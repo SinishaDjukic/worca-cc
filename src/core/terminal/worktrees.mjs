@@ -15,6 +15,7 @@ import { createDetachedWorktree, removeWorktree, worktreePathForBranch, listLoca
 import { isSafeBranchName } from '../git-sync.mjs';
 import { branchWorktreeRoot } from './paths.mjs';
 import * as store from './store.mjs';
+import { gitAvailable, gitMissingError, GIT_MISSING } from '../git-available.mjs';
 
 const codeError = (code, message) => Object.assign(new Error(message), { code });
 // `busyDirs` may be a Set or a getter (() => Set): a getter is read again right before git removes the
@@ -29,7 +30,7 @@ export function branchCheckoutName(branch) {
   return `${slug}-${createHash('sha1').update(String(branch)).digest('hex').slice(0, 6)}`;
 }
 
-const run = promisify(execFile);
+const execFileP = promisify(execFile); const run = (cmd, args, o) => (cmd === 'git' && !gitAvailable() ? Promise.reject(gitMissingError()) : execFileP(cmd, args, o));
 const detachedWarning = (branch, holder) => `Branch "${branch}" is checked out ${holder ? `in ${holder}` : 'elsewhere'}, so this folder is a detached copy of its latest commit. Commits made here are not on the branch.`;
 
 /**
@@ -42,6 +43,7 @@ async function attachWorktree(projectDir, dir, branch) {
 }
 
 export async function openBranchWorktree({ projectKey, projectDir, branch, by = 'local', now = Date.now() }) {
+  if (!gitAvailable()) throw codeError('GIT_MISSING', GIT_MISSING.message);
   if (!/^[A-Za-z0-9._-]+$/.test(String(projectKey || ''))) throw codeError('BAD_PROJECT', 'Unknown project.');
   if (!isSafeBranchName(branch)) throw codeError('BAD_BRANCH', 'That is not a branch name worca can open.');
   let known = store.findBranchWorktree(projectKey, branch);

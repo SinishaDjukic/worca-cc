@@ -110,14 +110,14 @@ function resolveTemplate(port, { ordinal, runCtx, prefix }) {
   if ((port.artifactKind || port.id) === 'plan') {
     const v = tpl.includes('{vsuffix}') ? nextVersion() : 1;
     return {
-      path: planPath(runCtx.projectDir, prefix + String(runCtx.baseName || ''), v, runCtx.datePrefix, runCtx.workspaceKey),
+      path: planPath(runCtx.projectDir, prefix + String(runCtx.baseName || ''), v, runCtx.datePrefix, runCtx.workspaceKey, { projectKey: runCtx.storeKey }),
       store,
     };
   }
   const m = /^\{base\}-(.+)\.md$/.exec(tpl);
   const kind = m ? m[1] : (port.artifactKind || port.id);
   return {
-    path: reviewPath(runCtx.projectDir, runCtx.baseName, runCtx.datePrefix, prefix + kind, runCtx.workspaceKey),
+    path: reviewPath(runCtx.projectDir, runCtx.baseName, runCtx.datePrefix, prefix + kind, runCtx.workspaceKey, { projectKey: runCtx.storeKey }),
     store,
   };
 }
@@ -204,6 +204,12 @@ function detachedWorkspace(ctx) {
  * Pure + exported (the parity suite pins both arms).
  */
 export function changesInstruction(ctx) {
+  // P5: the single-run folder arm only — a workspace (an all-Folder one included) takes the per-member arm below,
+  // whose workspaceDiffInstruction lines name each Folder member's own changes file.
+  if (ctx?.workMode === 'folder' && !(ctx?.workspace?.projects || []).length) {
+    return `in \`${join(ctx.pipelineDir, 'changes.patch')}\`, a unified diff of everything the run changed — there is no git in this run`;
+  }
+  if (ctx?.workMode === 'none') return 'by reading the files in your cwd (there is no repository: every file there was made by this run)';
   const perMember = detachedWorkspace(ctx) ? workspaceDiffInstruction(ctx) : '';
   return perMember
     ? 'in EVERY member checkout — your cwd is the worca-cc run root, not a repository, so ' +
@@ -993,7 +999,7 @@ export function runTaskExecution({ node, taskArtifact, runCtx = {} }) {
 
   if (text === null) throw missing();
   const version = typeof runCtx.planVersion === 'function' ? Number(runCtx.planVersion()) || 1 : 1;
-  const seeded = planPath(runCtx.projectDir, runCtx.baseName, version, runCtx.datePrefix, runCtx.workspaceKey);
+  const seeded = planPath(runCtx.projectDir, runCtx.baseName, version, runCtx.datePrefix, runCtx.workspaceKey, { projectKey: runCtx.storeKey });
   writeOut(seeded, text);
   return { outputs: { task: { path: seeded } } };
 }

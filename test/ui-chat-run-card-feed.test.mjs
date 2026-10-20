@@ -680,6 +680,32 @@ test('controller: a card\'s own Stop that lands while a read is in flight is rea
   ctl.destroy();
 });
 
+test('controller: a finished run without a project re-reads its facts on the artifact frames its teardown sends after `done`', async () => {
+  const store = fakeStore();
+  const NP = { projectKey: 'no-project-00000000', projectDir: '/h/.worca-cc/runs/abcd1234/work', workMode: 'none', branch: { workMode: 'none', runRootMode: 'detached' } };
+  store.snaps.set('run-uuid-1', liveSnap({ status: 'done', terminal: true, active: [] }, { status: 'done', active: [], ...NP }));
+  let harvested = false;
+  const extras = () => ({ results: null, moreArtifacts: false, pr: null,
+    artifacts: harvested ? [{ kind: 'work', relPath: 'work/deck.html', bytes: 86016, nodeId: null, cycle: null }] : [], artifactsTotal: harvested ? 1 : 0 });
+  const { doc, ctx, fetches } = env((u) => (u === '/api/ask/runs/abcd1234' ? ok({ state: STATE({ status: 'done', active: [], ...NP }), live: null, extras: extras() }) : null));
+  const ctl = createRunCardController({ controls: { prHost: () => true }, runStore: store, tickMs: 0 });
+  const built = ctl.build(BLOCK, ctx);
+  doc.body.appendChild(built.el);
+  store.poke('run-uuid-1', 'done');
+  await settle(6);
+  const n = fetches.length;
+  assert.equal(built.el.querySelector('.chat-rc-arts-list'), null, 'the teardown has not indexed work/ yet');
+  harvested = true;
+  store.poke('run-uuid-1', 'artifact');
+  await settle(6);
+  assert.equal(fetches.length, n + 1, 'the artifact frame re-reads the facts, once');
+  assert.equal(built.el.querySelector('.chat-rc-arts-list .cap').textContent, 'Artifacts · 1');
+  store.snaps.set('run-uuid-1', liveSnap({ status: 'done', terminal: true, active: [] }, { status: 'done', active: [] }));
+  store.poke('run-uuid-1', 'artifact');
+  await settle(6);
+  built.dispose();
+});
+
 test('controller: a fix card\'s outcome patch reaches the same card element (handle.blockChanged), with the pipeline id', async () => {
   const store = fakeStore();
   const { doc, ctx } = env();

@@ -130,18 +130,18 @@ test('model: a pick made before the first message is what that message uses (a n
   assert.deepEqual([posts[0].model, posts[0].effort], ['claude-sonnet-5-5', 'high']);
 });
 
-test('scope: the pill reads "Any project"; picking a project pins it and PATCHes the open thread', async () => {
+test('scope: the pill reads "No project"; picking a project pins it and PATCHes the open thread', async () => {
   const { route } = rig(null, { threads: [{ id: TID, title: 'A' }] });
   const h = await bootSidebar({ storage: STORE, route });
   const pill = h.$('.ask-scope-btn');
-  assert.equal(h.$('.ask-scope-label').textContent, 'Any project');
-  assert.equal(pill.title, 'Worca picks the project from your message');
+  assert.equal(h.$('.ask-scope-label').textContent, 'No project');
+  assert.equal(pill.title, 'Chat scope: No project');
   await h.change(h.$('.chat-head select[aria-label="Chat"]'), TID);
   await h.click(pill);
   const pop = h.$('.ask-pop-scope');
   assert.equal(pop.querySelector('.ask-pop-caption').textContent, 'Chat scope');
   const items = [...pop.querySelectorAll('.ask-scope-item')];
-  assert.deepEqual(items.map((i) => i.querySelector('.ask-model-name').textContent), ['Any project', 'ACME API', 'ACME Web']);
+  assert.deepEqual(items.map((i) => i.querySelector('.ask-model-name').textContent), ['No project', 'ACME API', 'ACME Web']);
   assert.ok(items[0].querySelector('.ask-model-check'));
   await h.click(items[2]);
   assert.equal(h.$('.ask-scope-label').textContent, 'ACME Web');
@@ -161,7 +161,7 @@ test('scope: a failed load says so with Retry; an empty Worca offers Open Worca'
   const before = h.calls.length;
   await h.click([...pop.querySelectorAll('.ask-scope-item')].find((b) => b.textContent === 'Retry'));
   assert.deepEqual(h.paths().slice(before).sort(), ['/api/projects', '/api/workspaces']);
-  assert.deepEqual([...h.$('.ask-pop-scope').querySelectorAll('.ask-scope-item')].map((i) => i.querySelector('.ask-model-name').textContent), ['Any project', 'ACME API', 'ACME Web']);
+  assert.deepEqual([...h.$('.ask-pop-scope').querySelectorAll('.ask-scope-item')].map((i) => i.querySelector('.ask-model-name').textContent), ['No project', 'ACME API', 'ACME Web']);
   stopSidebar();
   const b = rig(null, { projects: [] });
   const h2 = await bootSidebar({ storage: STORE, route: b.route });
@@ -171,7 +171,7 @@ test('scope: a failed load says so with Retry; an empty Worca offers Open Worca'
   assert.deepEqual(h2.tabsCreated, [{ url: 'http://127.0.0.1:4888' }]);
 });
 
-test('scope: a pinned chat keeps its pin on the pill while projects fail to load (never "Any project")', async () => {
+test('scope: a pinned chat keeps its pin on the pill while projects fail to load (never "No project")', async () => {
   const snap = SNAP(TID);
   snap.thread.context = { pinned: true, projectKey: 'acme-web' };
   const { route } = rig((p, o, m) => (p === '/api/projects' ? ok({ error: 'boom' }, 500) : p === `/api/ask/threads/${TID}` && m === 'GET' ? ok(snap) : null), { threads: [{ id: TID, title: 'A' }] });
@@ -245,7 +245,7 @@ test('capture-failed and notices show in the composer line', async () => {
   assert.match(h.$('.ask-composer-msg').textContent, /Select some text/);
 });
 
-test('running Action: the page\'s run pre-pins an "Any project" chat and is named in the page context', async () => {
+test('running Action: the page\'s run pre-pins an "No project" chat and is named in the page context', async () => {
   const action = { url: 'http://localhost:5173', projectKey: 'acme-web', workspaceId: null, runId: 'r1', runTitle: 'Fix checkout' };
   const { route, posts } = rig((p) => (p === MATCH ? ok({ match: action }) : null));
   const h = await bootSidebar({ storage: STORE, route });
@@ -258,7 +258,7 @@ test('running Action: the page\'s run pre-pins an "Any project" chat and is name
   assert.match(dec(posts[0].attachments[0].dataBase64), /worca run: Fix checkout \(run id r1, project acme-web\)/);
 });
 
-test('running Action: a scope the user picked is never overridden; "Any project" after a pre-pin sticks', async () => {
+test('running Action: a scope the user picked is never overridden; "No project" after a pre-pin sticks', async () => {
   const action = { url: 'http://localhost:5173', projectKey: 'acme-web', workspaceId: null, runId: 'r1', runTitle: 'Fix checkout' };
   const { route } = rig((p) => (p === MATCH ? ok({ match: action }) : null));
   const h = await bootSidebar({ storage: STORE, route });
@@ -272,9 +272,9 @@ test('running Action: a scope the user picked is never overridden; "Any project"
   await deliverTab(h2, { type: 'tab', tabId: 7, readable: true, title: 'Cart', url: 'http://localhost:5173/cart' });
   assert.equal(h2.$('.ask-scope-label').textContent, 'ACME Web', 'pre-pinned');
   await h2.click(h2.$('.ask-scope-btn'));
-  await h2.click([...h2.$$('.ask-pop-scope .ask-scope-item')].find((x) => x.textContent.startsWith('Any project')));
+  await h2.click([...h2.$$('.ask-pop-scope .ask-scope-item')].find((x) => x.textContent.startsWith('No project')));
   await deliverTab(h2, { type: 'tab', tabId: 7, readable: true, title: 'Cart 2', url: 'http://localhost:5173/cart?2' });
-  assert.equal(h2.$('.ask-scope-label').textContent, 'Any project', 'the user chose Any project; it sticks');
+  assert.equal(h2.$('.ask-scope-label').textContent, 'No project', 'the user chose No project; it sticks');
 });
 
 test('settings: the paired head reveals Settings; the Pinpoint option is stored', async () => {

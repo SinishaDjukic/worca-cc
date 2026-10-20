@@ -271,7 +271,7 @@
         <section class="view hidden" data-view="new">
           <div class="topbar">
             <div>
-              <div class="sub">Pick a project, describe the task, and run &middot; agents come tuned &mdash; open one only to change it</div>
+              <div class="sub">Pick where it runs, describe the task, and run &middot; agents come tuned &mdash; open one only to change it</div>
             </div>
           </div>
 
@@ -295,13 +295,15 @@
                 <!-- Target switch and the thing it selects share one row: they are one
                      decision, and the switch is only meaningful next to its picker. -->
                 <div class="split-row">
-                  <div class="field field-compact" id="target-field" data-min-level="advanced">
+                  <div class="field field-compact" id="target-field">
                     <label>Target</label>
                     <div class="seg" id="target-seg">
+                      <button type="button" data-target="none" aria-pressed="false">No project</button>
                       <button type="button" data-target="project" class="on" aria-pressed="true">Project</button>
-                      <button type="button" data-target="workspace" aria-pressed="false">Workspace</button>
+                      <button type="button" data-target="workspace" data-min-level="advanced" aria-pressed="false">Workspace</button>
                     </div>
                     <!-- hidden radios kept as the source of truth read at submit -->
+                    <input type="radio" name="target" value="none" hidden />
                     <input type="radio" name="target" value="project" checked hidden />
                     <input type="radio" name="target" value="workspace" hidden />
                   </div>
@@ -353,6 +355,8 @@
                   <small class="hint">A run fans out across the member projects. <a href="#workspaces" data-nav="workspaces">Manage workspaces</a></small>
                 </div>
 
+                <div class="field field-compact target-pane hidden" id="target-none-pane"><label for="noProjectWorkDir">Works in</label><input id="noProjectWorkDir" class="input" type="text" readonly></div>
+
                   </div><!-- /.target-panes -->
                 </div><!-- /.split-row -->
 
@@ -384,6 +388,7 @@
                         <option value="wf_default">Default</option>
                       </select>
                     </div>
+                    <small class="hint" id="needsRepoNote" hidden>Some steps expect a code repository.</small>
                   </div>
 
                   <!-- Engine (harness bridge §10.4): who runs the pipeline's agent nodes. Claude is
@@ -473,7 +478,7 @@
                 <!-- Branches (design v3): one table for a project or a workspace — a project
                      run is the same table with one row. One choice (where the code comes from),
                      then each row says in words what the run will get. -->
-                <div class="field field-compact branches" id="branch-fields" data-min-level="advanced">
+                <div class="field field-compact branches" id="branch-fields" data-min-level="advanced" data-needs-git>
                   <div class="branches-head">
                     <span class="branches-title" id="branches-title">Branches</span>
                     <span class="branches-ctx" id="branches-ctx"></span>
@@ -801,7 +806,7 @@
                        copies the name, like the Details header's (paintPageBranch). -->
                   <header class="rd-page-head">
                     <div class="rd-title-row"><h1 class="rd-page-title" tabindex="-1"></h1><span class="kind-chip">Run</span></div>
-                    <p class="rd-page-meta"><button type="button" class="btn btn-sm btn-quiet rd-page-branch" hidden data-min-level="advanced" aria-label="Copy branch name"><span class="rd-page-branch-name"></span><svg class="ico-copy" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg><svg class="ico-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></p>
+                    <p class="rd-page-meta"><button type="button" class="btn btn-sm btn-quiet rd-page-branch" hidden data-min-level="advanced" data-needs-git aria-label="Copy branch name"><span class="rd-page-branch-name"></span><svg class="ico-copy" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg><svg class="ico-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></p>
                     <!-- The Group row (runs redesign slice 4, D18): its own element, repainted through a signature. -->
                     <p class="rd-group-line" hidden></p>
                   </header>
@@ -821,10 +826,12 @@
                   </div>
                   <div class="rd-banners">
                     <!-- The worktree notice (worktree-notice.mjs): retained work, or a live checkout. -->
-                    <div class="retained-banner" role="alert" hidden></div>
+                    <div class="retained-banner" data-needs-git role="alert" hidden></div>
                   </div>
                   <!-- Time · Cost · Changes, in every state (the time ticks while live). -->
                   <div class="rd-facts"></div>
+                  <!-- A Folder run's changes on its copy: Discard · Apply to folder (paintFolderBars). -->
+                  <div class="rd-apply-slot" hidden></div>
                   <!-- Away mode's answers on this run, at the top where they are seen: how many, how many to
                        check, and a jump to the first one to check (paintAwayAnswers). -->
                   <div class="rd-away-note" hidden><span class="rd-away-note-text"></span><button type="button" class="btn btn-sm rd-away-jump">See the answers</button></div>
@@ -834,7 +841,7 @@
                   <div class="rd-result" hidden></div>
                   <!-- The pull request button: one node for the screen's life, outside the result
                        (rebuilt), so its loading placeholder can morph into it (paintPrCta). -->
-                  <div class="rd-pr-box">
+                  <div class="rd-pr-box" data-needs-git>
                     <div class="rd-pr-slot" hidden></div>
                     <!-- The open PR's checks, conflicts and Watch PR, as the button's footer (paintRdPrStatus). -->
                     <div class="rd-pr-status" hidden></div>
@@ -870,8 +877,8 @@
                   </div>
                   <div class="rd-meta mono"></div>
                   <div class="rd-row3">
-                    <span class="rd-base mono" hidden data-min-level="advanced"></span>
-                    <button type="button" class="btn btn-sm btn-quiet mono rd-branch-copy" hidden data-min-level="advanced" title="Copy branch name" aria-label="Copy branch name">
+                    <span class="rd-base mono" hidden data-min-level="advanced" data-needs-git></span>
+                    <button type="button" class="btn btn-sm btn-quiet mono rd-branch-copy" hidden data-min-level="advanced" data-needs-git title="Copy branch name" aria-label="Copy branch name">
                       <span class="rd-branch-name"></span>
                       <svg class="ico-copy" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg>
                       <svg class="ico-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
@@ -880,7 +887,7 @@
                          off copyBranchToClipboard's own 1200ms `.copied` window. -->
                     <span class="rd-copied">Copied</span>
                     <!-- Sync before run (#527): shown only when the run has a Sync row; opens its log. -->
-                    <button type="button" class="btn rd-sync" hidden data-min-level="advanced" title="Show the Sync log"></button>
+                    <button type="button" class="btn rd-sync" hidden data-min-level="advanced" data-needs-git title="Show the Sync log"></button>
                     <span class="rd-spacer"></span>
                   </div>
                 </header>
@@ -963,7 +970,7 @@
                 <div class="rd-now">
                   <header class="rd-page-head">
                     <div class="rd-title-row"><h1 class="rd-page-title" tabindex="-1"></h1><span class="kind-chip">Run</span></div>
-                    <p class="rd-page-meta"><button type="button" class="btn btn-sm btn-quiet rd-page-branch" hidden data-min-level="advanced" aria-label="Copy branch name"><span class="rd-page-branch-name"></span><svg class="ico-copy" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg><svg class="ico-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></p>
+                    <p class="rd-page-meta"><button type="button" class="btn btn-sm btn-quiet rd-page-branch" hidden data-min-level="advanced" data-needs-git aria-label="Copy branch name"><span class="rd-page-branch-name"></span><svg class="ico-copy" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg><svg class="ico-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></p>
                     <!-- The Group row (runs redesign slice 4, D18): its own element, repainted through a signature. -->
                     <p class="rd-group-line" hidden></p>
                   </header>
@@ -975,10 +982,12 @@
                   <div class="hd-limit-notice rd-ov-state" hidden><span class="rd-ov-copy"></span></div>
                   <div class="hd-banners">
                     <span class="badge hist-retained-badge" hidden>Work retained</span>
-                    <div class="retained-banner" role="alert" hidden></div>
-                    <div class="merge-back-banner" role="status" hidden></div>
+                    <div class="retained-banner" data-needs-git role="alert" hidden></div>
+                    <div class="merge-back-banner" data-needs-git role="status" hidden></div>
                   </div>
                   <div class="rd-facts"></div>
+                  <!-- A Folder run's changes on its copy: Discard · Apply to folder (paintFolderBars). -->
+                  <div class="rd-apply-slot" hidden></div>
                   <!-- Away mode's answers on this run, at the top where they are seen: how many, how many to
                        check, and a jump to the first one to check (paintAwayAnswers). -->
                   <div class="rd-away-note" hidden><span class="rd-away-note-text"></span><button type="button" class="btn btn-sm rd-away-jump">See the answers</button></div>
@@ -986,7 +995,7 @@
                   <div class="rd-result hd-result"></div>
                   <!-- The pull request button, mirrored from the Details header: one node, outside
                        the result paintHdGlance rebuilds on every paint (paintPrCta). -->
-                  <div class="rd-pr-box">
+                  <div class="rd-pr-box" data-needs-git>
                     <div class="rd-pr-slot" hidden></div>
                     <!-- The open PR's checks, conflicts and Watch PR, as the button's footer (paintRdPrStatus). -->
                     <div class="rd-pr-status" hidden></div>
@@ -1000,23 +1009,23 @@
                 <div class="hd-row1">
                   <h1 class="hd-title"></h1>
                   <span class="auto-badge" hidden></span>
-                  <span class="hist-merge" hidden data-min-level="expert"></span>
-                  <button type="button" class="btn btn-primary hd-pr" hidden data-min-level="advanced">Create PR</button>
+                  <span class="hist-merge" hidden data-min-level="expert" data-needs-git></span>
+                  <button type="button" class="btn btn-primary hd-pr" hidden data-min-level="advanced" data-needs-git>Create PR</button>
                   <!-- Publish branch (#618): push a finished run's branch without a PR. Painted by paintHdPublish. -->
-                  <button type="button" class="hd-publish btn" hidden data-min-level="advanced">Publish branch</button>
+                  <button type="button" class="hd-publish btn" hidden data-min-level="advanced" data-needs-git>Publish branch</button>
                   <span class="act-pill-slot"></span>
-                  <a class="hd-pr-link" hidden data-min-level="advanced" target="_blank" rel="noopener"></a>
-                  <button type="button" class="btn btn-primary hd-push" hidden data-min-level="advanced"></button>
+                  <a class="hd-pr-link" hidden data-min-level="advanced" data-needs-git target="_blank" rel="noopener"></a>
+                  <button type="button" class="btn btn-primary hd-push" hidden data-min-level="advanced" data-needs-git></button>
                 </div>
                 <!-- "Published to <remote>/<branch>" (#618): its own line, so a long branch never squeezes the title. -->
-                <p class="hd-published hint mono" hidden data-min-level="advanced"></p>
+                <p class="hd-published hint mono" hidden data-min-level="advanced" data-needs-git></p>
                 <!-- Base conflicts (#620): the stored check of each branch against its base. Painted by paintHdBase. -->
-                <div class="hd-base-check" hidden>
+                <div class="hd-base-check" data-needs-git hidden>
                   <ul class="hd-base-members"></ul>
                 </div>
                 <!-- Workspace runs: one line per member repo (View PR / Merged / No changes).
                      Painted by paintHdPr; never shown for a single-project run. -->
-                <ul class="hd-pr-repos" hidden data-min-level="advanced" aria-label="Pull requests per repository"></ul>
+                <ul class="hd-pr-repos" hidden data-min-level="advanced" data-needs-git aria-label="Pull requests per repository"></ul>
                 <!-- Status pip leads the META line, not row 1: it reads as the icon
                      for the status WORD it now sits next to (same pairing the list
                      card uses), and row 1 stays title + PR actions. -->
@@ -1030,8 +1039,8 @@
                   <div class="hd-meta mono"></div>
                 </div>
                 <div class="hd-row3">
-                  <span class="hd-base mono" data-min-level="advanced"></span>
-                  <button type="button" class="btn btn-sm btn-quiet mono hd-branch-copy" hidden data-min-level="advanced" title="Copy branch name" aria-label="Copy branch name">
+                  <span class="hd-base mono" data-min-level="advanced" data-needs-git></span>
+                  <button type="button" class="btn btn-sm btn-quiet mono hd-branch-copy" hidden data-min-level="advanced" data-needs-git title="Copy branch name" aria-label="Copy branch name">
                     <span class="hd-branch-name"></span>
                     <svg class="ico-copy" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg>
                     <svg class="ico-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
@@ -1291,7 +1300,7 @@
                     </div>
                     <div class="wiz-proj-list" id="wiz-projects"></div>
                     <!-- Import: repositories that are not projects yet. Scan registers the ticked new rows first. -->
-                    <div class="wiz-import">
+                    <div class="wiz-import" data-needs-git>
                       <div class="wiz-import-bar">
                         <button type="button" id="wiz-import-add" class="btn btn-sm">Add…</button>
                         <span class="wiz-import-lead">repositories, a folder of repositories or a <code>.code-workspace</code> file</span>
@@ -1375,6 +1384,7 @@
                     Back
                   </button>
                   <h1 class="pd-title"></h1>
+                  <span class="pd-kind"></span>
                   <!-- Opens the terminal pane in this page's folder (docs/terminal.md); app.js wires every .term-opener. -->
                   <button type="button" class="term-opener btn" aria-label="Open the terminal" aria-expanded="false" title="Terminal (Ctrl+`)">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2.5"></rect><path d="M7.5 9.5l3 2.5-3 2.5"></path><path d="M13 15h3.5"></path></svg>
@@ -1731,8 +1741,9 @@
                 <div class="label-row drow-label">
                   <label for="settingsProjectsRoot">Projects root folder</label>
                   <button type="button" class="info-tip" aria-label="About Projects root folder">i<span class="tip-content hidden">
-                    The top-level folder under which your projects live. Its CLAUDE.md, .claude/skills, and
-                    .mcp.json are made available to every pipeline agent. Leave empty to use your home folder.
+                    The top-level folder under which your projects live. New and Clone from URL create projects
+                    here. Its CLAUDE.md, .claude/skills, and .mcp.json are made available to every pipeline agent.
+                    Leave empty to use worca's projects folder.
                   </span></button>
                 </div>
                 <div class="drow-control">
@@ -1981,7 +1992,7 @@
             <!-- Scheduled runs: the defaults a NEW schedule inherits. Each schedule keeps
                  its own copy, so a change here never rewrites an existing one. -->
             <!-- Sync before run (#527): the instance defaults each project inherits. -->
-            <section class="card settings-card" id="sync-settings-card" data-min-level="advanced">
+            <section class="card settings-card" id="sync-settings-card" data-min-level="advanced" data-needs-git>
               <div class="card-head">
                 <div class="label-row">
                   <h2>Sync before run</h2>
@@ -2120,7 +2131,7 @@
 
             <!-- Actions (issue #529): keep policy for finished-run checkouts, the port range for
                  automatic port variables, editor/terminal overrides and the checkout cap. -->
-            <section class="card settings-card" id="actions-settings-card" data-min-level="advanced">
+            <section class="card settings-card" id="actions-settings-card" data-min-level="advanced" data-needs-git>
               <div class="card-head"><div class="label-row"><h2>Actions</h2>
                 <button type="button" class="info-tip" aria-label="About actions">i<span class="tip-content hidden">
                   Check out a finished run and run its project's actions from Worca. Actions are off on hosted
@@ -2631,10 +2642,10 @@
           <span class="export-label">Destination</span>
           <div id="export-plugin-dest" class="seg" role="group" aria-label="Plugin destination">
             <button type="button" class="seg-btn on" data-pdest="folder">Local folder</button>
-            <button type="button" class="seg-btn" data-pdest="marketplace">Marketplace</button>
+            <button type="button" class="seg-btn" data-pdest="marketplace" data-needs-git>Marketplace</button>
           </div>
         </div>
-        <div id="export-marketplace-field" class="export-field hidden">
+        <div id="export-marketplace-field" class="export-field hidden" data-needs-git>
           <label class="export-label" for="export-marketplace">Marketplace</label>
           <span class="select-wrap"><select id="export-marketplace" class="select" aria-label="Marketplace"></select></span>
           <span class="hint">The pull request targets the branch the marketplace tracks, else its default branch. Without push access it comes from your fork.</span>
@@ -2911,27 +2922,40 @@
         <div class="card-head">
           <h2 id="proj-add-title">Add project</h2>
         </div>
-        <!-- Two ways in: a folder already on this machine, or a repository cloned into the
-             projects folder by the server (POST /api/projects/clone). Clone is the default
-             where no folder picker exists (a container or hosted worca). -->
+        <!-- Three ways in: New (a name), Folder, Clone from URL. New makes <projects root>/<folder name>
+             (POST /api/projects/create, a dry run on every keystroke fills Location); Folder registers a
+             folder already on this machine (GET /api/projects/probe fills the detect row); Clone from URL
+             clones into the projects folder on the server (POST /api/projects/clone). Opens on New. -->
         <div class="md-tabs tabs proj-add-tabs" id="proj-add-tabs" role="tablist" aria-label="How to add the project">
-          <button type="button" class="md-tab tab" role="tab" id="proj-add-tab-folder" data-mode="folder" aria-selected="true" aria-controls="proj-add-folder-pane">Folder</button>
-          <button type="button" class="md-tab tab" role="tab" id="proj-add-tab-clone" data-mode="clone" aria-selected="false" aria-controls="proj-add-clone-pane">Clone from URL</button>
+          <button type="button" class="md-tab tab" role="tab" id="proj-add-tab-new" data-mode="new" aria-selected="true" aria-controls="proj-add-new-pane">New</button>
+          <button type="button" class="md-tab tab" role="tab" id="proj-add-tab-folder" data-mode="folder" aria-selected="false" aria-controls="proj-add-folder-pane">Folder</button>
+          <button type="button" class="md-tab tab" role="tab" id="proj-add-tab-clone" data-needs-git data-mode="clone" aria-selected="false" aria-controls="proj-add-clone-pane">Clone from URL</button>
         </div>
-        <div id="proj-add-folder-pane" role="tabpanel" aria-labelledby="proj-add-tab-folder">
+        <div class="field" id="proj-add-name-field">
+          <label for="proj-add-name">Name</label>
+          <input id="proj-add-name" class="input" type="text" spellcheck="false" autocomplete="off" placeholder="Project name" />
+        </div>
+        <div id="proj-add-new-pane" role="tabpanel" aria-labelledby="proj-add-tab-new">
           <div class="field">
-            <label for="proj-add-name">Name</label>
-            <input id="proj-add-name" class="input" type="text" spellcheck="false" placeholder="Project name" />
-          </div>
-          <div class="field">
-            <label for="proj-add-path">Folder</label>
-            <div class="path-row">
-              <input id="proj-add-path" class="input" type="text" spellcheck="false" placeholder="/absolute/path/to/project" />
-              <button type="button" id="proj-add-browse" class="btn btn-sm" title="Pick the project folder">Choose folder&hellip;</button>
-              <button type="button" id="proj-add-browse-many" class="btn btn-sm" title="Tick several folders in Worca's folder browser and add them together">Several folders&hellip;</button>
+            <label for="proj-add-location">Location</label>
+            <div class="proj-add-loc">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+              <input id="proj-add-location" class="input mono" type="text" readonly spellcheck="false" />
             </div>
           </div>
         </div>
+        <div id="proj-add-folder-pane" role="tabpanel" aria-labelledby="proj-add-tab-folder" hidden>
+          <div class="field">
+            <label for="proj-add-path">Folder</label>
+            <div class="path-row">
+              <input id="proj-add-path" class="input" type="text" spellcheck="false" placeholder="/absolute/path/to/project" aria-describedby="proj-add-detect" />
+              <button type="button" id="proj-add-browse" class="btn btn-sm" title="Pick the project folder">Choose folder&hellip;</button>
+              <button type="button" id="proj-add-browse-many" class="btn btn-sm" title="Tick several folders in Worca's folder browser and add them together">Several folders&hellip;</button>
+            </div>
+            <div class="proj-add-detect" id="proj-add-detect" role="status" aria-live="polite" hidden></div>
+          </div>
+        </div>
+        <label class="switch-row proj-add-git" id="proj-add-git-row" data-needs-git hidden><input id="proj-add-git" class="sw-input" type="checkbox" role="switch"><span class="switch switch-sm"></span><span class="txt">Use git</span></label>
         <div id="proj-add-clone-pane" role="tabpanel" aria-labelledby="proj-add-tab-clone" hidden>
           <div class="field">
             <label for="proj-clone-url">Repository URL</label>

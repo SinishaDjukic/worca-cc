@@ -7,6 +7,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _resetForTests } from '../src/core/db.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { displayPath } from '../src/core/projects.mjs';
+import { templateRepo } from './helpers/git-dir.mjs';
 
 let homeDir, srv, base, prevHome;
 
@@ -50,6 +52,10 @@ test('projects API: list empty, add, reject duplicate and no-name (400), delete'
       assert.equal(j.projects.length, 1);
       assert.equal(j.projects[0].name, 'demo');
       assert.equal(j.projects[0].exists, true);
+      assert.deepEqual([j.projects[0].vcs, j.projects[0].workMode], ['none', 'folder']);
+      r = await fetch(`${base}/api/projects`); const row = (await r.json()).projects[0];
+      assert.equal(row.workMode, 'folder');
+      assert.equal(row.displayPath, process.platform === 'win32' ? homeDir : displayPath(homeDir));
 
       r = await fetch(`${base}/api/projects`, {
         method: 'POST',
@@ -61,6 +67,19 @@ test('projects API: list empty, add, reject duplicate and no-name (400), delete'
       r = await fetch(`${base}/api/projects?name=${encodeURIComponent('demo')}`, { method: 'DELETE' });
       assert.equal(r.status, 200);
       assert.deepEqual((await r.json()).projects, []);
+    } },
+    { name: 'POST of a folder inside a git repo → 400 NESTED_IN_REPO', run: async () => {
+      const repo = templateRepo('projapi-nested', { branch: 'main', user: true, files: { 'a.txt': 'a\n' } });
+      try {
+        const inner = join(repo, 'inner'); await mkdir(inner);
+        const r = await fetch(`${base}/api/projects`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: 'inner', path: inner }),
+        });
+        const body = await r.json();
+        assert.equal(r.status, 400); assert.deepEqual(Object.keys(body).sort(), ['code', 'error', 'partOf', 'repoRoot']); assert.equal(body.error, 'Inside a git repository');
+      } finally { await rm(repo, { recursive: true, force: true }); }
     } },
     { name: 'POST /api/projects with no name is a 400', run: async () => {
       const r = await fetch(`${base}/api/projects`, {
@@ -93,6 +112,7 @@ test('POST /api/projects/bulk: adds valid folders, reports skipped rows with rea
       assert.match(j.results[1].reason, /already exists/);
       assert.equal(j.results[2].reason, 'folder does not exist');
       assert.ok(j.projects.some((p) => p.name === 'bulk-a' && p.path === a));
+      assert.ok(j.projects.every((p) => p.workMode && typeof p.displayPath === 'string'));
       // cleanup so the other tests in this file see their expected registry
       await fetch(`${base}/api/projects?name=bulk-a`, { method: 'DELETE' });
     } },

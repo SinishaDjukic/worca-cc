@@ -227,3 +227,82 @@ test('a resume prepared before the stop is refused: the stopped row stays stoppe
   assert.equal(row.status, 'stopped', 'never re-parked or errored over');
   assert.equal(row.resume_point, null);
 });
+
+// test/stop-paused-harness.test.mjs — folder cases (new). okVerifier / stopper / rowOf exist in the file.
+const branchOf = (id) => JSON.parse(getDb().prepare('SELECT branch FROM pipelines WHERE id = ?').get(id).branch);
+const folderDirs = [];
+after(() => { for (const d of folderDirs) rmSync(d, { recursive: true, force: true }); });
+async function pausedFolderRun() {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-cc-stop-paused-folder-')); folderDirs.push(dir);
+  writeFileSync(join(dir, 'keep.txt'), 'mine\n');
+  let orch;
+  orch = engine.create({
+    projectDir: dir, workMode: 'folder', prompt: 'demo', auto: true, claude: { mock: true },
+    runners: {
+      producer: async (ctx) => {
+        writeFileSync(join(orch.runCwd, 'wip.txt'), 'half done\n');
+        queueMicrotask(() => orch.pause());
+        return new Promise((_res, rej) => { const a = () => { const e = new Error('aborted'); e.name = 'AbortError'; rej(e); };
+          if (ctx.signal.aborted) a(); else ctx.signal.addEventListener('abort', a, { once: true }); });
+      },
+      verifier: okVerifier,
+    },
+  });
+  assert.equal((await orch.run()).status, 'paused');
+  return { dir, id: orch.state.id, copy: orch.runCwd };
+}
+const spy = (o) => { const calls = []; const real = o._git.bind(o); o._git = (a, x) => { calls.push(a); return real(a, x); }; return calls; };
+
+test('folder: stopPaused settles without git — changes.json lists the work, the copy waits for Apply, the folder is untouched', async () => {
+  const { dir, id, copy } = await pausedFolderRun();
+  getDb().prepare("UPDATE pipelines SET branch = json_set(branch, '$.changes', json(?)) WHERE id = ?").run(JSON.stringify({ state: 'pending', counts: { added: 9, modified: 0, deleted: 0 } }), id);   // a pre-pause scan's record
+  const { o } = await stopper(dir, id);
+  const calls = spy(o);
+  assert.equal((await o.stopPaused('ada@example.com')).status, 'stopped');
+  assert.deepEqual(calls, []); assert.equal(o.workMode, 'folder');
+  const br = branchOf(id);
+  assert.deepEqual([br.workMode, br.changes.state], ['folder', 'pending']);
+  assert.deepEqual(br.changes.counts, { added: 1, modified: 0, deleted: 0 });
+  assert.ok(existsSync(join(copy, 'wip.txt')));
+  assert.deepEqual([existsSync(join(dir, 'wip.txt')), existsSync(join(dir, '.git'))], [false, false]);
+  const changes = JSON.parse(readFileSync(join(o.pipeline.dir, 'changes.json'), 'utf8'));
+  assert.deepEqual(changes.files, [{ path: 'wip.txt', change: 'added', size: 10 }]);
+  assert.equal(o.getState().changes, undefined, 'a stop never carries the row\'s stale state.changes (PAUSED_STATE_SKIP)');
+});
+
+test('folder: a resume rides the recorded mode on its copy, runs no git, finishes', async () => {
+  const { dir, id, copy } = await pausedFolderRun();
+  const r = await createOrchestratorFor({ projectDir: dir, claude: { mock: true }, resume: readPipelineForResume(id), workMode: 'git' });
+  assert.equal(r.workMode, 'folder', 'the recorded mode wins over a caller');
+  const calls = spy(r);
+  assert.equal((await r.resume()).status, 'done');
+  assert.deepEqual(calls, []); assert.equal(r.runCwd, copy);
+  assert.equal(existsSync(join(dir, '.git')), false);
+  assert.ok(JSON.parse(readFileSync(join(r.pipeline.dir, 'changes.json'), 'utf8')).files.some((f) => f.path === 'wip.txt'));
+});
+
+test('folder: a stop whose copy was deleted by hand still lands and keeps nothing', async () => {
+  const { dir, id, copy } = await pausedFolderRun();
+  rmSync(copy, { recursive: true, force: true });
+  const { o, logs } = await stopper(dir, id);
+  assert.equal((await o.stopPaused()).status, 'stopped');
+  assert.ok(logs.some((l) => /copy missing: .* nothing to keep/.test(l)), logs.join('\n'));
+});
+
+test('folder: a strict resume whose copy was deleted ends with copy missing and never writes the folder', async () => {
+  const { dir, id, copy } = await pausedFolderRun();
+  rmSync(copy, { recursive: true, force: true });
+  const r = await createOrchestratorFor({ projectDir: dir, auto: true, claude: { mock: true }, resume: readPipelineForResume(id) });
+  const res = await r.resume();
+  assert.equal(res.status, 'error'); assert.match(res.error, /^copy missing: .* — cannot resume$/);
+  assert.deepEqual([existsSync(join(dir, 'src')), existsSync(join(dir, 'wip.txt'))], [false, false]);
+});
+
+test('folder: a node never starts on the real folder when runCwd is unset (the _execCtx guard)', async () => {
+  const { dir, id } = await pausedFolderRun();
+  const r = await createOrchestratorFor({ projectDir: dir, auto: true, claude: { mock: true }, resume: readPipelineForResume(id) });
+  const orig = r._reattachCheckouts.bind(r);
+  r._reattachCheckouts = async (...a) => { const m = await orig(...a); r.runCwd = null; return m; };
+  const res = await r.resume();
+  assert.notEqual(res.status, 'done'); assert.equal(existsSync(join(dir, 'src')), false);
+});

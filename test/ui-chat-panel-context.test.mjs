@@ -142,7 +142,8 @@ test('the composer re-previews its MCP sets when the panel run lands with no has
   await ctx.settle(10);
   const previews = ctx.calls.filter((c) => c.url.includes('/api/ask/mcp-preview')).map((c) => JSON.parse(c.opts.body || '{}').context || {});
   const last = previews.at(-1) || {};
-  assert.equal(last.projectDir, '/tmp/p');
+  assert.equal(last.projectDir, undefined, 'P4 No project: the run rides, its project folder does not (CONTRACT §4)');
+  assert.equal(last.pinned, false);
   assert.equal(last.runId, 'r1');
 });
 

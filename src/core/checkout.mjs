@@ -9,13 +9,15 @@ import { getDb, tx } from './db.mjs';
 import { worcaHome } from './projects.mjs';
 import { createWorktree, removeWorktree, worktreePathForBranch, snapshotWorktreePatch } from './worktree.mjs';
 import { staleIndexLockNote } from './git-lock.mjs';
-import { readRunManifest, writeRunManifest, updateRunManifest, rmGuarded, RETAIN_REASONS } from './run-manifest.mjs';
+import { readRunManifest, writeRunManifest, updateRunManifest, rmGuarded, RETAIN_REASONS, liveRetainMembers } from './run-manifest.mjs';
 import { findPipelineRowById, retainedWorkFor, checkoutRecordsFor, readPrState, appendAuditById,
   readStoreMeta, runRootSweepLookups } from './artifacts.mjs';
+import { isNoProjectKey, NO_PROJECT_NAME } from '../shared/no-project.mjs';
 import { branchExists, branchPushedTo, restoreBranchFromRemote, prLifecycleState } from './git-info.mjs';
 import { actionsSettings } from './settings.mjs';
 import { busyRunIdsFromPidFile, actionsPidFile } from './actions/registry.mjs';
 import { terminalPidFile } from './terminal/paths.mjs';
+import { gitAvailable } from './git-available.mjs';
 
 const execFileP = promisify(execFile);
 const FINISHED = new Set(['done', 'stopped', 'error']);
@@ -55,8 +57,9 @@ export function membersOfRow(row) {
     const projects = Array.isArray(wm.projects) ? wm.projects : [];
     return projects.map((p) => ({ projectKey: p.projectKey, projectName: p.projectName, projectDir: p.projectDir, br: branchOf(wm.branches[p.projectKey] || null) }));
   }
-  const dir = projectDirOfRow(row);
-  return [{ projectKey: row.project_key, projectName: dir ? basename(dir) : null, projectDir: dir, br: branchOf(parse(row.branch)) }];
+  const dir = isNoProjectKey(row.project_key) ? null : projectDirOfRow(row);   // P3: its store_meta path is <worcaHome>/runs, never a project
+  const projectName = isNoProjectKey(row.project_key) ? NO_PROJECT_NAME : dir ? basename(dir) : null;   // P3: never the store's `runs`
+  return [{ projectKey: row.project_key, projectName, projectDir: dir, br: branchOf(parse(row.branch)) }];
 }
 
 /** Where the checkout goes: the recorded worktreeDir, else derived from the recorded mode (D6). */
@@ -76,6 +79,7 @@ function assertEligible(row, isLive) {
 
 /** Drop registrations whose folder is gone, so a hand-deleted checkout never reads as "checked out elsewhere". */
 async function pruneWorktrees(projectDir) {
+  if (!gitAvailable()) return;
   await execFileP('git', ['worktree', 'prune'], { cwd: projectDir, windowsHide: true }).catch(() => {});
 }
 
@@ -274,7 +278,8 @@ export function discardCheckout({ id, members = null, force = false, stopService
       const runRoot = join(worcaHome(), 'runs', row.id);
       if (existsSync(runRoot)) {
         const cur = await readRunManifest(runRoot);
-        const left = (cur?.retain?.members || []).filter((x) => !removed.includes(x.projectKey) && existsSync(x.worktreeDir));
+        // P5: a pending Folder member of a mixed workspace keeps the root by its copyDir (it has no worktreeDir)
+        const left = liveRetainMembers({ members: (cur?.retain?.members || []).filter((x) => !removed.includes(x.projectKey)) });
         if (left.length) await updateRunManifest(runRoot, { retain: { ...cur.retain, members: left } });
         else await rmGuarded(runRoot, { worcaHome: worcaHome(), pipelineId: row.id });
       }
@@ -337,6 +342,7 @@ export function listCheckouts() {
 }
 
 export async function enforceCheckoutCap({ max, busy = busyRunIds(), stopServices = async () => {} }) {
+  if (!gitAvailable()) return { evicted: [] };   // force-discard: the patch that saves uncommitted edits needs git
   const all = listCheckouts();
   const evicted = [];
   let over = all.length - max;
@@ -351,6 +357,7 @@ export async function enforceCheckoutCap({ max, busy = busyRunIds(), stopService
 
 /** until-pr (D11): release checkouts whose PR merged or closed. */
 export async function releaseKeptCheckouts({ busy = busyRunIds(), stopServices = async () => {}, prState = prLifecycleState } = {}) {
+  if (!gitAvailable()) return { released: [] };  // force-discard: the patch that saves uncommitted edits needs git
   const released = [];
   for (const c of listCheckouts().filter((x) => x.policy === 'until-pr' && !busy.has(x.runId))) {
     const pr = readPrState(c.runId);                                     // { url, number, state } | null

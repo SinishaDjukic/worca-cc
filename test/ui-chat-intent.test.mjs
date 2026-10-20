@@ -76,7 +76,7 @@ test('mounting adds nothing to the lead row (P1 hides it while empty); set() add
 
 test('✕ removes the chip from the lead row and gives the placeholder back to the Chat default', () => {
   const s = setup();
-  s.ctl.set('clone');
+  s.ctl.set('script');
   s.chip().querySelector('.chat-intent-x').click();
   assert.equal(s.ctl.current(), null);
   assert.equal(s.chip(), null);
@@ -138,9 +138,9 @@ test('a send from a chat that already has messages waits for THAT chat to grow',
 
 test('leaving the home without sending drops the intent: a later message in another chat is not prefixed', () => {
   const s = setup();
-  s.ctl.set('clone');
+  s.ctl.set('script');
   s.handle.update(null);
-  assert.equal(s.ctl.current(), 'clone', 'still on the home: kept');
+  assert.equal(s.ctl.current(), 'script', 'still on the home: kept');
   s.page.dataset.view = 'thread';                                   // a History pick opened another chat
   s.handle.update({ id: 'ask_00000003', messages: [{}, {}] });
   assert.equal(s.ctl.current(), null);
@@ -150,7 +150,7 @@ test('leaving the home without sending drops the intent: a later message in anot
 
 test('leave() (the Chat page was left) drops a set intent, but keeps one riding a send for the retry', () => {
   const s = setup();
-  s.ctl.set('clone');
+  s.ctl.set('script');
   s.ctl.leave();
   assert.equal(s.ctl.current(), null);
   assert.equal(s.chip(), null);
@@ -185,7 +185,7 @@ test('every intent: a chip label, an icon, a placeholder and one plain sentence 
     assert.equal(intentText(id, 'x'), `${it.lead}\n\nx`);
   }
   assert.equal(intentText('nope', ' x '), 'x');
-  assert.deepEqual(Object.keys(INTENTS), ['run', 'shape', 'workflow', 'schedule', 'track', 'diff', 'script', 'clone',
+  assert.deepEqual(Object.keys(INTENTS), ['run', 'shape', 'workflow', 'schedule', 'track', 'diff', 'script',
     'away', 'metrics', 'model', 'workspace', 'remember', 'tasks']);
   assert.equal(INTENTS.away.prefill, "I'm away now", 'an empty composer never sends: Step away arrives with its text (P2\'s receipt words, straight apostrophe)');
   assert.equal(INTENTS.metrics.placeholder, 'Which project or workspace?', 'get_team_metrics needs a scope; the range defaults to this month');
@@ -255,11 +255,11 @@ test('destroy stops the timer, the Backspace and address listeners and removes t
   assert.equal(s.lead.querySelector('.chat-intent'), null);
   const e = key(s.doc, s.input, 'Backspace');
   assert.equal(e.defaultPrevented, false);
-  assert.equal(s.ctl.set('clone'), true, 'the controller outlives its mounts');
+  assert.equal(s.ctl.set('script'), true, 'the controller outlives its mounts');
   s.handle.transformSend('x');                                      // rides a send; the mount's listeners are gone
   const win = s.doc.defaultView;
   win.dispatchEvent(new win.HashChangeEvent('hashchange', { oldURL: 'http://localhost:4317/#chat/ask_0000000a' }));
-  assert.equal(s.ctl.current(), 'clone', 'the hashchange listener left with its mount');
+  assert.equal(s.ctl.current(), 'script', 'the hashchange listener left with its mount');
 });
 
 test('a composer mounted while an intent is set shows it at once', () => {
@@ -377,7 +377,7 @@ test('re-arming run with another workflow repaints; plain run keeps its lead byt
 
 test('a workflow on any intent but run is ignored', () => {
   const s = setup();
-  s.ctl.set('clone', { workflow: { id: 'wf_pay', name: 'Payroll close' } });
-  assert.equal(s.doc.querySelector('.chat-intent-l').textContent, 'Clone a repo');
+  s.ctl.set('script', { workflow: { id: 'wf_pay', name: 'Payroll close' } });
+  assert.equal(s.doc.querySelector('.chat-intent-l').textContent, 'Write a script');
   assert.equal(s.ctl.workflow(), null);
 });

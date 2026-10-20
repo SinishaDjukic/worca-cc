@@ -623,6 +623,21 @@ function ownedPair(sel, engine, projectDir) {
   const effort = own && (engine === 'claude' || effortsForEngine(engine).includes(own)) ? own : (own && model ? (effortOn(own, engine) || undefined) : undefined);
   return { ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
 }
+/** P3 (U13, S32): whether a graph holds an agent that expects a code repository (`needsRepo` in its sidecar).
+ *  Pure. A template without nodes (wf_auto, a v1 row) is never a hint.
+ *  @param {{nodes?: Array<{kind?: string, key?: string}>}|null} tpl @param {Record<string, object>} registry */
+export function graphNeedsRepo(tpl, registry) {
+  const nodes = Array.isArray(tpl?.nodes) ? tpl.nodes : [];
+  return nodes.some((n) => n?.kind === 'agent' && registry?.[n.key]?.needsRepo === true);
+}
+
+/** P3: `graphNeedsRepo` for a workflow id. Unknown ids and `wf_auto` (its graph is decided per run) answer false (S-E).
+ *  @param {string} workflowId @param {{registry?: Record<string, object>}} [opts] @returns {Promise<boolean>} */
+export async function workflowNeedsRepo(workflowId, { registry = loadAgentRegistry() } = {}) {
+  if (workflowId === AUTO_WORKFLOW_ID) return false;
+  return graphNeedsRepo(await readWorkflow(workflowId), registry);
+}
+
 export async function resolveGraph(projectDir, workflowId, registry, agentsDir = DEFAULT_AGENTS_DIR, opts = {}) {
   if (workflowId === AUTO_WORKFLOW_ID) {
     throw new Error('the Auto workflow is decided per run — resolveGraph needs the adopted workflow id');

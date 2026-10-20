@@ -16,6 +16,7 @@ import { redactSecrets } from './redact.mjs';
 import * as azurePr from './pr/azure.mjs';
 import { readAzureCredentials } from './azure-credentials.mjs';
 import { parseAzurePrUrl } from '../shared/azure-remote.mjs';
+import { gitAvailable, gitMissingResult } from './git-available.mjs';
 export { parseRemoteUrl, remoteRepoSlug, sameRepo } from './forge.mjs';
 
 /** Default runner: spawn `cmd args` in `cwd`, resolve { ok, stdout, stderr, code }. */
@@ -47,7 +48,10 @@ function defaultRun(cmd, args, { cwd, timeout = 0, env = null } = {}) {
 /** Bound for the diff helpers below (persisted-diff generation on every terminal path). */
 export const DIFF_TIMEOUT_MS = 120_000;
 
-let _run = defaultRun;
+// gh runs git itself (`git remote -v` in its cwd) to find the repository unless it is given --repo or a PR URL, and
+// `gh pr create` always does: while git is missing those calls answer like git (on macOS they would reach the CLT shim).
+const ghRunsGit = (args) => args[0] === 'pr' && (args[1] === 'create' || (!args.includes('--repo') && !/^https?:\/\//.test(String(args[2] ?? ''))));
+let _runner = defaultRun; const _run = (cmd, args, o) => ((cmd === 'git' || (cmd === 'gh' && ghRunsGit(args))) && !gitAvailable() ? Promise.resolve(gitMissingResult()) : _runner(cmd, args, o));
 let _ghCache = null;
 
 /** Parse `git diff --shortstat` output into { added, removed }. */
@@ -324,10 +328,10 @@ async function gcRunning(projectDir) {
   try { process.kill(pid, 0); return true; } catch (err) { return err.code === 'EPERM'; }
 }
 
-/** Wait (up to `maxMs`) for a running `git gc` in the repository to finish. */
-async function waitForGc(projectDir, { maxMs = 120_000, stepMs = 2_000, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
-  const until = Date.now() + maxMs;
-  while (Date.now() < until && await gcRunning(projectDir)) await sleep(stepMs);
+/** Wait (up to `maxMs` by `now`) for a running `git gc` in the repository to finish. */
+async function waitForGc(projectDir, { maxMs = 120_000, stepMs = 2_000, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now } = {}) {
+  const until = now() + maxMs;
+  while (now() < until && await gcRunning(projectDir)) await sleep(stepMs);
 }
 
 /**
@@ -1318,6 +1322,6 @@ export async function checkConflictMerge(projectDir, { baseSha, from, to } = {})
 // Test seam: swap the command runner + clear the gh memo. Mirrors server.mjs#_testing.
 export const _testing = {
   defaultRun,
-  setRunner(fn) { _run = typeof fn === 'function' ? fn : defaultRun; _ghCache = null; },
-  reset() { _run = defaultRun; _ghCache = null; },
+  setRunner(fn) { _runner = typeof fn === 'function' ? fn : defaultRun; _ghCache = null; },
+  reset() { _runner = defaultRun; _ghCache = null; },
 };

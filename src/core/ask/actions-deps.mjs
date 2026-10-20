@@ -18,6 +18,7 @@ import { readActionsState, actionsStateFile } from '../actions/registry.mjs';
 import { membersOfRow, checkoutPathFor } from '../checkout.mjs';
 import { checkoutRecordsFor, retainedWorkFor, findPipelineRowById } from '../artifacts.mjs';
 import { projectKey as projectKeyOf } from '../store.mjs';
+import { gitAvailable, GIT_MISSING } from '../git-available.mjs';
 import { createActionsChangeValidator } from './actions-proposal.mjs';
 import { redactAskText } from './redact.mjs';
 
@@ -79,6 +80,7 @@ async function workspaceStacks(id) {
 
 /** Why Check out is refused for this row, or null when it is offered (checkout.mjs assertEligible's words). */
 function checkoutBlocked(row) {
+  if (!gitAvailable()) return GIT_MISSING.message;
   if (row.archived_at) return 'the run is archived';
   if (!FINISHED.has(row.status)) return 'Check out is available once the run has finished';
   if (retainedWorkFor(row)) return 'the run kept uncommitted work in its worktree; recover or discard it first';

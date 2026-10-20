@@ -1,6 +1,7 @@
 // test/ask-panel-card.test.mjs — the Start-run card (spec §9, §10.5, D1-D3).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import { makePanel } from './helpers/ask-panel-harness.mjs';
 import { stampFrames } from './helpers/ask-frames.mjs';
@@ -83,10 +84,10 @@ function apiHandler(recorder = {}) {
       return { ok: true, status: 200, json: async () => ({ config: configBody().config }) };
     }
     if (path === '/api/run-defaults') return { ok: true, status: 200, json: async () => ({ engine: { value: recorder.runEngine || 'claude', source: 'default' } }) };
-    if (url === '/api/projects') return { ok: true, status: 200, json: async () => ({ projects: [{ name: 'proj', path: '/repos/proj', exists: true }, { name: 'other', path: '/repos/other', exists: false }] }) };
-    if (url === '/api/workflows') return { ok: true, status: 200, json: async () => ({ workflows: [{ id: 'wf_default', name: 'Default' }, { id: 'wf_review', name: 'Review only' }] }) };
+    if (url === '/api/projects') return { ok: true, status: 200, json: async () => ({ projects: recorder.projects || [{ name: 'proj', path: '/repos/proj', exists: true }, { name: 'other', path: '/repos/other', exists: false }] }) };
+    if (url === '/api/workflows') return { ok: true, status: 200, json: async () => ({ workflows: recorder.workflows || [{ id: 'wf_default', name: 'Default' }, { id: 'wf_review', name: 'Review only' }] }) };
     if (url === '/api/guardrails') return { ok: true, status: 200, json: async () => ({ guardrails: [{ id: 'permissive', name: 'Permissive' }, { id: 'normal', name: 'Normal' }, { id: 'strict', name: 'Strict' }] }) };
-    if (url === '/api/workspaces') return { ok: true, status: 200, json: async () => ({ workspaces: [{ id: 'wks-team-00000001', name: 'team', projectPaths: ['/repos/proj', '/repos/lib'], projectKeys: ['proj-00000001', 'lib-00000002'] }] }) };
+    if (url === '/api/workspaces') return { ok: true, status: 200, json: async () => ({ workspaces: recorder.workspaces || [{ id: 'wks-team-00000001', name: 'team', projectPaths: ['/repos/proj', '/repos/lib'], projectKeys: ['proj-00000001', 'lib-00000002'] }] }) };
     if (url.startsWith('/api/branches')) {
       recorder.branchCalls = [...(recorder.branchCalls || []), url];
       return { ok: true, status: 200, json: async () => ({ branches: ['main', 'dev'] }) };
@@ -118,6 +119,7 @@ function apiHandler(recorder = {}) {
 
 async function openWithCard(card, recorder = {}, overrides = {}) {
   const ctx = makePanel({ fetchHandler: apiHandler(recorder), ...overrides });
+  if (overrides.git) ctx.doc.documentElement.dataset.git = overrides.git;
   ctx.storage.setItem('worca-cc.ask.thread', TID);
   ctx.panel.open();
   await ctx.tick(); await ctx.tick(); await ctx.tick();
@@ -1108,6 +1110,15 @@ test('typed cards (model, clone, web, workspace, actions): fields render as text
       rmEl.querySelector('[data-ask-ws-decline]').click();
       await ctx.tick();
       assert.deepEqual(rec.cardPosts.at(-1), ['card_00000012', { state: 'declined' }]);
+      // P5: a Folder member of a create card carries its kind chip; a Git member carries none.
+      const mk = { type: 'workspace', kind: 'create', summary: 'Create workspace Docs with api and notes', name: 'Docs', workspaceId: null, workspaceName: null,
+        members: [{ key: 'ka', name: 'api', path: '/r/api' }, { key: 'kn', name: 'notes', path: '/r/notes', vcs: 'none' }], effects: [], warnings: [], followUps: [] };
+      ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_00000013', state: 'proposed', card: mk }, threadId: TID, messageId: MID, seq: 7 });
+      ctx.flush();
+      const mkEl = [...ctx.doc.querySelectorAll('[data-ask-wscard="proposed"]')].at(-1);
+      const memberRows = [...mkEl.querySelectorAll('.ask-mcard-changes li')].filter((li) => li.querySelector('.ask-mcard-change-label').textContent === 'Member');
+      assert.deepEqual(memberRows.map((li) => li.querySelector('.ask-mcard-after').textContent), ['api · /r/api', 'notes · /r/notes']);
+      assert.deepEqual(memberRows.map((li) => li.querySelector('.kind-chip')?.textContent ?? null), [null, 'Folder']);
     } },
     { name: 'actions card: each command whole, Now / New on a change, warnings and effects as text; Save / Decline post the verbs', run: async () => {
       const rec = { cardPosts: [] };
@@ -2280,6 +2291,183 @@ test('run card, enforcement off: no pickers, Start enabled, chips pre-filled', a
   assert.deepEqual(rpChips(card), ['cc:4410']);
   assert.equal(card.querySelector('.tag-rule-pickers').childElementCount, 0);
   assert.equal(card.querySelector('[data-ask-card-start]').disabled, false);
+});
+
+const NONE_CARD = { ...PROJECT_CARD, target: 'none', projectKey: null, projectName: null, projectDir: null, featureBranch: null, sourceBranch: null };
+
+test('ask-panel-card: a No project card opens on No project; Start posts { noProject: true } and no project or branch keys', async () => {
+  const rec = {};
+  const ctx = await openWithCard(NONE_CARD, rec);
+  const cardEl = ctx.doc.querySelector('.ask-card');
+  assert.deepEqual([...cardEl.querySelectorAll('[data-ask-card-seg]')].map((b) => b.textContent), ['No project', 'Project', 'Workspace']);
+  assert.equal(cardEl.querySelector('[data-ask-card-seg="none"]').getAttribute('aria-selected'), 'true');
+  assert.equal(cardEl.querySelector('.ask-card-project-select'), null);
+  assert.equal(cardEl.querySelector('[data-ask-card-schedule]').hidden, true);
+  cardEl.querySelector('[data-ask-card-start]').click();
+  await ctx.tick(); await ctx.tick();
+  assert.deepEqual(rec.runBodies[0], { noProject: true, prompt: 'Fix the login bug', workflowId: 'wf_default', guardrailsId: 'normal',
+    title: 'Fix login', mock: false, askThreadId: TID, askCardId: CARD_ID });
+});
+
+test('ask-panel-card: switching a project card to No project drops the project; the needs-repo note never blocks', async () => {
+  const rec = { workflows: [{ id: 'wf_default', name: 'Default', needsRepo: true }, { id: 'wf_review', name: 'Review only' }] };
+  const ctx = await openWithCard(PROJECT_CARD, rec);
+  const cardEl = ctx.doc.querySelector('.ask-card');
+  cardEl.querySelector('[data-ask-card-seg="none"]').click();
+  await ctx.tick();
+  assert.equal(cardEl.querySelector('.ask-card-needs-repo').textContent, 'Some steps expect a code repository.');
+  assert.ok(readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8').includes('.ask-card-needs-repo{margin:0;color:var(--ink-2);font-size:12px;line-height:1.45;}'),
+    'one quiet line, as New run\'s .hint (no browser-default paragraph margins)');
+  assert.equal(cardEl.querySelector('[data-ask-card-start]').disabled, false);
+  const wf = cardEl.querySelector('.ask-card-workflow'); wf.value = 'wf_review'; wf.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  assert.equal(cardEl.querySelector('.ask-card-needs-repo'), null);
+  cardEl.querySelector('[data-ask-card-start]').click();
+  await ctx.tick(); await ctx.tick();
+  assert.equal(rec.runBodies[0].noProject, true);
+  assert.equal('projectDir' in rec.runBodies[0], false);
+});
+
+test('ask-panel-card: Open in New run from a No project card hands over target none and no project', async () => {
+  const handed = [];
+  const ctx = await openWithCard(NONE_CARD, {}, { openNewPipeline: (p) => handed.push(p) });
+  const cardEl = ctx.doc.querySelector('.ask-card');
+  cardEl.querySelector('[data-ask-card-open-np]').click();
+  await ctx.tick(); await ctx.tick();
+  assert.equal(handed.length, 1);
+  assert.equal(handed[0].target, 'none');
+  assert.equal('projectDir' in handed[0], false);
+});
+
+test('P4 (SEAMS S12): a Folder project, or no git, has no branch rows on the run card — no GET /api/branches, the sub-line is the name alone', async () => {
+  const subEl = (cardEl) => [...cardEl.querySelectorAll('.ask-rp-sec-head')].find((h) => h.textContent.startsWith('Where it runs')).querySelector('.ask-rp-sec-sub');
+  // B10 (canvas Switched): the name, then the kind chip, then the branch words (git) — [name, chip class, the rest]
+  const subOf = (cardEl) => { const s = subEl(cardEl); const c = s.querySelector('.kind-chip'); return [s.firstChild.textContent, c ? c.className : null, c ? (c.nextSibling ? c.nextSibling.textContent : '') : null]; };
+  const branchRows = (cardEl) => ['.ask-card-source', '.ask-card-feature', '.ask-card-same-source'].map((s) => cardEl.querySelector(s).closest('.ask-rp-field').hidden);
+  await checkRows([
+    { name: 'a Folder project, then a Git one', run: async () => {
+      const rec = { projects: [{ key: 'proj-00000001', name: 'proj', path: '/repos/proj', exists: true, vcs: 'none' }, { key: 'lib-00000002', name: 'lib', path: '/repos/lib', exists: true, vcs: 'git' }] };
+      const ctx = await openWithCard(PROJECT_CARD, rec);
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      assert.deepEqual(branchRows(cardEl), [true, true, true]);
+      assert.equal(rec.branchCalls, undefined, 'no branches are asked for a folder');
+      assert.deepEqual(subOf(cardEl), ['proj', 'kind-chip kind-folder', ''], 'a Folder project: <name> · Folder');
+      const sel = cardEl.querySelector('.ask-card-project-select');
+      sel.value = '/repos/lib';
+      sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+      await ctx.tick(); await ctx.tick();
+      assert.deepEqual(branchRows(cardEl), [false, false, false], 'a Git project gets them back');
+      assert.equal(rec.branchCalls.length, 1);
+      const [libName, libChip, libRest] = subOf(cardEl);
+      assert.deepEqual([libName, libChip], ['lib', 'kind-chip kind-git']);
+      assert.match(libRest, /^ · branch current · feature /, 'today\'s branch words follow the chip');
+      ctx.panel.destroy();
+    } },
+    { name: 'git missing on this machine (data-git="off"): a Git project shows none either', run: async () => {
+      const rec = { projects: [{ key: 'proj-00000001', name: 'proj', path: '/repos/proj', exists: true, vcs: 'git' }] };
+      const ctx = await openWithCard(PROJECT_CARD, rec, { git: 'off' });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      assert.deepEqual(branchRows(cardEl), [true, true, true]);
+      assert.equal(rec.branchCalls, undefined);
+      assert.deepEqual(subOf(cardEl), ['proj', 'kind-chip kind-git', ''], 'the stored kind still shows (CONTRACT §1); no branch words');
+      ctx.panel.destroy();
+    } },
+    { name: 'a project of no known kind: the name and the branch words, no chip', run: async () => {
+      const ctx = await openWithCard(PROJECT_CARD, {});
+      const s = subEl(ctx.doc.querySelector('.ask-card'));
+      assert.equal(s.querySelector('.kind-chip'), null);
+      assert.match(s.textContent, /^proj · branch /);
+      ctx.panel.destroy();
+    } },
+  ]);
+});
+
+test('project card (ChatCreate board): Name / Folder / Kind rows; Create / Decline post the verbs; created, failed and declined read as such', async () => {
+  const rec = { cardPosts: [] };
+  const base = apiHandler(rec);
+  const ctx = await openWithCard(PROJECT_CARD, rec, { fetchHandler: (url, opts) => {
+    const m = /^\/api\/ask\/threads\/[^/]+\/cards\/(card_[0-9a-f]{8})$/.exec(url);
+    if (m && (opts.method || '').toUpperCase() === 'POST' && m[1] !== CARD_ID) { rec.cardPosts.push([m[1], JSON.parse(opts.body)]); return { ok: true, status: 200, json: async () => ({}) }; }
+    return base(url, opts);
+  } });
+  const card = { type: 'project', kind: 'create', summary: 'Create landing-page', name: 'landing-page', path: '/Users/me/.worca-cc/projects/landing-page',
+    displayPath: '~/.worca-cc/projects/landing-page', vcs: 'none', note: '<b>why</b>', change: { kind: 'create', name: 'landing-page', useGit: false } };
+  const push = (id, state, extra = {}, seq = 3) => { ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id, state, card, ...extra }, threadId: TID, messageId: MID, seq }); ctx.flush(); };
+  push('card_00000020', 'proposed');
+  const el = ctx.doc.querySelector('[data-ask-projectcard="proposed"]');
+  assert.equal(el.querySelector('.ask-mcard-title').textContent, 'Proposed project');
+  assert.equal(el.querySelector('.ask-mcard-kind').textContent, 'New');
+  assert.equal(el.querySelector('.ask-mcard-summary').textContent, 'Create landing-page');
+  assert.deepEqual([...el.querySelectorAll('.ask-mcard-change-label')].map((x) => x.textContent), ['Name', 'Folder', 'Kind']);
+  assert.deepEqual([...el.querySelectorAll('.ask-mcard-change-val')].map((x) => x.textContent), ['landing-page', '~/.worca-cc/projects/landing-page', 'Folder']);
+  assert.equal(el.querySelectorAll('.ask-mcard-change-val')[1].title, '/Users/me/.worca-cc/projects/landing-page');
+  assert.ok(el.querySelector('.ask-mcard-change-val .kind-chip.kind-folder'));
+  assert.equal(el.querySelector('.ask-mcard-note').textContent, '<b>why</b>'); assert.equal(el.querySelector('.ask-mcard-note b'), null);
+  assert.equal(el.querySelector('[data-ask-project-apply]').textContent, 'Create');
+  el.querySelector('[data-ask-project-apply]').click(); await ctx.tick(); await ctx.tick();
+  assert.deepEqual(rec.cardPosts.at(-1), ['card_00000020', { state: 'applied' }]);
+  const result = { ok: true, project: { key: 'landing-page-0000abcd', name: 'landing-page', path: '/Users/me/.worca-cc/projects/landing-page',
+    displayPath: '~/.worca-cc/projects/landing-page', vcs: 'none' }, scope: { pinned: true, projectKey: 'landing-page-0000abcd' } };
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_00000020', state: 'applied', card: { ...card, result } }, threadId: TID, messageId: MID, seq: 4 }); ctx.flush();
+  const done = ctx.doc.querySelector('[data-ask-projectcard="applied"]');
+  assert.equal(done.querySelector('.ask-mcard-title').textContent, 'Project created');
+  assert.equal(done.querySelector('.ask-mcard-summary').textContent, 'Create landing-page', 'the board: the summary stays, after a check');
+  assert.ok(done.querySelector('.ask-mcard-summary svg'), 'the applied check (WF_ICO.check)');
+  assert.equal(done.querySelector('.ask-mcard-detail').textContent, 'Registered as landing-page at ~/.worca-cc/projects/landing-page');
+  assert.equal(done.querySelector('[data-ask-project-apply]'), null);
+  const addCard = { type: 'project', kind: 'add', summary: 'Add docs', name: 'docs', path: '/x/docs', displayPath: '/x/docs', vcs: 'git', change: { kind: 'add', name: 'docs', path: '/x/docs', useGit: true } };
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_00000021', state: 'proposed', card: addCard }, threadId: TID, messageId: MID, seq: 5 }); ctx.flush();
+  const addEl = ctx.doc.querySelector('[data-ask-projectcard="proposed"]');
+  assert.equal(addEl.querySelector('.ask-mcard-kind').textContent, 'Folder');
+  assert.equal(addEl.querySelector('[data-ask-project-apply]').textContent, 'Add');
+  assert.equal(addEl.querySelector('.ask-mcard-change-val .kind-chip').textContent, 'Git');
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_00000021', state: 'failed', error: 'Part of mono', card: addCard }, threadId: TID, messageId: MID, seq: 6 }); ctx.flush();
+  const failed = ctx.doc.querySelector('[data-ask-projectcard="failed"]');
+  assert.equal(failed.querySelector('.ask-mcard-title').textContent, 'Add failed');
+  assert.equal(failed.querySelector('.ask-mcard-failed').textContent, 'Could not add: Part of mono');
+  push('card_00000022', 'proposed', {}, 7);
+  ctx.doc.querySelector('[data-ask-projectcard="proposed"] [data-ask-project-decline]').click(); await ctx.tick();
+  assert.deepEqual(rec.cardPosts.at(-1), ['card_00000022', { state: 'declined' }]);
+  push('card_00000022', 'declined', {}, 8);
+  assert.ok([...ctx.doc.querySelectorAll('.ask-card-stub')].some((x) => x.textContent === 'Declined — Create landing-page'));
+});
+
+// P5: lib is a Folder member — the card's members carry workMode 'folder', the live list carries vcs.
+const WS_FOLDER_CARD = { ...WS_CARD, members: [WS_CARD.members[0], { ...WS_CARD.members[1], workMode: 'folder' }] };
+const WS_FOLDER_ROW = { id: 'wks-team-00000001', name: 'team', projectPaths: ['/repos/proj', '/repos/lib'], projectKeys: ['proj-00000001', 'lib-00000002'], vcs: ['git', 'none'] };
+// The workspace segment's git-only fields, [label, hidden] (an attribute: jsdom loads no CSS).
+const WS_GIT_LABELS = ['Source branch', 'Feature branch', 'Run on the source branch'];
+const wsGitFields = (cardEl) => [...cardEl.querySelectorAll('.ask-rp-label')].map((l) => [l.firstChild.textContent.trim(), !!l.closest('[hidden]')])   // the label, without its ' · hint'
+  .filter(([t]) => WS_GIT_LABELS.includes(t));
+
+test('ask-panel-card: a Folder member is listed but gets no per-member source input', async () => {
+  await checkRows([
+    { name: 'the live workspace row says lib is a Folder member: listed, no source input, never in sourceBranchByKey', run: async () => {
+      const rec = { workspaces: [WS_FOLDER_ROW] };
+      const ctx = await openWithCard(WS_CARD, rec);
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      assert.match(cardEl.querySelector('.ask-card-members').textContent, /lib/);
+      const inputs = [...cardEl.querySelectorAll('.ask-card-member-src')];
+      assert.deepEqual(inputs.map((i) => i.dataset.projectKey), ['proj-00000001']);
+      assert.deepEqual(wsGitFields(cardEl), WS_GIT_LABELS.map((l) => [l, false]), 'a Git member keeps the branch fields');
+      inputs[0].value = 'release';
+      cardEl.querySelector('[data-ask-card-start]').click();
+      await ctx.tick(); await ctx.tick();
+      assert.deepEqual(rec.runBodies[0].sourceBranchByKey, { 'proj-00000001': 'release' });
+    } },
+    { name: 'no live row: the card\'s members say lib is a Folder member', run: async () => {
+      const ctx = await openWithCard(WS_FOLDER_CARD, { workspaces: [] });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      assert.match(cardEl.querySelector('.ask-card-members').textContent, /lib/);
+      assert.deepEqual([...cardEl.querySelectorAll('.ask-card-member-src')].map((i) => i.dataset.projectKey), ['proj-00000001']);
+    } },
+    { name: 'every member a Folder project: no per-member source branches disclosure, and no Source branch / Feature branch / Run on the source branch field', run: async () => {
+      const ctx = await openWithCard(WS_CARD, { workspaces: [{ ...WS_FOLDER_ROW, vcs: ['none', 'none'] }] });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      assert.equal(cardEl.querySelectorAll('.ask-card-member-src').length, 0);
+      assert.equal(cardEl.querySelector('.ask-card-members-src').hidden, true);
+      assert.deepEqual(wsGitFields(cardEl), WS_GIT_LABELS.map((l) => [l, true]));
+    } },
+  ]);
 });
 
 test('s2: a proposal for project acme lists the person\'s last-run cost tags plus required keys', async () => {

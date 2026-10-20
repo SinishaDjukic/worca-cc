@@ -84,12 +84,13 @@ test('the retry waits while a git gc runs in the repository, and not past the li
     await writeFile(join(dir, 'gc.pid'), `${process.pid} localhost\n`);
     const calls = [];
     _testing.setRunner(runner([{ ok: false, stdout: '', stderr: WORCA01 }, { ok: true, stdout: '', stderr: '' }], calls, dir));
+    // A clock the sleeps advance: a loaded machine's late timers cannot shorten the wait.
     let slept = 0;
-    const t0 = Date.now();
-    const r = await pushBranch(dir, 'feat', 'origin', { gcWait: { maxMs: 50, stepMs: 10, sleep: async (ms) => { slept += ms; await new Promise((res) => setTimeout(res, ms)); } } });
+    const gcWait = { maxMs: 50, stepMs: 10, now: () => slept, sleep: async (ms) => { slept += ms; } };
+    const r = await pushBranch(dir, 'feat', 'origin', { gcWait });
     assert.equal(r.ok, true);
-    assert.ok(slept >= 30, `waited for the gc (${slept}ms)`);
-    assert.ok(Date.now() - t0 < 2_000, 'and gave up at the limit');
+    assert.equal(slept, 50, 'waited for the gc, and gave up at the limit');
+    assert.deepEqual(calls.filter((c) => c.startsWith('push')), ['push -u origin feat', 'push --no-thin -u origin feat']);
     // A stale gc.pid (no such process) is not waited on.
     await writeFile(join(dir, 'gc.pid'), '999999999 localhost\n');
     slept = 0;

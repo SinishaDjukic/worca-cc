@@ -8,6 +8,7 @@
 // that loops or branches has no honest "n of m", so the glance never claims one.
 import { ledgerRows } from './graph/run-decor.mjs';
 import { BOOKEND_EXECUTION_IDS } from '../../src/shared/graph/constants.mjs';
+import { folderDoneWords } from './folder-changes.mjs';
 
 /** Dots per stacked column before the rest collapse into "+N". */
 export const TRAIL_STACK_CAP = 3;
@@ -178,7 +179,7 @@ export function glanceState(run) {
  * `progress` is runProgress's result: while the run runs or waits for you, its `text` ("Build · task 2 of 4")
  * is line 2, in place of the step names. An open preflight with nothing running still names itself.
  */
-export function glanceCopy(run, { pill = null, checks = null, lastLine = '', pr = null, files = null, limitNote = '', progress = null } = {}) {
+export function glanceCopy(run, { pill = null, checks = null, lastLine = '', pr = null, files = null, limitNote = '', progress = null, changes = null, gitChrome = true, workMode = 'git' } = {}) {
   const state = glanceState(run);
   const now = nowRows(run);
   const names = now.map((x) => x.label);
@@ -217,9 +218,11 @@ export function glanceCopy(run, { pill = null, checks = null, lastLine = '', pr 
       const p = String(pr || '').toUpperCase();
       const nFiles = (n) => `${n} file${n === 1 ? '' : 's'} changed`;
       const fin = (icon, lead, sub) => line(lead, '', sub, { icon });
+      if (changes) { const w = folderDoneWords(changes.state, files); return fin('finished', w.lead, w.sub); }
       if (p === 'MERGED') return fin('merged', 'Merged', 'The pull request was merged');
       if (p === 'OPEN') return fin('pr-open', 'In review', 'The pull request is open');
       if (p === 'CLOSED') return fin('pr-closed', 'PR closed', 'Closed without merging');
+      if (gitChrome === false) return fin('finished', 'Finished', files === 0 ? 'No files changed' : files ? nFiles(files) : '');
       if (files === 0) return fin('finished', 'Finished', 'No files changed');
       if (p === 'PENDING') return fin('finished', 'Finished', 'Checking for a pull request…');
       if (p === 'UNAVAILABLE') return fin('finished', 'Finished', files ? nFiles(files) : 'Review the changes in Diff');
@@ -236,7 +239,7 @@ export function glanceCopy(run, { pill = null, checks = null, lastLine = '', pr 
     case 'stop':
       return line('Stopped', '', 'Stopped before it finished');
     case 'start':
-      return line('Starting', '', 'Setting up the worktree');
+      return line('Starting', '', workMode === 'folder' ? 'Copying the folder' : workMode === 'none' ? '' : 'Setting up the worktree');
     default:
       // The state word alone; the line under it names what runs (no time: the facts
       // row carries the run's time, and a second, unlabelled one read as a contradiction).

@@ -9,6 +9,9 @@
 // Optional: `round` ({n, request, by}) or the raw marker `branch.roundOf` ({round, request, by}), a round of the same
 // run (spec §3.6); `watch` ({status, reason, fixRuns}), the run's Watch PR (§3.6a, statuses of src/core/pr-watch.mjs).
 // `memberPrs` ([pr]), a workspace run's member PRs (#784): the PR chip rolls them up (memberPrState).
+// Projects, any way: `workMode` ('folder' | 'none', else read off `branch.workMode`; anything else is a git run),
+// `changes` ({state, counts}, a Folder run's; else `branch.changes`) and `gitChrome` (false: a git run while git is
+// missing). A finished run of these ships nothing, so its `word` and line differ from RUN_STATES[state].word (finishedWords).
 import { runProgress, groupProgress, askWhat } from './run-progress.mjs';
 import { liveRoleRows } from './shape/role-review.mjs';
 import { parseAzurePrUrl } from './azure-remote.mjs';
@@ -235,6 +238,29 @@ function roundLine(state, round, base, prog, finished) {
   return { line: base, lineSaysState: false };
 }
 
+// Projects, any way: how a run worked. A live run, a History row or a saved state names it on `workMode` or on its
+// branch record; anything else is a git run.
+const RUN_MODES = new Set(['folder', 'none']);
+function workModeOf(r) {
+  for (const x of [r.workMode, r.branch && typeof r.branch === 'object' ? r.branch.workMode : null]) if (RUN_MODES.has(x)) return x;
+  return 'git';
+}
+/** A finished run with nothing to ship (Projects, any way): a Folder run lands its changes through its Apply bar
+ *  ("Applied · 14 files changed"), a run without a project leaves only its files, and a git run where git is missing
+ *  (`gitChrome: false`) shows no git chrome. null for a run that ships by pull request. */
+function finishedWords(r, mode) {
+  if (mode === 'folder') {
+    // An own `changes` (even null) wins over the branch record: a workspace run's branch mirrors its FIRST member only.
+    const c = (Object.hasOwn(r, 'changes') ? r.changes : r.branch && typeof r.branch === 'object' ? r.branch.changes : null) || null;
+    const n = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+    const total = c && c.counts && typeof c.counts === 'object' ? n(c.counts.added) + n(c.counts.modified) + n(c.counts.deleted) : null;
+    // A run that changed nothing settles as discarded (P1b S7), yet nobody discarded anything.
+    const word = total === 0 ? 'Finished' : c && c.state === 'applied' ? 'Applied' : c && c.state === 'discarded' ? 'Discarded' : 'Finished';
+    return { word, line: join(word, total == null ? '' : total === 0 ? 'no files changed' : `${plural(total, 'file')} changed`) };
+  }
+  return mode === 'none' || r.gitChrome === false ? { word: 'Finished', line: 'Finished' } : null;
+}
+
 /**
  * One run's model.
  * @param {object} run   see the header
@@ -248,18 +274,21 @@ export function runModel(run, opts = {}) {
   const watchNeeds = !!(watch && watch.stopped) && String(r.status || '') === 'done' && r.pendingQuestion == null
     && !(pr && (pr.id === 'merged' || pr.id === 'closed'));
   const state = watchNeeds ? 'needs-you' : stateOf(r, pr);
+  const mode = workModeOf(r);
+  const fin = state === 'ready' ? finishedWords(r, mode) : null;
   const prog = r.status ? runProgress(r, opts.memo || null) : null;
   const meta = RUN_STATES[state];
   // A PR-driven Needs you has no question to answer; its line is the chip's reason (QA 3) and its action Open PR (D31).
   const prNeeds = state === 'needs-you' && r.pendingQuestion == null && (watchNeeds || !!(pr && pr.needsYou));
-  const actions = watchNeeds ? ['open-pr', 'ask-changes'] : prNeeds ? ['open-pr']
+  const actions = fin ? [] : watchNeeds ? ['open-pr', 'ask-changes'] : prNeeds ? ['open-pr']
     : state === 'stopped' && r.resumable === true ? ['resume', 'archive'] : ACTIONS[state];
-  const base = watchNeeds ? watch.line : prNeeds ? prReasonLine(pr) : singleLine(state, r, prog, pr, opts);
+  const base = fin ? fin.line : state === 'starting' && mode === 'folder' ? 'Copying the folder'
+    : watchNeeds ? watch.line : prNeeds ? prReasonLine(pr) : singleLine(state, r, prog, pr, opts);
   const round = roundOf(r);
   const { line, lineSaysState } = roundLine(state, round, base, prog, prNeeds);
   // Review A12: the live role-review rows (or the Refine line) under the status line; null when there are none.
   // QA 6: "?" means Worca is asking. A run in Needs you through its PR (or a stopped Watch PR) is a plain amber dot.
-  return { state, ...meta, symbol: prNeeds ? null : meta.symbol, line, lineSaysState, actions: [...actions], pr, prNeeds,
+  return { state, ...meta, ...(fin ? { word: fin.word } : {}), symbol: prNeeds ? null : meta.symbol, line, lineSaysState, actions: [...actions], pr, prNeeds,
     round, progress: prog, roles: liveRoleRows(r, { stage: prog ? prog.stage : null }) };
 }
 

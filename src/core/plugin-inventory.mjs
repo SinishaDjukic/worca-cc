@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import { repoCacheDir } from './plugin-repo.mjs';
 import { buildInstallInventory } from './plugin-store.mjs';
 import { findEscapingSymlinks } from './plugin-manifest.mjs';
+import { gitAvailable } from './git-available.mjs';
 
 const execFileP = promisify(execFile);
 const defaultExec = (cmd, args, opts = {}) =>
@@ -22,6 +23,8 @@ const defaultExec = (cmd, args, opts = {}) =>
   });
 
 export async function inventoryFromCache(repoUrl, sha, subdir, { exec = defaultExec } = {}) {
+  // Without git: the GitHub snapshot (P6). Lazy — this module → plugin-store.mjs → plugin-repo.mjs never loads git-free/.
+  if (!gitAvailable()) return (await import('./git-free/plugin-repo.mjs')).inventoryHttps(repoUrl, sha, subdir);
   const tmp = await mkdtemp(join(tmpdir(), 'worca-cc-consent-'));
   try {
     const tar = join(tmp, 'x.tar');

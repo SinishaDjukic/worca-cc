@@ -25,6 +25,7 @@ import { spawnSync } from 'node:child_process';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { DIFF_PATCH_FILE } from '../src/core/results.mjs';
+await (await import('../src/core/git-available.mjs')).gitState();   // P0: a process that never probes reads git as missing
 
 function die(msg) {
   console.error(`smoke:workspace FAILED — ${msg}`);

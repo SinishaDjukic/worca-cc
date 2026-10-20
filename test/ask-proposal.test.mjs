@@ -13,7 +13,8 @@ import { GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW } from '../src/core/graph
 
 const dirA = mkdtempSync(join(tmpdir(), 'worca-ask-prop-a-'));
 const dirB = mkdtempSync(join(tmpdir(), 'worca-ask-prop-b-'));
-const existing = new Set([dirA, dirB, '/p/demo']);
+const existing = new Set([dirA, dirB, '/p/demo', '/p/notes']);
+const folders = new Set(['/p/notes']);
 const gitRepos = new Set([dirA, dirB]);
 const deps = {
   listProjects: async () => [
@@ -26,7 +27,9 @@ const deps = {
       ? { id, name: 'Broken', description: '', projectPaths: ['/p/missing'], projectKeys: ['missing-00000003'], exists: [false] }
       : id === 'wks-nogit-0000abcd'
         ? { id, name: 'NoGit', description: '', projectPaths: ['/p/demo'], projectKeys: ['demo-00000001'], exists: [true] }
-        : null),
+        : id === 'wks-mixed-0000abcd'
+          ? { id, name: 'Mixed', description: '', projectPaths: [dirA, '/p/notes'], projectKeys: ['alpha-00000001', 'notes-00000004'], exists: [true, true] }
+          : null),
   readWorkflow: async (id) => (id === 'wf_default' ? { id, name: 'Default' } : id === 'wf_review' ? { id, name: 'Review only' }
     : id === 'wf_shape' || id === 'wf_shape_ux' ? { id, name: 'Shaper' }
     : id === 'wf_memory_defrag' ? { id: 'wf_memory_defrag', name: 'Memory defragment', version: 2, domain: 'shared', nodes: [], wires: [] } : null),
@@ -40,6 +43,7 @@ const deps = {
   readGuardrailSet: async (id) => (['permissive', 'normal', 'secure', 'custom1'].includes(id) ? { id } : null),
   isGitRepo: (p) => gitRepos.has(p),
   pathExists: (p) => existing.has(p),
+  memberWorkMode: (p) => (folders.has(p) ? 'folder' : 'git'),
 };
 const { validateProposal } = createProposalValidator(deps);
 const ok = (r) => { assert.equal(r.ok, true, JSON.stringify(r)); return r.card; };
@@ -370,4 +374,49 @@ test('Shape it first: shape / slices / schedule refusal / the gate, and the asse
         'sourceBranch', 'sourceBranchByKey', 'target', 'title', 'workflowId', 'workflowName', 'workspaceId', 'workspaceName']);
     } },
   ]);
+});
+
+test('P3 noProject: a card with no project keeps the pinned key set; its refusals', async () => {
+  const card = ok(await validateProposal({ noProject: true, brief: 'A deck on Q3 hiring' }, { cardId: 'card_3f2a9c01' }));
+  assert.deepEqual(Object.keys(card).sort(), ['attachments', 'brief', 'featureBranch', 'guardrailsId', 'members', 'memoryScope', 'note', 'projectDir', 'projectKey', 'projectName',
+    'sourceBranch', 'sourceBranchByKey', 'target', 'title', 'workflowId', 'workflowName', 'workspaceId', 'workspaceName']);
+  assert.equal(card.target, 'none');
+  assert.deepEqual([card.projectKey, card.projectDir, card.featureBranch, card.sourceBranch], [null, null, null, null]);
+  assert.deepEqual([card.projectName, card.workspaceId, card.workspaceName, card.members, card.sourceBranchByKey], [null, null, null, null, null]);
+  assert.equal(card.workflowId, 'wf_default');
+  const ignored = ok(await validateProposal({ noProject: true, brief: 'x', sourceBranch: 'main', featureBranch: 'feat/x', sameAsSource: true }));
+  assert.deepEqual([ignored.sourceBranch, ignored.featureBranch, 'sameAsSource' in ignored], [null, null, false], 'branch fields are ignored, as POST /api/run does');
+  assert.deepEqual(errs(await validateProposal({ noProject: true, projectKey: 'demo-00000001', brief: 'x' })), ['provide one of projectKey, workspaceId or noProject']);
+  assert.deepEqual(errs(await validateProposal({ noProject: true, workspaceId: 'wks-team-0000abcd', brief: 'x' })), ['provide one of projectKey, workspaceId or noProject']);
+  assert.deepEqual(errs(await validateProposal({ projectKey: 'demo-00000001', workspaceId: 'wks-team-0000abcd', brief: 'x' })), [PROPOSAL_ERRORS.bothTargets], 'key + workspace keeps its text');
+  assert.deepEqual(errs(await validateProposal({ noProject: 'yes', brief: 'x' })), ['noProject must be true']);
+  assert.deepEqual(errs(await validateProposal({ noProject: false, brief: 'x' })), [PROPOSAL_ERRORS.noTarget], 'false is "not given"');
+  for (const extra of [{ when: 'tomorrow 02:00' }, { every: 'day 03:30' }, { after: 'abcd1234' }, { after: 'abcd1234', sourceFromPrevious: true }]) {
+    assert.ok(errs(await validateProposal({ noProject: true, brief: 'x', ...extra })).includes('a run without a project cannot be scheduled yet'), JSON.stringify(extra));
+  }
+  assert.ok(errs(await validateProposal({ noProject: true, brief: 'x', workflowId: 'wf_memory_defrag', memoryScope: 'project' })).includes('memoryScope needs a project'));
+  assert.equal(ok(await validateProposal({ noProject: true, brief: 'x', workflowId: 'wf_memory_defrag', memoryScope: 'global' })).memoryScope, 'global', 'U13: Memory defragment runs on global memory with no project');
+  const on = createProposalValidator({ ...deps, shapeFirst: () => true }).validateProposal;
+  const plain = ok(await on({ noProject: true, brief: 'x', shape: {} }));
+  assert.deepEqual([plain.target, plain.workflowId, plain.shape.slices], ['none', 'wf_shape', 'off'], 'U13: with no project a shaped run is never sliced');
+  assert.ok(errs(await on({ noProject: true, brief: 'x', shape: { slices: 'auto' } })).includes('a run without a project cannot be planned in slices yet'));
+  const shaped = ok(await on({ noProject: true, brief: 'x', shape: { slices: 'off' } }));
+  assert.deepEqual([shaped.target, shaped.workflowId, shaped.shape.slices], ['none', 'wf_shape', 'off']);
+  assert.equal(ok(await on({ noProject: true, brief: 'x', assess: { size: 'large', openDecisions: [] } })).nudge, undefined,
+    'no Shape-it-first nudge: its shaped run would be sliced');
+});
+
+test('workspace target: a Folder member is accepted (not a git repo), named folder on the card; a source branch for it is refused', async () => {
+  const card = ok(await validateProposal({ workspaceId: 'wks-mixed-0000abcd', brief: 'x' }));
+  assert.deepEqual(card.members.map((m) => [m.projectKey, m.workMode ?? null]), [['alpha-00000001', null], ['notes-00000004', 'folder']]);
+  assert.deepEqual(errs(await validateProposal({ workspaceId: 'wks-mixed-0000abcd', brief: 'x', sourceBranchByKey: { 'notes-00000004': 'main' } })),
+    ['sourceBranchByKey: notes-00000004 is a Folder project and has no branches']);
+});
+
+test('workspace target with git missing: a Git member runs on a copy — its sourceBranchByKey entry is ignored, never called "a Folder project"', async (t) => {
+  const { withNoGit } = await import('./helpers/git-off.mjs');
+  withNoGit(t);
+  const { validateProposal: v } = createProposalValidator({ ...deps, memberWorkMode: () => 'folder' });   // git missing: every member is a copy (U3)
+  const card = ok(await v({ workspaceId: 'wks-mixed-0000abcd', brief: 'x', sourceBranchByKey: { 'alpha-00000001': 'main' } }));
+  assert.equal(card.sourceBranchByKey, null);
 });

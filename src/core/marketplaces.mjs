@@ -15,10 +15,15 @@ import { join, resolve, dirname } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { pluginsRoot, readPluginsLock } from './plugins-lock.mjs';
-import { addPluginRepo, repoCacheDir, repoSlug } from './plugin-repo.mjs';
+import { addPluginRepo, repoCacheDir, repoSlug, removeSnapshotRoot } from './plugin-repo.mjs';
 import { inventoryFromCache } from './plugin-inventory.mjs';
+import { gitAvailable, gitMissingError } from './git-available.mjs';
+import { githubRepoOf } from './git-free/github.mjs';
 
 export function marketplacesFile() { return join(pluginsRoot(), 'marketplaces.json'); }
+
+/** Without git only a GitHub marketplace can be read (over HTTPS, P6); every other source needs git. */
+export function marketplaceNeedsGit(url) { return !gitAvailable() && !githubRepoOf(url); }
 
 /** owner/repo -> GitHub URL (unless a real local path); URLs lose trailing /
  *  and .git; local paths resolve to absolute. null for empty input. */
@@ -130,7 +135,7 @@ export async function addMarketplace(url, { exec } = {}) {
   // user's behalf (code PLUGIN_FOLDER).
   if (!/^[a-z+]+:\/\//i.test(norm) && !/^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:/.test(norm)
     && existsSync(join(norm, 'worca-cc-plugin.json')) && !existsSync(join(norm, 'worca-cc-marketplace.json'))
-    && !existsSync(join(norm, '.git'))) {
+    && (!existsSync(join(norm, '.git')) || !gitAvailable())) { // without git a local folder can only be linked
     throw Object.assign(
       new Error(`${norm} is a single plugin folder, not a marketplace — link it instead: worca plugin link ${norm}`),
       { code: 'PLUGIN_FOLDER', dir: norm });
@@ -139,6 +144,7 @@ export async function addMarketplace(url, { exec } = {}) {
   if (readMarketplaces().marketplaces[id]) { // cheap pre-check: fail before any git work
     throw Object.assign(new Error(`marketplace already added: ${norm}`), { code: 'EXISTS' });
   }
+  if (marketplaceNeedsGit(norm)) throw gitMissingError();
   const entry = {
     id, url: norm, name: id, description: '',
     addedAt: new Date().toISOString(), lastSync: null, plugins: [], warnings: [],
@@ -172,6 +178,7 @@ function mutateEntry(id, apply) {
 export async function syncMarketplace(id, { exec } = {}) {
   const cur = readMarketplaces().marketplaces[id];
   if (!cur) throw Object.assign(new Error(`marketplace "${id}" not found`), { code: 'NOT_FOUND' });
+  if (marketplaceNeedsGit(cur.url)) throw gitMissingError();   // a source off GitHub without git: Needs git
   const clone = { ...cur, plugins: [...(cur.plugins || [])], warnings: [...(cur.warnings || [])] };
   await syncEntry(clone, { exec });
   const saved = mutateEntry(id, (e) => Object.assign(e, {
@@ -188,7 +195,11 @@ export async function refreshAllMarketplaces({ exec } = {}) {
   const out = [];
   for (const id of Object.keys(readMarketplaces().marketplaces).sort()) {
     try { out.push(await syncMarketplace(id, { exec })); }
-    catch (err) { if (err?.code !== 'NOT_FOUND') throw err; }
+    catch (err) {
+      // A source off GitHub without git stays as stored (listed with needsGit) until git is back.
+      if (err?.code === 'GIT_MISSING') { const kept = readMarketplaces().marketplaces[id]; if (kept) out.push(kept); continue; }
+      if (err?.code !== 'NOT_FOUND') throw err;
+    }
   }
   return out;
 }
@@ -209,7 +220,10 @@ export function removeMarketplace(id) {
 function dropCacheUnlessInstalled(url) {
   const inUse = Object.values(readPluginsLock()).some((e) =>
     e && e.repo && (e.repo === url || normalizeMarketplaceUrl(e.repo) === url));
-  if (!inUse) rmSync(repoCacheDir(url), { recursive: true, force: true });
+  if (!inUse) {
+    rmSync(repoCacheDir(url), { recursive: true, force: true });
+    removeSnapshotRoot(url); // the snapshots read without git (P6): renamed aside, then removed
+  }
 }
 
 export function listMarketplaces() {

@@ -158,7 +158,8 @@ be skipped by forgetting it.
 | Preset ▾ button and its menu (presets, Rename…, Delete…, Save as preset), its ✕, Update preset | S |
 | Preset picker's "Manage presets…" entry | A |
 | "Set in Advanced mode and still applied" note | S |
-| Target switch, task source (Markdown), source and feature branch; "Run on the source branch" toggle | A |
+| Target switch (No project · Project) | S — its Workspace button A |
+| Task source (Markdown), source and feature branch; "Run on the source branch" toggle | A |
 | "Not sure what to build yet? Try Shaper" under the Markdown source (Shaper, gated) | A |
 | Engine dropdown beside the workflow (greyed-out engines the credential broker refuses) | A — stays visible at every level while a non-Claude engine is picked (rule 2) |
 | Advanced disclosure: guardrails, human in the loop, per-agent model and effort | A |
@@ -194,6 +195,8 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Run header cost and its breakdown (agents, Away mode, Auto workflow, run title; stopped reviews and stopped agent turns apart); the Overview cost card's Away mode share | S |
 | "Answered for you": one group per ask (kind · time · model · cost of its review, or "review stopped" and its lower bound), the answers, Check; the heading's answer count and what the Away mode reviews cost | S |
 | Diff tab (live worktree while running, the final patch after) | A |
+| Folder run (a Folder project): Changes tab, the Folder chip, the "<n> files · on a copy" bar with Discard and Apply to folder, the Apply to folder dialog | S |
+| Run without a project (No project): the Artifacts tab, opened first; the No project chip | S |
 | Live log pane (run page › Logs), log search / copy / auto-scroll | A |
 | Step log drawer under the Workflow graph (a card or execution-row click; Open in Logs, resize, close) | A — follows the Logs tab |
 | Branch chip, progress n/m · step on the card, model · effort pill, graph zoom cluster | A |
@@ -214,6 +217,8 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Save as preset (a run with a stored setup) | S |
 | History: usage-limit notice | S |
 | "Files changed" list on the Overview | S — the stand-in for the Diff tab |
+| Folder run: Changes tab, the Folder chip, the Apply bar and dialog, Discard; the Git / Folder chip on a project's group in the Runs list | S |
+| Run without a project: the Artifacts tab, opened first; the No project group and its chip in the Runs list | S |
 | Overview: Perspective checklists, as on the run page (shaped runs) | S |
 | Diff tab, diff pill, inline comments; Create PR / View PR; "Push <source>" (a run on its source branch, instead of a PR); branch line; ⋯ menu (Archive, Restore, Report); Artifacts tab | A |
 | Actions tab, Overview actions strip, Ship It 'Try it first' strip | A |
@@ -347,6 +352,7 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Ask: live run card, the feature strip of a sliced plan: progress, each slice's state and PR, Review plan / Answer / Open / Resume slice / Re-plan the rest / Cancel the rest / Open the re-plan, "Approve each slice's plan" | S |
 | Ask: run card result, the checklist tally ("Checklist: 3 met · 1 unmet · 1 n/a") on a finished shaped run | S |
 | Ask: the run card's agent model label, its artifact chips and "All artifacts", Create pull request / View pull request | A — as on the run page |
+| Ask: a run without a project's file list on its run card (Artifacts · n; each file's name, size and Download; "All artifacts") | S — its Artifacts tab is Simple too |
 | Ask: the pull-request card's Watch PR state, as its PR link tooltip (read-only; the switch stays on the run page) | all |
 | Ask: the run card's stopped-watch line (`Watch stopped · …`, Open PR, Ask for changes) | all (rule 1) |
 | Ask: the Ask for changes field on finished run, feature, Ship and pull-request cards | all (rule 1) |
@@ -362,10 +368,12 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Ask: proposal cards themselves | all (rule 4) |
 | Ask: files card (show_files) — image tiles, file rows, viewer | S — an answer is never hidden (rule 4) |
 | Ask: the context ring and its popover's window fill and topics | S |
-| Ask: model picker, scope, cost meter, tool rows, branches, guardrails, "Open in New run" | A |
+| Ask: the chat scope pill and its menu (No project, projects, workspaces, Add project…) | S |
+| Ask: model picker, cost meter, tool rows, branches, guardrails, "Open in New run" | A |
+| Ask: the project switch card ("Your turn: pick a project") and the "Switched to …" divider | all (rule 4) |
 | Ask: the chevron on a reply's activity line (`Done · 7.4s · …`) | A when it opens tool rows, E when it opens only sub-agents; the line itself shows at every level |
 | Ask: per-agent lane, the context popover's Agents and Worktrees sections, sub-agent logs | E — a run card carrying Chat's per-agent picks shows its lane at every mode (the picks apply at Start) |
-| Chat home: heading, composer, the New run / Build workflow / Track a run / Write a script / Clone a repo tiles, the one pinned-workflow slot (and More › Pinned), More (Step away), the tabs (Needs you, Running, Recent chats, Plans while Shaper is on, Workflows) and their run tiles, the Workflows and Away mode promos | S |
+| Chat home: heading, composer, the New run / Build workflow / Track a run / Write a script tiles, the Add project tile, the one pinned-workflow slot (and More › Pinned), More (Step away), the tabs (Needs you, Running, Recent chats, Plans while Shaper is on, Workflows) and their run tiles, the Workflows and Away mode promos | S |
 | Chat home: the Plans tab (Shaper, gated): shaped plans newest first with their state, and each sliced feature's card | S |
 | Chat home: the Schedule a run and Explain a diff tiles; More › New workspace, Remember something, Find tasks; the Schedules promo | A — with the page or surface that owns each feature |
 | Chat home: More › Team metrics, Add a model | E — with the Team metrics and Models pages |

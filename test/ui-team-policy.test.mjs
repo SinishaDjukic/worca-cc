@@ -251,6 +251,25 @@ test('Team policy page: a publish rejection is printed verbatim under the bar', 
   assert.equal(doc.querySelector('#tp-body .tp-head .tp-publish').disabled, false, 'Publish is usable again after a rejection');
 });
 
+test('Team policy page: Publish without git for a home off GitHub shows the Needs git chip on the form\'s message line', async () => {
+  const { window, doc, go, settle } = await boot({
+    fetchHandler: (u, opts) => (u === '/api/policy' && opts.method === 'PUT'
+      ? json({ error: 'git is not installed on this machine', code: 'GIT_MISSING' }, 409) : null),
+  });
+  await go('team-policy');
+  await settle();
+  doc.querySelector('#tp-body .tp-head .tp-edit').click();
+  await settle();
+  const editor = doc.querySelector('#tp-body .tp-editor');
+  editor.querySelector('.tp-title').value = 'Renamed';
+  editor.querySelector('.tp-title').dispatchEvent(new window.Event('input', { bubbles: true }));
+  await settle();
+  doc.querySelector('#tp-body .tp-head .tp-publish').click();
+  await settle(8);
+  const msg = editor.querySelector('.tp-msg');
+  assert.deepEqual([msg.className, msg.querySelector('.pl-needs-git')?.className, msg.textContent], ['form-msg tp-msg', 'badge waiting pl-needs-git', 'Needs git']);
+});
+
 test('Project page: "Set up team policy…" opens the dialog; the follow mode posts the marker body', async () => {
   const posts = [];
   const { doc, go, settle } = await boot({

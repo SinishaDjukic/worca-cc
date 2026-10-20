@@ -157,7 +157,7 @@ test('PATCH title: renames within 120 chars; empty, unknown and a PATCH naming n
 
 test('#397 scope: PATCH pins/clears, a message inherits the pin per field, and both drop projectSource with the target keys', async () => {
   await checkRows([
-    { name: '#397 PATCH scope: pin project/workspace, Auto clears the target, invalid shapes rejected', run: async () => {
+    { name: '#397 PATCH scope: pin project/workspace, No project clears the target, invalid shapes rejected', run: async () => {
       const { thread } = await (await post('/api/ask/threads', {})).json();
       // pin a project
       let r = await patch(`/api/ask/threads/${thread.id}`, { scope: { pinned: true, projectKey: 'demo-00000001' } });
@@ -205,7 +205,7 @@ test('#397 scope: PATCH pins/clears, a message inherits the pin per field, and b
       assert.equal(snap.thread.context.view, 'history', 'non-target fields still follow the page');
       assert.equal(snap.thread.context.pipelineId, '4e1f2a9b');
 
-      // an explicit Auto (pinned:false) from a selector-aware client is authoritative
+      // an explicit No project (pinned:false) from a selector-aware client is authoritative
       const { thread: t2 } = await (await post('/api/ask/threads', {})).json();
       await patch(`/api/ask/threads/${t2.id}`, { scope: { pinned: true, projectKey: 'demo-00000001' } });
       const r2 = await post(`/api/ask/threads/${t2.id}/messages`, {
@@ -226,7 +226,8 @@ test('#397 scope: PATCH pins/clears, a message inherits the pin per field, and b
       });
       assert.equal(r.status, 202);
       const stored = (await (await fetch(`${base}/api/ask/threads/${thread.id}`)).json()).thread.context;
-      assert.equal(stored.projectSource, 'fallback', 'Auto stores the tag (card-event turns reuse it)');
+      assert.equal(stored.projectSource, undefined, 'No project stores no page target'); assert.equal(stored.projectDir, undefined);
+      await idle();
       r = await patch(`/api/ask/threads/${thread.id}`, { scope: { pinned: true, projectKey: 'demo-00000001' } });
       assert.deepEqual((await r.json()).thread.context, { view: 'settings', pinned: true, projectKey: 'demo-00000001' }, 'PATCH scope strips it');
       // a pre-selector tab (no `pinned`) inherits the pin: askApplyPin strips the tag too

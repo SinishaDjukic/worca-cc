@@ -8,14 +8,19 @@
 // timeline and machine state live in the DB (pipeline_events + the pipelines row),
 // which is the authoritative store (no more pipeline.md / state.json on disk).
 
-import { mkdir, writeFile, readFile, copyFile, readdir, access, stat } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, copyFile, readdir, access, stat, lstat, realpath } from 'node:fs/promises';
 import { NON_BROWSABLE_KIND_LIST } from '../shared/artifact-kinds.mjs';
-import { join, basename, resolve, isAbsolute } from 'node:path';
+import { join, basename, resolve, isAbsolute, relative, sep } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { realpathSync, existsSync, statSync, constants as fsConstants } from 'node:fs';
 import { hostname } from 'node:os';
-import { projectKey, projectStorePath, canonicalProjectRoot, workspaceStorePath } from './store.mjs';
-import { listProjects } from './projects.mjs';
+import { projectKey, projectKey as projectKeyOf, projectStorePath, canonicalProjectRoot, workspaceStorePath, isNoProjectKey, noProjectWorkDir, NO_PROJECT_KEY } from './store.mjs';
+import { NO_PROJECT_NAME } from '../shared/no-project.mjs';
+import { workModeOfRow } from './project-kind.mjs';
+import { rollupChanges } from './folder-members.mjs';
+import { harvestWork, WORK_ARTIFACT_KIND } from './no-project-work.mjs';
+import { updateRunManifest } from './run-manifest.mjs';
+import { listProjects, worcaHome } from './projects.mjs';
 import { branchExists, diffShortstat, anyPrHost, findPrForBranch, commitsAhead } from './git-info.mjs';
 import { getDb, tx } from './db.mjs';
 import { rollupMemberPrs, workspaceMembers, changedFileCount } from './workspace-prs.mjs';
@@ -927,10 +932,10 @@ export function today() {
  * @param {string} [workspaceKey] when set, routes to the workspace store
  * @returns {{root:string, plans:string, reviews:string, pipelines:string}}
  */
-export function artifactPaths(projectDir, workspaceKey) {
+export function artifactPaths(projectDir, workspaceKey, { projectKey } = {}) {
   const root = workspaceKey
     ? workspaceStorePath(workspaceKey)
-    : projectStorePath(projectKey(projectDir));
+    : projectStorePath(projectKey ?? projectKeyOf(projectDir));
   return {
     root,
     plans: join(root, 'plans'),
@@ -946,12 +951,20 @@ export function artifactPaths(projectDir, workspaceKey) {
  * re-reading. `firstSeenAt` is preserved across re-runs because an existing row
  * short-circuits. `_root` is retained for signature stability (now unused).
  */
-async function ensureMeta(projectDir, _root) {
+async function ensureMeta(projectDir, _root, { projectKey, plain = false } = {}) {
   void _root;
-  const key = projectKey(projectDir);
+  const key = projectKey ?? projectKeyOf(projectDir);
+  if (isNoProjectKey(key)) {                           // P3: never canonicalProjectRoot (no git) for the reserved key
+    const have = readStoreMeta(key);
+    if (have) return have;
+    const meta = { key, path: join(worcaHome(), 'runs'), name: NO_PROJECT_NAME, firstSeenAt: new Date().toISOString() };
+    try { writeStoreMeta(key, 'project', meta); } catch { /* never block a run */ }
+    return meta;
+  }
   const existing = readStoreMeta(key);
   if (existing) return existing;                       // firstSeenAt preserved
-  const canonical = canonicalProjectRoot(projectDir);
+  // P1 (v8): a non-git run's folder is its own root — never an enclosing repo's (a parent git-inited after registration)
+  const canonical = plain ? (() => { const d = resolve(projectDir); try { return realpathSync(d); } catch { return d; } })() : canonicalProjectRoot(projectDir);
   let name = basename(canonical) || 'project';
   try {
     const projects = await listProjects();
@@ -1012,13 +1025,13 @@ async function ensureWorkspaceMeta(primaryProjectDir, workspaceKey, opts = {}) {
  * Single-project callers (no second arg) are byte-identical.
  */
 export async function ensureArtifactDirs(projectDir, workspaceKey, opts = {}) {
-  const p = artifactPaths(projectDir, workspaceKey);
+  const p = artifactPaths(projectDir, workspaceKey, { projectKey: opts.projectKey });
   await mkdir(p.plans, { recursive: true });
   await mkdir(p.reviews, { recursive: true });
   await mkdir(p.pipelines, { recursive: true });
   const meta = workspaceKey
     ? await ensureWorkspaceMeta(projectDir, workspaceKey, opts)
-    : await ensureMeta(projectDir, p.root);
+    : await ensureMeta(projectDir, p.root, { projectKey: opts.projectKey, plain: !!opts.workMode && opts.workMode !== 'git' });
   return { ...p, meta };
 }
 
@@ -1038,8 +1051,8 @@ export async function ensureArtifactDirs(projectDir, workspaceKey, opts = {}) {
  * @param {string} [workspaceKey] when set, routes to the workspace store
  * @returns {string}
  */
-export function planPath(projectDir, baseName, version = 1, datePrefix, workspaceKey) {
-  const { plans } = artifactPaths(projectDir, workspaceKey);
+export function planPath(projectDir, baseName, version = 1, datePrefix, workspaceKey, { projectKey } = {}) {
+  const { plans } = artifactPaths(projectDir, workspaceKey, { projectKey });
   const v = Number(version) > 1 ? `-v${Number(version)}` : '';
   const date = datePrefix || today();
   return join(plans, `${date}-${baseName}${v}.md`);
@@ -1054,8 +1067,8 @@ export function planPath(projectDir, baseName, version = 1, datePrefix, workspac
  * @param {string} [workspaceKey] when set, routes to the workspace store
  * @returns {string}
  */
-export function reviewPath(projectDir, baseName, datePrefix, kind = 'impl-review', workspaceKey) {
-  const { reviews } = artifactPaths(projectDir, workspaceKey);
+export function reviewPath(projectDir, baseName, datePrefix, kind = 'impl-review', workspaceKey, { projectKey } = {}) {
+  const { reviews } = artifactPaths(projectDir, workspaceKey, { projectKey });
   const date = datePrefix || today();
   return join(reviews, `${date}-${baseName}-${kind}.md`);
 }
@@ -1063,6 +1076,11 @@ export function reviewPath(projectDir, baseName, datePrefix, kind = 'impl-review
 /** Short random id (8 hex chars) used to make pipeline dirs unique. */
 function shortId() {
   return randomBytes(4).toString('hex');
+}
+
+/** P3-D2: a fresh pipeline id (8 hex) no row holds yet, minted by the server before the harness exists. */
+export function newPipelineId() {
+  for (;;) { const id = shortId(); if (!findPipelineRowById(id)) return id; }
 }
 
 /**
@@ -1163,12 +1181,18 @@ export async function createPipeline(projectDir, opts = {}) {
     workspaceKey = null, workspaceId = null, workspaceName = null,
     workspaceDescription = '', projects = null,
   } = opts;
+  if (opts.id != null) {   // P3-D2: a caller-minted id — both checks run before any dir or row exists
+    if (!/^[0-9a-f]{8}$/.test(String(opts.id))) throw new Error('createPipeline: id must be 8 hex characters');
+    if (findPipelineRowById(opts.id)) throw new Error(`createPipeline: pipeline id ${opts.id} is already taken`);
+  }
   const paths = await ensureArtifactDirs(projectDir, workspaceKey || undefined, {
     workspaceId: workspaceId || workspaceKey,
     workspaceName,
     projects,
+    projectKey: opts.projectKey,
+    workMode: opts.workMode,
   });
-  const key = projectKey(projectDir);
+  const key = opts.projectKey ?? projectKeyOf(projectDir);
   const projectName = (paths.meta && paths.meta.name) || basename(resolve(projectDir));
 
   // Resolve the prompt text. Precedence: inline `prompt` (legacy callers) >
@@ -1193,7 +1217,7 @@ export async function createPipeline(projectDir, opts = {}) {
     firstMeaningfulLine(promptText) ||
     'orchestration';
 
-  const id = shortId();
+  const id = opts.id ?? shortId();
   const slug = slugify(resolvedTitle).slice(0, 48) || 'pipeline';
   const dirName = `${today()}-${slug}-${id}`;
   const dir = join(paths.pipelines, dirName);
@@ -1447,7 +1471,7 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
       // v2 rows: execution_id === key. v1 rows leave every exec_* column NULL, so
       // the readers below reproduce today's exact shape for a v1 pipeline.
       const hasMeta = st.taskId != null || st.parentExecutionId != null || st.title != null || st.phaseOrdinal != null
-        || st.nodeKey != null || st.runtime != null || st.exitCode != null || st.bridgeCalls != null || st.auxCosts != null || st.stoppedTurns != null;
+        || st.nodeKey != null || st.runtime != null || st.exitCode != null || st.bridgeCalls != null || st.auxCosts != null || st.stoppedTurns != null || st.sessionCosts != null;
       const meta = hasMeta
         ? s({ taskId: st.taskId ?? null, parentExecutionId: st.parentExecutionId ?? null,
               title: st.title ?? null, phaseOrdinal: st.phaseOrdinal ?? null,
@@ -1460,7 +1484,9 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
               // Worca's own AI spend inside the step cost (Away mode, Auto workflow, run title).
               ...(st.auxCosts ? { auxCosts: st.auxCosts } : {}),
               // Agent turns cut before their `result`: a count and a lower bound, never in the cost.
-              ...(st.stoppedTurns ? { stoppedTurns: st.stoppedTurns } : {}) })
+              ...(st.stoppedTurns ? { stoppedTurns: st.stoppedTurns } : {}),
+              // The CLI's last session total per session id: a resumed spawn books only what it adds.
+              ...(st.sessionCosts ? { sessionCosts: st.sessionCosts } : {}) })
         : null;
       ins.run(
         id, st.key, st.nodeId ?? null, st.phase ?? null,
@@ -1925,6 +1951,7 @@ function toPipelineRow(o) {
         // _setupRunRoot / resume() stamp. (Single-project rows need nothing — the pin
         // rides state.branch, already serialized verbatim below.)
         runRootMode: o.runRootMode ?? null,
+        ...(o.workMode && o.workMode !== 'git' ? { workMode: o.workMode } : {}),
       })
     : null;
   return {
@@ -2064,6 +2091,46 @@ export function retainedWorkFor(row) {
   return { reason: members[0].code || 'unknown', members };
 }
 
+/**
+ * P1 (P1b S17): a pending Folder run's copy as a retain record — the boot sweep's DB fallback. Only while the row is a
+ * folder run, its changes are `pending` and the copy exists: a copy removed by hand self-clears.
+ */
+export function folderApplyRetainFor(row) {
+  if (!row || typeof row !== 'object') return null;
+  // P5: a workspace row lists its Folder members (workspace_meta.projects[i].workMode), whatever the run's own mode
+  const ws = row.target === 'workspace' ? workspaceFolderRecords(row) : null;
+  if (!ws && workModeOfRow(row) !== 'folder') return null;
+  const members = [];
+  for (const [pk, br] of ws || branchRecordsOf(row)) {
+    if (br?.changes?.state !== 'pending' || !br.copyDir || !existsSync(br.copyDir)) continue;
+    members.push({ projectKey: pk || null, copyDir: br.copyDir });
+  }
+  return members.length ? { reason: 'folder-apply', members } : null;
+}
+
+/** P5: [[memberKey, record]] of a workspace row's Folder members (workspace_meta.projects[i].workMode === 'folder'). */
+function workspaceFolderRecords(row) {
+  const wm = typeof row?.workspace_meta === 'string' ? j(row.workspace_meta, null) : row?.workspace_meta;
+  const projects = Array.isArray(wm?.projects) ? wm.projects : (Array.isArray(row?.projects) ? row.projects : []);
+  const branches = (wm?.branches && typeof wm.branches === 'object' ? wm.branches : row?.branches) || {};
+  return projects.filter((p) => p && p.workMode === 'folder' && typeof p.projectKey === 'string')
+    .map((p) => [p.projectKey, branches[p.projectKey] || null]);
+}
+
+/** S9: the folder facts a list row carries — `{ workMode, changes?: { state, counts } }` for a non-git row, `{}` for git.
+ *  P5: a workspace row's `changes` is the rollup of its Folder members' records (a mixed workspace keeps workMode git). */
+export function folderFacts(row) {
+  const workMode = workModeOfRow(row);
+  if (row?.target === 'workspace') {
+    const changes = rollupChanges(workspaceFolderRecords(row).map(([, br]) => br?.changes).filter(Boolean));
+    return { ...(workMode !== 'git' ? { workMode } : {}), ...(changes ? { changes } : {}) };
+  }
+  if (workMode === 'git') return {};
+  const br = typeof row?.branch === 'string' ? j(row.branch, null) : row?.branch;
+  const changes = br && typeof br === 'object' ? br.changes : null;
+  return { workMode, ...(changes ? { changes: { state: changes.state, counts: changes.counts } } : {}) };
+}
+
 const BASE_RANK = { conflicts: 4, error: 3, 'no-branch': 2, clean: 1, 'up-to-date': 0 };
 /** History list summary of a stored base check (#620): no file list, the detail view has it. */
 export function baseCheckSummary(c) {
@@ -2138,11 +2205,15 @@ async function workspaceMemberFacts(row, results, opts = {}) {
   const known = opts.withPr ? readMemberPrStates(row.id) : null;
   const gh = opts.withPr ? await anyPrHost() : false;
   return Promise.all(members.map(async (m) => {
+    const workMode = (wm.projects || []).find((p) => p?.projectKey === m.memberKey)?.workMode === 'folder' ? 'folder' : 'git';
+    const ch = workMode === 'folder' ? wm.branches?.[m.memberKey]?.changes : null;
     const out = {
       memberKey: m.memberKey, name: m.name, projectDir: m.projectDir,
       branch: m.feature, sourceBranch: m.source,
       survived: false, affected: false, added: 0, removed: 0, diffFrozen: false,
       baseCheck: baseCheckSummary(wm.branches?.[m.memberKey]?.baseCheck),
+      ...(workMode === 'folder' ? { workMode } : {}),   // absent = git: an all-Git row stays byte-identical
+      ...(ch ? { changes: { state: ch.state, counts: ch.counts } } : {}),
     };
     if (m.projectDir && m.feature) out.survived = await branchExists(m.projectDir, m.feature);
     const sum = perProject && perProject[m.memberKey] ? perProject[m.memberKey].summary : null;
@@ -2151,6 +2222,9 @@ async function workspaceMemberFacts(row, results, opts = {}) {
       out.affected = changedFileCount(sum) > 0;
       out.added = sum.linesAdded | 0;
       out.removed = sum.linesRemoved | 0;
+    } else if (ch) {
+      // a Folder member with no frozen summary: its record's counts (never git — it has no branch)
+      out.affected = ((ch.counts?.added | 0) + (ch.counts?.modified | 0) + (ch.counts?.deleted | 0)) > 0;
     } else if (out.survived && m.source) {
       out.affected = ((await commitsAhead(m.projectDir, m.source, m.feature)) || 0) > 0;
       if (out.affected) {
@@ -2272,6 +2346,7 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     baseCheck: baseCheckSummaryFor(row),
     // Only a run on its source branch carries these two keys (history shape unchanged otherwise).
     ...(mergeBack ? { sameAsSource: true, mergeBack } : {}),
+    ...folderFacts(row),
     survived,
     added,
     removed,
@@ -2440,6 +2515,10 @@ export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
         target: 'workspace',
       };
       repoDir = primary;
+    } else if (isNoProjectKey(row.project_key)) {
+      // P3: a run without a project — its own work folder, no repo (no branchExists / diffShortstat)
+      tag = { projectKey: NO_PROJECT_KEY, projectName: NO_PROJECT_NAME, projectDir: noProjectWorkDir(row.id) };
+      repoDir = null;
     } else {
       const m = meta(row.project_key);
       tag = { projectKey: row.project_key, projectName: m?.name ?? row.project_key, projectDir: m?.path ?? null };
@@ -2591,6 +2670,7 @@ function stepRowToStep(r) {
     if (em.bridgeFreeCalls) step.bridgeFreeCalls = em.bridgeFreeCalls;
     if (em.auxCosts && typeof em.auxCosts === 'object') step.auxCosts = em.auxCosts;
     if (em.stoppedTurns && typeof em.stoppedTurns === 'object') step.stoppedTurns = em.stoppedTurns;
+    if (em.sessionCosts && typeof em.sessionCosts === 'object') step.sessionCosts = em.sessionCosts;
   }
   return step;
 }
@@ -2671,6 +2751,7 @@ function rowToState(row) {
   }
   const meta = readStoreMeta(row.project_key);
   state.projectDir = meta?.path ?? null;
+  if (isNoProjectKey(row.project_key)) state.projectDir = noProjectWorkDir(row.id);   // P3: the run's own work folder
   // Workspace superset: spread workspace_meta back onto the top level + target.
   if (row.target === 'workspace') {
     const wm = j(row.workspace_meta, {}) || {};
@@ -2688,6 +2769,8 @@ function rowToState(row) {
     const wmeta = readStoreMeta(row.workspace_key);
     if (!state.projectDir) state.projectDir = Array.isArray(wmeta?.projectPaths) ? (wmeta.projectPaths[0] ?? null) : null;
   }
+  const wm = workModeOfRow(row); if (wm !== 'git') state.workMode = wm; const ch = state.branch?.changes; if (wm === 'folder' && ch) state.changes = { state: ch.state, counts: ch.counts };
+  if (row.target === 'workspace') { const ff = folderFacts(row); if (ff.changes) state.changes = ff.changes; else delete state.changes; }   // P5: the members' rollup, never the primary mirror
   return state;
 }
 
@@ -2822,7 +2905,7 @@ export function runRootSweepLookups() {
     statusOf: (id) => rowById(id)?.status ?? null,
     retainOf: (id) => {
       const row = rowById(id);
-      return row ? (retainedWorkFor(row) || checkoutRecordsFor(row)) : null;
+      return row ? (retainedWorkFor(row) || checkoutRecordsFor(row) || folderApplyRetainFor(row)) : null;
     },
     membersOf: async (id) => {
       const row = rowById(id);
@@ -2851,6 +2934,16 @@ export function runRootSweepLookups() {
       // disposition is decided, and it only names where the rescue copies go. A
       // readdir failure costs the durable copies, never a removal decision.
       try { return await runDirForRow(row); } catch { return null; }
+    },
+    // P3: a no-project run's unharvested work/ (a crash before its teardown) moves into its pipeline dir and is indexed
+    // as `work` artifacts before the sweep reclaims the root. A missing pipeline dir keeps the root (ok:false).
+    harvestWorkOf: async (id, runRoot, pipelineDir) => {
+      if (!pipelineDir) return { ok: false, moved: false, files: [], bytes: 0, unindexed: 0, error: 'no pipeline dir' };
+      const h = await harvestWork({ workDir: join(runRoot, 'work'), pipelineDir });
+      if (!h.ok) return h;
+      for (const rel of h.files) recordArtifact(id, WORK_ARTIFACT_KIND, rel);
+      await updateRunManifest(runRoot, { workHarvested: { files: h.files.length, bytes: h.bytes, unindexed: h.unindexed, at: new Date().toISOString() } });
+      return h;
     },
   };
 }
@@ -2910,7 +3003,12 @@ export function legacySweepLookups() {
  * @returns {Promise<{state:object|null, auditMarkdown:string}|null>}
  */
 export async function readPipeline(projectDir, id) {
-  return readPipelineByKey(projectKey(projectDir), id);
+  const key = projectKey(projectDir);
+  const hit = await readPipelineByKey(key, id);
+  if (hit) return hit;
+  const row = findPipelineRowById(id);
+  if (row && workModeOfRow(row) !== 'git' && row.project_key !== key) return readPipelineByKey(row.project_key, id);
+  return null;
 }
 
 /**
@@ -3066,7 +3164,8 @@ export async function resolveIndexedArtifactFileForRow(row, rel) {
   // Exact first, then the LONGEST suffix — with rows `plan.md` and `a/plan.md`
   // a request for `/x/a/plan.md` ends with BOTH `/plan.md` and `/a/plan.md`, and a
   // first-match `find` would serve whichever row the table happens to list first.
-  const hit = arts.find((a) => a.relPath === want)
+  // The raw request first: off Windows a work/ file name may itself hold a backslash (`work/a\b.md`).
+  const hit = arts.find((a) => a.relPath === String(rel)) || arts.find((a) => a.relPath === want)
     || arts.filter((a) => want.endsWith(`/${a.relPath}`))
       .sort((x, y) => y.relPath.length - x.relPath.length)[0];
   if (!hit) return null;
@@ -3082,11 +3181,25 @@ export async function resolveIndexedArtifactFileForRow(row, rel) {
     // actually holds the artifact.
     try {
       if (!(await stat(file)).isFile()) continue;
+      if (hit.kind === WORK_ARTIFACT_KIND && !(await workFileInside(base, file))) continue;
       await access(file, fsConstants.R_OK);
       return { rel: hit.relPath, file, base };
     } catch { /* try the next base */ }
   }
   return null;
+}
+
+/**
+ * P3-D13 at serve time: a no-project run's work/ was an agent's cwd and can still be one after the move (a process
+ * that outlived the run moved with it), so a `work` row is served only as a real file whose real path stays inside
+ * <base>/work — never a link (or a linked parent folder) planted after the index.
+ */
+async function workFileInside(base, file) {
+  try {
+    if (!(await lstat(file)).isFile()) return false;
+    const rel = relative(await realpath(join(base, 'work')), await realpath(file));
+    return !!rel && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+  } catch { return false; }
 }
 
 /** The keyed form (`/api/history/:key/:id`, workspace twin) over lookupPipelineRow. */

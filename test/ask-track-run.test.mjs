@@ -151,3 +151,11 @@ test('askTrackRun: an uppercase or dir-name id finds the LIVE entry, not just th
     mod.runs.delete(entry.id);
   }
 });
+
+test('P3: track_run on a run without a project labels its card No project, never its folder name "work"', async () => {
+  const { noProjectWorkDir, NO_PROJECT_KEY } = await import('../src/core/store.mjs');
+  const { id } = await seedPipeline(noProjectWorkDir('abcd1234'), { title: 'Q3 deck', status: 'done', steps: [], branch: { workMode: 'none', runRootMode: 'detached' } });
+  const r = mod._testing.askTrackRun(createThread().id, { id }, null);
+  assert.equal(r.ok, true);
+  assert.deepEqual([r.card.projectKey, r.card.label], [NO_PROJECT_KEY, 'No project']);
+});

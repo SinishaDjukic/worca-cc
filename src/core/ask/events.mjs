@@ -202,6 +202,7 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'list_copilot_models': return 'Listing Copilot models';
     case 'propose_model_change': return 'Proposing a model change';
     case 'propose_clone_project': return 'Proposing a project clone';
+    case 'propose_project_change': return 'Proposing a project';
     case 'propose_workspace_change': return 'Proposing a workspace change';
     case 'get_project_actions': return 'Looking at project actions';
     case 'get_workspace_stacks': return 'Looking at workspace stacks';
@@ -220,6 +221,7 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'web_fetch': { let host = ''; try { host = new URL(String(input?.url ?? '')).hostname; } catch { /* label only */ } return host ? `Reading ${host}` : 'Reading a web page'; }
     case 'web_search': return 'Searching the web';
     case 'propose_web_access': return 'Asking to read a new site';
+    case 'propose_scope_switch': return 'Asking which project';
     case 'Skill': return typeof input?.skill === 'string' && input.skill ? `Using ${input.skill.slice(0, 80)}` : 'Using a skill';   // skills registry §4.4
     default: return `Using ${n}`;
   }
@@ -293,9 +295,11 @@ export function createTurnReducer({
   onScheduleProposal = null,     // propose_schedule_change RESULT (schedule card; the parent re-validates the input)
   onModelProposal = null,        // propose_model_change RESULT (model card; same split)
   onCloneProposal = null,        // propose_clone_project RESULT (clone card; same split)
+  onProjectProposal = null,      // propose_project_change RESULT (project card; same split)
   onWorkspaceProposal = null,    // propose_workspace_change RESULT (workspace card; same split)
   onActionsProposal = null,      // propose_actions_change RESULT (actions card; same split)
   onWebProposal = null,          // propose_web_access RESULT (web card; same split)
+  onScopeSwitch = null,          // propose_scope_switch RESULT (P4: the scope ask card; same split)
   onScheduleMutation = null,     // a direct schedule write succeeded in the MCP child
   onTrackRun = null,
   onRunCommand = null,           // run_command RESULT (#574): the command card
@@ -737,10 +741,24 @@ export function createTurnReducer({
           if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
         } catch { reducerErrors += 1; }
       }
+      if (b.name === 'mcp__worca__propose_scope_switch' && typeof onScopeSwitch === 'function') {
+        // Same split as the web card: the parent re-checks the INPUT against this turn's scope and the thread's scope cards (scope.mjs).
+        try {
+          const ret = onScopeSwitch({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
       if (b.name === 'mcp__worca__propose_clone_project' && typeof onCloneProposal === 'function') {
         // Same split as the model card: the parent re-validates the INPUT and adds how GitHub is reached (clone-proposal.mjs).
         try {
           const ret = onCloneProposal({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
+      if (b.name === 'mcp__worca__propose_project_change' && typeof onProjectProposal === 'function') {
+        // Same split as the clone card: the parent re-validates the INPUT with dry runs (project-proposal.mjs).
+        try {
+          const ret = onProjectProposal({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
           if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
         } catch { reducerErrors += 1; }
       }

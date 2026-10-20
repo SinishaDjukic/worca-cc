@@ -30,8 +30,15 @@ const WF = { id: 'wf_default', name: 'Default', version: 2, updatedAt: 't',
   wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_impl', port: 'task' } }] };
 const QUESTION = { kind: 'clarify', questions: [{ id: 'q1', text: 'Which?' }] };
 
-function arms({ history = [], threads = [], settings = { chat: { scriptTools: false } }, sources = [], workflows = [] } = {}) {
-  return (url) => {
+const SITE = { key: 'site-00000001', name: 'site', path: '/w/p/site', displayPath: '/w/p/site', exists: true, vcs: 'none' };
+function arms({ history = [], threads = [], settings = { chat: { scriptTools: false } }, sources = [], workflows = [], create = false } = {}) {
+  return (url, opts = {}) => {
+    if (create && url === '/api/projects/create') {
+      const b = JSON.parse(opts.body || '{}');
+      if (b.dryRun) return ok({ ok: true, root: '/w/p', rootDisplay: '/w/p' });
+      const p = { ...SITE, key: `${b.name}-00000001`, name: b.name, path: `/w/p/${b.name}`, displayPath: `/w/p/${b.name}` };
+      return Promise.resolve({ ok: true, status: 201, json: async () => ({ project: p, projects: [p], root: '/w/p', rootDisplay: '/w/p' }) });
+    }
     if (url === '/api/history') return ok({ pipelines: history, ghAvailable: false, prHosts: {} });
     if (url.startsWith('/api/ask/threads?limit=')) return ok({ threads, total: threads.length });
     if (url === '/api/settings') return ok(settings);
@@ -391,6 +398,26 @@ test('Running lists the newest run first, as the Running list does', async () =>
   const doc = ctx.window.document;
   assert.equal(selected(doc), 'running');
   assert.deepEqual([...doc.querySelectorAll('.chat-run-tile')].map((t) => t.dataset.tileKey), ['live:m2', 'live:m1', 'live:m0']);
+});
+
+test('Add project: the tile and the scope menu\'s entry open the dialog on New; the created project becomes the chat\'s scope', async () => {
+  const ctx = await bootChat({ create: true });
+  const doc = ctx.window.document;
+  const flush = async () => { for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0)); };
+  doc.querySelector('[data-chat-page] [data-chat-home] .chat-home-act[data-action="project"]').click(); await flush();
+  assert.equal(doc.getElementById('project-add-modal').classList.contains('hidden'), false);
+  assert.equal(doc.getElementById('proj-add-tab-new').getAttribute('aria-selected'), 'true');
+  const name = doc.getElementById('proj-add-name');
+  name.value = 'site'; name.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
+  doc.getElementById('proj-add-save').click(); await flush();
+  assert.equal(doc.getElementById('project-add-modal').classList.contains('hidden'), true);
+  assert.equal(doc.querySelector('[data-chat-page] [data-ask-scope-btn] .ask-scope-label').textContent, 'site', 'askPanel.setScope (P4b)');
+  ctx.window.__projects.openAddProject(); await flush();        // what the scope menu's Add project… calls
+  assert.equal(doc.getElementById('project-add-modal').classList.contains('hidden'), false);
+  assert.equal(doc.getElementById('proj-add-tab-new').getAttribute('aria-selected'), 'true');
+  name.value = 'docs'; name.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
+  doc.getElementById('proj-add-save').click(); await flush();
+  assert.equal(doc.querySelector('[data-chat-page] [data-ask-scope-btn] .ask-scope-label').textContent, 'docs', 'the scope menu path scopes the chat too (S-P2-5)');
 });
 
 test('bundle QA 2: a History row in Needs you through its PR is a tile that says why, never "Done"', async () => {

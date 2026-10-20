@@ -15,6 +15,11 @@ function h(doc, tag, cls, text) {
 
 const sha7 = (sha) => (typeof sha === 'string' ? sha.slice(0, 7) : '');
 
+/** The `Needs git` chip (U17: a chip inside the action's own dialog, never a wash): a source off GitHub, no git here. */
+export function renderNeedsGit(doc = globalThis.document) {
+  return h(doc, 'span', 'badge waiting pl-needs-git', 'Needs git');
+}
+
 // Icons for row action buttons (stroke follows currentColor): the shared refresh, and a local bin icons.mjs lacks.
 const ICONS = {
   bin: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>',
@@ -164,10 +169,11 @@ export function renderOrphanList(orphans, { doc = globalThis.document } = {}) {
 // renderInstallConsent(entry, inventory) — spec §6.1 "Will install" ceremony.
 // entry: { name, repoUrl, sha } (a marketplace snapshot plugin + the marketplace's url/lastSync.sha);
 // inventory: buildInstallInventory shape. Secrets render red; setup commands verbatim.
-export function renderInstallConsent(entry, inventory, { doc = globalThis.document } = {}) {
+export function renderInstallConsent(entry, inventory, { doc = globalThis.document, needsGit = false } = {}) {
   const inv = inventory || {};
   const root = h(doc, 'div', 'pl-consent');
-  root.appendChild(h(doc, 'div', 'pl-consent-src mono', `${entry.repoUrl} @ ${sha7(entry.sha)}`));
+  const src = root.appendChild(h(doc, 'div', 'pl-consent-src mono', `${entry.repoUrl} @ ${sha7(entry.sha)}`));
+  if (needsGit) src.append(' ', renderNeedsGit(doc));
   const section = (label) => {
     const s = h(doc, 'div', 'pl-consent-sec');
     s.appendChild(h(doc, 'div', 'pl-consent-h', label));
@@ -559,8 +565,10 @@ export function renderMarketplaceList(marketplaces, { doc = globalThis.document,
     head.appendChild(h(doc, 'b', 'pl-name', m.name || m.id));
     if (m.builtin) head.appendChild(h(doc, 'span', 'badge grey pl-mkt-builtin', 'built-in'));
     const actions = h(doc, 'div', 'pl-mkt-actions');
+    // A source off GitHub on a machine without git cannot refresh: the chip stands where Refresh would.
+    if (m.needsGit) actions.appendChild(renderNeedsGit(doc));
     for (const [cls, icon, label] of [
-      ['btn btn-sm pl-mkt-refresh', 'refresh', 'Refresh'],
+      ...(m.needsGit ? [] : [['btn btn-sm pl-mkt-refresh', 'refresh', 'Refresh']]),
       ['btn btn-sm btn-danger pl-remove pl-mkt-remove', 'bin', 'Remove'],
     ]) {
       const b = iconBtn(doc, cls, icon, label);

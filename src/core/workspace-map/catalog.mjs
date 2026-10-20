@@ -335,7 +335,7 @@ async function scanMember(m, entries, resolved, limits, aliasIndex) {
   idx.aliasIndex = aliasIndex;
   if (!idx.size) return { list: [], truncated: false };
   const deadline = Date.now() + limits.MEMBER_BUDGET_MS;
-  const listing = await listMemberFiles(m.dir, { maxFiles: limits.MAX_FILES_PER_MEMBER });
+  const listing = await listMemberFiles(m.dir, { maxFiles: limits.MAX_FILES_PER_MEMBER, git: m.workMode !== 'folder' });
   // The member's real root, resolved once: readText's containment check needs it for every file.
   const realRoot = await realpath(m.dir).catch(() => null);
   const list = [];

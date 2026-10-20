@@ -234,7 +234,7 @@ test('add: Add project opens the dialog, Choose folder… picks a folder, prefil
     fetchHandler: (u, opts) => {
       if (u.includes('/api/fs/pick-folder') && (opts.method || 'GET') === 'GET') return Promise.resolve({ ok: true, status: 200, json: async () => ({ available: true }) });
       if (u.includes('/api/fs/pick-folder')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ status: 'picked', path: '/Users/me/dev/cool-app' }) });
-      if (u.includes('/api/projects') && opts.method === 'POST') {
+      if (u.endsWith('/api/projects') && opts.method === 'POST') {
         posts.push(JSON.parse(opts.body));
         const next = [...PROJECTS, { name: 'cool-app', path: '/Users/me/dev/cool-app', exists: true }];
         return Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: next }) });
@@ -247,6 +247,8 @@ test('add: Add project opens the dialog, Choose folder… picks a folder, prefil
   click(window, doc.querySelector('#project-add-btn'));
   await tick(); await tick();
   assert.equal(doc.querySelector('#project-add-modal').classList.contains('hidden'), false, 'add modal should open');
+  assert.equal(doc.querySelector('#proj-add-tab-new').getAttribute('aria-selected'), 'true', 'the dialog opens on New');
+  click(window, doc.querySelector('#proj-add-tab-folder'));
   assert.equal(doc.querySelector('#proj-add-path').value, '', 'no folder until one is chosen');
   click(window, doc.querySelector('#proj-add-browse'));
   await tick(); await tick();
@@ -707,6 +709,30 @@ test('rows carry compact team chips (status only, no controls); the project page
   assert.deepEqual(patches[0], { record: false });
 });
 
+test('zero projects: one empty card says so; its Add project opens the dialog', async () => {
+  const { window } = await boot({ fetchHandler: (u, o) => (u.endsWith('/api/projects') && (o.method || 'GET') === 'GET'
+    ? Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: [] }) }) : null) });
+  await goProjects(window);
+  const doc = window.document;
+  assert.equal(doc.querySelector('#projects-list .proj-zero-txt').textContent, 'No projects yet');
+  assert.equal(doc.querySelector('#projects-list .proj-zero-add').textContent, 'Add project');
+  click(window, doc.querySelector('#projects-list .proj-zero-add')); await tick(); await tick();
+  assert.equal(doc.querySelector('#project-add-modal').classList.contains('hidden'), false);
+});
+test('the project page names its kind: Folder (no BRANCH card) or Git', async () => {
+  const projects = [{ ...PROJECTS[0], vcs: 'git' }, { name: 'notes', path: '/Users/me/notes', exists: true, key: 'notes-00000003', vcs: 'none' }];
+  const { window } = await boot({ fetchHandler: (u, o) => (u.includes('/api/projects') && (o.method || 'GET') === 'GET'
+    ? Promise.resolve({ ok: true, status: 200, json: async () => ({ projects }) }) : null) });
+  await goHash(window, 'projects/notes-00000003');
+  const doc = window.document;
+  assert.equal(doc.querySelector('#proj-detail .pd-kind .kind-chip').textContent, 'Folder');
+  assert.equal(doc.querySelector('#proj-detail .pd-title').textContent.trim(), 'notes', 'the title stays the name');
+  assert.equal(doc.querySelector('#proj-detail .pd-ov-card-branch'), null);
+  await goHash(window, 'projects/alpha-00000001');
+  assert.equal(doc.querySelector('#proj-detail .pd-kind .kind-chip').textContent, 'Git');
+  assert.ok(doc.querySelector('#proj-detail .pd-ov-card-branch'));
+});
+
 test('Set up team metrics: while the enable POST is out, Escape and the header Close do nothing; a failure lands in the dialog that stayed open', async () => {
   let release;
   const gate = new Promise((r) => { release = r; });
@@ -734,4 +760,85 @@ test('Set up team metrics: while the enable POST is out, Escape and the header C
   assert.equal(modal.querySelector('.tm-enable-err').textContent, 'push rejected');
   pressEscape(window);
   assert.equal(modal.classList.contains('hidden'), true, 'once it answered, Escape closes it');
+});
+
+// A Folder project in worca's projects folder: GET /api/projects marks it ownedFolder (ui/server.mjs projectsForApi).
+const OWNED = [{ ...PROJECTS[0], path: '/Users/me/.worca-cc/projects/alpha', displayPath: '~/.worca-cc/projects/alpha', vcs: 'none', ownedFolder: true }, PROJECTS[1]];
+const reply = (status, body) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
+
+test('Remove of worca\'s own Folder project: a danger confirm naming the folder, then DELETE with deleteFolder=1', async () => {
+  const calls = [];
+  const { window } = await boot({ fetchHandler: (u, opts) => {
+    if (u.includes('/api/projects') && opts.method === 'DELETE') { calls.push(u); return reply(200, { projects: [PROJECTS[1]], folder: { path: OWNED[0].path, deleted: true } }); }
+    if (u.includes('/api/projects')) return reply(200, { projects: OWNED });
+    return null;
+  } });
+  await goHash(window, 'projects/alpha-00000001');
+  const doc = window.document;
+  click(window, doc.querySelector('#proj-detail .pd-remove'));
+  await tick();
+  assert.equal(doc.querySelector('#confirm-modal').classList.contains('hidden'), false);
+  const msg = doc.querySelector('#confirm-message').textContent;
+  assert.ok(msg.includes('~/.worca-cc/projects/alpha'), msg);
+  assert.match(msg, /every file in it will be deleted permanently/);
+  assert.match(msg, /This cannot be undone/);
+  assert.match(msg, /Run history stays/);
+  assert.doesNotMatch(msg, /left untouched/);
+  assert.equal(doc.querySelector('#confirm-message strong').textContent, '~/.worca-cc/projects/alpha', 'the folder stands out');
+  assert.ok(doc.querySelector('#confirm-ok').classList.contains('danger'), 'destructive styling');
+  click(window, doc.querySelector('#confirm-ok'));
+  await tick(); await tick(); await tick();
+  assert.equal(calls.length, 1);
+  assert.match(calls[0], /\?name=alpha&deleteFolder=1$/);
+  await tick(); await tick();
+  assert.equal(window.location.hash, '#projects');
+});
+
+test('Remove of any other project keeps today\'s confirm and sends no deleteFolder', async () => {
+  const calls = [];
+  const { window } = await boot({ fetchHandler: (u, opts) => {
+    if (u.includes('/api/projects') && opts.method === 'DELETE') { calls.push(u); return reply(200, { projects: [PROJECTS[1]] }); }
+    return null;
+  } });
+  await goHash(window, 'projects/alpha-00000001');
+  const doc = window.document;
+  click(window, doc.querySelector('#proj-detail .pd-remove'));
+  await tick();
+  assert.match(doc.querySelector('#confirm-message').textContent, /The folder on disk and its run history are left untouched\./);
+  assert.equal(doc.querySelector('#confirm-ok').classList.contains('danger'), false);
+  click(window, doc.querySelector('#confirm-ok'));
+  await tick(); await tick(); await tick();
+  assert.equal(calls.length, 1);
+  assert.doesNotMatch(calls[0], /deleteFolder/);
+});
+
+test('a 409 DELETE_FOLDER_REQUIRED (an older list) asks again naming the folder; a folder that could not be deleted is reported', async () => {
+  const calls = [];
+  const { window } = await boot({ fetchHandler: (u, opts) => {
+    if (u.includes('/api/projects') && opts.method === 'DELETE') {
+      calls.push(u);
+      return /deleteFolder=1/.test(u)
+        ? reply(200, { projects: [PROJECTS[1]], folder: { path: '/Users/me/dev/alpha', deleted: false, error: 'EBUSY' },
+          warning: 'Removed "alpha", but its folder could not be deleted (EBUSY). What is left of it is still at ~/dev/alpha.' })
+        : reply(409, { error: 'Removing "alpha" also deletes its folder ~/dev/alpha and every file in it.', code: 'DELETE_FOLDER_REQUIRED', displayPath: '~/dev/alpha' });
+    }
+    return null;
+  } });
+  await goHash(window, 'projects/alpha-00000001');
+  const doc = window.document;
+  click(window, doc.querySelector('#proj-detail .pd-remove'));
+  await tick();
+  assert.match(doc.querySelector('#confirm-message').textContent, /left untouched/, 'the list said nothing about the folder');
+  click(window, doc.querySelector('#confirm-ok'));
+  await tick(); await tick(); await tick(); await tick();
+  assert.equal(doc.querySelector('#confirm-modal').classList.contains('hidden'), false, 'asked again');
+  assert.equal(doc.querySelector('#confirm-message strong').textContent, '~/dev/alpha');
+  assert.ok(doc.querySelector('#confirm-ok').classList.contains('danger'));
+  click(window, doc.querySelector('#confirm-ok'));
+  await tick(); await tick(); await tick();
+  assert.deepEqual(calls.map((u) => /deleteFolder=1/.test(u)), [false, true]);
+  await tick(); await tick();
+  assert.equal(window.location.hash, '#projects');
+  const t = lastToast(doc);
+  assert.ok(t && `${t.title} ${t.detail}`.includes('could not be deleted (EBUSY)'), JSON.stringify(t));
 });

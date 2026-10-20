@@ -18,7 +18,8 @@ const trackDom = useDomRelease(afterEach);
 const htmlPath = fileURLToPath(new URL('../../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../../ui/public/app.js', import.meta.url));
 
-export async function bootApp({ fetchHandler, hooks = null } = {}) {
+// `local`: localStorage items set before app.js loads (it reads some once at import, e.g. the Runs View menu).
+export async function bootApp({ fetchHandler, hooks = null, local = null } = {}) {
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
@@ -65,6 +66,7 @@ export async function bootApp({ fetchHandler, hooks = null } = {}) {
   globalThis.window = window;
   globalThis.document = window.document;
   if (hooks) window.__worcaTestHooks = { ...hooks };
+  for (const [k, v] of Object.entries(local || {})) window.localStorage.setItem(k, v);
 
   await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
   await new Promise((r) => setTimeout(r, 0));

@@ -8,6 +8,7 @@ import { checkBaseMerge, mergeBaseInto, scrubGitText, INTERACTIVE_TTL_MS } from 
 import { branchPushedTo, branchTips, pushBranch, leftoverMarkers } from './git-info.mjs';
 import { conflictBrief } from './pr-watch.mjs';
 import { effectiveSyncSettings } from './project-sync.mjs';
+import { gitAvailable } from './git-available.mjs';
 
 const FINISHED = new Set(['done', 'stopped', 'error']);
 const SETTLED = new Set(['up-to-date', 'clean']);
@@ -195,6 +196,7 @@ export function resolveTaskText({ check, feature, title, prompt }) {
  * (D13) and the fast-forward push live in settleResolutions. Never throws.
  */
 export async function afterRunBaseCheck(rowId, { log = () => {} } = {}) {
+  if (!gitAvailable()) return;   // a check without git finds no branch tip and would store "no-branch" on a branch that exists
   try {
     const { row, members } = await checkRunBase(rowId);
     for (const m of members) log(`base check \`${m.branch}\`: ${m.baseCheck.status}${m.baseCheck.fileCount ? ` (${m.baseCheck.fileCount} file(s))` : ''}`);

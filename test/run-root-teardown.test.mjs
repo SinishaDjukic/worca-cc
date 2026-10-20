@@ -217,6 +217,8 @@ test('detached: a failed teardown commit retains the worktree + run root and per
     const liveManifest = await readRunManifest(runRoot);
     assert.equal(liveManifest.retain.reason, 'commit_failed');
     assert.equal(liveManifest.retain.members[0].worktreeDir, st.branch.worktreeDir);
+    assert.deepEqual(Object.keys(liveManifest.retain.members[0]).sort(), ['at', 'branch', 'message', 'projectKey', 'step', 'worktreeDir'],
+      'a git member carries no reason (P1: only a Folder member does)');
     const durableManifest = JSON.parse(await readFile(join(st.pipelineDir, 'run.json'), 'utf8'));
     assert.equal(durableManifest.retain.reason, 'commit_failed', 'retain is written before the durable copy');
     const patchText = await readFile(join(st.pipelineDir, 'retained-work.patch'), 'utf8');

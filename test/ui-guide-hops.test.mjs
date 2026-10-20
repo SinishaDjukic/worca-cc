@@ -41,6 +41,7 @@ const RUNTIME = new Map([
   ['#proj-detail .tp-cell', ['team-policy-view.mjs', "'tm-cell tp-cell'"]],
   ['#proj-detail .tp-enable', ['team-policy-view.mjs', "btn(doc, 'tp-enable',"]],
   ['#plugin-modal .tp-enable-submit', ['app.js', "'btn btn-primary btn-sm tp-enable-submit'"]],
+  ['#plugin-modal .pl-needs-git', ['team-metrics-surfaces.mjs', "sub.append(' · ', h(doc, 'span', 'badge waiting pl-needs-git', 'Needs git'))"]],   // the setup dialogs' origin line (P6; team-policy-view.mjs paints the same)
   ['#tp-body .tp-edit', ['team-policy-view.mjs', "'btn btn-sm tp-edit'"]],
   ['#mode-cards [data-level-choice]', ['ui-level.mjs', 'data-level-choice="${id}"']],            // the mode dialog's cards
   ['#lvl-menu [data-level-choice]', ['ui-level.mjs', "if (!side.querySelector('[data-level-choice]')) side.innerHTML = levelMenuHtml(lvl);"]],   // the account menu's Interface mode side menu

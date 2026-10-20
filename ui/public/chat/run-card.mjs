@@ -14,6 +14,11 @@ import { fmtDur, fmtUsd, isGraphManifest, manifestNodes } from '../graph/run-dec
 import { askKindOf } from '../ask/registry.mjs';
 import { shapeFirstOn } from './shape-gate.mjs';
 import { checklistScore } from '../../../src/shared/shape/review-checklist.mjs';
+import { NO_PROJECT_KEY, NO_PROJECT_NAME } from '../../../src/shared/no-project.mjs';
+import { changesCounts, folderDoneWords } from '../folder-changes.mjs';
+import { isGitRun, isNoProjectRun, kindChip, workModeOf } from '../run-kind.mjs';
+import { gitOn } from '../git-gate.mjs';
+import { formatBytes } from '../artifacts/common.mjs';
 import { fixOutcomeText } from './pr-watch-words.mjs';
 import { runModel } from '../../../src/shared/run-model.mjs';
 import { paintRunStatus, kindLabel, syncActions, pauseResumeOwn, renderMemberRows } from '../run-status-card.mjs';
@@ -50,6 +55,8 @@ const ICONS = {
   merged: '<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 8.5V21M6 9a9 9 0 0 0 9 9h.5"/>',
   check: '<path d="M5 12.5l4.5 4.5L19 7"/>',
   stop: '<path d="M7 7l10 10M17 7L7 17"/>',
+  download: '<path d="M12 4v11M7 10l5 5 5-5M5 19h14"/>',
+  file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>',
 };
 
 function icon(doc, name) {
@@ -71,8 +78,9 @@ export function progressIdent(block) {
       // A PR fix run's card (ui/server.mjs askPrFixRun): what started it and, later, its outcome.
       ...(card.fix && typeof card.fix === 'object' ? { fix: card.fix } : {}) };
   }
-  return { cardId: block.id, pipelineId: null, runId: block.runId || null, projectKey: card.projectKey || null, workspaceId: card.workspaceId || null,
-    title: card.title || card.brief || 'run', label: card.workspaceName || card.projectName || '' };
+  const none = card.target === 'none';   // P3: a No project proposal — the reserved key and its name until the first frame
+  return { cardId: block.id, pipelineId: null, runId: block.runId || null, projectKey: none ? NO_PROJECT_KEY : (card.projectKey || null), workspaceId: card.workspaceId || null,
+    title: card.title || card.brief || 'run', label: none ? NO_PROJECT_NAME : (card.workspaceName || card.projectName || '') };
 }
 
 /** What every control and ctx call receives: the run as the snapshot knows it, the identity filling the gaps (a live
@@ -116,6 +124,7 @@ export function resultWord(snap) {
     const step = failed ? nodeLabelOf(snap.stepper, failed) : '';
     return { key: 'failed', tone: 'red', glyph: 'stop', title: 'Failed', sub: step ? `Step: ${step} · see Logs for the error` : 'See Logs for the error' };
   }
+  if (snap.workMode === 'folder') { const c = changesCounts(snap.changes); const w = folderDoneWords(snap.changes && snap.changes.state, c ? c.total : null); return { key: 'folder', tone: 'green', glyph: 'check', title: w.lead, sub: w.sub }; }
   const pr = snap.pr && snap.pr.url ? String(snap.pr.state || '').toUpperCase() : '';
   if (pr === 'MERGED') return { key: 'merged', tone: 'violet', glyph: 'merged', title: 'Merged', sub: 'The pull request was merged' };
   if (pr === 'OPEN') return { key: 'review', tone: 'blue', glyph: 'review', title: 'In review', sub: 'The pull request is open' };
@@ -345,6 +354,11 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       ? { ...s.run, status: s.status ? status : (s.run.status || ''), pendingQuestion: s.pendingQuestion ?? s.run.pendingQuestion ?? null,
         pr: s.pr || s.run.pr || null, watch: s.watch || s.run.watch || null }      // D24: round / branch ride on s.run
       : { status, pendingQuestion: s.pendingQuestion || null, pr: s.pr || null, watch: s.watch || null };
+    // Projects, any way: a Folder run's changes and a run without a project word the finished line; with git missing on
+    // this machine a git run shows no git chrome (never Ready to ship).
+    const mode = isNoProjectRun(s) ? 'none' : workModeOf(s);
+    if (mode !== 'git') Object.assign(base, { workMode: mode, ...(s.changes ? { changes: s.changes } : {}) });
+    if (!gitOn(doc)) base.gitChrome = false;
     if (!lr) return base;
     const rs = lr.m;
     const run = rs ? { ...(rs.run || {}), status: String(rs.status || ''), pendingQuestion: rs.pendingQuestion ?? null }
@@ -585,8 +599,12 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     const r = s.results || null;
     const arts = Array.isArray(s.artifacts) ? s.artifacts : [];
     const prUrl = s.pr && isWebUrl(s.pr.url) ? s.pr.url : '';
-    const canCreate = word.key === 'ship' && !s.archived && !(s.pr && s.pr.url) && call(controls.prHost) !== false;
-    const sig = JSON.stringify([word, r, arts.map((a) => a.relPath), !!s.moreArtifacts, prUrl, canCreate, shapeFirstOn()]);
+    const canCreate = word.key === 'ship' && isGitRun(s) && !s.archived && !(s.pr && s.pr.url) && call(controls.prHost) !== false;
+    // P5: a workspace run applies each Folder member on its own (the run page's Changes); the card's Apply has no memberKey.
+    const ws = s.kind === 'workspace-run' || !!s.workspaceId;
+    const total = (changesCounts(s.changes) || {}).total || 0; const canApply = word.key === 'folder' && !ws && !s.archived && !!s.changes && s.changes.state === 'pending' && total > 0 && typeof controls.openApply === 'function';
+    const np = isNoProjectRun(s);
+    const sig = JSON.stringify([word, r, arts.map((a) => [a.relPath, a.bytes]), !!s.moreArtifacts, s.artifactsTotal, np, prUrl, canCreate, canApply, shapeFirstOn()]);
     if (sig === resultSig) return;
     resultSig = sig;
     createPrBtn = null;
@@ -633,14 +651,43 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
         b.title = shown;
         b.appendChild(h('span', 'chat-rc-file-path', shown));
         if (!f.binary) b.append(h('span', 'chat-rc-add', `+${f.additions}`), h('span', 'chat-rc-del', `−${f.deletions}`));
-        b.addEventListener('click', () => call(ctx.openRunPanel, ref(), { tab: 'diff' }));
+        b.addEventListener('click', () => call(ctx.openRunPanel, ref(), { tab: word.key === 'folder' ? 'changes' : 'diff' }));
         const li = h('li');
         li.appendChild(b);
         ul.appendChild(li);
       }
       resultSec.appendChild(ul);
     }
-    if (arts.length) {
+    if (arts.length && np) {
+      const box = h('section', 'chat-rc-arts-list');
+      box.setAttribute('aria-label', 'Artifacts');
+      box.appendChild(h('div', 'cap', `Artifacts · ${Number.isInteger(s.artifactsTotal) ? s.artifactsTotal : arts.length}`));
+      const rows = h('div', 'chat-rc-art-rows');
+      for (const a of arts) {
+        const rel = String(a.relPath || '').replace(/^work\//, '');
+        const cut = rel.lastIndexOf('/');
+        const base = rel.slice(cut + 1);
+        const row = h('div', 'chat-rc-art-row');
+        const name = button('chat-rc-art-name');
+        if (cut >= 0) name.appendChild(h('span', 'faint', rel.slice(0, cut + 1)));
+        name.appendChild(doc.createTextNode(base));
+        name.title = rel;
+        name.addEventListener('click', () => call(ctx.openArtifact, artifactRef(), a));
+        const dl = button('chat-rc-art-dl');
+        dl.setAttribute('aria-label', `Download ${base}`);
+        dl.appendChild(icon(doc, 'download'));
+        dl.addEventListener('click', () => call(ctx.downloadArtifact, artifactRef(), a));
+        row.append(icon(doc, 'file'), name, h('span', 'chat-rc-art-size', formatBytes(a.bytes)), dl);
+        rows.appendChild(row);
+      }
+      box.appendChild(rows);
+      if (s.moreArtifacts) {
+        const more = button('chat-rc-art is-more', 'All artifacts');
+        more.addEventListener('click', () => call(ctx.openRunPanel, ref(), { tab: 'artifacts' }));
+        box.appendChild(more);
+      }
+      resultSec.appendChild(box);
+    } else if (arts.length) {
       const box = h('div', 'chat-rc-arts');
       box.setAttribute('role', 'group');
       box.setAttribute('aria-label', 'Artifacts');
@@ -690,6 +737,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       }
       resultSec.appendChild(rfoot);
     }
+    if (canApply) { const f = h('div', 'chat-rc-res-foot'); const b = button('chat-rc-apply', 'Apply to folder'); let busy = false; b.addEventListener('click', () => { if (busy) return; busy = true; Promise.resolve(call(controls.openApply, ref(), b)).catch(() => {}).finally(() => { busy = false; call(refresh); }); }); f.appendChild(b); resultSec.appendChild(f); }
     resultSec.appendChild(changesSlot);
     resultSec.hidden = false;
   }
@@ -835,7 +883,8 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     kind.textContent = kindOf(curRow, s);
     open.setAttribute('href', curRow ? (curRow.groupKind === 'feature' ? `#feature/${encodeURIComponent(curRow.groupId)}` : `#group/${encodeURIComponent(curRow.groupId)}`) : progressRoute(id, s));
     if (curRow) { membersEl.replaceChildren(renderMemberRows(doc, curRow)); membersEl.hidden = false; } else { membersEl.replaceChildren(); membersEl.hidden = true; }
-    where.textContent = [projectLabel(id, s), pid ? `#${pid}` : ''].filter(Boolean).join(' · ');
+    if (isNoProjectRun(s)) where.replaceChildren(...[kindChip(doc, 'none'), pid ? ` · #${pid}` : ''].filter(Boolean));
+    else where.textContent = [projectLabel(id, s), pid ? `#${pid}` : ''].filter(Boolean).join(' · ');
     const chip = autoChip(s);
     autoEl.hidden = !chip;
     autoEl.textContent = chip ? chip.text : '';
@@ -966,8 +1015,9 @@ export function createRunCardController({ controls = {}, runStore = null, now = 
         // it read THIS ending. A read taken before a resume (`interrupted` is terminal too) must never paint over the
         // new lineage's end: it would show Interrupted + Resume until the `done` re-read, and for good after a socket gap.
         if (snap.terminal && rest.terminal && rest.status === snap.status) return { ...rest, runId: snap.runId, branch: snap.branch || rest.branch };
-        return { ...snap, results: rest.results, artifacts: rest.artifacts, moreArtifacts: rest.moreArtifacts, pr: rest.pr, branch: snap.branch || rest.branch,
-          rounds: rest.rounds, watch: rest.watch, labels: rest.labels ?? snap.labels };   // Shaper s5: the run's rounds and a stopped watch are REST facts
+        return { ...snap, results: rest.results, artifacts: rest.artifacts, moreArtifacts: rest.moreArtifacts, artifactsTotal: rest.artifactsTotal, pr: rest.pr, branch: snap.branch || rest.branch,
+          rounds: rest.rounds, watch: rest.watch, labels: rest.labels ?? snap.labels,   // Shaper s5: the run's rounds and a stopped watch are REST facts
+          ...(rest.workMode ? { workMode: rest.workMode, changes: rest.changes } : {}) };
       }
       return snap;
     }
@@ -1083,6 +1133,13 @@ export function createRunCardController({ controls = {}, runStore = null, now = 
         // run-harness persists status 'done' (a `state` frame) BEFORE _buildResults writes results.json and indexes the
         // last artifacts, and emits `done` after: re-arm the one-shot REST read on the `done` frame.
         if (type === 'done') for (const e of entries.values()) if (e.ident.runId === runId) { e.tried.clear(); if (e.hydrating) e.again = true; }
+        // P3: a run without a project indexes its work/ files at teardown, AFTER `done`: each `artifact` frame of such a
+        // finished run re-arms the read too (single-flight: a frame landing mid-read reads once more when it settles).
+        if (type === 'artifact') for (const e of entries.values()) {
+          if (e.ident.runId !== runId) continue;
+          const s = resolve(e);
+          if (s && s.terminal && isNoProjectRun(s)) { e.tried.clear(); if (e.hydrating) e.again = true; }
+        }
         if (queued) return;
         queued = true;
         Promise.resolve().then(() => {

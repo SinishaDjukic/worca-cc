@@ -3,12 +3,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, mkdirSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { planClone, parseCloneAllow, cloneAllowed, runClone, cloneProject, CloneError } from '../src/core/clone-project.mjs';
 import { ADO_GIT_CREDENTIAL_HELPER } from '../src/core/azure-credentials.mjs';
 import { withEnv } from './helpers/with-env.mjs';
+import { withNoGit } from './helpers/git-off.mjs';
 
 const ROOT = mkdtempSync(join(tmpdir(), 'worca-clone-root-'));
 const plan = (req, env = {}) => planClone(req, { projectsRoot: ROOT, env });
@@ -190,4 +191,31 @@ test('cloneProject: a registered name is refused before cloning; a failed regist
     addProject: async () => { throw new Error('this project path is already registered'); } }).catch((e) => e);
   assert.equal(bad.code, 'failed');
   assert.equal(existsSync(join(ROOT, 'regfail')), false);
+});
+
+test('cloneProject: a missing projects root is created before git clone runs (U6: on first use)', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'worca-clone-first-'));
+  const root = join(base, 'projects');
+  try {
+    let seen = null;
+    const run = async (p) => { seen = existsSync(root); mkdirSync(p.dir); return p; };
+    const r = await cloneProject({ url: 'https://github.com/acme/first' }, { projectsRoot: root, listProjects: async () => [], run,
+      addProject: async ({ name, path }) => [{ name, path, key: 'k' }] });
+    assert.equal(seen, true);
+    assert.equal(r.project.path, join(root, 'first'));
+  } finally { rmSync(base, { recursive: true, force: true }); }
+});
+
+test('cloneProject: with git missing nothing is created, not even the projects root', async (t) => {
+  withNoGit(t);
+  const base = mkdtempSync(join(tmpdir(), 'worca-clone-nogit-'));
+  const root = join(base, 'projects');
+  try {
+    let ran = false;
+    await assert.rejects(cloneProject({ url: 'https://github.com/acme/none' }, { projectsRoot: root, listProjects: async () => [],
+      run: async () => { ran = true; }, addProject: async () => [] }),
+    (e) => e instanceof CloneError && e.code === 'git-missing' && e.message === 'git is not installed on this machine');
+    assert.equal(ran, false);
+    assert.equal(existsSync(root), false);
+  } finally { rmSync(base, { recursive: true, force: true }); }
 });

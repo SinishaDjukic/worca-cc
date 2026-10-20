@@ -100,6 +100,14 @@ test('add accepts an explicit name with --path <dir> and --path=<dir>', async ()
       assert.equal(r.code, 0, r.stderr);
       assert.match(r.stdout, new RegExp(`-> ${reEsc(path)}`));
     } },
+    { name: 'add stores the folder kind (plain folder → none)', run: async () => {
+      const home = await freshHome(); const proj = await freshProj();
+      const r = await run(['add', 'plainkind', '--path', proj], { home });
+      assert.equal(r.code, 0, r.stderr);
+      const { DatabaseSync } = await import('node:sqlite');
+      const db = new DatabaseSync(join(home, '.worca-cc', 'worca-cc.db'));
+      try { assert.equal(db.prepare("SELECT vcs FROM projects WHERE name = 'plainkind'").get().vcs, 'none'); } finally { db.close(); }
+    } },
   ]);
 });
 

@@ -9,6 +9,7 @@ import { listProjects } from './projects.mjs';
 import { readWorkspace } from './workspaces.mjs';
 import { currentBranch, resolveDefaultBranch } from './worktree.mjs';
 import { mapWithCap, fanoutCap } from './fanout.mjs';
+import { gitAvailable, onGitChange } from './git-available.mjs';
 import {
   syncRepo, remoteInfo, incomingCommits, commitInfo, isSafeBranchName, lastFetchedAt,
   INTERACTIVE_TTL_MS, INTERACTIVE_TIMEOUT_MS, RUN_TIMEOUT_MS,
@@ -74,6 +75,9 @@ export async function workspaceSyncBlocks(workspaceId, { mode = 'status', bases 
   // readWorkspace returns `exists[]` aligned with projectPaths: a gone folder runs no git in a dead cwd.
   const blocks = await mapWithCap(members, fanoutCap(), (m) => (ws.exists && ws.exists[m.i] === false
     ? { base: null, remote: null, state: 'unknown', missing: true }
+    // P5: a Folder member (annotated vcs 'none') has no branch and no remote: never git in its folder — nested in a
+    // repository, a fetch / ff there would move THAT repository.
+    : Array.isArray(ws.vcs) && ws.vcs[m.i] === 'none' ? { base: null, remote: null, state: 'unknown', folder: true }
     : projectSyncBlock({ dir: m.dir, projectKey: m.projectKey, base: bases[m.projectKey] || null, mode, ...act })));
   return members.map((m, i) => ({ projectKey: m.projectKey, ...blocks[i] }));
 }
@@ -97,6 +101,8 @@ export function worstChipState(blocks) {
   return (blocks || []).map(chipState).filter(Boolean).sort((a, b) => RANK[b] - RANK[a])[0] || null;
 }
 
+const syncLoopCanRun = () => gitAvailable();
+
 /**
  * Scheduled background fetch (NOT per page load): one project at a time, each only when its
  * FETCH_HEAD is older than its refreshMinutes (0 = never). Emits 'changed' {projectKey} when a
@@ -118,6 +124,7 @@ export function startProjectSyncBackground({ log = (m) => console.warn(m), tickM
     return !at || Date.now() - Date.parse(at) >= s.refreshMinutes * 60_000;
   };
   const runTick = async () => {
+    if (!syncLoopCanRun()) return;
     try {
       for (const p of await listProjectsFn()) {
         if (stopped) return;                       // stop() lands between projects
@@ -143,8 +150,9 @@ export function startProjectSyncBackground({ log = (m) => console.warn(m), tickM
   void tick();
   const timer = setInterval(() => { void tick(); }, tickMs);
   timer.unref?.();
+  const offGit = onGitChange((s) => { if (s.available) void tick(); });
   /** Stop the timer; resolves once a tick already in flight has finished (tests await it). */
-  return async () => { stopped = true; clearInterval(timer); await (busy || null); };
+  return async () => { offGit(); stopped = true; clearInterval(timer); await (busy || null); };
 }
 
 export const _testing = { RANK };

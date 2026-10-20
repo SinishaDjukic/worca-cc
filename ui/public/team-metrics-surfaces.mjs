@@ -210,12 +210,29 @@ function radioCard(doc, { name, value, checked, title, body, disabled = false })
   return card;
 }
 
+/** The GitHub repository field (no git, no repository named in .git/config): a real <label for>, no hint text. */
+function repoField(doc, repo = '') {
+  const f = h(doc, 'div', 'field');
+  const label = h(doc, 'label', null, 'GitHub repository');
+  label.htmlFor = 'tm-repo-input';
+  const input = h(doc, 'input', 'input mono tm-repo');
+  Object.assign(input, { id: 'tm-repo-input', type: 'text', placeholder: 'owner/name', value: repo || '' });
+  input.setAttribute('spellcheck', 'false');
+  input.setAttribute('autocomplete', 'off');
+  f.append(label, input);
+  return f;
+}
+
 /** Enable dialog body (boards 5 + 6). mode: 'here' | 'delegate'. */
-export function renderEnableDialogBody({ project, origin, candidates = [], mode = 'here', attribution = 'git-user', change = false }, { doc = globalThis.document } = {}) {
+export function renderEnableDialogBody({ project, origin, candidates = [], mode = 'here', attribution = 'git-user', change = false, repoInput = false, repo = '', needsGit = false }, { doc = globalThis.document } = {}) {
   const root = h(doc, 'div', 'tm-enable-body');
   const sub = h(doc, 'div', 'sub');
-  sub.append('for ', h(doc, 'b', null, project.name), ' · origin ', code(doc, origin || '—'));
+  sub.append('for ', h(doc, 'b', null, project.name));
+  if (!repoInput) sub.append(' · origin ', code(doc, origin || '—'));
+  if (needsGit) sub.append(' · ', h(doc, 'span', 'badge waiting pl-needs-git', 'Needs git'));
   root.append(sub);
+  // No git and no repository named in .git/config: the GitHub repository is typed once (P6).
+  if (repoInput) root.append(repoField(doc, repo));
 
   const where = h(doc, 'div', 'field');
   where.append(h(doc, 'label', null, 'Where to record'));

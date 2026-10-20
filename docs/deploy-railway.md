@@ -159,8 +159,8 @@ Setting a variable redeploys the service. Other settings changes apply on the ne
 
 ## 5. First project
 
-Projects live on the volume under `/data/projects`. Add one from the UI: **Projects → Add project →
-Clone from URL**, with the repository's `https://` URL and, optionally, a branch and a folder name.
+Projects live on the volume under `/data/projects`. Add one from the UI: **Projects → Add project** — **New** for an empty project by name,
+or **Clone from URL** with the repository's `https://` URL and, optionally, a branch and a folder name.
 Worca clones it with the deployment's GitHub read credential (token or App), as the `worca` user,
 into a new folder, and registers it. The same works from Chat ("set up github.com/acme/api"
 proposes a card you apply) and from a shell with `worca add --clone <url>`.
