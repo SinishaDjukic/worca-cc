@@ -3799,28 +3799,28 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .fc-counts .fc-add,.fc-sign.fc-add{color:var(--green-ink-strong);}
 .fc-counts .fc-upd,.fc-sign.fc-upd{color:var(--amber-ink-strong);}
 .fc-counts .fc-del,.fc-sign.fc-del{color:var(--red-ink-strong);}
-.rd-stats b.fc-tile{font:500 17px var(--mono);letter-spacing:0;}
+.rd-stats b.fc-tile{font:500 18px var(--mono);letter-spacing:0;}
 .fc-bar{display:flex;align-items:center;flex-wrap:wrap;gap:10px;padding:10px 10px 10px 14px;border-radius:var(--r-card);
   background:color-mix(in srgb,var(--teal-bg) 60%,var(--panel));}
-.fc-bar-l{display:flex;align-items:center;gap:8px;min-width:0;font:500 12.5px var(--mono);color:var(--teal-ink-strong);overflow-wrap:anywhere;}
+.fc-bar-l{display:flex;align-items:center;gap:8px;min-width:0;font:500 12px var(--mono);color:var(--teal-ink-strong);overflow-wrap:anywhere;}
 .fc-bar-l svg{flex:none;}
 .fc-bar-r{margin-left:auto;display:flex;gap:8px;}
 .rd-sec .fc-bar-host:not([hidden]){margin-bottom:12px;}
 /* P5: a workspace run's Changes — one section per Folder member (name + Folder chip), and the Apply dialog's member line */
 .fc-member + .fc-member{margin-top:20px;}
-.fc-member-head{display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:14px;font-weight:600;}
+.fc-member-head{display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:13px;font-weight:600;}
 .fc-member-body .fc-bar-host:not([hidden]){margin-bottom:12px;}
-.fc-member-line{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;overflow-wrap:anywhere;}
+.fc-member-line{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;overflow-wrap:anywhere;}
 .fc-sign{width:12px;flex:none;text-align:center;font:500 13px var(--mono);}
 .rd-diff-row.fc-file{align-items:flex-start;}
 .fc-file .rd-diff-row-path{white-space:normal;overflow-wrap:anywhere;}   /* a long path wraps: clipped, rows sharing a long prefix read the same */
 .confirm-modal .fc-dlg{width:min(520px,100%);display:flex;flex-direction:column;gap:16px;}   /* beats .confirm-modal .card by source order */
-.fc-dlg .fc-dlg-title{margin:0;font-size:17px;font-weight:600;letter-spacing:0;}   /* (0,2,0): beats .card h2 (0,1,1) */
-.fc-target{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:var(--r-md);background:var(--field);font:400 12.5px var(--mono);overflow-wrap:anywhere;}
+.fc-dlg .fc-dlg-title{margin:0;font-size:15px;font-weight:600;letter-spacing:0;}   /* (0,2,0): beats .card h2 (0,1,1) */
+.fc-target{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:var(--r-md);background:var(--field);font:400 12px var(--mono);overflow-wrap:anywhere;}
 .fc-target svg{flex:none;color:var(--teal-ink-strong);}
 .fc-plan{list-style:none;margin:0;padding:0;border:1px solid var(--line);border-radius:var(--r-card);overflow:hidden;background:var(--panel);flex:none;}   /* overflow:hidden zeroes its flex min-height */
 .fc-plan:empty{display:none;}
-.fc-plan-row{display:flex;align-items:center;gap:12px;padding:10px 14px;font-size:14px;}
+.fc-plan-row{display:flex;align-items:center;gap:12px;padding:10px 13px;font-size:13px;}
 .fc-plan-row + .fc-plan-row{border-top:1px solid var(--line);}
 .fc-plan-n{margin-left:auto;font:400 12px var(--mono);color:var(--ink-2);}
 .fc-skipped{display:flex;flex-direction:column;gap:10px;padding:12px;border:1px solid var(--line);border-radius:var(--r-card);background:var(--field);}
@@ -3829,10 +3829,10 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .fc-skipped-h svg{flex:none;color:var(--amber-ink-strong);}
 .fc-skipped ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;max-height:min(30vh,240px);overflow:auto;}
 .fc-sfile{display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel);}
-.fc-sfile-path{min-width:0;font-size:12.5px;overflow-wrap:anywhere;}
-.fc-skip{margin-left:auto;flex:none;padding:3px 9px;font-size:11.5px;font-weight:500;background:var(--amber-bg);color:var(--amber-ink-strong);}
+.fc-sfile-path{min-width:0;font-size:12px;overflow-wrap:anywhere;}
+.fc-skip{margin-left:auto;flex:none;padding:3px 9px;font-size:12px;font-weight:500;background:var(--amber-bg);color:var(--amber-ink-strong);}
 .fc-skip.fc-fail{background:var(--red-bg);color:var(--red-ink-strong);}
-.fc-sfile-msg{flex-basis:100%;font-size:11.5px;color:var(--ink-2);overflow-wrap:anywhere;}
+.fc-sfile-msg{flex-basis:100%;font-size:12px;color:var(--ink-2);overflow-wrap:anywhere;}
 .fc-err{margin:0;font-size:13px;color:var(--red-ink-strong);overflow-wrap:anywhere;}   /* FOLDER_MISSING names the absolute path */
 .fc-err[hidden]{display:none;}
 .fc-loading{margin:0;font-size:13px;color:var(--ink-2);}
@@ -4172,7 +4172,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .pad-chip{display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 9px;border-radius:var(--r-xs);background:var(--field);color:var(--ink-2);font-size:12px;font-weight:600;}
 .pad-chip.warn{background:var(--amber-bg);color:var(--amber-ink-strong);}
 .pad-files{font-family:var(--mono);font-size:12px;color:var(--ink-2);}
-#proj-add-location{font-family:var(--mono);font-size:12.5px;}
+#proj-add-location{font-family:var(--mono);font-size:12px;}
 #proj-add-path{font-family:var(--mono);}
 /* The AddNew board's Location box: a folder icon inside the read-only field. */
 .proj-add-loc{position:relative;}
@@ -8916,7 +8916,7 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .chat-rc-art-row{display:flex;align-items:center;gap:10px;min-height:32px;padding:8px 8px 8px 14px;}
 .chat-rc-art-row + .chat-rc-art-row{border-top:1px solid var(--line);}
 .chat-rc-art-row > svg{flex:none;color:var(--ink-3);}
-.chat-rc-art-name{flex:1;min-width:0;padding:0;border:0;background:none;color:var(--ink);font-family:var(--mono);font-size:12.5px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;}
+.chat-rc-art-name{flex:1;min-width:0;padding:0;border:0;background:none;color:var(--ink);font-family:var(--mono);font-size:12px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;}
 .chat-rc-art-name .faint{color:var(--ink-2);}
 .chat-rc-art-size{flex:none;color:var(--ink-2);font-family:var(--mono);font-size:12px;font-variant-numeric:tabular-nums;}
 .chat-rc-art-dl{flex:none;display:inline-grid;place-items:center;width:28px;height:28px;padding:0;border:1px solid transparent;border-radius:var(--r-sm);background:none;color:var(--ink-2);cursor:pointer;}
@@ -8979,7 +8979,7 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 /* The run card's `Where it runs` sub-line (ask-panel.mjs updateTargetSub): the kind chip between the name and the branch words (B10). */
 .ask-rp-sec-sub > .kind-chip{margin:0 6px;}
 /* The `Switched to <name>` divider row (canvas Switched): a centered label between two hairlines, no accent. */
-.ask-divider{display:flex;align-items:center;gap:12px;margin:6px 0;font-size:12.5px;color:var(--ink-2);}
+.ask-divider{display:flex;align-items:center;gap:12px;margin:6px 0;font-size:12px;color:var(--ink-2);}
 .ask-divider::before,.ask-divider::after{content:"";flex:1 1 0;min-width:16px;height:1px;background:var(--line-2);}
 .ask-divider-in{display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:calc(100% - 56px);font-weight:500;}
 .ask-divider-in > svg{flex:none;}
@@ -8989,10 +8989,10 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .chat-q{container:chat-q / inline-size;}
 .chat-q .chat-rc-q-head{margin-bottom:14px;font-size:18px;}
 .chat-q.chat-rc-q :is(.qpanel,.qblock),.chat-q.chat-rc-q .qpanel[data-kind="clarify"] .qpanel-foot{border-color:var(--line);}
-.chat-q .qwhy{font-size:13.5px;font-weight:400;color:var(--ink-2);}
+.chat-q .qwhy{font-size:13px;font-weight:400;color:var(--ink-2);}
 .chat-q .qopt-txt{display:flex;flex-direction:column;gap:2px;min-width:0;}
 .chat-q-opt-name{display:flex;align-items:center;flex-wrap:wrap;gap:8px;}
-.chat-q-opt-sub{font-family:var(--mono);font-size:11.5px;font-weight:400;color:var(--ink-2);overflow-wrap:anywhere;}
+.chat-q-opt-sub{font-family:var(--mono);font-size:12px;font-weight:400;color:var(--ink-2);overflow-wrap:anywhere;}
 .chat-q .qpanel-foot .btn-primary:disabled{opacity:.45;cursor:default;transform:none;}
 .chat-q.is-answered .qopt{cursor:default;}
 @container chat-q (min-width:640px){

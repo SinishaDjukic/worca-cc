@@ -451,8 +451,8 @@ test('Folder rows: a Folder chip, a No git box where the branch bar goes, a Fold
     assert.ok(row('k3').querySelector('.pl-sync').hasAttribute('data-needs-git'), 'gated with the column (P0)');
     assert.match(readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8'),
       /#projects-list \.pl-sync:not\(:has\(> \.proj-sync:not\(\[hidden\]\), > \.proj-nogit\)\)\{display:none;\}/, 'the No git box keeps its column (jsdom has no cascade)');
-    assert.deepEqual([...ctx.doc.querySelectorAll('.proj-filters .proj-fchip')].map((c) => c.textContent), ['All 3', 'Behind 1', 'Up to date 1', 'Folder 1']);
-    click(ctx.window, ctx.doc.querySelector('.proj-fchip[data-filter="folder"]'));
+    assert.deepEqual([...ctx.doc.querySelectorAll('.proj-filters .filter-chip')].map((c) => c.textContent), ['All 3', 'Behind 1', 'Up to date 1', 'Folder 1']);
+    click(ctx.window, ctx.doc.querySelector('.filter-chip[data-filter="folder"]'));
     assert.deepEqual([...ctx.doc.querySelectorAll('#projects-list .pl-item')].filter((n) => !n.hidden).map((n) => n.dataset.key), ['k3']);
   } finally { t.mock.timers.reset(); }
 });

@@ -161,7 +161,7 @@ import { createMcpView } from '../ui/public/mcp-view.mjs';
 
 test('Marketplaces list: the chip stands first in the actions (before Remove), as span.badge.waiting', () => {
   const list = renderMarketplaceList([{ id: 'gl', url: 'https://gitlab.com/a/m', name: 'GL', plugins: [], lastSync: null, needsGit: true }], { doc });
-  assert.deepEqual([...list.querySelector('.pl-mkt-actions').children].map((c) => c.className), ['badge waiting pl-needs-git', 'pl-remove pl-mkt-remove']);
+  assert.deepEqual([...list.querySelector('.pl-mkt-actions').children].map((c) => c.className), ['badge waiting pl-needs-git', 'btn btn-sm btn-danger pl-remove pl-mkt-remove']);
 });
 
 test('app: consent names Needs git on the source line; the add-row chip is one, and typing removes it; a 409 without GIT_MISSING stays a message', async () => {
