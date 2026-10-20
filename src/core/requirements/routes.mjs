@@ -67,8 +67,9 @@ export async function featureView(seq, d = {}) {
   };
 }
 
-/** One list row: no spec, orientation or description; the derived state, the Ready count and the latest
- *  start's run. `targetOf` caches the target per scope for one list call. */
+/** One list row: no spec, orientation or description; the derived state, the Ready count, the pending
+ *  round's question count (0 unless it is the person's turn), the open assumptions and the latest start's
+ *  run. `targetOf` caches the target per scope for one list call. */
 async function summary(f, targetOf, runSummary) {
   const { spec, orientation, description, ...rest } = f;
   const busy = isBusy(f.seq);
@@ -77,6 +78,8 @@ async function summary(f, targetOf, runSummary) {
   const ready = readiness({ ...f, pending }, { turns, target: await targetOf(f) });
   const latest = latestStart(f.seq);
   return { ...rest, busy, state: displayState({ ...f, busy }, { ready, starts: latest ? [latest] : [] }), ready: ready.passed,
+    pendingCount: pending && Array.isArray(pending.questions) ? pending.questions.length : 0,
+    openAssumptions: ((spec && spec.assumptions) || []).filter((a) => a.status === 'open').length,
     latestRun: latest ? (await startView(latest, runSummary)).run : null };
 }
 

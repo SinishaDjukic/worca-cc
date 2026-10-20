@@ -2,8 +2,10 @@
 // tools/verify-requirements-cdp.mjs — headless-Chrome proof of the Requirements page (plans/requirements-design.md §6).
 // Checks: with the `requirements` flag off there is no nav row; flipping it on shows the row without a reload;
 // the new-feature form renders; creating a feature in mock mode shows round 1's question card; answering it
-// (Skip, use recommended) fills the spec with R-po-1 and marks the interview done; the answered rounds stay on
-// the page, folded; no page errors.
+// (Skip, use recommended) fills the spec with R-po-1, finishes the interview (the header's "Interview done ·
+// N rounds" chip and its Decide / Ready badge); the answered rounds stay on the page in the Earlier rounds card
+// with their answer and a Change; the Ready panel shows the server's six checks with Start enabled exactly when
+// the feature is Ready; the Export menu opens and Escape closes it; no page errors.
 // NOT part of `npm test`.
 // Run: npm run verify:requirements   (set CHROME_BIN to a Chrome/Chromium binary if it is not auto-found,
 // e.g. CHROME_BIN="C:/Program Files/Google/Chrome/Application/chrome.exe" on Windows)
@@ -156,11 +158,30 @@ check("the target select offers the 'shop' project", filled);
 if (!filled) await shutdown(1);
 check('round 1 asks (mock): the question card shows', await until(() => A.evalJs(`!!document.querySelector('#requirements-host .qpanel .qopt')`)));
 await A.evalJs(`document.querySelector('#requirements-host .req-skip').click()`);
-check('after answering, the spec has R-po-1 and the interview is done',
-  await until(() => A.evalJs(`!!document.querySelector('[data-criterion="R-po-1"]') && /Interview done/.test(document.querySelector('#requirements-host .req-head').textContent)`)));
-check('the answered rounds stay on the page, folded, with the answer given',
-  await A.evalJs(`(() => { const r = [...document.querySelectorAll('#requirements-host details.req-round')];
-    return r.length === 2 && r.every((d) => !d.open) && /Your answer: Customers/.test(r[0].textContent); })()`));
+check('after answering, the spec has R-po-1 and the header says the interview is done',
+  await until(() => A.evalJs(`(() => { const head = document.querySelector('#requirements-host .req-head');
+    return !!document.querySelector('[data-criterion="R-po-1"]') && !!head
+      && [...head.querySelectorAll('.chip')].some((c) => /^Interview done · \\d+ rounds?$/.test(c.textContent))
+      && ['Decide', 'Ready'].includes(head.querySelector('.badge')?.textContent); })()`)));
+check('the answered rounds stay on the page in Earlier rounds, with the answer given and a Change',
+  await A.evalJs(`(() => { const r = [...document.querySelectorAll('#requirements-host .req-rounds .req-round')];
+    return r.length === 2 && /→ Customers/.test(r[0].querySelector('.req-round-answer').textContent)
+      && [...r[0].querySelectorAll('button')].some((b) => b.textContent === 'Change'); })()`));
+check("the Ready panel shows the server's six checks; Start is enabled exactly when the feature is Ready",
+  await A.evalJs(`(async () => { const seq = /feature\\/(\\d+)/.exec(location.hash)[1];
+    const f = (await (await fetch('/api/requirements/' + seq)).json()).feature;
+    const p = document.querySelector('#requirements-host .req-ready');
+    if (!p) return false;
+    const labels = [...p.querySelectorAll('.req-check-label')].map((x) => x.textContent);
+    return labels.length === 6 && labels.join('|') === f.readiness.checks.map((c) => c.label).join('|')
+      && p.querySelector('[data-ui="start"]').disabled === !f.readiness.ok
+      && p.querySelector('code').textContent === f.readiness.passed + ' of 6'; })()`));
+check('the Export menu opens on its button and Escape closes it',
+  await A.evalJs(`(() => { const t = [...document.querySelectorAll('#requirements-host .req-head button')].find((b) => b.textContent === 'Export ▾');
+    const m = t.parentElement.querySelector('[role="menu"]');
+    t.click(); const opened = !m.hidden && getComputedStyle(m).display !== 'none';
+    m.querySelector('[role="menuitem"]').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    return opened && m.hidden && getComputedStyle(m).display === 'none' && document.activeElement === t; })()`));
 check('no page errors', A.pageErrors.length === 0, A.pageErrors.join(' | '));
 log(failed ? `${failed} check(s) failed` : 'all checks passed');
 await shutdown(failed ? 1 : 0);

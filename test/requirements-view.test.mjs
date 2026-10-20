@@ -14,13 +14,25 @@ after(() => window.close());
 const { createRequirementsView } = await import('../ui/public/requirements-view.mjs');
 
 const Q = [{ id: 'who', question: 'Who may cancel?', options: ['Customers', 'Support'], recommended: 'Customers', why: 'Decides the button' }];
+// The six readiness checks as featureView carries them (A2 D1): three pass, three do not.
+const CHECKS = [
+  { key: 'goal', ok: false, label: 'Goal with a success measure', hint: 'add a success measure' },
+  { key: 'criteria', ok: true, label: '1 acceptance criterion', hint: '' },
+  { key: 'interview', ok: false, label: 'Interview finished', hint: '1 question waiting' },
+  { key: 'openQuestions', ok: true, label: 'No open questions', hint: '' },
+  { key: 'assumptions', ok: false, label: 'Every assumption decided', hint: '1 to decide' },
+  { key: 'target', ok: true, label: 'Project shop is registered', hint: '' },
+];
+const readiness = (over = {}) => ({ ok: false, passed: 3, total: 6, checks: CHECKS, overridable: false, ...over });
+const ALL_OK = () => readiness({ ok: true, passed: 6, checks: CHECKS.map((c) => ({ ...c, ok: true, hint: '' })) });
 const feature = (over = {}) => ({
   seq: 4, id: 'FEAT-4', scopeType: 'project', scopeKey: 'shop-1', title: 'Cancel order', status: 'your_turn', rounds: 1, costUsd: 0.42, busy: false,
   orientation: { summary: 'Orders have a status.', files: ['src/o.js'], skipped: null },
   spec: { goal: { text: 'Cancel', measure: '' }, actors: ['Customer'], flow: [], edgeCases: [], rules: [], outOfScope: [],
     criteria: [{ id: 'R-po-1', text: 'Cancel while unpaid' }], assumptions: [{ id: 'A-1', text: 'Full refund', status: 'open' }],
     openQuestions: [], edited: { actors: true } },
-  pending: { turnId: 9, questions: Q, note: 'One question.' }, lastError: null, ...over,
+  pending: { turnId: 9, questions: Q, note: 'One question.' }, lastError: null,
+  state: 'your_turn', readiness: readiness(), starts: [], unaskedRejections: [], changedSinceStart: [], ...over,
 });
 function fakeApi(routes) {
   const calls = [];
@@ -119,7 +131,9 @@ test('list: each state\'s badge and meta line', async () => {
     row({ seq: 7, state: 'started', latestRun: { status: 'running', phase: 'implement', costUsd: 1, href: '#running/r1' } }),
     row({ seq: 8, state: 'started', latestRun: { status: 'done', phase: null, costUsd: 1, href: '#running/r2' } }),
     row({ seq: 9, state: 'started', latestRun: null }),
-    row({ seq: 10, state: 'your_turn', rounds: 1, pendingCount: 1 })]) });
+    row({ seq: 10, state: 'your_turn', rounds: 1, pendingCount: 1 }),
+    row({ seq: 11, state: 'decide', ready: 5, openAssumptions: 3 }), row({ seq: 12, state: 'decide', ready: 5, openAssumptions: 1 }),
+    row({ seq: 13, state: 'decide', ready: 5, openAssumptions: 0 })]) });
   const { host, view } = make();
   await view.show('');
   const meta = (seq) => rowOf(host, seq).querySelector('.req-row-meta').textContent;
@@ -128,6 +142,9 @@ test('list: each state\'s badge and meta line', async () => {
   assert.equal(meta(2), 'Round 1 of 6 · 3 questions for you');
   assert.equal(meta(10), 'Round 1 of 6 · 1 question for you');
   assert.equal(meta(3), 'Interview done · Ready 4 of 6');
+  assert.equal(meta(11), 'Interview done · Ready 5 of 6 · 3 assumptions to decide');
+  assert.equal(meta(12), 'Interview done · Ready 5 of 6 · 1 assumption to decide');
+  assert.equal(meta(13), 'Interview done · Ready 5 of 6');
   assert.equal(meta(4), 'Ready 6 of 6');
   assert.equal(meta(5), 'Worca is looking at the code…');
   assert.equal(meta(6), 'Worca is thinking…');
@@ -260,7 +277,9 @@ test('spec column: edited mark, criteria ids, assumption buttons; busy disables 
     'GET /api/projects': { projects: [] }, 'GET /api/workspaces': { workspaces: [] } });
   await view.show('feature/4');
   assert.match(host.textContent, /Worca is thinking/);
-  assert.ok([...host.querySelectorAll('.req-sect-edit')].every((b) => b.disabled));
+  const lockable = [...host.querySelectorAll('.req-sect-edit')];
+  assert.ok(lockable.length >= 8, 'pencils, Let Worca rewrite, the add and remove icons, Confirm / Reject');
+  assert.ok(lockable.every((b) => b.disabled));
 });
 
 test('error turn shows the message and Try again; a 404 says the page is off or gone', async () => {
@@ -285,6 +304,8 @@ const BASE = {
   'GET /api/projects': { projects: [{ key: 'shop-1', name: 'shop' }] }, 'GET /api/workspaces': { workspaces: [] },
 };
 const critInput = (host) => host.querySelector('[aria-label="New acceptance criterion"]');
+const openCrit = async (host) => { host.querySelector('[aria-label="Add a criterion"]').click(); await tick(); await tick(); };
+const openCtx = async (host) => { btn(host, 'Project context').click(); await tick(); await tick(); };
 const btn = (host, text) => [...host.querySelectorAll('button')].find((b) => b.textContent === text);
 
 test('new form: a live update neither repaints nor fetches; create posts and routes to the feature', async () => {
@@ -308,9 +329,11 @@ test('feature page: a live update keeps the open editor and a half-typed criteri
   fakeApi(BASE);
   const { host, view } = make();
   await view.show('feature/4');
-  host.querySelector('[data-section="actors"] .req-sect-edit').click();
+  host.querySelector('[data-section="actors"] [aria-label="Edit Actors"]').click();
   await tick();
   host.querySelector('[data-section="actors"] .req-edit textarea').value = 'Customer\nSupport';
+  await openCrit(host);
+  assert.equal(host.querySelector('[data-section="actors"] .req-edit textarea').value, 'Customer\nSupport', 'kept across the own repaint');
   critInput(host).value = 'half typed';
   await view.changed(4);
   assert.equal(host.querySelector('[data-section="actors"] .req-edit textarea').value, 'Customer\nSupport');
@@ -322,6 +345,9 @@ test('feature page: an own repaint (Confirm) keeps the typed criterion; focus re
   const { host, view } = make();
   document.body.append(host);
   await view.show('feature/4');
+  assert.equal(critInput(host), null, 'the add row opens from the plus button');
+  await openCrit(host);
+  assert.equal(document.activeElement, critInput(host), 'the plus focuses the new field');
   critInput(host).value = 'half typed';
   critInput(host).focus();
   host.querySelector('[data-assumption="A-1"] .req-confirm').click();
@@ -338,14 +364,14 @@ test('feature page: the context panel keeps its text and open state across a liv
     'PUT /api/requirements/context/project/shop-1': { ok: true } });
   const { host, view } = make();
   await view.show('feature/4');
-  const d = host.querySelector('.req-context');
-  d.open = true; d.dispatchEvent(new window.Event('toggle'));
-  await tick(); await tick();
+  assert.equal(host.querySelector('.req-context'), null, 'closed until asked for');
+  assert.equal(calls.filter((c) => c.url.includes('/context/')).length, 0, 'loaded lazily');
+  await openCtx(host);
   assert.equal(host.querySelector('.req-context textarea').value, 'Standing rules');
   host.querySelector('.req-context textarea').value = 'New rules';
   await view.changed(4);
   await tick(); await tick();
-  assert.ok(host.querySelector('.req-context').open);
+  assert.ok(host.querySelector('.req-context'), 'still open');
   assert.equal(host.querySelector('.req-context textarea').value, 'New rules');
   assert.equal(host.querySelector('.req-context input[type=checkbox]').checked, true);
   assert.equal(calls.filter((c) => c.method === 'GET' && c.url.includes('/context/')).length, 1);
@@ -435,6 +461,9 @@ test('Archive / Restore bodies; an archived feature is not interactive', async (
   assert.equal(host.querySelector('.qpanel'), null);
   assert.equal(host.querySelector('.req-retry'), null);
   assert.match(host.querySelector('.req-left').textContent, /archived/i);
+  assert.equal(host.querySelector('.req-ready'), null, 'no Ready panel while archived');
+  assert.equal(btn(host, 'Look again').disabled, true);
+  assert.equal(btn(host, 'Archive'), undefined);
   btn(host, 'Restore').click();
   await tick();
   assert.deepEqual(calls2.find((c) => c.url.endsWith('/archive')).body, { restore: true });
@@ -480,7 +509,7 @@ test('per-item accessible names on section and assumption buttons', async () => 
   const { host, view } = make();
   await view.show('feature/4');
   const btns = [...host.querySelectorAll('[data-section="actors"] .req-sect-edit')];
-  assert.deepEqual(btns.map((b) => b.getAttribute('aria-label')), ['Edit Actors', 'Let Worca rewrite Actors']);
+  assert.deepEqual(btns.map((b) => b.getAttribute('aria-label')), ['Let Worca rewrite Actors', 'Edit Actors']);
   assert.equal(host.querySelector('.req-confirm').getAttribute('aria-label'), 'Confirm A-1');
   assert.equal(host.querySelector('.req-reject').getAttribute('aria-label'), 'Reject A-1');
 });
@@ -489,9 +518,7 @@ test('context: a failed load keeps Save context disabled and sends no PUT', asyn
   const calls = fakeApi({ ...BASE, 'GET /api/requirements/context/project/shop-1': { __status: 500, body: { error: 'ctx down' } } });
   const { host, msgEl, view } = make();
   await view.show('feature/4');
-  const d = host.querySelector('.req-context');
-  d.open = true; d.dispatchEvent(new window.Event('toggle'));
-  await tick(); await tick();
+  await openCtx(host);
   assert.match(msgEl.textContent, /ctx down/);
   assert.equal(btn(host, 'Save context').disabled, true);
   btn(host, 'Save context').click();
@@ -519,50 +546,298 @@ test('index.html: a Simple-level, flag-gated nav row and a page section', () => 
   assert.match(topnav, /requirements: 'Requirements'/);
 });
 
-test('earlier rounds: folded, read-only, with their questions, the latest answers and the note; the pending one is not repeated', async () => {
+test('earlier rounds: one card, each answered question with its latest answer and the note; the pending one is not repeated', async () => {
   const turns = [
     { id: 2, kind: 'orientation', payload: {} },
     { id: 3, kind: 'round', payload: { questions: [{ id: 'who', question: 'Who may cancel?', options: ['Customers', 'Support'], recommended: 'Customers' }], note: 'Start <b>here</b>.' } },
-    { id: 4, kind: 'answers', payload: { roundTurnId: 3, answers: [{ id: 'who', question: 'Who may cancel?', answer: 'Customers' }] } },
-    { id: 5, kind: 'answers', payload: { roundTurnId: 3, revises: true, answers: [{ id: 'who', question: 'Who may cancel?', answer: 'Support' }] } },
+    { id: 4, kind: 'answers', payload: { roundTurnId: 3, answers: [{ id: 'who', question: 'Who may cancel?', answer: 'Customers', recommended: true }] } },
+    { id: 5, kind: 'answers', payload: { roundTurnId: 3, revises: true, answers: [{ id: 'who', question: 'Who may cancel?', answer: 'Support', recommended: false }] } },
+    { id: 6, kind: 'round', payload: { questions: [{ id: 'until', question: 'Until when?', options: ['Until shipped', 'Until paid'], recommended: 'Until shipped' }] } },
+    { id: 7, kind: 'answers', payload: { roundTurnId: 6, answers: [{ id: 'until', question: 'Until when?', answer: 'Until shipped', recommended: true }] } },
     { id: 9, kind: 'round', payload: { questions: Q, note: 'One question.' } },
   ];
-  fakeApi({
-    'GET /api/requirements/4': { feature: feature({ rounds: 2 }), turns },
-    'GET /api/projects': { projects: [] }, 'GET /api/workspaces': { workspaces: [] },
-  });
+  fakeApi({ ...BASE, 'GET /api/requirements/4': { feature: feature({ rounds: 3 }), turns } });
   const { host, view } = make();
   await view.show('feature/4');
-  const rounds = [...host.querySelectorAll('details.req-round')];
-  assert.equal(rounds.length, 1, 'only the earlier round; the pending one is the question card');
-  const r = rounds[0];
-  assert.equal(r.open, false, 'folded');
-  assert.match(r.querySelector('summary').textContent, /Round 1/);
-  assert.match(r.textContent, /Who may cancel\?/);
-  assert.match(r.textContent, /Support/, 'the latest answer');
-  assert.doesNotMatch(r.querySelector('.req-round-answer').textContent, /Customers/, 'a superseded answer is not shown');
-  assert.equal(r.querySelector('.req-round-note').textContent, 'Start <b>here</b>.', 'the note, as text');
-  assert.equal(r.querySelectorAll('button, input, textarea').length, 0, 'read-only');
-  // the open state survives a live repaint
-  r.open = true;
-  await view.changed(4);
-  assert.equal(host.querySelector('details.req-round').open, true);
+  const card = host.querySelector('.req-left .req-rounds');
+  assert.ok(card.classList.contains('card'), 'one card');
+  assert.equal(card.querySelector('h3').textContent, 'Earlier rounds');
+  const rounds = [...card.querySelectorAll('.req-round')];
+  assert.deepEqual(rounds.map((r) => r.getAttribute('data-round')), ['3', '6'], 'only the earlier rounds; the pending one is the question card');
+  const [r1, r2] = rounds;
+  assert.match(r1.textContent, /Who may cancel\?/);
+  assert.equal(r1.querySelector('.req-round-answer').textContent, '→ Support', 'the latest answer, no recommended marker');
+  assert.doesNotMatch(r1.textContent, /Customers/, 'a superseded answer is not shown');
+  assert.equal(r1.querySelector('.req-round-note').textContent, 'Start <b>here</b>.', 'the note, as text');
+  assert.equal(r2.querySelector('.req-round-answer').textContent, '→ Until shipped recommended');
+  assert.equal(r2.querySelector('.req-round-answer code').textContent, 'recommended');
+  for (const r of rounds) {
+    assert.deepEqual([...r.querySelectorAll('button, input, textarea')].map((b) => b.textContent), ['Change'], 'read-only but for Change');
+  }
+  // the question card comes first, the earlier rounds after it
+  const left = [...host.querySelector('.req-left').children];
+  assert.ok(left.indexOf(host.querySelector('.qpanel')) < left.indexOf(card));
 });
 
-test('earlier rounds: a done interview lists every round, the last one with no questions shows its note', async () => {
+test('earlier rounds: a done interview lists every round, the last one with no questions shows its note and no Change', async () => {
   const turns = [
     { id: 3, kind: 'round', payload: { questions: Q, note: 'One question.' } },
     { id: 4, kind: 'answers', payload: { roundTurnId: 3, answers: [{ id: 'who', question: 'Who may cancel?', answer: 'Customers' }] } },
     { id: 6, kind: 'round', payload: { questions: [], note: 'The spec is complete.', done: true } },
   ];
-  fakeApi({
-    'GET /api/requirements/4': { feature: feature({ status: 'done', pending: null, rounds: 2 }), turns },
-    'GET /api/projects': { projects: [] }, 'GET /api/workspaces': { workspaces: [] },
-  });
+  fakeApi({ ...BASE, 'GET /api/requirements/4': { feature: feature({ status: 'done', state: 'decide', pending: null, rounds: 2 }), turns } });
   const { host, view } = make();
   await view.show('feature/4');
-  const rounds = [...host.querySelectorAll('details.req-round')];
-  assert.deepEqual(rounds.map((d) => d.querySelector('summary').textContent.match(/Round \d/)[0]), ['Round 1', 'Round 2']);
+  const rounds = [...host.querySelectorAll('.req-round')];
+  assert.deepEqual(rounds.map((d) => d.querySelector('.req-round-n').textContent), ['Round 1', 'Round 2']);
   assert.equal(rounds[1].querySelector('.req-round-note').textContent, 'The spec is complete.');
   assert.equal(rounds[1].querySelectorAll('.req-round-q').length, 0);
+  assert.equal(rounds[1].querySelector('button'), null, 'nothing to change');
+});
+
+test('Change on an earlier round: the prefilled card, Cancel, Submit changes posts that round; never while locked', async () => {
+  const R = [{ id: 'who', question: 'Who may cancel?', options: ['Customers', 'Support'], recommended: 'Customers' },
+    { id: 'reason', question: 'Ask for a reason?', options: ['Optional', 'None'], recommended: 'Optional' }];
+  const turns = [
+    { id: 3, kind: 'round', payload: { questions: R, note: 'Two questions.' } },
+    { id: 4, kind: 'answers', payload: { roundTurnId: 3, answers: [{ id: 'who', question: R[0].question, answer: 'Support' },
+      { id: 'reason', question: R[1].question, answer: 'Only for refunds' }] } },
+    { id: 6, kind: 'round', payload: { questions: [], note: 'Complete.', done: true } },
+  ];
+  const done = feature({ status: 'done', state: 'decide', pending: null, rounds: 2 });
+  const calls = fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: done, turns }),
+    'POST /api/requirements/4/answers': { feature: done, turns } });
+  const { host, view } = make();
+  await view.show('feature/4');
+  assert.equal(host.querySelector('.req-revise'), null);
+  btn(host, 'Change').click();
+  await tick(); await tick();
+  const card = () => host.querySelector('.req-left .req-revise');
+  assert.ok(card().classList.contains('qpanel'));
+  const left = [...host.querySelector('.req-left').children];
+  assert.ok(left.indexOf(card()) < left.indexOf(host.querySelector('.req-rounds')), 'above Earlier rounds');
+  assert.match(card().querySelector('.qpanel-head').textContent, /Change round 1/);
+  const [b1, b2] = [...card().querySelectorAll('.qblock')];
+  assert.deepEqual([...b1.querySelectorAll('.qopt')].map((o) => o.getAttribute('aria-pressed')), ['false', 'true'], 'prefilled: Support');
+  assert.equal(b2.querySelector('.qfree').value, 'Only for refunds', 'prefilled: the free answer');
+  assert.equal(b2.querySelector('.qopt[aria-pressed="true"]'), null);
+  b1.querySelector('.qopt').click();   // Customers
+  // a live update keeps the card and the changed pick
+  await view.changed(4);
+  assert.deepEqual([...card().querySelector('.qblock').querySelectorAll('.qopt')].map((o) => o.getAttribute('aria-pressed')), ['true', 'false']);
+  btn(card(), 'Submit changes').click();
+  await tick(); await tick();
+  assert.deepEqual(calls.find((c) => c.method === 'POST').body,
+    { roundTurnId: 3, answers: [{ id: 'who', option: 'Customers' }, { id: 'reason', text: 'Only for refunds' }] });
+  assert.equal(card(), null, 'closed after the submit');
+  // Cancel closes it without a post
+  btn(host, 'Change').click();
+  await tick(); await tick();
+  assert.ok(card());
+  const n = calls.filter((c) => c.method === 'POST').length;
+  btn(card(), 'Cancel').click();
+  await tick(); await tick();
+  assert.equal(card(), null);
+  assert.equal(calls.filter((c) => c.method === 'POST').length, n);
+  // locked: no Change
+  fakeApi({ ...BASE, 'GET /api/requirements/4': { feature: { ...done, busy: true, status: 'thinking', state: 'thinking' }, turns } });
+  await view.changed(4);
+  assert.equal(btn(host, 'Change'), undefined);
+  fakeApi({ ...BASE, 'GET /api/requirements/4': { feature: { ...done, status: 'archived', state: 'archived' }, turns } });
+  await view.changed(4);
+  assert.equal(btn(host, 'Change'), undefined);
+});
+
+test('header: back link, FEAT code, title, state badge or run pill, chips', async () => {
+  fakeApi(BASE);
+  const { host, view, routed } = make();
+  await view.show('feature/4');
+  const back = host.querySelector('.req-back');
+  assert.equal(back.textContent, '← All features');
+  back.click();
+  assert.deepEqual(routed, ['']);
+  const head = () => host.querySelector('.req-head');
+  const chips = () => [...head().querySelectorAll('.chip')].map((c) => c.textContent);
+  assert.equal(head().querySelector('code').textContent, 'FEAT-4');
+  assert.equal(head().querySelector('h2').textContent, 'Cancel order');
+  assert.equal(head().querySelector('.badge').textContent, 'Your turn');
+  assert.ok(head().querySelector('.badge').classList.contains('amber'));
+  assert.deepEqual(chips(), ['Project · shop', 'Round 1 of 6', '$0.42 so far']);
+  const doneReady = readiness({ passed: 4, checks: CHECKS.map((c) => (c.key === 'interview' ? { ...c, ok: true, hint: '' } : c)) });
+  fakeApi({ ...BASE, 'GET /api/requirements/4': { feature: feature({ status: 'done', state: 'decide', pending: null, rounds: 3,
+    savedPath: 'specs/FEAT-4.md', readiness: doneReady }), turns: [] } });
+  await view.changed(4);
+  assert.equal(head().querySelector('.badge').textContent, 'Decide');
+  assert.deepEqual(chips(), ['Project · shop', 'Interview done · 3 rounds', '$0.42 so far', 'Saved as specs/FEAT-4.md']);
+  fakeApi({ ...BASE, 'GET /api/requirements/4': { feature: feature({ status: 'done', state: 'started', pending: null, rounds: 1, readiness: ALL_OK(),
+    starts: [{ version: 1, runId: 'r1', run: { status: 'running', phase: 'implement', costUsd: 1, href: '#running/r1' } }] }), turns: [] } });
+  await view.changed(4);
+  assert.equal(head().querySelector('.pill-run').textContent, 'Implement');
+  assert.ok(head().querySelector('.pill-run').classList.contains('peach'));
+  assert.equal(head().querySelector('.badge'), null, 'the pill, not a badge');
+  assert.deepEqual(chips(), ['Project · shop', 'Interview done · 1 round', '$0.42 so far']);
+  assert.doesNotMatch(host.textContent, /null|undefined/);
+});
+
+test('Export menu: its entries, Save only for a project feature; a choice, Escape and an outside click close it', async () => {
+  fakeApi({ ...BASE, 'GET /api/requirements/4/markdown': {} });
+  const { host, view } = make();
+  document.body.append(host);
+  await view.show('feature/4');
+  const trigger = () => btn(host, 'Export ▾');
+  const list = () => trigger().parentElement.querySelector('[role="menu"]');
+  assert.equal(trigger().getAttribute('aria-haspopup'), 'menu');
+  assert.equal(trigger().getAttribute('aria-expanded'), 'false');
+  assert.equal(list().hidden, true);
+  trigger().click();
+  assert.equal(list().hidden, false);
+  assert.equal(trigger().getAttribute('aria-expanded'), 'true');
+  assert.deepEqual([...list().querySelectorAll('[role="menuitem"]')].map((x) => x.textContent), ['Save to specs/', 'Copy Markdown', 'Download .md']);
+  const dl = list().querySelector('a[role="menuitem"]');
+  assert.equal(dl.getAttribute('href'), '/api/requirements/4/markdown?download=1');
+  assert.ok(dl.hasAttribute('download'));
+  list().querySelector('[role="menuitem"]').focus();
+  list().dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.equal(list().hidden, true, 'Escape closes');
+  assert.equal(trigger().getAttribute('aria-expanded'), 'false');
+  assert.equal(document.activeElement, trigger(), 'and returns the focus to the trigger');
+  trigger().click();
+  btn(host, 'Copy Markdown').click();
+  assert.equal(list().hidden, true, 'a choice closes');
+  await tick(); await tick();
+  trigger().click();
+  assert.equal(list().hidden, false);
+  document.body.click();
+  assert.equal(list().hidden, true, 'an outside click closes');
+  host.remove();
+  fakeApi({ ...BASE, 'GET /api/requirements/4': { feature: feature({ scopeType: 'workspace', scopeKey: 'ws1' }), turns: [] } });
+  await view.changed(4);
+  assert.deepEqual([...list().querySelectorAll('[role="menuitem"]')].map((x) => x.textContent), ['Copy Markdown', 'Download .md']);
+});
+
+test('⋯ menu: Project context, Look again, Archive; kept open across a live update; the lock rules', async () => {
+  fakeApi(BASE);
+  const { host, view } = make();
+  await view.show('feature/4');
+  const more = () => host.querySelector('[aria-label="More actions"]');
+  const items = () => [...more().parentElement.querySelectorAll('[role="menuitem"]')];
+  assert.equal(more().tagName, 'BUTTON');
+  assert.ok(more().classList.contains('req-ico'));
+  assert.equal(more().getAttribute('aria-haspopup'), 'menu');
+  assert.ok(more().querySelector('svg'));
+  more().click();
+  assert.deepEqual(items().map((x) => x.textContent), ['Project context', 'Look again', 'Archive']);
+  assert.ok(items().every((x) => !x.disabled));
+  fakeApi({ ...BASE, 'GET /api/requirements/4': { feature: feature({ busy: true, status: 'thinking', state: 'thinking', pending: null }), turns: [] } });
+  await view.changed(4);
+  assert.equal(more().parentElement.querySelector('[role="menu"]').hidden, false, 'still open');
+  assert.deepEqual(items().map((x) => [x.textContent, x.disabled]), [['Project context', false], ['Look again', true], ['Archive', true]]);
+  fakeApi({ ...BASE, 'GET /api/requirements/4': { feature: feature({ scopeType: 'workspace', scopeKey: 'ws1' }), turns: [] } });
+  await view.changed(4);
+  assert.equal(items()[0].textContent, 'Workspace context');
+});
+
+test('Ready panel: the six checks, n of 6, Start disabled until Ready, start-anyway only when overridable', async () => {
+  const calls = fakeApi(BASE);
+  const { host, view } = make();
+  await view.show('feature/4');
+  const panel = () => host.querySelector('.req-ready');
+  assert.equal(host.querySelector('.req-right').firstElementChild, panel(), 'first in the right column');
+  assert.ok(panel().classList.contains('card'));
+  assert.equal(panel().querySelector('h3').textContent, 'Ready to start?');
+  assert.equal(panel().querySelector('code').textContent, '3 of 6');
+  const items = [...panel().querySelectorAll('li')];
+  assert.deepEqual(items.map((li) => li.getAttribute('data-check')), CHECKS.map((c) => c.key));
+  assert.deepEqual(items.map((li) => li.querySelector('.req-check-label').textContent), CHECKS.map((c) => c.label));
+  assert.deepEqual(items.map((li) => li.querySelector('[role="img"]').getAttribute('aria-label')), ['Not yet', 'Passed', 'Not yet', 'Passed', 'Not yet', 'Passed']);
+  assert.deepEqual(items.map((li) => li.querySelector('.hint')?.textContent ?? ''), ['add a success measure', '', '1 question waiting', '', '1 to decide', '']);
+  assert.match(panel().textContent, /Nothing is built until you start it\./);
+  const start = () => panel().querySelector('[data-ui="start"]');
+  assert.equal(start().textContent, 'Start in worca');
+  assert.equal(start().disabled, true);
+  assert.equal(panel().querySelector('[data-ui="start-anyway"]'), null);
+  fakeApi({ ...BASE, 'GET /api/requirements/4': { feature: feature({ readiness: readiness({ overridable: true }) }), turns: [] } });
+  await view.changed(4);
+  const anyway = panel().querySelector('[data-ui="start-anyway"]');
+  assert.equal(anyway.textContent, "Start before it's Ready…");
+  assert.ok(anyway.classList.contains('link-btn'));
+  assert.equal(start().disabled, true);
+  const calls2 = fakeApi({ ...BASE, 'GET /api/requirements/4': { feature: feature({ status: 'done', state: 'ready', pending: null, readiness: ALL_OK() }), turns: [] } });
+  await view.changed(4);
+  assert.equal(start().disabled, false);
+  assert.ok(start().classList.contains('btn-go'));
+  assert.equal(panel().querySelector('code').textContent, '6 of 6');
+  assert.ok([...panel().querySelectorAll('[role="img"]')].every((i) => i.getAttribute('aria-label') === 'Passed'));
+  assert.equal(panel().querySelector('[data-ui="start-anyway"]'), null);
+  start().click();   // Task 8 wires the start flow; the stub posts nothing
+  await tick();
+  assert.equal([...calls, ...calls2].filter((c) => c.method !== 'GET').length, 0);
+});
+
+test('spec card: pencil buttons with labels, edited inline, remove icons, the folded long lists', async () => {
+  const f = feature();
+  Object.assign(f.spec, { flow: ['Open the order', 'Press Cancel'], edgeCases: ['Already shipped'], rules: [], outOfScope: ['Partial cancel'] });
+  const calls = fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: f, turns: [] }),
+    'DELETE /api/requirements/4/criteria/R-po-1': { feature: f, turns: [] } });
+  const { host, view } = make();
+  await view.show('feature/4');
+  const spec = () => host.querySelector('.req-right .req-spec');
+  assert.ok(spec().classList.contains('card'));
+  assert.equal(spec().querySelector('h3').textContent, 'Spec');
+  const sections = () => [...spec().querySelectorAll('[data-section]')].map((x) => x.getAttribute('data-section'));
+  assert.deepEqual(sections(), ['goal', 'actors', 'criteria', 'assumptions', 'openQuestions']);
+  const pencil = spec().querySelector('[data-section="goal"] .req-ico');
+  assert.equal(pencil.getAttribute('aria-label'), 'Edit Goal');
+  assert.ok(pencil.querySelector('svg'));
+  assert.equal(pencil.textContent, '');
+  const pencils = () => [...spec().querySelectorAll('.req-ico')].map((b) => b.getAttribute('aria-label')).filter((l) => l.startsWith('Edit '));
+  assert.deepEqual(pencils(), ['Edit Goal', 'Edit Actors', 'Edit Open questions']);
+  assert.match(spec().querySelector('[data-section="actors"] h4').textContent, /^Actors.*edited by you$/);
+  const rewrite = btn(host, 'Let Worca rewrite this');
+  assert.ok(rewrite && !rewrite.classList.contains('req-ico'), 'stays a text button');
+  assert.equal(spec().querySelector('[data-section="criteria"] .req-ico[aria-label="Add a criterion"]').tagName, 'BUTTON');
+  const rm = spec().querySelector('[aria-label="Remove R-po-1"]');
+  assert.ok(rm.classList.contains('req-ico'));
+  rm.click();
+  await tick();
+  assert.ok(calls.some((c) => c.method === 'DELETE' && c.url === '/api/requirements/4/criteria/R-po-1'));
+  await tick();
+  const show = () => btn(host, 'Show flow, edge cases, rules and out of scope (4 items)');
+  assert.ok(show().classList.contains('link-btn'));
+  assert.equal(show().getAttribute('aria-expanded'), 'false');
+  show().click();
+  await tick(); await tick();
+  assert.deepEqual(sections(), ['goal', 'actors', 'criteria', 'assumptions', 'openQuestions', 'flow', 'edgeCases', 'rules', 'outOfScope']);
+  assert.ok(pencils().includes('Edit Main flow'));
+  await view.changed(4);
+  assert.ok(sections().includes('flow'), 'kept open across a live update');
+  const hide = btn(host, 'Hide flow, edge cases, rules and out of scope');
+  assert.equal(hide.getAttribute('aria-expanded'), 'true');
+  hide.click();
+  await tick(); await tick();
+  assert.deepEqual(sections(), ['goal', 'actors', 'criteria', 'assumptions', 'openQuestions']);
+});
+
+test('What Worca found in the code: folded below the rounds, with how often it looked, the files and the cost', async () => {
+  const look = (id, costUsd) => ({ id, kind: 'orientation', costUsd, payload: { summary: 'x', files: ['src/o.js'], skipped: null } });
+  let turns = [look(2, 0.14)];
+  fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: feature(), turns }) });
+  const { host, view } = make();
+  await view.show('feature/4');
+  const box = () => host.querySelector('.req-left > details.req-orient');
+  assert.equal(box().open, false);
+  assert.match(box().querySelector('summary').textContent, /^What Worca found in the code/);
+  assert.equal(box().querySelector('.req-orient-meta').textContent, 'looked once · 1 file · $0.14');
+  turns = [look(2, 0.14), look(7, 0.1)];
+  box().open = true;
+  await view.changed(4);
+  assert.equal(box().open, true, 'kept open across a live update');
+  assert.equal(box().querySelector('.req-orient-meta').textContent, 'looked twice · 1 file · $0.24');
+  turns = [{ ...look(2, 0.14), payload: { summary: 'x', files: [], skipped: null } }];
+  fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: feature({ orientation: { summary: 'x', files: [], skipped: null } }), turns }) });
+  await view.changed(4);
+  assert.equal(box().querySelector('.req-orient-meta').textContent, 'looked once · $0.14', 'no files, no file count');
+  turns = [];
+  await view.changed(4);
+  assert.equal(box().querySelector('.req-orient-meta'), null, 'nothing known, nothing said');
 });

@@ -19,14 +19,6 @@ const STATE = Object.freeze({
   started: { label: 'Started', cls: '' },
   archived: { label: 'Archived', cls: '' },
 });
-// The interview status the feature page's head still shows (f.status).
-const STATUS = Object.freeze({
-  looking: { label: 'Looking at the code', cls: 'running' },
-  thinking: { label: 'Thinking', cls: 'running' },
-  your_turn: { label: 'Your turn', cls: 'amber' },
-  done: { label: 'Interview done', cls: 'green' },
-  archived: { label: 'Archived', cls: '' },
-});
 // The list's filter tabs. Counts leave archived out; Archived fetches with archived=1 and has no count.
 const FILTERS = Object.freeze([
   { key: 'open', label: 'All open', has: (s) => s !== 'archived' },
@@ -39,6 +31,8 @@ const READY_CHECKS = 6;
 const RUN_LIVE = ['created', 'starting', 'running', 'pausing'];
 const SECTIONS = [['goal', 'Goal'], ['actors', 'Actors'], ['flow', 'Main flow'], ['edgeCases', 'Edge cases'],
   ['rules', 'Business rules'], ['outOfScope', 'Out of scope'], ['openQuestions', 'Open questions']];
+// The long lists the spec card folds behind one link.
+const FOLDED = ['flow', 'edgeCases', 'rules', 'outOfScope'];
 const KEYS = ['A', 'B', 'C', 'D'];
 const MAX_ROUNDS = 6;
 
@@ -57,6 +51,26 @@ function h(tag, attrs = {}, ...kids) {
   return node;
 }
 
+const SVG_NS = 'http://www.w3.org/2000/svg';
+// The page's icons (24px grid, drawn in currentColor; the colour comes from style.css).
+const ICONS = Object.freeze({
+  pencil: [['path', { d: 'M4 20h4L19 9l-4-4L4 16v4z' }], ['path', { d: 'M13.5 6.5l4 4' }]],
+  plus: [['path', { d: 'M12 5v14M5 12h14' }]],
+  remove: [['path', { d: 'M7 7l10 10M17 7L7 17' }]],
+  check: [['path', { d: 'M5 12.5l4.5 4.5L19 7.5' }]],
+  circle: [['circle', { cx: 12, cy: 12, r: 7.5 }]],
+  dots: [['circle', { cx: 5, cy: 12, r: 1.6 }], ['circle', { cx: 12, cy: 12, r: 1.6 }], ['circle', { cx: 19, cy: 12, r: 1.6 }]],
+});
+/** An inline SVG icon; decorative (aria-hidden) unless `label` names it (role=img). */
+function icon(shapes, { size = 16, label = null, width = 2, fill = 'none', stroke = 'currentColor' } = {}) {
+  const set = (el, attrs) => { for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, String(v)); return el; };
+  const svg = set(document.createElementNS(SVG_NS, 'svg'), { width: size, height: size, viewBox: '0 0 24 24', fill, stroke,
+    'stroke-width': width, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' });
+  if (label) set(svg, { role: 'img', 'aria-label': label }); else svg.setAttribute('aria-hidden', 'true');
+  for (const [tag, attrs] of shapes) svg.append(set(document.createElementNS(SVG_NS, tag), attrs));
+  return svg;
+}
+
 async function api(method, url, body) {
   const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   let data = {};
@@ -70,7 +84,6 @@ const sentence = (s) => { const t = String(s || '').replace(/[_-]+/g, ' ').trim(
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 const badge = (state) => h('span', { class: `badge ${STATE[state]?.cls || ''}`.trim(), text: STATE[state]?.label || state });
-const statusBadge = (status) => h('span', { class: `badge ${STATUS[status]?.cls || ''}`.trim(), text: STATUS[status]?.label || status });
 const runColour = (status) => (RUN_LIVE.includes(status) ? 'peach' : status === 'done' ? 'green'
   : status === 'error' || status === 'stopped' ? 'red' : '');
 /** The latest run as a pill: peach while it runs (its phase as the text), green done, red error / stopped. */
@@ -79,7 +92,9 @@ function runPill(run) {
   const text = (RUN_LIVE.includes(status) && run.phase ? sentence(run.phase) : sentence(status)) || 'Started';
   return h('span', { class: `pill-run req-run ${runColour(status)}`.trim() }, h('span', { class: 'pdot' }), text);
 }
-const stateMark = (f) => (f.state === 'started' ? runPill(f.latestRun) : badge(f.state));
+// A list row carries `latestRun`; the feature page has its starts, newest first, each with its run.
+const latestRunOf = (f) => (f.latestRun !== undefined ? f.latestRun : (f.starts && f.starts[0] && f.starts[0].run) || null);
+const stateMark = (f) => (f.state === 'started' ? runPill(latestRunOf(f)) : badge(f.state));
 /** The line under a row's title, by state; `need` when it asks something of the person. */
 function rowMeta(f) {
   const run = f.latestRun;
@@ -88,7 +103,10 @@ function rowMeta(f) {
       const k = Number.isInteger(f.pendingCount) && f.pendingCount > 0 ? `${plural(f.pendingCount, 'question')} for you` : 'Your turn';
       return { text: `Round ${Math.min(Number(f.rounds) || 1, MAX_ROUNDS)} of ${MAX_ROUNDS} · ${k}`, need: true };
     }
-    case 'decide': return { text: `Interview done · Ready ${Number(f.ready) || 0} of ${READY_CHECKS}`, need: true };
+    case 'decide': {
+      const n = Number(f.openAssumptions) || 0;
+      return { text: `Interview done · Ready ${Number(f.ready) || 0} of ${READY_CHECKS}${n > 0 ? ` · ${plural(n, 'assumption')} to decide` : ''}`, need: true };
+    }
     case 'ready': return { text: `Ready ${READY_CHECKS} of ${READY_CHECKS}` };
     case 'started': return { text: `Started${run && run.status ? ` · run ${run.status}${run.phase ? ` · ${sentence(run.phase)}` : ''}` : ''}` };
     case 'looking': return { text: 'Worca is looking at the code…' };
@@ -106,14 +124,21 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   let seqShown = null;
   let paintNo = 0;
   let draft = null;          // { roundTurnId, picks: {id: option}, texts: {id: text} } — the open card's unsent answers
+  let revising = null;       // the earlier round being changed (its round turn id), shown as a card (D12)
+  let revDraft = null;       // that card's unsent answers, as `draft`
   let editing = null;        // the section open in its editor
+  let current = null;        // the feature page on screen: { f, turns }, for a repaint without a fetch
+  let focusNext = null;      // the data-ui field the next feature paint focuses (a field just opened)
   let targets = { projects: [], workspaces: [] };
   let filter = 'open';      // the list's filter tab (FILTERS), kept across repaints and visits
   let paintedKey = null;     // what the host currently shows: 'list' | 'new' | 'feature/<n>'
   // Unsaved input of the feature page, kept across repaints (read from the DOM before a rebuild, put back after).
   let ui = freshUi();
   let ctxEls = null;
-  function freshUi() { return { editVals: null, crit: '', orientOpen: false, roundsOpen: [], ctx: { open: false, loaded: false, loading: false, body: '', look: false } }; }
+  function freshUi() {
+    return { editVals: null, crit: '', critOpen: false, orientOpen: false, moreOpen: false, menu: null,
+      ctx: { open: false, loaded: false, loading: false, failed: false, body: '', look: false } };
+  }
 
   if (subEl) subEl.textContent = 'Define a feature with Worca before anything is built. Nothing runs until you start it.';
   const say = (text, kind = '') => { if (msgEl) { msgEl.textContent = text || ''; msgEl.className = `form-msg${kind ? ` ${kind}` : ''}`; } };
@@ -135,7 +160,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     param = String(p || '');
     const m = /^feature\/(?:FEAT-)?(\d+)$/.exec(param);
     const next = m ? Number(m[1]) : null;
-    if (next !== seqShown) { draft = null; editing = null; ui = freshUi(); }
+    if (next !== seqShown) { draft = null; revising = null; revDraft = null; editing = null; current = null; ui = freshUi(); }
     seqShown = next;
     say('');
     await paint();
@@ -185,18 +210,13 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     }
     const crit = q('new-criterion');
     if (crit) ui.crit = crit.value;
-    const ctx = host.querySelector('.req-context');
-    if (ctx) {
-      ui.ctx.open = ctx.open;
-      if (ui.ctx.loaded) { ui.ctx.body = q('ctx-body').value; ui.ctx.look = q('ctx-look').checked; }
-    }
+    if (ui.ctx.loaded && q('ctx-body')) { ui.ctx.body = q('ctx-body').value; ui.ctx.look = q('ctx-look').checked; }
     const orient = host.querySelector('.req-orient');
     if (orient) ui.orientOpen = orient.open;
-    ui.roundsOpen = [...host.querySelectorAll('details.req-round')].filter((d) => d.open).map((d) => Number(d.getAttribute('data-round')));
     return focus;
   }
 
-  // Every list / new-feature paint goes through here: a null or false child never reaches the DOM
+  // Every paint goes through here: a null or false child never reaches the DOM
   // (replaceChildren would render it as the text "null").
   const paintHost = (...kids) => host.replaceChildren(...kids.flat().filter((k) => k != null && k !== false));
   const setFilter = (key) => { if (key === filter) return; filter = key; void paint(); };
@@ -296,90 +316,123 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
             h('button', { type: 'button', class: 'btn-go', onclick: create }, 'Start the interview'))))));
   }
 
-  function questionCard(f, pending) {
-    if (!draft || draft.roundTurnId !== pending.turnId) {
-      draft = { roundTurnId: pending.turnId, picks: {}, texts: {} };
-      for (const q of pending.questions) if (q.recommended) draft.picks[q.id] = q.recommended;
+  // ---- the feature page (board Interview.dc.html): header, the conversation left, Ready + spec right ----
+
+  // Every round with its number, questions, note and the latest answers given (a revision supersedes).
+  function roundsOf(turns) {
+    const latest = new Map();
+    for (const t of turns) if (t.kind === 'answers') latest.set(t.payload.roundTurnId, t.payload.answers || []);
+    let n = 0;
+    return turns.filter((t) => t.kind === 'round').map((t) => ({
+      turnId: t.id, n: ++n, questions: t.payload.questions || [], note: t.payload.note || '',
+      given: new Map((latest.get(t.id) || []).map((a) => [a.id, a])),
+    }));
+  }
+
+  // The question card: the pending round (recommended answers preselected), or with `revise` an earlier
+  // round prefilled from its latest answers (design D12), posted as a revision of that round.
+  function questionCard(f, round, { revise = false } = {}) {
+    let d = revise ? revDraft : draft;
+    if (!d || d.roundTurnId !== round.turnId) {
+      d = { roundTurnId: round.turnId, picks: {}, texts: {} };
+      for (const q of round.questions) {
+        const a = revise && round.given ? round.given.get(q.id) : null;
+        if (a && a.answer) { if (q.options.includes(a.answer)) d.picks[q.id] = a.answer; else d.texts[q.id] = a.answer; }
+        else if (q.recommended) d.picks[q.id] = q.recommended;
+      }
+      if (revise) revDraft = d; else draft = d;
     }
     const count = h('span', { class: 'qanswered' });
     const recount = () => {
-      const n = pending.questions.filter((q) => draft.picks[q.id] || draft.texts[q.id]).length;
-      count.textContent = `${n} of ${pending.questions.length} answered`;
+      const n = round.questions.filter((q) => d.picks[q.id] || d.texts[q.id]).length;
+      count.textContent = `${n} of ${round.questions.length} answered`;
     };
-    const answers = () => pending.questions.map((q) => (draft.texts[q.id] ? { id: q.id, text: draft.texts[q.id] }
-      : draft.picks[q.id] ? { id: q.id, option: draft.picks[q.id] } : null)).filter(Boolean);
+    const answers = () => round.questions.map((q) => (d.texts[q.id] ? { id: q.id, text: d.texts[q.id] }
+      : d.picks[q.id] ? { id: q.id, option: d.picks[q.id] } : null)).filter(Boolean);
     const post = (extra) => act(async () => {
-      await api('POST', `/api/requirements/${f.seq}/answers`, { roundTurnId: pending.turnId, ...extra, answers: answers() });
-      draft = null;
+      await api('POST', `/api/requirements/${f.seq}/answers`, { roundTurnId: round.turnId, ...extra, answers: answers() });
+      if (revise) { revDraft = null; revising = null; } else draft = null;
       await paint();
     });
-    const panel = h('div', { class: 'qpanel req-q' },
-      h('div', { class: 'qpanel-head' }, h('b', { text: 'Your turn' }),
-        h('span', { class: 'qcount', text: `${pending.questions.length} question${pending.questions.length === 1 ? '' : 's'}` })),
-      pending.note ? h('p', { class: 'hint', text: pending.note }) : null,
-      ...pending.questions.map((q, i) => {
-        const buttons = q.options.map((o, k) => h('button', { type: 'button', class: 'qopt', 'data-key': KEYS[k], 'aria-pressed': draft.picks[q.id] === o && !draft.texts[q.id] ? 'true' : 'false' },
+    const foot = revise
+      ? [h('button', { type: 'button', class: 'btn btn-mini req-revise-cancel', onclick: () => { revising = null; revDraft = null; redraw(); } }, 'Cancel'),
+        h('button', { type: 'button', class: 'btn-go', onclick: () => post({}) }, 'Submit changes')]
+      : [h('button', { type: 'button', class: 'btn btn-mini req-finish', onclick: () => act(async () => { await api('POST', `/api/requirements/${f.seq}/finish`, {}); await paint(); }) }, 'Finish now'),
+        h('button', { type: 'button', class: 'btn btn-mini req-skip', onclick: () => post({ useRecommended: true }) }, 'Skip, use recommended'),
+        h('button', { type: 'button', class: 'btn-go', onclick: () => post({}) }, 'Submit')];
+    const panel = h('div', { class: `qpanel req-q${revise ? ' req-revise' : ''}` },
+      h('div', { class: 'qpanel-head' }, h('b', { text: revise ? `Change round ${round.n}` : 'Your turn' }),
+        h('span', { class: 'qcount', text: plural(round.questions.length, 'question') })),
+      round.note ? h('p', { class: 'hint req-q-note', text: round.note }) : null,
+      ...round.questions.map((q, i) => {
+        const buttons = q.options.map((o, k) => h('button', { type: 'button', class: 'qopt', 'data-key': KEYS[k], 'aria-pressed': d.picks[q.id] === o && !d.texts[q.id] ? 'true' : 'false' },
           h('span', { class: 'qopt-txt', text: o }), o === q.recommended ? h('span', { class: 'qrec', text: 'Recommended' }) : null));
-        const free = h('input', { class: 'qfree', type: 'text', value: draft.texts[q.id] || '', placeholder: 'Or type your own answer…', 'aria-label': `Your own answer to: ${q.question}` });
+        const free = h('input', { class: 'qfree', type: 'text', value: d.texts[q.id] || '', placeholder: 'Or type your own answer…', 'aria-label': `Your own answer to: ${q.question}` });
         const sync = () => {
-          buttons.forEach((b, k) => { const on = !draft.texts[q.id] && draft.picks[q.id] === q.options[k]; b.setAttribute('aria-pressed', on ? 'true' : 'false'); b.classList.toggle('sel', on); });
-          free.classList.toggle('has', !!draft.texts[q.id]);
+          buttons.forEach((b, k) => { const on = !d.texts[q.id] && d.picks[q.id] === q.options[k]; b.setAttribute('aria-pressed', on ? 'true' : 'false'); b.classList.toggle('sel', on); });
+          free.classList.toggle('has', !!d.texts[q.id]);
           recount();
         };
-        buttons.forEach((b, k) => b.addEventListener('click', () => { draft.picks[q.id] = q.options[k]; delete draft.texts[q.id]; free.value = ''; sync(); }));
-        free.addEventListener('input', () => { const v = free.value.trim(); if (v) { draft.texts[q.id] = v; delete draft.picks[q.id]; } else delete draft.texts[q.id]; sync(); });
+        buttons.forEach((b, k) => b.addEventListener('click', () => { d.picks[q.id] = q.options[k]; delete d.texts[q.id]; free.value = ''; sync(); }));
+        free.addEventListener('input', () => { const v = free.value.trim(); if (v) { d.texts[q.id] = v; delete d.picks[q.id]; } else delete d.texts[q.id]; sync(); });
         queueMicrotask(sync);
         return h('div', { class: 'qblock' },
           h('div', { class: 'qtext' }, h('span', { class: 'qn', text: String(i + 1) }), q.question),
           q.why ? h('div', { class: 'hint req-why', text: q.why }) : null,
           h('div', { class: 'qopts' }, ...buttons), free);
       }),
-      h('div', { class: 'qpanel-foot' }, count,
-        h('button', { type: 'button', class: 'btn req-finish', onclick: () => act(async () => { await api('POST', `/api/requirements/${f.seq}/finish`, {}); await paint(); }) }, 'Finish now'),
-        h('button', { type: 'button', class: 'btn req-skip', onclick: () => post({ useRecommended: true }) }, 'Skip, use recommended'),
-        h('button', { type: 'button', class: 'btn-go', onclick: () => post({}) }, 'Submit')));
+      h('div', { class: 'qpanel-foot' }, count, ...foot));
     recount();
     return panel;
   }
 
-  // Earlier rounds, read-only and folded: each round's questions with the latest answers given, and its note.
+  // Earlier rounds: one card, each answered question with its latest answer, a Change per round (D12).
   // The round waiting for answers is the question card instead.
-  function earlierRounds(f, turns) {
-    const latest = new Map();
-    for (const t of turns) if (t.kind === 'answers') latest.set(t.payload.roundTurnId, t.payload.answers || []);
-    const out = [];
-    let n = 0;
-    for (const t of turns) {
-      if (t.kind !== 'round') continue;
-      n += 1;
-      if (f.pending && t.id === f.pending.turnId) continue;
-      const qs = t.payload.questions || [];
-      const given = new Map((latest.get(t.id) || []).map((a) => [a.id, a]));
-      out.push(h('details', { class: 'req-round', 'data-round': t.id, open: ui.roundsOpen.includes(t.id) },
-        h('summary', { text: qs.length ? `Round ${n} · ${qs.length} question${qs.length === 1 ? '' : 's'}` : `Round ${n} · no more questions` }),
-        t.payload.note ? h('p', { class: 'hint req-round-note', text: t.payload.note }) : null,
-        ...qs.map((q) => {
-          const a = given.get(q.id);
+  function earlierRounds(f, rounds) {
+    const open = !isLocked(f);
+    const shown = rounds.filter((r) => !(f.pending && r.turnId === f.pending.turnId));
+    if (!shown.length) return null;
+    return h('section', { class: 'card req-rounds' }, h('h3', { text: 'Earlier rounds' }),
+      ...shown.map((r) => h('div', { class: 'req-round', 'data-round': r.turnId },
+        h('div', { class: 'req-round-head' }, h('span', { class: 'req-round-n', text: `Round ${r.n}` }),
+          open && r.questions.length && revising !== r.turnId
+            ? h('button', { type: 'button', class: 'link-btn req-change', 'data-ui': `change-${r.turnId}`,
+              onclick: () => { revising = r.turnId; revDraft = null; redraw(); } }, 'Change')
+            : null),
+        r.note ? h('p', { class: 'hint req-round-note', text: r.note }) : null,
+        ...r.questions.map((q) => {
+          const a = r.given.get(q.id);
           return h('div', { class: 'req-round-q' },
-            h('div', { class: 'qtext', text: q.question }),
-            h('div', { class: 'req-round-answer', text: a ? `Your answer: ${a.answer}${a.recommended ? ' (recommended)' : ''}` : 'Not answered' }));
-        })));
-    }
-    return out;
+            h('div', { class: 'req-round-qt', text: q.question }),
+            h('div', { class: 'req-round-answer' }, a ? `→ ${a.answer}` : 'Not answered',
+              a && a.recommended ? ' ' : null, a && a.recommended ? h('code', { text: 'recommended' }) : null));
+        }))));
   }
 
-  function conversation(f, turns) {
+  function conversation(f, turns, rounds) {
     const working = isWorking(f);
     const open = !isLocked(f);
+    let rev = null;
+    if (revising != null) {
+      rev = rounds.find((r) => r.turnId === revising && r.questions.length) || null;
+      if (!rev) { revising = null; revDraft = null; }
+    }
     return h('div', { class: 'req-left' },
-      ...earlierRounds(f, turns),
-      working ? h('p', { class: 'hint', text: f.status === 'looking' ? 'Worca is looking at the code…' : 'Worca is thinking…' }) : null,
-      f.status === 'archived' ? h('p', { class: 'hint', text: 'This feature is archived. Restore it to continue.' }) : null,
+      f.status === 'archived' ? h('p', { class: 'hint req-note', text: 'This feature is archived. Restore it to continue.' }) : null,
+      working ? h('p', { class: 'hint req-working', text: f.status === 'looking' ? 'Worca is looking at the code…' : 'Worca is thinking…' }) : null,
       open && f.lastError ? h('div', { class: 'req-error form-msg err' }, f.lastError, ' ',
         h('button', { type: 'button', class: 'btn btn-mini req-retry', onclick: () => act(async () => { await api('POST', `/api/requirements/${f.seq}/retry`, {}); await paint(); }) }, 'Try again')) : null,
-      open && f.pending ? questionCard(f, f.pending) : null,
-      open && f.status === 'done' ? h('p', { class: 'hint', text: 'The interview is done. Edit the spec on the right; every change is kept.' }) : null);
+      open && rev ? questionCard(f, rev, { revise: true })
+        : open && f.pending ? questionCard(f, { ...f.pending, n: rounds.find((r) => r.turnId === f.pending.turnId)?.n })
+          : null,
+      open && !rev && f.status === 'done' ? h('p', { class: 'hint req-note', text: 'The interview is done. Edit the spec on the right; every change is kept.' }) : null,
+      earlierRounds(f, rounds),
+      orientationBox(f, turns));
   }
+
+  // A small icon button (`req-ico`); `req-sect-edit` marks it as one of the edits the lock disables.
+  const icoBtn = (name, label, onclick, { disabled = false, cls = 'req-sect-edit', ...rest } = {}) => h('button',
+    { type: 'button', class: `req-ico${cls ? ` ${cls}` : ''}`, 'aria-label': label, title: label, disabled, onclick, ...rest }, icon(ICONS[name], { size: 15 }));
 
   function sectionBlock(f, key, title) {
     const s = f.spec;
@@ -393,52 +446,64 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       if (ui.editVals && ui.editVals.key === key) { a.value = ui.editVals.a; if (b) b.value = ui.editVals.b; }
       body = h('div', { class: 'req-edit' }, a, b,
         h('div', { class: 'req-actions' },
-          h('button', { type: 'button', class: 'btn', onclick: () => { editing = null; ui.editVals = null; void paint(); } }, 'Cancel'),
+          h('button', { type: 'button', class: 'btn btn-mini', onclick: () => { editing = null; ui.editVals = null; redraw(); } }, 'Cancel'),
           h('button', { type: 'button', class: 'btn-go', onclick: () => act(async () => {
             await api('PUT', `/api/requirements/${f.seq}/spec/${key}`, { value: isGoal ? { text: a.value, measure: b.value } : a.value });
             editing = null; ui.editVals = null; await paint();
           }) }, 'Save')));
     } else if (key === 'goal') {
-      body = s.goal.text ? h('div', {}, h('p', { text: s.goal.text }), s.goal.measure ? h('p', { class: 'hint', text: `Success measure: ${s.goal.measure}` }) : null) : h('p', { class: 'hint', text: 'Not yet.' });
+      body = s.goal.text ? h('div', {}, h('p', { text: s.goal.text }), s.goal.measure ? h('p', { class: 'hint', text: `Measure: ${s.goal.measure}` }) : null) : h('p', { class: 'hint', text: 'Not yet.' });
     } else {
       const list = s[key] || [];
       body = list.length ? h(key === 'flow' ? 'ol' : 'ul', {}, ...list.map((t) => h('li', { text: t }))) : h('p', { class: 'hint', text: 'Not yet.' });
     }
     return h('section', { class: 'req-sect', 'data-section': key },
-      h('div', { class: 'req-sect-head' }, h('h3', { text: title }),
-        edited ? h('span', { class: 'req-edited', text: 'edited by you' }) : null,
-        h('button', { type: 'button', class: 'btn-ghost btn-mini req-sect-edit', disabled: working, 'aria-label': `Edit ${title}`, onclick: () => { editing = key; void paint(); } }, 'Edit'),
-        edited ? h('button', { type: 'button', class: 'btn-ghost btn-mini req-sect-edit', disabled: working, 'aria-label': `Let Worca rewrite ${title}`,
-          onclick: () => act(async () => { await api('DELETE', `/api/requirements/${f.seq}/spec/${key}/edited`); await paint(); }) }, 'Let Worca rewrite this') : null),
+      h('div', { class: 'req-sect-head' },
+        h('h4', {}, title, edited ? h('span', { class: 'req-edited', text: ' · edited by you' }) : null),
+        edited ? h('button', { type: 'button', class: 'btn-ghost btn-mini req-sect-edit req-rewrite', disabled: working, 'aria-label': `Let Worca rewrite ${title}`,
+          onclick: () => act(async () => { await api('DELETE', `/api/requirements/${f.seq}/spec/${key}/edited`); await paint(); }) }, 'Let Worca rewrite this') : null,
+        icoBtn('pencil', `Edit ${title}`, () => { editing = key; focusNext = 'edit-a'; redraw(); }, { disabled: working, 'data-ui': `edit-${key}` })),
       body);
   }
 
   function criteriaBlock(f) {
     const working = isLocked(f);
-    const input = h('input', { type: 'text', placeholder: 'Add a criterion: what a tester can check', 'aria-label': 'New acceptance criterion', 'data-ui': 'new-criterion' });
-    input.value = ui.crit;
+    const adding = ui.critOpen || !!ui.crit;
+    let input = null;
+    let addBtn = null;
+    if (adding) {
+      input = h('input', { type: 'text', placeholder: 'Add a criterion: what a tester can check', 'aria-label': 'New acceptance criterion', 'data-ui': 'new-criterion' });
+      input.value = ui.crit;
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); addBtn.click(); }
+        else if (e.key === 'Escape') { e.preventDefault(); ui.critOpen = false; ui.crit = ''; input.value = ''; focusNext = 'add-criterion'; redraw(); }
+      });
+      addBtn = h('button', { type: 'button', class: 'btn btn-mini req-sect-edit', disabled: working,
+        onclick: () => act(async () => {
+          await api('POST', `/api/requirements/${f.seq}/criteria`, { text: input.value });
+          input.value = ''; ui.crit = ''; ui.critOpen = false;
+          await paint();
+        }) }, 'Add');
+    }
+    const list = f.spec.criteria || [];
     return h('section', { class: 'req-sect', 'data-section': 'criteria' },
-      h('div', { class: 'req-sect-head' }, h('h3', { text: 'Acceptance criteria' })),
-      ...f.spec.criteria.map((c) => h('div', { class: 'req-item', 'data-criterion': c.id },
+      h('div', { class: 'req-sect-head' }, h('h4', { text: 'Acceptance criteria' }),
+        icoBtn('plus', 'Add a criterion', () => { ui.critOpen = true; focusNext = 'new-criterion'; redraw(); },
+          { disabled: working, 'aria-expanded': adding ? 'true' : 'false', 'data-ui': 'add-criterion' })),
+      list.length ? h('ul', { class: 'req-items' }, ...list.map((c) => h('li', { class: 'req-item', 'data-criterion': c.id },
         h('code', { text: c.id }), h('span', { class: 'req-item-text', text: c.text }),
-        h('button', { type: 'button', class: 'btn-ghost btn-mini req-sect-edit', disabled: working, 'aria-label': `Remove ${c.id}`,
-          onclick: () => act(async () => { await api('DELETE', `/api/requirements/${f.seq}/criteria/${c.id}`); await paint(); }) }, 'Remove'))),
-      h('div', { class: 'req-item' }, input,
-        h('button', { type: 'button', class: 'btn btn-mini req-sect-edit', disabled: working,
-          onclick: () => act(async () => {
-            await api('POST', `/api/requirements/${f.seq}/criteria`, { text: input.value });
-            input.value = ''; ui.crit = '';
-            await paint();
-          }) }, 'Add')));
+        icoBtn('remove', `Remove ${c.id}`, () => act(async () => { await api('DELETE', `/api/requirements/${f.seq}/criteria/${c.id}`); await paint(); }),
+          { disabled: working })))) : adding ? null : h('p', { class: 'hint', text: 'None yet.' }),
+      adding ? h('div', { class: 'req-item req-add' }, input, addBtn) : null);
   }
 
   function assumptionsBlock(f) {
     const working = isLocked(f);
     const set = (a, status) => act(async () => { await api('POST', `/api/requirements/${f.seq}/assumptions/${a.id}`, { status }); await paint(); });
     return h('section', { class: 'req-sect', 'data-section': 'assumptions' },
-      h('div', { class: 'req-sect-head' }, h('h3', { text: 'Assumptions' })),
+      h('div', { class: 'req-sect-head' }, h('h4', { text: 'Assumptions' })),
       f.spec.assumptions.length ? null : h('p', { class: 'hint', text: 'None yet.' }),
-      ...f.spec.assumptions.map((a) => h('div', { class: 'req-item', 'data-assumption': a.id },
+      ...f.spec.assumptions.map((a) => h('div', { class: `req-item req-assume ${a.status}`, 'data-assumption': a.id },
         h('code', { text: a.id }), h('span', { class: 'req-item-text', text: a.text }),
         h('span', { class: `badge ${a.status === 'confirmed' ? 'green' : a.status === 'rejected' ? 'red' : 'amber'}`, text: a.status }),
         h('button', { type: 'button', class: 'btn btn-mini req-confirm req-sect-edit', disabled: working, 'aria-label': `Confirm ${a.id}`, 'data-ui': `confirm-${a.id}`, 'aria-pressed': a.status === 'confirmed' ? 'true' : 'false',
@@ -447,51 +512,128 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           onclick: () => set(a, a.status === 'rejected' ? 'open' : 'rejected') }, 'Reject'))));
   }
 
-  function contextPanel(f) {
-    const area = h('textarea', { rows: '4', 'aria-label': 'Shared context', 'data-ui': 'ctx-body', placeholder: 'Actors, terms and standing rules every feature here should know' });
-    const look = h('input', { type: 'checkbox', id: 'req-ctx-look', 'data-ui': 'ctx-look' });
-    const saveBtn = h('button', { type: 'button', class: 'btn', disabled: !ui.ctx.loaded, onclick: () => act(async () => {
-        await api('PUT', `/api/requirements/context/${f.scopeType}/${encodeURIComponent(f.scopeKey)}`, { body: area.value, lookAtCode: look.checked });
-        say('Context saved.', 'ok');
-      }) }, 'Save context');
-    ctxEls = { area, look, saveBtn };
-    if (ui.ctx.loaded) { area.value = ui.ctx.body; look.checked = ui.ctx.look; }
-    const panel = h('details', { class: 'req-context' },
-      h('summary', { text: f.scopeType === 'workspace' ? 'Workspace context' : 'Project context' }),
-      area, h('label', { for: 'req-ctx-look' }, look, ' Let Worca look at the code when a feature starts'),
-      h('div', { class: 'req-actions' }, saveBtn));
-    panel.addEventListener('toggle', () => {
-      if (!panel.open || ui.ctx.loaded || ui.ctx.loading) return;
-      ui.ctx.loading = true;
-      void act(async () => {
-        try {
-          const c = await api('GET', `/api/requirements/context/${f.scopeType}/${encodeURIComponent(f.scopeKey)}`);
-          ui.ctx.body = c.body; ui.ctx.look = !!c.lookAtCode; ui.ctx.loaded = true;
-          // the page may have been rebuilt while loading: write into the panel that is on screen now
-          if (ctxEls) { ctxEls.saveBtn.disabled = false; ctxEls.area.value = c.body; ctxEls.look.checked = !!c.lookAtCode; }
-        } finally { ui.ctx.loading = false; }
-      });
-    });
-    if (ui.ctx.open) panel.open = true;
-    return panel;
+  // The spec card: goal, actors, criteria, assumptions and open questions; the long lists folded behind one link.
+  function specCard(f) {
+    const s = f.spec;
+    const n = FOLDED.reduce((k, key) => k + (s[key] || []).length, 0);
+    const titleOf = (key) => SECTIONS.find(([k]) => k === key)[1];
+    const interviewing = f.status === 'your_turn' || f.status === 'thinking' || f.status === 'looking';
+    return h('section', { class: 'card req-spec' },
+      h('div', { class: 'req-card-head' }, h('h3', { text: 'Spec' }),
+        interviewing ? h('span', { class: 'hint', text: 'updates after every round' }) : null),
+      sectionBlock(f, 'goal', 'Goal'), sectionBlock(f, 'actors', 'Actors'),
+      criteriaBlock(f), assumptionsBlock(f),
+      sectionBlock(f, 'openQuestions', 'Open questions'),
+      ui.moreOpen ? FOLDED.map((k) => sectionBlock(f, k, titleOf(k))) : null,
+      h('button', { type: 'button', class: 'link-btn req-more', 'aria-expanded': ui.moreOpen ? 'true' : 'false', 'data-ui': 'spec-more',
+        onclick: () => { ui.moreOpen = !ui.moreOpen; focusNext = 'spec-more'; redraw(); } },
+      ui.moreOpen ? 'Hide flow, edge cases, rules and out of scope' : `Show flow, edge cases, rules and out of scope (${plural(n, 'item')})`));
   }
 
-  function orientationBox(f) {
+  // The start flow: Task 8 fills it in (Start in worca; with `override`, the start-before-Ready dialog).
+  function startFlow(f, { override = false } = {}) { void f; void override; }
+
+  // Ready to start? (A2 D1): the server's six checks, never derived here; every state but archived.
+  function readyPanel(f) {
+    const r = f.readiness;
+    if (!r || !Array.isArray(r.checks) || f.status === 'archived') return null;
+    const locked = isLocked(f);
+    return h('section', { class: 'card req-ready' },
+      h('div', { class: 'req-card-head' }, h('h3', { text: 'Ready to start?' }), h('code', { text: `${r.passed} of ${r.total || READY_CHECKS}` })),
+      h('ul', { class: 'req-checks' }, ...r.checks.map((c) => h('li', { class: `req-check${c.ok ? ' ok' : ''}`, 'data-check': c.key },
+        icon(c.ok ? ICONS.check : ICONS.circle, { label: c.ok ? 'Passed' : 'Not yet', width: c.ok ? 2.4 : 2 }),
+        h('span', { class: 'req-check-label', text: c.label }),
+        !c.ok && c.hint ? h('span', { class: 'hint req-check-hint', text: c.hint }) : null))),
+      h('div', { class: 'req-ready-foot' },
+        h('span', { class: 'hint', text: 'Nothing is built until you start it.' }),
+        h('div', { class: 'req-ready-btns' },
+          r.overridable ? h('button', { type: 'button', class: 'link-btn req-start-anyway', 'data-ui': 'start-anyway', disabled: locked,
+            onclick: () => startFlow(f, { override: true }) }, "Start before it's Ready…") : null,
+          h('button', { type: 'button', class: r.ok ? 'btn-go btn-mini req-start' : 'btn btn-mini req-start', 'data-ui': 'start', disabled: !r.ok || locked,
+            onclick: () => startFlow(f, { override: false }) }, 'Start in worca'))));
+  }
+
+  function loadContext(f) {
+    ui.ctx.loading = true;
+    void act(async () => {
+      try {
+        const c = await api('GET', `/api/requirements/context/${f.scopeType}/${encodeURIComponent(f.scopeKey)}`);
+        ui.ctx.body = c.body; ui.ctx.look = !!c.lookAtCode; ui.ctx.loaded = true;
+        // the page may have been rebuilt while loading: write into the panel that is on screen now
+        if (ctxEls) { ctxEls.saveBtn.disabled = false; ctxEls.area.value = c.body; ctxEls.look.checked = !!c.lookAtCode; }
+      } catch (err) { ui.ctx.failed = true; throw err; } finally { ui.ctx.loading = false; }
+    });
+  }
+
+  // Project / Workspace context, opened from the ⋯ menu; loaded the first time it opens.
+  function contextPanel(f) {
+    ctxEls = null;
+    if (!ui.ctx.open) return null;
+    const name = f.scopeType === 'workspace' ? 'Workspace context' : 'Project context';
+    const area = h('textarea', { rows: '4', 'aria-label': 'Shared context', 'data-ui': 'ctx-body', placeholder: 'Actors, terms and standing rules every feature here should know' });
+    const look = h('input', { type: 'checkbox', id: 'req-ctx-look', 'data-ui': 'ctx-look' });
+    const saveBtn = h('button', { type: 'button', class: 'btn btn-mini', disabled: !ui.ctx.loaded, onclick: () => act(async () => {
+      await api('PUT', `/api/requirements/context/${f.scopeType}/${encodeURIComponent(f.scopeKey)}`, { body: area.value, lookAtCode: look.checked });
+      say('Context saved.', 'ok');
+    }) }, 'Save context');
+    ctxEls = { area, look, saveBtn };
+    if (ui.ctx.loaded) { area.value = ui.ctx.body; look.checked = ui.ctx.look; }
+    else if (!ui.ctx.loading && !ui.ctx.failed) loadContext(f);
+    return h('section', { class: 'card req-context', 'aria-label': name },
+      h('div', { class: 'req-card-head' }, h('h3', { text: name }),
+        h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'ctx-close', onclick: () => { ui.ctx.open = false; focusNext = 'menu-more'; redraw(); } }, 'Close')),
+      area, h('label', { for: 'req-ctx-look', class: 'req-ctx-look' }, look, ' Let Worca look at the code when a feature starts'),
+      h('div', { class: 'req-actions' }, saveBtn));
+  }
+
+  function orientationBox(f, turns) {
     const o = f.orientation;
     const text = !o ? 'Not looked yet.'
       : o.skipped === 'off' ? 'Looking at the code is turned off for this one (Project context).'
         : o.skipped === 'no-repo' ? 'There is no repository to look at yet.'
           : o.skipped === 'failed' ? 'Worca could not look at the code this time; the interview runs without it.'
             : o.summary || 'Nothing relevant found.';
-    return h('details', { class: 'req-orient', open: ui.orientOpen }, // `open: false` is skipped by h()
-      h('summary', { text: 'What Worca found in the code' }),
+    const looks = turns.filter((t) => t.kind === 'orientation' && !(t.payload && t.payload.skipped));
+    const cost = looks.reduce((sum, t) => sum + (Number(t.costUsd) || 0), 0);
+    const times = looks.length === 1 ? 'looked once' : looks.length === 2 ? 'looked twice' : `looked ${looks.length} times`;
+    const nFiles = ((o && o.files) || []).length;
+    const meta = looks.length ? [times, nFiles ? plural(nFiles, 'file') : null, cost > 0 ? usd(cost) : null].filter(Boolean).join(' · ') : null;
+    return h('details', { class: 'card req-orient', open: ui.orientOpen }, // `open: false` is skipped by h()
+      h('summary', {}, 'What Worca found in the code', meta ? h('span', { class: 'hint req-orient-meta', text: meta }) : null),
       h('p', { text }),
-      o && o.files && o.files.length ? h('ul', { class: 'hint', 'data-min-level': 'advanced' }, ...o.files.map((p) => h('li', { text: p }))) : null,
-      h('button', { type: 'button', class: 'btn btn-mini req-sect-edit', disabled: isLocked(f),
-        onclick: () => act(async () => { await api('POST', `/api/requirements/${f.seq}/look`, {}); await paint(); }) }, 'Look again'));
+      o && o.files && o.files.length ? h('ul', { class: 'hint', 'data-min-level': 'advanced' }, ...o.files.map((p) => h('li', { text: p }))) : null);
   }
 
-  function paintFeature(f, turns = []) {
+  // A menu button (the ⋯ header menu's pattern, .hd-more-wrap / .hd-menu): the trigger toggles a role=menu
+  // list; a choice, Escape (focus back on the trigger) or a press outside closes it. The open one is kept
+  // in `ui.menu`, so a live repaint does not shut it.
+  function menu(key, trigger, items) {
+    const on = ui.menu === key;
+    const list = h('div', { class: 'hd-menu req-menu-list', role: 'menu', hidden: !on }, ...items);
+    trigger.setAttribute('aria-haspopup', 'menu');
+    trigger.setAttribute('aria-expanded', on ? 'true' : 'false');
+    trigger.addEventListener('click', () => setMenu(ui.menu === key ? null : key));
+    list.addEventListener('click', (e) => { if (e.target.closest('[role="menuitem"]')) setMenu(null); }, true);
+    const wrap = h('div', { class: 'hd-more-wrap req-menu', 'data-menu': key }, trigger, list);
+    wrap.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || ui.menu !== key) return;
+      e.preventDefault(); e.stopPropagation();
+      setMenu(null);
+      trigger.focus();
+    });
+    return wrap;
+  }
+  function setMenu(key) {
+    ui.menu = key;
+    for (const w of host.querySelectorAll('[data-menu]')) {
+      const on = w.getAttribute('data-menu') === key;
+      w.querySelector('[role="menu"]').hidden = !on;
+      w.querySelector('[aria-haspopup]').setAttribute('aria-expanded', on ? 'true' : 'false');
+    }
+  }
+  const menuItem = (label, onclick, { disabled = false } = {}) => h('button', { type: 'button', role: 'menuitem', class: 'req-menu-item', disabled, onclick }, label);
+
+  function header(f) {
     const save = () => act(async () => {
       try {
         const r = await api('POST', `/api/requirements/${f.seq}/save`, {});
@@ -509,38 +651,67 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       await navigator.clipboard.writeText(await res.text());
       say('Copied as Markdown.', 'ok');
     });
+    const archived = f.status === 'archived';
+    const rounds = Number(f.rounds) || 0;
+    const done = f.status === 'done' || !!f.readiness?.checks?.find((c) => c.key === 'interview')?.ok;
+    return h('div', { class: 'req-head', 'data-req-feature': f.seq },
+      h('div', { class: 'req-head-main' },
+        h('div', { class: 'req-head-title' }, h('code', { class: 'req-id', text: f.id }), h('h2', { text: f.title }), stateMark(f)),
+        h('div', { class: 'req-chips' },
+          h('span', { class: 'chip', text: targetLabel(f) }),
+          h('span', { class: 'chip', text: done ? `Interview done · ${plural(rounds, 'round')}` : `Round ${Math.min(rounds || 1, MAX_ROUNDS)} of ${MAX_ROUNDS}` }),
+          h('span', { class: 'chip', text: `${usd(f.costUsd)} so far` }),
+          f.savedPath ? h('span', { class: 'chip', text: `Saved as ${f.savedPath}` }) : null)),
+      h('div', { class: 'req-head-tools' },
+        menu('export', h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'menu-export' }, 'Export ▾'), [
+          f.scopeType === 'project' ? menuItem('Save to specs/', save) : null,
+          menuItem('Copy Markdown', copy),
+          h('a', { role: 'menuitem', class: 'req-menu-item', href: `/api/requirements/${f.seq}/markdown?download=1`, download: '' }, 'Download .md'),
+        ]),
+        menu('more', h('button', { type: 'button', class: 'req-ico', 'aria-label': 'More actions', title: 'More actions', 'data-ui': 'menu-more' },
+          icon(ICONS.dots, { size: 18, fill: 'currentColor', stroke: 'none' })), [
+          menuItem(f.scopeType === 'workspace' ? 'Workspace context' : 'Project context', () => {
+            ui.ctx.open = true; ui.ctx.failed = false; focusNext = 'ctx-body'; redraw();
+            host.querySelector('.req-context')?.scrollIntoView?.({ block: 'nearest' });
+          }),
+          menuItem('Look again', () => act(async () => { await api('POST', `/api/requirements/${f.seq}/look`, {}); await paint(); }), { disabled: isLocked(f) }),
+          menuItem(archived ? 'Restore' : 'Archive', () => act(async () => {
+            await api('POST', `/api/requirements/${f.seq}/archive`, archived ? { restore: true } : {});
+            await paint();
+          }), { disabled: !!f.busy }),
+        ])));
+  }
+
+  // A repaint from the feature on screen, without a fetch (a fold, an editor opened, Change, Cancel).
+  function redraw() { if (current) paintFeature(current.f, current.turns); }
+
+  function paintFeature(f, turns = []) {
+    current = { f, turns };
     const focus = capture(f);
-    host.replaceChildren(
-      h('div', { class: 'req-head', 'data-req-feature': f.seq }, h('h2', { text: `${f.id} · ${f.title}` }), statusBadge(f.status)),
-      h('div', { class: 'req-meta' },
-        h('span', { text: targetLabel(f) }),
-        h('span', { text: `Round ${Math.min(f.rounds, MAX_ROUNDS)} of ${MAX_ROUNDS}` }),
-        h('span', { text: `Cost so far ${usd(f.costUsd)}` }),
-        f.savedPath ? h('span', { text: `Saved as ${f.savedPath}` }) : null),
-      h('div', { class: 'req-actions' },
-        h('button', { type: 'button', class: 'btn', onclick: () => route('') }, 'All features'),
-        f.scopeType === 'project' ? h('button', { type: 'button', class: 'btn', onclick: save }, 'Save to specs/') : null,
-        h('button', { type: 'button', class: 'btn', onclick: copy }, 'Copy Markdown'),
-        h('a', { class: 'btn', href: `/api/requirements/${f.seq}/markdown?download=1`, download: '' }, 'Download .md'),
-        h('button', { type: 'button', class: 'btn', disabled: f.busy, onclick: () => act(async () => {
-          await api('POST', `/api/requirements/${f.seq}/archive`, f.status === 'archived' ? { restore: true } : {});
-          await paint();
-        }) }, f.status === 'archived' ? 'Restore' : 'Archive')),
-      orientationBox(f),
+    const rounds = roundsOf(turns);
+    paintHost(h('div', { class: 'req-page' },
+      h('a', { href: '#requirements', class: 'hint req-back', onclick: (e) => { e.preventDefault(); route(''); } }, '← All features'),
+      header(f),
       contextPanel(f),
       h('div', { class: 'req-cols' },
-        conversation(f, turns),
-        h('div', { class: 'req-right' },
-          ...SECTIONS.slice(0, 6).map(([k, t]) => sectionBlock(f, k, t)),
-          criteriaBlock(f), assumptionsBlock(f),
-          sectionBlock(f, ...SECTIONS[6]))),
-    );
+        conversation(f, turns, rounds),
+        h('div', { class: 'req-right' }, readyPanel(f), specCard(f)))));
     if (ui.editVals && ui.editVals.key !== editing) ui.editVals = null;
-    if (focus) {
-      const el = host.querySelector(`[data-ui="${focus}"]`);
+    const want = focusNext || focus;
+    focusNext = null;
+    if (want) {
+      const el = host.querySelector(`[data-ui="${want}"]`);
       if (el && !el.disabled) el.focus();
     }
   }
 
-  return { show, changed, destroy: () => { paintNo += 1; host.replaceChildren(); } };
+  const onDocClick = (e) => {
+    if (!ui.menu) return;
+    const t = e.target;
+    if (t && typeof t.closest === 'function' && t.closest('[data-menu]') && host.contains(t)) return;
+    setMenu(null);
+  };
+  document.addEventListener('click', onDocClick, true);
+
+  return { show, changed, destroy: () => { paintNo += 1; document.removeEventListener('click', onDocClick, true); host.replaceChildren(); } };
 }

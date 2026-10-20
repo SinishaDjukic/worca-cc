@@ -165,3 +165,25 @@ test('bulk confirm and follow-up routes', async () => {
   v = (await call('GET', `/api/requirements/${seq}`)).json;
   assert.equal(v.feature.pending.questions[0].id, 'replace-a-1');
 });
+
+test('list rows: pendingCount while it is your turn, openAssumptions to decide', async () => {
+  const c = await call('POST', '/api/requirements', { scopeType: 'project', scopeKey: projKey, title: 'Counts', description: 'd' });
+  const seq = c.json.feature.seq;
+  await waitFor(async () => (await call('GET', `/api/requirements/${seq}`)).json.feature.status === 'your_turn');
+  const rowOf = async () => (await call('GET', '/api/requirements')).json.features.find((f) => f.seq === seq);
+  let row = await rowOf();
+  const v = (await call('GET', `/api/requirements/${seq}`)).json;
+  assert.equal(row.pendingCount, v.feature.pending.questions.length);
+  assert.ok(row.pendingCount > 0);
+  assert.equal(typeof row.openAssumptions, 'number');
+  await call('POST', `/api/requirements/${seq}/answers`, { roundTurnId: v.feature.pending.turnId, useRecommended: true });
+  await waitFor(async () => (await call('GET', `/api/requirements/${seq}`)).json.feature.status === 'done');
+  const spec = (await call('GET', `/api/requirements/${seq}`)).json.feature.spec;
+  const open = spec.assumptions.filter((a) => a.status === 'open');
+  assert.ok(open.length > 0, 'the mock leaves an open assumption');
+  row = await rowOf();
+  assert.equal(row.pendingCount, 0);
+  assert.equal(row.openAssumptions, open.length);
+  await call('POST', `/api/requirements/${seq}/assumptions/${open[0].id}`, { status: 'confirmed' });
+  assert.equal((await rowOf()).openAssumptions, open.length - 1);
+});

@@ -9335,30 +9335,92 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .req-new .actions{flex-wrap:wrap;margin-top:6px}
 .req-new .req-new-cost{margin:0}
 .req-new-btns{display:flex;gap:10px;margin-left:auto}
-.req-head{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0 0 6px}
-.req-head h2{margin:0;font-size:20px}
-.req-meta{display:flex;flex-wrap:wrap;gap:14px;color:var(--ink-3);font-size:13px}
-.req-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
-.req-orient,.req-context{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-ctrl);padding:10px 14px;margin:0 0 12px}
-.req-orient summary,.req-context summary{cursor:pointer;font-weight:600}
-.req-cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px;align-items:start}
+/* The feature page (board Interview.dc.html): the back link, the header with its two menus, then the
+   conversation left and Ready + the spec right. */
+.req-page{display:flex;flex-direction:column;gap:18px;max-width:1180px}
+.req-page > .req-back{margin:0}
+.req-head{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:16px}
+.req-head-main{display:flex;flex-direction:column;gap:8px;min-width:0}
+.req-head-title{display:flex;flex-wrap:wrap;align-items:center;gap:10px;min-width:0}
+.req-head-title .req-id{font-size:14px}
+.req-head h2{margin:0;font-size:22px;font-weight:700;letter-spacing:-.015em;overflow-wrap:anywhere}
+.req-chips{display:flex;flex-wrap:wrap;gap:8px}
+.req-head-tools{display:flex;align-items:center;gap:8px}
+/* A small borderless icon button: the pencils, add / remove, the header's ⋯. */
+.req-ico{display:inline-grid;place-items:center;flex:none;width:28px;height:28px;padding:0;border:0;border-radius:8px;background:transparent;color:var(--ink-3);cursor:pointer}
+.req-ico:hover:not(:disabled),.req-ico[aria-expanded="true"]{background:var(--hover);color:var(--ink)}
+.req-ico:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.req-ico:disabled{opacity:.45;cursor:not-allowed}
+/* The menus wear the header ⋯ menu's chrome (.hd-more-wrap, .hd-menu); their rows are the Runs group menu's. */
+.req-menu .hd-menu{min-width:200px}
+.req-menu-item{display:flex;align-items:center;gap:8px;width:100%;box-sizing:border-box;padding:8px 10px;border:0;border-radius:9px;background:transparent;color:var(--ink);font:600 13px var(--sans);text-align:left;text-decoration:none;cursor:pointer}
+.req-menu-item:hover:not(:disabled),.req-menu-item:focus-visible{background:var(--hover);outline:none}
+.req-menu-item:disabled{opacity:.45;cursor:not-allowed}
+.req-actions{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 0}
+.req-cols{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:22px;align-items:start}
 @media (max-width:900px){.req-cols{grid-template-columns:1fr}}
-.req-left,.req-right{min-width:0}
-.req-sect{margin:0 0 18px}
-.req-sect-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 6px}
-.req-sect-head h3{font-size:14px;margin:0}
-.req-edited{font-size:11px;color:var(--amber-ink)}
-.req-sect ul,.req-sect ol{margin:0;padding-left:20px}
-.req-item{display:flex;flex-wrap:wrap;gap:8px;align-items:baseline;margin:0 0 6px}
+.req-left,.req-right{display:flex;flex-direction:column;gap:14px;min-width:0}
+.req-left > .qpanel,.req-left > .hint,.req-left > .req-error{margin:0}
+.req-rounds,.req-ready,.req-spec,.req-context{padding:16px 18px}
+.req-card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 10px}
+.req-card-head h3,.req-rounds h3{margin:0;font-size:13px;font-weight:600}
+.req-card-head .hint{margin:0}
+.req-card-head code{font-family:var(--mono);font-size:12px;color:var(--ink-2)}
+/* Earlier rounds: one card, a hairline between rounds. */
+.req-rounds h3{margin:0 0 10px}
+.req-round{display:flex;flex-direction:column;gap:6px}
+.req-round + .req-round{margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
+.req-round-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.req-round-n{font-size:12px;font-weight:600;color:var(--ink-3)}
+.req-round .req-round-note{margin:0}
+.req-round-qt{font-size:13px}
+.req-round-answer{margin:2px 0 0;font-size:12.5px;color:var(--ink-2)}
+.req-round-answer code{font-family:var(--mono);font-size:11.5px;color:var(--ink-3)}
+.req-change{font-size:12px}
+.req-orient{padding:14px 18px}
+.req-orient summary{cursor:pointer;font-size:13px;font-weight:600}
+.req-orient .req-orient-meta{display:inline;margin:0 0 0 6px;font-weight:400}
+.req-orient p{margin:10px 0 0;font-size:13px;color:var(--ink-2)}
+/* Ready to start?: the six checks, a hairline, then the start buttons. */
+.req-checks{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;font-size:13px}
+.req-check{display:flex;align-items:flex-start;gap:10px}
+.req-check > svg{flex:none;margin-top:1px;color:var(--ink-3)}
+.req-check.ok > svg{color:var(--green-ink)}
+.req-check-label{flex:1;min-width:0}
+.req-check .req-check-hint{margin:0;text-align:right}
+.req-ready-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+.req-ready-foot > .hint{margin:0}
+.req-ready-btns{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-left:auto}
+.req-start-anyway{font-size:12.5px}
+.req-start:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
+/* The spec card. */
+.req-spec{display:flex;flex-direction:column;gap:14px}
+.req-spec > .req-card-head{margin:0}
+.req-sect{margin:0}
+.req-sect-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 2px}
+.req-sect-head h4{flex:1;min-width:0;margin:0;font-size:12px;font-weight:600;color:var(--ink-2)}
+.req-edited{font-weight:500;color:var(--amber-ink)}
+.req-sect p{margin:2px 0 0;font-size:13px}
+.req-sect ul,.req-sect ol{margin:2px 0 0;padding-left:20px;font-size:13px}
+.req-sect .req-items{list-style:none;padding:0;display:flex;flex-direction:column;gap:6px;margin-top:6px}
+.req-item{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 10px;margin:0;font-size:13px}
+.req-items .req-item > code{flex:0 0 52px}
 .req-item-text{flex:1;min-width:0}
-.req-new select,.req-new input,.req-new textarea,.req-edit input,.req-edit textarea,.req-context textarea,.req-item input{width:100%;box-sizing:border-box}
+.req-add{flex-wrap:nowrap;align-items:center;margin-top:8px}
+.req-add input{flex:1 1 auto;width:auto;min-width:0}
+.req-assume{margin:6px 0 0;padding:10px 12px;border-radius:10px}
+.req-assume.open{background:var(--amber-wash)}
+.req-assume .req-item-text{flex:1 1 200px}
+.req-more{align-self:flex-start;font-size:12.5px}
+.req-new select,.req-new input,.req-new textarea,.req-edit input,.req-edit textarea,.req-context textarea{width:100%;box-sizing:border-box}
+.req-edit{display:flex;flex-direction:column;gap:8px;margin-top:6px}
+.req-edit .req-actions{margin:0}
+.req-context{display:flex;flex-direction:column;gap:10px}
+.req-context .req-card-head,.req-context .req-actions{margin:0}
+.req-ctx-look{display:flex;align-items:center;gap:8px;font-size:13px}
 .req-why{margin:2px 0 6px 28px}
+.req-q .req-q-note{margin:8px 0 0}
 .req-error{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-.req-q{margin-top:0}
 .req-retry{margin-left:8px}
 .req-confirm[aria-pressed="true"]{border-color:var(--green-ink);color:var(--green-ink)}
 .req-reject[aria-pressed="true"]{border-color:var(--red-ink);color:var(--red-ink)}
-.req-round{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-ctrl);padding:8px 14px;margin:0 0 8px}
-.req-round summary{cursor:pointer;font-weight:600}
-.req-round-q{margin:8px 0 0}
-.req-round-answer{color:var(--ink-3);font-size:13px;margin:2px 0 0}
