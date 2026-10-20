@@ -26,6 +26,8 @@ test('a card names the preset, its scope, workflow and engine; each button calls
   });
   const cards = list.querySelectorAll('.preset-card');
   assert.equal(cards.length, 2);
+  assert.ok(list.classList.contains('drows'));
+  for (const c of cards) assert.ok(c.classList.contains('drow') && !c.classList.contains('card'), 'a divided row, not a card');
   assert.match(cards[0].textContent, /Quick fix.*Any project.*Default · Codex · Updated 2 d ago/);
   assert.match(cards[1].textContent, /Only api/);
   assert.equal(cards[1].querySelector('.preset-gone'), null);

@@ -163,7 +163,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
 
   /** The card's footer: a Details toggle on the left, the actions on the right. */
   function footer(item, acts, body) {
-    const more = h('button', { type: 'button', class: 'sched-more', 'aria-expanded': 'false', text: 'Details' });
+    const more = h('button', { type: 'button', class: 'btn btn-sm btn-quiet sched-more', 'aria-expanded': 'false', text: 'Details' });
     more.addEventListener('click', () => {
       body.hidden = !body.hidden;
       more.setAttribute('aria-expanded', body.hidden ? 'false' : 'true');
@@ -234,7 +234,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
       acts.append(next);
     }
     const details = detailsBlock(t);
-    return h('section', { class: `card sched-item${missed ? ' attention' : ''}`, 'data-id': t.id },
+    return h('div', { class: `drow drow-stack sched-item${missed ? ' attention' : ''}`, 'data-id': t.id },
       h('div', { class: 'sched-head' },
         h('span', { class: `rc-sic st-${missed ? 'amber' : 'grey'}`, icon: missed ? ICON.bang : ICON.clock, role: 'img', 'aria-label': statusWord }),
         h('div', { class: 'rc-body' },
@@ -287,7 +287,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
     const next = s.nextRunAt ? h('span', { class: 'sched-when', 'data-at': s.nextRunAt, 'data-prefix': 'Next: ', text: `Next: ${when(s.nextRunAt)}${countdown(s.nextRunAt) ? ` · in ${countdown(s.nextRunAt)}` : ''}` }) : null;
     const last = s.lastResult ? h('span', { class: `badge ${RESULT_FAMILY[s.lastResult] || 'grey'}`, text: `Last: ${RESULT_WORD[s.lastResult] || s.lastResult}` }) : null;
     const details = detailsBlock(s);
-    return h('section', { class: `card sched-item${streakPause ? ' attention' : ''}`, 'data-id': s.id },
+    return h('div', { class: `drow drow-stack sched-item${streakPause ? ' attention' : ''}`, 'data-id': s.id },
       h('div', { class: 'sched-head' },
         h('span', { class: `rc-sic st-${streakPause ? 'amber' : 'grey'}`, icon: paused ? ICON.pause : ICON.repeat, role: 'img', 'aria-label': 'Repeating schedule' }),
         h('div', { class: 'rc-body' },
@@ -309,9 +309,9 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
     host.replaceChildren(...(rows.length ? rows : [emptyNode]));
     for (const c of host.querySelectorAll('.sched-item')) if (openIds.has(c.dataset.id)) c.querySelector('.sched-more').click();
   }
-  const emptyOnce = () => h('div', { class: 'run-empty' }, 'No one-off run is waiting. Pick a time with ',
+  const emptyOnce = () => h('p', { class: 'empty-line' }, 'No one-off run is waiting. Pick a time with ',
     h('a', { href: '#new/schedule', text: 'Schedule a run' }), ', then describe the task — or use Schedule… next to Start run on New run.');
-  const emptyRepeating = () => h('div', { class: 'run-empty' }, 'No repeating schedule. Pick a time with ',
+  const emptyRepeating = () => h('p', { class: 'empty-line' }, 'No repeating schedule. Pick a time with ',
     h('a', { href: '#new/schedule', text: 'Schedule a run' }), ' and choose Every day, Weekdays, Weekly or Monthly.');
 
   function paintTabs() {
@@ -356,33 +356,34 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
     const [word, family] = KIND[n.kind] || [n.kind, 'grey'];
     const ticket = n.ticketId ? model.tickets.find((t) => t.id === n.ticketId) : null;
     const series = n.scheduleId ? model.schedules.find((s) => s.id === n.scheduleId) : null;
-    const acts = h('div', { class: 'sched-feed-acts' });
+    const acts = [];
     if (!n.resolvedAt && n.kind === 'missed' && ticket && ticket.status === 'missed') {
       const b = h('button', { type: 'button', class: 'btn btn-sm', text: 'Run now' });
       b.addEventListener('click', () => act(() => api('POST', `/api/schedules/${ticket.id}/run-now`), 'Run started', 'start the run now'));
-      acts.append(b);
+      acts.push(b);
     }
     if (!n.resolvedAt && n.kind === 'paused' && series && series.status === 'paused') {
       const b = h('button', { type: 'button', class: 'btn btn-sm', text: 'Resume schedule' });
       b.addEventListener('click', () => act(() => api('POST', `/api/schedules/${series.id}/resume`), 'Resumed'));
-      acts.append(b);
+      acts.push(b);
     }
     if (n.pipelineId && deps.openRun) {
       const b = h('button', { type: 'button', class: 'btn btn-sm sched-feed-open', text: 'Open run' });
       b.addEventListener('click', () => deps.openRun({ pipelineId: n.pipelineId, projectDir: n.projectDir }));
-      acts.append(b);
+      acts.push(b);
     }
     if (n.unread) {
       const b = h('button', { type: 'button', class: 'btn btn-sm btn-quiet sched-feed-read', text: 'Mark read', title: 'Mark as read' });
       b.addEventListener('click', async () => { try { await api('POST', `/api/notifications/${n.id}/read`); } catch (err) { say(err.message, 'err'); } await loadFeed(); });
-      acts.append(b);
+      acts.push(b);
     }
-    return h('div', { class: `sched-feed-item${n.unread ? ' unread' : ''}`, 'data-id': n.id },
-      h('span', { class: `badge ${family}`, text: word }),
-      h('div', { class: 'sched-feed-body' },
+    // One table row: Kind · What happened · Actions.
+    return h('tr', { class: `sched-feed-item${n.unread ? ' unread' : ''}`, 'data-id': n.id },
+      h('td', { class: 'sched-feed-kind', 'data-label': 'Kind' }, h('span', { class: `badge ${family}`, text: word })),
+      h('td', { class: 'sched-feed-body table-main' },
         h('div', { class: 'sched-feed-text' }, h('b', { text: n.title || 'Scheduled run' }), ` ${humanMessage(n)}`),
         h('div', { class: 'sched-feed-time', text: relativeAgo(n.createdAt), title: new Date(n.createdAt).toLocaleString() })),
-      acts);
+      h('td', { class: 'sched-feed-acts', 'data-label': 'Actions' }, ...acts));
   }
 
   /** Server messages carry ISO instants; show them in local time. */
@@ -401,12 +402,14 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
     }
     const markAll = h('button', { type: 'button', class: 'btn btn-sm', text: 'Mark all read', disabled: unread === 0 });
     markAll.addEventListener('click', async () => { try { await api('POST', '/api/notifications/read-all', {}); } catch (err) { say(err.message, 'err'); } await loadFeed(); });
-    const body = rows.length
-      ? rows.map(feedItem)
-      : [h('div', { class: 'run-empty', text: model.filter === 'all' ? 'No activity yet. Missed, failed, skipped and completed scheduled runs show up here.' : 'Nothing here.' })];
+    const list = rows.length
+      ? h('div', { class: 'table-wrap' }, h('table', { class: 'table sched-feed-table' },
+        h('thead', {}, h('tr', {}, h('th', { text: 'Kind' }), h('th', { text: 'What happened' }), h('th', { text: '' }))),
+        h('tbody', {}, ...rows.map(feedItem))))
+      : h('p', { class: 'empty-line', text: model.filter === 'all' ? 'No activity yet. Missed, failed, skipped and completed scheduled runs show up here.' : 'Nothing here.' });
     feedHost.replaceChildren(
       h('div', { class: 'card-head sched-feed-head' }, h('h2', { text: 'Activity' }), h('div', { class: 'sched-feed-tools' }, seg, markAll)),
-      h('div', { class: 'sched-feed-list' }, ...body));
+      list);
   }
 
   // ── data ───────────────────────────────────────────────────────────────────

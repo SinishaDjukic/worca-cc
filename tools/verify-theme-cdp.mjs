@@ -37,6 +37,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { auditButtons, auditSizes, auditType, BUTTON_SPEC, SIZE_SPEC, TYPE_SPEC } from './button-audit.mjs';
+import { makeRecord } from '../test/fixtures/team-metrics/records.mjs';
 
 const args = process.argv.slice(2);
 // A bare flag (no value, or followed by another flag) yields '' so the caller can
@@ -65,7 +66,8 @@ const sizeReport = [];     // { state, theme, sig, rule, got, text }
 const designChecks = [];   // { what, ok, got } from the projects-detail, kitchen and cost tags states
 const DEBT = JSON.parse(readFileSync(new URL('../test/fixtures/design-debt.json', import.meta.url), 'utf8'));
 const SIZE_AUDIT = `(${auditSizes})(document.body, ${JSON.stringify({ ...SIZE_SPEC, debt: DEBT.fieldSizeOverrides })}, null)`;
-const SIZE_STATES = new Set(['settings-general', 'settings-runs', 'settings-guardrails', 'settings-models', 'stats', 'team-metrics']);
+const SIZE_STATES = new Set(['settings-general', 'settings-runs', 'settings-tags', 'settings-ask', 'settings-guardrails', 'settings-memory', 'settings-presets',
+  'settings-models', 'projects', 'projects-detail', 'workspaces', 'schedules', 'stats', 'team-metrics']);
 const typeReport = [];   // { state, theme, sig, rule, got, text }
 const TYPE_AUDIT = `(${auditType})(document.body, ${JSON.stringify(TYPE_SPEC)}, null)`;
 // D20: the slice-1 states (Chat home is 'ask-sheet', the baseline's key). The shell is on every one of them.
@@ -178,6 +180,29 @@ const waitEvent = (name, ms = 20000) => new Promise((res, rej) => {
   const l = (m) => { if (m.method === name) { clearTimeout(to); off(); res(m.params); } };
   const off = () => { const i = listeners.indexOf(l); if (i >= 0) listeners.splice(i, 1); };
   listeners.push(l);
+});
+// The Team metrics fixture (team-metrics state → layout-widths): the scopes body of test/ui-team-metrics.test.mjs and
+// 12 records with long workflow names and actors, answered at the Request stage while Fetch is enabled.
+const TM_NOW = new Date().toISOString();
+const TM_SCOPES = {
+  projects: [{ key: 'billing-api-0123abcd', name: 'billing-api', slug: 'acme/billing-api', enabled: true, recordsLocally: true, hasOrigin: true, runs: 12, pending: 0, record: true }],
+  workspaces: [{ id: 'wks-iot-sp-platform-0123abcd', name: 'IoT SP Platform', projectPaths: ['/a', '/b'], home: { state: 'ok', slug: 'acme/gateway', runs: 1 }, members: [], counts: { recordsHere: 1, routed: 0, notRecording: 1 } }],
+  scopes: { projects: [{ id: 'project:billing-api-0123abcd', label: 'acme/billing-api', name: 'billing-api' }], workspaces: [{ id: 'workspace:wks-iot-sp-platform-0123abcd', label: 'IoT SP Platform', home: 'acme/gateway' }] },
+  anyEnabled: true,
+};
+const TM_BODY = {
+  scope: { kind: 'project', id: 'billing-api-0123abcd', name: 'billing-api', slug: 'acme/billing-api' },
+  records: Array.from({ length: 12 }, (_, i) => makeRecord({ id: `tm${i}`, startedAt: new Date(Date.now() - i * 86400000).toISOString(), usd: 1 + i,
+    result: i % 4 === 3 ? 'failed' : 'done', review: i % 3, workflow: { id: `wf_long_${i % 3}`, name: `A rather long workflow name for proofs number ${i % 3}`, version: 2 },
+    actor: `someone.with.a.very.long.address.${i % 4}@example-enterprise-domain.com` })),
+  humanRateUsd: 50, aggregate: null, stats: {}, sync: [],
+  refresh: { requested: false, fetched: true, limited: false, retryInMs: 0 }, fetchError: null,
+};
+listeners.push((m) => {
+  if (m.method !== 'Fetch.requestPaused') return;
+  const body = m.params.request.url.includes('/api/team-metrics/scopes') ? TM_SCOPES : { ...TM_BODY, sync: [{ slug: 'acme/billing-api', pending: 0, lastSyncAt: TM_NOW, fetchedAt: TM_NOW }] };
+  cdp('Fetch.fulfillRequest', { requestId: m.params.requestId, responseCode: 200, responseHeaders: [{ name: 'Content-Type', value: 'application/json' }],
+    body: Buffer.from(JSON.stringify(body)).toString('base64') }).catch(() => {});
 });
 const pageErrors = [];
 const consoleErrors = [];   // report-only: the run-monitor proof gates on these too, but this proof visits every view (plugins, models, stats) — a benign console.error there must not fail the theme gate
@@ -482,7 +507,6 @@ const states = [
   ['workflows-agent-sheet', async () => { await go('workflows/agents/new'); await until(`document.querySelector('#wfv-sheet:not([hidden]) .wfv-pane[data-pane="agent-new"]:not([hidden])')`, 'the agent sheet'); await freeze('sheet'); }],
   ['workflows-chat-open', async () => { await go('workflows'); await until(`document.getElementById('wfc-input')`, 'the chat dock');
     await ev(`(()=>{document.getElementById('wfc-input').focus();return 1;})()`); await until(`document.querySelector('.wfc-shell[data-open="true"]')`, 'the open chat'); await freeze('chat'); }],
-  ['projects', async () => { await go('projects'); }],
   // The project page: register a folder through the API first (the proof's home has none), then
   // open it — Overview + header. The Memory tab is the Settings grid already audited above.
   ['projects-detail', async () => {
@@ -512,12 +536,73 @@ const states = [
     await setTheme(THEMES[0]);
     await ev(`document.documentElement.dataset.input='pointer';0`);
   }],
+  // After projects-detail, which registers the project: the list then has a row to audit.
+  ['projects', async () => { await go('projects'); await until("document.querySelector('#projects-list .pl-item')", 'a project row'); }],
   ['workspaces', async () => { await go('workspaces'); }],
   ['workspace-create', async () => { await go('workspace-create'); }],
   ['stats', async () => { await go('stats'); }],
-  ['team-metrics', async () => { await go('team-metrics'); }],
+  // Team metrics with data (the proof's home records none), so the 1440 check measures real 6-10 column tables:
+  // CDP answers the two reads until layout-widths ends.
+  ['team-metrics', async () => {
+    await cdp('Fetch.enable', { patterns: [{ urlPattern: '*/api/team-metrics/scopes*', requestStage: 'Request' }, { urlPattern: '*/api/team-metrics?*', requestStage: 'Request' }] });
+    await go('team-metrics');
+    await until(`document.querySelector('#tm-body table.tm-tbl')`, 'the team metrics tables');
+  }],
+  // The five pages at 290 / 375 / 1440 (R-qa-2), and the fresh loads (R-qa-3).
+  ['layout-widths', async () => {
+    const PAGES = ['settings', 'projects', 'schedules', 'stats', 'team-metrics'];
+    for (const width of [290, 375, 1440]) {
+      await cdp('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: width < 600 });
+      for (const page of PAGES) {
+        await cdp('Page.navigate', { url: `${base}/?w=${width}&p=${page}#${page}` });   // a distinct URL: a real load
+        await waitEvent('Page.loadEventFired');
+        await until('window.__np && window.__np.getRun', 'app boot');
+        await until(`document.querySelector('[data-view=${JSON.stringify(page)}]:not(.hidden)')`, `view ${page}`);
+        await sleep(400); await ev(READY); await freeze(page);
+        const m = await ev(`(() => { const d = document.scrollingElement; const main = document.querySelector('.main');
+          return { doc: [d.scrollWidth, d.clientWidth], main: [main.scrollWidth, main.clientWidth] }; })()`);
+        designChecks.push({ what: `no sideways scroll: #${page} at ${width}px`,
+          ok: m.doc[0] === m.doc[1] && m.main[0] <= m.main[1], got: m });
+        if (page === 'stats' && width === 290) {   // R-ux-7: the range buttons really wrap, each 28px
+          const r = await ev(`(() => { const bs = [...document.querySelectorAll('#stats-range button')];
+            return { n: bs.length, rows: new Set(bs.map((b) => b.offsetTop)).size, h: [...new Set(bs.map((b) => Math.round(b.getBoundingClientRect().height)))] }; })()`);
+          designChecks.push({ what: 'stats range at 290px: six buttons wrap onto more than one row, each 28px',
+            ok: r.n === 6 && r.rows > 1 && r.h.length === 1 && r.h[0] === 28, got: r });
+        }
+        if (page === 'settings' && width !== 290) {   // R-ux-1: right of the label on desktop, under it on a phone
+          const st = await ev(`(() => { const inp = document.getElementById('settingsRoot'); const row = inp.closest('.drow');
+            const lab = row.querySelector('.drow-label').getBoundingClientRect(), ctl = row.querySelector('.drow-control').getBoundingClientRect();
+            const cs = getComputedStyle(row), inner = row.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+            const sw = document.getElementById('alertsNotify').closest('.drow');
+            const sl = sw.querySelector('.drow-label').getBoundingClientRect(), sk = sw.querySelector('.switch').getBoundingClientRect();
+            return { right: ctl.left >= lab.right - 1, below: ctl.top >= lab.bottom - 1, full: Math.abs(ctl.width - inner) <= 1,
+              h: Math.round(inp.getBoundingClientRect().height), swRight: sk.left >= sl.left + 1 && sk.top < sl.bottom }; })()`);
+          const ok = width === 1440 ? st.right && st.h === 32 && st.swRight : st.below && st.full && st.h === 32 && st.swRight;
+          designChecks.push({ what: `settings field at ${width}px: ${width === 1440 ? 'control right of the label' : 'control under the label at full width'}, 32px; the switch stays right`, ok, got: st });
+        }
+      }
+    }
+    await cdp('Emulation.clearDeviceMetricsOverride', {});
+    await cdp('Fetch.disable', {});   // the team-metrics fixture ends here: later states hit the real API
+    for (const [page, title] of [['stats', 'Statistics'], ['team-metrics', 'Team metrics']]) {
+      await ev('localStorage.clear();sessionStorage.clear();0');
+      await cdp('Page.navigate', { url: `${base}/?fresh=${page}#${page}` });
+      await waitEvent('Page.loadEventFired');
+      await until('window.__np && window.__np.getRun', 'app boot');
+      await sleep(800);   // every boot fetch (flags, whoami, settings, hello) has answered
+      const r = await ev(`({ hash: location.hash, shown: !!document.querySelector('[data-view=${JSON.stringify(page)}]:not(.hidden)'),
+        chat: !!document.querySelector('[data-view="chat"]:not(.hidden)'), title: document.getElementById('topnav-title')?.textContent.trim() })`);
+      designChecks.push({ what: `fresh load: #${page} shows ${title}`, ok: r.hash === `#${page}` && r.shown && !r.chat && r.title === title, got: r });
+    }
+  }],
   // Spec §5.2's walk: the views the matrix did not visit yet (schedules, connectors, team policy, two settings tabs).
-  ['schedules', async () => { await go('schedules'); }],
+  // One Once ticket (a scheduled POST /api/run), so the size audit has a divided row to measure.
+  ['schedules', async () => {
+    const t = await api('/api/run', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectDir: proj, prompt: 'theme proof schedule', workflowId: 'wf_default', mock: true, scheduledFor: new Date(Date.now() + 3600_000).toISOString() }) });
+    if (t.status !== 202) throw new Error(`could not seed a scheduled run: ${t.status} ${JSON.stringify(t.body)}`);
+    await go('schedules/once'); await until(`document.querySelector('#schedules-once .sched-item')`, 'a Once row');
+  }],
   ['connectors', async () => { await go('connectors'); }],
   ['team-policy', async () => { await go('team-policy'); }],
   ['settings-general', async () => { await go('settings'); await until(`document.querySelector('.settings-pane[data-tab="general"]:not(.hidden) .card')`, 'general pane'); }],
@@ -534,6 +619,7 @@ const states = [
   ['settings-tags', async () => { await api('/api/flags', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runTags: true }) });
     await go('settings/tags'); await until(`document.querySelector('.settings-pane[data-tab="tags"]:not(.hidden)')`, 'the tags pane'); },
   async () => { await api('/api/flags', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runTags: null }) }); }],
+  ['settings-presets', async () => { await go('settings/presets'); await until(`document.querySelector('.settings-pane[data-tab="presets"]:not(.hidden)')`, 'the presets pane'); }],
   ['settings-experimental', async () => { await go('settings/experimental'); }],
   ['settings-ask', async () => { await go('settings/ask'); await until(`document.querySelector('.settings-pane[data-tab="ask"]:not(.hidden) #ask-web-host .ask-web')`, 'ask pane'); }],
   ['settings-guardrails', async () => { await go('settings/guardrails'); }],
@@ -676,7 +762,7 @@ try {
   const phaseA = new Set(['running-list', 'running-list-compact', 'running-detail', 'running-detail-details', 'running-detail-tabs']);
   for (const [id, prepare, cleanup] of states) {
     if (!phaseA.has(id) || (ONLY.length && !ONLY.includes(id))) continue;
-    log(`state ${id}`); await prepare(); if (id !== 'running-detail-tabs') await auditCurrent(id); if (cleanup) await cleanup();
+    log(`state ${id}`); await prepare(); if (!['running-detail-tabs', 'layout-widths'].includes(id)) await auditCurrent(id); if (cleanup) await cleanup();
   }
   // answer → finish → history has a pipeline with a diff
   const q = entry.pendingQuestion;
@@ -692,7 +778,7 @@ try {
   // Phase B: everything else.
   for (const [id, prepare, cleanup] of states) {
     if (phaseA.has(id) || (ONLY.length && !ONLY.includes(id))) continue;
-    log(`state ${id}`); await prepare(); if (id !== 'history-detail-tabs') await auditCurrent(id); if (cleanup) await cleanup();
+    log(`state ${id}`); await prepare(); if (!['history-detail-tabs', 'layout-widths'].includes(id)) await auditCurrent(id); if (cleanup) await cleanup();
   }
 
   // ---- outputs ------------------------------------------------------------------
@@ -752,7 +838,7 @@ try {
     console.log(`${c.ok ? 'PASS' : 'FAIL'} ${c.what}`);
     if (!c.ok) { failed += 1; console.log(JSON.stringify(c.got)); }
   }
-  const missing = ['project Back', 'filter chip', 'table', 'divided row', 'cost tags row'].filter((w) => !designChecks.some((c) => c.what.startsWith(w)));
+  const missing = ['project Back', 'filter chip', 'table', 'divided row', 'cost tags row', 'no sideways scroll', 'fresh load', 'stats range at 290px', 'settings field at'].filter((w) => !designChecks.some((c) => c.what.startsWith(w)));
   if (missing.length && !ONLY.length) { failed += 1; console.log(`FAIL design checks never ran: ${missing.join(', ')}`); }
   console.log(`${pageErrors.length ? 'FAIL' : 'PASS'} no page errors (${pageErrors.length})`);
   if (pageErrors.length) { failed += 1; console.log(pageErrors.slice(0, 10).join('\n')); }

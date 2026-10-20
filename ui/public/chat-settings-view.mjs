@@ -31,25 +31,26 @@ export function renderChatSettings({ prefs, channels } = {}, { doc = globalThis.
   const p = prefs || { notify: {}, channels: {} };
   const root = h(doc, 'div', 'chat-settings');
 
-  const evBox = h(doc, 'div', 'chat-events');
+  const evBox = h(doc, 'div', 'chat-events drows');
   evBox.appendChild(h(doc, 'div', 'label-row', 'Notify on'));
   for (const [key, label, hint] of EVENTS) {
-    const row = h(doc, 'label', 'chat-event-row');
+    const row = h(doc, 'label', 'drow switch-drow chat-event-row');
     const cb = h(doc, 'input', 'sw-input chat-ev');
     cb.type = 'checkbox';
     cb.dataset.ev = key;
     cb.dataset.setting = 'chat';
     cb.checked = p.notify?.[key] !== false;
     cb.setAttribute('aria-label', label);
-    row.appendChild(cb);
-    row.appendChild(h(doc, 'span', 'switch switch-sm'));
-    row.appendChild(h(doc, 'span', '', label));
-    if (hint) row.appendChild(h(doc, 'small', 'hint', hint));
+    row.appendChild(h(doc, 'span', 'drow-label', label));
+    if (hint) row.appendChild(h(doc, 'small', 'hint drow-help', hint));
+    const ctl = h(doc, 'span', 'drow-control');
+    ctl.append(cb, h(doc, 'span', 'switch switch-sm'));
+    row.appendChild(ctl);
     evBox.appendChild(row);
   }
   root.appendChild(evBox);
 
-  const chBox = h(doc, 'div', 'chat-channels');
+  const chBox = h(doc, 'div', 'chat-channels drows');
   chBox.appendChild(h(doc, 'div', 'label-row', 'Channels'));
   const rows = channels || [];
   if (!rows.length) {
@@ -57,9 +58,9 @@ export function renderChatSettings({ prefs, channels } = {}, { doc = globalThis.
   }
   for (const c of rows) {
     const key = `${c.plugin}/${c.channelId}`;
-    const row = h(doc, 'div', 'chat-channel-row');
+    const row = h(doc, 'div', 'drow chat-channel-row');
     row.dataset.channelKey = key;
-    const toggle = h(doc, 'label', 'chat-channel-toggle');
+    const toggle = h(doc, 'label', 'drow-label chat-channel-toggle');
     const cb = h(doc, 'input', 'sw-input chat-ch');
     cb.type = 'checkbox';
     cb.dataset.channelKey = key;
@@ -70,16 +71,18 @@ export function renderChatSettings({ prefs, channels } = {}, { doc = globalThis.
     toggle.appendChild(h(doc, 'span', 'switch switch-sm'));
     toggle.appendChild(h(doc, 'span', '', `${c.displayName || c.channelId} (${c.platform})`));
     row.appendChild(toggle);
+    const ctl = h(doc, 'span', 'drow-control');
     const stateCls = { connected: 'green', degraded: 'waiting', connecting: 'waiting', unconfigured: 'waiting' }[c.state] || 'red';
     const badge = h(doc, 'span', `badge ${stateCls} chat-state`, c.state);
     badge.dataset.channelKey = key;
     if (c.detail) badge.title = c.detail;
-    row.appendChild(badge);
+    ctl.appendChild(badge);
     const test = h(doc, 'button', 'btn btn-sm chat-test', 'Test');
     test.type = 'button';
     test.dataset.plugin = c.plugin;
     test.dataset.channelId = c.channelId;
-    row.appendChild(test);
+    ctl.appendChild(test);
+    row.appendChild(ctl);
     chBox.appendChild(row);
     // Command reach (/api/chat/status `commands`): an inbound channel with an empty
     // allow-list notifies but ignores every reply — the silent failure behind
@@ -162,7 +165,7 @@ export function collectSuggestionsToggle(root) {
 /** Ask Worca → Web access (docs/guardrails.md "Web access"): off by default; the allowlist is enforced by worca's server. */
 export function renderAskWebFields({ askWeb } = {}, { doc = globalThis.document } = {}) {
   const w = askWeb || { enabled: false, anyHost: false, allowedDomains: [], search: null };
-  const wrap = h(doc, 'div', 'ask-web');
+  const wrap = h(doc, 'div', 'ask-web drows');
   wrap.append(h(doc, 'div', 'label-row', 'Web access'));
   const row = h(doc, 'label', 'check-row'); row.setAttribute('for', 'askWebEnabled');
   const cb = h(doc, 'input'); cb.type = 'checkbox'; cb.id = 'askWebEnabled'; cb.checked = w.enabled === true;
@@ -170,25 +173,28 @@ export function renderAskWebFields({ askWeb } = {}, { doc = globalThis.document 
   const anyRow = h(doc, 'label', 'check-row'); anyRow.setAttribute('for', 'askWebAnyHost');
   const any = h(doc, 'input'); any.type = 'checkbox'; any.id = 'askWebAnyHost'; any.checked = w.anyHost === true;
   anyRow.append(any, doc.createTextNode(' Any site, without asking'));
-  const anyHint = h(doc, 'small', 'hint', 'Risky: a web page or a file Ask reads can then make it send data to any site in a URL. Leave off to approve each new site from the chat.');
-  const domains = h(doc, 'textarea', 'input'); domains.id = 'askWebDomains'; domains.rows = 4;
+  const anyHint = h(doc, 'small', 'hint drow-help', 'Risky: a web page or a file Ask reads can then make it send data to any site in a URL. Leave off to approve each new site from the chat.');
+  const domains = h(doc, 'textarea', 'textarea'); domains.id = 'askWebDomains'; domains.rows = 4;
   domains.dataset.setting = 'askWeb.allowedDomains'; domains.setAttribute('aria-label', 'Allowed domains');
   domains.placeholder = 'docs.python.org\n*.mozilla.org'; domains.value = (w.allowedDomains || []).join('\n');
-  const dHint = h(doc, 'small', 'hint', 'Sites Ask may read without asking. One host per line: example.com, or *.example.com for its subdomains. For any other site Ask shows a card in the chat: allow it for that chat, always (it is added here), or deny. https only. A site sees every URL Ask requests from it, so only allow sites you trust.');
+  const dHint = h(doc, 'small', 'hint drow-help', 'Sites Ask may read without asking. One host per line: example.com, or *.example.com for its subdomains. For any other site Ask shows a card in the chat: allow it for that chat, always (it is added here), or deny. https only. A site sees every URL Ask requests from it, so only allow sites you trust.');
   const field = (id, label, placeholder, value, setting) => {
-    const box = h(doc, 'div', 'field');
-    const l = h(doc, 'label', null, label); l.setAttribute('for', id);
+    const box = h(doc, 'div', 'field drow');
+    const l = h(doc, 'label', 'drow-label', label); l.setAttribute('for', id);
     const i = h(doc, 'input', 'input'); i.id = id; i.placeholder = placeholder; i.value = value || '';
     i.dataset.setting = setting;
-    box.append(l, i); return box;
+    box.append(l, ctlOf(i)); return box;
   };
+  const ctlOf = (...kids) => { const c = h(doc, 'div', 'drow-control'); c.append(...kids); return c; };
+  const rowOf = (cls, ...kids) => { const r = h(doc, 'div', cls); r.append(...kids); return r; };
   const s = w.search || {};
   // Dirty flag: the card posts askWeb only after the user touched a web field, so saving the other
   // Ask limits never rewrites the stored web settings.
   const markDirty = () => { wrap.dataset.dirty = '1'; };
   wrap.addEventListener('input', markDirty);
   wrap.addEventListener('change', markDirty);
-  wrap.append(row, anyRow, anyHint, domains, dHint,
+  wrap.append(rowOf('drow drow-wide', ctlOf(row)), rowOf('drow drow-wide', ctlOf(anyRow), anyHint),
+    rowOf('field drow drow-wide ask-web-domains', dHint, ctlOf(domains)),
     field('askWebSearchUrl', 'Search endpoint (optional)', 'https://api.search.brave.com/res/v1/web/search?q={query}', s.url, 'askWeb.search.url'),
     field('askWebSearchKey', 'Search key variable', '${BRAVE_API_KEY}', s.key, 'askWeb.search.key'),
     field('askWebSearchHeader', 'Key header', 'X-Subscription-Token', s.keyHeader, 'askWeb.search.keyHeader'),

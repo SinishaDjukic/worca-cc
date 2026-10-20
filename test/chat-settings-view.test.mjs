@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle } from '../ui/public/chat-settings-view.mjs';
+import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderAskWebFields } from '../ui/public/chat-settings-view.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
@@ -84,6 +84,25 @@ test('chat settings render and round-trip, including the Chat script toggle', as
       assert.deepEqual(collectSuggestionsToggle(doc.createElement('div')), { suggestions: true }, 'a host with no control means ON');
     } },
   ]);
+});
+
+test('chat settings are divided rows: event rows and web fields sit in .drows, the domain list is a wide row', () => {
+  const el = renderChatSettings({ prefs: { notify: {}, channels: {} }, channels: CHANNELS }, { doc });
+  const evRows = [...el.querySelectorAll('.chat-event-row')];
+  assert.equal(evRows.length, 6);
+  for (const r of evRows) {
+    assert.ok(r.classList.contains('drow') && r.closest('.drows'), 'event row is a .drow inside .drows');
+    assert.ok(r.querySelector('.drow-control input.chat-ev'), 'its switch sits in .drow-control');
+  }
+  for (const r of el.querySelectorAll('.chat-channel-row')) assert.ok(r.classList.contains('drow') && r.closest('.drows'));
+  const web = renderAskWebFields({ askWeb: null }, { doc });
+  const fields = [...web.querySelectorAll('.field')];
+  assert.ok(fields.length >= 4);
+  for (const f of fields) {
+    assert.ok(f.classList.contains('drow') && f.closest('.drows'), 'web field is a .drow inside .drows');
+    assert.ok(f.querySelector('.drow-control :is(input, textarea)'), 'its control sits in .drow-control');
+  }
+  assert.ok(web.querySelector('#askWebDomains').closest('.drow').classList.contains('drow-wide'), 'the domain list is a wide row');
 });
 
 // #555: the delegated Test button in the booted app goes through withButton — busy "Sending…",

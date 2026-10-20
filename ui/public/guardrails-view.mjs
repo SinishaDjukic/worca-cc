@@ -38,11 +38,11 @@ export function isReadOnlyGuardrailSet(s) {
   return !!s && (s.origin === 'builtin' || (typeof s.origin === 'string' && s.origin.startsWith('policy:')));
 }
 
-// renderGuardrailList(sets) -> <div.grv-list> of cards; built-ins get View + no Delete.
+// renderGuardrailList(sets) -> <div.grv-list.drows> of divided rows; built-ins get View + no Delete.
 export function renderGuardrailList(sets, { doc = globalThis.document } = {}) {
-  const root = h(doc, 'div', 'grv-list');
+  const root = h(doc, 'div', 'grv-list drows');
   for (const s of sets || []) {
-    const card = h(doc, 'section', 'card grv-card');
+    const card = h(doc, 'div', 'drow drow-stack grv-card');
     card.dataset.id = s.id;
     const body = h(doc, 'div', 'grv-body');
     const head = h(doc, 'div', 'grv-head');
@@ -163,9 +163,11 @@ function switchRow(doc, cls, on, label, readOnly = false) {
 }
 
 function field(doc, label, child) {
-  const f = h(doc, 'div', 'field');
-  f.appendChild(h(doc, 'label', null, label));
-  f.appendChild(child);
+  const f = h(doc, 'div', 'field drow');
+  f.appendChild(h(doc, 'label', 'drow-label', label));
+  const ctl = h(doc, 'div', 'drow-control');
+  ctl.appendChild(child);
+  f.appendChild(ctl);
   return f;
 }
 
@@ -198,12 +200,14 @@ export function renderGuardrailEditor(set, { doc = globalThis.document, mode = '
   root.appendChild(head);
   root.appendChild(switchRow(doc, 'gr-honor', s.honorProjectSettings, 'Honor project .claude/settings.json', readOnly));
   root.appendChild(switchRow(doc, 'gr-scrub', s.envScrub, 'Scrub environment on agent spawn', readOnly));
-  root.appendChild(field(doc, 'Env allowlist (passed through when scrub is on)',
+  const fields = h(doc, 'div', 'drows');
+  fields.appendChild(field(doc, 'Env allowlist (passed through when scrub is on)',
     listEditor(doc, 'gr-allow', s.envAllowlist, 'NPM_TOKEN', readOnly)));
-  root.appendChild(field(doc, 'Protected paths (denies Read/Edit)',
+  fields.appendChild(field(doc, 'Protected paths (denies Read/Edit)',
     listEditor(doc, 'gr-paths', s.protectedPaths, '.env*   |   **/secrets/**', readOnly)));
-  root.appendChild(field(doc, 'Deny rules (pairs: Bash(git push) + Bash(git push:*))',
+  fields.appendChild(field(doc, 'Deny rules (pairs: Bash(git push) + Bash(git push:*))',
     listEditor(doc, 'gr-deny', s.deny, 'Bash(curl:*)', readOnly)));
+  root.appendChild(fields);
   const msgEl = h(doc, 'p', `hint grv-msg${msgErr ? ' err' : ''}`, msg || '');
   msgEl.setAttribute('role', 'status');
   msgEl.setAttribute('aria-live', 'polite');

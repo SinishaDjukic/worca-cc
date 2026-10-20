@@ -7,6 +7,7 @@ import {
   BUDGET_WARN_AT, renderKpiRow,
   renderCostPauseBanner, renderStatsBody,
   renderGroupsCard, groupsToCsv, statsQuery, renderStatsView,
+  renderSpendChart, renderPeopleCard, renderShapingCard,
 } from '../ui/public/stats-view.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -135,6 +136,24 @@ test('renderStatsBody: KPI row + two chart cards; empty range -> chart-empty not
   assert.equal(empty.querySelector('svg.chart-svg'), null);
 });
 
+test('renderSpendChart: the chart has a legend like the Runs chart', () => {
+  const card = renderSpendChart(SPEND, { doc });
+  const items = [...card.querySelectorAll('.chart-legend .lg-item')];
+  assert.equal(items.length, 1);
+  assert.match(items[0].textContent, /^Spend \$/);
+});
+
+test('renderStatsBody: every card that draws a chart has a legend, with sans values (D16)', () => {
+  const model = { ...MODEL, bucket: 'day', windowStartMs: 1, windowEndMs: 5,
+    series: RUNS.series.map((r, i) => ({ ...r, spentUsd: SPEND.series[i].spentUsd })) };
+  const body = renderStatsBody(model, { doc });
+  const charts = [...body.querySelectorAll('.card')].filter((c) => c.querySelector('svg.chart-svg'));
+  assert.equal(charts.length, 2);
+  for (const c of charts) assert.ok(c.querySelector('.chart-legend'), c.querySelector('h2')?.textContent);
+  assert.equal(body.querySelectorAll('.chart-legend b.mono').length, 0);
+  assert.equal(body.querySelectorAll('.stat-value.mono').length, 0, 'tile values are sans');
+});
+
 const GROUPS = { by: 'tag:client', label: 'client', rows: [
   { kind: 'value', key: 'Müller & Söhne, GmbH', label: 'Müller & Söhne, GmbH', spentUsd: 3, runs: 2, finished: 2, stopped: 0, failed: 0, paused: 0, running: 0, prsOpened: 1, prsMerged: 1 },
   { kind: 'none', key: null, label: '(no client)', spentUsd: 0.5, runs: 1, finished: 0, stopped: 1, failed: 0, paused: 0, running: 0, prsOpened: 0, prsMerged: 0 },
@@ -156,6 +175,23 @@ test('renderGroupsCard: one row per group, muted none/ask rows, a total, export 
   assert.equal(foot.cells.length, 8);
   assert.match(foot.textContent, /\$4\.25/);
   assert.equal(card.querySelector('button.stats-export').disabled, false);
+});
+
+test('people, groups and Shaper tables are the shared table inside a table-wrap', () => {
+  const people = renderPeopleCard({ people: [{ person: 'ada@example.com', usd: 2, requests: 3, inputTokens: 10, outputTokens: 5, slots: [{ slot: 'anthropic', plan: 'api' }] }] }, 'x', { doc });
+  const groups = renderGroupsCard(GROUPS, 'x', { doc, totalUsd: 4.25, totalRuns: 3 });
+  const shaping = renderShapingCard({ groups: [{ size: 'small', shaped: { runs: 1, avgCostUsd: 1, avgActiveMs: 1, avgReviewCycles: 1 },
+    unshaped: { runs: 0, avgCostUsd: null, avgActiveMs: null, avgReviewCycles: null } }] }, 'x', { doc });
+  for (const card of [people, groups, shaping]) {
+    const table = card.querySelector('table');
+    assert.ok(table.classList.contains('table'), card.querySelector('h2').textContent);
+    assert.ok(table.parentElement.classList.contains('table-wrap'));
+    // Stacked on phones the thead is clipped: each value cell names its column, the row's name leads.
+    for (const td of table.querySelectorAll('td')) {
+      if (!td.textContent.trim()) continue;
+      assert.ok(td.classList.contains('table-main') || td.dataset.label, `${card.querySelector('h2').textContent}: "${td.textContent}" is labelled`);
+    }
+  }
 });
 
 test('renderGroupsCard: no rows → empty hint and a disabled export', () => {

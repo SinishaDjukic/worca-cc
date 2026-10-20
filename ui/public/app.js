@@ -115,7 +115,7 @@ import { workflowPickerLabel, memoryChangesRows } from './results-view.mjs';
 // The memory view's history list is `renderMemoryHistory`: "History" alone names the saved runs here.
 import {
   memoryRoute, renderHealthCard, renderFileList, renderEditor, collectEditor,
-  renderMemoryHistory, MEMORY_NAME_HELP,
+  renderMemoryHistory, MEMORY_NAME_HELP, formatWhen, parseSnapshotId, patchRunRefs,
 } from './memory-view.mjs';
 import { createScriptsController, nextCopyKey } from './scripts-view.mjs';
 import { renderRunPill, renderOverviewStrip, renderShipItStrip, renderRunningActionRows, historyActionBadges, createActionsController, releaseCheckout } from './actions-view.mjs';
@@ -799,7 +799,7 @@ const el = {
   projectsList: $('#projects-list'),
   // Sync all rides the list card's head (design 2026-10-01): one node every render re-homes, so a
   // Sync all in flight keeps its busy state through a projects-changed repaint.
-  projectsSyncAll: Object.assign(document.createElement('button'), { type: 'button', id: 'projects-sync-all', className: 'btn btn-primary btn-sm', hidden: true, textContent: 'Sync all' }),
+  projectsSyncAll: Object.assign(document.createElement('button'), { type: 'button', id: 'projects-sync-all', className: 'btn btn-quiet btn-sm', hidden: true, textContent: 'Sync all' }),
   projectsMsg: $('#projects-msg'),
   projectAddBtn: $('#project-add-btn'),
   projShell: $('#proj-shell'),
@@ -8948,7 +8948,7 @@ function buildWorkspaceRow(w, known) {
   const actions = document.createElement('div');
   actions.className = 'ws-actions';
   const syncAll = document.createElement('button');
-  syncAll.type = 'button'; syncAll.className = 'btn btn-primary btn-sm ws-sync-all'; syncAll.hidden = true;
+  syncAll.type = 'button'; syncAll.className = 'btn btn-quiet btn-sm ws-sync-all'; syncAll.hidden = true;
   const n = Array.isArray(w.projectPaths) ? w.projectPaths.length : 0;
   const toggle = document.createElement('button');
   toggle.type = 'button'; toggle.className = 'btn btn-sm ws-toggle';
@@ -8963,7 +8963,7 @@ function buildWorkspaceRow(w, known) {
   row.append(main, actions);
   // The project table sits outside the row, so its buttons never open the workspace page.
   const table = document.createElement('div');
-  table.className = 'ws-table';
+  table.className = 'table-wrap ws-table';
   table.hidden = true;
   table.id = `ws-table-${w.id}`;
   toggle.setAttribute('aria-controls', table.id);
@@ -9279,14 +9279,14 @@ function buildWdOverview(sec, id) {
     const pr = k ? projectByKey(k) : null;
     return wsShortName((pr && pr.name) || basenameOf(path), w.name);
   });
-  const projCard = pdStatCard('projects', 'PROJECTS', String(paths.length), missing ? `${missing} missing on disk` : shortNames.join(' · '));
+  const projCard = pdStatCard('projects', 'Projects', String(paths.length), missing ? `${missing} missing on disk` : shortNames.join(' · '));
   if (missing) projCard.querySelector('.pd-ov-sub').classList.add('pd-ov-missing');
   grid.appendChild(projCard);
   // The Workspaces list's rollup sentence, as a card: the worst state up front, Sync all (N).
-  grid.appendChild(pdBranchCard('branches', 'BRANCHES'));
+  grid.appendChild(pdBranchCard('branches', 'Branches'));
   // The team half: one card each, filled by the scopes painters; a click lands on the Team tab.
   for (const which of ['metrics', 'policy']) {
-    const card = pdStatCard(which, which === 'metrics' ? 'METRICS HOME' : 'POLICY HOME', '…', 'checking…', { tag: 'button' });
+    const card = pdStatCard(which, which === 'metrics' ? 'Metrics home' : 'Policy home', '…', 'checking…', { tag: 'button' });
     card.classList.add('pd-ov-link');
     card.title = 'Open the Team tab';
     card.addEventListener('click', () => { location.hash = `workspaces/${wsParamFor(id, 'team')}`; });
@@ -9294,7 +9294,7 @@ function buildWdOverview(sec, id) {
   }
   // The date alone at card size (a full timestamp wraps to two lines); the time and the creation date ride the sub.
   const [upDate, upTime] = w.updatedAt ? String(fmtDate(w.updatedAt)).split(', ') : ['—', ''];
-  grid.appendChild(pdStatCard('updated', 'UPDATED', upDate, [upTime, w.createdAt ? `created ${String(fmtDate(w.createdAt)).split(', ')[0]}` : ''].filter(Boolean).join(' · ')));
+  grid.appendChild(pdStatCard('updated', 'Updated', upDate, [upTime, w.createdAt ? `created ${String(fmtDate(w.createdAt)).split(', ')[0]}` : ''].filter(Boolean).join(' · ')));
   sec.appendChild(grid);
   // wsDetail is set before the tab builds, so the card can paint at once (and again per status read).
   paintPdBranchCards();
@@ -12081,15 +12081,32 @@ function paintWsSyncItem(item) {
   if (!table) return;
   table.hidden = !open;
   if (!open) return;
-  table.replaceChildren(...rows.map((r) => {
-    const tr = document.createElement('div');
+  // The member table is the shared table (D7); `table` is the persistent .ws-table host.
+  const t = document.createElement('table');
+  t.className = 'table ws-members';
+  const hr = t.createTHead().insertRow();
+  for (const label of ['', 'Project', 'Branch', 'Status', 'Action']) {
+    const th = document.createElement('th'); th.textContent = label; hr.appendChild(th);
+  }
+  const body = t.createTBody();
+  for (const r of rows) {
+    const tr = body.insertRow();
     tr.className = `ws-trow tone-${r.m.tone}`;
     tr.dataset.key = r.key;
-    const nm = document.createElement('span'); nm.className = 'ws-tname'; nm.textContent = r.name;
-    const c = syncRowCells(r.key, r.m, r.branch, r.name);
-    tr.append(c.icon, nm, c.branch, c.status, c.action);
-    return tr;
-  }));
+    const c = syncRowCells(r.key, r.m, r.branch, r.name);   // unchanged: { icon, branch, status, action } spans
+    const cell = (cls, label, ...kids) => {
+      const td = tr.insertCell(); td.className = cls;
+      if (label) td.dataset.label = label;
+      td.append(...kids);
+      return td;
+    };
+    cell('ws-icon-cell', '', c.icon).setAttribute('aria-hidden', 'true');
+    cell('ws-tname table-main', '', r.name);
+    cell('ws-tbranch-cell', 'Branch', c.branch);
+    cell('ws-tstatus-cell', 'Status', c.status);
+    cell('ws-tact-cell', 'Action', c.action);
+  }
+  table.replaceChildren(t);
 }
 /** The cells of a Workspaces table sync row: icon, branch, status + hint, and the one action Worca
  *  can take — Sync (behind), Details… (diverged), Retry (offline). The Projects list draws its own
@@ -12251,7 +12268,7 @@ function paintProjFilters() {
   host.replaceChildren(...[['all', 'All', '']].concat(defs).map(([k, label, dot]) => {
     const chip = document.createElement('button');
     chip.type = 'button';
-    chip.className = 'proj-fchip';
+    chip.className = 'filter-chip';
     chip.dataset.filter = k;
     chip.setAttribute('aria-pressed', String(projFilter === k));
     if (dot) chip.append(Object.assign(document.createElement('span'), { className: `proj-fdot ${dot}` }));
@@ -12259,7 +12276,7 @@ function paintProjFilters() {
     chip.addEventListener('click', () => {
       projFilter = k;
       paintProjFilters();
-      host.querySelector(`.proj-fchip[data-filter="${k}"]`)?.focus();
+      host.querySelector(`.filter-chip[data-filter="${k}"]`)?.focus();
     });
     return chip;
   }));
@@ -12796,12 +12813,12 @@ function activateProjTab(tab, sub = '') {
 }
 
 // ---- Overview tab ----
-function pdStatCard(kind, label, value, sub, { tag = 'div' } = {}) {
+function pdStatCard(kind, label, value, sub, { tag = 'div', mono = false } = {}) {
   const card = document.createElement(tag);
   card.className = `pd-ov-card pd-ov-card-${kind}`;
   if (tag === 'button') card.type = 'button';
   const l = document.createElement('div'); l.className = 'pd-ov-label'; l.textContent = label;
-  const v = document.createElement('div'); v.className = 'pd-ov-value mono'; v.textContent = value;
+  const v = document.createElement('div'); v.className = mono ? 'pd-ov-value mono' : 'pd-ov-value'; v.textContent = value;
   card.append(l, v);
   if (sub) { const s = document.createElement('div'); s.className = 'pd-ov-sub'; s.textContent = sub; card.appendChild(s); }
   return card;
@@ -12816,9 +12833,9 @@ function buildPdOverview(sec, key) {
   const grid = document.createElement('div');
   grid.className = 'pd-ov-grid';
 
-  // BRANCH replaces PATH (the header carries the path): the same row model as the Projects list,
+  // Branch replaces Path (the header carries the path): the same row model as the Projects list,
   // painted by paintSyncChips from /api/sync/projects.
-  grid.appendChild(pdBranchCard('branch', 'BRANCH'));
+  grid.appendChild(pdBranchCard('branch', 'Branch'));
 
   const rows = projectHistoryRows(key);
   const fam = { done: 0, paused: 0, stopped: 0, error: 0 };
@@ -12826,9 +12843,8 @@ function buildPdOverview(sec, key) {
   const live = [...runs.values()].filter((r) => r && r.projectDir === p.path && (r.status === 'running' || r.status === 'starting')).length;
   if (!rows.length && !live) {
     // Nothing to count yet: one wide card that says so and starts the first run, not "0" beside "—".
-    const card = pdStatCard('runs', 'RUNS', 'No runs yet', p.exists ? 'Runs started here show up on this page.' : 'The folder is missing on disk.');
+    const card = pdStatCard('runs', 'Runs', 'No runs yet', p.exists ? 'Runs started here show up on this page.' : 'The folder is missing on disk.');
     card.classList.add('pd-ov-wide');
-    card.querySelector('.pd-ov-value').classList.remove('mono');
     const start = document.createElement('button');
     start.type = 'button';
     start.className = 'btn btn-sm pd-ov-act pd-ov-start';
@@ -12841,24 +12857,23 @@ function buildPdOverview(sec, key) {
     // Only the counts that are not zero: "10 done · 2 error", never five zeros.
     const parts = Object.entries(fam).filter(([, n]) => n).map(([f, n]) => `${n} ${f}`);
     if (live) parts.push(`${live} running now`);
-    grid.appendChild(pdStatCard('runs', 'RUNS', String(rows.length), parts.join(' · ')));
+    grid.appendChild(pdStatCard('runs', 'Runs', String(rows.length), parts.join(' · ')));
     let last = null;
     for (const r of rows) { const t = histTs(r.startedAt || r.mtime); if (!last || t > last.t) last = { t, r }; }
     if (last) {
       const when = Number.isFinite(last.t) && last.t ? ago(new Date(last.t).toISOString()) : fmtDate(last.r.startedAt || last.r.mtime);
-      const card = pdStatCard('last', 'LAST RUN', when, [last.r.title || last.r.id, histStatusMeta(last.r).family].filter(Boolean).join(' · '), { tag: 'button' });
-      card.querySelector('.pd-ov-value').classList.remove('mono');
+      const card = pdStatCard('last', 'Last run', when, [last.r.title || last.r.id, histStatusMeta(last.r).family].filter(Boolean).join(' · '), { tag: 'button' });
       card.classList.add('pd-ov-link');
       card.title = `Open this run · ${fmtDate(last.r.startedAt || last.r.mtime)}`;
       card.addEventListener('click', () => { location.hash = `history/${histDetailParam(last.r)}`; });
       grid.appendChild(card);
     }
   }
-  grid.appendChild(tagLevel(pdStatCard('key', 'KEY', p.key, `memory scope projects/${p.key}`), 'expert'));
+  grid.appendChild(tagLevel(pdStatCard('key', 'Key', p.key, `memory scope projects/${p.key}`, { mono: true }), 'expert'));
   // The team half (docs/team-metrics.md, docs/team-policy.md): one card each, filled by the
   // scopes painters, and a click lands on the Team tab where the controls are.
   for (const which of ['metrics', 'policy']) {
-    const card = pdStatCard(which, which === 'metrics' ? 'TEAM METRICS' : 'TEAM POLICY', '…', 'checking…', { tag: 'button' });
+    const card = pdStatCard(which, which === 'metrics' ? 'Team metrics' : 'Team policy', '…', 'checking…', { tag: 'button' });
     card.classList.add('pd-ov-link');
     card.title = 'Open the Team tab';
     card.addEventListener('click', () => { location.hash = `projects/${projParamFor(key, 'team')}`; });
@@ -12878,8 +12893,6 @@ function buildPdOverview(sec, key) {
 function pdBranchCard(kind, label) {
   const card = pdStatCard(kind, label, '…', 'checking…');
   card.classList.add('pd-ov-branch');
-  const value = card.querySelector('.pd-ov-value');
-  value.classList.remove('mono');
   const status = document.createElement('div');
   status.className = 'pd-ov-status';
   card.insertBefore(status, card.querySelector('.pd-ov-sub'));
@@ -13078,6 +13091,7 @@ function buildPdMemory(sec, key) {
   sec.append(msg, host);
   if (!projDetail) return;
   if (projDetail.memCtl) projDetail.memCtl.destroy();
+  ensureHistoryLoaded();   // the file meta and History name runs from these rows (D4)
   projDetail.memCtl = createMemoryController({ host, msgEl: msg, scopeKey: `projects/${key}`, navigate: true });
 }
 
@@ -16603,8 +16617,16 @@ const memoryNameOk = (n) => MEMORY_NAME_RE.test(n) && n !== '.' && n !== '..' &&
 /** decodeURIComponent that never throws: a hand-typed hash can hold a truncated escape. */
 const safeDecode = (s) => { try { return decodeURIComponent(s); } catch { return String(s); } };
 
+/** A run's name for Settings › Memory (D4): from the loaded History rows; null until they are in. */
+function memoryRunInfo(pid) {
+  const p = (state.historyAll || []).find((x) => x && x.id === pid);
+  return p ? { title: String(p.title || '').trim(), href: `#history/${histDetailParam(p)}` } : null;
+}
+const memoryHosts = new Set();   // live controllers' hosts, patched when History lands
+
 function createMemoryController({ host, msgEl, scopeKey, hostProject = null, navigate = true }) {
   const base = memoryApiBase(scopeKey);
+  memoryHosts.add(host);
   // `editor.loaded` is the text the editor was LOADED from — the dirty baseline. It has to survive
   // a frame refresh (a draft is not a baseline), or the next frame reads the editor as clean and
   // refetches over the unsaved text. `flash` carries a success message across the reload a write
@@ -16632,11 +16654,11 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
     // A live defragment run owns the scope: Save / Delete / Restore resume when it finishes (B23).
     const locked = !!st.report.defragRunId;
     host.appendChild(renderHealthCard(st.report, { host: hostRef() }));
-    host.appendChild(renderFileList(st.report.files, { selected: st.selected }));
+    host.appendChild(renderFileList(st.report.files, { selected: st.selected, runInfo: memoryRunInfo }));
     const right = document.createElement('div');
     right.className = 'mem-right';
     if (st.editor) right.appendChild(renderEditor(st.editor, { isNew: st.isNew, msg: st.editor.msg || '', msgErr: !!st.editor.msgErr, locked }));
-    right.appendChild(renderMemoryHistory(st.snapshots, { locked }));
+    right.appendChild(renderMemoryHistory(st.snapshots, { locked, runInfo: memoryRunInfo }));
     host.appendChild(right);
     // replaceChildren drops focus to <body>; put it back where the user was.
     if (!hadFocus) return;
@@ -16648,7 +16670,7 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
       return;
     }
     const back = st.isNew ? host.querySelector('.mem-name')
-      : (st.selected ? [...host.querySelectorAll('.mem-row')].find((r) => r.dataset.name === st.selected) : null);
+      : (st.selected ? [...host.querySelectorAll('.mem-row')].find((r) => r.dataset.name === st.selected)?.querySelector('.mem-row-main') : null);
     if (back && typeof back.focus === 'function') back.focus({ preventScroll: true });
   }
 
@@ -16742,15 +16764,16 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
   }
 
   async function restore(id) {
+    const when = formatWhen(parseSnapshotId(id).iso) || 'that time';
     const ok = await confirmModal({
       title: 'Restore snapshot',
-      message: `Replace every file of this scope with snapshot ${id}? The current files are snapshotted first.`,
+      message: `Replace every file of this scope with the snapshot from ${when}? The current files are snapshotted first.`,
       confirmLabel: 'Restore',
     });
     if (!ok) return;
     const r = await memoryApi('POST', `${base}/history/${encodeURIComponent(id)}/restore`);
     if (!r.ok) { say(r.data.error || `HTTP ${r.status}`, 'err'); if (r.status === 409) await load(st.selected, { keepDraft: true }); return; }
-    st.flash = [`Restored ${id}`, 'ok'];
+    st.flash = [`Restored the snapshot from ${when}`, 'ok'];
     await load('');
   }
 
@@ -16769,6 +16792,7 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
     else void load(name);
   };
   const onClick = (e) => {
+    if (e.target.closest && e.target.closest('a[href]')) return;   // a run link navigates; it never opens the file
     const t = e.target;
     const hit = (cls) => (t.closest ? t.closest(`.${cls}`) : null);
     if (hit('mem-new')) { st.selected = ''; st.isNew = true; st.editor = { name: '', text: '' }; paint(); return; }
@@ -16785,11 +16809,12 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
     if (row) open(row.dataset.name);
   };
   const onKey = (e) => {
+    if (e.target.closest && e.target.closest('a[href]')) return;
     if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
-    const row = e.target.closest && e.target.closest('.mem-row');
-    if (!row) return;
+    const main = e.target.closest && e.target.closest('.mem-row-main');
+    if (!main) return;
     e.preventDefault();
-    open(row.dataset.name);
+    open(main.closest('.mem-row').dataset.name);
   };
   host.addEventListener('click', onClick);
   host.addEventListener('keydown', onKey);
@@ -16799,7 +16824,7 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
     selectedName: () => st.selected,
     loaded: () => !!st.report,
     dirty: isDirty,
-    destroy() { host.removeEventListener('click', onClick); host.removeEventListener('keydown', onKey); host.replaceChildren(); },
+    destroy() { memoryHosts.delete(host); host.removeEventListener('click', onClick); host.removeEventListener('keydown', onKey); host.replaceChildren(); },
   };
 }
 
@@ -16826,6 +16851,7 @@ function loadFlagsTab(sub = '') {
 
 async function loadMemoryTab(sub = '') {
   if (!el.memoryHost) return;
+  ensureHistoryLoaded();   // the file meta and History name runs from these rows (D4)
   if (!memoryTabCtl) {
     memoryTabCtl = createMemoryController({ host: el.memoryHost, msgEl: el.memoryMsg, scopeKey: 'global', hostProject: globalDefragHost });
   }
@@ -21144,6 +21170,7 @@ function paintHistory() {
   rdHandOffOpen();         // a finished run on the Running page moves to its saved row
   crpRetryPending();       // Chat P4: a run panel route that waited for these rows resolves now
   scheduleGroupPagePaint(); // a feature / group page opened by a deep link reads its members' rows from here (QA)
+  for (const h of memoryHosts) patchRunRefs(h, memoryRunInfo);   // Settings › Memory names its runs in place (D5)
 }
 
 // One row of the history empty/error state — a DIV (never an <li>).

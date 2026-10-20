@@ -39,8 +39,8 @@ const STATS_FIXTURE = {
   people: [], filtered: false, groups: null,
 };
 
-async function boot({ fetchHandler, storage = {} } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
+async function boot({ fetchHandler, storage = {}, url = 'http://localhost:4317/' } = {}) {
+  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   const wsBox = { ws: null };
@@ -209,13 +209,40 @@ test('Last month, Group by and Custom drive the /api/stats query', async () => {
   assert.equal(doc.getElementById('stats-to').hasAttribute('aria-invalid'), false);
 });
 
-test('narrow widths: the range control scrolls on one 32px row and a grouped table scrolls inside its card', () => {
+test('narrow widths: the range control wraps (no sideways scroll) and tables sit in the shared table-wrap', () => {
   const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
-  // Review A5: a wrapped segmented control is 62px, off the size scale; it scrolls within its width instead of running off-screen.
-  assert.match(css, /#stats-range\{[^}]*flex-wrap:nowrap;max-width:100%;overflow-x:auto;/, 'six range buttons stay one row and scroll, not run off-screen');
-  // A grid item keeps min-width:auto, so the 1fr track grows to the table's
-  // min-content width and .people-scroll never scrolls; min-width:0 caps it.
-  assert.match(css, /\.people-grid>\*\{min-width:0;\}/);
+  assert.match(css, /#stats-range\{[^}]*flex-wrap:wrap;/, 'six range buttons wrap at 290px');
+  assert.doesNotMatch(css, /#stats-range\{[^}]*overflow-x:auto/);
+  // A grid item keeps min-width:auto, so a 1fr track grows to a table's min-content width; min-width:0 caps it.
+  assert.match(css, /\.charts-grid>\*\{min-width:0;\}/);
+});
+
+test('a fresh load at #stats shows Statistics, not Chat; a late /api/flags at simple level keeps the hash', async () => {
+  await checkRows([
+    { name: 'a fresh load at #stats shows Statistics, not Chat', run: async () => {
+      const ctx = await boot({ url: 'http://localhost:4317/#stats' });
+      const doc = ctx.window.document;
+      await ctx.tick(); await ctx.tick();
+      assert.equal(ctx.window.location.hash, '#stats');
+      assert.equal(doc.querySelector('[data-view="stats"]').classList.contains('hidden'), false);
+      assert.equal(doc.querySelector('[data-view="chat"]').classList.contains('hidden'), true);
+      assert.equal(doc.getElementById('topnav-title').textContent, 'Statistics');
+    } },
+    { name: 'simple level and a late /api/flags: the hash stays #stats and Statistics shows', run: async () => {
+      const ctx = await boot({ url: 'http://localhost:4317/#stats', fetchHandler: (u) => {
+        if (u.includes('/api/flags')) return new Promise((r) => setTimeout(() => r({ ok: true, status: 200, json: async () => ({ flags: {} }) }), 30));
+        if (u.includes('/api/settings')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ uiLevel: 'simple' }) });
+        return null;
+      } });
+      const doc = ctx.window.document;
+      await new Promise((r) => setTimeout(r, 60));
+      await ctx.tick(); await ctx.tick();
+      assert.equal(ctx.window.location.hash, '#stats');
+      assert.equal(doc.querySelector('[data-view="stats"]').classList.contains('hidden'), false);
+      assert.equal(doc.querySelector('[data-view="chat"]').classList.contains('hidden'), true);
+      assert.equal(doc.getElementById('topnav-title').textContent, 'Statistics');
+    } },
+  ]);
 });
 
 // View chips (#718 slice 4; Cost: labels-cost-tags s3): Overview · By person · Cost replace the Group by while runTags is on.

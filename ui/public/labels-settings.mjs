@@ -9,7 +9,7 @@ export const runCount = (n) => `${n} run${n === 1 ? '' : 's'}`;
 /** labels: [{ label, count }] most used first → the list element (rows, or the empty hint). */
 export function renderLabelsSection(doc, labels, { onRename, onDelete } = {}) {
   const list = doc.createElement('div');
-  list.className = 'lbl-set-list';
+  list.className = 'lbl-set-list drows';
   if (!labels.length) {
     const p = doc.createElement('p');
     p.className = 'hint lbl-set-empty';
@@ -19,7 +19,7 @@ export function renderLabelsSection(doc, labels, { onRename, onDelete } = {}) {
   }
   for (const row of labels) {
     const r = doc.createElement('div');
-    r.className = 'lbl-set-row';
+    r.className = 'drow lbl-set-row';
     r.dataset.label = row.label;
     const dot = doc.createElement('span');
     dot.className = `label-dot hue-${labelHue(row.label)}`;
@@ -40,7 +40,13 @@ export function renderLabelsSection(doc, labels, { onRename, onDelete } = {}) {
       { label: 'Rename', onSelect: () => onRename && onRename(row) },
       { label: 'Delete', onSelect: () => onDelete && onDelete(row) },
     ] }));
-    r.append(dot, name, count, more);
+    const label = doc.createElement('span');
+    label.className = 'drow-label';
+    label.append(dot, name, count);
+    const ctl = doc.createElement('span');
+    ctl.className = 'drow-control';
+    ctl.append(more);
+    r.append(label, ctl);
     list.append(r);
   }
   return list;

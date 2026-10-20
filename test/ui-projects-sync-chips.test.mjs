@@ -107,8 +107,32 @@ test('the rows render from /api/sync/projects, and one render makes exactly one 
     // Sync all sits in the card head, beside the last check time — not in the page's topbar.
     assert.equal(ctx.doc.querySelector('#projects-list .saved-head #projects-sync-all').textContent, 'Sync all (1)');
     assert.equal(ctx.doc.querySelectorAll('#projects-sync-all').length, 1);
+    // The shared filter chip and a quiet Sync all (docs/design-system.md › Filter chip, Button).
+    const chips = [...ctx.doc.querySelectorAll('#projects-list .proj-filters button')];
+    assert.ok(chips.length >= 2);
+    assert.ok(chips.every((c) => c.classList.contains('filter-chip') && !c.classList.contains('proj-fchip')));
+    assert.equal(chips.filter((c) => c.getAttribute('aria-pressed') === 'true').length, 1);
+    const sync = ctx.doc.getElementById('projects-sync-all');
+    assert.ok(sync.classList.contains('btn-quiet'));
+    assert.ok(!sync.classList.contains('btn-primary'));
+    click(ctx.window, chips[1]);
+    assert.equal(ctx.doc.activeElement?.dataset.filter, chips[1].dataset.filter, 'focus stays on the picked chip');
     await timers.advance(400);
     assert.equal(chipGets(ctx.calls), 1, 'render → refresh never loops back into a render');
+  } finally {
+    t.mock.timers.reset();
+  }
+});
+
+test('the project page Branch tile: a sans value holding the branch name as an inner mono span', async (t) => {
+  const ctx = await boot();
+  const timers = useAppTimers(t);
+  try {
+    await go(ctx.window, timers, 'projects/k1');
+    const value = () => ctx.doc.querySelector('#proj-detail .pd-ov-card-branch .pd-ov-value');
+    await waitFor(timers, () => value() && value().querySelector('span.mono'));
+    assert.equal(value().classList.contains('mono'), false);
+    assert.equal(value().querySelector('span.mono').textContent, 'dev');
   } finally {
     t.mock.timers.reset();
   }
@@ -255,6 +279,7 @@ test('workspace rows: rollup sentence, icon strip, Sync all; the table opens on 
         assert.deepEqual([...item().querySelectorAll('.ws-strip-name')].map((n) => n.textContent), ['alpha', 'beta']);
         const syncAll = item().querySelector('.ws-sync-all');
         assert.equal(syncAll.hidden, false);
+        assert.ok(syncAll.classList.contains('btn-quiet') && !syncAll.classList.contains('btn-primary'));
         assert.equal(syncAll.textContent, 'Sync all (1)');
         const table = item().querySelector('.ws-table');
         assert.equal(table.hidden, true, 'nothing diverged: the table starts closed');
@@ -264,7 +289,17 @@ test('workspace rows: rollup sentence, icon strip, Sync all; the table opens on 
         assert.equal(ctx.window.location.hash, '#workspaces', 'Show did not open the workspace');
         assert.equal(table.hidden, false);
         assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+        assert.ok(table.classList.contains('table-wrap'));
+        assert.equal(table.querySelectorAll('table.table.ws-members').length, 1);
         const rows = [...table.querySelectorAll('.ws-trow')];
+        assert.ok(rows.every((r) => r.tagName === 'TR'));
+        for (const r of rows) {
+          assert.deepEqual(['.ws-tbranch-cell', '.ws-tstatus-cell', '.ws-tact-cell'].map((c) => r.querySelector(c).dataset.label), ['Branch', 'Status', 'Action']);
+          assert.equal(r.querySelector('.ws-tname').tagName, 'TD');
+          assert.ok(r.querySelector('.ws-tname').classList.contains('table-main'));
+          assert.equal(r.querySelector('td.ws-icon-cell').getAttribute('aria-hidden'), 'true');
+          assert.notEqual(r.querySelector('.ws-tstatus-cell').textContent, '', 'the status words carry the tone');
+        }
         assert.deepEqual(rows.map((r) => r.querySelector('.ws-tname').textContent), ['alpha', 'beta']);
         assert.deepEqual(rows.map(label), ['3 commits behind', 'Up to date']);
         click(ctx.window, rows[0].querySelector('button'));

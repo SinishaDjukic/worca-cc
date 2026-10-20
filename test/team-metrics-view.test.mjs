@@ -62,6 +62,34 @@ test('body: charts, breakdown tables with row filters and sortable headers, run 
   assert.match(body.querySelector('.tm-runs-head').textContent, /2 in range/);
 });
 
+test('every tm-tbl is the shared table in a table-wrap; cells carry their column label (D10)', () => {
+  const agg = aggregate(recs, { range: 'this-month', now: NOW });
+  const body = renderTeamMetricsBody(agg, { doc, now: NOW, scopeKind: 'project', sort: {}, filter: {} });
+  const tables = [...body.querySelectorAll('table.tm-tbl')];
+  assert.ok(tables.length >= 2);
+  for (const t of tables) {
+    assert.ok(t.classList.contains('table'), t.dataset.dim || 'runs');
+    assert.ok(t.parentElement.classList.contains('table-wrap'));
+    const row = t.querySelector('tbody tr');
+    const cells = [...row.cells];
+    if (cells.length > 1) {
+      assert.ok(cells[0].classList.contains('table-main'));
+      const labels = [...t.querySelectorAll('thead th')].map((th) => th.textContent);
+      cells.slice(1).forEach((td, i) => assert.equal(td.dataset.label ?? '', labels[i + 1]));
+    }
+  }
+});
+
+test('every card that draws a chart has a legend, with sans values (D16)', () => {
+  const agg = aggregate(recs, { range: 'this-month', now: NOW });
+  const body = renderTeamMetricsBody(agg, { doc, now: NOW, scopeKind: 'project', sort: {}, filter: {} });
+  const charts = [...body.querySelectorAll('.card')].filter((c) => c.querySelector('svg.chart-svg'));
+  assert.ok(charts.length >= 1);
+  for (const c of charts) assert.ok(c.querySelector('.chart-legend'), c.querySelector('h2')?.textContent);
+  assert.equal(body.querySelectorAll('.chart-legend b.mono').length, 0);
+  assert.equal(body.querySelectorAll('.stat-value.mono').length, 0, 'tile values are sans');
+});
+
 test('run table rows newest first with PR link and result badge', () => {
   const agg = aggregate(recs, { range: 'all', now: NOW });
   const t = renderRunsTable(agg.runs, { doc, total: agg.runs.length });

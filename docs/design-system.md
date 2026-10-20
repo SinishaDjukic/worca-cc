@@ -58,8 +58,7 @@ Dots, avatars, spinners, radios and switch knobs may be round; the switch track 
 | small | 28px | `.btn-sm`, `.input-sm`, `.select-sm`, segmented buttons, filter chips, list-row actions |
 | medium | 32px | `.btn`, fields, tabs, page and dialog actions |
 | large | 40px | `.btn-lg`: at most one per view (Start run) |
-Touch screens raise every button to 40px. Fields keep 32px on touch screens; whether they also rise to 40px is
-decided with the Settings forms (stacked fields on phones), not here.
+Touch screens raise every button to 40px. Fields stay 32px on touch screens; Settings stacks them under 560px of container width.
 
 ### Shadows (checked)
 None at rest. Only floating surfaces (menus, popovers, dialogs, the dock) use `--shadow-menu`, `--shadow-pop`,
@@ -95,7 +94,9 @@ A dot is the state: peach working (pulses), grey paused or waiting, green ready,
 `openMenu({ doc, anchor, items, align, side, label })` (`ui/public/workflows/menu.mjs`). No hand-built dropdowns.
 ### Cards versus divided rows
 Prefer divided rows (`.drows` / `.drow`): rows split by one `--line`, no box per item. A card (`.card`, 8px corner,
-24px padding) frames one thing you act on; never a card inside a card (checked).
+24px padding) frames one thing you act on; never a card inside a card (checked). `.drow-wide` puts a wide control
+(a textarea, a table, a path row) under its label at full width; `.drow-stack` holds rich block content (a schedule,
+a preset, a guardrail) with the same divider and padding.
 ### Table
 `.table-wrap` > `.table`: 12px / 600 `--ink-2` headers, 13px cells, 8px 12px 8px 0 cell padding, one `--line` under
 each row, no outer box. Under 560px it stacks one block per row using each cell's `data-label`; it never scrolls sideways.
@@ -104,7 +105,7 @@ A chart has a fixed height that does not grow with its width: the Cost and value
 charts (Statistics, Team metrics) about 180px. Axis labels are 11px `--ink-3` and legends 12px `--ink-2` at every
 width, so chart text is never drawn in a fixed viewBox that is scaled to the card (that is how a 560 × 240 viewBox
 became 461px tall with 20px axis text). Tooltips are 12px. Bars and areas use the status and neutral tokens; blue is
-never a bar.
+never a bar. Every chart card has a legend; a one-series chart's legend names the series and its total.
 ### Empty, loading, error
 Empty: one `.empty-line` (13px `--ink-2`) plus one quiet action. Loading: `aria-busy="true"` on the list, no spinner
 under 300ms. Error: a plain sentence plus a "Details" quiet button, never the raw error.
@@ -123,7 +124,7 @@ only inside a confirm is `.btn-danger` solid red.
 - The feature is "Chat", not "Ask Worca".
 - Page header: title, then one short intro sentence (`.page-intro`), then content.
 - Stat tiles hold numbers only (time, cost, files changed). A list of chips goes in its own labelled row under the
-  tiles, for example the run page's "Cost tags" row, never stacked inside a tile.
+  tiles, for example the run page's "Cost tags" row, never stacked inside a tile. The value is sans with tabular figures.
 - Search is the top bar's "Search or ask" only. A list filter is chosen there ("Runs labelled hotfix", `label:hotfix`),
   not from a filter button in the list's header.
 - Phones: one 16px gutter; nothing scrolls sideways at 290px.

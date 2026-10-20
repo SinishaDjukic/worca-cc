@@ -19,6 +19,8 @@ test('renderLabelsSection: one row per label with its dot, the label, "on N runs
   assert.deepEqual(rows.map((r) => [r.querySelector('.lbl-set-name').textContent, r.querySelector('.lbl-set-count').textContent]),
     [['hotfix', 'on 3 runs'], ['needs demo', 'on 1 run']]);
   assert.ok(rows[0].querySelector(`.label-dot.hue-${labelHue('hotfix')}`));
+  assert.ok(list.classList.contains('drows') && rows.every((r) => r.classList.contains('drow')), 'divided rows');
+  assert.ok(rows[0].querySelector('.drow-label .lbl-set-name') && rows[0].querySelector('.drow-control .lbl-set-more'));
   const more = rows[0].querySelector('.lbl-set-more');
   assert.equal(more.getAttribute('aria-label'), 'More for hotfix');
   more.click();

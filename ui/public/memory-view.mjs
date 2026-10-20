@@ -43,6 +43,55 @@ export function formatWhen(iso) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
+// Plain words for a memory source (docs/design-system.md › Patterns: ids in a tooltip).
+const SLUG_RE = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})-(.+?)(?:-(\d{2}))?$/;
+
+/** Where a write came from, as { kind: 'run'|'user'|'chat'|'other', ref }. `defrag:` is a run too. */
+export function memorySource(src) {
+  const m = /^(run|defrag|ask):(.+)$/.exec(String(src || ''));
+  if (m) return m[1] === 'ask' ? { kind: 'chat', ref: m[2] } : { kind: 'run', ref: m[2] };
+  return String(src || '') === 'user' ? { kind: 'user', ref: '' } : { kind: 'other', ref: '' };
+}
+
+/** A snapshot id `yyyymmdd-hhmmss-slug[-NN]` (memory-store stamps it in UTC) → { iso, source }. */
+export function parseSnapshotId(id) {
+  const m = SLUG_RE.exec(String(id || ''));
+  if (!m) return { iso: '', source: { kind: 'other', ref: '' } };
+  const [, y, mo, d, hh, mi, ss, slug] = m;
+  const iso = new Date(Date.UTC(+y, +mo - 1, +d, +hh, +mi, +ss)).toISOString();
+  const s = /^(run|defrag|ask)-(.+)$/.exec(slug);
+  const source = s ? (s[1] === 'ask' ? { kind: 'chat', ref: s[2] } : { kind: 'run', ref: s[2] })
+    : slug === 'user' ? { kind: 'user', ref: '' } : { kind: 'other', ref: '' };
+  return { iso, source };
+}
+
+const SOURCE_WORDS = { user: 'you', chat: 'a chat', other: 'Worca' };
+
+/** The source as words: a run's title linked to the run, 'a run' when the title is unknown (a link
+ *  only when the run's row is known), 'you' / 'a chat' / 'Worca' otherwise. */
+export function sourceNode(source, { doc = globalThis.document, runInfo = () => null } = {}) {
+  const wrap = h(doc, 'span', 'mem-src');
+  if (source.kind !== 'run') { wrap.textContent = SOURCE_WORDS[source.kind]; return wrap; }
+  wrap.dataset.runRef = source.ref;
+  const info = runInfo(source.ref);
+  if (!info) { wrap.textContent = 'a run'; return wrap; }
+  const a = h(doc, 'a', 'mem-src-link', info.title || 'a run');
+  a.href = info.href;
+  if (!info.title) a.setAttribute('aria-label', 'Open this run');   // tells it apart from the plain "a run"
+  wrap.appendChild(a);
+  return wrap;
+}
+
+/** Swap every still-unresolved run reference under `root` for its name once the runs are known. */
+export function patchRunRefs(root, runInfo, { doc = globalThis.document } = {}) {
+  for (const el of root.querySelectorAll('[data-run-ref]')) {
+    if (el.querySelector('a') || !runInfo(el.dataset.runRef)) continue;
+    const next = sourceNode({ kind: 'run', ref: el.dataset.runRef }, { doc, runInfo });
+    next.className = el.className;
+    el.replaceWith(next);
+  }
+}
+
 const NO_HOST_HINT = 'Register a project on the Projects page to host the global defragment run.';
 
 /** Settings › Memory's defragment model as the host hint names it — ` with Opus 5.5 · high` — from
@@ -120,9 +169,10 @@ export function renderHealthCard(report, { doc = globalThis.document, host = nul
   return card;
 }
 
-/** The file list: a head with the New button, one row per file. The ROW is the control (click,
- *  Enter, Space) — no nested button, so `role="button"` holds no interactive descendant. */
-export function renderFileList(files, { doc = globalThis.document, selected = '' } = {}) {
+/** The file list: a head with the New button, one row per file. The row's main block is the control
+ *  (click, Enter, Space) and holds no interactive descendant; the meta line beside it may hold the
+ *  source run's link (D6). */
+export function renderFileList(files, { doc = globalThis.document, selected = '', runInfo = () => null } = {}) {
   const wrap = h(doc, 'div', 'mem-list');
   const head = h(doc, 'div', 'mem-list-head');
   head.appendChild(h(doc, 'span', 'mem-list-title', 'Files'));
@@ -135,13 +185,21 @@ export function renderFileList(files, { doc = globalThis.document, selected = ''
   for (const f of list) {
     const row = h(doc, 'div', `mem-row${f.name === selected ? ' on' : ''}`);
     row.dataset.name = f.name;
-    row.setAttribute('role', 'button'); row.tabIndex = 0;
     const main = h(doc, 'div', 'mem-row-main');
+    main.setAttribute('role', 'button'); main.tabIndex = 0;
+    main.setAttribute('aria-label', `Open ${f.name}.md`);
     main.appendChild(h(doc, 'div', 'mem-row-name mono', `${f.name}.md`));
     main.appendChild(h(doc, 'div', 'mem-row-hook', f.description || '(no description)'));
-    const meta = [formatWhen(f.updated), f.source || ''].filter(Boolean).join(' · ') + (f.hasFrontmatter === false ? ' · no frontmatter' : '');
-    main.appendChild(h(doc, 'div', 'mem-row-meta', meta));
     row.appendChild(main);
+    const meta = h(doc, 'div', 'mem-row-meta');
+    const when = formatWhen(f.updated);
+    if (when) meta.append(when);
+    if (f.source) {
+      meta.title = f.source;
+      meta.append(when ? ' · ' : '', sourceNode(memorySource(f.source), { doc, runInfo }));
+    }
+    if (f.hasFrontmatter === false) meta.append(' · no frontmatter');
+    row.appendChild(meta);
     wrap.appendChild(row);
   }
   return wrap;
@@ -191,7 +249,7 @@ export function collectEditor(rootEl) {
 }
 
 /** The snapshot ring, newest first, one Restore per row (disabled while a defragment run is live). */
-export function renderMemoryHistory(snapshots, { doc = globalThis.document, locked = false } = {}) {
+export function renderMemoryHistory(snapshots, { doc = globalThis.document, locked = false, runInfo = () => null } = {}) {
   const wrap = h(doc, 'div', 'mem-history');
   wrap.dataset.minLevel = 'expert';             // snapshot restore: expert (docs/ui-levels.md)
   wrap.appendChild(h(doc, 'div', 'mem-list-title', 'History'));
@@ -200,7 +258,15 @@ export function renderMemoryHistory(snapshots, { doc = globalThis.document, lock
   for (const s of list) {
     const row = h(doc, 'div', 'mem-snap');
     row.dataset.id = s.id;
-    row.appendChild(h(doc, 'span', 'mem-snap-id mono', s.id));
+    row.title = s.id;
+    const { iso, source } = parseSnapshotId(s.id);
+    row.appendChild(h(doc, 'span', 'mem-snap-when', formatWhen(iso)));
+    if (iso) {   // an unparsable id names nothing: the row shows only its count
+      row.appendChild(h(doc, 'span', 'mem-snap-sep', ' · '));
+      const src = sourceNode(source, { doc, runInfo });
+      src.className = 'mem-snap-src';
+      row.appendChild(src);
+    }
     row.appendChild(h(doc, 'span', 'mem-snap-count', plural((s.files || []).length, 'file')));
     const btn = h(doc, 'button', 'btn btn-sm mem-restore', 'Restore');
     btn.type = 'button'; btn.dataset.id = s.id; btn.disabled = !!locked;

@@ -14,6 +14,8 @@ export const COST_STATE_KEY = 'worca-cc.stats.cost.v1';
 export const COST_VIEWS_KEY = 'worca-cc.stats.costViews.v1';
 const MAX_VIEWS = 20;
 const MAX_FILTERS = 10;
+/** The table's columns after the row name: the head, and each cell's label when the rows stack on phones. */
+const VALUE_HEADS = ['Share', 'AI spend', 'Human hours', 'Saved', '$ per hour', 'Runs'];
 
 function h(doc, tag, cls, text) {
   const n = doc.createElement(tag);
@@ -215,6 +217,9 @@ export function createCostReport({ doc = globalThis.document, fmt = DEFAULT_FMT,
       savedTd,
       h(doc, 'td', 'num', row.usdPerHour == null ? '—' : `${fmt.usd(row.usdPerHour)}/h`),
       runsTd);
+    // Stacked on phones the thead is clipped: the name leads the row, every other cell names its column.
+    nameTd.classList.add('table-main');
+    VALUE_HEADS.forEach((t, i) => { tr.cells[i + 1].dataset.label = t; });
     return tr;
   }
 
@@ -230,18 +235,18 @@ export function createCostReport({ doc = globalThis.document, fmt = DEFAULT_FMT,
 
   function paintTable() {
     rowsByPath.clear();
-    const table = h(doc, 'table', 'people-table cr-table');
+    const table = h(doc, 'table', 'table people-table cr-table');
     const head = h(doc, 'tr');
-    [dimLabel(st.by), 'Share', 'AI spend', 'Human hours', 'Saved', '$ per hour', 'Runs']
+    [dimLabel(st.by), ...VALUE_HEADS]
       .forEach((t, i) => head.append(h(doc, 'th', i ? 'num' : null, t)));
     const thead = h(doc, 'thead');
     thead.append(head);
     const tbody = h(doc, 'tbody');
     for (const r of model.rows) tbody.append(...rowTree(r, 0, ''));
     table.append(thead, tbody);
-    const scroll = h(doc, 'div', 'people-scroll');
-    scroll.append(table);
-    tableCard.replaceChildren(scroll);
+    const wrap = h(doc, 'div', 'table-wrap');
+    wrap.append(table);
+    tableCard.replaceChildren(wrap);
   }
 
   function toggle(path) {
