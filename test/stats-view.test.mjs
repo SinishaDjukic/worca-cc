@@ -133,3 +133,19 @@ test('renderStatsBody: KPI row + two chart cards; empty range -> chart-empty not
   assert.equal(empty.querySelectorAll('.chart-empty').length, 2);
   assert.equal(empty.querySelector('svg.chart-svg'), null);
 });
+
+test('renderKpiRow: Requirements tile needs the flag AND data; links to #requirements', () => {
+  const withReq = { ...MODEL, totals: { ...MODEL.totals, requirements: { spendUsd: 1.5, features: 3 } },
+    prev: { ...MODEL.prev, requirements: { spendUsd: 1, features: 1 } } };
+  const on = renderKpiRow(withReq, { doc, requirementsEnabled: true }).querySelectorAll('.stat-tile');
+  assert.equal(on.length, 8);
+  const t = [...on].find((x) => /Requirements/.test(x.querySelector('.stat-label').textContent));
+  assert.ok(t);
+  assert.match(t.querySelector('.stat-value').textContent, /\$1\.50/);
+  assert.match(t.querySelector('.stat-sub').textContent, /3 features/);
+  assert.equal(t.querySelector('a').getAttribute('href'), '#requirements');
+  assert.equal(renderKpiRow(withReq, { doc, requirementsEnabled: false }).querySelectorAll('.stat-tile').length, 7);
+  assert.equal(renderKpiRow(MODEL, { doc, requirementsEnabled: true }).querySelectorAll('.stat-tile').length, 7);
+  const one = { ...withReq, totals: { ...withReq.totals, requirements: { spendUsd: 0, features: 1 } } };
+  assert.match(renderKpiRow(one, { doc, requirementsEnabled: true }).textContent, /1 feature(?!s)/);
+});

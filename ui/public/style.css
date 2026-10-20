@@ -2862,6 +2862,8 @@ button.pd-ov-card:hover{border-color:var(--ink-3);}
 .stat-row{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px;}
 .stat-tile{padding:18px 20px;}
 .stat-label{display:flex;align-items:center;gap:8px;color:var(--ink-2);font-size:12.5px;font-weight:600;}
+.stat-link{color:inherit;text-decoration:none;}
+.stat-link:hover{color:var(--ink);text-decoration:underline;}
 .stat-ico{width:16px;height:16px;color:var(--ink-3);flex:0 0 auto;}
 .stat-delta,.stat-mult{margin-left:auto;background:var(--field);color:var(--ink-2);font-size:11px;font-weight:600;
   padding:2px 8px;border-radius:999px;white-space:nowrap;}
@@ -7814,8 +7816,8 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 /* team-cap pause banner (board 9) */
 /* Team metrics KPI row: the policy tiles (Off-policy, Pooled budget) make 7–8 tiles, which leave a
    hole in the 3-column row; four columns fill two rows for eight. Back to one column when narrow. */
-.stat-row.tm-kpis:has(> .stat-tile:nth-child(7)){grid-template-columns:repeat(4,minmax(0,1fr));}
-@media (max-width:1080px){ .stat-row.tm-kpis:has(> .stat-tile:nth-child(7)){grid-template-columns:repeat(2,minmax(0,1fr));} }
+.stat-row:has(> .stat-tile:nth-child(7)){grid-template-columns:repeat(4,minmax(0,1fr));}
+@media (max-width:1080px){ .stat-row:has(> .stat-tile:nth-child(7)){grid-template-columns:repeat(2,minmax(0,1fr));} }
 .cost-banner.cb-policy{background:var(--blue-bg);color:var(--blue-ink);}
 /* The policy home inside the sentence: bold like the figures, but inline (`.cost-banner b` is the block heading). */
 .cost-banner .cb-home{font-weight:600;color:var(--ink);}
