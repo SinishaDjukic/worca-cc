@@ -10,7 +10,7 @@ let current = null;
  * @param {object} o
  * @param {Document} o.doc
  * @param {HTMLElement} o.anchor  the trigger: aria-expanded tracks the menu; Escape and a pick return focus to it
- * @param {Array<{label:string, hint?:string, checked?:boolean, disabled?:boolean, title?:string, onSelect?:Function}
+ * @param {Array<{label:string, hint?:string, chip?:Node, checked?:boolean, disabled?:boolean, title?:string, onSelect?:Function}
  *   |{sep:true}|{header:string}>} o.items
  * @param {'start'|'end'} [o.align]  the edge shared with the anchor
  * @param {'bottom'|'top'} [o.side]   open below (default) or above the anchor
@@ -39,6 +39,7 @@ export function openMenu({ doc, anchor, items, align = 'start', side = 'bottom',
     l.className = 'wfv-menu-l';
     l.textContent = it.label;
     b.appendChild(l);
+    if (it.chip) b.appendChild(it.chip);                // a kind chip (B8): the one chip, never a text hint
     if (it.hint) { const h = doc.createElement('span'); h.className = 'wfv-menu-hint'; h.textContent = it.hint; b.appendChild(h); }
     if (it.disabled) { b.disabled = true; b.setAttribute('aria-disabled', 'true'); }
     if (it.title) b.title = it.title;

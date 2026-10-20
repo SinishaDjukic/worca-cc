@@ -62,7 +62,7 @@
   --amber-bg:light-dark(#FCE8C8,#332715);  --amber:#E6962A;  --amber-ink:light-dark(#A66510,#F0B45A);
   --amber-ink-strong:light-dark(#8E550B,#F0B45A);
   /* Script-only families (script-wizard plan S10): the same lightness as the six above, both themes. */
-  --teal-bg:light-dark(#DDF2EF,#1A2E2B);   --teal:#4FB3A9;   --teal-ink:light-dark(#2A8A80,#86D3CA);
+  --teal-bg:light-dark(#DDF2EF,#1A2E2B);   --teal:#4FB3A9;   --teal-ink:light-dark(#2A8A80,#86D3CA);   --teal-ink-strong:light-dark(#1F6B63,#9FE0D8);   /* teal text on --teal-bg at chip size: 5.4:1 light, 9.6:1 dark (--teal-ink is 3.6:1) */
   --pink-bg:light-dark(#FBE4EE,#33202A);   --pink:#E27BA8;   --pink-ink:light-dark(#B84A7C,#F0A2C3);
   --indigo-bg:light-dark(#E3E7F9,#232739); --indigo:#6A7FD8; --indigo-ink:light-dark(#4457B5,#A3B0EE);
   --lime-bg:light-dark(#EEF4D5,#262E15);   --lime:#A3BF3A;   --lime-ink:light-dark(#6E8A14,#C7DB6E);
@@ -2502,7 +2502,7 @@ input.bench-case-name{width:100%;padding:9px 12px;font-size:13px;}
 .proj-fchip .n{font-weight:600;font-variant-numeric:tabular-nums;}
 .proj-fdot{width:7px;height:7px;border-radius:50%;}
 .proj-fdot.blue{background:var(--blue);} .proj-fdot.amber{background:var(--amber);} .proj-fdot.peach{background:var(--peach);}
-.proj-fdot.green{background:var(--green);} .proj-fdot.grey{background:var(--ink-3);}
+.proj-fdot.green{background:var(--green);} .proj-fdot.grey{background:var(--ink-3);} .proj-fdot.teal{background:var(--teal-ink);}
 #projects-list .proj-head-tools{margin-left:auto;display:flex;align-items:center;gap:10px;}
 #projects-list .proj-head-tools .sync-checked{margin-left:0;}
 #projects-sync-all{height:32px;padding:0 15px;font-size:13px;}
@@ -2520,7 +2520,10 @@ input.bench-case-name{width:100%;padding:9px 12px;font-size:13px;}
 #projects-list .pl-name{font-weight:600;font-size:14px;letter-spacing:-.01em;color:var(--ink);overflow-wrap:anywhere;}
 #projects-list .proj-path{margin-top:2px;word-break:normal;overflow-wrap:anywhere;}
 #projects-list .pl-sync{grid-area:sync;min-width:0;container:ps / inline-size;}
-#projects-list .pl-sync:not(:has(> .proj-sync:not([hidden]))){display:none;}
+#projects-list .pl-sync:not(:has(> .proj-sync:not([hidden]), > .proj-nogit)){display:none;}
+.proj-nogit{display:flex;align-items:center;gap:10px;min-height:58px;padding:9px 12px 9px 14px;border:1px solid var(--line-2);border-radius:var(--r-card);background:var(--panel);color:var(--ink-3);}
+.proj-nogit-txt{font-family:var(--mono);font-size:13px;color:var(--ink-2);}
+#projects-list .proj-zero{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 20px;}
 #projects-list .pl-team{grid-area:team;min-width:0;}
 #projects-list .proj-open{grid-area:chev;border-radius:var(--r-sm);border-color:var(--line-2);}
 #projects-list .pl-row[role="button"]:hover .proj-open{border-color:var(--hover-outline);color:var(--ink);}
@@ -2592,6 +2595,16 @@ input.bench-case-name{width:100%;padding:9px 12px;font-size:13px;}
   #projects-list .proj-open{align-self:start;}
   #projects-list .pl-team{justify-self:start;display:flex;flex-wrap:wrap;gap:4px 14px;}
   #projects-list .pl-team-item{display:inline-flex;align-items:center;gap:6px;}
+}
+/* No git (data-git="off"): no sync column — the row is project | team | chevron. */
+:root[data-git="off"] #projects-list .proj-cols,
+:root[data-git="off"] #projects-list .pl-row{grid-template-columns:minmax(0,1fr) var(--pl-team-col) 30px;}
+:root[data-git="off"] #projects-list .pl-row{grid-template-areas:"proj team chev";}
+@container pl-list (max-width:1000px){
+  :root[data-git="off"] #projects-list .pl-row{grid-template-columns:minmax(0,1fr) auto 30px;grid-template-areas:"proj team chev";}
+}
+@container pl-list (max-width:560px){
+  :root[data-git="off"] #projects-list .pl-row{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"proj chev" "team team";}
 }
 .proj-path{
   font-family:var(--mono);font-size:12px;color:var(--ink-2);
@@ -2740,6 +2753,7 @@ button.pd-ov-card:hover{border-color:var(--ink-3);}
 .pl-uptodate .hint{margin-top:0;font-size:13px;}
 .pl-refs-list{margin:6px 0 0 18px;font-size:12.5px;}
 .plugin-card .mono,.pl-consent .mono,.pl-update .mono,.pl-doc-row .mono,.pl-refs .mono{font-family:var(--mono);}
+.pl-consent-src .pl-needs-git{font-family:var(--sans);}
 .pl-manifest-delta{margin:8px 0;}
 .pl-delta{font-size:12.5px;}
 .pl-delta-secret{font-size:12.5px;font-weight:700;color:var(--red-ink);background:var(--red-bg);border-radius:var(--r-sm);padding:3px 8px;margin:2px 0;display:inline-block;}
@@ -3685,6 +3699,9 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
    card-like distance from the border instead of 56px from the viewport edge. */
 .hd-header,.pd-header{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);margin:20px 32px 0;padding:20px 24px 18px;}
 .hd-row1,.pd-row1{display:flex;align-items:center;gap:14px;}
+.pd-row1:has(> .pd-kind:not(:empty)) > .pd-title{flex:0 1 auto;}
+.pd-row1 > .pd-kind{flex:none;display:inline-flex;}
+.pd-row1 > .pd-kind:empty{display:none;}
 .hd-title,.pd-title{margin:0;min-width:0;flex:1;font:700 22px/1.25 var(--sans);letter-spacing:-.02em;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .hd-body,.pd-body{padding:0 32px 40px;}
@@ -3716,6 +3733,63 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
    bare rules (same values); Task 11 folds the now-redundant scoped pair away. */
 .diff-add{color:var(--green-ink);}
 .diff-del{color:var(--red-ink);}
+/* Project / run kind chips (Projects, any way): one look everywhere (runs list heads, run meta, Projects, scope).
+   Modifiers stay scoped to .kind-chip: bare .kind / .kind-* belong to .team-chip, the Ask card and the artifact viewer. */
+.kind-chip{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 7px;flex:none;
+  white-space:nowrap;vertical-align:middle;}   /* corners and type: the one chip rule (:is(.badge,…)) */
+.kind-chip.kind-git{background:var(--blue-bg);color:var(--blue-ink-strong);}
+.kind-chip.kind-folder{background:var(--teal-bg);color:var(--teal-ink-strong);}
+.kind-chip.kind-none{background:var(--slate-bg);color:var(--slate-ink);}
+.kind-chip.kind-ws{background:var(--violet-bg);color:var(--violet-ink);}   /* 4.96:1 light */
+/* Folder runs (Projects, any way): what a run on a copy changed, and landing it (board 10). */
+.fc-counts{font-weight:500;}
+.fc-modal .mono,.fc-counts{font-family:var(--mono);}   /* style.css has no global .mono */
+.fc-counts .fc-add,.fc-sign.fc-add{color:var(--green-ink-strong);}
+.fc-counts .fc-upd,.fc-sign.fc-upd{color:var(--amber-ink-strong);}
+.fc-counts .fc-del,.fc-sign.fc-del{color:var(--red-ink-strong);}
+.rd-stats b.fc-tile{font:500 17px var(--mono);letter-spacing:0;}
+.fc-bar{display:flex;align-items:center;flex-wrap:wrap;gap:10px;padding:10px 10px 10px 14px;border-radius:var(--r-card);
+  background:color-mix(in srgb,var(--teal-bg) 60%,var(--panel));}
+.fc-bar-l{display:flex;align-items:center;gap:8px;min-width:0;font:500 12.5px var(--mono);color:var(--teal-ink-strong);overflow-wrap:anywhere;}
+.fc-bar-l svg{flex:none;}
+.fc-bar-r{margin-left:auto;display:flex;gap:8px;}
+.rd-sec .fc-bar-host:not([hidden]){margin-bottom:12px;}
+/* P5: a workspace run's Changes — one section per Folder member (name + Folder chip), and the Apply dialog's member line */
+.fc-member + .fc-member{margin-top:20px;}
+.fc-member-head{display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:14px;font-weight:600;}
+.fc-member-body .fc-bar-host:not([hidden]){margin-bottom:12px;}
+.fc-member-line{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;overflow-wrap:anywhere;}
+.fc-sign{width:12px;flex:none;text-align:center;font:500 13px var(--mono);}
+.rd-diff-row.fc-file{align-items:flex-start;}
+.fc-file .rd-diff-row-path{white-space:normal;overflow-wrap:anywhere;}   /* a long path wraps: clipped, rows sharing a long prefix read the same */
+.confirm-modal .fc-dlg{width:min(520px,100%);display:flex;flex-direction:column;gap:16px;}   /* beats .confirm-modal .card by source order */
+.fc-dlg .fc-dlg-title{margin:0;font-size:17px;font-weight:600;letter-spacing:0;}   /* (0,2,0): beats .card h2 (0,1,1) */
+.fc-target{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:var(--r-md);background:var(--field);font:400 12.5px var(--mono);overflow-wrap:anywhere;}
+.fc-target svg{flex:none;color:var(--teal-ink-strong);}
+.fc-plan{list-style:none;margin:0;padding:0;border:1px solid var(--line);border-radius:var(--r-card);overflow:hidden;background:var(--panel);flex:none;}   /* overflow:hidden zeroes its flex min-height */
+.fc-plan:empty{display:none;}
+.fc-plan-row{display:flex;align-items:center;gap:12px;padding:10px 14px;font-size:14px;}
+.fc-plan-row + .fc-plan-row{border-top:1px solid var(--line);}
+.fc-plan-n{margin-left:auto;font:400 12px var(--mono);color:var(--ink-2);}
+.fc-skipped{display:flex;flex-direction:column;gap:10px;padding:12px;border:1px solid var(--line);border-radius:var(--r-card);background:var(--field);}
+.fc-skipped[hidden]{display:none;}
+.fc-skipped-h{display:flex;align-items:center;gap:8px;margin:0;font-size:13px;font-weight:600;}
+.fc-skipped-h svg{flex:none;color:var(--amber-ink-strong);}
+.fc-skipped ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;max-height:min(30vh,240px);overflow:auto;}
+.fc-sfile{display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel);}
+.fc-sfile-path{min-width:0;font-size:12.5px;overflow-wrap:anywhere;}
+.fc-skip{margin-left:auto;flex:none;padding:3px 9px;font-size:11.5px;font-weight:500;background:var(--amber-bg);color:var(--amber-ink-strong);}
+.fc-skip.fc-fail{background:var(--red-bg);color:var(--red-ink-strong);}
+.fc-sfile-msg{flex-basis:100%;font-size:11.5px;color:var(--ink-2);overflow-wrap:anywhere;}
+.fc-err{margin:0;font-size:13px;color:var(--red-ink-strong);overflow-wrap:anywhere;}   /* FOLDER_MISSING names the absolute path */
+.fc-err[hidden]{display:none;}
+.fc-loading{margin:0;font-size:13px;color:var(--ink-2);}
+.fc-foot{display:flex;justify-content:flex-end;gap:8px;}
+/* end Folder runs */
+/* New run: a Folder target makes no branch (Projects, any way). */
+#run-form:is([data-work-mode="folder"],[data-work-mode="none"]) :is(#branch-fields,[data-needs-git]){display:none!important;}
+#run-form[data-work-mode="none"] #start-more{display:none!important;}
+#run-form[data-work-mode="none"] .btn-split > .btn:first-child{border-radius:var(--r-sm);}   /* #start-more is hidden by CSS, not [hidden] */
 
 /* Row 2 = status pip + meta line. The 12px top gap moved here from `.hd-meta`
    IN PLACE: leaving it on the child would stack under this row's own margin and
@@ -4040,8 +4114,22 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .hd-cmt-composer-title{display:flex;align-items:center;justify-content:space-between;gap:10px;
   padding:12px 14px;border-bottom:1px solid var(--line);font:600 13px var(--sans);color:var(--ink);}
 /* The comment composer's and the other markdown editors' Text / Preview strips are the one .tabs / .tab (review B4). */
-/* Add project: Folder / Clone from URL. */
+/* Add project: New / Folder / Clone from URL. */
 .proj-add-tabs{margin:0 0 12px;}
+/* Add project: the Folder detect row (kind chip · No git · file count) and New's read-only Location. */
+.proj-add-detect{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:6px;}
+.pad-chip{display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 9px;border-radius:var(--r-xs);background:var(--field);color:var(--ink-2);font-size:12px;font-weight:600;}
+.pad-chip.warn{background:var(--amber-bg);color:var(--amber-ink-strong);}
+.pad-files{font-family:var(--mono);font-size:12px;color:var(--ink-2);}
+#proj-add-location{font-family:var(--mono);font-size:12.5px;}
+#proj-add-path{font-family:var(--mono);}
+/* The AddNew board's Location box: a folder icon inside the read-only field. */
+.proj-add-loc{position:relative;}
+.proj-add-loc > svg{position:absolute;left:15px;top:50%;margin-top:-7.5px;color:var(--ink-3);pointer-events:none;}
+.proj-add-loc > #proj-add-location{padding-left:40px;}
+/* The AddFolder board: the path takes the whole row, Choose folder… / Several folders… wrap under it. */
+#proj-add-folder-pane .path-row{flex-wrap:wrap;}
+#proj-add-folder-pane .path-row > input{flex:1 1 100%;}
 .md-tab:disabled{cursor:default;opacity:.55;}
 .hd-cmt-input{width:100%;min-height:72px;padding:12px 14px;border:0;background:transparent;color:var(--ink);
   font:400 13px/1.5 var(--sans);resize:vertical;}
@@ -5630,6 +5718,8 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-card{margin-top:2px;display:flex;flex-direction:column;gap:10px;padding:13px 15px;
   border:1.5px solid var(--line);border-radius:var(--r-card);background:var(--panel);}
 .ask-card-target{display:flex;flex-direction:column;gap:10px;}
+/* P3: the No project target's one-line note (a workflow whose agents expect a code repository) — never blocking. */
+.ask-card-needs-repo{margin:0;color:var(--ink-2);font-size:12px;line-height:1.45;}
 /* Not inside a chat run card's question: its fields keep the Runs page's own metrics. :where() adds no weight. */
 .ask-card :is(select,input[type="text"],textarea):where(:not(.chat-rc-q *)){font-size:12.5px;padding:8px 11px;border-radius:var(--r-sm);}
 .ask-card textarea.ask-card-brief{min-height:0;height:auto;max-height:160px;resize:none;line-height:1.5;}
@@ -5637,8 +5727,6 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-card-members-src summary{font-weight:600;font-size:10.5px;color:var(--ink-3);cursor:pointer;}
 .ask-card-members-src-list{display:flex;flex-direction:column;gap:8px;margin-top:8px;}
 .ask-card-err{font-size:12px;color:var(--red-ink);min-height:0;}
-.ask-card-scope-warn{font-size:12px;color:var(--amber-ink);background:var(--amber-wash);
-  border:1px solid var(--amber-line);border-radius:var(--r-sm);padding:6px 9px;}
 .ask-card-err:empty{display:none;}
 .ask-card-open-np{border:0;background:transparent;padding:0;color:var(--blue-ink);font-family:inherit;
   font-size:11.5px;cursor:pointer;}
@@ -5747,7 +5835,6 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 /* With the lane summary gone from the shaped footer, the link keeps Not now and Start planning on the right. */
 .ask-rp-foot .ask-card-open-np.link-btn{margin-right:auto;}
 .ask-rp .ask-card-err{padding:0 18px 10px;}
-.ask-rp .ask-card-scope-warn{margin:12px 18px 0;}
 .ask-pop-at{width:288px;padding:6px;border-radius:var(--r-card);max-height:min(320px,60%);overflow-y:auto;}
 @media (max-width:640px){.ask-rp-grid,.ask-rp-grid.two,.ask-rp-grid.wf-row{grid-template-columns:1fr;}}
 @media (prefers-reduced-motion: reduce){.ask-card.ask-rp{animation:none;} .ask-rp *{transition:none!important;}}
@@ -6771,6 +6858,7 @@ a.ask-card-task-title:hover{text-decoration-color:currentColor;}
 :root[data-level="advanced"] [data-max-level="simple"],
 :root[data-level="expert"] [data-max-level="simple"],
 :root[data-level="expert"] [data-max-level="advanced"]{display:none !important;}
+:root[data-git="off"] [data-needs-git]{display:none !important;}
 
 /* The icon (the Settings card, the dialog's cards): a stack of layers, unlit ones ghosted. */
 .lv-icon .lv-off{opacity:.26;}
@@ -6807,10 +6895,8 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .whats-new-body{margin:0;color:var(--ink-2);}
 @media (max-width:600px){.whats-new{flex-wrap:wrap;}}
 
-/* Simple hides the Target switch, which leaves .split-row's picker alone in the row: auto-placement
-   would drop it into the narrow first track, so the row becomes one full-width column. */
-:root[data-level="simple"] .split-row:not(:has(#target-field[data-level-keep])){grid-template-columns:minmax(0,1fr);}
-/* …and the Engine picker (Advanced and up), leaving the workflow the whole row. */
+/* Simple hides the Engine picker (Advanced and up), leaving the workflow the whole row. (P3: the Target switch shows
+   at every level, so .split-row keeps its two tracks — NewRun board.) */
 :root[data-level="simple"] .wf-engine-row:not(:has(#engine-row[data-level-keep])){grid-template-columns:minmax(0,1fr);}
 
 /* New pipeline: mock mode outside Advanced, and the hidden-but-active note. */
@@ -8783,13 +8869,27 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .chat-rc-art:hover{color:var(--ink);border-color:var(--line-2);}
 .chat-rc-art.is-more{font-family:var(--sans);font-weight:600;}
 .chat-rc-art:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* P3: a run without a project lists its files on the chat run card (name · size · Download) — the NoProjectRun board's
+   bordered row list. The caption keeps --ink-2 (the board's --ink-3 is under 4.5:1 at this size). */
+.chat-rc-arts-list{display:flex;flex-direction:column;gap:8px;margin-top:12px;}
+.chat-rc-arts-list .cap{font-size:12px;font-weight:600;color:var(--ink-2);}
+.chat-rc-art-rows{border:1px solid var(--line);border-radius:var(--r-card);overflow:hidden;background:var(--panel);}
+.chat-rc-art-row{display:flex;align-items:center;gap:10px;min-height:32px;padding:8px 8px 8px 14px;}
+.chat-rc-art-row + .chat-rc-art-row{border-top:1px solid var(--line);}
+.chat-rc-art-row > svg{flex:none;color:var(--ink-3);}
+.chat-rc-art-name{flex:1;min-width:0;padding:0;border:0;background:none;color:var(--ink);font-family:var(--mono);font-size:12.5px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;}
+.chat-rc-art-name .faint{color:var(--ink-2);}
+.chat-rc-art-size{flex:none;color:var(--ink-2);font-family:var(--mono);font-size:12px;font-variant-numeric:tabular-nums;}
+.chat-rc-art-dl{flex:none;display:inline-grid;place-items:center;width:28px;height:28px;padding:0;border:1px solid transparent;border-radius:var(--r-sm);background:none;color:var(--ink-2);cursor:pointer;}
+.chat-rc-art-dl:hover{background:var(--hover);color:var(--ink);}
+:is(.chat-rc-art-name,.chat-rc-art-dl):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .chat-rc-res-foot{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:12px;}
 .chat-rc-res-err{margin-right:auto;font-size:12px;color:color-mix(in srgb, var(--red-ink) 85%, var(--ink));}
 .chat-rc-res-err[hidden]{display:none;}
-.chat-rc-create-pr,.chat-rc-view-pr{display:inline-flex;align-items:center;height:30px;padding:0 14px;border:0;border-radius:var(--r-sm);background:var(--ink);color:var(--panel);font:inherit;font-weight:600;font-size:12px;text-decoration:none;white-space:nowrap;cursor:pointer;}
-.chat-rc-create-pr:hover,.chat-rc-view-pr:hover{box-shadow:inset 0 0 0 999px var(--solid-hover);}
-.chat-rc-create-pr:disabled{opacity:.5;cursor:default;}
-.chat-rc-create-pr:focus-visible,.chat-rc-view-pr:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.chat-rc-create-pr,.chat-rc-view-pr,.chat-rc-apply{display:inline-flex;align-items:center;height:30px;padding:0 14px;border:0;border-radius:var(--r-sm);background:var(--ink);color:var(--panel);font:inherit;font-weight:600;font-size:12px;text-decoration:none;white-space:nowrap;cursor:pointer;}
+.chat-rc-create-pr:hover,.chat-rc-view-pr:hover,.chat-rc-apply:hover{box-shadow:inset 0 0 0 999px var(--solid-hover);}
+.chat-rc-create-pr:disabled,.chat-rc-apply:disabled{opacity:.5;cursor:default;}
+.chat-rc-create-pr:focus-visible,.chat-rc-view-pr:focus-visible,.chat-rc-apply:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .chat-rc-foot{display:flex;align-items:center;gap:8px;margin-top:14px;}
 .chat-rc-foot[hidden]{display:none;}
 .chat-rc-factions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
@@ -8824,6 +8924,43 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .chat-dir-err[hidden]{display:none;}
 .ask-composer.is-direction .ask-composer-box{box-shadow:0 0 0 2px color-mix(in srgb, var(--blue) 45%, transparent);}
 .ask-composer.is-direction textarea.ask-input::placeholder{white-space:nowrap;overflow:hidden;}
+
+/* ===== Chat scope (Projects, any way) ===== */
+/* The chat scope pill's menu, divider, switch card. Tokens only: no amber, no edge line, no chip rules (P1b's, S11). */
+.ask-scope-item > svg{flex:none;color:var(--ink-2);}
+.ask-scope-proj{align-items:flex-start;}
+.ask-scope-proj > svg{margin-top:2px;}
+.ask-scope-col{display:flex;flex-direction:column;gap:1px;flex:1 1 auto;min-width:0;}
+.ask-scope-line{display:flex;align-items:center;gap:8px;min-width:0;}
+.ask-scope-line > .ask-model-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ask-scope-line > .kind-chip{margin-left:auto;}
+.ask-scope-sub{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:11px;color:var(--ink-2);}
+/* The Workflows composer's scope menu (workflows/menu.mjs) keeps the one kind chip on the right, as the Ask menu does (B8). */
+.wfv-menu-item > .kind-chip{margin-left:auto;}
+/* The run card's `Where it runs` sub-line (ask-panel.mjs updateTargetSub): the kind chip between the name and the branch words (B10). */
+.ask-rp-sec-sub > .kind-chip{margin:0 6px;}
+/* The `Switched to <name>` divider row (canvas Switched): a centered label between two hairlines, no accent. */
+.ask-divider{display:flex;align-items:center;gap:12px;margin:6px 0;font-size:12.5px;color:var(--ink-2);}
+.ask-divider::before,.ask-divider::after{content:"";flex:1 1 0;min-width:16px;height:1px;background:var(--line-2);}
+.ask-divider-in{display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:calc(100% - 56px);font-weight:500;}
+.ask-divider-in > svg{flex:none;}
+.ask-divider-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* The chat question card (chat/question.mjs; canvas SwitchAsk): the Runs page's white ask-card grammar with grey lines,
+   the canvas 18px heading, a name line (label + chip) over a mono sub-line per tile; two columns once the card is wide. */
+.chat-q{container:chat-q / inline-size;}
+.chat-q .chat-rc-q-head{margin-bottom:14px;font-size:18px;}
+.chat-q.chat-rc-q :is(.qpanel,.qblock),.chat-q.chat-rc-q .qpanel[data-kind="clarify"] .qpanel-foot{border-color:var(--line);}
+.chat-q .qwhy{font-size:13.5px;font-weight:400;color:var(--ink-2);}
+.chat-q .qopt-txt{display:flex;flex-direction:column;gap:2px;min-width:0;}
+.chat-q-opt-name{display:flex;align-items:center;flex-wrap:wrap;gap:8px;}
+.chat-q-opt-sub{font-family:var(--mono);font-size:11.5px;font-weight:400;color:var(--ink-2);overflow-wrap:anywhere;}
+.chat-q .qpanel-foot .btn-primary:disabled{opacity:.45;cursor:default;transform:none;}
+.chat-q.is-answered .qopt{cursor:default;}
+@container chat-q (min-width:640px){
+  .chat-q .qblock{grid-template-columns:minmax(0,300px) minmax(0,1fr);grid-template-rows:auto 1fr;column-gap:48px;padding:28px 32px;}
+  .chat-q .qtext{grid-row:1 / span 2;}
+  .chat-q.chat-rc-q .qopts{grid-column:2;}
+}
 
 /* ===== Chat P4: run panel ===== */
 /* The Chat page's right panel (app.js "Chat P4: the run panel"): the run pages' OWN screens (.rd live,
@@ -9669,4 +9806,4 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
    later state rule resetting the border shorthand would draw the box again. Outside cards the base rules keep theirs. */
 :is(.ask-card,.chat-rc,.shape-feature) :is(.qpanel,.qblock,.qopt,.af-choice,.af-form,.issue-detail,.opt-row,.shape-plan-notes,
   .outline-slice,.shape-plan-outline-change,.chat-rc-result,.shape-card){border:0;background:var(--field);}
-.chat-rc-q :is(.qpanel,.qblock){background:var(--amber-bg);}
+.chat-rc-q:where(:not(.chat-q)) :is(.qpanel,.qblock){background:var(--amber-bg);}

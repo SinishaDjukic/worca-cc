@@ -25,8 +25,8 @@ test('changedFileCount counts new + changed (deletes already live in filesChange
 
 test('workspaceMembers joins projects x branches in projects order', () => {
   assert.deepEqual(workspaceMembers(STATE), [
-    { memberKey: 'api-00000001', name: 'api', projectDir: '/r/api', feature: 'worca-cc/feat-api', source: 'main' },
-    { memberKey: 'web-00000002', name: 'web', projectDir: '/r/web', feature: 'worca-cc/feat-web', source: 'dev' },
+    { memberKey: 'api-00000001', name: 'api', projectDir: '/r/api', feature: 'worca-cc/feat-api', source: 'main', workMode: 'git' },
+    { memberKey: 'web-00000002', name: 'web', projectDir: '/r/web', feature: 'worca-cc/feat-web', source: 'dev', workMode: 'git' },
   ]);
   assert.deepEqual(workspaceMembers({}), []);
 });
@@ -60,4 +60,17 @@ test('withRelatedPrsBlock appends once, replaces on rerun, keeps human text', ()
   assert.match(twice, /- web: https:\/\/g\/o\/web\/pull\/2 \(merged\)/);
   assert.match(twice, /- docs: https:\/\/g\/o\/docs\/pull\/9/);
   assert.equal(withRelatedPrsBlock('', block1), block1);
+});
+
+test('workspaceMembers carries workMode; memberPrTarget refuses a Folder member', () => {
+  const state = { target: 'workspace', projects: [
+    { projectKey: 'api-00000001', projectName: 'api', projectDir: '/r/api' },
+    { projectKey: 'notes-00000004', projectName: 'notes', projectDir: '/r/notes', workMode: 'folder' },
+  ], branches: { 'api-00000001': { feature: 'worca-cc/x-api', source: 'main' },
+    'notes-00000004': { workMode: 'folder', copyDir: '/h/runs/p/repos/notes-00000004', realDir: '/r/notes' } } };
+  assert.deepEqual(workspaceMembers(state).map((m) => [m.memberKey, m.workMode, m.feature]),
+    [['api-00000001', 'git', 'worca-cc/x-api'], ['notes-00000004', 'folder', null]]);
+  assert.deepEqual(memberPrTarget(state, 'notes-00000004'),
+    { ok: false, error: 'a Folder member has no branch to open a pull request from: notes-00000004' });
+  assert.equal(memberPrTarget(state, 'api-00000001').ok, true);
 });

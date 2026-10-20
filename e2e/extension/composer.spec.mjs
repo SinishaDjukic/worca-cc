@@ -15,7 +15,7 @@ test('attach a file, change model and scope, send; cost and context show', async
   await expect(sidebar.locator('.ask-pop-model')).toHaveCount(0);
   await expect(sidebar.locator('.ask-model-btn-label')).toHaveText(label);
   await sidebar.locator('.ask-scope-btn').click();
-  await expect(sidebar.locator('.ask-pop-scope .ask-scope-item').first()).toHaveText(/Any project/);
+  await expect(sidebar.locator('.ask-pop-scope .ask-scope-item').first()).toHaveText(/No project/);
   await expect(sidebar.locator('.ask-pop-scope')).toContainText('No projects in this Worca yet');   // the shared server has none
   await sidebar.keyboard.press('Escape');
   await expect(sidebar.locator('.ask-pop-scope')).toHaveCount(0);

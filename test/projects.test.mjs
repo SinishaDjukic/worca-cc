@@ -60,6 +60,7 @@ test('addProjects adds the valid rows and reports each skipped row with its reas
   assert.equal(results[0].path, a);
   assert.equal(results[6].name, 'beta');
   assert.deepEqual(projects.map((p) => p.name).sort(), ['alpha', 'beta', 'existing']);
+  assert.deepEqual(results.filter((r) => r.status === 'added').map((r) => r.vcs), ['none', 'none']);
 });
 
 test('addProjects tolerates a non-array / junk items without throwing', async () => {

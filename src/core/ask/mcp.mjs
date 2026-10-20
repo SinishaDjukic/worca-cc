@@ -3,6 +3,7 @@
 // the per-chat picker's choices (`mcpOff`), the targets in play, one resolve per turn or preview, the
 // prompt section's input and the turn-end worktree notice. The resolver itself is src/core/mcp/registry.mjs.
 import { codexSkillNames } from './prompt.mjs';
+import { chatScopeOf } from './scope.mjs';
 import { SET_ID_RE, MEMBERSHIP_KEY_RE } from '../mcp/definitions.mjs';
 import { listProjects } from '../projects.mjs';
 import { readWorkspace } from '../workspaces.mjs';
@@ -43,8 +44,8 @@ export function validateMcpOff(raw) {
 }
 
 /**
- * §9.1 — the targets in play for one turn or preview: the pin, else the page (never the fallback-tagged dropdown
- * projectDir), then every open worktree of the thread (rank 1 + creation index). A project already in play keeps its
+ * §9.1 — the targets in play for one turn or preview: the chat scope (P4: No project brings none), then every open
+ * worktree of the thread (rank 1 + creation index). A project already in play keeps its
  * first route and rank — and every member of a workspace in play is in play (D13 "a workspace ⇒ all members"), so a
  * worktree on a member adds no target and never brings that member's own Team set (§5.1). An unregistered project or
  * a missing workspace is no target.
@@ -69,15 +70,8 @@ export async function askTargetsInPlay({ ctx = {}, threadId = null } = {}, deps 
     targets.push({ kind: 'workspace', id: ws.id, name: ws.name, route, rank: 0,
       members: keys.map((key) => ({ key, name: byKey.get(key)?.name ?? key })) });
   };
-  if (ctx.pinned === true) {
-    if (ctx.projectKey) project(byKey.get(ctx.projectKey), 'pinned', 0);
-    else if (ctx.workspaceId) await workspace(ctx.workspaceId, 'pinned');
-  } else {
-    // The fallback tag names only the dropdown's projectDir (§9.1) — like resolveAskContext and contextProjectKey.
-    const byDir = ctx.projectSource === 'fallback' ? null : projects.find((p) => ctx.projectDir && p.path === ctx.projectDir);
-    project(ctx.projectKey ? byKey.get(ctx.projectKey) : byDir, 'page', 0);
-    if (ctx.workspaceId) await workspace(ctx.workspaceId, 'page');
-  }
+  const scope = chatScopeOf(ctx);
+  if (scope?.projectKey) project(byKey.get(scope.projectKey), 'pinned', 0); else if (scope?.workspaceId) await workspace(scope.workspaceId, 'pinned');
   if (threadId) (await d.listWorktrees(threadId)).forEach((w, i) => project(byKey.get(w.projectKey), 'worktree', 1 + i));
   return targets;
 }

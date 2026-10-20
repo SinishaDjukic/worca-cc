@@ -25,6 +25,7 @@ import { renderStatusDot } from './status-dot.mjs';
 import { fmtUsd } from './graph/run-decor.mjs';
 import { engineLabel } from '../../src/shared/engine-switch.mjs';
 import { runModel, groupModel, finishedNeedsYou } from '../../src/shared/run-model.mjs';
+import { kindChip } from './run-kind.mjs';
 
 const pad2 = (n) => String(n).padStart(2, '0');
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -102,8 +103,8 @@ function askWord(ask) {
 }
 
 /** A finished run's word: exactly the glance headline (run-glance.mjs glanceCopy, done branch). */
-function doneWord({ pr = null, checks = null, files = null } = {}) {
-  return glanceCopy({ status: 'done', steps: [] }, { pr, checks, files }).lead;
+function doneWord({ pr = null, checks = null, files = null, changes = null } = {}) {
+  return glanceCopy({ status: 'done', steps: [] }, { pr, checks, files, changes }).lead;
 }
 
 /** A live run's row: { icon, word, detail }. Branch order mirrors app.js statusPill:
@@ -126,7 +127,8 @@ export function histRowState(p) {
   if (PARKED.has(s)) st = parkedState(s, p.pauseReason, p.limitEngine, p.limitNote);
   else if (FAILED.has(s)) st = { icon: 'fail', word: 'Failed', detail: '' };
   else if (STOPPED.has(s)) st = { icon: 'stop', word: 'Stopped', detail: '' };
-  else if (DONE.has(s)) st = { icon: 'done', word: doneWord(p), detail: '' };
+  // P5: a mixed workspace row carries its Folder members' rollup `changes`, but its glance is the git one (workMode absent).
+  else if (DONE.has(s)) st = { icon: 'done', word: doneWord(p.target === 'workspace' && p.workMode !== 'folder' ? { ...p, changes: null } : p), detail: '' };
   else if (s === 'running' || s === 'starting' || s === 'created') st = { icon: 'run', word: 'Running', detail: '' };
   else st = { icon: 'stop', word: s ? `${s.charAt(0).toUpperCase()}${s.slice(1)}` : 'Unknown', detail: '' };
   // An archived run keeps its terminal icon (it did finish that way) but its word says
@@ -202,7 +204,7 @@ export function liveRow(it, now = Date.now()) {
     key: `live:${it.runId}`, href: `#running/${it.runId}`,
     runId: String(it.runId), pipelineId: String(it.pipelineId || ''), projectKey: '',
     title: String(it.title || '(untitled)'), status,
-    groupKey: String(it.groupKey || ''), groupName: String(it.groupName || ''), by: String(it.by || ''),
+    groupKey: String(it.groupKey || ''), groupName: String(it.groupName || ''), groupKind: String(it.groupKind || ''), by: String(it.by || ''),
     tags: Array.isArray(it.tags) ? it.tags.map(String) : [],
     labels: Array.isArray(it.labels) ? it.labels.map(String) : [],
     unread: !!it.unread, needs: needsYou({ kind: 'live', status, ask: !!it.ask, unread: !!it.unread }),
@@ -227,7 +229,7 @@ export function histRow(p, now = Date.now()) {
     key: `hist:${key}/${p.id}`, href: `#history/${key}/${p.id}`,
     runId: '', pipelineId: String(p.id), projectKey: key,
     title: String(p.title || p.id || '(untitled)'), status,
-    groupKey: key, groupName: String(p.groupName || key || '(unknown project)'), by: String(p.by || ''),
+    groupKey: key, groupName: String(p.groupName || key || '(unknown project)'), groupKind: String(p.groupKind || ''), by: String(p.by || ''),
     tags: Array.isArray(p.tags) ? p.tags.map(String) : [],
     labels: Array.isArray(p.labels) ? p.labels.map(String) : [],
     archived: !!(p && p.archived),
@@ -452,13 +454,15 @@ export function buildRunsModel({
       const by = new Map();
       for (const r of rest) {
         const k = r.groupKey || '(unknown)';
-        if (!by.has(k)) by.set(k, { name: r.groupName || '(unknown project)', rows: [] });
+        if (!by.has(k)) by.set(k, { name: r.groupName || '(unknown project)', kind: '', rows: [] });
         by.get(k).rows.push(r);
+        // The project kind chip (Git / Folder / No project); a chain row's groupKind is its chain kind, never a project's.
+        if (!by.get(k).kind && r.kind !== 'chain' && r.groupKind) by.get(k).kind = r.groupKind;
       }
       const latest = (g) => Math.max(...g.rows.map(recentMs));
       for (const [k, g] of [...by].sort((a, b) => latest(b[1]) - latest(a[1]))) {
         const id = `project:${k}`;
-        push(id, g.name, g.rows.sort(byRecent), { collapsed: collapsed.has(id) });
+        push(id, g.name, g.rows.sort(byRecent), { collapsed: collapsed.has(id), ...(g.kind ? { kind: g.kind } : {}) });
       }
     } else {
       for (const [b, name] of DATE_BUCKETS) {
@@ -617,7 +621,7 @@ export function renderRunsList(doc, model, { checked = new Set(), selecting = fa
     const head = doc.createElement(collapsible ? 'button' : 'div');
     head.className = 'runs-sec-head';
     if (collapsible) { head.type = 'button'; head.dataset.sectionKey = s.id; head.setAttribute('aria-expanded', s.collapsed ? 'false' : 'true'); }
-    head.append(textEl(doc, 'span', 'runs-sec-title', s.title), textEl(doc, 'span', 'runs-count', String(s.count)));
+    head.append(textEl(doc, 'span', 'runs-sec-title', s.title), ...(s.kind ? [kindChip(doc, s.kind)].filter(Boolean) : []), textEl(doc, 'span', 'runs-count', String(s.count)));
     const rows = doc.createElement('div');
     rows.className = 'runs-sec-rows';
     rows.hidden = !!s.collapsed;

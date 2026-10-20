@@ -48,6 +48,40 @@ test('spec §2.1, single run: dot, pulse, status line, actions and symbol for ev
   } })));
 });
 
+// Projects, any way: a run with nothing to ship by pull request (a Folder run, a run without a project, a git run while
+// git is missing) words its finished line and offers no Ship it; a run that has not finished keeps the usual words.
+const FIN = (o = {}) => R({ status: 'done', endReached: true, ...o });
+const CH = (state, counts) => ({ state, counts });
+const NO_SHIP = [
+  ['Folder, applied', FIN({ workMode: 'folder', changes: CH('applied', { added: 2, modified: 1, deleted: 0 }) }), 'ready', 'Applied', 'Applied · 3 files changed', []],
+  ['Folder, discarded', FIN({ workMode: 'folder', changes: CH('discarded', { added: 0, modified: 1, deleted: 0 }) }), 'ready', 'Discarded', 'Discarded · 1 file changed', []],
+  ['Folder, not landed yet', FIN({ workMode: 'folder', changes: CH('pending', { added: 9, modified: 4, deleted: 1 }) }), 'ready', 'Finished', 'Finished · 14 files changed', []],
+  ['Folder, 0 files (settled as discarded)', FIN({ workMode: 'folder', changes: CH('discarded', { added: 0, modified: 0, deleted: 0 }) }), 'ready', 'Finished', 'Finished · no files changed', []],
+  ['Folder, no counts', FIN({ workMode: 'folder' }), 'ready', 'Finished', 'Finished', []],
+  ['Folder while git is missing: the Folder words', FIN({ workMode: 'folder', gitChrome: false, changes: CH('applied', { added: 1 }) }), 'ready', 'Applied', 'Applied · 1 file changed', []],
+  ['no project', FIN({ workMode: 'none' }), 'ready', 'Finished', 'Finished', []],
+  ['git missing, no PR', FIN({ gitChrome: false }), 'ready', 'Finished', 'Finished', []],
+  ['git missing, open PR', FIN({ gitChrome: false, pr: PR }), 'in-review', 'In review', 'In review · PR #759', ['open-pr']],
+  ['git missing, closed PR', FIN({ gitChrome: false, pr: { ...PR, state: 'CLOSED' } }), 'ready', 'Finished', 'Finished', []],
+  ['branch.workMode only', FIN({ branch: { workMode: 'folder', changes: CH('applied', { added: 1 }) } }), 'ready', 'Applied', 'Applied · 1 file changed', []],
+  ['own changes: null beats branch.changes', FIN({ workMode: 'folder', changes: null, branch: { workMode: 'folder', changes: CH('applied', { added: 5 }) } }),
+    'ready', 'Finished', 'Finished', []],
+  ['failed Folder run: not reworded', R({ status: 'error', workMode: 'folder', changes: CH('pending', { added: 1 }),
+    steps: [row('n_clarify'), row('n_plan'), row('n_impl'), row('n_review', 'error')] }), 'failed', 'Failed', 'Review · failed · Review Implementation', ['retry', 'report']],
+  ['stopped Folder run: not reworded', R({ status: 'stopped', workMode: 'folder', steps: [row('n_clarify'), row('n_plan'), row('n_impl', 'stopped')] }),
+    'stopped', 'Stopped', 'Stopped at Build', ['archive']],
+  ['starting Folder run', R({ status: 'starting', workMode: 'folder' }), 'starting', 'Starting', 'Copying the folder', ['stop']],
+  ['git run, git there', FIN({ workMode: 'git', gitChrome: true }), 'ready', 'Ready', 'Ready to ship', ['ship']],
+];
+
+test('Projects, any way: Folder, no-project and git-missing runs word their finished line and offer no Ship it', async () => {
+  await checkRows(NO_SHIP.map(([name, run, state, word, line, actions]) => ({ name, run: () => {
+    const m = runModel(run, OPTS);
+    assert.deepEqual({ state: m.state, word: m.word, line: m.line, actions: m.actions }, { state, word, line, actions });
+    assert.equal(m.dot, RUN_STATES[state].dot);
+  } })));
+});
+
 test('symbol: question for Needs you, alert for Failed, null for the other 8, with their aria words', () => {
   const sym = Object.entries(RUN_STATES).filter(([, s]) => s.symbol);
   assert.deepEqual(sym.map(([id, s]) => [id, s.symbol, s.word]), [['needs-you', 'question', 'Needs you'], ['failed', 'alert', 'Failed']]);

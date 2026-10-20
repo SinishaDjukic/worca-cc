@@ -19,6 +19,8 @@ const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 const TID = 'ask_00000001';
 const MID = 'askm_00000001';
+const FIX = { projects: null, workspaces: null };   // a test swaps the /api/projects and /api/workspaces rows; reset after each test
+afterEach(() => { FIX.projects = null; FIX.workspaces = null; });
 
 function askArms(url, opts) {
   const method = ((opts && opts.method) || 'GET').toUpperCase();
@@ -63,10 +65,10 @@ async function boot({ url = 'http://localhost:4317/' } = {}) {
     const ask = askArms(url2, opts);
     if (ask) return Promise.resolve(ask);
     if (url2.includes('/api/workspaces')) {
-      return Promise.resolve({ ok: true, status: 200, json: async () => ({ workspaces: [{ id: 'wks-team-0000abcd', name: 'Team', projectKeys: [], projectPaths: [] }] }) });
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ workspaces: FIX.workspaces || [{ id: 'wks-team-0000abcd', name: 'Team', projectKeys: [], projectPaths: [] }] }) });
     }
     if (url2.includes('/api/projects')) {
-      return Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: [{ name: 'proj', path: '/repos/proj', exists: true }] }) });
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: FIX.projects || [{ name: 'proj', path: '/repos/proj', exists: true }] }) });
     }
     return Promise.resolve({ ok: true, status: 200, json: async () => ({ config: { steps: {}, customModels: [] }, models: [], efforts: [], pipelines: 0, projects: 0, workspaces: 0 }) });
   };
@@ -206,13 +208,14 @@ test('ui-ask-integration: a Chat send carries { view: chat } (plus the run its p
     { name: 'a send from Chat with no run panel: { view: chat } and no project (worca Chat R4)', run: async () => {
       await openChat(window);
       await sendText(window, 'context check one');
-      assert.deepEqual(lastCtx(), { view: 'chat', pinned: false, timeZone: tz }); // #397: Auto declares itself
+      assert.deepEqual(lastCtx(), { view: 'chat', pinned: false, timeZone: tz }); // P4: No project declares itself
     } },
     { name: 'with a run in the panel (P4\'s chatPanelContext) the send carries its ids', run: async () => {
       const run = { runId: '0f0f0f0f-0000-4000-8000-000000000001', pipelineId: 'aaaa1111', projectDir: '/p', runPage: 'logs' };
       window.__np.chat.setPanelContext(() => run);
       await sendText(window, 'context check two');
-      assert.deepEqual(lastCtx(), { view: 'chat', ...run, pinned: false, timeZone: tz });
+      const { projectDir, ...kept } = run;   // No project: the run's ids ride, its project folder does not (CONTRACT §4)
+      assert.deepEqual(lastCtx(), { view: 'chat', ...kept, pinned: false, timeZone: tz });
       window.__np.chat.setPanelContext(null);
     } },
     { name: 'MCP registry §9.1 still holds for getPageContext: Running names its run, New Pipeline its project untagged, the generic fallback is tagged, a workspace page its workspace', run: async () => {
@@ -237,4 +240,45 @@ test('ui-ask-integration: a Chat send carries { view: chat } (plus the run its p
       assert.equal(pc().projectSource, undefined);
     } },
   ]);
+});
+
+test('ui-ask-integration P4: the scope menu\'s Add project… opens the Add project dialog; a projects-changed frame refreshes the menu', async () => {
+  const { window, recv } = await boot();
+  await openChat(window);
+  const doc = window.document;
+  const btn = doc.querySelector('[data-ask-scope-btn]');
+  const names = () => [...doc.querySelectorAll('.ask-pop-scope .ask-scope-item .ask-model-name')].map((n) => n.textContent);
+  btn.click(); await settle(window, 6);
+  assert.deepEqual(names(), ['No project', 'Team', 'Add project…'], 'the boot fixture: no keyed project, one workspace; app.js set chatDeps.openAddProject');
+  btn.click(); await settle(window);
+  FIX.projects = [{ key: 'demo-00000001', name: 'Demo', path: '/repos/demo', exists: true, vcs: 'none' }];
+  recv({ type: 'projects-changed', action: 'created' });
+  await settle(window);
+  btn.click(); await settle(window, 6);
+  assert.deepEqual(names(), ['No project', 'Demo', 'Team', 'Add project…'], 'app.js → askPanel.optionsChanged()');
+  btn.click(); await settle(window);
+  FIX.workspaces = [];
+  recv({ type: 'workspaces-changed', action: 'deleted', workspaceId: 'wks-team-0000abcd' });
+  await settle(window);
+  btn.click(); await settle(window, 6);
+  assert.deepEqual(names(), ['No project', 'Demo', 'Add project…'], 'workspaces-changed → askPanel.optionsChanged() too');
+  [...doc.querySelectorAll('.ask-pop-scope .ask-scope-item')].find((b) => b.textContent.includes('Add project…')).click();
+  await settle(window, 6);
+  assert.equal(doc.getElementById('project-add-modal').classList.contains('hidden'), false, 'chatDeps.openAddProject → addProjectFlow');
+  assert.equal(doc.querySelector('.ask-pop-scope'), null);
+});
+
+test('ui-ask-integration P4: app.js registers the switch card before the chat mounts', async () => {
+  const { window, recv } = await boot();
+  await openChat(window);
+  await sendText(window, 'the room photo is tiny on tablets');
+  recv({ type: 'ask-message', threadId: TID, message: { id: 'askm_00000009', threadId: TID, seq: 3, role: 'assistant', text: '', status: 'done', createdAt: 't',
+    blocks: [{ kind: 'card', id: 'card_00000009', state: 'proposed', card: { type: 'scope-switch', candidates: [{ projectKey: 'demo-00000001', name: 'Demo', path: '/repos/demo', vcs: 'git' }], reason: '' } }] } });
+  await settle(window, 4);
+  const card = window.document.querySelector('.ask-msg-assistant section.chat-rc-q.chat-q');
+  assert.ok(card, 'the scope-switch type has a builder');
+  assert.equal(card.querySelector('.chat-rc-q-head').textContent, 'Your turn: pick a project');
+  const src = readFileSync(appPath, 'utf8');
+  const at = src.indexOf('\nregisterScopeSwitchCard();\n');
+  assert.ok(at > 0 && at < src.indexOf('\naskPanel = createAskPanel({'), 'CONTRACT §2: registered before createAskPanel runs');
 });

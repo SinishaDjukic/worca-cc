@@ -9,6 +9,7 @@
 
 import { readPipelineForResume } from './artifacts.mjs';
 import { createOrchestratorFor } from './engine-select.mjs';
+import { runProjectDir } from './store.mjs';
 
 export class StopPausedError extends Error {
   /**
@@ -38,7 +39,7 @@ async function targetOf(row, projectDirFor) {
       },
     };
   }
-  const projectDir = await projectDirFor(row.project_key);
+  const projectDir = await runProjectDir(row, projectDirFor);   // P3: a run without a project is its own work folder
   if (!projectDir) throw new StopPausedError('NO_PROJECT', 'project for this pipeline is not onboarded on this machine', 400);
   return { projectDir, workspace: null };
 }

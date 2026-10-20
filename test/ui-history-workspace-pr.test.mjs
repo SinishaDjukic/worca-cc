@@ -439,6 +439,142 @@ test('workspace detail: pr-watch-changed for the run\'s store key rereads only t
   assert.deepEqual([gets(API), gets(WEB)], [before[0] + 1, before[1]]);
 });
 
+const NOTES = 'notes-00000004';
+const folderMember = (state) => member(NOTES, 'notes', { workMode: 'folder', branch: null, sourceBranch: null, survived: false,
+  affected: true, added: 0, removed: 0, diffFrozen: false, changes: { state, counts: { added: 2, modified: 0, deleted: 0 } } });
+
+test('a Folder member: the header names its Changes state, Ship it leaves it out and says so', async () => {
+  const ctx = await bootShip({ detail: WS_DETAIL, rows: [wsRow([member(API, 'api'), folderMember('pending')])] });
+  await openDetail(ctx, wksDetailHash);
+  const lis = [...hdRepos(ctx.window).querySelectorAll('.hd-pr-repo')];
+  assert.deepEqual(lis.map((li) => [li.querySelector('b').textContent, li.querySelector('.hd-pr-repo-note, .hd-pr-repo-link').textContent]),
+    [['api', 'No PR yet'], ['notes', 'On a copy']]);
+  click(ctx.window, hdPr(ctx.window)); await settle(ctx.window, 6);
+  const modal = modalOf(ctx.window);
+  assert.deepEqual([...modal.querySelectorAll('#shipit-repos .shipit-repo')].map((r) => r.dataset.memberKey), [API]);
+  assert.equal(modal.querySelector('.shipit-folder-skipped').textContent, 'notes (Folder) — skipped.');
+  assert.ok(!remotesCalls(ctx).some((c) => c.url.includes(NOTES)), 'no git remotes read for a Folder member');
+});
+
+test('Folder member notes follow its Changes: Applied, Discarded; an all-Folder run offers no Create PR', async () => {
+  for (const [state, note] of [['applied', 'Applied'], ['discarded', 'Discarded']]) {
+    const ctx = await bootShip({ detail: WS_DETAIL, rows: [wsRow([folderMember(state), member(DOC, 'doc', { affected: false })])] });
+    await openDetail(ctx, wksDetailHash);
+    assert.equal(hdRepos(ctx.window).querySelector(`.hd-pr-repo[data-member-key="${NOTES}"] .hd-pr-repo-note`).textContent, note);
+    assert.equal(hdPr(ctx.window).hidden, true);
+  }
+});
+
+// test/ui-history-workspace-pr.test.mjs — append
+const CHANGES = { state: 'pending', files: [{ path: 'src/feature.mjs', change: 'added', size: 120 }, { path: 'test/feature.test.mjs', change: 'added', size: 90 }],
+  counts: { added: 2, modified: 0, deleted: 0 } };
+const PLAN = { target: '/tmp/notes', add: ['src/feature.mjs', 'test/feature.test.mjs'], update: [], delete: [], skipped: [] };
+const folderArms = (url, opts) => {
+  if (url.includes(`/api/runs/${ROW.id}/changes?memberKey=${NOTES}`)) return ok(CHANGES);
+  if (url.includes(`/api/runs/${ROW.id}/apply-plan?memberKey=${NOTES}`)) return ok(PLAN);
+  if (url.includes(`/api/runs/${ROW.id}/apply?memberKey=${NOTES}`) && opts.method === 'POST') return ok({ applied: 2, skipped: [] });
+  return null;
+};
+const byText = (root, sel, text) => [...root.querySelectorAll(sel)].find((n) => n.textContent.trim() === text);
+
+test('a mixed workspace run shows Diff and Changes; Changes holds one section per Folder member with its own Apply to folder', async () => {
+  const ctx = await bootShip({ detail: WS_DETAIL, rows: [wsRow([member(API, 'api'), folderMember('pending')])], arms: folderArms });
+  await openDetail(ctx, wksDetailHash);
+  const d = ctx.window.document;
+  assert.ok(d.querySelector('#hist-detail button[role="tab"][data-sec="diff"]'), 'the Git member keeps its Diff');
+  const tab = d.querySelector('#hist-detail button[role="tab"][data-sec="changes"]');
+  assert.ok(tab, 'a Changes tab');
+  assert.equal(tab.querySelector('.hd-tab-badge')?.textContent, '2', 'its badge = the Folder members\' file count');
+  click(ctx.window, tab); await settle(ctx.window, 6);
+  const secs = [...d.querySelectorAll('#hist-detail .hd-sec[data-sec="changes"] section[data-member-key]')];
+  assert.deepEqual(secs.map((n) => n.dataset.memberKey), [NOTES], 'one section for the one Folder member (never the Git member)');
+  assert.equal(secs.length, 1, 'one section for the one Folder member');
+  const sec = secs[0];
+  assert.match(sec.textContent, /notes/);
+  assert.ok(byText(sec, '.kind-chip', 'Folder'));
+  assert.ok(byText(sec, '*', '2 files · on a copy'));
+  assert.ok(byText(sec, 'button', 'Discard'));
+  click(ctx.window, byText(sec, 'button', 'Apply to folder')); await settle(ctx.window, 6);
+  const dlg = [...d.querySelectorAll('dialog[open], [role="dialog"], .modal:not(.hidden)')].find((n) => /Apply to folder/.test(n.textContent));
+  assert.ok(dlg, 'the Apply dialog opened');
+  const line = dlg.querySelector('.fc-member-line');
+  assert.ok(line, 'the dialog names the member');
+  assert.equal(line.querySelector('.fc-member-name').textContent, 'notes');
+  assert.equal(line.querySelector('.kind-chip.kind-folder').textContent, 'Folder');
+  assert.equal(line.nextElementSibling, dlg.querySelector('.fc-target'), 'the member line sits above the target line');
+  assert.match(dlg.querySelector('.fc-target').textContent, /\/tmp\/notes/);
+  click(ctx.window, byText(dlg, 'button', 'Apply 2 files')); await settle(ctx.window, 6);
+  assert.ok(ctx.calls.some((c) => c.url.includes(`/api/runs/${ROW.id}/apply?memberKey=${NOTES}`) && c.opts.method === 'POST'));
+  const bar = d.querySelector(`#hist-detail .hd-sec[data-sec="changes"] section[data-member-key="${NOTES}"] .fc-bar-l`);
+  assert.equal(bar && bar.textContent, '2 files · Applied', 'the member\'s bar settles; the glance repaint never blanks it');
+  assert.ok(!ctx.calls.some((c) => /\/api\/runs\/[^/]+\/(changes|apply-plan|apply|discard)(\/patch)?(\?|$)/.test(c.url) && !c.url.includes('memberKey=')),
+    'no memberless Changes call on a workspace run');
+});
+
+const DOCS = 'docs-00000005';
+const docsMember = (state) => member(DOCS, 'docs', { workMode: 'folder', branch: null, sourceBranch: null, survived: false,
+  affected: true, added: 0, removed: 0, diffFrozen: false, changes: { state, counts: { added: 1, modified: 2, deleted: 0 } } });
+
+test('an all-Folder workspace run: no Diff, Changes per member with the summed badge, no run-level Apply bar; one member settles alone', async () => {
+  const arms = (url, opts) => {
+    if (url.includes(`/api/runs/${ROW.id}/changes?memberKey=`)) return ok(CHANGES);
+    if (url.includes(`/api/runs/${ROW.id}/discard?memberKey=${DOCS}`) && opts.method === 'POST') return ok({ ok: true });
+    return null;
+  };
+  const allFolder = wsRow([folderMember('pending'), docsMember('pending')],
+    { workMode: 'folder', branch: null, sourceBranch: null, survived: false, changes: { state: 'pending', counts: { added: 3, modified: 2, deleted: 0 } } });
+  const ctx = await bootShip({ detail: { ...WS_DETAIL, state: { ...WS_DETAIL.state, workMode: 'folder', branch: { workMode: 'folder' } } }, rows: [allFolder], arms });
+  await openDetail(ctx, wksDetailHash);
+  const d = ctx.window.document;
+  assert.equal(d.querySelector('#hist-detail button[role="tab"][data-sec="diff"]'), null, 'no Diff');
+  const tab = d.querySelector('#hist-detail button[role="tab"][data-sec="changes"]');
+  assert.equal(tab.querySelector('.hd-tab-badge').textContent, '5', '2 + 3 files');
+  const slot = d.querySelector('#hist-detail .hd-glance .rd-apply-slot');
+  assert.ok(!slot || slot.hidden, 'no run-level Apply bar on a workspace run (it would POST without a memberKey)');
+  click(ctx.window, tab); await settle(ctx.window, 6);
+  const secs = [...d.querySelectorAll('#hist-detail .hd-sec[data-sec="changes"] section[data-member-key]')];
+  assert.deepEqual(secs.map((n) => [n.dataset.memberKey, n.querySelector('.fc-member-name').textContent, n.querySelector('.fc-bar-l').textContent]),
+    [[NOTES, 'notes', '2 files · on a copy'], [DOCS, 'docs', '3 files · on a copy']]);
+  const notesApply = secs[0].querySelector('.fc-apply');
+  click(ctx.window, byText(secs[1], 'button', 'Discard')); await settle(ctx.window, 2);
+  assert.equal(d.getElementById('confirm-title').textContent, 'Discard 3 files?');
+  click(ctx.window, d.getElementById('confirm-ok')); await settle(ctx.window, 8);
+  assert.ok(ctx.calls.some((c) => c.url.endsWith(`/api/runs/${ROW.id}/discard?memberKey=${DOCS}`) && c.opts.method === 'POST'));
+  const after = [...d.querySelectorAll('#hist-detail .hd-sec[data-sec="changes"] section[data-member-key]')];
+  assert.deepEqual(after.map((n) => n.querySelector('.fc-bar-l').textContent), ['2 files · on a copy', '3 files · Discarded']);
+  assert.deepEqual([...after[0].querySelectorAll('button')].map((b) => b.textContent).filter((t) => t === 'Discard' || t === 'Apply to folder'),
+    ['Discard', 'Apply to folder'], 'the other member keeps its own actions');
+  assert.equal(after[0].querySelector('.fc-apply'), notesApply, 'the run-level repaint leaves a member\'s bar alone (no rebuild, focus stays)');
+  assert.equal(allFolder.changes.state, 'pending', 'the row rollup stays pending while a member is pending');
+});
+
+
+test('an unchanged Folder member reads No changes — skipped and is named only in the No changes line', async () => {
+  const quiet = member(DOCS, 'docs', { workMode: 'folder', branch: null, sourceBranch: null, survived: false, affected: false,
+    added: 0, removed: 0, diffFrozen: false, changes: { state: 'discarded', counts: { added: 0, modified: 0, deleted: 0 } } });
+  const ctx = await bootShip({ detail: WS_DETAIL, rows: [wsRow([member(API, 'api'), folderMember('pending'), quiet])] });
+  await openDetail(ctx, wksDetailHash);
+  assert.equal(hdRepos(ctx.window).querySelector(`.hd-pr-repo[data-member-key="${DOCS}"] .hd-pr-repo-note`).textContent, 'No changes — skipped');
+  click(ctx.window, hdPr(ctx.window)); await settle(ctx.window, 6);
+  const modal = modalOf(ctx.window);
+  assert.deepEqual([...modal.querySelectorAll('#shipit-repos p')].map((p) => p.textContent),
+    ['No changes in docs — skipped.', 'notes (Folder) — skipped.']);
+});
+
+test('a mixed workspace run: the Diff tab lists and counts its Git member only (the Folder member is in Changes)', async () => {
+  const MIXED_RES = { summary: { filesNew: 3, filesChanged: 1, linesAdded: 12, linesRemoved: 1 },
+    perProject: { [API]: { summary: { filesNew: 1, filesChanged: 1, linesAdded: 7, linesRemoved: 1 }, newFiles: [{ path: 'src/a.mjs', added: 5, removed: 0 }], changedFiles: [{ path: 'src/b.mjs', added: 2, removed: 1 }] },
+      [NOTES]: { summary: { filesNew: 2, filesChanged: 0, linesAdded: 5, linesRemoved: 0 }, newFiles: [{ path: 'src/feature.mjs', added: 3, removed: 0 }, { path: 'test/feature.test.mjs', added: 2, removed: 0 }], changedFiles: [] } } };
+  const ctx = await bootShip({ detail: { ...WS_DETAIL, results: MIXED_RES }, rows: [wsRow([member(API, 'api'), folderMember('pending')])], arms: folderArms });
+  await openDetail(ctx, wksDetailHash);
+  const d = ctx.window.document;
+  assert.equal(d.querySelector('#hist-detail button[role="tab"][data-sec="diff"] .hd-tab-badge').textContent, '2', 'the Git member\'s 2 files, not 2 + the Folder member\'s 2');
+  go(ctx.window, `${wksDetailHash}/details/diff`); await settle(ctx.window, 10);
+  const sec = d.querySelector('#hist-detail .hd-sec[data-sec="diff"]');
+  assert.match(sec.querySelector('.hd-diff-list-head').textContent, /^2 files changed/);
+  assert.ok(![...sec.querySelectorAll('.rd-diff-row, .hd-diff-rows button')].some((b) => /feature/.test(b.textContent)), 'no Folder file (it has no git diff) in the Diff');
+});
+
 test('#620: each repo line reads the newer check and a stale one is redone quietly when the dialog opens', async () => {
   const ago = (ms) => new Date(Date.now() - ms).toISOString();
   const conflicts = (at) => ({ status: 'conflicts', base: 'main', fileCount: 1, at });

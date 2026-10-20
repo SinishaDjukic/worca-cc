@@ -45,6 +45,7 @@ async function boot({ picker = false, pick = 'unsupported', clone } = {}) {
       if ((opts.method || 'GET') === 'GET') return json(200, { available: picker });
       return json(200, pick === 'picked' ? { status: 'picked', path: '/Users/me/dev/cool' } : { status: pick });
     }
+    if (u.startsWith('/api/git')) return json(200, { available: true, version: '2.50.0', reason: 'ok', checkedAt: 0 });
     if (u.includes('/api/projects/clone')) {
       const r = clone && clone(u, opts, { setProjects: (p) => { projects = p; } });
       if (r) return r;
@@ -76,25 +77,30 @@ async function openAdd(window, doc) {
   await tick(); await tick();
 }
 
+async function openClone(window, doc) { await openAdd(window, doc); click(window, $(doc, '#proj-add-tab-clone')); }
+
 const pickerOpens = (calls) => calls.filter((c) => c.u.includes('/api/fs/pick-folder') && c.method === 'POST').length;
 
-test('Add project opens the dialog first: Clone without a folder picker, Folder with one, and the tabs switch panes (#649)', async () => {
+test('Add project opens the dialog first, on New — folder picker or not — and the tabs switch panes (#649)', async () => {
   await checkRows([
-    { name: 'no folder picker (container/hosted): Add project opens on Clone from URL', run: async () => {
+    { name: 'no folder picker (container/hosted): Add project opens on New', run: async () => {
       const { window, doc, calls } = await boot({ picker: false });
       await openAdd(window, doc);
       assert.equal($(doc, '#project-add-modal').classList.contains('hidden'), false);
-      assert.equal(selected(doc), 'clone');
-      assert.equal($(doc, '#proj-add-clone-pane').hidden, false);
+      assert.equal(selected(doc), 'new');
+      assert.equal($(doc, '#proj-add-new-pane').hidden, false);
       assert.equal($(doc, '#proj-add-folder-pane').hidden, true);
-      assert.equal($(doc, '#proj-add-save').textContent, 'Clone and add');
+      assert.equal($(doc, '#proj-add-clone-pane').hidden, true);
+      assert.equal($(doc, '#proj-add-save').textContent, 'Create project');
       assert.equal(pickerOpens(calls), 0);
     } },
-    { name: 'a folder picker here: the dialog opens on Folder without opening the picker, and the tabs switch panes', run: async () => {
+    { name: 'a folder picker here: the dialog opens on New (canvas AddNew) without opening the picker, and the tabs switch panes', run: async () => {
       const { window, doc, calls } = await boot({ picker: true, pick: 'picked' });
       await openAdd(window, doc);
       assert.equal($(doc, '#project-add-modal').classList.contains('hidden'), false);
       assert.equal(pickerOpens(calls), 0, 'the OS folder picker waits for Choose folder…');
+      assert.equal(selected(doc), 'new');
+      click(window, $(doc, '#proj-add-tab-folder'));
       assert.equal(selected(doc), 'folder');
       assert.equal($(doc, '#proj-add-path').value, '');
       assert.equal($(doc, '#proj-add-msg').textContent, '', 'no "picker unavailable" hint where one exists');
@@ -109,6 +115,7 @@ test('Add project opens the dialog first: Clone without a folder picker, Folder 
     { name: 'Choose folder… opens the picker and fills the folder and the name', run: async () => {
       const { window, doc, calls } = await boot({ picker: true, pick: 'picked' });
       await openAdd(window, doc);
+      click(window, $(doc, '#proj-add-tab-folder'));
       click(window, $(doc, '#proj-add-browse'));
       await tick(); await tick();
       assert.equal(pickerOpens(calls), 1);
@@ -125,6 +132,7 @@ test('cancelling the folder picker keeps the dialog open, and the repository can
     clone: (u, o) => (o.method === 'POST' ? json(202, { jobId: 'cln_00000003', job: { id: 'cln_00000003', state: 'running' } }) : json(200, { job: { id: 'cln_00000003', state: 'running' } })),
   });
   await openAdd(window, doc);
+  click(window, $(doc, '#proj-add-tab-folder'));
   click(window, $(doc, '#proj-add-browse'));
   await tick(); await tick();
   assert.equal(pickerOpens(calls), 1);
@@ -142,10 +150,10 @@ test('cancelling the folder picker keeps the dialog open, and the repository can
   assert.equal($(doc, '#project-add-modal').classList.contains('hidden'), true, 'the clone lands and the dialog closes');
 });
 
-test('clone form: host-neutral credential copy; the folder placeholder is the folder planClone will create (n9)', async () => {
+test('clone form: no hint paragraph (U17); the folder placeholder is the folder planClone will create (n9)', async () => {
   const { window, doc } = await boot({ pick: 'unsupported' });
-  await openAdd(window, doc);
-  assert.match($(doc, '#proj-add-msg').textContent, /credential for its host \(GitHub or Azure DevOps\)/);
+  await openClone(window, doc);
+  assert.equal($(doc, '#proj-add-msg').textContent, '');
   for (const [url, want] of [
     ['https://github.com/acme/api.git', 'api'],
     ['https://dev.azure.com/acme/Shop/_git/api', 'api'],
@@ -164,7 +172,7 @@ test('an up-front refusal shows the server message inline, and the form stays us
   const { window, doc, calls } = await boot({
     clone: () => json(409, { error: '/data/projects/api already exists; pick another folder name', code: 'exists' }),
   });
-  await openAdd(window, doc);
+  await openClone(window, doc);
   click(window, $(doc, '#proj-add-save'));
   assert.equal($(doc, '#proj-add-msg').textContent, 'Repository URL is required.');
   type(window, $(doc, '#proj-clone-url'), 'https://github.com/acme/api');
@@ -188,7 +196,7 @@ test('a running job shows progress; the WS done frame closes the dialog and refr
       return json(200, { job: { id: 'cln_00000001', state: 'running' } });
     },
   });
-  await openAdd(window, doc);
+  await openClone(window, doc);
   type(window, $(doc, '#proj-clone-url'), 'https://github.com/acme/api');
   click(window, $(doc, '#proj-add-save'));
   await tick(); await tick();
@@ -217,7 +225,7 @@ test('without the WS, the poll picks up a failure and shows it (names go in as t
   const realSetInterval = globalThis.setInterval;
   globalThis.setInterval = (fn) => realSetInterval(fn, 5);
   try {
-    await openAdd(window, doc);
+    await openClone(window, doc);
     type(window, $(doc, '#proj-clone-url'), 'https://github.com/acme/private');
     click(window, $(doc, '#proj-add-save'));
     for (let i = 0; i < 20 && polls === 0; i++) await new Promise((r) => setTimeout(r, 10));
@@ -233,9 +241,10 @@ test('without the WS, the poll picks up a failure and shows it (names go in as t
 });
 
 // ---- The pop-up rules (ui/public/modal-guard.mjs) on Add project --------------------------------
-const folderAdd = async () => {             // a folder picker here: the dialog opens on Folder (#649)
+const folderAdd = async () => {             // a folder picker here: the dialog opens on New, then its Folder tab (#649)
   const ctx = await boot({ picker: true, pick: 'picked' });
   await openAdd(ctx.window, ctx.doc);
+  click(ctx.window, $(ctx.doc, '#proj-add-tab-folder'));
   return ctx;
 };
 const isHidden = (doc) => $(doc, '#project-add-modal').classList.contains('hidden');
@@ -280,6 +289,7 @@ test('Add project: Cancel sits in the footer next to Add and closes at once; Esc
       assert.equal(discardPrompt(doc), null);
       assert.equal(isHidden(doc), true);
       await openAdd(window, doc);
+      click(window, $(doc, '#proj-add-tab-folder'));                // the dialog opens on New: Choose folder… is on Folder
       click(window, $(doc, '#proj-add-browse'));
       await tick(); await tick();
       assert.equal($(doc, '#proj-add-path').value, '/Users/me/dev/cool');
@@ -332,7 +342,7 @@ test('while the clone\'s start request is out, Cancel is disabled and Escape doe
   const { window, doc } = await boot({
     clone: (u, o) => (o.method === 'POST' ? gate : json(200, { job: { id: 'cln_00000005', state: 'running' } })),
   });
-  await openAdd(window, doc);                                  // no picker: the Clone tab
+  await openClone(window, doc);                                // the Clone tab
   type(window, $(doc, '#proj-clone-url'), 'https://github.com/acme/api');
   click(window, $(doc, '#proj-add-save'));
   await tick();
@@ -355,7 +365,7 @@ test('while the clone\'s start request is out, Cancel is disabled and Escape doe
 
 test('while a clone runs the way out says Hide: hiding keeps the clone going with a note, and its result replaces that note', async () => {
   const { window, doc, ws } = await boot({ clone: running('cln_00000003') });
-  await openAdd(window, doc);                                  // no picker: the Clone tab
+  await openClone(window, doc);                                // the Clone tab
   type(window, $(doc, '#proj-clone-url'), 'https://github.com/acme/api');
   click(window, $(doc, '#proj-add-save'));
   await tick(); await tick();
@@ -383,7 +393,7 @@ test('while a clone runs the way out says Hide: hiding keeps the clone going wit
 
 test('a folder picked while a clone runs opens on Folder and can be added; the clone ending leaves that dialog open and reports by toast', async () => {
   const { window, doc, ws } = await boot({ clone: running('cln_00000004') });
-  await openAdd(window, doc);
+  await openClone(window, doc);
   type(window, $(doc, '#proj-clone-url'), 'https://github.com/acme/api');
   click(window, $(doc, '#proj-add-save'));
   await tick(); await tick();

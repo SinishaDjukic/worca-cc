@@ -1063,7 +1063,10 @@ export class GraphOrchestrator extends RunHarness {
       projectKey: m.projectKey,
       projectDir: m.projectDir,
       projectName: m.projectName,
-      worktreeDir: this.workDirs.get(m.projectKey) || null,
+      // P5: a Folder member's copy rides copyDir — never worktreeDir (resume re-attaches it from its branches record)
+      ...(this._memberWorkMode(m.projectKey) === 'folder'
+        ? { copyDir: this.workDirs.get(m.projectKey) || null }
+        : { worktreeDir: this.workDirs.get(m.projectKey) || null }),
       graphInstruction: this.toolInstructions.get(m.projectKey) || '',
     }));
   }
@@ -1684,6 +1687,10 @@ export class GraphOrchestrator extends RunHarness {
       this._checkAbort();
       this._checkPause();
       if (!KEYED_KINDS.includes(node.kind)) return await this._runFlow(ctx);
+      // P1: a Folder run's cwd is still the run's own copy — a link the agent swapped in would take the engine's
+      // per-spawn files (Cursor's .cursor/) and every later node. A throw here pauses the run.
+      // P5: a mixed workspace (a git run) checks its Folder members' copies too — fan-out agents work in them.
+      if ((this.workMode === 'folder' || this.isWorkspace) && !(await this._folderCopyIntact())) throw new Error(`the run's copy is not the run's own folder: ${(this.isWorkspace && this._badFolderCopy) || this.runCwd}`);
       this._checkCostLimits();                  // budget gate at EVERY spawn (throws pauseErr)
       if (node.kind === 'script') {
         // A child process through the NODE site: every runner error carries
@@ -1843,6 +1850,8 @@ export class GraphOrchestrator extends RunHarness {
       model: nc.kind === 'script' ? null : this._nodeModelPair(nc).model,
     };
     const engineOpts = this._engineNodeOpts(nc);
+    // P1 (v3, defence in depth): a Folder run's nodes never start on the REAL folder, whatever reattach path left runCwd unset.
+    if (this.workMode === 'folder' && !this.runCwd) throw new Error('a Folder run has no copy to work on');
     return {
       // When this execution began. _indexExtraFiles compares it against each
       // candidate's mtime to tell the files this execution WROTE from the ones it
@@ -1879,6 +1888,7 @@ export class GraphOrchestrator extends RunHarness {
       memoryRules: this.memory?.rules || null,          // the read-only rules copy inside the cwd (tests read it; agents never write it)
       agentPrompts: this.agentPrompts,
       checkpointRef: this.checkpointRef,
+      workMode: this.workMode,
       workspace: this.isWorkspace ? this._workspaceChannel() : undefined,
       // A composite slice ALSO honors the scheduler's signal, which folds in its
       // phase-local controller: a sibling's failure cancels it (v1's third
@@ -1983,6 +1993,9 @@ export class GraphOrchestrator extends RunHarness {
       // ONE object for the whole run, shared by every execution's runCtx: where the clarifier
       // parks a typed `secret` form field (memory only) and the script runner reads it back.
       secretEnv: this._secretEnv,
+      // S52: a non-git run's plans and reviews live under its stored key (members[0].projectKey), which can differ
+      // from projectKey(projectDir) (a key registered while git worked, P3's NO_PROJECT_KEY). Git runs: unchanged.
+      ...(this.workMode !== 'git' && !this.isWorkspace ? { storeKey: this.members[0].projectKey } : {}),
     };
   }
 
@@ -2099,7 +2112,7 @@ export class GraphOrchestrator extends RunHarness {
       return await measureCodeCursor({
         workDirs: this.workDirs, checkpointRefs: this.checkpointRefs,
         excludeFor: (k) => this._excludePathspecs(k), numstat: diffNumstat,
-        stage: () => this._stageWorkingTree({ ignoreAbort: true }),
+        stage: () => this._stageWorkingTree({ ignoreAbort: true, refreshFolders: false }),
       });
     } catch { return null; }
   }

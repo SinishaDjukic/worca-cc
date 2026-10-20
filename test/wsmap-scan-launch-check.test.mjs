@@ -156,3 +156,19 @@ test('POST /api/workspaces/:id/scan: 400 for a workspace whose members a scan ca
   assert.deepEqual(scanRuns(['Plain Nested', 'Plain Fresh']), [], 'no scan run started');
   assert.ok(!existsSync(join(sub, '.git')));
 });
+
+test('POST /api/workspaces/scan accepts a registered Folder member and starts the scan; the folder stays byte-identical', async () => {
+  const ok = await repo('ok', { 'package.json': '{"name":"ok"}\n' });
+  const notes = mkdtempSync(join(tmpdir(), 'worca-cc-wslaunch-notes-'));
+  created.push(notes);
+  writeFileSync(join(notes, 'package.json'), '{"name":"notes"}\n');
+  assert.equal((await post('/api/projects', { name: 'Launch Notes', path: notes })).status, 200);
+  const res = await post('/api/workspaces/scan', { name: 'With Notes', projectPaths: [ok, notes] });
+  assert.equal(res.status, 200, JSON.stringify(await res.clone().json()));
+  assert.equal(scanRuns(['With Notes']).length, 1);
+  const entry = scanRuns(['With Notes'])[0];
+  await entry.launch;
+  const st = entry.orch.getState();
+  assert.equal(st.workspaceScan?.outcome, 'created', JSON.stringify({ status: st.status, reason: st.pauseReason, detail: st.pauseDetail, scan: st.workspaceScan }));
+  assert.deepEqual(readdirSync(notes), ['package.json']);
+});

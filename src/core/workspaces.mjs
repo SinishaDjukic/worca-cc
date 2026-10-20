@@ -24,9 +24,13 @@ import { execFileSync } from 'node:child_process';
 import { basename, isAbsolute, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 
-import { worcaHome, normalizeProjectPath } from './projects.mjs';
-import { canonicalProjectRoot, projectKey, workspaceStorePath } from './store.mjs';
-import { slugify, retainedWorkFor, checkoutRecordsFor } from './artifacts.mjs';
+import { worcaHome, normalizeProjectPath, getProjectByPath } from './projects.mjs';
+import { workModeForStart, normalizeVcs, effectiveWorkMode } from './project-kind.mjs';
+import { canonicalProjectRoot, projectKey, workspaceStorePath, isNoProjectWorkDir } from './store.mjs';
+import { NO_PROJECT_ERRORS } from '../shared/no-project.mjs';
+import { gitAvailable } from './git-available.mjs';
+import { teamOverHttps, teamRepoState } from './git-free/team-repo.mjs';
+import { slugify, retainedWorkFor, checkoutRecordsFor, folderApplyRetainFor } from './artifacts.mjs';
 import { getDb, prepare, tx } from './db.mjs';
 import { WORKSPACE_MAX_PROJECTS, scanDescriptionBudget } from '../shared/workspace-size.mjs';
 import { KINDS, checkOverrides, checkSynthesis } from '../shared/workspace-map/schema.mjs';
@@ -94,7 +98,7 @@ function isDir(p) {
  * no longer a git repo (§2.6 step 3) using the SAME check createWorkspace applies.
  */
 export function isGitRepo(p) {
-  if (!isDir(p)) return false;
+  if (!isDir(p) || !gitAvailable()) return false;
   try {
     execFileSync('git', ['rev-parse', '--is-inside-work-tree'],
       { cwd: p, stdio: ['ignore', 'pipe', 'ignore'] });
@@ -103,16 +107,47 @@ export function isGitRepo(p) {
 }
 
 /**
+ * A member's run mode (P1a's start rule): a registered project → effectiveWorkMode(its stored kind, git); an
+ * unregistered path → 'git' while git is installed, else 'folder'. Never throws; no git spawn.
+ * @param {string} path
+ * @returns {'git'|'folder'}
+ */
+export function memberWorkMode(path, { rowOf = getProjectByPath, gitOn = gitAvailable } = {}) {
+  return workModeForStart({ projectDir: path }, { getProjectByPath: rowOf, gitAvailable: gitOn });
+}
+
+/**
+ * P6 (S75): a member whose team branches can be discovered — a Git member, or one whose team repository is known
+ * over HTTPS (a .git/config origin without git, or a typed repo). Without git every member is a Folder (U3); with
+ * git this adds only a Folder whose team repo was typed (OS-1). Never throws; no git spawn.
+ * @param {string} path
+ * @returns {boolean}
+ */
+export function memberHasTeamRepo(path) {
+  return memberWorkMode(path) === 'git' || (teamOverHttps(path) && ['origin', 'typed'].includes(teamRepoState(path).kind));
+}
+
+/**
+ * A member's stored kind: a registered project's `vcs`; an unregistered path reads as 'git' (an orphan Git member).
+ * @param {string} path
+ * @returns {'git'|'none'}
+ */
+export function memberKind(path, { rowOf = getProjectByPath } = {}) {
+  return normalizeVcs(rowOf(path)?.vcs);
+}
+
+/**
  * Why a READ-ONLY Workspace scan cannot run over each member: a scan never `git init`s or commits
- * a member (run-harness `_ensureGitCheckpointFor` refuses), so each member must BE the top folder of
+ * a member (run-harness `_ensureGitCheckpointFor` refuses), so each GIT member must BE the top folder of
  * its own git repository — the harness's test: `git rev-parse --show-toplevel` is the folder itself,
  * both realpath'd (a folder inside a monorepo is not; neither is a bare repository) — and have a
- * commit. Both scan routes check it before a run starts; plain create keeps its own contract
- * (isGitRepo). Never throws.
+ * commit. A Folder member (`modeOf(p) !== 'git'`; with git missing every member is one) is copied,
+ * never inited, so it only has to exist. Both scan routes check it before a run starts; plain create
+ * keeps its own contract (checkNewMembers). Never throws.
  * @param {string[]} projectPaths
  * @returns {string[]} one `<path> <why>` per member a scan cannot run over ([] = every member can)
  */
-export function scanMemberProblems(projectPaths) {
+export function scanMemberProblems(projectPaths, { modeOf = memberWorkMode } = {}) {
   const git = (cwd, args) => {
     try { return execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); } catch { return null; }
   };
@@ -120,6 +155,7 @@ export function scanMemberProblems(projectPaths) {
   const out = [];
   for (const p of Array.isArray(projectPaths) ? projectPaths : []) {
     if (!isDir(p)) { out.push(`${p} does not exist`); continue; }
+    if (modeOf(p) !== 'git') continue;
     const top = git(p, ['rev-parse', '--show-toplevel']);
     if (!top || real(top) !== real(p)) out.push(`${p} is not its own git repository`);
     else if (git(p, ['rev-parse', '--verify', '-q', 'HEAD']) === null) out.push(`${p} has no commit`);
@@ -170,6 +206,7 @@ function annotate(entry) {
     projectPaths: pairs.map((x) => x.path),
     projectKeys: pairs.map((x) => x.key),
     exists: pairs.map((x) => isDir(x.path)),
+    vcs: pairs.map((x) => memberKind(x.path)),
     metricsProject: entry.metricsProject ?? null,
     policyProject: entry.policyProject ?? null,
     // The list carries the map's counts only; the map itself is GET /api/workspaces/:id/map.
@@ -357,6 +394,8 @@ function normalizeMembers(projectPaths, rootOf = canonicalProjectRoot) {
   for (const raw of Array.isArray(projectPaths) ? projectPaths : []) {
     const norm = normalizeProjectPath(raw);
     if (!norm) continue;
+    // P3-D11: a run's work folder is never a member — refused before rootOf, which would run git inside it.
+    if (isNoProjectWorkDir(norm)) throw err(NO_PROJECT_ERRORS.register, 'BAD_REQUEST');
     const root = rootOf(norm);
     if (seenRoots.has(root)) continue;
     seenRoots.add(root);
@@ -372,15 +411,27 @@ function normalizeMembers(projectPaths, rootOf = canonicalProjectRoot) {
  */
 function memoGitProbe() {
   const memo = (fn) => { const m = new Map(); return (p) => { if (!m.has(p)) m.set(p, fn(p)); return m.get(p); }; };
-  return { rootOf: memo(canonicalProjectRoot), isRepo: memo(isGitRepo) };
+  return { rootOf: memo(canonicalProjectRoot), isRepo: memo(isGitRepo), rowOf: memo(getProjectByPath), gitOn: gitAvailable };
 }
-const LIVE_GIT = { rootOf: canonicalProjectRoot, isRepo: isGitRepo };
+const LIVE_GIT = { rootOf: canonicalProjectRoot, isRepo: isGitRepo, rowOf: getProjectByPath, gitOn: gitAvailable };
 
-/** Each NEW member must be an existing directory inside a git work tree. */
-function checkNewMembers(paths, isRepo = isGitRepo) {
+/**
+ * Each NEW member must be an existing directory and either a registered project (a Git one must still be a
+ * repo while git is installed; a Folder one, or any one while git is missing, is copied — no git spawn) or,
+ * with git installed, an unregistered git work tree. A refusal never blames the folder for a missing git.
+ */
+function checkNewMembers(paths, git = LIVE_GIT) {
   for (const p of paths) {
     if (!isDir(p)) throw err(`member path does not exist or is not a directory: ${p}`, 'BAD_REQUEST');
-    if (!isRepo(p)) throw err(`member path is not a git repository: ${p}`, 'BAD_REQUEST');
+    const row = git.rowOf(p);
+    if (row) {
+      if (effectiveWorkMode(row.vcs ?? 'git', git.gitOn()) === 'git' && !git.isRepo(p)) {
+        throw err(`member path is not a git repository: ${p}`, 'BAD_REQUEST');
+      }
+      continue;
+    }
+    if (!git.gitOn()) throw err(`member path is not a registered project: ${p}`, 'BAD_REQUEST');
+    if (!git.isRepo(p)) throw err(`member path is not a git repository or a registered project: ${p}`, 'BAD_REQUEST');
   }
 }
 
@@ -396,7 +447,7 @@ function prepareCreate(input) {
   if (members.length > WORKSPACE_MAX_PROJECTS) {
     throw err(`a workspace holds at most ${WORKSPACE_MAX_PROJECTS} member projects (${members.length} given)`, 'BAD_REQUEST');
   }
-  checkNewMembers(members);
+  checkNewMembers(members, LIVE_GIT);
   return { name, members };
 }
 
@@ -582,7 +633,7 @@ export function planMembersAdd(id, projectPaths, git = LIVE_GIT) {
     if (current.has(git.rootOf(p))) throw err(`already a member of this workspace: ${p}`, 'BAD_REQUEST');
   }
   const next = [...entry.projectPaths, ...added];
-  checkNewMembers(added, git.isRepo);
+  checkNewMembers(added, git);
   assertUniqueSet(next, id, git.rootOf);
   return { entry, added, next };
 }
@@ -974,6 +1025,13 @@ export async function deleteWorkspace(id) {
     if (checkoutRecordsFor(memberRow)) {
       throw err(
         `workspace has a checked-out run (pipeline ${memberRow.id}); discard its checkout first`,
+        'RETAINED_WORKTREE',
+      );
+    }
+    // P5: a pending Folder member keeps its changes and copy until Apply or Discard; deleting the store strands the copy
+    if (folderApplyRetainFor(memberRow)) {
+      throw err(
+        `workspace has a run whose Folder changes are not applied yet (pipeline ${memberRow.id}); apply or discard them first`,
         'RETAINED_WORKTREE',
       );
     }

@@ -90,6 +90,15 @@ test('a finished headline is the glance’s: the PR first, then the review', () 
   assert.equal(histRowState({ status: 'interrupted' }).word, 'Interrupted');
 });
 
+test('P5: a workspace row reads like its glance — the Folder words for an all-Folder run, the git words for a mixed one', () => {
+  const applied = { state: 'applied', counts: { added: 2, modified: 0, deleted: 0 } };
+  assert.equal(histRowState({ status: 'done', target: 'workspace', workMode: 'folder', changes: applied }).word, 'Applied');
+  // A mixed row (no workMode) carries its Folder members' rollup `changes`, yet its glance is the git one.
+  assert.equal(histRowState({ status: 'done', target: 'workspace', changes: applied, pr: 'NONE', checks: 0, files: 3 }).word, 'Ready to ship');
+  assert.equal(histRowState({ status: 'done', target: 'workspace', changes: applied }).word, 'Finished');
+  assert.equal(histRowState({ status: 'done', workMode: 'folder', changes: applied }).word, 'Applied', 'a Folder project row is unchanged');
+});
+
 test('scheduled rows: a clock, what they wait for, and the Schedules tab that lists them', () => {
   assert.deepEqual(schedRowState({ status: 'scheduled' }), { icon: 'scheduled', word: 'Scheduled', detail: '' });
   assert.equal(schedRowState({ status: 'scheduled', after: { kind: 'run', id: 'p1' } }).word, 'Waiting');

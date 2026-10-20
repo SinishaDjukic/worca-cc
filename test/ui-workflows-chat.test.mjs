@@ -651,14 +651,16 @@ const fetchWith = (first) => fakeFetch([...first,
   ['POST', /\/api\/ask\/threads$/, () => [201, { thread: THREAD }]],
   ['POST', /\/messages$/, () => [202, { userMessageId: 'msg_0000aaaa' }]]]);
 
-test('collapsed pill: the still orb, one-line input with a rotating example, attach, scope "Auto", send', async () => {
+test('collapsed pill: the still orb, one-line input with a rotating example, attach, scope "No project", send', async () => {
   const s = await bootDock();
   const root = s.g('wfc');
   assert.equal(root.querySelector('.wfc-shell').dataset.open, 'false');
   assert.equal(root.querySelector('.wfc-spark canvas.wfc-orb').dataset.phase, 'rest');
   assert.equal(root.querySelector('.wfc-spark svg'), null, 'the orb took the sparkle\'s slot');
   assert.equal(root.querySelector('#wfc-input').placeholder, 'Add a security review after Implementation…');
-  assert.equal(root.querySelector('#wfc-scope').textContent.trim(), 'Auto');
+  assert.equal(root.querySelector('#wfc-scope').textContent.trim(), 'No project');
+  assert.equal(root.querySelector('#wfc-scope').getAttribute('aria-label'), 'Scope: No project');
+  assert.ok(root.querySelector('#wfc-scope svg circle[stroke-dasharray="3 3"]'), 'the No project circle');
   assert.equal(root.querySelector('#wfc-attach').getAttribute('aria-label'), 'Attach files');
   assert.deepEqual([...root.querySelector('.wfc-row').children].map((e) => e.id || e.className),
     ['wfc-spark', 'wfc-input', 'wfc-attach', 'wfc-file-input', 'wfc-scope', 'wfc-stop', 'wfc-send']);
@@ -688,12 +690,17 @@ test('typing expands it upward; Escape collapses; New chat clears the thread', a
   assert.equal(s.dock.client.threadId(), null);
 });
 
-test('Enter sends the text with the canvas; the scope pill pins a project', async () => {
-  const s = await bootDock();
+test('Enter sends the text with the canvas; the scope menu is the chat\'s (No project · Projects · Workspaces); a project or a workspace pins', async () => {
+  const s = await bootDock([], { projects: async () => [{ key: 'worca-1a2b3c4d', name: 'worca', vcs: 'git' }], workspaces: async () => [{ id: 'wks-team-0000abcd', name: 'Team' }] });
   const root = s.g('wfc');
   root.querySelector('#wfc-scope').click();
   await new Promise((r) => setTimeout(r, 0));
-  assert.deepEqual([...s.doc.querySelectorAll('.wfv-menu .wfv-menu-l')].map((x) => x.textContent), ['Auto', 'worca']);
+  const menu = s.doc.querySelector('.wfv-menu');
+  assert.equal(menu.getAttribute('aria-label'), 'Chat scope');
+  assert.deepEqual([...menu.querySelectorAll('.wfv-menu-h')].map((x) => x.textContent), ['Projects', 'Workspaces']);
+  assert.equal(menu.querySelector('.wfv-menu-hint'), null, 'B8: the kind is the one chip, never a text hint');
+  assert.deepEqual([...menu.querySelectorAll('.wfv-menu-item')].map((b) => [b.querySelector('.wfv-menu-l').textContent, b.querySelector('.kind-chip')?.className ?? null, b.getAttribute('role'), b.getAttribute('aria-checked')]),
+    [['No project', null, 'menuitemradio', 'true'], ['worca', 'kind-chip kind-git', 'menuitemradio', 'false'], ['Team', 'kind-chip kind-ws', 'menuitemradio', 'false']]);
   [...s.doc.querySelectorAll('.wfv-menu-item')].find((b) => b.textContent.startsWith('worca')).click();
   const input = root.querySelector('#wfc-input');
   input.value = 'Add Plan after Task';
@@ -705,6 +712,22 @@ test('Enter sends the text with the canvas; the scope pill pins a project', asyn
   assert.deepEqual(msg.body.context, { view: 'workflows', pinned: true, projectKey: 'worca-1a2b3c4d' });
   assert.equal(msg.body.composer.docToken, s.c.docToken());
   assert.equal(input.value, '');
+  const t = await bootDock([], { projects: async () => [{ name: 'no key' }, { key: 'worca-1a2b3c4d', name: 'worca' }], workspaces: async () => [{ name: 'no id' }, { id: 'wks-team-0000abcd', name: 'Team' }] });
+  t.g('wfc').querySelector('#wfc-scope').click();
+  await settle();
+  assert.deepEqual([...t.doc.querySelectorAll('.wfv-menu .wfv-menu-l')].map((x) => x.textContent), ['No project', 'worca', 'Team'], 'a row without a key or an id is skipped');
+  [...t.doc.querySelectorAll('.wfv-menu-item')].find((b) => b.textContent.startsWith('Team')).click();
+  assert.equal(t.g('wfc').querySelector('#wfc-scope').getAttribute('aria-label'), 'Scope: workspace Team');
+  assert.equal(t.g('wfc').querySelectorAll('#wfc-scope svg rect').length, 3, 'a workspace: the grid');
+  const tin = t.g('wfc').querySelector('#wfc-input');
+  tin.value = 'Add Plan'; tin.dispatchEvent(new t.win.Event('input', { bubbles: true }));
+  tin.dispatchEvent(new t.win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await settle();
+  assert.deepEqual(t.f.calls.find((c) => /\/messages$/.test(c.url)).body.context, { view: 'workflows', pinned: true, workspaceId: 'wks-team-0000abcd' });
+  t.g('wfc').querySelector('#wfc-scope').click();
+  await settle();
+  assert.deepEqual([...t.doc.querySelectorAll('.wfv-menu-item')].map((b) => b.getAttribute('aria-checked')), ['false', 'false', 'true'], 'the pinned workspace is the checked radio');
+  t.g('wfc').querySelector('#wfc-scope').click();
 });
 test('a streaming frame rewrites only the answer: the card under the pointer stays the same node', async () => {
   const s = await bootDock();
@@ -748,21 +771,117 @@ test('New chat waits for the reply: disabled while a turn runs (it would keep ru
   assert.equal(s.dock.client.threadId(), null);
 });
 
-test('a pinned project that is gone falls back to Auto once the projects load; a live one stays; an unreadable list keeps the pin', async () => {
+test('a pinned project or workspace that is gone falls back to No project once its list loads; a live one stays; an unreadable list keeps the pin', async () => {
   const KEY = 'worca-cc.composer.scope';
-  const pin = (projectKey, label) => { const m = memStore(); m.setItem(KEY, JSON.stringify({ pinned: true, projectKey, label })); return m; };
+  const pin = (o) => { const m = memStore(); m.setItem(KEY, JSON.stringify(o)); return m; };
   const scopeText = (s) => s.g('wfc').querySelector('#wfc-scope').textContent.trim();
-  const gone = pin('gone-0000abcd', 'gone');
+  const gone = pin({ pinned: true, projectKey: 'gone-0000abcd', label: 'gone' });
   const a = await bootDock([], { storage: gone });
   await new Promise((r) => setTimeout(r, 0));
-  assert.equal(scopeText(a), 'Auto');
+  assert.equal(scopeText(a), 'No project');
   assert.deepEqual(JSON.parse(gone.getItem(KEY)), { pinned: false });
-  const b = await bootDock([], { storage: pin('worca-1a2b3c4d', 'worca') });
+  const b = await bootDock([], { storage: pin({ pinned: true, projectKey: 'worca-1a2b3c4d', label: 'worca' }) });
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(scopeText(b), 'worca');
-  const c = await bootDock([], { storage: pin('gone-0000abcd', 'gone'), projects: async () => { throw new Error('offline'); } });
+  const c = await bootDock([], { storage: pin({ pinned: true, projectKey: 'gone-0000abcd', label: 'gone' }), projects: async () => { throw new Error('offline'); } });
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(scopeText(c), 'gone');
+  c.g('wfc').querySelector('#wfc-scope').click();
+  await settle();
+  assert.equal(scopeText(c), 'gone', 'the menu reads the list again: a rejection there keeps the pin too');
+  c.g('wfc').querySelector('#wfc-scope').click();
+  const teams = async () => [{ id: 'wks-team-0000abcd', name: 'Team' }];
+  const wsGone = pin({ pinned: true, workspaceId: 'wks-gone-0000abcd', label: 'Old' });
+  const d = await bootDock([], { storage: wsGone, workspaces: teams });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(scopeText(d), 'No project');
+  assert.deepEqual(JSON.parse(wsGone.getItem(KEY)), { pinned: false });
+  const e = await bootDock([], { storage: pin({ pinned: true, workspaceId: 'wks-team-0000abcd', label: 'Team' }), workspaces: teams });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(scopeText(e), 'Team');
+});
+
+test('New chat starts in No project (U5): a pinned scope resets, and the reset is stored', async () => {
+  const KEY = 'worca-cc.composer.scope';
+  const storage = memStore();
+  storage.setItem(KEY, JSON.stringify({ pinned: true, projectKey: 'worca-1a2b3c4d', label: 'worca' }));
+  const s = await bootDock([], { storage });
+  await settle();
+  assert.equal(s.g('wfc').querySelector('#wfc-scope').textContent.trim(), 'worca');
+  s.g('wfc').querySelector('#wfc-new').click();
+  await settle();
+  assert.equal(s.g('wfc').querySelector('#wfc-scope').textContent.trim(), 'No project');
+  assert.deepEqual(JSON.parse(storage.getItem(KEY)), { pinned: false });
+});
+
+test('a chat the client drops by itself starts in No project too (U5): a stored chat that answers 404 or is not a composer chat, Delete all chat history; a message on its way keeps its pin', async () => {
+  const KEY = 'worca-cc.composer.scope';
+  const pinned = () => { const m = memStore(); m.setItem('worca-cc.composer.thread', THREAD.id); m.setItem(KEY, JSON.stringify({ pinned: true, projectKey: 'worca-1a2b3c4d', label: 'worca' })); return m; };
+  const scopeText = (s) => s.g('wfc').querySelector('#wfc-scope').textContent.trim();
+  const GET_THREAD = /\/api\/ask\/threads\/ask_0000abcd$/;
+  const snap = (mode) => ({ thread: { ...THREAD, mode, context: { view: 'workflows', pinned: true, projectKey: 'worca-1a2b3c4d' } }, messages: [], attachments: [], runLinks: [], inFlight: null });
+  for (const [name, answer] of [['a stored chat deleted elsewhere (404)', () => [404, { error: 'thread not found' }]], ['a stored chat that is not a composer chat', () => [200, snap('ask')]]]) {
+    const storage = pinned();
+    const s = await bootDock([['GET', GET_THREAD, answer]], { storage });
+    await settle();
+    assert.equal(scopeText(s), 'worca', `${name}: nothing loads before the dock opens`);
+    await s.dock.client.open();
+    await settle();
+    assert.equal(s.dock.client.threadId(), null, name);
+    assert.equal(scopeText(s), 'No project', name);
+    assert.deepEqual(JSON.parse(storage.getItem(KEY)), { pinned: false }, name);
+  }
+  const cleared = pinned();
+  const b = await bootDock([['GET', GET_THREAD, () => [200, snap('composer')]]], { storage: cleared });
+  await b.dock.client.open();
+  await settle();
+  assert.equal(scopeText(b), 'worca', 'a stored chat that loads keeps its pin');
+  b.dock.pushFrame({ type: 'ask-history-cleared' });
+  await settle();
+  assert.equal(b.dock.client.threadId(), null);
+  assert.equal(scopeText(b), 'No project', 'Settings › Delete all chat history');
+  assert.deepEqual(JSON.parse(cleared.getItem(KEY)), { pinned: false });
+  // Enter before the stored chat's 404 lands: the message goes out with the pin the pill shows, and the fresh chat keeps it.
+  const racing = pinned();
+  const c = await bootDock([['GET', GET_THREAD, () => [404, { error: 'thread not found' }]]], { storage: racing });
+  const input = c.g('wfc').querySelector('#wfc-input');
+  input.value = 'Add Plan';
+  input.dispatchEvent(new c.win.Event('input', { bubbles: true }));
+  input.dispatchEvent(new c.win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await settle();
+  assert.deepEqual(c.f.calls.find((x) => /\/messages$/.test(x.url)).body.context, { view: 'workflows', pinned: true, projectKey: 'worca-1a2b3c4d' });
+  assert.equal(scopeText(c), 'worca', 'the pill still says what the message carried');
+  assert.deepEqual(JSON.parse(racing.getItem(KEY)), { pinned: true, projectKey: 'worca-1a2b3c4d', label: 'worca' });
+  // A chat this page started (no stored thread at boot), then cleared: it was a chat, so the next one starts in No project.
+  const fresh = memStore();
+  fresh.setItem(KEY, JSON.stringify({ pinned: true, projectKey: 'worca-1a2b3c4d', label: 'worca' }));
+  const d = await bootDock([], { storage: fresh });
+  const din = d.g('wfc').querySelector('#wfc-input');
+  din.value = 'Add Plan';
+  din.dispatchEvent(new d.win.Event('input', { bubbles: true }));
+  din.dispatchEvent(new d.win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await settle();
+  assert.equal(d.dock.client.threadId(), THREAD.id);
+  assert.equal(scopeText(d), 'worca');
+  d.dock.pushFrame({ type: 'ask-history-cleared' });
+  await settle();
+  assert.equal(scopeText(d), 'No project', 'a chat started in this page load, then cleared');
+});
+
+test('a composer thread\'s divider rows are skipped (SEAMS S39): the dock never shows "Switched to …" as a reply', async () => {
+  const storage = memStore();
+  storage.setItem('worca-cc.composer.thread', THREAD.id);
+  const snap = { thread: { ...THREAD, context: { view: 'workflows', pinned: true, projectKey: 'worca-1a2b3c4d' } }, attachments: [], runLinks: [], inFlight: null, messages: [
+    { id: 'msg_0000a001', threadId: THREAD.id, seq: 1, role: 'user', text: 'Add Plan', status: null, blocks: null, createdAt: 't' },
+    { id: 'msg_0000a002', threadId: THREAD.id, seq: 2, role: 'system', text: 'Switched to worca', status: null, blocks: [{ kind: 'divider', text: 'Switched to worca', scope: { pinned: true, projectKey: 'worca-1a2b3c4d' } }], createdAt: 't' },
+    { id: 'msg_0000a003', threadId: THREAD.id, seq: 3, role: 'assistant', text: 'Done.', status: 'done', blocks: [], createdAt: 't' },
+  ] };
+  const s = await bootDock([['GET', /\/api\/ask\/threads\/ask_0000abcd$/, () => [200, snap]]], { storage });
+  await s.dock.client.open();
+  await settle();
+  const msgs = [...s.g('wfc').querySelectorAll('.wfc-msg')];
+  assert.equal(msgs.length, 2, 'the user row and the reply; the divider row adds nothing');
+  assert.ok(!msgs.some((m) => m.textContent.includes('Switched to')));
 });
 
 test('a screen reader hears one line per card change and per finished reply; the rebuilt thread itself stays quiet', async () => {

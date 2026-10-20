@@ -482,3 +482,21 @@ test('receipt Revert brings back the Settings page\'s "No cap" tick (a stored nu
     'the child hands the parent the model\'s own null, never the stored marker');
   assert.equal((await post('/api/settings', { askMaxBudgetUsd: '' })).status, 200);
 });
+
+test('pull-request card of a mixed workspace run counts only its Git members: a Folder member ships in no pull request', async () => {
+  const { writeFile } = await import('node:fs/promises');
+  const { seedWorkspacePipeline } = await import('./helpers/db-seed.mjs');
+  const WK = 'wks-cards-00000002';
+  const FK = 'notes-0000000f';
+  const members = [{ projectKey: FK, projectDir: '/nowhere/notes', projectName: 'notes', workMode: 'folder' },
+    { projectKey: project.key, projectDir: project.path, projectName: 'actcards' }];
+  const feat = { source: 'main', feature: 'worca/ws-mixed', branchKept: true };
+  const ws = await seedWorkspacePipeline(project.path, WK, { title: 'Mixed', status: 'done', workspaceName: 'Team', projects: members,
+    projectKeys: members.map((m) => m.projectKey),
+    branches: { [FK]: { workMode: 'folder', runRootMode: 'detached', copyDir: '/nowhere/copy', realDir: '/nowhere/notes' }, [project.key]: feat }, branch: {} }, members);
+  const sum = (n, add) => ({ filesNew: n, filesChanged: 0, filesDeleted: 0, linesAdded: add, linesRemoved: 0 });
+  await writeFile(join(ws.dir, 'results.json'), JSON.stringify({ summary: sum(5, 50), perProject: { [FK]: { summary: sum(3, 30) }, [project.key]: { summary: sum(2, 20) } } }));
+  const w = await host().apply({ kind: 'pull-request', runId: ws.id }, { actor: 'local' });
+  assert.equal(w.ok, true, JSON.stringify(w));
+  assert.deepEqual([w.block.card.branch, w.block.card.filesChanged, w.block.card.additions, w.block.card.deletions], ['worca/ws-mixed', 2, 20, 0]);
+});

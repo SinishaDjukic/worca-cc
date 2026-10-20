@@ -171,12 +171,15 @@ export async function setWorcaRoot(input) {
 //
 // DELIBERATELY NOT derived from `root`: `root` means "where worca-cc's data
 // lives", so relocating the data dir to an external volume must not silently
-// relocate the user's instruction root.
+// relocate the user's instruction root — that holds for an explicit value. The
+// DEFAULT (nothing set) is `<worcaHome>/projects` (U6): New and Clone from URL
+// create projects there, so it follows WORCA_HOME and the Settings root. Existing
+// projects stay where they are.
 // ---------------------------------------------------------------------------
 
 /**
  * The effective projects root. Precedence: WORCA_PROJECTS_ROOT env →
- * settings.projectsRoot → defaultRoot(). ALWAYS an absolute path (never '',
+ * settings.projectsRoot → <worcaHome>/projects (worcaProjectsFolder()). ALWAYS an absolute path (never '',
  * unlike getWorcaRoot()) — the root context layer must always have a base.
  *
  * Only the SETTER validates dir-ness. The env tier passes through unchecked, so a
@@ -188,15 +191,15 @@ export function getProjectsRoot() {
   const env = process.env.WORCA_PROJECTS_ROOT;
   if (env && env.trim()) return resolve(expandTilde(env.trim()));
   const r = readSettings().projectsRoot;
-  return typeof r === 'string' && r.trim() ? resolve(expandTilde(r.trim())) : defaultRoot();
+  return typeof r === 'string' && r.trim() ? resolve(expandTilde(r.trim())) : worcaProjectsFolder();
 }
 
 /**
  * The RAW persisted projectsRoot — '' when the key is absent, blank, or not a
  * string. The exact mirror of getWorcaRoot(), and what the settings UI puts in
  * its field: "unset" must stay distinguishable from "explicitly set", so a blank
- * field can round-trip as blank and the "leave blank to use your home folder"
- * affordance is real.
+ * field can round-trip as blank and the "leave blank to use worca's projects
+ * folder" affordance is real.
  *
  * DELIBERATELY ignores the WORCA_PROJECTS_ROOT env tier: the env is an
  * override, not a setting, and surfacing it as the field value would let a plain
@@ -211,7 +214,7 @@ export function rawProjectsRoot() {
 
 /**
  * What applies when projectsRoot is left blank — the env tier if it is exported,
- * else defaultRoot(). This is the settings-UI placeholder, i.e. the honest answer
+ * else <worcaHome>/projects (worcaProjectsFolder()). This is the settings-UI placeholder, i.e. the honest answer
  * to "what do I get if I clear this field?", and it is why the API cannot just
  * reuse `default` (which is defaultRoot(), the worca-cc root default, and would
  * lie whenever WORCA_PROJECTS_ROOT is set).
@@ -223,14 +226,34 @@ export function rawProjectsRoot() {
 export function defaultProjectsRoot() {
   const env = process.env.WORCA_PROJECTS_ROOT;
   if (env && env.trim()) return resolve(expandTilde(env.trim()));
-  return defaultRoot();
+  return worcaProjectsFolder();
+}
+
+/**
+ * The DEFAULT projects root, <worcaHome>/projects (U6): New and Clone from URL create projects there. Mirrors
+ * projects.mjs#worcaHome()'s base rule (this module may not import projects.mjs); no node:test guard — it only
+ * computes a path. Never creates it.
+ */
+export function worcaProjectsFolder() {
+  const env = process.env.WORCA_HOME;
+  const base = env && env.trim() ? env : (getWorcaRoot() || defaultRoot());
+  return join(resolve(base), '.worca-cc', 'projects');
+}
+
+/** Which tier getProjectsRoot() used: 'env' | 'settings' | 'default'. Read fresh on every call. */
+export function projectsRootSource() {
+  const env = process.env.WORCA_PROJECTS_ROOT;
+  if (env && env.trim()) return 'env';
+  const r = readSettings().projectsRoot;
+  return typeof r === 'string' && r.trim() ? 'settings' : 'default';
 }
 
 /**
  * Persist the projects root. Pass '' / null / non-string to CLEAR it (reset to
- * defaultRoot()). A non-empty value is `~`-expanded, resolved absolute, and must
- * be an EXISTING directory — worca-cc never writes anything under projectsRoot
- * (this is the one divergence from setWorcaRoot, which pre-creates
+ * <worcaHome>/projects). A non-empty value is `~`-expanded, resolved absolute, and must
+ * be an EXISTING directory — worca writes under projectsRoot only to create a
+ * project folder (New, Clone from URL) and the root itself on first use; a typed
+ * path must still exist, so a typo is rejected, not created (this is the one divergence from setWorcaRoot, which pre-creates
  * <base>/.worca-cc to prove writability; there is nothing to pre-create here, and
  * silently mkdir-ing a mistyped path would be worse than rejecting it).
  * Atomic temp+rename over the same read-modify-write object, so `root` and every

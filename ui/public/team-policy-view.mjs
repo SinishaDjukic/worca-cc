@@ -58,7 +58,7 @@ const capText = (caps) => {
 /** Classify a project status (from /api/policy/scopes → projects[]) into a cell variant. */
 export function projectTpState(s) {
   if (s.hasOrigin === false) return { kind: 'no-origin' };
-  if (!s.present) return { kind: 'off' };
+  if (!s.present) return { kind: s.unread ? 'blocked' : 'off' };   // P6: unread = a GitHub team repository not read yet
   if (s.unknownSchema) return { kind: 'unsupported' };
   if (s.delegateTo && s.delegateState === 'invalid') return { kind: 'delegate-invalid' };
   if (s.blocked) return { kind: 'blocked' };
@@ -182,12 +182,28 @@ function radioCard(doc, { name, value, checked, title, body, disabled = false })
   return card;
 }
 
+/** The GitHub repository field (no git, no repository named in .git/config): a real <label for>, no hint text. */
+function repoField(doc, repo = '') {
+  const f = h(doc, 'div', 'field');
+  const label = h(doc, 'label', null, 'GitHub repository');
+  label.htmlFor = 'tp-repo-input';
+  const input = h(doc, 'input', 'input mono tp-repo');
+  Object.assign(input, { id: 'tp-repo-input', type: 'text', placeholder: 'owner/name', value: repo || '' });
+  input.setAttribute('spellcheck', 'false');
+  input.setAttribute('autocomplete', 'off');
+  f.append(label, input);
+  return f;
+}
+
 /** Enable dialog body (board 3). mode: 'here' | 'follow'. */
-export function renderPolicyEnableDialogBody({ project, origin, candidates = [], mode = 'here', change = false }, { doc = globalThis.document } = {}) {
+export function renderPolicyEnableDialogBody({ project, origin, candidates = [], mode = 'here', change = false, repoInput = false, repo = '', needsGit = false }, { doc = globalThis.document } = {}) {
   const root = h(doc, 'div', 'tp-enable-body');
   const sub = h(doc, 'div', 'sub');
-  sub.append('for ', h(doc, 'b', null, project.name), ' · origin ', code(doc, origin || '—'));
+  sub.append('for ', h(doc, 'b', null, project.name));
+  if (!repoInput) sub.append(' · origin ', code(doc, origin || '—'));
+  if (needsGit) sub.append(' · ', h(doc, 'span', 'badge waiting pl-needs-git', 'Needs git'));
   root.append(sub);
+  if (repoInput) root.append(repoField(doc, repo));
   const where = h(doc, 'div', 'field');
   where.append(h(doc, 'label', null, 'Where the policy lives'));
   where.append(radioCard(doc, { name: 'tp-where', value: 'here', checked: mode === 'here' && !change, disabled: change, title: 'Here, on this repository',

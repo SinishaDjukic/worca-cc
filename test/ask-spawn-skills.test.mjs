@@ -104,7 +104,7 @@ test('askSkillsAllowRules: the turn\'s own mount under the thread, shape-checked
 test('sandboxNote: byte-identical without skills; with a mount it names the skills and keeps scripts and other skills out', () => {
   const sha = (s) => createHash('sha256').update(s).digest('hex');
   assert.equal(sandboxNote({ skills: [] }), SANDBOX_NOTE);
-  assert.equal(sha(sandboxNote()), '28a815086c21a419427a8ead81c3f79badd494f5bbe6a1a1d116df5cb0edd4f7', 'SANDBOX_NOTE unchanged');
+  assert.equal(sha(sandboxNote()), '655b1ddb591fcc66fb4b25af1e58c78d1e0968bb10653e0fb6bd0c4f24c3d66d', 'SANDBOX_NOTE unchanged');
   const note = buildAskSpawnOptions(base({ skills: SKILLS })).appendSubagentSystemPrompt;
   assert.equal(note, sandboxNote({ skills: SKILLS.names }));
   assert.match(note, /the Skill tool, for the skills from the user's sets only \(billing:deploy-checklist, general:graphify\)/);

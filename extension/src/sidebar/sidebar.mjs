@@ -561,7 +561,7 @@ async function matchAction() {
   patchComposer();
 }
 
-/** D9: pre-pin to the run's project only while the chat is "Any project" and the user has not chosen a scope here. */
+/** D9: pre-pin to the run's project only while the chat is "No project" and the user has not chosen a scope here. */
 async function maybeAutoPin() {
   const a = st.action;
   if (!a || st.scope.pinned || st.scopeChosen || (!a.projectKey && !a.workspaceId)) return;

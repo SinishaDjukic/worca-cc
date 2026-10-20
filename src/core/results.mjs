@@ -6,6 +6,8 @@ import { writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { recordArtifact, resolvePipelineId, readPipelineExtras } from './artifacts.mjs';
 import { latestChecklist, checklistTally } from '../shared/shape/review-checklist.mjs';
+import { CHANGES_PATCH_FILE } from './project-kind.mjs';
+import { readRegularText } from './folder-copy.mjs';
 
 const NEW_STATUS = new Set(['A', 'C']);
 
@@ -195,7 +197,8 @@ export async function readRunContextBundle(dir, pipelineId) {
   const read = async (f) => { try { return await readFile(join(dir, f), 'utf8'); } catch { return null; } };
   const resultsTxt = await read(RESULTS_FILE);
   return {
-    diffPatch: await read(DIFF_PATCH_FILE),
+    // a Folder run's changes.patch sits in the agent-writable pipeline dir: never read through a link planted there
+    diffPatch: (await read(DIFF_PATCH_FILE)) ?? (await readRegularText(join(dir, CHANGES_PATCH_FILE)).catch(() => null)),
     results: resultsTxt ? JSON.parse(resultsTxt) : null,
     reviews: readPipelineExtras(pipelineId).reviews || [],
     audit: null, // audit markdown is rebuilt by buildAuditMarkdown at the API layer

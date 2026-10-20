@@ -10,13 +10,18 @@
 import { readdir, stat } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { normalizeProjectPath } from './projects.mjs';
-import { defaultRoot, getProjectsRoot } from './settings.mjs';
+import { defaultRoot, getProjectsRoot, projectsRootSource } from './settings.mjs';
 import { checkInside, insideRoots, isWithin, outsideAllowedError, realOrNull } from './fs-scope.mjs';
 
 function err(message, code) { return Object.assign(new Error(message), { code }); }
 
-/** Where a blank listing opens: the projects root if it is a directory, else home. */
+/**
+ * Where a blank listing opens: a CONFIGURED projects root (env or Settings) if it is a
+ * directory, else home. The default (<worcaHome>/projects, U6) is never a start: a blank
+ * Folder browse keeps opening at home, where people's projects are.
+ */
 async function startFolder(home) {
+  if (projectsRootSource() === 'default') return home;
   const root = getProjectsRoot();
   try {
     if (root !== home && (await stat(root)).isDirectory()) return root;
@@ -26,15 +31,16 @@ async function startFolder(home) {
 
 /**
  * List the sub-directories of `input` (tilde-expanded, resolved). Empty input
- * lists the effective projects root when it is an existing directory, else the
- * OS home directory (normalizeProjectPath returns null for blank input, so this
- * can never fall through to process.cwd()). With nothing configured the two are
- * the same folder; in a container, WORCA_PROJECTS_ROOT names the mounted repos
- * while home is an empty /home/worca. `home` stays the OS home (the Home button).
+ * lists a CONFIGURED projects root (env or Settings) when it is an existing
+ * directory, else the OS home directory (normalizeProjectPath returns null for
+ * blank input, so this can never fall through to process.cwd()). The default
+ * root (<worcaHome>/projects, U6) is never a start: people's folders are under
+ * home. In a container, WORCA_PROJECTS_ROOT names the mounted repos while home
+ * is an empty /home/worca. `home` stays the OS home (the Home button).
  *
  * With `roots` (real paths from fs-scope.mjs#realRoots, at least one), the listing
  * is limited: the path is resolved through symlinks and must lie inside a root, a
- * blank listing opens the projects root (or the first root), `parent` is null at a
+ * blank listing opens a configured projects root (else the first root), `parent` is null at a
  * root, symlinked folders that lead outside are not listed, and the answer carries
  * `limited: true` and `roots` so the UI can offer them.
  * @param {string} input
@@ -57,7 +63,8 @@ export async function listFolders(input, { roots = null } = {}) {
 
 async function listLimited(input, roots) {
   if (!roots.length) throw err('no folder can be browsed on this server', 'BAD_REQUEST');
-  const projects = await realOrNull(resolve(getProjectsRoot()));
+  // As startFolder: only a CONFIGURED projects root is a start; with the default, the first root (the OS home).
+  const projects = projectsRootSource() === 'default' ? null : await realOrNull(resolve(getProjectsRoot()));
   const home = projects && roots.some((r) => isWithin(projects, r)) ? projects : roots[0];
   const asked = normalizeProjectPath(input);
   let path = home;

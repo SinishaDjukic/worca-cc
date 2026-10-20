@@ -12,7 +12,7 @@ at a time; agents never get it, in any guardrail set.
   shows whether it can merge. History shows it, and the `until-pr` stop works as on GitHub. A
   description longer than Azure's 4,000 characters is cut, with a note saying so. **Open as draft**
   opens it as a draft. A run that came from a GitHub issue adds no `Closes` line here.
-- **Clone.** **Add project → Clone** takes an Azure repository URL (shapes below).
+- **Clone.** **Add project → Clone from URL** takes an Azure repository URL (shapes below).
 - **Fetch and sync**, including the `worca-metrics` and `worca-policy` branches on an Azure
   `origin`.
 - **Team metrics merge dates.** Runs whose branch became an Azure pull request get its creation
@@ -92,7 +92,7 @@ Names are percent-decoded (`My%20Project` is `My Project`) and compared case-ins
 https URL without `_git` is not a repository URL. Worca's own git calls are https; an ssh remote
 pushes with your ssh agent, as for GitHub.
 
-**Clone** takes https only (no port, query or password; a password is refused with a pointer to
+**Clone from URL** takes https only (no port, query or password; a password is refused with a pointer to
 `WORCA_ADO_TOKEN`), and clones from `https://dev.azure.com/org/project/_git/repo`.
 
 **`WORCA_CLONE_ALLOW`** matches `dev.azure.com/<org>/<project>/<repo>` for every spelling, any

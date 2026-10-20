@@ -20,6 +20,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { _resetForTests as closeDbForTests } from '../src/core/db.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { holdMockTurn, isToolResult } from './helpers/ask-hold.mjs';
+import { withNoGit } from './helpers/git-off.mjs';
 
 useTempHome(after);
 
@@ -511,4 +512,16 @@ test('askSystemPromptFor with "Create and run scripts" off: draft_script keeps i
     assert.match(p, /call draft_script with the meta's fields as named above/);
     assert.equal(p.includes('save_script'), false, 'no save_script with the switch off');
   } finally { assert.equal((await post('/api/settings', { chat: { scriptTools: true } })).status, 200); }
+});
+
+// P0 Task 10: the server's prompt builder hands the git state to buildSystemPrompt.
+test('askSystemPromptFor follows the git state: without git it names no worktree tool and carries the no-git rule 7', async () => {
+  const cat = { projects: [], workspaces: [], workflows: [], agents: [] };
+  assert.ok((await mod._testing.askSystemPromptFor(cat)).includes('open_worktree'), 'git on: the prompt of today');
+  const restore = withNoGit();
+  try {
+    const p = await mod._testing.askSystemPromptFor(cat);
+    assert.equal(p.includes('open_worktree'), false);
+    assert.match(p, /^7\. This machine has no git: /m);
+  } finally { restore(); }
 });

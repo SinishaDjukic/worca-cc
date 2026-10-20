@@ -10,7 +10,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdtemp, rm, realpath } from 'node:fs/promises';
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync, realpathSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,7 +22,7 @@ import { graphResumePoint } from './helpers/graph-templates.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { readPipelineForResume } from '../src/core/artifacts.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
-import { projectKey } from '../src/core/store.mjs';
+import { projectKey, noProjectWorkDir, NO_PROJECT_KEY } from '../src/core/store.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { posix } from './helpers/posix-path.mjs';
 import { checkRows } from './helpers/rows.mjs';
@@ -315,4 +315,35 @@ test('resume refuses a v1 resume point: exit 2 and the retirement message', asyn
   } finally {
     await rm(projDir, { recursive: true, force: true });
   }
+});
+
+// P3: a paused run without a project resolves to its own work/ folder — never the registry, never the cwd, never
+// "not onboarded". Its work/ is gone here, so the resume stops at the re-attach (after resolution succeeded).
+test('resume a run without a project -> its own work folder, never "not onboarded"', async () => {
+  const { id, dir } = await seedPipeline(noProjectWorkDir('abcd1234'), {
+    title: 'paused no-project run', status: 'paused',
+    branch: { workMode: 'none', runRootMode: 'detached' },
+    resumePoint: graphResumePoint({ pipelineDir: worcaHome() }),
+  });
+  assert.equal(getDb().prepare('SELECT project_key FROM pipelines WHERE id = ?').get(id).project_key, NO_PROJECT_KEY);
+  const r = await run(['resume', id, '--mock', '--yes']);
+  assert.equal(r.code, 1, `stderr: ${r.stderr}\nstdout: ${r.stdout}`);
+  assert.doesNotMatch(r.stderr, /not onboarded/i, `stderr: ${r.stderr}`);
+  assert.match(r.stderr, /work folder missing: .*[\\/]runs[\\/][0-9a-f]{8}[\\/]work — cannot resume/, `stderr: ${r.stderr}\nstdout: ${r.stdout}`);
+  void dir;
+});
+
+// P3-D11: a run's work folder is never a CLI project — named by --project or as the cwd, it is refused before a
+// pipelines row or a git call (it would take the reserved key and `git init` inside another run's work/).
+test('a run work folder is never a CLI project: --project and the cwd are refused before anything starts', async () => {
+  const work = noProjectWorkDir('abcd1234');
+  mkdirSync(work, { recursive: true });
+  const rows = () => getDb().prepare('SELECT COUNT(*) AS n FROM pipelines').get().n;
+  const before = rows();
+  for (const r of [await run(['--project', work, '--prompt', 'x', '--mock', '--yes']), await run(['--prompt', 'x', '--mock', '--yes'], { cwd: work })]) {
+    assert.equal(r.code, 2, `stderr: ${r.stderr}\nstdout: ${r.stdout}`);
+    assert.match(r.stderr, /this folder belongs to a run without a project/);
+  }
+  assert.equal(rows(), before, 'no pipelines row');
+  assert.equal(existsSync(join(work, '.git')), false, 'no git init in the work folder');
 });

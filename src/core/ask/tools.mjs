@@ -12,8 +12,31 @@ export class AskToolError extends Error {
   constructor(message) { super(message); this.name = 'AskToolError'; }
 }
 
+const scopeWhere = (s) => (!s ? 'No project' : s.projectKey ? `project ${s.projectKey}` : `workspace ${s.workspaceId}`);
+/** P4 (CONTRACT §4; canvas: "project-bound tools act only on the chat's scope"): the one refusal text, no tool prefix.
+ *  scope = the chat's ({projectKey}|{workspaceId}|null = No project); target = what the call named (null = nothing:
+ *  only a No-project chat is refused with nothing named, so the no-target text speaks of No project). */
+export function scopeRefusalText(scope, target = null) {
+  const ask = scope ? '' : '; when you are fairly certain which project the message is about, call propose_scope_switch';
+  return target
+    ? `this chat's scope is ${scopeWhere(scope)} and project tools act only on it — ${scopeWhere(target)} is outside it. Another project or workspace means the user changes the chat's scope pill${ask}`
+    : `this chat has No project, so there is no project to act on. The user picks one in the chat's scope pill${ask}`;
+}
+/** True when `target` is the chat's scope or, in a workspace chat, one of its member projects (memberKeys). */
+export function targetInScope(scope, target, memberKeys = []) {
+  if (!target) return true;
+  if (!scope) return false;
+  if (scope.projectKey) return target.projectKey === scope.projectKey;
+  if (target.workspaceId) return target.workspaceId === scope.workspaceId;
+  return Array.isArray(memberKeys) && memberKeys.includes(target.projectKey);
+}
+
+// The tools that only work with git on this machine: neither listed nor callable while deps.gitAvailable() is false.
+export const GIT_ONLY_ASK_TOOLS = Object.freeze(['list_branches', 'open_worktree', 'list_worktrees', 'remove_worktree', 'git', 'propose_clone_project', 'propose_pull_request']);
+
 const MEMBER_HEADER_RE = /^# ([a-z0-9][a-z0-9-]*-[0-9a-f]{8})$/;   // workspace patches = member patches joined as `# <projectKey>\n<patch>`
 const DIFF_GIT = 'diff --git ';
+const NO_PROJECT_KEY = 'no-project-00000000';   // src/shared/no-project.mjs (this module imports nothing): a run with no project
 const FROM_RE = /^(?:rename|copy) from /;   // extended-header line naming the SOURCE file of a rename/copy
 
 // `\a \b \f \n \r \t \v` — every other escape (`\"`, `\\`) is the literal byte.
@@ -371,6 +394,8 @@ const DRAFT_SCRIPT_PROPS = { displayName: SCHEMA.s('display name'), key: SCHEMA.
  */
 export function createAskTools(deps) {
   const L = deps.limits;
+  // git missing on this machine (P0): an absent dep means git is on, so every existing caller is unchanged.
+  const gitOff = () => typeof deps.gitAvailable === 'function' && deps.gitAvailable() === false;
 
   // #397: the user-pinned scope of this conversation — {projectKey}|{workspaceId}|
   // null — re-read per call so a mid-conversation selector change is honoured.
@@ -379,6 +404,21 @@ export function createAskTools(deps) {
     try { return typeof deps.pinnedScope === 'function' ? (deps.pinnedScope() || null) : null; }
     catch { return null; }
   };
+  // P4 (CONTRACT §4; canvas: "project-bound tools act only on the chat's scope"): the gate of the acting tools. A bundle
+  // without the scope reader is no chat (unit fakes, reader-only hosts) and has no gate; a failing reader is No project.
+  const hasChat = typeof deps.pinnedScope === 'function';
+  const targetOf = (input) => (str(input?.projectKey) ? { projectKey: str(input.projectKey) }
+    : str(input?.workspaceId) ? { workspaceId: str(input.workspaceId) } : null);
+  /** null when `target` may be acted on, else the refusal text (no tool prefix). */
+  async function scopeError(target) {
+    if (!hasChat || !target) return null;
+    const scope = pinnedScope();
+    let members = [];
+    if (scope && scope.workspaceId && target.projectKey) {
+      try { members = ((await deps.buildCatalog()).workspaces || []).find((w) => w.id === scope.workspaceId)?.projectKeys || []; } catch { members = []; }
+    }
+    return targetInScope(scope, target, members) ? null : scopeRefusalText(scope, target);
+  }
 
   // The person signed in to this chat on a shared sign-in (identity.mjs isSharedIdentity), else null.
   const viewer = () => (typeof deps.viewer === 'string' && deps.viewer ? deps.viewer : null);
@@ -467,8 +507,10 @@ export function createAskTools(deps) {
       description: 'Follow a run in this chat: puts a live progress card (status, elapsed time, cost, active agents, the workflow) into your reply, kept current while the user watches. Works for running, paused and finished runs. id is the run\'s 8-hex id; the app\'s live run id also works. Call it once per run per reply, only from your own turn.',
       inputSchema: SCHEMA.obj({ id: SCHEMA.s('run id (8 hex), or the app\'s live run id'), projectKey: SCHEMA.s('scope to a project'), workspaceId: SCHEMA.s('scope to a workspace') }, ['id']) },
     { name: 'propose_run',
-      description: 'Propose a pipeline run for the user to confirm — it never starts anything. Exactly one of projectKey / workspaceId; omitting both targets the scope the user pinned for this chat, when there is one. guardrailsId defaults to "normal"; "permissive" is not allowed. To run it LATER give `when` (once) or `every` (repeat) in the user\'s own words — the card then offers Schedule instead of Start; check the phrase with preview_schedule first when unsure. To run it when ANOTHER run ends give `after` (a run id) — `sourceFromPrevious: true` starts it on that run\'s branch. When the work IS a tracker task (an issue in an installed task source), give `source` INSTEAD of brief: the run fetches the task itself when it starts (find_tasks / get_task find it). workflowId "wf_auto" = Auto: the run picks its own workflow from the task when it starts. engine: who runs the agents — claude (Claude Code), or codex, copilot, cursor (all three in beta); omit it and the run starts on the default engine (the project\'s, else the user\'s, else the team\'s), which is what you want unless the user names an engine. nodes: per-agent model picks for this run only (rule 18) — a saved workflow\'s agent node ids (list_workflows steps[].nodeId) to { model, effort?, subagentModel?, reason }; the card shows each beside the project default and saves nothing. presetId starts from one of the user\'s run presets (list_presets). Returns {ok:true, card} or {ok:false, errors}; a card may carry warnings (the team policy\'s allowed models, a premium-tier pick) — relay them.',
-      inputSchema: SCHEMA.obj({ projectKey: SCHEMA.s('target project key'), workspaceId: SCHEMA.s('target workspace id'), workflowId: SCHEMA.s('workflow id (default wf_default; "wf_auto" = Auto)'),
+      description: 'Propose a pipeline run for the user to confirm — it never starts anything. Exactly one of projectKey / workspaceId / noProject: true (a run with no project works in its own empty folder: its files are the result; no git, branch or pull request; it cannot be scheduled or chained yet); omitting all three targets the chat\'s scope — in a No-project chat, a run with no project; use that only for work that belongs to no project. A project or workspace outside the chat\'s scope is refused (rule 2). guardrailsId defaults to "normal"; "permissive" is not allowed. To run it LATER give `when` (once) or `every` (repeat) in the user\'s own words — the card then offers Schedule instead of Start; check the phrase with preview_schedule first when unsure. To run it when ANOTHER run ends give `after` (a run id) — `sourceFromPrevious: true` starts it on that run\'s branch. When the work IS a tracker task (an issue in an installed task source), give `source` INSTEAD of brief: the run fetches the task itself when it starts (find_tasks / get_task find it). workflowId "wf_auto" = Auto: the run picks its own workflow from the task when it starts. engine: who runs the agents — claude (Claude Code), or codex, copilot, cursor (all three in beta); omit it and the run starts on the default engine (the project\'s, else the user\'s, else the team\'s), which is what you want unless the user names an engine. nodes: per-agent model picks for this run only (rule 18) — a saved workflow\'s agent node ids (list_workflows steps[].nodeId) to { model, effort?, subagentModel?, reason }; the card shows each beside the project default and saves nothing. presetId starts from one of the user\'s run presets (list_presets). Returns {ok:true, card} or {ok:false, errors}; a card may carry warnings (the team policy\'s allowed models, a premium-tier pick) — relay them.',
+      inputSchema: SCHEMA.obj({ projectKey: SCHEMA.s('target project key'), workspaceId: SCHEMA.s('target workspace id'),
+        noProject: SCHEMA.b('true = a run with no project, in its own empty folder (never with projectKey / workspaceId)'),
+        workflowId: SCHEMA.s('workflow id (default wf_default; "wf_auto" = Auto)'),
         presetId: SCHEMA.s('a run preset id (rp_…) from list_presets: its workflow, engine, guardrails, agent models, branches and tags fill the card; any field you also pass wins. A preset on Permissive guardrails is refused unless you pass guardrailsId'),
         brief: SCHEMA.s(`the full task description for the run (≤ ${L.briefMaxChars} chars); omit when you give source`),
         source: { type: 'object', additionalProperties: false, required: ['plugin', 'sourceId', 'taskId'],
@@ -499,7 +541,7 @@ export function createAskTools(deps) {
         ...SHAPE_PROPS,
         ...SCHEDULE_FIELDS }, ['brief']) },
     { name: 'propose_workflow',
-      description: 'Propose a NEW workflow for the user to save — it never writes anything; the user sees a card and decides. Exactly one of task / shape: task = the full task text (worca\'s Auto classifier picks the agents, loops and models exactly as an Auto run would — use this when the user says "auto" or simply gives a task); shape = a hand-authored ladder of catalog agents (see "Workflows you can create" in your instructions — only when the user describes the steps; a script, a gate or a new agent needs build_workflow). Target: projectKey OR workspaceId (not both); with neither, the scope pinned for this chat is used, whichever kind it is. A workspace proposal runs its plan, refine and implement stages across every member. thenRun = the user also asked to run it. Returns {ok:true, name, match, warnings, summary, shape}: match names the saved workflow with the same shape (Save reuses it), summary lists the stages and loops. Returns {ok:false, error} when worca\'s classifier failed (timeout, unusable replies): tell the user, retry at most once. Do not search list_workflows for a match yourself — the tool does.',
+      description: 'Propose a NEW workflow for the user to save — it never writes anything; the user sees a card and decides. Exactly one of task / shape: task = the full task text (worca\'s Auto classifier picks the agents, loops and models exactly as an Auto run would — use this when the user says "auto" or simply gives a task); shape = a hand-authored ladder of catalog agents (see "Workflows you can create" in your instructions — only when the user describes the steps; a script, a gate or a new agent needs build_workflow). Target: projectKey OR workspaceId (not both); with neither, the chat\'s scope is used, whichever kind it is (a target outside it is refused; in a No-project chat, use propose_run with noProject: true instead). A workspace proposal runs its plan, refine and implement stages across every member. thenRun = the user also asked to run it. Returns {ok:true, name, match, warnings, summary, shape}: match names the saved workflow with the same shape (Save reuses it), summary lists the stages and loops. Returns {ok:false, error} when worca\'s classifier failed (timeout, unusable replies): tell the user, retry at most once. Do not search list_workflows for a match yourself — the tool does.',
       inputSchema: SCHEMA.obj({
         task: SCHEMA.s('the full task text (≤ 32000 chars) — mode task'),
         shape: { type: 'object', description: 'a hand-authored workflow shape {name, taskKind, reasoning, stages[], loops?} — mode shape', additionalProperties: true },
@@ -509,6 +551,10 @@ export function createAskTools(deps) {
         thenRun: SCHEMA.b('the user also asked to run the work: the card offers "Save & propose run"'),
         note: SCHEMA.s('one line shown on the card: why this shape (≤ 200 chars)'),
       }) },
+    ...(deps.scopeSwitch ? [{ name: 'propose_scope_switch',
+      description: 'Ask the user to switch THIS chat to one of their projects — only when BOTH hold: the chat has No project (its context block reads "project: - [No project]"), and you are fairly certain the message is about one onboarded project: they name the project, its repo or its folder; or something only that project has (a screen, file, endpoint or feature); or the request only makes sense inside that codebase. Never for a general question, new work that belongs to no project yet, or a hunch — then answer in No project and ask nothing. candidates: that project\'s key (list_projects), or 2–3 keys only when it is genuinely one of those (both have that screen). reason: the one line the card shows (at most 200 characters). Refused when the chat already has a project or workspace, for an unknown or missing project, and for a project this chat already had a card about (at most one card per project per chat; after "Continue without project" never again). It switches nothing: END YOUR TURN right after it, without doing the work. When the user picks a project the app switches the chat and sends "[worca event] scope card <id> switched: …" — then continue the user\'s message in that project; "… declined" means continue it in No project. Returns {ok:true, card} or {ok:false, errors}.',
+      inputSchema: SCHEMA.obj({ candidates: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 3, description: 'project keys from list_projects: 1, or 2–3 only when genuinely ambiguous' },
+        reason: SCHEMA.s('one line shown on the card: why this project (≤ 200 chars)') }, ['candidates', 'reason']) }] : []),
     { name: 'read_attachment',
       description: 'Read an attachment of this conversation by id. Text attachments return their content, paged by byte offset (default 32000 bytes per page). HTML attachments (.html / .htm) return their raw markup by default; as: "text" converts them to readable text first (scripts, styles and page chrome dropped, the page title reported, conversionTruncated when the conversion itself was cut) and offset / nextOffset then count bytes of that converted text. Image and PDF attachments return metadata plus a file path — pass that path to your Read tool to view the content.',
       inputSchema: SCHEMA.obj({ id: SCHEMA.s('attachment id'), offset: SCHEMA.i('byte offset', 0, Number.MAX_SAFE_INTEGER), maxBytes: SCHEMA.i('bytes per page', 1, L.attachmentReadMaxBytes),
@@ -632,7 +678,7 @@ export function createAskTools(deps) {
       inputSchema: SCHEMA.obj({ level: SCHEMA.s('user | project'), projectKey: SCHEMA.s('project key (level project; defaults to the pinned project)'), set: { type: 'object' }, unset: { type: 'array', items: { type: 'string' } }, note: SCHEMA.s('one-line reason shown on the card') }, ['level']) },
     { name: 'list_memory',
       description: 'List worca\'s memory files — the durable rules and preferences agents and this chat keep — for scope "global" and/or the resolved project: name, hook (description), paths, source, updated, bytes. Omit scope for both.',
-      inputSchema: SCHEMA.obj({ scope: SCHEMA.s('"global" | "project" (default: both)'), projectKey: SCHEMA.s('the project for scope "project" (default: the pinned project, else the page\'s project)') }) },
+      inputSchema: SCHEMA.obj({ scope: SCHEMA.s('"global" | "project" (default: both)'), projectKey: SCHEMA.s('the project for scope "project" (default: the chat\'s project)') }) },
     { name: 'read_memory',
       description: 'Read one memory file: its hook, paths, provenance and markdown body. scope is "global" or "project".',
       inputSchema: SCHEMA.obj({ scope: SCHEMA.s('"global" | "project"'), name: SCHEMA.s('file name without .md'), projectKey: SCHEMA.s('the project for scope "project"') }, ['scope', 'name']) },
@@ -799,6 +845,11 @@ export function createAskTools(deps) {
           name: SCHEMA.s('folder and project name (default: the repository name)'),
           note: SCHEMA.s('one line shown on the card: why (≤ 200 chars)') }, ['url']) },
     ] : []),
+    ...(deps.projectChanges ? [
+      { name: 'propose_project_change',
+        description: 'Propose adding a project for the user to confirm — it never creates or registers anything itself; the user sees a card and applies or declines it. kind "create": a new, empty folder named after the project in worca\'s projects folder. kind "add": a folder that already exists on this machine (path). useGit: true only when the user asks for git (worca runs git init once; a folder that already has git is a Git project either way). Applying it also switches this chat to the new project. Returns {ok:true, card} or {ok:false, errors} — fix the input and call again.',
+        inputSchema: SCHEMA.obj({ kind: SCHEMA.s('create | add'), name: SCHEMA.s('the project name (create: also the new folder name; add: default the folder name)'), path: SCHEMA.s('add: the existing folder, absolute or ~'), useGit: SCHEMA.b('true only when the user asks for git: worca runs git init once'), note: SCHEMA.s('one line shown on the card: why (≤ 200 chars)') }, ['kind']) },
+    ] : []),
     ...(deps.workspaceChanges ? [
       { name: 'propose_workspace_change',
         description: 'Propose a workspace change for the user to confirm — it never changes anything itself; the user sees a card and applies or declines it. kind: "create" (name + projectKeys: two or more registered projects from list_projects), "add_members" (workspaceId + projectKeys to add), "remove_member" (workspaceId + projectKey of one member; at least two stay), "rename" (workspaceId + name). workspaceId defaults to the pinned workspace (not for create). The workspace keeps its id; runs already started keep their members. Returns {ok:true, card} (card.warnings: a live run, a new member off the metrics / policy home, a removed home, schedules naming members; card.followUps: what to offer once applied) or {ok:false, errors} to fix and retry. Never claim a change was applied — the card says so when it happens.',
@@ -869,7 +920,7 @@ export function createAskTools(deps) {
     // Every rail (command check, limits, ownership) is enforced in the server (commands.mjs), not here.
     ...(deps.commands ? [
       { name: 'run_command',
-        description: "Run ONE shell command line in a Worca terminal and return at once with its blockId. Runs in the run's folder (runId, plus member on a workspace run) or a project's own folder (projectKey); without either, in this chat's pinned project. The terminal is shared with the user: a cd, export or venv (theirs or yours) carries over while the shell stays inside that folder, and the result's cwd says where it ran; a shell that left the folder is replaced by a fresh one in it. The command shows live to the user in the chat, and its tab is in the terminal pane when the user opens it. Then use wait_for (exit or an output match) or end your reply: a '[worca event] terminal block <id> exited <code>' message wakes you when it ends. One line only; at most 3 at once per chat; stopped after 30 minutes. Protected paths, worca's own API and hard-to-undo commands are refused.",
+        description: "Run ONE shell command line in a Worca terminal and return at once with its blockId. Runs in the run's folder (runId, plus member on a workspace run) or the folder of this chat's project (projectKey: the chat's project or a member of its workspace; omit it for the chat's project) — never another project's. The terminal is shared with the user: a cd, export or venv (theirs or yours) carries over while the shell stays inside that folder, and the result's cwd says where it ran; a shell that left the folder is replaced by a fresh one in it. The command shows live to the user in the chat, and its tab is in the terminal pane when the user opens it. Then use wait_for (exit or an output match) or end your reply: a '[worca event] terminal block <id> exited <code>' message wakes you when it ends. One line only; at most 3 at once per chat; stopped after 30 minutes. Protected paths, worca's own API and hard-to-undo commands are refused.",
         inputSchema: SCHEMA.obj({ command: SCHEMA.s('one command line, e.g. "npm test"'), runId: SCHEMA.s('run id (optional)'),
           member: SCHEMA.s('project key of a workspace run member (optional)'), projectKey: SCHEMA.s('project key (optional)') }, ['command']) },
       { name: 'read_output',
@@ -997,12 +1048,13 @@ export function createAskTools(deps) {
     const isWs = row.target === 'workspace' || !!row.workspace_key;
     const branch = parseJson(row.branch, null) || {};
     const wsMeta = isWs ? (parseJson(row.workspace_meta, null) || {}) : null;
-    const meta = isWs ? null : deps.readStoreMeta(row.project_key);
+    const none = !isWs && row.project_key === NO_PROJECT_KEY;   // P3: propose_run names it noProject: true, never this key
+    const meta = isWs || none ? null : deps.readStoreMeta(row.project_key);
     return {
       id: row.id,
       title: deps.redact(row.title ?? row.id),
-      target: isWs ? 'workspace' : 'project',
-      project: isWs ? null : { key: row.project_key, name: (meta && meta.name) || row.project_key },
+      target: isWs ? 'workspace' : none ? 'none' : 'project',
+      project: isWs || none ? null : { key: row.project_key, name: (meta && meta.name) || row.project_key },
       workspace: isWs ? { id: row.workspace_key, name: wsMeta.workspaceName ?? row.workspace_key,
         members: (Array.isArray(wsMeta.projects) ? wsMeta.projects : []).map((p) => p.projectName) } : null,
       status: row.status ?? null,
@@ -1160,8 +1212,8 @@ export function createAskTools(deps) {
   const diffPageCache = new Map();   // run id -> { stamp, files, byPath, filtered } (get_run_diff paging)
 
   // Agent memory (§9.1): one scope resolver for the four memory tools. Order: an explicit
-  // projectKey → the pinned PROJECT (a pinned workspace is not a project) → the page-following
-  // project → a pointed error. `scopeObj` is the store's scope object; `key` its store key.
+  // projectKey (a write's must be in the chat scope, P4) → the chat's PROJECT (a workspace scope
+  // is not a project) → a pointed error. `scopeObj` is the store's scope object; `key` its store key.
   const MEMORY_SCOPES = ['global', 'project'];
   const memoryError = (tool, err) => (err && err.name === 'MemoryError' ? new AskToolError(`${tool}: ${String(err.message).replace(/^memory: /, '')}`) : err);
   const memoryOf = () => { if (!deps.memory) throw new AskToolError('memory tools are unavailable'); return deps.memory; };
@@ -1173,12 +1225,17 @@ export function createAskTools(deps) {
     return p.key;
   };
   async function memoryScopeOf(tool, input) {
+    const WRITE = tool === 'remember' || tool === 'forget';
     const scope = str(input.scope);
     if (!MEMORY_SCOPES.includes(scope)) throw new AskToolError(`${tool}: scope must be "global" or "project"`);
     if (scope === 'global') return { scope, scopeObj: { kind: 'global' }, projectKey: null, key: 'global' };
     const project = (projectKey) => ({ scope, scopeObj: { kind: 'project', projectKey }, projectKey, key: `projects/${projectKey}` });
     const explicit = str(input.projectKey);
     if (explicit) {
+      if (WRITE) {
+        const err = await scopeError({ projectKey: explicit });   // P4: a write acts only in the chat scope; reads stay open
+        if (err) throw new AskToolError(`${tool}: ${err}`);
+      }
       const p = await memoryOf().projectByKey(explicit);
       if (!p) throw new AskToolError(`${tool}: unknown projectKey "${explicit}" — use list_projects`);
       return project(p.key);
@@ -1186,8 +1243,7 @@ export function createAskTools(deps) {
     const pin = pinnedScope();
     if (pin && pin.projectKey) return project(await memoryRegistered(tool, pin.projectKey));
     if (pin && pin.workspaceId) throw new AskToolError(`${tool}: the pinned scope is a workspace — pass projectKey for the member project this belongs to`);
-    const ctxKey = typeof memoryOf().contextProjectKey === 'function' ? await memoryOf().contextProjectKey() : null;
-    if (ctxKey) return project(await memoryRegistered(tool, ctxKey));
+    if (WRITE && hasChat) throw new AskToolError(`${tool}: ${scopeRefusalText(null)}`);   // P4: No project has no project memory
     throw new AskToolError(`${tool}: which project? pass projectKey (see list_projects) or pin a project for this chat`);
   }
   // B24: every string the model sees is redacted, here as everywhere else in this module.
@@ -1368,6 +1424,7 @@ export function createAskTools(deps) {
   }
   /** Branch sync status on the same rows (#527): the last fetch, no network. No-op without the dep. */
   async function listProjectsSync(out) {
+    if (gitOff()) return out;
     const b = deps.branches && typeof deps.branches.status === 'function' ? deps.branches : null;
     if (!b || !out || !Array.isArray(out.projects)) return out;
     let m = null;
@@ -1381,6 +1438,7 @@ export function createAskTools(deps) {
   }
   /** { commits, fetchedAt } | null — offline; only for rows that recorded a start commit. */
   async function baseMovedOf(row, baseSha, source) {
+    if (gitOff()) return null;
     if (!baseSha || !source || !row || !row.project_key) return null;
     if (!deps.branches || typeof deps.branches.baseMoved !== 'function' || typeof deps.readStoreMeta !== 'function') return null;
     const meta = deps.readStoreMeta(row.project_key);
@@ -1679,7 +1737,11 @@ export function createAskTools(deps) {
     },
     async propose_policy_change(input) {
       const pol = tpRequire('propose_policy_change');
-      try { return await pol.validateChange(fillPolicyPin(input, pinnedScope())); } catch (err) { throw tmError('propose_policy_change', err); }
+      try {
+        const err = await scopeError(targetOf(input));   // P4: a named target outside the chat scope is refused
+        if (err) return { ok: false, errors: [err] };
+        return await pol.validateChange(fillPolicyPin(input, pinnedScope()));
+      } catch (err) { throw tmError('propose_policy_change', err); }
     },
     async get_away_mode(input) {
       if (!deps.away || typeof deps.away.read !== 'function') throw new AskToolError('get_away_mode: unavailable');
@@ -1721,6 +1783,10 @@ export function createAskTools(deps) {
     },
     async propose_away_mode_change(input) {
       if (!deps.away || typeof deps.away.validateChange !== 'function') throw new AskToolError('propose_away_mode_change: unavailable');
+      if (input.level === 'project' && str(input.projectKey)) {
+        const err = await scopeError({ projectKey: str(input.projectKey) });   // P4: a user-level change names no project target
+        if (err) return { ok: false, errors: [err] };
+      }
       const pin = pinnedScope();
       const inp = input.level === 'project' && !str(input.projectKey) && pin && pin.projectKey ? { ...input, projectKey: pin.projectKey } : input;
       return deps.away.validateChange(inp);
@@ -1787,7 +1853,11 @@ export function createAskTools(deps) {
         if (pin && pin.projectKey && (kind === 'enable' || kind === 'record')) inp = { ...inp, projectKey: pin.projectKey };
         if (pin && pin.workspaceId && (kind === 'workspace_home' || kind === 'route_members')) inp = { ...inp, workspaceId: pin.workspaceId };
       }
-      try { return await m.validateChange(inp); } catch (err) { throw tmError('propose_metrics_change', err); }
+      try {
+        const err = await scopeError(targetOf(input));   // P4: a named target outside the chat scope is refused
+        if (err) return { ok: false, errors: [err] };
+        return await m.validateChange(inp);
+      } catch (err) { throw tmError('propose_metrics_change', err); }
     },
     async list_workflows() {
       return (await deps.buildCatalog()).workflows;
@@ -1812,11 +1882,12 @@ export function createAskTools(deps) {
         if (query && !String(e.title ?? '').toLowerCase().includes(query)) continue;
         if (startedBy && String(e.startedBy ?? '').toLowerCase() !== startedBy) continue;
         const isWs = e.target === 'workspace' || String(e.projectKey).startsWith('workspaces/');
+        const none = !isWs && e.projectKey === NO_PROJECT_KEY;   // P3: a run with no project (propose_run: noProject: true)
         out.push({
-          id: e.id, title: deps.redact(e.title ?? e.id), target: isWs ? 'workspace' : 'project',
+          id: e.id, title: deps.redact(e.title ?? e.id), target: isWs ? 'workspace' : none ? 'none' : 'project',
           ...(isWs
             ? { workspaceId: String(e.projectKey).slice('workspaces/'.length), workspaceName: e.workspaceName ?? null }
-            : { projectKey: e.projectKey, projectName: e.projectName ?? null }),
+            : none ? {} : { projectKey: e.projectKey, projectName: e.projectName ?? null }),
           status: e.status ?? null, startedAt: e.startedAt ?? null,
           updatedAt: e.mtime ? new Date(e.mtime).toISOString() : null,
           branch: (e.sameAsSource && e.mergeBack?.merged === true ? e.sourceBranch : e.branch) ?? null,
@@ -1914,10 +1985,18 @@ export function createAskTools(deps) {
       // #397: a proposal naming NO target defaults to the user-pinned scope. The
       // parent turn applies the same default before its authoritative
       // re-validation, so the card the user sees matches what the model got.
+      // P4: a named target outside the chat scope is refused (here and in turn.mjs _onProposal). noProject: true
+      // passes in any chat; noProject plus a key skips the gate, so validateProposal answers tooManyTargets.
+      const named = input.noProject === true ? null : targetOf(input);
+      if (named) {
+        const err = await scopeError(named);
+        if (err) return { ok: false, errors: [err] };
+      }
       let inp = input;
-      if (!str(input.projectKey) && !str(input.workspaceId)) {
+      // P3: noProject: true is a target of its own — the pin never fills it. P4: No project proposes noProject.
+      if (!named && input.noProject !== true) {
         const pin = pinnedScope();
-        if (pin) inp = { ...input, ...pin };
+        inp = pin ? { ...input, ...pin } : hasChat ? { ...input, noProject: true } : input;
       }
       const attachments = typeof deps.listAttachments === 'function' ? (deps.listAttachments() || []) : [];
       // The schedule fields (when / every) are read in the user's zone; a bundle without
@@ -1937,12 +2016,15 @@ export function createAskTools(deps) {
       const cited = Array.isArray(input.commentIds) ? input.commentIds : [];
       if (r && r.ok && cited.length && deps.comments && typeof deps.comments.get === 'function') {
         const want = r.card.workspaceId ? `workspaces/${r.card.workspaceId}` : r.card.projectKey;
-        const bad = want ? cited.filter((id) => {
+        const none = r.card.target === 'none';   // P3: a run without a project works in an empty folder — every comment is off target
+        const bad = want || none ? cited.filter((id) => {
           const c = typeof id === 'string' ? deps.comments.get(id) : null;
-          return !!c && c.storeKey !== want;
+          return !!c && (none || c.storeKey !== want);
         }) : [];
         if (bad.length) {
-          return { ok: false, errors: [`these diff comments are not from ${want}: ${bad.join(', ')} — cite comments from a run of the project this proposal targets`] };
+          return { ok: false, errors: [none
+            ? `a run without a project cannot address diff comments: ${bad.join(', ')} — propose it on the project those comments belong to`
+            : `these diff comments are not from ${want}: ${bad.join(', ')} — cite comments from a run of the project this proposal targets`] };
         }
       }
       return r;
@@ -1956,10 +2038,17 @@ export function createAskTools(deps) {
       let projectKey = str(input.projectKey);
       let workspaceId = str(input.workspaceId);
       if (projectKey && workspaceId) throw new AskToolError('propose_workflow: give projectKey or workspaceId, not both');
+      const named = targetOf(input);
+      if (named) {
+        const err = await scopeError(named);   // P4: a named target outside the chat scope is refused
+        if (err) throw new AskToolError(`propose_workflow: ${err}`);
+      }
       if (!projectKey && !workspaceId) {
         const pin = pinnedScope();
         if (pin && pin.projectKey) projectKey = pin.projectKey;
         else if (pin && pin.workspaceId) workspaceId = pin.workspaceId;
+        // SEAMS S43: No project has no project for the classifier; a No-project run goes through propose_run.
+        else if (hasChat) throw new AskToolError(`propose_workflow: ${scopeRefusalText(null)}. For work that belongs to no project, call propose_run with noProject: true and a saved workflow instead`);
       }
       if (!projectKey && !workspaceId) throw new AskToolError('propose_workflow: projectKey or workspaceId is required — nothing is pinned for this chat');
       if (!deps.workflow || typeof deps.workflow.propose !== 'function') throw new AskToolError('propose_workflow: unavailable');
@@ -1973,6 +2062,7 @@ export function createAskTools(deps) {
         throw new AskToolError(`propose_workflow: ${err && err.message ? err.message : String(err)}`);
       }
     },
+    async propose_scope_switch(input) { if (!deps.scopeSwitch || typeof deps.scopeSwitch.validate !== 'function') throw new AskToolError('propose_scope_switch: unavailable'); return deps.scopeSwitch.validate(input && typeof input === 'object' ? input : {}); },
     async list_diff_comments(input) {
       const row = await resolveRow(input, 'list_diff_comments');
       const status = str(input.status) || 'all';
@@ -2548,6 +2638,10 @@ export function createAskTools(deps) {
     async propose_model_change(input) { return modelsOf('propose_model_change').validateChange(input); },
     async propose_workspace_change(input) {
       if (!deps.workspaceChanges) throw new AskToolError('propose_workspace_change: workspace changes are unavailable');
+      if (str(input.kind) !== 'create' && str(input.workspaceId)) {
+        const err = await scopeError({ workspaceId: str(input.workspaceId) });   // P4: projectKey here is a member, not a target
+        if (err) return { ok: false, errors: [err] };
+      }
       // A change to a workspace falls back to the pinned one (turn.mjs replays this); a create names its own members.
       const pin = pinnedScope();
       const inp = pin && pin.workspaceId && str(input.kind) !== 'create' && !str(input.workspaceId) ? { ...input, workspaceId: pin.workspaceId } : input;
@@ -2579,12 +2673,20 @@ export function createAskTools(deps) {
     },
     async propose_actions_change(input) {
       const a = actionsOf('propose_actions_change');
+      const kind = str(input?.kind);
+      const err = await scopeError(kind === 'project' && str(input.projectKey) ? { projectKey: str(input.projectKey) }
+        : kind === 'stacks' && str(input.workspaceId) ? { workspaceId: str(input.workspaceId) } : null);   // P4
+      if (err) return { ok: false, errors: [err] };
       // A change falls back to the pinned project / workspace (turn.mjs replays this, actionsProposalInput).
       return a.validateChange(actionsProposalInput(input, pinnedScope()));
     },
     async propose_clone_project(input) {
       if (!deps.clones) throw new AskToolError('propose_clone_project: cloning is unavailable');
       return deps.clones.validateChange(input);
+    },
+    async propose_project_change(input) {
+      if (!deps.projectChanges) throw new AskToolError('propose_project_change: adding projects is unavailable');
+      return deps.projectChanges.validateChange(input);
     },
     async propose_web_access(input) {
       const w = webOf('propose_web_access');
@@ -2780,6 +2882,10 @@ export function createAskTools(deps) {
       if (!id) throw new AskToolError('change_setting: id is required — list_settings names them');
       if (!Object.prototype.hasOwnProperty.call(input, 'value')) throw new AskToolError('change_setting: value is required (null = back to the default)');
       const scope = str(input.scope) || 'user';
+      if (scope === 'project' && str(input.projectKey)) {
+        const err = await scopeError({ projectKey: str(input.projectKey) });   // P4: a named project outside the chat scope is refused
+        if (err) return { ok: false, error: err };
+      }
       const projectKey = chatProjectKey(input, scope);
       const r = await ca.settings.check({ id, scope, projectKey: projectKey || null, value: input.value });
       if (!r.ok) return { ok: false, error: r.error };
@@ -2859,8 +2965,9 @@ export function createAskTools(deps) {
   };
 
   return {
-    list: () => defs.filter((d) => !composerMode || COMPOSER_ALLOW.has(d.name)).map((d) => ({ ...d })),
+    list: () => defs.filter((d) => (!composerMode || COMPOSER_ALLOW.has(d.name)) && !(gitOff() && GIT_ONLY_ASK_TOOLS.includes(d.name))).map((d) => ({ ...d })),
     async call(name, input) {
+      if (gitOff() && GIT_ONLY_ASK_TOOLS.includes(name)) throw new AskToolError(`${name}: git is not installed on this machine`);
       if (composerMode && !COMPOSER_ALLOW.has(name)) throw new AskToolError(`${name}: not available in the Workflows chat`);
       if (!composerMode && CANVAS_TOOLS.has(name)) throw new AskToolError(`${name}: only the Workflows view's chat edits a canvas`);
       const fn = Object.prototype.hasOwnProperty.call(handlers, name) ? handlers[name] : null;

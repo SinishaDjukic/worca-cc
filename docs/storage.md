@@ -13,12 +13,23 @@ project's working tree, so nothing is ever committed to your repo.
   settings.json                         { root } only — the bootstrap that locates the DB
   worca-cc.db  (+ -wal, -shm)           ALL structured state (SQLite, WAL mode)
   backup-<ts>/                          legacy JSON archived on first upgrade (see below)
+  store/no-project-00000000/            runs without a project: one store, the History group "No project";
+                                        a run's work/ moves into its pipeline folder as work/ when it ends
   store/<projectKey>/
     plans/      <DD-MM-YY>-<name>.md, -v2.md, ...   (plan markdown + refinements)
     reviews/    <DD-MM-YY>-<name>-impl-review.md     (review markdown)
     pipelines/  <DD-MM-YY>-<slug>-<id>/              (one folder per run)
       prompt.md          the prompt text (or copied markdown brief)
       diff-patch.patch   the run's captured diff (written when the run completes)
+      folder-manifest.json
+                         a Folder run: path → sha1, size, mtime of the copy at run start
+      changes.json, changes.patch
+                         a Folder run's added / modified / deleted files, their state (pending /
+                         applied / discarded) and their diff (built without git)
+      members/<projectKey>/
+                         a workspace run's Folder member: folder-manifest.json, changes.json,
+                         changes.patch, skipped/ (its own Changes; Apply to folder / Discard per member)
+      skipped/           the run's version of files Apply to folder skipped
       skills/            the run's set skills (docs/skills.md): one generated plugin per set, passed
                          with --plugin-dir; rebuilt on resume, never inside a checkout
       extras/            any optional extra files you attached
@@ -61,9 +72,17 @@ project's working tree, so nothing is ever committed to your repo.
                                         mcp-<messageId>.json, mode 0600 (never a project folder)
   logs/ask-web.jsonl                    Chat web access: one line per web_fetch/web_search
                                         call (redacted URL, status, bytes); rotated to .1 at 5 MB
-  runs/<pipelineId>/                    detached run roots: run.json, repos/<projectKey>/ worktrees
+  runs/<pipelineId>/                    detached run roots: run.json, repos/<projectKey>/ worktrees (Git)
+                                        or copies (Folder); a Folder run's copy is kept (run.json retain
+                                        "folder-apply") until Apply to folder, Discard or Archive, and a
+                                        workspace run's root until each unapplied Folder member is applied
+                                        or discarded; a run without a project works in
+                                        runs/<pipelineId>/work/ (its cwd, no git)
   metrics/
     repos/<owner~repo>/                  git worktree of the project repo, detached at origin/worca-metrics
+    snapshots/<owner~repo>/              without git, or a typed GitHub repository: the branch's README.md and
+                                         .worca-metrics/ read over the GitHub API
+    snapshots/<owner~repo>@sha           the commit that copy holds
     outbox/<owner~repo>/*.jsonl  .lock   pending run records (durability point) + cross-process lock
     no-hooks/                            empty core.hooksPath for metrics git commands
     ledger/<runId>.json                  per-run team-metrics status for the History header (swept after 180 d)
@@ -96,8 +115,14 @@ project's working tree, so nothing is ever committed to your repo.
                                         origin); gone on Import, Update, Back or Cancel, an abandoned one
                                         a day later
   plugins/                              installed plugin checkouts
+    .cache/<slug>.tree/<sha>/            without git: a GitHub commit's plugin folders and marketplace file
+                                         (the newest three and every installed pin kept; <sha>.meta.json beside it)
   agents/                               installed agent registry checkouts
   workflows/                            saved workflow templates
+  projects/                             New and Clone from URL projects (the default projects root). Removing a
+                                        Folder project (no git) whose folder sits directly in here deletes that
+                                        folder too, after a confirm that names it; Git projects, projects added
+                                        from elsewhere and a custom projects root are only unregistered
   projects.json                         registered project index
   workspaces.json                       workspace index
   chat-context.json                     chat context cache
@@ -135,7 +160,12 @@ The Runs list's groups (runs redesign §3.3) are the one new named state of the 
 - **`<projectKey>`** = `<repo-basename-slug>-<sha1(canonicalRoot)[:8]>`,
   derived from the repository's identity (the parent of its shared `.git`).
   It is **stable across all git worktrees of the same repo**, so every
-  worktree shares one history.
+  worktree shares one history. A plain folder's key is its realpath's;
+  projects.vcs ('git' | 'none', schema v69) records the kind once, at add
+  time, and never changes it on its own. A run without a project uses the
+  reserved key `no-project-00000000`; no project row is ever made for it.
+- **projects root** = `WORCA_PROJECTS_ROOT` if set, else Settings › Projects root folder, else
+  `<worcaHome>/projects` (created on the first New or Clone).
 
 Because state is machine-wide and keyed by repo identity, the web UI has an
 **"All projects"** view (and `GET /api/history`) that lists runs across every

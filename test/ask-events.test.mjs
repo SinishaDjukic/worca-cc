@@ -220,6 +220,7 @@ test('labelForTool: representative worca labels, Task/Agent → null, web tools 
       assert.equal(labelForTool('mcp__worca__web_fetch', { url: 'bad' }), 'Reading a web page');
       assert.equal(labelForTool('mcp__worca__web_search', { query: 'q' }), 'Searching the web');
     } },
+    { name: 'labelForTool: propose_scope_switch (P4)', run: () => { assert.equal(labelForTool('mcp__worca__propose_scope_switch', {}), 'Asking which project'); } },
   ]);
 });
 
@@ -718,11 +719,14 @@ const RESULT_HOOKS = [
     'propose_away_mode_change', 'onAwayProposal', { level: 'user', set: { enabled: true } }],
   ['propose_workspace_change: labelled, and its RESULT reaches onWorkspaceProposal with the full input; a sub-agent call never does',
     'propose_workspace_change', 'onWorkspaceProposal', { kind: 'add_members', workspaceId: 'wks-demo-0000abcd', projectKeys: ['k1'] }],
+  ['propose_scope_switch: labelled, and its RESULT reaches onScopeSwitch with the full input; a sub-agent call never does',
+    'propose_scope_switch', 'onScopeSwitch', { candidates: ['havn-android-0000aaaa'], reason: 'Both Havn apps have a booking screen.' }],
+  ['propose_project_change: labelled, and its RESULT reaches onProjectProposal with the full input; a sub-agent call never does', 'propose_project_change', 'onProjectProposal', { kind: 'create', name: 'landing-page' }],
   ['show_files: labelled, and its RESULT reaches onShowFiles with the full input; a sub-agent call never does',
     'show_files', 'onShowFiles', { files: [{ path: '$WORCA_ASK_OUT/a.png' }] }],
 ];
 
-test('RESULT hooks: each hooked tool (metrics, track_run, policy, clone, web, away switch, away proposal, workspace, show_files) reaches its hook on the main stream with {toolUseId,input,text,isError}; never for a sub-agent; a throwing hook is contained', async () => {
+test('RESULT hooks: each hooked tool (metrics, track_run, policy, clone, web, away switch, away proposal, workspace, scope switch, project, show_files) reaches its hook on the main stream with {toolUseId,input,text,isError}; never for a sub-agent; a throwing hook is contained', async () => {
   await checkRows(RESULT_HOOKS.map(([name, tool, hook, input]) => ({ name, run: () => {
     const mcpName = `mcp__worca__${tool}`;
     const calls = [];

@@ -645,6 +645,8 @@ test('chat run card CSS: the Runs page ask card in one column (the run side pane
   const chatRules = [...bare.matchAll(/([^{}]*)\{([^{}]*)\}/g)].filter((m) => /\.chat-rc-q\b/.test(m[1]));
   assert.deepEqual(chatRules.filter((m) => /--amber-line/.test(m[2])).map((m) => m[2].trim()), ['border-color:var(--amber-line);']);
   assert.deepEqual(chatRules.filter((m) => /--amber-wash/.test(m[2])).map((m) => m[1].trim()), [], 'no amber wash in the chat question');
+  // The run card's question is tinted amber; a free-standing question card (`section.chat-rc-q.chat-q`) keeps the white ask card.
+  assert.deepEqual(chatRules.filter((m) => /^background:var\(--amber-bg\);$/.test(m[2].trim())).map((m) => m[1].trim()), ['.chat-rc-q:where(:not(.chat-q)) :is(.qpanel,.qblock)']);
   // P2's ask-card field metrics stand down inside the question, so its fields keep the Runs page's own.
   assert.ok(css.includes('.ask-card :is(select,input[type="text"],textarea):where(:not(.chat-rc-q *)){font-size:12.5px;padding:8px 11px;border-radius:var(--r-sm);}'));
 });
@@ -1435,6 +1437,160 @@ test('chat run card progress bar (P9, slice 4): the status block\'s bar from the
       assert.equal(snapshotFromState(STATE({ stepper: null }), { now: 0 }).stageProgress, null);
     } },
   ]);
+});
+
+test('chat run card, a folder run: Finished · N files changed and Apply to folder at every level; Applied once settled; never a pull request', async () => {
+  const CH = { state: 'pending', counts: { added: 9, modified: 4, deleted: 1 } };
+  const EX = { results: null, artifacts: [], moreArtifacts: false, pr: null };
+  const applied = []; const openers = [];
+  const { card, $, refreshed } = mk({ controls: { prHost: () => true, openApply: (ref, opener) => { applied.push(ref.pipelineId); openers.push(opener); return Promise.resolve({ applied: 13, skipped: [] }); } } });
+  card.update(done({ ...EX, changes: CH }, { workMode: 'folder', changes: CH }));
+  assert.equal($('.chat-rc-res-title').textContent, 'Finished');
+  assert.equal($('.chat-rc-res-sub').textContent, '14 files changed');
+  assert.equal($('.chat-rc-create-pr'), null);
+  const b = $('.chat-rc-apply');
+  assert.equal(b.textContent, 'Apply to folder');
+  assert.equal(b.closest('[data-min-level]'), null, 'Simple: a plain-folder person lands it from the chat');
+  b.click(); b.click();
+  assert.equal(b.disabled, false, 'never disabled: the dialog returns focus to it');
+  await settle();
+  assert.deepEqual(applied, ['abcd1234'], 'one dialog for a double click');
+  assert.equal(openers[0], b, 'the dialog returns focus to the card\'s button');
+  assert.equal(refreshed.length, 1, 'the card re-reads the run once the dialog settles');
+  card.update(done(EX, { workMode: 'folder', changes: { ...CH, state: 'applied' } }));
+  assert.equal($('.chat-rc-res-title').textContent, 'Applied');
+  assert.equal($('.chat-rc-apply'), null);
+  assert.deepEqual(resultWord(done(null, { workMode: 'folder', changes: { ...CH, state: 'discarded' } })),
+    { key: 'folder', tone: 'green', glyph: 'check', title: 'Discarded', sub: '14 files changed' });
+  assert.deepEqual(resultWord(done(null, { workMode: 'folder', changes: { state: 'discarded', counts: { added: 0, modified: 0, deleted: 0 } } })),
+    { key: 'folder', tone: 'green', glyph: 'check', title: 'Finished', sub: 'No files changed' }, 'a run that changed nothing was never discarded');
+  const snap = snapshotFromState(STATE({ status: 'done', workMode: 'folder' }), { now: 0, extras: { ...EX, changes: CH } });
+  assert.deepEqual([snap.workMode, snap.changes], ['folder', CH]);
+  assert.equal('workMode' in snapshotFromState(STATE(), { now: 0 }), false, 'a git run keeps its key set');
+  const { card: c2, $: $2, calls } = mk({ controls: { openApply: () => Promise.resolve(null) } });
+  c2.update(done({ ...EX, results: { filesChanged: 1, additions: 1, deletions: 0, checks: 0, topFiles: [{ path: 'index.csv', additions: 1, deletions: 0 }] }, changes: CH },
+    { workMode: 'folder', changes: CH }));
+  $2('.chat-rc-file').click();
+  assert.deepEqual(calls.at(-1)[2], { tab: 'changes' }, 'a folder run\'s file opens its Changes tab');
+});
+
+test('chat run card: Create pull request asks isGitRun (CONTRACT §2) — a run with no branch never offers one', () => {
+  const EX = { results: null, artifacts: [], moreArtifacts: false, pr: null };
+  const { card, $ } = mk({ controls: { prHost: () => true } });
+  card.update(done(EX));
+  assert.ok($('.chat-rc-create-pr'), 'a git run that is ready to ship offers it');
+  card.update(done(EX, { workMode: 'none' }));
+  assert.equal($('.chat-rc-create-pr'), null);
+});
+
+test('chat run card: a Folder run, a run without a project and a git run while git is missing read Finished words and offer no Ship it', async () => {
+  const EX = { results: null, artifacts: [], moreArtifacts: false, pr: null };
+  const status = ($) => $('.chat-rc-status .run-status-text').textContent;
+  const ships = ($$) => $$('[data-model-action="ship"]').filter((b) => !b.hidden).length;
+  await checkRows([
+    { name: 'a git run with git: Ready to ship and Ship it (the control row)', run: () => {
+      const { card, $, $$ } = mk({ controls: { prHost: () => true } });
+      card.update(done(EX));
+      assert.equal(status($), 'Ready to ship');
+      assert.equal(ships($$), 1);
+    } },
+    { name: 'a Folder run that was applied', run: () => {
+      const CH = { state: 'applied', counts: { added: 2, modified: 1, deleted: 0 } };
+      const { card, $, $$ } = mk({ controls: { prHost: () => true } });
+      card.update(done({ ...EX, changes: CH }, { workMode: 'folder', changes: CH }));
+      assert.equal(status($), 'Applied · 3 files changed');
+      assert.equal(ships($$), 0);
+    } },
+    { name: 'a run without a project', run: () => {
+      const { card, $, $$ } = mk({ controls: { prHost: () => true } });
+      card.update(done(EX, { workMode: 'none' }));
+      assert.equal(status($), 'Finished');
+      assert.equal(ships($$), 0);
+    } },
+    { name: 'a git run while git is missing', run: () => {
+      const { card, doc, $, $$ } = mk({ controls: { prHost: () => true } });
+      doc.documentElement.dataset.git = 'off';
+      card.update(done(EX));
+      assert.equal(status($), 'Finished');
+      assert.equal(ships($$), 0);
+    } },
+  ]);
+});
+
+test('chat run card, a folder run: no Apply to folder when nothing changed or the run is archived', () => {
+  const EX = { results: null, artifacts: [], moreArtifacts: false, pr: null };
+  const { card, $ } = mk({ controls: { openApply: () => Promise.resolve(null) } });
+  card.update(done(EX, { workMode: 'folder', changes: { state: 'pending', counts: { added: 0 } } }));
+  assert.equal($('.chat-rc-apply'), null, 'nothing to apply');
+  card.update(done(EX, { workMode: 'folder', archived: true, changes: { state: 'pending', counts: { added: 2 } } }));
+  assert.equal($('.chat-rc-apply'), null, 'an archived run has no copy');
+  assert.match(readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8'), /\.chat-rc-create-pr,\.chat-rc-view-pr,\.chat-rc-apply\{/);
+});
+
+test('progressIdent: a started No project proposal names the reserved key and No project before its first frame', () => {
+  assert.deepEqual(progressIdent({ id: 'card_00000001', runId: 'r-np', card: { target: 'none', projectKey: null, projectName: null, title: 'Q3 Hiring Deck' } }),
+    { cardId: 'card_00000001', pipelineId: null, runId: 'r-np', projectKey: 'no-project-00000000', workspaceId: null, title: 'Q3 Hiring Deck', label: 'No project' });
+});
+
+test('chat run card: a run without a project names No project and lists its files with sizes and Download', () => {
+  const dom = trackDom(new JSDOM('<!doctype html><body></body>'));
+  const doc = dom.window.document;
+  const got = [];
+  const card = createChatRunCard({ doc, snapshot: { source: 'rest', status: 'done', terminal: true, pipelineId: 'a41c09d2', projectKey: 'no-project-00000000', workMode: 'none', title: 'Q3 Hiring Deck',
+    artifacts: [{ kind: 'work', relPath: 'work/deck.html', bytes: 86016 }, { kind: 'work', relPath: 'work/charts/headcount.svg', bytes: 12288 }], artifactsTotal: 2, results: null },
+  ctx: { downloadArtifact: (ref, a) => got.push([ref.pipelineId, a.relPath]) } });
+  doc.body.appendChild(card.el);
+  const where = card.el.querySelector('.chat-rc-where');
+  assert.equal(where.querySelector('.kind-chip.kind-none').textContent, 'No project');
+  assert.equal(where.textContent, 'No project · #a41c09d2');
+  const list = card.el.querySelector('.chat-rc-arts-list');
+  assert.equal(list.querySelector('.cap').textContent, 'Artifacts · 2');
+  assert.equal(list.getAttribute('aria-label'), 'Artifacts');
+  assert.equal(list.hasAttribute('data-min-level'), false);
+  assert.equal(card.el.querySelector('.chat-rc-create-pr'), null);
+});
+
+test('chat run card: a run without a project lists each file as a name, its size and a Download button', () => {
+  const dom = trackDom(new JSDOM('<!doctype html><body></body>'));
+  const doc = dom.window.document;
+  const got = [];
+  const card = createChatRunCard({ doc, snapshot: { source: 'rest', status: 'done', terminal: true, pipelineId: 'a41c09d2', projectKey: 'no-project-00000000', workMode: 'none', title: 'Q3 Hiring Deck',
+    artifacts: [{ kind: 'work', relPath: 'work/deck.html', bytes: 86016 }, { kind: 'work', relPath: 'work/charts/headcount.svg', bytes: 12288 }], artifactsTotal: 2, results: null },
+  ctx: { downloadArtifact: (ref, a) => got.push([ref.pipelineId, a.relPath]) } });
+  const list = card.el.querySelector('.chat-rc-arts-list');
+  assert.deepEqual([...list.querySelectorAll('.chat-rc-art-name')].map((b) => b.textContent), ['deck.html', 'charts/headcount.svg']);
+  assert.deepEqual([...list.querySelectorAll('.chat-rc-art-size')].map((b) => b.textContent), ['84.0 KB', '12.0 KB']);
+  assert.equal(list.querySelectorAll('.chat-rc-art-row')[1].querySelector('.faint').textContent, 'charts/');
+  // The NoProjectRun board: one bordered list of rows, a file icon first on each.
+  assert.equal(list.querySelectorAll('.chat-rc-art-rows > .chat-rc-art-row').length, 2);
+  for (const row of list.querySelectorAll('.chat-rc-art-row')) assert.equal(row.firstElementChild.tagName.toLowerCase(), 'svg');
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  // Runs redesign design language: a sentence-case caption (no uppercase tracked micro-label) and token radii.
+  for (const rule of ['.chat-rc-arts-list .cap{font-size:12px;font-weight:600;color:var(--ink-2);}',
+    '.chat-rc-art-rows{border:1px solid var(--line);border-radius:var(--r-card);overflow:hidden;background:var(--panel);}',
+    '.chat-rc-art-row + .chat-rc-art-row{border-top:1px solid var(--line);}']) assert.ok(css.includes(rule), rule);
+  const dls = [...list.querySelectorAll('.chat-rc-art-dl')];
+  assert.deepEqual(dls.map((b) => b.getAttribute('aria-label')), ['Download deck.html', 'Download headcount.svg']);
+  dls[0].click();
+  assert.deepEqual(got, [['a41c09d2', 'work/deck.html']]);
+});
+
+test('chat run card, a workspace run with Folder members: no Apply to folder (each member applies on its own on the run page)', () => {
+  const EX = { results: null, artifacts: [], moreArtifacts: false, pr: null };
+  const CH = { state: 'pending', counts: { added: 2, modified: 0, deleted: 0 } };
+  const { card, $ } = mk({ controls: { openApply: () => Promise.resolve(null) } });
+  card.update(done(EX, { workMode: 'folder', changes: CH }));
+  assert.ok($('.chat-rc-apply'), 'a single-project Folder run offers it');
+  card.update(done(EX, { kind: 'workspace-run', workspaceId: 'wks-notes-0000abcd', workMode: 'folder', changes: CH }));
+  assert.equal($('.chat-rc-apply'), null, 'a live workspace snapshot: its Apply would POST without a memberKey (400)');
+  const rest = snapshotFromState(STATE({ status: 'done', target: 'workspace', workspaceId: 'wks-notes-0000abcd', workMode: 'folder', projects: [] }),
+    { now: 0, extras: { ...EX, changes: CH } });
+  assert.deepEqual([rest.kind, rest.workMode, rest.changes], ['workspace-run', 'folder', CH]);
+  card.update(done(EX, { workMode: 'folder', changes: CH }));
+  assert.ok($('.chat-rc-apply'));
+  card.update({ ...rest, terminal: true });
+  assert.equal($('.chat-rc-res-title').textContent, 'Finished');
+  assert.equal($('.chat-rc-apply'), null, 'a REST workspace snapshot');
 });
 
 test('halted feature: one status line (the group\'s), Shaper\'s Resume · Re-plan the rest beside the model\'s footer, Resume posts the feature resume', async () => {

@@ -32,5 +32,11 @@ test('renderIndexHtml with flags', async () => {
     { name: 'flags given but the gates anchor is gone: throws', run: () => {
       assert.throws(() => renderIndexHtml(`${INDEX_THEME_ANCHOR}<head></head>`, 'dark', 'simple', {}), /flag-gates anchor missing/);
     } },
+    { name: 'git: data-git after data-level / data-flags; omitted ⇒ no attribute', run: () => {
+      assert.match(renderIndexHtml(mini, 'dark', 'simple', undefined, { git: false }), /<html lang="en" data-theme="dark" data-level="simple" data-git="off">/);
+      assert.match(renderIndexHtml(mini, 'light', 'expert', { flagsDemo: true, keepAwake: false, shapeFirst: false, runTags: false }, { git: true }),
+        /<html lang="en" data-theme="light" data-level="expert" data-flags="flagsDemo" data-git="on">/);
+      assert.equal(renderIndexHtml(mini, 'dark', 'expert'), mini.replace(INDEX_THEME_ANCHOR, '<html lang="en" data-theme="dark" data-level="expert">'));
+    } },
   ]);
 });

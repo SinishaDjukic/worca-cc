@@ -31,12 +31,16 @@ import { stopPausedRun, StopPausedError } from '../src/core/stop-paused.mjs';
 import {
   listPipelines, readPipeline, listAllPipelines, readPipelineByKey,
   enrichPipelinesPr, reconcileStaleRunning, foreignActiveWorkspaceRuns, readPipelineForResume, persistPrState, readPrState,
-  readRunLogText, readRunArtifactText, countPipelines, runRootSweepLookups, legacySweepLookups, slugify,
+  readRunLogText, readRunArtifactText, countPipelines, runRootSweepLookups, legacySweepLookups, slugify, newPipelineId,
   listArtifacts, listRunArtifacts, lookupPipelineRow, findPipelineRowById, readPipelineStateById, resolveIndexedArtifact, resolveIndexedArtifactForRow,
+  folderApplyRetainFor,
   resolveIndexedArtifactFileForRow, readPromptFile, runDirForRow, recordArtifact, appendAudit,
   persistMemberPrState, readMemberPrStates, readPipelineExtras,
-  checkoutRecordsFor, retainedWorkFor, runEngineOfRow,
+  checkoutRecordsFor, retainedWorkFor, runEngineOfRow, folderFacts,
 } from '../src/core/artifacts.mjs';
+import { FolderApplyError, folderMemberTarget, readFolderChanges, planFolderApply, applyFolderChanges, discardFolderChanges, releaseFolderCopy } from '../src/core/folder-apply.mjs';
+import { releaseFolderMember } from '../src/core/folder-members.mjs';
+import { readChangesFile, readRegularText, checkFolderSize } from '../src/core/folder-copy.mjs';
 import { mimeForPath, viewerKindFor } from '../src/shared/artifact-kinds.mjs';
 import { attachmentDisposition } from '../src/core/download-filename.mjs';
 import { appendDirection, DIRECTION_MAX_CHARS, DIRECTIONS_KIND, DIRECTIONS_FILE, DIRECTIONS_CLOSED } from '../src/core/directions.mjs';
@@ -50,13 +54,17 @@ import {
   deleteDiffComment, unresolvedCounts, onDiffCommentsChanged, stampSentRunId,
   peekPendingCardComments, clearPendingCardComments, DiffCommentError, DC_ID_RE,
 } from '../src/core/diff-comments.mjs';
-import { listProjects, addProject, addProjects, removeProject, normalizeProjectPath, countProjects, worcaHome } from '../src/core/projects.mjs';
+import { listProjects, addProject, addProjects, removeProject, normalizeProjectPath, countProjects, worcaHome, getProjectByPath, displayPath,
+  getProjectByName, ownsProjectFolder, removeProjectAndFolder } from '../src/core/projects.mjs';
+import { effectiveWorkMode, workModeOfRow, workModeForStart, samePath } from '../src/core/project-kind.mjs';
 import { renderIndexHtml, INDEX_THEME_ANCHOR, FLAG_GATES_ANCHOR } from '../src/core/index-html.mjs';
+import { gitState, gitAvailable, currentGitState, onGitChange, GIT_MISSING } from '../src/core/git-available.mjs';
+import { teamOverHttps, teamRepoState, setTypedTeamRepo } from '../src/core/git-free/team-repo.mjs';
 import { allFlags, listFlags, setFlags, checkFlags, flagEvents, flagEnabled, FlagError, requireFlag } from '../src/core/flags.mjs';
 import { createKeepAwake, countWorking } from '../src/core/keep-awake.mjs';
 import {
   getWorcaRoot, setWorcaRoot, setProjectsRoot, defaultRoot,
-  rawProjectsRoot, defaultProjectsRoot, runRootMode, getProjectsRoot,
+  rawProjectsRoot, defaultProjectsRoot, runRootMode, getProjectsRoot, projectsRootSource,
   pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod,
   setPipelineCostLimitUsd, setTotalCostLimitUsd, setCostLimitResetPeriod, assertCostLimitInputs,
   humanRateUsdPerHour, setHumanRateUsdPerHour, assertHumanRateInput,
@@ -166,6 +174,7 @@ import { loadCatalog } from '../src/core/mcp/catalog.mjs';
 import { installedPluginsMap, pluginRequirements, blockedPluginFindings, seedPolicyMarketplaces, mcpRequirements, skillRequirements, WORCA_VERSION as POLICY_WORCA_VERSION } from '../src/core/policy/local.mjs';
 import { normalizePolicyDoc } from '../src/core/policy/registry.mjs';
 import { checkTeamTotalGate, checkTeamPipelineGate, teamCapsForTarget } from '../src/core/policy/gate.mjs';
+import { teamRunDiscover } from '../src/core/git-free/team-repo.mjs';
 import { readPolicyState } from '../src/core/policy/state.mjs';
 import { teamAction, teamForget, teamSkillAction, teamSkillConsent, isTeamSkillId } from '../src/core/mcp/team.mjs';
 // Skills registry §2b-13: the policy routes' skill deviations. Aliased: the run-side code imports these names too.
@@ -220,8 +229,9 @@ import { checkBrokerAtBoot } from '../src/core/broker-boot.mjs';
 import { modelSlot, missingCredentials, describeMissing, workflowNeedsModel } from '../src/core/broker-routing.mjs';
 import { syncPluginSlots } from '../src/core/plugin-broker-slots.mjs';
 import { planClone, cloneProject, CloneError } from '../src/core/clone-project.mjs';
+import { createProject, addProjectFolder, probeFolder, ProjectAddError, PROJECT_ADD_STATUS } from '../src/core/project-create.mjs';
 import { listFolders } from '../src/core/fs-browse.mjs';
-import { realRoots, checkInside, outsideAllowedMessage, FS_OUTSIDE_ALLOWED } from '../src/core/fs-scope.mjs';
+import { realRoots, realOrNull, checkInside, insideRoots, outsideAllowedMessage, FS_OUTSIDE_ALLOWED } from '../src/core/fs-scope.mjs';
 import { importCandidates, parsePathList, IMPORT_MAX_INPUTS } from '../src/core/workspace-import.mjs';
 import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
@@ -230,7 +240,7 @@ import {
   globalModelRefs, removeGlobalModelAndRefs, promoteCustomModel, costUnreliableModelIds,
   readPrRemotePrefs, setPrRemotePrefs, modelHasBaseUrlRouting, writeSyncPrefs, readSyncPrefs,
   readNightModePrefs, writeNightModePrefs, readProjectDefaultTags, writeProjectDefaultTags,
-  readProjectActions, writeProjectActions, readActionsMeta, writeActionsMeta,
+  readProjectActions, writeProjectActions, readActionsMeta, writeActionsMeta, writeTeamRepo,
 } from '../src/core/config.mjs';
 import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
 import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue, UPSTREAM_PROVIDERS, CODEX_EFFORTS, MODEL_ENGINES, HELPER_ENGINES, CURSOR_EFFORTS, COPILOT_EFFORTS, helperEngineFor, ASK_ENGINES } from '../src/core/model-env.mjs';
@@ -257,7 +267,7 @@ import {
 } from '../src/core/guardrail-store.mjs';
 import {
   GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, listWorkflows, deleteWorkflow, isSafeWorkflowId,
-  setWorkflowNodeDefaults, workflowNodeDefaults, assertRunnableWorkflow, writeGraphWorkflow, readWorkflow, resolveGraph,
+  setWorkflowNodeDefaults, workflowNodeDefaults, assertRunnableWorkflow, writeGraphWorkflow, readWorkflow, graphNeedsRepo, resolveGraph,
 } from '../src/core/workflows.mjs';
 import { mintAutoWorkflowId, sanitizeProposalAnswer } from '../src/core/auto/proposal.mjs';
 import {
@@ -278,11 +288,14 @@ import { scheduleEventPrompt, scheduleNoticeText } from '../src/core/ask/schedul
 import { applyModelChange } from '../src/core/ask/model-deps.mjs';
 import { modelEventPrompt, modelNoticeText } from '../src/core/ask/model-proposal.mjs';
 import { cloneEventPrompt, cloneNoticeText } from '../src/core/ask/clone-proposal.mjs';
+import { projectEventPrompt, projectNoticeText } from '../src/core/ask/project-proposal.mjs';
+import { applyProjectChange } from '../src/core/ask/project-deps.mjs';
 import { workspaceEventPrompt, workspaceNoticeText } from '../src/core/ask/workspace-proposal.mjs';
 import { applyWorkspaceChange } from '../src/core/ask/workspace-deps.mjs';
 import { actionsEventPrompt, actionsNoticeText } from '../src/core/ask/actions-proposal.mjs';
 import { applyActionsChange } from '../src/core/ask/actions-deps.mjs';
 import { webEventPrompt, webNoticeText, chatWebHosts } from '../src/core/ask/web-proposal.mjs';
+import { chatScopeOf, withChatScope, sameScope, scopeBody, targetInScope, scopeRefusalText, noProjectRunText, scopeEventPrompt, scopeNoticeText } from '../src/core/ask/scope.mjs';
 import { hostAllowed as askHostAllowed } from '../src/core/web-allowlist.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
@@ -322,7 +335,7 @@ import { workspaceMembers as prStateMembers, memberPrTarget, relatedPrsBlock, wi
 import { isSyntacticRef } from '../src/core/ask/proposal.mjs';
 import { createRefResolver } from '../src/core/ask/refs.mjs';
 import { REFS_MAX } from '../src/shared/chip-refs.mjs';
-import { archivePipeline, restorePipeline, purgePipeline, discardRetainedWorktrees, applyRetainedWork } from '../src/core/pipeline-delete.mjs';
+import { archivePipeline, restorePipeline, purgePipeline, discardRetainedWorktrees, applyRetainedWork, archiveKeepsWork } from '../src/core/pipeline-delete.mjs';
 import { runBulk } from '../src/core/run-bulk.mjs';
 import { BULK_ACTIONS } from '../src/shared/run-bulk.mjs';
 import { listRunGroups, createRunGroup, addToGroup, removeFromGroup, groupMembers, RunGroupError } from '../src/core/run-groups.mjs';
@@ -333,7 +346,7 @@ import {
   updateWorkspace, deleteWorkspace, isGitRepo, WORKSPACE_KEY_RE, countWorkspaces,
   readWorkspaceMap, setWorkspaceEdgeState, addWorkspaceManualEdge, removeWorkspaceManualEdge,
   regenerateWorkspaceDescription, readWorkspaceStacks, updateWorkspaceStacks, workspaceMembers,
-  addWorkspaceMembers, removeWorkspaceMember, rootsHash, workspaceSetHash,
+  addWorkspaceMembers, removeWorkspaceMember, rootsHash, workspaceSetHash, memberWorkMode, memberHasTeamRepo,
 } from '../src/core/workspaces.mjs';
 import { effectiveEdges } from '../src/shared/workspace-map/overrides.mjs';
 import { WORKSPACE_SCAN_WORKFLOW_ID, WORKSPACE_SCAN_DEFAULT_MODELS, PR_FIX_WORKFLOW_ID, GRAPH_SHAPE_WORKFLOW, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from '../src/core/graph/builtin-workflows.mjs';
@@ -364,6 +377,9 @@ import { dimensionsForTarget, allTagDimensions, applyTagRules, teamTagPolicy, pr
 import { generateOverview } from '../src/core/overview-agent.mjs';
 import { generatePrDescription, resolvePrDescriptionModel, PR_BODY_MAX } from '../src/core/pr-description.mjs';
 import { projectKey, PROJECT_KEY_RE } from '../src/core/store.mjs';
+import { runProjectDir, noProjectWorkDir, isNoProjectWorkDir, isNoProjectKey, NO_PROJECT_KEY } from '../src/core/store.mjs';   // P3 — its own line: test/api-memory.test.mjs pins the one above
+import { WORK_ARTIFACT_KIND } from '../src/core/no-project-work.mjs';
+import { NO_PROJECT_NAME, NO_PROJECT_ERRORS } from '../src/shared/no-project.mjs';
 import { ensureHouseBrief, writeHouseBriefPins } from '../src/core/house-brief.mjs';
 import { validateMemoryScope, withStoreLock } from '../src/core/memory-sync.mjs';
 import {
@@ -396,7 +412,7 @@ import { readMcpStore } from '../src/core/mcp/store.mjs';
 import { mcpFootprint, skillFootprint } from '../src/core/mcp/plugin-lifecycle.mjs';
 import {
   addMarketplace, listMarketplaces, syncMarketplace, refreshAllMarketplaces,
-  removeMarketplace, readMarketplaces, seedBuiltinMarketplace,
+  removeMarketplace, readMarketplaces, seedBuiltinMarketplace, marketplaceNeedsGit,
 } from '../src/core/marketplaces.mjs';
 import {
   redactedConfig, writePluginConfig, readPluginConfig, listProfiles, listProfileIds,
@@ -487,6 +503,10 @@ preflightNode();
 // (express, ws and htmlparser2 are imported statically above, so a missing one of
 // those still fails at load, before this line.)
 preflightDeps();
+// CONTRACT §0: one git answer before anything can spawn git — at import, so every process that loads this module has it:
+// `npm start` / `worca ui`, and the CDP proofs and screenshot tools (tools/verify-*-cdp.mjs) that import the server and call
+// listen themselves. WORCA_GIT=0|1 answers without a probe (the suite runs with 1).
+await gitState();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -855,6 +875,7 @@ wss.on('connection', (ws, req) => {
   const id = requestedRunId || requestedGenId || requestedBenchId || requestedInstanceId;
 
   send(ws, { type: 'hello', bootId: BOOT_ID, serverMock: serverMockMode(), flags: allFlags(), runs: summarizeRuns(), ask: askHello(ws),
+    git: { available: gitAvailable() },
     extensionPairs: REMOTE_MODE ? [] : extensionPairing.pendingPublic() });
 
   if (id && runs.has(id)) {
@@ -951,6 +972,8 @@ function broadcast(obj) {
     }
   }
 }
+// CONTRACT §0: a git flip (installed / removed) reaches every open tab as one `git` frame.
+onGitChange((s) => broadcast({ type: 'git', git: { available: s.available, version: s.version } }));
 
 // Per-person delivery of Ask frames (step 3): on a shared sign-in an ask-* frame that names a
 // thread goes only to sockets of that thread's owner (and to non-shared sockets, e.g. an
@@ -1137,6 +1160,7 @@ function summarizeRuns() {
     workspaceId: r.workspaceId || null,
     projectNames: r.projectNames || null,
     tags: r.tags || [],
+    ...(r.orch?.workMode && r.orch.workMode !== 'git' ? { workMode: r.orch.workMode } : {}),   // P1b S1
     labels: liveLabels(r),
   }));
 }
@@ -1168,6 +1192,7 @@ function announceRun(entry) {
     startedBy: entry.startedBy || null,
     lastAction: entry.lastAction || null,
     tags: entry.tags || [],
+    ...(entry.orch?.workMode && entry.orch.workMode !== 'git' ? { workMode: entry.orch.workMode } : {}),   // P1b S1
     labels: entry.labels || [],
   });
 }
@@ -1627,6 +1652,24 @@ app.use(express.json({ limit: '8mb' }));
 // AFTER the body parsers: their stream callbacks would otherwise run outside this context.
 app.use((req, _res, next) => withBillTo(resolveIdentity(req).name, next));
 
+// CONTRACT §0: routes whose whole purpose is git answer 409 GIT_MISSING while git is missing. Registered before their
+// handlers, so next() reaches the real route when git is there. Body-dependent refusals stay inline (terminal branch,
+// skills, run start/resume, clone jobs from Ask cards).
+const gitMissing = (res) => res.status(409).json({ error: GIT_MISSING.message, code: GIT_MISSING.code });
+const GIT_ONLY_ROUTES = Object.freeze([
+  ['post', '/api/projects/clone'], ['delete', '/api/projects/:key/terminal/worktrees'],
+  ['post', '/api/runs/:id/checkout'], ['delete', '/api/runs/:id/checkout'], ['get', '/api/runs/:id/checkout/diff'],
+  ['post', '/api/projects/:key/actions/:actionId/try'],
+  ['get', '/api/pr/remotes'], ['post', '/api/pr'], ['post', '/api/pr/resolve'], ['post', '/api/runs/:id/publish'],
+  ['post', '/api/push'], ['post', '/api/shape/features/:id/ship'],
+  ['post', '/api/sync'], ['post', '/api/projects/:key/sync'], ['post', '/api/sync/all'], ['post', '/api/workspaces/:id/sync'],
+  ['post', '/api/runs/:id/base-check'], ['post', '/api/runs/:id/update-branch'],
+  ['post', '/api/runs/:id/resolve-pipeline'], ['post', '/api/runs/:id/resolve-terminal'],
+  ['post', '/api/runs/:id/apply-retained'], ['post', '/api/runs/:id/discard-worktree'],
+  ['post', '/api/workspaces/import-candidates'],   // the wizard's Add… / paste box: `git rev-parse` on every path
+]);
+for (const [method, route] of GIT_ONLY_ROUTES) app[method](route, (_req, res, next) => (gitAvailable() ? next() : gitMissing(res)));
+
 if (HLJS_ASSETS) {
   const sendHljsModule = (file) => (_req, res, next) => {
     res.type('text/javascript');
@@ -1794,7 +1837,7 @@ const INDEX_FILE = path.join(PUBLIC_DIR, 'index.html');
 }
 function sendIndex(res) {
   let html;
-  try { html = renderIndexHtml(fs.readFileSync(INDEX_FILE, 'utf8'), storedTheme(), effectiveUiLevel(), allFlags()); }
+  try { html = renderIndexHtml(fs.readFileSync(INDEX_FILE, 'utf8'), storedTheme(), effectiveUiLevel(), allFlags(), { git: gitAvailable() }); }
   catch (err) { return res.status(500).json({ error: err && err.message ? err.message : 'shell unavailable' }); }
   res.set('Content-Type', 'text/html; charset=utf-8');
   res.set('Cache-Control', 'no-store');
@@ -1851,12 +1894,14 @@ function workspaceErrorStatus(code) {
   if (code === 'RETAINED_WORKTREE') return 409;   // retained uncommitted work blocks deletion
   if (code === 'NOT_FOUND') return 404;
   if (code === 'BAD_REQUEST') return 400;
+  if (code === 'GIT_MISSING') return 409;
   return 500;
 }
 
 /** Answer a workspaces.mjs coded error with its HTTP status (workspaceErrorStatus). */
 function workspaceFail(res, err) {
-  return res.status(workspaceErrorStatus(err && err.code)).json({ error: err && err.message ? err.message : String(err) });
+  return res.status(workspaceErrorStatus(err && err.code)).json({ error: err && err.message ? err.message : String(err),
+    ...(err?.code === 'GIT_MISSING' ? { code: 'GIT_MISSING' } : {}) });
 }
 
 // Single source of truth for path normalization lives in the core registry.
@@ -2145,6 +2190,7 @@ function askTrackRun(threadId, input, pin) {
   const projKey = isWs ? null : ((entry && entry.projectDir) ? projectKey(entry.projectDir) : (state.projectKey || null));
   const label = isWs
     ? (state.workspaceName || (Array.isArray(state.projects) ? state.projects.map((p) => p.projectName).filter(Boolean).join(' · ') : '') || '')
+    : isNoProjectKey(projKey) ? NO_PROJECT_NAME   // P3: every run without a project's folder is `work`
     : String((entry && entry.projectDir) || state.projectDir || '').split(/[\\/]/).filter(Boolean).pop() || (projKey || '');
   const title = (entry && entry.title) || state.title || pipelineId;
   const status = (entry && entry.status) || state.status || null;
@@ -2293,6 +2339,12 @@ async function tagGate(res, body, { projectDir = null, workspaceId = null, start
   return false;
 }
 
+/** P1 (R6 / S9 / S69): the 413 body for a Folder member over the copy limits (or worca's own data folder), else null.
+ *  The name is the registered name, else the basename (S7). P5 calls it per Folder member (S23). */
+async function _folderSizeProblem(dir, { name } = {}) {
+  return checkFolderSize(dir, { name: name ?? getProjectByPath(dir)?.name });
+}
+
 /** An engine refusal's message on a preset start names the preset (#712). */
 const presetEngineMessage = (presetRow, runEngine, msg) => (presetRow ? `Preset "${presetRow.name}" cannot start: Engine ${runEngine.engine}: ${msg}` : msg);
 
@@ -2317,14 +2369,26 @@ const startRunHandler = async (req, res) => {
         : typeof stored.startedBy === 'string' && stored.startedBy ? stored.startedBy : null)
       : (req._startedBy || startedByOf(req));
 
-    // Mutual exclusion: exactly one of workspaceId / projectDir (§2.6).
+    // Mutual exclusion: exactly one of workspaceId / projectDir / noProject (§2.6, P3 CONTRACT §3).
+    if (body.noProject !== undefined && body.noProject !== null && typeof body.noProject !== 'boolean') {
+      return badRequest(res, NO_PROJECT_ERRORS.type);
+    }
+    const noProject = body.noProject === true;
     const hasWorkspace = typeof body.workspaceId === 'string' && body.workspaceId.trim();
     const hasProjectDir = typeof body.projectDir === 'string' && body.projectDir.trim();
+    if (noProject && (hasWorkspace || hasProjectDir)) return badRequest(res, NO_PROJECT_ERRORS.target);
     if (hasWorkspace && hasProjectDir) {
       return badRequest(res, 'provide workspaceId OR projectDir, not both');
     }
-    if (!hasWorkspace && !hasProjectDir) {
-      return badRequest(res, 'workspaceId or projectDir is required');
+    if (!noProject && !hasWorkspace && !hasProjectDir) {
+      return badRequest(res, NO_PROJECT_ERRORS.target);
+    }
+    // P3-D11: a run's own work folder is never a project (it would run in git mode under the reserved key).
+    if (hasProjectDir && isNoProjectWorkDir(body.projectDir)) return badRequest(res, NO_PROJECT_ERRORS.register);
+    // L7: a run without a project is never scheduled, chained or started from a previous run's branch (yet).
+    if (noProject && (body.scheduledFor != null || body.repeat != null || body.after != null
+      || (body.sourceFromPrevious != null && body.sourceFromPrevious !== false))) {
+      return badRequest(res, NO_PROJECT_ERRORS.schedule);
     }
 
     // Run presets (#712): a start from a preset is checked as a whole first, so the named broken items win over the
@@ -2385,7 +2449,7 @@ const startRunHandler = async (req, res) => {
     // The same name for both, without the flag: refuse now with the way out, instead of accepting the run
     // and failing it at setup ("they must differ") — or, on a repeating schedule, silently running on a
     // date-suffixed copy. Never inferred: chains, schedules and Ask carry the mode as data.
-    if (body.sameAsSource !== true && typeof body.featureBranch === 'string' && typeof body.sourceBranch === 'string'
+    if (!noProject && body.sameAsSource !== true && typeof body.featureBranch === 'string' && typeof body.sourceBranch === 'string'
       && body.featureBranch.trim() && body.featureBranch.trim() === body.sourceBranch.trim()) {
       return badRequest(res, `the new branch and the source branch are both "${body.sourceBranch.trim()}": to commit onto it, set sameAsSource (Run on the source branch); otherwise name another branch`);
     }
@@ -2455,7 +2519,12 @@ const startRunHandler = async (req, res) => {
     // Shape it first (spec D9/D12): `shape` and the shape workflows only while the gate is on.
     const shapeReq = resolveShapeRequest({ shape: body.shape, workflowId: body.workflowId }, { enabled: shapeFirstEnabled(), internal: !!internal });
     if (!shapeReq.ok) return badRequest(res, shapeReq.error);
-    const { shape } = shapeReq;
+    const { shape: askedShape } = shapeReq;
+    // L7: a sliced Shape-it-first run chains tickets per slice, and a run without a project cannot be scheduled. So with
+    // no project a shaped run is never sliced: `slices: 'off'` unless 'auto' was asked for, which is refused (U13: the
+    // Shaper itself still runs with No project).
+    if (noProject && askedShape?.slices === 'auto') return badRequest(res, NO_PROJECT_ERRORS.slices);
+    const shape = noProject && askedShape ? { ...askedShape, slices: 'off' } : askedShape;
     const workflowId = shapeReq.workflowId || 'wf_default';
     // ONE gate for every run entry point, ONE status: unknown (today's text) and
     // archived (the upgrade explanation the UI shows verbatim) answer 400 through
@@ -2488,6 +2557,7 @@ const startRunHandler = async (req, res) => {
     const memoryScope = typeof body.memoryScope === 'string' && body.memoryScope.trim() ? body.memoryScope.trim() : null;
     const scopeReason = validateMemoryScope({ workflowId, memoryScope, isWorkspace: !!hasWorkspace });
     if (scopeReason) return badRequest(res, scopeReason);
+    if (noProject && memoryScope === 'project') return badRequest(res, NO_PROJECT_ERRORS.memory);   // U13 + CONTRACT §3: global memory only
     // Settings › Memory: a defragment run may name its model/effort PAIR at start — tier 1, above
     // the setting (memory-defrag-model.mjs). Defragment runs only: every other workflow picks its
     // models per node, and a body model there stays ignored exactly as before. The shape here; the
@@ -2631,7 +2701,49 @@ const startRunHandler = async (req, res) => {
 
     let orch, entry;
 
-    if (hasWorkspace) {
+    if (noProject) {
+      // ── No project (P3, CONTRACT §3): the run works in <worcaHome>/runs/<pipelineId>/work. No git guard, no
+      //    workModeForStart, no team total gate, no readRunConfig, no sync and no branch (S-N, P3-D4).
+      const pipelineId = newPipelineId();
+      const projectDir = noProjectWorkDir(pipelineId);
+      const fileProblem = await promptFileProblem(effectiveSource, projectDir);
+      if (fileProblem) return badRequest(res, fileProblem);
+      // Memory defragment on global memory (P3-D12): the start pair against the user-level catalog, and one live
+      // defragment per scope — the project arm's two gates (B20).
+      if (startPair && !internal) {
+        const foreign = runEngine.engine && runEngine.engine !== 'claude' ? null : foreignRunModel(body.model, 'claude', null);
+        if (foreign) return badRequest(res, foreign);
+        const checked = checkStartPair(body, await listModels(''));
+        if (checked.error) return badRequest(res, checked.error);
+        startPair = checked.pair;
+      }
+      if (memoryScope) {
+        const live = liveDefragRun(memoryScopeKey(memoryScope, projectDir));   // 'global': never projectKey()
+        if (live) return res.status(409).json({ error: 'a defragment run for this memory scope is already live', runId: live.id });
+      }
+      if (await tagGate(res, body, { projectDir: null, startedBy, exempt: tagExempt })) return;
+      if (Array.isArray(body.tags)) tags = body.tags;
+      const mcpOptOut = await knownMcpOptOut(optOut.list, { kind: 'project', key: NO_PROJECT_KEY, name: NO_PROJECT_NAME, rank: 0 });
+      orch = await createOrchestratorFor({
+        projectDir, pipelineId, projectKey: NO_PROJECT_KEY, workMode: 'none',
+        prompt: effectivePrompt,
+        ...(effectiveSource ? { source: effectiveSource } : {}),
+        title, extras, agentsDir: AGENTS_DIR, workflowId, template: workflowRow, guardrailsId,
+        ...(mcpOptOut.length ? { mcpOptOut } : {}),
+        startedBy,
+        humanInLoop: bodyHumanInLoop ?? true,
+        ...(memoryScope ? { memoryScope } : {}),
+        ...(runOverlay ? { overlay: runOverlay } : {}),
+        claude: { permissionMode: 'acceptEdits', ...(startPair ? { model: startPair.model, ...(startPair.effort ? { effort: startPair.effort } : {}) } : {}), mock, ...runEngine },
+        ...(nightMode ? { nightMode: true } : {}),
+        tags,
+        ...(shape ? { shape } : {}),
+      });
+      entry = {
+        id: runId, orch, projectDir, projectKey: NO_PROJECT_KEY, workMode: 'none', kind: 'run', pipelineId,
+        title, status: 'starting', startedAt: new Date().toISOString(), startedBy, tags, events: [], pendingQuestion: null,
+      };
+    } else if (hasWorkspace) {
       // ── Workspace target (§2.6) ────────────────────────────────────────────
       const workspaceId = body.workspaceId.trim();
       // A stale bookmark / crafted id reads as "not found", not "bad request".
@@ -2654,15 +2766,25 @@ const startRunHandler = async (req, res) => {
       // creation, where createWorkspace enforced isGitRepo) is rejected the same
       // way, so the client gets a clean 400 instead of a mid-run worktree error.
       const projects = [];
+      await gitState();                                   // U4: refresh the cached git answer (≤ 1 min old) memberWorkMode reads
       for (const dir of ws.projectPaths) {
         if (!fs.existsSync(dir)) {
           return badRequest(res, 'workspace member path is missing');
         }
-        if (!isGitRepo(dir)) {
+        // P5 (U8): each member's mode is decided once, here (R5: resume / stop read it back from workspace_meta.projects)
+        const workMode = memberWorkMode(dir);
+        if (workMode === 'git' && !isGitRepo(dir)) {
           return badRequest(res, `workspace member is not a git repository: ${dir}`);
         }
-        projects.push({ projectDir: dir, projectKey: projectKey(dir), projectName: path.basename(dir) });
+        if (workMode === 'folder') {
+          const big = await _folderSizeProblem(dir);                // R6 / S9: before a row, a run root or a ticket
+          if (big) return res.status(413).json(big);
+        }
+        projects.push({ projectDir: dir, projectKey: projectKey(dir), projectName: path.basename(dir), ...(workMode === 'folder' ? { workMode } : {}) });
       }
+      // P1's project arm refuses the same at start: with no Git member there is no branch to start from (a mixed workspace's
+      // Folder member copies its folder as it is when the chained run fires).
+      if (sched?.sourceFromPrevious && projects.every((p) => p.workMode === 'folder')) return badRequest(res, "a Folder project run cannot start from the previous run's branch");
       // Sort by projectKey (the canonical member order used everywhere);
       // projects[0] is the primary (lowest projectKey).
       projects.sort((a, b) => (a.projectKey < b.projectKey ? -1 : a.projectKey > b.projectKey ? 1 : 0));
@@ -2717,7 +2839,8 @@ const startRunHandler = async (req, res) => {
 
       const wsBuilt = buildWorkspaceMembers(projects, branch, sourceByKey);
       const wsMembers = [];
-      if (syncAllowed) for (const m of wsBuilt) wsMembers.push({ ...m, source: m.branch.source || await resolveDefaultBranch(m.projectDir) });
+      // A Folder member never syncs (no resolveDefaultBranch): runSyncOpts gives an absent member nothing.
+      if (syncAllowed) for (const m of wsBuilt) if (m.workMode !== 'folder') wsMembers.push({ ...m, source: m.branch.source || await resolveDefaultBranch(m.projectDir) });
       const sync = runSyncOpts(wsMembers, { allowed: syncAllowed, before: syncBody.before, policy: syncBody.policy,
         scheduled: !!internal, onDiverged: syncBody.onDiverged });
       if (sync.enabled && !internal && !syncBody.policy) {
@@ -2780,6 +2903,10 @@ const startRunHandler = async (req, res) => {
       const projectDir = resolveProjectDir(body.projectDir);
       if (!projectDir) return badRequest(res, 'projectDir is required');
 
+      // A-m5: a registered project whose effective mode is Folder and whose folder is gone is refused, never recreated
+      // empty (with git installed a Git project keeps today's mkdir + git init). The stored row (S7), read once.
+      const projectRow = getProjectByPath(projectDir); const gitOn = (await gitState()).available;
+      if (projectRow && !fs.existsSync(projectDir) && effectiveWorkMode(projectRow.vcs, gitOn) === 'folder') return badRequest(res, `The folder is missing: ${projectDir}`);
       if (!fs.existsSync(projectDir)) {
         try {
           await fsp.mkdir(projectDir, { recursive: true });
@@ -2788,11 +2915,22 @@ const startRunHandler = async (req, res) => {
         }
       }
 
+      // P1 (CONTRACT §2, U3, L4, S3): a registered Folder project — or any project while git is missing — runs on a
+      // copy; an unregistered dir keeps git mode while git is installed. Replaces P0's start guard for projects.
+      // gitOn and projectRow were read before the mkdir (A-m5): the stored row (S7), never projectKey(dir)
+      const workMode = workModeForStart({ projectDir }, { getProjectByPath: () => projectRow, gitAvailable: gitOn });
+      if (workMode === 'folder') {
+        if (sched?.sourceFromPrevious) return badRequest(res, "a Folder project run cannot start from the previous run's branch");
+        const big = await _folderSizeProblem(projectDir);          // R6 / S9 / S69: before a row, a run root or a ticket
+        if (big) return res.status(413).json(big);
+      }
+      const runKey = projectRow && workMode !== 'git' ? projectRow.key : projectKey(projectDir);   // S52: the run's store key
+
       // M1: never hand an unvalidated sourceBranch to `git worktree add`. Reject a
       // leading-dash (option injection) or unknown ref here so the client gets a
       // clean 400 instead of a mid-run error event. featureBranch is sanitized
       // downstream by sanitizeBranchName, so it needs no ref check.
-      if (branch.source && !(await isValidSourceRef(projectDir, branch.source))) {
+      if (workMode === 'git' && branch.source && !(await isValidSourceRef(projectDir, branch.source))) {
         const r = isSafeBranchName(branch.source)
           ? await resolveSourceRef(projectDir, branch.source, { remote: effectiveSyncSettings(projectKey(projectDir)).remote })
           : { ok: false };
@@ -2827,7 +2965,7 @@ const startRunHandler = async (req, res) => {
 
       // Team total cap (design §7): soft — `pastTeamCap` acknowledges it once per window per home.
       {
-        const gate = await checkTeamTotalGate({ projectDir }, { pastTeamCap: body.pastTeamCap === true, reason: typeof body.policyReason === 'string' ? body.policyReason : null, by: startedBy });
+        const gate = await checkTeamTotalGate({ projectDir }, { pastTeamCap: body.pastTeamCap === true, reason: typeof body.policyReason === 'string' ? body.policyReason : null, by: startedBy, discover: teamRunDiscover(workMode, projectDir) });
         if (gate.blocked) return res.status(gate.code === 'reason_required' ? 400 : 403).json({ error: gate.error, code: gate.code, policy: gate.policy, needsPolicyAck: gate.code === 'team_total' });
       }
       const humanInLoop = bodyHumanInLoop ?? ((await readRunConfig(projectDir)).humanInLoop !== false);
@@ -2849,7 +2987,8 @@ const startRunHandler = async (req, res) => {
         if (runEngine.engine) {
           const probe = await createOrchestratorFor({
             projectDir, prompt: effectivePrompt, title, agentsDir: AGENTS_DIR, workflowId, template: workflowRow, guardrailsId,
-            mcpOptOut: await knownMcpOptOut(optOut.list, { kind: 'project', key: projectKey(projectDir), name: path.basename(projectDir), rank: 0 }),
+            workMode, ...(projectRow && workMode !== 'git' ? { projectKey: projectRow.key } : {}),
+            mcpOptOut: await knownMcpOptOut(optOut.list, { kind: 'project', key: runKey, name: path.basename(projectDir), rank: 0 }),
             claude: { mock, ...runEngine },
           });
           const refusal = await probe.engineStartRefusal();
@@ -2858,7 +2997,7 @@ const startRunHandler = async (req, res) => {
         return res.status(202).json(await scheduleRequest({ body: storedBody, sched, title, askLink, budget, projectDir, startedBy,
           preset: presetRow ? { id: presetRow.id, name: presetRow.name, owner: presetOwner, overrides: overriddenKeys(body, presetRow.setup) } : null }));
       }
-      const mcpOptOut = await knownMcpOptOut(optOut.list, { kind: 'project', key: projectKey(projectDir), name: path.basename(projectDir), rank: 0 });
+      const mcpOptOut = await knownMcpOptOut(optOut.list, { kind: 'project', key: runKey, name: path.basename(projectDir), rank: 0 });
       // Run presets slice 2 (#712): the run's setup, kept on the row for Save setup as preset. The RAW body
       // overlay (D4): the checked runOverlay carries effort '' for model-only picks, which a New run save drops.
       const runSetup = scanTarget || memoryScope ? null
@@ -2866,7 +3005,7 @@ const startRunHandler = async (req, res) => {
 
       // Scans and defrag never sync: skip the default-branch lookup and settings reads entirely, so
       // the window between the one-defrag-per-scope check and runs.set does not widen.
-      const members1 = syncAllowed ? [{ projectDir, projectKey: projectKey(projectDir), projectName: path.basename(projectDir),
+      const members1 = syncAllowed && workMode === 'git' ? [{ projectDir, projectKey: projectKey(projectDir), projectName: path.basename(projectDir),
         source: branch.source || await resolveDefaultBranch(projectDir) }] : [];
       const sync = runSyncOpts(members1, { allowed: syncAllowed, before: syncBody.before, policy: syncBody.policy,
         scheduled: !!internal, onDiverged: syncBody.onDiverged });
@@ -2877,6 +3016,8 @@ const startRunHandler = async (req, res) => {
 
       orch = await createOrchestratorFor({
         projectDir,
+        workMode,
+        ...(projectRow && workMode !== 'git' ? { projectKey: projectRow.key } : {}),   // S52 / S68: git runs keep projectKey(dir)
         prompt: effectivePrompt,
         ...(effectiveSource ? { source: effectiveSource } : {}),
         title,
@@ -3003,7 +3144,7 @@ const startRunHandler = async (req, res) => {
     // A scan's launcher needs the card attribution the wizard cannot compute (the key is a hash).
     res.json(scanTarget
       ? { runId, workspaceId: entry.workspaceId, title: entry.title, projectDir: entry.projectDir, projectNames: entry.projectNames }
-      : { runId });
+      : noProject ? { runId, pipelineId: entry.pipelineId } : { runId });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -3236,9 +3377,9 @@ function resumeTargetOf(ticket) {
 
 /** The onboarded project dir for a pipelines.project_key, or null. */
 async function projectDirForKey(key) {
-  for (const p of await listProjects()) {
-    if (projectKey(p.path) === key) return p.path;
-  }
+  const list = await listProjects();
+  for (const p of list) if (p.key === key) return p.path;            // the stored key wins (S7)
+  for (const p of list) if (projectKey(p.path) === key) return p.path;
   return null;
 }
 
@@ -3271,7 +3412,7 @@ async function validateResumeTarget(pipelineId) {
   const workspaceId = saved.row.target === 'workspace' ? (saved.row.workspace_key || null) : null;
   let projectDir = null;
   if (!workspaceId && saved.row.project_key) {
-    projectDir = await projectDirForKey(saved.row.project_key);
+    projectDir = await runProjectDir(saved.row, projectDirForKey);   // P3: a run without a project is its own work folder
   }
   return { ok: true, row: saved.row, resumePoint: saved.resumePoint, projectDir, workspaceId };
 }
@@ -3501,6 +3642,9 @@ async function fireTicket(ticket) {
       if (inherited.length) body.labels = inherited;
     }
     if (ticket.sourceFromPrevious) {
+      // Before the branch checks: isValidSourceRef answers false while git is missing, and "no longer exists" would be stored as a fact.
+      if (!gitAvailable()) return { ok: false, error: GIT_MISSING.message, transient: false };
+      if (p.pipelineId && workModeOfRow(findPipelineRowById(p.pipelineId)) !== 'git') return { ok: false, error: "a Folder project run cannot start from the previous run's branch", transient: false };
       const prev = p.pipelineId ? previousBranchesOf(p.pipelineId) : null;
       // Backstop only: the gate already waits for a merge back (pipelineGate). A FORCED ticket skips the gate.
       if (prev && prev.pending) return { ok: false, error: 'the run before it is still merging its work back', transient: true };
@@ -5089,7 +5233,7 @@ async function resumeTargetDirs(saved) {
       workspace: { id: meta.workspaceId, key: saved.row.workspace_key, name: meta.workspaceName, description: meta.workspaceDescription || '', projects },
     };
   }
-  const projectDir = await projectDirForKey(saved.row.project_key);
+  const projectDir = await runProjectDir(saved.row, projectDirForKey);   // P3: a run without a project is its own work folder
   if (!projectDir) throw new ResumeError(400, { error: 'project for this pipeline is not onboarded on this machine' });
   return { projectDir, workspace: undefined };
 }
@@ -5100,6 +5244,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
   const engineOpts = resumeEngineOpts(engine, allowUnguardedEngine);
   const saved = readPipelineForResume(pipelineId);
   if (!saved) throw new ResumeError(404, { error: 'pipeline not found' });
+  if (workModeOfRow(saved.row) === 'git' && !(await gitState()).available) throw new ResumeError(409, { error: GIT_MISSING.message, code: GIT_MISSING.code });
   // Resume with another model (a usage limit spent on one provider): every remaining step runs on it. It must be a
   // catalog model the run's harness — the one it resumes on — can run (src/shared/connections.mjs).
   const modelOpts = resumeModelOpts(model, effort, engineOpts.engine || saved.resumePoint?.claude?.engine || 'claude');
@@ -5159,6 +5304,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
   if (branch?.worktreeDir && !fs.existsSync(branch.worktreeDir)) {
     throw new ResumeError(400, { error: `worktree missing: ${branch.worktreeDir}` });
   }
+  if (branch?.workMode === 'folder' && branch.copyDir && !fs.existsSync(branch.copyDir)) throw new ResumeError(400, { error: `copy missing: ${branch.copyDir}` });
 
   const { projectDir, workspace } = await resumeTargetDirs(saved);
 
@@ -5188,7 +5334,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
   // per run. Both soft — `pastTeamCap` (with an optional / required reason) records the choice
   // and lets the resume through; the local gates above stay never-bypassable.
   const teamTarget = workspace ? { workspaceId: workspace.id } : { projectDir };
-  const totalGate = await checkTeamTotalGate(teamTarget, { pastTeamCap, reason: policyReason, by });
+  const totalGate = await checkTeamTotalGate(teamTarget, { pastTeamCap, reason: policyReason, by, discover: teamRunDiscover(workModeOfRow(saved.row), projectDir) });
   if (totalGate.blocked) {
     throw new ResumeError(totalGate.code === 'reason_required' ? 400 : 403, { error: totalGate.error, code: totalGate.code, policy: totalGate.policy, needsPolicyAck: totalGate.code === 'team_total' });
   }
@@ -5884,12 +6030,15 @@ async function statsByPerson(startMs, endMs) {
 
 // ---- Team metrics (team-metrics-design.md §4.6–§4.10) ----------------------------------
 function metricsErrorStatus(code) {
+  if (typeof code === 'string' && code.startsWith('GITHUB_')) return 502;
   switch (code) {
     case 'BAD_REQUEST': case 'NO_ORIGIN': return 400;
     case 'DELEGATE_INVALID': return 409;                 // a configuration state, not a malformed request
     case 'NOT_FOUND': case 'NOT_ENABLED': return 404;
     case 'PUSH_REJECTED': case 'FETCH_FAILED': case 'REMOTE_UNREACHABLE': case 'PUSH_RETRIES_EXHAUSTED': return 502;
     case 'LOCK_TIMEOUT': return 503;
+    case 'GIT_MISSING': return 409;
+    case 'REPO_REQUIRED': return 400;
     default: return 500;
   }
 }
@@ -5906,6 +6055,23 @@ async function tmProject(req, res) {
   const p = (await listProjects()).find((x) => x.key === req.params.key);
   if (!p) { res.status(404).json({ error: 'project not found', code: 'NOT_FOUND' }); return null; }
   return p;
+}
+/** P6: the GitHub repository typed in the no-git setup dialog — used only for a Folder whose team repo is unknown. */
+async function typedTeamRepoFor(p, raw) {
+  if (raw == null || raw === '' || !teamOverHttps(p.path) || teamRepoState(p.path).kind !== 'none') return null;
+  return setTypedTeamRepo(p.key, p.path, raw);
+}
+// P6: over HTTPS one team setup at a time per project — the typed repo a request stores is the one its enable uses, and a
+// failed enable forgets the repo before the next setup reads it (two dialogs on one Folder never cross repositories).
+// With git (no typed repository is taken): no queue.
+const teamSetupTails = new Map();
+function withTeamSetup(p, fn) {
+  if (!teamOverHttps(p.path)) return fn();
+  const run = (teamSetupTails.get(p.key) || Promise.resolve()).then(() => fn());
+  const tail = run.then(() => {}, () => {});
+  teamSetupTails.set(p.key, tail);
+  tail.then(() => { if (teamSetupTails.get(p.key) === tail) teamSetupTails.delete(p.key); });
+  return run;
 }
 
 app.get('/api/team-metrics/scopes', async (req, res) => {
@@ -5962,7 +6128,7 @@ app.post('/api/team-metrics/prs', async (req, res) => {
   if (body.runs.length > TM_MAX_PR_LOOKUPS) return badRequest(res, `at most ${TM_MAX_PR_LOOKUPS} runs per request`);
   try {
     const { sources } = await scopeSources(scope);
-    res.json(await resolveRunPrs({ runs: body.runs, sinks: sources.map((s) => s.slug) }));
+    res.json(await resolveRunPrs({ runs: body.runs, sinks: sources.map((s) => ({ slug: s.slug, projectDir: s.projectDir })) }));
   } catch (err) { sendMetricsError(res, err); }
 });
 
@@ -5978,7 +6144,7 @@ app.get('/api/team-metrics/pr-events', async (req, res) => {
   try {
     const { sources, meta } = await scopeSources(scope);
     const repos = meta.kind === 'project' ? [meta.slug] : sources.map((s) => s.slug);
-    res.json(await listPrEvents({ sinks: sources.map((s) => s.slug), repos, from, to }));
+    res.json(await listPrEvents({ sinks: sources.map((s) => ({ slug: s.slug, projectDir: s.projectDir })), repos, from, to }));
   } catch (err) { sendMetricsError(res, err); }
 });
 
@@ -6038,10 +6204,14 @@ app.post('/api/projects/:key/team-metrics/enable', async (req, res) => {
   if (mode === 'here' && body.attribution != null && body.attribution !== 'git-user' && body.attribution !== 'none') {
     return badRequest(res, 'attribution must be "git-user" or "none"');
   }
-  try {
-    const result = await enableTeamMetrics(p.path, { mode, attribution: body.attribution || 'git-user', delegateTo: body.delegateTo || null, change: body.change === true, by: actorOf(req) });
-    res.json({ ...result, status: await projectMetricsStatus(p) });
-  } catch (err) { sendMetricsError(res, err); }
+  await withTeamSetup(p, async () => {
+    let typed = null;
+    try {
+      typed = await typedTeamRepoFor(p, body.repo);
+      const result = await enableTeamMetrics(p.path, { mode, attribution: body.attribution || 'git-user', delegateTo: body.delegateTo || null, change: body.change === true, by: actorOf(req) });
+      res.json({ ...result, status: await projectMetricsStatus(p) });
+    } catch (err) { if (typed) writeTeamRepo(p.key, null); sendMetricsError(res, err); }
+  });
 });
 
 // Wizard step (§4.8). No POST /api/workspaces/:id route exists, so nothing shadows this path.
@@ -6053,9 +6223,18 @@ app.post('/api/workspaces/metrics-scan', async (req, res) => {
   // Same checks as POST /api/workspaces/scan (:~2948): never discover (and write a config row for) a junk path.
   for (const p of normalized) {
     if (!fs.existsSync(p)) return badRequest(res, `member path is missing: ${p}`);
-    if (!isGitRepo(p)) return badRequest(res, `member is not a git repository: ${p}`);
+    if (isNoProjectWorkDir(p)) return badRequest(res, NO_PROJECT_ERRORS.register);   // P3-D11, before git runs inside it
+    if (memberWorkMode(p) === 'git' && !teamOverHttps(p) && !isGitRepo(p)) return badRequest(res, `member is not a git repository: ${p}`);
   }
-  try { res.json(await scanMembers(normalized)); }
+  try {
+    // P5 (S26): a Folder member is never discovered (no origin to push to); the answer keeps the input order.
+    // P6 (OS-13): a member whose team repository is known over HTTPS (.git/config origin or a typed repo) is discovered too.
+    const git = normalized.filter((p) => memberHasTeamRepo(p));
+    const { members: found } = git.length ? await scanMembers(git) : { members: [] };
+    const byPath = new Map(found.map((m) => [m.path, m]));
+    res.json({ members: normalized.map((p) => byPath.get(p) || { path: p, key: projectKey(p), slug: path.basename(p), hasOrigin: false, enabled: false,
+      delegateTo: null, recordsLocally: false, enabledAt: null, workspaceRuns: null, error: null }) });
+  }
   catch (err) { sendMetricsError(res, err); }
 });
 
@@ -6072,11 +6251,11 @@ app.post('/api/workspaces/:id/metrics-route', async (req, res) => {
 const POLICY_ERROR_STATUS = {
   BAD_REQUEST: 400, NOT_FOUND: 404, NO_ORIGIN: 400, DELEGATE_INVALID: 400, NOT_HOME: 409, NOT_ENABLED: 409,
   REMOTE_UNREACHABLE: 502, FETCH_FAILED: 502, WORKTREE_FAILED: 500, COMMIT_FAILED: 500,
-  PUSH_REJECTED: 409, PUSH_RETRIES_EXHAUSTED: 409,
+  PUSH_REJECTED: 409, PUSH_RETRIES_EXHAUSTED: 409, GIT_MISSING: 409, REPO_REQUIRED: 400,
 };
 function sendPolicyError(res, err) {
   const code = (err && err.code) || 'INTERNAL';
-  res.status(POLICY_ERROR_STATUS[code] || 500).json({
+  res.status(POLICY_ERROR_STATUS[code] || (String(code).startsWith('GITHUB_') ? 502 : 500)).json({
     error: err && err.message ? err.message : String(err), code,
     ...(err && err.stderr ? { stderr: err.stderr } : {}),
     ...(err && err.hint ? { hint: err.hint } : {}),
@@ -6208,6 +6387,10 @@ async function unsyncableBlock(dir, projectKey, base) {
 app.get('/api/sync', syncRoute(async (req, res) => {
   const dir = resolveProjectDir(req.query.projectDir);
   if (!dir) return badRequest(res, 'projectDir is required');
+  if (isNoProjectWorkDir(dir)) {                     // P3: never git in a run's work folder (no repository, so no base)
+    const s = effectiveSyncSettings(null);
+    return res.json({ sync: { base: null, remote: null, state: 'unknown', settings: { beforeRun: s.beforeRun, onDiverged: s.onDiverged } } });
+  }
   const p = await registeredProjectForDir(dir);
   const base = typeof req.query.base === 'string' && req.query.base ? req.query.base : null;
   if (base && !isSafeBranchName(base)) return res.json({ sync: await unsyncableBlock(dir, p ? p.key : null, base) });
@@ -6503,10 +6686,14 @@ app.post('/api/projects/:key/policy/enable', async (req, res) => {
   const body = req.body || {};
   const mode = body.mode === 'follow' ? 'follow' : body.mode === 'here' || body.mode == null ? 'here' : null;
   if (!mode) return badRequest(res, 'mode must be "here" or "follow"');
-  try {
-    const result = await enableTeamPolicy(p.path, { mode, delegateTo: body.delegateTo || null, change: body.change === true, title: typeof body.title === 'string' ? body.title : '', by: actorOf(req) });
-    res.json({ ...result, status: await projectPolicyStatus(p) });
-  } catch (err) { sendPolicyError(res, err); }
+  await withTeamSetup(p, async () => {
+    let typed = null;
+    try {
+      typed = await typedTeamRepoFor(p, body.repo);
+      const result = await enableTeamPolicy(p.path, { mode, delegateTo: body.delegateTo || null, change: body.change === true, title: typeof body.title === 'string' ? body.title : '', by: actorOf(req) });
+      res.json({ ...result, status: await projectPolicyStatus(p) });
+    } catch (err) { if (typed) writeTeamRepo(p.key, null); sendPolicyError(res, err); }
+  });
 });
 
 app.post('/api/workspaces/:id/policy-route', async (req, res) => {
@@ -6957,15 +7144,27 @@ app.delete('/api/runs/:id', async (req, res) => {
   if (liveActive) return res.status(409).json({ error: 'cannot delete a running pipeline' });
 
   try {
-    const report = await archivePipeline({
-      workspaceKey: workspaceId || null,
-      key: workspaceId ? null : (projectKey || null),
-      projectDir: (workspaceId || projectKey) ? null : projectDir,
-      id,
+    const archBy = actorOf(req);
+    // P1: under the run lock, so an Archive never removes a copy an Apply holding the same lock is reading.
+    const report = await withRunLock(id, async () => {
+      // A pending Folder run's terminal opens in its copy (S9); Archive removes the copy, as Discard does: close it first —
+      // but never for a row archivePipeline will refuse as active (v8: the terminals closed, then the answer was 409).
+      // P5: a workspace run with Folder members (mixed: no run-level workMode) has copies in its run root too. A mixed
+      // run's Git member can hold a checkout or commit-failed work (the DB records or run.json's retain block), which
+      // archivePipeline refuses: leave its terminals.
+      const fr = findPipelineRowById(id);
+      if (fr && !fr.archived_at && (workModeOfRow(fr) === 'folder' || !!folderFacts(fr).changes)
+        && !(await archiveKeepsWork(fr))
+        && !['running', 'starting', 'created', 'pausing'].includes(String(fr.status || '').toLowerCase())) await stopMemberServices(id);
+      return archivePipeline({
+        workspaceKey: workspaceId || null,
+        key: workspaceId ? null : (projectKey || null),
+        projectDir: (workspaceId || projectKey) ? null : projectDir,
+        id, by: archBy,
+      });
     });
     if (!report) return res.status(404).json({ error: 'pipeline not found' });
     if (report.archived) {
-      const archBy = actorOf(req);
       appendAuditById(report.id, `Run archived${byActor(archBy)}.`, { actor: archBy });
     }
     emitChanged('pipelines-changed', 'deleted');
@@ -7096,6 +7295,83 @@ app.post('/api/runs/:id/apply-retained', async (req, res) => {
     res.status(500).json({ error: e && e.message ? e.message : String(e) });
   }
 });
+
+// ---------------------------------------------------------------------------
+// Folder runs (P1 Task 9): Changes, the apply plan, Apply to folder and Discard. The 8-hex pipeline id, no key; every
+// route resolves the member target first (S27). Not in P0's GIT_ONLY_ROUTES: none of them runs git.
+// ---------------------------------------------------------------------------
+const FOLDER_FINISHED = ['done', 'stopped', 'error'];
+function sendFolderError(res, e) {
+  if (e instanceof FolderApplyError) return res.status(e.status).json({ error: e.message, code: e.code, ...(e.state ? { state: e.state } : {}) });
+  return res.status(500).json({ error: e && e.message ? e.message : String(e) });
+}
+/** 1) the row (404 for an unknown or archived id), 2) its run dir, 3) the member target (S27), 4) for plan / apply /
+ *  discard: a run still finishing or not finished → 409 RUN_NOT_FINISHED. Answers itself and returns null on a refusal. */
+async function folderRouteTarget(req, res, { finished = false } = {}) {
+  const row = findPipelineRowById(req.params.id);
+  if (!row || row.archived_at) { res.status(404).json({ error: 'pipeline not found' }); return null; }
+  const pipelineDir = await runDirForRow(row);
+  const t = folderMemberTarget(readPipelineStateById(row.id), req.query.memberKey || null, pipelineDir);
+  if (finished && (isFinishingRun(row.id) || !FOLDER_FINISHED.includes(row.status))) {
+    res.status(409).json({ error: 'The run has not finished.', code: 'RUN_NOT_FINISHED' });
+    return null;
+  }
+  return { row, pipelineDir, t };
+}
+app.get('/api/runs/:id/changes', async (req, res) => {
+  try {
+    const g = await folderRouteTarget(req, res);
+    if (!g) return;
+    const c = await readFolderChanges(g.t);
+    if (!c) return res.status(404).json({ error: 'no changes' });
+    res.json(c);
+  } catch (e) { sendFolderError(res, e); }
+});
+app.get('/api/runs/:id/changes/patch', async (req, res) => {
+  try {
+    const g = await folderRouteTarget(req, res);
+    if (!g) return;
+    let text;
+    try { text = await readRegularText(g.t.files.patch); } catch { return res.status(404).json({ error: 'no changes' }); }
+    res.type('text/plain').send(text);
+  } catch (e) { sendFolderError(res, e); }
+});
+app.get('/api/runs/:id/apply-plan', async (req, res) => {
+  try {
+    const g = await folderRouteTarget(req, res, { finished: true });
+    if (!g) return;
+    const plan = await planFolderApply(g.t);
+    res.json({ target: plan.target, displayTarget: displayPath(g.t.realDir), add: plan.add, update: plan.update, delete: plan.delete, skipped: plan.skipped });
+  } catch (e) { sendFolderError(res, e); }
+});
+for (const verb of ['apply', 'discard']) {
+  app.post(`/api/runs/:id/${verb}`, async (req, res) => {
+    try {
+      const g = await folderRouteTarget(req, res, { finished: true });
+      if (!g) return;
+      const by = actorOf(req);
+      const out = await withRunLock(g.row.id, async () => {
+        const st = readPipelineStateById(g.row.id);
+        const t = folderMemberTarget(st, req.query.memberKey || null, g.pipelineDir);   // recomputed under the lock
+        // the run's terminals (S9 opens them in the copy) and its actions; P5: only this member's on a workspace run
+        await stopMemberServices(g.row.id, st?.target === 'workspace' ? t.memberKey : undefined);
+        const r = verb === 'apply'
+          ? await applyFolderChanges(t, { pipelineId: g.row.id, by })
+          : await discardFolderChanges(t, { pipelineId: g.row.id, by });
+        // P5: a workspace member releases only its own copy; the run root goes with the last retained member, and stays
+        // while the fresh row still lists another pending copy
+        if (st?.target === 'workspace') {
+          const pendingMembers = folderApplyRetainFor(findPipelineRowById(g.row.id))?.members;
+          await releaseFolderMember({ worcaHome: worcaHome(), pipelineId: g.row.id, pipelineDir: g.pipelineDir, memberKey: t.memberKey, pendingMembers });
+        }
+        else await releaseFolderCopy(g.row.id, g.pipelineDir);
+        return r;
+      });
+      emitChanged('pipelines-changed', 'updated');
+      res.json(out);
+    } catch (e) { sendFolderError(res, e); }
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Actions (issue #529): check out a finished run, run its setup once, and start the project's
@@ -7409,13 +7685,15 @@ const askCommands = createAskCommands({
   onFinish: (threadId, block) => { startTerminalEventTurn(threadId, block).catch((e) => console.warn(`[worca-ui] ask: terminal event for ${threadId}: ${e?.message || e}`)); },
 });
 
-/** The folder an Ask command runs in: a run member's terminal target, a project's own folder, or the pinned
- *  project. The person routes' logic without their `res`; no folder ever comes from the model. */
+/** The folder an Ask command runs in: a run member's terminal target, or
+ *  a project's folder only inside the chat scope (P4): the named member of its workspace, else the chat's project.
+ *  The person routes' logic without their `res`; no folder ever comes from the model. */
 async function askCommandTarget(threadId, { runId = null, member = null, projectKey = null } = {}) {
   const notFound = (msg) => Object.assign(new Error(msg), { code: 'NOT_FOUND' });
   if (runId) {
     const row = findPipelineRowById(runId);
     if (!row || row.archived_at) throw notFound('run not found');
+    if (isNoProjectKey(row.project_key)) throw new Error(noProjectRunText(row.id));   // SEAMS S35: no folder to give a shell
     const t = terminalTargets(row, { isLive: isLiveRun });
     const m = member ? t.members.find((x) => x.projectKey === member) : (t.members.length === 1 ? t.members[0] : null);
     if (!m) throw new Error(member ? 'that project is not part of this run' : 'this run has several projects: pass member');
@@ -7428,10 +7706,13 @@ async function askCommandTarget(threadId, { runId = null, member = null, project
       projectKey: m.projectKey, projectName: m.projectName, branch: m.branch, workspace: t.workspace, runLive: t.live,
       warning: m.warning || null, actionSnaps: activeActionSnaps(row.id) };
   }
-  const thread = askGetThread(threadId);
-  const ctx = thread?.context || {};
-  const key = projectKey || (ctx.pinned === true && typeof ctx.projectKey === 'string' ? ctx.projectKey : null);
-  if (!key) throw new Error('name a runId or a projectKey (this chat has no pinned project)');
+  const scope = chatScopeOf(askGetThread(threadId)?.context);
+  if (projectKey) {
+    const members = scope && scope.workspaceId ? [...((await readWorkspace(scope.workspaceId))?.projectKeys || [])] : [];
+    if (!targetInScope(scope, { projectKey }, members)) throw new Error(scopeRefusalText(scope, { projectKey }));
+  }
+  const key = projectKey || (scope && scope.projectKey) || null;
+  if (!key) throw new Error(scope ? "name a runId, or the projectKey of a member of this chat's workspace" : scopeRefusalText(null));
   if (!TM_PROJECT_KEY_RE.test(key)) throw new Error(`no project ${key}`);
   const p = (await listProjects()).find((x) => x.key === key);
   if (!p) throw notFound(`no project ${key}`);
@@ -7570,6 +7851,7 @@ app.post('/api/projects/:key/terminal', async (req, res) => {
         branch, by, cols: req.body?.cols, rows: req.body?.rows });
       return res.status(201).json({ session, warning: null });
     }
+    if (!gitAvailable()) return gitMissing(res);
     const wt = await openBranchWorktree({ projectKey: p.key, projectDir: p.path, branch: req.body?.branch, by });
     let session;
     try {
@@ -8151,6 +8433,8 @@ function isPrStoreKey(key) {
 // { error } (the caller maps it: 400 for create/remotes, UNKNOWN for mergeable).
 function prTargetFor(state, memberKey) {
   if (state.target !== 'workspace') {
+    // P3: a run without a project has no repository (its projectDir is its own work folder)
+    if (state.projectKey === NO_PROJECT_KEY) return { repoDir: null, feature: null, source: null, memberKey: null, memberName: null };
     return { repoDir: state.projectDir || null, feature: state.branch?.feature || null,
       source: state.branch?.source || null, memberKey: null, memberName: null };
   }
@@ -9094,6 +9378,7 @@ app.post('/api/install', async (req, res) => {
 app.get('/api/branches', async (req, res) => {
   const projectDir = resolveProjectDir(req.query.projectDir);
   if (!projectDir) return badRequest(res, 'projectDir is required');
+  if (isNoProjectWorkDir(projectDir)) return res.json({ branches: [], current: null, runs: [] });   // P3: never git in a run's work folder
   try {
     const [branches, current] = await Promise.all([
       listLocalBranches(projectDir),
@@ -9149,9 +9434,13 @@ app.get('/api/branches', async (req, res) => {
   }
 });
 
+// ownedFolder: Remove deletes this project's folder too (ownsProjectFolder), so the UI shows that warning.
+async function projectsForApi(list) { const { available } = await gitState(); return list.map((p) => ({ ...p, workMode: effectiveWorkMode(p.vcs, available), displayPath: displayPath(p.path), ownedFolder: ownsProjectFolder(p) })); }
+
 app.get('/api/projects', async (_req, res) => {
   try {
-    res.json({ projects: await listProjects() });
+    const runsRoot = path.join(worcaHome(), 'runs');
+    res.json({ projects: await projectsForApi(await listProjects()), runsRoot, runsRootDisplay: displayPath(runsRoot) });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -9160,6 +9449,15 @@ app.get('/api/projects', async (_req, res) => {
 app.post('/api/projects', async (req, res) => {
   const body = req.body || {};
   if (!(await requireFsAllowed(req, res, [normalizeProjectPath(body.path)]))) return;
+  if (body.useGit === true) {                  // Use git: git init once on a no-git folder, then register (Task 3)
+    try {
+      await pinUiLevel();
+      const out = await addProjectFolder({ name: body.name, path: body.path, useGit: true });
+      afterProjectRegistered(out.project);
+      const projects = await projectsForApi(out.projects);
+      return res.json({ projects, project: projects.find((p) => p.key === out.project.key) || null });
+    } catch (err) { return projectAddFail(res, err); }
+  }
   try {
     await pinUiLevel();                        // before the first project ends "fresh install"
     const projects = await addProject({ name: body.name, path: body.path });
@@ -9170,8 +9468,9 @@ app.post('/api/projects', async (req, res) => {
     // Its team policy at once too (MCP registry spec §11.2): removing a project drops its policy cache, so a re-added or
     // re-cloned project's home must not read "no project here follows" (a greyed Team set) until the background discovery.
     discoverPolicy(normalizeProjectPath(body.path), { force: true }).catch(() => { /* offline: the background discovery retries */ });
-    res.json({ projects });
+    res.json({ projects: await projectsForApi(projects) });
   } catch (err) {
+    if (err?.code === 'NESTED_IN_REPO') return res.status(400).json({ error: err.message, code: err.code, partOf: err.partOf, repoRoot: err.repoRoot });
     // addProject only throws on validation (empty/duplicate/not-a-directory), so
     // a thrown error here is a client error -> 400. (A rare write-time I/O error
     // would also surface as 400; acceptable for this single-user local tool.)
@@ -9206,10 +9505,53 @@ app.post('/api/projects/bulk', async (req, res) => {
         }
       })();
     }
-    res.json({ projects, results });
+    res.json({ projects: await projectsForApi(projects), results });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
+});
+
+function projectAddFail(res, err, extra = {}) {
+  const code = err instanceof ProjectAddError ? err.code : 'FAILED';
+  const body = { error: err && err.message ? err.message : String(err), code, ...extra };
+  if (code === 'NESTED_IN_REPO') Object.assign(body, { partOf: err.partOf ?? null, repoRoot: err.repoRoot ?? null });
+  return res.status(PROJECT_ADD_STATUS[code] || 500).json(body);
+}
+
+/** After New / Use git registered a project: the list broadcast, then discovery for a Git project only. */
+function afterProjectRegistered(project) {
+  emitChanged('projects-changed', 'created');
+  if (!project || project.vcs !== 'git') return;   // a Folder project has no origin to discover
+  discoverProject(project.path, { force: true })
+    .then(() => emitChanged('team-metrics-changed', 'discovered'))
+    .catch(() => { /* offline or no origin: discovery retries hourly */ });
+  discoverPolicy(project.path, { force: true }).catch(() => { /* offline: the background discovery retries */ });
+}
+
+// POST /api/projects/create — New: a project by name under the projects root (U6). No requireFsAllowed: the only
+// path is <projects root>/<one checked folder name>.
+app.post('/api/projects/create', async (req, res) => {
+  const body = req.body || {};
+  const root = getProjectsRoot();
+  const where = { root, rootDisplay: displayPath(root) };
+  try {
+    if (body.dryRun === true) {
+      const d = await createProject({ name: body.name, useGit: body.useGit === true, dryRun: true });
+      return res.json({ ok: true, ...where, path: d.path, name: d.name, displayPath: d.displayPath });
+    }
+    await pinUiLevel();                        // before the first project ends "fresh install"
+    const out = await createProject({ name: body.name, useGit: body.useGit === true });
+    afterProjectRegistered(out.project);
+    const projects = await projectsForApi(out.projects);
+    return res.status(201).json({ project: projects.find((p) => p.key === out.project.key) || null, projects, ...where });
+  } catch (err) { return projectAddFail(res, err, where); }
+});
+
+// GET /api/projects/probe?path= — what the Add project dialog's Folder pane shows for a path.
+app.get('/api/projects/probe', async (req, res) => {
+  const raw = typeof req.query.path === 'string' ? req.query.path : '';
+  if (!(await requireFsAllowed(req, res, [normalizeProjectPath(raw)]))) return;
+  try { return res.json(await probeFolder(raw)); } catch (err) { return projectAddFail(res, err); }
 });
 
 // POST /api/projects/clone {url, branch?, name?} -> 202 {jobId}: clone a repository into the
@@ -9223,6 +9565,7 @@ function publicCloneJob(j) {
   return { id, url, name, dir, state, code, error, project, startedAt, endedAt };
 }
 async function startCloneJob(req) {
+  if (!gitAvailable()) throw new CloneError('git-missing', GIT_MISSING.message);
   const plan = planClone(req, { projectsRoot: getProjectsRoot() });   // throws CloneError at once
   if ([...CLONE_JOBS.values()].some((j) => j.state === 'running' && j.dir === plan.dir)) {
     throw new CloneError('exists', `${plan.dir} is being cloned already`);
@@ -9266,19 +9609,88 @@ app.get('/api/projects/clone/:id', (req, res) => {
   res.json({ job: publicCloneJob(job) });
 });
 
+// What Remove project waits for: a run of the project that is starting, running, pausing, paused or still tearing
+// down — in this process (the runs Map; a workspace run holds each member) or saved by any process (a paused run
+// outlives a restart; a CLI run is in no Map). 'interrupted' never blocks: it cannot be stopped. A settled 'paused'
+// entry stays paused here after its run is archived or restored as interrupted (Stop refuses both), so its saved row
+// decides: the DB arm, which skips archived rows.
+const PROJECT_HOLD_STATUSES = ['created', 'starting', 'running', 'pausing', 'paused'];
+function runHoldingProject(project) {
+  const dir = canon(project.path);
+  const same = (p) => typeof p === 'string' && !!p && samePath(canon(p), dir);
+  for (const r of runs.values()) {
+    if (r.kind === 'action' || r.kind === 'scriptbench' || r.kind === 'agentgen') continue;
+    const status = String(r.status || '');
+    const holds = (status !== 'paused' && PROJECT_HOLD_STATUSES.includes(status)) || (!!r.pipelineId && isFinishingRun(r.pipelineId));
+    if (!holds) continue;
+    const members = Array.isArray(r.orch?.members) ? r.orch.members : [];
+    if (same(r.projectDir) || members.some((m) => same(m?.projectDir))) {
+      return { id: r.pipelineId || r.id, title: r.title || null, status: String(r.status || 'running') };
+    }
+  }
+  try { reconcileStaleRunning({ liveIds: liveRunIds() }); } catch { /* best-effort: a dead owner's row then reads as live */ }
+  const keys = new Set([project.key].filter(Boolean));          // a Folder project's runs carry its stored key (S52)
+  try { keys.add(projectKey(project.path)); } catch { /* the stored key stands */ }
+  const marks = PROJECT_HOLD_STATUSES.map(() => '?').join(', ');
+  const rows = getDb().prepare(`SELECT id, title, status, target, project_key, workspace_meta FROM pipelines
+    WHERE archived_at IS NULL AND status IN (${marks})`).all(...PROJECT_HOLD_STATUSES);
+  for (const row of rows) {
+    let hit;
+    if (row.target === 'workspace') {
+      let meta = null;
+      try { meta = JSON.parse(row.workspace_meta || 'null'); } catch { /* unreadable: no members */ }
+      const members = Array.isArray(meta?.projects) ? meta.projects : [];
+      hit = members.some((m) => m && (keys.has(m.projectKey) || same(m.projectDir)));
+    } else hit = keys.has(row.project_key);
+    if (hit) return { id: row.id, title: row.title || null, status: row.status };
+  }
+  return null;
+}
+
+// Remove a project. A Folder project worca made (ownsProjectFolder) goes with its folder — only on deleteFolder=1, the
+// flag the confirm naming that folder sends, so no folder is ever deleted unasked or left behind. The flag never widens
+// what is deleted: the server decides. Refused while a run of the project is live or paused.
 app.delete('/api/projects', async (req, res) => {
   const name = typeof req.query.name === 'string' ? req.query.name : '';
   if (!name.trim()) return badRequest(res, 'name is required');
+  const wantFolder = req.query.deleteFolder === '1';
   try {
+    // The row removeProject deletes (the same case-insensitive match): the guards and the schedule cleanup see it.
+    const row = getProjectByName(name);
+    if (row) {
+      const busy = runHoldingProject(row);
+      if (busy) {
+        const how = busy.status === 'paused' ? 'is paused' : 'is still running';
+        return res.status(409).json({
+          error: `"${row.name}" has a run that ${how}${busy.title ? ` (“${busy.title}”)` : ''}. Stop it first, then remove the project.`,
+          code: 'PROJECT_BUSY', pipelineId: busy.id,
+        });
+      }
+    }
+    const owned = !!row && ownsProjectFolder(row);
+    if (owned && !wantFolder) {
+      return res.status(409).json({
+        error: `Removing "${row.name}" also deletes its folder ${displayPath(row.path)} and every file in it. Confirm the removal again to go ahead.`,
+        code: 'DELETE_FOLDER_REQUIRED', displayPath: displayPath(row.path),
+      });
+    }
+    let projects; let folder = null;
+    if (owned) ({ projects, folder } = await removeProjectAndFolder(row.name));
+    else projects = await removeProject(name);
     // Scheduled runs of a removed project can never start: cancel them with it.
-    const before = (await listProjects()).find((p) => p && p.name === name.trim());
-    const projects = await removeProject(name);
-    if (before && before.path) {
-      try { if (cancelForTarget({ projectDir: before.path })) emitChanged('schedules-changed', 'target-removed'); }
+    if (row && row.path) {
+      try { if (cancelForTarget({ projectDir: row.path })) emitChanged('schedules-changed', 'target-removed'); }
       catch (err) { console.error(`[worca-ui] schedule cleanup failed: ${err && err.message ? err.message : err}`); }
     }
     emitChanged('projects-changed', 'deleted');
-    res.json({ projects });
+    const out = { projects: await projectsForApi(projects) };
+    if (folder) out.folder = { ...folder, displayPath: displayPath(folder.path) };
+    if (folder && !folder.deleted) {
+      out.warning = `Removed "${row.name}", but its folder could not be deleted (${folder.error}). What is left of it is still at ${displayPath(folder.path)}.`;
+    } else if (row && wantFolder && !folder) {
+      out.notice = `Removed "${row.name}". Its folder was kept: ${displayPath(row.path)}.`;
+    }
+    res.json(out);
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -9466,15 +9878,26 @@ registerMemoryRoutes('/api/memory/projects/:key', { family: 'projects' });
 // WORCA_ACTIONS_REMOTE=1 already grant more than a listing, so either lifts the limit.
 const fsLimitedHere = (req = null) => REMOTE_MODE && !terminalEnabledHere(req) && !actionsEnabledHere(req);
 const FS_BROAD_WARNED = new Set();
-/** Worca's own folders as real paths: the projects root and the Worca home. A broad one is skipped (logged once). */
+/** Worca's own folders as real paths: the projects root and the Worca home. While no projects root is configured
+ *  (the default <worcaHome>/projects, U6) the roots are TODAY's — the OS home (it WAS the default root; S50 keeps the
+ *  hosted Folder-add limit at today's rule) with the Worca home folded into it when it lies there, so the Worca home's
+ *  runs/, store/ and settings stay a hidden folder — plus the default projects folder itself once it exists (New and
+ *  Clone fill it; fs-scope insideRoots accepts any containing root, so its projects are not "hidden"). A broad one is
+ *  skipped (logged once). */
 async function fsAllowedRoots() {
   let home = null;
   try { home = worcaHome(); } catch { /* no resolvable home (node:test without WORCA_HOME) */ }
-  return realRoots([getProjectsRoot(), home], { onSkip: (c, r) => {
+  const onSkip = (c, r) => {
     if (FS_BROAD_WARNED.has(r)) return;
     FS_BROAD_WARNED.add(r);
     console.warn(`[worca-ui] folder browser: ${r} (from ${c}) is too broad to browse on a hosted Worca; skipped. Set WORCA_PROJECTS_ROOT to a deeper folder.`);
-  } });
+  };
+  if (projectsRootSource() !== 'default') return realRoots([getProjectsRoot(), home], { onSkip });
+  const today = await realRoots([defaultRoot(), home], { onSkip });
+  // The folder itself only: a link at <worcaHome>/projects (to store/, or ~/.ssh) must not make its target a root.
+  const own = home ? await realOrNull(home) : null;
+  const extra = (await realRoots([getProjectsRoot()], { onSkip })).filter((r) => own && r === path.join(own, 'projects') && !insideRoots(r, today));
+  return [...today, ...extra];
 }
 /** True when every path may be used here; otherwise answers 403 FS_OUTSIDE_ALLOWED and returns false. */
 async function requireFsAllowed(req, res, paths) {
@@ -9489,7 +9912,7 @@ async function requireFsAllowed(req, res, paths) {
   return true;
 }
 // GET answers whether "Choose folder…" can open a native dialog for the viewer, without opening
-// one: the Add project dialog opens on Clone from URL when not. Never on a hosted worca (the dialog
+// one (the Add project dialog no longer asks: it opens on New either way, P2). Never on a hosted worca (the dialog
 // would open on the server, not on the viewer's screen).
 app.get('/api/fs/pick-folder', (req, res) => {
   res.json({ available: !REMOTE_MODE && nativeDialogAvailable() });
@@ -9577,8 +10000,7 @@ app.post('/api/workspaces', async (req, res) => {
     emitChanged('workspaces-changed', 'created');
     res.status(201).json({ workspace, metricsHomeAuto });
   } catch (err) {
-    const status = workspaceErrorStatus(err && err.code);
-    return res.status(status).json({ error: err && err.message ? err.message : String(err) });
+    return workspaceFail(res, err);
   }
 });
 
@@ -9698,6 +10120,7 @@ let autoRescanOn = true; // test seam: _testing.setAutoRescan(false) skips the r
  */
 async function afterMembersChanged(workspace, added = []) {
   for (const dir of added) {
+    if (getProjectByPath(dir)?.vcs === 'none') continue;   // P5: a Folder member has no origin of its own (nested in a repository it would take that one's)
     discoverProject(dir, { force: true }).then(() => emitChanged('team-metrics-changed', 'discovered')).catch(() => { /* retried hourly */ });
     discoverPolicy(dir, { force: true }).then(() => emitChanged('team-policy-changed', 'discovered')).catch(() => { /* retried hourly */ });
   }
@@ -9735,8 +10158,7 @@ app.post('/api/workspaces/:id/members', async (req, res) => {
     if (clearedHomes.includes('policy')) emitChanged('team-policy-changed', 'policy-home');
     res.json({ workspace, clearedHomes, rescan });
   } catch (err) {
-    const status = workspaceErrorStatus(err && err.code);
-    return res.status(status).json({ error: err && err.message ? err.message : String(err) });
+    return workspaceFail(res, err);
   }
 });
 
@@ -10111,7 +10533,7 @@ app.get('/api/workspaces/:id/runs/:runId/artifact-raw/*', async (req, res) => {
 //                         and the next Save would promote that env override into
 //                         settings.json. Runs still resolve via getProjectsRoot().
 //   projectsRootDefault : what applies when projectsRoot is blank — the env tier
-//                         when exported, else defaultRoot(). The UI placeholder.
+//                         when exported, else <worcaHome>/projects. The UI placeholder.
 //                         Additive; `default` keeps its `root` meaning.
 //   app                 : { version, repoUrl, releaseUrl } — static identity for
 //                         the About card (APP_INFO, from package.json). GET-only:
@@ -10150,6 +10572,7 @@ const settingsState = () => ({
   networkWait: networkWaitSettings(),                     // Settings › Runs › Wait for the network
   uiLevel: effectiveUiLevel(),                            // simple | advanced | expert (docs/ui-levels.md)
   flags: allFlags(),                                      // { key: bool } resolved (docs/feature-flags.md)
+  git: (({ available, version }) => ({ available, version }))(currentGitState()),   // is git usable here (CONTRACT §0)
   memoryDefrag: memoryDefragModel(),                      // Settings › Memory: the STORED { model, effort } (null = the workflow default)
   memoryDefragDefault: defragDefaultModel(),              // what "(default)" means there: the built-in's own model
   workspaceScan: workspaceScanModels(),                   // Settings › Runs › Workspaces: the STORED pick (null = the defaults)
@@ -10209,6 +10632,13 @@ app.get('/api/health', (req, res) => {
     port: addr || PORT,
     startedAt: startedAtIso(),
   });
+});
+
+// CONTRACT §0: is git usable here, re-probed at most once a minute (U4: installing git needs no restart).
+// A flip broadcasts the `git` frame through onGitChange.
+app.get('/api/git', async (_req, res) => {
+  const s = await gitState({ maxAgeMs: 60_000 });
+  res.json({ available: s.available, version: s.version, reason: s.reason, checkedAt: s.checkedAt });
 });
 
 // Who this request is, for the header's "Signed in as" (identity.mjs). Attribution only.
@@ -10347,6 +10777,12 @@ async function askPrCardFacts(row) {
     const dir = await runDirForRow(row);
     const res = dir ? JSON.parse(await fsp.readFile(path.join(dir, 'results.json'), 'utf8')) : null;
     summary = res && res.summary && typeof res.summary === 'object' ? res.summary : null;
+    // P5: a workspace run's Folder members ship in no pull request (their changes wait for Apply): count the Git members only
+    const folder = isWs ? new Set(((parse(row.workspace_meta) || {}).projects || []).filter((p) => p && p.workMode === 'folder').map((p) => p.projectKey)) : null;
+    if (summary && folder && folder.size && res.perProject && typeof res.perProject === 'object') {
+      summary = { filesNew: 0, filesChanged: 0, linesAdded: 0, linesRemoved: 0 };
+      for (const [k, v] of Object.entries(res.perProject)) if (!folder.has(k)) for (const f of Object.keys(summary)) summary[f] += Number(v?.summary?.[f]) || 0;
+    }
   } catch { summary = null; }
   return {
     pipelineId: row.id,
@@ -11578,8 +12014,11 @@ app.get('/api/workflows', async (req, res) => {
     // CONTRACT: [ GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, then the Shape it first built-in while
     // the shapeFirst gate is on, then the saved rows ]. The built-ins are never persisted rows (listWorkflows
     // filters their ids), so none appears twice.
+    // P3 (U13): each row says whether one of its agents expects a code repository (the No-project note).
+    const registry = loadAgentRegistry(AGENTS_DIR);
     res.json({ workflows: [GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW,
-      ...(shapeFirstEnabled() ? [GRAPH_SHAPE_WORKFLOW] : []), ...(await listWorkflows())] });
+      ...(shapeFirstEnabled() ? [GRAPH_SHAPE_WORKFLOW] : []), ...(await listWorkflows())]
+      .map((wf) => ({ ...wf, needsRepo: graphNeedsRepo(wf, registry) })) });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -11738,6 +12177,7 @@ app.post('/api/workflows/:id/export', async (req, res) => {
   // ── destination 'marketplace' (#717): the plugin goes to a registered marketplace as ONE pull
   //    request on worca/plugin/<name>. dryRun = Preview (clone, build, validate; push nothing).
   if (destination === 'marketplace') {
+    if (!gitAvailable()) return gitMissing(res);   // it clones, commits and pushes with git
     if (typeof body.marketplaceId !== 'string' || !MARKETPLACE_ID_RE.test(body.marketplaceId)) {
       return badRequest(res, 'marketplaceId is required for a marketplace export');
     }
@@ -12135,6 +12575,48 @@ function postAskSystemNotice(threadId, text) {
   } catch { /* thread deleted */ }
 }
 
+const ASK_SCOPE_BUSY = 'wait for this reply to finish before changing the chat scope';
+/** The name a chat scope shows as: the project's or workspace's name (its key when the row is gone), or "No project". */
+async function askScopeLabel(scope) {
+  if (!scope.pinned) return 'No project';
+  try {
+    if (scope.projectKey) return (await listProjects()).find((p) => p.key === scope.projectKey)?.name || scope.projectKey;
+    return (await readWorkspace(scope.workspaceId))?.name || scope.workspaceId;
+  } catch { return scope.projectKey || scope.workspaceId; }
+}
+
+/**
+ * P4 (CONTRACT §4): change a chat's scope — the stored context (page fields kept, target keys replaced), a
+ * "Switched to <name>" divider row when `divider`, and the ask-scope frame every open tab applies to its pill.
+ * Refused (TURN_IN_FLIGHT) while a reply runs: that turn froze its scope at start. Card routes defer through
+ * startScopeEventTurn instead. Its only awaits read synchronous stores, so no turn can start between it and a caller's
+ * startAskTurn.
+ */
+async function switchThreadScope(threadId, scope, { divider = true } = {}) {
+  const sv = askValidateScope(scope);
+  if (!sv.ok) throw Object.assign(new Error(sv.error), { code: 'BAD_SCOPE' });
+  const label = await askScopeLabel(sv.scope);
+  if (askInFlight(threadId)) throw Object.assign(new Error(ASK_SCOPE_BUSY), { code: 'TURN_IN_FLIGHT' });
+  const cur = askGetThread(threadId);
+  if (!cur) throw Object.assign(new Error('thread not found'), { code: 'NOT_FOUND' });
+  askUpdateThread(threadId, { context: withChatScope(cur.context, chatScopeOf(sv.scope)) });
+  if (sv.scope.pinned) {
+    // SEAMS S17 / D6: a chat with a scope asks nothing — its open switch cards close (they render as a receipt).
+    for (const m of askListMessages(threadId)) {
+      for (const b of Array.isArray(m.blocks) ? m.blocks : []) {
+        if (b && b.kind === 'card' && b.state === 'proposed' && b.card && b.card.type === 'scope-switch') flipCard(threadId, b.id, { state: 'closed' });
+      }
+    }
+  }
+  if (divider) {
+    const text = `Switched to ${label}`;
+    const m = askAppendMessage(threadId, { role: 'system', text, blocks: [{ kind: 'divider', text, scope: sv.scope }] });
+    broadcast({ type: 'ask-message', threadId, message: m });
+  }
+  broadcast({ type: 'ask-scope', threadId, scope: sv.scope, label });
+  return { scope: sv.scope, label };
+}
+
 /**
  * Start the oldest queued workflow-card event turn (PD26). A starter resolves {ok:false,status,error}
  * — it never throws — when the reservation fails at START time (403: the turn the user waited on spent
@@ -12354,6 +12836,7 @@ app.post('/api/ask/threads', (req, res) => {
     // Workflows view (D9): the editor's chat is a composer thread — its own toolset, prompt and history list.
     if (body.mode !== undefined && body.mode !== null && body.mode !== 'composer') return badRequest(res, 'mode must be "composer"');
     const thread = askCreateThread({ createdBy: actorOf(req), mode: body.mode === 'composer' ? 'composer' : null });
+    askUpdateThread(thread.id, { context: { pinned: false } });   // P4 (U5): a new chat starts in No project
     if (title) askUpdateThread(thread.id, { title });
     res.status(201).json({ thread: askGetThread(thread.id) });
   } catch (err) {
@@ -12400,19 +12883,34 @@ async function askRunCardExtras(row) {
   } catch { results = null; }            // no results.json, a reclaimed run folder, or junk JSON
   let artifacts = [];
   let moreArtifacts = false;
+  let artifactsTotal = null;
   try {
     // Count on the cheap index rows (no stat), then read (and stat) only the last page.
     const { total, offset } = lastArtifactsWindow(await listArtifacts(row.id), RUN_CARD_ARTIFACTS);
-    const rows = total ? await listRunArtifacts(row.id, { limit: RUN_CARD_ARTIFACTS, offset, browsableOnly: true }) : [];
-    artifacts = rows.map((a) => ({ kind: a.kind, relPath: a.relPath, bytes: a.bytes, nodeId: a.nodeId, cycle: a.cycle }));
-    moreArtifacts = total > RUN_CARD_ARTIFACTS;
+    const pick = (rows) => rows.map((a) => ({ kind: a.kind, relPath: a.relPath, bytes: a.bytes, nodeId: a.nodeId, cycle: a.cycle }));
+    if (isNoProjectKey(row.project_key)) {
+      // P3: a run without a project — its work/ files (the deliverables) first, then its newest other rows; the caption
+      // counts every browsable row (Artifacts · <n>).
+      const work = total ? await listRunArtifacts(row.id, { kind: WORK_ARTIFACT_KIND, limit: RUN_CARD_ARTIFACTS }) : [];
+      const others = work.length < RUN_CARD_ARTIFACTS && total > work.length
+        ? (await listRunArtifacts(row.id, { limit: RUN_CARD_ARTIFACTS, offset, browsableOnly: true })).filter((a) => a.kind !== WORK_ARTIFACT_KIND)
+        : [];
+      artifacts = pick([...work, ...others].slice(0, RUN_CARD_ARTIFACTS));
+      artifactsTotal = total;
+      moreArtifacts = total > artifacts.length;
+    } else {
+      const rows = total ? await listRunArtifacts(row.id, { limit: RUN_CARD_ARTIFACTS, offset, browsableOnly: true }) : [];
+      artifacts = pick(rows);
+      moreArtifacts = total > RUN_CARD_ARTIFACTS;
+    }
   } catch { /* the artifact index is best-effort here */ }
   const pr = readPrState(row.id);
   let rounds = [];
   try { rounds = roundsOf([row.id]).get(row.id) || []; } catch { rounds = []; }
   let watch = null;
   try { watch = pr && pr.url ? stoppedWatchFact(getWatch(pr.url)) : null; } catch { watch = null; }
-  return { results, artifacts, moreArtifacts, pr, rounds, watch };
+  const { changes } = folderFacts(row);                // S9: a folder row's { state, counts }; git rows carry none
+  return { results, artifacts, moreArtifacts, ...(artifactsTotal != null ? { artifactsTotal } : {}), pr, rounds, watch, ...(changes ? { changes } : {}) };
 }
 
 // Ask Worca progress card hydration (plan D9): the run's detail state by pipeline id OR live run id, no store key.
@@ -12527,22 +13025,20 @@ app.patch('/api/ask/threads/:id', async (req, res) => {
       patch.model = mv.model;
       patch.effort = mv.effort;
     }
+    let scopeNext = null;
     if (body.scope !== undefined) {
-      // #397: the Ask panel's scope selector. Merged per field into the stored
-      // context — the pin replaces only the target keys, so the last page
-      // context (view, run, diff file) survives a selector change.
+      // #397 / P4: the chat's scope pill. switchThreadScope replaces only the target keys, so the last page
+      // context (view, run, diff file) survives a pill change. Refused while a reply runs (that turn froze its scope).
       const sv = askValidateScope(body.scope);
       if (!sv.ok) return badRequest(res, sv.error);
       const cur = askGetThread(id);
       if (!cur) return res.status(404).json({ error: 'thread not found' });
-      const base = cur.context && typeof cur.context === 'object' && !Array.isArray(cur.context) ? { ...cur.context } : {};
-      delete base.projectDir;
-      delete base.projectKey;
-      delete base.workspaceId;
-      delete base.projectSource;
-      patch.context = { ...base, ...sv.scope };
+      if (askInFlight(id)) return res.status(409).json({ error: ASK_SCOPE_BUSY, code: 'TURN_IN_FLIGHT' });
+      scopeNext = { body: sv.scope, divider: !sameScope(chatScopeOf(cur.context), chatScopeOf(sv.scope)) && askListMessages(id).length > 0 };
     }
-    const thread = askUpdateThread(id, patch);
+    // After every field is validated. The label lookup only reads synchronous stores, so the catch is a guard.
+    if (scopeNext) { try { await switchThreadScope(id, scopeNext.body, { divider: scopeNext.divider }); } catch (err) { if (err.code === 'TURN_IN_FLIGHT') return res.status(409).json({ error: ASK_SCOPE_BUSY, code: 'TURN_IN_FLIGHT' }); throw err; } }
+    const thread = Object.keys(patch).length ? askUpdateThread(id, patch) : askGetThread(id);
     if (!thread) return res.status(404).json({ error: 'thread not found' });
     res.json({ thread });
   } catch (err) {
@@ -12745,26 +13241,6 @@ function askRunFromPipelineRow(row) {
   };
 }
 
-/** #397: the user-pinned scope of an ask context — {projectKey} | {workspaceId} | null. */
-function askPinnedScope(context) {
-  if (!context || typeof context !== 'object' || context.pinned !== true) return null;
-  if (typeof context.projectKey === 'string' && context.projectKey) return { projectKey: context.projectKey };
-  if (typeof context.workspaceId === 'string' && context.workspaceId) return { workspaceId: context.workspaceId };
-  return null;
-}
-
-/** #397 per-field merge: the pinned scope replaces the page context's TARGET keys
- *  (projectDir/projectKey/workspaceId); view, run, pipeline and diff-file context
- *  still follow the page. */
-function askApplyPin(ctx, pin) {
-  const out = { ...ctx, pinned: true };
-  delete out.projectDir;
-  delete out.projectKey;
-  delete out.workspaceId;
-  delete out.projectSource;   // MCP registry §9.1: the fallback tag goes with the target keys
-  return { ...out, ...pin };
-}
-
 /** #397 selector PATCH body: {pinned:false} | {pinned:true, projectKey|workspaceId}. */
 function askValidateScope(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, error: 'scope must be an object' };
@@ -12781,7 +13257,7 @@ function askValidateScope(raw) {
  *  cards allowed "for this chat". Never throws: a failure reads as off. */
 function askWebAccessFor(threadId, ctx) {
   try {
-    const pinned = askPinnedScope(ctx || {});
+    const pinned = chatScopeOf(ctx || {});
     return askWebAccess({ projectKey: pinned?.projectKey || null, chatHosts: chatWebHosts(askListMessages(threadId)) });
   } catch (err) {
     console.warn(`[worca-ask] web access resolve failed (${err?.message || err}) — web stays off`);
@@ -12796,7 +13272,7 @@ function askWebAccessFor(threadId, ctx) {
  *  askMcpPromptInput()). Memory is mounted, not rendered. */
 async function askSystemPromptFor(catalog, { web = null, mcp = null, commands = false, engine = 'claude' } = {}) {
   const scripts = { ...(await askScriptPromptInput({ enabled: true })), edits: scriptToolsEnabled() };
-  return askBuildSystemPrompt(catalog, { scripts, deployment: DEPLOYMENT, web, mcp, commands,
+  return askBuildSystemPrompt(catalog, { scripts, deployment: DEPLOYMENT, web, mcp, commands, git: gitAvailable(),
     ...(engine !== 'claude' ? { engine } : {}), ...(shapeFirstEnabled() ? { shape: true } : {}) });
 }
 
@@ -12884,24 +13360,22 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
     if (facts) out.deployment = facts;
   } catch { /* absent line */ }
   if (typeof signedIn === 'string' && signedIn) out.signedIn = signedIn;
-  if (ctx.pinned === true) out.pinned = true;   // #397: rendered as the [pinned by the user] marker
+  const scope = chatScopeOf(ctx);
+  if (scope) out.pinned = true; else out.noProject = true;   // #397: the [pinned by the user] marker; P4: the [No project] line
   if (ctx.timeZone) out.timeZone = ctx.timeZone;   // validated IANA name; the header adds the user's clock
   if (ctx.view) out.view = ctx.view;
   if (ctx.diffPath) out.diffPath = ctx.diffPath;   // client-supplied, already length-checked by validateClientContext
   if (ctx.runPage) out.runPage = ctx.runPage;       // an enum (RUN_PAGE_PARTS), validated the same way
   try {
-    // MCP registry §9.1: a fallback-tagged projectDir (the dropdown on a page about no project) names nothing.
-    const dir = ctx.projectSource === 'fallback' ? null : ctx.projectDir;
-    if (ctx.projectKey || dir) {
-      const projects = await listProjects();
-      const p = projects.find((x) =>
-        (ctx.projectKey && x.key === ctx.projectKey) || (dir && x.path === dir));
+    // P4: the project line comes from the chat scope only (by key), never from a projectDir.
+    if (scope?.projectKey) {
+      const p = (await listProjects()).find((x) => x.key === scope.projectKey);
       if (p) out.project = { name: p.name, key: p.key };
     }
   } catch { /* absent line */ }
   try {
-    if (ctx.workspaceId) {
-      const ws = await readWorkspace(ctx.workspaceId);
+    if (scope?.workspaceId) {
+      const ws = await readWorkspace(scope.workspaceId);
       if (ws) {
         // readWorkspace returns {id, name, projectPaths, projectKeys, …} — there
         // is NO per-member name object (the {projectName} shape is a local
@@ -12947,7 +13421,7 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
   } catch { /* absent line */ }
   try {
     if (ctx.pipelineId) {
-      const run = askRunByPipelineId(ctx.pipelineId, ctx.workspaceId ? `workspaces/${ctx.workspaceId}` : out.project?.key);
+      const run = askRunByPipelineId(ctx.pipelineId, scope?.workspaceId ? `workspaces/${scope.workspaceId}` : out.project?.key);
       if (run) out.run = run;
     } else if (ctx.runId) {
       const run = askLiveRun(ctx.runId);
@@ -12981,7 +13455,7 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
         // Workflows chat (D13): a composer card names its type, state and name — never the run-card shape.
         const cc = composerHeaderCard(b);
         if (cc) { cards.push(cc); continue; }
-        if (b.card && (b.card.type === 'metrics' || b.card.type === 'policy' || b.card.type === 'clone' || b.card.type === 'web' || b.card.type === 'workspace' || b.card.type === 'actions' || b.card.type === 'away')) {
+        if (b.card && (b.card.type === 'metrics' || b.card.type === 'policy' || b.card.type === 'clone' || b.card.type === 'web' || b.card.type === 'workspace' || b.card.type === 'actions' || b.card.type === 'away' || b.card.type === 'scope-switch' || b.card.type === 'project')) {
           cards.push({ id: b.id, type: b.card.type, state: b.state, summary: b.card.summary || '' });
           continue;
         }
@@ -13070,9 +13544,10 @@ async function askEventPick(threadId, thread) {
  * cannot interleave (the route's earlier checks are only the fast-path 4xx). Resolves {ok:false,status,error} for the
  * 403/409/429 cases the message route maps to HTTP; {ok:true,…} once the turn is running.
  * @param {{threadId:string, thread:object, ctx:object, model:string, effort:string, text:string,
- *          files?:Array, synthetic?:{notice:string}|null}} o
+ *          files?:Array, synthetic?:{notice:string, quiet?:boolean}|null}} o
  *   text      what the MODEL gets as the user message: the typed text, or the `[worca event] …` line (synthetic)
- *   synthetic the user row renders as a notice (never a bubble) and never titles the thread (PD6)
+ *   synthetic the user row renders as a notice (never a bubble) and never titles the thread (PD6); quiet: the
+ *             transcript shows nothing for it — the divider or the answered card already says it
  */
 /** The identity Ask Worca's header shows: resolved like every other attribution, absent for 'local'. */
 function askSignedIn(req) {
@@ -13130,7 +13605,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     // P3: a synthetic row keeps the EVENT as its text (buildRestoredPrompt replays it truthfully) and carries the
     // human notice as a block the panel renders instead of a bubble.
     const userMsg = askAppendMessage(id, synthetic
-      ? { role: 'user', text, blocks: [{ kind: 'notice', synthetic: true, text: synthetic.notice }] }
+      ? { role: 'user', text, blocks: [{ kind: 'notice', synthetic: true, ...(synthetic.quiet ? { quiet: true } : {}), text: synthetic.notice }] }
       : { role: 'user', text });
     job.userMessageId = userMsg.id;
     const attRows = files.map((f) => askAddAttachment(id, userMsg.id, { name: f.name, kind: f.kind, mime: f.mime, text: f.text, data: f.data }));
@@ -13146,7 +13621,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
       // P3: keep the synthetic notice in front of the attachment blocks (unreachable today — event turns pass no files — but
       // an unconditional overwrite would silently drop the notice for a future caller).
       askSetMessageBlocks(userMsg.id, [
-        ...(synthetic ? [{ kind: 'notice', synthetic: true, text: synthetic.notice }] : []),
+        ...(synthetic ? [{ kind: 'notice', synthetic: true, ...(synthetic.quiet ? { quiet: true } : {}), text: synthetic.notice }] : []),
         ...attRows.map((a) => ({ kind: 'attachment', id: a.id, name: a.name, bytes: a.bytes, attKind: a.kind, mime: a.mime })),
       ]);
     }
@@ -13170,7 +13645,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     }
     // Web access (docs/guardrails.md "Web access"): resolved ONCE per turn — local settings ⊕ the pinned project's
     // team policy — so the prompt section, the sub-agent note and the MCP child's tools agree.
-    const pinned = askPinnedScope(ctx);
+    const pinned = chatScopeOf(ctx);   // P4: the chat scope, null = No project — proposal default + scope gate
     const web = askWebAccessFor(id, ctx);
     // MCP registry §9.1–9.3: General + the targets in play (the tagged dropdown fallback excluded), minus the chat's
     // picker choices — resolved ONCE per turn, so the per-turn file, the spawn and the prompt section agree.
@@ -13347,16 +13822,11 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
       if (!pc.ok) return badRequest(res, pc.error);
       composerState = pc.value;
     }
-    // #397: explicit pin beats page context, per field. A context carrying its own
-    // `pinned` verdict is authoritative — the selector-aware client already merged
-    // (true) or explicitly chose Auto (false). A context WITHOUT one comes from a
-    // pre-selector tab, and inherits the thread's stored pin so a stale tab can
-    // never silently unpin (or re-scope) the conversation.
-    let ctx = cv.context;
-    if (ctx.pinned === undefined) {
-      const inherited = askPinnedScope(thread.context);
-      if (inherited) ctx = askApplyPin(ctx, inherited);
-    }
+    // P4 (CONTRACT §4): the chat scope this message runs in. A context carrying `pinned` is authoritative — the scope
+    // pill sent it (false = No project: no page target rides along). A context without it (a pre-#397 tab, an API
+    // caller) keeps the thread's stored scope, else the projectKey / workspaceId it names; a projectDir never does.
+    const scope = cv.context.pinned === undefined ? (chatScopeOf(thread.context) || chatScopeOf(cv.context)) : chatScopeOf(cv.context);
+    const ctx = withChatScope(cv.context, scope);
 
     // §7.3 — validate EVERY attachment before ANY write (all-or-nothing).
     const files = [];
@@ -13407,6 +13877,12 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
       }
     }
 
+    // P4: a send that changes the chat scope (a pick the PATCH refused mid-turn, a second tab, an API caller's first
+    // message) switches first, so every tab's pill follows; a chat with messages gets the divider before the user row.
+    if (!sameScope(chatScopeOf(thread.context), scope)) {
+      try { await switchThreadScope(id, scopeBody(scope), { divider: askListMessages(id).length > 0 }); }
+      catch (err) { if (err.code === 'TURN_IN_FLIGHT') return res.status(409).json({ error: 'turn in flight' }); throw err; }
+    }
     if (composerState) askUpdateThread(id, { composer: composerState });
     const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files, signedIn: askSignedIn(req), reader: askViewer(req), mcpOff: mo.value, agentMode: body.agentMode, client: req.worcaExtension ? 'browser-extension' : null });
     if (!r.ok) return res.status(r.status).json({ error: r.error, ...(r.budget ? { budget: r.budget } : {}) });
@@ -13885,10 +14361,12 @@ async function startWorkflowEventTurn(threadId, block, { declined = false, thenR
   const notice = workflowNoticeText({ state, name: card.name, matched: !declined && card.adopted === true, thenRun });
   const mv = await askEventPick(threadId, thread);
   if (!mv) return failedEventTurn(threadId, { error: 'no model available', status: 503 });
-  const start = () => startAskTurn({
-    threadId, thread: askGetThread(threadId) || thread, ctx: thread.context || {},
-    model: mv.model, effort: mv.effort, text, synthetic: { notice },
-  });
+  const start = () => {
+    // The context is read when the turn starts, never when the event was queued: a scope switch queued ahead of it
+    // must not be undone (P4, C Note 5).
+    const t = askGetThread(threadId) || thread;
+    return startAskTurn({ threadId, thread: t, ctx: t.context || {}, model: mv.model, effort: mv.effort, text, synthetic: { notice } });
+  };
   if (askInFlight(threadId)) {
     // PD5/PD26: the flip stands and the reply waits — settleJob drains the queue
     // when the running turn ends, and a starter that cannot reserve a slot then
@@ -13916,8 +14394,10 @@ async function startTerminalEventTurn(threadId, block) {
   if (!mv) return failedEventTurn(threadId, { error: 'no model available', status: 503 });
   const start = async () => {
     if (askCommands.seen(id)) return { ok: false, skipped: true };
-    return startAskTurn({ threadId, thread: askGetThread(threadId) || thread, ctx: thread.context || {},
-      model: mv.model, effort: mv.effort, text, synthetic: { notice } });
+    // The context is read when the turn starts, never when the event was queued: a scope switch queued ahead of it
+    // must not be undone (P4, C Note 5).
+    const t = askGetThread(threadId) || thread;
+    return startAskTurn({ threadId, thread: t, ctx: t.context || {}, model: mv.model, effort: mv.effort, text, synthetic: { notice } });
   };
   if (askInFlight(threadId)) {
     if (!askDeferred.has(threadId)) askDeferred.set(threadId, []);
@@ -13937,17 +14417,61 @@ async function startMetricsEventTurn(threadId, block) {
   const state = block.state === 'declined' ? 'declined' : block.state === 'failed' ? 'failed' : 'applied';
   const result = card.result || null;
   // One event turn for every non-workflow card; the type picks the wording. Metrics is the fallback.
-  const kind = card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' ? card.type : 'metrics';
-  const eventPrompt = { policy: policyEventPrompt, schedule: scheduleEventPrompt, model: modelEventPrompt, clone: cloneEventPrompt, web: webEventPrompt, workspace: workspaceEventPrompt, actions: actionsEventPrompt, away: awayEventPrompt, metrics: metricsEventPrompt }[kind];
-  const noticeText = { policy: policyNoticeText, schedule: scheduleNoticeText, model: modelNoticeText, clone: cloneNoticeText, web: webNoticeText, workspace: workspaceNoticeText, actions: actionsNoticeText, away: awayNoticeText, metrics: metricsNoticeText }[kind];
+  const kind = card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'project' ? card.type : 'metrics';
+  const eventPrompt = { policy: policyEventPrompt, schedule: scheduleEventPrompt, model: modelEventPrompt, clone: cloneEventPrompt, web: webEventPrompt, workspace: workspaceEventPrompt, actions: actionsEventPrompt, away: awayEventPrompt, project: projectEventPrompt, metrics: metricsEventPrompt }[kind];
+  const noticeText = { policy: policyNoticeText, schedule: scheduleNoticeText, model: modelNoticeText, clone: cloneNoticeText, web: webNoticeText, workspace: workspaceNoticeText, actions: actionsNoticeText, away: awayNoticeText, project: projectNoticeText, metrics: metricsNoticeText }[kind];
   const text = eventPrompt({ cardId: block.id, state, card, result });
   const notice = noticeText({ state, card, result });
   const mv = await askEventPick(threadId, thread);
   if (!mv) return failedEventTurn(threadId, { error: 'no model available', status: 503 });
-  const start = () => startAskTurn({
-    threadId, thread: askGetThread(threadId) || thread, ctx: thread.context || {},
-    model: mv.model, effort: mv.effort, text, synthetic: { notice },
-  });
+  const start = () => {
+    // The context is read when the turn starts, never when the event was queued: a scope switch queued ahead of it
+    // must not be undone (P4, C Note 5).
+    const t = askGetThread(threadId) || thread;
+    return startAskTurn({ threadId, thread: t, ctx: t.context || {}, model: mv.model, effort: mv.effort, text, synthetic: { notice } });
+  };
+  if (askInFlight(threadId)) {
+    if (!askDeferred.has(threadId)) askDeferred.set(threadId, []);
+    askDeferred.get(threadId).push(start);
+    return { deferred: true };
+  }
+  const r = await start();
+  if (r.ok) return { assistantMessageId: r.assistantMessageId };
+  return failedEventTurn(threadId, { error: r.error, status: r.status, ...(r.budget ? { budget: r.budget } : {}) });
+}
+
+/** P4: the user's message a scope card continues — the newest typed user row before the card's message (event rows
+ *  are synthetic and never count), else ''. */
+function askScopeCardUserText(threadId, cardMessage) {
+  const seq = cardMessage && Number.isFinite(cardMessage.seq) ? cardMessage.seq : Infinity;
+  let text = '';
+  for (const m of askListMessages(threadId)) {
+    if (m.seq >= seq) break;
+    if (m.role !== 'user') continue;
+    if ((Array.isArray(m.blocks) ? m.blocks : []).some((b) => b && b.synthetic)) continue;
+    text = m.text || '';
+  }
+  return text;
+}
+
+/** P4 (CONTRACT §4): switch the chat (when `scope` is given) and start the event turn that continues the user's
+ *  message — or queue both while a reply runs (PD5/PD26), so the scope never changes under a running turn. The
+ *  switch and the turn's reservation have no I/O between them. P2's create card uses it too (U7). */
+async function startScopeEventTurn(threadId, { scope = null, text, notice }) {
+  const thread = askGetThread(threadId);
+  if (!thread) return null;
+  const mv = await askEventPick(threadId, thread);
+  const start = async () => {
+    if (scope) {
+      const cur = askGetThread(threadId);
+      try { await switchThreadScope(threadId, scope, { divider: !sameScope(chatScopeOf(cur?.context), chatScopeOf(scope)) }); }
+      catch (err) { return { ok: false, status: err.code === 'TURN_IN_FLIGHT' ? 409 : 500, error: err.message }; }
+    }
+    // CONTRACT §4 / U7: the pick switches the chat even when no model can continue the message.
+    if (!mv) return { ok: false, status: 503, error: 'no model available' };
+    const t = askGetThread(threadId) || thread;
+    return startAskTurn({ threadId, thread: t, ctx: t.context || {}, model: mv.model, effort: mv.effort, text, synthetic: { notice, quiet: true } });
+  };
   if (askInFlight(threadId)) {
     if (!askDeferred.has(threadId)) askDeferred.set(threadId, []);
     askDeferred.get(threadId).push(start);
@@ -14024,6 +14548,27 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       const block = flipCard(id, cardId, next.patch);
       if (!block) return res.status(409).json({ error: 'card vanished' });
       return res.json({ block });
+    }
+    if (found.block.card && found.block.card.type === 'scope-switch') {
+      // P4 (CONTRACT §4): the scope ask card answers once. A project pick switches the chat and continues the user's
+      // message in it; "none" (Continue without project) keeps No project and continues it there.
+      const card = found.block.card;
+      const keys = (Array.isArray(card.candidates) ? card.candidates : []).map((c) => c && c.projectKey).filter((k) => typeof k === 'string');
+      const choice = typeof body.choice === 'string' ? body.choice : '';
+      if (choice !== 'none' && !keys.includes(choice)) return badRequest(res, 'choice must be one of the card\'s projects or "none"');
+      if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
+      askCardBusy.add(cardId);
+      try {
+        const pick = choice === 'none' ? null : (await listProjects()).find((p) => p.key === choice) || null;
+        if (choice !== 'none' && !pick) return res.status(409).json({ error: 'that project is no longer registered', code: 'PROJECT_GONE' });
+        const block = flipCard(id, cardId, { state: 'answered', card: { choice } });
+        if (!block) return res.status(409).json({ error: 'card vanished' });
+        const state = pick ? 'switched' : 'declined';
+        const text = scopeEventPrompt({ cardId, state, projectKey: pick?.key ?? null, name: pick?.name ?? '', keys, userText: askScopeCardUserText(id, found.message) });
+        const turn = await startScopeEventTurn(id, { scope: pick ? { pinned: true, projectKey: pick.key } : null, text, notice: scopeNoticeText({ state, name: pick?.name ?? '' }) });
+        return res.json({ block, turn });
+      } finally { askCardBusy.delete(cardId); }
     }
     if (found.block.card && found.block.card.type === 'receipt') {
       // worca Chat P2 (R6): a receipt is applied already — its one verb is Revert, through the path the change took
@@ -14311,6 +14856,43 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       if (block.state === 'failed') return res.json({ block, turn: await startMetricsEventTurn(id, block) });
       followCloneCard(id, cardId, job);
       return res.json({ block });
+    }
+    if (found.block.card && found.block.card.type === 'project') {
+      // Project card: proposed → applied | failed | declined. The folder / registry write happens HERE, behind the click
+      // (Task 3's core); applied switches the chat to the new project through startScopeEventTurn (S40).
+      if (body.state !== 'applied' && body.state !== 'declined') return badRequest(res, 'state must be "applied" or "declined"');
+      if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
+      if (body.state === 'declined') {
+        const block = flipCard(id, cardId, { state: 'declined' });
+        if (!block) return res.status(409).json({ error: 'card vanished' });
+        return res.json({ block, turn: await startMetricsEventTurn(id, block) });
+      }
+      askCardBusy.add(cardId);
+      let block; let result;
+      try {
+        try {
+          const card = found.block.card; const ch = card.change || {};
+          if (ch.kind === 'add' && fsLimitedHere(req)) {
+            const p = normalizeProjectPath(ch.path);
+            if (!p || !(await checkInside(p, await fsAllowedRoots())).inside) {
+              throw Object.assign(new Error(outsideAllowedMessage(p || String(ch.path))), { code: FS_OUTSIDE_ALLOWED });
+            }
+          }
+          await pinUiLevel();
+          const { project } = await applyProjectChange(card);
+          result = { ok: true, project: { key: project.key, name: project.name, path: project.path, displayPath: displayPath(project.path), vcs: project.vcs },
+            scope: { pinned: true, projectKey: project.key } };
+          try { afterProjectRegistered(project); } catch { /* a broadcast never fails the card */ }
+        } catch (err) { result = { ok: false, code: (err && err.code) || 'FAILED', error: err && err.message ? err.message : String(err) }; }
+        block = flipCard(id, cardId, result.ok ? { state: 'applied', card: { result } } : { state: 'failed', error: result.error, card: { result } });
+      } finally { askCardBusy.delete(cardId); }
+      if (!block) return res.status(409).json({ error: 'card vanished' });
+      if (block.state !== 'applied') return res.json({ block, turn: await startMetricsEventTurn(id, block) });
+      const turn = await startScopeEventTurn(id, { scope: result.scope,
+        text: projectEventPrompt({ cardId, state: 'applied', card: block.card, result }),
+        notice: projectNoticeText({ state: 'applied', card: block.card, result }) });
+      return res.json({ block, turn });
     }
     if (found.block.card && ['metrics', 'policy', 'away'].includes(found.block.card.type)) {
       // Metrics / policy card (docs/team-metrics.md, docs/team-policy.md "Chat"): proposed → applied | failed |
@@ -14862,6 +15444,8 @@ function pluginErrorStatus(code) {
   if (code === 'BAD_REQUEST') return 400;
   if (code === 'REFERENCED') return 409;
   if (code === 'EXISTS') return 409;
+  if (code === 'GIT_MISSING') return 409;
+  if (typeof code === 'string' && code.startsWith('GITHUB_')) return 502;   // P6: GitHub answered (or not) over HTTPS
   return 500;
 }
 function sendPluginError(res, err) {
@@ -14869,7 +15453,7 @@ function sendPluginError(res, err) {
   if (err && (err.name === 'ReferencedError' || err.code === 'REFERENCED')) {
     return res.status(409).json({ error: message, references: err.references || [] });
   }
-  res.status(pluginErrorStatus(err && err.code)).json({ error: message });
+  res.status(pluginErrorStatus(err && err.code)).json({ error: message, ...(err?.code === 'GIT_MISSING' ? { code: 'GIT_MISSING' } : {}) });
 }
 
 // Load the installed manifest through the current/ symlink. null = broken
@@ -14919,7 +15503,7 @@ app.get('/api/plugins', async (req, res) => {
 function withInstalled(list) {
   const lock = readPluginsLock();
   return (list || []).map((m) => ({
-    ...m, plugins: (m.plugins || []).map((p) => ({ ...p, installed: !!lock[p.name] })),
+    ...m, ...(marketplaceNeedsGit(m.url) ? { needsGit: true } : {}), plugins: (m.plugins || []).map((p) => ({ ...p, installed: !!lock[p.name] })),
   }));
 }
 
@@ -14931,8 +15515,12 @@ app.get('/api/marketplaces', (req, res) => {
 
 // Export → Worca plugin → Marketplace (#717): the marketplaces a pull request can go to (GitHub /
 // Azure DevOps remotes inside WORCA_CLONE_ALLOW when set) and the rest with why — from the stored list, no network.
+// Without git none can take one: the export clones and pushes with git.
 app.get('/api/marketplaces/publish-targets', (_req, res) => {
-  try { res.json(listPublishTargets()); }
+  try {
+    if (!gitAvailable()) return res.json({ targets: [], skipped: listMarketplaces().map((m) => ({ id: m.id, name: m.name || m.id, reason: 'needs git' })) });
+    res.json(listPublishTargets());
+  }
   catch (err) { res.status(500).json({ error: err && err.message ? err.message : String(err) }); }
 });
 
@@ -15709,7 +16297,8 @@ function hostedGitRefusal(url) {
 function sendSkillsError(res, err) {
   if (err instanceof skLibrary.SkillLibraryError || err instanceof McpStoreError) {
     return res.status(err.status || 400).json({ error: err.message,
-      ...(Array.isArray(err.candidates) ? { candidates: err.candidates } : {}), ...(Array.isArray(err.problems) ? { problems: err.problems } : {}) });
+      ...(Array.isArray(err.candidates) ? { candidates: err.candidates } : {}), ...(Array.isArray(err.problems) ? { problems: err.problems } : {}),
+      ...(err.code === 'GIT_MISSING' ? { code: err.code } : {}) });
   }
   res.status(500).json({ error: err?.message || String(err) });
 }
@@ -16624,6 +17213,13 @@ if (isMain) {
     }
   }
 
+  // The git answer resolved at import (the `await gitState()` after preflightDeps), logged once at boot.
+  {
+    const g = currentGitState();
+    console.log(g.available ? `[worca-ui] git ${g.version || '(WORCA_GIT=1)'}${g.path ? ` at ${g.path}` : ''}`
+      : `[worca-ui] git: not available (${g.reason}); git features are hidden`);
+  }
+
   try {
     seedBuiltinMarketplace();
   } catch (err) {
@@ -16749,15 +17345,15 @@ export { app, server, runs };
 export const _testing = {
   wireRun, summarizeRuns, scanRequest, fireTicket, afterMembersChanged, markResumedRescan, wireAgentGen, startAgentGen, wireScriptBench, startScriptBench,
   chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork, answerRun,
-  chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor,
-  startCloneJob, followCloneCard, CLONE_JOBS,
+  chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor, switchThreadScope,
+  startCloneJob, followCloneCard, CLONE_JOBS, GIT_ONLY_ROUTES,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
   askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor,
   uiControl, bearerMatches,
   broadcast, askFilesRunDir,
-  validateResumeTarget, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
+  validateResumeTarget, resumeTargetDirs, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
   trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
-  askCommandBridge, askCommands, askCommandsEnabled, drainAskDeferred, terminals, prWatcher, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
+  askCommandBridge, askCommands, askCommandsEnabled, askCommandTarget, drainAskDeferred, startScopeEventTurn, startTerminalEventTurn, terminals, prWatcher, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
   prWatcherDeps, askPrFixRun, askLinkIsPrFix, prFixRoundOf,
   applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps, askShapeAction,
   openSliceDraft, afterRunSettled, offerShipCard, syncShipCard, draftReleasesOnMerge,

@@ -1,6 +1,7 @@
 {
   "key": "promoCapture",
   "metaVersion": 2,
+  "needsRepo": true,
   "mockRole": "generic-producer",
   "promptHints": "Start the app per the runbook in a sandbox (temporary HOME, its own port, demo data), capture every plate in the storyboard shot list with promo-kit/capture/lib.mjs, run the leak guard, stop everything you started. runbook.ui === false: an empty manifest and the reason. Pipeline directory: {pipelineDir}",
   "inputs": [

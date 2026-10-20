@@ -903,6 +903,10 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
       return;
     }
     say('');
+    if (!r.ok && r.status === 409 && r.data?.code === 'GIT_MISSING') {   // its origin is off GitHub and git is missing: say so in the dialog
+      modal.open(`Update ${e.name}`, h(doc, 'span', 'badge waiting pl-needs-git', 'Needs git'), [['Close', 'btn btn-sm', () => modal.close()]]);
+      return;
+    }
     if (!r.ok) { fail(r); return; }
     const { stage, added = [], removed = [], changed = [], inspection = null } = r.data;
     const discard = () => api('DELETE', `/api/skills/import/${enc(stage)}`);

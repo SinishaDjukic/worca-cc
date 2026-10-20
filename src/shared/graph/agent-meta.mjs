@@ -224,6 +224,8 @@ export function normalizeAgentMeta(raw, opts = {}) {
   if (humanEffort) meta.humanEffort = humanEffort;
   if (mockRole) meta.mockRole = mockRole;
   if (raw.wantsRequest) meta.wantsRequest = true;
+  // P3 (U13): the agent expects a code repository in its cwd — a non-blocking hint for runs without a project.
+  if (raw.needsRepo === true) meta.needsRepo = true;
   if (raw.workspaceFanOut) meta.workspaceFanOut = true;
   if (WORKSPACE_STRATEGIES.has(raw.workspaceStrategy)) meta.workspaceStrategy = raw.workspaceStrategy;
   if (workspaceVariantOf) meta.workspaceVariantOf = workspaceVariantOf;

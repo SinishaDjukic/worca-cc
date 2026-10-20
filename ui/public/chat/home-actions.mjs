@@ -1,9 +1,9 @@
-// ui/public/chat/home-actions.mjs — the Chat home's quick actions (worca Chat P6): seven intent tiles, one pinned workflow and
-// More, in the mockup's order. A tile only ARMS the composer (deps.setIntent: the intent chip and its placeholder); nothing is sent
-// until the user sends. Track a run / Explain a diff also open a run picker (Live / Finished) whose pick prefills a
+// ui/public/chat/home-actions.mjs — the Chat home's quick actions (worca Chat P6): six intent tiles, one pinned workflow,
+// Add project and More, in the mockup's order. An intent tile only ARMS the composer (deps.setIntent: the intent chip and
+// its placeholder); nothing is sent until the user sends. Add project opens the Add project dialog (deps.addProject). Track a run / Explain a diff also open a run picker (Live / Finished) whose pick prefills a
 // mention of that run. Every action is a real Ask Worca capability (src/core/ask/tools.mjs):
 //   run propose_run · pinned workflow propose_run (workflowId); Shaper pin propose_run (shape) · workflow propose_workflow · schedule preview_schedule + propose_run · track list_runs + track_run
-//   diff get_run + get_run_diff · script draft_script (+ save_script / test_script) · clone propose_clone_project · away set_away_now
+//   diff get_run + get_run_diff · script draft_script (+ save_script / test_script) · project the Add project dialog (New · Folder · Clone from URL; chat: propose_project_change / propose_clone_project) · away set_away_now
 //   metrics get_team_metrics · model list_models + propose_model_change · workspace propose_workspace_change
 //   remember remember · tasks list_task_sources + find_tasks
 import { toggleMenu } from '../workflows/menu.mjs';
@@ -13,16 +13,21 @@ import { homeIcon } from './home-icons.mjs';
 import { DEFAULT_HOME_PINS, visiblePins, splitPins, unpinWorkflow } from '../../../src/shared/home-pins.mjs';
 
 // Shaper is no longer a built-in tile: it is the default PIN (src/shared/home-pins.mjs).
-export const TILE_INTENTS = Object.freeze(['run', 'workflow', 'schedule', 'track', 'diff', 'script', 'clone']);
+export const TILE_INTENTS = Object.freeze(['run', 'workflow', 'schedule', 'track', 'diff', 'script']);
+/** Tiles that do something other than arm an intent: Add project opens the dialog on New (deps.addProject). */
+export const TILE_ACTIONS = Object.freeze(['project']);
+export const PROJECT_TILE = Object.freeze({ label: 'Add project', icon: 'project' });
 export const MORE_INTENTS = Object.freeze(['away', 'metrics', 'model', 'workspace', 'remember', 'tasks']);
 /** The interface mode each action belongs to: the level of the page or surface that owns the feature
  *  (app.js VIEW_MIN_LEVEL / SETTINGS_TAB_MIN_LEVEL, docs/ui-levels.md). */
 export const ACTION_LEVEL = Object.freeze({
-  run: 'simple', shape: 'simple', workflow: 'simple', schedule: 'advanced', track: 'simple', diff: 'advanced', script: 'simple', clone: 'simple',
+  run: 'simple', shape: 'simple', workflow: 'simple', schedule: 'advanced', track: 'simple', diff: 'advanced', script: 'simple', project: 'simple',
   away: 'simple', metrics: 'expert', model: 'expert', workspace: 'advanced', remember: 'advanced', tasks: 'advanced', more: 'simple',
 });
 /** Actions a server-side switch can take away: action → key of the flags the home loads (deps.flags). */
 export const ACTION_FLAG = Object.freeze({ script: 'scripts', tasks: 'tasks', shape: 'shapeFirst' });
+/** Actions that need git: their tiles carry data-needs-git, hidden while git is missing (git-gate.mjs). */
+export const ACTION_NEEDS_GIT = Object.freeze(['diff']);
 /** Before the flags load: script tools on (the setting's default), task sources unknown = none, Shape it first off
  *  until a hello turns it on. */
 export const DEFAULT_FLAGS = Object.freeze({ scripts: true, tasks: false, shapeFirst: false });
@@ -64,6 +69,7 @@ export function createQuickActions({ doc, deps, getRuns = () => ({ live: [], fin
     b.type = 'button';
     b.className = 'chat-home-act';
     b.dataset.minLevel = ACTION_LEVEL[id] || 'simple';
+    if (ACTION_NEEDS_GIT.includes(id)) b.dataset.needsGit = '';
     b.appendChild(homeIcon(doc, icon, 20));
     const l = doc.createElement('span');
     l.className = 'chat-home-act-l';
@@ -150,7 +156,7 @@ export function createQuickActions({ doc, deps, getRuns = () => ({ live: [], fin
     overflowIds.length = 0;
     for (const b of tiles.values()) delete b.dataset.overflow;
     if (!el.isConnected || !el.clientWidth || el.clientWidth <= 640) return;
-    const order = TILE_INTENTS.filter((id) => id !== 'run').reverse();
+    const order = [...TILE_INTENTS.filter((id) => id !== 'run'), ...TILE_ACTIONS].reverse();
     for (const id of order) {
       if (el.scrollWidth <= el.clientWidth) break;
       const b = tiles.get(id);
@@ -174,6 +180,13 @@ export function createQuickActions({ doc, deps, getRuns = () => ({ live: [], fin
     tiles.set(id, b);
     el.appendChild(b);
   }
+  for (const id of TILE_ACTIONS) {
+    const b = tile(id, PROJECT_TILE.label, PROJECT_TILE.icon);
+    b.dataset.action = id;
+    b.addEventListener('click', () => { if (deps.addProject) deps.addProject(); });
+    tiles.set(id, b);
+    el.appendChild(b);
+  }
   const more = tile('more', 'More', 'more');
   more.dataset.action = 'more';
   more.classList.add('is-more');
@@ -183,7 +196,9 @@ export function createQuickActions({ doc, deps, getRuns = () => ({ live: [], fin
     const level = typeof deps.level === 'function' ? deps.level() : 'expert';
     const items = [
       // Tiles that did not fit the row come first, in row order; a picker tile keeps its picker.
-      ...overflowIds.map((id) => ({ label: INTENTS[id].label, onSelect: () => (PICKERS[id] ? (deps.setIntent(id, { focus: false }), openPicker(id, more)) : arm(id)) })),
+      ...overflowIds.map((id) => (TILE_ACTIONS.includes(id)
+        ? { label: PROJECT_TILE.label, onSelect: () => { if (deps.addProject) deps.addProject(); } }
+        : { label: INTENTS[id].label, onSelect: () => (PICKERS[id] ? (deps.setIntent(id, { focus: false }), openPicker(id, more)) : arm(id)) })),
       ...moreItems({ level, flags }).map((id) => ({ label: INTENTS[id].label, onSelect: () => arm(id) })),
     ];
     const { overflow } = current();

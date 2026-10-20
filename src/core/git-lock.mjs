@@ -6,6 +6,7 @@
 import { execFile } from 'node:child_process';
 import { stat, unlink } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { gitAvailable } from './git-available.mjs';
 
 // git writes index.lock once, when it takes the lock, so the mtime is the lock's age, not
 // its last activity. No index write that worca or an agent runs should hold it this long;
@@ -14,6 +15,7 @@ export const STALE_INDEX_LOCK_MS = 10 * 60_000;
 
 /** The checkout's index.lock path; asking git covers linked worktrees (.git/worktrees/<n>/). */
 function indexLockPath(cwd) {
+  if (!gitAvailable()) return Promise.resolve(null);
   return new Promise((done) => {
     execFile('git', ['rev-parse', '--git-path', 'index.lock'], { cwd, timeout: 30_000 }, (err, stdout) => {
       done(err ? null : resolve(cwd, String(stdout).trim()));

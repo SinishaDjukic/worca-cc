@@ -29,7 +29,6 @@ export const INTENTS = Object.freeze({
   track: Object.freeze({ label: 'Track a run', icon: 'track', placeholder: 'Which run? Pick one or type its name', lead: 'Track this run here.' }),
   diff: Object.freeze({ label: 'Explain a diff', icon: 'diff', placeholder: 'Which run’s changes?', lead: 'Explain what this run changed.' }),
   script: Object.freeze({ label: 'Write a script', icon: 'script', placeholder: 'What should the script check?', lead: 'Write a script for this.' }),
-  clone: Object.freeze({ label: 'Clone a repo', icon: 'clone', placeholder: 'Paste an https:// repository URL', lead: 'Clone this repository as a new project.' }),
   away: Object.freeze({ label: 'Step away', icon: 'away', placeholder: "I'm away now", lead: 'Turn Away mode on now.', prefill: "I'm away now" }),
   metrics: Object.freeze({ label: 'Team metrics', icon: 'metrics', placeholder: 'Which project or workspace?', lead: 'Show my team metrics.' }),
   model: Object.freeze({ label: 'Add a model', icon: 'model', placeholder: 'Which model or endpoint?', lead: 'Help me add this model.' }),

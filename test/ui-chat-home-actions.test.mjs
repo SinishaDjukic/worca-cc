@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import {
-  createQuickActions, moreItems, actionAvailable, runMention, TILE_INTENTS, MORE_INTENTS, ACTION_LEVEL, DEFAULT_FLAGS, PICKER_MAX,
+  createQuickActions, moreItems, actionAvailable, runMention, TILE_INTENTS, TILE_ACTIONS, MORE_INTENTS, ACTION_LEVEL, DEFAULT_FLAGS, PICKER_MAX,
 } from '../ui/public/chat/home-actions.mjs';
 import { DEFAULT_HOME_PINS } from '../src/shared/home-pins.mjs';
 
@@ -23,6 +23,7 @@ function setup({ runs = { live: [], finished: [] }, level = 'expert', savePins =
     prefill: (text) => calls.push(['prefill', text]),
     savePins: (list) => { calls.push(['savePins', list]); return savePins(list); },
     level: () => level,
+    addProject: () => calls.push(['addProject']),
   };
   const actions = createQuickActions({ doc, deps, getRuns: () => runs });
   doc.body.appendChild(actions.el);
@@ -38,27 +39,30 @@ const win = (s) => s.doc.defaultView;   // setup() returns no dom: build events 
 const WF = [{ id: 'wf_default', name: 'Default' }, { id: 'wf_pay', name: 'Payroll close' }, { id: 'wf_post', name: 'Social post' }];
 const pinTiles = (s) => [...s.doc.querySelectorAll('.chat-home-act[data-pin]')];
 
-test('eight tiles before any pin shows — seven intents and More — each naming its interface level', () => {
+test('eight tiles before any pin shows — six intents, Add project and More — each naming its interface level', () => {
   const s = setup();
   const tiles = [...s.doc.querySelectorAll('.chat-home-act')];
   assert.deepEqual(tiles.map((b) => b.textContent), ['New run', 'Build workflow', 'Schedule a run', 'Track a run',
-    'Explain a diff', 'Write a script', 'Clone a repo', 'More']);
+    'Explain a diff', 'Write a script', 'Add project', 'More']);
   assert.deepEqual(tiles.map((b) => b.dataset.minLevel), ['simple', 'simple', 'advanced', 'simple', 'advanced', 'simple', 'simple', 'simple']);
   assert.ok(tiles.every((b) => b.type === 'button' && b.querySelector('.chat-ic svg')));
   assert.equal(s.actions.el.getAttribute('role'), 'group');
   assert.equal(s.actions.el.getAttribute('aria-label'), 'Quick actions');
   assert.equal(s.more().getAttribute('aria-haspopup'), 'menu');
-  assert.deepEqual([...TILE_INTENTS], ['run', 'workflow', 'schedule', 'track', 'diff', 'script', 'clone']);
+  assert.deepEqual([...TILE_INTENTS], ['run', 'workflow', 'schedule', 'track', 'diff', 'script']);
+  assert.deepEqual([...TILE_ACTIONS], ['project']);
+  assert.equal(ACTION_LEVEL.project, 'simple');
+  assert.equal('clone' in ACTION_LEVEL, false);
   assert.deepEqual([...MORE_INTENTS], ['away', 'metrics', 'model', 'workspace', 'remember', 'tasks']);
   assert.equal(ACTION_LEVEL.metrics, 'expert', 'Team metrics is gated like its page');
   assert.equal(ACTION_LEVEL.tasks, 'advanced', 'Find tasks is gated like the task source picker');
 });
 
-test('a tile only arms the composer: setIntent, focus on the composer, nothing sent, no menu', () => {
+test('a tile only arms the composer: setIntent, focus on the composer, nothing sent, no menu; Add project opens the dialog instead', () => {
   const s = setup();
   s.tile('run').click();
-  s.tile('clone').click();
-  assert.deepEqual(s.calls, [['setIntent', 'run', null], ['setIntent', 'clone', null]]);
+  s.doc.querySelector('.chat-home-act[data-action="project"]').click();
+  assert.deepEqual(s.calls, [['setIntent', 'run', null], ['addProject']]);
   assert.equal(s.menu(), null);
 });
 
@@ -121,7 +125,7 @@ test('More lists only what the level and the feature switches allow', () => {
   assert.equal(e.menu(), null, 'More toggles');
 });
 
-test('switches: script tools off hides Write a script; Clone has no off switch; task sources default to unknown = off', () => {
+test('switches: script tools off hides Write a script; Add project has no off switch; task sources default to unknown = off', () => {
   const s = setup();
   assert.equal(s.tile('script').hidden, false, 'DEFAULT_FLAGS: script tools on until told otherwise');
   s.actions.setFlags({ scripts: false });
@@ -129,7 +133,7 @@ test('switches: script tools off hides Write a script; Clone has no off switch; 
   s.actions.setFlags({ scripts: true });
   assert.equal(s.tile('script').hidden, false);
   assert.deepEqual({ ...DEFAULT_FLAGS }, { scripts: true, tasks: false, shapeFirst: false });
-  assert.equal(actionAvailable('clone', { scripts: false, tasks: false }), true);
+  assert.equal(actionAvailable('project', { scripts: false, tasks: false }), true);
   assert.equal(actionAvailable('tasks', {}), false);
   assert.equal(actionAvailable('tasks', { tasks: true }), true);
   assert.equal(actionAvailable('script', {}), true);
@@ -309,12 +313,14 @@ test('one row: tiles that do not fit move into the top of More, from the end of 
   s.actions.setFlags({ shapeFirst: true });
   fakeLayout(s, 700);                                 // 9 tiles × 100px in 700px: 2 have to go
   s.actions.fit();
-  const hidden = [...s.doc.querySelectorAll('.chat-home-act[data-overflow]')].map((b) => b.dataset.intent);
-  assert.deepEqual(hidden, ['script', 'clone'], 'the tail goes first');
+  const hidden = [...s.doc.querySelectorAll('.chat-home-act[data-overflow]')].map((b) => b.dataset.intent || b.dataset.action);
+  assert.deepEqual(hidden, ['script', 'project'], 'the tail goes first');
   assert.equal(s.tile('run').dataset.overflow, undefined);
   assert.equal(s.tile('shape').dataset.overflow, undefined, 'a pin never overflows');
   s.more().click();
-  assert.deepEqual(s.items().slice(0, 2).map((i) => i.textContent), ['Write a script', 'Clone a repo'], 'overflowed tiles lead More, in row order');
+  assert.deepEqual(s.items().slice(0, 2).map((i) => i.textContent), ['Write a script', 'Add project'], 'overflowed tiles lead More, in row order');
+  s.items()[1].click();
+  assert.deepEqual(s.calls.at(-1), ['addProject'], 'Add project from More opens the dialog, as its tile does');
 });
 
 test('one row: a wide row shows every tile, and a narrow (phone grid) home never hides any', () => {

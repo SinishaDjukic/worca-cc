@@ -167,8 +167,8 @@ Two rules:
 - **One home per install.** The container's `/worca` volume and a host
   `~/.worca-cc` are two Worcas with two histories. Never mount the host home into
   the container.
-- The native folder dialog does not exist in the box; **Add project** uses the
-  in-app folder browser, which starts at your projects root.
+- The native folder dialog does not exist in the box. **Add project** opens on **New** (a project by name in your projects root); its **Folder**
+  tab's **Choose folder…** uses the in-app folder browser, which starts at your projects root.
 
 ### Clone-in mode
 

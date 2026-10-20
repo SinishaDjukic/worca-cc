@@ -9,7 +9,8 @@ Worca turns a task into **reviewed, merge-ready work**. It is a
 work, and a state machine runs the agents of a workflow in sequence — by
 default **Clarify → Plan → Refine → Implement → Review** — looping until the
 work clears quality gates, pausing to ask *you* the questions that matter, and
-keeping every run isolated in its own git worktree and branch. Pick **Auto**
+keeping every run isolated in its own git worktree and branch — or, for a plain
+folder, on a copy you apply back with **Apply to folder**; with **No project**, in a folder of its own. Pick **Auto**
 and Worca chooses the workflow for the task, draw your own in **Workflows** (or
 ask its chat to build it), or start the shipped **Presentation** workflow to turn a brief into
 a slide deck, **Architecture (C4)** to keep a diagram of your code that
@@ -75,6 +76,12 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 (the clarify answers and any mid-run questions), and at Expert **Logs** and
 **Agents**. Diff, Artifacts and Actions start at Advanced (see
 [UI levels](docs/ui-levels.md)).
+A run in a Folder project works on a copy: in place of **Diff** and **Actions** it
+has **Changes** (every file it added, updated or deleted, at every level), and you
+land it with **Apply to folder** (files changed in the folder since the run started
+are skipped and listed in the dialog) or **Discard**.
+A run with **No project** works in its own folder: it opens on **Artifacts** at every
+level and has no **Diff**, **Changes** or **Actions**.
 
 ![A finished run, "CSV export for contacts", on its Diff tab: 4 files changed (+36 −0) in a file tree beside the highlighted patch of src/routes/contacts.js, with the run's worca-cc/ branch, its time and cost, and the Create PR and Publish branch buttons](docs/screenshots/run-detail.png)
 
@@ -382,11 +389,12 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 
 ### Workspaces
 
-- **Multi-project workspaces** — group 2–40 related repos under **Workspaces** (Advanced
-  level): **Create workspace**, pick the projects — or bring repos straight in with **Add…** or a
-  pasted list (a repo, a folder of repos, a VS Code `.code-workspace` file; a ticked repo that is
-  not a project yet becomes one) — **Scan interconnections**; the workspace is saved when that scan ends.
-  **Add projects** / **Remove** on its Overview tab re-scan the new set.
+- **Multi-project workspaces** — group 2–40 related projects — Git repositories or Folder
+  projects — under **Workspaces** (Advanced level): **Create workspace**, pick the projects —
+  or bring repos straight in with **Add…** or a pasted list (a repo, a folder of repos, a VS Code
+  `.code-workspace` file; a ticked repo that is not a project yet becomes one) — **Scan
+  interconnections**; the workspace is saved when that scan ends. **Add projects** / **Remove** on
+  its Overview tab re-scan the new set.
 - **A map built from code, with evidence** — the scan is itself a pipeline run that never
   changes a member. Code detectors find REST, gRPC and GraphQL APIs, message queues, build
   dependencies, shared databases and service calls and do the matching; agents fill what
@@ -397,8 +405,9 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   **Reject** an edge, and **Add edge** for one the scan missed. Reviews survive **Re-scan**,
   and the description rendered from the map reaches every agent of a workspace run.
 - **Runs across all members** — in **New pipeline** set **Target** to **Workspace**: one
-  plan tags each task with the projects it touches, implementers edit only those, every
-  member gets its own branch and worktree, and **Workspace Review** reviews each changed
+  plan tags each task with the projects it touches, implementers edit only those, every Git
+  member gets its own branch and worktree, every Folder member its own copy that you apply to
+  its folder (or discard) on its own, and **Workspace Review** reviews each changed
   member and merges the findings into one verdict per review cycle. See
   [`docs/workspace-map.md`](docs/workspace-map.md).
 
@@ -436,6 +445,9 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   chat channels, and MCP servers for the [registry](docs/mcp-servers.md).
   Install from the **Marketplace** page (Advanced) or `worca plugin install`;
   **Add marketplace** (a GitHub URL, `owner/repo` or a local path) is Expert.
+  On a machine without git, marketplaces and installs work for GitHub
+  repositories over HTTPS, a local plugin folder is linked, and other sources
+  say `Needs git`.
   Installing from the UI is an explicit consent ceremony pinned to the commit
   you saw: what's installed, which ask forms an agent can show and which file
   types they may display, which secrets each part requests, where models
@@ -448,8 +460,9 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   its `dev` branch, is registered on every install (nothing is installed until
   you pick it): the GitHub Issues and Azure Boards task sources, the four chat
   channels below, and MCP plugins for Atlassian, Cloudflare, Firebase, Notion
-  and Railway. Set `WORCA_BUILTIN_MARKETPLACE` to another repo URL or a local
-  checkout to use that instead (followed at its HEAD; only committed files count).
+  and Railway. It works without git too (it lives on GitHub). Set
+  `WORCA_BUILTIN_MARKETPLACE` to another repo URL or a local checkout to use
+  that instead (followed at its HEAD; only committed files count).
 - **Tasks from your tracker** — an installed task source adds its button to New
   pipeline › **Task source** (Advanced): search issues or work items, or paste a
   GitHub issue URL or `owner/repo#123`, and the ticket becomes the run's task.
@@ -482,13 +495,15 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   tools of its own (in agent mode, below, it changes files only through commands you ask for). Settings › **Chat** (Advanced) sets the turn limit, a per-turn cost cap, whether it may
   change and test-run your scripts, and opt-in web access with an allowed-domain list; chat spend counts toward the total
   budget, and a team policy can preset the limits or narrow web access, never widen it.
+- **One scope per chat** — the composer's scope pill sets **No project**, a project or a workspace, at every interface level. Changes act only there. When a No-project message is clearly about one of your projects, Ask asks with a card — **Switch to <name>** or **Continue without project** — and the same message continues after you choose; it never switches on its own. A project you create or add from a chat card, the chat home's **Add project** tile or the scope menu's **Add
+  project…** becomes that chat's scope.
 - **Changes are cards you confirm** — work becomes a **run card** (project, workflow, guardrails,
   branches and brief, all editable) that starts nothing until you click **Start run**, or
   **Schedule…** to run it later ([`docs/scheduled-runs.md`](docs/scheduled-runs.md#chat)).
   Ask for "auto", or for work no saved workflow fits, and it drafts a **workflow card** you tune
   and **Save as workflow** — or, when the work needs a script, a gate or a new agent, a graph card with **draft
   cards** for the new agents and scripts. Model and provider, workspace, Actions, team-metrics, team-policy and
-  Away mode changes, cloning a repo and reading a new website are cards too: nothing changes
+  Away mode changes, creating, adding or cloning a project and reading a new website are cards too: nothing changes
   until you apply one. A started run becomes a live card — status, elapsed, cost, its agents and
   its workflow graph, with **Open run** — where you **Pause**, **Resume** or **Stop** the run and
   answer its questions; once it ends, the card shows the result, the top changed files, its
@@ -733,10 +748,18 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   sits beside them in `~/.worca-cc/memory/`.
 - **Keyed by repo identity** — the project key is the repo's folder name plus
   a hash of its root (the parent of the shared `.git`), so every git worktree
-  of a repo shares one history.
+  of a repo shares one history. A plain folder (a **Folder** project) is keyed
+  by its own path.
 - **Move it** — `WORCA_HOME=<dir>` (or Settings › General › **Worca root
   folder**, Advanced) puts everything under `<dir>/.worca-cc/`; only the
   global `settings.json` stays in your home folder.
+- **Projects folder** — **New** (just a name) and **Clone from URL** put
+  projects in `~/.worca-cc/projects/` (it follows `WORCA_HOME` and Settings ›
+  **Worca root folder**); New names the folder in lowercase with `_` for
+  spaces (**Worca Presentation** → `worca_presentation`), the project keeps
+  the name as typed;
+  `WORCA_PROJECTS_ROOT` or Settings › **Projects root folder** moves it.
+  Existing projects stay where they are.
 - **One list for every project** — **Runs** in the sidebar shows live,
   scheduled and finished runs from every project on the machine (see
   [Pipeline](#pipeline)). See [`docs/storage.md`](docs/storage.md).
@@ -795,8 +818,17 @@ Requirements:
 
 - **Node.js >= 22.13.0** — the store is the built-in `node:sqlite`; on an older
   Node the CLI says so and exits.
-- **git** — every run, mock included, works in its own git worktree. The
-  GitHub CLI (`gh`) is optional: it opens pull requests and issues.
+- **git** — pull requests, Check out, Sync, Clone from URL and **Use git** need it
+  (on Windows, Git for Windows' `git.exe` on `PATH`). Without git — on macOS,
+  without the Xcode Command Line Tools — worca still opens and never runs git:
+  it hides the branch, pull-request, Sync and Clone controls, a project run
+  works on a copy of its folder (applied back with **Apply to folder**), a
+  workspace run works on a copy of each member (each applied back on its own), and
+  Workspaces, Marketplace, skill import, Team metrics and Team policy stay:
+  GitHub-hosted sources work over HTTPS and other hosts say `Needs git`;
+  installing git brings everything back without a restart. `WORCA_GIT=0` hides
+  them on purpose, `WORCA_GIT=1` skips the check. The GitHub CLI (`gh`) is
+  optional: it opens pull requests and issues.
 - **The [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI**
   (`claude`) on your `PATH` and signed in (`claude`, then `/login`; an
   `ANTHROPIC_API_KEY` works too) — for real runs only; mock mode starts no
@@ -849,8 +881,8 @@ the `tools/railway/worca-railway.mjs` tool and this repository's
 worca ui            # start it (worca --ui does the same)
 ```
 
-Open the printed URL (default `http://localhost:4317`), add a project (a
-folder, or **Clone from URL**), and
+Open the printed URL (default `http://localhost:4317`), add a project
+(**Projects › Add project**: **New** by name, any **Folder**, or **Clone from URL**), and
 click **New pipeline**: describe the task, pick a workflow and press
 **Start run** — turn on **Mock mode** beside it to try a run offline, with no
 Claude calls and no cost. At the Advanced [UI level](docs/ui-levels.md) the

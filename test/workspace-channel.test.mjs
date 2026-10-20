@@ -9,6 +9,8 @@ import { resolve } from 'node:path';
 
 import { useTempHome } from './helpers/temp-home.mjs';
 import { RunHarness } from '../src/core/run-harness.mjs';
+import { folderMemberFiles } from '../src/core/folder-members.mjs';
+import { WORKSPACE_SCAN_WORKFLOW_ID } from '../src/core/graph/builtin-workflows.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 useTempHome(after);
@@ -43,6 +45,47 @@ test('_workspaceChannel names the workspace and each member\'s live project dir;
       const ch = RunHarness.prototype._workspaceChannel.call({ ...self(), workspace: { name: 'Shop' } });
       assert.equal(ch.workspaceId, 'wks-shop-1234abcd');
       assert.equal(ch.workspaceName, 'Shop');
+    } },
+  ]);
+});
+
+// P5: a Folder member rides the channel and the node roster with its changes file — except on a read-only Workspace
+// scan, which writes no Changes (S51), so its agents are never pointed at a changes file.
+const withFolder = (workflowId) => {
+  const members = [
+    { projectKey: 'api-1111', projectName: 'api', projectDir: '/live/api' },
+    { projectKey: 'notes-9c8d7e6f', projectName: 'notes', projectDir: '/live/notes', workMode: 'folder' },
+  ];
+  const { _memberWorkMode, _folderFilesFor, _isWorkspaceScan } = RunHarness.prototype;
+  return {
+    ...self(), members, memberByKey: new Map(members.map((m) => [m.projectKey, m])),
+    isWorkspace: true, workflowId, runRootMode: 'detached', pipeline: { dir: '/store/pipelines/p-1' },
+    workDirs: new Map([['api-1111', '/wt/api'], ['notes-9c8d7e6f', '/wt/notes']]),
+    checkpointRefs: { 'api-1111': 'a1' },
+    _memberWorkMode, _folderFilesFor, _isWorkspaceScan,
+  };
+};
+
+test('a Folder member carries its changes file on the channel and the node roster, but not on a read-only Workspace scan', async () => {
+  const PATCH = folderMemberFiles('/store/pipelines/p-1', 'notes-9c8d7e6f').patch;
+  await checkRows([
+    { name: '_workspaceChannel: a run names the Folder member\'s changes file; a scan names none', run: () => {
+      const notes = { projectKey: 'notes-9c8d7e6f', projectName: 'notes', projectDir: resolve('/live/notes'), worktreeDir: '/wt/notes',
+        checkpointRef: undefined, graphInstruction: '', workMode: 'folder' };
+      const run = RunHarness.prototype._workspaceChannel.call(withFolder('wf_default'));
+      assert.deepEqual(run.projects[1], { ...notes, changesPatch: PATCH });
+      const scan = RunHarness.prototype._workspaceChannel.call(withFolder(WORKSPACE_SCAN_WORKFLOW_ID));
+      assert.deepEqual(scan.projects[1], notes);
+      assert.deepEqual(scan.projects[0], run.projects[0], 'the Git member is the same either way');
+    } },
+    { name: '_reposCtx: a run names the Folder member\'s changes file; a scan names none', run: () => {
+      const notes = { projectKey: 'notes-9c8d7e6f', projectName: 'notes', dir: '/wt/notes', relDir: 'repos/notes-9c8d7e6f',
+        checkpointRef: null, graphInstruction: '', workMode: 'folder' };
+      const run = RunHarness.prototype._reposCtx.call(withFolder('wf_default'));
+      assert.deepEqual(run[1], { ...notes, changesPatch: PATCH });
+      const scan = RunHarness.prototype._reposCtx.call(withFolder(WORKSPACE_SCAN_WORKFLOW_ID));
+      assert.deepEqual(scan[1], notes);
+      assert.deepEqual(scan[0], run[0], 'the Git member is the same either way');
     } },
   ]);
 });

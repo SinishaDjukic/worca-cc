@@ -29,11 +29,13 @@ function shipBlock(doc, f, deps) {
   const s = f.ship || {};
   const phase = s.mode ? 'applied' : s.ready ? 'ready' : f.status === 'active' ? 'waiting' : null;
   if (!phase) return doc.createDocumentFragment();
-  return renderShipCard(doc, { phase, title: f.title, runs: f.total, files: s.files, added: s.linesAdded, deleted: s.linesRemoved,
+  const card = renderShipCard(doc, { phase, title: f.title, runs: f.total, files: s.files, added: s.linesAdded, deleted: s.linesRemoved,
     suggested: s.suggested, hint: s.hint || null, result: s.result || null }, {
     // The host repaints with deps.error on a failure (the foot shows it), as before.
     onShip: (mode, release) => Promise.resolve(deps.act('ship', { mode, ...(release ? { release } : {}) }, { focus: `ship-${mode}` })),
   });
+  card.dataset.needsGit = '';   // shipping opens pull requests: hidden while git is missing (git-gate.mjs)
+  return card;
 }
 
 /**
@@ -53,7 +55,11 @@ export function renderFeature(doc, f, deps) {
   const log = h('ol', 'chat-rc-log shape-feature-log'); log.setAttribute('aria-label', 'Steps');
   el.appendChild(log);
   paintFeatureLog(doc, log, m.log);
-  if (f.slices.length > 1) el.appendChild(h('div', 'shape-feature-order', 'Merge in order: each run\'s branch starts from the one before.'));
+  if (f.slices.length > 1) {
+    const order = h('div', 'shape-feature-order', 'Merge in order: each run\'s branch starts from the one before.');
+    order.dataset.needsGit = '';
+    el.appendChild(order);
+  }
   el.appendChild(shipBlock(doc, f, deps));
   const foot = h('div', 'shape-feature-actions');
   el.appendChild(foot);
