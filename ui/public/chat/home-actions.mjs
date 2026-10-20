@@ -136,8 +136,28 @@ export function createQuickActions({ doc, deps, getRuns = () => ({ live: [], fin
     const focusId = focused ? focused.dataset.pin : null;
     for (const b of pinEls) b.remove();
     pinEls = current().inline.map(pinTile);
-    for (const b of pinEls) el.insertBefore(b, more);
+    // Priority order: New run, then the pins, then the other built-ins (the tail is what overflows into More first).
+    const after = tiles.get('run');
+    for (const b of pinEls) el.insertBefore(b, after ? after.nextSibling : more);
     if (focused) (pinEls.find((b) => b.dataset.pin === focusId) || pinEls[0] || more).focus({ preventScroll: true });
+    fit();
+  }
+
+  /** One row, never wrapped (priority+): while the row overflows, the last visible built-in tile (never New run, a
+   *  pin or More) moves into More. A narrow home (the 2-column phone grid, ≤ 640px) shows every tile as before. */
+  const overflowIds = [];
+  function fit() {
+    overflowIds.length = 0;
+    for (const b of tiles.values()) delete b.dataset.overflow;
+    if (!el.isConnected || !el.clientWidth || el.clientWidth <= 640) return;
+    const order = TILE_INTENTS.filter((id) => id !== 'run').reverse();
+    for (const id of order) {
+      if (el.scrollWidth <= el.clientWidth) break;
+      const b = tiles.get(id);
+      if (!b || b.hidden || !b.offsetParent) continue;
+      b.dataset.overflow = '';
+      overflowIds.unshift(id);
+    }
   }
 
   for (const id of TILE_INTENTS) {
@@ -161,7 +181,11 @@ export function createQuickActions({ doc, deps, getRuns = () => ({ live: [], fin
   more.setAttribute('aria-expanded', 'false');
   more.addEventListener('click', () => {
     const level = typeof deps.level === 'function' ? deps.level() : 'expert';
-    const items = moreItems({ level, flags }).map((id) => ({ label: INTENTS[id].label, onSelect: () => arm(id) }));
+    const items = [
+      // Tiles that did not fit the row come first, in row order; a picker tile keeps its picker.
+      ...overflowIds.map((id) => ({ label: INTENTS[id].label, onSelect: () => (PICKERS[id] ? (deps.setIntent(id, { focus: false }), openPicker(id, more)) : arm(id)) })),
+      ...moreItems({ level, flags }).map((id) => ({ label: INTENTS[id].label, onSelect: () => arm(id) })),
+    ];
     const { overflow } = current();
     if (overflow.length) {
       items.push({ header: 'Pinned' });
@@ -201,11 +225,16 @@ export function createQuickActions({ doc, deps, getRuns = () => ({ live: [], fin
     renderPins();
   }
   setFlags({});
+  // Re-fit when the row's width changes (window, pane, sidebar); a browser without ResizeObserver keeps the row as is.
+  const view = doc.defaultView;
+  const ro = view && typeof view.ResizeObserver === 'function' ? new view.ResizeObserver(() => fit()) : null;
+  if (ro) ro.observe(el);
   return {
     el,
     setFlags,
     setPins,
     closeMenu,
-    destroy() { closeMenu(); el.remove(); },
+    fit,
+    destroy() { closeMenu(); if (ro) ro.disconnect(); el.remove(); },
   };
 }

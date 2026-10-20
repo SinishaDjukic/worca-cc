@@ -342,7 +342,7 @@ test('the tab-emitter scan flags a bare per-view tab (self-test)', () => {
 
 // Size scale (review A5, C): controls at 28/32/40, tiles 56-64, an info tip's hit target at least 24.
 const CONTROL_HEIGHTS = { '.tab': 32, '.seg button': 28, '.seg.seg-sm button': 24, '.chat-home-preset': 28, '.wfl-chip': 28,
-  '.wfl-folder': 32, '.info-tip': 24, '.chat-home-act': 56 };
+  '.wfl-folder': 32, '.info-tip': 24, '.chat-home-act': 40 };
 const OFF_SCALE = [26, 31, 34, 36, 43, 44, 55, 78];
 const CONTROL_WORD = /^(?:tab|tabs|seg|btn|chip|preset|act|folder|switch|button)$/;
 // Rows, not controls (spec §1.2): allowed at their own height. Each entry names its reason.

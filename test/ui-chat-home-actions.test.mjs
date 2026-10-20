@@ -135,7 +135,7 @@ test('switches: script tools off hides Write a script; Clone has no off switch; 
   assert.equal(actionAvailable('script', {}), true);
 });
 
-test('default pin: Shaper is the 8th tile while the flag is on, with its badge, and arms the shape intent', () => {
+test('default pin: Shaper is the 2nd tile (right after New run) while the flag is on, with its badge, and arms the shape intent', () => {
   const s = setup();
   s.actions.setPins({ pins: DEFAULT_HOME_PINS, workflows: WF });
   assert.equal(s.tile('shape'), null, 'the flag is off until the hello says otherwise');
@@ -147,7 +147,7 @@ test('default pin: Shaper is the 8th tile while the flag is on, with its badge, 
   assert.equal(t.querySelector('.chat-home-act-help'), null);
   assert.equal(t.querySelector('.chat-home-act-badge').textContent, 'Experimental');
   assert.equal(s.tile('run').querySelector('.chat-home-act-badge'), null);
-  assert.equal(t.nextElementSibling, s.more(), 'pins sit after the built-ins, before More');
+  assert.equal(t.previousElementSibling, s.tile('run'), 'pins sit right after New run (priority order)');
   t.click();
   assert.deepEqual(s.calls, [['setIntent', 'shape', null]]);
   s.actions.setFlags({ shapeFirst: false });
@@ -277,20 +277,52 @@ test('only a workflow pin label shrinks: the badged Shaper pin keeps its name wh
   assert.equal(shrink[1], '.chat-home-act.is-pin:not(:has(> .chat-home-act-badge))');
 });
 
-test('QA 1: the Shaper badge sits on its own line at normal size and never truncates', () => {
+test('one row: the Shaper badge sits inline after its label at normal size and never truncates', () => {
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
   const rule = css.match(/^\.chat-home-act-badge\{([^}]*)\}/m)[1];
   assert.match(rule, /white-space:nowrap/);
   assert.match(rule, /font-size:10px/);
-  assert.match(rule, /grid-area:b/);
+  assert.doesNotMatch(rule, /grid-area/);
   assert.doesNotMatch(rule, /text-overflow|overflow:hidden|max-width/);
-  assert.match(css, /^\.chat-home-act:has\(> \.chat-home-act-badge\)\{display:grid;[^}]*grid-template-areas:"ic l" "ic b";/m);
+  assert.doesNotMatch(css, /\.chat-home-act:has\(> \.chat-home-act-badge\)\{display:grid/, 'one row: the badge sits inline after the label');
   assert.doesNotMatch(css, /\.chat-home-act-badge\{font-size:8\.5px/, 'no compact badge');
   assert.doesNotMatch(css, /@container chat-home \(max-width:960px\)/);
 });
 
-test('review B10: the tile stays 56px in the narrow container too', () => {
+test('the tile keeps its height in the narrow container too', () => {
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
   const narrow = css.match(/^@container chat-home \(max-width:440px\)\{([^\n]*)\}$/m)[1];
-  assert.doesNotMatch(narrow, /\.chat-home-act\{/, 'review B10: the tile stays 56px in the narrow container too');
+  assert.doesNotMatch(narrow, /\.chat-home-act\{/, 'the tile keeps its height in the narrow container too');
+});
+
+// One row (priority+): jsdom has no layout, so each visible tile is given 100px and the row a fixed width.
+function fakeLayout(s, rowWidth) {
+  const visible = (b) => !b.hidden && !('overflow' in b.dataset);
+  for (const b of s.doc.querySelectorAll('.chat-home-act')) Object.defineProperty(b, 'offsetParent', { configurable: true, get: () => (visible(b) ? s.doc.body : null) });
+  Object.defineProperty(s.actions.el, 'clientWidth', { configurable: true, get: () => rowWidth });
+  Object.defineProperty(s.actions.el, 'scrollWidth', { configurable: true, get: () => [...s.doc.querySelectorAll('.chat-home-act')].filter(visible).length * 100 });
+}
+
+test('one row: tiles that do not fit move into the top of More, from the end of the row; New run, the pin and More stay', () => {
+  const s = setup();
+  s.actions.setPins({ pins: DEFAULT_HOME_PINS, workflows: WF });
+  s.actions.setFlags({ shapeFirst: true });
+  fakeLayout(s, 700);                                 // 9 tiles × 100px in 700px: 2 have to go
+  s.actions.fit();
+  const hidden = [...s.doc.querySelectorAll('.chat-home-act[data-overflow]')].map((b) => b.dataset.intent);
+  assert.deepEqual(hidden, ['script', 'clone'], 'the tail goes first');
+  assert.equal(s.tile('run').dataset.overflow, undefined);
+  assert.equal(s.tile('shape').dataset.overflow, undefined, 'a pin never overflows');
+  s.more().click();
+  assert.deepEqual(s.items().slice(0, 2).map((i) => i.textContent), ['Write a script', 'Clone a repo'], 'overflowed tiles lead More, in row order');
+});
+
+test('one row: a wide row shows every tile, and a narrow (phone grid) home never hides any', () => {
+  const s = setup();
+  fakeLayout(s, 1200);
+  s.actions.fit();
+  assert.equal(s.doc.querySelectorAll('.chat-home-act[data-overflow]').length, 0);
+  fakeLayout(s, 600);
+  s.actions.fit();
+  assert.equal(s.doc.querySelectorAll('.chat-home-act[data-overflow]').length, 0, 'the 2-column grid below 640px shows all');
 });
