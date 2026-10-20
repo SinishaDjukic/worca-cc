@@ -2916,6 +2916,7 @@ button.pd-ov-card:hover{border-color:var(--ink-3);}
 .cost-report{display:flex;flex-direction:column;gap:14px;}
 .stat-row.cr-kpis{grid-template-columns:repeat(5,minmax(0,1fr));margin-bottom:0;}
 @media (max-width:1080px){ .stat-row.cr-kpis{grid-template-columns:repeat(2,minmax(0,1fr));} }
+@media (max-width:480px){ .stat-row.cr-kpis{grid-template-columns:minmax(0,1fr);} }   /* a 26px amount does not fit half a phone (QA) */
 .cr-bar,.cr-controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
 .cr-chip{gap:4px;}
 .cr-save-form{display:inline-flex;gap:6px;align-items:center;}
