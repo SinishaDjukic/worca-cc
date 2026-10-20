@@ -144,6 +144,9 @@ test('s5: dev moved after slice 1 → slice 2 merges dev before its first agent;
   capturePrompts();
   const dir = gitDir('slices-base');
   execSync('git branch -m dev', { cwd: dir });
+  // Slice 2's merge of the moved dev writes a commit, and mergeBaseInto never invents an identity: set one here, or a
+  // runner without user.name / user.email (CI) fails where a laptop passes.
+  execSync('git config user.email t@t && git config user.name t', { cwd: dir });
   const one = startRun({ projectDir: dir, prompt: 'Plan this in slices: demo', shape: { perspectives: ['product'] } });
   assert.equal((await one.done).status, 'done');
   const pid1 = one.orch.getState().id;
