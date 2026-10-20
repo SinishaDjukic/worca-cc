@@ -8,6 +8,18 @@
 //   view.changed(seq)   a `requirements-changed` frame: refetch what is on screen
 //   view.destroy()
 
+// The displayed state (A2 §4), always the server's `f.state`: the page never derives it. `started` is
+// drawn as the latest run's pill (runPill), not as a badge.
+const STATE = Object.freeze({
+  looking: { label: 'Looking', cls: 'running' },
+  thinking: { label: 'Thinking', cls: 'running' },
+  your_turn: { label: 'Your turn', cls: 'amber' },
+  decide: { label: 'Decide', cls: 'amber' },
+  ready: { label: 'Ready', cls: 'green' },
+  started: { label: 'Started', cls: '' },
+  archived: { label: 'Archived', cls: '' },
+});
+// The interview status the feature page's head still shows (f.status).
 const STATUS = Object.freeze({
   looking: { label: 'Looking at the code', cls: 'running' },
   thinking: { label: 'Thinking', cls: 'running' },
@@ -15,6 +27,16 @@ const STATUS = Object.freeze({
   done: { label: 'Interview done', cls: 'green' },
   archived: { label: 'Archived', cls: '' },
 });
+// The list's filter tabs. Counts leave archived out; Archived fetches with archived=1 and has no count.
+const FILTERS = Object.freeze([
+  { key: 'open', label: 'All open', has: (s) => s !== 'archived' },
+  { key: 'needs', label: 'Needs you', has: (s) => s === 'your_turn' || s === 'decide' },
+  { key: 'ready', label: 'Ready', has: (s) => s === 'ready' },
+  { key: 'started', label: 'Started', has: (s) => s === 'started' },
+  { key: 'archived', label: 'Archived', has: (s) => s === 'archived', noCount: true },
+]);
+const READY_CHECKS = 6;
+const RUN_LIVE = ['created', 'starting', 'running', 'pausing'];
 const SECTIONS = [['goal', 'Goal'], ['actors', 'Actors'], ['flow', 'Main flow'], ['edgeCases', 'Edge cases'],
   ['rules', 'Business rules'], ['outOfScope', 'Out of scope'], ['openQuestions', 'Open questions']];
 const KEYS = ['A', 'B', 'C', 'D'];
@@ -44,6 +66,36 @@ async function api(method, url, body) {
 }
 
 const usd = (n) => `$${(Number(n) || 0).toFixed(2)}`;
+const sentence = (s) => { const t = String(s || '').replace(/[_-]+/g, ' ').trim(); return t ? t[0].toUpperCase() + t.slice(1) : ''; };
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+const badge = (state) => h('span', { class: `badge ${STATE[state]?.cls || ''}`.trim(), text: STATE[state]?.label || state });
+const statusBadge = (status) => h('span', { class: `badge ${STATUS[status]?.cls || ''}`.trim(), text: STATUS[status]?.label || status });
+const runColour = (status) => (RUN_LIVE.includes(status) ? 'peach' : status === 'done' ? 'green'
+  : status === 'error' || status === 'stopped' ? 'red' : '');
+/** The latest run as a pill: peach while it runs (its phase as the text), green done, red error / stopped. */
+function runPill(run) {
+  const status = run && run.status;
+  const text = (RUN_LIVE.includes(status) && run.phase ? sentence(run.phase) : sentence(status)) || 'Started';
+  return h('span', { class: `pill-run req-run ${runColour(status)}`.trim() }, h('span', { class: 'pdot' }), text);
+}
+const stateMark = (f) => (f.state === 'started' ? runPill(f.latestRun) : badge(f.state));
+/** The line under a row's title, by state; `need` when it asks something of the person. */
+function rowMeta(f) {
+  const run = f.latestRun;
+  switch (f.state) {
+    case 'your_turn': {
+      const k = Number.isInteger(f.pendingCount) && f.pendingCount > 0 ? `${plural(f.pendingCount, 'question')} for you` : 'Your turn';
+      return { text: `Round ${Math.min(Number(f.rounds) || 1, MAX_ROUNDS)} of ${MAX_ROUNDS} · ${k}`, need: true };
+    }
+    case 'decide': return { text: `Interview done · Ready ${Number(f.ready) || 0} of ${READY_CHECKS}`, need: true };
+    case 'ready': return { text: `Ready ${READY_CHECKS} of ${READY_CHECKS}` };
+    case 'started': return { text: `Started${run && run.status ? ` · run ${run.status}${run.phase ? ` · ${sentence(run.phase)}` : ''}` : ''}` };
+    case 'looking': return { text: 'Worca is looking at the code…' };
+    case 'thinking': return { text: 'Worca is thinking…' };
+    default: return null;
+  }
+}
 const isWorking = (f) => !!f.busy || f.status === 'looking' || f.status === 'thinking';
 // Worca is working, or the feature is archived: nothing on the page may be changed.
 const isLocked = (f) => isWorking(f) || f.status === 'archived';
@@ -56,14 +108,14 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   let draft = null;          // { roundTurnId, picks: {id: option}, texts: {id: text} } — the open card's unsent answers
   let editing = null;        // the section open in its editor
   let targets = { projects: [], workspaces: [] };
-  let showArchived = false;
+  let filter = 'open';      // the list's filter tab (FILTERS), kept across repaints and visits
   let paintedKey = null;     // what the host currently shows: 'list' | 'new' | 'feature/<n>'
   // Unsaved input of the feature page, kept across repaints (read from the DOM before a rebuild, put back after).
   let ui = freshUi();
   let ctxEls = null;
   function freshUi() { return { editVals: null, crit: '', orientOpen: false, roundsOpen: [], ctx: { open: false, loaded: false, loading: false, body: '', look: false } }; }
 
-  if (subEl) subEl.textContent = 'Turn an idea into a clear, testable feature spec before anything is built';
+  if (subEl) subEl.textContent = 'Define a feature with Worca before anything is built. Nothing runs until you start it.';
   const say = (text, kind = '') => { if (msgEl) { msgEl.textContent = text || ''; msgEl.className = `form-msg${kind ? ` ${kind}` : ''}`; } };
   const fail = (err) => say(err && err.status === 404
     ? 'Requirements are turned off, or this feature no longer exists.'
@@ -78,7 +130,6 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     ? targets.workspaces.find((w) => w.id === f.scopeKey)?.name
     : targets.projects.find((p) => p.key === f.scopeKey)?.name) || f.scopeKey;
   const targetLabel = (f) => `${f.scopeType === 'workspace' ? 'Workspace' : 'Project'} · ${targetName(f)}`;
-  const badge = (status) => h('span', { class: `badge ${STATUS[status]?.cls || ''}`.trim(), text: STATUS[status]?.label || status });
 
   async function show(p = '') {
     param = String(p || '');
@@ -100,14 +151,19 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const key = param === 'new' ? 'new' : seqShown != null ? `feature/${seqShown}` : 'list';
     try {
       await loadTargets();
-      if (key === 'new') { if (mine === paintNo) { paintNew(); paintedKey = key; } return; }
+      if (key === 'new') {
+        // The list call carries the code-look cost for the hint; the form renders without it.
+        const look = await api('GET', '/api/requirements').then((d) => d.lookCostUsd, () => null);
+        if (mine === paintNo) { paintNew(typeof look === 'number' ? look : null); paintedKey = key; }
+        return;
+      }
       if (seqShown != null) {
         const data = await api('GET', `/api/requirements/${seqShown}`);
         if (mine === paintNo) { paintFeature(data.feature, data.turns || []); paintedKey = key; }
         return;
       }
-      const data = await api('GET', `/api/requirements${showArchived ? '?archived=1' : ''}`);
-      if (mine === paintNo) { paintList(data.features || []); paintedKey = key; }
+      const data = await api('GET', `/api/requirements${filter === 'archived' ? '?archived=1' : ''}`);
+      if (mine === paintNo) { paintList(data); paintedKey = key; }
     } catch (err) {
       if (mine !== paintNo) return;
       // Only a 404, or a first load, blanks the host; any other failure keeps what is on screen.
@@ -140,47 +196,104 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     return focus;
   }
 
-  function paintList(features) {
+  // Every list / new-feature paint goes through here: a null or false child never reaches the DOM
+  // (replaceChildren would render it as the text "null").
+  const paintHost = (...kids) => host.replaceChildren(...kids.flat().filter((k) => k != null && k !== false));
+  const setFilter = (key) => { if (key === filter) return; filter = key; void paint(); };
+
+  function filterTabs(all) {
+    const onKey = (e) => {
+      const i = FILTERS.findIndex((F) => F.key === filter);
+      const j = e.key === 'ArrowRight' ? i + 1 : e.key === 'ArrowLeft' ? i - 1 : e.key === 'Home' ? 0 : e.key === 'End' ? FILTERS.length - 1 : null;
+      if (j == null) return;
+      e.preventDefault();
+      setFilter(FILTERS[(j + FILTERS.length) % FILTERS.length].key);
+    };
+    return h('div', { class: 'seg req-filter', role: 'tablist', 'aria-label': 'Filter features', onkeydown: onKey },
+      ...FILTERS.map((F) => {
+        const on = F.key === filter;
+        return h('button', { type: 'button', role: 'tab', class: on ? 'on' : null, 'aria-selected': on ? 'true' : 'false',
+          tabindex: on ? '0' : '-1', 'data-filter': F.key, onclick: () => setFilter(F.key) },
+        F.noCount ? F.label : `${F.label} · ${all.filter((f) => F.has(f.state)).length}`);
+      }));
+  }
+
+  function listRow(f) {
+    const meta = rowMeta(f);
+    return h('button', { type: 'button', class: 'req-row', 'data-feature': f.seq, onclick: () => route(`feature/${f.seq}`) },
+      h('code', { class: 'req-id', text: f.id }),
+      h('span', { class: 'req-row-main' },
+        h('span', { class: 'req-title', text: f.title }),
+        meta ? h('span', { class: `hint req-row-meta${meta.need ? ' need' : ''}`, text: meta.text }) : null),
+      stateMark(f),
+      h('span', { class: 'req-cost', text: usd(f.costUsd) }));
+  }
+
+  function paintList(data) {
+    const all = data.features || [];
+    const F = FILTERS.find((x) => x.key === filter) || FILTERS[0];
+    const shown = all.filter((f) => F.has(f.state));
     const groups = new Map();
-    for (const f of features) {
+    for (const f of shown) {
       const k = `${f.scopeType}:${f.scopeKey}`;
       if (!groups.has(k)) groups.set(k, { label: targetLabel(f), items: [] });
       groups.get(k).items.push(f);
     }
-    host.replaceChildren(
-      h('div', { class: 'req-actions' },
-        h('button', { type: 'button', class: 'btn-go', onclick: () => route('new') }, 'New feature'),
-        h('button', { type: 'button', class: 'btn req-archived-toggle', 'aria-pressed': showArchived ? 'true' : 'false',
-          onclick: () => { showArchived = !showArchived; void paint(); } }, 'Show archived')),
-      features.length ? null : h('p', { class: 'hint', text: 'No features yet. Describe one in a few sentences and Worca interviews you about it.' }),
-      ...[...groups.values()].map((g) => h('section', { class: 'req-group' },
-        h('h3', { text: g.label }),
-        ...g.items.map((f) => h('button', { type: 'button', class: 'req-row', onclick: () => route(`feature/${f.seq}`) },
-          h('span', { class: 'req-id', text: f.id }),
-          h('span', { class: 'req-title', text: f.title }),
-          badge(f.status),
-          h('span', { class: 'req-cost', text: usd(f.costUsd) }))))),
+    const spend = data.spend;
+    const tabFocused = host.contains(document.activeElement) && document.activeElement.getAttribute('role') === 'tab';
+    paintHost(
+      h('div', { class: 'req-bar' },
+        filterTabs(all),
+        h('button', { type: 'button', class: 'btn-go', onclick: () => route('new') }, 'New feature')),
+      shown.length ? null : h('p', { class: 'hint req-empty', text: all.length === 0 && filter !== 'archived'
+        ? 'No features yet. Describe one in a few sentences and Worca interviews you about it.'
+        : 'Nothing here.' }),
+      [...groups.values()].map((g) => h('section', { class: 'req-group', 'aria-label': g.label },
+        h('h2', { text: g.label }),
+        h('div', { class: 'card req-rows' }, g.items.map(listRow)))),
+      spend && typeof spend.windowUsd === 'number'
+        ? h('p', { class: 'hint req-spend', text: `Spent on requirements this month: ${usd(spend.windowUsd)}${
+          typeof spend.totalLimitUsd === 'number' ? ` of your ${usd(spend.totalLimitUsd)} limit` : ''}.` })
+        : null,
     );
+    // a filter chosen from the keyboard keeps the focus on the tabs across the rebuild
+    if (tabFocused) host.querySelector('[role="tab"][aria-selected="true"]')?.focus();
   }
 
-  function paintNew() {
-    const select = h('select', { id: 'req-new-target', 'aria-label': 'Project or workspace' },
-      targets.projects.length ? h('optgroup', { label: 'Projects' }, ...targets.projects.map((p) => h('option', { value: `project:${p.key}`, text: p.name }))) : null,
-      targets.workspaces.length ? h('optgroup', { label: 'Workspaces' }, ...targets.workspaces.map((w) => h('option', { value: `workspace:${w.id}`, text: w.name }))) : null);
+  function paintNew(lookCost) {
+    const select = h('select', { id: 'req-new-target' },
+      targets.projects.length ? h('optgroup', { label: 'Projects' }, targets.projects.map((p) => h('option', { value: `project:${p.key}`, text: p.name }))) : null,
+      targets.workspaces.length ? h('optgroup', { label: 'Workspaces' }, targets.workspaces.map((w) => h('option', { value: `workspace:${w.id}`, text: w.name }))) : null);
     const title = h('input', { id: 'req-new-title', type: 'text', maxlength: '200', placeholder: 'Cancel an order before it ships' });
-    const desc = h('textarea', { id: 'req-new-desc', rows: '5', placeholder: 'A few sentences: who needs it, what they want to do, and why.' });
+    const desc = h('textarea', { id: 'req-new-desc', rows: '5', placeholder: 'A few sentences, the way you would tell a colleague.' });
+    const lookHint = h('span', { class: 'hint req-new-look' });
+    const sayLook = () => {
+      lookHint.textContent = select.value.startsWith('workspace:')
+        ? "Worca looks at the code of this workspace's projects once, read-only, to learn what already exists. Change that in Workspace context."
+        : "Worca looks at this project's code once, read-only, to learn what already exists. Change that in Project context.";
+    };
+    select.addEventListener('change', sayLook);
+    sayLook();
     const create = () => act(async () => {
       const [scopeType, ...rest] = select.value.split(':');
       const data = await api('POST', '/api/requirements', { scopeType, scopeKey: rest.join(':'), title: title.value, description: desc.value });
       route(`feature/${data.feature.seq}`);
     });
-    host.replaceChildren(h('div', { class: 'card req-new' },
-      h('label', { for: 'req-new-target', text: 'For' }), select,
-      h('label', { for: 'req-new-title', text: 'Title' }), title,
-      h('label', { for: 'req-new-desc', text: 'Describe it' }), desc,
-      h('div', { class: 'req-actions' },
-        h('button', { type: 'button', class: 'btn', onclick: () => route('') }, 'Cancel'),
-        h('button', { type: 'button', class: 'btn-go', onclick: create }, 'Start the interview'))));
+    const field = (id, label, control, ...after) => h('div', { class: 'field' }, h('label', { for: id }, ...label), control, ...after);
+    paintHost(h('div', { class: 'req-new-page' },
+      h('a', { href: '#requirements', class: 'hint req-back', onclick: (e) => { e.preventDefault(); route(''); } }, '← All features'),
+      h('div', { class: 'req-new-head' },
+        h('h2', { text: 'New feature' }),
+        h('p', { class: 'req-sub', text: 'Describe it the way you would to a colleague. Worca asks the rest, a few questions at a time.' })),
+      h('div', { class: 'card req-new' },
+        field('req-new-title', ['Title'], title),
+        field('req-new-desc', ['Describe it ', h('span', { class: 'opt', text: 'who needs it, what they want to do, and why' })], desc),
+        field('req-new-target', ['For'], h('div', { class: 'select-wrap' }, select), lookHint),
+        h('div', { class: 'actions req-new-actions' },
+          lookCost != null ? h('span', { class: 'hint req-new-cost', text: `About ${usd(lookCost)} for the code look, then cents per round.` }) : null,
+          h('div', { class: 'req-new-btns' },
+            h('button', { type: 'button', class: 'btn', onclick: () => route('') }, 'Cancel'),
+            h('button', { type: 'button', class: 'btn-go', onclick: create }, 'Start the interview'))))));
   }
 
   function questionCard(f, pending) {
@@ -398,7 +511,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     });
     const focus = capture(f);
     host.replaceChildren(
-      h('div', { class: 'req-head', 'data-req-feature': f.seq }, h('h2', { text: `${f.id} · ${f.title}` }), badge(f.status)),
+      h('div', { class: 'req-head', 'data-req-feature': f.seq }, h('h2', { text: `${f.id} · ${f.title}` }), statusBadge(f.status)),
       h('div', { class: 'req-meta' },
         h('span', { text: targetLabel(f) }),
         h('span', { text: `Round ${Math.min(f.rounds, MAX_ROUNDS)} of ${MAX_ROUNDS}` }),

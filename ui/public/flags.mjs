@@ -13,6 +13,8 @@ import { FLAGS, flagByKey } from '../../src/shared/flags/registry.mjs';
 import { flagsAttr, flagGateCss } from '../../src/shared/flags/resolve.mjs';
 
 export const STAGE_LABEL = Object.freeze({ experimental: 'Experimental', beta: 'Beta', retiring: 'Retiring' });
+// A sidebar row has room for a short chip only (the full word would ellipsize the row's label).
+const STAGE_SHORT = Object.freeze({ experimental: 'Exp' });
 
 const docOf = (doc) => doc || globalThis.document;
 const listeners = new Map();   // key -> Set<(on:boolean)=>void>
@@ -61,8 +63,10 @@ export function applyFlags(patch, doc) {
 const INTERACTIVE = 'a, button, input, select, textarea, label, summary';
 
 /** D9: give a [data-flag] element its stage chip, linking to its row in Settings › Experimental.
- *  Inside the host, or right after it when the host is interactive (no link inside a button). The
- *  chip carries the host's data-flag, so it is gated exactly like the host. Idempotent. */
+ *  Inside the host, or right after it when the host is interactive (no link inside a button). A row
+ *  of the sidebar (a button in .nav) wears it inside, after its label, as plain text: a sibling would
+ *  be a row of its own in the column-flex rail, and the row's own click opens the page. The chip
+ *  carries the host's data-flag, so it is gated exactly like the host. Idempotent. */
 export function chip(el, doc) {
   const d = docOf(doc || (el && el.ownerDocument));
   const key = String((el && el.dataset && el.dataset.flag) || '').split(/\s+/).find((k) => flagByKey(k));
@@ -70,12 +74,28 @@ export function chip(el, doc) {
   el.dataset.flagChipped = '1';
   const f = flagByKey(key);
   const label = STAGE_LABEL[f.stage] || f.stage;
+  const title = `${f.title} is ${f.stage === 'beta' ? 'in beta' : 'experimental'}.`;
+  if (el.matches('.nav button')) {
+    const s = d.createElement('span');
+    s.className = `flag-chip flag-chip-${f.stage}`;
+    s.dataset.flag = el.dataset.flag;
+    s.title = title;
+    const shown = d.createElement('span');
+    shown.setAttribute('aria-hidden', 'true');
+    shown.textContent = STAGE_SHORT[f.stage] || label;
+    const spoken = d.createElement('span');
+    spoken.className = 'sr-only';
+    spoken.textContent = label;
+    s.append(shown, spoken);
+    el.appendChild(s);
+    return el;
+  }
   const a = d.createElement('a');
   a.className = `flag-chip flag-chip-${f.stage}`;
   a.href = `#settings/experimental/${key}`;
   a.dataset.flag = el.dataset.flag;
   a.textContent = label;
-  a.title = `${f.title} is ${f.stage === 'beta' ? 'in beta' : 'experimental'}. Open its switch in Settings › Experimental.`;
+  a.title = `${title} Open its switch in Settings › Experimental.`;
   if (el.matches(INTERACTIVE)) el.after(a); else el.appendChild(a);
   return el;
 }

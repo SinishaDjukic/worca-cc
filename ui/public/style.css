@@ -649,6 +649,10 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
   background:var(--violet-bg);color:var(--violet-ink);vertical-align:middle;}
 .flag-chip-beta{background:var(--blue-bg);color:var(--blue-ink-strong);}   /* --blue-ink is 3.6:1 on --blue-bg at this size (:1016) */
 .flag-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* A sidebar row wears its chip inside, after the label (flags.mjs chip()). This rule comes after the
+   label's `.nav button > span:not(.nav-count)` at the same specificity, so the chip keeps its own width
+   instead of taking the label's flex:1 and ellipsis. The rail hides it with the label. */
+.nav button > span.flag-chip{flex:none;min-width:auto;overflow:visible;margin-left:6px;padding:2px 6px;font-size:9.5px;line-height:1.4;}
 .flags-warn{margin:0 0 12px;padding:10px 12px;border-radius:10px;background:var(--amber-bg);color:var(--amber-ink);font-weight:500;}
 .flags-host{display:flex;flex-direction:column;}
 .flag-row{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:14px 0;border-top:1px solid var(--line);}
@@ -9290,13 +9294,47 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 #featureBranch:disabled{opacity:.65;cursor:not-allowed;}   /* no global .input:disabled rule exists */
 
 /* Requirements page (plans/requirements-design.md section 6). Tokens only. */
-.req-group{margin:0 0 22px}
-.req-group h3{font-size:13px;color:var(--ink-3);margin:0 0 8px;font-weight:600}
-.req-row{display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-ctrl);padding:12px 14px;margin:0 0 8px;color:var(--ink);cursor:pointer;font:inherit}
-.req-row:hover{border-color:var(--line-2)}
+/* The list: the filter tabs and New feature, then one card of rows per project / workspace. A row is
+   id · title over its meta line · the state badge or run pill · the cost; on a phone the meta line
+   takes the second row. */
+.req-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin:0 0 20px}
+.req-filter{flex-wrap:wrap;max-width:100%}
+.req-group{display:flex;flex-direction:column;gap:8px;margin:0 0 20px}
+.req-group h2{font-size:12px;font-weight:600;color:var(--ink-2);margin:0}
+.req-rows{padding:0;overflow:hidden}
+.req-row{display:grid;grid-template-columns:72px minmax(0,1fr) auto auto;grid-template-areas:"id main mark cost";align-items:center;gap:16px;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--line);border-radius:0;padding:14px 18px;margin:0;color:var(--ink);cursor:pointer;font:inherit}
+.req-row:last-child{border-bottom:0}
+.req-row:hover{background:var(--field)}
+.req-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px}
+.req-row > .req-id{grid-area:id}
+.req-row > .req-row-main{grid-area:main}
+.req-row > .badge,.req-row > .pill-run{grid-area:mark;justify-self:end}
+.req-row > .req-cost{grid-area:cost}
 .req-id,.req-item code{font-family:var(--mono);font-size:12px;color:var(--ink-3)}
-.req-title{flex:1;min-width:0}
-.req-cost{color:var(--ink-3);font-size:13px}
+.req-row-main{display:flex;flex-direction:column;gap:2px;min-width:0}
+.req-title{font-weight:500;overflow-wrap:anywhere}
+.req-row .req-row-meta{margin:0}
+.req-row .req-row-meta.need{color:var(--amber-ink-strong)}
+.req-row .pill-run{padding:5px 10px;font-size:11.5px}
+/* A run that is not running, done or failed (paused, unknown): a quiet pill; only a live run's dot pulses. */
+.req-run:not(.peach):not(.green):not(.red){background:var(--field);color:var(--ink-2)}
+.req-run:not(.peach):not(.green):not(.red) .pdot{background:var(--ink-3)}
+.req-run:not(.peach) .pdot{animation:none}
+.req-cost{font-family:var(--mono);font-size:12px;color:var(--ink-2);min-width:48px;text-align:right}
+.req-empty,.req-spend{margin:0 0 12px}
+@media (max-width:600px){
+  .req-row{grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"id mark mark" "main main cost";gap:6px 12px;padding:12px 14px}
+  .req-row > .req-id{justify-self:start}
+}
+/* New feature: a narrow column with a back link, the heading, and the form card. */
+.req-new-page{display:flex;flex-direction:column;gap:20px;max-width:720px;margin:0 auto}
+.req-back{align-self:flex-start;margin:0;text-decoration:none}
+.req-back:hover{color:var(--ink)}
+.req-new-head h2{margin:0 0 6px;font-size:22px}
+.req-sub{margin:0;color:var(--ink-2)}
+.req-new .actions{flex-wrap:wrap;margin-top:6px}
+.req-new .req-new-cost{margin:0}
+.req-new-btns{display:flex;gap:10px;margin-left:auto}
 .req-head{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0 0 6px}
 .req-head h2{margin:0;font-size:20px}
 .req-meta{display:flex;flex-wrap:wrap;gap:14px;color:var(--ink-3);font-size:13px}
@@ -9313,11 +9351,9 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .req-sect ul,.req-sect ol{margin:0;padding-left:20px}
 .req-item{display:flex;flex-wrap:wrap;gap:8px;align-items:baseline;margin:0 0 6px}
 .req-item-text{flex:1;min-width:0}
-.req-new{display:grid;gap:8px;max-width:640px}
 .req-new select,.req-new input,.req-new textarea,.req-edit input,.req-edit textarea,.req-context textarea,.req-item input{width:100%;box-sizing:border-box}
 .req-why{margin:2px 0 6px 28px}
 .req-error{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-.req-archived-toggle{margin:0 0 12px}
 .req-q{margin-top:0}
 .req-retry{margin-left:8px}
 .req-confirm[aria-pressed="true"]{border-color:var(--green-ink);color:var(--green-ink)}

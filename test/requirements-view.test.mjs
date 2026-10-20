@@ -42,21 +42,159 @@ const make = () => {
   return { host, msgEl, view, routed };
 };
 
+// One list row as GET /api/requirements carries it (A2 §4): the server's state, the Ready count, the latest run.
+const row = (over = {}) => ({ seq: 4, id: 'FEAT-4', scopeType: 'project', scopeKey: 'shop-1', title: 'Cancel order', status: 'your_turn',
+  state: 'your_turn', ready: 2, rounds: 1, costUsd: 0.42, busy: false, latestRun: null, ...over });
+const LIST_BASE = { 'GET /api/projects': { projects: [{ key: 'shop-1', name: 'shop' }] }, 'GET /api/workspaces': { workspaces: [{ id: 'ws1', name: 'Storefront' }] } };
+const listOf = (features, extra = {}) => ({ features, lookCostUsd: null, spend: { windowUsd: 0, totalLimitUsd: null }, ...extra });
+const tabs = (host) => [...host.querySelectorAll('[role="tab"]')];
+const tab = (host, re) => tabs(host).find((t) => re.test(t.textContent));
+const rowOf = (host, seq) => host.querySelector(`.req-row[data-feature="${seq}"]`);
+const seqs = (host) => [...host.querySelectorAll('.req-row')].map((r) => r.getAttribute('data-feature'));
+
 test('list: grouped by project, FEAT id, state badge, cost; a row routes to the feature', async () => {
   fakeApi({
-    'GET /api/requirements': { features: [feature({ seq: 5, id: 'FEAT-5', title: 'Refunds', status: 'done' }), feature()] },
-    'GET /api/projects': { projects: [{ key: 'shop-1', name: 'shop' }] },
-    'GET /api/workspaces': { workspaces: [] },
+    ...LIST_BASE,
+    'GET /api/requirements': listOf([row({ seq: 5, id: 'FEAT-5', title: 'Refunds', status: 'done', state: 'ready', ready: 6 }), row(),
+      row({ seq: 3, id: 'FEAT-3', scopeType: 'workspace', scopeKey: 'ws1', title: 'Gift cards', state: 'looking', status: 'looking' })]),
   });
   const { host, view, routed } = make();
   await view.show('');
-  assert.equal(host.querySelector('.req-group h3').textContent, 'Project · shop');
+  assert.deepEqual([...host.querySelectorAll('.req-group h2')].map((x) => x.textContent), ['Project · shop', 'Workspace · Storefront']);
+  assert.ok(host.querySelector('.req-group .card .req-row'), 'each group is a card of rows');
   const rows = [...host.querySelectorAll('.req-row')];
-  assert.deepEqual(rows.map((r) => r.querySelector('.req-id').textContent), ['FEAT-5', 'FEAT-4']);
+  assert.deepEqual(rows.map((r) => r.querySelector('.req-id').textContent), ['FEAT-5', 'FEAT-4', 'FEAT-3']);
+  assert.equal(rows[1].tagName, 'BUTTON');
+  assert.equal(rows[1].getAttribute('data-feature'), '4');
+  assert.equal(rows[1].querySelector('.req-title').textContent, 'Cancel order');
   assert.equal(rows[1].querySelector('.badge').textContent, 'Your turn');
   assert.ok(rows[1].querySelector('.badge').classList.contains('amber'));
+  assert.equal(rows[1].querySelector('.req-cost').textContent, '$0.42');
   rows[1].click();
   assert.deepEqual(routed, ['feature/4']);
+});
+
+test('list: subtitle and New feature; the filter tabs with their counts; the filter survives a repaint', async () => {
+  const calls = fakeApi({ ...LIST_BASE, 'GET /api/requirements': listOf([
+    row({ seq: 1, state: 'your_turn' }), row({ seq: 2, state: 'decide' }), row({ seq: 3, state: 'ready' }),
+    row({ seq: 4, state: 'started', latestRun: { status: 'running', phase: 'implement', costUsd: 1, href: '#running/r1' } }),
+    row({ seq: 5, state: 'thinking' }), row({ seq: 6, state: 'looking' })]) });
+  const host = document.createElement('div'); const subEl = document.createElement('div'); const routed = [];
+  const view = createRequirementsView({ host, subEl, msgEl: document.createElement('p'), deps: { route: (p) => routed.push(p) } });
+  await view.show('');
+  assert.equal(subEl.textContent, 'Define a feature with Worca before anything is built. Nothing runs until you start it.');
+  const go = host.querySelector('.btn-go');
+  assert.equal(go.textContent, 'New feature');
+  go.click();
+  assert.deepEqual(routed, ['new']);
+  const list = host.querySelector('[role="tablist"]');
+  assert.ok(list.classList.contains('seg'));
+  assert.deepEqual(tabs(host).map((t) => t.textContent), ['All open · 6', 'Needs you · 2', 'Ready · 1', 'Started · 1', 'Archived']);
+  assert.deepEqual(tabs(host).map((t) => t.getAttribute('aria-selected')), ['true', 'false', 'false', 'false', 'false']);
+  assert.equal(host.querySelectorAll('.req-row').length, 6);
+  tab(host, /^Needs you/).click(); await tick(); await tick();
+  assert.deepEqual(seqs(host), ['1', '2']);
+  assert.equal(tab(host, /^Needs you/).getAttribute('aria-selected'), 'true');
+  assert.ok(tab(host, /^Needs you/).classList.contains('on'));
+  assert.equal(tab(host, /^All open/).getAttribute('aria-selected'), 'false');
+  await view.changed(9);
+  assert.equal(tab(host, /^Needs you/).getAttribute('aria-selected'), 'true', 'kept across a live repaint');
+  assert.deepEqual(seqs(host), ['1', '2']);
+  tab(host, /^Ready/).click(); await tick(); await tick();
+  assert.deepEqual(seqs(host), ['3']);
+  tab(host, /^Started/).click(); await tick(); await tick();
+  assert.deepEqual(seqs(host), ['4']);
+  assert.ok(calls.every((c) => c.url !== '/api/requirements?archived=1'));
+  // leaving the list and coming back keeps the filter too
+  await view.show('new');
+  await view.show('');
+  assert.equal(tab(host, /^Started/).getAttribute('aria-selected'), 'true');
+});
+
+test('list: each state\'s badge and meta line', async () => {
+  fakeApi({ ...LIST_BASE, 'GET /api/requirements': listOf([
+    row({ seq: 1, state: 'your_turn', rounds: 2 }), row({ seq: 2, state: 'your_turn', rounds: 1, pendingCount: 3 }),
+    row({ seq: 3, state: 'decide', ready: 4 }), row({ seq: 4, state: 'ready', ready: 6 }),
+    row({ seq: 5, state: 'looking' }), row({ seq: 6, state: 'thinking' }),
+    row({ seq: 7, state: 'started', latestRun: { status: 'running', phase: 'implement', costUsd: 1, href: '#running/r1' } }),
+    row({ seq: 8, state: 'started', latestRun: { status: 'done', phase: null, costUsd: 1, href: '#running/r2' } }),
+    row({ seq: 9, state: 'started', latestRun: null }),
+    row({ seq: 10, state: 'your_turn', rounds: 1, pendingCount: 1 })]) });
+  const { host, view } = make();
+  await view.show('');
+  const meta = (seq) => rowOf(host, seq).querySelector('.req-row-meta').textContent;
+  const mark = (seq) => rowOf(host, seq).querySelector('.badge, .pill-run');
+  assert.equal(meta(1), 'Round 2 of 6 · Your turn');
+  assert.equal(meta(2), 'Round 1 of 6 · 3 questions for you');
+  assert.equal(meta(10), 'Round 1 of 6 · 1 question for you');
+  assert.equal(meta(3), 'Interview done · Ready 4 of 6');
+  assert.equal(meta(4), 'Ready 6 of 6');
+  assert.equal(meta(5), 'Worca is looking at the code…');
+  assert.equal(meta(6), 'Worca is thinking…');
+  assert.equal(meta(7), 'Started · run running · Implement');
+  assert.equal(meta(8), 'Started · run done');
+  assert.equal(meta(9), 'Started');
+  for (const [seq, label, cls] of [[1, 'Your turn', 'amber'], [3, 'Decide', 'amber'], [4, 'Ready', 'green'], [5, 'Looking', 'running'], [6, 'Thinking', 'running']]) {
+    assert.ok(mark(seq).classList.contains('badge'), `FEAT-${seq} wears a badge`);
+    assert.equal(mark(seq).textContent, label);
+    assert.ok(mark(seq).classList.contains(cls), `FEAT-${seq} is ${cls}`);
+  }
+  for (const seq of [7, 8, 9]) assert.ok(mark(seq).classList.contains('pill-run'), `FEAT-${seq} wears a run pill`);
+});
+
+test('list: the run pill: colour by status, the phase while running, a pdot', async () => {
+  const run = (status, phase = null) => ({ status, phase, costUsd: 0, href: '#running/x' });
+  const cases = [['created', null, 'peach', 'Created'], ['starting', null, 'peach', 'Starting'], ['running', 'plan_review', 'peach', 'Plan review'],
+    ['pausing', 'test', 'peach', 'Test'], ['done', 'learn', 'green', 'Done'], ['error', 'test', 'red', 'Error'], ['stopped', null, 'red', 'Stopped'],
+    ['paused', 'test', '', 'Paused']];
+  fakeApi({ ...LIST_BASE, 'GET /api/requirements': listOf(cases.map(([status, phase], i) => row({ seq: i + 1, state: 'started', latestRun: run(status, phase) }))) });
+  const { host, view } = make();
+  await view.show('');
+  const COLOURS = ['peach', 'green', 'red', 'blue', 'amber', 'violet'];
+  cases.forEach(([status, , cls, text], i) => {
+    const pill = rowOf(host, i + 1).querySelector('.pill-run');
+    assert.equal(pill.textContent, text, status);
+    assert.ok(pill.querySelector('.pdot'), `${status}: a pdot`);
+    assert.deepEqual(COLOURS.filter((c) => pill.classList.contains(c)), cls ? [cls] : [], status);
+  });
+});
+
+test('list: Archived refetches with archived=1 and shows only the archived features', async () => {
+  const calls = fakeApi({
+    ...LIST_BASE,
+    'GET /api/requirements': listOf([row()]),
+    'GET /api/requirements?archived=1': listOf([row(), row({ seq: 6, id: 'FEAT-6', status: 'archived', state: 'archived' })]),
+  });
+  const { host, view } = make();
+  await view.show('');
+  assert.equal(host.querySelector('.req-archived-toggle'), null, 'the old toggle is gone');
+  tab(host, /^Archived/).click(); await tick(); await tick();
+  assert.ok(calls.some((c) => c.url === '/api/requirements?archived=1'));
+  assert.equal(tab(host, /^Archived/).getAttribute('aria-selected'), 'true');
+  assert.deepEqual([...host.querySelectorAll('.req-row .badge')].map((b) => b.textContent), ['Archived']);
+  assert.equal(tab(host, /^All open/).textContent, 'All open · 1', 'the counts leave archived out');
+  const n = calls.length;
+  tab(host, /^All open/).click(); await tick(); await tick();
+  assert.equal(calls.slice(n).find((c) => c.url.startsWith('/api/requirements'))?.url, '/api/requirements');
+  assert.equal(host.querySelectorAll('.req-row').length, 1);
+});
+
+test('list: the spend footer, with and without a limit; an empty list or filter never shows "null"', async () => {
+  fakeApi({ ...LIST_BASE, 'GET /api/requirements': listOf([row()], { spend: { windowUsd: 2.09, totalLimitUsd: 50 } }) });
+  const { host, view } = make();
+  await view.show('');
+  assert.equal(host.querySelector('.req-spend').textContent, 'Spent on requirements this month: $2.09 of your $50.00 limit.');
+  assert.ok(host.querySelector('.req-spend').classList.contains('hint'));
+  fakeApi({ ...LIST_BASE, 'GET /api/requirements': listOf([row()], { spend: { windowUsd: 0.5, totalLimitUsd: null } }) });
+  await view.show('');
+  assert.equal(host.querySelector('.req-spend').textContent, 'Spent on requirements this month: $0.50.');
+  tab(host, /^Ready/).click(); await tick(); await tick();
+  assert.doesNotMatch(host.textContent, /null|false|undefined/);
+  assert.match(host.textContent, /Nothing here/);
+  fakeApi({ ...LIST_BASE, 'GET /api/requirements': { features: [] } });
+  await view.show('');
+  assert.doesNotMatch(host.textContent, /null|false|undefined/);
+  assert.match(host.textContent, /No features yet/);
 });
 
 test('detail: question card with recommended preselected; submit posts the picks', async () => {
@@ -216,21 +354,46 @@ test('feature page: the context panel keeps its text and open state across a liv
   assert.deepEqual(calls.find((c) => c.method === 'PUT').body, { body: 'New rules', lookAtCode: true });
 });
 
-test('list: Show archived refetches with archived=1 and shows the Archived badge', async () => {
-  const calls = fakeApi({
-    'GET /api/requirements': { features: [feature()] },
-    'GET /api/requirements?archived=1': { features: [feature(), feature({ seq: 6, id: 'FEAT-6', status: 'archived', pending: null })] },
-    'GET /api/projects': { projects: [] }, 'GET /api/workspaces': { workspaces: [] },
-  });
+test('new feature: back link, heading, field blocks, the For select with its groups, the code-look hint', async () => {
+  fakeApi({ ...LIST_BASE, 'GET /api/requirements': listOf([]) });
+  const { host, view, routed } = make();
+  await view.show('new');
+  const back = [...host.querySelectorAll('a, button')].find((x) => x.textContent === '← All features');
+  assert.ok(back, 'a back link');
+  back.click();
+  assert.deepEqual(routed, ['']);
+  assert.equal(host.querySelector('h2').textContent, 'New feature');
+  const form = host.querySelector('.card.req-new');
+  assert.ok(form);
+  const fields = [...form.querySelectorAll('.field')];
+  assert.deepEqual(fields.map((f) => f.querySelector('label').firstChild.textContent.trim()), ['Title', 'Describe it', 'For']);
+  assert.equal(fields[0].querySelector('#req-new-title').tagName, 'INPUT');
+  assert.equal(fields[1].querySelector('#req-new-desc').tagName, 'TEXTAREA');
+  assert.equal(fields[1].querySelector('label .opt').textContent, 'who needs it, what they want to do, and why');
+  const select = fields[2].querySelector('.select-wrap select#req-new-target');
+  assert.ok(select);
+  assert.deepEqual([...select.querySelectorAll('optgroup')].map((g) => g.label), ['Projects', 'Workspaces']);
+  assert.deepEqual([...select.options].map((o) => o.value), ['project:shop-1', 'workspace:ws1']);
+  assert.match(fields[2].querySelector('.hint').textContent, /looks at this project's code once, read-only/);
+  assert.deepEqual([...form.querySelectorAll('.btn, .btn-go')].map((b) => b.textContent), ['Cancel', 'Start the interview']);
+  assert.ok([...form.querySelectorAll('.btn-go')].at(-1).textContent === 'Start the interview', 'the CDP proof clicks the last .req-new .btn-go');
+  assert.doesNotMatch(host.textContent, /null|false|undefined/);
+});
+
+test('new feature: the cost hint shows only when lookCostUsd is a number (from the list call)', async () => {
+  const calls = fakeApi({ ...LIST_BASE, 'GET /api/requirements': listOf([], { lookCostUsd: 0.25 }) });
   const { host, view } = make();
-  await view.show('');
-  assert.equal(host.querySelector('.req-archived-toggle').getAttribute('aria-pressed'), 'false');
-  host.querySelector('.req-archived-toggle').click(); await tick(); await tick();
-  assert.ok(calls.some((c) => c.url === '/api/requirements?archived=1'));
-  assert.equal(host.querySelector('.req-archived-toggle').getAttribute('aria-pressed'), 'true');
-  assert.deepEqual([...host.querySelectorAll('.req-row .badge')].map((b) => b.textContent), ['Your turn', 'Archived']);
-  host.querySelector('.req-archived-toggle').click(); await tick(); await tick();
-  assert.equal(host.querySelectorAll('.req-row').length, 1);
+  await view.show('new');
+  assert.ok(calls.some((c) => c.method === 'GET' && c.url === '/api/requirements'));
+  assert.equal(host.querySelector('.req-new-cost').textContent, 'About $0.25 for the code look, then cents per round.');
+  fakeApi({ ...LIST_BASE, 'GET /api/requirements': listOf([], { lookCostUsd: null }) });
+  await view.show('new');
+  assert.equal(host.querySelector('.req-new-cost'), null);
+  assert.ok(host.querySelector('#req-new-title'), 'the form still renders');
+  fakeApi({ ...LIST_BASE });   // the list call fails: no hint, the form still renders
+  await view.show('new');
+  assert.equal(host.querySelector('.req-new-cost'), null);
+  assert.ok(host.querySelector('#req-new-title'));
 });
 
 test('Save: exists asks, then posts overwrite and reports the path', async () => {
