@@ -2,7 +2,7 @@
 // branch terminal and the workspace refusal answer 409 GIT_MISSING; every table entry shadows a real route.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { checkRows } from './helpers/rows.mjs';
@@ -11,6 +11,10 @@ import { _testing as cap } from '../src/core/git-available.mjs';
 import { withNoGit, gitArrives } from './helpers/git-off.mjs';
 import { seedBuiltinMarketplace, refreshAllMarketplaces } from '../src/core/marketplaces.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
+import { _testing as ghTesting } from '../src/core/git-free/github.mjs';
+import { readPluginsLock, writePluginsLock } from '../src/core/plugins-lock.mjs';
+
+ghTesting.setFetch(async () => { throw new TypeError('fetch failed'); });
 
 const BODY = { error: 'git is not installed on this machine', code: 'GIT_MISSING' };
 let home, app, srv, base, prev, T, addProject, runs;
@@ -25,7 +29,7 @@ before(async () => {
   base = `http://127.0.0.1:${srv.address().port}`;
 });
 after(async () => {
-  cap.reset(); srv?.closeAllConnections?.();
+  cap.reset(); ghTesting.reset(); srv?.closeAllConnections?.();
   if (srv) await Promise.race([new Promise((r) => srv.close(r)), new Promise((r) => setTimeout(r, 500))]);
   for (const k of Object.keys(prev)) { if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k]; }
   await rm(home, { recursive: true, force: true });
@@ -52,20 +56,36 @@ test('routes while git is missing', async (t) => {
         assert.equal(r.status, 409, `${m} ${p}`); assert.deepEqual(await r.json(), BODY, `${m} ${p}`);
       }
     } },
-    { name: 'U2a routes (S5 — P6 turns exactly these into the HTTPS result for GitHub sources): 409 GIT_MISSING', run: async () => {
-      seedBuiltinMarketplace();
-      const [market] = await refreshAllMarketplaces();            // without git: the stored entries, no sync
-      const gh = 'https://github.com/acme/plugins';
+    { name: 'U2a routes: sources off GitHub still 409 without git', run: async () => {
+      const off = 'https://gitlab.com/acme/plugins';
+      writePluginsLock({ ...readPluginsLock(), p0plugin: { repo: off, subdir: '', pinnedSha: 'a'.repeat(40), version: '0.1.0', enabled: true } });
+      const team = await mkdtemp(join(home, 'worca-p0-team-'));   // under the file's root: removed in after()
+      await mkdir(join(team, '.git'));
+      await writeFile(join(team, '.git', 'config'), '[remote "origin"]\n\turl = https://gitlab.com/acme/team.git\n');
+      const key = (await addProject({ name: 'p0gl', path: team })).find((x) => x.name === 'p0gl').key;
       for (const [m, p, body] of [
-        ['post', '/api/marketplaces', { url: gh }], ['post', `/api/marketplaces/${market.id}/refresh`, {}],
-        ['post', '/api/plugins/install', { repoUrl: gh, name: 'p0plugin', sha: 'a'.repeat(40) }], ['post', '/api/plugins/p0plugin/update', { confirm: true }],
-        ['post', '/api/skills/import/preview', { source: { kind: 'git', url: 'https://github.com/acme/skills' } }],
-        ['post', '/api/projects/p0proj-00000001/team-metrics/enable', {}], ['post', '/api/team-metrics/flush', {}], ['post', '/api/team-metrics/discover', {}],
-        ['put', '/api/policy', {}], ['post', '/api/policy/discover', {}], ['post', '/api/projects/p0proj-00000001/policy/enable', {}],
-        ['post', '/api/workspaces/metrics-scan', { projectPaths: ['/x'] }], ['post', '/api/workspaces/ws-p0/metrics-route', {}], ['post', '/api/workspaces/ws-p0/policy-route', {}],
+        ['post', '/api/marketplaces', { url: off }],
+        ['post', '/api/plugins/install', { repoUrl: off, name: 'p0other', sha: 'a'.repeat(40) }], ['post', '/api/plugins/p0plugin/update', { confirm: true }],
+        ['post', '/api/skills/import/preview', { source: { kind: 'git', url: 'https://gitlab.com/acme/skills' } }],
+        ['post', `/api/projects/${key}/team-metrics/enable`, {}], ['post', `/api/projects/${key}/policy/enable`, {}],
       ]) {
         const r = await send(m, p, body);
         assert.equal(r.status, 409, `${m} ${p}`); assert.deepEqual(await r.json(), BODY, `${m} ${p}`);
+      }
+    } },
+    { name: 'U2a routes that are no longer git-only answer their own code, never GIT_MISSING', run: async () => {
+      seedBuiltinMarketplace();
+      const [market] = await refreshAllMarketplaces();
+      for (const [m, p, body, status, error] of [   // error: the start of the answer's error, null = none
+        ['post', `/api/marketplaces/${market.id}/refresh`, {}, 200, null],
+        ['post', '/api/team-metrics/flush', {}, 200, null], ['post', '/api/team-metrics/discover', {}, 200, null],
+        ['put', '/api/policy', {}, 400, 'scope must be project:'], ['post', '/api/policy/discover', {}, 200, null],
+        ['post', '/api/workspaces/metrics-scan', { projectPaths: ['/x'] }, 400, 'member path is missing: /x'],
+        ['post', '/api/workspaces/ws-p0/metrics-route', {}, 404, 'workspace not found'], ['post', '/api/workspaces/ws-p0/policy-route', {}, 404, 'workspace not found'],
+      ]) {
+        const r = await send(m, p, body);
+        const j = await r.json();
+        assert.deepEqual([r.status, error == null ? j.error ?? null : String(j.error).slice(0, error.length)], [status, error], `${m} ${p}`);
       }
     } },
     { name: 'POST /api/run (a project runs on a copy), a workspace start, resume, the branch terminal, a workspace with an unregistered member', run: async () => {

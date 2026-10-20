@@ -1408,6 +1408,35 @@ export function writeTeamMetricsPrefs(key, patch) {
   return next;
 }
 
+// ── Typed team repository (project_config.extra.teamRepo, P6) ─────
+// The GitHub 'Owner/Name' a Folder without git keeps its team branches on (typed once in the setup dialog).
+const TEAM_REPO_KEY = 'teamRepo';
+
+/** @returns {string|null} the typed team repository of a project key */
+export function readTeamRepo(key) {
+  assertProjectKey(key);
+  const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
+  const extra = row ? parseJson(row.extra, {}) : {};
+  const v = extra[TEAM_REPO_KEY];
+  return typeof v === 'string' && v ? v : null;
+}
+
+/** Store (string) or forget (null) the typed team repository of a project key. */
+export function writeTeamRepo(key, repo) {
+  assertProjectKey(key);
+  tx(() => {
+    const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
+    const extra = row ? parseJson(row.extra, {}) : {};
+    if (repo == null) delete extra[TEAM_REPO_KEY];
+    else extra[TEAM_REPO_KEY] = String(repo);
+    prepare(`
+      INSERT INTO project_config (project_key, steps, custom_models, active_workflow_id, extra)
+      VALUES (?, '{}', '[]', NULL, ?)
+      ON CONFLICT(project_key) DO UPDATE SET extra = excluded.extra
+    `).run(key, JSON.stringify(extra));
+  });
+}
+
 // ── Project actions (project_config.extra.actions / extra.actionsMeta) ─────
 // A project's setup command + actions (issue #529), and the last setup duration
 // used for the checkout estimate. Same KEY-taking contract as the team-metrics pair.

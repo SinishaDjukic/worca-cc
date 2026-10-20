@@ -15,7 +15,9 @@ The **Skills** view (Connectors › Skills) is the catalog:
   a disabled plugin's skills are listed (`plugin disabled`) and skipped in runs.
 - **Imported skills** — **Import skill** copies a skill into Worca's own library from
   - a **folder** (type the path or **Browse…**),
-  - a **git URL** (an optional ref and folder in the repository; fetched shallow, the way plugins are). A repository
+  - a **git URL** (an optional ref and folder in the repository; fetched shallow, the way plugins are; without git only
+    github.com URLs import, from GitHub's archive, which applies the repository's `.gitattributes` export and line-ending
+    rules — the size limits still hold). A repository
     holding several skills offers its skill folders to pick from,
   - a **pasted** `SKILL.md` (the Name is used only when the SKILL.md names none; a pasted skill has no origin, so it
     never updates — remove it, import it again and add it back to its sets),

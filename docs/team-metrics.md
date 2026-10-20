@@ -32,6 +32,8 @@ At enable time you also pick an **attribution** policy for the whole team, once:
 git user name on every run, or none. This can only be changed later by editing the config file
 on the branch by hand.
 
+Without git, a folder that names no repository asks for it once (**GitHub repository**, `owner/name`); team policy uses the same answer.
+
 Discovery keeps each project's local view of the branch current: the web server refreshes it on
 a schedule and on demand ("Check now" on the workspace card), and a CLI-only machine — no UI
 server running — refreshes it only when you run `worca add` or `worca metrics push`.
@@ -322,8 +324,8 @@ workflow to stdout instead. Commit and push the file afterwards.
 
 ## Requirements
 
-- **git ≥ 2.31** on every machine that records or reads team metrics.
-- Without git on the machine, **Set up team metrics…** answers `git is not installed on this machine` inside its dialog, and discovery and pushes wait until git is installed.
+- **git ≥ 2.31** on every machine that records or reads team metrics — or, on a machine without git, a team repository on **github.com**: worca then reads and writes `worca-metrics` through the GitHub API with its own GitHub credential (anonymous reads work for public repositories; writing needs `GH_TOKEN` / `WORCA_GH_WRITE_TOKEN` or the GitHub App). Without a token GitHub allows 60 API requests an hour, shared by everything worca reads from GitHub, and a private repository needs `GH_TOKEN` or the GitHub App.
+- Without git, a team repository on another host is out of reach: **Set up team metrics…** shows `Needs git` inside its dialog, and that project's discovery and pushes wait until git is installed.
 - Metrics commits and pushes **bypass the repository's client hooks and commit signing** — the
   metrics git worktree shares `.git/hooks` (and `core.hooksPath`) with the project, so every
   metrics git command runs with an empty `core.hooksPath` and `commit.gpgsign=false` /
@@ -380,6 +382,9 @@ Team metrics keeps its own working state under `~/.worca-cc/metrics/` (see
   plus the cross-process lock file for that project's slug.
 - `ledger/` — one small per-run status file used by the History header to show whether a run's
   record made it to the branch.
+- `snapshots/` — without git, or for a folder whose GitHub repository was typed: a copy of each `worca-metrics` branch's
+  `.worca-metrics/`, refreshed from the GitHub API (the changed files one by one when at most 20 changed, else one download).
+  Until that copy exists, a worktree git left in `repos/` is read as it is.
 
 ## Human hours and "Saved"
 

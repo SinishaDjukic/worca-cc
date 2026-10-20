@@ -134,7 +134,7 @@ import { installSessionGuard } from './session-guard.mjs';
 import {
   renderPluginList, renderInstallConsent, renderUpdatePreview,
   renderConfigForm, collectConfigForm, renderConnectResult, renderDoctorReport, renderReferences409,
-  renderOrphanList, channelBadge, renderAvailableList, renderMarketplaceList,
+  renderOrphanList, channelBadge, renderAvailableList, renderMarketplaceList, renderNeedsGit,
 } from './plugins-view.mjs';
 import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
@@ -15669,12 +15669,14 @@ async function openTmEnableDialog(projectKeyStr, { mode = 'here', change = false
   const candidates = data.projects
     .filter((x) => x.key !== s.key && x.recordsLocally)
     .map((x) => ({ slug: x.slug, label: `${x.slug}${homesByslug.has(x.slug) ? ` · metrics home of ${homesByslug.get(x.slug)}` : ''}${x.runs == null ? '' : ` · ${x.runs} runs`}` }));
-  const view = { project: s, origin: s.origin || s.slug, candidates, mode, attribution: 'git-user', change };
+  const view = { project: s, origin: s.origin || s.slug, candidates, mode, attribution: 'git-user', change,
+    repoInput: !!s.repoInput, needsGit: !!s.needsGit, repo: '' };   // both keys come only without git (P6)
   const holder = document.createElement('div');
   const errEl = document.createElement('small'); errEl.className = 'hint err tm-enable-err'; errEl.hidden = true;
   const showTmEnableErr = (msg) => { errEl.textContent = msg; errEl.hidden = !msg; };
   const paint = () => holder.replaceChildren(renderEnableDialogBody(view, { doc: document }), errEl);
   paint();
+  holder.addEventListener('input', (e) => { if (e.target.classList.contains('tm-repo')) view.repo = e.target.value; });   // kept across repaints
   holder.addEventListener('change', (e) => {
     if (e.target.name === 'tm-where') {
       view.mode = e.target.value;
@@ -15702,6 +15704,7 @@ async function openTmEnableDialog(projectKeyStr, { mode = 'here', change = false
     const body = view.mode === 'delegate'
       ? { mode: 'delegate', delegateTo: target.value, change }
       : { mode: 'here', attribution: view.attribution };
+    if (view.repoInput) body.repo = view.repo.trim();
     let r; let j = null;
     try {
       r = await fetch(`/api/projects/${encodeURIComponent(s.key)}/team-metrics/enable`, {
@@ -15715,6 +15718,7 @@ async function openTmEnableDialog(projectKeyStr, { mode = 'here', change = false
     }
     if (!r.ok) {
       errEl.hidden = false;
+      if (r.status === 409 && j?.code === 'GIT_MISSING') { errEl.replaceChildren(renderNeedsGit(document)); return done(false); }   // a typed repository off GitHub, no git here
       errEl.textContent = [j?.error, j?.stderr && j.stderr.trim(), j?.hint].filter(Boolean).join(' · ');
       return done(false);                                 // keep the modal open
     }
@@ -15726,6 +15730,7 @@ async function openTmEnableDialog(projectKeyStr, { mode = 'here', change = false
     ['Cancel', 'btn btn-ghost btn-mini', () => closePluginModal()],
     [view.mode === 'delegate' ? 'Create marker and enable' : 'Create branch and enable', 'btn btn-primary btn-mini tm-enable-submit', submit],
   ]);
+  if (view.needsGit) document.querySelector('#plugin-modal .tm-enable-submit').disabled = true;
   // Re-label the primary action when the mode flips (pluginModal renders actions once).
   holder.addEventListener('change', () => {
     const b = document.querySelector('#plugin-modal .tm-enable-submit');
@@ -15744,6 +15749,10 @@ async function pluginApi(method, url, body) {
     return { ok: res.ok, status: res.status, data: await safeJson(res) };
   } catch (e) { return { ok: false, status: 0, data: { error: `Worca did not answer (${e.message}).` } }; }
 }
+
+// A source off GitHub on a machine without git (P6): the action's own dialog says `Needs git` (header Close only).
+const isGitMissing = (r) => !!(r && !r.ok && r.status === 409 && r.data && r.data.code === 'GIT_MISSING');
+function needsGitModal(title) { pluginModal(title, renderNeedsGit(document)); }
 
 // Snapshot of the last GET /api/marketplaces payload — the delegated install
 // listener resolves the consent inventory from here (no re-fetch, no network).
@@ -15812,9 +15821,16 @@ async function addMarketplaceFromInput() {
   } finally {
     el.marketplaceAdd.disabled = false;
   }
+  if (isGitMissing(res)) {   // a source off GitHub, no git here: one chip in the add row, the message line stays empty
+    setPluginsMsg('');
+    const row = el.marketplaceAddRow.querySelector('.path-row');
+    if (row && !row.querySelector('.pl-needs-git')) row.appendChild(renderNeedsGit(document));
+    return;
+  }
   const { ok, data } = res;
   if (!ok) return setPluginsMsg(data.error || 'add failed', 'err');
   el.marketplaceUrl.value = '';
+  el.marketplaceAddRow.querySelector('.pl-needs-git')?.remove();
   el.marketplaceAddRow.classList.add('hidden');
   // Reload FIRST: loadPluginsView() clears the message line as it starts, so a
   // message set before it never survived.
@@ -15835,7 +15851,10 @@ async function addMarketplaceFromInput() {
 function openInstallConsent(entry, { onInstalled = null } = {}) {
   const err = Object.assign(document.createElement('small'), { className: 'hint err', hidden: true });
   const body = document.createElement('div');
-  body.append(renderInstallConsent(entry, entry.inventory || {}), err);
+  // A marketplace off GitHub on a machine without git: the source line says Needs git and only Cancel is offered.
+  const needsGit = !!pluginsViewMarketplaces.find((m) => m.id === entry.marketplace)?.needsGit;
+  body.append(renderInstallConsent(entry, entry.inventory || {}, { needsGit }), err);
+  if (needsGit) return void pluginModal(`Will install: ${entry.name}`, body, [['Cancel', 'btn btn-ghost btn-mini', closePluginModal]]);
   pluginModal(`Will install: ${entry.name}`, body, [
     ['Cancel', 'btn btn-ghost btn-mini', closePluginModal],
     ['Install', 'btn btn-primary btn-mini', async (ev) => {
@@ -16144,7 +16163,8 @@ if (el.pluginsList) el.pluginsList.addEventListener('click', async (e) => {
     pluginModal(`Doctor: ${name}`,
       renderDoctorReport(ok ? data : { ok: false, checks: [{ id: 'request', ok: false, detail: data.error || 'doctor failed' }] }));
   } else if (t.classList.contains('pl-update')) {
-    const { ok, data } = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/update`, {});
+    const { ok, status, data } = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/update`, {});
+    if (isGitMissing({ ok, status, data })) return needsGitModal(`Update ${name}`);
     if (!ok) return setPluginsMsg(data.error || 'update preview failed', 'err');
     const body = renderUpdatePreview(data);
     pluginModal(`Update ${name}`, body);  // header Close only
@@ -16244,6 +16264,7 @@ if (el.pluginAddBtn) el.pluginAddBtn.addEventListener('click', () => {
   if (!el.marketplaceAddRow.classList.contains('hidden')) el.marketplaceUrl.focus();
 });
 if (el.marketplaceAdd) el.marketplaceAdd.addEventListener('click', addMarketplaceFromInput);
+if (el.marketplaceUrl) el.marketplaceUrl.addEventListener('input', () => el.marketplaceAddRow.querySelector('.pl-needs-git')?.remove());
 if (el.pluginModalClose) el.pluginModalClose.addEventListener('click', () => {
   if (grvState.wizard) return grvCloseWizard();
   const after = pluginModalAfterClose;
@@ -19318,11 +19339,13 @@ async function openPolicyEnableDialog(projectKeyStr, { mode = 'here', change = f
   // The metrics delegate, when it carries a policy, is the natural home: preselect it.
   let metricsFollow = null;
   try { const tm = (await loadTmScopes()).projects.find((x) => x.key === s.key); metricsFollow = tm?.delegateTo || null; } catch { /* optional */ }
-  const view = { project: { ...s, metricsFollow }, origin: s.origin || s.slug, candidates, mode, change };
+  const view = { project: { ...s, metricsFollow }, origin: s.origin || s.slug, candidates, mode, change,
+    repoInput: !!s.repoInput, needsGit: !!s.needsGit, repo: '' };   // both keys come only without git (P6)
   const holder = document.createElement('div');
   const errEl = document.createElement('small'); errEl.className = 'hint err tm-enable-err'; errEl.hidden = true;
   const paint = () => holder.replaceChildren(renderPolicyEnableDialogBody(view, { doc: document }), errEl);
   paint();
+  holder.addEventListener('input', (e) => { if (e.target.classList.contains('tp-repo')) view.repo = e.target.value; });   // kept across repaints
   holder.addEventListener('change', (e) => {
     if (e.target.name === 'tp-where') {
       view.mode = e.target.value;
@@ -19345,6 +19368,7 @@ async function openPolicyEnableDialog(projectKeyStr, { mode = 'here', change = f
       return done(false);
     }
     const body = view.mode === 'follow' ? { mode: 'follow', delegateTo: target.value, change } : { mode: 'here' };
+    if (view.repoInput) body.repo = view.repo.trim();
     let r; let j = null;
     try {
       r = await fetch(`/api/projects/${encodeURIComponent(s.key)}/policy/enable`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -19355,6 +19379,7 @@ async function openPolicyEnableDialog(projectKeyStr, { mode = 'here', change = f
     }
     if (!r.ok) {
       errEl.hidden = false;
+      if (r.status === 409 && j?.code === 'GIT_MISSING') { errEl.replaceChildren(renderNeedsGit(document)); return done(false); }   // a typed repository off GitHub, no git here
       errEl.textContent = [j?.error, j?.stderr && j.stderr.trim(), j?.hint].filter(Boolean).join(' · ');
       return done(false);
     }
@@ -19369,6 +19394,7 @@ async function openPolicyEnableDialog(projectKeyStr, { mode = 'here', change = f
     ['Cancel', 'btn btn-ghost btn-mini', () => closePluginModal()],
     [view.mode === 'follow' ? 'Create marker and follow' : 'Create branch and enable', 'btn btn-primary btn-mini tp-enable-submit', submit],
   ]);
+  if (view.needsGit) document.querySelector('#plugin-modal .tp-enable-submit').disabled = true;
 }
 
 // Workspace cards (board 6): the policy home line per card + the home sheet + routing.
@@ -19615,6 +19641,7 @@ async function publishFromEditor(editor, registry) {
     if (!v.ok) return fail((v.warnings || []).join('\n') || 'invalid policy document');
     const res = await fetch('/api/policy', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scope: tpState.scopeId, doc }) });
     const j = await safeJson(res);
+    if (res.status === 409 && j?.code === 'GIT_MISSING') { msgEl.replaceChildren(renderNeedsGit(document)); return { ok: false }; }   // a home off GitHub, no git here
     if (!res.ok) return fail([j?.error, j?.stderr && String(j.stderr).trim(), j?.hint, ...(Array.isArray(j?.warnings) ? j.warnings : [])].filter(Boolean).join(' · '));
     return { ok: true, j };
   }, { busy: 'Publishing…', done: 'Published' });
@@ -20008,7 +20035,8 @@ async function handlePolicyPluginClick(e) {
 // The update preview for one required plugin (commits, diffstat, manifest changes), confirmed by a
 // click. Returns true when the preview opened, so a chain can wait for it to close.
 async function updateRequiredPlugin(name) {
-  const { ok, data } = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/update`, {});
+  const { ok, status, data } = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/update`, {});
+  if (isGitMissing({ ok, status, data })) { needsGitModal(`Update ${name}`); return true; }   // a dialog is up: a chain waits for it
   if (!ok) { setPluginsMsg(data.error || 'update preview failed', 'err'); return false; }
   const body = renderUpdatePreview(data);
   pluginModal(`Update ${name}`, body);
@@ -34518,6 +34546,7 @@ function gsHops(step, g) {
       const block = () => document.querySelector('#proj-detail .pd-team-metrics .tm-cell');
       const canEnable = () => !!document.querySelector('#proj-detail .tm-enable');
       const dialog = () => !!document.querySelector('#plugin-modal:not(.hidden) .tm-enable-submit');
+      const needsGit = () => !!document.querySelector('#plugin-modal:not(.hidden) .pl-needs-git');   // P6: no git, a source off GitHub: its submit is disabled
       const walk = [
         ...pre, nav,
         { id: 'open', target: ['#projects-list .pl-row[role="button"]', '#projects-list .pl-row'], skipWhenMet: true, met: pageOpen,
@@ -34540,6 +34569,7 @@ function gsHops(step, g) {
         ...walk,
         { id: 'enable', target: '#proj-detail .tm-enable', skipWhenMet: true, met: dialog,
           text: 'Team metrics records every finished run on a shared git branch, for the whole team. Set it up here.' },
+        needsGit() ? { id: 'submit', mode: 'pointer', info: true, nextLabel: 'Done', target: '#plugin-modal .pl-needs-git', text: 'Needs git' } :
         { id: 'submit', mode: 'pointer', target: '#plugin-modal .tm-enable-submit', final: true,
           text: 'Create the branch and enable it. From now on every finished run in this project is recorded there.' },
       ];
@@ -34559,6 +34589,7 @@ function gsHops(step, g) {
       const block = () => document.querySelector('#proj-detail .pd-team-policy .tp-cell');
       const canEnable = () => !!document.querySelector('#proj-detail .tp-enable');
       const dialog = () => !!document.querySelector('#plugin-modal:not(.hidden) .tp-enable-submit');
+      const needsGit = () => !!document.querySelector('#plugin-modal:not(.hidden) .pl-needs-git');   // P6: no git, a source off GitHub: its submit is disabled
       const walk = [
         ...pre, nav,
         { id: 'open', target: ['#projects-list .pl-row[role="button"]', '#projects-list .pl-row'], skipWhenMet: true, met: () => !!g.enabled || pageOpen(),
@@ -34593,6 +34624,7 @@ function gsHops(step, g) {
         ...walk,
         { id: 'enable', target: '#proj-detail .tp-enable', skipWhenMet: true, met: dialog,
           text: 'A team policy is one shared document — cost caps, models, plugins, guardrails — read by everyone who runs Worca on this repository. Set it up here.' },
+        needsGit() ? { id: 'submit', mode: 'pointer', info: true, nextLabel: 'Done', target: '#plugin-modal .pl-needs-git', text: 'Needs git' } :
         { id: 'submit', mode: 'pointer', target: '#plugin-modal .tp-enable-submit', click: 'enabled', met: () => !!g.enabled && !gsDialogUp('plugin-modal'),
           text: 'Create the branch and enable it: here, on this repository, or following another project’s policy. It starts empty.' },
       ];

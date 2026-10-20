@@ -78,6 +78,9 @@ project's working tree, so nothing is ever committed to your repo.
                                         runs/<pipelineId>/work/ (its cwd, no git)
   metrics/
     repos/<owner~repo>/                  git worktree of the project repo, detached at origin/worca-metrics
+    snapshots/<owner~repo>/              without git, or a typed GitHub repository: the branch's README.md and
+                                         .worca-metrics/ read over the GitHub API
+    snapshots/<owner~repo>@sha           the commit that copy holds
     outbox/<owner~repo>/*.jsonl  .lock   pending run records (durability point) + cross-process lock
     no-hooks/                            empty core.hooksPath for metrics git commands
     ledger/<runId>.json                  per-run team-metrics status for the History header (swept after 180 d)
@@ -110,6 +113,8 @@ project's working tree, so nothing is ever committed to your repo.
                                         origin); gone on Import, Update, Back or Cancel, an abandoned one
                                         a day later
   plugins/                              installed plugin checkouts
+    .cache/<slug>.tree/<sha>/            without git: a GitHub commit's plugin folders and marketplace file
+                                         (the newest three and every installed pin kept; <sha>.meta.json beside it)
   agents/                               installed agent registry checkouts
   workflows/                            saved workflow templates
   projects/                             New and Clone from URL projects (the default projects root; yours — worca never deletes it)

@@ -2773,6 +2773,7 @@ button.pd-ov-card:hover{border-color:var(--ink-3);}
 .pl-uptodate .hint{margin-top:0;font-size:13px;}
 .pl-refs-list{margin:6px 0 0 18px;font-size:12.5px;}
 .plugin-card .mono,.pl-consent .mono,.pl-update .mono,.pl-doc-row .mono,.pl-refs .mono{font-family:var(--mono);}
+.pl-consent-src .pl-needs-git{font-family:var(--sans);}
 .pl-manifest-delta{margin:8px 0;}
 .pl-delta{font-size:12.5px;}
 .pl-delta-secret{font-size:12.5px;font-weight:700;color:var(--red-ink);background:var(--red-bg);border-radius:8px;padding:3px 8px;margin:2px 0;display:inline-block;}

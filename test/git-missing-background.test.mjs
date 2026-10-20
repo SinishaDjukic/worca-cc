@@ -39,7 +39,7 @@ test('background loops', async (t) => {
       gitArrives(); await until(() => r.calls.length > 0);
       await stop();
     } },
-    { name: 'team metrics: no discovery and no push while missing; the flip runs discovery at once; a stopped loop ignores later flips', run: async () => {
+    { name: 'team metrics: no git spawn while missing (discovery runs over HTTPS); the flip runs discovery at once; a stopped loop ignores later flips', run: async () => {
       withNoGit();
       const g = counter(); const i = counter(); metricsGit.setGit(g.fn); gitInfo.setRunner(i.fn);
       const gitCalls = () => g.calls.length + i.calls.filter((c) => c[0] === 'git').length;
@@ -51,14 +51,12 @@ test('background loops', async (t) => {
       const n = gitCalls(); withNoGit(); gitArrives(); await wait(100);
       assert.equal(gitCalls(), n, 'a stopped loop does not wake on a later flip');
     } },
-    { name: 'team policy: neither discovery nor onTick while missing; the flip runs onTick once; a stopped loop ignores later flips', run: async () => {
+    { name: 'team policy: discovery over HTTPS and onTick while missing; the flip ticks again', run: async () => {
       withNoGit();
       let ticks = 0; const g = counter(); metricsGit.setGit(g.fn);
       if (typeof policySync.policyLoopCanSync === 'function') assert.equal(policySync.policyLoopCanSync(), false);   // P6 deletes the gate (S5)
       const stop = startTeamPolicyBackground({ log: () => {}, onTick: async () => { ticks += 1; } });
-      await wait(150); assert.deepEqual([ticks, g.calls.length], [0, 0]);
-      gitArrives(); await until(() => ticks === 1);
-      stop();
+      await until(() => ticks === 1); assert.equal(g.calls.length, 0); gitArrives(); await until(() => ticks === 2); stop();
       const n = ticks; withNoGit(); gitArrives(); await wait(100);
       assert.equal(ticks, n, 'a stopped loop does not wake on a later flip');
     } },

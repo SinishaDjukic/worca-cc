@@ -29,6 +29,7 @@ import { workModeForStart, normalizeVcs, effectiveWorkMode } from './project-kin
 import { canonicalProjectRoot, projectKey, workspaceStorePath, isNoProjectWorkDir } from './store.mjs';
 import { NO_PROJECT_ERRORS } from '../shared/no-project.mjs';
 import { gitAvailable } from './git-available.mjs';
+import { teamOverHttps, teamRepoState } from './git-free/team-repo.mjs';
 import { slugify, retainedWorkFor, checkoutRecordsFor, folderApplyRetainFor } from './artifacts.mjs';
 import { getDb, prepare, tx } from './db.mjs';
 import { WORKSPACE_MAX_PROJECTS, scanDescriptionBudget } from '../shared/workspace-size.mjs';
@@ -113,6 +114,17 @@ export function isGitRepo(p) {
  */
 export function memberWorkMode(path, { rowOf = getProjectByPath, gitOn = gitAvailable } = {}) {
   return workModeForStart({ projectDir: path }, { getProjectByPath: rowOf, gitAvailable: gitOn });
+}
+
+/**
+ * P6 (S75): a member whose team branches can be discovered — a Git member, or one whose team repository is known
+ * over HTTPS (a .git/config origin without git, or a typed repo). Without git every member is a Folder (U3); with
+ * git this adds only a Folder whose team repo was typed (OS-1). Never throws; no git spawn.
+ * @param {string} path
+ * @returns {boolean}
+ */
+export function memberHasTeamRepo(path) {
+  return memberWorkMode(path) === 'git' || (teamOverHttps(path) && ['origin', 'typed'].includes(teamRepoState(path).kind));
 }
 
 /**

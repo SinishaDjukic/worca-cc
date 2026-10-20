@@ -20,11 +20,15 @@ import { projectPolicyStatus, enableTeamPolicy, publishPolicy } from '../src/cor
 import { marketplaceSeedCandidates, seedPolicyMarketplaces } from '../src/core/policy/local.mjs';
 import { normalizePolicyDoc } from '../src/core/policy/registry.mjs';
 import { writePluginsLock } from '../src/core/plugins-lock.mjs';
+import { _testing as ghTesting } from '../src/core/git-free/github.mjs';
 
 useTempHome(after);
+// P6: GitHub sources are read over HTTPS without git — no row may reach the network.
+ghTesting.setFetch(async () => { throw Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('getaddrinfo ENOTFOUND api.github.com'), { code: 'ENOTFOUND' }) }); });
+after(() => ghTesting.reset());
 afterEach(() => { cap.reset(); metricsGit.reset(); });
 const counting = () => { const calls = []; return { calls, fn: async (...a) => { calls.push(a); return { stdout: '' }; } }; };
-const URL_ = 'https://github.com/acme/plugins';
+const URL_ = 'https://gitlab.com/acme/plugins';
 
 test('U2a features while git is missing', async (t) => {
   withNoGit(t);
@@ -38,22 +42,23 @@ test('U2a features while git is missing', async (t) => {
       await assert.rejects(inventoryFromCache(URL_, 'a'.repeat(40), '', { exec: x.fn }), { code: 'GIT_MISSING' });
       assert.equal(x.calls.length, 0);
     } },
-    { name: 'marketplaces: add refuses, a plugin folder still links, refresh-all is a quiet no-op, one refresh refuses', run: async () => {
+    { name: 'marketplaces: add refuses, a plugin folder still links, refresh-all reaches GitHub over HTTPS, a failure is a warning', run: async () => {
       const x = counting(); seedBuiltinMarketplace();
       await assert.rejects(addMarketplace(URL_, { exec: x.fn }), { code: 'GIT_MISSING', message: 'git is not installed on this machine' });
       const folder = mkdtempSync(join(tmpdir(), 'worca-p0-plugin-'));
       writeFileSync(join(folder, 'worca-cc-plugin.json'), '{"name":"p0"}');
       await assert.rejects(addMarketplace(folder, { exec: x.fn }), { code: 'PLUGIN_FOLDER' });
+      const OFF = 'never synced; refresh failed: GitHub unreachable (ENOTFOUND)';
       const all = await refreshAllMarketplaces({ exec: x.fn });
       assert.ok(all.length >= 1 && all.every((m) => m.lastSync === null));
-      await assert.rejects(syncMarketplace(all[0].id, { exec: x.fn }), { code: 'GIT_MISSING' });
+      const builtin = all.find((m) => m.builtin);
+      assert.deepEqual(builtin.warnings, [OFF]);
+      assert.deepEqual((await syncMarketplace(builtin.id, { exec: x.fn })).warnings, [OFF]);
       assert.equal(x.calls.length, 0);
     } },
-    { name: 'skills: a Git URL import is 409 GIT_MISSING, fetchGit never called', run: async () => {
-      let n = 0;
-      await assert.rejects(stageImport({ kind: 'git', url: 'https://github.com/acme/skills' }, { fetchGit: async () => { n += 1; return {}; } }),
+    { name: 'skills: a Git URL off GitHub is 409 GIT_MISSING (no fetch, no spawn)', run: async () => {
+      await assert.rejects(stageImport({ kind: 'git', url: 'https://gitlab.com/acme/skills' }),
         { status: 409, code: 'GIT_MISSING', message: 'git is not installed on this machine' });
-      assert.equal(n, 0);
     } },
     { name: 'clone: CloneError git-missing, nothing spawned, no folder', run: async () => {
       let n = 0; const dir = join(mkdtempSync(join(tmpdir(), 'worca-p0-clone-')), 'repo');
@@ -64,11 +69,11 @@ test('U2a features while git is missing', async (t) => {
       const repo = gitDir('p0-team'); const g = counting(); metricsGit.setGit(g.fn);
       const p = { key: 'p0team-00000001', name: 'p0team', path: repo, exists: true };
       const m = await projectMetricsStatus(p);
-      assert.deepEqual([m.hasOrigin, m.noGit], [null, undefined]);
-      assert.equal((await projectPolicyStatus(p)).hasOrigin, null);
-      await assert.rejects(enableTeamMetrics(repo), { code: 'GIT_MISSING' });
-      await assert.rejects(enableTeamPolicy(repo), { code: 'GIT_MISSING' });
-      await assert.rejects(publishPolicy(repo, {}), { code: 'GIT_MISSING' });
+      assert.deepEqual([m.hasOrigin, m.noGit], [false, undefined]);   // P6: "no origin remote", read from .git/config
+      assert.equal((await projectPolicyStatus(p)).hasOrigin, false);
+      await assert.rejects(enableTeamMetrics(repo), { code: 'NO_ORIGIN' });
+      await assert.rejects(enableTeamPolicy(repo), { code: 'NO_ORIGIN' });
+      await assert.rejects(publishPolicy(repo, {}), { code: 'NOT_HOME' });
       assert.equal(g.calls.length, 0);
     } },
     { name: 'policy marketplace seeding while git is missing is not remembered (it seeds once git arrives)', run: async () => {
@@ -89,6 +94,7 @@ import { worktreePath as metricsCheckout, ensureWorktree as ensureMetricsCheckou
 import { readScope } from '../src/core/metrics/read.mjs';
 import { addProject, listProjects } from '../src/core/projects.mjs';
 import { writeTeamMetricsPrefs } from '../src/core/config.mjs';
+import { makeRecord } from './fixtures/team-metrics/records.mjs';
 
 test('the team-metrics checkout survives git going missing (the page keeps reading it)', async (t) => {
   withNoGit(t);
@@ -102,10 +108,14 @@ test('the team-metrics checkout survives git going missing (the page keeps readi
   const dir = metricsCheckout(slug);
   mkdirSync(dirname(dir), { recursive: true });
   execFileSync('git', ['worktree', 'add', '--detach', dir, 'HEAD'], { cwd: repo });
+  const recFile = join(dir, '.worca-metrics', 'runs', '2026', '09', '20260910T100000Z-p0-cached.jsonl');
+  mkdirSync(dirname(recFile), { recursive: true });
+  writeFileSync(recFile, `${JSON.stringify(makeRecord({ id: 'p0-cached', project: slug }))}\n`);
   withNoGit();
   await checkRows([
-    { name: 'readScope (GET /api/team-metrics, Ask metrics) leaves the checkout in place', run: async () => {
-      await readScope({ kind: 'project', id: key }).catch(() => {});   // P0 serves it offline; after P6 it reads over HTTPS
+    { name: 'readScope (GET /api/team-metrics, Ask metrics) serves the checkout\'s records and leaves it in place', run: async () => {
+      const read = await readScope({ kind: 'project', id: key });   // P6: read as it is until a snapshot exists
+      assert.deepEqual([read.records.map((r) => r.id), read.fetchError], [['p0-cached'], 'git is not installed on this machine']);
       assert.ok(existsSync(dir));
     } },
     { name: 'ensureWorktree hands the checkout back unchecked', run: async () => {

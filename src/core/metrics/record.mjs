@@ -14,6 +14,7 @@ import {
   projectSlug, folderProjectSlug, gitUserName, gitUserEmail, resolveProjectSink, resolveWorkspaceSink, writeOutbox, scheduleFlush as realScheduleFlush,
 } from './sync.mjs';
 import { writeRunLedger } from './ledger.mjs';
+import { teamOverHttps, teamRepoState, teamRunDiscover } from '../git-free/team-repo.mjs';
 import { readPolicyState } from '../policy/state.mjs';
 import { readRunTags } from '../run-tags-store.mjs';
 import { normaliseTags, parseTag } from '../../shared/run-tags.mjs';
@@ -325,8 +326,10 @@ export async function snapshotFromHarness(harness, { status, error = null } = {}
     : [{ projectKey: null, projectDir: harness.projectDir }];
   const slugOf = new Map();
   // P5: a workspace's Folder member is named by its folder, never by git (a folder nested in a repository is not it).
+  // P6: unless its team repository is known over HTTPS (a .git/config origin without git, or a typed repo): owner/repo then.
+  const overHttps = (dir) => teamOverHttps(dir) && ['origin', 'typed'].includes(teamRepoState(dir).kind);
   for (const m of members) {
-    slugOf.set(m.projectKey ?? m.projectDir, m.workMode === 'folder' ? folderProjectSlug(m.projectDir) : (await projectSlug(m.projectDir)).slug);
+    slugOf.set(m.projectKey ?? m.projectDir, m.workMode === 'folder' && !overHttps(m.projectDir) ? folderProjectSlug(m.projectDir) : (await projectSlug(m.projectDir)).slug);
   }
   // P5: the actor's git identity comes from a Git checkout — a workspace's Folder primary is no repository of its own.
   const idDir = harness.isWorkspace ? (members.find((m) => m.workMode !== 'folder')?.projectDir ?? null) : harness.projectDir;
@@ -456,7 +459,7 @@ async function recordImpl(harness, { status, error = null, now = new Date() }) {
   // the terminal `done` event must never wait on ls-remote/fetch.
   const sink = harness.isWorkspace
     ? await resolveWorkspaceSink(harness.workspace?.id, { discover: 'if-missing' })
-    : await resolveProjectSink(harness.projectDir, { discover: harness.workMode && harness.workMode !== 'git' ? false : 'if-missing' });
+    : await resolveProjectSink(harness.projectDir, { discover: teamRunDiscover(harness.workMode || 'git', harness.projectDir) });
   if (!sink.ok) {
     if (sink.reason === 'delegate-invalid' || sink.reason === 'home-stale' || sink.code === 'CONFIG_UNKNOWN') {
       log(harness, 'warn', `team metrics: not recorded — ${sink.detail}`);

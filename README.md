@@ -409,6 +409,9 @@ level and has no **Diff**, **Changes** or **Actions**.
   chat channels, and MCP servers for the [registry](docs/mcp-servers.md).
   Install from the **Marketplace** page (Advanced) or `worca plugin install`;
   **Add marketplace** (a GitHub URL, `owner/repo` or a local path) is Expert.
+  On a machine without git, marketplaces and installs work for GitHub
+  repositories over HTTPS, a local plugin folder is linked, and other sources
+  say `Needs git`.
   Installing from the UI is an explicit consent ceremony pinned to the commit
   you saw: what's installed, which ask forms an agent can show and which file
   types they may display, which secrets each part requests, where models
@@ -420,7 +423,8 @@ level and has no **Diff**, **Changes** or **Actions**.
 - **Built-in marketplace** — **Worca CC Official**, Worca's GitHub repository on
   its `dev` branch, is registered on every install (nothing is installed until
   you pick it): the GitHub Issues task source, the four chat channels below,
-  and MCP plugins for Atlassian, Cloudflare, Firebase, Notion and Railway. Set
+  and MCP plugins for Atlassian, Cloudflare, Firebase, Notion and Railway. It
+  works without git too (it lives on GitHub). Set
   `WORCA_BUILTIN_MARKETPLACE` to another repo URL or a local checkout to use
   that instead (followed at its HEAD; only committed files count).
 - **Drive runs from chat** — two-way **Telegram**, **Slack**, **Discord** and
@@ -723,10 +727,11 @@ Requirements:
   it hides the branch, pull-request, Sync and Clone controls, a project run
   works on a copy of its folder (applied back with **Apply to folder**), a
   workspace run works on a copy of each member (each applied back on its own), and
-  Workspaces, Marketplace, Team metrics and Team policy stay but answer the
-  same when an action needs git; installing git brings everything back without
-  a restart. `WORCA_GIT=0` hides them on purpose, `WORCA_GIT=1` skips the
-  check. The GitHub CLI (`gh`) is optional: it opens pull requests and issues.
+  Workspaces, Marketplace, skill import, Team metrics and Team policy stay:
+  GitHub-hosted sources work over HTTPS and other hosts say `Needs git`;
+  installing git brings everything back without a restart. `WORCA_GIT=0` hides
+  them on purpose, `WORCA_GIT=1` skips the check. The GitHub CLI (`gh`) is
+  optional: it opens pull requests and issues.
 - **The [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI**
   (`claude`) on your `PATH` and signed in (`claude`, then `/login`; an
   `ANTHROPIC_API_KEY` works too) — for real runs only; mock mode starts no

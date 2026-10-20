@@ -110,6 +110,7 @@ import { recordRunMetrics } from './metrics/record.mjs';
 // Team policy (team-policy design §6–§7): the document a run's cost gates fold in, its
 // per-run state, and the off-policy findings the run log names at start.
 import { resolveProjectPolicy, resolveWorkspacePolicy } from './policy/sync.mjs';
+import { teamRunDiscover } from './git-free/team-repo.mjs';
 import { fieldsForRun, effectiveCap, deviationsFor, mcpDeviations } from './policy/effective.mjs';
 import { overlayStepModels } from './run-overlay.mjs';
 import { writePolicyState, hasPipelineOverride, readTotalAck } from './policy/state.mjs';
@@ -2996,7 +2997,7 @@ export class RunHarness extends EventEmitter {
     try {
       r = this.isWorkspace
         ? await resolveWorkspacePolicy(this.workspace?.id, { discover: 'if-missing' })
-        : await resolveProjectPolicy(this.projectDir, { discover: this.workMode === 'git' ? 'if-missing' : false });
+        : await resolveProjectPolicy(this.projectDir, { discover: teamRunDiscover(this.workMode, this.projectDir) });
     } catch (err) {
       this._log('policy', 'warn', `team policy could not be read (${err?.message || err}); your local settings apply`);
       return;

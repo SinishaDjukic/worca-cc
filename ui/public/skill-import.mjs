@@ -269,6 +269,11 @@ export function openSkillImport({ api, modal, onDone = () => {}, doc = globalThi
       candidates = r.data.candidates;
       return step1(error);
     }
+    if (r.status === 409 && r.data?.code === 'GIT_MISSING') {   // a URL off GitHub, no git here: the chip, in this dialog's message line
+      tell(msg, '', '');
+      msg.appendChild(h(doc, 'span', 'badge waiting pl-needs-git', 'Needs git'));
+      return;
+    }
     if (!r.ok) return tell(msg, error);
     candidates = null;
     staged = { stage: r.data.stage, name: r.data.name || '', inspection: r.data.inspection || {}, src };

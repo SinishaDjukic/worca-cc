@@ -1506,8 +1506,9 @@ async function cmdResume(argv) {
   // window for the total cap, per run for the pipeline cap); under --yes the harness warns instead.
   {
     const { checkTeamTotalGate, checkTeamPipelineGate } = await import('../core/policy/gate.mjs');
+    const { teamRunDiscover } = await import('../core/git-free/team-repo.mjs');
     const target = workspace ? { workspaceId: workspace.id } : { projectDir };
-    const totalGate = await checkTeamTotalGate(target, { pastTeamCap, reason: policyReason, unattended: auto, discover: workModeOfRow(saved.row) === 'git' ? 'if-missing' : false });
+    const totalGate = await checkTeamTotalGate(target, { pastTeamCap, reason: policyReason, unattended: auto, discover: teamRunDiscover(workModeOfRow(saved.row), projectDir) });
     if (totalGate.blocked) {
       process.stderr.write(`worca: ${totalGate.error}. ${totalGate.code === 'reason_required' ? 'Add --reason "<why>".' : `Continue: worca resume ${id} --past-team-cap [--reason "<why>"]`}\n`);
       return 1;
@@ -2392,7 +2393,7 @@ async function cmdMarketplace(argv) {
         }
         for (const m of entries) {
           const sync = m.lastSync ? `${m.lastSync.sha.slice(0, 7)} (${m.plugins.length} plugins)` : 'never synced';
-          out(`${m.name}\t${m.id}\t${m.url}\t${sync}${m.builtin ? '\tbuilt-in' : ''}`);
+          out(`${m.name}\t${m.id}\t${m.url}\t${sync}${m.builtin ? '\tbuilt-in' : ''}${mkt.marketplaceNeedsGit(m.url) ? '\tneeds git' : ''}`);
           for (const w of m.warnings || []) out(c('yellow', `  warning: ${w}`));
         }
         return 0;
@@ -2402,7 +2403,7 @@ async function cmdMarketplace(argv) {
         const entries = a._[0] ? [await mkt.syncMarketplace(a._[0])] : await mkt.refreshAllMarketplaces();
         for (const m of entries) {
           const sync = m.lastSync ? `${m.lastSync.sha.slice(0, 7)} (${m.plugins.length} plugins)` : 'never synced';
-          out(`${m.name}\t${sync}`);
+          out(`${m.name}\t${sync}${mkt.marketplaceNeedsGit(m.url) ? '\tneeds git' : ''}`);   // kept as stored until git is back
           for (const w of m.warnings || []) out(c('yellow', `  warning: ${w}`));
         }
         return 0;
@@ -3397,7 +3398,8 @@ async function main() {
   // window; under --yes nobody can click, so the harness warns instead and nothing is refused here.
   {
     const { checkTeamTotalGate } = await import('../core/policy/gate.mjs');
-    const gate = await checkTeamTotalGate({ projectDir }, { pastTeamCap: flags.pastTeamCap, reason: flags.reason, unattended: flags.auto, discover: cliMode.workMode === 'git' ? 'if-missing' : false });
+    const { teamRunDiscover } = await import('../core/git-free/team-repo.mjs');
+    const gate = await checkTeamTotalGate({ projectDir }, { pastTeamCap: flags.pastTeamCap, reason: flags.reason, unattended: flags.auto, discover: teamRunDiscover(cliMode.workMode, projectDir) });
     if (gate.blocked) {
       process.stderr.write(`worca: ${gate.error}. `
         + (gate.code === 'reason_required' ? 'Add --reason "<why>" with --past-team-cap.\n' : 'Continue: add --past-team-cap [--reason "<why>"]; the team sees it in Team metrics.\n'));

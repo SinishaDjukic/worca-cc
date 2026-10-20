@@ -174,7 +174,7 @@ cache at all pays one bounded fetch. A CLI-only machine refreshes with `worca po
 A missing, unreadable or newer-schema policy means your local settings apply, with one loud line
 in the run log and a red chip on the Projects row (the sentence is on the project page's Team tab).
 
-Without git on the machine, policy discovery waits; **Set up team policy…** answers `git is not installed on this machine` inside its dialog, and publishing an edited policy answers the same.
+Without git the branch is read and published through the GitHub API (github.com only), with the same cache; a run that finds nothing cached reads the policy once at its start, as with git. A private repository needs `GH_TOKEN` or the GitHub App: without one the policy shows as not read yet and each run logs that your local settings apply. A team repository on another host waits for git: **Set up team policy…** shows `Needs git` inside its dialog.
 
 ## Getting started
 

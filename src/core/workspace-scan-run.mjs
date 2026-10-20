@@ -14,7 +14,7 @@ import { copyFile, lstat, mkdir, readFile, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import {
-  checkNewWorkspace, createWorkspace, memberWorkMode, readWorkspace, saveWorkspaceScanResult, isWorkspaceMap, rootsHash,
+  checkNewWorkspace, createWorkspace, memberHasTeamRepo, readWorkspace, saveWorkspaceScanResult, isWorkspaceMap, rootsHash,
 } from './workspaces.mjs';
 import { workspaceStorePath } from './store.mjs';
 import { autoMetricsHome } from './metrics/sync.mjs';
@@ -101,7 +101,8 @@ export async function createWorkspaceWithHomes({ name, projectPaths, description
   checkNewWorkspace({ name, projectPaths });   // createWorkspace re-checks inside its tx
   const explicit = typeof metricsProject === 'string' && metricsProject ? metricsProject : null;
   // P5: a Folder member has no origin to record on — the home scans read git members only (no git in a Folder's folder).
-  const gitPaths = (Array.isArray(projectPaths) ? projectPaths : []).filter((p) => memberWorkMode(p) === 'git');
+  // P6 (S75): and the members whose team repository is known over HTTPS (without git every member is a Folder).
+  const gitPaths = (Array.isArray(projectPaths) ? projectPaths : []).filter((p) => memberHasTeamRepo(p));
   const metrics = explicit ?? await autoMetricsHome(gitPaths);
   let policy = typeof policyProject === 'string' && policyProject ? policyProject : null;
   if (!policy) {

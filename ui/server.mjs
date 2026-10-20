@@ -58,6 +58,7 @@ import { listProjects, addProject, addProjects, removeProject, normalizeProjectP
 import { effectiveWorkMode, workModeOfRow, workModeForStart } from '../src/core/project-kind.mjs';
 import { renderIndexHtml, INDEX_THEME_ANCHOR, FLAG_GATES_ANCHOR } from '../src/core/index-html.mjs';
 import { gitState, gitAvailable, currentGitState, onGitChange, GIT_MISSING } from '../src/core/git-available.mjs';
+import { teamOverHttps, teamRepoState, setTypedTeamRepo } from '../src/core/git-free/team-repo.mjs';
 import { allFlags, listFlags, setFlags, checkFlags, flagEvents, flagEnabled, FlagError } from '../src/core/flags.mjs';
 import { createKeepAwake, countWorking } from '../src/core/keep-awake.mjs';
 import {
@@ -166,6 +167,7 @@ import { loadCatalog } from '../src/core/mcp/catalog.mjs';
 import { installedPluginsMap, pluginRequirements, blockedPluginFindings, seedPolicyMarketplaces, mcpRequirements, skillRequirements, WORCA_VERSION as POLICY_WORCA_VERSION } from '../src/core/policy/local.mjs';
 import { normalizePolicyDoc } from '../src/core/policy/registry.mjs';
 import { checkTeamTotalGate, checkTeamPipelineGate, teamCapsForTarget } from '../src/core/policy/gate.mjs';
+import { teamRunDiscover } from '../src/core/git-free/team-repo.mjs';
 import { readPolicyState } from '../src/core/policy/state.mjs';
 import { teamAction, teamForget, teamSkillAction, teamSkillConsent, isTeamSkillId } from '../src/core/mcp/team.mjs';
 // Skills registry §2b-13: the policy routes' skill deviations. Aliased: the run-side code imports these names too.
@@ -230,7 +232,7 @@ import {
   globalModelRefs, removeGlobalModelAndRefs, promoteCustomModel, costUnreliableModelIds,
   readPrRemotePrefs, setPrRemotePrefs, modelHasBaseUrlRouting, writeSyncPrefs, readSyncPrefs,
   readNightModePrefs, writeNightModePrefs, readProjectDefaultTags, writeProjectDefaultTags,
-  readProjectActions, writeProjectActions, readActionsMeta, writeActionsMeta,
+  readProjectActions, writeProjectActions, readActionsMeta, writeActionsMeta, writeTeamRepo,
 } from '../src/core/config.mjs';
 import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
 import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue, UPSTREAM_PROVIDERS, CODEX_EFFORTS, MODEL_ENGINES, HELPER_ENGINES, CURSOR_EFFORTS, helperEngineFor, ASK_ENGINES } from '../src/core/model-env.mjs';
@@ -326,7 +328,7 @@ import {
   updateWorkspace, deleteWorkspace, isGitRepo, WORKSPACE_KEY_RE, countWorkspaces,
   readWorkspaceMap, setWorkspaceEdgeState, addWorkspaceManualEdge, removeWorkspaceManualEdge,
   regenerateWorkspaceDescription, readWorkspaceStacks, updateWorkspaceStacks, workspaceMembers,
-  addWorkspaceMembers, removeWorkspaceMember, rootsHash, workspaceSetHash, memberWorkMode,
+  addWorkspaceMembers, removeWorkspaceMember, rootsHash, workspaceSetHash, memberWorkMode, memberHasTeamRepo,
 } from '../src/core/workspaces.mjs';
 import { effectiveEdges } from '../src/shared/workspace-map/overrides.mjs';
 import { WORKSPACE_SCAN_WORKFLOW_ID, WORKSPACE_SCAN_DEFAULT_MODELS, PR_FIX_WORKFLOW_ID, GRAPH_SHAPE_WORKFLOW, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from '../src/core/graph/builtin-workflows.mjs';
@@ -382,7 +384,7 @@ import { readMcpStore } from '../src/core/mcp/store.mjs';
 import { mcpFootprint, skillFootprint } from '../src/core/mcp/plugin-lifecycle.mjs';
 import {
   addMarketplace, listMarketplaces, syncMarketplace, refreshAllMarketplaces,
-  removeMarketplace, readMarketplaces, seedBuiltinMarketplace,
+  removeMarketplace, readMarketplaces, seedBuiltinMarketplace, marketplaceNeedsGit,
 } from '../src/core/marketplaces.mjs';
 import {
   redactedConfig, writePluginConfig, readPluginConfig, listProfiles, listProfileIds,
@@ -1608,10 +1610,6 @@ const GIT_ONLY_ROUTES = Object.freeze([
   ['post', '/api/runs/:id/base-check'], ['post', '/api/runs/:id/update-branch'],
   ['post', '/api/runs/:id/resolve-pipeline'], ['post', '/api/runs/:id/resolve-terminal'],
   ['post', '/api/runs/:id/apply-retained'], ['post', '/api/runs/:id/discard-worktree'],
-  ['post', '/api/workspaces/metrics-scan'], ['post', '/api/workspaces/:id/metrics-route'], ['post', '/api/workspaces/:id/policy-route'],
-  ['post', '/api/projects/:key/team-metrics/enable'], ['post', '/api/team-metrics/flush'], ['post', '/api/team-metrics/discover'],
-  ['put', '/api/policy'], ['post', '/api/policy/discover'], ['post', '/api/projects/:key/policy/enable'],
-  ['post', '/api/plugins/install'], ['post', '/api/plugins/:name/update'],
 ]);
 for (const [method, route] of GIT_ONLY_ROUTES) app[method](route, (_req, res, next) => (gitAvailable() ? next() : gitMissing(res)));
 
@@ -2751,7 +2749,7 @@ const startRunHandler = async (req, res) => {
 
       // Team total cap (design §7): soft — `pastTeamCap` acknowledges it once per window per home.
       {
-        const gate = await checkTeamTotalGate({ projectDir }, { pastTeamCap: body.pastTeamCap === true, reason: typeof body.policyReason === 'string' ? body.policyReason : null, by: startedBy, discover: workMode === 'git' ? 'if-missing' : false });
+        const gate = await checkTeamTotalGate({ projectDir }, { pastTeamCap: body.pastTeamCap === true, reason: typeof body.policyReason === 'string' ? body.policyReason : null, by: startedBy, discover: teamRunDiscover(workMode, projectDir) });
         if (gate.blocked) return res.status(gate.code === 'reason_required' ? 400 : 403).json({ error: gate.error, code: gate.code, policy: gate.policy, needsPolicyAck: gate.code === 'team_total' });
       }
       const humanInLoop = bodyHumanInLoop ?? ((await readRunConfig(projectDir)).humanInLoop !== false);
@@ -4979,7 +4977,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
   // per run. Both soft — `pastTeamCap` (with an optional / required reason) records the choice
   // and lets the resume through; the local gates above stay never-bypassable.
   const teamTarget = workspace ? { workspaceId: workspace.id } : { projectDir };
-  const totalGate = await checkTeamTotalGate(teamTarget, { pastTeamCap, reason: policyReason, by, discover: workModeOfRow(saved.row) === 'git' ? 'if-missing' : false });
+  const totalGate = await checkTeamTotalGate(teamTarget, { pastTeamCap, reason: policyReason, by, discover: teamRunDiscover(workModeOfRow(saved.row), projectDir) });
   if (totalGate.blocked) {
     throw new ResumeError(totalGate.code === 'reason_required' ? 400 : 403, { error: totalGate.error, code: totalGate.code, policy: totalGate.policy, needsPolicyAck: totalGate.code === 'team_total' });
   }
@@ -5670,6 +5668,7 @@ async function statsByPerson(startMs, endMs) {
 
 // ---- Team metrics (team-metrics-design.md §4.6–§4.10) ----------------------------------
 function metricsErrorStatus(code) {
+  if (typeof code === 'string' && code.startsWith('GITHUB_')) return 502;
   switch (code) {
     case 'BAD_REQUEST': case 'NO_ORIGIN': return 400;
     case 'DELEGATE_INVALID': return 409;                 // a configuration state, not a malformed request
@@ -5677,6 +5676,7 @@ function metricsErrorStatus(code) {
     case 'PUSH_REJECTED': case 'FETCH_FAILED': case 'REMOTE_UNREACHABLE': case 'PUSH_RETRIES_EXHAUSTED': return 502;
     case 'LOCK_TIMEOUT': return 503;
     case 'GIT_MISSING': return 409;
+    case 'REPO_REQUIRED': return 400;
     default: return 500;
   }
 }
@@ -5693,6 +5693,23 @@ async function tmProject(req, res) {
   const p = (await listProjects()).find((x) => x.key === req.params.key);
   if (!p) { res.status(404).json({ error: 'project not found', code: 'NOT_FOUND' }); return null; }
   return p;
+}
+/** P6: the GitHub repository typed in the no-git setup dialog — used only for a Folder whose team repo is unknown. */
+async function typedTeamRepoFor(p, raw) {
+  if (raw == null || raw === '' || !teamOverHttps(p.path) || teamRepoState(p.path).kind !== 'none') return null;
+  return setTypedTeamRepo(p.key, p.path, raw);
+}
+// P6: over HTTPS one team setup at a time per project — the typed repo a request stores is the one its enable uses, and a
+// failed enable forgets the repo before the next setup reads it (two dialogs on one Folder never cross repositories).
+// With git (no typed repository is taken): no queue.
+const teamSetupTails = new Map();
+function withTeamSetup(p, fn) {
+  if (!teamOverHttps(p.path)) return fn();
+  const run = (teamSetupTails.get(p.key) || Promise.resolve()).then(() => fn());
+  const tail = run.then(() => {}, () => {});
+  teamSetupTails.set(p.key, tail);
+  tail.then(() => { if (teamSetupTails.get(p.key) === tail) teamSetupTails.delete(p.key); });
+  return run;
 }
 
 app.get('/api/team-metrics/scopes', async (req, res) => {
@@ -5749,7 +5766,7 @@ app.post('/api/team-metrics/prs', async (req, res) => {
   if (body.runs.length > TM_MAX_PR_LOOKUPS) return badRequest(res, `at most ${TM_MAX_PR_LOOKUPS} runs per request`);
   try {
     const { sources } = await scopeSources(scope);
-    res.json(await resolveRunPrs({ runs: body.runs, sinks: sources.map((s) => s.slug) }));
+    res.json(await resolveRunPrs({ runs: body.runs, sinks: sources.map((s) => ({ slug: s.slug, projectDir: s.projectDir })) }));
   } catch (err) { sendMetricsError(res, err); }
 });
 
@@ -5765,7 +5782,7 @@ app.get('/api/team-metrics/pr-events', async (req, res) => {
   try {
     const { sources, meta } = await scopeSources(scope);
     const repos = meta.kind === 'project' ? [meta.slug] : sources.map((s) => s.slug);
-    res.json(await listPrEvents({ sinks: sources.map((s) => s.slug), repos, from, to }));
+    res.json(await listPrEvents({ sinks: sources.map((s) => ({ slug: s.slug, projectDir: s.projectDir })), repos, from, to }));
   } catch (err) { sendMetricsError(res, err); }
 });
 
@@ -5825,10 +5842,14 @@ app.post('/api/projects/:key/team-metrics/enable', async (req, res) => {
   if (mode === 'here' && body.attribution != null && body.attribution !== 'git-user' && body.attribution !== 'none') {
     return badRequest(res, 'attribution must be "git-user" or "none"');
   }
-  try {
-    const result = await enableTeamMetrics(p.path, { mode, attribution: body.attribution || 'git-user', delegateTo: body.delegateTo || null, change: body.change === true, by: actorOf(req) });
-    res.json({ ...result, status: await projectMetricsStatus(p) });
-  } catch (err) { sendMetricsError(res, err); }
+  await withTeamSetup(p, async () => {
+    let typed = null;
+    try {
+      typed = await typedTeamRepoFor(p, body.repo);
+      const result = await enableTeamMetrics(p.path, { mode, attribution: body.attribution || 'git-user', delegateTo: body.delegateTo || null, change: body.change === true, by: actorOf(req) });
+      res.json({ ...result, status: await projectMetricsStatus(p) });
+    } catch (err) { if (typed) writeTeamRepo(p.key, null); sendMetricsError(res, err); }
+  });
 });
 
 // Wizard step (§4.8). No POST /api/workspaces/:id route exists, so nothing shadows this path.
@@ -5841,11 +5862,12 @@ app.post('/api/workspaces/metrics-scan', async (req, res) => {
   for (const p of normalized) {
     if (!fs.existsSync(p)) return badRequest(res, `member path is missing: ${p}`);
     if (isNoProjectWorkDir(p)) return badRequest(res, NO_PROJECT_ERRORS.register);   // P3-D11, before git runs inside it
-    if (memberWorkMode(p) === 'git' && !isGitRepo(p)) return badRequest(res, `member is not a git repository: ${p}`);   // P6 (S26) prefixes !teamOverHttps(p) && here
+    if (memberWorkMode(p) === 'git' && !teamOverHttps(p) && !isGitRepo(p)) return badRequest(res, `member is not a git repository: ${p}`);
   }
   try {
     // P5 (S26): a Folder member is never discovered (no origin to push to); the answer keeps the input order.
-    const git = normalized.filter((p) => memberWorkMode(p) === 'git');
+    // P6 (OS-13): a member whose team repository is known over HTTPS (.git/config origin or a typed repo) is discovered too.
+    const git = normalized.filter((p) => memberHasTeamRepo(p));
     const { members: found } = git.length ? await scanMembers(git) : { members: [] };
     const byPath = new Map(found.map((m) => [m.path, m]));
     res.json({ members: normalized.map((p) => byPath.get(p) || { path: p, key: projectKey(p), slug: path.basename(p), hasOrigin: false, enabled: false,
@@ -5867,11 +5889,11 @@ app.post('/api/workspaces/:id/metrics-route', async (req, res) => {
 const POLICY_ERROR_STATUS = {
   BAD_REQUEST: 400, NOT_FOUND: 404, NO_ORIGIN: 400, DELEGATE_INVALID: 400, NOT_HOME: 409, NOT_ENABLED: 409,
   REMOTE_UNREACHABLE: 502, FETCH_FAILED: 502, WORKTREE_FAILED: 500, COMMIT_FAILED: 500,
-  PUSH_REJECTED: 409, PUSH_RETRIES_EXHAUSTED: 409, GIT_MISSING: 409,
+  PUSH_REJECTED: 409, PUSH_RETRIES_EXHAUSTED: 409, GIT_MISSING: 409, REPO_REQUIRED: 400,
 };
 function sendPolicyError(res, err) {
   const code = (err && err.code) || 'INTERNAL';
-  res.status(POLICY_ERROR_STATUS[code] || 500).json({
+  res.status(POLICY_ERROR_STATUS[code] || (String(code).startsWith('GITHUB_') ? 502 : 500)).json({
     error: err && err.message ? err.message : String(err), code,
     ...(err && err.stderr ? { stderr: err.stderr } : {}),
     ...(err && err.hint ? { hint: err.hint } : {}),
@@ -6200,10 +6222,14 @@ app.post('/api/projects/:key/policy/enable', async (req, res) => {
   const body = req.body || {};
   const mode = body.mode === 'follow' ? 'follow' : body.mode === 'here' || body.mode == null ? 'here' : null;
   if (!mode) return badRequest(res, 'mode must be "here" or "follow"');
-  try {
-    const result = await enableTeamPolicy(p.path, { mode, delegateTo: body.delegateTo || null, change: body.change === true, title: typeof body.title === 'string' ? body.title : '', by: actorOf(req) });
-    res.json({ ...result, status: await projectPolicyStatus(p) });
-  } catch (err) { sendPolicyError(res, err); }
+  await withTeamSetup(p, async () => {
+    let typed = null;
+    try {
+      typed = await typedTeamRepoFor(p, body.repo);
+      const result = await enableTeamPolicy(p.path, { mode, delegateTo: body.delegateTo || null, change: body.change === true, title: typeof body.title === 'string' ? body.title : '', by: actorOf(req) });
+      res.json({ ...result, status: await projectPolicyStatus(p) });
+    } catch (err) { if (typed) writeTeamRepo(p.key, null); sendPolicyError(res, err); }
+  });
 });
 
 app.post('/api/workspaces/:id/policy-route', async (req, res) => {
@@ -14290,6 +14316,7 @@ function pluginErrorStatus(code) {
   if (code === 'REFERENCED') return 409;
   if (code === 'EXISTS') return 409;
   if (code === 'GIT_MISSING') return 409;
+  if (typeof code === 'string' && code.startsWith('GITHUB_')) return 502;   // P6: GitHub answered (or not) over HTTPS
   return 500;
 }
 function sendPluginError(res, err) {
@@ -14347,7 +14374,7 @@ app.get('/api/plugins', async (req, res) => {
 function withInstalled(list) {
   const lock = readPluginsLock();
   return (list || []).map((m) => ({
-    ...m, plugins: (m.plugins || []).map((p) => ({ ...p, installed: !!lock[p.name] })),
+    ...m, ...(marketplaceNeedsGit(m.url) ? { needsGit: true } : {}), plugins: (m.plugins || []).map((p) => ({ ...p, installed: !!lock[p.name] })),
   }));
 }
 
