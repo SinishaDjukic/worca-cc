@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { createCostReport, loadViews, saveView, COST_VIEWS_KEY } from '../ui/public/cost-report.mjs';
+import { createCostReport, loadViews, saveView, COST_STATE_KEY, COST_VIEWS_KEY } from '../ui/public/cost-report.mjs';
 
 const mem = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), m }; };
 const fact = (id, usd, tags, extra = {}) => ({ id, usd, hours: 2, inCohort: true, status: 'finished', pr: null,
@@ -139,4 +139,46 @@ test('style.css: a negative cell stays red in Unallocated and Ask Worca rows', a
   const kind = css.indexOf('.cr-table tr.cr-kind-none td');
   const neg = css.indexOf('.cr-table tr td.is-neg');
   assert.ok(kind > 0 && neg > kind, 'the is-neg rule matches the kind rule\'s specificity and comes after it');
+});
+
+test('team options: own storage keys, no run links, csvName, and the extras slots around the table', () => {
+  const doc = new JSDOM('<!doctype html><body></body>').window.document;
+  const storage = mem();
+  let csvName = '';
+  const seen = [];
+  const r = createCostReport({ doc, storage, onOpenRuns: null, stateKey: 'tm.cost', viewsKey: 'tm.views',
+    csvName: (_st, key) => `team-cost-${key}.csv`, onDownload: (_csv, name) => { csvName = name; },
+    extras: (ctx) => { seen.push([ctx.by, ctx.byLabel, ctx.runs.length]);
+      return { lead: Object.assign(doc.createElement('p'), { className: 'lead-x' }), tail: [Object.assign(doc.createElement('p'), { className: 'tail-x' })] }; } });
+  doc.body.append(r.el);
+  r.update({ data: { ...DATA, report: { ...DATA.report, ask: null } }, dims: [{ key: 'client', label: 'Client' }], rangeLabel: 'Oct', range: 'month' });
+  assert.deepEqual(seen.at(-1), ['tag:client', 'Client', 4]);
+  const kids = [...r.el.children];
+  assert.ok(kids.indexOf(r.el.querySelector('.cr-lead')) < kids.indexOf(r.el.querySelector('.cr-chart-card')));
+  assert.ok(kids.indexOf(r.el.querySelector('.cr-tail')) > kids.indexOf(r.el.querySelector('.cr-table-card')));
+  assert.ok(r.el.querySelector('.cr-lead .lead-x') && r.el.querySelector('.cr-tail .tail-x'));
+  assert.equal(r.el.querySelector('.cr-runs'), null);                         // no run links
+  assert.match(r.el.querySelector('.cr-table tbody tr').cells[6].textContent, /^\d+ runs?$/);
+  assert.equal(r.el.querySelector('.cr-tag-runs'), null);
+  r.el.querySelector('.cr-csv').click();
+  assert.equal(csvName, 'team-cost-client.csv');
+  r.el.querySelector('.cr-metric [data-metric="hours"]').click();          // persists the report state
+  assert.equal(JSON.parse(storage.getItem('tm.cost')).metric, 'hours');
+  assert.equal(storage.getItem(COST_STATE_KEY), null);
+  saveView(storage, 'Chargeback', { by: 'tag:client' }, 'tm.views');
+  assert.deepEqual(loadViews(storage, 'tm.views').map((v) => v.name), ['Chargeback']);
+  assert.deepEqual(loadViews(storage), []);
+});
+
+test('extras: hidden with the empty card when filters match nothing', () => {
+  const doc = new JSDOM('<!doctype html><body></body>').window.document;
+  const storage = mem();
+  storage.setItem('tm.cost', JSON.stringify({ by: 'tag:client', filters: [{ dim: 'tag:client', value: 'nobody' }] }));
+  const r = createCostReport({ doc, storage, stateKey: 'tm.cost', onOpenRuns: null,
+    extras: () => ({ lead: doc.createElement('p'), tail: [doc.createElement('p')] }) });
+  doc.body.append(r.el);
+  r.update({ data: DATA, dims: [{ key: 'client', label: 'Client' }], rangeLabel: 'Oct', range: 'month' });
+  assert.equal(r.el.querySelector('.cr-lead').hidden, true);
+  assert.equal(r.el.querySelector('.cr-tail').hidden, true);
+  assert.equal(r.el.querySelector('.cr-empty-card').hidden, false);
 });

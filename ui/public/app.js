@@ -220,7 +220,8 @@ import { renderEngineSection, readEngineSection, enginePatchToSettingsBody, util
 import { mountProjectSettings } from './project-settings-view.mjs';
 import { mountHouseBrief } from './house-brief-view.mjs';
 import { appendModelGroups, modelOptionText } from './model-options.mjs';
-import { renderScopeOptions, renderSyncChip, renderTeamMetricsBody, renderTmEmptyState, renderTmSkeleton, renderPooledBudgetTile, renderTagFilterSelect } from './team-metrics-view.mjs';
+import { renderScopeOptions, renderSyncChip, renderTeamMetricsBody, renderTmEmptyState, renderTmSkeleton, renderPooledBudgetTile,
+  renderTagFilterSelect, renderHeatGrid, renderMissingTagsStrip, TM_FMT } from './team-metrics-view.mjs';
 // Team policy (team-policy design §11): the Projects cell, the enable dialog, the page (read +
 // edit), the workspace line, the Settings readout, the New pipeline notes, the Plugins strip.
 import {
@@ -230,8 +231,8 @@ import {
   renderPolicyHeader, renderPolicyStats, renderPolicyPluginsPanel, renderPolicyCatalogPanel, renderMcpStrip, renderMcpConsent, handleTeamSkillClick,
 } from './team-policy-view.mjs';
 import { mcpRunsLabel, renderMcpRunsPop, renderRunSkills } from './mcp-run-picker.mjs';
-import { aggregate, toCsv, recordTags, tagBreakdowns } from '../../src/shared/team-metrics/aggregate.mjs';
-import { allocationModel, fromBreakdownRows, allocationCsv } from './tag-allocation.mjs';
+import { aggregate, toCsv, recordTags } from '../../src/shared/team-metrics/aggregate.mjs';
+import { recordFacts, heatGrid, missingKeyTodos } from '../../src/shared/team-metrics/cost-facts.mjs';
 import { buildWorkItems, prLookupFor } from '../../src/shared/team-metrics/timeline.mjs';
 import { renderTimeline, renderTimelinePopover, timelineWindow, shiftAnchor, TL_MODES, TL_ZOOMS } from './team-metrics-timeline.mjs';
 import {
@@ -261,7 +262,7 @@ import { presetSetupSummary, presetSavedNote, workflowNamesFrom } from './run-pr
 import { setupFromBody } from '../../src/shared/run-presets.mjs';
 import { createTagInput, tagChip, fetchTagVocabulary, createDimensionSlots, createDimensionEditor, flashFilled, missingSlot } from './tag-input.mjs';
 import { normaliseTags, formatTag, parseTag } from '../../src/shared/run-tags.mjs';
-import { splitByDimensions, tagGroupOptions, dimensionLabel, tagsProblemText } from '../../src/shared/tag-dimensions.mjs';
+import { splitByDimensions, tagGroupOptions, tagsProblemText } from '../../src/shared/tag-dimensions.mjs';
 import { createFlagsView, bindFlagSwitch } from './flags-view.mjs';
 import { createFlyout } from './side-flyout.mjs';
 import * as runPanel from './chat/run-panel.mjs';
@@ -20320,7 +20321,13 @@ async function paintPooledBudgetTile(scopeId, records) {
  *  tmState: tmState's initialiser reads it, and a const read above its declaration throws. */
 const TM_RUN_PAGE = 50;
 const TM_VIEW_KEY = 'worca.teamMetrics.view';
-const TM_VIEW_CHIPS = ['overview', 'person', 'tag'];   // Team metrics keeps By tag until s4 (Statistics has Cost)
+const TM_VIEW_CHIPS = ['overview', 'person', 'cost'];
+// 'tag' was the By cost tag chip (#718 slice 4); the Cost and value report replaced it (labels-cost-tags s4).
+const storedTmView = () => { const v = storedChoice(TM_VIEW_KEY, [...TM_VIEW_CHIPS, 'tag'], 'overview'); return v === 'tag' ? 'cost' : v; };
+const TM_COST_STATE_KEY = 'worca-cc.teamMetrics.cost.v1';
+const TM_COST_VIEWS_KEY = 'worca-cc.teamMetrics.costViews.v1';
+// Statistics' delta-chip wording (stats-view.mjs deltaChip) for a Team metrics range.
+const TM_DELTA_RANGE = { 'this-month': 'month', 'last-month': 'lastMonth', quarter: 'custom', year: 'custom', custom: 'custom', all: 'all' };
 const tmState = {
   scopeId: localStorage.getItem('worca.teamMetrics.scope') || '',
   range: 'this-month', from: '', to: '', groupBy: 'workflow',
@@ -20329,8 +20336,7 @@ const tmState = {
   runLimit: TM_RUN_PAGE,            // raised by "Show all N runs" (§4.9 "every record in range")
   cache: new Map(),                 // scopeId → last payload this session: switching back paints at once
   tab: 'overview',                  // 'overview' | 'timeline' — the hash param (#team-metrics/timeline)
-  view: storedChoice(TM_VIEW_KEY, TM_VIEW_CHIPS, 'overview'),   // the Overview tab's chip (#718 slice 4)
-  lastTagTables: [],                // the By tag allocationModels last painted (the per-table CSV reads them)
+  view: storedTmView(),             // the Overview tab's chip (#718 slice 4)
   // Timeline: calendar position, grouping (kept per viewer) and the tile filter.
   tl: {
     zoom: 'month', anchor: Date.now(), filter: null,
@@ -20623,6 +20629,29 @@ function onTimelineClick(e) {
   return true;
 }
 
+let tmCostReport = null;   // one instance, as Statistics keeps: a re-render morphs the same chart
+function tmCostReportFor() {
+  if (tmCostReport) return tmCostReport;
+  let reduced = false;
+  try { reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { /* no matchMedia */ }
+  tmCostReport = createCostReport({
+    doc: document, fmt: { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle, hours: DEFAULT_FMT.hours },
+    storage: localStorage, reducedMotion: reduced, stateKey: TM_COST_STATE_KEY, viewsKey: TM_COST_VIEWS_KEY,
+    onOpenRuns: null,                                   // teammates' runs: most are not in this machine's Runs list
+    onDownload: (csv, name) => downloadStatsCsv(csv, name),
+    csvName: (_st, key) => `team-metrics-${tmState.scopeId.replace(/[^a-z0-9-]+/gi, '-')}-${tmState.range}-cost-${key.replace(/[^a-z0-9._-]+/gi, '-')}.csv`,
+    extras: ({ runs, by, byLabel }) => ({
+      lead: renderMissingTagsStrip(missingKeyTodos(runs, tmState.dims), { doc: document, fmt: { usd: fmtUsd }, dims: tmState.dims }),
+      tail: [renderHeatGrid(heatGrid(runs, { by }), { doc: document, fmt: { usd: fmtUsd }, byLabel })],
+    }),
+  });
+  return tmCostReport;
+}
+// The window is UTC (resolveRange), so the label is UTC too: TM_FMT.day prints "Oct 1" from an ISO string, as the
+// rest of Team metrics does. (stats-view.mjs tipDate is private and prints LOCAL weekday dates.)
+const tmDay = (ms) => TM_FMT.day(new Date(ms).toISOString());
+const tmRangeLabel = (facts, range) => (range === 'all' ? 'All time' : `${tmDay(facts.windowStartMs)} – ${tmDay(facts.windowEndMs - 1)}`);
+
 function renderTeamMetrics() {
   const body = document.getElementById('tm-body');
   const data = tmState.data;
@@ -20650,26 +20679,32 @@ function renderTeamMetrics() {
     homeHint.append('Metrics home ', Object.assign(document.createElement('code'), { className: 'mono', textContent: data.scope.home || '—' }),
       ` · records from ${(data.scope.sources || []).length} member repositor${(data.scope.sources || []).length === 1 ? 'y' : 'ies'}, grouped by workspace name`);
   }
-  // View chips (flag on only): By tag while a dimension is configured or a loaded record carries a tag.
-  const tagChip = tagsOn && (tmState.dims.length > 0 || loadedTags.length > 0);
-  const view = !tagsOn ? null : (tmState.view === 'tag' && !tagChip ? 'overview' : tmState.view);
-  const tagTables = view !== 'tag' ? [] : tagBreakdowns(data.records, {
-    range: tmState.range, from: tmState.from || null, to: tmState.to || null, filter: aggFilter, now: Date.now(),
-    keys: tmState.dims.map((d) => d.key),
-  }).map((t) => allocationModel({ key: t.key, label: dimensionLabel(tmState.dims, t.key) || t.key, rows: fromBreakdownRows(t.rows) }));
-  tmState.lastTagTables = tagTables;
+  // View chips (flag on only). Cost is the Cost and value report over the team records in the range; the page's
+  // #tm-tag select and #tm-filters chips step aside there (the report has its own filter bar).
+  const view = tagsOn ? tmState.view : null;
+  let costEl = null;
+  if (view === 'cost') {
+    const facts = recordFacts(data.records || [], { range: tmState.range, from: tmState.from || null, to: tmState.to || null, now: Date.now() });
+    const r = tmCostReportFor();
+    r.update({
+      data: { bucket: facts.bucket, humanRateUsd: data.humanRateUsd ?? 0,
+        report: { buckets: facts.buckets, runs: facts.runs, prevRuns: facts.prevRuns, ask: null } },
+      dims: tmState.dims, rangeLabel: tmRangeLabel(facts, tmState.range), range: TM_DELTA_RANGE[tmState.range] || 'custom',
+    });
+    costEl = r.el;
+  }
   body.classList.remove('is-loading');
-  body.replaceChildren(renderTeamMetricsBody(agg, { doc: document, now: Date.now(), scopeKind: data.scope?.kind || 'project', sort: tmState.sort, filter: tmState.filter, homeHint, runLimit: tmState.runLimit, tagKeys, tagDims: tmState.dims, view, tagChip, tagTables }));
+  body.replaceChildren(renderTeamMetricsBody(agg, { doc: document, now: Date.now(), scopeKind: data.scope?.kind || 'project', sort: tmState.sort, filter: tmState.filter, homeHint, runLimit: tmState.runLimit, tagKeys, tagDims: tmState.dims, view, costEl }));
   tmState.lastAgg = agg;
   // The #tm-tag select, beside the range controls (replaced on every render; hidden with the flag off).
   const tagSel = renderTagFilterSelect(tagsOn ? data.records || [] : [], tmState.tag, { doc: document });
-  if (tmState.tab === 'timeline') tagSel.hidden = true;
+  if (tmState.tab === 'timeline' || view === 'cost') tagSel.hidden = true;
   const oldTag = document.getElementById('tm-tag');
   oldTag?.replaceWith(tagSel);
   void paintPooledBudgetTile(tmState.scopeId, data.records || []);   // team policy (design board 10): advisory tile, when the scope's policy sets one
   const chips = document.getElementById('tm-filters');
   const active = Object.entries(tmState.filter).filter(([, v]) => v != null);
-  chips.hidden = !(active.length || tmState.tag);
+  chips.hidden = view === 'cost' || !(active.length || tmState.tag);
   chips.replaceChildren(...active.map(([dim, key]) => {
     const b = document.createElement('button');
     b.type = 'button'; b.className = 'chip tm-filter-chip'; b.dataset.dim = dim;
@@ -20725,16 +20760,6 @@ if (tmSection) {
       tmState.view = viewBtn.dataset.tmView;
       storeChoice(TM_VIEW_KEY, tmState.view);
       renderTeamMetrics();
-      return;
-    }
-    const allocCsv = e.target.closest('.alloc-csv');
-    if (allocCsv) {
-      const m = (tmState.lastTagTables || []).find((t) => t.key === allocCsv.dataset.key);
-      if (!m) return;
-      const url = URL.createObjectURL(new Blob([allocationCsv(m)], { type: 'text/csv;charset=utf-8' }));
-      const a = Object.assign(document.createElement('a'), { href: url, download: `team-metrics-${tmState.scopeId.replace(/[^a-z0-9-]+/gi, '-')}-${tmState.range}-tag-${m.key}.csv` });
-      document.body.append(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
       return;
     }
     if (e.target.closest('#tm-timeline')) { onTimelineClick(e); return; }

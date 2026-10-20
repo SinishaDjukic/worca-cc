@@ -44,24 +44,24 @@ export const cleanState = (v) => ({
 });
 
 /** Saved views (per browser, clarified): [{ name, by, thenBy, metric, filters }], oldest first, at most 20. */
-export function loadViews(storage) {
-  const list = readJson(storage, COST_VIEWS_KEY, []);
+export function loadViews(storage, key = COST_VIEWS_KEY) {
+  const list = readJson(storage, key, []);
   return (Array.isArray(list) ? list : [])
     .filter((v) => v && typeof v.name === 'string' && v.name.trim())
     .map((v) => ({ name: v.name.trim().slice(0, 60), ...cleanState(v) })).slice(-MAX_VIEWS);
 }
 /** Save (a name used before, in any case, is replaced) → the new list. */
-export function saveView(storage, name, state) {
+export function saveView(storage, name, state, key = COST_VIEWS_KEY) {
   const n = String(name || '').trim().slice(0, 60);
-  if (!n) return loadViews(storage);
-  const list = loadViews(storage).filter((v) => v.name.toLowerCase() !== n.toLowerCase());
+  if (!n) return loadViews(storage, key);
+  const list = loadViews(storage, key).filter((v) => v.name.toLowerCase() !== n.toLowerCase());
   list.push({ name: n, ...cleanState(state) });
-  writeJson(storage, COST_VIEWS_KEY, list.slice(-MAX_VIEWS));
-  return loadViews(storage);
+  writeJson(storage, key, list.slice(-MAX_VIEWS));
+  return loadViews(storage, key);
 }
-export function deleteView(storage, name) {
-  const list = loadViews(storage).filter((v) => v.name !== name);
-  writeJson(storage, COST_VIEWS_KEY, list);
+export function deleteView(storage, name, key = COST_VIEWS_KEY) {
+  const list = loadViews(storage, key).filter((v) => v.name !== name);
+  writeJson(storage, key, list);
   return list;
 }
 
@@ -71,30 +71,37 @@ export function defaultBy(options) {
 }
 
 /**
- * @param {{ doc?, fmt?, storage?, reducedMotion?, onOpenRuns(ids: string[]): void, onDownload(csv: string, name: string): void }} deps
+ * @param {{ doc?, fmt?, storage?, reducedMotion?, onOpenRuns?: ((ids: string[]) => void)|null,
+ *   onDownload(csv: string, name: string): void, stateKey?, viewsKey?, csvName?(state, key): string,
+ *   extras?(ctx: { runs, model, by, byLabel }): { lead?: Node|null, tail?: Node[] } }} deps
+ *   onOpenRuns null: the runs are not this machine's (Team metrics), so no run links and no "select unallocated".
  * @returns {{ el: HTMLElement, update({ data, dims, rangeLabel, range }): void, state: object }}
  */
 export function createCostReport({ doc = globalThis.document, fmt = DEFAULT_FMT, storage = null, reducedMotion = false,
-  onOpenRuns = () => {}, onDownload = () => {} } = {}) {
-  const st = { ...cleanState(readJson(storage, COST_STATE_KEY, {})), view: '', expanded: new Set(),
+  onOpenRuns = () => {}, onDownload = () => {}, stateKey = COST_STATE_KEY, viewsKey = COST_VIEWS_KEY,
+  csvName = (s, key) => `statistics-${s.range}-cost-${key}.csv`, extras = null } = {}) {
+  const canOpen = typeof onOpenRuns === 'function';
+  const st = { ...cleanState(readJson(storage, stateKey, {})), view: '', expanded: new Set(),
     data: null, dims: [], rangeLabel: '', range: 'month' };
   const el = h(doc, 'div', 'cost-report');
   const kpis = h(doc, 'div', 'stat-row cr-kpis');
   const bar = h(doc, 'div', 'cr-bar');
   const controls = h(doc, 'div', 'cr-controls');
-  const chart = createAreaChart({ doc, fmt, reducedMotion, onTagRuns: (ids) => onOpenRuns(ids) });
+  const chart = createAreaChart({ doc, fmt, reducedMotion, onTagRuns: (ids) => { if (canOpen) onOpenRuns(ids); } });
   const chartCard = h(doc, 'section', 'card chart-card cr-chart-card');
   const chartHead = h(doc, 'div', 'card-head');
   chartCard.append(chartHead, chart.el);
   const tableCard = h(doc, 'section', 'card cr-table-card');
   const emptyCard = h(doc, 'section', 'card cr-empty-card');
-  el.append(kpis, bar, controls, chartCard, tableCard, emptyCard);
+  const leadEl = h(doc, 'div', 'cr-lead');
+  const tailEl = h(doc, 'div', 'cr-tail');
+  el.append(kpis, bar, controls, leadEl, chartCard, tableCard, tailEl, emptyCard);
 
   let options = [];
   let runs = [];
   let model = null;
   const rowsByPath = new Map();
-  const persist = () => writeJson(storage, COST_STATE_KEY, cleanState(st));
+  const persist = () => writeJson(storage, stateKey, cleanState(st));
   const dimLabel = (dim) => options.find((o) => o.id === dim)?.label || (dim.startsWith('tag:') ? dim.slice(4) : dim);
   const askOn = () => !st.filters.length && !!st.data?.report?.ask;
 
@@ -131,7 +138,7 @@ export function createCostReport({ doc = globalThis.document, fmt = DEFAULT_FMT,
   }
 
   function paintControls() {
-    const views = loadViews(storage);
+    const views = loadViews(storage, viewsKey);
     const by = btn(doc, 'btn btn-sm cr-dim', dimLabel(st.by), `Allocate by: ${dimLabel(st.by)}`);
     by.dataset.role = 'by';
     by.setAttribute('aria-haspopup', 'dialog');
@@ -199,7 +206,8 @@ export function createCostReport({ doc = globalThis.document, fmt = DEFAULT_FMT,
     } else name.append(h(doc, 'span', 'cr-value-text', row.label));
     const savedTd = h(doc, 'td', `num${row.savedUsd < 0 ? ' is-neg' : ''}`, signedUsd(fmt, row.savedUsd));
     const runsTd = h(doc, 'td', 'num');
-    if (row.runIds.length) runsTd.append(btn(doc, 'linkish cr-runs', `${row.runs} ${row.runs === 1 ? 'run' : 'runs'}`, `Open the ${row.runIds.length} runs of ${row.label} in the Runs list`));
+    if (row.runIds.length && canOpen) runsTd.append(btn(doc, 'linkish cr-runs', `${row.runs} ${row.runs === 1 ? 'run' : 'runs'}`, `Open the ${row.runIds.length} runs of ${row.label} in the Runs list`));
+    else if (!canOpen && row.runs) runsTd.textContent = `${row.runs} ${row.runs === 1 ? 'run' : 'runs'}`;
     else runsTd.textContent = '—';
     tr.append(nameTd, shareCell(row),
       h(doc, 'td', 'num', fmt.usd(row.spentUsd)),
@@ -273,6 +281,8 @@ export function createCostReport({ doc = globalThis.document, fmt = DEFAULT_FMT,
     chartCard.hidden = empty;
     tableCard.hidden = empty;
     emptyCard.hidden = !empty;
+    leadEl.hidden = true;
+    tailEl.hidden = true;
     if (empty) {
       emptyCard.replaceChildren(h(doc, 'p', 'chart-empty hint', st.filters.length ? 'No runs match these filters.' : 'No spend in this period.'),
         ...(st.filters.length ? [btn(doc, 'btn btn-sm cr-clear-filters', 'Clear filters')] : []));
@@ -283,9 +293,14 @@ export function createCostReport({ doc = globalThis.document, fmt = DEFAULT_FMT,
     chart.update({
       series: allocationSeries(model, runs, { buckets: rep.buckets, metric: st.metric, askSeries: askOn() ? rep.ask.series : null }),
       buckets: rep.buckets, bucket: st.data.bucket, metric: st.metric,
-      unallocated: none && st.by.startsWith('tag:') ? { ids: none.runIds } : null,
+      unallocated: none && canOpen && st.by.startsWith('tag:') ? { ids: none.runIds } : null,
     });
     paintTable();
+    const x = (extras && extras({ runs, model, by: st.by, byLabel: dimLabel(st.by) })) || {};
+    leadEl.replaceChildren(...(x.lead ? [x.lead] : []));
+    leadEl.hidden = !x.lead;
+    tailEl.replaceChildren(...(x.tail || []).filter(Boolean));
+    tailEl.hidden = !tailEl.childElementCount;
   }
 
   function setFilter(f) {
@@ -333,23 +348,23 @@ export function createCostReport({ doc = globalThis.document, fmt = DEFAULT_FMT,
     const val = t.closest('.cr-value');
     if (val) { const row = rowsByPath.get(val.closest('tr').dataset.path); if (row) setFilter({ dim: row.dim, value: row.value }); return; }
     const rn = t.closest('.cr-runs');
-    if (rn) { const row = rowsByPath.get(rn.closest('tr').dataset.path); if (row) onOpenRuns(row.runIds); return; }
+    if (rn) { const row = rowsByPath.get(rn.closest('tr').dataset.path); if (row && canOpen) onOpenRuns(row.runIds); return; }
     if (t.closest('.cr-csv')) {
       const key = st.by.startsWith('tag:') ? st.by.slice(4) : st.by;
       onDownload(reportCsv(model, { byLabel: dimLabel(st.by), thenByLabel: st.thenBy ? dimLabel(st.thenBy) : '' }),
-        `statistics-${st.range}-cost-${key}.csv`);
+        csvName(st, key));
       return;
     }
     if (t.closest('.cr-save-view')) { openSaveForm(); return; }
     if (t.closest('.cr-delete-view')) {
-      deleteView(storage, st.view); st.view = ''; paintControls();
+      deleteView(storage, st.view, viewsKey); st.view = ''; paintControls();
       controls.querySelector('.cr-views')?.focus();   // the button is gone after the repaint: focus the select
       return;
     }
   });
   el.addEventListener('change', (e) => {
     if (!e.target.matches('.cr-views')) return;
-    const v = loadViews(storage).find((x) => x.name === e.target.value);
+    const v = loadViews(storage, viewsKey).find((x) => x.name === e.target.value);
     if (!v) return;
     Object.assign(st, cleanState(v), { view: v.name });
     st.expanded.clear();
@@ -368,7 +383,7 @@ export function createCostReport({ doc = globalThis.document, fmt = DEFAULT_FMT,
     form.addEventListener('submit', (e) => {
       e.preventDefault();
       if (!name.value.trim()) return;
-      saveView(storage, name.value, st);
+      saveView(storage, name.value, st, viewsKey);
       st.view = name.value.trim().slice(0, 60);
       paintControls();
       controls.querySelector('.cr-views')?.focus();

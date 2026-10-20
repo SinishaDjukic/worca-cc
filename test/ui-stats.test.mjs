@@ -321,11 +321,12 @@ test('flag off: #stats-group is shown, no chips, no byTag even with a stored "ta
   assert.equal(doc.querySelector('#stats-body .alloc-card'), null);
 });
 
-test('By tag CSS: tokens only (light and dark); the hidden Cost chip (flag off) and folded rows hide through the global [hidden] rule', () => {
+test('Team metrics › Cost CSS: tokens only (light and dark); hidden parts hide through the global [hidden] rule', () => {
   const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
-  const rules = css.match(/[^}]*(alloc-|\.tm-view)[^{]*\{[^}]*\}/g) || [];
-  assert.ok(rules.length >= 4);
+  const rules = css.match(/[^}]*(\.tm-heat|\.tm-todo|\.cr-tail|\.tm-view)[^{]*\{[^}]*\}/g) || [];
+  assert.ok(rules.length >= 8, `${rules.length} rules`);
   for (const r of rules) assert.doesNotMatch(r.slice(r.indexOf('{')), /#[0-9a-f]{3,8}\b|rgb\(/i, r);
+  assert.doesNotMatch(css, /\.alloc-/);
   // style.css:4 is written with spaces: `[hidden]:not([hidden="until-found"]) { display: none !important; }`
   assert.match(css, /\[hidden\]:not\(\[hidden="until-found"\]\)\s*\{\s*display:\s*none\s*!important;?\s*\}/);
 });

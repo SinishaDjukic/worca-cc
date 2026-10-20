@@ -2827,10 +2827,21 @@ button.pd-ov-card:hover{border-color:var(--ink-3);}
 .stats-scope .tag-input{min-width:240px;}
 .groups-table tr.groups-row-none td,.groups-table tr.groups-row-ask td{color:var(--ink-3);font-style:italic;}
 .groups-table tfoot td{font-weight:500;border-top:1px solid var(--line);padding:8px 10px 8px 0;}
-.alloc-grid>*{min-width:0;}
-.alloc-csv{font-size:12px;}
-.alloc-table tr.alloc-more td:first-child{padding-left:14px;color:var(--ink-3);}
 .tm-view{margin-bottom:14px;}
+/* Team metrics › Cost (labels-cost-tags s4): the to-do strip and the person × value heat grid */
+.cr-tail{display:flex;flex-direction:column;gap:14px;}
+.cr-tail[hidden]{display:none;}
+.tm-todo-list{list-style:none;margin:0;padding:0;}
+.tm-todo-row{display:grid;grid-template-columns:minmax(0,1fr) 72px 96px minmax(0,1.2fr);gap:12px;align-items:baseline;padding:8px 0;border-top:1px solid var(--line);}
+.tm-todo-row:first-child{border-top:0;}
+.tm-heat-cell{border-radius:0;}
+.tm-heat-l0{background:transparent;}
+.tm-heat-l1{background:color-mix(in srgb, var(--blue) 12%, transparent);}
+.tm-heat-l2{background:color-mix(in srgb, var(--blue) 24%, transparent);}
+.tm-heat-l3{background:color-mix(in srgb, var(--blue) 40%, transparent);}
+.tm-heat-l4{background:color-mix(in srgb, var(--blue) 60%, transparent);}
+.tm-heat-legend{display:flex;align-items:center;gap:4px;margin-top:8px;}
+.tm-heat-swatch{display:inline-block;width:14px;height:10px;border-radius:var(--r-xs);}
 .stat-row{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px;}
 .stat-tile{padding:18px 20px;}
 .stat-label{display:flex;align-items:center;gap:8px;color:var(--ink-2);font-size:12.5px;font-weight:600;}

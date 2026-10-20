@@ -4,8 +4,9 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { aggregate } from '../src/shared/team-metrics/aggregate.mjs';
 import {
-  renderSyncChip, renderTmKpiRow, renderTeamMetricsBody, renderRunsTable, renderTmViewChips } from '../ui/public/team-metrics-view.mjs';
-import { allocationModel } from '../ui/public/tag-allocation.mjs';
+  renderSyncChip, renderTmKpiRow, renderTeamMetricsBody, renderRunsTable, renderTmViewChips,
+  renderHeatGrid, renderMissingTagsStrip, heatLevel } from '../ui/public/team-metrics-view.mjs';
+import { heatGrid } from '../src/shared/team-metrics/cost-facts.mjs';
 import { makeRecord } from './fixtures/team-metrics/records.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -143,15 +144,42 @@ const VIEW_RECS = [
   makeRecord({ id: 'v2', startedAt: '2026-09-09T10:00:00Z', usd: 1 }),
 ];
 
-test('renderTeamMetricsBody: no view (flag off) = no chips; By person = the By actor table alone; By tag = the tables', () => {
+test('renderTeamMetricsBody: no view (flag off) = no chips; By person = the By actor table alone; Cost = the report element', () => {
   const agg = aggregate(VIEW_RECS, { range: 'this-month', now: NOW });
   assert.equal(renderTeamMetricsBody(agg, { doc }).querySelector('#tm-view'), null);
-  const person = renderTeamMetricsBody(agg, { doc, view: 'person', tagChip: true });
-  assert.deepEqual([...person.querySelectorAll('#tm-view button')].map((b) => b.textContent), ['Overview', 'By person', 'By cost tag']);
+  const person = renderTeamMetricsBody(agg, { doc, view: 'person' });
+  assert.deepEqual([...person.querySelectorAll('#tm-view button')].map((b) => b.textContent), ['Overview', 'By person', 'Cost']);
   assert.deepEqual([...person.querySelectorAll('.tm-tbl')].map((t) => t.dataset.dim), ['actor']);
-  const tables = [allocationModel({ key: 'client', label: 'client', rows: [{ kind: 'value', label: 'acme', usd: 3, runs: 1 }, { kind: 'none', label: '(no client)', usd: 1, runs: 1 }] })];
-  const tag = renderTeamMetricsBody(agg, { doc, view: 'tag', tagChip: true, tagTables: tables });
-  assert.equal(tag.querySelectorAll('.alloc-card').length, 1);
-  assert.equal(tag.querySelector('.tm-tbl'), null);
-  assert.equal(renderTmViewChips('overview', { doc, tagChip: false }).querySelectorAll('button').length, 2);
+  const costEl = doc.createElement('div');
+  costEl.className = 'cost-report';
+  const cost = renderTeamMetricsBody(agg, { doc, view: 'cost', costEl });
+  assert.equal(cost.querySelector('#tm-view').nextElementSibling, costEl);
+  assert.equal(cost.querySelector('.tm-tbl'), null);
+  assert.deepEqual([...renderTmViewChips('overview', { doc }).querySelectorAll('button')].map((b) => b.textContent), ['Overview', 'By person', 'Cost']);
+});
+
+test('renderHeatGrid: a row per person, a column per value + Total, amounts in cells, shade steps l0–l4', () => {
+  const f = (id, person, usd, client) => ({ id, person, usd, hours: 0, inCohort: true, status: 'finished', tags: client ? { client } : {}, spend: [], hourBucket: -1 });
+  const grid = heatGrid([f('1', 'Developer A', 6, 'acme'), f('2', 'Developer A', 2, 'globex'), f('3', 'Developer B', 3, 'acme')], { by: 'tag:client' });
+  const card = renderHeatGrid(grid, { doc, byLabel: 'Client' });
+  assert.equal(card.querySelector('h2').textContent, 'Person × Client');
+  const t = card.querySelector('.tm-heat-table');
+  assert.deepEqual([...t.querySelectorAll('thead th')].map((x) => x.textContent), ['Person', 'acme', 'globex', 'Total']);
+  assert.deepEqual([...t.querySelectorAll('tbody tr')].map((r) => [...r.cells].map((c) => c.textContent)),
+    [['Developer A', '$6.00', '$2.00', '$8.00'], ['Developer B', '$3.00', '—', '$3.00']]);
+  assert.ok(t.querySelector('tbody tr td.tm-heat-l4'));
+  assert.ok(t.querySelectorAll('tbody tr')[1].cells[2].classList.contains('tm-heat-l0'));
+  assert.equal(t.querySelector('tbody tr').cells[1].title, 'Developer A · acme: $6.00 · 1 run');
+  assert.deepEqual([heatLevel(0, 6), heatLevel(1, 6), heatLevel(6, 6)], [0, 1, 4]);
+  assert.equal(renderHeatGrid(null, { doc, byLabel: 'Person' }).querySelector('.tm-heat-table'), null);
+});
+
+test('renderMissingTagsStrip: who, how many runs, how much; nothing without required keys', () => {
+  const dims = [{ key: 'client', label: 'Client', required: true }];
+  const card = renderMissingTagsStrip({ keys: ['client'], rows: [{ person: 'Developer A', label: 'Developer A', runs: 3, spentUsd: 4, keys: ['client'] }] }, { doc, dims });
+  assert.equal(card.querySelector('.card-head small').textContent, 'Required: Client');
+  assert.deepEqual([...card.querySelectorAll('.tm-todo-row')].map((li) => li.textContent), ['Developer A3 runs$4.00missing Client']);
+  assert.equal(card.querySelector('button'), null);
+  assert.match(renderMissingTagsStrip({ keys: ['client'], rows: [] }, { doc, dims }).textContent, /Every run in this view carries/);
+  assert.equal(renderMissingTagsStrip({ keys: [], rows: [] }, { doc, dims }), null);
 });
