@@ -39,7 +39,7 @@ test('quick actions: one row of label-sized 40px tiles (icon, label, badge inlin
   assert.match(b, /\.chat-home-promo-row\{display:grid;grid-template-columns:repeat\(auto-fit,minmax\(200px,1fr\)\);/, 'the Advanced Schedules promo leaves no hole either');
   assert.match(b, /\.chat-home-body\{container:chat-home \/ inline-size;/);
   assert.match(b, /@container chat-home \(max-width:640px\)\{\.chat-home-actions\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\);\}/);
-  assert.match(b, /@media \(max-width:760px\)\{\.chat-home-title\{font-size:24px;/);
+  assert.match(b, /@media \(max-width:760px\)\{\.chat-home-title\{font-size:var\(--fs-page\);/);
 });
 
 test('the run tile well is 176px and dotted (dots only behind graphs); the title stretches over the tile', () => {

@@ -36,7 +36,7 @@ import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { auditButtons, BUTTON_SPEC } from './button-audit.mjs';
+import { auditButtons, auditSizes, auditType, BUTTON_SPEC, SIZE_SPEC, TYPE_SPEC } from './button-audit.mjs';
 
 const args = process.argv.slice(2);
 // A bare flag (no value, or followed by another flag) yields '' so the caller can
@@ -61,6 +61,15 @@ const BASELINE_FILE = new URL('test/fixtures/contrast-baseline-light.json', ROOT
 // one of 3 sizes x 4 variants. auditButtons is self-contained, so its source runs in the page as is.
 const BUTTON_AUDIT = `(${auditButtons})(document.body, ${JSON.stringify(BUTTON_SPEC)}, null)`;
 const buttonReport = [];   // { state, theme, sig, rule, got, text }
+const sizeReport = [];     // { state, theme, sig, rule, got, text }
+const designChecks = [];   // { what, ok, got } from the projects-detail, kitchen and cost tags states
+const DEBT = JSON.parse(readFileSync(new URL('../test/fixtures/design-debt.json', import.meta.url), 'utf8'));
+const SIZE_AUDIT = `(${auditSizes})(document.body, ${JSON.stringify({ ...SIZE_SPEC, debt: DEBT.fieldSizeOverrides })}, null)`;
+const SIZE_STATES = new Set(['settings-general', 'settings-runs', 'settings-guardrails', 'settings-models', 'stats', 'team-metrics']);
+const typeReport = [];   // { state, theme, sig, rule, got, text }
+const TYPE_AUDIT = `(${auditType})(document.body, ${JSON.stringify(TYPE_SPEC)}, null)`;
+// D20: the slice-1 states (Chat home is 'ask-sheet', the baseline's key). The shell is on every one of them.
+const TYPE_STATES = new Set(['new', 'running-list', 'running-detail', 'running-detail-details', 'history-detail', 'history-detail-details', 'ask-sheet']);
 const FIXTURE_FILE = new URL('test/fixtures/theme-kitchen-sink.html', ROOT);
 
 const CHROME_PATHS = ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
@@ -416,6 +425,48 @@ const states = [
   ['history-list', async () => { await ev(`localStorage.removeItem('worca-cc.lingerRuns');0`); await go('runs'); await until(`document.querySelector('#runs-list .runs-row[data-kind="hist"]')`, 'a finished run row'); }],
   // History opens on the glance (like the Running detail); Details is its own state.
   ['history-detail', async () => { await go(`history/${projectKey}/${pipelineId}`); await until(`document.querySelector('.hd-glance:not([hidden]) .hd-result .rd-sgroup')`, 'the history glance'); }],
+  // D15/D16: the Cost tags row under the three tiles; one wrapping row, the control last, no sideways scroll.
+  ['history-detail-cost-tags', async () => {
+    const json = { 'content-type': 'application/json' };
+    await api('/api/flags', { method: 'PATCH', headers: json, body: JSON.stringify({ runTags: true }) });
+    await api(`/api/runs/${encodeURIComponent(pipelineId)}/tags`, { method: 'PUT', headers: json, body: JSON.stringify({ tags: ['client:northwind', 'team:docs'] }) });
+    await go(`history/${projectKey}/${pipelineId}`);
+    await until(`document.querySelector('#hist-detail .rd-facts .rd-cost-row .hd-tags-edit')`, 'the Cost tags row');
+    // prepare() runs before auditCurrent's theme loop, so the row is measured in light and dark here (R-ux-5).
+    for (const theme of THEMES.slice(0, 2)) for (const width of [1440, 375, 290]) {
+      await setTheme(theme);
+      await cdp('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: width < 600 });
+      await freeze(`cost-tags-${theme[0]}-${width}`);
+      const m = await ev(`(() => { const f = document.querySelector('#hist-detail .rd-facts');
+        const stats = f.querySelector('.rd-stats'); const row = f.querySelector('.rd-cost-row'); const cs = getComputedStyle(row);
+        const tops = [...row.querySelectorAll(':scope > .tag-chip')].map((c) => Math.round(c.getBoundingClientRect().top));
+        return { tiles: [...stats.children].map((d) => d.querySelector('span').textContent), label: row.firstElementChild.textContent,
+          below: row.getBoundingClientRect().top >= stats.getBoundingClientRect().bottom, oneLine: new Set(tops).size === 1,
+          wraps: cs.display === 'flex' && cs.flexWrap === 'wrap', last: !!row.lastElementChild.querySelector('.hd-tags-edit'),
+          scroll: document.scrollingElement.scrollWidth, client: document.scrollingElement.clientWidth }; })()`);
+      designChecks.push({ what: `cost tags row (${theme[0]}) at ${width}px: three tiles, one row under them, the control last, no sideways scroll`,
+        ok: m.tiles.length === 3 && !m.tiles.includes('cost tags') && m.label === 'Cost tags' && m.below && m.wraps && m.last
+          && (width === 290 || m.oneLine) && m.scroll === m.client, got: m });
+    }
+    await setTheme(THEMES[0]);
+    // The inline editor opens inside the row: at 290px (still emulated) it must not push the page sideways either.
+    await ev(`document.querySelector('#hist-detail .rd-cost-row .hd-tags-edit').click();0`);
+    await until(`document.querySelector('#hist-detail .rd-cost-row .hd-tags .tag-input-text')`, 'the cost tags editor');
+    await freeze('cost-tags-editor-290');
+    const ed = await ev(`({ scroll: document.scrollingElement.scrollWidth, client: document.scrollingElement.clientWidth,
+      inRow: !!document.querySelector('#hist-detail .rd-facts .rd-cost-row .tag-input-text') })`);
+    designChecks.push({ what: 'cost tags row at 290px: the open editor stays in the row, no sideways scroll',
+      ok: ed.inRow && ed.scroll === ed.client, got: ed });
+    // Close it without saving (a reload drops the unsaved editor), so the audits below see the resting row.
+    await go(`history/${projectKey}/${pipelineId}`);
+    await until(`document.querySelector('#hist-detail .rd-facts .rd-cost-row .hd-tags-edit')`, 'the Cost tags row');
+    await cdp('Emulation.clearDeviceMetricsOverride');
+    await freeze('cost-tags');
+  }, async () => {
+    const json = { 'content-type': 'application/json' };
+    await api(`/api/runs/${encodeURIComponent(pipelineId)}/tags`, { method: 'PUT', headers: json, body: JSON.stringify({ tags: [] }) });
+    await api('/api/flags', { method: 'PATCH', headers: json, body: JSON.stringify({ runTags: null }) });
+  }],
   ['history-detail-details', async () => { await go(`history/${projectKey}/${pipelineId}/details`); await until(`document.querySelector('.hd-details:not([hidden]) .hd-tabs .hd-tab')`, 'history tabs'); await freeze('details'); }],
   ['history-detail-tabs', async () => { const n = await ev(`document.querySelectorAll('.hd-tabs .hd-tab').length`); if (n < 2) throw new Error(`history-detail has ${n} tab(s): nothing to audit`); for (let i = 1; i < n; i += 1) { await ev(`document.querySelectorAll('.hd-tabs .hd-tab')[${i}].click();0`); await until(`!document.querySelector('.hd-diff-pane') || document.querySelector('.hd-diff-pane .hd-dl-row, .hd-diff-none, .hd-diff-note')`, 'tab content'); await freeze('tab'); await auditCurrent(`history-detail-tab-${i}`); } }],
   // The Workflows view (full screen): the canvas with the Library open, the Library's Scripts section with general expanded,
@@ -441,6 +492,25 @@ const states = [
     if (!p) throw new Error(`could not register the theme project: ${JSON.stringify(r.body)}`);
     await go(`projects/${p.key}`);
     await until(`document.querySelector('#proj-shell.detail-open .pd-ov-card-key')`, 'the project page');
+    const ring = () => ev(`(() => { const a = document.activeElement;
+      return { input: document.documentElement.dataset.input, back: !!a && a.classList.contains('pd-back'),
+        outline: a ? getComputedStyle(a).outlineStyle : '' }; })()`);
+    // prepare() runs once per state, before auditCurrent's theme loop, so this check walks light and dark itself
+    // (THEMES[0] is light, THEMES[1] dark) and leaves the page in light, as auditCurrent expects.
+    for (const theme of THEMES.slice(0, 2)) {
+      await setTheme(theme);
+      // A pointer user's open: go() reloads, so app.js:32087 boots in pointer mode, but an earlier state's trusted Tab
+      // events (focusSamples) or any stray keydown would flip it to keyboard (app.js:32089). Pin pointer mode
+      // explicitly, then read, and require the mode in the check, so a keyboard-mode read can never pass or fail it.
+      await ev(`document.documentElement.dataset.input='pointer';0`);
+      const onOpen = await ring();
+      designChecks.push({ what: `project Back (${theme[0]}): focused on open with no ring`, ok: onOpen.input === 'pointer' && onOpen.back && onOpen.outline === 'none', got: onOpen });
+      for (const type of ['keyDown', 'keyUp']) await cdp('Input.dispatchKeyEvent', { type, key: 'Shift', code: 'ShiftLeft', windowsVirtualKeyCode: 16 });
+      const afterKey = await ring();
+      designChecks.push({ what: `project Back (${theme[0]}): the ring after a keydown`, ok: afterKey.input === 'keyboard' && afterKey.back && afterKey.outline === 'solid', got: afterKey });
+    }
+    await setTheme(THEMES[0]);
+    await ev(`document.documentElement.dataset.input='pointer';0`);
   }],
   ['workspaces', async () => { await go('workspaces'); }],
   ['workspace-create', async () => { await go('workspace-create'); }],
@@ -494,7 +564,23 @@ const states = [
   ['modal-stop', async () => { await unhide('#stop-modal'); }, async () => { await rehide('#stop-modal'); }],
   ['modal-shipit', async () => { await unhide('#shipit-modal'); }, async () => { await rehide('#shipit-modal'); }],
   ['modal-viewer', async () => { await unhide('#viewer-card'); }, async () => { await rehide('#viewer-card'); }],
-  ['kitchen', async () => { await go('new'); await injectKitchen(); }],
+  ['kitchen', async () => { await go('new'); await injectKitchen();
+    // The #ds-proof block (test/fixtures/theme-kitchen-sink.html): the filter chip, the stacked table and the divided row.
+    const ds = await ev(`(() => { const q = (s) => document.querySelector('#ds-proof ' + s); const cs = (e) => getComputedStyle(e);
+      const probe = document.createElement('div'); probe.style.background = 'var(--field)'; document.body.append(probe);
+      const field = cs(probe).backgroundColor; probe.remove();
+      const chip = q('.filter-chip[aria-pressed="true"]'); const wrap = q('.table-wrap');
+      const label = q('.drow-label').getBoundingClientRect(); const ctl = q('.drow-control').getBoundingClientRect();
+      const td = q('.table td[data-label="Branch"]');
+      return { chipH: Math.round(chip.getBoundingClientRect().height), chipBg: cs(chip).backgroundColor, field,
+        chipBorder: cs(chip).borderTopColor, chipInk: cs(chip).color,
+        tdDisplay: cs(td).display, tdLabel: getComputedStyle(td, '::before').content,
+        wrapScroll: wrap.scrollWidth, wrapClient: wrap.clientWidth,
+        ctlBelow: ctl.top >= label.bottom, ctlW: Math.round(ctl.width), rowW: Math.round(q('.drow').getBoundingClientRect().width) }; })()`);
+    designChecks.push({ what: 'filter chip: pressed is 28px with the --field tint and an ink border', ok: ds.chipH === 28 && ds.chipBg === ds.field && ds.chipBorder === ds.chipInk, got: ds });
+    designChecks.push({ what: 'table: stacks per row in a 480px wrapper, no sideways scroll', ok: ds.tdDisplay === 'flex' && ds.tdLabel === '"Branch"' && ds.wrapScroll === ds.wrapClient, got: ds });
+    designChecks.push({ what: 'divided row: the control drops below the label at full width', ok: ds.ctlBelow && ds.ctlW === ds.rowW, got: ds });
+  }],
   // Actions (Phase B: pipelineId/projectKey exist only once the mock run finished). The first state registers
   // the run's folder as a project (its key is the run's projectKey) and seeds its action config, so the editor
   // renders an action row; they sit last so the extra project changes no earlier state. The fixture has no
@@ -550,6 +636,8 @@ async function auditCurrent(stateId) {
     // THEMES entries are [id, data-theme, emulated scheme]; only the explicit light and dark themes are audited.
     if (theme[0] === 'light' || theme[0] === 'dark') {
       for (const v of await ev(BUTTON_AUDIT, 90000)) buttonReport.push({ state: stateId, theme: theme[0], ...v });
+      if (SIZE_STATES.has(stateId)) for (const v of await ev(SIZE_AUDIT, 90000)) sizeReport.push({ state: stateId, theme: theme[0], ...v });
+      if (TYPE_STATES.has(stateId)) for (const v of await ev(TYPE_AUDIT, 90000)) typeReport.push({ state: stateId, theme: theme[0], ...v });
     }
     const { samples, styles, capped } = await ev(WALKER(null, theme[0] === 'light'), 90000);   // identity rows only for the light pass
     if (capped) cappedStates.push(`${stateId}/${theme[0]}`);
@@ -654,6 +742,18 @@ try {
   await writeFile(path.join(OUT, 'button-audit.json'), JSON.stringify(buttonReport, null, 1));
   console.log(`${buttonReport.length ? 'FAIL' : 'PASS'} one button style: ${buttonReport.length} button(s) outside 3 sizes x 4 variants`);
   if (buttonReport.length) { failed += 1; console.log(JSON.stringify(buttonReport.slice(0, 60), null, 1)); }
+  await writeFile(path.join(OUT, 'size-audit.json'), JSON.stringify(sizeReport, null, 1));
+  console.log(`${sizeReport.length ? 'FAIL' : 'PASS'} one size scale: ${sizeReport.length} field, segment or chip size(s) off the scale`);
+  if (sizeReport.length) { failed += 1; console.log(JSON.stringify(sizeReport.slice(0, 60), null, 1)); }
+  await writeFile(path.join(OUT, 'type-audit.json'), JSON.stringify(typeReport, null, 1));
+  console.log(`${typeReport.length ? 'FAIL' : 'PASS'} one type scale: ${typeReport.length} text element(s) off the scale`);
+  if (typeReport.length) { failed += 1; console.log(JSON.stringify(typeReport.slice(0, 60), null, 1)); }
+  for (const c of designChecks) {
+    console.log(`${c.ok ? 'PASS' : 'FAIL'} ${c.what}`);
+    if (!c.ok) { failed += 1; console.log(JSON.stringify(c.got)); }
+  }
+  const missing = ['project Back', 'filter chip', 'table', 'divided row', 'cost tags row'].filter((w) => !designChecks.some((c) => c.what.startsWith(w)));
+  if (missing.length && !ONLY.length) { failed += 1; console.log(`FAIL design checks never ran: ${missing.join(', ')}`); }
   console.log(`${pageErrors.length ? 'FAIL' : 'PASS'} no page errors (${pageErrors.length})`);
   if (pageErrors.length) { failed += 1; console.log(pageErrors.slice(0, 10).join('\n')); }
   if (consoleErrors.length) console.warn(`WARN ${consoleErrors.length} console.error call(s) (report-only):\n${consoleErrors.slice(0, 10).join('\n')}`);

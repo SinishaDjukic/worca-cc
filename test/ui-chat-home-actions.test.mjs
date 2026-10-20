@@ -281,7 +281,7 @@ test('one row: the Shaper badge sits inline after its label at normal size and n
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
   const rule = css.match(/^\.chat-home-act-badge\{([^}]*)\}/m)[1];
   assert.match(rule, /white-space:nowrap/);
-  assert.match(rule, /font-size:10px/);
+  assert.match(rule, /font-size:var\(--fs-caption\)/);
   assert.doesNotMatch(rule, /grid-area/);
   assert.doesNotMatch(rule, /text-overflow|overflow:hidden|max-width/);
   assert.doesNotMatch(css, /\.chat-home-act:has\(> \.chat-home-act-badge\)\{display:grid/, 'one row: the badge sits inline after the label');

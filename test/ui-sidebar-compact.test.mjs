@@ -65,10 +65,10 @@ test('hairlines: transparent at rest, --line while the pages run under an edge',
   assert.equal(ruleBody('.sidebar.under-bottom .side-foot'), 'border-top-color:var(--line);');
 });
 
-test('row rhythm: 32px rows a 4px gap apart, 13.5px medium labels, 16px icons at stroke 2, 4px corners', () => {
+test('row rhythm: 32px rows a 4px gap apart, 13px medium labels, 16px icons at stroke 2, 4px corners', () => {
   assert.match(ruleBody('.nav'), /gap:4px;/);
   const row = ruleBody('.nav button');
-  for (const d of ['height:32px;', 'padding:0 8px 0 9px;', 'border-radius:var(--r-sm);', 'gap:10px;', 'font-size:13.5px;', 'font-weight:500;', 'color:var(--side-ink);']) {
+  for (const d of ['height:32px;', 'padding:0 8px 0 9px;', 'border-radius:var(--r-sm);', 'gap:10px;', 'font-size:var(--fs-body);', 'font-weight:500;', 'color:var(--side-ink);']) {
     assert.ok(row.includes(d), `.nav button has ${d}`);
   }
   assert.match(ruleBody('.nav button svg'), /width:16px;height:16px;margin:0 2px;flex:0 0 auto;stroke-width:2;/);
@@ -115,12 +115,12 @@ test('counts: a plain grey mono number, the amber needs-you count is the one pil
   // Review A10: icon and number side by side, no tinted box; the number keeps the strong amber ink.
   assert.match(ruleBody('.nav-count.n-amber'), /display:inline-flex;align-items:center;gap:4px;min-width:0;height:auto;padding:0;background:none;color:var\(--amber-ink-strong\);/);
   assert.equal(ruleBody('.nav-count[hidden]'), 'display:none;');
-  assert.match(ruleBody('.sidebar.collapsed .nav-count'), /position:absolute;top:3px;right:2px;margin:0;font-size:9\.5px;/);
+  assert.match(ruleBody('.sidebar.collapsed .nav-count'), /position:absolute;top:3px;right:2px;margin:0;font-size:var\(--fs-caption\);/);
   // The needs-you count is the number alone now (no "?" icon), so it sits inside the square's top-right corner like
   // the other counts: no outer-gutter offset, no superscript nudge that only made sense beside the icon.
   assert.match(ruleBody('.sidebar.collapsed #nav-needs-count'), /min-width:0;height:auto;padding:0;background:none;/);
   assert.doesNotMatch(ruleBody('.sidebar.collapsed #nav-needs-count'), /right:-|top:1px/);
-  assert.equal(ruleBody('.sidebar.collapsed #nav-needs-count .nav-count-n'), 'font-size:9.5px;line-height:1;');
+  assert.equal(ruleBody('.sidebar.collapsed #nav-needs-count .nav-count-n'), 'font-size:var(--fs-caption);line-height:1;');
   assert.equal(ruleBody('.sidebar.collapsed .nav-count.n-grey:has(~ .nav-count.n-amber:not([hidden]))'), 'display:none;',
     'on the rail the Schedules grey number steps aside for its unread pill (one corner, one badge)');
   for (const id of ['nav-needs-count', 'nav-running-count', 'nav-schedules-count', 'nav-schedules-unread']) {

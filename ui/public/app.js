@@ -1191,11 +1191,14 @@ async function loadTopnavLazy() {
   }
 }
 function topnavSources() {
+  const live = overviewRuns().map(runsLiveItem);
+  const history = (state.historyAll || []).filter(Boolean).map(runsHistItem);
   return {
-    live: overviewRuns().map(runsLiveItem),
-    history: (state.historyAll || []).filter(Boolean).map(runsHistItem),
+    live, history,
     projects: (state.projects || []).map((p) => ({ key: p.key, name: p.name || projectName(p.path) })),
     workspaces: (state.workspaces || []).map((w) => ({ id: w.id, name: w.name, projectCount: (w.projectPaths || []).length })),
+    // D17: the label words in use on listed runs (the items carry [] while runLabels is off).
+    labels: [...new Set([...live, ...history].flatMap((r) => r.labels || []))].sort(),
     ...topnavLazy,
   };
 }
@@ -1208,6 +1211,12 @@ if (topnavSearchRoot) createTopnavSearch({
   onAsk: (query) => { openChat({ text: query }); },
   navigate: (href) => { location.hash = href; },
   openWorkflow: (id) => { void openWorkflowFromAsk(id); },
+  // D17: "Runs labelled hotfix" adds the word to the Runs list label filter and opens the Runs LIST: a bare #runs
+  // reopens the remembered run (D6), which may sit outside the filter, so go through goRunsList.
+  onLabel: (label) => {
+    if (!runsUi.view.labels.includes(label)) setRunsView({ labels: [...runsUi.view.labels, label] });
+    goRunsList();
+  },
 });
 
 // Restore before the first paint. `.sidebar` transitions width/flex-basis over
@@ -23305,7 +23314,7 @@ function paintHdGlance(screen, record, data) {
   paintGroupLine(glance.querySelector('.rd-page-head .rd-group-line'), record.id || '', record.title || '', groupHomeOf(record.id || ''));
   paintRunLabels(glance.querySelector(':scope > .rd-sheet'), { pipelineId: data.state.id, labels: data.state.labels, onSaved: (l) => { data.state.labels = l; } });
 
-  // Time · Cost · Cost tags · Changes, as on the Running page in every state.
+  // Time · Cost · Changes, then the Cost tags row, as on the Running page in every state.
   paintHdFacts(screen, record, data);
 
   // The result: every tab, the actions. The things to check live in Overview only.
@@ -23926,7 +23935,7 @@ function hdDot() {
 }
 
 // Run tags on the finished run page (#718): chips plus "Edit tags" (or "Add tags"), or the open editor,
-// in the landing page's head (the glance) and in Details › Overview. The editor stays in the head it was
+// in the Cost tags row under the glance tiles and in Details › Overview. The editor stays in the head it was
 // opened from; the element itself survives a header repaint, so its uncommitted chips are kept.
 let hdTagEditor = null;   // { pipelineId, el, input, host }
 // The finished page's facts row (also repainted after a cost tag Save, and when the run's dimensions answer: D18).
@@ -23936,18 +23945,29 @@ function paintHdFacts(screen, record, data) {
   const st = data.state;
   const s = data.results && data.results.summary;
   const activeMs = typeof st.totalActiveMs === 'number' ? st.totalActiveMs : liveTotalMs(st.steps, 0);
+  const tags = costTagsFact(st.tags, record && record.projectDir, () => { if (screen.isConnected) paintHdGlance(screen, record, data); }, record && record.target);
   paintGlanceFacts(glance, { summary: s || null, activeMs, cost: engineReportsCost(st.runEngine) ? (st.totalCostUsd || 0) : null,
     costNote: costSummaryText(runCostBreakdown(st.steps, st.totalCostUsd), fmtUsd),
-    costTags: costTagsFact(st.tags, record && record.projectDir, () => { if (screen.isConnected) paintHdGlance(screen, record, data); }, record && record.target) });
+    // D16: a finished run always has the row while runTags is on, so "Add cost tags" stays reachable.
+    costTags: flagOn('runTags') ? (tags || { tags: [], missing: [] }) : null });
+  // Only when the row was rebuilt (its control is gone): re-appending on every glance repaint would move an open
+  // editor's input out of the DOM and back, dropping focus and the caret while someone types.
+  const row = screen.querySelector('.rd-facts .rd-cost-row');
+  if (row && !row.querySelector(':scope > .hd-tags')) paintHdTags(screen, record, data);
 }
 function paintHdTags(screen, record, data) {
-  const hosts = { glance: screen.querySelector('.hd-glance .rd-page-meta'), row2: screen.querySelector('.hd-row2') };
-  for (const host of Object.values(hosts)) host?.querySelector('.hd-tags')?.remove();
-  if (!flagOn('runTags')) return;
+  // D16: the glance's control is the last item of the Cost tags row, on every screen that had the meta-line host.
+  const hosts = { glance: screen.querySelector('.hd-glance .rd-page-meta') ? screen.querySelector('.rd-facts .rd-cost-row') : null,
+    row2: screen.querySelector('.hd-row2') };
   const st = data.state;
+  // The open editor already in its host is left in place: moving it out and back drops focus and the caret.
+  const held = (where, host) => flagOn('runTags') && hdTagEditor && hdTagEditor.pipelineId === st.id && hdTagEditor.host === where
+    && hdTagEditor.el.parentElement?.parentElement === host;
+  for (const [where, host] of Object.entries(hosts)) if (host && !held(where, host)) host.querySelector('.hd-tags')?.remove();
+  if (!flagOn('runTags')) return;
   const repaint = () => { paintHdTags(screen, record, data); paintHdFacts(screen, record, data); };
   for (const [where, host] of Object.entries(hosts)) {
-    if (!host) continue;
+    if (!host || held(where, host)) continue;
     const box = document.createElement('span');
     box.className = 'hd-tags';
     if (hdTagEditor && hdTagEditor.pipelineId === st.id && hdTagEditor.host === where) {
@@ -23956,7 +23976,7 @@ function paintHdTags(screen, record, data) {
       continue;
     }
     const tags = st.tags || [];
-    // s2 (D10): the glance shows the chips in its cost tags tile; the meta line keeps only the button.
+    // The Cost tags row already shows the chips; Details (row2) shows its own beside the button.
     if (where !== 'glance') box.append(...tags.map((t) => tagChip(document, t)));
     const edit = document.createElement('button');
     edit.type = 'button';
@@ -24052,7 +24072,8 @@ function paintHdHeaderMeta(screen, record, data) {
   const row2 = screen.querySelector('.hd-row2');
   row2?.querySelector('.person-chip')?.remove();
   const by = personShown(st.startedBy) || personShown(record && record.startedBy);
-  if (by && row2) row2.appendChild(personChip(by, st.scheduledFor ? 'Scheduled by' : 'Started by'));
+  // Before a held tag editor (paintHdTags leaves it in place), so the chip keeps its spot.
+  if (by && row2) row2.insertBefore(personChip(by, st.scheduledFor ? 'Scheduled by' : 'Started by'), row2.querySelector(':scope > .hd-tags'));
   paintHdTags(screen, record, data);
   // spec §8: the End card's result chip, repeated in the header meta (History D5
   // untouched — no model/effort). A path links through the keyed artifact route.
@@ -31492,7 +31513,7 @@ function applyLabelsLocally(list) {
   scheduleRunsPaint();
 }
 
-// Runs head: the Label filter (no create: a filter word must be in use).
+// Runs head: the label filter chips (a word is chosen from the top search, D17).
 function paintRunsLabelFilter() {
   const box = document.getElementById('runs-label-filter');
   if (!box) return;
@@ -31500,16 +31521,6 @@ function paintRunsLabelFilter() {
   box.hidden = !chosen.length;
   box.replaceChildren(...chosen.map((l) => labelChip(document, l, { onRemove: () => setRunsView({ labels: chosen.filter((x) => x !== l) }) })));
 }
-document.getElementById('runs-label-btn')?.addEventListener('click', async (e) => {
-  const anchor = e.currentTarget;
-  if (closeLabelPickerFor(document, anchor)) return;   // a second press closes it
-  const used = await fetchLabels();
-  anchor.setAttribute('aria-expanded', 'true');
-  openLabelPicker({ doc: document, anchor, used, allowCreate: false, title: 'Filter by label',
-    states: new Map(runsUi.view.labels.map((l) => [l, 'all'])),
-    onToggle: (label, on) => setRunsView({ labels: on ? [...runsUi.view.labels, label] : runsUi.view.labels.filter((x) => x !== label) }),
-    onClose: () => anchor.setAttribute('aria-expanded', 'false') });
-});
 
 // Selection bar: the Label action.
 async function openRunsLabelPicker(anchor) {
@@ -33436,7 +33447,7 @@ const costTagsFact = (tags, projectDir, onLoad, target = 'project') => {
   return (tags || []).length || missing.length ? { tags: tags || [], missing } : null;
 };
 
-function glanceTiles({ summary = null, liveFiles = null, activeMs = null, cost = null, costNote = '', ticking = false, costTags = null } = {}) {
+function glanceTiles({ summary = null, liveFiles = null, activeMs = null, cost = null, costNote = '', ticking = false } = {}) {
   const tiles = document.createElement('div');
   tiles.className = 'rd-stats';
   const tile = (big, small, cls = '') => {
@@ -33451,12 +33462,6 @@ function glanceTiles({ summary = null, liveFiles = null, activeMs = null, cost =
   };
   if (activeMs != null) tiles.append(tile(fmtDuration(activeMs) || '0s', 'time', ticking ? 'run-time' : ''));
   if (cost != null) tiles.append(tile(fmtUsd(cost), costNote || 'cost'));
-  if (costTags) {   // s2 (D10): the run's cost tags next to time and cost, then a dashed slot per missing required key
-    const box = document.createElement('span');
-    box.className = 'rd-cost-tags';
-    box.append(...costTags.tags.map((t) => tagChip(document, t)), ...costTags.missing.map((k) => missingSlot(document, k)));
-    tiles.append(tile(box, 'cost tags', 'rd-cost-tags-b'));
-  }
   if (summary) {
     const files = (summary.filesNew || 0) + (summary.filesChanged || 0);
     tiles.append(tile(hdFileCountsNode(document, { added: summary.linesAdded || 0, removed: summary.linesRemoved || 0 }),
@@ -33467,6 +33472,17 @@ function glanceTiles({ summary = null, liveFiles = null, activeMs = null, cost =
   tiles.dataset.n = String(tiles.childElementCount);
   return tiles.childElementCount ? tiles : null;
 }
+// The run's cost tags under the tiles (D15). The label, the chips, then a dashed slot per missing required key; on a
+// finished run paintHdTags appends its Add / Edit control last (D16).
+function costTagsRow(doc, { tags, missing }) {
+  const row = doc.createElement('div');
+  row.className = 'rd-cost-row';
+  const label = doc.createElement('span');
+  label.className = 'rd-cost-row-label';
+  label.textContent = 'Cost tags';
+  row.append(label, ...tags.map((t) => tagChip(doc, t)), ...missing.map((k) => missingSlot(doc, k)));
+  return row;
+}
 
 // The facts row at the top of the sheet, in every state. Replaced only when its text
 // changes (the ticker rewrites the time in place between frames).
@@ -33476,11 +33492,14 @@ function paintGlanceFacts(glance, opts) {
   const host = screen && screen.querySelector('.rd-facts');
   if (!host) return;
   const tiles = glanceTiles(opts);
-  const sig = `${opts.ticking ? 't' : ''}|${tiles ? tiles.textContent : ''}`;
-  if (host.dataset.sig === sig || (opts.ticking && host.dataset.sig && host.dataset.sig.startsWith('t|') && host.dataset.rest === sigRest(tiles))) return;
+  const row = opts.costTags ? costTagsRow(document, opts.costTags) : null;
+  const tagSig = row ? row.textContent : '';
+  const sig = `${opts.ticking ? 't' : ''}|${tiles ? tiles.textContent : ''}|${tagSig}`;
+  const rest = `${sigRest(tiles)}|${tagSig}`;
+  if (host.dataset.sig === sig || (opts.ticking && host.dataset.sig && host.dataset.sig.startsWith('t|') && host.dataset.rest === rest)) return;
   host.dataset.sig = sig;
-  host.dataset.rest = sigRest(tiles);
-  host.replaceChildren(...(tiles ? [tiles] : []));
+  host.dataset.rest = rest;
+  host.replaceChildren(...[tiles, row].filter(Boolean));
 }
 // Everything but the time (the first tile): a ticking row need not be rebuilt for it.
 function sigRest(tiles) {
@@ -34404,7 +34423,7 @@ function paintRdHeader(screen, r) {
   const starter = personShown(r.startedBy);
   if (starter) screen.querySelector('.rd-page-meta').append(personChip(starter));
   // Run tags (#718): read-only chips after the person chip, replaced on every paint.
-  for (const c of screen.querySelectorAll('.rd-page-meta .tag-chip')) c.remove();   // s2: the chips moved to the cost tags tile
+  for (const c of screen.querySelectorAll('.rd-page-meta .tag-chip')) c.remove();   // s2: the chips moved to the Cost tags row
   paintRunLabels(screen.querySelector('.rd-glance > .rd-sheet'), { pipelineId: r.pipelineId || '', labels: r.labels, onSaved: (l) => { r.labels = l; } });
 
   // Meta: project · started · elapsed · cost · step n/m · step name.

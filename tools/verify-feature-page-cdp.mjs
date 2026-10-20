@@ -10,7 +10,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { auditButtons, BUTTON_SPEC } from './button-audit.mjs';
+import { auditButtons, auditType, BUTTON_SPEC, TYPE_SPEC } from './button-audit.mjs';
 import { auditGroupPageLayout } from './runs-layout-audit.mjs';
 
 const CHROME_PATHS = ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
@@ -120,12 +120,16 @@ async function waitFor(expr, what, ms = 15000) {
 }
 // The one-button-style audit (runs-redesign spec §5.2) in light, then dark; the page's own theme is put back after.
 const BUTTON_AUDIT = `(${auditButtons})(document.body, ${JSON.stringify(BUTTON_SPEC)}, null)`;
+// D23: every visible text on the type scale (docs/design-system.md › Type).
+const TYPE_AUDIT = `(${auditType})(document.body, ${JSON.stringify(TYPE_SPEC)}, null)`;
 async function auditButtonsBoth(where) {
   const before = await ev('document.documentElement.dataset.theme || ""');
   for (const theme of ['light', 'dark']) {
     await ev(`document.documentElement.dataset.theme=${JSON.stringify(theme)};0`);
     const bad = await ev(BUTTON_AUDIT);
     check(bad.length === 0, `${where}, ${theme}: every button is .btn in 3 sizes x 4 variants${bad.length ? ` — ${JSON.stringify(bad.slice(0, 12))}` : ''}`);
+    const offType = await ev(TYPE_AUDIT);
+    check(offType.length === 0, `${where}, ${theme}: every text is on the type scale${offType.length ? ` — ${JSON.stringify(offType.slice(0, 12))}` : ''}`);
   }
   await ev(`document.documentElement.dataset.theme=${JSON.stringify(before)};0`);
 }

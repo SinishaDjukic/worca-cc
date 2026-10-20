@@ -147,7 +147,7 @@ test('the top bar box: a 48px white grid with a hairline; .main-col is a flex co
   const all = [...css.matchAll(/(?:^|[\s,}])\.topnav\s*\{([^}]*)\}/g)].map((m) => m[1]);
   assert.ok(all.length >= 1);
   for (const body of all.slice(1)) assert.doesNotMatch(body, /height/, 'no tier changes the bar\'s height');
-  assert.match(ruleBody('.topnav-title'), /font-size:14px;font-weight:600;/);
+  assert.match(ruleBody('.topnav-title'), /font-size:var\(--fs-body\);font-weight:600;/);
   assert.match(ruleBody('.topnav-title'), /overflow:hidden;text-overflow:ellipsis;/);
   // One contiguous block right after the .main group (P2 and P3 append after it).
   const at = (s) => css.indexOf(s);

@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
-import { auditButtons, auditSurface, BUTTON_SPEC, SURFACE_SPEC } from '../tools/button-audit.mjs';
+import { auditButtons, auditSizes, auditSurface, auditType, BUTTON_SPEC, SIZE_SPEC, SURFACE_SPEC, TYPE_SPEC } from '../tools/button-audit.mjs';
 
 const OK = { borderTopLeftRadius: '6px', borderTopRightRadius: '6px', borderBottomRightRadius: '6px', borderBottomLeftRadius: '6px',
   backgroundImage: 'none', boxShadow: 'none' };
@@ -13,7 +13,7 @@ function run(html, styles = {}, { height = 32, coarse = false } = {}) {
   const env = {
     coarse,
     rect: (el) => ({ width: el.hasAttribute('data-hidden') ? 0 : 80, height: Number(el.dataset.h || height) }),
-    style: (el) => ({ ...OK, fontSize: el.classList.contains('btn-sm') ? '12.5px' : el.classList.contains('btn-lg') ? '14px' : '13px',
+    style: (el) => ({ ...OK, fontSize: el.classList.contains('btn-sm') ? '12px' : '13px',
       fontWeight: el.classList.contains('btn-primary') ? '600' : '500', ...(styles[el.id] || {}) }),
   };
   return auditButtons(doc.body, BUTTON_SPEC, env);
@@ -146,4 +146,36 @@ test('QA 1: a truncated badge fails the surface audit; a whole one passes', () =
     { heights: { t: 60 }, sizes: { b: { scroll: 81, client: 59 } } }), ['badge-truncated']);
   assert.deepEqual(surface('<button class="chat-home-act" id="t"><span class="chat-home-act-badge" id="b">Labs</span></button>',
     { heights: { t: 60 }, sizes: { b: { scroll: 81, client: 81 } } }), []);
+});
+
+test('a label that types "+" fails as typed-plus; the plus icon passes; listed debt passes', () => {
+  assert.deepEqual(run('<button class="btn">+ Add folder</button>').map((v) => v.rule), ['typed-plus']);
+  assert.deepEqual(run('<button class="btn"><span class="ic"></span>Add folder</button>'), []);
+  assert.deepEqual(run('<button class="btn">+ Add server</button>'), []);
+  assert.deepEqual(run('<button class="btn">+3</button>'), []);
+});
+
+test('auditSizes: a 46px field, a 24px segment and a 21px chip fail; a listed debt field is skipped', () => {
+  const doc = new JSDOM(`<body><select id="a"></select><div class="wm-filters"><select class="select" id="b"></select></div>
+    <div class="seg"><button id="c">Day</button></div><span class="badge" id="d">Beta</span></body>`).window.document;
+  const heights = { a: 46, b: 46, c: 24, d: 21 };
+  const env = { rect: (el) => ({ width: 10, height: heights[el.id] ?? 0 }), style: () => ({ borderTopLeftRadius: '6px' }) };
+  const got = auditSizes(doc.body, { ...SIZE_SPEC, debt: ['.wm-filters .select'] }, env).map((v) => v.rule);
+  assert.deepEqual(got, ['field-height', 'seg-height', 'chip-height']);
+  const ok = { a: 32, b: 46, c: 28, d: 18 };
+  assert.deepEqual(auditSizes(doc.body, { ...SIZE_SPEC, debt: ['.wm-filters .select'] },
+    { ...env, rect: (el) => ({ width: 10, height: ok[el.id] ?? 0 }) }), []);
+  // An 18px chip whose label overflows its box fails as chip-truncated.
+  const clipped = auditSizes(doc.body, { ...SIZE_SPEC, debt: ['.wm-filters .select'] },
+    { ...env, rect: (el) => ({ width: 10, height: ok[el.id] ?? 0 }), over: (el) => el.id === 'd' });
+  assert.deepEqual(clipped.map((v) => v.rule), ['chip-truncated']);
+});
+
+test('auditType: 12.5px and 13.33px text fail once per signature; steps, em code, a skipped graph and hidden text pass', () => {
+  const doc = new JSDOM(`<body><p id="a" class="m">x</p><p id="b" class="m">y</p><button id="c">Go</button>
+    <span id="d">ok</span><code id="h">npm test</code><div class="run-flow"><span id="e">node</span></div><span id="g">hid</span></body>`).window.document;
+  const size = { a: '12.5px', b: '12.5px', c: '13.3333px', d: '12px', h: '11.96px', e: '9.5px', g: '10px' };
+  const env = { style: (el) => ({ fontSize: size[el.id] || '13px' }),
+    rect: (el) => (el.id === 'g' ? { width: 0, height: 0 } : { width: 10, height: 10 }) };
+  assert.deepEqual(auditType(doc.body, TYPE_SPEC, env).map((v) => [v.sig, v.got]), [['p.m', '12.5px'], ['button', '13.3333px']]);
 });
