@@ -50,6 +50,9 @@ export function detectBuiltins({ platform = process.platform, env = process.env,
   return { editor, terminal, fileManager, copyCommand: { label: 'Copy command' } };
 }
 
+// explorer.exe exits 1 even when the window opened (launchAndWatch's okExitCodes).
+const EXPLORER_OK_CODES = [0, 1];
+
 /** { file, args, opts } for a detached, fire-and-forget launch of a built-in on `dir`. */
 export function builtinLaunch(key, dir, detected, { platform = process.platform, env = process.env, vars = {} } = {}) {
   const base = { detached: true, stdio: 'ignore', windowsHide: false };
@@ -72,7 +75,7 @@ export function builtinLaunch(key, dir, detected, { platform = process.platform,
   }
   if (key === 'fileManager') {
     if (d.kind === 'mac') return { file: 'open', args: [dir], opts: base };
-    if (d.kind === 'win') return { file: 'explorer.exe', args: [dir], opts: base };
+    if (d.kind === 'win') return { file: 'explorer.exe', args: [dir], opts: base, okExitCodes: EXPLORER_OK_CODES };
     return { file: d.cmd, args: [dir], opts: base };
   }
   throw new Error(`unknown built-in ${key}`);
@@ -87,7 +90,7 @@ export function revealLaunch(file, dir, detected) {
   if (!d) { const e = new Error('no file manager was found on this machine'); e.code = 'NOT_AVAILABLE'; throw e; }
   if (d.kind === 'mac') return { file: 'open', args: ['-R', file], opts: base };
   // Explorer takes `/select,"<path>"` as ONE argument: Node's own quoting would wrap the whole thing in quotes.
-  if (d.kind === 'win') return { file: 'explorer.exe', args: [`/select,"${file}"`], opts: { ...base, windowsVerbatimArguments: true } };
+  if (d.kind === 'win') return { file: 'explorer.exe', args: [`/select,"${file}"`], opts: { ...base, windowsVerbatimArguments: true }, okExitCodes: EXPLORER_OK_CODES };
   return { file: d.cmd, args: [dir], opts: base };
 }
 
