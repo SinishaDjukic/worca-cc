@@ -8,6 +8,7 @@ import {
 import {
   createFeature, getFeature, requireFeature, listFeatures, updateFeature, addFeatureCost,
   appendTurn, listTurns, getContext, setContext,
+  createStart, listStarts, latestStart, startByRunId, linkPipeline, recentLookCosts,
 } from '../src/core/requirements/store.mjs';
 
 useTempHome(after);
@@ -85,4 +86,57 @@ test('a title is one line: inner whitespace and newlines collapse to single spac
   const f = createFeature({ scopeType: 'project', scopeKey: 'k', title: '  Cancel\n  an\r\norder\tnow ', description: 'Line one\nLine two' });
   assert.equal(f.title, 'Cancel an order now');
   assert.equal(f.description, 'Line one\nLine two', 'the description keeps its lines');
+});
+
+test('starts: versions per feature, newest first, run id lookup, shape', () => {
+  const a = createFeature({ scopeType: 'project', scopeKey: 'st', title: 'A', description: 'd' });
+  const b = createFeature({ scopeType: 'project', scopeKey: 'st', title: 'B', description: 'd' });
+  assert.equal(latestStart(a.seq), null);
+  assert.deepEqual(listStarts(a.seq), []);
+  const spec = { ...emptySpec(), goal: { text: 'g', measure: '' } };
+  const s1 = createStart({ featureSeq: a.seq, version: 1, runId: 'run-a1', spec, title: 'A', ready: true }, { by: 'po' });
+  assert.deepEqual({ ...s1, id: 0, startedAt: '' }, {
+    id: 0, featureSeq: a.seq, version: 1, runId: 'run-a1', pipelineId: null, spec, title: 'A', ready: true, failing: [],
+    reason: null, workflowId: null, sourceBranch: null, startedBy: 'po', startedAt: '',
+  });
+  assert.ok(s1.startedAt);
+  const s2 = createStart({ featureSeq: a.seq, version: 2, runId: 'run-a2', spec, title: 'A', ready: false,
+    failing: ['criteria'], reason: 'urgent', workflowId: 'wf', sourceBranch: 'main' });
+  createStart({ featureSeq: b.seq, version: 1, runId: 'run-b1', spec, title: 'B', ready: true });
+  assert.deepEqual(listStarts(a.seq).map((x) => x.version), [2, 1]);
+  assert.equal(latestStart(a.seq).runId, 'run-a2');
+  assert.equal(s2.ready, false);
+  assert.deepEqual(s2.failing, ['criteria']);
+  assert.equal(startByRunId('run-a1').version, 1);
+  assert.equal(startByRunId('nope'), null);
+});
+
+test('starts: (feature, version) and run id are unique', () => {
+  const f = createFeature({ scopeType: 'project', scopeKey: 'st2', title: 'A', description: 'd' });
+  const base = { featureSeq: f.seq, spec: emptySpec(), title: 'A', ready: true };
+  createStart({ ...base, version: 1, runId: 'u-1' });
+  assert.throws(() => createStart({ ...base, version: 1, runId: 'u-2' }));
+  assert.throws(() => createStart({ ...base, version: 2, runId: 'u-1' }));
+});
+
+test('linkPipeline fills a NULL pipeline id once', () => {
+  const f = createFeature({ scopeType: 'project', scopeKey: 'st3', title: 'A', description: 'd' });
+  createStart({ featureSeq: f.seq, version: 1, runId: 'l-1', spec: emptySpec(), title: 'A', ready: true });
+  assert.equal(linkPipeline('l-1', 'abcd1234'), true);
+  assert.equal(linkPipeline('l-1', 'ffff0000'), false);
+  assert.equal(startByRunId('l-1').pipelineId, 'abcd1234');
+  assert.equal(linkPipeline('unknown', 'x'), false);
+});
+
+test('recentLookCosts: orientation turns with a positive cost, newest first, limited', () => {
+  const f = createFeature({ scopeType: 'project', scopeKey: 'st4', title: 'A', description: 'd' });
+  const before = recentLookCosts(1000).length;
+  appendTurn(f.seq, { kind: 'orientation', costUsd: 0.5 });
+  appendTurn(f.seq, { kind: 'orientation', costUsd: 0 });
+  appendTurn(f.seq, { kind: 'round', costUsd: 9 });
+  appendTurn(f.seq, { kind: 'orientation', costUsd: 0.25 });
+  const all = recentLookCosts(1000);
+  assert.equal(all.length, before + 2);
+  assert.deepEqual(all.slice(0, 2), [0.25, 0.5]);
+  assert.deepEqual(recentLookCosts(1), [0.25]);
 });

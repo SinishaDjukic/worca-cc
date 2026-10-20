@@ -133,3 +133,56 @@ export function setContext(scopeType, scopeKey, { body, lookAtCode } = {}, { by 
     .run(scopeType, scopeKey, b, look ? 1 : 0, by, iso());
   return getContext(scopeType, scopeKey);
 }
+
+// ---- starts (plans/requirements-a2-design.md §3, D8) ----
+
+function toStart(r) {
+  if (!r) return null;
+  return {
+    id: Number(r.id), featureSeq: Number(r.feature_seq), version: Number(r.version), runId: r.run_id,
+    pipelineId: r.pipeline_id || null, spec: { ...emptySpec(), ...json(r.spec_json, {}) }, title: r.title,
+    ready: !!r.ready, failing: json(r.failing_json, []), reason: r.reason || null,
+    workflowId: r.workflow_id || null, sourceBranch: r.source_branch || null,
+    startedBy: r.started_by || null, startedAt: r.started_at,
+  };
+}
+
+export function createStart({ featureSeq, version, runId, spec, title, ready, failing = [], reason = null,
+  workflowId = null, sourceBranch = null } = {}, { by = null } = {}) {
+  getDb();
+  const r = prepare(`INSERT INTO req_starts (feature_seq, version, run_id, spec_json, title, ready, failing_json,
+      reason, workflow_id, source_branch, started_by, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(Number(featureSeq), Number(version), runId, JSON.stringify(spec), title, ready ? 1 : 0,
+      JSON.stringify(failing), reason, workflowId, sourceBranch, by, iso());
+  return toStart(prepare('SELECT * FROM req_starts WHERE id = ?').get(Number(r.lastInsertRowid)));
+}
+
+export function listStarts(seq) {
+  getDb();
+  return prepare('SELECT * FROM req_starts WHERE feature_seq = ? ORDER BY version DESC').all(Number(seq)).map(toStart);
+}
+
+export function latestStart(seq) {
+  getDb();
+  return toStart(prepare('SELECT * FROM req_starts WHERE feature_seq = ? ORDER BY version DESC LIMIT 1').get(Number(seq)));
+}
+
+export function startByRunId(runId) {
+  getDb();
+  return toStart(prepare('SELECT * FROM req_starts WHERE run_id = ?').get(String(runId)));
+}
+
+/** Fill the pipeline id once; true only when this call filled a NULL. */
+export function linkPipeline(runId, pipelineId) {
+  getDb();
+  const r = prepare('UPDATE req_starts SET pipeline_id = ? WHERE run_id = ? AND pipeline_id IS NULL')
+    .run(String(pipelineId), String(runId));
+  return Number(r.changes) > 0;
+}
+
+/** Costs of the newest orientation ("look at the code") turns that cost something, newest first. */
+export function recentLookCosts(limit = 10) {
+  getDb();
+  return prepare(`SELECT cost_usd FROM req_turns WHERE kind = 'orientation' AND cost_usd > 0
+      ORDER BY id DESC LIMIT ?`).all(Number(limit)).map((r) => Number(r.cost_usd));
+}

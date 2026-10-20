@@ -3,15 +3,19 @@
 // Pure: no I/O, no imports — the store, the round validator, the edits and the Markdown renderer use it.
 
 export class RequirementsError extends Error {
-  /** @param {'BAD_REQUEST'|'NOT_FOUND'|'BUSY'|'CONFLICT'|'BUDGET'} code */
-  constructor(code, message) { super(message); this.name = 'RequirementsError'; this.code = code; }
+  /** @param {'BAD_REQUEST'|'NOT_FOUND'|'BUSY'|'CONFLICT'|'BUDGET'|'NOT_READY'} code
+   *  @param {object} [data] extra detail for the caller (e.g. { failing: [keys] }), kept on err.data */
+  constructor(code, message, data) {
+    super(message); this.name = 'RequirementsError'; this.code = code;
+    if (data !== undefined) this.data = data;
+  }
 }
 
 export const SCOPE_TYPES = Object.freeze(['project', 'workspace']);
 export const STATUSES = Object.freeze(['looking', 'thinking', 'your_turn', 'done', 'archived']);
 export const LIST_SECTIONS = Object.freeze(['actors', 'flow', 'edgeCases', 'rules', 'outOfScope', 'openQuestions']);
 export const SECTIONS = Object.freeze(['goal', ...LIST_SECTIONS]);
-export const TURN_KINDS = Object.freeze(['orientation', 'round', 'answers', 'edit', 'assumption', 'finish', 'error']);
+export const TURN_KINDS = Object.freeze(['orientation', 'round', 'answers', 'edit', 'assumption', 'finish', 'error', 'followup', 'start']);
 export const ASSUMPTION_STATUSES = Object.freeze(['open', 'confirmed', 'rejected']);
 export const LIMITS = Object.freeze({ title: 200, description: 20000, item: 500, items: 30, context: 10000 });
 export const MAX_ROUNDS = 6;      // D5

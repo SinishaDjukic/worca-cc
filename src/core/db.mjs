@@ -60,7 +60,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number â€” a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 57;
+export const SCHEMA_VERSION = 58;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -1089,6 +1089,27 @@ CREATE TABLE IF NOT EXISTS req_cost_ledger (
 CREATE INDEX IF NOT EXISTS req_cost_ledger_ts ON req_cost_ledger(ts);
 `;
 
+// Requirements A2 (plans/requirements-a2-design.md §3): one row per "Start in Worca" of a feature, with the
+// frozen spec. IF NOT EXISTS + an INCREMENTAL_TABLES entry: reconcile-safe against another branch's v58.
+const REQUIREMENTS_STARTS_DDL = `
+CREATE TABLE IF NOT EXISTS req_starts (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  feature_seq   INTEGER NOT NULL,
+  version       INTEGER NOT NULL,
+  run_id        TEXT NOT NULL UNIQUE,
+  pipeline_id   TEXT,
+  spec_json     TEXT NOT NULL,
+  title         TEXT NOT NULL,
+  ready         INTEGER NOT NULL,
+  failing_json  TEXT NOT NULL DEFAULT '[]',
+  reason        TEXT,
+  workflow_id   TEXT, source_branch TEXT,
+  started_by    TEXT, started_at TEXT NOT NULL,
+  UNIQUE (feature_seq, version)
+);
+CREATE INDEX IF NOT EXISTS req_starts_feature ON req_starts(feature_seq, version);
+`;
+
 const INCREMENTAL_TABLES = {
   config_workflow_wires: CONFIG_WORKFLOW_WIRES_DDL,
   step_questions:    STEP_QUESTIONS_DDL,
@@ -1121,6 +1142,7 @@ const INCREMENTAL_TABLES = {
   req_turns:         REQUIREMENTS_DDL,
   req_contexts:      REQUIREMENTS_DDL,
   req_cost_ledger:   REQUIREMENTS_DDL,
+  req_starts:        REQUIREMENTS_STARTS_DDL,
 };
 
 /**
