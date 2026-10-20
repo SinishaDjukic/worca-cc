@@ -2,9 +2,9 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { createFeature, getFeature, listTurns, updateFeature, appendTurn, setContext } from '../src/core/requirements/store.mjs';
+import { createFeature, getFeature, listTurns, updateFeature, appendTurn, setContext, createStart } from '../src/core/requirements/store.mjs';
 import {
-  updateHeader, setSection, releaseSection, addCriterion, editCriterion, removeCriterion, setAssumption, setArchived, confirmOpenAssumptions,
+  updateHeader, setSection, releaseSection, addCriterion, editCriterion, removeCriterion, setAssumption, setArchived, confirmOpenAssumptions, revertToStart,
 } from '../src/core/requirements/edits.mjs';
 import { emptySpec, nextIdNumber } from '../src/core/requirements/spec.mjs';
 import { buildRoundPrompt } from '../src/core/requirements/round.mjs';
@@ -159,4 +159,38 @@ test('confirmOpenAssumptions confirms only open ones in one turn; CONFLICT when 
   assert.throws(() => confirmOpenAssumptions(f.seq), (e) => e.code === 'CONFLICT');
   setArchived(f.seq, true);
   assert.throws(() => confirmOpenAssumptions(f.seq), (e) => e.code === 'CONFLICT');
+});
+
+test('scope lock: once started, the project or workspace cannot change; other header edits still can', () => {
+  const f = make();
+  assert.equal(updateHeader(f.seq, { scopeType: 'project', scopeKey: 'k2' }).scopeKey, 'k2', 'before a start: allowed');
+  createStart({ featureSeq: f.seq, version: 1, runId: `lock-${f.seq}`, spec: getFeature(f.seq).spec, title: 't', ready: true });
+  const n = listTurns(f.seq).length;
+  for (const scope of [{ scopeType: 'project', scopeKey: 'k3' }, { scopeType: 'workspace', scopeKey: 'k2' }]) {
+    assert.throws(() => updateHeader(f.seq, { ...scope, title: 'X' }),
+      (e) => e.code === 'CONFLICT' && e.message === 'this feature has been started; its project or workspace can no longer change');
+  }
+  assert.equal(listTurns(f.seq).length, n, 'a refused change appends nothing');
+  assert.equal(getFeature(f.seq).title, 't');
+  assert.equal(updateHeader(f.seq, { scopeType: 'project', scopeKey: 'k2', title: 'Same scope' }).title, 'Same scope');
+});
+
+test('revertToStart: the frozen spec comes back, counters stay, one edit turn; unknown version, busy-free checks', () => {
+  const f = make();
+  const frozen = getFeature(f.seq).spec;
+  createStart({ featureSeq: f.seq, version: 1, runId: `rev-${f.seq}`, spec: frozen, title: 't', ready: true });
+  addCriterion(f.seq, 'c4');
+  setAssumption(f.seq, 'A-1', 'confirmed');
+  setSection(f.seq, 'rules', 'r1');
+  const g = revertToStart(f.seq, 1, { by: 'po' });
+  assert.deepEqual(g.spec, frozen);
+  assert.equal(g.criteriaSeq, 4);
+  const t = listTurns(f.seq).at(-1);
+  assert.deepEqual([t.kind, t.payload, t.by], ['edit', { reverted: 1 }, 'po']);
+  assert.equal(addCriterion(f.seq, 'c5').spec.criteria.at(-1).id, 'R-po-5');
+  const n = listTurns(f.seq).length;
+  assert.throws(() => revertToStart(f.seq, 2), (e) => e.code === 'NOT_FOUND');
+  assert.equal(listTurns(f.seq).length, n);
+  setArchived(f.seq, true);
+  assert.throws(() => revertToStart(f.seq, 1), (e) => e.code === 'CONFLICT');
 });

@@ -6,16 +6,22 @@ import { actorOf } from '../identity.mjs';
 import { listProjects } from '../projects.mjs';
 import { workspaceTarget } from '../ask/workflow-deps.mjs';
 import { RequirementsError, parseFeatureSeq, SCOPE_TYPES } from './spec.mjs';
-import { createFeature, requireFeature, listFeatures, listTurns, getContext, setContext, updateFeature } from './store.mjs';
+import {
+  createFeature, requireFeature, listFeatures, listTurns, getContext, setContext, updateFeature, listStarts, latestStart, recentLookCosts,
+} from './store.mjs';
 import { startOrientation, submitAnswers, finishInterview, followUp, retry, isBusy, assertCapacity } from './interview.mjs';
 import { pendingRound } from './round.mjs';
 import {
   updateHeader, setSection, releaseSection, addCriterion, editCriterion, removeCriterion, setAssumption, confirmOpenAssumptions, setArchived,
+  revertToStart,
 } from './edits.mjs';
+import { readiness, displayState, changedSince, unaskedRejections } from './ready.mjs';
+import { startFeature, startView } from './start.mjs';
+import { budgetStatus, requirementsWindowedSpendUsd } from '../cost-budget.mjs';
 import { renderSpecMarkdown } from './markdown.mjs';
 import { saveSpecToCheckout, specFileName } from './save.mjs';
 
-const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_FOUND: 404, BUSY: 409, CONFLICT: 409, BUDGET: 409 });
+const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_FOUND: 404, BUSY: 409, CONFLICT: 409, BUDGET: 409, NOT_READY: 409 });
 const P = '/api/requirements';
 
 /** Every requirements route, in registration order: the one list registerRequirementsRoutes registers from
@@ -29,6 +35,7 @@ export const REQUIREMENTS_ROUTES = Object.freeze([
   ['POST', `${P}/:seq/criteria`], ['PUT', `${P}/:seq/criteria/:id`], ['DELETE', `${P}/:seq/criteria/:id`],
   ['POST', `${P}/:seq/assumptions`], ['POST', `${P}/:seq/assumptions/:id`], ['POST', `${P}/:seq/follow-up`], ['POST', `${P}/:seq/archive`],
   ['GET', `${P}/:seq/markdown`], ['POST', `${P}/:seq/save`],
+  ['POST', `${P}/:seq/start`], ['POST', `${P}/:seq/revert`],
 ].map(([method, path]) => Object.freeze({ method, path })));
 
 /** The change hook every requirements change goes through: a `requirements-changed` frame, only while the
@@ -37,18 +44,56 @@ export function requirementsChangeNotifier(broadcast) {
   return (seq) => { if (flagEnabled('requirements')) broadcast({ type: 'requirements-changed', seq: Number(seq) }); };
 }
 
-export function featureView(seq) {
+const noSummary = () => null;
+
+/** A feature's view (A1 §5, A2 §4): the stored feature plus what the page derives nothing of itself:
+ *  readiness, the displayed state, the unasked rejections, the starts (newest first; the newest with its
+ *  frozen spec, for the version switch) and the changes since the latest start. */
+export async function featureView(seq, d = {}) {
   const f = requireFeature(seq);
   const turns = listTurns(seq);
   const last = turns.at(-1);
+  const busy = isBusy(seq);
+  const pending = f.status === 'your_turn' ? pendingRound(turns) : null;
+  const ready = readiness({ ...f, pending }, { turns, target: await targetFor(f) });
+  const rows = listStarts(seq);
+  const runSummary = d.runSummary || noSummary;
+  const starts = await Promise.all(rows.map(async (s, i) => ({ ...(await startView(s, runSummary)), ...(i === 0 ? { spec: s.spec } : {}) })));
   return {
-    feature: { ...f, busy: isBusy(seq), pending: f.status === 'your_turn' ? pendingRound(turns) : null,
-      lastError: last && last.kind === 'error' ? last.payload.message : null },
+    feature: { ...f, busy, pending, lastError: last && last.kind === 'error' ? last.payload.message : null,
+      readiness: ready, state: displayState({ ...f, busy }, { ready, starts: rows }), unaskedRejections: unaskedRejections(f.spec, turns),
+      starts, changedSinceStart: rows.length ? changedSince(rows[0].spec, f.spec) : [] },
     turns,
   };
 }
 
-const summary = ({ spec, orientation, description, ...rest }) => ({ ...rest, busy: isBusy(rest.seq) });
+/** One list row: no spec, orientation or description; the derived state, the Ready count and the latest
+ *  start's run. `targetOf` caches the target per scope for one list call. */
+async function summary(f, targetOf, runSummary) {
+  const { spec, orientation, description, ...rest } = f;
+  const busy = isBusy(f.seq);
+  const turns = listTurns(f.seq);
+  const pending = f.status === 'your_turn' ? pendingRound(turns) : null;
+  const ready = readiness({ ...f, pending }, { turns, target: await targetOf(f) });
+  const latest = latestStart(f.seq);
+  return { ...rest, busy, state: displayState({ ...f, busy }, { ready, starts: latest ? [latest] : [] }), ready: ready.passed,
+    latestRun: latest ? (await startView(latest, runSummary)).run : null };
+}
+
+/** Median of the recent code-look costs, for the New feature page's hint (null when there are none). */
+function lookCostUsd() {
+  const costs = recentLookCosts(10).sort((a, b) => a - b);
+  if (!costs.length) return null;
+  const m = costs.length >> 1;
+  const mid = costs.length % 2 ? costs[m] : (costs[m - 1] + costs[m]) / 2;
+  return Math.round(mid * 1e4) / 1e4;
+}
+
+/** Requirements spend in the budget window budgetStatus() uses, and the total limit (null: none). */
+function requirementsSpend() {
+  const b = budgetStatus();
+  return { windowUsd: requirementsWindowedSpendUsd(b.windowStartMs), totalLimitUsd: b.totalLimitUsd ?? null };
+}
 
 async function checkTarget(scopeType, scopeKey) {
   if (!SCOPE_TYPES.includes(scopeType)) throw new RequirementsError('BAD_REQUEST', 'scopeType must be "project" or "workspace"');
@@ -56,11 +101,21 @@ async function checkTarget(scopeType, scopeKey) {
   if (scopeType === 'project') {
     const p = (await listProjects()).find((x) => x.key === scopeKey);
     if (!p) throw new RequirementsError('BAD_REQUEST', 'unknown project');
-    return { name: p.name, path: p.path, exists: p.exists };
+    // A registered project whose folder is gone still passes here (create, context); readiness says so.
+    return p.exists
+      ? { name: p.name, path: p.path, exists: true, ok: true, label: `Project ${p.name} is registered` }
+      : { name: p.name, path: p.path, exists: false, ok: false, hint: `the folder of project ${p.name} is missing` };
   }
   const ws = await workspaceTarget(scopeKey);
   if (!ws) throw new RequirementsError('BAD_REQUEST', 'unknown workspace');
-  return { name: ws.name };
+  return { name: ws.name, ok: true, label: `Workspace ${ws.name} exists` };
+}
+
+/** The feature's target for readiness: never throws; an unknown target is `{ ok: false, hint }`. */
+async function targetFor(f) {
+  try { return await checkTarget(f.scopeType, f.scopeKey); } catch {
+    return { ok: false, hint: f.scopeType === 'workspace' ? 'the workspace no longer exists' : 'the project is not registered' };
+  }
 }
 
 /**
@@ -75,7 +130,8 @@ export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
     try { await fn(req, res); }
     catch (err) {
       const status = (err && STATUS[err.code]) || 500;
-      res.status(status).json({ error: err && err.message ? err.message : String(err) });
+      const data = err instanceof RequirementsError && err.data && typeof err.data === 'object' ? err.data : {};
+      res.status(status).json({ ...data, error: err && err.message ? err.message : String(err) });
     }
   };
   const seqOf = (req) => {
@@ -84,7 +140,7 @@ export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
     return seq;
   };
   const by = (req) => actorOf(req);
-  const changed = (res, seq, code = 200) => { onChange(seq); res.status(code).json(featureView(seq)); };
+  const changed = async (res, seq, code = 200) => { onChange(seq); res.status(code).json(await featureView(seq, d)); };
 
   const handlers = {
     [`GET ${P}/context/:scopeType/:scopeKey`]: async (req, res) => {
@@ -98,7 +154,15 @@ export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
     },
     [`GET ${P}`]: async (req, res) => {
       const q = req.query || {};
-      res.json({ features: listFeatures({ scopeType: q.scopeType || null, scopeKey: q.scopeKey || null, archived: q.archived === '1' }).map(summary) });
+      const targets = new Map();
+      const targetOf = (f) => {
+        const k = `${f.scopeType}:${f.scopeKey}`;
+        if (!targets.has(k)) targets.set(k, targetFor(f));
+        return targets.get(k);
+      };
+      const list = listFeatures({ scopeType: q.scopeType || null, scopeKey: q.scopeKey || null, archived: q.archived === '1' });
+      const features = await Promise.all(list.map((f) => summary(f, targetOf, d.runSummary || noSummary)));
+      res.json({ features, lookCostUsd: lookCostUsd(), spend: requirementsSpend() });
     },
     [`POST ${P}`]: async (req, res) => {
       const b = req.body || {};
@@ -106,81 +170,81 @@ export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
       assertCapacity();   // before creating: a refused start must not leave a feature stuck at "looking"
       const f = createFeature({ scopeType: b.scopeType, scopeKey: b.scopeKey, title: b.title, description: b.description }, { by: by(req) });
       startOrientation(f.seq, { by: by(req) }, d);
-      changed(res, f.seq, 201);
+      await changed(res, f.seq, 201);
     },
-    [`GET ${P}/:seq`]: async (req, res) => res.json(featureView(seqOf(req))),
+    [`GET ${P}/:seq`]: async (req, res) => res.json(await featureView(seqOf(req), d)),
     [`PATCH ${P}/:seq`]: async (req, res) => {
       const seq = seqOf(req);
       const b = req.body || {};
       if (b.scopeType !== undefined || b.scopeKey !== undefined) await checkTarget(b.scopeType, b.scopeKey);
       updateHeader(seq, b, { by: by(req) });
-      changed(res, seq);
+      await changed(res, seq);
     },
     [`POST ${P}/:seq/answers`]: async (req, res) => {
       const seq = seqOf(req);
       submitAnswers(seq, req.body || {}, { by: by(req) }, d);
-      changed(res, seq, 202);
+      await changed(res, seq, 202);
     },
     [`POST ${P}/:seq/finish`]: async (req, res) => {
       const seq = seqOf(req);
       finishInterview(seq, { by: by(req) }, d);
-      changed(res, seq, 202);
+      await changed(res, seq, 202);
     },
     [`POST ${P}/:seq/retry`]: async (req, res) => {
       const seq = seqOf(req);
       retry(seq, { by: by(req) }, d);
-      changed(res, seq, 202);
+      await changed(res, seq, 202);
     },
     [`POST ${P}/:seq/look`]: async (req, res) => {
       const seq = seqOf(req);
       startOrientation(seq, { by: by(req), thenRound: false }, d);
-      changed(res, seq, 202);
+      await changed(res, seq, 202);
     },
     [`PUT ${P}/:seq/spec/:section`]: async (req, res) => {
       const seq = seqOf(req);
       setSection(seq, req.params.section, (req.body || {}).value, { by: by(req) });
-      changed(res, seq);
+      await changed(res, seq);
     },
     [`DELETE ${P}/:seq/spec/:section/edited`]: async (req, res) => {
       const seq = seqOf(req);
       releaseSection(seq, req.params.section, { by: by(req) });
-      changed(res, seq);
+      await changed(res, seq);
     },
     [`POST ${P}/:seq/criteria`]: async (req, res) => {
       const seq = seqOf(req);
       addCriterion(seq, (req.body || {}).text, { by: by(req) });
-      changed(res, seq);
+      await changed(res, seq);
     },
     [`PUT ${P}/:seq/criteria/:id`]: async (req, res) => {
       const seq = seqOf(req);
       editCriterion(seq, req.params.id, (req.body || {}).text, { by: by(req) });
-      changed(res, seq);
+      await changed(res, seq);
     },
     [`DELETE ${P}/:seq/criteria/:id`]: async (req, res) => {
       const seq = seqOf(req);
       removeCriterion(seq, req.params.id, { by: by(req) });
-      changed(res, seq);
+      await changed(res, seq);
     },
     [`POST ${P}/:seq/assumptions`]: async (req, res) => {
       const seq = seqOf(req);
       if ((req.body || {}).confirmOpen !== true) throw new RequirementsError('BAD_REQUEST', 'send { "confirmOpen": true }');
       confirmOpenAssumptions(seq, { by: by(req) });
-      changed(res, seq);
+      await changed(res, seq);
     },
     [`POST ${P}/:seq/follow-up`]: async (req, res) => {
       const seq = seqOf(req);
       followUp(seq, { by: by(req) }, d);
-      changed(res, seq, 202);
+      await changed(res, seq, 202);
     },
     [`POST ${P}/:seq/assumptions/:id`]: async (req, res) => {
       const seq = seqOf(req);
       setAssumption(seq, req.params.id, (req.body || {}).status, { by: by(req) });
-      changed(res, seq);
+      await changed(res, seq);
     },
     [`POST ${P}/:seq/archive`]: async (req, res) => {
       const seq = seqOf(req);
       setArchived(seq, (req.body || {}).restore !== true, { by: by(req) });
-      changed(res, seq);
+      await changed(res, seq);
     },
     [`GET ${P}/:seq/markdown`]: async (req, res) => {
       const f = requireFeature(seqOf(req));
@@ -200,6 +264,23 @@ export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
       updateFeature(seq, { savedPath: r.path }, { by: by(req) });
       onChange(seq);
       res.json({ path: r.path });
+    },
+    [`POST ${P}/:seq/start`]: async (req, res) => {
+      const seq = seqOf(req);
+      const f = requireFeature(seq);
+      if (typeof d.startRun !== 'function') throw new Error('starting runs is not available');
+      const b = req.body || {};
+      const r = await startFeature(seq, { reason: b.reason, workflowId: b.workflowId, sourceBranch: b.sourceBranch },
+        { by: by(req) }, { startRun: d.startRun, target: await targetFor(f) });
+      onChange(seq);
+      res.status(201).json({ runId: r.runId, version: r.version, ...await featureView(seq, d) });
+    },
+    [`POST ${P}/:seq/revert`]: async (req, res) => {
+      const seq = seqOf(req);
+      const v = (req.body || {}).version;
+      if (!Number.isInteger(v) || v < 1) throw new RequirementsError('BAD_REQUEST', 'version must be a whole number of at least 1');
+      revertToStart(seq, v, { by: by(req) });
+      await changed(res, seq);
     },
   };
 

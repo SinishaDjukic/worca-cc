@@ -24,3 +24,15 @@ export function renderSpecMarkdown(f, { targetName = null } = {}) {
     '## Description, as first given', f.description.split(/\r?\n/).map((l) => `> ${l}`).join('\n'),
   ].join('\n\n') + '\n';
 }
+
+/** The first paragraph of every run task (A2 D7). */
+export const TASK_PREAMBLE = 'Build this feature. The acceptance criteria `R-po-<n>` are the definition of done; keep their ids in the plan '
+  + 'and the review. Confirmed assumptions are decisions; open ones are guesses the product owner accepted when starting.';
+
+/** The task a run started from a feature gets (A2 D7): the preamble, then the given (frozen) spec as
+ *  renderSpecMarkdown renders it, its heading naming the version (`# FEAT-7 v2: …`). */
+export function renderTaskMarkdown(feature, { spec = feature.spec, targetName = null, version = 1 } = {}) {
+  const lines = renderSpecMarkdown({ ...feature, spec }, { targetName }).split('\n');
+  lines[0] = `# ${feature.id} v${version}: ${feature.title}`;
+  return `${TASK_PREAMBLE}\n\n${lines.join('\n')}`;
+}

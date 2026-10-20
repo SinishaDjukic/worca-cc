@@ -72,8 +72,21 @@ test('the whole flow in mock mode, with frames', async () => {
     assert.equal((await call('POST', `/api/requirements/${seq}/save`, {})).status, 409);
     const ctx = await call('PUT', `/api/requirements/context/project/${projKey}`, { body: 'Actors: buyer', lookAtCode: false });
     assert.deepEqual([ctx.json.body, ctx.json.lookAtCode], ['Actors: buyer', false]);
-    const list = (await call('GET', '/api/requirements')).json.features;
+    const listed = (await call('GET', '/api/requirements')).json;
+    const list = listed.features;
     assert.ok(list.some((f) => f.seq === seq && f.id === `FEAT-${seq}` && f.spec === undefined));
+    const row = list.find((f) => f.seq === seq);
+    assert.ok(['decide', 'ready'].includes(row.state), row.state);
+    assert.equal(typeof row.ready, 'number');
+    assert.equal(row.latestRun, null);
+    assert.ok(listed.lookCostUsd === null || typeof listed.lookCostUsd === 'number');
+    assert.equal(typeof listed.spend.windowUsd, 'number');
+    assert.ok('totalLimitUsd' in listed.spend);
+    v = (await call('GET', `/api/requirements/${seq}`)).json;
+    assert.equal(v.feature.readiness.total, 6);
+    assert.deepEqual(v.feature.starts, []);
+    assert.equal((await call('POST', `/api/requirements/${seq}/revert`, { version: 1 })).status, 404);
+    assert.equal((await call('POST', `/api/requirements/${seq}/revert`, {})).status, 400);
     assert.equal((await call('POST', `/api/requirements/${seq}/archive`, {})).json.feature.status, 'archived');
     assert.equal((await call('POST', `/api/requirements/${seq}/criteria`, { text: 'x' })).status, 409);
     assert.equal((await call('GET', '/api/requirements/999999')).status, 404);
@@ -94,6 +107,7 @@ test('the route table is exactly what gets registered', async () => {
   registerRequirementsRoutes(fake, { broadcast: () => {} });
   assert.deepEqual(seen, REQUIREMENTS_ROUTES.map((r) => `${r.method} ${r.path}`));
   assert.ok(REQUIREMENTS_ROUTES.length >= 19);
+  for (const p of ['/:seq/start', '/:seq/revert']) assert.ok(REQUIREMENTS_ROUTES.some((r) => r.method === 'POST' && r.path.endsWith(p)), p);
   for (const r of REQUIREMENTS_ROUTES) assert.doesNotMatch(fill(r.path), /:/, `every param is substituted: ${r.path}`);
 });
 

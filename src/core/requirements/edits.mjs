@@ -2,7 +2,7 @@
 // The product owner's edits (plans/requirements-design.md D6): ground truth the model may ask about but
 // never undo. Every edit is a turn, so the next round sees it in the thread.
 import { RequirementsError, SECTIONS, SCOPE_TYPES, ASSUMPTION_STATUSES, LIMITS, clip, normalizeSection, nextIdNumber } from './spec.mjs';
-import { requireFeature, updateFeature, appendTurn, listTurns } from './store.mjs';
+import { requireFeature, updateFeature, appendTurn, listTurns, listStarts, latestStart } from './store.mjs';
 import { tx } from '../db.mjs';
 import { isBusy } from './interview.mjs';
 
@@ -42,7 +42,11 @@ export function updateHeader(seq, { title, description, scopeType, scopeKey } = 
   const header = [];
   if (patch.title !== undefined && patch.title !== f.title) header.push('title');
   if (patch.description !== undefined && patch.description !== f.description) header.push('description');
-  if (patch.scopeType !== undefined && (patch.scopeType !== f.scopeType || patch.scopeKey !== f.scopeKey)) header.push('scope');
+  if (patch.scopeType !== undefined && (patch.scopeType !== f.scopeType || patch.scopeKey !== f.scopeKey)) {
+    // A run works on the target it was started for (A2 D8): the scope is fixed from the first start on.
+    if (latestStart(seq)) throw new RequirementsError('CONFLICT', 'this feature has been started; its project or workspace can no longer change');
+    header.push('scope');
+  }
   if (!header.length) return updateFeature(seq, patch, { by });
   return tx(() => {
     appendTurn(seq, { kind: 'edit', payload: { header } }, { by });
@@ -120,6 +124,18 @@ export function confirmOpenAssumptions(seq, { by = null } = {}) {
   return tx(() => {
     appendTurn(seq, { kind: 'assumption', payload: { ids, status: 'confirmed' } }, { by });
     return updateFeature(seq, { spec: { ...f.spec, assumptions: f.spec.assumptions.map((a) => (ids.includes(a.id) ? { ...a, status: 'confirmed' } : a)) } }, { by });
+  });
+}
+
+/** Undo the changes made since a start (A2 D11): the spec goes back to that start's frozen copy. The id
+ *  counters stay where they are (A1-D3), so an id given out after the start is never reused. */
+export function revertToStart(seq, version, { by = null } = {}) {
+  editable(seq);
+  const start = listStarts(seq).find((s) => s.version === Number(version));
+  if (!start) throw new RequirementsError('NOT_FOUND', `no build v${String(version).slice(0, 12)} of this feature`);
+  return tx(() => {
+    appendTurn(seq, { kind: 'edit', payload: { reverted: start.version } }, { by });
+    return updateFeature(seq, { spec: start.spec }, { by });
   });
 }
 

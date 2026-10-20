@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, symlinkSync, exist
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { emptySpec } from '../src/core/requirements/spec.mjs';
-import { renderSpecMarkdown } from '../src/core/requirements/markdown.mjs';
+import { renderSpecMarkdown, renderTaskMarkdown } from '../src/core/requirements/markdown.mjs';
 import { saveSpecToCheckout, specFileName } from '../src/core/requirements/save.mjs';
 
 const scratch = [];
@@ -77,4 +77,19 @@ test('save: specs/ as a regular file, or the spec path as a directory, is a 409,
   for (const overwrite of [false, true]) {
     assert.deepEqual(await saveSpecToCheckout({ projectDir: p2, feature, markdown: 'x', overwrite }), { ok: false, status: 409, error: 'the spec path is a directory' });
   }
+});
+
+test('task markdown: the preamble first, the version in the heading, the passed spec (not feature.spec)', () => {
+  const frozen = { ...feature.spec, criteria: [{ id: 'R-po-1', text: 'Cancel while unpaid' }, { id: 'R-po-4', text: 'Email the buyer' }] };
+  const md = renderTaskMarkdown({ ...feature, spec: { ...feature.spec, criteria: [{ id: 'R-po-9', text: 'Later edit' }] } },
+    { spec: frozen, targetName: 'shop', version: 2 });
+  const [first, second] = md.split('\n\n');
+  assert.equal(first, 'Build this feature. The acceptance criteria `R-po-<n>` are the definition of done; keep their ids in the plan '
+    + 'and the review. Confirmed assumptions are decisions; open ones are guesses the product owner accepted when starting.');
+  assert.equal(second, '# FEAT-12 v2: Cancel an order!');
+  assert.match(md, /\*\*Project:\*\* shop/);
+  assert.match(md, /- \*\*R-po-1\*\* Cancel while unpaid/);
+  assert.match(md, /- \*\*R-po-4\*\* Email the buyer/);
+  assert.doesNotMatch(md, /R-po-9|Later edit/);
+  assert.match(md, /- \*\*A-1\*\* \(confirmed\) Full refund/);
 });
