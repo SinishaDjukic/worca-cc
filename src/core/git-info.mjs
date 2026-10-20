@@ -324,10 +324,10 @@ async function gcRunning(projectDir) {
   try { process.kill(pid, 0); return true; } catch (err) { return err.code === 'EPERM'; }
 }
 
-/** Wait (up to `maxMs`) for a running `git gc` in the repository to finish. */
-async function waitForGc(projectDir, { maxMs = 120_000, stepMs = 2_000, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
-  const until = Date.now() + maxMs;
-  while (Date.now() < until && await gcRunning(projectDir)) await sleep(stepMs);
+/** Wait (up to `maxMs` by `now`) for a running `git gc` in the repository to finish. */
+async function waitForGc(projectDir, { maxMs = 120_000, stepMs = 2_000, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now } = {}) {
+  const until = now() + maxMs;
+  while (now() < until && await gcRunning(projectDir)) await sleep(stepMs);
 }
 
 /**
