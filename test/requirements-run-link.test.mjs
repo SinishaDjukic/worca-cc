@@ -1,0 +1,187 @@
+// test/requirements-run-link.test.mjs — starts go through the run handler; run events reach the feature
+// (plans/requirements-a2-design.md D6, D9, D10). The hook on its own, then ui/server.mjs in-process in mock
+// mode: a Ready feature starts a real mock run, and its first state event links the pipeline id.
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { WebSocket } from 'ws';
+
+let home; let srv; let base; let prev; let projKey; let projDir; let mod;
+let store; let createRunEventHook;
+
+function gitInit(dir) {
+  const g = (args) => {
+    const r = spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
+    if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
+  };
+  g(['init', '-q', '-b', 'main']); g(['config', 'user.email', 't@t']); g(['config', 'user.name', 't']);
+  g(['commit', '-q', '--allow-empty', '-m', 'init']);
+}
+
+before(async () => {
+  home = await mkdtemp(join(tmpdir(), 'worca-req-link-'));
+  prev = {};
+  for (const k of ['HOME', 'USERPROFILE', 'WORCA_HOME', 'WORCA_FLAGS', 'WORCA_MOCK', 'WORCA_TEST_ALLOW_HOME_FALLBACK']) prev[k] = process.env[k];
+  process.env.HOME = home; process.env.USERPROFILE = home; process.env.WORCA_HOME = join(home, 'worca-home');
+  process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
+  process.env.WORCA_MOCK = '1';
+  process.env.WORCA_FLAGS = 'requirements';
+  (await import('../src/core/db.mjs'))._resetForTests();
+  projDir = await mkdtemp(join(home, 'shop-'));
+  gitInit(projDir);
+  const { addProject } = await import('../src/core/projects.mjs');
+  projKey = (await addProject({ name: 'shop', path: projDir })).find((p) => p.name === 'shop').key;
+  store = await import('../src/core/requirements/store.mjs');
+  ({ createRunEventHook } = await import('../src/core/requirements/start.mjs'));
+  mod = await import('../ui/server.mjs');
+  srv = mod.server;
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  base = `http://127.0.0.1:${srv.address().port}`;
+});
+after(async () => {
+  for (const r of mod?.runs?.values?.() || []) { try { r.orch?.stop?.(); } catch { /* reap */ } }
+  srv?.closeAllConnections?.();
+  if (srv) await Promise.race([new Promise((r) => srv.close(r)), new Promise((r) => { const t = setTimeout(r, 500); t.unref?.(); })]);
+  for (const k of Object.keys(prev)) { if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k]; }
+  (await import('../src/core/db.mjs'))._resetForTests();   // release the sqlite handle (Windows cannot unlink an open file)
+  // A stopped orchestrator still flushes its live log for a few ticks: reap, wait, reap again.
+  const reap = () => rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }).catch(() => {});
+  await reap();
+  await new Promise((r) => setTimeout(r, 500));
+  await reap();
+});
+
+const call = async (method, path, body) => {
+  const r = await fetch(`${base}${path}`, { method, headers: { 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  return { status: r.status, json: await r.json().catch(() => null) };
+};
+const waitFor = async (pred, ms = 5000, what = 'condition') => {
+  const t0 = Date.now();
+  for (;;) {
+    const v = await pred();
+    if (v) return v;
+    if (Date.now() - t0 > ms) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 25));
+  }
+};
+
+/** A feature with one stored start for `runId` (no run behind it): what the hook looks up. */
+function featureWithStart(runId) {
+  const f = store.createFeature({ scopeType: 'project', scopeKey: projKey, title: 'Hook', description: 'd' }, { by: 't' });
+  store.createStart({ featureSeq: f.seq, version: 1, runId, spec: f.spec, title: f.title, ready: true, failing: [] }, { by: 't' });
+  return f.seq;
+}
+
+test('the hook: unknown runs and other events do nothing', () => {
+  const seen = [];
+  const hook = createRunEventHook({ notify: (seq) => seen.push(seq) });
+  hook('no-such-run', 'state', { id: 'abcd1234', status: 'running' });
+  hook('no-such-run', 'done', { status: 'done' });
+  const seq = featureWithStart('run-other-events');
+  for (const name of ['exec', 'log', 'token', 'title']) hook('run-other-events', name, { id: 'abcd1234', status: 'running' });
+  assert.deepEqual(seen, []);
+  assert.equal(store.startByRunId('run-other-events').pipelineId, null);
+  assert.ok(seq > 0);
+});
+
+test('the hook: links once, notifies on a link or a status change, clears on done', () => {
+  const seen = [];
+  const hook = createRunEventHook({ notify: (seq) => seen.push(seq) });
+  const seq = featureWithStart('run-link-1');
+  hook('run-link-1', 'state', { status: 'running' });             // no id yet: a status, so one notify
+  assert.deepEqual(seen, [seq]);
+  assert.equal(store.startByRunId('run-link-1').pipelineId, null);
+  hook('run-link-1', 'state', { id: 'abcd1234', status: 'running' });   // the link alone notifies
+  assert.equal(store.startByRunId('run-link-1').pipelineId, 'abcd1234');
+  assert.deepEqual(seen, [seq, seq]);
+  hook('run-link-1', 'state', { id: 'abcd1234', status: 'running' });   // nothing new
+  hook('run-link-1', 'state', { id: 'ffff0000', status: 'running' });   // never relinked
+  assert.equal(store.startByRunId('run-link-1').pipelineId, 'abcd1234');
+  assert.deepEqual(seen, [seq, seq]);
+  hook('run-link-1', 'state', { id: 'abcd1234', status: 'paused' });    // a status change
+  assert.deepEqual(seen, [seq, seq, seq]);
+  hook('run-link-1', 'done', { status: 'stopped' });
+  assert.deepEqual(seen, [seq, seq, seq, seq]);
+  hook('run-link-1', 'state', { id: 'abcd1234', status: 'stopped' });   // cleared on done: news again
+  assert.deepEqual(seen, [seq, seq, seq, seq, seq]);
+});
+
+test('the hook: first state with an id links and notifies once; done without a status means done; error', () => {
+  const seen = [];
+  const hook = createRunEventHook({ notify: (seq) => seen.push(seq) });
+  const seq = featureWithStart('run-link-2');
+  hook('run-link-2', 'state', { id: '1234abcd', status: 'running' });
+  assert.deepEqual(seen, [seq]);
+  assert.equal(store.startByRunId('run-link-2').pipelineId, '1234abcd');
+  hook('run-link-2', 'state', { id: '1234abcd', status: 'running' });
+  assert.deepEqual(seen, [seq]);
+  hook('run-link-2', 'done', {});
+  assert.deepEqual(seen, [seq, seq]);
+  const seq3 = featureWithStart('run-link-3');
+  hook('run-link-3', 'error', { message: 'boom' });
+  hook('run-link-3', 'error', { message: 'boom' });   // cleared after the first: reported again
+  assert.deepEqual(seen, [seq, seq, seq3, seq3]);
+});
+
+test('the hook: a throwing notify never throws out', () => {
+  const hook = createRunEventHook({ notify: () => { throw new Error('socket gone'); } });
+  featureWithStart('run-throw');
+  const logged = [];
+  const orig = console.error;
+  console.error = (...a) => logged.push(a.join(' '));
+  try {
+    assert.doesNotThrow(() => hook('run-throw', 'state', { id: 'aaaa1111', status: 'running' }));
+    assert.doesNotThrow(() => hook('run-throw', 'done', { status: 'done' }));
+  } finally { console.error = orig; }
+  assert.ok(logged.length >= 1 && logged.every((l) => l.startsWith('[worca-ui]')), logged.join('\n'));
+  assert.equal(store.startByRunId('run-throw').pipelineId, 'aaaa1111');
+});
+
+test('server: a Ready feature starts a mock run through the run handler; its pipeline id is linked', async () => {
+  const ws = new WebSocket(`${base.replace('http', 'ws')}/ws`, { headers: { host: '127.0.0.1', origin: 'http://127.0.0.1' } });
+  const frames = [];
+  ws.on('message', (d) => { try { const m = JSON.parse(String(d)); if (m.type === 'requirements-changed') frames.push(m); } catch { /* other frames */ } });
+  await new Promise((res, rej) => { ws.on('open', res); ws.on('error', rej); });
+  try {
+    const c = await call('POST', '/api/requirements', { scopeType: 'project', scopeKey: projKey, title: 'Cancel order', description: 'Before it ships' });
+    assert.equal(c.status, 201);
+    const seq = c.json.feature.seq;
+    await waitFor(async () => (await call('GET', `/api/requirements/${seq}`)).json.feature.status === 'your_turn', 5000, 'your_turn');
+    let v = (await call('GET', `/api/requirements/${seq}`)).json;
+    assert.equal((await call('POST', `/api/requirements/${seq}/answers`, { roundTurnId: v.feature.pending.turnId, useRecommended: true })).status, 202);
+    await waitFor(async () => (await call('GET', `/api/requirements/${seq}`)).json.feature.status === 'done', 5000, 'interview done');
+    assert.equal((await call('POST', `/api/requirements/${seq}/assumptions`, { confirmOpen: true })).status, 200);
+    v = (await call('GET', `/api/requirements/${seq}`)).json;
+    assert.equal(v.feature.readiness.ok, true, JSON.stringify(v.feature.readiness.checks.filter((k) => !k.ok)));
+
+    const before = frames.filter((f) => f.seq === seq).length;
+    const s = await call('POST', `/api/requirements/${seq}/start`, {});
+    assert.equal(s.status, 201, JSON.stringify(s.json));
+    const { runId } = s.json;
+    assert.match(runId, /^[0-9a-f-]{36}$/);
+    assert.ok(mod.runs.has(runId), 'the run handler registered the reserved run id');
+    v = (await call('GET', `/api/requirements/${seq}`)).json;
+    assert.equal(v.feature.starts[0].runId, runId);
+
+    // The hook (not the view's fallback) links: read the row directly, without a GET in between.
+    const pipelineId = await waitFor(() => store.startByRunId(runId).pipelineId, 10000, 'pipeline id');
+    assert.match(pipelineId, /^[0-9a-f]{8}$/);
+    // The start route sends exactly one frame; any further one for this seq came from the run-event hook.
+    await waitFor(() => frames.filter((f) => f.seq === seq).length >= before + 2, 10000, 'a run-event frame');
+    v = (await call('GET', `/api/requirements/${seq}`)).json;
+    assert.equal(v.feature.starts[0].pipelineId, pipelineId);
+    assert.equal(v.feature.starts[0].run.href, `#running/${runId}`);
+    assert.equal(typeof v.feature.starts[0].run.status, 'string');
+
+    // The wf_auto mock run parks on its workflow question: stop it and let the stop land, so the server can
+    // close and the temp dir can go (Windows). The stop is a status change, so the feature hears it too.
+    const heard = frames.filter((f) => f.seq === seq).length;
+    mod.runs.get(runId).orch.stop();
+    const settled = new Set(['done', 'stopped', 'error', 'paused', 'interrupted']);
+    await waitFor(() => settled.has(String(mod.runs.get(runId)?.status || '')), 30000, 'the run to settle');
+    await waitFor(() => frames.filter((f) => f.seq === seq).length > heard, 10000, 'the stop frame');
+  } finally { ws.close(); }
+});

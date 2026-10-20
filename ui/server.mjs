@@ -277,7 +277,8 @@ import { webEventPrompt, webNoticeText, chatWebHosts } from '../src/core/ask/web
 import { hostAllowed as askHostAllowed } from '../src/core/web-allowlist.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
-import { registerRequirementsRoutes } from '../src/core/requirements/routes.mjs';
+import { registerRequirementsRoutes, requirementsChangeNotifier } from '../src/core/requirements/routes.mjs';
+import { createRunEventHook } from '../src/core/requirements/start.mjs';
 import { recoverInterrupted as recoverRequirements } from '../src/core/requirements/interview.mjs';
 import { drainTimeoutMs, autoResumeEnabled, autoResumeCandidates, DRAIN_ACTIVE_STATUSES } from '../src/core/drain.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
@@ -910,6 +911,10 @@ function broadcast(obj) {
   }
 }
 
+/** Requirements (A2 D9): the one run-event hook wireRun calls for every run; it notifies through the same
+ *  `requirements-changed` notifier the routes use (silent while the flag is off). */
+const requirementsRunEvent = createRunEventHook({ notify: requirementsChangeNotifier(broadcast) });
+
 // Per-person delivery of Ask frames (step 3): on a shared sign-in an ask-* frame that names a
 // thread goes only to sockets of that thread's owner (and to non-shared sockets, e.g. an
 // in-container tool), like the HTTP guard on /api/ask/threads/:id. Owners never change, so
@@ -1227,6 +1232,8 @@ function wireRun(entry) {
           }
         }
       }
+      // Requirements (A2 D9): a run a feature started learns its pipeline id; the feature hears status changes.
+      requirementsRunEvent(id, name, payload);   // never throws
       if (entry.ticketId && (name === 'done' || name === 'error') && !entry._outcomeRecorded) {
         // Scheduled runs: report how the fired run ended (feed item, failure streak).
         // 'error' is the launch-error channel — a failure before the pipeline row exists.
@@ -3045,6 +3052,22 @@ function releaseAskCard(item) {
       flipCard(item.askThreadId, item.askCardId, { state: 'proposed', runId: null, scheduledFor: null, scheduleId: null, sentence: null });
     }
   } catch (err) { console.error(`[worca-ui] ask card release failed: ${err && err.message ? err.message : err}`); }
+}
+
+/** A requirements start's run as the feature shows it (A2 D10): the live entry while the server has it,
+ *  else the pipeline row on disk (after a restart). null when neither knows the run. */
+function requirementsRunSummary({ runId, pipelineId }) {
+  const live = liveRunEntry(runId);
+  const id = pipelineId || (live && live.pipelineId) || null;
+  let state = null;
+  if (id) { try { state = readPipelineStateById(id); } catch { state = null; } }
+  if (!live && !state) return null;
+  return {
+    status: (live && live.status) || (state && state.status) || null,
+    phase: (state && state.phase) || null,
+    costUsd: state?.totalCostUsd ?? null,
+    pipelineId: id,
+  };
 }
 
 /** Call startRunHandler without HTTP. Resolves { status, body }. */
@@ -8293,7 +8316,10 @@ registerMemoryRoutes('/api/memory/global', { family: 'global' });
 registerMemoryRoutes('/api/memory/projects/:key', { family: 'projects' });
 
 // Requirements (plans/requirements-design.md): product-owner feature specs, behind the `requirements` flag.
-registerRequirementsRoutes(app, { broadcast });
+registerRequirementsRoutes(app, { broadcast, deps: {
+  startRun: (body, opts) => invokeStartRun(body, null, opts),   // D6: through the run handler, as PR watch does
+  runSummary: requirementsRunSummary,
+} });
 
 // ---------------------------------------------------------------------------
 // Filesystem browsing for the add-project folder selector. Hybrid picker:

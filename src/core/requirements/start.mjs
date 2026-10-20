@@ -5,7 +5,7 @@
 import { randomUUID } from 'node:crypto';
 import { tx } from '../db.mjs';
 import { RequirementsError } from './spec.mjs';
-import { requireFeature, listTurns, latestStart, createStart, appendTurn, linkPipeline } from './store.mjs';
+import { requireFeature, listTurns, latestStart, createStart, appendTurn, linkPipeline, startByRunId } from './store.mjs';
 import { isBusy } from './interview.mjs';
 import { readiness } from './ready.mjs';
 import { renderTaskMarkdown } from './markdown.mjs';
@@ -106,5 +106,33 @@ export async function startView(start, runSummary = () => null) {
     version: start.version, runId: start.runId, pipelineId, startedBy: start.startedBy, startedAt: start.startedAt,
     ready: start.ready, failing: start.failing, reason: start.reason, workflowId: start.workflowId, sourceBranch: start.sourceBranch,
     run: s ? { status: s.status ?? null, phase: s.phase ?? null, costUsd: s.costUsd ?? null, href: `#running/${start.runId}` } : null,
+  };
+}
+
+/**
+ * The run-event hook `wireRun` in ui/server.mjs calls for every event of every run (D9). Only `state`,
+ * `done` and `error` do work, and only for runs a start made (one indexed lookup): the first `state` with a
+ * pipeline id fills `pipeline_id`, and the feature is notified when the run's status changed since its last
+ * event or the pipeline id was just linked. Never throws.
+ * @param {{ notify:(seq:number)=>void }} o  the requirements change notifier (checks the flag itself)
+ * @returns {(runId:string, name:string, payload:any)=>void}
+ */
+export function createRunEventHook({ notify }) {
+  const last = new Map();   // runId → the status its last event carried
+  return (runId, name, payload) => {
+    if (name !== 'state' && name !== 'done' && name !== 'error') return;
+    try {
+      const start = startByRunId(runId);
+      if (!start) return;
+      const p = payload && typeof payload === 'object' ? payload : {};
+      let linked = false;
+      if (name === 'state' && typeof p.id === 'string' && p.id) linked = linkPipeline(runId, p.id);
+      const status = name === 'state' ? (p.status || null) : name === 'done' ? (p.status || 'done') : 'error';
+      const changed = status != null && last.get(runId) !== status;
+      if (name === 'state') { if (status != null) last.set(runId, status); } else last.delete(runId);
+      if (changed || linked) notify(start.featureSeq);
+    } catch (err) {
+      console.error(`[worca-ui] requirements run link failed: ${err && err.message ? err.message : err}`);
+    }
   };
 }
