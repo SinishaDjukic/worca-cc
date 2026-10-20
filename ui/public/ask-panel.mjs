@@ -1496,7 +1496,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // MCP registry §9.4 + skills registry §6.8: the per-chat Sets picker — `Sets · N` (N = copies and skills that start
     // next turn), hidden while no set in play has a member or a skill. Styled as the scope pill; opens like the model
     // button's Effort sub-picker.
-    const mcpBtn = make('button', 'ask-scope-btn ask-mcp-btn ask-sets-btn');
+    const mcpBtn = make('button', 'btn btn-sm btn-quiet ask-scope-btn ask-mcp-btn ask-sets-btn');
     mcpBtn.type = 'button';
     mcpBtn.setAttribute('data-ask-mcp-btn', '');
     mcpBtn.title = 'Sets for this chat';
