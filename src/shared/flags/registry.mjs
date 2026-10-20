@@ -19,7 +19,7 @@ export const FLAGS = Object.freeze([
   entry({
     key: 'flagsDemo',
     title: 'Flags demo',
-    description: 'Shows a note on this tab. It proves experimental switches work; the first real experimental feature replaces it.',
+    description: 'Shows a note on this tab. It proves Labs switches work; the first real Labs feature replaces it.',
     stage: 'experimental',
     default: false,
     owner: 'e-angelov',
@@ -68,7 +68,7 @@ export const FLAGS = Object.freeze([
   entry({
     key: 'runPresets',
     title: 'Run presets',
-    description: 'Save a New run setup (workflow, engine, guardrails, agents, loops, branches, Away mark, opt-outs) as a named preset, then start a run, a schedule, `worca run --preset` or an Chat proposal from it.',
+    description: 'Save a New run setup (workflow, engine, guardrails, agents, loops, branches, Away mark, opt-outs) as a named preset, then start a run, a schedule, `worca run --preset` or a Chat proposal from it.',
     stage: 'beta',
     default: true,
     owner: 'e-angelov',

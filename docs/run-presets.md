@@ -110,9 +110,9 @@ fires. Edit the preset, and the next run uses the new setup. The prompt, title, 
 schedule stay the schedule's own. For an *Any project* preset, the schedule also keeps its own
 source branch.
 
-A field you changed in the form before scheduling (or a choice an Chat card made) stays as
+A field you changed in the form before scheduling (or a choice a Chat card made) stays as
 you set it: only the fields you left as the preset had them follow later edits to the preset.
-A schedule made from an Chat card never starts on *Permissive* guardrails: if the preset
+A schedule made from a Chat card never starts on *Permissive* guardrails: if the preset
 resolves to Permissive when it fires, the run ends *failed* and says so.
 
 The Schedules page names the preset in each row (`preset Quick fix`), and **Details** has a
