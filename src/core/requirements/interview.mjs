@@ -15,6 +15,7 @@ import { REPO_LOOK_TOOLS, REPO_LOOK_MAX_TURNS, REPO_LOOK_TIMEOUT_MS } from '../a
 import { worcaHome, listProjects } from '../projects.mjs';
 import { workspaceTarget } from '../ask/workflow-deps.mjs';
 import { RequirementsError, MAX_ROUNDS, LIMITS, clip } from './spec.mjs';
+import { unaskedRejections } from './ready.mjs';
 import {
   requireFeature, getFeature, updateFeature, appendTurn, listTurns, getContext, addFeatureCost, listFeatures,
 } from './store.mjs';
@@ -185,12 +186,13 @@ async function runOrientation(seq, d, by) {
   updateFeature(seq, { orientation: { summary: o.summary, files: o.files, skipped: o.skipped, at: new Date().toISOString() } }, { by });
 }
 
-async function runRound(seq, d, by, { final = false } = {}) {
+async function runRound(seq, d, by, { final = false, followUp = null } = {}) {
   if (isArchived(seq)) return;
   setStatus(seq, 'thinking', by);
   notify(d, seq);
   const f = requireFeature(seq);
-  const isFinal = final || f.rounds + 1 >= MAX_ROUNDS;
+  const isFinal = final || (!followUp && f.rounds + 1 >= MAX_ROUNDS);
+  const followItems = followUp ? f.spec.assumptions.filter((a) => followUp.includes(a.id)).map((a) => ({ id: a.id, text: a.text })) : null;
   const turns = listTurns(seq);
   const seqs = { criteriaSeq: f.criteriaSeq, assumptionSeq: f.assumptionSeq, final: isFinal, removedCriteria: removedCriteria(turns) };
   let applied = null;
@@ -198,10 +200,10 @@ async function runRound(seq, d, by, { final = false } = {}) {
   let cost = 0;
   let lastErr = null;
   if (mockEnabled({})) {
-    applied = applyRound(f.spec, mockRoundReply(f, isFinal), seqs);
+    applied = applyRound(f.spec, mockRoundReply(f, isFinal, { followUp: followItems }), seqs);
   } else {
     const ctx = getContext(f.scopeType, f.scopeKey);
-    const prompt = buildRoundPrompt({ feature: f, context: ctx.body, turns, final: isFinal, round: f.rounds + 1 });
+    const prompt = buildRoundPrompt({ feature: f, context: ctx.body, turns, final: isFinal, round: f.rounds + 1, followUp: followItems });
     model = await requirementsModel(d.listModels);
     const cwd = scratchDir();
     const fail = (code, msg) => failTurn(seq, { code, message: msg, job: 'round', costUsd: cost, model }, by, 'your_turn');
@@ -225,7 +227,7 @@ async function runRound(seq, d, by, { final = false } = {}) {
     failTurn(seq, { code: 'BAD_REPLY', message: `Worca's reply could not be read (${lastErr.message}). Try again.`, job: 'round', costUsd: cost, model }, by, 'your_turn');
     return;
   }
-  const turnId = appendTurn(seq, { kind: 'round', payload: { questions: applied.questions, note: applied.note, done: applied.done, final: isFinal },
+  const turnId = appendTurn(seq, { kind: 'round', payload: { questions: applied.questions, note: applied.note, done: applied.done, final: isFinal, ...(followUp ? { followUp } : {}) },
     model: model || null, costUsd: cost || null }, { by });
   charge(seq, turnId, cost, model);
   setStatus(seq, applied.done ? 'done' : 'your_turn', by, {
@@ -250,6 +252,16 @@ export function startOrientation(seq, { by = null, thenRound = true } = {}, deps
     if (thenRound) { job.kind = 'round'; await runRound(seq, d, by); }
     else setStatus(seq, restingStatus(seq), by);
   }, by, 'look');
+}
+
+/** Ask about the assumptions the product owner rejected since the last round: one extra round, past the round cap. */
+export function followUp(seq, { by = null } = {}, deps = {}) {
+  const d = { ...DEFAULTS, ...deps };
+  const f = guard(seq);
+  const ids = unaskedRejections(f.spec, listTurns(seq));
+  if (!ids.length) throw new RequirementsError('CONFLICT', 'no rejected assumption is waiting for a follow-up');
+  appendTurn(seq, { kind: 'followup', payload: { assumptions: ids } }, { by });
+  return startJob(seq, d, () => runRound(seq, d, by, { followUp: ids }), by);
 }
 
 /** Where a feature rests between jobs: done when its latest round said so, else the product owner's turn. */

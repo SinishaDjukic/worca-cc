@@ -200,3 +200,36 @@ test('a non-final reply with no questions and done: true ends the interview; ope
   assert.deepEqual(r.spec.openQuestions, []);
   assert.deepEqual(r.spec.assumptions.at(-1), { id: 'A-3', text: 'Not decided: Who pays shipping?', status: 'open' });
 });
+
+
+test('thread: bulk confirm, follow-up, start and undo lines', () => {
+  const turns = [
+    { id: 1, kind: 'assumption', payload: { ids: ['A-1', 'A-2'], status: 'confirmed' } },
+    { id: 2, kind: 'followup', payload: { assumptions: ['A-4'] } },
+    { id: 3, kind: 'followup', payload: { assumptions: ['A-4', 'A-7'] } },
+    { id: 4, kind: 'start', payload: { version: 2 } },
+    { id: 5, kind: 'edit', payload: { reverted: true, version: 2 } },
+  ];
+  const p = buildRoundPrompt({ feature: { id: 'f', title: 't', description: 'd', spec: emptySpec() }, turns });
+  assert.match(p, /The product owner confirmed assumptions A-1, A-2\./);
+  assert.match(p, /The product owner rejected A-4 and asked Worca to ask about it\./);
+  assert.match(p, /The product owner rejected A-4 and A-7 and asked Worca to ask about them\./);
+  assert.match(p, /The product owner started build v2\./);
+  assert.match(p, /The product owner undid their changes since build v2\./);
+});
+
+test('pendingRound is null after a trailing followup turn', () => {
+  const turns = [{ id: 1, kind: 'round', payload: { questions: [q('a')], note: '' } }, { id: 2, kind: 'followup', payload: { assumptions: ['A-1'] } }];
+  assert.equal(pendingRound(turns), null);
+});
+
+test('follow-up prompt names the rejected assumptions; the mock asks one question each', () => {
+  const fu = [{ id: 'A-1', text: 'Refunds <b> are full' }, { id: 'A-2', text: 'Two' }];
+  const p = buildRoundPrompt({ feature: { id: 'f', title: 't', description: 'd', spec: emptySpec() }, followUp: fu });
+  assert.match(p, /This is a follow-up round\. The product owner rejected these assumptions: A-1: Refunds &lt;b> are full; A-2: Two\./);
+  assert.doesNotMatch(buildRoundPrompt({ feature: { id: 'f', title: 't', description: 'd', spec: emptySpec() } }), /follow-up round/);
+  const m = mockRoundReply({ title: 't', description: 'd', rounds: 6 }, false, { followUp: fu });
+  assert.deepEqual(m.questions.map((x) => x.id), ['replace-a-1', 'replace-a-2']);
+  assert.equal(m.questions[0].recommended, m.questions[0].options[0]);
+  assert.equal(mockRoundReply({ title: 't', description: 'd', rounds: 6 }, true, { followUp: fu }).questions.length, 0);
+});

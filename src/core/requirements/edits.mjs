@@ -113,6 +113,16 @@ export function setAssumption(seq, id, status, { by = null } = {}) {
   });
 }
 
+export function confirmOpenAssumptions(seq, { by = null } = {}) {
+  const f = editable(seq);
+  const ids = f.spec.assumptions.filter((a) => a.status === 'open').map((a) => a.id);
+  if (!ids.length) throw new RequirementsError('CONFLICT', 'no open assumptions');
+  return tx(() => {
+    appendTurn(seq, { kind: 'assumption', payload: { ids, status: 'confirmed' } }, { by });
+    return updateFeature(seq, { spec: { ...f.spec, assumptions: f.spec.assumptions.map((a) => (ids.includes(a.id) ? { ...a, status: 'confirmed' } : a)) } }, { by });
+  });
+}
+
 export function setArchived(seq, archived, { by = null } = {}) {
   const f = requireFeature(seq);
   if (isBusy(seq)) throw new RequirementsError('BUSY', 'Worca is still working on this feature. Try again in a moment.');

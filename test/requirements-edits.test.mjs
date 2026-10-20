@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { createFeature, getFeature, listTurns, updateFeature, appendTurn, setContext } from '../src/core/requirements/store.mjs';
 import {
-  updateHeader, setSection, releaseSection, addCriterion, editCriterion, removeCriterion, setAssumption, setArchived,
+  updateHeader, setSection, releaseSection, addCriterion, editCriterion, removeCriterion, setAssumption, setArchived, confirmOpenAssumptions,
 } from '../src/core/requirements/edits.mjs';
 import { emptySpec, nextIdNumber } from '../src/core/requirements/spec.mjs';
 import { buildRoundPrompt } from '../src/core/requirements/round.mjs';
@@ -144,4 +144,19 @@ test('an updated title collapses newlines, so the Markdown heading cannot break'
   const g = updateHeader(f.seq, { title: 'Refund\n\n# not a heading' });
   assert.equal(g.title, 'Refund # not a heading');
   assert.equal(renderSpecMarkdown(g).split('\n')[0], `# ${g.id}: Refund # not a heading`);
+});
+
+
+test('confirmOpenAssumptions confirms only open ones in one turn; CONFLICT when none', () => {
+  const f = make();
+  updateFeature(f.seq, { spec: { ...getFeature(f.seq).spec, assumptions: [
+    { id: 'A-1', text: 'a', status: 'open' }, { id: 'A-2', text: 'b', status: 'rejected' }, { id: 'A-3', text: 'c', status: 'open' }] } });
+  const g = confirmOpenAssumptions(f.seq, { by: 'po' });
+  assert.deepEqual(g.spec.assumptions.map((a) => a.status), ['confirmed', 'rejected', 'confirmed']);
+  const t = listTurns(f.seq).filter((x) => x.kind === 'assumption');
+  assert.equal(t.length, 1);
+  assert.deepEqual(t[0].payload, { ids: ['A-1', 'A-3'], status: 'confirmed' });
+  assert.throws(() => confirmOpenAssumptions(f.seq), (e) => e.code === 'CONFLICT');
+  setArchived(f.seq, true);
+  assert.throws(() => confirmOpenAssumptions(f.seq), (e) => e.code === 'CONFLICT');
 });

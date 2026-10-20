@@ -60,7 +60,7 @@ export function latestAnswers(turns) {
 export function pendingRound(turns) {
   for (let i = turns.length - 1; i >= 0; i -= 1) {
     const t = turns[i];
-    if (t.kind === 'answers' || t.kind === 'finish') return null;
+    if (t.kind === 'answers' || t.kind === 'finish' || t.kind === 'followup') return null;
     if (t.kind === 'round') {
       return t.payload.questions?.length ? { turnId: t.id, questions: t.payload.questions, note: t.payload.note || '' } : null;
     }
@@ -94,6 +94,7 @@ function threadText(turns) {
       lines.push(t.payload.revises ? `The product owner changed their answers to round ${k}:` : 'The product owner answered:');
       for (const a of t.payload.answers || []) lines.push(`  [${asData(a.id)}] ${asData(a.answer)}`);
     } else if (t.kind === 'edit') {
+      if (t.payload.reverted) lines.push(`The product owner undid their changes since build v${asData(t.payload.version)}.`);
       if (t.payload.section) lines.push(`The product owner ${t.payload.released ? 'released' : 'edited'} "${asData(t.payload.section)}".`);
       if (t.payload.header) {
         const what = { title: 'the title', description: 'the description', scope: 'the project or workspace' };
@@ -106,7 +107,14 @@ function threadText(turns) {
           : `The product owner ${asData(t.payload.action)} criterion ${asData(t.payload.criterion)}.`);
       }
     } else if (t.kind === 'assumption') {
-      lines.push(`The product owner marked assumption ${asData(t.payload.id)} as ${asData(t.payload.status)}.`);
+      lines.push(Array.isArray(t.payload.ids) && t.payload.ids.length
+        ? `The product owner ${asData(t.payload.status)} assumptions ${t.payload.ids.map(asData).join(', ')}.`
+        : `The product owner marked assumption ${asData(t.payload.id)} as ${asData(t.payload.status)}.`);
+    } else if (t.kind === 'followup') {
+      const ids = (t.payload.assumptions || []).map(asData);
+      lines.push(`The product owner rejected ${ids.join(' and ')} and asked Worca to ask about ${ids.length === 1 ? 'it' : 'them'}.`);
+    } else if (t.kind === 'start') {
+      lines.push(`The product owner started build v${asData(t.payload.version)}.`);
     } else if (t.kind === 'finish') {
       lines.push('The product owner asked to finish the interview now.');
     }
@@ -114,7 +122,7 @@ function threadText(turns) {
   return lines.join('\n') || '(nothing yet: this is the first round)';
 }
 
-export function buildRoundPrompt({ feature, context = '', turns = [], final = false, round = 1 }) {
+export function buildRoundPrompt({ feature, context = '', turns = [], final = false, round = 1, followUp = null }) {
   const spec = { ...feature.spec };
   const edited = Object.keys(spec.edited || {}).filter((k) => spec.edited[k]);
   delete spec.edited;
@@ -129,6 +137,9 @@ export function buildRoundPrompt({ feature, context = '', turns = [], final = fa
     final
       ? 'This is the final round: ask no questions, set "done" to true, and turn every open question into an assumption.'
       : `This is round ${round} of at most ${MAX_ROUNDS}.`,
+    ...(followUp && followUp.length
+      ? [`This is a follow-up round. The product owner rejected these assumptions: ${followUp.map((a) => `${asData(a.id)}: ${asData(a.text)}`).join('; ')}. Ask only what you need to replace them (at most ${MAX_QUESTIONS} questions). Keep them as rejected; never propose them again with the same meaning. Do not set "done" unless nothing is left to ask about them.`]
+      : []),
     'Reply with ONLY the JSON object described in the system prompt.',
   ].join('\n\n');
 }
@@ -244,7 +255,19 @@ export function applyRound(prev, raw, { criteriaSeq = 0, assumptionSeq = 0, fina
 }
 
 /** Mock mode (D13): a deterministic two-round interview, never a spawn. */
-export function mockRoundReply(feature, final) {
+export function mockRoundReply(feature, final, { followUp = null } = {}) {
+  if (followUp && followUp.length && !final) {
+    return {
+      spec: {},
+      criteria: [], assumptions: [],
+      questions: followUp.slice(0, 3).map((a) => ({
+        id: `replace-${String(a.id).toLowerCase()}`, question: `[mock] What should replace "${a.text}"?`,
+        options: ['Keep it simple', 'Make it configurable'], recommended: 'Keep it simple', why: 'You rejected that assumption.',
+      })),
+      done: false,
+      note: '[mock] A few questions about the rejected assumptions.',
+    };
+  }
   const first = feature.rounds === 0 && !final;
   return {
     spec: {

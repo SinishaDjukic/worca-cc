@@ -7,10 +7,10 @@ import { listProjects } from '../projects.mjs';
 import { workspaceTarget } from '../ask/workflow-deps.mjs';
 import { RequirementsError, parseFeatureSeq, SCOPE_TYPES } from './spec.mjs';
 import { createFeature, requireFeature, listFeatures, listTurns, getContext, setContext, updateFeature } from './store.mjs';
-import { startOrientation, submitAnswers, finishInterview, retry, isBusy, assertCapacity } from './interview.mjs';
+import { startOrientation, submitAnswers, finishInterview, followUp, retry, isBusy, assertCapacity } from './interview.mjs';
 import { pendingRound } from './round.mjs';
 import {
-  updateHeader, setSection, releaseSection, addCriterion, editCriterion, removeCriterion, setAssumption, setArchived,
+  updateHeader, setSection, releaseSection, addCriterion, editCriterion, removeCriterion, setAssumption, confirmOpenAssumptions, setArchived,
 } from './edits.mjs';
 import { renderSpecMarkdown } from './markdown.mjs';
 import { saveSpecToCheckout, specFileName } from './save.mjs';
@@ -27,7 +27,7 @@ export const REQUIREMENTS_ROUTES = Object.freeze([
   ['POST', `${P}/:seq/answers`], ['POST', `${P}/:seq/finish`], ['POST', `${P}/:seq/retry`], ['POST', `${P}/:seq/look`],
   ['PUT', `${P}/:seq/spec/:section`], ['DELETE', `${P}/:seq/spec/:section/edited`],
   ['POST', `${P}/:seq/criteria`], ['PUT', `${P}/:seq/criteria/:id`], ['DELETE', `${P}/:seq/criteria/:id`],
-  ['POST', `${P}/:seq/assumptions/:id`], ['POST', `${P}/:seq/archive`],
+  ['POST', `${P}/:seq/assumptions`], ['POST', `${P}/:seq/assumptions/:id`], ['POST', `${P}/:seq/follow-up`], ['POST', `${P}/:seq/archive`],
   ['GET', `${P}/:seq/markdown`], ['POST', `${P}/:seq/save`],
 ].map(([method, path]) => Object.freeze({ method, path })));
 
@@ -160,6 +160,17 @@ export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
       const seq = seqOf(req);
       removeCriterion(seq, req.params.id, { by: by(req) });
       changed(res, seq);
+    },
+    [`POST ${P}/:seq/assumptions`]: async (req, res) => {
+      const seq = seqOf(req);
+      if ((req.body || {}).confirmOpen !== true) throw new RequirementsError('BAD_REQUEST', 'send { "confirmOpen": true }');
+      confirmOpenAssumptions(seq, { by: by(req) });
+      changed(res, seq);
+    },
+    [`POST ${P}/:seq/follow-up`]: async (req, res) => {
+      const seq = seqOf(req);
+      followUp(seq, { by: by(req) }, d);
+      changed(res, seq, 202);
     },
     [`POST ${P}/:seq/assumptions/:id`]: async (req, res) => {
       const seq = seqOf(req);

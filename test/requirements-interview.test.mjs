@@ -8,10 +8,10 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { createFeature, getFeature, listTurns, updateFeature, setContext } from '../src/core/requirements/store.mjs';
 import { REPO_LOOK_TOOLS, REPO_LOOK_TIMEOUT_MS } from '../src/core/auto/classify.mjs';
 import {
-  startOrientation, submitAnswers, finishInterview, retry, settled, isBusy, recoverInterrupted, requirementsModel, MAX_JOBS,
+  startOrientation, submitAnswers, finishInterview, followUp, retry, settled, isBusy, recoverInterrupted, requirementsModel, MAX_JOBS,
 } from '../src/core/requirements/interview.mjs';
 import { requirementsWindowedSpendUsd } from '../src/core/cost-budget.mjs';
-import { removeCriterion } from '../src/core/requirements/edits.mjs';
+import { removeCriterion, setAssumption } from '../src/core/requirements/edits.mjs';
 
 useTempHome(after);
 beforeEach(() => {
@@ -548,4 +548,60 @@ test('a round whose questions are all invalid is retried, then an error turn', a
   assert.equal(listTurns(f.seq).at(-1).payload.code, 'BAD_REPLY');
   assert.equal(getFeature(f.seq).status, 'your_turn');
   assert.equal(getFeature(f.seq).rounds, 0);
+});
+
+
+// ── follow-up rounds ─────────────────────────────────────────────────────────
+async function doneAfterSix() {
+  process.env.WORCA_MOCK = '1';
+  off();
+  const f = newFeature();
+  const d = deps(fakeRunner([]));
+  await startOrientation(f.seq, {}, d);
+  await settled(f.seq);
+  updateFeature(f.seq, { rounds: 6, status: 'done', spec: { ...getFeature(f.seq).spec, assumptions: [
+    { id: 'A-1', text: 'Refunds are full', status: 'open' }, { id: 'A-2', text: 'Cash only', status: 'open' }] }, assumptionSeq: 2 });
+  return { f, d };
+}
+
+test('follow-up: past the round cap it asks, then the answers end in a final round', async () => {
+  const { f, d } = await doneAfterSix();
+  setAssumption(f.seq, 'A-1', 'rejected');
+  await followUp(f.seq, {}, d);
+  await settled(f.seq);
+  const g = getFeature(f.seq);
+  assert.equal(g.status, 'your_turn');
+  assert.equal(g.rounds, 7);
+  const turns = listTurns(f.seq);
+  const fu = turns.find((t) => t.kind === 'followup');
+  assert.deepEqual(fu.payload, { assumptions: ['A-1'] });
+  const round = turns.at(-1);
+  assert.equal(round.kind, 'round');
+  assert.deepEqual(round.payload.questions.map((x) => x.id), ['replace-a-1']);
+  assert.deepEqual(round.payload.followUp, ['A-1']);
+  await submitAnswers(f.seq, { roundTurnId: round.id, useRecommended: true }, {}, d);
+  await settled(f.seq);
+  assert.equal(getFeature(f.seq).status, 'done');
+  assert.deepEqual(listTurns(f.seq).at(-1).payload.questions, []);
+  assert.throws(() => followUp(f.seq, {}, d), (e) => e.code === 'CONFLICT');
+});
+
+test('follow-up: nothing unasked is a CONFLICT; busy is BUSY', async () => {
+  const { f, d } = await doneAfterSix();
+  assert.throws(() => followUp(f.seq, {}, d), (e) => e.code === 'CONFLICT');
+  setAssumption(f.seq, 'A-1', 'rejected');
+  const p = followUp(f.seq, {}, d);
+  assert.throws(() => followUp(f.seq, {}, d), (e) => e.code === 'BUSY');
+  await p;
+  await settled(f.seq);
+});
+
+test('follow-up: refused at the spending limit becomes a BUDGET error turn', async () => {
+  const { f } = await doneAfterSix();
+  delete process.env.WORCA_MOCK;
+  setAssumption(f.seq, 'A-2', 'rejected');
+  await followUp(f.seq, {}, deps(fakeRunner([]), { budget: () => ({ blocked: true, totalLimitUsd: 5 }) }));
+  await settled(f.seq);
+  assert.equal(listTurns(f.seq).at(-1).payload.code, 'BUDGET');
+  assert.equal(getFeature(f.seq).status, 'your_turn');
 });

@@ -129,3 +129,25 @@ test('create: a valid scopeType with a missing or bad scopeKey says scopeKey is 
   const bad = await call('POST', '/api/requirements', { scopeType: 'team', scopeKey: projKey, title: 't', description: 'd' });
   assert.equal(bad.json.error, 'scopeType must be "project" or "workspace"');
 });
+
+
+test('bulk confirm and follow-up routes', async () => {
+  const c = await call('POST', '/api/requirements', { scopeType: 'project', scopeKey: projKey, title: 'Bulk', description: 'd' });
+  const seq = c.json.feature.seq;
+  await waitFor(async () => (await call('GET', `/api/requirements/${seq}`)).json.feature.status === 'your_turn');
+  let v = (await call('GET', `/api/requirements/${seq}`)).json;
+  await call('POST', `/api/requirements/${seq}/answers`, { roundTurnId: v.feature.pending.turnId, useRecommended: true });
+  await waitFor(async () => (await call('GET', `/api/requirements/${seq}`)).json.feature.status === 'done');
+  assert.equal((await call('POST', `/api/requirements/${seq}/assumptions`, {})).status, 400);
+  assert.equal((await call('POST', `/api/requirements/${seq}/follow-up`, {})).status, 409);
+  const ok = await call('POST', `/api/requirements/${seq}/assumptions`, { confirmOpen: true });
+  assert.equal(ok.status, 200);
+  assert.ok(ok.json.feature.spec.assumptions.every((a) => a.status === 'confirmed'));
+  assert.equal((await call('POST', `/api/requirements/${seq}/assumptions`, { confirmOpen: true })).status, 409);
+  await call('POST', `/api/requirements/${seq}/assumptions/A-1`, { status: 'rejected' });
+  const fu = await call('POST', `/api/requirements/${seq}/follow-up`, {});
+  assert.equal(fu.status, 202);
+  await waitFor(async () => (await call('GET', `/api/requirements/${seq}`)).json.feature.status === 'your_turn');
+  v = (await call('GET', `/api/requirements/${seq}`)).json;
+  assert.equal(v.feature.pending.questions[0].id, 'replace-a-1');
+});
