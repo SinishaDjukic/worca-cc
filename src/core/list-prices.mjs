@@ -25,14 +25,25 @@ export const PREDEFINED_LIST_PRICES = Object.freeze({
   'claude-haiku-4-5':  { input: 1,  output: 5,  cacheRead: 0.1,  cacheWrite: 1.25, cacheWrite1h: 2 },
 });
 
+// OpenAI's API list prices (developers.openai.com/api/docs/pricing, standard tier, short context — snapshot
+// 2026-10-20) as [input, output] or [input, output, cachedInput], USD per million tokens. Cached input is 0.1×
+// input unless a third value says otherwise. gpt-5.3-codex-spark is not on that page; its row is the earlier estimate.
 export const CODEX_PRICES = Object.freeze({
-  'gpt-6-astra': [6, 36],
-  'gpt-5.6-sol': [5, 30],
-  'gpt-5.6-terra': [2.5, 15],
-  'gpt-5.6-luna': [1, 6],
-  'gpt-5.5': [1.25, 10],
+  'gpt-6.1-sol': [2, 10, 0.1],
+  'gpt-6-astra': [10, 50],
+  'gpt-6-sol': [2, 10],
+  'gpt-6-luna': [0.1, 0.5],
+  'gpt-5.6-sol': [4, 20],
+  'gpt-5.6-terra': [2, 12],
+  'gpt-5.6-luna': [0.2, 1.2],
+  'gpt-5.5': [5, 30],
   'gpt-5.3-codex-spark': [0.5, 3],
 });
+
+/** The cached-input rate of a CODEX_PRICES row. */
+export function codexCachedRate(row) {
+  return Number.isFinite(row?.[2]) ? row[2] : row[0] / 10;
+}
 
 /** Ids whose list price depends on the prompt's length: past `aboveTokens` every rate is `multiplier`× the row above
  *  (the row is the short-prompt tier). Display facts only (model-tiers.mjs) — the cost estimates keep the row. */
