@@ -40,6 +40,7 @@ const state = {
   engineTouched: false,
   presets: [],    // GET /api/presets (run presets, #712), while the runPresets flag is on
   preset: null,   // the applied preset: { id, name, scope, setup, modified, applying, broken[] } — preset mode
+  presetWorkflowNames: null,   // { id: name } from GET /api/workflows for preset summaries (run-presets-names.mjs); null = unknown
   guardrailSets: [], // GET /api/guardrails cache for the picker + hint
   agents: {}, // registry { [key]: AgentMeta }, lazily loaded from /api/agents
   workflowCache: {}, // { [id]: WorkflowTemplate } from GET /api/workflows/:id
@@ -255,6 +256,7 @@ import { applyFlags, decorateFlagChips, flagOn, onFlagChange } from './flags.mjs
 import { presetMenuGroups, presetHiddenItems, presetNodePick, renderBrokenCard, resetItem, saveDialogError, configWithPreset } from './run-presets-picker.mjs';
 import { runPresetScopeOptions, runPresetRequest, runPresetErrorText, RUN_PRESET_SAVED_NOTE } from './run-presets-save.mjs';
 import { renderPresetsList } from './run-presets-view.mjs';
+import { presetSetupSummary, presetSavedNote, workflowNamesFrom } from './run-presets-names.mjs';
 import { setupFromBody } from '../../src/shared/run-presets.mjs';
 import { createTagInput, tagChip, fetchTagVocabulary, createDimensionSlots, createDimensionEditor } from './tag-input.mjs';
 import { normaliseTags, formatTag } from '../../src/shared/run-tags.mjs';
@@ -634,6 +636,7 @@ const el = {
   featureBranch: $('#featureBranch'),
   sameAsSource: $('#sameAsSource'),
   presetSelect: $('#presetSelect'),
+  presetMore: $('#preset-more'),
   presetChip: $('#preset-chip'),
   presetSave: $('#preset-save'),
   presetUpdate: $('#preset-update'),
@@ -35116,13 +35119,13 @@ const VIEW_MIN_LEVEL = Object.freeze({
   'team-metrics': 'expert', 'team-policy': 'expert',
   schedules: 'advanced', marketplace: 'advanced', connectors: 'advanced', models: 'expert', providers: 'expert',
 });
-const SETTINGS_TAB_MIN_LEVEL = Object.freeze({ ask: 'advanced', guardrails: 'advanced', memory: 'advanced' });
+const SETTINGS_TAB_MIN_LEVEL = Object.freeze({ ask: 'advanced', guardrails: 'advanced', memory: 'advanced', presets: 'advanced' });
 const VIEW_TITLES = Object.freeze({
   chat: 'Chat', stats: 'Statistics', workflows: 'Workflows', workspaces: 'Workspaces', 'workspace-create': 'Workspaces',
   'team-metrics': 'Team metrics', 'team-policy': 'Team policy',
   guardrails: 'Guardrails', memory: 'Memory', ask: 'Ask Worca', tags: 'Tags',
   marketplace: 'Marketplace', connectors: 'Connectors', models: 'Models', providers: 'Providers',
-  schedules: 'Schedules',
+  schedules: 'Schedules', presets: 'Presets',
 });
 function pageMinLevel() {
   if (currentShownView === 'settings') return { key: currentSettingsTab, min: SETTINGS_TAB_MIN_LEVEL[currentSettingsTab] || 'simple' };
@@ -36136,10 +36139,15 @@ function paintPresetMenu() {
   for (const g of presetMenuGroups(state.presets, presetTargetNames())) {
     const og = document.createElement('optgroup');
     og.label = g.label;
-    for (const p of g.items) og.appendChild(option(p.id, p.name));
+    for (const p of g.items) {
+      const o = option(p.id, p.name);
+      o.title = presetSetupSummary(p.setup, state.presetWorkflowNames).text;
+      og.appendChild(o);
+    }
     sel.appendChild(og);
   }
-  sel.appendChild(option('__manage__', 'Manage presets…'));
+  // Settings › Presets is Advanced (docs/ui-levels.md); Simple manages from the ⋯ menu.
+  if (levelAtLeast('advanced')) sel.appendChild(option('__manage__', 'Manage presets…'));
   sel.value = state.preset ? state.preset.id : '';
 }
 
@@ -36152,6 +36160,7 @@ function paintPresetChip() {
       : p.modified ? `${p.name} · modified` : 'Preset — changes here apply to this run only';
   }
   if (el.presetUpdate) el.presetUpdate.hidden = !(p && p.modified);
+  if (el.presetMore) el.presetMore.hidden = !p;
   if (el.presetSave) el.presetSave.textContent = p && p.modified ? 'Save as new…' : 'Save current setup…';
 }
 
@@ -36173,7 +36182,8 @@ function presetItemReplaced(item) {
 function paintPresetBroken() {
   if (!el.presetBroken) return;
   if (!state.preset) { el.presetBroken.replaceChildren(); return; }
-  el.presetBroken.replaceChildren(renderBrokenCard(document, state.preset.broken, { onReset: (b) => void resetPresetItem(b) }));
+  el.presetBroken.replaceChildren(renderBrokenCard(document, state.preset.broken, {
+    onReset: (b) => void resetPresetItem(b), canEditScope: levelAtLeast('advanced') }));
 }
 
 /** "Reset to project default": drop the pick, repaint the form from what is left, and check again. */
@@ -36329,8 +36339,10 @@ function leavePresetMode() {
 }
 
 async function loadPresets() {
-  const r = await mcpApi('GET', '/api/presets');
+  // The workflow names come with the list: the menu, Settings and the Chat home name a preset's workflow from them.
+  const [r, wfs] = await Promise.all([mcpApi('GET', '/api/presets'), listWorkflowsApi()]);
   state.presets = r.ok && Array.isArray(r.data?.presets) ? r.data.presets : [];
+  state.presetWorkflowNames = workflowNamesFrom(wfs);
   // A pinned preset's group label (and Settings' "Workspace gone") reads state.workspaces, which a page load leaves
   // empty until a target switch: load it first. The boot project list repaints the menu itself (loadProjects).
   if (state.presets.some((p) => p.scope?.kind === 'workspace')) await withWorkspaces();
@@ -36355,9 +36367,8 @@ async function savePresetDialog() {
   if (ws) scopeOptions.push({ value: 'workspace', text: `Only workspace ${ws.name}` });
   else if (draft.projectDir) scopeOptions.push({ value: 'project', text: `Only ${selectedProjectName()}` });
   // Review G: name the workflow, and say when it is the project's default (picking a project can switch to it).
-  const wfLabel = (el.workflowSelect?.selectedOptions?.[0]?.textContent || '').trim();
   const isDefault = !!draft.projectDir && draft.workflowId === state.config?.activeWorkflowId;
-  const SAVED = `Saved: workflow${wfLabel ? ` ${wfLabel}` : ''}${isDefault ? " (this project's default)" : ''}, engine, guardrails, agents, loops, branches, Away mark, opt-outs. Never saved: title, prompt, Markdown, extra files, new branch name.`;
+  const SAVED = presetSavedNote(setupFromBody(draft), workflowNamesFrom(await listWorkflowsApi()), { projectDefault: isDefault });
   let name = '';
   let scope = 'global';
   let error = '';
@@ -36406,8 +36417,47 @@ if (el.presetSelect) {
     void applyPreset(v);
   });
 }
+/** New run's ⋯ (Rename, Delete): the Settings tab's own actions, then the menu repainted; focus back on the row. */
+async function presetMenuAct(act, p) {
+  const r = await act(p);
+  if (r && !r.ok) presetChangeError(r);
+  if (r && r.ok) await loadPresets();
+  // The closing modal releases focus only at the next frame (Chromium): move it after that, onto ⋯, or the select once ⋯ hid.
+  await new Promise((res) => (typeof requestAnimationFrame === 'function' ? requestAnimationFrame(() => res()) : setTimeout(res, 0)));
+  (el.presetMore && !el.presetMore.hidden ? el.presetMore : el.presetSelect)?.focus();
+}
+if (el.presetMore) {
+  el.presetMore.replaceChildren(icon(document, 'more', 16));
+  el.presetMore.addEventListener('click', () => {
+    const p = state.preset && state.presets.find((x) => x.id === state.preset.id);
+    if (!p) return;
+    toggleMenu({ doc: document, anchor: el.presetMore, align: 'end', label: `Actions for ${p.name}`, items: [
+      { label: 'Rename', onSelect: () => void presetMenuAct(renamePreset, p) },
+      { label: 'Delete', onSelect: () => void presetMenuAct(deletePreset, p) },
+    ] });
+  });
+}
+onLevelChange(() => { paintPresetMenu(); paintPresetBroken(); });   // "Manage presets…" and the scope hint follow the level
 el.presetSave?.addEventListener('click', () => void savePresetDialog());
 el.presetUpdate?.addEventListener('click', () => void updateAppliedPreset());
+
+/** Rename (Settings › Presets and New run's ⋯): the prompt, then PUT. The response, or null on cancel. */
+async function renamePreset(p) {
+  const v = await promptModal({ title: 'Rename preset', fields: [{ id: 'name', label: 'Name', value: p.name, required: true }] });
+  if (!v) return null;
+  const r = await mcpApi('PUT', `/api/presets/${encodeURIComponent(p.id)}`, { name: v.name });
+  if (r.ok && state.preset && state.preset.id === p.id) { state.preset.name = r.data?.preset?.name || v.name.trim(); paintPresetChip(); }
+  return r;
+}
+/** Delete (Settings › Presets and New run's ⋯): the danger confirm, then DELETE. The response, or null on cancel. */
+async function deletePreset(p) {
+  const ok = await confirmModal({ title: 'Delete preset', message: `Delete the preset “${p.name}”? Runs it started are not affected.`, confirmLabel: 'Delete preset', danger: true });
+  if (!ok) return null;
+  const r = await mcpApi('DELETE', `/api/presets/${encodeURIComponent(p.id)}`);
+  if (r.ok && state.preset && state.preset.id === p.id) leavePresetMode();
+  return r;
+}
+const presetChangeError = (r) => notify({ tone: 'err', title: 'Could not change the preset', detail: (r.data && r.data.error) || `HTTP ${r.status}` });
 
 // Settings › Presets (run-presets-view.mjs): Use / Rename / Duplicate / Edit scope / Delete.
 async function loadPresetsView() {
@@ -36417,15 +36467,11 @@ async function loadPresetsView() {
   await withWorkspaces();   // Edit scope offers every workspace
   await loadPresets();
   const names = presetTargetNames();
-  const presetError = (r) => notify({ tone: 'err', title: 'Could not change the preset', detail: (r.data && r.data.error) || `HTTP ${r.status}` });
-  const after = async (r) => { if (!r.ok) presetError(r); await loadPresetsView(); };
+  const after = async (r) => { if (!r.ok) presetChangeError(r); await loadPresetsView(); };
   host.replaceChildren(renderPresetsList(document, state.presets, {
-    names,
+    names, workflowNames: state.presetWorkflowNames,
     onUse: (p) => void usePresetOnNewRun(p.id),
-    onRename: async (p) => {
-      const v = await promptModal({ title: 'Rename preset', fields: [{ id: 'name', label: 'Name', value: p.name, required: true }] });
-      if (v) await after(await mcpApi('PUT', `/api/presets/${encodeURIComponent(p.id)}`, { name: v.name }));
-    },
+    onRename: async (p) => { const r = await renamePreset(p); if (r) await after(r); },
     onDuplicate: async (p) => after(await mcpApi('POST', `/api/presets/${encodeURIComponent(p.id)}/duplicate`, {})),
     onEditScope: async (p) => {
       const options = [{ value: 'global', text: 'Any project' },
@@ -36439,13 +36485,7 @@ async function loadPresetsView() {
       const scope = kind === 'project' ? { kind, projectDir: proj ? proj.path : '' } : kind === 'workspace' ? { kind, workspaceId: ref } : { kind: 'global' };
       await after(await mcpApi('PUT', `/api/presets/${encodeURIComponent(p.id)}`, { scope }));
     },
-    onDelete: async (p) => {
-      const ok = await confirmModal({ title: 'Delete preset', message: `Delete the preset “${p.name}”? Runs it started are not affected.`, confirmLabel: 'Delete preset', danger: true });
-      if (!ok) return;
-      const r = await mcpApi('DELETE', `/api/presets/${encodeURIComponent(p.id)}`);
-      if (r.ok && state.preset && state.preset.id === p.id) leavePresetMode();
-      await after(r);
-    },
+    onDelete: async (p) => { const r = await deletePreset(p); if (r) await after(r); },
   }));
 }
 
@@ -36681,7 +36721,7 @@ function homePinned(id) { return isPinned(homePins || DEFAULT_HOME_PINS, id); }
 async function chatHomePresets() {
   if (!flagOn('runPresets')) return { presets: [], target: null };
   await loadPresets();
-  return { presets: state.presets, target: presetTargetNow() };
+  return { presets: state.presets, target: presetTargetNow(), workflowNames: state.presetWorkflowNames };
 }
 /** New run's current target as a preset scope ({ kind, ref }), or null before a project is chosen. The same reads
  *  as buildRunBody / runPresetCheck: the workspace select's value, or selectedProjectPath() (there is no state.workspaceId). */

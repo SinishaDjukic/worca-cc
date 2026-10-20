@@ -2,6 +2,7 @@
 // Rename, Duplicate, Edit scope and Delete. app.js owns the fetches; this module only renders and calls back.
 // Every name goes through textContent (a preset name is user input).
 import { ago } from './branch-sync.mjs';
+import { presetSetupSummary } from './run-presets-names.mjs';
 
 export const PRESETS_EMPTY_TEXT = 'No presets yet. Set up a run in New run, then use Save current setup…';
 
@@ -21,9 +22,9 @@ export function presetScopeLabel(scope, names = {}) {
 
 /**
  * The list element: the empty state, or one card per preset. A pinned preset whose target is not in `names`
- * is gone (the badge "Project gone" / "Workspace gone"). `names` also maps "workflow:id" to a workflow's name.
+ * is gone (the badge "Project gone" / "Workspace gone"). `workflowNames` is { id: name } from GET /api/workflows (null: unknown).
  */
-export function renderPresetsList(doc, presets, { names = {}, now = Date.now(), onUse, onRename, onDuplicate, onEditScope, onDelete } = {}) {
+export function renderPresetsList(doc, presets, { names = {}, workflowNames = null, now = Date.now(), onUse, onRename, onDuplicate, onEditScope, onDelete } = {}) {
   const list = h(doc, 'div', 'presets-list');
   if (!presets.length) {
     list.append(h(doc, 'div', 'hist-empty', PRESETS_EMPTY_TEXT));
@@ -38,9 +39,11 @@ export function renderPresetsList(doc, presets, { names = {}, now = Date.now(), 
       head.append(h(doc, 'span', 'badge amber preset-gone', p.scope.kind === 'workspace' ? 'Workspace gone' : 'Project gone'));
     }
     card.append(head);
-    const wf = (p.setup && p.setup.workflowId) || 'wf_default';
-    const engine = (p.setup && p.setup.engine) || 'claude';
-    card.append(h(doc, 'small', 'hint', `${names[`workflow:${wf}`] || wf} · ${engine} · Updated ${ago(p.updatedAt, now)}`));
+    const { workflow, engine } = presetSetupSummary(p.setup, workflowNames);
+    const meta = h(doc, 'small', 'hint preset-meta');
+    if (workflow) meta.append(h(doc, 'span', workflow.removed ? 'preset-wf muted' : 'preset-wf', workflow.text), ' · ');
+    meta.append(h(doc, 'span', 'preset-engine', engine), ` · Updated ${ago(p.updatedAt, now)}`);
+    card.append(meta);
     const acts = h(doc, 'div', 'pl-actions');
     for (const [label, act, fn] of [['Use', 'use', onUse], ['Rename', 'rename', onRename], ['Duplicate', 'duplicate', onDuplicate],
       ['Edit scope', 'scope', onEditScope], ['Delete', 'delete', onDelete]]) {

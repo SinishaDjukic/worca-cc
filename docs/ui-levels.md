@@ -138,6 +138,7 @@ be skipped by forgetting it.
 | Build: the group label, Workflows (the full-screen editor; agents and scripts live in its Library) | S |
 | Runs counts: the amber Needs-you number (no symbol), else the live count as a grey number | S — each hidden at zero |
 | Chat (the first sidebar row; the app's home) | S |
+| Chat home: Start from a preset chips; "N more…" opens New run below Advanced and Settings › Presets from Advanced | S |
 | The account corner and its menu: Interface mode, Settings, the away row, "Signed in as" (a shared identity) | S |
 | The spend ring on the avatar and the menu's spend card (with the free-request row) | S — never hidden: a blocked limit turns the ring red and full, and the card and the New pipeline note say until when |
 | Statistics, Workspaces | A |
@@ -154,6 +155,8 @@ be skipped by forgetting it.
 | Start run's caret menu (Schedule…) | A |
 | Workflow picker | S — lists Auto and Default only; the selected workflow always stays listed |
 | Mock mode | S — sits beside Start run, outside the Advanced disclosure |
+| Preset picker, Save current setup… / Update preset, the ⋯ menu (Rename, Delete) beside it | S |
+| Preset picker's "Manage presets…" entry | A |
 | "Set in Advanced mode and still applied" note | S |
 | Target switch, task source (Markdown), source and feature branch; "Run on the source branch" toggle | A |
 | "Not sure what to build yet? Try Shaper" under the Markdown source (Shaper, gated) | A |
@@ -207,6 +210,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | List, project filter, Refresh; Overview (verdict, findings, duration, cost, task); Clarify tab; Resume | S |
 | Header cost and its breakdown (agents, Away mode, Auto workflow, run title; stopped reviews and stopped agent turns apart); the glance and Overview cost's Away mode share | S |
 | "Answered for you", as on the run page | S |
+| Save as preset (a run with a stored setup) | S |
 | History: usage-limit notice | S |
 | "Files changed" list on the Overview | S — the stand-in for the Diff tab |
 | Overview: Perspective checklists, as on the run page (shaped runs) | S |
@@ -302,6 +306,7 @@ inside the view.
 | Runs tab: Actions (keep policy, port range, editor/terminal, cap) | A |
 | Runs tab: Wait for the network | A |
 | Guardrails tab (list, details); Memory tab (files) | A |
+| Presets tab (every preset: Use, Rename, Duplicate, Edit scope, Delete) | A |
 | General: spawn diagnostics; Memory tab: the line linking to Helper jobs | E |
 | Guardrails create / delete | E |
 

@@ -282,6 +282,7 @@
                 <div id="preset-row" class="preset-row" data-flag="runPresets">
                   <label for="presetSelect">Preset</label>
                   <select id="presetSelect"><option value="">No preset</option></select>
+                  <button type="button" id="preset-more" class="btn btn-sm btn-icon preset-more" aria-haspopup="menu" aria-expanded="false" aria-label="Preset actions" title="Preset actions" hidden></button>
                   <span id="preset-chip" class="chip" hidden></span>
                   <button type="button" id="preset-save" class="btn btn-sm">Save current setup…</button>
                   <button type="button" id="preset-update" class="btn btn-sm" hidden>Update preset</button>
@@ -1597,7 +1598,7 @@
                  strip. Plugins, Sets, Models and Providers left for the Add-ons pages. -->
             <button type="button" class="tab on" data-tab="general" data-min-level="simple" aria-pressed="true">General</button>
             <button type="button" class="tab" data-tab="tags" data-min-level="simple" data-flag="runTags" aria-pressed="false">Tags</button>
-            <button type="button" class="tab" data-tab="presets" data-min-level="simple" data-flag="runPresets" data-flag-chip aria-pressed="false">Presets</button>
+            <button type="button" class="tab" data-tab="presets" data-min-level="advanced" data-flag="runPresets" data-flag-chip aria-pressed="false">Presets</button>
             <button type="button" class="tab" data-tab="runs" data-min-level="simple" aria-pressed="false">Runs</button>
             <!-- Experimental (docs/feature-flags.md) shows at every level: flags are not levels. -->
             <button type="button" class="tab" data-tab="experimental" data-min-level="simple" aria-pressed="false">Experimental</button>
@@ -1828,7 +1829,7 @@
           </section><!-- /pane tags -->
 
           <section class="settings-pane hidden" data-tab="presets">
-            <section class="card settings-card" id="presets-settings-card" data-min-level="simple" data-flag="runPresets">
+            <section class="card settings-card" id="presets-settings-card" data-min-level="advanced" data-flag="runPresets">
               <div class="card-head"><div class="label-row"><h2>Presets</h2></div></div>
               <p class="hint">Named New run setups. Pick one in New run, type a prompt and start: its choices apply to that run only.</p>
               <div id="presets-list"></div>

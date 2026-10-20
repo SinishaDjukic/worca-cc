@@ -3,7 +3,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { presetMenuGroups, presetHiddenItems, presetNodePick, renderBrokenCard, resetItem, saveDialogError, configWithPreset } from '../ui/public/run-presets-picker.mjs';
+import { presetMenuGroups, presetHiddenItems, presetNodePick, renderBrokenCard, resetItem, saveDialogError, configWithPreset,
+  BROKEN_SCOPE_HINT, BROKEN_SCOPE_HINT_SIMPLE } from '../ui/public/run-presets-picker.mjs';
 
 const P = (id, name, scope = { kind: 'global', ref: null }) => ({ id, name, scope, setup: {} });
 
@@ -17,7 +18,8 @@ test('presetHiddenItems names picks, loops, Away mark, opt-outs, engine and mock
   // `c` holds only its toggles (the stored full picks name every agent node, n_clarify included): not a model pick.
   const nodes = { a: { model: 'm1', effort: '' }, b: { model: 'm2', effort: 'high', fanOut: true }, c: { fanOut: false, askQuestions: true } };
   assert.deepEqual(presetHiddenItems({ overlay: { nodes, wires: { w: { maxCycles: 2 } } }, nightMode: true, mcpOptOut: ['x'], engine: 'codex', mock: true }),
-    ['2 agent picks', '1 loop budget', 'Away mark', '1 Sets opt-out', 'codex engine', 'Mock mode']);
+    ['2 agent picks', '1 loop budget', 'Away mark', '1 Sets opt-out', 'Codex engine', 'Mock mode']);
+  assert.deepEqual(presetHiddenItems({ engine: 'gemini-x' }), ['Unknown engine']);
   assert.deepEqual(presetHiddenItems({ engine: 'claude' }), []);
   assert.deepEqual(presetHiddenItems(null), []);
 });
@@ -79,4 +81,16 @@ test('configWithPreset: a preset pick wins over a per-node and a per-role value;
   assert.equal(out.humanInLoop, false);
   assert.deepEqual(config, before);
   assert.deepEqual(configWithPreset(null, 'wf_x', null).workflows.wf_x, { nodes: {}, feedbacks: {}, wires: {} });
+});
+
+test('renderBrokenCard: below Advanced the scope hint names the ⋯ menu and Advanced, never Settings › Presets', () => {
+  const { document } = new JSDOM('').window;
+  const item = { item: 'project', ref: 'api-1', message: 'Project api-1 is no longer registered in worca', reset: false };
+  const adv = renderBrokenCard(document, [item]);
+  assert.equal(adv.querySelector('.preset-broken-row .muted').textContent, BROKEN_SCOPE_HINT);
+  assert.equal(BROKEN_SCOPE_HINT, 'Edit the preset\'s scope in Settings › Presets');
+  const simple = renderBrokenCard(document, [item], { canEditScope: false });
+  assert.equal(simple.querySelector('.preset-broken-row .muted').textContent, BROKEN_SCOPE_HINT_SIMPLE);
+  assert.equal(BROKEN_SCOPE_HINT_SIMPLE, 'Delete the preset from the ⋯ menu beside Preset, or switch to Advanced to edit its scope');
+  assert.doesNotMatch(simple.textContent, /Settings › Presets/);
 });

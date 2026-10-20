@@ -41,7 +41,10 @@ Pick it in the **Preset** menu at the top of New run. The form fills in, and a c
   for this run only, and nothing is written to the project's settings. The chip then reads
   *· modified*, with **Update preset** (saves the change into the preset) and **Save as new…**;
 - in Simple mode, the note above Start run names what the preset applies that Simple mode hides:
-  its agent picks, loop budgets, Away mark, Sets opt-outs and engine;
+  its agent picks, loop budgets, Away mark, Sets opt-outs and engine (by its label, for example
+  *Codex engine*);
+- the **⋯** button beside the menu has **Rename** and **Delete** for the applied preset, with the
+  same dialogs as Settings › Presets. It is shown at every interface level, and hidden with **No preset**;
 - choosing **No preset** leaves preset mode, and the form shows the project's settings again.
 
 **Save current setup…** saves what the form holds now. The dialog asks for a name (1–80
@@ -59,13 +62,20 @@ disabled until each one is fixed:
 - **Reset to default** drops the preset's pick, so the project's own setting applies;
 - or pick another value in the form (another model in the Planner row, another guardrail set);
 - a gone project or workspace has no reset: edit the preset's scope in **Settings › Presets**.
+  Below Advanced, where that tab is hidden, the card says to delete the preset from the **⋯** menu
+  beside Preset, or to switch to Advanced to edit its scope.
 
 The server checks again when the run starts (`POST /api/run` with `presetId`) and refuses a
 broken setup with 409 `preset-broken`, naming the same items.
 
 ## Settings › Presets
 
-One card per preset with its scope, workflow, engine and when it was last updated. **Use** opens
+The tab is part of Advanced mode (docs/ui-levels.md); below Advanced, New run's **⋯** menu renames
+and deletes, and the Preset menu leaves out *Manage presets…*.
+
+One card per preset with its scope, workflow, engine and when it was last updated. The workflow
+reads by its name (*Auto workflow* for Auto, *Workflow removed* once it is deleted), and the
+engine by its label (*Claude*, *Codex*, *Copilot*, *Cursor*), never by an id. **Use** opens
 New run with the preset applied; **Rename**, **Duplicate**, **Edit scope** and **Delete** manage
 it. A pinned preset whose project or workspace is gone shows *Project gone* (or *Workspace gone*);
 **Edit scope** can pin it again or make it global.
@@ -86,8 +96,9 @@ button is not shown on their page.
 With run presets on, the Chat home shows **Start from a preset**: up to 6 chips, first the presets
 pinned to New run's current project or workspace, then the *Any project* ones. Presets pinned to
 another target are left out. A chip opens New run with the preset applied, the same as **Use** in
-Settings › Presets. With more than 6, a *N more…* chip opens Settings › Presets. With no matching
-preset the section is hidden.
+Settings › Presets. A chip's tooltip names its scope, workflow and engine. With more than 6, a
+*N more…* chip opens Settings › Presets (New run, whose picker lists every preset, below Advanced).
+With no matching preset the section is hidden.
 
 ## Schedules
 
@@ -131,6 +142,8 @@ presets and the ones pinned to the project (the current directory, or `--project
 | 0 | The run started |
 | 1 | No preset by that name here (the in-scope names are listed), the preset is pinned to another project or workspace, the preset cannot start (one line per broken item), no Worca server is running, or run presets are turned off |
 | 2 | A usage error: no `--preset`, no `--prompt`, or an unknown option |
+
+`worca run --preset` is unaffected by interface levels.
 
 `worca run` works against a local Worca server. A server that asks you to sign in answers with
 its sign-in hint.

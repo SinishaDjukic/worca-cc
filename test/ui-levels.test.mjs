@@ -64,6 +64,19 @@ test('every nav item, Settings tab and card, and detail tab declares an explicit
         assert.match(c.dataset.minLevel || '', LEVEL_RE, `Settings card "${name}" has no data-min-level`);
       }
     } },
+    { name: 'presets: the Settings tab and card are Advanced; New run\'s picker, ⋯ and Save as preset stay ungated', run: () => {
+      const doc = shell();
+      assert.equal(doc.querySelector('#settings-tabs [data-tab="presets"]').dataset.minLevel, 'advanced');
+      assert.equal(doc.getElementById('presets-settings-card').dataset.minLevel, 'advanced');
+      for (const id of ['preset-row', 'presetSelect', 'preset-more', 'preset-save']) {
+        assert.equal(doc.getElementById(id).closest('[data-min-level="advanced"], [data-min-level="expert"]'), null, `#${id} is Simple`);
+      }
+      // The History page's Save as preset lives in #hist-detail-tpl: check inside the template and the template's own ancestors.
+      const tpl = doc.getElementById('hist-detail-tpl');
+      for (const n of [tpl.content.querySelector('.hd-save-preset'), tpl]) {
+        assert.equal(n.closest('[data-min-level="advanced"], [data-min-level="expert"]'), null, 'Save as preset is Simple');
+      }
+    } },
     { name: 'every detail tab (Running, History, project page, workspace page) declares a level', run: () => {
       for (const table of ['RD_TABS', 'HD_TABS', 'PD_TABS', 'WD_TABS']) {
         const start = app.indexOf(`const ${table} = [`);

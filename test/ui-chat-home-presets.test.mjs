@@ -76,3 +76,33 @@ test('createChatHome: with the flag on, a visit lists the presets and a chip cli
   assert.deepEqual(used, ['g1']);
   home.destroy();
 });
+
+test('a chip\'s tooltip is the scope, the workflow name and the engine label, never their ids', () => {
+  const { document } = trackDom(new JSDOM('')).window;
+  const ui = createHomePresets({ doc: document, onUse: () => {}, onMore: () => {} });
+  const p = (id, setup, kind = 'global', ref = null) => ({ id, name: id, scope: { kind, ref }, setup });
+  ui.render({ on: true, target: { kind: 'project', ref: 'api-1' }, workflowNames: { wf_default: 'Default' }, presets: [
+    p('a', { workflowId: 'wf_auto', engine: 'codex' }, 'project', 'api-1'), p('b', { workflowId: 'wf_gone99' })] });
+  assert.deepEqual([...ui.el.querySelectorAll('.chat-home-preset')].map((b) => b.title),
+    ['Only this project · Auto workflow · Codex', 'Any project · Workflow removed · Claude']);
+});
+
+for (const [level, want] of [['simple', '#new'], ['advanced', '#settings/presets'], ['expert', '#settings/presets']]) {
+  test(`createChatHome at ${level}: "N more…" navigates to ${want}`, async () => {
+    const { window } = trackDom(new JSDOM(SHELL, { url: 'http://localhost:4317/' }));
+    const doc = window.document;
+    const went = [];
+    const deps = {
+      runs: () => ({ needs: [], running: [], finished: [], project: null }), threads: async () => [],
+      workflows: async () => ({ list: [], portsFn: null }), flags: async () => ({ scripts: true, tasks: false, runPresets: true }),
+      presets: async () => ({ presets: Array.from({ length: 7 }, (_, i) => P(`g${i}`)), target: null, workflowNames: {} }),
+      usePreset: () => {}, threadForRun: async () => null, openThread: () => {}, openRunPanel: () => {}, setIntent: () => {}, prefill: () => {},
+      navigate: (h) => went.push(h), level: () => level,
+    };
+    const home = createChatHome({ doc, host: doc.querySelector('[data-chat-home]'), heroSlot: doc.querySelector('[data-chat-hero-slot]'), deps });
+    for (let i = 0; i < 6; i++) await new Promise((r) => window.setTimeout(r, 0));
+    doc.querySelector('.chat-home-preset-more').click();
+    assert.deepEqual(went.filter((h) => h === want), [want]);
+    home.destroy();
+  });
+}

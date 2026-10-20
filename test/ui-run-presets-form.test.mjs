@@ -43,6 +43,7 @@ async function boot({ presets = [], check = () => ({ broken: [] }), runDefaults 
   const calls = [];
   const posted = [];
   let checks = 0;
+  let list = [...presets];   // a PUT or DELETE is seen by the next GET
   window.fetch = (url, opts = {}) => {
     const u = String(url);
     const method = opts.method || 'GET';
@@ -60,7 +61,14 @@ async function boot({ presets = [], check = () => ({ broken: [] }), runDefaults 
     if (u.includes('/api/workflows') || u.includes('/api/agents')) return Promise.resolve(ok({ error: 'offline' }, 404));
     if (u.includes('/api/guardrails')) return Promise.resolve(ok({ guardrails: [{ id: 'permissive', name: 'Permissive', settings: null }, { id: 'normal', name: 'Normal', settings: {} }] }));
     if (/\/api\/presets\/[^/]+\/check/.test(u)) { checks += 1; return Promise.resolve(ok(check(checks))); }
-    if (u.includes('/api/presets') && method === 'GET') return Promise.resolve(ok({ presets }));
+    const one = u.match(/\/api\/presets\/([^/?]+)$/);
+    if (one && method === 'PUT') {
+      const body = JSON.parse(opts.body);
+      list = list.map((p) => (p.id === one[1] ? { ...p, ...body } : p));
+      return Promise.resolve(ok({ preset: list.find((p) => p.id === one[1]) }));
+    }
+    if (one && method === 'DELETE') { list = list.filter((p) => p.id !== one[1]); return Promise.resolve(ok({ ok: true })); }
+    if (u.includes('/api/presets') && method === 'GET') return Promise.resolve(ok({ presets: list }));
     if (u.includes('/api/presets') && method === 'POST') return Promise.resolve(ok({ preset: preset({ id: 'rp_bbbbbbbbbbbb', name: 'Saved' }) }, 201));
     if (u.endsWith('/api/run') && method === 'POST') {
       posted.push(JSON.parse(opts.body));
@@ -280,7 +288,7 @@ test('Save current setup… names the workflow and says when it is the project\'
   await waitFor(() => ctx.doc.querySelector('#workflowSelect').value === 'wf_auto');
   ctx.doc.querySelector('#preset-save').click();
   await waitFor(() => !ctx.doc.querySelector('#confirm-modal').classList.contains('hidden'));
-  assert.match(ctx.doc.querySelector('#confirm-fields').textContent, /Saved: workflow Auto \(this project's default\), engine, guardrails/);
+  assert.match(ctx.doc.querySelector('#confirm-fields').textContent, /Saved: Auto workflow \(this project's default\) · Claude, guardrails/);
   ctx.doc.querySelector('#confirm-cancel').click();
   await tick();
 });
@@ -319,5 +327,101 @@ test('Settings › Presets Use opens New run with the preset applied and the pro
   ctx.doc.querySelector('#presets-list [data-act="use"]').click();
   await waitFor(() => ctx.window.location.hash === '#new' && ctx.doc.getElementById('presetSelect').value === 'rp_aaaaaaaaaaaa');
   await waitFor(() => ctx.doc.activeElement === ctx.doc.getElementById('prompt'));
+  applyFlags({ runPresets: false }, ctx.doc);
+});
+
+const menuItem = (doc, label) => [...doc.querySelectorAll('.wfv-menu[role="menu"] [role="menuitem"]')].find((b) => b.textContent.trim() === label);
+
+test('⋯ beside Preset: hidden with No preset, shown once a preset is applied, lists Rename and Delete', async () => {
+  const ctx = await boot({ presets: [preset()] });
+  ctx.doc.documentElement.dataset.level = 'simple';
+  applyFlags({ runPresets: true }, ctx.doc);
+  await waitFor(() => ctx.doc.querySelectorAll('#presetSelect option').length > 1);
+  assert.equal(ctx.doc.getElementById('preset-more').hidden, true);
+  await pick(ctx, 'rp_aaaaaaaaaaaa');
+  const more = ctx.doc.getElementById('preset-more');
+  assert.equal(more.hidden, false);
+  more.click();
+  assert.equal(ctx.doc.querySelector('.wfv-menu[role="menu"]').getAttribute('aria-label'), 'Actions for Quick fix');
+  assert.deepEqual([...ctx.doc.querySelectorAll('.wfv-menu[role="menu"] [role="menuitem"]')].map((b) => b.textContent.trim()), ['Rename', 'Delete']);
+  applyFlags({ runPresets: false }, ctx.doc);
+});
+
+test('⋯ Rename: the Settings prompt, one PUT, the menu and chip renamed, focus back on ⋯', async () => {
+  const ctx = await boot({ presets: [preset()] });
+  await pick(ctx, 'rp_aaaaaaaaaaaa');
+  ctx.doc.getElementById('preset-more').click();
+  menuItem(ctx.doc, 'Rename').click();
+  await waitFor(() => !ctx.doc.querySelector('#confirm-modal').classList.contains('hidden'));
+  assert.equal(ctx.doc.getElementById('confirm-title').textContent, 'Rename preset');
+  const name = ctx.doc.querySelector('#confirm-f-name');
+  name.value = 'Faster fix';
+  name.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
+  ctx.doc.querySelector('#confirm-ok').click();
+  await waitFor(() => [...ctx.doc.querySelectorAll('#presetSelect option')].some((o) => o.textContent === 'Faster fix'));
+  assert.deepEqual(ctx.calls.filter((c) => c.method === 'PUT').map((c) => [c.url.replace(/^.*\/api/, '/api'), c.body]),
+    [['/api/presets/rp_aaaaaaaaaaaa', { name: 'Faster fix' }]]);
+  await waitFor(() => ctx.doc.activeElement === ctx.doc.getElementById('preset-more'));
+  applyFlags({ runPresets: false }, ctx.doc);
+});
+
+test('⋯ Delete: the danger confirm; Cancel sends nothing; Delete leaves preset mode, hides ⋯ and focuses the select', async () => {
+  const ctx = await boot({ presets: [preset()] });
+  await pick(ctx, 'rp_aaaaaaaaaaaa');
+  const more = ctx.doc.getElementById('preset-more');
+  more.click();
+  menuItem(ctx.doc, 'Delete').click();
+  await waitFor(() => !ctx.doc.querySelector('#confirm-modal').classList.contains('hidden'));
+  assert.match(ctx.doc.getElementById('confirm-message').textContent, /Delete the preset “Quick fix”\? Runs it started are not affected\./);
+  ctx.doc.querySelector('#confirm-cancel').click();
+  await waitFor(() => ctx.doc.activeElement === more);
+  assert.equal(ctx.calls.filter((c) => c.method === 'DELETE').length, 0);
+  more.click();
+  menuItem(ctx.doc, 'Delete').click();
+  await waitFor(() => !ctx.doc.querySelector('#confirm-modal').classList.contains('hidden'));
+  ctx.doc.querySelector('#confirm-ok').click();
+  await waitFor(() => ctx.doc.activeElement === ctx.doc.getElementById('presetSelect'));
+  assert.equal(ctx.calls.filter((c) => c.method === 'DELETE').length, 1);
+  assert.equal(more.hidden, true);
+  assert.equal(ctx.doc.getElementById('presetSelect').value, '');
+  assert.ok(![...ctx.doc.querySelectorAll('#presetSelect option')].some((o) => o.value === 'rp_aaaaaaaaaaaa'));
+  applyFlags({ runPresets: false }, ctx.doc);
+});
+
+test('Simple: no "Manage presets…", the broken scope hint names ⋯; switching to Advanced brings both back', async () => {
+  const ctx = await boot({ presets: [preset()], check: () => ({ broken: [{ item: 'project', ref: 'gone-1', message: 'Project gone-1 is no longer registered in worca', reset: false }] }) });
+  ctx.doc.documentElement.dataset.level = 'simple';
+  await pick(ctx, 'rp_aaaaaaaaaaaa');
+  const opts = () => [...ctx.doc.querySelectorAll('#presetSelect option')].map((o) => o.value);
+  assert.ok(!opts().includes('__manage__'));
+  await waitFor(() => /⋯ menu beside Preset/.test(ctx.doc.getElementById('preset-broken').textContent));
+  ctx.doc.documentElement.dataset.level = 'advanced';
+  ctx.doc.dispatchEvent(new ctx.window.CustomEvent('worca:level', { detail: { level: 'advanced', previous: 'simple' } }));   // as ui-level.mjs dispatches it
+  assert.ok(opts().includes('__manage__'));
+  assert.match(ctx.doc.getElementById('preset-broken').textContent, /Edit the preset's scope in Settings › Presets/);
+  applyFlags({ runPresets: false }, ctx.doc);
+});
+
+test('a picker option\'s tooltip and Settings › Presets name the workflow and engine, with no ids', async () => {
+  const ctx = await boot({ presets: [preset({ setup: { workflowId: 'wf_auto', engine: 'codex' } })] });
+  applyFlags({ runPresets: true }, ctx.doc);
+  await waitFor(() => ctx.doc.querySelector('#presetSelect option[value="rp_aaaaaaaaaaaa"]'));
+  assert.equal(ctx.doc.querySelector('#presetSelect option[value="rp_aaaaaaaaaaaa"]').title, 'Auto workflow · Codex');
+  ctx.window.location.hash = '#settings/presets';
+  await waitFor(() => ctx.doc.querySelector('#presets-list .preset-meta'));
+  assert.match(ctx.doc.querySelector('#presets-list .preset-meta').textContent, /^Auto workflow · Codex · Updated/);
+  ctx.window.location.hash = '#new';
+  applyFlags({ runPresets: false }, ctx.doc);
+});
+
+test('Simple: a deep link to Settings › Presets shows the Advanced level banner', async () => {
+  const ctx = await boot({ presets: [preset()] });
+  ctx.doc.documentElement.dataset.level = 'simple';
+  applyFlags({ runPresets: true }, ctx.doc);
+  ctx.window.location.hash = '#settings/presets';
+  await waitFor(() => ctx.doc.getElementById('level-banner').hidden === false);
+  assert.equal(ctx.doc.getElementById('level-banner-text').textContent, 'Presets is part of Advanced mode, so it is not in your menu.');
+  assert.equal(ctx.doc.getElementById('level-banner-pill').dataset.lv, 'advanced');
+  ctx.window.location.hash = '#new';
   applyFlags({ runPresets: false }, ctx.doc);
 });

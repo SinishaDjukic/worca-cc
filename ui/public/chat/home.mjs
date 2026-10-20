@@ -112,8 +112,10 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
   const tabs = createHomeTabs({ doc, onSelect: (t) => selectTab(t, { user: true }) });
   const promos = buildPromos();
   const body = h('div', 'chat-home-body');
+  // Settings › Presets is Advanced (docs/ui-levels.md): Simple's "N more…" opens New run's picker, which lists all.
   const presetsUi = createHomePresets({
-    doc, onUse: (id) => { if (typeof deps.usePreset === 'function') deps.usePreset(id); }, onMore: () => deps.navigate('#settings/presets'),
+    doc, onUse: (id) => { if (typeof deps.usePreset === 'function') deps.usePreset(id); },
+    onMore: () => deps.navigate((typeof deps.level === 'function' ? deps.level() : 'expert') === 'simple' ? '#new' : '#settings/presets'),
   });
   body.append(actions.el, presetsUi.el, tabs.el, promos);
   host.appendChild(body);
@@ -383,7 +385,7 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
     if (st.tab === 'plans') renderPanel();
   }
   // Run presets (#712 slice 2): the viewer's presets as chips, fresh per visit, while the runPresets flag is on.
-  function paintPresets() { presetsUi.render({ on: st.presetsOn, presets: st.presets?.presets || [], target: st.presets?.target || null }); }
+  function paintPresets() { presetsUi.render({ on: st.presetsOn, presets: st.presets?.presets || [], target: st.presets?.target || null, workflowNames: st.presets?.workflowNames ?? null }); }
   async function loadPresets(token) {
     let got = null;
     try { got = typeof deps.presets === 'function' ? await deps.presets() : null; } catch { got = null; }
