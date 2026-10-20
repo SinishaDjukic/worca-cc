@@ -12,6 +12,8 @@ import { gitDir } from './helpers/git-dir.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 import { shipKit, stubShip, withShip, ghCalls } from './helpers/ship-world.mjs';
 import { getDb } from '../src/core/db.mjs';
+import { readRunTags } from '../src/core/run-tags-store.mjs';
+import { editRunLabels, readRunLabels } from '../src/core/run-labels-store.mjs';
 import { createThread, linkRun as askLinkRun, listMessages, appendMessage as askAppendMessage } from '../src/core/ask/store.mjs';
 
 useTempHome(after);
@@ -484,6 +486,20 @@ test('s5: a round starts tag-exempt with its origin\'s bare-key tag (saved befor
   assert.equal(plain.status, 200, await plain.clone().text());
   const { runId } = await plain.json();
   assert.equal((await branchThenStop(runId)).branch.roundOf, undefined);
+}));
+
+test('s2: a round started from a run with tags and labels carries both', () => withGate(true, async () => {
+  const { id, thread } = await doneRunWithPr('s2-round');
+  getDb().prepare("INSERT INTO run_tags (pipeline_id, key, value) VALUES (?, 'client', 'acme')").run(id);
+  editRunLabels(id, ['hotfix']);
+  await post(`/api/ask/threads/${thread.id}/changes`, { pipelineId: id, text: 'make it blue' });
+  const card = blocksOf(thread.id).at(-1);
+  assert.deepEqual([card.card.run.tags, card.card.run.labels], [['client:acme'], ['hotfix']]);
+  const r = await post(`/api/ask/threads/${thread.id}/cards/${card.id}`, { verb: 'start' });
+  assert.equal(r.status, 200, await r.clone().text());
+  const block = (await r.json()).block;
+  const { pid } = await branchThenStop(block.card.result.runId);
+  assert.deepEqual([readRunTags(pid), readRunLabels(pid)], [['client:acme'], ['hotfix']]);
 }));
 
 test('ordinary stays ordinary: in a thread with a finished run, chat messages are Ask turns — no card, and /reply is gone', () => withGate(true, async () => {

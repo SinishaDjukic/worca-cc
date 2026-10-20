@@ -138,7 +138,7 @@ test('the Chat › Plans row and the release row links are controls, not §1.2 b
 });
 
 test('B7: the run page\'s "Add tags" is a quiet sm button with a short label — no finding', () => {
-  assert.deepEqual(run('<button class="btn btn-sm btn-quiet hd-tags-edit" data-h="28">Add tags</button>'), []);
+  assert.deepEqual(run('<button class="btn btn-sm btn-quiet hd-tags-edit" data-h="28">Add cost tags</button>'), []);
 });
 
 test('QA 1: a truncated badge fails the surface audit; a whole one passes', () => {

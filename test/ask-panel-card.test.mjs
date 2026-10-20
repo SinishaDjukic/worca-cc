@@ -2219,7 +2219,7 @@ async function openFlagged(card, rec) {
   ctx.flush(); await ctx.tick(); await ctx.tick(); ctx.flush();
   return { ctx, card: ctx.doc.querySelector('.ask-card') };
 }
-const rpChips = (card) => [...card.querySelectorAll('.ask-rp-tags .tag-chip')].map((c) => c.firstChild.textContent);
+const rpChips = (card) => [...card.querySelectorAll('.ask-rp-tags .tag-chip:not(.tag-missing)')].map((c) => c.firstChild.textContent);
 const CC_DIM = { key: 'cc', label: 'Cost centre', values: ['4410', '4420'], required: true };
 
 test('run card, enforced: pre-filled chips on one line; a missing mandatory tag shows its picker inline and gates Start', async () => {
@@ -2280,4 +2280,23 @@ test('run card, enforcement off: no pickers, Start enabled, chips pre-filled', a
   assert.deepEqual(rpChips(card), ['cc:4410']);
   assert.equal(card.querySelector('.tag-rule-pickers').childElementCount, 0);
   assert.equal(card.querySelector('[data-ask-card-start]').disabled, false);
+});
+
+test('s2: a proposal for project acme lists the person\'s last-run cost tags plus required keys', async () => {
+  const rec = { tagRules: { dims: [{ key: 'client', label: 'Client', values: [], required: true }], enforce: false, prefill: [],
+    autofill: { tags: ['team:web'], from: 'last-run' } } };
+  const { ctx, card } = await openFlagged({ ...PROJECT_CARD, projectName: 'acme', tags: ['spike'] }, rec);
+  await ctx.tick();
+  assert.deepEqual(rec.tagRuleQueries, ['projectDir=%2Frepos%2Fproj']);
+  assert.deepEqual(rpChips(card), ['spike', 'team:web']);
+  assert.deepEqual([...card.querySelectorAll('.ask-rp-tags .tag-missing')].map((s) => s.textContent), ['client · missing']);
+  card.querySelector('[data-ask-card-start]').click(); await ctx.tick(); await ctx.tick();
+  assert.deepEqual(rec.runBodies[0].tags, ['spike', 'team:web']);
+});
+
+test('s2: a workspace answer (no autofill) paints no missing slot', async () => {
+  const rec = { tagRules: { dims: [{ key: 'client', label: 'Client', values: [], required: true }], enforce: false, prefill: [] } };
+  const { ctx, card } = await openFlagged({ ...PROJECT_CARD }, rec);
+  await ctx.tick();
+  assert.equal(card.querySelectorAll('.ask-rp-tags .tag-missing').length, 0);
 });

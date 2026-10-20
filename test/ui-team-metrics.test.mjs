@@ -310,11 +310,11 @@ async function openTm(opts) {
 test('Team metrics chips: By tag tables over the loaded records with Untagged and a total; remembered', async () => {
   const ctx = await openTm({ fetchHandler: tmHandler({ scopes: SCOPES_ON, data: TAGGED() }) });
   const doc = ctx.window.document;
-  assert.deepEqual([...doc.querySelectorAll('#tm-view button')].map((b) => b.textContent), ['Overview', 'By person', 'By tag']);
+  assert.deepEqual([...doc.querySelectorAll('#tm-view button')].map((b) => b.textContent), ['Overview', 'By person', 'By cost tag']);
   doc.querySelector('#tm-view [data-tm-view="tag"]').click(); await ctx.tick();
   const card = doc.querySelector('#tm-body .alloc-card');
   assert.equal(card.querySelector('h2').textContent, 'client');
-  assert.deepEqual([...card.querySelectorAll('tbody tr')].map((r) => [r.cells[0].textContent, r.cells[2].textContent]), [['acme', '75%'], ['Untagged', '25%']]);
+  assert.deepEqual([...card.querySelectorAll('tbody tr')].map((r) => [r.cells[0].textContent, r.cells[2].textContent]), [['acme', '75%'], ['No cost tag', '25%']]);
   assert.equal(card.querySelector('tfoot tr').cells[1].textContent, '$4.00');
   assert.equal(doc.querySelector('#tm-body .tm-run-tbl'), null);
   assert.equal(ctx.window.localStorage.getItem('worca.teamMetrics.view'), 'tag');

@@ -1,7 +1,7 @@
 // src/core/run-labels-store.mjs — run labels (slice 1): read, replace, bulk add/remove, vocabulary.
 // Mirrors run-tags-store.mjs; no events table and no audit line (labels organise, they are not records).
 import { getDb, tx } from './db.mjs';
-import { normaliseLabels } from '../shared/run-labels.mjs';
+import { normaliseLabels, normaliseLabel, MAX_LABELS } from '../shared/run-labels.mjs';
 
 const badLabels = (errors) => Object.assign(new Error(errors[0]), { code: 'BAD_LABELS' });
 
@@ -31,6 +31,14 @@ function writeLabels(pipelineId, before, next, ts) {
   const ins = db.prepare('INSERT OR IGNORE INTO run_labels (pipeline_id, label, added_at) VALUES (?, ?, ?)');
   for (const l of before) if (!next.includes(l)) del.run(pipelineId, l);
   for (const l of next) if (!before.includes(l)) ins.run(pipelineId, l, ts);
+}
+
+/** s2: creation-time write, like insertRunTags: never throws, drops invalid entries. → the stored list. */
+export function insertRunLabels(pipelineId, labels, { now = new Date() } = {}) {
+  const list = Array.isArray(labels) ? labels.filter((l) => !normaliseLabels([l]).errors.length) : [];
+  const clean = normaliseLabels(list).labels.slice(0, MAX_LABELS);
+  if (clean.length) tx(() => writeLabels(pipelineId, [], clean, now.toISOString()));
+  return clean;
 }
 
 const same = (a, b) => a.length === b.length && a.every((x) => b.includes(x));
@@ -75,4 +83,41 @@ export function labelVocabulary() {
     SELECT l.label, COUNT(*) AS count, MAX(l.added_at) AS last FROM run_labels l JOIN pipelines p ON p.id = l.pipeline_id
     WHERE p.archived_at IS NULL GROUP BY l.label ORDER BY count DESC, last DESC, l.label`).all()
     .map((r) => ({ label: r.label, count: r.count }));
+}
+
+// s2: Settings › Labels — rename, merge or delete a label on every run.
+const oneLabel = (raw) => { const r = normaliseLabel(raw); if (r.error) throw badLabels([r.error]); return r.label; };
+const idsWith = (label) => getDb().prepare('SELECT pipeline_id FROM run_labels WHERE label = ?').all(label).map((r) => r.pipeline_id);
+
+/**
+ * Rename a label on every run, archived ones too, in one tx. Onto a label that exists it merges: a run that has both
+ * keeps only `to` (with its own added_at), so no run gains a row. → { from, label, ids, merged }; ids = the runs that
+ * changed ([] when `from` is on no run, or when both names normalise to the same label). Throws BAD_LABELS on a bad name.
+ */
+export function renameLabel(from, to) {
+  const f = oneLabel(from);
+  const t = oneLabel(to);
+  if (f === t) return { from: f, label: t, ids: [], merged: false };
+  const db = getDb();
+  let ids = [];
+  let merged = false;
+  tx(() => {
+    ids = idsWith(f);
+    if (!ids.length) return;
+    merged = !!db.prepare('SELECT 1 FROM run_labels WHERE label = ? LIMIT 1').get(t);
+    db.prepare('DELETE FROM run_labels WHERE label = ? AND pipeline_id IN (SELECT pipeline_id FROM run_labels WHERE label = ?)').run(f, t);
+    db.prepare('UPDATE run_labels SET label = ? WHERE label = ?').run(t, f);
+  });
+  return { from: f, label: t, ids, merged };
+}
+
+/** Remove a label from every run, archived ones too, in one tx. → { label, ids }; ids = [] when no run had it. */
+export function deleteLabel(label) {
+  const l = oneLabel(label);
+  let ids = [];
+  tx(() => {
+    ids = idsWith(l);
+    if (ids.length) getDb().prepare('DELETE FROM run_labels WHERE label = ?').run(l);
+  });
+  return { label: l, ids };
 }

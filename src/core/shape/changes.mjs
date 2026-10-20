@@ -28,7 +28,8 @@ export function changesCard({ text, facts }) {
   const f = facts.feature || null;
   const projectDir = (f && f.projectDir) || (r && r.projectDir) || null;
   const tags = (f && f.tags) || (r && r.tags) || [];          // D19: the origin's tags, so enforced tag rules pass
-  const withTags = (b) => (tags.length ? { ...b, tags } : b);
+  const labels = (f && f.labels) || (r && r.labels) || [];    // s2: and its labels
+  const withTags = (b) => ({ ...b, ...(tags.length ? { tags } : {}), ...(labels.length ? { labels } : {}) });
   const run = landing.kind === 'round'
     ? withTags({ prompt: req, projectDir, sourceBranch: landing.target.sourceBranch, sameAsSource: true, syncBeforeStart: false })
     : landing.kind === 'follow-up' && !landing.target.featureId
@@ -67,7 +68,7 @@ export function routeCard({ text, feature, guess }) {
   const choice = ROUTE_CHOICES.includes(guess && guess.choice) ? guess.choice : 'save';
   const g = { choice, where: choice === 'add' ? (hasNext ? 'next' : 'extra') : null, reason: oneLine(guess && guess.reason, 200) };
   return { type: 'route', text: clip(text), featureId: feature.id, featureTitle: feature.title, base: feature.base || null,
-    projectDir: feature.projectDir || null, tags: feature.tags || [], guess: g, hasNext, primary: routeLabel(g.choice, feature.title) };
+    projectDir: feature.projectDir || null, tags: feature.tags || [], labels: feature.labels || [], guess: g, hasNext, primary: routeLabel(g.choice, feature.title) };
 }
 
 export async function applyRoute(card, v, deps) {
@@ -79,16 +80,17 @@ export async function applyRoute(card, v, deps) {
   if (v.verb === 'save') return { ok: true, result: { note: 'idea', index: deps.addNote(card.featureId, { kind: 'idea', text: card.text }).runIndex } };
   // own: from the base at once, runs alongside, its own PR (no shape, no marker)
   const r = await deps.startRun({ prompt: card.text, projectDir: card.projectDir, ...(card.base ? { sourceBranch: card.base } : {}),
-    ...(card.tags && card.tags.length ? { tags: card.tags } : {}) }, {});
+    ...(card.tags && card.tags.length ? { tags: card.tags } : {}), ...(card.labels && card.labels.length ? { labels: card.labels } : {}) }, {});
   return r.status < 300 ? { ok: true, result: { runId: r.body.runId } } : startError(r);
 }
 
 // ---- the facts landingFor reads, from the DB. `deps` = the server's readers: { readPrState, findPipelineRowById,
-// readRunTags, featureView } (featureView carries the server's live runs map).
+// readRunTags, readRunLabels, featureView } (featureView carries the server's live runs map).
 const FINISHED = new Set(['done', 'stopped', 'error']);
 const LIVE_ROUND = new Set(['running', 'starting', 'paused']);
 const parse = (t) => { try { return t ? JSON.parse(t) : null; } catch { return null; } };
 const tagsOf = (deps, pid) => { try { return (pid && deps.readRunTags(pid)) || []; } catch { return []; } };
+const labelsOf = (deps, pid) => { try { return (pid && deps.readRunLabels && deps.readRunLabels(pid)) || []; } catch { return []; } };
 
 /** The landing facts of a run: a feature's when it belongs to one, else the plain run's (round 1's, for a round). */
 export function landingFacts(pipelineId, deps) {
@@ -101,7 +103,7 @@ export function landingFacts(pipelineId, deps) {
   const rounds = roundsOf([row.id]).get(row.id) || [];
   return { feature: null, run: { pipelineId: row.id, title: row.title || 'this run', status: row.status, projectDir: readStoreMeta(row.project_key)?.path ?? null,
     finished: FINISHED.has(row.status) && !rounds.some((r) => LIVE_ROUND.has(r.status)),
-    branch: parse(row.branch), pr: deps.readPrState(row.id), rounds: 1 + rounds.length, tags: tagsOf(deps, row.id) } };
+    branch: parse(row.branch), pr: deps.readPrState(row.id), rounds: 1 + rounds.length, tags: tagsOf(deps, row.id), labels: labelsOf(deps, row.id) } };
 }
 
 /** The landing facts of a feature (its current successor after a re-plan). */
@@ -119,7 +121,7 @@ export function landingFactsOfFeature(featureId, deps) {
   const owner = shipUrl ? db.prepare('SELECT id FROM pipelines WHERE pr_url = ? LIMIT 1').get(shipUrl) : null;
   const shipPr = !shipUrl ? null : (owner && deps.readPrState(owner.id)) || (slices.length ? slices[slices.length - 1].pr : null);
   return { run: null, feature: { id: fid, title: v.title, status: v.status, base: featureBase(fid), projectDir: (row && row.project_dir) || null,
-    shipPr, tags: tagsOf(deps, row && row.origin_pipeline_id), slices } };
+    shipPr, tags: tagsOf(deps, row && row.origin_pipeline_id), labels: labelsOf(deps, row && row.origin_pipeline_id), slices } };
 }
 
 // ---- the two Ask Worca tools (propose_changes, route_message): which work a thread follows, and the rule ----
@@ -127,12 +129,13 @@ const HALTS = new Set(['stopped', 'error', 'failed', 'paused']);
 const STEP = { plan: 'Plan', outline: 'Split', questions: 'Clarify', gate: 'Gate' };
 
 /** What a thread follows. `links` = ask_run_links rows, newest first. The first feature found wins, else the newest run.
- *  deps = { live?, readPrState, findPipelineRowById, readRunTags }; `live` is the server's runs overlay (liveSliceOf),
+ *  deps = { live?, readPrState, findPipelineRowById, readRunTags, readRunLabels }; `live` is the server's runs overlay (liveSliceOf),
  *  absent in the MCP child, so `open` is always null there (D7). → null when the thread follows nothing. */
 export function threadWork(links, deps) {
   const live = deps.live || (() => null);
   const fv = (fid) => featureView(fid, { live });
-  const factDeps = { readPrState: deps.readPrState, findPipelineRowById: deps.findPipelineRowById, readRunTags: deps.readRunTags, featureView: fv };
+  const factDeps = { readPrState: deps.readPrState, findPipelineRowById: deps.findPipelineRowById, readRunTags: deps.readRunTags,
+    readRunLabels: deps.readRunLabels, featureView: fv };
   for (const l of links) {
     const at = l.pipelineId ? featureOfPipeline(roundOrigin(l.pipelineId)) : null;
     if (!at || !at.featureId) continue;
@@ -187,7 +190,7 @@ export function shapeToolFit(kind, input, work) {
     if (kind === 'route') {
       if (!routeFits) return no(`${f.title} has no runs to go: use propose_changes`);
       const ff = work.facts.feature;
-      return { ok: true, card: routeCard({ text: raw, feature: { ...f, base: ff.base, projectDir: ff.projectDir, tags: ff.tags },
+      return { ok: true, card: routeCard({ text: raw, feature: { ...f, base: ff.base, projectDir: ff.projectDir, tags: ff.tags, labels: ff.labels },
         guess: { choice: input.guess, reason: input.reason } }) };
     }
     if (routeFits) return no(`${f.title} still has runs to go: use route_message`);

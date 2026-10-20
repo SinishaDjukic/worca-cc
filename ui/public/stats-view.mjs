@@ -700,7 +700,7 @@ export function renderStatsView(model, view, opts = {}) {
     const tables = (model.tagGroups || []).map((t) => allocationModel({
       key: t.key, label: dimensionLabel(dims, t.key) || t.key, rows: fromStatsRows(t.rows),
     }));
-    return renderAllocationTables(tables, { doc, fmt, rangeLabel, empty: 'No tagged runs in this period.' });
+    return renderAllocationTables(tables, { doc, fmt, rangeLabel, empty: 'No runs with cost tags in this period.' });
   }
   const g = h(doc, 'div', 'charts-grid people-grid');
   g.appendChild(renderGroupsCard(model.groups || { label: 'person', rows: [] }, rangeLabel,

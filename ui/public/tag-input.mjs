@@ -3,9 +3,12 @@
 import { icon } from './icons.mjs';
 import { parseTag, formatTag, normaliseTags, MAX_TAGS } from '../../src/shared/run-tags.mjs';
 import { missingRequired, keyFromLabel, tagProblems, tagsProblemText } from '../../src/shared/tag-dimensions.mjs';
+import { suggestKeys, suggestValues } from '../../src/shared/cost-tag-suggest.mjs';
 
-/** The autocomplete vocabulary (GET /api/tags), shared by the New run form, run page and Ask card. */
-export const fetchTagVocabulary = () => fetch('/api/tags').then((r) => (r.ok ? r.json() : { keys: [], values: {} }));
+/** The autocomplete vocabulary (GET /api/tags), scoped to a project when one is given; shared by the New run form, run page and Ask card. */
+export const fetchTagVocabulary = (projectDir = null) =>
+  fetch(projectDir ? `/api/tags?projectDir=${encodeURIComponent(projectDir)}` : '/api/tags')
+    .then((r) => (r.ok ? r.json() : { keys: [], values: {} }));
 
 /** A read-only chip. */
 export function tagChip(doc, tag) {
@@ -15,32 +18,51 @@ export function tagChip(doc, tag) {
   return s;
 }
 
-/** Suggestions for the typed text: `cli` → ['client:'], `client:a` → ['client:acme']. */
-export function suggestionsFor(text, vocab, limit = 8) {
+/** A required key the run lacks (s2): a dashed amber slot, `client · missing`. */
+export function missingSlot(doc, key) {
+  const s = doc.createElement('span');
+  s.className = 'tag-chip tag-missing';
+  s.textContent = `${key} · missing`;
+  return s;
+}
+
+/** The amber flash on chips a fill placed (s2); CSS turns it off under reduced motion. */
+export function flashFilled(root, tags) {
+  const want = new Set(tags);
+  for (const c of root.querySelectorAll('.tag-chip')) {
+    if (!want.has(c.firstChild?.textContent)) continue;
+    c.classList.add('is-filled');
+    const done = () => c.classList.remove('is-filled');
+    c.addEventListener('animationend', done, { once: true });
+    setTimeout(done, 2000);
+  }
+}
+
+/** Suggestions for the typed text: `cli` → ['client:'], `client:a` → ['client:acme']; policy dimensions first (s2). */
+export function suggestionsFor(text, vocab, limit = 8, dims = []) {
   const t = String(text || '').normalize('NFC').toLowerCase().replace(/\s+/g, ' ').trimStart();
   const i = t.indexOf(':');
   if (i < 0) {
     const pre = t.trim();
-    return (vocab?.keys || []).filter((k) => k.key.startsWith(pre))
+    return suggestKeys({ dims, vocab }).filter((k) => k.key.startsWith(pre))
       .flatMap((k) => [...(k.valued ? [`${k.key}:`] : []), ...(k.plain ? [k.key] : [])]).slice(0, limit);
   }
   const key = t.slice(0, i).trim();
   const v = t.slice(i + 1).trim();
-  return ((vocab?.values || {})[key] || []).map((x) => x.value).filter((x) => x.startsWith(v))
-    .slice(0, limit).map((x) => `${key}:${x}`);
+  return suggestValues({ key, dims, vocab }).filter((x) => x.startsWith(v)).slice(0, limit).map((x) => `${key}:${x}`);
 }
 
 let seq = 0;
 /**
  * @param {Document} doc
- * @param {{ value?: string[], suggest?: () => Promise<object>, placeholder?: string, strict?: boolean }} [o] strict (default): a run's tags are written key:value; a filter passes false.
- * @returns {{ el: HTMLElement, get: () => string[], set: (tags: string[], o?: { dirty?: boolean }) => void, onChange: (fn: Function) => void, dirty: () => boolean }}
+ * @param {{ value?: string[], suggest?: () => Promise<object>, dims?: () => object[], placeholder?: string, strict?: boolean }} [o] strict (default): a run's tags are written key:value; a filter passes false. dims: the target's policy dimensions, read per keystroke (s2).
+ * @returns {{ el: HTMLElement, get: () => string[], set: (tags: string[], o?: { dirty?: boolean }) => void, onChange: (fn: Function) => void, dirty: () => boolean, resetSuggestions: () => void }}
  */
-export function createTagInput(doc, { value = [], suggest = null, placeholder = 'client:acme, team:web…', strict = true } = {}) {
+export function createTagInput(doc, { value = [], suggest = null, dims = () => [], placeholder = 'client:acme, team:web…', strict = true } = {}) {
   const el = doc.createElement('div'); el.className = 'tag-input';
   const chips = doc.createElement('span'); chips.className = 'tag-input-chips';
   const input = doc.createElement('input'); input.className = 'input tag-input-text'; input.placeholder = placeholder;
-  input.setAttribute('aria-label', 'Tags'); input.spellcheck = false;
+  input.setAttribute('aria-label', 'Cost tags'); input.spellcheck = false;
   const list = doc.createElement('datalist'); list.id = `tag-input-list-${++seq}`; input.setAttribute('list', list.id);
   const hint = doc.createElement('span'); hint.className = 'hint tag-input-hint'; hint.setAttribute('aria-live', 'polite');
   el.append(chips, input, list, hint);
@@ -56,7 +78,7 @@ export function createTagInput(doc, { value = [], suggest = null, placeholder = 
       c.appendChild(x); return c;
     }));
   };
-  const refreshList = () => list.replaceChildren(...suggestionsFor(input.value, vocab).map((s) => {
+  const refreshList = () => list.replaceChildren(...suggestionsFor(input.value, vocab, 8, dims() || []).map((s) => {
     const o = doc.createElement('option'); o.value = s; return o;
   }));
   const commit = () => {
@@ -65,7 +87,7 @@ export function createTagInput(doc, { value = [], suggest = null, placeholder = 
     const r = parseTag(raw, { strict });
     if (r.error) { input.setAttribute('aria-invalid', 'true'); hint.textContent = r.error; return false; }
     const next = normaliseTags([...tags, formatTag(r.tag)]);
-    if (next.errors.length) { hint.textContent = `At most ${MAX_TAGS} tags per run`; return false; }
+    if (next.errors.length) { hint.textContent = `At most ${MAX_TAGS} cost tags per run`; return false; }
     tags = next.tags; edited = true; input.value = ''; input.removeAttribute('aria-invalid'); hint.textContent = '';
     paint(); emit(); return true;
   };
@@ -93,6 +115,7 @@ export function createTagInput(doc, { value = [], suggest = null, placeholder = 
     },
     onChange: (fn) => subs.push(fn),
     dirty: () => edited,
+    resetSuggestions: () => { vocab = null; },   // s2: the vocabulary is per project; refetch on the next focus
   };
 }
 
@@ -112,13 +135,16 @@ export function valueControl(doc, d, { blank = '', cls = 'tag-dim-input' } = {})
  * One slot per configured tag dimension (New run): label, then a select of the allowed values or a text input.
  * get() → ['cc:4410', …] (filled, valid slots only); set(tags) fills slots from a tag list and clears
  * dirty; missing() → required dimensions left empty; dirty() → the user typed since the last set().
+ * edits() → Map key → text of the slots the user touched, a cleared one included (''). `edits` rebuilds
+ * the slots with those carried over the `value` fill; untouched slots take the fill.
  * The caller decides: it warns, or gates Start when enforced.
  */
-export function createDimensionSlots(doc, dims, { value = [] } = {}) {
+export function createDimensionSlots(doc, dims, { value = [], edits = new Map() } = {}) {
   const el = doc.createElement('div'); el.className = 'tag-dims'; el.hidden = !dims.length;
   const inputs = new Map();
   const listeners = [];
-  let touched = false;
+  const touched = new Set();
+  const held = new Map();   // edits for keys this target has no slot for: they come back on a target that has one
   for (const d of dims) {
     const slot = doc.createElement('label'); slot.className = 'tag-dim-slot'; slot.dataset.key = d.key;
     const name = doc.createElement('span'); name.className = 'tag-dim-label'; name.textContent = d.label;
@@ -127,7 +153,7 @@ export function createDimensionSlots(doc, dims, { value = [] } = {}) {
     const input = valueControl(doc, d, { blank: 'Choose…' });
     const hint = doc.createElement('span'); hint.className = 'hint tag-dim-hint'; hint.setAttribute('aria-live', 'polite');
     const onEdit = () => {
-      touched = true;
+      touched.add(d.key);
       const text = input.value.trim();
       const r = text ? parseTag(`${d.key}:${text}`) : null;
       if (r?.error) { input.setAttribute('aria-invalid', 'true'); hint.textContent = r.error; } else { input.removeAttribute('aria-invalid'); hint.textContent = ''; }
@@ -145,12 +171,14 @@ export function createDimensionSlots(doc, dims, { value = [] } = {}) {
   });
   // A select given an off-list value stays blank, which reads as missing. set() fires no onChange.
   const set = (tags) => {
-    touched = false;
+    touched.clear(); held.clear();
     for (const { input, hint } of inputs.values()) { input.value = ''; input.removeAttribute('aria-invalid'); hint.textContent = ''; }
     for (const t of tags || []) { const r = parseTag(t); if (!r.error && inputs.has(r.tag.key)) inputs.get(r.tag.key).input.value = r.tag.value; }
   };
   set(value);
-  return { el, get, set, dirty: () => touched, missing: () => missingRequired(dims, get()), onChange: (fn) => listeners.push(fn) };
+  for (const [key, text] of edits) { if (inputs.has(key)) { inputs.get(key).input.value = text; touched.add(key); } else held.set(key, text); }
+  const editsNow = () => new Map([...held, ...[...touched].map((key) => [key, inputs.get(key).input.value])]);
+  return { el, get, set, dirty: () => touched.size > 0 || held.size > 0, edits: editsNow, missing: () => missingRequired(dims, get()), onChange: (fn) => listeners.push(fn) };
 }
 
 /** Settings › Tags › Values: chips plus a text box; Enter, comma or blur adds; × removes. */
@@ -189,15 +217,15 @@ export function createDimensionEditor(doc, { value = [] } = {}) {
   const el = doc.createElement('div'); el.className = 'tag-dim-editor';
   const table = doc.createElement('table'); table.className = 'tag-dim-table';
   const head = doc.createElement('thead');
-  head.innerHTML = '<tr><th>Tag</th><th>Values</th><th>Default</th><th>Mandatory</th><th></th></tr>';
+  head.innerHTML = '<tr><th>Cost tag</th><th>Values</th><th>Default</th><th>Mandatory</th><th></th></tr>';
   const rows = doc.createElement('tbody'); rows.className = 'tag-dim-rows';
   table.append(head, rows);
-  const add = doc.createElement('button'); add.type = 'button'; add.className = 'btn btn-sm tag-dim-add'; add.textContent = 'Add a tag';
+  const add = doc.createElement('button'); add.type = 'button'; add.className = 'btn btn-sm tag-dim-add'; add.textContent = 'Add a cost tag';
   const changed = () => el.dispatchEvent(new doc.defaultView.Event('input', { bubbles: true }));   // marks the card dirty
   const td = (...kids) => { const c = doc.createElement('td'); c.append(...kids); return c; };
   const addRow = (d = { key: '', label: '', values: [], required: false }) => {
     const tr = doc.createElement('tr'); tr.className = 'tag-dim-row';
-    const label = doc.createElement('input'); label.className = 'input tag-dim-label-input'; label.placeholder = 'Cost centre'; label.value = d.label; label.setAttribute('aria-label', 'Tag');
+    const label = doc.createElement('input'); label.className = 'input tag-dim-label-input'; label.placeholder = 'Cost centre'; label.value = d.label; label.setAttribute('aria-label', 'Cost tag');
     const key = doc.createElement('input'); key.className = 'input tag-dim-key tag-dim-key-small'; key.placeholder = 'key'; key.value = d.key; key.setAttribute('aria-label', 'Key');
     let keyTouched = !!d.key;
     key.addEventListener('input', () => { keyTouched = true; });
@@ -215,7 +243,7 @@ export function createDimensionEditor(doc, { value = [] } = {}) {
     values = createValueChips(doc, d.values || [], () => { paintDefault(def?.value || ''); changed(); });
     paintDefault(d.default || '');
     const req = doc.createElement('input'); req.type = 'checkbox'; req.className = 'tag-dim-required'; req.checked = !!d.required; req.setAttribute('aria-label', 'Mandatory');
-    const rm = doc.createElement('button'); rm.type = 'button'; rm.className = 'btn btn-sm btn-quiet btn-icon tag-dim-remove'; rm.setAttribute('aria-label', 'Remove tag'); rm.append(icon(doc, 'x', 14));
+    const rm = doc.createElement('button'); rm.type = 'button'; rm.className = 'btn btn-sm btn-quiet btn-icon tag-dim-remove'; rm.setAttribute('aria-label', 'Remove cost tag'); rm.append(icon(doc, 'x', 14));
     rm.addEventListener('click', () => { tr.remove(); changed(); });
     const tagCell = doc.createElement('div'); tagCell.className = 'tag-dim-tag'; tagCell.append(label, key);
     tr.append(td(tagCell), td(values.el), defCell, td(req), td(rm));
@@ -254,13 +282,14 @@ export function createDimensionEditor(doc, { value = [] } = {}) {
 export function createTagRulesLine(doc, tagInput) {
   const el = doc.createElement('span'); el.className = 'tag-rule-pickers';
   const listeners = [];
-  let dims = []; let enforce = false; let added = [];
+  let dims = []; let enforce = false; let added = []; let project = false;
   const keyOf = (t) => parseTag(t).tag?.key;
   const notify = () => listeners.forEach((fn) => fn());
   const paint = () => {
     el.replaceChildren();
-    if (!enforce) return;
     const { missing, outside } = tagProblems(dims, tagInput.get());
+    // s2: when not enforced, a dashed slot per required key the chips lack (enforced keeps the pickers)
+    if (!enforce) { if (project) el.append(...missing.map((d) => missingSlot(doc, d.key))); return; }
     for (const d of [...missing, ...outside.map((o) => o.dim)]) {
       const pick = valueControl(doc, d, { blank: `${d.label}…`, cls: 'tag-rule-pick' });
       const commit = () => {
@@ -277,12 +306,15 @@ export function createTagRulesLine(doc, tagInput) {
   const update = (info) => {
     const kept = tagInput.get().filter((t) => !added.includes(t));
     const own = new Set(kept.map(keyOf));
-    added = (info?.prefill || []).filter((t) => !own.has(keyOf(t)));
+    // s2: the person's last run in this project (else the project's defaults), then the dimension slots; the card's own keys win.
+    const fill = info?.autofill?.from ? info.autofill.tags : (info?.prefill || []);   // from null → prefill keeps dimension Defaults
+    project = !!info?.autofill;   // D8: the server sends autofill only for a project target
+    added = fill.filter((t) => !own.has(keyOf(t)));
     dims = Array.isArray(info?.dims) ? info.dims : [];
     enforce = info?.enforce === true;
     tagInput.set(normaliseTags([...kept, ...added]).tags);
     paint(); notify();
   };
   tagInput.onChange(() => { paint(); notify(); });
-  return { el, update, blocked: () => (enforce ? tagsProblemText(dims, tagInput.get()) : null), onChange: (fn) => listeners.push(fn) };
+  return { el, update, dims: () => dims, blocked: () => (enforce ? tagsProblemText(dims, tagInput.get()) : null), onChange: (fn) => listeners.push(fn) };
 }

@@ -7773,6 +7773,13 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .hd-tags-editor{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;}
 .hd-tags .tag-input{flex:1 1 280px;}
 .rd-page-meta > .tag-chip{margin-left:6px;}
+/* Cost tags (s2): the auto-fill flash on the New run form, the missing required-key slot, the run page's facts tile. */
+.tag-chip.is-filled{animation:tagFilled 1.6s ease-out;}
+@keyframes tagFilled{0%,30%{background:var(--amber-bg);}100%{background:transparent;}}
+.tag-chip.tag-missing{background:transparent;border:1px dashed var(--amber);color:var(--amber-ink);}
+@media (prefers-reduced-motion: reduce){.tag-chip.is-filled{animation:none;}}
+.rd-cost-tags{display:flex;flex-wrap:wrap;gap:4px;justify-content:center;}
+.rd-stats b.rd-cost-tags-b{white-space:normal;font:inherit;}
 /* Run labels (slice 1): the outlined chip; colour only on the dot (labelHue → .hue-*). */
 .label-chip{display:inline-flex;align-items:center;gap:4px;max-width:160px;min-width:0;padding:2px 6px;border-radius:var(--r-xs);border:1px solid var(--line);
   color:var(--ink-2);font-size:11.5px;font-weight:500;white-space:nowrap;}
@@ -7781,6 +7788,12 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .label-dot.hue-blue{background:var(--blue);}.label-dot.hue-violet{background:var(--violet);}.label-dot.hue-teal{background:var(--teal);}
 .label-dot.hue-pink{background:var(--pink);}.label-dot.hue-indigo{background:var(--indigo);}.label-dot.hue-lime{background:var(--lime);}
 .label-dot.hue-cocoa{background:var(--cocoa);}.label-dot.hue-slate{background:var(--slate);}
+/* Settings › Labels (s2): divided rows like .gr-row; no radius, no shadow. */
+.lbl-set-row{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line);}
+.lbl-set-row:last-child{border-bottom:none;}
+.lbl-set-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.lbl-set-count{font:600 11.5px var(--sans);color:var(--ink-2);}
+.lbl-set-error{color:var(--red-ink);}
 .label-x{border:0;background:none;cursor:pointer;color:var(--ink-3);font:inherit;padding:0 2px;display:inline-flex;}
 .label-more{flex:none;color:var(--ink-3);font-size:11.5px;font-variant-numeric:tabular-nums;}
 .runs-row-labels{flex:0 1 auto;min-width:0;display:inline-flex;align-items:center;gap:4px;overflow:hidden;}

@@ -6,10 +6,11 @@ import { shapeToolCheck } from '../shape/changes.mjs';
 import { listRunLinks } from './store.mjs';
 import { readPrState, findPipelineRowById } from '../artifacts.mjs';
 import { readRunTags } from '../run-tags-store.mjs';
+import { readRunLabels } from '../run-labels-store.mjs';
 
 export function defaultShapeToolDeps({ threadId = null, live = null } = {}) {
   if (!threadId || !shapeFirstEnabled()) return {};
-  const deps = { live: live || undefined, readPrState, findPipelineRowById, readRunTags };
+  const deps = { live: live || undefined, readPrState, findPipelineRowById, readRunTags, readRunLabels };
   const links = () => { try { return listRunLinks(threadId); } catch { return []; } };
   return { shapeTools: {
     follows: () => links().length > 0,

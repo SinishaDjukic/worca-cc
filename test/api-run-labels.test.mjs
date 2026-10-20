@@ -9,11 +9,32 @@ import { join } from 'node:path';
 import { gitDir } from './helpers/git-dir.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 
-let homeDir, prevHome, prevEnv, srv, base, repo, getDb;
+let homeDir, prevHome, prevEnv, srv, base, repo, getDb, runs, schedulerTick, readRunTags, readRunLabels;
 const JSONH = { 'Content-Type': 'application/json' };
 const call = (method, p, b) => fetch(`${base}${p}`, { method, headers: JSONH, ...(b === undefined ? {} : { body: JSON.stringify(b) }) });
 const post = (p, b) => call('POST', p, b ?? {});
 const get = async (p) => (await fetch(`${base}${p}`)).json();
+const settled = new Set(['done', 'stopped', 'error', 'paused', 'interrupted']);
+const answered = new Set();
+async function untilSettled(runId, ms = 90000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    const e = runs.get(runId);
+    if (e && settled.has(String(e.status || ''))) return e;
+    // A mock run parks at wf_default's HITL gates: answer them as auto mode would (api-schedules pattern).
+    const pq = e && e.pendingQuestion;
+    if (pq && !answered.has(`${runId}:${pq.id}`)) {
+      answered.add(`${runId}:${pq.id}`);
+      const payload = (pq.kind === 'clarify' || pq.kind === 'questions')
+        ? { answers: (pq.questions || []).map((q) => ({ id: q.id, choice: (q.options || []).find((o) => o && o.trim()) || 'auto' })) }
+        : { decision: 'continue' };
+      await post('/api/answer', { runId, id: pq.id, payload });
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error(`run ${runId} never settled`);
+}
+const startRun = async (body) => untilSettled((await (await post('/api/run', { projectDir: repo, prompt: 'x', mock: true, ...body })).json()).runId);
 
 before(async () => {
   homeDir = await mkdtemp(join(tmpdir(), 'worca-cc-run-labels-'));
@@ -24,7 +45,10 @@ before(async () => {
   process.env.HOME = homeDir; process.env.USERPROFILE = homeDir; process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
   process.env.WORCA_MOCK = '1';
   const mod = await import('../ui/server.mjs');   // imported ⇒ no port bind, no scheduler timer
+  ({ runs, schedulerTick } = mod);
   ({ getDb } = await import('../src/core/db.mjs'));
+  ({ readRunTags } = await import('../src/core/run-tags-store.mjs'));
+  ({ readRunLabels } = await import('../src/core/run-labels-store.mjs'));
   const { addProject } = await import('../src/core/projects.mjs');
   srv = http.createServer(mod.app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
@@ -87,5 +111,44 @@ test('flag off: every label route answers 404', async () => {
     assert.equal((await fetch(`${base}/api/labels`)).status, 404);
     assert.equal((await call('PUT', '/api/runs/ffffffff/labels', { labels: [] })).status, 404);
     assert.equal((await post('/api/runs/bulk/labels', { pipelineIds: ['x'], add: ['y'] })).status, 404);
+    assert.equal((await post('/api/labels/rename', { from: 'a', to: 'b' })).status, 404);
+    assert.equal((await call('DELETE', '/api/labels/a')).status, 404);
   } finally { await post('/api/settings', { flags: { runLabels: true } }); }
+});
+
+test('a start with labels stores them; an after-chained run inherits tags and labels; labels: [] opts out', async () => {
+  const a = await startRun({ tags: ['client:acme'], labels: ['hotfix'] });
+  assert.deepEqual(readRunLabels(a.pipelineId), ['hotfix']);
+  const chain = async (extra) => {
+    const r = await post('/api/run', { projectDir: repo, prompt: 'next', mock: true, after: { kind: 'pipeline', id: a.pipelineId }, ...extra });
+    assert.equal(r.status, 202);
+    const made = await r.json();
+    await schedulerTick({ now: Date.now() + 2000 });
+    return untilSettled(made.runId);
+  };
+  const b = await chain({});
+  assert.deepEqual([readRunTags(b.pipelineId), readRunLabels(b.pipelineId)], [['client:acme'], ['hotfix']]);
+  assert.deepEqual(readRunLabels((await chain({ labels: [] })).pipelineId), []);
+});
+
+test('POST /api/run with an invalid label answers 400 "labels: …"', async () => {
+  const r = await post('/api/run', { projectDir: repo, prompt: 'x', mock: true, labels: ['x'.repeat(40)] });
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).error, /^labels: /);
+});
+
+test('POST /api/labels/rename renames on every run and merges into an existing label; DELETE removes it everywhere', async () => {
+  const { id: a } = await seedPipeline(repo, { title: 'Ren A' });
+  const { id: b } = await seedPipeline(repo, { title: 'Ren B' });
+  await call('PUT', `/api/runs/${a}/labels`, { labels: ['api-old'] });
+  await call('PUT', `/api/runs/${b}/labels`, { labels: ['api-old', 'api-into'] });
+  assert.deepEqual(await (await post('/api/labels/rename', { from: 'api-old', to: 'API-New' })).json(), { label: 'api-new', runs: 2, merged: false });
+  assert.deepEqual(await (await post('/api/labels/rename', { from: 'api-new', to: 'api-into' })).json(), { label: 'api-into', runs: 2, merged: true });
+  assert.deepEqual((await get('/api/labels')).labels.filter((l) => l.label.startsWith('api-')), [{ label: 'api-into', count: 2 }]);
+  assert.deepEqual((await get('/api/history')).pipelines.find((p) => p.id === b).labels, ['api-into']);
+  assert.deepEqual(await (await call('DELETE', `/api/labels/${encodeURIComponent('api-into')}`)).json(), { label: 'api-into', runs: 2 });
+  assert.ok(!(await get('/api/labels')).labels.some((l) => l.label === 'api-into'));
+  assert.equal((await call('DELETE', '/api/labels/api-into')).status, 404);
+  assert.equal((await post('/api/labels/rename', { from: 'nowhere-x', to: 'y' })).status, 404);
+  assert.equal((await post('/api/labels/rename', { from: 'api-into', to: '' })).status, 400);
 });

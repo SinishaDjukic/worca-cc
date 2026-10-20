@@ -49,7 +49,7 @@ export function allocationModel({ key, label, rows }) {
   const values = rows.filter((r) => r.kind === 'value').sort((a, b) => b.usd - a.usd || byLabel(a, b));
   const none = rows.find((r) => r.kind === 'none');
   const ask = rows.find((r) => r.kind === 'ask');
-  const tail = [{ kind: 'none', label: 'Untagged', usd: none ? none.usd : 0, runs: none ? none.runs : 0 }]
+  const tail = [{ kind: 'none', label: 'No cost tag', usd: none ? none.usd : 0, runs: none ? none.runs : 0 }]
     .concat(ask ? [{ kind: 'ask', label: ask.label, usd: ask.usd, runs: null }] : []);
   const all = values.concat(tail);
   const pct = sharePercents(all.map((r) => r.usd));
@@ -132,7 +132,7 @@ export function renderAllocationTable(m, { doc = globalThis.document, fmt, range
 }
 
 /** Every key's table in a two-column grid; no tables → one card with `empty`. */
-export function renderAllocationTables(tables, { doc = globalThis.document, fmt, rangeLabel = '', empty = 'No tagged runs in this range.' } = {}) {
+export function renderAllocationTables(tables, { doc = globalThis.document, fmt, rangeLabel = '', empty = 'No runs with cost tags in this range.' } = {}) {
   const grid = h(doc, 'div', 'charts-grid alloc-grid');
   if (!tables.length) {
     const card = h(doc, 'section', 'card chart-card alloc-card');

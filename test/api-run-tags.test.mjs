@@ -401,3 +401,23 @@ test('GET /api/tag-dimensions: per target adds enforce + prefill; machine-wide a
     assert.equal(all.team, null);
   } finally { await clear(); }
 });
+
+const dimsAs = async (email) => (await fetch(`${base}/api/tag-dimensions?projectDir=${encodeURIComponent(repo)}`,
+  { headers: { 'x-forwarded-email': email } })).json();
+test('GET /api/tag-dimensions: autofill is the caller\'s last tagged run in this project; another person does not get it', async (t) => {
+  withIdentity(t);
+  const r = await postAs({ tags: ['client:acme', 'team:web'] }, 'dee@x.io');
+  assert.ok(r.ok, String(r.status));
+  await untilSettled((await r.json()).runId);
+  assert.deepEqual((await dimsAs('dee@x.io')).autofill, { tags: ['client:acme', 'team:web'], from: 'last-run' });
+  assert.notEqual((await dimsAs('eve@x.io')).autofill.from, 'last-run');
+});
+
+test('GET /api/tags?projectDir= scopes the vocabulary to that project', async () => {
+  const other = gitDir('run-tags-other');
+  await (await import('../src/core/projects.mjs')).addProject({ name: 'run-tags-other', path: other });
+  await startTagged({ projectDir: other, tags: ['scoped-only:x'] });
+  assert.ok((await get(`/api/tags?projectDir=${encodeURIComponent(other)}`)).keys.some((k) => k.key === 'scoped-only'));
+  assert.ok(!(await get(`/api/tags?projectDir=${encodeURIComponent(repo)}`)).keys.some((k) => k.key === 'scoped-only'));
+  assert.ok((await get('/api/tags')).keys.some((k) => k.key === 'scoped-only'));
+});

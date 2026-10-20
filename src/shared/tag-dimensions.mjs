@@ -140,5 +140,5 @@ export const dimensionLabel = (dims, key) => (dims || []).find((d) => d.key === 
 export function tagGroupOptions(dims, keysInUse) {
   const configured = (dims || []).map((d) => ({ value: `tag:${d.key}`, text: `Group by ${d.label}` }));
   const known = new Set((dims || []).map((d) => d.key));
-  return configured.concat((keysInUse || []).filter((k) => !known.has(k)).map((k) => ({ value: `tag:${k}`, text: `Group by tag: ${k}` })));
+  return configured.concat((keysInUse || []).filter((k) => !known.has(k)).map((k) => ({ value: `tag:${k}`, text: `Group by cost tag: ${k}` })));
 }

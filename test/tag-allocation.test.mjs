@@ -25,7 +25,7 @@ test('allocationModel: values by spend, an Untagged row even when the server dro
     { kind: 'ask', label: 'Ask Worca', spentUsd: 0.75, runs: 0 },
   ]) });
   assert.deepEqual(m.top.map((r) => r.label), ['acme', 'globex']);
-  assert.deepEqual(m.tail.map((r) => [r.label, r.usd, r.runs]), [['Untagged', 0, 0], ['Ask Worca', 0.75, null]]);
+  assert.deepEqual(m.tail.map((r) => [r.label, r.usd, r.runs]), [['No cost tag', 0, 0], ['Ask Worca', 0.75, null]]);
   assert.equal(sum(visibleShares(m)), 100);
   assert.equal(m.totalUsd, 5);
   assert.equal(m.totalRuns, 3);
@@ -53,7 +53,7 @@ test('renderAllocationTable: header, Untagged, a 100% total, a CSV link, and an 
   const csv = card.querySelector('button.alloc-csv');
   assert.equal(csv.dataset.key, 'cc');
   assert.equal(csv.textContent, 'CSV');
-  assert.equal([...card.querySelectorAll('tbody tr')].filter((r) => r.cells[0].textContent === 'Untagged').length, 1);
+  assert.equal([...card.querySelectorAll('tbody tr')].filter((r) => r.cells[0].textContent === 'No cost tag').length, 1);
   const foot = card.querySelector('tfoot tr');
   assert.deepEqual([...foot.cells].map((c) => c.textContent), ['Total', '$45.00', '100%', '9']);
   const more = card.querySelectorAll('tr.alloc-more');
@@ -77,5 +77,5 @@ test('allocationCsv: label, spendUsd, sharePct, runs; hidden rows included', () 
   const m = allocationModel({ key: 'client', label: 'Client', rows: [{ kind: 'value', label: 'acme', usd: 3, runs: 2 }, { kind: 'none', label: '(no client)', usd: 1, runs: 1 }] });
   const csv = allocationCsv(m);
   assert.ok(csv.startsWith('\uFEFFClient,spendUsd,sharePct,runs\r\n'));
-  assert.match(csv, /acme,3,75,2\r\nUntagged,1,25,1\r\n$/);
+  assert.match(csv, /acme,3,75,2\r\nNo cost tag,1,25,1\r\n$/);
 });

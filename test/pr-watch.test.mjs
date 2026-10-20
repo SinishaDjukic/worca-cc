@@ -29,7 +29,7 @@ const thread = (nodeId, id, extra = {}) => ({ nodeId, isResolved: false, comment
 const openPr = (over = {}) => ({ url: URL, state: 'OPEN', branch: 'feat/x', headSha: 'R1', author: { login: 'me' }, contexts: [], threads: [], reviews: [], ...over });
 
 /** In-memory IO: a fake repo, GitHub and run launcher. */
-function harness({ pr = openPr(), clock = { t: Date.now() } } = {}) {
+function harness({ pr = openPr(), clock = { t: Date.now() }, originOf = (o) => o } = {}) {
   const repo = { hasLocal: true, hasRemote: true, headSha: 'R1', remoteSha: 'R1', ahead: 0, behind: 0 };
   const calls = { start: [], reply: [], comment: [], push: [], ff: [], notify: [], snapshot: 0, free: [], attach: [], rerun: [], fix: [] };
   const live = new Map(); const durable = new Map();
@@ -40,7 +40,7 @@ function harness({ pr = openPr(), clock = { t: Date.now() } } = {}) {
   const deps = {
     now: () => clock.t,
     newId: () => `run-${++seq}`,
-    originOf: (w) => ({ pipelineId: w.pipelineId, projectKey: 'k', projectDir: '/repo', branch: 'feat/x', sourceBranch: 'main',
+    originOf: (w) => originOf({ pipelineId: w.pipelineId, projectKey: 'k', projectDir: '/repo', branch: 'feat/x', sourceBranch: 'main',
       guardrailsId: 'g1', engine: 'codex', mock: true }),
     host: {
       snapshot: async () => { calls.snapshot++; return io.snapshotResult ? io.snapshotResult() : { ok: true, pr: io.pr }; },
@@ -192,6 +192,7 @@ test('one fix run batches failures, review threads and change requests, then pub
   assert.deepEqual([body.humanInLoop, body.engine, body.mock], [false, 'codex', true]);
   assert.equal(Object.hasOwn(body, 'model'), false);
   assert.equal(Object.hasOwn(body, 'tags'), false, 'an untagged origin starts an untagged fix run');
+  assert.equal(Object.hasOwn(body, 'labels'), false);
   assert.deepEqual(opts, { startedBy: 'pr-watch', runId: opts.prWatchRunId, prWatchRunId: opts.prWatchRunId,
     roundOf: { pipelineId: origin, request: 'fix failing checks and fix review comments and address changes requested', kinds: ['checks', 'comments', 'changes'] } });
   let w = getWatch(URL);
@@ -1045,4 +1046,13 @@ test('s5: stoppedWatchFact is the watch\'s stopped reason, and null while it sti
     { prUrl: URL, status: 'needs-person', reason: 'cap', fixRuns: 3 });
   assert.equal(stoppedWatchFact({ prUrl: URL, status: 'watching', fixRuns: 1 }), null);
   assert.equal(stoppedWatchFact(null), null);
+});
+
+test('s2: a fix run carries the origin\'s tags and labels', async () => {
+  const origin = seedOrigin();
+  setWatch({ prUrl: URL, pipelineId: origin, enabled: true });
+  const { io, watcher } = harness({ pr: openPr({ contexts: [failing(41)] }), originOf: (base) => ({ ...base, tags: ['client:acme'], labels: ['hotfix'] }) });
+  await watcher.tick();
+  const { body } = io.calls.start.at(-1);
+  assert.deepEqual([body.tags, body.labels], [['client:acme'], ['hotfix']]);
 });

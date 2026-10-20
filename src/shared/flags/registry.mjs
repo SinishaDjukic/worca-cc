@@ -55,8 +55,8 @@ export const FLAGS = Object.freeze([
   }),
   entry({
     key: 'runTags',
-    title: 'Run tags',
-    description: 'Tag runs (client:acme, team:web) on the New run form, run pages, Runs list, Statistics and Team metrics, with optional tag dimensions from team policy or Settings.',
+    title: 'Cost tags',
+    description: 'Cost tags (client:acme, team:web) on the New run form, run pages, Runs list, Statistics and Team metrics, with optional tag dimensions from team policy or Settings.',
     stage: 'experimental',
     default: false,
     owner: 'e-angelov',

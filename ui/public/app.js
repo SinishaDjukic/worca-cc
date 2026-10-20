@@ -258,8 +258,8 @@ import { runPresetScopeOptions, runPresetRequest, runPresetErrorText, RUN_PRESET
 import { renderPresetsList } from './run-presets-view.mjs';
 import { presetSetupSummary, presetSavedNote, workflowNamesFrom } from './run-presets-names.mjs';
 import { setupFromBody } from '../../src/shared/run-presets.mjs';
-import { createTagInput, tagChip, fetchTagVocabulary, createDimensionSlots, createDimensionEditor } from './tag-input.mjs';
-import { normaliseTags, formatTag } from '../../src/shared/run-tags.mjs';
+import { createTagInput, tagChip, fetchTagVocabulary, createDimensionSlots, createDimensionEditor, flashFilled, missingSlot } from './tag-input.mjs';
+import { normaliseTags, formatTag, parseTag } from '../../src/shared/run-tags.mjs';
 import { splitByDimensions, tagGroupOptions, dimensionLabel, tagsProblemText } from '../../src/shared/tag-dimensions.mjs';
 import { createFlagsView, bindFlagSwitch } from './flags-view.mjs';
 import { createFlyout } from './side-flyout.mjs';
@@ -291,7 +291,8 @@ import { renderAskForm } from './ask/form-renderer.mjs';
 import { renderNightForm, readNightForm, updateAwaySummary } from './night-mode-form.mjs';
 import { visibleFields as visibleAnswerFields } from '../../src/shared/forms/layout.mjs';
 import { openLabelPicker, closeLabelPickerFor, fetchLabels, labelChip } from './label-picker.mjs';
-import { labelStates, applyLabelChange } from '../../src/shared/run-labels.mjs';
+import { labelStates, applyLabelChange, normaliseLabel } from '../../src/shared/run-labels.mjs';
+import { renderLabelsSection, runCount } from './labels-settings.mjs';
 
 // With site data blocked, Chrome throws SecurityError on merely reading `localStorage`. Every bare `localStorage` in
 // this module resolves here: the browser's storage, else an in-memory stand-in, so the page boots and forgets on reload.
@@ -4688,7 +4689,11 @@ function paintEngineHints() {
 }
 // Run tags (#718): the New run form's chip field, shown while the runTags flag is on. It starts from the
 // project's default tags; once the person edits it, later project changes leave it alone.
-const runTagInput = createTagInput(document, { suggest: fetchTagVocabulary });
+// s2: suggestions follow the project and the target's policy dimensions.
+const runTagInput = createTagInput(document, {
+  suggest: () => fetchTagVocabulary(state.runTarget === 'workspace' ? null : state.projectDir),
+  dims: () => state.tagDims?.dims || [],
+});
 document.getElementById('runTagsField')?.appendChild(runTagInput.el);
 // Tag dimensions (slice 3): one slot per configured key above the free-form field. The slots own the
 // dimension keys; the free-form field keeps every other key. Required only warns, never blocks.
@@ -4717,8 +4722,8 @@ function paintRunTagDimsWarn(reason = null) {
 function paintRunTagDims(info, tags) {
   state.tagDims = info && Array.isArray(info.dims) ? info : { source: null, home: null, dims: [], enforce: false };
   const dims = state.tagDims.dims;
-  const typed = runTagDims.dirty() ? runTagDims.get() : [];          // keep what the user typed into a slot
-  const next = createDimensionSlots(document, dims, { value: [...tags, ...typed] });
+  // Keep only the slots the user touched (a cleared one stays empty); the untouched ones take this target's fill.
+  const next = createDimensionSlots(document, dims, { value: tags, edits: runTagDims.edits() });
   next.onChange(() => paintRunTagDimsWarn());
   runTagDims.el.replaceWith(next.el);
   runTagDims = next;
@@ -4727,7 +4732,7 @@ function paintRunTagDims(info, tags) {
   // The policy (Settings › Tags "Require mandatory tags", or team policy) decides: on with a tag ticked Mandatory, the
   // field says so and Start waits for it; off, tags are optional.
   const opt = document.querySelector('.run-tags-field .opt');
-  if (opt) opt.textContent = state.tagDims.enforce && dims.some((d) => d.required) ? '· mandatory tags required' : '(optional)';
+  if (opt) opt.textContent = state.tagDims.enforce && dims.some((d) => d.required) ? '· mandatory cost tags required' : '(optional)';
   paintRunTagDimsWarn();
 }
 runTagInput.onChange(() => paintRunTagDimsWarn());
@@ -4744,11 +4749,17 @@ async function refreshRunTagDims() {
   let info = null;
   if (q) { try { const r = await fetch(`/api/tag-dimensions${q}`); info = r.ok ? await safeJson(r) : null; } catch {} }
   if (gen !== runTagDimsGen) return;
-  const { slots, rest } = splitByDimensions(state.runTagDefaults || [], info?.dims || []);
+  runTagInput.resetSuggestions();
+  // s2: the person's last tagged run in this project fills the field (D6, D9); else the project's defaults, as before.
+  const fill = info?.autofill?.from === 'last-run' ? info.autofill.tags : (state.runTagDefaults || []);
+  const { slots, rest } = splitByDimensions(fill, info?.dims || []);
+  const filled = !runTagInput.dirty() && info?.autofill?.from === 'last-run';
   if (!runTagInput.dirty()) runTagInput.set(rest);
-  // D4: the server's pre-fill (project default → Default → last used) when it sent one.
-  const slotTags = Array.isArray(info?.prefill) ? info.prefill : Object.entries(slots).map(([key, value]) => formatTag({ key, value }));
+  // D4: the server's pre-fill (project default → Default → last used) when it sent one; the last run's slots win.
+  const slotTags = filled ? Object.entries(slots).map(([key, value]) => formatTag({ key, value }))
+    : Array.isArray(info?.prefill) ? info.prefill : Object.entries(slots).map(([key, value]) => formatTag({ key, value }));
   paintRunTagDims(info, slotTags);
+  if (filled) flashFilled(runTagInput.el, rest);
 }
 document.getElementById('runTagsSaveDefault')?.addEventListener('click', async (e) => {
   const btn = e.currentTarget;
@@ -7180,10 +7191,14 @@ function clearTask(submitted) {
   if (!sameTask(snapshotTask(), submitted)) return;
   lastTask = submitted;
   setTask({ title: '', prompt: '', markdown: '', mdFileName: '', extras: [] });
-  { // #718: the next run starts from the project's defaults again, the dimension keys in their slots
-    const { slots, rest } = splitByDimensions(state.runTagDefaults || [], state.tagDims.dims);
+  { // #718 + s2: the next run starts from the last run's cost tags (D6), else the project's defaults, the dimension keys in their slots
+    const sent = normaliseTags([...runTagInput.get(), ...runTagDims.get()]).tags;
+    if (state.tagDims?.autofill && sent.length) state.tagDims.autofill = { tags: sent, from: 'last-run' };   // project target only (D8)
+    const lastRun = state.tagDims?.autofill?.from === 'last-run';
+    const { slots, rest } = splitByDimensions(lastRun ? state.tagDims.autofill.tags : (state.runTagDefaults || []), state.tagDims.dims);
+    const slotTags = Object.entries(slots).map(([key, value]) => formatTag({ key, value }));
     runTagInput.set(rest, { clearText: true });
-    runTagDims.set(Array.isArray(state.tagDims.prefill) ? state.tagDims.prefill : Object.entries(slots).map(([key, value]) => formatTag({ key, value })));
+    runTagDims.set(lastRun ? slotTags : Array.isArray(state.tagDims.prefill) ? state.tagDims.prefill : slotTags);
     paintRunTagDimsWarn();
   }
   el.reuseTask.hidden = false;
@@ -15329,6 +15344,43 @@ function paintTagDimsSettings(data) {
   tagsLocal = { tagDimensions: Array.isArray(data?.tagDimensions) ? data.tagDimensions : [], enforceTags: data?.enforceTags === true };
   paintTagsTab();
 }
+// s2 (D2, D21): Settings › Labels & cost tags › Labels. Re-read on every visit to the tab.
+async function loadLabelsSection() {
+  const host = document.getElementById('labelsSettingsList');
+  if (!host || !flagOn('runLabels')) return;
+  const labels = await fetchLabels();
+  host.replaceChildren(renderLabelsSection(document, labels, {
+    onRename: (row) => void labelSettingsAct(() => renameLabelFlow(row, labels)),
+    onDelete: (row) => void labelSettingsAct(() => deleteLabelFlow(row)),
+  }));
+}
+function labelSettingsError(msg) {
+  const e = document.getElementById('labelsSettingsError');
+  if (e) { e.textContent = msg || ''; e.hidden = !msg; }
+}
+async function labelSettingsAct(act) {
+  labelSettingsError('');
+  const r = await act();
+  if (r && !r.ok) labelSettingsError((await r.json().catch(() => ({}))).error || `Could not change the label (${r.status}).`);
+  if (r) await loadLabelsSection();
+  // The closing modal releases focus only at the next frame (as presetMenuAct): then move it onto the first row's ⋯.
+  await new Promise((res) => (typeof requestAnimationFrame === 'function' ? requestAnimationFrame(() => res()) : setTimeout(res, 0)));
+  document.querySelector('#labelsSettingsList .lbl-set-more')?.focus();
+}
+async function renameLabelFlow(row, labels) {
+  const v = await promptModal({ title: 'Rename label', fields: [{ id: 'label', label: 'Label', value: row.label, required: true }] });
+  if (!v) return null;
+  const to = normaliseLabel(v.label).label;   // undefined for a bad name: the server answers 400 with the reason
+  if (to === row.label) return null;
+  if (to && labels.some((l) => l.label === to)
+    && !(await confirmModal({ title: 'Merge labels', message: `Merge “${row.label}” into “${to}” on ${runCount(row.count)}?`, confirmLabel: 'Merge' }))) return null;
+  return fetch('/api/labels/rename', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: row.label, to: v.label }) });
+}
+async function deleteLabelFlow(row) {
+  const ok = await confirmModal({ title: 'Delete label', message: `Remove “${row.label}” from ${runCount(row.count)}?`, confirmLabel: 'Delete label', danger: true });
+  if (!ok) return null;
+  return fetch(`/api/labels/${encodeURIComponent(row.label)}`, { method: 'DELETE' });
+}
 async function loadTagsTeam() {
   // safeJson answers {} on a bad body, so `?.team ?? null` covers it.
   let next = null;
@@ -20612,7 +20664,7 @@ function renderTeamMetrics() {
   if (tmState.tag) {
     const b = document.createElement('button');
     b.type = 'button'; b.className = 'chip tm-filter-chip'; b.dataset.dim = 'tag';
-    b.textContent = `tag: ${tmState.tag} ×`;
+    b.textContent = `cost tag: ${tmState.tag} ×`;
     chips.append(b);
   }
 }
@@ -23169,10 +23221,8 @@ function paintHdGlance(screen, record, data) {
   paintGroupLine(glance.querySelector('.rd-page-head .rd-group-line'), record.id || '', record.title || '', groupHomeOf(record.id || ''));
   paintRunLabels(glance.querySelector(':scope > .rd-sheet'), { pipelineId: data.state.id, labels: data.state.labels, onSaved: (l) => { data.state.labels = l; } });
 
-  // Time · Cost · Changes, as on the Running page in every state.
-  const activeMs = typeof st.totalActiveMs === 'number' ? st.totalActiveMs : liveTotalMs(st.steps, 0);
-  paintGlanceFacts(glance, { summary: s || null, activeMs, cost: engineReportsCost(st.runEngine) ? (st.totalCostUsd || 0) : null,
-    costNote: costSummaryText(runCostBreakdown(st.steps, st.totalCostUsd), fmtUsd) });
+  // Time · Cost · Cost tags · Changes, as on the Running page in every state.
+  paintHdFacts(screen, record, data);
 
   // The result: every tab, the actions. The things to check live in Overview only.
   const host = glance.querySelector('.hd-result');
@@ -23795,12 +23845,23 @@ function hdDot() {
 // in the landing page's head (the glance) and in Details › Overview. The editor stays in the head it was
 // opened from; the element itself survives a header repaint, so its uncommitted chips are kept.
 let hdTagEditor = null;   // { pipelineId, el, input, host }
+// The finished page's facts row (also repainted after a cost tag Save, and when the run's dimensions answer: D18).
+function paintHdFacts(screen, record, data) {
+  const glance = screen && screen.querySelector('.hd-glance');
+  if (!glance || !data || !data.state) return;
+  const st = data.state;
+  const s = data.results && data.results.summary;
+  const activeMs = typeof st.totalActiveMs === 'number' ? st.totalActiveMs : liveTotalMs(st.steps, 0);
+  paintGlanceFacts(glance, { summary: s || null, activeMs, cost: engineReportsCost(st.runEngine) ? (st.totalCostUsd || 0) : null,
+    costNote: costSummaryText(runCostBreakdown(st.steps, st.totalCostUsd), fmtUsd),
+    costTags: costTagsFact(st.tags, record && record.projectDir, () => { if (screen.isConnected) paintHdGlance(screen, record, data); }, record && record.target) });
+}
 function paintHdTags(screen, record, data) {
   const hosts = { glance: screen.querySelector('.hd-glance .rd-page-meta'), row2: screen.querySelector('.hd-row2') };
   for (const host of Object.values(hosts)) host?.querySelector('.hd-tags')?.remove();
   if (!flagOn('runTags')) return;
   const st = data.state;
-  const repaint = () => paintHdTags(screen, record, data);
+  const repaint = () => { paintHdTags(screen, record, data); paintHdFacts(screen, record, data); };
   for (const [where, host] of Object.entries(hosts)) {
     if (!host) continue;
     const box = document.createElement('span');
@@ -23811,20 +23872,23 @@ function paintHdTags(screen, record, data) {
       continue;
     }
     const tags = st.tags || [];
-    box.append(...tags.map((t) => tagChip(document, t)));
+    // s2 (D10): the glance shows the chips in its cost tags tile; the meta line keeps only the button.
+    if (where !== 'glance') box.append(...tags.map((t) => tagChip(document, t)));
     const edit = document.createElement('button');
     edit.type = 'button';
     edit.className = 'btn btn-sm btn-quiet hd-tags-edit';
-    edit.textContent = tags.length ? 'Edit tags' : 'Add tags';
-    edit.addEventListener('click', () => { hdTagEditor = { ...hdTagEditorFor(st, repaint), host: where }; repaint(); });
+    edit.textContent = tags.length ? 'Edit cost tags' : 'Add cost tags';
+    edit.addEventListener('click', () => { hdTagEditor = { ...hdTagEditorFor(st, repaint, record), host: where }; repaint(); });
     box.appendChild(edit);
     host.appendChild(box);
   }
 }
-function hdTagEditorFor(st, repaint) {
+function hdTagEditorFor(st, repaint, record) {
   const el = document.createElement('span');
   el.className = 'hd-tags-editor';
-  const input = createTagInput(document, { value: st.tags || [], suggest: fetchTagVocabulary });
+  // s2: `st` (data.state) has no projectDir; the record has. A cache entry is a pending object until its fetch answers.
+  const input = createTagInput(document, { value: st.tags || [], suggest: () => fetchTagVocabulary(record?.projectDir || null),
+    dims: () => { const g = runTagDimsCache.get(record?.projectDir); return Array.isArray(g) ? g : []; } });
   const save = document.createElement('button');
   save.type = 'button';
   save.className = 'btn btn-primary btn-sm hd-tags-save';
@@ -33072,6 +33136,7 @@ function paintRdGlance(screen, r) {
     activeMs: rdActiveMs(r), cost: engineReportsCost(r.runEngine) ? (r.totalCostUsd || 0) : null,
     costNote: costSummaryText(runCostBreakdown(r.steps, r.totalCostUsd), fmtUsd),
     ticking: (r.status === 'running' || r.status === 'starting') && r.pendingQuestion == null,
+    costTags: costTagsFact(r.tags, r.projectDir, () => rdRepaintOpenGlance(r.pipelineId), r.workspaceId ? 'workspace' : 'project'),
   });
 
   const trail = trailColumns(r);
@@ -33222,7 +33287,32 @@ function activityOverviewValue(results) {
 // the time to the 1 s ticker (`.run-time`, rdTickHosts) while the run executes; a live
 // run knows only how many files its worktree changed (`liveFiles`), a finished one the
 // line counts too (`summary`).
-function glanceTiles({ summary = null, liveFiles = null, activeMs = null, cost = null, costNote = '', ticking = false } = {}) {
+// s2 (D11): the run target's dimensions, fetched once per project dir for the page session.
+const runTagDimsCache = new Map();   // projectDir → dims[] once answered, else { waiting: Set of repaint callbacks }
+function runRequiredKeys(projectDir, onLoad) {
+  if (!projectDir || !flagOn('runTags')) return [];
+  const got = runTagDimsCache.get(projectDir);
+  if (Array.isArray(got)) return got.filter((d) => d.required).map((d) => d.key);
+  if (got) { if (onLoad) got.waiting.add(onLoad); return []; }
+  const pending = { waiting: new Set(onLoad ? [onLoad] : []) };
+  runTagDimsCache.set(projectDir, pending);
+  fetch(`/api/tag-dimensions?projectDir=${encodeURIComponent(projectDir)}`)
+    .then((r) => (r.ok ? r.json() : null)).catch(() => null)
+    .then((info) => {
+      runTagDimsCache.set(projectDir, Array.isArray(info?.dims) ? info.dims : []);
+      for (const fn of pending.waiting) { try { fn(); } catch { /* a closed page */ } }
+    });
+  return [];
+}
+// D8: a workspace run has no single project, so it gets chips but never a missing slot (pass target 'workspace').
+const costTagsFact = (tags, projectDir, onLoad, target = 'project') => {
+  if (!flagOn('runTags')) return null;
+  const have = new Set((tags || []).map((t) => parseTag(t).tag?.key));
+  const missing = (target === 'workspace' ? [] : runRequiredKeys(projectDir, onLoad)).filter((k) => !have.has(k));
+  return (tags || []).length || missing.length ? { tags: tags || [], missing } : null;
+};
+
+function glanceTiles({ summary = null, liveFiles = null, activeMs = null, cost = null, costNote = '', ticking = false, costTags = null } = {}) {
   const tiles = document.createElement('div');
   tiles.className = 'rd-stats';
   const tile = (big, small, cls = '') => {
@@ -33237,6 +33327,12 @@ function glanceTiles({ summary = null, liveFiles = null, activeMs = null, cost =
   };
   if (activeMs != null) tiles.append(tile(fmtDuration(activeMs) || '0s', 'time', ticking ? 'run-time' : ''));
   if (cost != null) tiles.append(tile(fmtUsd(cost), costNote || 'cost'));
+  if (costTags) {   // s2 (D10): the run's cost tags next to time and cost, then a dashed slot per missing required key
+    const box = document.createElement('span');
+    box.className = 'rd-cost-tags';
+    box.append(...costTags.tags.map((t) => tagChip(document, t)), ...costTags.missing.map((k) => missingSlot(document, k)));
+    tiles.append(tile(box, 'cost tags', 'rd-cost-tags-b'));
+  }
   if (summary) {
     const files = (summary.filesNew || 0) + (summary.filesChanged || 0);
     tiles.append(tile(hdFileCountsNode(document, { added: summary.linesAdded || 0, removed: summary.linesRemoved || 0 }),
@@ -34184,8 +34280,7 @@ function paintRdHeader(screen, r) {
   const starter = personShown(r.startedBy);
   if (starter) screen.querySelector('.rd-page-meta').append(personChip(starter));
   // Run tags (#718): read-only chips after the person chip, replaced on every paint.
-  for (const c of screen.querySelectorAll('.rd-page-meta .tag-chip')) c.remove();
-  if (flagOn('runTags')) screen.querySelector('.rd-page-meta').append(...(r.tags || []).map((t) => tagChip(document, t)));
+  for (const c of screen.querySelectorAll('.rd-page-meta .tag-chip')) c.remove();   // s2: the chips moved to the cost tags tile
   paintRunLabels(screen.querySelector('.rd-glance > .rd-sheet'), { pipelineId: r.pipelineId || '', labels: r.labels, onSaved: (l) => { r.labels = l; } });
 
   // Meta: project · started · elapsed · cost · step n/m · step name.
@@ -35238,7 +35333,7 @@ const SETTINGS_TAB_MIN_LEVEL = Object.freeze({ ask: 'advanced', guardrails: 'adv
 const VIEW_TITLES = Object.freeze({
   chat: 'Chat', stats: 'Statistics', workflows: 'Workflows', workspaces: 'Workspaces', 'workspace-create': 'Workspaces',
   'team-metrics': 'Team metrics', 'team-policy': 'Team policy',
-  guardrails: 'Guardrails', memory: 'Memory', ask: 'Ask Worca', tags: 'Tags',
+  guardrails: 'Guardrails', memory: 'Memory', ask: 'Ask Worca', tags: 'Labels & cost tags',
   marketplace: 'Marketplace', connectors: 'Connectors', models: 'Models', providers: 'Providers',
   schedules: 'Schedules', presets: 'Presets',
 });
@@ -35642,7 +35737,7 @@ function showSettingsTab(param = '') {
     // '#settings/runs/actions' and the like: a link to one card (the Actions tab's "Set one in Settings").
     void loadSettings().then(() => focusSettingsCard(settingsPanes.find((p) => p.dataset.tab === tab), sub));
   }
-  if (tab === 'tags') void loadTagsTeam();
+  if (tab === 'tags') { void loadTagsTeam(); void loadLabelsSection(); }
   if (tab === 'presets') void loadPresetsView();
   if (tab === 'ask') void paintAskMcpBlock(document.getElementById('ask-mcp-host'), { api: mcpApi });
   if (tab === 'guardrails') loadGuardrailsView(sub);

@@ -1,6 +1,6 @@
 // ui/public/run-presets-save.mjs — Save setup as preset on a run's page (docs/run-presets.md): the dialog's scope
 // options for the run's own target, the request body (the server fixes the scope ref from the run row) and error text.
-export const RUN_PRESET_SAVED_NOTE = 'Saved from this run: workflow, engine, guardrails, every agent and loop, branches, Away mark, opt-outs, tags. Never saved: title, prompt, Markdown, extra files, new branch name.';
+export const RUN_PRESET_SAVED_NOTE = 'Saved from this run: workflow, engine, guardrails, every agent and loop, branches, Away mark, opt-outs, cost tags. Never saved: title, prompt, Markdown, extra files, new branch name.';
 const NO_SETUP_TEXT = 'This run started before Worca kept run setups, so there is nothing to save';
 
 /** The run's own target first (the dialog's default, so branch names are kept), then Any project. */

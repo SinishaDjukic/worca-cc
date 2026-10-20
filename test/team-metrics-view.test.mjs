@@ -147,7 +147,7 @@ test('renderTeamMetricsBody: no view (flag off) = no chips; By person = the By a
   const agg = aggregate(VIEW_RECS, { range: 'this-month', now: NOW });
   assert.equal(renderTeamMetricsBody(agg, { doc }).querySelector('#tm-view'), null);
   const person = renderTeamMetricsBody(agg, { doc, view: 'person', tagChip: true });
-  assert.deepEqual([...person.querySelectorAll('#tm-view button')].map((b) => b.textContent), ['Overview', 'By person', 'By tag']);
+  assert.deepEqual([...person.querySelectorAll('#tm-view button')].map((b) => b.textContent), ['Overview', 'By person', 'By cost tag']);
   assert.deepEqual([...person.querySelectorAll('.tm-tbl')].map((t) => t.dataset.dim), ['actor']);
   const tables = [allocationModel({ key: 'client', label: 'client', rows: [{ kind: 'value', label: 'acme', usd: 3, runs: 1 }, { kind: 'none', label: '(no client)', usd: 1, runs: 1 }] })];
   const tag = renderTeamMetricsBody(agg, { doc, view: 'tag', tagChip: true, tagTables: tables });

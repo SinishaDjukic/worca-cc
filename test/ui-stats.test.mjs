@@ -239,8 +239,8 @@ const CC = [{ key: 'cc', label: 'Cost centre', values: [], required: false }];
 test('view chips: By tag hidden with no tags and no dimensions; shown when either exists', async () => {
   await checkRows([
     { name: 'nothing', dims: [], keys: [], want: ['Overview', 'By person'] },
-    { name: 'a tag in use', dims: [], keys: VOCAB, want: ['Overview', 'By person', 'By tag'] },
-    { name: 'a dimension only', dims: CC, keys: [], want: ['Overview', 'By person', 'By tag'] },
+    { name: 'a tag in use', dims: [], keys: VOCAB, want: ['Overview', 'By person', 'By cost tag'] },
+    { name: 'a dimension only', dims: CC, keys: [], want: ['Overview', 'By person', 'By cost tag'] },
   ].map((row) => ({ name: row.name, run: async () => {
     const ctx = await boot({ fetchHandler: tagHandler(row.dims, { keys: row.keys }) });
     applyFlags({ runTags: true }, ctx.window.document);
@@ -261,7 +261,7 @@ test('By tag: byTag=1 with the configured keys, one table per key with Untagged 
   const cards = [...doc.querySelectorAll('#stats-body .alloc-card')];
   assert.deepEqual(cards.map((c) => c.querySelector('h2').textContent), ['Cost centre', 'client']);
   for (const c of cards) {
-    assert.equal([...c.querySelectorAll('tbody tr')].filter((r) => r.cells[0].textContent === 'Untagged').length, 1);
+    assert.equal([...c.querySelectorAll('tbody tr')].filter((r) => r.cells[0].textContent === 'No cost tag').length, 1);
     assert.equal(c.querySelector('tfoot tr').cells[2].textContent, '100%');
     const shares = [...c.querySelectorAll('tbody tr:not([hidden])')].map((r) => parseInt(r.cells[2].textContent, 10));
     assert.equal(shares.reduce((a, v) => a + v, 0), 100);

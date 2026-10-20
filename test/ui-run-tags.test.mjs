@@ -113,7 +113,7 @@ test('New run with the flag off: no tags key in the body; the CSS gate hides eve
   assert.ok(gates && gates[1].includes('[data-flag~="runTags"]'), gates ? gates[1] : html.slice(0, 400));
 });
 
-test('live run page: one set of tag chips after repeated header paints, none with the flag off', async () => {
+test('live run page: one set of cost tag chips (in the facts row) after repeated paints, none with the flag off', async () => {
   const ctx = await bootApp();
   flagsOn(ctx.window);
   helloRun(ctx, { runId: 'run-t1', pipelineId: 'aaaa0001', tags: ['client:acme'] });
@@ -122,14 +122,15 @@ test('live run page: one set of tag chips after repeated header paints, none wit
   helloRun(ctx, { runId: 'run-t1', pipelineId: 'aaaa0001', tags: ['client:acme'] });
   await ctx.settle();
   const doc = ctx.window.document;
-  assert.deepEqual([...doc.querySelectorAll('#run-detail .rd-page-meta .tag-chip')].map((c) => c.textContent), ['client:acme']);
+  assert.deepEqual([...doc.querySelectorAll('#run-detail .rd-facts .tag-chip')].map((c) => c.textContent), ['client:acme']);
+  assert.equal(doc.querySelectorAll('#run-detail .rd-page-meta .tag-chip').length, 0);
   applyFlags({ runTags: false }, doc);
   helloRun(ctx, { runId: 'run-t1', pipelineId: 'aaaa0001', tags: ['client:acme'] });
   await ctx.settle();
-  assert.equal(doc.querySelectorAll('#run-detail .rd-page-meta .tag-chip').length, 0);
+  assert.equal(doc.querySelectorAll('#run-detail .rd-facts .tag-chip, #run-detail .rd-page-meta .tag-chip').length, 0);
 });
 
-test('finished run page: chips + Edit tags, an editor that survives a repaint, a PUT, and the server\'s list after Save', async () => {
+test('finished run page: chips in the facts row + Edit cost tags, an editor that survives a repaint, a PUT, and the server\'s list after Save', async () => {
   const puts = [];
   let answer = () => okRes({ tags: ['client:globex'], changed: true });
   const detail = { ...DETAIL, state: { ...DETAIL.state, tags: ['client:acme'] } };
@@ -142,13 +143,15 @@ test('finished run page: chips + Edit tags, an editor that survives a repaint, a
   await openDetail(ctx, null);
   await deliverRows(ctx, [ROW]);
   const doc = ctx.window.document;
-  // The landing page's head (the glance) carries the chips and the editor; Details › Overview too.
+  // The landing page's head (the glance) carries the editor and its facts row the chips; Details › Overview has both.
   const row2 = () => doc.querySelector('#hist-detail .hd-glance .rd-page-meta');
+  const facts = () => [...doc.querySelectorAll('#hist-detail .rd-facts .tag-chip')].map((c) => c.textContent);
   assert.equal(row2().querySelectorAll('.hd-tags').length, 1, 'two header paints, one tag box');
-  assert.deepEqual([...row2().querySelectorAll('.hd-tags .tag-chip')].map((c) => c.textContent), ['client:acme']);
+  assert.equal(row2().querySelectorAll('.hd-tags .tag-chip').length, 0, 'no duplicate chips beside the button');
+  assert.deepEqual(facts(), ['client:acme']);
   assert.deepEqual([...doc.querySelectorAll('#hist-detail .hd-row2 .hd-tags .tag-chip')].map((c) => c.textContent), ['client:acme']);
   const edit = row2().querySelector('.hd-tags-edit');
-  assert.equal(edit.textContent, 'Edit tags');
+  assert.equal(edit.textContent, 'Edit cost tags');
   click(ctx.window, edit);
   const input = () => row2().querySelector('.hd-tags .tag-input-text');
   input().value = 'client:globex';
@@ -164,12 +167,12 @@ test('finished run page: chips + Edit tags, an editor that survives a repaint, a
   click(ctx.window, row2().querySelector('.hd-tags-save'));
   await settle(ctx.window, 4);
   assert.deepEqual(puts.at(-1), { tags: ['client:globex'] });
-  assert.equal(row2().querySelector('.hd-tags .tag-input'), null, 'back to chips');
-  assert.deepEqual([...row2().querySelectorAll('.hd-tags .tag-chip')].map((c) => c.textContent), ['client:globex']);
+  assert.equal(row2().querySelector('.hd-tags .tag-input'), null, 'back to the button');
+  assert.deepEqual(facts(), ['client:globex'], 'the facts tile repaints after a Save');
   assert.deepEqual([...doc.querySelectorAll('#hist-detail .hd-row2 .hd-tags .tag-chip')].map((c) => c.textContent), ['client:globex']);
 });
 
-test('finished run page: "Add tags" when the run has none; no tag UI with the flag off', async () => {
+test('finished run page: "Add cost tags" when the run has none; no tag UI with the flag off', async () => {
   const ctx = await bootDetail({ detail: { ...DETAIL, state: { ...DETAIL.state, tags: [] } } });
   await openDetail(ctx, null);
   const doc = ctx.window.document;
@@ -178,7 +181,7 @@ test('finished run page: "Add tags" when the run has none; no tag UI with the fl
   await deliverRows(ctx, [ROW]);
   for (const host of ['.hd-glance .rd-page-meta', '.hd-row2']) {
     const edit = doc.querySelector(`#hist-detail ${host} .hd-tags-edit`);
-    assert.equal(edit.textContent, 'Add tags', host);
+    assert.equal(edit.textContent, 'Add cost tags', host);
     // B7: the one button component, quiet — like "Add to group…" — never a link-styled button.
     assert.deepEqual([...edit.classList], ['btn', 'btn-sm', 'btn-quiet', 'hd-tags-edit'], host);
     assert.equal(doc.querySelectorAll(`#hist-detail ${host} .tag-chip`).length, 0, host);
@@ -204,7 +207,7 @@ test('the Tags label follows the policy: "(optional)" while it is off, "mandator
   assert.equal(opt(off), '(optional)', 'policy off: optional, even with a tag ticked Mandatory');
   const on = await bootForm({ dims: () => ({ source: 'settings', home: null, enforce: true, dims: cc }) });
   flagsOn(on.window);
-  assert.equal(opt(on), '· mandatory tags required', 'policy on: the field says so');
+  assert.equal(opt(on), '· mandatory cost tags required', 'policy on: the field says so');
   const onNoneTicked = await bootForm({ dims: () => ({ source: 'settings', home: null, enforce: true, dims: [{ ...cc[0], required: false }] }) });
   flagsOn(onNoneTicked.window);
   assert.equal(opt(onNoneTicked), '(optional)', 'policy on but no tag ticked Mandatory: still optional');
@@ -375,4 +378,109 @@ test('run labels, finished page: "Add label" when the run has none; no row with 
   await deliverRows(ctx, [ROW]);
   assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-labels .rd-labels-edit').textContent, 'Add label');
   assert.equal(doc.querySelectorAll('#hist-detail .hd-glance .label-chip').length, 0);
+});
+
+test('suggestionsFor: required policy key first, then policy keys, then project keys; values from the policy list', async () => {
+  const { suggestionsFor } = await import('../ui/public/tag-input.mjs');
+  const dims = [{ key: 'team', values: [], required: false }, { key: 'client', values: [], required: true }, { key: 'cc', values: ['4410', '4420'], required: false }];
+  const vocab = { keys: [{ key: 'epic', count: 9, valued: true }, { key: 'cache', count: 3, valued: true }], values: { epic: [] } };
+  assert.deepEqual(suggestionsFor('c', vocab, 8, dims), ['client:', 'cc:', 'cache:']);
+  assert.deepEqual(suggestionsFor('cc:44', vocab, 8, dims), ['cc:4410', 'cc:4420']);
+});
+
+test('New run: the last run\'s cost tags fill an untouched field, flash, ride the body, and come back after a start', async () => {
+  const ctx = await bootForm({ dims: () => ({ dims: [], enforce: false, prefill: [], autofill: { tags: ['client:acme', 'team:web'], from: 'last-run' } }) });
+  flagsOn(ctx.window);
+  assert.deepEqual(formChips(ctx.doc), ['client:acme', 'team:web']);
+  const chips = [...ctx.doc.querySelectorAll('#runTagsField .tag-chip')];
+  assert.ok(chips.length === 2 && chips.every((c) => c.classList.contains('is-filled')));
+  assert.deepEqual((await submit(ctx)).tags, ['client:acme', 'team:web']);
+  assert.deepEqual(formChips(ctx.doc), ['client:acme', 'team:web'], 'the next run starts from the run just started');
+});
+test('New run: a value typed into a slot survives switching the project away and back (no auto-fill overwrites it)', async () => {
+  const ctx = await bootForm({ dims: (q) => ({ dims: [{ key: 'client', label: 'Client', values: [], required: true }], enforce: false, prefill: [],
+    autofill: q.get('projectDir') === '/a/web' ? { tags: ['client:acme'], from: 'last-run' } : { tags: ['client:globex'], from: 'last-run' } }) });
+  flagsOn(ctx.window);
+  const slot = () => ctx.doc.querySelector('#runTagDimsField .tag-dim-input');
+  assert.equal(slot().value, 'acme');
+  slot().value = 'initech'; slot().dispatchEvent(new ctx.window.Event('input'));
+  const pick = async (i) => {
+    const sel = ctx.doc.getElementById('projectSelect');
+    sel.selectedIndex = i; sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+    for (let n = 0; n < 12; n++) await tick();
+  };
+  const web = ctx.doc.getElementById('projectSelect').selectedIndex;
+  await pick([...ctx.doc.getElementById('projectSelect').options].findIndex((o) => o.textContent.includes('api')));
+  assert.equal(slot().value, 'initech');
+  await pick(web);
+  assert.equal(slot().value, 'initech', 'the typed value is kept after the round trip');
+});
+test('New run: a cleared slot stays empty after a round trip, and an untouched auto-filled slot does not cross projects', async () => {
+  const ctx = await bootForm({ dims: (q) => ({ dims: [{ key: 'client', label: 'Client', values: [], required: true }, { key: 'cc', label: 'Cost centre', values: [], required: false }],
+    enforce: false, prefill: [],
+    autofill: q.get('projectDir') === '/a/web' ? { tags: ['client:acme', 'cc:4410'], from: 'last-run' } : { tags: ['client:globex'], from: 'last-run' } }) });
+  flagsOn(ctx.window);
+  const slot = (key) => ctx.doc.querySelector(`#runTagDimsField .tag-dim-slot[data-key="${key}"] .tag-dim-input`);
+  const pick = async (i) => {
+    const sel = ctx.doc.getElementById('projectSelect');
+    sel.selectedIndex = i; sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+    for (let n = 0; n < 12; n++) await tick();
+  };
+  const opts = () => [...ctx.doc.getElementById('projectSelect').options];
+  const web = ctx.doc.getElementById('projectSelect').selectedIndex;
+  const api = opts().findIndex((o) => o.textContent.includes('api'));
+  assert.equal(slot('cc').value, '4410');
+  slot('client').value = ''; slot('client').dispatchEvent(new ctx.window.Event('input'));
+  await pick(api);
+  assert.equal(slot('client').value, '', 'the cleared slot is not refilled by the next project');
+  assert.equal(slot('cc').value, '', 'the untouched auto-filled cc does not cross into a project whose last run has none');
+  await pick(web);
+  assert.equal(slot('client').value, '', 'the cleared slot is still empty after the round trip');
+  assert.equal(slot('cc').value, '4410', 'the untouched slot takes this project\'s fill again');
+});
+test('New run: autofill from "defaults" keeps today\'s project-default fill and does not flash', async () => {
+  const { doc } = await bootForm({ tagsFor: () => ['team:ops'], dims: () => ({ dims: [], enforce: false, prefill: [], autofill: { tags: ['team:ops'], from: 'defaults' } }) });
+  assert.equal(doc.querySelectorAll('#runTagsField .tag-chip.is-filled').length, 0);
+});
+test('style.css: the fill flash is off under prefers-reduced-motion', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  assert.match(css, /@media \(prefers-reduced-motion: ?reduce\)\{[^@]*\.tag-chip\.is-filled\{animation:none;\}/);
+});
+
+test('run page head: cost tags tile next to time and cost; a required key absent shows "client · missing"; no "Tags" text anywhere', async () => {
+  const dims = { dims: [{ key: 'client', label: 'Client', values: [], required: true }], enforce: false, prefill: [], autofill: { tags: [], from: null } };
+  // run-page-boot returns the handler's value AS the fetch Response (:45-48), so answer with a Response-like object.
+  const ctx = await bootApp({ fetchHandler: (url) => (url.startsWith('/api/tag-dimensions')
+    ? Promise.resolve({ ok: true, status: 200, json: async () => dims }) : null) });
+  flagsOn(ctx.window);
+  helloRun(ctx, { runId: 'run-m1', pipelineId: 'aaaa0002', tags: ['team:web'], projectDir: '/tmp/acme' });
+  ctx.go('running/run-m1'); await ctx.settle(); await ctx.settle();
+  const doc = ctx.window.document;
+  const tiles = [...doc.querySelectorAll('#run-detail .rd-facts .rd-stats > div > span')].map((s) => s.textContent);
+  assert.ok(tiles.includes('cost tags'));
+  assert.deepEqual([...doc.querySelectorAll('#run-detail .rd-facts .tag-chip')].map((c) => c.textContent), ['team:web', 'client · missing']);
+  assert.ok(doc.querySelector('#run-detail .rd-facts .tag-missing'));
+  assert.equal(doc.querySelectorAll('#run-detail .rd-page-meta .tag-chip').length, 0);
+  // "no visible text reads 'Tags' outside identifiers": text nodes and labelling attributes of the whole booted page
+  const walker = doc.createTreeWalker(doc.body, ctx.window.NodeFilter.SHOW_TEXT);
+  const bad = [];
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) if (/\bTags\b/.test(n.textContent) && !n.parentElement.closest('script,style')) bad.push(n.textContent.trim());
+  for (const el of doc.body.querySelectorAll('[aria-label],[placeholder],[title]'))
+    for (const a of ['aria-label', 'placeholder', 'title']) if (/\bTags\b/.test(el.getAttribute(a) || '')) bad.push(`${a}=${el.getAttribute(a)}`);
+  assert.deepEqual(bad, []);
+});
+
+test('finished run page: the facts row shows the run\'s cost tags and the missing required key; the meta line keeps only the button', async () => {
+  const dims = { dims: [{ key: 'client', label: 'Client', values: [], required: true }], enforce: false, prefill: [], autofill: { tags: [], from: null } };
+  const detail = { ...DETAIL, state: { ...DETAIL.state, tags: ['team:web'] } };
+  const ctx = await bootDetail({ detail, arms: (url) => (url.startsWith('/api/tag-dimensions') ? okRes(dims) : null) });
+  flagsOn(ctx.window);
+  await openDetail(ctx, null);
+  await deliverRows(ctx, [ROW]);
+  await settle(ctx.window, 4);
+  const doc = ctx.window.document;
+  assert.deepEqual([...doc.querySelectorAll('#hist-detail .rd-facts .tag-chip')].map((c) => c.textContent), ['team:web', 'client · missing']);
+  const meta = doc.querySelector('#hist-detail .hd-glance .rd-page-meta');
+  assert.equal(meta.querySelector('.hd-tags-edit').textContent, 'Edit cost tags');
+  assert.equal(meta.querySelectorAll('.tag-chip').length, 0);
 });

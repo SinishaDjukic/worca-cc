@@ -4514,7 +4514,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const presetLine = card.preset ? make('div', 'ask-card-preset muted', `From preset ${card.preset.name}`) : null;
     if (presetLine) head.appendChild(presetLine);
     // Run tags (#718), behind the experimental flag: prefilled from the proposal, sent on Start.
-    const tagInput = flagOn('runTags', doc) ? createTagInput(doc, { value: card.tags || [], suggest: fetchTagVocabulary }) : null;
+    // s2: suggestions follow the card's project and its target's policy dimensions (getters: both exist only later).
+    const tagInput = flagOn('runTags', doc) ? createTagInput(doc, { value: card.tags || [],
+      suggest: () => fetchTagVocabulary(local.projectDir() || null), dims: () => rootEl.__rp?.tagRules?.dims() || [] }) : null;
     const tagRow = tagInput ? make('div', 'ask-rp-tags') : null;
     if (tagInput) {
       tagRow.appendChild(tagInput.el);

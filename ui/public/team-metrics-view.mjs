@@ -504,7 +504,7 @@ export function renderGroupBySelect(groupBy, scopeKind, { doc = globalThis.docum
   // The same three for both scope kinds: spend is never split across the projects a run touched.
   // Tag keys stack too: a run carries one value per key.
   const opts = ['workflow', 'result', 'actor'].map((v) => [v, v])
-    .concat(tagKeys.map((k) => [`tag:${k}`, dimensionLabel(dims, k) || `tag: ${k}`]));
+    .concat(tagKeys.map((k) => [`tag:${k}`, dimensionLabel(dims, k) || `cost tag: ${k}`]));
   for (const [v, text] of opts) { const o = h(doc, 'option', null, text); o.value = v; o.selected = v === groupBy; sel.append(o); }
   wrap.append(sel);
   label.append(wrap);
@@ -515,8 +515,8 @@ export function renderGroupBySelect(groupBy, scopeKind, { doc = globalThis.docum
 export function renderTagFilterSelect(records, current, { doc = globalThis.document } = {}) {
   const tags = [...new Set(records.flatMap(recordTags))].sort();
   const sel = h(doc, 'select', 'select select-sm');
-  sel.id = 'tm-tag'; sel.setAttribute('aria-label', 'Filter by tag'); sel.hidden = !tags.length;
-  for (const [v, text] of [['', 'All tags'], ...tags.map((t) => [t, t])]) { const o = h(doc, 'option', null, text); o.value = v; o.selected = v === current; sel.append(o); }
+  sel.id = 'tm-tag'; sel.setAttribute('aria-label', 'Filter by cost tag'); sel.hidden = !tags.length;
+  for (const [v, text] of [['', 'All cost tags'], ...tags.map((t) => [t, t])]) { const o = h(doc, 'option', null, text); o.value = v; o.selected = v === current; sel.append(o); }
   return sel;
 }
 
@@ -526,7 +526,7 @@ export function renderTmViewChips(view, { doc = globalThis.document, tagChip = f
   seg.id = 'tm-view';
   seg.setAttribute('role', 'group');
   seg.setAttribute('aria-label', 'View');
-  for (const [v, text] of [['overview', 'Overview'], ['person', 'By person'], ['tag', 'By tag']]) {
+  for (const [v, text] of [['overview', 'Overview'], ['person', 'By person'], ['tag', 'By cost tag']]) {
     if (v === 'tag' && !tagChip) continue;
     const b = h(doc, 'button', v === view ? 'on' : null, text);
     b.type = 'button';
@@ -555,7 +555,7 @@ export function renderTeamMetricsBody(agg, { doc = globalThis.document, now = Da
     return wrap;
   }
   if (view === 'tag') {
-    wrap.append(renderAllocationTables(tagTables, { doc, fmt: TM_FMT, empty: 'No tagged runs in this range.' }));
+    wrap.append(renderAllocationTables(tagTables, { doc, fmt: TM_FMT, empty: 'No runs with cost tags in this range.' }));
     return wrap;
   }
   wrap.append(renderTmKpiRow(agg, { doc, now, scopeKind }));
