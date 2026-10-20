@@ -84,7 +84,7 @@ test('the tab strip: a tablist with five tabs (Plans hidden), one panel, roving 
   tabs.destroy();
 });
 
-test('the Needs-you count: amber number while > 0, hidden at 0; the underline follows the selection', () => {
+test('the Needs-you count: amber number while > 0, hidden at 0; the selected tab carries aria-selected (the one .tab underline)', () => {
   const doc = docOf();
   const tabs = createHomeTabs({ doc, onSelect: () => {} });
   doc.body.appendChild(tabs.el);
@@ -95,12 +95,12 @@ test('the Needs-you count: amber number while > 0, hidden at 0; the underline fo
   assert.equal(n.textContent, '2');
   tabs.setNeeds(0);
   assert.equal(n.hidden, true);
-  const ink = tabs.el.querySelector('.chat-home-ink');
-  assert.equal(ink.getAttribute('aria-hidden'), 'true');
-  assert.equal(ink.style.opacity, '0');
+  assert.equal(tabs.el.querySelector('.chat-home-ink'), null, 'review B4: no sliding underline element');
+  assert.ok(tabs.el.querySelector('.chat-home-tablist').classList.contains('tabs'));
   tabs.select('chats');
-  assert.equal(ink.style.opacity, '1');
-  assert.match(ink.style.transform, /^translateX\(\d+px\)$/);
+  const sel = tabs.el.querySelector('.chat-home-tab[aria-selected="true"]');
+  assert.equal(sel.dataset.tab, 'chats');
+  assert.ok(sel.classList.contains('tab'));
 });
 
 test('Recent chats: dot by state, title, "ago · topic · $cost", chevron; a click opens the chat', () => {
@@ -210,9 +210,7 @@ test('the 1 s re-read never scrolls a strip the user swiped: only a new selectio
   assert.equal(left, 100);
   left = 0;                                                         // the user swipes the strip back to its start
   tabs.setNeeds(2);                                                 // every 1 s re-read
-  tabs.moveInk();                                                   // a resize
   assert.equal(left, 0, 'the strip stays where the user left it');
-  assert.equal(tabs.el.querySelector('.chat-home-ink').style.transform, 'translateX(320px)', 'the underline still follows');
   tabs.select('workflows');
   assert.equal(left, 100, 'a selection brings its tab into view');
   tabs.destroy();

@@ -772,7 +772,7 @@ test('workflow card: a width change during the build animation lands nothing ear
   assert.equal(hidden(), before, 'the build keeps its hidden cards and wires');
 });
 
-// ---- Scheduled runs (docs/scheduled-runs.md "Ask Worca") ----
+// ---- Scheduled runs (docs/scheduled-runs.md "Chat") ----
 const ONCE = { kind: 'once', runAt: '2026-09-19T00:00:00.000Z', when: 'Sat Sep 19, 02:00', timeZone: 'Europe/Berlin' };
 const REPEAT = {
   kind: 'repeat', rule: { freq: 'weekly', interval: 1, time: '02:00', tz: 'Europe/Berlin', weekdays: ['mo', 'tu', 'we', 'th', 'fr'], anchor: '2026-09-18', end: { type: 'never' } },
@@ -781,7 +781,7 @@ const REPEAT = {
 
 test('ask-panel-card: a scheduled proposal makes Schedule primary (Start now the alternative); a repeating one posts repeat; a plain card keeps Advanced "Schedule…"', async () => {
   await checkRows([
-    { name: 'ask-panel-card: a proposal Ask Worca scheduled makes Schedule the primary action; Start now is the alternative', run: async () => {
+    { name: 'ask-panel-card: a proposal Chat scheduled makes Schedule the primary action; Start now is the alternative', run: async () => {
       const rec = {};
       const ctx = await openWithCard({ ...PROJECT_CARD, schedule: ONCE }, rec);
       const cardEl = ctx.doc.querySelector('.ask-card');
@@ -871,7 +871,7 @@ test('schedule card: before / after, Decline and the action\'s own Apply post th
   ctx.flush();
   const apply = ctx.doc.querySelector('[data-ask-scard="proposed"] [data-ask-sc-apply]');
   assert.equal(apply.textContent, 'Delete');
-  assert.ok(apply.classList.contains('is-danger'), 'a removal reads as one');
+  assert.ok(apply.classList.contains('btn-danger'), 'a removal reads as one');
 });
 
 const AFTER_S = { kind: 'after', after: { kind: 'pipeline', id: 'p1', title: 'Refactor', status: 'running' }, policy: 'any', sourceFromPrevious: true, text: 'After ‘Refactor’ finishes' };
@@ -962,7 +962,7 @@ test('typed cards (model, clone, web, workspace, actions): fields render as text
       assert.equal(rmEl.querySelector('.ask-mcard-arrow'), null, 'a removal lists what goes, no arrows');
       const apply = rmEl.querySelector('[data-ask-mod-apply]');
       assert.equal(apply.textContent, 'Remove');
-      assert.ok(apply.classList.contains('is-danger'));
+      assert.ok(apply.classList.contains('btn-danger'));
       const prov = { type: 'model', kind: 'provider', target: 'openai', summary: 'Change the OpenAI-compatible provider', rows: [{ field: 'Base URL', before: 'a', after: 'b' }], warnings: [] };
       ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_0000000c', state: 'declined', card: prov }, threadId: TID, messageId: MID, seq: 6 });
       ctx.flush();
@@ -1027,7 +1027,7 @@ test('typed cards (model, clone, web, workspace, actions): fields render as text
       assert.deepEqual([...el.querySelectorAll('.ask-mcard-change-label')].map((x) => x.textContent), ['Repository', 'Branch', 'Folder', 'Azure DevOps']);
       assert.equal([...el.querySelectorAll('.ask-mcard-after')].at(-1).textContent, 'the Azure DevOps token (WORCA_ADO_TOKEN)');
     } },
-    { name: 'web card: host, reason and exact URL as text; Deny / Always allow / Allow for this chat post the verbs; applied and failed read as such', run: async () => {
+    { name: 'web card: host, reason and exact URL as text; Deny / Always allow / Allow in chat post the verbs; applied and failed read as such', run: async () => {
       const rec = { cardPosts: [] };
       const base = apiHandler(rec);
       const ctx = await openWithCard(PROJECT_CARD, rec, { fetchHandler: (url, opts) => {
@@ -1040,7 +1040,7 @@ test('typed cards (model, clone, web, workspace, actions): fields render as text
       push('card_00000010', 'proposed');
       const el = ctx.doc.querySelector('[data-ask-webcard="proposed"]');
       assert.ok(el);
-      assert.equal(el.querySelector('.ask-mcard-title').textContent, 'Ask Worca wants to read a new site');
+      assert.equal(el.querySelector('.ask-mcard-title').textContent, 'Chat wants to read a new site');
       assert.equal(el.querySelector('.ask-mcard-after').textContent, 'https://jev.example.dev/docs?v=2');
       assert.equal(el.querySelector('.ask-mcard-note').textContent, '<i>docs</i>'); assert.equal(el.querySelector('.ask-mcard-note i'), null);
       el.querySelector('[data-ask-web-chat]').click(); await ctx.tick();
@@ -1106,7 +1106,7 @@ test('typed cards (model, clone, web, workspace, actions): fields render as text
       ctx.flush();
       const rmEl = ctx.doc.querySelector('[data-ask-wscard="proposed"]');
       assert.equal(rmEl.querySelector('.ask-mcard-kind').textContent, 'Remove member');
-      assert.ok(rmEl.querySelector('[data-ask-ws-apply]').classList.contains('is-danger'), 'a removal reads as one');
+      assert.ok(rmEl.querySelector('[data-ask-ws-apply]').classList.contains('btn-danger'), 'a removal reads as one');
       rmEl.querySelector('[data-ask-ws-decline]').click();
       await ctx.tick();
       assert.deepEqual(rec.cardPosts.at(-1), ['card_00000012', { state: 'declined' }]);
@@ -1411,7 +1411,7 @@ test('ask-panel-card: Shape it first on the run proposal card', async () => {
       assert.equal(cardEl.querySelector('.ask-rp-kicker').textContent, 'Shaper');
       const main = cardEl.querySelector('.ask-rp-shape-main');
       assert.equal(main.querySelector('.ask-rp-brief-preview').textContent, 'Fix the login bug');
-      assert.equal(main.querySelector('[data-ask-card-brief-more]').textContent, 'Show the full brief');
+      assert.equal(main.querySelector('[data-ask-card-brief-more]').textContent, 'Show brief');
       assert.equal(cardEl.querySelector('.ask-rp-brief-host').hidden, true, 'the full brief waits behind its link');
       const labels = [...main.querySelectorAll('.ask-rp-field > .ask-rp-label')].map((l) => l.firstChild.textContent);
       assert.deepEqual(labels, ['Project', 'Base branch', 'Perspectives']);
@@ -1513,23 +1513,23 @@ test('ask-panel-card: card.nodes pre-fills the lane — marker with the reason, 
   assert.equal(plan.querySelector('.ask-rp-model').value, 'claude-opus-5-5');
   assert.equal(plan.querySelector('.ask-rp-eff button.on').textContent, 'high');
   const mark = plan.querySelector('.ask-rp-prop');
-  assert.equal(mark.textContent, 'Ask Worca');
-  assert.equal(mark.title, 'Proposed by Ask Worca for this run — Plans the auth change: a judgement step — anthropic · top tier · $4/$20 per Mtok');
+  assert.equal(mark.textContent, 'Chat');
+  assert.equal(mark.title, 'Proposed by Chat for this run — Plans the auth change: a judgement step — anthropic · top tier · $4/$20 per Mtok');
   assert.deepEqual([mark.tabIndex, mark.getAttribute('aria-label')], [0, mark.title], 'the reason reaches keyboard and screen-reader users too');
-  assert.equal(plan.querySelector('.ask-rp-name small').textContent, 'Ask Worca · step 1 · project: inherit');
+  assert.equal(plan.querySelector('.ask-rp-name small').textContent, 'Chat · step 1 · project: inherit');
   assert.ok(!plan.classList.contains('mod'), 'a proposed pick is not the user\'s edit');
   assert.equal(tileOf(lane, 'n_rev').querySelector('.ask-rp-eff button.on').textContent, 'medium');
   assert.equal(tileOf(lane, 'n_impl').querySelector('.ask-rp-prop'), null, 'a node the proposal does not name');
   assert.equal(tileOf(lane, 'n_impl').querySelector('.ask-rp-row-reset'), null, 'nothing to reset');
-  assert.match(lane.querySelector('.ask-rp-sec-sub').textContent, /^Ask Worca picked 2 agents for this run · 2 overrides of the workflow defaults$/);
+  assert.match(lane.querySelector('.ask-rp-sec-sub').textContent, /^Chat picked 2 agents for this run · 2 overrides of the workflow defaults$/);
   assert.equal(lane.querySelector('.ask-rp-mini').hidden, true, 'nothing to reset to the proposal yet');
-  assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · Opus 5.5 ×2 · Haiku 4.5 ×1 · 1 fan-out · 2 picked by Ask Worca');
+  assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · Opus 5.5 ×2 · Haiku 4.5 ×1 · 1 fan-out · 2 picked by Chat');
   plan.querySelector('.ask-rp-row-reset').click();
   const plan2 = tileOf(lane, 'n_plan');
   assert.equal(plan2.querySelector('.ask-rp-model').value, '', 'back to the project\'s own setting');
   assert.ok(plan2.classList.contains('mod'), 'moved off the proposal');
   assert.equal(plan2.querySelector('.ask-rp-m').textContent, 'project default');
-  assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · inherit ×1 · Opus 5.5 ×1 · Haiku 4.5 ×1 · 1 fan-out · 1 picked by Ask Worca');
+  assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · inherit ×1 · Opus 5.5 ×1 · Haiku 4.5 ×1 · 1 fan-out · 1 picked by Chat');
   assert.equal(lane.querySelector('.ask-rp-mini').hidden, false);
   lane.querySelector('.ask-rp-mini').click();
   assert.equal(tileOf(lane, 'n_plan').querySelector('.ask-rp-model').value, 'claude-opus-5-5', 'Reset to proposal brings the pick back');
@@ -1651,7 +1651,7 @@ test('ask-panel-card: on a workspace card a standing pick is sent outright, even
   assert.deepEqual(rec.runBodies[0].overlay, { nodes: { n_impl: { model: 'claude-opus-5-5', effort: 'high' } } });
 });
 
-test('ask-panel-card: a Start whose lane never loaded still sends Ask Worca\'s picks as proposed — the run API checks them', async () => {
+test('ask-panel-card: a Start whose lane never loaded still sends Chat\'s picks as proposed — the run API checks them', async () => {
   const rec = { laneFail: true };
   const ctx = await openWithCard(NODES_CARD, rec);
   await laneOf(ctx);
@@ -1686,7 +1686,7 @@ test('ask-panel-card: on a workspace card an agent the workspace run always fans
   assert.equal(tileOf(lane2, 'n_impl').querySelector('[data-ctl="fanOut"]').disabled, false, 'a project run fans out as the lane says');
 });
 
-test('ask-panel-card: on a workspace card another edit on a picked agent keeps Ask Worca\'s model in the overlay', async () => {
+test('ask-panel-card: on a workspace card another edit on a picked agent keeps Chat\'s model in the overlay', async () => {
   const rec = {};
   const ctx = await openWithCard({ ...WS_CARD, nodes: { n_impl: { model: 'claude-opus-5-5', effort: 'high', reason: 'A wide change' } } }, rec);
   const lane = await laneOf(ctx);
@@ -1889,7 +1889,7 @@ test('Ask graph card: a declined draft refuses Save (nothing posted); Open in Wo
   await ticks(ctx, 3);
   assert.equal(r.cardPosts, undefined, 'nothing posted');
   assert.match(cards[0].querySelector('.wfc-err:not([hidden])').textContent, /needs "releaseNotes", which was declined/);
-  assert.ok([...cards[1].querySelectorAll('button')].some((b) => b.textContent === 'Save & propose run'));
+  assert.ok([...cards[1].querySelectorAll('button')].some((b) => b.textContent === 'Save & propose'));
   clickText(cards[1], 'Open in Workflows');
   await ticks(ctx, 3);
   assert.deepEqual(opened, [{ name: 'Fix and review', domain: 'coding', nodes: WF_DEFAULT_TPL.nodes, wires: WF_DEFAULT_TPL.wires }]);
@@ -2230,7 +2230,7 @@ async function openFlagged(card, rec) {
   ctx.flush(); await ctx.tick(); await ctx.tick(); ctx.flush();
   return { ctx, card: ctx.doc.querySelector('.ask-card') };
 }
-const rpChips = (card) => [...card.querySelectorAll('.ask-rp-tags .tag-chip')].map((c) => c.firstChild.textContent);
+const rpChips = (card) => [...card.querySelectorAll('.ask-rp-tags .tag-chip:not(.tag-missing)')].map((c) => c.firstChild.textContent);
 const CC_DIM = { key: 'cc', label: 'Cost centre', values: ['4410', '4420'], required: true };
 
 test('run card, enforced: pre-filled chips on one line; a missing mandatory tag shows its picker inline and gates Start', async () => {
@@ -2468,4 +2468,23 @@ test('ask-panel-card: a Folder member is listed but gets no per-member source in
       assert.deepEqual(wsGitFields(cardEl), WS_GIT_LABELS.map((l) => [l, true]));
     } },
   ]);
+});
+
+test('s2: a proposal for project acme lists the person\'s last-run cost tags plus required keys', async () => {
+  const rec = { tagRules: { dims: [{ key: 'client', label: 'Client', values: [], required: true }], enforce: false, prefill: [],
+    autofill: { tags: ['team:web'], from: 'last-run' } } };
+  const { ctx, card } = await openFlagged({ ...PROJECT_CARD, projectName: 'acme', tags: ['spike'] }, rec);
+  await ctx.tick();
+  assert.deepEqual(rec.tagRuleQueries, ['projectDir=%2Frepos%2Fproj']);
+  assert.deepEqual(rpChips(card), ['spike', 'team:web']);
+  assert.deepEqual([...card.querySelectorAll('.ask-rp-tags .tag-missing')].map((s) => s.textContent), ['client · missing']);
+  card.querySelector('[data-ask-card-start]').click(); await ctx.tick(); await ctx.tick();
+  assert.deepEqual(rec.runBodies[0].tags, ['spike', 'team:web']);
+});
+
+test('s2: a workspace answer (no autofill) paints no missing slot', async () => {
+  const rec = { tagRules: { dims: [{ key: 'client', label: 'Client', values: [], required: true }], enforce: false, prefill: [] } };
+  const { ctx, card } = await openFlagged({ ...PROJECT_CARD }, rec);
+  await ctx.tick();
+  assert.equal(card.querySelectorAll('.ask-rp-tags .tag-missing').length, 0);
 });

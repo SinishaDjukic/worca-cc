@@ -221,7 +221,7 @@ test('GET /api/runs?projectDir still returns inline pr (per-project withPr uncha
   });
   const j = await (await fetch(`${base}/api/runs?projectDir=${encodeURIComponent(repoDir)}`)).json();
   const row = j.pipelines.find((p) => p.id === rpId);
-  assert.deepEqual(row.pr, { state: 'OPEN', url: 'https://gh/r/pull/9', number: 9 });
+  assert.deepEqual(row.pr, { state: 'OPEN', url: 'https://gh/r/pull/9', number: 9, isDraft: false, mergeable: 'UNKNOWN' });
 });
 
 test('POST /api/pr/mergeable error paths: 400 without id; 200 UNKNOWN when gh is missing or the key is malformed', async () => {
@@ -440,7 +440,7 @@ test('POST /api/pr refuses a bad baseBranch with 400 before anything is pushed',
   assert.deepEqual(seen.find((c) => c[2] === 'create').slice(5, 7), ['--base', 'main']);
 });
 
-test('a chained run: GET offers the chain root first as the default; POST without baseBranch still targets its source', async () => {
+test('a chained run: GET stacks the default on the previous run\'s branch until its PR merges, then the chain root; POST without baseBranch still targets its source', async () => {
   // dev -> nb1 -> nb2 -> nb3, each started from the previous run's feature branch.
   const run = async (title, source, feature) => (await seedPipeline(betaRepo, { title, status: 'done',
     startedAt: '2026-06-02T00:00:00Z', branch: { source, feature, branchKept: true } })).id;
@@ -460,7 +460,7 @@ test('a chained run: GET offers the chain root first as the default; POST withou
   stubForkRepo(seen, { refs: `${REFS}refs/remotes/origin/worca-cc/nb2\nrefs/remotes/origin/worca-cc/nb3\n` });
   const j = await (await getRemotes({ projectKey: betaKey, id: nb3 })).json();
   assert.deepEqual(j.chain, ['dev', 'worca-cc/nb1', 'worca-cc/nb2']);
-  assert.equal(j.defaultBase, 'dev', 'the chain ROOT, not the direct source');
+  assert.equal(j.defaultBase, 'worca-cc/nb2', 'stacked on the previous run\'s branch: nb2 has no PR yet');
   assert.deepEqual(j.branches.origin, ['main', 'release', FEATURE, 'worca-cc/nb2'], 'nb3\'s own branch is dropped');
 
   // The chain survives a remote list that cannot be read, so the dialog can still offer it.
@@ -468,7 +468,7 @@ test('a chained run: GET offers the chain root first as the default; POST withou
   const bad = await getRemotes({ projectKey: betaKey, id: nb3 });
   assert.equal(bad.status, 500);
   const b = await bad.json();
-  assert.deepEqual([b.chain, b.defaultBase], [['dev', 'worca-cc/nb1', 'worca-cc/nb2'], 'dev']);
+  assert.deepEqual([b.chain, b.defaultBase], [['dev', 'worca-cc/nb1', 'worca-cc/nb2'], 'worca-cc/nb2']);
 
   const s1 = [];
   stubForkRepo(s1);
@@ -478,6 +478,54 @@ test('a chained run: GET offers the chain root first as the default; POST withou
   stubForkRepo(s2);
   assert.equal((await post({ projectKey: betaKey, id: nb3, baseBranch: 'dev' })).status, 200);
   assert.deepEqual(s2.find((c) => c[2] === 'create').slice(5, 7), ['--base', 'dev']);
+
+  // The previous run's PR: open or closed keeps the stack; merged falls back to the chain root.
+  for (const [state, want] of [['OPEN', 'worca-cc/nb2'], ['CLOSED', 'worca-cc/nb2'], ['MERGED', 'dev']]) {
+    persistPrState(nb2, { url: 'https://github.com/up/repo/pull/12', number: 12, state });
+    stubForkRepo([], { refs: `${REFS}refs/remotes/origin/worca-cc/nb2\n` });
+    const k = await (await getRemotes({ projectKey: betaKey, id: nb3 })).json();
+    assert.equal(k.defaultBase, want, state);
+  }
+});
+
+// A run started from a remote-tracking ref (the Ask agent's start_run with sourceBranch "origin/dev") records it
+// verbatim; on the remote that branch is `dev`.
+test('a run whose source is origin/dev: GET defaults to dev on origin; POST opens against dev', async () => {
+  await setPrRemotePrefs(betaRepo, { pushRemote: 'origin', baseRemote: 'origin' });
+  try {
+    const feature = 'worca-cc/from-remote-ref';
+    const seeded = await seedPipeline(betaRepo, { title: 'From origin/dev', status: 'stopped', startedAt: '2026-06-03T00:00:00Z',
+      branch: { source: 'origin/dev', feature, branchKept: true, commit: 'abc', baseSha: 'a'.repeat(40),
+        sync: { remote: 'origin', remoteSha: 'b'.repeat(40) } } });
+    const refs = `${REFS}refs/remotes/origin/dev\n`;
+    const seen = [];
+    const synced = [];
+    stubForkRepo(seen, { refs });
+    stubSyncRepo(synced, { moved: '2' });
+    const j = await (await getRemotes({ projectKey: betaKey, id: seeded.id })).json();
+    assert.deepEqual([j.chain, j.defaultBase], [['dev'], 'dev']);
+    assert.ok(j.branches.origin.includes('dev'), 'the default is offered on the base remote: no "not on origin" warning');
+    assert.equal(j.baseStatus.base, 'dev');
+    assert.equal(j.baseStatus.movedSinceRun, 2);
+    assert.ok(synced.some((a) => a[0] === 'rev-list' && a[2] === `${'b'.repeat(40)}..refs/remotes/origin/dev`),
+      'the recorded origin tip is the same ref as the mapped base: measured from it');
+
+    for (const extra of [{}, { baseBranch: 'origin/dev' }]) {
+      const s = [];
+      stubForkRepo(s, { refs });
+      const r = await post({ projectKey: betaKey, id: seeded.id, ...extra });
+      assert.equal(r.status, 200, JSON.stringify(extra));
+      assert.deepEqual(s.find((c) => c[2] === 'create').slice(3, 9), ['--repo', 'me/repo', '--base', 'dev', '--head', feature], JSON.stringify(extra));
+    }
+
+    // A real local branch named origin/dev stays the base, as before.
+    const local = `${refs}refs/heads/origin/dev\n`;
+    stubForkRepo([], { refs: local });
+    const k = await (await getRemotes({ projectKey: betaKey, id: seeded.id })).json();
+    assert.deepEqual([k.chain, k.defaultBase], [['origin/dev'], 'origin/dev']);
+  } finally {
+    await setPrRemotePrefs(betaRepo, {});
+  }
 });
 
 // ---------------------------------------------------------------------------

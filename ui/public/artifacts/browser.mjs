@@ -178,7 +178,7 @@ export function createArtifactBrowser({
   const head = h('div', 'afb-head');
   const title = h('span', 'afb-title');
   const sbox = h('div', 'afb-sbox');
-  const searchBtn = h('button', 'afb-ib afb-sbtn');
+  const searchBtn = h('button', 'btn btn-sm btn-quiet btn-icon afb-ib afb-sbtn');
   searchBtn.type = 'button';
   searchBtn.title = 'Search';
   searchBtn.setAttribute('aria-label', 'Search artifacts');
@@ -277,7 +277,7 @@ export function createArtifactBrowser({
     main.addEventListener('click', () => { navAt = Date.now(); onOpen(a, st.flat.slice()); });
     item.appendChild(main);
     if (typeof onDownload === 'function') {
-      const dl = h('button', 'afb-dl');
+      const dl = h('button', 'btn btn-sm btn-quiet btn-icon afb-dl');
       dl.type = 'button';
       dl.title = 'Download';
       dl.setAttribute('aria-label', `Download ${name}`);

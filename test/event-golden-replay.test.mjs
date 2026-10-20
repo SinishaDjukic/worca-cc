@@ -16,6 +16,8 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { createTurnReducer } from '../src/core/ask/events.mjs';
 import { runClaude, MOCK_WRITER_ROLES, extractResultCost } from '../src/core/claude-runner.mjs';
+import { recordShaperFeature } from './helpers/shaper-fixture.mjs';
+import { featureCardModel } from '../ui/public/shape/feature-card.mjs';
 
 useTempHome(after);
 const REPO = fileURLToPath(new URL('../', import.meta.url));
@@ -123,3 +125,27 @@ for (const file of fixtureDir('ask')) {
     check(`spawn-ask-${name}`, replayAsk(ordered));
   });
 }
+
+// Shaper s2 (D18): the Chat feature card over a recorded 3-run feature (test/helpers/shaper-fixture.mjs), every frame.
+// The bundle merge (D5): the feature model keeps the log, the open step and the controls; the head, status line, bars
+// and member rows are the run model's (src/shared/run-model.mjs groupModel, test/run-model.test.mjs).
+test('golden: Shaper feature, 3 runs — proposal → clarify → split → run 1..3 → gate → ready, every frame', async () => {
+  const frames = await recordShaperFeature();
+  const out = frames.map((f) => {
+    const m = featureCardModel({ own: f.own, card: f.card, snapOf: (pid) => f.snaps[pid] || null });
+    return { label: f.label, phase: m.phase,
+      log: m.log.map((l) => (l.run ? `Run ${l.run} · ${l.text}` : l.text)),
+      step: m.step ? { index: m.step.index, kind: m.step.kind } : null,
+      target: m.controls && m.controls.target ? { index: m.controls.target.index, status: m.controls.target.status, asks: m.controls.target.asks } : null };
+  });
+  assert.deepEqual(out.map((o) => [o.label, o.phase]), [
+    ['proposal', 'shaping'], ['clarify', 'shaping'], ['split', 'shaping'],
+    ['run1-plan', 'feature'], ['run1-build', 'feature'], ['run2-plan', 'feature'], ['run2-build', 'feature'],
+    ['run3-plan', 'feature'], ['run3-review', 'feature'], ['gate', 'feature'], ['ready', 'feature'],
+  ]);
+  assert.deepEqual(out.at(-1).log, ['Clarify · 2 answers', 'Split into 3 runs', 'Run 1 · Plan approved · after 1 round of changes',
+    'Run 2 · Plan approved', 'Run 3 · Plan approved', 'Run 3 · Another cycle started']);
+  assert.deepEqual(out.map((o) => o.step && o.step.kind), [null, 'clarify', 'outline', 'plan', null, 'plan', null, 'plan', null, 'gate', null]);
+  assert.deepEqual(out.find((o) => o.label === 'run2-plan').target, { index: 2, status: 'running', asks: true });
+  check('shaper-feature-3-runs', out);
+});

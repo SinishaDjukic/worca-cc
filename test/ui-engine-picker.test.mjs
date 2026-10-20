@@ -155,7 +155,7 @@ test('engine: Copilot sends engine copilot, says it runs on its default model, a
   pick(ctx, 'copilot');
   assert.equal(doc.getElementById('engineSelect').value, 'copilot');
   assert.equal(doc.getElementById('engine-hint').hidden, false);
-  assert.match(doc.getElementById('engine-hint').textContent, /^GitHub Copilot CLI runs this pipeline, including titles and summaries, on its default model/);
+  assert.match(doc.getElementById('engine-hint').textContent, /^GitHub Copilot CLI runs this pipeline, including titles and summaries \(on its default model\)\. Step models: Models › Copilot\./);
   await submit(ctx);
   assert.equal(ctx.posted.at(-1).engine, 'copilot');
   await waitFor(() => !doc.getElementById('engineRefusal').hidden);

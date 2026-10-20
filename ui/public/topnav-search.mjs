@@ -119,7 +119,7 @@ export function createTopnavSearch({ doc, win, root, getSources, loadLazy, onAsk
       sep.setAttribute('aria-hidden', 'true');
       parts.push(sep);
     }
-    const ask = option(`tsearch-opt-${st.items.length}`, 'ask', { title: 'Ask Worca', meta: 'opens a chat' }, 'Ask Worca, opens a chat');
+    const ask = option(`tsearch-opt-${st.items.length}`, 'ask', { title: 'Ask in Chat', meta: 'opens a chat' }, 'Ask in Chat, opens a chat');
     st.items.push({ key: 'ask', row: null, el: ask });
     parts.push(ask);
     pop.replaceChildren(...parts);

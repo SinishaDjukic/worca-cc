@@ -330,14 +330,14 @@ test('History detail menu: a pause that offers no switch lists no other engine',
   }
 });
 
-test('run page: a paused Codex run lists every other engine; the second clone resumes on Cursor', async () => {
+test('run page: a paused Codex run lists every other engine; the third clone resumes on Cursor', async () => {
   const ctx = await boot();
   const page = await pausedRun(ctx, { done: limitOf('codex') });
   page.querySelector('.rd-resume-more').click();
   await ctx.settle();
   const items = [...page.querySelectorAll('.rd-resume-menu .resume-on-other')].filter((i) => !i.hidden);
-  assert.deepEqual(items.map((i) => [i.dataset.engine, i.querySelector('b').textContent]), [['claude', 'Resume on Claude'], ['cursor', 'Resume on Cursor']]);
-  items[1].querySelector('b').click();
+  assert.deepEqual(items.map((i) => [i.dataset.engine, i.querySelector('b').textContent]), [['claude', 'Resume on Claude'], ['copilot', 'Resume on Copilot'], ['cursor', 'Resume on Cursor']]);
+  items[2].querySelector('b').click();
   await ctx.settle();
   assert.equal(modal(ctx.doc).title, 'Resume on Cursor?');
   ctx.doc.getElementById('confirm-ok').click();
@@ -379,17 +379,18 @@ test('History detail: the caret shows in Simple only while another engine is rea
   }
 });
 
-test('History detail menu: one item per other engine, ready or not; the second one sends its engine', async () => {
+test('History detail menu: one item per other engine, ready or not; the third one sends its engine', async () => {
   const { handler } = countingEngines(['claude'], histFetch('codex'));
   const ctx = await boot({ fetchHandler: handler });
   ctx.go(`history/${KEY}/fcec04e8`);
   await ctx.settle(8);
   const items = [...ctx.doc.querySelectorAll('.hd-resume-menu .resume-on-other')].filter((i) => !i.hidden);
   assert.deepEqual(items.map((i) => [i.dataset.engine, i.querySelector('b').textContent, i.querySelector('small').textContent]),
-    [['claude', 'Resume on Claude', NOTE], ['cursor', 'Resume on Cursor', "Starts the paused step fresh; a model Cursor cannot run falls back to its default."]]);
+    [['claude', 'Resume on Claude', NOTE], ['copilot', 'Resume on Copilot', "Starts the paused step fresh; a model Copilot cannot run falls back to its default."],
+      ['cursor', 'Resume on Cursor', "Starts the paused step fresh; a model Cursor cannot run falls back to its default."]]);
   ctx.doc.querySelector('.hd-resume-more').click();
   await ctx.settle();
-  items[1].click();
+  items[2].click();
   await ctx.settle();
   ctx.doc.getElementById('confirm-ok').click();
   await ctx.settle(8);

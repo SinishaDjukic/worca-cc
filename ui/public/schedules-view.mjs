@@ -16,6 +16,7 @@
 import { formatInstant, formatCountdown } from '../../src/shared/schedule/recurrence.mjs';
 import { openScheduleSheet, browserTimeZone } from './schedule-sheet.mjs';
 import { splitMessage } from './feedback.mjs';
+import { actionError, httpError } from './action-errors.mjs';
 
 const ICON = {
   clock: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 2"></path></svg>',
@@ -61,7 +62,7 @@ async function api(method, url, body) {
   const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   let data = {};
   try { data = await res.json(); } catch { /* empty body */ }
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  if (!res.ok) throw httpError(res, data);
   return data;
 }
 
@@ -78,7 +79,7 @@ export const SCHEDULE_TABS = ['activity', 'once', 'repeating'];
 
 /**
  * @param {object} o
- * @param {HTMLElement} o.tabsHost       the .seg holding button[data-tab]
+ * @param {HTMLElement} o.tabsHost       the .tabs strip holding button[data-tab]
  * @param {HTMLElement} o.feedHost       the Activity pane (the feed)
  * @param {HTMLElement} o.onceHost       the Once pane (one-off runs)
  * @param {HTMLElement} o.repeatingHost  the Repeating pane (series)
@@ -100,10 +101,14 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
   const when = (iso) => formatInstant(Date.parse(iso), tz);
   const countdown = (iso) => formatCountdown(Date.parse(iso) - Date.now());
 
-  async function act(fn, okText = '') {
+  /** `what` completes "Could not …" (D8): the failure toast then names the action and the next step. */
+  async function act(fn, okText = '', what = '') {
     say('');
     try { await fn(); if (okText) say(okText, 'ok'); }
-    catch (err) { say(err.message, 'err'); }
+    catch (err) {
+      if (what && deps.notify) deps.notify(actionError(what, err));
+      else say(err.message, 'err');
+    }
     await load();
   }
 
@@ -127,6 +132,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
     if (git && item.summary.sourceBranch) bits.push(`from ${item.summary.sourceBranch}`);
     if (git && item.sourceFromPrevious) bits.push('from the run before it');
     if (item.summary.mock) bits.push('mock');
+    if (item.presetId) bits.push(item.presetName ? `preset ${item.presetName}` : 'preset deleted');
     return bits.filter(Boolean).join(' · ');
   }
 
@@ -145,6 +151,8 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
       git ? row('Feature branch', item.summary.sameAsSource ? 'none — commits onto the source branch'
         : (item.summary.featureBranch ? (item.kind === 'recurring' ? `${item.summary.featureBranch}-<date>` : item.summary.featureBranch) : '')) : null,
       row('Guardrails', item.summary.guardrailsId && item.summary.guardrailsId !== 'permissive' ? item.summary.guardrailsId : ''),
+      row('Preset', item.presetId ? (item.presetName ? `${item.presetName} — read when the run starts`
+        : `${item.presetGoneName || 'A preset'} — deleted; the next run will fail`) : ''),
       row('Extra files', item.summary.extras ? String(item.summary.extras) : ''),
       item.after ? null : row('If Worca is not running', item.ifMissed === 'skip' ? 'Skip it' : `Start it late, at most ${item.graceMin >= 60 && item.graceMin % 60 === 0 ? `${item.graceMin / 60} h` : `${item.graceMin} min`}`),
       item.kind === 'recurring' ? row('If the previous run is still going', { skip: 'Skip this one', queue: 'Wait, then start', start: 'Start anyway' }[item.overlap]) : null,
@@ -181,15 +189,15 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
       : (missed ? `was due ${when(t.runAt)}` : `${when(t.runAt)}${countdown(t.runAt) ? ` · in ${countdown(t.runAt)}` : ''}`);
     const acts = h('div', { class: 'sched-acts' });
     if (!firing) {
-      const runNow = h('button', { type: 'button', class: 'btn btn-mini', text: resumeTarget ? 'Resume now' : 'Run now' });
+      const runNow = h('button', { type: 'button', class: 'btn btn-sm', text: resumeTarget ? 'Resume now' : 'Run now' });
       runNow.addEventListener('click', () => act(async () => {
         const out = await api('POST', `/api/schedules/${t.id}/run-now`);
         if (out.status === 'failed') throw new Error(out.failReason || 'The run could not be started.');
         if (out.status === 'fired' && deps.openRun) deps.openRun(out.resume ? { runId: out.runId, pipelineId: out.pipelineId } : { runId: out.runId });
-      }, 'Run started'));
+      }, 'Run started', 'start the run now'));
       acts.append(runNow);
       if (!t.scheduleId) {
-        const move = h('button', { type: 'button', class: 'btn btn-mini', text: chained ? 'Change…' : (missed ? 'Reschedule' : 'Change time') });
+        const move = h('button', { type: 'button', class: 'btn btn-sm', text: chained ? 'Change…' : (missed ? 'Reschedule' : 'Change time') });
         move.addEventListener('click', async () => {
           const res = await openScheduleSheet({
             mode: 'ticket', runTitle: t.title || '', defaults: model.defaults,
@@ -198,7 +206,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
           });
           if (res) act(() => api('PATCH', `/api/schedules/${t.id}`, res), 'Schedule changed');
         });
-        const cancel = h('button', { type: 'button', class: 'btn btn-danger btn-mini', text: missed ? 'Dismiss' : 'Cancel' });
+        const cancel = h('button', { type: 'button', class: 'btn btn-danger btn-sm', text: missed ? 'Dismiss' : 'Cancel' });
         cancel.addEventListener('click', async () => {
           if (!missed) {
             // The same sentence, cap and guard as app.js's afterDependentsNote (the Archive note) — not
@@ -217,13 +225,13 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
             cancel.disabled = false;
             if (!(await deps.confirmModal({ title: 'Cancel scheduled run', message: `Cancel “${t.title || 'this run'}”?\nIt will not start. Nothing has run yet, so there is nothing to clean up.${note}`, confirmLabel: 'Cancel run' }))) return;
           }
-          act(() => api('DELETE', `/api/schedules/${t.id}`), 'Schedule cancelled');
+          act(() => api('DELETE', `/api/schedules/${t.id}`), 'Schedule cancelled', missed ? 'dismiss the missed run' : 'cancel the waiting run');
         });
         acts.append(move, cancel);
       }
     }
     if (!t.scheduleId && !missed) {
-      const next = h('button', { type: 'button', class: 'btn btn-mini', text: 'Schedule next…', title: 'Schedule a run that starts after this one' });
+      const next = h('button', { type: 'button', class: 'btn btn-sm', text: 'Schedule next…', title: 'Schedule a run that starts after this one' });
       next.addEventListener('click', () => { location.hash = `#new/after/t:${t.id}`; });
       acts.append(next);
     }
@@ -256,22 +264,22 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
 
     const acts = h('div', { class: 'sched-acts' });
     if (!ended) {
-      const runNow = h('button', { type: 'button', class: 'btn btn-mini', text: 'Run now', title: 'Start one extra run now — the schedule itself does not shift' });
+      const runNow = h('button', { type: 'button', class: 'btn btn-sm', text: 'Run now', title: 'Start one extra run now — the schedule itself does not shift' });
       runNow.addEventListener('click', () => act(async () => {
         const out = await api('POST', `/api/schedules/${s.id}/run-now`);
         if (out.status === 'failed') throw new Error(out.failReason || 'The run could not be started.');
         if (out.status === 'fired' && deps.openRun) deps.openRun({ runId: out.runId });
-      }, 'Run started'));
-      const skip = h('button', { type: 'button', class: 'btn btn-mini', text: 'Skip next', hidden: paused });
+      }, 'Run started', 'start the run now'));
+      const skip = h('button', { type: 'button', class: 'btn btn-sm', text: 'Skip next', hidden: paused });
       skip.addEventListener('click', () => act(() => api('POST', `/api/schedules/${s.id}/skip-next`), 'Next run skipped'));
-      const edit = h('button', { type: 'button', class: 'btn btn-mini', text: 'Edit' });
+      const edit = h('button', { type: 'button', class: 'btn btn-sm', text: 'Edit' });
       edit.addEventListener('click', async () => {
         const res = await openScheduleSheet({ mode: 'series', runTitle: s.title || '', defaults: model.defaults, initial: { rule: s.rule, overlap: s.overlap, maxFailures: s.maxFailures, ifMissed: s.ifMissed, graceMin: s.graceMin } });
         if (res) act(() => api('PATCH', `/api/schedules/${s.id}`, { rule: res.repeat.rule, overlap: res.repeat.overlap, maxFailures: res.repeat.maxFailures, ifMissed: res.ifMissed, graceMin: res.graceMin }), 'Schedule changed');
       });
       acts.append(runNow, skip, edit);
     }
-    const del = h('button', { type: 'button', class: 'btn btn-danger btn-mini', text: 'Delete' });
+    const del = h('button', { type: 'button', class: 'btn btn-danger btn-sm', text: 'Delete' });
     del.addEventListener('click', async () => {
       if (!(await deps.confirmModal({ title: 'Delete schedule', message: `Delete “${s.title || 'this schedule'}”?\nIt stops repeating. Runs it already started stay in Runs.`, confirmLabel: 'Delete schedule' }))) return;
       act(() => api('DELETE', `/api/schedules/${s.id}`), 'Schedule deleted');
@@ -352,22 +360,22 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
     const series = n.scheduleId ? model.schedules.find((s) => s.id === n.scheduleId) : null;
     const acts = h('div', { class: 'sched-feed-acts' });
     if (!n.resolvedAt && n.kind === 'missed' && ticket && ticket.status === 'missed') {
-      const b = h('button', { type: 'button', class: 'btn btn-mini', text: 'Run now' });
-      b.addEventListener('click', () => act(() => api('POST', `/api/schedules/${ticket.id}/run-now`), 'Run started'));
+      const b = h('button', { type: 'button', class: 'btn btn-sm', text: 'Run now' });
+      b.addEventListener('click', () => act(() => api('POST', `/api/schedules/${ticket.id}/run-now`), 'Run started', 'start the run now'));
       acts.append(b);
     }
     if (!n.resolvedAt && n.kind === 'paused' && series && series.status === 'paused') {
-      const b = h('button', { type: 'button', class: 'btn btn-mini', text: 'Resume schedule' });
+      const b = h('button', { type: 'button', class: 'btn btn-sm', text: 'Resume schedule' });
       b.addEventListener('click', () => act(() => api('POST', `/api/schedules/${series.id}/resume`), 'Resumed'));
       acts.append(b);
     }
     if (n.pipelineId && deps.openRun) {
-      const b = h('button', { type: 'button', class: 'btn btn-mini sched-feed-open', text: 'Open run' });
+      const b = h('button', { type: 'button', class: 'btn btn-sm sched-feed-open', text: 'Open run' });
       b.addEventListener('click', () => deps.openRun({ pipelineId: n.pipelineId, projectDir: n.projectDir }));
       acts.append(b);
     }
     if (n.unread) {
-      const b = h('button', { type: 'button', class: 'sched-feed-read', text: 'Mark read', title: 'Mark as read' });
+      const b = h('button', { type: 'button', class: 'btn btn-sm btn-quiet sched-feed-read', text: 'Mark read', title: 'Mark as read' });
       b.addEventListener('click', async () => { try { await api('POST', `/api/notifications/${n.id}/read`); } catch (err) { say(err.message, 'err'); } await loadFeed(); });
       acts.append(b);
     }
@@ -393,7 +401,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
       b.addEventListener('click', () => { model.filter = key; paintFeed(); });
       seg.append(b);
     }
-    const markAll = h('button', { type: 'button', class: 'btn btn-mini', text: 'Mark all read', disabled: unread === 0 });
+    const markAll = h('button', { type: 'button', class: 'btn btn-sm', text: 'Mark all read', disabled: unread === 0 });
     markAll.addEventListener('click', async () => { try { await api('POST', '/api/notifications/read-all', {}); } catch (err) { say(err.message, 'err'); } await loadFeed(); });
     const body = rows.length
       ? rows.map(feedItem)

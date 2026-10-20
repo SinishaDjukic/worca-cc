@@ -161,7 +161,7 @@ test('Chat home: the shape tile is hidden with the gate off and appears on a gat
   await ctx.settle(8);
   const doc = ctx.window.document;
   const tile = (id) => doc.querySelector(`.chat-home-act[data-intent="${id}"]`);
-  assert.equal(tile('shape').hidden, true, 'gate off');
+  assert.equal(tile('shape'), null, 'gate off');
   assert.equal(tile('script').hidden, true, 'scriptTools:false');
   const switches = () => ctx.calls.filter((c) => c.url === '/api/settings' || c.url === '/api/sources').length;
   const before = switches();

@@ -420,7 +420,7 @@ export async function runCursorProcess({
   mcpConfigPath, spawnEnv: runSpawnEnv, redactValues, maxTurns, permissionRules, noGit = false,
 } = {}) {
   if (signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
-  if (askLockdown) throw new Error(`${bin}: Cursor cannot be locked down for a chat (no switch for its shell or file tools) — Ask on Cursor is unavailable`);
+  if (askLockdown) throw new Error(`${bin}: Cursor cannot be locked down for a chat (no switch for its shell or file tools) — Chat on Cursor is unavailable`);
   if (sandbox === 'read-only') throw new Error(`${bin}: Cursor has no read-only mode — a read-only job runs on Claude instead`);
   const secrets = Array.isArray(redactValues) ? redactValues : [];
   const redactor = secrets.length ? createRedactor(secrets) : null;

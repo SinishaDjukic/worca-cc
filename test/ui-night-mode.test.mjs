@@ -65,6 +65,7 @@ async function boot({ settings = {}, decisions = [], away, models = [], runData 
     if (path.endsWith('/api/workflows')) return ok({ workflows: [{ id: 'wf_default', name: 'Default' }] });
     if (path.endsWith('/api/guardrails')) return ok({ guardrails: [{ id: 'permissive', name: 'Permissive' }] });
     if (path.endsWith('/api/branches')) return ok({ branches: ['main'], current: 'main' });
+    if (path.endsWith('/house-brief')) return ok(HOUSE_BRIEF);   // Settings → Project → House brief (slice 2)
     if (url2.includes('/api/projects')) return ok({ projects: [{ name: 'proj', path: '/repos/proj', exists: true, key: 'proj-1' }] });
     return ok({ pipelines: 0, projects: 0, workspaces: 0 });
   };
@@ -87,6 +88,11 @@ async function boot({ settings = {}, decisions = [], away, models = [], runData 
 async function settle(n = 4) { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); }
 
 const RUN = { runId: 'run-n1', title: 'Night run', projectDir: '/repos/proj', status: 'running', startedAt: '2026-01-01T00:00:00Z', kind: 'run', pipelineId: 'p-1', night: { optIn: true, override: 'auto', decisions: 0, flagged: 0 } };
+const HOUSE_BRIEF = {
+  brief: '# House brief\n\n## Memory\n- a — b\n', words: 9, budget: 2000, builtAt: '2026-10-18T12:02:00.000Z',
+  trimmed: { lines: 0, bySection: {} }, pinned: [], rebuilt: false,
+  sources: [{ kind: 'memory', label: 'Memory', files: 1, readAt: '2026-10-18T12:02:00.000Z' }],
+};
 
 async function openDetail(ctx) {
   ctx.dispatch({ type: 'hello', runs: [RUN] });
@@ -366,7 +372,7 @@ test('away row: unread settings: disabled, a click opens Settings › Runs and c
   assert.equal(menuOpen(doc), false, 'the route closes the menu');
 });
 
-test('away row: settings-changed (Settings, another tab, Ask Worca) repaints it and an open project tab', async () => {
+test('away row: settings-changed (Settings, another tab, Chat) repaints it and an open project tab', async () => {
   let body = sideBody();
   Date.now = () => Date.parse('2026-09-28T15:00:00Z');
   const ctx = await boot({ away: () => body });
@@ -546,6 +552,26 @@ test('project card: Away mode for this project, its summary, and Save re-reads G
   assert.equal(patch.body.projectDir, '/repos/proj');
   assert.ok(patch.body.nightMode && Array.isArray(patch.body.nightMode.__unset));
   assert.ok(ctx.awayCalls.slice(before).some((u) => u.includes(`projectDir=${encodeURIComponent('/repos/proj')}`)), 'a fresh GET after the save');
+});
+
+test('project Settings tab: the House brief card mounts between the settings cards and the Away card', async () => {
+  const ctx = await boot();
+  ctx.window.location.hash = 'projects/proj-1/settings';
+  await settle(12);
+  const sec = ctx.window.document.querySelector('.pd-sec[data-sec="settings"]');
+  assert.ok(sec, 'the project Settings tab is open');
+  // buildPdSettings: the settings host, then the brief's own host, then the Away card, as direct children.
+  const order = [...sec.children].map((c) => ['pd-settings', 'pd-house-brief', 'pd-night-card'].find((k) => c.classList.contains(k)) || null).filter(Boolean);
+  assert.deepEqual(order, ['pd-settings', 'pd-house-brief', 'pd-night-card']);
+  const card = sec.querySelector('.pd-house-brief > .card.house-brief');
+  assert.ok(card, 'the card is in its own host, not inside .pd-settings (whose replaceChildren() would wipe it)');
+  assert.equal(sec.querySelector('.pd-settings .house-brief'), null);
+  assert.equal(card.querySelector('h3').textContent, 'House brief');
+  assert.match(card.querySelector('.hb-summary').textContent, /^9 of 2,000 words · built /, 'the GET for proj-1 was answered and rendered');
+  const actions = card.querySelectorAll('.hb-actions');
+  assert.equal(actions.length, 1);
+  assert.deepEqual([...actions[0].querySelectorAll('button')].map((b) => b.textContent), ['Refresh now']);
+  assert.equal(card.querySelectorAll('.btn-primary').length, 0);
 });
 
 // Task 7: the run page pill ticks on the 1 s timer even while the run waits on a question.

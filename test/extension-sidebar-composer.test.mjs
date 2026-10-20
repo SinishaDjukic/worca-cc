@@ -56,7 +56,7 @@ test('the composer row is Ask\'s, minus voice, plus the capture button', async (
   const { route } = rig();
   const h = await bootSidebar({ storage: STORE, route });
   const row = h.$('.ask-composer-row');
-  const kids = [...row.children].map((c) => (c.matches('input[type=file][hidden]') ? 'file' : c.matches('[data-ask-attach-btn]') ? 'attach' : c.matches('[data-wx-capture-btn]') ? 'capture' : c.className.split(' ')[0]));
+  const kids = [...row.children].map((c) => (c.matches('input[type=file][hidden]') ? 'file' : c.matches('[data-ask-attach-btn]') ? 'attach' : c.matches('[data-wx-capture-btn]') ? 'capture' : c.className.split(' ').find((k) => !/^btn(-|$)/.test(k))));   // the feature class, not the .btn skin
   assert.deepEqual(kids, ['file', 'attach', 'capture', 'ask-scope-btn', 'ask-composer-spacer', 'ask-meter', 'ask-model-btn', 'ask-send', 'ask-stop']);
   assert.ok(h.$('.ask-stop').hidden);
   for (const gone of ['.ask-voice', '[data-ask-mic]', '.wx-scope', '#wx-scope']) assert.equal(h.$(gone), null, gone);

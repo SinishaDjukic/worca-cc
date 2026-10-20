@@ -12,6 +12,7 @@ import { confirmDialog } from './helpers/confirm-modal.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { lastToast } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { pressEscape } from './helpers/popups.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -302,6 +303,35 @@ test('delete 409 (live run) keeps the page open + surfaces the error on its head
   assert.equal(doc.querySelector('#ws-detail .ws-delete').disabled, false, 'the button is live again');
 });
 
+test('a double-click on Delete stacks two confirms on the one shell: Escape answers both No, and a later, unrelated OK deletes nothing', async () => {
+  const deletes = [];
+  const { window, show } = await boot({
+    fetchHandler: (u, opts) => {
+      if (!/\/api\/workspaces\/wks-beta-00000002$/.test(u) || opts.method !== 'DELETE') return null;
+      deletes.push(u);
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true, warnings: [] }) });
+    },
+  });
+  show('workspaces/wks-beta-00000002');
+  await settle();
+  const doc = window.document;
+  const del = doc.querySelector('#ws-detail .ws-delete');
+  click(window, del);
+  click(window, del);                    // live until the confirm: each click awaits the dependents note first
+  await settle();
+  const modal = doc.getElementById('confirm-modal');
+  assert.equal(modal.classList.contains('hidden'), false);
+  pressEscape(window);
+  await settle();
+  assert.equal(modal.classList.contains('hidden'), true, 'Escape answered No');
+  const other = window.__projects.confirmModal({ title: 'Something else?' });
+  doc.getElementById('confirm-ok').click();
+  assert.equal(await other, true);
+  await settle();
+  assert.deepEqual(deletes, [], 'the delete the user cancelled never runs');
+  assert.equal(window.location.hash, '#workspaces/wks-beta-00000002');
+});
+
 test('an unknown id shows the list with the not-registered message; a workspaces-changed frame that dropped the open one closes it', async () => {
   let list = WS;
   const { window, show, ws } = await boot({
@@ -464,7 +494,7 @@ test('Add projects lists registered non-members; Save posts {add} and the page s
   assert.deepEqual(boxes.map((b) => b.value), [THIRD.path], 'only projects that are not members yet');
   const addBtn = () => [...doc.querySelectorAll('#plugin-modal button')].find((b) => b.textContent === 'Add');
   assert.equal(addBtn().disabled, true, 'Add waits for a pick');
-  assert.deepEqual([...doc.querySelectorAll('#plugin-modal-actions button')].map((b) => b.textContent), ['Add'], 'the header\'s Close is the way out');
+  assert.deepEqual([...doc.querySelectorAll('#plugin-modal-actions button')].map((b) => b.textContent), ['Cancel', 'Add'], 'Cancel sits next to Add');
   boxes[0].checked = true;
   boxes[0].dispatchEvent(new window.Event('change', { bubbles: true }));
   assert.equal(addBtn().disabled, false);

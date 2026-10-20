@@ -20,7 +20,7 @@ afterEach(() => {
 });
 
 const CARD = { projectKey: 'demo-00000001', workflowId: 'wf_default', brief: 'Add a badge', guardrailsId: 'normal' };
-const SYS = `You are Ask Worca.\n\nMOCK_ROLE: ask\nMOCK_ASK_CARD: ${JSON.stringify(CARD)}\n`;
+const SYS = `You are Chat.\n\nMOCK_ROLE: ask\nMOCK_ASK_CARD: ${JSON.stringify(CARD)}\n`;
 const tmp = () => mkdtemp(join(tmpdir(), 'worca-ask-mock-'));
 
 /** Run the mock and replay every event through the reducer. */

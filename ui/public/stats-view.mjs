@@ -11,8 +11,6 @@
 
 import { renderTeamCapPauseBanner, POLICY_PAUSE_REASONS } from './team-policy-view.mjs';
 import { rowsToCsv } from '../../src/shared/csv.mjs';
-import { allocationModel, fromStatsRows, renderAllocationTables } from './tag-allocation.mjs';
-import { dimensionLabel } from '../../src/shared/tag-dimensions.mjs';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -225,7 +223,7 @@ export function renderKpiRow(model, { doc = globalThis.document, fmt = DEFAULT_F
   // the range, so cost/session is window spend over that count.
   const ask = totals.ask || { spendUsd: 0, sessions: 0, turns: 0 };
   row.appendChild(tile(doc, {
-    iconD: ICONS.ask, label: 'Ask Worca',
+    iconD: ICONS.ask, label: 'Chat',
     chip: prev ? deltaChip(doc, ask.spendUsd, prev.ask?.spendUsd, range) : null,
     valueNodes: [doc.createTextNode(fmt.usd(ask.spendUsd))],
     sub: ask.sessions > 0
@@ -313,7 +311,7 @@ export function renderCostPauseBanner(rec, { doc = globalThis.document, fmt = DE
   const el = h(doc, 'div', `cost-banner ${kind}`);
   const text = h(doc, 'div', 'cb-text');
   const actions = h(doc, 'div', 'cb-actions');
-  const settingsBtn = h(doc, 'button', 'btn btn-mini cb-settings', 'Open Settings');
+  const settingsBtn = h(doc, 'button', 'btn btn-sm cb-settings', 'Open Settings');
   settingsBtn.type = 'button';
 
   if (kind === 'cb-pipeline') {
@@ -325,7 +323,7 @@ export function renderCostPauseBanner(rec, { doc = globalThis.document, fmt = DE
     text.appendChild(doc.createTextNode(
       ' limit. Raise or clear the limit in Settings, or continue without a cap.'));
     el.appendChild(text);
-    const override = h(doc, 'button', 'btn btn-primary btn-mini cb-override',
+    const override = h(doc, 'button', 'btn btn-primary btn-sm cb-override',
       'Continue without cap (this pipeline)');
     override.type = 'button';
     override.dataset.pipelineId = rec.pipelineId || '';
@@ -398,6 +396,9 @@ function compactUsd(fmt, v) {
   if (v >= 10) return `$${Math.round(v)}`;
   return fmt.usd(v);
 }
+
+// The Cost report (cost-report.mjs, cost-area-chart.mjs) reuses these private helpers.
+export { tile as statTile, deltaChip as statDeltaChip, ICONS as STAT_ICONS, bucketLabel, tipDate, compactUsd };
 
 /** Shared chart scaffolding: svg + grid + x labels + hit rects + sr table. */
 function chartScaffold(doc, spec, { yMax, yFmt, ariaLabel, srHead, srRow, tip, drawBucket, integerScale = false }) {
@@ -609,13 +610,14 @@ export function renderPeopleCard(byPerson, rangeLabel, { doc = globalThis.docume
 }
 
 /** The /api/stats query string for the page's state. */
-export function statsQuery({ range, from = '', to = '', tags = [], person = '', groupBy = '', byTag = false, tagKeys = [] }) {
+export function statsQuery({ range, from = '', to = '', tags = [], person = '', groupBy = '', byTag = false, tagKeys = [], report = false }) {
   const q = new URLSearchParams({ range });
   if (range === 'custom') { q.set('from', from); q.set('to', to); }
   for (const t of tags) q.append('tag', t);
   if (person) q.set('person', person);
   if (groupBy) q.set('groupBy', groupBy);
   if (byTag) { q.set('byTag', '1'); for (const k of tagKeys) q.append('tagKey', k); }
+  if (report) q.set('report', '1');
   return q.toString();
 }
 
@@ -692,16 +694,10 @@ export function statsRangeLabel(model) {
       : `${tipDate(model.windowStartMs, 'day')} – ${tipDate(model.windowEndMs - 1, 'day')}`;
 }
 
-/** The By person / By tag chips (#718 slice 4): that table alone, without the KPI row and charts. */
+/** The By person chip (#718 slice 4): that table alone, without the KPI row and charts. The Cost chip is cost-report.mjs. */
 export function renderStatsView(model, view, opts = {}) {
-  const { doc = globalThis.document, fmt = DEFAULT_FMT, dims = [] } = opts;
+  const { doc = globalThis.document } = opts;
   const rangeLabel = statsRangeLabel(model);
-  if (view === 'tag') {
-    const tables = (model.tagGroups || []).map((t) => allocationModel({
-      key: t.key, label: dimensionLabel(dims, t.key) || t.key, rows: fromStatsRows(t.rows),
-    }));
-    return renderAllocationTables(tables, { doc, fmt, rangeLabel, empty: 'No tagged runs in this period.' });
-  }
   const g = h(doc, 'div', 'charts-grid people-grid');
   g.appendChild(renderGroupsCard(model.groups || { label: 'person', rows: [] }, rangeLabel,
     { ...opts, totalUsd: model.totals.spentUsd, totalRuns: model.totals.runs }));

@@ -26,6 +26,8 @@ export const SHADOW_PIECES = Object.freeze([
   { name: 'askChips', rule: '.ask-chips{' },
   { name: 'askChip', rule: '.ask-chip{' },
   { name: 'askChipX', rule: '.ask-chip-x{' },
+  // Pinpoint's tray and popover buttons are the one .btn component (runs redesign, slice 1).
+  { name: 'buttons', from: '/* ---------- buttons ---------- */', to: '/* ===================== Action feedback' },
   { name: 'pinpoint', from: '/* ===== Chat Pinpoint (#669) ===== */', to: '/* ===== Chat P6: home ===== */' },
 ]);
 

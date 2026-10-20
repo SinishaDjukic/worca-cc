@@ -38,9 +38,8 @@ export function defaultTab({ needs = 0, running = 0, chats = null } = {}) {
 }
 
 export function createHomeTabs({ doc, onSelect }) {
-  const win = doc.defaultView || globalThis;
   const el = make(doc, 'div', 'chat-home-tabs');
-  const list = make(doc, 'div', 'chat-home-tablist');
+  const list = make(doc, 'div', 'chat-home-tablist tabs');
   list.setAttribute('role', 'tablist');
   list.setAttribute('aria-label', 'Runs and chats');
   const panel = make(doc, 'div', 'chat-home-panel');
@@ -49,7 +48,7 @@ export function createHomeTabs({ doc, onSelect }) {
   panel.tabIndex = 0;
   const btns = new Map();
   for (const t of HOME_TABS) {
-    const b = make(doc, 'button', 'chat-home-tab');
+    const b = make(doc, 'button', 'chat-home-tab tab');
     b.type = 'button';
     b.id = `chat-home-tab-${t}`;
     b.dataset.tab = t;
@@ -68,9 +67,6 @@ export function createHomeTabs({ doc, onSelect }) {
     btns.set(t, b);
     list.appendChild(b);
   }
-  const ink = make(doc, 'span', 'chat-home-ink');
-  ink.setAttribute('aria-hidden', 'true');
-  list.appendChild(ink);
   list.addEventListener('keydown', (e) => {
     const shown = visibleTabs();
     const i = shown.indexOf(e.target && e.target.dataset ? e.target.dataset.tab : '');
@@ -89,15 +85,8 @@ export function createHomeTabs({ doc, onSelect }) {
   /** The tabs whose button shows (Plans is hidden while the Shape it first gate is off). */
   function visibleTabs() { return HOME_TABS.filter((t) => !btns.get(t).hidden); }
   let sel = null;
-  function moveInk() {
-    const b = sel ? btns.get(sel) : null;
-    ink.style.opacity = b ? '1' : '0';
-    if (!b) return;
-    ink.style.width = `${b.offsetWidth || 0}px`;
-    ink.style.transform = `translateX(${b.offsetLeft || 0}px)`;
-  }
   /** A phone-width strip scrolls sideways: bring the selected tab into it when the SELECTION changes — never from
-   *  moveInk, which the 1 s re-read (setNeeds) and every resize call: that would snap back a strip the user is
+   *  the 1 s re-read (setNeeds) or a resize: that would snap back a strip the user is
    *  swiping. Never scrollIntoView — it scrolls the home too. */
   function revealSelected() {
     const b = sel ? btns.get(sel) : null;
@@ -117,25 +106,20 @@ export function createHomeTabs({ doc, onSelect }) {
     }
     if (sel) { panel.setAttribute('aria-labelledby', `chat-home-tab-${sel}`); panel.dataset.tab = sel; }
     else { panel.removeAttribute('aria-labelledby'); delete panel.dataset.tab; }
-    moveInk();
     revealSelected();
   }
   function setVisible(t, on) {
     const b = btns.get(t);
     if (!b) return;
     b.hidden = !on;
-    moveInk();
   }
   function setNeeds(n) {
     const c = btns.get('needs').querySelector('.chat-home-tab-n');
     const v = Number(n) > 0 ? String(n) : '';
     if (c.textContent !== v) c.textContent = v;
     c.hidden = !v;
-    moveInk();
   }
-  const ro = typeof win.ResizeObserver === 'function' ? new win.ResizeObserver(() => moveInk()) : null;
-  if (ro) ro.observe(list);
-  return { el, panel, select, selected: () => sel, setNeeds, setVisible, visibleTabs, moveInk, destroy() { if (ro) ro.disconnect(); } };
+  return { el, panel, select, selected: () => sel, setNeeds, setVisible, visibleTabs, destroy() {} };
 }
 
 /** A chat row's dot: green while its reply streams, amber while a run it follows waits on you, violet while a run it

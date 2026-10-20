@@ -79,7 +79,7 @@ test('custom range is inclusive of `to`, picks day buckets up to 92 days, reject
   }
 });
 
-test('a tag filter narrows every tile and series bucket and drops Ask Worca', () => {
+test('a tag filter narrows every tile and series bucket and drops Chat', () => {
   const s = getStats({ range: 'lastMonth', now: NOW, filter: { tags: ['client:acme'] } });
   assert.equal(s.filtered, true);
   assert.deepEqual(s.filter, { tags: ['client:acme'], person: null });
@@ -108,22 +108,22 @@ test('an unfiltered call is unchanged and lists people', () => {
   assert.deepEqual(s.people, ['alice', 'bob']);
 });
 
-test('lastMonth grouped by tag:client: one row per client, (no client), Ask Worca, summing to the total', () => {
+test('lastMonth grouped by tag:client: one row per client, (no client), Chat, summing to the total', () => {
   const s = getStats({ range: 'lastMonth', now: NOW, groupBy: 'tag:client' });
   assert.equal(s.groups.label, 'client');
   assert.deepEqual(s.groups.rows.map((r) => [r.label, r.kind, r.spentUsd, r.runs]), [
     ['acme', 'value', 2.25, 2],
     ['globex', 'value', 2, 1],
     ['(no client)', 'none', 0.5, 1],
-    ['Ask Worca', 'ask', 0.75, 0],
+    ['Chat', 'ask', 0.75, 0],
   ]);
   assert.equal(sum(s.groups.rows), s.totals.spentUsd);
 });
 
-test('grouped by person: named rows, (unknown person), Ask Worca, same total', () => {
+test('grouped by person: named rows, (unknown person), Chat, same total', () => {
   getDb().prepare("UPDATE pipelines SET started_by = 'local' WHERE id = ?").run(untagged);
   const s = getStats({ range: 'lastMonth', now: NOW, groupBy: 'person' });
-  assert.deepEqual(s.groups.rows.map((r) => r.label), ['alice', 'bob', '(unknown person)', 'Ask Worca']);
+  assert.deepEqual(s.groups.rows.map((r) => r.label), ['alice', 'bob', '(unknown person)', 'Chat']);
   assert.equal(sum(s.groups.rows), s.totals.spentUsd);
   assert.equal(sum(getStats({ range: 'lastMonth', now: NOW, groupBy: 'tag:client' }).groups.rows), s.totals.spentUsd);
 });
@@ -131,12 +131,12 @@ test('grouped by person: named rows, (unknown person), Ask Worca, same total', (
 test('a plain tag groups as its own row; all-time grouping reconciles with fallback totals', () => {
   const plain = getStats({ range: 'lastMonth', now: NOW, groupBy: 'tag:spike' });
   assert.deepEqual(plain.groups.rows.map((r) => [r.label, r.spentUsd, r.runs]),
-    [['spike', 1.25, 1], ['(no spike)', 3.5, 3], ['Ask Worca', 0.75, 0]]);   // kind order first, then spend
+    [['spike', 1.25, 1], ['(no spike)', 3.5, 3], ['Chat', 0.75, 0]]);   // kind order first, then spend
   const all = getStats({ range: 'all', now: NOW, groupBy: 'tag:client' });
   assert.equal(sum(all.groups.rows), all.totals.spentUsd);
 });
 
-test('filter + group: rows sum to the filtered total and carry no Ask Worca row', () => {
+test('filter + group: rows sum to the filtered total and carry no Chat row', () => {
   const s = getStats({ range: 'lastMonth', now: NOW, groupBy: 'person', filter: { tags: ['client'] } });
   assert.ok(!s.groups.rows.some((r) => r.kind === 'ask'));
   assert.equal(sum(s.groups.rows), s.totals.spentUsd);
@@ -184,4 +184,36 @@ test('tagKeys: null = no tables; a bad or duplicate key', () => {
   assert.throws(() => getStats({ range: 'lastMonth', now: NOW, tagKeys: ['Bad key'] }), RangeError);
   assert.deepEqual(getStats({ range: 'lastMonth', now: NOW, tagKeys: ['cc', 'cc'] }).tagGroups.filter((t) => t.key === 'cc').length, 1);
   assert.throws(() => getStats({ range: 'lastMonth', now: NOW, tagKeys: Array.from({ length: 51 }, (_, i) => `k${i}`) }), RangeError);
+});
+
+test('report facts: every run the window counts, money reconciles with the Spent tile', () => {
+  const s = getStats({ range: 'lastMonth', now: NOW, report: true });
+  const f = s.report;
+  assert.equal(f.buckets.length, 31);
+  const byId = new Map(f.runs.map((x) => [x.id, x]));
+  assert.deepEqual(byId.get(acme).tags, { client: 'acme', spike: '' });
+  assert.equal(byId.get(acme).person, 'alice');
+  assert.equal(byId.get(acme).project, 'p', 'no projects row: the key p-xxxxxxxx reads as its slug');
+  assert.equal(byId.get(globex).status, 'failed');
+  assert.equal(byId.get(untagged).person, null);
+  assert.equal(roundUsd(f.runs.reduce((a, x) => a + x.usd, 0)), s.totals.pipelineSpendUsd);
+  // Σ is true by construction (drift step); per-run money catches an attribution bug.
+  assert.deepEqual([acme, globex, untagged, straddle].map((id) => byId.get(id).usd), [1.25, 2, 0.5, 1]);
+  assert.equal(roundUsd(s.totals.pipelineSpendUsd + f.ask.spentUsd), s.totals.spentUsd);
+  assert.deepEqual(byId.get(straddle).spend, [[30, 1]], 'only the August part, in the 31 August bucket');
+});
+
+test('report facts: a run that only spent in the window carries money but no run and no hours', () => {
+  const s = getStats({ range: 'month', now: NOW, report: true });
+  const x = s.report.runs.find((r) => r.id === straddle);
+  assert.equal(x.usd, 3);
+  assert.equal(x.inCohort, false);
+  assert.equal(x.hours, 0);
+});
+
+test('report facts honour a tag filter and drop Ask Worca; no report key without the option', () => {
+  const s = getStats({ range: 'lastMonth', now: NOW, report: true, filter: { tags: ['client:acme'] } });
+  assert.deepEqual(s.report.runs.map((x) => x.id).sort(), [acme, straddle].sort());
+  assert.equal(s.report.ask, null);
+  assert.equal('report' in getStats({ range: 'lastMonth', now: NOW }), false);
 });

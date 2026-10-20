@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { lastToast } from './helpers/feedback.mjs';
+import { backdropClick, pressEscape, discardPrompt, keepEditing } from './helpers/popups.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -43,7 +44,7 @@ const GITDIFF = SCRIPTS.find((s) => s.key === 'gitDiff');
 const tick = async (n = 1) => { for (let i = 0; i < n; i += 1) await new Promise((r) => setTimeout(r, 0)); };
 async function go(w, h) { w.location.hash = h; w.dispatchEvent(new w.Event('hashchange')); for (let i = 0; i < 6; i += 1) await tick(); }
 
-async function boot({ agentsFail = false, workflows = null, del = null, onboarding = null, workspaces = null } = {}) {
+async function boot({ agentsFail = false, workflows = null, del = null, onboarding = null, workspaces = null, fetchHandler = null } = {}) {
   const rows = workflows || [DEFAULT_ROW, V2_ROW, V1_ROW];
   const deletes = [];
   const importBodies = [];
@@ -59,6 +60,7 @@ async function boot({ agentsFail = false, workflows = null, del = null, onboardi
   window.WebSocket = class { constructor() { this.readyState = 1; this._l = {}; lastWs = this; } send() {} close() {} addEventListener(t, fn) { (this._l[t] ||= []).push(fn); } };
   const json = (v, status = 200) => Promise.resolve({ ok: status < 400, status, json: async () => v });
   window.fetch = (u, init) => {
+    if (fetchHandler) { const r = fetchHandler(String(u), init || {}); if (r) return r; }
     const url = String(u);
     const method = (init && init.method) || 'GET';
     requests.push({ method, url, body: init && init.body });
@@ -247,6 +249,13 @@ test('importing a workflow with script commands shows them first; Cancel and Clo
   doc.getElementById('plugin-modal-close').click();
   assert.equal(await pClose, false);
   assert.equal(win.__rows.length, n0);
+  // Escape settles it too: modal-guard hands Escape to #plugin-modal, whose dismiss hooks answer "no".
+  const pEsc = win.__gvImport(withShell);
+  await tick();
+  doc.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  assert.equal(await pEsc, false);
+  assert.equal(win.__rows.length, n0);
+  assert.equal(modal.classList.contains('hidden'), true);
   const p2 = win.__gvImport(withShell);
   await tick();
   [...doc.querySelectorAll('#plugin-modal-actions button')].find((b) => b.textContent === 'Import').click();
@@ -794,6 +803,84 @@ test('drag-free add: a Library "+" spawns the agent on the canvas and selects it
   assert.equal(c.template().nodes.length, n0 + 1);
   assert.equal(c.template().nodes.at(-1).key, 'planner');
   assert.deepEqual(c.selection(), { kind: 'node', id: c.template().nodes.at(-1).id });
+});
+
+// One body answers both export POSTs: the dry run reads created/updated/noop/conflicts, the write reads written/skipped.
+const EXPORT_BODY = { created: ['/h/.claude/skills/graph-one/SKILL.md'], updated: [], noop: [], skipped: [], conflicts: [], warnings: [], orphans: [],
+  written: ['/h/.claude/skills/graph-one/SKILL.md'] };
+const exportReply = () => Promise.resolve({ ok: true, status: 200, json: async () => EXPORT_BODY });
+async function openExport(opts) {
+  const { window: win } = await boot(opts);
+  await go(win, 'workflows');
+  win.__wfv.library().open('workflows');
+  const doc = win.document;
+  doc.querySelector('.wfl-wf[data-id="wf_g"] .wfl-export').click();
+  return { win, doc, modal: doc.getElementById('export-modal'), cancel: doc.getElementById('export-cancel') };
+}
+const pickFormat = (win, doc, f) => doc.querySelector(`#export-format .seg-btn[data-format="${f}"]`).dispatchEvent(new win.Event('click'));
+
+test('Export…: a backdrop click never closes it; while a Preview or an Export is out nothing does; a format picked alone asks; the Done view closes without asking', async () => {
+  await checkRows([
+    { name: 'a fresh open: a backdrop click keeps it, Escape closes it without asking', run: async () => {
+      const { win, doc, modal } = await openExport();
+      assert.equal(modal.classList.contains('hidden'), false, 'Export opened the dialog');
+      backdropClick(win, modal);
+      assert.equal(modal.classList.contains('hidden'), false, 'a backdrop click never closes the export dialog');
+      pressEscape(win);
+      assert.equal(discardPrompt(doc), null, 'untouched: no question');
+      assert.equal(modal.classList.contains('hidden'), true);
+    } },
+    ...[['Preview', 'export-plan-btn'], ['Export', 'export-apply-btn']].map(([what, btnId]) => ({
+      name: `while ${what} is out, Cancel is disabled and Escape does nothing; the answer gives Cancel back`, run: async () => {
+        let release;
+        const gate = new Promise((r) => { release = r; });
+        let posts = 0;                               // hold the first POST (Export's own dry run); the write answers at once
+        const { win, doc, modal, cancel } = await openExport({ fetchHandler: (url) => (url.endsWith('/export')
+          ? ((posts += 1) === 1 ? gate.then(exportReply) : exportReply()) : null) });
+        pickFormat(win, doc, 'skill');
+        doc.getElementById(btnId).dispatchEvent(new win.Event('click'));
+        assert.equal(cancel.disabled, true, 'no way out while the request is out');
+        cancel.dispatchEvent(new win.Event('click'));   // a synthetic click reaches a disabled button: cancel() must hold too
+        pressEscape(win);
+        await tick();
+        assert.equal(discardPrompt(doc), null, 'not even the question');
+        assert.equal(modal.classList.contains('hidden'), false);
+        release();
+        await tick(3);
+        assert.equal(cancel.disabled, false, 'the answer gives Cancel back');
+      },
+    })),
+    { name: 'a format picked, nothing typed: Escape asks; picked back, Escape closes', run: async () => {
+      const { win, doc, modal } = await openExport();
+      pickFormat(win, doc, 'skill');
+      pressEscape(win);
+      assert.ok(discardPrompt(doc), 'the format is a choice');
+      keepEditing(doc);
+      await tick();
+      assert.equal(modal.classList.contains('hidden'), false);
+      pickFormat(win, doc, 'json');
+      pressEscape(win);
+      assert.equal(discardPrompt(doc), null, 'back where it started');
+      assert.equal(modal.classList.contains('hidden'), true);
+    } },
+    { name: 'the Done view after a skill export: Escape asked over the typed slug before; now it closes without asking', run: async () => {
+      const { win, doc, modal } = await openExport({ fetchHandler: (url) => (url.endsWith('/export') ? exportReply() : null) });
+      pickFormat(win, doc, 'skill');
+      const slug = doc.getElementById('export-slug');
+      slug.value = 'my-skill';
+      slug.dispatchEvent(new win.Event('input', { bubbles: true }));
+      pressEscape(win);
+      assert.ok(discardPrompt(doc), 'changed: Escape asks');
+      keepEditing(doc);
+      await tick();
+      doc.getElementById('export-apply-btn').dispatchEvent(new win.Event('click'));   // the dry run, then the write
+      await tick(3);
+      assert.equal(doc.getElementById('export-done').classList.contains('hidden'), false, 'the Done view is up');
+      pressEscape(win);
+      assert.equal(discardPrompt(doc), null, 'exported: nothing left to lose');
+      assert.equal(modal.classList.contains('hidden'), true);
+    } },
+  ]);
 });
 
 test('MAJ-17 (ported): a refused workflow delete toasts the server error and keeps the row; a successful one toasts and refreshes', async () => {
@@ -1533,7 +1620,7 @@ test('another workflow opened drops a draft card\'s "Save & add to canvas" (sig 
     then: { ops: [{ op: 'add_node', id: 'n_note0001', kind: 'agent', key: 'notesWriter', x: 500, y: 200 }] } } };
   recv({ type: 'ask-card', threadId: 'ask_0000abcd', messageId: 'askm_0000bbbb', seq: 2, block: draft });
   await tick(6);
-  const has = () => [...doc.querySelectorAll('#wfc [data-card-id="card_0000dddd"] button')].some((b) => b.textContent === 'Save & add to canvas');
+  const has = () => [...doc.querySelectorAll('#wfc [data-card-id="card_0000dddd"] button')].some((b) => b.textContent === 'Add to canvas');
   assert.equal(has(), true, 'precondition');
   await go(w, 'workflows/wf_g');                      // another saved workflow (a clean canvas: no discard prompt)
   await tick(6);
@@ -1772,6 +1859,50 @@ test('the Workflows tour survives a Library search query: ✕ on the open search
     doc.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape' }));
     await tick(2);
   }
+});
+
+// Export… → Worca plugin → Marketplace (#717): the dialog re-reads the PR-capable marketplaces on every open (one may
+// have been added since). A reopen while that read is still in flight must start its own read — and the first read's
+// late answer must not paint over the new open's state.
+test('Export… → Marketplace: reopening the dialog mid-read starts a fresh marketplace read, and the stale answer never paints', async () => {
+  const { window: w } = await boot();
+  await go(w, 'workflows');
+  w.__wfv.library().open('workflows');
+  const doc = w.document;
+  const real = globalThis.fetch;
+  const pending = [];                                        // one resolver per publish-targets request, in order
+  const fetchTargets = (u, init) => {
+    if (!String(u).includes('/api/marketplaces/publish-targets')) return real(u, init);
+    return new Promise((resolve) => pending.push((body) => resolve({ ok: true, status: 200, json: async () => body })));
+  };
+  globalThis.fetch = fetchTargets; w.fetch = fetchTargets;
+  const options = () => [...doc.getElementById('export-marketplace').options].map((o) => o.value);
+  const openMarketplace = async () => {
+    doc.querySelector('.wfl-wf[data-id="wf_g"] .wfl-export').click();
+    doc.querySelector('#export-format .seg-btn[data-format="plugin"]').click();
+    doc.querySelector('#export-plugin-dest .seg-btn[data-pdest="marketplace"]').click();
+    await tick();
+  };
+  try {
+    await openMarketplace();
+    assert.equal(pending.length, 1, 'the first open reads the marketplaces');
+    await openMarketplace();                                 // reopened while the first read is still in flight
+    assert.equal(pending.length, 2, 'the reopen starts its own read instead of reusing the stale one');
+    pending[0]({ targets: [{ id: 'old', name: 'Old', repo: 'o/m', ref: null }], skipped: [] });   // the stale read answers late
+    await tick(2);
+    assert.equal(options().includes('old'), false, 'the stale answer never paints');
+    assert.equal(doc.getElementById('export-apply-btn').disabled, true, 'still waiting on the live read');
+    pending[1]({ targets: [{ id: 'new', name: 'New', repo: 'n/m', ref: null }], skipped: [] });
+    await tick(2);
+    assert.deepEqual(options(), ['new']);
+    assert.equal(doc.getElementById('export-apply-btn').disabled, false);
+    // and the read is not stuck: a later switch away and back reuses the list without another request
+    doc.querySelector('#export-plugin-dest .seg-btn[data-pdest="folder"]').click();
+    doc.querySelector('#export-plugin-dest .seg-btn[data-pdest="marketplace"]').click();
+    await tick();
+    assert.equal(pending.length, 2);
+    assert.deepEqual(options(), ['new']);
+  } finally { globalThis.fetch = real; w.fetch = real; }
 });
 
 test('Ask\'s graph card: Open in Workflows opens the graph on the canvas as a NEW unsaved workflow', async () => {

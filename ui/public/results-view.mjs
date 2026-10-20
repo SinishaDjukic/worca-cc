@@ -88,7 +88,7 @@ export function sourceBadge(row, { doc = globalThis.document } = {}) {
  *  is kept on el._pending for deterministic tests. */
 export function reportResultControl(pipelineId, { doc = globalThis.document, post } = {}) {
   const wrap = _el(doc, 'span', 'src-report-wrap');
-  const btn = _el(doc, 'button', 'btn btn-ghost btn-mini src-report', 'Report result');
+  const btn = _el(doc, 'button', 'btn btn-sm src-report', 'Report result');
   btn.type = 'button';
   const status = _el(doc, 'span', 'src-report-status hint', '');
   btn.addEventListener('click', () => {

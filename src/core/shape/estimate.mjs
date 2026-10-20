@@ -31,8 +31,10 @@ export function stepHistory({ sinceDays = ESTIMATE_HISTORY_DAYS, now = Date.now(
 
 const agentKeys = (wf) => (Array.isArray(wf?.nodes) ? wf.nodes : []).filter((n) => n && n.kind === 'agent' && n.key).map((n) => n.key);
 
-/** The planning agents (Clarify, Plan, Refine): the nudge shows their share apart from the build (D28). */
-export const PLANNING_AGENTS = Object.freeze(['clarify', 'planner', 'refiner']);
+/** The planning agents (Clarify, Plan, the role reviewers, Refine): the nudge shows their share apart from the build (D28). */
+export const PLANNING_AGENTS = Object.freeze(['clarify', 'planner', 'planReviewer', 'refiner']);
+/** Role reviews (spec §4a "Cost"): too little planReviewer history borrows the refiner's — same planning weight. */
+const FALLBACK = Object.freeze({ planReviewer: 'refiner' });
 const PLANNING = new Set(PLANNING_AGENTS);
 const cents = (x) => Math.round(x * 100) / 100;
 
@@ -42,7 +44,8 @@ export function estimateGraph(wf, history) {
   if (!keys.length || !history) return null;
   let cost = 0; let planning = 0; let ms = 0; let samples = Infinity;
   for (const k of keys) {
-    const h = history.get(k);
+    let h = history.get(k);
+    if ((!h || h.cost.length < ESTIMATE_MIN_SAMPLES) && FALLBACK[k]) h = history.get(FALLBACK[k]);
     if (!h || h.cost.length < ESTIMATE_MIN_SAMPLES) return null;
     const c = median(h.cost);
     cost += c; if (PLANNING.has(k)) planning += c;

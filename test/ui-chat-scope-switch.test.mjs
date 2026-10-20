@@ -39,7 +39,7 @@ test('proposed: heading outside, the question and its reason, the candidates the
     ['B', 'Havn IOS', 'kind-chip kind-folder', 'Folder', 'C:\\Users\\me\\Develop\\Havn'],
     ['C', 'Continue without project', 'kind-chip kind-none', 'No project', null],
   ]);
-  const go = el.querySelector('.btn-go');
+  const go = el.querySelector('[data-qpanel-submit]');
   assert.deepEqual([el.querySelector('.qanswered').textContent, go.textContent, go.disabled], ['0 of 1 answered', 'Switch', true]);
   opts[0].click();
   assert.deepEqual([el.querySelector('.qanswered').textContent, go.textContent], ['1 of 1 answered', 'Switch to Havn Android']);
@@ -59,19 +59,19 @@ test('the answer posts { choice } on the card route; the composer gets the focus
     { name: 'a project', run: async () => {
       const { ctx, posts, said, focused } = ctxOf();
       const { el } = buildScopeSwitchCard(BLOCK, ctx);
-      el.querySelectorAll('.qopt')[1].click(); el.querySelector('.btn-go').click(); await tick();
+      el.querySelectorAll('.qopt')[1].click(); el.querySelector('[data-qpanel-submit]').click(); await tick();
       assert.deepEqual([posts, said, focused()], [[{ choice: 'havn-ios-00000002' }], ['Switched to Havn IOS'], 1]);
     } },
     { name: 'none', run: async () => {
       const { ctx, posts, said } = ctxOf();
       const { el } = buildScopeSwitchCard(BLOCK, ctx);
-      el.querySelectorAll('.qopt')[2].click(); el.querySelector('.btn-go').click(); await tick();
+      el.querySelectorAll('.qopt')[2].click(); el.querySelector('[data-qpanel-submit]').click(); await tick();
       assert.deepEqual([posts, said], [[{ choice: 'none' }], ['Answer sent']]);
     } },
     { name: 'a refusal (409)', run: async () => {
       const { ctx, said, focused } = ctxOf({ post: async () => { throw Object.assign(new Error('this chat already has a project'), { status: 409, body: { error: 'this chat already has a project' } }); } });
       const { el } = buildScopeSwitchCard(BLOCK, ctx);
-      el.querySelector('.qopt').click(); el.querySelector('.btn-go').click(); await tick();
+      el.querySelector('.qopt').click(); el.querySelector('[data-qpanel-submit]').click(); await tick();
       assert.deepEqual([el.querySelector('.chat-rc-q-err').textContent, said, focused()], ['this chat already has a project', [], 0]);
     } },
   ]);
@@ -112,8 +112,8 @@ test('registered as scope-switch: inside the panel a proposed block renders the 
   const card = ctx.doc.querySelector('.ask-msg-assistant section.chat-q');
   assert.ok(card, 'the registered builder rendered the card');
   card.querySelector('.qopt').click();
-  card.querySelector('.btn-go').focus();   // open() already focused the composer: move the focus away so the assertion below binds focusComposer
-  card.querySelector('.btn-go').click();
+  card.querySelector('[data-qpanel-submit]').focus();   // open() already focused the composer: move the focus away so the assertion below binds focusComposer
+  card.querySelector('[data-qpanel-submit]').click();
   for (let i = 0; i < 3; i++) await ctx.tick();
   const post = ctx.fetchCalls.find((c) => c.url === `/api/ask/threads/${TID}/cards/card_00000009`);
   assert.deepEqual([post.opts.method, JSON.parse(post.opts.body)], ['POST', { choice: 'havn-and-00000001' }]);

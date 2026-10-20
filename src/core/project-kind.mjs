@@ -28,7 +28,7 @@ export function detectVcs(path) {
   return existsSync(join(path, '.git')) ? 'git' : 'none';
 }
 
-/** V61 (U12): an existing directory without .git → 'none'; a .git or a missing path → 'git'. */
+/** V69 (U12): an existing directory without .git → 'none'; a .git or a missing path → 'git'. */
 export function vcsAtUpgrade(path) {
   try {
     if (path && statSync(path).isDirectory() && !existsSync(join(path, '.git'))) return 'none';

@@ -131,8 +131,9 @@ export function buildChatQuestion(doc, spec) {
 
   const foot = h('div', 'qpanel-foot');
   const count = h('span', 'qanswered');
-  const go = h('button', 'btn-go');
+  const go = h('button', 'btn btn-primary');
   go.type = 'button';
+  go.dataset.qpanelSubmit = '';
   foot.append(count, go);
   panel.appendChild(foot);
 

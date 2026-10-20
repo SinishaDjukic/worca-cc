@@ -12,7 +12,7 @@ Nothing about a run's own branch or history changes — `worca-metrics` carries 
 
 ## Enable and join
 
-A project turns team metrics on from its project page's **Team** tab (`Set up team metrics…`; the Projects
+A project turns team metrics on from its project page's **Team** tab (`Set up metrics…`; the Projects
 list row only carries a one-line status chip), in one of two modes:
 
 - **Here, on this repository** — Worca creates the orphan branch `worca-metrics` on `origin`,
@@ -24,7 +24,7 @@ list row only carries a one-line status chip), in one of two modes:
   name. A delegate must be a project (or workspace member/home) Worca already knows about on
   this machine; delegating to a project that itself delegates ("chains") is rejected.
 
-If a teammate has already enabled the branch on `origin` before you do, clicking **Set up team metrics…**
+If a teammate has already enabled the branch on `origin` before you do, clicking **Set up metrics…**
 here **joins** it instead of creating a second orphan history — the push-not-fast-forward from
 a race is exactly this case, handled the same way.
 
@@ -81,28 +81,41 @@ detail — the **Metrics branch** column says where each project's runs land —
 The home comes first, then members that need attention, then the routed ones; past six members
 the table collapses behind **Show N more** and the table head sums up the rest ("44 routed · 5
 not routed"). The table head also holds the actions: **Choose metrics home…** / **Change metrics
-home…** opens the picker, and **Route all to metrics home** sets up every member that has no
+home…** opens the picker, and **Route all** sets up every member that has no
 `worca-metrics` branch yet to delegate to the home in one action. Members that already record on
 their own branch or delegate elsewhere are left alone, so that button is hidden when there is
 nothing it could change. A sentence appears under the table only when it matters: no home chosen
 yet, a stale home, or the home's "Include my runs" switch turned off on this machine (your
 workspace runs follow that switch).
 
-## By tag
+## Cost
 
 While the `runTags` feature flag is on, the Overview tab opens with three chips: **Overview** (the
-page as before), **By person** (the By actor table on its own) and **By tag**. By tag shows one table
-per tag key over the runs in the range, after the filters: configured tag dimensions first, then every
-other key a run in the range carries, by spend. Each table lists the values by spend, an **Untagged**
-row and a **Total** equal to the Spend tile; Share is an integer percent that adds up to 100%. More
-than 8 values fold into the top 7 and an **Other (n)** row that expands in place. By tag only appears
-when a dimension is configured or a loaded run carries a tag. The chosen chip is remembered in this
-browser.
+page as before), **By person** (the By actor table on its own) and **Cost**. Cost is the same Cost and
+value report as Statistics › Cost (see [statistics.md](./statistics.md)): KPIs, a filter bar,
+Allocate by → then by, a stacked area chart, one expandable table, saved views and Download CSV, over
+every team record in the range. The chosen chip, the report's choices and its saved views are kept in
+this browser, apart from the Statistics ones.
 
 A run's whole cost lands in the period it **started** (team records carry one total per run), unlike
-Statistics, which counts spend when it happened. Team records carry no Ask Worca spend, so there is no
-Ask Worca row. Each table's **CSV** link downloads `team-metrics-<scope>-<range>-tag-<key>.csv` with the
-columns: the key, `spendUsd`, `sharePct`, `runs`.
+Statistics, which counts spend when it happened. Team records carry no Chat spend, so there is no
+Chat row, and they are mostly teammates' runs, so the report does not link to the Runs list. PRs
+count as opened; records do not say whether one merged. The page's cost tag filter and row filters
+step aside on Cost: the report has its own filter bar.
+
+**Person × value.** Under the table, a grid shows each person's AI spend per value of the Allocate by
+dimension: the same columns as the table (top 5, Other, Unallocated) and a Total per person. A darker
+cell is a larger share of the largest cell; every cell prints its amount. Allocated by Person, the
+grid steps aside.
+
+**Missing cost tags.** When a cost tag key is required (team policy or Settings › Labels & cost tags),
+a strip above the chart lists who ran runs without it, how many and how much, for the runs the report
+shows: for example **Developer A · 3 runs · $4.00 · missing Client** for three acme runs started
+without `client`.
+
+**Download CSV** saves `team-metrics-<scope>-<range>-cost-<key>.csv` with the Statistics report's
+columns: the dimension(s), `spendUsd`, `runs`, `finished`, `stopped`, `failed`, `running`, `paused`,
+`prsOpened`, `prsMerged`, `humanHours`, `savedUsd`, `usdPerHour`.
 
 ## Timeline
 
@@ -194,7 +207,7 @@ It degrades rather than fails:
   repositories (Azure: set `WORCA_ADO_TOKEN`, see [Azure DevOps](azure-devops.md)); GitLab and
   Bitbucket items show without merge data.
 
-## Ask Worca
+## Chat
 
 The chat reads team metrics and can propose configuration changes, through four tools. It is
 gnostic about the domain — scopes, ranges, the metrics home, routing, attribution, "Include my
@@ -236,7 +249,7 @@ toggle is on:
 
 | Chip state | Meaning | Action shown |
 |---|---|---|
-| Off ("runs stay on this machine") | Not enabled | `Set up team metrics…` |
+| Off ("runs stay on this machine") | Not enabled | `Set up metrics…` |
 | Not available | No `origin` remote on this repository | none |
 | On (green) | Enabled, nothing pending, last push (if any) succeeded | — |
 | On · N pending (amber) | Runs are queued in the local outbox, not yet pushed | `Push now` |
@@ -262,7 +275,7 @@ Both metrics surfaces wait on git, so neither blocks on it:
   `team-metrics-changed` event (`fetched` / `fetch-failed`) reaches the page, which reloads and
   repaints the chip ("Synced just now", or the fetch's stderr). A repository whose branch has
   never been fetched on this machine answers "pending" with no records; the clone happens in the
-  background the same way. Ask Worca's tools, the CLI and other API clients keep the inline
+  background the same way. Chat's tools, the CLI and other API clients keep the inline
   fetch and get fresh data in one round trip.
 - **First paint** is a skeleton of the page (six KPI tiles, two charts, the breakdown grid and
   the runs card, as shimmer bars), never a "Loading…" line, so the layout lands once. Each scope's

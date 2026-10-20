@@ -46,8 +46,8 @@ test('Enter commits a normalised chip and never submits; Tab commits only valid 
   assert.equal(f.input.value, '');
   assert.deepEqual(seen, [['client:acme']]);
   assert.equal(f.t.dirty(), true);
-  assert.equal(f.type('spike', 'Tab').defaultPrevented, true);
-  assert.deepEqual(f.t.get(), ['client:acme', 'spike']);
+  assert.equal(f.type('team:web', 'Tab').defaultPrevented, true);
+  assert.deepEqual(f.t.get(), ['client:acme', 'team:web']);
   assert.equal(f.type('client:', 'Tab').defaultPrevented, false, 'an invalid entry never traps focus');
 });
 
@@ -84,10 +84,10 @@ test('set() replaces the chips and resets dirty unless told otherwise', () => {
 
 test('the 21st tag is refused', () => {
   const f = field({ value: Array.from({ length: 20 }, (_, i) => `k${i}`) });
-  f.type('one-more');
+  f.type('k20:x');
   assert.equal(f.t.get().length, 20);
-  assert.equal(f.hint(), 'At most 20 tags per run');
-  assert.equal(f.input.value, 'one-more');
+  assert.equal(f.hint(), 'At most 20 cost tags per run');
+  assert.equal(f.input.value, 'k20:x');
 });
 
 test('focus loads the vocabulary once and fills the datalist; tagChip is a plain chip', async () => {
@@ -137,6 +137,33 @@ test('dimension slots: a select of the allowed values, a text input without valu
   assert.equal(s.dirty(), false);
   s.set(['cc:9999']);
   assert.equal(sel.value, '', 'an off-list value leaves the select blank');
+  const rebuilt = slots(DIMS, { value: ['client:initech'], edits: new Map([['client', 'initech']]) }).s;
+  assert.equal(rebuilt.dirty(), true, 'a rebuild can carry the edited slots over');
+  rebuilt.set([]);
+  assert.equal(rebuilt.dirty(), false);
+});
+
+test('dimension slots: edits() holds only the touched keys, a cleared slot included; a rebuild keeps them over the fill', () => {
+  const { s, window, doc } = slots(DIMS, { value: ['cc:4410', 'client:globex'] });
+  assert.deepEqual([...s.edits()], [], 'auto-filled values are not edits');
+  const client = doc.querySelector('.tag-dim-slot[data-key="client"] .tag-dim-input');
+  client.value = ''; client.dispatchEvent(new window.Event('input'));
+  assert.deepEqual([...s.edits()], [['client', '']], 'an explicit empty counts as touched');
+  // The next project fills client and cc: the cleared client stays empty, the untouched cc takes the new fill.
+  const next = slots(DIMS, { value: ['cc:4420', 'client:acme'], edits: s.edits() });
+  assert.deepEqual(next.s.get(), ['cc:4420']);
+  assert.equal(next.s.dirty(), true);
+  assert.deepEqual([...next.s.edits()], [['client', '']]);
+  // An untouched auto-filled slot does not travel: the next project without a cc leaves it empty.
+  const third = slots(DIMS, { value: [], edits: next.s.edits() });
+  assert.deepEqual(third.s.get(), []);
+  const typed = third.doc.querySelector('.tag-dim-slot[data-key="client"] .tag-dim-input');
+  typed.value = 'initech'; typed.dispatchEvent(new third.window.Event('input'));
+  assert.deepEqual(slots(DIMS, { value: ['cc:4410'], edits: third.s.edits() }).s.get(), ['cc:4410', 'client:initech']);
+  // A target without a client slot holds the edit, and the next target with one gets it back.
+  const noClient = slots([DIMS[0]], { value: [], edits: third.s.edits() }).s;
+  assert.deepEqual(noClient.get(), []);
+  assert.deepEqual(slots(DIMS, { value: ['client:acme'], edits: noClient.edits() }).s.get(), ['client:initech']);
 });
 
 test('dimension slots: an invalid value is flagged and not returned; set() clears the hint', () => {
@@ -169,7 +196,7 @@ const typeValue = (window, row, v, key = 'Enter') => {
 
 test('dimension editor (Settings › Tags): a table; empty has no rows; add, key from label, values, Default, Mandatory, remove', () => {
   const { ed, window } = editor();
-  assert.deepEqual([...ed.el.querySelectorAll('thead th')].map((th) => th.textContent), ['Tag', 'Values', 'Default', 'Mandatory', '']);
+  assert.deepEqual([...ed.el.querySelectorAll('thead th')].map((th) => th.textContent), ['Cost tag', 'Values', 'Default', 'Mandatory', '']);
   assert.equal(ed.el.querySelectorAll('.tag-dim-row').length, 0);
   ed.el.querySelector('.tag-dim-add').click();
   const row = ed.el.querySelector('.tag-dim-row');
@@ -211,4 +238,27 @@ test('dimension editor: set() paints rows with their Default; setLocked disables
   assert.ok([...ed.el.querySelectorAll('.tag-x')].every((b) => b.disabled));
   assert.ok([...ed.el.querySelectorAll('.tag-dim-remove')].every((b) => b.hidden));
   assert.equal(ed.el.querySelector('.tag-dim-add').hidden, true);
+});
+
+test('write mode: free text or a bare key is not committed — the message shows and the text stays (Enter and Tab)', () => {
+  const f = field({ value: ['urgent'] });           // a stored bare key on the run still shows as a chip
+  assert.deepEqual(f.chips(), ['urgent']);
+  f.type('hello world');
+  assert.equal(f.hint(), '"hello world": a tag is key:value, for example client:acme');
+  assert.equal(f.input.getAttribute('aria-invalid'), 'true');
+  assert.equal(f.input.value, 'hello world');
+  const tab = f.type('client', 'Tab');
+  assert.equal(tab.defaultPrevented, false, 'focus is never trapped');
+  assert.equal(f.hint(), '"client": a tag is key:value, for example client:acme');
+  assert.equal(f.input.value, 'client');
+  assert.deepEqual(f.t.get(), ['urgent']);
+  f.type('client:acme');
+  assert.deepEqual(f.t.get(), ['client:acme', 'urgent']);
+});
+
+test('a filter field (strict: false) still takes a bare key', () => {
+  const f = field({ strict: false });
+  f.type('client');
+  assert.deepEqual(f.t.get(), ['client']);
+  assert.equal(f.hint(), '');
 });

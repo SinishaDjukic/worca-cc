@@ -384,7 +384,7 @@ test('P4 the scope card: a pick switches the chat and continues the same message
         try { const r = await answer(t, body); assert.equal(r.status, 200); return await r.json(); }
         finally { if (prev === undefined) delete process.env.WORCA_BROKER_URL; else process.env.WORCA_BROKER_URL = prev; }
       };
-      const FAILED = 'Ask Worca could not reply to an event: no model available';
+      const FAILED = 'Chat could not reply to an event: no model available';
       await idle();
       const t = cardThread();
       const r = await noModel(t, { choice: android.key });

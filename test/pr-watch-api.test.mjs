@@ -15,6 +15,7 @@ import { writeStoreMeta, persistPrState, persistMemberPrState } from '../src/cor
 import { getWatch, updateWatch, setWatch, reserveBatch, watchRun, FIX_WORKFLOW_ID } from '../src/core/pr-watch.mjs';
 import { seedPipeline, seedWorkspacePipeline } from './helpers/db-seed.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
+import { editRunLabels } from '../src/core/run-labels-store.mjs';
 import { stopAndSettle } from './helpers/stop-and-settle.mjs';
 
 const GH = 'https://github.com/me/repo/pull/7';
@@ -206,6 +207,8 @@ test('the watcher origin is the run\'s member project, branch, guardrails, engin
   assert.equal(o.sourceBranch, 'main');
   assert.equal(o.baseRemote, 'origin', 'the conflict fix fetches the base from the project sync remote');
   assert.deepEqual([o.engine, o.mock, Object.hasOwn(o, 'stepper')], ['claude', false, false]);
+  editRunLabels(seeded.id, ['hotfix']);   // s2: the fix run carries the watched run's labels
+  assert.deepEqual(server.prWatchOrigin({ pipelineId: seeded.id, memberKey: '' }).labels, ['hotfix']);
   const w = server.prWatchOrigin({ pipelineId: wsId, memberKey: 'web-00000002' });
   assert.deepEqual([w.projectDir, w.branch, w.sourceBranch], [webDir, 'worca-cc/feat-web', 'dev']);
   // The engine the origin ran on, and a mock origin's persisted flag, carry over to its fix runs.

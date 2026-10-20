@@ -1,0 +1,145 @@
+// tools/button-audit.mjs (new) — the one-button-style audit (runs-redesign spec §1.2, §5.2; known bug 4).
+// auditButtons and auditSurface are serialised into the page by the CDP proofs as `(${auditButtons})(…)`, so their
+// bodies must not reference anything outside their own parameters.
+
+export const BUTTON_SPEC = Object.freeze({
+  sizes: ['btn-sm', 'btn-lg'],                          // none = medium
+  variants: ['btn-primary', 'btn-quiet', 'btn-danger'], // none = secondary
+  heights: { 'btn-sm': 28, '': 32, 'btn-lg': 40 },
+  fontSizes: { 'btn-sm': '12.5px', '': '13px', 'btn-lg': '14px' },
+  corners: ['6px', '0px'],                              // 0 for the joined halves of a split button
+  // D10: controls, not §1.2 buttons. They still obey the radius tokens (test/ui-design-language.test.mjs).
+  controls: ['.nav button', '.seg button', '.tab', '[role="tab"]', '[role="menuitem"]', '[role="menuitemradio"]',
+    '[role="menuitemcheckbox"]', '[role="option"]', '[role="radio"]', '[role="switch"]', '.switch', '.link-btn',
+    '.info-tip', '.act-tile', '.ob-door', '.seg-btn', '.btn-split-menu button', '.rd-tab', '.hd-tab', '.pd-tab', '.tp-tab', '.md-tab', '.af-tab',
+    '.wfl-tab', '.chat-home-tab', '.hd-cmt-tab', 'button.rd-srow', 'button.tl-tile', 'button.af-gal-card',
+    'button.pd-ov-card', 'button.wd-member', 'button.ask-activity-head', 'button.act-srow-name', 'button.runs-sec-head',
+    'button.gp-row', 'button.agent-row-head', 'button.hd-tree-file', 'button.hd-tree-dir', 'button.ask-filescard-thumb', 'button.ask-filescard-name', 'button.chat-home-act',
+    'button.chat-home-wf', 'button.chat-home-chat', 'button.chat-home-plan-open', 'button.release-row-add', 'button.release-row-edit',
+    'button.wfl-folder', 'button.mcp-setrow', 'button.mv-sec-toggle', 'button.proj-open', 'button.xtoggle',
+    '.mv-filter', '.mv-cp-terms-pill', '.cost-bd-btn', '.linkish', '.hd-dl-more-btn', '.plan-fold', '.plan-persp-edit', '.qopt', '.afb-main',
+    '.afb-folder', '.acct', '[class*="chip"]'],
+});
+
+/**
+ * Every visible action button under `root` that breaks the one component, as
+ * [{ sig, rule, got, text }]. `env` (tests only) supplies { style(el), rect(el), coarse }; in the page it is null and
+ * the real getComputedStyle / getBoundingClientRect are used.
+ */
+export function auditButtons(root, spec, env) {
+  const win = root.ownerDocument.defaultView;
+  const style = (env && env.style) || ((el) => win.getComputedStyle(el));
+  const rect = (env && env.rect) || ((el) => el.getBoundingClientRect());
+  const coarse = !!(env && env.coarse);
+  const sig = (el) => el.tagName.toLowerCase() + [...el.classList].sort().map((c) => `.${c}`).join('');
+  const visible = (el) => { const r = rect(el); return r.width > 0 && r.height > 0; };
+  const controls = spec.controls.join(',');
+  const out = [];
+  for (const el of root.querySelectorAll('button, input[type="button"], input[type="submit"], a.btn, [role="button"].btn')) {
+    if (!visible(el) || el.closest(controls)) continue;
+    const label = (el.getAttribute('aria-label') || el.textContent || '').trim().slice(0, 40);
+    const bad = (rule, got) => out.push({ sig: sig(el), rule, got: String(got), text: label });
+    const cl = el.classList;
+    if (!cl.contains('btn')) { bad('not-the-component', [...cl].join(' ') || '(no class)'); continue; }
+    const sizes = spec.sizes.filter((c) => cl.contains(c));
+    const variants = spec.variants.filter((c) => cl.contains(c));
+    if (sizes.length > 1) bad('two-sizes', sizes.join(' '));
+    if (variants.length > 1) bad('two-variants', variants.join(' '));
+    const size = sizes[0] || '';
+    const cs = style(el);
+    const h = Math.round(rect(el).height);
+    if (coarse ? h < 40 : h !== spec.heights[size]) bad('height', `${h}px`);
+    for (const k of ['borderTopLeftRadius', 'borderTopRightRadius', 'borderBottomRightRadius', 'borderBottomLeftRadius']) {
+      if (!spec.corners.includes(cs[k])) bad('corner', `${k} ${cs[k]}`);
+    }
+    if (cs.backgroundImage && cs.backgroundImage !== 'none') bad('gradient', cs.backgroundImage);
+    if (cs.boxShadow && cs.boxShadow !== 'none') bad('shadow-at-rest', cs.boxShadow);
+    if (cs.fontSize !== spec.fontSizes[size]) bad('font-size', cs.fontSize);
+    const weight = variants[0] === 'btn-primary' ? '600' : '500';
+    if (String(cs.fontWeight) !== weight) bad('font-weight', cs.fontWeight);
+    // A14: at most 3 words of visible text (the aria-label may be longer); one decided exception.
+    const shown = (el.textContent || '').replace(/[…]/g, '').trim();
+    const words = shown.split(/\s+/).filter((w) => /\w/.test(w));
+    if (words.length > 3 && !/^Approve with \d+ open issues?$/.test(shown)) bad('long-label', shown.slice(0, 40));
+  }
+  // One primary per group of actions (spec §1.3). A .btn-split (main half + caret) is one action (D11).
+  const isPrimary = (c) => visible(c) && (c.classList.contains('btn-primary')
+    || (c.classList.contains('btn-split') && !!c.querySelector(':scope > .btn-primary')));
+  const groups = new Set();
+  for (const el of root.querySelectorAll('.btn.btn-primary')) {
+    if (!visible(el) || !el.parentElement) continue;
+    const p = el.parentElement.classList.contains('btn-split') ? el.parentElement.parentElement : el.parentElement;
+    if (p) groups.add(p);
+  }
+  for (const p of groups) {
+    const n = [...p.children].filter(isPrimary).length;
+    if (n > 1) out.push({ sig: sig(p), rule: 'two-primaries', got: String(n), text: '' });
+  }
+  return out;
+}
+
+export const SURFACE_SPEC = Object.freeze({
+  heights: [28, 32, 40],
+  infoMin: 24,
+  controls: ['.tab', '.seg', '.wfl-chip', '.wfl-folder', '.chat-home-preset'],
+  tiles: { sel: '.chat-home-act', min: 56, max: 64 },
+  cards: ['.ask-card', '.chat-rc', '.shape-feature', '.rd-sheet', '.card'],
+  fields: '.file, .ta-hl-back',   // input-like boxes (the file drop zone, a textarea's highlight backdrop) keep their borders
+  floating: '[role="menu"], [role="dialog"], [role="listbox"], [role="tooltip"], .confirm-modal, .info-bubble, .tsearch-list',
+  bars: ['.runs-row-prog > i', '.run-prog-fill', '.run-prog > i'],
+  blue: ['rgb(91, 166, 204)'],
+});
+
+/** Size scale, shadows, tabs, nesting, bars and flag chips (UI/UX review 2026-10-19 A–C) under `root`. */
+export function auditSurface(root, spec, env) {
+  const win = root.ownerDocument.defaultView;
+  const style = (env && env.style) || ((el) => win.getComputedStyle(el));
+  const rect = (env && env.rect) || ((el) => el.getBoundingClientRect());
+  const out = [];
+  const sig = (el) => el.tagName.toLowerCase() + [...el.classList].sort().map((c) => `.${c}`).join('');
+  const visible = (el) => { const r = rect(el); return r.width > 0 && r.height > 0; };
+  const bad = (el, rule, got) => out.push({ sig: sig(el), rule, got: String(got), text: (el.textContent || '').trim().slice(0, 40) });
+  const bordered = (cs) => ['Top', 'Right', 'Bottom', 'Left'].filter((s) => parseFloat(cs[`border${s}Width`]) > 0 && cs[`border${s}Style`] !== 'none').length >= 3;
+  const h = (el) => Math.round(rect(el).height);
+  for (const el of root.querySelectorAll(spec.controls.join(','))) {
+    if (visible(el) && !spec.heights.includes(h(el))) bad(el, 'control-height', `${h(el)}px`);
+  }
+  for (const el of root.querySelectorAll(spec.tiles.sel)) {
+    if (visible(el) && (h(el) < spec.tiles.min || h(el) > spec.tiles.max)) bad(el, 'control-height', `${h(el)}px`);
+  }
+  // QA 1: a badge never truncates (its text wider than its box).
+  const size = (env && env.size) || ((el) => ({ scroll: el.scrollWidth, client: el.clientWidth }));
+  for (const el of root.querySelectorAll('[class*="badge"]')) {
+    if (!visible(el) || el.classList.contains('auto-badge')) continue;
+    const s = size(el);
+    if (s.client > 0 && s.scroll > s.client + 1) bad(el, 'badge-truncated', `${s.scroll}px in ${s.client}px`);
+  }
+  for (const el of root.querySelectorAll('.info-tip')) if (visible(el) && h(el) < spec.infoMin) bad(el, 'control-height', `${h(el)}px`);
+  for (const el of root.querySelectorAll('*')) {
+    if (!visible(el) || el.closest(spec.floating)) continue;
+    const cs = style(el);
+    const pos = cs.position;
+    if (pos === 'fixed' || pos === 'absolute' || pos === 'sticky') continue;   // floats over content
+    if (cs.boxShadow && cs.boxShadow !== 'none' && !/inset/.test(cs.boxShadow)
+      && !/\b0px 0px 0px [\d.]+px\b/.test(cs.boxShadow)) bad(el, 'shadow-at-rest', cs.boxShadow);
+  }
+  for (const el of root.querySelectorAll('[role="tab"], .tab')) {
+    if (!visible(el)) continue;
+    const cs = style(el);
+    if (bordered(cs) || (cs.backgroundColor && !/^(?:transparent|rgba\(0, 0, 0, 0\))$/.test(cs.backgroundColor))) bad(el, 'boxed-tab', cs.backgroundColor);
+  }
+  for (const card of root.querySelectorAll(spec.cards.join(','))) {
+    if (!visible(card) || !bordered(style(card))) continue;
+    for (const el of card.querySelectorAll('div, section, article, li, fieldset')) {
+      if (visible(el) && !el.matches(spec.fields) && bordered(style(el))) bad(el, 'nested-border', sig(card));
+    }
+  }
+  for (const el of root.querySelectorAll(spec.bars.join(','))) {
+    if (visible(el) && spec.blue.includes(style(el).backgroundColor)) bad(el, 'blue-bar', style(el).backgroundColor);
+  }
+  for (const c of root.querySelectorAll('.flag-chip')) {
+    const p = c.parentElement;
+    if (p && p.matches('[role="tablist"], .tabs, .seg')) bad(c, 'chip-outside-label', p.className);
+  }
+  return out;
+}

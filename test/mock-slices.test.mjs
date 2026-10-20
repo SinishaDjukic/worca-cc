@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, readFile, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runMock, mockPlanMarkdown, MOCK_OUTLINE } from '../src/core/engines/mock.mjs';
+import { runMock, mockPlanMarkdown, MOCK_OUTLINE, MOCK_OUTLINE_3 } from '../src/core/engines/mock.mjs';
 
 const scratch = [];
 const tmp = async () => { const d = await mkdtemp(join(tmpdir(), 'worca-mock-sl-')); scratch.push(d); return d; };
@@ -46,4 +46,19 @@ test('without the phrase, or without the marker, the plan is written as today an
   await run({}, 'plan this in slices');
   assert.equal(await readFile(out, 'utf8'), mockPlanMarkdown('demo', 1));
   assert.equal(await exists(slices), false);
+});
+
+test('"plan this in 3 slices" writes the three-run outline (s2 depends on s1, s3 on s2); "plan this in slices" still writes two', async () => {
+  const dir = await tmp();
+  const write = async (phrase) => {
+    const slices = join(dir, `${phrase.length}.json`);
+    await runMock({ cwd: dir, systemPrompt: '', onEvent: () => {},
+      prompt: `${markers({ MOCK_ROLE: 'planner-plan', MOCK_BASE: 'demo', MOCK_OUT: join(dir, 'plan.md'), MOCK_SLICES: slices })}\n${phrase}` });
+    return JSON.parse(await readFile(slices, 'utf8'));
+  };
+  const three = await write('Please plan this in 3 slices.');
+  assert.ok(Object.isFrozen(MOCK_OUTLINE_3));
+  assert.deepEqual(three, MOCK_OUTLINE_3);
+  assert.deepEqual(three.slices.map((s) => s.dependsOn), [[], ['s1'], ['s2']]);
+  assert.equal((await write('plan this in slices')).slices.length, 2);
 });

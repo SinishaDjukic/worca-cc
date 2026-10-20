@@ -6,7 +6,7 @@
 import { test, before, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtemp, mkdir, rm, symlink, realpath } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, symlink, realpath, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -157,6 +157,51 @@ test('remote mode: adding, installing into and rooting at a folder outside are r
     { name: 'POST /api/settings projectsRoot / root outside -> 403', run: async () => {
       refused(await remote('POST', '/api/settings', { projectsRoot: outside }));
       refused(await remote('POST', '/api/settings', { root: outside }));
+    } },
+  ]);
+});
+
+test('remote mode: the workspace wizard import reads only inside Worca\'s folders', async () => {
+  const importOf = (body) => remote('POST', '/api/workspaces/import-candidates', body);
+  const outsideRow = (r, path) => {
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const row = r.body.candidates.find((c) => c.path === path);
+    assert.ok(row, `a row for ${path}: ${JSON.stringify(r.body.candidates)}`);
+    assert.equal(row.status, 'problem');
+    assert.match(row.problem, /outside Worca's data and projects folders/);
+  };
+  await checkRows([
+    { name: 'a picked or pasted path outside is a problem row, nothing about it is read', run: async () => {
+      outsideRow(await importOf({ paths: [join(outside, 'secret')] }), join(outside, 'secret'));
+      outsideRow(await importOf({ text: `${join(outside, 'no-such-dir')}\n` }), join(outside, 'no-such-dir'));
+      outsideRow(await importOf({ paths: [`${projects}/app/../../outside`] }), outside);
+    } },
+    { name: 'a folder inside is searched without following the escaping link, even to a repository', run: async () => {
+      await mkdir(join(outside, 'secret', '.git'), { recursive: true });
+      try {
+        for (const depth of [1, 2]) {
+          const r = await importOf({ paths: [projects], depth });
+          assert.equal(r.status, 200, JSON.stringify(r.body));
+          assert.ok(r.body.candidates.length > 0);
+          for (const c of r.body.candidates) assert.ok(c.path.startsWith(projects + '/'), `${c.path} is inside`);
+          assert.ok(!r.body.candidates.some((c) => c.path.startsWith(join(projects, 'escape'))), 'the link is not listed');
+        }
+      } finally { await rm(join(outside, 'secret', '.git'), { recursive: true, force: true }); }
+    } },
+    { name: 'a .code-workspace inside naming a folder outside: that row is a problem', run: async () => {
+      const ws = join(projects, 'team.code-workspace');
+      await writeFile(ws, JSON.stringify({ folders: [{ path: '../outside/secret' }, { path: 'other' }] }));
+      try {
+        outsideRow(await importOf({ paths: [ws] }), join(outside, 'secret'));
+      } finally { await rm(ws, { force: true }); }
+    } },
+    { name: 'WORCA_TERMINAL_REMOTE=1 lifts it', run: async () => {
+      process.env.WORCA_TERMINAL_REMOTE = '1';
+      try {
+        const r = await importOf({ paths: [join(outside, 'secret')] });
+        assert.equal(r.status, 200, JSON.stringify(r.body));
+        assert.doesNotMatch(r.body.candidates[0].problem || '', /outside Worca's data/);
+      } finally { delete process.env.WORCA_TERMINAL_REMOTE; }
     } },
   ]);
 });

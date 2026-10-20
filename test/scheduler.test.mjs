@@ -15,7 +15,7 @@ import {
   dependentsOfWorkflow, dueTickets, runDueTickets, recordOutcome, recoverScheduler, purgeScheduler,
   scheduleCounts, summarizeRequest, RETRY_BACKOFF_MIN, AFTER_RUN_AT,
   afterRefOf, predecessorState, previousBranchesOf, dependentsOfRun, resolveAfterRef,
-  chainBaseBranchesOf, markTicketFired, cancelResumeTicketsFor, runChains,
+  chainBaseBranchesOf, stackedPrBaseOf, markTicketFired, cancelResumeTicketsFor, runChains,
 } from '../src/core/scheduler.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { listNotifications, unreadCount } from '../src/core/notifications.mjs';
@@ -700,6 +700,68 @@ test('chainBaseBranchesOf: walks a from-its-branch chain root first, stops at a 
   ]);
 });
 
+// ── stackedPrBaseOf: the PR dialog's default base for a run started from the previous run's branch ──
+const prOf = (id, state) =>
+  getDb().prepare('UPDATE pipelines SET pr_url = ?, pr_state = ? WHERE id = ?').run(`https://github.com/o/r/pull/${id}`, state, id);
+
+test('stackedPrBaseOf: a from-its-branch run stacks on its source until the previous run\'s PR merges; no previous run or a workspace row never stacks', async () => {
+  await checkRows([
+    { name: 'a plain chain stacks while the previous run has no PR, an open PR or a closed PR, and falls back once it merged', run: () => {
+      clearTables();
+      chainRun('s0000001', 'dev', 'nb1');
+      chainRun('s0000002', 'nb1', 'nb2');
+      chainFire('s0000002', { kind: 'pipeline', id: 's0000001' });
+      const chain = chainBaseBranchesOf('s0000002');
+      assert.deepEqual(chain, ['dev', 'nb1']);
+      assert.equal(stackedPrBaseOf('s0000002', chain), 'nb1', 'no PR yet');
+      prOf('s0000001', 'OPEN');
+      assert.equal(stackedPrBaseOf('s0000002', chain), 'nb1', 'open');
+      prOf('s0000001', 'CLOSED');
+      assert.equal(stackedPrBaseOf('s0000002', chain), 'nb1', 'closed is not merged');
+      prOf('s0000001', 'MERGED');
+      assert.equal(stackedPrBaseOf('s0000002', chain), null, 'merged: the chain root again');
+    } },
+    { name: 'the previous run is the direct one, also when chained on the ticket that became it', run: () => {
+      clearTables();
+      chainRun('s0000011', 'dev', 'nb1');
+      chainRun('s0000012', 'nb1', 'nb2');
+      chainRun('s0000013', 'nb2', 'nb3');
+      const t2 = chainFire('s0000012', { kind: 'pipeline', id: 's0000011' });
+      chainFire('s0000013', { kind: 'ticket', id: t2.id });
+      const chain = chainBaseBranchesOf('s0000013');
+      assert.deepEqual(chain, ['dev', 'nb1', 'nb2']);
+      prOf('s0000011', 'OPEN');
+      prOf('s0000012', 'MERGED');
+      assert.equal(stackedPrBaseOf('s0000013', chain), null, 'only the direct previous run\'s PR counts');
+      prOf('s0000011', 'MERGED');
+      prOf('s0000012', 'OPEN');
+      assert.equal(stackedPrBaseOf('s0000013', chain), 'nb2');
+    } },
+    { name: 'no previous run: a lone run, a run not started from its branch, an unknown run, no chain', run: () => {
+      clearTables();
+      chainRun('s0000021', 'dev', 'nb1');
+      assert.equal(stackedPrBaseOf('s0000021', chainBaseBranchesOf('s0000021')), null, 'a chain of 1');
+      chainRun('s0000022', 'nb1', 'nb2');
+      chainFire('s0000022', { kind: 'pipeline', id: 's0000021' }, false);
+      assert.deepEqual(chainBaseBranchesOf('s0000022'), ['nb1']);
+      assert.equal(stackedPrBaseOf('s0000022', ['dev', 'nb1']), null, 'not "from its branch": no previous run even with a chain of 2');
+      assert.equal(stackedPrBaseOf('nope', ['dev', 'nb1']), null);
+      assert.equal(stackedPrBaseOf('s0000022', null), null);
+    } },
+    { name: 'a workspace row never stacks: a member keeps its own source', run: () => {
+      clearTables();
+      chainRun('s0000031', 'dev', 'nb1');
+      seedPipelineRow({ id: 's0000032', title: 's0000032', status: 'done', target: 'workspace', workspaceKey: 'wks-00000001',
+        startedAt: new Date(T0).toISOString(), branch: { source: 'nb1', feature: 'nb2' } });
+      chainFire('s0000032', { kind: 'pipeline', id: 's0000031' });
+      prOf('s0000031', 'OPEN');
+      assert.deepEqual(chainBaseBranchesOf('s0000032'), [], 'a workspace row has no chain');
+      assert.equal(stackedPrBaseOf('s0000032', []), null);
+      assert.equal(stackedPrBaseOf('s0000032', ['dev', 'nb1']), null, 'not even with a chain of 2');
+    } },
+  ]);
+});
+
 // ── runChains: the open "Run after" chains, root first (run progress P8) ───────
 test('runChains: lists each open chain in pre-order with member states, links only https PRs, and survives forks, cycles and purged links', async () => {
   const setPr = (id, url) => getDb().prepare('UPDATE pipelines SET pr_url = ? WHERE id = ?').run(url, id);
@@ -727,6 +789,7 @@ test('runChains: lists each open chain in pre-order with member states, links on
       assert.equal(chains[0].members[0].prUrl, 'https://github.com/acme/app/pull/7');
       assert.equal(chains[0].members[1].prUrl, null);
       assert.equal(chains[0].members[2].ticketId, t3.id);
+      assert.deepEqual(chains[0].members.map((m) => m.after), [null, 1, 2], 'D29: each member names the position it runs after');
     } },
     { name: 'a javascript: pr_url yields prUrl null', run: () => {
       clearTables();
@@ -766,6 +829,7 @@ test('runChains: lists each open chain in pre-order with member states, links on
       assert.equal(chains.length, 1);
       assert.deepEqual(chains[0].members.slice(0, 3).map((m) => m.pipelineId), ['p0000041', 'p0000042', 'p0000043']);
       assert.equal(chains[0].members.length, 4);
+      assert.deepEqual(chains[0].members.map((m) => m.after), [null, 1, 1, 1], 'forked children all run after the root');
     } },
     { name: 'a hand-made cycle has no root and is not listed', run: () => {
       clearTables();
@@ -878,7 +942,7 @@ test('a paused usage limit an engine hit says it can continue now on the other e
   recordOutcome(await fire('20'), { status: 'paused', reason: 'usage_limit', detail: 'free requests used up' });
   const msgs = listNotifications().filter((n) => n.kind === 'run_paused' && n.scheduleId === schedule.id).map((n) => n.message).reverse();
   assert.deepEqual(msgs, [
-    "paused (usage limit): You've hit your usage limit — resume on Claude or Cursor to continue now.",
+    "paused (usage limit): You've hit your usage limit — resume on Claude, Copilot or Cursor to continue now.",
     'paused (usage limit): free requests used up',
   ]);
 });

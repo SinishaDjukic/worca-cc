@@ -5,7 +5,8 @@
 export function csvCell(v) {
   if (v == null) return '';
   let s = String(v);
-  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;            // spreadsheet formula injection guard
+  // spreadsheet formula injection guard; a finite number cannot carry a formula, and a negative Saved must stay numeric
+  if (!(typeof v === 'number' && Number.isFinite(v)) && /^[=+\-@\t\r]/.test(s)) s = `'${s}`;
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 

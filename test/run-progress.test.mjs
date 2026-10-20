@@ -4,13 +4,17 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   runProgress, chainProgress, ordinal, progressWidth, progressTone, askWhat,
-  PROGRESS_STAGES, STAGE_LABEL, REVIEW_STEP, REVIEW_CAP,
+  PROGRESS_STAGES, STAGE_LABEL, REVIEW_STEP, REVIEW_CAP, START_SHARE, groupProgress,
 } from '../src/shared/run-progress.mjs';
 import { buildGraphManifest } from '../src/shared/graph/manifest.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
-import { GRAPH_DEFAULT_WORKFLOW, GRAPH_PR_FIX_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, GRAPH_WORKSPACE_SCAN_WORKFLOW } from '../src/core/graph/builtin-workflows.mjs';
+import {
+  GRAPH_DEFAULT_WORKFLOW, GRAPH_PR_FIX_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, GRAPH_WORKSPACE_SCAN_WORKFLOW,
+  GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW,
+} from '../src/core/graph/builtin-workflows.mjs';
 import { GRAPH_ARCHITECTURE_WORKFLOW } from '../src/core/graph/architecture-workflow.mjs';
 import { GRAPH_PRESENTATION_WORKFLOW } from '../src/core/graph/presentation-workflow.mjs';
+import { GRAPH_PROMO_VIDEO_WORKFLOW } from '../src/core/graph/promo-video-workflow.mjs';
 import { SEED_TEMPLATES } from '../src/core/graph/seed-templates.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -71,7 +75,7 @@ test('stages map: the wf_default shape moves Plan → Build → Review → Ready
       const p = runProgress(S({ steps: [row('n_clarify'), row('n_plan'), row('n_refine'), row('n_impl', 1, { status: 'start' })], active: [live('n_impl')] }));
       assert.equal(p.stage, 'build');
       assert.equal(p.text, 'Build · Implementation');
-      near(p.fraction, 0.25);
+      near(p.fraction, 0.25 + START_SHARE / 4);
     } },
     { name: 'reviewer active at cycle 1 → Review · 1st pass', run: () => {
       const p = runProgress(S({ steps: [row('n_plan'), row('n_impl'), row('n_rev', 1, { status: 'start' })], active: [live('n_rev')] }));
@@ -103,7 +107,7 @@ test('stages map: the wf_default shape moves Plan → Build → Review → Ready
       assert.equal(p.fraction, 0);
       assert.equal(p.text, 'Plan · choosing the workflow');
       const q = runProgress(S({ stepper, pendingQuestion: { kind: 'workflow' } }));
-      assert.equal(q.text, 'Plan · needs you: review the workflow');
+      assert.equal(q.text, 'Plan · needs you · review the workflow');
       assert.equal(q.tone, 'amber');
     } },
     { name: 'the same empty graph WITHOUT the auto tag stays P6', run: () => {
@@ -119,12 +123,64 @@ test('shipped workflows built from the real sidecars: staged ones get stages, th
   await checkRows([
     { name: 'wf_default', run: () => assert.equal(modeOf(GRAPH_DEFAULT_WORKFLOW), 'stages') },
     ...SEED_TEMPLATES.map((tpl) => ({ name: `seed ${tpl.id}`, run: () => assert.equal(modeOf(tpl), 'stages') })),
+    { name: 'wf_shape', run: () => assert.equal(modeOf(GRAPH_SHAPE_WORKFLOW), 'stages') },
+    { name: 'wf_shape_ux', run: () => assert.equal(modeOf(GRAPH_SHAPE_UX_WORKFLOW), 'stages') },
     { name: 'wf_pr_fix', run: () => assert.equal(modeOf(GRAPH_PR_FIX_WORKFLOW), 'stages') },
     { name: 'wf_architecture_c4', run: () => assert.equal(modeOf(GRAPH_ARCHITECTURE_WORKFLOW), 'stages') },
     { name: 'wf_memory_defrag', run: () => assert.equal(modeOf(GRAPH_MEMORY_DEFRAG_WORKFLOW), 'nodes') },
     { name: 'wf_workspace_scan', run: () => assert.equal(modeOf(GRAPH_WORKSPACE_SCAN_WORKFLOW), 'nodes') },
     { name: 'wf_presentation', run: () => assert.equal(modeOf(GRAPH_PRESENTATION_WORKFLOW), 'nodes') },
   ]);
+});
+
+// Known bugs 1 and 2 over every shipped workflow's real step list.
+const SHIPPED = () => [GRAPH_DEFAULT_WORKFLOW, GRAPH_PR_FIX_WORKFLOW, GRAPH_ARCHITECTURE_WORKFLOW, GRAPH_SHAPE_WORKFLOW,
+  GRAPH_SHAPE_UX_WORKFLOW, ...SEED_TEMPLATES, GRAPH_MEMORY_DEFRAG_WORKFLOW, GRAPH_WORKSPACE_SCAN_WORKFLOW,
+  GRAPH_PRESENTATION_WORKFLOW, GRAPH_PROMO_VIDEO_WORKFLOW];
+
+test('every shipped workflow: each staged step reports its own stage, and no step repeats its stage (Known bugs 1, 2)', async () => {
+  const registry = loadAgentRegistry(undefined, { userAgentsDir: null });
+  const rows = [];
+  for (const tpl of SHIPPED()) {
+    const stepper = buildGraphManifest(tpl, registry);
+    // Walk the steps in stage order: RR appends n_roles (a plan-stage reviewer) after n_review / n_end in the node list.
+    const rank = (n) => { const i = ['plan', 'build', 'review'].indexOf(n.progressStage); return i < 0 ? 9 : i; };
+    const order = stepper.graph.nodes.filter((n) => n.kind === 'agent' || n.kind === 'script').sort((x, y) => rank(x) - rank(y));
+    order.forEach((n, i) => rows.push({ name: `${tpl.id} ${n.key}`, run: () => {
+      const done = order.slice(0, i).map((d) => row(d.id));
+      const p = runProgress({ stepper, status: 'running', steps: [...done, row(n.id, 1, { status: 'start' })],
+        active: [live(n.id)], tokens: {}, progressFacts: { tasks: {}, reviews: {} } });
+      if (n.progressStage) assert.equal(p.stage, n.progressStage, `${n.label} is a ${n.progressStage} step`);
+      const [head, ...tail] = p.text.split(' · ');
+      assert.notEqual(tail.join(' · ').toLowerCase(), head.toLowerCase(), `"${p.text}" repeats its stage`);
+    } }));
+  }
+  await checkRows(rows);
+});
+
+test('the real planner (displayName "Plan") reads "Plan", its step is empty', () => {
+  const registry = loadAgentRegistry(undefined, { userAgentsDir: null });
+  const stepper = buildGraphManifest(GRAPH_DEFAULT_WORKFLOW, registry);
+  const p = runProgress({ stepper, status: 'running', steps: [row('n_clarify'), row('n_plan', 1, { status: 'start' })],
+    active: [live('n_plan')], tokens: {}, progressFacts: { tasks: {}, reviews: {} } });
+  assert.equal(p.text, 'Plan');
+  assert.equal(p.step, '');
+  assert.equal(p.what, '');
+});
+
+test('start share: a begun stage with nothing finished fills START_SHARE of its quarter', () => {
+  const p = runProgress(S({ steps: [row('n_clarify', 1, { status: 'start' })], active: [live('n_clarify')] }));
+  near(p.fraction, START_SHARE / 4);
+  assert.deepEqual(p.fill.map((f) => Number(f.toFixed(4))), [START_SHARE, 0, 0, 0]);
+});
+
+test('groupProgress: (finished + current fill) ÷ members, Planning counted', () => {
+  const cur = { state: 'current', progress: { fraction: 0.5 } };
+  near(groupProgress([{ state: 'done' }, cur, { state: 'waiting' }]).fraction, 1.5 / 3);
+  near(groupProgress([{ state: 'done' }, cur, { state: 'waiting' }], { planning: { state: 'done' } }).fraction, 2.5 / 4);
+  const memo = {};
+  groupProgress([cur], { memo });
+  near(groupProgress([{ state: 'current', progress: { fraction: 0.2 } }], { memo }).fraction, 0.5, 'never backwards');
 });
 
 test('absent stages count as passed once every stage before them is whole', async () => {
@@ -203,10 +259,10 @@ test('build by tasks: a decomposition feeding a build agent moves the fill on ta
       }));
       assert.equal(p.tasks.done, 1);
     } },
-    { name: 'decomposer active with no tasks yet → "Build · Decompose" at .25', run: () => {
+    { name: 'decomposer active with no tasks yet → "Build · Decompose" at .25 + START_SHARE / 4', run: () => {
       const p = runProgress(TS({ steps: [row('n_decomp', 1, { status: 'start' })], active: [live('n_decomp')] }));
       assert.equal(p.text, 'Build · Decompose');
-      near(p.fraction, 0.25);
+      near(p.fraction, 0.25 + START_SHARE / 4);
     } },
   ]);
 });
@@ -314,26 +370,26 @@ test('review cap: passes fill the quarter up to 0.8 until a clean pass', async (
 test('tone and text while waiting, parked or ended', async () => {
   const planning = { steps: [row('n_clarify', 1, { status: 'start' })], active: [live('n_clarify')] };
   await checkRows([
-    { name: 'three questions while planning → amber, "Plan · needs you: answer 3 questions"', run: () => {
+    { name: 'three questions while planning → amber, "Plan · needs you · answer 3 questions"', run: () => {
       const p = runProgress(S({ ...planning, pendingQuestion: { questions: [{}, {}, {}] } }));
       assert.equal(p.tone, 'amber');
-      assert.equal(p.text, 'Plan · needs you: answer 3 questions');
+      assert.equal(p.text, 'Plan · needs you · answer 3 questions');
     } },
     { name: 'gate / form / recovery / one question', run: () => {
-      assert.equal(runProgress(S({ ...planning, pendingQuestion: { kind: 'gate' } })).text, 'Plan · needs you: a decision');
-      assert.equal(runProgress(S({ ...planning, pendingQuestion: { kind: 'form' } })).text, 'Plan · needs you: input needed');
-      assert.equal(runProgress(S({ ...planning, pendingQuestion: { kind: 'recovery' } })).text, 'Plan · needs you: a step failed');
-      assert.equal(runProgress(S({ ...planning, pendingQuestion: { questions: [{}] } })).text, 'Plan · needs you: answer 1 question');
-      assert.equal(runProgress(S({ ...planning, pendingQuestion: {} })).text, 'Plan · needs you: answer a question');
+      assert.equal(runProgress(S({ ...planning, pendingQuestion: { kind: 'gate' } })).text, 'Plan · needs you · a decision');
+      assert.equal(runProgress(S({ ...planning, pendingQuestion: { kind: 'form' } })).text, 'Plan · needs you · input needed');
+      assert.equal(runProgress(S({ ...planning, pendingQuestion: { kind: 'recovery' } })).text, 'Plan · needs you · a step failed');
+      assert.equal(runProgress(S({ ...planning, pendingQuestion: { questions: [{}] } })).text, 'Plan · needs you · answer 1 question');
+      assert.equal(runProgress(S({ ...planning, pendingQuestion: {} })).text, 'Plan · needs you · answer a question');
     } },
     { name: 'a plan approval, a slice outline and Clarify name the wait (D33)', run: () => {
       const text = (pq) => runProgress(S({ ...planning, pendingQuestion: pq })).text;
-      assert.equal(text({ kind: 'plan', plan: { round: 1, nodeId: 'n_plan' } }), 'Plan · needs you: approve the plan');
-      assert.equal(text({ kind: 'plan', plan: { port: 'outline', outline: { why: 'w', slices: [{}, {}] } } }), 'Plan · needs you: approve the slices');
-      assert.equal(text({ kind: 'clarify', questions: [{}, {}] }), 'Plan · needs you: answer 2 questions');
-      assert.notEqual(text({ kind: 'plan', plan: {} }), 'Plan · needs you: answer a question');
+      assert.equal(text({ kind: 'plan', plan: { round: 1, nodeId: 'n_plan' } }), 'Plan · needs you · approve the plan');
+      assert.equal(text({ kind: 'plan', plan: { port: 'outline', outline: { why: 'w', slices: [{}, {}] } } }), 'Plan · needs you · approve the slices');
+      assert.equal(text({ kind: 'clarify', questions: [{}, {}] }), 'Plan · needs you · answer 2 questions');
+      assert.notEqual(text({ kind: 'plan', plan: {} }), 'Plan · needs you · answer a question');
       const p6 = { stepper: manifest([agent('n_a', 'deckA'), end()]) };
-      assert.equal(runProgress(S({ ...p6, pendingQuestion: { kind: 'plan', plan: {} } })).text, 'Needs you: approve the plan');
+      assert.equal(runProgress(S({ ...p6, pendingQuestion: { kind: 'plan', plan: {} } })).text, 'Needs you · approve the plan');
     } },
     { name: 'paused / pausing / interrupted → amber', run: () => {
       assert.equal(runProgress(S({ ...planning, status: 'paused' })).tone, 'amber');
@@ -356,7 +412,7 @@ test('tone and text while waiting, parked or ended', async () => {
     } },
     { name: 'P6 waiting text', run: () => {
       const st = { stepper: manifest([agent('n_a', 'deckA'), end()]) };
-      assert.equal(runProgress(S({ ...st, pendingQuestion: { kind: 'gate' } })).text, 'Needs you: a decision');
+      assert.equal(runProgress(S({ ...st, pendingQuestion: { kind: 'gate' } })).text, 'Needs you · a decision');
       assert.equal(runProgress(S({ ...st, status: 'paused' })).text, 'Paused');
       assert.equal(runProgress(S({ ...st, status: 'stopped' })).text, 'Stopped');
       assert.equal(runProgress(S({ ...st, status: 'error' })).text, 'Failed');
@@ -434,4 +490,54 @@ test('chainProgress: one equal part per run', async () => {
       assert.equal(e.text, '');
     } },
   ]);
+});
+
+// ── role reviews (spec §3/§4a): "Plan · role reviews[, round N]", and never "Plan · Plan" ──
+
+test('role reviews: the shape workflows read "Plan · role reviews[, round 2]" while n_roles runs; an active Planner reads "Plan"', async () => {
+  const registry = loadAgentRegistry(undefined, { userAgentsDir: null });
+  const sliceRow = (ordinal, role, status) => step({ executionId: `x:n_roles:${ordinal}:role-${role}`, nodeId: 'n_roles', ordinal,
+    kind: 'task', taskId: `role-${role}`, phaseOrdinal: 1, status });
+  const rows = [];
+  for (const tpl of [GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW]) {
+    const stepper = buildGraphManifest(tpl, registry);
+    const at = (over) => runProgress(S({ stepper, ...over }));
+    rows.push({ name: `${tpl.id} planner`, run: () => {
+      const p = at({ steps: [row('n_clarify')], active: [live('n_plan')] });
+      assert.equal(p.text, 'Plan', 'known bug 1: never "Plan · Plan"');
+    } });
+    rows.push({ name: `${tpl.id} round 1`, run: () => {
+      const p = at({ steps: [row('n_clarify'), row('n_plan'), sliceRow(1, 'ux', 'start')], active: [live('n_roles')],
+        progressFacts: { tasks: {}, reviews: {}, roleReview: { nodeId: 'n_roles', round: 1 } } });
+      assert.equal(p.text, 'Plan · role reviews');
+      assert.equal(p.stage, 'plan');
+    } });
+    rows.push({ name: `${tpl.id} round 2`, run: () => {
+      const p = at({ steps: [row('n_clarify'), row('n_plan'), sliceRow(1, 'ux', 'done'), row('n_refine'), sliceRow(2, 'ux', 'start')],
+        active: [live('n_roles', 2)], progressFacts: { tasks: {}, reviews: {}, roleReview: { nodeId: 'n_roles', round: 2 } } });
+      assert.equal(p.text, 'Plan · role reviews, round 2');
+      assert.equal(p.stage, 'plan');
+    } });
+    rows.push({ name: `${tpl.id} replay never decreases`, run: () => {
+      const memo = {};
+      const fact = (round) => ({ tasks: {}, reviews: {}, roleReview: { nodeId: 'n_roles', round } });
+      const frames = [
+        { steps: [row('n_clarify')], active: [live('n_plan')] },
+        { steps: [row('n_clarify'), row('n_plan')], active: [live('n_roles')], progressFacts: fact(1) },
+        { steps: [row('n_clarify'), row('n_plan'), sliceRow(1, 'ux', 'done')], active: [live('n_refine')], progressFacts: fact(1) },
+        { steps: [row('n_clarify'), row('n_plan'), sliceRow(1, 'ux', 'done'), row('n_refine')], active: [live('n_roles', 2)], progressFacts: fact(2) },
+        { steps: [row('n_clarify'), row('n_plan'), sliceRow(1, 'ux', 'done'), row('n_refine'), sliceRow(2, 'ux', 'done')],
+          active: [live('n_refine', 2)], progressFacts: fact(2) },
+      ];
+      let prev = -1;
+      for (const f of frames) {
+        const p = runProgress(S({ stepper, ...f }), memo);
+        assert.equal(p.stage, 'plan');
+        assert.ok(p.fraction >= prev, `${p.fraction} < ${prev}`);
+        assert.doesNotMatch(p.text, /Plan · Plan/);
+        prev = p.fraction;
+      }
+    } });
+  }
+  await checkRows(rows);
 });

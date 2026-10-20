@@ -14,7 +14,8 @@ const html = readFileSync(fileURLToPath(new URL('../ui/public/index.html', impor
 const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
 const MARKUP = ['#branch-fields', '#proj-add-tab-clone', '#sync-settings-card', '#actions-settings-card', '.rd-page-branch',
   '.retained-banner', '.rd-pr-box', '.rd-base', '.rd-branch-copy', '.rd-sync', '.merge-back-banner', '.hist-merge', '.hd-pr',
-  '.hd-publish', '.hd-pr-link', '.hd-push', '.hd-published', '.hd-base-check', '.hd-pr-repos', '.hd-base', '.hd-branch-copy'];
+  '.hd-publish', '.hd-pr-link', '.hd-push', '.hd-published', '.hd-base-check', '.hd-pr-repos', '.hd-base', '.hd-branch-copy',
+  '.wiz-import', '[data-pdest="marketplace"]', '#export-marketplace-field'];   // dev's git-spawning workspace import and #717 export
 const KEPT = ['[data-nav="workspaces"]', '[data-nav="marketplace"]', '[data-nav="team-metrics"]', '[data-nav="team-policy"]',
   '#plugin-add-btn', '#marketplace-add-row', '#proj-add-tab-folder', '#projectSelect'];
 const doc = (git) => trackDom(new JSDOM(renderIndexHtml(html, 'system', 'expert', undefined, { git }))).window.document;
@@ -70,6 +71,15 @@ test('hide set: JS-built surfaces and requests', async () => {
       doc.querySelector('#project-add-btn').dispatchEvent(new window.Event('click', { bubbles: true })); for (let i = 0; i < 4; i++) await tick();
       assert.equal([...doc.querySelectorAll('#proj-add-tabs .md-tab')].find((t) => t.getAttribute('aria-selected') === 'true')?.dataset.mode, 'new');
     } },
+    { name: 'New workspace without git: the step 1 hint names no hidden Add… or paste box', run: async () => {
+      const hint = async (git) => {
+        const { window, doc } = await bootApp({ git });
+        window.location.hash = 'workspace-create'; for (let i = 0; i < 8; i++) await tick();
+        return doc.querySelector('#wiz-step1-hint').textContent;
+      };
+      assert.equal(await hint(false), 'Pick at least two projects.');
+      assert.match(await hint(true), /Add… or the paste box/);
+    } },
     { name: 'New run without git: picking a project asks for no branch list', run: async () => {
       const { window, doc, calls } = await bootApp({ git: false });
       window.location.hash = 'new'; for (let i = 0; i < 6; i++) await tick();
@@ -117,7 +127,7 @@ test('hide set: JS-built surfaces and requests', async () => {
       const f = renderFeature(w.document, { id: 'f1', title: 'Add billing', status: 'done', total: 2, done: 2, approveEach: false, open: true, halted: null, slices,
         ship: { ready: true, mode: null, suggested: 'one', linesAdded: 10, prUrl: null } },
         { page: true, act: async () => ({ ok: true }), openSlice() {}, openRun() {}, confirm: async () => true });
-      for (const s of ['.shape-feature-order', '.shape-feature-ship']) assert.ok(f.querySelector(s)?.closest('[data-needs-git]'), s);
+      for (const s of ['.shape-feature-order', '.ask-shipcard']) assert.ok(f.querySelector(s)?.closest('[data-needs-git]'), s);
     } },
     { name: 'schedules view: no from <branch> / Feature branch while git is off', run: async () => {
       const { window: w } = trackDom(new JSDOM('<!doctype html><body></body>', { url: 'http://localhost:4317/#schedules' }));

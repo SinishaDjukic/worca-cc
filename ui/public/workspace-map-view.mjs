@@ -35,7 +35,7 @@ function h(doc, tag, cls, text) {
   return n;
 }
 function btn(doc, cls, text) {
-  const b = h(doc, 'button', `btn-ghost btn-mini ${cls}`, text);
+  const b = h(doc, 'button', `btn btn-sm ${cls}`, text);
   b.type = 'button';
   return b;
 }
@@ -375,7 +375,7 @@ function renderAddForm(doc, members) {
     input.setAttribute('aria-label', label);
     form.appendChild(input);
   }
-  const add = h(doc, 'button', 'btn btn-primary btn-mini wm-add', 'Add edge');
+  const add = h(doc, 'button', 'btn btn-primary btn-sm wm-add', 'Add edge');
   add.type = 'button';
   form.appendChild(add);
   const msg = h(doc, 'small', 'hint err wm-add-msg');

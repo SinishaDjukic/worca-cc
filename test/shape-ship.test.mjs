@@ -2,7 +2,7 @@
 // fake deps.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { shipFeature, onePrBody, SHIP_MODES } from '../src/core/shape/ship.mjs';
+import { shipFeature, onePrBody, SHIP_MODES, SHIP_CARD_VERBS, shipCardVerb } from '../src/core/shape/ship.mjs';
 
 const pr = (n) => ({ url: `https://github.com/o/r/pull/${n}` });
 const FEATURE = () => ({ id: 'feat_1', title: 'Charts', slices: [1, 2, 3].map((i) => ({
@@ -39,6 +39,7 @@ test('one PR: changelog, push, one PR with a section per slice, then every draft
   const f = fake();
   const out = await shipFeature({ feature: FEATURE(), mode: 'one' }, f.deps);
   assert.equal(out.prUrl, 'https://github.com/o/r/pull/9');
+  assert.equal(out.closed, 3);
   assert.deepEqual(f.names(), ['commitChangelog', 'push', 'openOnePr', 'close', 'close', 'close']);
   const open = f.calls[2][1];
   assert.equal(open.pipelineId, 'p3');
@@ -57,6 +58,7 @@ test('one PR where the forge answers with slice 3\'s draft: it is adopted, not c
   assert.equal(adopt.url, pr(3).url);
   assert.match(adopt.body, /## Slice 3: Slice 3[\s\S]*Draft: this pull request/);
   assert.deepEqual(f.calls.filter((c) => c[0] === 'close').map((c) => c[1]), [pr(1).url, pr(2).url]);
+  assert.equal(out.closed, 2);
 });
 
 test('refusals: no PR yet (409, nothing called), changelog (409) and push (500) failures stop before any PR call, a bad mode 400', async () => {
@@ -98,4 +100,19 @@ test('onePrBody: over maxBody the checklists are left out with a note; without i
   const small = onePrBody(slices, null, { maxChars: 400 });
   assert.ok(!small.includes('## Perspective checklist'));
   assert.ok(small.endsWith('Each slice\'s checklist is in its closed draft.'));
+});
+
+test('shipCardVerb (s4): ship-one / ship-stacked / not-now, every other body 400', () => {
+  assert.deepEqual(Object.keys(SHIP_CARD_VERBS), ['ship-one', 'ship-stacked', 'not-now']);
+  for (const [body, mode] of [[{ verb: 'ship-one' }, 'one'], [{ verb: 'ship-stacked' }, 'stacked'], [{ verb: 'not-now' }, null]]) {
+    const v = shipCardVerb(body);
+    assert.equal(v.ok, true, JSON.stringify(body));
+    assert.equal(v.mode, mode);
+    assert.equal(v.release, null);
+  }
+  assert.deepEqual(shipCardVerb({ verb: 'ship-one', release: { version: 'v1.12.0' } }).release, { version: 'v1.12.0' });
+  for (const body of [{ state: 'applied' }, { verb: 'revert' }, {}, null, [], { verb: 'not-now', release: { version: 'v1.0.0' } },
+    { verb: 'ship-one', release: { version: 'bad' } }, { verb: 'toString' }]) {
+    assert.equal(shipCardVerb(body).status, 400, JSON.stringify(body));
+  }
 });

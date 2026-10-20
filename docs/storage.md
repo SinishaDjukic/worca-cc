@@ -41,7 +41,9 @@ project's working tree, so nothing is ever committed to your repo.
                          the run stays viewable under Runs › Archived and can be
                          restored there, minus the reclaimed artifacts. A restored run
                          never resumes (its resume point is dropped; a paused one comes
-                         back interrupted).
+                         back interrupted). Delete (Runs list, Advanced) is permanent:
+                         it archives, then anonymises the row in place and stamps
+                         `deleted_at` (see "Run groups (v65)" below).
   store/workspaces/<workspaceId>/       a workspace's runs, laid out like a project's store, plus
                                         workspace-graph.json — the last scan's merged cross-project
                                         graph (see workspace-map.md); the map itself and its reviews
@@ -54,21 +56,21 @@ project's working tree, so nothing is ever committed to your repo.
                                         notifications (see scheduled-runs.md).
                                         (v34: after_kind/after_id/after_policy/
                                         source_from_previous — a run that waits for another run.)
-  ask/<threadId>/att/<attachmentId>.<ext>  Ask Worca attachment bodies — .txt for text kinds,
+  ask/<threadId>/att/<attachmentId>.<ext>  Chat attachment bodies — .txt for text kinds,
                                         the sniffed type's extension for images/PDFs (threads, messages and
                                         run links live in the DB: ask_threads, ask_messages,
                                         ask_attachments, ask_run_links); removed with the thread.
                                         Chat spend is copied per turn into ask_cost_ledger
                                         (append-only, FK-free), so Statistics keeps session
                                         count and cost after deletion
-  ask/<threadId>/wt/<worktreeId>/       Ask Worca chat worktrees: read-only DETACHED git
+  ask/<threadId>/wt/<worktreeId>/       chat worktrees: read-only DETACHED git
                                         checkouts the assistant opens (registry: ask_worktrees;
                                         removed with the thread, reconciled at boot)
   ask/<threadId>/skills/<messageId>/    an Ask turn's set skills, one generated plugin per set;
                                         written before the turn's spawn, removed when the turn ends
-  tmp/ask/                              the Ask Worca assistant's scratch cwd + per-turn
+  tmp/ask/                              the Chat assistant's scratch cwd + per-turn
                                         mcp-<messageId>.json, mode 0600 (never a project folder)
-  logs/ask-web.jsonl                    Ask Worca web access: one line per web_fetch/web_search
+  logs/ask-web.jsonl                    Chat web access: one line per web_fetch/web_search
                                         call (redacted URL, status, bytes); rotated to .1 at 5 MB
   runs/<pipelineId>/                    detached run roots: run.json, repos/<projectKey>/ worktrees (Git)
                                         or copies (Folder); a Folder run's copy is kept (run.json retain
@@ -130,6 +132,22 @@ Everything that used to be a per-run `.json`/`.md` control file —
 plan/review **markdown**, `prompt.md`, and `extras/` remain on disk (their
 existence is indexed in the database).
 
+### Run groups (v65)
+
+The Runs list's groups (runs redesign §3.3) are the one new named state of the runs redesign:
+
+- `run_groups` holds the groups a person creates (`grp_` + 12 hex, a title, the first run's project).
+- `run_group_members` holds one row per ad-hoc member: `pipeline_id` is the primary key, so a run is in one group at a
+  time. Its `group_id` names either a `run_groups.id` or a Shaper feature (`shape_features.id`); it has no foreign key,
+  `src/core/run-groups.mjs` checks it. A feature's own slices are not rows here: they come from `shape_feature_slices`.
+  Removing the last member of a user group deletes the group.
+- `pipelines.deleted_at` marks a run deleted from the Runs list. Delete keeps an anonymised row (title "deleted run",
+  no prompt, no starter, no tags, no group) so its cost stays in Statistics; every feed skips it.
+- `pipelines.pr_verdict` is the last CI, mergeability, draft and review verdict the PR refresh read for an open GitHub
+  PR (JSON). The Runs list's PR chip ("Checks failing", "Conflicts", …) reads it through `readPrState`.
+- `run_labels` (v67): one row per (run, label), `added_at` keeps the order on the run; survives archive and restore,
+  removed with the run on a hard delete; never read by Statistics or the team metrics record.
+
 ## Resolution rules
 
 - **`<worcaHome>`** = `<base>/.worca-cc`, where `<base>` is `WORCA_HOME` if
@@ -140,7 +158,7 @@ existence is indexed in the database).
   derived from the repository's identity (the parent of its shared `.git`).
   It is **stable across all git worktrees of the same repo**, so every
   worktree shares one history. A plain folder's key is its realpath's;
-  projects.vcs ('git' | 'none', schema v61) records the kind once, at add
+  projects.vcs ('git' | 'none', schema v69) records the kind once, at add
   time, and never changes it on its own. A run without a project uses the
   reserved key `no-project-00000000`; no project row is ever made for it.
 - **projects root** = `WORCA_PROJECTS_ROOT` if set, else Settings › Projects root folder, else

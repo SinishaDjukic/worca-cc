@@ -131,11 +131,12 @@ test('project MCP tab: chips with ×, read-only Team chip, Add set, Include Gene
       const { api, calls, writes } = fakeApi(a);
       await mountProjectMcp(sec, { key: 'billing-1a2b3c4d', name: 'billing', api, doc });
       const chips = [...sec.querySelectorAll('.mcp-proj-sets .mcp-chip')];
-      assert.deepEqual(chips.map((c) => c.textContent), ['Billing×', 'Team · acme/platform']);
+      assert.deepEqual(chips.map((c) => c.textContent), ['Billing', 'Team · acme/platform']);
+      assert.ok(chips[0].querySelector('button.mcp-x svg'), 'the × is a stroke icon');
       assert.equal(chips[1].querySelector('button'), null, 'the Team chip is read-only');
       assert.equal(chips[1].getAttribute('href'), '#connectors/sets/team-acme-platform-9333');
       assert.match(sec.textContent, /Include General in runs/);
-      assert.match(sec.textContent, /Ask Worca always includes General; a workspace run includes it when any member does/);
+      assert.match(sec.textContent, /Chat always includes General; a workspace run includes it when any member does/);
       assert.deepEqual(calls.find(([, p]) => p === '/api/mcp/preview')[2], { target: { projectKey: 'billing-1a2b3c4d' } });
       assert.match(sec.querySelector('.mcp-resolution h2').textContent, /Servers in runs on billing/);
       const sw = sec.querySelector('input[aria-label="Include General in runs"]');
@@ -172,7 +173,7 @@ const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 class WSStub { constructor() { WSStub.last = this; this._l = {}; } send() {} close() {}
   addEventListener(t, fn) { (this._l[t] = this._l[t] || []).push(fn); } _open() { (this._l.open || []).forEach((fn) => fn({})); } }
 
-test('#projects/<key>/mcp opens the MCP tab (Advanced) and the pill writes that hash; Settings › Ask Worca paints its MCP block', async () => {
+test('#projects/<key>/mcp opens the MCP tab (Advanced) and the pill writes that hash; Settings › Chat paints its MCP block', async () => {
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4321/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};

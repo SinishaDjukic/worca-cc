@@ -5,6 +5,7 @@
 // opens as a NEW unsaved workflow (after the discard prompt). A drafted agent/script waits for Save. The
 // proposal card draws no mini graph: the canvas is the preview.
 // The card DOM is workflows/card-views.mjs, shared with Ask Worca.
+import { icon } from '../icons.mjs';
 import { cardKit, plural, draftCardView, buildCardView } from './card-views.mjs';
 
 export function createCardController({ doc, composer, sessionId, client, actions = {}, blocks = () => [],
@@ -107,7 +108,9 @@ export function createCardController({ doc, composer, sessionId, client, actions
       el.appendChild(h('span', 'wfc-sum', mine(c) ? `Applying: ${c.summary || 'a change'}` : `Not applied — made for an earlier visit: ${c.summary || 'a change'}`));
       return el;
     }
-    el.append(h('span', 'wfc-ok', '✓'), h('span', 'wfc-sum', c.summary || 'Canvas changed'));
+    const ok = h('span', 'wfc-ok');
+    ok.append(icon(doc, 'check', 12));
+    el.append(ok, h('span', 'wfc-sum', c.summary || 'Canvas changed'));
     if (state === 'undone') { el.appendChild(h('span', 'wfc-muted', 'Undone')); return el; }
     if (c.todo) el.appendChild(h('span', 'wfc-muted', `${plural(c.todo, 'port')} to wire`));
     const undo = button('Undo', 'wfc-link', async () => {
@@ -184,8 +187,8 @@ export function createCardController({ doc, composer, sessionId, client, actions
   function renderBuild(b) {
     return buildCardView(b, { h, actions: (row) => {
       if (b.state === 'proposed') {
-        row.append(button('Decline', 'wfv-btn', () => flip(b.id, { state: 'declined' })), h('span', 'wfc-spacer'),
-          button('Apply to canvas', 'wfv-btn wfv-btn-primary', () => applyBuild(b)));
+        row.append(button('Decline', 'btn btn-sm', () => flip(b.id, { state: 'declined' })), h('span', 'wfc-spacer'),
+          button('Apply to canvas', 'btn btn-sm btn-primary', () => applyBuild(b)));
       } else if (b.state === 'applied') {
         row.appendChild(h('span', 'wfc-chip-ok', '✓ Applied to canvas'));
         const undo = button('Undo', 'wfc-link', async () => {
@@ -203,7 +206,7 @@ export function createCardController({ doc, composer, sessionId, client, actions
         // Save only the workflow THIS card opened (an applied card from an earlier visit or another document would
         // open the save dialog for whatever canvas is showing now).
         if (lastBuild && lastBuild.cardId === b.id && composer.docToken() === lastBuild.docToken) {
-          row.append(h('span', 'wfc-spacer'), button('Save as workflow', 'wfv-btn', () => { composer.openSaveDialog(); }));
+          row.append(h('span', 'wfc-spacer'), button('Save as workflow', 'btn btn-sm', () => { composer.openSaveDialog(); }));
         }
       } else {
         row.appendChild(h('span', 'wfc-muted', 'Undone'));
@@ -222,7 +225,7 @@ export function createCardController({ doc, composer, sessionId, client, actions
       onEdit: (draft) => act(isAgent ? 'openAgentDraft' : 'openScriptDraft', draft),
       onDecline: () => flip(b.id, { state: 'declined' }),
       onSave: () => saveDraft(b),
-      savedExtra: placeable ? (row) => row.append(h('span', 'wfc-spacer'), button('Add to canvas', 'wfv-btn', async () => {
+      savedExtra: placeable ? (row) => row.append(h('span', 'wfc-spacer'), button('Add to canvas', 'btn btn-sm', async () => {
         await act('reloadRegistry');
         if (!onDoc(c)) { act('notify', { tone: 'err', title: 'Not added — another workflow was opened meanwhile.' }); return; }
         const a = composer.applyOps(c.then.ops, `chat: add ${name}`);
@@ -230,7 +233,7 @@ export function createCardController({ doc, composer, sessionId, client, actions
         lastEdit = { cardId: b.id, depth: a.depth, docToken: composer.docToken(), after: snap() };
         await flip(b.id, { state: 'added', card: { added: true } });
       })) : null,
-      proposedExtra: placeable ? (row) => row.appendChild(button('Save & add to canvas', 'wfv-btn wfv-btn-primary', () => saveDraft(b, { add: true }))) : null });
+      proposedExtra: placeable ? (row) => row.appendChild(button('Add to canvas', 'btn btn-sm btn-primary', () => saveDraft(b, { add: true }))) : null });
   }
 
   return {

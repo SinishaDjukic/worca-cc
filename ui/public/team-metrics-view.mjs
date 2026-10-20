@@ -5,7 +5,6 @@
 import { niceScale, roundedTopBar, savedMultChip } from './stats-view.mjs';
 import { safeHttpUrl, recordTags } from '../../src/shared/team-metrics/aggregate.mjs';
 import { dimensionLabel } from '../../src/shared/tag-dimensions.mjs';
-import { renderAllocationTables } from './tag-allocation.mjs';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -108,14 +107,14 @@ export function renderSyncChip({ sync = [], stats = {}, refresh = null, fetchErr
   // regular 60 s fetch serves fresh data, and "refresh again in N s" would be a lie.
   if (refresh?.limited && !refresh.fetched) txt.append(` | refresh again in ${Math.ceil(refresh.retryInMs / 1000)} s`);
   chip.append(txt);
-  const refreshBtn = h(doc, 'button', `btn-ghost btn-mini tm-refresh${checking ? ' busy' : ''}`, 'Refresh'); refreshBtn.type = 'button';
+  const refreshBtn = h(doc, 'button', `btn btn-sm tm-refresh${checking ? ' busy' : ''}`, 'Refresh'); refreshBtn.type = 'button';
   if (checking) refreshBtn.disabled = true;
   chip.append(refreshBtn);
   // "Push now" exists only while there is something to push: with an empty outbox
   // the flush is a no-op, and a permanently visible (disabled) button read as an
   // action that was somehow unavailable rather than one that was not needed.
   if (pending > 0) {
-    const pushBtn = h(doc, 'button', 'btn-ghost btn-mini tm-push-now', 'Push now'); pushBtn.type = 'button';
+    const pushBtn = h(doc, 'button', 'btn btn-sm tm-push-now', 'Push now'); pushBtn.type = 'button';
     chip.append(pushBtn);
   }
   const err = lastError || fetchError;
@@ -431,7 +430,7 @@ export function renderRunsTable(runs, { doc = globalThis.document, total = runs.
   const head = h(doc, 'div', 'card-head tm-runs-head');
   const title = h(doc, 'h2', null, 'Runs ');
   title.append(h(doc, 'small', 'hint', `${total} in range`));
-  const exp = h(doc, 'button', 'btn-ghost btn-mini tm-export', 'Export CSV'); exp.type = 'button'; exp.disabled = total === 0;
+  const exp = h(doc, 'button', 'btn btn-sm tm-export', 'Export CSV'); exp.type = 'button'; exp.disabled = total === 0;
   head.append(title, exp);
   card.append(head);
   if (!runs.length) { card.append(h(doc, 'div', 'chart-empty hint', 'No runs recorded in this range')); return card; }
@@ -479,7 +478,7 @@ export function renderRunsTable(runs, { doc = globalThis.document, total = runs.
   // §4.9 asks for "every record in range". The mockup's first paint is capped for layout, so the
   // remaining rows must stay REACHABLE on screen, not only through Export CSV.
   if (shown < runs.length) {
-    const more = h(doc, 'button', 'btn-ghost btn-mini tm-show-all', `Show all ${runs.length} runs`);
+    const more = h(doc, 'button', 'btn btn-sm tm-show-all', `Show all ${runs.length} runs`);
     more.type = 'button';
     foot.append(more);
   }
@@ -504,7 +503,7 @@ export function renderGroupBySelect(groupBy, scopeKind, { doc = globalThis.docum
   // The same three for both scope kinds: spend is never split across the projects a run touched.
   // Tag keys stack too: a run carries one value per key.
   const opts = ['workflow', 'result', 'actor'].map((v) => [v, v])
-    .concat(tagKeys.map((k) => [`tag:${k}`, dimensionLabel(dims, k) || `tag: ${k}`]));
+    .concat(tagKeys.map((k) => [`tag:${k}`, dimensionLabel(dims, k) || `cost tag: ${k}`]));
   for (const [v, text] of opts) { const o = h(doc, 'option', null, text); o.value = v; o.selected = v === groupBy; sel.append(o); }
   wrap.append(sel);
   label.append(wrap);
@@ -515,19 +514,89 @@ export function renderGroupBySelect(groupBy, scopeKind, { doc = globalThis.docum
 export function renderTagFilterSelect(records, current, { doc = globalThis.document } = {}) {
   const tags = [...new Set(records.flatMap(recordTags))].sort();
   const sel = h(doc, 'select', 'select select-sm');
-  sel.id = 'tm-tag'; sel.setAttribute('aria-label', 'Filter by tag'); sel.hidden = !tags.length;
-  for (const [v, text] of [['', 'All tags'], ...tags.map((t) => [t, t])]) { const o = h(doc, 'option', null, text); o.value = v; o.selected = v === current; sel.append(o); }
+  sel.id = 'tm-tag'; sel.setAttribute('aria-label', 'Filter by cost tag'); sel.hidden = !tags.length;
+  for (const [v, text] of [['', 'All cost tags'], ...tags.map((t) => [t, t])]) { const o = h(doc, 'option', null, text); o.value = v; o.selected = v === current; sel.append(o); }
   return sel;
 }
 
-/** #tm-view (#718 slice 4): Overview · By person · By tag, inside the Overview tab; By tag only when tagChip. */
-export function renderTmViewChips(view, { doc = globalThis.document, tagChip = false } = {}) {
+/** A heat cell's shade step: 0 for no spend, else 1–4 by its share of the largest cell. */
+export const heatLevel = (usd, max) => (!(usd > 0) || !(max > 0) ? 0 : Math.max(1, Math.min(4, Math.ceil((usd / max) * 4))));
+
+/** Team metrics › Cost: person × value for the Allocate by dimension (cost-facts.mjs heatGrid). null grid = Allocate by Person. */
+export function renderHeatGrid(grid, { doc = globalThis.document, fmt = TM_FMT, byLabel = '' } = {}) {
+  const card = h(doc, 'section', 'card tm-heat');
+  const head = h(doc, 'div', 'card-head');
+  head.append(h(doc, 'h2', null, `Person × ${byLabel}`), h(doc, 'small', 'hint', 'AI spend per person and value'));
+  card.append(head);
+  if (!grid) {
+    card.append(h(doc, 'p', 'chart-empty hint', 'Allocate by a dimension other than Person to see who spends on what.'));
+    return card;
+  }
+  const cellOf = new Map(grid.cells.map((c) => [`${c.person}\u0000${c.col}`, c]));
+  const table = h(doc, 'table', 'people-table tm-heat-table');
+  const thr = h(doc, 'tr');
+  thr.append(h(doc, 'th', null, 'Person'), ...grid.columns.map((c) => h(doc, 'th', 'num', c.label)), h(doc, 'th', 'num', 'Total'));
+  const thead = h(doc, 'thead');
+  thead.append(thr);
+  const tbody = h(doc, 'tbody');
+  for (const p of grid.people) {
+    const tr = h(doc, 'tr');
+    const name = h(doc, 'td');
+    const lab = h(doc, 'span', 'tm-person', p.label);
+    lab.title = p.label;
+    name.append(lab);
+    tr.append(name);
+    for (const col of grid.columns) {
+      const c = cellOf.get(`${p.key}\u0000${col.key}`);
+      const td = h(doc, 'td', `num mono tm-heat-cell tm-heat-l${heatLevel(c.spentUsd, grid.maxUsd)}`, c.spentUsd > 0 ? fmt.usd(c.spentUsd) : '—');
+      td.title = `${p.label} · ${col.label}: ${fmt.usd(c.spentUsd)} · ${c.runs} ${c.runs === 1 ? 'run' : 'runs'}`;
+      tr.append(td);
+    }
+    tr.append(h(doc, 'td', 'num mono', fmt.usd(p.spentUsd)));
+    tbody.append(tr);
+  }
+  table.append(thead, tbody);
+  const scroll = h(doc, 'div', 'people-scroll');
+  scroll.append(table);
+  const legend = h(doc, 'div', 'tm-heat-legend hint');
+  legend.setAttribute('aria-hidden', 'true');             // the amounts in the cells carry the same information
+  legend.append('Less ', ...[1, 2, 3, 4].map((l) => h(doc, 'span', `tm-heat-swatch tm-heat-l${l}`)), ' More');
+  card.append(scroll, legend);
+  return card;
+}
+
+/** Team metrics › Cost: runs missing a required cost tag key, per person (cost-facts.mjs missingKeyTodos). null without required keys. */
+export function renderMissingTagsStrip(todo, { doc = globalThis.document, fmt = TM_FMT, dims = [] } = {}) {
+  if (!todo || !todo.keys.length) return null;
+  const name = (k) => dimensionLabel(dims, k) || k;
+  const card = h(doc, 'section', 'card tm-todo');
+  const head = h(doc, 'div', 'card-head');
+  head.append(h(doc, 'h2', null, 'Missing cost tags'), h(doc, 'small', 'hint', `Required: ${todo.keys.map(name).join(', ')}`));
+  card.append(head);
+  if (!todo.rows.length) {
+    card.append(h(doc, 'p', 'hint tm-todo-done', 'Every run in this view carries the required cost tags.'));
+    return card;
+  }
+  const list = h(doc, 'ul', 'tm-todo-list');
+  for (const r of todo.rows) {
+    const li = h(doc, 'li', 'tm-todo-row');
+    const who = h(doc, 'span', 'tm-person', r.label);
+    who.title = r.label;
+    li.append(who, h(doc, 'span', 'mono num', `${r.runs} ${r.runs === 1 ? 'run' : 'runs'}`),
+      h(doc, 'span', 'mono num', fmt.usd(r.spentUsd)), h(doc, 'small', 'hint', `missing ${r.keys.map(name).join(', ')}`));
+    list.append(li);
+  }
+  card.append(list);
+  return card;
+}
+
+/** #tm-view: Overview · By person · Cost, inside the Overview tab (flag on). Cost replaced By cost tag (labels-cost-tags s4). */
+export function renderTmViewChips(view, { doc = globalThis.document } = {}) {
   const seg = h(doc, 'div', 'seg seg-sm tm-view');
   seg.id = 'tm-view';
   seg.setAttribute('role', 'group');
   seg.setAttribute('aria-label', 'View');
-  for (const [v, text] of [['overview', 'Overview'], ['person', 'By person'], ['tag', 'By tag']]) {
-    if (v === 'tag' && !tagChip) continue;
+  for (const [v, text] of [['overview', 'Overview'], ['person', 'By person'], ['cost', 'Cost']]) {
     const b = h(doc, 'button', v === view ? 'on' : null, text);
     b.type = 'button';
     b.dataset.tmView = v;
@@ -537,10 +606,10 @@ export function renderTmViewChips(view, { doc = globalThis.document, tagChip = f
   return seg;
 }
 
-export function renderTeamMetricsBody(agg, { doc = globalThis.document, now = Date.now(), scopeKind = 'project', sort = {}, filter = {}, homeHint = null, runLimit = 50, tagKeys = [], tagDims = [], view = null, tagChip = false, tagTables = [] } = {}) {
+export function renderTeamMetricsBody(agg, { doc = globalThis.document, now = Date.now(), scopeKind = 'project', sort = {}, filter = {}, homeHint = null, runLimit = 50, tagKeys = [], tagDims = [], view = null, costEl = null } = {}) {
   const wrap = h(doc, 'div', 'tm-body');
   if (homeHint) wrap.append(homeHint);
-  if (view) wrap.append(renderTmViewChips(view, { doc, tagChip }));
+  if (view) wrap.append(renderTmViewChips(view, { doc }));
   if (view === 'person') {
     const g = h(doc, 'div', 'charts-grid people-grid tm-breakdowns');
     if (agg.breakdowns.actor) {
@@ -554,8 +623,8 @@ export function renderTeamMetricsBody(agg, { doc = globalThis.document, now = Da
     wrap.append(g);
     return wrap;
   }
-  if (view === 'tag') {
-    wrap.append(renderAllocationTables(tagTables, { doc, fmt: TM_FMT, empty: 'No tagged runs in this range.' }));
+  if (view === 'cost') {
+    if (costEl) wrap.append(costEl);
     return wrap;
   }
   wrap.append(renderTmKpiRow(agg, { doc, now, scopeKind }));
@@ -633,7 +702,7 @@ export function renderTmEmptyState({ doc = globalThis.document } = {}) {
     c.append(h(doc, 'div', 'tm-step', step), h(doc, 'h3', null, title));
     const p = h(doc, 'p', 'hint');
     for (const part of body) p.append(typeof part === 'string' ? part : h(doc, 'code', 'mono', part.code));
-    const a = h(doc, 'a', primary ? 'btn btn-primary btn-mini' : 'btn btn-ghost btn-mini', label); a.href = href;
+    const a = h(doc, 'a', primary ? 'btn btn-primary btn-sm' : 'btn btn-sm', label); a.href = href;
     c.append(p, a);
     return c;
   };

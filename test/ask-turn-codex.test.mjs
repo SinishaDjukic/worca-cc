@@ -121,7 +121,7 @@ test('no lockdown on this codex: the turn refuses before any spawn', async () =>
   const { turn, frames, calls } = makeTurn(s, {}, { codexLockdown: () => null, runClaudeImpl: async (o) => reply(o) });
   await turn.run();
   assert.equal(calls.length, 0);
-  assert.match(frames.find((f) => f.type === 'ask-error').message, /Ask on Codex is unavailable/);
+  assert.match(frames.find((f) => f.type === 'ask-error').message, /Chat on Codex is unavailable/);
 });
 
 test('the shipped lockdown lets a Codex turn start', async () => {

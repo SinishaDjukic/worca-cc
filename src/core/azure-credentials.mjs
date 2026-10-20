@@ -9,9 +9,10 @@ export const AZURE_DEVOPS_CREDENTIAL_KEYS = Object.freeze([
 ]);
 
 /**
- * Azure DevOps credentials worca never uses itself but must never hand to a child either. Strip-only:
- * readAzureCredentials ignores them. WORCA_ADO_BOARDS_TOKEN is the documented {"$env":…} target of the Boards
- * plugin's token field (plugin-config.mjs resolves it in the host at read time, so stripping children is safe).
+ * Azure DevOps credentials worca must never hand to a child. Strip-only: readAzureCredentials ignores them.
+ * WORCA_ADO_BOARDS_TOKEN is the documented {"$env":…} target of the Boards plugin's token field (plugin-config.mjs
+ * resolves it in the host at read time, so stripping children is safe); worca's one read of it is
+ * azureWorkItemsAuthHeader (Chat's work item chips), never for code.
  */
 export const AZURE_DEVOPS_STRIP_ONLY_KEYS = Object.freeze(['WORCA_ADO_BOARDS_TOKEN']);
 
@@ -59,9 +60,19 @@ export function azureEnv(role, base = process.env) {
   return withAzureToken(stripGithubCredentials(base), role === 'write' ? creds.write : creds.read);
 }
 
+const basic = (t) => (t ? { authorization: `Basic ${Buffer.from(`:${t}`).toString('base64')}` } : null);
+
 /** Headers for one REST call: Basic base64(":" + PAT). null when there is no credential for `role`. */
 export function azureAuthHeader(role, env = process.env) {
   const c = readAzureCredentials(env);
-  const t = role === 'write' ? c.write : c.read;
-  return t ? { authorization: `Basic ${Buffer.from(`:${t}`).toString('base64')}` } : null;
+  return basic(role === 'write' ? c.write : c.read);
+}
+
+/**
+ * Headers for Chat's work item chips (a read: title, state, type): WORCA_ADO_BOARDS_TOKEN, the PAT with the Work
+ * Items scope, else the Code PAT's read token. A Code PAT without Work Items (Read) is refused, and the chip then
+ * shows its ref only. null when neither is set.
+ */
+export function azureWorkItemsAuthHeader(env = process.env) {
+  return basic(val(env.WORCA_ADO_BOARDS_TOKEN) || readAzureCredentials(env).read);
 }

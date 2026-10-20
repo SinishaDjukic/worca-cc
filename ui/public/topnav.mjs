@@ -29,6 +29,7 @@ export const PAGE_TITLES = Object.freeze({
   'workspace-create': 'New workspace',
   settings: 'Settings',
   feature: 'Feature',
+  group: 'Group',
 });
 
 /** The top bar's title for route `view`; 'Worca' for a route it does not know. */

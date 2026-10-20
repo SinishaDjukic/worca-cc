@@ -29,8 +29,9 @@ import { readRunLedger } from './metrics/ledger.mjs';
 import { readPolicyState } from './policy/state.mjs';
 import { memoryTotals } from './memory-sync.mjs';
 import { actorLabel } from './identity.mjs';
-import { attachWatchPipeline } from './pr-watch.mjs';
+import { attachWatchPipeline, getWatch, watchActive } from './pr-watch.mjs';
 import { insertRunTags, readRunTags, readTagsFor } from './run-tags-store.mjs';
+import { insertRunLabels, readLabelsFor, readRunLabels } from './run-labels-store.mjs';
 
 // ── DB row <-> state object mapping (Phase 3) ──────────────────────────────────
 // JSON columns are TEXT; (de)serialize at THIS boundary only. Reads are fail-safe:
@@ -1162,6 +1163,7 @@ export async function readPromptFile(projectDir, promptFile) {
  * @param {string} [opts.sourceType]  'prompt' | 'markdown' | 'plugin' (defaults derived)
  * @param {object} [opts.sourceMeta]  { plugin, sourceId, taskId, url, title } | null
  * @param {string} [opts.guardrailsId] the run's selected guardrail set id (per-run)
+ * @param {string|null} [opts.runSetup] JSON of the run's setup (pipelines.run_setup, v62); never on the state object
  * @param {string[]} [opts.extras]    paths to extra files copied into dir/extras
  * @param {string} [opts.title]       human title (defaults to derived text)
  * @param {string} [opts.workspaceKey]   opt-in: route to the workspace store
@@ -1175,7 +1177,7 @@ export async function createPipeline(projectDir, opts = {}) {
   const {
     prompt, promptFile, extras = [], title,
     promptText: precomputedPromptText = null, sourceType = null, sourceMeta = null,
-    guardrailsId = null, startedBy = null, prWatchRunId = null, tags = [],
+    guardrailsId = null, startedBy = null, prWatchRunId = null, tags = [], labels = [], runSetup = null,
     workspaceKey = null, workspaceId = null, workspaceName = null,
     workspaceDescription = '', projects = null,
   } = opts;
@@ -1315,10 +1317,11 @@ export async function createPipeline(projectDir, opts = {}) {
   // no more state.json on disk. writeState also seeds the dir->id cache
   // (rememberDir) so appendAudit resolves this run without any call-site change
   // (A4). recordArtifact runs AFTER the row exists (FK -> pipelines).
-  await writeState(dir, state, { prWatchRunId });
+  await writeState(dir, state, { prWatchRunId, runSetup });
   // Run tags (#718): written once, after the row exists (FK) and after writeState's tx has
   // committed (tx cannot nest). writeState updates never touch them.
   insertRunTags(id, tags);
+  insertRunLabels(id, labels);   // s2: an inherited run's labels, written once like its tags
   recordArtifact(id, 'prompt', 'prompt.md');
   if (workspaceKey) recordArtifact(id, 'workspace-description', 'workspace-description.md');
   for (const rel of copiedExtras) recordArtifact(id, 'extra', rel);
@@ -1422,7 +1425,7 @@ function rememberDir(dir, id) { if (dir && id) _dirIdCache.set(resolve(dir), id)
  * @param {object} stateObj
  * @returns {Promise<object>}
  */
-export async function writeState(pipelineDir, stateObj, { prWatchRunId = null } = {}) {
+export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, runSetup = null } = {}) {
   const obj = { ...stateObj, updatedAt: new Date().toISOString() };
   const id = obj.id;
   if (!id) return obj; // pre-id state (constructor default): nothing to persist yet
@@ -1432,11 +1435,11 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null } 
       INSERT INTO pipelines (id, project_key, workspace_key, target, title, base_name,
         date_prefix, status, phase, cycle, started_at, updated_at, total_cost_usd,
         total_active_ms, prompt, branch, workspace_meta, stepper, tools, resume_point,
-        source_type, source_ref, guardrails_id, outcome, human_hours, started_by, shape_stats, run_size)
+        source_type, source_ref, guardrails_id, outcome, human_hours, started_by, shape_stats, run_size, run_setup)
       VALUES (@id,@project_key,@workspace_key,@target,@title,@base_name,@date_prefix,
         @status,@phase,@cycle,@started_at,@updated_at,@total_cost_usd,@total_active_ms,
         @prompt,@branch,@workspace_meta,@stepper,@tools,@resume_point,
-        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by,@shape_stats,@run_size)
+        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by,@shape_stats,@run_size,@run_setup)
       ON CONFLICT(id) DO UPDATE SET
         status=excluded.status, phase=excluded.phase, cycle=excluded.cycle,
         updated_at=excluded.updated_at, total_cost_usd=excluded.total_cost_usd,
@@ -1450,7 +1453,7 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null } 
         run_size=COALESCE(excluded.run_size, run_size),
         base_name=COALESCE(excluded.base_name, base_name),
         date_prefix=COALESCE(excluded.date_prefix, date_prefix)
-    `).run(toPipelineRow(obj));
+    `).run({ ...toPipelineRow(obj), run_setup: typeof runSetup === 'string' ? runSetup : null });
 
     // A Watch PR fix run (#619): ownership lands in the same transaction that creates the row.
     if (prWatchRunId) attachWatchPipeline(prWatchRunId, id, obj.updatedAt);
@@ -1555,9 +1558,10 @@ export function persistPrState(pipelineId, pr) {
   try {
     tx(() => {
       getDb().prepare(
-        `UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = ?, pr_checked_at = ?
-         WHERE id = ?`,
-      ).run(pr.url, pr.number ?? null, pr.state ?? 'OPEN', new Date().toISOString(), pipelineId);
+        `UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = ?, pr_checked_at = ?,
+           pr_verdict = COALESCE(?, pr_verdict) WHERE id = ?`,
+      ).run(pr.url, pr.number ?? null, pr.state ?? 'OPEN', new Date().toISOString(),
+        pr.verdict ? JSON.stringify(pr.verdict) : null, pipelineId);   // the verdict is written when the lookup read one, kept otherwise
     });
   } catch { /* best-effort */ }
 }
@@ -1568,13 +1572,20 @@ export function persistPrState(pipelineId, pr) {
  * the base repo, not the cwd's default) is resolved by URL instead of by branch.
  * The resolved `state` (rowToState) deliberately omits pr_* — use this instead.
  * @param {string} pipelineId
- * @returns {{ url:string, number:(number|null), state:string }|null}
+ * The stored CI verdict (pr_verdict: draft / reviewDecision / mergeable / checks) is spread onto the PR, and `fixing`
+ * says a Watch PR fix run is live on it right now (runs redesign §2.1a, D31).
+ * @returns {{ url:string, number:(number|null), state:string, draft?, reviewDecision?, mergeable?, checks?, fixing? }|null}
  */
 export function readPrState(pipelineId) {
   if (!pipelineId) return null;
   try {
-    const row = getDb().prepare('SELECT pr_url, pr_number, pr_state FROM pipelines WHERE id = ?').get(pipelineId);
-    return row && row.pr_url ? { url: row.pr_url, number: row.pr_number ?? null, state: row.pr_state ?? 'OPEN' } : null;
+    const row = getDb().prepare('SELECT pr_url, pr_number, pr_state, pr_verdict FROM pipelines WHERE id = ?').get(pipelineId);
+    if (!row || !row.pr_url) return null;
+    let v = null;
+    try { v = row.pr_verdict ? JSON.parse(row.pr_verdict) : null; } catch { v = null; }
+    // `fixing` only when true, so every caller's existing deepEqual on a PR with no verdict and no fix run holds.
+    return { url: row.pr_url, number: row.pr_number ?? null, state: row.pr_state ?? 'OPEN', ...(v || {}),
+      ...(watchActive(getWatch(row.pr_url)) ? { fixing: true } : {}) };
   } catch { return null; }
 }
 
@@ -1610,6 +1621,10 @@ export function persistMemberPrState(pipelineId, memberKey, pr) {
 }
 
 /** A workspace run's member PRs as { [memberKey]: { url, number, state } } ({} on none/any failure). */
+/** A workspace member's PR with `fixing` when a Watch PR fix run is live on it right now (D31), as readPrState
+ *  marks a single run's. Never persisted. */
+const withFixing = (pr) => (pr && watchActive(getWatch(pr.url)) ? { ...pr, fixing: true } : pr);
+
 export function readMemberPrStates(pipelineId) {
   if (!pipelineId) return {};
   try {
@@ -2217,7 +2232,7 @@ async function workspaceMemberFacts(row, results, opts = {}) {
     }
     if (opts.withPr) {
       out.pr = gh && m.projectDir && m.feature
-        ? await findPrForBranch({ projectDir: m.projectDir, head: m.feature, prUrl: known[m.memberKey]?.url || null })
+        ? withFixing(await findPrForBranch({ projectDir: m.projectDir, head: m.feature, prUrl: known[m.memberKey]?.url || null }))
         : null;
     }
     return out;
@@ -2356,9 +2371,17 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
   } else if (opts.withPr && repoDir && feature) {
     // Single-project runs AND legacy workspace rows (empty workspace_meta.projects):
     // the unchanged primary-only lookup, pr_url first — never overwritten with null.
-    entry.pr = (await anyPrHost())
-      ? await findPrForBranch({ projectDir: repoDir, head: feature, prUrl: row.pr_url || null })
+    // The fresh lookup wins over the stored row (a PR merged since the last refresh, or a newer PR for the branch);
+    // stored fields (the CI verdict) are used only for the same URL. Persisting is the enrich path's job.
+    const found = (await anyPrHost())
+      ? await findPrForBranch({ projectDir: repoDir, head: feature, prUrl: row.pr_url || null, withVerdict: true })
       : null;
+    if (found) {
+      const { verdict, ...fresh } = found;
+      const stored = readPrState(row.id);
+      entry.pr = { ...(stored && stored.url === fresh.url ? stored : {}), ...fresh, ...(verdict || {}),
+        ...(watchActive(getWatch(fresh.url)) ? { fixing: true } : {}) };
+    } else entry.pr = null;
   }
   return entry;
 }
@@ -2420,6 +2443,8 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
   }
   const tagMap = readTagsFor(out.map((e) => e.id));
   for (const e of out) e.tags = tagMap.get(e.id) || [];
+  const labelMap = readLabelsFor(out.map((e) => e.id));
+  for (const e of out) e.labels = labelMap.get(e.id) || [];
   out.sort((a, b) => b.mtime - a.mtime);
   return out;
 }
@@ -2448,7 +2473,7 @@ export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitResetAt') AS limit_reset_at,
            ${RUN_ENGINE_SQL} AS run_engine
     FROM pipelines
-    WHERE archived_at IS ${opts.archived ? 'NOT NULL' : 'NULL'}
+    WHERE archived_at IS ${opts.archived ? 'NOT NULL' : 'NULL'} AND deleted_at IS NULL
     ORDER BY COALESCE(updated_at, started_at) DESC, project_key, id
     LIMIT ?
   `).all(Number.isInteger(opts.limit) && opts.limit > 0 ? opts.limit : -1); // -1 = unlimited (SQLite)
@@ -2519,6 +2544,8 @@ export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
   }
   const tagMap = readTagsFor(out.map((e) => e.id));
   for (const e of out) e.tags = tagMap.get(e.id) || [];
+  const labelMap = readLabelsFor(out.map((e) => e.id));
+  for (const e of out) e.labels = labelMap.get(e.id) || [];
 
   // Newest-first, with a deterministic tiebreaker so equal-mtime rows do not
   // reorder run-to-run now that build order is non-deterministic (parallel).
@@ -2544,13 +2571,16 @@ export function countPipelines() {
 
 /**
  * Re-walk the skeleton and resolve live PR state per branch, pushed to `onBatch`
- * in parallel batches. v1 sends ONLY `pr` (state OPEN/MERGED or null) —
- * findPrForBranch already distinguishes merged-vs-open. We do NOT compute live
- * mergeability (no prMergeable call). `onBatch(items, isFinal)` is awaited so a
- * caller can broadcast incrementally; the FINAL call always carries isFinal=true
- * (even with no PR host / no targets) so a client spinner provably clears. A workspace
- * item (a row WITH member facts) also carries `members: [{ memberKey, pr }]`; its
- * `pr` is the rollup of those.
+ * in parallel batches. Each item sends ONLY `pr`: findPrForBranch's
+ * { state, url, number, isDraft, mergeable } (state OPEN/MERGED, or CLOSED when no
+ * open or merged PR exists — the Runs list draws a dropped PR too) or null. Draft and
+ * mergeability come from the same lookup (gh or Azure REST): no prMergeable call per PR.
+ * A single run's OPEN PR also carries the stored CI verdict (`draft`, `reviewDecision`, `checks`) and `fixing` (D31).
+ * `onBatch(items, isFinal)` is awaited so a caller can broadcast incrementally; the
+ * FINAL call always carries isFinal=true (even with no PR host / no targets) so a client
+ * spinner provably clears. A workspace item (a row WITH member facts) also carries
+ * `members: [{ memberKey, pr }]`, each `pr` in the same shape; its `pr` is the rollup
+ * of the open and merged ones.
  */
 export async function enrichPipelinesPr(onBatch, { batchSize = 16 } = {}) {
   if (!(await anyPrHost())) { await onBatch([], true); return; } // no PR host: one empty final batch
@@ -2568,17 +2598,25 @@ export async function enrichPipelinesPr(onBatch, { batchSize = 16 } = {}) {
         const known = readMemberPrStates(r.id);
         const members = await Promise.all(r.members.map(async (m) => {
           const pr = m.projectDir && m.branch
-            ? (await findPrForBranch({ projectDir: m.projectDir, head: m.branch, prUrl: known[m.memberKey]?.url || null })) || null
+            ? (await findPrForBranch({ projectDir: m.projectDir, head: m.branch, prUrl: known[m.memberKey]?.url || null, includeClosed: true })) || null
             : null;
-          if (pr) persistMemberPrState(r.id, m.memberKey, pr);
-          return { memberKey: m.memberKey, pr };
+          if (pr && pr.state !== 'CLOSED') persistMemberPrState(r.id, m.memberKey, pr);   // a closed PR is shown, never recorded
+          return { memberKey: m.memberKey, pr: withFixing(pr) };
         }));
         const pr = rollupMemberPrs(Object.fromEntries(members.filter((m) => m.pr).map((m) => [m.memberKey, m.pr])));
         return { projectKey: r.projectKey, id: r.id, pr, members };
       }
       const prUrl = readPrState(r.id)?.url || null;
-      const pr = (await findPrForBranch({ projectDir: r.projectDir, head: r.branch, prUrl })) || null;
-      if (pr) persistPrState(r.id, pr);   // positive observations only (null never clears)
+      const found = (await findPrForBranch({ projectDir: r.projectDir, head: r.branch, prUrl, withVerdict: true, includeClosed: true })) || null;
+      // Positive observations only (null never clears). A closed PR is shown, never
+      // recorded: pr_url keeps naming the open or merged PR the other readers act on.
+      if (found && found.state !== 'CLOSED') persistPrState(r.id, found);
+      if (!found) return { projectKey: r.projectKey, id: r.id, pr: null };
+      // The live PR (isDraft / mergeable) plus the stored verdict and `fixing`, as rowToHistoryEntry builds it.
+      const { verdict, ...fresh } = found;
+      const stored = fresh.state === 'CLOSED' ? null : readPrState(r.id);
+      const pr = { ...(stored && stored.url === fresh.url ? stored : {}), ...fresh, ...(verdict || {}),
+        ...(watchActive(getWatch(fresh.url)) ? { fixing: true } : {}) };
       return { projectKey: r.projectKey, id: r.id, pr };
     }));
     await onBatch(items, i + batchSize >= targets.length); // (items, isFinal)
@@ -2683,6 +2721,7 @@ function rowToState(row) {
     `).all(row.id).map(stepRowToStep),
     subAgents: listSubAgents(row.id),
     tags: readRunTags(row.id),
+    labels: readRunLabels(row.id),
   };
   // The pause cause rides resume_point (no column): expose it on the DETAIL payload
   // too, so a deep-linked History detail no longer waits for the LIST row.
@@ -3141,7 +3180,7 @@ export async function resolveIndexedArtifactFileForRow(row, rel) {
       if (!(await stat(file)).isFile()) continue;
       if (hit.kind === WORK_ARTIFACT_KIND && !(await workFileInside(base, file))) continue;
       await access(file, fsConstants.R_OK);
-      return { rel: hit.relPath, file };
+      return { rel: hit.relPath, file, base };
     } catch { /* try the next base */ }
   }
   return null;

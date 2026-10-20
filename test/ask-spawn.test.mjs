@@ -101,6 +101,7 @@ test('askWorktreeAllowRules names the thread\'s worktree subtree, shape-checks t
   assert.deepEqual(askWorktreeAllowRules('ask_00000001'), [
     'Read(//**/.worca-cc/ask/ask_00000001/wt/**)',
     'Read(//**/.worca-cc/ask/ask_00000001/att/**)', // #398: the image/PDF bodies read_attachment points at
+    'Read(//**/.worca-cc/ask/ask_00000001/out/**)', // show_files: what Ask saved in $WORCA_ASK_OUT
   ], 'the chat may read its own worktrees and its own attachment bodies');
   assert.deepEqual(askWorktreeAllowRules('../etc'), [], 'unminted id ⇒ NO allow rule (never interpolated)');
   assert.deepEqual(askWorktreeAllowRules(undefined), []);
@@ -143,7 +144,7 @@ test('buildClaudeArgs over the recipe carries every flag, the deny list + worktr
   assert.ok(!args.includes('--resume'));
   const settings = JSON.parse(args[args.indexOf('--settings') + 1]);
   assert.deepEqual(settings.permissions.deny, [...ASK_DENY_RULES]);
-  assert.deepEqual(settings.permissions.allow, ['Read(//**/.worca-cc/ask/ask_00000001/wt/**)', 'Read(//**/.worca-cc/ask/ask_00000001/att/**)']);
+  assert.deepEqual(settings.permissions.allow, ['Read(//**/.worca-cc/ask/ask_00000001/wt/**)', 'Read(//**/.worca-cc/ask/ask_00000001/att/**)', 'Read(//**/.worca-cc/ask/ask_00000001/out/**)']);
   const noCap = buildClaudeArgs(buildAskSpawnOptions({ ...base(), limits: { maxTurns: 40, maxBudgetUsd: null } }));
   assert.ok(!noCap.includes('--max-budget-usd'));
   const withMem = buildClaudeArgs(buildAskSpawnOptions({ ...base(), memoryDir: '/m/x' }));

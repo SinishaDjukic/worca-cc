@@ -184,7 +184,7 @@ each run. This is attribution, not permissions: everyone keeps the same rights.
   `WORCA_IDENTITY_NAME`, records the name but shows none of it: there is only one person.
 - A pull request opened from a run ends with *Started by ada@example.com via worca*, so a PR
   authored by a shared bot or GitHub App still names the person.
-- Ask Worca sees the signed-in person in its context and answers "who started this", "what did ada
+- Chat sees the signed-in person in its context and answers "who started this", "what did ada
   run", "who paused it" and "who scheduled this" from the recorded names (`list_runs` with a
   `startedBy` filter, `list_people`, and the actions `get_run` lists). "My runs" works only with a
   per-person sign-in.
@@ -193,7 +193,7 @@ each run. This is attribution, not permissions: everyone keeps the same rights.
 - *Run now* on a schedule credits whoever clicked it. Team metrics, team policy edits and cap
   overrides record the person instead of the server's git user (`attribution: none` still records
   nobody).
-- With a per-person sign-in (Access or a trusted header), each person's Ask Worca chats are their
+- With a per-person sign-in (Access or a trusted header), each person's chats are their
   own: others can't open them, and *Delete all* removes only yours. Notifications are marked read
   per person.
 - Each run's audit timeline (History → the saved `pipeline.md`) names who answered its questions,
@@ -349,7 +349,7 @@ allowlist never applies under a mode. If the proxy can't start, worca does not s
 A refused host gets a `403` whose body names the host and says the organization's outbound
 network policy blocked it, so an agent's tool error says why (`curl`, `git` and `npm` show it as
 a failed `CONNECT`). worca's log has one `egress: … DENY CONNECT host:443` line per refusal, and
-a boot line with the mode and list sizes. Ask Worca's context shows the mode (`egress=allow`).
+a boot line with the mode and list sizes. Chat's context shows the mode (`egress=allow`).
 
 The proxy runs inside worca, so nothing a client or a remote host does may take it down: a
 malformed request or `CONNECT` target gets a `400`, a request head over 16 KB a `431`, an

@@ -10,6 +10,7 @@
 import { safeAgentIcon, SCRIPT_GLYPH, thumbnailFor } from '../graph/view.mjs';
 import { classifyLoops } from '../../../src/shared/graph/loops.mjs';
 import { DND_TYPE, FLOW_CARDS } from './shell.mjs';
+import { toggleMenu } from './menu.mjs';
 
 /** The sections, in the selector's order. */
 export const TOPS = Object.freeze(['agents', 'scripts', 'workflows']);
@@ -27,6 +28,8 @@ const SEARCH_GLYPH = '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/>
 const CLOSE_GLYPH = '<path d="M6 6l12 12M18 6L6 18"/>';
 const PLUS_GLYPH = '<path d="M12 6v12M6 12h12"/>';
 const TRASH_GLYPH = '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>';
+/** The row ⋯ (shell.mjs ICONS.more): an SVG, never a text glyph. */
+const MORE_GLYPH = '<circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/>';
 const FLOW_DESC = {
   task: 'The pipeline entry: the prompt and its attached files.',
   end: 'The pipeline sink. A token arriving here completes the run.',
@@ -78,7 +81,8 @@ export function workflowDomains(list) {
  * @param {HTMLElement} o.host  aside#wfv-library
  * @param {object} o.actions  {addToCanvas(entry), openWorkflow(id), deleteWorkflow(wf), deleteArchived(wf),
  *   exportWorkflow(wf), newAgent(), newScript(), viewAgent(key), editAgent(key), deleteAgent(agent),
- *   duplicateAgent(agent), openScript(key), deleteScript(script), duplicateScript(script), portsFn(node), closeLibrary()}
+ *   duplicateAgent(agent), openScript(key), deleteScript(script), duplicateScript(script), portsFn(node), closeLibrary(),
+ *   isPinned(id), togglePin(wf)}  — the last two: the Chat home pins (src/shared/home-pins.mjs) from the row ⋯ menu
  */
 export function createLibrary({ doc, host, actions }) {
   const win = doc.defaultView || globalThis;
@@ -203,7 +207,7 @@ export function createLibrary({ doc, host, actions }) {
   const head = h('div', 'wfl-head');
   const title = h('h2', 'wfl-title', 'Library');
   const sbox = h('div', 'wfl-sbox');
-  const searchBtn = h('button', 'wfv-icon-btn wfl-filter-btn');
+  const searchBtn = h('button', 'btn btn-quiet btn-icon wfl-filter-btn');
   searchBtn.type = 'button';
   searchBtn.id = 'wfl-filter-btn';
   searchBtn.title = 'Search';
@@ -216,9 +220,10 @@ export function createLibrary({ doc, host, actions }) {
   input.autocomplete = 'off';
   input.spellcheck = false;
   sbox.append(searchBtn, input);
-  const closeBtn = h('button', 'wfv-icon-btn wfl-close');
+  const closeBtn = h('button', 'btn btn-quiet btn-icon wfl-close');
   closeBtn.type = 'button';
   closeBtn.id = 'wfl-close';
+  closeBtn.setAttribute('aria-label', 'Close');
   closeBtn.appendChild(svg(CLOSE_GLYPH));
   head.append(title, sbox, closeBtn);
   function syncHead() {
@@ -261,11 +266,11 @@ export function createLibrary({ doc, host, actions }) {
   /** Agents · Scripts · Workflows (registry counts) and, at the right, the section's "+" — Workflows keeps its slot. */
   function bar() {
     const row = h('div', 'wfl-bar');
-    const seg = h('div', 'wfl-seg');
+    const seg = h('div', 'wfl-seg tabs');
     seg.setAttribute('role', 'tablist');
     seg.setAttribute('aria-label', 'Library sections');
     for (const t of TOPS) {
-      const b = h('button', 'wfl-tab');
+      const b = h('button', 'wfl-tab tab');
       b.type = 'button';
       b.id = `wfl-tab-${t}`;
       b.dataset.tab = t;                                  // the tour and the proofs find a section by it
@@ -286,7 +291,7 @@ export function createLibrary({ doc, host, actions }) {
     row.appendChild(seg);
     if (hasChips()) {
       const agents = st.top === 'agents';
-      const nb = h('button', 'wfv-icon-btn wfl-new');
+      const nb = h('button', 'btn btn-quiet btn-icon wfl-new');
       nb.type = 'button';
       nb.id = agents ? 'wfl-new-agent' : 'wfl-new-script';
       nb.title = agents ? 'New agent' : 'New script';
@@ -356,7 +361,7 @@ export function createLibrary({ doc, host, actions }) {
   function actionsRow(list, base = '') {
     const row = h('div', 'wfl-actions');
     list.forEach(([label, fn, primary], i) => {
-      const b = h('button', `wfv-btn${primary ? ' wfv-btn-primary' : ''}${label === 'Delete' ? ' wfl-danger' : ''}`, label);
+      const b = h('button', `btn btn-sm${primary ? ' btn-primary' : ''}${label === 'Delete' ? ' btn-danger wfl-danger' : ''}`, label);
       b.type = 'button';
       if (base) b.dataset.focusKey = `${base}:${label}`;
       b.addEventListener('click', fn);
@@ -399,7 +404,7 @@ export function createLibrary({ doc, host, actions }) {
     main.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); toggle(); } });
     row.appendChild(main);
     if (draggable) {
-      const add = h('button', 'wfv-icon-btn wfl-add');
+      const add = h('button', 'btn btn-sm btn-quiet btn-icon wfl-add');
       add.type = 'button';
       add.title = 'Add to canvas';
       add.setAttribute('aria-label', `Add ${name} to canvas`);
@@ -461,7 +466,7 @@ export function createLibrary({ doc, host, actions }) {
       detail: () => {
         const d = h('div', 'wfl-detail');
         d.appendChild(h('p', 'wfl-desc', s.description || ''));
-        if (s.ports === 'config') d.appendChild(h('div', 'wfl-k', 'ports per card'));
+        if (s.ports === 'config') d.appendChild(h('div', 'wfl-k', 'Ports per card'));
         else d.append(h('div', 'wfl-k', 'Inputs'), portChips(s.inputs, { dir: 'in', script: true }), h('div', 'wfl-k', 'Outputs'), portChips(s.outputs, { dir: 'out', script: true }));
         const params = Array.isArray(s.params) ? s.params : [];
         if (params.length) {
@@ -530,7 +535,7 @@ export function createLibrary({ doc, host, actions }) {
     item.appendChild(main);
     const tail = h('span', 'wfl-wf-actions');
     if (v2) {
-      const ex = h('button', 'wfv-icon-btn wfl-export');
+      const ex = h('button', 'btn btn-sm btn-quiet btn-icon wfl-export');
       ex.type = 'button';
       ex.title = 'Export as a JSON file, a Claude Code skill or a Worca plugin';
       ex.setAttribute('aria-label', `Export "${w.name || w.id}"`);
@@ -539,13 +544,29 @@ export function createLibrary({ doc, host, actions }) {
       tail.appendChild(ex);
     }
     if (!RESERVED.has(w.id)) {
-      const del = h('button', 'wfv-icon-btn wfl-del');
+      const del = h('button', 'btn btn-sm btn-quiet btn-icon wfl-del');
       del.type = 'button';
       del.title = 'Delete pipeline';
       del.setAttribute('aria-label', `Delete "${w.name || w.id}"`);
       del.appendChild(svg(TRASH_GLYPH));
       del.addEventListener('click', () => act('deleteWorkflow', w));
       tail.appendChild(del);
+    }
+    if (!w.archivedAt) {
+      const more = h('button', 'btn btn-sm btn-quiet btn-icon wfl-more');
+      more.type = 'button';
+      more.title = 'More';
+      more.setAttribute('aria-label', `More for "${w.name || w.id}"`);
+      more.setAttribute('aria-haspopup', 'menu');
+      more.dataset.focusKey = `workflow:${w.id}:more`;
+      more.appendChild(svg(MORE_GLYPH));
+      more.addEventListener('click', () => {
+        const pinned = act('isPinned', w.id) === true;
+        toggleMenu({ doc, anchor: more, align: 'end', label: `More for ${w.name || w.id}`, items: [
+          { label: pinned ? 'Unpin from Chat home' : 'Pin to Chat home', onSelect: () => act('togglePin', w) },
+        ] });
+      });
+      tail.appendChild(more);
     }
     item.appendChild(tail);
     return item;
@@ -564,7 +585,7 @@ export function createLibrary({ doc, host, actions }) {
     main.appendChild(txt);
     item.appendChild(main);
     const tail = h('span', 'wfl-wf-actions');
-    const del = h('button', 'wfv-icon-btn wfl-del');
+    const del = h('button', 'btn btn-sm btn-quiet btn-icon wfl-del');
     del.type = 'button';
     del.title = 'Delete permanently';
     del.setAttribute('aria-label', `Delete "${w.name || w.id}" permanently`);
@@ -590,7 +611,7 @@ export function createLibrary({ doc, host, actions }) {
     if (st.data.loadError) {
       const err = h('p', 'wfl-empty', st.data.loadError);
       if (typeof st.data.retry === 'function') {
-        const b = h('button', 'wfv-btn', 'Retry');
+        const b = h('button', 'btn btn-sm', 'Retry');
         b.type = 'button';
         b.addEventListener('click', () => st.data.retry());
         err.appendChild(b);

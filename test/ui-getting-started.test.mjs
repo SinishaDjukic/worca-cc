@@ -8,6 +8,7 @@ import {
   GETTING_STARTED_STEPS, renderGettingStarted, renderGettingStartedPill, bindWelcome, doneCount, allStepsDone,
 } from '../ui/public/getting-started.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { backdropClick, dragOut } from './helpers/popups.mjs';
 
 const dom = () => new JSDOM('<!doctype html><body><div id="host"></div><div id="pill"></div></body>', { url: 'http://localhost/' });
 const status = (done = [], extra = {}) => ({
@@ -42,8 +43,8 @@ test('the shelf (nine tiles in order, progress, Hide, done tiles re-summon) and 
         assert.ok(t.querySelector('.gs-label').textContent.length > 8, 'a label');
       }
       // A finished vignette is painted still; an unfinished one plays.
-      assert.ok(tiles[0].querySelector('svg').classList.contains('static'));
-      assert.ok(tiles[2].querySelector('svg').classList.contains('play'));
+      assert.ok(tiles[0].querySelector('.gs-vig svg').classList.contains('static'));
+      assert.ok(tiles[2].querySelector('.gs-vig svg').classList.contains('play'));
       // Done tiles reveal faster than unfinished ones: strictly increasing delays.
       const delays = tiles.map((t) => parseFloat(t.style.getPropertyValue('--tile-delay')));
       for (let i = 1; i < delays.length; i++) assert.ok(delays[i] > delays[i - 1], `tile ${i} arrives after tile ${i - 1}`);
@@ -124,8 +125,9 @@ test('welcome bindings: doors hand over their step, Skip / backdrop / Esc skip',
   click(window, modal.querySelector('[data-door="run"]'));
   assert.deepEqual(doors, ['run']);
   click(window, modal.querySelector('.ob-skip'));
-  click(window, modal);                                   // the backdrop itself
+  backdropClick(window, modal);                           // press and release on the backdrop
   click(window, modal.querySelector('.card'));            // the card is not the backdrop
+  dragOut(window, modal.querySelector('.card'), modal);   // a press inside released on the backdrop is not one
   doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
   assert.equal(skips, 3);
   unbind();

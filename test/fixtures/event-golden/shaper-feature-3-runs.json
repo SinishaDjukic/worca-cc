@@ -1,0 +1,167 @@
+[
+ {
+  "label": "proposal",
+  "phase": "shaping",
+  "log": [],
+  "step": null,
+  "target": null
+ },
+ {
+  "label": "clarify",
+  "phase": "shaping",
+  "log": [],
+  "step": {
+   "index": null,
+   "kind": "clarify"
+  },
+  "target": null
+ },
+ {
+  "label": "split",
+  "phase": "shaping",
+  "log": [
+   "Clarify · 2 answers"
+  ],
+  "step": {
+   "index": null,
+   "kind": "outline"
+  },
+  "target": null
+ },
+ {
+  "label": "run1-plan",
+  "phase": "feature",
+  "log": [
+   "Clarify · 2 answers",
+   "Split into 3 runs"
+  ],
+  "step": {
+   "index": 1,
+   "kind": "plan"
+  },
+  "target": {
+   "index": 1,
+   "status": "running",
+   "asks": true
+  }
+ },
+ {
+  "label": "run1-build",
+  "phase": "feature",
+  "log": [
+   "Clarify · 2 answers",
+   "Split into 3 runs",
+   "Run 1 · Plan approved · after 1 round of changes"
+  ],
+  "step": null,
+  "target": {
+   "index": 1,
+   "status": "running",
+   "asks": false
+  }
+ },
+ {
+  "label": "run2-plan",
+  "phase": "feature",
+  "log": [
+   "Clarify · 2 answers",
+   "Split into 3 runs",
+   "Run 1 · Plan approved · after 1 round of changes"
+  ],
+  "step": {
+   "index": 2,
+   "kind": "plan"
+  },
+  "target": {
+   "index": 2,
+   "status": "running",
+   "asks": true
+  }
+ },
+ {
+  "label": "run2-build",
+  "phase": "feature",
+  "log": [
+   "Clarify · 2 answers",
+   "Split into 3 runs",
+   "Run 1 · Plan approved · after 1 round of changes",
+   "Run 2 · Plan approved"
+  ],
+  "step": null,
+  "target": {
+   "index": 2,
+   "status": "running",
+   "asks": false
+  }
+ },
+ {
+  "label": "run3-plan",
+  "phase": "feature",
+  "log": [
+   "Clarify · 2 answers",
+   "Split into 3 runs",
+   "Run 1 · Plan approved · after 1 round of changes",
+   "Run 2 · Plan approved"
+  ],
+  "step": {
+   "index": 3,
+   "kind": "plan"
+  },
+  "target": {
+   "index": 3,
+   "status": "running",
+   "asks": true
+  }
+ },
+ {
+  "label": "run3-review",
+  "phase": "feature",
+  "log": [
+   "Clarify · 2 answers",
+   "Split into 3 runs",
+   "Run 1 · Plan approved · after 1 round of changes",
+   "Run 2 · Plan approved",
+   "Run 3 · Plan approved"
+  ],
+  "step": null,
+  "target": {
+   "index": 3,
+   "status": "running",
+   "asks": false
+  }
+ },
+ {
+  "label": "gate",
+  "phase": "feature",
+  "log": [
+   "Clarify · 2 answers",
+   "Split into 3 runs",
+   "Run 1 · Plan approved · after 1 round of changes",
+   "Run 2 · Plan approved",
+   "Run 3 · Plan approved"
+  ],
+  "step": {
+   "index": 3,
+   "kind": "gate"
+  },
+  "target": {
+   "index": 3,
+   "status": "running",
+   "asks": true
+  }
+ },
+ {
+  "label": "ready",
+  "phase": "feature",
+  "log": [
+   "Clarify · 2 answers",
+   "Split into 3 runs",
+   "Run 1 · Plan approved · after 1 round of changes",
+   "Run 2 · Plan approved",
+   "Run 3 · Plan approved",
+   "Run 3 · Another cycle started"
+  ],
+  "step": null,
+  "target": null
+ }
+]

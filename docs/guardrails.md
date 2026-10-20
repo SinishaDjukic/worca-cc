@@ -111,9 +111,9 @@ enforces the set's latest definition.
   and Strict's exfil and publish denies (`Bash(gh)`, `curl`, `WebFetch`, …) do
   not constrain a registry server's tools, which every agent of the run can
   call. A team that wants a tool off writes a deny rule, which then reaches every
-  copy (above). Ask Worca has no guardrails, so deny rules never bind the chat's
+  copy (above). Chat has no guardrails, so deny rules never bind the chat's
   copies.
-- **What "no code changes" means for Ask Worca with MCP servers.** Native write
+- **What "no code changes" means for Chat with MCP servers.** Native write
   tools stay denied, but a server included in a chat may have write tools (a
   filesystem server, GitHub push/merge, Jira create), and it is a network path
   outside Ask web access: the allowlist, the SSRF checks, the team's web caps and
@@ -170,7 +170,7 @@ enforces the set's latest definition.
   included) are worca's own child processes, not `claude` spawns: no deny rule
   reaches them, and they start from the run's scrubbed environment when its
   set scrubs (the scan runs under Normal, which does not scrub).
-- **Ask Worca sandbox.** The in-app assistant (`Ask Worca`) is a headless
+- **Chat sandbox.** The in-app assistant (`Chat`) is a headless
   `claude` spawned by Worca itself, never inside a project folder: its cwd is
   `<worcaHome>/tmp/ask`, its built-in tools are reduced to `Task` (`--tools
   Task` — no Bash/Read/Write/Edit exist in the process), only Worca's own MCP
@@ -206,7 +206,7 @@ enforces the set's latest definition.
   similarity threshold, a plain copy, or credential lines an agent pasted into
   a harmless file arrive as an ordinary add under a name no pattern matches.
   Redaction (`src/core/ask/redact.mjs`) is the second line for those. Per-turn `--max-turns` and
-  `--max-budget-usd` caps are configurable in Settings → Ask Worca.
+  `--max-budget-usd` caps are configurable in Settings → Chat.
   **Chat worktrees.** The assistant can open read-only **detached** git checkouts of
   any registered project ref (or a run's feature branch) under
   `<worcaHome>/ask/<threadId>/wt/<worktreeId>` — `open_worktree` /
@@ -287,7 +287,7 @@ enforces the set's latest definition.
   tools run inside the worca server, so the fetch uses worca's read credential.
   Tokens are never forwarded into the MCP child's env.
   **Scripts the chat can write and run.** With **Create and run scripts**
-  (Settings → Ask Worca, on by default) the assistant holds four more worca MCP
+  (Settings → Chat, on by default) the assistant holds four more worca MCP
   tools: `list_scripts` and `get_script` read the registry, `save_script`
   changes one of the user's own scripts that already exists
   (`~/.worca-cc/scripts`; a NEW script is always a `draft_script` card the user
@@ -317,7 +317,7 @@ enforces the set's latest definition.
   session at all — the two readers and `draft_script` stay (a draft writes
   nothing until the user saves its card), and the prompt keeps the script
   contract without its save/test line.
-  **Web access (off by default).** Settings → Ask Worca → Web access gives the
+  **Web access (off by default).** Settings → Chat → Web access gives the
   assistant `web_fetch` (GET one https page, HTML converted to text) and, when a
   search endpoint is configured, `web_search`. They are worca MCP tools; the
   native `WebFetch`/`WebSearch` stay denied. Every rule is enforced by worca's
@@ -329,7 +329,7 @@ enforces the set's latest definition.
     (`*.github.io`, `*.vercel.app`, `*.co.uk`, …); list the exact host instead.
   - **New sites are approved in the chat.** When Ask wants a host that is not
     allowed, it calls `propose_web_access` and ends its turn. The card shows the
-    host, the reason and the exact URL: **Allow for this chat** (recorded on the
+    host, the reason and the exact URL: **Allow in chat** (recorded on the
     card; other chats are unaffected), **Always allow** (the exact host joins the
     allowlist above) or **Deny**. The click is re-checked against the chat's
     current web access, so a card fails if web access was switched off or the
@@ -388,4 +388,4 @@ enforces the set's latest definition.
   outside it is never used. That check is a rail against mistakes, not a sandbox: an
   obfuscated command can get around it. `Edit` and `Write` stay denied for the
   chat itself. With agent isolation on, agent mode is off: a server-user shell
-  would undo the isolation. See [Terminal](terminal.md#ask-worca-agent-mode).
+  would undo the isolation. See [Terminal](terminal.md#chat-agent-mode).

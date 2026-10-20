@@ -1,6 +1,6 @@
 // ui/public/shape/slice-line.mjs — the slice line on a run page (D16, D22): which feature a run belongs to and, once
 // it is done, which slice comes next. Pure copy; app.js paints it.
-import { SLICE_STATE_LABELS } from './feature-view.mjs';
+import { SLICE_STATE_LABELS } from './feature-card.mjs';
 
 /** @returns {{text:string, href:string, openFeature:boolean}|null} */
 export function sliceLineCopy(info, { done = false } = {}) {

@@ -6,6 +6,7 @@
 // no fetch, no network — app.js owns data and delegates events. The few listeners here are
 // purely local (a show-all toggle, chip add/remove inside the editor).
 
+import { icon } from './icons.mjs';
 import { engineLabel } from '../../src/shared/engine-switch.mjs';
 import { normaliseDimension } from '../../src/shared/tag-dimensions.mjs';
 const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -30,7 +31,7 @@ function withRef(doc, text, name) {
   parts.forEach((part, i) => { if (i) frag.append(ref(doc, name)); if (part) frag.append(part); });
   return frag;
 }
-function btn(doc, cls, text, primary = false) { const b = h(doc, 'button', `${primary ? 'btn btn-primary btn-mini' : 'btn-ghost btn-mini'} ${cls}`, text); b.type = 'button'; return b; }
+function btn(doc, cls, text, primary = false) { const b = h(doc, 'button', `${primary ? 'btn btn-primary btn-sm' : 'btn btn-sm'} ${cls}`, text); b.type = 'button'; return b; }
 const usd = (n) => `$${(Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 export function relTime(iso, now = Date.now()) {
   const ms = now - Date.parse(iso);
@@ -119,7 +120,7 @@ export function renderProjectTpCell(s, { doc = globalThis.document, now = Date.n
       break;
     case 'off':
       status.classList.add('muted'); status.textContent = 'Off · your settings apply';
-      actions.append(btn(doc, 'tp-enable', 'Set up team policy…'));
+      actions.append(btn(doc, 'tp-enable', 'Set up policy…'));
       break;
     case 'unsupported':
       line.append(dot(doc, 'red'));
@@ -238,7 +239,7 @@ export function renderPolicyEnableDialogBody({ project, origin, candidates = [],
 }
 
 // ---- Team policy page: read mode (board 4) ----------------------------------------------
-const GROUP_LABELS = { cost: 'Cost', ask: 'Ask Worca', guardrails: 'Guardrails', models: 'Models', plugins: 'Plugins', runs: 'Runs' };
+const GROUP_LABELS = { cost: 'Cost', ask: 'Chat', guardrails: 'Guardrails', models: 'Models', plugins: 'Plugins', runs: 'Runs' };
 const kindChip = (doc, kind, declaredKind) => {
   const c = h(doc, 'span', `tp-kind ${declaredKind === 'hard' ? 'hard' : kind}`, declaredKind === 'hard' ? 'hard' : kind);
   if (declaredKind === 'hard') c.title = 'Hard constraints are not enforced by this version — treated as soft';
@@ -322,7 +323,7 @@ export function renderPolicySyncChip({ policy }, { doc = globalThis.document, no
   if (policy?.checkedAt) txt.append(h(doc, 'b', null, relTime(policy.checkedAt, now) || ''));
   if (warnings.length) txt.append(` | ${warnings.length} warning${warnings.length === 1 ? '' : 's'}`);
   chip.append(txt);
-  const check = h(doc, 'button', `btn-ghost btn-mini tp-check-now${busy ? ' busy' : ''}`, 'Refresh'); check.type = 'button';
+  const check = h(doc, 'button', `btn btn-sm tp-check-now${busy ? ' busy' : ''}`, 'Refresh'); check.type = 'button';
   if (busy) check.disabled = true;
   chip.append(check);
   if (warnings.length) { const w = h(doc, 'pre', 'hint mono tm-sync-error', warnings.join('\n')); chip.append(w); }
@@ -369,7 +370,7 @@ export function renderPolicyHeader(payload, { doc = globalThis.document, now = D
   main.append(facts);
   card.append(main);
   const actions = h(doc, 'div', 'tp-head-actions');
-  const edit = h(doc, 'button', 'btn btn-ghost btn-mini tp-edit', editing ? 'Cancel editing' : 'Edit policy'); edit.type = 'button';
+  const edit = h(doc, 'button', 'btn btn-sm tp-edit', editing ? 'Cancel editing' : 'Edit policy'); edit.type = 'button';
   edit.disabled = !payload.canPublish;
   actions.append(edit);
   if (!payload.canPublish) { const hint = h(doc, 'small', 'hint'); hint.append('Edit it where ', ref(doc, policy.home || 'the policy home'), ' is registered in Worca'); actions.append(hint); }
@@ -542,7 +543,7 @@ export function renderPolicyEmptyState({ doc = globalThis.document } = {}) {
     c.append(h(doc, 'div', 'tm-step', step), h(doc, 'h3', null, title));
     const p = h(doc, 'p', 'hint');
     for (const part of body) p.append(typeof part === 'string' ? part : h(doc, 'code', 'mono', part.code));
-    const a = h(doc, 'a', primary ? 'btn btn-primary btn-mini' : 'btn btn-ghost btn-mini', label); a.href = href;
+    const a = h(doc, 'a', primary ? 'btn btn-primary btn-sm' : 'btn btn-sm', label); a.href = href;
     c.append(p, a);
     return c;
   };
@@ -564,7 +565,7 @@ export function renderPolicyEmptyState({ doc = globalThis.document } = {}) {
 const KIND_LABEL = { default: 'Default', soft: 'Soft', hard: 'Hard' };
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const CODEX_EFFORTS = ['minimal', 'low', 'medium', 'high'];
-const EFFORTS_BY_ENGINE = { claude: EFFORTS, codex: CODEX_EFFORTS, cursor: [] };
+const EFFORTS_BY_ENGINE = { claude: EFFORTS, codex: CODEX_EFFORTS, cursor: [], copilot: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] };
 
 function listChips(doc, row, items, labelOf) {
   const list = row.querySelector('.tp-list');
@@ -572,7 +573,7 @@ function listChips(doc, row, items, labelOf) {
   for (const [i, it] of items.entries()) {
     const chip = h(doc, 'span', 'chip tp-chip');
     chip.append(labelOf(it));
-    const rm = h(doc, 'button', 'tp-chip-rm', '✕'); rm.type = 'button'; rm.dataset.index = String(i); rm.setAttribute('aria-label', `Remove ${labelOf(it)}`);
+    const rm = h(doc, 'button', 'tp-chip-rm'); rm.type = 'button'; rm.append(icon(doc, 'x', 12)); rm.dataset.index = String(i); rm.setAttribute('aria-label', `Remove ${labelOf(it)}`);
     chip.append(rm);
     list.append(chip);
   }
@@ -595,7 +596,7 @@ function chipField(doc, label, key, items, placeholder) {
   writeItems(wrap, Array.isArray(items) ? items : []);
   wrap.append(h(doc, 'div', 'tp-list'));
   const add = h(doc, 'div', 'path-row tp-add-row'); const inp = h(doc, 'input', 'input tp-add'); inp.type = 'text'; inp.placeholder = placeholder;
-  const b = h(doc, 'button', 'btn btn-ghost btn-mini tp-add-btn', '+ add'); b.type = 'button';
+  const b = h(doc, 'button', 'btn btn-sm tp-add-btn', '+ add'); b.type = 'button';
   add.append(inp, b); wrap.append(add);
   listChips(doc, wrap, readItems(wrap), (x) => String(x));
   return wrap;
@@ -616,7 +617,7 @@ function catalogItem(doc, cat, item) {
   const it = h(doc, 'div', 'tp-cat-item'); it.dataset.cat = cat;
   it.dataset.orig = JSON.stringify(item || {});   // the keys the document had: a round trip keeps them
   const head = h(doc, 'div', 'tp-cat-item-head');
-  const rm = h(doc, 'button', 'btn-ghost btn-mini tp-cat-rm', 'Remove'); rm.type = 'button';
+  const rm = h(doc, 'button', 'btn btn-sm tp-cat-rm', 'Remove'); rm.type = 'button';
   const grid = h(doc, 'div', 'tp-cat-grid');
   if (cat === 'guardrailSets') {
     head.append(h(doc, 'b', null, item?.name || item?.id || 'New guardrail set'), rm);
@@ -643,7 +644,7 @@ function catalogItem(doc, cat, item) {
     const env = h(doc, 'div', 'tp-cat-field tp-cat-env'); env.append(h(doc, 'label', null, 'Env'));
     const rows = h(doc, 'div', 'tp-env-rows');
     for (const [k, v] of Object.entries(item?.env || {})) rows.append(envRow(doc, k, v));
-    const addEnv = h(doc, 'button', 'btn btn-ghost btn-mini tp-env-add', '+ env var'); addEnv.type = 'button';
+    const addEnv = h(doc, 'button', 'btn btn-sm tp-env-add', '+ env var'); addEnv.type = 'button';
     env.append(rows, addEnv, h(doc, 'small', 'hint', 'A token goes in as ${VAR}: the name of a variable on each teammate\'s machine, never the value.'));
     it.append(head, grid, eff, env);
   }
@@ -664,7 +665,7 @@ function catalogCard(doc, cat, items) {
   const list = h(doc, 'div', 'tp-cat-list'); list.dataset.cat = cat;
   for (const it of items) list.append(catalogItem(doc, cat, it));
   card.append(list);
-  const add = h(doc, 'button', 'btn btn-ghost btn-mini tp-cat-add', cat === 'guardrailSets' ? '+ Add guardrail set' : '+ Add model'); add.type = 'button'; add.dataset.cat = cat;
+  const add = h(doc, 'button', 'btn btn-sm tp-cat-add', cat === 'guardrailSets' ? '+ Add guardrail set' : '+ Add model'); add.type = 'button'; add.dataset.cat = cat;
   card.append(add);
   return card;
 }
@@ -735,7 +736,7 @@ function valueControl(doc, meta, entry, row) {
       writeItems(row, Array.isArray(v) ? v : []);
       wrap.append(h(doc, 'div', 'tp-list'));
       const add = h(doc, 'div', 'path-row tp-add-row'); const inp = h(doc, 'input', 'input tp-add'); inp.type = 'text'; inp.placeholder = meta.key === 'plugins.marketplaces' ? 'owner/repo or URL' : meta.key === 'models.allowed' ? 'model id' : meta.key === 'ask.webAllowedDomains' ? 'example.com or *.example.com' : 'plugin name';
-      const b = h(doc, 'button', 'btn btn-ghost btn-mini tp-add-btn', '+ add'); b.type = 'button';
+      const b = h(doc, 'button', 'btn btn-sm tp-add-btn', '+ add'); b.type = 'button';
       add.append(inp, b); wrap.append(add);
       break;
     }
@@ -746,7 +747,7 @@ function valueControl(doc, meta, entry, row) {
       const name = h(doc, 'input', 'input tp-add tp-plugin-name'); name.type = 'text'; name.placeholder = 'plugin name';
       const mkt = h(doc, 'input', 'input tp-plugin-marketplace'); mkt.type = 'text'; mkt.placeholder = 'marketplace (optional)';
       const min = h(doc, 'input', 'input tp-plugin-min'); min.type = 'text'; min.placeholder = 'min version';
-      const b = h(doc, 'button', 'btn btn-ghost btn-mini tp-add-btn', '+ add'); b.type = 'button';
+      const b = h(doc, 'button', 'btn btn-sm tp-add-btn', '+ add'); b.type = 'button';
       add.append(name, mkt, min, b); wrap.append(add);
       break;
     }
@@ -761,7 +762,7 @@ function valueControl(doc, meta, entry, row) {
       const none = h(doc, 'option', null, 'effort'); none.value = ''; effort.append(none);
       for (const e of EFFORTS) { const o = h(doc, 'option', null, e); o.value = e; effort.append(o); }
       sw.append(effort);
-      const b = h(doc, 'button', 'btn btn-ghost btn-mini tp-add-btn', '+ add'); b.type = 'button';
+      const b = h(doc, 'button', 'btn btn-sm tp-add-btn', '+ add'); b.type = 'button';
       add.append(role, model, sw, b); wrap.append(add);
       break;
     }
@@ -781,7 +782,7 @@ function valueControl(doc, meta, entry, row) {
       // at publish, POST /api/policy/validate).
       writeItems(row, Array.isArray(v) ? v : []);
       wrap.append(h(doc, 'div', 'tp-list'));
-      const add = h(doc, 'button', 'btn btn-ghost btn-mini tp-mcp-add', '+ Add'); add.type = 'button';
+      const add = h(doc, 'button', 'btn btn-sm tp-mcp-add', '+ Add'); add.type = 'button';
       const box = h(doc, 'textarea', 'textarea mono tp-mcp-json'); box.rows = 4; box.hidden = true;
       box.placeholder = '{ "plugin": "acme-tools", "server": "sentry" } or { "name": "github", "type": "stdio", "command": "npx", … }';
       box.setAttribute('aria-label', 'One MCP server entry as JSON');
@@ -796,7 +797,7 @@ function valueControl(doc, meta, entry, row) {
       const add = h(doc, 'div', 'path-row tp-add-row');
       const inp = h(doc, 'input', 'input tp-add tp-skill-ref'); inp.type = 'text'; inp.placeholder = 'plugin/skill, e.g. acme/deploy-checklist';
       inp.setAttribute('aria-label', 'A required skill as plugin/skill');
-      const b = h(doc, 'button', 'btn btn-ghost btn-mini tp-add-btn', '+ add'); b.type = 'button';
+      const b = h(doc, 'button', 'btn btn-sm tp-add-btn', '+ add'); b.type = 'button';
       const err = h(doc, 'small', 'hint err tp-skill-err'); err.hidden = true;
       add.append(inp, b); wrap.append(add, err);
       break;
@@ -810,7 +811,7 @@ function valueControl(doc, meta, entry, row) {
       const values = h(doc, 'input', 'input tp-dim-values'); values.type = 'text'; values.placeholder = 'allowed values, comma-separated (optional)'; values.setAttribute('aria-label', 'Allowed values');
       const def = h(doc, 'input', 'input tp-dim-default'); def.type = 'text'; def.placeholder = 'default (optional)'; def.setAttribute('aria-label', 'Default');
       const req = h(doc, 'label', 'check-row'); const cb = h(doc, 'input', 'tp-dim-required'); cb.type = 'checkbox'; req.append(cb, ' Required');
-      const b = h(doc, 'button', 'btn btn-ghost btn-mini tp-add-btn', '+ add'); b.type = 'button';
+      const b = h(doc, 'button', 'btn btn-sm tp-add-btn', '+ add'); b.type = 'button';
       add.append(key, label, values, def, req, b); wrap.append(add);
       break;
     }
@@ -1076,11 +1077,11 @@ export function renderPolicyEditor(policyDoc, { registry = [], doc = globalThis.
   const root = h(doc, 'div', 'tp-editor');
   root.dataset.original = JSON.stringify(canonicalDoc(src));
   // ---- tabs: the read view's pills, one section per subject, so the form is never one long scroll.
-  const tabsBar = h(doc, 'div', 'tp-tabs tp-edit-tabs'); tabsBar.setAttribute('role', 'tablist');
+  const tabsBar = h(doc, 'div', 'tp-tabs tp-edit-tabs tabs'); tabsBar.setAttribute('role', 'tablist');
   const secs = h(doc, 'div', 'tp-edit-sections');
   const tabs = [];
   const addTab = (key, label, count) => {
-    const btn = h(doc, 'button', 'tp-tab'); btn.type = 'button'; btn.dataset.sec = key; btn.setAttribute('role', 'tab');
+    const btn = h(doc, 'button', 'tp-tab tab'); btn.type = 'button'; btn.dataset.sec = key; btn.setAttribute('role', 'tab');
     btn.append(label);
     const badge = h(doc, 'span', 'tp-tab-badge'); badge.hidden = true; btn.append(badge);
     const sec = h(doc, 'div', 'tp-sec tp-edit-sec'); sec.dataset.sec = key; sec.hidden = true; sec.setAttribute('role', 'tabpanel');
@@ -1174,9 +1175,9 @@ export function renderPolicyEditor(policyDoc, { registry = [], doc = globalThis.
   const count = h(doc, 'span', 'tp-change-count', 'no changes');
   grow.append(count, ' · ');
   const vj = h(doc, 'button', 'linkish tp-view-json', 'View JSON'); vj.type = 'button';
-  const cj = h(doc, 'button', 'linkish tp-copy-json', 'Copy for a pull request'); cj.type = 'button';
+  const cj = h(doc, 'button', 'linkish tp-copy-json', 'Copy for PR'); cj.type = 'button';
   grow.append(vj, ' · ', cj);
-  const publish = h(doc, 'button', 'btn btn-primary btn-mini tp-publish', 'Publish to worca-policy'); publish.type = 'button'; publish.disabled = true;
+  const publish = h(doc, 'button', 'btn btn-primary btn-sm tp-publish', 'Publish to worca-policy'); publish.type = 'button'; publish.disabled = true;
   bar.append(grow, publish);
   root.append(bar);
   // The message and the JSON view sit at the top, right under the header that holds the controls.
@@ -1288,7 +1289,7 @@ export function renderWsPolicyLine(w, { doc = globalThis.document } = {}) {
   root.append(h(doc, 'span', 'tm-label', 'Team policy'));
   const actions = h(doc, 'span', 'ws-tbl-actions');
   if (home.state === 'ok') actions.append(btn(doc, 'wsp-open', 'Open policy'));
-  if (home.state === 'ok' && members.some((m) => m.state === 'none')) actions.append(btn(doc, 'wsp-route', 'Route all to policy home'));
+  if (home.state === 'ok' && members.some((m) => m.state === 'none')) actions.append(btn(doc, 'wsp-route', 'Route all'));
   actions.append(btn(doc, 'wsp-home-change', home.state === 'unset' ? 'Choose policy home…' : 'Change policy home…'));
   root.append(actions);
 
@@ -1417,8 +1418,8 @@ export function renderTeamCapPauseBanner(rec, { doc = globalThis.document, budge
   }
   el.append(text);
   const actions = h(doc, 'div', 'cb-actions');
-  const open = h(doc, 'button', 'btn btn-mini cb-policy-open', 'Open Team policy'); open.type = 'button';
-  const past = h(doc, 'button', 'btn btn-primary btn-mini cb-past-team-cap', total ? 'Continue past team cap (this period)' : 'Continue past team cap (this pipeline)'); past.type = 'button';
+  const open = h(doc, 'button', 'btn btn-sm cb-policy-open', 'Open Team policy'); open.type = 'button';
+  const past = h(doc, 'button', 'btn btn-primary btn-sm cb-past-team-cap', total ? 'Continue past team cap (this period)' : 'Continue past team cap (this pipeline)'); past.type = 'button';
   past.dataset.pipelineId = rec.pipelineId || '';
   actions.append(open, past);
   el.append(actions);
@@ -1659,7 +1660,7 @@ export function renderSetupChecklist({ home, requirements = [], seeds = [], trus
   root.append(trust);
   // One footer action: the modal's own Close is the way out (a "Later" here said the same twice).
   const actions = h(doc, 'div', 'confirm-actions');
-  const all = h(doc, 'button', 'btn btn-primary btn-mini tp-install-all', requiredAllLabel(requirements) || 'Install all…'); all.type = 'button';
+  const all = h(doc, 'button', 'btn btn-primary btn-sm tp-install-all', requiredAllLabel(requirements) || 'Install all…'); all.type = 'button';
   all.disabled = !requiredAllLabel(requirements);
   actions.append(all);
   root.append(actions);
@@ -1711,7 +1712,7 @@ export function renderSkillConsent(c, { doc = globalThis.document } = {}) {
   fact('FROM', `${c.home} · worca-policy @ ${String(c.sha || '').slice(0, 7)}`);
   fact('FILES', `${c.files} · ${kb(c.bytes)}`);
   fact('SCRIPTS', c.scripts.length ? code(doc, c.scripts.join(' · ')) : 'none');
-  fact('SHELL BLOCKS', c.shellBlocks ? `${c.shellBlocks} in SKILL.md — they run in pipeline runs without guardrail checks; Ask Worca never runs them` : 'none');
+  fact('SHELL BLOCKS', c.shellBlocks ? `${c.shellBlocks} in SKILL.md — they run in pipeline runs without guardrail checks; Chat never runs them` : 'none');
   if (c.hooks) fact('HOOKS', h(doc, 'span', 'hint err', SKILL_HOOKS_TEXT));
   if (c.pluginRootRefs) fact('PLUGIN FILES', h(doc, 'span', 'hint err', SKILL_PLUGIN_ROOT_TEXT));
   if (c.allowedTools) fact('ALLOWED TOOLS', code(doc, c.allowedTools));
@@ -1758,8 +1759,8 @@ export async function handleTeamSkillClick(e, deps) {
     const body = renderSkillConsent(c.data, { doc: deps.doc });
     let sent = false;
     deps.dialog(title, body, [
-      ['Cancel', 'btn btn-ghost btn-mini', deps.close],
-      ['Turn on', 'btn btn-primary btn-mini', () => { if (sent) return; sent = true; void turnOn(body, c.data.hash); }],
+      ['Cancel', 'btn btn-sm', deps.close],
+      ['Turn on', 'btn btn-primary btn-sm', () => { if (sent) return; sent = true; void turnOn(body, c.data.hash); }],
     ]);
   } finally { delete t.dataset.busy; }
 }

@@ -764,7 +764,7 @@ export async function runCodexProcess({
   // CODEX_ASK_LOCKDOWN) or an explicit, verified flag list.
   const lockdown = Array.isArray(askLockdown) ? askLockdown : CODEX_ASK_LOCKDOWN;
   // An empty list is no lockdown at all: refused exactly like none.
-  if (askLockdown && (!Array.isArray(lockdown) || !lockdown.length)) throw new Error(`${bin}: this codex cannot be locked down for a chat (its image viewer and sub-agents stay on) — Ask on Codex is unavailable`);
+  if (askLockdown && (!Array.isArray(lockdown) || !lockdown.length)) throw new Error(`${bin}: this codex cannot be locked down for a chat (its image viewer and sub-agents stay on) — Chat on Codex is unavailable`);
   // The sandbox writes only the cwd: the memory mount and the node's output dirs
   // become writable roots (--add-dir fresh, writable_roots on resume).
   const dirs = [...new Set([...(addDirs || []), ...(writableDirs || [])])];

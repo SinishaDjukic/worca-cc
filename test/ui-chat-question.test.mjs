@@ -48,7 +48,7 @@ test('markup: the heading outside the card, one white clarify card with keyed ti
   ]);
   const foot = panel.querySelector(':scope > .qpanel-foot');
   assert.equal(foot.querySelector('.qanswered').textContent, '0 of 1 answered');
-  const go = foot.querySelector('button.btn-go');
+  const go = foot.querySelector('button[data-qpanel-submit]');
   assert.deepEqual([go.type, go.textContent, go.disabled], ['button', 'Go', true]);
   const err = el.querySelector(':scope > .chat-rc-q-err');
   assert.deepEqual([err.hidden, err.getAttribute('role')], [true, 'status']);
@@ -58,7 +58,7 @@ test('a pick: one option pressed, the count and the submit label follow it; anot
   const { doc } = rig();
   const { el, picks } = buildChatQuestion(doc, spec(doc));
   const opts = [...el.querySelectorAll('.qopt')];
-  const go = el.querySelector('.btn-go');
+  const go = el.querySelector('[data-qpanel-submit]');
   opts[1].click();
   assert.deepEqual(opts.map((o) => [o.classList.contains('sel'), o.getAttribute('aria-pressed')]), [[false, 'false'], [true, 'true'], [false, 'false']]);
   assert.equal(el.querySelector('.qanswered').textContent, '1 of 1 answered');
@@ -82,7 +82,7 @@ test('keyboard: arrows move and pick (wrapping), a letter picks its option from 
   keyOn(win, opts[2], 'ArrowDown'); assert.equal(doc.activeElement, opts[0], 'wraps to the first');
   keyOn(win, opts[0], 'ArrowUp'); assert.equal(doc.activeElement, opts[2], 'and back to the last');
   keyOn(win, opts[2], 'ArrowLeft'); assert.equal(doc.activeElement, opts[1]);
-  const go = el.querySelector('.btn-go');
+  const go = el.querySelector('[data-qpanel-submit]');
   go.focus();
   keyOn(win, go, 'a');
   assert.deepEqual([doc.activeElement, opts[0].getAttribute('aria-pressed')], [opts[0], 'true'], 'a letter, lower case too');
@@ -119,7 +119,7 @@ test('submit: everything waits while it is sent; a refusal shows its words in th
   const buttons = () => [...el.querySelectorAll('button')].map((b) => b.disabled);
   const err = el.querySelector('.chat-rc-q-err');
   el.querySelector('.qopt').click();
-  el.querySelector('.btn-go').click();
+  el.querySelector('[data-qpanel-submit]').click();
   assert.deepEqual(buttons(), [true, true, true, true]);
   keyOn(win, el.querySelectorAll('.qopt')[1], 'b');
   assert.deepEqual([buttons(), el.querySelector('.qopt.sel').dataset.key], [[true, true, true, true], 'A'], 'no pick while the answer is in flight');
@@ -127,12 +127,12 @@ test('submit: everything waits while it is sent; a refusal shows its words in th
   await tick();
   assert.deepEqual([err.hidden, err.textContent], [false, 'this chat already has a project']);
   assert.deepEqual(buttons(), [false, false, false, false]);
-  assert.equal(doc.activeElement, el.querySelector('.btn-go'), 'the focus waits on the submit for a retry');
-  el.querySelector('.btn-go').click();
+  assert.equal(doc.activeElement, el.querySelector('[data-qpanel-submit]'), 'the focus waits on the submit for a retry');
+  el.querySelector('[data-qpanel-submit]').click();
   settleIt.rej(new Error(''));
   await tick();
   assert.equal(err.textContent, 'Answer not sent');
-  el.querySelector('.btn-go').click();
+  el.querySelector('[data-qpanel-submit]').click();
   settleIt.res();
   await tick();
   assert.equal(err.hidden, true);

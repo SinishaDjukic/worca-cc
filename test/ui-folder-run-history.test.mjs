@@ -146,8 +146,9 @@ test('the folder run glance (board 10): Finished · 14 files changed, time · co
   await openDetail(ctx, '');
   const doc = ctx.window.document;
   const g = doc.querySelector('#hist-detail .hd-glance');
-  assert.equal(g.querySelector('.rd-now-state').textContent, 'Finished');
-  assert.equal(g.querySelector('.rd-now-sub').textContent, '14 files changed');
+  // Runs redesign: the one status block (run-model.mjs) words the run.
+  assert.equal(g.querySelector('.rd-now-top').dataset.word, 'Finished');
+  assert.equal(g.querySelector('.rd-now-top .run-status-text').textContent, 'Finished · 14 files changed');
   const tile = [...doc.querySelectorAll('#hist-detail .rd-facts .rd-stats > div')].at(-1);
   assert.equal(tile.lastElementChild.textContent, 'files changed');
   assert.equal(tile.querySelector('b').className, 'fc-tile');
@@ -207,7 +208,7 @@ test('a folder run shows no git chrome and asks git or a forge nothing', async (
       assert.equal(g.querySelector('.rd-page-branch').hidden, true);
       assert.equal(g.querySelector('.rd-pr-slot').hidden, true);
       for (const sel of ['.hd-base', '.hd-branch-copy', '.hd-pr', '.hd-publish', '.hd-push']) assert.equal(doc.querySelector(`#hist-detail ${sel}`).hidden, true, sel);
-      assert.equal(g.querySelector('.rd-now-sub').textContent, '', 'not "Review the changes in Diff"');
+      assert.equal(g.querySelector('.rd-now-top .run-status-text').textContent, 'Finished', 'not "Ready to ship": Ship it is hidden');
       assert.equal(g.querySelector('.rd-page-meta .kind-chip'), null, 'still a git run: no Folder chip');
       assert.ok(!ctx.calls.some((c) => /\/publish|\/base-check/.test(c.url)));
     } },
@@ -222,7 +223,7 @@ test('a folder run shows no git chrome and asks git or a forge nothing', async (
       const g = doc.querySelector('#hist-detail .hd-glance');
       assert.equal(doc.querySelector('#hist-detail .hd-base').hidden, false);
       assert.equal(g.querySelector('.rd-page-branch').hidden, false);
-      assert.equal(g.querySelector('.rd-now-sub').textContent, 'Review the changes in Diff');
+      assert.equal(g.querySelector('.rd-now-top .run-status-text').textContent, 'Ready to ship');
     } },
     { name: 'git missing hides a git run\'s pull request link and slot (paintHdPr / the !gitChrome return)', run: async () => {
       const ctx = await bootDetail({ rows: [{ ...ROW, pr: { state: 'OPEN', url: 'https://github.com/a/b/pull/1' } }] });
@@ -292,7 +293,7 @@ test('the Apply bar on the glance and on Changes; Apply to folder applies 13 fil
   assert.deepEqual(lastToast(doc), { tone: 'ok', title: 'Applied to folder', detail: '13 files · 1 skipped', action: '' });
   assert.equal(slotOf(doc).querySelector('.fc-bar-l').textContent, '14 files · Applied');
   assert.equal(slotOf(doc).querySelector('button'), null, 'nothing left to apply or discard');
-  assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-now-state').textContent, 'Applied');
+  assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-now-top').dataset.word, 'Applied');
   assert.deepEqual(ctx.calls.filter((c) => c.opts.method === 'POST' && c.url.includes(`/api/runs/${ID}/`)).map((c) => c.url), [`/api/runs/${ID}/apply`]);
   await openDetail(ctx, 'details/changes');
   await settle(ctx.window, 4);
@@ -315,7 +316,7 @@ test('Discard asks once (destructive, no prose), discards and toasts; a refusal 
       await settle(ctx.window, 6);
       assert.deepEqual(lastToast(doc), { tone: 'ok', title: 'Changes discarded', detail: '', action: '' });
       assert.equal(slotOf(doc).querySelector('.fc-bar-l').textContent, '14 files · Discarded');
-      assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-now-state').textContent, 'Discarded');
+      assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-now-top').dataset.word, 'Discarded');
     } },
     { name: 'refused', run: async () => {
       const ctx = await boot({ arms: folderArms({ discard: () => fail(409, { error: 'The run has not finished.', code: 'RUN_NOT_FINISHED' }) }) });
@@ -385,7 +386,7 @@ test('a deep link with no saved row yet: Apply settles the bar from the detail p
   click(ctx.window, doc.querySelector('.fc-modal .fc-go'));
   await settle(ctx.window, 6);
   assert.equal(slotOf(doc).querySelector('.fc-bar-l').textContent, '14 files · Applied');
-  assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-now-state').textContent, 'Applied');
+  assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-now-top').dataset.word, 'Applied');
 });
 
 test('files the OS refused: Close on the result toasts warn with the counts', async () => {
@@ -424,15 +425,15 @@ test('the Runs list in the app: the Folder chip lands when /api/projects answers
   const PROJ = [{ name: 'Tax papers 2026', path: '/tmp/tax', exists: true, vcs: 'none', workMode: 'folder', key: ROW.projectKey }];
   let release;
   const gate = new Promise((r) => { release = r; });
-  const ctx = await bootDetail({ rows: [FROW({ changes: { state: 'applied', counts: COUNTS } })], detail: DETAIL,
+  const ctx = await bootDetail({ rows: [FROW({ changes: { state: 'applied', counts: COUNTS } })], detail: DETAIL, local: { 'worca-cc.runs.view': JSON.stringify({ show: 'all', groupBy: 'project', person: '' }) },
     arms: (url) => (url.includes('/api/projects') ? gate.then(() => ({ ok: true, status: 200, json: async () => ({ projects: PROJ }) })) : null) });
   go(ctx.window, 'runs');
   await settle(ctx.window, 8);
   const doc = ctx.window.document;
-  const group = () => doc.querySelector(`#runs-list .runs-group[data-group-key="${ROW.projectKey}"]`);
+  const group = () => doc.querySelector(`#runs-list .runs-sec[data-section="project:${ROW.projectKey}"]`);   // View › Group by Project
   assert.equal(group().querySelector('.kind-chip'), null, 'no project row yet: no chip');
   assert.match(group().querySelector('.runs-row-sub').textContent, /^Applied/);
   release();
   await settle(ctx.window, 8);
-  assert.equal(group().querySelector('.runs-group-head .kind-chip').textContent, 'Folder');
+  assert.equal(group().querySelector('.runs-sec-head .kind-chip').textContent, 'Folder');
 });

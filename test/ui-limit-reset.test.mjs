@@ -358,7 +358,7 @@ test('run rows: the group row reads "resets HH:MM", and "resumes HH:MM" once a t
   await pausedCard(ctx, { limitResetAt: iso(reset) });
   ctx.go('runs');
   await ctx.settle(8);
-  const sub = () => ctx.doc.querySelector('[data-slot="group"] .runs-row-sub')?.textContent || '';
+  const sub = () => ctx.doc.querySelector('a.runs-row .runs-row-sub')?.textContent || '';
   assert.match(sub(), new RegExp(`· resets ${hhmm(reset)}$`));
   const at = reset + 5 * MIN;
   ctx.server.tickets = [ticket({ runAt: iso(at) })];

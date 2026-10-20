@@ -20,7 +20,7 @@ import { githubEnv } from './github-credentials.mjs';
 import { azureEnv } from './azure-credentials.mjs';
 import { stripHostCredentials } from './host-credentials.mjs';
 import { worcaHome } from './projects.mjs';
-import { parseRemoteUrl } from './git-info.mjs';
+import { parseRemoteUrl, prBaseBranch } from './git-info.mjs';
 import { forgeOf } from './forge.mjs';
 import { mapWithCap } from './fanout.mjs';
 import { gitAvailable, gitMissingResult } from './git-available.mjs';
@@ -57,7 +57,7 @@ const NETWORK_CMDS = new Set(['fetch', 'merge', 'merge-tree']);
  *  can hold no hooks (a directory could be created and filled later); on Windows, a worca-home
  *  folder that does not exist simply has no hooks. The shared .git/config is just as writable, so
  *  a planted core.fsmonitor command (run by `git status`) and http.sslVerify=false are overridden too. */
-function hookFreeArgs() {
+export function hookFreeArgs() {
   let dir = devNull;
   if (process.platform === 'win32') { try { dir = join(worcaHome(), 'no-hooks'); } catch { /* devNull */ } }
   return ['-c', `core.hooksPath=${dir}`, '-c', 'core.fsmonitor=false', '-c', 'http.sslVerify=true'];
@@ -669,6 +669,8 @@ export async function checkBaseMerge(dir, { base, feature, remote = 'origin', fe
     if (!f.ok && (f.kind === 'no-remote' || f.kind === 'bad-remote')) useRemote = false;
     else if (!f.ok) fetchError = { kind: f.kind, message: f.error };
   }
+  // A run started from `origin/dev` records that name: its base is `dev` on origin (prBaseBranch).
+  if (useRemote) base = await prBaseBranch(dir, base, [r]);
   const headSha = await shaOf(dir, `refs/heads/${feature}`);
   if (!headSha) return { status: 'no-branch', base, feature, files: [], fileCount: 0, at };
   const tip = await baseTip(dir, base, useRemote ? r : null);
@@ -752,6 +754,24 @@ export async function mergeBaseInto(dir, { feature, baseSha, headSha, baseRef, t
 async function unmergedFiles(wt) {
   const r = await _run(['diff', '--name-only', '--diff-filter=U', '-z'], { cwd: wt });
   return r.ok ? nulNames(r.stdout) : [];
+}
+
+/** Shaper s5 (D14): before a feature's next run, merge the base branch into the run's fresh branch when it moved.
+ *  Never writes a conflicted merge: on conflicts the branch is left as is (the clash shows at this run, #620's check
+ *  after it). @returns {{merged: boolean, status: string, behind: number, files: string[], to?: string, error?: string}} */
+export async function mergeBaseBeforeRun(dir, { base, feature, remote = 'origin' }) {
+  const c = await checkBaseMerge(dir, { base, feature, remote });
+  const out = { merged: false, status: c.status, behind: c.behind || 0, files: c.files || [] };
+  if (c.status !== 'clean') return out;
+  const m = await mergeBaseInto(dir, { feature, baseSha: c.baseSha, headSha: c.headSha, baseRef: c.baseRef, tree: c.tree });
+  return m.ok ? { ...out, merged: true, to: m.to } : { ...out, status: 'error', error: m.kind || 'failed' };
+}
+
+/** The audit line feature-log.mjs parseBaseLine reads; null when there is nothing to say. */
+export function baseMovedAudit(base, feature, r) {
+  if (r.merged) return `Base \`${base}\` moved: merged into \`${feature}\` (${r.behind} ${r.behind === 1 ? 'commit' : 'commits'}).`;
+  if (r.status === 'conflicts') return `Base \`${base}\` moved: conflicts in ${r.files.length} ${r.files.length === 1 ? 'file' : 'files'}.`;
+  return null;
 }
 
 /**

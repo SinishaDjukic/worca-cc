@@ -69,7 +69,7 @@ test('POST /api/run: overlay.nodes is checked against the workflow and the catal
   const body = { projectDir: project.path, workflowId: 'wf_default', guardrailsId: 'normal', prompt: 'demo task', scheduledFor: DAY() };
   for (const [overlay, re] of [
     [[], /^overlay must be an object/],
-    [{ nodes: {}, wires: {} }, /^overlay takes nodes only/],
+    [{ nodes: {}, foo: {} }, /^overlay takes nodes and wires only/],
     [{ nodes: { n_ghost: { model: 'claude-opus-5-5' } } }, /node "n_ghost" is not an agent node of workflow wf_default/],
     [{ nodes: { n_task: { model: 'claude-opus-5-5' } } }, /node "n_task" is not an agent node of workflow wf_default/],
     [{ nodes: { n_plan: { model: 'gone-model' } } }, /node "n_plan": unknown model "gone-model"/],
@@ -110,6 +110,24 @@ test('POST /api/run: a normal run resolves the overlay over the project layer fo
   const cfg = (await (await get(`/api/config?projectDir=${encodeURIComponent(project.path)}`)).json()).config || {};
   assert.equal(((cfg.steps || {}).planner || {}).model, undefined, 'no per-role model was saved');
   assert.equal((((cfg.workflows || {}).wf_default || {}).nodes || {}).n_plan, undefined, 'no node override was saved');
+});
+
+test('POST /api/run: overlay.wires sets a loop budget for THAT run and is recorded on the manifest', { timeout: 120000 }, async () => {
+  const wf = await (await get('/api/workflows/wf_default')).json();
+  const loop = (wf.wires || []).find((w) => w && w.config && Number.isInteger(w.config.maxCycles));
+  assert.ok(loop, 'wf_default has a loop wire');
+  const r = await post('/api/run', { projectDir: project.path, workflowId: 'wf_default', guardrailsId: 'normal', prompt: 'loop budget',
+    overlay: { wires: { [loop.id]: { maxCycles: 1 } } } });
+  const raw = await r.text();
+  assert.equal(r.status, 200, raw);
+  const { runId } = JSON.parse(raw);
+  try {
+    const stepper = await untilStepper(runs.get(runId));
+    assert.deepEqual(stepper.runOverlay, { wires: { [loop.id]: { maxCycles: 1 } } });
+  } finally {
+    await post('/api/stop', { runId });
+    await untilSettled(runId);
+  }
 });
 
 test('POST /api/run: a SCHEDULED run stores the overlay as checked (its ticket fires it verbatim)', async () => {

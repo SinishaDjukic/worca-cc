@@ -123,13 +123,15 @@ test('branch row: source -> destination when known, destination only for legacy 
 // ---------------------------------------------------------------------------
 
 const DONE = { ...SURVIVED, status: 'done' };
-const word = (row) => row.querySelector('.runs-row-sub').textContent.split(' · ')[0];
+// The row's state as the run model says it (data-state, the dot) and its PR chip's one word, if any.
+const stateOf = (row) => row.dataset.state;
+const chipOf = (row) => row.querySelector('.runs-pr-word')?.textContent || '';
 
-test('PR state words: OPEN reads \'In review\' (links to the saved run), MERGED \'Merged\' (even with the branch gone), CLOSED \'PR closed\' never Merged/In review', async () => {
+test('PR states: OPEN is In review (links to the saved run), MERGED is Merged (even with the branch gone), CLOSED never Merged/In review', async () => {
   const OPEN = { ...DONE, id: 'po', pr: { state: 'OPEN', url: 'https://gh/x/pull/8', number: 8 } };
   const MERGED = { ...DONE, id: 'pm', pr: { state: 'MERGED', url: 'https://gh/x/pull/9', number: 9 } };
-  // Defense in depth: even if a stray CLOSED pr object reaches the client, the row must
-  // not claim the work landed. (In practice the server now sends pr:null here.)
+  // A closed PR (the history-pr enrichment sends one when the branch has no open or merged
+  // PR, for the row's PR glyph): the row must not claim the work landed.
   const CLOSED = { ...DONE, id: 'pc', pr: { state: 'CLOSED', url: 'https://gh/x/pull/1', number: 1 } };
   // The cited case: PR merged, the lookup is by remote head name, not local branch.
   const MERGED_GONE = {
@@ -145,29 +147,32 @@ test('PR state words: OPEN reads \'In review\' (links to the saved run), MERGED 
     return row;
   };
   await checkRows([
-    { name: 'open PR: the row reads "In review" and links to the saved run', run: () => {
+    { name: 'open PR: the row is In review and links to the saved run', run: () => {
       const row = rowFor(OPEN);
-      assert.equal(word(row), 'In review');
+      assert.equal(stateOf(row), 'in-review');
+      assert.equal(chipOf(row), 'Ready', 'the chip says the PR\'s own state');
       assert.equal(row.getAttribute('href'), `#history/${OPEN.projectKey}/po`, 'the row opens the run, not GitHub');
     } },
     // A workspace run never offers Create PR from the list — the Runs list shows only a
     // word, and PR eligibility (members vs primary-only) is asserted for the saved-run
     // detail screen in ui-history-shipit.test.mjs.
-    { name: 'merged PR: the row reads "Merged"', run: () => {
-      assert.equal(word(rowFor(MERGED)), 'Merged');
+    { name: 'merged PR: the row is Merged', run: () => {
+      assert.equal(stateOf(rowFor(MERGED)), 'merged');
+      assert.equal(chipOf(rowFor(MERGED)), 'Merged');
     } },
-    { name: 'closed (unmerged) PR: the row reads "PR closed", never "Merged" or "In review"', run: () => {
-      assert.equal(word(rowFor(CLOSED)), 'PR closed');
+    { name: 'closed (unmerged) PR: the chip reads "Closed", the row is never Merged or In review', run: () => {
+      assert.equal(stateOf(rowFor(CLOSED)), 'ready');
+      assert.equal(chipOf(rowFor(CLOSED)), 'Closed');
     } },
-    { name: 'merged PR with branch gone (survived=false) still reads "Merged"', run: () => {
-      assert.equal(word(rowFor(MERGED_GONE)), 'Merged');
+    { name: 'merged PR with branch gone (survived=false) is still Merged', run: () => {
+      assert.equal(stateOf(rowFor(MERGED_GONE)), 'merged');
     } },
   ]);
 });
 
-// No PR yet and a clean review: "Ready to ship" when some PR host can open one (gh, or an
-// Azure DevOps token, D8), "Finished" when none can.
-test('a run with no PR reads "Ready to ship" when gh or an Azure DevOps token is available, "Finished" when neither is', async () => {
+// No PR yet: the list reads the run model (runs redesign §2.1), "Ready to ship" whatever PR host is configured.
+// (The glance headline still says "Finished" when no host can open a PR: test/ui-run-glance.test.mjs.)
+test('a run with no PR reads "Ready to ship" in the list, with or without a PR host', async () => {
   const READY = { ...DONE, id: 'pr0', pr: null, checks: 0, files: 3 };
   const wordWith = async (ghAvailable, prHosts) => {
     const ctx = await boot({ fetchHandler: armsFor([READY], ghAvailable, prHosts) });
@@ -175,12 +180,12 @@ test('a run with no PR reads "Ready to ship" when gh or an Azure DevOps token is
     await ctx.settle();
     const row = ctx.window.document.querySelector(`#runs-list .runs-row[data-kind="hist"][data-pipeline-id="${READY.id}"]`);
     assert.ok(row, 'the finished run is listed');
-    return word(row);
+    return row.querySelector('.runs-row-sub').textContent.split(' · ')[0];
   };
   await checkRows([
     { name: 'gh available', run: async () => assert.equal(await wordWith(true, null), 'Ready to ship') },
     { name: 'only an Azure DevOps token', run: async () => assert.equal(await wordWith(false, { github: false, azure: true }), 'Ready to ship') },
-    { name: 'no PR host at all', run: async () => assert.equal(await wordWith(false, { github: false, azure: false }), 'Finished') },
+    { name: 'no PR host at all', run: async () => assert.equal(await wordWith(false, { github: false, azure: false }), 'Ready to ship') },
   ]);
 });
 

@@ -202,7 +202,8 @@ test('the P5 stylesheet section: plain backgrounds, no left-edge accents, focus 
   assert.doesNotMatch(sec, /radial-gradient/, 'no dotted background: dots only behind graphs');
   assert.doesNotMatch(sec, /border-left\s*:/, 'no coloured left-edge accent lines');
   assert.ok(sec.includes(':is(.afb-folder,.afb-main,.afb-dl,.afb-ib):focus-visible'));
-  assert.ok(sec.includes(':is(.apv-ib,.apv-btn):focus-visible'));
+  assert.ok(sec.includes('.apv-ib:focus-visible'));
+  assert.ok(!sec.includes('.apv-btn'), 'Download is the one .btn: no skin of its own');
   assert.ok(sec.includes('.apv-body:focus-visible'), 'the scrollable preview shows its focus');
   assert.ok(sec.includes('.afb-filter:focus{outline:none;box-shadow:inset 0 -2px 0 var(--ink);}'), 'the search field shows where the focus is');
   assert.ok(sec.includes('.apv.is-full .apv-stage.kind-image img{max-width:100%;max-height:100%;min-height:0;object-fit:contain;}'),

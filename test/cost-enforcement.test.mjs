@@ -122,7 +122,7 @@ test('total cap trips from the seeded ledger even with the override set', async 
   clearLedger();
 });
 
-test('total cap trips from Ask Worca spend alone (count-everywhere D3)', async () => {
+test('total cap trips from Chat spend alone (count-everywhere D3)', async () => {
   clearLedger();
   getDb().exec('DELETE FROM ask_cost_ledger');
   await setTotalCostLimitUsd(2);

@@ -14,6 +14,7 @@ import { getDb } from '../src/core/db.mjs';
 import { persistPrState, readPrState, enrichPipelinesPr, writeStoreMeta } from '../src/core/artifacts.mjs';
 import { archivePipeline } from '../src/core/pipeline-delete.mjs';
 import { _testing as gitInfo } from '../src/core/git-info.mjs';
+import { setWatch, updateWatch } from '../src/core/pr-watch.mjs';
 
 useTempHome(after);
 
@@ -130,4 +131,38 @@ test('archive runs a final PR refresh before FS cleanup', async () => {
   assert.equal(row.pr_state, 'MERGED');
   assert.equal(row.pr_number, 11);
   assert.ok(row.archived_at);
+});
+
+test('pr_verdict: persisted with the PR, read back flat, kept when a later lookup reads none; fixing (D31)', async () => {
+  const { id } = await seedPipeline('/tmp/proj-a', { status: 'done' });
+  const url = 'https://github.com/o/r/pull/781';
+  const verdict = { draft: false, reviewDecision: null, mergeable: 'MERGEABLE', checks: { state: 'failing', total: 12, failed: 3, pending: 0 } };
+  persistPrState(id, { url, number: 781, state: 'OPEN', verdict });
+  assert.deepEqual(readPrState(id), { url, number: 781, state: 'OPEN', ...verdict });
+  persistPrState(id, { url, number: 781, state: 'OPEN' });
+  assert.equal(readPrState(id).checks.failed, 3, 'a lookup without a verdict keeps the last one');
+  setWatch({ prUrl: url, pipelineId: id, enabled: true });
+  assert.equal(readPrState(id).fixing, undefined, 'a watch that is only watching is not Fixing');
+  updateWatch(url, { status: 'fixing' });
+  assert.equal(readPrState(id).fixing, true, 'a live fix run reads Fixing');
+});
+
+test('enrichPipelinesPr stores the CI verdict read through the real findPrForBranch (withVerdict)', async () => {
+  const id = await seedPipelineWithBranch({ feature: 'feat/ci' });
+  const URL9 = 'https://github.com/up/repo/pull/909';
+  persistPrState(id, { url: URL9, number: 909, state: 'OPEN' });
+  const check = (conclusion) => ({ __typename: 'CheckRun', name: 'ci', status: 'COMPLETED', conclusion });
+  gitInfo.setRunner((cmd, args) => {
+    if (cmd === 'gh' && args[0] === '--version') return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
+    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view' && args[2] === URL9) {
+      const body = args[4] === 'number,state,url,isDraft,mergeable' ? { number: 909, state: 'OPEN', url: URL9, isDraft: false, mergeable: 'MERGEABLE' }
+        : { state: 'OPEN', isDraft: false, reviewDecision: null, mergeable: 'MERGEABLE',
+          statusCheckRollup: [...Array(3)].map(() => check('FAILURE')).concat([...Array(9)].map(() => check('SUCCESS'))) };
+      return Promise.resolve({ ok: true, stdout: JSON.stringify(body), stderr: '', code: 0 });
+    }
+    if (cmd === 'git' && args[0] === 'rev-parse') return Promise.resolve({ ok: false, stdout: '', stderr: '', code: 1 });
+    return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
+  });
+  await runEnrichment();
+  assert.equal(readPrState(id).checks.failed, 3);
 });

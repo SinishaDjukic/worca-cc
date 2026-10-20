@@ -67,6 +67,7 @@ import { engineLabel } from '../shared/engine-switch.mjs';
 import { validateNightPatch, NIGHT_TOGGLES } from './night/config.mjs';
 import { normalizeDomainList, normalizeDomainPattern, domainError, DOMAIN_LIST_MAX, RESERVED_KEY_VAR } from './web-allowlist.mjs';
 import { normaliseDimensions } from '../shared/tag-dimensions.mjs';
+import { normalizePins, storedPins } from '../shared/home-pins.mjs';
 
 /**
  * The real OS home base, honoring HOME/USERPROFILE so tests can sandbox it.
@@ -1151,7 +1152,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'root', 'projectsRoot', 'chat',
   'pipelineCostLimitUsd', 'totalCostLimitUsd', 'costLimitResetPeriod', 'humanRateUsdPerHour',
   'askMaxTurns', 'askMaxBudgetUsd',
-  'askWeb',                                  // Ask Worca web access { enabled, allowedDomains, search }
+  'askWeb',                                  // Chat web access { enabled, allowedDomains, search }
   'debugSpawnEnabled',
   'resumeAfterUsageLimit',
   'titleModel', 'hideBuiltinModels',
@@ -1169,7 +1170,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'networkWait',                             // Settings › Runs › Wait for the network {enabled, maxWaitMin}
   'actions',                                 // Settings › Runs › Actions { keep, portLow, portHigh, editor, terminal, maxCheckouts }
   'runEngine', 'stepModels', 'utilityModels',
-  'askEngine', 'askModels',                  // Ask Worca's engine for new chats and its model per engine (user-only, D17)
+  'askEngine', 'askModels',                  // Chat's engine for new chats and its model per engine (user-only, D17)
   'tagDimensions',                           // Settings › Tags › Tag dimensions [{ key, label, values, required, default? }]
   'enforceTags',                             // Settings › Tags › Require mandatory tags to start a run
 ]);
@@ -1627,6 +1628,10 @@ function sanitizeGlobalModel(raw) {
     for (const k of Object.keys(env)) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping env key ${JSON.stringify(k)} — a cursor model takes no routing env`); delete env[k]; }
     if (upstream) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping upstream — a cursor model runs through cursor-agent's own sign-in`); upstream = undefined; }
   }
+  if (engine === 'copilot') {
+    for (const k of Object.keys(env)) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping env key ${JSON.stringify(k)} — a copilot model takes no routing env`); delete env[k]; }
+    if (upstream) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping upstream — a copilot model runs through the Copilot CLI's own sign-in`); upstream = undefined; }
+  }
   if (upstream) {
     // The bridge owns the routing keys (model-env.mjs BRIDGE_ROUTING_KEYS); a
     // hand-edited file carrying both is degraded, not rejected: the bridge wins.
@@ -1740,6 +1745,12 @@ function assertCursorFields(engine, env, upstream) {
   if (Object.keys(env || {}).length) throw new Error('a cursor model takes no env');
   if (upstream) throw new Error('a cursor model takes no upstream — cursor-agent connects with its own sign-in');
 }
+/** A Copilot model takes no routing env and no upstream: the Copilot CLI connects with its own sign-in. */
+function assertCopilotFields(engine, env, upstream) {
+  if (engine !== 'copilot') return;
+  if (Object.keys(env || {}).length) throw new Error('a copilot model takes no env');
+  if (upstream) throw new Error('a copilot model takes no upstream — the Copilot CLI connects with its own sign-in');
+}
 /** A Codex model takes no routing env, and only an OpenAI-compatible Responses endpoint as its upstream (codexUpstreamProblem). */
 function assertCodexFields(engine, env, upstream) {
   if (engine !== 'codex') return;
@@ -1761,7 +1772,9 @@ function assertIdForEngine(id, engine, conn = {}) {
   if (engine === 'claude' && CODEX_PRICES[id.toLowerCase()]) throw new Error(`"${id}" is the id of Codex's built-in ${id} (ChatGPT sign-in) — ${handleHint(id, conn)}`);
   // Cursor's own ids may look like Claude's (sonnet-4.5): the catalog row decides the owner. Only a built-in id is taken
   // (a Claude built-in has a list price; settings.mjs cannot import config.mjs's PREDEFINED_MODELS).
-  if (engine === 'cursor' && (CODEX_PRICES[id.toLowerCase()] || listPriceFor(id))) throw new Error(`"${id}" is a built-in model id`);
+  if ((engine === 'cursor' || engine === 'copilot') && (CODEX_PRICES[id.toLowerCase()] || listPriceFor(id))) throw new Error(`"${id}" is a built-in model id${engine === 'copilot' ? ` — Copilot's own models are copilot/<id>, such as "copilot/${id}"` : ''}`);
+  // copilot/<id> names a Copilot built-in (model-env.mjs COPILOT_MODEL_PREFIX): only a Copilot row may take one.
+  if (engine !== 'copilot' && id.toLowerCase().startsWith('copilot/')) throw new Error(`"${id}" names a Copilot model — a copilot/ id is for the Copilot engine`);
 }
 
 /** @throws {Error} on a reserved key or a non-string value. `allowNull` admits
@@ -1842,6 +1855,7 @@ export async function addGlobalModel({ id, label, efforts, env, cost, upstream, 
   const vupstream = assertModelUpstream(upstream);
   assertCodexFields(vengine, venv, vupstream);
   assertCursorFields(vengine, venv, vupstream);
+  assertCopilotFields(vengine, venv, vupstream);
   assertUpstreamEnvCompatible(venv, vupstream);
   const settings = readSettings();
   const models = rawModels(settings);
@@ -1904,6 +1918,7 @@ export async function updateGlobalModel(id, { label, efforts, env, cost, upstrea
   assertUpstreamEnvCompatible(nextEnv, nextUpstream);
   assertCodexFields(curEngine, nextEnv, nextUpstream);
   assertCursorFields(curEngine, nextEnv, nextUpstream);
+  assertCopilotFields(curEngine, nextEnv, nextUpstream);
 
   if (dryRun) return sanitizeGlobalModel(storedModelShape(current.id, nextLabel, nextEfforts, nextEnv, nextCost, nextUpstream, curEngine));
   settings.models = models.slice();
@@ -2363,6 +2378,32 @@ export async function setScheduleDefaults(patch = {}) {
   if (has('maxFailures')) put('scheduleMaxFailures', patch.maxFailures);
   await persistSettings(settings);
   return scheduleDefaults();
+}
+
+/** The person a Chat home pin list belongs to: the signed-in name lowercased, '' for a local or operator install. */
+const pinsPersonKey = (person) => String(person ?? '').trim().toLowerCase();
+function pinsMap(settings) {
+  const m = settings.chatHomePins;
+  // A null-prototype copy: a person named "__proto__" stays an ordinary key.
+  return Object.assign(Object.create(null), m && typeof m === 'object' && !Array.isArray(m) ? m : {});
+}
+
+/** The person's pinned workflow ids (Chat home quick actions), in pin order. Never set = ['wf_shape']. Never throws. */
+export function chatHomePinsFor(person) {
+  if (homeGuarded()) return storedPins(undefined);
+  return storedPins(pinsMap(readSettings())[pinsPersonKey(person)]);
+}
+
+/** Replace the person's list ([] = nothing pinned, kept as such). Throws { code: 'BAD_HOME_PINS' } before any write. */
+export async function setChatHomePinsFor(person, list) {
+  const { pins, errors } = normalizePins(list);
+  if (errors.length) throw Object.assign(new Error(errors[0]), { code: 'BAD_HOME_PINS' });
+  const settings = readSettings();
+  const map = pinsMap(settings);
+  map[pinsPersonKey(person)] = pins;
+  settings.chatHomePins = map;
+  await persistSettings(settings);
+  return chatHomePinsFor(person);
 }
 
 /** Local tag dimensions (Settings › Tags): used when the run target's team policy sets none. Never throws. */

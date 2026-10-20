@@ -2,13 +2,16 @@
 // tools/verify-feature-page-cdp.mjs — headless-Chrome proof of Shaper's feature views (D16, D17): a 3-slice
 // feature is ONE open row in the Runs list (members "1 · …", no row of its own for slice 2's run, the row links to
 // #feature/ID), and #feature/ID renders the full-width page (one segmented bar and no stage bar, "merge first", the rare
-// actions in ⋯ with Approve each unchecked, the halted line in amber). NOT part of `npm test`: it needs Chrome. Screenshots of both land in a temp dir; their paths are printed.
+// actions in ⋯ with Approve each unchecked, the halted line in amber), and both views pass the one-button-style audit
+// (tools/button-audit.mjs) in light and dark. NOT part of `npm test`: it needs Chrome. Screenshots of both land in a temp dir; their paths are printed.
 // Run: node tools/verify-feature-page-cdp.mjs   (or: npm run verify:feature-page)
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { auditButtons, BUTTON_SPEC } from './button-audit.mjs';
+import { auditGroupPageLayout } from './runs-layout-audit.mjs';
 
 const CHROME_PATHS = ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium-browser', '/usr/bin/chromium'];
@@ -115,6 +118,17 @@ async function waitFor(expr, what, ms = 15000) {
   while (Date.now() < end) { if (await ev(expr)) return true; await sleep(150); }
   throw new Error(`timed out waiting for ${what}`);
 }
+// The one-button-style audit (runs-redesign spec §5.2) in light, then dark; the page's own theme is put back after.
+const BUTTON_AUDIT = `(${auditButtons})(document.body, ${JSON.stringify(BUTTON_SPEC)}, null)`;
+async function auditButtonsBoth(where) {
+  const before = await ev('document.documentElement.dataset.theme || ""');
+  for (const theme of ['light', 'dark']) {
+    await ev(`document.documentElement.dataset.theme=${JSON.stringify(theme)};0`);
+    const bad = await ev(BUTTON_AUDIT);
+    check(bad.length === 0, `${where}, ${theme}: every button is .btn in 3 sizes x 4 variants${bad.length ? ` — ${JSON.stringify(bad.slice(0, 12))}` : ''}`);
+  }
+  await ev(`document.documentElement.dataset.theme=${JSON.stringify(before)};0`);
+}
 async function shot(name) {
   const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
   const file = path.join(tmpdir(), `worca-feature-page-${name}-${Date.now()}.png`);
@@ -126,17 +140,18 @@ await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, devi
 
 // ---- the Runs list
 await cdp('Page.navigate', { url: `${base}/#runs` });
-await waitFor("document.querySelectorAll('#runs-list .runs-chain').length === 1", 'the feature row');
+await waitFor("document.querySelectorAll('#runs-list .runs-item[data-level=\"top\"][data-row-key^=\"chain:\"]').length === 1", 'the feature row');
 const runs = await ev(`(() => {
   const host = document.getElementById('runs-list');
-  const row = host.querySelector('.runs-chain');
+  const row = host.querySelector('.runs-item[data-level="top"][data-row-key^="chain:"]');
+  const link = row.querySelector(':scope > a.runs-row');
   return {
-    chains: host.querySelectorAll('.runs-chain').length,
-    title: row.querySelector('.runs-row').textContent,
-    href: row.querySelector('.runs-row').getAttribute('href'),
-    open: !row.querySelector('.runs-chain-members').hidden,
-    members: [...row.querySelectorAll('.runs-chain-member:not(.runs-chain-open-feature) .runs-chain-link')].map((a) => a.textContent),
-    ownRow: [...host.querySelectorAll('.runs-row')].filter((r) => !r.closest('.runs-chain') && /2\\/3/.test(r.textContent)).length,
+    chains: host.querySelectorAll('.runs-item[data-level="top"][data-row-key^="chain:"]').length,
+    title: link.textContent,
+    href: link.getAttribute('href'),
+    open: row.querySelector(':scope > .runs-row-tail .runs-expand').getAttribute('aria-expanded') === 'true',
+    members: [...row.querySelectorAll(':scope > .runs-members > .runs-item > a.runs-row > .runs-row-title')].map((a) => a.textContent),
+    ownRow: [...host.querySelectorAll('.runs-item[data-level="top"]')].filter((r) => !r.dataset.rowKey.startsWith('chain:') && /2\\/3/.test(r.textContent)).length,
   };
 })()`);
 check(runs.chains === 1, 'one feature row');
@@ -145,39 +160,53 @@ check(runs.href === `#feature/${f.id}`, `the row links to the feature page (${ru
 check(runs.open, 'the row is open by default');
 check(JSON.stringify(runs.members) === JSON.stringify(['1 · Store tags', '2 · Run tags', '3 · Cost report']), `members ${JSON.stringify(runs.members)}`);
 check(runs.ownRow === 0, 'no separate row for slice 2\'s run');
+await auditButtonsBoth('the Runs list');
 const runsShot = await shot('runs');
 
-// ---- the feature page
-await cdp('Page.navigate', { url: `${base}/#feature/${f.id}` });
-await waitFor("!!document.querySelector('[data-view=\"feature\"] .shape-feature.is-page')", 'the feature page');
+// ---- the feature page: the group page's model block owns the head, status and members; its Overview tab holds Shaper's
+// head-less view (log, ⋯, Ship card). The bundle merge (D12): one status line, at most one member list.
+await cdp('Page.navigate', { url: `${base}/#feature/${f.id}/overview` });
+const OV = '[data-view="feature"] .gpage-panel[data-tab="overview"] .shape-feature';
+await waitFor(`!!document.querySelector('${OV}')`, 'the feature page');
 const page = await ev(`(() => {
-  const el = document.querySelector('[data-view="feature"] .shape-feature.is-page');
+  const el = document.querySelector('${OV}');
   const main = document.querySelector('[data-view="feature"]');
   return {
-    segs: el.querySelectorAll('.shape-feature-seg').length,
-    merge: el.querySelector('.shape-feature-slice.is-done .shape-feature-merge')?.textContent || '',
-    bars: el.querySelectorAll('.shape-feature-segs').length, stageBars: el.querySelectorAll('.run-prog').length,
-    replanButton: !!el.querySelector('.shape-feature-replan'), more: !!el.querySelector('.shape-feature-more'),
-    headColor: getComputedStyle(el.querySelector('.shape-feature-head')).color,
-    amber: (() => { const p = document.createElement('span'); p.style.color = 'var(--amber-ink)'; el.appendChild(p);
-      const c = getComputedStyle(p).color; p.remove(); return c; })(),
+    statusLines: main.querySelectorAll('.run-status-text').length,
+    memberLists: main.querySelectorAll('ol.run-members').length,
+    dupes: el.querySelectorAll('.shape-feature-head, .shape-feature-status, .shape-feature-runs, ol.chat-rc-members').length,
+    replanButton: !!el.querySelector('[data-act="feature-replan"]'), more: !!el.querySelector('.shape-feature-more svg'),
     menu: (() => { el.querySelector('.shape-feature-more')?.click();
-      const items = [...document.querySelectorAll('.wfv-menu .wfv-menu-item')];
-      return { labels: items.map((b) => b.textContent), each: items.find((b) => /Approve each/.test(b.textContent))?.getAttribute('aria-checked') }; })(),
+      return [...document.querySelectorAll('.wfv-menu .wfv-menu-item')].map((b) => b.textContent); })(),
     width: el.getBoundingClientRect().width, mainWidth: main.getBoundingClientRect().width,
   };
 })()`);
-check(page.segs === 3, 'three bar parts');
-check(page.merge === 'merge first', 'slice 1 reads "merge first"');
-check(page.bars === 1 && page.stageBars === 0, 'one segmented bar, no stage bar');
-check(!page.replanButton && page.more, 'Re-plan the rest moved into ⋯');
-check(['Re-plan the rest', 'Cancel the rest'].every((l) => page.menu.labels.includes(l)), `⋯ holds ${JSON.stringify(page.menu.labels)}`);
-check(page.menu.each === 'false', 'Approve each slice\'s plan is unchecked');
-check(page.headColor === page.amber, `the halted line is amber (${page.headColor} vs ${page.amber})`);
+check(page.statusLines === 1, `one status line on the page (${page.statusLines})`);
+check(page.memberLists <= 1, `at most one member list (${page.memberLists})`);
+check(page.dupes === 0, 'the Shaper view draws no head, status, runs fold or member list');
+check(page.replanButton && page.more, 'halted: Re-plan the rest beside an icon ⋯');
+check(['Re-plan the rest', 'Cancel the rest'].every((l) => page.menu.includes(l)), `⋯ holds ${JSON.stringify(page.menu)}`);
 check(page.width > 0.8 * page.mainWidth, `full width (${Math.round(page.width)} of ${Math.round(page.mainWidth)})`);
 const pageShot = await shot('page');
 // A second ⋯ click closes the menu (toggleMenu); a document-level Escape would not reach the menu's own keydown.
-await ev("document.querySelector('[data-view=\"feature\"] .shape-feature-more').click(), !document.querySelector('.wfv-menu')");
+await ev(`document.querySelector('${OV} .shape-feature-more').click(), !document.querySelector('.wfv-menu')`);
+await auditButtonsBoth('the feature page');
+
+// ---- the group page (runs redesign slice 4, D21): title row, status card, tabs and Runs table share their edges,
+// and every row's Open ends at one x, at 290, 375 and 1440 in light and dark (QA 8: no row cells overlap at 290).
+const LAYOUT_AUDIT = `(${auditGroupPageLayout})(document.querySelector('.gpage'), null, document)`;
+for (const width of [290, 375, 1440]) {
+  await cdp('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: width < 600 });
+  await cdp('Page.navigate', { url: `${base}/?w=${width}#feature/${f.id}` });
+  await waitFor("!!document.querySelector('[data-view=\"feature\"] .gpage .run-members.is-table')", `the group page at ${width}`);
+  for (const theme of ['light', 'dark']) {
+    await ev(`document.documentElement.dataset.theme=${JSON.stringify(theme)};0`);
+    const bad = await ev(LAYOUT_AUDIT);
+    check(bad.length === 0, `the group page at ${width}px, ${theme}: one column, Open buttons aligned${bad.length ? ` — ${JSON.stringify(bad)}` : ''}`);
+  }
+  await auditButtonsBoth(`the group page at ${width}px`);
+}
+await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
 check(errors.length === 0, `no page errors${errors.length ? `: ${errors.join(' | ')}` : ''}`);
 console.log(`screenshots:\n  ${runsShot}\n  ${pageShot}`);
 console.log(failed ? `${failed} check(s) FAILED` : 'all checks passed');

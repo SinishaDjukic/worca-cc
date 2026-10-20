@@ -49,6 +49,7 @@ export function snapshotFromState(state, { now = Date.now(), extras = null } = {
   const decor = graph ? decorFromState(state, { live, now }) : null;
   const ws = state.target === 'workspace';
   const x = extras && typeof extras === 'object' ? extras : null;
+  const pr = x && x.pr && typeof x.pr.url === 'string' && x.pr.url ? x.pr : null;
   return {
     source: 'rest',
     runId: null,
@@ -62,6 +63,7 @@ export function snapshotFromState(state, { now = Date.now(), extras = null } = {
     status,
     pauseReason: state.pauseReason || null,
     pendingQuestion: null,
+    labels: Array.isArray(state.labels) ? state.labels : [],
     live,
     terminal: TERMINAL_RUN_STATUS.has(status),
     startedAt: state.startedAt || null,
@@ -78,10 +80,21 @@ export function snapshotFromState(state, { now = Date.now(), extras = null } = {
     artifacts: x && Array.isArray(x.artifacts) ? x.artifacts : null,
     moreArtifacts: !!(x && x.moreArtifacts),
     artifactsTotal: x && Number.isInteger(x.artifactsTotal) ? x.artifactsTotal : null,   // P3: the run card's Artifacts · <n>
-    pr: x && x.pr && typeof x.pr.url === 'string' && x.pr.url ? x.pr : null,
+    pr,
+    rounds: x && Array.isArray(x.rounds) ? x.rounds : [],          // Shaper s5: the run's rounds (askRunCardExtras)
+    watch: x && x.watch && typeof x.watch === 'object' ? x.watch : null,   // Shaper s5: a watch that gave up on its PR
     archived: !!state.archivedAt,                    // archived: the run folder and its History row are gone
     ...(workModeOf(state) !== 'git' ? { workMode: workModeOf(state), changes: x && x.changes && typeof x.changes === 'object' ? x.changes : null } : {}),
     ...(state && state.shaping ? { shaping: state.shaping } : {}),
+    // Runs redesign slice 4 (D9): the raw state runModel reads, so the card draws the same model as the list and the page.
+    run: { stepper: state.stepper || null, status, steps: state.steps || [], active: state.active || [],
+      endReached: !!state.endReached, tokens: state.tokens || {}, progressFacts: state.progressFacts || null,
+      pendingQuestion: null, pauseReason: state.pauseReason || '', pr, resumable: state.resumable === true,
+      // D24: the round marker (branch.roundOf) and the Watch PR fact (extras.watch) pass through; the model words them.
+      branch: state.branch && typeof state.branch === 'object' ? state.branch : null, round: state.round || null,
+      watch: (x && x.watch) || null,
+      // Review A12: the live role rows read the picked perspectives and the role-review rounds.
+      shaping: state.shaping || null, roleReviews: state.roleReviews || null },
   };
 }
 

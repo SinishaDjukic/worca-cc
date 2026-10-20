@@ -49,6 +49,8 @@ test('a finished run without a project: its Overview never says it did not compl
   assert.ok(sec && sec.querySelector('.hd-ov-grid'), 'the Overview painted');
   assert.equal(sec.querySelector('.hd-ov-verdict'), null, 'no results.json: its files are the result, no verdict line');
   assert.doesNotMatch(sec.textContent, /did not complete/);
+  assert.equal(doc.querySelector('#hist-detail .rd-sheet .run-status .run-status-text').textContent, 'Finished', 'never Ready to ship');
+  assert.equal(doc.querySelectorAll('#hist-detail [data-model-action="ship"]').length, 0, 'no Ship it');
   click(ctx.window, doc.querySelector('#hist-detail .hd-archive'));
   await settle(ctx.window, 4);
   const msg = doc.querySelector('#confirm-message').textContent;
@@ -74,11 +76,11 @@ test('an archived run without a project: Restore says its files were removed, wi
 });
 
 test('the Runs list groups it under No project with the No project chip', async () => {
-  const ctx = await boot({ fetchHandler: (u) => arms(u) || ok({}) });
+  const ctx = await boot({ local: { 'worca-cc.runs.view': JSON.stringify({ show: 'all', groupBy: 'project', person: '' }) }, fetchHandler: (u) => arms(u) || ok({}) });
   go(ctx.window, 'history');
   await settle(ctx.window, 6);
-  const head = ctx.window.document.querySelector(`.runs-group[data-group-key="${NP_KEY}"] .runs-group-head`);
-  assert.equal(head.querySelector('.runs-group-name').textContent, 'No project');
+  const head = ctx.window.document.querySelector(`.runs-sec[data-section="project:${NP_KEY}"] .runs-sec-head`);   // View › Group by Project
+  assert.equal(head.querySelector('.runs-sec-title').textContent, 'No project');
   assert.equal(head.querySelector('.kind-chip.kind-none').textContent, 'No project');
 });
 

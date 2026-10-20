@@ -14,9 +14,10 @@ const UP = { status: 'up-to-date', base: 'feat/log-ux', behind: 0, at: AT };
 const withCheck = (rec, over = {}) => ({ ...DETAIL, state: { ...DETAIL.state, ...over, branch: { ...DETAIL.state.branch, baseCheck: rec } } });
 
 /** Boot the detail with `rec` stored; `answer(action, body)` fakes the POST routes. Records each POST. */
-async function bootBase(rec, { answer = () => ok({ ok: true }), detail = withCheck(rec), rows = [ROW] } = {}) {
+async function bootBase(rec, { answer = () => ok({ ok: true }), detail = withCheck(rec), rows = [ROW], more = () => null } = {}) {
   const posts = [];
-  const ctx = await bootDetail({ rows, detail, arms: (url, opts) => {
+  const ctx = await bootDetail({ rows, detail, arms: (url, opts, box) => {
+    const extra = more(url, opts, box); if (extra) return extra;
     const m = /\/api\/runs\/[^/]+\/(base-check|update-branch|resolve-pipeline|resolve-terminal)\?/.exec(url);
     if (m && opts.method === 'POST') {
       const body = JSON.parse(opts.body || '{}');
@@ -49,7 +50,7 @@ test('conflicts: the pill, the files and both Resolve buttons; no Update branch'
   assert.equal(shown(btn(li, 'hd-base-pipeline')), true);
   assert.equal(shown(btn(li, 'hd-base-terminal')), true);
   assert.equal(shown(btn(li, 'hd-base-recheck')), false, 'the check runs on open: no Re-check here');
-  assert.ok(['btn', 'btn-ghost', 'btn-mini'].every((c) => btn(li, 'hd-base-pipeline').classList.contains(c)), 'the house small button');
+  assert.ok(['btn', 'btn-sm'].every((c) => btn(li, 'hd-base-pipeline').classList.contains(c)), 'the house small button');
 });
 
 test('an open PR: no Resolve in a pipeline here (its Overview row has Resolve); the terminal stays', async () => {
@@ -245,4 +246,83 @@ test('auto check on open: a failed request leaves the stored line alone', async 
 test('a running run shows no block', async () => {
   const ctx = await bootBase(CONFLICTS, { detail: withCheck(CONFLICTS, { status: 'running' }), rows: [{ ...ROW, status: 'running' }] });
   assert.equal(box(ctx).hidden, true);
+});
+
+// ---- Ship it's base line (the dialog that opens the PR) agrees with the detail and with the branch now ----
+const REMOTES = { ok: true, remotes: [{ name: 'origin', fetchUrl: 'u', pushUrl: 'u', host: 'github.com', owner: 'me', repo: 'repo', slug: 'me/repo' }],
+  defaults: { pushRemote: 'origin', baseRemote: 'origin' }, remembered: null,
+  chain: ['feat/log-ux'], defaultBase: 'feat/log-ux', branches: { origin: ['feat/log-ux', 'main'] } };
+/** bootBase with Create PR reachable: gh available, no PR yet, the remotes the dialog loads. */
+function bootShipBase(rec, { rowCheck = null, branch = {}, answer } = {}) {
+  const detail = { ...DETAIL, state: { ...DETAIL.state, branch: { ...DETAIL.state.branch, baseCheck: rec, ...branch } } };
+  const rows = [{ ...ROW, pr: null, ...(rowCheck ? { baseCheck: rowCheck } : {}) }];
+  return bootBase(rec, { rows, detail, answer, more: (url, opts, box) => {
+    if (url.endsWith('/api/history')) return ok({ pipelines: box.rows, ghAvailable: true });
+    if (/\/api\/pr\/remotes\?/.test(url)) return ok(REMOTES);
+    return null;
+  } });
+}
+async function openShip(ctx) {
+  const pr = doc(ctx).querySelector('#hist-detail .hd-pr');
+  assert.equal(pr.hidden, false, 'Create PR is offered');
+  click(ctx.window, pr);
+  await settle(ctx.window, 8);
+  assert.equal(doc(ctx).querySelector('#shipit-modal').classList.contains('hidden'), false);
+  return doc(ctx).querySelector('#shipit-modal .shipit-basecheck');
+}
+const now = (ms = 0) => new Date(Date.now() + ms).toISOString();
+const checked = (rec) => ok({ ok: true, members: [{ projectKey: KEY, baseCheck: rec }], settled: {} });
+
+test('an automatic check that answers after Update branch never brings the old "behind" line back', async () => {
+  let release = null;
+  const ctx = await bootShipBase({ ...CLEAN, at: now(-10 * 60_000) }, { answer: (action) => {
+    if (action === 'update-branch') return ok({ ok: true, baseCheck: { ...UP, at: now() }, push: { pushed: true, remote: 'origin' } });
+    const started = now(-1000);                            // it started before the merge, so it reads "clean"
+    return new Promise((r) => { release = () => r({ ok: true, status: 200, json: async () => ({ ok: true,
+      members: [{ projectKey: KEY, baseCheck: { ...CLEAN, at: started } }], settled: {} }) }); });
+  } });
+  assert.deepEqual(ctx.posts.map((x) => x.action), ['base-check'], 'the automatic check is still out');
+  click(ctx.window, btn(items(ctx)[0], 'hd-base-update'));
+  await settle(ctx.window, 6);
+  release();
+  await settle(ctx.window, 6);
+  assert.equal(items(ctx)[0].querySelector('.hd-base-pill').textContent, 'Up to date with feat/log-ux');
+  const line = await openShip(ctx);
+  assert.equal(line.hidden, true, 'no "Update branch first" line after the update');
+});
+
+test('Ship it reads the newer of the detail and the History row: a row up to date since hides the old line', async () => {
+  const ctx = await bootShipBase(CLEAN, { rowCheck: { ...UP, at: now(-60_000) } });
+  assert.equal(box(ctx).hidden, true, 'the detail block already reads the newer row');
+  const line = await openShip(ctx);
+  assert.equal(line.hidden, true);
+  assert.equal(ctx.posts.length, 0, 'a recent check is not redone');
+});
+
+test('Ship it re-checks quietly when the stored check predates the branch\'s last push', async () => {
+  const published = { remote: 'origin', sha: 'c2', at: now(-60_000), by: null };
+  const answers = [fail(500, { error: 'boom' }), checked({ ...UP, at: now() })];   // the detail's own try fails
+  const ctx = await bootShipBase({ ...CLEAN, headSha: 'c1' }, { branch: { published }, answer: () => answers.shift() });
+  assert.deepEqual(ctx.posts.map((x) => [x.action, x.body]), [['base-check', { auto: true }]], 'the detail checks it on open');
+  const line = await openShip(ctx);
+  assert.deepEqual(ctx.posts.map((x) => [x.action, x.body]), [['base-check', { auto: true }], ['base-check', { auto: true }]]);
+  assert.equal(line.hidden, true, 'repainted from the fresh check');
+  assert.equal(box(ctx).hidden, true, 'the detail block reads the same fresh check');
+});
+
+test('Ship it keeps a check made after the last push, even of a head with local commits not pushed yet', async () => {
+  const published = { remote: 'origin', sha: 'c2', at: new Date(Date.parse(AT) - 60_000).toISOString(), by: null };
+  const ctx = await bootShipBase({ ...CLEAN, headSha: 'c3' }, { branch: { published } });
+  const line = await openShip(ctx);
+  assert.equal(ctx.posts.length, 0, 'no quiet re-check on every open');
+  assert.equal(line.hidden, false);
+});
+
+test('Ship it keeps a current check: the line shows for a recent "clean" check of the branch as pushed', async () => {
+  const published = { remote: 'origin', sha: 'c1', at: now(-60_000), by: null };
+  const ctx = await bootShipBase({ ...CLEAN, headSha: 'c1' }, { branch: { published } });
+  const line = await openShip(ctx);
+  assert.equal(ctx.posts.length, 0);
+  assert.equal(line.hidden, false);
+  assert.match(line.textContent, /^feat\/log-ux is 2 commits ahead, merges cleanly \(checked 3 min ago\)\. Update branch first/);
 });

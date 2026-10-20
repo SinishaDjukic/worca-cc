@@ -28,7 +28,7 @@ export const WINDOWS = Object.freeze(['weekly', 'monthly']);
 export const TEXT_MAX = 200;
 
 const GROUPS = Object.freeze({
-  cost: 'Cost', ask: 'Ask Worca', guardrails: 'Guardrails', models: 'Models', plugins: 'Plugins', runs: 'Runs',
+  cost: 'Cost', ask: 'Chat', guardrails: 'Guardrails', models: 'Models', plugins: 'Plugins', runs: 'Runs',
   night: 'Away mode',
 });
 
@@ -40,15 +40,15 @@ const GROUPS = Object.freeze({
  */
 export const FIELDS = Object.freeze([
   { key: 'cost.pipelineLimitUsd', group: 'cost', label: 'Per-pipeline cap (USD)', help: 'Pauses one pipeline at this estimated cost. Soft: the tighter of team and local applies; continue past it on resume.', type: 'usd', kinds: ['default', 'soft'], cap: true, attrs: ['onBreach', 'requireReason'], local: 'pipelineCostLimitUsd' },
-  { key: 'cost.totalLimitUsd', group: 'cost', label: 'Total cap per period (USD)', help: 'Per developer, per reset period; pipelines and Ask Worca together.', type: 'usd', kinds: ['default', 'soft'], cap: true, attrs: ['onBreach', 'requireReason'], local: 'totalCostLimitUsd' },
+  { key: 'cost.totalLimitUsd', group: 'cost', label: 'Total cap per period (USD)', help: 'Per developer, per reset period; pipelines and Chat together.', type: 'usd', kinds: ['default', 'soft'], cap: true, attrs: ['onBreach', 'requireReason'], local: 'totalCostLimitUsd' },
   { key: 'cost.resetPeriod', group: 'cost', label: 'Reset period', help: 'The developer\'s own period wins when set.', type: 'enum', values: WINDOWS, kinds: ['default'], local: 'costLimitResetPeriod' },
   { key: 'cost.pooledBudgetUsd', group: 'cost', label: 'Pooled budget (USD)', help: 'Whole team, read from team metrics. Advisory: it never pauses a run.', type: 'usd', kinds: ['soft'], advisory: true, attrs: ['window'] },
   { key: 'cost.humanRateUsd', group: 'cost', label: 'Developer rate (USD/h)', help: 'Prices the estimated human hours behind "Saved". A developer\'s own rate wins when set.', type: 'usd', kinds: ['default'], local: 'humanRateUsdPerHour' },
-  { key: 'ask.maxTurns', group: 'ask', label: 'Turn limit', help: 'Ask Worca agentic turns per chat turn.', type: 'int', min: 1, max: 500, kinds: ['default'], local: 'askMaxTurns' },
-  { key: 'ask.maxBudgetUsd', group: 'ask', label: 'Per-turn cost cap (USD)', help: 'Ask Worca per-turn cap; null means no cap.', type: 'usd-or-null', min: 0.1, max: 100, kinds: ['default'], local: 'askMaxBudgetUsd' },
+  { key: 'ask.maxTurns', group: 'ask', label: 'Turn limit', help: 'Agentic turns per Chat turn.', type: 'int', min: 1, max: 500, kinds: ['default'], local: 'askMaxTurns' },
+  { key: 'ask.maxBudgetUsd', group: 'ask', label: 'Per-turn cost cap (USD)', help: 'Chat per-turn cap; null means no cap.', type: 'usd-or-null', min: 0.1, max: 100, kinds: ['default'], local: 'askMaxBudgetUsd' },
   // The two web fields only ever NARROW, and bind (no "go past it"): web access is opt-in per developer, and the policy
   // branch is writable by whoever can push to the repo — so a policy may switch it off or cap the hosts, never widen.
-  { key: 'ask.webEnabled', group: 'ask', label: 'Web access', help: 'Off switches Ask Worca web access off for chats pinned to this project. A policy can never switch it on — each developer opts in.', type: 'bool', kinds: ['soft'], offOnly: true, local: 'askWeb.enabled' },
+  { key: 'ask.webEnabled', group: 'ask', label: 'Web access', help: 'Off switches Chat web access off for chats pinned to this project. A policy can never switch it on — each developer opts in.', type: 'bool', kinds: ['soft'], offOnly: true, local: 'askWeb.enabled' },
   { key: 'ask.webAllowedDomains', group: 'ask', label: 'Web allowlist', help: 'The most a developer may allow (example.com or *.example.com): hosts outside this list are dropped from their own Ask web allowlist. It never adds a host.', type: 'string[]', kinds: ['soft'], domains: true, local: 'askWeb.allowedDomains' },
   { key: 'guardrails.default', group: 'guardrails', label: 'Default set', help: 'What the New run picker starts on. A built-in id, a user set id, or gp:<name> for a set this policy ships.', type: 'string', kinds: ['default'] },
   { key: 'guardrails.minimum', group: 'guardrails', label: 'Minimum tier', help: 'A run whose set ranks below this warns and is recorded.', type: 'enum', values: TIERS, kinds: ['soft'] },
@@ -399,6 +399,12 @@ function normalizeModels(raw, warnings) {
       if (m.env != null) { warnings.push(`catalogs.models: ${m.id}: a cursor model takes no env — entry dropped`); continue; }
       if (m.upstream != null) { warnings.push(`catalogs.models: ${m.id}: a cursor model takes no upstream — entry dropped`); continue; }
       entry.engine = 'cursor';
+    }
+    if (engine === 'copilot') {
+      // A copilot model runs through the Copilot CLI's own sign-in: no routing env, no upstream.
+      if (m.env != null) { warnings.push(`catalogs.models: ${m.id}: a copilot model takes no env — entry dropped`); continue; }
+      if (m.upstream != null) { warnings.push(`catalogs.models: ${m.id}: a copilot model takes no upstream — entry dropped`); continue; }
+      entry.engine = 'copilot';
     }
     if (codex) {
       // §3.1a: codex ignores routing env. Its upstream (an OpenAI-compatible endpoint) is checked below.

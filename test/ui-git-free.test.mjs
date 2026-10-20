@@ -401,7 +401,7 @@ test('Team policy cell: a GitHub team repository never read (unread) says not re
     ['blocked', 'On · branch not read yet · your settings apply', []]);
   assert.deepEqual([projectTpSummary(s).short, projectTpSummary(s).detail], ['on · not read yet', `${why} · your settings apply`]);
   const off = renderProjectTpCell({ ...s, unread: undefined, blocked: null, delegateCode: null, delegateDetail: null }, { doc });
-  assert.deepEqual([off.dataset.kind, [...off.querySelectorAll('button')].map((b) => b.textContent)], ['off', ['Set up team policy…']]);
+  assert.deepEqual([off.dataset.kind, [...off.querySelectorAll('button')].map((b) => b.textContent)], ['off', ['Set up policy…']]);
 });
 
 test('Getting started: with Needs git in the setup dialog the team tours end on Done at the dialog\'s Needs git chip, not on its disabled submit', async () => {

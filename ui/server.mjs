@@ -59,7 +59,7 @@ import { effectiveWorkMode, workModeOfRow, workModeForStart } from '../src/core/
 import { renderIndexHtml, INDEX_THEME_ANCHOR, FLAG_GATES_ANCHOR } from '../src/core/index-html.mjs';
 import { gitState, gitAvailable, currentGitState, onGitChange, GIT_MISSING } from '../src/core/git-available.mjs';
 import { teamOverHttps, teamRepoState, setTypedTeamRepo } from '../src/core/git-free/team-repo.mjs';
-import { allFlags, listFlags, setFlags, checkFlags, flagEvents, flagEnabled, FlagError } from '../src/core/flags.mjs';
+import { allFlags, listFlags, setFlags, checkFlags, flagEvents, flagEnabled, FlagError, requireFlag } from '../src/core/flags.mjs';
 import { createKeepAwake, countWorking } from '../src/core/keep-awake.mjs';
 import {
   getWorcaRoot, setWorcaRoot, setProjectsRoot, defaultRoot,
@@ -91,6 +91,7 @@ import {
   stepModelsSetting, assertStepModelsInput, setStepModels,
   utilityModelsSetting, assertUtilityModelsInput, setUtilityModels,
   askEngineSetting, assertAskEngineInput, setAskEngineSetting, askModelsSetting, assertAskModelsInput, setAskModels,
+  chatHomePinsFor, setChatHomePinsFor,
 } from '../src/core/settings.mjs';
 import { resolveSetting, resolveAll, writeProjectSettings, assertProjectSettingsPatch, resolveRunEngine, defragSlotPair } from '../src/core/settings-cascade.mjs';
 import { resolveNightConfig, validateNightPatch } from '../src/core/night/config.mjs';
@@ -98,7 +99,10 @@ import { effectiveNightConfig, nightLayers } from '../src/core/night/effective.m
 import { readNightDecisions, nightAnsweredSince } from '../src/core/night/store.mjs';
 import { createAwayHoursWatch } from '../src/core/night/hours-watch.mjs';
 import { resolveDefragModel, defragDefaultModel, defragWorkflowView, checkStartPair } from '../src/core/memory-defrag-model.mjs';
-import { parseRunOverlay, checkRunOverlay, overlayWorkflowRefusal } from '../src/core/run-overlay.mjs';
+import { parseRunOverlay, checkRunOverlay, overlayWorkflowRefusal, OVERLAY_ERRORS } from '../src/core/run-overlay.mjs';
+import { listPresets, readPreset, createPreset, updatePreset, duplicatePreset, deletePreset, readRunSetup, createPresetFromRun } from '../src/core/run-presets-store.mjs';
+import { presetRefusals, completeSnapshot } from '../src/core/run-presets-check.mjs';
+import { setupFromBody, bodyFollowingPreset, overriddenKeys, PRESET_LIMITS } from '../src/shared/run-presets.mjs';
 import { describeTitleModel } from '../src/core/title.mjs';
 import { validatePinpointInput, runPinpoint, pinpointCwd } from '../src/core/pinpoint.mjs';
 import { demoChunks, demoPinpointReply } from '../src/core/demo-scenario.mjs';
@@ -113,10 +117,12 @@ import {
   listMessages as askListMessages, setMessageBlocks as askSetMessageBlocks,
   findCard as askFindCard, updateCardBlock as askUpdateCardBlock,
   addAttachment as askAddAttachment, listAttachments as askListAttachments,
-  getAttachment as askGetAttachment, attachmentPath as askAttachmentPath,
+  getAttachment as askGetAttachment, attachmentPath as askAttachmentPath, readAttachmentText as askReadAttachmentText,
+  attachmentSourcePath as askAttachmentSourcePath,
   linkRun as askLinkRun, updateRunLink as askUpdateRunLink, listRunLinks as askListRunLinks,
-  findRunLinksByPipeline as askFindRunLinksByPipeline,
-  finishMessage as askFinishMessage,
+  findRunLinksByPipeline as askFindRunLinksByPipeline, runLinkTarget,
+  finishMessage as askFinishMessage, newAskId,
+  newAskId as askNewId, findPullRequestCards as askFindPullRequestCards, findFixRunCards as askFindFixRunCards,
 } from '../src/core/ask/store.mjs';
 import { sanitizeTitle as askSanitizeTitle } from '../src/core/title.mjs';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
@@ -202,7 +208,7 @@ import { createAskCommands, terminalEventPrompt, terminalNoticeText } from '../s
 import { openBranchWorktree, removeBranchWorktree, releaseBranchWorktree, enforceBranchWorktreeCap, sweepBranchWorktrees } from '../src/core/terminal/worktrees.mjs';
 import { pidAlive, killDescendants } from '../src/core/terminal/pty.mjs';
 import { createTerminalFanout } from '../src/core/terminal/fanout.mjs';
-import { detectBuiltins, builtinLaunch, copyCommandText, findOnPath } from '../src/core/actions/builtins.mjs';
+import { detectBuiltins, builtinLaunch, revealLaunch, copyCommandText, findOnPath } from '../src/core/actions/builtins.mjs';
 import { buildLauncherCommand, launchAndWatch, installedLaunchers, launcherExamples, launcherWarning, lineForPickedApp } from '../src/core/actions/launcher.mjs';
 import { assertNoRawCommand, normalizeStacks, memberAliases, SETUP_ACTION_ID, ActionConfigError } from '../src/core/actions/model.mjs';
 import { parsePortRange } from '../src/core/actions/ports.mjs';
@@ -225,9 +231,10 @@ import { planClone, cloneProject, CloneError } from '../src/core/clone-project.m
 import { createProject, addProjectFolder, probeFolder, ProjectAddError, PROJECT_ADD_STATUS } from '../src/core/project-create.mjs';
 import { listFolders } from '../src/core/fs-browse.mjs';
 import { realRoots, realOrNull, checkInside, insideRoots, outsideAllowedMessage, FS_OUTSIDE_ALLOWED } from '../src/core/fs-scope.mjs';
+import { importCandidates, parsePathList, IMPORT_MAX_INPUTS } from '../src/core/workspace-import.mjs';
 import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
-  PREDEFINED_MODELS, CODEX_BUILTIN_MODELS, agentSteps, EFFORTS, catalogHasModel, engineOfModel, enginesOfModel, modelRunsOn, foreignRunModel, assertSlotModels, stepSlotDefaults,
+  PREDEFINED_MODELS, CODEX_BUILTIN_MODELS, COPILOT_BUILTIN_MODELS, agentSteps, EFFORTS, catalogHasModel, engineOfModel, enginesOfModel, modelRunsOn, foreignRunModel, assertSlotModels, stepSlotDefaults,
   readRunConfig, setNodeModel, setFeedbackCycles, setWireCycles, setActiveWorkflow, setHumanInLoop, resetWorkflowConfig,
   globalModelRefs, removeGlobalModelAndRefs, promoteCustomModel, costUnreliableModelIds,
   readPrRemotePrefs, setPrRemotePrefs, modelHasBaseUrlRouting, writeSyncPrefs, readSyncPrefs,
@@ -235,7 +242,7 @@ import {
   readProjectActions, writeProjectActions, readActionsMeta, writeActionsMeta, writeTeamRepo,
 } from '../src/core/config.mjs';
 import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
-import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue, UPSTREAM_PROVIDERS, CODEX_EFFORTS, MODEL_ENGINES, HELPER_ENGINES, CURSOR_EFFORTS, helperEngineFor, ASK_ENGINES } from '../src/core/model-env.mjs';
+import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue, UPSTREAM_PROVIDERS, CODEX_EFFORTS, MODEL_ENGINES, HELPER_ENGINES, CURSOR_EFFORTS, COPILOT_EFFORTS, helperEngineFor, ASK_ENGINES } from '../src/core/model-env.mjs';
 import { engineLabel, ENGINE_NAMES, engineRefusalFor } from '../src/shared/engine-switch.mjs';
 import { engineReadiness, engineLocks } from '../src/core/engines/readiness.mjs';
 import { providerReadiness } from '../src/core/bridge/registry.mjs';
@@ -259,7 +266,7 @@ import {
 } from '../src/core/guardrail-store.mjs';
 import {
   GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, listWorkflows, deleteWorkflow, isSafeWorkflowId,
-  setWorkflowNodeDefaults, workflowNodeDefaults, assertRunnableWorkflow, writeGraphWorkflow, readWorkflow, graphNeedsRepo,
+  setWorkflowNodeDefaults, workflowNodeDefaults, assertRunnableWorkflow, writeGraphWorkflow, readWorkflow, graphNeedsRepo, resolveGraph,
 } from '../src/core/workflows.mjs';
 import { mintAutoWorkflowId, sanitizeProposalAnswer } from '../src/core/auto/proposal.mjs';
 import {
@@ -291,8 +298,9 @@ import { chatScopeOf, withChatScope, sameScope, scopeBody, targetInScope, scopeR
 import { hostAllowed as askHostAllowed } from '../src/core/web-allowlist.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
-import { drainTimeoutMs, autoResumeEnabled, autoResumeCandidates, DRAIN_ACTIVE_STATUSES } from '../src/core/drain.mjs';
+import { drainTimeoutMs, autoResumeMode, autoResumeCandidates, DRAIN_ACTIVE_STATUSES } from '../src/core/drain.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
+import { exportWorkflowToMarketplace, listPublishTargets } from '../src/core/marketplace-publish.mjs';
 import {
   saveGraphWorkflow, importGraphWorkflow, exportGraphJson, workflowFileSlug, nodeDefaultsError,
 } from '../src/core/workflow-share.mjs';
@@ -308,21 +316,30 @@ import {
   INTERACTIVE_TTL_MS, INTERACTIVE_TIMEOUT_MS, RUN_TIMEOUT_MS, checkBaseMerge, mergeBaseInto, startConflictMerge, branchCheckouts,
   commitFileOnBranch,
 } from '../src/core/git-sync.mjs';
-import { shipFeature, SHIP_MODES } from '../src/core/shape/ship.mjs';
+import { shipFeature, SHIP_MODES, shipCardVerb } from '../src/core/shape/ship.mjs';
+import { releaseVersionHint, recordRunRelease, draftReleasesOnMerge } from '../src/core/draft-release.mjs';
+import { parseReleaseChoice } from '../src/shared/release-version.mjs';
 import {
   projectSyncBlock, workspaceSyncBlocks, effectiveSyncSettings, projectSyncEvents, startProjectSyncBackground,
 } from '../src/core/project-sync.mjs';
 import { mapWithCap, fanoutCap } from '../src/core/fanout.mjs';
-import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips,
+import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, prBaseBranch, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips, tipsRelation,
   prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl,
   prWatchSnapshot, prChecks, prWatchJobLog, prWatchRerun, prWatchReply, prWatchComment, commitSubjects, checkConflictMerge,
-  markPrReady, closePr, uncommittedPatch } from '../src/core/git-info.mjs';
+  markPrReady, closePr, uncommittedPatch, ghItemSummaries } from '../src/core/git-info.mjs';
 import { prNumberFromUrl, watchablePrUrl, forgeOfPrUrl, FORGE_LABEL } from '../src/core/forge.mjs';
-import { getWatch, setWatch, createPrWatcher, watchActive, FIX_WORKFLOW_ID } from '../src/core/pr-watch.mjs';
-import { forkRefusal, workItemIdFromSourceRef } from '../src/core/pr/azure.mjs';
+import { getWatch, setWatch, createPrWatcher, watchActive, FIX_WORKFLOW_ID, stoppedWatchFact } from '../src/core/pr-watch.mjs';
+import { forkRefusal, workItemIdFromSourceRef, prSummary, workItemSummaries } from '../src/core/pr/azure.mjs';
 import { workspaceMembers as prStateMembers, memberPrTarget, relatedPrsBlock, withRelatedPrsBlock } from '../src/core/workspace-prs.mjs';
 import { isSyntacticRef } from '../src/core/ask/proposal.mjs';
-import { archivePipeline, restorePipeline, discardRetainedWorktrees, applyRetainedWork, archiveKeepsWork } from '../src/core/pipeline-delete.mjs';
+import { createRefResolver } from '../src/core/ask/refs.mjs';
+import { REFS_MAX } from '../src/shared/chip-refs.mjs';
+import { archivePipeline, restorePipeline, purgePipeline, discardRetainedWorktrees, applyRetainedWork, archiveKeepsWork } from '../src/core/pipeline-delete.mjs';
+import { runBulk } from '../src/core/run-bulk.mjs';
+import { BULK_ACTIONS } from '../src/shared/run-bulk.mjs';
+import { listRunGroups, createRunGroup, addToGroup, removeFromGroup, groupMembers, RunGroupError } from '../src/core/run-groups.mjs';
+import { runModel } from '../src/shared/run-model.mjs';
+import { runModelFor } from '../src/core/run-status.mjs';
 import {
   listWorkspaces, readWorkspace, checkNewWorkspace, scanMemberProblems,
   updateWorkspace, deleteWorkspace, isGitRepo, WORKSPACE_KEY_RE, countWorkspaces,
@@ -334,18 +351,27 @@ import { effectiveEdges } from '../src/shared/workspace-map/overrides.mjs';
 import { WORKSPACE_SCAN_WORKFLOW_ID, WORKSPACE_SCAN_DEFAULT_MODELS, PR_FIX_WORKFLOW_ID, GRAPH_SHAPE_WORKFLOW, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from '../src/core/graph/builtin-workflows.mjs';
 import { shapeFirstEnabled, requireShapeFirst } from '../src/core/shape/gate.mjs';
 import { latestChecklist, checklistMarkdown, CHECKLIST_PR_MARKER } from '../src/shared/shape/review-checklist.mjs';
+import { currentPass } from '../src/shared/shape/role-review.mjs';
 import { resolveShapeRequest, PLAN_ASK_KIND, planFileOf } from '../src/core/shape/run.mjs';
 import { savePlanToCheckout } from '../src/core/shape/save.mjs';
 import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, cancelRest, resumeFeature,
-  rechainWaiting, replanRest, setApproveEach, stackedPrBase, recordShapePlan, listShapePlans, chainFeature,
-  sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, featureShipInput } from '../src/core/shape/features.mjs';
+  rechainWaiting, replanRest, setApproveEach, recordShapePlan, listShapePlans, chainFeature,
+  sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, featureShipInput,
+  liveSliceFrom, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf } from '../src/core/shape/features.mjs';
+import { roundsOf, roundOrigin, nextRound, setRoundOutcome } from '../src/core/shape/rounds.mjs';
+import { changesCard, applyChanges, applyRoute, landingFacts, landingFactsOfFeature, shapeToolCheck, threadWork, shapeThreadFacts } from '../src/core/shape/changes.mjs';
+import { defaultShapeToolDeps } from '../src/core/ask/shape-tool-deps.mjs';
+import { routeCardVerb, changesCardVerb } from '../src/shared/shape/route.mjs';
 import { scanRunPrompt, scanRunTitle, createWorkspaceWithHomes, resolveScanModels } from '../src/core/workspace-scan-run.mjs';
 import { listWorkspacePipelines, readWorkspacePipeline, appendAuditById, listNetworkWaitRuns } from '../src/core/artifacts.mjs';
 import { createNetworkWatch, NETWORK_ACTOR } from '../src/core/network-wait.mjs';
 import { probeReachable, hostOf } from '../src/core/upstream-probe.mjs';
 import { editRunTags, readRunTags, tagVocabulary } from '../src/core/run-tags-store.mjs';
+import { editRunLabels, changeLabels, labelVocabulary, readRunLabels, renameLabel, deleteLabel, readLabelsFor } from '../src/core/run-labels-store.mjs';
 import { normaliseTags, describeTagChange, parseTag } from '../src/shared/run-tags.mjs';
+import { normaliseLabels } from '../src/shared/run-labels.mjs';
 import { normaliseDimensions, prefillTags } from '../src/shared/tag-dimensions.mjs';
+import { autoFillTags } from '../src/shared/cost-tag-suggest.mjs';
 import { dimensionsForTarget, allTagDimensions, applyTagRules, teamTagPolicy, prefillSources } from '../src/core/tag-dimensions.mjs';
 import { generateOverview } from '../src/core/overview-agent.mjs';
 import { generatePrDescription, resolvePrDescriptionModel, PR_BODY_MAX } from '../src/core/pr-description.mjs';
@@ -353,6 +379,7 @@ import { projectKey, PROJECT_KEY_RE } from '../src/core/store.mjs';
 import { runProjectDir, noProjectWorkDir, isNoProjectWorkDir, isNoProjectKey, NO_PROJECT_KEY } from '../src/core/store.mjs';   // P3 — its own line: test/api-memory.test.mjs pins the one above
 import { WORK_ARTIFACT_KIND } from '../src/core/no-project-work.mjs';
 import { NO_PROJECT_NAME, NO_PROJECT_ERRORS } from '../src/shared/no-project.mjs';
+import { ensureHouseBrief, writeHouseBriefPins } from '../src/core/house-brief.mjs';
 import { validateMemoryScope, withStoreLock } from '../src/core/memory-sync.mjs';
 import {
   memoryRoot, GLOBAL_SCOPE, projectScope, scopeKey, isValidMemoryName, MEMORY_NAME_HELP, memoryScopeReport,
@@ -410,14 +437,14 @@ import {
   runScheduleNow, deleteSchedule, cancelForTarget, dependentsOfWorkflow, runDueTickets, recordOutcome,
   recoverScheduler, purgeScheduler, scheduleCounts, scheduleStageDir, scheduleSignature,
   resolveAfterRef, predecessorState, previousBranchesOf, dependentsOfRun, AFTER_POLICIES, afterRefOf,
-  chainBaseBranchesOf, resumeTicketsFor, cancelResumeTicketsFor, inheritedTagsAtCreation, runChains,
+  chainBaseBranchesOf, stackedPrBaseOf, resumeTicketsFor, cancelResumeTicketsFor, inheritedTagsAtCreation, runChains,
 } from '../src/core/scheduler.mjs';
 import {
   onNotification, listNotifications, unreadCount, latestNotificationId, markRead, markAllRead, purgeNotifications,
 } from '../src/core/notifications.mjs';
 import {
   normalizeRule, nextOccurrence, previewOccurrences, describeRule, parseScheduledFor, localDate,
-  isValidTimeZone, formatInstant, OVERLAP_POLICIES, MISSED_POLICIES,
+  isValidTimeZone, formatInstant, occurrenceStamp, OVERLAP_POLICIES, MISSED_POLICIES,
 } from '../src/shared/schedule/recurrence.mjs';
 import { REASON } from '../src/core/failure-policy.mjs';
 import { callSource, PluginOpError } from '../src/core/plugin-shim.mjs';
@@ -589,7 +616,7 @@ const isLocalRequest = createHostGuard(REMOTE_ACCESS.allowedHosts);
 const identityCheck = REMOTE_ACCESS_CHECK.errors.length ? null : createIdentityCheck(REMOTE_ACCESS);
 // local | container | hosted (src/core/deployment.mjs): what Ask Worca is told about where it runs.
 const DEPLOYMENT = detectDeployment(process.env, { remoteMode: REMOTE_MODE });
-// Experimental keepAwake flag (docs/feature-flags.md): one OS child holds off idle system sleep while
+// Beta keepAwake flag, default on locally (docs/feature-flags.md): one OS child holds off idle system sleep while
 // any pipeline run has agents working. syncKeepAwake() is cheap and idempotent: call it wherever a
 // run's status or pendingQuestion changes, and when the flag flips.
 const keepAwake = createKeepAwake({ deployment: DEPLOYMENT, log: (line) => console.warn(line) });
@@ -1133,7 +1160,16 @@ function summarizeRuns() {
     projectNames: r.projectNames || null,
     tags: r.tags || [],
     ...(r.orch?.workMode && r.orch.workMode !== 'git' ? { workMode: r.orch.workMode } : {}),   // P1b S1
+    labels: liveLabels(r),
   }));
+}
+
+// Run labels (slice 1): a live entry reads its stored labels once, the first summary after its pipeline id exists,
+// so a run recovered after a restart keeps them; the label routes keep r.labels current after that.
+function liveLabels(r) {
+  if (!r.pipelineId) return r.labels || [];
+  if (!Array.isArray(r.labels)) r.labels = readRunLabels(r.pipelineId);
+  return r.labels;
 }
 
 // Birth announcement for a freshly-registered run: broadcasts the metadata that
@@ -1156,6 +1192,7 @@ function announceRun(entry) {
     lastAction: entry.lastAction || null,
     tags: entry.tags || [],
     ...(entry.orch?.workMode && entry.orch.workMode !== 'git' ? { workMode: entry.orch.workMode } : {}),   // P1b S1
+    labels: entry.labels || [],
   });
 }
 
@@ -1200,6 +1237,9 @@ function wireRun(entry) {
       const event = { type: name, ...(payload && typeof payload === 'object' ? payload : { value: payload }) };
 
       if (name === 'question') {
+        // Slice 4: the Plan step card's role rows read the current pass of role reviews off the plan ask (D1).
+        const rr = event.kind === 'plan' && event.plan && !event.plan.outline ? currentPass(orch.state?.roleReviews) : null;
+        if (rr) event.plan = { ...event.plan, roleReviews: rr };
         entry.pendingQuestion = event;
       }
       if (name === 'night-decision') {
@@ -1318,11 +1358,26 @@ function wireRun(entry) {
       // Clarify's questions, changes no status, so key on everything the view reads. Gated and caught (F42).
       if (orch.runShape?.slice && (name === 'question' || name === 'state' || name === 'exec' || name === 'done')) {
         const pq = entry.pendingQuestion;
-        const key = `${entry.status}|${pq ? pq.kind : ''}|${orch.state?.shaping?.approved ? 1 : 0}`;
+        const key = `${entry.status}|${pq ? `${pq.kind}:${pq.id || ''}` : ''}|${orch.state?.shaping?.approved ? 1 : 0}`;
         if (key !== entry._featureKey) {
           entry._featureKey = key;
           broadcastFeaturesOf(() => [featureOfPipeline(entry.pipelineId)?.featureId].filter(Boolean));
         }
+      }
+      // Shaper s5 (D16): a round reports into its origin's card, which gets none of the round's own frames.
+      if (name === 'question' || name === 'state' || name === 'done') {
+        try {
+          const roundOf = orch.state?.branch?.roundOf;
+          if (roundOf && roundOf.pipelineId) {
+            const key = `${entry.status}|${entry.pendingQuestion?.kind || ''}`;
+            if (key !== entry._roundKey) {
+              entry._roundKey = key;
+              broadcast({ type: 'round-changed', origin: roundOf.pipelineId });
+              const at = featureOfPipeline(roundOf.pipelineId);
+              if (at && at.featureId) broadcastFeature(currentFeatureId(at.featureId));
+            }
+          }
+        } catch (err) { console.error(`[worca-ui] round frame failed: ${err && err.message ? err.message : err}`); }
       }
 
       record(event);
@@ -1610,6 +1665,7 @@ const GIT_ONLY_ROUTES = Object.freeze([
   ['post', '/api/runs/:id/base-check'], ['post', '/api/runs/:id/update-branch'],
   ['post', '/api/runs/:id/resolve-pipeline'], ['post', '/api/runs/:id/resolve-terminal'],
   ['post', '/api/runs/:id/apply-retained'], ['post', '/api/runs/:id/discard-worktree'],
+  ['post', '/api/workspaces/import-candidates'],   // the wizard's Add… / paste box: `git rev-parse` on every path
 ]);
 for (const [method, route] of GIT_ONLY_ROUTES) app[method](route, (_req, res, next) => (gitAvailable() ? next() : gitMissing(res)));
 
@@ -2035,12 +2091,14 @@ function fallbackRunTitle(effectivePrompt, source) {
 // and ask-run-status frames. Used by POST /api/run at launch AND by resumeRun
 // (a resumed pipeline is a NEW orchestrator; the paused lineage's follower
 // detached on done{paused}, so the link must be re-followed — review of PR #376).
-function attachAskFollower(orch, { threadId, runId, cardId }) {
+function attachAskFollower(orch, { threadId, runId, cardId, quiet = false }) {
   const follower = attachRunFollower(orch, {
     threadId,
     runId,
     cardId,
-    post: ({ text, href }) => {
+    // Quiet (a PR fix-run card, askPostPrFixCards): the link and the ask-run-status frames, never a notice — the card
+    // shows the run, and the watcher's outcome lands on it.
+    post: quiet ? () => {} : ({ text, href }) => {
       try {
         const m = askAppendMessage(threadId, {
           role: 'system', text, blocks: [{ kind: 'notice', text, href }],
@@ -2161,12 +2219,110 @@ function askTrackRun(threadId, input, pin) {
   return { ok: true, card: { type: 'progress', pipelineId, runId: liveRunId, projectKey: projKey, workspaceId, title, label, status } };
 }
 
+/** A run link that belongs to a PR fix-run card (askPostPrFixCards) follows its run quietly: no Run resumed / finished
+ *  rows — the card shows the run, and its outcome. */
+function askLinkIsPrFix(link) {
+  if (!link || !link.cardId) return false;
+  try { return !!askFindCard(link.threadId, link.cardId)?.block?.card?.fix; } catch { return false; }
+}
+
+/**
+ * PR watch → Ask (pr-watch.mjs onFixRun), with no model turn: `started` posts ONE fix-run card (track_run's progress
+ * card plus `fix`) into every chat holding an applied pull-request card for the PR; `ended` writes the outcome onto
+ * those cards. Best effort: a chat write never reaches back into the watch. → [{ threadId, cardId }] touched
+ */
+function askPrFixRun(event) {
+  if (!event || typeof event.runId !== 'string' || !event.runId || !event.watch || typeof event.watch.prUrl !== 'string') return [];
+  if (event.phase === 'ended') {
+    try { if (event.pipelineId) setRoundOutcome(event.pipelineId, event.outcome); }
+    catch (err) { console.error(`[worca-ui] fix round outcome for ${event.runId} failed: ${err && err.message ? err.message : err}`); }
+  }
+  // Shaper s5 (D22): with the gate on, a fix run is a round of the PR's run: it reports into that run's card.
+  if (shapeFirstEnabled()) { askPrFixRound(event); return event.phase === 'ended' ? askSettlePrFixCards(event) : []; }
+  if (event.phase === 'started') return askPostPrFixCards(event);
+  if (event.phase === 'ended') return askSettlePrFixCards(event);
+  return [];
+}
+
+/** Shaper s5 (D22): a fix run reports into the run card already in each chat holding the PR — no card, row or link. */
+function askPrFixRound({ watch }) {
+  try {
+    const origin = roundOrigin(watch.pipelineId);
+    const threadIds = [...new Set(askFindPullRequestCards(watch.prUrl).map((l) => l.threadId))];
+    broadcast({ type: 'round-changed', origin, threadIds });
+    const at = featureOfPipeline(origin);                  // { featureId, … } | null
+    if (at && at.featureId) broadcastFeature(currentFeatureId(at.featureId));
+  } catch (err) { console.error(`[worca-ui] fix round for ${watch.prUrl} failed: ${err && err.message ? err.message : err}`); }
+}
+
+function askPostPrFixCards({ watch, runId, trigger, once }) {
+  const posted = [];
+  const seen = new Set(askFindFixRunCards(runId).map((c) => c.threadId));   // one card per fix run per chat
+  const entry = runs.get(runId) || null;                                    // startRunHandler set it before answering 200
+  let origin = null;
+  if (!entry || !entry.projectDir) { try { origin = prWatchOrigin(watch); } catch { origin = null; } }
+  const dir = (entry && entry.projectDir) || (origin && origin.projectDir) || '';
+  const why = trigger && typeof trigger === 'object' && typeof trigger.label === 'string' ? trigger : { kinds: [], label: 'Pull request feedback' };
+  for (const link of askFindPullRequestCards(watch.prUrl)) {
+    if (seen.has(link.threadId)) continue;
+    seen.add(link.threadId);
+    try {
+      const cardId = askNewId('card');
+      const status = (entry && entry.status) || 'starting';
+      const card = {
+        type: 'progress', pipelineId: null, runId,
+        projectKey: dir ? projectKey(dir) : ((origin && origin.projectKey) || null), workspaceId: null,
+        title: (entry && entry.title) || 'PR fix run',
+        label: String(dir).split(/[\\/]/).filter(Boolean).pop() || '',
+        status,
+        fix: { prUrl: watch.prUrl, memberKey: link.memberKey, originPipelineId: link.pipelineId,
+          trigger: Array.isArray(why.kinds) ? why.kinds : [], triggerLabel: why.label, once: once === true },
+      };
+      const text = `PR watch started a fix run on ${watch.prUrl}: ${why.label}`;
+      const m = askAppendMessage(link.threadId, { role: 'system', text, blocks: [{ kind: 'card', id: cardId, state: 'tracked', card }] });
+      try { askLinkRun(link.threadId, { runId, cardId, status }); } catch { /* a link for this run exists already: the card finds it by run id */ }
+      if (entry && entry.orch && !SETTLED_RUN.has(String(entry.status || '')) && !askFollowerAttached(link.threadId, runId)) {
+        attachAskFollower(entry.orch, { threadId: link.threadId, runId, cardId, quiet: true });
+      }
+      broadcast({ type: 'ask-message', threadId: link.threadId, message: m, unread: true });
+      posted.push({ threadId: link.threadId, cardId });
+    } catch (err) {
+      console.error(`[worca-ui] PR fix-run card for ${watch.prUrl} failed: ${err && err.message ? err.message : err}`);
+    }
+  }
+  return posted;
+}
+
+function askSettlePrFixCards({ runId, pipelineId, outcome }) {
+  const settled = [];
+  const out = outcome && typeof outcome === 'object' ? outcome : { kind: 'failed', reason: 'unknown' };
+  for (const { threadId, block } of askFindFixRunCards(runId)) {
+    if (block.card.fix.outcome) continue;                                 // written once
+    try {
+      askUpdateCardBlock(threadId, block.id, { card: { pipelineId: block.card.pipelineId || pipelineId || null, fix: { ...block.card.fix, outcome: out } } });
+      // A system row is never held by a turn's reducer: the whole message goes out, as flipCard sends an out-of-turn flip.
+      const found = askFindCard(threadId, block.id);
+      if (found) broadcast({ type: 'ask-message', threadId, message: found.message, unread: true });
+      settled.push({ threadId, cardId: block.id });
+    } catch (err) {
+      console.error(`[worca-ui] PR fix-run outcome for ${runId} failed: ${err && err.message ? err.message : err}`);
+    }
+  }
+  return settled;
+}
+
 // ---------------------------------------------------------------------------
 // POST /api/run  -> start a new orchestration run
 // body (single-project): { projectDir, prompt?, promptMarkdown?, title?, mock? }
 // body (workspace):      { workspaceId, prompt?, ... } — mutually exclusive with
 //                        projectDir (§2.6). Single-project behavior is byte-identical.
 // ---------------------------------------------------------------------------
+// A project's stored default tags, for the key:value write rule's grandfathering; [] for a workspace or an unknown dir.
+function storedDefaultTags(rawDir) {
+  if (typeof rawDir !== 'string' || !rawDir) return [];
+  try { const dir = resolveProjectDir(rawDir); return dir ? readProjectDefaultTags(projectKey(dir)) : []; } catch { return []; }
+}
+
 /**
  * Enforced run tags (D9, D9a, D10, D13): pre-fill, then refuse a missing mandatory tag or an off-list value
  * with 422 { error, fields: { tags } }. Returns true when it answered. On pass, body.tags holds the filled
@@ -2187,6 +2343,9 @@ async function tagGate(res, body, { projectDir = null, workspaceId = null, start
 async function _folderSizeProblem(dir, { name } = {}) {
   return checkFolderSize(dir, { name: name ?? getProjectByPath(dir)?.name });
 }
+
+/** An engine refusal's message on a preset start names the preset (#712). */
+const presetEngineMessage = (presetRow, runEngine, msg) => (presetRow ? `Preset "${presetRow.name}" cannot start: Engine ${runEngine.engine}: ${msg}` : msg);
 
 const startRunHandler = async (req, res) => {
   // B2: a draining server starts nothing new (the scan arm and the scheduler come through here too).
@@ -2229,6 +2388,34 @@ const startRunHandler = async (req, res) => {
     if (noProject && (body.scheduledFor != null || body.repeat != null || body.after != null
       || (body.sourceFromPrevious != null && body.sourceFromPrevious !== false))) {
       return badRequest(res, NO_PROJECT_ERRORS.schedule);
+    }
+
+    // Run presets (#712): a start from a preset is checked as a whole first, so the named broken items win over the
+    // per-field 400s below. The check runs on the body being started — the person's in-form replacements count.
+    // A fired ticket reads its preset as the person who scheduled it (stored at schedule time, never from HTTP).
+    const presetOwner = internal ? (typeof stored.presetOwner === 'string' && stored.presetOwner ? stored.presetOwner : null) : askViewer(req);
+    let presetRow = null;
+    if (body.presetId !== undefined) {
+      if (!flagEnabled('runPresets')) return badRequest(res, 'presetId needs the Run presets feature (Settings › Labs features)');
+      presetRow = readPreset(body.presetId, { owner: presetOwner });
+      // 404 like the preset routes: a missing and another person's preset answer the same (R-sec-3).
+      if (!presetRow) return res.status(404).json({ error: `preset ${JSON.stringify(String(body.presetId).slice(0, 40))} not found` });
+      const pinned = presetRow.scope;
+      const bodyDir = body.workspaceId ? null : resolveProjectDir(body.projectDir);
+      if (pinned.kind === 'project' && (!bodyDir || projectKey(bodyDir) !== pinned.ref)) {
+        return badRequest(res, `preset "${presetRow.name}" is pinned to project ${pinned.ref}`);
+      }
+      if (pinned.kind === 'workspace' && body.workspaceId !== pinned.ref) return badRequest(res, `preset "${presetRow.name}" is pinned to workspace ${pinned.ref}`);
+      // body.overlay is not parsed until the overlay block below; shape-check it here so a malformed
+      // overlay is the usual 400, never a TypeError inside presetRefusals (the catch would send 500).
+      const shaped = body.overlay === undefined || body.overlay === null ? { overlay: null } : parseRunOverlay(body.overlay);
+      if (shaped.error) return badRequest(res, shaped.error);
+      const setup = { ...setupFromBody(body, { scope: 'project' }), overlay: shaped.overlay || undefined };   // the body being started, branch names included
+      const target = body.workspaceId ? { workspaceId: body.workspaceId } : { projectDir: body.projectDir };
+      const broken = await presetRefusals(setup, await presetCheckCtx(pinned, target, setup, { probeEngine: false }));
+      if (broken.length) {
+        return res.status(409).json({ error: `Preset "${presetRow.name}" cannot start: ${broken.map((b) => b.message).join('; ')}`, code: 'preset-broken', broken });
+      }
     }
 
     // Ask Worca card link (§8.1): both or neither; the thread must exist and
@@ -2390,16 +2577,30 @@ const startRunHandler = async (req, res) => {
     // Run tags (#718): normalised once, written back so a stored schedule keeps the clean list and
     // its firing re-validates it. Absent = no tags (legacy bodies unchanged). An explicit [] stays []:
     // "no tags", which also opts an `after` run out of inheriting its predecessor's tags.
+    // A person's tags must be key:value; the project's stored defaults (the form pre-fills them) may keep a
+    // bare key saved before that rule.
+    // Enforced tags (D10): fired tickets were checked by fireTicket; system and follow-up starts keep today's behaviour.
+    // Their tags are stored data (a ticket's request, a predecessor's or parent's tags, a changes/route card's origin
+    // run's tags), so the key:value rule skips them too.
+    const tagExempt = !!internal?.ticket || !!scanTarget || !!req._resolveOf || !!req._prWatchRunId
+      || req._startedBy === 'pr-watch' || body.workflowId === MEMORY_DEFRAG_WORKFLOW_ID
+      || req._cardStart === true;   // Shaper s5 (D19): a run started from a changes/route card; its tags are the origin's stored tags
     let tags = [];
     if (body.tags !== undefined) {
-      const t = normaliseTags(body.tags);
+      const t = normaliseTags(body.tags, tagExempt ? {} : { strict: true, keep: storedDefaultTags(body.projectDir) });
       if (t.errors.length) return badRequest(res, `tags: ${t.errors[0]}`);
       tags = t.tags;
       body.tags = tags;
     }
-    // Enforced tags (D10): fired tickets were checked by fireTicket; system and follow-up starts keep today's behaviour.
-    const tagExempt = !!internal?.ticket || !!scanTarget || !!req._resolveOf || !!req._prWatchRunId
-      || req._startedBy === 'pr-watch' || body.workflowId === MEMORY_DEFRAG_WORKFLOW_ID;
+    // s2: labels a start carries (inherited by a chained, Shaper, round or Watch PR run). A person's bad label is a 400;
+    // stored data (exempt starts) drops a bad entry instead.
+    let labels = [];
+    if (body.labels !== undefined) {
+      const n = normaliseLabels(tagExempt && Array.isArray(body.labels) ? body.labels.filter((l) => !normaliseLabels([l]).errors.length) : body.labels);
+      if (n.errors.length) return badRequest(res, `labels: ${n.errors[0]}`);
+      labels = n.labels;
+      body.labels = labels;
+    }
 
     // Optional guardrailsId selects the named guardrail set that IS this run's
     // policy (applied uniformly to every member — guardrails are per-run only).
@@ -2443,11 +2644,14 @@ const startRunHandler = async (req, res) => {
       if (refusal) return badRequest(res, refusal);
       if (!internal) {
         const checked = checkRunOverlay(runOverlay.nodes, {
-          workflow: workflowRow, engine: runEngine.engine || 'claude',
+          workflow: workflowRow, engine: runEngine.engine || 'claude', wires: runOverlay.wires,
           models: await listModels(hasWorkspace ? '' : (resolveProjectDir(body.projectDir) || '')),
         });
         if (checked.errors.length) return badRequest(res, checked.errors.join('; '));
-        runOverlay = { nodes: checked.nodes };
+        runOverlay = {
+          ...(Object.keys(checked.nodes).length ? { nodes: checked.nodes } : {}),
+          ...(Object.keys(checked.wires).length ? { wires: checked.wires } : {}),
+        };
       }
     }
 
@@ -2470,6 +2674,9 @@ const startRunHandler = async (req, res) => {
 
     // #620 Resolve in a pipeline: the run it resolves. Set in-process by /resolve-pipeline only, never from HTTP.
     const resolveOf = req._resolveOf && typeof req._resolveOf === 'object' && typeof req._resolveOf.runId === 'string' ? req._resolveOf : null;
+    // Shaper s5 (D4): a round of an earlier run (Ask for changes → Start round n, or a Watch PR fix run). Set in-process
+    // by startRunAs / invokeStartRun only, never from HTTP.
+    const roundOf = req._roundOf && typeof req._roundOf === 'object' && typeof req._roundOf.pipelineId === 'string' ? req._roundOf : null;
     // Run on the source branch (explicit flag — never inferred from feature === source): the run
     // auto-names its hidden branch, so a typed feature name is ignored (and never date-suffixed).
     // A Workspace scan or a memory defragment lands no work: the flag does not apply there.
@@ -2480,6 +2687,7 @@ const startRunHandler = async (req, res) => {
       feature: !sameAsSource && typeof body.featureBranch === 'string' && body.featureBranch.trim()
         ? body.featureBranch.trim() : null,
       ...(resolveOf ? { resolves: { runId: resolveOf.runId, member: resolveOf.member || null } } : {}),
+      ...(roundOf ? { roundOf } : {}),
       ...(sameAsSource ? { sameAsSource: true } : {}),
     };
     const syncBody = {
@@ -2617,11 +2825,16 @@ const startRunHandler = async (req, res) => {
             mcpOptOut: await knownMcpOptOut(optOut.list, mcpWorkspaceTarget(ws)), claude: { mock, ...runEngine },
           });
           const refusal = await probe.engineStartRefusal();
-          if (refusal) return res.status(409).json({ error: engineRefusalFor(refusal.error, 'ui'), code: 'engine-refused', overridable: refusal.overridable });
+          if (refusal) return res.status(409).json({ error: presetEngineMessage(presetRow, runEngine, engineRefusalFor(refusal.error, 'ui')), code: 'engine-refused', overridable: refusal.overridable });
         }
-        return res.status(202).json(await scheduleRequest({ body: runOverlay ? { ...body, overlay: runOverlay } : body, sched, title, askLink, budget, workspaceId: ws.id, projectDir: projects[0].projectDir, startedBy }));
+        return res.status(202).json(await scheduleRequest({ body: runOverlay ? { ...body, overlay: runOverlay } : body, sched, title, askLink, budget, workspaceId: ws.id, projectDir: projects[0].projectDir, startedBy,
+          preset: presetRow ? { id: presetRow.id, name: presetRow.name, owner: presetOwner, overrides: overriddenKeys(body, presetRow.setup) } : null }));
       }
       const mcpOptOut = await knownMcpOptOut(optOut.list, mcpWorkspaceTarget(ws));
+      // Run presets slice 2 (#712): the run's setup, kept on the row for Save setup as preset. The RAW body
+      // overlay (D4): the checked runOverlay carries effort '' for model-only picks, which a New run save drops.
+      const runSetup = scanTarget || memoryScope ? null
+        : await runSetupOf({ ...body, workflowId, guardrailsId }, { workspaceId: ws.id });
 
       const wsBuilt = buildWorkspaceMembers(projects, branch, sourceByKey);
       const wsMembers = [];
@@ -2664,7 +2877,9 @@ const startRunHandler = async (req, res) => {
         ...(stored.auto ? { auto: true } : {}),
         ...(nightMode ? { nightMode: true } : {}),
         tags,
+        labels,
         ...(shape ? { shape } : {}),
+        ...(runSetup ? { runSetup } : {}),
       });
 
       entry = {
@@ -2776,11 +2991,16 @@ const startRunHandler = async (req, res) => {
             claude: { mock, ...runEngine },
           });
           const refusal = await probe.engineStartRefusal();
-          if (refusal) return res.status(409).json({ error: engineRefusalFor(refusal.error, 'ui'), code: 'engine-refused', overridable: refusal.overridable });
+          if (refusal) return res.status(409).json({ error: presetEngineMessage(presetRow, runEngine, engineRefusalFor(refusal.error, 'ui')), code: 'engine-refused', overridable: refusal.overridable });
         }
-        return res.status(202).json(await scheduleRequest({ body: storedBody, sched, title, askLink, budget, projectDir, startedBy }));
+        return res.status(202).json(await scheduleRequest({ body: storedBody, sched, title, askLink, budget, projectDir, startedBy,
+          preset: presetRow ? { id: presetRow.id, name: presetRow.name, owner: presetOwner, overrides: overriddenKeys(body, presetRow.setup) } : null }));
       }
       const mcpOptOut = await knownMcpOptOut(optOut.list, { kind: 'project', key: runKey, name: path.basename(projectDir), rank: 0 });
+      // Run presets slice 2 (#712): the run's setup, kept on the row for Save setup as preset. The RAW body
+      // overlay (D4): the checked runOverlay carries effort '' for model-only picks, which a New run save drops.
+      const runSetup = scanTarget || memoryScope ? null
+        : await runSetupOf({ ...body, workflowId, guardrailsId }, { projectDir });
 
       // Scans and defrag never sync: skip the default-branch lookup and settings reads entirely, so
       // the window between the one-defrag-per-scope check and runs.set does not widen.
@@ -2823,7 +3043,9 @@ const startRunHandler = async (req, res) => {
         ...(stored.auto ? { auto: true } : {}),
         ...(nightMode ? { nightMode: true } : {}),
         tags,
+        labels,
         ...(shape ? { shape } : {}),
+        ...(runSetup ? { runSetup } : {}),
       });
 
       entry = {
@@ -2847,7 +3069,7 @@ const startRunHandler = async (req, res) => {
     // arrive as the run's error event.
     if (runEngine.engine) {
       const refusal = await orch.engineStartRefusal();
-      if (refusal) return res.status(409).json({ error: engineRefusalFor(refusal.error, 'ui'), code: 'engine-refused', overridable: refusal.overridable });
+      if (refusal) return res.status(409).json({ error: presetEngineMessage(presetRow, runEngine, engineRefusalFor(refusal.error, 'ui')), code: 'engine-refused', overridable: refusal.overridable });
     }
 
     if (internal) {
@@ -3195,9 +3417,10 @@ async function validateResumeTarget(pipelineId) {
 }
 
 /** The request a ticket stores: the validated body minus schedule fields and uploads. */
-async function storedRequestOf(body, stageId, projectDir, startedBy = null) {
+async function storedRequestOf(body, stageId, projectDir, startedBy = null, preset = null) {
   const request = { ...body };
-  for (const k of ['scheduledFor', 'repeat', 'after', 'afterPolicy', 'sourceFromPrevious', 'ifMissed', 'graceMin', 'extras', 'internal']) delete request[k];
+  // presetId: the link lives in the ticket's preset_id column (v63), never in the replayed body.
+  for (const k of ['scheduledFor', 'repeat', 'after', 'afterPolicy', 'sourceFromPrevious', 'ifMissed', 'graceMin', 'extras', 'internal', 'presetId']) delete request[k];
   // Text the user authored is part of the request: a prompt FILE is frozen now, so a
   // file deleted or half-edited overnight cannot fail an unattended run.
   if (request.source && request.source.type === 'markdown' && request.source.promptFile && !request.source.promptText) {
@@ -3205,22 +3428,25 @@ async function storedRequestOf(body, stageId, projectDir, startedBy = null) {
     request.source = { type: 'markdown', promptText };
   }
   const extrasPaths = await writeExtras(stageId, body.extras, path.join(scheduleStageDir(stageId), 'extras'));
-  request.internal = { extrasPaths, ...(startedBy ? { startedBy } : {}) };
+  // The preset a ticket follows is named in `internal` for messages and read by its owner (D3).
+  request.internal = { extrasPaths, ...(startedBy ? { startedBy } : {}),
+    ...(preset ? { presetName: preset.name, ...(typeof preset.owner === 'string' && preset.owner ? { presetOwner: preset.owner } : {}),
+      ...(Array.isArray(preset.overrides) && preset.overrides.length ? { presetOverrides: preset.overrides } : {}) } : {}) };
   return request;
 }
 
 /** Turn a validated run request into a ticket (or a recurring schedule). 202 body. */
-async function scheduleRequest({ body, sched, title, askLink, budget, projectDir, workspaceId = null, startedBy = null }) {
+async function scheduleRequest({ body, sched, title, askLink, budget, projectDir, workspaceId = null, startedBy = null, preset = null }) {
   const target = workspaceId ? { workspaceId } : { projectDir };
   let ticket, schedule = null;
   if (sched.repeat) {
     const id = `sch_${randomBytes(4).toString('hex')}`;
-    const request = await storedRequestOf(body, id, projectDir, startedBy);
+    const request = await storedRequestOf(body, id, projectDir, startedBy, preset);
     ({ schedule, ticket } = createSchedule({
       id, title, ...target, request, rule: sched.repeat.rule, overlap: sched.repeat.overlap,
       maxFailures: sched.repeat.maxFailures, ifMissed: sched.ifMissed, graceMin: sched.graceMin,
       askThreadId: askLink ? askLink.threadId : null, askCardId: askLink ? askLink.cardId : null,
-      createdBy: startedBy,
+      presetId: preset ? preset.id : null, createdBy: startedBy,
     }));
     // An Ask card that became a repeating schedule follows the SERIES, not one run of it.
     if (askLink) {
@@ -3229,13 +3455,13 @@ async function scheduleRequest({ body, sched, title, askLink, budget, projectDir
     }
   } else {
     const id = randomUUID();
-    const request = await storedRequestOf(body, id, projectDir, startedBy);
+    const request = await storedRequestOf(body, id, projectDir, startedBy, preset);
     // Both arms carry ifMissed / graceMin: parseScheduleRequest filled them with the Settings defaults
     // (an after body may not name them), and a chained ticket later moved to a time shows them.
     const chain = sched.after ? {
       after: { kind: sched.afterRef.kind, id: sched.afterRef.id }, afterPolicy: sched.afterPolicy, sourceFromPrevious: sched.sourceFromPrevious, ifMissed: sched.ifMissed, graceMin: sched.graceMin,
     } : { runAtMs: sched.runAtMs, ifMissed: sched.ifMissed, graceMin: sched.graceMin };
-    ticket = createTicket({ id, title, ...target, request, ...chain, askThreadId: askLink ? askLink.threadId : null, askCardId: askLink ? askLink.cardId : null, createdBy: startedBy });
+    ticket = createTicket({ id, title, ...target, request, ...chain, askThreadId: askLink ? askLink.threadId : null, askCardId: askLink ? askLink.cardId : null, presetId: preset ? preset.id : null, createdBy: startedBy });
     if (askLink) {
       try { flipCard(askLink.threadId, askLink.cardId, { state: 'scheduled', runId: id, scheduledFor: sched.after ? null : ticket.runAt, after: sched.after ? { kind: sched.afterRef.kind, id: sched.afterRef.id, title: sched.afterRef.title } : null }); }
       catch (err) { console.error(`[worca-ui] ask card schedule flip failed: ${err && err.message ? err.message : err}`); }
@@ -3265,7 +3491,7 @@ function releaseAskCard(item) {
 }
 
 /** Call startRunHandler without HTTP. Resolves { status, body }. */
-async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null } = {}) {
+async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, roundOf = null } = {}) {
   let out = { status: 200, body: null };
   const res = {
     statusCode: 200,
@@ -3273,8 +3499,19 @@ async function invokeStartRun(body, internal, { startedBy = null, runId = null, 
     json(payload) { out = { status: this.statusCode, body: payload }; return this; },
   };
   await startRunHandler({ body, headers: {}, _internal: internal, _startedBy: startedBy, _runId: runId,
-    _prWatchRunId: prWatchRunId }, res);
+    _prWatchRunId: prWatchRunId, ...(roundOf ? { _roundOf: roundOf } : {}) }, res);
   return out;
+}
+
+/** Shaper s5 (D20): a Watch PR fix run is round n+1 of the run that opened the PR. Null on bad input or a read error,
+ *  and the fix run then starts as before, without a marker. */
+function prFixRoundOf(r) {
+  if (!r || typeof r !== 'object' || typeof r.pipelineId !== 'string' || !r.pipelineId) return null;
+  try {
+    const origin = roundOrigin(r.pipelineId);
+    return { pipelineId: origin, round: nextRound(origin), request: String(r.request || '').slice(0, 200),
+      by: 'watch', kinds: Array.isArray(r.kinds) ? r.kinds.map(String) : [] };
+  } catch { return null; }
 }
 
 /** Ticket id -> who clicked "Run now" (identity.mjs actor), consumed by the firing it causes. */
@@ -3366,7 +3603,23 @@ async function fireResumeTicket(ticket, pipelineId) {
 async function fireTicket(ticket) {
   const resumePipelineId = resumeTargetOf(ticket);
   if (resumePipelineId) return fireResumeTicket(ticket, resumePipelineId);
-  const body = { ...(ticket.request || {}) };
+  let body = { ...(ticket.request || {}) };
+  // A ticket that follows a preset gets the preset's CURRENT setup before anything else reads the body (D4).
+  // A missing preset or a disabled flag is a permanent failure that names the preset; a broken one is the handler's 409.
+  if (ticket.presetId) {
+    const stored = body.internal && typeof body.internal === 'object' ? body.internal : {};
+    const name = typeof stored.presetName === 'string' && stored.presetName ? stored.presetName : ticket.presetId;
+    if (!flagEnabled('runPresets')) return { ok: false, error: `it follows the run preset "${name}", and run presets are turned off (Settings › Labs)`, transient: false };
+    const preset = readPreset(ticket.presetId, { owner: typeof stored.presetOwner === 'string' && stored.presetOwner ? stored.presetOwner : null });
+    if (!preset) return { ok: false, error: `Preset "${name}" no longer exists`, transient: false };
+    const keep = Array.isArray(stored.presetOverrides) ? stored.presetOverrides.filter((k) => typeof k === 'string') : [];
+    body = bodyFollowingPreset(body, preset, { keep });
+    // An Ask card can never propose Permissive (D9 / R-sec-2), so an unattended run from one never starts on it,
+    // whatever the preset says now. (A missing guardrailsId starts as Permissive.)
+    if (ticket.askCardId && (!body.guardrailsId || body.guardrailsId === 'permissive')) {
+      return { ok: false, error: `it was scheduled from Chat and the run preset "${name}" now resolves to Permissive guardrails; pick a stricter set in the preset or schedule it again`, transient: false };
+    }
+  }
   if (body.source && body.source.type === 'plugin') {
     try {
       await resolveTaskInput(body.source, { projectDir: ticket.projectDir || undefined });
@@ -3382,6 +3635,10 @@ async function fireTicket(ticket) {
     if (body.tags === undefined && p.pipelineId) {
       const inherited = readRunTags(p.pipelineId);
       if (inherited.length) body.tags = inherited;
+    }
+    if (body.labels === undefined && p.pipelineId) {   // s2: labels inherit the same way; an explicit [] opts out
+      const inherited = readRunLabels(p.pipelineId);
+      if (inherited.length) body.labels = inherited;
     }
     if (ticket.sourceFromPrevious) {
       // Before the branch checks: isValidSourceRef answers false while git is missing, and "no longer exists" would be stored as a fact.
@@ -3409,12 +3666,13 @@ async function fireTicket(ticket) {
       Object.assign(body, prev);
     }
   }
-  // Every occurrence of a series needs its own feature branch — except a run on its source branch,
-  // which has none of its own (the server ignores featureBranch for it).
+  // Every occurrence of a series needs its own feature branch: the local date, plus the time
+  // when the series runs several times a day — except a run on its source branch, which has
+  // none of its own (the server ignores featureBranch for it).
   if (ticket.scheduleId && body.sameAsSource !== true && typeof body.featureBranch === 'string' && body.featureBranch.trim()) {
     const s = getSchedule(ticket.scheduleId);
-    const day = (s && s.tz ? localDate(Date.parse(ticket.runAt), s.tz) : ticket.runAt.slice(0, 10)).replace(/-/g, '');
-    body.featureBranch = `${body.featureBranch.trim()}-${day}`;
+    const stamp = s && s.rule && s.tz ? occurrenceStamp(Date.parse(ticket.runAt), s.rule) : ticket.runAt.slice(0, 10).replace(/-/g, '');
+    body.featureBranch = `${body.featureBranch.trim()}-${stamp}`;
   }
   // A "Run now" click names its clicker for this one firing (scheduleVerb records it).
   const runNowBy = RUN_NOW_BY.get(ticket.id) || null;
@@ -3463,7 +3721,10 @@ function afterRunSettled(orch) {
   try {
     const st = orch.getState?.();
     if (orch.runShape?.slice && st?.status === 'done' && st.id) {
-      draft = openSliceDraft(st.id).catch((err) => console.error(`[worca-ui] slice draft PR failed: ${err?.message || err}`));
+      // s4: the draft first, then the Ship card (it needs the last slice's PR for "View pull request").
+      draft = openSliceDraft(st.id).catch((err) => console.error(`[worca-ui] slice draft PR failed: ${err?.message || err}`))
+        .then(() => offerShipCard(st.id))
+        .catch((err) => console.error(`[worca-ui] ship card failed: ${err?.message || err}`));
     }
     if (!ranMergeBack(st)) return draft;
     emitChanged('pipelines-changed', 'updated');
@@ -3605,6 +3866,20 @@ function withAfter(t) {
   return { ...t, after: { ...t.after, title: p.title || null, status: p.status || null, pipelineId: p.pipelineId || null } };
 }
 
+// GET /api/schedules and GET /api/schedules/:id: the current name of the preset a row follows (D14). null = deleted.
+// Name only, read as the local install (owner null): whoever can list schedules already sees their full requests.
+// A deleted preset also carries presetGoneName, the name stored at schedule time (request.internal.presetName);
+// list rows carry no request, so that one row is re-read with it — only for rows whose preset is gone.
+const presetNameOf = (x, reread) => {
+  if (!x || !x.presetId) return x;
+  const live = readPreset(x.presetId, { owner: null });
+  if (live) return { ...x, presetName: live.name };
+  const gone = reread(x.id)?.request?.internal?.presetName;
+  return { ...x, presetName: null, ...(typeof gone === 'string' && gone ? { presetGoneName: gone } : {}) };
+};
+const ticketPresetName = (x) => presetNameOf(x, (id) => getTicket(id, { withRequest: true }));
+const schedulePresetName = (x) => presetNameOf(x, (id) => getSchedule(id, { withRequest: true }));
+
 // GET /api/schedules[?projectDir=|workspaceId=][&all=1] -> { schedules, tickets, counts, defaults }
 app.get('/api/schedules', (req, res) => {
   try {
@@ -3612,8 +3887,8 @@ app.get('/api/schedules', (req, res) => {
     const workspaceId = typeof req.query.workspaceId === 'string' && req.query.workspaceId.trim() ? req.query.workspaceId.trim() : null;
     const all = req.query.all === '1' || req.query.all === 'true';
     res.json({
-      schedules: listSchedules({ projectDir, workspaceId }),
-      tickets: listTickets({ projectDir, workspaceId, all }).map(withAfter),
+      schedules: listSchedules({ projectDir, workspaceId }).map(schedulePresetName),
+      tickets: listTickets({ projectDir, workspaceId, all }).map(withAfter).map(ticketPresetName),
       // Run progress (P8): every open "Run after" chain, unscoped (a chain may cross projects).
       chains: withChainFeatures(runChains({ isLive: liveProbe })),
       counts: { ...scheduleCounts(), unread: unreadCount('schedule', { reader: notifReader(req) }) },
@@ -3787,8 +4062,8 @@ app.get('/api/schedules/after/:id', async (req, res) => {
 app.get('/api/schedules/:id', (req, res) => {
   const found = findScheduleItem(req.params.id);
   if (!found) return res.status(404).json({ error: 'schedule not found' });
-  const history = found.kind === 'recurring' ? listTickets({ scheduleId: found.item.id, all: true, limit: 50 }).reverse() : [];
-  res.json({ ...found, item: found.kind === 'once' ? withAfter(found.item) : found.item, history, notifications: listNotifications({ scheduleId: found.kind === 'recurring' ? found.item.id : null, limit: 50, reader: notifReader(req) }).filter((n) => found.kind === 'recurring' || n.ticketId === found.item.id) });
+  const history = found.kind === 'recurring' ? listTickets({ scheduleId: found.item.id, all: true, limit: 50, newestFirst: true }) : [];
+  res.json({ ...found, item: found.kind === 'once' ? ticketPresetName(withAfter(found.item)) : schedulePresetName(found.item), history, notifications: listNotifications({ scheduleId: found.kind === 'recurring' ? found.item.id : null, limit: 50, reader: notifReader(req) }).filter((n) => found.kind === 'recurring' || n.ticketId === found.item.id) });
 });
 
 // One schedule change, for the REST routes AND an applied Ask Worca schedule card — so the
@@ -4396,9 +4671,7 @@ function liveSliceOf(id) {
   if (!e || !e.orch) return null;
   const status = String(e.status || '');
   if (SETTLED_RUN.has(status) && status !== 'paused') return null;
-  const pq = e.pendingQuestion;
-  return { runId: e.id, status, waiting: !!(pq && pq.kind === PLAN_ASK_KIND), asking: !!(pq && pq.kind !== PLAN_ASK_KIND),
-    approved: !!e.orch.state?.shaping?.approved };
+  return liveSliceFrom({ runId: e.id, status, pendingQuestion: e.pendingQuestion, approved: e.orch.state?.shaping?.approved });
 }
 function broadcastFeature(id) { if (id && shapeFirstEnabled()) broadcast({ type: 'shape-feature', id }); }
 /** F42: the run-event and tick hooks. Gate first (no query while it is off), and never let a throw escape: in wireRun
@@ -4431,7 +4704,12 @@ app.get('/api/shape/features/:id', async (req, res) => {
     const view = featureView(cur, { live: liveSliceOf });
     if (!view) return res.status(404).json({ error: 'unknown feature' });
     // P17: the Ship as default, once every slice is done (async: it reads each slice's results.json).
-    if (view.ship && view.ship.ready) Object.assign(view.ship, await featureShipSuggestion(view));
+    // s4: and the release row's version hint (the repo's last tag / package.json).
+    if (view.ship && view.ship.ready) {
+      Object.assign(view.ship, await featureShipSuggestion(view));
+      const sc = shipCtxOf(view);
+      view.ship.hint = sc.error ? null : await releaseVersionHint(sc.target.repoDir);
+    }
     res.json({ ...view, replanOf: cur !== req.params.id ? req.params.id : null });
   } catch (err) { if (!res.headersSent) shapeRouteError(res, err); }
 });
@@ -4442,6 +4720,18 @@ app.get('/api/shape/pipelines/:pid/slice', (req, res) => {
   try {
     const out = sliceOfPipeline(req.params.pid, { live: liveSliceOf });
     if (!out) return res.status(404).json({ error: 'not a slice' });
+    res.json({ ...out, threadId: featureThread(out.featureId)?.threadId || null });   // s2 D14: the thread that started the feature
+  } catch (err) { shapeRouteError(res, err); }
+});
+
+// Shaper s2 (D10): the Chat feature card — the planning run's decision log, and once split the feature view with its
+// open ask. Synchronous: Express 4 catches a sync throw, and shapeRouteError answers it.
+app.get('/api/shape/pipelines/:pid/card', (req, res) => {
+  if (!requireShapeFirst(req, res)) return;
+  try {
+    // shaped: the entry's in-memory shaping (state.shaping is never persisted). A settled entry still carries it.
+    const out = shaperCard(req.params.pid, { live: liveSliceOf, shaped: (pid) => !!liveRunEntry(pid)?.orch?.state?.shaping });
+    if (!out) return res.status(404).json({ error: 'not a shaped run' });
     res.json(out);
   } catch (err) { shapeRouteError(res, err); }
 });
@@ -4533,66 +4823,130 @@ async function refreshSliceBody(prUrl, pid, repoDir) {
   return editPrBody({ projectDir: repoDir, prUrl, body: [fresh, ...lines.slice(end)].join('\n') });
 }
 const SHIPPING = new Set();     // feature ids with a Ship as in flight (ship_mode is written only at the end)
+// Shaper s4: one ship path for the group page route and the Ship card. → { status, body }. `release` = { version } |
+// null (validated by the caller).
+async function shipFeatureNow(id, mode, { actor = null, release = null } = {}) {
+  if (!SHIP_MODES.includes(mode)) return { status: 400, body: { error: 'mode must be stacked or one' } };
+  if (SHIPPING.has(id)) return { status: 409, body: { error: 'this feature is already shipping' } };
+  const view = featureView(id, { live: liveSliceOf });
+  if (!view) return { status: 404, body: { error: 'unknown feature' } };
+  if (view.ship.mode) return { status: 409, body: { error: `this feature was already shipped as ${view.ship.mode === 'one' ? 'one PR' : 'stacked PRs'}` } };
+  const round = liveRoundOf(id);                    // Shaper s5 (D16): a live round holds Ship back
+  if (round) {
+    const s = view.slices.find((x) => (x.rounds || []).some((r) => r.pipelineId === round.pipelineId));
+    return { status: 409, body: { error: `a round of run ${s ? s.index : '?'} is still going` } };
+  }
+  if (!view.ship.ready) return { status: 409, body: { error: 'every slice must be done before the feature ships' } };
+  SHIPPING.add(id);
+  try {
+    // A slice whose draft never opened (a CLI-started run, or the auto draft failed at the time) gets its PR now,
+    // the same way; a failure stays visible as shipFeature's "slice K has no pull request yet".
+    let shown = view;
+    if (shown.slices.some((s) => s.pipelineId && !s.pr)) {
+      for (const s of shown.slices) if (s.pipelineId && !s.pr) await openSliceDraft(s.pipelineId);
+      shown = featureView(id, { live: liveSliceOf }) || view;
+    }
+    const input = await featureShipInput(shown);
+    const ctx = shipCtxOf(shown);
+    if (ctx.error) return { status: 409, body: { error: ctx.error } };
+    const out = await shipFeature({ feature: input, mode, maxBody: PR_BODY_MAX - 2000 }, {
+      commitChangelog: (pid, update) => commitFileOnBranch(ctx.target.repoDir, {
+        branch: ctx.target.feature, path: 'CHANGELOG.md', update, message: `Changelog: ${view.title}` }),
+      push: async () => {
+        const picked = await pickPrRemotes({}, ctx.target.repoDir);
+        if (picked.error) return { ok: false, error: picked.error };
+        const p = await pushBranch(ctx.target.repoDir, ctx.target.feature, picked.pushRemote);
+        return p.ok ? { ok: true } : { ok: false, error: p.stderr };
+      },
+      openOnePr: async ({ pipelineId, title, body }) => {
+        const r = await createRunPr({ id: pipelineId, state: ctx.state, target: ctx.target, base: ctx.base,
+          description: body, title, actor, preamble: false });
+        return r.ok ? { ok: true, url: r.pr.url, existed: !!r.pr.existed } : { ok: false, error: r.error };
+      },
+      adoptOnePr: async ({ url, body }) => {
+        const r = await markPrReady({ prUrl: url });
+        if (!r.ok) return r;
+        if (forgeOfPrUrl(url) !== 'azure') await editPrBody({ projectDir: ctx.target.repoDir, prUrl: url, body }).catch(() => null);
+        return { ok: true };
+      },
+      markReady: (prUrl) => markPrReady({ prUrl }),
+      close: async (prUrl, comment, pid) => {
+        const r = await closePr({ prUrl, comment });
+        if (r.ok) { const pr = readPrState(pid); if (pr && pr.url === prUrl) persistPrState(pid, { ...pr, state: 'CLOSED' }); }
+        return r;
+      },
+      refreshBody: (prUrl, pid) => refreshSliceBody(prUrl, pid, ctx.target.repoDir),
+    });
+    if (!out.ok) return { status: out.status, body: { error: out.error } };
+    recordShip(id, { mode: out.mode, prUrl: out.prUrl, closed: out.closed, release: release ? { version: release.version, target: ctx.base } : null });
+    appendAuditById(ctx.state.id, `Feature shipped as ${out.mode === 'one' ? 'one PR' : 'stacked PRs'}${byActor(actor)}${out.prUrl ? `: ${out.prUrl}` : ''}`
+      + `${release ? ` · draft release ${release.version} after merge` : ''}`, { actor });
+    broadcastFeature(id);
+    syncShipCard(id);
+    return { status: 200, body: { ok: true, mode: out.mode, prUrl: out.prUrl, warnings: out.warnings } };
+  } finally { SHIPPING.delete(id); }
+}
 app.post('/api/shape/features/:id/ship', async (req, res) => {
   if (!requireShapeFirst(req, res)) return;
-  const id = String(req.params.id);
   try {
-    const mode = req.body && req.body.mode;
-    if (!SHIP_MODES.includes(mode)) return res.status(400).json({ error: 'mode must be stacked or one' });
-    if (SHIPPING.has(id)) return res.status(409).json({ error: 'this feature is already shipping' });
-    const view = featureView(id, { live: liveSliceOf });
-    if (!view) return res.status(404).json({ error: 'unknown feature' });
-    if (view.ship.mode) return res.status(409).json({ error: `this feature was already shipped as ${view.ship.mode === 'one' ? 'one PR' : 'stacked PRs'}` });
-    if (!view.ship.ready) return res.status(409).json({ error: 'every slice must be done before the feature ships' });
-    SHIPPING.add(id);
-    const actor = actorOf(req);
-    try {
-      // A slice whose draft never opened (a CLI-started run, or the auto draft failed at the time) gets its PR now,
-      // the same way; a failure stays visible as shipFeature's "slice K has no pull request yet".
-      let shown = view;
-      if (shown.slices.some((s) => s.pipelineId && !s.pr)) {
-        for (const s of shown.slices) if (s.pipelineId && !s.pr) await openSliceDraft(s.pipelineId);
-        shown = featureView(id, { live: liveSliceOf }) || view;
-      }
-      const input = await featureShipInput(shown);
-      const ctx = shipCtxOf(shown);
-      if (ctx.error) return res.status(409).json({ error: ctx.error });
-      const out = await shipFeature({ feature: input, mode, maxBody: PR_BODY_MAX - 2000 }, {
-        commitChangelog: (pid, update) => commitFileOnBranch(ctx.target.repoDir, {
-          branch: ctx.target.feature, path: 'CHANGELOG.md', update, message: `Changelog: ${view.title}` }),
-        push: async () => {
-          const picked = await pickPrRemotes({}, ctx.target.repoDir);
-          if (picked.error) return { ok: false, error: picked.error };
-          const p = await pushBranch(ctx.target.repoDir, ctx.target.feature, picked.pushRemote);
-          return p.ok ? { ok: true } : { ok: false, error: p.stderr };
-        },
-        openOnePr: async ({ pipelineId, title, body }) => {
-          const r = await createRunPr({ id: pipelineId, state: ctx.state, target: ctx.target, base: ctx.base,
-            description: body, title, actor, preamble: false });
-          return r.ok ? { ok: true, url: r.pr.url, existed: !!r.pr.existed } : { ok: false, error: r.error };
-        },
-        adoptOnePr: async ({ url, body }) => {
-          const r = await markPrReady({ prUrl: url });
-          if (!r.ok) return r;
-          if (forgeOfPrUrl(url) !== 'azure') await editPrBody({ projectDir: ctx.target.repoDir, prUrl: url, body }).catch(() => null);
-          return { ok: true };
-        },
-        markReady: (prUrl) => markPrReady({ prUrl }),
-        close: async (prUrl, comment, pid) => {
-          const r = await closePr({ prUrl, comment });
-          if (r.ok) { const pr = readPrState(pid); if (pr && pr.url === prUrl) persistPrState(pid, { ...pr, state: 'CLOSED' }); }
-          return r;
-        },
-        refreshBody: (prUrl, pid) => refreshSliceBody(prUrl, pid, ctx.target.repoDir),
-      });
-      if (!out.ok) return res.status(out.status).json({ error: out.error });
-      recordShip(id, { mode: out.mode, prUrl: out.prUrl });
-      appendAuditById(ctx.state.id, `Feature shipped as ${out.mode === 'one' ? 'one PR' : 'stacked PRs'}${byActor(actor)}${out.prUrl ? `: ${out.prUrl}` : ''}`, { actor });
-      broadcastFeature(id);
-      res.json({ ok: true, mode: out.mode, prUrl: out.prUrl, warnings: out.warnings });
-    } finally { SHIPPING.delete(id); }
+    const rel = parseReleaseChoice(req.body && req.body.release);
+    if (rel.error) return badRequest(res, rel.error);
+    const r = await shipFeatureNow(String(req.params.id), req.body && req.body.mode, { actor: actorOf(req), release: rel.value });
+    res.status(r.status).json(r.body);
   } catch (err) { if (!res.headersSent) shapeRouteError(res, err); }
 });
+
+/** Shaper s4: the feature's Ship card in a thread ({ message, block }) or null. */
+function findShipCardIn(threadId, featureId) {
+  for (const m of askListMessages(threadId)) {
+    for (const b of m.blocks || []) {
+      // currentFeatureId: a card offered before a Re-plan the rest still names the feature that replaced it.
+      if (b && b.kind === 'card' && b.card && b.card.type === 'ship' && currentFeatureId(b.card.featureId) === featureId) return { message: m, block: b };
+    }
+  }
+  return null;
+}
+/** Shaper s4: when the last run settles done, the feature's thread gets its Ship card (once). Best effort. */
+async function offerShipCard(pipelineId) {
+  if (!shapeFirstEnabled()) return null;
+  const at = featureOfPipeline(pipelineId);
+  if (!at) return null;
+  const fid = currentFeatureId(at.featureId);
+  const view = featureView(fid, { live: liveSliceOf });
+  if (!view || !view.ship.ready) return null;
+  const th = featureThread(fid);
+  if (!th || !askGetThread(th.threadId) || findShipCardIn(th.threadId, fid)) return null;
+  const stats = await featureShipSuggestion(view);
+  const ctx = shipCtxOf(view);
+  const release = ctx.error ? null : await releaseVersionHint(ctx.target.repoDir);
+  const card = { type: 'ship', featureId: fid, title: view.title, runs: view.total, files: stats.files,
+    added: stats.linesAdded, deleted: stats.linesRemoved, suggested: stats.suggested, release };
+  const message = askAppendMessage(th.threadId, { role: 'assistant', text: '', status: 'done',
+    blocks: [{ kind: 'card', id: newAskId('card'), state: 'proposed', card }] });
+  broadcast({ type: 'ask-message', threadId: th.threadId, message });
+  return message;
+}
+/** Shaper s4: the draft release pass, at boot and on the hourly until-pr timer (it polls the forge itself). */
+function releasesPass() {
+  return draftReleasesOnMerge()
+    .then((out) => {
+      if (!out) return;
+      for (const c of [...out.created, ...out.failed]) {
+        if (c.table === 'shape_features') { broadcastFeature(c.id); syncShipCard(c.id); }
+      }
+      if (out.created.length || out.failed.length) emitChanged('pipelines-changed', 'updated');
+    })
+    .catch((err) => console.error(`[worca-ui] draft releases: ${err?.message || err}`));
+}
+/** Shaper s4: after a ship (or a draft release) the thread's Ship card shows what happened, whichever surface shipped. */
+function syncShipCard(featureId) {
+  try {
+    const view = featureView(featureId, { live: liveSliceOf });
+    const th = view && view.ship.result ? featureThread(featureId) : null;
+    const found = th ? findShipCardIn(th.threadId, featureId) : null;
+    if (found) flipCard(th.threadId, found.block.id, { state: 'applied', card: { result: view.ship.result } });
+  } catch (err) { console.error(`[worca-ui] ship card sync failed: ${err?.message || err}`); }
+}
 
 /** A plan row's state when its run is not live: the pipelines row first, then the link row (follow.mjs). */
 const PLAN_STATE = { done: 'done', stopped: 'stopped', error: 'stopped', interrupted: 'stopped', paused: 'paused', starting: 'running', running: 'running' };
@@ -4814,10 +5168,12 @@ async function resumeBaseCheck(row, { workspace, projectDir }) {
       const remote = isSafeRemoteName(b.sync?.remote) ? b.sync.remote : effectiveSyncSettings(key).remote;
       const f = await fetchRemote(dir, { remote, maxAgeMs: INTERACTIVE_TTL_MS });
       if (!f.ok && (f.kind === 'no-remote' || f.kind === 'bad-remote')) return null;
-      const st = await syncStatus(dir, { base: b.source, remote });
+      // A source of `origin/dev` is measured as `dev` on origin (prBaseBranch).
+      const base = await prBaseBranch(dir, b.source, [remote]);
+      const st = await syncStatus(dir, { base, remote });
       if (!st.ok) return null;
       if (!st.hasLocal && !st.hasRemote) {
-        // Not a branch at all (a tag, or 'origin/dev', both accepted by isValidSourceRef):
+        // Not a branch at all (a tag, or another remote's 'upstream/dev', both accepted by isValidSourceRef):
         // nothing to measure. Only a source that resolves nowhere is "missing".
         if (await isValidSourceRef(dir, b.source)) return null;
         return { projectKey: key, base: b.source, remote, exists: false, onRemote: false, movedBy: null, stale: !f.ok };
@@ -4826,8 +5182,8 @@ async function resumeBaseCheck(row, { workspace, projectDir }) {
       // fetch, baseSha is a local tip that may already have been behind, and baseSha..remote would
       // count commits that landed BEFORE the run as "since this run started".
       const from = b.sync?.remoteSha || b.baseSha;
-      const movedBy = from && st.hasRemote ? await commitsBetween(dir, from, `refs/remotes/${remote}/${b.source}`) : null;
-      return { projectKey: key, base: b.source, remote, exists: true, onRemote: st.hasRemote, movedBy, stale: !f.ok };
+      const movedBy = from && st.hasRemote ? await commitsBetween(dir, from, `refs/remotes/${remote}/${base}`) : null;
+      return { projectKey: key, base, remote, exists: true, onRemote: st.hasRemote, movedBy, stale: !f.ok };
     });
     return rows.filter(Boolean);
   } catch { return []; /* never block a resume on a read error */ }
@@ -5065,10 +5421,14 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
   for (const link of askFindRunLinksByPipeline(pipelineId)) {
     try {
       if (!askUpdateRunLink(link.threadId, link.runId, { runId, status: 'running' })) continue;
-      const text = `Run resumed — "${saved.row.title || 'run'}"`;
-      const m = askAppendMessage(link.threadId, { role: 'system', text, blocks: [{ kind: 'notice', text, href: `#running/${runId}` }] });
-      broadcast({ type: 'ask-message', threadId: link.threadId, message: m });
-      attachAskFollower(orch, { threadId: link.threadId, runId, cardId: link.cardId });
+      // A PR fix-run card follows quietly (askPostPrFixCards): it shows the resumed run itself — no "Run resumed" row.
+      const quiet = askLinkIsPrFix(link);
+      if (!quiet) {
+        const text = `Run resumed — "${saved.row.title || 'run'}"`;
+        const m = askAppendMessage(link.threadId, { role: 'system', text, blocks: [{ kind: 'notice', text, href: `#running/${runId}` }] });
+        broadcast({ type: 'ask-message', threadId: link.threadId, message: m });
+      }
+      attachAskFollower(orch, { threadId: link.threadId, runId, cardId: link.cardId, quiet });
     } catch (err) {
       console.error(`[worca-ui] ask follower re-attach failed: ${err && err.message ? err.message : err}`);
     }
@@ -5625,7 +5985,7 @@ app.get('/api/counts', (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /api/stats?range=today|week|month|lastMonth|custom|all[&from&to][&tag…][&person][&groupBy][&byTag=1[&tagKey…]]
+// GET /api/stats?range=today|week|month|lastMonth|custom|all[&from&to][&tag…][&person][&groupBy][&byTag=1[&tagKey…]][&report=1]
 //   -> the Statistics view payload (§6.9). A bad range/filter/groupBy is the caller's fault: getStats'
 //   RangeError maps to 400. The broker's per-person card is skipped while a filter is active (it
 //   cannot be narrowed by tag).
@@ -5640,6 +6000,7 @@ app.get('/api/stats', async (req, res) => {
       filter: { tags: q.tag == null ? [] : [].concat(q.tag), person: str(q.person) },
       groupBy: str(q.groupBy),
       tagKeys: q.byTag === '1' ? (q.tagKey == null ? [] : [].concat(q.tagKey)) : null,
+      report: q.report === '1',
     });
   } catch (err) {
     if (err instanceof RangeError) return badRequest(res, err.message);
@@ -6095,9 +6456,34 @@ app.get('/api/projects/:key/tags/defaults', async (req, res) => {
 });
 app.put('/api/projects/:key/tags/defaults', async (req, res) => {
   const p = await tmProject(req, res); if (!p) return;
-  const t = normaliseTags(req.body?.tags);
+  const t = normaliseTags(req.body?.tags, { strict: true, keep: readProjectDefaultTags(p.key) });
   if (!Array.isArray(req.body?.tags) || t.errors.length) return badRequest(res, t.errors[0] || 'tags must be a list of strings');
   res.json({ tags: writeProjectDefaultTags(p.key, t.tags) });
+});
+
+// House brief (Settings → Project): GET rebuilds only when a source hash or the pins changed; PUT replaces the
+// pinned lines; POST refresh rebuilds now. A project with no sources answers an empty brief, not an error.
+// A missing project directory is handled inside collectHouseBriefSources (existsSync), so p.path is passed as is.
+const houseBriefOf = (p, force = false) => ensureHouseBrief({ projectKey: p.key, projectDir: p.path, force });
+app.get('/api/projects/:key/house-brief', async (req, res) => {
+  try {
+    const p = await tmProject(req, res); if (!p) return;
+    res.json(await houseBriefOf(p));
+  } catch (err) { res.status(500).json({ error: err?.message || 'house brief could not be built' }); }
+});
+app.put('/api/projects/:key/house-brief/pinned', async (req, res) => {
+  try {
+    const p = await tmProject(req, res); if (!p) return;
+    try { writeHouseBriefPins(p.key, req.body?.pinned); }
+    catch (err) { if (err?.code === 'EPINS') return badRequest(res, err.message); throw err; }
+    res.json(await houseBriefOf(p));
+  } catch (err) { res.status(500).json({ error: err?.message || 'house brief could not be built' }); }
+});
+app.post('/api/projects/:key/house-brief/refresh', async (req, res) => {
+  try {
+    const p = await tmProject(req, res); if (!p) return;
+    res.json(await houseBriefOf(p, true));
+  } catch (err) { res.status(500).json({ error: err?.message || 'house brief could not be built' }); }
 });
 
 // Run tags (#718): replace a run's tags (any status; the UI offers it on finished runs), logging who
@@ -6118,8 +6504,82 @@ app.put('/api/runs/:id/tags', (req, res) => {
   res.json({ tags: out.tags, changed: out.changed });
 });
 
+// Run labels (slice 1). Behind runLabels: 404 while off. Labels never reach stats, metrics or policy.
+const labelsOn = requireFlag('runLabels');
+const MAX_BULK_LABEL_RUNS = 500;
+
+app.get('/api/labels', labelsOn, (req, res) => res.json({ labels: labelVocabulary() }));
+
+// Patch every live entry of these runs, so the next hello / run frame carries the new set.
+function syncLiveLabels(rows) {
+  for (const { id, labels } of rows) for (const r of runs.values()) if (r.pipelineId === id) r.labels = labels;
+}
+
+app.put('/api/runs/:id/labels', labelsOn, (req, res) => {
+  const row = findPipelineRowById(req.params.id);
+  if (!row) return res.status(404).json({ error: 'pipeline not found' });
+  if (!Array.isArray(req.body?.labels)) return badRequest(res, 'labels must be a list of strings');
+  let out;
+  try { out = editRunLabels(row.id, req.body.labels); }
+  catch (e) { if (e?.code === 'BAD_LABELS') return badRequest(res, e.message); throw e; }
+  if (out.changed) { syncLiveLabels([{ id: row.id, labels: out.labels }]); emitChanged('pipelines-changed', 'labels'); }
+  res.json({ labels: out.labels, changed: out.changed });
+});
+
+app.post('/api/runs/bulk/labels', labelsOn, (req, res) => {
+  const { pipelineIds, add = [], remove = [] } = req.body || {};
+  if (!Array.isArray(pipelineIds) || !pipelineIds.length) return badRequest(res, 'pipelineIds must be a non-empty list');
+  if (pipelineIds.length > MAX_BULK_LABEL_RUNS) return badRequest(res, `at most ${MAX_BULK_LABEL_RUNS} runs at once`);
+  if (!Array.isArray(add) || !Array.isArray(remove) || !(add.length || remove.length)) return badRequest(res, 'add or remove a label');
+  const found = [];
+  const missing = [];
+  for (const id of new Set(pipelineIds.map(String))) {
+    const row = findPipelineRowById(id);
+    if (row) found.push(row.id); else missing.push(id);
+  }
+  let out;
+  try { out = found.length ? changeLabels(found, { add, remove }) : []; }
+  catch (e) { if (e?.code === 'BAD_LABELS') return badRequest(res, e.message); throw e; }
+  const changed = out.filter((r) => r.changed);
+  if (changed.length) { syncLiveLabels(changed); emitChanged('pipelines-changed', 'labels'); }
+  res.json({ runs: out, missing });
+});
+
+// s2 (D20): Settings › Labels renames, merges or deletes a label on every run. One tx each, in the store.
+function labelsChangedEverywhere(ids) {
+  if (!ids.length) return;
+  const now = readLabelsFor(ids);
+  syncLiveLabels(ids.map((id) => ({ id, labels: now.get(id) || [] })));
+  emitChanged('pipelines-changed', 'labels');
+}
+
+app.post('/api/labels/rename', labelsOn, (req, res) => {
+  let out;
+  try { out = renameLabel(req.body?.from, req.body?.to); }
+  catch (e) { if (e?.code === 'BAD_LABELS') return badRequest(res, e.message); throw e; }
+  if (!out.ids.length && out.from !== out.label) return res.status(404).json({ error: 'label not found' });
+  labelsChangedEverywhere(out.ids);
+  res.json({ label: out.label, runs: out.ids.length, merged: out.merged });
+});
+
+app.delete('/api/labels/:label', labelsOn, (req, res) => {
+  let out;
+  try { out = deleteLabel(req.params.label); }   // Express has already decoded %20 / %2F in the param
+  catch (e) { if (e?.code === 'BAD_LABELS') return badRequest(res, e.message); throw e; }
+  if (!out.ids.length) return res.status(404).json({ error: 'label not found' });
+  labelsChangedEverywhere(out.ids);
+  res.json({ label: out.label, runs: out.ids.length });
+});
+
 // Autocomplete vocabulary for tag fields: keys, then values already in use, most used first.
-app.get('/api/tags', (req, res) => res.json(tagVocabulary()));
+// s2 (D5): ?projectDir= scopes the vocabulary to that project; without it the vocabulary is machine-wide.
+app.get('/api/tags', (req, res) => {
+  const rawDir = typeof req.query.projectDir === 'string' && req.query.projectDir ? req.query.projectDir : null;
+  if (rawDir && rawDir.includes('\0')) return badRequest(res, 'invalid projectDir');
+  let key = null;
+  if (rawDir) { try { key = projectKey(resolveProjectDir(rawDir)); } catch { key = null; } }
+  res.json(tagVocabulary(key ? { projectKey: key } : {}));
+});
 // Tag dimensions (D9): one run target's list, or the machine-wide union for Statistics, the Runs list and Team metrics.
 app.get('/api/tag-dimensions', async (req, res) => {
   const rawDir = typeof req.query.projectDir === 'string' && req.query.projectDir ? req.query.projectDir : null;
@@ -6133,8 +6593,11 @@ app.get('/api/tag-dimensions', async (req, res) => {
       const info = await dimensionsForTarget({ projectDir, workspaceId });
       // D4: the form's pre-fill, dimension keys only (the form keeps project defaults for other keys itself).
       // D19: enforce is flag-aware here, so the client gate needs no flag check of its own.
-      const prefill = prefillTags(info.dims, [], prefillSources({ projectDir, person: startedByOf(req) }));
-      return res.json({ ...info, enforce: flagEnabled('runTags') && info.enforce === true, prefill });
+      const src = prefillSources({ projectDir, person: startedByOf(req) });
+      const prefill = prefillTags(info.dims, [], src);
+      // s2 (D7, D8): the New run / Ask card fill, sent ONLY for a project target (a workspace has no single project).
+      const autofill = projectDir ? autoFillTags({ dims: info.dims, lastRun: src.lastUsed, projectDefaults: src.projectDefaults }) : undefined;
+      return res.json({ ...info, enforce: flagEnabled('runTags') && info.enforce === true, prefill, ...(autofill ? { autofill } : {}) });
     }
     res.json({ ...(await allTagDimensions()), team: await teamTagPolicy() });
   } catch (err) { res.status(500).json({ error: err?.message || String(err) }); }
@@ -6558,6 +7021,104 @@ app.get('/api/history/:key/:id/artifact-raw/*', async (req, res) => {
 // disappears from History and every list/count read. The remote branch is never
 // touched. Refused (409) while the run is live in this process.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------- Runs list: groups and bulk actions (runs redesign §3.2, §3.3)
+function bulkResolve(t) {
+  const entry = t.runId ? runs.get(t.runId) : t.pipelineId ? liveRunEntry(t.pipelineId) : null;
+  const pid = t.pipelineId || entry?.pipelineId || null;
+  if (entry && !SETTLED_RUN.has(entry.status)) {
+    // steps: a running entry reads as working, not starting; both are stoppable, so the verdict is the same.
+    const m = runModel({ status: entry.status, pendingQuestion: entry.pendingQuestion ?? null, steps: [{ nodeId: 'x' }] });
+    return { id: pid || entry.id, runId: entry.id, pipelineId: pid, title: entry.title || pid || entry.id, state: m.state, status: entry.status };
+  }
+  if (pid) {
+    const row = getDb().prepare('SELECT title, status, project_key, workspace_key FROM pipelines WHERE id = ? AND deleted_at IS NULL').get(pid);
+    if (!row) return null;
+    const m = runModelFor(pid);
+    // runModelFor reads readPrState, so a done run whose PR needs you arrives with prNeeds (D31) and the table treats it as finished.
+    return { id: pid, pipelineId: pid, runId: entry?.id || null, title: row.title || pid, state: m ? m.state : 'stopped', status: row.status,
+      prNeeds: !!(m && m.prNeeds), key: row.project_key, workspaceKey: row.workspace_key };
+  }
+  const tk = t.ticketId ? getTicket(t.ticketId) : null;
+  if (!tk) return null;
+  // A fired ticket is its pipeline now; resolve it as one (a member ref sent before the fire still lands right).
+  if (tk.pipelineId) return bulkResolve({ pipelineId: tk.pipelineId });
+  // The model's own ticket table: scheduled / missed → waiting, firing → starting, canceled / skipped → stopped, failed → failed.
+  return { id: tk.id, ticketId: tk.id, title: tk.title || 'Scheduled run', state: runModel({ ticket: { status: tk.status, runAt: null } }).state, status: tk.status };
+}
+const rowScope = (t) => ({ key: t.workspaceKey ? null : t.key, workspaceKey: t.workspaceKey || null, id: t.pipelineId });
+
+app.post('/api/runs/bulk', async (req, res) => {
+  try {
+    const { action, targets = [], groups = [] } = req.body || {};
+    if (!BULK_ACTIONS.includes(action)) return badRequest(res, 'action must be stop, archive, delete or restore');
+    if (!Array.isArray(targets) || !Array.isArray(groups) || targets.length + groups.length > 500) return badRequest(res, 'targets and groups must be arrays (500 at most)');
+    const isObj = (x) => !!x && typeof x === 'object' && !Array.isArray(x);
+    if (![...targets, ...groups].every((x) => isObj(x) && (x.members == null || (Array.isArray(x.members) && x.members.every(isObj)))))
+      return badRequest(res, 'every target, group and member must be an object');
+    const by = actorOf(req);
+    const AUDIT = { archive: 'Run archived', restore: 'Run restored', delete: 'Run deleted' };
+    // archive / restore / purge return null for an unknown run (→ skipped) and a flag for a no-op
+    // ({alreadyArchived}, {alreadyActive}, {alreadyDeleted}), which writes no audit line.
+    const audited = (fn) => async (t) => {
+      const r = await fn(rowScope(t));
+      if (!r) throw new Error('run not found');
+      if (!r.alreadyArchived && !r.alreadyActive && !r.alreadyDeleted) appendAuditById(t.pipelineId, `${AUDIT[action]}${byActor(by)}.`, { actor: by });
+      return r;
+    };
+    const out = await runBulk({ action, targets, groups }, {
+      resolve: bulkResolve,
+      expandGroup: (g) => groupMembers(g.id),
+      stop: (t) => {
+        const entry = t.runId ? runs.get(t.runId) : null;
+        if (entry && !SETTLED_RUN.has(entry.status)) return stopRun(t.runId, by);
+        if (!t.pipelineId) throw new Error('it is starting — try again in a moment');   // a firing ticket
+        return stopPausedPipeline(t.pipelineId, by);
+      },
+      archive: audited(archivePipeline),
+      restore: audited(restorePipeline),
+      delete: audited(purgePipeline),
+      cancel: (t) => !!cancelTicket(t.ticketId, { by }),
+      afterGroupStop: (g) => { cancelRest(g.id, { by }); broadcastFeature(g.id); },   // a non-active feature returns {status:409}: nothing to do
+    });
+    emitChanged('pipelines-changed', `bulk-${action}`);
+    if (out.cancelled.length || action === 'stop') emitChanged('schedules-changed', 'bulk');
+    emitChanged('run-groups-changed', 'bulk');
+    res.json(out);
+  } catch (err) {
+    res.status(500).json({ error: String(err.message || err) });
+  }
+});
+
+const groupError = (res, err) => (err instanceof RunGroupError ? res.status(err.status).json({ error: err.message, code: err.code }) : res.status(500).json({ error: String(err.message || err) }));
+// Runs redesign §5a.1: an old `#running/<runId>` link from chat history → the saved run it became.
+app.get('/api/run-links/:runId', (req, res) => {
+  const t = runLinkTarget(String(req.params.runId || ''));
+  if (!t) return res.status(404).json({ error: 'No saved run for that link' });
+  res.json(t);
+});
+app.get('/api/run-groups', (req, res) => { try { res.json({ groups: listRunGroups() }); } catch (err) { groupError(res, err); } });
+app.post('/api/run-groups', (req, res) => {
+  try {
+    const g = createRunGroup({ title: req.body?.title, pipelineId: String(req.body?.pipelineId || ''), by: actorOf(req) });
+    emitChanged('run-groups-changed', 'created');
+    res.status(201).json({ group: g });
+  } catch (err) { groupError(res, err); }
+});
+app.post('/api/run-groups/:id/members', (req, res) => {
+  try {
+    const r = addToGroup({ groupId: req.params.id, pipelineId: String(req.body?.pipelineId || ''), by: actorOf(req) });
+    emitChanged('run-groups-changed', 'added');
+    res.json({ ok: true, ...r });
+  } catch (err) { groupError(res, err); }
+});
+app.delete('/api/run-groups/members/:pipelineId', (req, res) => {
+  try {
+    const r = removeFromGroup({ pipelineId: req.params.pipelineId });
+    emitChanged('run-groups-changed', 'removed');
+    res.json({ ok: true, ...r });
+  } catch (err) { groupError(res, err); }
+});
+
 app.delete('/api/runs/:id', async (req, res) => {
   const id = req.params.id;
   const workspaceId = typeof req.query.workspaceId === 'string' ? req.query.workspaceId.trim() : '';
@@ -6822,7 +7383,7 @@ const ACTION_ENTRY_CAP = 50;                        // finished action entries k
 const actionsPidFileNow = () => actionsPidFile(worcaHome());
 const actions = new ActionRegistry({ portRange: () => parsePortRange(actionsSettings()) });
 Object.defineProperty(actions, 'pidFile', { get: actionsPidFileNow });
-Object.defineProperty(actions, 'stateFile', { get: () => actionsStateFile(worcaHome()) });   // Ask Worca reads it (readActionsState)
+Object.defineProperty(actions, 'stateFile', { get: () => actionsStateFile(worcaHome()) });   // Chat reads it (readActionsState)
 const stackStates = new Map();                     // `${runId}:${stackId}` -> state reported by runStack (D26)
 const stackTokens = new Map();                     // `${runId}:${stackId}` -> token of the live start; deleted by Stop
 const setupJobs = new Map();                       // `${runId}:${member}` -> Promise<boolean> (D25)
@@ -6989,16 +7550,19 @@ function prWatchOrigin(w) {
   return { pipelineId: row.id, projectKey: m.projectKey, projectDir: m.projectDir, branch: m.br.feature,
     sourceBranch: m.br.source || null, baseRemote: effectiveSyncSettings(m.projectKey).remote || null,
     guardrailsId: row.guardrails_id || null, engine: runEngineOfRow(row),
-    mock: rp?.mock === true, tags: readRunTags(row.id) };
+    mock: rp?.mock === true, tags: readRunTags(row.id), labels: readRunLabels(row.id) };
 }
 /** The pr-watch-changed frame: the run's STORE key (a workspace run's is `workspaces/<wk>`, the key its
  *  History detail carries), its id and the member, so only the matching open detail / member row refreshes. */
 function prWatchFrame(pipelineId, memberKey) {
   const row = findPipelineRowById(pipelineId);
   const projectKey = !row ? null : (row.target === 'workspace' || row.workspace_key) ? `workspaces/${row.workspace_key}` : row.project_key;
-  return { type: 'pr-watch-changed', projectKey, pipelineId: row?.id || pipelineId, memberKey: memberKey || null };
+  const prUrl = row ? readPrState(row.id)?.url : null;
+  // `fixing` (D31) only when true, so test/pr-watch-api.test.mjs's deepEquals (no live fix run) hold unchanged.
+  return { type: 'pr-watch-changed', projectKey, pipelineId: row?.id || pipelineId, memberKey: memberKey || null,
+    ...(prUrl && !memberKey && watchActive(getWatch(prUrl)) ? { fixing: true } : {}) };
 }
-const prWatcher = createPrWatcher({
+const prWatcherDeps = {
   originOf: prWatchOrigin,
   host: { snapshot: prWatchSnapshot, jobLog: prWatchJobLog, rerun: prWatchRerun, reply: prWatchReply, comment: prWatchComment },
   git: {
@@ -7014,7 +7578,7 @@ const prWatcher = createPrWatcher({
   liveOnBranch: (where) => liveRunOnBranch(where) || terminalResolveOnBranch(where),
   freeCheckout: ({ projectDir, branch }) => freeBranchCheckout({ projectDir, branch, stopServices: stopCheckoutServices, by: 'pr-watch',
     busy: busyActionRunIds([...liveRunIds(), ...[...runs.values()].map((r) => r.pipelineId).filter((id) => id && isFinishingRun(id))]) }),
-  startRun: (body, opts) => invokeStartRun(body, null, opts),
+  startRun: (body, { roundOf = null, ...opts } = {}) => invokeStartRun(body, null, { ...opts, roundOf: prFixRoundOf(roundOf) }),
   // By pipeline once one exists: every resume (manual, after a drain or restart, after a cost pause) runs
   // under a fresh run id, so the start-time id only finds the run until its pipeline row exists.
   liveRun: ({ runId, pipelineId }) => {
@@ -7032,10 +7596,13 @@ const prWatcher = createPrWatcher({
     if (readPrState(pipelineId)?.url !== pr.url) throw new Error('the fix run did not record its pull request');
   },
   notify: (event) => chatNotifier.notifyPrWatch(event),
+  // Ask: the chats that opened this PR get each fix run's card, then its outcome (askPrFixRun).
+  onFixRun: (event) => { askPrFixRun(event); },
   audit: (pipelineId, text) => appendAuditById(pipelineId, text, { actor: 'pr-watch' }),
   onChange: (w) => broadcast(prWatchFrame(w.pipelineId, w.memberKey)),
   log: (m) => console.warn(`[worca-ui] ${m}`),
-});
+};
+const prWatcher = createPrWatcher(prWatcherDeps);
 /** Nudge the loop after a toggle; a no-op unless it started (listen) and WORCA_PR_WATCH is on. */
 const kickPrWatch = () => { void prWatcher.runner.kick(); };
 
@@ -7112,7 +7679,7 @@ const askCommands = createAskCommands({
   // their own chat; app.js routes ask-* frames to the Ask panel.
   onUpdate: (threadId, command) => broadcast({ type: 'ask-command', threadId, command }),
   onOpen: (threadId, target) => {
-    if (target.runId) appendAuditById(target.runId, `Terminal opened by Ask Worca in ${target.projectName || target.projectKey}.`, { actor: `ask:${threadId}` });
+    if (target.runId) appendAuditById(target.runId, `Terminal opened by Chat in ${target.projectName || target.projectKey}.`, { actor: `ask:${threadId}` });
   },
   onFinish: (threadId, block) => { startTerminalEventTurn(threadId, block).catch((e) => console.warn(`[worca-ui] ask: terminal event for ${threadId}: ${e?.message || e}`)); },
 });
@@ -7935,8 +8502,8 @@ function runSourceIssue(pipelineId, { baseRemote = null, memberKey = null } = {}
 // none. Same pipeline resolution as POST /api/pr (the repo dir comes from the
 // pipeline's store_meta, never from the query). gh is not required here.
 // The base-branch choices ride along: `chain` is the run chain's base branches,
-// root first (a run outside a chain: just its source), `defaultBase` its root, and
-// `branches` each remote's branches from the remote-tracking refs, without HEAD and
+// root first (a run outside a chain: just its source), `defaultBase` its root, or the direct source while the
+// previous run's PR is not merged (stackedPrBaseOf), and `branches` each remote's branches from the remote-tracking refs, without HEAD and
 // the run's own feature branch. The base remote is fetched first (45 s TTL, 8 s bound,
 // negative-cached) so `baseStatus` can warn when the base moved since the run started
 // (warn only, #527). A git remote failure still carries the chain so the dialog can offer it.
@@ -7957,16 +8524,20 @@ app.get('/api/pr/remotes', async (req, res) => {
   const repoDir = target.repoDir;                     // null when store_meta is missing
   if (!repoDir) return badRequest(res, 'pipeline has no project directory');
   const { feature, source } = target;
-  // chainBaseBranchesOf answers [] for a workspace row, so a member's chain is its own source.
-  const walked = chainBaseBranchesOf(resolved.state.id || resolved.id);
-  const chain = (walked.length ? walked : (source ? [source] : [])).filter((b) => b !== feature);
-  const pipelineId = resolved.state.id || resolved.id;
-  // L10: a slice's PR stacks on the previous slice's branch until that slice's PR merges. The route is async with
-  // no try/catch (F29): a failed feature lookup keeps the chain-root default instead of rejecting.
-  let stacked = null;
-  try { stacked = stackedPrBase(pipelineId, chain); } catch (err) { console.error(`[worca-ui] stacked PR base: ${err?.message || err}`); }
-  const defaultBase = stacked || chain[0] || null;
   const rl = await listRemotes(repoDir);
+  const remoteNames = rl.remotes.map((r) => r.name);
+  // chainBaseBranchesOf answers [] for a workspace row, so a member's chain is its own source.
+  // A remote-tracking source (`origin/dev`) offers the branch it names on the remote (`dev`).
+  const walked = chainBaseBranchesOf(resolved.state.id || resolved.id);
+  const chain = (await Promise.all((walked.length ? walked : (source ? [source] : []))
+    .map((b) => prBaseBranch(repoDir, b, remoteNames)))).filter((b) => b !== feature);
+  const pipelineId = resolved.state.id || resolved.id;
+  // A run started from the previous run's branch (any chain, a Shaper slice is one) stacks its PR on that branch
+  // until the previous run's PR merges. The route is async with no try/catch (F29): a failed lookup keeps the
+  // chain-root default instead of rejecting.
+  let stacked = null;
+  try { stacked = stackedPrBaseOf(pipelineId, chain); } catch (err) { console.error(`[worca-ui] stacked PR base: ${err?.message || err}`); }
+  const defaultBase = stacked || chain[0] || null;
   if (!rl.ok) {
     const issue = runSourceIssue(pipelineId, { memberKey: target.memberKey });
     return res.status(500).json({ error: `git remote failed: ${rl.error}`, chain, defaultBase, issue });
@@ -7979,7 +8550,8 @@ app.get('/api/pr/remotes', async (req, res) => {
   // Measure from the remote tip recorded at start only when it is the SAME ref we compare
   // against: a fork's base remote is `upstream` and a chained run's base is the chain root,
   // not this run's source; there, the recorded origin tip would count old commits.
-  const sameRef = runBranch.sync?.remote === baseRemote && runBranch.source === defaultBase;
+  const sameRef = runBranch.sync?.remote === baseRemote
+    && await prBaseBranch(repoDir, runBranch.source, remoteNames) === defaultBase;
   const baseSha = (sameRef && runBranch.sync?.remoteSha) || runBranch.baseSha || null;
   const bf = isSafeRemoteName(baseRemote) ? await fetchRemote(repoDir, { remote: baseRemote, maxAgeMs: INTERACTIVE_TTL_MS }) : null;
   const rb = await listRemoteBranches(repoDir, rl.remotes.map((r) => r.name));
@@ -7999,7 +8571,7 @@ app.get('/api/pr/remotes', async (req, res) => {
     return { ...r, prHost: r.forge ? p.label : null, prSupported: a.ok, ...(a.ok ? {} : { prReason: a.reason }) };
   }));
   res.json({ ok: true, remotes, defaults, remembered,
-    chain, defaultBase, branches, baseStatus, issue });
+    chain, defaultBase, branches, baseStatus, issue, release: await releaseVersionHint(repoDir) });   // s4: the release row's hint
 });
 
 /** D24: a finished slice opens a draft PR for early review (best effort: a failure is an audit line). */
@@ -8011,11 +8583,11 @@ async function openSliceDraft(pipelineId) {
   const target = prTargetFor(state);
   if (target.error || !target.repoDir) return null;
   // The PR dialog's default base (GET /api/pr/remotes): the chain without the feature branch itself, stacked on the
-  // previous slice's branch until that slice's PR merges.
+  // previous run's branch until that run's PR merges.
   const walked = chainBaseBranchesOf(pipelineId);
   const chain = (walked.length ? walked : (target.source ? [target.source] : [])).filter((b) => b !== target.feature);
   let base = null;
-  try { base = stackedPrBase(pipelineId, chain) || chain[0] || null; } catch { base = chain[0] || null; }
+  try { base = stackedPrBaseOf(pipelineId, chain) || chain[0] || null; } catch { base = chain[0] || null; }
   if (!base) return null;
   let out = await createRunPr({ id: pipelineId, state, target, base, draft: true });
   // A forge that refuses drafts (GitHub's free plan for private repositories): open it ready instead.
@@ -8041,6 +8613,8 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
   const picked = await pickPrRemotes(chosen, repoDir);
   if (picked.error) return { ok: false, status: picked.status, error: picked.error };
   const { remotes, pushRemote, baseRemote, pushR, baseR } = picked;
+  // A remote-tracking source (`origin/dev`) names the branch `dev` on the remote.
+  base = await prBaseBranch(repoDir, base, remotes.map((r) => r.name));
   // Always target the chosen base repo explicitly (gh's default-repo guess prefers
   // a remote named upstream over origin); use the owner:branch head only when the
   // branch lives in a different repository than the PR (gh matches by head label).
@@ -8151,6 +8725,9 @@ app.post('/api/pr', async (req, res) => {
   }
   if (!(body.watch === undefined || body.watch === true || body.watch === false)) return badRequest(res, 'watch must be a boolean');
   const draft = body.draft === true;
+  // Shaper s4: the release row's choice, a draft release once the PR merges (draftReleasesOnMerge).
+  const relChoice = parseReleaseChoice(body.release);
+  if (relChoice.error) return badRequest(res, relChoice.error);
   // worca Chat P2 (R9): the chat's pull-request card this Ship it dialog was opened from — both or neither, checked
   // BEFORE anything is pushed; applied below only when the PR is really open (on failure it stays proposed).
   const hasAskThread = body.askThreadId !== undefined && body.askThreadId !== null;
@@ -8184,6 +8761,8 @@ app.post('/api/pr', async (req, res) => {
   const target = prTargetFor(state, body.memberKey);
   if (target.error) return badRequest(res, target.error);
   const { repoDir, feature, source, memberKey } = target;
+  // A workspace / member PR has no single repo to tag.
+  if (relChoice.value && (memberKey || body.memberKey)) return badRequest(res, 'a release is for a single-project run');
   if (askPrLink) {
     // The card rule reads the RESOLVED member (prTargetFor drops a memberKey a project run does not have), so a project
     // card already applied is never opened again by naming a member. Still before anything is pushed.
@@ -8210,6 +8789,10 @@ app.post('/api/pr', async (req, res) => {
     return res.status(out.status).json({ error: out.error, ...(out.kind ? { kind: out.kind } : {}), ...(out.forge ? { forge: out.forge } : {}) });
   }
   const { pr, newDraft, remotes, pushRemote, baseRemote, repo, headOwner, baseR, pipelineIdForPr } = out;
+  if (relChoice.value) {
+    try { recordRunRelease(id, { version: relChoice.value.version, target: base }); }
+    catch (err) { console.error(`[worca-ui] could not record the release: ${err?.message || err}`); }   // the PR stands
+  }
   // Remember the choice for this project (only once a PR was actually created).
   if (remotes.length) {
     try { await setPrRemotePrefs(repoDir, { pushRemote, baseRemote }); } catch { /* best-effort */ }
@@ -8337,8 +8920,10 @@ function publishMembers(state) {
 }
 
 // One member's published state from refs only (no network): the recorded remote, else the one
-// branchPushedTo finds (a branch Ship it pushed). 'moved' = local commits since (Push changes).
-// -> 'none' (no branch here) | 'unpublished' | 'published' | 'moved'
+// branchPushedTo finds (a branch Ship it pushed). 'moved' = local commits not on the remote (Push
+// changes). A remote that is only ahead (the PR's Update branch, a collaborator's push) has nothing
+// to push: 'published'. 'diverged' = both sides have commits, so a push (never forced) is refused.
+// -> 'none' (no branch here) | 'unpublished' | 'published' | 'moved' | 'diverged'
 async function publishStatus(m) {
   if (!m.repoDir || !m.feature) return { remote: null, state: 'none' };
   const recorded = m.published?.remote || null;
@@ -8348,7 +8933,12 @@ async function publishStatus(m) {
     remote = (await branchPushedTo(m.repoDir, m.feature))?.remote || null;
     tips = await branchTips(m.repoDir, m.feature, remote);
   }
-  if (remote && tips?.remote) return { remote, state: tips.local && tips.local !== tips.remote ? 'moved' : 'published' };
+  if (remote && tips?.remote) {
+    const rel = await tipsRelation(m.repoDir, tips.local, tips.remote);
+    // null with two different tips: git could not tell, so keep reading it as local commits.
+    const moved = rel === 'ahead' || (rel === null && tips.local && tips.local !== tips.remote);
+    return { remote, state: moved ? 'moved' : rel === 'diverged' ? 'diverged' : 'published' };
+  }
   return { remote: null, state: tips?.local ? 'unpublished' : 'none' };
 }
 
@@ -9704,6 +10294,35 @@ async function scanRequest(req, res, { id, name, projectPaths, rescan, models })
   }
 }
 
+// POST /api/workspaces/import-candidates {paths?: string[], text?: string, depth?: 1|2}
+//   -> 200 {candidates, workspaceName, truncated}
+// The creation wizard's Add… and paste box: what each path is (a repository, a folder of
+// repositories, a VS Code .code-workspace file) as review rows — registered (the existing project),
+// new (the wizard registers it through POST /api/projects/bulk before it scans) or problem (with
+// the reason). Reads folders and runs `git rev-parse` only: it never writes (src/core/workspace-
+// import.mjs). On a hosted Worca it reads only inside Worca's own folders (fs-scope.mjs).
+app.post('/api/workspaces/import-candidates', async (req, res) => {
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  if (body.paths !== undefined && !Array.isArray(body.paths)) return badRequest(res, 'paths must be an array of paths');
+  if (body.text !== undefined && typeof body.text !== 'string') return badRequest(res, 'text must be a string');
+  try {
+    // Picked and pasted paths, duplicates removed BEFORE the count: the same 60 paths picked and
+    // pasted are 60 inputs. parsePathList stops just past the limit, so a huge paste stays cheap.
+    const inputs = [...new Set([
+      ...(body.paths || []).filter((p) => typeof p === 'string' && p.trim()).map((p) => p.trim()),
+      ...parsePathList(body.text || '', IMPORT_MAX_INPUTS),
+    ])];
+    if (!inputs.length) return badRequest(res, 'give at least one path (paths or text)');
+    if (inputs.length > IMPORT_MAX_INPUTS) return badRequest(res, `at most ${IMPORT_MAX_INPUTS} paths per import`);
+    // On a hosted Worca the import reads only inside Worca's own folders, like the folder browser.
+    const roots = fsLimitedHere(req) ? await fsAllowedRoots() : null;
+    const outsideProblem = roots ? async (p) => ((await checkInside(p, roots)).inside ? null : outsideAllowedMessage(p)) : null;
+    res.json(await importCandidates(inputs, { depth: body.depth === 2 ? 2 : 1, projects: await listProjects(), outsideProblem }));
+  } catch (err) {
+    if (!res.headersSent) res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
 // POST /api/workspaces/scan (first scan): validated exactly as the save will be (D4).
 app.post('/api/workspaces/scan', async (req, res) => {
   const body = req.body || {};
@@ -9867,7 +10486,7 @@ const settingsState = () => ({
   humanRateUsdPerHour: humanRateUsdPerHour(),
   askMaxTurns: askMaxTurns(),
   askMaxBudgetUsd: askMaxBudgetUsd(),
-  askWeb: askWeb(),                                       // Ask Worca web access (off by default)
+  askWeb: askWeb(),                                       // Chat web access (off by default)
   debugSpawnEnabled: storedDebugSpawnEnabled(),          // what is STORED (the checkbox)
   debugSpawnEffective: effectiveDebugSpawn(),             // what the next spawn will DO, and why
   resumeAfterUsageLimit: resumeAfterUsageLimit(),
@@ -9890,8 +10509,8 @@ const settingsState = () => ({
   runEngine: runEngineSetting() ?? null,
   stepModels: stepModelsSetting(),
   utilityModels: utilityModelsSetting(),
-  askEngine: askEngineSetting() ?? null,                  // Ask Worca: the engine new chats start on (D17)
-  askModels: askModelsSetting(),                          // Ask Worca: the model per engine (D17)
+  askEngine: askEngineSetting() ?? null,                  // Chat: the engine new chats start on (D17)
+  askModels: askModelsSetting(),                          // Chat: the model per engine (D17)
   nightMode: nightModeSettings(),                         // night mode: the user layer (only the fields set)
   nightModeEffective: resolveNightConfig({ user: nightModeSettings() }).config,   // no project: the global view
   nightModeToggle: nightModeToggle(),                     // auto | on | off (live switch)
@@ -10054,7 +10673,10 @@ const askChatActions = createChatActionHost({
 function askChatTurnDeps(turnReader) {
   return {
     awaySwitch: (req) => askChatActions.awaySwitch(req, { actor: turnReader || 'local', person: turnReader }),
-    chatAction: (req) => askChatActions.apply(req, { actor: askActorFor(turnReader) }),
+    // Shaper's two card tools need the thread (what it follows); every other kind is the chat action host's.
+    chatAction: (req, o = {}) => (req && (req.kind === 'changes' || req.kind === 'route')
+      ? askShapeAction(req, o.threadId || null)
+      : askChatActions.apply(req, { actor: askActorFor(turnReader) })),
   };
 }
 
@@ -10112,7 +10734,7 @@ function askAgentRelay({ threadId, reader, web = null, engine = 'claude', skillR
   // The tools run here, so this turn's web access rides a private env copy (never process.env itself);
   // the search key is read from worca's own environment, where it was set.
   // A Codex turn's set skills (#635): this message's mount, one more read root for this relay (this turn) only.
-  const env = { ...process.env, ...askWebMcpEnv(web), ...(engine === 'codex' ? { WORCA_ASK_ENGINE: 'codex', ...(skillRoot ? { WORCA_ASK_SKILL_ROOT: skillRoot } : {}) } : {}) };
+  const env = { ...process.env, ...askWebMcpEnv(web), ...(engine === 'codex' || engine === 'copilot' ? { WORCA_ASK_ENGINE: engine, ...(skillRoot ? { WORCA_ASK_SKILL_ROOT: skillRoot } : {}) } : {}) };
   entry.rpc = createAskToolServer({
     threadId, reader, signal: life.signal, env, write: (s) => { entry.out.push(s); },
     // The tools run in THIS process, which holds the live runs: get_run_diff can read a run
@@ -10132,6 +10754,8 @@ function askAgentRelay({ threadId, reader, web = null, engine = 'claude', skillR
         return { status: live.orch.state?.status ?? live.status ?? null, night: live.orch.state?.night || null, waiting: live.orch.pendingQuestion != null,
           projectDir: dir, projectKey: dir ? projectKey(dir) : null };
       },
+      // Shaper (D7): here the tools see the live runs, so an open step's refusal reaches the model as the tool result.
+      ...defaultShapeToolDeps({ threadId, live: (id) => liveSliceOf(id) }),
     },
   });
   askRelays.set(token, entry);
@@ -10265,19 +10889,21 @@ function drainServer({ timeoutMs = drainTimeoutMs(), reason = 'stop' } = {}) {
 }
 
 /**
- * B3 (opt-in, WORCA_AUTO_RESUME=1): after boot maintenance, resume the runs a drain paused and
- * the runs this start found dead under a previous process (`interruptedIds`), each as the person
- * who last started or resumed it. Resumes go through resumeRun's whole guard chain (budget gates
+ * B3: after boot maintenance, resume the runs a drain paused (by default; WORCA_AUTO_RESUME=0 turns
+ * it off) and, with WORCA_AUTO_RESUME=1, also the runs this start found dead under a previous process
+ * (`interruptedIds`), each as the person who last started or resumed it. Resumes go through resumeRun's whole guard chain (budget gates
  * included); a refusal is logged and leaves the run waiting for a person.
  */
 async function autoResumeOnBoot({ interruptedIds = [], env = process.env, mock = isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK) } = {}) {
-  if (!autoResumeEnabled(env)) return { enabled: false, resumed: [], failed: [] };
+  const mode = autoResumeMode(env);
+  if (mode === 'off') return { enabled: false, resumed: [], failed: [] };
   const rows = getDb().prepare(`SELECT id, status, started_by, archived_at, resume_point FROM pipelines
     WHERE status IN ('paused', 'interrupted') AND archived_at IS NULL ORDER BY started_at ASC`).all()
     .map((r) => { let rp = null; try { rp = r.resume_point ? JSON.parse(r.resume_point) : null; } catch { /* unreadable point */ } return { ...r, resumePoint: rp }; });
   const picks = autoResumeCandidates(rows, {
     interruptedNow: new Set(interruptedIds),
     hasResumeTicket: (id) => resumeTicketsFor(id).length > 0,
+    includeInterrupted: mode === 'all',
   });
   const resumed = [];
   const failed = [];
@@ -10838,6 +11464,7 @@ app.get('/api/models', (req, res) => {
     models: maskedGlobalModels(), plugin: pluginModelsPayload(), predefined: PREDEFINED_MODELS, efforts: EFFORTS,
     codex: CODEX_BUILTIN_MODELS, codexEfforts: CODEX_EFFORTS,   // §3.1a: the Codex built-ins group + the editor's Codex efforts
     cursorEfforts: CURSOR_EFFORTS,                               // none: Cursor has no effort flag (no Cursor built-ins)
+    copilot: COPILOT_BUILTIN_MODELS, copilotEfforts: COPILOT_EFFORTS,   // the Copilot built-ins group + the editor's Copilot efforts
     hideBuiltinModels: hideBuiltinModels(),   // the Models-view checkbox (#422)
     // Team policy catalog entries (team-policy design §8): read-only, env masked like a global's.
     policy: policyCatalogModels().map((m) => maskedGlobalModel(m, readiness)),
@@ -11463,16 +12090,47 @@ app.delete('/api/workflows/:id', async (req, res) => {
 function workflowExportErrorStatus(code) {
   if (code === 'NOT_FOUND') return 404;
   if (code === 'BAD_REQUEST' || code === 'UNSUPPORTED' || code === 'MISSING_SKILL') return 400;
-  if (code === 'INVALID_GRAPH') return 422;
+  if (code === 'INVALID_GRAPH' || code === 'VALIDATION_FAILED' || code === 'DISCOVERY_FAILED' || code === 'MARKETPLACE_INVALID') return 422;
   if (code === 'CONFLICT' || code === 'CANCELLED') return 409;
+  // Marketplace export (#717): the remote side failed (clone / fork / push / PR) — not our 500.
+  if (code === 'GIT_FAILED' || code === 'FORK_FAILED' || code === 'PUSH_FAILED' || code === 'PR_FAILED') return 502;
   return 500;
 }
 
 app.post('/api/workflows/:id/export', async (req, res) => {
   const body = req.body || {};
   const destination = body.destination;
-  if (destination !== 'global' && destination !== 'project' && destination !== 'plugin') {
-    return badRequest(res, "destination must be 'global', 'project' or 'plugin'");
+  if (destination !== 'global' && destination !== 'project' && destination !== 'plugin' && destination !== 'marketplace') {
+    return badRequest(res, "destination must be 'global', 'project', 'plugin' or 'marketplace'");
+  }
+  // ── destination 'marketplace' (#717): the plugin goes to a registered marketplace as ONE pull
+  //    request on worca/plugin/<name>. dryRun = Preview (clone, build, validate; push nothing).
+  if (destination === 'marketplace') {
+    if (!gitAvailable()) return gitMissing(res);   // it clones, commits and pushes with git
+    if (typeof body.marketplaceId !== 'string' || !MARKETPLACE_ID_RE.test(body.marketplaceId)) {
+      return badRequest(res, 'marketplaceId is required for a marketplace export');
+    }
+    if (!(body.draft === undefined || body.draft === true || body.draft === false)) {
+      return badRequest(res, 'draft must be a boolean');
+    }
+    if (body.keepVersion) {
+      return badRequest(res, 'keepVersion does not apply to a marketplace export (a changed export always bumps the patch version)');
+    }
+    try {
+      const result = await exportWorkflowToMarketplace({
+        workflowId: req.params.id, marketplaceId: body.marketplaceId,
+        pluginName: typeof body.pluginName === 'string' ? body.pluginName : undefined,
+        draft: body.draft === true, dryRun: !!body.dryRun, startedBy: startedByOf(req),
+      });
+      return res.json(result);
+    } catch (err) {
+      return res.status(workflowExportErrorStatus(err && err.code)).json({
+        error: err && err.message ? err.message : String(err),
+        code: err?.code || null,
+        ...(Array.isArray(err?.problems) ? { problems: err.problems } : {}),
+        ...(Array.isArray(err?.errors) ? { errors: err.errors } : {}),
+      });
+    }
   }
   // ── destination 'plugin' (#421): a plugin folder the recipient links/reimports.
   //    Same Plan/Apply shape as the Claude Code export, so the modal renders both.
@@ -11523,6 +12181,203 @@ app.post('/api/workflows/:id/export', async (req, res) => {
     res.json(result); // Plan {created,noop,updated,conflicts,warnings,orphans} OR Apply {written,skipped,...}
   } catch (err) {
     res.status(workflowExportErrorStatus(err && err.code)).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Run presets (docs/run-presets.md, #712): named New run setups in SQLite (run_presets), behind the
+// experimental `runPresets` flag (404 when off). Per person on a shared deployment (askViewer): another
+// owner's preset answers 404, as Ask threads do. A saved setup is full picks — snapshotFor resolves the
+// graph for the basis target and fills every agent node and loop — so a later project change never
+// changes what a preset runs. presetRefusals is the ONE check (pick time here, start time in startRunHandler).
+// ---------------------------------------------------------------------------
+const PRESET_STATUS = { BAD_PRESET: 400, DUPLICATE: 409, NOT_FOUND: 404, NO_RUN_SETUP: 409 };
+function sendPresetError(res, err) {
+  const status = PRESET_STATUS[err && err.code] || 500;
+  res.status(status).json({ error: status === 500 ? 'could not save the preset' : err.message,
+    ...(err && err.code === 'NO_RUN_SETUP' ? { code: 'no-run-setup' } : {}) });
+  if (status === 500) console.error('[presets]', err);
+}
+const presetBad = (message) => Object.assign(new Error(message), { code: 'BAD_PRESET' });
+
+/** The engine a setup runs on a target ('claude' when none), or throws BAD_PRESET with runEngineOpts' message. */
+function presetEngineOf(setup, target) {
+  const r = runEngineOpts(setup, target.workspaceId ? { workspace: true } : { projectDir: target.projectDir || '' });
+  if (r.error) throw presetBad(r.error);
+  return r.opts || {};
+}
+
+/** A request's scope { kind, ref } from { kind, projectDir | workspaceId }; null when the target is unknown. */
+async function presetScopeOf(raw) {
+  if (!raw || raw.kind === undefined || raw.kind === 'global') return { kind: 'global', ref: null };
+  if (raw.kind === 'project') {
+    const dir = resolveProjectDir(raw.projectDir);
+    return dir && (await registeredProjectForDir(dir)) ? { kind: 'project', ref: projectKey(dir) } : null;
+  }
+  if (raw.kind === 'workspace') {
+    const id = String(raw.workspaceId || '');
+    return WORKSPACE_KEY_RE.test(id) && (await readWorkspace(id)) ? { kind: 'workspace', ref: id } : null;
+  }
+  return null;
+}
+async function presetScopeExists(scope) {
+  if (scope.kind === 'project') return !!(await projectDirForKey(scope.ref));
+  if (scope.kind === 'workspace') return !!(await readWorkspace(scope.ref));
+  return true;
+}
+
+/** The engine gate's early refusal for a setup on a target, without starting anything (pick-time check only). */
+async function presetEngineRefusal(setup, target, runEngine) {
+  const base = { prompt: 'probe', agentsDir: AGENTS_DIR, workflowId: setup.workflowId || 'wf_default', guardrailsId: setup.guardrailsId || 'permissive', claude: { mock: !!setup.mock, ...runEngine } };
+  const probe = await createOrchestratorFor(target.workspaceId
+    ? { ...base, workspace: { id: target.workspaceId, key: target.workspaceId, name: target.workspaceId, projects: [] } }
+    : { ...base, projectDir: target.projectDir });
+  const refusal = await probe.engineStartRefusal();
+  return refusal ? engineRefusalFor(refusal.error, 'ui') : null;
+}
+
+/** The check context for a target ({ projectDir } | { workspaceId }). probeEngine only on pick: at start the handler's own gate runs. */
+async function presetCheckCtx(scope, target, setup, { probeEngine }) {
+  const t = target.workspaceId ? { workspaceId: target.workspaceId } : { projectDir: resolveProjectDir(target.projectDir) || '' };
+  let runEngine = {};
+  let engineError = null;
+  try { runEngine = presetEngineOf(setup, t); } catch (e) { engineError = e.message; }
+  return {
+    scope, scopeExists: presetScopeExists,
+    models: await listModels(t.workspaceId ? '' : t.projectDir),
+    engine: runEngine.engine || 'claude',
+    assertWorkflow: (id) => assertRunnableWorkflow(id),
+    guardrailExists: async (id) => !!(await readGuardrailSet(id)),
+    engineRefusal: engineError ? async () => engineError
+      // Same rule as the start gate: only a non-Claude engine is probed, so a Claude preset's check builds no orchestrator.
+      : probeEngine && runEngine.engine && runEngine.engine !== 'claude' && (t.workspaceId || t.projectDir) ? () => presetEngineRefusal(setup, t, runEngine) : null,
+  };
+}
+
+/** Full picks: resolve the graph for the basis target and fill every agent node and loop (D2). */
+async function snapshotFor(setup, basis) {
+  const wf = setup.workflowId || 'wf_default';
+  const parsed = setup.overlay === undefined || setup.overlay === null ? { overlay: null } : parseRunOverlay(setup.overlay);
+  if (parsed.error) throw presetBad(parsed.error);
+  if (wf === 'wf_auto') {
+    if (parsed.overlay) throw presetBad(OVERLAY_ERRORS.auto);
+    return { ...setup, overlay: undefined };
+  }
+  const ws = basis.workspaceId && WORKSPACE_KEY_RE.test(String(basis.workspaceId)) ? await readWorkspace(basis.workspaceId) : null;
+  const dir = ws ? ((await workspaceMembers(ws.id)) || [])[0]?.projectDir || null : resolveProjectDir(basis.projectDir) || null;
+  const runEngine = presetEngineOf(setup, ws ? { workspaceId: ws.id } : { projectDir: dir || '' });
+  const resolved = await resolveGraph(dir, wf, loadAgentRegistry(AGENTS_DIR), AGENTS_DIR, {
+    engine: runEngine.engine || 'claude', isWorkspace: !!ws, ...(parsed.overlay ? { overlay: parsed.overlay } : {}),
+  });
+  return completeSnapshot({ ...setup, overlay: parsed.overlay || undefined }, resolved);
+}
+
+/**
+ * The run's setup for pipelines.run_setup (v62): the normalized body's preset keys as full picks for the run's own
+ * target — the value Save setup as preset stores. Never blocks a start: any failure (or > 32 KB) keeps nothing.
+ */
+async function runSetupOf(normalized, basis) {
+  try {
+    const setup = setupFromBody(normalized, { scope: basis.workspaceId ? 'workspace' : 'project' });
+    const json = JSON.stringify(await snapshotFor(setup, basis));
+    return Buffer.byteLength(json) <= PRESET_LIMITS.setupBytes ? json : null;
+  } catch (err) {
+    console.warn('[presets] run setup not kept:', err && err.message);
+    return null;
+  }
+}
+
+// The Chat home's pinned workflows (src/shared/home-pins.mjs): one ordered list per person, in settings.json.
+app.get('/api/chat-home/pins', (req, res) => {
+  res.json({ pins: chatHomePinsFor(askViewer(req)) });
+});
+app.put('/api/chat-home/pins', async (req, res) => {
+  try {
+    res.json({ pins: await setChatHomePinsFor(askViewer(req), (req.body || {}).pins) });
+  } catch (err) {
+    if (err && err.code === 'BAD_HOME_PINS') return badRequest(res, err.message);
+    res.status(500).json({ error: String((err && err.message) || err) });
+  }
+});
+
+app.use('/api/presets', requireFlag('runPresets'));
+
+app.get('/api/presets', (req, res) => {
+  res.json({ presets: listPresets({ owner: askViewer(req) }) });
+});
+
+app.post('/api/presets', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const scope = await presetScopeOf(body.scope);
+    if (!scope) return badRequest(res, 'scope names a project or workspace worca does not know');
+    const setup = await snapshotFor(body.setup && typeof body.setup === 'object' ? body.setup : {}, body.basis || {});
+    res.status(201).json({ preset: createPreset({ name: body.name, scope, setup }, { owner: askViewer(req) }) });
+  } catch (err) { sendPresetError(res, err); }
+});
+
+app.put('/api/presets/:id', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const patch = {};
+    if (body.name !== undefined) patch.name = body.name;
+    if (body.scope !== undefined) {
+      patch.scope = await presetScopeOf(body.scope);
+      if (!patch.scope) return badRequest(res, 'scope names a project or workspace worca does not know');
+    }
+    if (body.setup !== undefined) patch.setup = await snapshotFor(body.setup && typeof body.setup === 'object' ? body.setup : {}, body.basis || {});
+    res.json({ preset: updatePreset(req.params.id, patch, { owner: askViewer(req) }) });
+  } catch (err) { sendPresetError(res, err); }
+});
+
+app.post('/api/presets/:id/duplicate', (req, res) => {
+  try { res.status(201).json({ preset: duplicatePreset(req.params.id, { name: req.body?.name, owner: askViewer(req) }) }); } catch (err) { sendPresetError(res, err); }
+});
+
+app.delete('/api/presets/:id', (req, res) => {
+  if (!deletePreset(req.params.id, { owner: askViewer(req) })) return res.status(404).json({ error: 'preset not found' });
+  res.json({ ok: true });
+});
+
+// Pick-time check: the body { projectDir } | { workspaceId } is the form's target; a pinned preset's own target wins.
+app.post('/api/presets/:id/check', async (req, res) => {
+  try {
+    const preset = readPreset(req.params.id, { owner: askViewer(req) });
+    if (!preset) return res.status(404).json({ error: 'preset not found' });
+    const target = preset.scope.kind === 'project' ? { projectDir: (await projectDirForKey(preset.scope.ref)) || '' }
+      : preset.scope.kind === 'workspace' ? { workspaceId: preset.scope.ref }
+      : { projectDir: req.body?.projectDir, workspaceId: req.body?.workspaceId };
+    const ctx = await presetCheckCtx(preset.scope, target, preset.setup, { probeEngine: true });
+    res.json({ broken: await presetRefusals(preset.setup, ctx) });
+  } catch (err) { console.error('[presets] check', err); res.status(500).json({ error: 'could not check the preset' }); }
+});
+
+/** A run preset's scope from the run's own target: the client names only the kind (D8). null = not this run's kind / gone. */
+async function runPresetScope(kind, target) {
+  if (kind === undefined || kind === 'global') return { kind: 'global', ref: null };
+  if (kind !== target.kind) return null;
+  if (kind === 'project') return presetScopeOf({ kind: 'project', projectDir: await projectDirForKey(target.ref) });
+  return presetScopeOf({ kind: 'workspace', workspaceId: target.ref });
+}
+
+// Save setup as preset (slice 2): the setup a run kept at start (pipelines.run_setup, v62), saved into the viewer's own presets.
+app.get('/api/pipelines/:id/setup', requireFlag('runPresets'), (req, res) => {
+  const run = readRunSetup(req.params.id);
+  if (run === undefined) return res.status(404).json({ error: 'run not found' });
+  res.json({ setup: run.setup, target: run.target });
+});
+
+app.post('/api/pipelines/:id/preset', requireFlag('runPresets'), async (req, res) => {
+  try {
+    const body = req.body || {};
+    const run = readRunSetup(req.params.id);
+    if (run === undefined) return res.status(404).json({ error: 'run not found' });
+    if (!run.setup) throw Object.assign(new Error('This run started before Worca kept run setups, so there is nothing to save'), { code: 'NO_RUN_SETUP' });
+    const scope = await runPresetScope(body.scope && body.scope.kind, run.target);
+    if (!scope) return badRequest(res, 'scope names a project or workspace worca does not know');
+    res.status(201).json({ preset: createPresetFromRun(req.params.id, { name: body.name, scope }, { owner: askViewer(req) }) });
+  } catch (err) {
+    if (!res.headersSent) sendPresetError(res, err);
   }
 });
 
@@ -11710,7 +12565,7 @@ async function drainAskDeferred(threadId) {
     try { r = await next(); } catch (e) { r = { ok: false, error: e && e.message ? e.message : String(e) }; }
     if (r && r.ok) return;                                        // its settleJob continues the chain
     if (r && r.skipped) continue;                                 // #574: the model already saw that end
-    postAskSystemNotice(threadId, `Ask Worca could not reply to an event: ${(r && r.error) || 'unknown error'}`);
+    postAskSystemNotice(threadId, `Chat could not reply to an event: ${(r && r.error) || 'unknown error'}`);
   }
 }
 
@@ -11931,7 +12786,8 @@ app.get('/api/ask/threads/:id', (req, res) => {
       // has left the catalog.
       thread: { ...thread, engine: askChatEngine(id, thread) },
       messages: askListMessages(id),
-      attachments: askListAttachments(id),
+      // show_files copies (message_id null, docs/show-files.md) are not uploads: they never join the run card's @ picker.
+      attachments: askListAttachments(id).filter((a) => a.messageId != null),
       runLinks: askListRunLinks(id),
       // P4 §10: the SAME narrow envelope the list_worktrees MCP tool and the
       // ask-worktrees frame carry — never the full row.
@@ -11977,8 +12833,13 @@ async function askRunCardExtras(row) {
       moreArtifacts = total > RUN_CARD_ARTIFACTS;
     }
   } catch { /* the artifact index is best-effort here */ }
+  const pr = readPrState(row.id);
+  let rounds = [];
+  try { rounds = roundsOf([row.id]).get(row.id) || []; } catch { rounds = []; }
+  let watch = null;
+  try { watch = pr && pr.url ? stoppedWatchFact(getWatch(pr.url)) : null; } catch { watch = null; }
   const { changes } = folderFacts(row);                // S9: a folder row's { state, counts }; git rows carry none
-  return { results, artifacts, moreArtifacts, ...(artifactsTotal != null ? { artifactsTotal } : {}), pr: readPrState(row.id), ...(changes ? { changes } : {}) };
+  return { results, artifacts, moreArtifacts, ...(artifactsTotal != null ? { artifactsTotal } : {}), pr, rounds, watch, ...(changes ? { changes } : {}) };
 }
 
 // Ask Worca progress card hydration (plan D9): the run's detail state by pipeline id OR live run id, no store key.
@@ -11989,8 +12850,10 @@ app.get('/api/ask/runs/:id', async (req, res) => {
   if (!ASK_RUN_REF_RE.test(id)) return res.status(400).json({ error: 'invalid run id' });
   try {
     const entry = liveRunEntry(id);
-    const state = readPipelineStateById(entry && entry.pipelineId ? entry.pipelineId : id);
-    if (!state) return res.status(404).json({ error: 'run not found' });
+    const row = findPipelineRowById(entry && entry.pipelineId ? entry.pipelineId : id);
+    // A deleted run keeps an anonymised row (deleted_at) for Statistics; the chat card must still read it as gone.
+    if (!row || row.deleted_at) return res.status(404).json({ error: 'run not found' });
+    const state = readPipelineStateById(row.id);
     // Shape it first, plan in slices: state.shaping is in memory only (F46), so a finished or unloaded slice 1 would
     // lose its feature strip. The feature row is durable. Best effort, and only while the gate is on.
     if (!state.shaping && shapeFirstEnabled()) {
@@ -11999,8 +12862,56 @@ app.get('/api/ask/runs/:id', async (req, res) => {
         if (at && at.idx === 1) state.shaping = { feature: { id: at.featureId, index: 1 } };
       } catch { /* the feature tables are best-effort here */ }
     }
-    const extras = await askRunCardExtras(findPipelineRowById(state.id));
+    const extras = await askRunCardExtras(row);
     res.json({ state, live: entry ? { runId: entry.id, status: entry.status } : null, extras });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// Chat answer chips (src/core/ask/refs.mjs): one batch of ref keys -> a title and a status per ref. Read-only. Someone
+// else's chat answers exactly like an unknown one (askThreadVisible), a Workflows composer thread is no chat, and the
+// GitHub / Azure DevOps lookups run on worca's own credentials, so a caller that may be an agent gets none of them.
+const askRefResolver = createRefResolver({
+  github: (repo, numbers) => ghItemSummaries({ repo, numbers }),
+  azurePr: (ref) => prSummary(ref),
+  workItems: (org, ids) => workItemSummaries({ org, ids }),
+});
+/** One run for a chip, by History id or app run id: the live entry's title, status and pause cause first (fresher
+ *  than the row), the saved row's #history home. A saved run's pause cause rides resume_point, read the way
+ *  rowToState reads it. A live run with no History row yet answers its app run id only (id null). null when
+ *  neither the runs Map nor the DB knows it. */
+function askRefRun(id) {
+  const entry = liveRunEntry(id);
+  const pid = (entry && entry.pipelineId) || (/^[0-9a-f]{8}$/.test(id) ? id : null);
+  const row = pid ? findPipelineRowById(pid) : null;
+  if (!row && !entry) return null;
+  const saved = row ? askRunFromPipelineRow(row) : null;
+  const live = entry ? askLiveRun(entry.id) : null;
+  let rp = null;
+  try { rp = row && row.resume_point ? JSON.parse(row.resume_point) : null; } catch { rp = null; }
+  return {
+    id: saved ? saved.id : pid, runId: entry ? entry.id : null,
+    title: (live && live.title) || (saved && saved.title) || '',
+    status: (live && live.status) || (saved && saved.status) || '',
+    pauseReason: entry ? (entry.pauseReason || null) : (rp && typeof rp.pauseReason === 'string' ? rp.pauseReason : null),
+    home: row ? (row.workspace_key ? `workspaces/${row.workspace_key}` : (row.project_key || null)) : (live ? live.home : null),
+  };
+}
+app.post('/api/ask/refs/resolve', async (req, res) => {
+  const refs = req.body && req.body.refs;
+  if (!Array.isArray(refs) || refs.length > REFS_MAX || !refs.every((k) => typeof k === 'string' && k.length <= 300)) {
+    return badRequest(res, `refs must be an array of at most ${REFS_MAX} ref keys`);
+  }
+  try {
+    res.json({ refs: await askRefResolver.resolve(refs, {
+      run: askRefRun,
+      chat: (id) => {
+        const thread = askGetThread(id);
+        return thread && thread.mode !== 'composer' && askThreadVisible(thread, req) ? { title: thread.title || '' } : null;
+      },
+      external: !agentMayBeCaller(req),
+    }) });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -12141,6 +13052,7 @@ app.delete('/api/ask/threads/:id/worktrees/:wtId', async (req, res) => {
   }
 });
 
+const ASK_TEXT_PREVIEW_MAX = 2 * 1024 * 1024; // the viewer's TEXT_PREVIEW_MAX_BYTES (artifacts/common.mjs)
 app.get('/api/ask/threads/:id/attachments/:attId', (req, res) => {
   const id = askIdParam(res, req.params.id, 'thread');
   if (!id) return;
@@ -12156,24 +13068,34 @@ app.get('/api/ask/threads/:id/attachments/:attId', (req, res) => {
     // this is what makes an HTML attachment (a text kind labelled text/html)
     // safe: with nosniff it is shown as source, never rendered or run on the
     // worca origin, so text/html must never be served here. Binary bodies are
-    // sniff-verified allowlisted mimes only (never scriptable markup like SVG),
-    // so serving their real mime inline is safe — and it is what lets the
-    // transcript render <img> thumbnails (#398).
+    // sniff-verified allowlisted mimes only, so serving their real mime inline
+    // is safe — and it is what lets the transcript render <img> thumbnails
+    // (#398). The one scriptable binary is a show_files SVG copy, which gets the
+    // sandbox CSP below.
     const type = att.kind === 'text' ? 'text/plain; charset=utf-8' : (att.mime || 'application/octet-stream');
+    // The chat files card's viewer reads a text body as JSON {text}, like the artifact text route (docs/show-files.md).
+    if (req.query.as === 'text') {
+      if (att.kind !== 'text') return res.status(415).json({ error: 'not a text attachment' });
+      if (att.bytes > ASK_TEXT_PREVIEW_MAX) return res.status(413).json({ error: 'too large to preview' });
+      const r = askReadAttachmentText(id, attId);
+      if (!r) return res.status(404).json({ error: 'not found' });
+      res.set('Cache-Control', 'private, no-store');
+      return res.json({ text: r.text });
+    }
     // Streamed, not readFileSync + send: a body is immutable under its
     // store-minted id, so a stat-based ETag/Last-Modified plus a year-long
     // private immutable cache replaces a 5 MB sync read and sha1 per request —
     // the transcript re-creates every <img> on each structural render.
+    const headers = { 'Content-Type': type, 'X-Content-Type-Options': 'nosniff', 'Content-Disposition': 'inline',
+      'Cache-Control': 'private, max-age=31536000, immutable' };
+    // A show_files SVG is drawn through <img> only; opened in its own tab, the sandbox CSP keeps its scripts dead
+    // (the ask-files route's rule).
+    if (att.mime === 'image/svg+xml') headers['Content-Security-Policy'] = "sandbox; default-src 'none'";
     res.sendFile(path.basename(file), {
       root: path.dirname(file),
       dotfiles: 'deny',
       cacheControl: false,
-      headers: {
-        'Content-Type': type,
-        'X-Content-Type-Options': 'nosniff',
-        'Content-Disposition': 'inline',
-        'Cache-Control': 'private, max-age=31536000, immutable',
-      },
+      headers,
     }, (err) => {
       if (!err || res.headersSent) return;
       if (err.code === 'ENOENT' || err.status === 404) return res.status(404).json({ error: 'attachment not found' });
@@ -12182,6 +13104,36 @@ app.get('/api/ask/threads/:id/attachments/:attId', (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
+});
+
+// Show in folder (docs/show-files.md): a chat files card opens the file manager on the file a show_files copy was made
+// from. It opens on THIS machine, so never on a hosted worca, never for a caller that may be an agent, and only where a
+// file manager was found. The path never leaves the server: the card holds a `source` flag, this route reads the row.
+const askRevealAvailable = (req) => !REMOTE_MODE && !agentMayBeCaller(req) && !!builtins().fileManager;
+app.get('/api/ask/reveal', (req, res) => {
+  res.json({ available: askRevealAvailable(req), label: askRevealAvailable(req) ? builtins().fileManager.label : null });
+});
+app.post('/api/ask/threads/:id/attachments/:attId/reveal', async (req, res) => {
+  const id = askIdParam(res, req.params.id, 'thread');
+  if (!id) return;
+  const attId = askIdParam(res, req.params.attId, 'attachment');
+  if (!attId) return;
+  if (agentMayBeCaller(req)) return res.status(403).json({ error: 'Show in folder cannot be used from inside the container while agent isolation is on.', code: 'REVEAL_AGENT_BLOCKED' });
+  if (REMOTE_MODE) return res.status(403).json({ error: 'Folders open on the machine worca runs on, so Show in folder is off on a hosted worca.', code: 'REVEAL_REMOTE' });
+  if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
+  if (!askGetAttachment(id, attId)) return res.status(404).json({ error: 'attachment not found' });
+  const source = askAttachmentSourcePath(id, attId);
+  if (!source) return res.status(409).json({ error: 'This file was not shown from a folder.', code: 'NO_SOURCE' });
+  let st = null;
+  try { st = fs.statSync(source); } catch { st = null; }
+  if (!st || !st.isFile()) return res.status(409).json({ error: 'The original file is gone: it was moved or deleted after it was shown.', code: 'SOURCE_GONE' });
+  const dir = path.dirname(source);
+  let l;
+  try { l = revealLaunch(source, dir, builtins()); }
+  catch (e) { return res.status(409).json({ error: e.message, code: e.code || 'NOT_AVAILABLE' }); }
+  const r = await launchAndWatch(l, { spawn });
+  if (!r.ok) return res.status(409).json({ error: `The file manager did not open: ${r.error}`, code: 'LAUNCH_FAILED' });
+  res.json({ ok: true });
 });
 
 // D8/§8.1: the chat model catalog. Fresh per request (the /api/config
@@ -12250,14 +13202,14 @@ function askWebAccessFor(threadId, ctx) {
 async function askSystemPromptFor(catalog, { web = null, mcp = null, commands = false, engine = 'claude' } = {}) {
   const scripts = { ...(await askScriptPromptInput({ enabled: true })), edits: scriptToolsEnabled() };
   return askBuildSystemPrompt(catalog, { scripts, deployment: DEPLOYMENT, web, mcp, commands, git: gitAvailable(),
-    ...(engine === 'codex' ? { engine } : {}), ...(shapeFirstEnabled() ? { shape: true } : {}) });
+    ...(engine !== 'claude' ? { engine } : {}), ...(shapeFirstEnabled() ? { shape: true } : {}) });
 }
 
 /** The Workflows chat's system prompt (D10): composer rules + catalog + scripts/web — no MCP, no commands, no hosting rule. */
 async function askComposerSystemPromptFor(catalog, { web = null, engine = 'claude' } = {}) {
   // `enabled: true`: draft_script is ALWAYS a composer tool, so its program contract ("Scripts you can create") must
   // be in the prompt even when Ask's "Create and run scripts" setting is off (that setting gates test_script only).
-  return askBuildComposerSystemPrompt(catalog, { scripts: await askScriptPromptInput({ enabled: true }), web, ...(engine === 'codex' ? { engine } : {}) });
+  return askBuildComposerSystemPrompt(catalog, { scripts: await askScriptPromptInput({ enabled: true }), web, ...(engine !== 'claude' ? { engine } : {}) });
 }
 
 /** "scheduled Sat Sep 19, 02:00 (run 1a2b…)" / "repeats: Every weekday at 02:00 (sch_…)" / "proposes: …" — or ''. */
@@ -12415,6 +13367,11 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
       };
     });
     if (links.length) out.linkedRuns = links;
+    // Shaper (D9): what this thread follows, read-only, for propose_changes / route_message. Gate off: no line.
+    if (shapeFirstEnabled()) {
+      try { const s = shapeThreadFacts(threadWork(askListRunLinks(threadId), shapeToolFactDeps)); if (s) out.shape = s; }
+      catch { /* absent line */ }
+    }
     const cards = [];
     for (const m of askListMessages(threadId)) {
       if (!Array.isArray(m.blocks)) continue;
@@ -12436,7 +13393,8 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
           continue;
         }
         // worca Chat P2: a receipt, a stop warning or a pull-request offer in one line — the next turn sees a revert.
-        if (b.card && (b.card.type === 'receipt' || b.card.type === 'run-stop' || b.card.type === 'pull-request')) {
+        if (b.card && (b.card.type === 'receipt' || b.card.type === 'run-stop' || b.card.type === 'pull-request' || b.card.type === 'ship'
+          || b.card.type === 'changes' || b.card.type === 'route')) {
           cards.push({ id: b.id, type: b.card.type, state: b.state, summary: chatActionSummary(b.card) });
           continue;
         }
@@ -12459,7 +13417,7 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
     // newest first — inlined current files must not be double-listed, so the
     // earlier set excludes the whole current message, not just `listed` ids.
     const earlier = askListAttachments(threadId)
-      .filter((a) => !currentMessageId || a.messageId !== currentMessageId)
+      .filter((a) => a.messageId != null && (!currentMessageId || a.messageId !== currentMessageId))   // uploads only: a show_files copy never takes a header slot
       .slice(-ASK_LIMITS.headerAttachments)
       .reverse()
       .map((a) => ({ id: a.id, name: a.name, bytes: a.bytes, kind: a.kind, mime: a.mime }));
@@ -12541,7 +13499,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
   // D5 backstop, before anything is stored: an engine Ask does not run on (Cursor). The catalog filter
   // (ask/models.mjs) already makes such a model unknown to validateModelEffort.
   const modelEngine = model ? askTurnEngine(id, thread, model) : null;
-  if (model && !modelEngine && engineOfModel(model)) return { ok: false, status: 400, error: `Ask on ${engineLabel(engineOfModel(model))} is unavailable` };
+  if (model && !modelEngine && engineOfModel(model)) return { ok: false, status: 400, error: `Chat on ${engineLabel(engineOfModel(model))} is unavailable` };
   const budget = budgetStatus();                                                    // P3: the event path needs the same gate the route head applies
   if (budget.blocked) return { ok: false, status: 403, error: 'total cost limit reached', budget };
   if (askRunningCount() >= ASK_LIMITS.turnsGlobal) {
@@ -12621,10 +13579,11 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     // MCP registry §9.1–9.3: General + the targets in play (the tagged dropdown fallback excluded), minus the chat's
     // picker choices — resolved ONCE per turn, so the per-turn file, the spawn and the prompt section agree.
     const mcp = composerMode ? { result: null } : await resolveAskMcp({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff, model });
-    // D12: the chat's engine is its (validated, engine-locked) model's. A Codex chat gets no registry copies (§4.6, §10)
-    // and is told so once per chat.
-    const engine = modelEngine === 'codex' ? 'codex' : 'claude';
-    const mcpCodexNote = !composerMode && engine === 'codex' && mcp.result.copies.length > 0
+    // D12: the chat's engine is its (validated, engine-locked) model's. A Codex or Copilot chat gets no registry copies
+    // (§4.6, §10) and is told so once per chat.
+    const engine = ASK_ENGINES.includes(modelEngine) ? modelEngine : 'claude';
+    const lockedDown = engine !== 'claude';
+    const mcpCodexNote = !composerMode && lockedDown && mcp.result.copies.length > 0
       && !askListMessages(id).some((m) => Array.isArray(m.blocks) && m.blocks.some((b) => b && b.mcpCodex));
     // Skills registry §4.4: the same targets and choices for the skills from sets — resolved ONCE per turn; the turn
     // mounts them and appends the prompt section naming exactly what it wrote (a Codex chat reads them through read_file).
@@ -12634,7 +13593,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     const agentOn = !composerMode && askCommandsEnabled();
     const systemPrompt = composerMode
       ? await askComposerSystemPromptFor(catalog, { web, engine })
-      : await askSystemPromptFor(catalog, { web, mcp: engine === 'codex' ? null : await askMcpPromptInput(mcp), commands: agentOn, engine });
+      : await askSystemPromptFor(catalog, { web, mcp: lockedDown ? null : await askMcpPromptInput(mcp), commands: agentOn, engine });
     // Shared terminal: what the user ran in this chat's Ask tabs since its last user turn (their commands never wake
     // the chat; an event turn leaves them for the next user turn).
     if (!synthetic && askCommandsEnabled()) headerCtx.personCommands = askCommands.takePersonCommands(id);
@@ -12661,11 +13620,12 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
       deterministicTitle,
       pinnedScope: pinned,                          // #397: proposal defaulting + mismatch flag
       web,
-      mcp: engine === 'codex' ? null : mcp.result,
+      mcp: lockedDown ? null : mcp.result,
       skills: skills.result,
       agentMode: agentOn,
       composer: composerMode ? ((askGetThread(id) || {}).composer || null) : null,
       suggest: !synthetic,                          // ask-suggestion: a user's message only — an event turn suggests nothing
+      ...(engine === 'copilot' ? { engine, mcpCodexNote } : {}),   // no images: the route refused them
       ...(engine === 'codex' ? {
         engine,
         mcpCodexNote,
@@ -12768,7 +13728,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     // readable by the agent. Refused before the model check, which no longer lists Codex rows.
     const chatEngine = askChatEngine(id, thread);
     const engineRefusal = brokerEngineRefusal(chatEngine);
-    if (engineRefusal) return res.status(409).json({ error: `This chat runs on Codex: ${engineRefusal}. Start a new chat on Claude.`, code: 'engine-broker' });
+    if (engineRefusal) return res.status(409).json({ error: `This chat runs on ${engineLabel(chatEngine)}: ${engineRefusal}. Start a new chat on Claude.`, code: 'engine-broker' });
     const mv = await validateModelEffort(body.model, body.effort, { engine: chatEngine });
     if (!mv.ok) return badRequest(res, mv.error);
     if (!mockEnabled({})) {
@@ -12816,7 +13776,10 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
         if (!cls) return badRequest(res, `attachment type not allowed: ${name || '(unnamed)'}`);
         // D16: a Codex chat has no PDF reader (out of scope, §10) — refused at attach time, before any write.
         // (askClassifyExtension gives kind text|image|binary; a PDF is kind 'binary', mime 'application/pdf'.)
-        if (cls.mime === 'application/pdf' && askTurnEngine(id, thread, mv.model) === 'codex') return badRequest(res, `PDFs need a Claude chat: ${name}`);
+        const attachEngine = askTurnEngine(id, thread, mv.model);
+        if (cls.mime === 'application/pdf' && attachEngine === 'codex') return badRequest(res, `PDFs need a Claude chat: ${name}`);
+        // A Copilot chat takes no image or PDF (the adapter has no image input).
+        if (cls.kind !== 'text' && attachEngine === 'copilot') return badRequest(res, `images and PDFs need a Claude chat: ${name}`);
         const raw = typeof a.dataBase64 === 'string' ? a.dataBase64 : '';
         const buf = raw ? Buffer.from(raw, 'base64') : Buffer.alloc(0);
         if (!buf.length) return badRequest(res, `attachment is empty or not valid base64: ${name}`);
@@ -13101,6 +14064,56 @@ app.post('/api/pinpoint', async (req, res) => {
   }
 });
 
+// ---- Shaper s5: Ask for changes and the Route card (D5, D6); the tools' parent half ----
+const factDeps = { readPrState, findPipelineRowById, readRunTags, readRunLabels, featureView: (fid) => featureView(fid, { live: liveSliceOf }) };
+/** A turn of this thread is still being written (askInFlight: the job while it runs). */
+const threadTurnBusy = (threadId) => askInFlight(threadId) != null;
+/** The person's message and an assistant row carrying the card, both broadcast (offerShipCard's way). → the assistant row */
+function postThreadExchange(threadId, text, card) {
+  const user = askAppendMessage(threadId, { role: 'user', text, blocks: [] });
+  broadcast({ type: 'ask-message', threadId, message: user });
+  const message = askAppendMessage(threadId, { role: 'assistant', text: '', status: 'done',
+    blocks: [{ kind: 'card', id: newAskId('card'), state: 'proposed', card }] });
+  broadcast({ type: 'ask-message', threadId, message });
+  return message;
+}
+/** Shaper (ordinary stays ordinary, D6): propose_changes / route_message, applied in the parent. Re-checked NOW with the
+ *  live runs overlay (an open step the classic MCP child cannot see, D7); a refusal is a notice in the reply. */
+const shapeToolFactDeps = { live: (id) => liveSliceOf(id), readPrState, findPipelineRowById, readRunTags, readRunLabels };
+function askShapeAction(req, threadId) {
+  if (!shapeFirstEnabled()) return { ok: false, notice: 'Not applied: Shaper is off' };
+  if (!threadId) return { ok: false, notice: 'Not applied: no chat to post to' };
+  let r;
+  try { r = shapeToolCheck(req.kind, req, askListRunLinks(threadId), shapeToolFactDeps); }
+  catch (err) { return { ok: false, notice: `Could not do that: ${err && err.message ? err.message : err}` }; }
+  return r.ok ? { ok: true, block: { state: 'proposed', card: r.card } } : { ok: false, notice: `Not applied: ${r.error}` };
+}
+
+// Shaper s5 (D5): Ask for changes from a finished card. body { pipelineId? | featureId?, text } → 201 { message }
+app.post('/api/ask/threads/:id/changes', async (req, res) => {
+  if (!requireShapeFirst(req, res)) return;
+  try {
+    const id = askIdParam(res, req.params.id, 'thread');
+    if (!id) return;
+    const { pipelineId, featureId, text } = req.body || {};
+    if (typeof text !== 'string' || !text.trim()) return badRequest(res, 'text is required');
+    if (text.length > 4000) return badRequest(res, 'text must be at most 4000 characters');
+    if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
+    if (threadTurnBusy(id)) return res.status(409).json({ error: 'a reply is still being written' });
+    const facts = typeof featureId === 'string' && featureId ? landingFactsOfFeature(featureId, factDeps)
+      : landingFacts(String(pipelineId || ''), factDeps);
+    if (facts && facts.run && facts.run.finished === false) return res.status(409).json({ error: 'the run is still going' });
+    const halted = facts && facts.feature && facts.feature.slices.find((s) => ['stopped', 'error', 'failed', 'paused'].includes(s.state));
+    if (halted) return res.status(409).json({ error: `Run ${halted.index} stopped: resume or re-plan it first` });
+    const card = facts && changesCard({ text, facts });
+    if (!card) return res.status(409).json({ error: 'this run has no single branch to change' });
+    const message = postThreadExchange(id, text.trim(), card);
+    res.status(201).json({ message });
+  } catch (err) {
+    if (!res.headersSent) res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
 // Chat P3 (R10): a direction from the chat composer's "→ run" chip. The run must be one this thread follows
 // (ask_run_links: by its run_id — a live UUID, or the 8-hex id track_run stores — or its pipeline_id). The text goes
 // through the SAME in-process post as POST /api/runs/:id/directions; then the thread keeps it as a user row carrying
@@ -13261,7 +14274,7 @@ async function saveBuildCard(threadId, block, { acceptScripts = null } = {}) {
  * keeps `turn.error` for API clients.
  */
 function failedEventTurn(threadId, turn) {
-  postAskSystemNotice(threadId, `Ask Worca could not reply to an event: ${turn.error || 'unknown error'}`);
+  postAskSystemNotice(threadId, `Chat could not reply to an event: ${turn.error || 'unknown error'}`);
   return turn;
 }
 
@@ -13534,6 +14547,51 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       if (!block) return res.status(409).json({ error: 'card vanished' });
       return res.json({ block });
     }
+    if (found.block.card && (found.block.card.type === 'changes' || found.block.card.type === 'route')) {
+      // Shaper s5 (D5, D6): the card type decides the verbs; anything else is refused before any state check.
+      const c = found.block.card;
+      const v = c.type === 'changes' ? changesCardVerb(body) : routeCardVerb(body);
+      if (!v.ok) return badRequest(res, v.error);
+      if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
+      if (v.verb === 'not-now') { const block = flipCard(id, cardId, { state: 'declined' }); return block ? res.json({ block }) : res.status(409).json({ error: 'card vanished' }); }
+      if (!shapeFirstEnabled()) return res.status(404).json({ error: 'not found' });
+      askCardBusy.add(cardId);
+      let r;
+      try {
+        const by = actorOf(req);
+        // D19: every card start is tag-exempt; the round number is read at Start (nextRound, src/core/shape/rounds.mjs).
+        const deps = { startRun: (b, extra) => startRunAs(req, b, { ...extra, _cardStart: true }), nextRound,
+          addNote: (fid, n) => addFeatureNote(currentFeatureId(fid), { ...n, by }),
+          appendRun: (fid, o) => appendFeatureRun(currentFeatureId(fid), { ...o, by }), tick: () => { void schedulerTick(); } };
+        r = c.type === 'changes' ? await applyChanges(c, deps) : await applyRoute(c, v, deps);
+      } catch (err) { r = { ok: false, status: 500, error: err && err.message ? err.message : String(err) }; }
+      finally { askCardBusy.delete(cardId); }
+      if (!r.ok) return res.status(r.status || 500).json({ error: r.error });
+      if (c.featureId) broadcastFeature(currentFeatureId(c.featureId));
+      if (c.type === 'changes' && c.landing.kind === 'round') broadcast({ type: 'round-changed', origin: c.landing.target.roundOf });
+      const block = flipCard(id, cardId, { state: 'applied', card: { result: { ...r.result, verb: v.verb, where: v.where || null } } });
+      return block ? res.json({ block }) : res.status(409).json({ error: 'card vanished' });
+    }
+    if (found.block.card && found.block.card.type === 'ship') {
+      // Shaper s4: the Ship card ships, or Not now; nothing else (the verb set is the card type's, not the request's).
+      const v = shipCardVerb(body);
+      if (!v.ok) return badRequest(res, v.error);
+      if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
+      if (v.mode === null) {
+        const block = flipCard(id, cardId, { state: 'declined' });
+        return block ? res.json({ block }) : res.status(409).json({ error: 'card vanished' });
+      }
+      if (!shapeFirstEnabled()) return res.status(404).json({ error: 'not found' });   // requireShapeFirst's answer
+      askCardBusy.add(cardId);
+      try {
+        const r = await shipFeatureNow(currentFeatureId(found.block.card.featureId), v.mode, { actor: actorOf(req), release: v.release });
+        if (r.status !== 200) return res.status(r.status).json(r.body);
+      } finally { askCardBusy.delete(cardId); }
+      const again = askFindCard(id, cardId);     // syncShipCard flipped it to applied
+      return res.json({ block: again ? again.block : null });
+    }
     if (found.block.card && found.block.card.type === 'pull-request') {
       // worca Chat P2 (R9): "Not now" only — the pull request is opened from the Ship it dialog, and POST /api/pr flips
       // the card to applied through its ask link.
@@ -13544,7 +14602,7 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       return res.json({ block });
     }
     if (found.block.card && found.block.card.type === 'schedule') {
-      // Schedule card (docs/scheduled-runs.md "Ask Worca"): proposed → applied | failed | declined. The change —
+      // Schedule card (docs/scheduled-runs.md "Chat"): proposed → applied | failed | declined. The change —
       // start now, move, edit, cancel, delete — happens HERE, behind the click, through the same scheduleVerb
       // the Schedules page uses; never in the model's tool.
       if (body.state !== 'applied' && body.state !== 'declined') return badRequest(res, 'state must be "applied" or "declined"');
@@ -13569,7 +14627,7 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       return res.json({ block, turn });
     }
     if (found.block.card && found.block.card.type === 'model') {
-      // Model card (docs/models.md "Ask Worca"): proposed → applied | failed | declined. The catalog / provider
+      // Model card (docs/models.md "Chat"): proposed → applied | failed | declined. The catalog / provider
       // write happens HERE, behind the click, through the same setters the Models view uses — each re-validates.
       if (body.state !== 'applied' && body.state !== 'declined') return badRequest(res, 'state must be "applied" or "declined"');
       if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
@@ -13613,7 +14671,7 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
         try {
           const host = found.block.card.change?.host;
           const now = askWebAccessFor(id, askGetThread(id)?.context || {});
-          if (!now.enabled) throw new Error('web access is off for this chat — switch it on in Settings → Ask Worca → Web access');
+          if (!now.enabled) throw new Error('web access is off for this chat — switch it on in Settings → Chat → Web access');
           if (Array.isArray(now.teamCap) && !askHostAllowed(host, now.teamCap)) throw new Error(`${host} is outside the team policy's web allowlist`);
           if (body.scope === 'always') { await addAskWebHost(host); emitChanged('settings-changed'); }
           result = { ok: true, scope: body.scope };
@@ -13668,7 +14726,7 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       return res.json({ block, turn });
     }
     if (found.block.card && found.block.card.type === 'actions') {
-      // Actions card (docs/actions.md "Ask Worca"): proposed → applied | failed | declined. The config write happens
+      // Actions card (docs/actions.md "Chat"): proposed → applied | failed | declined. The config write happens
       // HERE, behind the click, through the same core setters as PUT /api/projects/:key/actions and
       // /api/workspaces/:id/actions — each re-validates — and behind the same D4 guard: an isolated agent must
       // not plant a command a person's later click would run. Applying stores config; it starts nothing.
@@ -13766,7 +14824,7 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       return res.json({ block, turn });
     }
     if (found.block.card && ['metrics', 'policy', 'away'].includes(found.block.card.type)) {
-      // Metrics / policy card (docs/team-metrics.md, docs/team-policy.md "Ask Worca"): proposed → applied | failed |
+      // Metrics / policy card (docs/team-metrics.md, docs/team-policy.md "Chat"): proposed → applied | failed |
       // declined. The change is the outward-facing part — a branch on origin, a commit to the team's policy, a
       // marker on another repo, this machine's switch, the workspace's home — so it happens HERE, behind the
       // click, never in the model's tool.
@@ -14382,6 +15440,17 @@ app.get('/api/marketplaces', (req, res) => {
   try {
     res.json({ marketplaces: withInstalled(listMarketplaces()) });
   } catch (err) { sendPluginError(res, err); }
+});
+
+// Export → Worca plugin → Marketplace (#717): the marketplaces a pull request can go to (GitHub /
+// Azure DevOps remotes inside WORCA_CLONE_ALLOW when set) and the rest with why — from the stored list, no network.
+// Without git none can take one: the export clones and pushes with git.
+app.get('/api/marketplaces/publish-targets', (_req, res) => {
+  try {
+    if (!gitAvailable()) return res.json({ targets: [], skipped: listMarketplaces().map((m) => ({ id: m.id, name: m.name || m.id, reason: 'needs git' })) });
+    res.json(listPublishTargets());
+  }
+  catch (err) { res.status(500).json({ error: err && err.message ? err.message : String(err) }); }
 });
 
 // Dev-mode link of a LOCAL plugin folder — the `worca plugin link <dir>` path
@@ -15893,6 +16962,7 @@ export async function bootMaintenance({ log } = {}) {
     if (orphans) console.log(`[worca-ui] actions: stopped ${orphans} orphaned process(es) from a previous server`);
     const interrupted = markInterruptedSetups();
     const { released } = await releaseKeptCheckouts({ busy: busyActionRunIds(), stopServices: stopCheckoutServices });
+    void releasesPass();     // Shaper s4: a ship PR that merged while the server was down gets its draft release
     const { maxCheckouts } = actionsSettings();
     const { evicted } = maxCheckouts
       ? await enforceCheckoutCap({ max: maxCheckouts, busy: busyActionRunIds(), stopServices: stopCheckoutServices })
@@ -16086,7 +17156,7 @@ if (isMain) {
   }
 
   bootMaintenance().then((summary) => {
-    // B3: with WORCA_AUTO_RESUME=1, continue what the last stop paused (or a crash interrupted).
+    // B3: continue what the last stop paused (and, with WORCA_AUTO_RESUME=1, what a crash interrupted).
     autoResumeOnBoot({ interruptedIds: summary?.reconciledIds || [] })
       .catch((err) => console.error(`[worca-ui] auto-resume failed: ${err && err.message ? err.message : err}`));
   }, (err) => {
@@ -16194,6 +17264,7 @@ if (isMain) {
       releaseKeptCheckouts({ busy: busyActionRunIds(), stopServices: stopCheckoutServices })
         .then(({ released }) => { if (released.length) emitChanged('pipelines-changed', 'updated'); })
         .catch(() => {});
+      void releasesPass();
     }, 3_600_000);
     keptTimer.unref();
   });
@@ -16206,14 +17277,15 @@ export const _testing = {
   chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor, switchThreadScope,
   startCloneJob, followCloneCard, CLONE_JOBS, GIT_ONLY_ROUTES,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
-  askTrackRun, liveRunEntry, liveDefragRun, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor,
+  askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor,
   uiControl, bearerMatches,
   broadcast, askFilesRunDir,
   validateResumeTarget, resumeTargetDirs, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
   trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
   askCommandBridge, askCommands, askCommandsEnabled, askCommandTarget, drainAskDeferred, startScopeEventTurn, startTerminalEventTurn, terminals, prWatcher, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
-  applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps,
-  openSliceDraft, afterRunSettled,
+  prWatcherDeps, askPrFixRun, askLinkIsPrFix, prFixRoundOf,
+  applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps, askShapeAction,
+  openSliceDraft, afterRunSettled, offerShipCard, syncShipCard, draftReleasesOnMerge,
   networkWatchTick: () => networkWatch().tick(),
   setNetworkProbe(fn) { _networkProbe = fn; },
   setAutoRescan(on) { autoRescanOn = on !== false; },

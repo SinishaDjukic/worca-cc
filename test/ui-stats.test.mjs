@@ -209,68 +209,73 @@ test('Last month, Group by and Custom drive the /api/stats query', async () => {
   assert.equal(doc.getElementById('stats-to').hasAttribute('aria-invalid'), false);
 });
 
-test('narrow widths: the range control wraps and a grouped table scrolls inside its card', () => {
+test('narrow widths: the range control scrolls on one 32px row and a grouped table scrolls inside its card', () => {
   const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
-  assert.match(css, /#stats-range\{[^}]*flex-wrap:wrap/, 'six range buttons must wrap, not run off-screen');
+  // Review A5: a wrapped segmented control is 62px, off the size scale; it scrolls within its width instead of running off-screen.
+  assert.match(css, /#stats-range\{[^}]*flex-wrap:nowrap;max-width:100%;overflow-x:auto;/, 'six range buttons stay one row and scroll, not run off-screen');
   // A grid item keeps min-width:auto, so the 1fr track grows to the table's
   // min-content width and .people-scroll never scrolls; min-width:0 caps it.
   assert.match(css, /\.people-grid>\*\{min-width:0;\}/);
 });
 
-// View chips (#718 slice 4): Overview · By person · By tag replace the Group by while runTags is on.
+// View chips (#718 slice 4; Cost: labels-cost-tags s3): Overview · By person · Cost replace the Group by while runTags is on.
 const json = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
 const VOCAB = [{ key: 'client', count: 2, plain: false, valued: true }];
-const TAG_GROUPS = [
-  { key: 'cc', configured: true, rows: [{ kind: 'none', key: null, label: '(no cc)', spentUsd: 3, runs: 3 }, { kind: 'ask', key: null, label: 'Ask Worca', spentUsd: 0.5, runs: 0 }] },
-  { key: 'client', configured: false, rows: [{ kind: 'value', key: 'acme', label: 'acme', spentUsd: 2, runs: 2 }, { kind: 'none', key: null, label: '(no client)', spentUsd: 1, runs: 1 }, { kind: 'ask', key: null, label: 'Ask Worca', spentUsd: 0.5, runs: 0 }] },
-];
-function tagHandler(dims, { keys = VOCAB, tagGroups = TAG_GROUPS } = {}) {
+const fact = (id, usd, tags) => ({ id, usd, hours: 1, inCohort: true, status: 'finished', pr: null, person: 'Developer A',
+  project: 'web-app', workflow: 'Default', tags, spend: [[0, usd]], hourBucket: 0 });
+const REPORT = {
+  buckets: [STATS_FIXTURE.series[0].bucketStartMs],
+  runs: [fact('r1', 2, { client: 'acme', cc: 'eng' }), fact('r2', 1, { client: 'globex' })],
+  prevRuns: null, ask: null,
+};
+function tagHandler(dims, { keys = VOCAB } = {}) {
   return (u) => {
     if (u.includes('/api/tag-dimensions')) return json({ dims });
     if (u.includes('/api/tags')) return json({ keys, values: {} });
-    if (u.includes('/api/stats') && u.includes('byTag=1')) return json({ ...STATS_FIXTURE, tagGroups });
+    if (u.includes('/api/stats') && u.includes('report=1')) return json({ ...STATS_FIXTURE, report: REPORT });
     return null;
   };
 }
 const chipTexts = (doc) => [...doc.querySelectorAll('#stats-view button')].filter((b) => !b.hidden).map((b) => b.textContent);
 const CC = [{ key: 'cc', label: 'Cost centre', values: [], required: false }];
 
-test('view chips: By tag hidden with no tags and no dimensions; shown when either exists', async () => {
+test('view chips: Overview, By person and Cost, with or without tags and dimensions', async () => {
   await checkRows([
-    { name: 'nothing', dims: [], keys: [], want: ['Overview', 'By person'] },
-    { name: 'a tag in use', dims: [], keys: VOCAB, want: ['Overview', 'By person', 'By tag'] },
-    { name: 'a dimension only', dims: CC, keys: [], want: ['Overview', 'By person', 'By tag'] },
+    { name: 'nothing', dims: [], keys: [] },
+    { name: 'a tag in use', dims: [], keys: VOCAB },
+    { name: 'a dimension only', dims: CC, keys: [] },
   ].map((row) => ({ name: row.name, run: async () => {
     const ctx = await boot({ fetchHandler: tagHandler(row.dims, { keys: row.keys }) });
     applyFlags({ runTags: true }, ctx.window.document);
     await ctx.showStats(); await ctx.tick(); await ctx.tick();
-    assert.deepEqual(chipTexts(ctx.window.document), row.want);
+    assert.deepEqual(chipTexts(ctx.window.document), ['Overview', 'By person', 'Cost']);
     assert.equal(ctx.window.document.getElementById('stats-group-wrap').hidden, true);
   } })));
 });
 
-test('By tag: byTag=1 with the configured keys, one table per key with Untagged and a 100% total, remembered', async () => {
+test('Cost: report=1 without byTag or tag filters, the Cost report renders, the tag field and Person hide, remembered', async () => {
   const ctx = await boot({ fetchHandler: tagHandler(CC) });
   applyFlags({ runTags: true }, ctx.window.document);
   await ctx.showStats(); await ctx.tick(); await ctx.tick();
   const doc = ctx.window.document;
-  doc.querySelector('#stats-view [data-stats-view="tag"]').click(); await ctx.tick(); await ctx.tick(); await ctx.tick();
-  assert.ok(ctx.calls.at(-1).includes('byTag=1&tagKey=cc'));
-  assert.ok(!ctx.calls.at(-1).includes('groupBy='));
-  const cards = [...doc.querySelectorAll('#stats-body .alloc-card')];
-  assert.deepEqual(cards.map((c) => c.querySelector('h2').textContent), ['Cost centre', 'client']);
-  for (const c of cards) {
-    assert.equal([...c.querySelectorAll('tbody tr')].filter((r) => r.cells[0].textContent === 'Untagged').length, 1);
-    assert.equal(c.querySelector('tfoot tr').cells[2].textContent, '100%');
-    const shares = [...c.querySelectorAll('tbody tr:not([hidden])')].map((r) => parseInt(r.cells[2].textContent, 10));
-    assert.equal(shares.reduce((a, v) => a + v, 0), 100);
-  }
-  assert.equal(doc.querySelector('#stats-view [data-stats-view="tag"]').getAttribute('aria-pressed'), 'true');
-  assert.equal(ctx.window.localStorage.getItem('worca-cc.stats.view'), 'tag');
+  doc.querySelector('#stats-view [data-stats-view="cost"]').click(); await ctx.tick(); await ctx.tick(); await ctx.tick();
+  const last = ctx.calls.at(-1);
+  assert.ok(last.includes('report=1'), last);
+  assert.ok(!last.includes('byTag='), last);
+  assert.ok(!last.includes('tag='), last);
+  assert.ok(!last.includes('groupBy='), last);
+  assert.ok(doc.querySelector('#stats-body .cost-report'), 'the Cost report is painted');
+  assert.equal(doc.querySelectorAll('#stats-body .cr-kpis .stat-tile').length, 5);
+  assert.equal(doc.getElementById('stats-tags').hidden, true);
+  assert.equal(doc.getElementById('stats-person').closest('.select-wrap').hidden, true);
+  assert.equal(doc.querySelector('#stats-view [data-stats-view="cost"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(ctx.window.localStorage.getItem('worca-cc.stats.view'), 'cost');
+  doc.querySelector('#stats-view [data-stats-view="overview"]').click(); await ctx.tick(); await ctx.tick();
+  assert.equal(doc.getElementById('stats-tags').hidden, false, 'Overview shows the tag field again');
 });
 
-test('By tag: each table\'s CSV link downloads that key with the existing group columns', async () => {
-  const ctx = await boot({ fetchHandler: tagHandler(CC), storage: { 'worca-cc.stats.view': 'tag' } });
+test('Cost: Download CSV saves the report under statistics-month-cost-cc.csv with the hours columns', async () => {
+  const ctx = await boot({ fetchHandler: tagHandler(CC), storage: { 'worca-cc.stats.view': 'cost' } });
   applyFlags({ runTags: true }, ctx.window.document);
   // app.js calls the bare URL and Blob, which are Node's globals (boot copies only window, document, location,
   // localStorage, WebSocket, fetch and navigator), so stub Node's URL, not ctx.window.URL. The <a> is jsdom's.
@@ -282,21 +287,23 @@ test('By tag: each table\'s CSV link downloads that key with the existing group 
   ctx.window.HTMLAnchorElement.prototype.click = function () { names.push(this.download); };
   try {
     await ctx.showStats(); await ctx.tick(); await ctx.tick();
-    ctx.window.document.querySelector('#stats-body .alloc-csv[data-key="client"]').click();
-    assert.deepEqual(names, ['statistics-month-tag-client.csv']);
+    ctx.window.document.querySelector('#stats-body .cr-csv').click();
+    assert.deepEqual(names, ['statistics-month-cost-cc.csv']);
     // Blob.text() strips a leading BOM, so decode the bytes with ignoreBOM to see it.
-    assert.match(new TextDecoder('utf-8', { ignoreBOM: true }).decode(await blobs[0].arrayBuffer()), /^\uFEFFclient,spendUsd,runs,finished/);
+    assert.match(new TextDecoder('utf-8', { ignoreBOM: true }).decode(await blobs[0].arrayBuffer()),
+      /^\uFEFFCost centre,spendUsd,runs,finished,stopped,failed,running,paused,prsOpened,prsMerged,humanHours,savedUsd,usdPerHour\r\n/);
   } finally {
     [URL.createObjectURL, URL.revokeObjectURL] = orig;
   }
 });
 
-test('remembered chip: a stored "tag" opens By tag; By person sends groupBy=person and renders only its table', async () => {
+test('remembered chip: a stored "tag" opens Cost; By person sends groupBy=person and renders only its table', async () => {
   const ctx = await boot({ fetchHandler: tagHandler(CC), storage: { 'worca-cc.stats.view': 'tag' } });
   applyFlags({ runTags: true }, ctx.window.document);
   await ctx.showStats(); await ctx.tick(); await ctx.tick();
-  assert.ok(ctx.calls.some((u) => u.includes('byTag=1')));
+  assert.ok(ctx.calls.some((u) => u.includes('report=1')));
   const doc = ctx.window.document;
+  assert.equal(doc.querySelector('#stats-view [data-stats-view="cost"]').getAttribute('aria-pressed'), 'true');
   doc.querySelector('#stats-view [data-stats-view="person"]').click(); await ctx.tick(); await ctx.tick();
   assert.ok(ctx.calls.at(-1).includes('groupBy=person'));
   assert.equal(ctx.window.localStorage.getItem('worca-cc.stats.view'), 'person');
@@ -310,15 +317,16 @@ test('flag off: #stats-group is shown, no chips, no byTag even with a stored "ta
   assert.equal(doc.getElementById('stats-group-wrap').hidden, false);
   assert.equal(doc.getElementById('stats-view').dataset.flag, 'runTags');
   assert.ok(ctx.calls.length > 0, 'a stats request was made');
-  assert.ok(ctx.calls.every((u) => !u.includes('byTag')));
+  assert.ok(ctx.calls.every((u) => !u.includes('byTag') && !u.includes('report=1')));
   assert.equal(doc.querySelector('#stats-body .alloc-card'), null);
 });
 
-test('By tag CSS: tokens only (light and dark); the hidden chip and folded rows hide through the global [hidden] rule', () => {
+test('Team metrics › Cost CSS: tokens only (light and dark); hidden parts hide through the global [hidden] rule', () => {
   const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
-  const rules = css.match(/[^}]*(alloc-|\.tm-view)[^{]*\{[^}]*\}/g) || [];
-  assert.ok(rules.length >= 4);
+  const rules = css.match(/[^}]*(\.tm-heat|\.tm-todo|\.cr-tail|\.tm-view)[^{]*\{[^}]*\}/g) || [];
+  assert.ok(rules.length >= 8, `${rules.length} rules`);
   for (const r of rules) assert.doesNotMatch(r.slice(r.indexOf('{')), /#[0-9a-f]{3,8}\b|rgb\(/i, r);
+  assert.doesNotMatch(css, /\.alloc-/);
   // style.css:4 is written with spaces: `[hidden]:not([hidden="until-found"]) { display: none !important; }`
   assert.match(css, /\[hidden\]:not\(\[hidden="until-found"\]\)\s*\{\s*display:\s*none\s*!important;?\s*\}/);
 });

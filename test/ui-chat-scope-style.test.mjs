@@ -52,7 +52,7 @@ test('the chat question: run-page grammar, grey lines like the Runs page, the ca
   assert.equal(ruleBody('.chat-q .qopt-txt'), 'display:flex;flex-direction:column;gap:2px;min-width:0;');
   assert.equal(ruleBody('.chat-q-opt-name'), 'display:flex;align-items:center;flex-wrap:wrap;gap:8px;');
   assert.equal(ruleBody('.chat-q-opt-sub'), 'font-family:var(--mono);font-size:11.5px;font-weight:400;color:var(--ink-2);overflow-wrap:anywhere;');
-  assert.equal(ruleBody('.chat-q .qpanel-foot .btn-go:disabled'), 'opacity:.45;cursor:default;transform:none;');
+  assert.equal(ruleBody('.chat-q .qpanel-foot .btn-primary:disabled'), 'opacity:.45;cursor:default;transform:none;');
   assert.equal(ruleBody('.chat-q.is-answered .qopt'), 'cursor:default;', 'an answered card\'s tiles are not buttons to press');
   assert.match(css, /@container chat-q \(min-width:640px\)\{\n {2}\.chat-q \.qblock\{grid-template-columns:minmax\(0,300px\) minmax\(0,1fr\);grid-template-rows:auto 1fr;column-gap:48px;padding:28px 32px;\}\n {2}\.chat-q \.qtext\{grid-row:1 \/ span 2;\}\n {2}\.chat-q\.chat-rc-q \.qopts\{grid-column:2;\}\n\}/);
 });

@@ -43,7 +43,9 @@ test('kindChip: one chip per kind with the canvas words; nothing for an unknown 
 test('kind chip CSS: modifiers scoped to .kind-chip, readable tokens in both themes', () => {
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
   assert.match(css, /--teal-ink-strong:light-dark\(#1F6B63,#9FE0D8\)/);
-  assert.match(css, /\.kind-chip\{[^}]*font:400 10\.5px var\(--mono\)/);
+  // Runs redesign (D13): corners and type come from the one grouped chip rule; the own rule sets neither.
+  assert.match(css, /^:is\(\.badge,[^{]*\.kind-chip\)\{\s*border-radius:var\(--r-xs\);font:500 11px\/1 var\(--sans\);/m);
+  assert.doesNotMatch(css, /(^|[^-\w])\.kind-chip\{[^}]*(font|border-radius|letter-spacing):/m);
   assert.match(css, /\.kind-chip\.kind-git\{background:var\(--blue-bg\);color:var\(--blue-ink-strong\);\}/);
   assert.match(css, /\.kind-chip\.kind-folder\{background:var\(--teal-bg\);color:var\(--teal-ink-strong\);\}/);
   assert.match(css, /\.kind-chip\.kind-none\{background:var\(--slate-bg\);color:var\(--slate-ink\);\}/);

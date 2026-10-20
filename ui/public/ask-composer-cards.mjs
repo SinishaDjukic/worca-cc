@@ -132,7 +132,7 @@ export function createAskComposerCards({ doc, fetch, blocks = () => [], postCard
     }
     if (!f.ok) { fail(b, `Not saved — ${f.error}`); return; }
     const turn = f.body && f.body.turn;
-    if (turn && turn.error) fail(b, `Saved. Ask Worca could not reply: ${turn.error}`);
+    if (turn && turn.error) fail(b, `Saved. Chat could not reply: ${turn.error}`);
   }
   async function openBuild(b) {
     if (b.state === 'saved' && b.workflowId) { if (typeof openComposer === 'function') openComposer(b.workflowId); return; }
@@ -183,11 +183,11 @@ export function createAskComposerCards({ doc, fetch, blocks = () => [], postCard
     const handle = b.state === 'declined' || b.state === 'failed' ? null : graphOf(b);
     const el = buildCardView(b, { h, graph: handle ? handle.el : null, title: b.state === 'saved' ? 'Saved workflow' : 'Proposed workflow', actions: (row) => {
       if (b.state === 'proposed') {
-        row.append(button('Decline', 'wfv-btn', () => decline(b)), h('span', 'wfc-spacer'),
-          button('Open in Workflows', 'wfv-btn', () => openBuild(b)),
-          button(c.thenRun ? 'Save & propose run' : 'Save as workflow', 'wfv-btn wfv-btn-primary', () => saveBuild(b)));
+        row.append(button('Decline', 'btn btn-sm', () => decline(b)), h('span', 'wfc-spacer'),
+          button('Open in Workflows', 'btn btn-sm', () => openBuild(b)),
+          button(c.thenRun ? 'Save & propose' : 'Save as workflow', 'btn btn-sm btn-primary', () => saveBuild(b)));
       } else if (b.state === 'saved') {
-        row.append(h('span', 'wfc-chip-ok', `✓ Saved as ${b.workflowId || c.name}`), h('span', 'wfc-spacer'), button('Open in Workflows', 'wfv-btn', () => openBuild(b)));
+        row.append(h('span', 'wfc-chip-ok', `✓ Saved as ${b.workflowId || c.name}`), h('span', 'wfc-spacer'), button('Open in Workflows', 'btn btn-sm', () => openBuild(b)));
       } else {
         row.appendChild(h('span', 'wfc-muted', String(b.state || '')));
       }

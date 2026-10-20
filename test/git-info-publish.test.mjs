@@ -4,7 +4,7 @@
 
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { _testing as gitInfo, branchTips } from '../src/core/git-info.mjs';
+import { _testing as gitInfo, branchTips, tipsRelation } from '../src/core/git-info.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 const ok = (stdout = '') => ({ ok: true, code: 0, stdout, stderr: '' });
@@ -46,6 +46,41 @@ test('branchTips: local and remote-tracking shas of one branch, exact ref names 
       const calls = stub(() => ok());
       assert.equal(await branchTips(null, 'feat', 'origin'), null);
       assert.equal(await branchTips('/p', '', 'origin'), null);
+      assert.equal(calls.length, 0);
+    } },
+  ]);
+});
+
+test('tipsRelation: which side of a published branch has commits the other lacks', async () => {
+  await checkRows([
+    { name: 'tipsRelation: equal tips are the same, with no spawn', run: async () => {
+      const calls = stub(() => ok());
+      assert.equal(await tipsRelation('/p', 'aaa', 'aaa'), 'same');
+      assert.equal(calls.length, 0);
+    } },
+    { name: 'tipsRelation: counts remote...local with one rev-list in the repo', run: async () => {
+      const calls = stub(() => ok('0\t2\n'));
+      assert.equal(await tipsRelation('/p', 'loc', 'rem'), 'ahead');
+      assert.deepEqual(calls[0].args, ['rev-list', '--left-right', '--count', 'rem...loc']);
+      assert.equal(calls[0].opts.cwd, '/p');
+    } },
+    { name: 'tipsRelation: commits only on the remote are behind (the PR\'s Update branch, a collaborator push)', run: async () => {
+      stub(() => ok('3\t0\n'));
+      assert.equal(await tipsRelation('/p', 'loc', 'rem'), 'behind');
+    } },
+    { name: 'tipsRelation: commits on both sides are diverged', run: async () => {
+      stub(() => ok('1\t4\n'));
+      assert.equal(await tipsRelation('/p', 'loc', 'rem'), 'diverged');
+    } },
+    { name: 'tipsRelation: null when git fails, answers nothing usable, or a tip is missing', run: async () => {
+      stub(() => fail());
+      assert.equal(await tipsRelation('/p', 'loc', 'rem'), null);
+      stub(() => ok(''));
+      assert.equal(await tipsRelation('/p', 'loc', 'rem'), null);
+      const calls = stub(() => ok('0\t1\n'));
+      assert.equal(await tipsRelation('/p', null, 'rem'), null);
+      assert.equal(await tipsRelation('/p', 'loc', null), null);
+      assert.equal(await tipsRelation(null, 'loc', 'rem'), null);
       assert.equal(calls.length, 0);
     } },
   ]);

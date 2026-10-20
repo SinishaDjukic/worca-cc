@@ -138,7 +138,7 @@ test('renderStatsBody: KPI row + two chart cards; empty range -> chart-empty not
 const GROUPS = { by: 'tag:client', label: 'client', rows: [
   { kind: 'value', key: 'Müller & Söhne, GmbH', label: 'Müller & Söhne, GmbH', spentUsd: 3, runs: 2, finished: 2, stopped: 0, failed: 0, paused: 0, running: 0, prsOpened: 1, prsMerged: 1 },
   { kind: 'none', key: null, label: '(no client)', spentUsd: 0.5, runs: 1, finished: 0, stopped: 1, failed: 0, paused: 0, running: 0, prsOpened: 0, prsMerged: 0 },
-  { kind: 'ask', key: null, label: 'Ask Worca', spentUsd: 0.75, sessions: 1, runs: 0, finished: 0, stopped: 0, failed: 0, paused: 0, running: 0, prsOpened: 0, prsMerged: 0 },
+  { kind: 'ask', key: null, label: 'Chat', spentUsd: 0.75, sessions: 1, runs: 0, finished: 0, stopped: 0, failed: 0, paused: 0, running: 0, prsOpened: 0, prsMerged: 0 },
 ] };
 
 test('renderGroupsCard: one row per group, muted none/ask rows, a total, export enabled', () => {
@@ -170,7 +170,7 @@ test('groupsToCsv: BOM, header from the group label, the label cell round-trips'
   const lines = csv.slice(1).split('\r\n');
   assert.equal(lines[0], 'client,spendUsd,runs,finished,stopped,failed,running,paused,prsOpened,prsMerged');
   assert.equal(lines[1], '"Müller & Söhne, GmbH",3,2,2,0,0,0,0,1,1');
-  assert.equal(lines[3].startsWith('Ask Worca,0.75,'), true);
+  assert.equal(lines[3].startsWith('Chat,0.75,'), true);
 });
 
 test('statsQuery: repeated tag params, custom dates only for custom', () => {
@@ -191,8 +191,8 @@ const VIEW_MODEL = {
   totals: { spentUsd: 4.25, runs: 3 }, series: [], filtered: false,
   groups: { label: 'person', rows: [{ kind: 'value', key: 'ana', label: 'ana', spentUsd: 4.25, runs: 3, finished: 3, stopped: 0, failed: 0, running: 0, paused: 0, prsOpened: 0, prsMerged: 0 }] },
   tagGroups: [
-    { key: 'cc', configured: true, rows: [{ kind: 'none', key: null, label: '(no cc)', spentUsd: 3.5, runs: 3 }, { kind: 'ask', key: null, label: 'Ask Worca', spentUsd: 0.75, runs: 0 }] },
-    { key: 'client', configured: false, rows: [{ kind: 'value', key: 'acme', label: 'acme', spentUsd: 3.5, runs: 3 }, { kind: 'ask', key: null, label: 'Ask Worca', spentUsd: 0.75, runs: 0 }] },
+    { key: 'cc', configured: true, rows: [{ kind: 'none', key: null, label: '(no cc)', spentUsd: 3.5, runs: 3 }, { kind: 'ask', key: null, label: 'Chat', spentUsd: 0.75, runs: 0 }] },
+    { key: 'client', configured: false, rows: [{ kind: 'value', key: 'acme', label: 'acme', spentUsd: 3.5, runs: 3 }, { kind: 'ask', key: null, label: 'Chat', spentUsd: 0.75, runs: 0 }] },
   ],
 };
 
@@ -201,10 +201,11 @@ test('statsQuery: byTag adds byTag=1 and one tagKey per configured key', () => {
   assert.equal(statsQuery({ range: 'month', byTag: false, tagKeys: ['cc'] }), 'range=month');
 });
 
-test('renderStatsView: By tag = one table per key labelled by dimension; By person = the person table alone', () => {
-  const tag = renderStatsView(VIEW_MODEL, 'tag', { doc, dims: [{ key: 'cc', label: 'Cost centre' }] });
-  assert.deepEqual([...tag.querySelectorAll('.alloc-card h2')].map((n) => n.textContent), ['Cost centre', 'client']);
-  assert.equal(tag.querySelector('.stat-row'), null);
+test('statsQuery: report adds report=1 (Statistics › Cost)', () => {
+  assert.equal(statsQuery({ range: 'month', report: true }), 'range=month&report=1');
+});
+
+test('renderStatsView: By person = the person table alone', () => {
   const person = renderStatsView(VIEW_MODEL, 'person', { doc });
   assert.equal(person.querySelector('.groups-card h2').textContent, 'By person');
   assert.equal(person.querySelectorAll('.groups-card').length, 1);

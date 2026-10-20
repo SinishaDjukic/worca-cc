@@ -49,9 +49,9 @@ test('mergeDimensions + labels + group options', () => {
   assert.equal(dimensionLabel(a, 'cc'), 'Cost centre');
   assert.equal(dimensionLabel(a, 'spike'), null);
   assert.deepEqual(tagGroupOptions(a, ['spike', 'cc']), [
-    { value: 'tag:cc', text: 'Group by Cost centre' }, { value: 'tag:spike', text: 'Group by tag: spike' },
+    { value: 'tag:cc', text: 'Group by Cost centre' }, { value: 'tag:spike', text: 'Group by cost tag: spike' },
   ]);
-  assert.deepEqual(tagGroupOptions([], ['client']), [{ value: 'tag:client', text: 'Group by tag: client' }]);
+  assert.deepEqual(tagGroupOptions([], ['client']), [{ value: 'tag:client', text: 'Group by cost tag: client' }]);
 });
 
 const CC = { key: 'cc', label: 'Cost centre', values: ['4410', '4420'], required: true };

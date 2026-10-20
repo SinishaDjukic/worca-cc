@@ -42,9 +42,9 @@ export function insertRunTags(pipelineId, tags) {
   return clean;
 }
 
-/** A human edit. Throws { code: 'BAD_TAGS' } on invalid input. A no-op writes nothing. */
+/** A human edit. New tags must be key:value; one already on the run passes as stored. Throws { code: 'BAD_TAGS' }. A no-op writes nothing. */
 export function editRunTags(pipelineId, input, { actor = null, now = new Date() } = {}) {
-  const { tags, errors } = normaliseTags(input);
+  const { tags, errors } = normaliseTags(input, { strict: true, keep: readRunTags(pipelineId) });
   if (errors.length) throw Object.assign(new Error(errors.join('; ')), { code: 'BAD_TAGS' });
   let before = [];
   let changed = false;
@@ -65,17 +65,21 @@ export function readTagEvents(pipelineId) {
     .map((r) => ({ ts: r.ts, actor: r.actor, before: JSON.parse(r.before_tags), after: JSON.parse(r.after_tags) }));
 }
 
-/** Keys and values in use on active runs, most used first: { keys: [{key, count, plain, valued}], values: { key: [{value, count}] } }. */
-export function tagVocabulary() {
+/**
+ * Keys and values in use on active runs, most used first: { keys: [{key, count, plain, valued}], values: { key: [{value, count, lastAt}] } }.
+ * s2 (D5): `projectKey` scopes it to that project's runs; `lastAt` is each value's newest start.
+ */
+export function tagVocabulary({ projectKey = null } = {}) {
   const rows = getDb().prepare(`
-    SELECT t.key, t.value, COUNT(*) AS n FROM run_tags t JOIN pipelines p ON p.id = t.pipeline_id
-    WHERE p.archived_at IS NULL GROUP BY t.key, t.value ORDER BY n DESC, t.key, t.value`).all();
+    SELECT t.key, t.value, COUNT(*) AS n, MAX(p.started_at) AS last_at FROM run_tags t JOIN pipelines p ON p.id = t.pipeline_id
+    WHERE p.archived_at IS NULL${projectKey ? ' AND p.project_key = ?' : ''}
+    GROUP BY t.key, t.value ORDER BY n DESC, t.key, t.value`).all(...(projectKey ? [projectKey] : []));
   const keys = new Map();
   const values = {};
   for (const r of rows) {
     const k = keys.get(r.key) || { key: r.key, count: 0, plain: false, valued: false };
     k.count += r.n;
-    if (r.value) { k.valued = true; (values[r.key] ||= []).push({ value: r.value, count: r.n }); } else k.plain = true;
+    if (r.value) { k.valued = true; (values[r.key] ||= []).push({ value: r.value, count: r.n, lastAt: r.last_at || null }); } else k.plain = true;
     keys.set(r.key, k);
   }
   return { keys: [...keys.values()].sort((a, b) => b.count - a.count || (a.key < b.key ? -1 : 1)), values };

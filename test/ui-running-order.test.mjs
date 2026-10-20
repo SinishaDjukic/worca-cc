@@ -1,8 +1,7 @@
 // test/ui-running-order.test.mjs
 // Row/tab ordering is STABLE while pipelines run: log activity must not
-// reshuffle; group-rank transitions (question, finish) still regroup. The live
-// rows are read inside their project group — `[data-slot="group"]`, because a
-// Needs-you run is repeated above the groups (rule 6).
+// reshuffle; group-rank transitions (question, finish) still regroup. Each run is listed once (runs
+// redesign §3.1), so the live rows are read in list order across the sections.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -57,7 +56,7 @@ async function boot() {
 }
 
 const liveRows = (window) =>
-  [...window.document.querySelectorAll('#runs-list .runs-group .runs-row[data-slot="group"][data-kind="live"]')];
+  [...window.document.querySelectorAll('#runs-list .runs-row[data-kind="live"]')];
 const cardOrder = (window) => liveRows(window).map((c) => c.dataset.runId);
 
 // One boot: baseline, a log frame, then a question frame.

@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createScheduler } from '../src/core/graph/scheduler.mjs';
-import { flowPorts } from '../src/shared/graph/ports.mjs';
+import { flowPorts, ROLE_REVIEW_PORTS } from '../src/shared/graph/ports.mjs';
 import { AWAIT_PORT } from '../src/shared/graph/constants.mjs';
 
 const BLOCKING = (title = 'boom') => ({ issues: [{ severity: 'critical', title }] });
@@ -27,16 +27,22 @@ const AGENTS = {
     outputs: [{ id: 'plan', type: 'md', when: 'clean' }, { id: 'revise', type: 'md', when: 'blocking' }],
     verdict: { filename: 'refine-cycle{cycle}.json' },
   },
+  tightener: {
+    inputs: [{ id: 'plan', type: 'md', required: true }, { id: 'findings', type: 'md', required: false }],
+    outputs: [{ id: 'plan', type: 'md', when: 'clean' }, { id: 'revise', type: 'md', when: 'blocking' }],
+    verdict: { filename: 'tight-cycle{cycle}.json' },
+  },
   implementer: {
     inputs: [{ id: 'plan', type: 'md', required: true }],
     outputs: [{ id: 'done', type: 'void', when: 'always' }],
   },
 };
 
+const ownPorts = (node) => (node.config?.roleReview === true ? ROLE_REVIEW_PORTS : AGENTS[node.key]);
 const portsFn = (node) => (node.kind === 'agent'
   ? {
-    inputs: [...(AGENTS[node.key]?.inputs || []).map((p) => ({ ...p })), { ...AWAIT_PORT }],
-    outputs: (AGENTS[node.key]?.outputs || []).map((p) => ({ ...p })),
+    inputs: [...(ownPorts(node)?.inputs || []).map((p) => ({ ...p })), { ...AWAIT_PORT }],
+    outputs: (ownPorts(node)?.outputs || []).map((p) => ({ ...p })),
     verdict: AGENTS[node.key]?.verdict,
   }
   : flowPorts(node));
@@ -62,7 +68,7 @@ const approveTpl = (rKey = 'reviewer', extraWires = [], rConfig = APPROVE) => TP
 function harness({ template, script = {}, onAsk, approvalStops = true }) {
   const snapshots = []; const calls = []; const asks = [];
   const execute = (args) => {
-    calls.push({ nodeId: args.node.id, ordinal: args.ordinal, bindings: args.bindings, trigger: args.trigger });
+    calls.push({ nodeId: args.node.id, ordinal: args.ordinal, bindings: args.bindings, trigger: args.trigger, composite: args.composite });
     const fn = script[args.node.id];
     return Promise.resolve(typeof fn === 'function' ? fn(args) : {});
   };
@@ -302,4 +308,51 @@ test('9 the revise target skips the synthesized await input', { timeout: 5000 },
   assert.equal(d.queue[0].q.plan.revisable, false);
   h.scheduler.abort();
   await run;
+});
+
+test('12 role reviews: a revise answer goes to the Planner through the role node, clears its latched revise and refills its loop', { timeout: 5000 }, async () => {
+  const tpl = TPL(
+    [N('n_task', 'task'), N('n_p', 'agent', 'planner'), N('n_roles', 'agent', 'reviewer', { roleReview: true }),
+      N('n_ref', 'agent', 'tightener', { ...APPROVE, awaitAll: true }), N('n_i', 'agent', 'implementer'), N('n_end', 'end')],
+    [W('w1', 'n_task.task', 'n_p.task'), W('w4', 'n_p.plan', 'n_roles.plan'), W('w17', 'n_roles.plan', 'n_ref.plan'),
+      W('w18', 'n_roles.findings', 'n_ref.findings'),
+      W('w5', 'n_ref.revise', 'n_roles.revise', { maxCycles: 2, onExhausted: 'clean' }),
+      W('w3', 'n_ref.plan', 'n_i.plan'), W('w9', 'n_i.done', 'n_end.result')],
+  );
+  const roles = (a) => {
+    if (a.composite === 'expand') return { phases: [] };
+    return { outputs: { findings: { path: `/p/f${a.ordinal}.md` }, plan: { path: (a.bindings.revise || a.bindings.plan).path } } };
+  };
+  let atRound2 = null;
+  const h = harness({
+    template: tpl,
+    script: {
+      n_p: () => PLAN,
+      n_roles: roles,
+      // Blocks once per pass: pass 1 spends the loop's single allowance, pass 2 needs it back.
+      n_ref: (a) => ([1, 3].includes(a.ordinal)
+        ? { verdict: BLOCKING(), outputs: { revise: { path: `/p/rev${a.ordinal}.md` } } }
+        : { verdict: CLEAN, outputs: { plan: { path: `/p/r${a.ordinal}.md` } } }),
+    },
+    onAsk: (a) => {
+      if (a.kind === 'gate') return 'continue';
+      if (a.plan.round === 1) {
+        assert.equal(a.plan.revisable, true, 'the stop can be revised through the role node');
+        return { decision: 'revise', path: '/fb.md' };
+      }
+      atRound2 = { deliveries: h.scheduler.getState().wireDeliveries.w5 };
+      return 'approve';
+    },
+  });
+  assert.equal(await h.scheduler.run(), 'done');
+  const p = h.callsFor('n_p');
+  assert.equal(p.length, 2);
+  assert.equal(p[1].bindings.revise.path, '/fb.md', 'the feedback lands on the Planner\'s revise');
+  const expands = h.callsFor('n_roles').filter((c) => c.composite === 'expand');
+  assert.equal(expands.length, 4, 'two rounds in each pass');
+  assert.equal(expands[2].bindings.revise, undefined, 'the latched pass-1 rewrite is gone');
+  assert.deepEqual(expands[2].trigger.freshPorts, ['plan']);
+  assert.ok(h.callsFor('n_roles').every((c) => c.bindings.revise?.path !== '/fb.md'), 'the role node never gets the feedback');
+  assert.equal(expands[3].bindings.revise.path, '/p/rev3.md', 'the budget came back: the pass-2 rewrite is delivered');
+  assert.deepEqual(atRound2, { deliveries: 1 });
 });

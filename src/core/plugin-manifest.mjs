@@ -558,6 +558,11 @@ export function normalizeManifest(raw, { dir = '' } = {}) {
         errors.push(`${at} ("${id}"): a cursor model takes no upstream — cursor-agent connects with its own sign-in`);
         return;
       }
+      // A copilot model runs through the Copilot CLI's own sign-in: no routing env, no upstream.
+      if (engine === 'copilot' && (Object.keys(env).length || upstream)) {
+        errors.push(`${at} ("${id}"): a copilot model takes no ${upstream ? 'upstream' : 'env'} — the Copilot CLI connects with its own sign-in`);
+        return;
+      }
       const codexWhy = engine === 'codex' ? codexUpstreamProblem(upstream) : null;
       if (codexWhy) {
         errors.push(`${at} ("${id}"): ${codexWhy}`);

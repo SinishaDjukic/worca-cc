@@ -6,6 +6,7 @@ import { JSDOM } from 'jsdom';
 import {
   SHAPE_ATTENTION, isShapingRun, planStats, perspectiveChangeFeedback, fixFeedback, sectionOwners, defaultAnswers,
   planSummary, checkLine, unmetLine, fixAllFeedback, approveLabel, shaperWait,
+  planApproveLabel,
 } from '../ui/public/shape/plan-text.mjs';
 import { buildPerspectiveChips } from '../ui/public/shape/chips.mjs';
 import { PERSPECTIVES } from '../src/shared/shape/perspectives.mjs';
@@ -155,7 +156,7 @@ test('fixAllFeedback: one failure equals fixFeedback; several are listed', () =>
 
 test('approveLabel names the outcome; shaperWait only for Shaper steps with the gate on', () => {
   assert.equal(approveLabel({}), 'Approve and build');
-  assert.equal(approveLabel({ outline: { slices: [] } }), 'Approve the slices');
+  assert.equal(approveLabel({ outline: { slices: [] } }), 'Approve and build', 'the outline label lives in outline-body');
   const shaped = (pq) => ({ shaping: { rounds: [] }, pendingQuestion: pq });
   assert.equal(shaperWait(shaped({ kind: 'plan' }), true), 'plan');
   assert.equal(shaperWait(shaped({ kind: 'questions', questions: [] }), true), 'clarify');
@@ -163,4 +164,21 @@ test('approveLabel names the outcome; shaperWait only for Shaper steps with the 
   assert.equal(shaperWait(shaped({ kind: 'plan' }), false), null, 'gate off');
   assert.equal(shaperWait({ pendingQuestion: { kind: 'plan' } }, true), null, 'unshaped');
   assert.equal(shaperWait(shaped(null), true), null, 'nothing pending');
+});
+
+test('buildPerspectiveChips: hidden keys are not offered — no chip, not in value(), not in "+ N more"', () => {
+  const open = buildPerspectiveChips(newDoc(), { picked: ['qa', 'fit'], hidden: ['fit'], collapsed: false });
+  assert.equal(open.el.querySelectorAll('.shape-chip').length, PERSPECTIVES.length - 1);
+  assert.equal(open.el.querySelector('[data-perspective="fit"]'), null);
+  assert.deepEqual(open.value(), ['product', 'qa']);
+  const shut = buildPerspectiveChips(newDoc(), { picked: ['architect', 'qa'], hidden: ['fit'] });
+  assert.equal(shut.el.querySelector('.shape-chip-more').textContent, `+ ${PERSPECTIVES.length - 1 - 3} more`);
+});
+
+test('planApproveLabel: open critical/major issues are named on a plan ask only', () => {
+  assert.equal(planApproveLabel({}, 1), 'Approve with 1 open issue');
+  assert.equal(planApproveLabel({}, 2), 'Approve with 2 open issues');
+  assert.equal(planApproveLabel({}, 0), 'Approve and build');
+  assert.equal(planApproveLabel({}), 'Approve and build');
+  assert.equal(planApproveLabel({ outline: { slices: [] } }, 3), approveLabel({ outline: { slices: [] } }));
 });

@@ -94,7 +94,7 @@ export function renderSpendCard(budget, { doc = globalThis.document, fmt = DEFAU
     const head = h(doc, 'div', 'mc-head');
     if (ring) head.appendChild(ringSvg(doc, 'mini-ring', 20, MINI_R, ring.ratio));
     head.appendChild(h(doc, 'span', 'mc-title', title));
-    const go = h(doc, 'button', b.blocked ? 'mc-btn solid' : 'mc-btn', b.blocked ? 'Raise limit' : 'Details');
+    const go = h(doc, 'button', b.blocked ? 'btn btn-sm btn-primary mc-btn' : 'btn btn-sm mc-btn', b.blocked ? 'Raise limit' : 'Details');
     go.type = 'button';
     go.setAttribute('role', 'menuitem');
     go.dataset.nav = b.blocked ? 'settings' : 'stats';

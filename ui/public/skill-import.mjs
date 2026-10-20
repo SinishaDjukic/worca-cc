@@ -8,7 +8,7 @@
 
 export const SKILL_CONSENT = 'Worca copies these files into its library. Agents may read them and run the scripts where their guardrails allow.';
 // Honest copy for what no guardrail stops (user decision U2; the hooks line, U1, is the library's own `hooks` finding text).
-export const SKILL_SHELL_NOTE = 'Its inline shell blocks (!`cmd`) run in pipeline runs without guardrail checks; Ask Worca never runs them.';
+export const SKILL_SHELL_NOTE = 'Its inline shell blocks (!`cmd`) run in pipeline runs without guardrail checks; Chat never runs them.';
 export const SKILL_LIMITS_TEXT = 'Limits: 300 files · 1000 links and folders · 1 MB per file · 8 MB total · no .claude-plugin/ inside · the frontmatter name must equal the folder name';
 
 const SOURCES = [['dir', 'Folder'], ['git', 'Git URL'], ['paste', 'Paste'], ['home', 'From your Claude Code skills']];
@@ -165,7 +165,7 @@ export function openSkillImport({ api, modal, onDone = () => {}, doc = globalThi
     if (form.src === 'dir') {
       const row = h(doc, 'div', 'sk-row-input');
       const path = input('path', 'Folder', { placeholder: 'the folder that holds SKILL.md' });
-      const browse = button(doc, 'btn btn-ghost btn-mini', 'Browse…', { impBrowse: '' });
+      const browse = button(doc, 'btn btn-sm', 'Browse…', { impBrowse: '' });
       browse.addEventListener('click', async () => {
         const r = await api('POST', '/api/fs/pick-folder', {});
         const d = r.ok ? r.data : null;
@@ -241,8 +241,8 @@ export function openSkillImport({ api, modal, onDone = () => {}, doc = globalThi
     body.appendChild(msg);
     shownMsg = msg;
     modal.open('Import skill', body, [
-      ['Cancel', 'btn btn-ghost btn-mini', close],
-      ['Preview', 'btn btn-primary btn-mini', () => preview(msg)],
+      ['Cancel', 'btn btn-sm', close],
+      ['Preview', 'btn btn-primary btn-sm', () => preview(msg)],
     ]);
   }
   async function loadHome() {
@@ -309,9 +309,9 @@ export function openSkillImport({ api, modal, onDone = () => {}, doc = globalThi
     const cancel = async () => { if (busy) return; close(); await discard(); };
     modal.open(`Import skill · ${staged.name || 'preview'}`, body, [
       // Step 1 first, so this step's buttons are gone before the stage is (an Import after Back has nothing to commit).
-      ['Back', 'btn btn-ghost btn-mini', async () => { if (busy) return; const gone = discard(); step1(); await gone; }],
-      ['Cancel', 'btn btn-ghost btn-mini', cancel],
-      ['Import', 'btn btn-primary btn-mini', () => commit(msg)],
+      ['Back', 'btn btn-sm', async () => { if (busy) return; const gone = discard(); step1(); await gone; }],
+      ['Cancel', 'btn btn-sm', cancel],
+      ['Import', 'btn btn-primary btn-sm', () => commit(msg)],
     ]);
     if (modal.afterClose) modal.afterClose(cancel);   // the dialog's own Close is this step's Cancel
   }

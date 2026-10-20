@@ -73,8 +73,9 @@ test('a finished folder run before its saved row lands: Finished · 14 files cha
   ctx.go('running/r1');
   await ctx.settle(8);
   assert.equal(ctx.window.location.hash, '#running/r1', 'no saved row yet: it stays here');
-  assert.equal($(ctx, '.rd-now-state').textContent, 'Finished');
-  assert.equal($(ctx, '.rd-now-sub').textContent, '14 files changed');
+  // Runs redesign: the one status block (run-model.mjs) words the run.
+  assert.equal($(ctx, '.rd-now-top').dataset.word, 'Finished');
+  assert.equal($(ctx, '.rd-now-top .run-status-text').textContent, 'Finished · 14 files changed');
   assert.equal($(ctx, '.rd-apply-slot .fc-bar-l').textContent, '14 files · on a copy');
   assert.deepEqual([...ctx.window.document.querySelectorAll('#run-detail .rd-apply-slot button')].map((b) => b.textContent), ['Discard', 'Apply to folder']);
   assert.equal($(ctx, '.rd-pr-slot').hidden, true);
@@ -142,7 +143,7 @@ test('Apply from the Running page settles its bar and headline (the run models +
   ctx.window.document.querySelector('.fc-modal .fc-go').click();
   await ctx.settle(8);
   assert.equal($(ctx, '.rd-apply-slot .fc-bar-l').textContent, '14 files · Applied');
-  assert.equal($(ctx, '.rd-now-state').textContent, 'Applied');
+  assert.equal($(ctx, '.rd-now-top').dataset.word, 'Applied');
 });
 
 test('a starting folder run reads Copying the folder', async () => {
@@ -150,7 +151,7 @@ test('a starting folder run reads Copying the folder', async () => {
   helloRun(ctx, { runId: 'r1', pipelineId: 'p1', status: 'starting', workMode: 'folder', projectDir: '/tmp/tax' });
   ctx.go('running/r1');
   await ctx.settle();
-  assert.equal($(ctx, '.rd-now-sub').textContent, 'Copying the folder');
+  assert.equal($(ctx, '.rd-now-top').dataset.line, 'Copying the folder');
 });
 
 test('the tab bar rebuilt for a Folder run keeps the open tab', async () => {
@@ -178,7 +179,7 @@ test('a finished git run while git is missing: no pull-request placeholder, a li
   await ctx.settle(8);
   assert.equal($(ctx, '.rd-pr-slot').hidden, true);
   assert.equal($(ctx, '.rd-pr-slot .rd-pr-spin'), null);
-  assert.equal($(ctx, '.rd-now-sub').textContent, '');
+  assert.equal($(ctx, '.rd-now-top .run-status-text').textContent, 'Finished', 'not "Ready to ship": Ship it is hidden');
 });
 
 test('a finished folder run: changes that land after the detail payload fill the Changes row', async () => {
@@ -201,7 +202,7 @@ test('a finished folder run: changes that land after the detail payload fill the
 
 test('the Runs list: a live Folder run names its group kind and its settled changes before any saved row', async () => {
   const PROJ = [{ name: 'Tax papers 2026', path: '/tmp/tax', exists: true, vcs: 'none', workMode: 'folder', key: 'tax-papers-1a2b3c4d' }];
-  const ctx = await bootApp({ fetchHandler: (url) => {
+  const ctx = await bootApp({ local: { 'worca-cc.runs.view': JSON.stringify({ show: 'all', groupBy: 'project', person: '' }) }, fetchHandler: (url) => {
     if (url === '/api/projects') return ok({ projects: PROJ });
     if (url.endsWith('/api/history')) return ok({ pipelines: [], ghAvailable: false });
     return null;
@@ -212,8 +213,8 @@ test('the Runs list: a live Folder run names its group kind and its settled chan
   ctx.dispatch({ type: 'done', runId: 'r1', status: 'done' });
   ctx.showRunning();
   await ctx.settle(8);
-  const group = ctx.window.document.querySelector('#runs-list .runs-group[data-group-key="tax-papers-1a2b3c4d"]');
-  assert.equal(group.querySelector('.runs-group-head .kind-chip').textContent, 'Folder');
+  const group = ctx.window.document.querySelector('#runs-list .runs-sec[data-section="project:tax-papers-1a2b3c4d"]');   // View › Group by Project
+  assert.equal(group.querySelector('.runs-sec-head .kind-chip').textContent, 'Folder');
   assert.match(group.querySelector('.runs-row[data-run-id="r1"] .runs-row-sub').textContent, /^Applied/);
 });
 
@@ -277,7 +278,7 @@ test('P5: a finished all-Folder workspace run before its saved row lands: no run
   await ctx.settle(8);
   const slot = $(ctx, '.rd-apply-slot');
   assert.ok(slot && slot.hidden, 'no run-level Apply bar on the glance (it would POST without a memberKey)');
-  assert.equal($(ctx, '.rd-now-state').textContent, 'Finished', 'notes is still pending');
+  assert.equal($(ctx, '.rd-now-top').dataset.word, 'Finished', 'notes is still pending');
   // Applying the last pending member settles the saved state's rollup too: with no History row the headline reads it.
   ctx.go('running/w2/details/changes');
   await ctx.settle(8);
@@ -288,7 +289,7 @@ test('P5: a finished all-Folder workspace run before its saved row lands: no run
   await ctx.settle(10);
   ctx.go('running/w2');
   await ctx.settle(8);
-  assert.equal($(ctx, '.rd-now-state').textContent, 'Applied', 'both members applied: the run reads Applied, as a single Folder run does');
+  assert.equal($(ctx, '.rd-now-top').dataset.word, 'Applied', 'both members applied: the run reads Applied, as a single Folder run does');
 });
 
 test('P5: a live mixed workspace run that finishes on the run page badges Changes once its saved counts land', async () => {

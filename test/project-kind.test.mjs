@@ -21,7 +21,7 @@ test('normalizers: NULL vcs is git, unknown work mode is git; folder file names'
     patch: join('/p', 'changes.patch'), skipped: join('/p', 'skipped') });
 });
 
-test('detectVcs (add time) and vcsAtUpgrade (V61, U12) are stat-only', () => {
+test('detectVcs (add time) and vcsAtUpgrade (V69, U12) are stat-only', () => {
   const plain = tmp('plain'); const repo = tmp('repo'); mkdirSync(join(repo, '.git'));
   const wt = tmp('wt'); writeFileSync(join(wt, '.git'), 'gitdir: /elsewhere\n');
   assert.deepEqual([detectVcs(plain), detectVcs(repo), detectVcs(wt), detectVcs(join(plain, 'missing'))], ['none', 'git', 'git', 'none']);

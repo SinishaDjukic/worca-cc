@@ -24,6 +24,7 @@ import { createAskTools } from './tools.mjs';
 import { createRpcServer } from './rpc-server.mjs';
 import { defaultToolDeps } from './tool-deps.mjs';
 import { defaultWorktreeDeps } from './worktree-deps.mjs';
+import { defaultShowFilesDeps } from './show-files-deps.mjs';
 import { defaultMemoryDeps } from './memory-deps.mjs';
 import { defaultScriptDeps } from './script-deps.mjs';
 import { defaultCommentDeps } from './comment-deps.mjs';
@@ -45,6 +46,7 @@ import { defaultBranchDeps } from './branch-deps.mjs';
 import { defaultComposerDeps } from './composer-deps.mjs';
 import { defaultChatActionDeps } from './chat-action-deps.mjs';
 import { gitAvailable, gitState } from '../git-available.mjs';
+import { defaultShapeToolDeps } from './shape-tool-deps.mjs';
 
 // The JSON-RPC server itself lives in rpc-server.mjs (re-exported: tests and the Codex file tools use it).
 export { createRpcServer } from './rpc-server.mjs';
@@ -74,6 +76,7 @@ export function createAskToolServer({ threadId, reader = null, signal, write, lo
       gitAvailable,
       ...defaultToolDeps({ threadId, viewer: reader }),
       ...defaultWorktreeDeps({ threadId }),
+      ...defaultShowFilesDeps({ threadId }),
       ...defaultMemoryDeps({ threadId }),
       // The life signal (already built for propose_workflow's nested classifier): the turn
       // ending or being stopped also stops a bench run still going.
@@ -89,14 +92,14 @@ export function createAskToolServer({ threadId, reader = null, signal, write, lo
       ...defaultCloneDeps(),
       ...defaultProjectDeps(),
       ...defaultWorkspaceDeps(),
-      // Actions (docs/actions.md "Ask Worca"): read the config, checkouts and running services; propose config.
+      // Actions (docs/actions.md "Chat"): read the config, checkouts and running services; propose config.
       ...defaultActionsDeps(),
       // Branch reads + fetch-only (#527): list_branches, list_projects.sync, get_run.baseMoved.
       ...defaultBranchDeps(),
       // Web access: present only when this turn's env carries WORCA_ASK_WEB (web-deps.mjs) — the
       // child's env (classic), or the relay's own copy built from the turn's web access (ui/server.mjs).
       ...defaultWebDeps({ threadId, signal, env }),
-      // Codex chats only (WORCA_ASK_ENGINE=codex): read_file / grep / glob under the shared deny rules (D13).
+      // Codex and Copilot chats only (WORCA_ASK_ENGINE=codex|copilot): read_file / grep / glob under the shared deny rules (D13).
       ...defaultFileDeps({ threadId, env, signal }),
       // Agent mode (#574): present only when this turn's env names the command bridge (command-deps.mjs).
       ...defaultCommandDeps({ env }),
@@ -105,6 +108,8 @@ export function createAskToolServer({ threadId, reader = null, signal, write, lo
       ...defaultComposerDeps({ threadId }),
       // worca Chat P2: settings and run controls — validate here, applied by the parent (chat-action-deps.mjs).
       ...defaultChatActionDeps(),
+      // Shaper: propose_changes / route_message — only with the gate and a thread (shape-tool-deps.mjs); relay overrides it.
+      ...defaultShapeToolDeps({ threadId }),
       // Readers only the host process can supply (relay mode: ui/server.mjs passes
       // readLiveDiff, which needs the live runs). Absent in the classic child.
       ...extraDeps,

@@ -342,6 +342,15 @@ test('startAskTurn wiring (askChatTurnDeps): chat actions run as "<person> via w
   } finally { h.apply = apply; h.awaySwitch = awaySwitch; }
 });
 
+test('askChatTurnDeps: changes/route go to askShapeAction with the turn\'s thread; other kinds stay on the host', async () => {
+  const d = mod._testing.askChatTurnDeps('ada@example.com');
+  const prev = process.env.WORCA_FLAGS; process.env.WORCA_FLAGS = '-shapeFirst';
+  try {
+    assert.deepEqual(await d.chatAction({ kind: 'changes', pipelineId: 'aaaa0001', request: 'x' }, { threadId: 'ask_x' }),
+      { ok: false, notice: 'Not applied: Shaper is off' });
+  } finally { if (prev === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = prev; }
+});
+
 test('one turn\'s set_away_now and change_setting both land: the Away switch shares the settings write queue (refine cycle 2)', async () => {
   const { nightModeToggle } = await import('../src/core/settings.mjs');
   const h = host();
@@ -456,7 +465,7 @@ test('per-person Away on a shared sign-in: in an ownerless (legacy) thread every
 
 test('receipt Revert brings back the Settings page\'s "No cap" tick (a stored null), never an unset cap a team default fills', async () => {
   const { readSettings } = await import('../src/core/settings.mjs');
-  assert.equal((await post('/api/settings', { askMaxBudgetUsd: null })).status, 200);   // Settings › Ask Worca: No cap ticked
+  assert.equal((await post('/api/settings', { askMaxBudgetUsd: null })).status, 200);   // Settings › Chat: No cap ticked
   assert.equal(readSettings().askMaxBudgetUsd, null);
   const minted = await host().apply({ kind: 'setting', id: 'askMaxBudgetUsd', scope: 'user', value: 5 }, { actor: 'local' });
   assert.equal(minted.ok, true, JSON.stringify(minted));

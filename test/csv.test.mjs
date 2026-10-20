@@ -37,3 +37,10 @@ test('csvCell guards formulas and leaves null empty', () => {
   assert.equal(csvCell(null), '');
   assert.equal(csvCell('a\nb'), '"a\nb"');
 });
+
+test('csvCell keeps negative numbers as numbers; strings that start with "-" stay guarded', () => {
+  assert.equal(csvCell(-15), '-15');
+  assert.equal(csvCell(-0.5), '-0.5');
+  assert.equal(csvCell('-SUM(A1)'), "'-SUM(A1)");
+  assert.equal(csvCell('=1+1'), "'=1+1");
+});

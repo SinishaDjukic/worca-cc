@@ -1,6 +1,6 @@
 // src/core/ask/model-proposal.mjs
 // The ONE validator behind mcp__worca__propose_model_change, the edit merge its apply replays,
-// and the event/notice text of the model card (docs/models.md "Ask Worca"). Pure: every reader
+// and the event/notice text of the model card (docs/models.md "Chat"). Pure: every reader
 // and every dry-run setter is injected (model-deps.mjs binds the real ones), so the MCP child
 // validates for the model's self-correction and the parent turn re-validates authoritatively —
 // the policy-proposal.mjs split. Nothing here writes; applying a card is ui/server.mjs's
@@ -128,7 +128,7 @@ export function mergeEditPatch(current, patch) {
   return out;
 }
 
-const connectionOf = (m) => (m.engine === 'cursor' ? "cursor-agent's own sign-in" : m.upstream && m.engine === 'codex' ? 'codex, direct to an OpenAI-compatible endpoint' : m.upstream ? `through provider ${m.upstream.provider}` : m.env && m.env.ANTHROPIC_BASE_URL ? 'custom endpoint via env' : 'Anthropic API / CLI default');
+const connectionOf = (m) => (m.engine === 'cursor' ? "cursor-agent's own sign-in" : m.engine === 'copilot' ? "the Copilot CLI's own sign-in" : m.upstream && m.engine === 'codex' ? 'codex, direct to an OpenAI-compatible endpoint' : m.upstream ? `through provider ${m.upstream.provider}` : m.env && m.env.ANTHROPIC_BASE_URL ? 'custom endpoint via env' : 'Anthropic API / CLI default');
 const fmtEfforts = (e) => (Array.isArray(e) && e.length ? e.join(', ') : 'all');
 const fmtCost = (c) => (!c ? null : c.free ? 'free' : c.perMtok ? Object.entries(c.perMtok).map(([k, v]) => `${k} $${v}`).join(' · ') : JSON.stringify(c));
 const fmtCaps = (c) => (!c ? null : Object.entries(c).map(([k, v]) => `${k} ${v}`).join(' · '));

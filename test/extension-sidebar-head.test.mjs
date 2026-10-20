@@ -17,7 +17,7 @@ test('the head keeps the chat list and adds worca\'s labelled "+ New chat" butto
   assert.ok(chats, 'the chat list stays');
   const btn = h.$('.chat-head button[data-ask-new-btn]');
   assert.ok(btn, 'a New chat button');
-  assert.equal(btn.className, 'ask-icon-btn chat-new-btn chat-head-btn');
+  assert.equal(btn.className, 'btn btn-sm btn-quiet chat-new-btn chat-head-btn');
   assert.equal(btn.textContent, 'New chat', 'a labelled button, not an icon');
   assert.equal(btn.getAttribute('aria-label'), null, 'the visible label is its name');
   assert.equal(btn.querySelector('svg').getAttribute('aria-hidden'), 'true');

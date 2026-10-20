@@ -320,7 +320,7 @@ test('implementer on a translated (bridged) model', POSIX, async () => {
   }
 });
 
-test('Ask Worca turn spawn', POSIX, async () => {
+test('Chat turn spawn', POSIX, async () => {
   cleanEnv();
   const scratchDir = tmp('worca-argv-ask-');
   const opts = buildAskSpawnOptions({

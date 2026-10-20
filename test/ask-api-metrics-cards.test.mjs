@@ -1,5 +1,5 @@
 // test/ask-api-metrics-cards.test.mjs
-// The metrics card end to end over WORCA_MOCK (docs/team-metrics.md "Ask Worca"): the mock's
+// The metrics card end to end over WORCA_MOCK (docs/team-metrics.md "Chat"): the mock's
 // propose_metrics_change → the parent re-validates and mints the card → POST
 // /api/ask/threads/:id/cards/:cardId with `applied` (the change happens HERE — the "Include my
 // runs" switch, no git) or `declined`, each flipping the card, storing the synthetic notice row

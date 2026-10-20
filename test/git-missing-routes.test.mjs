@@ -107,6 +107,19 @@ test('routes while git is missing', async (t) => {
       const w = await send('post', '/api/workspaces', { name: 'W', projectPaths: [dir, loose] });
       assert.equal(w.status, 400); assert.deepEqual(await w.json(), { error: `member path is not a registered project: ${loose}` });
     } },
+    { name: 'dev #717 / workspace import: a marketplace export answers 409 and no marketplace is a publish target; a plugin export still runs', run: async () => {
+      const r = await send('post', '/api/workflows/wf_default/export', { destination: 'marketplace', marketplaceId: 'acme-plugins-00000001', dryRun: true });
+      assert.equal(r.status, 409); assert.deepEqual(await r.json(), BODY);
+      seedBuiltinMarketplace();
+      const t = await (await send('get', '/api/marketplaces/publish-targets')).json();
+      assert.deepEqual(t.targets, []);
+      assert.ok(t.skipped.length > 0, 'the built-in marketplace is listed');
+      for (const s of t.skipped) assert.equal(s.reason, 'needs git', s.id);
+      const plugin = await send('post', '/api/workflows/wf_default/export', { destination: 'plugin' });
+      assert.deepEqual([plugin.status, (await plugin.json()).error], [400, 'pluginDir is required for a plugin export']);
+      const imp = await send('post', '/api/workspaces/import-candidates', { paths: [home] });
+      assert.equal(imp.status, 409); assert.deepEqual(await imp.json(), BODY);
+    } },
     { name: 'an Ask clone card: startCloneJob refuses git-missing before any job exists', run: async () => {
       await assert.rejects(T.startCloneJob({ url: 'https://github.com/acme/api', branch: null, name: null }),
         { code: 'git-missing', message: 'git is not installed on this machine' });
@@ -134,7 +147,7 @@ test('routes while git is missing', async (t) => {
 // plan removes (P5 drops the two scan entries, P6 the nine team and two plugin entries — this row survives both).
 test('the git-only table keeps every route whose whole purpose is git', async () => {
   await checkRows([
-    { name: 'GIT_ONLY_ROUTES holds the 22 non-U2a, non-scan entries', run: () => {
+    { name: 'GIT_ONLY_ROUTES holds the 23 non-U2a, non-scan entries', run: () => {
       const have = new Set(T.GIT_ONLY_ROUTES.map(([m, p]) => `${m} ${p}`));
       for (const r of ['post /api/projects/clone', 'delete /api/projects/:key/terminal/worktrees',
         'post /api/runs/:id/checkout', 'delete /api/runs/:id/checkout', 'get /api/runs/:id/checkout/diff',
@@ -144,7 +157,8 @@ test('the git-only table keeps every route whose whole purpose is git', async ()
         'post /api/sync', 'post /api/projects/:key/sync', 'post /api/sync/all', 'post /api/workspaces/:id/sync',
         'post /api/runs/:id/base-check', 'post /api/runs/:id/update-branch',
         'post /api/runs/:id/resolve-pipeline', 'post /api/runs/:id/resolve-terminal',
-        'post /api/runs/:id/apply-retained', 'post /api/runs/:id/discard-worktree']) assert.ok(have.has(r), r);
+        'post /api/runs/:id/apply-retained', 'post /api/runs/:id/discard-worktree',
+        'post /api/workspaces/import-candidates']) assert.ok(have.has(r), r);
     } },
   ]);
 });

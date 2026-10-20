@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { cardAlertOf } from './helpers/feedback.mjs';
+import { backdropClick, pressEscape, discardPrompt, discardChanges } from './helpers/popups.mjs';
 
 // Workspace runs: one PR per AFFECTED member repo. The saved-run detail header's
 // per-repo list and the workspace Ship-it dialog (per-repo rows, sequential POSTs,
@@ -362,6 +363,33 @@ test('workspace Ship it: Watch PR resets on open and one snapshot applies to eve
   assert.deepEqual(prPosts(ctx).map((c) => [JSON.parse(c.opts.body).memberKey, JSON.parse(c.opts.body).watch]), [[API, true], [WEB, true]]);
 });
 
+test('workspace Ship it is a form: a backdrop click keeps it and its picks; Escape asks once a pick changed; Cancel closes at once', async () => {
+  const ctx = await bootShip({ detail: WS_DETAIL, rows: [wsRow([member(API, 'api'), member(WEB, 'web')])] });
+  await openDetail(ctx, wksDetailHash);
+  click(ctx.window, hdPr(ctx.window)); await settle(ctx.window, 6);
+  const modal = modalOf(ctx.window);
+  const doc = ctx.window.document;
+  pressEscape(ctx.window);
+  assert.equal(discardPrompt(doc), null, 'untouched (the remotes that loaded are no change): no question');
+  assert.equal(isOpen(ctx.window), false, 'Escape closes an untouched dialog');
+  click(ctx.window, hdPr(ctx.window)); await settle(ctx.window, 6);
+  const pick = modal.querySelectorAll('#shipit-repos .shipit-repo-pick')[1];
+  pick.checked = false;
+  pick.dispatchEvent(new ctx.window.Event('change'));
+  backdropClick(ctx.window, modal);
+  assert.equal(isOpen(ctx.window), true, 'never on a backdrop click');
+  assert.equal(modal.querySelectorAll('#shipit-repos .shipit-repo-pick')[1].checked, false, 'the pick is kept');
+  pressEscape(ctx.window);
+  assert.ok(discardPrompt(doc), 'a changed pick: Escape asks');
+  discardChanges(doc);
+  await settle(ctx.window);
+  assert.equal(isOpen(ctx.window), false, 'Discard closes it');
+  click(ctx.window, hdPr(ctx.window)); await settle(ctx.window, 6);
+  click(ctx.window, modal.querySelector('.shipit-cancel'));
+  assert.equal(isOpen(ctx.window), false, 'Cancel closes at once');
+  assert.equal(prPosts(ctx).length, 0);
+});
+
 const memberChecks = (watch) => ({ checks: { state: 'passing', total: 3, failed: 0, pending: 0, skipped: 0 }, mergeable: 'MERGEABLE',
   status: { tone: 'ok', label: 'Ready to merge', detail: 'All 3 checks passed' }, watch });
 const ovRows = (w) => [...w.document.querySelectorAll('#hist-detail .hd-ov-pr')];
@@ -545,4 +573,33 @@ test('a mixed workspace run: the Diff tab lists and counts its Git member only (
   const sec = d.querySelector('#hist-detail .hd-sec[data-sec="diff"]');
   assert.match(sec.querySelector('.hd-diff-list-head').textContent, /^2 files changed/);
   assert.ok(![...sec.querySelectorAll('.rd-diff-row, .hd-diff-rows button')].some((b) => /feature/.test(b.textContent)), 'no Folder file (it has no git diff) in the Diff');
+});
+
+test('#620: each repo line reads the newer check and a stale one is redone quietly when the dialog opens', async () => {
+  const ago = (ms) => new Date(Date.now() - ms).toISOString();
+  const conflicts = (at) => ({ status: 'conflicts', base: 'main', fileCount: 1, at });
+  const up = (at) => ({ status: 'up-to-date', base: 'main', behind: 0, at });
+  const branches = {
+    [API]: { source: 'main', feature: 'worca-cc/feat-api', baseCheck: up(ago(60_000)) },     // newer than the row's
+    [WEB]: { source: 'main', feature: 'worca-cc/feat-web' },                                   // only the row's, old
+  };
+  const detail = { ...WS_DETAIL, state: { ...WS_DETAIL.state, branches } };
+  const answers = [fail(500, { error: 'boom' }),                                                // the detail's own try
+    ok({ ok: true, members: [{ projectKey: WEB, baseCheck: up(ago(0)) }], settled: {} })];
+  const checks = [];
+  const ctx = await bootShip({ detail, rows: [wsRow([
+    member(API, 'api', { baseCheck: conflicts(ago(3 * 60_000)) }),
+    member(WEB, 'web', { baseCheck: conflicts(ago(10 * 60_000)) })])],
+  arms: (url, opts) => {
+    if (!(/\/api\/runs\/[^/]+\/base-check\?/.test(url) && opts.method === 'POST')) return null;
+    checks.push(JSON.parse(opts.body));
+    return answers.shift();
+  } });
+  await openDetail(ctx, wksDetailHash);
+  assert.equal(checks.length, 1, 'the detail checks the old one on open');
+  click(ctx.window, hdPr(ctx.window)); await settle(ctx.window, 8);
+  assert.deepEqual(checks, [{ auto: true }, { auto: true }], 'the dialog redoes it');
+  const lines = [...modalOf(ctx.window).querySelectorAll('#shipit-repos .shipit-repo')]
+    .map((r) => [r.dataset.memberKey, r.querySelector('.shipit-basecheck').hidden]);
+  assert.deepEqual(lines, [[API, true], [WEB, true]], 'no conflict line: both repos are up to date now');
 });

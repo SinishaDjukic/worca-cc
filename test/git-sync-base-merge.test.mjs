@@ -6,7 +6,8 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkBaseMerge, mergeBaseInto, startConflictMerge, _testing } from '../src/core/git-sync.mjs';
+import { checkBaseMerge, mergeBaseInto, startConflictMerge, mergeBaseBeforeRun, baseMovedAudit, _testing } from '../src/core/git-sync.mjs';
+import { buildDecisionLog } from '../src/shared/shape/feature-log.mjs';
 import { leftoverMarkers, _testing as gitInfo } from '../src/core/git-info.mjs';
 import { g, GITCONFIG, world as makeWorld, teammatePush, commitOnFeat } from './helpers/base-world.mjs';
 
@@ -118,6 +119,21 @@ test('missing branch and missing base', async () => {
   assert.equal((await checkBaseMerge(w.a, { base: '-x', feature: 'feat' })).kind, 'bad-base');
 });
 
+test('a remote-tracking source (origin/dev) checks against dev on origin; a local branch named origin/dev stays', async () => {
+  const w = world();
+  commitOnFeat(w, 'f.txt', 'feature\n');
+  teammatePush(w, 'f.txt', 'upstream\n');
+  const c = await checkBaseMerge(w.a, { base: 'origin/dev', feature: 'feat' });
+  assert.equal(c.status, 'conflicts', 'not missing-base');
+  assert.deepEqual([c.base, c.baseRef, c.remote], ['dev', 'origin/dev', 'origin']);
+  assert.equal(c.baseSha, g(w.a, 'rev-parse', 'refs/remotes/origin/dev'));
+
+  const initSha = g(w.a, 'rev-parse', 'dev');
+  g(w.a, 'branch', 'origin/dev', initSha);
+  const k = await checkBaseMerge(w.a, { base: 'origin/dev', feature: 'feat' });
+  assert.deepEqual([k.status, k.base, k.baseRef, k.baseSha], ['up-to-date', 'origin/dev', 'origin/dev', initSha], 'the local branch is the base');
+});
+
 test('git too old: exit 129 maps to kind git-too-old', async () => {
   const w = world();
   commitOnFeat(w, 'f.txt', 'feature\n'); teammatePush(w, 'g.txt', 'u\n');
@@ -194,4 +210,43 @@ test('leftoverMarkers reports a git failure instead of no markers', async () => 
   try {
     assert.deepEqual(await leftoverMarkers(w.a, { from: 'a', to: 'b' }), { ok: false, error: 'fatal: bad object' });
   } finally { gitInfo.reset(); }
+});
+
+test('s5: dev moved after run 2 started → run 3 merges the base before it starts; the feature log says so', async () => {
+  const w = world();
+  commitOnFeat(w, 'f.txt', 'run 2\n');                    // run 2's branch: feat
+  teammatePush(w, 'g.txt', 'hotfix on dev\n');            // dev moves while run 2 runs
+  g(w.a, 'branch', 'run-3', 'feat');                      // run 3 is cut from run 2's branch (sourceFromPrevious)
+  const feat = g(w.a, 'rev-parse', 'feat');
+  const r = await mergeBaseBeforeRun(w.a, { base: 'dev', feature: 'run-3' });
+  assert.equal(r.merged, true);
+  assert.equal(r.behind, 1);
+  assert.equal(g(w.a, 'show', 'run-3:g.txt'), 'hotfix on dev', 'run 3 starts from the moved base');
+  assert.equal(g(w.a, 'rev-parse', 'run-3'), r.to);
+  assert.equal(g(w.a, 'rev-parse', 'feat'), feat, 'run 2\'s branch is not touched');
+  const line = baseMovedAudit('dev', 'run-3', r);
+  assert.equal(line, 'Base `dev` moved: merged into `run-3` (1 commit).');
+  const log = buildDecisionLog({ sliced: true, slices: [], runs: [{ index: 3, events: [line] }] });
+  assert.equal(log[0].text, 'dev moved · run 3 starts from it');
+});
+
+test('s5: dev did not move → nothing merged, no audit line', async () => {
+  const w = world();
+  commitOnFeat(w, 'f.txt', 'run 2\n');
+  g(w.a, 'branch', 'run-3', 'feat');
+  const r = await mergeBaseBeforeRun(w.a, { base: 'dev', feature: 'run-3' });
+  assert.deepEqual([r.merged, r.status], [false, 'up-to-date']);
+  assert.equal(baseMovedAudit('dev', 'run-3', r), null);
+});
+
+test('s5: a clash with dev → the branch is left as is and the audit line names the files', async () => {
+  const w = world();
+  commitOnFeat(w, 'f.txt', 'run 2\n');
+  teammatePush(w, 'f.txt', 'dev\n');
+  g(w.a, 'branch', 'run-3', 'feat');
+  const before = g(w.a, 'rev-parse', 'run-3');
+  const r = await mergeBaseBeforeRun(w.a, { base: 'dev', feature: 'run-3' });
+  assert.deepEqual([r.merged, r.status, r.files], [false, 'conflicts', ['f.txt']]);
+  assert.equal(g(w.a, 'rev-parse', 'run-3'), before);
+  assert.equal(baseMovedAudit('dev', 'run-3', r), 'Base `dev` moved: conflicts in 1 file.');
 });

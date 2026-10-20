@@ -18,6 +18,7 @@ import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { cardAlertOf } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { backdropClick, dragOut } from './helpers/popups.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -167,15 +168,14 @@ test('"Keep running" and a backdrop click close the modal without POSTing /api/s
       assert.equal(modal.dataset.runId, undefined, 'the runId stamp is cleared on close');
       assert.equal(stopPosts(ctx).length, 0, 'cancel never stops the run');
     } },
-    { name: 'backdrop click closes; a click inside the card does not', run: async () => {
+    { name: 'a backdrop click (press and release on the overlay) closes; a click inside the card, or a selection dragged out of it, does not', run: async () => {
       await openStop(ctx);
-
       const modal = ctx.window.document.getElementById('stop-modal');
-      click(ctx.window, modal.querySelector('.stop-ident'));       // inside the dialog card
-      assert.equal(modal.classList.contains('hidden'), false, 'clicks inside the card do not close');
-
-      modal.dispatchEvent(new ctx.window.Event('click', { bubbles: true }));   // the overlay itself
-      assert.ok(modal.classList.contains('hidden'), 'backdrop click closes');
+      click(ctx.window, modal.querySelector('.stop-ident'));                 // inside the dialog card
+      dragOut(ctx.window, modal.querySelector('.stop-ident'), modal);       // a selection dragged out
+      assert.equal(modal.classList.contains('hidden'), false, 'neither closes it');
+      backdropClick(ctx.window, modal);
+      assert.ok(modal.classList.contains('hidden'), 'a real outside click is the safe "Keep running"');
       assert.equal(stopPosts(ctx).length, 0);
     } },
   ]);
@@ -255,7 +255,7 @@ test('cancel, Escape and backdrop are inert while the stop POST is in flight', a
   assert.equal(modal.classList.contains('hidden'), false, 'cancel mid-flight does not fake a cancellation');
   esc(ctx.window);
   assert.equal(modal.classList.contains('hidden'), false, 'Escape mid-flight is ignored');
-  modal.dispatchEvent(new ctx.window.Event('click', { bubbles: true }));   // backdrop
+  backdropClick(ctx.window, modal);   // backdrop: press and release
   assert.equal(modal.classList.contains('hidden'), false, 'backdrop mid-flight is ignored');
 
   release();
@@ -421,10 +421,14 @@ test('a stray error frame after a pause leaves the run paused', async () => {
   assert.equal(scr.querySelector('.rd-stop').hidden, false);
 });
 
-test('an INTERRUPTED run offers no Stop on its page (it stays resumable)', async () => {
+test('an INTERRUPTED run offers no working Stop on its page (it stays resumable)', async () => {
   const ctx = await boot();
   seedPaused(ctx, { status: 'interrupted' });
   openDetail(ctx);
   await new Promise((r) => setTimeout(r, 0));
-  assert.equal(ctx.window.document.querySelector('#run-detail .rd-stop').hidden, true);
+  // The one run model lists Stop for a parked run (runs redesign slice 4): it shows, disabled, with the reason.
+  const stop = ctx.window.document.querySelector('#run-detail .rd-stop');
+  assert.equal(stop.hidden, false);
+  assert.equal(stop.disabled, true);
+  assert.equal(stop.title, 'An interrupted run cannot be stopped');
 });

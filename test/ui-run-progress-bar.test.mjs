@@ -32,15 +32,6 @@ test('paintProgressBar', async () => {
     { name: 'a missing host is a no-op', run() {
       assert.doesNotThrow(() => paintProgressBar(null, staged()));
     } },
-    { name: 'stages mode builds ticks, marks, detail', run() {
-      const host = doc.createElement('div');
-      paintProgressBar(host, staged());
-      assert.equal(host.hidden, false);
-      assert.equal(host.querySelectorAll('.run-prog-tick').length, 3);
-      assert.equal(host.querySelectorAll('.run-prog-mark').length, 4);
-      assert.ok(host.querySelector('.run-prog-detail[data-min-level="advanced"]'));
-      assert.equal(host.querySelector('.run-prog-detail').getAttribute('role'), 'tooltip');
-    } },
     { name: 'marks carry the stage state', run() {
       const host = doc.createElement('div');
       paintProgressBar(host, staged());
@@ -52,17 +43,6 @@ test('paintProgressBar', async () => {
       paintProgressBar(host, staged({ stages: [stage('plan', 'Plan', 'current')] }));
       const build = host.querySelector('.run-prog-mark[data-stage="build"]');
       assert.equal(build.dataset.state, 'waiting');
-    } },
-    { name: 'fill element survives repaint and follows width and tone', run() {
-      const host = doc.createElement('div');
-      paintProgressBar(host, staged({ fraction: 0.3, stages: [], passes: 0 }));
-      const fill1 = host.querySelector('.run-prog-fill');
-      assert.equal(host.dataset.tone, 'blue');
-      paintProgressBar(host, staged({ fraction: 0.5, tone: 'green', stages: [], passes: 0 }));
-      const fill2 = host.querySelector('.run-prog-fill');
-      assert.strictEqual(fill1, fill2, 'same fill element');
-      assert.equal(pct(fill2), 50);
-      assert.equal(host.dataset.tone, 'green');
     } },
     { name: 'nodes mode has no marks, ticks or detail', run() {
       const host = doc.createElement('div');
@@ -119,6 +99,47 @@ test('paintProgressBar', async () => {
   ]);
 });
 
+// The neutral four-section bar and the continuous group bar.
+const fourStage = (extra = {}) => staged({ fill: [1, 1, 0.4, 0], fraction: 0.6, ...extra });
+
+test('paintProgressBar: four neutral sections', async () => {
+  await checkRows([
+    { name: 'four sections, one per stage, each with its own fill', run() {
+      const host = doc.createElement('div');
+      paintProgressBar(host, fourStage());
+      const secs = [...host.querySelectorAll('.run-prog-sec')];
+      assert.deepEqual(secs.map((s) => s.dataset.stage), ['plan', 'build', 'review', 'ready']);
+      assert.deepEqual(secs.map((s) => pct(s.querySelector('.run-prog-fill'))), [100, 100, 40, 0]);
+      assert.equal(host.querySelectorAll('.run-prog-tick').length, 0, 'ticks are gone: sections are the stops');
+    } },
+    { name: 'the current section is marked and the pulse edge needs { pulse: true }', run() {
+      const host = doc.createElement('div');
+      paintProgressBar(host, fourStage());
+      assert.equal(host.querySelector('.run-prog-sec.is-current').dataset.stage, 'review');
+      assert.equal(host.dataset.pulse, 'off');
+      paintProgressBar(host, fourStage(), { pulse: true });
+      assert.equal(host.dataset.pulse, 'on');
+    } },
+    { name: 'fill elements survive repaints (the width glides)', run() {
+      const host = doc.createElement('div');
+      paintProgressBar(host, fourStage());
+      const first = host.querySelector('.run-prog-sec[data-stage="review"] .run-prog-fill');
+      paintProgressBar(host, fourStage({ fill: [1, 1, 0.8, 0] }));
+      assert.equal(host.querySelector('.run-prog-sec[data-stage="review"] .run-prog-fill'), first);
+      assert.equal(pct(first), 80);
+    } },
+  ]);
+});
+
+test('paintChainBar: one continuous fill at the group fraction', () => {
+  const host = doc.createElement('div');
+  paintChainBar(host, { total: 3, fraction: 0.5, text: 'Run 2 of 3 · Build', parts: [] });
+  assert.equal(host.querySelectorAll('.run-chain-track').length, 1);
+  assert.equal(host.querySelectorAll('.run-chain-part').length, 0);
+  assert.equal(pct(host.querySelector('.run-chain-track > .run-prog-fill')), 50);
+  assert.equal(host.querySelector('.run-chain-label').textContent, 'Run 2 of 3 · Build');
+});
+
 test('paintChainBar', async () => {
   const chain = () => ({
     total: 3, index: 2, fraction: 0.5, tone: 'blue', text: 'Run 2 of 3 · Plan',
@@ -136,41 +157,6 @@ test('paintChainBar', async () => {
       paintChainBar(host, null);
       assert.equal(host.hidden, true);
       assert.doesNotThrow(() => paintChainBar(null, chain()));
-    } },
-    { name: 'three parts with state, tone, width and label', run() {
-      const host = doc.createElement('div');
-      paintChainBar(host, chain());
-      assert.equal(host.hidden, false);
-      const parts = host.querySelectorAll('.run-chain-part');
-      assert.equal(parts.length, 3);
-      assert.equal(parts[0].dataset.state, 'done');
-      assert.equal(parts[0].dataset.tone, 'green');
-      assert.equal(pct(parts[1].firstElementChild), 30);
-      assert.equal(parts[1].firstElementChild.className, 'run-prog-fill');
-      assert.equal(host.querySelector('.run-chain-label').textContent, 'Run 2 of 3 · Plan');
-      assert.equal(host.querySelector('.run-chain-track').getAttribute('aria-hidden'), 'true');
-    } },
-    { name: 'repaint keeps the part fills and moves them', run() {
-      const host = doc.createElement('div');
-      paintChainBar(host, chain());
-      const fill = host.querySelectorAll('.run-prog-fill')[1];
-      const next = chain();
-      next.parts[1].fraction = 0.8;
-      next.text = 'Run 2 of 3 · Build';
-      paintChainBar(host, next);
-      assert.strictEqual(host.querySelectorAll('.run-prog-fill')[1], fill);
-      assert.equal(pct(fill), 80);
-      assert.equal(host.querySelector('.run-chain-label').textContent, 'Run 2 of 3 · Build');
-    } },
-    { name: 'a changed run count rebuilds the parts; a short parts list falls back to waiting', run() {
-      const host = doc.createElement('div');
-      paintChainBar(host, chain());
-      paintChainBar(host, { total: 2, text: 'Run 1 of 2', parts: [{ state: 'current', fraction: 0.1, tone: 'amber' }] });
-      const parts = host.querySelectorAll('.run-chain-part');
-      assert.equal(parts.length, 2);
-      assert.equal(parts[0].dataset.tone, 'amber');
-      assert.equal(parts[1].dataset.state, 'waiting');
-      assert.equal(pct(parts[1].firstElementChild), 0);
     } },
   ]);
 });
@@ -203,13 +189,29 @@ test('renderRowLine', async () => {
 const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
 const rule = (sel) => (css.match(new RegExp(`^${sel.replace(/[.>]/g, '\\$&')}\\s*\\{([^}]*)\\}`, 'm')) || [])[1] || '';
 
+test('neutral bar CSS: ink steps 40/60/80/100%, --line-2 upcoming, no tone colours, pulse edge off under reduced motion', () => {
+  for (const [stage, n] of [['plan', 40], ['build', 60], ['review', 80], ['ready', 100]]) {
+    assert.match(css, new RegExp(`\\.run-prog-sec\\[data-stage="${stage}"\\]\\{--sec-ink:color-mix\\(in srgb,var\\(--ink\\) ${n}%,var\\(--line-2\\)\\);\\}`));
+  }
+  assert.match(rule('.run-prog-sec'), /background:var\(--line-2\)/);
+  assert.doesNotMatch(css, /data-tone="(?:amber|green|red)"\][^{]*\.run-prog-fill/);
+  assert.match(rule('.run-chain-track > .run-prog-fill'), /background:var\(--ink-2\)/);
+  // A1: the Runs list row bar is ink-grey too; its data-tone stays for other readers, but no CSS colours it.
+  assert.match(rule('.runs-row-prog > i'), /background:var\(--ink-2\)/);
+  assert.doesNotMatch(css, /\.runs-row-prog\[data-tone/);
+  assert.doesNotMatch(css, /\.runs-row-prog[^{]*\{[^}]*--blue/);
+  assert.match(css, /prefers-reduced-motion: reduce\)\{[^@]*\.run-prog\[data-pulse="on"\] \.run-prog-sec\.is-current > \.run-prog-fill::after\{animation:none;\}/);
+});
+
 test('run progress layout CSS', async () => {
   await checkRows([
     { name: 'the sheet head is a grid, not a squeezing flex row', run() {
       assert.match(rule('.rd-sheet-head'), /display:\s*grid/);
     } },
-    { name: 'the bars span the full head width', run() {
-      assert.match(rule('.rd-sheet-head > .run-prog'), /grid-column:\s*1\s*\/\s*-1/);
+    { name: 'the bars take the status block\'s width: a grid, never a squeezing flex row (slice 4, D19)', run() {
+      assert.match(rule('.run-status'), /display:\s*grid/);
+      assert.match(rule('.rd-sheet-head'), /grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+      assert.doesNotMatch(css, /(^|\})\.rd-now-top\{display:flex/m, 'the old orb row no longer lays the block out');
     } },
     { name: 'the hover detail opens above the bar', run() {
       const r = rule('.run-prog-detail');

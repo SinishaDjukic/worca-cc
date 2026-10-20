@@ -1,5 +1,5 @@
 // test/ui-schedules-tabs.test.mjs
-// The Schedules view's three tabs (Activity | Once | Repeating — the Statistics .seg idiom),
+// The Schedules view's three tabs (Activity | Once | Repeating — the one underline .tabs strip, review B4),
 // routed as #schedules[/once|/repeating] (docs/scheduled-runs.md "UI").
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -54,10 +54,10 @@ async function boot(hash) {
 const paneShown = (doc, name) => !doc.querySelector(`[data-pane="${name}"]`).hidden;
 const onTab = (doc) => doc.querySelector('#schedules-tabs button.on')?.dataset.tab;
 
-test('#schedules opens on Activity; the strip is the Statistics .seg with counts; #schedules/once and /repeating route the panes', async () => {
+test('#schedules opens on Activity; the strip is the one .tabs strip with counts; #schedules/once and /repeating route the panes', async () => {
   let window = await boot('#schedules');
   let doc = window.document;
-  assert.ok(doc.getElementById('schedules-tabs').classList.contains('seg'), 'reuses the .seg segmented control');
+  assert.ok(doc.getElementById('schedules-tabs').classList.contains('tabs'), 'the one underline tab strip (review B4)');
   assert.deepEqual([...doc.querySelectorAll('#schedules-tabs button')].map((b) => b.dataset.tab), ['activity', 'once', 'repeating']);
   assert.equal(onTab(doc), 'activity');
   assert.deepEqual([paneShown(doc, 'activity'), paneShown(doc, 'once'), paneShown(doc, 'repeating')], [true, false, false]);

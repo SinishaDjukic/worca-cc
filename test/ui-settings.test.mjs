@@ -159,7 +159,7 @@ test('Settings › Tags: the switch is off by default; on with no tag ticked Man
   assert.equal(hint.hidden, true, 'off: no hint');
   sw.click();
   assert.equal(hint.hidden, false, 'on, nothing Mandatory: the hint shows');
-  assert.equal(hint.textContent, 'No tag is marked Mandatory yet, so runs are not blocked.');
+  assert.equal(hint.textContent, 'No cost tag is marked Mandatory yet, so runs are not blocked.');
   const card = doc.getElementById('tag-dims-settings-card');
   card.querySelector('.tag-dim-add').click();
   const row = card.querySelector('.tag-dim-row');
@@ -167,4 +167,73 @@ test('Settings › Tags: the switch is off by default; on with no tag ticked Man
   label.value = 'Client'; label.dispatchEvent(new window.Event('input', { bubbles: true }));
   row.querySelector('.tag-dim-required').click();
   assert.equal(hint.hidden, true, 'a Mandatory tag: the hint goes');
+});
+
+async function openLabels({ flags = { runTags: true, runLabels: true }, labels = [], sent = [], answer = () => okJson({}) } = {}) {
+  const ctx = await boot({ fetchHandler: (url, opts) => {
+    // as openTags: the Settings view reads its settings before painting the tags pane
+    if (url.includes('/api/settings')) return okJson({ root: '', default: '/home/me', tagDimensions: [], enforceTags: false });
+    if (url === '/api/labels') { sent.push(['GET', url]); return okJson({ labels }); }
+    if (url.startsWith('/api/labels/')) { sent.push([opts.method || 'GET', url, opts.body ? JSON.parse(opts.body) : null]); return answer(url, opts); }
+    if (url.startsWith('/api/tag-dimensions')) return okJson({ dims: [], team: null });
+    return null;
+  } });
+  const { window } = ctx;
+  applyFlags(flags, window.document);
+  window.location.hash = 'settings/tags';
+  window.dispatchEvent(new window.Event('hashchange'));
+  for (let i = 0; i < 4; i++) await tick();
+  return { window, doc: window.document, sent };
+}
+const menuPick = (doc, card, text) => {
+  card.querySelector('.lbl-set-more').click();
+  [...doc.querySelectorAll('.wfv-menu [role="menuitem"]')].find((i) => i.textContent.trim() === text).click();
+};
+
+test('Settings › Labels & cost tags: the Labels section lists labels; Delete names the run count, then sends DELETE', async () => {
+  const { doc, sent } = await openLabels({ labels: [{ label: 'hotfix', count: 3 }] });
+  const card = doc.getElementById('labels-settings-card');
+  assert.equal(card.closest('.settings-pane').dataset.tab, 'tags');
+  assert.equal(card.querySelector('h2').textContent, 'Labels');
+  assert.deepEqual([...card.querySelectorAll('.lbl-set-name')].map((n) => n.textContent), ['hotfix']);
+  assert.equal(card.querySelector('.lbl-set-count').textContent, 'on 3 runs');
+  menuPick(doc, card, 'Delete'); await tick();
+  assert.equal(doc.getElementById('confirm-message').textContent, 'Remove “hotfix” from 3 runs?');
+  doc.getElementById('confirm-ok').click();
+  for (let i = 0; i < 3; i++) await tick();
+  assert.deepEqual(sent.filter((s) => s[0] === 'DELETE').map((s) => s[1]), ['/api/labels/hotfix']);
+});
+
+test('Settings › Labels & cost tags: Rename onto an existing label asks to merge, then posts { from, to }', async () => {
+  const { window, doc, sent } = await openLabels({ labels: [{ label: 'hotfix', count: 3 }, { label: 'urgent', count: 2 }] });
+  const card = doc.getElementById('labels-settings-card');
+  menuPick(doc, card, 'Rename'); await tick();
+  const input = doc.querySelector('#confirm-fields input');
+  input.value = 'Urgent'; input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  doc.getElementById('confirm-ok').click(); await tick(); await tick();
+  assert.equal(doc.getElementById('confirm-message').textContent, 'Merge “hotfix” into “urgent” on 3 runs?');
+  doc.getElementById('confirm-ok').click();
+  for (let i = 0; i < 3; i++) await tick();
+  assert.deepEqual(sent.filter((s) => s[0] === 'POST').map((s) => [s[1], s[2]]), [['/api/labels/rename', { from: 'hotfix', to: 'Urgent' }]]);
+});
+
+test('Settings › Labels & cost tags: a refused rename shows the server message in the section error line', async () => {
+  const bad = () => Promise.resolve({ ok: false, status: 400, json: async () => ({ error: 'a label is at most 32 characters' }) });
+  const { window, doc } = await openLabels({ labels: [{ label: 'hotfix', count: 3 }], answer: bad });
+  menuPick(doc, doc.getElementById('labels-settings-card'), 'Rename'); await tick();
+  const input = doc.querySelector('#confirm-fields input');
+  input.value = 'x'.repeat(40); input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  doc.getElementById('confirm-ok').click();
+  for (let i = 0; i < 4; i++) await tick();
+  const err = doc.getElementById('labelsSettingsError');
+  assert.deepEqual([err.hidden, err.textContent], [false, 'a label is at most 32 characters']);
+});
+
+test('Settings › Labels & cost tags: with runLabels off the Labels section is gated and /api/labels is never read', async () => {
+  const { doc, sent } = await openLabels({ flags: { runTags: true } });
+  const card = doc.getElementById('labels-settings-card');
+  assert.equal(card.dataset.flag, 'runLabels');
+  assert.equal(card.querySelectorAll('.lbl-set-row').length, 0);
+  assert.equal(sent.length, 0);
+  assert.ok(doc.getElementById('tag-dims-settings-card'), 'the Cost tags section is still there');
 });

@@ -95,3 +95,8 @@ test('askCommandEnv keeps the base, drops tokens and model credentials', () => {
     CLAUDE_CODE_OAUTH_TOKEN: 't', GITHUB_TOKEN: 'g', WORCA_HOME: '/w', OPENAI_API_KEY: 'o', PORT: '4317' });
   assert.deepEqual(env, { PATH: '/bin', HOME: '/h', LANG: 'C', SSH_AUTH_SOCK: '/s' });
 });
+
+test('$WORCA_ASK_OUT: the variable form passes; the spelled-out .worca-cc path is refused', () => {
+  assert.equal(checkAskCommand('npx playwright screenshot http://localhost:3000 "$WORCA_ASK_OUT/home.png"', ctx), null);
+  assert.match(checkAskCommand('npx playwright screenshot http://localhost:3000 ~/.worca-cc/ask/ask_00000001/out/home.png', ctx), /names a protected path/);
+});

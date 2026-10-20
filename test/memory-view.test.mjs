@@ -32,7 +32,8 @@ test('renderHealthCard: badge, reasons, counters, and the Defragment control in 
   const liveBtn = live.querySelector('.mem-defrag');
   assert.equal(liveBtn.disabled, false);
   assert.equal(liveBtn.dataset.runId, 'abc-123');
-  assert.match(liveBtn.textContent, /Defragmenting/);
+  assert.equal(liveBtn.textContent, 'Open run');
+  assert.match(live.querySelector('.mem-counters').textContent, / · defragmenting now$/, 'the state stays in the line');
   assert.equal(live.querySelector('.mem-run'), null, 'no second control');
   const failing = renderHealthCard({ ...REPORT, health: { ...HEALTH, level: 'failing', failedWrites: 2, reasons: ['2 memory writes by runs failed since the last defragment — last in run abc12345; that run\'s History detail carries the reason'] } }, { doc, host: HOST });
   assert.equal(failing.querySelector('.badge').textContent, 'Writes failing');
