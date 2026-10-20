@@ -220,7 +220,7 @@ export function createDimensionEditor(doc, { value = [] } = {}) {
   head.innerHTML = '<tr><th>Cost tag</th><th>Values</th><th>Default</th><th>Mandatory</th><th></th></tr>';
   const rows = doc.createElement('tbody'); rows.className = 'tag-dim-rows';
   table.append(head, rows);
-  const add = doc.createElement('button'); add.type = 'button'; add.className = 'btn btn-sm tag-dim-add'; add.textContent = 'Add a cost tag';
+  const add = doc.createElement('button'); add.type = 'button'; add.className = 'btn btn-sm tag-dim-add'; add.textContent = 'Add cost tag';
   const changed = () => el.dispatchEvent(new doc.defaultView.Event('input', { bubbles: true }));   // marks the card dirty
   const td = (...kids) => { const c = doc.createElement('td'); c.append(...kids); return c; };
   const addRow = (d = { key: '', label: '', values: [], required: false }) => {
