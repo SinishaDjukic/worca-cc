@@ -123,7 +123,7 @@
   --r-card:var(--r-md);
   --r-ctrl:var(--r-sm);
   /* Type scale (docs/design-system.md › Type): one scale, no half sizes. 11 is the floor. */
-  --fs-caption:11px;--fs-meta:12px;--fs-body:13px;--fs-section:15px;--fs-subpage:18px;--fs-page:22px;--fs-stat:22px;--fs-hero:26px;
+  --fs-caption:11px;--fs-meta:12px;--fs-body:13px;--fs-section:15px;--fs-subpage:18px;--fs-page:22px;--fs-stat:22px;--fs-hero:32px;
   --lh-body:1.5;--lh-title:1.25;
   --shadow-pop:0 6px 28px light-dark(rgba(25,25,27,.10),rgba(0,0,0,.55)),0 1px 2px light-dark(rgba(25,25,27,.06),rgba(0,0,0,.4));
   --shadow-sheet:0 18px 60px light-dark(rgba(25,25,27,.14),rgba(0,0,0,.65)),0 2px 6px light-dark(rgba(25,25,27,.06),rgba(0,0,0,.4));
