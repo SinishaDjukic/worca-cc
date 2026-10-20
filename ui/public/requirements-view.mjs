@@ -454,7 +454,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       : rev ? questionCard(f, rev, { revise: true })
         : f.pending ? questionCard(f, { ...f.pending, n: rounds.find((r) => r.turnId === f.pending.turnId)?.n })
           : buildCardShown(f) ? buildCard(f)
-            : f.state === 'decide' ? decideCard(f)
+            : f.state === 'decide' || decideNeeded(f) ? decideCard(f)
               : null;
     return h('div', { class: 'req-left' },
       hasStarts ? runsCard(f) : null,
@@ -521,6 +521,11 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         waitingIds.length ? h('button', { type: 'button', class: 'btn-go', 'data-ui': 'follow-up', onclick: () => post('follow-up', {}) },
           `Done, ask about ${waitingIds[0]}${waitingIds.length > 1 ? ` and ${waitingIds.length - 1} more` : ''}`) : null));
   }
+
+  // Something to decide, from the data rather than the state (A2 D11): a started feature still decides its
+  // assumptions and asks about the rejected ones (the state there is `started`, never `decide`).
+  const decideNeeded = (f) => !f.pending && f.status === 'done'
+    && (((f.spec && f.spec.assumptions) || []).some((a) => a.status === 'open') || (f.unaskedRejections || []).length > 0);
 
   // The Ready to build card is the current card: Ready, nothing to answer or change, not locked.
   const buildCardShown = (f) => f.state === 'ready' && !isLocked(f) && !f.pending && revising == null;

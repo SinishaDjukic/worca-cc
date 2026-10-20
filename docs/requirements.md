@@ -83,3 +83,4 @@ rejected assumption and the rest is decided.
 - **Start again with v<n>** starts another run from the changed spec; it is enabled only when something
   changed.
 - Once a run has started, the feature's project or workspace can no longer be changed.
+- Rejecting an assumption and **Done, ask about A-n** still work on a started feature, as before the start.

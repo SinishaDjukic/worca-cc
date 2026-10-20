@@ -1371,3 +1371,38 @@ test('Ready to build: a failed workflow list says Auto is used', async () => {
   assert.deepEqual([...host.querySelectorAll('[data-ui="build-workflow"] option')].map((o) => o.value), ['wf_auto']);
   assert.equal(host.querySelector('.req-build-warn').textContent, 'Could not load workflows; Auto is used.');
 });
+
+test('Started: the Decide card stays reachable (A2 D11): Done, ask about A-n and Confirm the N left, under the runs card', async () => {
+  let f = twoStarts({ unaskedRejections: ['A-3'] });
+  f.spec.assumptions = [{ id: 'A-1', text: 'Full refund', status: 'confirmed' }, { id: 'A-3', text: 'No partial cancel', status: 'rejected' }];
+  const calls = fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: f, turns: [] }),
+    'POST /api/requirements/4/follow-up': () => ({ feature: f, turns: [] }), 'POST /api/requirements/4/assumptions': () => ({ feature: f, turns: [] }) });
+  const { host, view } = make();
+  await view.show('feature/4');
+  const left = () => [...host.querySelector('.req-left').children];
+  const decide = () => host.querySelector('.req-left .req-decide');
+  assert.ok(decide(), 'a started feature with an unasked rejection shows the Decide card');
+  assert.ok(left().indexOf(decide()) > left().indexOf(host.querySelector('.req-runs')), 'under the runs card');
+  const follow = host.querySelector('[data-ui="follow-up"]');
+  assert.equal(follow.textContent, 'Done, ask about A-3');
+  follow.click();
+  await tick(); await tick();
+  assert.deepEqual(calls.filter((c) => c.method === 'POST').at(-1), { method: 'POST', url: '/api/requirements/4/follow-up', body: {} });
+
+  f = twoStarts({ unaskedRejections: [] });
+  f.spec.assumptions = [{ id: 'A-1', text: 'Full refund', status: 'open' }, { id: 'A-2', text: 'Email', status: 'open' }];
+  await view.changed(4);
+  const all = host.querySelector('[data-ui="confirm-all"]');
+  assert.equal(all.textContent, 'Confirm the 2 left');
+  all.click();
+  await tick(); await tick();
+  assert.deepEqual(calls.filter((c) => c.method === 'POST').at(-1), { method: 'POST', url: '/api/requirements/4/assumptions', body: { confirmOpen: true } });
+
+  f = twoStarts({ unaskedRejections: [] });
+  f.spec.assumptions = [{ id: 'A-1', text: 'Full refund', status: 'confirmed' }];
+  await view.changed(4);
+  assert.equal(decide(), null, 'nothing to decide: no Decide card on a started feature');
+  f = twoStarts({ unaskedRejections: ['A-3'], status: 'archived', state: 'archived' });
+  await view.changed(4);
+  assert.equal(decide(), null, 'never while locked');
+});
