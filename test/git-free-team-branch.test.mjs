@@ -152,8 +152,11 @@ test('syncSnapshot: past 20 changed files one archive replaces the per-file read
 test('lsRemoteHttps and readBranchFile take a per-request timeout (a run start bounds its discovery)', { timeout: 5_000 }, async () => {
   gh.repo('acme/slowls', { files: { a: '1' } });
   const head = gh.commit('acme/slowls', { branch: 'worca-policy', orphan: true, files: { 'p.json': '{}' } });
+  // Never answers those reads until the signal aborts (3 s at most, so a failure ends the test). The 3 s timer also stands in
+  // for the socket a real fetch holds open: AbortSignal.timeout's own timer is unref'd, and without a ref'd handle Node 22
+  // finds the event loop empty and cancels this test and every later one in the file.
   ghTesting.setFetch((url, init) => (/\/git\/ref\/heads\/|\/contents\//.test(new URL(url).pathname)
-    ? new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason)))
+    ? new Promise((_, reject) => { const tm = setTimeout(() => reject(new Error('hung')), 3_000); init.signal.addEventListener('abort', () => { clearTimeout(tm); reject(init.signal.reason); }); })
     : gh.fetch(url, init)));
   try {
     const t0 = Date.now();
