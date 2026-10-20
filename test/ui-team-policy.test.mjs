@@ -111,7 +111,7 @@ test('Team policy page: the Plugins tab lists what the policy expects and instal
   const row = doc.querySelector('#tp-sec-plugins tr[data-name="acme-jira"]');
   assert.match(row.textContent, /expected by acme\/gateway · from acme/);
   assert.match(row.textContent, /≥ 1.2.0/);
-  assert.equal(row.querySelector('.badge.amber').textContent, 'not installed');
+  assert.equal(row.querySelector('.badge.grey').textContent, 'not installed');
   assert.equal(row.querySelector('.pl-policy-install').dataset.marketplace, 'acme');
   assert.ok(doc.querySelector('#tp-sec-plugins .pl-policy-setup'), 'Set up… opens the checklist');
   assert.equal(doc.querySelector('#tp-sec-plugins .card-head .pl-policy-all').textContent, 'Install all…', 'the fixture has one missing plugin');

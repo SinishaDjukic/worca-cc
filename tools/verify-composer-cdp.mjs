@@ -627,6 +627,19 @@ try {
       && tours.filter((r) => r.width <= 760).every((r) => r.hops.length > 0 && r.hops[0].id === 'wfv-lib-toggle'), tours);
   }
 
+  // ---- (20) Save is the primary: ink, never washed out to grey (docs/design-system.md › Button) ---------------------
+  // A fresh page (the tour block above leaves its Library and overlay state behind): a distinct URL, so the load fires.
+  {
+    await cdp('Page.navigate', { url: `${base}/?save=20#workflows` });
+    await waitEvent('Page.loadEventFired');
+    for (let i = 0; i < 60; i += 1) { if (await ev(`!!document.getElementById('wfv-save') && !!document.getElementById('wfv-save').offsetParent`)) break; await sleep(100); }
+    const save = await ev(`(() => { const b = document.getElementById('wfv-save'); const p = document.createElement('i'); p.style.color = 'var(--ink)';
+      document.body.append(p); const ink = getComputedStyle(p).color; p.remove(); const cs = getComputedStyle(b);
+      return { bg: cs.backgroundColor, ink, opacity: Number(cs.opacity), primary: b.classList.contains('btn-primary') }; })()`);
+    check(20, 'Save is the primary button, ink and never washed out (opacity at least 0.7, disabled or not)',
+      save.primary && save.bg === save.ink && save.opacity >= 0.7, save);
+  }
+
   check('console', 'no page errors or exceptions', errors.length === 0, errors.slice(0, 5));
 } catch (e) {
   failed += 1;

@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
-import { auditButtons, auditSizes, auditSurface, auditType, BUTTON_SPEC, SIZE_SPEC, SURFACE_SPEC, TYPE_SPEC } from '../tools/button-audit.mjs';
+import { auditButtons, auditSizes, auditStray, auditSurface, auditType, BUTTON_SPEC, SIZE_SPEC, STRAY_SPEC, SURFACE_SPEC, TYPE_SPEC } from '../tools/button-audit.mjs';
 
 const OK = { borderTopLeftRadius: '6px', borderTopRightRadius: '6px', borderBottomRightRadius: '6px', borderBottomLeftRadius: '6px',
   backgroundImage: 'none', boxShadow: 'none' };
@@ -50,7 +50,7 @@ test('two primaries in one group of actions fail once', () => {
 
 test('controls (tabs, nav rows, chips, role=button rows) and hidden buttons are skipped', () => {
   assert.deepEqual(run(`<nav class="nav"><button>Runs</button></nav><button role="tab">Logs</button>
-    <button class="proj-fchip">All</button><div role="button" class="run-row">Row</div><button class="btn-go" data-hidden>x</button>`), []);
+    <button class="filter-chip">All</button><div role="button" class="run-row">Row</div><button class="btn-go" data-hidden>x</button>`), []);
 });
 
 test('under a coarse pointer every button must be at least 40px', () => {
@@ -111,7 +111,7 @@ test('auditSurface: each rule returns for its failing fixture (review A–C)', (
 test('auditSurface: the passing fixture returns nothing', () => {
   assert.deepEqual(surface(`<div class="tabs"><button class="tab">General <span class="flag-chip">Beta</span></button></div>
     <button class="chat-home-act" id="a">New run</button><button class="info-tip" id="i">i</button>
-    <div id="f">menu</div><section class="card" id="c"><div class="file" id="fz">Choose files</div></section>`, { heights: { a: 56, i: 24 },
+    <div id="f">menu</div><section class="card" id="c"><div class="file" id="fz">Choose files</div></section>`, { heights: { a: 56, i: 28 },
     styles: { f: { position: 'fixed', boxShadow: 'rgba(0, 0, 0, 0.1) 0px 6px 28px 0px' }, c: BORDER, fz: BORDER } }), []);
 });
 
@@ -148,10 +148,10 @@ test('QA 1: a truncated badge fails the surface audit; a whole one passes', () =
     { heights: { t: 60 }, sizes: { b: { scroll: 81, client: 81 } } }), []);
 });
 
-test('a label that types "+" fails as typed-plus; the plus icon passes; listed debt passes', () => {
+test('a label that types "+" fails as typed-plus; the plus icon passes; nothing is excused any more', () => {
   assert.deepEqual(run('<button class="btn">+ Add folder</button>').map((v) => v.rule), ['typed-plus']);
   assert.deepEqual(run('<button class="btn"><span class="ic"></span>Add folder</button>'), []);
-  assert.deepEqual(run('<button class="btn">+ Add server</button>'), []);
+  assert.deepEqual(run('<button class="btn">+ Add server</button>').map((v) => v.rule), ['typed-plus']);
   assert.deepEqual(run('<button class="btn">+3</button>'), []);
 });
 
@@ -178,4 +178,20 @@ test('auditType: 12.5px and 13.33px text fail once per signature; steps, em code
   const env = { style: (el) => ({ fontSize: size[el.id] || '13px' }),
     rect: (el) => (el.id === 'g' ? { width: 0, height: 0 } : { width: 10, height: 10 }) };
   assert.deepEqual(auditType(doc.body, TYPE_SPEC, env).map((v) => [v.sig, v.got]), [['p.m', '12.5px'], ['button', '13.3333px']]);
+});
+
+test('auditStray: a button outside .btn and outside the shared controls is listed; .btn, chips, tabs and rows are not', () => {
+  const { window } = new JSDOM(`<body><div id="v">
+    <button class="btn btn-sm">Ok</button><button class="filter-chip" aria-pressed="true">All</button>
+    <button class="tab" role="tab">A</button><button class="wfl-folder">F</button>
+    <button class="linkish">Show all</button><button class="tp-chip-rm">x</button><div role="button" class="odd">r</div></div></body>`);
+  const env = { rect: () => ({ width: 10, height: 10 }) };
+  const got = auditStray(window.document.getElementById('v'), STRAY_SPEC, env).map((f) => f.sig);
+  assert.deepEqual(got, ['button.linkish', 'button.tp-chip-rm', 'div.odd']);
+});
+test('auditStray is self-contained (it runs in the page as its source)', () => {
+  assert.doesNotThrow(() => new Function(`return (${auditStray})`)());
+});
+test('typed-plus: no label is excused any more (slice 3 emptied plusDebt)', () => {
+  assert.deepEqual(BUTTON_SPEC.plusDebt, []);
 });

@@ -37,3 +37,9 @@ test('extension CSS has no colour literal (same rule as test/ui-theme-tokens.tes
     assert.deepEqual(bodies.match(RE) || [], [], f);
   }
 });
+
+test('the sidebar\'s own CSS stays on the type and field scale (docs/design-system.md › Type, › Field)', () => {
+  const own = readFileSync(new URL('../extension/src/sidebar/sidebar.css', import.meta.url), 'utf8');
+  assert.doesNotMatch(own, /font-size:(?:12\.5|17)px/);
+  assert.doesNotMatch(own, /\.wx-settings-row \.input\{[^}]*padding/);
+});

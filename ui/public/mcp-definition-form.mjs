@@ -17,6 +17,8 @@ function button(doc, cls, label, data = {}) {
   Object.assign(b.dataset, data);
   return b;
 }
+// One "Add …" button: the shared plus icon, never a typed "+" (docs/design-system.md › Button).
+const addBtn = (doc, label, data) => { const b = button(doc, 'btn btn-sm', label, data); b.prepend(icon(doc, 'plus', 14)); return b; };
 
 const PLACEHOLDER_RE = /\{([A-Za-z][A-Za-z0-9_]{0,31})\}/g;
 // Mirrors QUERY_SECRET_RE in src/core/mcp-secrets.mjs (test/ui-mcp-definition-form.test.mjs pins the two).
@@ -259,7 +261,7 @@ export function createDefinitionForm(doc, api, form, { edit }) {
       row.appendChild(rm);
       rows.appendChild(row);
     });
-    rows.appendChild(button(doc, 'btn btn-sm', form.type === 'stdio' ? '+ Add variable' : '+ Add header', { addRow: '1' }));
+    rows.appendChild(addBtn(doc, form.type === 'stdio' ? 'Add variable' : 'Add header', { addRow: '1' }));
     parts.push(rows, derived, input('Description', 'description', { mono: false }), errorsEl);
     root.replaceChildren(...parts);
     changed();

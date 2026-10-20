@@ -36,7 +36,7 @@ import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { auditButtons, auditSizes, auditType, BUTTON_SPEC, SIZE_SPEC, TYPE_SPEC } from './button-audit.mjs';
+import { auditButtons, auditSizes, auditStray, auditType, BUTTON_SPEC, SIZE_SPEC, STRAY_SPEC, TYPE_SPEC } from './button-audit.mjs';
 import { makeRecord } from '../test/fixtures/team-metrics/records.mjs';
 
 const args = process.argv.slice(2);
@@ -64,6 +64,17 @@ const BUTTON_AUDIT = `(${auditButtons})(document.body, ${JSON.stringify(BUTTON_S
 const buttonReport = [];   // { state, theme, sig, rule, got, text }
 const sizeReport = [];     // { state, theme, sig, rule, got, text }
 const designChecks = [];   // { what, ok, got } from the projects-detail, kitchen and cost tags states
+// D13: per state, the view (or the open dialog) whose buttons must all be .btn or a shared control.
+const STRAY_ROOTS = { workflows: '[data-view="workflows"]', 'workflows-library-scripts': '[data-view="workflows"]',
+  'workflows-chat-open': '[data-view="workflows"]', 'settings-plugins': '[data-view="marketplace"]', connectors: '[data-view="connectors"]',
+  'settings-models': '[data-view="models"]', 'settings-providers': '[data-view="providers"]', 'team-policy': '[data-view="team-policy"]',
+  'getting-started': '[data-view="getting-started"]', 'modal-confirm': '#confirm-modal', 'modal-export': '#export-modal',
+  'modal-stop': '#stop-modal', 'modal-shipit': '#shipit-modal', 'modal-viewer': '#viewer-card' };
+const STRAY_AUDIT = (sel) => `(${auditStray})(document.querySelector(${JSON.stringify(sel)}), ${JSON.stringify(STRAY_SPEC)}, null)`;
+const strayReport = [];   // { state, theme, sig, rule, text }
+// Beside STRAY_ROOTS: the same action selector as test/ui-catalogue-rulebook.test.mjs (keep both in step).
+const FOOT = ['.confirm-actions', '.stop-actions', '.add-project-actions', '.mode-foot', '.report-head-actions', '.publish-actions',
+  '.shipit-actions', '.mv-editor-btns', '.viewer-actions', '[data-card-actions]'].map((s) => `${s} .btn`).concat('#plugin-modal-close', '#claude-setup-close').join(', ');
 const DEBT = JSON.parse(readFileSync(new URL('../test/fixtures/design-debt.json', import.meta.url), 'utf8'));
 const SIZE_AUDIT = `(${auditSizes})(document.body, ${JSON.stringify({ ...SIZE_SPEC, debt: DEBT.fieldSizeOverrides })}, null)`;
 const SIZE_STATES = new Set(['settings-general', 'settings-runs', 'settings-tags', 'settings-ask', 'settings-guardrails', 'settings-memory', 'settings-presets',
@@ -117,6 +128,9 @@ execFileSync('git', ['add', '-A'], { cwd: proj });
 execFileSync('git', ['commit', '-qm', 'init'], { cwd: proj });
 const { server, runs } = await import(new URL('ui/server.mjs', ROOT).href);
 srv = server;
+// The real server seeds the builtin marketplace at startup (ui/server.mjs), which an import skips. Seed it here, from the
+// local proof project so the Marketplace view's background refresh stays offline: the slice-3 checks measure its row.
+{ const { seedBuiltinMarketplace } = await import(new URL('src/core/marketplaces.mjs', ROOT).href); seedBuiltinMarketplace({ source: { url: proj, ref: null } }); }
 await new Promise((r) => srv.listen(0, '127.0.0.1', r));
 const base = `http://127.0.0.1:${srv.address().port}`;
 // These proofs measure the full UI, so pin the interface mode to Expert (docs/ui-levels.md) —
@@ -548,9 +562,10 @@ const states = [
     await go('team-metrics');
     await until(`document.querySelector('#tm-body table.tm-tbl')`, 'the team metrics tables');
   }],
-  // The five pages at 290 / 375 / 1440 (R-qa-2), and the fresh loads (R-qa-3).
+  // The five slice-2 pages and the seven slice-3 pages at 290 / 375 / 1440 (R-qa-2), and the fresh loads (R-qa-3).
   ['layout-widths', async () => {
-    const PAGES = ['settings', 'projects', 'schedules', 'stats', 'team-metrics'];
+    const PAGES = [...['settings', 'projects', 'schedules', 'stats', 'team-metrics'],
+      ...['workflows', 'marketplace', 'connectors', 'models', 'providers', 'team-policy', 'getting-started']];
     for (const width of [290, 375, 1440]) {
       await cdp('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: width < 600 });
       for (const page of PAGES) {
@@ -563,6 +578,12 @@ const states = [
           return { doc: [d.scrollWidth, d.clientWidth], main: [main.scrollWidth, main.clientWidth] }; })()`);
         designChecks.push({ what: `no sideways scroll: #${page} at ${width}px`,
           ok: m.doc[0] === m.doc[1] && m.main[0] <= m.main[1], got: m });
+        if (width === 1440 && page !== 'workflows' && !['settings', 'projects', 'schedules', 'stats', 'team-metrics'].includes(page)) {
+          const pi = await ev(`(() => { const v = document.querySelector('[data-view=${JSON.stringify(page)}]');
+            const ps = [...v.querySelectorAll('.page-intro')].filter((e) => e.offsetParent); const t = ps[0] ? ps[0].textContent.trim() : '';
+            return { n: ps.length, len: t.length, one: !/[.!?]\\s+\\S/.test(t.replace(/[.!?]$/, '')), t }; })()`);
+          designChecks.push({ what: `page intro: #${page} shows one sentence of at most 140 characters`, ok: pi.n === 1 && pi.len <= 140 && pi.one, got: pi });
+        }
         if (page === 'stats' && width === 290) {   // R-ux-7: the range buttons really wrap, each 28px
           const r = await ev(`(() => { const bs = [...document.querySelectorAll('#stats-range button')];
             return { n: bs.length, rows: new Set(bs.map((b) => b.offsetTop)).size, h: [...new Set(bs.map((b) => Math.round(b.getBoundingClientRect().height)))] }; })()`);
@@ -605,6 +626,7 @@ const states = [
   }],
   ['connectors', async () => { await go('connectors'); }],
   ['team-policy', async () => { await go('team-policy'); }],
+  ['getting-started', async () => { await go('getting-started'); await until(`document.querySelector('#getting-started-host:not([hidden])')`, 'the tiles'); }],
   ['settings-general', async () => { await go('settings'); await until(`document.querySelector('.settings-pane[data-tab="general"]:not(.hidden) .card')`, 'general pane'); }],
   // Tooltips open on mouseover / focusin (app.js TIP_SELECTOR handlers), not on click: a bubbling
   // synthetic mouseover reaches the document listener whatever the page's focus state.
@@ -650,6 +672,25 @@ const states = [
   ['modal-stop', async () => { await unhide('#stop-modal'); }, async () => { await rehide('#stop-modal'); }],
   ['modal-shipit', async () => { await unhide('#shipit-modal'); }, async () => { await rehide('#shipit-modal'); }],
   ['modal-viewer', async () => { await unhide('#viewer-card'); }, async () => { await rehide('#viewer-card'); }],
+  // D16: every index.html dialog, opened alone at 1440px: 24px card padding, 32px footer and head actions.
+  ['dialog-sizes', async () => {
+    await go('new');
+    const ids = await ev(`[...document.querySelectorAll('.viewer-modal[id]')].map((m) => m.id)`);
+    for (const id of ids) {
+      if (id === 'model-editor-modal') { await go('models'); await clickSel('#model-create-btn'); await until(`document.querySelector('#model-editor-modal:not(.hidden) .mv-editor')`, 'the editor dialog'); }
+      else await unhide(`#${id}`);
+      const d = await ev(`(() => { const m = document.getElementById(${JSON.stringify(id)}); const card = m.querySelector('.card');
+        const cs = card && getComputedStyle(card); const pad = cs ? [cs.paddingTop, cs.paddingRight, cs.paddingBottom, cs.paddingLeft] : null;
+        const hs = [...m.querySelectorAll(${JSON.stringify(FOOT)})].filter((b) => b.offsetParent).map((b) => [b.id || b.className, Math.round(b.getBoundingClientRect().height)]);
+        return { pad, hs }; })()`);
+      designChecks.push({ what: `dialog: #${id} pads its card 24px and its actions are 32px`,
+        ok: !!d.pad && d.pad.every((p) => p === '24px') && d.hs.every(([, h]) => h === 32), got: d });
+      // ux-2-1: the stray audit covers every index.html dialog, not only the 5 modal states in STRAY_ROOTS.
+      for (const v of await ev(STRAY_AUDIT(`#${id}`), 90000)) strayReport.push({ state: `dialog-sizes #${id}`, theme: 'light', ...v });
+      if (id === 'model-editor-modal') await ev(`(()=>{const c=document.querySelector('#model-editor-modal .mv-cancel');if(c)c.click();return 1;})()`);
+      await rehide(`#${id}`);
+    }
+  }],
   ['kitchen', async () => { await go('new'); await injectKitchen();
     // The #ds-proof block (test/fixtures/theme-kitchen-sink.html): the filter chip, the stacked table and the divided row.
     const ds = await ev(`(() => { const q = (s) => document.querySelector('#ds-proof ' + s); const cs = (e) => getComputedStyle(e);
@@ -705,6 +746,45 @@ const states = [
   }],
 ];
 
+// D16: what the slice makes visible, measured in Chrome (jsdom applies no stylesheet).
+// tok(css) resolves a token through a probe: getComputedStyle answers rgb(), never var(--x).
+const TOK = `const tok = (prop, v) => { const p = document.createElement('i'); p.style[prop] = v; document.body.append(p); const r = getComputedStyle(p)[prop]; p.remove(); return r; };`;
+const dividedRows = (what, sel, n) => async () => {
+  const dr = await ev(`(() => { const items = [...document.querySelectorAll(${JSON.stringify(sel)})];
+    return { n: items.length, rows: items.every((e) => e.classList.contains('drow') && !e.classList.contains('card') && e.parentElement.classList.contains('drows')
+      && (getComputedStyle(e).borderBottomStyle === 'solid' || e.matches(':last-child'))),
+      radius: [...new Set(items.map((e) => getComputedStyle(e).borderTopLeftRadius))] }; })()`);
+  designChecks.push({ what: `divided rows: ${what} items are rows, not boxes`, ok: (n ? dr.n === n : dr.n > 0) && dr.rows && dr.radius.join() === '0px', got: dr });
+};
+const quietChip = (what, sel) => async () => {
+  const qc = await ev(`(() => { ${TOK} const c = document.querySelector(${JSON.stringify(sel)}); if (!c) return null; const cs = getComputedStyle(c);
+    return { bg: cs.backgroundColor, border: cs.borderTopColor, h: Math.round(c.getBoundingClientRect().height), ink: tok('color', 'var(--ink)'), field: tok('backgroundColor', 'var(--field)') }; })()`);
+  designChecks.push({ what: `quiet chip: the selected ${what} filter is the --field tint with an ink border, 28px`, ok: !!qc && qc.bg === qc.field && qc.border === qc.ink && qc.bg !== qc.ink && qc.h === 28, got: qc });
+};
+const SLICE3_CHECKS = {
+  'settings-plugins': async () => {
+    // The proof server always has the built-in marketplace, so the Marketplaces list has at least 1 row (once /api/marketplaces answers).
+    await until(`document.querySelector('#marketplaces-list .pl-mkt-row')`, 'the marketplace rows');
+    await dividedRows('Marketplace', '#plugins-list .plugin-card, #plugins-available .pl-avail-card, #marketplaces-list .pl-mkt-row')();
+    const gb = await ev(`(() => { const b = document.querySelector('#marketplaces-list .pl-mkt-builtin'); const p = document.createElement('span'); p.className = 'badge grey';
+      document.body.append(p); const grey = getComputedStyle(p).backgroundColor; p.remove(); return b && { bg: getComputedStyle(b).backgroundColor, grey }; })()`);
+    designChecks.push({ what: 'grey badge: the built-in marketplace badge is grey, not amber', ok: !!gb && gb.bg === gb.grey, got: gb });
+  },
+  'settings-providers': dividedRows('Providers', '#providers-list .mv-pv-card', 4),
+  'settings-models': quietChip('Models', '.mv-filters .filter-chip[aria-pressed="true"]'),
+  'workflows-library-scripts': quietChip('Library', '.wfl .filter-chip[aria-pressed="true"]'),
+  'team-policy': async () => {
+    // No all-caps label (acronyms of 2-4 letters such as URL pass), and the sync chip in sans 12px when it is painted.
+    const tp = await ev(`(() => { const v = document.querySelector('[data-view="team-policy"]'); const caps = [];
+      for (const e of v.querySelectorAll('*')) { if (!e.offsetParent || e.children.length) continue; const t = e.textContent.trim();
+        if (getComputedStyle(e).textTransform === 'uppercase' || (/^[A-Z][A-Z -]{4,}$/.test(t))) caps.push(t.slice(0, 40)); }
+      const s = document.querySelector('#tp-sync .sync-chip-inner'); const cs = s && getComputedStyle(s);
+      return { caps, sync: s ? { font: cs.fontFamily, size: cs.fontSize } : null }; })()`);
+    const sansSync = !tp.sync || (!/mono/i.test(tp.sync.font) && tp.sync.size === '12px');
+    designChecks.push({ what: `team policy type: no all-caps label; the sync chip ${tp.sync ? 'is sans 12px' : 'is not painted on this home'}`, ok: tp.caps.length === 0 && sansSync, got: tp });
+  },
+};
+
 // ---- collection ---------------------------------------------------------------
 const report = { light: [], dark: [], 'system-dark': [], 'system-light': [] };   // violations per theme id
 const identity = {};                                                             // light identity rows per state
@@ -722,6 +802,7 @@ async function auditCurrent(stateId) {
     // THEMES entries are [id, data-theme, emulated scheme]; only the explicit light and dark themes are audited.
     if (theme[0] === 'light' || theme[0] === 'dark') {
       for (const v of await ev(BUTTON_AUDIT, 90000)) buttonReport.push({ state: stateId, theme: theme[0], ...v });
+      if (STRAY_ROOTS[stateId]) for (const v of await ev(STRAY_AUDIT(STRAY_ROOTS[stateId]), 90000)) strayReport.push({ state: stateId, theme: theme[0], ...v });
       if (SIZE_STATES.has(stateId)) for (const v of await ev(SIZE_AUDIT, 90000)) sizeReport.push({ state: stateId, theme: theme[0], ...v });
       if (TYPE_STATES.has(stateId)) for (const v of await ev(TYPE_AUDIT, 90000)) typeReport.push({ state: stateId, theme: theme[0], ...v });
     }
@@ -762,7 +843,7 @@ try {
   const phaseA = new Set(['running-list', 'running-list-compact', 'running-detail', 'running-detail-details', 'running-detail-tabs']);
   for (const [id, prepare, cleanup] of states) {
     if (!phaseA.has(id) || (ONLY.length && !ONLY.includes(id))) continue;
-    log(`state ${id}`); await prepare(); if (!['running-detail-tabs', 'layout-widths'].includes(id)) await auditCurrent(id); if (cleanup) await cleanup();
+    log(`state ${id}`); await prepare(); if (!['running-detail-tabs', 'layout-widths', 'dialog-sizes'].includes(id)) await auditCurrent(id); if (cleanup) await cleanup();
   }
   // answer → finish → history has a pipeline with a diff
   const q = entry.pendingQuestion;
@@ -778,7 +859,7 @@ try {
   // Phase B: everything else.
   for (const [id, prepare, cleanup] of states) {
     if (phaseA.has(id) || (ONLY.length && !ONLY.includes(id))) continue;
-    log(`state ${id}`); await prepare(); if (!['history-detail-tabs', 'layout-widths'].includes(id)) await auditCurrent(id); if (cleanup) await cleanup();
+    log(`state ${id}`); await prepare(); if (SLICE3_CHECKS[id]) await SLICE3_CHECKS[id](); if (!['history-detail-tabs', 'layout-widths', 'dialog-sizes'].includes(id)) await auditCurrent(id); if (cleanup) await cleanup();
   }
 
   // ---- outputs ------------------------------------------------------------------
@@ -834,11 +915,15 @@ try {
   await writeFile(path.join(OUT, 'type-audit.json'), JSON.stringify(typeReport, null, 1));
   console.log(`${typeReport.length ? 'FAIL' : 'PASS'} one type scale: ${typeReport.length} text element(s) off the scale`);
   if (typeReport.length) { failed += 1; console.log(JSON.stringify(typeReport.slice(0, 60), null, 1)); }
+  await writeFile(path.join(OUT, 'stray-audit.json'), JSON.stringify(strayReport, null, 1));
+  console.log(`${strayReport.length ? 'FAIL' : 'PASS'} no stray clickables: ${strayReport.length} button(s) outside .btn on the catalogue, composer and dialog screens`);
+  if (strayReport.length) { failed += 1; console.log(JSON.stringify(strayReport.slice(0, 60), null, 1)); }
   for (const c of designChecks) {
     console.log(`${c.ok ? 'PASS' : 'FAIL'} ${c.what}`);
     if (!c.ok) { failed += 1; console.log(JSON.stringify(c.got)); }
   }
-  const missing = ['project Back', 'filter chip', 'table', 'divided row', 'cost tags row', 'no sideways scroll', 'fresh load', 'stats range at 290px', 'settings field at'].filter((w) => !designChecks.some((c) => c.what.startsWith(w)));
+  const missing = ['project Back', 'filter chip', 'table', 'divided row', 'cost tags row', 'no sideways scroll', 'fresh load', 'stats range at 290px', 'settings field at',
+    'divided rows', 'quiet chip', 'grey badge', 'team policy type', 'page intro', 'dialog'].filter((w) => !designChecks.some((c) => c.what.startsWith(w)));
   if (missing.length && !ONLY.length) { failed += 1; console.log(`FAIL design checks never ran: ${missing.join(', ')}`); }
   console.log(`${pageErrors.length ? 'FAIL' : 'PASS'} no page errors (${pageErrors.length})`);
   if (pageErrors.length) { failed += 1; console.log(pageErrors.slice(0, 10).join('\n')); }

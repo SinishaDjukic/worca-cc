@@ -13136,7 +13136,9 @@ function modalShell({
     el.confirmMessage.classList.toggle('err', messageTone === 'err');
     el.confirmOk.textContent = confirmLabel;
     el.confirmCancel.textContent = cancelLabel;
-    el.confirmOk.classList.toggle('danger', !!danger);
+    el.confirmOk.classList.toggle('danger', !!danger);   // hook a few tests read
+    el.confirmOk.classList.toggle('btn-danger', !!danger);
+    el.confirmOk.classList.toggle('btn-primary', !danger);
 
     // prompt fields: built fresh each time, values bound via .value (never innerHTML)
     const inputs = [];
@@ -15901,7 +15903,8 @@ function pluginModal(title, bodyEl, actions = [], guard = {}) {
   el.pluginModalBody.replaceChildren(bodyEl);
   el.pluginModalActions.replaceChildren(...actions.map(([label, cls, fn]) => {
     const b = document.createElement('button');
-    b.type = 'button'; b.className = cls; b.textContent = label;
+    // Dialog actions are 32px (docs/design-system.md › Sizes): the shell drops the callers' btn-sm.
+    b.type = 'button'; b.className = cls.split(' ').filter((c) => c !== 'btn-sm').join(' '); b.textContent = label;
     b.addEventListener('click', fn);
     return b;
   }));
@@ -18547,7 +18550,7 @@ function onModelsToolbar(ev) {
   }
 }
 function onModelsToolbarClick(t) {
-  if (t.classList.contains('mv-filter')) {
+  if (t.classList.contains('filter-chip') && t.closest('.mv-filters')) {
     mvState.filter = t.dataset.filter || 'all';
     renderModelsViewBody();
     return true;
@@ -19720,7 +19723,7 @@ function renderTeamPolicyRead() {
   parts.push(renderPolicyHeader(data, { doc: document, now: Date.now() }));
   const label = document.createElement('div');
   label.className = 'tp-sec-label';
-  label.textContent = 'ON THIS MACHINE';
+  label.textContent = 'On this machine';
   parts.push(label, renderPolicyStats(data, { doc: document }));
   const tabsHost = document.createElement('div');
   tabsHost.className = 'tp-tabs-host';

@@ -665,7 +665,7 @@
         <section class="view hidden" data-view="getting-started">
           <div class="topbar">
             <div>
-              <div class="sub">Nine things to do with Worca, in order &middot; each tile opens a guided tour of the real controls</div>
+              <div class="sub page-intro">Nine things to try in order; each tile opens a guided tour of the real controls.</div>
             </div>
           </div>
           <div id="getting-started-host" class="gs-host" hidden></div>
@@ -1191,7 +1191,7 @@
         <section class="view hidden" data-view="team-policy">
           <div class="topbar">
             <div>
-              <div class="sub">Shared from the <code>worca-policy</code> branch · soft: you can go past a cap, and the team sees it</div>
+              <div class="sub page-intro">Shared from the team's <code>worca-policy</code> branch; a soft cap can be passed, and the team sees it.</div>
             </div>
             <div class="sync-chip" id="tp-sync" hidden></div>
           </div>
@@ -1433,7 +1433,7 @@
                   </button>
                   <span class="wfv-sep" aria-hidden="true"></span>
                   <input type="text" class="wfv-name" id="wfv-name" placeholder="Untitled pipeline" aria-label="Pipeline name" spellcheck="false" autocomplete="off">
-                  <button type="button" class="wfv-errchip" id="wfv-errors" hidden></button>
+                  <button type="button" class="btn btn-sm btn-danger wfv-errchip" id="wfv-errors" hidden></button>
                   <input type="file" id="wfv-import-file" accept=".json,application/json" hidden>
                 </div>
               </div>
@@ -2352,7 +2352,7 @@
         <section class="view hidden" data-view="marketplace">
             <div class="topbar">
               <div>
-                <div class="sub">Task sources, agents, skills and workflow packs from your plugin marketplaces</div>
+                <div class="sub page-intro">Plugins from your marketplaces: task sources, agents, skills and workflow packs.</div>
               </div>
               <button type="button" id="plugin-add-btn" class="btn btn-primary" data-min-level="expert">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
@@ -2368,11 +2368,11 @@
             </div>
             <!-- Team policy (design board 10): what a policy home expects on this machine. -->
             <div id="plugins-policy"></div>
-            <h3 class="pl-sec-title">Installed</h3>
+            <h3 class="section-title pl-sec-title">Installed</h3>
             <div class="run-list" id="plugins-list"></div>
-            <h3 class="pl-sec-title">Available</h3>
+            <h3 class="section-title pl-sec-title">Available</h3>
             <div class="run-list" id="plugins-available"></div>
-            <h3 class="pl-sec-title" data-min-level="expert">Marketplaces</h3>
+            <h3 class="section-title pl-sec-title" data-min-level="expert">Marketplaces</h3>
             <div class="run-list" id="marketplaces-list" data-min-level="expert"></div>
         </section>
         <!-- /view marketplace -->
@@ -2386,7 +2386,7 @@
         <section class="view hidden" data-view="models">
             <div class="topbar">
               <div>
-                <div class="sub">The global model catalog — available in every project; entries can override built-ins, route through a provider, or carry per-model routing env. The cards on top pick the models Worca's own titles, Auto classifier and PR descriptions use. Sign-ins and endpoints live on the Providers page.</div>
+                <div class="sub page-intro">The model catalogue every project can pick from; sign-ins live on the Providers page.</div>
               </div>
               <div class="mv-head-actions">
                 <button type="button" id="model-share-btn" class="btn" style="white-space:nowrap">Share as plugin…</button>
@@ -2414,7 +2414,7 @@
         <section class="view hidden" data-view="providers">
             <div class="topbar">
               <div>
-                <div class="sub">Sign-ins, endpoints and keys for the models Worca bridges — GitHub Copilot, any OpenAI-compatible server (llama.cpp, Ollama, LM Studio, vLLM), an Anthropic-compatible gateway. The models themselves live on the Models page.</div>
+                <div class="sub page-intro">Sign-ins and keys for the models Worca runs through its own bridge; add the models themselves on the Models page.</div>
               </div>
             </div>
             <p id="providers-msg" class="form-msg" aria-live="polite"></p>
@@ -2471,8 +2471,8 @@
         <div class="card-head">
           <h2 id="viewer-title">Saved pipeline</h2>
           <span class="viewer-actions">
-            <button type="button" id="viewer-full" class="btn btn-sm" aria-pressed="false" hidden>Full screen</button>
-            <button type="button" id="viewer-close" class="btn btn-sm">Close</button>
+            <button type="button" id="viewer-full" class="btn" aria-pressed="false" hidden>Full screen</button>
+            <button type="button" id="viewer-close" class="btn">Close</button>
           </span>
         </div>
         <pre id="viewer" class="viewer"></pre>
@@ -2497,9 +2497,9 @@
         <ul id="folderList" class="folder-list"></ul>
         <div class="add-project-actions">
           <small id="folderPickCount" class="hint folder-pick-count hidden" aria-live="polite"></small>
-          <button type="button" id="folderBrowserClose" class="btn btn-sm">Cancel</button>
-          <button type="button" id="folderSelect" class="btn btn-primary btn-sm">Select this folder</button>
-          <button type="button" id="folderSelectMany" class="btn btn-primary btn-sm hidden" disabled>Add selected</button>
+          <button type="button" id="folderBrowserClose" class="btn">Cancel</button>
+          <button type="button" id="folderSelect" class="btn btn-primary">Select this folder</button>
+          <button type="button" id="folderSelectMany" class="btn btn-primary hidden" disabled>Add selected</button>
         </div>
         <small class="hint" id="folderMsg"></small>
       </div>
@@ -2519,7 +2519,7 @@
         <small class="hint" id="mode-msg" aria-live="polite"></small>
         <div class="mode-foot">
           <span class="hint">Applies at once. Runs and saved settings are not affected.</span>
-          <button type="button" id="mode-done" class="btn btn-primary btn-sm">Done</button>
+          <button type="button" id="mode-done" class="btn btn-primary">Done</button>
         </div>
       </div>
     </div>
@@ -2538,8 +2538,8 @@
           <span id="confirm-checkbox-label"></span>
         </label>
         <div class="confirm-actions">
-          <button type="button" id="confirm-cancel" class="btn btn-sm">Cancel</button>
-          <button type="button" id="confirm-ok" class="btn btn-primary btn-sm">Confirm</button>
+          <button type="button" id="confirm-cancel" class="btn">Cancel</button>
+          <button type="button" id="confirm-ok" class="btn btn-primary">Confirm</button>
         </div>
       </div>
     </div>
@@ -2561,8 +2561,8 @@
           <div class="card-head">
             <h2 id="report-title">Report this run</h2>
             <div class="report-head-actions">
-              <button type="button" id="report-close" class="btn btn-sm">Cancel</button>
-              <button type="button" id="report-create-issue" class="btn btn-primary btn-sm">Create GitHub issue</button>
+              <button type="button" id="report-close" class="btn">Cancel</button>
+              <button type="button" id="report-create-issue" class="btn btn-primary">Create GitHub issue</button>
             </div>
           </div>
           <!-- Both outcomes of the button above them, so neither needs a scroll to read. -->
@@ -2583,15 +2583,15 @@
           <pre id="report-preview" class="viewer"></pre>
         </div>
         <div class="confirm-actions">
-          <button type="button" id="report-copy" class="btn btn-sm">Copy JSON</button>
-          <button type="button" id="report-download" class="btn btn-sm">Download JSON</button>
+          <button type="button" id="report-copy" class="btn">Copy JSON</button>
+          <button type="button" id="report-download" class="btn">Download JSON</button>
           <!-- The FALLBACK, hidden until the server says it could not file the issue
                itself. An <a>, not a button: a real anchor gives the browser a genuine
                user-gesture new tab. app.js strips the href while a rebuild is in
                flight, so the link can never fire with a payload that disagrees with
                the preview. Its prefilled body can only ASK for the JSON to be pasted
                — a URL dies at ~8 KB and half of all runs serialize larger. -->
-          <a id="report-issue" class="btn btn-sm" target="_blank" rel="noopener noreferrer" hidden>Open a prefilled issue</a>
+          <a id="report-issue" class="btn" target="_blank" rel="noopener noreferrer" hidden>Open a prefilled issue</a>
         </div>
       </div>
     </div>
@@ -2687,12 +2687,12 @@
           <p id="export-done-next" class="export-done-next"></p>
         </div>
         <div class="confirm-actions">
-          <button type="button" id="export-cancel" class="btn btn-sm">Cancel</button>
+          <button type="button" id="export-cancel" class="btn">Cancel</button>
           <!-- Preview = dry run (optional). Export runs the dry run itself and writes
                unless it hits a conflict, which it then shows for per-file resolution. -->
-          <button type="button" id="export-plan-btn" class="btn btn-sm">Preview</button>
-          <button type="button" id="export-apply-btn" class="btn btn-primary btn-sm">Export</button>
-          <button type="button" id="export-done-close" class="btn btn-primary btn-sm hidden">Done</button>
+          <button type="button" id="export-plan-btn" class="btn">Preview</button>
+          <button type="button" id="export-apply-btn" class="btn btn-primary">Export</button>
+          <button type="button" id="export-done-close" class="btn btn-primary hidden">Done</button>
         </div>
       </div>
     </div>
@@ -2811,8 +2811,8 @@
         <p class="publish-sub hint">Pushes the branch so it can be pulled and tested.<br>No pull request is opened.</p>
         <div class="publish-repos"></div>
         <div class="publish-actions" data-card-actions>
-          <button type="button" class="publish-cancel btn btn-sm">Cancel</button>
-          <button type="button" class="publish-ok btn btn-primary btn-sm">Publish</button>
+          <button type="button" class="publish-cancel btn">Cancel</button>
+          <button type="button" class="publish-ok btn btn-primary">Publish</button>
         </div>
       </div>
     </div>
@@ -2875,7 +2875,7 @@
       <div class="card ob-claude">
         <div class="card-head">
           <h2 id="claude-setup-title">Connect Claude Code</h2>
-          <button type="button" id="claude-setup-close" class="btn btn-sm">Close</button>
+          <button type="button" id="claude-setup-close" class="btn">Close</button>
         </div>
         <p class="ob-claude-lead">Worca drives the <strong>Claude Code</strong> CLI. Real runs need it on your <code>PATH</code>; mock runs need nothing.</p>
         <pre class="ob-claude-cmd"><code>npm install -g @anthropic-ai/claude-code</code></pre>
@@ -2885,7 +2885,7 @@
         <p class="ob-claude-note">Signing in to the Claude desktop app does not carry over — the CLI keeps its own sign-in.</p>
         <div class="ob-claude-status" id="claude-setup-status" aria-live="polite"></div>
         <div class="stop-actions">
-          <button type="button" id="claude-setup-check" class="btn btn-primary btn-sm">Check again</button>
+          <button type="button" id="claude-setup-check" class="btn btn-primary">Check again</button>
         </div>
       </div>
     </div>
@@ -2948,8 +2948,8 @@
         </div>
         <small class="hint" id="proj-add-msg" aria-live="polite"></small>
         <div class="confirm-actions">
-          <button type="button" id="proj-add-cancel" class="btn btn-sm">Cancel</button>
-          <button type="button" id="proj-add-save" class="btn btn-primary btn-sm">Add project</button>
+          <button type="button" id="proj-add-cancel" class="btn">Cancel</button>
+          <button type="button" id="proj-add-save" class="btn btn-primary">Add project</button>
         </div>
       </div>
     </div>
@@ -2967,8 +2967,8 @@
         <ul id="proj-bulk-list" class="proj-bulk-list"></ul>
         <small class="hint" id="proj-bulk-msg" aria-live="polite"></small>
         <div class="confirm-actions" data-card-actions>
-          <button type="button" id="proj-bulk-close" class="btn btn-sm">Cancel</button>
-          <button type="button" id="proj-bulk-save" class="btn btn-primary btn-sm">Add projects</button>
+          <button type="button" id="proj-bulk-close" class="btn">Cancel</button>
+          <button type="button" id="proj-bulk-save" class="btn btn-primary">Add projects</button>
         </div>
       </div>
     </div>
@@ -2978,7 +2978,7 @@
       <div class="card">
         <div class="card-head">
           <h2 id="plugin-modal-title">Plugin</h2>
-          <button type="button" id="plugin-modal-close" class="btn btn-sm">Close</button>
+          <button type="button" id="plugin-modal-close" class="btn">Close</button>
         </div>
         <div id="plugin-modal-body"></div>
         <div class="confirm-actions" id="plugin-modal-actions"></div>

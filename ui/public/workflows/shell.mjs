@@ -155,7 +155,7 @@ export function createWorkflowsShell({ doc, els, composer, actions }) {
     for (const [k, v] of Object.entries(patch)) { if (v == null) delete n.config[k]; else n.config[k] = v; }
   });
   const btn = (key, text, { pressed = null, disabled = false, title = '', iconName = '', menu = false } = {}) => {
-    const b = h('button', `wfv-tbb${iconName && !text ? ' wfv-tbi' : ''}`);
+    const b = h('button', `wfv-tbb btn btn-quiet btn-sm${iconName && !text ? ' btn-icon wfv-tbi' : ''}`);
     b.type = 'button';
     b.dataset.tb = key;
     if (iconName) b.appendChild(icon(iconName));

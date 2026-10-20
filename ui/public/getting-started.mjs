@@ -178,13 +178,14 @@ export function renderGettingStarted(host, status, { onStep, onHide, animate = t
   const head = doc.createElement('div');
   head.className = 'gs-head';
   const h2 = doc.createElement('h2');
+  h2.className = 'section-title';
   h2.textContent = done === total ? 'All set' : 'Your progress';   // the page's topbar already says Getting started
   const progress = doc.createElement('span');
   progress.className = 'gs-progress';
   progress.textContent = `${done} of ${total}`;
   const hide = doc.createElement('button');
   hide.type = 'button';
-  hide.className = 'gs-hide';
+  hide.className = 'btn btn-sm btn-quiet gs-hide';
   hide.textContent = hideLabel;
   hide.title = 'The sidebar entry; Settings › General › Getting started also opens this page';
   hide.addEventListener('click', () => onHide && onHide());

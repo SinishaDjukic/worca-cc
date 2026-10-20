@@ -1428,7 +1428,7 @@ test('the attachment UI restates what the house rules would change (focus rings,
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
   assert.match(css, /\.wfc-drop\{[^}]*position:absolute;[^}]*pointer-events:none;/);
   assert.match(css, /\.wfc-shell:not\(\[data-open="true"\]\) :is\(\.wfc-files,\.wfc-note\)\{display:none;\}/);
-  assert.match(css, /\.wfc-file-x:focus-visible\{outline:2px solid var\(--ink\);outline-offset:-2px;\}/);
+  assert.match(css, /\n\.wfc-file-x\{flex:none;\}/, 'the × is the shared .btn-icon (its ring is .btn\'s); only its flex stays');
   assert.match(css, /\.wfc-file\{[^}]*flex:none;/);
   assert.match(css, /\.wfc-uthumb-link:focus-visible\{outline:2px solid var\(--ink\);outline-offset:2px;\}/);
   // A name pill beside a 110 px thumbnail: the flex default (stretch) draws it as a tall oval with its name cut.

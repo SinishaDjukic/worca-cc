@@ -23,6 +23,8 @@ function button(doc, cls, label, data = {}) {
   Object.assign(b.dataset, data);
   return b;
 }
+// One "Add …" button: the shared plus icon, never a typed "+" (docs/design-system.md › Button).
+const addBtn = (doc, label, data) => { const b = button(doc, 'btn btn-sm', label, data); b.prepend(icon(doc, 'plus', 14)); return b; };
 
 // ── routes: #connectors (General), #connectors/sets/<id>, #connectors/servers, #connectors/skills ──
 // The Skills view has its own constant: a set may be named "Skills", and mcpRoute('skills') is that set.
@@ -182,7 +184,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
   function topbar() {
     const bar = h(doc, 'div', 'topbar');
     const title = h(doc, 'div');
-    title.append(h(doc, 'div', 'sub', 'MCP servers and skills worca’s agents and Chat get, grouped in sets attached to projects'));
+    title.append(h(doc, 'div', 'sub page-intro', 'MCP servers and skills worca’s agents and Chat get, grouped in sets attached to projects'));
     const seg = h(doc, 'div', 'seg');
     seg.setAttribute('role', 'group');
     seg.setAttribute('aria-label', 'View');
@@ -271,7 +273,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
       const tip = team && m.team.suggests.find((x) => x.key === f.key);
       if (tip) {
         const note = h(doc, 'small', 'hint mcp-suggest', `Team suggests ${tip.value} · `);
-        note.appendChild(button(doc, 'linkish', 'Use team value', { useTeam: f.key, server: m.serverId, value: tip.value }));
+        note.appendChild(button(doc, 'btn btn-sm btn-quiet', 'Use team value', { useTeam: f.key, server: m.serverId, value: tip.value }));
         card.appendChild(note);
       }
     }
@@ -331,7 +333,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
   function skillSection(set, skills) {
     const head = h(doc, 'div', 'mcp-usedby sk-head');
     head.appendChild(h(doc, 'span', 'label', 'Skills'));
-    if (!isTeam(set)) head.appendChild(button(doc, 'btn btn-sm', '+ Add skill', { act: 'add-skill' }));
+    if (!isTeam(set)) head.appendChild(addBtn(doc, 'Add skill', { act: 'add-skill' }));
     head.appendChild(h(doc, 'span', 'hint', `agents call /${set.pluginName || 'general'}:<name> · no values, no secrets, no Test`));
     const out = [head];
     // A Team set lists the required skills installed here (a required plugin not installed yet brings none): the policy may
@@ -366,9 +368,9 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     const used = h(doc, 'div', 'mcp-usedby');
     used.appendChild(h(doc, 'span', 'label', 'Used by'));
     for (const p of set.usedBy) {
-      const chip = h(doc, 'span', 'chip mcp-chip', p.name);
+      const chip = h(doc, 'span', 'chip', p.name);
       if (!isTeam(set)) {
-        const x = button(doc, 'mcp-x', null, { unassign: p.key });
+        const x = button(doc, 'btn btn-sm btn-quiet btn-icon mcp-x', null, { unassign: p.key });
         x.append(icon(doc, 'x', 12));
         x.title = set.group === 'general' ? `Turn Include General off for ${p.name}` : `Remove ${set.name} from ${p.name}`;
         x.setAttribute('aria-label', x.title);
@@ -376,12 +378,12 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
       }
       used.appendChild(chip);
     }
-    if (set.group === 'general') used.appendChild(h(doc, 'span', 'chip mcp-chip', 'Chat'));
-    if (!isTeam(set)) used.appendChild(button(doc, 'btn btn-sm', '+ Add project', { act: 'add-project' }));
+    if (set.group === 'general') used.appendChild(h(doc, 'span', 'chip', 'Chat'));
+    if (!isTeam(set)) used.appendChild(addBtn(doc, 'Add project', { act: 'add-project' }));
     card.appendChild(used);
     const sh = h(doc, 'div', 'mcp-usedby');
     sh.appendChild(h(doc, 'span', 'label', 'Servers'));
-    if (!isTeam(set)) sh.appendChild(button(doc, 'btn btn-sm', '+ Add server', { act: 'add-member' }));
+    if (!isTeam(set)) sh.appendChild(addBtn(doc, 'Add server', { act: 'add-member' }));
     card.appendChild(sh);
     if (!members.length) card.appendChild(h(doc, 'div', 'hist-empty', 'No servers in this set yet.'));
     for (const m of members) card.appendChild(memberCard(set, m));
@@ -1136,10 +1138,10 @@ export async function mountProjectMcp(sec, { key, name, api, doc = globalThis.do
   card.appendChild(h(doc, 'h2', '', 'Sets'));
   const chips = h(doc, 'div', 'mcp-usedby');
   for (const s of a.sets) {
-    const chip = h(doc, 'span', 'chip mcp-chip');
+    const chip = h(doc, 'span', 'chip');
     const link = h(doc, 'a', '', s.name);
     link.href = `#${mcpRoute(s.id)}`;
-    const x = button(doc, 'mcp-x', null, { drop: s.id });
+    const x = button(doc, 'btn btn-sm btn-quiet btn-icon mcp-x', null, { drop: s.id });
     x.append(icon(doc, 'x', 12));
     x.setAttribute('aria-label', `Remove ${s.name}`);
     x.addEventListener('click', () => save({ ...a, sets: a.sets.filter((y) => y.id !== s.id) }));
@@ -1147,7 +1149,7 @@ export async function mountProjectMcp(sec, { key, name, api, doc = globalThis.do
     chips.appendChild(chip);
   }
   if (a.team) {
-    const t = h(doc, 'a', 'chip mcp-chip', a.team.name);
+    const t = h(doc, 'a', 'chip', a.team.name);
     t.href = `#${mcpRoute(a.team.id)}`;
     chips.appendChild(t);
   }

@@ -468,10 +468,10 @@ input[type="file"]{font-size:var(--fs-meta);color:var(--ink-3);background:transp
    18px bottom margin; centered flex would sink the ⓘ below the heading text. */
 .label-row > h2{margin:0;}
 .card-head .label-row{margin-bottom:0;}
-.info-tip{position:relative;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;flex:0 0 24px;
+.info-tip{position:relative;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;flex:0 0 28px;
   padding:0;border:0;background:none;color:var(--ink-2);font:700 10px/1 var(--sans);cursor:help;transition:color .15s;}
-/* Info tip (review A5): 24px hit target, 16px drawn ring. */
-.info-tip::before{content:"";position:absolute;inset:4px;border:1.5px solid var(--ink-2);border-radius:var(--r-sm);transition:border-color .15s;}
+/* Info tip (review A5): 28px hit target (the .btn-sm.btn-icon square), 16px drawn ring. */
+.info-tip::before{content:"";position:absolute;inset:6px;border:1.5px solid var(--ink-2);border-radius:var(--r-sm);transition:border-color .15s;}
 .info-tip:hover{color:var(--ink);}
 .info-tip:hover::before{border-color:var(--hover-outline);}
 .info-tip:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
@@ -1747,13 +1747,6 @@ dialog.discard-modal::backdrop{background:transparent;}
 .hist-discard:hover:not(:disabled){box-shadow:inset 0 0 0 1px var(--amber);}
 .hist-discard:disabled{opacity:.6;cursor:default;}
 .hist-discard[hidden]{display:none;}
-/* This block is SHARED with the Plugins view's `.pl-remove`; the retired
-   `.hist-delete` arms were removed from the selector lists, the block stays. */
-.pl-remove{display:inline-flex;align-items:center;gap:6px;background:var(--red-ink);
-  border:1.5px solid var(--red-ink);color:var(--on-status);font-family:inherit;font-weight:600;
-  font-size:12px;padding:6px 12px;border-radius:var(--r-sm);cursor:pointer;}
-.pl-remove:disabled{opacity:.6;cursor:default;}
-.pl-remove svg{display:block;}
 
 /* Export dialog (JSON file / Claude Code skill / Worca plugin). The row's
    Export… button is the Workflows Library row's icon button (.wfl-export). */
@@ -2746,7 +2739,7 @@ button.pd-ov-card:hover{border-color:var(--ink-3);}
 .pb-status.ok{color:var(--green-ink);}
 .pb-status.err{color:var(--red-ink);}
 .pb-row.added{opacity:.65;}
-.confirm-message{margin:4px 0 18px;color:var(--ink-2);font-size:14px;line-height:1.5;white-space:pre-line;}
+.confirm-message{margin:4px 0 18px;color:var(--ink-2);font-size:var(--fs-body);line-height:1.5;white-space:pre-line;}
 .confirm-message.err{color:var(--red-ink);}
 .confirm-message strong{color:var(--ink);font-weight:600;overflow-wrap:anywhere;}   /* the variable parts of a message (a branch, a command): confirmModal parts */
 .confirm-actions{display:flex;gap:9px;justify-content:flex-end;margin-top:14px;}
@@ -2781,16 +2774,14 @@ button.pd-ov-card:hover{border-color:var(--ink-3);}
 /* ---- Plugins view ---- */
 /* Available/Marketplaces render as one wrapper div inside the .run-list, so the
    list's gap doesn't reach the cards — the wrappers repeat it. */
-.pl-list,.pl-orphans,.pl-available,.pl-mkts{display:flex;flex-direction:column;gap:18px;}
-.plugin-card{padding:16px 20px;}
+.pl-list,.pl-orphans,.pl-available,.pl-mkts{display:flex;flex-direction:column;}
 /* Card actions live top-right of the head row. */
-.pl-remove{border-radius:var(--r-sm);} /* pill like the rest of this page's buttons */
 .pl-mkt-actions{margin-left:auto;display:flex;align-items:center;gap:8px;}
 .pl-mkt-actions .btn svg{display:block;}
 .pl-avail-card .pl-install-avail,.pl-avail-card .pl-installed{margin-left:auto;}
 .plugin-card.pl-disabled{opacity:.62;}
 .pl-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
-.pl-head .pl-name{font-size:14.5px;}
+.pl-head .pl-name{font-size:var(--fs-body);font-weight:600;}
 .pl-version{color:var(--ink-3);font-size:12px;}
 .pl-enable{margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-3);cursor:pointer;}
 .pl-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}
@@ -2811,9 +2802,9 @@ button.pd-ov-card:hover{border-color:var(--ink-3);}
 .pl-delta{font-size:12.5px;}
 .pl-delta-secret{font-size:12.5px;font-weight:700;color:var(--red-ink);background:var(--red-bg);border-radius:var(--r-sm);padding:3px 8px;margin:2px 0;display:inline-block;}
 #plugin-modal .card{max-width:640px;width:min(92vw,640px);max-height:80vh;overflow:auto;}
-.pl-sec-title{margin:22px 0 10px;font-size:12px;opacity:.65;font-weight:600;}
+.pl-sec-title{margin:24px 0 8px;}
 .pl-provenance{display:block;margin-top:4px;}
-.pl-mkt-url{display:block;margin-top:2px;}
+.pl-mkt-url{display:block;margin-top:2px;overflow-wrap:anywhere;}
 .pl-mkt-sync{display:block;margin-top:2px;}
 .pl-mkt-warning{margin-top:4px;}
 .pl-avail-card .pl-mkt-badge{margin-left:6px;}
@@ -3026,7 +3017,7 @@ table.sr-only{display:block;}
 .tm-sync-error{white-space:pre-wrap;margin:0;}
 section[data-view="team-metrics"] .topbar{align-items:flex-start;}
 .sync-chip{margin-left:auto;display:flex;align-items:center;}
-.sync-chip-inner{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:8px 12px;border:1px solid var(--line-2);border-radius:var(--r-card);background:var(--surface);font-size:12.5px;max-width:520px;}
+.sync-chip-inner{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:8px 12px;border:1px solid var(--line-2);border-radius:var(--r-card);background:var(--surface);font-size:var(--fs-meta);max-width:520px;}
 .sync-chip-inner .dot.green{background:var(--green);} .sync-chip-inner .dot.amber{background:var(--amber);} .sync-chip-inner .dot.red{background:var(--red);}
 .sync-chip-inner .tm-sync-error{flex-basis:100%;color:var(--red-ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .tm-filter{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-bottom:18px;}
@@ -3076,9 +3067,6 @@ section[data-view="team-metrics"] .topbar{align-items:flex-start;}
 .tm-run-tbl td:nth-last-child(-n+2){white-space:nowrap;}
 .badge.grey{background:var(--field);color:var(--ink-2);}
 /* The Copilot card's "read the notice first" pill is a button: it opens the notice (bridge-view.mjs). */
-.mv-cp-terms-pill{border:0;font-family:inherit;cursor:pointer;}
-.mv-cp-terms-pill:hover{background:var(--hover-on-field);color:var(--ink);}
-.mv-cp-terms-pill:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 /* With the credential broker, a provider pill for a missing key links to the key page. */
 .mv-broker-pill{text-decoration:none;cursor:pointer;}
 .mv-broker-pill:hover{text-decoration:underline;}
@@ -3544,11 +3532,10 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .mv-section[data-section="builtin"] .mv-sec-body{gap:10px;}
 .mv-hide-builtin-row{display:grid;gap:6px;padding:10px 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);}
 .mv-hide-builtin-row .hint{margin:0;}
-.mv-section-title{margin:4px 0 0;font-size:12px;opacity:.75;font-weight:600;}
 .mv-card{padding:16px 20px;display:flex;align-items:center;gap:14px;}
 .mv-body{flex:1 1 auto;min-width:0;}
 .mv-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
-.mv-name{font-size:14.5px;}
+.mv-name{font-size:var(--fs-body);font-weight:600;}
 .mv-summary{display:block;margin:6px 0 0;word-break:break-all;}
 .mv-card .btn{flex:0 0 auto;}
 .mv-head-actions{display:flex;gap:8px;flex:0 0 auto;}
@@ -3561,7 +3548,6 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 }
 .mv-builtin{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);}
 .mv-builtin .mv-summary{margin:0;flex:1 1 auto;text-align:right;}
-.mv-editor{padding:18px 22px;}
 .mv-editor-title{margin:0 0 14px;font-size:15px;}
 .mv-editor-grid{display:grid;gap:14px;}
 .mv-field{display:grid;gap:6px;}
@@ -3600,9 +3586,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
    because the grid/flex rules here otherwise beat the UA hidden rule. ---- */
 .mv-providers{padding:18px 22px;display:grid;gap:14px;}
 /* The Providers TAB: one card per account, so three unrelated sign-ins stop reading as one form. */
-.mv-providers-split{padding:0;background:transparent;box-shadow:none;gap:18px;}
-.mv-providers-split .mv-providers-hint{margin:0 2px 0;}
-.mv-pv-card{padding:18px 22px;display:grid;gap:12px;}
+.mv-providers-split{padding:0;background:transparent;box-shadow:none;}
 .mv-pv-card .mv-pv-row{border:0;padding:0;margin:0;}
 /* A provider card reads top to bottom: name + state, what it is, then its fields side by side in one row, then the
    verdict and buttons. Description beside a column of fields left the left half empty and the card tall. */
@@ -3617,6 +3601,9 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .mv-pv-card .mv-pv-row:not(.mv-sp-row) .mv-pv-ctl{grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:10px 14px;align-items:start;}
 .mv-pv-card .mv-pv-row:not(.mv-sp-row) .mv-pv-ctl .mv-field:has(.mv-pv-conc):last-child:nth-child(3){max-width:190px;}
 .mv-pv-card .mv-pv-row:not(.mv-sp-row) .mv-pv-btns{padding-top:12px;border-top:1px solid var(--line-2);}
+@container drows (max-width:560px){
+  .mv-pv-card .mv-pv-row:not(.mv-sp-row) .mv-pv-ctl{grid-template-columns:minmax(0,1fr);}
+}
 /* New surface, new contrast: the house `.hint` / placeholder grey (--ink-3) sits at
    2.8:1 on a white card and is only tolerated where the light baseline predates the
    dark theme (test/fixtures/contrast-baseline-light.json — shrink, never grow). The
@@ -3672,15 +3659,10 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .mv-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:14px;}
 .mv-toolbar .mv-search{flex:1 1 280px;min-width:0;}
 .mv-filters{display:flex;flex-wrap:wrap;gap:6px;}
-.mv-filter{padding:6px 12px;border:1.5px solid var(--line-2);border-radius:var(--r-sm);background:transparent;
-  color:var(--ink-2);font:600 12px var(--sans);cursor:pointer;white-space:nowrap;}
-.mv-filter:hover{border-color:var(--ink-3);}
-.mv-filter.on{background:var(--ink);border-color:var(--ink);color:var(--on-ink);}
 .mv-section-head{display:flex;align-items:center;gap:8px;}
-.mv-sec-toggle{display:flex;align-items:center;gap:8px;padding:2px 0;border:0;background:transparent;cursor:pointer;color:inherit;font:inherit;}
-.mv-sec-toggle .mv-section-title{margin:0;}
+.mv-sec-toggle{gap:8px;padding:0 8px 0 4px;}
 .mv-sec-caret{flex:0 0 auto;transform:rotate(90deg);}   /* .adv-chev: points right; a group is open unless folded */
-.mv-sec-count{padding:1px 8px;border-radius:var(--r-xs);background:var(--field);color:var(--ink-2);font:600 11px var(--mono);}
+.mv-sec-count{padding:1px 8px;border-radius:var(--r-xs);background:var(--field);color:var(--ink-2);font:500 var(--fs-caption)/1 var(--sans);}
 .mv-section.is-folded .mv-sec-caret{transform:none;}
 .mv-section.is-folded .mv-sec-body,.mv-section.is-folded .mv-sec-hint{display:none;}
 .mv-no-hits{margin-top:6px;}
@@ -3915,7 +3897,6 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 
 /* Destructive confirm (spec §5.2). The id keeps it out of .btn-primary's way with
    no !important. confirmModal removes the class on close, so it never leaks. */
-#confirm-ok.danger{background:var(--red-ink);border-color:var(--red-ink);color:var(--on-status);}
 
 /* ---------- History detail: section tabs ---------- */
 .hd-tabs,.pd-tabs{position:sticky;top:0;z-index:5;padding-top:18px;margin-bottom:14px;background:var(--bg);}
@@ -4379,7 +4360,7 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
    (:786) and `.confirm-modal .card` (:1306). Everything else below only ties with
    `.card` (:263) and wins on source order, so it stays bare. */
 #shipit-modal .card{width:min(560px,100%);}
-.shipit-card{padding:32px 28px 24px;text-align:center;
+.shipit-card{text-align:center;
   animation:shipit-rise .34s cubic-bezier(.2,.7,.3,1) both;}
 @keyframes shipit-rise{0%{transform:translateY(10px);opacity:0}100%{transform:translateY(0);opacity:1}}
 .shipit-ico-wrap{position:relative;display:grid;place-items:center;width:74px;height:74px;margin:0 auto;}
@@ -6451,7 +6432,7 @@ input[type="radio"]:focus-visible{outline:2px solid var(--ink);outline-offset:2p
 /* ---- confirm/prompt modal internals ---- */
 .confirm-field{margin-bottom:14px;}
 .confirm-field > label{display:block;font-weight:600;font-size:var(--fs-body);margin-bottom:6px;}
-.confirm-field .input{font-size:var(--fs-body);padding:0 14px;}
+.confirm-field .input{font-size:var(--fs-body);}
 .confirm-field .hint.err{color:var(--red-ink);}
 .confirm-checkbox{display:flex;align-items:flex-start;gap:10px;margin:0 0 4px;padding:12px 14px;
   background:var(--field);border-radius:var(--r-sm);font-size:var(--fs-meta);color:var(--ink-2);
@@ -6494,13 +6475,9 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
    side panel. Painted by getting-started.mjs; [hidden] when hidden or unknown. */
 .gs-host{max-width:960px;margin:0 auto;}
 .gs-host[hidden]{display:none;}
-.gs-card{padding:20px 22px 22px;}
 .gs-head{display:flex;align-items:baseline;gap:12px;margin-bottom:14px;}
-.gs-head h2{margin:0;flex:1;font-size:16px;font-weight:600;}
+.gs-head h2{flex:1;}
 .gs-progress{font-family:var(--mono);font-size:12px;color:var(--ink-2);font-weight:600;}
-.gs-hide{background:none;border:0;padding:0;font:inherit;font-size:12.5px;color:var(--ink-2);cursor:pointer;
-  text-decoration:underline;text-underline-offset:3px;}
-.gs-hide:hover{color:var(--ink);}
 /* Nine equal tiles that fill the row and wrap 3 -> 1: a 3×3 square, then one column — two
    columns would leave the ninth an orphan. */
 .gs-tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;}
@@ -6574,7 +6551,7 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .gs-settings-text{margin:0;color:var(--ink-2);font-size:13px;line-height:1.5;}
 
 /* ---------- Welcome + Connect Claude Code dialogs ---------- */
-.ob-welcome{width:min(92vw,600px);padding:30px 34px 26px;animation:wr-rise .28s cubic-bezier(.2,.7,.3,1) both;}
+.ob-welcome{width:min(92vw,600px);animation:wr-rise .28s cubic-bezier(.2,.7,.3,1) both;}
 .ob-eyebrow{margin:0 0 6px;font-size:12px;color:var(--ink-2);font-weight:600;}
 .ob-headline{margin:0;font-size:27px;font-weight:600;letter-spacing:-.01em;line-height:1.2;}
 .ob-headline em{font-style:italic;color:var(--violet-ink);}
@@ -6899,7 +6876,7 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 @media (max-width:560px){.mode-current{flex-wrap:wrap;}.mode-current .btn{margin-left:56px;}}
 
 /* The dialog. Follows .ob-welcome's door cards: one bordered row per choice. */
-.mode-modal .card{width:min(580px,100%);padding:26px 28px 22px;animation:wr-rise .24s cubic-bezier(.2,.7,.3,1) both;}
+.mode-modal .card{width:min(580px,100%);animation:wr-rise .24s cubic-bezier(.2,.7,.3,1) both;}
 .mode-modal .card-head{margin-bottom:4px;}
 .mode-sub{margin:0 0 16px;font-size:13px;line-height:1.55;color:var(--ink-2);}
 .lv-cards{display:flex;flex-direction:column;gap:8px;}
@@ -6926,7 +6903,6 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .mode-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 14px;margin-top:16px;}
 .mode-foot .hint{margin:0;}
 @media (max-width:520px){
-  .mode-modal .card{padding:20px 18px 18px;}
   .lv-card{grid-template-columns:34px minmax(0,1fr) 18px;gap:11px;padding:12px;}
   .lv-card-icon{width:34px;height:34px;}
 }
@@ -7291,7 +7267,7 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 /* ---------- save dialog ---------- */
 .save-dialog{border:none;border-radius:var(--r-card);padding:0;box-shadow:var(--shadow-sheet);max-width:420px;width:92vw;}
 .save-dialog::backdrop{background:var(--scrim-soft);}
-.save-dialog .sd-body{padding:20px 22px 18px;display:flex;flex-direction:column;gap:14px;}
+.save-dialog .sd-body{padding:24px;display:flex;flex-direction:column;gap:14px;}
 .save-dialog .sd-title{margin:0;font-size:16px;font-weight:700;letter-spacing:-.015em;}
 .save-dialog .sd-field{display:flex;flex-direction:column;gap:6px;}
 .save-dialog .sd-field label{font-weight:600;font-size:12.5px;color:var(--ink-2);}
@@ -7614,19 +7590,19 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 /* Team policy page: the published document (panel) above what this machine makes of it (cards). */
 .tp-head{display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:18px;}
 .tp-head-main{min-width:0;flex:1 1 420px;}
-.tp-head-kicker{font:600 10.5px var(--sans);color:var(--ink-3);}
+.tp-head-kicker{font:600 var(--fs-meta) var(--sans);color:var(--ink-3);}
 .tp-head-title{margin:6px 0 0;font-size:19px;font-weight:700;letter-spacing:-.015em;}
 .tp-facts{display:grid;grid-template-columns:96px minmax(0,1fr);gap:8px 16px;margin:16px 0 0;font-size:12.5px;}
-.tp-facts dt{font:600 10.5px var(--sans);color:var(--ink-3);padding-top:2px;}
+.tp-facts dt{font:600 var(--fs-meta) var(--sans);color:var(--ink-3);padding-top:2px;}
 .tp-facts dd{margin:0;color:var(--ink-2);min-width:0;overflow-wrap:anywhere;}
 .tp-facts dd code{font-size:11.5px;}
 .tp-head-notes{white-space:pre-wrap;}
 .tp-head-actions{display:flex;flex-direction:column;align-items:flex-end;gap:6px;text-align:right;}
 .tp-head-actions .hint{max-width:230px;}
-.tp-sec-label{margin:22px 0 12px;font:600 10.5px var(--sans);color:var(--ink-3);}
+.tp-sec-label{margin:22px 0 12px;font:600 var(--fs-meta) var(--sans);color:var(--ink-3);}
 .tp-ov-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px;}
 .tp-ov-card{padding:20px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
-.tp-ov-label{font:600 10.5px var(--sans);color:var(--ink-3);}
+.tp-ov-label{font:600 var(--fs-meta) var(--sans);color:var(--ink-3);}
 .tp-ov-value{margin-top:10px;font-size:22px;font-weight:700;letter-spacing:-.02em;color:var(--ink);overflow-wrap:anywhere;}
 .tp-ov-sub{margin-top:6px;font-size:11.5px;color:var(--ink-3);overflow-wrap:anywhere;}
 .tp-ov-sub.is-warn{color:var(--amber-ink);}
@@ -7665,7 +7641,7 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .tp-tbl td.tp-key small{display:block;font-weight:400;color:var(--ink-3);font-size:11.5px;}
 .tp-tbl td.tp-team small{display:block;color:var(--ink-3);font-size:11px;margin-top:2px;}
 .tp-tbl .muted{color:var(--ink-3);}
-.tp-kind{display:inline-flex;padding:3px 8px;}
+.tp-kind{display:inline-flex;padding:0 6px;}
 .tp-kind.default{background:var(--field);color:var(--ink-2);}
 .tp-kind.soft{background:var(--blue-bg);color:var(--blue-ink);}
 .tp-kind.hard{background:var(--red-bg);color:var(--red-ink);}
@@ -7729,9 +7705,7 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .tp-control{display:flex;flex-direction:column;gap:8px;min-width:0;}
 .tp-control .check-row{margin-top:2px;}
 .tp-list{display:flex;flex-wrap:wrap;gap:6px;}
-.tp-chip{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11.5px;}
-.tp-chip-rm{background:none;border:0;padding:0;color:var(--ink-3);font:inherit;cursor:pointer;}
-.tp-chip-rm:hover{color:var(--red-ink);}
+.tp-chip{display:inline-flex;align-items:center;gap:2px;padding-block:0;padding-right:0;}
 .tp-list-empty{color:var(--ink-3);font-size:12px;}
 .tp-add-row{display:flex;gap:6px;flex-wrap:wrap;}
 .tp-add-row .input{flex:1 1 120px;min-width:0;}
@@ -7743,7 +7717,6 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .tp-onbreach{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-2);}
 .tp-onbreach .select-wrap{display:inline-block;width:96px;}
 .tp-onbreach .select{padding:6px 30px 6px 10px;font-size:12px;border-radius:var(--r-sm);}
-.tp-unset{color:var(--ink-3);font-size:12px;background:none;border:none;font:inherit;cursor:pointer;text-decoration:underline;padding:0;}
 /* The pure editor's bar (team-policy-view.mjs): the page dismantles it into the header. */
 .tp-publish-bar{display:flex;align-items:center;gap:12px;}
 .tp-publish-bar .grow{flex:1;font-size:12.5px;color:var(--ink-2);}
@@ -7856,6 +7829,7 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 /* Connectors › Sets and Servers (mcp-view.mjs, mcp-definition-form.mjs): layout only; cards, chips, badges,
    switches and buttons are the shared ones. */
 [data-view="connectors"] .topbar{flex-wrap:wrap;}
+[data-view="marketplace"] .topbar{flex-wrap:wrap;}
 .mcp-sets{display:grid;grid-template-columns:minmax(220px,300px) minmax(0,1fr);gap:18px;align-items:start;}
 .mcp-setlist{padding:8px;display:flex;flex-direction:column;gap:2px;}
 .mcp-setrow{display:flex;flex-direction:column;gap:3px;text-align:left;padding:10px 12px;border:0;border-radius:var(--r-sm);background:none;font:inherit;color:inherit;cursor:pointer;}
@@ -7866,8 +7840,8 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .mcp-usedby{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0;}
 /* The row's inline notes read as labels beside the chips: --ink-2 keeps them at AA on the card. */
 .mcp-usedby .hint{margin-top:0;color:var(--ink-2);}
-.mcp-chip{display:inline-flex;align-items:center;gap:6px;}
-.mcp-x{border:0;background:none;cursor:pointer;color:var(--ink-2);font:inherit;padding:0 2px;}
+.mcp-usedby > .chip{display:inline-flex;align-items:center;gap:6px;}
+.mcp-usedby > .chip:has(> .btn){padding-block:0;}   /* the 28px remove button sets the height */
 /* Run tags (#718): an outlined pill (the .person-chip shape); the chip field wraps chips and its input. */
 .tag-chip{display:inline-flex;align-items:center;gap:4px;max-width:240px;padding:2px 8px;border-radius:var(--r-xs);border:1px solid var(--line);
   color:var(--ink-2);font-size:var(--fs-caption);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
@@ -8249,7 +8223,6 @@ body.view-workflows .main{padding:0;overflow:hidden;display:flex;flex-direction:
 .wfv-br{right:12px;bottom:14px;display:flex;gap:8px;transition:bottom .2s;}
 .wfv-br.is-up{bottom:66px;}
 @media (prefers-reduced-motion:reduce){.wfv-br{transition:none;}}
-.wfv-errchip:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .wfv-dock{left:50%;bottom:14px;transform:translateX(-50%);display:flex;align-items:flex-end;gap:8px;z-index:30;max-width:calc(100% - 24px);}
 .wfv-bar{display:flex;align-items:center;height:40px;box-sizing:border-box;padding:4px;gap:2px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-sm);}
 .wfv-sep{width:1px;align-self:stretch;margin:6px 4px;background:var(--line);}
@@ -8259,13 +8232,17 @@ body.view-workflows .main{padding:0;overflow:hidden;display:flex;flex-direction:
 .wfv-bar .btn:not(.btn-icon) svg{width:15px;height:15px;}
 .wfv-bar .wfv-chev{width:12px;height:12px;color:var(--ink-2);}
 .wfv-savewrap{display:inline-flex;margin-left:4px;}
+.wfv-savewrap > .btn-primary:disabled{opacity:.7;}
 input.wfv-name{width:auto;height:30px;min-width:56px;max-width:280px;field-sizing:content;padding:0 9px;border:0;border-radius:var(--r-sm);background:transparent;color:var(--ink);font:500 13.5px/1 var(--sans);}
 input.wfv-name:hover{background:var(--hover);}
 input.wfv-name:focus{background:var(--field);outline:none;}
 input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
-.wfv-errchip{flex:0 0 auto;white-space:nowrap;height:22px;margin:0 4px 0 2px;padding:0 9px;border-radius:var(--r-xs);border:0;background:var(--red-bg);color:var(--red-ink);font:500 11.5px/22px var(--sans);cursor:pointer;}
+.wfv-errchip{flex:0 0 auto;margin:0 4px 0 2px;}
 .wfv-errchip.is-incomplete{background:var(--field);color:var(--ink-2);}
 .wfv-errchip.is-warning{background:var(--amber-bg);color:var(--amber-ink-strong);}
+/* .btn-danger:hover:not(:disabled) is (0,3,0); without these arms a grey or amber chip turns red on hover. */
+.wfv-errchip.is-incomplete:hover:not(:disabled){background-color:color-mix(in srgb,var(--ink) 7%,var(--field));color:var(--ink-2);}
+.wfv-errchip.is-warning:hover:not(:disabled){background-color:color-mix(in srgb,var(--ink) 7%,var(--amber-bg));color:var(--amber-ink-strong);}
 #wfv-dialog-host{display:contents;}
 .wfv-zoom{justify-content:space-between;font-variant-numeric:tabular-nums;}
 .wfv-plus{flex:0 0 auto;}
@@ -8278,20 +8255,18 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
 .wfv-menu-h{padding:8px 9px 4px;color:var(--ink-2);font-size:12px;font-weight:600;}
 .wfv-menu-sep{height:1px;margin:4px 6px;background:var(--line);}
 .wfv-overlay{position:absolute;inset:0;pointer-events:none;z-index:10;}
-.wfv-tb{position:absolute;pointer-events:auto;display:flex;align-items:center;gap:1px;height:28px;box-sizing:border-box;padding:2px 3px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-sm);box-shadow:var(--shadow-pop);font-size:11.5px;white-space:nowrap;max-width:calc(100% - 16px);overflow-x:auto;scrollbar-width:none;}
-.wfv-tbb{height:22px;display:inline-flex;align-items:center;gap:4px;padding:0 7px;border:0;border-radius:var(--r-sm);background:none;color:var(--ink);font:inherit;cursor:pointer;}
-.wfv-tbb:hover,.wfv-tbb[aria-expanded="true"],.wfv-tbb[aria-pressed="true"]{background:var(--hover);}
-.wfv-tbb[aria-pressed="true"]{font-weight:600;}
-.wfv-tbb[aria-disabled="true"]{opacity:.55;cursor:default;}
-.wfv-tbb .k{color:var(--ink-2);}
-.wfv-tbi{width:24px;padding:0;justify-content:center;}
-.wfv-tbi svg{width:14px;height:14px;}
+.wfv-tb{position:absolute;pointer-events:auto;display:flex;align-items:center;gap:1px;box-sizing:border-box;padding:2px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-sm);box-shadow:var(--shadow-pop);white-space:nowrap;max-width:calc(100% - 16px);overflow-x:auto;scrollbar-width:none;}
+.wfv-tb .btn-quiet:is([aria-expanded="true"],[aria-pressed="true"]){background:var(--hover);color:var(--ink);}
+.wfv-tb .btn[aria-pressed="true"]{font-weight:600;}
+.wfv-tb .btn[aria-disabled="true"]{opacity:.55;cursor:default;}
+.wfv-tb .btn .k{color:var(--ink-2);}
+.wfv-tb .btn svg{width:14px;height:14px;}
 .wfv-tb-sep{width:1px;height:16px;margin:0 3px;background:var(--line);}
 .wfv-tb-mono{font-family:var(--mono);color:var(--ink-2);padding:0 6px;}
 .wfv-step{display:inline-flex;align-items:center;gap:2px;}
 .wfv-step output{min-width:18px;text-align:center;font-variant-numeric:tabular-nums;}
 .wfv-pop{position:absolute;pointer-events:auto;width:300px;max-height:min(60vh,520px);overflow:auto;padding:12px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);box-shadow:var(--shadow-pop);}
-:is(.wfv-tbb,.wfv-pop button):focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+.wfv-pop button:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
 .wfv-sheet{position:absolute;inset:0;z-index:40;display:grid;place-items:center;padding:24px;background:var(--scrim-soft);}
 .wfv-sheet-card{width:min(1080px,100%);max-height:100%;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);box-shadow:var(--shadow-sheet);overflow:hidden;}
 .wfv-sheet-head{display:flex;align-items:center;gap:8px;height:46px;flex:0 0 auto;padding:0 10px 0 16px;border-bottom:1px solid var(--line);}
@@ -8328,8 +8303,6 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
 .wfl-new{flex:0 0 auto;}
 .wfl-new.is-slot{width:32px;height:32px;}
 .wfl-tools{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:10px 12px 2px;}
-.wfl-chip{height:28px;padding:0 10px;border:0;border-radius:var(--r-xs);background:var(--field);color:var(--ink-2);font:500 12.5px/28px var(--sans);cursor:pointer;}
-.wfl-chip[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:var(--on-ink);}
 .wfl-list{flex:1 1 auto;min-height:0;overflow:auto;padding:6px 8px 10px;}
 .wfl-folder{display:flex;align-items:center;gap:10px;width:100%;min-height:32px;padding:6px;border:0;border-radius:var(--r-sm);background:none;color:var(--ink);font:500 13px/1.3 var(--sans);text-align:left;cursor:pointer;}
 .wfl-folder:hover{background:var(--field);}
@@ -8341,6 +8314,9 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
 .wfl-fold{padding:0 0 6px 20px;}
 :is(.wfl-folder,.wfl-tab):focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .wfl-item{border-radius:var(--r-sm);}
+.wfl-list .wfl-item{border-bottom:1px solid var(--line);border-radius:0;}
+.wfl-list .wfl-item:last-child{border-bottom:0;}
+.wfl-list .wfl-item:is(:hover,:has(.wfl-detail)){border-bottom-color:transparent;border-radius:var(--r-sm);}
 .wfl-item.is-flash{animation:wflWash 1.6s ease-out;}
 @keyframes wflWash{0%{background:var(--amber-bg);}100%{background:transparent;}}
 .wfl-item.is-dragging{opacity:.45;}
@@ -8349,7 +8325,6 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
 .wfl-main{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:12px;padding:9px 42px 9px 8px;border-radius:var(--r-sm);cursor:pointer;}
 .wfl-main:hover,.wfl-item:has(.wfl-detail) .wfl-main{background:var(--field);}
 .wfl-main:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
-.wfl-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .wfl-ic{flex:0 0 auto;width:26px;height:26px;border-radius:var(--r-sm);display:grid;place-items:center;}
 .wfl-ic svg{width:16px;height:16px;}
 .wfl-ic.h-flow{background:var(--ink);color:var(--on-ink);}
@@ -8411,7 +8386,7 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
 .wfc-shell[data-open="true"] .wfc-head{display:flex;}
 .wfc-title{font-weight:600;font-size:12.5px;}
 .wfc-ctx{height:20px;padding:0 8px;border-radius:var(--r-xs);background:var(--field);color:var(--ink-2);font-size:11px;line-height:20px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.wfc-sel{height:20px;padding:0 8px;border:0;border-radius:var(--r-xs);background:var(--ink);color:var(--on-ink);font:500 11px/20px var(--mono);cursor:pointer;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.wfc-sel{max-width:160px;overflow:hidden;text-overflow:ellipsis;}
 .wfc-spacer{flex:1;}
 .wfc-ibtn{flex:0 0 auto;display:grid;place-items:center;}
 .wfc-ibtn:disabled{opacity:.4;}
@@ -8487,7 +8462,7 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
 .ask-ccard .ask-wfcard-body{margin:4px 0;}
 .wfc-suggest{display:flex;flex-wrap:wrap;gap:6px;}
 .wfc-chip-btn{height:28px;padding:0 10px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel);color:var(--ink);font:500 11.5px/24px var(--sans);cursor:pointer;}
-:is(.wfc-ibtn,.wfc-scope,.wfc-sel,.wfc-link,.wfc-chip-btn):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+:is(.wfc-ibtn,.wfc-scope,.wfc-link,.wfc-chip-btn):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .gv-world .node.wfc-enter{animation:wfcEnter .32s var(--ease, ease-out) both;}
 @keyframes wfcEnter{from{opacity:0;}to{opacity:1;}}
 /* Attachments (chat-dock.mjs: Ask's chips, drop overlay and pills in dock form). The chips and their note show only in
@@ -8498,9 +8473,7 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
 .wfc-file{display:inline-flex;align-items:center;gap:6px;flex:none;height:26px;max-width:220px;padding:0 3px 0 8px;box-sizing:border-box;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--field);color:var(--ink-2);font:500 11px/1 var(--mono);}
 .wfc-file-thumb{width:18px;height:18px;flex:none;object-fit:cover;border-radius:var(--r-sm);}
 .wfc-file-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.wfc-file-x{width:20px;height:20px;flex:none;display:grid;place-items:center;padding:0;border:0;border-radius:var(--r-sm);background:none;color:var(--ink-2);font:14px/1 var(--sans);cursor:pointer;}
-.wfc-file-x:hover{background:var(--hover-on-field);color:var(--ink);}
-.wfc-file-x:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.wfc-file-x{flex:none;}
 .wfc-note{margin:0;padding:6px 12px 0;color:var(--red-ink);font-size:11.5px;line-height:1.4;}
 .wfc-shell:not([data-open="true"]) :is(.wfc-files,.wfc-note){display:none;}
 #wfc-attach{position:relative;}

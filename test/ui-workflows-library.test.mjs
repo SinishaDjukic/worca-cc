@@ -542,7 +542,8 @@ test('the search box slides over the title (reduced motion: at once); folders an
   assert.match(css, /\n\.wfl-head\.is-searching \.wfl-title\{opacity:0;visibility:hidden;\}/);
   assert.match(css, /@media \(prefers-reduced-motion:reduce\)\{\.wfl-sbox,\.wfl-title,\.wfl-filter-input\{transition:none;\}\}/);
   assert.match(css, /:is\(\.wfl-folder,\.wfl-tab\):focus-visible\{outline:2px solid var\(--ink\);outline-offset:-2px;\}/);
-  assert.match(css, /\.wfl-chip:focus-visible\{outline:2px solid var\(--ink\);outline-offset:2px;\}/);
+  const lib = readFileSync(new URL('../ui/public/workflows/library.mjs', import.meta.url), 'utf8');
+  assert.match(lib, /h\('button', 'filter-chip', t\)/, 'the All / Built-in / Yours chips are the shared .filter-chip');
   assert.doesNotMatch(css, /\.wfl-(crumbs?|trail|csep|up|search|gh|gn|group|archived)\b/);
   const src = readFileSync(new URL('../ui/public/workflows/library.mjs', import.meta.url), 'utf8');
   assert.doesNotMatch(src, /wfl-(crumbs?|crumb-home|trail|csep|up|search|gh|gn|group|archived)\b/);

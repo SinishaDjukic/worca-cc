@@ -242,6 +242,11 @@ const REMOVED_RUNS = [
 test('no Runs list or run page rule removed by the redesign comes back (Known bug 10)', () => {
   assert.deepEqual([...new Set(REMOVED_RUNS)].flatMap((c) => scan(classRe(c)).map((h) => `${c} — ${h}`)), []);
 });
+// Slice 3: the four one-off filter chips are gone; .filter-chip is the only one (docs/design-system.md › Filter chip).
+const REMOVED_CHIPS = ['mv-filter', 'wfl-chip', 'proj-fchip', 'mcp-chip'];
+test('ui/public no longer defines or uses mv-filter, wfl-chip, proj-fchip or mcp-chip', () => {
+  assert.deepEqual(REMOVED_CHIPS.flatMap((c) => scan(classRe(c)).map((h) => `${c} — ${h}`)), []);
+});
 test('the removed-selector scan flags a reappearance (self-test)', () => {
   const dir = mkdtempSync(join(tmpdir(), 'wdl-'));
   const f = join(dir, 'x.css');
@@ -341,8 +346,8 @@ test('the tab-emitter scan flags a bare per-view tab (self-test)', () => {
 });
 
 // Size scale (review A5, C): controls at 28/32/40, tiles 56-64, an info tip's hit target at least 24.
-const CONTROL_HEIGHTS = { '.tab': 32, '.seg button': 28, '.chat-home-preset': 28, '.wfl-chip': 28,
-  '.wfl-folder': 32, '.info-tip': 24, '.chat-home-act': 40 };
+const CONTROL_HEIGHTS = { '.tab': 32, '.seg button': 28, '.chat-home-preset': 28, '.filter-chip': 28,
+  '.wfl-folder': 32, '.info-tip': 28, '.chat-home-act': 40 };
 const OFF_SCALE = [26, 31, 34, 36, 43, 44, 55, 78];
 const CONTROL_WORD = /^(?:tab|tabs|seg|btn|chip|preset|act|folder|switch|button)$/;
 // Rows, not controls (spec §1.2): allowed at their own height. Each entry names its reason.

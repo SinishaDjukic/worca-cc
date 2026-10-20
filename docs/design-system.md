@@ -72,7 +72,10 @@ that focuses its way back on open hides the ring while `data-input="pointer"`.
 ### Button (checked)
 `.btn` + one size (`.btn-sm`, `.btn-lg`) + one variant (`.btn-primary`, `.btn-quiet`, `.btn-danger`); `.btn-icon` is
 square. One primary per group. Labels of 1–3 words, verb first. Icons come from `icon(doc, 'plus')`
-(`ui/public/icons.mjs`), never a typed "+", "×" or "▾" (checked).
+(`ui/public/icons.mjs`), never a typed "+", "×" or "▾" (checked). `.info-tip` is a 28px square like `.btn-sm.btn-icon`; a
+button outside `.btn` must be a shared control or a row a person opens (checked by the stray audit). The composer's
+disabled Save keeps its ink fill at 70% opacity, not the 45% grey of other disabled buttons, so it still reads as the
+primary.
 ### Field
 `.input` / `.select` / text, number and select elements: 32px, 13px, `--field` fill, 6px corner, ink border on focus.
 `.input-sm` / `.select-sm`: 28px, 12px. A textarea grows; it keeps the same fill, corner and padding sides. Search, url, email,
@@ -83,7 +86,8 @@ password and date inputs follow the same field; each joins the base rule when it
 `.tabs` / `.tab`: underline tabs, 32px, never boxed (checked).
 ### Filter chip
 `.filter-chip` (`aria-pressed`): 28px, 12px / 500, 1px `--line-2` border, 6px corner. Selected: `--field` fill, ink
-border, ink text. Never a solid ink fill. A count sits in `.n`.
+border, ink text. Never a solid ink fill. A count sits in `.n`. It is the only filter chip: `mv-filter`, `wfl-chip`,
+`proj-fchip` and `mcp-chip` are gone (checked).
 ### Chips and badges
 One chip: 18px, 11px / 500, 4px corner, filled, no border (checked). The Labs (violet) and Beta (blue) flag chips are the
 reference size. Colour carries meaning only.
@@ -114,7 +118,8 @@ under 300ms. Error: a plain sentence plus a "Details" quiet button, never the ra
 stay, never move focus.
 ### Modals
 `confirmModal({ title, message, confirmLabel, danger })` (`ui/public/app.js`): a destructive confirm names what goes;
-only inside a confirm is `.btn-danger` solid red.
+only inside a confirm is `.btn-danger` solid red. Footer actions and the head Close are 32px `.btn`; inline field
+buttons stay 28px; the card keeps the shared 24px padding (checked by the theme proof's `dialog-sizes`).
 
 ## Patterns
 - Status line: "State · detail", for example "Failed · Review · Review Implementation". No colon forms.
@@ -122,7 +127,8 @@ only inside a confirm is `.btn-danger` solid red.
 - Labels are 1–3 words. Plain words: never ids (`run:cc3b6fce`), raw timestamps or raw errors in visible text; ids
   belong in a tooltip.
 - The feature is "Chat", not "Ask Worca".
-- Page header: title, then one short intro sentence (`.page-intro`), then content.
+- Page header: title, then one short intro sentence (`.page-intro`), then content. A full-bleed editor (Workflows) has
+  no page header.
 - Stat tiles hold numbers only (time, cost, files changed). A list of chips goes in its own labelled row under the
   tiles, for example the run page's "Cost tags" row, never stacked inside a tile. The value is sans with tabular figures.
 - Search is the top bar's "Search or ask" only. A list filter is chosen there ("Runs labelled hotfix", `label:hotfix`),

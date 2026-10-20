@@ -16,13 +16,12 @@ export const BUTTON_SPEC = Object.freeze({
     'button.pd-ov-card', 'button.wd-member', 'button.ask-activity-head', 'button.act-srow-name', 'button.runs-sec-head',
     'button.gp-row', 'button.agent-row-head', 'button.hd-tree-file', 'button.hd-tree-dir', 'button.ask-filescard-thumb', 'button.ask-filescard-name', 'button.chat-home-act',
     'button.chat-home-wf', 'button.chat-home-chat', 'button.chat-home-plan-open', 'button.release-row-add', 'button.release-row-edit',
-    'button.wfl-folder', 'button.mcp-setrow', 'button.mv-sec-toggle', 'button.proj-open', 'button.xtoggle',
-    '.mv-filter', '.mv-cp-terms-pill', '.cost-bd-btn', '.linkish', '.hd-dl-more-btn', '.plan-fold', '.plan-persp-edit', '.qopt', '.afb-main',
+    'button.wfl-folder', 'button.mcp-setrow', 'button.proj-open', 'button.xtoggle', 'button.gs-tile',
+    '.mv-cp-terms-pill', '.cost-bd-btn', '.linkish', '.hd-dl-more-btn', '.plan-fold', '.plan-persp-edit', '.qopt', '.afb-main',
     '.afb-folder', '.acct', '[class*="chip"]'],
-  // .btn labels that still type "+" instead of icon(doc, 'plus'), exactly as shown; slice 3 empties this
+  // .btn labels that still type "+" instead of icon(doc, 'plus'), exactly as shown; slice 3 emptied this
   // (docs/design-system.md › Button). The static twin is DEBT.typedPlus in test/fixtures/design-debt.json.
-  plusDebt: ['+ Add', '+ Add guardrail set', '+ Add header', '+ Add model', '+ Add project', '+ Add server', '+ Add skill',
-    '+ Add variable', '+ Case'],
+  plusDebt: [],
 });
 
 /**
@@ -85,8 +84,8 @@ export function auditButtons(root, spec, env) {
 
 export const SURFACE_SPEC = Object.freeze({
   heights: [28, 32, 40],
-  infoMin: 24,
-  controls: ['.tab', '.seg', '.wfl-chip', '.wfl-folder', '.chat-home-preset', '.filter-chip'],
+  infoMin: 28,
+  controls: ['.tab', '.seg', '.wfl-folder', '.chat-home-preset', '.filter-chip'],
   tiles: { sel: '.chat-home-act', min: 56, max: 64 },
   cards: ['.ask-card', '.chat-rc', '.shape-feature', '.rd-sheet', '.card'],
   fields: '.file, .ta-hl-back',   // input-like boxes (the file drop zone, a textarea's highlight backdrop) keep their borders
@@ -213,6 +212,28 @@ export function auditType(root, spec, env) {
     if (seen.has(sig)) continue;
     seen.add(sig);
     out.push({ sig, rule: 'type-scale', got: `${px}px`, text: el.textContent.trim().slice(0, 40) });
+  }
+  return out;
+}
+
+// Slice 3 (D13): stray clickables. Every visible button under `root` is .btn or one of the shared controls, or one of
+// the rows and tiles a person opens (docs/design-system.md › Cards versus divided rows). Nothing screen-specific.
+export const STRAY_SPEC = Object.freeze({
+  allow: ['.tab', '[role="tab"]', '.seg button', '.seg-btn', '.filter-chip', '.switch', '[role="switch"]', '[role^="menuitem"]',
+    '[role="option"]', '[role="radio"]', '.info-tip', 'button.wfl-folder', 'div.wfl-main', 'button.mcp-setrow', 'button.gs-tile',
+    'button.ob-door', 'button.wfc-chip-btn'],
+  skip: '#wfv-canvas',
+});
+export function auditStray(root, spec, env) {
+  const rect = (env && env.rect) || ((el) => el.getBoundingClientRect());
+  const visible = (el) => { const r = rect(el); return r.width > 0 && r.height > 0; };
+  const allow = spec.allow.join(',');
+  const out = [];
+  if (!root) return out;
+  for (const el of root.querySelectorAll('button, input[type="button"], input[type="submit"], [role="button"]')) {
+    if (!visible(el) || el.classList.contains('btn') || el.matches(allow) || el.closest(spec.skip)) continue;
+    out.push({ sig: el.tagName.toLowerCase() + [...el.classList].sort().map((c) => `.${c}`).join(''), rule: 'outside-btn',
+      text: (el.getAttribute('aria-label') || el.textContent || '').trim().slice(0, 40) });
   }
   return out;
 }
