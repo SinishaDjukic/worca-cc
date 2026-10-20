@@ -6,7 +6,9 @@
 // N rounds" chip and its Decide / Ready badge); the answered rounds stay on the page in the Earlier rounds card
 // with their answer and a Change; the Ready panel shows the server's six checks with Start enabled exactly when
 // the feature is Ready; the Export menu opens and Escape closes it; the Decide card, the start-before-Ready
-// dialog (focus on the reason, Escape returns it), Confirm the N left leading to the Ready to build card; no page errors.
+// dialog (focus on the reason, Escape returns it; its button is disabled until a reason is typed), Confirm the N
+// left leading to the Ready to build card; Start in worca on that card gives one run row linking to #running/<id>
+// and the API's starts[0].runId (the mock run is then stopped); no page errors.
 // NOT part of `npm test`.
 // Run: npm run verify:requirements   (set CHROME_BIN to a Chrome/Chromium binary if it is not auto-found,
 // e.g. CHROME_BIN="C:/Program Files/Google/Chrome/Application/chrome.exe" on Windows)
@@ -18,7 +20,7 @@
 // flipped through window.__np.flags, real CSS deciding the nav row's computed display, the hash route, the
 // live server in mock mode) and the no-page-error gate. The view's DOM shapes and behaviour are pinned in
 // the jsdom tests test/requirements-view.test.mjs and test/requirements-app.test.mjs.
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -41,6 +43,7 @@ async function shutdown(code) {
   for (const s of sockets) { try { s.close(); } catch {} }
   try { if (chrome) chrome.kill('SIGKILL'); } catch {}
   try { if (srv) { srv.closeAllConnections?.(); await new Promise((r) => srv.close(r)); } } catch {}
+  try { (await import(new URL('../src/core/db.mjs', import.meta.url).href))._resetForTests(); } catch {}
   for (const dir of [home, profile]) { try { if (dir) await rm(dir, { recursive: true, force: true, maxRetries: 3 }); } catch {} }
   process.exit(code);
 }
@@ -65,10 +68,14 @@ process.env.WORCA_MOCK = '1';
 delete process.env.WORCA_FLAGS;
 const projDir = path.join(home, 'shop');
 await mkdir(projDir, { recursive: true });
+// A start needs a git repository with one commit (the run's worktree base).
+const git = (...a) => execFileSync('git', a, { cwd: projDir, stdio: 'ignore' });
+git('init'); git('config', 'user.name', 'proof'); git('config', 'user.email', 'proof@example.invalid');
+git('commit', '--allow-empty', '-m', 'init');
 await (await import(new URL('../src/core/projects.mjs', import.meta.url).href)).addProject({ name: 'shop', path: projDir });
 // The WebSocketServer is attached to the MODULE's `server` (a bare
 // http.createServer(app) answers the /ws upgrade with 404 and no frame arrives).
-const { server } = await import(new URL('../ui/server.mjs', import.meta.url).href);
+const { server, runs } = await import(new URL('../ui/server.mjs', import.meta.url).href);
 srv = server;
 await new Promise((r) => srv.listen(0, '127.0.0.1', r));
 const base = `http://127.0.0.1:${srv.address().port}`;
@@ -198,11 +205,32 @@ check("Start before it's Ready… opens the dialog on the reason; Escape closes 
     if (getComputedStyle(d.closest('.viewer-modal')).position !== 'fixed') return false;
     d.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     return !document.querySelector('.req-dialog') && document.activeElement === document.querySelector('#requirements-host [data-ui="start-anyway"]'); })()`));
+check('the dialog Start button is disabled while the reason is empty and enabled once text is typed',
+  await A.evalJs(`(() => { document.querySelector('#requirements-host [data-ui="start-anyway"]').click();
+    const d = document.querySelector('.req-dialog'); if (!d) return false;
+    const go = d.querySelector('.btn-primary'); const ta = d.querySelector('textarea');
+    const empty = go.disabled === true;
+    ta.value = 'Needed now'; ta.dispatchEvent(new Event('input', { bubbles: true }));
+    const typed = go.disabled === false;
+    d.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    return empty && typed && !document.querySelector('.req-dialog'); })()`));
 await A.evalJs(`document.querySelector('#requirements-host [data-ui="confirm-all"]').click()`);
 check('Confirm the N left: the feature is Ready and the Ready to build card offers Start in worca',
   await until(() => A.evalJs(`(() => { const c = document.querySelector('#requirements-host .req-left .req-build');
     return !!c && document.querySelector('#requirements-host .req-head .badge')?.textContent === 'Ready'
       && !c.querySelector('[data-ui="start-go"]').disabled; })()`)));
+const seqNo = await A.evalJs(`location.hash.split('/').pop()`);
+await A.evalJs(`document.querySelector('#requirements-host .req-build [data-ui="start-go"]').click()`);
+check('Start in worca: one run row links to #running/<id> and the API has starts[0].runId',
+  await until(() => A.evalJs(`(async () => { const rows = [...document.querySelectorAll('#requirements-host .req-runs a.req-run-row')];
+    if (rows.length !== 1 || !rows[0].getAttribute('href').startsWith('#running/')) return false;
+    const f = (await (await fetch('/api/requirements/${seqNo}')).json()).feature;
+    return !!f.starts?.[0]?.runId && rows[0].getAttribute('href') === '#running/' + f.starts[0].runId; })()`), 15000));
+// The mock Auto run parks on its workflow question: stop it so the server closes and the temp dir can go.
+for (const r of runs.values()) { try { r.orch?.stop?.(); } catch {} }
+const settled = new Set(['done', 'stopped', 'error', 'paused', 'interrupted']);
+await until(async () => [...runs.values()].every((r) => settled.has(String(r.status || ''))), 30000);
+await sleep(1000);
 check('no page errors', A.pageErrors.length === 0, A.pageErrors.join(' | '));
 log(failed ? `${failed} check(s) failed` : 'all checks passed');
 await shutdown(failed ? 1 : 0);

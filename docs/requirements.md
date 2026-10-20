@@ -25,6 +25,58 @@ If a look or a round fails (no reply, an unreadable reply, the spending limit, o
 page says why and offers **Try again**, which re-runs exactly what failed. **Archive** hides a feature
 from the list; **Show archived** lists it again, and **Restore** brings it back where it was.
 
-No run, branch or worktree is created. Each look and round is one model call; its cost is shown on the
+Nothing is built until you press **Start in worca** (below). Each look and round is one model call; its cost is shown on the
 feature, counts toward your spending limit, and is part of the spend in Statistics and the account menu.
 Worca runs at most four requirements looks or rounds at a time.
+
+## Ready
+
+A feature is **Ready** when six checks pass; Worca computes them from what is stored, no model is asked:
+
+1. A goal with a success measure.
+2. At least one acceptance criterion.
+3. The interview is finished.
+4. No open questions.
+5. Every assumption is decided (none open, and none you rejected that no round has asked about yet).
+6. The project or workspace still exists.
+
+The Ready panel shows each check and what is missing. The list and the page header say **Decide** while
+only assumptions are left; **Confirm the N left** settles them in one click. When all six pass, a
+**Ready to build** card offers **Start in worca**.
+
+You can start before it is Ready: **Start before it's Ready...** asks for a reason, which is required.
+Worca keeps the reason, your name and the checks that failed on the feature, and the run is marked as
+started before Ready. Open assumptions are then treated as confirmed. Worca refuses it without a reason, and
+always refuses a feature that is busy, archived or whose project or workspace is gone.
+
+## Start in Worca
+
+**Start in worca** starts a normal run from the feature:
+
+- The run's task is the spec, with the acceptance criteria (`R-po-1`, ...) as its definition of done. The
+  run title is `FEAT-<n>: <title>`.
+- It uses the **Auto** workflow and the project's default branch, unless you change them under **Change** on the
+  Ready to build card.
+- Only runs started from Requirements are checked this way. **New run**, **Ask**, schedules and the CLI
+  work as before and do not look at Requirements.
+
+The page's **Runs from this feature** card lists every run started from the feature, with its status and
+cost, and links to the run.
+
+## Follow-up rounds
+
+After the interview, a change of mind does not need a new feature. **Reject** an assumption, then choose
+**Done, ask about A-n** to put it to a new round of questions. Follow-up rounds are not limited by the
+6-round cap of the first interview. The feature is not Ready again until a round has asked about each
+rejected assumption and the rest is decided.
+
+## After starting
+
+- **Versions.** What a run started with is kept frozen as **v1**, **v2**, ... and never changes.
+- **Changed since the run started.** If you edit the spec afterwards, the page lists what changed against
+  the last start: goal, sections, criteria and assumptions, old text struck through and new text marked.
+- **Undo my changes** puts the spec back to the one the last run started with. New ids are never reused,
+  so a criterion you added and undid does not come back under the same number.
+- **Start again with v<n>** starts another run from the changed spec; it is enabled only when something
+  changed.
+- Once a run has started, the feature's project or workspace can no longer be changed.
