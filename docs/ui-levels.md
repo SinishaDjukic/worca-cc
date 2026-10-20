@@ -155,7 +155,7 @@ be skipped by forgetting it.
 | Start run's caret menu (Schedule…) | A |
 | Workflow picker | S — lists Auto and Default only; the selected workflow always stays listed |
 | Mock mode | S — sits beside Start run, outside the Advanced disclosure |
-| Preset picker, Save current setup… / Update preset, the ⋯ menu (Rename, Delete) beside it | S |
+| Preset ▾ button and its menu (presets, Rename…, Delete…, Save as preset), its ✕, Update preset | S |
 | Preset picker's "Manage presets…" entry | A |
 | "Set in Advanced mode and still applied" note | S |
 | Target switch, task source (Markdown), source and feature branch; "Run on the source branch" toggle | A |

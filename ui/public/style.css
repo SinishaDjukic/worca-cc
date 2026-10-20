@@ -821,9 +821,14 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 @container (max-width:520px){ .split-row{grid-template-columns:minmax(0,1fr);} }
 
 /* Run presets (#712): the Preset picker above the target row, its applied chip, and the broken card. */
-.preset-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:12px;}
-.preset-row > label{font-weight:600;}
-.preset-row select{min-width:0;flex:1 1 200px;}
+/* The compact Preset ▾ button (plans/mocks/new-run-preset-button.png): right-aligned, no row of its own until a preset
+   is applied; then it fills (ink) with a separate ✕ and a muted one-line summary on its left. */
+.preset-row{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px;margin-bottom:8px;}
+.preset-summary{flex:1 1 200px;min-width:0;font-size:12px;color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.preset-pick{display:inline-flex;align-items:center;gap:2px;}
+.preset-btn{max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.preset-btn.is-on{background:var(--ink);color:var(--bg);font-weight:600;}
+.preset-btn.is-on:hover:not(:disabled){background:var(--ink);color:var(--bg);}
 #preset-broken{flex:1 0 100%;}
 #preset-broken:empty{display:none;}
 .preset-broken{display:flex;flex-direction:column;gap:6px;padding:10px 12px;background:var(--amber-wash);border:1px solid var(--amber-line);}

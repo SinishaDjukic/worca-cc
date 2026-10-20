@@ -640,9 +640,10 @@ const el = {
   featureBranch: $('#featureBranch'),
   sameAsSource: $('#sameAsSource'),
   presetSelect: $('#presetSelect'),
-  presetMore: $('#preset-more'),
   presetChip: $('#preset-chip'),
-  presetSave: $('#preset-save'),
+  presetBtn: $('#preset-btn'),
+  presetClear: $('#preset-clear'),
+  presetSummary: $('#preset-summary'),
   presetUpdate: $('#preset-update'),
   presetBroken: $('#preset-broken'),
   sameAsSourceHint: $('#sameAsSourceHint'),
@@ -36192,14 +36193,47 @@ function paintPresetMenu() {
 function paintPresetChip() {
   const chip = el.presetChip;
   const p = state.preset;
+  // The chip now only says what is happening (checking, modified); the summary line says what the preset set.
   if (chip) {
-    chip.hidden = !p;
-    chip.textContent = !p ? '' : p.applying ? `Checking ${p.name}…`
-      : p.modified ? `${p.name} · modified` : 'Preset — changes here apply to this run only';
+    chip.hidden = !(p && (p.applying || p.modified));
+    chip.textContent = !p ? '' : p.applying ? `Checking ${p.name}…` : p.modified ? 'Modified' : '';
   }
   if (el.presetUpdate) el.presetUpdate.hidden = !(p && p.modified);
-  if (el.presetMore) el.presetMore.hidden = !p;
-  if (el.presetSave) el.presetSave.textContent = p && p.modified ? 'Save as new…' : 'Save current setup…';
+  if (el.presetBtn) {
+    el.presetBtn.textContent = p ? `${p.name} ▾` : 'Preset ▾';
+    el.presetBtn.classList.toggle('is-on', !!p);
+    el.presetBtn.title = p ? `Preset: ${p.name}` : 'Start from a preset';
+  }
+  if (el.presetClear) el.presetClear.hidden = !p;
+  if (el.presetSummary) {
+    const stored = p && state.presets.find((x) => x.id === p.id);
+    el.presetSummary.hidden = !p;
+    el.presetSummary.textContent = p ? `${presetSetupSummary((p.modified || !stored ? p : stored).setup, state.presetWorkflowNames).text} · applies to this run only` : '';
+  }
+}
+
+/** The Preset ▾ menu: the presets (grouped as the old select was, the applied one ticked), the applied preset's own
+ *  actions, then Save as preset and (Advanced and up) Manage presets…. */
+function presetMenuItems() {
+  const items = [];
+  const groups = presetMenuGroups(state.presets, presetTargetNames());
+  if (!state.presets.length) items.push({ label: 'No presets yet', disabled: true });
+  for (const g of groups) {
+    items.push({ header: g.label });
+    for (const p of g.items) {
+      items.push({ label: p.name, checked: !!state.preset && state.preset.id === p.id,
+        title: presetSetupSummary(p.setup, state.presetWorkflowNames).text, onSelect: () => void applyPreset(p.id) });
+    }
+  }
+  const cur = state.preset && state.presets.find((x) => x.id === state.preset.id);
+  if (cur) {
+    items.push({ sep: true }, { header: cur.name },
+      { label: 'Rename…', onSelect: () => void presetMenuAct(renamePreset, cur) },
+      { label: 'Delete…', onSelect: () => void presetMenuAct(deletePreset, cur) });
+  }
+  items.push({ sep: true }, { label: state.preset && state.preset.modified ? 'Save as new…' : 'Save as preset', onSelect: () => void savePresetDialog() });
+  if (levelAtLeast('advanced')) items.push({ label: 'Manage presets…', onSelect: () => { location.hash = '#settings/presets'; } });
+  return items;
 }
 
 // A broken item the form has replaced since the check (#712 8.6): its reference is no longer what this run uses.
@@ -36460,26 +36494,23 @@ async function presetMenuAct(act, p) {
   const r = await act(p);
   if (r && !r.ok) presetChangeError(r);
   if (r && r.ok) await loadPresets();
-  // The closing modal releases focus only at the next frame (Chromium): move it after that, onto ⋯, or the select once ⋯ hid.
+  // The closing modal releases focus only at the next frame (Chromium): move it after that, back onto the Preset button.
   await new Promise((res) => (typeof requestAnimationFrame === 'function' ? requestAnimationFrame(() => res()) : setTimeout(res, 0)));
-  (el.presetMore && !el.presetMore.hidden ? el.presetMore : el.presetSelect)?.focus();
+  el.presetBtn?.focus();
 }
-if (el.presetMore) {
-  el.presetMore.replaceChildren(icon(document, 'more', 16));
-  el.presetMore.addEventListener('click', () => {
-    const p = state.preset && state.presets.find((x) => x.id === state.preset.id);
-    if (!p) return;
-    toggleMenu({ doc: document, anchor: el.presetMore, align: 'end', label: `Actions for ${p.name}`, items: [
-      { label: 'Rename', onSelect: () => void presetMenuAct(renamePreset, p) },
-      { label: 'Delete', onSelect: () => void presetMenuAct(deletePreset, p) },
-    ] });
+if (el.presetBtn) {
+  el.presetBtn.addEventListener('click', () => {
+    toggleMenu({ doc: document, anchor: el.presetBtn, align: 'end', label: 'Presets', items: presetMenuItems() });
   });
 }
+if (el.presetClear) {
+  el.presetClear.replaceChildren(icon(document, 'x', 14));
+  el.presetClear.addEventListener('click', () => { leavePresetMode(); el.presetBtn?.focus(); });
+}
 onLevelChange(() => { paintPresetMenu(); paintPresetBroken(); });   // "Manage presets…" and the scope hint follow the level
-el.presetSave?.addEventListener('click', () => void savePresetDialog());
 el.presetUpdate?.addEventListener('click', () => void updateAppliedPreset());
 
-/** Rename (Settings › Presets and New run's ⋯): the prompt, then PUT. The response, or null on cancel. */
+/** Rename (Settings › Presets and New run's Preset menu): the prompt, then PUT. The response, or null on cancel. */
 async function renamePreset(p) {
   const v = await promptModal({ title: 'Rename preset', fields: [{ id: 'name', label: 'Name', value: p.name, required: true }] });
   if (!v) return null;

@@ -65,11 +65,11 @@ test('every nav item, Settings tab and card, and detail tab declares an explicit
         assert.match(c.dataset.minLevel || '', LEVEL_RE, `Settings card "${name}" has no data-min-level`);
       }
     } },
-    { name: 'presets: the Settings tab and card are Advanced; New run\'s picker, ⋯ and Save as preset stay ungated', run: () => {
+    { name: 'presets: the Settings tab and card are Advanced; New run\'s Preset button and its ✕ stay ungated', run: () => {
       const doc = shell();
       assert.equal(doc.querySelector('#settings-tabs [data-tab="presets"]').dataset.minLevel, 'advanced');
       assert.equal(doc.getElementById('presets-settings-card').dataset.minLevel, 'advanced');
-      for (const id of ['preset-row', 'presetSelect', 'preset-more', 'preset-save']) {
+      for (const id of ['preset-row', 'preset-btn', 'preset-clear']) {
         assert.equal(doc.getElementById(id).closest('[data-min-level="advanced"], [data-min-level="expert"]'), null, `#${id} is Simple`);
       }
       // The History page's Save as preset lives in #hist-detail-tpl: check inside the template and the template's own ancestors.

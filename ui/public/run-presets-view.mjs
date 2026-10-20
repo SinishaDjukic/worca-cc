@@ -4,7 +4,7 @@
 import { ago } from './branch-sync.mjs';
 import { presetSetupSummary } from './run-presets-names.mjs';
 
-export const PRESETS_EMPTY_TEXT = 'No presets yet. Set up a run in New run, then use Save current setup…';
+export const PRESETS_EMPTY_TEXT = 'No presets yet. Set up a run in New run, then use Preset ▾ › Save as preset';
 
 function h(doc, tag, cls, text) {
   const el = doc.createElement(tag);

@@ -279,13 +279,17 @@
             <section class="card">
               <form id="run-form" autocomplete="off">
                 <!-- Run presets (#712, docs/run-presets.md): a named setup, applied for THIS run only. -->
+                <!-- One compact "Preset ▾" button (plans/mocks/new-run-preset-button.png): its menu lists the presets and
+                     holds Save as preset, Rename, Delete and Manage. The select stays as the hidden value holder. -->
                 <div id="preset-row" class="preset-row" data-flag="runPresets">
-                  <label for="presetSelect">Preset</label>
-                  <select id="presetSelect"><option value="">No preset</option></select>
-                  <button type="button" id="preset-more" class="btn btn-sm btn-icon preset-more" aria-haspopup="menu" aria-expanded="false" aria-label="Preset actions" title="Preset actions" hidden></button>
+                  <span id="preset-summary" class="preset-summary" hidden></span>
                   <span id="preset-chip" class="chip" hidden></span>
-                  <button type="button" id="preset-save" class="btn btn-sm">Save current setup…</button>
                   <button type="button" id="preset-update" class="btn btn-sm" hidden>Update preset</button>
+                  <span class="preset-pick">
+                    <button type="button" id="preset-btn" class="btn btn-sm btn-quiet preset-btn" aria-haspopup="menu" aria-expanded="false">Preset ▾</button>
+                    <button type="button" id="preset-clear" class="btn btn-sm btn-quiet btn-icon preset-clear" aria-label="Clear preset" title="Clear preset" hidden></button>
+                  </span>
+                  <select id="presetSelect" hidden aria-hidden="true" tabindex="-1"><option value="">No preset</option></select>
                   <div id="preset-broken"></div>
                 </div>
                 <!-- Target switch and the thing it selects share one row: they are one
