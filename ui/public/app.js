@@ -304,6 +304,7 @@ import { visibleFields as visibleAnswerFields } from '../../src/shared/forms/lay
 import { openLabelPicker, closeLabelPickerFor, fetchLabels, labelChip } from './label-picker.mjs';
 import { labelStates, applyLabelChange, normaliseLabel } from '../../src/shared/run-labels.mjs';
 import { renderLabelsSection, runCount } from './labels-settings.mjs';
+import { makeSwitch } from './switch.mjs';
 
 // With site data blocked, Chrome throws SecurityError on merely reading `localStorage`. Every bare `localStorage` in
 // this module resolves here: the browser's storage, else an in-memory stand-in, so the page boots and forgets on reload.
@@ -4235,6 +4236,8 @@ async function renderWorkflowConfig(workflowId) {
         el.humanInLoop.checked = presetHumanInLoop() ?? state.config.humanInLoop !== false;   // readRunConfig echoes only `false`
         el.humanInLoop.disabled = !agentsEditable();
       }
+      const hitlWhy = document.getElementById('hitl-why');
+      if (hitlWhy) hitlWhy.hidden = !el.humanInLoop.disabled;
     }
     // Reset what the failed-fetch arm resets, so nothing from the previous workflow lingers inside the
     // hidden accordion (#wf-feedback-config and the agents header live INSIDE #agents-config).
@@ -4460,18 +4463,9 @@ function renderAgentRows(rows) {
     if (row.role) effortSel.dataset.role = row.role;
     effortSel.setAttribute('aria-label', `${row.label} effort`);
     eWrap.appendChild(effortSel);
-    const fanWrap = document.createElement('label');
-    fanWrap.className = 'fanout-toggle';
-    const fanCb = document.createElement('input');
-    fanCb.type = 'checkbox';
-    fanCb.className = 'step-fanout';
-    fanCb.dataset.nodeId = row.nodeId;
-    if (row.role) fanCb.dataset.role = row.role;
-    fanCb.setAttribute('aria-label', `${row.label} fan-out`);
-    fanCb.checked = !!row.fanOut;
-    const fanTxt = document.createElement('span');
-    fanTxt.textContent = 'Fan-out';
-    fanWrap.append(fanCb, fanTxt);
+    const fan = makeSwitch(document, { label: 'Fan-out', ariaLabel: `${row.label} fan-out`, checked: !!row.fanOut,
+      inputClass: 'step-fanout', rowClass: 'fanout-toggle', data: { nodeId: row.nodeId, ...(row.role ? { role: row.role } : {}) } });
+    const fanWrap = fan.row;
     // Sub-agent model: what this node's Task children run on. Rendered beside
     // Fan-out (whose children it governs) and, like it, offered on every agent —
     // the row's own fan-out toggle is what decides whether it bites.
@@ -4495,25 +4489,11 @@ function renderAgentRows(rows) {
     // node's own model, and Cursor has none.
     if (state.engine !== 'claude') sWrap.hidden = true;
     if (row.askQuestions !== null && row.askQuestions !== undefined) {
-      const qWrap = document.createElement('label');
-      qWrap.className = 'fanout-toggle questions-toggle';
-      if (row.questionsLocked) {
-        qWrap.title = row.askQuestions ? 'Always on for this agent' : 'Always off for this agent';
-      }
-      const qCb = document.createElement('input');
-      qCb.type = 'checkbox';
-      qCb.className = 'step-questions';
-      qCb.dataset.nodeId = row.nodeId;
-      if (row.role) qCb.dataset.role = row.role;
-      qCb.setAttribute('aria-label', `${row.label} questions`);
-      qCb.checked = !!row.askQuestions;
-      qCb.disabled = !!row.questionsLocked;
-      // Marked so re-enabling the accordion (project selected) cannot un-lock an
-      // agent whose questions setting is fixed by its manifest.
-      if (row.questionsLocked) qCb.dataset.locked = '1';
-      const qTxt = document.createElement('span');
-      qTxt.textContent = 'Questions';
-      qWrap.append(qCb, qTxt);
+      const lockWhy = row.questionsLocked ? (row.askQuestions ? 'Always on for this agent' : 'Always off for this agent') : null;
+      const q = makeSwitch(document, { label: 'Questions', ariaLabel: `${row.label} questions`, checked: !!row.askQuestions,
+        inputClass: 'step-questions', rowClass: 'fanout-toggle questions-toggle', locked: lockWhy,
+        data: { nodeId: row.nodeId, ...(row.role ? { role: row.role } : {}) } });
+      const qWrap = q.row;
       keepVisible(tagLevel(qWrap, 'expert'), !row.questionsLocked && !!row.askQuestions !== !!rowDef.askQuestions);
       picks.appendChild(qWrap);
     }
@@ -6291,7 +6271,7 @@ function buildTunablesTable(w, wf, handle) {
     const cb = document.createElement('input'); cb.type = 'checkbox'; cb.className = 'sw-input'; cb.checked = !!on; cb.setAttribute('aria-label', label);
     if (locked) { cb.disabled = true; cb.dataset.locked = '1'; }
     cb.addEventListener('change', () => onChange(cb.checked));
-    const knob = document.createElement('span'); knob.className = 'switch switch-sm';
+    const knob = document.createElement('span'); knob.className = 'switch';
     const t = document.createElement('span'); t.className = 'qtune-sw-t'; t.textContent = label.replace(/ for .*$/, '');
     l.append(cb, knob, t); return l;
   };
@@ -7106,12 +7086,15 @@ function applyServerMock(on) {
   serverMock.on = on;
   paintMock(on || serverMock.choice);
   mockSwitch.classList.toggle('disabled', on);
+  const mockWhy = mockSwitch.parentElement.querySelector('.switch-why');
   if (on) {
     mockSwitch.setAttribute('aria-disabled', 'true');
     mockSwitch.title = SERVER_MOCK_TITLE;
+    if (!mockWhy) mockSwitch.parentElement.appendChild(Object.assign(document.createElement('span'), { className: 'switch-why', textContent: 'Set by the server (mock mode)' }));
   } else {
     mockSwitch.removeAttribute('aria-disabled');
     mockSwitch.removeAttribute('title');
+    if (mockWhy) mockWhy.remove();
   }
 }
 if (mockSwitch) {
@@ -9067,7 +9050,7 @@ function buildWorkspaceRow(w, known) {
   toggle.textContent = `Show ${n} project${n === 1 ? '' : 's'}`;
   const open = document.createElement('button');
   open.type = 'button';
-  open.className = 'proj-open ws-open';
+  open.className = 'btn btn-sm btn-quiet btn-icon proj-open ws-open';
   open.setAttribute('aria-label', 'Open workspace details');
   open.innerHTML = CHEVRON_RIGHT_SVG;   // static markup
   actions.append(syncAll, toggle, open);
@@ -11087,16 +11070,7 @@ function fmSelect(cls, options, value) {
   return sel;
 }
 function fmCheck(cls, labelText, checked) {
-  const label = document.createElement('label');
-  label.className = 'fanout-toggle';
-  const cb = document.createElement('input');
-  cb.type = 'checkbox';
-  cb.className = cls;
-  cb.checked = Boolean(checked);
-  const txt = document.createElement('span');
-  txt.textContent = labelText;
-  label.append(cb, txt);
-  return label;
+  return makeSwitch(document, { label: labelText, checked: Boolean(checked), inputClass: cls, rowClass: 'fanout-toggle' }).row;
 }
 /** A RULE the store would 400 on — red. */
 function fmHint(cls) {
@@ -12104,11 +12078,12 @@ function buildProjectRow(p) {
   // outside worca's store) has no page: no role, no chevron, default cursor.
   if (p.key) {
     row.setAttribute('role', 'button');
+    row.classList.add('row-btn');
     row.tabIndex = 0;
     row.setAttribute('aria-label', `Open ${p.name}`);
     const open = document.createElement('button');
     open.type = 'button';
-    open.className = 'proj-open';
+    open.className = 'btn btn-sm btn-quiet btn-icon proj-open';
     open.setAttribute('aria-label', 'Open project details');
     open.innerHTML = CHEVRON_RIGHT_SVG;   // static markup
     row.appendChild(open);

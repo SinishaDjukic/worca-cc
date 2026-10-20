@@ -54,7 +54,7 @@ const validInstall = (d) => d && typeof d === 'object' && Array.isArray(d.builds
 export function renderExtensionInstall(data, { doc = document, browser = 'chrome' } = {}) {
   const make = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
   const root = make('div', 'xi');
-  root.append(make('h3', 'xi-head', 'Install'));
+  root.append(make('h3', 'subsection-title xi-head', 'Install'));
   if (!validInstall(data)) { root.append(make('p', 'xp-empty', 'Could not load the packaged browser extension.')); return root; }
   const tabs = make('div', 'tabs xi-tabs');
   tabs.setAttribute('role', 'tablist');

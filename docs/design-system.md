@@ -6,20 +6,26 @@ the same commit.
 
 ## Foundations
 
-### Colour
-Every colour is a token in `:root` of `ui/public/style.css`, written as `light-dark(light, dark)`. Never restate a hex.
-| Token | Meaning |
-|---|---|
-| `--ink`, `--ink-2`, `--ink-3` | text: primary, secondary, tertiary |
-| `--line`, `--line-2` | dividers; control borders |
-| `--panel`, `--surface`, `--field` | page; raised surface; field and tint fill |
-| `--amber*` | needs you (a person must act) |
-| `--red*` | failed, destructive |
-| `--peach*` | working |
-| `--green*` | ready, in review, done well |
-| `--violet*` | merged; the Labs chip |
-| `--blue*` | information only (the Beta chip); never a status, never a bar |
-Amber means "needs attention" and nothing else: not a brand mark, not "not installed".
+### Colour (checked)
+Every colour is a token in `:root` of `ui/public/style.css`, written as `light-dark(light, dark)`. Never restate a hex;
+a `color-mix()` recipe used twice is a named token (`--btn-hover`, `--red-tint`, …).
+| Colour | Tokens | Means | Never |
+|---|---|---|---|
+| ink | `--ink`, `--ink-2`, `--ink-3` | primary and neutral text; a checked box, a checked radio, an on switch | — |
+| green | `--green*` | done, OK, ready, in review | a checked box, an on switch, decoration |
+| amber | `--amber*` | needs you, attention, waiting; a PR problem | a brand mark, "not installed", "built-in" |
+| red | `--red*` | failed, destructive | a warning that needs no action |
+| blue | `--blue*` | information (the Beta chip), in-progress text, links | a status dot, a bar, team policy |
+| violet | `--violet*` | Labs only | sources, "Official", policy |
+| slate | `--slate*` | neutral metadata: a source, "Official", policy (`.badge.slate`) | a state |
+Status-dot exceptions: peach = working (it pulses), violet = merged. They are the dots only, never a badge.
+Surfaces: `--panel` page, `--surface` raised, `--field` field and tint fill; `--line` dividers, `--line-2` control borders.
+
+Known drift (left for a later run): violet badges on `mcp-view.mjs` plugin sources, `guardrails-view.mjs` plugin origins,
+the `tp-engine` and "metrics home" badges, the engine "Beta" badge in `engine-settings-view.mjs`, the Models override,
+pinned-cost and shadowed badges, and the workspace map's "manual" tone; amber `badge waiting` on Guardrails' "built-in"
+and Models' "endpoint-routed", "project (legacy)" and "plugin:" labels; blue engine and credential badges. The interface
+mode cards (`.lv-card-icon`) tint their icon per level (an illustration, not a state).
 
 ### Type (checked)
 One scale, no half sizes. Use the tokens; never type a px size that is not a step.
@@ -41,6 +47,8 @@ tooltips), never for plain values such as "On · 356 runs" or "Synced 9 min ago"
 
 ### Spacing
 A 4px grid: 4, 8, 12, 16, 24, 32. Rows pad 8–12px vertically. Phones (under 600px) use one 16px gutter.
+`--pad-card` (24px) pads every card and dialog; `--pad-tile` (16px) pads stat tiles, run tiles and
+list cards. Chat message cards keep their own.
 
 ### Corners (checked)
 | Token | Value | For |
@@ -65,8 +73,10 @@ None at rest. Only floating surfaces (menus, popovers, dialogs, the dock) use `-
 `--shadow-sheet` and `--shadow-dock`.
 
 ### Focus
-`outline:2px solid var(--ink); outline-offset:2px` on `:focus-visible`; tabs and rows use an inset `-2px` offset. A page
-that focuses its way back on open hides the ring while `data-input="pointer"`.
+`outline:2px solid var(--ink); outline-offset:2px` on `:focus-visible`; tabs and rows use an inset `-2px` offset. A
+script-focused control (a page that focuses its way back on open, a menu handing focus back to its trigger) hides the
+ring for every button, link, summary, tab, switch and `[tabindex]` while `data-input="pointer"`; a keydown brings it
+back. Fields keep their ink border on focus. Rings sit on `:focus-visible`, never on `:focus`.
 
 ## Components
 ### Button (checked)
@@ -80,6 +90,20 @@ primary.
 `.input` / `.select` / text, number and select elements: 32px, 13px, `--field` fill, 6px corner, ink border on focus.
 `.input-sm` / `.select-sm`: 28px, 12px. A textarea grows; it keeps the same fill, corner and padding sides. Search, url, email,
 password and date inputs follow the same field; each joins the base rule when its screen moves.
+### Switch (checked)
+One switch, `.switch`: a 32×18 `--r-pill` track and a 14px round knob that is always visible. Off is `--switch-off` with
+the `--knob` knob; on is `--ink` with the `--on-ink` knob, never green. Disabled or locked: no opacity fade; the track
+turns `--field` with a 1px `--line-2` ring and an `--ink-3` knob (off), or `--ink-3` with a `--panel` knob (on). A locked
+switch shows its reason as a 12px `--ink-2` line (`.switch-why`) and in the row's tooltip. Two drivers paint the same
+pixels: a real checkbox built by `makeSwitch` (`ui/public/switch.mjs`: `input.sw-input[role="switch"]` + `span.switch`),
+and a `role="switch"` element that carries `.on` / `aria-checked`. Labels are 13px / 500 sans (`.switch-label`), help
+12px. A setting or option that is on or off is a switch; a checkbox only picks items from a list, is a "No cap" /
+"Never" / "No away hours" / "Only between" opt-out or opt-in next to a field, or is a one-time consent. Known drift: the
+extension sidebar's own settings checkbox (`.wx-settings-check`) keeps its native look until the sidebar run.
+### Checkbox and radio (checked)
+A checked checkbox and a checked radio fill `--ink`, never green; the tick is the page colour (`--tick`, `--tick-dash`).
+A disabled checked box fills `--seq`. A selected option row (`.opt-row`, `.chip-select label`) takes the `--field` fill and
+an ink border.
 ### Segmented control
 `.seg`: one `--field` container, 28px / 13px buttons, the selected one `--surface`. `.seg-sm` is the same size.
 ### Tabs
@@ -89,13 +113,28 @@ password and date inputs follow the same field; each joins the base rule when it
 border, ink text. Never a solid ink fill. A count sits in `.n`. It is the only filter chip: `mv-filter`, `wfl-chip`,
 `proj-fchip` and `mcp-chip` are gone (checked).
 ### Chips and badges
-One chip: 18px, 11px / 500, 4px corner, filled, no border (checked). The Labs (violet) and Beta (blue) flag chips are the
-reference size. Colour carries meaning only.
+One chip: 18px, 11px / 500 sans, 4px corner, filled, no border (checked). The Labs (violet) and Beta (blue) flag chips are
+the reference size. Colour carries meaning only. Cost-tag chips (`.tag-chip`), the Projects sync pill (`.ps-pill`), the
+Chat command card's state (`.ask-cmd-pill`) and the Team policy tab count (`.tp-tab-badge`) are the same chip; on the
+active tab the count turns neutral (`--line-2` fill, ink text). The missing-key slot is the one outlined chip: a 1px dashed
+`--amber` outline on a transparent fill. A removable chip's × is a 14px quiet button inside the chip. A source, "Official"
+or a policy origin is `.badge.slate`; "not installed" and "built-in" are grey.
 ### Status dot and symbols
 A dot is the state: peach working (pulses), grey paused or waiting, green ready, violet merged. Needs you is an amber
 "?" only when Worca asks; a PR problem is a plain amber dot with the reason in the PR chip; failed is a red "!".
-### Menus
-`openMenu({ doc, anchor, items, align, side, label })` (`ui/public/workflows/menu.mjs`). No hand-built dropdowns.
+### Menu (checked)
+One menu skin. The box is `.menu`: 4px padding, `--panel`, 1px `--line`, `--r-md` (8px), `--shadow-menu`, 13px. A row is
+`.menu-item`: at least 30px, `--r-sm` (6px), `--hover` on hover and keyboard focus; `.menu-sep` and `.menu-h` (12px /
+600 `--ink-2`) divide and head. A disabled row is `--ink-3` with no hover; a destructive row is `.menu-item.is-danger`
+(red ink, `--red-bg` on hover) and nothing else in a menu is red or amber. `openMenu({ doc, anchor, items, align, side,
+label })` (`ui/public/workflows/menu.mjs`) emits it, and its items take `danger`. The sidebar flyouts (`.nav-fly`), the
+composer pickers (`.ask-pop`), the split-button menus (`.btn-split-menu`) and the run header ⋯ (`.hd-menu`) keep their
+own builders and positions and add `.menu` / `.menu-item`; they carry no box or row skin of their own. No hand-built
+dropdowns.
+### Row button
+`.row-btn`: a whole divided-list row that a person opens (a Library folder, a Memory row, a keyed project row): full
+width, `--hover` fill and `--r-sm` corner on hover, an inset ring on keyboard focus. Each list keeps its own grid and
+padding. A chevron inside a row is a `.btn-icon` quiet button, not a row.
 ### Cards versus divided rows
 Prefer divided rows (`.drows` / `.drow`): rows split by one `--line`, no box per item. A card (`.card`, 8px corner,
 24px padding) frames one thing you act on; never a card inside a card (checked). `.drow-wide` puts a wide control

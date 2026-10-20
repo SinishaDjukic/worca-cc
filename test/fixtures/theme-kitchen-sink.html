@@ -69,6 +69,35 @@
 - item</pre>
 
   <div class="switch-row"><span class="switch on"></span><span class="txt">on</span><span class="switch"></span><span class="txt">off</span></div>
+  <!-- Shared controls (run 1): every switch, checkbox, radio, menu and chip state the proof measures. Fake names only. -->
+  <section data-kit="controls" aria-label="Shared controls">
+    <div class="switch-row"><input class="sw-input" type="checkbox" role="switch" aria-label="Off"><span class="switch" aria-hidden="true"></span><span class="switch-label">Off</span></div>
+    <div class="switch-row"><input class="sw-input" type="checkbox" role="switch" aria-label="On" checked><span class="switch" aria-hidden="true"></span><span class="switch-label">On</span></div>
+    <div class="switch-row"><input class="sw-input" type="checkbox" role="switch" aria-label="Disabled off" disabled><span class="switch" aria-hidden="true"></span><span class="switch-label">Disabled off</span></div>
+    <div class="switch-row"><input class="sw-input" type="checkbox" role="switch" aria-label="Disabled on" checked disabled><span class="switch" aria-hidden="true"></span><span class="switch-label">Disabled on</span></div>
+    <label class="switch-row" title="Fixed for this agent"><input class="sw-input" type="checkbox" role="switch" aria-label="Questions" checked disabled data-locked="1"><span class="switch" aria-hidden="true"></span><span class="switch-label">Questions</span><span class="switch-why">Fixed for this agent</span></label>
+    <div class="switch-row"><span class="switch on" role="switch" aria-checked="true" tabindex="0"></span><span class="txt">A role switch, on</span>
+      <input type="checkbox" checked aria-label="A checked box"><span class="txt">A checked box</span></div>
+    <p><input type="checkbox" checked aria-label="Checked"> <input type="checkbox" id="kit-indeterminate" aria-label="Some"> <input type="checkbox" checked disabled aria-label="Disabled checked">
+       <input type="radio" name="kit-radio" checked aria-label="Chosen"> <input type="radio" name="kit-radio" aria-label="Other"></p>
+    <div class="menu" role="menu" aria-label="Kitchen menu" style="width:200px">
+      <button type="button" class="menu-item" role="menuitem">Open run</button>
+      <button type="button" class="menu-item" role="menuitem" disabled>Report</button>
+      <div class="menu-sep" role="separator"></div>
+      <button type="button" class="menu-item is-danger" role="menuitem">Archive</button>
+    </div>
+    <div class="menu btn-split-menu" role="menu" aria-label="Kitchen split menu" style="position:static;margin-top:8px">
+      <button type="button" class="menu-item" role="menuitem"><b>Start run now</b><small>Begins immediately</small></button>
+      <button type="button" class="menu-item" role="menuitem"><b>Schedule…</b><small>Run once later, or on a repeat</small></button>
+    </div>
+    <p><span class="tag-chip">client:acme <button type="button" class="tag-x" aria-label="Remove client:acme"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></span>
+       <span class="tag-chip">project:redesign</span>
+       <span class="tag-chip tag-missing">client · missing</span>
+       <span class="badge slate">Worca CC Official</span>
+       <span class="ps-pill">Synced</span>
+       <span class="ask-cmd-pill st-green">exit 0</span> <span class="ask-cmd-pill st-red">exit 1</span> <span class="ask-cmd-pill st-peach">running</span>
+       <span class="tp-tab-badge">3</span></p>
+  </section>
   <div class="seg"><button type="button" class="on">On</button><button type="button">Off</button></div>
   <p><button type="button" class="btn">Ghost</button> <button type="button" class="btn btn-primary">Primary</button> <button type="button" class="btn btn-danger">Danger</button> <button type="button" class="btn btn-quiet">Go</button> <button type="button" class="btn btn-sm" disabled>Disabled</button> <button type="button" class="btn btn-quiet btn-icon" aria-label="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h16"/></svg></button></p>
   <div class="field"><label>Field</label><input class="input" placeholder="Placeholder text" /><small class="hint">Hint text</small><small class="hint err">Error hint</small></div>

@@ -78,7 +78,7 @@ export function renderPluginList(plugins, { doc = globalThis.document, channelSt
     cb.dataset.name = p.name;
     cb.setAttribute('aria-label', `Enable ${p.name}`);
     toggle.appendChild(cb);
-    toggle.appendChild(h(doc, 'span', 'switch switch-sm'));
+    toggle.appendChild(h(doc, 'span', 'switch'));
     toggle.appendChild(h(doc, 'span', '', p.enabled !== false ? 'enabled' : 'disabled'));
     head.appendChild(toggle);
     card.appendChild(head);
@@ -532,7 +532,7 @@ export function renderAvailableList(marketplaces, { doc = globalThis.document } 
       const head = h(doc, 'div', 'pl-head');
       head.appendChild(h(doc, 'b', 'pl-name', p.name));
       head.appendChild(h(doc, 'span', 'pl-version mono', p.version || sha7(m.lastSync && m.lastSync.sha)));
-      head.appendChild(h(doc, 'span', 'badge grey pl-mkt-badge', m.name || m.id));
+      head.appendChild(h(doc, 'span', 'badge slate pl-mkt-badge', m.name || m.id));
       if (p.installed) {
         head.appendChild(h(doc, 'span', 'badge green pl-installed', 'Installed'));
       } else if (m.lastSync) {

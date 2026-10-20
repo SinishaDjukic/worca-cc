@@ -183,7 +183,7 @@ test('auditType: 12.5px and 13.33px text fail once per signature; steps, em code
 test('auditStray: a button outside .btn and outside the shared controls is listed; .btn, chips, tabs and rows are not', () => {
   const { window } = new JSDOM(`<body><div id="v">
     <button class="btn btn-sm">Ok</button><button class="filter-chip" aria-pressed="true">All</button>
-    <button class="tab" role="tab">A</button><button class="wfl-folder">F</button>
+    <button class="tab" role="tab">A</button><button class="wfl-folder row-btn">F</button><div role="button" class="row-btn">R</div>
     <button class="linkish">Show all</button><button class="tp-chip-rm">x</button><div role="button" class="odd">r</div></div></body>`);
   const env = { rect: () => ({ width: 10, height: 10 }) };
   const got = auditStray(window.document.getElementById('v'), STRAY_SPEC, env).map((f) => f.sig);

@@ -60,7 +60,7 @@ test('chat settings render and round-trip, including the Chat script toggle', as
       const on = renderScriptToolsToggle({ prefs: {} }, { doc });
       assert.equal(on.querySelector('input#askScriptTools').checked, true, 'an absent pref is ON (W20)');
       assert.equal(on.textContent.trim(), 'Create and run scripts');
-      assert.equal(on.getAttribute('for'), 'askScriptTools');
+      assert.ok(on.matches('label.switch-row') && on.querySelector('input.sw-input#askScriptTools'), 'a switch row holding the input');
       assert.equal(on.querySelectorAll('p, small, .hint').length, 0, 'labels only — no explanatory prose in the UI');
       assert.deepEqual(collectScriptToolsToggle(on), { scriptTools: true });
       const off = renderScriptToolsToggle({ prefs: { scriptTools: false } }, { doc });
@@ -74,7 +74,7 @@ test('chat settings render and round-trip, including the Chat script toggle', as
       const on = renderSuggestionsToggle({ prefs: {} }, { doc });
       assert.equal(on.querySelector('input#askSuggestions').checked, true, 'an absent pref is ON');
       assert.equal(on.textContent.trim(), 'Suggest a next prompt after each reply');
-      assert.equal(on.getAttribute('for'), 'askSuggestions');
+      assert.ok(on.matches('label.switch-row') && on.querySelector('input.sw-input#askSuggestions'), 'a switch row holding the input');
       assert.deepEqual(collectSuggestionsToggle(on), { suggestions: true });
       const off = renderSuggestionsToggle({ prefs: { suggestions: false } }, { doc });
       assert.equal(off.querySelector('input#askSuggestions').checked, false);

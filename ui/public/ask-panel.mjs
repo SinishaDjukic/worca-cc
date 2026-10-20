@@ -42,6 +42,7 @@ import { INTENTS, splitIntentLead } from './chat/intent.mjs';
 import { homeIcon } from './chat/home-icons.mjs';
 import { NO_PROJECT_LABEL, scopeFromContext, scopeKind, scopeIcon, kindChip, projectKind } from './chat/scope-ui.mjs';
 import { icon } from './icons.mjs';
+import { makeSwitch } from './switch.mjs';
 import { shapeCardExtras, shapeWhatHappens, shapeAdvancedSummary } from './shape/proposal.mjs';
 import { createAskComposerCards, ASK_COMPOSER_CARD_TYPES } from './ask-composer-cards.mjs';
 import { applyPresetStart } from '../../src/shared/run-presets.mjs';
@@ -1489,7 +1490,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const scopeBtn = make('button', 'btn btn-sm btn-quiet ask-scope-btn');
     scopeBtn.type = 'button';
     scopeBtn.setAttribute('data-ask-scope-btn', '');
-    scopeBtn.title = 'Chat scope';
+    scopeBtn.title = `Chat scope: ${NO_PROJECT_LABEL}`;
     scopeBtn.setAttribute('aria-haspopup', 'menu');
     scopeBtn.setAttribute('aria-expanded', 'false');
     scopeBtn.setAttribute('aria-label', `Chat scope: ${NO_PROJECT_LABEL}`);   // updateScopeButton() runs on the first scope change
@@ -1502,6 +1503,16 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     scopeBtn.addEventListener('click', () => openScopePopover(scopeBtn));
     el.scopeBtn = scopeBtn;
     row.appendChild(scopeBtn);
+    // Never a two-letter stub (run 1): when the label would be cut below 56px, show the icon alone; the label stays in
+    // the tooltip and the accessible name. The row's width changes with the level, the engine and the window.
+    const fitScope = () => {
+      scopeBtn.classList.remove('is-compact');
+      const l = el.scopeLabel;
+      if (l.scrollWidth > l.clientWidth + 1 && l.clientWidth < 56) scopeBtn.classList.add('is-compact');
+    };
+    el.fitScope = fitScope;
+    const RO = doc.defaultView && doc.defaultView.ResizeObserver;
+    if (typeof RO === 'function') { el.scopeRo = new RO(() => fitScope()); el.scopeRo.observe(row); }
 
     // MCP registry §9.4 + skills registry §6.8: the per-chat Sets picker — `Sets · N` (N = copies and skills that start
     // next turn), hidden while no set in play has a member or a skill. Styled as the scope pill; opens like the model
@@ -1779,7 +1790,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function openPopover({ panelClass, trigger, build, onClose, refreshOn, refresh }) {
     if (st.popover && st.popover.trigger === trigger) { closePopover({ focusTrigger: false }); return null; }
     closePopover({ focusTrigger: false });
-    const panel = make('div', `ask-pop ${panelClass}`);
+    const panel = make('div', `menu ask-pop ${panelClass}`);
     panel.setAttribute('role', 'menu');
     panel.addEventListener('keydown', onPopKeydown);
     build(panel);
@@ -1809,7 +1820,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
 
   function menuItem(className, onPick) {
-    const b = make('button', `ask-pop-item ${className}`.trim());
+    const b = make('button', `menu-item ask-pop-item ${className}`.trim());
     b.type = 'button';
     b.setAttribute('role', 'menuitem');
     b.tabIndex = -1;
@@ -2058,7 +2069,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const rowEl = make('div', 'ask-thread-row');
     rowEl.setAttribute('role', 'listitem');
     rowEl.dataset.threadId = t.id;
-    const pick = make('button', 'ask-pop-item ask-thread-pick');
+    const pick = make('button', 'menu-item ask-pop-item ask-thread-pick');
     pick.type = 'button';
     pick.appendChild(make('span', `ask-dot ask-thread-dot${t.inFlight ? ' ask-dot-live' : ''}`));
     pick.appendChild(make('span', `ask-dot ask-thread-dot${t.waiting ? ' ask-dot-wait' : t.tracking ? ' ask-dot-track' : ''}`));
@@ -2680,6 +2691,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       : NO_PROJECT_LABEL;
     el.scopeLabel.textContent = label;
     el.scopeBtn.setAttribute('aria-label', `Chat scope: ${label}`);
+    el.scopeBtn.title = `Chat scope: ${label}`;
     const kind = scopeKind(st.scope);
     if (kind !== el.scopeIcoKind) {
       const ico = scopeIcon(doc, kind, 13);
@@ -2688,6 +2700,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       el.scopeIcoKind = kind;
     }
     el.scopeBtn.classList.toggle('is-pinned', st.scope.pinned);
+    if (el.fitScope) el.fitScope();
   }
 
   /** `persist:false` sends no PATCH (the server stored it already); `focus:false` neither closes popovers nor focuses
@@ -3545,21 +3558,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return { extras };
   }
   const cardPending = (local) => lanePending(local) || !!(local.pills && local.pills.length);
-  function rpSwitch(ctl, label, on, locked, onChange, editable) {
-    const wrap = make('label', 'ask-rp-ctl');
-    wrap.appendChild(make('span', null, label));
-    const sw = make('span', 'ask-rp-sw');
-    const cb = doc.createElement('input');
-    cb.type = 'checkbox';
-    cb.checked = !!on;
-    cb.disabled = !!locked || !editable;
-    cb.setAttribute('data-ctl', ctl);
-    cb.setAttribute('aria-label', label);
-    cb.addEventListener('change', () => onChange(cb.checked));
-    sw.append(cb, make('span', 'ask-rp-knob'));
-    if (locked) wrap.title = 'Fixed for this agent';
-    wrap.appendChild(sw);
-    return wrap;
+  function rpSwitch(ctl, label, on, locked, onChange, editable, why = 'Fixed for this agent') {
+    const { row, input } = makeSwitch(doc, { label, ariaLabel: label, checked: on, rowClass: 'ask-rp-ctl', data: { ctl },
+      locked: locked ? why : null });
+    if (!editable) input.disabled = true;      // a read-only card: off-limits, not locked (no reason line)
+    input.addEventListener('change', () => onChange(input.checked));
+    return row;
   }
   /** Paint the lane section: header (sub-line + Reset), tiles, footer. Re-run on every edit.
    *  `lc` = { summary: <span>, workflowId(): string }. lane === null → the unusable state. */
@@ -3681,8 +3685,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // A workspace run fans this agent out over its projects whatever the switch says (workflows.mjs workspaceFanOut):
       // it shows on and locked, as on Auto's proposal panel.
       const forced = fanForced(lane, row);
-      const fan = rpSwitch('fanOut', 'Fan-out', forced || c.fanOut, forced, (v) => { laneSet(lane, row, { fanOut: v }); renderLane(laneSec, lane, lc); }, lane.editable);
-      if (forced) fan.title = 'A workspace run fans this agent out over its projects';
+      const fan = rpSwitch('fanOut', 'Fan-out', forced || c.fanOut, forced, (v) => { laneSet(lane, row, { fanOut: v }); renderLane(laneSec, lane, lc); }, lane.editable,
+        'A workspace run fans this agent out over its projects');
       l2.appendChild(fan);
       const subWrap = make('label', 'ask-rp-ctl');
       subWrap.appendChild(make('span', null, 'Sub-agents'));
@@ -4875,11 +4879,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     feature.setAttribute('aria-label', 'Feature branch');
 
     // Run on the source branch (branch.sameAsSource): ONE checkbox for both targets, like `feature`.
-    const sameSrc = doc.createElement('input');
-    sameSrc.type = 'checkbox';
-    sameSrc.className = 'ask-card-same-source';
-    sameSrc.checked = card.sameAsSource === true;
-    sameSrc.setAttribute('aria-label', 'Run on the source branch');
+    const sameSw = makeSwitch(doc, { ariaLabel: 'Run on the source branch', checked: card.sameAsSource === true, inputClass: 'ask-card-same-source' });
+    const sameSrc = sameSw.input;
     feature.disabled = sameSrc.checked;
     // updateTargetSub is a function declaration further down in this same scope (hoisted).
     sameSrc.addEventListener('change', () => { feature.disabled = sameSrc.checked; updateTargetSub(); });
@@ -5092,7 +5093,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           updateTargetSub();
         });
         const featureField = lvTag(rpField('Feature branch', feature, 'created for the run'), 'advanced', !!card.featureBranch);
-        const sameField = lvTag(rpField('Run on the source branch', sameSrc, 'commits onto the source branch'), 'advanced', !!card.sameAsSource);
+        const sameField = lvTag(rpField('Run on the source branch', sameSw.row, 'commits onto the source branch'), 'advanced', !!card.sameAsSource);
         for (const f of [srcField, featureField, sameField]) f.dataset.needsGit = '';
         // S12: a Folder project, or no git, shows no branch rows and asks for no branches. The fill is async: the
         // sub-line reads the select again when the branches land, or a proposed sourceBranch would read "branch current".
@@ -5161,7 +5162,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       wsField.appendChild(members);
       const wsGitFields = [lvTag(rpField('Source branch', srcInput, 'default for members'), 'advanced', !!card.sourceBranch),
         lvTag(rpField('Feature branch', feature), 'advanced', !!card.featureBranch),
-        lvTag(rpField('Run on the source branch', sameSrc, 'commits onto the source branch'), 'advanced', !!card.sameAsSource)];
+        lvTag(rpField('Run on the source branch', sameSw.row, 'commits onto the source branch'), 'advanced', !!card.sameAsSource)];
       for (const f of [...wsGitFields, details]) f.dataset.needsGit = '';
       grid.append(wsField, ...wsGitFields);
       targetHost.appendChild(grid);      // attach BEFORE filling: renderMembers → updateTargetSub finds the select through rootEl
@@ -6924,6 +6925,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     win.removeEventListener('hashchange', onHashChange);
     if (dockRo) { dockRo.disconnect(); dockRo = null; }
     if (clearRo) { clearRo.disconnect(); clearRo = null; }
+    if (el.scopeRo) { el.scopeRo.disconnect(); el.scopeRo = null; }
     if (st.runTick) { clearInterval(st.runTick); st.runTick = null; }
     if (st.runUnsub) { try { st.runUnsub(); } catch { /* ignore */ } st.runUnsub = null; }
     refChips.destroy();
