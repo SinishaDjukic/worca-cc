@@ -134,7 +134,7 @@ export function setContext(scopeType, scopeKey, { body, lookAtCode } = {}, { by 
   return getContext(scopeType, scopeKey);
 }
 
-// ---- starts (plans/requirements-a2-design.md ง3, D8) ----
+// ---- starts (plans/requirements-a2-design.md ยง3, D8) ----
 
 function toStart(r) {
   if (!r) return null;

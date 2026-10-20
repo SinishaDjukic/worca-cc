@@ -1089,7 +1089,7 @@ CREATE TABLE IF NOT EXISTS req_cost_ledger (
 CREATE INDEX IF NOT EXISTS req_cost_ledger_ts ON req_cost_ledger(ts);
 `;
 
-// Requirements A2 (plans/requirements-a2-design.md �3): one row per "Start in Worca" of a feature, with the
+// Requirements A2 (plans/requirements-a2-design.md §3): one row per "Start in Worca" of a feature, with the
 // frozen spec. IF NOT EXISTS + an INCREMENTAL_TABLES entry: reconcile-safe against another branch's v58.
 const REQUIREMENTS_STARTS_DDL = `
 CREATE TABLE IF NOT EXISTS req_starts (
@@ -2220,6 +2220,7 @@ export function migrate(db) {
     if (current < SCHEMA_VERSION) refreshArchitectureSeed(db);
     if (current < 56) db.exec(PR_WATCH_DDL);         // watched PRs + crash-safe fix-run provenance
     if (current < 57) db.exec(REQUIREMENTS_DDL);     // requirements: features, thread, contexts, spend — reconcile-safe
+    if (current < 58) db.exec(REQUIREMENTS_STARTS_DDL);   // requirements: one row per Start in Worca — reconcile-safe
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {
