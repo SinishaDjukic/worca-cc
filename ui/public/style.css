@@ -7816,8 +7816,10 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 /* team-cap pause banner (board 9) */
 /* Team metrics KPI row: the policy tiles (Off-policy, Pooled budget) make 7–8 tiles, which leave a
    hole in the 3-column row; four columns fill two rows for eight. Back to one column when narrow. */
-.stat-row:has(> .stat-tile:nth-child(7)){grid-template-columns:repeat(4,minmax(0,1fr));}
-@media (max-width:1080px){ .stat-row:has(> .stat-tile:nth-child(7)){grid-template-columns:repeat(2,minmax(0,1fr));} }
+.stat-row.tm-kpis:has(> .stat-tile:nth-child(7)){grid-template-columns:repeat(4,minmax(0,1fr));}
+/* Statistics with the Requirements tile: eight tiles in two rows of four (seven, flag off, stay in threes). */
+.stat-row:not(.tm-kpis):has(> .stat-tile:nth-child(8)){grid-template-columns:repeat(4,minmax(0,1fr));}
+@media (max-width:1080px){ .stat-row.tm-kpis:has(> .stat-tile:nth-child(7)), .stat-row:not(.tm-kpis):has(> .stat-tile:nth-child(8)){grid-template-columns:repeat(2,minmax(0,1fr));} }
 .cost-banner.cb-policy{background:var(--blue-bg);color:var(--blue-ink);}
 /* The policy home inside the sentence: bold like the figures, but inline (`.cost-banner b` is the block heading). */
 .cost-banner .cb-home{font-weight:600;color:var(--ink);}
