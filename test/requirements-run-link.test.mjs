@@ -238,3 +238,46 @@ test('server: runSummary finds a resumed run by its pipeline id; href is the liv
     assert.equal(requirementsRunSummary({ runId: 'nobody', pipelineId: null }), null);
   })();
 });
+
+test('the hook through the real notifier: flag off, a run event of a started feature sends no frame; on, it does', async () => {
+  const { requirementsChangeNotifier } = await import('../src/core/requirements/routes.mjs');
+  const frames = [];
+  const hook = createRunEventHook({ notify: requirementsChangeNotifier((f) => frames.push(f)) });
+  const seq = featureWithStart('run-flag-off');
+  delete process.env.WORCA_FLAGS;
+  try {
+    hook('run-flag-off', 'state', { id: 'f1a90ff0', status: 'running' });
+    hook('run-flag-off', 'done', { status: 'done' });
+  } finally { process.env.WORCA_FLAGS = 'requirements'; }
+  assert.deepEqual(frames, [], 'no requirements-changed frame while the flag is off');
+  assert.equal(store.startByRunId('run-flag-off').pipelineId, 'f1a90ff0', 'the link is still kept');
+  hook('run-flag-off', 'state', { id: 'f1a90ff0', status: 'paused' });
+  assert.deepEqual(frames, [{ type: 'requirements-changed', seq }]);
+});
+
+test('the hook: a question from a started run notifies, and the next state after it does too', () => {
+  const seen = [];
+  const hook = createRunEventHook({ notify: (seq) => seen.push(seq) });
+  const seq = featureWithStart('run-question');
+  hook('run-question', 'state', { id: 'a5ced001', status: 'running' });
+  assert.deepEqual(seen, [seq]);
+  hook('run-question', 'question', { id: 'q1', kind: 'workflow' });
+  assert.deepEqual(seen, [seq, seq], 'waiting for the person: the pill changes');
+  hook('run-question', 'state', { id: 'a5ced001', status: 'running' });
+  assert.deepEqual(seen, [seq, seq, seq], 'answered: the same status, but no longer waiting');
+  hook('run-question', 'state', { id: 'a5ced001', status: 'running' });
+  assert.deepEqual(seen, [seq, seq, seq]);
+  hook('no-such-run', 'question', { id: 'q2' });
+  assert.deepEqual(seen, [seq, seq, seq]);
+});
+
+test('server: runSummary says waiting while the live run has a pending question', () => {
+  const { requirementsRunSummary } = mod._testing;
+  const entry = { id: 'waiting-uuid-1', orch: {}, kind: 'run', pipelineId: null, status: 'running', pendingQuestion: { id: 'q1' } };
+  mod.runs.set(entry.id, entry);
+  try {
+    assert.equal(requirementsRunSummary({ runId: entry.id, pipelineId: null }).waiting, true);
+    entry.pendingQuestion = null;
+    assert.equal(requirementsRunSummary({ runId: entry.id, pipelineId: null }).waiting, false);
+  } finally { mod.runs.delete(entry.id); }
+});

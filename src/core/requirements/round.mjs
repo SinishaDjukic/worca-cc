@@ -94,7 +94,10 @@ function threadText(turns) {
       lines.push(t.payload.revises ? `The product owner changed their answers to round ${k}:` : 'The product owner answered:');
       for (const a of t.payload.answers || []) lines.push(`  [${asData(a.id)}] ${asData(a.answer)}`);
     } else if (t.kind === 'edit') {
-      if (t.payload.reverted) lines.push(`The product owner undid their changes since build v${asData(Number.isInteger(t.payload.reverted) ? t.payload.reverted : t.payload.version)}.`);
+      if (t.payload.reverted) {
+        const v = asData(Number.isInteger(t.payload.reverted) ? t.payload.reverted : t.payload.version);
+        lines.push(`The product owner undid their changes since build v${v}: the spec went back to build v${v} (criteria and assumptions as they were then).`);
+      }
       if (t.payload.section) lines.push(`The product owner ${t.payload.released ? 'released' : 'edited'} "${asData(t.payload.section)}".`);
       if (t.payload.header) {
         const what = { title: 'the title', description: 'the description', scope: 'the project or workspace' };

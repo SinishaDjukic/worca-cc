@@ -92,10 +92,12 @@ function lookCostUsd() {
   return Math.round(mid * 1e4) / 1e4;
 }
 
-/** Requirements spend in the budget window budgetStatus() uses, and the total limit (null: none). */
+/** Requirements spend in the budget window budgetStatus() uses, the total limit (null: none) and the
+ *  window's period ('weekly' | 'monthly'), so the page names the right one. */
 function requirementsSpend() {
   const b = budgetStatus();
-  return { windowUsd: requirementsWindowedSpendUsd(b.windowStartMs), totalLimitUsd: b.totalLimitUsd ?? null };
+  return { windowUsd: requirementsWindowedSpendUsd(b.windowStartMs), totalLimitUsd: b.totalLimitUsd ?? null,
+    resetPeriod: b.resetPeriod === 'weekly' ? 'weekly' : 'monthly' };
 }
 
 async function checkTarget(scopeType, scopeKey) {

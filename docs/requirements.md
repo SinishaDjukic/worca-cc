@@ -64,7 +64,8 @@ always refuses a feature that is busy, archived or whose project or workspace is
   work as before and do not look at Requirements.
 
 The page's **Runs from this feature** card lists every run started from the feature, with its status and
-cost, and links to the run.
+cost, and links to the run (its live page, also after a resume, else its page in History). A run that
+waits for you, on a question or the Auto confirmation, says **Waiting for you**.
 
 ## Follow-up rounds
 

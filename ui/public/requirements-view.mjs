@@ -94,9 +94,11 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const badge = (state) => h('span', { class: `badge ${STATE[state]?.cls || ''}`.trim(), text: STATE[state]?.label || state });
 const runColour = (status) => (RUN_LIVE.includes(status) ? 'peach' : status === 'done' ? 'green'
   : status === 'error' || status === 'stopped' ? 'red' : '');
-/** The latest run as a pill: peach while it runs (its phase as the text), green done, red error / stopped. */
+/** The latest run as a pill: peach while it runs (its phase as the text), amber while it waits for the person
+ *  (a question or the Auto confirmation), green done, red error / stopped. */
 function runPill(run) {
   const status = run && run.status;
+  if (run && run.waiting === true) return h('span', { class: 'pill-run req-run amber' }, h('span', { class: 'pdot' }), 'Waiting for you');
   const text = (RUN_LIVE.includes(status) && run.phase ? sentence(run.phase) : sentence(status)) || 'Started';
   return h('span', { class: `pill-run req-run ${runColour(status)}`.trim() }, h('span', { class: 'pdot' }), text);
 }
@@ -116,7 +118,14 @@ function rowMeta(f) {
       return { text: `Interview done · Ready ${Number(f.ready) || 0} of ${READY_CHECKS}${n > 0 ? ` · ${plural(n, 'assumption')} to decide` : ''}`, need: true };
     }
     case 'ready': return { text: `Ready ${READY_CHECKS} of ${READY_CHECKS}` };
-    case 'started': return { text: `Started${run && run.status ? ` · run ${run.status}${run.phase ? ` · ${sentence(run.phase)}` : ''}` : ''}` };
+    case 'started': {
+      // the interview goes on after a start (A2 D11): questions waiting are said here too
+      const k = Number.isInteger(f.pendingCount) && f.pendingCount > 0 ? f.pendingCount : 0;
+      const waits = !!(run && run.waiting === true);
+      const runText = waits ? ' · run waiting for you'
+        : run && run.status ? ` · run ${run.status}${run.phase ? ` · ${sentence(run.phase)}` : ''}` : '';
+      return { text: `Started${runText}${k ? ` · ${plural(k, 'question')} for you` : ''}`, need: k > 0 || waits };
+    }
     case 'looking': return { text: 'Worca is looking at the code…' };
     case 'thinking': return { text: 'Worca is thinking…' };
     default: return null;
@@ -300,7 +309,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('h2', { text: g.label }),
         h('div', { class: 'card req-rows' }, g.items.map(listRow)))),
       spend && typeof spend.windowUsd === 'number'
-        ? h('p', { class: 'hint req-spend', text: `Spent on requirements this month: ${usd(spend.windowUsd)}${
+        ? h('p', { class: 'hint req-spend', text: `Spent on requirements this ${spend.resetPeriod === 'weekly' ? 'week' : 'month'}: ${usd(spend.windowUsd)}${
           typeof spend.totalLimitUsd === 'number' ? ` of your ${usd(spend.totalLimitUsd)} limit` : ''}.` })
         : null,
     );
@@ -826,6 +835,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     starting = false;
     const c = choices.get(f.seq);
     if (c) c.open = false;
+    // Another feature is on screen now: its page keeps its paint and its focus (only its Start buttons,
+    // disabled while this start ran, come back).
+    if (seqShown !== f.seq) { redraw(); return; }
     paintNo += 1;   // a fetch already under way would paint the feature as it was before the start
     if (data && data.feature && seqShown === data.feature.seq) { paintFeature(data.feature, data.turns || []); paintedKey = `feature/${seqShown}`; }
     sayStarted(data.version, data.runId);
@@ -935,8 +947,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const hasStarts = (f.starts || []).length > 0;
     const same = hasStarts && !(f.changedSinceStart || []).length;
     const locked = isLocked(f) || starting || same;
-    // While the Ready to build card is on screen its Start is the one (board Ready.dc.html): no second button here.
-    const cardStarts = buildCardShown(f);
+    // While the Ready to build card is on screen its Start is the one (board Ready.dc.html), and once started
+    // the runs card's Start again is: no second button here.
+    const cardStarts = buildCardShown(f) || hasStarts;
     return h('section', { class: 'card req-ready' },
       h('div', { class: 'req-card-head' }, h('h3', { text: 'Ready to start?' }), h('code', { text: `${r.passed} of ${r.total || READY_CHECKS}` })),
       h('ul', { class: 'req-checks' }, ...r.checks.map((c) => h('li', { class: `req-check${c.ok ? ' ok' : ''}`, 'data-check': c.key },
@@ -949,7 +962,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           r.overridable ? h('button', { type: 'button', class: 'link-btn req-start-anyway', 'data-ui': 'start-anyway', 'data-start': '', disabled: locked,
             onclick: (e) => startFlow(f, { override: true, trigger: e.currentTarget }) }, "Start before it's Ready…") : null,
           cardStarts ? null : h('button', { type: 'button', class: r.ok ? 'btn-go btn-mini req-start' : 'btn btn-mini req-start', 'data-ui': 'start', 'data-start': '', disabled: !r.ok || locked,
-            onclick: (e) => startFlow(f, { override: false, trigger: e.currentTarget }) }, hasStarts ? `Start again with v${nextVersion(f)}` : 'Start in worca'))));
+            onclick: (e) => startFlow(f, { override: false, trigger: e.currentTarget }) }, 'Start in worca'))));
   }
 
   function loadContext(f) {

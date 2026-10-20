@@ -5,6 +5,9 @@ import { RequirementsError, SECTIONS, SCOPE_TYPES, ASSUMPTION_STATUSES, LIMITS, 
 import { requireFeature, updateFeature, appendTurn, listTurns, listStarts, latestStart } from './store.mjs';
 import { tx } from '../db.mjs';
 import { isBusy } from './interview.mjs';
+import { isStarting } from './start.mjs';   // no cycle: start.mjs never imports this module
+
+const STARTING = 'this feature is starting a run. Try again in a moment.';
 
 function editable(seq) {
   const f = requireFeature(seq);
@@ -43,7 +46,9 @@ export function updateHeader(seq, { title, description, scopeType, scopeKey } = 
   if (patch.title !== undefined && patch.title !== f.title) header.push('title');
   if (patch.description !== undefined && patch.description !== f.description) header.push('description');
   if (patch.scopeType !== undefined && (patch.scopeType !== f.scopeType || patch.scopeKey !== f.scopeKey)) {
-    // A run works on the target it was started for (A2 D8): the scope is fixed from the first start on.
+    // A run works on the target it was started for (A2 D8): the scope is fixed from the first start on,
+    // and while a start is in flight (its row is not written yet).
+    if (isStarting(seq)) throw new RequirementsError('BUSY', STARTING);
     if (latestStart(seq)) throw new RequirementsError('CONFLICT', 'this feature has been started; its project or workspace can no longer change');
     header.push('scope');
   }
@@ -142,6 +147,7 @@ export function revertToStart(seq, version, { by = null } = {}) {
 export function setArchived(seq, archived, { by = null } = {}) {
   const f = requireFeature(seq);
   if (isBusy(seq)) throw new RequirementsError('BUSY', 'Worca is still working on this feature. Try again in a moment.');
+  if (isStarting(seq)) throw new RequirementsError('BUSY', STARTING);
   if (archived) return f.status === 'archived' ? f : updateFeature(seq, { status: 'archived' }, { by });
   if (f.status !== 'archived') return f;
   const lastRound = listTurns(seq).filter((t) => t.kind === 'round').at(-1);

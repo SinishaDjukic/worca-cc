@@ -205,6 +205,12 @@ test('list: the spend footer, with and without a limit; an empty list or filter 
   fakeApi({ ...LIST_BASE, 'GET /api/requirements': listOf([row()], { spend: { windowUsd: 0.5, totalLimitUsd: null } }) });
   await view.show('');
   assert.equal(host.querySelector('.req-spend').textContent, 'Spent on requirements this month: $0.50.');
+  fakeApi({ ...LIST_BASE, 'GET /api/requirements': listOf([row()], { spend: { windowUsd: 0.5, totalLimitUsd: 5, resetPeriod: 'weekly' } }) });
+  await view.show('');
+  assert.equal(host.querySelector('.req-spend').textContent, 'Spent on requirements this week: $0.50 of your $5.00 limit.', 'the budget period');
+  fakeApi({ ...LIST_BASE, 'GET /api/requirements': listOf([row()], { spend: { windowUsd: 0.5, totalLimitUsd: null, resetPeriod: 'monthly' } }) });
+  await view.show('');
+  assert.equal(host.querySelector('.req-spend').textContent, 'Spent on requirements this month: $0.50.');
   tab(host, /^Ready/).click(); await tick(); await tick();
   assert.doesNotMatch(host.textContent, /null|false|undefined/);
   assert.match(host.textContent, /Nothing here/);
@@ -1181,7 +1187,8 @@ test('Started: the runs card (newest first), the total, Start again with the nex
   assert.equal(card().querySelector('.req-run-total').textContent, 'Total for FEAT-4 so far: $3.24 (requirements $0.40 + build $2.84)');
   const again = () => card().querySelector('[data-ui="start-again"]');
   assert.equal(again().textContent, 'Start again with v3');
-  assert.equal(host.querySelector('.req-ready [data-ui="start"]').textContent, 'Start again with v3', 'the Ready panel says what it does');
+  assert.equal(host.querySelector('.req-ready [data-ui="start"]'), null, 'one Start again: the runs card\'s, none in the Ready panel');
+  assert.deepEqual([...host.querySelectorAll('button')].filter((b) => /^Start again/.test(b.textContent)).length, 1);
   assert.equal(again().disabled, false);
   again().click();
   await tick(); await tick();
@@ -1405,4 +1412,66 @@ test('Started: the Decide card stays reachable (A2 D11): Done, ask about A-n and
   f = twoStarts({ unaskedRejections: ['A-3'], status: 'archived', state: 'archived' });
   await view.changed(4);
   assert.equal(decide(), null, 'never while locked');
+});
+
+test('list: a started feature with questions waiting says so in its meta line', async () => {
+  fakeApi({ ...LIST_BASE, 'GET /api/requirements': listOf([
+    row({ seq: 1, state: 'started', pendingCount: 2, latestRun: { status: 'running', phase: 'implement', costUsd: 1, href: '#running/r1' } }),
+    row({ seq: 2, state: 'started', pendingCount: 1, latestRun: null }),
+    row({ seq: 3, state: 'started', pendingCount: 0, latestRun: { status: 'done', phase: null, costUsd: 1, href: '#running/r3' } })]) });
+  const { host, view } = make();
+  await view.show('');
+  const meta = (seq) => rowOf(host, seq).querySelector('.req-row-meta');
+  assert.equal(meta(1).textContent, 'Started · run running · Implement · 2 questions for you');
+  assert.ok(meta(1).classList.contains('need'));
+  assert.equal(meta(2).textContent, 'Started · 1 question for you');
+  assert.equal(meta(3).textContent, 'Started · run done');
+  assert.equal(meta(3).classList.contains('need'), false);
+});
+
+test('Start: when another feature is on screen by the time the start answers, its page keeps the focus and its paint', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const other = readyFeature({ seq: 5, id: 'FEAT-5', title: 'Other one' });
+  fakeApi({ ...BASE, ...BUILD, 'GET /api/requirements/4': () => ({ feature: readyFeature(), turns: [] }),
+    'GET /api/requirements/5': () => ({ feature: other, turns: [] }) });
+  const inner = globalThis.fetch;
+  globalThis.fetch = async (url, opts = {}) => {
+    if (opts.method === 'POST' && url === '/api/requirements/4/start') {
+      await gate;
+      return { ok: true, status: 201, json: async () => ({ runId: 'r9', version: 1, feature: startedFeature(), turns: [] }) };
+    }
+    return inner(url, opts);
+  };
+  const { host, msgEl, view } = make();
+  document.body.append(host, msgEl);
+  try {
+    await view.show('feature/4');
+    host.querySelector('[data-ui="start-go"]').click();
+    await tick();
+    await view.show('feature/5');
+    host.querySelector('[data-ui="build-change"]').focus();
+    release();
+    await tick(); await tick(); await tick();
+    assert.equal(host.querySelector('.req-head h2').textContent, 'Other one', 'FEAT-5 stays on screen');
+    assert.equal(document.activeElement.getAttribute('data-ui'), 'build-change', 'the focus is not taken to FEAT-4\'s run');
+    assert.equal(host.querySelector('[data-ui="start-go"]').disabled, false, 'FEAT-5 can start once FEAT-4\'s start answered');
+  } finally { host.remove(); msgEl.remove(); }
+});
+
+test('run pill: a live run waiting for the person says "Waiting for you" (amber), not its idle phase', async () => {
+  fakeApi({ ...LIST_BASE, 'GET /api/requirements': listOf([
+    row({ seq: 1, state: 'started', latestRun: { status: 'running', phase: 'idle', costUsd: 0, href: '#running/r1', waiting: true } }),
+    row({ seq: 2, state: 'started', latestRun: { status: 'running', phase: 'idle', costUsd: 0, href: '#running/r2' } })]) });
+  const { host, view } = make();
+  await view.show('');
+  const pill = (seq) => rowOf(host, seq).querySelector('.pill-run');
+  assert.equal(pill(1).textContent, 'Waiting for you');
+  assert.ok(pill(1).classList.contains('amber'));
+  assert.equal(pill(1).classList.contains('peach'), false);
+  assert.equal(pill(2).textContent, 'Idle');
+  const meta = (seq) => rowOf(host, seq).querySelector('.req-row-meta');
+  assert.equal(meta(1).textContent, 'Started · run waiting for you');
+  assert.ok(meta(1).classList.contains('need'));
+  assert.equal(meta(2).textContent, 'Started · run running · Idle');
 });

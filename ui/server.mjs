@@ -3072,6 +3072,8 @@ function requirementsRunSummary({ runId, pipelineId }) {
     costUsd: state?.totalCostUsd ?? null,
     pipelineId: id,
     href: live ? `#running/${live.id}` : key && id ? `#history/${key}/${id}` : null,
+    // waits on a question, a gate or the Auto confirmation: entry.pendingQuestion, as the Running page reads it
+    waiting: !!(live && live.pendingQuestion && !SETTLED_RUN.has(String(live.status || ''))),
   };
 }
 

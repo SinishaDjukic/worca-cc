@@ -636,3 +636,14 @@ test('follow-up: after an interrupted follow-up, the boot sweep and retry ask th
   assert.equal(last.payload.questions.length, 1);
   assert.equal(getFeature(f.seq).status, 'your_turn');
 });
+
+test('follow-up: refused (CONFLICT) while a round\'s questions are waiting; nothing is written', async () => {
+  const f = newFeature();
+  appendTurn(f.seq, { kind: 'round', payload: { questions: ROUND1.questions, done: false } });
+  updateFeature(f.seq, { status: 'your_turn', rounds: 1, spec: { ...getFeature(f.seq).spec, assumptions: [{ id: 'A-1', text: 'Full', status: 'rejected' }] }, assumptionSeq: 1 });
+  appendTurn(f.seq, { kind: 'assumption', payload: { id: 'A-1', status: 'rejected' } });
+  const n = listTurns(f.seq).length;
+  assert.throws(() => followUp(f.seq, {}, deps(fakeRunner([]))), (e) => e.code === 'CONFLICT' && /questions/.test(e.message));
+  assert.equal(listTurns(f.seq).length, n, 'no followup turn');
+  assert.equal(isBusy(f.seq), false);
+});

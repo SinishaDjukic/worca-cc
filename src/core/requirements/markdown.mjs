@@ -27,7 +27,8 @@ export function renderSpecMarkdown(f, { targetName = null } = {}) {
 
 /** The first paragraph of every run task (A2 D7). */
 export const TASK_PREAMBLE = 'Build this feature. The acceptance criteria `R-po-<n>` are the definition of done; keep their ids in the plan '
-  + 'and the review. Confirmed assumptions are decisions; open ones are guesses the product owner accepted when starting.';
+  + 'and the review. Confirmed assumptions are decisions; open ones are guesses the product owner accepted when starting. '
+  + 'Rejected assumptions are not to be built.';
 
 /** The task a run started from a feature gets (A2 D7): the preamble, then the given (frozen) spec as
  *  renderSpecMarkdown renders it, its heading naming the version (`# FEAT-7 v2: …`). */

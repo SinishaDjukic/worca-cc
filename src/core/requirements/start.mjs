@@ -18,6 +18,8 @@ const WORKFLOW_ID = /^wf_[a-z0-9_-]+$/i;
 
 /** Features with a start between the run handler's call and the stored row: a second start waits its turn. */
 const starting = new Set();
+/** A start is between the run handler's call and its stored row: archive and a scope change wait (edits.mjs). */
+export const isStarting = (seq) => starting.has(Number(seq));
 
 /** The run handler's refusal as a RequirementsError (D6): 403 budget → BUDGET, 400 → BAD_REQUEST, other 4xx
  *  → CONFLICT, anything else a plain Error (500). Carries the handler's own message. */
@@ -80,11 +82,17 @@ export async function startFeature(seq, { reason, workflowId, sourceBranch } = {
     const status = Number(res && res.status);
     if (!(status >= 200 && status <= 299)) throw refusal(res);
     const stored = (res.body && typeof res.body.runId === 'string' && res.body.runId) || runId;
-    tx(() => {
-      createStart({ featureSeq: f.seq, version, runId: stored, spec, title: f.title, ready: r.ok, failing,
-        reason: failing.length ? why : null, workflowId: body.workflowId, sourceBranch: body.sourceBranch || null }, { by });
-      appendTurn(f.seq, { kind: 'start', payload: { version, runId: stored, override: failing.length > 0 } }, { by });
-    });
+    try {
+      tx(() => {
+        createStart({ featureSeq: f.seq, version, runId: stored, spec, title: f.title, ready: r.ok, failing,
+          reason: failing.length ? why : null, workflowId: body.workflowId, sourceBranch: body.sourceBranch || null }, { by });
+        appendTurn(f.seq, { kind: 'start', payload: { version, runId: stored, override: failing.length > 0 } }, { by });
+      });
+    } catch (err) {
+      // The run is already started: without its row the feature never learns of it (an orphan run).
+      console.error(`[worca-ui] requirements: run ${stored} started for ${f.id}, but its start could not be stored: ${err && err.message ? err.message : err}`);
+      throw err;
+    }
     return { runId: stored, version };
   } finally {
     starting.delete(f.seq);
@@ -109,36 +117,41 @@ export async function startView(start, runSummary = () => null) {
     version: start.version, runId: start.runId, pipelineId, startedBy: start.startedBy, startedAt: start.startedAt,
     ready: start.ready, failing: start.failing, reason: start.reason, workflowId: start.workflowId, sourceBranch: start.sourceBranch,
     run: s ? { status: s.status ?? null, phase: s.phase ?? null, costUsd: s.costUsd ?? null,
-      href: (typeof s.href === 'string' && s.href) || `#running/${start.runId}` } : null,
+      href: (typeof s.href === 'string' && s.href) || `#running/${start.runId}`,
+      ...(s.waiting === true ? { waiting: true } : {}) } : null,   // the live run waits for the person
   };
 }
 
 /**
  * The run-event hook `wireRun` in ui/server.mjs calls for every event of every run (D9). Only `state`,
- * `done` and `error` do work, and only for runs a start made (one indexed lookup): the first `state` with a
- * pipeline id fills `pipeline_id`, and the feature is notified when the run's status changed since its last
- * event or the pipeline id was just linked. A resumed run has a new UUID but the same pipeline: when the
- * run id is unknown, the pipeline id (the `state` payload's, else the entry's `pipelineId`) finds the start.
- * Never throws.
+ * `done`, `error` and `question` do work, and only for runs a start made (one indexed lookup): the first
+ * `state` with a pipeline id fills `pipeline_id`, and the feature is notified when the run's status changed
+ * since its last event or the pipeline id was just linked, when the run asks the person something, and at
+ * the first `state` after that (the answer let it go on; the page reads whether it still waits). A resumed
+ * run has a new UUID but the same pipeline: when the run id is unknown, the pipeline id (the `state`
+ * payload's, else the entry's `pipelineId`) finds the start. Never throws.
  * @param {{ notify:(seq:number)=>void }} o  the requirements change notifier (checks the flag itself)
  * @returns {(runId:string, name:string, payload:any, pipelineId?:string|null)=>void}
  */
 export function createRunEventHook({ notify }) {
   const last = new Map();   // runId → the status its last event carried
+  const asked = new Set();  // runIds whose last news was a question
   return (runId, name, payload, pipelineId = null) => {
-    if (name !== 'state' && name !== 'done' && name !== 'error') return;
+    if (name !== 'state' && name !== 'done' && name !== 'error' && name !== 'question') return;
     try {
       const p = payload && typeof payload === 'object' ? payload : {};
       const pid = name === 'state' && typeof p.id === 'string' && p.id ? p.id
         : typeof pipelineId === 'string' && pipelineId ? pipelineId : null;
       const start = startByRunId(runId) || (pid ? startByPipelineId(pid) : null);
       if (!start) return;
+      if (name === 'question') { asked.add(runId); notify(start.featureSeq); return; }
+      const answered = asked.delete(runId);
       let linked = false;
       if (name === 'state' && typeof p.id === 'string' && p.id) linked = linkPipeline(start.runId, p.id);
       const status = name === 'state' ? (p.status || null) : name === 'done' ? (p.status || 'done') : 'error';
       const changed = status != null && last.get(runId) !== status;
       if (name === 'state') { if (status != null) last.set(runId, status); } else last.delete(runId);
-      if (changed || linked) notify(start.featureSeq);
+      if (changed || linked || answered) notify(start.featureSeq);
     } catch (err) {
       console.error(`[worca-ui] requirements run link failed: ${err && err.message ? err.message : err}`);
     }

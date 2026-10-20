@@ -298,7 +298,7 @@ test('revert: changes since the start show, undo restores the frozen spec, count
   assert.equal(r.json.feature.criteriaSeq, 3, 'the counter never goes back');
   const t = listTurns(f.seq).at(-1);
   assert.deepEqual([t.kind, t.payload], ['edit', { reverted: 1 }]);
-  assert.match(buildRoundPrompt({ feature: getFeature(f.seq), turns: listTurns(f.seq) }), /The product owner undid their changes since build v1\./);
+  assert.match(buildRoundPrompt({ feature: getFeature(f.seq), turns: listTurns(f.seq) }), /The product owner undid their changes since build v1: the spec went back to build v1 \(criteria and assumptions as they were then\)\./);
   assert.equal((await call('POST', `/api/requirements/${f.seq}/criteria`, { text: 'again' })).json.feature.spec.criteria.at(-1).id, 'R-po-4');
   assert.equal((await call('POST', `/api/requirements/${f.seq}/revert`, { version: 9 })).status, 404);
   for (const version of [0, -1, 1.5, '1', undefined]) {
@@ -372,7 +372,8 @@ test('list: state, ready, latestRun; lookCostUsd and spend', async () => {
   const other = r.json.features.find((x) => x.seq === g.seq);
   assert.deepEqual([other.state, other.ready, other.latestRun], ['decide', 3, null]);
   assert.equal(r.json.lookCostUsd, null);
-  assert.deepEqual(Object.keys(r.json.spend).sort(), ['totalLimitUsd', 'windowUsd']);
+  assert.deepEqual(Object.keys(r.json.spend).sort(), ['resetPeriod', 'totalLimitUsd', 'windowUsd']);
+  assert.equal(r.json.spend.resetPeriod, 'monthly', 'the budget period (the default)');
   assert.equal(r.json.spend.totalLimitUsd, null);
   const w0 = r.json.spend.windowUsd;
   for (const c of [0.3, 0.1, 0.2, 0.5]) appendTurn(g.seq, { kind: 'orientation', payload: {}, costUsd: c });
@@ -394,4 +395,50 @@ test('startView: the summary\'s href wins (a resumed or settled run); #running/<
   assert.equal(gone.run.href, '#history/shop-key/beadbead');
   const bare = await startView(s, () => ({ status: 'done', phase: null, costUsd: 1, pipelineId: 'beadbead' }));
   assert.equal(bare.run.href, '#running/r-href-1');
+});
+
+test('a store write failing after the run handler said yes is logged with the run id (an orphan run), then thrown', async () => {
+  reset();
+  const f = readyFeature();
+  createStart({ featureSeq: f.seq, version: 9, runId: 'r-taken', spec: f.spec, title: 't', ready: true });
+  runImpl = ok('r-taken');   // run_id is UNIQUE: the start row cannot be written
+  const logged = [];
+  const orig = console.error;
+  console.error = (...a) => logged.push(a.join(' '));
+  try {
+    await assert.rejects(startFeature(f.seq, {}, { by: 'po' }, { startRun: runImpl, target: { ok: true, path: projDir, name: 'shop' } }));
+  } finally { console.error = orig; }
+  assert.equal(logged.length, 1, logged.join('\n'));
+  assert.match(logged[0], /^\[worca-ui\] /);
+  assert.match(logged[0], /r-taken/);
+  assert.equal(listTurns(f.seq).some((t) => t.kind === 'start'), false, 'the turn rolled back with the row');
+});
+
+test('a start in flight: isStarting; archive and a scope change are BUSY until it is stored; the title is not', async () => {
+  reset();
+  const { isStarting } = await import('../src/core/requirements/start.mjs');
+  const { updateHeader, setArchived } = await import('../src/core/requirements/edits.mjs');
+  const f = readyFeature();
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const p = startFeature(f.seq, {}, { by: 'po' }, {
+    startRun: async (_b, opts) => { await gate; return { status: 200, body: { runId: opts.runId } }; },
+    target: { ok: true, path: projDir, name: 'shop' } });
+  assert.equal(isStarting(f.seq), true);
+  assert.throws(() => setArchived(f.seq, true), (e) => e.code === 'BUSY');
+  assert.throws(() => updateHeader(f.seq, { scopeType: 'project', scopeKey: 'elsewhere-1' }), (e) => e.code === 'BUSY');
+  assert.equal(updateHeader(f.seq, { title: 'Cancel order now' }).title, 'Cancel order now', 'a title change is fine');
+  release();
+  await p;
+  assert.equal(isStarting(f.seq), false);
+  assert.equal(getFeature(f.seq).status, 'done');
+  assert.equal(getFeature(f.seq).scopeKey, projKey);
+  assert.equal(setArchived(f.seq, true).status, 'archived', 'after the start, archive works');
+});
+
+test('startView: run.waiting only when the summary says so', async () => {
+  const f = readyFeature();
+  const s = createStart({ featureSeq: f.seq, version: 1, runId: 'r-wait-1', spec: f.spec, title: 't', ready: true });
+  assert.equal((await startView(s, () => ({ status: 'running', phase: 'idle', costUsd: 0, waiting: true }))).run.waiting, true);
+  assert.equal('waiting' in (await startView(s, () => ({ status: 'running', phase: 'idle', costUsd: 0, waiting: false }))).run, false);
 });

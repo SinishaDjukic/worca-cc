@@ -215,7 +215,7 @@ test('thread: bulk confirm, follow-up, start and undo lines', () => {
   assert.match(p, /The product owner rejected A-4 and asked Worca to ask about it\./);
   assert.match(p, /The product owner rejected A-4 and A-7 and asked Worca to ask about them\./);
   assert.match(p, /The product owner started build v2\./);
-  assert.match(p, /The product owner undid their changes since build v2\./);
+  assert.match(p, /The product owner undid their changes since build v2: the spec went back to build v2 \(criteria and assumptions as they were then\)\./);
 });
 
 test('pendingRound is null after a trailing followup turn', () => {

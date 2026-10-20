@@ -21,7 +21,7 @@ import {
 } from './store.mjs';
 import {
   ROUND_SYSTEM_PROMPT, ORIENTATION_SYSTEM_PROMPT, buildRoundPrompt, buildOrientationPrompt, applyRound,
-  normalizeOrientation, mockRoundReply, RoundError, removedCriteria,
+  normalizeOrientation, mockRoundReply, RoundError, removedCriteria, pendingRound,
 } from './round.mjs';
 
 const ROUND_TIMEOUT_MS = 180_000;
@@ -259,7 +259,10 @@ export function startOrientation(seq, { by = null, thenRound = true } = {}, deps
 export function followUp(seq, { by = null } = {}, deps = {}) {
   const d = { ...DEFAULTS, ...deps };
   const f = guard(seq);
-  const ids = unaskedRejections(f.spec, listTurns(seq));
+  const turns = listTurns(seq);
+  // The round waiting for answers comes first: its answers start the next round, which sees the rejection.
+  if (f.status === 'your_turn' && pendingRound(turns)) throw new RequirementsError('CONFLICT', 'answer the questions waiting first');
+  const ids = unaskedRejections(f.spec, turns);
   if (!ids.length) throw new RequirementsError('CONFLICT', 'no rejected assumption is waiting for a follow-up');
   appendTurn(seq, { kind: 'followup', payload: { assumptions: ids } }, { by });
   return startJob(seq, d, () => runRound(seq, d, by, { followUp: ids }), by);

@@ -85,7 +85,8 @@ test('task markdown: the preamble first, the version in the heading, the passed 
     { spec: frozen, targetName: 'shop', version: 2 });
   const [first, second] = md.split('\n\n');
   assert.equal(first, 'Build this feature. The acceptance criteria `R-po-<n>` are the definition of done; keep their ids in the plan '
-    + 'and the review. Confirmed assumptions are decisions; open ones are guesses the product owner accepted when starting.');
+    + 'and the review. Confirmed assumptions are decisions; open ones are guesses the product owner accepted when starting. '
+    + 'Rejected assumptions are not to be built.');
   assert.equal(second, '# FEAT-12 v2: Cancel an order!');
   assert.match(md, /\*\*Project:\*\* shop/);
   assert.match(md, /- \*\*R-po-1\*\* Cancel while unpaid/);
