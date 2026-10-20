@@ -119,7 +119,10 @@ project's working tree, so nothing is ever committed to your repo.
                                          (the newest three and every installed pin kept; <sha>.meta.json beside it)
   agents/                               installed agent registry checkouts
   workflows/                            saved workflow templates
-  projects/                             New and Clone from URL projects (the default projects root; yours — worca never deletes it)
+  projects/                             New and Clone from URL projects (the default projects root). Removing a
+                                        Folder project (no git) whose folder sits directly in here deletes that
+                                        folder too, after a confirm that names it; Git projects, projects added
+                                        from elsewhere and a custom projects root are only unregistered
   projects.json                         registered project index
   workspaces.json                       workspace index
   chat-context.json                     chat context cache

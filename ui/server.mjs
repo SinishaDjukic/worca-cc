@@ -54,8 +54,9 @@ import {
   deleteDiffComment, unresolvedCounts, onDiffCommentsChanged, stampSentRunId,
   peekPendingCardComments, clearPendingCardComments, DiffCommentError, DC_ID_RE,
 } from '../src/core/diff-comments.mjs';
-import { listProjects, addProject, addProjects, removeProject, normalizeProjectPath, countProjects, worcaHome, getProjectByPath, displayPath } from '../src/core/projects.mjs';
-import { effectiveWorkMode, workModeOfRow, workModeForStart } from '../src/core/project-kind.mjs';
+import { listProjects, addProject, addProjects, removeProject, normalizeProjectPath, countProjects, worcaHome, getProjectByPath, displayPath,
+  getProjectByName, ownsProjectFolder, removeProjectAndFolder } from '../src/core/projects.mjs';
+import { effectiveWorkMode, workModeOfRow, workModeForStart, samePath } from '../src/core/project-kind.mjs';
 import { renderIndexHtml, INDEX_THEME_ANCHOR, FLAG_GATES_ANCHOR } from '../src/core/index-html.mjs';
 import { gitState, gitAvailable, currentGitState, onGitChange, GIT_MISSING } from '../src/core/git-available.mjs';
 import { teamOverHttps, teamRepoState, setTypedTeamRepo } from '../src/core/git-free/team-repo.mjs';
@@ -9433,7 +9434,8 @@ app.get('/api/branches', async (req, res) => {
   }
 });
 
-async function projectsForApi(list) { const { available } = await gitState(); return list.map((p) => ({ ...p, workMode: effectiveWorkMode(p.vcs, available), displayPath: displayPath(p.path) })); }
+// ownedFolder: Remove deletes this project's folder too (ownsProjectFolder), so the UI shows that warning.
+async function projectsForApi(list) { const { available } = await gitState(); return list.map((p) => ({ ...p, workMode: effectiveWorkMode(p.vcs, available), displayPath: displayPath(p.path), ownedFolder: ownsProjectFolder(p) })); }
 
 app.get('/api/projects', async (_req, res) => {
   try {
@@ -9607,19 +9609,88 @@ app.get('/api/projects/clone/:id', (req, res) => {
   res.json({ job: publicCloneJob(job) });
 });
 
+// What Remove project waits for: a run of the project that is starting, running, pausing, paused or still tearing
+// down — in this process (the runs Map; a workspace run holds each member) or saved by any process (a paused run
+// outlives a restart; a CLI run is in no Map). 'interrupted' never blocks: it cannot be stopped. A settled 'paused'
+// entry stays paused here after its run is archived or restored as interrupted (Stop refuses both), so its saved row
+// decides: the DB arm, which skips archived rows.
+const PROJECT_HOLD_STATUSES = ['created', 'starting', 'running', 'pausing', 'paused'];
+function runHoldingProject(project) {
+  const dir = canon(project.path);
+  const same = (p) => typeof p === 'string' && !!p && samePath(canon(p), dir);
+  for (const r of runs.values()) {
+    if (r.kind === 'action' || r.kind === 'scriptbench' || r.kind === 'agentgen') continue;
+    const status = String(r.status || '');
+    const holds = (status !== 'paused' && PROJECT_HOLD_STATUSES.includes(status)) || (!!r.pipelineId && isFinishingRun(r.pipelineId));
+    if (!holds) continue;
+    const members = Array.isArray(r.orch?.members) ? r.orch.members : [];
+    if (same(r.projectDir) || members.some((m) => same(m?.projectDir))) {
+      return { id: r.pipelineId || r.id, title: r.title || null, status: String(r.status || 'running') };
+    }
+  }
+  try { reconcileStaleRunning({ liveIds: liveRunIds() }); } catch { /* best-effort: a dead owner's row then reads as live */ }
+  const keys = new Set([project.key].filter(Boolean));          // a Folder project's runs carry its stored key (S52)
+  try { keys.add(projectKey(project.path)); } catch { /* the stored key stands */ }
+  const marks = PROJECT_HOLD_STATUSES.map(() => '?').join(', ');
+  const rows = getDb().prepare(`SELECT id, title, status, target, project_key, workspace_meta FROM pipelines
+    WHERE archived_at IS NULL AND status IN (${marks})`).all(...PROJECT_HOLD_STATUSES);
+  for (const row of rows) {
+    let hit;
+    if (row.target === 'workspace') {
+      let meta = null;
+      try { meta = JSON.parse(row.workspace_meta || 'null'); } catch { /* unreadable: no members */ }
+      const members = Array.isArray(meta?.projects) ? meta.projects : [];
+      hit = members.some((m) => m && (keys.has(m.projectKey) || same(m.projectDir)));
+    } else hit = keys.has(row.project_key);
+    if (hit) return { id: row.id, title: row.title || null, status: row.status };
+  }
+  return null;
+}
+
+// Remove a project. A Folder project worca made (ownsProjectFolder) goes with its folder — only on deleteFolder=1, the
+// flag the confirm naming that folder sends, so no folder is ever deleted unasked or left behind. The flag never widens
+// what is deleted: the server decides. Refused while a run of the project is live or paused.
 app.delete('/api/projects', async (req, res) => {
   const name = typeof req.query.name === 'string' ? req.query.name : '';
   if (!name.trim()) return badRequest(res, 'name is required');
+  const wantFolder = req.query.deleteFolder === '1';
   try {
+    // The row removeProject deletes (the same case-insensitive match): the guards and the schedule cleanup see it.
+    const row = getProjectByName(name);
+    if (row) {
+      const busy = runHoldingProject(row);
+      if (busy) {
+        const how = busy.status === 'paused' ? 'is paused' : 'is still running';
+        return res.status(409).json({
+          error: `"${row.name}" has a run that ${how}${busy.title ? ` (“${busy.title}”)` : ''}. Stop it first, then remove the project.`,
+          code: 'PROJECT_BUSY', pipelineId: busy.id,
+        });
+      }
+    }
+    const owned = !!row && ownsProjectFolder(row);
+    if (owned && !wantFolder) {
+      return res.status(409).json({
+        error: `Removing "${row.name}" also deletes its folder ${displayPath(row.path)} and every file in it. Confirm the removal again to go ahead.`,
+        code: 'DELETE_FOLDER_REQUIRED', displayPath: displayPath(row.path),
+      });
+    }
+    let projects; let folder = null;
+    if (owned) ({ projects, folder } = await removeProjectAndFolder(row.name));
+    else projects = await removeProject(name);
     // Scheduled runs of a removed project can never start: cancel them with it.
-    const before = (await listProjects()).find((p) => p && p.name === name.trim());
-    const projects = await removeProject(name);
-    if (before && before.path) {
-      try { if (cancelForTarget({ projectDir: before.path })) emitChanged('schedules-changed', 'target-removed'); }
+    if (row && row.path) {
+      try { if (cancelForTarget({ projectDir: row.path })) emitChanged('schedules-changed', 'target-removed'); }
       catch (err) { console.error(`[worca-ui] schedule cleanup failed: ${err && err.message ? err.message : err}`); }
     }
     emitChanged('projects-changed', 'deleted');
-    res.json({ projects: await projectsForApi(projects) });
+    const out = { projects: await projectsForApi(projects) };
+    if (folder) out.folder = { ...folder, displayPath: displayPath(folder.path) };
+    if (folder && !folder.deleted) {
+      out.warning = `Removed "${row.name}", but its folder could not be deleted (${folder.error}). What is left of it is still at ${displayPath(folder.path)}.`;
+    } else if (row && wantFolder && !folder) {
+      out.notice = `Removed "${row.name}". Its folder was kept: ${displayPath(row.path)}.`;
+    }
+    res.json(out);
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }

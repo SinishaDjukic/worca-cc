@@ -84,7 +84,8 @@ test('createProject: a folder under the projects root, Folder kind; useGit runs 
         { dryRun: true, root: ROOT, path: join(ROOT, 'board_deck'), name: 'Board Deck', displayPath: displayPath(join(ROOT, 'board_deck')) },
         'the dry run (the dialog\'s Location, the Ask card) shows the same folder');
       assert.equal(await outcome(createProject({ name: 'worca  presentation' }, { projectsRoot: ROOT })),
-        'EXISTS: this project path is already registered', 'another name with the same folder is refused');
+        `EXISTS: ${join(ROOT, 'worca_presentation')} is already registered as "Worca Presentation"; pick another name`,
+        'another name with the same folder is refused, naming the folder and the project holding it');
       mkdirSync(join(ROOT, 'old_notes'));
       assert.equal(await outcome(createProject({ name: 'Old Notes' }, { projectsRoot: ROOT })),
         `EXISTS: ${join(ROOT, 'old_notes')} already exists; pick another name`, 'a folder on disk with that folder name');
@@ -103,7 +104,7 @@ test('createProject: a folder under the projects root, Folder kind; useGit runs 
     { name: 'refusals create nothing: bad name, registered name, a folder in any case, git missing, inside a repository', run: async () => {
       const at = (input, deps = {}) => outcome(createProject(input, { projectsRoot: ROOT, ...deps }));
       assert.equal(await at({ name: '../x' }), `INVALID: ${SEP}`);
-      assert.equal(await at({ name: 'SITE' }), 'EXISTS: a project named "SITE" already exists');
+      assert.equal(await at({ name: 'SITE' }), 'EXISTS: a project named "site" already exists', 'the registered spelling names it');
       mkdirSync(join(ROOT, 'Taken'));
       assert.equal(await at({ name: 'taken' }), `EXISTS: ${join(ROOT, 'Taken')} already exists; pick another name`);
       assert.equal(await at({ name: 'nogit', useGit: true }, { gitAvailable: () => false }), 'GIT_MISSING: git is not installed on this machine');
@@ -131,7 +132,7 @@ test('createProject: a folder under the projects root, Folder kind; useGit runs 
     } },
     { name: 'a registered path whose folder is gone: refused before any mkdir, the dry run (the Ask card) too', run: async () => {
       await addProject({ name: 'ghost-row', path: join(ROOT, 'ghost') });
-      const GHOST = 'EXISTS: this project path is already registered';
+      const GHOST = `EXISTS: ${join(ROOT, 'ghost')} is already registered as "ghost-row"; pick another name`;
       assert.equal(await outcome(createProject({ name: 'ghost', dryRun: true }, { projectsRoot: ROOT })), GHOST);
       assert.equal(await outcome(createProject({ name: 'ghost' }, { projectsRoot: ROOT })), GHOST);
       assert.equal(existsSync(join(ROOT, 'ghost')), false);

@@ -591,3 +591,47 @@ test('a projects-changed refresh under the Workspace target leaves New run\'s en
   assert.equal(eng.value, 'codex', 'the hidden project select is not the workspace run\'s');
   assert.deepEqual(calls.slice(n).map((c) => c.u).filter((u) => /^\/api\/(config|run-defaults|branches)\b/.test(u)), []);
 });
+
+test('New: a refusal from Create itself keeps Create off until the name changes; a failure (500) leaves it on', async () => {
+  const { window, doc, calls } = await boot({ create: (b) => {
+    if (b.dryRun) return json(200, { ok: true, root: '/w/p', path: `/w/p/${b.name}`, name: b.name });
+    if (b.name === 'site') return json(400, { error: '/w/p/site already exists; pick another name', code: 'EXISTS', root: '/w/p' });
+    if (b.name === 'boom') return json(500, { error: 'could not create /w/p/boom: EACCES', code: 'FAILED', root: '/w/p' });
+    return json(201, { project: { key: 'site2-00000002', name: b.name, path: `/w/p/${b.name}`, exists: true, vcs: 'none' }, projects: [], root: '/w/p' });
+  } });
+  await openAdd(window, doc);
+  type(window, $(doc, '#proj-add-name'), 'boom'); await settle();
+  click(window, $(doc, '#proj-add-save')); await tick(); await tick();
+  assert.equal($(doc, '#proj-add-msg').textContent, 'could not create /w/p/boom: EACCES');
+  assert.equal($(doc, '#proj-add-save').disabled, false, 'a failure is no refusal: Create stays on for another try');
+  type(window, $(doc, '#proj-add-name'), 'site'); await settle();
+  assert.equal($(doc, '#proj-add-save').disabled, false, 'the dry run passed (the folder appeared after it)');
+  click(window, $(doc, '#proj-add-save')); await tick(); await tick();
+  assert.equal($(doc, '#proj-add-msg').textContent, '/w/p/site already exists; pick another name');
+  assert.equal($(doc, '#proj-add-save').disabled, true, 'a refused name keeps Create off');
+  assert.equal($(doc, '#project-add-modal').classList.contains('hidden'), false, 'the dialog stays open');
+  type(window, $(doc, '#proj-add-name'), 'site2'); await settle();
+  assert.equal($(doc, '#proj-add-save').disabled, false, 'a new name that passes the live check turns it back on');
+  click(window, $(doc, '#proj-add-save')); await tick(); await tick();
+  assert.deepEqual(calls.filter((c) => c.u.endsWith('/api/projects/create') && !c.body.dryRun).map((c) => c.body.name), ['boom', 'site', 'site2']);
+  assert.equal($(doc, '#project-add-modal').classList.contains('hidden'), true);
+});
+
+test('New: a late refusal for a name the user changed while Create was in flight leaves Create on for the new name', async () => {
+  let release;
+  const held = new Promise((r) => { release = r; });
+  const { window, doc, calls } = await boot({ create: (b) => {
+    if (b.dryRun) return json(200, { ok: true, root: '/w/p', path: `/w/p/${b.name}`, name: b.name });
+    if (b.name === 'site') return held.then(() => json(400, { error: '/w/p/site already exists; pick another name', code: 'EXISTS', root: '/w/p' }));
+    return json(201, { project: { key: 'site2-00000002', name: b.name, path: `/w/p/${b.name}`, exists: true, vcs: 'none' }, projects: [], root: '/w/p' });
+  } });
+  await openAdd(window, doc);
+  type(window, $(doc, '#proj-add-name'), 'site'); await settle();
+  click(window, $(doc, '#proj-add-save')); await tick();
+  type(window, $(doc, '#proj-add-name'), 'site2'); await settle();
+  release(); await tick(); await tick(); await tick();
+  assert.equal($(doc, '#proj-add-save').disabled, false, 'the refusal named "site"; "site2" passed its own check');
+  click(window, $(doc, '#proj-add-save')); await tick(); await tick();
+  assert.deepEqual(calls.filter((c) => c.u.endsWith('/api/projects/create') && !c.body.dryRun).map((c) => c.body.name), ['site', 'site2']);
+  assert.equal($(doc, '#project-add-modal').classList.contains('hidden'), true);
+});

@@ -6,13 +6,15 @@ import { mkdtemp, mkdir, rm, readdir, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { _resetForTests } from '../src/core/db.mjs';
+import { _resetForTests, getDb } from '../src/core/db.mjs';
 import { _testing as gitTesting } from '../src/core/git-available.mjs';
 import { displayPath } from '../src/core/projects.mjs';
+import { createTicket, listTickets } from '../src/core/scheduler.mjs';
 import { gitDir as makeGitDir } from './helpers/git-dir.mjs';
+import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
-let homeDir, srv, base, root, rootDisplay;
+let homeDir, srv, base, root, rootDisplay, runs;
 const made = [];                                                  // fixtures outside homeDir, removed in after()
 const gitDir = (tag) => { const d = makeGitDir(tag); made.push(d); return d; };
 const prev = {};
@@ -32,8 +34,9 @@ before(async () => {
   root = join(homeDir, '.worca-cc', 'projects');
   rootDisplay = displayPath(root);
   _resetForTests();
-  const { app } = await import('../ui/server.mjs');
-  srv = http.createServer(app);
+  const mod = await import('../ui/server.mjs');
+  runs = mod.runs;
+  srv = http.createServer(mod.app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });
@@ -134,4 +137,116 @@ test('POST /api/projects with useGit: git init once on a no-git folder, stored G
   assert.deepEqual(bulk.results.map((x) => x.status), ['added', 'added']);
   assert.equal(bulk.projects.find((p) => p.name === 'bulk-git').vcs, 'git');
   assert.equal(bulk.projects.find((p) => p.name === 'bulk-plain').vcs, 'none');
+});
+
+test('DELETE /api/projects: a New Folder project goes with its folder only on deleteFolder=1; other folders stay; a live or paused run refuses', async () => {
+  const del = (name, flag) => fetch(`${base}/api/projects?name=${encodeURIComponent(name)}${flag ? '&deleteFolder=1' : ''}`, { method: 'DELETE' });
+  const listed = async () => (await (await fetch(`${base}/api/projects`)).json()).projects;
+  const make = async (name, extra = {}) => {
+    const r = await post('/api/projects/create', { name, ...extra });
+    assert.equal(r.status, 201, await r.clone().text());
+    return (await r.json()).project;
+  };
+  await checkRows([
+    { name: 'ownedFolder: a New Folder project yes; New + Use git and a folder added from elsewhere no', run: async () => {
+      assert.equal((await make('rm-own')).ownedFolder, true, 'the create answer carries it too');
+      await make('rm-git', { useGit: true });
+      const outside = await plainDir('rm-outside');
+      assert.equal((await post('/api/projects', { name: 'rm-outside', path: outside })).status, 200);
+      const by = Object.fromEntries((await listed()).map((p) => [p.name, p.ownedFolder]));
+      assert.deepEqual([by['rm-own'], by['rm-git'], by['rm-outside']], [true, false, false]);
+    } },
+    { name: 'eligible without deleteFolder=1: 409 DELETE_FOLDER_REQUIRED naming the folder; nothing removed', run: async () => {
+      const r = await del('rm-own');
+      assert.equal(r.status, 409);
+      const j = await r.json();
+      assert.equal(j.code, 'DELETE_FOLDER_REQUIRED');
+      assert.equal(j.displayPath, displayPath(join(root, 'rm-own')));
+      assert.ok(j.error.includes(`also deletes its folder ${displayPath(join(root, 'rm-own'))} and every file in it`), j.error);
+      assert.ok((await listed()).some((p) => p.name === 'rm-own'), 'still registered');
+      assert.equal(existsSync(join(root, 'rm-own')), true);
+    } },
+    { name: 'eligible with deleteFolder=1 (any letter case): 200, the folder is gone, New with the same name works again', run: async () => {
+      await writeFile(join(root, 'rm-own', 'notes.txt'), 'x');
+      const r = await del('RM-OWN', true);
+      assert.equal(r.status, 200, await r.clone().text());
+      const j = await r.json();
+      assert.deepEqual(j.folder, { path: join(root, 'rm-own'), deleted: true, displayPath: displayPath(join(root, 'rm-own')) });
+      assert.equal(j.warning, undefined);
+      assert.equal(existsSync(join(root, 'rm-own')), false);
+      assert.equal(j.projects.some((p) => p.name === 'rm-own'), false);
+      assert.equal((await post('/api/projects/create', { name: 'rm-own' })).status, 201, 'diskClash no longer blocks the name');
+    } },
+    { name: 'deleteFolder=1 on a project worca does not own removes it and keeps the folder, with a notice', run: async () => {
+      for (const name of ['rm-git', 'rm-outside']) {
+        const p = (await listed()).find((x) => x.name === name);
+        const r = await del(name, true);
+        assert.equal(r.status, 200, name);
+        const j = await r.json();
+        assert.equal(j.folder, undefined, name);
+        assert.match(j.notice, /folder was kept/, name);
+        assert.equal(existsSync(p.path), true, name);
+        assert.equal(j.projects.some((x) => x.name === name), false, name);
+      }
+    } },
+    { name: '409 PROJECT_BUSY while a run of it runs, a workspace run holds it, or a saved run is paused', run: async () => {
+      const p = await make('rm-busy');
+      const refused = async (label) => {
+        const r = await del('rm-busy', true);
+        assert.equal(r.status, 409, label);
+        const j = await r.json();
+        assert.equal(j.code, 'PROJECT_BUSY', label);
+        assert.match(j.error, /Stop it first/, label);
+        assert.equal(existsSync(p.path), true, label);
+        assert.ok((await listed()).some((x) => x.name === 'rm-busy'), label);
+      };
+      runs.set('rm-live', { id: 'rm-live', kind: 'run', projectDir: p.path, status: 'running', events: [] });
+      try { await refused('a running run of the project'); } finally { runs.delete('rm-live'); }
+      runs.set('rm-ws', { id: 'rm-ws', kind: 'workspace-run', workspaceId: 'ws-rm', projectDir: join(root, 'elsewhere'),
+        status: 'pausing', events: [], orch: { members: [{ projectDir: p.path }] } });
+      try { await refused('a workspace run with it as a member'); } finally { runs.delete('rm-ws'); }
+      seedPipelineRow({ id: 'rmbusy01', projectKey: p.key, target: 'project', status: 'paused', startedAt: new Date().toISOString() });
+      await refused('a paused run saved in the DB (it outlives a restart)');
+      getDb().prepare("UPDATE pipelines SET status = 'stopped' WHERE id = ?").run('rmbusy01');
+      runs.set('rm-fin', { id: 'rm-fin', kind: 'run', projectDir: p.path, pipelineId: 'rmfin001', status: 'done', settled: false, events: [] });
+      try { await refused('a run that is done but still tearing down'); } finally { runs.delete('rm-fin'); }
+      for (const [id, member] of [['rmws0001', { projectKey: p.key }], ['rmws0002', { projectDir: p.path }]]) {
+        seedPipelineRow({ id, projectKey: 'ws-rm-00000001', target: 'workspace', status: 'paused', startedAt: new Date().toISOString(),
+          workspaceMeta: { projects: [member] } });
+        await refused(`a paused workspace run saved with it as a member (by ${Object.keys(member)[0]})`);
+        getDb().prepare("UPDATE pipelines SET status = 'stopped' WHERE id = ?").run(id);
+      }
+      const r = await del('rm-busy', true);
+      assert.equal(r.status, 200, 'stopped: the removal goes through');
+      assert.equal(existsSync(p.path), false);
+    } },
+    { name: 'a settled paused entry holds only while its saved row is parked: an archived or interrupted run (Stop refuses both) no longer blocks', run: async () => {
+      const settles = [
+        ['rm-arch', 'rmarch01', (id) => getDb().prepare('UPDATE pipelines SET archived_at = ? WHERE id = ?').run(new Date().toISOString(), id)],
+        ['rm-intr', 'rmintr01', (id) => getDb().prepare("UPDATE pipelines SET status = 'interrupted' WHERE id = ?").run(id)],
+      ];
+      for (const [name, id, settle] of settles) {
+        const p = await make(name);
+        seedPipelineRow({ id, projectKey: p.key, target: 'project', status: 'paused', startedAt: new Date().toISOString() });
+        runs.set(name, { id: name, kind: 'run', projectDir: p.path, pipelineId: id, status: 'paused', settled: true, events: [] });
+        try {
+          const held = await del(name, true);
+          assert.equal(held.status, 409, `${name}: still parked, so Stop works and the run holds`);
+          assert.equal((await held.json()).code, 'PROJECT_BUSY', name);
+          settle(id);
+          const r = await del(name, true);
+          assert.equal(r.status, 200, `${name}: ${await r.clone().text()}`);
+          assert.equal(existsSync(p.path), false, name);
+        } finally { runs.delete(name); }
+      }
+    } },
+    { name: 'a removal by another letter case still cancels the project\'s scheduled runs', run: async () => {
+      const p = await make('rm-sched');
+      createTicket({ projectDir: p.path, title: 'later', runAtMs: Date.now() + 3_600_000,
+        request: { projectDir: p.path, prompt: 'x', workflowId: 'wf_default' } });
+      assert.equal(listTickets({ projectDir: p.path }).length, 1);
+      assert.equal((await del('RM-SCHED', true)).status, 200);
+      assert.equal(listTickets({ projectDir: p.path }).length, 0);
+    } },
+  ]);
 });
