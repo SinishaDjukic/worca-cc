@@ -731,7 +731,8 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 
 .field-invalid,.field-invalid:focus{border-color:var(--red-ink)!important;box-shadow:0 0 0 1px var(--red-ink);}
 .field-invalid.field-invalid::placeholder{color:var(--ink-2);}   /* the field needs attention: its hint must be readable (the house placeholder grey misses 4.5:1 on the grey field) */
-.field-error{flex-basis:100%;width:100%;font-size:12.5px;line-height:1.4;color:var(--red-ink);display:flex;gap:6px;align-items:flex-start;margin-top:6px;}
+/* --red-ink-strong: a field error now sits on the --bg canvas (Settings lost its white cards), where --red-ink is 4.26:1. */
+.field-error{flex-basis:100%;width:100%;font-size:12.5px;line-height:1.4;color:var(--red-ink-strong);display:flex;gap:6px;align-items:flex-start;margin-top:6px;}
 .ac-field .field-error{margin-top:4px;}
 .field-error .fe-ic{width:14px;height:14px;flex:none;margin-top:1px;}
 
