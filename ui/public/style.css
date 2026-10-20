@@ -9424,3 +9424,95 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .req-retry{margin-left:8px}
 .req-confirm[aria-pressed="true"]{border-color:var(--green-ink);color:var(--green-ink)}
 .req-reject[aria-pressed="true"]{border-color:var(--red-ink);color:var(--red-ink)}
+/* Task 8: a muted text link (the mock's `hint` links: an earlier round's Change, Ready to build's Change,
+   Decide's "Show the other N"), and the start-anyway link's disabled look. */
+.req-link{appearance:none;-webkit-appearance:none;display:inline;background:none;border:0;padding:0;margin:0;font:inherit;font-size:12px;color:var(--ink-2);cursor:pointer;text-align:left;text-decoration:underline;text-underline-offset:2px}
+.req-link:hover{color:var(--ink)}
+.req-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:4px}
+.req-start-anyway:disabled{opacity:.45;cursor:not-allowed}
+/* Decide (board Decisions.dc.html): one row per assumption, id · text · a Confirm / Reject toggle. */
+.req-left > .req-decide{margin:0;padding:16px 18px 10px}
+.req-decide .req-decide-note{margin:8px 0 4px 28px;color:var(--ink-2)}
+.req-arows{padding-left:28px}
+.req-arow{display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:12px;align-items:start;padding:11px 0;border-top:1px solid var(--line);font-size:13px}
+.req-arow:last-child{border-bottom:1px solid var(--line)}
+.req-arow > .req-id{padding-top:1px}
+.req-arow-text{min-width:0;overflow-wrap:anywhere}
+.req-toggle button{padding:5px 12px;font-size:12px}
+.req-toggle button.req-no.on{background:var(--red-bg);color:var(--red-ink-strong);box-shadow:none}
+.req-decide-more{display:block;margin:10px 0 0 28px}
+.req-decide .qpanel-foot{flex-wrap:wrap}
+@media (max-width:600px){
+  .req-arows,.req-decide-more{padding-left:0;margin-left:0}
+  .req-decide .req-decide-note{margin-left:0}
+  .req-arow{grid-template-columns:44px minmax(0,1fr)}
+  .req-arow > .req-toggle{grid-column:2;justify-self:start}
+}
+/* Ready to build (board Ready.dc.html): what Start does, the workflow and branch chips with Change, Start. */
+.req-build{padding:20px 22px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px 24px;align-items:center}
+.req-build-main{display:flex;flex-direction:column;gap:6px;min-width:0}
+.req-build h3{margin:0;font-size:15px;font-weight:700}
+.req-build p{margin:0;font-size:13px;color:var(--ink-2)}
+.req-build p b{color:var(--ink);font-weight:600}
+.req-build-chips{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:4px}
+.req-build-choices{display:flex;flex-wrap:wrap;gap:12px;margin-top:8px}
+.req-build-field{display:flex;flex-direction:column;gap:6px;flex:1 1 200px;min-width:0}
+.req-build-field label{font-size:12px;font-weight:600;color:var(--ink-2)}
+.req-build-field select,.req-build-field input{box-sizing:border-box;padding-top:9px;padding-bottom:9px;font-size:13px}
+.req-build-go:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
+@media (max-width:600px){.req-build{grid-template-columns:1fr;padding:16px 18px}.req-build-go{justify-self:start}}
+/* Started (board Started.dc.html): the runs card, the changed-since notice, the spec version switch. */
+.req-runs{padding:16px 18px;display:flex;flex-direction:column;gap:12px}
+.req-runs .req-card-head{margin:0}
+.req-run-rows{display:flex;flex-direction:column;gap:8px}
+.req-run-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:14px;align-items:center;padding:12px 14px;border-radius:12px;background:var(--field);color:var(--ink);text-decoration:none}
+a.req-run-row:hover{background:var(--hover)}
+a.req-run-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.req-run-row.gone{grid-template-columns:minmax(0,1fr)}
+.req-run-row .pill-run{padding:5px 10px;font-size:11.5px}
+.req-run-main{display:flex;flex-direction:column;gap:2px;min-width:0}
+.req-run-main .hint{margin:0}
+.req-run-label{font-weight:500;font-size:13px;overflow-wrap:anywhere}
+.req-run-cost{font-family:var(--mono);font-size:12px;color:var(--ink-2)}
+.req-run-go{color:var(--ink-3)}
+.req-runs .req-run-total{margin:0}
+.req-run-total code{font-family:var(--mono)}
+.req-changed{display:flex;gap:12px;align-items:flex-start;padding:14px 16px;border-radius:14px;background:var(--amber-wash);border:1px solid var(--amber-bg)}
+.req-changed > svg{flex:none;margin-top:1px;color:var(--amber-ink-strong)}
+.req-changed-body{display:flex;flex-direction:column;gap:6px;flex:1;min-width:0}
+.req-changed-body b{font-size:13.5px}
+.req-changed-body p{margin:0;font-size:13px;color:var(--ink-2)}
+.req-change-line{font-size:13px;padding:8px 10px;background:var(--surface);border-radius:10px;overflow-wrap:anywhere}
+.req-change-line .req-id{margin-right:4px}
+.req-del{color:var(--ink-3);text-decoration:line-through}
+.req-ins{background:var(--green-bg);border-radius:4px;padding:0 3px;text-decoration:none;-webkit-box-decoration-break:clone;box-decoration-break:clone}
+.req-changed .req-actions{margin:2px 0 0}
+.req-spec > .req-card-head{flex-wrap:wrap}
+.req-spec .req-spec-ver{flex:1;min-width:0}
+.req-item .req-changed-mark{display:inline;margin:0;color:var(--amber-ink-strong)}
+.req-runs .req-card-head{flex-wrap:wrap}
+.req-msg-link{color:var(--blue-ink-strong);font-weight:600}
+.req-msg-link:hover{color:var(--ink)}
+@media (max-width:600px){
+  .req-run-row{grid-template-columns:auto minmax(0,1fr) auto;gap:8px 12px}
+  .req-run-go{display:none}
+  .req-spec .req-spec-ver{order:3;flex-basis:100%}
+}
+/* The start-before-Ready dialog (board StartAnyway.dc.html) on the upstream .viewer-modal overlay. */
+.viewer-modal.req-dlg-wrap{place-items:start center;padding-top:min(18vh,180px)}
+.req-dlg-wrap .card.req-dialog{width:min(560px,100%);box-sizing:border-box;box-shadow:var(--shadow-sheet);padding:24px 26px;display:flex;flex-direction:column;gap:14px}
+.req-dialog h2{margin:0;font-size:18px;font-weight:700;letter-spacing:-.01em}
+.req-dlg-lead{margin:0;font-size:13.5px;color:var(--ink-2)}
+.req-dlg-fail{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:10px;background:var(--amber-wash);border:1px solid var(--amber-bg);font-size:13px}
+.req-dlg-fail ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.req-dlg-fail li{display:flex;gap:10px;align-items:flex-start}
+.req-dlg-fail li > svg{flex:none;margin-top:1px;color:var(--amber-ink-strong)}
+.req-dlg-fail b{font-weight:600}
+.req-dlg-fail p{margin:0;color:var(--ink-2)}
+.req-dlg-field{margin:0}
+.req-dlg-field textarea{box-sizing:border-box;min-height:84px}
+.req-dlg-field .req-dlg-count{margin:4px 0 0;text-align:right}
+.req-dialog .req-dlg-who,.req-dialog .req-dlg-msg{margin:0}
+.req-dlg-msg:empty{display:none}
+.req-dlg-btns{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:10px;margin-top:4px}
+@media (max-width:600px){.viewer-modal.req-dlg-wrap{padding:16px}.req-dlg-wrap .card.req-dialog{padding:18px 16px}}

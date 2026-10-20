@@ -769,9 +769,7 @@ test('Ready panel: the six checks, n of 6, Start disabled until Ready, start-any
   assert.equal(panel().querySelector('code').textContent, '6 of 6');
   assert.ok([...panel().querySelectorAll('[role="img"]')].every((i) => i.getAttribute('aria-label') === 'Passed'));
   assert.equal(panel().querySelector('[data-ui="start-anyway"]'), null);
-  start().click();   // Task 8 wires the start flow; the stub posts nothing
-  await tick();
-  assert.equal([...calls, ...calls2].filter((c) => c.method !== 'GET').length, 0);
+  assert.equal([...calls, ...calls2].filter((c) => c.method !== 'GET').length, 0, 'nothing is posted until a Start');
 });
 
 test('spec card: pencil buttons with labels, edited inline, remove icons, the folded long lists', async () => {
@@ -840,4 +838,465 @@ test('What Worca found in the code: folded below the rounds, with how often it l
   turns = [];
   await view.changed(4);
   assert.equal(box().querySelector('.req-orient-meta'), null, 'nothing known, nothing said');
+});
+
+// ---- Task 8: Decide, Ready to build, Start, the start-before-Ready dialog, Started ----
+
+const DONE = { status: 'done', pending: null, rounds: 2 };
+const decideFeature = (over = {}) => {
+  const f = feature({ ...DONE, state: 'decide', unaskedRejections: ['A-3'], ...over });
+  f.spec.assumptions = [
+    { id: 'A-1', text: 'Full refund', status: 'open' }, { id: 'A-2', text: 'Email the customer', status: 'confirmed' },
+    { id: 'A-3', text: 'No partial cancel', status: 'rejected' }, { id: 'A-4', text: 'Stock goes back', status: 'open' },
+    { id: 'A-5', text: 'Only the buyer', status: 'rejected' }];
+  return f;
+};
+const decideRows = (host) => [...host.querySelectorAll('.req-decide [data-decide]')].map((r) => r.getAttribute('data-decide'));
+
+test('Decide card: open first, then the unasked rejections, the rest folded; the toggles, the counts', async () => {
+  const f = decideFeature();
+  const calls = fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: f, turns: [] }),
+    'POST /api/requirements/4/assumptions/A-1': { feature: f, turns: [] }, 'POST /api/requirements/4/assumptions/A-3': { feature: f, turns: [] } });
+  const { host, view } = make();
+  await view.show('feature/4');
+  const card = () => host.querySelector('.req-left .req-decide');
+  assert.ok(card().classList.contains('qpanel'));
+  assert.equal(host.querySelector('.req-left').firstElementChild, card(), 'the current card, at the top');
+  assert.equal(card().querySelector('.qpanel-head b').textContent, 'Decide the assumptions');
+  assert.equal(card().querySelector('.qcount').textContent, '2 of 5 left');
+  assert.match(card().textContent, /Confirm what is right, reject what is not: a rejected one is asked again in one short round\./);
+  assert.doesNotMatch(host.textContent, /The interview is done\./, 'the A1 hint is gone');
+  assert.deepEqual(decideRows(host), ['A-1', 'A-4', 'A-3']);
+  const row = (id) => card().querySelector(`[data-decide="${id}"]`);
+  const group = row('A-3').querySelector('[role="group"]');
+  assert.equal(group.getAttribute('aria-label'), 'Decide A-3');
+  assert.deepEqual([...group.querySelectorAll('button')].map((b) => [b.textContent, b.getAttribute('aria-pressed')]), [['Confirm', 'false'], ['Reject', 'true']]);
+  assert.equal(row('A-1').querySelector('code').textContent, 'A-1');
+  assert.match(row('A-1').textContent, /Full refund/);
+  const more = btn(card(), 'Show the other 2');
+  assert.ok(more.classList.contains('hint'));
+  assert.equal(more.getAttribute('aria-expanded'), 'false');
+  more.click();
+  await tick();
+  assert.deepEqual(decideRows(host), ['A-1', 'A-4', 'A-3', 'A-2', 'A-5']);
+  assert.equal(btn(card(), 'Show fewer').getAttribute('aria-expanded'), 'true');
+  assert.equal(card().querySelector('.qanswered').textContent, '3 decided · 2 rejected');
+  btn(row('A-1'), 'Confirm').click();
+  await tick(); await tick();
+  assert.deepEqual(calls.filter((c) => c.method === 'POST').map((c) => [c.url, c.body]), [['/api/requirements/4/assumptions/A-1', { status: 'confirmed' }]]);
+  btn(row('A-3'), 'Reject').click();   // pressing the pressed one reopens it
+  await tick(); await tick();
+  assert.deepEqual(calls.filter((c) => c.method === 'POST').at(-1).body, { status: 'open' });
+});
+
+test('Decide card: Confirm the N left and Done, ask about A-n post their routes; each shows only when it applies', async () => {
+  let f = decideFeature();
+  const calls = fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: f, turns: [] }),
+    'POST /api/requirements/4/assumptions': () => ({ feature: f, turns: [] }), 'POST /api/requirements/4/follow-up': () => ({ feature: f, turns: [] }) });
+  const { host, view } = make();
+  await view.show('feature/4');
+  const all = () => host.querySelector('[data-ui="confirm-all"]');
+  const follow = () => host.querySelector('[data-ui="follow-up"]');
+  assert.equal(all().textContent, 'Confirm the 2 left');
+  assert.equal(follow().textContent, 'Done, ask about A-3');
+  assert.ok(follow().classList.contains('btn-go'));
+  all().click();
+  await tick(); await tick();
+  assert.deepEqual(calls.filter((c) => c.method === 'POST').at(-1), { method: 'POST', url: '/api/requirements/4/assumptions', body: { confirmOpen: true } });
+  follow().click();
+  await tick(); await tick();
+  assert.deepEqual(calls.filter((c) => c.method === 'POST').at(-1), { method: 'POST', url: '/api/requirements/4/follow-up', body: {} });
+  f = decideFeature({ unaskedRejections: ['A-3', 'A-5'] });
+  await view.changed(4);
+  assert.equal(follow().textContent, 'Done, ask about A-3 and 1 more');
+  f = decideFeature({ unaskedRejections: [] });
+  f.spec.assumptions = f.spec.assumptions.map((a) => ({ ...a, status: a.status === 'open' ? 'confirmed' : a.status }));
+  await view.changed(4);
+  assert.equal(all(), null, 'nothing left to confirm');
+  assert.equal(follow(), null, 'no rejection waits');
+  assert.equal(host.querySelector('.req-decide .qcount').textContent, '0 of 5 left');
+  f = decideFeature({ busy: true, status: 'thinking', state: 'thinking' });
+  await view.changed(4);
+  assert.equal(host.querySelector('.req-decide'), null, 'never while Worca works');
+});
+
+const readyFeature = (over = {}) => feature({ ...DONE, state: 'ready', readiness: ALL_OK(), ...over });
+const BUILD = {
+  'GET /api/projects': { projects: [{ key: 'shop-1', name: 'shop', path: '/p/shop' }] },
+  'GET /api/workflows': { workflows: [{ id: 'wf_default', name: 'Default' }, { id: 'wf_memory_defrag', name: 'Memory defragment' }, { id: 'wf_x', name: 'Careful' }] },
+  'GET /api/branches?projectDir=%2Fp%2Fshop': { branches: ['main', 'dev'], current: 'main' },
+};
+const chipsOf = (el) => [...el.querySelectorAll('.chip')].map((c) => c.textContent);
+const pick = (el, value) => { el.value = value; el.dispatchEvent(new window.Event('change', { bubbles: true })); };
+
+test('Ready to build: the sentence, the chips, Change reveals the workflow and branch selects; the choices are kept', async () => {
+  const calls = fakeApi({ ...BASE, ...BUILD, 'GET /api/requirements/4': () => ({ feature: readyFeature(), turns: [] }) });
+  const { host, view } = make();
+  await view.show('feature/4');
+  const card = () => host.querySelector('.req-left .req-build');
+  assert.ok(card().classList.contains('card'));
+  assert.equal(host.querySelector('.req-left').firstElementChild, card());
+  assert.equal(card().querySelector('h3').textContent, 'Ready to build');
+  assert.equal(card().querySelector('p').textContent, 'All 6 checks pass. Starting saves this spec as version 1 and starts a run on shop with it as the task. The run plans, builds and reviews; its cost counts toward your limit like any run.');
+  assert.equal(card().querySelector('p b').textContent, 'shop');
+  assert.deepEqual(chipsOf(card()), ['Workflow · Auto', 'Branch from · default']);
+  const go = card().querySelector('[data-ui="start-go"]');
+  assert.ok(go.classList.contains('btn-go'));
+  assert.equal(go.textContent, 'Start in worca');
+  assert.equal(card().querySelector('select'), null, 'the selects open from Change');
+  const change = card().querySelector('[data-ui="build-change"]');
+  assert.equal(change.textContent, 'Change');
+  assert.ok(change.classList.contains('hint'));
+  change.click();
+  await tick(); await tick(); await tick();
+  const wf = () => card().querySelector('select[data-ui="build-workflow"]');
+  const br = () => card().querySelector('select[data-ui="build-branch"]');
+  assert.deepEqual([...wf().options].map((o) => [o.value, o.textContent]), [['wf_auto', 'Auto'], ['wf_default', 'Default'], ['wf_x', 'Careful']]);
+  assert.deepEqual([...br().options].map((o) => [o.value, o.textContent]), [['', 'Project default (main)'], ['main', 'main'], ['dev', 'dev']]);
+  assert.ok(calls.some((c) => c.url === '/api/branches?projectDir=%2Fp%2Fshop'));
+  pick(wf(), 'wf_x');
+  pick(br(), 'dev');
+  assert.deepEqual(chipsOf(card()), ['Workflow · Careful', 'Branch from · dev']);
+  await view.changed(4);
+  assert.equal(wf().value, 'wf_x', 'kept across a live update');
+  assert.equal(br().value, 'dev');
+  assert.equal(calls.filter((c) => c.url === '/api/workflows').length, 1, 'loaded once');
+});
+
+test('Ready to build, workspace: one branch field for every project, no branch list', async () => {
+  const calls = fakeApi({ ...BASE, ...BUILD, 'GET /api/workspaces': { workspaces: [{ id: 'ws1', name: 'Storefront' }] },
+    'GET /api/requirements/4': () => ({ feature: readyFeature({ scopeType: 'workspace', scopeKey: 'ws1' }), turns: [] }) });
+  const { host, view } = make();
+  await view.show('feature/4');
+  const card = host.querySelector('.req-build');
+  assert.match(card.querySelector('p').textContent, /starts a run on Storefront with it/);
+  card.querySelector('[data-ui="build-change"]').click();
+  await tick(); await tick();
+  const input = host.querySelector('.req-build input[data-ui="build-branch"]');
+  assert.equal(input.getAttribute('placeholder'), "Branch for every project (empty: each project's default)");
+  input.value = 'release';
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  assert.deepEqual(chipsOf(host.querySelector('.req-build')), ['Workflow · Auto', 'Branch from · release']);
+  assert.ok(!calls.some((c) => c.url.startsWith('/api/branches')));
+});
+
+const startedFeature = (over = {}) => feature({ ...DONE, state: 'started', readiness: ALL_OK(),
+  starts: [{ version: 1, runId: 'r9', ready: true, failing: [], reason: null, workflowId: 'wf_x', sourceBranch: 'dev',
+    run: { status: 'running', phase: 'plan', costUsd: 0.1, href: '#running/r9' } }], ...over });
+
+test('Start: posts the choices once (the button waits for the answer), repaints as started, says so with a link', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const calls = fakeApi({ ...BASE, ...BUILD, 'GET /api/requirements/4': () => ({ feature: readyFeature(), turns: [] }) });
+  const inner = globalThis.fetch;
+  globalThis.fetch = async (url, opts = {}) => {
+    if (opts.method === 'POST' && url === '/api/requirements/4/start') {
+      calls.push({ method: 'POST', url, body: JSON.parse(opts.body) });
+      await gate;
+      return { ok: true, status: 201, json: async () => ({ runId: 'r9', version: 1, feature: startedFeature(), turns: [] }) };
+    }
+    return inner(url, opts);
+  };
+  const { host, msgEl, view } = make();
+  await view.show('feature/4');
+  host.querySelector('[data-ui="build-change"]').click();
+  await tick(); await tick(); await tick();
+  pick(host.querySelector('[data-ui="build-workflow"]'), 'wf_x');
+  pick(host.querySelector('[data-ui="build-branch"]'), 'dev');
+  const go = host.querySelector('[data-ui="start-go"]');
+  go.click();
+  go.click();
+  await tick();
+  assert.equal(host.querySelector('[data-ui="start-go"]').disabled, true, 'disabled while the start is in flight');
+  assert.equal(host.querySelector('.req-ready [data-ui="start"]').disabled, true);
+  host.querySelector('.req-ready [data-ui="start"]').click();
+  release();
+  await tick(); await tick(); await tick();
+  const posts = calls.filter((c) => c.method === 'POST');
+  assert.equal(posts.length, 1, 'one start, however often it was pressed');
+  assert.deepEqual(posts[0].body, { workflowId: 'wf_x', sourceBranch: 'dev' });
+  assert.equal(msgEl.textContent, 'Started build v1. Open the run');
+  assert.equal(msgEl.querySelector('a').getAttribute('href'), '#running/r9');
+  assert.ok(host.querySelector('.req-runs'), 'repainted from the answer: the feature is started');
+  assert.equal(host.querySelector('.req-build'), null);
+  assert.equal(calls.filter((c) => c.url === '/api/requirements/4').length, 1, 'no refetch: the answer carries the feature');
+});
+
+test('Start: the defaults send only the workflow; an error other than NOT_READY is said, with no dialog', async () => {
+  const calls = fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: readyFeature(), turns: [] }),
+    'POST /api/requirements/4/start': { __status: 409, body: { error: 'The budget for this month is used up.' } } });
+  const { host, msgEl, view } = make();
+  await view.show('feature/4');
+  host.querySelector('.req-ready [data-ui="start"]').click();
+  await tick(); await tick();
+  assert.deepEqual(calls.find((c) => c.method === 'POST').body, { workflowId: 'wf_auto' });
+  assert.equal(msgEl.textContent, 'The budget for this month is used up.');
+  assert.equal(document.querySelector('[role="dialog"]'), null);
+  assert.equal(host.querySelector('[data-ui="start-go"]').disabled, false, 'usable again');
+});
+
+test('NOT_READY opens the dialog: the failing checks, a required reason, sent with the start; Escape closes, focus returns', async () => {
+  const f = readyFeature();
+  let calls = null;
+  calls = fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: f, turns: [] }),
+    'POST /api/requirements/4/start': () => (calls.at(-1).body.reason
+      ? { __status: 201, body: { runId: 'r9', version: 1, feature: startedFeature(), turns: [] } }
+      : { __status: 409, body: { error: 'This feature is not Ready. Give a reason to start it anyway.', failing: ['assumptions'] } }) });
+  const { host, msgEl, view } = make();
+  document.body.append(host);
+  await view.show('feature/4');
+  const go = () => host.querySelector('[data-ui="start-go"]');
+  go().focus();
+  go().click();
+  await tick(); await tick();
+  const dlg = () => document.querySelector('[role="dialog"]');
+  assert.ok(dlg(), 'the dialog opens');
+  assert.equal(dlg().getAttribute('aria-modal'), 'true');
+  assert.ok(dlg().closest('.viewer-modal'), 'the upstream modal overlay');
+  assert.equal(document.getElementById(dlg().getAttribute('aria-labelledby')).textContent, "Start FEAT-4 before it's Ready?");
+  assert.match(dlg().querySelector('.req-dlg-fail').textContent, /Every assumption decided/);
+  assert.match(dlg().textContent, /The run treats open assumptions as confirmed: the build follows them as written\./);
+  const area = () => dlg().querySelector('textarea');
+  assert.equal(document.activeElement, area(), 'focus on the reason');
+  assert.equal(area().getAttribute('maxlength'), '500');
+  assert.match(dlg().textContent, /Why start now\?/);
+  assert.match(dlg().textContent, /Recorded as: you · started before Ready/);
+  const primary = () => dlg().querySelector('.btn-primary');
+  assert.equal(primary().textContent, 'Start with 1 open', 'A-1 is open');
+  assert.equal(primary().disabled, true);
+  area().value = '   ';
+  area().dispatchEvent(new window.Event('input'));
+  assert.equal(primary().disabled, true, 'blank is no reason');
+  area().value = 'Sprint today';
+  area().dispatchEvent(new window.Event('input'));
+  assert.equal(primary().disabled, false);
+  assert.equal(dlg().querySelector('.req-dlg-count').textContent, '12 / 500');
+  // Tab stays inside the dialog
+  primary().focus();
+  dlg().dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+  assert.equal(document.activeElement, area());
+  area().dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true }));
+  assert.equal(document.activeElement, primary());
+  // Escape closes, the focus goes back to the trigger
+  dlg().dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.equal(dlg(), null);
+  assert.equal(document.activeElement, go());
+  // again, with Keep deciding
+  go().click();
+  await tick(); await tick();
+  btn(dlg(), 'Keep deciding').click();
+  assert.equal(dlg(), null);
+  // again, now with a reason: sent with the start
+  go().click();
+  await tick(); await tick();
+  area().value = '  Sprint today ';
+  area().dispatchEvent(new window.Event('input'));
+  primary().click();
+  await tick(); await tick(); await tick();
+  assert.deepEqual(calls.filter((c) => c.method === 'POST').at(-1).body, { reason: 'Sprint today', workflowId: 'wf_auto' });
+  assert.equal(dlg(), null, 'closed after the start');
+  assert.equal(msgEl.textContent, 'Started build v1. Open the run');
+  assert.ok(host.querySelector('.req-runs'));
+  host.remove();
+});
+
+test("Start before it's Ready…: the dialog names every failing check with its hint, posts nothing until confirmed", async () => {
+  const f = feature({ readiness: readiness({ overridable: true }) });
+  const calls = fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: f, turns: [] }),
+    'POST /api/requirements/4/start': { __status: 409, body: { error: 'Worca is still working on this feature.' } } });
+  const { host, view } = make();
+  document.body.append(host);
+  await view.show('feature/4');
+  host.querySelector('[data-ui="start-anyway"]').focus();
+  host.querySelector('[data-ui="start-anyway"]').click();
+  await tick();
+  const dlg = () => document.querySelector('[role="dialog"]');
+  assert.ok(dlg());
+  assert.equal(calls.filter((c) => c.method === 'POST').length, 0);
+  assert.match(dlg().textContent, /3 checks do not pass yet:/);
+  const items = [...dlg().querySelectorAll('.req-dlg-fail li')].map((li) => li.textContent);
+  assert.deepEqual(items, ['Goal with a success measure: add a success measure', 'Interview finished: 1 question waiting', 'Every assumption decided: 1 to decide']);
+  dlg().querySelector('textarea').value = 'Demo';
+  dlg().querySelector('textarea').dispatchEvent(new window.Event('input'));
+  dlg().querySelector('.btn-primary').click();
+  await tick(); await tick();
+  assert.equal(dlg().querySelector('.form-msg').textContent, 'Worca is still working on this feature.', 'an error stays in the dialog');
+  dlg().dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.equal(document.activeElement, host.querySelector('[data-ui="start-anyway"]'));
+  host.remove();
+});
+
+const frozen = () => ({ goal: { text: 'Cancel', measure: '' }, actors: ['Customer'], flow: [], edgeCases: [], rules: [], outOfScope: [],
+  criteria: [{ id: 'R-po-1', text: 'Cancel while unpaid' }], assumptions: [{ id: 'A-1', text: 'Full refund', status: 'open' }], openQuestions: [], edited: {} });
+const CHANGES = [
+  { kind: 'goal', field: 'measure', before: '', after: 'Fewer calls' },
+  { kind: 'section', section: 'actors', added: ['Support'], removed: ['Customer'] },
+  { kind: 'criterion', id: 'R-po-1', change: 'edited', before: 'Cancel while unpaid', after: 'Cancel until shipped' },
+  { kind: 'criterion', id: 'R-po-2', change: 'added', after: 'Refund in 3 days' },
+  { kind: 'assumption', id: 'A-1', change: 'status', before: 'open', after: 'confirmed' },
+];
+const twoStarts = (over = {}) => {
+  const f = feature({ ...DONE, state: 'started', costUsd: 0.4, readiness: ALL_OK(), changedSinceStart: CHANGES,
+    starts: [
+      { version: 2, runId: 'r2', startedBy: 'tom', ready: false, failing: ['assumptions'], reason: 'Sprint today', workflowId: 'wf_x', sourceBranch: null,
+        run: { status: 'running', phase: 'implement', costUsd: 2.84, href: '#running/r2' }, spec: frozen() },
+      { version: 1, runId: 'r1', ready: true, failing: [], reason: null, workflowId: 'wf_auto', sourceBranch: null, run: null }], ...over });
+  f.spec.criteria = [{ id: 'R-po-1', text: 'Cancel until shipped' }, { id: 'R-po-2', text: 'Refund in 3 days' }];
+  return f;
+};
+
+test('Started: the runs card (newest first), the total, Start again with the next version', async () => {
+  let f = twoStarts();
+  const calls = fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: f, turns: [] }),
+    'POST /api/requirements/4/start': { __status: 201, body: { runId: 'r3', version: 3, feature: twoStarts(), turns: [] } } });
+  const { host, msgEl, view } = make();
+  await view.show('feature/4');
+  const card = () => host.querySelector('.req-left .req-runs');
+  assert.ok(card().classList.contains('card'));
+  assert.equal(host.querySelector('.req-left').firstElementChild, card(), 'at the top of the left column');
+  assert.equal(card().querySelector('h3').textContent, 'Runs from this feature');
+  const rows = [...card().querySelectorAll('.req-run-row')];
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].tagName, 'A');
+  assert.equal(rows[0].getAttribute('href'), '#running/r2');
+  assert.equal(rows[0].querySelector('.pill-run').textContent, 'Implement');
+  const label = rows[0].querySelector('.req-run-label');
+  assert.equal(label.textContent, 'Run · spec v2 · started before Ready');
+  assert.equal(label.getAttribute('title'), 'Sprint today');
+  assert.equal(rows[0].querySelector('.req-run-cost').textContent, '$2.84');
+  assert.notEqual(rows[1].tagName, 'A');
+  assert.match(rows[1].textContent, /Run · spec v1/);
+  assert.match(rows[1].textContent, /Run not found/);
+  assert.equal(card().querySelector('.req-run-total').textContent, 'Total for FEAT-4 so far: $3.24 (requirements $0.40 + build $2.84)');
+  const again = () => card().querySelector('[data-ui="start-again"]');
+  assert.equal(again().textContent, 'Start again with v3');
+  assert.equal(again().disabled, false);
+  again().click();
+  await tick(); await tick();
+  assert.deepEqual(calls.find((c) => c.method === 'POST').body, { workflowId: 'wf_x' }, 'the last start\'s workflow');
+  assert.equal(msgEl.textContent, 'Started build v3. Open the run');
+  f = twoStarts({ changedSinceStart: [] });
+  await view.changed(4);
+  assert.equal(again().disabled, true, 'nothing changed: nothing to start again');
+  f = twoStarts({ readiness: readiness() });
+  await view.changed(4);
+  assert.equal(again().disabled, true, 'not Ready and not overridable');
+  assert.doesNotMatch(host.textContent, /null|undefined|NaN/);
+});
+
+test('Started: the changed-since notice, one line per change; Undo my changes reverts after a confirm', async () => {
+  const f = twoStarts();
+  const calls = fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: f, turns: [] }),
+    'POST /api/requirements/4/revert': { feature: f, turns: [] } });
+  const { host, view } = make();
+  await view.show('feature/4');
+  const box = host.querySelector('.req-left .req-changed');
+  const left = [...host.querySelector('.req-left').children];
+  assert.equal(left.indexOf(box), left.indexOf(host.querySelector('.req-runs')) + 1, 'right under the runs card');
+  assert.equal(box.querySelector('b').textContent, 'Changed since the run started');
+  const lines = [...box.querySelectorAll('.req-change-line')];
+  assert.equal(lines.length, 5);
+  assert.equal(lines[0].textContent, 'Success measure: Fewer calls');
+  assert.equal(lines[0].querySelector('ins').textContent, 'Fewer calls');
+  assert.equal(lines[1].textContent, 'Actors: Customer Support');
+  assert.equal(lines[1].querySelector('del').textContent, 'Customer');
+  assert.equal(lines[1].querySelector('ins').textContent, 'Support');
+  assert.equal(lines[2].querySelector('code').textContent, 'R-po-1');
+  assert.equal(lines[2].querySelector('del').textContent, 'Cancel while unpaid');
+  assert.equal(lines[2].querySelector('ins').textContent, 'Cancel until shipped');
+  assert.equal(lines[3].textContent, 'R-po-2 added: Refund in 3 days');
+  assert.equal(lines[4].textContent, 'A-1 open confirmed');
+  assert.equal(lines[4].querySelector('del').textContent, 'open');
+  assert.match(box.textContent, /The running build still works from v2; it does not see this change\./);
+  const undo = btn(box, 'Undo my changes');
+  window.confirm = () => false;
+  undo.click();
+  await tick();
+  assert.equal(calls.filter((c) => c.method === 'POST').length, 0, 'declined: nothing sent');
+  window.confirm = () => true;
+  btn(host.querySelector('.req-changed'), 'Undo my changes').click();
+  await tick(); await tick();
+  assert.deepEqual(calls.find((c) => c.method === 'POST'), { method: 'POST', url: '/api/requirements/4/revert', body: { version: 2 } });
+});
+
+test('Started: the spec card switches between the draft and the started version; the started one is read-only', async () => {
+  let f = twoStarts();
+  fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: f, turns: [] }) });
+  const { host, view } = make();
+  await view.show('feature/4');
+  const spec = () => host.querySelector('.req-spec');
+  const tabsOf = () => [...spec().querySelectorAll('[role="tab"]')];
+  assert.ok(spec().querySelector('[role="tablist"]').classList.contains('seg'));
+  assert.deepEqual(tabsOf().map((t) => [t.textContent, t.getAttribute('aria-selected')]), [['v3 draft', 'true'], ['v2 started', 'false']]);
+  const crit = () => [...spec().querySelectorAll('[data-criterion]')].map((li) => li.querySelector('.req-item-text').textContent);
+  assert.deepEqual(crit(), ['Cancel until shipped', 'Refund in 3 days']);
+  assert.ok(spec().querySelector('[data-criterion="R-po-1"] .req-changed-mark'), 'a changed criterion is marked');
+  tabsOf()[1].click();
+  await tick();
+  assert.equal(tabsOf()[1].getAttribute('aria-selected'), 'true');
+  assert.deepEqual(crit(), ['Cancel while unpaid'], 'the frozen spec');
+  assert.equal(spec().querySelectorAll('.req-ico').length, 0, 'no pencils, no add or remove');
+  assert.equal(spec().querySelector('.req-confirm'), null, 'no Confirm / Reject');
+  assert.match(spec().querySelector('[data-assumption="A-1"]').textContent, /open/);
+  await view.changed(4);
+  assert.deepEqual(crit(), ['Cancel while unpaid'], 'kept across a live update');
+  tabsOf()[0].click();
+  await tick();
+  assert.deepEqual(crit(), ['Cancel until shipped', 'Refund in 3 days']);
+  f = twoStarts({ changedSinceStart: [] });
+  await view.changed(4);
+  assert.equal(spec().querySelector('[role="tablist"]'), null, 'no changes: no switch');
+  assert.equal(host.querySelector('.req-changed'), null, 'and no notice');
+});
+
+test('focus: Change opens the card on its first option; Cancel and Submit changes return to that round\'s Change', async () => {
+  const turns = [
+    { id: 3, kind: 'round', payload: { questions: Q, note: '' } },
+    { id: 4, kind: 'answers', payload: { roundTurnId: 3, answers: [{ id: 'who', question: Q[0].question, answer: 'Support' }] } },
+    { id: 6, kind: 'round', payload: { questions: [], note: 'Complete.', done: true } },
+  ];
+  const f = decideFeature();
+  fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: f, turns }), 'POST /api/requirements/4/answers': { feature: f, turns } });
+  const { host, view } = make();
+  document.body.append(host);
+  await view.show('feature/4');
+  const change = () => host.querySelector('[data-ui="change-3"]');
+  assert.ok(change().classList.contains('hint'), 'the muted hint link');
+  assert.ok(!change().classList.contains('link-btn'));
+  change().click();
+  await tick();
+  assert.equal(document.activeElement, host.querySelector('.req-revise .qopt'));
+  btn(host.querySelector('.req-revise'), 'Cancel').click();
+  await tick();
+  assert.equal(document.activeElement, change());
+  change().click();
+  await tick();
+  btn(host.querySelector('.req-revise'), 'Submit changes').click();
+  await tick(); await tick(); await tick();
+  assert.equal(host.querySelector('.req-revise'), null);
+  assert.equal(document.activeElement, change());
+  host.remove();
+});
+
+test('focus: a live update keeps the focus on an open menu\'s item; Escape still closes it', async () => {
+  fakeApi(BASE);
+  const { host, view } = make();
+  document.body.append(host);
+  await view.show('feature/4');
+  btn(host, 'Export ▾').click();
+  btn(host, 'Copy Markdown').focus();
+  await view.changed(4);
+  assert.equal(document.activeElement && document.activeElement.textContent, 'Copy Markdown');
+  assert.ok(host.contains(document.activeElement));
+  document.activeElement.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.equal(btn(host, 'Export ▾').getAttribute('aria-expanded'), 'false');
+  assert.equal(document.activeElement, btn(host, 'Export ▾'));
+  host.remove();
+});
+
+test('style.css: the start-anyway link has a disabled look; the req- rules use tokens only', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  assert.match(css, /\.req-start-anyway:disabled\{[^}]*opacity/);
+  const req = css.split('\n').filter((l) => /\.req-/.test(l));
+  assert.ok(req.every((l) => !/#[0-9a-fA-F]{3,8}\b/.test(l)), 'no hex colour in a req- rule');
 });

@@ -5,7 +5,8 @@
 // (Skip, use recommended) fills the spec with R-po-1, finishes the interview (the header's "Interview done ·
 // N rounds" chip and its Decide / Ready badge); the answered rounds stay on the page in the Earlier rounds card
 // with their answer and a Change; the Ready panel shows the server's six checks with Start enabled exactly when
-// the feature is Ready; the Export menu opens and Escape closes it; no page errors.
+// the feature is Ready; the Export menu opens and Escape closes it; the Decide card, the start-before-Ready
+// dialog (focus on the reason, Escape returns it), Confirm the N left leading to the Ready to build card; no page errors.
 // NOT part of `npm test`.
 // Run: npm run verify:requirements   (set CHROME_BIN to a Chrome/Chromium binary if it is not auto-found,
 // e.g. CHROME_BIN="C:/Program Files/Google/Chrome/Application/chrome.exe" on Windows)
@@ -182,6 +183,25 @@ check('the Export menu opens on its button and Escape closes it',
     t.click(); const opened = !m.hidden && getComputedStyle(m).display !== 'none';
     m.querySelector('[role="menuitem"]').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     return opened && m.hidden && getComputedStyle(m).display === 'none' && document.activeElement === t; })()`));
+// Task 8: the mock leaves an assumption open, so the feature is in Decide: the Decide card, the start-before-Ready
+// dialog (real focus handling), then Confirm the N left turns it Ready and the Ready to build card shows.
+check('Decide: the card lists the open assumptions, each with a Confirm / Reject group',
+  await until(() => A.evalJs(`(() => { const c = document.querySelector('#requirements-host .req-left .req-decide');
+    return !!c && c.querySelectorAll('[data-decide] [role="group"] button[aria-pressed]').length >= 2
+      && !!c.querySelector('[data-ui="confirm-all"]'); })()`)));
+check("Start before it's Ready… opens the dialog on the reason; Escape closes it and the focus goes back",
+  await A.evalJs(`(async () => { const b = document.querySelector('#requirements-host [data-ui="start-anyway"]');
+    if (!b) return false; b.focus(); b.click();
+    const d = document.querySelector('.req-dialog[role="dialog"]');
+    if (!d || d.getAttribute('aria-modal') !== 'true' || document.activeElement !== d.querySelector('textarea')) return false;
+    if (getComputedStyle(d.closest('.viewer-modal')).position !== 'fixed') return false;
+    d.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    return !document.querySelector('.req-dialog') && document.activeElement === document.querySelector('#requirements-host [data-ui="start-anyway"]'); })()`));
+await A.evalJs(`document.querySelector('#requirements-host [data-ui="confirm-all"]').click()`);
+check('Confirm the N left: the feature is Ready and the Ready to build card offers Start in worca',
+  await until(() => A.evalJs(`(() => { const c = document.querySelector('#requirements-host .req-left .req-build');
+    return !!c && document.querySelector('#requirements-host .req-head .badge')?.textContent === 'Ready'
+      && !c.querySelector('[data-ui="start-go"]').disabled; })()`)));
 check('no page errors', A.pageErrors.length === 0, A.pageErrors.join(' | '));
 log(failed ? `${failed} check(s) failed` : 'all checks passed');
 await shutdown(failed ? 1 : 0);

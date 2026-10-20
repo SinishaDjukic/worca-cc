@@ -29279,7 +29279,8 @@ const requirementsView = createRequirementsView({
   host: $('#requirements-host'),
   subEl: $('#requirements-sub'),
   msgEl: $('#requirements-msg'),
-  deps: { route: (p) => { location.hash = p ? `#requirements/${p}` : '#requirements'; } },
+  // who: the signed-in person on a shared deployment (the start-before-Ready dialog's "Recorded as"), else nobody
+  deps: { route: (p) => { location.hash = p ? `#requirements/${p}` : '#requirements'; }, who: () => viewer.name },
 });
 // Turning the flag off while the page is open leaves it for Chat (a hidden page must not stay up).
 onFlagChange('requirements', (on) => { if (!on && currentView() === 'requirements') showView('chat', ''); });

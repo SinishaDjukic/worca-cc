@@ -187,3 +187,29 @@ test('list rows: pendingCount while it is your turn, openAssumptions to decide',
   await call('POST', `/api/requirements/${seq}/assumptions/${open[0].id}`, { status: 'confirmed' });
   assert.equal((await rowOf()).openAssumptions, open.length - 1);
 });
+
+test('a revision after the interview is done: answers to an earlier round, 202, a revises turn, a new round', async () => {
+  const c = await call('POST', '/api/requirements', { scopeType: 'project', scopeKey: projKey, title: 'Revise', description: 'd' });
+  const seq = c.json.feature.seq;
+  await waitFor(async () => (await call('GET', `/api/requirements/${seq}`)).json.feature.status === 'your_turn');
+  const first = (await call('GET', `/api/requirements/${seq}`)).json.feature.pending;
+  await call('POST', `/api/requirements/${seq}/answers`, { roundTurnId: first.turnId, useRecommended: true });
+  await waitFor(async () => (await call('GET', `/api/requirements/${seq}`)).json.feature.status === 'done');
+  const before = (await call('GET', `/api/requirements/${seq}`)).json.turns;
+  const roundsBefore = before.filter((t) => t.kind === 'round').length;
+  const q = first.questions[0];
+  const other = q.options.find((o) => o !== q.recommended) || q.options[0];
+  const r = await call('POST', `/api/requirements/${seq}/answers`, { roundTurnId: first.turnId,
+    answers: first.questions.map((x) => ({ id: x.id, option: x === q ? other : x.recommended || x.options[0] })) });
+  assert.equal(r.status, 202);
+  await waitFor(async () => {
+    const v = (await call('GET', `/api/requirements/${seq}`)).json;
+    return !v.feature.busy && v.turns.filter((t) => t.kind === 'round').length > roundsBefore;
+  });
+  const turns = (await call('GET', `/api/requirements/${seq}`)).json.turns;
+  const rev = turns.filter((t) => t.kind === 'answers' && t.payload.roundTurnId === first.turnId).at(-1);
+  assert.equal(rev.payload.revises, true);
+  assert.equal(rev.payload.answers.find((a) => a.id === q.id).answer, other);
+  const newRound = turns.filter((t) => t.kind === 'round').at(-1);
+  assert.ok(newRound.id > rev.id, 'a new round runs after the revision');
+});
