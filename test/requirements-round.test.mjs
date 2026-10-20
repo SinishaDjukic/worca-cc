@@ -233,3 +233,13 @@ test('follow-up prompt names the rejected assumptions; the mock asks one questio
   assert.equal(m.questions[0].recommended, m.questions[0].options[0]);
   assert.equal(mockRoundReply({ title: 't', description: 'd', rounds: 6 }, true, { followUp: fu }).questions.length, 0);
 });
+
+test('follow-up prompt: outside the round count, never "round 7 of at most 6"', () => {
+  const feature = { id: 'f', title: 't', description: 'd', spec: emptySpec() };
+  const p = buildRoundPrompt({ feature, round: 7, followUp: [{ id: 'A-1', text: 'x' }] });
+  assert.doesNotMatch(p, /of at most/);
+  assert.doesNotMatch(p, /This is round/);
+  assert.match(p, /This is a follow-up round, outside the interview's round count\./);
+  assert.match(buildRoundPrompt({ feature, round: 3 }), /This is round 3 of at most 6\./);
+  assert.match(buildRoundPrompt({ feature, round: 6, final: true }), /This is the final round/);
+});

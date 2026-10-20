@@ -79,7 +79,7 @@ test('rejected then round after passes; round before fails', () => {
   const before = [{ id: 2, kind: 'round', payload: { done: true } }, rej];
   assert.deepEqual(unaskedRejections(s, before), ['A-4']);
   assert.equal(byKey(readiness(feat(s), { turns: before }), 'assumptions').ok, false);
-  const after = [...before, { id: 7, kind: 'round', payload: { done: true } }];
+  const after = [...before, { id: 7, kind: 'round', payload: { done: false, questions: [{ id: 'q', question: 'Q?', options: ['a', 'b'] }] } }];
   assert.deepEqual(unaskedRejections(s, after), []);
   assert.equal(byKey(readiness(feat(s), { turns: after }), 'assumptions').ok, true);
 });
@@ -157,4 +157,21 @@ test('changedSince', () => {
     { kind: 'criterion', id: 'R-po-1', change: 'edited', before: 'Exports CSV', after: 'Exports XLSX' },
   ]);
   assert.deepEqual(changedSince(null, null), []);
+});
+
+test('asked about: a later round with questions, a follow-up only for its own ids; an empty reply asks nothing', () => {
+  const s = good(); s.assumptions = [{ id: 'A-4', text: 'x', status: 'rejected' }, { id: 'A-5', text: 'y', status: 'rejected' }];
+  const rej = { id: 6, kind: 'assumption', payload: { ids: ['A-4', 'A-5'], status: 'rejected' } };
+  const Q1 = [{ id: 'q', question: 'Q?', options: ['a', 'b'] }];
+  // a follow-up round that came back with no questions asked nothing: both stay unasked
+  const empty = [rej, { id: 7, kind: 'followup', payload: { assumptions: ['A-4', 'A-5'] } },
+    { id: 8, kind: 'round', payload: { done: true, questions: [], followUp: ['A-4', 'A-5'] } }];
+  assert.deepEqual(unaskedRejections(s, empty), ['A-4', 'A-5']);
+  assert.equal(byKey(readiness(feat(s), { turns: empty }), 'assumptions').ok, false);
+  // a follow-up round with questions counts for the ids it was about, not for the others
+  const one = [rej, { id: 8, kind: 'round', payload: { done: false, questions: Q1, followUp: ['A-4'] } }];
+  assert.deepEqual(unaskedRejections(s, one), ['A-5']);
+  // an ordinary round counts only when it asked something
+  assert.deepEqual(unaskedRejections(s, [rej, { id: 8, kind: 'round', payload: { done: true, questions: [] } }]), ['A-4', 'A-5']);
+  assert.deepEqual(unaskedRejections(s, [rej, { id: 8, kind: 'round', payload: { done: false, questions: Q1 } }]), []);
 });

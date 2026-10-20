@@ -6,11 +6,14 @@ export const OVERRIDABLE = Object.freeze(['goal', 'criteria', 'interview', 'open
 
 const turnIds = (p) => (p && Array.isArray(p.ids) ? p.ids : (p && p.id != null ? [p.id] : []));
 
-/** Ids of rejected assumptions no round has followed since their latest rejection. */
+/** Ids of rejected assumptions no round has asked about since their latest rejection (D4). A round asked
+ *  about one when it came after that rejection and asked at least one question; a follow-up round counts
+ *  only for the ids it was about (`payload.followUp`). A round with no questions asked nothing: neither a
+ *  `done` reply to a follow-up nor a final round clears a rejection. */
 export function unaskedRejections(spec, turns = []) {
   const list = Array.isArray(turns) ? turns : [];
-  let lastRound = -Infinity;
-  for (const t of list) if (t && t.kind === 'round' && t.id > lastRound) lastRound = t.id;
+  const asking = list.filter((t) => t && t.kind === 'round' && t.payload
+    && Array.isArray(t.payload.questions) && t.payload.questions.length > 0);
   const out = [];
   for (const a of (spec && spec.assumptions) || []) {
     if (a.status !== 'rejected') continue;
@@ -19,7 +22,9 @@ export function unaskedRejections(spec, turns = []) {
       if (t && t.kind === 'assumption' && t.payload && t.payload.status === 'rejected'
         && turnIds(t.payload).includes(a.id) && t.id > rej) rej = t.id;
     }
-    if (rej === -Infinity || !(lastRound > rej)) out.push(a.id);
+    const asked = rej !== -Infinity && asking.some((t) => t.id > rej
+      && (!Array.isArray(t.payload.followUp) || t.payload.followUp.includes(a.id)));
+    if (!asked) out.push(a.id);
   }
   return out;
 }

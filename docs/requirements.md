@@ -71,7 +71,8 @@ cost, and links to the run.
 After the interview, a change of mind does not need a new feature. **Reject** an assumption, then choose
 **Done, ask about A-n** to put it to a new round of questions. Follow-up rounds are not limited by the
 6-round cap of the first interview. The feature is not Ready again until a round has asked about each
-rejected assumption and the rest is decided.
+rejected assumption and the rest is decided. A round that comes back with no questions has not asked about
+anything.
 
 ## After starting
 

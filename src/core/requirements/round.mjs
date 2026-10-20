@@ -136,7 +136,10 @@ export function buildRoundPrompt({ feature, context = '', turns = [], final = fa
     `<edited_by_product_owner>${edited.map(asData).join(', ') || '(none)'}</edited_by_product_owner>`,
     final
       ? 'This is the final round: ask no questions, set "done" to true, and turn every open question into an assumption.'
-      : `This is round ${round} of at most ${MAX_ROUNDS}.`,
+      // A follow-up round is outside the cap (A2 D4): naming its number ("round 7 of at most 6") would tell
+      // the model the interview is over.
+      : followUp && followUp.length ? "This is a follow-up round, outside the interview's round count."
+        : `This is round ${round} of at most ${MAX_ROUNDS}.`,
     ...(followUp && followUp.length
       ? [`This is a follow-up round. The product owner rejected these assumptions: ${followUp.map((a) => `${asData(a.id)}: ${asData(a.text)}`).join('; ')}. Ask only what you need to replace them (at most ${MAX_QUESTIONS} questions). Keep them as rejected; never propose them again with the same meaning. Do not set "done" unless nothing is left to ask about them.`]
       : []),
