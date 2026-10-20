@@ -49,6 +49,9 @@ test('revealLaunch: Finder and Explorer select the file, a Linux file manager op
   const win = detectBuiltins({ platform: 'win32', env: { Path: '' }, exists: fsWith([]) });
   const w = revealLaunch('C:\\w\\out\\home page.png', 'C:\\w\\out', win);
   assert.deepEqual([w.file, w.args, w.opts.windowsVerbatimArguments], ['explorer.exe', ['/select,"C:\\w\\out\\home page.png"'], true]);
+  assert.deepEqual(w.okExitCodes, [0, 1], 'Explorer exits 1 even when it opened');
+  const f = builtinLaunch('fileManager', 'C:\\w\\out', win, { platform: 'win32', env: {} });
+  assert.deepEqual([f.file, f.args, f.okExitCodes], ['explorer.exe', ['C:\\w\\out'], [0, 1]]);
   const lin = detectBuiltins({ platform: 'linux', env: { PATH: '/usr/bin', DISPLAY: ':0' }, exists: fsWith(['/usr/bin/xdg-open']) });
   assert.deepEqual([revealLaunch('/w/out/a.png', '/w/out', lin).file, revealLaunch('/w/out/a.png', '/w/out', lin).args], ['/usr/bin/xdg-open', ['/w/out']]);
   const headless = detectBuiltins({ platform: 'linux', env: { PATH: '/usr/bin' }, exists: fsWith(['/usr/bin/xdg-open']) });
