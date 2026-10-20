@@ -809,7 +809,7 @@ function collectOpenRouter(conn) {
  *  sign-in (no env, no endpoint). A mode with no text is hidden. */
 const MODE_TEXT = {
   claude: {
-    direct: ["A harness's own sign-in", "The subscription you are signed in with — Claude Code's login, Codex's ChatGPT sign-in or Cursor's. It runs only in that harness."],
+    direct: ["A harness's own sign-in", "The subscription you are signed in with — Claude Code's login, Codex's ChatGPT sign-in, Cursor's or the Copilot CLI's. It runs only in that harness."],
     env: ['Custom endpoint via env (Claude Code)', 'For endpoints that already speak the Anthropic API — LiteLLM, Bedrock, Vertex, a gateway. Set the routing env below.'],
     provider: ['Through a provider', "GitHub Copilot, an OpenAI-compatible or an Anthropic-compatible endpoint. Claude Code reaches each through worca's bridge; Codex reaches an OpenAI Responses endpoint itself."],
   },
@@ -819,6 +819,9 @@ const MODE_TEXT = {
   },
   cursor: {
     direct: ['Cursor default', "cursor-agent's own sign-in (`cursor-agent login`, or CURSOR_API_KEY) reaches Cursor."],
+  },
+  copilot: {
+    direct: ['Copilot default', "the Copilot CLI's own sign-in (`copilot login`, or COPILOT_GITHUB_TOKEN) reaches GitHub Copilot."],
   },
 };
 
@@ -1008,7 +1011,7 @@ export function applyConnectionMode(connEl) {
   const eng = conn.dataset.engine || 'claude';
   const held = conn.dataset.editing === '1' ? eng : 'claude';
   const codex = held === 'codex';
-  const cursor = held === 'cursor';
+  const cursor = held === 'cursor' || held === 'copilot';   // a sign-in only: no endpoint fields
   for (const lab of conn.querySelectorAll('.mv-conn-mode')) {
     const rb = lab.querySelector('.mv-conn-mode-rb');
     const text = (MODE_TEXT[held] || MODE_TEXT.claude)[rb.value];

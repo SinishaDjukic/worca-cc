@@ -72,7 +72,7 @@ export const PROPOSAL_ERRORS = Object.freeze({
   shapeScheduled: 'Shaper starts now and waits for the user to approve its plan: drop when / every / after',
   nodesAuto: 'nodes needs a saved workflow — Auto (wf_auto) picks its agents and their models when the run starts',
   nodesDefrag: 'the Memory defragment workflow takes its model from Settings › Memory — omit nodes',
-  // An engine that owns no catalog models (Copilot) runs its own: no pick can ever run on it.
+  // An engine that owns no catalog models runs its own: no pick can ever run on it (every engine has some today).
   nodesEngine: (engine) => `nodes: the ${engineLabel(engine)} engine runs its own models — omit nodes for a run on it`,
   nodeNoModel: (id) => `node ${JSON.stringify(String(id).slice(0, 64))}: a pick needs a model`,
   signedOutPick: (id, model) => `node ${JSON.stringify(String(id).slice(0, 64))}: ${model} needs the Claude Code sign-in, which this install lacks — pick a model routed through an endpoint or provider`,

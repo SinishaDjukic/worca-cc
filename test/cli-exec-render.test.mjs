@@ -177,10 +177,12 @@ test('formatResumeHints: the resume command, plus each other engine after a usag
   assert.deepEqual(formatResumeHints({ reason: 'usage_limit', limitEngine: 'codex' }, 'ab12cd34'), [
     'Resume with: worca resume ab12cd34',
     'Or continue now on Claude: worca resume ab12cd34 --engine claude',
+    'Or continue now on Copilot: worca resume ab12cd34 --engine copilot',
     'Or continue now on Cursor: worca resume ab12cd34 --engine cursor',
     'Or continue now with another model: worca resume ab12cd34 --model <id>',
   ]);
   const bold = formatResumeHints({ reason: 'usage_limit', limitEngine: 'claude' }, 'x', { color: (n, s) => `<${n}>${s}` });
   assert.equal(bold[1], 'Or continue now on Codex: <bold>worca resume x --engine codex');
-  assert.equal(bold[2], 'Or continue now on Cursor: <bold>worca resume x --engine cursor');
+  assert.equal(bold[2], 'Or continue now on Copilot: <bold>worca resume x --engine copilot');
+  assert.equal(bold[3], 'Or continue now on Cursor: <bold>worca resume x --engine cursor');
 });

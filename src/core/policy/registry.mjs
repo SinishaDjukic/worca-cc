@@ -400,6 +400,12 @@ function normalizeModels(raw, warnings) {
       if (m.upstream != null) { warnings.push(`catalogs.models: ${m.id}: a cursor model takes no upstream — entry dropped`); continue; }
       entry.engine = 'cursor';
     }
+    if (engine === 'copilot') {
+      // A copilot model runs through the Copilot CLI's own sign-in: no routing env, no upstream.
+      if (m.env != null) { warnings.push(`catalogs.models: ${m.id}: a copilot model takes no env — entry dropped`); continue; }
+      if (m.upstream != null) { warnings.push(`catalogs.models: ${m.id}: a copilot model takes no upstream — entry dropped`); continue; }
+      entry.engine = 'copilot';
+    }
     if (codex) {
       // §3.1a: codex ignores routing env. Its upstream (an OpenAI-compatible endpoint) is checked below.
       if (m.env != null) { warnings.push(`catalogs.models: ${m.id}: a codex model takes no env — entry dropped`); continue; }

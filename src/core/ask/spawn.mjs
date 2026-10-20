@@ -148,6 +148,7 @@ export function buildAskSpawnOptions({ thread = {}, turn = {}, limits = {}, mcpC
   if (!scratchDir) throw new Error('buildAskSpawnOptions: scratchDir is required');
   if (!mcpConfigPath) throw new Error('buildAskSpawnOptions: mcpConfigPath is required');
   if (engine === 'codex') return buildCodexAskOptions({ thread, turn, mcpConfigPath, scratchDir, web, relayed, commands });
+  if (engine === 'copilot') return buildCopilotAskOptions({ thread, turn, mcpConfigPath, scratchDir, web, relayed, commands });
   const systemPrompt = String(turn.systemPrompt ?? '') + (turn.mock ? buildMockMarkers(turn.mock.card) : '');
   const reg = registry && Array.isArray(registry.copies) && registry.copies.length ? registry : null;
   // Skills registry §4.4 (P3 probe 6): --disable-slash-commands hides the Skill tool AND every plugin skill, so a turn
@@ -244,6 +245,36 @@ function buildCodexAskOptions({ thread, turn, mcpConfigPath, scratchDir, web, re
   };
 }
 
+/**
+ * A Copilot chat's spawn: the adapter's Ask lockdown (engines/copilot.mjs askLockdown — no built-in tool at all, only the
+ * worca MCP server from the per-turn config, no custom instructions, a scrubbed env), no writable dir and no added
+ * folder: memory is read through read_file. No images (copilot takes none; the composer refuses them). Claude's levers
+ * do not exist on copilot; the caps are turn.mjs's watchdog. The host-guard preamble is prepended by the adapter.
+ */
+function buildCopilotAskOptions({ thread, turn, mcpConfigPath, scratchDir, web, relayed, commands = null }) {
+  const keyVar = !relayed ? webKeyVar(web) : null;
+  return {
+    engine: 'copilot',
+    cwd: scratchDir,
+    prompt: String(turn.prompt ?? ''),
+    systemPrompt: String(turn.systemPrompt ?? '') + (turn.mock ? buildMockMarkers(turn.mock.card) : ''),
+    model: turn.model,
+    effort: turn.effort,
+    sandbox: 'read-only',
+    askLockdown: true,
+    mcpConfigPath,
+    envScrub: true,
+    // The MCP child inherits copilot's env (verified on 1.0.100): ssh-remote git fetch, the web search key.
+    envAllowlist: ['SSH_AUTH_SOCK', ...(keyVar ? [keyVar] : [])],
+    ...(thread.sessionId ? { resumeSessionId: thread.sessionId } : {}),
+    // Agent mode (#574): the command bridge token, never on disk; the adapter hands an Ask chat's spawn env to copilot,
+    // whose MCP children inherit it.
+    ...(commands?.token ? { spawnEnv: { ASK_COMMAND_TOKEN: commands.token } } : {}),
+    signal: turn.signal,
+    onEvent: turn.onEvent,
+  };
+}
+
 /** Server-side knobs the MCP child's NESTED classifier spawn needs (P3 propose_workflow, task mode). The chat's claude is
  *  spawned env-scrubbed, so nothing WORCA_* reaches the child unless it rides mcpServers.env. Forwarded only when set. */
 // WORCA_PROJECTS_ROOT / WORCA_CLONE_ALLOW: propose_clone_project validates against the same projects
@@ -308,11 +339,11 @@ export function buildMcpConfig({ homeBase, threadId, execPath = process.execPath
     // WORCA_ASK_READER: the shared sign-in behind this turn (identity.mjs), so the child's
     // notification reads/marks are per person; absent on local/operator deployments.
     env: { WORCA_HOME: base, WORCA_ASK_THREAD_ID: thread, ...forwarded, ...authEnv(claudeAuth), ...(typeof reader === 'string' && reader ? { WORCA_ASK_READER: reader } : {}), ...webMcpEnv(web),
-      // A Codex chat's child adds read_file / grep / glob (file-deps.mjs) and classifies on Codex (D13, D8).
-      ...(engine === 'codex' ? { WORCA_ASK_ENGINE: 'codex' } : {}),
-      // A Codex turn's set skills (#635): this message's mount, one more read-only root of read_file / grep / glob. The
+      // A Codex or Copilot chat's child adds read_file / grep / glob (file-deps.mjs) and classifies on its engine (D13, D8).
+      ...(engine === 'codex' || engine === 'copilot' ? { WORCA_ASK_ENGINE: engine } : {}),
+      // Such a turn's set skills (#635): this message's mount, one more read-only root of read_file / grep / glob. The
       // file is per message, so the root lives as long as the turn; the child checks it names exactly such a folder.
-      ...(engine === 'codex' && typeof skillRoot === 'string' && skillRoot ? { WORCA_ASK_SKILL_ROOT: skillRoot } : {}),
+      ...((engine === 'codex' || engine === 'copilot') && typeof skillRoot === 'string' && skillRoot ? { WORCA_ASK_SKILL_ROOT: skillRoot } : {}),
       // Agent mode (#574): the bridge URL only; its token rides spawnEnv (buildAskSpawnOptions), never this file.
       ...(commands && commands.url ? { WORCA_ASK_COMMANDS: JSON.stringify({ url: commands.url }) } : {}) },
   });

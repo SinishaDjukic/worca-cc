@@ -185,7 +185,7 @@ function buildUserDefs(roles, scanDefaults) {
   return defs;
 }
 
-const MODEL_ID_RE = /^models\.(claude|codex|cursor)\.(?:steps\.(.+)|utility\.(title|classifier|overview|prDescription)|(memoryDefrag|workspaceScan))$/;
+const MODEL_ID_RE = new RegExp(`^models\\.(${MODEL_ENGINES.join('|')})\\.(?:steps\\.(.+)|utility\\.(title|classifier|overview|prDescription)|(memoryDefrag|workspaceScan))$`);
 function buildProjectDefs(ids, userDefs, roles) {
   const twins = new Map(userDefs.map((d) => [d.id, d]));
   return ids.filter((id) => id !== 'askWeb' && !id.startsWith('nightMode.')).map((id) => {
@@ -298,7 +298,7 @@ export function createSettingsRegistry(deps = {}) {
     const def = findDef(sid, scope);
     if (!def) {
       // A model slot id is never an exclusion (the 'models' entry is the catalog): a project-only slot or a typo.
-      const slot = MODEL_ID_RE.test(sid) || /^models\.(claude|codex|cursor)\.ask$/.test(sid);
+      const slot = MODEL_ID_RE.test(sid) || ASK_ENGINES.some((e) => sid === `models.${e}.ask`);
       const ex = slot ? null : exclusionOf(sid);
       if (ex) return { ok: false, error: `${sid} is not changed from the chat: ${ex.why}` };
       const projectOnly = scope === 'user' && findDef(sid, 'project') ? ' (it is set per project: scope "project")' : '';

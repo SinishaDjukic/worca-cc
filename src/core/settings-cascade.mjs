@@ -13,7 +13,7 @@ import {
 } from './settings.mjs';
 import { cachedPolicyForKey } from './policy/cache.mjs';
 import { fieldsForRun } from './policy/effective.mjs';
-import { MODEL_ENGINES, HELPER_ENGINES } from './model-env.mjs';
+import { MODEL_ENGINES, HELPER_ENGINES, ASK_ENGINES } from './model-env.mjs';
 import { NIGHT_FIELDS, NIGHT_DEFAULTS, fieldError as nightFieldError } from './night/config.mjs';
 
 export const LAYERS = Object.freeze(['project', 'user', 'team']);
@@ -70,9 +70,9 @@ const NIGHT = NIGHT_FIELDS.map((field) => ({
   readUser: () => nightModeSettings()[field], readProject: (ctx) => ctx.nightProject()?.[field], team: (ctx) => ctx.teamValue(`night.${field}`),
 }));
 const STATIC = new Map([...SCALARS, ...NIGHT].map((entry) => [entry.id, entry]));
-const STEP_RE = /^models\.(claude|codex|cursor)\.steps\.([A-Za-z0-9_-]{1,64})$/;
-// UTIL_RE and ASK_MODEL_RE stay (claude|codex): Cursor has no helper or Ask slots.
-const UTIL_RE = /^models\.(claude|codex)\.(?:utility\.(title|classifier|overview|prDescription)|(memoryDefrag|workspaceScan))$/;
+// From the engine lists: step slots on every model engine, helper slots on the helper engines, Ask slots on the Ask engines.
+const STEP_RE = new RegExp(`^models\\.(${MODEL_ENGINES.join('|')})\\.steps\\.([A-Za-z0-9_-]{1,64})$`);
+const UTIL_RE = new RegExp(`^models\\.(${HELPER_ENGINES.join('|')})\\.(?:utility\\.(title|classifier|overview|prDescription)|(memoryDefrag|workspaceScan))$`);
 const RUN_JOBS = new Set(['title', 'classifier', 'overview', 'prDescription']);
 const utilityId = (engine, job) => (RUN_JOBS.has(job) ? `models.${engine}.utility.${job}` : `models.${engine}.${job}`);
 
@@ -101,7 +101,7 @@ function utilEntry(engine, job) {
 // listed by settingIds(), so the project Settings API and tab are unchanged.
 const ASK_ENGINE = Object.freeze({ id: 'askEngine', path: ['askEngine'], store: 'settings', default: 'claude', userOnly: true, hint: 'must be an engine',
   validate: (value) => SETTING_CHECKS.engine(value), readUser: () => askEngineSetting(), readProject: () => undefined, team: null });
-const ASK_MODEL_RE = /^models\.(claude|codex)\.ask$/;
+const ASK_MODEL_RE = new RegExp(`^models\\.(${ASK_ENGINES.join('|')})\\.ask$`);
 function askModelEntry(engine) {
   return { id: `models.${engine}.ask`, family: 'ask', engine, path: ['askModels', engine], store: 'settings', default: undefined, userOnly: true,
     validate: pairCheck(engine), readUser: () => pickPair(askModelsSetting()[engine]), readProject: () => undefined, team: null };
@@ -247,8 +247,6 @@ export function scopeForRunKey(key) {
 /** The slot of `job` on `engine`. An engine without helper slots (Cursor) gets an empty one, never Claude's: the
  *  memory defrag and the workspace scan run ON that engine, and a helper caller passes helperEngineFor(engine). */
 export function utilityModelFor(engine, job, scope = null) {
-  // Copilot has no helper-model slots: its helper jobs run copilot's own default model.
-  if (engine === 'copilot') return { model: null, effort: null, source: 'default' };
   const e = engine || 'claude';
   const entry = HELPER_ENGINES.includes(e) ? settingEntry(utilityId(e, job)) : null;
   if (!entry) return { model: null, effort: null, source: 'default' };

@@ -823,9 +823,9 @@ export class RunHarness extends EventEmitter {
       // A switch keeps a model the target harness reaches too (an endpoint model on Claude Code and Codex).
       const runs = modelRunsOn(saved, engine);
       const owner = runs === false ? engineOfModel(saved) : runs ? engine : null;
-      // Copilot owns no catalog model: it keeps an id of its own naming (_engineModel) while the run stays on it.
+      // Copilot keeps a catalog model it runs, and an id of its own naming (_engineModel) while the run stays on it.
       const keep = engine === 'copilot'
-        ? (savedEngine === 'copilot' && !!this._engineModel(saved))
+        ? (!!this._engineModel(saved) && (runs === true || savedEngine === 'copilot'))
         : runs === true
           ? (engine !== 'claude' || catalogHasModel(saved, { engine: 'claude' }))
           : (runs === null && engine !== 'claude' && engine === savedEngine);
@@ -3080,11 +3080,12 @@ export class RunHarness extends EventEmitter {
    *  (the gate says so at run start). */
   _engineModel(model) {
     const engine = this.claude.engine || 'claude';
-    // Copilot owns no catalog model and names its models its own way (gpt-5.4, claude-sonnet-4.6, auto): a model
-    // the catalog holds belongs to another engine and is dropped, and so is a Claude Code id or alias (opus,
-    // claude-opus-4-8: copilot versions its Claude ids with a dot); any other id is handed to copilot as named.
+    // Copilot names its models its own way (gpt-5.4, claude-sonnet-4.6, auto): a catalog model is kept when it runs on
+    // Copilot (its copilot/<id> built-ins, the user's Copilot rows); an id the catalog does not hold is handed to copilot
+    // as named, except a Claude Code id or alias (opus, claude-opus-4-8: copilot versions its Claude ids with a dot).
     if (engine === 'copilot') {
-      if (typeof model !== 'string' || !model.trim() || catalogHasModel(model, { projectDir: this.projectDir })) return undefined;
+      if (typeof model !== 'string' || !model.trim()) return undefined;
+      if (catalogHasModel(model, { projectDir: this.projectDir })) return modelForEngine(model, engine, { projectDir: this.projectDir });
       return engineOfModel(model, { projectDir: this.projectDir }) === 'claude' && !/\d\.\d/.test(model) ? undefined : model;
     }
     return modelForEngine(model, engine, { projectDir: this.projectDir });

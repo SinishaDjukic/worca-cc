@@ -225,7 +225,7 @@ import { realRoots, checkInside, outsideAllowedMessage, FS_OUTSIDE_ALLOWED } fro
 import { importCandidates, parsePathList, IMPORT_MAX_INPUTS } from '../src/core/workspace-import.mjs';
 import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
-  PREDEFINED_MODELS, CODEX_BUILTIN_MODELS, agentSteps, EFFORTS, catalogHasModel, engineOfModel, enginesOfModel, modelRunsOn, foreignRunModel, assertSlotModels, stepSlotDefaults,
+  PREDEFINED_MODELS, CODEX_BUILTIN_MODELS, COPILOT_BUILTIN_MODELS, agentSteps, EFFORTS, catalogHasModel, engineOfModel, enginesOfModel, modelRunsOn, foreignRunModel, assertSlotModels, stepSlotDefaults,
   readRunConfig, setNodeModel, setFeedbackCycles, setWireCycles, setActiveWorkflow, setHumanInLoop, resetWorkflowConfig,
   globalModelRefs, removeGlobalModelAndRefs, promoteCustomModel, costUnreliableModelIds,
   readPrRemotePrefs, setPrRemotePrefs, modelHasBaseUrlRouting, writeSyncPrefs, readSyncPrefs,
@@ -233,7 +233,7 @@ import {
   readProjectActions, writeProjectActions, readActionsMeta, writeActionsMeta,
 } from '../src/core/config.mjs';
 import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
-import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue, UPSTREAM_PROVIDERS, CODEX_EFFORTS, MODEL_ENGINES, HELPER_ENGINES, CURSOR_EFFORTS, helperEngineFor, ASK_ENGINES } from '../src/core/model-env.mjs';
+import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue, UPSTREAM_PROVIDERS, CODEX_EFFORTS, MODEL_ENGINES, HELPER_ENGINES, CURSOR_EFFORTS, COPILOT_EFFORTS, helperEngineFor, ASK_ENGINES } from '../src/core/model-env.mjs';
 import { engineLabel, ENGINE_NAMES, engineRefusalFor } from '../src/shared/engine-switch.mjs';
 import { engineReadiness, engineLocks } from '../src/core/engines/readiness.mjs';
 import { providerReadiness } from '../src/core/bridge/registry.mjs';
@@ -10263,7 +10263,7 @@ function askAgentRelay({ threadId, reader, web = null, engine = 'claude', skillR
   // The tools run here, so this turn's web access rides a private env copy (never process.env itself);
   // the search key is read from worca's own environment, where it was set.
   // A Codex turn's set skills (#635): this message's mount, one more read root for this relay (this turn) only.
-  const env = { ...process.env, ...askWebMcpEnv(web), ...(engine === 'codex' ? { WORCA_ASK_ENGINE: 'codex', ...(skillRoot ? { WORCA_ASK_SKILL_ROOT: skillRoot } : {}) } : {}) };
+  const env = { ...process.env, ...askWebMcpEnv(web), ...(engine === 'codex' || engine === 'copilot' ? { WORCA_ASK_ENGINE: engine, ...(skillRoot ? { WORCA_ASK_SKILL_ROOT: skillRoot } : {}) } : {}) };
   entry.rpc = createAskToolServer({
     threadId, reader, signal: life.signal, env, write: (s) => { entry.out.push(s); },
     // The tools run in THIS process, which holds the live runs: get_run_diff can read a run
@@ -10993,6 +10993,7 @@ app.get('/api/models', (req, res) => {
     models: maskedGlobalModels(), plugin: pluginModelsPayload(), predefined: PREDEFINED_MODELS, efforts: EFFORTS,
     codex: CODEX_BUILTIN_MODELS, codexEfforts: CODEX_EFFORTS,   // §3.1a: the Codex built-ins group + the editor's Codex efforts
     cursorEfforts: CURSOR_EFFORTS,                               // none: Cursor has no effort flag (no Cursor built-ins)
+    copilot: COPILOT_BUILTIN_MODELS, copilotEfforts: COPILOT_EFFORTS,   // the Copilot built-ins group + the editor's Copilot efforts
     hideBuiltinModels: hideBuiltinModels(),   // the Models-view checkbox (#422)
     // Team policy catalog entries (team-policy design §8): read-only, env masked like a global's.
     policy: policyCatalogModels().map((m) => maskedGlobalModel(m, readiness)),
@@ -12690,14 +12691,14 @@ function askWebAccessFor(threadId, ctx) {
 async function askSystemPromptFor(catalog, { web = null, mcp = null, commands = false, engine = 'claude' } = {}) {
   const scripts = { ...(await askScriptPromptInput({ enabled: true })), edits: scriptToolsEnabled() };
   return askBuildSystemPrompt(catalog, { scripts, deployment: DEPLOYMENT, web, mcp, commands,
-    ...(engine === 'codex' ? { engine } : {}), ...(shapeFirstEnabled() ? { shape: true } : {}) });
+    ...(engine !== 'claude' ? { engine } : {}), ...(shapeFirstEnabled() ? { shape: true } : {}) });
 }
 
 /** The Workflows chat's system prompt (D10): composer rules + catalog + scripts/web — no MCP, no commands, no hosting rule. */
 async function askComposerSystemPromptFor(catalog, { web = null, engine = 'claude' } = {}) {
   // `enabled: true`: draft_script is ALWAYS a composer tool, so its program contract ("Scripts you can create") must
   // be in the prompt even when Ask's "Create and run scripts" setting is off (that setting gates test_script only).
-  return askBuildComposerSystemPrompt(catalog, { scripts: await askScriptPromptInput({ enabled: true }), web, ...(engine === 'codex' ? { engine } : {}) });
+  return askBuildComposerSystemPrompt(catalog, { scripts: await askScriptPromptInput({ enabled: true }), web, ...(engine !== 'claude' ? { engine } : {}) });
 }
 
 /** "scheduled Sat Sep 19, 02:00 (run 1a2b…)" / "repeats: Every weekday at 02:00 (sch_…)" / "proposes: …" — or ''. */
@@ -13068,10 +13069,11 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     // MCP registry §9.1–9.3: General + the targets in play (the tagged dropdown fallback excluded), minus the chat's
     // picker choices — resolved ONCE per turn, so the per-turn file, the spawn and the prompt section agree.
     const mcp = composerMode ? { result: null } : await resolveAskMcp({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff, model });
-    // D12: the chat's engine is its (validated, engine-locked) model's. A Codex chat gets no registry copies (§4.6, §10)
-    // and is told so once per chat.
-    const engine = modelEngine === 'codex' ? 'codex' : 'claude';
-    const mcpCodexNote = !composerMode && engine === 'codex' && mcp.result.copies.length > 0
+    // D12: the chat's engine is its (validated, engine-locked) model's. A Codex or Copilot chat gets no registry copies
+    // (§4.6, §10) and is told so once per chat.
+    const engine = ASK_ENGINES.includes(modelEngine) ? modelEngine : 'claude';
+    const lockedDown = engine !== 'claude';
+    const mcpCodexNote = !composerMode && lockedDown && mcp.result.copies.length > 0
       && !askListMessages(id).some((m) => Array.isArray(m.blocks) && m.blocks.some((b) => b && b.mcpCodex));
     // Skills registry §4.4: the same targets and choices for the skills from sets — resolved ONCE per turn; the turn
     // mounts them and appends the prompt section naming exactly what it wrote (a Codex chat reads them through read_file).
@@ -13081,7 +13083,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     const agentOn = !composerMode && askCommandsEnabled();
     const systemPrompt = composerMode
       ? await askComposerSystemPromptFor(catalog, { web, engine })
-      : await askSystemPromptFor(catalog, { web, mcp: engine === 'codex' ? null : await askMcpPromptInput(mcp), commands: agentOn, engine });
+      : await askSystemPromptFor(catalog, { web, mcp: lockedDown ? null : await askMcpPromptInput(mcp), commands: agentOn, engine });
     // Shared terminal: what the user ran in this chat's Ask tabs since its last user turn (their commands never wake
     // the chat; an event turn leaves them for the next user turn).
     if (!synthetic && askCommandsEnabled()) headerCtx.personCommands = askCommands.takePersonCommands(id);
@@ -13108,11 +13110,12 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
       deterministicTitle,
       pinnedScope: pinned,                          // #397: proposal defaulting + mismatch flag
       web,
-      mcp: engine === 'codex' ? null : mcp.result,
+      mcp: lockedDown ? null : mcp.result,
       skills: skills.result,
       agentMode: agentOn,
       composer: composerMode ? ((askGetThread(id) || {}).composer || null) : null,
       suggest: !synthetic,                          // ask-suggestion: a user's message only — an event turn suggests nothing
+      ...(engine === 'copilot' ? { engine, mcpCodexNote } : {}),   // no images: the route refused them
       ...(engine === 'codex' ? {
         engine,
         mcpCodexNote,
@@ -13215,7 +13218,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     // readable by the agent. Refused before the model check, which no longer lists Codex rows.
     const chatEngine = askChatEngine(id, thread);
     const engineRefusal = brokerEngineRefusal(chatEngine);
-    if (engineRefusal) return res.status(409).json({ error: `This chat runs on Codex: ${engineRefusal}. Start a new chat on Claude.`, code: 'engine-broker' });
+    if (engineRefusal) return res.status(409).json({ error: `This chat runs on ${engineLabel(chatEngine)}: ${engineRefusal}. Start a new chat on Claude.`, code: 'engine-broker' });
     const mv = await validateModelEffort(body.model, body.effort, { engine: chatEngine });
     if (!mv.ok) return badRequest(res, mv.error);
     if (!mockEnabled({})) {
@@ -13268,7 +13271,10 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
         if (!cls) return badRequest(res, `attachment type not allowed: ${name || '(unnamed)'}`);
         // D16: a Codex chat has no PDF reader (out of scope, §10) — refused at attach time, before any write.
         // (askClassifyExtension gives kind text|image|binary; a PDF is kind 'binary', mime 'application/pdf'.)
-        if (cls.mime === 'application/pdf' && askTurnEngine(id, thread, mv.model) === 'codex') return badRequest(res, `PDFs need a Claude chat: ${name}`);
+        const attachEngine = askTurnEngine(id, thread, mv.model);
+        if (cls.mime === 'application/pdf' && attachEngine === 'codex') return badRequest(res, `PDFs need a Claude chat: ${name}`);
+        // A Copilot chat takes no image or PDF (the adapter has no image input).
+        if (cls.kind !== 'text' && attachEngine === 'copilot') return badRequest(res, `images and PDFs need a Claude chat: ${name}`);
         const raw = typeof a.dataBase64 === 'string' ? a.dataBase64 : '';
         const buf = raw ? Buffer.from(raw, 'base64') : Buffer.alloc(0);
         if (!buf.length) return badRequest(res, `attachment is empty or not valid base64: ${name}`);

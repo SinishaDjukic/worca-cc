@@ -34,7 +34,7 @@ run a model follows from its connection, never from a setting:
 
 | Connection | Runs on |
 |---|---|
-| A harness's own sign-in (Claude Code's login, Codex's ChatGPT sign-in, Cursor's) | that harness only — a subscription works only in its own CLI |
+| A harness's own sign-in (Claude Code's login, Codex's ChatGPT sign-in, Cursor's, the Copilot CLI's) | that harness only — a subscription works only in its own CLI |
 | Custom endpoint via env (`ANTHROPIC_BASE_URL` …) | Claude Code |
 | Through a provider: an OpenAI-compatible endpoint on the Responses API | Claude Code (through the bridge) **and** Codex (directly) |
 | Through a provider: chat completions, OpenRouter routing, GitHub Copilot, Anthropic-compatible | Claude Code (through the bridge) |
@@ -457,17 +457,18 @@ What an Ask chat on Codex can do, and what it cannot do:
 
 ## GitHub Copilot CLI
 
-worca can run pipelines on GitHub's own Copilot CLI (`copilot`). This is a separate engine from the Copilot *provider* above. The provider routes Claude Code's requests to Copilot's API through worca's bridge, as an editor client. The engine runs GitHub's own supported CLI as the agent, so the notice above does not apply to it. Your plan's AI-credit (premium request) allowance still does.
+worca can run pipelines and chats on GitHub's own Copilot CLI (`copilot`). This is a separate engine from the Copilot *provider* above. The provider routes Claude Code's requests to Copilot's API through worca's bridge, as an editor client. The engine runs GitHub's own supported CLI as the agent, so the notice above does not apply to it. Your plan's AI-credit (premium request) allowance still does.
 
 1. Install the CLI (`npm i -g @github/copilot`, version 1.0.92 or later) and make sure worca finds it: on `PATH`, or `WORCA_COPILOT_BIN=/path/to/copilot` in worca's environment.
 2. Sign in once in a terminal: `copilot login`. Or put a fine-grained token with the "Copilot Requests" permission in `COPILOT_GITHUB_TOKEN`. worca never hands `GH_TOKEN` or `GITHUB_TOKEN` to an agent, so Copilot does not pick those up.
-3. Pick Copilot per run on New pipeline, run `worca --engine copilot …`, or set it as the default engine on the Models page (Engines) or in a project's Settings.
+3. Pick Copilot per run on New pipeline, run `worca --engine copilot …`, or set it as the default engine on the Models page (Engines) or in a project's Settings. For Chat, Settings › Chat › Engine & models.
 
 There is no sign-in status command, so worca checks only that the binary runs before a run starts. A signed-out CLI fails at the first agent node with an auth error.
 
-**Models.** Copilot names its models its own way (`gpt-5.4`, `claude-sonnet-4.6`, `auto`) and owns no catalog entries.
+**Models.** The models `copilot --model` takes are built-in catalog entries on the Copilot sign-in, listed under *Copilot built-in models* on the Models page. Their catalog id is `copilot/<Copilot's id>`, such as `copilot/gpt-5.5` or `copilot/claude-sonnet-5.5`. Copilot's own ids clash with Codex's built-ins (`gpt-5.5`) and look like Claude's, and the catalog keeps one entry per id. Copilot is handed its own id. To add a model Copilot gained after this list, add a model with the Copilot sign-in.
 
-- Steps run the run's model (`--model`), else Copilot's default. Helper jobs run Copilot's default; Away mode's night decider uses the run's model when it has one.
+- Steps take Copilot's step models (Models › Copilot, or a project's Settings), else the run's model, else Copilot's default. Helper jobs run Copilot's default; Away mode's night decider uses the run's model when it has one.
+- An id the catalog does not hold (`auto`, `gpt-5.4`) is handed to Copilot as named.
 - A catalog model of another engine, or a Claude Code id or alias (`opus`, `claude-opus-4-8`), is dropped on Copilot, and the run log says so.
 - Copilot bills AI credits, not tokens at list prices. worca records each node's tokens but leaves the dollar cost unknown, unless the model has a price override.
 
@@ -506,11 +507,17 @@ There is no sign-in status command, so worca checks only that the binary runs be
 - Skills mount at the run checkout's `.agents/skills`, as on Codex, skills from sets included (renamed `<set>-<skill>` on a clash). A set skill's hooks do not run.
 - Helper jobs (titles, overview, PR description, the Auto classifier, the night decider) run with no built-in tool at all. They get only the MCP servers worca hands them (the classifier's and night decider's read-only file tools), and a scrubbed environment.
 
-**Not on Copilot yet:**
+**Chat on Copilot** needs GitHub Copilot CLI 1.0.100 or newer: a chat runs with `--available-tools` naming only worca's own MCP server, so Copilot's shell, file tools, web tools and `task` tool are not offered to the model at all. An older copilot, or one without one of these flags, refuses the chat with "Copilot isn't ready: … update". Pipelines on Copilot are unaffected.
 
-- Chat conversations.
-- Per-engine step and helper model slots on the Models page.
-- Resuming a paused run on another engine from the usage-limit banner. `worca resume <id> --engine copilot` (or `claude`) still works.
+What a chat on Copilot can do, and what it cannot do:
+
+- It reads files only through worca's `read_file`, `grep` and `glob`, inside the chat's worktrees, attachments and memory, under the same protected-file rules as a Claude chat. Web access goes through worca's web tools as in any chat.
+- Copilot's built-in GitHub MCP server, your `~/.copilot` MCP servers and custom instructions (`AGENTS.md`, `~/.copilot` instructions) are off. Worca's environment is scrubbed; worca's MCP server inherits what is left.
+- If the chat calls a shell or any tool that is not worca's, worca stops the turn with an error.
+- A chat keeps the engine it started on. To switch, start a new chat.
+- Images and PDFs need a Claude chat (a Codex chat takes images). Your MCP servers are available in Claude chats. Skills from your sets work as on Codex.
+- Copilot reports no dollar cost, so a Copilot chat runs only while the per-turn cost cap is off. There are no next-prompt suggestions on Copilot: each call would spend a premium request.
+- If Copilot is not installed, the chat says "Copilot isn't ready" with the reason. A signed-out Copilot fails the turn with an auth error. It never falls back to Claude.
 
 ## Cursor
 

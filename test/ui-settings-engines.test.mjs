@@ -44,7 +44,7 @@ test('renderEngineSection: a row per role and job, each engine\'s models only', 
     'run.engine': { own: 'codex', inherited: { value: 'claude', source: 'default' } },
   }, jobs: { claude: [], codex: ['title', 'workspaceScan'] } });
   assert.equal(host.querySelector('[data-setting="run.engine"] .inherit-input').value, 'codex');
-  assert.deepEqual([...host.querySelectorAll('.engine-card')].map((c) => c.dataset.engine), ['claude', 'codex', 'cursor']);
+  assert.deepEqual([...host.querySelectorAll('.engine-card')].map((c) => c.dataset.engine), ['claude', 'codex', 'copilot', 'cursor']);
   const codexPlan = host.querySelector('.engine-card[data-engine="codex"] [data-setting="models.codex.steps.planner"] .inherit-model');
   assert.deepEqual([...codexPlan.options].map((o) => o.value), ['', 'gpt-5.5']);
   assert.ok(host.querySelector('[data-setting="models.codex.workspaceScan"]'));
@@ -58,7 +58,10 @@ test('renderEngineSection: the Cursor card has step rows, no helper rows, its ow
   renderEngineSection(host, { level: 'user', roles: STEPS, catalog: [...CATALOG, { id: 'my-cursor-m', label: 'my-cursor-m', engine: 'cursor', efforts: [], custom: 'global' }],
     fields: {}, jobs: { claude: [], codex: ['title'], cursor: [] } });
   assert.deepEqual([...host.querySelectorAll('[data-setting="run.engine"] option')].map((o) => o.value).filter(Boolean), ['claude', 'codex', 'copilot', 'cursor']);
-  assert.deepEqual([...host.querySelectorAll('.engine-card')].map((c) => c.dataset.engine), ['claude', 'codex', 'cursor'], 'Copilot owns no models: no card');
+  assert.deepEqual([...host.querySelectorAll('.engine-card')].map((c) => c.dataset.engine), ['claude', 'codex', 'copilot', 'cursor']);
+  const copilot = host.querySelector('.engine-card[data-engine="copilot"]');
+  assert.ok(copilot.querySelector('[data-setting="models.copilot.steps.planner"]'), 'Copilot has step rows');
+  assert.match(copilot.querySelector('.engine-helpers .engine-slot-rest').textContent, /^Copilot runs its helper jobs .* on its own default model\.$/);
   const card = host.querySelector('.engine-card[data-engine="cursor"]');
   assert.equal(card.querySelector('h3').firstChild.textContent, 'Cursor');
   assert.equal(card.querySelector('h3 .beta-badge')?.textContent, 'Beta');
@@ -77,7 +80,7 @@ test('renderAskEngineSection offers no Cursor engine', () => {
   const doc = new JSDOM('<!doctype html><div id="h"></div>').window.document;
   const host = doc.getElementById('h');
   renderAskEngineSection(host, { catalog: CATALOG });
-  assert.deepEqual([...host.querySelectorAll('[data-setting="askEngine"] option')].map((o) => o.value).filter(Boolean), ['codex'], 'Claude is the default option, listed once');
+  assert.deepEqual([...host.querySelectorAll('[data-setting="askEngine"] option')].map((o) => o.value).filter(Boolean), ['codex', 'copilot'], 'Claude is the default option, listed once');
 });
 
 async function boot(settings = {}, { hash = 'settings', engines = null } = {}) {
