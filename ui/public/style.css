@@ -9421,6 +9421,9 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .shape-feature-err[hidden]{display:none;}
 /* D16: the group page (#feature/ID), full width. */
 .feature-page{padding:16px 20px;}
+/* Phones: the page keeps the one 16px gutter (main's); the feature page and its group page add no side padding of
+   their own, or three paddings stacked to 72px and squeezed the title and tabs (QA). */
+@media (max-width:640px){.main{padding:16px 16px 32px;}.feature-page,.feature-page .gpage{padding-left:0;padding-right:0;}}
 .feature-page-gone,.feature-page-loading{color:var(--ink-3);}
 /* §5a.2: the group page could not load (server unreachable): the error and a Try again on one line. */
 .feature-page-error{color:var(--red-ink);}
