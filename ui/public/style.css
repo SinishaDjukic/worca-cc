@@ -9354,9 +9354,9 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .chat-rc-member-open{display:flex;width:100%;gap:4px;background:none;border:0;padding:0;font:inherit;color:inherit;text-align:left;cursor:pointer;}
 .chat-rc-member-open:disabled{cursor:default;opacity:.7;}
 .chat-rc-member-open:focus-visible,.chat-rc-log-show:focus-visible{outline:2px solid currentColor;outline-offset:2px;}
-/* QA 1: on a tile that carries a badge (the Shaper pin), the badge takes its own line under the label at its normal
-   size; "Experimental" (~81px at 10px) fits every tile (≥ 143px at a 290px home). Never truncated. */
-.chat-home-act-badge{flex:none;box-sizing:border-box;padding:1px 7px;border-radius:var(--r-sm);background:var(--amber-bg);color:var(--amber-ink-strong);font-size:10px;font-weight:600;line-height:1.4;white-space:nowrap;}
+/* QA 1: the Shaper pin's badge sits inline after the label, sized and coloured like the feature-flag chip
+   (.flag-chip: 18px, violet for Experimental). Never truncated. */
+.chat-home-act-badge{flex:none;box-sizing:border-box;display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:var(--r-xs);background:var(--violet-bg);color:var(--violet-ink);font-size:10px;font-weight:500;line-height:1;white-space:nowrap;}
 .shape-checklists{margin:12px 0;display:flex;flex-direction:column;gap:6px;}
 .shape-cl-title{font-size:13px;margin:0;color:var(--ink-2);}
 .shape-cl-cycle{border:1px solid var(--line);border-radius:var(--r-ctrl);padding:6px 10px;background:var(--panel);
