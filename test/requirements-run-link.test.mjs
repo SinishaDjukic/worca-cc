@@ -185,3 +185,56 @@ test('server: a Ready feature starts a mock run through the run handler; its pip
     await waitFor(() => frames.filter((f) => f.seq === seq).length > heard, 10000, 'the stop frame');
   } finally { ws.close(); }
 });
+
+test('store: startByPipelineId finds the start a pipeline belongs to', () => {
+  const seq = featureWithStart('run-by-pid');
+  store.linkPipeline('run-by-pid', 'c0ffee01');
+  assert.equal(store.startByPipelineId('c0ffee01').featureSeq, seq);
+  assert.equal(store.startByPipelineId('c0ffee01').runId, 'run-by-pid');
+  assert.equal(store.startByPipelineId('nope0000'), null);
+});
+
+test('the hook: a resumed run (a new UUID, the same pipeline id) is still the feature\'s run', () => {
+  const seen = [];
+  const hook = createRunEventHook({ notify: (seq) => seen.push(seq) });
+  const seq = featureWithStart('run-before-resume');
+  hook('run-before-resume', 'state', { id: 'aced0001', status: 'running' });
+  hook('run-before-resume', 'done', { status: 'paused' });
+  assert.deepEqual(seen, [seq, seq]);
+  // resumeRun registers a new UUID; its first state carries the pipeline id
+  hook('run-after-resume', 'state', { id: 'aced0001', status: 'running' }, 'aced0001');
+  assert.deepEqual(seen, [seq, seq, seq]);
+  hook('run-after-resume', 'state', { id: 'aced0001', status: 'running' }, 'aced0001');
+  assert.deepEqual(seen, [seq, seq, seq], 'nothing new');
+  // done carries no id: the entry's pipeline id (wireRun's 4th argument) finds the start
+  hook('run-after-resume', 'done', { status: 'done' }, 'aced0001');
+  assert.deepEqual(seen, [seq, seq, seq, seq]);
+  hook('run-other-resume', 'error', { message: 'x' }, null);
+  assert.deepEqual(seen, [seq, seq, seq, seq], 'an unknown run without a pipeline id stays unknown');
+  assert.equal(store.startByRunId('run-before-resume').pipelineId, 'aced0001', 'the row keeps its first run id and pipeline');
+});
+
+test('server: runSummary finds a resumed run by its pipeline id; href is the live run, else its History page', () => {
+  const { requirementsRunSummary } = mod._testing;
+  return (async () => {
+    const db = (await import('../src/core/db.mjs')).getDb();
+    db.prepare("INSERT INTO pipelines (id, project_key, target, title, status, phase, total_cost_usd) VALUES ('fade0001', ?, 'project', 'R', 'paused', 'test', 1.5)").run(projKey);
+    db.prepare("INSERT INTO pipelines (id, project_key, workspace_key, target, title, status, phase) VALUES ('fade0002', ?, 'wsk-1', 'workspace', 'W', 'done', 'learn')").run(projKey);
+    // a resumed run: a new runs-Map UUID driving the same pipeline
+    const entry = { id: 'resumed-uuid-1', orch: {}, kind: 'run', pipelineId: 'fade0001', status: 'running' };
+    mod.runs.set(entry.id, entry);
+    try {
+      const live = requirementsRunSummary({ runId: 'first-uuid-gone', pipelineId: 'fade0001' });
+      assert.equal(live.status, 'running');
+      assert.equal(live.pipelineId, 'fade0001');
+      assert.equal(live.href, '#running/resumed-uuid-1');
+      assert.equal(live.costUsd, 1.5);
+    } finally { mod.runs.delete(entry.id); }
+    const settled = requirementsRunSummary({ runId: 'first-uuid-gone', pipelineId: 'fade0001' });
+    assert.equal(settled.status, 'paused');
+    assert.equal(settled.href, `#history/${projKey}/fade0001`);
+    const ws = requirementsRunSummary({ runId: 'ws-uuid-gone', pipelineId: 'fade0002' });
+    assert.equal(ws.href, '#history/workspaces/wsk-1/fade0002');
+    assert.equal(requirementsRunSummary({ runId: 'nobody', pipelineId: null }), null);
+  })();
+});

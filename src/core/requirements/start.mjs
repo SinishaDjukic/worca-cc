@@ -5,7 +5,9 @@
 import { randomUUID } from 'node:crypto';
 import { tx } from '../db.mjs';
 import { RequirementsError } from './spec.mjs';
-import { requireFeature, listTurns, latestStart, createStart, appendTurn, linkPipeline, startByRunId } from './store.mjs';
+import {
+  requireFeature, listTurns, latestStart, createStart, appendTurn, linkPipeline, startByRunId, startByPipelineId,
+} from './store.mjs';
 import { isBusy } from './interview.mjs';
 import { readiness } from './ready.mjs';
 import { renderTaskMarkdown } from './markdown.mjs';
@@ -91,8 +93,9 @@ export async function startFeature(seq, { reason, workflowId, sourceBranch } = {
 
 /**
  * One start as the page shows it (D10). `runSummary({ runId, pipelineId })` (injected; may be async, may
- * throw) → `{ status, phase, costUsd, pipelineId } | null`. When it knows a pipeline id the row lacks, the
- * row is linked (the run-event hook normally does that first, D9).
+ * throw) → `{ status, phase, costUsd, pipelineId, href? } | null`. When it knows a pipeline id the row lacks,
+ * the row is linked (the run-event hook normally does that first, D9). Its `href` (the live run, which a
+ * resume gives a new UUID, or the saved run's History page) wins over `#running/<runId>`.
  */
 export async function startView(start, runSummary = () => null) {
   let s = null;
@@ -105,7 +108,8 @@ export async function startView(start, runSummary = () => null) {
   return {
     version: start.version, runId: start.runId, pipelineId, startedBy: start.startedBy, startedAt: start.startedAt,
     ready: start.ready, failing: start.failing, reason: start.reason, workflowId: start.workflowId, sourceBranch: start.sourceBranch,
-    run: s ? { status: s.status ?? null, phase: s.phase ?? null, costUsd: s.costUsd ?? null, href: `#running/${start.runId}` } : null,
+    run: s ? { status: s.status ?? null, phase: s.phase ?? null, costUsd: s.costUsd ?? null,
+      href: (typeof s.href === 'string' && s.href) || `#running/${start.runId}` } : null,
   };
 }
 
@@ -113,20 +117,24 @@ export async function startView(start, runSummary = () => null) {
  * The run-event hook `wireRun` in ui/server.mjs calls for every event of every run (D9). Only `state`,
  * `done` and `error` do work, and only for runs a start made (one indexed lookup): the first `state` with a
  * pipeline id fills `pipeline_id`, and the feature is notified when the run's status changed since its last
- * event or the pipeline id was just linked. Never throws.
+ * event or the pipeline id was just linked. A resumed run has a new UUID but the same pipeline: when the
+ * run id is unknown, the pipeline id (the `state` payload's, else the entry's `pipelineId`) finds the start.
+ * Never throws.
  * @param {{ notify:(seq:number)=>void }} o  the requirements change notifier (checks the flag itself)
- * @returns {(runId:string, name:string, payload:any)=>void}
+ * @returns {(runId:string, name:string, payload:any, pipelineId?:string|null)=>void}
  */
 export function createRunEventHook({ notify }) {
   const last = new Map();   // runId → the status its last event carried
-  return (runId, name, payload) => {
+  return (runId, name, payload, pipelineId = null) => {
     if (name !== 'state' && name !== 'done' && name !== 'error') return;
     try {
-      const start = startByRunId(runId);
-      if (!start) return;
       const p = payload && typeof payload === 'object' ? payload : {};
+      const pid = name === 'state' && typeof p.id === 'string' && p.id ? p.id
+        : typeof pipelineId === 'string' && pipelineId ? pipelineId : null;
+      const start = startByRunId(runId) || (pid ? startByPipelineId(pid) : null);
+      if (!start) return;
       let linked = false;
-      if (name === 'state' && typeof p.id === 'string' && p.id) linked = linkPipeline(runId, p.id);
+      if (name === 'state' && typeof p.id === 'string' && p.id) linked = linkPipeline(start.runId, p.id);
       const status = name === 'state' ? (p.status || null) : name === 'done' ? (p.status || 'done') : 'error';
       const changed = status != null && last.get(runId) !== status;
       if (name === 'state') { if (status != null) last.set(runId, status); } else last.delete(runId);

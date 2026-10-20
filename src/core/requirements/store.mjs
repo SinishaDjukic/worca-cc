@@ -172,6 +172,12 @@ export function startByRunId(runId) {
   return toStart(prepare('SELECT * FROM req_starts WHERE run_id = ?').get(String(runId)));
 }
 
+/** The start a pipeline belongs to: a resumed run gets a new run UUID but keeps its pipeline id. */
+export function startByPipelineId(pipelineId) {
+  getDb();
+  return toStart(prepare('SELECT * FROM req_starts WHERE pipeline_id = ?').get(String(pipelineId)));
+}
+
 /** Fill the pipeline id once; true only when this call filled a NULL. */
 export function linkPipeline(runId, pipelineId) {
   getDb();

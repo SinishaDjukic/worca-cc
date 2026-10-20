@@ -384,3 +384,14 @@ test('list: state, ready, latestRun; lookCostUsd and spend', async () => {
   recordRequirementsCostDelta({ featureSeq: g.seq, amountUsd: 0.5, tsMs: Date.UTC(2000, 0, 1) });
   assert.equal((await call('GET', '/api/requirements')).json.spend.windowUsd, Math.round((w0 + 0.07) * 1e4) / 1e4);
 });
+
+test('startView: the summary\'s href wins (a resumed or settled run); #running/<runId> only without one', async () => {
+  const f = readyFeature();
+  const s = createStart({ featureSeq: f.seq, version: 1, runId: 'r-href-1', spec: f.spec, title: 't', ready: true });
+  const live = await startView(s, () => ({ status: 'running', phase: 'plan', costUsd: 0, pipelineId: 'beadbead', href: '#running/new-uuid' }));
+  assert.equal(live.run.href, '#running/new-uuid');
+  const gone = await startView(s, () => ({ status: 'done', phase: null, costUsd: 1, pipelineId: 'beadbead', href: '#history/shop-key/beadbead' }));
+  assert.equal(gone.run.href, '#history/shop-key/beadbead');
+  const bare = await startView(s, () => ({ status: 'done', phase: null, costUsd: 1, pipelineId: 'beadbead' }));
+  assert.equal(bare.run.href, '#running/r-href-1');
+});

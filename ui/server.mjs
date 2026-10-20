@@ -1233,7 +1233,8 @@ function wireRun(entry) {
         }
       }
       // Requirements (A2 D9): a run a feature started learns its pipeline id; the feature hears status changes.
-      requirementsRunEvent(id, name, payload);   // never throws
+      // The entry's pipeline id finds the start of a resumed run (a new UUID, the same pipeline).
+      requirementsRunEvent(id, name, payload, entry.pipelineId || null);   // never throws
       if (entry.ticketId && (name === 'done' || name === 'error') && !entry._outcomeRecorded) {
         // Scheduled runs: report how the fired run ended (feed item, failure streak).
         // 'error' is the launch-error channel — a failure before the pipeline row exists.
@@ -3055,18 +3056,22 @@ function releaseAskCard(item) {
 }
 
 /** A requirements start's run as the feature shows it (A2 D10): the live entry while the server has it,
- *  else the pipeline row on disk (after a restart). null when neither knows the run. */
+ *  else the pipeline row on disk (after a restart). null when neither knows the run. A resume gives the run
+ *  a new UUID, so the pipeline id finds the live entry first. `href`: the live run's page while the server
+ *  has it, else the saved run's History page (#history/<projectKey | workspaces/<key>>/<pipelineId>). */
 function requirementsRunSummary({ runId, pipelineId }) {
-  const live = liveRunEntry(runId);
+  const live = (pipelineId && liveRunEntry(pipelineId)) || liveRunEntry(runId);
   const id = pipelineId || (live && live.pipelineId) || null;
   let state = null;
   if (id) { try { state = readPipelineStateById(id); } catch { state = null; } }
   if (!live && !state) return null;
+  const key = state && (state.target === 'workspace' && state.workspaceKey ? `workspaces/${state.workspaceKey}` : state.projectKey);
   return {
     status: (live && live.status) || (state && state.status) || null,
     phase: (state && state.phase) || null,
     costUsd: state?.totalCostUsd ?? null,
     pipelineId: id,
+    href: live ? `#running/${live.id}` : key && id ? `#history/${key}/${id}` : null,
   };
 }
 
@@ -15138,7 +15143,7 @@ export const _testing = {
   chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor,
   startCloneJob, followCloneCard, CLONE_JOBS,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
-  askTrackRun, liveRunEntry, liveDefragRun, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor,
+  askTrackRun, liveRunEntry, liveDefragRun, requirementsRunSummary, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor,
   uiControl, bearerMatches,
   broadcast, askFilesRunDir,
   validateResumeTarget, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
