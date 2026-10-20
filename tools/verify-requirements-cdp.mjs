@@ -175,7 +175,8 @@ check("the Ready panel shows the server's six checks; Start is enabled exactly w
     if (!p) return false;
     const labels = [...p.querySelectorAll('.req-check-label')].map((x) => x.textContent);
     return labels.length === 6 && labels.join('|') === f.readiness.checks.map((c) => c.label).join('|')
-      && p.querySelector('[data-ui="start"]').disabled === !f.readiness.ok
+      && (f.state === 'ready' ? !p.querySelector('[data-ui="start"]') && !!document.querySelector('#requirements-host .req-build [data-ui="start-go"]')
+        : p.querySelector('[data-ui="start"]').disabled === !f.readiness.ok)
       && p.querySelector('code').textContent === f.readiness.passed + ' of 6'; })()`));
 check('the Export menu opens on its button and Escape closes it',
   await A.evalJs(`(() => { const t = [...document.querySelectorAll('#requirements-host .req-head button')].find((b) => b.textContent === 'Export ▾');

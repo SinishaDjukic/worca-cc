@@ -149,6 +149,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   const branchLists = new Map();   // projectDir -> 'loading' | { branches, current }
   let starting = false;
   let dialog = null;
+  let workflowsFailed = false;     // GET /api/workflows failed: Auto only, and the card says so
+  const assumePosting = new Set(); // assumption ids whose Confirm / Reject POST is in flight
   // Unsaved input of the feature page, kept across repaints (read from the DOM before a rebuild, put back after).
   let ui = freshUi();
   let ctxEls = null;
@@ -451,7 +453,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const card = !open ? null
       : rev ? questionCard(f, rev, { revise: true })
         : f.pending ? questionCard(f, { ...f.pending, n: rounds.find((r) => r.turnId === f.pending.turnId)?.n })
-          : f.state === 'ready' ? buildCard(f)
+          : buildCardShown(f) ? buildCard(f)
             : f.state === 'decide' ? decideCard(f)
               : null;
     return h('div', { class: 'req-left' },
@@ -468,6 +470,30 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
 
   // ---- Decide (board Decisions.dc.html, A2 D3/D4): Confirm / Reject per assumption, Confirm the N left,
   // and the follow-up round on the rejected ones not yet asked about ----
+  // The Confirm / Reject toggle of one assumption (Decide card and spec card): a role=group of two
+  // aria-pressed buttons; pressing the pressed one reopens it (A1). Both stay disabled while the POST runs,
+  // across a live repaint too, so a double click never posts twice. `prefix` keeps the data-ui unique.
+  function assumeToggle(f, a, { prefix = '', disabled = false, extraCls = '' } = {}) {
+    const groupButtons = () => host.querySelectorAll(`[data-assume-toggle="${a.id}"] button`);
+    const set = (status) => {
+      if (assumePosting.has(a.id)) return;
+      assumePosting.add(a.id);
+      for (const b of groupButtons()) b.disabled = true;
+      void act(async () => {
+        try { await api('POST', `/api/requirements/${f.seq}/assumptions/${a.id}`, { status }); } finally { assumePosting.delete(a.id); }
+        await paint();
+      }).then(() => { for (const b of groupButtons()) if (!assumePosting.has(a.id)) b.disabled = disabled; });
+    };
+    const btn = (label, status, cls, key) => {
+      const on = a.status === status;
+      return h('button', { type: 'button', class: `${cls}${extraCls ? ` ${extraCls}` : ''}${on ? ' on' : ''}`, 'aria-pressed': on ? 'true' : 'false',
+        'aria-label': `${label} ${a.id}`, 'data-ui': `${prefix}${key}-${a.id}`, disabled: disabled || assumePosting.has(a.id),
+        onclick: () => set(on ? 'open' : status) }, label);
+    };
+    return h('div', { class: 'seg seg-sm req-toggle', role: 'group', 'aria-label': `Decide ${a.id}`, 'data-assume-toggle': a.id },
+      btn('Confirm', 'confirmed', 'req-yes req-confirm', 'confirm'), btn('Reject', 'rejected', 'req-no req-reject', 'reject'));
+  }
+
   function decideCard(f) {
     const all = (f.spec && f.spec.assumptions) || [];
     if (!all.length) return h('p', { class: 'hint req-note', text: 'The interview is done. Edit the spec on the right; every change is kept.' });
@@ -476,17 +502,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const waiting = all.filter((a) => a.status === 'rejected' && waitingIds.includes(a.id));
     const rest = all.filter((a) => !open.includes(a) && !waiting.includes(a));
     const rejected = all.filter((a) => a.status === 'rejected').length;
-    const set = (a, status) => act(async () => { await api('POST', `/api/requirements/${f.seq}/assumptions/${a.id}`, { status }); await paint(); });
-    const toggle = (a, label, status, cls) => {
-      const on = a.status === status;
-      return h('button', { type: 'button', class: `${cls}${on ? ' on' : ''}`, 'aria-pressed': on ? 'true' : 'false', 'data-ui': `decide-${status}-${a.id}`,
-        onclick: () => set(a, on ? 'open' : status) }, label);
-    };
     const row = (a) => h('div', { class: `req-arow ${a.status}`, 'data-decide': a.id },
       h('code', { class: 'req-id', text: a.id }),
       h('span', { class: 'req-arow-text', text: a.text }),
-      h('div', { class: 'seg seg-sm req-toggle', role: 'group', 'aria-label': `Decide ${a.id}` },
-        toggle(a, 'Confirm', 'confirmed', 'req-yes'), toggle(a, 'Reject', 'rejected', 'req-no')));
+      assumeToggle(f, a, { prefix: 'decide-' }));
     const post = (path, body) => act(async () => { await api('POST', `/api/requirements/${f.seq}/${path}`, body); await paint(); });
     return h('section', { class: 'qpanel req-decide', 'aria-label': 'Decide the assumptions' },
       h('div', { class: 'qpanel-head' }, icon(ICONS.ask, { size: 17, width: 1.8 }), h('b', { text: 'Decide the assumptions' }),
@@ -503,6 +522,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           `Done, ask about ${waitingIds[0]}${waitingIds.length > 1 ? ` and ${waitingIds.length - 1} more` : ''}`) : null));
   }
 
+  // The Ready to build card is the current card: Ready, nothing to answer or change, not locked.
+  const buildCardShown = (f) => f.state === 'ready' && !isLocked(f) && !f.pending && revising == null;
+
   // ---- Ready to build (board Ready.dc.html, A2 D6): what Start does, the workflow and base branch ----
   // The choices of a feature, kept per seq; a feature already started defaults to its last start's.
   function choiceOf(f) {
@@ -514,6 +536,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     }
     return c;
   }
+  // The version the next start saves the spec as: the latest start's + 1 (1 before any start).
+  const nextVersion = (f) => ((((f.starts || [])[0]) || {}).version || 0) + 1;
   const projectPath = (f) => (f.scopeType === 'project' ? targets.projects.find((p) => p.key === f.scopeKey)?.path || null : null);
   const workflowName = (id) => (id === AUTO_WORKFLOW ? 'Auto' : (Array.isArray(workflows) && workflows.find((w) => w.id === id)?.name) || id);
   // Repaint for a list that just arrived, only while the Ready to build card is on screen.
@@ -521,8 +545,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   function loadBuildOptions(f) {
     if (workflows == null) {
       workflows = 'loading';
-      api('GET', '/api/workflows').then((d) => { workflows = (d.workflows || []).filter((w) => w && w.id && !NOT_FOR_BUILDS.includes(w.id)); },
-        () => { workflows = []; }).then(redrawBuild);
+      api('GET', '/api/workflows').then((d) => { workflows = (d.workflows || []).filter((w) => w && w.id && !NOT_FOR_BUILDS.includes(w.id)); workflowsFailed = false; },
+        () => { workflows = []; workflowsFailed = true; }).then(redrawBuild);
     }
     const dir = projectPath(f);
     if (dir && !branchLists.has(dir)) {
@@ -554,14 +578,15 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       branch.addEventListener('change', () => { c.sourceBranch = branch.value; redraw(); });
     }
     return h('div', { class: 'req-build-choices' },
-      h('div', { class: 'req-build-field' }, h('label', { for: 'req-build-wf', text: 'Workflow' }), h('div', { class: 'select-wrap' }, wf)),
+      h('div', { class: 'req-build-field' }, h('label', { for: 'req-build-wf', text: 'Workflow' }), h('div', { class: 'select-wrap' }, wf),
+        workflowsFailed ? h('span', { class: 'hint warn req-build-warn', role: 'status', text: 'Could not load workflows; Auto is used.' }) : null),
       h('div', { class: 'req-build-field' }, h('label', { for: 'req-build-branch', text: 'Branch from' }),
         f.scopeType === 'workspace' ? branch : h('div', { class: 'select-wrap' }, branch)));
   }
   function buildCard(f) {
     const c = choiceOf(f);
     if (c.open) loadBuildOptions(f);
-    const version = (((f.starts || [])[0] || {}).version || 0) + 1;
+    const version = nextVersion(f);
     const total = (f.readiness && f.readiness.total) || READY_CHECKS;
     const chipBranch = h('span', { class: 'chip', text: `Branch from · ${c.sourceBranch || 'default'}` });
     return h('section', { class: 'card req-build', 'aria-label': 'Ready to build' },
@@ -602,7 +627,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'start-again', 'data-start': '',
           disabled: !changed || isLocked(f) || starting || !(r.ok || r.overridable),
           title: changed ? null : 'Nothing changed since the last start',
-          onclick: (e) => startFlow(f, { trigger: e.currentTarget }) }, `Start again with v${((starts[0] || {}).version || 0) + 1}`)),
+          onclick: (e) => startFlow(f, { trigger: e.currentTarget }) }, `Start again with v${nextVersion(f)}`)),
       h('div', { class: 'req-run-rows' }, ...starts.map(row)),
       h('p', { class: 'hint req-run-total' }, `Total for ${f.id} so far: `, h('code', { text: usd(req + build) }),
         ` (requirements ${usd(req)} + build ${usd(build)})`));
@@ -718,23 +743,21 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   function assumptionsBlock(f, ro = false) {
     const working = isLocked(f);
     const list = f.spec.assumptions || [];
-    const set = (a, status) => act(async () => { await api('POST', `/api/requirements/${f.seq}/assumptions/${a.id}`, { status }); await paint(); });
     return h('section', { class: 'req-sect', 'data-section': 'assumptions' },
       h('div', { class: 'req-sect-head' }, h('h4', { text: 'Assumptions' })),
       list.length ? null : h('p', { class: 'hint', text: 'None yet.' }),
       ...list.map((a) => h('div', { class: `req-item req-assume ${a.status}`, 'data-assumption': a.id },
         h('code', { text: a.id }), h('span', { class: 'req-item-text', text: a.text }),
-        h('span', { class: `badge ${a.status === 'confirmed' ? 'green' : a.status === 'rejected' ? 'red' : 'amber'}`, text: a.status }),
-        ro ? null : h('button', { type: 'button', class: 'btn btn-mini req-confirm req-sect-edit', disabled: working, 'aria-label': `Confirm ${a.id}`, 'data-ui': `confirm-${a.id}`, 'aria-pressed': a.status === 'confirmed' ? 'true' : 'false',
-          onclick: () => set(a, a.status === 'confirmed' ? 'open' : 'confirmed') }, 'Confirm'),
-        ro ? null : h('button', { type: 'button', class: 'btn btn-mini req-reject req-sect-edit', disabled: working, 'aria-label': `Reject ${a.id}`, 'data-ui': `reject-${a.id}`, 'aria-pressed': a.status === 'rejected' ? 'true' : 'false',
-          onclick: () => set(a, a.status === 'rejected' ? 'open' : 'rejected') }, 'Reject'))));
+        // the frozen version shows the status as a badge; the draft's toggle carries it (aria-pressed)
+        ro ? h('span', { class: `badge ${a.status === 'confirmed' ? 'green' : a.status === 'rejected' ? 'red' : 'amber'}`, text: a.status })
+          : assumeToggle(f, a, { disabled: working, extraCls: 'req-sect-edit' }))));
   }
 
   // The spec card: goal, actors, criteria, assumptions and open questions; the long lists folded behind one link.
   // Once started and changed since, a switch shows the draft (v<n+1>, editable) or the frozen spec the
   // latest run started with (v<n>, read-only).
-  function specSwitch(n) {
+  function specSwitch(f) {
+    const n = nextVersion(f) - 1;
     const tab = (key, label) => {
       const on = ui.specTab === key;
       return h('button', { type: 'button', role: 'tab', class: on ? 'on' : null, 'aria-selected': on ? 'true' : 'false', tabindex: on ? '0' : '-1',
@@ -748,7 +771,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       redraw();
     };
     return h('div', { class: 'seg seg-sm req-spec-switch', role: 'tablist', 'aria-label': 'Spec version', onkeydown: onKey },
-      tab('draft', `v${n + 1} draft`), tab('started', `v${n} started`));
+      tab('draft', `v${nextVersion(f)} draft`), tab('started', `v${n} started`));
   }
 
   function specCard(f) {
@@ -763,9 +786,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const interviewing = f.status === 'your_turn' || f.status === 'thinking' || f.status === 'looking';
     return h('section', { class: 'card req-spec' },
       h('div', { class: 'req-card-head' }, h('h3', { text: 'Spec' }),
-        canSwitch ? h('span', { class: 'hint req-spec-ver', text: ro ? `v${latest.version} is with the run, read-only` : `v${latest.version + 1} draft · v${latest.version} is with the run` })
+        canSwitch ? h('span', { class: 'hint req-spec-ver', text: ro ? `v${latest.version} is with the run, read-only` : `v${nextVersion(f)} draft · v${latest.version} is with the run` })
           : interviewing ? h('span', { class: 'hint', text: 'updates after every round' }) : null,
-        canSwitch ? specSwitch(latest.version) : null),
+        canSwitch ? specSwitch(f) : null),
       sectionBlock(v, 'goal', 'Goal', ro), sectionBlock(v, 'actors', 'Actors', ro),
       criteriaBlock(v, ro), assumptionsBlock(v, ro),
       sectionBlock(v, 'openQuestions', 'Open questions', ro),
@@ -801,6 +824,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     paintNo += 1;   // a fetch already under way would paint the feature as it was before the start
     if (data && data.feature && seqShown === data.feature.seq) { paintFeature(data.feature, data.turns || []); paintedKey = `feature/${seqShown}`; }
     sayStarted(data.version, data.runId);
+    // The control pressed is gone with the repaint: the focus goes to the message's run link, else the runs card.
+    const link = msgEl && msgEl.querySelector('a');
+    const to = link && link.isConnected ? link : host.querySelector('.req-runs a.req-run-row, .req-runs button:not(:disabled)');
+    if (to) to.focus();
   }
   async function startPlain(f, trigger) {
     say('');
@@ -828,7 +855,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const assumptionsFail = failing.some((c) => c.key === 'assumptions');
     const who = (typeof deps.who === 'function' && deps.who()) || 'you';
     let busy = false;
-    const area = h('textarea', { id: 'req-dlg-reason', rows: '3', maxlength: String(REASON_MAX), 'aria-describedby': 'req-dlg-count' });
+    const area = h('textarea', { id: 'req-dlg-reason', rows: '3', maxlength: String(REASON_MAX), 'aria-required': 'true', 'aria-describedby': 'req-dlg-count' });
     const count = h('span', { class: 'hint req-dlg-count', id: 'req-dlg-count', text: `0 / ${REASON_MAX}` });
     const msg = h('p', { class: 'form-msg err req-dlg-msg', role: 'alert' });
     const go = h('button', { type: 'button', class: 'btn btn-primary', disabled: true }, assumptionsFail && openN ? `Start with ${openN} open` : 'Start anyway');
@@ -841,7 +868,6 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         const data = await postStart(f, { reason: area.value.trim() });
         closeDialog(false);
         started(f, data);
-        restoreFocus(trigger, triggerUi);
       } catch (err) {
         starting = false;
         msg.textContent = (err && err.message) || String(err);
@@ -863,7 +889,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('button', { type: 'button', class: 'btn', onclick: () => { if (!busy) closeDialog(true); } }, 'Keep deciding'), go));
     const wrap = h('div', { class: 'viewer-modal req-dlg-wrap' }, card);
     const triggerUi = trigger && trigger.getAttribute ? trigger.getAttribute('data-ui') : null;
-    wrap.addEventListener('keydown', (e) => {
+    // On the document, in the capture phase: Escape and Tab work wherever the focus is, even after a click
+    // on the scrim left it on <body>. Removed on close.
+    const onKey = (e) => {
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (!busy) closeDialog(true); return; }
       if (e.key !== 'Tab') return;
       const all = [...card.querySelectorAll('button, textarea, input, select, a[href]')].filter((el) => !el.disabled);
@@ -872,9 +900,12 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       const at = document.activeElement;
       if (e.shiftKey && (at === first || !card.contains(at))) { e.preventDefault(); last.focus(); }
       else if (!e.shiftKey && (at === last || !card.contains(at))) { e.preventDefault(); first.focus(); }
-    });
+    };
+    document.addEventListener('keydown', onKey, true);
     document.body.append(wrap);
-    dialog = { wrap, trigger, triggerUi };
+    // the page behind cannot be reached while the dialog is open
+    host.inert = true; host.setAttribute('inert', '');
+    dialog = { wrap, trigger, triggerUi, onKey };
     area.focus();
   }
   function restoreFocus(trigger, triggerUi) {
@@ -883,8 +914,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   }
   function closeDialog(restore = true) {
     if (!dialog) return;
-    const { wrap, trigger, triggerUi } = dialog;
+    const { wrap, trigger, triggerUi, onKey } = dialog;
     dialog = null;
+    document.removeEventListener('keydown', onKey, true);
+    host.inert = false; host.removeAttribute('inert');
     wrap.remove();
     if (restore) restoreFocus(trigger, triggerUi);
   }
@@ -894,8 +927,11 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const r = f.readiness;
     if (!r || !Array.isArray(r.checks) || f.status === 'archived') return null;
     // Once started, starting again needs a change since (the runs card's Start again, A2 D11).
-    const same = (f.starts || []).length > 0 && !(f.changedSinceStart || []).length;
+    const hasStarts = (f.starts || []).length > 0;
+    const same = hasStarts && !(f.changedSinceStart || []).length;
     const locked = isLocked(f) || starting || same;
+    // While the Ready to build card is on screen its Start is the one (board Ready.dc.html): no second button here.
+    const cardStarts = buildCardShown(f);
     return h('section', { class: 'card req-ready' },
       h('div', { class: 'req-card-head' }, h('h3', { text: 'Ready to start?' }), h('code', { text: `${r.passed} of ${r.total || READY_CHECKS}` })),
       h('ul', { class: 'req-checks' }, ...r.checks.map((c) => h('li', { class: `req-check${c.ok ? ' ok' : ''}`, 'data-check': c.key },
@@ -907,8 +943,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('div', { class: 'req-ready-btns' },
           r.overridable ? h('button', { type: 'button', class: 'link-btn req-start-anyway', 'data-ui': 'start-anyway', 'data-start': '', disabled: locked,
             onclick: (e) => startFlow(f, { override: true, trigger: e.currentTarget }) }, "Start before it's Ready…") : null,
-          h('button', { type: 'button', class: r.ok ? 'btn-go btn-mini req-start' : 'btn btn-mini req-start', 'data-ui': 'start', 'data-start': '', disabled: !r.ok || locked,
-            onclick: (e) => startFlow(f, { override: false, trigger: e.currentTarget }) }, 'Start in worca'))));
+          cardStarts ? null : h('button', { type: 'button', class: r.ok ? 'btn-go btn-mini req-start' : 'btn btn-mini req-start', 'data-ui': 'start', 'data-start': '', disabled: !r.ok || locked,
+            onclick: (e) => startFlow(f, { override: false, trigger: e.currentTarget }) }, hasStarts ? `Start again with v${nextVersion(f)}` : 'Start in worca'))));
   }
 
   function loadContext(f) {

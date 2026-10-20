@@ -764,8 +764,10 @@ test('Ready panel: the six checks, n of 6, Start disabled until Ready, start-any
   assert.equal(start().disabled, true);
   const calls2 = fakeApi({ ...BASE, 'GET /api/requirements/4': { feature: feature({ status: 'done', state: 'ready', pending: null, readiness: ALL_OK() }), turns: [] } });
   await view.changed(4);
-  assert.equal(start().disabled, false);
-  assert.ok(start().classList.contains('btn-go'));
+  // Ready: the Ready to build card's Start is the one; the panel keeps its checks but no second button
+  assert.equal(start(), null);
+  assert.equal(host.querySelectorAll('[data-start]').length, 1);
+  assert.equal(host.querySelector('.req-build [data-ui="start-go"]').disabled, false);
   assert.equal(panel().querySelector('code').textContent, '6 of 6');
   assert.ok([...panel().querySelectorAll('[role="img"]')].every((i) => i.getAttribute('aria-label') === 'Passed'));
   assert.equal(panel().querySelector('[data-ui="start-anyway"]'), null);
@@ -1008,8 +1010,7 @@ test('Start: posts the choices once (the button waits for the answer), repaints 
   go.click();
   await tick();
   assert.equal(host.querySelector('[data-ui="start-go"]').disabled, true, 'disabled while the start is in flight');
-  assert.equal(host.querySelector('.req-ready [data-ui="start"]').disabled, true);
-  host.querySelector('.req-ready [data-ui="start"]').click();
+  host.querySelector('[data-ui="start-go"]').click();
   release();
   await tick(); await tick(); await tick();
   const posts = calls.filter((c) => c.method === 'POST');
@@ -1027,7 +1028,7 @@ test('Start: the defaults send only the workflow; an error other than NOT_READY 
     'POST /api/requirements/4/start': { __status: 409, body: { error: 'The budget for this month is used up.' } } });
   const { host, msgEl, view } = make();
   await view.show('feature/4');
-  host.querySelector('.req-ready [data-ui="start"]').click();
+  host.querySelector('[data-ui="start-go"]').click();
   await tick(); await tick();
   assert.deepEqual(calls.find((c) => c.method === 'POST').body, { workflowId: 'wf_auto' });
   assert.equal(msgEl.textContent, 'The budget for this month is used up.');
@@ -1058,6 +1059,8 @@ test('NOT_READY opens the dialog: the failing checks, a required reason, sent wi
   assert.match(dlg().textContent, /The run treats open assumptions as confirmed: the build follows them as written\./);
   const area = () => dlg().querySelector('textarea');
   assert.equal(document.activeElement, area(), 'focus on the reason');
+  assert.equal(area().getAttribute('aria-required'), 'true');
+  assert.ok(host.hasAttribute('inert'), 'the page behind is inert');
   assert.equal(area().getAttribute('maxlength'), '500');
   assert.match(dlg().textContent, /Why start now\?/);
   assert.match(dlg().textContent, /Recorded as: you · started before Ready/);
@@ -1077,9 +1080,14 @@ test('NOT_READY opens the dialog: the failing checks, a required reason, sent wi
   assert.equal(document.activeElement, area());
   area().dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true }));
   assert.equal(document.activeElement, primary());
-  // Escape closes, the focus goes back to the trigger
-  dlg().dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  // a click on the scrim leaves the focus on <body>: Tab still lands inside, Escape still closes
+  document.activeElement.blur();
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+  assert.ok(dlg().contains(document.activeElement), 'Tab from <body> goes into the dialog');
+  document.activeElement.blur();
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   assert.equal(dlg(), null);
+  assert.ok(!host.hasAttribute('inert'), 'the page is live again');
   assert.equal(document.activeElement, go());
   // again, with Keep deciding
   go().click();
@@ -1097,7 +1105,10 @@ test('NOT_READY opens the dialog: the failing checks, a required reason, sent wi
   assert.equal(dlg(), null, 'closed after the start');
   assert.equal(msgEl.textContent, 'Started build v1. Open the run');
   assert.ok(host.querySelector('.req-runs'));
+  assert.ok(host.querySelector('.req-runs').contains(document.activeElement), 'the focus goes to the runs card (the message is not on the page here)');
+  document.body.append(msgEl);
   host.remove();
+  msgEl.remove();
 });
 
 test("Start before it's Ready…: the dialog names every failing check with its hint, posts nothing until confirmed", async () => {
@@ -1170,6 +1181,7 @@ test('Started: the runs card (newest first), the total, Start again with the nex
   assert.equal(card().querySelector('.req-run-total').textContent, 'Total for FEAT-4 so far: $3.24 (requirements $0.40 + build $2.84)');
   const again = () => card().querySelector('[data-ui="start-again"]');
   assert.equal(again().textContent, 'Start again with v3');
+  assert.equal(host.querySelector('.req-ready [data-ui="start"]').textContent, 'Start again with v3', 'the Ready panel says what it does');
   assert.equal(again().disabled, false);
   again().click();
   await tick(); await tick();
@@ -1238,6 +1250,8 @@ test('Started: the spec card switches between the draft and the started version;
   assert.equal(spec().querySelectorAll('.req-ico').length, 0, 'no pencils, no add or remove');
   assert.equal(spec().querySelector('.req-confirm'), null, 'no Confirm / Reject');
   assert.match(spec().querySelector('[data-assumption="A-1"]').textContent, /open/);
+  assert.equal(spec().querySelector('[data-assumption="A-1"] .badge').textContent, 'open', 'the frozen tab shows the status as a badge');
+  assert.equal(spec().querySelector('[data-assumption="A-1"] [role="group"]'), null);
   await view.changed(4);
   assert.deepEqual(crit(), ['Cancel while unpaid'], 'kept across a live update');
   tabsOf()[0].click();
@@ -1299,4 +1313,61 @@ test('style.css: the start-anyway link has a disabled look; the req- rules use t
   assert.match(css, /\.req-start-anyway:disabled\{[^}]*opacity/);
   const req = css.split('\n').filter((l) => /\.req-/.test(l));
   assert.ok(req.every((l) => !/#[0-9a-fA-F]{3,8}\b/.test(l)), 'no hex colour in a req- rule');
+});
+
+test('spec card: each assumption is one Confirm / Reject toggle (aria-pressed carries the status); the frozen tab keeps the badge', async () => {
+  const f = decideFeature({ state: 'your_turn', status: 'your_turn', pending: { turnId: 9, questions: Q, note: '' } });
+  const calls = fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: f, turns: [] }),
+    'POST /api/requirements/4/assumptions/A-3': { feature: f, turns: [] } });
+  const { host, view } = make();
+  await view.show('feature/4');
+  const row = (id) => host.querySelector(`.req-spec [data-assumption="${id}"]`);
+  const group = row('A-3').querySelector('[role="group"]');
+  assert.ok(group.classList.contains('req-toggle'));
+  assert.equal(row('A-3').querySelector('.badge'), null, 'the toggle carries the status, no badge');
+  assert.deepEqual([...group.querySelectorAll('button')].map((b) => [b.textContent, b.getAttribute('aria-pressed'), b.getAttribute('data-ui')]),
+    [['Confirm', 'false', 'confirm-A-3'], ['Reject', 'true', 'reject-A-3']]);
+  btn(group, 'Reject').click();
+  btn(group, 'Reject').click();
+  assert.ok([...host.querySelectorAll('[data-assume-toggle="A-3"] button')].every((b) => b.disabled), 'disabled while the POST runs');
+  await tick(); await tick(); await tick();
+  const posts = calls.filter((c) => c.method === 'POST');
+  assert.deepEqual(posts.map((c) => [c.url, c.body]), [['/api/requirements/4/assumptions/A-3', { status: 'open' }]], 'one post: pressing the pressed one reopens');
+  assert.ok([...host.querySelectorAll('[data-assume-toggle="A-3"] button')].every((b) => !b.disabled), 'usable again');
+});
+
+test('Decide card: a toggle is disabled while its POST runs, also across a live update; no double post', async () => {
+  const f = decideFeature();
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const calls = fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: f, turns: [] }) });
+  const inner = globalThis.fetch;
+  globalThis.fetch = async (url, opts = {}) => {
+    if (opts.method === 'POST') { calls.push({ method: 'POST', url, body: JSON.parse(opts.body) }); await gate; return { ok: true, status: 200, json: async () => ({ feature: f, turns: [] }) }; }
+    return inner(url, opts);
+  };
+  const { host, view } = make();
+  await view.show('feature/4');
+  const yes = () => host.querySelector('[data-ui="decide-confirm-A-1"]');
+  yes().click();
+  yes().click();
+  await view.changed(4);
+  assert.equal(yes().disabled, true, 'still disabled after the repaint');
+  assert.equal(host.querySelector('[data-ui="confirm-A-1"]').disabled, true, 'the spec card\'s toggle for the same assumption too');
+  yes().click();
+  release();
+  await tick(); await tick(); await tick();
+  assert.equal(calls.filter((c) => c.method === 'POST').length, 1);
+  assert.equal(yes().disabled, false);
+});
+
+test('Ready to build: a failed workflow list says Auto is used', async () => {
+  fakeApi({ ...BASE, ...BUILD, 'GET /api/workflows': { __status: 500, body: { error: 'boom' } },
+    'GET /api/requirements/4': () => ({ feature: readyFeature(), turns: [] }) });
+  const { host, view } = make();
+  await view.show('feature/4');
+  host.querySelector('[data-ui="build-change"]').click();
+  await tick(); await tick(); await tick();
+  assert.deepEqual([...host.querySelectorAll('[data-ui="build-workflow"] option')].map((o) => o.value), ['wf_auto']);
+  assert.equal(host.querySelector('.req-build-warn').textContent, 'Could not load workflows; Auto is used.');
 });

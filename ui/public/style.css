@@ -9410,7 +9410,11 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .req-add input{flex:1 1 auto;width:auto;min-width:0}
 .req-assume{margin:6px 0 0;padding:10px 12px;border-radius:10px}
 .req-assume.open{background:var(--amber-wash)}
-.req-assume .req-item-text{flex:1 1 200px}
+/* One row above 600px: id · text · the Confirm / Reject toggle (or the frozen version's badge). */
+.req-assume{flex-wrap:nowrap;align-items:center}
+.req-assume .req-item-text{flex:1 1 0}
+.req-assume > .req-toggle,.req-assume > .badge{flex:none}
+@media (max-width:600px){.req-assume{flex-wrap:wrap}.req-assume .req-item-text{flex:1 1 calc(100% - 64px)}.req-assume > .req-toggle{margin-left:auto}}
 .req-more{align-self:flex-start;font-size:12.5px}
 .req-new select,.req-new input,.req-new textarea,.req-edit input,.req-edit textarea,.req-context textarea{width:100%;box-sizing:border-box}
 .req-edit{display:flex;flex-direction:column;gap:8px;margin-top:6px}
@@ -9458,6 +9462,7 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .req-build-choices{display:flex;flex-wrap:wrap;gap:12px;margin-top:8px}
 .req-build-field{display:flex;flex-direction:column;gap:6px;flex:1 1 200px;min-width:0}
 .req-build-field label{font-size:12px;font-weight:600;color:var(--ink-2)}
+.req-build-field .req-build-warn{margin:0}
 .req-build-field select,.req-build-field input{box-sizing:border-box;padding-top:9px;padding-bottom:9px;font-size:13px}
 .req-build-go:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
 @media (max-width:600px){.req-build{grid-template-columns:1fr;padding:16px 18px}.req-build-go{justify-self:start}}
