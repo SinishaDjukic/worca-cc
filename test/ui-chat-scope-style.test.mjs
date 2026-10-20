@@ -37,7 +37,7 @@ test('the scope menu: two-line project rows, the chip on the right, the path in 
 });
 
 test('the divider: a centered label between two hairlines, no accent', () => {
-  assert.equal(ruleBody('.ask-divider'), 'display:flex;align-items:center;gap:12px;margin:6px 0;font-size:12.5px;color:var(--ink-2);');
+  assert.equal(ruleBody('.ask-divider'), 'display:flex;align-items:center;gap:12px;margin:6px 0;font-size:12px;color:var(--ink-2);');
   assert.equal(ruleBody('.ask-divider::before,.ask-divider::after'), 'content:"";flex:1 1 0;min-width:16px;height:1px;background:var(--line-2);');
   assert.equal(ruleBody('.ask-divider-in'), 'display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:calc(100% - 56px);font-weight:500;');
   assert.equal(ruleBody('.ask-divider-in > svg'), 'flex:none;');
@@ -48,10 +48,10 @@ test('the chat question: run-page grammar, grey lines like the Runs page, the ca
   assert.equal(ruleBody('.chat-q'), 'container:chat-q / inline-size;');
   assert.equal(ruleBody('.chat-q .chat-rc-q-head'), 'margin-bottom:14px;font-size:18px;');
   assert.equal(ruleBody('.chat-q.chat-rc-q :is(.qpanel,.qblock),.chat-q.chat-rc-q .qpanel[data-kind="clarify"] .qpanel-foot'), 'border-color:var(--line);');
-  assert.equal(ruleBody('.chat-q .qwhy'), 'font-size:13.5px;font-weight:400;color:var(--ink-2);');
+  assert.equal(ruleBody('.chat-q .qwhy'), 'font-size:13px;font-weight:400;color:var(--ink-2);');
   assert.equal(ruleBody('.chat-q .qopt-txt'), 'display:flex;flex-direction:column;gap:2px;min-width:0;');
   assert.equal(ruleBody('.chat-q-opt-name'), 'display:flex;align-items:center;flex-wrap:wrap;gap:8px;');
-  assert.equal(ruleBody('.chat-q-opt-sub'), 'font-family:var(--mono);font-size:11.5px;font-weight:400;color:var(--ink-2);overflow-wrap:anywhere;');
+  assert.equal(ruleBody('.chat-q-opt-sub'), 'font-family:var(--mono);font-size:12px;font-weight:400;color:var(--ink-2);overflow-wrap:anywhere;');
   assert.equal(ruleBody('.chat-q .qpanel-foot .btn-primary:disabled'), 'opacity:.45;cursor:default;transform:none;');
   assert.equal(ruleBody('.chat-q.is-answered .qopt'), 'cursor:default;', 'an answered card\'s tiles are not buttons to press');
   assert.match(css, /@container chat-q \(min-width:640px\)\{\n {2}\.chat-q \.qblock\{grid-template-columns:minmax\(0,300px\) minmax\(0,1fr\);grid-template-rows:auto 1fr;column-gap:48px;padding:28px 32px;\}\n {2}\.chat-q \.qtext\{grid-row:1 \/ span 2;\}\n {2}\.chat-q\.chat-rc-q \.qopts\{grid-column:2;\}\n\}/);
