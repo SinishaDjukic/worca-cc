@@ -87,6 +87,9 @@
   "skills": [
    "mcp:worca:list_runs"
   ],
+  "sessionCosts": {
+   "00000000-0000-4000-8000-000000000001": 0.006771900000000001
+  },
   "costUsd": 0.0068
  },
  "totalCost": 0.0068

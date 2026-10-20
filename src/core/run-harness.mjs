@@ -6844,7 +6844,8 @@ export class RunHarness extends EventEmitter {
 
   // Capture actual spend before anything returns early. The runner tags the
   // terminal stream-json `result` with costUsd (Claude's total_cost_usd; 0 in
-  // mock). Fall back to raw.total_cost_usd defensively. e.raw may be a string
+  // mock), a session total that _sessionCostDelta turns into this result's share
+  // before any override sees it. Fall back to raw.total_cost_usd defensively. e.raw may be a string
   // (non-JSON line) — `.type` on it is just undefined, so this never throws.
   // `e.costUsd != null` keeps a genuine 0 (which `!= null` is true for).
   // A per-model cost override (config.mjs) wins over the CLI's own figure — so a
@@ -6864,7 +6865,7 @@ export class RunHarness extends EventEmitter {
   // observeModelCost. One warning per model per run; the observation itself
   // is derived state and must never fail the run.
   _onResultEvent(role, e, attr) {
-    const rawCost = e.costUsd != null ? Number(e.costUsd) : NaN;
+    const rawCost = this._sessionCostDelta(e, attr?.stepKey);
     const costCfg = attr?.model ? modelCostConfig(attr.model) : null;
     // A bridged node whose upstream reported what its calls cost (OpenRouter's
     // usage.cost, booked per execution id) records that figure: the CLI prices an
@@ -6914,6 +6915,25 @@ export class RunHarness extends EventEmitter {
         this._mcpChain(() => this._recordRunWarning(`${MCP_NAME_WARNING} — Test the servers in ${sets} (${untested.map((c) => c.name).join(', ')})`));
       }
     }
+  }
+
+  /** What a result's CLI cost adds to the step. A `cumulativeCost` figure (Claude Code) is the
+   *  session's running total: a re-woken process repeats the earlier turns, and `--resume` (a question
+   *  round, a pause) restores the session's cost into its first result. So the step keeps the last
+   *  figure per session id (`sessionCosts`, in exec_meta so a resumed run starts from it) and books
+   *  the difference. A figure below the kept one means the CLI restored less (a process killed before
+   *  it saved its cost): nothing is booked and it becomes the baseline. Any other cost is the
+   *  result's own, as is a cumulative one with no session id or no step row. */
+  _sessionCostDelta(e, stepKey) {
+    const cost = e.costUsd != null ? Number(e.costUsd) : NaN;
+    if (!e.cumulativeCost || !e.sessionId || !Number.isFinite(cost)) return cost;
+    const key = stepKey
+      || (this.state.cycle ? `${this.state.phase}#${this.state.cycle}` : this.state.phase);
+    const step = this.state.steps.find((s) => s.key === key);
+    if (!step) return cost;
+    const seen = Number(step.sessionCosts?.[e.sessionId]) || 0;
+    (step.sessionCosts ||= {})[e.sessionId] = cost;
+    return Math.max(0, cost - seen);
   }
 
   /** Sub-agent lifecycle: a spawn learns its label (for the child lines' "▸"

@@ -46,6 +46,9 @@
   "nodeId": "n1",
   "cycle": 1,
   "modelUsed": "claude-haiku-4-5",
+  "sessionCosts": {
+   "00000000-0000-4000-8000-000000000001": 0.023766
+  },
   "costUsd": 0.0238
  },
  "totalCost": 0.0238
