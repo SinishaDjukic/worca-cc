@@ -79,7 +79,7 @@ const state = {
 };
 // The group page host (runs redesign slice 4, D16). Up here, next to `state`: the boot's synchronous showView runs
 // mountGroupPage on a #feature/… reload, and a `const` declared below that call would still be in its TDZ.
-const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', gone: false, failed: false, resolving: false, reentered: false };
+const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', gone: false, failed: false, resolving: false, reentered: false, paintQueued: false };
 
 import { icon } from './icons.mjs';
 import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore, newCycleState, projectLogRecord } from './log-line.mjs';
@@ -21033,6 +21033,7 @@ function paintHistory() {
   refreshProjOverview();   // the Projects page reads state.historyAll too
   rdHandOffOpen();         // a finished run on the Running page moves to its saved row
   crpRetryPending();       // Chat P4: a run panel route that waited for these rows resolves now
+  scheduleGroupPagePaint(); // a feature / group page opened by a deep link reads its members' rows from here (QA)
 }
 
 // One row of the history empty/error state — a DIV (never an <li>).
@@ -31028,12 +31029,12 @@ function paintGroupPageNow() {
     },
   });
 }
-// Frames arrive in bursts: paint the group page once per microtask.
-let groupPagePaintQueued = false;
+// Frames arrive in bursts: paint the group page once per microtask. The flag lives on GROUP_PAGE (declared at the
+// top) because History's cached paint can call this during boot, before a `let` down here is initialised.
 function scheduleGroupPagePaint() {
-  if (groupPagePaintQueued) return;
-  groupPagePaintQueued = true;
-  queueMicrotask(() => { groupPagePaintQueued = false; paintGroupPageNow(); });
+  if (GROUP_PAGE.paintQueued) return;
+  GROUP_PAGE.paintQueued = true;
+  queueMicrotask(() => { GROUP_PAGE.paintQueued = false; paintGroupPageNow(); });
 }
 /** D12, Known bug 7: the group page's question, answered through the one question delegate. */
 function paintGroupQuestion(slot, mb) {
@@ -31259,6 +31260,7 @@ function scheduleRunsPaint() {
   if (runsPaintQueued) return;
   runsPaintQueued = true;
   queueMicrotask(() => { runsPaintQueued = false; if (inRunsView()) paintRunsList(); });
+  scheduleGroupPagePaint();   // the group page's PR chips read the same rows
 }
 
 function runsSelection() {

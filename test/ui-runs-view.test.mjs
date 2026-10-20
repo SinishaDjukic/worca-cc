@@ -93,7 +93,8 @@ async function boot({ url = 'http://localhost:4317/', storage = {}, projects = [
     if (s.includes('/api/projects')) return ok({ projects });
     // `history` may be a function: a test that reloads History can answer differently each time.
     if (s.includes('/api/history?archived=1')) return ok({ pipelines: archived, ghAvailable: true });
-    if (s.endsWith('/api/history')) return ok({ pipelines: typeof history === 'function' ? history() : history, ghAvailable: true });
+    // A function may return a promise: History then answers late (after a deep-linked page painted).
+    if (s.endsWith('/api/history')) return Promise.resolve(typeof history === 'function' ? history() : history).then((pipelines) => ok({ pipelines, ghAvailable: true }));
     // The detail itself only: a looser match would answer its /log, /diff and /comments with a state body.
     if (/\/api\/history\/[^/]+\/aaaa000[12]$/.test(s)) return ok({ state: { title: 'Merged thing', status: 'done', steps: [], stepper: null } });
     // An archived run's detail: the stamp is what flips the header to Restore.
@@ -532,6 +533,20 @@ test('a plain Run-after chain lists all 3 members, open, with shapeFirst off and
     assert.equal(members[2].querySelector('.runs-row-sub').textContent, 'Waiting · starts after run 2');
     window.close();
   }
+});
+
+test('a deep-linked feature page repaints when History answers late: its member reads its project and PR (QA)', async () => {
+  const group = { id: 'feat_000000000002', kind: 'feature', title: 'Done feature', projectKey: null, cost: { usd: 1, byPipeline: {} },
+    members: [{ position: 1, title: 'Merged thing', pipelineId: 'aaaa0001', ticketId: null, status: 'done', pr: null, ticket: null, adhoc: false, after: null }] };
+  const { window, doc, recv } = await boot({ url: `http://localhost:4317/#feature/${group.id}`, runGroups: [group],
+    history: () => new Promise((r) => setTimeout(() => r(HIST), 30)) });
+  recv({ type: 'hello', runs: [] });   // the boot's History load: it answers after the page painted
+  await new Promise((r) => setTimeout(r, 60));
+  await settle(window, 8);
+  const page = doc.querySelector('.feature-page');
+  assert.doesNotMatch(page.textContent, /unknown project/);
+  assert.match(page.textContent, /proj/, 'the project name');
+  assert.match(page.textContent, /Merged/, 'the member reads its merged PR from History');
 });
 
 test('a Shaper feature (from /api/run-groups) is one group row that opens the feature page; ⌄ holds; a question raises it', async () => {
