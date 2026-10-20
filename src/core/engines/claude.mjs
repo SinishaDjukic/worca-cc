@@ -25,6 +25,13 @@ import { CAPABILITY_KEYS } from './capabilities.mjs';
 
 export const DEFAULT_BIN = process.env.WORCA_CLAUDE_BIN || process.env.ORCH_CLAUDE_BIN || 'claude';
 
+// Env every Claude spawn carries, over the ambient, run and model env (#810). Claude Code 2.1.302 offers
+// `subagent_type: "fork"` in -p by default: a fork inherits the parent's context, tools and model, so a
+// fan-out node's children would bypass the pinned investigator (--agents, phases.mjs investigatorAgents)
+// and the sub-agent model policy (a fork ignores the Agent call's `model`). 0 turns forks off; the key is
+// a reserved model-env key, so no catalog entry sets it.
+export const CLAUDE_SPAWN_ENV = Object.freeze({ CLAUDE_CODE_FORK_SUBAGENT: '0' });
+
 // Settings keys a caller's extraSettings never sets (skills registry §4.1): the runner's own guardrail `permissions`
 // and `hooks` (telemetry + the host guard), and the two that would switch those hooks off or rewrite the env the
 // host guard reads (`disableAllHooks`, `env`).
@@ -570,7 +577,8 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
     // (model-env.mjs#withStreamTimeouts).
     // Read off the FINAL env so the ambient shell, the run env and the model entry
     // all count for both the route and an explicit value.
-    spawnEnv = withStreamTimeouts(spawnEnv);
+    // CLAUDE_SPAWN_ENV last: no fork sub-agents, whatever any tier says.
+    spawnEnv = { ...withStreamTimeouts(spawnEnv), ...CLAUDE_SPAWN_ENV };
 
     // Opt-in spawn diagnostics (WORCA_DEBUG_SPAWN, default off — byte-identical spawn
     // path when unset). Everything here is derived from values already computed above
