@@ -13,6 +13,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { cardAlertOf } from './helpers/feedback.mjs';
+import { backdropClick, pressEscape, discardPrompt, keepEditing } from './helpers/popups.mjs';
 
 const trackDom = useDomRelease(afterEach);
 const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
@@ -194,6 +195,39 @@ test('workspace: one row per member with a branch; each ticked member is pushed 
   click(w, q(w, '#publish-modal .publish-ok'));
   await settle(w, 12);
   assert.deepEqual(posts(ctx).map((c) => JSON.parse(c.opts.body).memberKey), ['api-1', 'web-2']);
+});
+
+test('the Publish dialog is a form: a backdrop click keeps it and its picks; Escape asks once a pick changed; Cancel closes at once', async () => {
+  const ctx = await bootPublish({
+    rows: [row({ projectKey: WKS_KEY, target: 'workspace', projectDir: null })],
+    det: detail({ target: 'workspace' }),
+    hash: `history/${WKS_KEY}/${ID}`,
+    status: [member({ memberKey: 'api-1', name: 'api', branch: 'worca-cc/a' }), member({ memberKey: 'web-2', name: 'web', branch: 'worca-cc/w' })],
+  });
+  const w = ctx.window;
+  const modal = q(w, '#publish-modal');
+  click(w, q(w, '#hist-detail .hd-publish'));
+  await settle(w);
+  pressEscape(w);
+  assert.equal(discardPrompt(w.document), null, 'untouched (the remotes that loaded are no change): no question');
+  assert.equal(modal.classList.contains('hidden'), true, 'Escape closes an untouched dialog');
+  click(w, q(w, '#hist-detail .hd-publish'));
+  await settle(w);
+  const pick = modal.querySelectorAll('.publish-pick')[1];
+  pick.checked = false;
+  pick.dispatchEvent(new w.Event('change'));
+  backdropClick(w, modal);
+  assert.equal(modal.classList.contains('hidden'), false, 'never on a backdrop click');
+  assert.equal(modal.querySelectorAll('.publish-pick')[1].checked, false, 'the pick is kept');
+  pressEscape(w);
+  assert.ok(discardPrompt(w.document), 'a changed pick: Escape asks');
+  keepEditing(w.document);
+  await settle(w, 2);
+  assert.equal(modal.classList.contains('hidden'), false);
+  click(w, q(w, '#publish-modal .publish-cancel'));
+  assert.equal(modal.classList.contains('hidden'), true, 'Cancel closes at once');
+  assert.equal(discardPrompt(w.document), null, 'Cancel never asks');
+  assert.equal(posts(ctx).length, 0);
 });
 
 test('a branch with a pull request never offers Publish branch, even when its remote-tracking ref is gone', async () => {

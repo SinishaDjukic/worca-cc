@@ -38,7 +38,7 @@ anything.
    `#models` opens at Simple. The page shows a banner naming its level
    and offering the switch. Never disable a control or refuse a route because of
    the mode.
-4. **An answer is never hidden.** A card Ask Worca emits (run, workflow or
+4. **An answer is never hidden.** A card Chat emits (run, workflow or
    metrics proposal) is the assistant's reply. Hiding it would leave the chat
    text pointing at nothing. Trim the card's *fields*, not the card.
 5. **Guides ask before they need a higher mode.** A Getting started step with a
@@ -155,7 +155,7 @@ be skipped by forgetting it.
 | Start run's caret menu (Schedule…) | A |
 | Workflow picker | S — lists Auto and Default only; the selected workflow always stays listed |
 | Mock mode | S — sits beside Start run, outside the Advanced disclosure |
-| Preset picker, Save current setup… / Update preset, the ⋯ menu (Rename, Delete) beside it | S |
+| Preset ▾ button and its menu (presets, Rename…, Delete…, Save as preset), its ✕, Update preset | S |
 | Preset picker's "Manage presets…" entry | A |
 | "Set in Advanced mode and still applied" note | S |
 | Target switch, task source (Markdown), source and feature branch; "Run on the source branch" toggle | A |
@@ -250,7 +250,7 @@ resets its run allowance. Worca replies to review threads without resolving them
 With the watch off, or waiting for a person, Resolve on a conflicted PR merges the
 base branch in once.
 
-A pull request opened from an Ask Worca card shows the same watch on that card, as its link's tooltip
+A pull request opened from a Chat card shows the same watch on that card, as its link's tooltip
 (`PR #781 · watched`, `PR #781 · watch stopped`, or just `PR #781` while it is not watched). With Shaper on, a fix
 run is a round of the run whose PR it fixes: it shows on that run's card, not as a card of its own (see
 [Iterate in the chat](shape-it-first.md#iterate-in-the-chat-s5)). With Shaper off, every fix run on it, whether Watch PR started it or Resolve
@@ -301,8 +301,8 @@ inside the view.
 |---|---|
 | General: Appearance, Alerts, Interface mode, Getting started, About | S |
 | Runs tab: Budget & cost limits (incl. Resume runs automatically when a usage limit resets) | S |
-| Experimental tab (feature flags) | S — flags are independent of levels (docs/feature-flags.md) |
-| General: root folders; Runs tab: Scheduled runs defaults, Workspaces (scan models), chat notifications; Ask Worca tab (limits, tools, web access, chat history) | A |
+| Labs tab (feature flags) | S — flags are independent of levels (docs/feature-flags.md) |
+| General: root folders; Runs tab: Scheduled runs defaults, Workspaces (scan models), chat notifications; Chat tab (limits, tools, web access, chat history) | A |
 | Runs tab: Actions (keep policy, port range, editor/terminal, cap) | A |
 | Runs tab: Wait for the network | A |
 | Guardrails tab (list, details); Memory tab (files) | A |
@@ -325,7 +325,7 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Providers page: Providers card (Copilot sign-in, account type, concurrency cap, key rows) and its Import-models shortcuts | E |
 | The Copilot notice modal; a card's "needs sign-in" pill and button; the New pipeline caption's "needs sign-in" note | all (rule 1 — they block a run) |
 
-### Statistics, Team metrics, Team policy, Ask Worca, Getting started
+### Statistics, Team metrics, Team policy, Chat, Getting started
 
 | Element | Level |
 |---|---|
@@ -338,7 +338,7 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Pinpoint (#669): select text in a chat answer, a Markdown artifact or the Diff tab for Copy · Explain · Alternatives · Disagree · Note / Comment · Quote / Send to chat; the composer's quote chip; an artifact's pending-changes tray (sent back to the run as one direction while it still takes directions); the diff's open-comments tray (Propose fix run) | all — follows the surface it is on |
 | Ask: the run card's Pause / Resume / Stop, its answer receipt, its result (verdict, changes, top changed files) and the composer's "→ run" direction chip | S — the run card's controls, as on the Running card |
 | Ask: the run card's question (clarify, form, cycle gate, recovery, Auto proposal) | all (rule 1) — its own controls keep the run page's levels (Auto proposal Revise A, tunables E) |
-| Ask: Chat home default pin "Shaper" (gated; help line, Experimental badge; can be unpinned, see [Chat home](chat-home.md)) | S |
+| Ask: Chat home default pin "Shaper" (gated; help line, Labs badge; can be unpinned, see [Chat home](chat-home.md)) | S |
 | Ask: run card, perspective chips and the Shaper nudge (open decisions, Run as is / Shaper with estimates) | S |
 | Ask: Shaper proposal card — title + label, clamped brief, Project, Base branch, Perspectives, What happens, Advanced (collapsed; its fields keep their own levels), Start planning / Not now / Open in New run | S |
 | Ask: the run card's question, "Use defaults" / "Answer" (shaping runs) | all (rule 1) |
@@ -359,10 +359,11 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Ask: a classified failure's human notice (what happened and where the remedy lives) | all — recovery instructions are never hidden (rule 1); Simple gets no Models page navigation, the copy names the mode instead |
 | Ask: a classified failure's raw-detail expander ("Details") | E |
 | Ask: proposal cards themselves | all (rule 4) |
+| Ask: files card (show_files) — image tiles, file rows, viewer | S — an answer is never hidden (rule 4) |
 | Ask: the context ring and its popover's window fill and topics | S |
 | Ask: model picker, scope, cost meter, tool rows, branches, guardrails, "Open in New run" | A |
 | Ask: the chevron on a reply's activity line (`Done · 7.4s · …`) | A when it opens tool rows, E when it opens only sub-agents; the line itself shows at every level |
-| Ask: per-agent lane, the context popover's Agents and Worktrees sections, sub-agent logs | E — a run card carrying Ask Worca's per-agent picks shows its lane at every mode (the picks apply at Start) |
+| Ask: per-agent lane, the context popover's Agents and Worktrees sections, sub-agent logs | E — a run card carrying Chat's per-agent picks shows its lane at every mode (the picks apply at Start) |
 | Chat home: heading, composer, the New run / Build workflow / Track a run / Write a script / Clone a repo tiles, the one pinned-workflow slot (and More › Pinned), More (Step away), the tabs (Needs you, Running, Recent chats, Plans while Shaper is on, Workflows) and their run tiles, the Workflows and Away mode promos | S |
 | Chat home: the Plans tab (Shaper, gated): shaped plans newest first with their state, and each sliced feature's card | S |
 | Chat home: the Schedule a run and Explain a diff tiles; More › New workspace, Remember something, Find tasks; the Schedules promo | A — with the page or surface that owns each feature |

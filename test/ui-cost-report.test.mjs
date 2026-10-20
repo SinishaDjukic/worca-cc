@@ -32,16 +32,16 @@ const rowLabels = (doc) => [...doc.querySelectorAll('.cr-table tbody tr')].map((
 
 test('expanding a table row inserts its second-level rows right under it; collapsing removes them', () => {
   const { doc } = mount({ state: { by: 'tag:client', thenBy: 'tag:project' } });
-  assert.deepEqual(rowLabels(doc), ['acme', 'globex', 'Unallocated', 'Ask Worca']);
+  assert.deepEqual(rowLabels(doc), ['acme', 'globex', 'Unallocated', 'Chat']);
   const exp = doc.querySelector('tr[data-path="v:acme"] .cr-expand');
   assert.equal(exp.getAttribute('aria-expanded'), 'false');
   exp.click();
-  assert.deepEqual(rowLabels(doc), ['acme', 'web-app', 'api', 'globex', 'Unallocated', 'Ask Worca']);
+  assert.deepEqual(rowLabels(doc), ['acme', 'web-app', 'api', 'globex', 'Unallocated', 'Chat']);
   assert.ok(doc.querySelector('tr[data-path="v:acme/v:web-app"]').classList.contains('cr-row-child'));
   assert.equal(doc.querySelector('tr[data-path="v:acme"] .cr-expand').getAttribute('aria-expanded'), 'true');
   assert.equal(doc.activeElement, doc.querySelector('tr[data-path="v:acme"] .cr-expand'), 'focus stays on the toggle');
   doc.querySelector('tr[data-path="v:acme"] .cr-expand').click();
-  assert.deepEqual(rowLabels(doc), ['acme', 'globex', 'Unallocated', 'Ask Worca']);
+  assert.deepEqual(rowLabels(doc), ['acme', 'globex', 'Unallocated', 'Chat']);
 });
 
 test('KPIs: 5 tiles, delta vs previous, Allocated share; Saved red when negative', () => {

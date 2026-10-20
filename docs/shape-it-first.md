@@ -4,7 +4,7 @@ Plan a task with Worca before it builds, in Chat, and cut a large one into slice
 Nothing here changes a run that does not ask for it: a run without `shape` in its
 request behaves exactly as before.
 
-> **Experimental.** Shaper is behind a switch until the feature flag ships.
+> **Labs.** Shaper is behind a switch until the feature flag ships.
 > See [Turning it on](#turning-it-on).
 
 ## What it is
@@ -21,7 +21,7 @@ review later checks the code against the checklists the plan ended with.
 ## Turning it on
 
 Shaper is an experimental feature, off by default. Turn on **Shaper** in
-Settings › Experimental (the `shapeFirst` feature flag, see [Feature flags](feature-flags.md)),
+Settings › Labs (the `shapeFirst` feature flag, see [Feature flags](feature-flags.md)),
 or start Worca with `WORCA_FLAGS=shapeFirst`. It takes effect at once, without a restart.
 While it is off, everything below is hidden or refused: the **Plan it
 with me** tile, the nudge on a run card, the **Plans** tab, the `shape` field on
@@ -39,7 +39,7 @@ chips, **Save to plans/** and **Open in New run**.
 
 - **Shaper.** The default pin on the Chat home; it can be unpinned (see
   [Chat home](chat-home.md)). Describe the task; Worca proposes a shaped run on a card.
-- **The nudge.** When Ask Worca judges a task to have open decisions, the run card
+- **The nudge.** When Chat judges a task to have open decisions, the run card
   offers **Shaper** next to **Run as is**, with an estimate of each.
 - **New run.** The New run page links to the same flow.
 
@@ -272,17 +272,17 @@ lists it under **From the chat**. "Save for later" stores an `idea` note: it is 
 checkpoint` on the feature card, and on the next Plan step card) but not fed to the Planner. A note made when no
 run is left goes to the next run added to the feature.
 
-**Ask Worca and the Route card.** Every message in a chat goes to Ask Worca, as in any other chat: worca never
-reroutes it. In a chat that follows a run or a feature, with Shaper on, Ask Worca sees the run's state and PR, or the
+**Chat and the Route card.** Every message in a chat goes to Chat, as in any other chat: worca never
+reroutes it. In a chat that follows a run or a feature, with Shaper on, Chat sees the run's state and PR, or the
 feature's runs, its next run and its open step, and it has two tools it calls when your message asks for a change:
 - **propose_changes** posts the Changes card (where it lands follows the table above). It fits a finished plain run
   or a finished feature.
 - **route_message** posts a **Where does this go?** card (chip `Route`) while the feature has runs to go: Add to the
   feature (into the next run's plan, or as an extra run), Own run now (from the base, its own PR), or Save for later.
-  The preselected choice and its one-line reason are Ask Worca's guess; you can pick another.
+  The preselected choice and its one-line reason are Chat's guess; you can pick another.
 
 worca refuses a call that does not fit the chat (the wrong tool for the feature's state, a run that is still going,
-an open step), and Ask Worca answers in words instead. A Plan, Split, Clarify or Gate step is answered on its step
+an open step), and Chat answers in words instead. A Plan, Split, Clarify or Gate step is answered on its step
 card only, never from a chat message.
 
 **Base merge before the next run.** When `dev` (the feature's base) moved while a run was building, run 3 merges it

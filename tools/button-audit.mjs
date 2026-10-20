@@ -14,7 +14,7 @@ export const BUTTON_SPEC = Object.freeze({
     '.info-tip', '.act-tile', '.ob-door', '.seg-btn', '.btn-split-menu button', '.rd-tab', '.hd-tab', '.pd-tab', '.tp-tab', '.md-tab', '.af-tab',
     '.wfl-tab', '.chat-home-tab', '.hd-cmt-tab', 'button.rd-srow', 'button.tl-tile', 'button.af-gal-card',
     'button.pd-ov-card', 'button.wd-member', 'button.ask-activity-head', 'button.act-srow-name', 'button.runs-sec-head',
-    'button.gp-row', 'button.agent-row-head', 'button.hd-tree-file', 'button.hd-tree-dir', 'button.chat-home-act',
+    'button.gp-row', 'button.agent-row-head', 'button.hd-tree-file', 'button.hd-tree-dir', 'button.ask-filescard-thumb', 'button.ask-filescard-name', 'button.chat-home-act',
     'button.chat-home-wf', 'button.chat-home-chat', 'button.chat-home-plan-open', 'button.release-row-add', 'button.release-row-edit',
     'button.wfl-folder', 'button.mcp-setrow', 'button.mv-sec-toggle', 'button.proj-open', 'button.xtoggle',
     '.mv-filter', '.mv-cp-terms-pill', '.cost-bd-btn', '.linkish', '.hd-dl-more-btn', '.plan-fold', '.plan-persp-edit', '.qopt', '.afb-main',

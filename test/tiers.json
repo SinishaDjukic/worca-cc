@@ -8,7 +8,7 @@
     "test/wsmap-order-overrides.test.mjs", "test/ask-workspace-card.test.mjs", "test/ask-worktrees.test.mjs",
     "test/workspace-map-api.test.mjs", "test/workspace-size.test.mjs", "test/workspace-scan-finalize-map.test.mjs",
     "test/git-sync.test.mjs", "test/metrics-sync.test.mjs", "test/metrics-prune.test.mjs", "test/policy-sync.test.mjs",
-    "test/sync-api.test.mjs", "test/branches-api-fresh.test.mjs",
+    "test/sync-api.test.mjs", "test/branches-api-fresh.test.mjs", "test/marketplace-publish-flow.test.mjs",
     "test/cli-interactive.test.mjs", "test/cli-schedule-wait.test.mjs", "test/cli-auto.test.mjs", "test/cli-resume.test.mjs",
     "test/wsmap-detectors-p3-registry.test.mjs", "test/wsmap-detectors-p4-registry.test.mjs",
     "test/wsmap-http-client-shapes-slow.test.mjs", "test/wsmap-graphql-client-copy-slow.test.mjs"

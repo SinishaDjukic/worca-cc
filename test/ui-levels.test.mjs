@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { checkRows } from './helpers/rows.mjs';
 import { paintRunStatus } from '../ui/public/run-status-card.mjs';
+import { backdropClick, dragOut } from './helpers/popups.mjs';
 
 import {
   UI_LEVELS, LEVEL_INFO, normalizeLevel, levelShows, levelAtLeast, currentLevel, tagLevel, keepVisible,
@@ -64,11 +65,11 @@ test('every nav item, Settings tab and card, and detail tab declares an explicit
         assert.match(c.dataset.minLevel || '', LEVEL_RE, `Settings card "${name}" has no data-min-level`);
       }
     } },
-    { name: 'presets: the Settings tab and card are Advanced; New run\'s picker, ⋯ and Save as preset stay ungated', run: () => {
+    { name: 'presets: the Settings tab and card are Advanced; New run\'s Preset button and its ✕ stay ungated', run: () => {
       const doc = shell();
       assert.equal(doc.querySelector('#settings-tabs [data-tab="presets"]').dataset.minLevel, 'advanced');
       assert.equal(doc.getElementById('presets-settings-card').dataset.minLevel, 'advanced');
-      for (const id of ['preset-row', 'presetSelect', 'preset-more', 'preset-save']) {
+      for (const id of ['preset-row', 'preset-btn', 'preset-clear']) {
         assert.equal(doc.getElementById(id).closest('[data-min-level="advanced"], [data-min-level="expert"]'), null, `#${id} is Simple`);
       }
       // The History page's Save as preset lives in #hist-detail-tpl: check inside the template and the template's own ancestors.
@@ -214,6 +215,11 @@ test('mode dialog: three radio cards, a click applies and saves, a failed save r
       assert.ok(modal.classList.contains('hidden'), 'Done closes');
       // jsdom lays nothing out (offsetParent is null), so the opener reads as gone: the fallback is the account corner.
       assert.equal(doc.activeElement, doc.getElementById('side-acct'), 'focus falls back to the account corner');
+      doc.getElementById('modeSettingsChange').click();
+      dragOut(dom.window, doc.querySelector('#mode-cards [data-level-choice]'), modal);
+      assert.ok(!modal.classList.contains('hidden'), 'a press on a card released on the backdrop is not an outside click');
+      backdropClick(dom.window, modal);
+      assert.ok(modal.classList.contains('hidden'), 'a backdrop click closes it: each card applied at once, nothing is pending');
     } },
     { name: 'a [data-mode-set] control (banner, hidden-settings note) sets the mode without opening the dialog', run: async () => {
       const doc = new JSDOM(html).window.document;

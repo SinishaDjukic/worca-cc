@@ -22,6 +22,12 @@ export const ASK_LIMITS = Object.freeze({
     extensions: TEXT_EXTENSIONS,           // attachment-kind.mjs owns both tables
     binaryExtensions: BINARY_EXTENSIONS,
   }),
+  showFiles: Object.freeze({                 // show_files (docs/show-files.md): the chat files card
+    maxFiles: 12,                            // sources per call = files per card
+    cardBytes: 100 * 1024 * 1024,            // snapshot bytes per card
+    threadBytes: 500 * 1024 * 1024,          // ALL of a thread's attachment bytes (uploads included) before show_files refuses
+    textBytes: 1024 * 1024,                  // a text kind (and SVG) is sniffed and redacted whole: past this it is refused
+  }),
   contextHeaderMaxChars: 1024,             // [worca context] block
   inlineAttachmentsMaxBytes: 24 * 1024,    // inlined into the turn prompt
   restoredMaxChars: 30_000,                // DB-replay fallback prompt

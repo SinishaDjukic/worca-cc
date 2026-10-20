@@ -1,5 +1,5 @@
 // src/core/run-groups.mjs — groups for the Runs list (runs redesign §2, §3.3): Shaper features (their slices, #770)
-// and user-created groups, each with its ad-hoc members (run_group_members, schema v64). Plain Run-after chains are not
+// and user-created groups, each with its ad-hoc members (run_group_members, schema v65). Plain Run-after chains are not
 // here: they come from scheduler.mjs runChains. Synchronous; tx() from db.mjs (never nested).
 import { randomUUID } from 'node:crypto';
 import { getDb, tx } from './db.mjs';

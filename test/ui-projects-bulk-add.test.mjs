@@ -10,6 +10,7 @@ import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { lastToast, cardAlertOf } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { backdropClick, pressEscape, discardPrompt, discardChanges } from './helpers/popups.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -138,7 +139,7 @@ test('partial success: added rows lock, skipped rows show the reason, a rename +
   assert.deepEqual(lastToast(doc), { tone: 'ok', title: 'Added 2 projects.', detail: '', action: '' });
 });
 
-test('unticking every row disables Add; Escape closes without a request', async () => {
+test('unticking every row disables Add; Escape then asks first (unticked rows are a change) and Discard closes without a request', async () => {
   let posted = 0;
   const { window } = await boot({
     fetchHandler: (u) => {
@@ -152,10 +153,36 @@ test('unticking every row disables Add; Escape closes without a request', async 
   await addAndChoose(window);
   for (const cb of doc.querySelectorAll('#proj-bulk-list .pb-include')) { cb.checked = false; cb.dispatchEvent(new window.Event('change', { bubbles: true })); }
   assert.equal(doc.querySelector('#proj-bulk-save').disabled, true);
-  doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  pressEscape(window);
+  assert.ok(discardPrompt(doc), 'asks first');
+  assert.equal(doc.querySelector('#project-bulk-modal').classList.contains('hidden'), false);
+  discardChanges(doc);
+  await tick();
   assert.ok(doc.querySelector('#project-bulk-modal').classList.contains('hidden'));
   assert.equal(posted, 0);
   assert.equal(doc.querySelector('#projects-msg').textContent, '', 'nothing added, nothing skipped -> no message');
+});
+
+test('Add projects: a backdrop click never closes it; the footer Cancel next to Add closes at once, edits and all', async () => {
+  const { window } = await boot({
+    fetchHandler: (u) => (u.includes('/api/fs/pick-folder') ? json({ status: 'picked', path: '/a/one', paths: ['/a/one', '/a/two'] }) : null),
+  });
+  await goProjects(window);
+  const doc = window.document;
+  await addAndChoose(window);
+  const modal = doc.querySelector('#project-bulk-modal');
+  const name = doc.querySelector('#proj-bulk-list .pb-name');
+  name.value = 'renamed';
+  name.dispatchEvent(new window.Event('input', { bubbles: true }));
+  backdropClick(window, modal);
+  assert.equal(modal.classList.contains('hidden'), false, 'never on a backdrop click');
+  assert.equal(doc.querySelector('#proj-bulk-list .pb-name').value, 'renamed');
+  assert.deepEqual([...modal.querySelectorAll('.confirm-actions button')].map((b) => [b.id, b.textContent]),
+    [['proj-bulk-close', 'Cancel'], ['proj-bulk-save', 'Add 2 projects']]);
+  assert.equal(modal.querySelector('.card-head button'), null, 'no header Close any more');
+  click(window, doc.querySelector('#proj-bulk-close'));
+  assert.equal(modal.classList.contains('hidden'), true);
+  assert.equal(discardPrompt(doc), null, 'Cancel never asks');
 });
 
 test('one native pick fills the single Add dialog; several picks from Choose folder… open the review list', async () => {
@@ -196,4 +223,39 @@ test('project names from the folder go in as text, never HTML', async () => {
   await addAndChoose(window);
   assert.equal(doc.querySelector('#proj-bulk-list img'), null);
   assert.equal(doc.querySelector('#proj-bulk-list .pb-path').textContent, '/p/<img src=x>');
+});
+
+test('while Add is posting, Cancel is disabled and Escape does nothing; a refusal hands the way out back', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const { window } = await boot({
+    fetchHandler: (u) => {
+      if (u.includes('/api/fs/pick-folder')) return json({ status: 'picked', path: '/a/one', paths: ['/a/one', '/a/two'] });
+      if (u.endsWith('/api/projects/bulk')) return gate;
+      return null;
+    },
+  });
+  await goProjects(window);
+  const doc = window.document;
+  await addAndChoose(window);
+  const modal = doc.querySelector('#project-bulk-modal');
+  const name = doc.querySelector('#proj-bulk-list .pb-name');
+  name.value = 'renamed';                                      // a change: Escape would ask, if it answered at all
+  name.dispatchEvent(new window.Event('input', { bubbles: true }));
+  click(window, doc.querySelector('#proj-bulk-save'));
+  await tick();
+  assert.equal(doc.querySelector('#proj-bulk-close').disabled, true, 'no way out while the request is out');
+  click(window, doc.querySelector('#proj-bulk-close'));        // a synthetic click reaches a disabled button: cancel() must hold too
+  pressEscape(window);
+  assert.equal(discardPrompt(doc), null, 'not even the question');
+  assert.equal(modal.classList.contains('hidden'), false);
+  release(await json({ error: 'disk full' }, 500));
+  await tick(); await tick();
+  assert.equal(modal.classList.contains('hidden'), false, 'a refusal keeps the dialog');
+  assert.equal(doc.querySelector('#proj-bulk-close').disabled, false, 'Cancel is back');
+  pressEscape(window);
+  assert.ok(discardPrompt(doc), 'and Escape answers again: the rename asks first');
+  discardChanges(doc);
+  await tick();
+  assert.equal(modal.classList.contains('hidden'), true);
 });

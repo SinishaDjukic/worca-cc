@@ -56,7 +56,7 @@ import { codexMemoryLine } from './prompt.mjs';
 import { resolveSetting } from '../settings-cascade.mjs';
 import { mentionedRefs } from './contexts.mjs';
 import {
-  newAskId, finishMessage, setMessageBlocks, addThreadTotals, addThreadContexts, updateThread, setThreadTitle, listAttachments, ASK_ID_RE,
+  newAskId, finishMessage, setMessageBlocks, addThreadTotals, addThreadContexts, updateThread, setThreadTitle, listAttachments, getAttachment, ASK_ID_RE,
 } from './store.mjs';
 import { budgetStatus, recordAskCostDelta } from '../cost-budget.mjs';
 import { generateSuggestion, suggestionModel, claimSuggestion, releaseSuggestion, cancelSuggestion, SUGGESTION_TIMEOUT_MS } from './suggest.mjs';
@@ -77,7 +77,7 @@ const ERROR_DETAIL_MAX = 2000;
 // Ask Worca on Codex (cascading-settings-design.md §4.6, D13, D14).
 export const CODEX_NOT_READY_CODE = 'codex-not-ready';
 export const CODEX_SETUP_DOCS_URL = 'https://github.com/SinishaDjukic/worca-cc/blob/dev/docs/models.md#codex';
-export const CODEX_NO_LOCKDOWN_MESSAGE = "Ask on Codex is unavailable: this codex version cannot switch off its image viewer (which reads any image on disk) or its sub-agents, and a chat must stay inside its own files. Use a Claude chat.";
+export const CODEX_NO_LOCKDOWN_MESSAGE = "Chat on Codex is unavailable: this codex version cannot switch off its image viewer (which reads any image on disk) or its sub-agents, and a chat must stay inside its own files. Use a Claude chat.";
 export const CODEX_MCP_NOTE = 'Your MCP servers are available in Claude chats';
 export const CODEX_SHELL_TRIPPED_MESSAGE = 'Codex tried to run a shell command although its shell was switched off — worca stopped the turn.';
 /** D13 fail-closed beyond the shell: a Codex chat may call worca's own tools (mcp__…) only. */
@@ -136,7 +136,7 @@ class AskTurn extends EventEmitter {
   } = {}) {
     super();
     // D5 backstop: an engine Ask does not run on (Cursor: CURSOR_ASK_LOCKDOWN = null) is refused outright.
-    if (engine && !ASK_ENGINES.includes(engine)) throw new Error(`Ask on ${engineLabel(engine)} is unavailable`);
+    if (engine && !ASK_ENGINES.includes(engine)) throw new Error(`Chat on ${engineLabel(engine)} is unavailable`);
     this.threadId = threadId;
     // The chat's engine (D12) — fixed by the server from the chat's model; a Claude turn never reads the fields below.
     this.engine = engine === 'codex' ? 'codex' : 'claude';
@@ -212,7 +212,7 @@ class AskTurn extends EventEmitter {
       materializeSkillMount: deps.materializeSkillMount ?? materializeSkillMount,
       removeSkillMount: deps.removeSkillMount ?? ((base) => rm(base, { recursive: true, force: true })),
       store: {
-        finishMessage, setMessageBlocks, addThreadTotals, addThreadContexts, updateThread, setThreadTitle, listAttachments,
+        finishMessage, setMessageBlocks, addThreadTotals, addThreadContexts, updateThread, setThreadTitle, listAttachments, getAttachment,
         ...(deps.store || {}),
       },
       // Claude Code's sign-in for propose_run's per-agent picks, asked once per turn (proposal.mjs proposalClaudeAuth: a
@@ -381,6 +381,37 @@ class AskTurn extends EventEmitter {
       folder: r.folder || null, cwd: r.cwd || null, warning: r.warning || null };
     // textAt: the card sits in the answer where the command ran, not below it.
     const block = this.reducer.addBlock({ kind: 'card', id: this.deps.newAskId('card'), state: 'command', textAt: this.reducer.textLength(), card });
+    if (block) this._persistBlocks();
+  }
+
+  /** show_files RESULT → a display-only files card, inline where the answer stands (textAt). The card is rebuilt from
+   *  THIS thread's attachment rows: an id the store does not hold for this chat is dropped, and name/mime/bytes come
+   *  from the row, never from the tool's echo. Only the sniffed kind, the optional image size, the caption and the
+   *  "not shown" notes are taken from the result. */
+  _onShowFiles(text, isError) {
+    if (isError) return;
+    let r = null;
+    try { r = JSON.parse(text); } catch { return; }
+    if (!r || r.ok !== true || !Array.isArray(r.items)) return;
+    const dim = (n) => (Number.isInteger(n) && n > 0 && n <= 100_000 ? n : null);
+    const items = [];
+    for (const it of r.items.slice(0, ASK_LIMITS.showFiles.maxFiles)) {
+      const att = it && typeof it.attId === 'string' ? this.deps.store.getAttachment(this.threadId, it.attId) : null;
+      if (!att) continue;
+      const w = dim(it.width); const h = dim(it.height);
+      // typeof first: RegExp#test(undefined) tests the string "undefined", which would pass.
+      items.push({ attId: att.id, name: att.name, kind: typeof it.kind === 'string' && /^[a-z][a-z0-9-]{0,31}$/.test(it.kind) ? it.kind : 'file',
+        mime: att.mime || null, bytes: att.bytes, ...(w && h ? { width: w, height: h } : {}),
+        ...(att.hasSource ? { source: true } : {}) });   // from the row: Show in folder opens the file this was copied from
+    }
+    if (!items.length) return;
+    const caption = typeof r.caption === 'string' ? r.caption.slice(0, 300) : '';
+    const skipped = (Array.isArray(r.refused) ? r.refused : []).slice(0, 10)
+      .map((x) => ({ name: String(x?.source || '').split(/[\\/]/).pop().slice(0, 120), reason: String(x?.reason || '').slice(0, 200) }))
+      .filter((x) => x.name || x.reason);
+    const title = caption || (items.length === 1 ? items[0].name : `${items.length} files`);
+    const card = { type: 'files', title, items, ...(caption ? { caption } : {}), ...(skipped.length ? { skipped } : {}) };
+    const block = this.reducer.addBlock({ kind: 'card', id: this.deps.newAskId('card'), state: 'shown', textAt: this.reducer.textLength(), card });
     if (block) this._persistBlocks();
   }
 
@@ -805,6 +836,7 @@ class AskTurn extends EventEmitter {
       onComposerResult: ({ name, text, isError }) => this._onComposerResult(name, text, isError),
       onTrackRun: this.composer ? null : ({ input, isError }) => this._onTrackRun(input, isError),
       onRunCommand: ({ text, isError }) => this._onRunCommand(text, isError),
+      onShowFiles: ({ text, isError }) => this._onShowFiles(text, isError),
       onAwaySwitch: this.composer ? null : ({ text, isError }) => this._onAwaySwitch(text, isError),
       onChatAction: this.composer ? null : ({ name, text, isError, sub }) => this._onChatAction(name, text, isError, sub === true),
       onMetricsProposal: ({ input, text, isError }) => this._onMetricsProposal(input, text, isError),
@@ -1073,8 +1105,8 @@ class AskTurn extends EventEmitter {
 
   _limitNotice(reason, limitsNow) {
     const text = reason === 'max_budget'
-      ? `Stopped: reached the $${limitsNow.maxBudgetUsd} per-turn cap (Settings → Ask Worca)`
-      : `Stopped: reached the ${limitsNow.maxTurns}-turn limit (Settings → Ask Worca)`;
+      ? `Stopped: reached the $${limitsNow.maxBudgetUsd} per-turn cap (Settings → Chat)`
+      : `Stopped: reached the ${limitsNow.maxTurns}-turn limit (Settings → Chat)`;
     this.reducer.addBlock({ kind: 'notice', text });
     this._persistBlocks();
   }
@@ -1133,7 +1165,7 @@ class AskTurn extends EventEmitter {
     const d = this.deps;
     if (!d.codexLockdown()) return this._complete({ kind: 'error', message: CODEX_NO_LOCKDOWN_MESSAGE });
     if (limitsNow.maxBudgetUsd != null && !d.codexModelPriced(this.model)) {
-      return this._complete({ kind: 'error', message: `A per-turn cost cap is set, and ${this.model} has no known price on Codex, so worca cannot keep this turn under it. Pick a priced Codex model, or turn the cap off (Settings › Ask Worca).` });
+      return this._complete({ kind: 'error', message: `A per-turn cost cap is set, and ${this.model} has no known price on Codex, so worca cannot keep this turn under it. Pick a priced Codex model, or turn the cap off (Settings › Chat).` });
     }
     if (this.mock) return null;
     const refuse = (refusal) => {

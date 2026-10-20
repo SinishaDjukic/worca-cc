@@ -2,7 +2,7 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { notify, withButton, fieldError, clearFieldErrors, cardAlert, trackDirty, splitMessage, TOAST_MAX }
+import { notify, withButton, fieldError, clearFieldErrors, cardAlert, trackDirty, splitMessage, TOAST_MAX, controlSnapshot }
   from '../ui/public/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -283,4 +283,12 @@ test('trackDirty + withButton: Save disabled until a change, reverting disables,
 test('splitMessage: short head becomes the title', () => {
   assert.deepEqual(splitMessage('Install failed: 401 bad token'), { title: 'Install failed', detail: '401 bad token' });
   assert.deepEqual(splitMessage('Deleted.'), { title: 'Deleted.', detail: '' });
+});
+
+test('controlSnapshot: every control value or check, minus [data-dirty-ignore], buttons and file inputs', () => {
+  const { document: doc } = fresh();
+  doc.body.insertAdjacentHTML('beforeend', '<div id="c"><input value="a"><input type="checkbox" checked>'
+    + '<select><option>x</option></select><textarea>t</textarea><div data-dirty-ignore><input value="skip"></div>'
+    + '<input type="button" value="b"><input type="file"></div>');
+  assert.equal(controlSnapshot(doc.getElementById('c')), JSON.stringify(['a', true, 'x', 't']));
 });

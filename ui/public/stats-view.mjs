@@ -223,7 +223,7 @@ export function renderKpiRow(model, { doc = globalThis.document, fmt = DEFAULT_F
   // the range, so cost/session is window spend over that count.
   const ask = totals.ask || { spendUsd: 0, sessions: 0, turns: 0 };
   row.appendChild(tile(doc, {
-    iconD: ICONS.ask, label: 'Ask Worca',
+    iconD: ICONS.ask, label: 'Chat',
     chip: prev ? deltaChip(doc, ask.spendUsd, prev.ask?.spendUsd, range) : null,
     valueNodes: [doc.createTextNode(fmt.usd(ask.spendUsd))],
     sub: ask.sessions > 0

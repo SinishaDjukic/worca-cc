@@ -91,6 +91,6 @@ test('renderBrokenCard: below Advanced the scope hint names the ⋯ menu and Adv
   assert.equal(BROKEN_SCOPE_HINT, 'Edit the preset\'s scope in Settings › Presets');
   const simple = renderBrokenCard(document, [item], { canEditScope: false });
   assert.equal(simple.querySelector('.preset-broken-row .muted').textContent, BROKEN_SCOPE_HINT_SIMPLE);
-  assert.equal(BROKEN_SCOPE_HINT_SIMPLE, 'Delete the preset from the ⋯ menu beside Preset, or switch to Advanced to edit its scope');
+  assert.equal(BROKEN_SCOPE_HINT_SIMPLE, 'Delete the preset from the Preset menu, or switch to Advanced to edit its scope');
   assert.doesNotMatch(simple.textContent, /Settings › Presets/);
 });

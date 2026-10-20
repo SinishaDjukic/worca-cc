@@ -846,7 +846,7 @@ export class RunHarness extends EventEmitter {
     // instead (review of PR #376). WORCA_MOCK counts: the runner honours the env too.
     if (this.claude.permissionMode === 'dontAsk'
       && (this.claude.mock || /^(1|true|yes|on)$/i.test(String(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK ?? '')))) {
-      throw new Error('permissionMode "dontAsk" is reserved for the Ask Worca runner in mock mode — a mock pipeline role spawned with it would take the ask mock and write no artifact');
+      throw new Error('permissionMode "dontAsk" is reserved for the Chat runner in mock mode — a mock pipeline role spawned with it would take the ask mock and write no artifact');
     }
     this.agentsDir = this.opts.agentsDir || DEFAULT_AGENTS_DIR;
     this.auto = !!this.opts.auto;

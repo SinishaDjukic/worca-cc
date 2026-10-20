@@ -1,4 +1,4 @@
-// src/core/ask/proposal-preset.mjs — propose_run's presetId (docs/run-presets.md "Ask Worca", #712 slice 3).
+// src/core/ask/proposal-preset.mjs — propose_run's presetId (docs/run-presets.md "Chat", #712 slice 3).
 // The preset's picks fill what the model did not pass; the validator then checks the merged input like any proposal,
 // so a gone guardrail set, workflow or model is named by the usual errors. "As is" (D9): a preset that runs on
 // Permissive — or names no guardrails, which a preset start reads as Permissive (run-presets-check.mjs) — never

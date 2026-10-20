@@ -36,7 +36,7 @@ test('by client then project: top 5 + Other + Unallocated; spend sums equal the 
 
 test('Ask Worca is a last row and is part of the total; allocated share leaves it and Unallocated out', () => {
   const m = allocate(RUNS, { by: 'tag:client', rate: 35, askUsd: 1.2 });
-  assert.equal(m.rows.at(-1).label, 'Ask Worca');
+  assert.equal(m.rows.at(-1).label, 'Chat');
   assert.equal(sum(m.rows), m.total.units);
   const allocated = sum(m.rows.filter((r) => r.kind === 'value' || r.kind === 'other'));
   assert.equal(m.allocatedShare, allocated / m.total.units);

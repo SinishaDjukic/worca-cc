@@ -708,7 +708,7 @@ test('a resolved card whose ANTHROPIC_MODEL equals the catalog id logs its routi
   assert.equal(warnings.filter((w) => w.includes('wire model "')).length, 0, 'plain wire-model line does NOT fire when ids match');
 });
 
-test('a model env with no ANTHROPIC_* routing key (the Ask Worca CLAUDE_CODE_* knob) logs nothing', POSIX_SHIM, async () => {
+test('a model env with no ANTHROPIC_* routing key (the Chat CLAUDE_CODE_* knob) logs nothing', POSIX_SHIM, async () => {
   const realWarn = console.warn; const warnings = [];
   console.warn = (...a) => warnings.push(a.join(' '));
   const prevDbg = process.env.WORCA_DEBUG_SPAWN; delete process.env.WORCA_DEBUG_SPAWN;

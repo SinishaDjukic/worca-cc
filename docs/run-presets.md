@@ -4,7 +4,7 @@ A run preset is a named New run setup. Save the choices you make for a kind of r
 pick the preset, type only the prompt and press **Start run**. The run gets the preset's choices
 for that run only: the project's saved settings never change.
 
-Run presets are in beta and on by default. Turn them off in **Settings › Experimental ›
+Run presets are in beta and on by default. Turn them off in **Settings › Labs ›
 Run presets** (flag `runPresets`, see [Feature flags](feature-flags.md)), or with
 `worca flags off runPresets`.
 
@@ -34,20 +34,22 @@ the project's settings never changes what the preset runs.
 
 ## Using a preset
 
-Pick it in the **Preset** menu at the top of New run. The form fills in, and a chip says
-*Preset — changes here apply to this run only*. While a preset is applied:
+Pick it from the **Preset ▾** button at the top right of New run. The form fills in, the button
+shows the preset's name (filled), and a muted line beside it says what the preset sets and that it
+*applies to this run only*. While a preset is applied:
 
 - changing an agent's model, a loop budget, human in the loop or the workflow changes the preset
-  for this run only, and nothing is written to the project's settings. The chip then reads
-  *· modified*, with **Update preset** (saves the change into the preset) and **Save as new…**;
+  for this run only, and nothing is written to the project's settings. A **Modified** chip then
+  shows, with **Update preset** (saves the change into the preset); the menu offers **Save as new…**;
 - in Simple mode, the note above Start run names what the preset applies that Simple mode hides:
   its agent picks, loop budgets, Away mark, Sets opt-outs and engine (by its label, for example
   *Codex engine*);
-- the **⋯** button beside the menu has **Rename** and **Delete** for the applied preset, with the
-  same dialogs as Settings › Presets. It is shown at every interface level, and hidden with **No preset**;
-- choosing **No preset** leaves preset mode, and the form shows the project's settings again.
+- the menu ticks the applied preset and adds **Rename…** and **Delete…** for it, with the same
+  dialogs as Settings › Presets, at every interface level;
+- the **✕** beside the button leaves preset mode, and the form shows the project's settings again.
 
-**Save current setup…** saves what the form holds now. The dialog asks for a name (1–80
+**Save as preset** (the last item of the menu; **Manage presets…** follows it from Advanced) saves
+what the form holds now. The dialog asks for a name (1–80
 characters, unique among your presets whatever the case) and a scope.
 
 ## When a preset needs attention
@@ -108,9 +110,9 @@ fires. Edit the preset, and the next run uses the new setup. The prompt, title, 
 schedule stay the schedule's own. For an *Any project* preset, the schedule also keeps its own
 source branch.
 
-A field you changed in the form before scheduling (or a choice an Ask Worca card made) stays as
+A field you changed in the form before scheduling (or a choice a Chat card made) stays as
 you set it: only the fields you left as the preset had them follow later edits to the preset.
-A schedule made from an Ask Worca card never starts on *Permissive* guardrails: if the preset
+A schedule made from a Chat card never starts on *Permissive* guardrails: if the preset
 resolves to Permissive when it fires, the run ends *failed* and says so.
 
 The Schedules page names the preset in each row (`preset Quick fix`), and **Details** has a
@@ -148,17 +150,17 @@ presets and the ones pinned to the project (the current directory, or `--project
 `worca run` works against a local Worca server. A server that asks you to sign in answers with
 its sign-in hint.
 
-## Ask Worca
+## Chat
 
-Ask Worca can propose a run from one of your presets. Its `list_presets` tool lists the presets
+Chat can propose a run from one of your presets. Its `list_presets` tool lists the presets
 that fit the chat's pinned project or workspace (and the *Any project* ones), and `propose_run`
 takes a `presetId`. The card then shows *From preset Quick fix* and the preset's workflow,
-guardrails, engine and agent models. Anything Ask Worca names itself wins over the preset.
+guardrails, engine and agent models. Anything Chat names itself wins over the preset.
 **Start** sends the preset's other picks too (human in the loop, Away mark, opt-outs, loop
 budgets) and the server checks the preset again. Switching the card to another workflow drops the
 preset's agent picks, and the card says so.
 
-A preset on the Permissive guardrail set (or with none) is not proposed as is: Ask Worca must name
+A preset on the Permissive guardrail set (or with none) is not proposed as is: Chat must name
 a stricter guardrail set. A preset's tags reach the card only while Run tags are on, because the
 card sends tags only through its tag row.
 

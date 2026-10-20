@@ -539,7 +539,7 @@ export async function runCopilotProcess({
   permissionRules, allowedTools, agents, appendSubagentSystemPrompt, scratchBase = join(worcaHome(), 'tmp', 'copilot'),
 } = {}) {
   if (signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
-  if (askLockdown) throw new Error(`${bin}: Ask Worca does not run on Copilot`);
+  if (askLockdown) throw new Error(`${bin}: Chat does not run on Copilot`);
   const secrets = Array.isArray(redactValues) ? redactValues : [];
   const redactor = secrets.length ? createRedactor(secrets) : null;
   if (redactor) { const emit = onEvent; onEvent = (e) => emit(redactor.deep(e)); }

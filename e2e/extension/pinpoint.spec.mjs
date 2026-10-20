@@ -61,7 +61,7 @@ test('Send to chat puts a quote chip in the composer; Use this also appends its 
   await expect(sidebar.locator('.ask-chip-quote .ask-chip-quote-t')).toContainText('token bucket per API key');
 });
 
-test('context menu "Ask Worca about selection" quotes into the sidebar', async ({ context, sw, extensionId, worca, site }) => {
+test('context menu "Ask Chat about selection" quotes into the sidebar', async ({ context, sw, extensionId, worca, site }) => {
   const { page, sidebar } = await pairedSidebar({ context, sw, extensionId, worca, site });
   await sw.evaluate(async (u) => { const [tab] = await chrome.tabs.query({ url: u }); globalThis.__worcaTest.contextMenuClick({ menuItemId: 'worca-ask-selection', selectionText: 'holds at most 100 tokens' }, tab); }, page.url());
   await expect(sidebar.locator('.ask-chip-quote .ask-chip-quote-t')).toHaveText('holds at most 100 tokens');

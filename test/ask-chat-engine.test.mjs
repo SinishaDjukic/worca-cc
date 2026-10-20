@@ -106,5 +106,5 @@ test('Cursor models never reach the Ask catalog, and a hand-made pick of one is 
 });
 
 test('the Ask turn refuses an engine Ask does not run on', () => {
-  assert.throws(() => createAskTurn({ engine: 'cursor' }), /Ask on Cursor is unavailable/);
+  assert.throws(() => createAskTurn({ engine: 'cursor' }), /Chat on Cursor is unavailable/);
 });

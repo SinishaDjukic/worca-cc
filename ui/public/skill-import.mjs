@@ -8,7 +8,7 @@
 
 export const SKILL_CONSENT = 'Worca copies these files into its library. Agents may read them and run the scripts where their guardrails allow.';
 // Honest copy for what no guardrail stops (user decision U2; the hooks line, U1, is the library's own `hooks` finding text).
-export const SKILL_SHELL_NOTE = 'Its inline shell blocks (!`cmd`) run in pipeline runs without guardrail checks; Ask Worca never runs them.';
+export const SKILL_SHELL_NOTE = 'Its inline shell blocks (!`cmd`) run in pipeline runs without guardrail checks; Chat never runs them.';
 export const SKILL_LIMITS_TEXT = 'Limits: 300 files · 1000 links and folders · 1 MB per file · 8 MB total · no .claude-plugin/ inside · the frontmatter name must equal the folder name';
 
 const SOURCES = [['dir', 'Folder'], ['git', 'Git URL'], ['paste', 'Paste'], ['home', 'From your Claude Code skills']];

@@ -45,8 +45,8 @@ test('home vs thread: home hides the transcript and the dock (and New chat), a t
   assert.equal(ruleBody('.chat-page[data-view="thread"] .chat-home'), 'display:none;');
   assert.match(bare, /\.chat-page\[data-view="home"\] \.ask-transcript,\.chat-page\[data-view="home"\] \.chat-dock\{display:none;\}/);
   assert.equal(ruleBody('.chat-page[data-view="home"] .chat-head [data-ask-new-btn]'), 'visibility:hidden;');
-  // #731: half the old 16vh/160px top gap, so the tiles and tabs fit on the first screen at 1440×900.
-  assert.match(ruleBody('.chat-home'), /;padding:clamp\(24px,8vh,80px\) 16px 32px;$/);
+  // #731 halved the old 16vh/160px top gap; the redesign halves it again so the heading sits close under the top bar.
+  assert.match(ruleBody('.chat-home'), /;padding:clamp\(16px,4vh,40px\) 16px 32px;$/);
 });
 
 test('composer popovers ride the composer: upward in the dock, downward on home, never 70% of the composer\'s height', () => {

@@ -10,13 +10,13 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 import {
-  ASK_ID_RE, newAskId, askRoot, attachmentsDir,
+  ASK_ID_RE, newAskId, askRoot, attachmentsDir, askOutDir,
   createThread, getThread, listThreads, updateThread, setThreadTitle, addThreadTotals, addThreadContexts, deleteThread, sweepEmptyThreads,
   countThreads, listThreadIds, countWorktrees, countAttachments,
   appendMessage, getMessage, listMessages, finishMessage, setMessageBlocks, findCard, updateCardBlock, sweepStreamingMessages,
   findPullRequestCards, findFixRunCards,
   addAttachment, listAttachments, getAttachment, readAttachmentText, readAttachmentRaw,
-  attachmentPath,
+  attachmentPath, attachmentSourcePath,
   linkRun, updateRunLink, listRunLinks,
 } from '../src/core/ask/store.mjs';
 
@@ -630,6 +630,26 @@ test('agentMode (#574): on by default; a patch stores false and true (0/1, never
   assert.equal(getDb().prepare('SELECT agent_mode FROM ask_threads WHERE id = ?').get(t.id).agent_mode, 0);
   assert.equal(updateThread(t.id, { agentMode: true }).agentMode, true);
   assert.equal(updateThread(t.id, { title: 'x' }).agentMode, true, 'other patches leave it alone');
+});
+
+test('attachment source (v64): a show_files copy keeps its original path server-side; rows carry only hasSource', () => {
+  const t = createThread({ title: 't' });
+  const copy = addAttachment(t.id, null, { name: 'a.png', kind: 'image', mime: 'image/png', data: Buffer.from('x'), sourcePath: '/w/out/a.png' });
+  const up = addAttachment(t.id, null, { name: 'b.md', text: 'b' });
+  assert.deepEqual([copy.hasSource, up.hasSource], [true, false]);
+  assert.equal(JSON.stringify(listAttachments(t.id)).includes('/w/out'), false, 'the path is never on a row');
+  assert.equal(attachmentSourcePath(t.id, copy.id), '/w/out/a.png');
+  assert.equal(attachmentSourcePath(t.id, up.id), null);
+  assert.equal(attachmentSourcePath(createThread().id, copy.id), null, 'another thread never reads it');
+});
+
+test('askOutDir: under the thread folder, strict thread id; an svg snapshot round-trips through attachmentPath', () => {
+  const t = createThread({ title: 't' });
+  assert.ok(askOutDir(t.id).endsWith(join('ask', t.id, 'out')));
+  assert.throws(() => askOutDir('../x'), /never minted/);
+  const a = addAttachment(t.id, null, { name: 'chart.svg', kind: 'image', mime: 'image/svg+xml', data: Buffer.from('<svg/>') });
+  assert.equal(a.messageId, null);
+  assert.ok(attachmentPath(t.id, a.id).endsWith('.svg'));
 });
 
 test('findPullRequestCards: an applied card by its url or a workspace member url — never another state, never another PR', () => {

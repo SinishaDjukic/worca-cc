@@ -66,13 +66,13 @@ forces it off. There is no decomposer on a workspace in this version — the cla
 told not to apply the large-task modifier, because the workspace implementer already runs
 one sub-agent per plan task (cap 8).
 
-**Designing a workflow for a workspace from Ask Worca.** `propose_workflow` takes
+**Designing a workflow for a workspace from Chat.** `propose_workflow` takes
 `workspaceId` or `projectKey` (at most one; neither ⇒ the pinned scope). The chat's repo
 look checks out up to 8 members detached under a throwaway dir (`auto-look-*` in
 `<worcaHome>/tmp/ask`), and a boot sweep removes looks a crashed chat child left behind
 after one hour.
 
-**Agents, scripts and graphs from Ask Worca.** Ask has the Workflows chat's composer tools minus the canvas:
+**Agents, scripts and graphs from Chat.** Ask has the Workflows chat's composer tools minus the canvas:
 `draft_agent` and `draft_script` put a draft card in the chat (nothing is written until the user presses Save, or saves
 it from the wizard Edit… opens), and `build_workflow` proposes a whole graph — scripts, gates, drafted keys, explicit
 wires — validated and laid out by `src/core/ask/composer-deps.mjs` on a working copy that starts from the empty

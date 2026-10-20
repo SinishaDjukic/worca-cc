@@ -12,6 +12,7 @@ import {
 } from '../ui/public/branch-sync.mjs';
 import { isSafeBranchName } from '../src/core/git-sync.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { backdropClick } from './helpers/popups.mjs';
 
 const block = (over = {}) => ({
   base: 'dev', remote: 'origin', state: 'up-to-date', ahead: 0, behind: 0,
@@ -318,7 +319,9 @@ test('openSyncDialog: rows, commits as text, Escape/scrim close with focus retur
 
       done = openSyncDialog({ sync: b, opener });
       const m2 = w.document.querySelector('.sync-modal');
-      m2.dispatchEvent(new w.Event('click', { bubbles: true }));
+      m2.dispatchEvent(new w.Event('click', { bubbles: true }));            // a release with no press: not an outside click
+      assert.ok(m2.isConnected, 'a selection dragged out of the card does not close it');
+      backdropClick(w, m2);                                                   // press + release on the scrim
       assert.equal(await done, null);
 
       // onSync returns nothing → the current block stays; returns a refused ff → the note explains.

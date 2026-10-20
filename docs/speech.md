@@ -1,6 +1,6 @@
-# Voice mode for Ask Worca
+# Voice mode for Chat
 
-Ask Worca can listen and talk back — hands-free. Out of the box it needs no
+Chat can listen and talk back — hands-free. Out of the box it needs no
 setup: **Whisper** (speech-to-text) and **Kokoro** (text-to-speech) run inside
 your browser, and audio never leaves this computer. If you would rather use
 speech servers **you run** (whisper.cpp, Kokoro-FastAPI, a hosted OpenAI-compatible
@@ -115,7 +115,7 @@ Worca asks for `response_format: "wav"`.
 
 ### Pointing worca at them
 
-Providers › **Speech (Ask Worca voice)** — set **Engine** to *Your server*
+Providers › **Speech (Chat voice)** — set **Engine** to *Your server*
 (the server fields show then; they stay saved when you switch back):
 
 | Field | Speech-to-text | Text-to-speech |

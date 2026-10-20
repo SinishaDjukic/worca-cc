@@ -13,7 +13,7 @@ const preset = (over = {}) => ({ id: 'rp_aaaaaaaaaaaa', name: 'Quick fix', scope
 test('0 presets show the empty state text', () => {
   const { document } = new JSDOM('').window;
   assert.equal(renderPresetsList(document, []).textContent, PRESETS_EMPTY_TEXT);
-  assert.equal(PRESETS_EMPTY_TEXT, 'No presets yet. Set up a run in New run, then use Save current setup…');
+  assert.equal(PRESETS_EMPTY_TEXT, 'No presets yet. Set up a run in New run, then use Preset ▾ › Save as preset');
 });
 
 test('a card names the preset, its scope, workflow and engine; each button calls back with the preset', () => {

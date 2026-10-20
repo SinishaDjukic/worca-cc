@@ -213,3 +213,39 @@ test('markReady and closePr: PATCH isDraft false; comment then PATCH abandoned',
   assert.equal(f.calls[1].body.comments[0].content, 'see #9');
   assert.equal((await az.markReady({ prUrl: 'https://github.com/o/r/pull/1', env: ENV })).ok, false);
 });
+
+test('chat chips: prSummary and workItemSummaries read a title and a lifecycle, never throw', async () => {
+  await checkRows([
+    { name: 'prSummary: project-level GET, draft only while active, the Code PAT, a 10 s bound', run: async () => {
+      const f = fakeFetch([
+        { match: /pullrequests\/5\?/, reply: res(200, { pullRequestId: 5, status: 'active', isDraft: true, title: 'Draft it' }) },
+        { match: /pullrequests\/6\?/, reply: res(200, { pullRequestId: 6, status: 'completed', isDraft: true, title: 'Done' }) },
+        { match: /pullrequests\/7\?/, reply: res(404, { message: 'TF401180: not found' }) },
+      ]);
+      az._testing.setFetch(f);
+      assert.deepEqual(await az.prSummary({ org: 'acme', project: 'My Project', number: 5, env: ENV }), { kind: 'pr', title: 'Draft it', state: 'draft' });
+      assert.deepEqual(await az.prSummary({ org: 'acme', project: 'My Project', number: 6, env: ENV }), { kind: 'pr', title: 'Done', state: 'merged' });
+      assert.equal(await az.prSummary({ org: 'acme', project: 'My Project', number: 7, env: ENV }), null);
+      assert.equal(await az.prSummary({ org: 'acme', project: 'My Project', number: 5, env: {} }), null, 'no credential: no call');
+      assert.equal(f.calls.length, 3);
+      assert.equal(f.calls[0].url, 'https://dev.azure.com/acme/My%20Project/_apis/git/pullrequests/5?api-version=7.1');
+      assert.equal(f.calls[0].headers.authorization, `Basic ${Buffer.from(':pat').toString('base64')}`);
+    } },
+    { name: 'workItemSummaries: one org-level GET with the Boards token first, else the Code PAT; omitted ids left out', run: async () => {
+      const f = fakeFetch([{ match: /_apis\/wit\/workitems\?/, reply: res(200, { value: [
+        { id: 123, fields: { 'System.Title': 'Login loops', 'System.State': 'Active', 'System.WorkItemType': 'Bug' } }, null, { id: 9 },
+      ] }) }]);
+      az._testing.setFetch(f);
+      const m = await az.workItemSummaries({ org: 'acme', ids: [123, 124, 123], env: { WORCA_ADO_TOKEN: 'pat', WORCA_ADO_BOARDS_TOKEN: 'boards' } });
+      assert.deepEqual([...m], [[123, { kind: 'workitem', title: 'Login loops', state: 'Active', type: 'Bug' }]]);
+      assert.equal(f.calls[0].url, 'https://dev.azure.com/acme/_apis/wit/workitems?ids=123,124&fields=System.Title,System.State,System.WorkItemType&errorPolicy=omit&api-version=7.1');
+      assert.equal(f.calls[0].headers.authorization, `Basic ${Buffer.from(':boards').toString('base64')}`);
+      await az.workItemSummaries({ org: 'acme', ids: [1], env: ENV });
+      assert.equal(f.calls[1].headers.authorization, `Basic ${Buffer.from(':pat').toString('base64')}`, 'no Boards token: the Code PAT');
+      assert.equal((await az.workItemSummaries({ org: 'acme', ids: [1], env: {} })).size, 0);
+      assert.equal(f.calls.length, 2, 'no token at all: no call');
+      az._testing.setFetch(fakeFetch([{ match: /workitems/, reply: res(401, {}) }]));
+      assert.equal((await az.workItemSummaries({ org: 'acme', ids: [1], env: ENV })).size, 0, 'a refused token is an empty answer');
+    } },
+  ]);
+});

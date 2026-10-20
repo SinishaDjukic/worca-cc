@@ -1,5 +1,5 @@
 // test/ask-actions-card.test.mjs
-// Ask Worca and Actions (docs/actions.md "Ask Worca"): the card's validator (pure, over injected
+// Ask Worca and Actions (docs/actions.md "Chat"): the card's validator (pure, over injected
 // readers), the event/notice text, the five tools (read-only + propose; no start/stop tool exists),
 // the registry's state file the tools read from another process, the deployment line,
 // and the card route over WORCA_MOCK — decline, apply a project config, apply stacks, a refusal.

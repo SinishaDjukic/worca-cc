@@ -54,7 +54,8 @@ Run branch worca-cc/bundle-integration-merge-the-runs-redesign-fe56f029, from 5f
 | ui/public/style.css `.plan-check-show` | (clean) hand-sized | padding and font-size dropped |
 
 ### Schema numbering
-v61–v63 Run Presets · v64 Runs redesign · v65 Shaper s4 release columns · v66 Shaper s5 notes + round-of index · role reviews: none
+v61–v63 Run Presets · v64 dev #798 source_path · v65 Runs redesign · v66 Shaper s4 release columns · v67 Shaper s5 notes + round-of index · role reviews: none
+Renumbered when dev #798 took v64 (merge of 988551ca).
 
 ### One source for the run card
 - Head (status dot, title, kind chip, Open ›), status line, bars, member rows: `runModel` / `groupModel` through `paintStatusDot`, `paintRunStatus`, `renderMemberRows` (`ui/public/run-status-card.mjs`). The chip is `PR fix run` for a fix card, `Shaping` for an open shaping plan (flag on), else `kindLabel(row)` (D7).

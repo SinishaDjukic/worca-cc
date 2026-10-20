@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { cardAlertOf } from './helpers/feedback.mjs';
+import { backdropClick, pressEscape, discardPrompt, discardChanges } from './helpers/popups.mjs';
 
 // Workspace runs: one PR per AFFECTED member repo. The saved-run detail header's
 // per-repo list and the workspace Ship-it dialog (per-repo rows, sequential POSTs,
@@ -360,6 +361,33 @@ test('workspace Ship it: Watch PR resets on open and one snapshot applies to eve
   modal.querySelector('.shipit-watch-input').checked = true;
   click(ctx.window, modal.querySelector('.shipit-ok')); await settle(ctx.window, 10);
   assert.deepEqual(prPosts(ctx).map((c) => [JSON.parse(c.opts.body).memberKey, JSON.parse(c.opts.body).watch]), [[API, true], [WEB, true]]);
+});
+
+test('workspace Ship it is a form: a backdrop click keeps it and its picks; Escape asks once a pick changed; Cancel closes at once', async () => {
+  const ctx = await bootShip({ detail: WS_DETAIL, rows: [wsRow([member(API, 'api'), member(WEB, 'web')])] });
+  await openDetail(ctx, wksDetailHash);
+  click(ctx.window, hdPr(ctx.window)); await settle(ctx.window, 6);
+  const modal = modalOf(ctx.window);
+  const doc = ctx.window.document;
+  pressEscape(ctx.window);
+  assert.equal(discardPrompt(doc), null, 'untouched (the remotes that loaded are no change): no question');
+  assert.equal(isOpen(ctx.window), false, 'Escape closes an untouched dialog');
+  click(ctx.window, hdPr(ctx.window)); await settle(ctx.window, 6);
+  const pick = modal.querySelectorAll('#shipit-repos .shipit-repo-pick')[1];
+  pick.checked = false;
+  pick.dispatchEvent(new ctx.window.Event('change'));
+  backdropClick(ctx.window, modal);
+  assert.equal(isOpen(ctx.window), true, 'never on a backdrop click');
+  assert.equal(modal.querySelectorAll('#shipit-repos .shipit-repo-pick')[1].checked, false, 'the pick is kept');
+  pressEscape(ctx.window);
+  assert.ok(discardPrompt(doc), 'a changed pick: Escape asks');
+  discardChanges(doc);
+  await settle(ctx.window);
+  assert.equal(isOpen(ctx.window), false, 'Discard closes it');
+  click(ctx.window, hdPr(ctx.window)); await settle(ctx.window, 6);
+  click(ctx.window, modal.querySelector('.shipit-cancel'));
+  assert.equal(isOpen(ctx.window), false, 'Cancel closes at once');
+  assert.equal(prPosts(ctx).length, 0);
 });
 
 const memberChecks = (watch) => ({ checks: { state: 'passing', total: 3, failed: 0, pending: 0, skipped: 0 }, mergeable: 'MERGEABLE',

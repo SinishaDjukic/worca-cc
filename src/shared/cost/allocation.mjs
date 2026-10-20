@@ -133,7 +133,7 @@ export function allocate(runs, { by, thenBy = null, rate = 0, askUsd = 0, top = 
   const rows = level(runs, by, { thenBy: second, rate, top });
   const askUnits = toUnits(askUsd);
   if (askUnits > 0) {
-    rows.push({ kind: 'ask', dim: by, value: null, key: 'ask', label: 'Ask Worca', ...sum([], rate, askUnits),
+    rows.push({ kind: 'ask', dim: by, value: null, key: 'ask', label: 'Chat', ...sum([], rate, askUnits),
       factIds: [], runIds: [], children: [], members: [] });
   }
   const total = sum(runs, rate, askUnits);

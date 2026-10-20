@@ -1,5 +1,5 @@
 // src/core/ask/policy-deps.mjs
-// The team-policy dependency bundle of the Ask Worca tools (docs/team-policy.md "Ask Worca"): the
+// The team-policy dependency bundle of the Ask Worca tools (docs/team-policy.md "Chat"): the
 // ONE module that touches the policy core on the tools' behalf (tools.mjs may not import anything).
 // Two callers:
 //   • the MCP child (mcp-stdio.mjs): deps.policy.* behind list_projects' `policy`, get_team_policy

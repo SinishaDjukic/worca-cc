@@ -336,7 +336,7 @@ test('Chat shown under the welcome (a first visit from another page) leaves focu
   assert.equal(doc.activeElement, doc.querySelector('[data-chat-page] textarea.ask-input'), 'Skip hands the focus to the composer');
 });
 
-test('openChat with nothing to add while Chat shows puts the caret in the composer (the top bar\'s "Ask Worca" row blurs the search first)', async () => {
+test('openChat with nothing to add while Chat shows puts the caret in the composer (the top bar\'s "Ask in Chat" row blurs the search first)', async () => {
   const { window, doc } = await boot();
   doc.getElementById('tsearch-input').focus();
   doc.activeElement.blur();

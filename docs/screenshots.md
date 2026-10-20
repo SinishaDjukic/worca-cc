@@ -68,10 +68,10 @@ cropping. Each shot uses the lowest interface mode that shows its view (see
 - **Live runs.** Three mock runs are held at their clarify question. Their questions are
   rewritten in place to read as real decisions, their titles replace the mock ones, and the
   Task and Clarify steps get plausible time and cost.
-- **Ask Worca.** A stored conversation built with the real proposal validator: a run card for
+- **Chat.** A stored conversation built with the real proposal validator: a run card for
   the "Paginate the search endpoint" run, linked to it, plus three shorter chats and their
   Ask spend.
-- **Ask Worca agent mode.** A real bash session opened in `nimbus-crm` through the server's
+- **Chat agent mode.** A real bash session opened in `nimbus-crm` through the server's
   terminal manager, with `npm test` typed into it, and a chat holding that command's card. It
   is not run through Ask's own command runner, whose finished commands wake a Claude turn.
   bash, not zsh: a login zsh prompt shows the user and host names.

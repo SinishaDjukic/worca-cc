@@ -213,7 +213,7 @@
           </div>
           <div class="topnav-c">
             <!-- Search or ask (topnav-search.mjs over global-search.mjs): ⌘K / Ctrl K focuses the
-                 input and opens the listbox under it; its last row hands what was typed to Ask Worca.
+                 input and opens the listbox under it; its last row hands what was typed to Chat.
                  Phones fold the pill into #tsearch-open, which shows the input as a full-width row
                  with #tsearch-close. The script writes the chip (⌘K on a Mac, Ctrl K elsewhere). -->
             <div class="tsearch">
@@ -279,13 +279,17 @@
             <section class="card">
               <form id="run-form" autocomplete="off">
                 <!-- Run presets (#712, docs/run-presets.md): a named setup, applied for THIS run only. -->
+                <!-- One compact "Preset ▾" button (plans/mocks/new-run-preset-button.png): its menu lists the presets and
+                     holds Save as preset, Rename, Delete and Manage. The select stays as the hidden value holder. -->
                 <div id="preset-row" class="preset-row" data-flag="runPresets">
-                  <label for="presetSelect">Preset</label>
-                  <select id="presetSelect"><option value="">No preset</option></select>
-                  <button type="button" id="preset-more" class="btn btn-sm btn-icon preset-more" aria-haspopup="menu" aria-expanded="false" aria-label="Preset actions" title="Preset actions" hidden></button>
+                  <span id="preset-summary" class="preset-summary" hidden></span>
                   <span id="preset-chip" class="chip" hidden></span>
-                  <button type="button" id="preset-save" class="btn btn-sm">Save current setup…</button>
                   <button type="button" id="preset-update" class="btn btn-sm" hidden>Update preset</button>
+                  <span class="preset-pick">
+                    <button type="button" id="preset-btn" class="btn btn-sm btn-quiet preset-btn" aria-haspopup="menu" aria-expanded="false">Preset ▾</button>
+                    <button type="button" id="preset-clear" class="btn btn-sm btn-quiet btn-icon preset-clear" aria-label="Clear preset" title="Clear preset" hidden></button>
+                  </span>
+                  <select id="presetSelect" hidden aria-hidden="true" tabindex="-1"><option value="">No preset</option></select>
                   <div id="preset-broken"></div>
                 </div>
                 <!-- Target switch and the thing it selects share one row: they are one
@@ -1144,7 +1148,7 @@
               <button type="button" data-stats-view="cost" aria-pressed="false">Cost</button>
             </div>
             <div class="select-wrap" id="stats-group-wrap"><select id="stats-group" class="select" aria-label="Group by"><option value="">No grouping</option><option value="person">Group by person</option></select></div>
-            <small class="hint" id="stats-filter-note" hidden>Filtered: Ask Worca chat spend is not included.</small>
+            <small class="hint" id="stats-filter-note" hidden>Filtered: Chat spend is not included.</small>
           </div>
           <div id="stats-body"><small class="hint">Loading…</small></div>
           <div id="stats-tip" class="chart-tip" hidden></div>
@@ -1605,9 +1609,9 @@
             <button type="button" class="tab" data-tab="tags" data-min-level="simple" data-flag="runTags" aria-pressed="false">Labels &amp; cost tags</button>
             <button type="button" class="tab" data-tab="presets" data-min-level="advanced" data-flag="runPresets" data-flag-chip aria-pressed="false">Presets</button>
             <button type="button" class="tab" data-tab="runs" data-min-level="simple" aria-pressed="false">Runs</button>
-            <!-- Experimental (docs/feature-flags.md) shows at every level: flags are not levels. -->
-            <button type="button" class="tab" data-tab="experimental" data-min-level="simple" aria-pressed="false">Experimental</button>
-            <button type="button" class="tab" data-tab="ask" data-min-level="advanced" aria-pressed="false">Ask Worca</button>
+            <!-- Labs (docs/feature-flags.md) shows at every level: flags are not levels. -->
+            <button type="button" class="tab" data-tab="experimental" data-min-level="simple" aria-pressed="false">Labs</button>
+            <button type="button" class="tab" data-tab="ask" data-min-level="advanced" aria-pressed="false">Chat</button>
             <button type="button" class="tab" data-tab="guardrails" data-min-level="advanced" aria-pressed="false">Guardrails</button>
             <button type="button" class="tab" data-tab="memory" data-min-level="advanced" aria-pressed="false">Memory</button>
           </div>
@@ -1939,7 +1943,7 @@
               </div>
             </section>
 
-            <!-- Keep awake (UI/UX review F): the keepAwake beta flag, the same value as its Settings › Experimental row. -->
+            <!-- Keep awake (UI/UX review F): the keepAwake beta flag, the same value as its Settings › Labs row. -->
             <section class="card settings-card" id="keepawake-settings-card" data-min-level="simple">
               <div class="card-head">
                 <div class="label-row"><h2>Keep awake</h2></div>
@@ -2193,7 +2197,7 @@
               <button type="button" class="btn btn-sm" id="flags-reset">Reset all</button>
             </div>
             <section class="card settings-card" id="flags-settings-card" data-min-level="simple">
-              <p class="flags-warn" role="note">Experimental features may change, break or disappear in any release.</p>
+              <p class="flags-warn" role="note">Labs features may change, break or disappear in any release.</p>
               <p id="flags-msg" class="form-msg" aria-live="polite"></p>
               <div id="flags-host" class="flags-host"></div>
               <!-- The one use of the demo flag (it keeps the usage scan honest); removed with the flag. -->
@@ -2227,8 +2231,8 @@
               <div class="card-head">
                 <div class="label-row">
                   <h2>Limits &amp; access</h2>
-                  <button type="button" class="info-tip" aria-label="About Ask Worca limits">i<span class="tip-content hidden">
-                    Per-turn guards for the Ask Worca assistant chat. A chat turn stops when it reaches the turn limit or the per-turn cost cap; both are read fresh on every turn.
+                  <button type="button" class="info-tip" aria-label="About Chat limits">i<span class="tip-content hidden">
+                    Per-turn guards for the Chat assistant. A chat turn stops when it reaches the turn limit or the per-turn cost cap; both are read fresh on every turn.
                   </span></button>
                 </div>
               </div>
@@ -2273,7 +2277,7 @@
                 <div class="label-row">
                   <label for="askHistoryDelete">Chat history</label>
                   <button type="button" class="info-tip" aria-label="About Chat history">i<span class="tip-content hidden">
-                    Every saved Ask Worca chat: transcripts, attachments and the git worktrees checked out for them. Runs started from a chat are not affected.
+                    Every saved chat: transcripts, attachments and the git worktrees checked out for them. Runs started from a chat are not affected.
                   </span></button>
                 </div>
                 <button type="button" id="askHistoryDelete" class="btn btn-danger ask-history-delete" disabled>Delete all chats</button>
@@ -2424,7 +2428,7 @@
         </div>
         <p id="mimp-msg" class="form-msg" aria-live="polite"></p>
         <!-- Copilot lists dozens of models; the filter narrows what is already listed, client-side. -->
-        <input id="mimp-filter" class="input mimp-filter hidden" type="search" placeholder="Filter by model, id or vendor…" aria-label="Filter the listed models" />
+        <input id="mimp-filter" class="input mimp-filter hidden" type="search" data-dirty-ignore placeholder="Filter by model, id or vendor…" aria-label="Filter the listed models" />
         <div id="mimp-body"></div>
         <div class="mv-editor-btns mimp-btns">
           <button type="button" id="mimp-go" class="btn btn-primary" disabled>Import selected</button>
@@ -2454,7 +2458,6 @@
       <div class="card">
         <div class="card-head">
           <h2 id="folderBrowserTitle">Select a folder</h2>
-          <button type="button" id="folderBrowserClose" class="btn btn-sm">Close</button>
         </div>
         <div class="folder-toolbar">
           <button type="button" id="folderUp" class="btn btn-sm" title="Parent folder">&#8593; Up</button>
@@ -2466,6 +2469,7 @@
         <ul id="folderList" class="folder-list"></ul>
         <div class="add-project-actions">
           <small id="folderPickCount" class="hint folder-pick-count hidden" aria-live="polite"></small>
+          <button type="button" id="folderBrowserClose" class="btn btn-sm">Cancel</button>
           <button type="button" id="folderSelect" class="btn btn-primary btn-sm">Select this folder</button>
           <button type="button" id="folderSelectMany" class="btn btn-primary btn-sm hidden" disabled>Add selected</button>
         </div>
@@ -2516,12 +2520,12 @@
     <!-- The <pre> shows the EXACT payload that will leave the machine; nothing is
          sent without a click. Follows the #viewer-card shape (scrollable monospace
          body) plus the #export-modal checkbox rows.
-         NOTE: any new overlay must also be added to the two capture-phase Escape
-         guards in app.js (History and Running) or Escape will close it AND navigate
-         the detail screen back to its list. -->
+         NOTE: the page's capture-phase Escape arms (app.js) stand down for any open
+         .viewer-modal or <dialog> (modal-guard.mjs dialogOpen), so a new overlay needs
+         only that class and a guardModal() — there is no list to extend. -->
     <div id="report-modal" class="viewer-modal report-modal hidden" role="dialog" aria-modal="true" aria-labelledby="report-title">
       <div class="card">
-        <!-- Sticky header: title, Close, and every action. The card is the scroll
+        <!-- Sticky header: title, Cancel, and every action. The card is the scroll
              container (.viewer-modal .card{overflow:auto}), so the actions stay
              reachable while the reporter is reading the JSON preview, and an error
              or a filed-issue link lands where they are already looking. -->
@@ -2529,8 +2533,8 @@
           <div class="card-head">
             <h2 id="report-title">Report this run</h2>
             <div class="report-head-actions">
+              <button type="button" id="report-close" class="btn btn-sm">Cancel</button>
               <button type="button" id="report-create-issue" class="btn btn-primary btn-sm">Create GitHub issue</button>
-              <button type="button" id="report-close" class="btn btn-sm">Close</button>
             </div>
           </div>
           <!-- Both outcomes of the button above them, so neither needs a scroll to read. -->
@@ -2593,6 +2597,24 @@
             <button type="button" class="seg-btn" data-dest="project">Project folder</button>
           </div>
         </div>
+        <!-- Worca plugin destination (#717): a local folder (as before) or a registered marketplace,
+             which gets ONE pull request on worca/plugin/<name>; nothing is pushed to its own branch. -->
+        <div id="export-plugin-dest-field" class="export-field hidden">
+          <span class="export-label">Destination</span>
+          <div id="export-plugin-dest" class="seg" role="group" aria-label="Plugin destination">
+            <button type="button" class="seg-btn on" data-pdest="folder">Local folder</button>
+            <button type="button" class="seg-btn" data-pdest="marketplace">Marketplace</button>
+          </div>
+        </div>
+        <div id="export-marketplace-field" class="export-field hidden">
+          <label class="export-label" for="export-marketplace">Marketplace</label>
+          <span class="select-wrap"><select id="export-marketplace" class="select" aria-label="Marketplace"></select></span>
+          <span class="hint">The pull request targets the branch the marketplace tracks, else its default branch. Without push access it comes from your fork.</span>
+          <!-- Only when no marketplace can take a pull request: the registered ones that were left out, with why. -->
+          <span id="export-marketplace-skipped" class="hint hidden"></span>
+          <!-- Draft is opt-in per export (unchecked on every open), like Ship it? (#597). -->
+          <label class="confirm-checkbox" for="export-draft"><input id="export-draft" type="checkbox" /> Open as draft</label>
+        </div>
         <div id="export-folder-field" class="export-field hidden">
           <span class="export-label" id="export-folder-label">Folder</span>
           <div class="export-folder-row">
@@ -2609,7 +2631,7 @@
           <!-- Re-export only: a changed export into an existing plugin folder bumps
                the manifest's patch version (0.1.0 → 0.1.1) so the recipient's
                `worca plugin update` sees it. A first export is always 0.1.0. -->
-          <label class="confirm-checkbox">
+          <label class="confirm-checkbox" id="export-keep-version-row">
             <input type="checkbox" id="export-keep-version" />
             <span>Don't bump the plugin version when updating an existing plugin folder<br><span class="hint">A changed re-export normally goes 0.1.0 → 0.1.1 so recipients see an update. A first export is always 0.1.0.</span></span>
           </label>
@@ -2860,7 +2882,6 @@
       <div class="card">
         <div class="card-head">
           <h2 id="proj-add-title">Add project</h2>
-          <button type="button" id="proj-add-cancel" class="btn btn-sm">Close</button>
         </div>
         <!-- Two ways in: a folder already on this machine, or a repository cloned into the
              projects folder by the server (POST /api/projects/clone). Clone is the default
@@ -2899,6 +2920,7 @@
         </div>
         <small class="hint" id="proj-add-msg" aria-live="polite"></small>
         <div class="confirm-actions">
+          <button type="button" id="proj-add-cancel" class="btn btn-sm">Cancel</button>
           <button type="button" id="proj-add-save" class="btn btn-primary btn-sm">Add project</button>
         </div>
       </div>
@@ -2912,12 +2934,12 @@
       <div class="card">
         <div class="card-head">
           <h2 id="proj-bulk-title">Add projects</h2>
-          <button type="button" id="proj-bulk-close" class="btn btn-sm">Close</button>
         </div>
         <p class="hint">Untick a folder to leave it out. Names default to the folder name.</p>
         <ul id="proj-bulk-list" class="proj-bulk-list"></ul>
         <small class="hint" id="proj-bulk-msg" aria-live="polite"></small>
         <div class="confirm-actions" data-card-actions>
+          <button type="button" id="proj-bulk-close" class="btn btn-sm">Cancel</button>
           <button type="button" id="proj-bulk-save" class="btn btn-primary btn-sm">Add projects</button>
         </div>
       </div>

@@ -166,7 +166,7 @@ export function renderAskWebFields({ askWeb } = {}, { doc = globalThis.document 
   wrap.append(h(doc, 'div', 'label-row', 'Web access'));
   const row = h(doc, 'label', 'check-row'); row.setAttribute('for', 'askWebEnabled');
   const cb = h(doc, 'input'); cb.type = 'checkbox'; cb.id = 'askWebEnabled'; cb.checked = w.enabled === true;
-  row.append(cb, doc.createTextNode(' Let Ask Worca read web pages'));
+  row.append(cb, doc.createTextNode(' Let Chat read web pages'));
   const anyRow = h(doc, 'label', 'check-row'); anyRow.setAttribute('for', 'askWebAnyHost');
   const any = h(doc, 'input'); any.type = 'checkbox'; any.id = 'askWebAnyHost'; any.checked = w.anyHost === true;
   anyRow.append(any, doc.createTextNode(' Any site, without asking'));

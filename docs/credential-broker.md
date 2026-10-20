@@ -391,7 +391,7 @@ credentials (a ChatGPT, Cursor or GitHub sign-in, or a key in their environment)
 can neither charge to a person nor keep from the agent. So with the broker on:
 
 - a pipeline run on any other engine is refused before it starts;
-- Ask Worca offers no Codex chats, and a Codex chat started before the broker was turned on is refused;
+- Chat offers no Codex chats, and a Codex chat started before the broker was turned on is refused;
 - every engine picker shows the other engines greyed out, and the Models page says why.
 
 ### People
@@ -549,7 +549,7 @@ resumes pays. Work with no signed-in person uses the shared `worca-agent`. With 
 people, the rest share users by a stable hash (worca warns once). `WORCA_AGENT_POOL=0` turns
 the pool off.
 
-Ask Worca runs as the person's agent user too. Its worca tools (runs, projects, memory…)
+Chat runs as the person's agent user too. Its worca tools (runs, projects, memory…)
 then run inside the worca server: the chat's tool process only relays each call over
 loopback with a token that lives for one turn.
 

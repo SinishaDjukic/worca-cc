@@ -79,7 +79,8 @@ export function paintRunStatus(host, m) {
         return row;
       })));
   }
-  const show = !!(cur && cur.progress && BAR_STATES.has(cur.state));
+  // A run in Needs you only through its PR has finished its pipeline, so it has no bar (an empty one read as 0%).
+  const show = !!(cur && cur.progress && BAR_STATES.has(cur.state) && !cur.prNeeds);
   bar.hidden = !show;
   if (show) paintProgressBar(bar, cur.progress, { pulse: !!cur.pulse });
 }

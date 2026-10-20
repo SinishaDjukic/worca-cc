@@ -20,6 +20,7 @@ import {
 import { SCRIPT_COLORS, SCRIPT_KEY_RE, RESERVED_SCRIPT_KEYS } from '../../src/shared/graph/script-meta.mjs';
 import { iconSvgOf } from '../../src/shared/graph/script-icons.mjs';
 import { splitMessage } from './feedback.mjs';
+import { dialogOpen } from './modal-guard.mjs';
 import {
   SCRIPT_TEMPLATES, SCRIPT_WIN32_TEMPLATE, SHELL_COMMAND_TEMPLATE, SCRIPT_EXAMPLES, RUNTIME_DEFAULTS, blankScriptMeta,
 } from '../../src/shared/graph/script-templates.mjs';
@@ -876,6 +877,9 @@ export function createScriptsController({
 
   function onKeyDown(e) {
     if (e.key !== 'Escape' || st.mode === 'list') return;
+    // A pop-up on screen owns Escape (modal-guard.mjs hands it to the one on top) — e.g. the bench's
+    // run-artifact picker in #plugin-modal, opened from a button that keeps the focus on this page.
+    if (dialogOpen(doc)) return;
     const t = e.target;
     if (t && t.closest && t.closest('textarea, input, select, [contenteditable="true"]')) return;
     e.preventDefault();

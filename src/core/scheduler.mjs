@@ -33,7 +33,7 @@ import { usageLimitSwitches, engineList } from '../shared/engine-switch.mjs';
 import { readyEnginesCached } from './engines/ready-cache.mjs';
 import { readRunTags } from './run-tags-store.mjs';
 import {
-  normalizeRule, nextOccurrence, describeRule, OVERLAP_POLICIES, MISSED_POLICIES,
+  normalizeRule, nextOccurrence, countOccurrences, isSubDaily, describeRule, OVERLAP_POLICIES, MISSED_POLICIES,
 } from '../shared/schedule/recurrence.mjs';
 
 export const TICKET_STATUSES = ['scheduled', 'firing', 'fired', 'canceled', 'skipped', 'missed', 'failed'];
@@ -255,9 +255,10 @@ export function getTicket(id, opts = {}) {
 
 /**
  * List tickets, soonest first. `open` (default) keeps scheduled/firing/missed — the
- * ones a person can still act on; `all` adds the ended ones.
+ * ones a person can still act on; `all` adds the ended ones. `newestFirst` orders
+ * latest first, so a limit keeps the recent ones.
  */
-export function listTickets({ projectDir = null, workspaceId = null, scheduleId = null, all = false, oneShotOnly = false, limit = 500 } = {}) {
+export function listTickets({ projectDir = null, workspaceId = null, scheduleId = null, all = false, oneShotOnly = false, limit = 500, newestFirst = false } = {}) {
   const where = [];
   const args = [];
   if (projectDir) { where.push('project_key = ?'); args.push(projectKey(projectDir)); }
@@ -265,7 +266,7 @@ export function listTickets({ projectDir = null, workspaceId = null, scheduleId 
   if (scheduleId) { where.push('schedule_id = ?'); args.push(scheduleId); }
   if (oneShotOnly) where.push('schedule_id IS NULL');
   if (!all) where.push("status IN ('scheduled', 'firing', 'missed')");
-  const sql = `SELECT * FROM scheduled_runs ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY run_at ASC LIMIT ${Math.max(1, Math.min(2000, Number(limit) || 500))}`;
+  const sql = `SELECT * FROM scheduled_runs ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY run_at ${newestFirst ? 'DESC' : 'ASC'} LIMIT ${Math.max(1, Math.min(2000, Number(limit) || 500))}`;
   return getDb().prepare(sql).all(...args).map((r) => rowToTicket(r));
 }
 
@@ -800,7 +801,8 @@ function dropPendingTickets(scheduleId) {
  * Ensure the series has its next occurrence as a ticket. No-op when one is already
  * open or the schedule is not active. When the rule is exhausted the schedule ENDS.
  * Catch-up is bounded by construction: the next slot is always computed from `now`,
- * so a backlog is never replayed.
+ * so a backlog is never replayed. A sub-daily series starts one late slot within its
+ * grace; the passed slots are reported in one `missed` notification, never replayed.
  * @returns {object|null} the open ticket
  */
 export function materializeNext(scheduleId, { now = Date.now() } = {}) {
@@ -984,9 +986,14 @@ function previousStillRunning(t, { now, isLive }) {
   return false;
 }
 
+/**
+ * How late a series slot may still start. A once-a-day (or rarer) series is capped at
+ * the gap to its next slot. A sub-daily series is not: after a downtime it starts ONE
+ * catch-up run within its grace and reports the slots in between as missed.
+ */
 function effectiveGraceMs(t, schedule) {
   let grace = t.graceMin * 60_000;
-  if (schedule?.rule) {
+  if (schedule?.rule && !isSubDaily(schedule.rule)) {
     const runAt = Date.parse(t.runAt);
     const next = nextOccurrence(schedule.rule, runAt, { firedCount: 0 });
     if (next != null) grace = Math.min(grace, next - runAt);
@@ -994,13 +1001,26 @@ function effectiveGraceMs(t, schedule) {
   return grace;
 }
 
+/** A sub-daily series' slots strictly after `t` up to `now`: the ones a downtime swallowed. */
+function passedSlots(t, schedule, now) {
+  return schedule?.rule && isSubDaily(schedule.rule) ? countOccurrences(schedule.rule, Date.parse(t.runAt), now) : { count: 0, last: null };
+}
+const slotsText = (n) => `${n} slot${n === 1 ? '' : 's'}`;
+
 function miss(t, schedule, now, why) {
   touchTicket(t.id, "status = 'missed', fail_reason = ?", [why], now);
+  const passed = passedSlots(t, schedule, now);
+  const more = passed.count ? ` ${slotsText(passed.count)} after it, up to ${iso(passed.last)}, passed too.` : '';
   addNotification({
     kind: 'missed', scheduleId: t.scheduleId, ticketId: t.id, projectDir: t.projectDir, title: t.title,
-    message: `was due at ${t.runAt}. ${why}${lastChangedSuffix(t, schedule)}`, now: new Date(now),
+    message: `was due at ${t.runAt}. ${why}${more}${lastChangedSuffix(t, schedule)}`, now: new Date(now),
   });
-  if (schedule) { setLastResult(schedule.id, 'missed', now); bumpFailure(schedule.id, now); materializeNext(schedule.id, { now }); }
+  if (schedule) {
+    setLastResult(schedule.id, 'missed', now);
+    // A sub-daily series misses a slot on every sleep of the laptop: that is not a failure.
+    if (!isSubDaily(schedule.rule)) bumpFailure(schedule.id, now);
+    materializeNext(schedule.id, { now });
+  }
 }
 
 /** An after-ticket whose predecessor ended in a way its policy refuses, or vanished (spec §3.3). */
@@ -1087,10 +1107,13 @@ export async function runDueTickets({
         continue;
       }
       touchTicket(t.id, "status = 'skipped', fail_reason = 'the previous run was still going'", [], now);
-      addNotification({
-        kind: 'skipped', severity: 'info', scheduleId: t.scheduleId, ticketId: t.id, projectDir: t.projectDir, title: t.title,
-        message: 'was skipped because the previous run was still going.', now: new Date(now),
-      });
+      // A sub-daily series overlaps often: the skipped ticket is the record, with no feed item.
+      if (!isSubDaily(schedule.rule)) {
+        addNotification({
+          kind: 'skipped', severity: 'info', scheduleId: t.scheduleId, ticketId: t.id, projectDir: t.projectDir, title: t.title,
+          message: 'was skipped because the previous run was still going.', now: new Date(now),
+        });
+      }
       setLastResult(schedule.id, 'skipped', now);
       materializeNext(schedule.id, { now });
       out.skipped.push(t.id);
@@ -1098,6 +1121,15 @@ export async function runDueTickets({
     }
 
     if (!claimTicket(t.id, { pid, host, now })) continue; // another process won the race
+    // A sub-daily catch-up: this late slot starts, the later ones that already passed do not.
+    const passed = !t.forced && !t.queued && t.attempts === 0 && late > ON_TIME_SLACK_MS ? passedSlots(t, schedule, now) : { count: 0 };
+    if (passed.count) {
+      addNotification({
+        kind: 'missed', scheduleId: t.scheduleId, projectDir: t.projectDir, title: t.title,
+        message: `missed ${slotsText(passed.count)}, up to ${iso(passed.last)}, while Worca was not running. Only the slot due at ${t.runAt} starts now, late.${lastChangedSuffix(t, schedule)}`,
+        now: new Date(now),
+      });
+    }
     if (startedAny && staggerMs > 0) await sleep(staggerMs);
     startedAny = true;
 

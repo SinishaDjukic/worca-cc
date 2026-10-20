@@ -11,6 +11,7 @@ import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { lastToast } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { pressEscape } from './helpers/popups.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -285,6 +286,30 @@ test('Project page: "Set up team policy…" opens the dialog; the follow mode po
   assert.equal(posts.length, 1);
   assert.match(posts[0].url, /\/api\/projects\/billing-00000002\/policy\/enable$/);
   assert.deepEqual(posts[0].body, { mode: 'follow', delegateTo: 'acme/gateway', change: false });
+});
+
+test('"Set up team policy": while the enable POST is out, Escape and the header Close do nothing; a failure lands in the dialog that stayed open', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const { window, doc, go, settle } = await boot({
+    fetchHandler: (u, opts) => (u.includes('/policy/enable') && opts.method === 'POST' ? gate : null),
+  });
+  await go('projects/billing-00000002/team');
+  await settle();
+  doc.querySelector('#proj-detail .pd-team-policy .tp-enable').click();
+  await settle();
+  const modal = doc.getElementById('plugin-modal');
+  modal.querySelector('.tp-enable-submit').click();
+  await settle(2);
+  pressEscape(window);
+  doc.getElementById('plugin-modal-close').click();
+  assert.equal(modal.classList.contains('hidden'), false, 'no way out while the request is out');
+  release({ ok: false, status: 409, json: async () => ({ error: 'push rejected' }) });
+  await settle();
+  assert.equal(modal.classList.contains('hidden'), false);
+  assert.equal(modal.querySelector('.tm-enable-err').textContent, 'push rejected');
+  pressEscape(window);
+  assert.equal(modal.classList.contains('hidden'), true, 'once it answered, Escape closes it');
 });
 
 test('Configure…: an installed plugin opens its settings pane with the policy\'s seeds filled into blank fields', async () => {

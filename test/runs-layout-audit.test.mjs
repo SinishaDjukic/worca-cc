@@ -74,3 +74,17 @@ test('QA 8: a group page row wider than its table (a ~290px pane) fails as row-o
   assert.deepEqual(rules({ tbl: R(72, 218), row: R(72, 262), t: R(104, 202) }), ['row-overflow']);
   assert.deepEqual(rules({ tbl: R(72, 218), row: R(72, 218), t: R(92, 218) }), []);
 });
+
+test('bundle QA 2: at 290px the number stays on the title line and the chip icon stays with its word', () => {
+  const doc = new JSDOM(`<!doctype html><body><div class="gpage"><ol class="run-members is-table"><li class="run-member">
+    <span class="status-dot"></span><span class="run-member-num" id="n">1</span>
+    <span class="run-member-main"><a class="run-member-title" id="t">Found the bug in uploads</a><span class="run-member-line">In review</span></span>
+    <span class="run-member-pr"><a class="runs-pr is-failing" id="c"><span class="ic" id="i"></span><span class="runs-pr-word" id="w">Checks failing</span></a></span>
+    <span class="run-member-cost" id="k">$1.20</span></li></ol></div></body>`).window.document;
+  const rules = (rects) => auditGroupPageLayout(doc.querySelector('.gpage'),
+    { rect: (e) => rects[e.id] || R(0, 250, 0, 80), viewport: { width: 290, height: 800 } }, doc).map((p) => p.rule).sort();
+  const ok = { n: R(20, 40, 12, 28), t: R(48, 250, 0, 40), c: R(48, 160, 44, 60), i: R(48, 62, 45, 59), w: R(66, 160, 44, 60), k: R(210, 250, 44, 60) };
+  assert.deepEqual(rules(ok), []);
+  assert.deepEqual(rules({ ...ok, n: R(20, 40, 44, 60) }), ['num-line'], 'the number dropped under the title');
+  assert.deepEqual(rules({ ...ok, c: R(48, 120, 44, 80), i: R(48, 62, 44, 58), w: R(48, 120, 62, 78) }), ['chip-wrap'], 'the icon sits above its word');
+});

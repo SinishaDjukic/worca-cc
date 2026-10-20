@@ -142,8 +142,8 @@ test('B7: the run page\'s "Add tags" is a quiet sm button with a short label —
 });
 
 test('QA 1: a truncated badge fails the surface audit; a whole one passes', () => {
-  assert.deepEqual(surface('<button class="chat-home-act" id="t"><span class="chat-home-act-badge" id="b">Experimental</span></button>',
+  assert.deepEqual(surface('<button class="chat-home-act" id="t"><span class="chat-home-act-badge" id="b">Labs</span></button>',
     { heights: { t: 60 }, sizes: { b: { scroll: 81, client: 59 } } }), ['badge-truncated']);
-  assert.deepEqual(surface('<button class="chat-home-act" id="t"><span class="chat-home-act-badge" id="b">Experimental</span></button>',
+  assert.deepEqual(surface('<button class="chat-home-act" id="t"><span class="chat-home-act-badge" id="b">Labs</span></button>',
     { heights: { t: 60 }, sizes: { b: { scroll: 81, client: 81 } } }), []);
 });

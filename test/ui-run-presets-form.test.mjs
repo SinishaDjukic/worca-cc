@@ -97,13 +97,16 @@ async function boot({ presets = [], check = () => ({ broken: [] }), runDefaults 
   return { window, doc, calls, posted, checks: () => checks };
 }
 const configWrites = (calls) => calls.filter((c) => c.url.includes('/api/config') && (c.method === 'POST' || c.method === 'PATCH'));
+// Applied and unmodified: the Preset button names the preset, the summary says it is for this run, no "Modified" chip.
+const applied = (doc) => doc.getElementById('preset-btn').classList.contains('is-on') && doc.getElementById('preset-chip').hidden
+  && /applies to this run only$/.test(doc.getElementById('preset-summary').textContent);
 async function pick(ctx, id, flags = { runPresets: true }) {
   applyFlags(flags, ctx.doc);
   await waitFor(() => [...ctx.doc.querySelectorAll('#presetSelect option')].some((o) => o.value === id));
   const sel = ctx.doc.querySelector('#presetSelect');
   sel.value = id;
   sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
-  await waitFor(() => /Preset — changes here apply to this run only/.test(ctx.doc.querySelector('#preset-chip').textContent));
+  await waitFor(() => applied(ctx.doc));
   for (let i = 0; i < 5; i++) await tick();
 }
 async function submit(ctx) {
@@ -138,7 +141,7 @@ test('pick → prompt → start sends the run-only lane and writes no project co
   assert.equal(ctx.doc.querySelector('#agentsReset').hidden, true, 'no Reset: it would delete the project\'s rows');
   model.value = 'claude-opus-5-5';
   model.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
-  await waitFor(() => /modified/.test(ctx.doc.querySelector('#preset-chip').textContent));
+  await waitFor(() => /Modified/.test(ctx.doc.querySelector('#preset-chip').textContent));
   const body = await submit(ctx);
   assert.equal(ctx.posted.length, 1);
   assert.equal(body.presetId, 'rp_aaaaaaaaaaaa');
@@ -234,7 +237,7 @@ test('changing the project in preset mode puts the preset\'s workflow and guardr
   for (let i = 0; i < 10; i++) await tick();
   assert.equal(ctx.doc.querySelector('#workflowSelect').value, 'wf_auto', 'the project\'s activeWorkflowId did not win');
   assert.equal(ctx.doc.querySelector('#guardrailsSelect').value, 'normal');
-  assert.match(ctx.doc.querySelector('#preset-chip').textContent, /Preset — changes here apply to this run only/, 'the setup is unchanged, so not modified');
+  assert.ok(applied(ctx.doc), 'the setup is unchanged, so not modified');
   const check = ctx.calls.filter((c) => /\/api\/presets\/[^/]+\/check/.test(c.url)).at(-1);
   assert.equal(check.body.projectDir, '/a/api');
   const body = await submit(ctx);
@@ -265,11 +268,11 @@ test('Settings › Presets after a fresh load names the pinned workspace, with n
   ctx.window.location.hash = '#new';
 });
 
-test('Save current setup… under a name the menu holds reopens with the duplicate message and sends nothing', async () => {
+test('Save as preset under a name the menu holds reopens with the duplicate message and sends nothing', async () => {
   const ctx = await boot({ presets: [preset()] });
   applyFlags({ runPresets: true }, ctx.doc);
   await waitFor(() => ctx.doc.querySelectorAll('#presetSelect option').length > 2);
-  ctx.doc.querySelector('#preset-save').click();
+  openPresetMenu(ctx.doc); menuItem(ctx.doc, 'Save as preset').click();
   await waitFor(() => !ctx.doc.querySelector('#confirm-modal').classList.contains('hidden'));
   const name = ctx.doc.querySelector('#confirm-f-name');
   name.value = 'quick FIX';
@@ -282,11 +285,11 @@ test('Save current setup… under a name the menu holds reopens with the duplica
   assert.equal(ctx.calls.filter((c) => c.url.includes('/api/presets') && c.method === 'POST').length, 0);
 });
 
-test('Save current setup… names the workflow and says when it is the project\'s default (review G)', async () => {
+test('Save as preset names the workflow and says when it is the project\'s default (review G)', async () => {
   const ctx = await boot({ activeWorkflowId: 'wf_auto' });
   applyFlags({ runPresets: true }, ctx.doc);
   await waitFor(() => ctx.doc.querySelector('#workflowSelect').value === 'wf_auto');
-  ctx.doc.querySelector('#preset-save').click();
+  openPresetMenu(ctx.doc); menuItem(ctx.doc, 'Save as preset').click();
   await waitFor(() => !ctx.doc.querySelector('#confirm-modal').classList.contains('hidden'));
   assert.match(ctx.doc.querySelector('#confirm-fields').textContent, /Saved: Auto workflow \(this project's default\) · Claude, guardrails/);
   ctx.doc.querySelector('#confirm-cancel').click();
@@ -312,7 +315,7 @@ test('the Chat home lists the scoped presets and picking one opens New run with 
   assert.deepEqual([...ctx.doc.querySelectorAll('.chat-home-preset')].map((b) => b.textContent), ['Quick fix'], 'another project\'s pinned preset is not listed');
   ctx.doc.querySelector('.chat-home-preset').click();
   await waitFor(() => ctx.window.location.hash === '#new' && ctx.doc.getElementById('presetSelect').value === 'rp_aaaaaaaaaaaa');
-  await waitFor(() => /Preset — changes here apply to this run only/.test(ctx.doc.querySelector('#preset-chip').textContent));
+  await waitFor(() => applied(ctx.doc));
   await waitFor(() => ctx.doc.querySelector('#guardrailsSelect').value === 'normal');
   await waitFor(() => ctx.doc.activeElement === ctx.doc.getElementById('prompt'));
   assert.equal(ctx.doc.getElementById('prompt').value, '');
@@ -330,28 +333,54 @@ test('Settings › Presets Use opens New run with the preset applied and the pro
   applyFlags({ runPresets: false }, ctx.doc);
 });
 
-const menuItem = (doc, label) => [...doc.querySelectorAll('.wfv-menu[role="menu"] [role="menuitem"]')].find((b) => b.textContent.trim() === label);
+const menuItem = (doc, label) => [...doc.querySelectorAll('.wfv-menu[role="menu"] [role^="menuitem"]')].find((b) => b.textContent.trim() === label);
+const menuLabels = (doc) => [...doc.querySelectorAll('.wfv-menu[role="menu"] [role^="menuitem"], .wfv-menu[role="menu"] .wfv-menu-h')].map((b) => b.textContent.trim());
+const openPresetMenu = (doc) => doc.getElementById('preset-btn').click();
 
-test('⋯ beside Preset: hidden with No preset, shown once a preset is applied, lists Rename and Delete', async () => {
+test('Preset ▾: one quiet button with No preset; its menu lists the presets, Save as preset and (Advanced) Manage presets…', async () => {
   const ctx = await boot({ presets: [preset()] });
   ctx.doc.documentElement.dataset.level = 'simple';
   applyFlags({ runPresets: true }, ctx.doc);
   await waitFor(() => ctx.doc.querySelectorAll('#presetSelect option').length > 1);
-  assert.equal(ctx.doc.getElementById('preset-more').hidden, true);
-  await pick(ctx, 'rp_aaaaaaaaaaaa');
-  const more = ctx.doc.getElementById('preset-more');
-  assert.equal(more.hidden, false);
-  more.click();
-  assert.equal(ctx.doc.querySelector('.wfv-menu[role="menu"]').getAttribute('aria-label'), 'Actions for Quick fix');
-  assert.deepEqual([...ctx.doc.querySelectorAll('.wfv-menu[role="menu"] [role="menuitem"]')].map((b) => b.textContent.trim()), ['Rename', 'Delete']);
+  const btn = ctx.doc.getElementById('preset-btn');
+  assert.equal(btn.textContent, 'Preset ▾');
+  assert.ok(btn.classList.contains('btn-quiet') && !btn.classList.contains('is-on'));
+  assert.equal(ctx.doc.getElementById('preset-clear').hidden, true);
+  assert.equal(ctx.doc.getElementById('preset-summary').hidden, true);
+  openPresetMenu(ctx.doc);
+  assert.equal(ctx.doc.querySelector('.wfv-menu[role="menu"]').getAttribute('aria-label'), 'Presets');
+  assert.ok(!menuLabels(ctx.doc).includes('Manage presets…'), 'Simple has no Manage presets…');
+  assert.ok(menuLabels(ctx.doc).includes('Quick fix') && menuLabels(ctx.doc).at(-1) === 'Save as preset');
+  openPresetMenu(ctx.doc);   // toggles it closed
+  ctx.doc.documentElement.dataset.level = 'advanced';
+  openPresetMenu(ctx.doc);
+  assert.equal(menuLabels(ctx.doc).at(-1), 'Manage presets…');
   applyFlags({ runPresets: false }, ctx.doc);
 });
 
-test('⋯ Rename: the Settings prompt, one PUT, the menu and chip renamed, focus back on ⋯', async () => {
+test('Preset ▾ with a preset applied: the filled name, ✕ clears it, the menu ticks it and lists Rename… and Delete…', async () => {
   const ctx = await boot({ presets: [preset()] });
   await pick(ctx, 'rp_aaaaaaaaaaaa');
-  ctx.doc.getElementById('preset-more').click();
-  menuItem(ctx.doc, 'Rename').click();
+  const btn = ctx.doc.getElementById('preset-btn');
+  assert.equal(btn.textContent, 'Quick fix ▾');
+  assert.equal(ctx.doc.getElementById('preset-clear').hidden, false);
+  openPresetMenu(ctx.doc);
+  assert.equal(menuItem(ctx.doc, 'Quick fix').getAttribute('aria-checked'), 'true');
+  assert.ok(menuItem(ctx.doc, 'Rename…') && menuItem(ctx.doc, 'Delete…'));
+  openPresetMenu(ctx.doc);
+  ctx.doc.getElementById('preset-clear').click();
+  assert.equal(ctx.doc.getElementById('presetSelect').value, '');
+  assert.equal(btn.textContent, 'Preset ▾');
+  assert.equal(ctx.doc.getElementById('preset-clear').hidden, true);
+  assert.equal(ctx.doc.activeElement, btn);
+  applyFlags({ runPresets: false }, ctx.doc);
+});
+
+test('Rename… from the Preset menu: the Settings prompt, one PUT, the menu and button renamed, focus back on Preset', async () => {
+  const ctx = await boot({ presets: [preset()] });
+  await pick(ctx, 'rp_aaaaaaaaaaaa');
+  openPresetMenu(ctx.doc);
+  menuItem(ctx.doc, 'Rename…').click();
   await waitFor(() => !ctx.doc.querySelector('#confirm-modal').classList.contains('hidden'));
   assert.equal(ctx.doc.getElementById('confirm-title').textContent, 'Rename preset');
   const name = ctx.doc.querySelector('#confirm-f-name');
@@ -361,28 +390,28 @@ test('⋯ Rename: the Settings prompt, one PUT, the menu and chip renamed, focus
   await waitFor(() => [...ctx.doc.querySelectorAll('#presetSelect option')].some((o) => o.textContent === 'Faster fix'));
   assert.deepEqual(ctx.calls.filter((c) => c.method === 'PUT').map((c) => [c.url.replace(/^.*\/api/, '/api'), c.body]),
     [['/api/presets/rp_aaaaaaaaaaaa', { name: 'Faster fix' }]]);
-  await waitFor(() => ctx.doc.activeElement === ctx.doc.getElementById('preset-more'));
+  await waitFor(() => ctx.doc.activeElement === ctx.doc.getElementById('preset-btn'));
   applyFlags({ runPresets: false }, ctx.doc);
 });
 
-test('⋯ Delete: the danger confirm; Cancel sends nothing; Delete leaves preset mode, hides ⋯ and focuses the select', async () => {
+test('Delete… from the Preset menu: the danger confirm; Cancel sends nothing; Delete leaves preset mode', async () => {
   const ctx = await boot({ presets: [preset()] });
   await pick(ctx, 'rp_aaaaaaaaaaaa');
-  const more = ctx.doc.getElementById('preset-more');
-  more.click();
-  menuItem(ctx.doc, 'Delete').click();
+  const btn = ctx.doc.getElementById('preset-btn');
+  openPresetMenu(ctx.doc);
+  menuItem(ctx.doc, 'Delete…').click();
   await waitFor(() => !ctx.doc.querySelector('#confirm-modal').classList.contains('hidden'));
   assert.match(ctx.doc.getElementById('confirm-message').textContent, /Delete the preset “Quick fix”\? Runs it started are not affected\./);
   ctx.doc.querySelector('#confirm-cancel').click();
-  await waitFor(() => ctx.doc.activeElement === more);
+  await waitFor(() => ctx.doc.activeElement === btn);
   assert.equal(ctx.calls.filter((c) => c.method === 'DELETE').length, 0);
-  more.click();
-  menuItem(ctx.doc, 'Delete').click();
+  openPresetMenu(ctx.doc);
+  menuItem(ctx.doc, 'Delete…').click();
   await waitFor(() => !ctx.doc.querySelector('#confirm-modal').classList.contains('hidden'));
   ctx.doc.querySelector('#confirm-ok').click();
-  await waitFor(() => ctx.doc.activeElement === ctx.doc.getElementById('presetSelect'));
-  assert.equal(ctx.calls.filter((c) => c.method === 'DELETE').length, 1);
-  assert.equal(more.hidden, true);
+  await waitFor(() => ctx.calls.filter((c) => c.method === 'DELETE').length === 1 && btn.textContent === 'Preset ▾');
+  await waitFor(() => ctx.doc.activeElement === btn);
+  assert.equal(ctx.doc.getElementById('preset-clear').hidden, true);
   assert.equal(ctx.doc.getElementById('presetSelect').value, '');
   assert.ok(![...ctx.doc.querySelectorAll('#presetSelect option')].some((o) => o.value === 'rp_aaaaaaaaaaaa'));
   applyFlags({ runPresets: false }, ctx.doc);
@@ -394,7 +423,7 @@ test('Simple: no "Manage presets…", the broken scope hint names ⋯; switching
   await pick(ctx, 'rp_aaaaaaaaaaaa');
   const opts = () => [...ctx.doc.querySelectorAll('#presetSelect option')].map((o) => o.value);
   assert.ok(!opts().includes('__manage__'));
-  await waitFor(() => /⋯ menu beside Preset/.test(ctx.doc.getElementById('preset-broken').textContent));
+  await waitFor(() => /from the Preset menu/.test(ctx.doc.getElementById('preset-broken').textContent));
   ctx.doc.documentElement.dataset.level = 'advanced';
   ctx.doc.dispatchEvent(new ctx.window.CustomEvent('worca:level', { detail: { level: 'advanced', previous: 'simple' } }));   // as ui-level.mjs dispatches it
   assert.ok(opts().includes('__manage__'));

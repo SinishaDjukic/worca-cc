@@ -324,6 +324,10 @@ try {
   const CARD_ROOT = `#runs-list .runs-sec[data-section="needs"] .runs-row[data-run-id=${JSON.stringify(runId)}]`;
   await go('runs', { first: true });
   await ev(`localStorage.removeItem('worca-cc.runs.last');0`);   // the bare list: nothing remembered reopens
+  // The Runs list at its 280px floor (runs-resize.mjs LIST_W_KEY): the run page's stage then has the width these
+  // geometry checks were measured at. The 340px default (bundle QA 2) leaves the 7-card graph wider than the stage
+  // even at the 0.3 zoom floor at 1280px, so check (6)'s fit could not hold for a reason that is not the canvas nav's.
+  await ev(`localStorage.setItem('worca-cc.runs.listWidth','280');0`);
   await go('runs');
   await until(`document.querySelector(${JSON.stringify(CARD_ROOT)})`, 'the waiting run in Needs you');
   await settle('card');

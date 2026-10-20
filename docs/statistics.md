@@ -25,7 +25,7 @@ equally long period for Custom.
   `client:acme` tag matches exactly; a bare `client` matches any client value.
 - **Person**: only runs started by that person.
 
-Every tile, chart and grouped row follows the filters. Ask Worca chat spend is not tied to a run,
+Every tile, chart and grouped row follows the filters. Chat spend is not tied to a run,
 so any active filter leaves it out, and the Spent tile drops its budget meter (the limit covers
 the whole account, not the filtered slice).
 
@@ -38,7 +38,7 @@ While the `runTags` feature flag is on, three chips replace the Group by select:
 
 - **Overview** (default): the tiles and charts.
 - **By person**: the person table on its own (one row per starter, `(unknown person)` for runs with
-  no named starter, an `Ask Worca` row, a `Total` footer equal to the Spent tile), with Export CSV.
+  no named starter, a `Chat` row, a `Total` footer equal to the Spent tile), with Export CSV.
 - **Cost**: the Cost and value report (below).
 
 The chosen chip is remembered in this browser (a stored By tag choice opens Cost). With `runTags` off,
@@ -61,7 +61,7 @@ The Cost and value report splits the period's spend and asks what it bought.
   key. Then by can be None.
 - **Rows**: the top 5 values by spend, then **Other (n)** when 2 or more values are left over (a single
   leftover value shows as itself), then **Unallocated** (runs without the value, only when there are
-  any), then **Ask Worca** (chat spend, only without filter chips). Shares are of the whole report total
+  any), then **Chat** (chat spend, only without filter chips). Shares are of the whole report total
   at both levels; under one percent reads `<1%`, never `0%`, and no spend reads `—`. The rows add up to
   the Spent tile, and each row's second-level rows add up to it. Expand a row to see its then by values;
   a row of Other expands to the values it folds.
@@ -69,7 +69,7 @@ The Cost and value report splits the period's spend and asks what it bought.
   the Runs list. Hours and Saved follow
   [Human hours and "Saved"](team-metrics.md#human-hours-and-saved).
 - **Chart**: stacked areas per row over the period, switchable between **AI spend** and **Human hours**
-  (Ask Worca has no hours, so the hours chart leaves it out). Unallocated is hatched; when Allocate by
+  (Chat has no hours, so the hours chart leaves it out). Unallocated is hatched; when Allocate by
   is a cost tag its legend item offers **Tag N runs**, which opens the Runs list with those runs ticked.
   The chart is drawn from the cost ledger, so for All time it can show less than the table for runs
   recorded before the ledger.
@@ -129,6 +129,6 @@ With `report=1` the response adds `report`:
   itself), `spend` (`[bucketIndex, usd]` pairs) and `hourBucket`. Spend of a deleted run is a fact with
   `orphan: true`. The facts' `usd` add up to `totals.pipelineSpendUsd`.
 - `prevRuns`: the previous period's facts (no buckets), `null` for All time.
-- `ask`: `{ spentUsd, prevSpentUsd, series }` for Ask Worca, `null` while a filter is active.
+- `ask`: `{ spentUsd, prevSpentUsd, series }` for Chat, `null` while a filter is active.
 
 Without `report=1` there is no `report` key.

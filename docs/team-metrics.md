@@ -96,8 +96,8 @@ every team record in the range. The chosen chip, the report's choices and its sa
 this browser, apart from the Statistics ones.
 
 A run's whole cost lands in the period it **started** (team records carry one total per run), unlike
-Statistics, which counts spend when it happened. Team records carry no Ask Worca spend, so there is no
-Ask Worca row, and they are mostly teammates' runs, so the report does not link to the Runs list. PRs
+Statistics, which counts spend when it happened. Team records carry no Chat spend, so there is no
+Chat row, and they are mostly teammates' runs, so the report does not link to the Runs list. PRs
 count as opened; records do not say whether one merged. The page's cost tag filter and row filters
 step aside on Cost: the report has its own filter bar.
 
@@ -205,7 +205,7 @@ It degrades rather than fails:
   repositories (Azure: set `WORCA_ADO_TOKEN`, see [Azure DevOps](azure-devops.md)); GitLab and
   Bitbucket items show without merge data.
 
-## Ask Worca
+## Chat
 
 The chat reads team metrics and can propose configuration changes, through four tools. It is
 gnostic about the domain — scopes, ranges, the metrics home, routing, attribution, "Include my
@@ -273,7 +273,7 @@ Both metrics surfaces wait on git, so neither blocks on it:
   `team-metrics-changed` event (`fetched` / `fetch-failed`) reaches the page, which reloads and
   repaints the chip ("Synced just now", or the fetch's stderr). A repository whose branch has
   never been fetched on this machine answers "pending" with no records; the clone happens in the
-  background the same way. Ask Worca's tools, the CLI and other API clients keep the inline
+  background the same way. Chat's tools, the CLI and other API clients keep the inline
   fetch and get fresh data in one round trip.
 - **First paint** is a skeleton of the page (six KPI tiles, two charts, the breakdown grid and
   the runs card, as shimmer bars), never a "Loading…" line, so the layout lands once. Each scope's

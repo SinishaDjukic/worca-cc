@@ -5,7 +5,7 @@ import { presetEngineName, UNKNOWN_ENGINE_LABEL } from './run-presets-names.mjs'
 
 export const BROKEN_SCOPE_HINT = 'Edit the preset\'s scope in Settings › Presets';
 // Below Advanced the Presets tab is hidden (docs/ui-levels.md): point at New run's ⋯ menu instead.
-export const BROKEN_SCOPE_HINT_SIMPLE = 'Delete the preset from the ⋯ menu beside Preset, or switch to Advanced to edit its scope';
+export const BROKEN_SCOPE_HINT_SIMPLE = 'Delete the preset from the Preset menu, or switch to Advanced to edit its scope';
 
 /** Group presets for the menu: "Any project" first, then one group per pinned target (label from `names`). */
 export function presetMenuGroups(presets, names = {}) {

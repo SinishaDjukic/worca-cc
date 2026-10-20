@@ -94,7 +94,7 @@ test('save_script: the input reaches the bundle unredacted; the toggle and a mis
     'the model\'s own text is never redacted on the way in');
   const off = fakeTools({ enabled: false }).tools;
   await assert.rejects(() => off.call('save_script', { key: 'x', meta: {}, source: 'x' }),
-    { name: 'AskToolError', message: 'save_script: creating and running scripts is switched off for this chat — the user turns it back on in Settings → Ask Worca' });
+    { name: 'AskToolError', message: 'save_script: creating and running scripts is switched off for this chat — the user turns it back on in Settings → Chat' });
   const none = fakeTools({ scripts: false }).tools;
   await assert.rejects(() => none.call('list_scripts', {}), { name: 'AskToolError', message: 'list_scripts: scripts are unavailable in this session' });
 });

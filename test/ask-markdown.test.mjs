@@ -65,6 +65,14 @@ test('ask-markdown: the §12 hostile matrix is neutralised', async () => {
   assert.equal(dom.window.__pwned, undefined);
 });
 
+test('ask-markdown: render() makes no chips, and a model cannot forge one (the Chat answer pass, ask-ref-chips.mjs, is the only place)', async () => {
+  const r = await makeReady();
+  const out = htmlOf(r.render('https://github.com/o/r/pull/7 and o/r#8 and run 1a2b3c4d\n\n<a href="https://evil.example" class="ask-ref-chip ask-ref-cand">x</a>'));
+  assert.equal(out.querySelector('.ask-ref-chip, .ask-ref-cand, [class]'), null, 'every surface keeps plain links and text; the class is stripped');
+  assert.equal(out.querySelector('a').getAttribute('href'), 'https://github.com/o/r/pull/7');
+  assert.match(out.textContent, /o\/r#8 and run 1a2b3c4d/);
+});
+
 test('ask-markdown: https/mailto links get _blank + noopener noreferrer; #hash links stay in-app', async () => {
   const r = await makeReady();
   const out = htmlOf(r.render('[ext](https://example.com) [mail](mailto:a@b.c) [in](#history/p/1)'));
