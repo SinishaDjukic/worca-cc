@@ -44,6 +44,21 @@ test('a finished run raised to Needs you by its PR (D31) archives and deletes; S
   assert.equal(planBulk('stop', [pr]).skip[0].reason, 'already finished');
 });
 
+test('an interrupted run with no resume point archives and deletes; one that can resume is skipped as interrupted', () => {
+  const dead = T('d', 'paused', { status: 'interrupted', resumable: false, pipelineId: 'd' });
+  const parked = T('r', 'paused', { status: 'interrupted', resumable: true, pipelineId: 'r' });
+  const unknown = T('u', 'paused', { status: 'interrupted', pipelineId: 'u' });
+  assert.equal(bulkVerdict('archive', dead), 'apply');
+  assert.equal(bulkVerdict('delete', dead), 'apply');
+  assert.equal(bulkVerdict('stop', dead), 'skip', 'an interrupted run is never stopped');
+  for (const t of [parked, unknown]) {
+    assert.equal(bulkVerdict('archive', t), 'skip', `${t.id}: only Resume moves it on`);
+    assert.equal(bulkVerdict('delete', t), 'skip');
+  }
+  assert.deepEqual(planBulk('archive', [parked]).skip.map((t) => t.reason), ['interrupted — resume it first']);
+  assert.deepEqual(planBulk('delete', [parked]).skip.map((t) => t.reason), ['interrupted — resume it first']);
+});
+
 test('a waiting group member that Archive skips reads "not started yet", not "never started"', () => {
   const plan = planBulk('archive', [T('g', 'waiting', { members: [T('t2', 'waiting', { ticketId: 't2' })] })]);
   assert.deepEqual(plan.skip.map((t) => t.reason), ['not started yet']);
