@@ -1,4 +1,4 @@
-// ui/public/flags-view.mjs — Settings › Experimental (docs/feature-flags.md, D8): one row per
+// ui/public/flags-view.mjs — Settings › Labs (docs/feature-flags.md, D8): one row per
 // registry flag that is not retiring, with its stage, switch, lock note and docs link; Reset all.
 // Split out of app.js so a test can drive it against the real pane without booting the app.
 // The host owns the endpoints: `api(method, body)` answers { ok, status, data } and never rejects
@@ -10,7 +10,7 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 
 /** The rows' markup. `flags` is GET /api/flags' `flags`. */
 export function flagRowsHtml(flags) {
-  if (!flags.length) return '<p class="hint">No experimental features in this release.</p>';
+  if (!flags.length) return '<p class="hint">No Labs features in this release.</p>';
   return flags.map((f) => {
     const lock = f.locked ? '<p class="flag-row-lock">Locked by WORCA_FLAGS</p>' : '';
     const docs = f.docsUrl ? `<a class="flag-row-docs" href="${esc(f.docsUrl)}" target="_blank" rel="noopener">How it works</a>` : '';
@@ -52,7 +52,7 @@ export function createFlagsView({ host, msgEl = null, resetBtn = null, api, conf
 
   async function load(sub = '') {
     const r = await api('GET');
-    if (!r.ok) { say((r.data && r.data.error) || 'Could not load the experimental features.', 'err'); return; }
+    if (!r.ok) { say((r.data && r.data.error) || 'Could not load the Labs features.', 'err'); return; }
     flags = Array.isArray(r.data.flags) ? r.data.flags : [];
     say('');
     paint({ sub });
@@ -94,7 +94,7 @@ export function createFlagsView({ host, msgEl = null, resetBtn = null, api, conf
     const keys = flags.filter((f) => !f.locked).map((f) => f.key);
     if (!keys.length) return;
     if (!(await confirm({
-      title: 'Reset all experimental features?',
+      title: 'Reset all Labs features?',
       message: 'Every feature goes back to its default. Features locked by WORCA_FLAGS stay as they are.',
       confirmLabel: 'Reset all',
     }))) return;
@@ -117,7 +117,7 @@ export function createFlagsView({ host, msgEl = null, resetBtn = null, api, conf
 }
 
 /**
- * A single flag's switch outside the Experimental page (Settings › Runs, review F): the same value, one source.
+ * A single flag's switch outside the Labs page (Settings › Runs, review F): the same value, one source.
  * `el` is a `.switch[role=switch]`; `api(method, body)` is the /api/flags binding ({ok, status, data}, never throws).
  * Returns an unbind function.
  */

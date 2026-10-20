@@ -1,6 +1,6 @@
 // test/ui-flags.test.mjs — feature flags in the real shell (D4-D9, D12): the first paint hides an off
 // flag, a `flags` frame flips it live and fires onFlagChange, data-flag + data-min-level need both,
-// Settings › Experimental lists / toggles / locks / resets at every level, and the chip links to the row.
+// Settings › Labs lists / toggles / locks / resets at every level, and the chip links to the row.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -70,7 +70,7 @@ test('first paint, live flip, events, and flags × levels', async () => {
       const note = doc.getElementById('flags-demo-note');
       const a = note.querySelector('a.flag-chip');
       assert.equal(a.getAttribute('href'), '#settings/experimental/flagsDemo');
-      assert.equal(a.textContent, 'Experimental');
+      assert.equal(a.textContent, 'Labs');
       assert.equal(a.dataset.flag, 'flagsDemo');
       decorateFlagChips(doc);
       assert.equal(note.querySelectorAll('a.flag-chip').length, 1);
@@ -81,7 +81,7 @@ test('first paint, live flip, events, and flags × levels', async () => {
   ]);
 });
 
-test('Settings › Experimental view: rows, toggle PATCH body, locked row, requires confirm, Reset all', async () => {
+test('Settings › Labs view: rows, toggle PATCH body, locked row, requires confirm, Reset all', async () => {
   const { document: doc } = page();
   const host = doc.getElementById('flags-host');
   const calls = []; const confirms = [];
@@ -97,7 +97,7 @@ test('Settings › Experimental view: rows, toggle PATCH body, locked row, requi
     { name: 'load lists the flag with its stage badge and an off switch', run: async () => {
       await view.load();
       const row = host.querySelector('[data-flag-row="flagsDemo"]');
-      assert.equal(row.querySelector('.flag-stage').textContent, 'Experimental');
+      assert.equal(row.querySelector('.flag-stage').textContent, 'Labs');
       assert.equal(row.querySelector('[role="switch"]').getAttribute('aria-checked'), 'false');
       assert.ok(doc.getElementById('flags-reset').disabled, 'nothing stored: nothing to reset');
     } },
@@ -112,7 +112,7 @@ test('Settings › Experimental view: rows, toggle PATCH body, locked row, requi
     { name: 'Reset all confirms, then PATCHes null for every unlocked flag', run: async () => {
       doc.getElementById('flags-reset').click();
       await tick(); await tick();
-      assert.equal(confirms.at(-1), 'Reset all experimental features?');
+      assert.equal(confirms.at(-1), 'Reset all Labs features?');
       assert.deepEqual(calls.at(-1), ['PATCH', { flagsDemo: null }]);
     } },
     { name: 'a repaint (what a flags frame triggers) keeps focus on the switch', run: async () => {
@@ -168,7 +168,7 @@ async function bootApp({ level, flags }) {
   return { window, doc: window.document, frame: (msg) => WSStub.last.emit('message', { data: JSON.stringify(msg) }) };
 }
 
-test('app: the Experimental tab shows at every level; a flags frame flips the page; the chip opens the row', async () => {
+test('app: the Labs tab shows at every level; a flags frame flips the page; the chip opens the row', async () => {
   await checkRows([
     { name: 'the tab button is level simple and never gated, at simple, advanced and expert', run: async () => {
       for (const level of ['simple', 'advanced', 'expert']) {
@@ -234,7 +234,7 @@ test('A4: a tab gets its Beta chip inside the label as plain text; other hosts k
   assert.equal(c.dataset.flag, undefined, 'an ungated host: the chip is never hidden by the flag gate');
 });
 
-test('bindFlagSwitch (Settings › Runs, review F): one source with the Experimental page', async () => {
+test('bindFlagSwitch (Settings › Runs, review F): one source with the Labs page', async () => {
   const { document: doc } = page({ flags: { keepAwake: true } });
   const el = doc.getElementById('keepAwakeSwitch');
   const msg = doc.getElementById('keepAwakeMsg');
@@ -253,7 +253,7 @@ test('bindFlagSwitch (Settings › Runs, review F): one source with the Experime
       await tick();
       assert.deepEqual(calls, [['GET', undefined], ['PATCH', { keepAwake: false }]]);
       assert.equal(el.getAttribute('aria-checked'), 'false');
-      assert.equal(flagOn('keepAwake', doc), false, 'the page state follows, so the Experimental row repaints too');
+      assert.equal(flagOn('keepAwake', doc), false, 'the page state follows, so the Labs row repaints too');
       applyFlags({ keepAwake: true }, doc);
       assert.equal(el.getAttribute('aria-checked'), 'true', 'a flags frame repaints it');
       off();

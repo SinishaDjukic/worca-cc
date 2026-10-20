@@ -2320,7 +2320,7 @@ const startRunHandler = async (req, res) => {
     const presetOwner = internal ? (typeof stored.presetOwner === 'string' && stored.presetOwner ? stored.presetOwner : null) : askViewer(req);
     let presetRow = null;
     if (body.presetId !== undefined) {
-      if (!flagEnabled('runPresets')) return badRequest(res, 'presetId needs the Run presets feature (Settings › Experimental features)');
+      if (!flagEnabled('runPresets')) return badRequest(res, 'presetId needs the Run presets feature (Settings › Labs features)');
       presetRow = readPreset(body.presetId, { owner: presetOwner });
       // 404 like the preset routes: a missing and another person's preset answer the same (R-sec-3).
       if (!presetRow) return res.status(404).json({ error: `preset ${JSON.stringify(String(body.presetId).slice(0, 40))} not found` });
@@ -3445,7 +3445,7 @@ async function fireTicket(ticket) {
   if (ticket.presetId) {
     const stored = body.internal && typeof body.internal === 'object' ? body.internal : {};
     const name = typeof stored.presetName === 'string' && stored.presetName ? stored.presetName : ticket.presetId;
-    if (!flagEnabled('runPresets')) return { ok: false, error: `it follows the run preset "${name}", and run presets are turned off (Settings › Experimental)`, transient: false };
+    if (!flagEnabled('runPresets')) return { ok: false, error: `it follows the run preset "${name}", and run presets are turned off (Settings › Labs)`, transient: false };
     const preset = readPreset(ticket.presetId, { owner: typeof stored.presetOwner === 'string' && stored.presetOwner ? stored.presetOwner : null });
     if (!preset) return { ok: false, error: `Preset "${name}" no longer exists`, transient: false };
     const keep = Array.isArray(stored.presetOverrides) ? stored.presetOverrides.filter((k) => typeof k === 'string') : [];

@@ -885,7 +885,7 @@ const el = {
   memoryHost: $('#memory-host'),
   memoryMsg: $('#memory-msg'),
 
-  // Experimental (Settings tab; docs/feature-flags.md)
+  // Labs (Settings tab; docs/feature-flags.md)
   flagsHost: $('#flags-host'),
   flagsMsg: $('#flags-msg'),
   flagsReset: $('#flags-reset'),
@@ -1947,7 +1947,7 @@ function handleServerMessage(msg) {
 }
 
 // Shape it first's UI that nothing else rebuilds: the New run link and the Chat home tile. Run on every hello and
-// whenever the flag flips (Settings › Experimental, or a `flags` frame).
+// whenever the flag flips (Settings › Labs, or a `flags` frame).
 function syncShapeFirstUi() {
   refreshShapeFeatures();   // a view emptied while the gate was off comes back
   const shapeLink = document.getElementById('shapeChatLink');
@@ -16744,7 +16744,7 @@ function globalDefragHost() {
   return p && p.key ? { key: p.key, name: p.name } : null;
 }
 
-// Settings › Experimental (docs/feature-flags.md): one controller, made on first entry; a chip's
+// Settings › Labs (docs/feature-flags.md): one controller, made on first entry; a chip's
 // '#settings/experimental/<key>' lands on that flag's row.
 let flagsTabCtl = null;
 function loadFlagsTab(sub = '') {
@@ -36570,7 +36570,7 @@ const offPresetsFlag = onFlagChange('runPresets', (on) => {
 // Test hook: flags.mjs's listener map outlives a jsdom boot, so a suite unsubscribes the previous app first.
 if (typeof window !== 'undefined') window.__np = Object.assign(window.__np || {}, { offPresetsFlag });
 
-// Settings › Runs › Keep awake (UI/UX review F): the keepAwake flag's own switch, one source with Settings › Experimental.
+// Settings › Runs › Keep awake (UI/UX review F): the keepAwake flag's own switch, one source with Settings › Labs.
 if (el.keepAwakeSwitch) {
   window.__np.offKeepAwakeSwitch?.();
   window.__np.offKeepAwakeSwitch = bindFlagSwitch(el.keepAwakeSwitch, 'keepAwake', {

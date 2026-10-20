@@ -32,7 +32,7 @@ test('quick actions: one row of label-sized 40px tiles (icon, label, badge inlin
   assert.match(b, /\.chat-home-act\[data-overflow\]\{display:none;\}/);
   assert.match(b, /\.chat-home-act\{display:flex;flex-direction:row;[^}]*flex:none;[^}]*min-height:40px;[^}]*border:0;/);
   assert.match(b, /\.chat-home-act:hover\{background:var\(--hover\);\}/);
-  // Web UI review: "Shaper" broke as "Shap / er" beside its Experimental badge. The label never shrinks or wraps;
+  // Web UI review: "Shaper" broke as "Shap / er" beside its Labs badge. The label never shrinks or wraps;
   // the badge (overflow:hidden, ellipsis) is what gives way.
   assert.match(b, /\.chat-home-act-l\{flex:none;white-space:nowrap;\}/);
   assert.doesNotMatch(b, /\.chat-home-act-l\{[^}]*overflow-wrap:anywhere/);

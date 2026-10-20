@@ -13,8 +13,6 @@ import { homeIcon } from './home-icons.mjs';
 import { DEFAULT_HOME_PINS, visiblePins, splitPins, unpinWorkflow } from '../../../src/shared/home-pins.mjs';
 
 // Shaper is no longer a built-in tile: it is the default PIN (src/shared/home-pins.mjs).
-const BADGE_SHORT = { Experimental: 'Exp' };
-
 export const TILE_INTENTS = Object.freeze(['run', 'workflow', 'schedule', 'track', 'diff', 'script', 'clone']);
 export const MORE_INTENTS = Object.freeze(['away', 'metrics', 'model', 'workspace', 'remember', 'tasks']);
 /** The interface mode each action belongs to: the level of the page or surface that owns the feature
@@ -71,15 +69,7 @@ export function createQuickActions({ doc, deps, getRuns = () => ({ live: [], fin
     l.className = 'chat-home-act-l';
     l.textContent = label;
     b.appendChild(l);
-    // The badge shows its short form ("Exp") so the one-row tile stays small; the full stage is the tooltip and the name.
-    if (badge) {
-      const s = doc.createElement('span');
-      s.className = 'chat-home-act-badge';
-      s.textContent = BADGE_SHORT[badge] || badge;
-      s.title = badge;
-      b.appendChild(s);
-      b.setAttribute('aria-label', `${label} (${badge})`);
-    }
+    if (badge) { const s = doc.createElement('span'); s.className = 'chat-home-act-badge'; s.textContent = badge; b.appendChild(s); }
     return b;
   }
   /** Arm intent `id`; an intent that cannot go out empty (Step away) also leaves its text in the composer. */

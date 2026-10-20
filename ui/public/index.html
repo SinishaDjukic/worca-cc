@@ -1604,8 +1604,8 @@
             <button type="button" class="tab" data-tab="tags" data-min-level="simple" data-flag="runTags" aria-pressed="false">Tags</button>
             <button type="button" class="tab" data-tab="presets" data-min-level="advanced" data-flag="runPresets" data-flag-chip aria-pressed="false">Presets</button>
             <button type="button" class="tab" data-tab="runs" data-min-level="simple" aria-pressed="false">Runs</button>
-            <!-- Experimental (docs/feature-flags.md) shows at every level: flags are not levels. -->
-            <button type="button" class="tab" data-tab="experimental" data-min-level="simple" aria-pressed="false">Experimental</button>
+            <!-- Labs (docs/feature-flags.md) shows at every level: flags are not levels. -->
+            <button type="button" class="tab" data-tab="experimental" data-min-level="simple" aria-pressed="false">Labs</button>
             <button type="button" class="tab" data-tab="ask" data-min-level="advanced" aria-pressed="false">Chat</button>
             <button type="button" class="tab" data-tab="guardrails" data-min-level="advanced" aria-pressed="false">Guardrails</button>
             <button type="button" class="tab" data-tab="memory" data-min-level="advanced" aria-pressed="false">Memory</button>
@@ -1932,7 +1932,7 @@
               </div>
             </section>
 
-            <!-- Keep awake (UI/UX review F): the keepAwake beta flag, the same value as its Settings › Experimental row. -->
+            <!-- Keep awake (UI/UX review F): the keepAwake beta flag, the same value as its Settings › Labs row. -->
             <section class="card settings-card" id="keepawake-settings-card" data-min-level="simple">
               <div class="card-head">
                 <div class="label-row"><h2>Keep awake</h2></div>
@@ -2186,7 +2186,7 @@
               <button type="button" class="btn btn-sm" id="flags-reset">Reset all</button>
             </div>
             <section class="card settings-card" id="flags-settings-card" data-min-level="simple">
-              <p class="flags-warn" role="note">Experimental features may change, break or disappear in any release.</p>
+              <p class="flags-warn" role="note">Labs features may change, break or disappear in any release.</p>
               <p id="flags-msg" class="form-msg" aria-live="polite"></p>
               <div id="flags-host" class="flags-host"></div>
               <!-- The one use of the demo flag (it keeps the usage scan honest); removed with the flag. -->

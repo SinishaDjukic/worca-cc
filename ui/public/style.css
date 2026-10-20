@@ -621,8 +621,8 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .switch.disabled{opacity:.5;cursor:not-allowed;}
 .switch-row .txt{font-weight:500;}
 
-/* Feature flags (docs/feature-flags.md): the Experimental / Beta chip a flagged element wears (D9),
-   and the Settings › Experimental rows (D8). The gates themselves live in <style id="flag-gates">. */
+/* Feature flags (docs/feature-flags.md): the Labs / Beta chip a flagged element wears (D9),
+   and the Settings › Labs rows (D8). The gates themselves live in <style id="flag-gates">. */
 .flag-chip{display:inline-flex;align-items:center;height:18px;margin-left:6px;padding:0 6px;text-decoration:none;
   background:var(--violet-bg);color:var(--violet-ink);vertical-align:middle;}
 .flag-chip-beta{background:var(--blue-bg);color:var(--blue-ink-strong);}   /* --blue-ink is 3.6:1 on --blue-bg at this size (:1016) */
@@ -9358,7 +9358,7 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .chat-rc-member-open:disabled{cursor:default;opacity:.7;}
 .chat-rc-member-open:focus-visible,.chat-rc-log-show:focus-visible{outline:2px solid currentColor;outline-offset:2px;}
 /* QA 1: the Shaper pin's badge sits inline after the label, sized and coloured like the feature-flag chip
-   (.flag-chip: 18px, violet for Experimental). Never truncated. */
+   (.flag-chip: 18px, violet for Labs). Never truncated. */
 .chat-home-act-badge{flex:none;box-sizing:border-box;display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:var(--r-xs);background:var(--violet-bg);color:var(--violet-ink);font-size:10px;font-weight:500;line-height:1;white-space:nowrap;}
 .shape-checklists{margin:12px 0;display:flex;flex-direction:column;gap:6px;}
 .shape-cl-title{font-size:13px;margin:0;color:var(--ink-2);}

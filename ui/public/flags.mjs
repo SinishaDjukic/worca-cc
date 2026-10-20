@@ -3,7 +3,7 @@
 // The server renders the state into the shell (src/core/index-html.mjs): <html data-flags="…"> lists
 // the flags that are on, and <style id="flag-gates"> hides [data-flag~="<key>"] for every flag that is
 // off, so flagged-off markup never paints. This module keeps both live (the `flags` WS frame, hello):
-//   markup    data-flag=<key> [data-flag-chip]     hidden while off; the chip says Experimental / Beta
+//   markup    data-flag=<key> [data-flag-chip]     hidden while off; the chip says Labs / Beta
 //   logic     flagOn(key)                         read at the point of use
 //   reactive  onFlagChange(key, fn)               mount / unmount a JS-built feature
 //   anything  document 'worca:flags'              detail { flags, changed }
@@ -12,7 +12,7 @@
 import { FLAGS, flagByKey } from '../../src/shared/flags/registry.mjs';
 import { flagsAttr, flagGateCss } from '../../src/shared/flags/resolve.mjs';
 
-export const STAGE_LABEL = Object.freeze({ experimental: 'Experimental', beta: 'Beta', retiring: 'Retiring' });
+export const STAGE_LABEL = Object.freeze({ experimental: 'Labs', beta: 'Beta', retiring: 'Retiring' });
 
 const docOf = (doc) => doc || globalThis.document;
 const listeners = new Map();   // key -> Set<(on:boolean)=>void>
@@ -62,7 +62,7 @@ export function applyFlags(patch, doc) {
 const INTERACTIVE = 'a, button, input, select, textarea, label, summary';
 const TAB_HOST = '[role="tab"], .tab, .tabs > button, .seg > button';
 
-/** D9: give a [data-flag] element its stage chip, linking to its row in Settings › Experimental.
+/** D9: give a [data-flag] element its stage chip, linking to its row in Settings › Labs.
  *  Inside the host, or right after it when the host is interactive (no link inside a button). The
  *  chip carries the host's data-flag, so it is gated exactly like the host. A tab gets a plain span
  *  inside its label instead (review A4). A non-empty data-flag-chip value names the flag without
@@ -75,7 +75,7 @@ export function chip(el, doc) {
   el.dataset.flagChipped = '1';
   const f = flagByKey(key);
   const label = STAGE_LABEL[f.stage] || f.stage;
-  const title = `${f.title} is ${f.stage === 'beta' ? 'in beta' : 'experimental'}.`;
+  const title = `${f.title} is ${f.stage === 'beta' ? 'in beta' : 'in Labs'}.`;
   if (el.matches(TAB_HOST)) {
     const s = d.createElement('span');
     s.className = `flag-chip flag-chip-${f.stage}`;
@@ -89,7 +89,7 @@ export function chip(el, doc) {
   a.href = `#settings/experimental/${key}`;
   if (el.dataset.flag) a.dataset.flag = el.dataset.flag;
   a.textContent = label;
-  a.title = `${title} Open its switch in Settings › Experimental.`;
+  a.title = `${title} Open its switch in Settings › Labs.`;
   if (el.matches(INTERACTIVE)) el.after(a); else el.appendChild(a);
   return el;
 }

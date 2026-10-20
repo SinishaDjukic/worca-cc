@@ -4,7 +4,7 @@ Plan a task with Worca before it builds, in Chat, and cut a large one into slice
 Nothing here changes a run that does not ask for it: a run without `shape` in its
 request behaves exactly as before.
 
-> **Experimental.** Shaper is behind a switch until the feature flag ships.
+> **Labs.** Shaper is behind a switch until the feature flag ships.
 > See [Turning it on](#turning-it-on).
 
 ## What it is
@@ -21,7 +21,7 @@ review later checks the code against the checklists the plan ended with.
 ## Turning it on
 
 Shaper is an experimental feature, off by default. Turn on **Shaper** in
-Settings › Experimental (the `shapeFirst` feature flag, see [Feature flags](feature-flags.md)),
+Settings › Labs (the `shapeFirst` feature flag, see [Feature flags](feature-flags.md)),
 or start Worca with `WORCA_FLAGS=shapeFirst`. It takes effect at once, without a restart.
 While it is off, everything below is hidden or refused: the **Plan it
 with me** tile, the nudge on a run card, the **Plans** tab, the `shape` field on
