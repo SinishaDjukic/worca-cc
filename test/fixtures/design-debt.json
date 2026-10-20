@@ -425,7 +425,6 @@
     "input.wfv-name → 13.5px"
   ],
   "svgTypeScale": [
-    "ui/public/cost-area-chart.mjs",
     "ui/public/stats-view.mjs",
     "ui/public/team-metrics-view.mjs"
   ]
