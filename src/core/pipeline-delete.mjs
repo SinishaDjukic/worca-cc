@@ -29,7 +29,7 @@ import { removeWorktree, snapshotWorktreePatch, commitStagedWork, commitOf, inde
 import { fastForwardTo } from './git-sync.mjs';
 import { updateBranchRecords, withRunLock } from './checkout.mjs';
 import { MEMORY_RULES_REL } from './memory-sync.mjs';
-import { staleIndexLockNote } from './git-lock.mjs';
+import { staleGitLockNote } from './git-lock.mjs';
 import {
   rmGuarded, readRunManifest, updateRunManifest, rescueModifiedMounts, scanStrayEntries, copyRunManifestTo, RETAIN_REASONS,
 } from './run-manifest.mjs';
@@ -560,7 +560,7 @@ export async function discardRetainedWorktrees({ projectDir = null, key = null, 
   for (const target of targets) {
     const name = retainedWorkPatchName(state.target === 'workspace' ? (target.projectKey || 'member') : null);
     const snap = await snapshotWorktreePatch(target.worktreeDir, join(runDir, name));
-    if (snap.clearedLock) lockNotes.push(staleIndexLockNote(snap.clearedLock));
+    for (const lock of snap.clearedLocks || []) lockNotes.push(staleGitLockNote(lock));
     if (!snap.ok) {
       throw err(
         `cannot save recovery patch for ${target.projectKey || target.worktreeDir}: git ${snap.step} failed: ${snap.message}`,

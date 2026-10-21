@@ -30,7 +30,7 @@ import {
   claimPausedForStop, claimForResume, findPipelineRowById, readPipelineForResume,
 } from './artifacts.mjs';
 import { diffNameStatus, diffNumstat, diffPatch, untrackedFiles, untrackedPatch } from './git-info.mjs';
-import { clearStaleIndexLock, staleIndexLockNote } from './git-lock.mjs';
+import { clearStaleGitLocks, staleGitLockNote } from './git-lock.mjs';
 import { claimPipelineCommand, discardPendingPipelineCommands, controlCheckIntervalMs } from './pipeline-commands.mjs';
 import {
   assembleResults, persistResults, persistDiffPatch, buildPerProject, rollupSummary,
@@ -5064,7 +5064,7 @@ export class RunHarness extends EventEmitter {
     if (!pipelineDir || !info?.worktreeDir) return;
     const name = retainedWorkPatchName(this.isWorkspace ? key : null);
     const snap = await snapshotWorktreePatch(info.worktreeDir, join(pipelineDir, name));
-    if (snap.clearedLock) await this._recordRunWarning(staleIndexLockNote(snap.clearedLock));
+    for (const lock of snap.clearedLocks || []) await this._recordRunWarning(staleGitLockNote(lock));
     if (snap.ok && snap.file) {
       recordArtifact(this.pipeline.id, 'retained-work-patch', name);
       this._log('git', 'info', `Retained-work recovery patch saved: ${name}`);
@@ -6867,16 +6867,17 @@ export class RunHarness extends EventEmitter {
 
   /**
    * `_git` for a command that writes the index (add / rm --cached / commit). When git refuses
-   * because `index.lock` exists and the lock is stale — a leftover from a killed git, not a live
-   * one — remove it, record a run warning, and retry once. Without this one leftover lock fails
-   * every later staging and then the teardown commit, retaining the whole run.
+   * because a lock exists (`index.lock`, or `HEAD.lock` / the branch ref lock a commit takes) and
+   * the lock is stale — a leftover from a killed git, not a live one — remove every stale lock,
+   * record one run warning per lock, and retry once. Without this one leftover lock fails every
+   * later staging and then the teardown commit, retaining the whole run.
    */
   async _gitIndexWrite(args, opts) {
     const res = await this._git(args, opts);
     if (res.ok) return res;
-    const cleared = await clearStaleIndexLock(opts?.cwd || this.projectDir);
-    if (!cleared) return res;
-    await this._recordRunWarning(staleIndexLockNote(cleared));
+    const cleared = await clearStaleGitLocks(opts?.cwd || this.projectDir);
+    if (!cleared.length) return res;
+    for (const lock of cleared) await this._recordRunWarning(staleGitLockNote(lock));
     return this._git(args, opts);
   }
 
