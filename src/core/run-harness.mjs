@@ -8056,12 +8056,13 @@ export class RunHarness extends EventEmitter {
     if (rpNow && typeof rpNow === 'object' && this._metricsIv) rpNow.interventions = { ...this._metricsIv };
     if (!this.pipeline) return false;
     if (this._rowHandedOff()) return false;
+    const rpOut = this.state.resumePoint;   // adopting a store edit (above) replaced the object rpNow names
     if (this._shapeRec) this.state.shapeStats = buildShapeStats(this._shapeRec, this.state.steps);
     try {
       // A paused harness names itself in the saved point (`pausedBy`, written here only, never kept
       // in state): _rowHandedOff reads it back. A resumed run's new harness never writes this token.
-      const st = this._pauseToken && rpNow && typeof rpNow === 'object'
-        ? { ...this.state, resumePoint: { ...rpNow, pausedBy: this._pauseToken } } : this.state;
+      const st = this._pauseToken && rpOut && typeof rpOut === 'object'
+        ? { ...this.state, resumePoint: { ...rpOut, pausedBy: this._pauseToken } } : this.state;
       await writeState(this.pipeline.dir, st);
       return true;
     } catch {
@@ -8084,7 +8085,33 @@ export class RunHarness extends EventEmitter {
     let row = null;
     try { row = pipelineRowStamp(this.pipeline.id); } catch { return false; }
     this._handedOff = !row || row.status !== 'paused' || row.pausedBy !== this._pauseToken;
+    // A model-switch store edit re-tokens the row without resuming it: re-adopt (any process may have made it).
+    if (this._handedOff && row?.status === 'paused' && String(row.pausedBy || '').startsWith('switch:')) {
+      return !this.adoptPausedStoreEdit();
+    }
     return this._handedOff;
+  }
+
+  /** A model-switch store edit of this PAUSED run's row (model-switch.mjs: a `switch:` token) is not a
+   *  resume: take the edited point as this harness's own, under the edit's token, so its later writes
+   *  (the Away switch, a booking, the title) land instead of being dropped as a hand-off. Never throws.
+   *  @returns {boolean} whether it adopted */
+  adoptPausedStoreEdit() {
+    if (!this._pausedHandoff || !this.pipeline?.id || this.state.status !== 'paused') return false;
+    let saved = null;
+    try { saved = readPipelineForResume(this.pipeline.id); } catch { return false; }
+    const token = saved?.resumePoint?.pausedBy;
+    if (!saved || saved.row?.status !== 'paused' || typeof token !== 'string' || !token.startsWith('switch:')) return false;
+    // The edit owns ONLY the manifest and the fresh-session marks (switchPausedRunModels). Everything else
+    // stays this harness's: setNightOverride mutates state.resumePoint.night BEFORE the _persist that
+    // lands here, so taking the row's whole point would drop the very switch being saved.
+    const { manifest, freshSessionNodes } = saved.resumePoint;
+    const own = this.state.resumePoint && typeof this.state.resumePoint === 'object' ? this.state.resumePoint : {};
+    this.state.resumePoint = { ...own, ...(manifest ? { manifest } : {}), ...(Array.isArray(freshSessionNodes) ? { freshSessionNodes } : {}) };
+    if (manifest) this.state.stepper = manifest;
+    this._pauseToken = token;   // _persist stamps it back as pausedBy
+    this._handedOff = false;
+    return true;
   }
 
   /**

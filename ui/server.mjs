@@ -5612,9 +5612,11 @@ app.post('/api/pipelines/:id/models', async (req, res) => {
       return res.status(202).json(out);   // sent; the owner has not answered in time
     }
     if (out.changed.length) {
-      // The parked entry's orchestrator is what a reconnect snapshots: show the new models there too.
+      // The parked entry's harness re-adopts the edited row (new token, new manifest): a reconnect
+      // snapshots it, and its later writes (the Away switch) still reach the row.
       if (parked?.orch?.state) {
-        parked.orch.state.stepper = out.stepper;
+        if (typeof parked.orch.adoptPausedStoreEdit === 'function') parked.orch.adoptPausedStoreEdit();
+        else parked.orch.state.stepper = out.stepper;
         broadcast({ runId: parked.id, type: 'state', ...parked.orch.getState() });
       }
       emitChanged('pipelines-changed', 'updated');
