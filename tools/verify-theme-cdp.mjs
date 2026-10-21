@@ -478,35 +478,38 @@ const states = [
     await api('/api/flags', { method: 'PATCH', headers: json, body: JSON.stringify({ runTags: true }) });
     await api(`/api/runs/${encodeURIComponent(pipelineId)}/tags`, { method: 'PUT', headers: json, body: JSON.stringify({ tags: ['client:northwind', 'team:docs'] }) });
     await go(`history/${projectKey}/${pipelineId}`);
-    await until(`document.querySelector('#hist-detail .rd-facts .rd-cost-row .hd-tags-edit')`, 'the Cost tags row');
-    // prepare() runs before auditCurrent's theme loop, so the row is measured in light and dark here (R-ux-5).
+    await until(`document.querySelector('#hist-detail .rd-kv [data-fact="tags"] .rd-cost-row .hd-tags-edit')`, 'the Cost tags row');
+    // prepare() runs before auditCurrent's theme loop, so the row is measured in light and dark here (R-ux-5). Run 3 (D8):
+    // the row is the facts block's Cost tags row, above the tiles, inside the card.
     for (const theme of THEMES.slice(0, 2)) for (const width of [1440, 375, 290]) {
       await setTheme(theme);
       await cdp('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: width < 600 });
       await freeze(`cost-tags-${theme[0]}-${width}`);
       const m = await ev(`(() => { const f = document.querySelector('#hist-detail .rd-facts');
-        const stats = f.querySelector('.rd-stats'); const row = f.querySelector('.rd-cost-row'); const cs = getComputedStyle(row);
+        const stats = f.querySelector('.rd-stats'); const row = document.querySelector('#hist-detail .rd-kv [data-fact="tags"] .rd-cost-row'); const cs = getComputedStyle(row);
+        const sheet = row.closest('.rd-sheet').getBoundingClientRect(); const r = row.getBoundingClientRect();
         const tops = [...row.querySelectorAll(':scope > .tag-chip')].map((c) => Math.round(c.getBoundingClientRect().top));
-        return { tiles: [...stats.children].map((d) => d.querySelector('span').textContent), label: row.firstElementChild.textContent,
-          below: row.getBoundingClientRect().top >= stats.getBoundingClientRect().bottom, oneLine: new Set(tops).size === 1,
+        return { tiles: [...stats.children].map((d) => d.querySelector('span').textContent), label: row.closest('.rd-kv-row').querySelector('.rd-kv-k').textContent,
+          above: r.bottom <= stats.getBoundingClientRect().top && !!(row.compareDocumentPosition(f) & Node.DOCUMENT_POSITION_FOLLOWING),
+          inCard: r.left >= sheet.left - 0.5 && r.right <= sheet.right + 0.5, oneLine: new Set(tops).size === 1,
           wraps: cs.display === 'flex' && cs.flexWrap === 'wrap', last: !!row.lastElementChild.querySelector('.hd-tags-edit'),
           scroll: document.scrollingElement.scrollWidth, client: document.scrollingElement.clientWidth }; })()`);
-      designChecks.push({ what: `cost tags row (${theme[0]}) at ${width}px: three tiles, one row under them, the control last, no sideways scroll`,
-        ok: m.tiles.length === 3 && !m.tiles.includes('cost tags') && m.label === 'Cost tags' && m.below && m.wraps && m.last
+      designChecks.push({ what: `cost tags row (${theme[0]}) at ${width}px: three tiles, the facts block's Cost tags row above them inside the card, the control last, no sideways scroll`,
+        ok: m.tiles.length === 3 && !m.tiles.includes('cost tags') && m.label === 'Cost tags' && m.above && m.inCard && m.wraps && m.last
           && (width === 290 || m.oneLine) && m.scroll === m.client, got: m });
     }
     await setTheme(THEMES[0]);
     // The inline editor opens inside the row: at 290px (still emulated) it must not push the page sideways either.
-    await ev(`document.querySelector('#hist-detail .rd-cost-row .hd-tags-edit').click();0`);
-    await until(`document.querySelector('#hist-detail .rd-cost-row .hd-tags .tag-input-text')`, 'the cost tags editor');
+    await ev(`document.querySelector('#hist-detail .rd-kv [data-fact="tags"] .rd-cost-row .hd-tags-edit').click();0`);
+    await until(`document.querySelector('#hist-detail .rd-kv [data-fact="tags"] .rd-cost-row .hd-tags .tag-input-text')`, 'the cost tags editor');
     await freeze('cost-tags-editor-290');
     const ed = await ev(`({ scroll: document.scrollingElement.scrollWidth, client: document.scrollingElement.clientWidth,
-      inRow: !!document.querySelector('#hist-detail .rd-facts .rd-cost-row .tag-input-text') })`);
+      inRow: !!document.querySelector('#hist-detail .rd-kv [data-fact="tags"] .rd-cost-row .tag-input-text') })`);
     designChecks.push({ what: 'cost tags row at 290px: the open editor stays in the row, no sideways scroll',
       ok: ed.inRow && ed.scroll === ed.client, got: ed });
     // Close it without saving (a reload drops the unsaved editor), so the audits below see the resting row.
     await go(`history/${projectKey}/${pipelineId}`);
-    await until(`document.querySelector('#hist-detail .rd-facts .rd-cost-row .hd-tags-edit')`, 'the Cost tags row');
+    await until(`document.querySelector('#hist-detail .rd-kv [data-fact="tags"] .rd-cost-row .hd-tags-edit')`, 'the Cost tags row');
     await cdp('Emulation.clearDeviceMetricsOverride');
     await freeze('cost-tags');
   }, async () => {

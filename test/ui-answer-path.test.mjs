@@ -37,7 +37,7 @@ async function host(kind, question) {
   await ctx.settle();
   let root = null;
   if (kind === 'run page') { ctx.go('running/r1'); await ctx.settle(4); root = ctx.window.document.querySelector('#run-detail'); }
-  if (kind === 'group page') { ctx.go('feature/feat_1'); await ctx.settle(6); root = ctx.window.document.querySelector('[data-view="feature"] .gpage'); }
+  if (kind === 'group page') { ctx.go('feature/feat_1'); await ctx.settle(6); root = ctx.window.document.querySelector('#group-detail .gpage'); }
   if (kind === 'chat card') {
     const doc = ctx.window.document;
     const card = createChatRunCard({ doc, win: ctx.window, ident: { cardId: 'c1', runId: 'r1', pipelineId: 'p1', title: 'Demo' }, snapshot: null,

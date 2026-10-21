@@ -31,7 +31,7 @@ export const RUN_STATES = Object.freeze({
 
 export const ACTION_LABEL = Object.freeze({
   stop: 'Stop', pause: 'Pause', answer: 'Answer', resume: 'Resume', 'start-now': 'Start now', cancel: 'Cancel',
-  retry: 'Retry', report: 'Report', archive: 'Archive', ship: 'Ship it', 'open-pr': 'Open PR', 'ask-changes': 'Ask for changes',
+  retry: 'Retry', report: 'Report', archive: 'Archive', ship: 'Ship it', 'open-pr': 'View PR', 'ask-changes': 'Ask for changes',
 });
 
 const ACTIONS = Object.freeze({

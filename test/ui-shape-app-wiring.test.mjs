@@ -342,7 +342,7 @@ async function openFeaturePage({ server = featureServer(), runs = [] } = {}) {
   await ctx.settle();
   ctx.go('feature/feat_1/overview');                // the group page's Overview hosts the Shaper view (slice 4, D14)
   await ctx.settle(6);
-  const page = ctx.window.document.querySelector('[data-view="feature"] .feature-page');
+  const page = ctx.window.document.querySelector('#group-detail');
   return { ctx, server, page };
 }
 
@@ -394,8 +394,8 @@ test('#feature with the gate off still renders the group page, without Overview 
   ctx.go('feature/feat_1');
   await ctx.settle(4);
   assert.deepEqual(server.gets, [], 'no Shaper read with the flag off');
-  const view = ctx.window.document.querySelector('[data-view="feature"]');
-  assert.equal(view.classList.contains('hidden'), false);
+  assert.equal(ctx.window.document.querySelector('[data-view="runs"]').classList.contains('hidden'), false);
+  const view = ctx.window.document.querySelector('#group-detail');
   assert.ok(view.querySelector('.gpage'));
   assert.equal(view.querySelector('.gpage .rd-tab[data-tab="overview"]').hidden, true);
 });

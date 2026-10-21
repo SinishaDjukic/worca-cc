@@ -450,17 +450,17 @@ test('badges never truncate: no text-overflow on a badge class', () => {
 });
 
 // QA 8: narrow layouts follow their own container: the run page's stat boxes (.rd-facts), the group page's table
-// (.gpage-runs), and the run page's Group row on a phone.
-test('narrow layouts: stat boxes 2 per row, the Group row stacks, group page rows put chip and cost under the title', () => {
+// (.gpage-runs), and the facts block (.rd-kv, run 3 D8) in a narrow card.
+test('narrow layouts: stat boxes 2 per row, the facts block stacks label over value, group page rows put chip and cost under the title', () => {
   assert.ok(ALL.some((r) => r.sel === '.rd-facts' && /container:rd-facts \/ inline-size/.test(r.body)), 'the facts are a container');
   const facts = css.match(/@container rd-facts \(max-width:420px\)\{([^\n]*)\}/);
   assert.ok(facts, 'the narrow stat boxes block exists');
   assert.match(facts[1], /\.rd-stats\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\);\}/);
   assert.match(facts[1], /\.rd-stats\[data-n="3"\] > div:last-child\{grid-column:1 \/ -1;\}/);
-  const phone = css.match(/@media \(max-width:640px\)\{\.rd-group-line\{([^}]*)\}([^\n]*)\}/);
-  assert.ok(phone, 'the phone Group row block exists');
-  assert.match(phone[1], /flex-direction:column/);
-  assert.match(phone[2], /\.rd-group-sep\{display:none;?\}/);
+  assert.ok(ALL.some((r) => r.sel === '.rd-kv' && /container:rd-kv \/ inline-size/.test(r.body)), 'the facts block is a container');
+  const kv = css.match(/@container rd-kv \(max-width:420px\)\{([^\n]*)\}/);
+  assert.ok(kv, 'the narrow facts block exists');
+  assert.match(kv[1], /\.rd-kv-row\{grid-template-columns:minmax\(0,1fr\);/);
   assert.ok(ALL.some((r) => r.sel === '.gpage-runs' && /container:gpage-runs \/ inline-size/.test(r.body)), 'the group table host is a container');
   const at = css.indexOf('@container gpage-runs (max-width:480px)');
   assert.ok(at > 0, 'the narrow group table block exists');

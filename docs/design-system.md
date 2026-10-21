@@ -20,6 +20,7 @@ a `color-mix()` recipe used twice is a named token (`--btn-hover`, `--red-tint`,
 | slate | `--slate*` | neutral metadata: a source, "Official", policy (`.badge.slate`) | a state |
 Status-dot exceptions: peach = working (it pulses), violet = merged. They are the dots only, never a badge.
 Surfaces: `--panel` page, `--surface` raised, `--field` field and tint fill; `--line` dividers, `--line-2` control borders.
+`--row-open` is 50% of `--field` (no new hue): the lighter row highlight of a Runs group whose run is open.
 
 Known drift (left for a later run): violet badges on `mcp-view.mjs` plugin sources, `guardrails-view.mjs` plugin origins,
 the `tp-engine` and "metrics home" badges, the engine "Beta" badge in `engine-settings-view.mjs`, the Models override,
@@ -168,8 +169,14 @@ buttons stay 28px; the card keeps the shared 24px padding (checked by the theme 
 - The feature is "Chat", not "Ask Worca".
 - Page header: title, then one short intro sentence (`.page-intro`), then content. A full-bleed editor (Workflows) has
   no page header.
-- Stat tiles hold numbers only (time, cost, files changed). A list of chips goes in its own labelled row under the
-  tiles, for example the run page's "Cost tags" row, never stacked inside a tile. The value is sans with tabular figures.
+- Stat tiles hold numbers only (time, cost, files changed). A list of chips goes in its own labelled row, for example
+  the Cost tags row in the run page's facts block, never stacked inside a tile. The value is sans with tabular figures.
+- Run and group pages share one head: the bar (the breadcrumb `Runs › Run tags › Run 2` beside the list, Back on
+  phones; on the right the one primary action, Stop, ⋯), the title with its kind chip (`Run 2 of 3`, `Run`, or
+  `Feature` / `Chain` / `Group`), then the card: the status block, the facts block (`.rd-kv`: 12px `--ink-2` labels,
+  13px values, one row per fact and one place to edit it), the PR bar (only for the run's own PR), the tiles.
+- Runs navigation: every row opens its own page in the right pane and the list stays. A group row opens the group
+  page; the ⌄ only expands. A group whose run is open shows the lighter `--row-open` fill.
 - Search is the top bar's "Search or ask" only. A list filter is chosen there ("Runs labelled hotfix", `label:hotfix`),
   not from a filter button in the list's header.
 - Phones: one 16px gutter; nothing scrolls sideways at 290px.

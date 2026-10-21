@@ -1112,8 +1112,9 @@ test('D1/D2: a finished member still live, with no History PR yet, shows its gro
   assert.equal(mm.dataset.state, 'needs-you');
   assert.equal(mm.querySelector('.runs-pr-word').textContent, 'Checks failing');
   go(window, `history/${KEY}/p-roll1`); await settle(window, 8);
-  assert.equal(doc.querySelector('#hist-detail .hd-glance .run-status-text').textContent, 'Needs you · Checks failing · PR #821',
-    'the run page reads what the list reads');
+  // Run 3 (D10): the run page's PR bar carries "PR #821", so its status line drops the second mention.
+  assert.equal(doc.querySelector('#hist-detail .hd-glance .run-status-text').textContent, 'Needs you · Checks failing',
+    'the run page reads what the list reads, without a second PR mention');
 });
 
 test('D5: a finished member still in the live map at $0 shows its stored cost in the list and on the feature page', async () => {
@@ -1170,4 +1171,101 @@ test('D10/D11: a ticket queued after a feature slice sits in Waiting and names t
   const row = groupItem(doc, 'sched:t-docs');
   assert.equal(row.closest('.runs-sec').dataset.section, 'waiting');
   assert.equal(row.querySelector('.runs-row-sub').textContent, 'Waiting · starts after Complete Design Language Rollout · run 3');
+});
+
+// ── Run 3: the Runs navigation — every row opens its own page in the pane (D1-D5) ──
+test('run 3: a feature row opens the feature page in the pane; the list stays; a member opens beside it', async () => {
+  const { window, doc, recv } = await boot({ runGroups: [FEATURE_GROUP], history: [] });
+  recv({ type: 'hello', runs: [live('r-live', { pipelineId: 'p-live' })] });   // member 1 (p-live) is the running one
+  go(window, 'runs'); await settle(window);
+  const row = () => groupItem(doc, `chain:${FEATURE_GROUP.id}`).querySelector(':scope > a.runs-row');
+  click(window, row()); await settle(window);
+  assert.equal(window.location.hash, `#feature/${FEATURE_GROUP.id}`);
+  assert.equal(doc.querySelector('[data-view="runs"]').classList.contains('hidden'), false, 'the list stays');
+  const pane = doc.querySelector('#runs-pane');
+  assert.equal(pane.dataset.kind, 'group');
+  assert.ok(pane.querySelector('#group-detail .gpage'), 'the group page renders inside #runs-pane');
+  assert.ok(row().classList.contains('selected'));
+  assert.equal(row().getAttribute('aria-current'), 'true');
+  assert.equal(doc.querySelectorAll('#runs-list .runs-row.selected').length, 1);
+  // member 1 is live: its title in the runs table links #running/r-live; opening it turns the group row member-open
+  const member = pane.querySelector('#group-detail .run-member-title');
+  assert.ok(member.getAttribute('href'), 'the live member row links its run');
+  go(window, member.getAttribute('href').slice(1)); await settle(window);
+  assert.equal(pane.dataset.kind, 'live');
+  assert.equal(row().classList.contains('selected'), false);
+  assert.ok(row().classList.contains('member-open'));
+  assert.equal(row().getAttribute('aria-current'), 'location');
+  const memberRow = doc.querySelector(`#runs-list [data-row-key="chain:${FEATURE_GROUP.id}"] .runs-members a.runs-row[data-run-id="r-live"]`);
+  assert.ok(memberRow && memberRow.classList.contains('selected'), 'the member row is .selected');
+});
+
+test('run 3: ⌄ only toggles; a chain row links its #group page', async () => {
+  const { window, doc, recv } = await boot({ chains: CHAIN2(), history: [] });
+  recv({ type: 'hello', runs: [live('r1', { pipelineId: 'pchain01' })] });
+  go(window, 'runs'); await settle(window);
+  const it = groupItem(doc, 'chain:p:pchain01');
+  assert.equal(it.querySelector(':scope > a.runs-row').getAttribute('href'), `#group/${encodeURIComponent('p:pchain01')}`);
+  const before = window.location.hash;
+  click(window, it.querySelector('.runs-expand')); await settle(window);
+  assert.equal(window.location.hash, before);
+});
+
+test('run 3: #runs reopens the group page the pane showed last', async () => {
+  const { window, doc } = await boot({ runGroups: [FEATURE_GROUP], history: [] });
+  go(window, `feature/${FEATURE_GROUP.id}`); await settle(window);
+  assert.match(String(window.localStorage.getItem('worca-cc.runs.last')), /feature\//);
+  go(window, 'schedules'); await settle(window);
+  go(window, 'runs'); await settle(window);
+  assert.equal(window.location.hash, `#feature/${FEATURE_GROUP.id}`);
+  assert.ok(doc.querySelector('#group-detail .gpage'));
+});
+
+test('run 3: a gone group clears the memory and #runs reopens nothing stale', async () => {
+  const { window, doc } = await boot({ runGroups: [], history: [], storage: { 'worca-cc.runs.last': JSON.stringify({ group: 'feature/feat_gone' }) } });
+  go(window, 'feature/feat_gone'); await settle(window);
+  assert.match(doc.querySelector('#group-detail').textContent, /no longer exists/);
+  assert.ok(!String(window.localStorage.getItem('worca-cc.runs.last') || '').includes('feat_gone'));
+  go(window, 'schedules'); await settle(window);
+  go(window, 'runs'); await settle(window);
+  assert.ok(!window.location.hash.includes('feat_gone'));
+});
+
+test('run 3: all four deep links render inside #runs-pane with Runs visible', async () => {
+  // each hash needs its data seeded: the feature, a chain, a History row and a live run
+  const cases = [[`feature/${FEATURE_GROUP.id}`, 'group'], ['group/p%3Apchain01', 'group'], [`history/${KEY}/aaaa0001`, 'hist'], ['running/r1', 'live']];
+  for (const [hash, kind] of cases) {
+    const { window, doc, recv } = await boot({ runGroups: [FEATURE_GROUP], chains: CHAIN2(), history: HIST });
+    recv({ type: 'hello', runs: [live('r1', { pipelineId: 'pchain01' })] });
+    go(window, hash); await settle(window, 8);
+    assert.equal(doc.querySelector('[data-view="runs"]').classList.contains('hidden'), false, hash);
+    const pane = doc.querySelector('#runs-pane');
+    assert.equal(pane.dataset.kind, kind, hash);
+    assert.ok(pane.querySelector({ group: '#group-detail .gpage', hist: '#hist-detail .hd', live: '#run-detail .rd' }[kind]), `${hash} renders inside #runs-pane`);
+    assert.ok(doc.querySelectorAll('#runs-list .runs-row.selected').length <= 1, hash);
+    window.close();
+  }
+});
+
+test('run 3: on a phone (slide layout) the group pane is full screen with Back, in its page, gone and error states', async () => {
+  const fail = (window) => {
+    const f = window.fetch;
+    window.fetch = globalThis.fetch = (u, init) => (String(u).endsWith('/api/run-groups')
+      ? Promise.resolve({ ok: false, status: 500, json: async () => ({}) }) : f(u, init));
+  };
+  for (const [id, prep, text] of [[FEATURE_GROUP.id, null, null], ['feat_unlisted', null, /no longer exists/], [FEATURE_GROUP.id, fail, /Could not load/]]) {
+    const { window, doc, recv } = await boot({ runGroups: [FEATURE_GROUP], history: [] });
+    if (prep) { prep(window); recv({ type: 'run-groups-changed' }); await settle(window); }
+    go(window, 'runs'); await settle(window);
+    doc.getElementById('runs-shell').dataset.layout = 'slide';
+    go(window, `feature/${id}`); await settle(window, 6);
+    assert.equal(doc.getElementById('runs-list-pane').hasAttribute('inert'), true, `${id}: the list is inert`);
+    const back = doc.querySelector('#group-detail .gpage-back');
+    assert.ok(back, `${id}: the group pane carries Back`);
+    assert.equal(doc.activeElement, back, `${id}: focus lands on Back`);
+    if (text) assert.match(doc.querySelector('#group-detail').textContent, text);
+    back.click(); await settle(window, 6);
+    assert.equal(window.location.hash, '#runs', `${id}: Back returns to the list`);
+    window.close();
+  }
 });

@@ -29,6 +29,7 @@
   --side-sel-bg:light-dark(#EFEFEF,#353531);
   --surface:light-dark(#FFFFFF,#34342F);
   --field:light-dark(#F6F6F4,#2C2C29);
+  --row-open:color-mix(in srgb,var(--field) 50%,transparent);
   --field-focus:light-dark(#FFFFFF,#2E2E2B);
   --ink:light-dark(#19191B,#ECECE8);
   --ink-2:light-dark(#5C5C63,#B4B4AE);
@@ -4688,6 +4689,11 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 /* The sidebar nav item's corner (decided); the row's own divider would bend at it, so it turns transparent. */
 .runs-item.is-needs{background:color-mix(in srgb,var(--amber) 8%,transparent);border-radius:var(--r-sm);border-bottom-color:transparent;}
 .runs-item:has(> a.runs-row.selected){background:var(--field);border-radius:var(--r-sm);border-bottom-color:transparent;}
+/* Run 3 (D4): a group whose run is open — its own row's cells take the lighter fill; its member list keeps the panel. */
+.runs-item:has(> a.runs-row.member-open) > :is(.runs-pick,a.runs-row,.runs-row-tail){background:var(--row-open);align-self:stretch;}
+.runs-item:has(> a.runs-row.member-open) > .runs-pick{border-radius:var(--r-sm) 0 0 var(--r-sm);}
+.runs-item:has(> a.runs-row.member-open) > .runs-row-tail{border-radius:0 var(--r-sm) var(--r-sm) 0;}
+.runs-item:has(> a.runs-row.member-open){border-bottom-color:transparent;}
 .runs-pick{display:grid;place-items:center;height:36px;}
 .runs-pick .runs-check{display:none;margin:0;}
 /* Only the row itself flips its dot: hovering or focusing an expanded member must not flip its group's dot too. */
@@ -4742,11 +4748,12 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .runs-note-err{color:var(--red-ink);}
 .runs-note-err .runs-retry{margin-left:8px;}
 .runs-pane{position:relative;min-width:0;min-height:0;background:var(--bg);}
-.runs-pane > :is(.run-shell,.hist-shell){position:absolute;inset:0;}
+.runs-pane > :is(.run-shell,.hist-shell,.group-shell){position:absolute;inset:0;}
 /* Two rules, not one grouped selector (the ui-ask-clearance test that read each by `<sel>{` is gone). */
 .run-screen-detail{position:absolute;inset:0;padding:0;overflow-y:auto;overflow-x:hidden;background:var(--bg);}
 .hist-screen-detail{position:absolute;inset:0;padding:0;overflow-y:auto;overflow-x:hidden;background:var(--bg);}
-.run-screen-detail:empty,.hist-screen-detail:empty{display:none;}
+.group-screen-detail{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;background:var(--bg);}
+.run-screen-detail:empty,.hist-screen-detail:empty,.group-screen-detail:empty{display:none;}
 .runs-empty{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:24px;text-align:center;}
 .runs-empty[hidden]{display:none;}
 .runs-empty-title{margin:0;font:700 var(--fs-section) var(--sans);color:var(--ink-2);}
@@ -4754,8 +4761,10 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 /* The glance title is a programmatic focus landing (tabindex=-1), not a control. */
 .rd-page-title:focus{outline:none;}
 /* Side by side: only the open detail shows, and the glance's back-to-list button has nowhere to go. */
-.runs-shell[data-layout="split"] .runs-pane > :is(.run-shell,.hist-shell):not(.detail-open){display:none;}
-.runs-shell[data-layout="split"] :is(.rd-back,.hd-back){display:none;}
+.runs-shell[data-layout="split"] .runs-pane > :is(.run-shell,.hist-shell,.group-shell):not(.detail-open){display:none;}
+.runs-shell[data-layout="split"] :is(.rd-back,.hd-back,.gpage-back){display:none;}
+/* Run 3 (D6): the slide layout keeps the one Back button; the breadcrumb is for the split layout. */
+.runs-shell[data-layout="slide"] .rd-crumbs{display:none;}
 /* Narrow: the slide the two old screens used (D7). */
 .runs-shell[data-layout="slide"]{display:block;}
 .runs-shell[data-layout="slide"] > :is(.runs-list-pane,.runs-pane){position:absolute;inset:0;transition:transform .46s cubic-bezier(.65,.02,.28,1);}
@@ -4766,7 +4775,7 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .runs-shell[data-layout="slide"] .runs-empty{display:none;}
 /* The open detail sits above a closing one while it slides out. Slide only: side by side just
    one shell shows, and a z-index there would trap the tour's .guide-lift (z 45) under its scrim. */
-.runs-shell[data-layout="slide"] .runs-pane > :is(.run-shell,.hist-shell).detail-open{z-index:1;}
+.runs-shell[data-layout="slide"] .runs-pane > :is(.run-shell,.hist-shell,.group-shell).detail-open{z-index:1;}
 .runs-shell.no-anim > *{transition:none !important;}
 /* Run after this one (the list card's old schedule-after button): a quiet pill beside Pause/Stop,
    on the run page's bar and the saved run's (.hd-after). */
@@ -4867,11 +4876,13 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .rd > .rd-error{margin:12px 32px 0;}
 .rd-glance[hidden],.rd-details[hidden]{display:none;}
 
-.rd-glance{max-width:608px;margin:0 auto;padding:28px 32px var(--ask-dock-clearance);display:flex;flex-direction:column;gap:22px;}
-/* A waiting question reads easier wide: the column opens to twice the run panel's width
-   for it, while the header and the panel keep their 544px measure and do not move. */
-.rd-glance:has(> .rd-questions:not([hidden])){max-width:1216px;}
-.rd-glance:has(> .rd-questions:not([hidden])) > :is(.rd-now,.rd-sheet,.rd-night-sec){width:100%;max-width:544px;align-self:center;}
+.rd-glance{max-width:none;margin:0 auto;padding:28px 32px var(--ask-dock-clearance);display:flex;flex-direction:column;gap:22px;}
+/* Run 3 (D16): everything but the graph keeps the old 544px measure; the graph takes the pane's content width, under
+   the run details at every list and pane width. A waiting question reads easier wide: it opens to twice the run panel's
+   width, while the header and the card keep their measure and do not move. */
+.rd-glance > :not(.rd-live){width:100%;max-width:544px;align-self:center;}
+.rd-glance:has(> .rd-questions:not([hidden])) > .rd-questions{max-width:1152px;}
+.rd-glance > .rd-live{align-self:stretch;width:100%;max-width:none;}
 /* Run progress (runs redesign §2.3): four neutral sections; the run's state is told by the status dot, not the fill. */
 .run-prog{position:relative;margin-top:10px;outline:none;}
 .run-prog[hidden]{display:none;}
@@ -4926,7 +4937,7 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
 /* A row: the text (app.js paintPageHead), the branch chip, the person chip. A chip too long
    for the rest of the line wraps under the text and truncates there. */
-.rd-page-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:6px 0 0;color:var(--ink-2);font-size:13px;}
+.rd-page-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;color:var(--ink-2);}
 .rd-page-meta:empty{display:none;}
 /* The run's feature branch (app.js paintPageBranch): a compact mono chip that copies it, with the
    Details header's copied tick (.rd-branch-copy). The full name is its tooltip. */
@@ -5005,7 +5016,7 @@ button.rd-srow:hover{background:var(--hover-on-field);}
 .rd-srow-tx{flex:1;min-width:0;overflow-wrap:anywhere;}
 .rd-srow-ico{flex:none;color:var(--ink-2);}   /* the tab icon the row leads to */
 .rd-srow-tx small{display:block;color:var(--ink-2);font-size:var(--fs-meta);}
-.rd-srow-v{color:var(--ink-2);font-size:var(--fs-meta);white-space:nowrap;}
+.rd-srow-v{color:var(--ink-2);font:400 var(--fs-body)/var(--lh-body) var(--sans);font-variant-numeric:tabular-nums;white-space:nowrap;}
 .rd-srow.chv::after{content:"›";color:var(--ink-2);font-size:var(--fs-subpage);line-height:1;}
 .rd-slist .issues{margin:0;padding:10px 14px;}
 
@@ -5211,16 +5222,14 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
 
 /* ---------- Running detail: Live view ---------- */
 /* The glance's running step(s), centred in a fogged graph (app.js paintRdLive, the
-   `focus` host in graph/run-hosts.mjs). Beside the card when the PAGE AREA is wide —
-   a container query, so a collapsed sidebar counts — and below it otherwise. app.js
-   slides the left column into place (flipGlance); the panel's own entrance is here.
-   Opacity is the LAST transition to end on the way out in both layouts: app.js drops
-   the graph on its transitionend. */
+   `focus` host in graph/run-hosts.mjs). Under the card at every pane width, as wide as the
+   pane's content (run 3, D16); the panel's own entrance is here. Opacity is the LAST
+   transition to end on the way out: app.js drops the graph on its transitionend. */
 .rd{container:rd / inline-size;}
 .switch-row.rd-live-row{gap:10px;}
 .rd-live-row[hidden]{display:none;}   /* .switch-row's display:flex beats the UA [hidden] rule */
 .rd-live-row .txt{font-size:13px;color:var(--ink-2);}
-/* Narrow: the panel opens its height under the card (0fr → 1fr), eating the column gap
+/* The panel opens its height under the card (0fr → 1fr), eating the column gap
    it would otherwise add at once, and rises into place. */
 .rd-live{display:grid;grid-template-rows:0fr;margin-top:-22px;opacity:0;transform:translateY(10px);
   cursor:pointer;border-radius:var(--r-card);
@@ -5246,29 +5255,6 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
   mask-image:radial-gradient(closest-side, transparent 66%, var(--ink) 100%);}
 /* The camera glides when the work moves on (focusNodeIds). */
 .rd-live .gv-world{transition:transform .7s cubic-bezier(.4,0,.2,1);}
-@container rd (min-width: 960px){
-  /* :not([hidden]) — this weighs the same as `.rd-glance[hidden]{display:none}` and comes
-     later, so without it Details would open UNDER a glance that never went away. */
-  .rd-glance[data-live="on"]:not([hidden]){max-width:1216px;display:grid;grid-template-columns:544px minmax(0,1fr);
-    column-gap:28px;row-gap:22px;align-items:start;}
-  .rd-glance[data-live="on"] > .rd-now{grid-column:1;grid-row:1;}
-  .rd-glance[data-live="on"] > .rd-sheet{grid-column:1;grid-row:2;}
-  .rd-glance[data-live="on"] > .rd-questions{grid-column:1 / -1;}
-  /* D30: a shaped run waiting on the person — the card in row 2, right under the title; folded, one column */
-  .rd-glance[data-live="on"][data-shaper-wait] > .rd-questions{grid-row:2;}
-  .rd-glance[data-live="on"][data-shaper-wait] > :is(.rd-sheet,.rd-live){grid-row:3;}
-  .rd-glance[data-live="on"][data-shaper-wait]:not([data-wait-open]):not([hidden]){display:flex;max-width:608px;}
-  /* Away mode's answers stay under the run card, never beside the title in the graph's column. */
-  .rd-glance[data-live="on"] > .rd-night-sec{grid-column:1;}
-  /* Wide: as tall as the card (320px at least), its top level with the card's; it slides
-     in from the right out of a blur once the card has made room. */
-  .rd-glance[data-live="on"] > .rd-live{grid-column:2;grid-row:2;align-self:stretch;min-height:320px;
-    grid-template-rows:1fr;margin-top:0;transform:translateX(28px);filter:blur(6px);
-    transition:opacity .22s ease,transform .22s ease,filter .22s ease;}
-  .rd-glance[data-live="on"] > .rd-live.is-in{transform:none;filter:none;
-    transition:opacity .38s ease .12s,transform .5s cubic-bezier(.2,.7,.3,1) .12s,filter .38s ease .12s;}
-  .rd-glance[data-live="on"] > .rd-live .run-flow-wrap{height:100%;}
-}
 @media (prefers-reduced-motion: reduce){
   .rd-live,.rd-live.is-in,.rd-live .gv-world{transition:none !important;}
 }
@@ -7933,8 +7919,7 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .tag-chip.tag-missing{background:transparent;border:1px dashed var(--amber);color:var(--amber-ink);}
 @media (prefers-reduced-motion: reduce){.tag-chip.is-filled{animation:none;}}
 /* Cost tags under the facts tiles (D15): one wrapping row — the label, the chips and missing-key slots, the control last. */
-.rd-cost-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px;min-width:0;}
-.rd-cost-row-label{margin-right:2px;font-size:var(--fs-meta);color:var(--ink-2);}
+.rd-cost-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;}
 /* Run labels (slice 1): the outlined chip; colour only on the dot (labelHue → .hue-*). */
 .label-chip{display:inline-flex;align-items:center;gap:4px;max-width:160px;min-width:0;padding:2px 6px;border-radius:var(--r-xs);border:1px solid var(--line);
   color:var(--ink-2);font-size:var(--fs-caption);font-weight:500;white-space:nowrap;}
@@ -7955,7 +7940,8 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .runs-label-filter[hidden]{display:none;}
 .rd-labels{display:flex;flex-wrap:wrap;align-items:center;gap:6px;}
 /* Shaper wait: .rd-sheet is a flex row there (see the .rd-glance[data-shaper-wait] rules); the labels take their own line under the head. */
-.rd-glance[data-shaper-wait]:not([data-wait-open]) > .rd-sheet > .rd-labels{flex-basis:100%;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) > .rd-sheet > .rd-kv{flex-basis:100%;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) > .rd-sheet > .rd-kv > .rd-kv-row:not([data-fact="labels"]){display:none;}
 .chat-rc-labels{display:flex;flex-wrap:wrap;gap:4px;}
 .chat-rc-labels:empty{display:none;}
 .label-picker{position:fixed;z-index:60;width:280px;max-width:calc(100vw - 16px);max-height:60vh;overflow:auto;background:var(--panel);
@@ -9548,6 +9534,30 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 /* D31: a shaped run's bar — the three controls live in the ⋯ menu */
 .rd-bar[data-shaped] .rd-bar-end > :is(.rd-night-wrap,.rd-after,.term-opener){display:none;}
 .rd-bar-more{flex:none;}   /* ⋯ is .btn .btn-quiet .btn-icon in markup */
+/* Run 3 (D13): the bar is the primary action, Stop and ⋯ on every run page; ⋯ drives the controls hidden here. */
+.rd-bar .rd-bar-end > :is(.rd-night-wrap,.rd-after,.term-opener){display:none;}
+.hd-bar .rd-bar-end > :is(.hd-save-preset,.hd-after,.term-opener){display:none;}
+/* At 290px the bar shrinks by rule: the primary label ellipsizes, Stop and the icon buttons keep their size. */
+.rd-bar-end,.gpage-actions{min-width:0;flex:0 1 auto;}
+:is(.rd-actions,.gpage-actions) .btn-primary{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.rd-bar :is(.btn-danger,.btn-icon){flex:none;}
+/* Run 3 (D6): the breadcrumb at the bar's left (split layout only). */
+.rd-crumbs{display:flex;align-items:center;gap:4px;min-width:0;font-size:var(--fs-meta);color:var(--ink-2);}
+.rd-crumbs[hidden]{display:none;}
+.rd-crumb{min-width:0;max-width:24ch;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:inherit;text-decoration:none;}
+a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
+.rd-crumb[aria-current="page"]{color:var(--ink);}
+.rd-crumb-sep{display:inline-flex;flex:none;color:var(--ink-3);}
+/* Run 3 (D8): the facts block — 12px labels in one column, 13px values; label over value in a narrow card. */
+.rd-kv{container:rd-kv / inline-size;margin:0;display:flex;flex-direction:column;}
+.rd-kv-row{display:grid;grid-template-columns:96px minmax(0,1fr);gap:12px;align-items:baseline;padding:8px 0;}
+/* Divided rows: a line above every shown row but the first shown one (a hidden first row takes no line with it). */
+.rd-kv-row:not([hidden]) ~ .rd-kv-row{border-top:1px solid var(--line);}
+.rd-kv-row[hidden]{display:none;}
+.rd-kv-k{font-size:var(--fs-meta);line-height:var(--lh-body);color:var(--ink-2);}
+.rd-kv-v{margin:0;min-width:0;font-size:var(--fs-body);line-height:var(--lh-body);color:var(--ink);display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;overflow-wrap:anywhere;}
+@container rd-kv (max-width:420px){.rd-kv-row{grid-template-columns:minmax(0,1fr);gap:2px;}}
+.rd-kv:not(:has(> .rd-kv-row:not([hidden]))){display:none;}
 /* D30: while a shaped run waits on the person, Results / How it ran and the graph fold under "Run details ›" */
 .rd-wait-more{align-self:flex-start;}
 .rd-glance[data-shaper-wait]:not([data-wait-open]) :is(.rd-result,.rd-live,.rd-live-row){display:none;}
@@ -9646,11 +9656,11 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .shape-feature-actions[hidden]{display:none;}
 .shape-feature-err{flex-basis:100%;padding:6px 8px;border-radius:var(--r-ctrl);background:var(--red-bg);color:var(--red-ink);overflow-wrap:anywhere;}
 .shape-feature-err[hidden]{display:none;}
-/* D16: the group page (#feature/ID), full width. */
-.feature-page{padding:16px 20px;}
-/* Phones: the page keeps the one 16px gutter (main's); the feature page and its group page add no side padding of
-   their own, or three paddings stacked to 72px and squeezed the title and tabs (QA). */
-@media (max-width:640px){.main{padding:16px 16px 32px;}.feature-page,.feature-page .gpage{padding-left:0;padding-right:0;}}
+/* Run 3 (D1): the group page's host in the Runs pane (#group-detail); .gpage pads itself like the run page. Its loading,
+   gone and error lines sit under the bar's Back with the run page's gutter. */
+.feature-page{padding:0;}
+.feature-page > :is(.feature-page-loading,.feature-page-gone,.feature-page-error){margin:0;padding:28px 32px;}
+@media (max-width:640px){.main{padding:16px 16px 32px;}.feature-page > :is(.feature-page-loading,.feature-page-gone,.feature-page-error){padding:16px;}}
 .feature-page-gone,.feature-page-loading{color:var(--ink-3);}
 /* §5a.2: the group page could not load (server unreachable): the error and a Try again on one line. */
 .feature-page-error{color:var(--red-ink);}
@@ -9699,11 +9709,6 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .chat-rc-status .run-status-head > .status-dot{display:none;}   /* the card's dot is the head's (D10) */
 .chat-rc-actions{display:flex;flex-wrap:wrap;gap:8px;}   /* the card's footer buttons (D4): its own and the made ones */
 .rd-actions{display:contents;}   /* the model's made buttons (D4) are bar items, with the bar's own gap */
-.rd-group-line{margin:4px 0 0;font-size:13px;color:var(--ink-2);display:flex;gap:6px;align-items:center;}
-.rd-group-line[hidden]{display:none;}
-.rd-group-k{font-size:12px;font-weight:600;color:var(--ink-2);}
-/* QA 8: on a phone the Group row stacks: the label, "Part of …", then "run 4 of 5". */
-@media (max-width:640px){.rd-group-line{flex-direction:column;align-items:flex-start;gap:2px;}.rd-group-sep{display:none;}}
 /* member rows: dividers, never boxes (§1.4); the page table is one grid, rows are subgrids so columns line up (§3.3a) */
 .run-members{list-style:none;margin:0;padding:0;}
 .run-member{display:grid;grid-template-columns:16px 12px minmax(0,1fr) minmax(0,1.4fr) max-content;align-items:center;gap:8px;
@@ -9732,9 +9737,13 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .run-member-line{color:var(--ink-2);font-size:var(--fs-meta);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .run-member-cost{text-align:right;color:var(--ink-2);}
 /* the group page: one column, so title, card, tabs and table share edges */
-.gpage{display:flex;flex-direction:column;gap:12px;margin:0 auto;padding:16px 20px;box-sizing:border-box;max-width:1216px;}
+.gpage{display:flex;flex-direction:column;gap:22px;margin:0 auto;padding:28px 32px var(--ask-dock-clearance);box-sizing:border-box;max-width:1216px;}
 .gpage > *{width:100%;box-sizing:border-box;}
 .gpage-bar{display:flex;align-items:center;gap:8px;}
+/* Run 3 (D15): the run page's spacing — the bar spans the pane like the run page's .rd-bar (its height and padding), and
+   the title sits as far under it as the run page's (the glance's 28px top padding, 20px on a phone; the page gap is 22px). */
+.gpage > .gpage-bar.rd-bar{width:auto;margin:-28px -32px 6px;}
+@media (max-width:640px){.gpage{padding:16px 16px var(--ask-dock-clearance);}.gpage > .gpage-bar.rd-bar{margin:-16px -16px -2px;}}
 .gpage-spacer{flex:1;}
 .gpage-actions{display:inline-flex;gap:6px;}
 .gpage-ship{margin:8px 0 0;font-size:13px;color:var(--ink-2);}
