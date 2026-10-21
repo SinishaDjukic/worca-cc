@@ -130,7 +130,7 @@ export async function pluginSnapshot(repoUrl, rev) {
 }
 
 /** addPluginRepo without git: same result shape, read from the commit's snapshot. */
-export async function addPluginRepoHttps(repoUrl, { ref = null } = {}) {
+export async function addPluginRepoHttps(repoUrl, { ref = null, onProgress = null } = {}) {
   const c = clientFor(repoUrl);
   let sha;
   if (ref) {
@@ -142,6 +142,7 @@ export async function addPluginRepoHttps(repoUrl, { ref = null } = {}) {
     sha = await resolveCommit(c, null);
   }
   const snap = await pluginSnapshot(repoUrl, sha);
+  onProgress?.({ phase: 'reading', sha });
   const { paths } = snapshotMeta(repoUrl, sha);
   // git's `show` hands a committed symlink's target text, never the file it points at: refuse links the same way.
   const readText = async (p) => {

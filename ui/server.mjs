@@ -414,6 +414,7 @@ import { mcpFootprint, skillFootprint } from '../src/core/mcp/plugin-lifecycle.m
 import {
   addMarketplace, listMarketplaces, syncMarketplace, refreshAllMarketplaces,
   removeMarketplace, readMarketplaces, seedBuiltinMarketplace, marketplaceNeedsGit,
+  presentMarketplace, checkMarketplaceAdd, redactUserinfo, safeErrorText,
 } from '../src/core/marketplaces.mjs';
 import {
   redactedConfig, writePluginConfig, readPluginConfig, listProfiles, listProfileIds,
@@ -15461,6 +15462,7 @@ function sendPluginError(res, err) {
     return res.status(409).json({ error: message, references: err.references || [] });
   }
   if (err?.code === 'STALE_PREVIEW') return res.status(409).json({ error: message, code: 'STALE_PREVIEW', candidateSha: err.candidateSha ?? null });
+  if (err?.code === 'EXISTS') return res.status(409).json({ error: message, code: 'EXISTS', ...(err.existing ? { existing: err.existing } : {}) });
   res.status(pluginErrorStatus(err && err.code)).json({ error: message, ...(err?.code === 'GIT_MISSING' ? { code: 'GIT_MISSING' } : {}) });
 }
 
@@ -15486,7 +15488,7 @@ async function pluginApiRows(rows, mkts) {
   const mcp = await readMcpStore();
   return rows.map((p) => ({
     ...p,
-    marketplaceName: p.marketplace && mkts[p.marketplace] ? mkts[p.marketplace].name : null,
+    marketplaceName: p.marketplace && mkts[p.marketplace] ? presentMarketplace(mkts[p.marketplace]).name : null,
     pythonMissing: !!(notice && Number((p.scriptRuntimes || {}).python) > 0),
     // The uninstall confirm names the MCP sets its servers leave (§4.6), and the sets its skills leave (skills §5).
     mcpSets: mcpFootprint(mcp, (id) => id.startsWith(`plugin:${p.name}/`)).sets,
@@ -15537,10 +15539,11 @@ app.get('/api/plugins/:name/references', (req, res) => {
 // Merge lock membership onto each snapshot plugin. MUST wrap every response that
 // returns marketplace snapshots — refresh routes return raw entries whose plugins
 // have no `installed` key, and renderAvailableList would re-offer Install on them.
+// A source that needs git reads Needs git, never Can't reach: it carries lastError: null (SEAMS SM4).
 function withInstalled(list) {
   const lock = readPluginsLock();
   return (list || []).map((m) => ({
-    ...m, ...(marketplaceNeedsGit(m.url) ? { needsGit: true } : {}), plugins: (m.plugins || []).map((p) => ({ ...p, installed: !!lock[p.name] })),
+    ...m, ...(marketplaceNeedsGit(m.url) ? { needsGit: true, lastError: null } : {}), plugins: (m.plugins || []).map((p) => ({ ...p, installed: !!lock[p.name] })),
   }));
 }
 
@@ -15588,11 +15591,69 @@ app.post('/api/plugins/link', async (req, res) => {
   } catch (err) { sendPluginError(res, err); }
 });
 
+// POST /api/marketplaces {url, progress:true} -> 202 {jobId, job} (CONTRACT §2.1–2.2, U3): the add as a job whose
+// phases reach every tab as 'marketplace-add-changed'; GET /api/marketplaces/jobs/:id reads it. Refusals known up
+// front answer at once, exactly as the blocking add. No abort (L6). A job carries what GET /api/marketplaces shows
+// plus the typed url and a short error, URL credentials masked. Finished jobs are kept an hour.
+const MARKET_JOBS = new Map();   // jobId -> { job: MarketplaceAddJob, marketId }
+const MARKET_JOB_TTL_MS = 3600_000;
+const MARKET_JOB_KEYS = ['id', 'url', 'state', 'phase', 'resolvedUrl', 'sha', 'done', 'total', 'plugin', 'error', 'code', 'existing', 'marketplace', 'startedAt', 'endedAt'];
+const publicMarketJob = (j) => Object.fromEntries(MARKET_JOB_KEYS.map((k) => [k, j[k] ?? null]));
+// A typed url can be megabytes (express.json takes 8 MB): a job keeps, and sends to every tab, at most 2 000 characters of it.
+const jobUrlText = (s) => { const r = redactUserinfo(s); return r.length > 2000 ? `${r.slice(0, 1999)}…` : r; };
+function pruneMarketJobs(now = Date.now()) {
+  for (const [id, { job }] of MARKET_JOBS) {
+    if (job.state !== 'running' && Date.parse(job.endedAt) + MARKET_JOB_TTL_MS <= now) MARKET_JOBS.delete(id);
+  }
+}
+function marketJobFailure(err) {
+  if (err?.code === 'EXISTS') return { code: 'EXISTS', error: safeErrorText(err.message), existing: err.existing ?? null };
+  if (err?.syncError) return { code: err.syncError.code, error: err.syncError.message };
+  return { code: typeof err?.code === 'string' ? err.code : 'ERROR', error: safeErrorText(err?.message || String(err)) };
+}
+function startMarketplaceAddJob(url, plan) {
+  for (const rec of MARKET_JOBS.values()) {
+    if (rec.marketId === plan.id && rec.job.state === 'running') return publicMarketJob(rec.job);   // a second click joins
+  }
+  const job = { id: `mkt_${randomBytes(4).toString('hex')}`, url: jobUrlText(url), state: 'running', phase: 'resolving',
+    resolvedUrl: jobUrlText(plan.url), sha: null, done: 0, total: null, plugin: null, error: null, code: null,
+    existing: null, marketplace: null, startedAt: new Date().toISOString(), endedAt: null };
+  MARKET_JOBS.set(job.id, { job, marketId: plan.id });
+  const send = () => broadcast({ type: 'marketplace-add-changed', job: publicMarketJob(job) });
+  const onProgress = (p) => {
+    job.phase = p.phase;
+    if (p.resolvedUrl !== undefined) job.resolvedUrl = jobUrlText(p.resolvedUrl);
+    for (const k of ['sha', 'done', 'total', 'plugin']) if (p[k] !== undefined) job[k] = p[k];
+    send();
+  };
+  // The 202 answers the job as created, and the work starts on the next turn, after the route has written that 202,
+  // so the tab that asked holds the job id before core's first progress frame (resolving, then fetching).
+  const created = publicMarketJob(job);
+  send();
+  setImmediate(async () => {
+    try {
+      const entry = await addMarketplace(url, { onProgress });
+      Object.assign(job, { state: 'done', phase: 'saved', marketplace: withInstalled([entry])[0] });
+      emitPluginsChanged('marketplace-add');
+    } catch (err) {
+      Object.assign(job, { state: 'error', ...marketJobFailure(err) });
+    }
+    job.endedAt = new Date().toISOString();
+    send();
+  });
+  return created;
+}
+
 app.post('/api/marketplaces', async (req, res) => {
   const url = req.body && typeof req.body.url === 'string' ? req.body.url.trim() : '';
   if (!url) return badRequest(res, 'url is required');
   try {
-    res.json({ ok: true, marketplace: withInstalled([await addMarketplace(url)])[0] });
+    if (req.body.progress === true) {
+      pruneMarketJobs();
+      const job = startMarketplaceAddJob(url, checkMarketplaceAdd(url));   // a refusal throws here and is answered below, at once
+      return res.status(202).json({ jobId: job.id, job });
+    }
+    const entry = await addMarketplace(url); emitPluginsChanged('marketplace-add'); res.json({ ok: true, marketplace: withInstalled([entry])[0] });
   } catch (err) {
     if (err && err.code === 'PLUGIN_FOLDER') {
       // Not a marketplace but a plugin folder: link it, and SAY that is what happened.
@@ -15603,10 +15664,17 @@ app.post('/api/marketplaces', async (req, res) => {
   }
 });
 
+app.get('/api/marketplaces/jobs/:id', (req, res) => {
+  pruneMarketJobs();
+  const rec = MARKET_JOBS.get(String(req.params.id));
+  if (!rec) return res.status(404).json({ error: 'marketplace add job not found' });
+  res.json({ job: publicMarketJob(rec.job) });
+});
+
 // refresh-all (a distinct path from :id/refresh, so registration order is irrelevant).
 app.post('/api/marketplaces/refresh', async (req, res) => {
   try {
-    res.json({ ok: true, marketplaces: withInstalled(await refreshAllMarketplaces()) });
+    const marketplaces = withInstalled(await refreshAllMarketplaces()); emitPluginsChanged('marketplace-refresh'); res.json({ ok: true, marketplaces });
   } catch (err) { sendPluginError(res, err); }
 });
 
@@ -15614,7 +15682,7 @@ app.post('/api/marketplaces/:id/refresh', async (req, res) => {
   const id = requireMarketplace(req, res);
   if (!id) return;
   try {
-    res.json({ ok: true, marketplace: withInstalled([await syncMarketplace(id)])[0] });
+    const marketplace = withInstalled([await syncMarketplace(id)])[0]; emitPluginsChanged('marketplace-refresh'); res.json({ ok: true, marketplace });
   } catch (err) { sendPluginError(res, err); }
 });
 
@@ -15622,7 +15690,7 @@ app.delete('/api/marketplaces/:id', (req, res) => {
   const id = requireMarketplace(req, res);
   if (!id) return;
   try {
-    res.json(removeMarketplace(id));
+    const out = removeMarketplace(id); emitPluginsChanged('marketplace-remove'); res.json(out);
   } catch (err) { sendPluginError(res, err); }
 });
 
@@ -17399,7 +17467,7 @@ export const _testing = {
   wireRun, summarizeRuns, scanRequest, fireTicket, afterMembersChanged, markResumedRescan, wireAgentGen, startAgentGen, wireScriptBench, startScriptBench,
   chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork, answerRun,
   chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor, switchThreadScope,
-  startCloneJob, followCloneCard, CLONE_JOBS, GIT_ONLY_ROUTES,
+  startCloneJob, followCloneCard, CLONE_JOBS, GIT_ONLY_ROUTES, MARKET_JOBS, pruneMarketJobs, marketJobFailure,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
   askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor,
   uiControl, bearerMatches,

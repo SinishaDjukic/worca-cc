@@ -53,6 +53,7 @@ test('U2a features while git is missing', async (t) => {
       assert.ok(all.length >= 1 && all.every((m) => m.lastSync === null));
       const builtin = all.find((m) => m.builtin);
       assert.deepEqual(builtin.warnings, [OFF]);
+      assert.deepEqual([builtin.lastError.code, builtin.lastError.message], ['UNREACHABLE', 'GitHub unreachable (ENOTFOUND)']);
       assert.deepEqual((await syncMarketplace(builtin.id, { exec: x.fn })).warnings, [OFF]);
       assert.equal(x.calls.length, 0);
     } },

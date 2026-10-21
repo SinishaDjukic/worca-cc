@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
-import { join, resolve, dirname } from 'node:path';
+import { basename, join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { useTempHome } from './helpers/temp-home.mjs';
 
@@ -146,4 +146,25 @@ test('with no override the builtin marketplace is the GitHub repo on dev (listin
   const list = await run(['marketplace', 'list'], { home, builtin: null });
   assert.equal(list.code, 0, list.stderr);
   assert.match(list.stdout, /Worca CC Official\t[^\t]+\thttps:\/\/github\.com\/SinishaDjukic\/worca-cc\tnever synced\tbuilt-in/);
+});
+
+test('marketplace add / list name a repo without a marketplace manifest by its folder, not its hashed id (G6)', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'worca-cc-cli-mkt6-'));
+  created.push(home);
+  const dir = await mkdtemp(join(tmpdir(), 'worca-cc-cli-nameless-'));
+  created.push(dir);
+  await writeFile(join(dir, 'worca-cc-plugin.json'), JSON.stringify({ name: 'nameless-demo', version: '0.1.0',
+    taskSources: [{ id: 'main', displayName: 'Demo', module: './index.mjs', inputs: [{ key: 'task', type: 'task-browser', label: 'Task' }] }] }));
+  await writeFile(join(dir, 'index.mjs'), 'export default () => ({});\n');
+  const git = (...args) => execFileP('git', ['-C', dir, ...args]);
+  await execFileP('git', ['init', '-q', '-b', 'main', dir]);
+  await git('config', 'user.email', 't@t');
+  await git('config', 'user.name', 't');
+  await git('add', '-A');
+  await git('commit', '-q', '-m', 'fixture');
+  const add = await run(['marketplace', 'add', dir], { home });
+  assert.equal(add.code, 0, add.stderr);
+  assert.ok(add.stdout.startsWith(`added marketplace ${basename(dir)}\t`), add.stdout);
+  const list = await run(['marketplace', 'list'], { home });
+  assert.ok(list.stdout.split('\n').some((l) => l.startsWith(`${basename(dir)}\t`)), list.stdout);
 });

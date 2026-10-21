@@ -41,7 +41,7 @@ const defaultExec = async (cmd, args, opts = {}) => {
     maxBuffer: 16 * 1024 * 1024,
     timeout: 120_000,
     killSignal: 'SIGKILL',
-    env: { ...env, GIT_TERMINAL_PROMPT: '0' },
+    env: { ...env, GIT_TERMINAL_PROMPT: '0', ...(cmd === 'git' ? { LC_ALL: 'C' } : {}) },   // git's errors in English: syncErrorOf reads them
     ...opts,
   });
 };
@@ -54,7 +54,7 @@ export function repoSlug(repoUrl) {
   const s = String(repoUrl);
   const readable = s
     .replace(/^[a-z+]+:\/\//i, '').replace(/\.git$/i, '')
-    .replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '')
+    .replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|(?<!-)-+$/g, '')   // the lookbehind keeps a long run of dashes linear
     .slice(0, 80) || 'repo';
   return `${readable}-${createHash('sha1').update(s).digest('hex').slice(0, 8)}`;
 }
@@ -214,7 +214,7 @@ export async function discoverPlugins(allPaths, readText) {
       continue;
     }
     seenNames.add(res.manifest.name);
-    discovered.push({ name: res.manifest.name, subdir, manifest: res.manifest });
+    discovered.push({ name: res.manifest.name, subdir, manifest: res.manifest, warnings: res.warnings });
   }
   return { discovered, warnings, marketplace };
 }
@@ -226,15 +226,16 @@ export async function discoverPlugins(allPaths, readText) {
  * @returns {{repoUrl:string, sha:string, discovered:Array<{name,subdir,manifest}>,
  *   warnings:string[], marketplace:{name:string, description:string}|null}}
  */
-export async function addPluginRepo(repoUrl, { exec = defaultExec, ref = null } = {}) {
+export async function addPluginRepo(repoUrl, { exec = defaultExec, ref = null, onProgress = null } = {}) {
   // `owner/repo` shorthand -> GitHub URL (spec §4.3) — only when it is not a
   // real local path (local fixture repos in tests stay untouched).
   if (/^[\w.-]+\/[\w.-]+$/.test(repoUrl) && !existsSync(repoUrl)) {
     repoUrl = `https://github.com/${repoUrl}`;
   }
-  if (!gitAvailable()) return (await httpsRepo()).addPluginRepoHttps(repoUrl, { ref });
+  if (!gitAvailable()) return (await httpsRepo()).addPluginRepoHttps(repoUrl, { ref, onProgress });
   const cache = await ensureCache(repoUrl, exec);
   const sha = await tipSha(cache, ref, exec);
+  onProgress?.({ phase: 'reading', sha });
   return { repoUrl, ...(await discoverAtCommit(cache, sha, { exec })) };
 }
 

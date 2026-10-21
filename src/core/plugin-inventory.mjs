@@ -19,7 +19,7 @@ const execFileP = promisify(execFile);
 const defaultExec = (cmd, args, opts = {}) =>
   execFileP(cmd, args, {
     maxBuffer: 16 * 1024 * 1024, timeout: 120_000, killSignal: 'SIGKILL',
-    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }, ...opts,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0', ...(cmd === 'git' ? { LC_ALL: 'C' } : {}) }, ...opts,   // git's errors in English: syncErrorOf reads them
   });
 
 export async function inventoryFromCache(repoUrl, sha, subdir, { exec = defaultExec } = {}) {

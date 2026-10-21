@@ -9,7 +9,7 @@ import {
   mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, symlinkSync, lstatSync, readFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { delimiter, join, dirname } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import {
@@ -82,6 +82,21 @@ test('addPluginRepo: no marketplace manifest -> depth 0-1 scan finds both subdir
   ]);
 });
 
+test('plugin repo git runs in the C locale, so a failed sync reads the same on every host (G12)', { skip: process.platform === 'win32' && 'a POSIX shell script stands in for git' }, async () => {
+  const bin = mkdtempSync(join(tmpdir(), 'worca-cc-fakegit-'));
+  writeFileSync(join(bin, 'git'), '#!/bin/sh\necho "fatal: LC_ALL=$LC_ALL" >&2\nexit 128\n', { mode: 0o755 });
+  const saved = { PATH: process.env.PATH, LC_ALL: process.env.LC_ALL };
+  process.env.PATH = `${bin}${delimiter}${saved.PATH}`;
+  process.env.LC_ALL = 'de_DE.UTF-8';
+  try {
+    await assert.rejects(addPluginRepo(join(bin, 'no-such-repo')), (e) => /^fatal: LC_ALL=C$/m.test(String(e.stderr)));
+  } finally {
+    process.env.PATH = saved.PATH;
+    if (saved.LC_ALL === undefined) delete process.env.LC_ALL; else process.env.LC_ALL = saved.LC_ALL;
+    rmSync(bin, { recursive: true, force: true });
+  }
+});
+
 test('addPluginRepo: reserved model-env key -> plugin still discovered, warning surfaced', async () => {
   const { root } = await makeRepo('reserved-env', {
     'ds/worca-cc-plugin.json': JSON.stringify({
@@ -94,6 +109,9 @@ test('addPluginRepo: reserved model-env key -> plugin still discovered, warning 
   assert.equal(r.discovered[0].manifest.models[0].env.CLAUDE_CODE_SUBAGENT_MODEL, undefined, 'key stripped');
   assert.equal(r.discovered[0].manifest.models[0].env.ANTHROPIC_MODEL, 'ds-stable', 'legal key kept');
   assert.match(r.warnings.join('\n'), /env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored/);
+  assert.deepEqual(r.discovered[0].warnings,
+    ['ds/worca-cc-plugin.json: models[0] ("ds-stable"): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored'],
+    'G14: the plugin carries its own notes');
 });
 
 test('addPluginRepo: no manifest anywhere -> empty discovery; invalid manifest skipped with warning', async () => {
@@ -421,4 +439,11 @@ test('fetchCandidate: versions, previewedAt and access ride at the top level; a 
   await git(root, 'commit', '-qam', 'touch the worker');
   const kept = await fetchCandidate('chan-plugin');
   assert.deepEqual([kept.candidateVersion, kept.manifestDelta.newChatChannels, kept.manifestDelta.newChannelSecrets, kept.access], ['0.2.0', [], [], []]);
+});
+
+test('addPluginRepo reports reading once the commit is fetched (onProgress, G4)', async () => {
+  const { root, sha } = await makeRepo('progress', { 'worca-cc-plugin.json': MANIFEST('progress-plugin'), 'index.mjs': 'export default () => ({});\n' });
+  const events = [];
+  await addPluginRepo(root, { onProgress: (e) => events.push(e) });
+  assert.deepEqual(events, [{ phase: 'reading', sha }]);
 });
