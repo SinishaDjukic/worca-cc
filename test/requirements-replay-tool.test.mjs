@@ -28,9 +28,11 @@ const USAGE_OBJ = { input_tokens: 10, cache_creation_input_tokens: 600, cache_re
 /** A fake spawn: a raw init frame, the spawn-debug stderr line, and a raw result. `reply(i)` gives call i's text. */
 function fakeSpawn({ cost = 0.1, reply, fail = [] } = {}) {
   const calls = [];
+  const debugSpawn = [];   // process.env.WORCA_DEBUG_SPAWN as each call saw it
   const spawn = async (opts) => {
     const i = calls.length;
     calls.push(opts);
+    debugSpawn.push(process.env.WORCA_DEBUG_SPAWN);
     if (fail.includes(i)) throw new Error('boom');
     const text = reply ? reply(i) : '{}';
     opts.onEvent({ type: 'system', raw: { type: 'system', subtype: 'init', apiKeySource: 'none', tools: ['a', 'b'], plugins: [], skills: ['s'], slash_commands: ['x', 'y', 'z'], mcp_servers: [{ name: 'm' }] } });
@@ -39,7 +41,7 @@ function fakeSpawn({ cost = 0.1, reply, fail = [] } = {}) {
       modelUsage: { [MODEL]: {} }, num_turns: 1, duration_ms: 1234 }, text, costUsd: cost });
     return { text };
   };
-  return { calls, spawn };
+  return { calls, debugSpawn, spawn };
 }
 
 test('WORCA_MOCK set: exit 2 before anything, even the dry run text', async () => {
@@ -154,6 +156,7 @@ test('--yes: the report adds up, sets WORCA_DEBUG_SPAWN, and --out writes the JS
   const out = join(work, 'report.json');
   const code = await main(['--rounds', '3', '--model', MODEL, '--yes', '--label', 'before', '--out', out], { spawn: f.spawn, log, env: noMock });
   assert.equal(code, 0);
+  assert.deepEqual(f.debugSpawn, ['1', '1', '1'], 'WORCA_DEBUG_SPAWN is 1 during every call');
   assert.equal(process.env.WORCA_DEBUG_SPAWN, undefined);   // restored after the run
   assert.equal(f.calls.length, 3);
   assert.match(lines.join('\n'), /^TOTAL/m);
