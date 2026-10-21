@@ -1,6 +1,7 @@
 // test/ui-switch.test.mjs — ui/public/switch.mjs: the checkbox driver of the one switch (docs/design-system.md › Switch).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { makeSwitch } from '../ui/public/switch.mjs';
 
@@ -40,4 +41,16 @@ test('makeSwitch: no visible label names the input through aria-label', () => {
   const { row, input } = makeSwitch(doc, { ariaLabel: 'Mandatory', inputClass: 'tag-dim-required' });
   assert.equal(input.getAttribute('aria-label'), 'Mandatory');
   assert.equal(row.querySelector('.switch-label'), null);
+});
+
+
+test('index.html: every static switch track sits inside a label whose control is its own input, so a click on the track toggles it', () => {
+  const page = new JSDOM(readFileSync(new URL('../ui/public/index.html', import.meta.url), 'utf8')).window.document;
+  const inputs = [...page.querySelectorAll('input.sw-input')];
+  assert.ok(inputs.length > 10, 'the page has its switches');
+  const unreachable = inputs.filter((i) => {
+    const track = i.nextElementSibling;
+    return !track?.classList.contains('switch') || ![...i.labels].some((l) => l.contains(track));
+  }).map((i) => i.id || i.className);
+  assert.deepEqual(unreachable, [], 'a label without for= names its FIRST labelable child (an info-tip button wins), and .sw-input takes no pointer events');
 });
