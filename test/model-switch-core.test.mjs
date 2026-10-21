@@ -155,8 +155,11 @@ test('stageChangeError refuses a model the run engine cannot run, and checks eff
   assert.equal(stageChangeError(cell, { subagentModel: '' }, ALL, { engine: 'cursor' }), '');
 });
 
-test('stageChangeError: an untouched foreign model never blocks an effort or sub-agent change (Review Focus 1)', () => {
+test('stageChangeError: an effort on a foreign model is refused; sub-agent changes and clearing the effort pass', () => {
   const foreign = { model: 'claude-opus-5-5', effort: '', subagentModel: '', subagentEffort: '' };
+  assert.match(stageChangeError(foreign, { effort: 'low' }, ALL, { engine: 'codex' }), /runs on Claude, not on Codex/);
+  assert.equal(stageChangeError(foreign, { effort: '' }, ALL, { engine: 'codex' }), '');
+  assert.match(stageChangeError(foreign, { effort: 'medium' }, ALL, { engine: 'cursor' }), /runs on Claude, not on Cursor/);
   assert.equal(stageChangeError(foreign, { subagentEffort: 'low' }, ALL, { engine: 'codex' }), '');
   assert.equal(stageChangeError(foreign, { subagentModel: 'opus' }, ALL, { engine: 'codex' }), '');
 });

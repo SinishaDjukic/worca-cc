@@ -140,14 +140,15 @@ export function switchableStages({ manifest, steps, active, held } = {}) {
 
 /** '' when `change` may be applied to `cell` on a run on `engine`. Only TOUCHED fields are checked; a
  *  model/effort touch checks the MERGED pair (setNodeModel's rules, config.mjs). A model the engine
- *  cannot run is refused: the harness would drop it at spawn (run-harness _engineModel) and run its default. */
+ *  cannot run is refused: the harness would drop it at spawn (run-harness _engineModel) and run its default; likewise an effort on a model the engine
+ *  cannot run, which the harness drops (_nodeModelPair). */
 export function stageChangeError(cell, change, models, { engine = 'claude' } = {}) {
   const next = { ...pick(cell), ...change };
   const efforts = effortsOfEngine(engine);
   if ('model' in change || 'effort' in change) {
     const entry = next.model ? models.find((m) => m.id === next.model) : null;
     if (next.model && !entry) return `unknown model "${next.model}"`;
-    if ('model' in change && entry && !runsOn(entry, engine)) {
+    if (entry && !runsOn(entry, engine) && ('model' in change || next.effort)) {
       return `model "${entry.id}" runs on ${harnessesLabel(entry)}, not on ${engineLabel(engine)} (this run's engine)`;
     }
     if (next.effort) {
