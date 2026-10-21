@@ -43,6 +43,21 @@ const pick = (cell) => Object.fromEntries(SWITCH_FIELDS.map((f) => [f, typeof ce
 const parseJson = (text) => { try { return text ? JSON.parse(text) : null; } catch { return null; } };
 
 /** The engine a saved point runs on (run-harness.mjs savedEngine's rule: a missing engine is Claude). */
+/** The model a saved point runs EVERY remaining stage on (a resume "with another model for all";
+ *  run-harness _nodeModelPair then ignores per-node model and effort), else null. */
+const modelForAllOf = (rp) => (rp?.claude?.modelForAll === true && typeof rp.claude.model === 'string' && rp.claude.model) || null;
+
+/** Refuse model/effort touches on a run that runs every stage on one model: the switch would be ignored.
+ *  Sub-agent fields still apply (_nodeModelPair does not cover them). */
+export function assertPerStageModels(normalized, modelForAll) {
+  if (!modelForAll) return;
+  const touched = Object.values(normalized || {}).some((c) => 'model' in c || 'effort' in c);
+  if (touched) {
+    throw new ModelSwitchError('MODEL_FOR_ALL',
+      `this run was resumed with ${modelForAll} for every remaining stage, so a per-stage model or effort would be ignored`);
+  }
+}
+
 const engineOfPoint = (rp) => (typeof rp?.claude?.engine === 'string' && rp.claude.engine) || 'claude';
 /** The effort vocabulary of `engine` (connections.mjs HARNESS_EFFORTS; an unknown engine falls back to Claude's). */
 const effortsOfEngine = (engine) => HARNESS_EFFORTS[engine] || EFFORTS;
@@ -333,6 +348,7 @@ export async function describeModelSwitch(pipelineId, { projectDirFor, live = nu
     runDefault: (running && live ? live.runDefault : rp?.claude?.model) || '',
     stages: switchableStages(input),
     engine,
+    modelForAll: (running && live ? live.modelForAll : modelForAllOf(rp)) || null,
     models: engineCatalog(models, engine),
     efforts: [...effortsOfEngine(engine)],
     subagents: engineHasSubagents(engine),
@@ -357,6 +373,7 @@ export async function switchPausedRunModels(pipelineId, { changes, by = 'local',
   const stages = switchableStages({ manifest: rp.manifest, steps: saved.steps, held });
   const models = await listModels(await catalogDirOf(saved.row, projectDirFor));
   const normalized = validateChanges(stages, changes, models, { engine: engineOfPoint(rp) });
+  assertPerStageModels(normalized, modelForAllOf(rp));
   for (const nodeId of Object.keys(normalized)) {
     const stage = stages.find((s) => s.nodeId === nodeId);
     if (!stage.switchable) throw lockedStageError(stage);

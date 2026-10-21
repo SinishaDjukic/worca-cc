@@ -154,3 +154,13 @@ test('a paused Codex run refuses a Claude model and is described with the Codex 
   assert.ok(!d.models.some((m) => m.id === 'claude-opus-5-5'));
   assert.deepEqual(d.efforts, ['minimal', 'low', 'medium', 'high']);
 });
+
+test('a paused run resumed with one model for every stage refuses a per-stage model, says why in describe', async () => {
+  const dir = gitDir('msw-all');
+  const rp = graphResumePoint({ pipelineDir: dir, pausedBy: 'tok-1', claude: { model: 'claude-sonnet-5-5', modelForAll: true } });
+  const { id } = await seedPipeline(dir, { status: 'paused', stepper: rp.manifest, resumePoint: rp, steps: STEPS });
+  const projectDirFor = () => dir;
+  await assert.rejects(switchPausedRunModels(id, { changes: { n_impl: { model: 'claude-opus-5-5' } }, projectDirFor }),
+    (e) => e.code === 'MODEL_FOR_ALL');
+  assert.equal((await describeModelSwitch(id, { projectDirFor })).modelForAll, 'claude-sonnet-5-5');
+});

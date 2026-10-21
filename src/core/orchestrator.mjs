@@ -74,7 +74,7 @@ import { classifyError } from './recoverable-error.mjs';
 import { withRecoveryRetry, RETRYABLE_CLASSES, HELPER_RETRY_ATTEMPTS } from './recovery-backoff.mjs';
 import { resolveFailure, markTerminal, isTerminal } from './failure-policy.mjs';
 import { byActor } from './identity.mjs';
-import { switchableStages, heldWireIds, validateChanges, applyModelSwitch, ModelSwitchError, describeModelChange, modelSwitchWarnings } from './model-switch.mjs';
+import { switchableStages, heldWireIds, validateChanges, assertPerStageModels, applyModelSwitch, ModelSwitchError, describeModelChange, modelSwitchWarnings } from './model-switch.mjs';
 import { toolNameLimitFor } from './mcp/registry.mjs';
 
 /** Max ask-then-resume question rounds per execution (mirrors v1's constant). */
@@ -1090,6 +1090,7 @@ export class GraphOrchestrator extends RunHarness {
       held: heldWireIds(this._graphSnapshot),
       runDefault: this.claude?.model || '',
       engine: this.claude?.engine || 'claude',
+      modelForAll: this._modelForAll && this.claude?.model ? this.claude.model : null,
     };
   }
 
@@ -1138,6 +1139,7 @@ export class GraphOrchestrator extends RunHarness {
     this._assertModelSwitchable();
     const stages = switchableStages(this.modelSwitchSnapshot());
     const normalized = validateChanges(stages, changes, models, { engine: this.claude?.engine || 'claude' });   // throws: the whole request is refused
+    assertPerStageModels(normalized, this._modelForAll && this.claude?.model ? this.claude.model : null);
     const byId = new Map(stages.map((s) => [s.nodeId, s]));
     const accepted = {};
     const skipped = [];

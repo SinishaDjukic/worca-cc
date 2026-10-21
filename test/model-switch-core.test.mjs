@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { buildGraphManifest } from '../src/shared/graph/manifest.mjs';
 import { GRAPH_DEFAULT_WORKFLOW } from '../src/core/workflows.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
-import { completedNodeIds, switchableStages, stageChangeError, applyModelSwitch, validateChanges, engineCatalog } from '../src/core/model-switch.mjs';
+import { completedNodeIds, switchableStages, stageChangeError, applyModelSwitch, validateChanges, engineCatalog, assertPerStageModels } from '../src/core/model-switch.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 const manifest = buildGraphManifest(GRAPH_DEFAULT_WORKFLOW, loadAgentRegistry());
@@ -169,4 +169,12 @@ test('engineCatalog: only the models the engine runs, efforts in its vocabulary,
   assert.deepEqual(ids('claude'), ['claude-opus-5-5', 'claude-haiku-4-5', 'gw-shared']);
   assert.deepEqual(ids('codex'), ['gpt-6.1-sol', 'gw-shared']);
   assert.deepEqual(engineCatalog(ALL, 'codex').find((m) => m.id === 'gw-shared').efforts, ['medium', 'high']);
+});
+
+test('assertPerStageModels: a modelForAll run refuses model/effort touches, keeps sub-agent ones (Review Focus 5)', () => {
+  assert.throws(() => assertPerStageModels({ n_impl: { model: 'claude-opus-5-5', effort: '' } }, 'claude-sonnet-5-5'),
+    (e) => e.code === 'MODEL_FOR_ALL' && e.status === 409 && /claude-sonnet-5-5/.test(e.message));
+  assert.throws(() => assertPerStageModels({ n_impl: { effort: 'high' } }, 'claude-sonnet-5-5'), (e) => e.code === 'MODEL_FOR_ALL');
+  assert.doesNotThrow(() => assertPerStageModels({ n_impl: { subagentModel: 'opus' } }, 'claude-sonnet-5-5'));
+  assert.doesNotThrow(() => assertPerStageModels({ n_impl: { model: 'claude-opus-5-5' } }, null));
 });
