@@ -207,7 +207,7 @@ async function runOrientation(seq, d, by, { useBrief = false } = {}) {
   const turnId = appendTurn(seq, { kind: 'orientation', payload: { summary: o.summary, files: o.files, skipped: o.skipped, error: o.error || null },
     model: o.model || null, costUsd: o.costUsd || null }, { by });
   charge(seq, turnId, o.costUsd, o.model);
-  updateFeature(seq, { orientation: { summary: o.summary, files: o.files, skipped: o.skipped, ...(o.area ? { area: o.area } : {}), at: new Date().toISOString() } }, { by });
+  updateFeature(seq, { orientation: { summary: o.summary, files: o.files, skipped: o.skipped, ...(brief && o.area ? { area: o.area } : {}), at: new Date().toISOString() } }, { by });
 }
 
 async function runRound(seq, d, by, { final = false, followUp = null } = {}) {

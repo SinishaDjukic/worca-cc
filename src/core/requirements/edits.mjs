@@ -146,11 +146,13 @@ export function revertToStart(seq, version, { by = null } = {}) {
 }
 
 /**
- * **Add this to the brief** (A7 D11): the feature's closer look becomes a new area of its scope's brief, named
- * after the feature and filed under the area the look named. It never replaces an area and does not mark
- * "What exists today" edited (D6), so the area survives a refresh as an added one. The look's paths are the
- * temporary checkout's, absolute: they are made relative (a workspace keeps `repos/<member>/…` of the brief's
- * members). Returns the brief's scope, for its frame.
+ * **Add this to the brief** (A7 D11): the feature's closer look becomes an area of its scope's brief, named after
+ * the feature and filed under the area the look named. The feature's own added area, if any (from an earlier
+ * closer look), is updated in place; any other area, and every area Worca wrote (`added` null), is never
+ * replaced. "What exists today" is not marked edited (D6), so the area survives a refresh as an added one.
+ * The look's paths are the temporary checkout's, absolute: they are made relative. A workspace keeps
+ * `repos/<member>/…` of the brief's own members (its `sources`), on purpose: files of a member added after
+ * the brief are dropped, as staleness (D9) checks only those members. Returns the brief's scope, for its frame.
  */
 export function addToBrief(seq, { by = null } = {}) {
   const f = editable(seq);
@@ -161,7 +163,8 @@ export function addToBrief(seq, { by = null } = {}) {
   if (!o || !o.summary) throw new RequirementsError('CONFLICT', 'There is no closer look to add.');
   if (o.addedToBrief) throw new RequirementsError('CONFLICT', 'Already added to the brief.');
   const areas = b.sections.areas || [];
-  if (areas.length >= BRIEF_LIMITS.areas) throw new RequirementsError('CONFLICT', `The brief already has ${BRIEF_LIMITS.areas} areas.`);
+  const own = areas.findIndex((a) => a && a.added && a.added.feature === f.id);
+  if (own < 0 && areas.length >= BRIEF_LIMITS.areas) throw new RequirementsError('CONFLICT', `The brief already has ${BRIEF_LIMITS.areas} areas.`);
   const members = f.scopeType === 'workspace' ? (b.sources || []).map((s) => s && s.project).filter(Boolean) : null;
   const files = [];
   for (const p of Array.isArray(o.files) ? o.files : []) {
@@ -173,8 +176,9 @@ export function addToBrief(seq, { by = null } = {}) {
     name: clip(f.title, BRIEF_LIMITS.name), belongsTo: clip(o.area, BRIEF_LIMITS.name) || null, text: clip(o.summary, BRIEF_LIMITS.addedText),
     status: null, files: files.slice(0, BRIEF_LIMITS.areaFiles), added: { feature: f.id, at },
   };
+  const next = own >= 0 ? areas.map((a, i) => (i === own ? area : a)) : [...areas, area];   // same place, new `added.at`
   tx(() => {
-    setBriefSections(b.id, { sections: { ...b.sections, areas: [...areas, area] }, edited: b.edited }, { by });
+    setBriefSections(b.id, { sections: { ...b.sections, areas: next }, edited: b.edited }, { by });
     updateFeature(seq, { orientation: { ...o, addedToBrief: at } }, { by });
   });
   return { scopeType: f.scopeType, scopeKey: f.scopeKey };

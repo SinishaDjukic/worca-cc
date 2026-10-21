@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import {
-  createFeature, getFeature, listTurns, updateFeature, appendTurn, setContext, getBrief, beginBrief, saveBriefResult,
+  createFeature, getFeature, listTurns, updateFeature, appendTurn, setContext, getBrief, beginBrief, saveBriefResult, deleteBrief,
 } from '../src/core/requirements/store.mjs';
 import { REPO_LOOK_TOOLS, REPO_LOOK_TIMEOUT_MS } from '../src/core/auto/classify.mjs';
 import {
@@ -844,4 +844,34 @@ test('brief at the spending limit: the feature is still created (no look to refu
   assert.equal(turns[1].payload.code, 'BUDGET');
   assert.equal(turns[1].payload.job, 'round');
   assert.equal(getFeature(f.seq).status, 'your_turn');
+});
+
+test('brief deleted after creation: the next round has no <product_brief> and records no brief', async () => {
+  briefOn();
+  savedBrief();
+  const f = newBriefFeature();
+  const r = fakeRunner([ROUND1, ROUND2]);
+  const { d } = briefDeps(r);
+  await startOrientation(f.seq, {}, d);
+  await settled(f.seq);
+  assert.equal(getFeature(f.seq).orientation.skipped, 'brief');
+  assert.match(r.calls[0].prompt, /<product_brief>/);
+  assert.ok(deleteBrief('project', BSCOPE));
+  try {
+    const round = listTurns(f.seq).find((t) => t.kind === 'round');
+    await submitAnswers(f.seq, { roundTurnId: round.id, useRecommended: true }, {}, d);
+    await settled(f.seq);
+    assert.doesNotMatch(r.calls[1].prompt, /product_brief/);
+    assert.equal('brief' in listTurns(f.seq).at(-1).payload, false);
+  } finally { savedBrief(); }
+});
+
+test('a look without a brief never stores an area, even when the reply names one', async () => {
+  const f = newFeature();
+  const r = fakeRunner([{ summary: 'Orders exist.', files: [], area: 'Orders' }, ROUND1]);
+  await startOrientation(f.seq, {}, deps(r));
+  await settled(f.seq);
+  const o = getFeature(f.seq).orientation;
+  assert.equal(o.summary, 'Orders exist.');
+  assert.equal('area' in o, false);
 });

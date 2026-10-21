@@ -310,3 +310,46 @@ test('addToBrief refusals write nothing', async () => {
   await settled(busy.f.seq);
   assert.equal(getBrief('project', busy.scopeKey).sections.areas.length, 1);
 });
+
+test('addToBrief again after a new closer look updates the feature\'s own area in place; Worca\'s areas are never replaced', () => {
+  const { f, scopeKey } = closerLooked();
+  const first = getBrief('project', scopeKey).sections.areas;
+  addToBrief(f.seq);
+  const once = getBrief('project', scopeKey).sections.areas;
+  assert.equal(once.length, 2);
+  const firstAt = once[1].added.at;
+  // a new Look closer replaces the orientation: addedToBrief is gone, the summary, files and area are new
+  updateFeature(f.seq, { orientation: { summary: 'Orders now need a gift flag.', skipped: null, area: 'Checkout', at: '2026-10-21T10:00:00.000Z',
+    files: ['/tmp/auto-look-0000abcd/src/gift-flag.js'] } });
+  addToBrief(f.seq, { by: 'po' });
+  const twice = getBrief('project', scopeKey).sections.areas;
+  assert.equal(twice.length, 2, 'no duplicate');
+  assert.deepEqual(twice[0], first[0], 'the model\'s area is untouched');
+  assert.equal(twice[1].name, 'Gift message on an order');
+  assert.equal(twice[1].belongsTo, 'Checkout');
+  assert.equal(twice[1].text, 'Orders now need a gift flag.');
+  assert.deepEqual(twice[1].files, ['src/gift-flag.js']);
+  assert.equal(twice[1].added.feature, f.id);
+  assert.equal(twice[1].added.at, getFeature(f.seq).orientation.addedToBrief);
+  assert.ok(twice[1].added.at >= firstAt);
+  // another feature's add still appends
+  const other = createFeature({ scopeType: 'project', scopeKey, title: 'Wrap an order', description: 'd' });
+  updateFeature(other.seq, { status: 'your_turn', orientation: { summary: 'No wrapping.', files: [], skipped: null, area: 'Orders' } });
+  addToBrief(other.seq);
+  assert.equal(getBrief('project', scopeKey).sections.areas.length, 3);
+});
+
+test('addToBrief: with 20 areas a re-add of the feature\'s own area succeeds; a new one is refused', () => {
+  const { f, scopeKey } = closerLooked({ brief: { areas: Array.from({ length: 19 }, (_, i) => ({ ...ORDERS, name: `Area ${i}` })) } });
+  addToBrief(f.seq);
+  assert.equal(getBrief('project', scopeKey).sections.areas.length, 20);
+  updateFeature(f.seq, { orientation: { summary: 'A second look.', files: [], skipped: null, area: 'Orders' } });
+  addToBrief(f.seq);
+  const areas = getBrief('project', scopeKey).sections.areas;
+  assert.equal(areas.length, 20);
+  assert.equal(areas[19].text, 'A second look.');
+  assert.equal(areas[19].added.feature, f.id);
+  const other = createFeature({ scopeType: 'project', scopeKey, title: 'Another', description: 'd' });
+  updateFeature(other.seq, { status: 'your_turn', orientation: { summary: 'x', files: [], skipped: null } });
+  assert.throws(() => addToBrief(other.seq), (e) => e.code === 'CONFLICT' && e.message === 'The brief already has 20 areas.');
+});
