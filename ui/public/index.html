@@ -721,6 +721,10 @@
               <div class="hist-shell" id="hist-shell">
                 <div class="hist-screen-detail" id="hist-detail" aria-hidden="true"></div>
               </div>
+              <!-- Run 3 (D1): the group page (#feature/…, #group/…) in the same pane; group-page.mjs builds into it. -->
+              <div class="group-shell" id="group-shell">
+                <div class="group-screen-detail feature-page" id="group-detail" aria-hidden="true" inert></div>
+              </div>
             </div>
           </div>
 
@@ -744,6 +748,8 @@
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
                   <span class="rd-to-run-label">Run</span>
                 </button>
+                <!-- Run 3 (D6): Runs › the group › Run 2, beside the list only (the slide layout keeps Back). -->
+                <nav class="rd-crumbs" aria-label="Breadcrumb" hidden></nav>
                 <!-- The run's name: the glance's headline carries its state. -->
                 <span class="rd-bar-mid"><span class="rd-bar-title"></span></span>
                 <span class="rd-bar-end">
@@ -790,7 +796,7 @@
                   <button type="button" class="term-opener btn" aria-label="Open the terminal" aria-expanded="false" title="Terminal (Ctrl+`)">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2.5"></rect><path d="M7.5 9.5l3 2.5-3 2.5"></path><path d="M13 15h3.5"></path></svg>
                   </button>
-                  <!-- Shaper (D31): a shaped run's Away mode, Run after and terminal in one menu (paintRdHeader). -->
+                  <!-- D31, run 3 D13: every run's Away mode, Run after and terminal in one menu (paintRdHeader). -->
                   <button type="button" class="btn btn-quiet btn-icon rd-bar-more" aria-haspopup="menu" aria-expanded="false" title="More for this run" aria-label="More for this run" hidden>
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg>
                   </button>
@@ -802,14 +808,10 @@
 
               <section class="rd-glance" aria-label="Run status">
                 <div class="rd-now">
-                  <!-- The run's name is the page title; the bar shows it only once this scrolls away.
-                       The meta line's text is its first node (paintPageHead); the feature branch chip
-                       copies the name, like the Details header's (paintPageBranch). -->
+                  <!-- The run's name is the page title; the bar shows it only once this scrolls away. Its kind
+                       chip says where the run sits ("Run 2 of 3", run 3 D7); every other fact is in the card. -->
                   <header class="rd-page-head">
                     <div class="rd-title-row"><h1 class="rd-page-title" tabindex="-1"></h1><span class="kind-chip">Run</span></div>
-                    <p class="rd-page-meta"><button type="button" class="btn btn-sm btn-quiet rd-page-branch" hidden data-min-level="advanced" data-needs-git aria-label="Copy branch name"><span class="rd-page-branch-name"></span><svg class="ico-copy" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg><svg class="ico-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></p>
-                    <!-- The Group row (runs redesign slice 4, D18): its own element, repainted through a signature. -->
-                    <p class="rd-group-line" hidden></p>
                   </header>
                 </div>
                 <div class="rd-sheet">
@@ -824,6 +826,22 @@
                       <span class="txt">Live view</span>
                       <div class="switch rd-live-switch" role="switch" tabindex="0" aria-checked="false" aria-label="Live view"></div>
                     </div>
+                  </div>
+                  <!-- Run 3 (D8): the facts block, one row per fact and one place to edit it. The Project row's value is the
+                       old meta line (paintPageHead owns its first text node); the branch chip copies the name (paintPageBranch). -->
+                  <dl class="rd-kv" aria-label="Run facts">
+                    <div class="rd-kv-row" data-fact="group" hidden><dt class="rd-kv-k">Group</dt><dd class="rd-kv-v rd-group-line"></dd></div>
+                    <div class="rd-kv-row" data-fact="project" hidden><dt class="rd-kv-k">Project</dt><dd class="rd-kv-v rd-page-meta"></dd></div>
+                    <div class="rd-kv-row" data-fact="branch" data-min-level="advanced" data-needs-git hidden><dt class="rd-kv-k">Branch</dt><dd class="rd-kv-v"><button type="button" class="btn btn-sm btn-quiet rd-page-branch" hidden data-min-level="advanced" data-needs-git aria-label="Copy branch name"><span class="rd-page-branch-name"></span><svg class="ico-copy" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg><svg class="ico-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></dd></div>
+                    <div class="rd-kv-row" data-fact="labels" hidden><dt class="rd-kv-k">Labels</dt><dd class="rd-kv-v"></dd></div>
+                    <div class="rd-kv-row" data-fact="tags" hidden><dt class="rd-kv-k">Cost tags</dt><dd class="rd-kv-v"></dd></div>
+                  </dl>
+                  <!-- The PR bar (run 3 D11): the run's own PR, its checks and Watch; or the Create pull request button. One node
+                       for the screen's life, outside the result (rebuilt), so its loading placeholder can morph (paintPrCta). -->
+                  <div class="rd-pr-box" data-needs-git>
+                    <div class="rd-pr-slot" hidden></div>
+                    <!-- The open PR's chip, checks, conflicts and Watch PR (paintRdPrStatus). -->
+                    <div class="rd-pr-status" hidden></div>
                   </div>
                   <div class="rd-banners">
                     <!-- The worktree notice (worktree-notice.mjs): retained work, or a live checkout. -->
@@ -840,13 +858,6 @@
                   <!-- D30: while a shaped run waits on the person, Results / How it ran / the graph fold here (paintShaperWait). -->
                   <button type="button" class="btn btn-sm btn-quiet rd-wait-more" aria-expanded="false" hidden>Run details <span aria-hidden="true">›</span></button>
                   <div class="rd-result" hidden></div>
-                  <!-- The pull request button: one node for the screen's life, outside the result
-                       (rebuilt), so its loading placeholder can morph into it (paintPrCta). -->
-                  <div class="rd-pr-box" data-needs-git>
-                    <div class="rd-pr-slot" hidden></div>
-                    <!-- The open PR's checks, conflicts and Watch PR, as the button's footer (paintRdPrStatus). -->
-                    <div class="rd-pr-status" hidden></div>
-                  </div>
                 </div>
                 <!-- The Live view panel. The clip lets the narrow layout open its height while the
                      graph host keeps its final size (no fit chasing a growing box). It is `inert`:
@@ -916,6 +927,7 @@
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
                   Run
                 </button>
+                <nav class="rd-crumbs" aria-label="Breadcrumb" hidden></nav>
                 <span class="rd-bar-mid"><span class="rd-bar-title"></span></span>
                 <!-- The run page bar's controls, in its order and with its look (style.css shares their
                      rules): Run after, the Resume split, Pause, Stop. History's own class names, so
@@ -962,6 +974,10 @@
                   <button type="button" class="term-opener btn" aria-label="Open the terminal" aria-expanded="false" title="Terminal (Ctrl+`)">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2.5"></rect><path d="M7.5 9.5l3 2.5-3 2.5"></path><path d="M13 15h3.5"></path></svg>
                   </button>
+                  <!-- Run 3 (D13): Save as preset, Run after and the terminal in one menu (openHistDetail binds it). -->
+                  <button type="button" class="btn btn-quiet btn-icon hd-bar-more" aria-haspopup="menu" aria-expanded="false" title="More for this run" aria-label="More for this run">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg>
+                  </button>
                 </span>
               </div>
               <!-- The inline error sits under the shared bar so both modes show it (a load
@@ -971,14 +987,27 @@
                 <div class="rd-now">
                   <header class="rd-page-head">
                     <div class="rd-title-row"><h1 class="rd-page-title" tabindex="-1"></h1><span class="kind-chip">Run</span></div>
-                    <p class="rd-page-meta"><button type="button" class="btn btn-sm btn-quiet rd-page-branch" hidden data-min-level="advanced" data-needs-git aria-label="Copy branch name"><span class="rd-page-branch-name"></span><svg class="ico-copy" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg><svg class="ico-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></p>
-                    <!-- The Group row (runs redesign slice 4, D18): its own element, repainted through a signature. -->
-                    <p class="rd-group-line" hidden></p>
                   </header>
                 </div>
                 <div class="rd-sheet">
                   <div class="rd-sheet-head">
                     <div class="rd-now-top run-status"></div>
+                  </div>
+                  <!-- Run 3 (D8): the facts block, one row per fact and one place to edit it. The Project row's value is the
+                       old meta line (paintPageHead owns its first text node); the branch chip copies the name (paintPageBranch). -->
+                  <dl class="rd-kv" aria-label="Run facts">
+                    <div class="rd-kv-row" data-fact="group" hidden><dt class="rd-kv-k">Group</dt><dd class="rd-kv-v rd-group-line"></dd></div>
+                    <div class="rd-kv-row" data-fact="project" hidden><dt class="rd-kv-k">Project</dt><dd class="rd-kv-v rd-page-meta"></dd></div>
+                    <div class="rd-kv-row" data-fact="branch" data-min-level="advanced" data-needs-git hidden><dt class="rd-kv-k">Branch</dt><dd class="rd-kv-v"><button type="button" class="btn btn-sm btn-quiet rd-page-branch" hidden data-min-level="advanced" data-needs-git aria-label="Copy branch name"><span class="rd-page-branch-name"></span><svg class="ico-copy" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg><svg class="ico-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></dd></div>
+                    <div class="rd-kv-row" data-fact="labels" hidden><dt class="rd-kv-k">Labels</dt><dd class="rd-kv-v"></dd></div>
+                    <div class="rd-kv-row" data-fact="tags" hidden><dt class="rd-kv-k">Cost tags</dt><dd class="rd-kv-v"></dd></div>
+                  </dl>
+                  <!-- The PR bar (run 3 D11): the run's own PR, its checks and Watch; or the Create pull request button. One node
+                       for the screen's life, outside the result (rebuilt), so its loading placeholder can morph (paintPrCta). -->
+                  <div class="rd-pr-box" data-needs-git>
+                    <div class="rd-pr-slot" hidden></div>
+                    <!-- The open PR's chip, checks, conflicts and Watch PR (paintRdPrStatus). -->
+                    <div class="rd-pr-status" hidden></div>
                   </div>
                   <div class="hd-limit-notice rd-ov-state" hidden><span class="rd-ov-copy"></span></div>
                   <div class="hd-banners">
@@ -994,13 +1023,6 @@
                   <div class="rd-away-note" hidden><span class="rd-away-note-text"></span><button type="button" class="btn btn-sm rd-away-jump">See the answers</button></div>
                   <div class="rd-nowlist"></div>
                   <div class="rd-result hd-result"></div>
-                  <!-- The pull request button, mirrored from the Details header: one node, outside
-                       the result paintHdGlance rebuilds on every paint (paintPrCta). -->
-                  <div class="rd-pr-box" data-needs-git>
-                    <div class="rd-pr-slot" hidden></div>
-                    <!-- The open PR's checks, conflicts and Watch PR, as the button's footer (paintRdPrStatus). -->
-                    <div class="rd-pr-status" hidden></div>
-                  </div>
                 </div>
                 <!-- What Away mode answered on this run (GET /api/night-decisions), as on the run page. -->
                 <section class="rd-night-sec hd-night-sec" hidden><h3 class="rd-night-h">Answered for you<span class="rd-night-count"></span></h3><div class="rd-night-asks"></div></section>
@@ -1096,7 +1118,6 @@
         <!-- /view runs -->
 
         <!-- ===== VIEW: FEATURE (Shaper, D16) ===== -->
-        <section class="view hidden" data-view="feature"><div class="feature-page"></div></section>
 
         <!-- ===== VIEW: STATISTICS ===== -->
         <section class="view hidden" data-view="schedules">

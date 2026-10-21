@@ -7,7 +7,7 @@ import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
 import {
   rowTime, liveRowState, histRowState, schedRowState, countNeedsYou, needsYouItems,
-  buildRunsModel, isRowSelected, renderRunsList, dateBucket, DATE_BUCKETS, listLine, groupRow, groupCostUsd, costTitle, memberCostUsd,
+  buildRunsModel, isRowSelected, isMemberOpen, renderRunsList, dateBucket, DATE_BUCKETS, listLine, groupRow, groupCostUsd, costTitle, memberCostUsd,
 } from '../ui/public/runs-list.mjs';
 import { RUN_STATES } from '../src/shared/run-model.mjs';
 import { checkRows } from './helpers/rows.mjs';
@@ -282,13 +282,23 @@ test('a finished run whose PR fails checks needs you (D31): Needs you, the badge
   assert.equal(needsYouItems({ history: [{ id: 'h1', status: 'done', pr: { ...pr, fixing: true } }] }).history.length, 0, 'a live fix run: not counted');
 });
 
-test('isRowSelected: a group row is selected by any member pipeline or run', () => {
-  const g = groupRow({ id: 'p:p1', groupKind: 'chain', title: 'C', members: [
-    { position: 1, pipelineId: 'p1', runId: 'r1', kind: 'live', run: { status: 'running' } },
-    { position: 2, ticketId: 't2', kind: 'sched', run: { ticket: { status: 'scheduled', runAt: null } } }] }, { now: NOW });
-  assert.equal(isRowSelected(g, { pipelineId: 'p1' }), true);
-  assert.equal(isRowSelected(g, { runId: 'r1' }), true);
-  assert.equal(isRowSelected(g, { runId: 'zz' }), false);
+test('run 3 (D3): every group row links its own page — #group/… for a chain or a user group', () => {
+  const g = groupRow({ id: 'p:p0', groupKind: 'chain', title: 'C', members: [
+    { position: 1, pipelineId: 'p0', runId: 'r1', kind: 'live', href: '#running/r1', run: { status: 'running' } }] }, { now: NOW });
+  assert.equal(g.href, '#group/p%3Ap0', 'not the current member\'s #running/r1');
+  const u = groupRow({ id: 'g_1', groupKind: 'user', title: 'U', members: [{ position: 1, pipelineId: 'u1', kind: 'hist', run: { status: 'done' } }] }, { now: NOW });
+  assert.equal(u.href, '#group/g_1');
+});
+
+test('selection is two levels: the group row on its own page, member-open while a member runs', () => {
+  const row = { kind: 'chain', groupId: 'feat_1', memberKeys: new Set(['p:p1', 'r:r2']) };
+  assert.equal(isRowSelected(row, { groupId: 'feat_1' }), true);
+  assert.equal(isRowSelected(row, { runId: 'r2', pipelineId: 'p2' }), false);
+  assert.equal(isMemberOpen(row, { runId: 'r2', pipelineId: 'p2' }), true);
+  assert.equal(isMemberOpen(row, { groupId: 'feat_1' }), false);
+  assert.equal(isMemberOpen({ kind: 'hist', pipelineId: 'p1' }, { pipelineId: 'p1' }), false);
+  assert.equal(isRowSelected({ kind: 'hist', pipelineId: 'p1', projectKey: 'k' }, { pipelineId: 'p1', groupId: 'feat_1' }), false,
+    'while a group page is open no run row is selected');
 });
 
 test('dateBucket: an ended group files under its latest member\'s time, a working group under Today', () => {
@@ -355,6 +365,7 @@ test('rows, members and symbols: Needs you / Failed draw the 12px symbol, never 
   assert.equal(g.querySelector(':scope > .runs-row-tail .runs-expand').getAttribute('aria-expanded'), 'true');
   assert.equal(g.querySelector(':scope > a.runs-row').dataset.memberKeys.split(' ').sort().join(' '), 'p:bad p:good t:t3',
     'the row carries its member keys so the selection repaint can rebuild them from the DOM');
+  assert.equal(g.querySelector(':scope > a.runs-row').dataset.groupId, 'feat_x', 'and its group id (D4)');
 });
 
 test('a group row reads its count once and its bar glides from lineFrom; a single live row draws the four-section stage block', () => {

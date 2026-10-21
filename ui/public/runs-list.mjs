@@ -410,7 +410,8 @@ export function groupRow(g, { now = Date.now() } = {}) {
   const firstAt = [...(g.planning ? [g.planning] : []), ...(g.members || [])].map((mb) => timeMs(mb.startedAt, now)).find(Number.isFinite);
   return {
     kind: 'chain', groupKind: g.groupKind || 'chain', key: `chain:${g.id}`, groupId: String(g.id),
-    href: g.groupKind === 'feature' ? `#feature/${encodeURIComponent(g.id)}` : (cur && cur.href) || '#runs',
+    // Run 3 (D3): every group row opens its own page in the pane; the current member's ids stay for the ⋯ and alerts.
+    href: `${g.groupKind === 'feature' ? '#feature' : '#group'}/${encodeURIComponent(g.id)}`,
     runId: (cur && cur.runId) || '', pipelineId: (cur && cur.pipelineId) || '', projectKey: '',
     title: String(g.title || '(untitled)'), status: '', groupKey: String(g.groupKey || ''), groupName: String(g.groupName || ''),
     by: '', unread: false, needs: members.some((mb) => mb.needs), time: '', sortMs: now, dispatchMs: firstAt, open: false,   // set by buildRunsModel (D29)
@@ -516,13 +517,19 @@ export function buildRunsModel({
   return { sections, counts, view, total: view.show === 'archived' ? shown.length : counts.all, shown: shown.length, spansProjects, now };
 }
 
-/** Is `row` the run the pane shows? `sel` = { runId, pipelineId, histKey: "<projectKey>/<id>" }. */
+/** Is `row` the page the pane shows? `sel` = { runId, pipelineId, histKey: "<projectKey>/<id>", groupId }. A group row
+ *  is selected only while its own page is open (D4); isMemberOpen marks it while one of its runs is. */
 export function isRowSelected(row, sel) {
   if (!sel || row.kind === 'sched') return false;
-  if (row.kind === 'chain') return !!((sel.pipelineId && row.memberKeys.has(`p:${sel.pipelineId}`)) || (sel.runId && row.memberKeys.has(`r:${sel.runId}`)));
+  if (row.kind === 'chain') return !!sel.groupId && row.groupId === sel.groupId;
+  if (sel.groupId) return false;
   if (sel.runId && row.runId === sel.runId) return true;
   if (sel.histKey && row.kind === 'hist' && `${row.projectKey}/${row.pipelineId}` === sel.histKey) return true;
   return !!sel.pipelineId && row.pipelineId === sel.pipelineId;
+}
+export function isMemberOpen(row, sel) {
+  if (!sel || row.kind !== 'chain' || !row.memberKeys) return false;
+  return !!((sel.pipelineId && row.memberKeys.has(`p:${sel.pipelineId}`)) || (sel.runId && row.memberKeys.has(`r:${sel.runId}`)));
 }
 
 function textEl(doc, tag, cls, text) {
@@ -533,14 +540,17 @@ function textEl(doc, tag, cls, text) {
 }
 
 /** The PR chip (spec §2.1a): icon + word, the title in the tooltip. Shared with run-status-card.mjs (slice 4, D1).
- *  `link`: a member row's chip is its own link to the PR (QA 7), above the row's stretched title link. */
-export function prChip(doc, pr, { link = false } = {}) {
+ *  `link`: a member row's chip is its own link to the PR (QA 7), above the row's stretched title link.
+ *  `number`: the run page's PR bar names its PR inside the chip, between the git-state icon and the word (run 3, D11). */
+export function prChip(doc, pr, { link = false, number = false } = {}) {
   const asLink = link && !!pr.url;
   const s = doc.createElement(asLink ? 'a' : 'span');
   s.className = `runs-pr is-${pr.id}`;
   s.title = pr.title;
   if (asLink) { s.setAttribute('href', pr.url); s.setAttribute('target', '_blank'); s.setAttribute('rel', 'noopener'); }
-  s.append(icon(doc, pr.icon, 14), textEl(doc, 'span', 'runs-pr-word', pr.word));
+  s.append(icon(doc, pr.icon, 14));
+  if (number && pr.number != null) s.append(textEl(doc, 'span', 'runs-pr-num', `PR #${pr.number}`));
+  s.append(textEl(doc, 'span', 'runs-pr-word', pr.word));
   return s;
 }
 
@@ -586,7 +596,8 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   a.className = `runs-row runs-row-${r.kind}`;
   a.setAttribute('href', r.href);
   a.title = costTitle(r);                                 // §2.4: the PR chip keeps its own title
-  for (const [k, v] of Object.entries({ rowKey: r.key, kind: r.kind, state: r.model.state, pipelineId: r.pipelineId, projectKey: r.projectKey })) if (v) a.dataset[k] = v;
+  for (const [k, v] of Object.entries({ rowKey: r.key, kind: r.kind, state: r.model.state, pipelineId: r.pipelineId, projectKey: r.projectKey,
+    groupId: r.kind === 'chain' ? r.groupId : '' })) if (v) a.dataset[k] = v;
   if (r.runId) a.dataset.runId = r.runId;   // this exact line: test/ui-guide-hops.test.mjs reads it as the guide hop's painter
   a.dataset.line = r.model.line;      // slice 4 (D3): the canonical status line, compared across list, card and page
   if (r.memberKeys) a.dataset.memberKeys = [...r.memberKeys].join(' ');   // paintRunsSelection rebuilds the set from it
