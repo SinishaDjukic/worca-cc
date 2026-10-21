@@ -4319,6 +4319,8 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .pd-ov-label{font:500 var(--fs-meta)/var(--lh-body) var(--sans);color:var(--ink-2);}
 .hd-ov-value,.pd-ov-value{margin-top:10px;font-size:22px;color:var(--ink);}
 .hd-ov-sub,.pd-ov-sub{margin-top:6px;font-size:var(--fs-meta);color:var(--ink-3);overflow-wrap:anywhere;}
+/* The stat cards' sub line is sans (no .mono); --ink-3 there is 2.8:1 on the card (AA needs 4.5). */
+.hd-ov-card .hd-ov-sub{color:var(--ink-2);}
 .hd-ov-task{padding:var(--pad-card);background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
 .hd-ov-task-h{font:600 13px var(--sans);}
 /* overflow-wrap:anywhere like its sibling .hd-ov-sub — prompts routinely carry
@@ -5036,7 +5038,7 @@ button.rd-srow:hover{background:var(--hover-on-field);}
    diff pane's darker count tokens, not the 4.45:1 --red-ink. */
 .rd-stats .hd-diff-counts .diff-add{color:var(--hd-count-add);}
 .rd-stats .hd-diff-counts .diff-del{color:var(--hd-count-del);}
-.rd-stats .hd-diff-counts .is-zero{color:var(--ink-3);}
+.rd-stats .hd-diff-counts .is-zero{color:var(--ink-2);}   /* --ink-3 is 2.58:1 on the tile */
 .rd-stats .rd-stat-link{color:inherit;text-decoration:none;}
 .rd-stats .rd-stat-link:hover b{text-decoration:underline;}
 .rd-stats > div > span{font-size:var(--fs-meta);color:var(--ink-2);}
