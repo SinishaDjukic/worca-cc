@@ -8,7 +8,7 @@ let seq = 0;
 
 export function renderRouteCard(doc, { state, card }, { onChoose, onNotNow, onOpenRun = null }) {
   const h = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
-  if (state === 'declined') return h('div', 'ask-card-stub ask-actcard-stub', 'Not now — kept in the chat');
+  if (state === 'declined') return h('div', 'ask-card-stub ask-actcard-stub', 'Not now: kept in the chat');
   const root = h('div', `ask-card ask-mcard ask-routecard is-${state}`);
   root.dataset.routeCard = state;
   const head = h('div', 'ask-mcard-head');
@@ -24,7 +24,7 @@ export function renderRouteCard(doc, { state, card }, { onChoose, onNotNow, onOp
     body.appendChild(done);
     return root;
   }
-  body.appendChild(h('div', 'ask-routecard-guess', `Worca's guess: ${routeLabel(card.guess.choice, card.featureTitle)} — ${card.guess.reason}`));
+  body.appendChild(h('div', 'ask-routecard-guess', `Worca's guess: ${routeLabel(card.guess.choice, card.featureTitle)} (${card.guess.reason})`));
   const name = `route-${++seq}`;
   const group = h('div', 'ask-routecard-options'); group.setAttribute('role', 'radiogroup');
   const where = h('select', 'ask-routecard-where'); where.setAttribute('aria-label', 'Where in the feature');

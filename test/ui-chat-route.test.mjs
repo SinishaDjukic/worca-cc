@@ -74,7 +74,7 @@ test('the Chat row leads the sidebar (simple, "Chat", an unread dot that starts 
     const a = doc.querySelector(sel);
     assert.ok(a, sel);
     assert.equal(a.getAttribute('href'), '#chat/new', sel);   // home: a new chat, never a restored one
-    assert.equal(a.getAttribute('aria-label'), 'worca — Chat', sel);
+    assert.equal(a.getAttribute('aria-label'), 'worca: Chat', sel);
   }
   assert.equal(pageTitle('chat'), 'Chat');
 });

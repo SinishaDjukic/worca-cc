@@ -768,7 +768,7 @@ test('form: a stored hidden, signed-out or stale model stays visible and saving 
   }
   renderNightForm(root, { level: 'user', values: { deciderModel: 'gone-model', deciderEffort: 'max' }, inherited: resolveNightConfig({}), now: 0, models: DM_MODELS });
   const sel = root.querySelector('.night-decider-model');
-  assert.deepEqual(optionsOf(sel).at(-1), ['gone-model', 'gone-model — not installed', true]);
+  assert.deepEqual(optionsOf(sel).at(-1), ['gone-model', 'gone-model (not installed)', true]);
   assert.equal(sel.value, 'gone-model');
   const p = readNightForm(root, { level: 'user' });
   assert.deepEqual([p.deciderModel, p.deciderEffort], ['gone-model', 'max']);

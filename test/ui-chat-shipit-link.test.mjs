@@ -269,7 +269,7 @@ test('a lookup still out when the wait ends: the card says "still checking" and 
     assert.equal(modalOf(ctx.window).classList.contains('hidden'), true);
     Date.now = () => realNow() + 20000;                    // past HISTORY_PR_TIMEOUT_MS + 1 s; History's own watchdog (a real timer) has not fired
     await until(() => el.querySelector('.ask-card-err').textContent);
-    assert.equal(el.querySelector('.ask-card-err').textContent, "Still checking this run's pull requests — try again in a moment.");
+    assert.equal(el.querySelector('.ask-card-err').textContent, "Still checking this run's pull requests. Try again in a moment.");
     assert.equal(modalOf(ctx.window).classList.contains('hidden'), true);
     assert.equal(prPosts(ctx).length, 0);
   } finally { Date.now = realNow; }

@@ -220,7 +220,7 @@ test('detail actions by origin: built-in View · Duplicate; user Edit · Delete'
   s.lib.openFolder(['agents', 'coding']);
   click(s.host.querySelector('.wfl-item[data-item="agent:planner"] .wfl-main'));
   const d = s.host.querySelector('.wfl-item[data-item="agent:planner"] .wfl-detail');
-  assert.match(d.textContent, /planner · producer — Writes the plan\./);
+  assert.match(d.textContent, /planner · producer: Writes the plan\./);
   assert.deepEqual([...d.querySelectorAll('.wfl-actions button')].map((b) => b.textContent), ['Add to canvas', 'View', 'Duplicate']);
   s.lib.openFolder(['agents', 'general']);
   click(s.host.querySelector('.wfl-item[data-item="agent:docsWriter"] .wfl-main'));

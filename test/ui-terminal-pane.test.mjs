@@ -324,7 +324,7 @@ test('an exited shell is not replaced on its own: a dim line, then Enter (only) 
   await tick();
   pane.onFrame({ type: 'term-status', snapshot: { ...SNAP, status: 'exited', exitCode: 0 } });
   await tick();
-  assert.match(xt.writes.join(''), /\x1b\[2m\[shell exited with code 0 — press Enter for a new one\]/);
+  assert.match(xt.writes.join(''), /\x1b\[2m\[shell exited with code 0\. Press Enter for a new one\]/);
   pane.onContextChange();
   await tick();
   assert.equal(posts(calls).length, 0, 'no respawn');
@@ -405,7 +405,7 @@ test('a tab\'s × on a terminal that ran a command asks first; No keeps it, Yes 
   await tick();
   assert.deepEqual(deletes(calls), ['/api/terminal/sessions/t-1']);
   assert.deepEqual(tabTexts(doc), ['New terminal']);
-  assert.match(xt.writes.join(''), /terminal closed — press Enter for a new one/);
+  assert.match(xt.writes.join(''), /terminal closed\. Press Enter for a new one/);
   assert.equal(posts(calls).length, 0, 'no new shell unasked');
 });
 
@@ -620,7 +620,7 @@ test('a server restart forgets the shell and its screen, and starts a new one on
   pane.onHello({ type: 'hello', bootId: 'boot-b' });
   await tick(12);
   assert.doesNotMatch(xt.writes.join(''), /before/);
-  assert.match(xt.writes.join(''), /\[the worca server restarted — press Enter for a new one\]/);
+  assert.match(xt.writes.join(''), /\[the worca server restarted\. Press Enter for a new one\]/);
   assert.deepEqual(tabTexts(doc), ['New terminal'], 'the gone shell\'s tab leaves');
   assert.match(doc.querySelector('.term-context').textContent, /server restarted/);
   assert.equal(posts(calls).length, 0, 'no respawn');

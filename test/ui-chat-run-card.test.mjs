@@ -376,7 +376,7 @@ test('chat run card result region: words, churn, top files → Diff, artifact ch
       card.update(done(EXTRAS));
       assert.equal($('.chat-rc-result').hidden, false);
       assert.equal($('.chat-rc-res-title').textContent, 'Ready to ship');
-      assert.equal($('.chat-rc-res-sub').textContent, 'Clean — no blocking issues flagged');
+      assert.equal($('.chat-rc-res-sub').textContent, 'Clean: no blocking issues flagged');
       assert.equal($('.chat-rc-res-churn').textContent, '+12 −3 · 2 files changed');
       const files = [...card.el.querySelectorAll('.chat-rc-file')];
       assert.deepEqual(files.map((f) => f.textContent), ['src/a.mjs+10−2', 'img/x.png']);

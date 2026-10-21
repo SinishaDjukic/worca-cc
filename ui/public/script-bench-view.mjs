@@ -213,7 +213,7 @@ function benchBar(doc, projects) {
   sel.appendChild(scratch);
   for (const p of projects || []) {
     const o = doc.createElement('option');
-    o.value = `project:${p.key}`; o.textContent = `${p.name} — ${p.path}`;
+    o.value = `project:${p.key}`; o.textContent = `${p.name} (${p.path})`;
     o.disabled = p.exists === false;
     sel.appendChild(o);
   }

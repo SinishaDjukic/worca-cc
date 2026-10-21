@@ -30,12 +30,12 @@ export function resumeTicketOf(tickets, pipelineId) {
  */
 export function limitNotice({ pauseDetail = null, whose = '', limitResetAt = null, ticket = null, now = Date.now() }) {
   const openRouter = OPENROUTER_RE.test(pauseDetail || '');
-  const lead = openRouter ? `Paused — ${pauseDetail}.` : `Paused — ${whose}${limitNoun(pauseDetail)}.`;
+  const lead = openRouter ? `Paused: ${pauseDetail}.` : `Paused: ${whose}${limitNoun(pauseDetail)}.`;
   const none = { timeAt: null, sentence: '', countdownTo: null, repaintAt: null, action: null };
   if (ticket) {
     const at = Date.parse(ticket.runAt);
     if (ticket.status === 'firing' || (ticket.status === 'scheduled' && Number.isFinite(at) && at <= now)) {
-      return { ...none, state: 'D', lead: 'Paused — resuming…' };
+      return { ...none, state: 'D', lead: 'Paused: resuming…' };
     }
     const cancel = { kind: 'cancel', ticketId: ticket.id };
     if (ticket.status === 'missed') {
@@ -46,7 +46,7 @@ export function limitNotice({ pauseDetail = null, whose = '', limitResetAt = nul
   const reset = Date.parse(limitResetAt ?? '');
   if (!Number.isFinite(reset)) return { ...none, state: 'A', lead: null };
   const at = reset + LIMIT_RESUME_MARGIN_MS;
-  if (at <= now) return { ...none, state: 'B2', lead, timeAt: reset, sentence: 'It reset at {t} — resume to continue' };
+  if (at <= now) return { ...none, state: 'B2', lead, timeAt: reset, sentence: 'It reset at {t}. Resume to continue' };
   const action = { kind: 'schedule', at };
   if (openRouter) return { ...none, state: 'B', lead, repaintAt: at, action };   // its detail already names the reset
   // Inside the margin: the limit is back but the one-click time is still ahead — no "in under a minute".

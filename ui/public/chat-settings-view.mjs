@@ -15,7 +15,7 @@ function h(doc, tag, cls, text) {
 }
 
 const EVENTS = [
-  ['question', 'Approval / question needed', 'a pipeline is blocked waiting on you — the one to keep on'],
+  ['question', 'Approval / question needed', 'a pipeline is blocked waiting on you (the one to keep on)'],
   ['done', 'Run finished (done / stopped)', ''],
   ['error', 'Run failed', ''],
   ['paused', 'Run paused (incl. cost limits)', ''],
@@ -99,7 +99,7 @@ export function renderChatSettings({ prefs, channels } = {}, { doc = globalThis.
     if (cmd && cmd.lastRefused) {
       const r = cmd.lastRefused;
       const refused = h(doc, 'small', 'hint warn chat-refused',
-        `Ignored /${r.command} from chat ${r.chatId} — it is not in Allowed chat IDs.`);
+        `Ignored /${r.command} from chat ${r.chatId}: it is not in Allowed chat IDs.`);
       refused.dataset.channelKey = key;
       if (r.at) refused.title = r.at;
       chBox.appendChild(refused);

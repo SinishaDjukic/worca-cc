@@ -259,7 +259,7 @@ export function createTerminalPane({ doc, win, fetch, sendWs, getPageContext, co
     st.why = null;
     if (st.restartKey === key) return;
     st.restartKey = key;
-    const text = why ? `[${why} — press Enter for a new one]` : '[no shell here — press Enter to start one]';
+    const text = why ? `[${why}. Press Enter for a new one]` : '[no shell here. Press Enter to start one]';
     ensureTerm().then((t) => { if (st.restartKey === key) t.write(`\r\n\x1b[2m${text}\x1b[0m\r\n`); }).catch(() => {});
   }
 
@@ -563,7 +563,7 @@ export function createTerminalPane({ doc, win, fetch, sendWs, getPageContext, co
       const t = button(text, 'term-tab', () => { if (x.id !== st.current) { st.focusNext = true; attach(x.id); } else focusTerm(); }, '');
       t.setAttribute('role', 'tab');
       t.setAttribute('aria-selected', String(x.id === st.current));
-      t.title = x.status === 'running' ? text : `${text} — ${x.status}`;
+      t.title = x.status === 'running' ? text : `${text} (${x.status})`;
       if (x.status !== 'running') item.classList.add('term-tab-ended');
       const shut = button(null, 'term-tab-close', () => closeTab(x.id, text), '');
       shut.append(icon(doc, 'x', 12));

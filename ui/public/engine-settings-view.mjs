@@ -6,7 +6,7 @@ export const ENGINE_EFFORTS = Object.freeze({ claude: Object.freeze(['medium', '
   copilot: Object.freeze(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']) });
 // An inherited value's label; an unset one stays null, so the field shows its bare heading.
 const engineName = (v) => (v == null ? null : engineLabel(v));
-const CURSOR_HELPERS_NOTE = "Cursor runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on Claude — see the Claude tab.";
+const CURSOR_HELPERS_NOTE = "Cursor runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on Claude. See the Claude tab.";
 const COPILOT_HELPERS_NOTE = "Copilot runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on its own default model.";
 export const JOB_LABELS = Object.freeze({ title: 'Titles', classifier: 'Auto workflow classifier', overview: 'Run overview', prDescription: 'PR description', memoryDefrag: 'Memory defragment', workspaceScan: 'Workspace scan' });
 // The setting id of an engine's helper slot, as settings-cascade.mjs names it: memory defragment

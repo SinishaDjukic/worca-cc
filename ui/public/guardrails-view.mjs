@@ -27,7 +27,7 @@ function originBadge(doc, origin) {
   // Team policy sets (gp:<id>): blue, like every policy origin; the title names the home.
   if (typeof origin === 'string' && origin.startsWith('policy:')) {
     const b = h(doc, 'span', 'badge slate grv-origin', 'policy');
-    b.title = `Shipped by the team policy on ${origin.slice(7)} — edit it on the Team policy page`;
+    b.title = `Shipped by the team policy on ${origin.slice(7)}. Edit it on the Team policy page`;
     return b;
   }
   return h(doc, 'span', 'badge green grv-origin', 'user');

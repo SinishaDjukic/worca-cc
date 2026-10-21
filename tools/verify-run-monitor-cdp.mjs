@@ -741,8 +741,8 @@ try {
       endCardResult:(document.querySelector('${HD} .gv-world .node[data-node-id="n_end"] .xresult')||{}).textContent||null,
       warn:!!document.querySelector('#hist-detail .hd-banners .run-warn:not([hidden])'),
       ovNote:(document.querySelector('#hist-detail .hd-ov-note')||{}).textContent||null};})()`);
-  check(8, 'History header meta carries the End chip (— completed) for a run that reached End, and no quiescence banner',
-    head.endReached === true && head.text === '— completed' && head.endCardResult === '— completed'
+  check(8, 'History header meta carries the End chip (completed) for a run that reached End, and no quiescence banner',
+    head.endReached === true && head.text === 'completed' && head.endCardResult === 'completed'
     && head.warn === false && head.ovNote === null, head);
   // The seeded run REACHES End, so there is no quiescence banner on it. Prove the
   // copy where it lives instead: paint a quiescent bag into the REAL .hd-banners

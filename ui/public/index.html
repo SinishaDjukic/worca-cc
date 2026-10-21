@@ -19,10 +19,10 @@
         <div class="brand">
           <!-- The wordmark (and the rail's mark) go to Chat's home — a new chat (worca Chat U5); app.js swaps
                #chat/new for #chat. -->
-          <a class="logo" href="#chat/new" aria-label="worca — Chat" title="Chat"></a>
-          <a class="logo-mark" href="#chat/new" aria-label="worca — Chat" title="Chat"></a>
+          <a class="logo" href="#chat/new" aria-label="worca: Chat" title="Chat"></a>
+          <a class="logo-mark" href="#chat/new" aria-label="worca: Chat" title="Chat"></a>
           <!-- The server's mock mode (WS hello serverMock, app.js#applyServerMock): every run is a mock. -->
-          <span class="badge amber side-mock-pill" id="side-mock-pill" title="Server started with WORCA_MOCK=1 — all runs are mock." hidden>MOCK</span>
+          <span class="badge amber side-mock-pill" id="side-mock-pill" title="Server started with WORCA_MOCK=1, so all runs are mock." hidden>MOCK</span>
           <button type="button" class="btn btn-quiet btn-icon side-close" id="side-close" aria-label="Close menu" title="Close menu">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
           </button>
@@ -271,7 +271,7 @@
         <section class="view hidden" data-view="new">
           <div class="topbar">
             <div>
-              <div class="sub">Pick where it runs, describe the task, and run &middot; agents come tuned &mdash; open one only to change it</div>
+              <div class="sub">Pick where it runs, describe the task, and run &middot; agents come tuned: open one only to change it</div>
             </div>
           </div>
 
@@ -422,7 +422,7 @@
                     <button type="button" data-scope="global" class="on" aria-pressed="true">Global</button>
                     <button type="button" data-scope="project" aria-pressed="false">Project</button>
                   </div>
-                  <small class="hint">Global: the rules every project shares. Project: this project's memory. The run restructures that scope and nothing else — the task text is optional, and it runs with the Normal guardrails unless you pick another set.</small>
+                  <small class="hint">Global: the rules every project shares. Project: this project's memory. The run restructures that scope and nothing else. The task text is optional, and it runs with the Normal guardrails unless you pick another set.</small>
                 </div>
 
                 <!-- Task source switch; the panes below span the full width. -->
@@ -558,7 +558,7 @@
                     <label class="switch-row" id="hitl-row" hidden>
                       <input id="humanInLoop" class="sw-input" type="checkbox" checked aria-describedby="hitlHint">
                       <span class="switch"></span>
-                      <span class="txt">Human in the loop — Auto shows its proposal, clarifies, and agents may ask</span>
+                      <span class="txt">Human in the loop: Auto shows its proposal, clarifies, and agents may ask</span>
                       <span class="switch-why" id="hitl-why" hidden>Needs a project</span>
                     </label>
                     <small class="hint" id="hitlHint">Off: the proposal is accepted as proposed, no clarify card, no agent questions. A loop that runs out of cycles, a recovery prompt, a cost cap or an error still pause the run.</small>
@@ -604,7 +604,7 @@
                      users to it, and it is the one switch that makes a run free and harmless. -->
                 <div class="switch-row mock-row" id="mock-row" data-min-level="simple">
                   <div class="switch" id="mock-switch" role="switch" aria-checked="false" tabindex="0"></div>
-                  <span class="txt">Mock mode — try it offline: no Claude calls, no cost</span>
+                  <span class="txt">Mock mode: try it offline with no Claude calls and no cost</span>
                 </div>
                 <input id="mock" type="checkbox" hidden />
 
@@ -730,7 +730,7 @@
 
           <!-- The live-log bar (filters + auto-scroll switch), cloned by the run page's Logs tab and by History. -->
           <template id="log-bar-tpl">
-            <div class="run-log-head"><span class="ll-label">Live log</span><div class="log-filters"><select class="log-f log-f-source" data-min-level="expert" title="Filter by source" aria-label="Filter by source"></select><select class="log-f log-f-level" data-min-level="expert" title="Filter by level" aria-label="Filter by level"></select><select class="log-f log-f-step" data-min-level="expert" title="Filter by step" aria-label="Filter by step"></select><select class="log-f log-f-cycle" data-min-level="expert" title="Filter by cycle" aria-label="Filter by cycle"></select><button type="button" class="log-f log-f-exec btn btn-sm" hidden title="Showing one execution — click to clear"><span class="lfe-text"></span><span class="lfe-x" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7 7l10 10M17 7 7 17"></path></svg></span></button><input type="search" class="log-f log-search" placeholder="search" title="Search the log text" aria-label="Search the log text"><button type="button" class="log-f log-copy btn btn-sm btn-quiet" title="Copy the visible log lines" aria-label="Copy the visible log lines">copy</button></div><div class="switch-row"><div class="switch on autoscroll" role="switch" aria-checked="true" tabindex="0"></div><span class="txt">Auto-scroll</span></div></div>
+            <div class="run-log-head"><span class="ll-label">Live log</span><div class="log-filters"><select class="log-f log-f-source" data-min-level="expert" title="Filter by source" aria-label="Filter by source"></select><select class="log-f log-f-level" data-min-level="expert" title="Filter by level" aria-label="Filter by level"></select><select class="log-f log-f-step" data-min-level="expert" title="Filter by step" aria-label="Filter by step"></select><select class="log-f log-f-cycle" data-min-level="expert" title="Filter by cycle" aria-label="Filter by cycle"></select><button type="button" class="log-f log-f-exec btn btn-sm" hidden title="Showing one execution. Click to clear"><span class="lfe-text"></span><span class="lfe-x" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7 7l10 10M17 7 7 17"></path></svg></span></button><input type="search" class="log-f log-search" placeholder="search" title="Search the log text" aria-label="Search the log text"><button type="button" class="log-f log-copy btn btn-sm btn-quiet" title="Copy the visible log lines" aria-label="Copy the visible log lines">copy</button></div><div class="switch-row"><div class="switch on autoscroll" role="switch" aria-checked="true" tabindex="0"></div><span class="txt">Auto-scroll</span></div></div>
           </template>
 
           <!-- clone target for the live run in the pane (#running/<runId>) -->
@@ -1121,7 +1121,7 @@
         <section class="view hidden" data-view="schedules">
           <div class="topbar">
             <div>
-              <div class="sub" id="schedules-sub">Runs that start later — once, or on a repeat</div>
+              <div class="sub" id="schedules-sub">Runs that start later, once or on a repeat</div>
             </div>
             <a class="btn btn-primary" href="#new/schedule" id="schedules-new" style="text-decoration:none">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
@@ -1568,7 +1568,7 @@
                       </div>
                       <div class="switch-row" style="margin-top:14px">
                         <div class="switch" id="agw-own-md-toggle" role="switch" aria-checked="false" tabindex="0"></div>
-                        <span class="txt">I'll provide the markdown myself — the builder only infers the metadata</span>
+                        <span class="txt">I'll provide the markdown myself, and the builder only infers the metadata</span>
                       </div>
                       <div id="agw-own-md-pane" class="hidden" style="margin-top:11px">
                         <textarea id="agw-own-md" class="textarea" rows="12" spellcheck="false" placeholder="Paste your agent system prompt markdown&hellip;"></textarea>
@@ -1748,7 +1748,7 @@
                 <div class="label-row drow-label">
                   <label for="settingsRoot">Worca root folder</label>
                   <button type="button" class="info-tip" aria-label="About Worca root folder">i<span class="tip-content hidden">
-                    The folder under which Worca keeps its data &mdash; a <code>.worca-cc/</code> directory holding the
+                    The folder under which Worca keeps its data: a <code>.worca-cc/</code> directory holding the
                     history store, the project list, and saved workflows. Leave empty to use the default.
                     Changes apply to new runs immediately. Changing the root does <b>not</b> move existing
                     data: Worca starts a fresh <code>.worca-cc/</code> under the new folder; history under
@@ -1951,8 +1951,8 @@
                 </div>
                 <div class="drow-control"><div class="select-wrap">
                   <select id="budgetResetPeriod" data-setting="costLimitResetPeriod" class="select">
-                    <option value="weekly">Weekly &mdash; resets Monday 00:00</option>
-                    <option value="monthly">Monthly &mdash; resets on the 1st, 00:00</option>
+                    <option value="weekly">Weekly (resets Monday 00:00)</option>
+                    <option value="monthly">Monthly (resets on the 1st, 00:00)</option>
                   </select>
                 </div></div>
               </div>
@@ -2120,7 +2120,7 @@
                 <div class="label-row">
                   <h2>Wait for the network</h2>
                   <button type="button" class="info-tip" aria-label="About waiting for the network">i<span class="tip-content hidden">
-                    When a step loses the network (internet down, provider unreachable), worca checks the endpoint that step uses and retries by itself once it answers. A run paused that way, or stopped by a restart while it waited, is resumed when the network is back — but only within the longest wait, counted from the first failure. Cost caps, usage limits, sign-in problems and your own pauses are never resumed.
+                    When a step loses the network (internet down, provider unreachable), worca checks the endpoint that step uses and retries by itself once it answers. A run paused that way, or stopped by a restart while it waited, is resumed when the network is back, but only within the longest wait, counted from the first failure. Cost caps, usage limits, sign-in problems and your own pauses are never resumed.
                   </span></button>
                 </div>
               </div>
@@ -2352,7 +2352,7 @@
           <section class="settings-pane hidden" data-tab="guardrails">
             <div class="topbar">
               <div>
-                <div class="sub">Named guardrail policies — built-ins plus your own sets, selected per pipeline run</div>
+                <div class="sub">Named guardrail policies: built-ins plus your own sets, selected per pipeline run</div>
               </div>
               <button type="button" id="guardrail-create-btn" class="btn btn-primary" data-min-level="expert">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
@@ -2483,7 +2483,7 @@
               <input id="mimp-base" class="input" type="text" placeholder="http://127.0.0.1:11434/v1" />
               <button type="button" id="mimp-list" class="btn">List models</button>
             </span>
-            <small class="hint">llama.cpp, Ollama, LM Studio, vLLM or a gateway — on this machine or your network.</small>
+            <small class="hint">llama.cpp, Ollama, LM Studio, vLLM or a gateway, on this machine or your network.</small>
           </label>
         </div>
         <p id="mimp-msg" class="form-msg" aria-live="polite"></p>
@@ -2868,7 +2868,7 @@
       <div class="card ob-welcome">
         <p class="ob-eyebrow">Welcome to Worca</p>
         <h2 id="welcome-title" class="ob-headline">Your pipelines, <em>on autopilot.</em></h2>
-        <svg class="ob-hero" viewBox="0 0 560 104" role="img" aria-label="A task becomes a chain of agents: plan, refine, implement, review — looping until the work clears its gates">
+        <svg class="ob-hero" viewBox="0 0 560 104" role="img" aria-label="A task becomes a chain of agents (plan, refine, implement, review) that loops until the work clears its gates">
           <circle class="gs-pop gs-node" style="--d:.1s" cx="40" cy="44" r="9"></circle>
           <path class="gs-draw gs-wire ob-thread" pathLength="1" style="--d:.5s;--t:1.1s" d="M52 44 C 90 44, 110 44, 150 44"></path>
           <circle class="gs-pop gs-node" style="--d:1.2s" cx="162" cy="44" r="9"></circle>
@@ -2916,7 +2916,7 @@
         <p class="ob-claude-note">On native Windows the <a href="https://docs.anthropic.com/en/docs/claude-code/setup" target="_blank" rel="noopener noreferrer">native installer</a> works too. A binary elsewhere: set <code>WORCA_CLAUDE_BIN</code> to its full path and restart the UI.</p>
         <p class="ob-claude-lead ob-claude-step"><strong>Then sign it in.</strong> Start it once in a terminal and type <code>/login</code>:</p>
         <pre class="ob-claude-cmd"><code>claude</code></pre>
-        <p class="ob-claude-note">Signing in to the Claude desktop app does not carry over — the CLI keeps its own sign-in.</p>
+        <p class="ob-claude-note">Signing in to the Claude desktop app does not carry over. The CLI keeps its own sign-in.</p>
         <div class="ob-claude-status" id="claude-setup-status" aria-live="polite"></div>
         <div class="stop-actions">
           <button type="button" id="claude-setup-check" class="btn btn-primary">Check again</button>

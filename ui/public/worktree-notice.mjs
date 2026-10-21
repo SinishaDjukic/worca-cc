@@ -25,7 +25,7 @@ const button = (doc, label, cls, onClick, tip) => {
 const sq = (v) => `'${String(v == null ? '' : v).replaceAll("'", "'\"'\"'")}'`;
 
 export const NOTICE_TITLES = Object.freeze({
-  retained: 'Commit failed — uncommitted work retained',
+  retained: 'Commit failed: uncommitted work retained',
   checkout: 'Checked out in a worktree',
   linked: 'Linked to your folder',
 });
@@ -128,7 +128,7 @@ function renderRetained(doc, frag, model, { handlers, recovery, when }) {
   const list = h(doc, 'ul', 'wt-members');
   for (const m of model.members) {
     const li = h(doc, 'li');
-    if (m.label) li.append(h(doc, 'strong', null, m.label), doc.createTextNode(' — '));
+    if (m.label) li.append(h(doc, 'strong', null, m.label), doc.createTextNode(' · '));
     li.append(h(doc, 'span', 'wt-git', `git ${m.step}: ${m.message || 'failed'}`));
     li.append(h(doc, 'div', 'wt-path', `Worktree: ${m.dir || '(unknown)'}`));
     if (m.branch) li.append(h(doc, 'div', null, `Branch: ${m.branch} (the uncommitted work is not on it yet)`));
@@ -176,7 +176,7 @@ function renderCheckout(doc, frag, model, { handlers, when }) {
   for (const m of model.members) {
     const li = h(doc, 'li');
     if (m.label) li.append(h(doc, 'strong', null, m.label));
-    if (!one) li.append(doc.createTextNode(`${m.label ? ' — ' : ''}${m.branch || ''}${m.at ? ` since ${when(m.at)}` : ''}`));
+    if (!one) li.append(doc.createTextNode(`${m.label ? ' · ' : ''}${m.branch || ''}${m.at ? ` since ${when(m.at)}` : ''}`));
     li.append(h(doc, 'div', 'wt-path', `${m.external ? 'Your folder' : 'Worktree'}: ${m.dir || '(unknown)'}`));
     const acts = h(doc, 'div', 'wt-member-actions');
     if (!model.provisional && handlers.onReleaseCheckout) {

@@ -263,7 +263,7 @@ function imageWidget(item, ctx) {
   img.setAttribute('loading', 'lazy');
   fig.appendChild(img);
   const cap = h(ctx.doc, 'figcaption', '');
-  cap.textContent = `${item.caption ? `${item.caption} — ` : ''}${entry.name} · ${fmtBytes(entry.bytes)}`;
+  cap.textContent = `${item.caption ? `${item.caption}: ` : ''}${entry.name} · ${fmtBytes(entry.bytes)}`;
   cap.appendChild(openLink(ctx, entry));
   fig.appendChild(cap);
   return labelled(ctx, item, fig);

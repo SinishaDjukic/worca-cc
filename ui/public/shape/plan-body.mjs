@@ -141,7 +141,7 @@ export function renderPlanBody(panel, pq, deps) {
       send({ decision: 'revise', feedback: perspectiveChangeFeedback(perspectives, after), perspectives: after });
     });
     const row = h('div', 'plan-perspectives'); row.hidden = true; row.append(chips.el, update);
-    pline.append(' — ', fold(btn('plan-persp-edit', 'edit'), row));
+    pline.append(' · ', fold(btn('plan-persp-edit', 'edit'), row));
     body.appendChild(row);
   }
 

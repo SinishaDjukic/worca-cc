@@ -6,7 +6,7 @@
 import { registerComposerAddon } from './extensions.mjs';
 
 export const DIRECTION_ADDON_ID = 'direction';
-export const DIRECTION_PLACEHOLDER = 'Tell the run what to change — the next step reads it';
+export const DIRECTION_PLACEHOLDER = 'Tell the run what to change. The next step reads it';
 /** src/core/directions.mjs DIRECTION_MAX_CHARS — the browser never imports src/core; test/ui-chat-direction.test.mjs pins the two equal. */
 export const DIRECTION_MAX_CHARS = 4000;
 /** What a direction still reaches: the server refuses done/error/stopped (DIRECTIONS_CLOSED); a paused or
@@ -48,7 +48,7 @@ export function createDirectionAddon() {
       const chip = doc.createElement('button');
       chip.type = 'button';
       chip.className = 'chat-dir-chip';
-      chip.title = 'Send to the run — the next step reads it';
+      chip.title = 'Send to the run. The next step reads it';
       chip.setAttribute('aria-pressed', 'false');
       const arrow = doc.createElement('span');
       arrow.className = 'chat-dir-arrow';
@@ -135,11 +135,11 @@ export function createDirectionAddon() {
             }
             let msg = `HTTP ${res ? res.status : 0}`;
             try { const j = await res.json(); if (j && typeof j.error === 'string' && j.error) msg = j.error; } catch { /* not JSON */ }
-            showErr(`Not sent — ${msg}`);
+            showErr(`Not sent: ${msg}`);
             return 'keep';
           } catch {
             // A dropped connection: the chip's own words, never the browser's TypeError ("Failed to fetch", "Load failed").
-            showErr('Not sent — network error');
+            showErr('Not sent: network error');
             return 'keep';
           } finally {
             sending = false;

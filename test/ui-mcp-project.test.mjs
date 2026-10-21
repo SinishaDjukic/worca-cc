@@ -47,7 +47,7 @@ test('the MCP resolution table (copy · set link · status, skip reasons) for a 
         ['jira_billing', 'Billing', 'API token not set in Billing'],
         ['playwright', 'General', 'not tested'],
         ['sentry_billing · name provisional', 'Billing', 'stale'],
-        ['sentry_team-platfor', 'Team · acme/platform', 'off — turn it on in the team checklist'],
+        ['sentry_team-platfor', 'Team · acme/platform', 'off: turn it on in the team checklist'],
       ]);
       assert.equal(card.querySelector('.mcp-res-row a').getAttribute('href'), '#connectors/sets/billing');
       assert.match(card.textContent, /renamed with _w when the run starts/);

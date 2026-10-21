@@ -163,7 +163,7 @@ export function renderHealthCard(report, { doc = globalThis.document, host = nul
   }
   if (isGlobal && !runId) {
     card.appendChild(h(doc, 'small', 'hint mem-host-hint',
-      host ? `Runs on ${host.name || host.key}${defragModelPhrase(report?.defragModel)} — pick another project on the New run page.` : NO_HOST_HINT));
+      host ? `Runs on ${host.name || host.key}${defragModelPhrase(report?.defragModel)}. Pick another project on the New run page.` : NO_HOST_HINT));
   }
   card.appendChild(h(doc, 'small', 'hint', 'A defragment run merges duplicate topics, splits overgrown files, drops stale rules and tightens hooks. It is an ordinary pipeline run; the previous files stay in History.'));
   return card;
@@ -181,7 +181,7 @@ export function renderFileList(files, { doc = globalThis.document, selected = ''
   head.appendChild(add);
   wrap.appendChild(head);
   const list = Array.isArray(files) ? files : [];
-  if (!list.length) { wrap.appendChild(h(doc, 'div', 'hist-empty', 'No memory files yet — agents and Chat add them, or click New file.')); return wrap; }
+  if (!list.length) { wrap.appendChild(h(doc, 'div', 'hist-empty', 'No memory files yet. Agents and Chat add them, or click New file.')); return wrap; }
   for (const f of list) {
     const row = h(doc, 'div', `mem-row${f.name === selected ? ' on' : ''}`);
     row.dataset.name = f.name;
@@ -225,9 +225,9 @@ export function renderEditor(file, { doc = globalThis.document, isNew = false, m
   ta.rows = 16; ta.spellcheck = false;
   ta.value = file?.text || (isNew ? '---\nname: \ndescription: \n---\n' : '');
   textField.appendChild(ta);
-  textField.appendChild(h(doc, 'small', 'hint', 'Keep name, description (one line: when the file matters — shown here and to Chat) and optional paths (the file loads only when a matching file is read) in the frontmatter; worca stamps source and updated.'));
+  textField.appendChild(h(doc, 'small', 'hint', 'Keep name, description (one line on when the file matters, shown here and to Chat) and optional paths (the file loads only when a matching file is read) in the frontmatter; worca stamps source and updated.'));
   wrap.appendChild(textField);
-  const text = msg || (locked ? 'A defragment run is live on this scope — Save and Delete resume when it finishes.' : '');
+  const text = msg || (locked ? 'A defragment run is live on this scope. Save and Delete resume when it finishes.' : '');
   const status = h(doc, 'div', `hint mem-msg${msgErr ? ' err' : ''}`, text);
   status.setAttribute('role', 'status');
   wrap.appendChild(status);
@@ -254,7 +254,7 @@ export function renderMemoryHistory(snapshots, { doc = globalThis.document, lock
   wrap.dataset.minLevel = 'expert';             // snapshot restore: expert (docs/ui-levels.md)
   wrap.appendChild(h(doc, 'div', 'mem-list-title', 'History'));
   const list = Array.isArray(snapshots) ? [...snapshots].reverse() : [];
-  if (!list.length) { wrap.appendChild(h(doc, 'div', 'hist-empty', 'No snapshots yet — every write takes one.')); return wrap; }
+  if (!list.length) { wrap.appendChild(h(doc, 'div', 'hist-empty', 'No snapshots yet. Every write takes one.')); return wrap; }
   for (const s of list) {
     const row = h(doc, 'div', 'mem-snap');
     row.dataset.id = s.id;

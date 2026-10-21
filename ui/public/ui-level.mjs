@@ -170,7 +170,7 @@ export function createLevelController({ doc, save, onError = null } = {}) {
     const info = LEVEL_INFO[lvl];
     for (const b of d.querySelectorAll('[data-mode-open]')) {
       b.setAttribute('aria-label', `Interface mode: ${info.label}. Change how much of Worca is shown`);
-      b.title = `${info.label} — change how much of Worca is shown`;
+      b.title = `${info.label}. Change how much of Worca is shown`;
     }
     const sIcon = $('#modeSettingsIcon'); if (sIcon) sIcon.innerHTML = levelIconSvg(lvl);
     const sName = $('#modeSettingsName'); if (sName) sName.textContent = info.label;

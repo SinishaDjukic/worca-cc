@@ -70,7 +70,7 @@ test('renderEngineSection: the Cursor card has step rows, no helper rows, its ow
   assert.match(plan.options[0].textContent, /Cursor's default model/);
   assert.equal(card.querySelector('.engine-helpers .engine-slot'), null, 'no helper rows');
   assert.equal(card.querySelector('.engine-helpers h4').textContent, 'Helper jobs');
-  assert.match(card.querySelector('.engine-helpers .engine-slot-rest').textContent, /^Cursor runs its helper jobs \(titles, overview, PR description, Auto classifier, Away mode's decider\) on Claude — see the Claude tab\.$/);
+  assert.match(card.querySelector('.engine-helpers .engine-slot-rest').textContent, /^Cursor runs its helper jobs \(titles, overview, PR description, Auto classifier, Away mode's decider\) on Claude\. See the Claude tab\.$/);
   assert.ok(card.querySelector('.engine-card-status'), 'a status line app.js fills');
   assert.equal(host.querySelector('.engine-card[data-engine="claude"] .engine-card-status'), null);
   assert.deepEqual(enginePatchToSettingsBody({ 'models.cursor.steps.planner': { model: 'my-cursor-m' } }), { stepModels: { cursor: { planner: { model: 'my-cursor-m' } } } });

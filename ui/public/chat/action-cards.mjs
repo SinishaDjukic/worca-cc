@@ -84,7 +84,7 @@ export function buildReceiptCard(block, ctx) {
   }
   const note = make(doc, 'div', 'ask-rcard-note');   // no live region: ctx.announce speaks each outcome once
   if (reverted) note.textContent = 'Reverted';
-  else if (result.code === 'CHANGED_SINCE') note.textContent = 'Changed since — not reverted';
+  else if (result.code === 'CHANGED_SINCE') note.textContent = 'Not reverted: it changed since';
   body.appendChild(note);
   root.appendChild(body);
   const err = make(doc, 'div', 'ask-card-err');
@@ -108,7 +108,7 @@ export function buildReceiptCard(block, ctx) {
         const code = e && e.body && e.body.code;
         revert.textContent = 'Revert';
         if (code === 'CHANGED_SINCE' || code === 'ALREADY_REVERTED') {   // stays disabled (R6)
-          note.textContent = code === 'CHANGED_SINCE' ? 'Changed since — not reverted' : 'Already reverted';
+          note.textContent = code === 'CHANGED_SINCE' ? 'Not reverted: it changed since' : 'Already reverted';
           announce(ctx, note.textContent);
           return;
         }
@@ -126,7 +126,7 @@ export function buildRunStopCard(block, ctx) {
   const doc = ctx.doc;
   const card = block.card || {};
   const title = card.title || card.pipelineId || 'this run';
-  if (block.state === 'declined') return { el: make(doc, 'div', 'ask-card-stub ask-actcard-stub', `Not stopped — ${title}`) };
+  if (block.state === 'declined') return { el: make(doc, 'div', 'ask-card-stub ask-actcard-stub', `Not stopped: ${title}`) };
   const root = make(doc, 'div', `ask-card ask-mcard ask-stopcard is-${block.state}`);
   root.setAttribute('data-chat-run-stop', block.state);
   root.setAttribute('role', 'group');
@@ -215,7 +215,7 @@ export function buildPullRequestCard(block, ctx) {
   const doc = ctx.doc;
   const card = block.card || {};
   const title = card.title || card.pipelineId || 'this run';
-  if (block.state === 'declined') return { el: make(doc, 'div', 'ask-card-stub ask-actcard-stub', `Not now — ${title}`) };
+  if (block.state === 'declined') return { el: make(doc, 'div', 'ask-card-stub ask-actcard-stub', `Not now: ${title}`) };
   const root = make(doc, 'div', `ask-card ask-mcard ask-prcard is-${block.state}`);
   root.setAttribute('data-chat-pr', block.state);
   root.setAttribute('role', 'group');

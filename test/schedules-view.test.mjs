@@ -73,9 +73,9 @@ test('a row that follows a preset names it; a deleted preset says the next run w
   try {
     const text = document.body.textContent;
     assert.match(text, /preset Quick fix/);
-    assert.match(text, /Quick fix — read when the run starts/);
+    assert.match(text, /Quick fix \(read when the run starts\)/);
     assert.match(text, /preset deleted/);
-    assert.match(text, /Old fix — deleted; the next run will fail/);
+    assert.match(text, /Old fix \(deleted: the next run will fail\)/);
   } finally { view.destroy(); }
 });
 

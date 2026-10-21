@@ -165,23 +165,23 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
     const src = item.summary.source && item.summary.source.type === 'plugin' ? item.summary.source : null;
     const git = typeof deps.gitOn !== 'function' || deps.gitOn();
     body.append(...[
-      row('Task', src ? `${src.plugin} · ${src.taskId} — fetched when the run starts` : (item.summary.prompt || '—')),
+      row('Task', src ? `${src.plugin} · ${src.taskId} (fetched when the run starts)` : (item.summary.prompt || '—')),
       row('Created by', shown(item.createdBy)),
       shown(item.updatedBy) && shown(item.updatedBy) !== shown(item.createdBy) ? row('Changed by', shown(item.updatedBy)) : null,
       item.after ? row('After', `${(item.after.title || item.after.id.slice(0, 8))} · ${afterWord(item.after)}`) : null,
       item.after ? row('If it fails', item.after.policy === 'any' ? 'Start anyway' : 'Do not start') : null,
       git && item.sourceFromPrevious ? row('Source branch', 'the run before it') : null,
-      git ? row('Feature branch', item.summary.sameAsSource ? 'none — commits onto the source branch'
+      git ? row('Feature branch', item.summary.sameAsSource ? 'none (commits onto the source branch)'
         : (item.summary.featureBranch ? (item.kind === 'recurring' ? `${item.summary.featureBranch}-<date>` : item.summary.featureBranch) : '')) : null,
       row('Guardrails', item.summary.guardrailsId && item.summary.guardrailsId !== 'permissive' ? item.summary.guardrailsId : ''),
-      row('Preset', item.presetId ? (item.presetName ? `${item.presetName} — read when the run starts`
-        : `${item.presetGoneName || 'A preset'} — deleted; the next run will fail`) : ''),
+      row('Preset', item.presetId ? (item.presetName ? `${item.presetName} (read when the run starts)`
+        : `${item.presetGoneName || 'A preset'} (deleted: the next run will fail)`) : ''),
       row('Extra files', item.summary.extras ? String(item.summary.extras) : ''),
       item.after ? null : row('If Worca is not running', item.ifMissed === 'skip' ? 'Skip it' : `Start it late, at most ${item.graceMin >= 60 && item.graceMin % 60 === 0 ? `${item.graceMin / 60} h` : `${item.graceMin} min`}`),
       item.kind === 'recurring' ? row('If the previous run is still going', { skip: 'Skip this one', queue: 'Wait, then start', start: 'Start anyway' }[item.overlap]) : null,
       item.kind === 'recurring' ? row('Pause after failures in a row', item.maxFailures ? String(item.maxFailures) : 'Never') : null,
       item.kind === 'recurring' ? row('Runs so far', String(item.runsCount)) : null,
-      item.ownerPid != null && item.status === 'scheduled' ? row('Held by', 'a waiting terminal (worca --wait) — it starts the run') : null,
+      item.ownerPid != null && item.status === 'scheduled' ? row('Held by', 'a waiting terminal (worca --wait), which starts the run') : null,
     ].filter(Boolean));
     return body;
   }
@@ -287,7 +287,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
 
     const acts = h('div', { class: 'sched-acts' });
     if (!ended) {
-      const runNow = h('button', { type: 'button', class: 'btn btn-sm', text: 'Run now', title: 'Start one extra run now — the schedule itself does not shift' });
+      const runNow = h('button', { type: 'button', class: 'btn btn-sm', text: 'Run now', title: 'Start one extra run now. The schedule itself does not shift' });
       runNow.addEventListener('click', () => act(async () => {
         const out = await api('POST', `/api/schedules/${s.id}/run-now`);
         if (out.status === 'failed') throw new Error(out.failReason || 'The run could not be started.');
@@ -335,7 +335,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
     for (const c of host.querySelectorAll('.sched-item')) if (openIds.has(c.dataset.id)) c.querySelector('.sched-more').click();
   }
   const emptyOnce = () => h('p', { class: 'empty-line' }, 'No one-off run is waiting. Pick a time with ',
-    h('a', { href: '#new/schedule', text: 'Schedule a run' }), ', then describe the task — or use Schedule… next to Start run on New run.');
+    h('a', { href: '#new/schedule', text: 'Schedule a run' }), ', then describe the task. Or use Schedule… next to Start run on New run.');
   const emptyRepeating = () => h('p', { class: 'empty-line' }, 'No repeating schedule. Pick a time with ',
     h('a', { href: '#new/schedule', text: 'Schedule a run' }), ' and choose Every day, Weekdays, Weekly or Monthly.');
 

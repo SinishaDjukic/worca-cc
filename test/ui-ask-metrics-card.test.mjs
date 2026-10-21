@@ -122,7 +122,7 @@ test('metrics card terminal states: applied receipt with per-member results, fai
       assert.ok(!el.querySelector('[data-ask-mc-apply]'));
       const declined = await openWith({ kind: 'card', id: CARD_ID, state: 'declined', card: RECORD_CARD });
       const stub = declined.doc.querySelector('.ask-card-stub');
-      assert.equal(stub.textContent, 'Declined — Turn "Include my runs" off for proj');
+      assert.equal(stub.textContent, 'Declined: Turn "Include my runs" off for proj');
       assert.ok(!declined.doc.querySelector('.ask-mcard'));
     } },
   ]);

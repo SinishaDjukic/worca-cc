@@ -1495,7 +1495,7 @@ test('a tool frame mid-turn keeps a card that did not change: the System prompt 
   recv({ type: 'ask-card', threadId: 'ask_0000abcd', messageId: 'askm_0000bbbb', seq: 4, block: { ...draft, state: 'declined' } });
   await tick(3);
   assert.notEqual(doc.querySelector(sel), det.closest('[data-card-id]'), 'a new state is a new element');
-  assert.match(doc.querySelector(sel).textContent, /Declined — Release Notes/);
+  assert.match(doc.querySelector(sel).textContent, /Declined: Release Notes/);
 });
 
 const chatSend = async (w, text) => {

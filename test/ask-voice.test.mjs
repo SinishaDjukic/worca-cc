@@ -207,7 +207,7 @@ test('text-only mode: TTS unconfigured/off, and a TTS, playback or acknowledgeme
       v.onFrame(frame('ask-start'), '');
       v.onFrame(frame('ask-done', { text: 'Hello there.', status: 'done' }), null);
       for (let i = 0; i < 6; i++) await tick();
-      assert.deepEqual(t.notices, ['Voice replies are text only for now — the browser blocked audio playback']);
+      assert.deepEqual(t.notices, ['Voice replies are text only for now: the browser blocked audio playback']);
       assert.equal(v.state(), 'listening');
     } },
     { name: 'an acknowledgement that cannot be rendered drops replies to text only, with the reason', run: async () => {

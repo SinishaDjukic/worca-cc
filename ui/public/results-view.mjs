@@ -117,7 +117,7 @@ export function workflowPickerLabel(wf, enabledPluginNames = []) {
   if (!origin.startsWith('plugin:')) return wf?.name || '';
   const plugin = origin.slice('plugin:'.length);
   const disabled = Array.isArray(enabledPluginNames) && !enabledPluginNames.includes(plugin);
-  return `${wf.name} [plugin: ${plugin}${disabled ? ' — disabled' : ''}]`;
+  return `${wf.name} [plugin: ${plugin}${disabled ? ', disabled' : ''}]`;
 }
 
 /**

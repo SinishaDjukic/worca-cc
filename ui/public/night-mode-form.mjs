@@ -158,7 +158,7 @@ function deciderModelField(doc, level, values, inh, inhSrc, models) {
     // failed GET) condemns nothing. Ids match case-insensitively, like the resolver.
     const lc = stored.toLowerCase();
     const gone = Array.isArray(models) && models.length > 0 && !models.some((m) => m && typeof m.id === 'string' && m.id.toLowerCase() === lc);
-    const o = el(doc, 'option', null, gone ? `${stored} — ${DECIDER_WORDS.notInstalled}` : stored);
+    const o = el(doc, 'option', null, gone ? `${stored} (${DECIDER_WORDS.notInstalled})` : stored);
     o.value = stored; o.disabled = gone; sel.append(o);
   }
   sel.value = stored;

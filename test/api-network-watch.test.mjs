@@ -93,7 +93,7 @@ test('the watcher resumes only network pauses parked while unreachable, inside t
   assert.equal(entry.lastAction.by, 'worca (network watch)');
   const line = await until(() => getDb().prepare("SELECT text, actor FROM pipeline_events WHERE pipeline_id = ? AND text LIKE 'Network back%'").get(ids.netAuto));
   assert.equal(line.actor, 'worca (network watch)');
-  assert.match(line.text, /api\.anthropic\.com answers again — run resumed by worca \(network watch\)/);
+  assert.match(line.text, /api\.anthropic\.com answers again\. Run resumed by worca \(network watch\)/);
   for (const k of ['netReach', 'auth', 'cost', 'usage', 'manual', 'old', 'legacy']) {
     assert.equal(getDb().prepare('SELECT status FROM pipelines WHERE id = ?').get(ids[k]).status, 'paused', k);
     retire(ids[k]);

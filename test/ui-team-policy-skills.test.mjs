@@ -100,7 +100,7 @@ test('setup checklist: one Skill row per required skill, the state badge, the fa
     ['Turn on', '', HOME, 'skill:plugin:acme/incident-triage', 'off', false],
     null]);
   assert.equal(list.querySelector('.hist-empty'), null, 'skills alone are something to set up');
-  assert.ok(list.querySelector('.tp-trust-row').textContent.includes('MCP servers are never installed or turned on automatically, and required skills are never turned on automatically — but updates to required skills apply without another review when you trust this home.'),
+  assert.ok(list.querySelector('.tp-trust-row').textContent.includes('MCP servers are never installed or turned on automatically, and required skills are never turned on automatically. However, updates to required skills apply without another review when you trust this home.'),
     'trusting a home is honest about required-skill updates');
   assert.ok(renderSetupChecklist({ home: HOME }, { doc }).querySelector('.hist-empty'), 'nothing at all: the empty line');
   const ghost = renderSetupChecklist({ home: HOME, skills: [row('ghost', 'skipped', { code: null, files: 0, scripts: [], shellBlocks: 0, problem: 'acme does not ship a skill named ghost' })] }, { doc })
@@ -111,7 +111,7 @@ test('setup checklist: one Skill row per required skill, the state badge, the fa
 
 test('the Sets-tab strip lists open skill items next to MCP ones; all done (or none): no strip', () => {
   const strip = renderMcpStrip([], { doc, skills: SKILLS });
-  assert.equal(strip.querySelector('.card-head b').textContent, 'acme/platform requires 5 skills in its Team set — 4 to set up');
+  assert.equal(strip.querySelector('.card-head b').textContent, 'acme/platform requires 5 skills in its Team set (4 to set up)');
   assert.deepEqual([strip.querySelector('.card-head .badge').className, strip.querySelector('.card-head .badge').textContent], ['badge slate', 'Team policy']);
   assert.equal(renderMcpStrip([], { doc, skills: [SKILLS[0]] }).querySelector('.card-head b').textContent, 'acme/platform requires the skill deploy-checklist · acme in its Team set');
   assert.equal(renderMcpStrip([], { doc, skills: [SKILLS[0], { ...SKILLS[3], home: 'acme/other' }] }).querySelector('.card-head b').textContent, 'acme/platform, acme/other require 2 skills in their Team sets');
@@ -134,7 +134,7 @@ test('consent dialog: plugin @ sha7, the home, files, scripts, shell blocks, all
   const facts = Object.fromEntries([...el.querySelectorAll('dl.tp-facts dt')].map((dt) => [dt.textContent, dt.nextElementSibling.textContent]));
   assert.deepEqual(facts, {
     Name: 'deploy-checklist', From: 'acme/platform · worca-policy @ 8c1d2e0', Files: '5 · 6.8 kB',
-    Scripts: 'scripts/preflight.sh · scripts/rollback.py', 'Shell blocks': '1 in SKILL.md — they run in pipeline runs without guardrail checks; Chat never runs them',
+    Scripts: 'scripts/preflight.sh · scripts/rollback.py', 'Shell blocks': '1 in SKILL.md (they run in pipeline runs without guardrail checks; Chat never runs them)',
     'Allowed tools': 'Bash(kubectl get:*) Read',
     Consent: 'this plugin skill; later content changes come through the plugin\'s update review',
     Updates: 'updates to required skills apply without another review when you trust this home', Joins: 'Team · acme/platform set',
@@ -146,7 +146,7 @@ test('consent dialog: plugin @ sha7, the home, files, scripts, shell blocks, all
   const hooked = [...renderSkillConsent({ ...CONSENT, hooks: true }, { doc }).querySelectorAll('dl.tp-facts dt')].find((dt) => dt.textContent === 'Hooks');
   assert.equal(hooked?.nextElementSibling.textContent, SKILL_HOOKS_TEXT, 'U1: the words every other surface shows for skill hooks');
   const rooted = [...renderSkillConsent({ ...CONSENT, pluginRootRefs: true }, { doc }).querySelectorAll('dl.tp-facts dt')].find((dt) => dt.textContent === 'Plugin files');
-  assert.equal(rooted?.nextElementSibling.textContent, "references its plugin's other files — may not work from a set", '§4.1: the badge text');
+  assert.equal(rooted?.nextElementSibling.textContent, "references its plugin's other files, so it may not work from a set", '§4.1: the badge text');
   assert.match(el.querySelector('.confirm-message').textContent, /inline shell blocks and declared hooks are not checked by them\.$/, 'U1/U2: no guardrail claim for them');
 });
 

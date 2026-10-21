@@ -347,7 +347,7 @@ test('list: Codex built-ins have their own group; a Codex custom model carries a
   assert.ok(sec);
   assert.equal(sec.querySelector('.mv-section-title').textContent, 'Codex built-in models');
   assert.deepEqual([...sec.querySelectorAll('.mv-builtin.mv-codex')].map((r) => r.dataset.id), ['gpt-5.5']);
-  assert.match(sec.querySelector('.mv-summary').textContent, /gpt-5\.5 — all efforts/);
+  assert.match(sec.querySelector('.mv-summary').textContent, /gpt-5\.5: all efforts/);
   const card = el.querySelector('.mv-card[data-id="gpt-5.5-tuned"]');
   assert.equal(card.querySelector('.mv-engine').textContent, 'Codex');
   assert.match(card.querySelector('.mv-summary').textContent, /low · high/);

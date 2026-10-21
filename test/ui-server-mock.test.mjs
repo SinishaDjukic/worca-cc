@@ -81,7 +81,7 @@ test('server mock on: the MOCK pill shows and the Mock switch is locked on — c
       assert.equal(sw.getAttribute('aria-checked'), 'true');
       assert.equal(sw.getAttribute('aria-disabled'), 'true');
       assert.ok(sw.classList.contains('disabled'));
-      assert.match(sw.title, /Server started with WORCA_MOCK=1 — all runs are mock\./);
+      assert.match(sw.title, /Server started with WORCA_MOCK=1, so all runs are mock\./);
     } },
     { name: 'server mock on: clicking or keying the locked switch leaves it on', run: async () => {
       const { sw, cb } = parts(doc);

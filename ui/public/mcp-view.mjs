@@ -83,7 +83,7 @@ export function skillStateText(m) {
   if (m.team && !m.team.consented) return { text: 'turn on in the team checklist', tone: '' };
   if (m.problem) return { text: m.problem, tone: 'err' };
   if (!m.enabled) return { text: 'off', tone: '' };
-  if (m.pluginRootRefs) return { text: 'in runs · references its plugin’s other files — may not work from a set', tone: 'warn' };
+  if (m.pluginRootRefs) return { text: 'in runs · references its plugin’s other files, so it may not work from a set', tone: 'warn' };
   return { text: 'in runs', tone: 'ok' };
 }
 
@@ -168,7 +168,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
       else if (r.data.newer) say('MCP registry files need a newer Worca', 'err-inline');
       else if (lib.newer || lib.damaged) {   // P1 reads no imported skill then: say why none is listed
         say(lib.newer ? 'The skill library needs a newer Worca: imported skills are not listed'
-          : 'The skill library file skills/library.json is damaged — fix it or remove it: imported skills are not listed', 'err-inline');
+          : 'The skill library file skills/library.json is damaged (fix it or remove it): imported skills are not listed', 'err-inline');
       }
     } else {
       const [l, s] = await Promise.all([api('GET', '/api/mcp/sets'), api('GET', setPath(st.setId))]);
@@ -292,7 +292,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     }
     const w = h(doc, 'span', 'sk-prefix');
     w.append(h(doc, 'span', 'badge amber', `loads as ${set.pluginName}:`),
-      h(doc, 'span', 'hint', `— a Claude Code plugin named ${set.pluginName.replace(/-set(?:-\d+)?$/, '')} is installed`));
+      h(doc, 'span', 'hint', `because a Claude Code plugin named ${set.pluginName.replace(/-set(?:-\d+)?$/, '')} is installed`));
     return w;
   }
   function skillCard(set, m) {
@@ -323,7 +323,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     }
     if (!missing) {
       const facts = h(doc, 'small', 'hint sk-facts', skillCountsText(m));
-      if (hasShellScripts(m)) facts.appendChild(h(doc, 'span', 'badge amber', 'shell scripts — Windows'));
+      if (hasShellScripts(m)) facts.appendChild(h(doc, 'span', 'badge amber', 'shell scripts (may not run on Windows)'));
       card.appendChild(facts);
       if (st.mdOpen.has(m.skillId)) card.appendChild(mdDrawer(m));
     }
@@ -341,7 +341,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     // A Team set lists the required skills installed here (a required plugin not installed yet brings none): the policy may
     // still require some — its setup checklist knows.
     if (!skills.length) out.push(h(doc, 'div', 'hist-empty', isTeam(set)
-      ? 'No skill this team policy requires is installed here — its setup checklist lists what it requires.' : 'No skills in this set yet.'));
+      ? 'No skill this team policy requires is installed here. Its setup checklist lists what it requires.' : 'No skills in this set yet.'));
     for (const m of skills) out.push(skillCard(set, m));
     return out;
   }
@@ -470,14 +470,14 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     head.append(h(doc, 'b', 'mono', e.name), sourceBadge(e), h(doc, 'span', 'mono hint', originText(e)));
     const pluginRoot = !!(e.frontmatter && e.frontmatter.pluginRootRefs);
     const badges = [[e.pluginEnabled === false, 'plugin disabled'], [e.updateAvailable, 'update available'],
-      [hasShellScripts(e), 'shell scripts — Windows'], [pluginRoot, 'plugin-root refs']];
+      [hasShellScripts(e), 'shell scripts (may not run on Windows)'], [pluginRoot, 'plugin-root refs']];
     for (const [on, text] of badges) if (on) head.appendChild(h(doc, 'span', 'badge amber', text));
     if (e.valid === false) head.appendChild(h(doc, 'span', 'badge red', 'invalid'));
     const hooks = !!(e.frontmatter && e.frontmatter.hooks);
     if (hooks) head.appendChild(h(doc, 'span', 'badge red', 'declares hooks'));
     row.append(head, h(doc, 'small', 'hint', [e.description, skillCountsText(e)].filter(Boolean).join(' · ')));
     if (e.valid === false) row.appendChild(h(doc, 'small', 'hint err', `invalid: ${(e.problems || []).join('; ')} · never mounted`));
-    if (pluginRoot) row.appendChild(h(doc, 'small', 'hint warn', 'references its plugin’s other files — may not work from a set'));
+    if (pluginRoot) row.appendChild(h(doc, 'small', 'hint warn', 'references its plugin’s other files, so it may not work from a set'));
     if (hooks) row.appendChild(h(doc, 'small', 'hint err', SKILL_HOOKS_TEXT));
     const sets = h(doc, 'div', 'mcp-usedby');
     sets.appendChild(h(doc, 'span', 'label', 'In sets'));
@@ -980,7 +980,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
 
 // ── resolution tables: the project MCP tab and the workspace overview (spec §8) ───────────────────
 function statusFor(row, sets) {
-  if (row.why) return row.reason === 'off' ? 'off' : row.reason === 'needs-consent' ? `off — ${row.why}` : `${row.why} in ${row.setName}`;
+  if (row.why) return row.reason === 'off' ? 'off' : row.reason === 'needs-consent' ? `off: ${row.why}` : `${row.why} in ${row.setName}`;
   const member = (sets || []).find((s) => s.id === row.setId)?.members.find((m) => m.serverId === row.serverId);
   return { ok: 'ok', stale: 'stale', none: 'not tested', failed: 'test failed' }[member ? member.test : 'none'];
 }
@@ -1020,7 +1020,7 @@ const SKILL_LAYER_WORDS = {
 function skillStatus(r, blocked = false) {
   if (!r.reason) return blocked ? 'not loaded' : 'ok';
   if (r.reason === 'off') return 'off';
-  if (r.reason === 'needs-consent') return `off — ${r.why || 'turn it on in the team checklist'}`;
+  if (r.reason === 'needs-consent') return `off: ${r.why || 'turn it on in the team checklist'}`;
   return r.why || r.reason;
 }
 /** Mounted then skipped skills, by the name agents call: P4's preview puts `qualifiedName` (`<plugin name>:<skill>`) on

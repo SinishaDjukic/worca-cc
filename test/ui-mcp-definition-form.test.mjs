@@ -36,9 +36,9 @@ test('stdio: {name} in Arguments is a required field (prefix/suffix kept); rows 
   });
   assert.deepEqual(compileDefinition(form({ args: '{a}{b}' })).errors, ['one {placeholder} per argument: {a}{b}']);
   const clash = compileDefinition(form({ rows: [{ key: 'X-Team', value: '', perSet: true, secret: false }, { key: 'X_Team', value: '', perSet: true, secret: false }] }));
-  assert.deepEqual(clash.errors, ['X_Team: its field "X_Team" is already declared — rename the row'], 'two rows never share a field');
+  assert.deepEqual(clash.errors, ['X_Team: its field "X_Team" is already declared. Rename the row'], 'two rows never share a field');
   const nocase = compileDefinition(form({ rows: [{ key: 'X-Team', value: '', perSet: true, secret: false }, { key: 'x_team', value: '', perSet: true, secret: false }] }));
-  assert.deepEqual(nocase.errors, ['x_team: its field "x_team" is already declared — rename the row'], 'field keys compare ignoring case');
+  assert.deepEqual(nocase.errors, ['x_team: its field "x_team" is already declared. Rename the row'], 'field keys compare ignoring case');
 });
 
 test('http: one Bearer tick = a secret OAuth token behind Authorization: Bearer; URL placeholders; secret query placeholders', () => {
@@ -57,10 +57,10 @@ test('http: one Bearer tick = a secret OAuth token behind Authorization: Bearer;
   assert.equal(placeholderStartsSecret('https://x/{team}', 'team'), false);
   const token = (over) => compileDefinition(form({ name: 'x', type: 'http', url: 'https://x/mcp', bearer: true, ...over })).errors;
   assert.deepEqual(token({ rows: [{ key: 'token', value: '', perSet: true, secret: true }] }),
-    ['Bearer token: its field "token" is already declared — rename the row or the placeholder'], 'the Bearer field never shares');
-  assert.deepEqual(token({ url: 'https://x/{Token}/mcp' }), ['Bearer token: its field "token" is already declared — rename the row or the placeholder']);
+    ['Bearer token: its field "token" is already declared. Rename the row or the placeholder'], 'the Bearer field never shares');
+  assert.deepEqual(token({ url: 'https://x/{Token}/mcp' }), ['Bearer token: its field "token" is already declared. Rename the row or the placeholder']);
   assert.deepEqual(token({ rows: [{ key: 'Authorization', value: 'Basic x', perSet: false, secret: false }] }),
-    ['Authorization: the Bearer token tick sets this header — remove the row']);
+    ['Authorization: the Bearer token tick sets this header. Remove the row']);
   const off = compileDefinition(form({ type: 'http', url: 'https://x/?token={t}', placeholders: { t: { secret: false } } }));
   assert.equal(off.def.fields[0].secret, undefined, 'a starting-secret placeholder can be unticked');
   assert.equal(compileDefinition(form({ type: 'sse', url: 'https://x/sse' })).def.url, 'https://x/sse');

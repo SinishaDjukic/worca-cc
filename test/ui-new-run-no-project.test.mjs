@@ -75,7 +75,7 @@ test('no projects yet: New run opens on No project, shows where it works, and po
 test('the New run subtitle names where it runs, not a project (NewRun board)', async () => {
   const window = await boot({ projects: [] });
   assert.equal(window.document.querySelector('[data-view="new"] .topbar .sub').textContent,
-    'Pick where it runs, describe the task, and run · agents come tuned — open one only to change it');
+    'Pick where it runs, describe the task, and run · agents come tuned: open one only to change it');
 });
 
 test('with projects: Project stays the default; picking No project hides branches and the schedule caret; back again restores them', async () => {

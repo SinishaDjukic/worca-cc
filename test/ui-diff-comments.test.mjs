@@ -556,7 +556,7 @@ test('a comment whose row is outside the first window attaches when Show more co
 
 test('comments whose anchor cannot render are never lost: past the 500k cap (detached under the truncation note), binary section, path absent from the patch (synthetic row)', async () => {
   await checkRows([
-    { name: 'a comment past the 500k parse cap renders detached, below "(large file — diff truncated)"', run: async () => {
+    { name: 'a comment past the 500k parse cap renders detached, below "(large file, diff truncated)"', run: async () => {
       const ctx = await bootComments({ patch: capPatch(), files: BIG_JS, hooks: SMALL,
         comments: [cmt({ path: 'big.js', line: 59, lineText: 'a line the parser never reached', body: 'past the cap' })] });
       const doc = ctx.window.document;

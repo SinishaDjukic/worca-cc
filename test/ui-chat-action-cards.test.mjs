@@ -55,7 +55,7 @@ test('receipt: Changed since keeps Revert disabled with the note; another failur
       const { el } = buildReceiptCard(RECEIPT, ctx);
       const revert = el.querySelector('[data-chat-revert]');
       click(revert); await tick();
-      assert.equal(el.querySelector('.ask-rcard-note').textContent, 'Changed since — not reverted');
+      assert.equal(el.querySelector('.ask-rcard-note').textContent, 'Not reverted: it changed since');
       assert.equal(revert.disabled, true);
       assert.equal(el.querySelector('.ask-card-err').textContent, '');
     } },
@@ -63,7 +63,7 @@ test('receipt: Changed since keeps Revert disabled with the note; another failur
       const { ctx } = ctxOf();
       const { el } = buildReceiptCard({ ...RECEIPT, card: { ...RECEIPT.card, result: { code: 'CHANGED_SINCE', error: 'Changed since — not reverted' } } }, ctx);
       assert.equal(el.querySelector('[data-chat-revert]').disabled, true);
-      assert.equal(el.querySelector('.ask-rcard-note').textContent, 'Changed since — not reverted');
+      assert.equal(el.querySelector('.ask-rcard-note').textContent, 'Not reverted: it changed since');
     } },
     { name: 'a failed write', run: async () => {
       const { ctx } = ctxOf({ post: async () => { throw refused('REVERT_FAILED', 'The run is still pausing — try again in a moment'); } });
@@ -142,7 +142,7 @@ test('run-stop: the warning itself (R7) — title, run, branch, copy, Keep runni
       assert.equal(applied.querySelector('[data-chat-stop-confirm]'), null);
       assert.equal(buildRunStopCard({ ...STOP, state: 'failed', error: "An interrupted run can't be stopped — it stays resumable" }, ctx).el.querySelector('.ask-mcard-failed').textContent,
         "Could not stop: An interrupted run can't be stopped — it stays resumable");
-      assert.equal(buildRunStopCard({ ...STOP, state: 'declined' }, ctx).el.textContent, 'Not stopped — Fix login');
+      assert.equal(buildRunStopCard({ ...STOP, state: 'declined' }, ctx).el.textContent, 'Not stopped: Fix login');
     } },
   ]);
 });
@@ -200,7 +200,7 @@ test('pull-request: branch → base and files ±; Create opens Ship it with the 
         members: [{ url: 'https://x/pull/1', memberKey: 'api-11111111' }, { url: 'https://x/pull/2', draft: true, memberKey: 'web-22222222' }] } } }, ctx).el;
       assert.deepEqual([...ws.querySelectorAll('.ask-prcard-link')].map((x) => x.textContent), ['View pull request · api', 'View pull request · web']);
       assert.equal(ws.querySelectorAll('.ask-prcard-links .ask-mcard-kind').length, 1, 'one Draft chip');
-      assert.equal(buildPullRequestCard({ ...PR, state: 'declined' }, ctx).el.textContent, 'Not now — Fix login');
+      assert.equal(buildPullRequestCard({ ...PR, state: 'declined' }, ctx).el.textContent, 'Not now: Fix login');
     } },
   ]);
 });
@@ -254,7 +254,7 @@ test('refine cycle 2: Away now names itself once; declined stubs carry the reada
   assert.equal(away.querySelector('[data-chat-revert]').getAttribute('aria-label'), 'Revert Away mode');
   assert.equal(away.querySelector('.ask-rcard-note').hasAttribute('role'), false, 'no live region beside ctx.announce');
   click(away.querySelector('[data-chat-revert]')); await tick();
-  assert.deepEqual(said, ['Changed since — not reverted']);
+  assert.deepEqual(said, ['Not reverted: it changed since']);
   assert.ok(buildRunStopCard({ ...STOP, state: 'declined' }, ctx).el.classList.contains('ask-actcard-stub'));
   assert.ok(buildPullRequestCard({ ...PR, state: 'declined' }, ctx).el.classList.contains('ask-actcard-stub'));
 });
