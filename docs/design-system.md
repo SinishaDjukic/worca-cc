@@ -142,7 +142,7 @@ buttons stay 28px; the card keeps the shared 24px padding (checked by the theme 
 | One 32px field | 48px full-width grey inputs | Height must match the buttons beside them |
 | Tinted selected filter chip | A solid black selected chip | Solid ink is the primary button; a filter is not an action |
 | Sentence-case labels | UPPERCASE kickers | They shout and break the type scale |
-| A size from the scale (11, 12, 13, 15, 18, 22; 26 on the Chat home hero) | Half sizes (12.5, 13.5) or one-off sizes | Eighteen near-equal sizes read as noise; seven steps read as hierarchy |
+| A size from the scale (11, 12, 13, 15, 18, 22; 32 on the Chat home hero) | Half sizes (12.5, 13.5) or one-off sizes | Eighteen near-equal sizes read as noise; seven steps read as hierarchy |
 | A fixed chart height | A chart that grows with its width | A 461px chart pushes the numbers off the screen and scales its own labels |
 | The plus icon | A typed "+" | Glyphs render at the font's whim and are not one icon set |
 | Ids in a tooltip | Ids in visible text | People read names, not engine ids |

@@ -190,7 +190,7 @@ export function auditSizes(root, spec, env) {
 /** Type scale (docs/design-system.md › Type): every visible element with its own text renders at a step. The graph
  *  canvases, SVG and the terminal are skipped (D23). One entry per element signature. */
 export const TYPE_SPEC = Object.freeze({
-  sizes: [11, 12, 13, 15, 18, 22, 26],
+  sizes: [11, 12, 13, 15, 18, 22, 32],
   skip: 'svg, .run-flow, .gv-world, .xterm',
 });
 

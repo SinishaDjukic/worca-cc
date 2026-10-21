@@ -8331,8 +8331,8 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
 .wfv-errchip.is-warning:hover:not(:disabled){background-color:color-mix(in srgb,var(--ink) 7%,var(--amber-bg));color:var(--amber-ink-strong);}
 #wfv-dialog-host{display:contents;}
 .wfv-zoom{justify-content:space-between;font-variant-numeric:tabular-nums;}
-/* 40px square: the chat pill and the Auto-layout / zoom bars are 40px, and the dock bottom-aligns, so a 32px .btn-icon sat low. */
-.wfv-plus{flex:0 0 auto;width:40px;height:40px;}
+/* .btn-lg.btn-icon (40px square): the chat pill and the Auto-layout / zoom bars are 40px, and the dock bottom-aligns, so a 32px .btn-icon sat low. */
+.wfv-plus{flex:0 0 auto;}
 .wfv-plus svg{width:17px;height:17px;stroke-width:2;}
 .wfv-menu{position:fixed;z-index:45;min-width:180px;max-height:min(60vh,420px);overflow:auto;padding:4px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);box-shadow:var(--shadow-menu);font-size:12.5px;}
 .wfv-menu-item{display:flex;align-items:center;gap:10px;width:100%;height:30px;padding:0 9px;border:0;border-radius:var(--r-sm);background:none;color:var(--ink);text-align:left;font:inherit;cursor:pointer;}
