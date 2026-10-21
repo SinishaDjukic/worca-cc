@@ -38,12 +38,15 @@ const status = (done = [], flags = {}) => ({
   done: done.length, total: 9, claude: { bin: 'claude', hint: null }, hidden: false, welcomeSeen: false, ...flags,
 });
 
-async function boot({ onboarding = status(['claude']), projects = [], level = null, settingsError = null } = {}) {
+async function boot({ onboarding = status(['claude']), projects = [], level = null, settingsError = null, width = null, holdOnboarding = null } = {}) {
   // `level`: the server-rendered interface mode (docs/ui-levels.md); null = no attribute (gates nothing).
   const shellHtml = level ? html.replace('<html lang="en" data-theme="system">', `<html lang="en" data-theme="system" data-level="${level}">`) : html;
   const dom = trackDom(new JSDOM(shellHtml, { url: 'http://localhost:4317/', pretendToBeVisual: true }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
+  if (width) {
+    window.matchMedia = (q) => { const m = /max-width:\s*(\d+)px/.exec(q); return { media: q, matches: !!m && width <= Number(m[1]), addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }; };
+  }
   window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
   const posts = [];
   let current = onboarding;
@@ -52,7 +55,8 @@ async function boot({ onboarding = status(['claude']), projects = [], level = nu
     const json = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
     if (url.includes('/api/onboarding')) {
       if (init.method === 'POST') { const b = JSON.parse(init.body); posts.push(b); current = { ...current, ...b }; }
-      return json(current);
+      // holdOnboarding: a promise the GET waits on (the async onboarding load lands after the user acted).
+      return init.method !== 'POST' && holdOnboarding ? holdOnboarding.then(() => json(current)) : json(current);
     }
     // settingsError: the error POST /api/settings answers with (a mode switch the server refuses).
     if (settingsError && url.includes('/api/settings') && init.method === 'POST') return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: settingsError }) });
@@ -130,6 +134,21 @@ test('welcome: shows once; Skip or a door posts {welcomeSeen:true}; never shown 
       assert.equal(doc.querySelector('.gs-pill-host').hidden, true, 'and no pill');
     } },
   ]);
+});
+
+test('welcome at 375px: the nav drawer is closed behind it (F-21)', async () => {
+  let release;
+  const holdOnboarding = new Promise((r) => { release = r; });
+  const { doc, window } = await boot({ width: 375, holdOnboarding });
+  doc.getElementById('mbar-menu').click();
+  assert.ok(doc.body.classList.contains('nav-open'), 'precondition: the drawer is open');
+  release();
+  await settle();
+  assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), false);
+  assert.equal(doc.body.classList.contains('nav-open'), false);
+  assert.equal(doc.querySelector('.main').hasAttribute('inert'), false);
+  const css = readFileSync(join(root, 'style.css'), 'utf8');
+  assert.match(css, /@media \(max-width:760px\)\{\s*\.ob-welcome\{max-height:calc\(100dvh - 24px\)/);
 });
 
 test('Hide posts {hidden:true} and removes the pill (the page stays); Settings › Show again posts {hidden:false} and opens the page', async () => {
