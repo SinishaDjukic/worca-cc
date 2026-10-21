@@ -390,6 +390,9 @@ export async function switchPausedRunModels(pipelineId, { changes, by = 'local',
     // A NEW token: a paused harness still held in memory now reads its row as handed off
     // (run-harness _rowHandedOff) and can never write the old manifest back.
     pausedBy: `switch:${randomUUID()}`,
+    // The ORIGINAL pause token, carried across successive switches: only the harness that made that
+    // pause may re-adopt the row (run-harness adoptPausedStoreEdit).
+    pausedFrom: rp.pausedFrom || rp.pausedBy || null,
   };
   if (!rewritePausedManifest(pipelineId, { stepper: manifest, resumePoint: nextRp, expect: saved.row.resume_point })) {
     throw new ModelSwitchError('CHANGED', 'the run changed meanwhile (resumed, stopped or switched) — reload and try again');

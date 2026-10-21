@@ -1840,7 +1840,7 @@ export class RunHarness extends EventEmitter {
   }
 
   async _resume() {
-    this._pausedHandoff = false; this._handedOff = false; this._pauseToken = null;   // this harness owns its row again
+    this._pausedHandoff = false; this._handedOff = false; this._pauseToken = null; this._pauseOrigin = null;   // this harness owns its row again
     const saved = this.resumeOpts;
     if (!saved?.row || !saved?.resumePoint) throw new Error('resume(): no saved pipeline provided');
     const { row, resumePoint: rp, steps } = saved;
@@ -8050,6 +8050,16 @@ export class RunHarness extends EventEmitter {
       .catch(() => { /* generateTitle already swallows; this is a final backstop */ });
   }
 
+  /** The saved point with this harness's pause token. While the token is an adopted switch token,
+   *  `pausedFrom` keeps the lineage (the original pause) so the NEXT switch stays adoptable; a
+   *  harness pausing under its own token never carries a lineage. */
+  _stampedPoint(rp) {
+    const out = { ...rp, pausedBy: this._pauseToken };
+    if (this._pauseOrigin && this._pauseToken !== this._pauseOrigin) out.pausedFrom = this._pauseOrigin;
+    else delete out.pausedFrom;
+    return out;
+  }
+
   /** @returns {Promise<boolean>} whether the state reached the row. */
   async _persist() {
     const rpNow = this.state.resumePoint;
@@ -8062,7 +8072,7 @@ export class RunHarness extends EventEmitter {
       // A paused harness names itself in the saved point (`pausedBy`, written here only, never kept
       // in state): _rowHandedOff reads it back. A resumed run's new harness never writes this token.
       const st = this._pauseToken && rpOut && typeof rpOut === 'object'
-        ? { ...this.state, resumePoint: { ...rpOut, pausedBy: this._pauseToken } } : this.state;
+        ? { ...this.state, resumePoint: this._stampedPoint(rpOut) } : this.state;
       await writeState(this.pipeline.dir, st);
       return true;
     } catch {
@@ -8102,6 +8112,9 @@ export class RunHarness extends EventEmitter {
     try { saved = readPipelineForResume(this.pipeline.id); } catch { return false; }
     const token = saved?.resumePoint?.pausedBy;
     if (!saved || saved.row?.status !== 'paused' || typeof token !== 'string' || !token.startsWith('switch:')) return false;
+    // Only the harness whose pause this edit descends from: a row another harness resumed and re-paused
+    // carries that harness's lineage, and writing to it would overwrite that run.
+    if (!this._pauseOrigin || saved.resumePoint.pausedFrom !== this._pauseOrigin) return false;
     // The edit owns ONLY the manifest and the fresh-session marks (switchPausedRunModels). Everything else
     // stays this harness's: setNightOverride mutates state.resumePoint.night BEFORE the _persist that
     // lands here, so taking the row's whole point would drop the very switch being saved.
@@ -8254,6 +8267,7 @@ export class RunHarness extends EventEmitter {
       else delete rp.autoLimitResumes;
       // The token this pause is written with (_persist stamps it into the saved point as `pausedBy`).
       this._pauseToken ||= randomUUID();
+      this._pauseOrigin ||= this._pauseToken;
     }
     this._setStatus('paused');
     const persisted = await this._persist();
