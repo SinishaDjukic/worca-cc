@@ -238,7 +238,11 @@ test('a second start is version 2; two concurrent starts: one succeeds, one is B
   const gate = new Promise((res) => { release = res; });
   runImpl = async (_b, o) => { await gate; return { status: 200, body: { runId: o.runId } }; };
   const first = call('POST', `/api/requirements/${g.seq}/start`, {});
-  while (calls.length === 0) await new Promise((r) => setTimeout(r, 5));
+  // bounded: a start that never reaches the run handler fails the test instead of hanging the run
+  for (let i = 0; calls.length === 0; i += 1) {
+    if (i >= 1000) { release(); assert.fail('the first start never reached the run handler (5 s)'); }
+    await new Promise((r) => setTimeout(r, 5));
+  }
   const second = await call('POST', `/api/requirements/${g.seq}/start`, {});
   assert.equal(second.status, 409);
   assert.match(second.json.error, /already starting/);
