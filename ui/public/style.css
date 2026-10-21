@@ -123,7 +123,7 @@
   --r-card:var(--r-md);
   --r-ctrl:var(--r-sm);
   /* Type scale (docs/design-system.md › Type): one scale, no half sizes. 11 is the floor. */
-  --fs-caption:11px;--fs-meta:12px;--fs-body:13px;--fs-section:15px;--fs-subpage:18px;--fs-page:22px;--fs-stat:22px;--fs-hero:26px;
+  --fs-caption:11px;--fs-meta:12px;--fs-body:13px;--fs-section:15px;--fs-subpage:18px;--fs-page:22px;--fs-stat:22px;--fs-hero:32px;
   --lh-body:1.5;--lh-title:1.25;
   --shadow-pop:0 6px 28px light-dark(rgba(25,25,27,.10),rgba(0,0,0,.55)),0 1px 2px light-dark(rgba(25,25,27,.06),rgba(0,0,0,.4));
   --shadow-sheet:0 18px 60px light-dark(rgba(25,25,27,.14),rgba(0,0,0,.65)),0 2px 6px light-dark(rgba(25,25,27,.06),rgba(0,0,0,.4));
@@ -8295,7 +8295,8 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
 .wfv-errchip.is-warning:hover:not(:disabled){background-color:color-mix(in srgb,var(--ink) 7%,var(--amber-bg));color:var(--amber-ink-strong);}
 #wfv-dialog-host{display:contents;}
 .wfv-zoom{justify-content:space-between;font-variant-numeric:tabular-nums;}
-.wfv-plus{flex:0 0 auto;}
+/* 40px square: the chat pill and the Auto-layout / zoom bars are 40px, and the dock bottom-aligns, so a 32px .btn-icon sat low. */
+.wfv-plus{flex:0 0 auto;width:40px;height:40px;}
 .wfv-plus svg{width:17px;height:17px;stroke-width:2;}
 .wfv-menu{position:fixed;z-index:45;min-width:180px;max-height:min(60vh,420px);overflow:auto;}
 .wfv-menu-hint{margin-left:auto;color:var(--ink-2);font-size:11px;}
@@ -8333,6 +8334,7 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
 .wfl-sbox{position:absolute;top:9px;right:40px;left:calc(100% - 70px);height:28px;display:flex;align-items:center;gap:4px;overflow:hidden;transition:left .24s cubic-bezier(.2,.8,.2,1);}
 .wfl-head.is-searching .wfl-sbox{left:7px;}
 .wfl-filter-btn{flex:0 0 auto;}
+.wfl-filter-btn svg{width:16px;height:16px;}
 .wfl-filter-btn[aria-expanded="true"]:not(:hover){background:none;color:var(--ink);}
 .wfl-filter-input{flex:1 1 auto;min-width:0;height:28px;padding:0 4px;border:0;background:none;color:var(--ink);font:inherit;font-size:var(--fs-meta);opacity:0;transition:opacity .18s;-webkit-appearance:none;appearance:none;}
 .wfl-head.is-searching .wfl-filter-input{opacity:1;}
@@ -8349,8 +8351,8 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
 .wfl-new.is-slot{width:32px;height:32px;}
 .wfl-tools{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:10px 12px 2px;}
 .wfl-list{flex:1 1 auto;min-height:0;overflow:auto;padding:6px 8px 10px;}
-.wfl-folder{display:flex;align-items:center;gap:10px;min-height:32px;padding:6px;color:var(--ink);font:500 13px/1.3 var(--sans);}
-.wfl-folder svg{flex:0 0 auto;width:20px;height:20px;color:var(--ink-2);stroke-width:1.6;}
+.wfl-folder{display:flex;align-items:center;gap:10px;min-height:32px;padding:4px 6px;color:var(--ink);font:500 13px/1.3 var(--sans);}
+.wfl-folder svg{flex:0 0 auto;width:24px;height:24px;color:var(--ink-2);stroke-width:1.6;}
 .wfl-folder .wfl-chev{width:14px;height:14px;stroke-width:2;}
 .wfl-folder[aria-expanded="true"] .wfl-chev{transform:rotate(90deg);}
 .wfl-fname{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
@@ -8555,7 +8557,7 @@ body.view-chat .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .chat-history-toggle > svg{width:20px;height:20px;flex:none;}
 .chat-history-toggle[aria-pressed="true"]{background:var(--field);color:var(--ink);}
 .chat-page[data-view="home"] .chat-head [data-ask-new-btn]{visibility:hidden;}
-.chat-home{flex:1 1 auto;min-height:0;overflow-y:auto;display:flex;flex-direction:column;align-items:center;padding:clamp(16px,4vh,40px) 16px 32px;}
+.chat-home{flex:1 1 auto;min-height:0;overflow-y:auto;display:flex;flex-direction:column;align-items:center;padding:clamp(32px,10vh,96px) 16px 32px;}
 .chat-hero-slot{width:100%;max-width:var(--chat-text-max);}
 .chat-hero-slot .ask-composer{padding:0;--ask-col-inset:0px;}
 .chat-page[data-view="thread"] .chat-home{display:none;}
@@ -8583,10 +8585,10 @@ body.view-chat .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .chat-page .ask-composer-box:has(.guide-target){-webkit-backdrop-filter:none;backdrop-filter:none;}
 .chat-convo .ask-msg > :is(.ask-card,.ask-card-stub){width:min(var(--chat-card-max),100cqi);margin-left:calc((100% - min(var(--chat-card-max),100cqi)) / 2);}
 /* The composer's popovers ride the composer (ask-panel.mjs openPopover): above the box in the dock, under it on
-   home, and never sized against the composer's own height. On home the cap is 100vh less .chat-home's 8vh top padding. */
+   home, and never sized against the composer's own height. On home the cap is 100vh less .chat-home's 10vh top padding. */
 .chat-page .ask-composer{--ask-box-top:calc(100% - 10px);}
 .chat-page .ask-composer > .ask-pop{max-height:min(420px,calc(100vh - 240px));}
-.chat-page[data-view="home"] .ask-composer > .ask-pop{bottom:auto;top:calc(100% + 6px);max-height:min(420px,calc(92vh - 230px));}
+.chat-page[data-view="home"] .ask-composer > .ask-pop{bottom:auto;top:calc(100% + 6px);max-height:min(420px,calc(90vh - 230px));}
 .chat-panel{flex:none;min-width:0;min-height:0;display:flex;flex-direction:column;border-left:1px solid var(--line);background:var(--panel);}
 .chat-panel[hidden]{display:none;}
 /* The Chat row's unread dot (a .nav-count, so the rail parks it in the square's corner) and the logo links. */
@@ -9354,16 +9356,16 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .chat-home{position:relative;}
 .chat-home > *{position:relative;}
 .chat-home-title{margin:0 0 18px;text-align:center;color:var(--ink);font:600 var(--fs-hero)/var(--lh-title) var(--sans);letter-spacing:-.01em;}
-.chat-home-body{container:chat-home / inline-size;display:flex;flex-direction:column;gap:24px;width:100%;max-width:1040px;margin:8px auto 32px;box-sizing:border-box;}
+.chat-home-body{container:chat-home / inline-size;display:flex;flex-direction:column;gap:24px;width:100%;max-width:1040px;margin:20px auto 32px;box-sizing:border-box;}
 .chat-ic{display:inline-grid;place-items:center;flex:none;line-height:0;}
 .chat-ic svg{width:100%;height:100%;}
 /* Quick actions: all 7 tiles, 1 pin and More in one row above a 640px container (8 × 72px + gaps), 4 per row
    below it. auto-fit: a level-gated or switched-off tile collapses its track instead of leaving a hole. */
-/* Quick actions (review B10): 56px, icon + label on one line, no border, hover tint. */
-.chat-home-actions{display:flex;flex-wrap:nowrap;justify-content:center;gap:4px;overflow:hidden;}
+/* Quick actions (review B10): icon + label on one line in a hairline-bordered, rounded (card radius) box, hover tint. */
+.chat-home-actions{display:flex;flex-wrap:nowrap;justify-content:center;gap:8px;overflow:hidden;}
 .chat-home-act[data-overflow]{display:none;}
 .chat-home-act{display:flex;flex-direction:row;align-items:center;justify-content:flex-start;gap:8px;flex:none;min-width:0;min-height:40px;
-  padding:0 12px;box-sizing:border-box;border:0;border-radius:var(--r-sm);background:none;color:var(--ink);
+  padding:0 12px;box-sizing:border-box;border:1px solid var(--line-2);border-radius:var(--r-md);background:none;color:var(--ink);
   font:500 13px/1.3 var(--sans);text-align:left;cursor:pointer;}
 .chat-home-act:hover{background:var(--hover);}
 .chat-home-act > .chat-ic{color:var(--ink-2);}
@@ -9429,14 +9431,21 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .chat-home-wf-m{color:var(--ink-2);font-size:var(--fs-meta);}
 .chat-home-more-link{align-self:flex-start;margin-top:10px;padding:0;border:0;background:none;color:var(--blue-ink-strong);font:500 var(--fs-meta)/var(--lh-body) var(--sans);cursor:pointer;}
 .chat-home-more-link:hover{text-decoration:underline;}
-/* Promos: neutral (bundle QA 2) — the field surface, no tint and no border; tints are for what needs a person (§1.3). */
+/* Promos: each card is a still gradient picture (ui/public/assets/promo-*.jpg — static, no animation, no WebGL), no
+   border; --field shows while it loads. A picture looks the same in both themes, so each card pins the scheme its
+   picture needs and its light-dark() tokens follow: light (dark ink) on the pale blue, dark (light ink) on the red
+   and the night one. The button stays the light one on every card. */
 .chat-home-promos{display:flex;flex-direction:column;gap:10px;}
 .chat-home-promos-h{margin:0;color:var(--ink);}
 .chat-home-promo-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;}
-.chat-home-promo{display:flex;flex-direction:column;align-items:flex-start;gap:6px;min-width:0;padding:14px;border:0;border-radius:var(--r-card);background:var(--field);color:var(--ink);}
+.chat-home-promo{display:flex;flex-direction:column;align-items:flex-start;gap:6px;min-width:0;padding:14px;border:0;border-radius:var(--r-card);background:var(--field) center/cover no-repeat;color:var(--ink);color-scheme:light;}
+.chat-home-promo[data-promo="workflows"]{background-image:url(/assets/promo-workflows.jpg);color-scheme:dark;}
+.chat-home-promo[data-promo="away"]{background-image:url(/assets/promo-away.jpg);background-position:center top;}
+.chat-home-promo[data-promo="schedules"]{background-image:url(/assets/promo-schedules.jpg);color-scheme:dark;}
 .chat-home-promo-t{font-size:var(--fs-body);font-weight:600;}
-.chat-home-promo-d{color:var(--ink-2);font-size:12px;}
-.chat-home-promo-b{margin-top:4px;}
+/* --ink-2 is under 4.5:1 on the deeper parts of the pictures: the description is the full ink. */
+.chat-home-promo-d{color:var(--ink);font-size:12px;}
+.chat-home-promo-b{margin-top:4px;color-scheme:light;}
 /* Start from a preset (#712 slice 2): one wrapping row of chips below the quick actions. */
 .chat-home-presets{display:flex;flex-direction:column;gap:8px;}
 .chat-home-presets-h{margin:0;color:var(--ink);}

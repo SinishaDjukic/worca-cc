@@ -38,7 +38,7 @@ export function runsKeyAction(e, { size = 0 } = {}) {
 /** A list row as a bulk target (members for a group row). */
 export function rowTarget(r) {
   const one = (x) => ({ id: x.pipelineId || x.ticketId || x.runId || x.key, title: x.title, state: x.model.state, prNeeds: !!x.model.prNeeds,
-    status: x.run ? x.run.status : x.status, pipelineId: x.pipelineId || null, runId: x.runId || null,
+    status: x.run ? x.run.status : x.status, resumable: x.resumable !== false, pipelineId: x.pipelineId || null, runId: x.runId || null,
     ticketId: x.ticketId || (x.kind === 'sched' ? x.key.slice('sched:'.length) : null),
     labels: Array.isArray(x.labels) ? x.labels : [] });
   if (r.kind !== 'chain') return one(r);

@@ -403,7 +403,6 @@
     "blockquote.ask-routecard-quote → 12.5px"
   ],
   "svgTypeScale": [
-    "ui/public/cost-area-chart.mjs",
     "ui/public/stats-view.mjs",
     "ui/public/team-metrics-view.mjs"
   ]
