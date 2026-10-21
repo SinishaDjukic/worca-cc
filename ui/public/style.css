@@ -1714,6 +1714,9 @@ button.af-gal-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 /* Confirm dialog must stack ABOVE the plugin/wizard modal (equal .viewer-modal z-index,
    but #confirm-modal precedes #plugin-modal in the DOM). */
 #confirm-modal.viewer-modal{z-index:60;}
+/* The choose-a-scan-model window has the same constraint: a member change opens it over
+   the Add/Remove projects plugin modal, and #scan-model-modal precedes #plugin-modal. */
+#scan-model-modal.viewer-modal{z-index:60;}
 /* The folder browser is a leaf picker opened FROM other modals (add-project,
    export). It precedes #export-modal in the DOM, so at equal .viewer-modal
    z-index the export modal would paint over it, hiding the Browse… picker.

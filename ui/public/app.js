@@ -829,6 +829,14 @@ const el = {
   confirmCheckbox: $('#confirm-checkbox'),
   confirmCheckboxLabel: $('#confirm-checkbox-label'),
 
+  // Choose-a-scan-model window (#scan-model-modal)
+  scanModelModal: $('#scan-model-modal'),
+  scanModelTitle: $('#scan-model-title'),
+  scanModelMessage: $('#scan-model-message'),
+  scanModelOk: $('#scan-model-ok'),
+  scanModelCancel: $('#scan-model-cancel'),
+  scanModelClear: $('#scan-model-clear'),
+
   // Add-project modal
   projectAddModal: $('#project-add-modal'),
   projAddName: $('#proj-add-name'),
@@ -9315,6 +9323,7 @@ function openWsDetail(w, parsed, { instant = false } = {}) {
   wsDetail = { id: w.id, name: w.name, screen };
   screen.querySelector('.pd-back').addEventListener('click', () => { location.hash = 'workspaces'; });
   screen.querySelector('.ws-rescan').addEventListener('click', () => { void rescanWorkspace(workspaceById(w.id)); });
+  screen.querySelector('.ws-scan-model').addEventListener('click', () => { void changeWsScanModel(workspaceById(w.id)); });
   screen.querySelector('.ws-delete').addEventListener('click', () => { void deleteWorkspaceFromPage(w.id); });
   paintWsHeader(screen, w);
   initWdTabs(screen, w);
@@ -9333,6 +9342,8 @@ function paintWsHeader(screen, w) {
   screen.querySelector('.pd-title').textContent = w.name || w.id || '(unnamed)';
   const stale = screen.querySelector('.pd-row1 .ws-stale');
   if (stale) stale.hidden = !(Array.isArray(w.exists) && w.exists.some((e) => !e));
+  const label = screen.querySelector('.ws-scan-model-label');
+  if (label) label.textContent = w.scanModels ? `Scan: ${w.scanModels.scanModel}` : 'Set scan model';
   const meta = screen.querySelector('.pd-meta .ws-projects');
   if (meta) {
     const known = (peekTmScopes()?.workspaces || []).find((x) => x.id === w.id);
@@ -10026,7 +10037,31 @@ async function postWsMembers(id, body) {
   const i = state.workspaces.findIndex((x) => x && x.id === id);
   if (i >= 0 && data.workspace) state.workspaces[i] = data.workspace;
   const cleared = Array.isArray(data.clearedHomes) ? data.clearedHomes : [];
-  if (data.rescan && (data.rescan.runId || data.rescan.skipped)) trackWsRescan(id, data.rescan, cleared);
+  if (data.rescan && data.rescan.needsModel) {
+    // The auto re-scan needs a model this workspace has not saved (or the saved one left the
+    // catalog — the reported 403 loop). Ask, persist, then start the re-scan with the pick:
+    // tagged autoRescan so a next member change supersedes it exactly like a server-started one.
+    // A dismiss skips the re-scan with the reason on its card.
+    const pick = await scanModelPrompt({
+      title: 'Choose a scan model', okLabel: 'Re-scan',
+      message: 'Members changed, but no scan model is saved for this workspace (or the saved one is no longer available). Pick the model to re-scan with — it is saved and reused.',
+      pick: (workspaceById(id) || {}).scanModels || null,
+    });
+    if (pick) {
+      const saved = await putWorkspaceScanModels(id, pick);
+      if (saved.error) trackWsRescan(id, { skipped: saved.error }, cleared);
+      else {
+        const r = await fetch(`/api/workspaces/${encodeURIComponent(id)}/scan`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ models: pick, autoRescan: true }),
+        }).catch((err) => ({ ok: false, status: 0, json: async () => ({ error: err.message }) }));
+        const d2 = await safeJson(r);
+        if (r.ok && d2.runId) trackWsRescan(id, { runId: d2.runId }, cleared);
+        else trackWsRescan(id, { skipped: (d2 && d2.error) || `HTTP ${r.status}` }, cleared);
+      }
+    } else {
+      trackWsRescan(id, { skipped: 'choose a scan model to re-scan the workspace' }, cleared);
+    }
+  } else if (data.rescan && (data.rescan.runId || data.rescan.skipped)) trackWsRescan(id, data.rescan, cleared);
   if (wsDetail && wsDetail.id === id) { setWdError(wsDetail.screen, ''); refreshWdOverview(); }
   tpCache.at = 0;
   void paintWsMetricsRows(true);
@@ -10170,7 +10205,10 @@ function setWdError(screen, text) {
 }
 
 // Re-scan: start the Workspace scan run over the saved workspace and follow it on Running; the
-// run replaces the description when it finishes (D12). 409 (a live run) stays on the page.
+// run replaces the description when it finishes (D12). 409 (a live run) stays on the page. A 428
+// SCAN_MODEL_REQUIRED (no saved scan model, or the saved one left the catalog) opens the
+// choose-a-scan-model window; the picked model is saved and the scan runs with it. Dismissing
+// keeps the page and says why the scan did not run.
 async function rescanWorkspace(w) {
   if (!w || !wsDetail) return;
   const screen = wsDetail.screen;
@@ -10180,13 +10218,27 @@ async function rescanWorkspace(w) {
   await fetch('/api/workspaces/metrics-scan', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectPaths: w.projectPaths || [] }),
   }).catch(() => {});
-  try {
+  const start = async (models) => {
     const res = await fetch(`/api/workspaces/${encodeURIComponent(w.id)}/scan`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(models ? { models } : {}),
     });
     const data = await safeJson(res);
+    if (data && data.code === 'SCAN_MODEL_REQUIRED') {
+      const pick = await scanModelPrompt({
+        title: 'Choose a scan model', okLabel: 'Scan',
+        message: 'No scan model is saved for this workspace (or the saved one is no longer available). Pick the model to scan with — it is saved and reused for later re-scans.',
+        pick: w.scanModels || null,
+      });
+      if (!pick) { setWdError(screen, 'Scan cancelled — choose a scan model to run the scan.'); return; }
+      const saved = await putWorkspaceScanModels(w.id, pick);
+      if (saved.error) { setWdError(screen, saved.error); return; }
+      return start(pick);
+    }
     if (!res.ok || !data.runId) { setWdError(screen, data.error || `HTTP ${res.status}`); return; }
     beginScanRun(data, w.name || w.id);
+  };
+  try {
+    await start();
   } catch (err) {
     setWdError(screen, err.message);
   } finally {
@@ -10288,6 +10340,120 @@ function paintScanModelPickers(ids, pick, catalog) {
 function readScanModelPickers(ids) {
   const v = (k) => document.getElementById(ids[k])?.value || '';
   return { scanModel: v('scanModel'), scanEffort: v('scanEffort'), agentModel: v('agentModel'), agentEffort: v('agentEffort') };
+}
+
+// ---- The choose-a-scan-model window --------------------------------------------
+
+// The modal's own ids (the wizard's painters take an id map). A re-scan with no usable saved
+// model, or the header's "Scan model" control, opens the window; Save resolves to the 4-field
+// pick, Clear to { __clear: true }, Cancel to null.
+const SCAN_MODEL_MODAL_IDS = {
+  scanModel: 'sm-scan-model', scanEffort: 'sm-scan-effort', agentModel: 'sm-agent-model', agentEffort: 'sm-agent-effort',
+};
+const SCAN_MODEL_CLEARED = { __clear: true };
+
+/**
+ * The choose-a-scan-model window (#scan-model-modal). Resolves to the 4-field pick on Save,
+ * SCAN_MODEL_CLEARED on "Clear saved model" (when offered), null on Cancel/backdrop/Escape.
+ * @param {{title?:string, message?:string, pick?:object|null, okLabel?:string, canClear?:boolean}} opts
+ *   pick: where the selects start — a workspace's saved pick, or Settings › Runs › Workspaces
+ *   (else the deployment default). A scan model that left the catalog is never offered (the
+ *   wizard's stale rule, D18): a SENT pick is checked strictly (400), so it would refuse every
+ *   scan.
+ *   canClear: show the "Clear saved model" action. Only the header control does — a required
+ *   model window (a re-scan answered SCAN_MODEL_REQUIRED) must not offer to clear what it asks
+ *   for.
+ */
+function scanModelPrompt({ title = 'Choose a scan model', message = '', pick = null, okLabel = 'Save', canClear = false } = {}) {
+  return new Promise((resolve) => {
+    const m = el.scanModelModal;
+    let modalCatalog = [];   // filled by paint; the effort cascade reads it (the pair rule)
+    const paint = async () => {
+      let data = {};
+      let catalog = [];
+      try {
+        const [cat, res] = await Promise.all([fetchTitleModelCatalog(), fetch('/api/settings')]);
+        catalog = cat;
+        if (res.ok) data = await safeJson(res);
+      } catch { /* the fallback pick below */ }
+      modalCatalog = catalog;
+      let start = pick || scanModelsFrom(data);
+      if (catalog.length && (!start.scanModel || !catalog.some((x) => x && x.id === start.scanModel))) {
+        const def = scanModelsFrom({ workspaceScanDefault: data.workspaceScanDefault });
+        start = { ...start, scanModel: def.scanModel, scanEffort: def.scanEffort };
+      }
+      paintScanModelPickers(SCAN_MODEL_MODAL_IDS, start, catalog);
+    };
+    el.scanModelTitle.textContent = title;
+    el.scanModelMessage.textContent = message;
+    el.scanModelMessage.classList.toggle('err', false);
+    el.scanModelMessage.hidden = !message;
+    el.scanModelClear.classList.toggle('hidden', !canClear);
+    el.scanModelOk.textContent = okLabel;
+    m.classList.remove('hidden');
+    void paint().catch(() => { /* keeps the window up; the empty selects still Cancel */ });
+    const sm = document.getElementById(SCAN_MODEL_MODAL_IDS.scanModel);
+    const onCascade = () => paintScanEffort(SCAN_MODEL_MODAL_IDS, document.getElementById(SCAN_MODEL_MODAL_IDS.scanEffort)?.value || '', modalCatalog);
+    if (sm) sm.addEventListener('change', onCascade);
+    const done = (value) => {
+      m.classList.add('hidden');
+      if (sm) sm.removeEventListener('change', onCascade);
+      el.scanModelOk.removeEventListener('click', onOk);
+      el.scanModelCancel.removeEventListener('click', onCancel);
+      el.scanModelClear.removeEventListener('click', onClear);
+      m.removeEventListener('click', onBackdrop);
+      document.removeEventListener('keydown', onKey);
+      resolve(value);
+    };
+    const onOk = () => done(readScanModelPickers(SCAN_MODEL_MODAL_IDS));
+    const onCancel = () => done(null);
+    const onClear = () => done(SCAN_MODEL_CLEARED);
+    const onBackdrop = (e) => { if (e.target === m) done(null); };
+    const onKey = (e) => { if (e.key === 'Escape') done(null); };
+    el.scanModelOk.addEventListener('click', onOk);
+    el.scanModelCancel.addEventListener('click', onCancel);
+    el.scanModelClear.addEventListener('click', onClear);
+    m.addEventListener('click', onBackdrop);
+    document.addEventListener('keydown', onKey);
+    el.scanModelOk.focus();
+  });
+}
+
+/** PUT a workspace's own scan-model pick (null clears). Answers the updated workspace. */
+async function putWorkspaceScanModels(id, pick) {
+  const res = await fetch(`/api/workspaces/${encodeURIComponent(id)}/scan-models`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspaceScan: pick || null }),
+  }).catch((err) => ({ ok: false, status: 0, json: async () => ({ error: err.message }) }));
+  const data = await safeJson(res);
+  if (res.ok && data.workspace) {
+    const i = state.workspaces.findIndex((x) => x && x.id === id);
+    if (i >= 0) state.workspaces[i] = data.workspace;
+  }
+  return res.ok ? { ok: true } : { error: data.error || `HTTP ${res.status}` };
+}
+
+/** The header control: open the window from the workspace's current saved pick. */
+async function changeWsScanModel(w) {
+  if (!w) return;
+  const label = (p) => (p && p.scanModel ? `Scan: ${p.scanModel}` : 'Set scan model');
+  const pick = await scanModelPrompt({
+    title: 'Scan model', canClear: true, okLabel: 'Save',
+    message: w.scanModels
+      ? `This workspace re-scans with ${w.scanModels.scanModel} (${w.scanModels.agentModel} · ${w.scanModels.agentEffort}).`
+      : 'No scan model is saved: a re-scan would ask you to pick one. Choose one to reuse, or clear to keep asking.',
+    pick: w.scanModels || null,
+  });
+  if (!pick || pick === SCAN_MODEL_CLEARED) {
+    if (pick === SCAN_MODEL_CLEARED) {
+      const r = await putWorkspaceScanModels(w.id, null);
+      if (r.error && wsDetail && wsDetail.id === w.id) setWdError(wsDetail.screen, r.error);
+    }
+  } else {
+    const r = await putWorkspaceScanModels(w.id, pick);
+    if (r.error) { if (wsDetail && wsDetail.id === w.id) setWdError(wsDetail.screen, r.error); return; }
+  }
+  if (wsDetail && wsDetail.id === w.id) { setWdError(wsDetail.screen, ''); paintWsHeader(wsDetail.screen, workspaceById(w.id) || w); }
 }
 
 // ---- Creation wizard -------------------------------------------------------

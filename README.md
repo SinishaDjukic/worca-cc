@@ -394,7 +394,9 @@ level and has no **Diff**, **Changes** or **Actions**.
   or bring repos straight in with **Add…** or a pasted list (a repo, a folder of repos, a VS Code
   `.code-workspace` file; a ticked repo that is not a project yet becomes one) — **Scan
   interconnections**; the workspace is saved when that scan ends. **Add projects** / **Remove** on
-  its Overview tab re-scan the new set.
+  its Overview tab re-scan the new set on the workspace's saved scan model — view or change it
+  with the header **Scan model** control (a re-scan with no usable pick asks you to choose one
+  first).
 - **A map built from code, with evidence** — the scan is itself a pipeline run that never
   changes a member. Code detectors find REST, gRPC and GraphQL APIs, message queues, build
   dependencies, shared databases and service calls and do the matching; agents fill what

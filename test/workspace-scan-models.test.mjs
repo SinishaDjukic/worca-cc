@@ -33,6 +33,17 @@ const CATALOG = [
   { id: 'local-llm', efforts: [] },
 ];
 const PICK = { scanModel: 'Claude-Opus-5-5', scanEffort: 'high', agentModel: 'fable', agentEffort: 'max' };
+// Catalogs WITHOUT the claude-sonnet-5 default: the last-resort block (D19) and its release hatch.
+const SONNET_ONLY_CATALOG = [
+  { id: 'claude-sonnet-5', efforts: ['medium', 'high', 'xhigh', 'max'] },
+  { id: 'local-llm', efforts: [] },
+];
+const NO_DEFAULT_CATALOG = [
+  { id: 'discretestack-stable', efforts: ['medium', 'high', 'max'] },
+  { id: 'local-llm', efforts: [] },
+];
+const WS_PICK = { scanModel: 'claude-sonnet-5', scanEffort: 'high', agentModel: 'fable', agentEffort: 'max' };
+const WS_SETTINGS = { scanModel: 'claude-opus-5-5', scanEffort: 'high', agentModel: 'opus', agentEffort: 'high' };
 
 test('assertWorkspaceScanInput: null clears; a pick comes back in catalog casing; bad picks throw', () => {
   assert.equal(assertWorkspaceScanInput(null), null);
@@ -75,4 +86,35 @@ test('resolveScanModels: explicit > stored > default; a stale stored pick degrad
   assert.deepEqual({ ...none }, { ...WORKSPACE_SCAN_DEFAULT_MODELS, source: 'default', warning: null });
   assert.throws(() => resolveScanModels({ explicit: { ...PICK, agentModel: 'haiku' }, models: CATALOG }), /agentModel/);
   assert.equal(describeScanModels(none), 'scan agent claude-sonnet-5 · medium, project agents sonnet · medium');
+});
+
+test('resolveScanModels: precedence explicit > workspace > settings > default', () => {
+  // explicit wins over the workspace pick
+  let r = resolveScanModels({ explicit: PICK, workspacePick: WS_PICK, stored: WS_SETTINGS, models: CATALOG });
+  assert.equal(r.source, 'explicit');
+  assert.equal(r.agentModel, 'fable');
+  // workspace pick wins over settings
+  r = resolveScanModels({ workspacePick: WS_PICK, stored: WS_SETTINGS, models: CATALOG });
+  assert.equal(r.source, 'workspace');
+  assert.equal(r.scanModel, 'claude-sonnet-5');
+  assert.equal(r.agentModel, 'fable');
+  // no workspace pick → settings
+  r = resolveScanModels({ stored: WS_SETTINGS, models: CATALOG });
+  assert.equal(r.source, 'settings');
+  // a workspace pick whose scan model left the catalog degrades to the NEXT valid source (settings holds)
+  r = resolveScanModels({ workspacePick: { ...WS_PICK, scanModel: 'gone-model' }, stored: WS_SETTINGS, models: CATALOG });
+  assert.equal(r.source, 'settings');
+  assert.equal(r.warning, null);
+  // both the workspace pick AND settings degrade → the default, with a warning naming the failed pick
+  r = resolveScanModels({ workspacePick: { ...WS_PICK, scanModel: 'gone-model' }, stored: { ...WS_SETTINGS, scanModel: 'gone-model-2' }, models: CATALOG });
+  assert.equal(r.source, 'default');
+  assert.match(r.warning, /gone-model/);
+});
+
+test('resolveScanModels: with no stored pick and the default NOT in the catalog, it throws clear guidance (never runs an unavailable model)', () => {
+  assert.throws(() => resolveScanModels({ workspacePick: null, stored: null, models: NO_DEFAULT_CATALOG }), /no workspace scan model is available/);
+  assert.throws(() => resolveScanModels({ stored: null, models: NO_DEFAULT_CATALOG }), /Settings › Runs › Workspaces/);
+  // but the default IS usable when it is in the catalog, with no warning
+  const ok = resolveScanModels({ stored: null, models: SONNET_ONLY_CATALOG });
+  assert.deepEqual({ scanModel: ok.scanModel, source: ok.source, warning: ok.warning }, { scanModel: 'claude-sonnet-5', source: 'default', warning: null });
 });

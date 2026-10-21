@@ -107,6 +107,16 @@ const branchesGone = (...dirs) => waitFor(() => dirs.every((d) => branches(d).le
 const fakeLiveScan = (id, workspaceId) => runs.set(id, {
   id, kind: 'workspace-run', workspaceId, status: 'running', events: [], orch: { workflowId: 'wf_workspace_scan' },
 });
+const put = (p, body) => fetch(`${base}${p}`, { method: 'PUT', headers: JSONH, body: JSON.stringify(body) });
+// A pick-less workspace's re-scan answers 428 SCAN_MODEL_REQUIRED by design (the page asks the
+// user). The ownership/description tests below are about the LIVE-RUN guard and the re-scan
+// itself, so give the fresh workspace a saved pick first — exactly what the prompted page does.
+const savePick = async (wsId) => {
+  const r = await put(`/api/workspaces/${wsId}/scan-models`, {
+    workspaceScan: { scanModel: 'claude-opus-5-5', scanEffort: 'high', agentModel: 'opus', agentEffort: 'xhigh' },
+  });
+  assert.equal(r.status, 200, `PUT /scan-models: ${(await r.json()).error || r.status}`);
+};
 
 test('POST /api/workspaces/scan: 400 for fewer than 2 members, no name, a missing dir or a non-git dir', async () => {
   const a = await freshRepo();
@@ -198,6 +208,24 @@ test('a first scan (with a models pick) is a recorded run that creates the works
   } finally { sock.ws.close(); }
 });
 
+test('a scan created with an explicit model pick persists it on the workspace; it survives a member-add auto rescan', async () => {
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const c = await freshRepo(); // added to the workspace later
+  const pick = { scanModel: 'claude-opus-5-5', scanEffort: 'high', agentModel: 'fable', agentEffort: 'max' };
+  const created = await (await post('/api/workspaces/scan', { name: 'Auto WS', projectPaths: [a, b], models: pick })).json();
+  assert.equal((await settled(created.runId)).status, 'done', JSON.stringify(created));
+  // the wizard pick is stored on the workspace and served back through the API
+  const wsBefore = (await (await fetch(`${base}/api/workspaces/${created.workspaceId}`)).json()).workspace;
+  assert.deepEqual(wsBefore.scanModels, pick);
+
+  // A member-add auto-rescan re-reads the stored pick: it resolves (no "no workspace scan model is
+  // available" skip), a re-scan starts, and the stored pick survives the member UPDATE.
+  const changed = await (await post(`/api/workspaces/${created.workspaceId}/members`, { add: [c] })).json();
+  assert.ok(changed.rescan && changed.rescan.runId, `the member-add starts a re-scan: ${JSON.stringify(changed.rescan)}`);
+  assert.deepEqual(changed.workspace.scanModels, pick, 'the stored pick survives addWorkspaceMembers');
+});
+
 test('two first scans of the same set in the same tick: the launch reservation refuses the second', async () => {
   const a = await freshRepo();
   const b = await freshRepo();
@@ -228,6 +256,7 @@ test('re-scan: 404 unknown, 409 live run, else a run that replaces the descripti
   const b = await freshRepo();
   const cr = await post('/api/workspaces', { name: 'Rescan', projectPaths: [a, b], description: 'old' });
   const { workspace } = await cr.json();
+  await savePick(workspace.id);
   fakeLiveScan('fake-live-run', workspace.id);
   try {
     assert.equal((await post(`/api/workspaces/${workspace.id}/scan`, {})).status, 409);
@@ -254,6 +283,7 @@ test('a workspace whose members changed keeps its id, but the scan guard follows
   const c = await freshRepo();
   const { workspace } = await (await post('/api/workspaces', { name: 'Grown', projectPaths: [a, b] })).json();
   await addWorkspaceMembers(workspace.id, [c]);   // id still ends in the hash of {a, b}
+  await savePick(workspace.id);
   // A live run of the grown workspace does not block a first scan of its ORIGINAL set: no
   // workspace spans {a, b} any more, and no scan of {a, b} is running.
   fakeLiveScan('fake-grown-run', workspace.id);
@@ -274,6 +304,7 @@ test('a live first scan of a set a grown workspace once spanned does not block t
   const c = await freshRepo();
   const { workspace } = await (await post('/api/workspaces', { name: 'Grown Too', projectPaths: [a, b] })).json();
   await addWorkspaceMembers(workspace.id, [c]);
+  await savePick(workspace.id);
   fakeLiveScan('fake-pair-scan', workspaceKey({ name: 'Pair', projectPaths: [a, b] }));
   try {
     const res = await post(`/api/workspaces/${workspace.id}/scan`, {});
@@ -288,6 +319,7 @@ test('a paused scan blocks a re-scan and a delete; a paused ordinary run blocks 
   const a = await freshRepo();
   const b = await freshRepo();
   const { workspace } = await (await post('/api/workspaces', { name: 'Paused Owner', projectPaths: [a, b] })).json();
+  await savePick(workspace.id);
   const fakePaused = (id, workflowId) => runs.set(id, {
     id, kind: 'workspace-run', workspaceId: workspace.id, status: 'paused', events: [], orch: { workflowId },
   });

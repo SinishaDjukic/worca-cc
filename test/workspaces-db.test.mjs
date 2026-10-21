@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import {
-  workspaceKey, listWorkspaces, readWorkspace, createWorkspace,
+  workspaceKey, listWorkspaces, readWorkspace, createWorkspace, saveWorkspaceScanResult, setWorkspaceScanPick,
 } from '../src/core/workspaces.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { getDb, _resetForTests } from '../src/core/db.mjs';
@@ -159,6 +159,78 @@ test('deleteWorkspace: unknown id NOT_FOUND removes nothing; a real delete casca
 });
 
 // ---- p1t4: workspaces.metricsProject (team-metrics home) ----
+
+// ---- workspaces.scan_models_json (v57): the scan pick captured at creation ----
+
+test('createWorkspace persists a validated scanModels pick; readWorkspace returns it; a missing/blank pick stores NULL', async () => {
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const c = await freshRepo();   // a NEW member set for the plain pick-less workspace (same set = DUPLICATE_SET)
+  const pick = { scanModel: 'claude-opus-5-5', scanEffort: 'high', agentModel: 'fable', agentEffort: 'max' };
+  const ws = await createWorkspace({ name: 'Models WS', projectPaths: [a, b], scanModels: pick });
+  assert.deepEqual((await readWorkspace(ws.id)).scanModels, pick);
+  const db = getDb();
+  const row = db.prepare('SELECT scan_models_json FROM workspaces WHERE id = ?').get(ws.id);
+  assert.deepEqual(JSON.parse(row.scan_models_json), pick);
+
+  const plain = await createWorkspace({ name: 'Plain WS', projectPaths: [a, c] });
+  assert.equal((await readWorkspace(plain.id)).scanModels, null);
+});
+
+test('saveWorkspaceScanResult lazily stores a scanModels pick when a workspace has none; never overwrites one; ignores a null pick', async () => {
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const c = await freshRepo();
+  const pick = { scanModel: 'claude-opus-5-5', scanEffort: 'high', agentModel: 'fable', agentEffort: 'max' };
+  const other = { scanModel: 'claude-sonnet-5', scanEffort: 'medium', agentModel: 'sonnet', agentEffort: 'medium' };
+  const ws = await createWorkspace({ name: 'Persist On Scan WS', projectPaths: [a, b] });   // → scan_models_json NULL
+  assert.equal(ws.scanModels, null, 'a plain create stores no pick (pre-v57 legacy shape)');
+
+  // A scan result carrying the resolved snapshot establishes the pick…
+  await saveWorkspaceScanResult(ws.id, { description: '# Workspace: P\n', scanModels: pick });
+  assert.deepEqual((await readWorkspace(ws.id)).scanModels, pick, 'the snapshot became the workspace pick');
+  const row1 = getDb().prepare('SELECT scan_models_json, updated_at FROM workspaces WHERE id = ?').get(ws.id);
+  assert.deepEqual(JSON.parse(row1.scan_models_json), pick, 'raw row persisted');
+  assert.ok(row1.updated_at, 'the pick UPDATE stamps updated_at');
+
+  // …only once: a later snapshot never overwrites the stored pick…
+  await saveWorkspaceScanResult(ws.id, { description: '# Workspace: P2\n', scanModels: other });
+  assert.deepEqual((await readWorkspace(ws.id)).scanModels, pick, 're-scans keep the stored pick');
+
+  // …and a result without a snapshot leaves a NULL pick alone.
+  const plain = await createWorkspace({ name: 'Plain2 WS', projectPaths: [a, c] });
+  await saveWorkspaceScanResult(plain.id, { description: '# Workspace: Plain2\n' });
+  assert.equal((await readWorkspace(plain.id)).scanModels, null, 'no snapshot, nothing persisted');
+});
+
+test('setWorkspaceScanPick persists a pick, clears on null, stamps updated_at, refuses an unknown id, and re-reads under the write lock (never clobbers a landed finalize)', async () => {
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const pick = { scanModel: 'claude-opus-5-5', scanEffort: 'high', agentModel: 'fable', agentEffort: 'max' };
+  const other = { scanModel: 'claude-sonnet-5', scanEffort: 'medium', agentModel: 'sonnet', agentEffort: 'medium' };
+  const ws = await createWorkspace({ name: 'Set Pick WS', projectPaths: [a, b] });
+  assert.equal(ws.scanModels, null);
+
+  const set = await setWorkspaceScanPick(ws.id, pick);
+  assert.deepEqual(set.scanModels, pick, 'returned on the write');
+  assert.deepEqual((await readWorkspace(ws.id)).scanModels, pick, 'persisted');
+  const row = getDb().prepare('SELECT scan_models_json, updated_at FROM workspaces WHERE id = ?').get(ws.id);
+  assert.deepEqual(JSON.parse(row.scan_models_json), pick, 'raw row persisted');
+  assert.ok(row.updated_at, 'the write stamps updated_at');
+
+  // A pick a scan's finalize landed mid-write is never clobbered: the write re-reads under the lock.
+  await saveWorkspaceScanResult(ws.id, { description: '# Workspace: X\n', scanModels: other });
+  assert.deepEqual((await readWorkspace(ws.id)).scanModels, pick, 'the saved pick survives a finalize snapshot');
+  const set2 = await setWorkspaceScanPick(ws.id, other);
+  assert.deepEqual(set2.scanModels, other, 'an explicit write replaces the pick');
+  assert.deepEqual((await readWorkspace(ws.id)).scanModels, other);
+
+  // ## null clears; an unknown id is NOT_FOUND.
+  const cleared = await setWorkspaceScanPick(ws.id, null);
+  assert.equal(cleared.scanModels, null, 'null clears');
+  assert.equal((await readWorkspace(ws.id)).scanModels, null, 'row returns null');
+  await assert.rejects(() => setWorkspaceScanPick('no-such-workspace', pick), (e) => e && e.code === 'NOT_FOUND');
+});
 
 test('createWorkspace metricsProject: stored and returned, null when omitted, a non-member is BAD_REQUEST', async () => {
   const a = await freshRepo();

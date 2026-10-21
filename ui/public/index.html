@@ -1275,6 +1275,10 @@
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.3-5.7"></path><path d="M20 4v5h-5"></path></svg>
                     Re-scan
                   </button>
+                  <button type="button" class="ws-scan-model btn" title="View or change the model this workspace re-scans with (also opened when a re-scan needs a model)">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"></path></svg>
+                    <span class="ws-scan-model-label"></span>
+                  </button>
                   <span class="pd-spacer"></span>
                   <button type="button" class="btn btn-danger pd-remove ws-delete">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13M10 11v6M14 11v6"></path></svg>
@@ -2573,6 +2577,43 @@
         <div class="confirm-actions">
           <button type="button" id="confirm-cancel" class="btn">Cancel</button>
           <button type="button" id="confirm-ok" class="btn btn-primary">Confirm</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== Choose a scan model ===== -->
+    <!-- Opens when a re-scan (the header's Re-scan, or the auto re-scan after a member change)
+         targets a workspace whose saved scan model is missing or no longer usable (the server
+         answers SCAN_MODEL_REQUIRED), and from the header's "Scan model" control. Mirrors the
+         create wizard's Models column: the four picks are painted by paintScanModelPickers into
+         the sm- ids, and the API accepts exactly what readScanModelPickers reads back. -->
+    <div id="scan-model-modal" class="viewer-modal confirm-modal scan-model-modal hidden" role="dialog" aria-modal="true" aria-labelledby="scan-model-title">
+      <div class="card">
+        <div class="card-head">
+          <h2 id="scan-model-title">Choose a scan model</h2>
+        </div>
+        <p id="scan-model-message" class="confirm-message"></p>
+        <div class="scan-model-fields">
+          <div class="field">
+            <div class="label-row"><label for="sm-scan-model">Scan agent</label></div>
+            <div class="wiz-model-pair">
+              <select id="sm-scan-model" class="select" aria-label="Scan agent model"></select>
+              <select id="sm-scan-effort" class="select" aria-label="Scan agent effort"></select>
+            </div>
+          </div>
+          <div class="field">
+            <div class="label-row"><label for="sm-agent-model">Project agents</label></div>
+            <div class="wiz-model-pair">
+              <select id="sm-agent-model" class="select" aria-label="Project agents model"></select>
+              <select id="sm-agent-effort" class="select" aria-label="Project agents effort"></select>
+            </div>
+          </div>
+        </div>
+        <div class="confirm-actions">
+          <button type="button" id="scan-model-clear" class="btn hidden">Clear saved model</button>
+          <span class="pd-spacer"></span>
+          <button type="button" id="scan-model-cancel" class="btn">Cancel</button>
+          <button type="button" id="scan-model-ok" class="btn btn-primary">Save</button>
         </div>
       </div>
     </div>
