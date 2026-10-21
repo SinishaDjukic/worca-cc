@@ -137,7 +137,7 @@ export function resultWord(snap) {
   if (!r) return { key: 'ship', tone: 'green', glyph: 'check', title: 'Finished', sub: '' };
   const checks = Number(r.checks) || 0;
   return { key: 'ship', tone: 'green', glyph: 'ship', title: checks ? 'Ready to review' : 'Ready to ship',
-    sub: checks ? `${checks} thing${checks === 1 ? '' : 's'} to check` : 'Clean — no blocking issues flagged' };
+    sub: checks ? `${checks} thing${checks === 1 ? '' : 's'} to check` : 'Clean: no blocking issues flagged' };
 }
 
 /** The receipt line a question collapses into once it is resolved (mockup §5c/§5d): the named decision this tab sent
@@ -811,7 +811,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     if (!inFlight) {
       pauseBtn.dataset.action = resume ? 'resume' : 'pause';
       pauseBtn.textContent = resume ? 'Resume' : status === 'pausing' || pauseAsked ? 'Pausing…' : 'Pause';
-      pauseBtn.title = resume ? 'Resume — restart this paused pipeline where it left off' : 'Pause — gracefully stop the session so it can be resumed';
+      pauseBtn.title = resume ? 'Resume: restart this paused pipeline where it left off' : 'Pause: gracefully stop the session so it can be resumed';
     }
     pauseBtn.disabled = inFlight || !!pauseAsked || (!resume && status !== 'running');
   }

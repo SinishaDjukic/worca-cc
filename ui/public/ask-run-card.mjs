@@ -216,7 +216,7 @@ export function createRunProgressCard({ doc, ident, onOpen = null }) {
     banner.hidden = !q;
     if (!q) return;
     const n = Array.isArray(q.questions) && q.questions.length ? q.questions.length : (Array.isArray(q.issues) && q.issues.length ? q.issues.length : 1);
-    banner.textContent = q.kind === 'workflow' ? 'Waiting for your decision on the proposed workflow' : `Waiting for your answer — ${n} question${n === 1 ? '' : 's'}`;
+    banner.textContent = q.kind === 'workflow' ? 'Waiting for your decision on the proposed workflow' : `Waiting for your answer (${n} question${n === 1 ? '' : 's'})`;
   }
   function update(snap, now = Date.now()) {
     lastSnap = snap || null;

@@ -112,7 +112,7 @@ test('#new/after/p1: the pick waits on the form, the branch select leads with th
   assert.equal(sel.options[0].textContent, 'Branch of the run before it');
   assert.equal(sel.value, '__previous__', 'selected by default on an after-pick');
   assert.deepEqual([...sel.querySelectorAll('optgroup')].map((g) => g.label), ['Branches', 'Run branches']);
-  assert.equal(sel.querySelector('optgroup[label="Run branches"] option').textContent, 'worca/refactor-p1 — Refactor · running');
+  assert.equal(sel.querySelector('optgroup[label="Run branches"] option').textContent, 'worca/refactor-p1: Refactor · running');
   assert.equal(sel.querySelector('optgroup[label="Branches"] option[value="worca/refactor-p1"]'), null, 'not repeated under Branches');
   doc.getElementById('prompt').value = 'Add tests';
   doc.getElementById('start-btn').click();
@@ -248,7 +248,7 @@ test('the previous-run option survives a branch rebuild for another project', as
 test('a predecessor that cannot be waited on is refused (t9 unregistered project, t8 already-ended ticket)', async () => {
   await checkRows([
     { name: '#new/after/t:t9: a predecessor in a project this worca does not know is refused', hash: '#new/after/t:t9', msg: 'That run’s project is not registered.' },
-    { name: '#new/after/t:t8: a ticket predecessor that already ended is refused — nothing to wait for', hash: '#new/after/t:t8', msg: '‘Gone’ was canceled — nothing to wait for.' },
+    { name: '#new/after/t:t8: a ticket predecessor that already ended is refused — nothing to wait for', hash: '#new/after/t:t8', msg: '‘Gone’ was canceled. Nothing to wait for.' },
   ].map(({ name, hash, msg }) => ({ name, run: async () => {
     const { window } = await boot(hash);
     const doc = window.document;

@@ -90,7 +90,7 @@ test('engine-locks: locked options are disabled with the reason; the caller lear
   assert.equal(lockEngineOptions(select), true);
   assert.equal(lockEngineOptions(select), true, 'idempotent');
   assert.deepEqual(select.options.map((o) => [o.value, o.disabled, o.textContent]), [
-    ['', false, 'Default'], ['claude', false, 'Claude'], ['codex', true, 'Codex (Beta) — off while the credential broker is on'], ['cursor', false, 'Cursor (Beta)'],
+    ['', false, 'Default'], ['claude', false, 'Claude'], ['codex', true, 'Codex (Beta): off while the credential broker is on'], ['cursor', false, 'Cursor (Beta)'],
   ]);
   assert.equal(select.options[2].title, 'broker on');
   select.value = 'claude';

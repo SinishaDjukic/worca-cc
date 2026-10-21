@@ -685,7 +685,7 @@ test('the modal loads project remotes into both selects with server defaults and
       const pushSel = modal.querySelector('.shipit-push-remote');
       const baseSel = modal.querySelector('.shipit-base-remote');
       assert.deepEqual(optionValues(pushSel), ['origin', 'upstream']);
-      assert.deepEqual([...baseSel.options].map((o) => o.textContent), ['origin — me/repo', 'upstream — up/repo']);
+      assert.deepEqual([...baseSel.options].map((o) => o.textContent), ['origin (me/repo)', 'upstream (up/repo)']);
       assert.equal(pushSel.value, 'origin');
       assert.equal(baseSel.value, 'upstream');
       assert.equal(pushSel.disabled, false);
@@ -1241,7 +1241,7 @@ test('(a)(b)(c)(g) the Ship-it modal names the base remote\'s PR host and says w
     } },
     { name: '(b) a fork push into an Azure base says forks are not supported, not Cross-repo', run: async () => {
       const modal = await openModal(await bootShip({ remotes: azRemotes([AZ_BASE, AZ_FORK], { pushRemote: 'fork', baseRemote: 'origin' }) }));
-      assert.equal(hintOf(modal), 'Azure DevOps pull requests between repositories (forks) are not supported yet — push to origin.');
+      assert.equal(hintOf(modal), 'Azure DevOps pull requests between repositories (forks) are not supported yet. Push to origin.');
     } },
     { name: '(c) a missing credential shows the server\'s reason', run: async () => {
       const prReason = 'Azure DevOps is not configured: set WORCA_ADO_TOKEN (a PAT with Code: Read & Write) where worca runs';
@@ -1393,7 +1393,7 @@ test('Overview: an open PR row shows GitHub\'s verdict and the watch, words only
     [WATCH({ status: 'fixing', activePipelineId: 'f1' }), 'Fixing', 'true'],
     [WATCH({ status: 'fixing', activePipelineId: 'f1', mergingBase: 'dev' }), 'Merging dev in', 'true'],
     [WATCH({ status: 'fixing', activePipelineId: 'f1', resolving: true }), 'Resolving conflicts', 'true'],
-    [WATCH({ watching: false, status: 'publishing' }), 'Disabled — finishing', 'false'],
+    [WATCH({ watching: false, status: 'publishing' }), 'Disabled (finishing)', 'false'],
     [WATCH({ status: 'needs-person', reason: 'cap' }), 'Needs a person', 'true'],
     [WATCH({ watching: false, status: null }), '', 'false'],
   ]) {
@@ -1402,7 +1402,7 @@ test('Overview: an open PR row shows GitHub\'s verdict and the watch, words only
     assert.equal(ovStatus(ctx.window).hidden, false);
     assert.match(ovPr(ctx.window).textContent, /^Pull request/);
     assert.match(ovStatus(ctx.window).textContent, /Ready to merge·All 12 checks passed/);
-    if (label) assert.match(ovStatus(ctx.window).textContent, new RegExp(label));
+    if (label) assert.ok(ovStatus(ctx.window).textContent.includes(label), label);
     else assert.doesNotMatch(ovStatus(ctx.window).textContent, /Watching|Fixing|Needs a person|Disabled/);
     assert.equal(ovSwitch(ctx.window).querySelector('[role="switch"]').getAttribute('aria-checked'), pressed);
     assert.equal(ovSwitch(ctx.window).dataset.minLevel, 'advanced');

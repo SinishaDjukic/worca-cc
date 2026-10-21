@@ -165,7 +165,7 @@ export function renderAutoProposal(proposal, {
   function paintMatch() {
     matchText.replaceChildren();
     if (p.match) { matchText.append(doc.createTextNode('Same as your saved workflow '), h(doc, 'b', null, `"${p.match.name}"`)); }
-    else { matchText.append(doc.createTextNode('No saved workflow has this shape — will be saved as '), h(doc, 'b', null, `"${state.name}"`)); }
+    else { matchText.append(doc.createTextNode('No saved workflow has this shape. It will be saved as '), h(doc, 'b', null, `"${state.name}"`)); }
   }
   match.append(icon(doc, p.match ? ICO.check : ICO.search), matchText); paintMatch(); parts.match = match;
   const warnBox = h(doc, 'div', 'ask-wfcard-warnings');

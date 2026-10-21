@@ -38,7 +38,7 @@ export const DEFAULT_FMT = {
     const v = Math.round(((h || 0) + Number.EPSILON) * 10) / 10;
     return `${v.toLocaleString('en-US', { maximumFractionDigits: 1 })} h`;
   },
-  estTitle: (n) => `Estimated cost $${(n || 0).toLocaleString('en-US', USD_4DP)} — Claude Code client-side estimate (total_cost_usd), not authoritative billing`,
+  estTitle: (n) => `Estimated cost $${(n || 0).toLocaleString('en-US', USD_4DP)}. Claude Code client-side estimate (total_cost_usd), not authoritative billing`,
 };
 
 function h(doc, tag, cls, text) {
@@ -315,7 +315,7 @@ export function renderCostPauseBanner(rec, { doc = globalThis.document, fmt = DE
   settingsBtn.type = 'button';
 
   if (kind === 'cb-pipeline') {
-    el.appendChild(h(doc, 'b', null, 'Paused — pipeline cost limit reached'));
+    el.appendChild(h(doc, 'b', null, 'Paused: pipeline cost limit reached'));
     text.appendChild(doc.createTextNode("This pipeline's estimated cost hit "));
     text.appendChild(h(doc, 'span', 'mono', fmt.usd(rec.totalCostUsd || 0)));
     text.appendChild(doc.createTextNode(' of its '));
@@ -330,7 +330,7 @@ export function renderCostPauseBanner(rec, { doc = globalThis.document, fmt = DE
     actions.appendChild(settingsBtn);
     actions.appendChild(override);
   } else {
-    el.appendChild(h(doc, 'b', null, 'Paused — total budget reached'));
+    el.appendChild(h(doc, 'b', null, 'Paused: total budget reached'));
     text.appendChild(doc.createTextNode('Estimated spend is '));
     text.appendChild(h(doc, 'span', 'mono', fmt.usd(b.windowSpendUsd || 0)));
     text.appendChild(doc.createTextNode(' of the '));
@@ -765,7 +765,7 @@ export function renderStatsBody(model, opts = {}) {
     ? model.series[model.series.length - 1].bucketStartMs : 0;
   if (!model.totals.runs && !model.series.some((p) => p.spentUsd > 0)) {
     const emptyText = model.filtered ? 'No runs match these filters in this period.' : model.range === 'all'
-      ? 'No pipelines yet — run one from New run.'
+      ? 'No pipelines yet. Run one from New run.'
       : 'No runs in this period.';
     for (const title of ['Spend', 'Runs']) {
       const card = chartCard(doc, `${title} per ${unitWord(model.bucket)}`, rangeLabel);

@@ -128,7 +128,7 @@ test('free-request row: "Free requests today  37 / 50", amber when low, red when
     { name: 'freeDailyRow: null when off or unknown; the count, tone and tip otherwise', run: () => {
       for (const s of [null, { enabled: false }, FREE({ known: false })]) assert.equal(freeDailyRow(s, { now }), null);
       assert.deepEqual(freeDailyRow(FREE(), { now }), { text: '37 / 50', tone: '',
-        title: 'OpenRouter free-model requests left today: 37 of 50 · resets 00:00 UTC, in 3h 0m — every model call on a :free model is one request' });
+        title: 'OpenRouter free-model requests left today: 37 of 50 · resets 00:00 UTC, in 3h 0m. Every model call on a :free model is one request' });
       assert.equal(freeDailyRow(FREE({ remaining: 4 }), { now }).tone, 'warn', 'under 10% left');
       assert.equal(freeDailyRow(FREE({ remaining: 0 }), { now }).tone, 'over', 'used up');
       assert.match(freeDailyRow(FREE({ remaining: 0 }), { now }).title, /one request\. Used up: free models pause until the reset\.$/);

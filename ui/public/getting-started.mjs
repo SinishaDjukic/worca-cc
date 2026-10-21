@@ -207,7 +207,7 @@ export function renderGettingStarted(host, status, { onStep, onHide, animate = t
     tile.className = `gs-tile${animate ? ' reveal' : ''}${isDone ? ' done' : ''}`;
     tile.dataset.step = s.id;
     tile.style.setProperty('--tile-delay', `${animate ? delay : 0}s`);
-    tile.setAttribute('aria-label', `${s.label} — ${isDone ? 'done' : 'not done yet'}`);
+    tile.setAttribute('aria-label', `${s.label}: ${isDone ? 'done' : 'not done yet'}`);
     const mark = doc.createElement('span');
     mark.className = 'gs-mark';
     mark.setAttribute('aria-hidden', 'true');
@@ -225,7 +225,7 @@ export function renderGettingStarted(host, status, { onStep, onHide, animate = t
       lv.dataset.lv = s.level;
       lv.textContent = LEVEL_LABEL[s.level];
       tile.appendChild(lv);
-      tile.setAttribute('aria-label', `${tile.getAttribute('aria-label')} — part of ${LEVEL_LABEL[s.level]} mode`);
+      tile.setAttribute('aria-label', `${tile.getAttribute('aria-label')}, part of ${LEVEL_LABEL[s.level]} mode`);
     }
     tile.addEventListener('click', () => onStep && onStep(s.id));
     tiles.appendChild(tile);
@@ -255,7 +255,7 @@ export function renderGettingStartedPill(host, status, onOpen) {
   const btn = doc.createElement('button');
   btn.type = 'button';
   btn.className = 'gs-pill';
-  btn.setAttribute('aria-label', `Getting started — ${done} of ${total} done`);
+  btn.setAttribute('aria-label', `Getting started: ${done} of ${total} done`);
   btn.title = 'Getting started';
   btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12.5l4.5 4.5L20 6"></path></svg>';
   const text = doc.createElement('span');

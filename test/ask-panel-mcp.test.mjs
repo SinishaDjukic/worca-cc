@@ -362,7 +362,7 @@ test('a failed preview says so in the open picker and keeps the chip so it can b
       state.preview = null;                                                      // the next preview answers no body
       ctx.window.dispatchEvent(new ctx.window.Event('hashchange'));
       await settle(ctx);
-      assert.match(pop(ctx).textContent, /Could not load the sets — reopen to retry\./);
+      assert.match(pop(ctx).textContent, /Could not load the sets\. Reopen to retry\./);
       ctx.panel.destroy();
     } },
     { name: 'a failed preview keeps the chip, so the picker can be reopened to retry', run: async () => {
@@ -374,7 +374,7 @@ test('a failed preview says so in the open picker and keeps the chip so it can b
       state.preview = null;                                                      // the next preview fails
       ctx.window.dispatchEvent(new ctx.window.Event('hashchange'));
       await settle(ctx);
-      assert.match(pop(ctx).textContent, /reopen to retry/);
+      assert.match(pop(ctx).textContent, /Reopen to retry/);
       assert.equal(btn(ctx).hidden, false, 'the chip the message tells the user to reopen is still there');
       assert.equal(btn(ctx).textContent.trim(), 'Sets · ?');
       state.preview = PREVIEW;

@@ -365,7 +365,7 @@ test('Configure…: an installed plugin opens its settings pane with the policy\
   assert.equal(inputs.baseUrl.dataset.seeded, '1');
   assert.equal(inputs.projectKey.value, 'OLD', 'a stored value is never overwritten');
   assert.equal(inputs.token.value, '', 'a secret is never seeded');
-  assert.match(modal.querySelector('.pl-seeded-note').textContent, /^baseUrl filled in from the team policy — Save keeps them/);
+  assert.match(modal.querySelector('.pl-seeded-note').textContent, /^baseUrl filled in from the team policy\. Save keeps them/);
 });
 
 test('New pipeline: MCP servers paints under Guardrails; an unticked membership reaches the policy notes and the run body', async () => {
@@ -455,7 +455,7 @@ test('Running: a cost_pipeline_policy pause shows the blue banner; "Continue pas
   assert.ok(banner, 'the run page carries the cost banner');
   assert.equal(banner.hidden, false);
   assert.ok(banner.classList.contains('cb-policy'), 'the blue team-cap variant');
-  assert.match(banner.textContent, /Paused — team cost cap reached/);
+  assert.match(banner.textContent, /Paused: team cost cap reached/);
   assert.equal(word(row()), 'Paused · team cap', 'the row names the team cap');
   assert.ok(banner.querySelector('.cb-past-team-cap'));
   assert.equal(banner.querySelector('.cb-override'), null);

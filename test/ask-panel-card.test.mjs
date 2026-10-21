@@ -451,7 +451,7 @@ test('ask-panel-card v2: workspace target → the lane edits THIS run (built-in 
   assert.equal(sel.disabled, false, 'a per-run pick needs no project');
   const save = lane.querySelector('[data-ctl="saveDefaults"]');
   assert.deepEqual([save.disabled, save.checked], [true, false]);
-  assert.match(lane.querySelector('.ask-rp-agents-foot').textContent, /apply to this run only — agent defaults are per project/);
+  assert.match(lane.querySelector('.ask-rp-agents-foot').textContent, /apply to this run only\. Agent defaults are per project/);
   sel.value = 'claude-haiku-4-5';
   sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
   ctx.doc.querySelector('[data-ask-card-start]').click();
@@ -564,7 +564,7 @@ test('ask-panel-card v2: nothing starts when the config write fails or the extra
       sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
       ctx.doc.querySelector('[data-ask-card-start]').click();
       for (let i = 0; i < 6; i++) await ctx.tick();
-      assert.equal(ctx.doc.querySelector('.ask-card-err').textContent, 'attachments exceed 100 MB — remove one');
+      assert.equal(ctx.doc.querySelector('.ask-card-err').textContent, 'attachments exceed 100 MB: remove one');
       assert.equal(rec.runBodies, undefined);
       assert.equal(rec.configWrites, undefined, 'the extras check runs first, so a refusal persists nothing');
       const rec2 = {};
@@ -830,7 +830,7 @@ test('ask-panel-card: a card that became a repeating schedule follows the series
   const el = ctx.doc.querySelector('[data-ask-card-scheduled]');
   assert.ok(el);
   assert.equal(el.querySelector('.badge').textContent, 'Repeats');
-  assert.match(el.querySelector('.ask-card-sched-text').textContent, /^Fix login — Every weekday at 02:00 · next /);
+  assert.match(el.querySelector('.ask-card-sched-text').textContent, /^Fix login: Every weekday at 02:00 · next /);
   const [runNow, del] = [...el.querySelectorAll('button')];
   assert.equal(del.textContent, 'Delete schedule');
   runNow.click();
@@ -912,7 +912,7 @@ test('ask-panel-card: run chains — a proposal after ANOTHER run says so, Sched
       const el = ctx.doc.querySelector('[data-ask-card-scheduled]');
       assert.ok(el);
       assert.equal(el.querySelector('.badge').textContent, 'After run');
-      assert.equal(el.querySelector('.ask-card-sched-text').textContent, 'Fix login — after ‘Refactor’ finishes');
+      assert.equal(el.querySelector('.ask-card-sched-text').textContent, 'Fix login: after ‘Refactor’ finishes');
     } },
   ]);
 });
@@ -966,7 +966,7 @@ test('typed cards (model, clone, web, workspace, actions): fields render as text
       const prov = { type: 'model', kind: 'provider', target: 'openai', summary: 'Change the OpenAI-compatible provider', rows: [{ field: 'Base URL', before: 'a', after: 'b' }], warnings: [] };
       ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_0000000c', state: 'declined', card: prov }, threadId: TID, messageId: MID, seq: 6 });
       ctx.flush();
-      assert.ok([...ctx.doc.querySelectorAll('.ask-card-stub')].some((x) => x.textContent === 'Declined — Change the OpenAI-compatible provider'));
+      assert.ok([...ctx.doc.querySelectorAll('.ask-card-stub')].some((x) => x.textContent === 'Declined: Change the OpenAI-compatible provider'));
     } },
     { name: 'clone card: repository, branch, folder and GitHub rows; Clone / Decline post the verbs; cloning, applied and failed read as such', run: async () => {
       const rec = { cardPosts: [] };
@@ -1514,7 +1514,7 @@ test('ask-panel-card: card.nodes pre-fills the lane — marker with the reason, 
   assert.equal(plan.querySelector('.ask-rp-eff button.on').textContent, 'high');
   const mark = plan.querySelector('.ask-rp-prop');
   assert.equal(mark.textContent, 'Chat');
-  assert.equal(mark.title, 'Proposed by Chat for this run — Plans the auth change: a judgement step — anthropic · top tier · $4/$20 per Mtok');
+  assert.equal(mark.title, 'Proposed by Chat for this run\nPlans the auth change: a judgement step\nanthropic · top tier · $4/$20 per Mtok');
   assert.deepEqual([mark.tabIndex, mark.getAttribute('aria-label')], [0, mark.title], 'the reason reaches keyboard and screen-reader users too');
   assert.equal(plan.querySelector('.ask-rp-name small').textContent, 'Chat · step 1 · project: inherit');
   assert.ok(!plan.classList.contains('mod'), 'a proposed pick is not the user\'s edit');
@@ -1991,7 +1991,7 @@ test('Ask graph card: Open in Workflows saves its drafts first; a failed or miss
   clickText(cardEl('card_0000c019'), 'Save as workflow');
   await ticks(ctx, 6);
   assert.equal(errOf('card_0000c019').hidden, false);
-  assert.equal(errOf('card_0000c019').textContent, 'Not saved — down');
+  assert.equal(errOf('card_0000c019').textContent, 'Not saved: down');
 });
 
 test('Ask graph card: the Workflows rendering — build_workflow\'s x/y verbatim, description footers once the library loads, and its Expand is Open in Workflows (a saved card opens its row)', async () => {
@@ -2060,7 +2060,7 @@ test('Ask graph card (D10): a 409 naming commands the card did not show lists th
   assert.equal(el.querySelector('.gv-import-script-h').textContent, 'My script (n_sh, shell) · command');
   assert.equal(el.querySelector('pre.gv-import-script-v').textContent, 'make lint');
   assert.ok(el.querySelector('.gv-import-scripts').compareDocumentPosition(el.querySelector('.wfc-actions')) & 4, 'above the buttons');
-  assert.match(el.querySelector('p.wfc-err[role="status"]').textContent, /check the commands this workflow runs/);
+  assert.match(el.querySelector('p.wfc-err[role="status"]').textContent, /Check the commands this workflow runs/);
   clickText(el, 'Save as workflow');
   await ticks(ctx, 6);
   assert.deepEqual(r.cardPosts, [['card_0000c022', { state: 'saved' }], ['card_0000c022', { state: 'saved', acceptScripts: [{ nodeId: 'n_sh', params: { command: 'make lint' } }] }]]);
@@ -2204,7 +2204,7 @@ test('Ask draft card: a Save whose record failed shows the card unsaved (Save re
   });
   clickText(ctx.doc.querySelector('.ask-ccard [aria-label="New agent"]'), 'Save agent');
   await ticks(ctx);
-  assert.match(ctx.doc.querySelector('.ask-ccard[data-card-id="card_0000c041"] p.wfc-err[role="status"]').textContent, /Saved, but the card was not updated — down/);
+  assert.match(ctx.doc.querySelector('.ask-ccard[data-card-id="card_0000c041"] p.wfc-err[role="status"]').textContent, /Saved, but the card was not updated: down/);
   for (const f of stampFrames([{ type: 'ask-card', block: { kind: 'card', id: 'card_0000c042', state: 'proposed', card: BUILD } }],
     { threadId: TID, messageId: MID, seqStart: 3 })) ctx.panel.pushServerFrame(f);
   ctx.flush(); await ticks(ctx);

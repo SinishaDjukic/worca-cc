@@ -19,7 +19,7 @@ const FLOW_TITLES = { task: 'Task', end: 'End', and: 'AND', or: 'OR', combine: '
 const FLOW_BLURB = {
   task: 'The pipeline entry: the prompt and its attached files.',
   end: 'The pipeline sink. A token arriving here completes the run.',
-  and: 'Fires when ALL of its inputs are fresh. Payloads are discarded — pure sequencing.',
+  and: 'Fires when ALL of its inputs are fresh. Payloads are discarded (pure sequencing).',
   or: 'Fires on ANY fresh input and forwards the freshest payload.',
   combine: 'Joins its md inputs into one document, in port order.',
 };

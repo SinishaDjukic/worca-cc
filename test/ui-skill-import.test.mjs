@@ -229,7 +229,7 @@ test('Back and Cancel discard the stage; refusals show in the modal (a taken nam
   type(body(taken.modal).querySelector('[data-imp="path"]'), '/src/db-migrations');
   await act(taken.modal, 'Preview');
   await act(taken.modal, 'Import');
-  assert.equal(msgOf(taken.modal).textContent, 'a skill named db-migrations is already in the library — remove the existing one in Connectors › Skills first, or change the name in its SKILL.md.');
+  assert.equal(msgOf(taken.modal).textContent, 'a skill named db-migrations is already in the library. Remove the existing one in Connectors › Skills first, or change the name in its SKILL.md.');
   assert.ok(taken.modal.opened);
   assert.deepEqual(taken.done, []);
   const damaged = harness({ over: { 'POST /api/skills/import': { ok: false, status: 409,

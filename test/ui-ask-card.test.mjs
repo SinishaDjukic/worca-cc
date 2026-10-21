@@ -413,7 +413,7 @@ test('ui-ask-card: a proposed workflowId no list serves fails loudly — inline 
   const card = ctx.window.document.querySelector('.ask-card.ask-rp');
   const sel = card.querySelector('.ask-card-workflow');
   const start = card.querySelector('[data-ask-card-start]');
-  assert.equal(card.querySelector('.ask-card-err').textContent, 'Workflow wf_ghost is not available — pick one');
+  assert.equal(card.querySelector('.ask-card-err').textContent, 'Workflow wf_ghost is not available: pick one');
   assert.equal(sel.value, '', 'no other option is silently selected');
   assert.deepEqual([...sel.options].map((o) => o.value), ['wf_default', 'wf_review'], 'the served list is still offered');
   assert.equal(start.disabled, true);

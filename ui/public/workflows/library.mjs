@@ -29,7 +29,7 @@ const TRASH_GLYPH = '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3
 const FLOW_DESC = {
   task: 'The pipeline entry: the prompt and its attached files.',
   end: 'The pipeline sink. A token arriving here completes the run.',
-  and: 'Fires when ALL of its inputs are fresh. Payloads discarded — pure sequencing.',
+  and: 'Fires when ALL of its inputs are fresh. Payloads discarded (pure sequencing).',
   or: 'Fires on ANY fresh input and forwards the freshest payload.',
   combine: 'Joins its md inputs into one document, in port order.',
 };
@@ -433,7 +433,7 @@ export function createLibrary({ doc, host, actions }) {
       fam: a.color || 'blue', glyph: safeAgentIcon(a) || '', viewBox: '0 0 24 24', draggable: placeable,
       detail: () => {
         const d = h('div', 'wfl-detail');
-        d.appendChild(h('p', 'wfl-desc', `${a.key} · ${a.runnerType || 'producer'} — ${a.description || a.portSummary || ''}`));
+        d.appendChild(h('p', 'wfl-desc', `${a.key} · ${a.runnerType || 'producer'}: ${a.description || a.portSummary || ''}`));
         d.append(h('div', 'wfl-k', 'Inputs'), portChips(a.inputs, { dir: 'in' }), h('div', 'wfl-k', 'Outputs'), portChips(a.outputs, { dir: 'out' }));
         const caps = h('div', 'wfl-caps');
         if (a.fanOut) caps.appendChild(h('span', 'wfl-qchip', 'Research fan-out'));

@@ -56,7 +56,7 @@ export function compileDefinition(form) {
       const fk = r.fieldKey || fieldKeyFor(key);
       // Two refs share a field only when the stored definition says so (its own key, same secret flag).
       const clash = fields.find((x) => x.key.toLowerCase() === fk.toLowerCase());
-      if (clash && !(r.fieldKey && clash.key === fk && !!clash.secret === !!r.secret)) errors.push(`${key}: its field "${fk}" is already declared — rename the row`);
+      if (clash && !(r.fieldKey && clash.key === fk && !!clash.secret === !!r.secret)) errors.push(`${key}: its field "${fk}" is already declared. Rename the row`);
       out[key] = { field: fk, ...(r.prefix ? { prefix: r.prefix } : {}), ...(r.suffix ? { suffix: r.suffix } : {}) };
       if (r.secret) add({ key: fk, label: key, secret: true, required: true });
       else {
@@ -110,8 +110,8 @@ export function compileDefinition(form) {
     def.headers = map();
     if (form.bearer) {
       // The tick owns the token field and the Authorization header: a row or placeholder holding either is an error.
-      if (fields.some((x) => x.key.toLowerCase() === 'token')) errors.push('Bearer token: its field "token" is already declared — rename the row or the placeholder');
-      if (Object.keys(def.headers).some((k) => k.toLowerCase() === 'authorization')) errors.push('Authorization: the Bearer token tick sets this header — remove the row');
+      if (fields.some((x) => x.key.toLowerCase() === 'token')) errors.push('Bearer token: its field "token" is already declared. Rename the row or the placeholder');
+      if (Object.keys(def.headers).some((k) => k.toLowerCase() === 'authorization')) errors.push('Authorization: the Bearer token tick sets this header. Remove the row');
       def.headers.Authorization = { field: 'token', prefix: 'Bearer ' };
       add({ key: 'token', label: 'Bearer token', secret: true, oauth: true, required: true });
     }
@@ -161,7 +161,7 @@ export function createDefinitionForm(doc, api, form, { edit }) {
   function fills() {
     const { def } = compileDefinition(form);
     derived.replaceChildren(h(doc, 'span', 'label', 'Each set fills in'));
-    if (!def.fields.length) derived.appendChild(h(doc, 'small', 'hint', 'nothing — every set runs it as is'));
+    if (!def.fields.length) derived.appendChild(h(doc, 'small', 'hint', 'nothing. Every set runs it as is'));
     const fromArgs = new Set((def.args || []).filter((a) => typeof a === 'object').map((a) => a.field));
     const inUrl = new Set([].concat(def.url || []).filter((p) => p && typeof p === 'object').map((p) => p.field));
     for (const f of def.fields) {

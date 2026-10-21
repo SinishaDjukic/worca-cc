@@ -136,14 +136,14 @@ test('a composite (fan-out) parent has NO row of its own: its start time comes f
   assert.deepEqual(decorFromState(st).activeNodes.map((a) => a.nodeId), ['n_impl', 'n_plan'], 'the slice started later');
 });
 
-test('the End chip links a path by basename and says "— completed" for a void result', () => {
+test('the End chip links a path by basename and says "completed" for a void result', () => {
   const done = { status: 'done', endReached: true,
     steps: [step({ executionId: 'x:n_end:1', nodeId: 'n_end', status: 'done', costUsd: 0 })] };
   const withPath = decorFromState(S({ ...done, result: { type: 'md', path: '/tmp/run/plan-review.md' } }));
   assert.deepEqual(withPath.endResult, { nodeId: 'n_end', path: '/tmp/run/plan-review.md', rel: 'plan-review.md', text: 'plan-review.md', kind: 'path' });
   const voidRes = decorFromState(S({ ...done, result: { type: 'void' } }));
   assert.equal(voidRes.endResult.kind, 'void');
-  assert.equal(voidRes.endResult.text, '— completed');
+  assert.equal(voidRes.endResult.text, 'completed');
   assert.equal(voidRes.endResult.path, null);
   assert.equal(decorFromState(S()).endResult, null, 'no chip until End binds');
   // A recorded result on a run that never bound End (endReached false) shows nothing.

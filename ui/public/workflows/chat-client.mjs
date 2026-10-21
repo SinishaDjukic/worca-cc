@@ -88,7 +88,7 @@ export function createComposerChatClient({ fetch: fetchFn, sendWs = () => {}, st
         // newChat(), and the branch below starts a fresh thread instead.
         if (threadId && !model) {
           await load(threadId);
-          if (threadId && !model) return { ok: false, error: 'This chat could not be loaded — start a New chat.' };
+          if (threadId && !model) return { ok: false, error: 'This chat could not be loaded. Start a New chat.' };
         }
         const pick = await defaultPick();   // after the load: a stored chat keeps its own engine
         if (!pick) return { ok: false, error: 'No model is available for the chat.' };

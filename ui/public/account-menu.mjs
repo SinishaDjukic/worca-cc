@@ -89,7 +89,7 @@ export function renderSpendCard(budget, { doc = globalThis.document, fmt = DEFAU
     card.dataset.spend = ring ? (ring.tone || 'ok') : 'none';
     card.title = `Estimated spend this ${periodWord(b)}: ${fmt.usd4(b.windowSpendUsd)}` +
       (limit ? ` of ${fmt.usd(b.totalLimitUsd)}` : '') +
-      ` · resets ${fmtResetAt(b.windowEndMs)} — Claude Code client-side estimate (total_cost_usd), not authoritative billing` +
+      ` · resets ${fmtResetAt(b.windowEndMs)}. Claude Code client-side estimate (total_cost_usd), not authoritative billing` +
       (saved != null ? `. Saved this ${periodWord(b)}: ${signedUsd(fmt, saved)} (${SAVED_NOTE})` : '');
     const head = h(doc, 'div', 'mc-head');
     if (ring) head.appendChild(ringSvg(doc, 'mini-ring', 20, MINI_R, ring.ratio));

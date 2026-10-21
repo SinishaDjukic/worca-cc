@@ -327,7 +327,7 @@ export function openSkillImport({ api, modal, onDone = () => {}, doc = globalThi
     busy = false;
     // The name advice only for a taken name: a 409 also means a library.json that is damaged or from a newer Worca.
     if (r.status === 409 && /already in the library/.test((r.data && r.data.error) || '')) {
-      return tell(msg, `${r.data.error} — remove the existing one in Connectors › Skills first, or change the name in its SKILL.md.`);
+      return tell(msg, `${r.data.error}. Remove the existing one in Connectors › Skills first, or change the name in its SKILL.md.`);
     }
     if (!r.ok) return tell(msg, (r.data && r.data.error) || `HTTP ${r.status}`);
     staged = null;   // committed: nothing left to discard

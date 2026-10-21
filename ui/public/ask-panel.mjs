@@ -967,7 +967,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       let res = null;
       try {
         res = await fetch(`/api/ask/threads/${id}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      } catch { setComposerMsg('network error — the message was not sent'); return false; }
+      } catch { setComposerMsg('network error: the message was not sent'); return false; }
       const accepted = !!res && res.status === 202;
       // The user may have clicked New chat or switched threads during the POST: the
       // message is on the server and arrives with its thread; touching the composer
@@ -1025,7 +1025,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     let q = st.queues.get(id);
     if (!q) { q = { items: [], paused: false, draining: false }; st.queues.set(id, q); }
     if (q.items.length >= QUEUE_MAX) {
-      announce(`Queue full — ${QUEUE_MAX} messages wait for this reply`);
+      announce(`Queue full: ${QUEUE_MAX} messages wait for this reply`);
       renderQueue();
       return false;
     }
@@ -1038,7 +1038,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     renderChips();
     st.hist = { idx: -1, draft: '' };
     renderQueue();
-    announce(`Queued — ${q.items.length} of ${QUEUE_MAX}, sends when the reply finishes`);
+    announce(`Queued: ${q.items.length} of ${QUEUE_MAX}, sends when the reply finishes`);
     return 'queued';
   }
 
@@ -1268,7 +1268,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const paused = !!q && q.paused;
     el.queueResume.hidden = !paused;
     el.queueNote.textContent = paused ? 'Queue paused'
-      : items.length >= QUEUE_MAX ? 'Queue full — sends when the reply finishes'
+      : items.length >= QUEUE_MAX ? 'Queue full: sends when the reply finishes'
         : 'Sends when the reply finishes';
     if (before) {
       for (const li of el.queueList.children) {
@@ -2366,14 +2366,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // The two STATUS badges stay (models-view.mjs:116,120-123) — they are warnings, not provenance.
       if (m.costUnreliable) {
         item.appendChild(tag('⚠cost', 'is-warn',
-          'This model reported no cost while consuming tokens — chat spend may not count toward the budget.'));
+          'This model reported no cost while consuming tokens. Chat spend may not count toward the budget.'));
       }
       if (Array.isArray(m.secretsMissing) && m.secretsMissing.length) {
         item.appendChild(tag('secret not set', 'is-err',
-          `${m.secretsMissing.join(', ')} is not set — configure it in the ${m.plugin ? `“${m.plugin}” ` : ''}plugin's Model secrets, or this model will fail.`));
+          `${m.secretsMissing.join(', ')} is not set. Configure it in the ${m.plugin ? `“${m.plugin}” ` : ''}plugin's Model secrets, or this model will fail.`));
       }
       if (m.needsSignIn) {
-        item.appendChild(tag('needs sign-in', 'is-err', m.signInMessage || 'The provider behind this model is not usable yet — the Providers page.'));
+        item.appendChild(tag('needs sign-in', 'is-err', m.signInMessage || 'The provider behind this model is not usable yet. See the Providers page.'));
       }
       // Credential broker: whether the signed-in person has the key this model spends from.
       const cb = credentialBadge(m.id);
@@ -2647,7 +2647,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           panel.appendChild(row);
         }
         // Before the first preview lands, or when it failed: say so rather than show an empty menu.
-        if (!p.sets.length) panel.appendChild(make('div', 'ask-pop-empty', st.mcp.failed ? 'Could not load the sets — reopen to retry.' : !st.mcp.preview ? 'Loading…' : 'No sets in play.'));
+        if (!p.sets.length) panel.appendChild(make('div', 'ask-pop-empty', st.mcp.failed ? 'Could not load the sets. Reopen to retry.' : !st.mcp.preview ? 'Loading…' : 'No sets in play.'));
         // Skills registry §4.1: a host whose Claude Code refuses --plugin-dir mounts no skill — one muted line.
         if (sk.layer && sk.layer.blocked) panel.appendChild(make('div', 'ask-pop-empty', layerLine(sk)));
         // §4.6 (#635): a Codex chat starts the sets' skills but none of their MCP servers — said, never just left out.
@@ -3484,7 +3484,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const e = {};
       if (named || (c.model || '') !== (row.model || '') || (c.effort || '') !== (row.effort || '')) {
         const pair = c.model ? { model: c.model, effort: c.effort || '' } : (row.def.model ? { model: row.def.model, effort: row.def.effort || '' } : null);
-        if (!pair && !lane.explicit) return { error: `${row.label}: "inherit" over this project's own model only works as a project default — turn on "Save as project defaults", or pick a model` };
+        if (!pair && !lane.explicit) return { error: `${row.label}: "inherit" over this project's own model only works as a project default. Turn on "Save as project defaults", or pick a model` };
         if (pair) Object.assign(e, pair);
       }
       if (!!c.fanOut !== !!row.fanOut) e.fanOut = !!c.fanOut;
@@ -3545,7 +3545,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   async function collectCardExtras(local) {
     const pills = local.pills || [];
     if (!pills.length) return { extras: [] };
-    if (pills.reduce((n, p) => n + (p.bytes || 0), 0) > RP_EXTRAS_MAX_BYTES) return { error: `attachments exceed ${RP_EXTRAS_MAX_BYTES / (1024 * 1024)} MB — remove one` };
+    if (pills.reduce((n, p) => n + (p.bytes || 0), 0) > RP_EXTRAS_MAX_BYTES) return { error: `attachments exceed ${RP_EXTRAS_MAX_BYTES / (1024 * 1024)} MB: remove one` };
     const extras = [];
     for (const p of pills) {
       let res = null;
@@ -3628,7 +3628,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         // beside it (a workspace card shows the workflow default: agent settings are per project). `role="note"`: a
         // generic span may not carry aria-label (ARIA 1.2), so a screen reader would skip the reason.
         const mark = make('span', 'ask-rp-prop', 'Chat');
-        mark.title = ['Proposed by Chat for this run', pick.reason, pick.facts].filter(Boolean).join(' — ');
+        mark.title = ['Proposed by Chat for this run', pick.reason, pick.facts].filter(Boolean).join('\n');
         mark.tabIndex = 0;
         mark.setAttribute('role', 'note');
         mark.setAttribute('aria-label', mark.title);
@@ -3725,11 +3725,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const saving = !!projectDir && lc.saveDefaults();
     const pending = laneEditedRows(lane).length > 0;
     foot.appendChild(make('span', 'ask-rp-foot-text', !projectDir
-      ? 'Changes apply to this run only — agent defaults are per project.'
+      ? 'Changes apply to this run only. Agent defaults are per project.'
       : saving ? `Edits become this project's defaults for ${lane.wf.name || lc.workflowId()}`
         : pending ? 'Changes apply to this run only' : "Runs on this project's agent settings"));
     const save = rpSwitch('saveDefaults', 'Save as project defaults', saving, false, (v) => { lc.setSaveDefaults(v); renderLane(laneSec, lane, lc); }, !!projectDir);
-    if (!projectDir) save.title = 'Agent defaults are per project — pick a project target to save them';
+    if (!projectDir) save.title = 'Agent defaults are per project. Pick a project target to save them';
     foot.appendChild(save);
     box.appendChild(foot);
     laneSec.appendChild(box);
@@ -3742,10 +3742,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function buildCardTerminal(block) {
     const card = block.card || {};
     if (block.state === 'failed') {
-      return make('div', 'ask-card-stub ask-card-failed', `Run failed${block.error ? `: ${block.error}` : ''} — ${card.title || card.brief || ''}`);
+      return make('div', 'ask-card-stub ask-card-failed', `Run failed (${card.title || card.brief || 'run proposal'})${block.error ? `: ${block.error}` : ''}`);
     }
     if (block.state === 'scheduled') return buildCardScheduled(block);
-    return make('div', 'ask-card-stub', `Not now — ${card.title || card.brief || 'run proposal'}`);
+    return make('div', 'ask-card-stub', `Not now: ${card.title || card.brief || 'run proposal'}`);
   }
 
   // ---- scheduled proposals (docs/scheduled-runs.md "Chat") ----
@@ -3785,8 +3785,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const series = !!block.scheduleId;
     const title = card.title || card.brief || 'Run';
     rootEl.append(make('span', 'badge grey', series ? 'Repeats' : block.after ? 'After run' : 'Scheduled'), make('span', 'ask-card-sched-text',
-      series ? `${title} — ${block.sentence || 'repeating schedule'}${block.scheduledFor ? ` · next ${localWhen(block.scheduledFor)}` : ''}`
-        : block.after ? `${title} — after ‘${block.after.title || block.after.id}’ finishes` : `${title} — starts ${localWhen(block.scheduledFor)}`));
+      series ? `${title}: ${block.sentence || 'repeating schedule'}${block.scheduledFor ? ` · next ${localWhen(block.scheduledFor)}` : ''}`
+        : block.after ? `${title}: after ‘${block.after.title || block.after.id}’ finishes` : `${title}: starts ${localWhen(block.scheduledFor)}`));
     const err = make('span', 'ask-card-err');
     const call = async (method, path, btn) => {
       err.textContent = ''; btn.disabled = true;
@@ -3883,7 +3883,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       wrap.append(el, wfTargetEl(target));
       return { el: wrap };
     };
-    if (block.state === 'declined') return stub(make('div', 'ask-card-stub', `Declined — ${name || 'workflow proposal'}`));
+    if (block.state === 'declined') return stub(make('div', 'ask-card-stub', `Declined: ${name || 'workflow proposal'}`));
     if (block.state === 'failed') return stub(make('div', 'ask-card-stub ask-card-failed', `Proposal failed: ${block.error || 'unknown error'}`));
     // State modifier = `is-<state>` (v6): `ask-wfcard-${state}` would make the SAVED root carry the same class as the check line below.
     const rootEl = make('div', `ask-card ask-wfcard is-${block.state}`);
@@ -3919,7 +3919,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       handle.parts.name.replaceWith(saved);
       saved.after(line);
     } else if (matched) {
-      const hint = make('div', 'ask-wfcard-hint', 'Model and effort come from that saved workflow — edit them in the Workflows view.');
+      const hint = make('div', 'ask-wfcard-hint', 'Model and effort come from that saved workflow. Edit them in the Workflows view.');
       handle.parts.match.after(hint);
     }
     rootEl.appendChild(handle.el);
@@ -3976,7 +3976,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const noun = isPolicy ? 'policy change' : 'metrics change';
     const Noun = isPolicy ? 'Policy change' : 'Metrics change';
     const summary = card.summary || noun;
-    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined — ${summary}`) };
+    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined: ${summary}`) };
     const rootEl = make('div', `ask-card ask-mcard${isPolicy ? ' ask-pcard' : ''} is-${block.state}`);
     rootEl.setAttribute(isPolicy ? 'data-ask-pcard' : 'data-ask-mcard', block.state);
     const head = make('div', 'ask-mcard-head');
@@ -4064,7 +4064,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function buildAwayCard(block) {
     const card = block.card || {};
     const summary = card.summary || 'Away mode change';
-    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined — ${summary}`) };
+    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined: ${summary}`) };
     const rootEl = make('div', `ask-card ask-mcard ask-awcard is-${block.state}`);
     rootEl.setAttribute('data-ask-awcard', block.state);
     const head = make('div', 'ask-mcard-head');
@@ -4118,7 +4118,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function buildScheduleCard(block) {
     const card = block.card || {};
     const summary = card.summary || 'schedule change';
-    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined — ${summary}`) };
+    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined: ${summary}`) };
     const rootEl = make('div', `ask-card ask-mcard ask-scard is-${block.state}`);
     rootEl.setAttribute('data-ask-scard', block.state);
     const head = make('div', 'ask-mcard-head');
@@ -4183,7 +4183,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function buildModelCard(block) {
     const card = block.card || {};
     const summary = card.summary || 'model change';
-    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined — ${summary}`) };
+    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined: ${summary}`) };
     const rootEl = make('div', `ask-card ask-mcard ask-modcard is-${block.state}`);
     rootEl.setAttribute('data-ask-modcard', block.state);
     const noun = card.kind === 'provider' ? 'provider change' : 'model change';
@@ -4253,7 +4253,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function buildWebCard(block) {
     const card = block.card || {};
     const host = card.host || 'a website';
-    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined — ${card.summary || `Read ${host}`}`) };
+    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined: ${card.summary || `Read ${host}`}`) };
     const rootEl = make('div', `ask-card ask-mcard ask-webcard is-${block.state}`);
     rootEl.setAttribute('data-ask-webcard', block.state);
     const result = card.result || null;
@@ -4301,7 +4301,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function buildCloneCard(block) {
     const card = block.card || {};
     const summary = card.summary || 'clone a repository';
-    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined — ${summary}`) };
+    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined: ${summary}`) };
     const rootEl = make('div', `ask-card ask-mcard ask-clonecard is-${block.state}`);
     rootEl.setAttribute('data-ask-clonecard', block.state);
     const head = make('div', 'ask-mcard-head');
@@ -4424,7 +4424,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function buildWorkspaceCard(block) {
     const card = block.card || {};
     const summary = card.summary || 'workspace change';
-    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined — ${summary}`) };
+    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined: ${summary}`) };
     const rootEl = make('div', `ask-card ask-mcard ask-wscard is-${block.state}`);
     rootEl.setAttribute('data-ask-wscard', block.state);
     const head = make('div', 'ask-mcard-head');
@@ -4503,7 +4503,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function buildActionsCard(block) {
     const card = block.card || {};
     const summary = card.summary || 'actions change';
-    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined — ${summary}`) };
+    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined: ${summary}`) };
     const rootEl = make('div', `ask-card ask-mcard ask-acard is-${block.state}`);
     rootEl.setAttribute('data-ask-acard', block.state);
     const head = make('div', 'ask-mcard-head');
@@ -4787,7 +4787,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     });
     if (presetLine) workflowSel.addEventListener('change', () => {
       presetLine.textContent = workflowSel.value === card.preset.workflowId ? `From preset ${card.preset.name}`
-        : `From preset ${card.preset.name} — agent picks dropped (another workflow)`;
+        : `From preset ${card.preset.name}: agent picks dropped (another workflow)`;
     });
 
     // agents lane (reloadLane → renderLane fills laneSec)
@@ -4916,7 +4916,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // Schedule…: the same request, started later — once, or on a repeat (the card then follows the schedule).
     const sheetOpts = (initial = {}) => ({
       mode: 'create', allowRepeat: true, initial, runTitle: (block.card && (block.card.title || block.card.brief)) || '',
-      warning: 'A scheduled run is unattended. If this workflow asks questions, the run waits for your answer — chat notifications can reach you.',
+      warning: 'A scheduled run is unattended. If this workflow asks questions, the run waits for your answer. Chat notifications can reach you.',
       // Keyed off the card's LIVE target segment (local.target), not the proposal's frozen card.workspaceId —
       // the user can switch the card between project and workspace before opening the sheet.
       candidates: () => fetch(`/api/schedules/after-candidates?${local.target === 'workspace'
@@ -5234,7 +5234,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // of another workflow's agents.
     function markWorkflowUnavailable() {
       workflowSel.selectedIndex = -1;
-      err.textContent = `Workflow ${card.workflowId} is not available — pick one`;
+      err.textContent = `Workflow ${card.workflowId} is not available: pick one`;
       startBtn.disabled = true;
       local.workflowUnavailable = true;
     }
@@ -5249,7 +5249,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         workflowSel.disabled = true;
       } else {
         // Auto is not a saved workflow: listed only when Ask Worca proposed it (a plain card keeps its list).
-        const autoOpt = card.workflowId === 'wf_auto' ? [{ value: 'wf_auto', label: 'Auto — picks the workflow when the run starts' }] : [];
+        const autoOpt = card.workflowId === 'wf_auto' ? [{ value: 'wf_auto', label: 'Auto: picks the workflow when the run starts' }] : [];
         fillSelect(workflowSel, [...autoOpt, ...opts.workflows.map((w) => ({ value: w.id, label: workflowPickerLabel(w, null) || w.name || w.id }))], card.workflowId || 'wf_default');
         if (card.workflowId && workflowSel.value !== card.workflowId) markWorkflowUnavailable();
       }
@@ -5433,7 +5433,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       try { const b = await res.json(); if (b && b.error) msg = b.error; } catch { /* keep */ }
       // One turn per thread: the route refuses every card verb that starts one while a
       // reply streams. Say what to do instead of echoing the wire's `turn in flight`.
-      if (res.status === 409 && msg === 'turn in flight') msg = 'Chat is still replying — try again once the answer lands.';
+      if (res.status === 409 && msg === 'turn in flight') msg = 'Chat is still replying. Try again once the answer lands.';
       if (err) err.textContent = msg;
       release();
       return null;

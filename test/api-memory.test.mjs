@@ -158,7 +158,7 @@ test('write refusals map to statuses: bad name 400 (the shared help string), mis
   assert.equal(bad.status, 400);
   // The ROUTE refuses before any fs call, with the string the editor shows (memory-view.mjs
   // exports the same MEMORY_NAME_HELP); the store's own ENAME message reads "invalid name …".
-  assert.equal((await bad.json()).error, `invalid memory name — ${MEMORY_NAME_HELP}`);
+  assert.equal((await bad.json()).error, `invalid memory name: ${MEMORY_NAME_HELP}`);
   assert.equal((await put('/api/memory/global/files/nul', { text: 'x' })).status, 400);
   assert.equal((await put('/api/memory/global/files/ok', {})).status, 400);
   assert.equal((await put('/api/memory/global/files/ok', { text: 42 })).status, 400);
@@ -171,10 +171,10 @@ test('write refusals map to statuses: bad name 400 (the shared help string), mis
   assert.match((await huge.json()).error, /over the 32768-byte cap/);
   const badRead = await get('/api/memory/global/files/nul');
   assert.equal(badRead.status, 400, 'names are validated on reads too');
-  assert.equal((await badRead.json()).error, `invalid memory name — ${MEMORY_NAME_HELP}`);
+  assert.equal((await badRead.json()).error, `invalid memory name: ${MEMORY_NAME_HELP}`);
   const badDel = await del('/api/memory/global/files/bad%20name');
   assert.equal(badDel.status, 400);
-  assert.equal((await badDel.json()).error, `invalid memory name — ${MEMORY_NAME_HELP}`);
+  assert.equal((await badDel.json()).error, `invalid memory name: ${MEMORY_NAME_HELP}`);
   // SX-F19: the store mkdirs the scope dir before its cap checks, so pre-fs validation is what
   // keeps a refused write from leaving an empty projects/<key>/ behind on an untouched scope.
   const fresh = scopeDir(memoryRoot(), projectScope(project.key));

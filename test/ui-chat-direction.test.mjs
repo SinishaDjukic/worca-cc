@@ -49,7 +49,7 @@ test('the chip shows for a followed live run, toggles direction mode, and a send
       assert.equal(m.chip().closest('[data-chat-composer-lead]'), m.lead);
       assert.equal(m.chip().querySelector('.chat-dir-title').textContent, 'Fix login');
       assert.equal(m.chip().getAttribute('aria-pressed'), 'false');
-      assert.equal(m.chip().title, 'Send to the run — the next step reads it');
+      assert.equal(m.chip().title, 'Send to the run. The next step reads it');
       m.chip().click();
       assert.equal(m.chip().getAttribute('aria-pressed'), 'true');
       assert.deepEqual(m.placeholders, [DIRECTION_PLACEHOLDER]);
@@ -77,7 +77,7 @@ test('the chip shows for a followed live run, toggles direction mode, and a send
       m.chip().click();
       assert.equal(await m.handle.beforeSend('x'), 'keep');
       assert.equal(m.err().hidden, false);
-      assert.equal(m.err().textContent, 'Not sent — run is finished; a direction would never be read');
+      assert.equal(m.err().textContent, 'Not sent: run is finished; a direction would never be read');
       assert.equal(m.chip().getAttribute('aria-pressed'), 'true', 'still on: fix and resend, or toggle off');
       assert.equal(await m.handle.beforeSend('y'.repeat(DIRECTION_MAX_CHARS + 1)), 'keep');
       assert.equal(m.err().textContent, `A direction can be at most ${DIRECTION_MAX_CHARS} characters`);
@@ -224,8 +224,8 @@ test('a send the network drops says "Not sent — network error", never the brow
   const m = mount({ fetchHandler: () => Promise.reject(new TypeError('Failed to fetch')) });
   m.chip().click();
   assert.equal(await m.handle.beforeSend('x'), 'keep');
-  assert.equal(m.err().textContent, 'Not sent — network error');
-  assert.deepEqual(m.said, ['Not sent — network error']);
+  assert.equal(m.err().textContent, 'Not sent: network error');
+  assert.deepEqual(m.said, ['Not sent: network error']);
   assert.equal(m.chip().getAttribute('aria-pressed'), 'true', 'still on: resend once the connection is back');
 });
 

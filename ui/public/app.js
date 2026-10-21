@@ -1431,7 +1431,7 @@ function applyBudgetToNewView() {
   note.hidden = !blocked;
   if (blocked) {
     const w = b.resetPeriod === 'weekly' ? 'week' : 'month';
-    const msg = `Total budget reached — ${fmtUsd(b.windowSpendUsd)} of ${fmtUsd(b.totalLimitUsd)} ` +
+    const msg = `Total budget reached: ${fmtUsd(b.windowSpendUsd)} of ${fmtUsd(b.totalLimitUsd)} ` +
       `spent this ${w}. New pipelines are blocked until ${fmtResetAtLocal(b.windowEndMs)}, ` +
       `or a higher total limit in Settings.`;
     note.textContent = msg;
@@ -2369,7 +2369,7 @@ function fmtUsd4(n) {
 function estTitle(n) {
   const exact = fmtUsd4(n);
   return exact
-    ? `Estimated cost ${exact} — Claude Code client-side estimate (total_cost_usd), not authoritative billing`
+    ? `Estimated cost ${exact}: Claude Code client-side estimate (total_cost_usd), not authoritative billing`
     : '';
 }
 
@@ -2924,7 +2924,7 @@ async function loadConfig(projectDir) {
       state.config = { steps: {}, customModels: [] };
       state.stepDefaults = {};
       appendLog({ source: 'ui', level: 'error', text: `config: ${data.error || res.status}`, ts: Date.now() });
-      setConfigError(`Could not load saved config (${data.error || `HTTP ${res.status}`}) — showing defaults.`);
+      setConfigError(`Could not load saved config (${data.error || `HTTP ${res.status}`}). Showing defaults.`);
     }
   } catch {
     if (stale()) return;
@@ -2932,7 +2932,7 @@ async function loadConfig(projectDir) {
     // project's config must not linger), but keep last-known models/efforts.
     state.config = { steps: {}, customModels: [] };
     state.stepDefaults = {};
-    setConfigError('Could not load saved config (network error) — showing defaults.');
+    setConfigError('Could not load saved config (network error). Showing defaults.');
   }
   // Seed the active workflow from per-project run-config (activeWorkflowId),
   // then populate the dropdown + render the chosen workflow's accordion. The
@@ -3120,7 +3120,7 @@ async function gvLoadAgents() {
     wfvLibrary?.setData({ agents: all, scripts, runtimes, loadError: '' });
   } catch {
     gvComposer.setReady(false);                  // Save stays disabled without a registry
-    wfvLibrary?.setData({ loadError: 'Couldn’t load agents — ', retry: () => { void gvLoadAgents(); } });
+    wfvLibrary?.setData({ loadError: 'Couldn’t load agents. ', retry: () => { void gvLoadAgents(); } });
   }
 }
 
@@ -3964,12 +3964,12 @@ function renderModelEffortPair(modelSel, effortSel, caption, sel = {}) {
 
   modelSel.disabled = false;
   effortSel.disabled = !model;
-  effortSel.title = model ? '' : 'Pick a model first — the effort levels on offer are that model’s own.';
+  effortSel.title = model ? '' : 'Pick a model first. The effort levels on offer are that model’s own.';
 
   if (caption) {
     const mLabel = model ? model.label : 'default model';
     caption.textContent = `${mLabel} · ${effortSel.value || 'default effort'}`
-      + (model && model.needsSignIn ? ' — needs sign-in (the Providers page)' : '');
+      + (model && model.needsSignIn ? ' (needs sign-in on the Providers page)' : '');
     caption.classList.toggle('err', !!(model && model.needsSignIn));
   }
 }
@@ -4164,7 +4164,7 @@ function updateGuardrailsHint() {
     return;
   }
   const members = state.runTarget === 'workspace' ? ' across every workspace member' : '';
-  el.guardrailsHint.textContent = `This run: ${guardrailSummary(sel.settings)} — applied uniformly${members}.`;
+  el.guardrailsHint.textContent = `This run: ${guardrailSummary(sel.settings)}, applied uniformly${members}.`;
 }
 
 // Fill #guardrailsSelect with every named set (built-ins first — server order),
@@ -4201,7 +4201,7 @@ async function loadGuardrailsInto(selectId) {
   } else {
     state.guardrailsId = list.some((g) => g.id === want) ? want : 'permissive';
     if (want !== 'permissive' && state.guardrailsId === 'permissive') {
-      setFormMsg(`Guardrail set "${want}" no longer exists — this run will use Permissive (no restrictions).`, 'err');
+      setFormMsg(`Guardrail set "${want}" no longer exists. This run will use Permissive (no restrictions).`, 'err');
     }
   }
   sel.value = state.guardrailsId;
@@ -4518,8 +4518,8 @@ function renderAgentRows(rows) {
       const kept = document.createElement('small');
       kept.className = 'agent-kept-pick hint';
       kept.textContent = owner
-        ? `Your ${owner} pick ${entry.label || row.enginePair.model} is kept for ${owner} runs — choose a model here to replace it.`
-        : `Your pick ${row.enginePair.model} is kept for runs on its own engine — choose a model here to replace it.`;
+        ? `Your ${owner} pick ${entry.label || row.enginePair.model} is kept for ${owner} runs. Choose a model here to replace it.`
+        : `Your pick ${row.enginePair.model} is kept for runs on its own engine. Choose a model here to replace it.`;
       body.appendChild(kept);
     }
 
@@ -4557,7 +4557,7 @@ function paintRowSummary(row, body) {
 
 // Settings › Memory owns a Memory defragment run's model + effort (node-tunables.mjs `pinned`):
 // shown, never edited here. `data-locked` keeps setAgentRowsEnabled from re-enabling them.
-const PINNED_PAIR_TEXT = 'Set in Settings › Memory — every Memory defragment run uses this model, whatever this project picked.';
+const PINNED_PAIR_TEXT = 'Set in Settings › Memory. Every Memory defragment run uses this model, whatever this project picked.';
 function lockPinnedPair(modelSel, effortSel) {
   for (const s of [modelSel, effortSel]) {
     s.disabled = true;
@@ -4569,7 +4569,7 @@ function lockPinnedPair(modelSel, effortSel) {
 // One line naming what this row falls back to once its override is gone — the
 // answer to "what does 'default' actually mean here", without opening a doc.
 function defaultOriginText(row) {
-  if (!row.def.model) return 'No model set for this workflow — falls back to the CLI’s own default.';
+  if (!row.def.model) return 'No model set for this workflow. It falls back to the CLI’s own default.';
   const m = modelById(row.def.model);
   const label = m ? m.label : row.def.model;
   return `This workflow’s default: ${label}${row.def.effort ? ` · ${row.def.effort}` : ''}.`;
@@ -4628,7 +4628,7 @@ function renderFeedbackRows(rows) {
     field.className = 'field fb-field';
 
     const label = document.createElement('label');
-    label.textContent = `${row.label} — max cycles`;
+    label.textContent = `${row.label}: max cycles`;
     label.setAttribute('for', `fb-${row.fbId}`);
     field.appendChild(label);
 
@@ -5959,7 +5959,7 @@ function renderClarifyBody(r, panel, pq) {
     const note = document.createElement('div');
     note.className = 'gate-intro';
     note.textContent =
-      'No specific questions — you can submit an empty answer to let the pipeline proceed.';
+      'No specific questions. You can submit an empty answer to let the pipeline proceed.';
     panel.appendChild(note);
   }
 
@@ -6159,7 +6159,7 @@ function renderWorkflowBody(r, panel, pq) {
   accept.prepend(playIcon());
   const stop = (fn) => (e) => { e.stopPropagation(); fn(); };   // the #run-detail delegates sit above this node
   cancel.addEventListener('click', stop(async () => {
-    const ok = await confirmModal({ title: 'Cancel this run?', message: 'The run stops now. Nothing is saved — no workflow row is written.', confirmLabel: 'Cancel run', cancelLabel: 'Keep', danger: true });
+    const ok = await confirmModal({ title: 'Cancel this run?', message: 'The run stops now. Nothing is saved: no workflow row is written.', confirmLabel: 'Cancel run', cancelLabel: 'Keep', danger: true });
     if (ok) postAnswer(r, { decision: 'cancel' });
   }));
   revise.addEventListener('click', stop(() => { ta.hidden = !ta.hidden; send.hidden = ta.hidden; if (!ta.hidden) ta.focus(); }));
@@ -6450,7 +6450,7 @@ registerAskRenderer('gate', {
     wireCopy: gateWireCopy(ctx.run, pq.wireId), tagLevel, submit: (p) => stepPost(ctx.run, p) }),
 });
 registerAskRenderer('recovery', {
-  title: (pq) => `${(((pq.recovery || {}).cls) || 'recoverable').replace('_', ' ')} error — action needed`,
+  title: (pq) => `${(((pq.recovery || {}).cls) || 'recoverable').replace('_', ' ')} error: action needed`,
   render: (panel, pq, ctx) => renderRecoveryCard(panel, pq, { ...stepDeps(ctx, pq), submit: (p) => stepPost(ctx.run, p) }),
 });
 registerAskRenderer('workflow', {
@@ -6964,7 +6964,7 @@ async function mountPluginSourcePane(src) {
   if (!owns()) return;
   if (!resolved) {
     host.replaceChildren(Object.assign(document.createElement('small'),
-      { className: 'hint', textContent: 'Select a project first — the source profile is bound to it.' }));
+      { className: 'hint', textContent: 'Select a project first. The source profile is bound to it.' }));
     return;
   }
   if (resolved.gate) {
@@ -7042,7 +7042,7 @@ async function mountPluginSourcePane(src) {
       continue;
     }
     const detail = v && v.pending
-      ? 'timed out waiting for the sign-in — press Test connection to try again'
+      ? 'timed out waiting for the sign-in. Press Test connection to try again'
       : ((v && v.errors) || []).map((x) => x.message).join('; ') || 'connection check failed';
     show(failBox(`${src.displayName} is not connected: ${detail}`));
     return;
@@ -7076,7 +7076,7 @@ function toggleMock() {
 // with WORCA_MOCK=1 / ORCH_MOCK=1 mocks EVERY run whatever body.mock says, so the switch is
 // locked on and the sidebar shows the MOCK pill. `choice` keeps the per-run pick the lock
 // covered, restored when a restarted server comes back without it.
-const SERVER_MOCK_TITLE = 'Server started with WORCA_MOCK=1 — all runs are mock.';
+const SERVER_MOCK_TITLE = 'Server started with WORCA_MOCK=1, so all runs are mock.';
 const serverMock = { on: false, choice: false };
 function applyServerMock(on) {
   on = on === true;
@@ -7888,7 +7888,7 @@ async function populateBranchSelect(select, projectDir) {
     if (stale()) return;
     // m2: surface the failure instead of leaving a silently-empty select. The
     // empty value still makes the server fall back to HEAD on submit.
-    placeholder.textContent = 'current branch (auto — branch list unavailable)';
+    placeholder.textContent = 'current branch (auto, branch list unavailable)';
     syncPreviousBranchOption(select);
   }
 }
@@ -7914,7 +7914,7 @@ function paintBranchOptions(select, data) {
     const grp = document.createElement('optgroup'); grp.label = 'Run branches';
     for (const r of runBranches) {
       const opt = document.createElement('option');
-      opt.value = r.branch; opt.textContent = `${r.branch} — ${r.title || r.pipelineId} · ${RUN_BRANCH_WORD[r.status] || r.status}`;
+      opt.value = r.branch; opt.textContent = `${r.branch}: ${r.title || r.pipelineId} · ${RUN_BRANCH_WORD[r.status] || r.status}`;
       if (r.branch === data.current) opt.selected = true;
       grp.appendChild(opt);
     }
@@ -7925,7 +7925,7 @@ function paintBranchOptions(select, data) {
     const grp = document.createElement('optgroup'); grp.label = 'Remote only';
     for (const b of only) {
       const opt = document.createElement('option');
-      opt.value = b; opt.textContent = `${b} — on ${data.remote.name}`; opt.dataset.remoteOnly = '1';
+      opt.value = b; opt.textContent = `${b} (on ${data.remote.name})`; opt.dataset.remoteOnly = '1';
       grp.appendChild(opt);
     }
     select.appendChild(grp);
@@ -8456,7 +8456,7 @@ el.newProjectBrowse.addEventListener('click', async () => {
     const data = await pickFolder('project', { multiple: true });   // never throws
     if (data.status === 'picked' && pickedPaths(data).length) newPipelinePicks(pickedPaths(data));
     else if (data.status === 'canceled') { /* user dismissed the dialog */ }
-    else if (data.status === 'busy') setAddMsg('A folder dialog is already open — finish or cancel it first.', 'err');
+    else if (data.status === 'busy') setAddMsg('A folder dialog is already open. Finish or cancel it first.', 'err');
     else await browseNewProjectInWorca();                            // unsupported / error -> in-app fallback
   } finally {
     el.newProjectBrowse.disabled = false;
@@ -8969,7 +8969,7 @@ function renderWorkspaces() {
   if (!host) return;
   host.innerHTML = '';
   if (!state.workspaces.length) {
-    host.appendChild(histEmpty('No workspaces yet — create one to scan a set of projects.'));
+    host.appendChild(histEmpty('No workspaces yet. Create one to scan a set of projects.'));
     return;
   }
   const card = document.createElement('section');
@@ -9454,7 +9454,7 @@ function buildWdOverview(sec, id) {
   const view = document.createElement('div');
   view.className = 'ws-desc-view viewer';
   if (w.description) bindMarkdown(view, w.description);
-  else { view.classList.remove('artifact-markdown'); view.textContent = '(no description yet — re-scan to generate one)'; }
+  else { view.classList.remove('artifact-markdown'); view.textContent = '(no description yet: re-scan to generate one)'; }
   const pane = document.createElement('div');
   pane.className = 'ws-desc-edit';
   pane.hidden = true;
@@ -9912,8 +9912,8 @@ function renderWsRescan(r) {
   const body = document.createElement('div');
   body.className = 'wd-rescan-body';
   const LABEL = {
-    running: 'Members changed — re-scanning the workspace', done: 'Workspace re-scanned', failed: 'Re-scan failed',
-    stopped: 'Re-scan stopped', paused: 'Re-scan paused', skipped: 'Members changed — not re-scanned',
+    running: 'Members changed: re-scanning the workspace', done: 'Workspace re-scanned', failed: 'Re-scan failed',
+    stopped: 'Re-scan stopped', paused: 'Re-scan paused', skipped: 'Members changed: not re-scanned',
   };
   const SUB = {
     running: 'A Workspace scan run rebuilds the graphs, the map and the description.',
@@ -9921,7 +9921,7 @@ function renderWsRescan(r) {
     failed: 'Use Re-scan to refresh the map and the description.',
     stopped: 'Use Re-scan to refresh the map and the description.',
     paused: 'Resume it under Running, or use Re-scan.',
-    skipped: `${r.reason || 'The scan could not start'} — use Re-scan once that is fixed.`,
+    skipped: `${String(r.reason || 'The scan could not start').replace(/\.?$/, '.')} Use Re-scan once that is fixed.`,
   };
   const label = document.createElement('div');
   label.className = 'status-label';
@@ -9955,7 +9955,7 @@ function renderWsRescan(r) {
   const hint = document.createElement('small');
   hint.className = 'hint wd-rescan-hint';
   hint.textContent = 'Check the Team tab for members off the metrics or policy home.'
-    + (r.cleared && r.cleared.length ? ` The ${r.cleared.join(' and ')} home was cleared — choose a new one there.` : '');
+    + (r.cleared && r.cleared.length ? ` The ${r.cleared.join(' and ')} home was cleared. Choose a new one there.` : '');
   body.appendChild(hint);
   box.append(lead, body);
   return box;
@@ -9999,7 +9999,7 @@ function openWsAddMembers(id) {
   body.className = 'wd-add-list';
   const chosen = new Set();
   if (!candidates.length) {
-    body.appendChild(Object.assign(document.createElement('small'), { className: 'hint', textContent: 'Every registered project is already a member — add a project to Worca first, then add it here.' }));
+    body.appendChild(Object.assign(document.createElement('small'), { className: 'hint', textContent: 'Every registered project is already a member. Add a project to Worca first, then add it here.' }));
   }
   for (const p of candidates) {
     const row = document.createElement('label');
@@ -10045,7 +10045,7 @@ async function removeWsMember(id, path) {
   const ok = await confirmModal({
     title: 'Remove project', danger: true, confirmLabel: 'Remove',
     message: `Remove ${name} from "${w.name || w.id}"?\n\nThe project itself is untouched, and runs already started keep their members.`
-      + (homes.length ? `\n\n${name} is the ${homes.join(' and ')} home — it is cleared.` : ''),
+      + (homes.length ? `\n\n${name} is the ${homes.join(' and ')} home, so it is cleared.` : ''),
   });
   if (!ok) return;
   const r = await postWsMembers(id, { remove: path });
@@ -10451,7 +10451,7 @@ async function addWizardImports() {
     const data = await pickFolder('repos', { multiple: true });   // never throws
     if (data.status === 'picked' && pickedPaths(data).length) await importWizardPaths({ paths: pickedPaths(data) });
     else if (data.status === 'canceled') { /* the user dismissed the dialog */ }
-    else if (data.status === 'busy') setWizImportHint('A folder dialog is already open — finish or cancel it first.', 'err');
+    else if (data.status === 'busy') setWizImportHint('A folder dialog is already open. Finish or cancel it first.', 'err');
     else {
       await openFolderBrowser('', (p) => { void importWizardPaths({ paths: [p] }); },
         { multiple: true, onSelectMany: (paths) => { void importWizardPaths({ paths }); } });
@@ -10573,9 +10573,9 @@ function renderWizardProjects() {
 // Workspace size (D24): one line under the list once the pick passes 10 (a bit big) or 20 (big);
 // past 40 it turns red and Scan stays off. data-level drives the tone; hidden when nothing to say.
 const WIZ_SIZE_NOTES = {
-  big: (n) => `A bit big — ${n} projects: the scan takes longer and costs more.`,
-  'very-big': (n) => `Big workspace — ${n} projects: a long, costly scan, and a long description added to every run.`,
-  over: (n) => `Too many — ${n} selected; a workspace holds up to ${WORKSPACE_MAX_PROJECTS} projects.`,
+  big: (n) => `A bit big (${n} projects): the scan takes longer and costs more.`,
+  'very-big': (n) => `Big workspace (${n} projects): a long, costly scan, and a long description added to every run.`,
+  over: (n) => `Too many (${n} selected): a workspace holds up to ${WORKSPACE_MAX_PROJECTS} projects.`,
 };
 
 function paintWizardSizeNote() {
@@ -10817,7 +10817,7 @@ function buildAgentCard(a) {
   node.querySelector('.agent-not-placeable').hidden = a.placeable !== false;
   // The blurb the user authored wins; a port summary stands in when it is empty.
   node.querySelector('.agent-sub').textContent =
-    `${a.key} · ${a.runnerType || 'producer'} — ${a.description || a.portSummary || ''}`;
+    `${a.key} · ${a.runnerType || 'producer'}: ${a.description || a.portSummary || ''}`;
   fillPortRow(node.querySelector('.agent-chips-in'), a.inputs, 'cons');   // INPUT row
   fillPortRow(node.querySelector('.agent-chips-out'), a.outputs, 'prod'); // OUTPUT row
   const isUser = a.origin === 'user';
@@ -10838,7 +10838,7 @@ function renderAgentsList() {
     return;
   }
   if (!state.agentsList.length) {
-    host.appendChild(histEmpty('No agents found — is the server running?'));
+    host.appendChild(histEmpty('No agents found. Is the server running?'));
     return;
   }
   const groups = [
@@ -11567,9 +11567,9 @@ function agentFormRender(host, meta, opts = {}) {
   // sideEffect is a three-way value (agent-meta.mjs SIDE_EFFECTS): a checkbox could only write
   // 'code' and would silently drop 'memory' on the next save.
   frag.appendChild(fmField('Side effect', fmSelect('agent-f-sideeffect', [
-    { value: '', text: 'none — writes only its output ports' },
-    { value: 'code', text: 'code — edits the worktree (implementer tool set)' },
-    { value: 'memory', text: 'memory — edits worca memory only (no Bash)' },
+    { value: '', text: 'none: writes only its output ports' },
+    { value: 'code', text: 'code: edits the worktree (implementer tool set)' },
+    { value: 'memory', text: 'memory: edits worca memory only (no Bash)' },
   ], m.sideEffect || '')));
 
   const row4 = document.createElement('div');
@@ -13503,7 +13503,7 @@ function openProjectAddModal(path, { mode = 'folder', onAdded = null } = {}) {
   if (cloneFollow) {
     setProjAddMode(path ? 'folder' : 'clone');
     if (path) {
-      setProjAddMsg(`Still cloning ${cloneFollow.url} — a notification says when it is done.`);
+      setProjAddMsg(`Still cloning ${cloneFollow.url}. A notification says when it is done.`);
       el.projAddName.focus();
       el.projAddName.select();
     }
@@ -13753,7 +13753,7 @@ function closeProjectAddModal() {
 function dismissProjectAdd() {
   if (cloneFollow && !cloneHideToast) {
     cloneHideToast = notify({ tone: 'info', title: 'Cloning in the background',
-      detail: `${cloneFollow.url} — a notification says when it is done.`, timeout: 0 });
+      detail: `${cloneFollow.url}. A notification says when it is done.`, timeout: 0 });
   }
   closeProjectAddModal();
 }
@@ -13980,7 +13980,7 @@ async function saveProjectBulk() {
     if (!skipped.length) { closeProjectBulkModal(); return; }
     renderProjectBulkRows();
     projBulkAlert('Not every project was added',
-      `${addedNow ? `Added ${addedNow}. ` : ''}${skipped.length} could not be added — see the reason on each row. Rename and press Add again, or close.`);
+      `${addedNow ? `Added ${addedNow}. ` : ''}${skipped.length} could not be added. See the reason on each row. Rename and press Add again, or close.`);
   } catch (e) {
     projBulkAlert('Projects not added', e.message);
   } finally {
@@ -14128,7 +14128,7 @@ if (el.projAddSave) {
       const data = await pickFolder('project', { multiple: true });
       if (data && data.status === 'picked' && pickedPaths(data).length) projectsViewPicks(pickedPaths(data), { fill: fillProjAdd });
       else if (data && data.status === 'canceled') { /* user dismissed the dialog */ }
-      else if (data && data.status === 'busy') setProjAddMsg('A folder dialog is already open — finish or cancel it first.', 'err');
+      else if (data && data.status === 'busy') setProjAddMsg('A folder dialog is already open. Finish or cancel it first.', 'err');
       else await browseProjAddInWorca();                          // unsupported / error -> in-app browser
     } finally {
       el.projAddBrowse.disabled = false;
@@ -14711,7 +14711,7 @@ function newFormCard() { return el.form; }
 let pendingSchedule = null;
 const newScheduleSheetOpts = (runTitle = '') => ({
   mode: 'create', runTitle, defaults: schedulesView.defaults, candidates: fetchAfterCandidates,
-  warning: 'A scheduled run is unattended. If this workflow asks questions, the run waits for your answer — chat notifications can reach you.',
+  warning: 'A scheduled run is unattended. If this workflow asks questions, the run waits for your answer. Chat notifications can reach you.',
   sync: scheduleSyncOpt(),
 });
 /** The sheet's opt-in Sync block (#527, D16): form state, not server defaults. A scheduled run
@@ -14853,7 +14853,7 @@ async function openAfterForNew(ref) {
     if (!res.ok) { setFormMsg((await safeJson(res)).error || 'That run was not found.', 'err'); return; }
     r = await res.json();
   } catch { setFormMsg('That run was not found.', 'err'); return; }
-  if (r.kind === 'ticket' && ENDED_TICKET[r.status]) { setFormMsg(`‘${r.title || 'That run'}’ ${ENDED_TICKET[r.status]} — nothing to wait for.`, 'err'); return; }
+  if (r.kind === 'ticket' && ENDED_TICKET[r.status]) { setFormMsg(`‘${r.title || 'That run'}’ ${ENDED_TICKET[r.status]}. Nothing to wait for.`, 'err'); return; }
   if (r.workspaceId) {
     // Load (or reuse) the workspace list BEFORE switching target: setRunTarget('workspace') calls
     // ensureWorkspaceOptions() un-awaited, and a second concurrent load would re-render the members.
@@ -16130,7 +16130,7 @@ function buildAutoModelOptions(sel, stored, catalog, stale = false, defaultLabel
   // non-OK/throw, so an unreachable catalog would otherwise disable Save and Test on
   // a perfectly good setting — `stale` is the caller's verdict, not this list's.
   if (stored && !models.some((m) => m.id === stored)) {
-    const o = option(stored, stale ? `${stored} — not installed` : stored);
+    const o = option(stored, stale ? `${stored} (not installed)` : stored);
     o.disabled = stale;
     sel.appendChild(o);
   }
@@ -16163,7 +16163,7 @@ async function paintWorkspaceScanModelsSettings(data) {
   // An EMPTY catalog is a failed GET, not an empty catalog: it condemns nothing (the Auto card's rule).
   const stale = !!pick.scanModel && wsScanCatalog.length > 0 && !wsScanCatalog.some((m) => m && m.id === pick.scanModel);
   keepVisible(document.getElementById('ws-scan-models-card'), !!(data && data.workspaceScan));
-  setHintMsg('wsScanModelsNote', stale ? `Model "${pick.scanModel}" is no longer in the catalog — scans fall back to the default.` : '', stale ? 'warn' : '');
+  setHintMsg('wsScanModelsNote', stale ? `Model "${pick.scanModel}" is no longer in the catalog. Scans fall back to the default.` : '', stale ? 'warn' : '');
   settingsCardPainted('wsScanModelsSave');
 }
 function postWorkspaceScanModels(body, opts = {}) {
@@ -16295,7 +16295,7 @@ async function openTmEnableDialog(projectKeyStr, { mode = 'here', change = false
     // { mode:'delegate', delegateTo:'' } round-trips to a 400 that reads like a server fault;
     // refuse locally and say why instead.
     if (view.mode === 'delegate' && !(target && target.value)) {
-      showTmEnableErr('No project on this machine records team metrics yet — enable one first, then delegate to it.');
+      showTmEnableErr('No project on this machine records team metrics yet. Enable one first, then delegate to it.');
       return done(false);
     }
     const body = view.mode === 'delegate'
@@ -16433,7 +16433,7 @@ async function addMarketplaceFromInput() {
     // The path was a single plugin folder (an Export… → Worca plugin result):
     // the server linked it instead of registering a marketplace.
     const n = (data.plugin.workflows?.imported || []).length;
-    setPluginsMsg(`Linked plugin "${data.plugin.name}" from ${data.plugin.dir} — ${n} pipeline template${n === 1 ? '' : 's'} added to your saved pipelines.`, 'ok');
+    setPluginsMsg(`Linked plugin "${data.plugin.name}" from ${data.plugin.dir}: ${n} pipeline template${n === 1 ? '' : 's'} added to your saved pipelines.`, 'ok');
   } else {
     setPluginsMsg(`Added ${data.marketplace.name} (${data.marketplace.plugins.length} plugins).`, 'ok');
   }
@@ -16467,7 +16467,7 @@ function openInstallConsent(entry, { onInstalled = null } = {}) {
         // A cached snapshot can point at a sha the remote no longer has (force-push,
         // rebase): git's raw complaint is unreadable, so map it to the real fix (C3).
         if (/not a valid object name|does not exist/.test(data.error || '')) {
-          return setPluginsMsg('This plugin snapshot is stale — Refresh the marketplace and try again.', 'err', { key });
+          return setPluginsMsg('This plugin snapshot is stale. Refresh the marketplace and try again.', 'err', { key });
         }
         return setPluginsMsg(data.error || 'install failed', 'err', { key });
       }
@@ -16513,7 +16513,7 @@ async function addPluginProfile(name, sourceId) {
       messageTone: error ? 'err' : null,
       fields: [
         { id: 'id', label: 'Profile id', placeholder: 'work', mono: true, required: true, value: answers.id,
-          hint: 'Lowercase letters, digits and dashes — e.g. "work".' },
+          hint: 'Lowercase letters, digits and dashes, e.g. "work".' },
         { id: 'label', label: 'Display name', placeholder: 'optional', value: answers.label },
       ],
     });
@@ -16608,7 +16608,7 @@ async function openPluginSettings(name, profile, { seeds = null } = {}) {
     if (filled.length) {
       const note = document.createElement('p');
       note.className = 'hint pl-seeded-note';
-      note.textContent = `${filled.join(', ')} filled in from the team policy — Save keeps them. Secrets are yours to enter.`;
+      note.textContent = `${filled.join(', ')} filled in from the team policy. Save keeps them. Secrets are yours to enter.`;
       body.prepend(note);
     }
   }
@@ -16779,7 +16779,7 @@ if (el.pluginsList) el.pluginsList.addEventListener('click', async (e) => {
         ? `\n\nIts MCP servers leave these sets, with their values, secrets and test results: ${t.dataset.mcpSets}.` : ''}${t.dataset.skillSets
         ? `\n\nIt also removes its skills from ${t.dataset.skillSets}.` : ''}`,
       confirmLabel: 'Uninstall',
-      checkbox: { label: 'Also delete config, secrets and state (purge — cannot be undone)' },
+      checkbox: { label: 'Also delete config, secrets and state (purge, cannot be undone)' },
     });
     if (!res.ok) return;
     const purge = res.checked;
@@ -17079,7 +17079,7 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
       const owed = fromFrame || frameOwed;
       frameOwed = false;
       if (st.flash) { say(...st.flash); st.flash = null; }
-      else if (owed) say('This scope changed on disk while you were editing — Save overwrites, Cancel reloads.', 'warn-inline');
+      else if (owed) say('This scope changed on disk while you were editing. Save overwrites, Cancel reloads.', 'warn-inline');
       return;
     }
     frameOwed = false;
@@ -18034,14 +18034,14 @@ function prefillModelEditor(editor, pre) {
   for (const k of pre.secretKeys || []) {
     const row = makeEnvRow();
     row.querySelector('.mv-env-key').value = k;
-    row.querySelector('.mv-env-val').placeholder = 'value required — the plugin secret is not copied';
+    row.querySelector('.mv-env-val').placeholder = 'value required: the plugin secret is not copied';
     wrap.appendChild(row);
   }
   const msg = editor.querySelector('.mv-editor-msg');
   if (msg && (pre.secretKeys || []).length) {
-    msg.textContent = `Fill in ${pre.secretKeys.join(', ')} — secret values never leave the plugin.`;
+    msg.textContent = `Fill in ${pre.secretKeys.join(', ')}. Secret values never leave the plugin.`;
   } else if (msg && pre.duplicatedFrom) {
-    msg.textContent = `Copy of ${pre.duplicatedFrom} — change what should differ, then Add model.`;
+    msg.textContent = `Copy of ${pre.duplicatedFrom}. Change what should differ, then Add model.`;
   }
 }
 
@@ -18122,7 +18122,7 @@ async function exportPluginFlow() {
     const data = await safeJson(res);
     if (!res.ok) return say(data.error || `HTTP ${res.status}`);
     mvState.openShare = false;
-    setModelsMsg(`Plugin scaffold written to ${data.dir} — git init + push it, then teammates install it from the Marketplace page.`, 'ok');
+    setModelsMsg(`Plugin scaffold written to ${data.dir}. Run git init + push it, then teammates install it from the Marketplace page.`, 'ok');
     renderModelsViewBody();
   } catch (e) {
     say(e.message);
@@ -18476,11 +18476,11 @@ function hasUnsavedProviderEdits(name, typed) {
 /** One line of "what to do about it" for the failures that have an obvious answer. */
 function providerFixHint(why) {
   const w = String(why).toLowerCase();
-  if (w.includes('authentication failed')) return ' — check the API key, then Save.';
-  if (w.includes('no api key configured')) return ' — set a key above, or point the base URL at a local server (no key needed).';
-  if (w.includes('${var} is not set')) return ' — set that variable in the shell that starts Worca, then restart it.';
-  if (w.includes('unreachable')) return ' — is the server running, and is the base URL right?';
-  if (w.includes('endpoint answered 404')) return ' — the base URL usually ends in /v1.';
+  if (w.includes('authentication failed')) return '. Check the API key, then Save.';
+  if (w.includes('no api key configured')) return '. Set a key above, or point the base URL at a local server (no key needed).';
+  if (w.includes('${var} is not set')) return '. Set that variable in the shell that starts Worca, then restart it.';
+  if (w.includes('unreachable')) return '. Is the server running, and is the base URL right?';
+  if (w.includes('endpoint answered 404')) return '. The base URL usually ends in /v1.';
   return '';
 }
 
@@ -18519,7 +18519,7 @@ function setImportMsg(text, kind) {
 function importSources() {
   const connected = !!(mvState.providers && mvState.providers.copilot && mvState.providers.copilot.connected);
   return [
-    { id: 'copilot', label: connected ? 'GitHub Copilot' : 'GitHub Copilot — sign in first', disabled: !connected },
+    { id: 'copilot', label: connected ? 'GitHub Copilot' : 'GitHub Copilot (sign in first)', disabled: !connected },
     // The servers are named in the Base URL hint; a 60-character option truncates in the control.
     { id: 'openai', label: 'OpenAI-compatible', disabled: false },
   ];
@@ -19478,7 +19478,7 @@ async function seedResumedLog(newRunId, prevLines, logUrl) {
     } catch { /* best-effort seed */ }
   }
   if (!head.length) return;
-  const sep = { ts: Date.now(), source: 'ui', level: 'info', text: '── resumed — continuing below ──' };
+  const sep = { ts: Date.now(), source: 'ui', level: 'info', text: '── resumed, continuing below ──' };
   const tail = Array.isArray(nr.logLines) ? nr.logLines : [];
   nr.logLines = [...head, sep, ...tail];
   if (nr.logLines.length > MAX_LOG_LINES) nr.logLines = nr.logLines.slice(-MAX_LOG_LINES);
@@ -19933,7 +19933,7 @@ async function openPolicyEnableDialog(projectKeyStr, { mode = 'here', change = f
     const done = (v) => { submitting = false; if (btnEl) btnEl.disabled = false; return v; };
     const target = holder.querySelector('select.tp-follow-target');
     if (view.mode === 'follow' && !(target && target.value)) {
-      errEl.hidden = false; errEl.textContent = 'No project on this machine carries a team policy yet — set one up first, then follow it.';
+      errEl.hidden = false; errEl.textContent = 'No project on this machine carries a team policy yet. Set one up first, then follow it.';
       return done(false);
     }
     const body = view.mode === 'follow' ? { mode: 'follow', delegateTo: target.value, change } : { mode: 'here' };
@@ -19977,7 +19977,7 @@ async function paintWsPolicyLines(force = false) {
   const w = byId.get(wsDetail.id);
   const body = screen.querySelector('.wd-team-policy .pd-team-body');
   if (body) {
-    if (!w) body.replaceChildren(Object.assign(document.createElement('small'), { className: 'hint', textContent: 'No member of this workspace carries a team policy yet — set one up from a project\'s page.' }));
+    if (!w) body.replaceChildren(Object.assign(document.createElement('small'), { className: 'hint', textContent: 'No member of this workspace carries a team policy yet. Set one up from a project\'s page.' }));
     else {
       const slot = document.createElement('div');
       slot.className = 'ws-policy';
@@ -20568,7 +20568,7 @@ function marketplaceEntryFor(name, marketplaceHint) {
 }
 async function installRequiredPlugin(name, { marketplace = '', silent = false } = {}) {
   const hit = marketplaceEntryFor(name, marketplace);
-  if (!hit) { setPluginsMsg(`${name}: not found in a synced marketplace — refresh marketplaces${marketplace ? ` (the policy names ${marketplace})` : ''}.`, silent ? 'err-inline' : 'err'); return false; }
+  if (!hit) { setPluginsMsg(`${name}: not found in a synced marketplace. Refresh marketplaces${marketplace ? ` (the policy names ${marketplace})` : ''}.`, silent ? 'err-inline' : 'err'); return false; }
   const entry = { name: hit.p.name, subdir: hit.p.subdir, repoUrl: hit.m.url, sha: hit.m.lastSync.sha, inventory: hit.p.inventory || {}, marketplace: hit.m.id };
   // The dialog only opens here: the result is reported by the consent handler, not by this button.
   if (!silent) { openInstallConsent(entry, { onInstalled: () => { tpCache.at = 0; if (currentView() === 'team-policy') loadTeamPolicyView(); } }); return true; }
@@ -21606,7 +21606,7 @@ function renderMergeBack(node, p) {
     label.textContent = m.name || (p.target !== 'workspace' && p.projectName)
       || String(m.projectKey || '').replace(/-[0-9a-f]{8}$/, '') || m.source || 'Project';
     const detail = document.createElement('span');
-    detail.textContent = ` — ${m.reason || 'the fast-forward was not possible'}. The work is on ${m.branch}.`;
+    detail.textContent = `: ${m.reason || 'the fast-forward was not possible'}. The work is on ${m.branch}.`;
     const { lead, cmd } = mergeBackRecipe(m, p);
     const how = document.createElement('p');
     how.textContent = lead;
@@ -21995,12 +21995,12 @@ function applyHistResumeGate(btn, pauseReason, budget, pauseDetail = '') {
   const totalBlocked = pauseReason === 'cost_total' && !!(budget && budget.blocked);
   btn.disabled = totalBlocked;
   if (totalBlocked) {
-    btn.title = `Total budget reached — blocked until ${fmtResetAtLocal(budget.windowEndMs)} or a higher total limit`;
+    btn.title = `Total budget reached: blocked until ${fmtResetAtLocal(budget.windowEndMs)} or a higher total limit`;
   } else if (pauseReason === 'error' || pauseReason === 'recoverable') {
     // An error pause is never gated — the tooltip carries the cause instead.
     btn.title = pauseReason === 'recoverable'
-      ? `Paused on a recoverable error${pauseDetail ? `: ${pauseDetail}` : ''} — resume once it clears`
-      : `Paused after an error${pauseDetail ? `: ${pauseDetail}` : ''} — fix the cause, then resume`;
+      ? `Paused on a recoverable error${pauseDetail ? `: ${pauseDetail}` : ''}. Resume once it clears`
+      : `Paused after an error${pauseDetail ? `: ${pauseDetail}` : ''}. Fix the cause, then resume`;
   } else {
     btn.title = '';
   }
@@ -22241,7 +22241,7 @@ async function loadLiveLogs(panel, logUrl, st = null) {
       if (shown.length < matches.length) {
         const note = document.createElement('div');
         note.className = 'hint';
-        note.textContent = `(showing the last ${shown.length} of ${matches.length} matching lines — copy takes all ${matches.length})`;
+        note.textContent = `(showing the last ${shown.length} of ${matches.length} matching lines; copy takes all ${matches.length})`;
         frag.appendChild(note);
       }
       let cycleState = newCycleState();
@@ -22792,7 +22792,7 @@ function closeShipItModal() { if (shipItClose) shipItClose(); }
 // populateBranchSelect's `_branchGen` (:5204-5205).
 let shipItRemotesGen = 0;
 
-function remoteOptionLabel(r) { return r.slug ? `${r.name} — ${r.slug}` : r.name; }
+function remoteOptionLabel(r) { return r.slug ? `${r.name} (${r.slug})` : r.name; }
 
 function fillRemoteSelect(select, remotes, chosen) {
   select.innerHTML = '';
@@ -22838,7 +22838,7 @@ function crossRepoHint(remotes, pushName, baseName, branch, baseBranch) {
   const base = remotes.find((r) => r.name === baseName);
   const cross = !!(push && base && push.slug && base.slug && push.slug.toLowerCase() !== base.slug.toLowerCase());
   if (base && base.prSupported === false) return base.prReason || `${base.prHost || 'This host'} pull requests are not available`;
-  if (cross && base.forge === 'azure') return `Azure DevOps pull requests between repositories (forks) are not supported yet — push to ${base.name}.`;
+  if (cross && base.forge === 'azure') return `Azure DevOps pull requests between repositories (forks) are not supported yet. Push to ${base.name}.`;
   return cross ? `Cross-repo: ${push.owner}:${branch || ''} → ${base.slug} ${baseBranch}` : '';
 }
 
@@ -23015,7 +23015,7 @@ async function openShipItFor(ref = {}, link = null) {
     const failed = state.historyError && !(state.historyAll || []).length;
     return { opened: false, error: failed ? `Could not load finished runs: ${state.historyError}` : 'This run is not in History yet.' };
   }
-  if (pending(record)) return { opened: false, error: "Still checking this run's pull requests — try again in a moment." };
+  if (pending(record)) return { opened: false, error: "Still checking this run's pull requests. Try again in a moment." };
   let data;
   try {
     const res = await fetch(historyDetailUrl(record.projectDir || null, id, record));
@@ -23348,7 +23348,7 @@ function buildShipItRepoRow(member, summary, canShip) {
   if (!canShip) {                                               // shown for context, never offered
     row.done = true;
     if (prLive(member.pr)) setShipItRowOpened(row, member.pr);
-    else setShipItRowStatus(row, `${wsMemberNote(member)} — no PR can be opened.`, '');   // the exact cause
+    else setShipItRowStatus(row, `${wsMemberNote(member)}. No PR can be opened.`, '');   // the exact cause
     el.appendChild(row.statusEl);
     return row;
   }
@@ -23558,13 +23558,13 @@ function openShipItWsModal(record, data, { link = null, onClose = null } = {}) {
   if (skipped.length) {
     const p = document.createElement('p');
     p.className = 'shipit-skipped hint';
-    p.textContent = `No changes in ${skipped.map((m) => m.name || m.memberKey).join(', ')} — skipped.`;
+    p.textContent = `No changes in ${skipped.map((m) => m.name || m.memberKey).join(', ')}. Skipped.`;
     list.appendChild(p);
   }
   if (folderSkipped.length) {
     const p = document.createElement('p');
     p.className = 'shipit-folder-skipped shipit-skipped hint';
-    p.textContent = `${folderSkipped.map((m) => m.name || m.memberKey).join(', ')} (Folder) — skipped.`;
+    p.textContent = `${folderSkipped.map((m) => m.name || m.memberKey).join(', ')} (Folder). Skipped.`;
     list.appendChild(p);
   }
   list.hidden = false;
@@ -23658,7 +23658,7 @@ function openShipItWsModal(record, data, { link = null, onClose = null } = {}) {
     const msgs = [];
     if (failedRows.length) {
       msgs.push(`${failedRows.length} of ${batch.length} pull request${batch.length === 1 ? '' : 's'} could not be opened. ` +
-        'Opened ones stay open — fix the cause and retry the rest.');
+        'Opened ones stay open. Fix the cause and retry the rest.');
     }
     if (note) msgs.push(note);
     cardAlert(card, { title: 'Not shipped', detail: msgs.join(' ') });
@@ -23699,11 +23699,11 @@ function histWsShippable(p) {
 function wsMemberNote(m) {
   // A Folder member (P5) has no branch: its note is its Changes state.
   if (m.workMode === 'folder') {
-    if (!m.affected) return 'No changes — skipped';
+    if (!m.affected) return 'No changes, skipped';
     const st = m.changes && m.changes.state;
     return st === 'applied' ? 'Applied' : st === 'discarded' ? 'Discarded' : 'On a copy';
   }
-  if (!m.affected) return 'No changes — skipped';
+  if (!m.affected) return 'No changes, skipped';
   if (!m.branch || !m.sourceBranch) return 'No branch recorded';
   if (!m.survived) return 'Branch no longer exists';
   return 'No PR yet';
@@ -24161,7 +24161,7 @@ function paintHdLive(screen, record, data) {
       const refused = SCHEDULE_REFUSED_PAUSE.has(gate.reason);
       resumeAtItem.disabled = refused;
       resumeAtItem.title = refused
-        ? 'This run paused on a cost cap — continuing past it is a live decision and cannot be scheduled.'
+        ? 'This run paused on a cost cap. Continuing past it is a live decision and cannot be scheduled.'
         : '';
     }
     const pause = hdPauseOf(live, screen, data, record);
@@ -24234,7 +24234,7 @@ const HD_PR_WATCH_ACTIVE = new Set(['starting', 'fixing', 'publishing']);
 function hdPrWatchLabel(state) {
   if (HD_PR_WATCH_ACTIVE.has(state.status) && state.resolving) return 'Resolving conflicts';
   if (HD_PR_WATCH_ACTIVE.has(state.status) && state.mergingBase) return `Merging ${state.mergingBase} in`;
-  if (!state.watching) return HD_PR_WATCH_ACTIVE.has(state.status) ? 'Disabled — finishing' : '';
+  if (!state.watching) return HD_PR_WATCH_ACTIVE.has(state.status) ? 'Disabled (finishing)' : '';
   if (HD_PR_WATCH_ACTIVE.has(state.status)) return 'Fixing';
   return state.status === 'needs-person' ? 'Needs a person' : '';
 }
@@ -24649,7 +24649,7 @@ function paintHdHeaderMeta(screen, record, data) {
       });
       seg.appendChild(a);
     } else {
-      seg.textContent = '— completed';
+      seg.textContent = 'completed';
     }
     meta.appendChild(seg);
   }
@@ -24711,7 +24711,7 @@ function paintHdHeaderMeta(screen, record, data) {
   const same = (br.sameAsSource === true || record.sameAsSource === true) && (br.mergeBack || record.mergeBack)?.merged !== false;
   // Merged back: the hidden branch was fast-forwarded into the source and deleted, so never offer its name.
   const mergedBack = same && (br.mergeBack || record.mergeBack)?.merged === true;
-  base.textContent = dropped ? 'No branch — no changes in this project'
+  base.textContent = dropped ? 'No branch: no changes in this project'
     : (source ? (mergedBack ? `Merged into ${source}` : `${source} ${same ? '←' : '→'}`) : '');
   base.hidden = !dropped && !source;
   copyBtn.hidden = dropped || mergedBack || !feature;
@@ -24947,7 +24947,7 @@ function renderErrorPauseBanner(detail, reason = 'error') {
   const hint = document.createElement('div');
   hint.className = 'peb-hint';
   hint.textContent = recoverable
-    ? 'The run could not reach the model and parked itself. Nothing was discarded — once the cause clears (re-login, connectivity, credit, a rate limit), Resume retries the step.'
+    ? 'The run could not reach the model and parked itself. Nothing was discarded. Once the cause clears (re-login, connectivity, credit, a rate limit), Resume retries the step.'
     : 'Nothing was discarded: the worktree and the run position are kept. Fix the cause, then Resume.';
   el.append(b, text, hint);
   return el;
@@ -25605,7 +25605,7 @@ function placeCostPop(header, btn, pop) {
 /** A run on an engine that reports no cost (Cursor): its cost is unknown, never a $0.00 (fmtUsd(null) prints $0.00).
  *  `fallback`: what the site shows today when the total is not a number ('' or '—'); a reporting engine is unchanged. */
 function runCostText(r, total, fallback = null) {
-  if (!engineReportsCost(r?.runEngine)) return { text: 'cost unknown', title: `${engineLabel(r.runEngine)} reports no cost${Number(total) > 0 ? ` — worca's own calls so far: ${fmtUsd(total)}` : ''}` };
+  if (!engineReportsCost(r?.runEngine)) return { text: 'cost unknown', title: `${engineLabel(r.runEngine)} reports no cost${Number(total) > 0 ? ` (worca's own calls so far: ${fmtUsd(total)})` : ''}` };
   if (fallback !== null && typeof total !== 'number') return { text: fallback, title: '' };
   return { text: fmtUsd(Number(total) || 0), title: '' };
 }
@@ -26756,7 +26756,7 @@ function buildHdDiff(sec, record, data) {
       // builds the artifact on the stopped and error paths too. What is left here
       // is a run that committed nothing (stopped before its first commit, or still
       // going) and an archived run whose artifacts are gone.
-      sub.textContent = 'Nothing was captured yet — the run has committed no work, or its artifacts have been archived.';
+      sub.textContent = 'Nothing was captured yet. The run has committed no work, or its artifacts have been archived.';
       empty.appendChild(sub);
     }
     sec.appendChild(empty);
@@ -26866,7 +26866,7 @@ function buildHdDiff(sec, record, data) {
           try { const b = await res.json(); if (b && b.error) m = b.error; } catch { /* keep the fallback */ }
           return m;
         }
-      } catch { return 'network error — the comment was not saved'; }
+      } catch { return 'network error: the comment was not saved'; }
       await reload();
       return null;
     },
@@ -26883,7 +26883,7 @@ function buildHdDiff(sec, record, data) {
           try { const b = await res.json(); if (b && b.error) m = b.error; } catch { /* keep the fallback */ }
           return m;
         }
-      } catch { return 'network error — the reply was not saved'; }
+      } catch { return 'network error: the reply was not saved'; }
       await reload();
       return null;
     },
@@ -27323,7 +27323,7 @@ function buildHdDiff(sec, record, data) {
       tail = document.createElement('div');
       tail.className = 'hint hd-diff-note hd-diff-trunc';
       setSectionData(tail, meta);
-      tail.textContent = '(large file — diff truncated)';
+      tail.textContent = '(large file, diff truncated)';
       body.appendChild(tail);
     }
     hdDiffAppendWindow(document, body, view, meta, tail);
@@ -27495,7 +27495,7 @@ function buildHdOverview(sec, record, data) {
     verdict.classList.add('clean');
     chip.classList.add('clean');
     chip.textContent = 'Clean';
-    verdict.append(chip, document.createTextNode(' Clean — no blocking issues flagged.'));
+    verdict.append(chip, document.createTextNode(' Clean: no blocking issues flagged.'));
   } else if (results) {
     verdict.classList.add('warn');
     chip.classList.add('warn');
@@ -27507,7 +27507,7 @@ function buildHdOverview(sec, record, data) {
     verdict.classList.add('none');
     chip.classList.add(`st-${family}`);
     chip.textContent = word;
-    verdict.append(chip, document.createTextNode(' No review results captured — the run did not complete.'));
+    verdict.append(chip, document.createTextNode(' No review results captured. The run did not complete.'));
   }
   if (verdict.childNodes.length) wrap.appendChild(verdict);
   // The open pull request(s) as GitHub sees them now, beside the review's verdict from the run.
@@ -27775,7 +27775,7 @@ function hdRenderAskForm(record, ask, captionPrefix = '') {
   const caption = document.createElement('div');
   caption.className = 'hint hd-cl-caption';
   const name = `${ask.form || 'form'} · v${ask.version == null ? 1 : ask.version}`;
-  caption.textContent = captionPrefix ? `${captionPrefix} — ${name}` : name;
+  caption.textContent = captionPrefix ? `${captionPrefix}: ${name}` : name;
   card.appendChild(caption);
   const askId = ask.askId || '';          // X1: the route token, NOT the question id
   const handle = renderAskForm(ask, {
@@ -27867,7 +27867,7 @@ function buildHdClarify(sec, record, data) {
   if (questions.length && data.clarify) { const by = answeredByLine(data.clarify.answeredBy, data.clarify.night); if (by) wrap.appendChild(by); }
   if (data.clarify && data.clarify.ask) wrap.appendChild(hdRenderAskForm(record, data.clarify.ask));
   for (const r of Array.isArray(data.stepQuestions) ? data.stepQuestions : []) {
-    const roundLabel = `${r && (r.agentKey || r.nodeId) ? (r.agentKey || r.nodeId) : 'agent'} — round ${r && r.round}`
+    const roundLabel = `${r && (r.agentKey || r.nodeId) ? (r.agentKey || r.nodeId) : 'agent'}, round ${r && r.round}`
       + (String((r && r.stepKey) || '').split('#')[1] ? ` · cycle ${String(r.stepKey).split('#')[1]}` : '');
     if (r && r.ask) {
       wrap.appendChild(hdRenderAskForm(record, r.ask, roundLabel));
@@ -28825,29 +28825,29 @@ function rdStateCopy(r, stepName) {
   if (r.pendingQuestion != null) return `Parked on ${step} until the questions above are answered.`;
   // The cost arms reuse the banner's own wording (stats-view.mjs) so the Overview
   // line and the banner above the graph never disagree.
-  if (r.pauseReason === 'cost_pipeline') return 'Paused — pipeline cost limit reached.';
-  if (r.pauseReason === 'cost_total') return 'Paused — total budget reached.';
-  if (r.pauseReason === 'cost_pipeline_policy') return 'Paused — team cost cap reached.';
-  if (r.pauseReason === 'cost_total_policy') return 'Paused — team total cap reached.';
+  if (r.pauseReason === 'cost_pipeline') return 'Paused: pipeline cost limit reached.';
+  if (r.pauseReason === 'cost_total') return 'Paused: total budget reached.';
+  if (r.pauseReason === 'cost_pipeline_policy') return 'Paused: team cost cap reached.';
+  if (r.pauseReason === 'cost_total_policy') return 'Paused: team total cap reached.';
   if (r.pauseReason === 'night_guardrail') return r.pauseDetail || 'Paused: Away mode limit reached.';
-  if (r.pauseReason === 'drain') return 'Paused while worca was stopping. Resume continues from here — the worktree and progress are kept.';
+  if (r.pauseReason === 'drain') return 'Paused while worca was stopping. Resume continues from here. The worktree and progress are kept.';
   if (r.pauseReason === 'error') {
     const why = r.pauseDetail ? `: ${r.pauseDetail}` : '';
-    return `Paused after an error${why}. Fix the cause, then Resume — the worktree and progress are kept.`;
+    return `Paused after an error${why}. Fix the cause, then Resume. The worktree and progress are kept.`;
   }
   if (r.pauseReason === 'recoverable') {
     const why = r.pauseDetail ? ` (${r.pauseDetail})` : '';
-    return `Paused on a recoverable error${why}. Once it clears, Resume retries the step — the worktree and progress are kept.`;
+    return `Paused on a recoverable error${why}. Once it clears, Resume retries the step. The worktree and progress are kept.`;
   }
   if (r.pauseReason === 'usage_limit') {
     // OpenRouter's daily free requests: the detail already says when they come back and what to do.
-    if (/^OpenRouter's free-model requests/.test(r.pauseDetail || '')) return `Paused — ${r.pauseDetail}.`;
+    if (/^OpenRouter's free-model requests/.test(r.pauseDetail || '')) return `Paused: ${r.pauseDetail}.`;
     const whose = r.limitEngine ? `${engineLabel(r.limitEngine)}'s ` : '';
-    return `Paused — ${whose}session/usage limit reached${r.pauseDetail ? ` (${r.pauseDetail})` : ''}. Resume after the reset.`;
+    return `Paused: ${whose}session/usage limit reached${r.pauseDetail ? ` (${r.pauseDetail})` : ''}. Resume after the reset.`;
   }
   if (r.pauseReason && (r.status === 'paused' || r.status === 'pausing' || r.status === 'interrupted')) {
     // A legacy reason is the orchestrator's own text (a pre-policy session/usage-limit line).
-    return `Paused — ${r.pauseReason}. Resume once it clears.`;
+    return `Paused: ${r.pauseReason}. Resume once it clears.`;
   }
   if (r.status === 'paused' || r.status === 'pausing' || r.status === 'interrupted') {
     // Who paused it (shared deployments only): "by you" when it was the viewer, else the name.
@@ -29508,7 +29508,7 @@ async function refreshReport() {
     el.reportPreview.textContent = previewText(data.payload);
     if (data.issue && data.issue.url) el.reportIssue.href = data.issue.url;
     el.reportIssue.title = data.issue && data.issue.truncated
-      ? 'The prefilled text was trimmed to fit a URL — paste the copied JSON into the issue'
+      ? 'The prefilled text was trimmed to fit a URL. Paste the copied JSON into the issue'
       : 'Opens GitHub with the report prefilled';
   } catch (err) {
     if (token !== reportState.token) return;
@@ -29606,7 +29606,7 @@ el.reportIssue.addEventListener('click', () => {
 /** What the reporter can DO about each failure kind the route reports. */
 const GH_ISSUE_HINTS = {
   'no-gh': 'The GitHub CLI (gh) is not installed, so worca could not file the issue.',
-  auth: 'gh is not logged in — run `gh auth login` — so worca could not file the issue.',
+  auth: 'gh is not logged in, so worca could not file the issue. Run `gh auth login`.',
   'no-repo': 'No GitHub repository is configured to report to.',
   failed: 'GitHub refused the issue.',
 };
@@ -30288,7 +30288,7 @@ function paintAutoBadge(el, stepper) {
   el.hidden = false;
   el.textContent = decided ? `Auto → ${name}` : 'Auto';
   el.title = !decided ? 'Auto is deciding the workflow'
-    : auto.via === 'fallback' ? `The Auto classifier was unreachable${auto.reason ? ` (${auto.reason})` : ''} — running the default workflow "${name}"`
+    : auto.via === 'fallback' ? `The Auto classifier was unreachable${auto.reason ? ` (${auto.reason})` : ''}. Running the default workflow "${name}"`
     : auto.via === 'reused' ? `Auto reused the saved workflow "${name}"` : `Auto created the workflow "${name}"`;
   el.classList.toggle('is-deciding', !decided);
 }
@@ -30396,7 +30396,7 @@ function skillPillsHtml(skills) {
     if (kind === 'overflow') {
       const n = Number(rest);
       if (!Number.isFinite(n) || n <= 0) return '';   // a malformed sentinel renders nothing
-      const title = `Pill cap reached (${shown} shown) — ${n} more skill${n === 1 ? '' : 's'}/tools were used`;
+      const title = `Pill cap reached (${shown} shown): ${n} more skill${n === 1 ? '' : 's'}/tools were used`;
       return `<span class="skill-pill is-overflow" title="${escapeHtml(title)}">+${n} more</span>`;
     }
     if (kind === 'mcp') {
@@ -31145,7 +31145,7 @@ function pinpointArtifact(ctx, base, { artifact, stage, body, root }) {
         let m = `could not send (${res.status})`;
         try { const b = await res.json(); if (b && b.error) m = b.error; } catch { /* keep the fallback */ }
         return m;
-      } catch { return 'network error — nothing was sent'; }
+      } catch { return 'network error: nothing was sent'; }
     },
     draft: pinpointDraft,
   });
@@ -31543,7 +31543,7 @@ function buildHdArtifacts(sec, record, data) {
           const retry = document.createElement('button');
           retry.type = 'button';
           retry.className = 'hint artifact-truncated';
-          retry.textContent = `Showing the first ${seen.length} — this run indexed more. Loading the next page failed; try again.`;
+          retry.textContent = `Showing the first ${seen.length}. This run indexed more. Loading the next page failed; try again.`;
           retry.addEventListener('click', () => { retry.disabled = true; loadPage(offset); });
           sec.appendChild(retry);
         }
@@ -31561,7 +31561,7 @@ function buildHdArtifacts(sec, record, data) {
         const more = body.nextOffset != null;
         const note = document.createElement(more ? 'button' : 'div');
         note.className = 'hint artifact-truncated';
-        note.textContent = `Showing the first ${seen.length} — this run indexed more.`;
+        note.textContent = `Showing the first ${seen.length}. This run indexed more.`;
         if (more) {
           note.type = 'button';
           note.textContent += ' Load the next page.';
@@ -35616,9 +35616,9 @@ function paintRdHeader(screen, r) {
   }
   pauseBtn.dataset.gated = totalBlocked ? '1' : '';
   pauseBtn.title = totalBlocked
-    ? `Total budget reached — blocked until ${fmtResetAtLocal(budgetState.budget.windowEndMs)} or a higher total limit`
-    : (paused ? 'Resume — restart this paused pipeline where it left off'
-              : 'Pause — gracefully stop the session so it can be resumed');
+    ? `Total budget reached: blocked until ${fmtResetAtLocal(budgetState.budget.windowEndMs)} or a higher total limit`
+    : (paused ? 'Resume: restart this paused pipeline where it left off'
+              : 'Pause: gracefully stop the session so it can be resumed');
   // The split's caret: paused, live runs only (as on the run card); caps keep the
   // caret but disable "Resume at…" (a cap is a live decision).
   const resumeMore = screen.querySelector('.rd-resume-more');
@@ -35634,7 +35634,7 @@ function paintRdHeader(screen, r) {
   if (resumeAt) {
     const refused = typeof r.pauseReason === 'string' && SCHEDULE_REFUSED_PAUSE.has(r.pauseReason);
     resumeAt.disabled = refused;
-    resumeAt.title = refused ? 'This run paused on a cost cap — continuing past it is a live decision and cannot be scheduled.' : '';
+    resumeAt.title = refused ? 'This run paused on a cost cap. Continuing past it is a live decision and cannot be scheduled.' : '';
   }
   paintResumeEngineItems(screen.querySelector('.rd-resume-menu'), r.runEngine, { reason: r.pauseReason, limitEngine: r.limitEngine });
   paintRdLimitItem(screen, r);
@@ -35664,7 +35664,7 @@ function paintRdHeader(screen, r) {
 function renderPipelineTabs() {
   const needs = pipelineTabRuns().some((r) => r.pendingQuestion != null);
   const dot = $('#mbar-rollup'); if (dot) dot.hidden = !needs;
-  $('#mbar-menu')?.setAttribute('aria-label', needs ? 'Menu — a pipeline needs your input' : 'Menu');
+  $('#mbar-menu')?.setAttribute('aria-label', needs ? 'Menu: a pipeline needs your input' : 'Menu');
 }
 
 // Needs you, counted without building the list (this runs on every WS frame): the same rule
@@ -35716,7 +35716,7 @@ function updateNavCounts() {
     const parts = [];
     if (needs) parts.push(`${needs} need${needs === 1 ? 's' : ''} you`);
     if (live) parts.push(`${live} live`);
-    const t = parts.length ? `Runs — ${parts.join(', ')}` : 'Runs';
+    const t = parts.length ? `Runs: ${parts.join(', ')}` : 'Runs';
     // A tooltip only when it says more than the label beside it ("Runs" over "Runs" is
     // noise); the collapsed rail has no label, so it always gets one.
     const railed = !!rb.closest('.sidebar.collapsed');
@@ -35910,7 +35910,7 @@ function paintClaudeSetupStatus() {
   const ok = !!gs.status.steps.claude;
   const bin = c.bin || 'claude';
   box.className = `ob-claude-status ${ok ? 'ok' : 'err'}`;
-  if (ok) box.textContent = c.auth === 'signed-in' ? `Found ${bin}, installed and signed in — you're set.` : `Found ${bin} — you're set.`;
+  if (ok) box.textContent = c.auth === 'signed-in' ? `Found ${bin}, installed and signed in. You're set.` : `Found ${bin}. You're set.`;
   else if (c.auth === 'signed-out') box.textContent = `Found ${bin}, installed but not signed in yet. Run claude in a terminal, type /login, then check again.`;
   else box.textContent = c.hint || `"${bin}" is not on the PATH of the Worca server. Install it, then check again (restart the UI if PATH changed).`;
   // The wizards' signed-out lines are stale once the CLI checks out.
@@ -36043,12 +36043,12 @@ function gsRunHops(g, mock) {
     // P3: a run without a project has no project to pick (its select is hidden).
     state.runTarget === 'none' ? null : { id: 'project', target: '#projectSelect', lift: ['.select-wrap'], met: () => !noProjectPicked(),
       text: 'Pick the project the run happens in.',
-      already: 'The run happens in the project picked here — any registered folder.' },
+      already: 'The run happens in the project picked here. Any registered folder works.' },
     mock ? null : {
       id: 'workflow', target: '#workflowSelect', lift: ['.select-wrap'],
       met: () => !(wf && !wf.hidden && (wf.value || '') === AUTO_WORKFLOW_ID),
-      text: 'Choose a built-in workflow for this run — Default is the loop you saw in Workflows. Auto would pick one for you.',
-      already: 'The workflow for this run is picked here — Default is the loop you saw in Workflows; Auto would pick one for you.',
+      text: 'Choose a built-in workflow for this run. Default is the loop you saw in Workflows. Auto would pick one for you.',
+      already: 'The workflow for this run is picked here. Default is the loop you saw in Workflows; Auto would pick one for you.',
     },
     { id: 'prompt', target: '#prompt', met: () => !(prompt && !prompt.hidden && !prompt.value.trim()),
       text: mock
@@ -36056,7 +36056,7 @@ function gsRunHops(g, mock) {
         : 'Describe the task in a sentence or two. The planner asks when something matters.',
       already: mock
         ? 'The task goes here. A mock run never reads it, so what is there will do.'
-        : 'The task goes here — a sentence or two; the planner asks when something matters.' },
+        : 'The task goes here, in a sentence or two. The planner asks when something matters.' },
     // A server in mock mode locks the switch on (applyServerMock): nothing to turn off, so met.
     { id: 'mock', target: '#mock-switch', toggle: true, met: () => mockOn() === mock || serverMock.on,
       skipWhenMet: !mock,   // a real run mentions the switch only when it has to be turned off
@@ -36099,8 +36099,8 @@ function gsAddProjectHops(g, navText, addText) {
         text: 'Paste the folder’s path, or Choose folder… to pick it.',
         already: 'The folder’s path goes here.' },
       { id: 'name', mode: 'pointer', target: '#proj-add-name', met: () => !!g.added || !!val('proj-add-name'), skipWhenMet: !!g.added,
-        text: 'Name it — this is how it appears in lists and pickers.',
-        already: 'Its name — how it appears in lists and pickers.' },
+        text: 'Name it. This is how it appears in lists and pickers.',
+        already: 'Its name: how it appears in lists and pickers.' },
       save('Add it. The dialog closes and the project joins the list.'),
     ];
   }
@@ -36125,7 +36125,7 @@ function gsRaiseLevelHop(hop) {
     if (!t) continue;
     const min = minLevelFor(t);
     if (levelAtLeast(min)) {
-      return dialogUp ? { target: '#mode-done', mode: 'pointer', text: 'Done — the tour carries on from here.' } : hop;
+      return dialogUp ? { target: '#mode-done', mode: 'pointer', text: 'Done. The tour carries on from here.' } : hop;
     }
     if (!need || UI_LEVELS.indexOf(min) < UI_LEVELS.indexOf(need)) need = min;
   }
@@ -36189,12 +36189,12 @@ function gsHops(step, g) {
       return [
         NAV('chat', 'Chat: ask about any run, agent or project in plain language.'),
         { id: 'question', target: '.ask-input', met: () => !!(input && input.value.trim()),
-          text: 'Try “What did my last run change?” — or anything about a run, an agent or a project.',
+          text: 'Try “What did my last run change?” Or ask anything about a run, an agent or a project.',
           already: 'A question is already typed here. Anything about a run, an agent or a project works.' },
         { id: 'send', target: '.ask-send', click: 'asked', met: () => !!g.asked,
           text: 'Send it. Worca reads the run itself before answering.' },
         { id: 'answer', info: true, nextLabel: 'Done', target: '.ask-transcript',
-          text: 'The answer lands here, with what it read to get there. Ask a follow-up any time — the thread keeps its context.' },
+          text: 'The answer lands here, with what it read to get there. Ask a follow-up any time. The thread keeps its context.' },
       ];
     }
     case 'workflows': {
@@ -36225,13 +36225,13 @@ function gsHops(step, g) {
         { id: 'canvas', info: true, target: '#wfv-canvas', lift: ['.wfv-stage'],
           text: 'This is the whole workflow. Each card is an agent or a script; the wires carry plans, code and reviews from one to the next. Drag cards in from the Library, rewire them, or select one to tune it.' },
         { id: 'chat', info: true, target: '#wfc', lift: ['.wfv-float', '.wfv-stage'],
-          text: 'Or ask the chat: it adds and rewires steps, tunes models, and drafts new agents and scripts — on this canvas, while you watch.' },
+          text: 'Or ask the chat: it adds and rewires steps, tunes models, and drafts new agents and scripts. It works on this canvas, while you watch.' },
         { id: 'back', target: '#wfv-back', lift: ['.wfv-float', '.wfv-stage'], met: () => currentView() !== 'workflows',
           text: 'Leave the editor. Runs start from New run.' },
         NAV('new', 'Now start a run with the workflow that fits your task. Every run starts here.'),
         // The pick is saved per project (PATCH /api/config), so a project has to be picked first.
         state.runTarget === 'none' ? null : { id: 'project', target: '#projectSelect', lift: ['.select-wrap'], met: () => !noProjectPicked(),
-          text: 'Pick the project the run happens in — the workflow you choose is remembered for it.',
+          text: 'Pick the project the run happens in. The workflow you choose is remembered for it.',
           already: 'The run happens in the project picked here; the workflow you choose next is remembered for it.' },
         // Only the user's own pick counts (a `change` on the picker, noted by the watcher): choosing
         // a project loads its remembered workflow into the picker, and that must not end the tour.
@@ -36241,7 +36241,7 @@ function gsHops(step, g) {
         // a form. The Mock switch is left to the user: mentioned at Start, never rung — a real run is
         // a fine outcome here, and so is an offline one.
         { ...run.prompt, text: 'Now describe the task for it, in a sentence or two. The planner asks when something matters.',
-          already: 'The task goes here — a sentence or two; the planner asks when something matters.' },
+          already: 'The task goes here, in a sentence or two. The planner asks when something matters.' },
         { ...run.start, text: 'Start the run with that workflow. Mock mode, beside it, tries the loop offline first.' },
         run.runs,
         ...gsRunPageHops('This is your run’s page, on the workflow you picked. The line at the top of its card says what it is doing: the state, then the step.'),
@@ -36257,8 +36257,8 @@ function gsHops(step, g) {
         { id: 'name', target: '#wiz-name', met: () => !!(document.getElementById('wiz-name')?.value || '').trim(),
           text: 'Name the workspace.', already: 'The workspace’s name.' },
         { id: 'members', target: '#wiz-projects', met: () => checked() >= 2,
-          text: 'Tick the projects that belong together — two or more.',
-          already: 'The projects that belong together — two or more are ticked.' },
+          text: 'Tick the projects that belong together (two or more).',
+          already: 'The projects that belong together. Two or more are ticked.' },
         { id: 'scan', target: '#wiz-start-scan', final: true,
           text: 'Scan them. Worca starts a scan run you can follow under Runs; when it finishes, the workspace appears here with its description, ready to edit.' },
       ];
@@ -36293,7 +36293,7 @@ function gsHops(step, g) {
         const change = !!block().querySelector('.tm-change');
         return [...walk, { id: 'why', info: true, nextLabel: 'Done', target: '#proj-detail .pd-team-metrics',
           text: on ? `Team metrics is already on for this project: every finished run is recorded on the shared branch. Include my runs is your own switch${change ? '; Change… points the project at another home' : ''}.`
-            : 'Team metrics lives on a git remote. This project has none yet — push it to one and “Set up metrics…” appears here.' }];
+            : 'Team metrics lives on a git remote. This project has none yet. Push it to one and “Set up metrics…” appears here.' }];
       }
       return [
         ...walk,
@@ -36338,7 +36338,7 @@ function gsHops(step, g) {
         const on = !!document.querySelector('#proj-detail .tp-cell .tp-open');
         return [...walk, { id: 'after', info: true, nextLabel: 'Done', target: ['#proj-detail .tp-cell', '#proj-detail .pd-team-policy'],
           text: on ? 'Team policy is on for this project. Open takes you to the Team policy page, where the document is read and edited.'
-            : 'Nothing was enabled — “Set up policy…” stays here for when you are ready.' }];
+            : 'Nothing was enabled. “Set up policy…” stays here for when you are ready.' }];
       }
       if (!pageOpen() || !tabActive() || !block()) return [...walk, { id: 'enable', target: ['#proj-detail .tp-enable', '#proj-detail .pd-team-policy'], met: () => false, text: 'A team policy is switched on from the project’s Team tab.' }];
       if (!canEnable()) {
@@ -36348,12 +36348,12 @@ function gsHops(step, g) {
         const change = !!block().querySelector('.tp-change');
         return [...walk, { id: 'why', info: true, nextLabel: 'Done', target: '#proj-detail .pd-team-policy',
           text: on ? `Team policy is already on for this project. Open shows the document on the Team policy page${change ? '; Change… points the project at another home' : ''}.`
-            : 'A team policy lives on a git remote. This project has none yet — push it to one and “Set up policy…” appears here.' }];
+            : 'A team policy lives on a git remote. This project has none yet. Push it to one and “Set up policy…” appears here.' }];
       }
       return [
         ...walk,
         { id: 'enable', target: '#proj-detail .tp-enable', skipWhenMet: true, met: dialog,
-          text: 'A team policy is one shared document — cost caps, models, plugins, guardrails — read by everyone who runs Worca on this repository. Set it up here.' },
+          text: 'A team policy is one shared document (cost caps, models, plugins, guardrails) read by everyone who runs Worca on this repository. Set it up here.' },
         needsGit() ? { id: 'submit', mode: 'pointer', info: true, nextLabel: 'Done', target: '#plugin-modal .pl-needs-git', text: 'Needs git' } :
         { id: 'submit', mode: 'pointer', target: '#plugin-modal .tp-enable-submit', click: 'enabled', met: () => !!g.enabled && !gsDialogUp('plugin-modal'),
           text: 'Create the branch and enable it: here, on this repository, or following another project’s policy. It starts empty.' },
@@ -36435,7 +36435,7 @@ async function startGuide(step) {
     const ok = await confirmModal({
       title: `Switch to ${info.label}?`,
       message: `“${def.label}” uses controls that ${LEVEL_INFO[currentLevel()].label} hides. `
-        + `Switch to ${info.label} to follow the tour — you can change it back any time from your account menu.`,
+        + `Switch to ${info.label} to follow the tour. You can change it back any time from your account menu.`,
       confirmLabel: `Switch to ${info.label} and start`,
       cancelLabel: 'Not now',
     });
@@ -38600,7 +38600,7 @@ function exportSyncFormat() {
         ? `Export "${name}" as a Worca plugin folder to share with other Worca users.`
         : `Export "${name}" as a runnable /command skill.`;
   document.getElementById('export-format-hint').textContent = json
-    ? 'The saved graph only — no agents or skills travel with it. The recipient uses Import… in their saved list.'
+    ? 'The saved graph only. No agents or skills travel with it. The recipient uses Import… in their saved list.'
     : market
       ? 'Builds the plugin in a fresh copy of the marketplace, lists it in worca-cc-marketplace.json, validates it (lint, script cases, the marketplace\'s own discovery) and opens one pull request on worca/plugin/<name>.'
       : plugin
@@ -38743,7 +38743,7 @@ function exportRenderPlan(plan) {
   for (const p of plan.noop) line('no-op', p);
   // A plugin plan's `skipped` entries are {path, reason} (a Worca-shipped skill
   // that is not bundled); the skill export's are plain paths.
-  for (const s of plan.skipped || []) line('skip', typeof s === 'string' ? s : `${s.path} — ${s.reason}`);
+  for (const s of plan.skipped || []) line('skip', typeof s === 'string' ? s : `${s.path}: ${s.reason}`);
   for (const w of plan.warnings || []) {
     const row = document.createElement('div');
     row.className = 'export-row';
@@ -38832,7 +38832,7 @@ function bindExportModal() {
     const data = await pickFolder(exportModalState.format === 'plugin' ? 'plugin' : 'export');
     if (data && data.status === 'picked' && data.path) { set(data.path); return; }
     if (data && data.status === 'canceled') return;
-    if (data && data.status === 'busy') { exportSay('A folder dialog is already open — finish or cancel it first.'); return; }
+    if (data && data.status === 'busy') { exportSay('A folder dialog is already open. Finish or cancel it first.'); return; }
     openFolderBrowser(folder.value.trim(), set);
   });
   document.getElementById('export-cancel').addEventListener('click', () => exportGuard.cancel());
@@ -38857,12 +38857,12 @@ function bindExportModal() {
       if (market) {
         exportRenderPlan({ ...plan.files, warnings: plan.warnings, conflicts: [] });
         document.getElementById('export-plan').appendChild(marketplacePlanExtras(plan, { doc: document }));
-        exportSay(plan.status === 'unchanged' ? 'No changes — the marketplace already has this export.'
-          : 'Preview only — nothing is pushed until you click Open pull request.');
+        exportSay(plan.status === 'unchanged' ? 'No changes. The marketplace already has this export.'
+          : 'Preview only. Nothing is pushed until you click Open pull request.');
         return;
       }
       exportRenderPlan(plan);
-      exportSay(plan.conflicts.length ? 'Resolve each conflict below, then Export.' : 'Preview only — nothing is written until you click Export.');
+      exportSay(plan.conflicts.length ? 'Resolve each conflict below, then Export.' : 'Preview only. Nothing is written until you click Export.');
     } catch (err) {
       if (current()) exportSay(`Preview failed: ${err.message}`, true);
     } finally {
@@ -38884,7 +38884,7 @@ function bindExportModal() {
       exportShowDone({
         title: 'JSON file downloaded',
         lines: [['File', exportJsonFilename(exportModalState.item.id)], ['Pipeline', exportModalState.item.name]],
-        next: 'Send the file to another Worca user — they pick it up with Import… in their saved pipelines. Agents and skills do not travel with it; share a plugin for those.',
+        next: 'Send the file to another Worca user. They pick it up with Import… in their saved pipelines. Agents and skills do not travel with it; share a plugin for those.',
       });
       return;
     }
@@ -38931,7 +38931,7 @@ function bindExportModal() {
       if (unwritten.length) {
         exportRenderPlan(applied);
         appendLog({ source: 'ui', level: 'error', text: `export of ${exportModalState.item.name} incomplete: ${applied.written.length} written, ${unwritten.length} conflict(s) left unwritten` });
-        exportSay(`${unwritten.length} unresolved conflict(s) were left unwritten — resolve below and Export again.`, true);
+        exportSay(`${unwritten.length} unresolved conflict(s) were left unwritten. Resolve below and Export again.`, true);
         return;
       }
       // A plugin folder that does not validate stays open: the recipient's
@@ -38950,7 +38950,7 @@ function bindExportModal() {
           title: `Plugin "${applied.name}" v${applied.version} exported`,
           lines: [['Folder', applied.dir], ['Files', files]],
           next: exportNextStep('Share the folder. The recipient pastes its path into Add marketplace on the Marketplace page, or runs ',
-            `worca plugin link ${applied.dir}`, ' — once; after a re-export they run worca plugin reimport.'),
+            `worca plugin link ${applied.dir}`, ' once. After a re-export they run worca plugin reimport.'),
         });
       } else {                                                    // Claude Code skill
         const command = (document.getElementById('export-slug-preview').textContent.match(/\/[^\s]+/) || [''])[0];
@@ -38960,7 +38960,7 @@ function bindExportModal() {
           title: 'Claude Code skill exported',
           lines: [['Skill', command || exportModalState.item.name], ['Location', where], ['Files', files]],
           next: exportNextStep(exportModalState.destination === 'project' ? 'Open the project in Claude Code and run ' : 'In Claude Code, run ',
-            command || '/<skill>', ' — the pipeline runs there without Worca.'),
+            command || '/<skill>', '. The pipeline runs there without Worca.'),
         });
       }
     } catch (err) {
@@ -39016,7 +39016,7 @@ function gvConfirmScriptImport(list) {
 
 function gvImportError(r) {
   const issues = (r.issues || []).slice(0, 5).map((i) => `${i.code}: ${i.message}`).join(' · ');
-  notify({ tone: 'err', title: 'Not imported', detail: r.summary || (issues ? `${r.error} — ${issues}` : r.error) });
+  notify({ tone: 'err', title: 'Not imported', detail: r.summary || (issues ? `${r.error}: ${issues}` : r.error) });
   return false;
 }
 
@@ -39029,7 +39029,7 @@ async function gvImportWorkflowObject(obj) {
   if (!r.ok) return gvImportError(r);
   gvNewIds.add(r.workflow.id);
   notify({ tone: 'ok', title: r.renamed
-    ? `Imported as "${r.workflow.name}" — "${r.requestedName}" was already taken.`
+    ? `Imported as "${r.workflow.name}" because "${r.requestedName}" was already taken.`
     : `Imported "${r.workflow.name}".` });
   await wfvRefreshWorkflows();
   wfvShellActions().openLibrary('workflows');

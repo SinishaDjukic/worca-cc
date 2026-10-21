@@ -55,7 +55,7 @@ test('Overview: clean verdict + stat cards + task card; a non-done run shows the
       const verdict = sec.querySelector('.hd-ov-verdict');
       assert.ok(verdict, 'the verdict banner renders');
       assert.ok(verdict.classList.contains('clean'), 'an empty keyThingsToCheck is a clean verdict');
-      assert.match(verdict.textContent, /Clean — no blocking issues flagged\./);
+      assert.match(verdict.textContent, /Clean: no blocking issues flagged\./);
       assert.equal(sec.querySelector('ul.issues'), null, 'nothing to list when there are no findings');
 
       const dur = sec.querySelector('.hd-ov-card-duration');
@@ -99,7 +99,7 @@ test('Overview: clean verdict + stat cards + task card; a non-done run shows the
 
       const verdict = sec.querySelector('.hd-ov-verdict');
       assert.ok(verdict.classList.contains('none'));
-      assert.match(verdict.textContent, /No review results captured — the run did not complete\./);
+      assert.match(verdict.textContent, /No review results captured\. The run did not complete\./);
       const chip = sec.querySelector('.hd-ov-chip');
       assert.ok(chip.classList.contains('st-stopped'), 'the chip wears the status family class');
       assert.equal(chip.textContent, 'Stopped');
@@ -436,7 +436,7 @@ test('Clarify tab: Q/A cards + step rounds, caption without cycle when the stepK
       // An unanswered step question keeps its ANS row and says so.
       assert.match(cards[1].textContent, /Keep flag\?/);
       assert.match(cards[1].textContent, /\(none\)/);
-      assert.match(sec.querySelector('.hd-cl-caption').textContent, /implementer — round 1 · cycle 2/);
+      assert.match(sec.querySelector('.hd-cl-caption').textContent, /implementer, round 1 · cycle 2/);
     } },
     { name: 'Clarify caption drops the cycle when the stepKey carries none', run: async () => {
       const ctx = await bootDetail({
@@ -450,7 +450,7 @@ test('Clarify tab: Q/A cards + step rounds, caption without cycle when the stepK
         },
       });
       const sec = await openTab(ctx, 'clarify');
-      assert.equal(sec.querySelector('.hd-cl-caption').textContent, 'plan — round 2');
+      assert.equal(sec.querySelector('.hd-cl-caption').textContent, 'plan, round 2');
       // A whitespace-only choice is not an answer.
       assert.match(sec.querySelector('.hd-cl-card').textContent, /\(none\)/);
     } },
