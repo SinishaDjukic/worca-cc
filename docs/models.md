@@ -69,6 +69,13 @@ entry's env, wins. First-party spawns keep the CLI defaults. Each retry the CLI
 makes shows in the run log as a warning, for example `API call failed: no HTTP
 response (timeout or connection error); retry 5/10 in 4.1s`.
 
+**No fork sub-agents.** Every Claude spawn carries `CLAUDE_CODE_FORK_SUBAGENT=0`.
+From Claude Code 2.1.302, `claude -p` offers `subagent_type: "fork"`: a child
+that inherits the agent's context, tools and model. Such a child would skip
+worca's read-only investigator and the node's sub-agent model. A value set in
+the shell Worca starts from does not change this, and an entry's env may not
+set the key.
+
 ## The catalog
 
 The Models page is the catalog and nothing else. Above the rows sit a search
