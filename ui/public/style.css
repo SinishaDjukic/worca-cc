@@ -1305,6 +1305,8 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .msw-table th{text-align:left;color:var(--ink-3);font-weight:500;padding:4px 6px;}
 .msw-table td{padding:4px 6px;vertical-align:middle;}
 .msw-row.is-locked{opacity:.6;}
+.msw-loading{color:var(--ink-3);font-size:13px;padding:12px 14px;}
+.msw-note{color:var(--ink-3);font-size:12px;margin:0 0 8px;}
 .msw-stage{display:flex;flex-direction:column;}
 .msw-state{color:var(--ink-3);font-size:11px;}
 .msw-state.st-paused{color:var(--red-ink);}

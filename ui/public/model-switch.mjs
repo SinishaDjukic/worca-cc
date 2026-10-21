@@ -7,6 +7,7 @@
 import { h } from './script-forms.mjs';
 
 export const FIELDS = Object.freeze(['model', 'effort', 'subagentModel', 'subagentEffort']);
+const FIELD_NAME = { model: 'model', effort: 'effort', subagentModel: 'sub-agent model', subagentEffort: 'sub-agent effort' };
 const STATE_LABEL = { completed: 'completed', paused: 'paused here', pending: 'not started',
   running: 'running now', 'may-rerun': 'ran · may run again' };
 
@@ -46,7 +47,7 @@ function modelItems(payload, current) {
   const items = [{ value: '', text: payload.runDefault ? `Default (${payload.runDefault})` : 'Default' }];
   for (const m of payload.models || []) items.push({ value: m.id, text: m.label || m.id });
   // A frozen model that left the catalog still shows as itself (it is what the stage holds now).
-  if (current && !items.some((it) => it.value === current)) items.push({ value: current, text: `${current} (not in catalog)` });
+  if (current && !items.some((it) => it.value === current)) items.push({ value: current, text: `${current} (not offered on this run)` });
   return items;
 }
 
@@ -86,13 +87,15 @@ export function renderModelSwitchPanel(payload, { doc = globalThis.document, onS
     : 'This run only. A stage whose model changes starts a fresh session when the run resumes.'));
   root.appendChild(head);
   if (payload.pauseDetail) root.appendChild(h(doc, 'p', 'msw-why', payload.pauseDetail));
+  const allLocked = !!payload.modelForAll;   // run-harness _nodeModelPair ignores per-stage model/effort
+  if (allLocked) root.appendChild(h(doc, 'p', 'msw-note', `This run was resumed with ${payload.modelForAll} for every remaining stage — per-stage models and efforts do not apply.`));
 
   const syncEffort = (nodeId) => {
     const s = selects[nodeId];
     const p = picks[nodeId];
     p.effort = reconcileEffort(payload.models, p.model, p.effort);
     fillSelect(doc, s.effort, [{ value: '', text: 'Default' }, ...effortsFor(payload.models, p.model).map((e) => ({ value: e, text: e }))], p.effort);
-    s.effort.disabled = s.locked || !p.model;
+    s.effort.disabled = s.locked || !p.model || allLocked;
   };
 
   const table = h(doc, 'table', 'msw-table');
@@ -107,8 +110,9 @@ export function renderModelSwitchPanel(payload, { doc = globalThis.document, onS
     tr.appendChild(h(doc, 'td', 'msw-stage', 'All remaining stages'));
     const td = h(doc, 'td');
     const all = h(doc, 'select', 'msw-all ins-select');
-    fillSelect(doc, all, [{ value: '__keep', text: '— keep each —' }, ...modelItems(payload, '')], '__keep');
-    all.value = '__keep';
+    all.setAttribute('aria-label', 'Set every remaining stage to a model');
+    fillSelect(doc, all, [{ value: '__keep', text: 'Set all to…' }, ...modelItems(payload, '')], '__keep');
+    all.disabled = allLocked;
     all.addEventListener('change', () => {
       if (all.value === '__keep') return;
       for (const s of switchable) {
@@ -116,6 +120,7 @@ export function renderModelSwitchPanel(payload, { doc = globalThis.document, onS
         selects[s.nodeId].model.value = all.value;
         syncEffort(s.nodeId);
       }
+      all.value = '__keep';   // an action, not a state: the rows now hold the pick
     });
     td.appendChild(all);
     tr.appendChild(td);
@@ -136,8 +141,9 @@ export function renderModelSwitchPanel(payload, { doc = globalThis.document, onS
     const mk = (field, items, value) => {
       const sel = h(doc, 'select', 'ins-select');
       sel.dataset.field = field;
+      sel.setAttribute('aria-label', `${s.label} ${FIELD_NAME[field]}`);
       fillSelect(doc, sel, items, value);
-      sel.disabled = locked;
+      sel.disabled = locked || (allLocked && (field === 'model' || field === 'effort'));
       sel.addEventListener('change', () => {
         picks[s.nodeId][field] = sel.value;
         if (field === 'model') syncEffort(s.nodeId);
@@ -151,7 +157,7 @@ export function renderModelSwitchPanel(payload, { doc = globalThis.document, onS
     selects[s.nodeId].model = mk('model', modelItems(payload, s.model), s.model || '');
     selects[s.nodeId].effort = mk('effort', [{ value: '', text: 'Default' }], '');
     syncEffort(s.nodeId);
-    if (s.fanOut) {
+    if (s.fanOut && payload.subagents !== false) {
       mk('subagentModel', [{ value: '', text: 'Default (agent picks)' }, ...(payload.subagentModels || []).map((v) => ({ value: v, text: v }))], s.subagentModel || '');
       mk('subagentEffort', [{ value: '', text: 'Default' }, ...(payload.efforts || []).map((v) => ({ value: v, text: v }))], s.subagentEffort || '');
     } else {
@@ -167,9 +173,9 @@ export function renderModelSwitchPanel(payload, { doc = globalThis.document, onS
   root.appendChild(err);
   const actions = h(doc, 'div', 'msw-actions');
   const cancel = h(doc, 'button', 'msw-cancel btn', 'Cancel');
-  const save = h(doc, 'button', live ? 'msw-save primary' : 'msw-save', 'Save');
+  const save = h(doc, 'button', live ? 'msw-save btn btn-primary' : 'msw-save btn', 'Save');
   // A running run has nothing to resume: Save is the primary action.
-  const saveResume = live ? null : h(doc, 'button', 'msw-save-resume primary', 'Save & resume');
+  const saveResume = live ? null : h(doc, 'button', 'msw-save-resume btn btn-primary', 'Save & resume');
   const buttons = [cancel, save, ...(saveResume ? [saveResume] : [])];
   for (const b of buttons) { b.type = 'button'; actions.appendChild(b); }
   root.appendChild(actions);

@@ -77,7 +77,7 @@ test('a running payload: the running copy, Save as the primary action, no Save &
   assert.match(panel.el.querySelector('.msw-title').textContent, /have not started/);
   assert.match(panel.el.querySelector('.msw-sub').textContent, /a stage that is running keeps its model/);
   assert.equal(panel.el.querySelector('.msw-save-resume'), null);
-  assert.ok(panel.el.querySelector('.msw-save').classList.contains('primary'));
+  assert.ok(panel.el.querySelector('.msw-save').classList.contains('btn-primary'));
   assert.equal(panel.el.querySelector('tr[data-node="n_plan"] .msw-state').textContent, 'running now');
   assert.ok(panel.el.querySelector('tr[data-node="n_plan"]').classList.contains('is-locked'));
   assert.equal(panel.el.querySelector('tr[data-node="n_refine"] .msw-state').textContent, 'ran · may run again');
@@ -88,4 +88,47 @@ test('switchNotice: changed, skipped and warnings', () => {
   assert.deepEqual(switchNotice({ changed: [{}], skipped: [{ label: 'Plan', reason: 'running' }], warnings: [] }),
     { tone: 'ok', title: 'Switched 1 stage', detail: 'Plan had already started — kept its model.' });
   assert.equal(switchNotice({ changed: [], skipped: [{ label: 'Plan', reason: 'running' }] }).tone, 'warn');
+});
+
+test('every select has an accessible name', () => {
+  const { el } = renderModelSwitchPanel(PAYLOAD, { doc });
+  for (const sel of el.querySelectorAll('select')) assert.ok(sel.getAttribute('aria-label'), sel.outerHTML);
+  const row = el.querySelector('tr[data-node="n_impl"] select[data-field="model"]');
+  assert.match(row.getAttribute('aria-label'), /model$/i);
+});
+
+test('"All remaining stages" applies once and goes back to "keep each"', () => {
+  const { el, picks } = renderModelSwitchPanel(PAYLOAD, { doc });
+  const all = el.querySelector('select.msw-all');
+  all.value = PAYLOAD.models[0].id;
+  all.dispatchEvent(new doc.defaultView.Event('change'));
+  assert.equal(all.value, '__keep');
+  for (const s of PAYLOAD.stages.filter((x) => x.switchable)) assert.equal(picks()[s.nodeId].model, PAYLOAD.models[0].id);
+});
+
+test('an engine without sub-agents shows no sub-agent selects (Review Focus 3)', () => {
+  const p = { ...PAYLOAD, engine: 'cursor', subagents: false, efforts: [], stages: PAYLOAD.stages.map((s) => ({ ...s, fanOut: true })) };
+  const { el } = renderModelSwitchPanel(p, { doc });
+  assert.equal(el.querySelectorAll('select[data-field="subagentModel"]').length, 0);
+});
+
+test('a modelForAll run: model and effort locked, a note says why', () => {
+  const { el } = renderModelSwitchPanel({ ...PAYLOAD, modelForAll: 'claude-sonnet-5-5' }, { doc });
+  assert.match(el.querySelector('.msw-note').textContent, /claude-sonnet-5-5/);
+  for (const sel of el.querySelectorAll('select[data-field="model"], select[data-field="effort"], select.msw-all')) assert.ok(sel.disabled);
+});
+
+test('a current model the run cannot run is labelled "(not offered on this run)"', () => {
+  const p = { ...PAYLOAD, stages: PAYLOAD.stages.map((s) => (s.nodeId === 'n_impl' ? { ...s, model: 'gpt-x' } : s)) };
+  const { el } = renderModelSwitchPanel(p, { doc });
+  const opt = [...el.querySelectorAll('tr[data-node="n_impl"] select[data-field="model"] option')].find((o) => o.value === 'gpt-x');
+  assert.equal(opt.textContent, 'gpt-x (not offered on this run)');
+});
+
+test('the primary actions use the dev primary button class, keeping the hook classes', () => {
+  const paused = renderModelSwitchPanel(PAYLOAD, { doc }).el;
+  assert.ok(paused.querySelector('.msw-save-resume').classList.contains('btn-primary'));
+  assert.ok(paused.querySelector('.msw-save-resume').classList.contains('btn'));
+  assert.ok(!paused.querySelector('.msw-save').classList.contains('btn-primary'));
+  assert.ok(paused.querySelector('.msw-save').classList.contains('btn'));
 });
