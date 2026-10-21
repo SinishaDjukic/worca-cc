@@ -100,9 +100,10 @@ import { runProgress, progressWidth } from '../../src/shared/run-progress.mjs';
 import { DEFAULT_HOME_PINS, isPinned, pinWorkflow, unpinWorkflow } from '../../src/shared/home-pins.mjs';
 import { worktreeNoticeModel, renderWorktreeNotice, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
-import { buildRunsModel, countNeedsYou, isRowSelected, renderRunsList, RECENT_PAGE, groupRow, memberPrsOf, prChip } from './runs-list.mjs';
+import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, RECENT_PAGE, groupRow, memberPrsOf, prChip, memberCostUsd } from './runs-list.mjs';
 import { paintRunStatus, syncActions, pauseResumeOwn } from './run-status-card.mjs';
 import { buildGroupPage, paintGroupPage, runReceipts } from './group-page.mjs';
+import { runPositionLabel, groupKindWord, pageModel, runCrumbs, paintCrumbs, syncFacts } from './run-page-head.mjs';
 import { delegateQuestion } from './question-delegate.mjs';
 import { loadRunsView, saveRunsView, viewChip, viewMenuItems } from './runs-view-menu.mjs';
 import { createRunsSelection, runsKeyAction, rowTarget, barModel, bulkBody, rangeKeys, labelTargets } from './runs-selection.mjs';
@@ -304,6 +305,7 @@ import { visibleFields as visibleAnswerFields } from '../../src/shared/forms/lay
 import { openLabelPicker, closeLabelPickerFor, fetchLabels, labelChip } from './label-picker.mjs';
 import { labelStates, applyLabelChange, normaliseLabel } from '../../src/shared/run-labels.mjs';
 import { renderLabelsSection, runCount } from './labels-settings.mjs';
+import { makeSwitch } from './switch.mjs';
 
 // With site data blocked, Chrome throws SecurityError on merely reading `localStorage`. Every bare `localStorage` in
 // this module resolves here: the browser's storage, else an in-memory stand-in, so the page boots and forgets on reload.
@@ -723,6 +725,8 @@ const el = {
   runsList: $('#runs-list'),
   runsPane: $('#runs-pane'),
   runsEmpty: $('#runs-empty'),
+  groupShell: $('#group-shell'),
+  groupDetail: $('#group-detail'),
 
   // Target selector (New Pipeline)
   targetSeg: $('#target-seg'),
@@ -4235,6 +4239,8 @@ async function renderWorkflowConfig(workflowId) {
         el.humanInLoop.checked = presetHumanInLoop() ?? state.config.humanInLoop !== false;   // readRunConfig echoes only `false`
         el.humanInLoop.disabled = !agentsEditable();
       }
+      const hitlWhy = document.getElementById('hitl-why');
+      if (hitlWhy) hitlWhy.hidden = !el.humanInLoop.disabled;
     }
     // Reset what the failed-fetch arm resets, so nothing from the previous workflow lingers inside the
     // hidden accordion (#wf-feedback-config and the agents header live INSIDE #agents-config).
@@ -4460,18 +4466,9 @@ function renderAgentRows(rows) {
     if (row.role) effortSel.dataset.role = row.role;
     effortSel.setAttribute('aria-label', `${row.label} effort`);
     eWrap.appendChild(effortSel);
-    const fanWrap = document.createElement('label');
-    fanWrap.className = 'fanout-toggle';
-    const fanCb = document.createElement('input');
-    fanCb.type = 'checkbox';
-    fanCb.className = 'step-fanout';
-    fanCb.dataset.nodeId = row.nodeId;
-    if (row.role) fanCb.dataset.role = row.role;
-    fanCb.setAttribute('aria-label', `${row.label} fan-out`);
-    fanCb.checked = !!row.fanOut;
-    const fanTxt = document.createElement('span');
-    fanTxt.textContent = 'Fan-out';
-    fanWrap.append(fanCb, fanTxt);
+    const fan = makeSwitch(document, { label: 'Fan-out', ariaLabel: `${row.label} fan-out`, checked: !!row.fanOut,
+      inputClass: 'step-fanout', rowClass: 'fanout-toggle', data: { nodeId: row.nodeId, ...(row.role ? { role: row.role } : {}) } });
+    const fanWrap = fan.row;
     // Sub-agent model: what this node's Task children run on. Rendered beside
     // Fan-out (whose children it governs) and, like it, offered on every agent —
     // the row's own fan-out toggle is what decides whether it bites.
@@ -4495,25 +4492,11 @@ function renderAgentRows(rows) {
     // node's own model, and Cursor has none.
     if (state.engine !== 'claude') sWrap.hidden = true;
     if (row.askQuestions !== null && row.askQuestions !== undefined) {
-      const qWrap = document.createElement('label');
-      qWrap.className = 'fanout-toggle questions-toggle';
-      if (row.questionsLocked) {
-        qWrap.title = row.askQuestions ? 'Always on for this agent' : 'Always off for this agent';
-      }
-      const qCb = document.createElement('input');
-      qCb.type = 'checkbox';
-      qCb.className = 'step-questions';
-      qCb.dataset.nodeId = row.nodeId;
-      if (row.role) qCb.dataset.role = row.role;
-      qCb.setAttribute('aria-label', `${row.label} questions`);
-      qCb.checked = !!row.askQuestions;
-      qCb.disabled = !!row.questionsLocked;
-      // Marked so re-enabling the accordion (project selected) cannot un-lock an
-      // agent whose questions setting is fixed by its manifest.
-      if (row.questionsLocked) qCb.dataset.locked = '1';
-      const qTxt = document.createElement('span');
-      qTxt.textContent = 'Questions';
-      qWrap.append(qCb, qTxt);
+      const lockWhy = row.questionsLocked ? (row.askQuestions ? 'Always on for this agent' : 'Always off for this agent') : null;
+      const q = makeSwitch(document, { label: 'Questions', ariaLabel: `${row.label} questions`, checked: !!row.askQuestions,
+        inputClass: 'step-questions', rowClass: 'fanout-toggle questions-toggle', locked: lockWhy,
+        data: { nodeId: row.nodeId, ...(row.role ? { role: row.role } : {}) } });
+      const qWrap = q.row;
       keepVisible(tagLevel(qWrap, 'expert'), !row.questionsLocked && !!row.askQuestions !== !!rowDef.askQuestions);
       picks.appendChild(qWrap);
     }
@@ -6291,7 +6274,7 @@ function buildTunablesTable(w, wf, handle) {
     const cb = document.createElement('input'); cb.type = 'checkbox'; cb.className = 'sw-input'; cb.checked = !!on; cb.setAttribute('aria-label', label);
     if (locked) { cb.disabled = true; cb.dataset.locked = '1'; }
     cb.addEventListener('change', () => onChange(cb.checked));
-    const knob = document.createElement('span'); knob.className = 'switch switch-sm';
+    const knob = document.createElement('span'); knob.className = 'switch';
     const t = document.createElement('span'); t.className = 'qtune-sw-t'; t.textContent = label.replace(/ for .*$/, '');
     l.append(cb, knob, t); return l;
   };
@@ -7106,12 +7089,15 @@ function applyServerMock(on) {
   serverMock.on = on;
   paintMock(on || serverMock.choice);
   mockSwitch.classList.toggle('disabled', on);
+  const mockWhy = mockSwitch.parentElement.querySelector('.switch-why');
   if (on) {
     mockSwitch.setAttribute('aria-disabled', 'true');
     mockSwitch.title = SERVER_MOCK_TITLE;
+    if (!mockWhy) mockSwitch.parentElement.appendChild(Object.assign(document.createElement('span'), { className: 'switch-why', textContent: 'Set by the server (mock mode)' }));
   } else {
     mockSwitch.removeAttribute('aria-disabled');
     mockSwitch.removeAttribute('title');
+    if (mockWhy) mockWhy.remove();
   }
 }
 if (mockSwitch) {
@@ -9067,7 +9053,7 @@ function buildWorkspaceRow(w, known) {
   toggle.textContent = `Show ${n} project${n === 1 ? '' : 's'}`;
   const open = document.createElement('button');
   open.type = 'button';
-  open.className = 'proj-open ws-open';
+  open.className = 'btn btn-sm btn-quiet btn-icon proj-open ws-open';
   open.setAttribute('aria-label', 'Open workspace details');
   open.innerHTML = CHEVRON_RIGHT_SVG;   // static markup
   actions.append(syncAll, toggle, open);
@@ -11087,16 +11073,7 @@ function fmSelect(cls, options, value) {
   return sel;
 }
 function fmCheck(cls, labelText, checked) {
-  const label = document.createElement('label');
-  label.className = 'fanout-toggle';
-  const cb = document.createElement('input');
-  cb.type = 'checkbox';
-  cb.className = cls;
-  cb.checked = Boolean(checked);
-  const txt = document.createElement('span');
-  txt.textContent = labelText;
-  label.append(cb, txt);
-  return label;
+  return makeSwitch(document, { label: labelText, checked: Boolean(checked), inputClass: cls, rowClass: 'fanout-toggle' }).row;
 }
 /** A RULE the store would 400 on — red. */
 function fmHint(cls) {
@@ -12104,11 +12081,12 @@ function buildProjectRow(p) {
   // outside worca's store) has no page: no role, no chevron, default cursor.
   if (p.key) {
     row.setAttribute('role', 'button');
+    row.classList.add('row-btn');
     row.tabIndex = 0;
     row.setAttribute('aria-label', `Open ${p.name}`);
     const open = document.createElement('button');
     open.type = 'button';
-    open.className = 'proj-open';
+    open.className = 'btn btn-sm btn-quiet btn-icon proj-open';
     open.setAttribute('aria-label', 'Open project details');
     open.innerHTML = CHEVRON_RIGHT_SVG;   // static markup
     row.appendChild(open);
@@ -22551,6 +22529,17 @@ function openHistDetail(parsed, { instant = false, host: where = 'page' } = {}) 
   const toDetails = (tab = '') => { hdGoDetails(tab); };
   const toRun = () => { if (histDetailState && histDetailState.host !== 'panel') location.hash = hdHash(histDetailState); };
   screen.querySelector('.hd-to-run').addEventListener('click', toRun);
+  // Run 3 (D13): the saved bar is the primary action, Stop and ⋯; ⋯ drives the controls CSS hides there.
+  screen.querySelector('.hd-bar-more')?.addEventListener('click', (e) => {
+    const anchor = e.currentTarget;
+    const items = [];
+    const preset = screen.querySelector('.hd-save-preset');
+    const after = screen.querySelector('.hd-after');
+    if (preset && !preset.hidden && flagOn('runPresets')) items.push({ label: 'Save as preset', title: preset.title, onSelect: () => preset.click() });
+    if (after && !after.hidden && levelAtLeast('advanced')) items.push({ label: after.querySelector('.hd-btn-label').textContent, title: after.title, onSelect: () => after.click() });
+    if (screen.dataset.presentation !== 'panel') items.push({ label: 'Terminal', onSelect: () => terminalPane?.toggle() });
+    toggleMenu({ doc: document, anchor, items, align: 'end', label: 'More for this run' });
+  });
   screen.querySelector('.hd-glance .rd-sheet').addEventListener('click', (e) => {
     const row = e.target.closest && e.target.closest('[data-rd-tab]');
     if (row) toDetails(row.dataset.rdTab);
@@ -23861,9 +23850,12 @@ function paintHdGlance(screen, record, data) {
   paintRunKindChip(glance.querySelector('.rd-page-meta'), mode);
 
   // Runs redesign slice 4: the one status block and the Group row, as on the live page (no bar: the run is finished).
-  paintRunStatus(glance.querySelector('.rd-sheet .run-status'), runModel(hdModelRun(record, data), { memo: memoFor(record.id) }));
-  paintGroupLine(glance.querySelector('.rd-page-head .rd-group-line'), record.id || '', record.title || '', groupHomeOf(record.id || ''));
-  paintRunLabels(glance.querySelector(':scope > .rd-sheet'), { pipelineId: data.state.id, labels: data.state.labels, onSaved: (l) => { data.state.labels = l; } });
+  paintRunStatus(glance.querySelector('.rd-sheet .run-status'), pageModel(runModel(hdModelRun(record, data), { memo: memoFor(record.id) })));
+  const home = groupHomeOf(record.id || '');
+  paintGroupLine(glance.querySelector('.rd-kv .rd-group-line'), record.id || '', record.title || '', home);
+  paintRunPlace(screen, home);
+  paintRunLabels(glance.querySelector('.rd-kv [data-fact="labels"] > .rd-kv-v'), { pipelineId: data.state.id, labels: data.state.labels, onSaved: (l) => { data.state.labels = l; } });
+  syncFacts(glance.querySelector('.rd-kv'));
 
   // Time · Cost · Changes, then the Cost tags row, as on the Running page in every state.
   paintHdFacts(screen, record, data);
@@ -23899,10 +23891,14 @@ function paintHdGlance(screen, record, data) {
     const rec = (state.historyAll || []).find((p) => p && p.id === record.id) || record;
     return runModel(hdModelRun(rec, data), { memo: memoFor(record.id) }).pr;
   };
+  // Run 3 (D11): the run's own PR is the PR bar (chip, checks, Watch); the header's View PR is its action. A workspace
+  // run keeps today's slot.
+  const ownPr = linked && record.target !== 'workspace';
   paintRdPrStatus(glance.querySelector('.rd-pr-status'),
-    linked && pr === 'OPEN' && record.target !== 'workspace'
-      ? { id: record.id, projectKey: record.projectKey, chipOf: hdChip } : null);
-  if (linked) {
+    ownPr ? { id: record.id, projectKey: record.projectKey, chipOf: hdChip, checks: pr === 'OPEN' } : null);
+  if (ownPr) {
+    paintPrCta(slot, { state: 'none' });
+  } else if (linked) {
     paintPrCta(slot, { state: pr === 'MERGED' ? 'merged' : 'view', href: link.href, cls: 'hd-g-pr-link' });
   } else if (shown(createBtn) && !createBtn.hidden) {
     // The one wiring: the header's button opens the ship-it modal (re-read at click time).
@@ -24514,12 +24510,12 @@ function paintHdFacts(screen, record, data) {
     costTags: flagOn('runTags') ? (tags || { tags: [], missing: [] }) : null });
   // Only when the row was rebuilt (its control is gone): re-appending on every glance repaint would move an open
   // editor's input out of the DOM and back, dropping focus and the caret while someone types.
-  const row = screen.querySelector('.rd-facts .rd-cost-row');
+  const row = screen.querySelector('.rd-kv [data-fact="tags"] .rd-cost-row');
   if (row && !row.querySelector(':scope > .hd-tags')) paintHdTags(screen, record, data);
 }
 function paintHdTags(screen, record, data) {
   // D16: the glance's control is the last item of the Cost tags row, on every screen that had the meta-line host.
-  const hosts = { glance: screen.querySelector('.hd-glance .rd-page-meta') ? screen.querySelector('.rd-facts .rd-cost-row') : null,
+  const hosts = { glance: screen.querySelector('.hd-glance .rd-page-meta') ? screen.querySelector('.rd-kv [data-fact="tags"] .rd-cost-row') : null,
     row2: screen.querySelector('.hd-row2') };
   const st = data.state;
   // The open editor already in its host is left in place: moving it out and back drops focus and the caret.
@@ -24543,7 +24539,10 @@ function paintHdTags(screen, record, data) {
     const edit = document.createElement('button');
     edit.type = 'button';
     edit.className = 'btn btn-sm btn-quiet hd-tags-edit';
-    edit.textContent = tags.length ? 'Edit cost tags' : 'Add cost tags';
+    // Run 3 (D8): the facts row's dt says "Cost tags", so its control is one word; Details keeps the long one.
+    const words = tags.length ? 'Edit cost tags' : 'Add cost tags';
+    edit.textContent = where === 'glance' ? (tags.length ? 'Edit' : 'Add') : words;
+    if (where === 'glance') edit.setAttribute('aria-label', words);
     edit.addEventListener('click', () => { hdTagEditor = { ...hdTagEditorFor(st, repaint, record), host: where }; repaint(); });
     box.appendChild(edit);
     host.appendChild(box);
@@ -31781,21 +31780,51 @@ function runsLiveItem(r) {
     // The run model reads the raw run (runs-list.mjs runModel); its monotonic progress memo is kept per run. A finished
     // run takes its History row's PR (rdModelRun), so it reads In review here as on the run page.
     run: rdModelRun(r), memo: memoFor(r.pipelineId || r.runId),
-    cost: engineReportsCost(r.runEngine) ? (r.totalCostUsd ?? null) : null,   // D32: "Cost unknown" for an engine with none
+    // D32: "Cost unknown" for an engine with none. D5: a finished run still live at 0 takes its History row's cost.
+    cost: engineReportsCost(r.runEngine) ? memberCostUsd(r.totalCostUsd, rec && rec.totalCostUsd) : null,
   };
 }
 /** A Run-after chain member (scheduler.mjs runChains) has `state` done|current|waiting|failed and `prUrl`, never a
  *  status or a PR object; a /api/run-groups member has the DB `status` and `pr`. Without a live run, the History row
  *  is the best source (its status and its PR state, so a merged member reads Merged, not Ready). */
 const CHAIN_MEMBER_STATUS = { done: 'done', failed: 'error', current: 'running' };
+/** The /api/run-groups member (and the group's stored cost) for a pipeline: an index rebuilt when the groups reload. */
+let memberIndexFor = null;
+let memberIndex = new Map();
+function groupMemberFor(pid) {
+  if (!pid) return null;
+  if (memberIndexFor !== state.runGroups) {
+    memberIndexFor = state.runGroups;
+    memberIndex = new Map();
+    for (const g of state.runGroups || []) {
+      for (const m of [...(g.members || []), ...(g.planning ? [g.planning] : [])]) {
+        if (m && m.pipelineId) memberIndex.set(m.pipelineId, { m, stored: g.cost && g.cost.byPipeline ? g.cost.byPipeline[m.pipelineId] : undefined });
+      }
+    }
+  }
+  return memberIndex.get(pid) || null;
+}
+const storedPrOf = (pid) => { const x = groupMemberFor(pid); return x && x.m.pr && typeof x.m.pr === 'object' ? x.m.pr : null; };
+const prVerdictKnown = (pr) => pr.checks !== undefined || pr.mergeable !== undefined || pr.reviewDecision !== undefined;
+/** D1: a finished run's PR. Its History row's PR wins (clarify); the group member's stored PR (with its stored verdict,
+ *  D3) only fills the gap. D4: a stored PR still open with no verdict is `pending`: no chip, never "Ready". */
+function runPrFor(h, stored) {
+  if (h && h.pr && typeof h.pr === 'object' && (h.pr.url || h.pr.number != null)) return h.pr;
+  if (!stored || (!stored.url && stored.number == null)) return null;
+  const open = !['MERGED', 'CLOSED'].includes(String(stored.state || '').toUpperCase());
+  return open && !prVerdictKnown(stored) ? { ...stored, pending: true } : stored;
+}
+const histOf = (pid) => (pid ? (state.historyAll || []).find((p) => p && p.id === pid) || null : null);
 function memberRun(m) {
-  const h = m.pipelineId ? (state.historyAll || []).find((p) => p.id === m.pipelineId) : null;
+  const h = histOf(m.pipelineId);
   // Runs redesign slice 4 (D24): a member's round / Watch PR facts pass through untouched; the run model words them.
   const facts = { round: m.round || (h && h.round) || null, watch: m.watch || (h && h.watch) || null };
-  if (h) return { status: h.status, pauseReason: h.pauseReason, pr: h.pr && typeof h.pr === 'object' ? h.pr : null, ...facts };
-  if (m.status) return { status: m.status, pr: m.pr || null, ...facts };
-  return { status: CHAIN_MEMBER_STATUS[m.state] || 'stopped', pr: m.prUrl ? { url: m.prUrl } : null, ...facts };
+  if (h) return { status: h.status, pauseReason: h.pauseReason, pr: runPrFor(h, m.pr), ...(h.inBase ? { inBase: h.inBase } : {}), ...facts };
+  if (m.status) return { status: m.status, pr: runPrFor(null, m.pr), ...facts };
+  return { status: CHAIN_MEMBER_STATUS[m.state] || 'stopped', pr: runPrFor(null, m.prUrl ? { url: m.prUrl } : null), ...facts };
 }
+/** A live chain member has no /api/run-groups entry: once it has ended with no History PR, its chain's prUrl fills in. */
+const withChainPr = (x, m) => (x && !x.pr && m.prUrl && isTerminalStatus(x.status) ? { ...x, pr: runPrFor(null, { url: m.prUrl }) } : x);
 
 /** A group (a Run-after chain from schedulesView, or a feature / user group from /api/run-groups) as the list's group
  *  item: members carry their raw run from this tab's live map, else memberRun, else their ticket. */
@@ -31805,10 +31834,13 @@ function runsGroupItem({ id, groupKind, title, members, cost = null, planning = 
   const histPk = (pid) => (pid ? (((state.historyAll || []).find((p) => p && p.id === pid)) || {}).projectKey || '' : '');
   const items = members.map((m, i) => {
     const r = m.pipelineId ? latestPipelineRun(m.pipelineId) : null;
+    const h = histOf(m.pipelineId);
     // An after-ticket has no start time: never pass its AFTER_RUN_AT sentinel (runModel does not read ticket.after).
     // `m.after` (D29): the 1-based position of the member this one runs after (runChains and listRunGroups both send it),
     // so runModel reads "Waiting · starts after run 1"; a timed ticket keeps its start time instead.
-    const run = r || (m.pipelineId ? memberRun(m)
+    // D2: a live member reads what its run page reads (rdModelRun: History PR, else the stored member PR, D1; Watch PR;
+    // inBase). The raw live run carries no PR, so a finished member with failing checks read "Ready to ship".
+    const run = r ? withChainPr(rdModelRun(r), m) : (m.pipelineId ? memberRun(m)
       : { ticket: { status: m.ticket ? m.ticket.status : 'scheduled', runAt: m.ticket && !m.ticket.after ? m.ticket.runAt : null,
         after: m.after ? { index: m.after } : null } });
     const pk = m.historyKey || m.projectKey || histPk(m.pipelineId);
@@ -31817,19 +31849,22 @@ function runsGroupItem({ id, groupKind, title, members, cost = null, planning = 
     return { position: m.position || i + 1, title: m.title, adhoc: !!m.adhoc, href, pipelineId: m.pipelineId || (r && r.pipelineId) || null,
       ticketId: m.ticketId || null, runId: r ? r.runId : '', kind: r ? 'live' : m.pipelineId ? 'hist' : 'sched', run,
       memo: memoFor(m.pipelineId || m.ticketId || `${id}:${i}`),
-      // D32: the member's own cost (a chain's total sums these): live first, else its History row's stored total.
-      cost: r && typeof r.totalCostUsd === 'number' ? r.totalCostUsd
-        : m.pipelineId ? ((state.historyAll || []).find((p) => p.id === m.pipelineId) || {}).totalCostUsd ?? null : null };
+      startedAt: (r && r.startedAt) || (h && h.startedAt) || null,       // D12: the group's dispatch time
+      // D32: the member's own cost (a chain's total sums these). D5: max(live, History, the group's stored byPipeline):
+      // a finished run in the live map at 0 never wins.
+      cost: memberCostUsd(r && r.totalCostUsd, h && h.totalCostUsd, cost && cost.byPipeline ? cost.byPipeline[m.pipelineId] : undefined) };
   });
   // Slice 4 (D8): a feature's separate planning run, built the way a member is; its memo key is its pipeline id, the
   // key the list uses for that run, so both read the same fill.
   const planningItem = planning ? (() => {
     const r = latestPipelineRun(planning.pipelineId);
+    const hp = histOf(planning.pipelineId);
     const pk = planning.projectKey || histPk(planning.pipelineId);
     return { title: 'Planning', pipelineId: planning.pipelineId, runId: r ? r.runId : '', kind: r ? 'live' : 'hist',
-      run: r || memberRun(planning), memo: memoFor(planning.pipelineId),
+      run: r ? rdModelRun(r) : memberRun(planning), memo: memoFor(planning.pipelineId),
       href: r ? `#running/${r.runId}` : pk ? `#history/${pk}/${planning.pipelineId}` : `#feature/${encodeURIComponent(id)}`,
-      cost: r && typeof r.totalCostUsd === 'number' ? r.totalCostUsd : null };
+      startedAt: (r && r.startedAt) || (hp && hp.startedAt) || null,
+      cost: memberCostUsd(r && r.totalCostUsd, hp && hp.totalCostUsd, cost && cost.byPipeline ? cost.byPipeline[planning.pipelineId] : undefined) };
   })() : null;
   const first = members[0] || {};
   const g = runsGroupFor({ pipelineId: first.pipelineId || '', projectDir: first.projectDir || '', workspaceId: first.workspaceId || '', projectKey: first.projectKey || '' });
@@ -31868,11 +31903,28 @@ async function loadRunGroups() {
   pokeAskRuns(null, 'run-groups');                 // Chat cards (a finished one gets no frame) become group cards now
 }
 // ── The group page (runs redesign slice 4, D13 to D17): #feature/ID[/tab] and #group/ID[/tab] ──
+// Run 3 (D2): loading / gone / error keep the bar's Back, so a phone is never stranded. Returns the message line.
+function groupMessage(host, cls, text) {
+  const back = Object.assign(document.createElement('a'), { className: 'btn gpage-back', href: '#runs', textContent: 'Runs' });
+  back.setAttribute('aria-label', 'Back to the runs list');
+  const bar = Object.assign(document.createElement('div'), { className: 'gpage-bar rd-bar' });
+  bar.append(back);
+  const p = Object.assign(document.createElement('p'), { className: cls, textContent: text });
+  keepGroupBack(host, () => host.replaceChildren(bar, p));
+  return p;
+}
+// A rebuild of the pane (message -> page) keeps a focused Back focused (rule: app-js-repaint-drops-focus).
+function keepGroupBack(host, rebuild) {
+  const a = document.activeElement;
+  const had = !!a && host.contains(a) && a.matches('.gpage-back');
+  rebuild();
+  if (had) host.querySelector('.gpage-back')?.focus({ preventScroll: true });
+}
 async function mountGroupPage(host, { route, id, tab, reentered = false }) {
   const fresh = GROUP_PAGE.host !== host || GROUP_PAGE.route !== route || GROUP_PAGE.id !== id;
   Object.assign(GROUP_PAGE, { host, route, id, tab, reentered, ...(fresh ? { featureId: '', gone: false, failed: false, resolving: false } : {}) });
   if (fresh) {
-    host.replaceChildren(Object.assign(document.createElement('p'), { className: 'feature-page-loading', textContent: 'Loading group…' }));
+    groupMessage(host, 'feature-page-loading', 'Loading group…');
     host.__gp = null;
     // state.runGroups starts as [], so a separate flag says whether GET /api/run-groups has answered.
     if (!state.runGroupsLoaded) void loadRunGroups();   // a deep link before the boot load: loadRunGroups repaints this page
@@ -31901,12 +31953,11 @@ async function mountGroupPage(host, { route, id, tab, reentered = false }) {
 }
 function paintGroupPageNow() {
   const { host, route, id, tab } = GROUP_PAGE;
-  if (!host || !host.isConnected || host.closest('.view.hidden')) return;
+  if (!host || !host.isConnected || host.closest('.view.hidden') || !(el.groupShell && el.groupShell.classList.contains('detail-open'))) return;
   const gid = GROUP_PAGE.featureId || id;
   const it = !GROUP_PAGE.gone && state.runGroupsLoaded ? runsGroupItems().find((g) => g.id === gid) : null;
   if (!it && !GROUP_PAGE.gone && (state.runGroupsFailed || GROUP_PAGE.failed)) {
-    const p = Object.assign(document.createElement('p'), { className: 'feature-page-error',
-      textContent: "Could not load this group: Worca's server could not be reached. It loads when the connection is back. " });
+    const p = groupMessage(host, 'feature-page-error', "Could not load this group: Worca's server could not be reached. It loads when the connection is back. ");
     const b = Object.assign(document.createElement('button'), { type: 'button', className: 'btn btn-sm btn-secondary', textContent: 'Try again' });
     b.addEventListener('click', () => {
       const { host: h, route: rt, id: gid0, tab: tb } = GROUP_PAGE;
@@ -31916,7 +31967,6 @@ function paintGroupPageNow() {
       if (rt === 'feature') { GROUP_PAGE.id = ''; void mountGroupPage(h, { route: rt, id: gid0, tab: tb }); }
     });
     p.append(b);
-    host.replaceChildren(p);
     host.__gp = null;
     return;
   }
@@ -31926,21 +31976,26 @@ function paintGroupPageNow() {
     if (GROUP_PAGE.gone || (state.runGroupsLoaded && !GROUP_PAGE.resolving)) {
       // runChains lists a chain only while a member is current or waiting; its id is the root's key (p:… / t:…).
       const chain = route === 'group' && /^[pt]:/.test(id);
-      const gone = Object.assign(document.createElement('p'), { className: 'feature-page-gone',
-        textContent: route === 'feature' ? 'This feature no longer exists.'
-          : chain ? 'This chain has finished. Its runs are in the Runs list.' : 'This group no longer exists.' });
+      const gone = groupMessage(host, 'feature-page-gone', route === 'feature' ? 'This feature no longer exists.'
+        : chain ? 'This chain has finished. Its runs are in the Runs list.' : 'This group no longer exists.');
       gone.append(' ', Object.assign(document.createElement('a'), { href: '#runs', textContent: 'Open the Runs list' }));
-      host.replaceChildren(gone);
       host.__gp = null;
+      // Run 3 (D5): #runs never reopens a group that is gone.
+      const last = readLastRun();
+      if (last && last.group && last.group === `${route}/${encodeURIComponent(id)}`) forgetLastRun();
     }
     return;                                        // not loaded yet: "Loading group…" stays; loadRunGroups repaints
   }
   const row = groupRow(it, { now: Date.now() });
-  if (!host.__gp) { host.__gp = buildGroupPage(document); host.replaceChildren(host.__gp); }
+  if (!host.__gp) { host.__gp = buildGroupPage(document); keepGroupBack(host, () => host.replaceChildren(host.__gp)); }
   const base = `${route === 'feature' ? '#feature' : '#group'}/${encodeURIComponent(id)}`;
   // The run page's Logs tab is Expert-only, so the group page offers its Logs (links to those tabs) at Expert too.
-  paintGroupPage(host.__gp, { row, project: row.groupName || '', tab, overview: row.groupKind === 'feature' && shapeFirstOn(), logs: levelAtLeast('expert') }, {
+  // Run 3 (D15): the group's Labels fact is the read-only union of its members' History labels.
+  const labels = [...new Set(row.members.flatMap((mb) => (histOf(mb.pipelineId) || {}).labels || []))].sort();
+  paintGroupPage(host.__gp, { row, project: row.groupName || '', tab, overview: row.groupKind === 'feature' && shapeFirstOn(), logs: levelAtLeast('expert'), labels }, {
     onAction: (aid, b) => groupAction(row, aid, b),
+    onMore: (anchor) => openGroupMoreMenu(anchor, row),
+    labelChip: (d, l) => labelChip(d, l, {}),
     onTab: (t) => { location.hash = t === 'runs' ? base : `${base}/${t}`; },
     mountQuestion: (slot, mb) => paintGroupQuestion(slot, mb),
     // Mount once per feature: paintGroupPageNow runs on every run frame, and a remount would refetch and rebuild the
@@ -32053,7 +32108,7 @@ async function paintGroupDecisions(host, row) {
 /** The work mode the run model reads: a run without a project (its reserved key too), a Folder run, else git. */
 const modelWorkMode = (...xs) => (xs.some((x) => x && isNoProjectRun(x)) ? 'none' : xs.map(workModeOf).find((m) => m !== 'git') || 'git');
 const histRun = (p, st = null) => ({ status: String((p && p.status) || (st && st.status) || '').toLowerCase(),
-  pauseReason: (p && p.pauseReason) || '', pr: p && p.pr && typeof p.pr === 'object' ? p.pr : null,
+  pauseReason: (p && p.pauseReason) || '', pr: runPrFor(p, storedPrOf(p && p.id)), ...(p && p.inBase ? { inBase: p.inBase } : {}),
   ...(memberPrsOf(p).length ? { memberPrs: memberPrsOf(p) } : {}),
   // D24: passed through for the model; the saved state's branch carries a round marker on a frozen row.
   round: (p && p.round) || null, branch: (st && st.branch) || null, watch: (p && p.watch) || null,
@@ -32083,10 +32138,18 @@ function runsHistItem(p) {
     cost: engineReportsCost(p.runEngine) ? (p.totalCostUsd ?? null) : null,
   };
 }
+/** D11: an after-ticket's predecessor inside a /api/run-groups group, worded "Complete Design Language Rollout · run 3". */
+function afterInGroup(a) {
+  for (const g of state.runGroups || []) {
+    const m = (g.members || []).find((x) => (a.pipelineId && x.pipelineId === a.pipelineId) || (a.id && (x.ticketId === a.id || x.pipelineId === a.id)));
+    if (m) return { group: g.title, index: m.position };
+  }
+  return {};
+}
 function runsSchedItem(t) {
   const g = runsGroupFor({ projectDir: t.projectDir || '', workspaceId: t.workspaceId || '', projectKey: t.projectKey || '' });
-  return { id: t.id, scheduleId: t.scheduleId || '', title: t.title, status: t.status, after: t.after || null,
-    queued: !!t.queued, retryAt: t.retryAt || null, runAt: t.runAt,
+  return { id: t.id, scheduleId: t.scheduleId || '', title: t.title, status: t.status, after: t.after ? { ...t.after, ...afterInGroup(t.after) } : null,
+    queued: !!t.queued, retryAt: t.retryAt || null, runAt: t.runAt, createdAt: t.createdAt || null,
     groupKey: g.key, groupName: g.name, by: runsPersonKey(t.createdBy) };
 }
 
@@ -32094,10 +32157,10 @@ function runsSchedItem(t) {
 // and the focus fallbacks below match on it).
 // A group line's fraction is patched in place (paintRunsProgress); its presence is structural (the model's state).
 const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.model.state, r.model.symbol || '', r.model.line, r.model.pulse ? 1 : 0, r.count || '',
-  r.model.pr ? [r.model.pr.id, r.model.pr.word, r.model.pr.title, r.model.pr.icon] : 0, r.model.progress && r.model.progress.mode === 'stages' ? [r.model.progress.stage, r.model.progress.label] : 0,
+  r.model.pr ? [r.model.pr.id, r.model.pr.word, r.model.pr.title, r.model.pr.icon, r.model.pr.pending ? 1 : 0] : 0, r.model.progress && r.model.progress.mode === 'stages' ? [r.model.progress.stage, r.model.progress.label] : 0,
   r.activityMs || 0, r.groupName, r.cost ?? null, r.costUsd ?? null, r.needs ? 1 : 0,
   r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.key, m.model.state, m.model.line, m.title, m.href, m.cost ?? null, m.model.symbol || '',
-    m.model.pr ? [m.model.pr.id, m.model.pr.word, m.model.pr.icon] : 0])] : 0, (r.labels || []).join('\n')];
+    m.model.pr ? [m.model.pr.id, m.model.pr.word, m.model.pr.title, m.model.pr.icon, m.model.pr.pending ? 1 : 0] : 0])] : 0, (r.labels || []).join('\n')];
 // Where focus goes back to after the list is rebuilt under it. A row can change key in the
 // rebuild: opening a finished run acknowledges it, and the same paint turns live:<runId> into
 // hist:<projectKey>/<pipelineId>. Its pipeline id carries over, then the selected row stands in;
@@ -32209,11 +32272,15 @@ function scheduleRunsPaint() {
 }
 
 function runsSelection() {
+  // Run 3 (D4): while a group page is open the pane shows no run, so only its group row is selected.
+  const groupOpen = !!(el.groupShell && el.groupShell.classList.contains('detail-open'));
+  if (groupOpen) return { runId: '', pipelineId: '', histKey: '', groupId: GROUP_PAGE.featureId || GROUP_PAGE.id || '' };
   const r = runDetailState.screen ? runs.get(runDetailState.runId) : null;
   return {
     runId: runDetailState.screen ? runDetailState.runId : '',
     pipelineId: (r && r.pipelineId) || (histDetailState ? histDetailState.id : ''),
     histKey: histDetailState ? `${histDetailState.key}/${histDetailState.id}` : '',
+    groupId: '',
   };
 }
 function paintRunsSelection() {
@@ -32222,10 +32289,15 @@ function paintRunsSelection() {
   const sel = runsSelection();
   for (const a of host.querySelectorAll('.runs-row')) {
     const row = { kind: a.dataset.kind, runId: a.dataset.runId || '', pipelineId: a.dataset.pipelineId || '', projectKey: a.dataset.projectKey || '',
-      memberKeys: new Set((a.dataset.memberKeys || '').split(' ').filter(Boolean)) };
+      groupId: a.dataset.groupId || '', memberKeys: new Set((a.dataset.memberKeys || '').split(' ').filter(Boolean)) };
     const on = isRowSelected(row, sel);
+    // Run 3 (D4): a group whose run is open takes the lighter member-open highlight, and says so to assistive tech.
+    const open = !on && isMemberOpen(row, sel);
     a.classList.toggle('selected', on);
-    if (on) a.setAttribute('aria-current', 'true'); else a.removeAttribute('aria-current');
+    a.classList.toggle('member-open', open);
+    if (on) a.setAttribute('aria-current', 'true');
+    else if (open) a.setAttribute('aria-current', 'location');
+    else a.removeAttribute('aria-current');
   }
 }
 
@@ -32253,7 +32325,8 @@ el.runsList?.addEventListener('click', (e) => {
   const a = e.target.closest && e.target.closest('a.runs-row');
   if (!a || e.defaultPrevented || (e.button || 0) !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
   e.preventDefault();
-  const ask = a.dataset.state === 'needs-you' && a.dataset.runId ? a.dataset.runId : '';
+  // Run 3 (D3): a group row's question opens in its own page, so the run shortcut is for run rows only.
+  const ask = a.dataset.kind !== 'chain' && a.dataset.state === 'needs-you' && a.dataset.runId ? a.dataset.runId : '';
   const screen = runDetailState.screen;
   const open = !!ask && !!screen && runDetailState.runId === ask;
   // A waiting question: the pane lands on it once its panel mounts (the removed card strip's
@@ -32266,6 +32339,13 @@ el.runsList?.addEventListener('click', (e) => {
     setRdMode(screen, 'glance', '', { focus: false });   // idempotent; the hashchange echo is too
     scrollToQuestions(screen);
   }
+});
+// Run 3 (D6): the breadcrumb's "Runs" is the list itself (goRunsList: no D6 restore of the page just left).
+el.runsPane?.addEventListener('click', (e) => {
+  const c = e.target.closest && e.target.closest('.rd-crumb[data-crumb="runs"]');
+  if (!c || (e.button || 0) !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  e.preventDefault();
+  goRunsList();
 });
 function toggleRunsGroup(key) {
   if (runsUi.collapsed.has(key)) runsUi.collapsed.delete(key); else runsUi.collapsed.add(key);
@@ -32498,33 +32578,40 @@ el.runsList?.addEventListener('click', (e) => {
   e.preventDefault();
   const r = runsUi.rowsByKey.get(more.dataset.rowKey);
   if (!r) return;
+  // A waiting run is a schedule ticket: it has nothing to stop, archive or delete, only the model's own actions (D5).
+  const ticketActs = r.kind === 'sched' ? r.model.actions.filter((id) => id === 'start-now' || id === 'cancel') : [];
+  if (ticketActs.length) {
+    const ref = { ticketId: rowTarget(r).ticketId, title: r.title };
+    const acts = ticketActs.map((id) => ({ label: ACTION_LABEL[id], onSelect: () => runAction(ref, id, more, r.model) }));
+    openMenu({ doc: document, anchor: more, align: 'end', label: `More for ${r.title}`, items: acts });
+    return;
+  }
+  openMenu({ doc: document, anchor: more, align: 'end', label: `More for ${r.title}`, items: runsRowMenuItems(r, more) });
+});
+/** The row ⋯ items (§3.4, D13): also the group page's ⋯ (run 3, D13), less Select and Open feature. */
+function runsRowMenuItems(r, more) {
   const t = rowTarget(r);
   const m = barModel([t]);
   const adv = levelAtLeast('advanced');
   const g = r.kind === 'chain' || !r.pipelineId ? null : groupOfRun(r.pipelineId);
   const adhoc = !!(g && g.members.some((x) => x.adhoc && x.pipelineId === r.pipelineId));
-  // A group offers its current member's PR (D31: a group raised to Needs you by a PR offers Open PR).
+  // A group offers its current member's PR (D31: a group raised to Needs you by a PR offers View PR).
   const prUrl = (r.model.pr && r.model.pr.url) || (r.kind === 'chain' && r.model.current && r.model.current.pr && r.model.current.pr.url) || '';
-  // A waiting run is a schedule ticket: it has nothing to stop, archive or delete, only the model's own actions (D5).
-  const ticketActs = r.kind === 'sched' ? r.model.actions.filter((id) => id === 'start-now' || id === 'cancel') : [];
-  if (ticketActs.length) {
-    const ref = { ticketId: t.ticketId, title: r.title };
-    const acts = ticketActs.map((id) => ({ label: ACTION_LABEL[id], onSelect: () => runAction(ref, id, more, r.model) }));
-    openMenu({ doc: document, anchor: more, align: 'end', label: `More for ${r.title}`, items: acts });
-    return;
-  }
-  const items = [
+  return [
     { label: 'Select', onSelect: () => { runsUi.selecting = true; runsUi.anchorKey = r.key; toggleRunsKey(r.key); } },
     { label: 'Stop', disabled: !m.stop.count, title: m.stop.title, onSelect: () => runBulkAction('stop', [t]) },
     { label: 'Archive', disabled: !m.archive.count, title: m.archive.title, onSelect: () => runBulkAction('archive', [t]) },
     ...(adv ? [{ label: 'Delete', disabled: !m.delete.count, title: m.delete.title, onSelect: () => runBulkAction('delete', [t]) }] : []),
     ...(adv && r.kind !== 'chain' && r.pipelineId && !g ? [{ sep: true }, { label: 'Add to group…', onSelect: () => openAddToGroup(more, r) }] : []),
     ...(adv && adhoc ? [{ sep: true }, { label: 'Remove from group', onSelect: () => removeRunFromGroup(r) }] : []),
-    ...(prUrl ? [{ label: 'Open PR', onSelect: () => window.open(prUrl, '_blank', 'noopener') }] : []),
+    ...(prUrl ? [{ label: 'View PR', onSelect: () => window.open(prUrl, '_blank', 'noopener') }] : []),
     ...(r.groupKind === 'feature' ? [{ label: 'Open feature', onSelect: () => { location.hash = r.href; } }] : []),
   ];
-  openMenu({ doc: document, anchor: more, align: 'end', label: `More for ${r.title}`, items });
-});
+}
+function openGroupMoreMenu(anchor, row) {
+  const items = runsRowMenuItems(row, anchor).filter((it) => it.label !== 'Select' && it.label !== 'Open feature');
+  toggleMenu({ doc: document, anchor, items, align: 'end', label: `More for ${row.title}` });
+}
 function openAddToGroup(anchor, r) {
   const groups = (state.runGroups || []).map((g) => {
     const it = runsGroupItem({ id: g.id, groupKind: g.kind, title: g.title, members: g.members });
@@ -32650,8 +32737,8 @@ function setRunsLayout(w) {
   // Hand focus to the open screen's way back (the glance's, or Details' "back to the run").
   const open = el.runsPane && el.runsPane.dataset.kind;
   if (want !== 'slide' || !inList || !open) return;
-  const screen = open === 'live' ? el.runDetail : el.histDetail;
-  const back = screen && [...screen.querySelectorAll('.rd-back, .hd-back, .rd-to-run, .hd-to-run')].find((b) => !b.hidden);
+  const screen = open === 'live' ? el.runDetail : open === 'group' ? el.groupDetail : el.histDetail;
+  const back = screen && [...screen.querySelectorAll('.rd-back, .hd-back, .rd-to-run, .hd-to-run, .gpage-back')].find((b) => !b.hidden);
   if (back) back.focus({ preventScroll: true });
 }
 // showView calls this as the section becomes visible, before routing opens anything, so the
@@ -32667,7 +32754,8 @@ function syncRunsPane() {
   const list = el.runsListPane;
   if (!shell || !pane || !list) return;
   const kind = el.runShell && el.runShell.classList.contains('detail-open') ? 'live'
-    : el.histShell && el.histShell.classList.contains('detail-open') ? 'hist' : '';
+    : el.histShell && el.histShell.classList.contains('detail-open') ? 'hist'
+    : el.groupShell && el.groupShell.classList.contains('detail-open') ? 'group' : '';
   pane.dataset.kind = kind;
   if (el.runsEmpty) el.runsEmpty.hidden = !!kind;
   shell.classList.toggle('pane-open', !!kind);
@@ -32742,7 +32830,7 @@ const crp = { open: false, kind: '', id: '', want: null, waiting: '', historySee
 const crpHints = new Map();   // pipelineId -> projectKey, from openRunPanel refs: a saved run opens before History lists it
 
 // ── The remembered run (D6): a bare #runs reopens the run the pane showed last ──
-const RUNS_LAST_KEY = 'worca-cc.runs.last';   // {runId, pipelineId, projectKey}: the last run the pane showed
+const RUNS_LAST_KEY = 'worca-cc.runs.last';   // {runId, pipelineId, projectKey} or {group: 'feature/ID'}: what the pane showed last
 function rememberRun(v) {
   try { localStorage.setItem(RUNS_LAST_KEY, JSON.stringify(v)); } catch { /* private mode */ }
 }
@@ -32760,6 +32848,7 @@ function forgetLastRun() {
 function rememberedRunHash() {
   const m = readLastRun();
   if (!m) return '';
+  if (typeof m.group === 'string' && /^(feature|group)\/[^/]+$/.test(m.group)) return m.group;   // run 3 (D5)
   if (m.runId && (runs.has(m.runId) || !helloSeeded)) return `running/${m.runId}`;
   if (m.pipelineId && m.projectKey) return `history/${m.projectKey}/${m.pipelineId}`;
   forgetLastRun();
@@ -33202,6 +33291,38 @@ function closeRunDetail({ instant = false } = {}) {
   pane.addEventListener('transitionend', onEnd);
   const t = setTimeout(() => { pane.removeEventListener('transitionend', onEnd); clear(); }, 600);
   if (t && typeof t.unref === 'function') t.unref();
+}
+
+// Run 3 (D2): the group page's shell in the Runs pane, the twin of openRunDetail / closeRunDetail.
+function openGroupPane(route, id, tab, { reentered = false } = {}) {
+  const shell = el.groupShell;
+  const host = el.groupDetail;
+  if (!shell || !host) return;
+  const wasOpen = shell.classList.contains('detail-open');
+  host.removeAttribute('inert');
+  host.setAttribute('aria-hidden', 'false');
+  shell.classList.add('detail-open');
+  syncRunsPane();
+  rememberRun({ group: `${route}/${encodeURIComponent(id)}` });
+  void mountGroupPage(host, { route, id, tab, reentered });
+  if (!wasOpen && runsLayout() === 'slide') queueMicrotask(() => host.querySelector('.gpage-back')?.focus({ preventScroll: true }));
+}
+function closeGroupPane({ instant = false } = {}) {
+  const shell = el.groupShell;
+  const host = el.groupDetail;
+  if (!shell || !host || !shell.classList.contains('detail-open')) return;
+  const key = GROUP_PAGE.featureId || GROUP_PAGE.id;
+  const slide = runsLayout() === 'slide';
+  host.setAttribute('aria-hidden', 'true');
+  if (slide && !instant) {
+    releaseRunsList();
+    el.runsList?.querySelector(`[data-row-key="chain:${cssEscape(key)}"] > a.runs-row`)?.focus({ preventScroll: true });
+  }
+  host.setAttribute('inert', '');
+  if (instant || !slide) holdRunsAnim();
+  shell.classList.remove('detail-open');
+  syncRunsPane();
+  if (instant || !slide) { host.replaceChildren(); host.__gp = null; GROUP_PAGE.host = null; }
 }
 
 // Full repaint of the open detail screen.
@@ -33943,11 +34064,12 @@ function rdModelRun(r) {
   const base = Object.keys(kind).length ? { ...r, ...kind } : r;
   if (!isTerminalStatus(r.status)) return base;
   const h = rdHistoryRecord(r);
-  const pr = h && h.pr && typeof h.pr === 'object' && typeof h.pr.url === 'string' ? h.pr : null;
+  const pr = runPrFor(h, storedPrOf(r.pipelineId));       // D1: History's PR, else the group member's stored one
   const watch = (h && h.watch) || r.watch || null;       // D24: the Watch PR fact, when the History row carries it
   const memberPrs = memberPrsOf(h);                      // #784: a workspace run's member PRs roll into the chip
-  return pr || watch || memberPrs.length
-    ? { ...base, ...(pr ? { pr } : {}), ...(watch ? { watch } : {}), ...(memberPrs.length ? { memberPrs } : {}) } : base;
+  const inBase = (h && h.inBase) || null;                // D8: the work is already in its base (History, local refs)
+  return pr || watch || memberPrs.length || inBase
+    ? { ...base, ...(pr ? { pr } : {}), ...(watch ? { watch } : {}), ...(memberPrs.length ? { memberPrs } : {}), ...(inBase ? { inBase } : {}) } : base;
 }
 const rdModel = (r) => runModel(rdModelRun(r), { memo: memoFor(r.pipelineId || r.runId) });
 /** `r` is the live run from `runs` (never paintRdGlance's rdGlanceRun display copy), so the memo and the PR lookup
@@ -33955,17 +34077,20 @@ const rdModel = (r) => runModel(rdModelRun(r), { memo: memoFor(r.pipelineId || r
 function paintRdStatus(screen, r) {
   const m = rdModel(r);
   const block = screen.querySelector('.rd-sheet .run-status');
-  paintRunStatus(block, m);
+  paintRunStatus(block, pageModel(m));                       // run 3 D10: the PR bar carries "PR #N"
   // The run page's bar takes over the removed .rd-prog's focus stop ("Run progress"): the D30 one-line wait state
   // shows only its stage words and gives it the focus ring.
   const bar = block && block.querySelector('.run-status-bar');
   if (bar && !bar.hasAttribute('tabindex')) { bar.tabIndex = 0; bar.setAttribute('aria-label', 'Run progress'); }
-  paintGroupLine(screen.querySelector('.rd-page-head .rd-group-line'), r.pipelineId || '', r.title || '', groupHomeOf(r.pipelineId || ''));
+  const home = groupHomeOf(r.pipelineId || '');
+  paintGroupLine(screen.querySelector('.rd-kv .rd-group-line'), r.pipelineId || '', r.title || '', home);
+  paintRunPlace(screen, home);
   paintRdActions(screen, r, m);
   return m;
 }
 /** The glance's PR call-to-action (paintPrCta into .rd-pr-slot) already offers the PR action when it shows Create pull
- *  request / Push (ship) or View PR (open-pr): the bar makes no second button for it (Known bug 9). */
+ *  request / Push (ship) or View PR (open-pr): the bar makes no second button for it (Known bug 9). Run 3 (D11): a run
+ *  with its own PR paints the slot `none` (the PR bar names it), so the `view` / `merged` branch is a workspace run's. */
 function prCovered(screen) {
   const slot = screen.querySelector('.rd-glance .rd-pr-slot');
   const st = slot && !slot.hidden ? slot.dataset.state || 'none' : 'none';
@@ -33993,29 +34118,41 @@ function paintRdActions(screen, r, m = rdModel(r)) {
   });
   if (split) split.hidden = !!pause && pause.hidden;      // the split wrapper follows its button
 }
-/** D18: the Group row. Its own element, repainted through a signature (never appended into .rd-page-meta). */
+/** D18, run 3 D8: the facts block's group row. `el` is its dd, repainted through a signature; the dt names the kind
+ *  (Feature / Chain / Group), and the row hides with no group below Advanced. */
 function paintGroupLine(el, pipelineId, title, home) {
   if (!el) return;
-  const k = () => Object.assign(document.createElement('span'), { className: 'rd-group-k', textContent: 'Group' });
+  const row = el.closest('.rd-kv-row') || el;
+  const dt = row.querySelector('.rd-kv-k');
   if (home) {
-    const sig = `in|${groupHref(home.row)}|${home.row.title}|${home.planning ? 'p' : home.position}|${home.total}`;
-    el.hidden = false;
+    const sig = `in|${groupHref(home.row)}|${home.row.title}|${home.planning ? 'p' : home.position}|${home.total}|${home.row.groupKind}`;
+    row.hidden = false;
     if (el.dataset.sig === sig) return;
     el.dataset.sig = sig;
+    if (dt) dt.textContent = groupKindWord(home.row);
     const a = Object.assign(document.createElement('a'), { className: 'rd-group-link', href: groupHref(home.row), textContent: home.row.title });
-    const span = (cls, ...kids) => { const s = document.createElement('span'); s.className = cls; s.append(...kids); return s; };
-    // QA 8: spans a phone can stack. The leading space keeps textContent "Group Part of Run tags · run 4 of 5".
-    el.replaceChildren(k(), span('rd-group-of', ' Part of ', a), span('rd-group-sep', ' · '),
-      span('rd-group-pos', home.planning ? 'planning' : `run ${home.position} of ${home.total}`));
+    const pos = Object.assign(document.createElement('span'), { className: 'rd-group-pos',
+      textContent: ` · ${home.planning ? 'planning' : `run ${home.position} of ${home.total}`}` });
+    el.replaceChildren(a, pos);
     return;
   }
-  if (!pipelineId || !levelAtLeast('advanced')) { el.hidden = true; el.dataset.sig = ''; el.replaceChildren(); return; }
-  el.hidden = false;
+  if (dt) dt.textContent = 'Group';
+  if (!pipelineId || !levelAtLeast('advanced')) { row.hidden = true; el.dataset.sig = ''; el.replaceChildren(); return; }
+  row.hidden = false;
   if (el.dataset.sig === 'add') return;
   el.dataset.sig = 'add';
   const b = Object.assign(document.createElement('button'), { type: 'button', className: 'btn btn-sm btn-quiet rd-group-add', textContent: 'Add to group…' });
   b.addEventListener('click', () => openAddToGroup(b, { pipelineId, title }));
-  el.replaceChildren(k(), ' ', b);
+  el.replaceChildren(b);
+}
+/** Run 3 (D6, D7): the kind chip ("Run 2 of 3") and the breadcrumb, from the run's group. The breadcrumb is the
+ *  split layout's alone: the Chat run panel keeps none (its "Runs" crumb would leave Chat). */
+function paintRunPlace(screen, home) {
+  const chip = screen.querySelector('.rd-glance .rd-title-row .kind-chip');
+  const word = runPositionLabel(home);
+  if (chip && chip.textContent !== word) chip.textContent = word;
+  paintCrumbs(screen.querySelector(':is(.rd-bar,.hd-bar) .rd-crumbs'), screen.dataset.presentation === 'panel' ? [] : runCrumbs(home));
+  syncFacts(screen.querySelector('.rd-glance .rd-kv'));
 }
 /** The open run page's Group row (and status), repainted after the groups reload or the level changes. */
 function repaintOpenRunGroupLine() {
@@ -34025,7 +34162,9 @@ function repaintOpenRunGroupLine() {
   }
   const hd = histDetailState;
   if (hd && hd.screen && hd.record) {
-    paintGroupLine(hd.screen.querySelector('.hd-glance .rd-page-head .rd-group-line'), hd.record.id || '', hd.record.title || '', groupHomeOf(hd.record.id || ''));
+    const home = groupHomeOf(hd.record.id || '');
+    paintGroupLine(hd.screen.querySelector('.hd-glance .rd-kv .rd-group-line'), hd.record.id || '', hd.record.title || '', home);
+    paintRunPlace(hd.screen, home);
   }
 }
 
@@ -34133,7 +34272,7 @@ function rdSheetRow({ label, detail = '', value = '', tab = '', state = '', icon
   b.appendChild(tx);
   if (value) {
     const v = document.createElement('span');
-    v.className = 'rd-srow-v mono';
+    v.className = 'rd-srow-v';
     if (since) v.dataset.since = since;   // a live elapsed time: _timerTick keeps it moving
     v.textContent = value;
     b.appendChild(v);
@@ -34202,6 +34341,8 @@ function paintPageBranch(glance, name) {
   const btn = glance && glance.querySelector('.rd-page-branch');
   if (!btn) return;
   btn.hidden = !name;
+  const row = btn.closest('.rd-kv-row');            // run 3 (D8): the facts block's Branch row
+  if (row) row.hidden = !name;
   const label = btn.querySelector('.rd-page-branch-name');
   if (name && label.textContent !== name) {
     label.textContent = name;
@@ -34304,15 +34445,12 @@ function glanceTiles({ summary = null, liveFiles = null, activeMs = null, cost =
   tiles.dataset.n = String(tiles.childElementCount);
   return tiles.childElementCount ? tiles : null;
 }
-// The run's cost tags under the tiles (D15). The label, the chips, then a dashed slot per missing required key; on a
-// finished run paintHdTags appends its Add / Edit control last (D16).
+// The run's cost tags in the facts block's Cost tags row (D15, run 3 D8; its dt is the label). The chips, then a dashed
+// slot per missing required key; on a finished run paintHdTags appends its Add / Edit control last (D16).
 function costTagsRow(doc, { tags, missing }) {
   const row = doc.createElement('div');
   row.className = 'rd-cost-row';
-  const label = doc.createElement('span');
-  label.className = 'rd-cost-row-label';
-  label.textContent = 'Cost tags';
-  row.append(label, ...tags.map((t) => tagChip(doc, t)), ...missing.map((k) => missingSlot(doc, k)));
+  row.append(...tags.map((t) => tagChip(doc, t)), ...missing.map((k) => missingSlot(doc, k)));
   return row;
 }
 
@@ -34323,15 +34461,22 @@ function paintGlanceFacts(glance, opts) {
   const screen = glance && (glance.closest('.rd, .hd') || glance);
   const host = screen && screen.querySelector('.rd-facts');
   if (!host) return;
+  // Run 3 (D8): the tiles stay in .rd-facts; the Cost tags row is the facts block's last row.
+  const tagsHost = screen.querySelector('.rd-kv [data-fact="tags"] > .rd-kv-v');
   const tiles = glanceTiles(opts);
   const row = opts.costTags ? costTagsRow(document, opts.costTags) : null;
-  const tagSig = row ? row.textContent : '';
+  const tagSig = row ? `+${row.textContent}` : '';   // an empty row (a finished run's "Add") is still a row
   const sig = `${opts.ticking ? 't' : ''}|${tiles ? tiles.textContent : ''}|${tagSig}`;
   const rest = `${sigRest(tiles)}|${tagSig}`;
   if (host.dataset.sig === sig || (opts.ticking && host.dataset.sig && host.dataset.sig.startsWith('t|') && host.dataset.rest === rest)) return;
   host.dataset.sig = sig;
   host.dataset.rest = rest;
-  host.replaceChildren(...[tiles, row].filter(Boolean));
+  host.replaceChildren(...[tiles].filter(Boolean));
+  if (tagsHost && tagsHost.dataset.sig !== tagSig) {
+    tagsHost.dataset.sig = tagSig;
+    tagsHost.replaceChildren(...[row].filter(Boolean));
+  }
+  syncFacts(screen.querySelector('.rd-kv'));
 }
 // Everything but the time (the first tile): a ticking row need not be rebuilt for it.
 function sigRest(tiles) {
@@ -34345,6 +34490,7 @@ function glancePrInput(record) {
   const pr = record && record.pr;
   if (pr && typeof pr === 'object') return String(pr.state || '').toUpperCase() || 'UNAVAILABLE';
   if (!record) return 'PENDING';
+  if (record.inBase) return 'IN_BASE';                    // D8: no PR of its own, its work already in its base
   if (record.sameAsSource && record.mergeBack?.merged !== false) return 'UNAVAILABLE';   // on the source (head == base): no PR, no "checking" placeholder
   if (!prHostAvailable()) return 'UNAVAILABLE';
   if (pr === undefined) return 'PENDING';
@@ -34543,6 +34689,14 @@ function paintRdPrStatus(host, scope) {
   if (!scope) { host.hidden = true; host.dataset.key = ''; host._prScope = null; clearTimeout(host._prTimer); return; }
   host._prScope = scope;                           // QA 3: refreshRdPrStatus redraws with this scope's chip
   const key = prStatusKey(scope);
+  // Run 3 (D11): a merged or closed PR is its chip alone — no checks to read, nothing to watch. Its key is the open
+  // PR's, so an open PR's poll stops here too.
+  if (scope.checks === false) {
+    clearTimeout(host._prTimer);
+    if (host.dataset.key !== key) { host.dataset.key = key; host.dataset.sig = ''; }
+    renderRdPrStatus(host, scope, {});
+    return;
+  }
   const cached = prStatusCache.get(key);
   if (host.dataset.key !== key) { host.dataset.key = key; host.dataset.sig = ''; host.hidden = true; clearTimeout(host._prTimer); }
   if (cached) renderRdPrStatus(host, scope, cached);
@@ -34567,6 +34721,7 @@ async function loadRdPrStatus(host, scope) {
   let c;
   try { c = await readPrStatus(key, q); }
   finally { host._prLoading = false; }
+  if (host._prScope?.checks === false) return;     // the PR merged or closed meanwhile: its chip alone (D11)
   // A change announced while this read was in flight: read once more, the answer may predate it.
   if (host._prAgain && host.dataset.key === key) { void loadRdPrStatus(host, host._prScope || scope); return; }
   const w = c?.watch;
@@ -34661,7 +34816,7 @@ function renderRdPrStatus(host, scope, s) {
   if (chip) {
     const sum = document.createElement('span');
     sum.className = 'rd-prs-sum';
-    sum.append(prChip(document, chip));
+    sum.append(prChip(document, chip, { link: true, number: true }));   // run 3 (D11): icon, "PR #821", word
     for (const n of notes) sum.append(span('rd-prs-sep', '·'), n);
     parts.push(sum);
   } else if (tone) {
@@ -34713,7 +34868,7 @@ function refreshRdPrStatus(projectKey, id, memberKey = '') {
   const key = prStatusKey(scope);
   prStatusCache.delete(key);
   for (const host of document.querySelectorAll('.rd-pr-status')) {
-    if (host.dataset.key !== key) continue;
+    if (host.dataset.key !== key || host._prScope?.checks === false) continue;   // a merged or closed PR reads nothing (D11)
     // QA 3: the painted scope (its chipOf re-reads the model at paint time).
     const sc = host._prScope && prStatusKey(host._prScope) === key ? host._prScope : scope;
     if (host._prLoading) host._prAgain = true;
@@ -34772,15 +34927,22 @@ function paintRdPrCta(screen, r) {
     if (glancePrInput(record) === 'PENDING') { paintPrCta(slot, { state: 'pending' }); paintRdPrStatus(status, null); return; }
     const pr = record.pr && typeof record.pr === 'object' ? record.pr : null;
     const prState = pr ? String(pr.state || '').toUpperCase() : '';
-    if (pr && (prState === 'OPEN' || prState === 'MERGED') && pr.url) {
-      paintPrCta(slot, { state: prState === 'MERGED' ? 'merged' : 'view', href: pr.url });
-      // QA 3: the scope says how to read the run model's chip. rdModel → rdModelRun → rdHistoryRecord looks the row up in
-      // state.historyAll on every call, so it sees a pr-watch-changed frame's in-place `row.pr.fixing`.
-      paintRdPrStatus(status, prState === 'OPEN' && record.target !== 'workspace'
-        ? { id: r.pipelineId, projectKey: key, chipOf: () => rdModel(r).pr } : null);
+    // Run 3 (D11): the PR bar (.rd-pr-status) is the run's one PR mention; the header's View PR is the action.
+    // QA 3: the scope says how to read the run model's chip. rdModel → rdModelRun → rdHistoryRecord looks the row up in
+    // state.historyAll on every call, so it sees a pr-watch-changed frame's in-place `row.pr.fixing`.
+    const ownPr = pr && (prState === 'OPEN' || prState === 'MERGED' || prState === 'CLOSED') && pr.url && record.target !== 'workspace';
+    const prScope = ownPr ? { id: r.pipelineId, projectKey: key, chipOf: () => rdModel(r).pr, checks: prState === 'OPEN' } : null;
+    if (ownPr && prState !== 'CLOSED') {
+      paintPrCta(slot, { state: 'none' });
+      paintRdPrStatus(status, prScope);
       return;
     }
-    paintRdPrStatus(status, null);
+    if (pr && (prState === 'OPEN' || prState === 'MERGED') && pr.url) {   // a workspace run: today's slot, unchanged
+      paintPrCta(slot, { state: prState === 'MERGED' ? 'merged' : 'view', href: pr.url });
+      paintRdPrStatus(status, null);
+      return;
+    }
+    paintRdPrStatus(status, prScope);              // a closed PR: its chip, while the slot can still create a new one
     if (histPrEligible(record) && record.pr !== undefined) {
       paintPrCta(slot, {
         state: 'create', cls: 'rd-create-pr',
@@ -35190,19 +35352,19 @@ function rdDot() {
   return s;
 }
 
-// Run labels under the run page status (slice 1). One row per sheet, rebuilt on every header paint.
-// A saved change stores the new set (onSaved: data only) and repaints just this row (D18).
-function paintRunLabels(sheet, { pipelineId, labels, onSaved = () => {} }) {
-  if (!sheet) return;
-  sheet.querySelector(':scope > .rd-labels')?.remove();
-  if (!flagOn('runLabels')) return;
+// Run labels in the facts block's Labels row (slice 1, run 3 D8). `host` is that row's dd; one .rd-labels in it,
+// rebuilt on every header paint. A saved change stores the new set (onSaved: data only) and repaints just this row (D18).
+function paintRunLabels(host, { pipelineId, labels, onSaved = () => {} }) {
+  if (!host) return;
+  host.querySelector(':scope > .rd-labels')?.remove();
+  if (!flagOn('runLabels')) { syncFacts(host.closest('.rd-kv')); return; }
   const row = document.createElement('div');
   row.className = 'rd-labels';
   row.setAttribute('aria-label', 'Labels');
   const done = (next) => {
     applyLabelsLocally([{ id: pipelineId, labels: next }]);
     onSaved(next);
-    if (sheet.isConnected) paintRunLabels(sheet, { pipelineId, labels: next, onSaved });
+    if (host.isConnected) paintRunLabels(host, { pipelineId, labels: next, onSaved });
   };
   // The chip ×: replace the set (PUT). A picker toggle: a delta for this one run (D17), so quick toggles never race.
   const remove = async (l) => {
@@ -35221,19 +35383,20 @@ function paintRunLabels(sheet, { pipelineId, labels, onSaved = () => {} }) {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'btn btn-sm btn-quiet rd-labels-edit';
-    b.textContent = list.length ? 'Label' : 'Add label';
+    b.append(icon(document, 'plus', 12), 'Add');
+    b.setAttribute('aria-label', list.length ? 'Edit labels' : 'Add a label');
     b.setAttribute('aria-haspopup', 'dialog');
     b.addEventListener('click', async () => {
       if (closeLabelPickerFor(document, b)) return;
       // A toggle repaints this row (done), so the picker follows the current button rather than this one.
-      const anchor = () => (sheet.isConnected && sheet.querySelector(':scope > .rd-labels > .rd-labels-edit')) || b;
+      const anchor = () => (host.isConnected && host.querySelector(':scope > .rd-labels > .rd-labels-edit')) || b;
       openLabelPicker({ doc: document, anchor, used: await fetchLabels(), title: 'Labels',
         states: new Map(list.map((l) => [l, 'all'])), onToggle: toggle });
     });
     row.append(b);
   }
-  const head = sheet.querySelector(':scope > .rd-sheet-head');
-  if (row.childElementCount && head) head.after(row);
+  if (row.childElementCount) host.append(row);
+  syncFacts(host.closest('.rd-kv'));
 }
 
 function paintRdHeader(screen, r) {
@@ -35266,8 +35429,9 @@ function paintRdHeader(screen, r) {
   if (starter) screen.querySelector('.rd-page-meta').append(personChip(starter));
   // Run tags (#718): read-only chips after the person chip, replaced on every paint.
   for (const c of screen.querySelectorAll('.rd-page-meta .tag-chip')) c.remove();   // s2: the chips moved to the Cost tags row
-  paintRunLabels(screen.querySelector('.rd-glance > .rd-sheet'), { pipelineId: r.pipelineId || '', labels: r.labels, onSaved: (l) => { r.labels = l; } });
+  paintRunLabels(screen.querySelector('.rd-glance .rd-kv [data-fact="labels"] > .rd-kv-v'), { pipelineId: r.pipelineId || '', labels: r.labels, onSaved: (l) => { r.labels = l; } });
   paintRunKindChip(screen.querySelector('.rd-page-meta'), workModeOf(r));
+  syncFacts(screen.querySelector('.rd-glance .rd-kv'));
 
   // Meta: project · started · elapsed · cost · step n/m · step name.
   const meta = screen.querySelector('.rd-meta');
@@ -35357,11 +35521,12 @@ function paintRdHeader(screen, r) {
   const STOP_INTERRUPTED = 'An interrupted run cannot be stopped';
   if (r.status === 'interrupted') { stopBtn.disabled = true; stopBtn.title = STOP_INTERRUPTED; }
   else if (stopBtn.title === STOP_INTERRUPTED) { stopBtn.disabled = false; stopBtn.title = ''; }
-  // D31: a shaped run's bar folds Away mode, Run after and the terminal into one ⋯ (CSS hides the three).
+  // Run 3 (D13): every run page's bar is the primary action, Stop and ⋯ (D31's fold, for every run now; CSS hides
+  // Away mode, Run after and the terminal, and ⋯ drives them).
   const shapedBar = shapeFirstOn() && isShapingRun(r);
   screen.querySelector('.rd-bar')?.toggleAttribute('data-shaped', shapedBar);
   const barMore = screen.querySelector('.rd-bar-more');
-  if (barMore) barMore.hidden = !shapedBar;
+  if (barMore) barMore.hidden = false;
   // Run after this one (the list card's old schedule-after button): a pipeline run with a pipeline
   // id, in every state. A finished run is followed up, as on the saved run's bar (paintHdAfter).
   const afterBtn = screen.querySelector('.rd-after');
@@ -36306,14 +36471,13 @@ const navLinks = $$('.nav button[data-nav], #acct-settings');
 // (old addresses redirect — see MOVED_ROUTES). The four Add-ons pages went the other way:
 // Settings tabs once, pages of their own now.
 const VIEW_NAMES = ['chat', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers', 'feature', 'group'];
-// One Runs page, three route names: the bare list (#runs) and the two detail routes every
-// deep link already uses (#running/<id>…, #history/<projectKey>/<id>…). All three render
-// the `data-view="runs"` section and light the one Runs nav button.
-const RUNS_VIEWS = new Set(['runs', 'running', 'history']);
+// One Runs page, five route names: the bare list (#runs), the two run routes every deep link already uses
+// (#running/<id>…, #history/<projectKey>/<id>…) and the group page's two (#feature/<id>…, #group/<id>…, run 3 D1).
+// All five render the `data-view="runs"` section and light the one Runs nav button.
+const RUNS_VIEWS = new Set(['runs', 'running', 'history', 'feature', 'group']);
 // The Add-ons pages (sidebar group "Add-ons"): Settings tabs once, pages of their own now.
 const ADDON_VIEWS = ['marketplace', 'connectors', 'models', 'providers'];
-// The group page (runs redesign slice 4, D16) renders into the feature page's section for both of its routes.
-const viewSection = (name) => (RUNS_VIEWS.has(name) ? 'runs' : name === 'group' ? 'feature' : name);
+const viewSection = (name) => (RUNS_VIEWS.has(name) ? 'runs' : name);
 function inRunsView(v = currentView()) { return RUNS_VIEWS.has(v); }
 
 // ── Interface mode (docs/ui-levels.md) ──────────────────────────────────────
@@ -36543,6 +36707,9 @@ function showView(name, param = '') {
   // row (close*Detail force `instant` side by side). Leaving Runs hides the whole section,
   // so there the close is instant, as before.
   if (currentShownView === 'history' && name !== 'history') closeHistDetail({ instant: name !== 'runs' });
+  // Run 3 (D2): the group page's pane, the same way.
+  const groupRoute = (n) => n === 'feature' || n === 'group';
+  if (groupRoute(currentShownView) && !groupRoute(name)) closeGroupPane({ instant: name !== 'runs' });
   // Same for the Projects track: leaving must not park a project page mid-slide behind the next
   // view, and its Memory controller must not outlive the view.
   if (currentShownView === 'projects' && name !== 'projects') closeProjDetail({ instant: true });
@@ -36638,6 +36805,10 @@ function showView(name, param = '') {
       }
     } else if (name === 'history') {
       routeHistoryDetail(param, { instant: entering });
+    } else if (name === 'feature' || name === 'group') {
+      const [rawId, tab = 'runs'] = String(param).split('/');
+      // Coming back from another view: the hidden page skipped frames, so the Overview's Shaper view repaints (D14).
+      openGroupPane(name, decodeURIComponent(rawId), tab, { reentered: prevView !== 'feature' && prevView !== 'group' });
     }
     paintRunsList();
     // §5a.9: the one-time What's new note above the list (idempotent; gone for good after Got it).
@@ -36675,12 +36846,6 @@ function showView(name, param = '') {
     else routeProjectDetail(param);
   }
   if (name === 'chat') enterChatView(param, prevView);
-  if (name === 'feature' || name === 'group') {
-    const host = document.querySelector('[data-view="feature"] .feature-page');
-    const [rawId, tab = 'runs'] = String(param).split('/');
-    // Coming back from another view: the hidden page skipped frames, so the Overview's Shaper view repaints (D14).
-    void mountGroupPage(host, { route: name, id: decodeURIComponent(rawId), tab, reentered: prevView !== 'feature' && prevView !== 'group' });
-  }
   if (name === 'workflows') void enterWorkflowsView(param, prevView);
   if (name === 'settings') showSettingsTab(param);
   if (name === 'marketplace') loadPluginsView({ refresh: true });

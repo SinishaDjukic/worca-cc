@@ -1502,9 +1502,10 @@ test('a done slice\'s History page says "Part of Charts · run 1 of 3", linking 
   gateOn(ctx);
   await openDetail(ctx);
   await settle(ctx.window, 4);
-  const line = ctx.window.document.querySelector('#hist-detail .hd-glance .rd-page-head .rd-group-line');
+  const line = ctx.window.document.querySelector('#hist-detail .hd-glance .rd-kv [data-fact="group"]');
   assert.equal(line.hidden, false);
-  assert.equal(line.textContent.replace(/\s+/g, ' ').trim(), 'Group Part of Charts · run 1 of 3');
+  assert.equal(line.querySelector('.rd-kv-k').textContent, 'Feature');
+  assert.equal(line.querySelector('.rd-kv-v').textContent.replace(/\s+/g, ' ').trim(), 'Charts · run 1 of 3');
   assert.equal(line.querySelector('a.rd-group-link').getAttribute('href'), '#feature/feat_1');
   assert.equal(ctx.window.document.querySelector('#hist-detail .rd-slice-line'), null, 'the Group row replaces the slice line');
   await openDetail(ctx);                                 // the same detail again: painted in place
@@ -1516,7 +1517,7 @@ test('a plain run (in no group) shows no group link; at Expert it offers "Add to
   gateOn(ctx);
   await openDetail(ctx);
   await settle(ctx.window, 4);
-  const line = ctx.window.document.querySelector('#hist-detail .hd-glance .rd-group-line');
+  const line = ctx.window.document.querySelector('#hist-detail .hd-glance .rd-kv [data-fact="group"]');
   assert.equal(line.querySelector('.rd-group-link'), null);
   assert.equal(line.querySelector('.rd-group-add').textContent, 'Add to group…');
 });

@@ -193,7 +193,7 @@ test('no coloured left-border accent cards (D16)', () => {
 });
 
 const KIND_CHIPS = ['.badge', '.flag-chip', '.issue-sev', '.artifact-kind', '.tp-kind', '.sk-kind', '.team-chip .kind',
-  '.hd-ov-file-kind', '.ask-mcard-kind', '.wf-log-live', '.kind-chip'];
+  '.hd-ov-file-kind', '.ask-mcard-kind', '.wf-log-live', '.kind-chip', '.tag-chip', '.ps-pill', '.ask-cmd-pill', '.tp-tab-badge'];
 test('kind and state chips are one 11px sans chip with 4px corners (D13)', () => {
   const group = ALL.find((r) => r.sel.startsWith(':is(.badge,'));
   assert.ok(group, 'the grouped chip rule');
@@ -450,17 +450,17 @@ test('badges never truncate: no text-overflow on a badge class', () => {
 });
 
 // QA 8: narrow layouts follow their own container: the run page's stat boxes (.rd-facts), the group page's table
-// (.gpage-runs), and the run page's Group row on a phone.
-test('narrow layouts: stat boxes 2 per row, the Group row stacks, group page rows put chip and cost under the title', () => {
+// (.gpage-runs), and the facts block (.rd-kv, run 3 D8) in a narrow card.
+test('narrow layouts: stat boxes 2 per row, the facts block stacks label over value, group page rows put chip and cost under the title', () => {
   assert.ok(ALL.some((r) => r.sel === '.rd-facts' && /container:rd-facts \/ inline-size/.test(r.body)), 'the facts are a container');
   const facts = css.match(/@container rd-facts \(max-width:420px\)\{([^\n]*)\}/);
   assert.ok(facts, 'the narrow stat boxes block exists');
   assert.match(facts[1], /\.rd-stats\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\);\}/);
   assert.match(facts[1], /\.rd-stats\[data-n="3"\] > div:last-child\{grid-column:1 \/ -1;\}/);
-  const phone = css.match(/@media \(max-width:640px\)\{\.rd-group-line\{([^}]*)\}([^\n]*)\}/);
-  assert.ok(phone, 'the phone Group row block exists');
-  assert.match(phone[1], /flex-direction:column/);
-  assert.match(phone[2], /\.rd-group-sep\{display:none;?\}/);
+  assert.ok(ALL.some((r) => r.sel === '.rd-kv' && /container:rd-kv \/ inline-size/.test(r.body)), 'the facts block is a container');
+  const kv = css.match(/@container rd-kv \(max-width:420px\)\{([^\n]*)\}/);
+  assert.ok(kv, 'the narrow facts block exists');
+  assert.match(kv[1], /\.rd-kv-row\{grid-template-columns:minmax\(0,1fr\);/);
   assert.ok(ALL.some((r) => r.sel === '.gpage-runs' && /container:gpage-runs \/ inline-size/.test(r.body)), 'the group table host is a container');
   const at = css.indexOf('@container gpage-runs (max-width:480px)');
   assert.ok(at > 0, 'the narrow group table block exists');
@@ -666,10 +666,18 @@ test('Runs list: selected and Needs-you rows take the sidebar nav item\'s corner
   }
 });
 
-test('a script-focused Back button shows no ring for a pointer user', () => {
-  const r = ALL.find((x) => x.sel.startsWith(':root[data-input="pointer"]') && x.sel.includes('.pd-header'));
-  assert.ok(r, 'the pointer suppressor covers .pd-header');
+test('a script-focused control shows no ring for a pointer user; fields keep their focus border', () => {
+  const r = ALL.find((x) => x.sel.startsWith(':root[data-input="pointer"] :is(button,'));
+  assert.ok(r, 'the pointer suppressor covers every button, link, summary, tab, switch and [tabindex]');
   assert.match(r.body, /outline:none/);
+  for (const k of ['button', 'a', 'summary', '[role="tab"]', '[role="switch"]', '[tabindex]']) assert.ok(r.sel.includes(k), k);
+  assert.doesNotMatch(r.sel.replace('[data-input="pointer"]', ''), /input|textarea|select/);   // the attribute is named data-input
+});
+
+test('focus rings: no :focus rule (without -visible) draws an outline ring', () => {
+  const bad = ALL.filter((x) => /:focus(?![-\w])/.test(x.sel))
+    .flatMap((x) => decls(x.body, 'outline').filter(([, v]) => !/^(?:none|0)$/.test(v)).map(([, v]) => where(x, v)));
+  assert.deepEqual(bad, []);
 });
 
 // The same pattern as the button audit's typed-plus rule: "+" then a capitalised word ("+ Add", "+ Case", "+ Override").
@@ -701,7 +709,7 @@ function offScale() {
 // When the browser type audit (8c) finds an off-scale text on a slice-1 state that these miss, add its prefix here.
 const SHARED_TYPE = ['body', 'button', '.topbar .sub', '.pill-status', '.pill-run', '.card h2', '.card-head h2', '.input', '.select',
   '.textarea', '.ta-hl-back', 'input[type="text"]', 'input[type="number"]', 'input[type="file"]', 'textarea', 'select', '.input-sm',
-  '.select-sm', '.btn-sm', '.btn-lg', '.check-inline', '.file .state', '.extra-pill-x', '.mention-item', '.form-msg', '.toast .tt',
+  '.select-sm', '.btn-sm', '.btn-lg', '.file .state', '.extra-pill-x', '.mention-item', '.form-msg', '.toast .tt',
   '.field-error', '.card-alert .ca-title', '.dirty-mark', '.field-compact .hint', '.check-row', '.opt-row', '.opt-row .opt-sub',
   '.confirm-field > label', '.confirm-field .input', '.confirm-checkbox', '.stat-value', '.stat-frac', '.stat-sub'];
 const SLICE1_TYPE = new RegExp('(?:^|[\\s(,>+~])(?:' + [

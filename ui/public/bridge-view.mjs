@@ -8,6 +8,7 @@
 // (mv-cp-*, mv-pv-*, mvi-*, mv-conn-*) plus data-provider / data-id.
 
 import { icon } from './icons.mjs';
+import { makeSwitch } from './switch.mjs';
 import { codexReaches, runsOnText } from '../../src/shared/connections.mjs';
 
 function h(doc, tag, cls, text) {
@@ -934,12 +935,7 @@ export function renderConnectionSection(model, { doc = globalThis.document, prov
     const o = h(doc, 'option', null, text); o.value = value; orSort.appendChild(o);
   }
   orBox.appendChild(field('Sort providers by', orSort));
-  const orFbLab = h(doc, 'label', 'mv-conn-cap');
-  const orFb = h(doc, 'input', 'mv-conn-or-fallbacks');
-  orFb.type = 'checkbox';
-  orFbLab.appendChild(orFb);
-  orFbLab.appendChild(h(doc, 'span', null, 'Allow other providers when these are unavailable'));
-  orBox.appendChild(orFbLab);
+  orBox.appendChild(makeSwitch(doc, { label: 'Allow other providers when these are unavailable', inputClass: 'mv-conn-or-fallbacks', rowClass: 'mv-conn-cap' }).row);
   advBody.appendChild(orBox);
   fillOpenRouter(orBox, upstream && upstream.openrouter);
   adv.appendChild(advBody);

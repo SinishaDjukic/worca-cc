@@ -140,7 +140,7 @@ export function levelCardsHtml(level) {
  *  click is a choose like a dialog card), the bars, the name, a check and one short line. */
 export function levelMenuHtml(level) {
   const cur = normalizeLevel(level);
-  return UI_LEVELS.map((id) => `<button type="button" class="lv-opt" role="menuitemradio" data-level-choice="${id}" aria-checked="${id === cur}">`
+  return UI_LEVELS.map((id) => `<button type="button" class="menu-item lv-opt" role="menuitemradio" data-level-choice="${id}" aria-checked="${id === cur}">`
     + levelBarsSvg(id)
     + `<span class="lv-opt-name">${esc(LEVEL_INFO[id].label)}</span>`
     + '<svg class="lv-check" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>'

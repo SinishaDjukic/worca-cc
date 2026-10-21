@@ -37,7 +37,7 @@ export const SIDEBAR_CLASSES = Object.freeze([
   // ask-effort-row, ask-effort-item, ask-pane-back.
   'ask-scope-btn', 'ask-scope-label', 'ask-meter', 'ask-meter-cost', 'ask-ctx-ring', 'ask-ctx-ring-track', 'ask-ctx-ring-arc',
   'ask-model-btn', 'ask-model-btn-effort', 'ask-chip-name', 'ask-chip-thumb', 'ask-drop', 'ask-drop-label',
-  'ask-pop', 'ask-pop-scope', 'ask-pop-model', 'ask-pop-ctx', 'ask-pop-item', 'ask-pop-caption', 'ask-pop-caption-row', 'ask-pop-caption-meter',
+  'menu', 'menu-item', 'ask-pop', 'ask-pop-scope', 'ask-pop-model', 'ask-pop-ctx', 'ask-pop-item', 'ask-pop-caption', 'ask-pop-caption-row', 'ask-pop-caption-meter',
   'ask-pop-empty', 'ask-pop-divider', 'ask-pop-group', 'ask-pop-subgroup', 'ask-model-item', 'ask-model-name', 'ask-model-check', 'ask-model-tag',
   'ask-pop-row-value', 'ask-pop-row-chev',
   'ask-ctx-bar', 'ask-ctx-bar-used', 'ask-ctx-bar-buffer', 'ask-ctx-stat', 'ask-ctx-swatch', 'ask-ctx-stat-name', 'ask-ctx-stat-tokens',
@@ -294,7 +294,7 @@ export function createPopovers(doc, host) {
     open(trigger, panelClass, build) {
       if (cur && cur.trigger === trigger) { close({ focusTrigger: false }); return null; }
       close({ focusTrigger: false });
-      const panel = make(doc, 'div', `ask-pop ${panelClass}`);
+      const panel = make(doc, 'div', `menu ask-pop ${panelClass}`);
       panel.setAttribute('role', 'menu');
       panel.addEventListener('keydown', onKey);
       build(panel);
@@ -317,7 +317,7 @@ export function createPopovers(doc, host) {
 
 /** ask-panel.mjs menuItem + its label/✓ children. labelClass null: a bare <span> (Ask's Effort row and pane back). */
 export function menuItem(doc, className, label, onPick, { checked = false, disabled = false, labelClass = 'ask-model-name' } = {}) {
-  const b = make(doc, 'button', `ask-pop-item ${className}`.trim());
+  const b = make(doc, 'button', `menu-item ask-pop-item ${className}`.trim());
   b.type = 'button';
   b.setAttribute('role', 'menuitem');
   b.tabIndex = -1;

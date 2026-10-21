@@ -10,6 +10,7 @@ import { fold, buildCheckFold } from './check-row.mjs';
 import { stepHead, stepSender } from './step-card.mjs';
 import { toggleMenu } from '../workflows/menu.mjs';
 import { icon } from '../icons.mjs';
+import { makeSwitch } from '../switch.mjs';
 
 /** "3 runs · v2 · why" — the round only after the first, the why when set. */
 export function outlineSummary(outline, round = 1) {
@@ -62,9 +63,8 @@ export function renderOutlineBody(panel, pq, deps) {
   // Undo edits: shown only while there are edits. It posts nothing.
   const undo = btn('outline-undo', 'Undo edits');
   undo.addEventListener('click', (e) => { e.stopPropagation(); edits = []; paint(); });
-  const each = h('label', 'outline-approve-each');
-  const eachBox = h('input'); eachBox.type = 'checkbox'; eachBox.checked = plan.approveEach === true;   // D19: off unless chosen; a re-ask keeps the choice
-  each.append(eachBox, doc.createTextNode(' Ask me before each run'));
+  // D19: off unless chosen; a re-ask keeps the choice
+  const { row: each, input: eachBox } = makeSwitch(doc, { label: 'Ask me before each run', checked: plan.approveEach === true, rowClass: 'outline-approve-each' });
   const under = h('div', 'outline-under'); under.append(undo, each);
   const checks = buildCheckFold(doc, runWorded(checkSlices(asked)), 'Outline');
   body.append(summary, list, under, checks.line, checks.rows);

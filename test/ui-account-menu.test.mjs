@@ -144,7 +144,7 @@ test('free-request row: "Free requests today  37 / 50", amber when low, red when
     } },
     { name: 'no budget yet: the free row alone; nothing at all: no card', run: () => {
       const only = renderSpendCard(null, { doc, free: FREE(), now });
-      assert.deepEqual([...only.children].map((c) => c.className), ['mi mc-free']);
+      assert.deepEqual([...only.children].map((c) => c.className), ['mi menu-item mc-free']);
       assert.equal(only.getAttribute('aria-label'), 'Spend');
       assert.equal(renderSpendCard(null, { doc, free: null }), null);
       assert.equal(renderSpendCard(NO_LIMIT, { doc, free: FREE({ known: false }) }).querySelector('.mc-free'), null);

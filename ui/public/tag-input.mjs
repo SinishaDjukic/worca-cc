@@ -1,6 +1,7 @@
 // ui/public/tag-input.mjs — the run-tag chip field (#718): chips with ×, a text input, native
 // <datalist> suggestions (keys, then values already in use). Pure DOM; `doc` is injected for jsdom.
 import { icon } from './icons.mjs';
+import { makeSwitch } from './switch.mjs';
 import { parseTag, formatTag, normaliseTags, MAX_TAGS } from '../../src/shared/run-tags.mjs';
 import { missingRequired, keyFromLabel, tagProblems, tagsProblemText } from '../../src/shared/tag-dimensions.mjs';
 import { suggestKeys, suggestValues } from '../../src/shared/cost-tag-suggest.mjs';
@@ -119,8 +120,9 @@ export function createTagInput(doc, { value = [], suggest = null, dims = () => [
   };
 }
 
-/** A value control for one dimension (D15): a select of its values (blank first), else a text input. */
-export function valueControl(doc, d, { blank = '', cls = 'tag-dim-input' } = {}) {
+/** A value control for one dimension (D15): a select of its values (blank first), else a text input. A blank label is
+ *  the select's empty option and, when `placeholder` is set, the empty input's placeholder too (the Default column). */
+export function valueControl(doc, d, { blank = '', cls = 'tag-dim-input', placeholder = false } = {}) {
   if (d.values?.length) {
     const s = doc.createElement('select'); s.className = `input ${cls}`;
     for (const v of ['', ...d.values]) { const o = doc.createElement('option'); o.value = v; o.textContent = v || blank; s.append(o); }
@@ -128,6 +130,7 @@ export function valueControl(doc, d, { blank = '', cls = 'tag-dim-input' } = {})
     return s;
   }
   const i = doc.createElement('input'); i.className = `input ${cls}`; i.spellcheck = false; i.setAttribute('aria-label', d.label);
+  if (placeholder && blank) i.placeholder = blank;
   return i;
 }
 
@@ -236,7 +239,7 @@ export function createDimensionEditor(doc, { value = [] } = {}) {
     let values = null;
     const paintDefault = (keep) => {
       const list = values ? values.get() : (d.values || []);
-      def = valueControl(doc, { label: 'Default', values: list }, { blank: 'None', cls: 'input-sm tag-dim-default' });
+      def = valueControl(doc, { label: 'Default', values: list }, { blank: 'No default', cls: 'input-sm tag-dim-default', placeholder: true });
       def.value = !list.length || list.includes(keep) ? keep : '';
       def.addEventListener('change', changed); def.addEventListener('input', changed);
       defCell.replaceChildren(def);
@@ -244,7 +247,7 @@ export function createDimensionEditor(doc, { value = [] } = {}) {
     values = createValueChips(doc, d.values || [], () => { paintDefault(def?.value || ''); changed(); });
     values.el.querySelector('.tag-value-input').classList.add('input-sm');
     paintDefault(d.default || '');
-    const req = doc.createElement('input'); req.type = 'checkbox'; req.className = 'tag-dim-required'; req.checked = !!d.required; req.setAttribute('aria-label', 'Mandatory');
+    const req = makeSwitch(doc, { ariaLabel: 'Mandatory', inputClass: 'tag-dim-required', checked: !!d.required }).row;
     const rm = doc.createElement('button'); rm.type = 'button'; rm.className = 'btn btn-sm btn-quiet btn-icon tag-dim-remove'; rm.setAttribute('aria-label', 'Remove cost tag'); rm.append(icon(doc, 'x', 14));
     rm.addEventListener('click', () => { tr.remove(); changed(); });
     const tagCell = doc.createElement('div'); tagCell.className = 'tag-dim-tag'; tagCell.append(label, key);

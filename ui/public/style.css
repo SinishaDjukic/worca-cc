@@ -29,6 +29,7 @@
   --side-sel-bg:light-dark(#EFEFEF,#353531);
   --surface:light-dark(#FFFFFF,#34342F);
   --field:light-dark(#F6F6F4,#2C2C29);
+  --row-open:color-mix(in srgb,var(--field) 50%,transparent);
   --field-focus:light-dark(#FFFFFF,#2E2E2B);
   --ink:light-dark(#19191B,#ECECE8);
   --ink-2:light-dark(#5C5C63,#B4B4AE);
@@ -130,6 +131,29 @@
   --shadow-menu:0 12px 34px light-dark(rgba(25,25,27,.12),rgba(0,0,0,.6));
   --shadow-dock:0 -8px 24px light-dark(rgba(25,25,27,.08),rgba(0,0,0,.45));   /* a panel docked at the bottom (step log drawer) */
   --knob-shadow:0 1px 3px light-dark(rgba(0,0,0,.18),rgba(0,0,0,.6));
+  /* Spacing (docs/design-system.md › Spacing): one card padding, one compact padding for tiles and list cards. */
+  --pad-card:24px;--pad-tile:16px;
+  /* Named color-mix recipes (› Colour): a recipe used twice is a token. Per-element ones (var(--c), currentColor) stay inline. */
+  --btn-hover:color-mix(in srgb,var(--ink) 7%,var(--panel));
+  --quiet-hover:color-mix(in srgb,var(--ink) 7%,transparent);
+  --danger-hover:color-mix(in srgb,var(--ink) 7%,var(--red-bg));
+  --amber-ring:color-mix(in srgb,var(--amber) 55%,var(--line-2));
+  --red-ring:color-mix(in srgb,var(--red) 50%,var(--line-2));
+  --red-tint:color-mix(in srgb,var(--red) 13%,transparent);
+  --violet-glow:color-mix(in srgb,var(--violet) 30%,transparent);
+  --violet-glow-strong:color-mix(in srgb,var(--violet) 70%,transparent);
+  --violet-ring:color-mix(in srgb,var(--violet) 55%,transparent);
+  --violet-clear:color-mix(in srgb,var(--violet) 0%,transparent);
+  --panel-veil:color-mix(in srgb,var(--panel) 88%,transparent);
+  --red-ink-soft:color-mix(in srgb,var(--red-ink) 85%,var(--ink));
+  /* Diff counts and syntax (moved from .rd-stats,.hd-diff and .hd-diff-pane,.ask-md,.code-editor,.apv). */
+  --hd-count-add:light-dark(#176B4D,#6CCB93);--hd-count-del:light-dark(#B31D28,#F0868E);
+  --hd-syntax-comment:light-dark(#5B6167,#8B949E);--hd-syntax-keyword:light-dark(#B31D28,#FF7B72);
+  --hd-syntax-type:light-dark(#9A3E00,#FFA657);--hd-syntax-string:light-dark(#176B4D,#7EE787);
+  --hd-syntax-literal:light-dark(#713BB8,#D2A8FF);--hd-syntax-title:light-dark(#075C82,#79C0FF);
+  /* The one switch (› Switch): ink when on, a muted track with a visible knob when locked. */
+  --switch-off:light-dark(#8A8A85,#6B6B66);--switch-on:var(--ink);--switch-knob-on:var(--on-ink);
+  --switch-off-locked:var(--field);--switch-on-locked:var(--ink-3);--switch-knob-locked:var(--ink-3);
   --ask-dock-clearance:96px;
 
   --sans:'Poppins',system-ui,-apple-system,BlinkMacSystemFont,sans-serif;
@@ -250,15 +274,13 @@ button{font:inherit;}
 .nav .nav-group.has-active{background:var(--side-sel-bg);color:var(--side-sel-ink);}
 .nav .nav-group[aria-expanded="true"]:not(.has-active){background:var(--field);color:var(--ink);}
 .nav .nav-group-chev{flex:none;width:14px;height:14px;margin:0;color:var(--ink-3);stroke-width:1.8;}
-/* The popup card (the mockup's menu): panel, hairline, 12px corners and the menu shadow,
-   172px wide, its rows the sidebar's own 32px ones 1px apart. It lives inside <nav> for keyboard
+/* The popup card (the mockup's menu): the shared .menu box (docs/design-system.md › Menu),
+   172px wide, its rows .menu-item 1px apart. It lives inside <nav> for keyboard
    order, so the rail's rules use `.nav > button` and never reach these rows. z 43: over
    the phone drawer (42) it opens from, under a running tour's scrim (44+). */
-.nav-fly{position:fixed;z-index:43;display:flex;flex-direction:column;gap:1px;width:172px;padding:5px;
-  border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel);box-shadow:var(--shadow-menu);}
+.nav-fly{position:fixed;z-index:43;display:flex;flex-direction:column;gap:1px;width:172px;}
 .nav-fly[hidden]{display:none;}
 .nav-fly-k{padding:6px 9px 5px;font-size:var(--fs-caption);font-weight:500;line-height:1.2;color:var(--ink-3);}
-.nav .nav-fly button{height:30px;}
 
 .side-project{margin:0 4px 22px;padding-bottom:22px;border-bottom:1px solid var(--line);}
 .side-project .sp-label{display:block;font-size:12px;font-weight:600;color:var(--ink-2);margin:0 4px 8px;}
@@ -414,7 +436,7 @@ body.view-workspaces .main{display:flex;flex-direction:column;overflow:hidden;pa
 .grid.single{grid-template-columns:minmax(0,864px);justify-content:center;}
 .view[data-view="new"] .topbar{justify-content:center;text-align:center;}
 .col{display:flex;flex-direction:column;gap:22px;}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);padding:24px;}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);padding:var(--pad-card);}
 .card-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;}
 .card-head h2{font-size:var(--fs-section);line-height:var(--lh-title);font-weight:600;letter-spacing:-.01em;margin:0;}
 .card h2{font-size:var(--fs-section);line-height:var(--lh-title);font-weight:600;letter-spacing:-.01em;margin:0 0 18px;}
@@ -469,10 +491,10 @@ input[type="file"]{font-size:var(--fs-meta);color:var(--ink-3);background:transp
 .label-row > h2{margin:0;}
 .card-head .label-row{margin-bottom:0;}
 .info-tip{position:relative;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;flex:0 0 28px;
-  padding:0;border:0;background:none;color:var(--ink-2);font:700 10px/1 var(--sans);cursor:help;transition:color .15s;}
+  padding:0;border:0;border-radius:var(--r-sm);background:none;color:var(--ink-2);font:700 var(--fs-caption)/1 var(--sans);cursor:help;transition:color .15s,background-color .15s;}
 /* Info tip (review A5): 28px hit target (the .btn-sm.btn-icon square), 16px drawn ring. */
 .info-tip::before{content:"";position:absolute;inset:6px;border:1.5px solid var(--ink-2);border-radius:var(--r-sm);transition:border-color .15s;}
-.info-tip:hover{color:var(--ink);}
+.info-tip:hover{color:var(--ink);background:var(--hover);}
 .info-tip:hover::before{border-color:var(--hover-outline);}
 .info-tip:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 /* The shared floating bubble (created once by app.js, filled per icon). */
@@ -532,9 +554,8 @@ input[type="file"]{font-size:var(--fs-meta);color:var(--ink-3);background:transp
 fieldset.source{border:1.5px solid var(--line);border-radius:var(--r-ctrl);padding:16px;margin:0 0 18px;}
 fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--ink);}
 .radio-row{display:flex;gap:18px;margin-bottom:12px;}
-.radio,.check{display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:500;cursor:pointer;user-select:none;}
+.radio,.check{display:inline-flex;align-items:center;gap:8px;font-size:var(--fs-body);font-weight:500;cursor:pointer;user-select:none;}
 .check{margin-bottom:12px;}
-.check-inline{margin-bottom:0;font-size:var(--fs-meta);color:var(--ink-2);}
 
 /* file picker */
 .file{display:flex;align-items:center;gap:13px;background:var(--field);border:1.5px dashed var(--line-2);
@@ -615,18 +636,30 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
   .ta-hl > textarea.textarea:focus{color:CanvasText;background:Canvas;}
 }
 
-/* One switch (review B6): pill track, round knob, 32x18. The knob's "on" position is the later
-   `.switch.on::after,.sw-input:checked + .switch::after` rule. */
-.switch-row{display:flex;align-items:center;gap:12px;}
-.switch{width:32px;height:18px;border-radius:var(--r-pill);background:var(--line-2);position:relative;
-  cursor:pointer;flex:0 0 auto;transition:background .18s;}
+/* One switch (docs/design-system.md › Switch): a 32x18 pill track and a 14px round knob that is always visible.
+   Two drivers paint the same pixels: a real checkbox (input.sw-input + span.switch, ui/public/switch.mjs) and a
+   role="switch" element that carries .on / aria-checked. On is ink; disabled or locked is a muted track with a
+   visible knob, never an opacity fade, and the row says why (.switch-why). */
+.switch-row{display:flex;align-items:center;gap:8px;}
+.switch{width:32px;height:18px;border-radius:var(--r-pill);background:var(--switch-off);position:relative;
+  cursor:pointer;flex:0 0 auto;border:0;padding:0;transition:background .18s;}
 .switch::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;
-  background:var(--knob);box-shadow:var(--knob-shadow);transition:left .18s;}
-.switch.on{background:var(--green);}
-.switch:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
-/* Locked by the server's mock mode (app.js#applyServerMock): on, and not the user's to change. */
-.switch.disabled{opacity:.5;cursor:not-allowed;}
-.switch-row .txt{font-weight:500;}
+  background:var(--knob);box-shadow:var(--knob-shadow);transition:left .18s,background .18s;}
+:is(.switch.on,.switch[aria-checked="true"],.sw-input:checked + .switch){background:var(--switch-on);}
+:is(.switch.on,.switch[aria-checked="true"],.sw-input:checked + .switch)::after{left:16px;background:var(--switch-knob-on);}
+:is(.switch.disabled,.switch:disabled,.switch[aria-disabled="true"],.sw-input:disabled + .switch){
+  background:var(--switch-off-locked);box-shadow:inset 0 0 0 1px var(--line-2);cursor:not-allowed;}
+:is(.switch.disabled,.switch:disabled,.switch[aria-disabled="true"],.sw-input:disabled + .switch)::after{background:var(--switch-knob-locked);box-shadow:none;}
+:is(.switch.on.disabled,.switch.on:disabled,.switch.on[aria-disabled="true"],.sw-input:checked:disabled + .switch){background:var(--switch-on-locked);box-shadow:none;}
+:is(.switch.on.disabled,.switch.on:disabled,.switch.on[aria-disabled="true"],.sw-input:checked:disabled + .switch)::after{background:var(--panel);}
+.switch:focus-visible,.sw-input:focus-visible + .switch{outline:2px solid var(--ink);outline-offset:2px;}
+/* The checkbox is position:absolute; without a positioned wrapper its containing block is the viewport, so clicking
+   the switch focuses it and the browser scrolls it into view. Anchor it to its own row. */
+.sw-input{position:absolute;width:1px;height:1px;opacity:0;margin:0;pointer-events:none;}
+:where(label, div, span):has(> .sw-input){position:relative;}
+.switch-label,.switch-row > .txt{font:500 var(--fs-body)/var(--lh-body) var(--sans);color:var(--ink);}
+.switch-why{font-size:var(--fs-meta);color:var(--ink-2);}
+.switch-why[hidden]{display:none;}
 
 /* Feature flags (docs/feature-flags.md): the Labs / Beta chip a flagged element wears (D9),
    and the Settings › Labs rows (D8). The gates themselves live in <style id="flag-gates">. */
@@ -641,7 +674,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .flag-row-target{background:var(--field);border-radius:var(--r-sm);padding-left:10px;padding-right:10px;}
 .flag-row-title{font-weight:600;display:flex;align-items:center;gap:8px;}
 .flag-row-desc{margin:4px 0 0;color:var(--ink-2);}
-.flag-row-lock{margin:4px 0 0;color:var(--ink-3);font-size:12px;}
+.flag-row-lock{margin:4px 0 0;color:var(--ink-3);font-size:var(--fs-meta);}
 .flag-row-docs{display:inline-block;margin-top:4px;font-size:12px;}
 .badge.flag-stage-experimental{background:var(--violet-bg);color:var(--violet-ink);}
 .badge.flag-stage-beta{background:var(--blue-bg);color:var(--blue-ink-strong);}
@@ -720,7 +753,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .actions{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:22px;}
 /* One kind/state chip (spec §1.3, review B9): filled, sans 11px, weight 500, 4px corners; own rules set colour, padding and layout only.
    :is() takes its most specific argument (0,2,0), so it wins over the chips' own rules. */
-:is(.badge,.flag-chip,.issue-sev,.artifact-kind,.tp-kind,.sk-kind,.team-chip .kind,.hd-ov-file-kind,.ask-mcard-kind,.wf-log-live,.kind-chip){
+:is(.badge,.flag-chip,.issue-sev,.artifact-kind,.tp-kind,.sk-kind,.team-chip .kind,.hd-ov-file-kind,.ask-mcard-kind,.wf-log-live,.kind-chip,.tag-chip,.ps-pill,.ask-cmd-pill,.tp-tab-badge){
   display:inline-flex;align-items:center;height:18px;padding-top:0;padding-bottom:0;
   border-radius:var(--r-xs);font:500 11px/1 var(--sans);letter-spacing:0;text-transform:none;white-space:nowrap;}
 
@@ -732,7 +765,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
   border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);color:var(--ink);
   font-family:inherit;font-size:13px;font-weight:500;line-height:1;white-space:nowrap;text-decoration:none;cursor:pointer;
   box-shadow:none;transition:background-color .12s,border-color .12s;}
-.btn:hover:not(:disabled){background-color:color-mix(in srgb,var(--ink) 7%,var(--panel));}
+.btn:hover:not(:disabled){background-color:var(--btn-hover);}
 .btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .btn:disabled{opacity:.45;cursor:not-allowed;}
 .btn svg{flex:none;}
@@ -745,10 +778,10 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .btn-primary{background:var(--ink);border-color:var(--ink);color:var(--on-ink);font-weight:600;}
 .btn-primary:hover:not(:disabled){background-color:color-mix(in srgb,var(--on-ink) 8%,var(--ink));}
 .btn-quiet{background:transparent;border-color:transparent;color:var(--ink-2);}
-.btn-quiet:hover:not(:disabled){background-color:color-mix(in srgb,var(--ink) 7%,transparent);color:var(--ink);}
+.btn-quiet:hover:not(:disabled){background-color:var(--quiet-hover);color:var(--ink);}
 /* --red-ink-strong, not --red-ink: --red-ink on --red-bg is 3.9:1; the hover also deepens the text to stay over 4.5:1. */
 .btn-danger{background:var(--red-bg);border-color:transparent;color:var(--red-ink-strong);}
-.btn-danger:hover:not(:disabled){background-color:color-mix(in srgb,var(--ink) 7%,var(--red-bg));color:color-mix(in srgb,var(--red-ink-strong) 80%,var(--ink));}
+.btn-danger:hover:not(:disabled){background-color:var(--danger-hover);color:color-mix(in srgb,var(--red-ink-strong) 80%,var(--ink));}
 /* Solid red only in a confirm dialog (spec §1.2). The hover rule is needed: .btn-danger:hover:not(:disabled) is (0,3,0)
    and would otherwise beat .confirm-modal .btn-danger (0,2,0) and flip the button back to the light fill. */
 .confirm-modal .btn-danger{background:var(--red-ink-strong);color:var(--panel);}
@@ -767,6 +800,26 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .form-msg.warn{color:var(--amber-ink);}
 /* #555 D8: a failed Settings GET, above the tabs at every UI level. */
 .settings-load-msg{margin:0 0 14px;max-width:760px;}
+
+/* One menu (docs/design-system.md › Menu): openMenu's .wfv-menu, the sidebar flyouts (.nav-fly), the composer pickers
+   (.ask-pop), the split-button menus (.btn-split-menu) and the run header ⋯ (.hd-menu) all wear .menu for the box and
+   .menu-item for a row. Each family keeps its own position, width and z-index only. */
+.menu{padding:4px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);box-shadow:var(--shadow-menu);font-size:var(--fs-body);}
+.menu-item{display:flex;align-items:center;gap:10px;width:100%;min-height:30px;padding:4px 9px;border:0;border-radius:var(--r-sm);
+  background:none;color:var(--ink);text-align:left;font:inherit;cursor:pointer;}
+.menu-item:hover,.menu-item:focus-visible{background:var(--hover);outline:none;}
+.menu-item:is(:disabled,[aria-disabled="true"]){color:var(--ink-3);cursor:not-allowed;}
+.menu-item:is(:disabled,[aria-disabled="true"]):hover{background:none;}
+.menu-item.is-danger{color:var(--red-ink);}
+.menu-item.is-danger:hover:not(:disabled){background:var(--red-bg);}
+.menu-sep{height:1px;margin:4px 6px;background:var(--line);}
+.menu-h{padding:8px 9px 4px;color:var(--ink-2);font-size:var(--fs-meta);font-weight:600;}
+
+/* A row a person opens (docs/design-system.md › Row button): full width inside its divided list, the --hover fill and
+   the 6px corner on hover, an inset ring for the keyboard. Each list keeps its own grid, gaps and padding. */
+.row-btn{width:100%;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;border-radius:var(--r-sm);}
+.row-btn:hover{background:var(--hover);}
+.row-btn:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 
 /* ===================== Action feedback (#555, feedback.mjs) =====================
    Words use --ink / --ink-2; tone colour is for the icon, the invalid border and the
@@ -856,7 +909,6 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 /* Read-only accordion (no project selected): the rows still show what the
    workflow will do, but nothing in them can be edited. */
 .agent-row-body select:disabled,.agent-row-body input:disabled{opacity:.55;cursor:not-allowed;}
-.agent-row-body .fanout-toggle:has(input:disabled){opacity:.6;cursor:not-allowed;}
 .agents-actions{display:flex;gap:6px;flex:0 0 auto;}
 
 .agent-row{border-top:1px solid var(--line);background:var(--panel);}
@@ -968,7 +1020,6 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 /* ---------- Live log ---------- */
 .log-card .card-head{margin-bottom:14px;}
 .log-tools,.log-controls{display:flex;align-items:center;gap:14px;}
-.log-tools .switch-row .txt{font-size:13px;font-weight:600;color:var(--ink-2);}
 .log{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);min-height:260px;max-height:380px;overflow-y:auto;
   padding:18px 20px;font-family:var(--mono);font-size:var(--fs-meta);line-height:1.85;color:var(--ink-2);
   white-space:pre-wrap;word-break:break-word;}
@@ -1040,7 +1091,6 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .run-log .log{min-height:210px;max-height:320px;overflow-y:auto;}
 .run-log-head{display:flex;align-items:center;justify-content:space-between;gap:8px 10px;flex-wrap:wrap;margin-bottom:10px;}
 .run-log-head .ll-label{font-weight:700;font-size:13px;}
-.run-log-head .switch-row .txt{font-size:var(--fs-meta);font-weight:600;color:var(--ink-2);}
 
 /* log filter dropdowns (source / level / step) — the run page + history panel;
    one row always: nowrap bar, content-sized shrinkable pills (width:auto beats
@@ -1239,7 +1289,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .qtune .select-wrap select{height:34px;padding:0 40px 0 12px;border-radius:var(--r-sm);}
 .qtune td.qtune-sw-cell{display:flex;align-items:center;min-height:24px;}
 .qtune-sw{display:inline-flex;align-items:center;gap:8px;position:relative;cursor:pointer;}
-.qtune-sw-t{font-size:var(--fs-meta);color:var(--ink-2);}
+.qtune-sw-t{font-size:var(--fs-body);color:var(--ink-2);}
 /* Disclosures on the workflow review panel: Why this? · Show graph · Customize agents */
 .wf-namelabel{flex:0 0 auto;font-weight:600;font-size:15px;line-height:1.35;color:var(--ink-3);}
 /* The preview: always visible, the whole card is one button that opens the large pan/zoom popup. */
@@ -1277,7 +1327,6 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .wf-disc-body>*+*{margin-top:12px;}
 .wf-disc-body .ask-wfcard-graph{margin-top:0;}
 @media (prefers-reduced-motion: reduce){.wf-disc>summary::before{transition:none;}}
-/* (no disabled rule here: `.sw-input:disabled + .switch{opacity:.5;cursor:not-allowed}` already exists) */
 .qfree-area{margin-top:12px;min-height:64px;resize:vertical;line-height:1.5;}
 .qfree-area[hidden]{display:none;}
 .qfree.qfree-err{border-color:var(--red);}
@@ -1370,7 +1419,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 /* tables */
 .af-tbl-wrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:var(--r-sm);background:var(--panel);}
 .af-tbl{width:100%;border-collapse:collapse;font-size:var(--fs-body);}
-.af-tbl th{text-align:left;font:600 12px var(--mono);
+.af-tbl th{text-align:left;font:600 var(--fs-meta) var(--mono);
   color:var(--ink-2);height:32px;padding:0 12px;border-bottom:1px solid var(--line);white-space:nowrap;}
 .af-tbl td{height:38px;padding:0 12px;border-bottom:1px solid var(--line);color:var(--ink);vertical-align:middle;}
 .af-tbl tr:last-child td{border-bottom:none;}
@@ -1785,18 +1834,8 @@ dialog.discard-modal::backdrop{background:transparent;}
 .export-pr-preview{margin-top:8px;}
 .export-pr-preview > summary{cursor:pointer;font-size:12px;}
 .export-pr-preview > pre{max-height:240px;overflow:auto;white-space:pre-wrap;font-size:12px;margin:6px 0 0;}
-/* Per-agent fan-out toggle in the New Pipeline rows. */
-.fanout-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--ink-3);
-  white-space: nowrap;
-  cursor: pointer;
-  user-select: none;
-}
-.fanout-toggle input { margin: 0; cursor: pointer; }
+/* Per-agent fan-out switch in the New Pipeline rows: layout only (the switch is the shared .switch). */
+.fanout-toggle{white-space:nowrap;cursor:pointer;user-select:none;}
 
 /* Per-agent questions toggle shares the fan-out look; [hidden] must win over
    the inline-flex display when the agent has no questions capability. */
@@ -2039,7 +2078,7 @@ button.wd-member:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;
 .wm-filters .select-wrap::after,.wm-add-form .select-wrap::after{right:12px;}
 .wm-table-scroll{overflow-x:auto;}
 .wm-table{width:100%;border-collapse:collapse;font-size:12.5px;}
-.wm-table th{text-align:left;font-weight:600;font-size:12px;color:var(--ink-2);
+.wm-table th{text-align:left;font-weight:600;font-size:var(--fs-meta);color:var(--ink-2);
   padding:6px 10px 6px 0;border-bottom:1px solid var(--line);white-space:nowrap;}
 .wm-table td{padding:8px 10px 8px 0;border-bottom:1px solid var(--line);vertical-align:top;color:var(--ink);}
 .wm-table tr:last-child td{border-bottom:0;}
@@ -2086,7 +2125,7 @@ button.wd-member:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;
 .wiz-proj input{margin:0;cursor:pointer;}
 .wiz-proj.missing{color:var(--ink-3);cursor:not-allowed;}
 .wiz-proj-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;}
-.wiz-select-all{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink-2);cursor:pointer;}
+.wiz-select-all{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-body);color:var(--ink-2);cursor:pointer;}
 .wiz-select-all input{margin:0;cursor:pointer;}
 .wiz-select-all:has(input:disabled){opacity:.5;cursor:not-allowed;}
 /* Workspace size (D24): the project list scrolls inside the card so the size note under it stays in
@@ -2106,7 +2145,7 @@ button.wd-member:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;
 .wiz-import-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 .wiz-import-bar .hint{margin-top:0;}
 .wiz-import-lead{font-size:12.5px;color:var(--ink-2);}
-.wiz-import-deep{display:inline-flex;align-items:center;gap:6px;margin-left:auto;font-size:12.5px;color:var(--ink-2);cursor:pointer;}
+.wiz-import-deep{display:inline-flex;align-items:center;gap:6px;margin-left:auto;font-size:var(--fs-body);color:var(--ink-2);cursor:pointer;}
 .wiz-import-deep input{margin:0;cursor:pointer;}
 .wiz-import-paste{min-height:58px;font-family:var(--mono);font-size:12.5px;}
 .wiz-import-paste::placeholder{color:var(--ink-2);}   /* ink-3 misses 4.5:1 on the grey field (theme proof) */
@@ -2159,9 +2198,9 @@ button.wd-member:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;
 .run-flow .node.is-active{animation:nodeGlow 2.2s ease-in-out infinite;}
 .run-flow .node.is-paused{animation:nodeGlowAmber 2.2s ease-in-out infinite;}
 /* The v2 card's own scope (0,5,0, as is-error below) outranks `.gv-world .node:hover` / `:focus-visible` (0,3,0, later). */
-.run-flow .node.is-stopped,.run-flow.gv-host .gv-world .node.is-stopped{box-shadow:0 0 0 1.5px color-mix(in srgb, var(--red) 50%, var(--line-2)),0 0 0 4px color-mix(in srgb, var(--red) 13%, transparent);}
+.run-flow .node.is-stopped,.run-flow.gv-host .gv-world .node.is-stopped{box-shadow:0 0 0 1.5px var(--red-ring),0 0 0 4px var(--red-tint);}
 @keyframes nodeGlow{0%,100%{box-shadow:0 0 0 1.5px color-mix(in srgb, var(--c) 55%, var(--line-2));}50%{box-shadow:0 0 0 1.5px color-mix(in srgb, var(--c) 55%, var(--line-2)),0 0 0 5px color-mix(in srgb, var(--c) 13%, transparent),0 8px 26px color-mix(in srgb, var(--c) 24%, transparent);}}
-@keyframes nodeGlowAmber{0%,100%{box-shadow:0 0 0 1.5px color-mix(in srgb, var(--amber) 55%, var(--line-2));}50%{box-shadow:0 0 0 1.5px color-mix(in srgb, var(--amber) 55%, var(--line-2)),0 0 0 5px color-mix(in srgb, var(--amber) 16%, transparent),0 8px 26px color-mix(in srgb, var(--amber) 26%, transparent);}}
+@keyframes nodeGlowAmber{0%,100%{box-shadow:0 0 0 1.5px var(--amber-ring);}50%{box-shadow:0 0 0 1.5px var(--amber-ring),0 0 0 5px color-mix(in srgb, var(--amber) 16%, transparent),0 8px 26px color-mix(in srgb, var(--amber) 26%, transparent);}}
 
 /* Sub-agent square strip on a run-graph node. The node wraps so the strip
    drops to its own full-width row under the meta/cost block. PULSE LIVES HERE
@@ -2228,7 +2267,7 @@ button.wd-member:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;
 
 @media (prefers-reduced-motion: reduce){
   .run-flow .node.is-active,.run-flow .node.is-paused,.run-flow.gv-host .gv-world .node.is-active,.run-flow.gv-host .gv-world .node.is-paused{animation:none;box-shadow:0 0 0 1.5px color-mix(in srgb, var(--c) 55%, var(--line-2)),0 0 0 4px color-mix(in srgb, var(--c) 16%, transparent);}
-  .run-flow .node.is-paused,.run-flow.gv-host .gv-world .node.is-paused{box-shadow:0 0 0 1.5px color-mix(in srgb, var(--amber) 55%, var(--line-2)),0 0 0 4px color-mix(in srgb, var(--amber) 18%, transparent);}
+  .run-flow .node.is-paused,.run-flow.gv-host .gv-world .node.is-paused{box-shadow:0 0 0 1.5px var(--amber-ring),0 0 0 4px color-mix(in srgb, var(--amber) 18%, transparent);}
   .run-flow .node .fan .sq.on{animation:none;}
 }
 
@@ -2378,7 +2417,7 @@ input.bench-case-name{width:100%;padding:9px 12px;font-size:13px;}
 .bench-expect-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;}
 .bench-expect-chip{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;border:1px solid var(--line);
   border-radius:var(--r-xs);padding:3px 10px;cursor:pointer;}
-.bench-expect-chip:has(input:checked){background:var(--green-bg);border-color:transparent;color:var(--green-ink);}
+.bench-expect-chip:has(input:checked){background:var(--field);color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink);}
 .bench-status{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
 .bench-status-text{font-weight:600;font-size:13px;}
 .bench-dot{width:9px;height:9px;border-radius:50%;background:var(--seq);}
@@ -2490,12 +2529,7 @@ input.bench-case-name{width:100%;padding:9px 12px;font-size:13px;}
 .wz-pdflt{flex:1 1 auto;min-width:60px;width:auto;margin:0;height:24px;padding:0 8px;font-size:12px;font-family:var(--mono);color:var(--ink);background:var(--panel);border:1px solid var(--line-2);border-radius:var(--r-ctrl);}
 .wz-pdflt:focus{background:var(--field-focus);border-color:var(--ink);outline:none;}
 .wz-iface .empty{font-size:12px;color:var(--ink-3);min-height:32px;display:flex;align-items:center;padding:0 12px;border:1.5px dashed var(--line-2);border-radius:var(--r-sm);}
-.wz-routing{display:flex;align-items:center;gap:10px;min-height:28px;padding-left:2px;font-size:12.5px;color:var(--ink-2);}
-.wz .tog{width:34px;height:20px;border-radius:var(--r-sm);background:var(--seq);position:relative;cursor:pointer;border:0;padding:0;flex:0 0 auto;}
-.wz .tog.on{background:var(--ink);}
-.wz .tog::after{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--panel);transition:left .15s;}
-.wz .tog.on::after{left:16px;}
-.wz .tog:disabled{cursor:default;opacity:.6;}
+.wz-routing{display:flex;align-items:center;gap:10px;min-height:28px;padding-left:2px;font-size:var(--fs-body);color:var(--ink-2);}
 .wz-adv{padding:0 16px;}
 .wz-adv-toggle{height:44px;width:100%;display:flex;align-items:center;gap:10px;background:none;border:0;padding:0;cursor:pointer;font-family:inherit;color:var(--ink);text-align:left;}
 .wz-adv-sum{font-size:12px;color:var(--ink-3);}
@@ -2585,8 +2619,7 @@ input.bench-case-name{width:100%;padding:9px 12px;font-size:13px;}
 .proj-nogit-txt{font-family:var(--mono);font-size:13px;color:var(--ink-2);}
 #projects-list .proj-zero{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 20px;}
 #projects-list .pl-team{grid-area:team;min-width:0;}
-#projects-list .proj-open{grid-area:chev;border-radius:var(--r-sm);border-color:var(--line-2);}
-#projects-list .pl-row[role="button"]:hover .proj-open{border-color:var(--hover-outline);color:var(--ink);}
+#projects-list .proj-open{grid-area:chev;}
 #projects-list .proj-empty{padding:28px 20px;text-align:center;font-size:13px;color:var(--ink-3);}
 #projects-list .proj-empty[hidden]{display:none;}
 /* The sync bar: branch | origin status | action, one object tinted by state. Its inner columns
@@ -2608,13 +2641,13 @@ input.bench-case-name{width:100%;padding:9px 12px;font-size:13px;}
 .ps-bnone{font-size:13px;color:var(--ink-3);}
 .ps-status{min-width:0;align-self:stretch;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;
   padding-left:14px;border-left:1px solid var(--ps-line);}
-.ps-pill{display:inline-flex;align-items:center;gap:6px;max-width:100%;height:26px;padding:0 11px 0 8px;border-radius:var(--r-xs);
-  font-size:12.5px;font-weight:600;font-variant-numeric:tabular-nums;background:var(--field);color:var(--ink-2);box-shadow:inset 0 0 0 1px var(--line-2);}
+.ps-pill{gap:4px;max-width:100%;padding:0 6px;font-variant-numeric:tabular-nums;background:var(--field);color:var(--ink-2);}
+.ps-pill svg{width:12px;height:12px;}
 .ps-label{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.tone-ok > .ps-status .ps-pill{background:var(--green-bg);color:var(--green-ink);box-shadow:none;}
-.tone-blue > .ps-status .ps-pill{background:var(--blue-bg);color:var(--blue-ink-strong);box-shadow:none;}   /* the strong ink: ~5:1 at 12.5px/600 */
-.tone-amber > .ps-status .ps-pill{background:var(--amber-bg);color:var(--amber-ink);box-shadow:none;}
-.tone-peach > .ps-status .ps-pill{background:var(--peach-bg);color:var(--peach-ink);box-shadow:none;}
+.tone-ok > .ps-status .ps-pill{background:var(--green-bg);color:var(--green-ink);}
+.tone-blue > .ps-status .ps-pill{background:var(--blue-bg);color:var(--blue-ink-strong);}   /* the strong ink: ~5:1 */
+.tone-amber > .ps-status .ps-pill{background:var(--amber-bg);color:var(--amber-ink);}
+.tone-peach > .ps-status .ps-pill{background:var(--peach-bg);color:var(--peach-ink);}
 .ps-pill .ps-spin svg{animation:ws-spin .9s linear infinite;}
 .ps-pill.ps-flash{animation:ps-pop .5s ease;}
 @keyframes ps-pop{0%{transform:scale(.92);}60%{transform:scale(1.04);}100%{transform:scale(1);}}
@@ -2705,12 +2738,7 @@ input.bench-case-name{width:100%;padding:9px 12px;font-size:13px;}
 .ws-shell.no-anim .ws-screen{transition:none;}
 /* A keyed row IS the control (role=button): pointer + hover tint, the .hist-head idiom. The
    keyless row keeps #projects-list .pl-row's default cursor. */
-#projects-list .pl-row[role="button"]{cursor:pointer;transition:background .12s;}
-#projects-list .pl-row[role="button"]:hover{background:var(--hover);}
-#projects-list .pl-row[role="button"]:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
-.proj-open{flex:0 0 auto;display:flex;align-items:center;justify-content:center;width:30px;height:30px;
-  border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel);color:var(--ink-2);cursor:pointer;}
-.proj-open:hover{border-color:var(--hover-outline);color:var(--ink);}
+.proj-open{flex:0 0 auto;}
 /* Project page header: the card, title and Back ride the hd- rules; these are its own lines. */
 .pd-meta{display:flex;align-items:center;flex-wrap:wrap;gap:8px;min-width:0;margin-top:10px;
   font-size:12.5px;color:var(--ink-2);overflow-wrap:anywhere;}
@@ -2796,7 +2824,7 @@ button.pd-ov-card:hover{border-color:var(--ink-3);}
 .pl-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 .pl-head .pl-name{font-size:var(--fs-body);font-weight:600;}
 .pl-version{color:var(--ink-3);font-size:12px;}
-.pl-enable{margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-3);cursor:pointer;}
+.pl-enable{margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-body);color:var(--ink-3);cursor:pointer;}
 .pl-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}
 .pl-pick-row{display:flex;align-items:center;gap:10px;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line);}
 .pl-consent-h{font-weight:700;font-size:12.5px;margin:10px 0 4px;}
@@ -2884,7 +2912,7 @@ button.pd-ov-card:hover{border-color:var(--ink-3);}
 .grv-source-row:hover{background:var(--hover);}
 .grv-source-name{flex:1 1 auto;font-size:14px;}
 .grv-wizard-actions{justify-content:flex-end;margin-top:14px;}
-.grv-editor .switch.disabled{opacity:.5;pointer-events:none;}
+.grv-editor .switch.disabled{pointer-events:none;}
 /* The editor renders as a .card, so inside #plugin-modal it re-matches the
    `#plugin-modal .card` rule above (640px + its own overflow:auto/max-height).
    That pinned it to 640px inside the 900px body AND made it a nested scroll
@@ -2928,7 +2956,7 @@ button.pd-ov-card:hover{border-color:var(--ink-3);}
 .tm-heat-legend{display:flex;align-items:center;gap:4px;margin-top:8px;}
 .tm-heat-swatch{display:inline-block;width:14px;height:10px;border-radius:var(--r-xs);}
 .stat-row{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px;}
-.stat-tile{padding:18px 20px;}
+.stat-tile{padding:var(--pad-tile);}
 .stat-label{display:flex;align-items:center;gap:8px;color:var(--ink-2);font-size:var(--fs-meta);font-weight:500;}
 .stat-ico{width:16px;height:16px;color:var(--ink-3);flex:0 0 auto;}
 .stat-delta,.stat-mult{margin-left:auto;background:var(--field);color:var(--ink-2);font-size:11px;font-weight:600;
@@ -2950,13 +2978,13 @@ button.pd-ov-card:hover{border-color:var(--ink-3);}
    Team metrics breakdowns take one full-width column. */
 .charts-grid>*{min-width:0;}
 .charts-grid.tm-breakdowns{grid-template-columns:minmax(0,1fr);}
-.chart-card{padding:20px 22px;}
+.chart-card{padding:var(--pad-card);}
 /* Stats › By person (credential broker): one full-width card, a table with a share bar. */
 .people-grid{grid-template-columns:1fr;}
 .people-scroll{overflow-x:auto;}
 .people-table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums;}
 /* The heat grid keeps its own cells; every other people table is the shared .table, which owns these. */
-.people-table:not(.table) th{text-align:left;font-weight:500;color:var(--ink-3);font-size:12px;padding:6px 10px 6px 0;border-bottom:1px solid var(--line);white-space:nowrap;}
+.people-table:not(.table) th{text-align:left;font-weight:600;color:var(--ink-2);font-size:var(--fs-meta);padding:6px 10px 6px 0;border-bottom:1px solid var(--line);white-space:nowrap;}
 .people-table:not(.table) td{padding:8px 10px 8px 0;border-bottom:1px solid var(--line);vertical-align:middle;}
 .people-table:not(.table) tr:last-child td{border-bottom:none;}
 .people-table td.num{white-space:nowrap;color:var(--ink-2);}
@@ -3065,7 +3093,7 @@ section[data-view="team-metrics"] .topbar{align-items:flex-start;}
 .ws-home-inner.is-pending .ws-projects-tbl td{padding-top:9px;padding-bottom:9px;}
 .tm-tbl{width:100%;border-collapse:collapse;}
 /* Team metrics' tables are the shared .table, which owns the cell padding; Team policy and the bridge keep these. */
-.tm-tbl:not(.table) th{text-align:left;font-weight:600;color:var(--ink-3);padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap;}
+.tm-tbl:not(.table) th{text-align:left;font:600 var(--fs-meta)/var(--lh-title) var(--sans);color:var(--ink-2);padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap;}
 .tm-tbl th[data-sort]{cursor:pointer;} .tm-tbl th.num,.tm-tbl td.num{text-align:right;}
 .tm-tbl:not(.table) td{padding:9px 10px;border-bottom:1px solid var(--line);}
 .tm-tbl tbody tr[data-filter-dim]{cursor:pointer;} .tm-tbl tbody tr[data-filter-dim]:hover,.tm-tbl tbody tr.on{background:var(--hover);}
@@ -3080,11 +3108,12 @@ section[data-view="team-metrics"] .topbar{align-items:flex-start;}
 /* Actor and Started never wrap: with the Saved column in, Title (ellipsis) and Workflow give way first. */
 .tm-run-tbl td:nth-last-child(-n+2){white-space:nowrap;}
 .badge.grey{background:var(--field);color:var(--ink-2);}
+.badge.slate{background:var(--slate-bg);color:var(--slate-ink);}
 /* The Copilot card's "read the notice first" pill is a button: it opens the notice (bridge-view.mjs). */
 /* With the credential broker, a provider pill for a missing key links to the key page. */
 .mv-broker-pill{text-decoration:none;cursor:pointer;}
 .mv-broker-pill:hover{text-decoration:underline;}
-.tm-empty{display:grid;grid-template-columns:1fr 1fr;gap:14px;} .tm-empty .card{padding:22px;}
+.tm-empty{display:grid;grid-template-columns:1fr 1fr;gap:14px;} .tm-empty .card{padding:var(--pad-card);}
 .tm-step{font-size:11px;font-weight:700;color:var(--ink-2);}
 .tm-empty-foot{display:block;margin-top:14px;}
 /* New light-theme text must clear 4.5:1 (the contrast proof's baseline shrinks, never grows):
@@ -3187,8 +3216,8 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .is-outside .tl-tail,.tl-lg .tl-pr-start + .tl-tail{border-top:3px solid var(--tl-c);margin-top:-1px;}
 .tl-lg .tl-pr-start{margin-top:-4.5px;}
 .tl-outside{flex:none;font-size:10px;font-weight:600;letter-spacing:.02em;color:var(--ink-3);border:1px solid var(--line-2);border-radius:var(--r-sm);padding:0 6px;line-height:15px;}
-.tl-toggle{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink-2);cursor:pointer;margin-right:6px;}
-.tl-toggle input{margin:0;accent-color:var(--ink);}
+.tl-toggle{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-body);color:var(--ink-2);cursor:pointer;margin-right:6px;}
+.tl-toggle input{margin:0;}
 .tl-pop-note{margin:0;color:var(--ink-2);font-size:12.5px;}
 
 .tl-legend{display:flex;flex-wrap:wrap;gap:8px 18px;padding:6px 20px 4px;font-size:12px;color:var(--ink-2);border-top:1px solid var(--line);}
@@ -3283,7 +3312,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .ws-tbl-actions{margin-left:auto;display:flex;align-items:center;gap:8px;}
 .ws-members-summary{color:var(--ink-3);font-size:12.5px;}
 .ws-projects-tbl{width:100%;border-collapse:collapse;margin-top:8px;font-size:12.5px;}
-.ws-projects-tbl th{text-align:left;font-weight:600;font-size:12px;color:var(--ink-2);padding:6px 14px 6px 0;border-bottom:1px solid var(--line);}
+.ws-projects-tbl th{text-align:left;font-weight:600;font-size:var(--fs-meta);color:var(--ink-2);padding:6px 14px 6px 0;border-bottom:1px solid var(--line);}
 .ws-projects-tbl td{padding:7px 14px 7px 0;border-bottom:1px solid var(--line);vertical-align:top;color:var(--ink-2);line-height:1.5;}
 .ws-projects-tbl tr:last-child td{border-bottom:0;}
 .ws-projects-tbl tr[hidden]{display:none;}
@@ -3375,10 +3404,8 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .id-card b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 12.5px/1.3 var(--sans);color:var(--ink);}
 .id-card small{font:400 11px/1.35 var(--sans);color:var(--ink-2);}
 .msect{display:flex;flex:none;flex-direction:column;}
-.mi{display:flex;flex:none;align-items:center;gap:10px;width:100%;height:32px;padding:0 9px;border:0;border-radius:var(--r-sm);background:transparent;
-  color:var(--ink);font:400 13px/1 var(--sans);text-align:left;cursor:pointer;white-space:nowrap;}
-.mi:hover,.mi[aria-expanded="true"]{background:var(--hover);}
-.mi:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.mi{flex:none;font:400 var(--fs-body)/1 var(--sans);white-space:nowrap;}
+.mi[aria-expanded="true"]{background:var(--hover);}
 .mi[aria-current="page"]{font-weight:500;}
 .mi[aria-disabled="true"]{cursor:default;color:var(--ink-2);}
 /* line-height:1.4 keeps g, p and y inside the label: its overflow:hidden (the ellipsis) would
@@ -3414,8 +3441,6 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .mc-free[data-tone="over"] .mi-val{color:var(--red-ink-strong);}
 .lv-opt{display:grid;grid-template-columns:18px 1fr 16px;gap:2px 9px;align-items:start;width:100%;padding:8px 9px;border:0;border-radius:var(--r-sm);
   background:transparent;color:var(--ink-2);font-family:inherit;text-align:left;cursor:pointer;}
-.lv-opt:hover{background:var(--field);}
-.lv-opt:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .lv-bars{width:12px;height:12px;margin-top:2px;justify-self:center;}
 .lv-bars rect{fill:var(--line-2);}
 .lv-bars rect.on{fill:currentColor;}
@@ -3433,10 +3458,10 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 
 /* ---------- Settings cards ---------- */
 /* One width/centering/gap rule for every Settings card. */
-.settings-card{max-width:760px;padding:22px;margin-left:auto;margin-right:auto;}
+.settings-card{max-width:760px;padding:var(--pad-card);margin-left:auto;margin-right:auto;}
 /* Sections, not cards (review B3): heading, content, a 1px divider. The border comes from .card, so the override
    names that compound. */
-.card.settings-card{padding:0 0 22px;border:0;border-bottom:1px solid var(--line);border-radius:0;background:none;box-shadow:none;}
+.card.settings-card{padding:0 0 var(--pad-card);border:0;border-bottom:1px solid var(--line);border-radius:0;background:none;box-shadow:none;}
 .settings-card + .settings-card{margin-top:18px;}
 .settings-card[hidden]{display:none;}
 /* The Models page: Title generation, Auto workflow model and PR description model side by side
@@ -3469,7 +3494,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .xp-meta{font-size:12px;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .xp-empty{margin:0;font-size:13px;color:var(--ink-2);}
 .xi{display:flex;flex-direction:column;gap:10px;margin-bottom:18px;}
-.xi-head{margin:0;font-size:13px;font-weight:600;color:var(--ink);}
+.xi-head{margin:0;color:var(--ink);}
 .xi-tabs{align-self:flex-start;}
 .xi-panel{display:flex;flex-direction:column;gap:8px;padding:12px;border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);}
 .xi-panel[hidden]{display:none;}
@@ -3546,7 +3571,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .mv-section[data-section="builtin"] .mv-sec-body{gap:10px;}
 .mv-hide-builtin-row{display:grid;gap:6px;padding:10px 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);}
 .mv-hide-builtin-row .hint{margin:0;}
-.mv-card{padding:16px 20px;display:flex;align-items:center;gap:14px;}
+.mv-card{padding:var(--pad-card);display:flex;align-items:center;gap:14px;}
 .mv-body{flex:1 1 auto;min-width:0;}
 .mv-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 .mv-name{font-size:var(--fs-body);font-weight:600;}
@@ -3598,7 +3623,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
    import sheet, sign-in block. Same 18px rhythm and card chrome as the rest
    of the Models view; every revealed block gets an explicit [hidden] rule
    because the grid/flex rules here otherwise beat the UA hidden rule. ---- */
-.mv-providers{padding:18px 22px;display:grid;gap:14px;}
+.mv-providers{padding:var(--pad-card);display:grid;gap:14px;}
 /* The Providers TAB: one card per account, so three unrelated sign-ins stop reading as one form. */
 .mv-providers-split{padding:0;background:transparent;box-shadow:none;}
 .mv-pv-card .mv-pv-row{border:0;padding:0;margin:0;}
@@ -3712,7 +3737,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .mv-conn-caps{display:grid;gap:6px;}
 .mv-conn-caps[hidden]{display:none;}
 .mv-conn-caps-row{display:flex;gap:14px;flex-wrap:wrap;align-items:center;}
-.mv-conn-cap{display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;}
+.mv-conn-cap{display:flex;align-items:center;gap:6px;font-size:var(--fs-body);cursor:pointer;}
 .mv-conn-limit{display:flex;align-items:center;gap:6px;font-size:12.5px;}
 .mv-conn-limit .mv-conn-limit-in{max-width:120px;font-family:var(--mono);font-size:12.5px;padding:7px 10px;}
 .mv-conn-note{margin:0;}
@@ -3889,38 +3914,18 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .hd-more-wrap{position:relative;display:inline-flex;}
 .hd-more[hidden]{display:none;}
 /* open, not hover */
-.hd-menu{position:absolute;top:calc(100% + 6px);right:0;z-index:5;min-width:214px;
-  display:flex;flex-direction:column;gap:2px;padding:6px;background:var(--panel);
-  border:1px solid var(--line-2);border-radius:var(--r-card);box-shadow:var(--shadow-menu);}
+.hd-menu{position:absolute;top:calc(100% + 6px);right:0;z-index:5;min-width:214px;display:flex;flex-direction:column;gap:2px;}
 .hd-menu[hidden]{display:none;}
 /* The menu drops over the sticky .hd-tabs (same z-index, later in the DOM): lift the
    header above them only while it is open, so scrolled tabs still cover the header. */
 .hd-header:has(.hd-menu:not([hidden])){position:relative;z-index:6;}
 /* Likewise the bar (sticky, z-index 5, BEFORE the tabs in the DOM) while its Resume split menu is open. */
 .rd-bar:has(.btn-split-menu:not([hidden])),.hd-bar:has(.btn-split-menu:not([hidden])){z-index:7;}
-/* All items shed their pill dressing in here and become full-width rows. Higher
-   specificity than the standalone rules above, which still hold nowhere else.
-   display:flex here (not only in the standalone rules): .hd-restore has no
-   standalone rule of its own, and without it gap:10px is inert on an
-   inline-block button — icon and label collapse together. */
-.hd-menu .hd-archive,.hd-menu .hd-report,.hd-menu .hd-restore{display:flex;align-items:center;width:100%;justify-content:flex-start;gap:10px;
-  padding:9px 11px;border:0;border-radius:var(--r-sm);background:transparent;
-  font:600 13px var(--sans);text-align:left;}
-/* Restore is Archive's inverse, not a report: neutral ink, and the house hover
-   for borderless menu items (--hover, design comment at the token block). */
-.hd-menu .hd-restore{color:var(--ink);}
-.hd-menu .hd-restore:hover{background:var(--hover);}
+/* The rows are the shared .menu-item (Archive adds .is-danger); a hidden row stays hidden. */
 /* Same guard as its siblings (.hd-archive[hidden], .hd-report[hidden]): the flex
    display above beats the UA [hidden] rule, so a non-archived run's Restore
    would otherwise stay visible inside the flex .hd-menu. */
 .hd-restore[hidden]{display:none;}
-.hd-menu .hd-archive{color:var(--red-ink);}
-.hd-menu .hd-archive:hover:not([disabled]){background:var(--red-bg);border-color:transparent;}
-/* Amber, the exact twin of Archive's red: both rows report a problem, and reporting
-   a run is a lighter act than destroying it. --amber-ink is the readable text tone in
-   both themes (--amber itself is the solid chip colour). */
-.hd-menu .hd-report{color:var(--amber-ink);}
-.hd-menu .hd-report:hover{background:var(--amber-bg);}
 /* The header cost's breakdown (app.js paintCostBreakdown): the meta line's cost becomes a
    trigger, its panel hangs off the header card. While it is open the card lifts above the
    sticky tabs, exactly like the ⋯ menu above. Tokens only; the Away mode row is marked by a
@@ -4012,23 +4017,10 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 
 /* ---------- History detail: Diff tab ---------- */
 .hd-diff{display:grid;grid-template-columns:minmax(280px,340px) 1fr;gap:18px;align-items:start;}
-/* The glance fact tile (.rd-stats) shows the same +/- counts at 18px bold: same tokens. */
-.rd-stats,.hd-diff{
-  --hd-count-add:light-dark(#176B4D,#6CCB93);
-  --hd-count-del:light-dark(#B31D28,#F0868E);
-}
 .hd-diff .diff-add{color:var(--hd-count-add);}
 .hd-diff .diff-del{color:var(--hd-count-del);}
 @media (max-width:900px){.hd-diff{grid-template-columns:1fr;}}
 .hd-diff-list,.hd-diff-pane{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);overflow:hidden;}
-.hd-diff-pane,.ask-md,.code-editor,.apv{
-  --hd-syntax-comment:light-dark(#5B6167,#8B949E);
-  --hd-syntax-keyword:light-dark(#B31D28,#FF7B72);
-  --hd-syntax-type:light-dark(#9A3E00,#FFA657);
-  --hd-syntax-string:light-dark(#176B4D,#7EE787);
-  --hd-syntax-literal:light-dark(#713BB8,#D2A8FF);
-  --hd-syntax-title:light-dark(#075C82,#79C0FF);
-}
 .hd-diff-list-head,.hd-diff-pane-head{display:flex;align-items:center;justify-content:space-between;gap:10px;
   padding:15px 18px;border-bottom:1px solid var(--line);font-size:var(--fs-body);}
 .hd-diff-rows{padding:6px;max-height:860px;overflow-y:auto;}
@@ -4306,7 +4298,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .hd-ov-wt-note{font-size:13px;color:var(--ink-2);min-width:0;}
 .hd-ov-wt-path{margin-left:auto;max-width:60%;}
 @media (max-width:640px){ .hd-ov-wt{flex-wrap:wrap;} .hd-ov-wt-path{margin-left:0;max-width:100%;} }
-.hd-ov-card,.pd-ov-card{padding:20px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
+.hd-ov-card,.pd-ov-card{padding:var(--pad-card);background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
 /* Agent memory (agent-memory-design.md §6): what this run wrote into worca's memory. */
 .hd-ov-mem{padding:16px 20px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);display:flex;flex-direction:column;gap:8px;}
 .hd-ov-mem .mono{font-family:var(--mono);}
@@ -4327,7 +4319,7 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .pd-ov-label{font:500 var(--fs-meta)/var(--lh-body) var(--sans);color:var(--ink-2);}
 .hd-ov-value,.pd-ov-value{margin-top:10px;font-size:22px;color:var(--ink);}
 .hd-ov-sub,.pd-ov-sub{margin-top:6px;font-size:var(--fs-meta);color:var(--ink-3);overflow-wrap:anywhere;}
-.hd-ov-task{padding:22px 24px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
+.hd-ov-task{padding:var(--pad-card);background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
 .hd-ov-task-h{font:600 13px var(--sans);}
 /* overflow-wrap:anywhere like its sibling .hd-ov-sub — prompts routinely carry
    absolute paths and URLs, and `.hist-screen-detail{overflow-x:hidden}` would silently
@@ -4358,8 +4350,7 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .mem-row{display:flex;flex-direction:column;gap:2px;padding:10px 8px;border-bottom:1px solid var(--line);border-radius:0;}
 .mem-row:hover{background:var(--hover);}
 .mem-row.on{border-radius:var(--r-sm);border-bottom-color:transparent;background:var(--field);box-shadow:none;}
-.mem-row-main{min-width:0;cursor:pointer;}
-.mem-row-main:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.mem-row-main{min-width:0;}
 .mem-row-name{font-size:13px;color:var(--ink);}
 .mem-row-hook{font-size:var(--fs-meta);color:var(--ink-2);overflow-wrap:anywhere;}
 .mem-row-meta{font-size:var(--fs-meta);color:var(--ink-2);overflow-wrap:anywhere;}
@@ -4393,7 +4384,7 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 
 /* ---------- History detail: Clarify tab ---------- */
 .hd-cl{display:flex;flex-direction:column;gap:14px;}
-.hd-cl-card{padding:20px 24px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
+.hd-cl-card{padding:var(--pad-card);background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
 .hd-cl-q,.hd-cl-a{display:flex;gap:12px;align-items:flex-start;}
 .hd-cl-a{margin-top:12px;color:var(--ink-2);}
 .hd-cl-q > span:last-child{font:600 var(--fs-body)/var(--lh-body) var(--sans);}
@@ -4594,8 +4585,8 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
   animation:shipit-sweep 2.4s linear infinite;}
 @keyframes shipit-sweep{from{background-position:0 0;}to{background-position:-183.333% 0;}}
 @keyframes shipit-veil-breathe{
-  0%,100%{box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--violet) 30%,transparent);}
-  50%{box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--violet) 70%,transparent),inset 0 0 24px color-mix(in srgb,var(--violet) 16%,transparent);}}
+  0%,100%{box-shadow:inset 0 0 0 1.5px var(--violet-glow);}
+  50%{box-shadow:inset 0 0 0 1.5px var(--violet-glow-strong),inset 0 0 24px color-mix(in srgb,var(--violet) 16%,transparent);}}
 
 /* Reduced motion for the three ship-it animations. This block MUST sit AFTER the
    rules that declare them: `@media` contributes no specificity, so naming
@@ -4613,7 +4604,7 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
   /* The Generate-with-AI veil holds still: a steady violet edge, no sweep, and the
      label gets a real colour back (its fill is a clipped, now-frozen gradient). */
   .shipit-desc-field.is-generating .shipit-desc-busy{animation:none;
-    box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--violet) 55%,transparent);}
+    box-shadow:inset 0 0 0 1.5px var(--violet-ring);}
   .shipit-desc-field.is-generating .shipit-desc-busy::before{content:none;}
   .shipit-desc-busy-label{animation:none;background:none;color:var(--ink-2);}
 }
@@ -4698,6 +4689,11 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 /* The sidebar nav item's corner (decided); the row's own divider would bend at it, so it turns transparent. */
 .runs-item.is-needs{background:color-mix(in srgb,var(--amber) 8%,transparent);border-radius:var(--r-sm);border-bottom-color:transparent;}
 .runs-item:has(> a.runs-row.selected){background:var(--field);border-radius:var(--r-sm);border-bottom-color:transparent;}
+/* Run 3 (D4): a group whose run is open — its own row's cells take the lighter fill; its member list keeps the panel. */
+.runs-item:has(> a.runs-row.member-open) > :is(.runs-pick,a.runs-row,.runs-row-tail){background:var(--row-open);align-self:stretch;}
+.runs-item:has(> a.runs-row.member-open) > .runs-pick{border-radius:var(--r-sm) 0 0 var(--r-sm);}
+.runs-item:has(> a.runs-row.member-open) > .runs-row-tail{border-radius:0 var(--r-sm) var(--r-sm) 0;}
+.runs-item:has(> a.runs-row.member-open){border-bottom-color:transparent;}
 .runs-pick{display:grid;place-items:center;height:36px;}
 .runs-pick .runs-check{display:none;margin:0;}
 /* Only the row itself flips its dot: hovering or focusing an expanded member must not flip its group's dot too. */
@@ -4752,11 +4748,12 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .runs-note-err{color:var(--red-ink);}
 .runs-note-err .runs-retry{margin-left:8px;}
 .runs-pane{position:relative;min-width:0;min-height:0;background:var(--bg);}
-.runs-pane > :is(.run-shell,.hist-shell){position:absolute;inset:0;}
+.runs-pane > :is(.run-shell,.hist-shell,.group-shell){position:absolute;inset:0;}
 /* Two rules, not one grouped selector (the ui-ask-clearance test that read each by `<sel>{` is gone). */
 .run-screen-detail{position:absolute;inset:0;padding:0;overflow-y:auto;overflow-x:hidden;background:var(--bg);}
 .hist-screen-detail{position:absolute;inset:0;padding:0;overflow-y:auto;overflow-x:hidden;background:var(--bg);}
-.run-screen-detail:empty,.hist-screen-detail:empty{display:none;}
+.group-screen-detail{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;background:var(--bg);}
+.run-screen-detail:empty,.hist-screen-detail:empty,.group-screen-detail:empty{display:none;}
 .runs-empty{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:24px;text-align:center;}
 .runs-empty[hidden]{display:none;}
 .runs-empty-title{margin:0;font:700 var(--fs-section) var(--sans);color:var(--ink-2);}
@@ -4764,8 +4761,10 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 /* The glance title is a programmatic focus landing (tabindex=-1), not a control. */
 .rd-page-title:focus{outline:none;}
 /* Side by side: only the open detail shows, and the glance's back-to-list button has nowhere to go. */
-.runs-shell[data-layout="split"] .runs-pane > :is(.run-shell,.hist-shell):not(.detail-open){display:none;}
-.runs-shell[data-layout="split"] :is(.rd-back,.hd-back){display:none;}
+.runs-shell[data-layout="split"] .runs-pane > :is(.run-shell,.hist-shell,.group-shell):not(.detail-open){display:none;}
+.runs-shell[data-layout="split"] :is(.rd-back,.hd-back,.gpage-back){display:none;}
+/* Run 3 (D6): the slide layout keeps the one Back button; the breadcrumb is for the split layout. */
+.runs-shell[data-layout="slide"] .rd-crumbs{display:none;}
 /* Narrow: the slide the two old screens used (D7). */
 .runs-shell[data-layout="slide"]{display:block;}
 .runs-shell[data-layout="slide"] > :is(.runs-list-pane,.runs-pane){position:absolute;inset:0;transition:transform .46s cubic-bezier(.65,.02,.28,1);}
@@ -4776,7 +4775,7 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .runs-shell[data-layout="slide"] .runs-empty{display:none;}
 /* The open detail sits above a closing one while it slides out. Slide only: side by side just
    one shell shows, and a z-index there would trap the tour's .guide-lift (z 45) under its scrim. */
-.runs-shell[data-layout="slide"] .runs-pane > :is(.run-shell,.hist-shell).detail-open{z-index:1;}
+.runs-shell[data-layout="slide"] .runs-pane > :is(.run-shell,.hist-shell,.group-shell).detail-open{z-index:1;}
 .runs-shell.no-anim > *{transition:none !important;}
 /* Run after this one (the list card's old schedule-after button): a quiet pill beside Pause/Stop,
    on the run page's bar and the saved run's (.hd-after). */
@@ -4870,17 +4869,20 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .rd-to-run.ask{background:var(--panel);border-color:var(--amber);color:var(--amber-ink);}   /* a question waits on the glance */
 .rd-back[hidden],.hd-bar .hd-back[hidden],.hd-to-run[hidden],.rd-to-run[hidden]{display:none;}
 .rd-to-run:focus-visible,.hd-to-run:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
-/* The page focuses its way back when it opens; that ring shows only to keyboard users
-   (app.js sets data-input from the last keydown / pointerdown). */
-:root[data-input="pointer"] :is(.rd-bar,.hd-bar,.pd-header) :focus-visible{outline:none;}
+/* A page that focuses its way back (or a menu handing focus back to its trigger) would otherwise paint that as
+   :focus-visible after a click. The ring shows only to keyboard users (app.js sets data-input from the last keydown /
+   pointerdown). Fields are not listed: a clicked field keeps its ink border. */
+:root[data-input="pointer"] :is(button,a,summary,[role="button"],[role="tab"],[role="switch"],[role="menuitem"],[tabindex]):focus-visible{outline:none;}
 .rd > .rd-error{margin:12px 32px 0;}
 .rd-glance[hidden],.rd-details[hidden]{display:none;}
 
-.rd-glance{max-width:608px;margin:0 auto;padding:28px 32px var(--ask-dock-clearance);display:flex;flex-direction:column;gap:22px;}
-/* A waiting question reads easier wide: the column opens to twice the run panel's width
-   for it, while the header and the panel keep their 544px measure and do not move. */
-.rd-glance:has(> .rd-questions:not([hidden])){max-width:1216px;}
-.rd-glance:has(> .rd-questions:not([hidden])) > :is(.rd-now,.rd-sheet,.rd-night-sec){width:100%;max-width:544px;align-self:center;}
+.rd-glance{max-width:none;margin:0 auto;padding:28px 32px var(--ask-dock-clearance);display:flex;flex-direction:column;gap:22px;}
+/* Run 3 (D16): everything but the graph keeps the old 544px measure; the graph takes the pane's content width, under
+   the run details at every list and pane width. A waiting question reads easier wide: it opens to twice the run panel's
+   width, while the header and the card keep their measure and do not move. */
+.rd-glance > :not(.rd-live){width:100%;max-width:544px;align-self:center;}
+.rd-glance:has(> .rd-questions:not([hidden])) > .rd-questions{max-width:1152px;}
+.rd-glance > .rd-live{align-self:stretch;width:100%;max-width:none;}
 /* Run progress (runs redesign §2.3): four neutral sections; the run's state is told by the status dot, not the fill. */
 .run-prog{position:relative;margin-top:10px;outline:none;}
 .run-prog[hidden]{display:none;}
@@ -4935,7 +4937,7 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
 /* A row: the text (app.js paintPageHead), the branch chip, the person chip. A chip too long
    for the rest of the line wraps under the text and truncates there. */
-.rd-page-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:6px 0 0;color:var(--ink-2);font-size:13px;}
+.rd-page-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;color:var(--ink-2);}
 .rd-page-meta:empty{display:none;}
 /* The run's feature branch (app.js paintPageBranch): a compact mono chip that copies it, with the
    Details header's copied tick (.rd-branch-copy). The full name is its tooltip. */
@@ -4997,7 +4999,7 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 /* The sheet under the status line: banners, the waiting question, the result,
    what runs now, and the way into Details. */
 .rd-sheet{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);box-shadow:none;
-  padding:18px;display:flex;flex-direction:column;gap:16px;}
+  padding:var(--pad-card);display:flex;flex-direction:column;gap:16px;}
 .rd-sheet .rd-banners:has(> :not([hidden])){margin-top:0;}
 .rd-sheet .rd-banners:not(:has(> :not([hidden]))){display:none;}
 .rd-nowlist{display:flex;flex-direction:column;gap:16px;}
@@ -5014,7 +5016,7 @@ button.rd-srow:hover{background:var(--hover-on-field);}
 .rd-srow-tx{flex:1;min-width:0;overflow-wrap:anywhere;}
 .rd-srow-ico{flex:none;color:var(--ink-2);}   /* the tab icon the row leads to */
 .rd-srow-tx small{display:block;color:var(--ink-2);font-size:var(--fs-meta);}
-.rd-srow-v{color:var(--ink-2);font-size:var(--fs-meta);white-space:nowrap;}
+.rd-srow-v{color:var(--ink-2);font:400 var(--fs-body)/var(--lh-body) var(--sans);font-variant-numeric:tabular-nums;white-space:nowrap;}
 .rd-srow.chv::after{content:"›";color:var(--ink-2);font-size:var(--fs-subpage);line-height:1;}
 .rd-slist .issues{margin:0;padding:10px 14px;}
 
@@ -5196,7 +5198,7 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
 .away-summary{margin:0 0 12px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--panel);font-size:13px;line-height:1.5}
 .away-line{display:block}
 .away-status{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}
-.away-basic h3{font-size:13px;margin:4px 0 10px}
+.away-basic h3{margin:4px 0 10px}
 .away-input-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .away-which{display:flex;flex-direction:column;gap:2px}
 .away-radio{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
@@ -5220,16 +5222,14 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
 
 /* ---------- Running detail: Live view ---------- */
 /* The glance's running step(s), centred in a fogged graph (app.js paintRdLive, the
-   `focus` host in graph/run-hosts.mjs). Beside the card when the PAGE AREA is wide —
-   a container query, so a collapsed sidebar counts — and below it otherwise. app.js
-   slides the left column into place (flipGlance); the panel's own entrance is here.
-   Opacity is the LAST transition to end on the way out in both layouts: app.js drops
-   the graph on its transitionend. */
+   `focus` host in graph/run-hosts.mjs). Under the card at every pane width, as wide as the
+   pane's content (run 3, D16); the panel's own entrance is here. Opacity is the LAST
+   transition to end on the way out: app.js drops the graph on its transitionend. */
 .rd{container:rd / inline-size;}
 .switch-row.rd-live-row{gap:10px;}
 .rd-live-row[hidden]{display:none;}   /* .switch-row's display:flex beats the UA [hidden] rule */
 .rd-live-row .txt{font-size:13px;color:var(--ink-2);}
-/* Narrow: the panel opens its height under the card (0fr → 1fr), eating the column gap
+/* The panel opens its height under the card (0fr → 1fr), eating the column gap
    it would otherwise add at once, and rises into place. */
 .rd-live{display:grid;grid-template-rows:0fr;margin-top:-22px;opacity:0;transform:translateY(10px);
   cursor:pointer;border-radius:var(--r-card);
@@ -5255,29 +5255,6 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
   mask-image:radial-gradient(closest-side, transparent 66%, var(--ink) 100%);}
 /* The camera glides when the work moves on (focusNodeIds). */
 .rd-live .gv-world{transition:transform .7s cubic-bezier(.4,0,.2,1);}
-@container rd (min-width: 960px){
-  /* :not([hidden]) — this weighs the same as `.rd-glance[hidden]{display:none}` and comes
-     later, so without it Details would open UNDER a glance that never went away. */
-  .rd-glance[data-live="on"]:not([hidden]){max-width:1216px;display:grid;grid-template-columns:544px minmax(0,1fr);
-    column-gap:28px;row-gap:22px;align-items:start;}
-  .rd-glance[data-live="on"] > .rd-now{grid-column:1;grid-row:1;}
-  .rd-glance[data-live="on"] > .rd-sheet{grid-column:1;grid-row:2;}
-  .rd-glance[data-live="on"] > .rd-questions{grid-column:1 / -1;}
-  /* D30: a shaped run waiting on the person — the card in row 2, right under the title; folded, one column */
-  .rd-glance[data-live="on"][data-shaper-wait] > .rd-questions{grid-row:2;}
-  .rd-glance[data-live="on"][data-shaper-wait] > :is(.rd-sheet,.rd-live){grid-row:3;}
-  .rd-glance[data-live="on"][data-shaper-wait]:not([data-wait-open]):not([hidden]){display:flex;max-width:608px;}
-  /* Away mode's answers stay under the run card, never beside the title in the graph's column. */
-  .rd-glance[data-live="on"] > .rd-night-sec{grid-column:1;}
-  /* Wide: as tall as the card (320px at least), its top level with the card's; it slides
-     in from the right out of a blur once the card has made room. */
-  .rd-glance[data-live="on"] > .rd-live{grid-column:2;grid-row:2;align-self:stretch;min-height:320px;
-    grid-template-rows:1fr;margin-top:0;transform:translateX(28px);filter:blur(6px);
-    transition:opacity .22s ease,transform .22s ease,filter .22s ease;}
-  .rd-glance[data-live="on"] > .rd-live.is-in{transform:none;filter:none;
-    transition:opacity .38s ease .12s,transform .5s cubic-bezier(.2,.7,.3,1) .12s,filter .38s ease .12s;}
-  .rd-glance[data-live="on"] > .rd-live .run-flow-wrap{height:100%;}
-}
 @media (prefers-reduced-motion: reduce){
   .rd-live,.rd-live.is-in,.rd-live .gv-world{transition:none !important;}
 }
@@ -5635,6 +5612,7 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 .ask-scope-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .ask-scope-btn.is-pinned{color:var(--ink);}
 .ask-scope-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ask-scope-btn.is-compact > .ask-scope-label{display:none;}
 .ask-mcp-btn[hidden]{display:none;}
 
 /* `overflow-anchor:auto` is the UA default, stated here on purpose: it is the
@@ -5842,16 +5820,8 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-rp-eff button[disabled]{opacity:.35;cursor:default;}
 .ask-rp-eff.unset button{visibility:hidden;}
 .ask-rp-eff.unset::after{content:"inherits workflow";position:absolute;inset:0;display:grid;place-items:center;font-family:var(--mono);font-size:10px;color:var(--ink-3);}
-.ask-rp-ctl{display:inline-flex;align-items:center;gap:8px;font-size:11.5px;color:var(--ink-2);}
-.ask-rp-ctl>span:first-child{font-family:var(--mono);font-size:12px;color:var(--ink-2);font-weight:600;}
-.ask-rp-sw{display:inline-flex;align-items:center;position:relative;}
-.ask-rp-sw input{position:absolute;opacity:0;width:1px;height:1px;}
-.ask-rp-knob{width:32px;height:18px;border-radius:50%;background:var(--line-2);position:relative;transition:.15s;cursor:pointer;}
-.ask-rp-knob::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--knob);transition:.15s;}
-.ask-rp-sw input:checked+.ask-rp-knob{background:var(--ink);}
-.ask-rp-sw input:checked+.ask-rp-knob::after{transform:translateX(14px);}
-.ask-rp-sw input:disabled+.ask-rp-knob{opacity:.4;cursor:not-allowed;}
-.ask-rp-sw input:focus-visible+.ask-rp-knob{outline:2px solid var(--ink);outline-offset:2px;}
+.ask-rp-ctl{display:inline-flex;align-items:center;gap:8px;}
+.ask-rp-ctl > span:first-child{font:500 var(--fs-body)/var(--lh-body) var(--sans);color:var(--ink);}
 .ask-rp-agents-foot{display:flex;align-items:center;gap:8px;padding:8px 14px;border-top:1px solid var(--line);font-size:11.5px;color:var(--ink-3);}
 .ask-rp-lane-msg{padding:12px 14px;font-size:12px;color:var(--ink-3);}
 .ask-rp-prop{display:inline-block;padding:0 6px;border-radius:var(--r-sm);background:var(--violet-wash);color:var(--violet-ink);font-weight:700;cursor:help;}
@@ -5888,7 +5858,7 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 /* With the lane summary gone from the shaped footer, the link keeps Not now and Start planning on the right. */
 .ask-rp-foot .ask-card-open-np.link-btn{margin-right:auto;}
 .ask-rp .ask-card-err{padding:0 18px 10px;}
-.ask-pop-at{width:288px;padding:6px;border-radius:var(--r-card);max-height:min(320px,60%);overflow-y:auto;}
+.ask-pop-at{width:288px;max-height:min(320px,60%);overflow-y:auto;}
 @media (max-width:640px){.ask-rp-grid,.ask-rp-grid.two,.ask-rp-grid.wf-row{grid-template-columns:1fr;}}
 @media (prefers-reduced-motion: reduce){.ask-card.ask-rp{animation:none;} .ask-rp *{transition:none!important;}}
 
@@ -5917,7 +5887,7 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-pop-effort{display:flex;align-items:center;gap:4px;padding:8px 10px 6px;}
 .ask-pop-effort-label{font-size:12px;color:var(--ink-2);margin-right:auto;white-space:nowrap;}
 .ask-pop-effort .ask-effort-pill{width:auto;height:24px;padding:0 8px;border:1px solid var(--line-2);border-radius:var(--r-xs);background:transparent;color:var(--ink-2);font-weight:600;font-size:11px;white-space:nowrap;}
-.ask-pop-effort .ask-effort-pill.on{background:var(--ink);border-color:var(--ink);color:var(--on-ink);}
+.ask-pop-effort .ask-effort-pill.on{background:var(--field);border-color:var(--ink);color:var(--ink);}
 .ask-pop-effort-none{font-size:11px;color:var(--ink-3);}
 @media (prefers-reduced-motion: reduce){.ask-card.ask-wfcard{animation:none;}}
 
@@ -6064,7 +6034,7 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
    an animation, which the global reduced-motion rule (transitions only) misses. */
 .ask-drop{position:absolute;inset:0;z-index:8;display:flex;align-items:center;justify-content:center;pointer-events:none;
   margin:6px;border:2px dashed var(--ink-3);border-radius:var(--r-sm);
-  background:color-mix(in srgb, var(--panel) 88%, transparent);animation:ask-drop-in .12s ease-out both;}
+  background:var(--panel-veil);animation:ask-drop-in .12s ease-out both;}
 .ask-drop[hidden]{display:none;}
 .ask-drop-label{padding:8px 16px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);
   color:var(--ink);font-weight:600;font-size:13px;box-shadow:var(--shadow-pop);}
@@ -6163,12 +6133,11 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-composer :is(.ask-voice-mic,.ask-voice-caret):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .ask-composer :is(.ask-model-btn,.ask-send,.ask-stop,.ask-chip-x):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 
-.ask-pop{position:absolute;z-index:3;background:var(--panel);border:1px solid var(--line-2);
-  padding:6px;box-shadow:var(--shadow-menu);border-radius:var(--r-card);}
+.ask-pop{position:absolute;z-index:3;}
 /* The composer popovers hug the box (--ask-col-inset, see .ask-sheet) and float
    just above it (--ask-box-top). */
 .ask-pop-scope{left:var(--ask-col-inset);bottom:calc(var(--ask-box-top) + 6px);width:300px;max-height:min(420px,70%);overflow-y:auto;}
-.ask-pop-model{right:var(--ask-col-inset);bottom:calc(var(--ask-box-top) + 6px);width:292px;border-radius:var(--r-card);
+.ask-pop-model{right:var(--ask-col-inset);bottom:calc(var(--ask-box-top) + 6px);width:292px;
   max-height:min(420px,70%);overflow-y:auto;overscroll-behavior:contain;}   /* ~10 rows, then it scrolls, like the scope and MCP pickers */
 /* The per-chat MCP picker (MCP registry §9.4) opens over the scope pill it sits beside. Level 1 rows hold a
    small switch and a drill button; level 2 rows a copy name and its switch. */
@@ -6177,12 +6146,10 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-mcp-row .ask-pop-item{flex:1 1 auto;min-width:0;padding-left:6px;}
 .ask-mcp-copy{flex:1 1 auto;min-width:0;padding:9px 0;font-family:var(--mono);font-size:12px;color:var(--ink);
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.ask-pop-mcp .switch{border:0;padding:0;}
-.ask-pop-mcp .switch:disabled{opacity:.5;cursor:not-allowed;}
 .ask-mcp-member.is-skipped .ask-model-name{font-family:var(--mono);font-size:12px;color:var(--ink-3);}
 .ask-mcp-member.is-problem .ask-pop-row-value{color:var(--amber-ink);}
 /* Skills registry §6.8: a level-1 set row's "2 servers · 1 skill · pinned" line under the set name. */
-.ask-pop-mcp .ask-model-name small{display:block;font-size:11.5px;font-weight:400;color:var(--ink-3);}
+.ask-pop-mcp .ask-model-name small{display:block;font-size:var(--fs-caption);font-weight:400;color:var(--ink-3);}
 .ask-notice-mcp{padding:0;border:0;background:none;color:var(--blue-ink);font:inherit;cursor:pointer;}
 /* Context popover (ask-panel.mjs buildCtxPopover): the window's fill, the chat's topics, agents and
    worktrees. Above the ring (JS sets its right edge); capped, it scrolls when the lists run long. */
@@ -6222,23 +6189,19 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
    chip sits wherever the transcript scrolled it. Its rows are the WHOLE model catalog, so
    the menu outgrows the sheet, which clips -- the same cap .ask-pop-scope carries keeps
    the Effort row reachable, and chipPickerTop() flips it above the chip when that fits. */
-.ask-pop-chip{width:288px;padding:6px;border-radius:var(--r-card);max-height:min(420px,70%);overflow-y:auto;}
+.ask-pop-chip{width:288px;max-height:min(420px,70%);overflow-y:auto;}
 .ask-pop-caption,.ask-pop-caption-row .ask-pop-caption{padding:8px 10px 6px;font-weight:600;font-size:12px;color:var(--ink-2);}
 .ask-pop-caption-row{display:flex;align-items:baseline;gap:8px;}
-.ask-pop-caption-meter{margin-left:auto;padding-right:10px;font-family:var(--mono);font-size:10px;color:var(--ink-3);}
+.ask-pop-caption-meter{margin-left:auto;padding-right:10px;font-family:var(--mono);font-size:var(--fs-caption);color:var(--ink-3);}
 .ask-pop-empty{padding:10px 10px 12px;font-size:12px;color:var(--ink-3);}
 .ask-pop-divider{height:1px;margin:6px 11px;background:var(--line);}
 .ask-pop-group { padding: 6px 12px 2px; font-size: 12px; color: var(--ink-2);font-weight:600; }
 /* A connection inside an engine's section (Claude sign-in, OpenAI-compatible, …): quieter than the section. */
-.ask-pop-subgroup { padding: 6px 12px 2px; font-size: 11.5px; font-weight: 600; color: var(--ink-3); }
-.ask-pop-item{display:flex;align-items:center;gap:10px;width:100%;padding:9px 11px;border:0;border-radius:var(--r-sm);
-  background:transparent;text-align:left;font-family:inherit;cursor:pointer;transition:.15s;}
-.ask-pop-item:hover,.ask-pop-item:focus-visible{background:var(--hover);outline:none;}
-.ask-pop-item:disabled{cursor:default;color:var(--ink-3);}
-.ask-pop-item:disabled:hover{background:transparent;}
-.ask-model-name{font-weight:500;font-size:13.5px;color:var(--ink);}
-.ask-model-check{margin-left:auto;color:var(--blue-ink);font-weight:600;}
-.ask-pop-row-value{margin-left:auto;font-weight:400;font-size:12.5px;color:var(--ink-3);}
+.ask-pop-subgroup { padding: 6px 12px 2px; font-size: var(--fs-meta); font-weight: 600; color: var(--ink-3); }
+.ask-pop-item{display:flex;align-items:center;gap:10px;width:100%;text-align:left;}
+.ask-model-name{font-weight:500;font-size:var(--fs-body);color:var(--ink);}
+.ask-model-check{margin-left:auto;color:var(--ink);font-weight:600;}
+.ask-pop-row-value{margin-left:auto;font-weight:400;font-size:var(--fs-meta);color:var(--ink-3);}
 .ask-pop-row-chev{color:var(--ink-3);}
 /* .ask-pop-model is a fixed 292px panel (256px of row content), so something in the
    row has to give: rigid badges win every negotiation, and measured in Chrome an
@@ -6251,7 +6214,7 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
    warning itself. The shrink props on the base badge outlive the origin badge in
    case a plain one returns. */
 .ask-model-tag{flex:0 1 auto;min-width:0;max-width:45%;overflow:hidden;text-overflow:ellipsis;
-  font-size:10.5px;font-weight:700;letter-spacing:.01em;padding:2px 8px;
+  font-size:var(--fs-caption);font-weight:700;letter-spacing:.01em;padding:2px 8px;
   border-radius:var(--r-xs);white-space:nowrap;background:var(--field);color:var(--ink-3);}
 .ask-model-tag.is-warn{flex:0 0 auto;max-width:none;background:var(--amber-bg);color:var(--amber-ink);}
 .ask-model-tag.is-err{flex:0 0 auto;max-width:none;background:var(--red-bg);color:var(--red-ink);}
@@ -6346,10 +6309,10 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-cmd>*{min-width:0;}
 .ask-cmd-head{display:flex;align-items:center;gap:8px;min-height:28px;}
 .ask-cmd-kicker{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:var(--r-xs);font-family:var(--mono);font-size:12px;background:var(--violet-bg);color:var(--violet-ink);white-space:nowrap;font-weight:600;}
-.ask-cmd-pill{display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:var(--r-xs);font-family:var(--mono);font-size:11px;font-weight:700;white-space:nowrap;}
+.ask-cmd-pill{padding:0 6px;}
 .ask-cmd-pill.st-peach{background:var(--peach-bg);color:var(--h-peach-ink);}
-.ask-cmd-pill.st-green{background:var(--green-bg);color:var(--h-green-ink);}
-.ask-cmd-pill.st-red{background:var(--red-bg);color:var(--red-ink);}
+.ask-cmd-pill.st-green{background:var(--green-bg);color:var(--green-ink-strong);}
+.ask-cmd-pill.st-red{background:var(--red-bg);color:var(--red-ink-strong);}
 .ask-cmd-pill.st-amber{background:var(--amber-bg);color:var(--amber-ink);}
 .ask-cmd.is-live .ask-cmd-pill{animation:dotpulse 1.3s ease-in-out infinite;}
 .ask-cmd-folder{min-width:0;padding:0;border:0;background:none;color:var(--ink-2);font:inherit;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;}
@@ -6373,8 +6336,8 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
   background:var(--canvas-2) radial-gradient(circle,var(--line-2) 1.1px,transparent 1.1px);background-size:22px 22px;transition:height .24s cubic-bezier(.2,.7,.3,1);}
 .ask-rc-graph[hidden]{display:none;}
 .ask-rc-graph .gv-world .node.is-active{box-shadow:0 0 0 1.5px color-mix(in srgb, var(--c) 55%, var(--line-2));animation:nodeGlow 2.2s ease-in-out infinite;}
-.ask-rc-graph .gv-world .node.is-paused{box-shadow:0 0 0 1.5px color-mix(in srgb, var(--amber) 55%, var(--line-2));animation:nodeGlowAmber 2.2s ease-in-out infinite;}
-.ask-rc-graph .gv-world .node.is-stopped,.ask-rc-graph .gv-world .node.is-error{box-shadow:0 0 0 1.5px color-mix(in srgb, var(--red) 50%, var(--line-2)),0 0 0 4px color-mix(in srgb, var(--red) 13%, transparent);}
+.ask-rc-graph .gv-world .node.is-paused{box-shadow:0 0 0 1.5px var(--amber-ring);animation:nodeGlowAmber 2.2s ease-in-out infinite;}
+.ask-rc-graph .gv-world .node.is-stopped,.ask-rc-graph .gv-world .node.is-error{box-shadow:0 0 0 1.5px var(--red-ring),0 0 0 4px var(--red-tint);}
 .ask-rc-graph .gv-world .node.is-skipped{opacity:.35;box-shadow:none;outline:1.5px dashed var(--line-2);outline-offset:-1.5px;}
 .ask-rc-graph .gv-world .node.is-done::after,.ask-rc-graph .gv-world .node.is-paused::after,.ask-rc-graph .gv-world .node.is-stopped::after,.ask-rc-graph .gv-world .node.is-error::after{content:"";position:absolute;top:calc(-8px * var(--gv-scale));right:calc(-8px * var(--gv-scale));width:calc(21px * var(--gv-scale));height:calc(21px * var(--gv-scale));border-radius:var(--r-sm);z-index:3;color:var(--on-status);font:800 calc(12px * var(--gv-scale))/calc(21px * var(--gv-scale)) var(--sans);text-align:center;}
 /* icons: check, pause, x */
@@ -6401,8 +6364,8 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 /* ---------- native control skins (checkbox / radio / switch / rows) -------- */
 /* Everything the browser used to draw for itself. The mark is the one .qopt
    already draws (:761): a 1.5px --radio-ring hairline on --panel that fills
-   --green behind a white glyph, so "chosen" reads identically on a question
-   option, a checkbox, a chip and a whole row.
+   --ink behind a tick in the page colour, so "chosen" reads identically on a
+   question option, a checkbox, a chip and a whole row.
    Styling the REAL <input> through appearance:none — rather than hiding it
    behind a span — is what lets every existing emitter keep its markup:
    :checked, :disabled, :indeterminate, label clicks and keyboard all keep
@@ -6410,8 +6373,22 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
    the segmented controls (#mock, [name=target], [name=source]) stay hidden. */
 
 /* Net for anything never hand-skinned (a future <progress>, a date input, the
-   OS spell-check UI): brand green instead of the OS accent. */
-:root{accent-color:var(--green);}
+   OS spell-check UI): ink instead of the OS accent.
+   The ink tick (docs/design-system.md › Checkbox): a data URI cannot read a token, so the tick's colour follows the
+   theme through --tick. It is the page colour on the ink fill: white in light, #161614 (--on-ink's dark arm) in dark. */
+:root{accent-color:var(--ink);
+  --tick:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.6' stroke-linecap='round' stroke-linejoin='round'><path d='M5 13l4 4L19 7'/></svg>");
+  --tick-dash:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.6' stroke-linecap='round'><path d='M6 12h12'/></svg>");}
+:root[data-theme="dark"]{
+  --tick:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23161614' stroke-width='3.6' stroke-linecap='round' stroke-linejoin='round'><path d='M5 13l4 4L19 7'/></svg>");
+  --tick-dash:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23161614' stroke-width='3.6' stroke-linecap='round'><path d='M6 12h12'/></svg>");}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --tick:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23161614' stroke-width='3.6' stroke-linecap='round' stroke-linejoin='round'><path d='M5 13l4 4L19 7'/></svg>");
+  --tick-dash:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23161614' stroke-width='3.6' stroke-linecap='round'><path d='M6 12h12'/></svg>");}}
+/* Paper is white (the print block forces color-scheme:light): the tick is white on the light ink fill there too. */
+@media print{:root,:root[data-theme="dark"],:root:not([data-theme="light"]){
+  --tick:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.6' stroke-linecap='round' stroke-linejoin='round'><path d='M5 13l4 4L19 7'/></svg>");
+  --tick-dash:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.6' stroke-linecap='round'><path d='M6 12h12'/></svg>");}}
 
 input[type="checkbox"],
 input[type="radio"]{
@@ -6423,23 +6400,23 @@ input[type="radio"]{
 input[type="radio"]{border-radius:50%;}
 input[type="checkbox"]:hover:not(:disabled),
 input[type="radio"]:hover:not(:disabled){border-color:var(--ink-3);}
-/* the identical white tick .qopt.sel uses */
-input[type="checkbox"]:checked{border-color:var(--green);
-  background:var(--green) center/11px 11px no-repeat url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.6' stroke-linecap='round' stroke-linejoin='round'><path d='M5 13l4 4L19 7'/></svg>");}
+/* Checked fills ink, never green (green means done). */
+input[type="checkbox"]:checked{border-color:var(--ink);background-color:var(--ink);background-image:var(--tick);
+  background-position:center;background-size:11px 11px;background-repeat:no-repeat;}
 /* "some of these are on" — set from JS, there is no HTML attribute for it */
-input[type="checkbox"]:indeterminate{border-color:var(--green);
-  background:var(--green) center/11px 11px no-repeat url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.6' stroke-linecap='round'><path d='M6 12h12'/></svg>");}
-/* ring, white gap and dot from one inset shadow — no pseudo-element, which a
+input[type="checkbox"]:indeterminate{border-color:var(--ink);background-color:var(--ink);background-image:var(--tick-dash);
+  background-position:center;background-size:11px 11px;background-repeat:no-repeat;}
+/* ring, panel gap and dot from one inset shadow — no pseudo-element, which a
    replaced element cannot be relied on to render */
-input[type="radio"]:checked{border-color:var(--green);background:var(--green);
+input[type="radio"]:checked{border-color:var(--ink);background:var(--ink);
   box-shadow:inset 0 0 0 3.5px var(--panel);}
 /* disabled reads as "fixed" (a manifest locked it), never as "broken" */
 input[type="checkbox"]:disabled,
 input[type="radio"]:disabled{background:var(--field);border-color:var(--line-2);cursor:not-allowed;}
 /* the :disabled rule above uses the `background` shorthand, which drops the
    glyph :checked painted — so a locked-on box has to restate it */
-input[type="checkbox"]:disabled:checked{border-color:var(--seq);
-  background:var(--seq) center/11px 11px no-repeat url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.6' stroke-linecap='round' stroke-linejoin='round'><path d='M5 13l4 4L19 7'/></svg>");}
+input[type="checkbox"]:disabled:checked{border-color:var(--seq);background-color:var(--seq);background-image:var(--tick);
+  background-position:center;background-size:11px 11px;background-repeat:no-repeat;}
 input[type="radio"]:disabled:checked{background:var(--seq);border-color:var(--seq);
   box-shadow:inset 0 0 0 3.5px var(--panel);}
 input[type="checkbox"]:focus-visible,
@@ -6453,25 +6430,6 @@ input[type="radio"]:focus-visible{outline:2px solid var(--ink);outline-offset:2p
   input[type="checkbox"]:checked,input[type="radio"]:checked{background-color:Highlight;border-color:Highlight;}
 }
 
-/* ---- switch driven by a real checkbox ----
-   .switch (:470) is a <div role="switch"> mirrored to a hidden input by hand
-   (app.js#wireMockSwitch). One sibling selector lets the SAME pixels be driven
-   by a real <input type=checkbox>, so a new switch needs no JS and keeps its
-   semantics for free. Both spellings work; the existing .on emitters are
-   untouched. */
-.sw-input{position:absolute;width:1px;height:1px;opacity:0;margin:0;pointer-events:none;}
-/* The checkbox is position:absolute; without a positioned wrapper its
-   containing block is the viewport, so its static position sits near the top
-   of the page — clicking the switch focuses it and the browser scrolls that
-   into view, jerking the whole viewport up. Anchor it to its own row. */
-:where(label, div, span):has(> .sw-input){position:relative;}
-.switch.on,
-.sw-input:checked + .switch{background:var(--green);}
-.switch.on::after,
-.sw-input:checked + .switch::after{left:16px;}
-.sw-input:focus-visible + .switch{outline:2px solid var(--ink);outline-offset:2px;}
-.sw-input:disabled + .switch{opacity:.5;cursor:not-allowed;}
-/* A 20px track needs more room between rows than the 13px box it replaced. */
 
 /* ---- checkbox rows inside a .field ----
    .check-row carried NO rule, so `.field > label` (:304) claimed it: block,
@@ -6479,7 +6437,7 @@ input[type="radio"]:focus-visible{outline:2px solid var(--ink);outline-offset:2p
    heading welded to its box. Equal specificity class-count, so the qualified
    selectors are what win. */
 .check-row{display:inline-flex;align-items:center;gap:9px;cursor:pointer;user-select:none;
-  font-weight:500;font-size:var(--fs-meta);color:var(--ink-2);}
+  font-weight:500;font-size:var(--fs-body);color:var(--ink-2);}
 /* The engine field's hint and the gate refusal's consent row: hidden must win over
    .hint's display:block and .check-row's inline-flex. */
 #engine-hint[hidden], #engine-default-hint[hidden], #engineAllowRow[hidden]{display:none;}
@@ -6500,7 +6458,7 @@ input[type="radio"]:focus-visible{outline:2px solid var(--ink);outline-offset:2p
   border-radius:var(--r-sm);cursor:pointer;font-size:var(--fs-body);font-weight:500;
   color:var(--ink);transition:background .14s,border-color .14s;}
 .opt-row:hover{border-color:var(--ink-3);}
-.opt-row:has(input:checked){background:var(--green-bg);border-color:var(--green);}
+.opt-row:has(input:checked){background:var(--field);border-color:var(--ink);}
 .opt-row:has(input:disabled){opacity:.55;cursor:not-allowed;background:var(--field);}
 .opt-row:has(input:focus-visible){outline:2px solid var(--ink);outline-offset:2px;}
 .opt-row .opt-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
@@ -6512,7 +6470,7 @@ input[type="radio"]:focus-visible{outline:2px solid var(--ink);outline-offset:2p
    so the box inside was carrying it alone. */
 .chip-select label{transition:background .14s,border-color .14s;}
 .chip-select label:hover{border-color:var(--ink-3);}
-.chip-select label:has(input:checked){background:var(--green-bg);border-color:var(--green);}
+.chip-select label:has(input:checked){background:var(--field);border-color:var(--ink);}
 .chip-select label:has(input:disabled){opacity:.55;cursor:not-allowed;}
 .chip-select input{width:14px;height:14px;border-radius:var(--r-sm);}
 
@@ -6522,7 +6480,7 @@ input[type="radio"]:focus-visible{outline:2px solid var(--ink);outline-offset:2p
 .confirm-field .input{font-size:var(--fs-body);}
 .confirm-field .hint.err{color:var(--red-ink);}
 .confirm-checkbox{display:flex;align-items:flex-start;gap:10px;margin:0 0 4px;padding:12px 14px;
-  background:var(--field);border-radius:var(--r-sm);font-size:var(--fs-meta);color:var(--ink-2);
+  background:var(--field);border-radius:var(--r-sm);font-size:var(--fs-body);color:var(--ink-2);
   cursor:pointer;line-height:1.45;}
 .confirm-checkbox.hidden{display:none;}
 .confirm-modal .card h2.danger{color:var(--red-ink);}
@@ -6692,8 +6650,8 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .guide-ring{position:fixed;z-index:46;pointer-events:none;border:2.5px solid var(--violet);border-radius:var(--r-sm);
   animation:guide-pulse 1.8s ease-out infinite;}
 @keyframes guide-pulse{
-  0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--violet) 55%,transparent);}
-  100%{box-shadow:0 0 0 14px color-mix(in srgb,var(--violet) 0%,transparent);}
+  0%{box-shadow:0 0 0 0 var(--violet-ring);}
+  100%{box-shadow:0 0 0 14px var(--violet-clear);}
 }
 .guide-balloon{position:fixed;z-index:47;display:flex;flex-direction:column;align-items:flex-start;gap:6px;
   max-width:300px;padding:11px 14px 10px;background:var(--panel);border:1px solid var(--line-2);border-radius:var(--r-card);
@@ -6713,9 +6671,9 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .guide-ring.nudge{animation:guide-nudge-ring .45s ease-out;}
 .guide-balloon.nudge{animation:guide-nudge-balloon .45s ease-out;}
 @keyframes guide-nudge-ring{
-  0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--violet) 70%,transparent);transform:scale(1);}
+  0%{box-shadow:0 0 0 0 var(--violet-glow-strong);transform:scale(1);}
   40%{transform:scale(1.04);}
-  100%{box-shadow:0 0 0 22px color-mix(in srgb,var(--violet) 0%,transparent);transform:scale(1);}
+  100%{box-shadow:0 0 0 22px var(--violet-clear);transform:scale(1);}
 }
 @keyframes guide-nudge-balloon{
   0%,100%{transform:translateY(0);}
@@ -6742,14 +6700,11 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .btn-split > .btn + .btn{border-radius:0 var(--r-sm) var(--r-sm) 0;margin-left:1px;}
 :root[data-level="simple"] .btn-split > .btn:first-child:not(:has(~ [data-level-keep])){border-radius:var(--r-sm);}
 /* Never wider than 340px (or the viewport): a long engine note wraps instead of pushing the menu off screen. */
-.btn-split-menu{position:absolute;right:0;bottom:calc(100% + 8px);z-index:20;min-width:230px;max-width:min(340px,calc(100vw - 32px));padding:6px;
-  background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);box-shadow:var(--shadow-menu);}
+.btn-split-menu{position:absolute;right:0;bottom:calc(100% + 8px);z-index:20;min-width:230px;max-width:min(340px,calc(100vw - 32px));}
 .btn-split-menu[hidden]{display:none;}
-.btn-split-menu button{display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;text-align:left;
-  background:transparent;border:none;border-radius:var(--r-sm);padding:10px 12px;font-family:inherit;cursor:pointer;color:var(--ink);}
-.btn-split-menu button:hover,.btn-split-menu button:focus-visible{background:var(--hover);outline:none;}
+.btn-split-menu .menu-item{flex-direction:column;align-items:flex-start;gap:2px;padding-block:6px;}
 .btn-split-menu b{font-weight:600;font-size:var(--fs-body);}
-.btn-split-menu small{font-size:12px;color:var(--ink-3);white-space:normal;line-height:1.4;}
+.btn-split-menu small{font-size:var(--fs-meta);color:var(--ink-2);white-space:normal;line-height:1.4;}
 .btn-split.mini .btn-split-menu{bottom:auto;top:calc(100% + 8px);}
 /* Resume split (run card, run page, History detail): ONE control like #start-split, medium secondary halves.
    Each caret is Advanced-only, so Simple closes the Resume back up. The [hidden] guards outrank the author
@@ -6759,9 +6714,6 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .btn-split.rd-resume-split > .rd-resume-more[hidden]{display:none;}
 .hd-resume-split[hidden],.hd-resume-split > .hd-resume-more[hidden]{display:none;}
 
-/* Disabled "Resume at…" menu item: greyed, and its hover must not light it up. */
-.btn-split-menu button:disabled{opacity:.45;cursor:not-allowed;}
-.btn-split-menu button:disabled:hover,.btn-split-menu button:disabled:focus-visible{background:transparent;outline:none;}
 
 /* the schedule sheet */
 .sched-modal .card.sched-card{width:min(600px,100%);animation:wr-rise .28s cubic-bezier(.2,.7,.3,1) both;}
@@ -6844,7 +6796,7 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .sched-v{color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere;}
 @media (max-width:720px){.sched-kv{grid-template-columns:minmax(0,1fr);gap:1px;}.sched-acts{justify-content:flex-start;margin-left:0;}}
 
-.sched-feed{padding:20px 22px;}
+.sched-feed{padding:var(--pad-card);}
 .sched-feed-head{flex-wrap:wrap;gap:12px;margin-bottom:8px;}
 .sched-feed-tools{display:flex;flex-wrap:wrap;align-items:center;gap:10px;}
 .sched-feed-item.unread td{background:var(--amber-wash);}
@@ -7033,7 +6985,7 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
   /* Getting started: tiles land drawn, vignettes paint finished, the guide ring holds a still halo. */
   .gs-tile.reveal,.play .gs-pop,.play .gs-draw,.ob-welcome,.guide-ring,.guide-ring.nudge,.guide-balloon.nudge{animation:none;}
   .play .gs-draw{stroke-dashoffset:0;}
-  .guide-ring{box-shadow:0 0 0 6px color-mix(in srgb,var(--violet) 30%,transparent);}
+  .guide-ring{box-shadow:0 0 0 6px var(--violet-glow);}
   /* #stop-modal is a top-level overlay, outside the shell — named explicitly. */
   #stop-modal .card{animation:none;}
   /* The schedule sheet is a body-level overlay too. */
@@ -7311,13 +7263,12 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
   border-right:1.8px solid var(--ink-2);border-bottom:1.8px solid var(--ink-2);transform:translateY(-65%) rotate(45deg);pointer-events:none;}
 .ins-tog{display:flex;align-items:flex-start;gap:10px;padding:9px 11px;
   border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--field);}
-.ins-tog input[type="checkbox"]{width:15px;height:15px;flex:0 0 auto;margin:1px 0 0;accent-color:var(--ink);cursor:pointer;}
-.ins-tog input:disabled{cursor:not-allowed;}
-.ins-tog:has(input:disabled){opacity:.55;}
+.ins-tog .switch-row{flex:1 1 auto;min-width:0;align-items:flex-start;}
+.ins-tog .switch{margin-top:1px;}
 .ins-panel .ins-f:has(.ins-select:disabled){opacity:.55;}
 .ins-tog-b{display:flex;flex-direction:column;gap:2px;min-width:0;}
-.ins-tog-t{font-weight:600;font-size:12.5px;color:var(--ink);}
-.ins-tog-h{font-size:11px;line-height:1.4;color:var(--ink-3);}
+.ins-tog-t{font-weight:500;font-size:var(--fs-body);color:var(--ink);}
+.ins-tog-h{font-size:var(--fs-meta);line-height:1.4;color:var(--ink-3);}
 .ins-blurb{margin:0;font-size:12px;line-height:1.55;color:var(--ink-2);}
 .ins-hint{display:block;font-size:11px;line-height:1.45;color:var(--ink-3);margin-top:-6px;}
 .ins-resolved{font:11px/1.4 var(--mono);color:var(--ink-2);background:var(--field);
@@ -7396,7 +7347,7 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .run-flow.gv-host .gv-world .xfoot .fl{margin-left:auto;font:700 10px/1.4 var(--mono);color:var(--ink-3);}
 .run-flow.gv-host .gv-world .nrun{margin-top:0;}
 /* two states the v1 block has no vocabulary for */
-.run-flow.gv-host .gv-world .node.is-error{box-shadow:0 0 0 1.5px color-mix(in srgb, var(--red) 50%, var(--line-2)),0 0 0 4px color-mix(in srgb, var(--red) 13%, transparent);}
+.run-flow.gv-host .gv-world .node.is-error{box-shadow:0 0 0 1.5px var(--red-ring),0 0 0 4px var(--red-tint);}
 .run-flow.gv-host .gv-world .node.is-skipped{opacity:.35;box-shadow:none;outline:1.5px dashed var(--line-2);outline-offset:-1.5px;}
 /* settled pips (v1's .nstat, as pseudo-elements: the view creates no pip DOM) */
 .run-flow.gv-host .gv-world .node.is-done::after,.run-flow.gv-host .gv-world .node.is-paused::after,.run-flow.gv-host .gv-world .node.is-stopped::after,.run-flow.gv-host .gv-world .node.is-error::after{content:"";position:absolute;top:-8px;right:-8px;width:21px;height:21px;border-radius:var(--r-sm);z-index:3;color:var(--on-status);font:800 12px/21px var(--sans);text-align:center;}
@@ -7619,8 +7570,7 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
    "Follows gateway" reads as a name and a word, never two words. In a hint it keeps the hint's ink. */
 .ref{font-weight:600;color:var(--ink);font-size:.96em;}
 .hint .ref,small .ref{color:var(--ink-2);}
-/* Policy origin colour: blue. Amber is built-in, violet is plugin, green is user. */
-.badge.blue{background:var(--blue-bg);color:var(--blue-ink);}
+/* Policy origin colour: slate (.badge.slate). Amber is built-in, violet is plugin, green is user. */
 /* Projects row: the policy cell sits UNDER the team-metrics cell in the same 420px column (board 2,
    reworked): two cells side by side squeezed both to a truncated status at every laptop width, and
    the row's name column must not move. A grid, so the name spans both rows and the chevron stays
@@ -7687,15 +7637,15 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .tp-head-actions .hint{max-width:230px;}
 .tp-sec-label{margin:22px 0 12px;font:600 var(--fs-meta) var(--sans);color:var(--ink-3);}
 .tp-ov-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px;}
-.tp-ov-card{padding:20px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
+.tp-ov-card{padding:var(--pad-card);background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
 .tp-ov-label{font:600 var(--fs-meta) var(--sans);color:var(--ink-3);}
 .tp-ov-value{margin-top:10px;font-size:22px;font-weight:700;letter-spacing:-.02em;color:var(--ink);overflow-wrap:anywhere;}
 .tp-ov-sub{margin-top:6px;font-size:11.5px;color:var(--ink-3);overflow-wrap:anywhere;}
 .tp-ov-sub.is-warn{color:var(--amber-ink);}
 /* Tabs: the History / Project detail pills, one row per page section. */
 .tp-tabs{margin:26px 0 16px;}
-.tp-tab-badge{padding:2px 8px;border-radius:var(--r-sm);background:var(--field);color:var(--ink-3);font:600 10.5px var(--mono);}
-.tp-tab.active .tp-tab-badge{background:var(--blue-bg);color:var(--blue-ink);}
+.tp-tab-badge{padding:0 6px;background:var(--field);color:var(--ink-2);}
+.tp-tab.active .tp-tab-badge{background:var(--line-2);color:var(--ink);}
 .tp-sec[hidden]{display:none;}
 .tp-sec-body{display:flex;flex-direction:column;gap:18px;}
 /* Plugins tab */
@@ -7768,7 +7718,7 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .tp-head-btns{display:flex;align-items:center;gap:8px;}
 .tp-head-status{font-size:12px;color:var(--ink-3);text-align:right;}
 .tp-head-status .linkish{font-size:12px;}
-.tp-editor .card.tp-group-card,.tp-editor details.card{padding:20px 22px;}
+.tp-editor .card.tp-group-card,.tp-editor details.card{padding:var(--pad-card);}
 .tp-editor details.card > summary{cursor:pointer;font-size:14px;list-style:none;}
 .tp-editor details.card > summary::-webkit-details-marker{display:none;}
 /* icons: chevron, chevron-down */
@@ -7917,7 +7867,7 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 [data-view="connectors"] .topbar{flex-wrap:wrap;}
 [data-view="marketplace"] .topbar{flex-wrap:wrap;}
 .mcp-sets{display:grid;grid-template-columns:minmax(220px,300px) minmax(0,1fr);gap:18px;align-items:start;}
-.mcp-setlist{padding:8px;display:flex;flex-direction:column;gap:2px;}
+.mcp-setlist{padding:var(--pad-tile);display:flex;flex-direction:column;gap:2px;}
 .mcp-setrow{display:flex;flex-direction:column;gap:3px;text-align:left;padding:10px 12px;border:0;border-radius:var(--r-sm);background:none;font:inherit;color:inherit;cursor:pointer;}
 .mcp-setrow.on{background:var(--field);}
 .mcp-setrow.greyed{opacity:.55;}
@@ -7928,11 +7878,11 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .mcp-usedby .hint{margin-top:0;color:var(--ink-2);}
 .mcp-usedby > .chip{display:inline-flex;align-items:center;gap:6px;}
 .mcp-usedby > .chip:has(> .btn){padding-block:0;}   /* the 28px remove button sets the height */
-/* Run tags (#718): an outlined pill (the .person-chip shape); the chip field wraps chips and its input. */
-.tag-chip{display:inline-flex;align-items:center;gap:4px;max-width:240px;padding:2px 8px;border-radius:var(--r-xs);border:1px solid var(--line);
-  color:var(--ink-2);font-size:var(--fs-caption);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.tag-x{border:0;background:none;cursor:pointer;color:var(--ink-3);font:inherit;padding:0 2px;}
-.tag-x:hover{color:var(--ink);}
+/* Run tags (#718): the one chip, filled; a removable chip's × sits inside it. The chip field wraps chips and its input. */
+.tag-chip{gap:2px;max-width:240px;padding:0 6px;background:var(--field);color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;}
+.tag-x{display:inline-grid;place-items:center;width:14px;height:14px;margin-right:-3px;padding:0;border:0;border-radius:var(--r-xs);
+  background:none;color:var(--ink-2);cursor:pointer;}
+.tag-x:hover{color:var(--ink);background:var(--hover);}
 .tag-input{display:flex;flex-wrap:wrap;align-items:center;gap:6px;}
 .tag-input-chips{display:contents;}
 .tag-input-text{flex:1 1 160px;min-width:120px;}
@@ -7954,7 +7904,7 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .tag-dim-table{margin-bottom:6px;}
 .tag-dim-table td{vertical-align:top;}
 .tag-dim-tag{display:flex;flex-direction:column;gap:2px;}
-.tag-dim-key-small{font-family:var(--mono);font-size:11px;color:var(--ink-3);border-color:transparent;background:transparent;padding:0 2px;height:auto;}
+.tag-dim-key-small{font-family:var(--mono);font-size:var(--fs-caption);color:var(--ink-2);border-color:transparent;background:transparent;padding:0 2px;height:auto;}
 .tag-value-chips{display:flex;flex-wrap:wrap;gap:4px;align-items:center;}
 .tag-value-chips .tag-value-input{flex:1;min-width:80px;}
 .tag-rule-pickers{display:inline-flex;gap:6px;align-items:center;flex:none;}
@@ -7965,12 +7915,11 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .rd-page-meta > .tag-chip{margin-left:6px;}
 /* Cost tags (s2): the auto-fill flash on the New run form, the missing required-key slot, the run page's facts tile. */
 .tag-chip.is-filled{animation:tagFilled 1.6s ease-out;}
-@keyframes tagFilled{0%,30%{background:var(--amber-bg);}100%{background:transparent;}}
+@keyframes tagFilled{0%,30%{background:var(--amber-bg);}100%{background:var(--field);}}
 .tag-chip.tag-missing{background:transparent;border:1px dashed var(--amber);color:var(--amber-ink);}
 @media (prefers-reduced-motion: reduce){.tag-chip.is-filled{animation:none;}}
 /* Cost tags under the facts tiles (D15): one wrapping row — the label, the chips and missing-key slots, the control last. */
-.rd-cost-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px;min-width:0;}
-.rd-cost-row-label{margin-right:2px;font-size:var(--fs-meta);color:var(--ink-2);}
+.rd-cost-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;}
 /* Run labels (slice 1): the outlined chip; colour only on the dot (labelHue → .hue-*). */
 .label-chip{display:inline-flex;align-items:center;gap:4px;max-width:160px;min-width:0;padding:2px 6px;border-radius:var(--r-xs);border:1px solid var(--line);
   color:var(--ink-2);font-size:var(--fs-caption);font-weight:500;white-space:nowrap;}
@@ -7991,7 +7940,8 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .runs-label-filter[hidden]{display:none;}
 .rd-labels{display:flex;flex-wrap:wrap;align-items:center;gap:6px;}
 /* Shaper wait: .rd-sheet is a flex row there (see the .rd-glance[data-shaper-wait] rules); the labels take their own line under the head. */
-.rd-glance[data-shaper-wait]:not([data-wait-open]) > .rd-sheet > .rd-labels{flex-basis:100%;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) > .rd-sheet > .rd-kv{flex-basis:100%;}
+.rd-glance[data-shaper-wait]:not([data-wait-open]) > .rd-sheet > .rd-kv > .rd-kv-row:not([data-fact="labels"]){display:none;}
 .chat-rc-labels{display:flex;flex-wrap:wrap;gap:4px;}
 .chat-rc-labels:empty{display:none;}
 .label-picker{position:fixed;z-index:60;width:280px;max-width:calc(100vw - 16px);max-height:60vh;overflow:auto;background:var(--panel);
@@ -8042,7 +7992,7 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .sk-pick-row:last-child{border-bottom:0;}
 .sk-pick-row.greyed{color:var(--ink-3);}
 .sk-pick-row .hint{margin:0 0 0 auto;}
-.sk-pick-row input{margin:0;accent-color:var(--ink);}
+.sk-pick-row input{margin:0;}
 .sk-import-form .seg{margin-bottom:16px;flex-wrap:wrap;}
 .sk-row-input{display:flex;gap:8px;align-items:center;}
 .sk-row-input .input{flex:1 1 auto;min-width:0;}
@@ -8135,7 +8085,7 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .ac-card > .btn,.ac-action > .btn,.ac-stack > .btn{align-self:flex-start}
 .ac-builtin{display:flex;align-items:center;gap:10px;padding:6px 0;cursor:pointer}
 .ac-builtin-label{font-weight:500;color:var(--ink)}
-.ac-builtin-note{margin-left:auto;font-size:12.5px;color:var(--ink-2)}
+.ac-builtin-note{margin-left:auto;font-size:var(--fs-meta);color:var(--ink-2)}
 .ac-step{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end}
 .ac-step .ac-field{flex:1 1 180px}
 .ac-step-num{font-weight:600;color:var(--ink-2);align-self:center}
@@ -8319,7 +8269,7 @@ body.view-workflows .main{padding:0;overflow:hidden;display:flex;flex-direction:
 .wfv-bar .wfv-chev{width:12px;height:12px;color:var(--ink-2);}
 .wfv-savewrap{display:inline-flex;margin-left:4px;}
 .wfv-savewrap > .btn-primary:disabled{opacity:.7;}
-input.wfv-name{width:auto;height:30px;min-width:56px;max-width:280px;field-sizing:content;padding:0 9px;border:0;border-radius:var(--r-sm);background:transparent;color:var(--ink);font:500 13.5px/1 var(--sans);}
+input.wfv-name{width:auto;height:32px;min-width:56px;max-width:280px;field-sizing:content;padding:0 9px;border:0;border-radius:var(--r-sm);background:transparent;color:var(--ink);font:500 var(--fs-body)/1 var(--sans);}
 input.wfv-name:hover{background:var(--hover);}
 input.wfv-name:focus{background:var(--field);outline:none;}
 input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
@@ -8334,13 +8284,8 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
 /* 40px square: the chat pill and the Auto-layout / zoom bars are 40px, and the dock bottom-aligns, so a 32px .btn-icon sat low. */
 .wfv-plus{flex:0 0 auto;width:40px;height:40px;}
 .wfv-plus svg{width:17px;height:17px;stroke-width:2;}
-.wfv-menu{position:fixed;z-index:45;min-width:180px;max-height:min(60vh,420px);overflow:auto;padding:4px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);box-shadow:var(--shadow-menu);font-size:12.5px;}
-.wfv-menu-item{display:flex;align-items:center;gap:10px;width:100%;height:30px;padding:0 9px;border:0;border-radius:var(--r-sm);background:none;color:var(--ink);text-align:left;font:inherit;cursor:pointer;}
-.wfv-menu-item:hover,.wfv-menu-item:focus-visible{background:var(--hover);outline:none;}
-.wfv-menu-item:disabled{color:var(--ink-2);opacity:.55;cursor:default;}
+.wfv-menu{position:fixed;z-index:45;min-width:180px;max-height:min(60vh,420px);overflow:auto;}
 .wfv-menu-hint{margin-left:auto;color:var(--ink-2);font-size:11px;}
-.wfv-menu-h{padding:8px 9px 4px;color:var(--ink-2);font-size:12px;font-weight:600;}
-.wfv-menu-sep{height:1px;margin:4px 6px;background:var(--line);}
 .wfv-overlay{position:absolute;inset:0;pointer-events:none;z-index:10;}
 .wfv-tb{position:absolute;pointer-events:auto;display:flex;align-items:center;gap:1px;box-sizing:border-box;padding:2px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-sm);box-shadow:var(--shadow-pop);white-space:nowrap;max-width:calc(100% - 16px);overflow-x:auto;scrollbar-width:none;}
 .wfv-tb .btn-quiet:is([aria-expanded="true"],[aria-pressed="true"]){background:var(--hover);color:var(--ink);}
@@ -8369,15 +8314,15 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
 /* visibility:hidden takes the closed card's controls out of the Tab order (it flips at the END of the close). */
 .wfl[data-open="false"]{width:0;flex-basis:0;opacity:0;border-width:0;margin-left:-8px;pointer-events:none;visibility:hidden;}
 .wfl-head{position:relative;display:flex;align-items:center;gap:2px;height:46px;flex:0 0 auto;padding:0 8px 0 14px;border-bottom:1px solid var(--line);}
-.wfl-title{margin:0 auto 0 0;font-size:13.5px;font-weight:600;transition:opacity .16s,visibility .16s;}
+.wfl-title{margin:0 auto 0 0;transition:opacity .16s,visibility .16s;}
 .wfl-head.is-searching .wfl-title{opacity:0;visibility:hidden;}
 /* Folded, the search box is just its button beside ✕; open, its left edge slides to the card's edge and the field fills it. */
-.wfl-sbox{position:absolute;top:8px;right:40px;left:calc(100% - 70px);height:30px;display:flex;align-items:center;gap:4px;overflow:hidden;transition:left .24s cubic-bezier(.2,.8,.2,1);}
+.wfl-sbox{position:absolute;top:9px;right:40px;left:calc(100% - 70px);height:28px;display:flex;align-items:center;gap:4px;overflow:hidden;transition:left .24s cubic-bezier(.2,.8,.2,1);}
 .wfl-head.is-searching .wfl-sbox{left:7px;}
 .wfl-filter-btn{flex:0 0 auto;}
 .wfl-filter-btn svg{width:16px;height:16px;}
 .wfl-filter-btn[aria-expanded="true"]:not(:hover){background:none;color:var(--ink);}
-.wfl-filter-input{flex:1 1 auto;min-width:0;height:30px;padding:0 4px;border:0;background:none;color:var(--ink);font:inherit;font-size:14px;opacity:0;transition:opacity .18s;-webkit-appearance:none;appearance:none;}
+.wfl-filter-input{flex:1 1 auto;min-width:0;height:28px;padding:0 4px;border:0;background:none;color:var(--ink);font:inherit;font-size:var(--fs-meta);opacity:0;transition:opacity .18s;-webkit-appearance:none;appearance:none;}
 .wfl-head.is-searching .wfl-filter-input{opacity:1;}
 .wfl-filter-input:focus{outline:none;}
 .wfl-filter-input::placeholder{color:var(--ink-3);}
@@ -8392,15 +8337,14 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
 .wfl-new.is-slot{width:32px;height:32px;}
 .wfl-tools{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:10px 12px 2px;}
 .wfl-list{flex:1 1 auto;min-height:0;overflow:auto;padding:6px 8px 10px;}
-.wfl-folder{display:flex;align-items:center;gap:10px;width:100%;min-height:32px;padding:4px 6px;border:0;border-radius:var(--r-sm);background:none;color:var(--ink);font:500 13px/1.3 var(--sans);text-align:left;cursor:pointer;}
-.wfl-folder:hover{background:var(--field);}
+.wfl-folder{display:flex;align-items:center;gap:10px;min-height:32px;padding:4px 6px;color:var(--ink);font:500 13px/1.3 var(--sans);}
 .wfl-folder svg{flex:0 0 auto;width:24px;height:24px;color:var(--ink-2);stroke-width:1.6;}
 .wfl-folder .wfl-chev{width:14px;height:14px;stroke-width:2;}
 .wfl-folder[aria-expanded="true"] .wfl-chev{transform:rotate(90deg);}
 .wfl-fname{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .wfl-fn{flex:0 0 auto;font-size:12px;color:var(--ink-2);}
 .wfl-fold{padding:0 0 6px 20px;}
-:is(.wfl-folder,.wfl-tab):focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.wfl-tab:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .wfl-item{border-radius:var(--r-sm);}
 .wfl-list .wfl-item{border-bottom:1px solid var(--line);border-radius:0;}
 .wfl-list .wfl-item:last-child{border-bottom:0;}
@@ -8567,7 +8511,7 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
 #wfc-attach{position:relative;}
 #wfc-attach[data-count]::after{content:attr(data-count);position:absolute;top:1px;right:0;min-width:14px;height:14px;padding:0 3px;box-sizing:border-box;border-radius:var(--r-sm);background:var(--ink);color:var(--on-ink);font:600 9px/14px var(--sans);text-align:center;}
 .wfc-shell[data-open="true"] #wfc-attach::after{display:none;}
-.wfc-drop{position:absolute;inset:0;z-index:4;display:flex;align-items:center;justify-content:center;pointer-events:none;border:2px dashed var(--ink-3);border-radius:inherit;background:color-mix(in srgb,var(--panel) 88%,transparent);}
+.wfc-drop{position:absolute;inset:0;z-index:4;display:flex;align-items:center;justify-content:center;pointer-events:none;border:2px dashed var(--ink-3);border-radius:inherit;background:var(--panel-veil);}
 .wfc-drop-l{padding:4px 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);color:var(--ink);font-weight:600;font-size:12px;line-height:1.4;white-space:nowrap;}
 .wfc-uatts{align-self:flex-end;display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:flex-end;gap:6px;max-width:82%;margin-top:-4px;}
 .wfc-upill{max-width:220px;padding:3px 10px;border:1px solid var(--line);border-radius:var(--r-xs);background:var(--field);color:var(--ink-2);font:500 11px/1.4 var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
@@ -8899,7 +8843,7 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 /* The status inks on the result's --field and on a hovered row: plain --green-ink / --red-ink measure 4.03–4.45:1 in
    light; 15 % ink lifts them past 4.5:1 in both themes (the token blocks stay the only colour literals). */
 .chat-rc-add{color:color-mix(in srgb, var(--green-ink) 85%, var(--ink));}
-.chat-rc-del{color:color-mix(in srgb, var(--red-ink) 85%, var(--ink));}
+.chat-rc-del{color:var(--red-ink-soft);}
 .chat-rc-files{display:flex;flex-direction:column;gap:2px;margin:12px 0 0;padding:0;list-style:none;}
 .chat-rc-file{display:flex;align-items:center;gap:10px;width:100%;padding:5px 8px;border:0;border-radius:var(--r-sm);background:transparent;color:var(--ink);font-family:var(--mono);font-size:11.5px;text-align:left;cursor:pointer;}
 .chat-rc-file:hover{background:var(--hover);}
@@ -8925,7 +8869,7 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .chat-rc-art-dl:hover{background:var(--hover);color:var(--ink);}
 :is(.chat-rc-art-name,.chat-rc-art-dl):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .chat-rc-res-foot{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:12px;}
-.chat-rc-res-err{margin-right:auto;font-size:12px;color:color-mix(in srgb, var(--red-ink) 85%, var(--ink));}
+.chat-rc-res-err{margin-right:auto;font-size:12px;color:var(--red-ink-soft);}
 .chat-rc-res-err[hidden]{display:none;}
 .chat-rc-create-pr,.chat-rc-view-pr,.chat-rc-apply{display:inline-flex;align-items:center;height:30px;padding:0 14px;border:0;border-radius:var(--r-sm);background:var(--ink);color:var(--panel);font:inherit;font-weight:600;font-size:12px;text-decoration:none;white-space:nowrap;cursor:pointer;}
 .chat-rc-create-pr:hover,.chat-rc-view-pr:hover,.chat-rc-apply:hover{box-shadow:inset 0 0 0 999px var(--solid-hover);}
@@ -9419,7 +9363,7 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 /* Run tiles: the title button stretches over the tile; Answer sits above that overlay. Pill and button text on the
    tinted washes uses the strong inks (AA in light: --X-ink on --X-bg reads 3.3–3.9:1 there). */
 .chat-home-runs{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;}
-.chat-run-tile{position:relative;display:flex;flex-direction:column;gap:10px;min-width:0;padding:12px;border:0;border-radius:var(--r-card);background:none;}
+.chat-run-tile{position:relative;display:flex;flex-direction:column;gap:10px;min-width:0;padding:var(--pad-tile);border:0;border-radius:var(--r-card);background:none;}
 .chat-run-tile:hover{background:var(--hover);}
 .chat-run-tile:hover{border-color:var(--hover-outline);}
 .chat-run-tile.is-need{background:var(--amber-wash);border-color:var(--amber-line);}
@@ -9478,7 +9422,7 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
    picture needs and its light-dark() tokens follow: light (dark ink) on the pale blue, dark (light ink) on the red
    and the night one. The button stays the light one on every card. */
 .chat-home-promos{display:flex;flex-direction:column;gap:10px;}
-.chat-home-promos-h{margin:0;color:var(--ink-2);font:600 12px/1.3 var(--sans);}
+.chat-home-promos-h{margin:0;color:var(--ink);}
 .chat-home-promo-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;}
 .chat-home-promo{display:flex;flex-direction:column;align-items:flex-start;gap:6px;min-width:0;padding:14px;border:0;border-radius:var(--r-card);background:var(--field) center/cover no-repeat;color:var(--ink);color-scheme:light;}
 .chat-home-promo[data-promo="workflows"]{background-image:url(/assets/promo-workflows.jpg);color-scheme:dark;}
@@ -9490,7 +9434,7 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .chat-home-promo-b{margin-top:4px;color-scheme:light;}
 /* Start from a preset (#712 slice 2): one wrapping row of chips below the quick actions. */
 .chat-home-presets{display:flex;flex-direction:column;gap:8px;}
-.chat-home-presets-h{font-size:13px;font-weight:600;margin:0;color:var(--ink-2);}
+.chat-home-presets-h{margin:0;color:var(--ink);}
 .chat-home-preset-row{display:flex;flex-wrap:wrap;gap:8px;}
 .chat-home-preset,.chat-home-preset-more{height:28px;padding:0 10px;border:0;border-radius:var(--r-xs);background:var(--field);color:var(--ink);font:inherit;cursor:pointer;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .chat-home-preset-more{background:transparent;color:var(--ink-2);}
@@ -9590,6 +9534,30 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 /* D31: a shaped run's bar — the three controls live in the ⋯ menu */
 .rd-bar[data-shaped] .rd-bar-end > :is(.rd-night-wrap,.rd-after,.term-opener){display:none;}
 .rd-bar-more{flex:none;}   /* ⋯ is .btn .btn-quiet .btn-icon in markup */
+/* Run 3 (D13): the bar is the primary action, Stop and ⋯ on every run page; ⋯ drives the controls hidden here. */
+.rd-bar .rd-bar-end > :is(.rd-night-wrap,.rd-after,.term-opener){display:none;}
+.hd-bar .rd-bar-end > :is(.hd-save-preset,.hd-after,.term-opener){display:none;}
+/* At 290px the bar shrinks by rule: the primary label ellipsizes, Stop and the icon buttons keep their size. */
+.rd-bar-end,.gpage-actions{min-width:0;flex:0 1 auto;}
+:is(.rd-actions,.gpage-actions) .btn-primary{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.rd-bar :is(.btn-danger,.btn-icon){flex:none;}
+/* Run 3 (D6): the breadcrumb at the bar's left (split layout only). */
+.rd-crumbs{display:flex;align-items:center;gap:4px;min-width:0;font-size:var(--fs-meta);color:var(--ink-2);}
+.rd-crumbs[hidden]{display:none;}
+.rd-crumb{min-width:0;max-width:24ch;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:inherit;text-decoration:none;}
+a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
+.rd-crumb[aria-current="page"]{color:var(--ink);}
+.rd-crumb-sep{display:inline-flex;flex:none;color:var(--ink-3);}
+/* Run 3 (D8): the facts block — 12px labels in one column, 13px values; label over value in a narrow card. */
+.rd-kv{container:rd-kv / inline-size;margin:0;display:flex;flex-direction:column;}
+.rd-kv-row{display:grid;grid-template-columns:96px minmax(0,1fr);gap:12px;align-items:baseline;padding:8px 0;}
+/* Divided rows: a line above every shown row but the first shown one (a hidden first row takes no line with it). */
+.rd-kv-row:not([hidden]) ~ .rd-kv-row{border-top:1px solid var(--line);}
+.rd-kv-row[hidden]{display:none;}
+.rd-kv-k{font-size:var(--fs-meta);line-height:var(--lh-body);color:var(--ink-2);}
+.rd-kv-v{margin:0;min-width:0;font-size:var(--fs-body);line-height:var(--lh-body);color:var(--ink);display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;overflow-wrap:anywhere;}
+@container rd-kv (max-width:420px){.rd-kv-row{grid-template-columns:minmax(0,1fr);gap:2px;}}
+.rd-kv:not(:has(> .rd-kv-row:not([hidden]))){display:none;}
 /* D30: while a shaped run waits on the person, Results / How it ran and the graph fold under "Run details ›" */
 .rd-wait-more{align-self:flex-start;}
 .rd-glance[data-shaper-wait]:not([data-wait-open]) :is(.rd-result,.rd-live,.rd-live-row){display:none;}
@@ -9688,11 +9656,11 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .shape-feature-actions[hidden]{display:none;}
 .shape-feature-err{flex-basis:100%;padding:6px 8px;border-radius:var(--r-ctrl);background:var(--red-bg);color:var(--red-ink);overflow-wrap:anywhere;}
 .shape-feature-err[hidden]{display:none;}
-/* D16: the group page (#feature/ID), full width. */
-.feature-page{padding:16px 20px;}
-/* Phones: the page keeps the one 16px gutter (main's); the feature page and its group page add no side padding of
-   their own, or three paddings stacked to 72px and squeezed the title and tabs (QA). */
-@media (max-width:640px){.main{padding:16px 16px 32px;}.feature-page,.feature-page .gpage{padding-left:0;padding-right:0;}}
+/* Run 3 (D1): the group page's host in the Runs pane (#group-detail); .gpage pads itself like the run page. Its loading,
+   gone and error lines sit under the bar's Back with the run page's gutter. */
+.feature-page{padding:0;}
+.feature-page > :is(.feature-page-loading,.feature-page-gone,.feature-page-error){margin:0;padding:28px 32px;}
+@media (max-width:640px){.main{padding:16px 16px 32px;}.feature-page > :is(.feature-page-loading,.feature-page-gone,.feature-page-error){padding:16px;}}
 .feature-page-gone,.feature-page-loading{color:var(--ink-3);}
 /* §5a.2: the group page could not load (server unreachable): the error and a Try again on one line. */
 .feature-page-error{color:var(--red-ink);}
@@ -9741,11 +9709,6 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .chat-rc-status .run-status-head > .status-dot{display:none;}   /* the card's dot is the head's (D10) */
 .chat-rc-actions{display:flex;flex-wrap:wrap;gap:8px;}   /* the card's footer buttons (D4): its own and the made ones */
 .rd-actions{display:contents;}   /* the model's made buttons (D4) are bar items, with the bar's own gap */
-.rd-group-line{margin:4px 0 0;font-size:13px;color:var(--ink-2);display:flex;gap:6px;align-items:center;}
-.rd-group-line[hidden]{display:none;}
-.rd-group-k{font-size:12px;font-weight:600;color:var(--ink-2);}
-/* QA 8: on a phone the Group row stacks: the label, "Part of …", then "run 4 of 5". */
-@media (max-width:640px){.rd-group-line{flex-direction:column;align-items:flex-start;gap:2px;}.rd-group-sep{display:none;}}
 /* member rows: dividers, never boxes (§1.4); the page table is one grid, rows are subgrids so columns line up (§3.3a) */
 .run-members{list-style:none;margin:0;padding:0;}
 .run-member{display:grid;grid-template-columns:16px 12px minmax(0,1fr) minmax(0,1.4fr) max-content;align-items:center;gap:8px;
@@ -9774,9 +9737,13 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .run-member-line{color:var(--ink-2);font-size:var(--fs-meta);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .run-member-cost{text-align:right;color:var(--ink-2);}
 /* the group page: one column, so title, card, tabs and table share edges */
-.gpage{display:flex;flex-direction:column;gap:12px;margin:0 auto;padding:16px 20px;box-sizing:border-box;max-width:1216px;}
+.gpage{display:flex;flex-direction:column;gap:22px;margin:0 auto;padding:28px 32px var(--ask-dock-clearance);box-sizing:border-box;max-width:1216px;}
 .gpage > *{width:100%;box-sizing:border-box;}
 .gpage-bar{display:flex;align-items:center;gap:8px;}
+/* Run 3 (D15): the run page's spacing — the bar spans the pane like the run page's .rd-bar (its height and padding), and
+   the title sits as far under it as the run page's (the glance's 28px top padding, 20px on a phone; the page gap is 22px). */
+.gpage > .gpage-bar.rd-bar{width:auto;margin:-28px -32px 6px;}
+@media (max-width:640px){.gpage{padding:16px 16px var(--ask-dock-clearance);}.gpage > .gpage-bar.rd-bar{margin:-16px -16px -2px;}}
 .gpage-spacer{flex:1;}
 .gpage-actions{display:inline-flex;gap:6px;}
 .gpage-ship{margin:8px 0 0;font-size:13px;color:var(--ink-2);}

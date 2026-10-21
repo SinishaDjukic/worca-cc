@@ -7,6 +7,7 @@
 // purely local (a show-all toggle, chip add/remove inside the editor).
 
 import { icon } from './icons.mjs';
+import { makeSwitch } from './switch.mjs';
 import { engineLabel } from '../../src/shared/engine-switch.mjs';
 import { normaliseDimension } from '../../src/shared/tag-dimensions.mjs';
 const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -422,7 +423,12 @@ export function renderPolicyStats(payload, { doc = globalThis.document } = {}) {
   return grid;
 }
 
-const PLUGIN_STATE = { ok: ['green', 'installed'], missing: ['grey', 'not installed'], outdated: ['amber', 'below the floor'], disabled: ['amber', 'disabled here'] };
+const PLUGIN_STATE = {
+  ok: ['green', 'installed'],
+  missing: ['grey', 'not installed'],
+  outdated: ['amber', 'below the floor'],
+  disabled: ['amber', 'disabled here'],
+};
 
 /** The Plugins tab (board 11): what the policy expects, against what this machine has. */
 export function renderPolicyPluginsPanel(payload, { doc = globalThis.document } = {}) {
@@ -507,7 +513,7 @@ export function renderPolicyCatalogPanel(payload, { doc = globalThis.document } 
       main.append(h(doc, 'b', null, g.name || g.id), ' ', code(doc, `gp:${g.id}`));
       const bits = [g.envScrub ? 'env scrubbed' : 'env passed through', `${(g.protectedPaths || []).length} protected path${(g.protectedPaths || []).length === 1 ? '' : 's'}`, `${(g.deny || []).length} deny rule${(g.deny || []).length === 1 ? '' : 's'}`];
       main.append(h(doc, 'small', 'hint', bits.join(' · ')));
-      row.append(main, h(doc, 'span', 'badge blue', 'policy'));
+      row.append(main, h(doc, 'span', 'badge slate', 'policy'));
       list.append(row);
     }
     sc.append(list);
@@ -527,7 +533,7 @@ export function renderPolicyCatalogPanel(payload, { doc = globalThis.document } 
       if (m.engine && m.engine !== 'claude') main.append(' ', h(doc, 'span', 'badge violet tp-engine', engineLabel(m.engine)));
       const envKeys = Object.keys(m.env || {});
       main.append(h(doc, 'small', 'hint', [(m.efforts || []).join(' · ') || 'default efforts', envKeys.length ? `${envKeys.length} env var${envKeys.length === 1 ? '' : 's'}` : null, m.env?.ANTHROPIC_BASE_URL ? 'routes via base URL' : null].filter(Boolean).join(' · ')));
-      row.append(main, h(doc, 'span', 'badge blue', 'policy'));
+      row.append(main, h(doc, 'span', 'badge slate', 'policy'));
       list.append(row);
     }
     mc.append(list);
@@ -609,9 +615,7 @@ function textField(doc, label, cls, value, placeholder, mono = false) {
   return wrap;
 }
 function boolField(doc, label, cls, on) {
-  const lab = h(doc, 'label', 'check-row tp-cat-bool'); const cb = h(doc, 'input', cls); cb.type = 'checkbox'; cb.checked = !!on;
-  lab.append(cb, ` ${label}`);
-  return lab;
+  return makeSwitch(doc, { label, checked: !!on, inputClass: cls, rowClass: 'tp-cat-bool' }).row;
 }
 function catalogItem(doc, cat, item) {
   const it = h(doc, 'div', 'tp-cat-item'); it.dataset.cat = cat;
@@ -718,7 +722,7 @@ function valueControl(doc, meta, entry, row) {
       const lab = h(doc, 'label', 'switch-row'); const cb = h(doc, 'input', 'sw-input tp-val'); cb.type = 'checkbox'; cb.checked = v === true;
       cb.setAttribute('aria-label', meta.label);
       if (meta.offOnly) cb.disabled = true;             // a policy can only switch it off (registry: offOnly)
-      lab.append(cb, h(doc, 'span', 'switch switch-sm'), h(doc, 'span', 'txt', v === true ? 'on' : 'off'));
+      lab.append(cb, h(doc, 'span', 'switch'), h(doc, 'span', 'txt', v === true ? 'on' : 'off'));
       cb.addEventListener('change', () => { lab.querySelector('.txt').textContent = cb.checked ? 'on' : 'off'; });
       wrap.append(lab); break;
     }
@@ -810,7 +814,7 @@ function valueControl(doc, meta, entry, row) {
       const label = h(doc, 'input', 'input tp-dim-label'); label.type = 'text'; label.placeholder = 'label (Cost centre)'; label.setAttribute('aria-label', 'Label');
       const values = h(doc, 'input', 'input tp-dim-values'); values.type = 'text'; values.placeholder = 'allowed values, comma-separated (optional)'; values.setAttribute('aria-label', 'Allowed values');
       const def = h(doc, 'input', 'input tp-dim-default'); def.type = 'text'; def.placeholder = 'default (optional)'; def.setAttribute('aria-label', 'Default');
-      const req = h(doc, 'label', 'check-row'); const cb = h(doc, 'input', 'tp-dim-required'); cb.type = 'checkbox'; req.append(cb, ' Required');
+      const req = makeSwitch(doc, { label: 'Required', inputClass: 'tp-dim-required' }).row;
       const b = h(doc, 'button', 'btn btn-sm tp-add-btn', 'Add'); b.prepend(icon(doc, 'plus', 14)); b.type = 'button';
       add.append(key, label, values, def, req, b); wrap.append(add);
       break;
@@ -873,8 +877,7 @@ function editorRow(doc, meta, entry, scope) {
     const sw = h(doc, 'span', 'select-wrap'); const sel = h(doc, 'select', 'select tp-onbreach-sel');
     for (const val of ['pause', 'warn']) { const o = h(doc, 'option', null, val); o.value = val; if ((entry?.onBreach || 'pause') === val) o.selected = true; sel.append(o); }
     sw.append(sel); lab.append(sw);
-    const rr = h(doc, 'label', 'check-row tp-require'); const cb = h(doc, 'input', 'tp-require-reason'); cb.type = 'checkbox'; cb.checked = !!entry?.requireReason;
-    rr.append(cb, ' reason required');
+    const rr = makeSwitch(doc, { label: 'reason required', checked: !!entry?.requireReason, inputClass: 'tp-require-reason', rowClass: 'tp-require' }).row;
     extra.append(lab, rr, h(doc, 'span', 'tp-src', 'soft cap: the run pauses (or warns) at the tighter of team and local'));
     const sync = () => { extra.hidden = seg.querySelector('.on')?.dataset.kind !== 'soft'; };
     seg.addEventListener('click', () => setTimeout(sync, 0)); sync();
@@ -1370,7 +1373,7 @@ export function renderTeamChip({ kind, display }, { doc = globalThis.document } 
 export function renderPolicyNotesLine({ policy, notes = [] }, { doc = globalThis.document } = {}) {
   const root = h(doc, 'div', 'policy-line');
   const head = h(doc, 'div', 'pl-head-row');
-  head.append(h(doc, 'span', 'badge blue', 'team policy'), ref(doc, policy?.home || '—'));
+  head.append(h(doc, 'span', 'badge slate', 'team policy'), ref(doc, policy?.home || '—'));
   const n = notes.length;
   head.append(h(doc, 'span', 'muted', n ? ` · ${n} note${n === 1 ? '' : 's'} · nothing here blocks the run` : ' · nothing to note'));
   root.append(head);
@@ -1459,7 +1462,7 @@ export function renderRequiredStrip(requirements = [], blockedPlugins = [], { do
   // the head — the Team policy page's Plugins tab, in short form.
   const root = h(doc, 'section', 'card pl-required-card');
   const head = h(doc, 'div', 'card-head');
-  head.append(h(doc, 'span', 'badge blue', 'team policy'), h(doc, 'b', null, 'Required by team policy'), h(doc, 'span', 'badge', String(off.length + blocked.length)));
+  head.append(h(doc, 'span', 'badge slate', 'team policy'), h(doc, 'b', null, 'Required by team policy'), h(doc, 'span', 'badge', String(off.length + blocked.length)));
   const actions = h(doc, 'div', 'pl-required-actions');
   actions.append(requiredActions(doc, requirements));
   head.append(actions);
@@ -1541,11 +1544,11 @@ export function renderMcpStrip(rows = [], { doc = globalThis.document, skills = 
     const required = (skills || []).filter((r) => homeList.includes(r.home));
     const what = required.length === 1 ? `the skill ${required[0].name} · ${required[0].plugin}` : `${required.length} skills`;
     const todo = openSkills.length < required.length ? ` — ${openSkills.length} to set up` : '';
-    head.append(h(doc, 'span', 'badge grey', 'Team policy'), h(doc, 'b', null, `${homes} ${one ? 'requires' : 'require'} ${what} in ${one ? 'its Team set' : 'their Team sets'}${todo}`));
+    head.append(h(doc, 'span', 'badge slate', 'Team policy'), h(doc, 'b', null, `${homes} ${one ? 'requires' : 'require'} ${what} in ${one ? 'its Team set' : 'their Team sets'}${todo}`));
   } else {
     const what = [`${open.length} MCP item${open.length === 1 ? '' : 's'}`,
       openSkills.length ? `${openSkills.length} skill${openSkills.length === 1 ? '' : 's'}` : null].filter(Boolean).join(' and ');
-    head.append(h(doc, 'span', 'badge blue', 'team policy'), h(doc, 'b', null, `${homes}: ${what} to set up`));
+    head.append(h(doc, 'span', 'badge slate', 'team policy'), h(doc, 'b', null, `${homes}: ${what} to set up`));
   }
   const actions = h(doc, 'div', 'pl-required-actions'); actions.append(btn(doc, 'pl-policy-setup', 'Set up…'));
   head.append(actions);
@@ -1656,7 +1659,7 @@ export function renderSetupChecklist({ home, requirements = [], seeds = [], trus
   const trust = h(doc, 'label', 'switch-row tp-trust-row');
   const cb = h(doc, 'input', 'sw-input tp-trust'); cb.type = 'checkbox'; cb.checked = !!trusted; cb.dataset.home = home || '';
   const txt = h(doc, 'span', 'txt'); txt.append(h(doc, 'b', null, 'Trust this policy home'), h(doc, 'small', 'hint', `Install and update required plugins from ${home || 'this home'} automatically on this machine, without this checklist. Plugins run with your user privileges. MCP servers are never installed or turned on automatically, and required skills are never turned on automatically — but updates to required skills apply without another review when you trust this home. You can turn this off on the Marketplace page at any time.`));
-  trust.append(cb, h(doc, 'span', 'switch switch-sm'), txt);
+  trust.append(cb, h(doc, 'span', 'switch'), txt);
   root.append(trust);
   // One footer action: the modal's own Close is the way out (a "Later" here said the same twice).
   const actions = h(doc, 'div', 'confirm-actions');
@@ -1766,7 +1769,7 @@ export async function handleTeamSkillClick(e, deps) {
 }
 
 export function renderPolicyBadgeFor(origin, { doc = globalThis.document } = {}) {
-  const b = h(doc, 'span', 'badge blue tp-origin', 'policy');
+  const b = h(doc, 'span', 'badge slate tp-origin', 'policy');
   if (origin) b.title = `from the team policy on ${origin}`;
   return b;
 }

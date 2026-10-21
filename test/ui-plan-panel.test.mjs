@@ -125,19 +125,21 @@ for (const [name, opts] of [['an unshaped run (gate on)', { row: { shaping: unde
     assert.equal(g.querySelector('.rd-questions').nextElementSibling, g.querySelector('.rd-night-sec'));
     const bar = doc(ctx).querySelector('#run-detail .rd-bar');
     assert.equal(bar.hasAttribute('data-shaped'), false);
-    assert.equal(bar.querySelector('.rd-bar-more').hidden, true);
+    // Run 3 (D13): every run page's bar folds its secondary controls into ⋯, shaped or not.
+    assert.equal(bar.querySelector('.rd-bar-more').hidden, false);
     // The plan still waits: the one run model's Needs you actions (slice 4), Answer then Stop, and no Pause.
     assert.deepEqual([...bar.querySelectorAll('[data-model-action]')].filter((b) => !b.hidden).map((b) => b.dataset.modelAction), ['answer', 'stop']);
     assert.equal(bar.querySelector('.rd-pause').hidden, true);
   });
 }
 
-test('wide Live view: the waiting card sits in row 2, sheet and graph in row 3, folded is one column', () => {
+test('run 3 (D16): the Live view never takes a second column; a waiting card follows the column order', () => {
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
-  const wide = css.slice(css.indexOf('@container rd (min-width: 960px)'));
-  assert.match(wide, /\.rd-glance\[data-live="on"\]\[data-shaper-wait\] > \.rd-questions\{grid-row:2;\}/);
-  assert.match(wide, /\.rd-glance\[data-live="on"\]\[data-shaper-wait\] > :is\(\.rd-sheet,\.rd-live\)\{grid-row:3;\}/);
-  assert.match(wide, /\.rd-glance\[data-live="on"\]\[data-shaper-wait\]:not\(\[data-wait-open\]\):not\(\[hidden\]\)\{display:flex;/);
+  assert.equal(css.indexOf('@container rd (min-width: 960px)'), -1);
+  assert.doesNotMatch(css, /\.rd-glance\[data-live="on"\][^{]*\{[^}]*grid-(row|column)/);
+  // Every glance child but the graph keeps the 544px measure; the graph takes the pane's content width.
+  assert.match(css, /\.rd-glance > :not\(\.rd-live\)\{width:100%;max-width:544px;align-self:center;\}/);
+  assert.match(css, /\.rd-glance > \.rd-live\{align-self:stretch;width:100%;max-width:none;\}/);
 });
 
 test('the Away mode select is not repainted while a change posts (a ⋯ pick leaves focus on ⋯)', async () => {

@@ -112,7 +112,7 @@ test('setup checklist: one Skill row per required skill, the state badge, the fa
 test('the Sets-tab strip lists open skill items next to MCP ones; all done (or none): no strip', () => {
   const strip = renderMcpStrip([], { doc, skills: SKILLS });
   assert.equal(strip.querySelector('.card-head b').textContent, 'acme/platform requires 5 skills in its Team set — 4 to set up');
-  assert.deepEqual([strip.querySelector('.card-head .badge').className, strip.querySelector('.card-head .badge').textContent], ['badge grey', 'Team policy']);
+  assert.deepEqual([strip.querySelector('.card-head .badge').className, strip.querySelector('.card-head .badge').textContent], ['badge slate', 'Team policy']);
   assert.equal(renderMcpStrip([], { doc, skills: [SKILLS[0]] }).querySelector('.card-head b').textContent, 'acme/platform requires the skill deploy-checklist · acme in its Team set');
   assert.equal(renderMcpStrip([], { doc, skills: [SKILLS[0], { ...SKILLS[3], home: 'acme/other' }] }).querySelector('.card-head b').textContent, 'acme/platform, acme/other require 2 skills in their Team sets');
   assert.deepEqual([...strip.querySelectorAll('.pl-required[data-skill]')].map((r) => r.querySelector('b').textContent), ['deploy-checklist', 'qa-runbook', 'incident-triage', 'bad-one']);
@@ -121,7 +121,7 @@ test('the Sets-tab strip lists open skill items next to MCP ones; all done (or n
   const mcpRow = { home: HOME, serverId: 'policy:acme/platform/pg', name: 'pg', plugin: null, type: 'stdio', state: 'off', setName: 'Team · acme/platform', field: null, problem: null };
   const mixed = renderMcpStrip([mcpRow], { doc, skills: SKILLS });
   assert.equal(mixed.querySelector('.card-head b').textContent, 'acme/platform: 1 MCP item and 4 skills to set up');
-  assert.equal(mixed.querySelector('.card-head .badge').className, 'badge blue', 'with MCP items open the strip keeps the MCP register');
+  assert.equal(mixed.querySelector('.card-head .badge').className, 'badge slate', 'with MCP items open the strip keeps the MCP register');
   assert.equal(renderMcpStrip([mcpRow], { doc }).querySelector('.card-head b').textContent, 'acme/platform: 1 MCP item to set up', 'MCP only: as before');
   assert.equal(renderMcpStrip([], { doc, skills: [SKILLS[1]] }), null);
 });

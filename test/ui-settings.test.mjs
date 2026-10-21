@@ -156,6 +156,10 @@ test('Settings › Tags: the switch is off by default; on with no tag ticked Man
   const sw = doc.getElementById('tagsEnforce');
   const hint = doc.getElementById('tagsEnforceNone');
   assert.equal(sw.checked, false, 'off by default');
+  const rowEl = sw.closest('.drow');
+  assert.ok(rowEl.classList.contains('switch-drow'), 'a settings row: label left, switch right');
+  assert.equal(rowEl.querySelector('.drow-label').getAttribute('for'), 'tagsEnforce');
+  assert.ok(sw.closest('.drow-control'), 'the switch sits in the right-hand control cell');
   assert.equal(hint.hidden, true, 'off: no hint');
   sw.click();
   assert.equal(hint.hidden, false, 'on, nothing Mandatory: the hint shows');

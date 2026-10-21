@@ -189,7 +189,7 @@ export function renderMemberRows(doc, row) {
     const line = textEl(doc, 'span', 'run-member-line', memberStatusText(m));
     const pr = textEl(doc, 'span', 'run-member-pr', '');
     if (mb.adhoc) pr.append(textEl(doc, 'span', 'runs-indep', 'Independent'));
-    if (m.pr) pr.append(prChip(doc, m.pr, { link: true }));
+    if (m.pr && !m.pr.pending) pr.append(prChip(doc, m.pr, { link: true }));
     const num = textEl(doc, 'span', 'run-member-num', unnumbered ? '' : String(mb.position));
     const main = textEl(doc, 'span', 'run-member-main', '');
     main.append(title, line);

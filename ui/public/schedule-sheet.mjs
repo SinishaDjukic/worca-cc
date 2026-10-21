@@ -231,7 +231,7 @@ export function openScheduleSheet({
     const divergedSel = selectEl('sched-sync-diverged', divergedOpts, divergedStart, 'If the base has diverged');
     const syncRow = showSync ? h('div', { class: 'field-grid-2 sched-sync' },
       h('div', { class: 'field field-compact' }, h('span', { class: 'label', text: 'Sync' }),
-        h('label', { class: 'switch-row' }, syncAutoIn, h('span', { class: 'switch switch-sm' }), h('span', { class: 'txt', text: 'Auto-sync before the run' }))),
+        h('label', { class: 'switch-row' }, syncAutoIn, h('span', { class: 'switch' }), h('span', { class: 'txt', text: 'Auto-sync before the run' }))),
       h('div', { class: 'field field-compact' }, h('label', { for: 'sched-sync-diverged', text: 'If the base has diverged' }), divergedSel)) : null;
     syncAutoIn.addEventListener('change', () => { syncAutoTouched = true; });
     /** Only what the person chose: undefined when nothing was set, so no `sync` key at all. */
