@@ -106,7 +106,7 @@ function askTotals(fromMs, toMs) {
  *  that spent in the window (orientation passes and interview rounds). */
 function requirementsTotals(fromMs, toMs) {
   const row = prepare(`
-    SELECT COALESCE(SUM(amount_usd), 0) AS s, COUNT(DISTINCT feature_seq) AS features
+    SELECT COALESCE(SUM(amount_usd), 0) AS s, COUNT(DISTINCT NULLIF(feature_seq, 0)) AS features
     FROM req_cost_ledger WHERE ts >= ? AND ts < ?`).get(fromMs, toMs);
   return { spendUsd: roundUsd(row?.s || 0), features: row?.features || 0 };
 }

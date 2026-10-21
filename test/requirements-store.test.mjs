@@ -9,7 +9,11 @@ import {
   createFeature, getFeature, requireFeature, listFeatures, updateFeature, addFeatureCost,
   appendTurn, listTurns, getContext, setContext,
   createStart, listStarts, latestStart, startByRunId, linkPipeline, recentLookCosts,
+  getBrief, usableBrief, listBriefs, listMakingBriefs, beginBrief, saveBriefResult, failBrief, setBriefSections,
+  addBriefCost, deleteBrief, briefUsers, recentBriefCosts,
 } from '../src/core/requirements/store.mjs';
+
+import { recordRequirementsCostDelta } from '../src/core/cost-budget.mjs';
 
 useTempHome(after);
 
@@ -139,4 +143,83 @@ test('recentLookCosts: orientation turns with a positive cost, newest first, lim
   assert.equal(all.length, before + 2);
   assert.deepEqual(all.slice(0, 2), [0.25, 0.5]);
   assert.deepEqual(recentLookCosts(1), [0.25]);
+});
+
+// ---- product briefs (A7) ----
+
+test('briefs: one row per scope; beginBrief twice is BUSY; JSON round trips; usableBrief is null until saved', () => {
+  assert.equal(getBrief('project', 'bp1'), null);
+  const b = beginBrief('project', 'bp1', { by: 'ann' });
+  assert.equal(b.status, 'making');
+  assert.deepEqual(b.sections, { product: '', users: [], terms: [], areas: [] });
+  assert.equal(usableBrief('project', 'bp1'), null);
+  assert.throws(() => beginBrief('project', 'bp1'), (e) => e instanceof RequirementsError && e.code === 'BUSY');
+  assert.deepEqual(listMakingBriefs().map((x) => x.scopeKey), ['bp1']);
+  const sections = { product: 'A shop', users: [{ name: 'Shopper', can: 'buys' }], terms: [], areas: [{ name: 'Orders', files: ['a.mjs'] }] };
+  const saved = saveBriefResult(b.id, { sections, edited: { users: true }, sources: [{ project: 'bp1', branch: 'main', ref: 'refs/heads/main', sha: 'abc' }],
+    files: ['a.mjs'], seed: { kind: 'workspace-description' }, model: 'm' }, { by: 'bob' });
+  assert.equal(saved.status, 'ready');
+  assert.equal(saved.madeBy, 'bob');
+  assert.ok(saved.madeAt);
+  assert.deepEqual(saved.sections, sections);
+  assert.deepEqual(saved.edited, { users: true });
+  assert.deepEqual(saved.seed, { kind: 'workspace-description' });
+  assert.deepEqual(saved.files, ['a.mjs']);
+  assert.equal(usableBrief('project', 'bp1').id, b.id);
+  assert.deepEqual(listBriefs().find((x) => x.scopeKey === 'bp1'), { scopeType: 'project', scopeKey: 'bp1', status: 'ready', madeAt: saved.madeAt });
+  assert.equal(listMakingBriefs().length, 0);
+  // refresh keeps the row, stays usable while making, clears the error
+  const again = beginBrief('project', 'bp1');
+  assert.equal(again.id, b.id);
+  assert.equal(again.status, 'making');
+  assert.ok(usableBrief('project', 'bp1'));
+});
+
+test('briefs: failBrief returns to ready when it was made, else empty; setBriefSections leaves status alone', () => {
+  const a = beginBrief('workspace', 'bw1');
+  const f1 = failBrief(a.id, { code: 'TIMEOUT', message: 'slow' });
+  assert.equal(f1.status, 'empty');
+  assert.equal(f1.error.code, 'TIMEOUT');
+  assert.ok(f1.error.at);
+  beginBrief('workspace', 'bw1');
+  saveBriefResult(a.id, { sections: { product: 'x', users: [], terms: [], areas: [] } });
+  beginBrief('workspace', 'bw1');
+  const f2 = failBrief(a.id, { code: 'X', message: 'y' });
+  assert.equal(f2.status, 'ready');
+  const edited = setBriefSections(a.id, { sections: { product: 'mine', users: [], terms: [], areas: [] }, edited: { product: true } }, { by: 'cy' });
+  assert.equal(edited.status, 'ready');
+  assert.equal(edited.sections.product, 'mine');
+  assert.deepEqual(edited.edited, { product: true });
+  assert.equal(edited.error.code, 'X');
+  addBriefCost(a.id, 0.25);
+  addBriefCost(a.id, 0);
+  assert.equal(getBrief('workspace', 'bw1').costUsd, 0.25);
+  assert.equal(deleteBrief('workspace', 'bw1'), true);
+  assert.equal(getBrief('workspace', 'bw1'), null);
+  assert.equal(deleteBrief('workspace', 'bw1'), false);
+});
+
+test('briefUsers counts only rounds naming the current brief id; archived features are left out', () => {
+  const b = beginBrief('project', 'bu1');
+  saveBriefResult(b.id, { sections: { product: 'x', users: [], terms: [], areas: [] } });
+  const f1 = createFeature({ scopeType: 'project', scopeKey: 'bu1', title: 'one', description: 'd' });
+  const f2 = createFeature({ scopeType: 'project', scopeKey: 'bu1', title: 'two', description: 'd' });
+  const f3 = createFeature({ scopeType: 'project', scopeKey: 'bu1', title: 'three', description: 'd' });
+  const f4 = createFeature({ scopeType: 'project', scopeKey: 'bu1', title: 'four', description: 'd' });
+  appendTurn(f1.seq, { kind: 'round', payload: { brief: { id: b.id, madeAt: 'x' } } });
+  appendTurn(f1.seq, { kind: 'round', payload: { brief: { id: b.id } } });        // counted once
+  appendTurn(f2.seq, { kind: 'round', payload: { brief: { id: b.id + 100 } } });   // another (deleted) brief
+  appendTurn(f3.seq, { kind: 'round', payload: {} });                              // no brief
+  appendTurn(f4.seq, { kind: 'round', payload: { brief: { id: b.id } } });
+  updateFeature(f4.seq, { status: 'archived' });
+  assert.deepEqual(briefUsers('project', 'bu1'), [{ seq: f1.seq, id: `FEAT-${f1.seq}` }]);
+  assert.deepEqual(briefUsers('project', 'no-brief'), []);
+});
+
+test('recentBriefCosts: the newest ledger rows with a brief id', () => {
+  recordRequirementsCostDelta({ featureSeq: 1, amountUsd: 9 });                 // a feature row is not a brief look
+  recordRequirementsCostDelta({ briefId: 1, amountUsd: 0.1 });
+  recordRequirementsCostDelta({ briefId: 2, amountUsd: 0.3 });
+  assert.deepEqual(recentBriefCosts(2), [0.3, 0.1]);
+  assert.deepEqual(recentBriefCosts(), [0.3, 0.1]);
 });

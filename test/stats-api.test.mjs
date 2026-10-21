@@ -235,3 +235,11 @@ test('requirements spend shows in totals, prev, all-time, series and the budget 
   assert.equal(budget.allTimeSpendUsd, Math.round((budget0.allTimeSpendUsd + 1.75) * 1e4) / 1e4);
   assert.equal(budget.allTimeSpendUsd, all.totals.spentUsd, 'the spend card and the all-time tile agree');
 });
+
+test('a brief look counts in requirements spend but not in the feature count', () => {
+  const before = getStats({ range: 'all', now: NOW }).totals.requirements;
+  recordRequirementsCostDelta({ briefId: 9, amountUsd: 0.5, tsMs: +new Date(2026, 7, 4, 11) });
+  const after = getStats({ range: 'all', now: NOW }).totals.requirements;
+  assert.equal(after.spendUsd, Math.round((before.spendUsd + 0.5) * 1e6) / 1e6);
+  assert.equal(after.features, before.features);
+});

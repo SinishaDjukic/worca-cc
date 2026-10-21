@@ -18,7 +18,7 @@ test('fresh DB has the requirements tables', () => {
   ]);
   assert.deepEqual(cols(db, 'req_turns'), ['id', 'feature_seq', 'kind', 'payload_json', 'model', 'cost_usd', 'created_by', 'created_at']);
   assert.deepEqual(cols(db, 'req_contexts'), ['scope_type', 'scope_key', 'body', 'look_at_code', 'updated_by', 'updated_at']);
-  assert.deepEqual(cols(db, 'req_cost_ledger'), ['id', 'feature_seq', 'turn_id', 'amount_usd', 'model', 'ts']);
+  assert.deepEqual(cols(db, 'req_cost_ledger'), ['id', 'feature_seq', 'turn_id', 'amount_usd', 'model', 'ts', 'brief_id']);
 });
 
 test('a v56 DB gets them at v57', () => {

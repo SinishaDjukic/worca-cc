@@ -76,10 +76,10 @@ export function askWindowedSpendUsd(fromMs, toMs = null) {
 
 /** Append one requirements cost event (plans/requirements-design.md D9): an orientation pass or an
  *  interview round. Same no-op gate as the other ledgers ($0 mock calls leave no row). */
-export function recordRequirementsCostDelta({ featureSeq, turnId = null, amountUsd, model = null, tsMs = Date.now() }) {
-  if (!featureSeq || !Number.isFinite(amountUsd) || amountUsd <= 0) return;
-  prepare('INSERT INTO req_cost_ledger (feature_seq, turn_id, amount_usd, model, ts) VALUES (?, ?, ?, ?, ?)')
-    .run(featureSeq, turnId, amountUsd, model, tsMs);
+export function recordRequirementsCostDelta({ featureSeq = 0, briefId = null, turnId = null, amountUsd, model = null, tsMs = Date.now() }) {
+  if ((!featureSeq && !briefId) || !Number.isFinite(amountUsd) || amountUsd <= 0) return;
+  prepare('INSERT INTO req_cost_ledger (feature_seq, brief_id, turn_id, amount_usd, model, ts) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(featureSeq || 0, briefId || null, turnId, amountUsd, model, tsMs);
 }
 
 /** Windowed requirements spend; toMs null = open-ended (budget windows), else ts < toMs. */

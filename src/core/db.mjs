@@ -60,7 +60,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 58;
+export const SCHEMA_VERSION = 59;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -833,6 +833,7 @@ ${STEP_QUESTIONS_DDL}
  * against the live schema so the gap can be healed regardless of the stamp.
  */
 const INCREMENTAL_COLUMNS = {
+  req_cost_ledger:        { brief_id: 'INTEGER' },   // v59: a brief look's spend (feature_seq is 0 then)
   pipelines:              { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT',
                             source_type: "TEXT DEFAULT 'prompt'", source_ref: 'TEXT', guardrails_id: 'TEXT',
                             archived_at: 'TEXT', cost_cap_override: 'INTEGER NOT NULL DEFAULT 0',
@@ -1111,6 +1112,28 @@ CREATE INDEX IF NOT EXISTS req_starts_feature ON req_starts(feature_seq, version
 CREATE INDEX IF NOT EXISTS req_starts_pipeline ON req_starts(pipeline_id);
 `;
 
+// Requirements A7 (plans/requirements-a7-design.md §3): the optional Product brief, one row per project or
+// workspace. IF NOT EXISTS + an INCREMENTAL_TABLES entry: reconcile-safe against another branch's v59.
+const REQUIREMENTS_BRIEFS_DDL = `
+CREATE TABLE IF NOT EXISTS req_briefs (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  scope_type    TEXT NOT NULL,
+  scope_key     TEXT NOT NULL,
+  status        TEXT NOT NULL,
+  sections_json TEXT NOT NULL DEFAULT '{}',
+  edited_json   TEXT NOT NULL DEFAULT '{}',
+  sources_json  TEXT NOT NULL DEFAULT '[]',
+  files_json    TEXT NOT NULL DEFAULT '[]',
+  seed_json     TEXT,
+  model         TEXT,
+  cost_usd      REAL NOT NULL DEFAULT 0,
+  error_json    TEXT,
+  made_by TEXT, made_at TEXT,
+  created_by TEXT, created_at TEXT NOT NULL, updated_by TEXT, updated_at TEXT NOT NULL,
+  UNIQUE (scope_type, scope_key)
+);
+`;
+
 const INCREMENTAL_TABLES = {
   config_workflow_wires: CONFIG_WORKFLOW_WIRES_DDL,
   step_questions:    STEP_QUESTIONS_DDL,
@@ -1144,6 +1167,7 @@ const INCREMENTAL_TABLES = {
   req_contexts:      REQUIREMENTS_DDL,
   req_cost_ledger:   REQUIREMENTS_DDL,
   req_starts:        REQUIREMENTS_STARTS_DDL,
+  req_briefs:        REQUIREMENTS_BRIEFS_DDL,
 };
 
 /**
@@ -2227,6 +2251,7 @@ export function migrate(db) {
     if (current < 56) db.exec(PR_WATCH_DDL);         // watched PRs + crash-safe fix-run provenance
     if (current < 57) db.exec(REQUIREMENTS_DDL);     // requirements: features, thread, contexts, spend — reconcile-safe
     if (current < 58) db.exec(REQUIREMENTS_STARTS_DDL);   // requirements: one row per Start in Worca — reconcile-safe
+    if (current < 59) { db.exec(REQUIREMENTS_BRIEFS_DDL); repairSchemaGaps(db, schemaGaps(db)); }   // requirements: the product brief + ledger.brief_id
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

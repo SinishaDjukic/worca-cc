@@ -192,3 +192,113 @@ export function recentLookCosts(limit = 10) {
   return prepare(`SELECT cost_usd FROM req_turns WHERE kind = 'orientation' AND cost_usd > 0
       ORDER BY id DESC LIMIT ?`).all(Number(limit)).map((r) => Number(r.cost_usd));
 }
+
+// ---- product briefs (plans/requirements-a7-design.md §3) ----
+
+const emptySections = () => ({ product: '', users: [], terms: [], areas: [] });
+
+function toBrief(r) {
+  if (!r) return null;
+  return {
+    id: Number(r.id), scopeType: r.scope_type, scopeKey: r.scope_key, status: r.status,
+    sections: { ...emptySections(), ...json(r.sections_json, {}) }, edited: json(r.edited_json, {}),
+    sources: json(r.sources_json, []), files: json(r.files_json, []), seed: json(r.seed_json, null),
+    model: r.model || null, costUsd: Math.round((Number(r.cost_usd) || 0) * 1e4) / 1e4,
+    error: json(r.error_json, null), madeBy: r.made_by || null, madeAt: r.made_at || null,
+    createdBy: r.created_by || null, createdAt: r.created_at, updatedBy: r.updated_by || null, updatedAt: r.updated_at,
+  };
+}
+
+const briefById = (id) => toBrief(prepare('SELECT * FROM req_briefs WHERE id = ?').get(Number(id)));
+
+export function getBrief(scopeType, scopeKey) {
+  checkScope(scopeType, scopeKey);
+  getDb();
+  return toBrief(prepare('SELECT * FROM req_briefs WHERE scope_type = ? AND scope_key = ?').get(scopeType, scopeKey));
+}
+
+/** The brief once it has been made (also while it is being refreshed), else null. */
+export function usableBrief(scopeType, scopeKey) {
+  const b = getBrief(scopeType, scopeKey);
+  return b && b.madeAt ? b : null;
+}
+
+export function listBriefs() {
+  getDb();
+  return prepare('SELECT scope_type, scope_key, status, made_at FROM req_briefs ORDER BY id').all()
+    .map((r) => ({ scopeType: r.scope_type, scopeKey: r.scope_key, status: r.status, madeAt: r.made_at || null }));
+}
+
+export function listMakingBriefs() {
+  getDb();
+  return prepare("SELECT * FROM req_briefs WHERE status = 'making' ORDER BY id").all().map(toBrief);
+}
+
+/** Upsert into `making`; BUSY when the brief is already being made (checked and set in one UPDATE). */
+export function beginBrief(scopeType, scopeKey, { by = null } = {}) {
+  checkScope(scopeType, scopeKey);
+  getDb();
+  const key = scopeKey.trim();
+  const ts = iso();
+  prepare(`INSERT OR IGNORE INTO req_briefs (scope_type, scope_key, status, created_by, created_at, updated_by, updated_at)
+      VALUES (?, ?, 'empty', ?, ?, ?, ?)`).run(scopeType, key, by, ts, by, ts);
+  const r = prepare(`UPDATE req_briefs SET status = 'making', error_json = NULL, updated_by = ?, updated_at = ?
+      WHERE scope_type = ? AND scope_key = ? AND status != 'making'`).run(by, ts, scopeType, key);
+  if (!Number(r.changes)) throw new RequirementsError('BUSY', 'Worca is already making this brief.');
+  return getBrief(scopeType, key);
+}
+
+export function saveBriefResult(id, { sections, edited, sources, files, seed, model } = {}, { by = null } = {}) {
+  getDb();
+  const ts = iso();
+  prepare(`UPDATE req_briefs SET status = 'ready', sections_json = ?, edited_json = ?, sources_json = ?, files_json = ?,
+      seed_json = ?, model = ?, error_json = NULL, made_by = ?, made_at = ?, updated_by = ?, updated_at = ? WHERE id = ?`)
+    .run(JSON.stringify(sections || emptySections()), JSON.stringify(edited || {}), JSON.stringify(sources || []),
+      JSON.stringify(files || []), seed ? JSON.stringify(seed) : null, model || null, by, ts, by, ts, Number(id));
+  return briefById(id);
+}
+
+export function failBrief(id, { code, message } = {}) {
+  getDb();
+  const ts = iso();
+  prepare(`UPDATE req_briefs SET error_json = ?, status = CASE WHEN made_at IS NOT NULL THEN 'ready' ELSE 'empty' END,
+      updated_at = ? WHERE id = ?`).run(JSON.stringify({ code, message, at: ts }), ts, Number(id));
+  return briefById(id);
+}
+
+/** The owner's edits; never touches status or sources. */
+export function setBriefSections(id, { sections, edited } = {}, { by = null } = {}) {
+  getDb();
+  prepare('UPDATE req_briefs SET sections_json = ?, edited_json = ?, updated_by = ?, updated_at = ? WHERE id = ?')
+    .run(JSON.stringify(sections || emptySections()), JSON.stringify(edited || {}), by, iso(), Number(id));
+  return briefById(id);
+}
+
+export function addBriefCost(id, usd) {
+  if (!Number.isFinite(usd) || usd <= 0) return;
+  getDb();
+  prepare('UPDATE req_briefs SET cost_usd = cost_usd + ? WHERE id = ?').run(usd, Number(id));
+}
+
+export function deleteBrief(scopeType, scopeKey) {
+  checkScope(scopeType, scopeKey);
+  getDb();
+  return Number(prepare('DELETE FROM req_briefs WHERE scope_type = ? AND scope_key = ?').run(scopeType, scopeKey).changes) > 0;
+}
+
+/** Features of the scope (not archived) with a round that names the scope's current brief id. */
+export function briefUsers(scopeType, scopeKey) {
+  const b = getBrief(scopeType, scopeKey);
+  if (!b) return [];
+  return prepare(`SELECT f.seq FROM req_features f WHERE f.scope_type = ? AND f.scope_key = ? AND f.status != 'archived'
+      AND EXISTS (SELECT 1 FROM req_turns t WHERE t.feature_seq = f.seq AND t.kind = 'round'
+        AND json_extract(t.payload_json, '$.brief.id') = ?) ORDER BY f.seq`)
+    .all(scopeType, scopeKey, b.id).map((r) => ({ seq: Number(r.seq), id: featureId(r.seq) }));
+}
+
+/** Costs of the newest brief looks (ledger rows with a brief_id), newest first. */
+export function recentBriefCosts(limit = 10) {
+  getDb();
+  return prepare('SELECT amount_usd FROM req_cost_ledger WHERE brief_id IS NOT NULL ORDER BY id DESC LIMIT ?')
+    .all(Number(limit)).map((r) => Number(r.amount_usd));
+}
