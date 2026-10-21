@@ -116,6 +116,7 @@ test('checkout runs setup once and streams action-* frames with replay', async (
   const { ws, msgs, opened } = openWs(); await opened;
   const res = await post(`/api/runs/${id}/checkout?projectKey=${key}`, {});
   assert.equal(res.status, 200);
+  await waitFor(() => msgs.some((m) => m.type === 'actions-changed'));   // the strips refetch (audit F-2)
   await waitFor(() => msgs.some((m) => m.type === 'action-status' && m.snapshot.actionId === '__setup' && m.snapshot.status === 'exited'));
   await waitFor(async () => (await getJson(`/api/runs/${id}/actions?projectKey=${key}`)).members[0].checkout?.setup?.status === 'ok');
   const model = await getJson(`/api/runs/${id}/actions?projectKey=${key}`);
@@ -203,8 +204,11 @@ test('action entries never appear as live runs', async () => {
 
 test('discard stops services first then removes the worktree', async () => {
   await post(`/api/runs/${id}/actions/run/start?projectKey=${key}`, {});
+  const { ws, msgs, opened } = openWs(); await opened;
   const r = await fetch(`${base}/api/runs/${id}/checkout?projectKey=${key}`, { method: 'DELETE', headers: JSONH, body: '{}' });
   assert.equal(r.status, 200);
+  await waitFor(() => msgs.some((m) => m.type === 'actions-changed' && m.action === 'checkout'));
+  ws.close();
   assert.equal((await getJson('/api/actions/running')).length, 0);
   assert.equal((await getJson(`/api/runs/${id}/actions?projectKey=${key}`)).members[0].state, 'not-checked-out');
 });

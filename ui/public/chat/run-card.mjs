@@ -12,6 +12,7 @@ import { planApprovedLine } from '../log-line.mjs';
 import { mountRunGraph } from '../graph/run-hosts.mjs';
 import { fmtDur, fmtUsd, isGraphManifest, manifestNodes } from '../graph/run-decor.mjs';
 import { askKindOf } from '../ask/registry.mjs';
+import { SHIP_LABEL } from '../ship-words.mjs';
 import { shapeFirstOn } from './shape-gate.mjs';
 import { checklistScore } from '../../../src/shared/shape/review-checklist.mjs';
 import { NO_PROJECT_KEY, NO_PROJECT_NAME } from '../../../src/shared/no-project.mjs';
@@ -717,7 +718,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
         a.rel = 'noopener';
         rfoot.appendChild(a);
       } else {
-        const b = button('chat-rc-create-pr', 'Create pull request');
+        const b = button('chat-rc-create-pr', SHIP_LABEL);
         createPrBtn = b;
         const why = h('span', 'chat-rc-res-err');
         why.hidden = true;

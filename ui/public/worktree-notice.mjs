@@ -78,6 +78,18 @@ export function worktreeNoticeModel({ retained = null, checkout = null, workspac
   };
 }
 
+/** The Overview WORKTREE row, from the same model the notice card paints (audit F-2).
+ *  word: 'retained' | 'checked out' | 'active' | 'released'; dir: the path to show. */
+export function worktreeRowState(model, { live = false, dir = '', removed = true } = {}) {
+  if (model && model.kind === 'retained') return { word: 'retained', dir: dir || model.members[0]?.dir || '' };
+  if (model && model.kind === 'checkout') {
+    const m = model.members[0] || {};
+    return { word: 'checked out', dir: m.dir || dir };
+  }
+  if (live && dir && removed !== true) return { word: 'active', dir };
+  return { word: 'released', dir: '' };
+}
+
 /** The Apply to branch confirm. */
 export function applyConfirmMessage(model) {
   const branches = [...new Set((model?.members || []).map((m) => m.branch).filter(Boolean))];
