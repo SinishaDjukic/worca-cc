@@ -57,7 +57,7 @@ test('Marketplace: divided rows, Remove on .btn-danger, no amber name badge', ()
   assert.deepEqual([...rm.classList], ['btn', 'btn-sm', 'btn-danger', 'pl-remove']);
   const mrm = renderMarketplaceList([MKT], { doc }).querySelector('.pl-mkt-remove');
   assert.ok(mrm.classList.contains('btn') && mrm.classList.contains('btn-danger'));
-  assert.ok(renderAvailableList([MKT], { doc }).querySelector('.pl-mkt-badge').classList.contains('grey'));
+  assert.ok(renderAvailableList([MKT], { doc }).querySelector('.pl-mkt-badge').classList.contains('slate'));
   assert.ok(renderMarketplaceList([MKT], { doc }).querySelector('.pl-mkt-builtin').classList.contains('grey'));
   assert.deepEqual(rules('.pl-remove'), [], 'the solid red skin is gone');
   const intro = page.querySelector('[data-view="marketplace"] .page-intro');
@@ -130,7 +130,7 @@ test('Team policy: sentence-case labels, a sans sync chip, grey "not installed",
   assert.ok(!chip.classList.contains('tp-chip') && chip.classList.contains('tp-sync'), 'the editor value-chip rule (mono) no longer reaches the sync chip');
   assert.match(src, /missing: \['grey', 'not installed'\]/);
   assert.match(src, /'not-installed': \['grey', 'Not installed'/);
-  assert.match(src, /h\(doc, 'span', 'badge grey', 'Team policy'\)/);
+  assert.match(src, /h\(doc, 'span', 'badge slate', 'Team policy'\)/);
   assert.doesNotMatch(src, /h\(doc, 'button', '(?:linkish|tp-unset|tp-chip-rm)/, 'linkish stays only on the a.tp-open-page link');
   assert.doesNotMatch(src, /['"`]\+ ?[A-Za-z]/, 'no typed plus, lowercase "+ add" included');
   assert.doesNotMatch(src, /'✕'/);
@@ -199,7 +199,7 @@ test('the theme proof measures the slice-3 pages, intros and dialogs, and runs t
   assert.match(proof, /\['dialog-sizes', async \(\) => \{/);
   // Both Phase B skip lists (the running and the history variants) exclude dialog-sizes, so it adds no audit rows.
   assert.match(proof, /\['running-detail-tabs', 'layout-widths', 'dialog-sizes'\]\.includes\(id\)/, 'running skip list');
-  assert.match(proof, /\['history-detail-tabs', 'layout-widths', 'dialog-sizes'\]\.includes\(id\)/, 'history skip list');
+  assert.match(proof, /\['history-detail-tabs', 'history-menu', 'layout-widths', 'dialog-sizes'\]\.includes\(id\)/, 'history skip list');
   assert.match(proof, /strayReport\.push\(\{ state: `dialog-sizes #\$\{id\}`/, 'every index.html dialog is stray-audited');
   // The proof's FOOT selector is the unit test's, so the two dialog lists cannot drift.
   const line = proof.match(/const FOOT = (\[[\s\S]*?\.join\(', '\));/);

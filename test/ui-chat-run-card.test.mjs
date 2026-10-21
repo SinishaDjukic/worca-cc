@@ -961,8 +961,8 @@ test('chat run card CSS: the result counts and error, a hovered file row or Stop
   const mixed = (tok) => `color-mix(in srgb, var(${tok}) 85%, var(--ink))`;
   for (const rule of [
     `.chat-rc-add{color:${mixed('--green-ink')};}`,
-    `.chat-rc-del{color:${mixed('--red-ink')};}`,
-    `.chat-rc-res-err{margin-right:auto;font-size:12px;color:${mixed('--red-ink')};}`,
+    '.chat-rc-del{color:var(--red-ink-soft);}',
+    '.chat-rc-res-err{margin-right:auto;font-size:12px;color:var(--red-ink-soft);}',
     '.chat-rc-agent-model{min-width:0;flex:0 100000 auto;overflow:hidden;text-overflow:ellipsis;color:var(--ink-2);font-family:var(--mono);font-size:10.5px;font-weight:500;}',
     '.chat-rc-deciding{padding:28px 16px;text-align:center;color:var(--ink-2);font-size:12.5px;}',
   ]) assert.ok(p3.includes(rule), rule);

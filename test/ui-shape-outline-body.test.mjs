@@ -105,9 +105,9 @@ test('closed: summary, compact runs, folded check line, Stop only in ⋯, box cl
   assert.equal($('.outline-flat'), null, 'Don\'t split lives in ⋯');
   assert.equal($$('.btn-primary').length, 1);
   assert.deepEqual(reachable($$).map((n) => n.className.replace(/^btn /, '').split(' ').pop() || n.type),
-    ['outline-row-more', 'outline-row-more', 'checkbox', 'plan-ask-changes', 'outline-approve', 'plan-more']);
+    ['outline-row-more', 'outline-row-more', 'sw-input', 'plan-ask-changes', 'outline-approve', 'plan-more']);
   assert.equal($$('.outline-row-more')[1].getAttribute('aria-label'), 'More for run 2');
-  assert.equal($('.outline-approve-each').textContent, ' Ask me before each run');
+  assert.equal($('.outline-approve-each').textContent.trim(), 'Ask me before each run');
   assert.doesNotMatch(visibleText(panel), /slice/i);
 });
 

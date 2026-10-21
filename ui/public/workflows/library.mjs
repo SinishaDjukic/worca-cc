@@ -203,7 +203,7 @@ export function createLibrary({ doc, host, actions }) {
   // Built once and kept across repaints, so the search box's slide (CSS, .is-searching) runs and typing never loses
   // the field. Folded: "Library  🔍 ✕". Open: "🔍 Search agents…  ✕" — the box's left edge slides over the title.
   const head = h('div', 'wfl-head');
-  const title = h('h2', 'wfl-title', 'Library');
+  const title = h('h2', 'section-title wfl-title', 'Library');
   const sbox = h('div', 'wfl-sbox');
   const searchBtn = h('button', 'btn btn-quiet btn-icon wfl-filter-btn');
   searchBtn.type = 'button';
@@ -321,7 +321,7 @@ export function createLibrary({ doc, host, actions }) {
   // ── folders ────────────────────────────────────────────────────────────────
   function folderRow(path, count) {
     const key = path.join('/');
-    const row = h('button', 'wfl-folder');
+    const row = h('button', 'wfl-folder row-btn');
     row.type = 'button';
     row.dataset.folder = key;
     row.dataset.focusKey = `folder:${key}`;

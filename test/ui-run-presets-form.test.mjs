@@ -349,6 +349,7 @@ test('Preset ▾: one quiet button with No preset; its menu lists the presets, S
   assert.equal(ctx.doc.getElementById('preset-summary').hidden, true);
   openPresetMenu(ctx.doc);
   assert.equal(ctx.doc.querySelector('.wfv-menu[role="menu"]').getAttribute('aria-label'), 'Presets');
+  assert.ok(ctx.doc.querySelector('.wfv-menu[role="menu"]').classList.contains('menu'), 'openMenu wears the shared .menu box');
   assert.ok(!menuLabels(ctx.doc).includes('Manage presets…'), 'Simple has no Manage presets…');
   assert.ok(menuLabels(ctx.doc).includes('Quick fix') && menuLabels(ctx.doc).at(-1) === 'Save as preset');
   openPresetMenu(ctx.doc);   // toggles it closed

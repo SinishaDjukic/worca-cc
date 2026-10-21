@@ -172,6 +172,17 @@ const runsShot = await shot('runs');
 await cdp('Page.navigate', { url: `${base}/#feature/${f.id}/overview` });
 const OV = '[data-view="feature"] .gpage-panel[data-tab="overview"] .shape-feature';
 await waitFor(`!!document.querySelector('${OV}')`, 'the feature page');
+// Run 1: a pointer user gets no ring on the first slice ⋯ after the page opens; a real Tab brings the 2px ring back.
+await cdp('Emulation.setFocusEmulationEnabled', { enabled: true });
+await ev(`document.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));0`);
+const ringOpen = await ev(`(() => { const m = document.querySelector('${OV} .shape-feature-more');
+  return m && { mode: document.documentElement.dataset.input, outline: getComputedStyle(m).outlineStyle }; })()`);
+check(!!ringOpen && ringOpen.mode === 'pointer' && ringOpen.outline === 'none', `no ring on load: the first slice ⋯ (${JSON.stringify(ringOpen)})`);
+for (const type of ['keyDown', 'keyUp']) await cdp('Input.dispatchKeyEvent', { type, key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
+const ringKey = await ev(`(() => { const m = document.querySelector('${OV} .shape-feature-more'); m.focus(); const cs = getComputedStyle(m);
+  return { mode: document.documentElement.dataset.input, style: cs.outlineStyle, width: cs.outlineWidth }; })()`);
+check(ringKey.mode === 'keyboard' && ringKey.style === 'solid' && ringKey.width === '2px', `no ring on load: the first slice ⋯ shows a 2px solid ring after a key press (${JSON.stringify(ringKey)})`);
+await ev(`document.activeElement && document.activeElement.blur && document.activeElement.blur(); document.documentElement.dataset.input = 'pointer'; 0`);
 const page = await ev(`(() => {
   const el = document.querySelector('${OV}');
   const main = document.querySelector('[data-view="feature"]');

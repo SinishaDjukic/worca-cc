@@ -233,7 +233,8 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     cb.dataset.toggle = m.serverId;
     cb.disabled = team && !m.team.consented;
     cb.setAttribute('aria-label', `Use ${m.copy} in ${set.name}`);
-    sw.append(cb, h(doc, 'span', 'switch switch-sm'));
+    sw.append(cb, h(doc, 'span', 'switch'));
+    if (team && !m.team.consented) sw.appendChild(h(doc, 'span', 'switch-why', 'Allow it in Connectors first'));
     head.append(sw, h(doc, 'b', 'mono', m.copy));
     if (m.provisional) head.appendChild(h(doc, 'span', 'badge amber', 'name provisional'));
     head.appendChild(h(doc, 'span', 'badge', m.sourceLabel));
@@ -309,7 +310,8 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     // (P2's PUT needs a catalog entry: 404) — only removed.
     cb.disabled = missing || (team && !(m.team && m.team.consented));
     cb.setAttribute('aria-label', `Use ${m.qualifiedName} in ${set.name}`);
-    sw.append(cb, h(doc, 'span', 'switch switch-sm'));
+    sw.append(cb, h(doc, 'span', 'switch'));
+    if (!missing && team && !(m.team && m.team.consented)) sw.appendChild(h(doc, 'span', 'switch-why', 'Allow it in Connectors first'));
     head.append(sw, h(doc, 'b', 'mono', m.qualifiedName), sourceBadge(m), h(doc, 'span', 'hint', m.description || ''));
     if (!missing) head.appendChild(mdButton(m.skillId));
     if (!team) head.appendChild(button(doc, 'btn btn-sm', 'Remove', { skillRemove: m.skillId }));
@@ -1172,7 +1174,7 @@ export async function mountProjectMcp(sec, { key, name, api, doc = globalThis.do
   cb.checked = a.includeGeneral;
   cb.setAttribute('aria-label', 'Include General in runs');
   cb.addEventListener('change', () => save({ ...a, includeGeneral: cb.checked }));
-  sw.append(cb, h(doc, 'span', 'switch switch-sm'), h(doc, 'span', 'txt', 'Include General in runs'));
+  sw.append(cb, h(doc, 'span', 'switch'), h(doc, 'span', 'txt', 'Include General in runs'));
   card.append(sw, h(doc, 'small', 'hint', 'Chat always includes General; a workspace run includes it when any member does'));
   if (a.none) card.appendChild(h(doc, 'p', 'hint err', 'No MCP servers in runs on this project'));
   card.appendChild(h(doc, 'small', 'hint err mcp-proj-msg'));

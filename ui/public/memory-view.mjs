@@ -185,7 +185,7 @@ export function renderFileList(files, { doc = globalThis.document, selected = ''
   for (const f of list) {
     const row = h(doc, 'div', `mem-row${f.name === selected ? ' on' : ''}`);
     row.dataset.name = f.name;
-    const main = h(doc, 'div', 'mem-row-main');
+    const main = h(doc, 'div', 'mem-row-main row-btn');
     main.setAttribute('role', 'button'); main.tabIndex = 0;
     main.setAttribute('aria-label', `Open ${f.name}.md`);
     main.appendChild(h(doc, 'div', 'mem-row-name mono', `${f.name}.md`));

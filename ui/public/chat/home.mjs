@@ -127,7 +127,7 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
 
   function buildPromos() {
     const sec = h('section', 'chat-home-promos');
-    const hd = h('h2', 'chat-home-promos-h', 'More you can do');
+    const hd = h('h2', 'section-title chat-home-promos-h', 'More you can do');
     hd.id = 'chat-home-promos-h';
     sec.setAttribute('aria-labelledby', hd.id);
     const row = h('div', 'chat-home-promo-row');

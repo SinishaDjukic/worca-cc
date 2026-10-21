@@ -194,6 +194,26 @@ const typeValue = (window, row, v, key = 'Enter') => {
   vin.value = v; vin.dispatchEvent(new window.KeyboardEvent('keydown', { key, bubbles: true }));
 };
 
+test('cost-tag editor: Mandatory is a switch, Default reads "No default" in every row, the key line is the literal key', () => {
+  const { ed } = editor([
+    { key: 'client', label: 'Client', values: ['acme', 'globex'], required: true, default: '' },
+    { key: 'cc', label: 'Cost centre', values: [], required: false, default: '' },
+  ]);
+  const rows = [...ed.el.querySelectorAll('tr.tag-dim-row')];
+  const req = rows.map((r) => r.querySelector('td[data-label="Mandatory"] input.tag-dim-required'));
+  assert.deepEqual(req.map((i) => [i.classList.contains('sw-input'), i.getAttribute('role'), i.nextElementSibling?.className]),
+    [[true, 'switch', 'switch'], [true, 'switch', 'switch']]);
+  assert.deepEqual(req.map((i) => i.checked), [true, false]);
+  const sel = rows[0].querySelector('.tag-dim-default');
+  assert.equal(sel.tagName, 'SELECT');
+  assert.equal(sel.options[0].value, '');
+  assert.equal(sel.options[0].textContent, 'No default');
+  const inp = rows[1].querySelector('.tag-dim-default');
+  assert.equal(inp.tagName, 'INPUT');
+  assert.equal(inp.placeholder, 'No default');
+  assert.deepEqual(ed.get().map((d) => d.required), [true, false], 'get() still reads .checked');
+});
+
 test('dimension editor (Settings › Tags): a table; empty has no rows; add, key from label, values, Default, Mandatory, remove', () => {
   const { ed, window } = editor();
   assert.deepEqual([...ed.el.querySelectorAll('thead th')].map((th) => th.textContent), ['Cost tag', 'Values', 'Default', 'Mandatory', '']);

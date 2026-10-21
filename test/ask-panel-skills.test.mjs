@@ -237,5 +237,5 @@ test('the activity label names the skill; the level-1 small line has its own sty
   assert.equal(labelForTool('Skill', {}), 'Using a skill');
   const { readFileSync } = await import('node:fs');
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
-  assert.match(css, /\n\.ask-pop-mcp \.ask-model-name small\{display:block;font-size:11\.5px;font-weight:400;color:var\(--ink-3\);\}\n/);
+  assert.match(css, /\n\.ask-pop-mcp \.ask-model-name small\{display:block;font-size:var\(--fs-caption\);font-weight:400;color:var\(--ink-3\);\}\n/);
 });
