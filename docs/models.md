@@ -423,7 +423,7 @@ went away).
   (another terminal, a scheduled run) gets the change through its run-control mailbox and answers
   within a couple of seconds. On a run with MCP servers, switching to a model whose API caps MCP
   tool names at 64 characters warns: pause and resume the run to re-resolve them for that model.
-- **Fresh session.** A stage whose **model** changed starts a fresh Claude session instead of
+- **Fresh session.** A stage whose **model** changed starts a fresh session instead of
   re-attaching its old one, because the old transcript belongs to the old model: on a paused run
   when it resumes, and on a running run for a stage left paused that the resume has not restarted
   yet. A change of effort or sub-agent settings alone keeps the session.
@@ -442,18 +442,23 @@ went away).
   ```
 
   `--stage` takes a node id, or an agent key when only one stage uses it. `default` clears a field
-  back to the run default. On a running run the command prints what was switched and what was
-  skipped; if the run has not answered within about 10 seconds it says "Switch sent". See
-  `worca switch-model help`.
+  back to the run default. `--model` without `--effort` keeps a stage's effort only if the new model
+  offers it, and clears it otherwise (as the panel does). The listing names the run's engine. On a
+  running run the command prints what was switched and what was skipped; if the run has not
+  answered within about 10 seconds it says "Switch sent". See `worca switch-model help`.
 - **API.** `GET /api/pipelines/:id/models` returns `status` (`running` | `paused`), the stages with
-  their `state` (`pending`, `paused`, `may-rerun`, `running`, `completed`) and the run project's
-  model catalog. `POST /api/pipelines/:id/models` takes
+  their `state` (`pending`, `paused`, `may-rerun`, `running`, `completed`), the run's `engine`, the
+  run project's model catalog as that engine offers it (`models`, each with its `efforts`, and
+  `efforts`), `subagents` (whether the engine runs sub-agents at all), `subagentModels` and
+  `subagentEfforts` (the sub-agent values the engine applies; `[]` = none) and `modelForAll` (the
+  model a run resumed with one model for every stage runs on, else `null`).
+  `POST /api/pipelines/:id/models` takes
   `{ "changes": { "<nodeId>": { "model", "effort", "subagentModel", "subagentEffort" } } }` and returns
   `{ ok, changed, skipped, stages, stepper, warnings }`; on a running run `skipped` lists
   `{ nodeId, label, reason }` (`running` | `completed`). A run driven by another process that has not
   answered in time returns **202** `{ ok: false, outcome }`. Errors use `{ error, code }`
   (`NOT_SWITCHABLE_STATUS`, `NOT_RUNNING`, `NOT_READY`, `REHYDRATING`, `NO_OWNER`, `STAGE_COMPLETED`,
-  `INVALID_SELECTION`, `CHANGED`, …).
+  `INVALID_SELECTION`, `CHANGED`, **409** `MODEL_FOR_ALL`, …).
 
 **Engines.** A run keeps the engine it started on, so the Models panel offers only the models that
 engine runs, with that engine's efforts (Claude: medium–max; Codex: minimal–high; Copilot: none–max;
@@ -462,9 +467,16 @@ engine is refused rather than silently replaced by the engine's default. On an e
 non-empty effort on a stage whose model the run's engine cannot run is refused too (that engine would
 drop it); choose a model it runs first. To move a run to another engine, resume it on that engine.
 
-**One model for every stage.** A run resumed "with another model for every stage" runs all remaining
-stages on that model, so per-stage model and effort switches are refused there (sub-agent settings
-still apply).
+Sub-agent settings follow the engine too, because each engine's sub-agents take different settings:
+Claude takes a sub-agent model and a sub-agent effort (medium–max); Codex takes no sub-agent model
+(its sub-agents run on the stage's model) and a sub-agent effort of medium or high only; Copilot and
+Cursor take neither. The panel shows "—" for a setting the engine does not take, and the CLI and the
+API refuse a value it would drop. Clearing a setting back to Default always works.
+
+**One model for every stage.** A run resumed with one model for every remaining stage (Resume ›
+*Switch model…*, or `worca resume <id> --model <model id>`) runs all remaining stages on that model,
+so per-stage model and effort switches are refused there (sub-agent settings still apply). The
+Models panel and `worca switch-model` say so.
 
 ## Plugins and team policy
 
