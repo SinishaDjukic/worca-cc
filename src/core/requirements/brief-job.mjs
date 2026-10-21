@@ -242,8 +242,9 @@ function runJob(row, target, scopeType, scopeKey, by, d) {
 /**
  * Create or refresh the scope's brief. Refuses (throws RequirementsError) before anything is written or called:
  * the switch off, no repository or default branch, already being made, MAX_BRIEF_JOBS running, the budget.
- * Resolves, once the job has started, to `{ brief, job }`: the row now `making`, and the job's promise (which
- * never rejects; callers need not await it). The refusals need the target's git probes, hence the promise.
+ * Resolves, once the job has started, to `{ brief, job, target }`: the row now `making`, the job's promise (which
+ * never rejects; callers need not await it) and the briefTarget the refusals read (the route reuses it rather than
+ * probing git again). The refusals need the target's git probes, hence the promise.
  */
 export async function makeBrief(scopeType, scopeKey, { by = null } = {}, deps = {}) {
   const d = { ...DEFAULTS, ...deps };
@@ -267,7 +268,7 @@ export async function makeBrief(scopeType, scopeKey, { by = null } = {}, deps = 
   const row = beginBrief(scopeType, scopeKey, { by });
   const job = runJob(row, target, scopeType, scopeKey, by, d);   // registers itself under the scope's key
   notify(d, scopeType, scopeKey);
-  return { brief: row, job };
+  return { brief: row, job, target };
 }
 
 /** Boot sweep (D15): a brief left `making` by a restart, whose job is not running, gets INTERRUPTED. */
@@ -309,7 +310,9 @@ const STALENESS_DEFAULTS = Object.freeze({
   commitsAhead: (dir, a, b) => commitsAhead(dir, a, b, { timeout: GIT_TIMEOUT_MS }),
   commitFilesSince: (dir, a, b) => commitFilesSince(dir, a, b, { timeout: GIT_TIMEOUT_MS }),
 });
-const memo = new Map();   // '<id>:<madeAt>' → { at, value }
+// '<id>:<madeAt>' → { at, git }: only the git part (per source: the entry, its commits' files, partial). The areas
+// are matched against the brief as it is on every call: the owner may edit or add areas without a new made_at.
+const memo = new Map();
 const SLOW = Object.freeze({ known: false, reason: 'slow' });
 
 /** One source in its project's own checkout, no model. → `{ entry, commits, partial }`. */
@@ -329,41 +332,52 @@ async function checkSource(src, dir, d) {
   return { entry: { ...base, known: true, commits: n }, commits, partial: n > FILES_MAX || commits.length >= FILES_MAX };
 }
 
-async function checkProject(brief, src, d) {
+/** The git part of a project brief's check: `{ results: [checkSource result] }`. */
+async function gitProject(brief, src, d) {
   const p = (await d.listProjects()).find((x) => x && x.key === brief.scopeKey);
-  const r = await checkSource(src, p && p.exists !== false ? p.path : null, d);
-  if (!r.entry.known) return { known: false, reason: r.entry.reason, branch: src.branch || null, sha: src.sha };
-  const t = touchedAreas(brief.sections, brief.edited, [{ project: src.project, commits: r.commits }]);
-  return { known: true, commits: r.entry.commits, touching: t.touching, areas: t.areas, checked: t.checked, partial: r.partial, sources: [r.entry] };
+  return { results: [await checkSource(src, p && p.exists !== false ? p.path : null, d)] };
 }
 
-async function checkWorkspace(brief, sources, d) {
+/** The git part of a workspace brief's check: the results of the members still in the workspace (a removed member
+ *  is not counted at all), with their names, and the members added since the brief. */
+async function gitWorkspace(brief, sources, d) {
   const ws = await d.workspaceTarget(brief.scopeKey);
   const members = [...((ws && ws.members) || [])].filter((m) => m && m.projectKey).sort(byKey);
   const byProject = new Map(members.map((m) => [m.projectKey, m]));
-  const nameOf = (k) => (byProject.get(k) && byProject.get(k).projectName) || k;
-  // a member removed from the workspace since the brief is not counted at all
+  const names = Object.fromEntries(members.map((m) => [m.projectKey, m.projectName || m.projectKey]));
   const results = await Promise.all(sources.filter((s) => byProject.has(s.project)).map((s) => checkSource(s, byProject.get(s.project).projectDir, d)));
-  const known = results.filter((r) => r.entry.known);
-  const unknown = results.filter((r) => !r.entry.known).map((r) => nameOf(r.entry.project));
   const covered = new Set((brief.sources || []).map((s) => s && s.project));
   const added = members.filter((m) => hasGit(m.projectDir)).slice(0, REPO_LOOK_MAX_MEMBERS)
     .filter((m) => !covered.has(m.projectKey)).map((m) => m.projectName || m.projectKey);
-  const entries = results.map((r) => r.entry);
-  if (!known.length) return { known: false, reason: (entries[0] && entries[0].reason) || 'missing', unknown, added, sources: entries };
-  const t = touchedAreas(brief.sections, brief.edited, known.map((r) => ({ project: r.entry.project, commits: r.commits })));
+  return { results, names, added };
+}
+
+/** The staleness result from the git part and the brief's current areas (run on every call, memo or not). */
+function staleness(brief, src, git) {
+  const touched = (known) => touchedAreas(brief.sections, brief.edited, known.map((r) => ({ project: r.entry.project, commits: r.commits })));
+  if (brief.scopeType !== 'workspace') {
+    const r = git.results[0];
+    if (!r.entry.known) return { known: false, reason: r.entry.reason, branch: src.branch || null, sha: src.sha };
+    const t = touched([r]);
+    return { known: true, commits: r.entry.commits, touching: t.touching, areas: t.areas, checked: t.checked, partial: r.partial, sources: [r.entry] };
+  }
+  const known = git.results.filter((r) => r.entry.known);
+  const unknown = git.results.filter((r) => !r.entry.known).map((r) => git.names[r.entry.project] || r.entry.project);
+  const entries = git.results.map((r) => r.entry);
+  if (!known.length) return { known: false, reason: (entries[0] && entries[0].reason) || 'missing', unknown, added: git.added, sources: entries };
+  const t = touched(known);
   return {
-    known: true, commits: known.reduce((s, r) => s + r.entry.commits, 0), touching: t.touching, areas: t.areas, checked: t.checked,
-    partial: known.some((r) => r.partial), unknown, added, sources: entries,
+    known: true, commits: known.reduce((n, r) => n + r.entry.commits, 0), touching: t.touching, areas: t.areas, checked: t.checked,
+    partial: known.some((r) => r.partial), unknown, added: git.added, sources: entries,
   };
 }
 
-const isSlow = (v) => !v || v.reason === 'slow' || (v.sources || []).some((s) => s.reason === 'slow');
+const isSlow = (git) => git.results.some((r) => r.entry.reason === 'slow');
 
 /**
  * How far the code moved on since the brief (D9), or null when there is nothing to compare (never made, no
- * source with a sha). The whole check is raced against STALENESS_TIMEOUT_MS ("slow"). Memoised 30 s per brief and
- * made_at; a result that says "slow" anywhere is not kept.
+ * source with a sha). The whole check is raced against STALENESS_TIMEOUT_MS ("slow"). The git part is memoised 30 s
+ * per brief and made_at (one that says "slow" anywhere is not kept); the areas are matched afresh on every call.
  */
 export async function briefStaleness(brief, deps = {}) {
   if (!brief || !brief.madeAt) return null;
@@ -371,15 +385,15 @@ export async function briefStaleness(brief, deps = {}) {
   if (!sources.length) return null;
   const key = `${brief.id}:${brief.madeAt}`;
   const hit = memo.get(key);
-  if (hit && Date.now() - hit.at < MEMO_MS) return hit.value;
+  if (hit && Date.now() - hit.at < MEMO_MS) return staleness(brief, sources[0], hit.git);
   const d = { ...STALENESS_DEFAULTS, ...deps };
-  const run = brief.scopeType === 'workspace' ? checkWorkspace(brief, sources, d) : checkProject(brief, sources[0], d);
-  let value;
-  try { value = await within(run, STALENESS_TIMEOUT_MS, SLOW); } catch { value = SLOW; }
-  if (value === SLOW) return { ...SLOW };
+  const run = brief.scopeType === 'workspace' ? gitWorkspace(brief, sources, d) : gitProject(brief, sources[0], d);
+  let git;
+  try { git = await within(run, STALENESS_TIMEOUT_MS, SLOW); } catch { git = SLOW; }
+  if (git === SLOW) return { ...SLOW };
   const now = Date.now();
   for (const [k, v] of memo) if (now - v.at >= MEMO_MS) memo.delete(k);
-  if (isSlow(value)) memo.delete(key);
-  else memo.set(key, { at: now, value });
-  return value;
+  if (isSlow(git)) memo.delete(key);
+  else memo.set(key, { at: now, git });
+  return staleness(brief, sources[0], git);
 }

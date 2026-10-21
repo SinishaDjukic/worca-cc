@@ -13,7 +13,7 @@ import { spawnSync } from 'node:child_process';
 import { WebSocket } from 'ws';
 import express from 'express';
 
-let home; let srv; let base; let prev; let shop; let cart; let bare;
+let home; let srv; let base; let prev; let shop; let cart; let bare; let mall; let hold;
 let briefJob; let store;
 
 const git = (dir, ...a) => {
@@ -47,6 +47,8 @@ before(async () => {
   const plain = realpathSync(await mkdtemp(join(home, 'plain-')));
   mkdirSync(join(plain, 'src'), { recursive: true });
   bare = await add('plain', plain);   // a folder that is no repository
+  mall = await add('mall', await repo('mall'));
+  hold = await add('hold', await repo('hold'));
   briefJob = await import('../src/core/requirements/brief-job.mjs');
   store = await import('../src/core/requirements/store.mjs');
   srv = (await import('../ui/server.mjs')).server;
@@ -249,6 +251,9 @@ test('a feature with a brief: its view, Add this to the brief, the look refused 
 
     assert.equal((await call('POST', `/api/requirements/${seq}/look`, {})).status, 202);
     await waitFor(async () => { const x = (await call('GET', `/api/requirements/${seq}`)).json.feature; return !x.busy && x.orientation && x.orientation.summary; });
+    writeFileSync(join(shop.dir, 'README.md'), '# shop\n\nGift messages.\n');
+    git(shop.dir, 'commit', '-q', '-am', 'gift');
+    assert.deepEqual((await call('GET', B(shop))).json.staleness.areas, ['Orders']);
     const n = ws.seen.length;
     const add = await call('POST', `/api/requirements/${seq}/brief-addition`, {});
     assert.equal(add.status, 200, JSON.stringify(add.json));
@@ -257,6 +262,8 @@ test('a feature with a brief: its view, Add this to the brief, the look refused 
     const area = store.getBrief('project', shop.key).sections.areas.find((a) => a.added);
     assert.equal(`${area.belongsTo}: ${area.name}`, 'Orders: Gift message on an order');
     assert.deepEqual(area.files, ['README.md'], 'relative to the checkout');
+    assert.deepEqual((await call('GET', B(shop))).json.staleness.areas, ['Orders', 'Orders: Gift message on an order'],
+      'the added area counts at once, though the commits come from the memo');
     await waitFor(() => ws.seen.slice(n).some((x) => x.brief === `project:${shop.key}`) && ws.seen.slice(n).some((x) => x.seq === seq));
     const again = await call('POST', `/api/requirements/${seq}/brief-addition`, {});
     assert.equal(again.status, 409);
@@ -315,4 +322,121 @@ test('flag off: the brief routes answer the gate\'s 404 and a refused create sen
     await new Promise((r) => setTimeout(r, 100));
     assert.deepEqual(ws.seen, []);
   } finally { process.env.WORCA_FLAGS = 'requirements'; ws.close(); }
+});
+
+// ---------------------------------------------------------------- Task 6 review fixes
+
+test('staleness follows the owner: editing What exists today stops the check at once; releasing it brings it back', async () => {
+  await makeReady(mall);
+  writeFileSync(join(mall.dir, 'README.md'), '# mall\n\nOrders.\n');
+  git(mall.dir, 'commit', '-q', '-am', 'orders');
+  const v = (await call('GET', B(mall))).json;
+  assert.equal(v.staleness.commits, 1);
+  assert.deepEqual(v.staleness.areas, ['Orders']);
+  const e = await call('PUT', B(mall, '/sections/areas'), { value: 'Orders (partly): checkout\nAccounts (exists): sign-in' });
+  assert.equal(e.status, 200);
+  assert.equal(e.json.staleness.checked, false);
+  assert.equal(e.json.staleness.touching, 0);
+  assert.deepEqual(e.json.staleness.areas, []);
+  assert.equal(e.json.staleness.commits, 1);
+  const r = await call('DELETE', B(mall, '/sections/areas/edited'));
+  assert.equal(r.json.staleness.checked, true);
+  assert.deepEqual(r.json.staleness.areas, ['Orders']);
+});
+
+test('releasing a section that is not edited writes nothing and sends no frame', async () => {
+  const before = store.getBrief('project', mall.key);
+  assert.ok(!before.edited.users);
+  const ws = await frames();
+  try {
+    const r = await call('DELETE', B(mall, '/sections/users/edited'));
+    assert.equal(r.status, 200);
+    assert.equal(r.json.brief.updatedAt, before.updatedAt);
+    await new Promise((res) => setTimeout(res, 100));
+    assert.deepEqual(ws.seen, []);
+    assert.equal(store.getBrief('project', mall.key).updatedAt, before.updatedAt);
+  } finally { ws.close(); }
+});
+
+test('saving the notes sends the brief frame (the switch shows on the brief page, the list and the feature)', async () => {
+  const ws = await frames();
+  try {
+    assert.equal((await call('PUT', `/api/requirements/context/project/${mall.key}`, { body: 'Shoppers', lookAtCode: true })).status, 200);
+    await waitFor(() => ws.seen.some((f) => f.brief === `project:${mall.key}`));
+  } finally { ws.close(); }
+});
+
+/** A bare app with the requirements routes and `deps`, for one test. */
+async function bareApp(deps, fn) {
+  const { registerRequirementsRoutes } = await import('../src/core/requirements/routes.mjs');
+  const app = express();
+  app.use(express.json());
+  registerRequirementsRoutes(app, { broadcast: () => {}, deps });
+  const s = app.listen(0, '127.0.0.1');
+  await new Promise((r) => s.once('listening', r));
+  try { return await fn(request(() => `http://127.0.0.1:${s.address().port}`)); }
+  finally { s.closeAllConnections?.(); await new Promise((r) => s.close(r)); }
+}
+
+test('a create probes the default branch once (the 202 body reuses the refusals\' target)', async () => {
+  const { defaultBranchRef } = await import('../src/core/worktree.mjs');
+  let n = 0;
+  await bareApp({ defaultBranchRef: (...a) => { n += 1; return defaultBranchRef(...a); } }, async (req) => {
+    const r = await req('POST', B(mall));
+    assert.equal(r.status, 202);
+    assert.equal(r.json.target.branch, 'main');
+    assert.equal(n, 1);
+    await briefJob.briefSettled('project', mall.key);
+  });
+});
+
+test('while a brief is being made (a job held open, no model): create and delete refused, edits kept, not recovered', async () => {
+  await makeReady(hold);
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const mockWas = process.env.WORCA_MOCK;
+  delete process.env.WORCA_MOCK;   // the real job path, with a checkout that waits and then finds nothing (NO_REPO)
+  try {
+    await bareApp({ openLook: () => gate.then(() => null) }, async (req) => {
+      const c = await req('POST', B(hold));
+      assert.equal(c.status, 202);
+      assert.equal(c.json.brief.status, 'making');
+      assert.ok(briefJob.isBriefBusy('project', hold.key));
+      const again = await req('POST', B(hold));
+      assert.equal(again.status, 409);
+      assert.equal(again.json.error, 'Worca is already making this brief.');
+      const del = await req('DELETE', B(hold));
+      assert.equal(del.status, 409);
+      assert.equal(del.json.error, 'Worca is making this brief. Try again when it is done.');
+      const e = await req('PUT', B(hold, '/sections/users'), { value: 'Clerk: rings up sales' });
+      assert.equal(e.status, 200);
+      assert.equal(briefJob.recoverBriefs(), 0, 'a running job is not interrupted by the sweep');
+      release();
+      await briefJob.briefSettled('project', hold.key);
+    });
+  } finally { release(); if (mockWas === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = mockWas; }
+  const b = store.getBrief('project', hold.key);
+  assert.equal(b.status, 'ready', 'the earlier brief is kept');
+  assert.equal(b.error.code, 'NO_REPO');
+  assert.deepEqual(b.sections.users, [{ name: 'Clerk', can: 'rings up sales' }]);
+  assert.equal(b.edited.users, true);
+});
+
+test('a workspace brief: no branch on the page; the export names each member on its provenance line', async () => {
+  const { createWorkspace } = await import('../src/core/workspaces.mjs');
+  const ws = await createWorkspace({ name: 'Market', projectPaths: [shop.dir, cart.dir] });
+  const W = (rest = '') => `/api/requirements/brief/workspace/${encodeURIComponent(ws.id)}${rest}`;
+  const page = (await call('GET', W())).json;
+  assert.equal(page.target.name, 'Market');
+  assert.equal(page.target.branch, null);
+  assert.deepEqual(page.target.leftOut, []);
+  const c = await call('POST', W());
+  assert.equal(c.status, 202, JSON.stringify(c.json));
+  await briefJob.briefSettled('workspace', ws.id);
+  const md = await call('GET', W('/markdown?download=1'));
+  assert.equal(md.status, 200);
+  assert.match(md.text, /^# Product brief: Market/);
+  assert.match(md.text, /^shop-[A-Za-z0-9]+: Made from main @ [0-9a-f]{7} on \d{4}-\d{2}-\d{2}$/m);
+  assert.match(md.text, /^cart-[A-Za-z0-9]+: Made from main @ [0-9a-f]{7} on \d{4}-\d{2}-\d{2}$/m);
+  assert.equal(md.headers.get('content-disposition'), 'attachment; filename="product-brief-market.md"');
 });

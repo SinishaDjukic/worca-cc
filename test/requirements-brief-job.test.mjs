@@ -737,3 +737,24 @@ test('a checkout that leaves under 1 s for the call fails with the checkout mess
     assert.equal(lk.closed, 1);
   } finally { mock.timers.reset(); }
 });
+
+// Task 6 review: the memo keeps the git part only; the areas are matched on every call, so an owner's edit of the
+// areas (D6: no longer checked) or an added / renamed area shows at once, not after the 30 s memo.
+test('staleness: the memo keeps the commits, not the areas; edits and added areas show at once', async () => {
+  const r = repo();
+  const sha = r.commit('src/orders.mjs');
+  const k = key();
+  let n = 0;
+  const counting = sdeps([project(k, r.dir)], { commitOf: async (...a) => { n += 1; return commitOf(...a); } });
+  r.commit('src/orders.mjs', 'change orders');
+  const brief = staleBrief(k, sha);
+  assert.deepEqual(head(await briefStaleness(brief, counting)), { known: true, commits: 1, touching: 1, areas: ['Orders'], checked: true, partial: false });
+  assert.equal(n, 1);
+  const edited = await briefStaleness({ ...brief, edited: { areas: true } }, counting);
+  assert.deepEqual(head(edited), { known: true, commits: 1, touching: 0, areas: [], checked: false, partial: false });
+  const renamed = { ...ORDERS, name: 'Order history' };
+  const added = { name: 'Gift', belongsTo: 'Orders', text: 't', status: null, files: ['src/orders.mjs'], added: { feature: 'FEAT-1', at: 'x' } };
+  const s = await briefStaleness({ ...brief, sections: { ...brief.sections, areas: [renamed, ACCOUNTS, added] } }, counting);
+  assert.deepEqual(s.areas, ['Order history', 'Orders: Gift']);
+  assert.equal(n, 1, 'the git part came from the memo every time');
+});

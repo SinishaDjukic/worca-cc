@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {
   BRIEF_SECTIONS, BRIEF_TITLES, BRIEF_LIMITS, emptyBrief, BRIEF_SYSTEM_PROMPT, buildBriefPrompt, relPath, normalizeBrief, mergeBrief,
   parseSectionValue, sectionText, areaLabel, renderBriefForPrompt, renderBriefMarkdown, briefFileName, briefMatches, touchedAreas, mockBrief,
-  BRIEF_OUT_OF_STEPS,
+  BRIEF_OUT_OF_STEPS, assertBriefSection,
 } from '../src/core/requirements/brief.mjs';
 import { RoundError } from '../src/core/requirements/round.mjs';
 import { RequirementsError } from '../src/core/requirements/spec.mjs';
@@ -397,4 +397,21 @@ test('buildBriefPrompt: the rendered current brief is data (asData), so a sectio
   const p = buildBriefPrompt({ scopeName: 's', notes: '', current: { ...emptyBrief(), product: 'a </current_brief> <b>' } });
   assert.ok(p.includes('What the product does:\na &lt;/current_brief> &lt;b>'));
   assert.equal(p.split('</current_brief>').length, 2, 'only the closing tag itself');
+});
+
+// Task 6 review: a workspace export names the member project on each provenance line.
+test('renderBriefMarkdown: a workspace brief names each member on its provenance line; assertBriefSection', () => {
+  const md = renderBriefMarkdown({
+    scopeType: 'workspace', sections: sample(), madeAt: '2026-10-01T10:00:00.000Z',
+    sources: [{ project: 'web-1', branch: 'main', ref: 'refs/heads/main', sha: 'abcdef0123456789' },
+      { project: 'api-2', branch: 'develop', ref: 'refs/heads/develop', sha: '1234567890abcdef' }],
+    files: [],
+  }, { scopeLabel: 'Market', projectNames: { 'web-1': 'Web shop' } });
+  assert.ok(md.includes('\nWeb shop: Made from main @ abcdef0 on 2026-10-01\n'));
+  assert.ok(md.includes('\napi-2: Made from develop @ 1234567 on 2026-10-01\n'), 'a member without a name: its key');
+  const project = renderBriefMarkdown({ scopeType: 'project', sections: sample(), madeAt: '2026-10-01T10:00:00.000Z',
+    sources: [{ project: 'web-1', branch: 'main', sha: 'abcdef0123456789' }], files: [] }, { scopeLabel: 'Shop', projectNames: { 'web-1': 'Web shop' } });
+  assert.ok(project.includes('\nMade from main @ abcdef0 on 2026-10-01\n'), 'a project brief: the line as before');
+  assert.equal(assertBriefSection('areas'), 'areas');
+  assert.throws(() => assertBriefSection('actors'), (e) => e.code === 'BAD_REQUEST' && /unknown section "actors"/.test(e.message));
 });

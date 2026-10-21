@@ -172,9 +172,15 @@ const currentList = (section, current) => {
   return Array.isArray(v) ? v : [];
 };
 
+/** `section` when it is one of BRIEF_SECTIONS, else BAD_REQUEST. */
+export function assertBriefSection(section) {
+  if (!BRIEF_SECTIONS.includes(section)) throw badRequest(`unknown section "${String(section).slice(0, 40)}"`);
+  return section;
+}
+
 /** The product owner's edit of one section (a string from the editor, or the structured value) → the section's value. Throws BAD_REQUEST. */
 export function parseSectionValue(section, value, current) {
-  if (!BRIEF_SECTIONS.includes(section)) throw badRequest(`unknown section "${String(section).slice(0, 40)}"`);
+  assertBriefSection(section);
   if (section === 'product') {
     if (typeof value !== 'string') throw badRequest('the product description must be text');
     return clip(value, BRIEF_LIMITS.product);
@@ -256,11 +262,17 @@ export function renderBriefForPrompt(sections, { provenance = null } = {}) {
   return out;
 }
 
-/** The brief as a Markdown document for download. `brief` = `{ sections, sources, files, madeAt }` as the store returns it. */
-export function renderBriefMarkdown(brief, { scopeLabel = '' } = {}) {
+/** The brief as a Markdown document for download. `brief` = `{ scopeType, sections, sources, files, madeAt }` as the
+ *  store returns it. A workspace brief's provenance lines name their member project (`projectNames`: key → name;
+ *  the key when a member is not named, e.g. one removed from the workspace since). */
+export function renderBriefMarkdown(brief, { scopeLabel = '', projectNames = {} } = {}) {
   const s = { ...emptyBrief(), ...(brief && brief.sections) };
   const out = [`# Product brief: ${scopeLabel}`, ''];
-  for (const src of (brief && brief.sources) || []) out.push(provLine({ ...src, at: brief.madeAt }), '');
+  const workspace = !!brief && brief.scopeType === 'workspace';
+  for (const src of (brief && brief.sources) || []) {
+    const line = provLine({ ...src, at: brief.madeAt });
+    out.push(workspace ? `${(projectNames && projectNames[src.project]) || src.project}: ${line}` : line, '');
+  }
   for (const sec of BRIEF_SECTIONS) {
     out.push(`## ${BRIEF_TITLES[sec]}`, '');
     if (sec === 'product') out.push(s.product || '(nothing yet)');

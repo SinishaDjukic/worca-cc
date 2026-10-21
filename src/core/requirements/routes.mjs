@@ -21,7 +21,7 @@ import { startFeature, startView } from './start.mjs';
 import { budgetStatus, requirementsWindowedSpendUsd } from '../cost-budget.mjs';
 import { renderSpecMarkdown } from './markdown.mjs';
 import { saveSpecToCheckout, specFileName } from './save.mjs';
-import { BRIEF_SECTIONS, parseSectionValue, renderBriefMarkdown, briefFileName, briefMatches } from './brief.mjs';
+import { assertBriefSection, parseSectionValue, renderBriefMarkdown, briefFileName, briefMatches } from './brief.mjs';
 import { makeBrief, isBriefBusy, briefTarget, briefEstimate, briefStaleness } from './brief-job.mjs';
 
 const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_FOUND: 404, BUSY: 409, CONFLICT: 409, BUDGET: 409, NOT_READY: 409 });
@@ -135,12 +135,13 @@ const briefFields = (b) => (b ? Object.fromEntries(BRIEF_FIELDS.map((k) => [k, b
  * staleness }`. `branch` is the default branch the next look reads (a project; a workspace: null), `leftOut` the
  * workspace members past the checkout cap, `slow` the repositories whose default branch could not be read in
  * time. The target's git probes and the staleness check run side by side, each bounded by STALENESS_TIMEOUT_MS
- * (D9), so a slow repository never holds the page for much longer than that.
+ * (D9), so a slow repository never holds the page for much longer than that. `known` is a briefTarget already read
+ * (makeBrief's), so a create does not probe git twice.
  */
-async function briefPage(scopeType, scopeKey, t, d) {
+async function briefPage(scopeType, scopeKey, t, d, known = null) {
   const b = getBrief(scopeType, scopeKey);
   const [target, estimate, staleness] = await Promise.all([
-    briefTarget(scopeType, scopeKey, d), briefEstimate(d), b ? briefStaleness(b, d) : null,
+    known || briefTarget(scopeType, scopeKey, d), briefEstimate(d), b ? briefStaleness(b, d) : null,
   ]);
   const first = scopeType === 'project' ? target.dirs[0] : null;
   return {
@@ -155,11 +156,6 @@ function madeBrief(scopeType, scopeKey) {
   const b = usableBrief(scopeType, scopeKey);
   if (!b) throw new RequirementsError('CONFLICT', 'There is no brief yet.');
   return b;
-}
-
-function briefSection(section) {
-  if (!BRIEF_SECTIONS.includes(section)) throw new RequirementsError('BAD_REQUEST', `unknown section "${String(section).slice(0, 40)}"`);
-  return section;
 }
 
 async function checkTarget(scopeType, scopeKey) {
@@ -224,7 +220,10 @@ export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
     [`PUT ${P}/context/:scopeType/:scopeKey`]: async (req, res) => {
       await checkTarget(req.params.scopeType, req.params.scopeKey);
       const b = req.body || {};
-      res.json(setContext(req.params.scopeType, req.params.scopeKey, { body: b.body, lookAtCode: b.lookAtCode }, { by: by(req) }));
+      const ctx = setContext(req.params.scopeType, req.params.scopeKey, { body: b.body, lookAtCode: b.lookAtCode }, { by: by(req) });
+      // The switch shows on the brief page, the list's briefs and the feature view's brief: they repaint on the brief frame.
+      onBriefChange(req.params.scopeType, req.params.scopeKey);
+      res.json(ctx);
     },
     [`GET ${P}/brief/:scopeType/:scopeKey`]: async (req, res) => {
       const t = await checkTarget(...scope(req));
@@ -234,8 +233,8 @@ export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
       const t = await checkTarget(...scope(req));
       // The refusals reject before anything is written; the job is not awaited (it never rejects, and it sends
       // the scope's frames itself as it starts and as it settles).
-      await makeBrief(...scope(req), { by: by(req) }, briefDeps);
-      res.status(202).json(await briefPage(...scope(req), t, briefDeps));
+      const { target } = await makeBrief(...scope(req), { by: by(req) }, briefDeps);
+      res.status(202).json(await briefPage(...scope(req), t, briefDeps, target));
     },
     [`DELETE ${P}/brief/:scopeType/:scopeKey`]: async (req, res) => {
       const t = await checkTarget(...scope(req));
@@ -247,13 +246,15 @@ export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
       const t = await checkTarget(...scope(req));
       const b = usableBrief(...scope(req));
       if (!b) throw new RequirementsError('NOT_FOUND', 'There is no brief yet.');
+      const ws = b.scopeType === 'workspace' ? await workspaceTarget(b.scopeKey) : null;
+      const projectNames = Object.fromEntries(((ws && ws.members) || []).map((m) => [m.projectKey, m.projectName || m.projectKey]));
       res.type('text/markdown; charset=utf-8');
       if (req.query && req.query.download === '1') res.set('Content-Disposition', `attachment; filename="${briefFileName(t.name)}"`);
-      res.send(renderBriefMarkdown(b, { scopeLabel: t.name }));
+      res.send(renderBriefMarkdown(b, { scopeLabel: t.name, projectNames }));
     },
     [`PUT ${P}/brief/:scopeType/:scopeKey/sections/:section`]: async (req, res) => {
       const t = await checkTarget(...scope(req));
-      const section = briefSection(req.params.section);
+      const section = assertBriefSection(req.params.section);
       const b = madeBrief(...scope(req));
       const value = parseSectionValue(section, (req.body || {}).value, b.sections);
       setBriefSections(b.id, { sections: { ...b.sections, [section]: value }, edited: { ...b.edited, [section]: true } }, { by: by(req) });
@@ -261,8 +262,9 @@ export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
     },
     [`DELETE ${P}/brief/:scopeType/:scopeKey/sections/:section/edited`]: async (req, res) => {
       const t = await checkTarget(...scope(req));
-      const section = briefSection(req.params.section);
+      const section = assertBriefSection(req.params.section);
       const b = madeBrief(...scope(req));
+      if (!(b.edited && b.edited[section])) return res.json(await briefPage(...scope(req), t, briefDeps));   // nothing to release
       const edited = { ...b.edited };
       delete edited[section];
       setBriefSections(b.id, { sections: b.sections, edited }, { by: by(req) });
