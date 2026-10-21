@@ -4198,7 +4198,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .hd-dl-code{position:relative;}
 .hd-cmt-add{position:absolute;left:0;top:50%;transform:translateY(-50%);
   width:16px;height:16px;display:grid;place-items:center;padding:0;
-  border:none;border-radius:var(--r-sm);background:var(--blue);color:var(--on-status);
+  border:none;border-radius:var(--r-sm);background:var(--blue-ink-strong);color:var(--on-status);
   font:600 12px var(--sans);line-height:1;cursor:pointer;z-index:1;}
 .hd-cmt-add:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
 .hd-dl-code:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
