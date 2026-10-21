@@ -175,6 +175,9 @@ function stableStringify(value) {
 }
 
 const byProjectKey = (a, b) => (a.projectKey < b.projectKey ? -1 : a.projectKey > b.projectKey ? 1 : 0);
+/** A member's checkout as agents see it from the run root: its dir on disk, which can be a shortened
+ *  projectKey (worktree.mjs boundCheckoutName, #411); the projectKey only before the checkout exists. */
+const repoRel = (m) => `repos/${m.worktreeDir ? basename(m.worktreeDir) : m.projectKey}`;
 
 /** `git -C dir <args>` stdout, or null. Sync + fail-safe (mirrors store.mjs). */
 function gitOut(dir, args) {
@@ -503,7 +506,7 @@ export async function assembleSkills({
     for (const c of await skillCandidates(m.projectDir, onError)) {
       candidates.push({
         ...c, cls: 'member', prefix: `${slug(m.projectName || m.projectKey)}-`,
-        origin: `${m.projectName || m.projectKey} (repos/${m.projectKey})`,
+        origin: `${m.projectName || m.projectKey} (${repoRel(m)})`,
         // P1: a non-git member's source is the user's REAL folder — never linked, or an agent edit would land there before Apply.
         noLink: !!m.workMode && m.workMode !== 'git',
       });
@@ -1157,7 +1160,7 @@ export function generateClaudeMd({
   if (none) meta.push('*(none — a run without a project)*', '');
   else if (!members.length) meta.push('*(none)*', '');
   for (const m of none ? [] : [...members].sort(byProjectKey)) {
-    meta.push(`- \`repos/${m.projectKey}\` — **${m.projectName || m.projectKey}**`);
+    meta.push(`- \`${repoRel(m)}\` — **${m.projectName || m.projectKey}**`);
     meta.push(`  - real directory: \`${m.projectDir}\``);
     if (mixed && m.workMode === 'folder') {
       meta.push('  - Folder project: a copy with no git; the person applies its changes after the run');
@@ -1182,7 +1185,7 @@ export function generateClaudeMd({
       '',
     );
     for (const m of agentCarriers) {
-      meta.push(`- **${m.projectName || m.projectKey}** (\`repos/${m.projectKey}\`): ${agentsOf(m.projectKey).join(', ')}`);
+      meta.push(`- **${m.projectName || m.projectKey}** (\`${repoRel(m)}\`): ${agentsOf(m.projectKey).join(', ')}`);
     }
     meta.push('');
     meta.push('Your personal `~/.claude/agents` still work (inherited environment); for anything ' +
@@ -1221,7 +1224,7 @@ export function generateClaudeMd({
   }
   // P3: a run without a project has no project memory to name (its work/ folder is the cwd; Claude loads it there).
   for (const m of none ? [] : [...members].sort(byProjectKey)) {
-    mem.push(`## Project: ${m.projectName || m.projectKey} — repos/${m.projectKey}`, '');
+    mem.push(`## Project: ${m.projectName || m.projectKey} — ${repoRel(m)}`, '');
     const sections = memberSections.get(m.projectKey) || [];
     if (!sections.length) mem.push(NO_MEMORY_PLACEHOLDER, '');
     for (const s of sections) mem.push(`### ${s.rel}`, '', s.text.replace(/\s+$/, ''), '');
@@ -1325,7 +1328,7 @@ export async function assembleRunContext({
       warnings.push(
         `member \`${m.projectKey}\` real directory \`${m.projectDir}\` is missing or unreadable — ` +
         'degrading to worktree-only context for it (its committed blobs still exist in ' +
-        `repos/${m.projectKey}).`,
+        `${repoRel(m)}).`,
       );
     }
   }

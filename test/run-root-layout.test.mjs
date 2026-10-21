@@ -13,9 +13,9 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile, mkdir, readFile, readdir, realpath } from 'node:fs/promises';
 import { existsSync, mkdtempSync, rmSync , writeFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { execSync, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
@@ -157,6 +157,36 @@ test('runRootMode: default is detached, env is read fresh, precedence env > sett
 
 // ONE detached default-workflow run carries the five detached-layout checks. The
 // default workflow declares ZERO skills (`grep requiresSkills agents/` → nothing), so the
+// #411: a projectKey that would push git's fsmonitor socket past sun_path gets a shortened checkout dir,
+// and every agent-facing `repos/<…>` names that dir. Under /tmp: macOS's tmpdir alone is too deep to fix.
+test('detached run: an over-long projectKey gets a shortened checkout dir, and CLAUDE.md names that dir', { skip: process.platform === 'win32' }, async () => {
+  const root = await realpath(await mkdtemp('/tmp/wtr-'));
+  created.push(root);
+  const repo = join(root, 'my-awesome-microservice');
+  await mkdir(repo);
+  execSync('git init -q -b main && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init', { cwd: repo });
+  const key = projectKey(repo);
+  await withMode('detached', async () => {
+    const orch = createOrchestrator({ projectDir: repo, prompt: 'Add login flow', auto: true, claude: { mock: true }, branch: { source: 'main' } });
+    let seen = null;
+    let text = null;
+    orch.on('state', async (s) => {
+      if (!s.branch?.worktreeDir) return;
+      seen = seen || s.branch.worktreeDir;
+      if (!text) text = await readFile(join(worcaHome(), 'runs', s.id, 'CLAUDE.md'), 'utf8').catch(() => null);
+    });
+    const res = await orch.run();
+    assert.equal(res.status, 'done', JSON.stringify(res));
+    const dir = basename(seen);
+    assert.notEqual(dir, key, 'the projectKey would overflow, so the checkout dir is shortened');
+    assert.ok(dir.endsWith(key.slice(-8)), `the key's hash is kept: ${dir}`);
+    assert.equal(seen, join(await realpath(worcaHome()), 'runs', orch.getState().id, 'repos', dir));
+    assert.ok(text, '<runRoot>/CLAUDE.md was assembled');
+    assert.ok(text.includes(`- \`repos/${dir}\``), 'the roster names the dir on disk');
+    assert.ok(!text.includes(`repos/${key}`), 'never the projectKey');
+  });
+});
+
 // CLAUDE.md row fails if context assembly is ever re-nested under the
 // `if (requiredSkills.length)` guard.
 test('detached single run: worktree under <worcaHome>/runs/<id>/repos/<key>, nothing under <projectDir>/.worca-cc, run.json (minimal + extended) and CLAUDE.md assembled from the real dir, results.json/diff.patch carry the edit', async () => {
