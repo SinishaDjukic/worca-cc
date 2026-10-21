@@ -24,7 +24,7 @@ import {
   normalizeOrientation, mockRoundReply, RoundError, removedCriteria, pendingRound,
 } from './round.mjs';
 
-const ROUND_TIMEOUT_MS = 180_000;
+export const ROUND_TIMEOUT_MS = 180_000;
 const DEFAULTS = Object.freeze({
   runClaudeImpl: runClaude, listModels, listProjects, workspaceTarget,
   openLook: openRepoLook, openWorkspaceLook: openWorkspaceRepoLook, budget: () => budgetStatus(), onChange: () => {},
@@ -123,6 +123,7 @@ export function interviewCallOptions(kind, args = {}) {
   const { cwd, prompt, model } = args;
   const pick = (k) => (args[k] !== undefined ? args[k] : def[k]);
   const tools = pick('tools');
+  if (!Array.isArray(tools)) throw new TypeError('interviewCallOptions: tools must be an array');
   const maxTurns = pick('maxTurns');
   return {
     cwd, systemPrompt: pick('systemPrompt'), prompt, model, modelEnv: resolveModelEnv(model),

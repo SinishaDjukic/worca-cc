@@ -34,13 +34,12 @@ import { safeParseJson } from '../src/core/protocol.mjs';
 import { REPO_LOOK_TIMEOUT_MS } from '../src/core/auto/classify.mjs';
 import { MAX_ROUNDS, emptySpec } from '../src/core/requirements/spec.mjs';
 import { buildRoundPrompt, buildOrientationPrompt, applyRound } from '../src/core/requirements/round.mjs';
-import { interviewCallOptions, requirementsModel } from '../src/core/requirements/interview.mjs';
+import { interviewCallOptions, requirementsModel, ROUND_TIMEOUT_MS } from '../src/core/requirements/interview.mjs';
 
 export const USAGE = 'usage: node tools/requirements-replay.mjs [--fixture <file>] [--rounds N] [--look <dir>] [--model <id>] '
   + '[--effort <level>] [--max-usd <n>] [--no-cache] [--label <text>] [--out <file.json>] [--yes]\n'
   + '       node tools/requirements-replay.mjs --compare <a.json> <b.json>';
 const DEFAULT_FIXTURE = join(dirname(fileURLToPath(import.meta.url)), 'requirements-replay.fixture.json');
-const ROUND_TIMEOUT_MS = 180_000;
 const DEFAULT_ROUNDS = 4;
 const DEFAULT_MAX_USD = 1.5;
 const DRY_NOTE = 'Dry run: nothing was sent. Add --yes to call the model (this costs money).';
@@ -66,7 +65,8 @@ export function loadFixture(path) {
  */
 export function replayPlan(fixture, { rounds = DEFAULT_ROUNDS, lookDir = null, roundCwd, model, effort = 'medium' } = {}) {
   if (!Number.isInteger(rounds) || rounds < 1 || rounds > MAX_ROUNDS) throw new InputError(`--rounds must be 1 to ${MAX_ROUNDS}`);
-  if (rounds > fixture.rounds.length) throw new InputError(`the fixture has ${fixture.rounds.length} rounds, not ${rounds}`);
+  // Round k reads the answers of fixture rounds 1..k-1, so N rounds need N-1 fixture rounds.
+  if (rounds > fixture.rounds.length + 1) throw new InputError(`the fixture supports at most ${fixture.rounds.length + 1} rounds, not ${rounds}`);
   const calls = [];
   const context = fixture.context || '';
   if (lookDir) {
@@ -111,15 +111,17 @@ export function splitCost(costUsd, usage) {
 
 const countOf = (v) => (Array.isArray(v) ? v.length : 0);
 
+const emptyRecord = (call) => ({
+  kind: call.kind, round: call.round ?? null, ok: false, error: null, skipped: null,
+  costUsd: null, promptCostUsd: null, outputCostUsd: null,
+  inputTokens: 0, cacheWrite5m: 0, cacheWrite1h: 0, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 0,
+  durationMs: null, wallMs: null, numTurns: null, models: [], loaded: null, systemPromptFlag: null, replyReadable: false,
+});
+
 /** Runs one call through `spawn` and returns its record. A failed call is a record with ok: false, never a throw. */
 export async function measureCall(spawn, call, { timeoutMs = call.timeoutMs, noCache = false } = {}) {
   const { options, check } = call;
-  const rec = {
-    kind: call.kind, round: call.round ?? null, ok: false, error: null, skipped: null,
-    costUsd: null, promptCostUsd: null, outputCostUsd: null,
-    inputTokens: 0, cacheWrite5m: 0, cacheWrite1h: 0, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 0,
-    durationMs: null, wallMs: null, numTurns: null, models: [], loaded: null, systemPromptFlag: null, replyReadable: false,
-  };
+  const rec = emptyRecord(call);
   const ctrl = new AbortController();
   let timedOut = false;
   const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, timeoutMs);
@@ -146,8 +148,9 @@ export async function measureCall(spawn, call, { timeoutMs = call.timeoutMs, noC
       ...(noCache ? { spawnEnv: { DISABLE_PROMPT_CACHING: '1' } } : {}),
     });
     text = res?.text || result?.text || '';
-    rec.ok = !(result && result.isError);
-    if (!rec.ok) rec.error = text || 'the model returned an error';
+    rec.ok = !!result && !result.isError;
+    if (!result) rec.error = 'no result';
+    else if (!rec.ok) rec.error = text || 'the model returned an error';
   } catch (err) {
     rec.error = timedOut ? `no reply within ${Math.round(timeoutMs / 1000)} seconds` : (err && err.message ? err.message : String(err));
   } finally { clearTimeout(timer); }
@@ -290,7 +293,7 @@ function best(cmd, args) {
   } catch { return null; }
 }
 
-export async function main(argv, { spawn = runClaudeAdapter, log = console.log, env = process.env } = {}) {
+export async function main(argv, { spawn = runClaudeAdapter, log = console.log, env = process.env, resolveModel = requirementsModel } = {}) {
   // First of all: a mock measures nothing, and nothing may run (not even the dry run) under one.
   if (env.WORCA_MOCK || env.ORCH_MOCK) {
     log('the replay measures the real model; unset WORCA_MOCK');
@@ -320,8 +323,9 @@ export async function main(argv, { spawn = runClaudeAdapter, log = console.log, 
     if (!(maxUsd > 0)) throw new InputError('--max-usd must be a positive number');
     const fixturePath = v.fixture || DEFAULT_FIXTURE;
     const fixture = loadFixture(fixturePath);
-    const model = v.model || await requirementsModel();
+    const model = v.model || await resolveModel();
     const effort = v.effort || 'medium';
+    if (v.yes && !model) throw new InputError('no model could be resolved; pass --model <id> so before and after runs measure the same model');
     const roundCwd = join(tmpdir(), 'worca-req-replay');
     mkdirSync(roundCwd, { recursive: true });
     const plan = replayPlan(fixture, { rounds, lookDir: v.look || null, roundCwd, model, effort });
@@ -336,21 +340,26 @@ export async function main(argv, { spawn = runClaudeAdapter, log = console.log, 
       return 0;
     }
 
+    const prevDebug = process.env.WORCA_DEBUG_SPAWN;
     process.env.WORCA_DEBUG_SPAWN = '1';
     const records = [];
     let spent = 0;
     let stopped = false;
-    for (const c of plan) {
-      if (stopped || spent >= maxUsd) {
-        stopped = true;
-        records.push({ kind: c.kind, round: c.round, ok: false, error: null, skipped: 'max-usd', costUsd: null, promptCostUsd: null, outputCostUsd: null,
-          inputTokens: 0, cacheWrite5m: 0, cacheWrite1h: 0, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 0,
-          durationMs: null, wallMs: null, numTurns: null, models: [], loaded: null, systemPromptFlag: null, replyReadable: false });
-        continue;
+    try {
+      for (const c of plan) {
+        if (stopped || spent >= maxUsd) {
+          stopped = true;
+          records.push({ ...emptyRecord(c), skipped: 'max-usd' });
+          continue;
+        }
+        const rec = await measureCall(spawn, c, { timeoutMs: c.timeoutMs, noCache: !!v['no-cache'] });
+        records.push(rec);
+        // An unknown cost (a failed call, no result frame) counts as 0, so the cap can undercount; the
+        // per-call timeout and the cap's check before every call bound what one unknown can add.
+        if (Number.isFinite(rec.costUsd)) spent += rec.costUsd;
       }
-      const rec = await measureCall(spawn, c, { timeoutMs: c.timeoutMs, noCache: !!v['no-cache'] });
-      records.push(rec);
-      if (Number.isFinite(rec.costUsd)) spent += rec.costUsd;
+    } finally {
+      if (prevDebug === undefined) delete process.env.WORCA_DEBUG_SPAWN; else process.env.WORCA_DEBUG_SPAWN = prevDebug;
     }
     const totals = summarize(records);
     log(formatReport(records, totals, medianRoundMs(records)));

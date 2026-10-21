@@ -154,7 +154,7 @@ test('--yes: the report adds up, sets WORCA_DEBUG_SPAWN, and --out writes the JS
   const out = join(work, 'report.json');
   const code = await main(['--rounds', '3', '--model', MODEL, '--yes', '--label', 'before', '--out', out], { spawn: f.spawn, log, env: noMock });
   assert.equal(code, 0);
-  assert.equal(process.env.WORCA_DEBUG_SPAWN, '1');
+  assert.equal(process.env.WORCA_DEBUG_SPAWN, undefined);   // restored after the run
   assert.equal(f.calls.length, 3);
   assert.match(lines.join('\n'), /^TOTAL/m);
   const rep = JSON.parse(readFileSync(out, 'utf8'));
@@ -226,4 +226,26 @@ test('--compare: per-call and total deltas and percentages; spawns nothing', asy
   assert.equal(f.calls.length, 0);
   assert.match(lines.join('\n'), /-50\.0%/);
   assert.equal(await main(['--compare', pa], { spawn: f.spawn, log, env: noMock }), 2);
+});
+
+test('replayPlan: 6 rounds work from 5 fixture rounds; the last is final and carries round 5 answers', () => {
+  const plan = replayPlan(FIXTURE, { rounds: 6, roundCwd: work, model: MODEL });
+  assert.equal(plan.length, 6);
+  assert.equal(plan[5].check.final, true);
+  assert.equal(plan[4].check.final, false);
+  assert.match(plan[5].options.prompt, new RegExp(FIXTURE.rounds[4].answers[0].answer));
+  assert.match(plan[5].options.prompt, /This is the final round/);
+  assert.throws(() => replayPlan(FIXTURE, { rounds: 7, roundCwd: work, model: MODEL }));
+});
+
+test('a call without a result frame is not ok; --yes without a resolvable model is refused', async () => {
+  const plan = replayPlan(FIXTURE, { rounds: 1, roundCwd: work, model: MODEL });
+  const rec = await measureCall(async () => ({ text: '{}' }), plan[0], { timeoutMs: 5000 });
+  assert.equal(rec.ok, false);
+  assert.equal(rec.error, 'no result');
+  const { lines, log } = logger();
+  const f = fakeSpawn();
+  assert.equal(await main(['--yes'], { spawn: f.spawn, log, env: noMock, resolveModel: async () => undefined }), 2);
+  assert.match(lines.join('\n'), /--model/);
+  assert.equal(f.calls.length, 0);
 });

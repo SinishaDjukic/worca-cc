@@ -671,6 +671,7 @@ test('interviewCallOptions: a round is exactly what A2 sent (no tools, no maxTur
 test('interviewCallOptions: unknown kind and unknown keys throw TypeError', () => {
   assert.throws(() => interviewCallOptions('brief', { cwd: '/c', prompt: 'P' }), TypeError);
   assert.throws(() => interviewCallOptions('round', { cwd: '/c', prompt: 'P', settingSources: [] }), TypeError);
+  assert.throws(() => interviewCallOptions('round', { cwd: '/c', prompt: 'P', tools: 'Read' }), TypeError);
 });
 
 test('interviewCallOptions: overrides replace the kind defaults', () => {
