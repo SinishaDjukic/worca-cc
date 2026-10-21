@@ -455,6 +455,17 @@ went away).
   (`NOT_SWITCHABLE_STATUS`, `NOT_RUNNING`, `NOT_READY`, `REHYDRATING`, `NO_OWNER`, `STAGE_COMPLETED`,
   `INVALID_SELECTION`, `CHANGED`, …).
 
+**Engines.** A run keeps the engine it started on, so the Models panel and `worca switch-model` offer
+only the models that engine runs, with that engine's efforts (Claude: medium–max; Codex: minimal–high;
+Cursor: none). A model that runs on another engine is refused rather than silently replaced by the
+engine's default. On an engine whose model offers no efforts (Cursor), the effort stays Default. A
+non-empty effort on a stage whose model the run's engine cannot run is refused too (that engine would
+drop it); choose a model it runs first. To move a run to another engine, resume it on that engine.
+
+**One model for every stage.** A run resumed "with another model for every stage" runs all remaining
+stages on that model, so per-stage model and effort switches are refused there (sub-agent settings
+still apply).
+
 ## Plugins and team policy
 
 A plugin manifest's `models[]` entry may carry the same `upstream` block
