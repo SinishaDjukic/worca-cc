@@ -16,7 +16,7 @@ import {
   appendMessage, getMessage, listMessages, finishMessage, setMessageBlocks, findCard, updateCardBlock, sweepStreamingMessages,
   findPullRequestCards, findFixRunCards,
   addAttachment, listAttachments, getAttachment, readAttachmentText, readAttachmentRaw,
-  attachmentPath, attachmentSourcePath,
+  attachmentPath, attachmentSourcePath, attachmentSourceOrigin,
   linkRun, updateRunLink, listRunLinks,
 } from '../src/core/ask/store.mjs';
 
@@ -658,6 +658,25 @@ test('attachment source (v64): a show_files copy keeps its original path server-
   assert.equal(attachmentSourcePath(t.id, copy.id), '/w/out/a.png');
   assert.equal(attachmentSourcePath(t.id, up.id), null);
   assert.equal(attachmentSourcePath(createThread().id, copy.id), null, 'another thread never reads it');
+});
+
+test('attachment source origin (v70): a copy found under a run or project keeps runId, projectKey and the root-relative path server-side', () => {
+  const t = createThread({ title: 't' });
+  const run = addAttachment(t.id, null, { name: 'a.png', kind: 'image', mime: 'image/png', data: Buffer.from('x'),
+    sourcePath: '/runs/r1/repos/app/out/a.png', sourceOrigin: { runId: 'r1', projectKey: 'app', rel: 'out/a.png' } });
+  const proj = addAttachment(t.id, null, { name: 'b.md', text: 'b', sourcePath: '/p/app/b.md', sourceOrigin: { projectKey: 'app', rel: 'b.md' } });
+  const plain = addAttachment(t.id, null, { name: 'c.png', kind: 'image', mime: 'image/png', data: Buffer.from('x'), sourcePath: '/w/out/c.png' });
+  const up = addAttachment(t.id, null, { name: 'd.md', text: 'd' });
+  assert.deepEqual(attachmentSourceOrigin(t.id, run.id), { runId: 'r1', projectKey: 'app', rel: 'out/a.png' });
+  assert.deepEqual(attachmentSourceOrigin(t.id, proj.id), { runId: null, projectKey: 'app', rel: 'b.md' });
+  assert.equal(attachmentSourceOrigin(t.id, plain.id), null, 'a copy from the out folder has no origin');
+  assert.equal(attachmentSourceOrigin(t.id, up.id), null);
+  assert.equal(attachmentSourceOrigin(createThread().id, run.id), null, 'another thread never reads it');
+  assert.equal(JSON.stringify(listAttachments(t.id)).includes('out/a.png'), false, 'the relative path is never on a row');
+  assert.equal(JSON.stringify(getAttachment(t.id, run.id)).includes('r1'), false, 'nor the run id');
+  const half = addAttachment(t.id, null, { name: 'e.png', kind: 'image', mime: 'image/png', data: Buffer.from('x'),
+    sourcePath: '/x/e.png', sourceOrigin: { runId: 'r1', rel: 'e.png' } });
+  assert.equal(attachmentSourceOrigin(t.id, half.id), null, 'no project key: nothing to fall back to, nothing stored');
 });
 
 test('askOutDir: under the thread folder, strict thread id; an svg snapshot round-trips through attachmentPath', () => {

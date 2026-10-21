@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, realpathSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, realpathSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { showFiles, parseShownPath, credentialReason, showFileKindFor, imageSize, kindOf } from '../src/core/ask/show-files.mjs';
+import { showFiles, parseShownPath, credentialReason, showFileKindFor, imageSize, kindOf, revealTargetOf, REVEAL_GONE } from '../src/core/ask/show-files.mjs';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
 
 const PNG = Buffer.concat([Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex'), Buffer.from([0, 0, 2, 128, 0, 0, 1, 224]), Buffer.alloc(16)]);
@@ -11,14 +11,14 @@ const L = ASK_LIMITS.showFiles;
 
 function fixture({ withPinned = false, limits = L } = {}) {
   const top = realpathSync(mkdtempSync(join(tmpdir(), 'sf-')));
-  const [out, wt, proj, run, outside, attDir] = ['out', 'wt', 'proj', 'run', 'outside', 'att'].map((d) => join(top, d));
-  for (const d of [out, wt, proj, run, outside, attDir]) mkdirSync(d, { recursive: true });
+  const [out, wt, proj, run, member, outside, attDir] = ['out', 'wt', 'proj', 'run', 'member', 'outside', 'att'].map((d) => join(top, d));
+  for (const d of [out, wt, proj, run, member, outside, attDir]) mkdirSync(d, { recursive: true });
   const stored = [];
   const deps = {
     platform: process.platform, limits, redact: (s) => s.replace(/sk-ant-\w+/g, 'sk-ant-<redacted>'),
     outDir: () => out, worktreesDir: () => wt, pinnedProjectDir: async () => (withPinned ? proj : null),
     projectDir: async (k) => (k === 'p1' ? proj : null),
-    runDirsOf: async () => [run],
+    runDirsOf: async () => [{ dir: run }, { dir: member, projectKey: 'app' }],
     artifactFileOf: async (row, rel) => {
       if (rel === 'boom.png') throw new Error('index unreadable');
       return rel.startsWith('missing') ? null : { file: join(run, rel), base: run };
@@ -30,13 +30,13 @@ function fixture({ withPinned = false, limits = L } = {}) {
       const id = `att_${String(stored.length).padStart(8, '0')}`;
       const body = b.data ?? Buffer.from(b.text);
       writeFileSync(join(attDir, id), body);
-      const a = { id, messageId: null, name: b.name, kind: b.kind, mime: b.mime, bytes: body.length, text: b.text, sourcePath: b.sourcePath ?? null, hasSource: !!b.sourcePath };
+      const a = { id, messageId: null, name: b.name, kind: b.kind, mime: b.mime, bytes: body.length, text: b.text, sourcePath: b.sourcePath ?? null, sourceOrigin: b.sourceOrigin ?? null, hasSource: !!b.sourcePath };
       stored.push(a);
       return a;
     },
   };
   const rowFor = async (id) => { if (id !== 'r1') throw new Error('show_files: run not found'); return { id }; };
-  return { top, out, wt, proj, run, outside, deps, rowFor, stored };
+  return { top, out, wt, proj, run, member, outside, deps, rowFor, stored };
 }
 
 test('show_files: $WORCA_ASK_OUT screenshots snapshot as images with their size; the card item never carries a path', async () => {
@@ -150,6 +150,65 @@ test('show_files run artifacts: contained in the base they were found under; a r
   const reasons = r.refused.map((x) => x.reason);
   assert.equal(reasons.filter((x) => /artifact not found/.test(x)).length, 2, 'missing, and a lookup that threw');
   assert.ok(reasons.some((x) => /resolves outside its run folder/.test(x)));
+});
+
+test('show_files origin: a file under a run member\'s checkout keeps runId, projectKey and its relative path; a project file keeps projectKey; the out folder and run store none', async () => {
+  const f = fixture();
+  mkdirSync(join(f.member, 'out', 'shots'), { recursive: true });
+  writeFileSync(join(f.member, 'out', 'shots', 'home.png'), PNG);
+  writeFileSync(join(f.proj, 'notes.md'), '# n');
+  writeFileSync(join(f.run, 'log.txt'), 'log');
+  writeFileSync(join(f.out, 'o.txt'), 'o');
+  const r = await showFiles({ rowFor: f.rowFor, files: [
+    { path: 'out/shots/home.png', runId: 'r1' },
+    { path: 'notes.md', projectKey: 'p1' },
+    { path: 'log.txt', runId: 'r1' },
+    { path: '$WORCA_ASK_OUT/o.txt' },
+  ] }, f.deps);
+  assert.equal(r.items.length, 4);
+  assert.deepEqual(f.stored.map((a) => a.sourceOrigin), [
+    { runId: 'r1', projectKey: 'app', rel: 'out/shots/home.png' },
+    { runId: null, projectKey: 'p1', rel: 'notes.md' },
+    null,
+    null,
+  ]);
+  assert.equal(JSON.stringify(r).includes('out/shots'), false, 'the relative path never reaches the card');
+  assert.ok(r.items.every((i) => i.source === true), 'the card keeps only the flag');
+});
+
+test('revealTargetOf: the original while it is there, else the same relative path inside the project; both gone or an old row: SOURCE_GONE text', async () => {
+  const f = fixture();
+  const projectDir = async (k) => (k === 'app' ? f.proj : null);
+  const opts = { projectDir, platform: process.platform };
+  mkdirSync(join(f.member, 'out'), { recursive: true });
+  mkdirSync(join(f.proj, 'out'), { recursive: true });
+  writeFileSync(join(f.member, 'out', 'a.png'), PNG);
+  writeFileSync(join(f.proj, 'out', 'a.png'), PNG);
+  const src = { path: join(f.member, 'out', 'a.png'), origin: { runId: 'r1', projectKey: 'app', rel: 'out/a.png' } };
+  assert.deepEqual(await revealTargetOf(src, opts), { file: src.path }, 'the original wins while it exists');
+  rmSync(f.member, { recursive: true });
+  assert.deepEqual(await revealTargetOf(src, opts), { file: join(f.proj, 'out', 'a.png') }, 'the run folder is gone: the project copy');
+  rmSync(join(f.proj, 'out', 'a.png'));
+  assert.deepEqual(await revealTargetOf(src, opts), { error: REVEAL_GONE.run }, 'both gone');
+  assert.match(REVEAL_GONE.run, /run's folder was cleaned up.*Download still has the copy/);
+  assert.deepEqual(await revealTargetOf({ ...src, origin: { ...src.origin, projectKey: 'gone' } }, opts), { error: REVEAL_GONE.run }, 'an unregistered project');
+  assert.deepEqual(await revealTargetOf({ path: src.path, origin: null }, opts), { error: REVEAL_GONE.moved }, 'an older row: today\'s text');
+  assert.equal(REVEAL_GONE.moved, 'The original file is gone: it was moved or deleted after it was shown.');
+  assert.deepEqual(await revealTargetOf({ path: src.path, origin: { runId: null, projectKey: 'app', rel: 'out/a.png' } }, opts), { error: REVEAL_GONE.moved },
+    'a project file gone from the project: today\'s text');
+  mkdirSync(join(f.proj, 'dir.png'));
+  assert.deepEqual(await revealTargetOf({ ...src, origin: { ...src.origin, rel: 'dir.png' } }, opts), { error: REVEAL_GONE.run }, 'a folder is not a file');
+});
+
+test('revealTargetOf guard: the fallback never leaves the project folder (.., absolute, a symlink out)', async () => {
+  const f = fixture();
+  const opts = { projectDir: async () => f.proj, platform: process.platform };
+  writeFileSync(join(f.outside, 'x.png'), PNG);
+  symlinkSync(join(f.outside, 'x.png'), join(f.proj, 'link.png'));
+  const gone = join(f.member, 'nope.png');
+  for (const rel of ['../outside/x.png', 'a/../../outside/x.png', join(f.outside, 'x.png'), 'link.png', 'C:/outside/x.png', '']) {
+    assert.deepEqual(await revealTargetOf({ path: gone, origin: { runId: 'r1', projectKey: 'app', rel } }, opts), { error: REVEAL_GONE.run }, rel);
+  }
 });
 
 test("show_files attachmentIds: this chat's attachment is shown without a new copy, re-sniffed from its body; junk refused", async () => {
