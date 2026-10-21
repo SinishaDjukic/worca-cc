@@ -5,9 +5,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import {
-  renderPluginList, renderInstallConsent, renderUpdatePreview,
+  renderInstallConsent, renderUpdatePreview,
   renderConfigForm, collectConfigForm, renderConnectResult,
-  renderOrphanList, renderMarketplaceList, relTime,
+  renderMarketplaceList, relTime,
 } from '../ui/public/plugins-view.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -193,47 +193,6 @@ test('update preview: commits, diffstat, new-secret line and confirm; up-to-date
   ]);
 });
 
-test('plugin list shows enabled toggle, disabled state, broken badge, contributions', () => {
-  const el = renderPluginList([
-    { name: 'github-source', version: '0.1.0', pinnedSha: 'a1b2c3d4e5', enabled: true,
-      contributions: { agents: ['issueTriager'], taskSources: ['github'], skills: [], workflows: [] } },
-    { name: 'jira-source', version: null, pinnedSha: 'deadbeef99', enabled: false, broken: true, contributions: {} },
-  ], { doc });
-  const cards = el.querySelectorAll('.plugin-card');
-  assert.equal(cards.length, 2);
-  assert.equal(cards[0].querySelector('.pl-toggle').checked, true);
-  assert.match(cards[0].querySelector('.pl-contrib').textContent, /1 agent · 1 source/);
-  assert.equal(cards[1].querySelector('.pl-toggle').checked, false);
-  assert.ok(cards[1].classList.contains('pl-disabled'));
-  assert.ok(cards[1].querySelector('.pl-broken'), 'broken badge must render');
-  assert.equal(cards[1].querySelector('.pl-version').textContent, 'deadbee', 'sha7 stands in for a missing version');
-  assert.equal(cards[1].querySelector('.pl-remove').dataset.name, 'jira-source'); // delegation hook
-});
-
-test('an API-mismatched plugin gets an amber "needs update" badge and the note', () => {
-  const el = renderPluginList([
-    { name: 'old-plugin', version: '0.2.0', enabled: true, broken: true, contributions: { agents: 1, workflows: 1 },
-      apiMismatch: { builtFor: 2, host: 3, agents: 1, workflows: 1,
-        message: 'built for plugin API 2; this version of worca requires plugin API 3 for agents and pipeline templates \u2014 update or reinstall the plugin (1 agent(s), 1 template(s) ignored)' } },
-    { name: 'fine-plugin', version: '1.0.0', enabled: true, contributions: {} },
-  ], { doc });
-  const cards = el.querySelectorAll('.plugin-card');
-  const badge = cards[0].querySelector('.pl-api-mismatch');
-  assert.ok(badge, 'needs-update badge renders');
-  assert.equal(badge.textContent, 'needs update');
-  assert.ok(badge.classList.contains('amber'));
-  assert.equal(cards[0].querySelector('.pl-broken'), null,
-    'needs-update WINS: an outdated plugin never also shows the red "broken" badge');
-  assert.equal(cards[0].querySelectorAll('.badge').length, 1, 'exactly one badge on the card');
-  const note = cards[0].querySelector('.pl-api-note');
-  assert.equal(note.textContent,
-    'built for plugin API 2; this version of worca requires plugin API 3 for agents and pipeline '
-    + 'templates \u2014 update or reinstall the plugin (1 agent(s), 1 template(s) ignored)');
-  assert.equal(note.previousElementSibling.className, 'pl-contrib hint', 'the note follows the contributions line');
-  assert.equal(cards[1].querySelector('.pl-api-mismatch'), null);
-  assert.equal(cards[1].querySelector('.pl-api-note'), null);
-});
-
 test('connect result: connected / waiting / field errors, and a bare transport error', () => {
   const okEl = renderConnectResult(
     { ok: true, identity: 'Jane Doe', instance: { baseUrl: 'https://tracker.example.com/jira', project: 'PROJ' } },
@@ -258,25 +217,6 @@ test('connect result: connected / waiting / field errors, and a bare transport e
   // No envelope at all (shim transport failure) still renders one row.
   const bare = renderConnectResult({ ok: false, error: { kind: 'timeout', message: 'jtr whoami timed out' } }, { doc });
   assert.match(bare.textContent, /timed out/);
-});
-
-test('orphan list: row per orphan with Purge button; empty input -> empty container', () => {
-  const el = renderOrphanList(
-    [{ name: 'ghost-src', dataDir: '/home/u/.worca-cc/plugins/ghost-src/data' }],
-    { doc },
-  );
-  assert.equal(el.className, 'pl-orphans drows');
-  const rows = el.querySelectorAll('.pl-orphan-row');
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].querySelector('.pl-name').textContent, 'ghost-src');
-  assert.match(rows[0].querySelector('.hint').textContent, /uninstalled — config\/secrets remain/);
-  const btn = rows[0].querySelector('button.pl-purge-orphan');
-  assert.ok(btn, 'purge button present');
-  assert.equal(btn.dataset.name, 'ghost-src');
-  assert.equal(btn.textContent, 'Purge');
-
-  assert.equal(renderOrphanList([], { doc }).childElementCount, 0);
-  assert.equal(renderOrphanList(undefined, { doc }).childElementCount, 0);
 });
 
 test('config form renders channel sections with data-channel-id; collect routes accordingly', () => {
@@ -366,7 +306,7 @@ const MKT = {
 test('the Available list is gone: Browse tiles replace it (marketplace P3)', async () => {
   const mod = await import('../ui/public/plugins-view.mjs');
   assert.equal('renderAvailableList' in mod, false);
-  assert.equal(mod.renderPluginList([], { doc }).querySelector('.hist-empty').textContent, 'No plugins installed.');
+  assert.equal('renderPluginList' in mod || 'renderOrphanList' in mod, false, 'the Installed tab replaced them (marketplace P5)');
   assert.doesNotMatch(readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8'), /\.pl-avail|\.pl-available/);
 });
 
@@ -403,23 +343,14 @@ test('relTime: fixed-now buckets (pure, jsdom-safe) (C4)', () => {
 
 test('scripts: consent rows (runtime, command, case count), card count, python-missing chip', async () => {
   await checkRows([
-    { name: 'install consent lists shipped scripts with their runtime and command; the card summary counts them', run: () => {
+    { name: 'install consent lists shipped scripts with their runtime and command', run: () => {
       const el = renderInstallConsent({ name: 'p', repoUrl: 'https://x/y', sha: 'a'.repeat(40) },
         { agents: [], taskSources: [], scripts: [{ key: 'tidy', runtime: 'shell', file: null, command: 'npm run tidy' }, { key: 'lint', runtime: 'node', file: 'lint.mjs', command: null }], skills: [], workflows: [] }, { doc });
       assert.match(el.textContent, /Scripts \(2\)/);
       assert.match(el.textContent, /tidy — shell · npm run tidy/);
       assert.match(el.textContent, /lint — node · lint\.mjs/);
-      const list = renderPluginList([{ name: 'p', version: '1', enabled: true, contributions: { agents: 1, scripts: 2, taskSources: 0, chatChannels: 0, models: 0, skills: 0, workflows: 0 }, ignored: [] }], { doc });
-      assert.match(list.textContent, /1 agent · 2 scripts/);
     } },
-    { name: 'the Plugins card carries the python notice; a consent script row counts its cases', run: () => {
-      const contributions = { agents: 0, scripts: 1, taskSources: 0, chatChannels: 0, models: 0, skills: 0, workflows: 0 };
-      const loud = renderPluginList([{ name: 'p', version: '1', enabled: true, pythonMissing: true, contributions, ignored: [] }], { doc });
-      assert.ok(loud.querySelector('.pl-python-missing'), 'the notice is a chip, not a paragraph');
-      assert.match(loud.textContent, /python not found/);
-      const quiet = renderPluginList([{ name: 'q', version: '1', enabled: true, contributions, ignored: [] }], { doc });
-      assert.equal(quiet.querySelector('.pl-python-missing'), null);
-
+    { name: 'a consent script row counts its cases', run: () => {
       const el = renderInstallConsent({ name: 'p', repoUrl: 'https://x/y', sha: 'a'.repeat(40) },
         { agents: [], taskSources: [], skills: [], workflows: [],
           scripts: [{ key: 'tidy', runtime: 'shell', file: null, command: 'npm run tidy', cases: 2 },

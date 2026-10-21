@@ -52,7 +52,7 @@ a fresh child. **Pipeline templates are the exception** — they are DB rows, im
 (and at `install`/`update`), so after editing `workflows/*.json` run `worca plugin reimport <name>`.
 Reimport upserts: a template file you DELETE keeps its row until the plugin is removed.
 
-`plugin list`, `plugin doctor` and its Marketplace card name every contribution worca **ignored** —
+`plugin list`, `plugin doctor` and its row under Marketplace › Installed › Needs attention name every contribution worca **ignored** —
 an agent key that collides with an existing agent, a sidecar that fails the meta v2 gate, a template
 that fails graph validation. If your agent or flow is missing, that line says why.
 
@@ -206,7 +206,7 @@ Your manifest must **negotiate** API 4 or later (`">=5 <6"` honours forms too) o
 
 A plugin declaring `">=3 <4"` keeps working: its agents load, its ports are intact, and it asks with
 generic questions. The ignored block is named in `worca plugin list`, `worca plugin doctor` and its
-Marketplace card, the same way an ignored sidecar is.
+row under Marketplace › Installed › Needs attention, the same way an ignored sidecar is.
 
 ### The declaration
 
@@ -634,11 +634,11 @@ device names (`con`, `nul`, `com1`, …).
 | Self-managed storage not keyed by `ctx.profile` | Two profiles share one cache/cookie jar/CLI config dir → one instance silently answers with the other's data. Hang every path you own off the profile id |
 | `getTask().body` not markdown | It becomes the pipeline prompt verbatim |
 | Symlinks pointing outside the plugin dir | Deleted during export, reported as a warning |
-| A v1 sidecar (`consumes`/`produces`/`connectsTo`) | Ignored at load with a note on its Marketplace card — port it to `metaVersion: 2` |
-| A v1 `steps` workflow template | Ignored at load with a note on its Marketplace card — rewrite it as a graph (`version: 2`) |
+| A v1 sidecar (`consumes`/`produces`/`connectsTo`) | Ignored at load with a note under Marketplace › Installed — port it to `metaVersion: 2` |
+| A v1 `steps` workflow template | Ignored at load with a note under Marketplace › Installed — rewrite it as a graph (`version: 2`) |
 | `agentFile` pointing outside `agents/` (`../`, absolute) | Install-blocking validation error; the loader also refuses to read it |
 | A template referencing a key whose sidecar was rejected | ONE line naming the sidecar — the template is not re-reported rule by rule |
-| An agent key that collides with a built-in or user agent | Yours is dropped; `plugin list`/`doctor`/its Marketplace card name it under "contributions ignored" |
+| An agent key that collides with a built-in or user agent | Yours is dropped; `plugin list`/`doctor`/Marketplace › Installed name it under "contributions ignored" |
 | Editing `workflows/*.json` in a linked dir | The DB row is stale until `worca plugin reimport <name>` |
 | A shipped case with `"cwd": {"kind": "project"}` | Install-blocking validation error — a shipped case runs in a scratch folder |
 | `<key>.tests.json` with no `<key>.meta.json` beside it | Validation error — nothing would ever read it |
@@ -646,10 +646,10 @@ device names (`con`, `nul`, `com1`, …).
 | A node/python script that writes no value for a declared output | Execution error `output "<port>" was not written` |
 | A script key a built-in script or agent already holds (`shell`, `planner`, …) | Yours is dropped at load; `worca plugin new-script` refuses the key up front |
 | `process.stdout.write` in a `node` script | Corrupts the result frame. `console.*` is safe — it is routed to the run log |
-| An `ask` block on a plugin declaring API 3 | The block is ignored, the agent asks with generic questions; `plugin list`/`doctor`/its Marketplace card say so. Declare `">=4 <5"` |
+| An `ask` block on a plugin declaring API 3 | The block is ignored, the agent asks with generic questions; `plugin list`/`doctor`/Marketplace › Installed say so. Declare `">=4 <5"` |
 | A form with no `example` | Validation error — `example` is what proves the declaration and what the Agents view previews |
 | A `type:'file'` with a wide `accept` | Every reviewer sees it on the consent card. Narrow it to what the form actually shows |
-| `mcpServers` on a plugin declaring API 4 | The block is ignored — no server reaches the catalog; `plugin list`/`doctor`/its Marketplace card say so. Declare `">=5 <6"` |
+| `mcpServers` on a plugin declaring API 4 | The block is ignored — no server reaches the catalog; `plugin list`/`doctor`/Marketplace › Installed say so. Declare `">=5 <6"` |
 | A secret field referenced from `args` | Validation error — argv is readable by every local user. Pass it through `env` |
 
 ## The example worth reading

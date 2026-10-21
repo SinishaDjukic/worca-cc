@@ -60,7 +60,7 @@ test('the install sheet in the app', async () => {
       const chip = () => doc.querySelector('#mk-sheet .pl-channel[data-channel-key="slack-chat/main"]');
       assert.equal(chip().textContent, 'Slack · connecting');
       ws._msg({ type: 'channel-status', plugin: 'slack-chat', channelId: 'main', platform: 'slack', state: 'connected', detail: null });
-      assert.deepEqual([chip().textContent, chip().className], ['Slack · connected', 'badge green pl-channel']);   // SM37: P5 later rewrites this className
+      assert.deepEqual([chip().textContent, chip().className], ['Slack · connected', 'badge mk-chip mk-chip-ok pl-channel']);   // SM37: P5 later rewrites this className
       assert.equal(calls.filter(([m, u]) => m === 'POST' && u === '/api/plugins/install').length, 1);
       act(doc, 'done').click(); await wait(5);
       assert.deepEqual([sheetOpen(doc), doc.activeElement === tile(doc)], [false, true]);

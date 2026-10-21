@@ -52,14 +52,15 @@ test('#marketplace: three tabs with counts, Browse lit; today\'s lists sit insid
   assert.equal(lit(doc), 'browse');
   assert.equal(doc.querySelector('.mk-tab[data-tab="installed"] .mk-upd-chip').textContent, '1 update');
   assert.equal(doc.querySelectorAll('.mk-panel[data-tab="browse"] button.mk-tile').length, 4);
-  for (const [tab, sel] of [['installed', '#plugins-policy'], ['installed', '#plugins-list .plugin-card'], ['marketplaces', '#marketplace-add-row'], ['marketplaces', '#marketplaces-list .pl-mkt-row']]) {
+  for (const [tab, sel] of [['marketplaces', '#marketplace-add-row'], ['marketplaces', '#marketplaces-list .pl-mkt-row']]) {
     assert.ok(doc.querySelector(`.mk-panel[data-tab="${tab}"] ${sel}`), `${sel} in ${tab}`);
   }
-  assert.equal(doc.getElementById('mk-legacy').children.length, 0, 'both legacy hosts moved into their tabs');
+  assert.equal(doc.getElementById('plugins-list'), null);
+  assert.equal(doc.getElementById('mk-legacy').children.length, 0, 'the legacy Marketplaces host moved into its tab');
   assert.equal(doc.querySelector('[data-view="marketplace"] [data-needs-git], [data-view="marketplace"] .page-intro'), null);
-  // P3 ungates its own surfaces (LC-P3-1); today's Doctor button and Leftover data keep their Expert gate until P5.
-  assert.deepEqual([...doc.querySelectorAll('[data-view="marketplace"] [data-min-level]')].map((n) => n.className),
-    ['btn btn-sm pl-doctor']);
+  assert.deepEqual([...doc.querySelectorAll('[data-view="marketplace"] [data-min-level]')].map((n) => n.className), [],
+    'U5: nothing on the page is gated');
+  assert.ok(doc.querySelector('.mk-panel[data-tab="installed"] section.mk-all li.mk-row'), 'the Installed tab is P5\u2019s');
 });
 
 test('one entry, one load: tab hops refetch nothing; a new entry loads once more; any other sub-path is Browse', async () => {
@@ -122,11 +123,11 @@ test('no marketplaces: the inline add posts once per submit, keeps Needs git in 
   assert.deepEqual([count(calls, 'POST /api/marketplaces'), count(calls, 'GET /api/plugins') - n], [2, 1]);
 });
 
-test('Configure… from the Installed tab\'s team policy strip keeps the Installed tab', async () => {
+test('Configure… (Team policy) opens Settings over the Installed tab and keeps it', async () => {
   const { window, doc, go } = await boot({ routes: { 'GET /api/plugins/acme/config': [200, { sources: [], channels: [] }] } });
   await go('marketplace/installed');
   const b = doc.createElement('button'); b.className = 'pl-policy-configure'; b.dataset.name = 'acme';
-  doc.getElementById('plugins-policy').appendChild(b);
+  doc.querySelector('section[data-view="team-policy"]').appendChild(b);
   b.click(); await settle();
   assert.deepEqual([window.location.hash, doc.getElementById('plugin-modal-title').textContent], ['#marketplace/installed', 'Settings: acme']);
 });

@@ -183,7 +183,7 @@ test('renderDone: ready line, live chips, Now in worca, Next (board 1.4)', () =>
   assert.ok(b.querySelector('.mk-done-hero > .mk-ok-tile .ic svg'));
   assert.equal(b.querySelector('.mk-done-hero > h3.subpage-title').textContent, 'slack-chat is ready');
   assert.deepEqual([...b.querySelectorAll('.mk-chips .pl-channel')].map((c) => [c.dataset.channelKey, c.textContent, c.className]),
-    [['slack-chat/main', 'Slack · connected', 'badge green pl-channel']]);   // SM37: P5 later rewrites this className
+    [['slack-chat/main', 'Slack · connected', 'badge mk-chip mk-chip-ok pl-channel']]);   // SM37: P5 later rewrites this className
   const [now, next] = b.querySelectorAll('section.mk-sec');
   assert.deepEqual([now.querySelector('h3.subsection-title').textContent, next.querySelector('h3.subsection-title').textContent], ['Now in worca', 'Next']);
   const row = now.querySelector('ul.mk-list > li.mk-list-row');

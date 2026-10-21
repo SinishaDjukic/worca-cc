@@ -2,14 +2,6 @@
 // action, until the plan that replaces an action deletes its function here.
 const list = (v) => (Array.isArray(v) ? v : []);
 
-/** openRemove: today's uninstall confirm with the sets the plugin's servers and skills leave; onRemoved after a removal. */
-export async function fallbackRemove(page, deps, name, { onRemoved = null } = {}) {
-  const row = page.state.plugins.find((p) => p?.name === name);
-  const removed = await deps.fallbacks.uninstallPlugin(name, { mcpSets: list(row?.mcpSets).join(', '), skillSets: list(row?.skillSets).join(', ') });
-  if (removed === true) onRemoved?.();
-  return removed;
-}
-
 /** openUpdateReview: today's update preview for each name (default: every plugin with an update), one after another. */
 export async function fallbackUpdateAll(page, deps, names) {
   const todo = Array.isArray(names) ? names : page.state.plugins.filter((p) => p?.latest).map((p) => p.name);

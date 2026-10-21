@@ -2791,14 +2791,12 @@ button.pd-ov-card:hover{border-color:var(--ink-3);}
 /* ---- Plugins view ---- */
 /* Marketplaces render as one wrapper div inside the .run-list, so the
    list's gap doesn't reach the cards — the wrappers repeat it. */
-.pl-list,.pl-orphans,.pl-mkts{display:flex;flex-direction:column;}
+.pl-mkts{display:flex;flex-direction:column;}
 /* Card actions live top-right of the head row. */
 .pl-mkt-actions{margin-left:auto;display:flex;align-items:center;gap:8px;}
 .pl-mkt-actions .btn svg{display:block;}
-.plugin-card.pl-disabled{opacity:.62;}
 .pl-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 .pl-head .pl-name{font-size:var(--fs-body);font-weight:600;}
-.pl-version{color:var(--ink-3);font-size:12px;}
 .pl-enable{margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-3);cursor:pointer;}
 .pl-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}
 .pl-pick-row{display:flex;align-items:center;gap:10px;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line);}
@@ -2813,13 +2811,12 @@ button.pd-ov-card:hover{border-color:var(--ink-3);}
 .pl-uptodate{display:flex;align-items:baseline;gap:8px;padding:4px 0;}
 .pl-uptodate .hint{margin-top:0;font-size:13px;}
 .pl-refs-list{margin:6px 0 0 18px;font-size:12.5px;}
-.plugin-card .mono,.pl-consent .mono,.pl-update .mono,.pl-doc-row .mono,.pl-refs .mono{font-family:var(--mono);}
+.pl-consent .mono,.pl-update .mono,.pl-doc-row .mono,.pl-refs .mono{font-family:var(--mono);}
 .pl-consent-src .pl-needs-git{font-family:var(--sans);}
 .pl-manifest-delta{margin:8px 0;}
 .pl-delta{font-size:12.5px;}
 .pl-delta-secret{font-size:12.5px;font-weight:700;color:var(--red-ink);background:var(--red-bg);border-radius:var(--r-sm);padding:3px 8px;margin:2px 0;display:inline-block;}
 #plugin-modal .card{max-width:640px;width:min(92vw,640px);max-height:80vh;overflow:auto;}
-.pl-provenance{display:block;margin-top:4px;}
 .pl-mkt-url{display:block;margin-top:2px;overflow-wrap:anywhere;}
 .pl-mkt-sync{display:block;margin-top:2px;}
 .pl-mkt-warning{margin-top:4px;}
@@ -3528,7 +3525,6 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 }
 
 /* ── Chat connectivity (chat-connectivity-design.md §4.8) ─────────────────── */
-.pl-channels { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 8px; }
 .pl-channel-warn { color: var(--red); font-weight: 600; }
 .pl-config-h { font-weight: 600; margin: 14px 0 6px; font-size: 13px; }
 .chat-events, .chat-channels { margin: 8px 0; }
@@ -10050,3 +10046,49 @@ a.badge.mk-health:focus-visible{outline:2px solid var(--ink);outline-offset:2px;
 .mk-lrow:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .mk-lrow > .ic{margin-left:auto;color:var(--ink-3);}
 .mk-foot-start{margin-right:auto;}
+
+/* ── marketplace P5 ── */
+/* Installed tab (board 3.1): one column; each list is ONE card of divided rows (canvas .card.rows). P4's
+   .mk-row-main / .mk-meta / .mk-mono / .mk-list* / .mk-sec / .mk-link are reused as they are (SM23). */
+.mk-installed{display:flex;flex-direction:column;gap:24px;max-width:980px;}
+/* The tab header sits on the same 980px column as the lists (board 3.1): Update all ends at the cards’ right edge. */
+#mk-root:has(> .mk-panel[data-tab="installed"]:not([hidden])) > .mk-head{max-width:980px;}
+.mk-sec-head{display:flex;align-items:center;gap:8px;margin:0 0 12px;}
+.mk-sec-head .section-title{margin:0;}
+.mk-rows{list-style:none;margin:0;padding:0;}
+.mk-rows.card{padding:0;}
+.mk-row{display:flex;align-items:center;gap:12px;padding:12px 16px;min-width:0;}
+.mk-rows > .mk-row + .mk-row{border-top:1px solid var(--line);}
+.mk-row > .mk-row-main{display:flex;flex-direction:column;gap:2px;}
+.mk-row-line{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;min-width:0;}
+.mk-pname{font-size:var(--fs-body);font-weight:600;color:var(--ink);overflow-wrap:anywhere;}
+button.mk-name{background:none;border:0;padding:0;margin:0;font:inherit;font-size:var(--fs-body);font-weight:600;color:var(--ink);text-align:left;cursor:pointer;overflow-wrap:anywhere;}
+button.mk-name:hover{text-decoration:underline;}
+button.mk-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
+.mk-row-line .mk-ver,.mk-id{font-size:var(--fs-meta);color:var(--ink-2);overflow-wrap:anywhere;}
+.mk-meta a{color:var(--blue-ink-strong);}
+.mk-lines{list-style:none;margin:2px 0 0;padding:0;font-size:var(--fs-meta);line-height:var(--lh-body);color:var(--ink-2);overflow-wrap:anywhere;}
+/* A problem row with server text: tile and button on the first line; on a phone the button drops below the text. */
+.mk-row:has(> .mk-row-main > .mk-lines){flex-wrap:wrap;align-items:flex-start;}
+.mk-row:has(> .mk-row-main > .mk-lines) > .mk-row-main{flex:1 1 240px;}
+.mk-row:has(> .mk-row-main > .mk-lines) > .btn{margin-left:auto;}
+.mk-meta a:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
+.pl-channel .mk-live-dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex:none;}
+.mk-switch{display:inline-flex;align-items:center;flex:none;min-height:28px;padding:0 4px;cursor:pointer;}
+.mk-policy{padding:0;}
+.mk-policy-head{display:flex;align-items:center;gap:12px;padding:12px 16px;}
+.mk-policy-title{font-size:var(--fs-body);font-weight:600;}
+.mk-policy-id{display:flex;flex-wrap:wrap;align-items:baseline;gap:0 12px;flex:1;min-width:0;}
+.mk-policy .mk-rows{border-top:1px solid var(--line);}
+.mk-leftover{display:flex;flex-direction:column;gap:8px;}
+/* Remove / Blocked / Purge (board 3.4) inside P3's .mk-dialog. */
+#mk-dialog:is([data-kind="remove"],[data-kind="blocked"],[data-kind="purge"]) > .mk-dialog-head{align-items:center;}
+.mk-dlg-body{display:flex;flex-direction:column;gap:16px;}
+#mk-dialog[data-kind="purge"] .mk-dlg-body{gap:4px;}
+.mk-dlg-body p,.mk-dlg-body .subsection-title{margin:0;}
+.mk-goes,.mk-changes{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;}
+.mk-goes > li,.mk-changes > li{display:flex;align-items:center;gap:8px;min-width:0;}
+.mk-goes-k{font-weight:500;}
+.mk-purge-opt{display:flex;flex-direction:column;gap:4px;padding-top:12px;border-top:1px solid var(--line);}
+.mk-check{display:flex;align-items:center;gap:8px;cursor:pointer;}
+.mk-purge-opt .mk-consequence{padding-left:26px;}

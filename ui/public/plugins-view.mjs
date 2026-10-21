@@ -36,134 +36,18 @@ function iconBtn(doc, cls, icon, label) {
   return b;
 }
 
-// contributions -> "2 agents · 1 source · 1 skill". Arrays (listInstalledPlugins)
-// or plain counts are both tolerated.
-function contribSummary(c) {
-  const n = (v) => (Array.isArray(v) ? v.length : (Number.isFinite(v) ? v : 0));
-  const parts = [
-    [n(c && c.agents), 'agent'], [n(c && c.scripts), 'script'], [n(c && c.taskSources), 'source'],
-    [n(c && c.chatChannels), 'chat channel'], [n(c && c.models), 'model'],
-    [n(c && c.skills), 'skill'], [n(c && c.workflows), 'workflow'],
-  ].filter(([k]) => k > 0).map(([k, w]) => `${k} ${w}${k > 1 ? 's' : ''}`);
-  return parts.join(' · ') || 'no contributions';
-}
-
-// renderPluginList(plugins, {channelStatus}) -> <div.pl-list> of cards.
-// Action buttons + the enable checkbox carry data-name and a pl-* class so
-// app.js can wire ONE delegated listener on the list container. channelStatus
-// rows (GET /api/chat/status) add per-channel live badges; the badge carries
-// data-channel-key="<plugin>/<id>" so a channel-status WS event can patch it
-// in place.
-export function renderPluginList(plugins, { doc = globalThis.document, channelStatus = [] } = {}) {
-  const root = h(doc, 'div', 'pl-list drows');
-  for (const p of plugins || []) {
-    const card = h(doc, 'section', 'drow drow-stack plugin-card');
-    card.dataset.name = p.name;
-    if (p.enabled === false) card.classList.add('pl-disabled');
-    const head = h(doc, 'div', 'pl-head');
-    head.appendChild(h(doc, 'b', 'pl-name', p.name));
-    head.appendChild(h(doc, 'span', 'pl-version mono', p.version || sha7(p.pinnedSha)));
-    if (p.linked) head.appendChild(h(doc, 'span', 'badge grey pl-linked', 'linked'));
-    if (p.apiMismatch) head.appendChild(h(doc, 'span', 'badge amber pl-api-mismatch', 'needs update'));
-    else if (p.broken) head.appendChild(h(doc, 'span', 'badge red pl-broken', 'broken'));
-    // A shipped python script on a host without python: a chip, never a block.
-    if (p.pythonMissing) head.appendChild(h(doc, 'span', 'badge amber pl-python-missing', 'python not found'));
-    // Enabling a plugin acts on a live system the moment it flips, so it reads
-    // as a switch. `.switch` MUST be the input's immediate next sibling — the
-    // `.sw-input:checked + .switch` rule is what paints the on state.
-    const toggle = h(doc, 'label', 'pl-enable');
-    const cb = h(doc, 'input', 'sw-input pl-toggle');
-    cb.type = 'checkbox';
-    cb.checked = p.enabled !== false;
-    cb.dataset.name = p.name;
-    cb.setAttribute('aria-label', `Enable ${p.name}`);
-    toggle.appendChild(cb);
-    toggle.appendChild(h(doc, 'span', 'switch switch-sm'));
-    toggle.appendChild(h(doc, 'span', '', p.enabled !== false ? 'enabled' : 'disabled'));
-    head.appendChild(toggle);
-    card.appendChild(head);
-    const contrib = h(doc, 'small', 'pl-contrib hint', contribSummary(p.contributions));
-    const mcp = Number(p.contributions && p.contributions.mcpServers) || 0;
-    if (mcp) {
-      // MCP servers are configured on the Connectors page; the count is the way there.
-      if (contrib.textContent === 'no contributions') contrib.textContent = '';
-      else contrib.appendChild(doc.createTextNode(' · '));
-      const a = h(doc, 'a', 'pl-mcp-link', `${mcp} MCP server${mcp > 1 ? 's' : ''}`);
-      a.href = '#connectors/servers';
-      contrib.appendChild(a);
-    }
-    card.appendChild(contrib);
-    if (p.apiMismatch) card.appendChild(h(doc, 'small', 'pl-api-note hint err', p.apiMismatch.message || ''));
-    // Contributions worca refused to load. Same note treatment as the API note:
-    // the contributions line above counts what the plugin SHIPS, so without this
-    // the card claims an agent or a template that exists nowhere.
-    if (p.ignored && p.ignored.length) {
-      const n = p.ignored.length;
-      card.appendChild(h(doc, 'small', 'pl-ignored-note hint err',
-        `${n} contribution${n > 1 ? 's' : ''} ignored: `
-        + p.ignored.map((i) => `${i.file} — ${i.reason}`).join('; ')));
-    }
-    if (p.repo || p.marketplaceName) {
-      const prov = [p.marketplaceName, p.repo].filter(Boolean).join(' · ');
-      card.appendChild(h(doc, 'small', 'pl-provenance hint mono',
-        p.pinnedSha ? `${prov} @ ${sha7(p.pinnedSha)}` : prov));
-    }
-    const chRows = (channelStatus || []).filter((c) => c.plugin === p.name);
-    if (chRows.length) {
-      const chans = h(doc, 'div', 'pl-channels');
-      for (const c of chRows) chans.appendChild(channelBadge(doc, c));
-      card.appendChild(chans);
-    }
-    const actions = h(doc, 'div', 'pl-actions');
-    for (const [cls, label] of [['pl-settings', 'Settings'], ['pl-doctor', 'Doctor'], ['pl-update', 'Update'], ['pl-remove', 'Remove']]) {
-      const b = h(doc, 'button', `btn btn-sm${cls === 'pl-remove' ? ' btn-danger' : ''} ${cls}`, label);
-      b.type = 'button';
-      b.dataset.name = p.name;
-      if (cls === 'pl-doctor') b.dataset.minLevel = 'expert';   // diagnostics (docs/ui-levels.md)
-      // The MCP sets this plugin's servers leave on uninstall, and the sets its skills leave — the confirm lists them.
-      if (cls === 'pl-remove' && (p.mcpSets || []).length) b.dataset.mcpSets = p.mcpSets.join(', ');
-      if (cls === 'pl-remove' && (p.skillSets || []).length) b.dataset.skillSets = p.skillSets.join(', ');
-      actions.appendChild(b);
-    }
-    card.appendChild(actions);
-    root.appendChild(card);
-  }
-  if (!plugins || !plugins.length) {
-    root.appendChild(h(doc, 'div', 'hist-empty', 'No plugins installed.'));
-  }
-  return root;
-}
-
-// One live channel badge: dot color by connection state + platform label.
-// Exported so app.js can re-render a single badge on a channel-status event.
+// The live channel chip (board 3.1; also the install sheet's Done chip): onChannelStatus replaces it by
+// key and recovers the name from the text before ' · '. The classes are P3's chip (SM19), written out so
+// plugins-view.mjs does not import the marketplace modules.
+const CHANNEL_TONE = { connected: 'ok', degraded: 'warn', failed: 'bad' };
 export function channelBadge(doc, c) {
-  const stateCls = { connected: 'green', degraded: 'waiting', connecting: 'waiting' }[c.state] || 'red';
-  const b = h(doc, 'span', `badge ${stateCls} pl-channel`, `${c.displayName || c.channelId} · ${c.state}`);
+  const b = h(doc, 'span', `badge mk-chip mk-chip-${CHANNEL_TONE[c.state] || 'off'} pl-channel`);
+  const dot = h(doc, 'span', 'mk-live-dot');
+  dot.setAttribute('aria-hidden', 'true');
+  b.append(dot, doc.createTextNode(`${c.displayName || c.channelId} · ${c.state}`));
   b.dataset.channelKey = `${c.plugin}/${c.channelId}`;
   if (c.detail) b.title = c.detail;
   return b;
-}
-
-// renderOrphanList(orphans) -> <div.pl-orphans> of "leftover data" rows.
-// Purge buttons carry data-name + .pl-purge-orphan for app.js's delegated
-// listener. Empty/nullish input -> childless container (app.js skips mounting).
-export function renderOrphanList(orphans, { doc = globalThis.document } = {}) {
-  const root = h(doc, 'div', 'pl-orphans drows');
-  root.dataset.minLevel = 'expert';                       // purge of leftover data (docs/ui-levels.md)
-  if (!orphans || !orphans.length) return root;
-  root.appendChild(h(doc, 'h3', 'pl-orphans-title', 'Leftover data'));
-  for (const o of orphans) {
-    const row = h(doc, 'div', 'drow drow-stack pl-orphan-row');
-    row.dataset.name = o.name;
-    row.appendChild(h(doc, 'b', 'pl-name', o.name));
-    row.appendChild(h(doc, 'small', 'hint', 'uninstalled — config/secrets remain'));
-    const btn = h(doc, 'button', 'btn pl-purge-orphan', 'Purge');
-    btn.type = 'button';
-    btn.dataset.name = o.name;
-    row.appendChild(btn);
-    root.appendChild(row);
-  }
-  return root;
 }
 
 // renderInstallConsent(entry, inventory) — spec §6.1 "Will install" ceremony.

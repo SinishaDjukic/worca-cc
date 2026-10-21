@@ -107,7 +107,7 @@ test('app: Add marketplace 409 → the chip inside the add row; Update 409 → t
     '/api/marketplaces/refresh': () => json({ ok: true, marketplaces: [MKT] }),
     '/api/marketplaces': (u, o) => ((o.method || 'GET') === 'POST' ? json(GIT_MISSING, 409) : json({ marketplaces: [MKT] })),
     '/api/plugins/alpha/update': () => json(GIT_MISSING, 409),
-    '/api/plugins': () => json({ plugins: [], orphans: [] }),
+    '/api/plugins': () => json({ plugins: [{ name: 'alpha', version: '1.0.0', enabled: true, contributions: {}, latest: { version: '1.1.0', sha: 'b'.repeat(40), marketplace: 'gl', access: [] }, setup: { ok: true, missing: [], noProfiles: [] }, notes: [] }], orphans: [] }),
     '/api/chat/status': () => json({ channels: [] }),
     '/api/policy/scopes': () => json({ projects: [], workspaces: [], scopes: { projects: [], workspaces: [] }, homes: [], requirements: [], blockedPlugins: [], anyEnabled: false }),
   });
@@ -118,11 +118,13 @@ test('app: Add marketplace 409 → the chip inside the add row; Update 409 → t
   await settle();
   assert.equal(d.querySelector('#marketplace-add-row .pl-needs-git').textContent, 'Needs git');
   assert.equal(d.getElementById('plugins-msg').textContent, '');
-  const upd = d.createElement('button'); upd.className = 'pl-update'; upd.dataset.name = 'alpha';
-  d.getElementById('plugins-list').appendChild(upd);
-  upd.click();
+  d.defaultView.location.hash = '#marketplace/installed';
+  await settle();
+  d.querySelector('section.mk-attention li.mk-row[data-name="alpha"] [data-act="update"]').click();
+  await settle();
   await settle();
   assert.deepEqual([d.getElementById('plugin-modal-title').textContent, d.querySelector('#plugin-modal-body .pl-needs-git').textContent], ['Update alpha', 'Needs git']);
+  d.getElementById('plugin-modal-close').click();
   d.querySelector('button.mk-tile[data-key="gl/gl-plugin"]').click();
   await settle();
   assert.deepEqual([...d.querySelectorAll('#mk-sheet .mk-sheet-foot [data-act]')].map((b) => b.textContent), ['Cancel']);
@@ -171,7 +173,7 @@ test('app: consent names Needs git on the source line; the add-row chip is one, 
     '/api/marketplaces/refresh': () => json({ ok: true, marketplaces: [MKT] }),
     '/api/marketplaces': (u, o) => ((o.method || 'GET') === 'POST' ? json(GIT_MISSING, 409) : json({ marketplaces: [MKT] })),
     '/api/plugins/beta/update': () => json({ error: 'an update is already running' }, 409),
-    '/api/plugins': () => json({ plugins: [], orphans: [] }),
+    '/api/plugins': () => json({ plugins: [{ name: 'beta', version: '1.0.0', enabled: true, contributions: {}, latest: { version: '1.1.0', sha: 'b'.repeat(40), marketplace: 'gl', access: [] }, setup: { ok: true, missing: [], noProfiles: [] }, notes: [] }], orphans: [] }),
     '/api/chat/status': () => json({ channels: [] }),
     '/api/policy/scopes': () => json({ projects: [], workspaces: [], scopes: { projects: [], workspaces: [] }, homes: [], requirements: [], blockedPlugins: [], anyEnabled: false }),
   });
@@ -190,11 +192,13 @@ test('app: consent names Needs git on the source line; the add-row chip is one, 
   assert.equal(d.querySelectorAll('#marketplace-add-row .pl-needs-git').length, 1);
   url.dispatchEvent(new d.defaultView.Event('input', { bubbles: true }));
   assert.equal(d.querySelector('#marketplace-add-row .pl-needs-git'), null);
-  const upd = d.createElement('button'); upd.className = 'pl-update'; upd.dataset.name = 'beta';
-  d.getElementById('plugins-list').appendChild(upd);
-  upd.click();
+  d.defaultView.location.hash = '#marketplace/installed';
   await settle();
-  assert.equal(d.getElementById('plugin-modal').classList.contains('hidden'), true, 'another 409 is reported as before, no dialog');
+  d.querySelector('section.mk-attention li.mk-row[data-name="beta"] [data-act="update"]').click();
+  await settle();
+  await settle();
+  assert.equal(d.getElementById('plugin-modal').classList.contains('hidden'), true, 'another 409 is a toast, no dialog');
+  assert.equal(d.querySelector('#toasts > .toast.err .tt').textContent, 'an update is already running');
 });
 
 test('app: a required plugin\'s Update 409 → the Update dialog says Needs git, and Update all waits for it', async () => {
@@ -205,7 +209,7 @@ test('app: a required plugin\'s Update 409 → the Update dialog says Needs git,
     '/api/plugins/beta/update': () => json(GIT_MISSING, 409),
   });
   const all = d.createElement('button'); all.className = 'pl-policy-all';
-  d.getElementById('plugins-policy').replaceChildren(all);
+  d.querySelector('section[data-view="team-policy"]').append(all);
   all.click();
   await settle();
   assert.deepEqual([d.getElementById('plugin-modal-title').textContent, d.querySelector('#plugin-modal-body .pl-needs-git').textContent, actions(d)], ['Update alpha', 'Needs git', []]);

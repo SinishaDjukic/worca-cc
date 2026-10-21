@@ -157,7 +157,7 @@ import { projectForm } from '../../src/shared/forms/project.mjs';
 import { installSessionGuard } from './session-guard.mjs';
 import {
   renderInstallConsent, renderUpdatePreview,
-  renderConfigForm, collectConfigForm, renderConnectResult, renderDoctorReport, renderReferences409,
+  renderConfigForm, collectConfigForm, renderConnectResult, renderDoctorReport,
   channelBadge, renderNeedsGit,
 } from './plugins-view.mjs';
 import { mountMarketplace, tabFromParam } from './marketplace/index.mjs';
@@ -235,7 +235,7 @@ import { renderScopeOptions, renderSyncChip, renderTeamMetricsBody, renderTmEmpt
 import {
   renderProjectTpCell, renderProjectTpChip, projectTpSummary, renderPolicyEnableDialogBody, renderEffectiveTable, renderPolicyEditor, docFromEditor, editorDirty,
   renderPolicyEmptyState, renderPolicySyncChip, renderWsPolicyLine, renderTeamCapsReadout, renderTeamChip, renderPolicyNotesLine,
-  renderRequiredStrip, renderSetupChecklist, relTime as tpRelTime,
+  renderSetupChecklist, relTime as tpRelTime,
   renderPolicyHeader, renderPolicyStats, renderPolicyPluginsPanel, renderPolicyCatalogPanel, renderMcpStrip, renderMcpConsent, handleTeamSkillClick,
 } from './team-policy-view.mjs';
 import { mcpRunsLabel, renderMcpRunsPop, renderRunSkills } from './mcp-run-picker.mjs';
@@ -793,7 +793,6 @@ const el = {
   mcpRunsField: $('#mcpRunsField'),
   mcpRunsLabel: $('#mcpRunsLabel'),
   mcpRunsPop: $('#mcpRunsPop'),
-  pluginsPolicy: $('#plugins-policy'),
   tpBody: $('#tp-body'),
   tpScope: $('#tp-scope'),
   tpSync: $('#tp-sync'),
@@ -873,7 +872,6 @@ const el = {
   agwClose: $('#agw-close'),
 
   // Plugins view
-  pluginsList: $('#plugins-list'),
   pluginsMsg: $('#plugins-msg'),
   marketplacesList: $('#marketplaces-list'),
   marketplaceAddRow: $('#marketplace-add-row'),
@@ -1806,7 +1804,7 @@ function handleServerMessage(msg) {
     if (currentView() === 'workspaces') paintWsPolicyLines(true);
     if (currentView() === 'team-policy' && !tpState.editing) loadTeamPolicyView();
     if (currentView() === 'settings' && currentSettingsTab === 'runs') paintTeamCapsReadout(true);
-    if (currentView() === 'marketplace') paintPluginsPolicy(true);
+    if (currentView() === 'marketplace') { void paintPluginsPolicy(true); void marketplacePage?.load(); }
     if (currentView() === 'connectors') refreshMcpSurfaces();   // the MCP strip and the Team set
     if (currentView() === 'new') schedulePolicyLine();
     return;
@@ -15280,6 +15278,9 @@ if (el.chatSettingsHost) el.chatSettingsHost.addEventListener('click', async (e)
 // cards + the settings card) without a refetch.
 function onChannelStatus(msg) {
   const key = `${msg.plugin}/${msg.channelId}`;
+  // The Marketplace page repaints from its state (a tab switch, a refresh): keep its row current, or the old chip returns.
+  const row = (marketplacePage?.state?.channelStatus || []).find((c) => c.plugin === msg.plugin && c.channelId === msg.channelId);
+  if (row) Object.assign(row, { state: msg.state, detail: msg.detail ?? null });
   for (const b of document.querySelectorAll(`.pl-channel[data-channel-key="${cssEscape(key)}"]`)) {
     b.replaceWith(channelBadge(document, { ...msg, displayName: b.textContent.split(' · ')[0] }));
   }
@@ -16382,17 +16383,17 @@ function needsGitModal(title) { pluginModal(title, renderNeedsGit(document)); }
 let pluginsViewMarketplaces = [];
 let marketplacePage = null;   // SM15: P5–P7 read it (e.g. the marketplace-add-changed forward)
 marketplacePage = mountMarketplace({ doc: document, win: window, deps: {
-  api: pluginApi, notify, confirmModal, openMenu, gitOn, invalidateAgentCaches, setMsg: setPluginsMsg,
+  api: pluginApi, notify, confirmModal, openMenu, gitOn, invalidateAgentCaches, openSetupChecklist, setMsg: setPluginsMsg,
   loadPolicy: () => loadTpScopes({ force: true }),   // SM35: state.policy (P5's Team policy card)
   navigate: (hash) => { const t = String(hash).replace(/^#/, ''); if (location.hash.slice(1) !== t) location.hash = t; },
-  fallbacks: { openInstallConsent, openPluginSettings, updatePlugin: updateRequiredPlugin, uninstallPlugin: uninstallPluginFlow,
+  fallbacks: { openInstallConsent, openPluginSettings, updatePlugin: updateRequiredPlugin, checkHealth: openDoctorModal,
     addMarketplace: openLegacyAddRow, waitModalClosed: pluginModalClosed },
 } });
 marketplacePage.onChange((s) => { pluginsViewMarketplaces = s.marketplaces; });
 // Every caller (Team policy, the action flows) reloads the page here; only a route entry passes refresh.
 async function loadPluginsView({ refresh = false } = {}) {
   await marketplacePage.load({ refresh });
-  paintPluginsPolicy(false);                     // team policy (design board 10): the required-by strip, from the scopes load() just read
+  paintPluginsPolicy(false);                     // team policy (design board 10): a trusted home's installs, from the scopes load() just read
 }
 // One entry, one load (CONTRACT §4): a tab hop inside the page only selects the tab.
 function enterMarketplace(param, prevView) {
@@ -16744,56 +16745,14 @@ async function openPluginSettings(name, profile, { seeds = null } = {}) {
   ]);
 }
 
-// One delegated listener: enable toggle + Settings/Doctor/Update/Remove + orphan Purge.
-if (el.pluginsList) el.pluginsList.addEventListener('click', async (e) => {
-  const t = e.target;
-  const name = t && t.dataset ? t.dataset.name : '';
-  if (!name) return;
-  if (t.classList.contains('pl-toggle')) {
-    const { ok, data } = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/enable`, { enabled: t.checked });
-    if (!ok) { setPluginsMsg(data.error || 'toggle failed', 'err'); t.checked = !t.checked; return; }
-    invalidateAgentCaches();                   // disabled plugin's agents leave the registry
-    loadPluginsView();
-  } else if (t.classList.contains('pl-settings')) {
-    openPluginSettings(name);
-  } else if (t.classList.contains('pl-doctor')) {
-    setPluginsMsg(`Running doctor on ${name}…`);
-    const { ok, data } = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/doctor`);
-    setPluginsMsg('');
-    // No footer actions — the modal header already has a Close button.
-    pluginModal(`Doctor: ${name}`,
-      renderDoctorReport(ok ? data : { ok: false, checks: [{ id: 'request', ok: false, detail: data.error || 'doctor failed' }] }));
-  } else if (t.classList.contains('pl-update')) {
-    const { ok, status, data } = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/update`, {});
-    if (isGitMissing({ ok, status, data })) return needsGitModal(`Update ${name}`);
-    if (!ok) return setPluginsMsg(data.error || 'update preview failed', 'err');
-    const body = renderUpdatePreview(data);
-    pluginModal(`Update ${name}`, body);  // header Close only
-    const confirmBtn = body.querySelector('.pl-confirm-update');
-    if (confirmBtn) confirmBtn.addEventListener('click', async () => {
-      confirmBtn.disabled = true;
-      const r2 = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/update`, { confirm: true });
-      closePluginModal();
-      if (!r2.ok) return setPluginsMsg(r2.data.error || 'update failed', 'err');
-      setPluginsMsg(`Updated ${name}.`, 'ok');
-      invalidateAgentCaches();
-      loadPluginsView();
-    });
-  } else if (t.classList.contains('pl-remove')) {
-    await uninstallPluginFlow(name, { mcpSets: t.dataset.mcpSets || '', skillSets: t.dataset.skillSets || '' });
-  } else if (t.classList.contains('pl-purge-orphan')) {
-    const sure = await confirmModal({
-      title: 'Purge plugin data',
-      message: `Delete config, secrets and state for "${name}"? This cannot be undone.`,
-      confirmLabel: 'Purge',
-    });
-    if (!sure) return;
-    const { ok, data } = await pluginApi('DELETE', `/api/plugins/${encodeURIComponent(name)}/data`);
-    if (!ok) return setPluginsMsg(data.error || 'purge failed', 'err');
-    setPluginsMsg(`Purged leftover data for ${name}.`, 'ok');
-    loadPluginsView();
-  }
-});
+async function openDoctorModal(name) {
+  // The Installed ⋯ "Check health" until P6's manage sheet takes it (page action checkHealth): the Doctor checks in the shared modal.
+  setPluginsMsg(`Running doctor on ${name}…`);
+  const { ok, data } = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/doctor`);
+  setPluginsMsg('');
+  pluginModal(`Health: ${name}`,
+    renderDoctorReport(ok ? data : { ok: false, checks: [{ id: 'request', ok: false, detail: data.error || 'doctor failed' }] }));
+}
 
 // Marketplaces section: Refresh / Remove.
 if (el.marketplacesList) el.marketplacesList.addEventListener('click', async (e) => {
@@ -20506,17 +20465,15 @@ async function resumePipelineOnEngine(p, runEngine, btn, engine) {
   return resumePipeline(p, p.projectDir || null, btn, { engine });
 }
 
-// Plugins page (boards 10–11): the required-by strip, installs through the SAME consent flow as
-// Available, the setup checklist, and the per-home trust switch.
+// Plugins page (boards 10–11): installs through the SAME consent flow as Available, the setup
+// checklist, and the per-home trust switch.
 const TP_TRUST_PREFIX = 'worca.policy.trust.';
 const policyHomeTrusted = (home) => { try { return localStorage.getItem(TP_TRUST_PREFIX + home) === '1'; } catch { return false; } };
 let pluginsPolicyAutoBusy = false;
 async function paintPluginsPolicy(force = false) {
-  if (!el.pluginsPolicy) return;
   const data = await loadTpScopes({ force });
-  const strip = renderRequiredStrip(data.requirements || [], data.blockedPlugins || [], { doc: document });
-  el.pluginsPolicy.replaceChildren(strip || '');
-  // A trusted home (the developer's own switch, per machine) installs its missing plugins here.
+  // A trusted home (the developer's own switch, per machine) installs its missing plugins here; the Installed
+  // tab's Team policy card reads the same scopes from the page state.
   const missing = (data.requirements || []).filter((r) => r.state === 'missing' && (r.homes || []).some(policyHomeTrusted));
   if (missing.length && !pluginsPolicyAutoBusy) {
     pluginsPolicyAutoBusy = true;
@@ -20592,7 +20549,6 @@ async function updateRequiredPlugin(name) {
   });
   return true;
 }
-if (el.pluginsPolicy) el.pluginsPolicy.addEventListener('click', (e) => { void handlePolicyPluginClick(e); });
 async function openSetupChecklist() {
   const data = await loadTpScopes({ force: true });
   const reqs = data.requirements || [];
@@ -20698,39 +20654,6 @@ const skillTeamDeps = () => ({
     if (checklist) void openSetupChecklist(); else refreshMcpSurfaces();
   },
 });
-// Uninstall one plugin (the Installed list's Remove, the page's openRemove): today's confirm names the sets its MCP
-// servers and skills leave; resolves true once the plugin is gone.
-async function uninstallPluginFlow(name, { mcpSets = '', skillSets = '' } = {}) {
-  const res = await confirmModal({
-    title: 'Uninstall plugin',
-    message: `Uninstall "${name}"?${mcpSets
-      ? `\n\nIts MCP servers leave these sets, with their values, secrets and test results: ${mcpSets}.` : ''}${skillSets
-      ? `\n\nIt also removes its skills from ${skillSets}.` : ''}`,
-    confirmLabel: 'Uninstall',
-    checkbox: { label: 'Also delete config, secrets and state (purge — cannot be undone)' },
-  });
-  if (!res.ok) return false;
-  const purge = res.checked;
-  const { ok, status, data } = await pluginApi(
-    'DELETE', `/api/plugins/${encodeURIComponent(name)}${purge ? '?purge=1' : ''}`,
-  );
-  if (status === 409) {
-    const refs = data.references || [];
-    notify({ tone: 'err', title: `Cannot uninstall ${name}`, detail: String(data.error || '').split('\n')[0],
-      action: { label: 'Details', run: () => pluginModal(`Cannot uninstall ${name}`, renderReferences409(refs)) } });
-    return false;
-  }
-  if (!ok) { setPluginsMsg(data.error || 'uninstall failed', 'err'); return false; }
-  setPluginsMsg(
-    purge
-      ? `Uninstalled ${name} and purged its data.`
-      : `Uninstalled ${name}. Leftover data kept under ~/.worca-cc/plugins/${name}/data.`,
-    'ok',
-  );
-  invalidateAgentCaches();
-  loadPluginsView();
-  return true;
-}
 // Resolves once #plugin-modal is closed: a chain of dialogs waits on it (one install or update preview at a time).
 function pluginModalClosed() {
   return new Promise((res) => { const iv = setInterval(() => { if (!el.pluginModal || el.pluginModal.classList.contains('hidden')) { clearInterval(iv); res(); } }, 200); });

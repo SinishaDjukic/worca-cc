@@ -5,7 +5,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
-import { renderPluginList, renderMarketplaceList } from '../ui/public/plugins-view.mjs';
+import { renderMarketplaceList } from '../ui/public/plugins-view.mjs';
+import { renderAllInstalled } from '../ui/public/marketplace/installed-view.mjs';
+import { renderRemoveDialog } from '../ui/public/marketplace/remove-view.mjs';
 import { renderProvidersCard } from '../ui/public/bridge-view.mjs';
 import { renderModelsList } from '../ui/public/models-view.mjs';
 import { renderPolicySyncChip } from '../ui/public/team-policy-view.mjs';
@@ -48,13 +50,16 @@ test('Workflows Library: shared filter chips, divided rows, shared icons', () =>
 const PLUGIN = { name: 'acme', version: '1.0.0', enabled: true };
 const MKT = { id: 'worca-cc', name: 'Worca CC Official', url: 'https://x/y.git', builtin: true, lastSync: { sha: 'abcdef0123', at: '2026-10-20T10:00:00Z' }, plugins: [{ name: 'acme', installed: false }] };
 test('Marketplace: divided rows, Remove on .btn-danger, no amber name badge, no page intro (L18)', () => {
-  for (const [root, item] of [[renderPluginList([PLUGIN], { doc }), '.plugin-card'], [renderMarketplaceList([MKT], { doc }), '.pl-mkt-row']]) {
+  for (const [root, item] of [[renderMarketplaceList([MKT], { doc }), '.pl-mkt-row']]) {
     assert.ok(root.classList.contains('drows'), `${item} host is .drows`);
     const row = root.querySelector(item);
     assert.ok(row.classList.contains('drow') && row.classList.contains('drow-stack') && !row.classList.contains('card'), item);
   }
-  const rm = renderPluginList([PLUGIN], { doc }).querySelector('.pl-remove');
-  assert.deepEqual([...rm.classList], ['btn', 'btn-sm', 'btn-danger', 'pl-remove']);
+  const all = renderAllInstalled(doc, [PLUGIN]);
+  assert.ok(all.querySelector('ul.mk-rows.card > li.mk-row') && !all.querySelector('li.mk-row.card'), 'one card of divided rows, never a card per row');
+  assert.equal(all.querySelector('.btn-danger'), null, 'Remove lives in the ⋯ menu and its dialog');
+  assert.deepEqual(renderRemoveDialog(doc, { name: 'acme', iconKind: 'none', goesAway: [], changes: [] }).foot.map((b) => b.className),
+    ['btn btn-quiet', 'btn btn-danger mk-confirm']);
   const mrm = renderMarketplaceList([MKT], { doc }).querySelector('.pl-mkt-remove');
   assert.ok(mrm.classList.contains('btn') && mrm.classList.contains('btn-danger'));
   assert.ok(renderMarketplaceList([MKT], { doc }).querySelector('.pl-mkt-builtin').classList.contains('grey'));

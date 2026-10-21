@@ -61,11 +61,12 @@ async function waitFor(fn, what, { timeoutMs = 3000, everyMs = 10 } = {}) {
   }
 }
 
+// Team policy › Configure… opens the plugin's Settings modal (LEAD-CALLS L2): the section's own delegated listener.
 function openSettings(doc, name) {
   const btn = doc.createElement('button');
-  btn.className = 'pl-settings';
+  btn.className = 'pl-policy-configure';
   btn.dataset.name = name;
-  doc.querySelector('#plugins-list').appendChild(btn);
+  doc.querySelector('section[data-view="team-policy"]').appendChild(btn);
   btn.click();
 }
 

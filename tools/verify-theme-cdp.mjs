@@ -765,7 +765,7 @@ const SLICE3_CHECKS = {
   'settings-plugins': async () => {
     // The proof server always has the built-in marketplace, so the Marketplaces list has at least 1 row (once /api/marketplaces answers).
     await until(`document.querySelector('#marketplaces-list .pl-mkt-row')`, 'the marketplace rows');
-    await dividedRows('Marketplace', '#plugins-list .plugin-card, #marketplaces-list .pl-mkt-row')();
+    await dividedRows('Marketplace', '#marketplaces-list .pl-mkt-row')();
     const gb = await ev(`(() => { const b = document.querySelector('#marketplaces-list .pl-mkt-builtin'); const p = document.createElement('span'); p.className = 'badge grey';
       document.body.append(p); const grey = getComputedStyle(p).backgroundColor; p.remove(); return b && { bg: getComputedStyle(b).backgroundColor, grey }; })()`);
     designChecks.push({ what: 'grey badge: the built-in marketplace badge is grey, not amber', ok: !!gb && gb.bg === gb.grey, got: gb });
