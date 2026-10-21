@@ -3,6 +3,26 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Re-scans run on the model you chose
+
+**Workspaces stop silently defaulting to a scan model.**
+
+A workspace keeps the scan model it was created with, and every re-scan — the automatic one
+after **Add projects** / **Remove**, and the header's Re-scan — runs on that saved pick. A
+workspace with no saved model (an older workspace, or one whose saved model left the catalog)
+does not fall back to a default: the re-scan opens the choose-a-model window (the same menu as
+the create wizard, pre-filled from Settings › Runs › Workspaces). Save it and the scan runs on
+it and keeps it for later; close the window and the re-scan is skipped. The workspace header's
+**Scan model** control shows the saved pick and changes or clears it any time.
+
+Chips: Workspaces · scan model · re-scan
+
+Read it: [Workspace map](../workspace-map.md)
+
+Pull requests (add each number when it opens):
+
+- Re-scans run on the model you chose
+
 ## Shape it first (experimental)
 
 **Plan it before it builds.**

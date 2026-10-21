@@ -5220,6 +5220,7 @@ export class RunHarness extends EventEmitter {
       name: this.workspace.name,
       projectPaths: this.members.map((m) => resolve(m.projectDir)),
       pipelineDir: this.pipeline.dir,
+      models: this.opts.scanModels ?? null,
     });
     this.state.workspaceScan = { ...res, at: new Date().toISOString() };
     if (res.outcome === 'failed') {

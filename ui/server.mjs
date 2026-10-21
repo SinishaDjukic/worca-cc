@@ -346,7 +346,7 @@ import {
   updateWorkspace, deleteWorkspace, isGitRepo, WORKSPACE_KEY_RE, countWorkspaces,
   readWorkspaceMap, setWorkspaceEdgeState, addWorkspaceManualEdge, removeWorkspaceManualEdge,
   regenerateWorkspaceDescription, readWorkspaceStacks, updateWorkspaceStacks, workspaceMembers,
-  addWorkspaceMembers, removeWorkspaceMember, rootsHash, workspaceSetHash, memberWorkMode, memberHasTeamRepo,
+  addWorkspaceMembers, removeWorkspaceMember, rootsHash, workspaceSetHash, memberWorkMode, memberHasTeamRepo, setWorkspaceScanPick,
 } from '../src/core/workspaces.mjs';
 import { effectiveEdges } from '../src/shared/workspace-map/overrides.mjs';
 import { WORKSPACE_SCAN_WORKFLOW_ID, WORKSPACE_SCAN_DEFAULT_MODELS, PR_FIX_WORKFLOW_ID, GRAPH_SHAPE_WORKFLOW, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from '../src/core/graph/builtin-workflows.mjs';
@@ -10084,14 +10084,18 @@ async function supersedeRescans(id) {
  * POST /api/workspaces/:id/scan (scanRequest), and tag its run as automatic. A workspace the
  * scan cannot read (a member that is not its own repository with a commit), a scan model that
  * no longer fits, or a signed-out CLI skips it with the reason — the page offers Re-scan.
- * @returns {Promise<{runId:string}|{skipped:string}>}
+ * { needsModel: true } when the workspace has no usable stored pick (the page asks the user).
+ * @returns {Promise<{runId:string}|{skipped:string}|{needsModel:boolean}>}
  */
 async function startAutoRescan(ws) {
   const problems = scanMemberProblems(ws.projectPaths);
   if (problems.length) return { skipped: `read-only workspace scan: ${problems.join('; ')}` };
   let models;
-  try { models = await scanModelsFor({}, ws.projectPaths); }
+  try { models = await scanModelsFor({}, ws.projectPaths, ws); }
   catch (err) { return { skipped: err && err.message ? err.message : String(err) }; }
+  // No usable stored pick (a legacy workspace, or one whose model left the catalog): the page
+  // opens the pick-a-model window and starts the scan itself; the member change stands.
+  if (models && models.needsModel) return { needsModel: true };
   if (!(models && modelHasBaseUrlRouting(models.scanModel))) {
     const { state } = await probeClaudeAuth({ bin: configuredClaudeBin(), mock: isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK) });
     if (state === 'signed-out') return { skipped: CLAUDE_SIGNED_OUT_MESSAGE };
@@ -10118,7 +10122,7 @@ let autoRescanOn = true; // test seam: _testing.setAutoRescan(false) skips the r
  * automatic re-scan of the old set, and re-scan the workspace — per-member graphify graphs, the
  * map and a new description, saved when the run ends done. Runs build their own graphs per
  * member worktree from the registry at start, so the next run already covers the new set.
- * @returns {Promise<{runId:string}|{skipped:string}>}
+ * @returns {Promise<{runId:string}|{skipped:string}|{needsModel:boolean}>}
  */
 async function afterMembersChanged(workspace, added = []) {
   for (const dir of added) {
@@ -10332,10 +10336,37 @@ async function refuseSignedOutScan(res, models) {
   return refuseSignedOutClaude(res);
 }
 
-/** The scan's models (D18): the request's pick, else Settings › Runs › Workspaces, else the
- *  defaults — checked against the primary member's catalog. Throws on a bad explicit pick (400). */
-async function scanModelsFor(body, projectPaths) {
-  return resolveScanModels({ explicit: body && body.models, stored: workspaceScanModels(), models: await listModels(primaryMemberOf(projectPaths)) });
+/** Whether the workspace's OWN stored scan pick still holds against the primary member's catalog.
+ *  Missing/empty catalog = "no info" (e.g. a failed catalog GET) condemns nothing, matching
+ *  resolveScanModels' defaultScanModelsOrThrow. A pick whose scan model left the catalog (or no
+ *  longer offers its effort) is UNUSABLE: it would fail at the endpoint, so the rescan must ask the
+ *  user instead of silently degrading to Settings/default (the pick was deliberately chosen once). */
+function workspacePickUsable(pick, models) {
+  if (!pick || typeof pick !== 'object') return false;
+  if (!Array.isArray(models) || !models.length) return true;
+  try { assertWorkspaceScanInput(pick, models); return true; } catch { return false; }
+}
+
+/** The scan's models (D18, D19): the request's pick, else the workspace's stored pick (source
+ *  'workspace' — captured at creation, reused by auto re-scans), else Settings › Runs › Workspaces,
+ *  else the defaults (only when a known catalog offers the default) — checked against the primary
+ *  member's catalog. Throws on a bad explicit pick (400) or when no model is available (D19).
+ *  A RE-SCAN of a workspace with no usable stored pick — every legacy pre-v57 workspace, or one
+ *  whose model left the catalog — is NOT silently resolved: scanModelsFor returns the marker
+ *  { needsModel: true, models: <PRIMARY_CATALOG> } and the caller asks the user to pick a model
+ *  (D20). An explicit body.models always wins (the prompted client sends one; API/CLI callers can
+ *  still force a pick). */
+async function scanModelsFor(body, projectPaths, workspace = null) {
+  const models = await listModels(primaryMemberOf(projectPaths));
+  if (workspace && !(body && body.models) && !workspacePickUsable(workspace.scanModels, models)) {
+    return { needsModel: true, models };
+  }
+  return resolveScanModels({
+    explicit: body && body.models,
+    stored: workspaceScanModels(),
+    workspacePick: workspace && workspace.scanModels ? workspace.scanModels : null,
+    models,
+  });
 }
 
 /** Start a scan through the ONE run handler (the defragRequest pattern). startRunHandler reads
@@ -10420,6 +10451,11 @@ app.post('/api/workspaces/scan', async (req, res) => {
 });
 
 // POST /api/workspaces/:id/scan (re-scan): the description is replaced when the run ends done.
+// 428 SCAN_MODEL_REQUIRED when the workspace has no usable stored scan pick and the request names
+// none — the page opens the pick-a-model window (a legacy pre-v57 workspace, or a pick whose model
+// left the catalog, must never silently fall to Settings/default). An explicit body.models always
+// proceeds; the prompted page sends it after the user picks. `autoRescan: true` (internal) tags the
+// run so the next member change supersedes it exactly like a server-started auto-rescan.
 app.post('/api/workspaces/:id/scan', async (req, res) => {
   const id = req.params.id;
   if (!WORKSPACE_KEY_RE.test(id)) return res.status(404).json({ error: 'workspace not found' });
@@ -10431,12 +10467,59 @@ app.post('/api/workspaces/:id/scan', async (req, res) => {
     const problems = scanMemberProblems(ws.projectPaths);
     if (problems.length) return badRequest(res, `read-only workspace scan: ${problems.join('; ')}`);
     let models;
-    try { models = await scanModelsFor(req.body || {}, ws.projectPaths); }
+    try { models = await scanModelsFor(req.body || {}, ws.projectPaths, ws); }
     catch (err) { return badRequest(res, err && err.message ? err.message : String(err)); }
     if (await refuseSignedOutScan(res, models)) return;
+    if (models && models.needsModel) {
+      return res.status(428).json({
+        code: 'SCAN_MODEL_REQUIRED', workspace: ws,
+        error: 'This workspace has no scan model saved (or the saved model is no longer available) — choose one to scan.',
+      });
+    }
+    if (req.body && req.body.autoRescan === true) {
+      // The prompted add/remove flow: start it like startAutoRescan would (same stub-res capture,
+      // same autoRescan tag) so a next member change supersedes this run exactly like a
+      // server-started auto-rescan.
+      let out = { status: 200, body: null };
+      const stub = {
+        statusCode: 200, headersSent: false,
+        status(c) { this.statusCode = c; return this; },
+        json(p) { out = { status: this.statusCode, body: p }; this.headersSent = true; return this; },
+      };
+      await scanRequest(req, stub, { id: ws.id, name: ws.name, projectPaths: ws.projectPaths, rescan: true, models });
+      const runId = out.body && out.body.runId;
+      const entry = runId ? runs.get(runId) : null;
+      if (entry) entry.autoRescan = true;
+      return res.status(out.status).json(out.body || {});
+    }
     return await scanRequest(req, res, { id: ws.id, name: ws.name, projectPaths: ws.projectPaths, rescan: true, models });
   } catch (err) {
     if (!res.headersSent) res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// PUT /api/workspaces/:id/scan-models — the workspace's OWN scan-model pick (the page's "Scan
+// model" header control and the pick-a-model window a rescan opens). Body { workspaceScan:
+// { scanModel, scanEffort, agentModel, agentEffort } } or null to clear. Validated against the
+// primary member's catalog (mirrors the Settings route); persisted via setWorkspaceScanPick, which
+// re-reads under the write lock so a pick a scan's finalize landed mid-write is never clobbered.
+app.put('/api/workspaces/:id/scan-models', async (req, res) => {
+  const id = req.params.id;
+  if (!WORKSPACE_KEY_RE.test(id)) return res.status(404).json({ error: 'workspace not found' });
+  try {
+    const ws = await readWorkspace(id);
+    if (!ws) return res.status(404).json({ error: 'workspace not found' });
+    const hasKey = req.body && Object.prototype.hasOwnProperty.call(req.body, 'workspaceScan');
+    const raw = hasKey ? req.body.workspaceScan : undefined;
+    if (!hasKey) return badRequest(res, 'give workspaceScan: { scanModel, scanEffort, agentModel, agentEffort } or null to clear');
+    let pick;
+    try { pick = assertWorkspaceScanInput(raw, await listModels(primaryMemberOf(ws.projectPaths))); }
+    catch (err) { return badRequest(res, err && err.message ? err.message : String(err)); }
+    const workspace = await setWorkspaceScanPick(id, pick);
+    emitChanged('workspaces-changed', 'scan-models');
+    res.json({ workspace });
+  } catch (err) {
+    if (!res.headersSent) return res.status(workspaceErrorStatus(err && err.code)).json({ error: err && err.message ? err.message : String(err) });
   }
 });
 
