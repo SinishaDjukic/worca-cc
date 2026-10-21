@@ -5,7 +5,7 @@ import { normaliseLabels } from '../../src/shared/run-labels.mjs';
 
 export const VIEW_KEY = 'worca-cc.runs.view';
 export const DEFAULT_VIEW = Object.freeze({ show: 'all', groupBy: 'none', person: '', labels: Object.freeze([]) });
-const SHOW = [['all', 'All'], ['needs', 'Needs you'], ['running', 'Running'], ['finished', 'Finished'], ['archived', 'Archived']];
+const SHOW = [['all', 'All'], ['needs', 'Needs you'], ['running', 'Running'], ['waiting', 'Waiting'], ['finished', 'Finished'], ['archived', 'Archived']];
 const GROUP = [['none', 'None'], ['project', 'Project'], ['date', 'Date']];
 const OLD_SHOW = { all: 'all', live: 'running', finished: 'finished', needs: 'needs', archived: 'archived' };
 

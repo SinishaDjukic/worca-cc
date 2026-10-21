@@ -7,6 +7,8 @@ export const SIDEBAR_PIECES = Object.freeze([
   { name: 'tokens', from: ':root{', to: '/* ---------- base reset ---------- */' },
   { name: 'base', from: '/* ---------- base reset ---------- */', to: '/* ---------- App shell ---------- */' },
   { name: 'form', from: '/* ---------- Form ---------- */', to: '/* ---------- Info tooltips (settings) ---------- */' },
+  // The one switch (docs/design-system.md › Switch): the Chat run proposal card's Fan-out and Questions switches.
+  { name: 'switch', from: '/* One switch (docs/design-system.md › Switch)', to: '/* Feature flags (docs/feature-flags.md)' },
   { name: 'extrasPills', rule: '.extras-pills{' },
   { name: 'extraPill', rule: '.extra-pill{' },
   { name: 'extraPillName', rule: '.extra-pill-name{' },
@@ -14,7 +16,6 @@ export const SIDEBAR_PIECES = Object.freeze([
   // Connection settings is worca's disclosure (the Workflows .wf-disc chevron); the project picker's actions are .linkish.
   { name: 'disclosure', from: '.wf-disc{border-bottom', to: '.wf-disc-body .ask-wfcard-graph' },
   { name: 'disclosureMotion', rule: '@media (prefers-reduced-motion: reduce){.wf-disc>summary::before' },
-  { name: 'syntaxVars', rule: '.hd-diff-pane,.ask-md,.code-editor,.apv{' },
   { name: 'linkish', rule: '.linkish{' },
   { name: 'keyframes', from: '/* ---------- Running redesign: shared keyframes', to: '/* ---------- Runs: one list beside one content pane' },
   { name: 'ask', from: '/* ---------- Ask Worca (spec §10.3-§10.6; tokens only, no hex) ---------- */', to: '/* ---------- native control skins' },

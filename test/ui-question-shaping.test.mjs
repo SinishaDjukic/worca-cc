@@ -161,7 +161,7 @@ const look = (panel) => ({
 async function groupPageHost(ctx) {
   ctx.go('feature/feat_1');
   await ctx.settle();
-  return ctx.window.document.querySelector('[data-view="feature"] .gpage-card .gpage-question .qpanel');
+  return ctx.window.document.querySelector('#group-detail .gpage-card .gpage-question .qpanel');
 }
 
 for (const [name, pq, shaping, title, chip] of KINDS) {

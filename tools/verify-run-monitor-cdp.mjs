@@ -39,6 +39,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { maxListWidth, LIST_W_KEY } from '../ui/public/runs-resize.mjs';
 
 // Chrome is overridable so this proof also runs on a Linux CI runner: CHROME_BIN
 // picks the binary, and headless Chrome refuses to start as root (containers)
@@ -355,6 +356,35 @@ try {
     !g2.missing && Math.abs(g2.stage.t - g2.pad.t) < 0.6 && Math.abs(g2.stage.h - g2.pad.h) < 0.6
     && Math.abs(g2.stage.l - g2.pad.l) < 0.6 && Math.abs(g2.stage.w - g2.pad.w) < 0.6
     && g2.hostPos === 'absolute' && g2.hostPad === '0px' && g2.hostDisplay === 'block', g2);
+
+  // (1d) run 3 (D16): the Live view graph sits under the run details at every list and pane width, as wide as the pane's
+  // content (the glance's content box), while the card keeps its 544px measure. Windows 1440 and 1920, the list at its
+  // 280px floor and at its max (maxListWidth: 640 at both). The key is worca-cc.runs.listWidth (runs-resize LIST_W_KEY).
+  for (const w of [1440, 1920]) {
+    for (const lw of ['280', String(maxListWidth(w))]) {
+      await ev(`localStorage.setItem(${JSON.stringify(LIST_W_KEY)},${JSON.stringify(lw)});0`);
+      await cdp('Emulation.setDeviceMetricsOverride', { width: w, height: 900, deviceScaleFactor: 1, mobile: false });
+      await go(`running/${runId}`);
+      await until(`document.querySelector('#run-detail .rd-glance .rd-sheet')`, `the run page at ${w}px`);
+      // Live view on: the switch is the person's remembered choice.
+      await ev(`(()=>{const row=document.querySelector('#run-detail .rd-live-row');const sw=row&&row.querySelector('.rd-live-switch');
+        if(row&&!row.hidden&&sw&&sw.getAttribute('aria-checked')!=='true')sw.click();return 0;})()`);
+      const shown = await until(`document.querySelector('#run-detail .rd-live.is-in')`, `the Live view at ${w}px, list ${lw}px`).then(() => true, () => false);
+      await settle(`live ${w}/${lw}`);
+      const geo = await ev(`(()=>{const q=(s)=>document.querySelector('#run-detail '+s);const glance=q('.rd-glance');const live=q('.rd-glance > .rd-live');
+        const sheet=q('.rd-glance > .rd-sheet');const now=q('.rd-glance > .rd-now');if(!glance||!live||!sheet||!now)return {missing:true};
+        const cs=getComputedStyle(glance);const g=glance.getBoundingClientRect();const pl=parseFloat(cs.paddingLeft),pr=parseFloat(cs.paddingRight);
+        const s=sheet.getBoundingClientRect();const l=live.getBoundingClientRect();
+        return {pane:{left:g.left+pl,width:g.width-pl-pr},sheet:{bottom:s.bottom,width:s.width},live:{top:l.top,left:l.left,width:l.width},
+          now:now.getBoundingClientRect().width,list:document.querySelector('#runs-list-pane').getBoundingClientRect().width};})()`);
+      check('1d', `1d graph under the details at ${w}px, list ${lw}px: .rd-live under .rd-sheet at the pane's content width; the card and .rd-now stay at or under 545px`,
+        shown && !geo.missing && geo.live.top >= geo.sheet.bottom - 1 && Math.abs(geo.live.left - geo.pane.left) <= 1
+        && Math.abs(geo.live.width - geo.pane.width) <= 1 && geo.sheet.width <= 545 && geo.now <= 545, { shown, ...geo });
+    }
+  }
+  // Back to the width and window the run started with: the checks below were measured there.
+  await ev(`localStorage.setItem(${JSON.stringify(LIST_W_KEY)},'280');0`);
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
 
   // (9a) the node axis is live on the Logs tab bar, with MANIFEST labels
   await go(`running/${runId}/details/logs`);

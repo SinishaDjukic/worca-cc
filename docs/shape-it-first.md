@@ -177,7 +177,7 @@ every host. Beside the ⋯ button:
 - once the feature halts (`Failed · Run 2 · Review`, `Paused · Run 2 · Build`):
   **Resume**, which resumes a paused run and restarts a stopped one as a new run, then
   re-chains the runs after it, and **Re-plan the rest**. The runs that wait read
-  `Waiting`;
+  `Waiting · starts after run 2`;
 - while re-planning, ready to ship, shipped or canceled: no buttons.
 
 The ⋯ menu lists, in this order:

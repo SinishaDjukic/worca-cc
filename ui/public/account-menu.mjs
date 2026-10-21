@@ -114,7 +114,7 @@ export function renderSpendCard(budget, { doc = globalThis.document, fmt = DEFAU
     if (b.blocked) card.appendChild(h(doc, 'p', 'mc-note', `New runs are blocked until ${fmtResetAt(b.windowEndMs)}.`));
   }
   if (fr) {
-    const btn = h(doc, 'button', 'mi mc-free');
+    const btn = h(doc, 'button', 'mi menu-item mc-free');
     btn.type = 'button';
     btn.setAttribute('role', 'menuitem');
     btn.dataset.nav = 'providers';

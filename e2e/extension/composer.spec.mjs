@@ -14,6 +14,12 @@ test('attach a file, change model and scope, send; cost and context show', async
   await second.click();
   await expect(sidebar.locator('.ask-pop-model')).toHaveCount(0);
   await expect(sidebar.locator('.ask-model-btn-label')).toHaveText(label);
+  // Never a two-letter stub: the whole label, or the icon alone with the label in the tooltip.
+  const scopeBtn = sidebar.locator('[data-ask-scope-btn]');
+  await expect(scopeBtn).toHaveAttribute('title', /^Chat scope: /);
+  const scopeLabel = scopeBtn.locator('.ask-scope-label');
+  const fits = await scopeLabel.evaluate((l) => getComputedStyle(l).display === 'none' || l.scrollWidth <= l.clientWidth + 1);
+  expect(fits).toBe(true);
   await sidebar.locator('.ask-scope-btn').click();
   await expect(sidebar.locator('.ask-pop-scope .ask-scope-item').first()).toHaveText(/No project/);
   await expect(sidebar.locator('.ask-pop-scope')).toContainText('No projects in this Worca yet');   // the shared server has none

@@ -159,7 +159,7 @@ test('the account menu: its order and roles (spend card · Signed in as · Inter
       assert.deepEqual([...menu.querySelectorAll('.msect')].map((s) => [s.getAttribute('role'), [...s.children].map((b) => b.id)]),
         [['group', ['acct-lvl', 'acct-settings']], ['group', ['acct-away']], ['group', ['acct-theme-k', 'acct-theme']]], 'each run of rows is its own section; Appearance leads its icons');
       assert.deepEqual([...menu.querySelectorAll('[role^="menuitem"]')].map((b) => b.id || b.dataset.themeMode || b.className),
-        ['btn btn-sm mc-btn', 'mi mc-free', 'acct-lvl', 'acct-settings', 'acct-away', 'system', 'light', 'dark'], 'Details, the free row, the three rows, then the three icons');
+        ['btn btn-sm mc-btn', 'mi menu-item mc-free', 'acct-lvl', 'acct-settings', 'acct-away', 'system', 'light', 'dark'], 'Details, the free row, the three rows, then the three icons');
       assert.deepEqual([...$('acct-theme').querySelectorAll('button')].map((b) => [b.getAttribute('role'), b.getAttribute('aria-label'), b.textContent.trim()]),
         [['menuitemradio', 'System', ''], ['menuitemradio', 'Light', ''], ['menuitemradio', 'Dark', '']], 'icons only: the name is the aria-label');
       assert.deepEqual([$('acct-lvl').getAttribute('aria-haspopup'), $('acct-lvl').getAttribute('aria-controls'), $('acct-lvl').getAttribute('aria-expanded')],
@@ -350,7 +350,7 @@ test('stylesheet: the account menu is the mockup\'s padded sheet: inset hairline
     ['.mc-free[data-tone="over"] .mi-val', 'red'], ['.mc-note', 'red']]) {
     assert.match(rule(sel) || '', new RegExp(`color:var\\(--${ink}-ink-strong\\);`), `${sel}: the -strong ink keeps 4.5:1 on the grey panel`);
   }
-  assert.match(rule('.mi') || '', /height:32px;/);
+  assert.match(rule('.menu-item') || '', /min-height:30px;/, 'a menu row is the shared 30px one');
   assert.match(rule('.msect.theme-sect') || '', /flex-direction:row;align-items:center;justify-content:space-between;/, 'Appearance is one row');
   assert.match(rule('.theme-ic') || '', /width:30px;/, 'a compact segmented control, not a full-width track');
   assert.doesNotMatch(rule('.theme-ic') || '', /flex:1;/);

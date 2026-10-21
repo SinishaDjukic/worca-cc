@@ -33,7 +33,7 @@ test('statusText and actions for rounds and a stopped Watch PR: the model\'s wor
   const host = doc.createElement('div');
   syncActions(host, stopped, { onAction: () => {}, disable: { 'ask-changes': "Ask for changes from the run's chat" } });
   const btns = [...host.querySelectorAll('button[data-model-action]')];
-  assert.deepEqual(btns.map((b) => [b.textContent, b.disabled]), [['Open PR', false], ['Ask for changes', true]]);
+  assert.deepEqual(btns.map((b) => [b.textContent, b.disabled]), [['View PR', false], ['Ask for changes', true]]);
   assert.ok(btns[0].classList.contains('btn-primary'));
   assert.equal(btns[1].title, "Ask for changes from the run's chat");
   // D8: Ask for changes has a flow now (Shaper): with no host reason it is enabled.
@@ -237,4 +237,15 @@ test('a run in Needs you only through its PR has finished: no current-run bar (a
     paintRunStatus(host, { ...m, progress: m.progress || { mode: 'nodes', fraction: 0, total: 4 } });
     assert.equal(host.querySelector('.run-status-bar').hidden, true);
   }
+});
+
+test('D4: a member row draws no chip for a pending PR (open, no verdict yet), and one for a known one', () => {
+  const doc = dom();
+  const pr = { url: 'https://github.com/acme/web/pull/821', number: 821, state: 'OPEN' };
+  const rowOf = (p) => renderMemberRows(doc, { members: [{ position: 1, title: 'Slice', href: '#running/r1',
+    model: runModel({ status: 'done', pr: p }, { now: NOW }) }] }).querySelector('.run-member');
+  const pending = rowOf({ ...pr, pending: true });
+  assert.equal(pending.querySelectorAll('.runs-pr').length, 0);
+  assert.equal(pending.dataset.state, 'in-review');
+  assert.equal(rowOf({ ...pr, checks: { state: 'passing', total: 12, failed: 0, pending: 0 } }).querySelectorAll('.runs-pr').length, 1);
 });

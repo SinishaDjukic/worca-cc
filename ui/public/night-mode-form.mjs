@@ -214,7 +214,7 @@ export function renderNightForm(root, { level, values = {}, effective = {}, sour
 
   // C. When and where worca answers (open).
   const basic = el(doc, 'div', 'away-basic');
-  basic.append(el(doc, 'h3', null, 'When and where worca answers'));
+  basic.append(el(doc, 'h3', 'subsection-title', 'When and where worca answers'));
 
   const win = field(doc, FIELD_LABELS.window.label, FIELD_LABELS.window.hint);
   const [ws, we] = typeof values.window === 'string' ? values.window.split('-') : ['', ''];

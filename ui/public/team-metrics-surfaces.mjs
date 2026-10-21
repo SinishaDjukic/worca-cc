@@ -50,7 +50,7 @@ function recordSwitch(doc, s) {
   // Personal, per-machine opt-out — worded as a share choice so it reads as
   // distinct from the team-level setup button of the Off state.
   cb.setAttribute('aria-label', `Include my runs for ${s.name}`);
-  label.append(cb, h(doc, 'span', 'switch switch-sm'), h(doc, 'span', 'txt', 'Include my runs'));
+  label.append(cb, h(doc, 'span', 'switch'), h(doc, 'span', 'txt', 'Include my runs'));
   return label;
 }
 

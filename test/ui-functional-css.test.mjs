@@ -131,10 +131,10 @@ test('[hidden] beats the author display rule on every element app.js hides by at
       }
       assert.deepEqual(shown, []);
     } },
-    { name: 'ui-running-detail: the Live two-column layout never outranks [hidden]', run: () => {
-      const live = displays('.rd-glance').filter(({ s }) => subject(s).includes('.rd-glance[data-live="on"]'));
-      assert.ok(live.length, 'the wide layout sets display somewhere');
-      assert.deepEqual(live.filter(({ s }) => !subject(s).includes(':not([hidden])')).map(({ s }) => s), []);
+    { name: 'ui-running-detail: the run page is one column at every width (run 3, D16)', run: () => {
+      assert.equal(css.includes('@container rd ('), false, 'no container query lays the run page out');
+      assert.deepEqual(displays('.rd-glance').filter(({ s }) => subject(s).includes('.rd-glance[data-live="on"]')).map(({ s }) => s), []);
+      assert.doesNotMatch(css, /\.rd-glance[^{]*\{[^}]*grid-template-columns/);
     } },
   ]);
 });
@@ -147,16 +147,16 @@ test('the tag input placeholder is readable on the grey field (ink-2)', () => {
   assert.equal(r.style.getPropertyValue('color').replace(/\s+/g, ''), 'var(--ink-2)');
 });
 
-// The run header is a 2-column grid (title | Live view). The slice line ("Part of <feature> · slice 1 of 2 →", D22)
-// must take its own full row like the progress bar: while the run waits on the person the Live view switch is hidden,
-// and an auto-placed slice line took the title's row and squeezed "Waiting for you" into a narrow column.
-test('the Group row (which replaced the slice line, runs redesign slice 4) is a row of its own that [hidden] really hides', () => {
-  const row = flat.find((x) => sels(x).includes('.rd-group-line'));
-  assert.ok(row, 'a .rd-group-line rule exists');
-  assert.equal(row.style.getPropertyValue('display'), 'flex');
-  const hid = flat.find((x) => sels(x).includes('.rd-group-line[hidden]'));
-  assert.ok(hid, 'a .rd-group-line[hidden] rule exists');
+// Run 3 (D8): the Group row is the facts block's first row. Each fact row is a grid that [hidden] really hides, and an
+// empty facts block takes no room.
+test('the facts block\'s rows (the Group row among them) are grids that [hidden] really hides', () => {
+  const row = flat.find((x) => sels(x).includes('.rd-kv-row'));
+  assert.ok(row, 'a .rd-kv-row rule exists');
+  assert.equal(row.style.getPropertyValue('display'), 'grid');
+  const hid = flat.find((x) => sels(x).includes('.rd-kv-row[hidden]'));
+  assert.ok(hid, 'a .rd-kv-row[hidden] rule exists');
   assert.equal(hid.style.getPropertyValue('display'), 'none');
+  assert.match(css, /\.rd-kv\{container:rd-kv \/ inline-size;/);
 });
 
 // The chat card's footer buttons sit in .chat-rc-actions (runs redesign slice 4); without a gap of its own they touch.

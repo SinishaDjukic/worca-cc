@@ -10,6 +10,7 @@
 import { bridgedBadge, needsSignInPill, degradationLine, renderConnectionSection, collectConnection, applyConnectionMode } from './bridge-view.mjs';
 import { credentialBadge } from './credential-badges.mjs';
 import { icon } from './icons.mjs';
+import { makeSwitch } from './switch.mjs';
 import { engineLabel, engineChoiceLabel, isBetaEngine, MODEL_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
 import { harnessesOf, runsOn, suggestModelHandle } from '../../src/shared/connections.mjs';
 
@@ -195,13 +196,8 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
 
   // ── Hide built-in models (#422) — one checkbox, top of the pane ──
   const hideRow = h(doc, 'div', 'mv-hide-builtin-row');
-  const hideLabel = h(doc, 'label', 'check-row');
-  const hideCb = h(doc, 'input', 'mv-hide-builtin');
-  hideCb.type = 'checkbox';
-  hideCb.checked = !!hideBuiltin;
-  hideLabel.appendChild(hideCb);
-  hideLabel.appendChild(doc.createTextNode(" Hide built-in models (you don't use a first-party Anthropic account)"));
-  hideRow.appendChild(hideLabel);
+  const hideSw = makeSwitch(doc, { label: "Hide built-in models (you don't use a first-party Anthropic account)", checked: !!hideBuiltin, inputClass: 'mv-hide-builtin' });
+  hideRow.appendChild(hideSw.row);
   hideRow.appendChild(h(doc, 'small', 'hint',
     'Drops the built-ins from every model picker — New run, the Workflows view, Chat, title generation. Cosmetic only: a run or reference that already names one keeps working.'));
   root.appendChild(hideRow);
@@ -350,7 +346,7 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
       head.appendChild(h(doc, 'b', 'mv-name', m.label || m.id));
     keyBadge(head, m, doc);
     const teb = engineBadge(m); if (teb) head.appendChild(teb);
-      const badge = h(doc, 'span', 'badge blue mv-origin', 'policy');
+      const badge = h(doc, 'span', 'badge slate mv-origin', 'policy');
       badge.title = `Team policy on ${m.home}`;
       head.appendChild(badge);
       if (globalLc.has(m.id.toLowerCase())) head.appendChild(h(doc, 'span', 'badge violet mv-shadowed', 'overridden by your copy'));
