@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { getDb } from '../src/core/db.mjs';
-import { createPipeline } from '../src/core/artifacts.mjs';
+import { createPipeline, readPipelineForResume } from '../src/core/artifacts.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { setMockSourceResponses, callSource } from '../src/core/plugin-shim.mjs';
 import { writePluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs';
@@ -316,4 +316,80 @@ test('e2e: a MANUAL pause never writes back — the user is driving', async () =
   assert.equal(res.status, 'paused');
   assert.equal(orch.pauseReason, null, 'precondition: a manual pause records no reason');
   assert.equal(calls.length, 0, 'no reportResult for a manual pause');
+});
+
+test("e2e: a SIGTERM pause (pauseForSignal) reports 'needs-human': a stopped CLI run has nobody to resume it", async () => {
+  const calls = [];
+  setMockSourceResponses({
+    getTask: { id: 'T-5', title: 'Evicted', url: 'https://x.test/T-5', state: 'open', updatedAt: '2026-07-12T00:00:00Z', body: 'demo body', meta: {} },
+    reportResult: (args) => { calls.push(args); return { ok: true }; },
+  });
+  const projectDir = await mkdtemp(join(tmpdir(), 'worca-cc-wb-pause-'));
+  let orch;
+  let accepted = null;
+  orch = createOrchestrator({
+    projectDir, auto: true, claude: { mock: true },
+    source: { type: 'plugin', plugin: 'gh', sourceId: 'issues', taskId: 'T-5' },
+    runners: {
+      // The CLI's SIGTERM handler, mid-node.
+      producer: async () => { accepted = orch.pauseForSignal('SIGTERM'); return { status: 'ok', summary: 'done' }; },
+      verifier: async () => ({ status: 'ok', issues: [], review: { issues: [] }, summary: '' }),
+    },
+  });
+
+  const res = await orch.run();
+
+  assert.equal(accepted, true, 'a running run accepts the signal pause');
+  assert.equal(res.status, 'paused');
+  assert.equal(res.reason, 'terminated');
+  assert.equal(res.detail, 'the process received SIGTERM');
+  assert.equal(calls.length, 1, 'the SIGTERM pause reported exactly once');
+  assert.equal(calls[0].id, 'T-5');
+  assert.equal(calls[0].status, 'needs-human');
+  const row = getDb().prepare('SELECT status, resume_point FROM pipelines WHERE id = ?').get(orch.getState().id);
+  assert.equal(row.status, 'paused');
+  const rp = JSON.parse(row.resume_point);
+  assert.equal(rp.version, 2, 'a graph resume point `worca resume` can continue');
+  assert.equal(orch.pauseForSignal('SIGTERM'), false, 'a run no longer running refuses a second signal pause');
+});
+
+test('e2e: a SIGTERM while a resume still sets up (idle) pauses it as soon as it runs, before any node', async () => {
+  const calls = [];
+  setMockSourceResponses({
+    getTask: { id: 'T-6', title: 'Evicted twice', url: 'https://x.test/T-6', state: 'open', updatedAt: '2026-07-12T00:00:00Z', body: 'demo body', meta: {} },
+    reportResult: (args) => { calls.push(args); return { ok: true }; },
+  });
+  const projectDir = await mkdtemp(join(tmpdir(), 'worca-cc-wb-pause-'));
+  let first;
+  first = createOrchestrator({
+    projectDir, auto: true, claude: { mock: true },
+    source: { type: 'plugin', plugin: 'gh', sourceId: 'issues', taskId: 'T-6' },
+    runners: {
+      producer: async () => { first.pauseForSignal('SIGTERM'); return { status: 'ok', summary: 'done' }; },
+      verifier: async () => ({ status: 'ok', issues: [], review: { issues: [] }, summary: '' }),
+    },
+  });
+  assert.equal((await first.run()).status, 'paused');
+  const id = first.getState().id;
+
+  let produced = 0;
+  const orch = createOrchestrator({
+    projectDir, auto: true, claude: { mock: true },
+    resume: readPipelineForResume(id),
+    runners: {
+      producer: async () => { produced += 1; return { status: 'ok', summary: 'done' }; },
+      verifier: async () => ({ status: 'ok', issues: [], review: { issues: [] }, summary: '' }),
+    },
+  });
+  const resuming = orch.resume();
+  assert.equal(orch.state.status, 'idle', 'precondition: the resume has not reached running yet');
+  assert.equal(orch.pauseForSignal('SIGTERM'), true, 'the signal is held for the resume');
+  const res = await resuming;
+
+  assert.equal(res.status, 'paused');
+  assert.equal(res.reason, 'terminated');
+  assert.equal(produced, 0, 'no node ran: the pause landed as the resume started running');
+  assert.equal(getDb().prepare('SELECT status FROM pipelines WHERE id = ?').get(id).status, 'paused');
+  assert.ok(JSON.parse(getDb().prepare('SELECT resume_point FROM pipelines WHERE id = ?').get(id).resume_point), 'still resumable');
+  assert.deepEqual(calls.map((c) => c.status), ['needs-human', 'needs-human']);
 });

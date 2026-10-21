@@ -47,6 +47,8 @@ export const REASON = Object.freeze({
   NIGHT_GUARDRAIL: 'night_guardrail', // night mode hit its per-run decision limit or the night spend cap
   DRAIN: 'drain',                 // the server was stopping (SIGTERM, POST /api/drain): resumable as is, and
                                   // the one reason WORCA_AUTO_RESUME picks up again on the next start
+  TERMINATED: 'terminated',       // a CLI run got SIGTERM (docker stop, a pod eviction, a CI cancel): resumable
+                                  // with `worca resume`, but nothing resumes it by itself
 });
 export const REASON_CODES = Object.freeze(Object.values(REASON));
 
@@ -200,6 +202,9 @@ const CONSEQUENCES = Object.freeze({
   // A drain is the server going away (suspend, upgrade, redeploy), not a problem with the run: the
   // task source keeps it claimed, since the run continues on the next start (auto-resume) or a click.
   [REASON.DRAIN]:        { reportsToSource: false, stagesResults: false, severity: 'info',    notifyPref: 'paused', exitInteractive: 0, label: 'worca was restarting' },
+  // A SIGTERM to the CLI is a supervisor stopping a headless run: no server comes back to resume it, so the
+  // task source hears needs-human, or the ticket stays claimed "in progress".
+  [REASON.TERMINATED]:   { reportsToSource: true,  stagesResults: false, severity: 'warning', notifyPref: 'paused', exitInteractive: 0, label: 'worca was stopped' },
 });
 
 /** The consequences row for a pause reason (unknown/legacy free-text reasons read

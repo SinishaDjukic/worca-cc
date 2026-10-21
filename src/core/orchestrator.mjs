@@ -2887,7 +2887,8 @@ export class GraphOrchestrator extends RunHarness {
     this._slicingDone = rp.slicingDone === true;
     this._outlineRevise = typeof rp.outlineRevise === 'string' ? rp.outlineRevise : null;
     if (rp.humanCursor && typeof rp.humanCursor === 'object') { this._humanCursor = rp.humanCursor; this._humanCursorReady = true; }
-    this._clearPauseReason();
+    // The saved point's reason is spent; a pause THIS resume already took (a SIGTERM or a drain while it set up) keeps its own.
+    if (!this.pauseRequested) this._clearPauseReason();
     const manifest = rp.manifest || this.state.stepper;
     this.state.stepper = manifest;
     this.scriptRegistry = loadScriptRegistry({ scriptsDir: this.opts.scriptsDir, agentKeys: Object.keys(this.registry || {}) });
