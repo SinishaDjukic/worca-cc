@@ -63,6 +63,20 @@ test('describeModelSwitch returns stages + the run project catalog', async () =>
   assert.ok(d.models.some((m) => m.id === 'claude-opus-5-5'));
   assert.deepEqual(d.efforts, ['medium', 'high', 'xhigh', 'max']);
   assert.equal(d.stages.find((s) => s.nodeId === 'n_plan').state, 'paused');
+  assert.deepEqual([d.engine, d.subagents, d.subagentModels, d.subagentEfforts],
+    ['claude', true, ['sonnet', 'opus', 'fable', 'auto', 'inherit'], ['medium', 'high', 'xhigh', 'max']]);
+});
+
+test('a running row driven elsewhere with no resume point yet is described on its own engine (outcome.runEngine)', async () => {
+  const dir = gitDir('msw-run-codex');
+  const { manifest } = graphResumePoint({ pipelineDir: dir });
+  const { id } = await seedPipeline(dir, { status: 'running', stepper: manifest, runEngine: 'codex', steps: [STEPS[0]] });
+  assert.equal(readPipelineForResume(id).resumePoint, null, 'no clean snapshot yet');
+  const d = await describeModelSwitch(id, { projectDirFor: () => dir });
+  assert.equal(d.engine, 'codex');
+  assert.ok(d.models.some((m) => m.id === CODEX_BUILTIN_MODELS[0].id));
+  assert.ok(!d.models.some((m) => m.id === 'claude-opus-5-5'));
+  assert.deepEqual(d.efforts, ['minimal', 'low', 'medium', 'high']);
 });
 
 test('the widened rule: a paused run\'s loop stage that already ran is switchable', async () => {
@@ -153,6 +167,22 @@ test('a paused Codex run refuses a Claude model and is described with the Codex 
   assert.ok(d.models.some((m) => m.id === codexId));
   assert.ok(!d.models.some((m) => m.id === 'claude-opus-5-5'));
   assert.deepEqual(d.efforts, ['minimal', 'low', 'medium', 'high']);
+  assert.deepEqual([d.subagents, d.subagentModels, d.subagentEfforts], [true, [], ['medium', 'high']]);
+  await assert.rejects(switchPausedRunModels(id, { changes: { n_impl: { subagentEffort: 'low' } }, projectDirFor }),
+    (e) => e.code === 'INVALID_SELECTION' && /unknown sub-agent effort "low" on Codex/.test(e.message));
+  await assert.rejects(switchPausedRunModels(id, { changes: { n_impl: { subagentModel: 'opus' } }, projectDirFor }),
+    (e) => e.code === 'INVALID_SELECTION' && /Codex does not take a sub-agent model/.test(e.message));
+});
+
+test('a paused Copilot run is described with no sub-agent values to pick and refuses one', async () => {
+  const dir = gitDir('msw-copilot');
+  const rp = graphResumePoint({ pipelineDir: dir, pausedBy: 'tok-1', claude: { engine: 'copilot' } });
+  const { id } = await seedPipeline(dir, { status: 'paused', stepper: rp.manifest, resumePoint: rp, steps: STEPS });
+  const projectDirFor = () => dir;
+  const d = await describeModelSwitch(id, { projectDirFor });
+  assert.deepEqual([d.engine, d.subagents, d.subagentModels, d.subagentEfforts], ['copilot', true, [], []]);
+  await assert.rejects(switchPausedRunModels(id, { changes: { n_impl: { subagentEffort: 'high' } }, projectDirFor }),
+    (e) => e.code === 'INVALID_SELECTION' && /Copilot does not take a sub-agent effort/.test(e.message));
 });
 
 test('a paused run resumed with one model for every stage refuses a per-stage model, says why in describe', async () => {

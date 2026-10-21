@@ -4,7 +4,7 @@
 //  - a PAUSED run has no process driving it, so the switch is a store edit: the frozen manifest
 //    (pipelines.stepper AND resume_point.manifest — resume reads the latter first) gets the new
 //    per-node model, effort and sub-agent policy, and a node whose MODEL changed is marked so the
-//    resume starts it on a fresh Claude session instead of re-attaching the old one;
+//    resume starts it on a fresh session instead of re-attaching the old one;
 //  - a RUNNING run is switched by the process that drives it (GraphOrchestrator.switchModels):
 //    in memory when that is this process, else through its run-control mailbox
 //    (requestLiveModelSwitch → pipeline_commands 'switch-models' → the owner writes `result`).
@@ -13,7 +13,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { getDb } from './db.mjs';
-import { readPipelineForResume, rewritePausedManifest, appendAuditById, isDeadOwner } from './artifacts.mjs';
+import { readPipelineForResume, rewritePausedManifest, appendAuditById, isDeadOwner, runEngineOfRow } from './artifacts.mjs';
 import { listModels } from './config.mjs';
 import { EFFORTS, SUBAGENT_MODEL_VALUES, subagentModelIssue } from './model-env.mjs';
 import { byActor } from './identity.mjs';
@@ -42,7 +42,6 @@ export class ModelSwitchError extends Error {
 const pick = (cell) => Object.fromEntries(SWITCH_FIELDS.map((f) => [f, typeof cell?.[f] === 'string' ? cell[f] : '']));
 const parseJson = (text) => { try { return text ? JSON.parse(text) : null; } catch { return null; } };
 
-/** The engine a saved point runs on (run-harness.mjs savedEngine's rule: a missing engine is Claude). */
 /** The model a saved point runs EVERY remaining stage on (a resume "with another model for all";
  *  run-harness _nodeModelPair then ignores per-node model and effort), else null. */
 const modelForAllOf = (rp) => (rp?.claude?.modelForAll === true && typeof rp.claude.model === 'string' && rp.claude.model) || null;
@@ -58,6 +57,7 @@ export function assertPerStageModels(normalized, modelForAll) {
   }
 }
 
+/** The engine a saved point runs on (run-harness.mjs savedEngine's rule: a missing engine is Claude). */
 const engineOfPoint = (rp) => (typeof rp?.claude?.engine === 'string' && rp.claude.engine) || 'claude';
 /** The effort vocabulary of `engine` (connections.mjs HARNESS_EFFORTS; an unknown engine falls back to Claude's). */
 const effortsOfEngine = (engine) => HARNESS_EFFORTS[engine] || EFFORTS;
@@ -65,6 +65,22 @@ const effortsOfEngine = (engine) => HARNESS_EFFORTS[engine] || EFFORTS;
 function engineHasSubagents(engine) {
   try { return getEngine(engine).capabilities?.subagents !== false; } catch { return true; }
 }
+
+/** The sub-agent values each engine's runtime applies AS STORED; any other value it would drop. Claude: the
+ *  node keeps every model (phases.mjs ctxSubagentModel → the prompt block) and every effort (ctxSubagentEffort →
+ *  investigatorAgents → --agents). Codex: its investigator role takes no sub-agent model (investigatorAgents pins
+ *  only a Claude alias, which engines/codex.mjs codexInvestigatorRole drops) and carries an effort as itself
+ *  only when ctxSubagentEffort keeps it (Claude's EFFORTS) AND it is a Codex effort — the role runs on the node's
+ *  Codex model (max becomes xhigh, which no Codex model offers). Copilot's investigator takes neither
+ *  (engines/copilot.mjs copilotInvestigatorAgent); Cursor runs no sub-agents; an unknown engine is offered nothing. */
+const SUBAGENT_VALUES = Object.freeze({
+  claude: Object.freeze({ models: SUBAGENT_MODEL_VALUES, efforts: EFFORTS }),
+  codex: Object.freeze({ models: [], efforts: EFFORTS.filter((e) => HARNESS_EFFORTS.codex.includes(e)) }),
+});
+/** The sub-agent models a run on `engine` honours ([] = none: leave it on Default). */
+export const subagentModelsOf = (engine) => [...(SUBAGENT_VALUES[engine]?.models || [])];
+/** The sub-agent efforts a run on `engine` honours ([] = none: leave it on Default). */
+export const subagentEffortsOf = (engine) => [...(SUBAGENT_VALUES[engine]?.efforts || [])];
 
 /** The catalog as a run on `engine` offers it: the models that engine runs, each with its efforts
  *  in that engine's vocabulary (a two-harness endpoint model maps them, connections.mjs effortsOn). */
@@ -172,16 +188,22 @@ export function stageChangeError(cell, change, models, { engine = 'claude' } = {
       if (!effortsOn(entry, engine).includes(next.effort)) return `model "${next.model}" does not support effort "${next.effort}" on ${engineLabel(engine)}`;
     }
   }
-  const subagentTouch = ('subagentModel' in change && change.subagentModel) || ('subagentEffort' in change && change.subagentEffort);
-  if (subagentTouch && !engineHasSubagents(engine)) {
+  // Sub-agent values: only what the engine's runtime applies (subagentModelsOf / subagentEffortsOf).
+  // Clearing ('') always passes.
+  const subagentModel = 'subagentModel' in change ? change.subagentModel : '';
+  const subagentEffort = 'subagentEffort' in change ? change.subagentEffort : '';
+  if ((subagentModel || subagentEffort) && !engineHasSubagents(engine)) {
     return `${engineLabel(engine)} runs no sub-agents — leave the sub-agent settings on Default`;
   }
-  if ('subagentModel' in change) {
-    const issue = subagentModelIssue(change.subagentModel);
-    if (issue) return issue;
+  if (subagentModel) {
+    const offered = subagentModelsOf(engine);
+    if (!offered.length) return `${engineLabel(engine)} does not take a sub-agent model — leave it on Default`;
+    if (!offered.includes(subagentModel)) return subagentModelIssue(subagentModel) || `unknown sub-agent model "${subagentModel}" on ${engineLabel(engine)}`;
   }
-  if ('subagentEffort' in change && change.subagentEffort && !efforts.includes(change.subagentEffort)) {
-    return `unknown sub-agent effort "${change.subagentEffort}"`;
+  if (subagentEffort) {
+    const offered = subagentEffortsOf(engine);
+    if (!offered.length) return `${engineLabel(engine)} does not take a sub-agent effort — leave it on Default`;
+    if (!offered.includes(subagentEffort)) return `unknown sub-agent effort "${subagentEffort}" on ${engineLabel(engine)}`;
   }
   return '';
 }
@@ -338,7 +360,9 @@ export async function describeModelSwitch(pipelineId, { projectDirFor, live = nu
     : { manifest: parseJson(row.stepper), steps: saved.steps, held: heldWireIds(rp?.snapshot) };
   if (!input.manifest?.graph?.nodes?.length) throw noGraph();
   const models = await listModels(await catalogDirOf(row, projectDirFor));
-  const engine = (running && live ? live.engine : engineOfPoint(rp)) || 'claude';
+  // A run another process drives may have no resume point yet (before its first clean snapshot): its
+  // row's outcome names its engine. A paused run resumes on its point's engine (what its switch checks).
+  const engine = (running ? (live ? live.engine : runEngineOfRow(row)) : engineOfPoint(rp)) || 'claude';
   return {
     pipelineId,
     title: row.title || '',
@@ -352,7 +376,8 @@ export async function describeModelSwitch(pipelineId, { projectDirFor, live = nu
     models: engineCatalog(models, engine),
     efforts: [...effortsOfEngine(engine)],
     subagents: engineHasSubagents(engine),
-    subagentModels: [...SUBAGENT_MODEL_VALUES],
+    subagentModels: subagentModelsOf(engine),
+    subagentEfforts: subagentEffortsOf(engine),
   };
 }
 

@@ -43,6 +43,14 @@ function fillSelect(doc, sel, items, value) {
   sel.value = items.some((it) => it.value === value) ? value : '';
 }
 
+/** Default + `list`; a stored value the list does not hold still shows as itself (it is what the stage
+ *  holds now), so rendering never changes a pick. */
+function listItems(defaultText, list, current) {
+  const items = [{ value: '', text: defaultText }, ...(list || []).map((v) => ({ value: v, text: v }))];
+  if (current && !items.some((it) => it.value === current)) items.push({ value: current, text: `${current} (not offered on this run)` });
+  return items;
+}
+
 function modelItems(payload, current) {
   const items = [{ value: '', text: payload.runDefault ? `Default (${payload.runDefault})` : 'Default' }];
   for (const m of payload.models || []) items.push({ value: m.id, text: m.label || m.id });
@@ -88,16 +96,15 @@ export function renderModelSwitchPanel(payload, { doc = globalThis.document, onS
   root.appendChild(head);
   if (payload.pauseDetail) root.appendChild(h(doc, 'p', 'msw-why', payload.pauseDetail));
   const allLocked = !!payload.modelForAll;   // run-harness _nodeModelPair ignores per-stage model/effort
-  if (allLocked) root.appendChild(h(doc, 'p', 'msw-note', `This run was resumed with ${payload.modelForAll} for every remaining stage — per-stage models and efforts do not apply.`));
+  // Named after the Resume menu item that set it (index.html .resume-with-model), not this panel.
+  if (allLocked) root.appendChild(h(doc, 'p', 'msw-note', `This run was resumed with ${payload.modelForAll} for every remaining stage (Resume › Switch model…) — per-stage models and efforts do not apply.`));
 
   // Fill-only (render): shows the stored effort even if its model does not offer it; never touches picks.
   const fillEffort = (nodeId) => {
     const s = selects[nodeId];
     const p = picks[nodeId];
     const offered = effortsFor(payload.models, p.model);
-    const items = [{ value: '', text: 'Default' }, ...offered.map((e) => ({ value: e, text: e }))];
-    if (p.effort && !offered.includes(p.effort)) items.push({ value: p.effort, text: `${p.effort} (not offered on this run)` });
-    fillSelect(doc, s.effort, items, p.effort);
+    fillSelect(doc, s.effort, listItems('Default', offered, p.effort), p.effort);
     s.effort.disabled = s.locked || !p.model || allLocked || offered.length === 0;
   };
   // A user model change (or "Set all to…"): keep the effort only if the new model offers it.
@@ -166,13 +173,15 @@ export function renderModelSwitchPanel(payload, { doc = globalThis.document, onS
     selects[s.nodeId].model = mk('model', modelItems(payload, s.model), s.model || '');
     selects[s.nodeId].effort = mk('effort', [{ value: '', text: 'Default' }], '');
     fillEffort(s.nodeId);
-    if (s.fanOut && payload.subagents !== false) {
-      mk('subagentModel', [{ value: '', text: 'Default (agent picks)' }, ...(payload.subagentModels || []).map((v) => ({ value: v, text: v }))], s.subagentModel || '');
-      mk('subagentEffort', [{ value: '', text: 'Default' }, ...(payload.efforts || []).map((v) => ({ value: v, text: v }))], s.subagentEffort || '');
-    } else {
-      tr.appendChild(h(doc, 'td', 'msw-na', '—'));
-      tr.appendChild(h(doc, 'td', 'msw-na', '—'));
-    }
+    // Sub-agent cells: only the values this run's engine applies (describeModelSwitch subagentModels /
+    // subagentEfforts); a field it takes none of reads '—', like a stage without fan-out.
+    const fan = s.fanOut && payload.subagents !== false;
+    const subField = (field, defaultText, list) => {
+      if (fan && list?.length) mk(field, listItems(defaultText, list, s[field] || ''), s[field] || '');
+      else tr.appendChild(h(doc, 'td', 'msw-na', '—'));
+    };
+    subField('subagentModel', 'Default (agent picks)', payload.subagentModels);
+    subField('subagentEffort', 'Default', payload.subagentEfforts);
     table.appendChild(tr);
   }
   root.appendChild(table);

@@ -114,3 +114,22 @@ test('a run another process drives: GET from the store; a dead owner answers 409
   const r = await req('POST', `/api/pipelines/${id}/models`, { changes: { n_impl: { model: 'claude-opus-5-5' } } });
   assert.equal(r.status, 409); assert.equal(r.body.code, 'NO_OWNER');
 });
+
+test('a paused switch with a parked entry: its state is broadcast only when its harness adopted the edit', async () => {
+  for (const adopts of [false, true]) {
+    const id = await seed();
+    let adoptCalls = 0; let stateReads = 0;
+    const orch = { state: { status: 'paused' },
+      adoptPausedStoreEdit: () => { adoptCalls += 1; return adopts; },
+      getState: () => { stateReads += 1; return { status: 'paused' }; } };
+    runs.set('r-parked', { id: 'r-parked', pipelineId: id, status: 'paused', settled: true, orch });
+    try {
+      const p = await req('POST', `/api/pipelines/${id}/models`, { changes: { n_plan: { model: 'claude-opus-5-5' } } });
+      assert.equal(p.status, 200, JSON.stringify(p.body));
+      assert.deepEqual(p.body.changed.map((c) => c.nodeId), ['n_plan']);
+      assert.equal(adoptCalls, 1);
+      assert.equal(stateReads, adopts ? 1 : 0, adopts ? 'adopted: the new state is broadcast' : 'not adopted: no stale pre-switch state is broadcast');
+      assert.equal(orch.state.stepper, undefined, 'the server never writes the parked state itself');
+    } finally { runs.delete('r-parked'); }
+  }
+});

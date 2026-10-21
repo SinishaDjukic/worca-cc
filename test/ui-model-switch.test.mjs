@@ -14,6 +14,7 @@ const PAYLOAD = {
   ],
   efforts: ['medium', 'high', 'xhigh', 'max'],
   subagentModels: ['sonnet', 'opus', 'fable', 'auto', 'inherit'],
+  subagentEfforts: ['medium', 'high', 'xhigh', 'max'],
   stages: [
     { nodeId: 'n_plan', key: 'planner', label: 'Planner', state: 'completed', switchable: false, model: '', effort: '', subagentModel: '', subagentEffort: '', fanOut: true },
     { nodeId: 'n_refine', key: 'refiner', label: 'Refiner', state: 'paused', switchable: true, model: 'claude-fable-5-1', effort: 'xhigh', subagentModel: '', subagentEffort: '', fanOut: true },
@@ -112,9 +113,10 @@ test('an engine without sub-agents shows no sub-agent selects (Review Focus 3)',
   assert.equal(el.querySelectorAll('select[data-field="subagentModel"]').length, 0);
 });
 
-test('a modelForAll run: model and effort locked, a note says why', () => {
+test('a modelForAll run: model and effort locked, a note says why and names the Resume menu item that did it', () => {
   const { el } = renderModelSwitchPanel({ ...PAYLOAD, modelForAll: 'claude-sonnet-5-5' }, { doc });
-  assert.match(el.querySelector('.msw-note').textContent, /claude-sonnet-5-5/);
+  assert.equal(el.querySelector('.msw-note').textContent,
+    'This run was resumed with claude-sonnet-5-5 for every remaining stage (Resume › Switch model…) — per-stage models and efforts do not apply.');
   for (const sel of el.querySelectorAll('select[data-field="model"], select[data-field="effort"], select.msw-all')) assert.ok(sel.disabled);
 });
 
@@ -162,6 +164,37 @@ test('changing a row model still reconciles its effort', () => {
   const sel2 = panel2.el.querySelector('tr[data-node="n_impl"] select[data-field="model"]');
   sel2.value = 'claude-haiku-4-5'; sel2.dispatchEvent(ev());
   assert.equal(panel2.picks().n_impl.effort, '', 'Haiku does not offer xhigh');
+});
+
+const options = (el, id, field) => [...el.querySelectorAll(`tr[data-node="${id}"] select[data-field="${field}"] option`)]
+  .map((o) => [o.value, o.textContent]);
+
+test('sub-agent selects offer the engine\'s sub-agent lists, not the main efforts (I1)', () => {
+  const codex = { ...PAYLOAD, engine: 'codex', subagents: true, efforts: ['minimal', 'low', 'medium', 'high'],
+    subagentModels: [], subagentEfforts: ['medium', 'high'] };
+  const { el } = renderModelSwitchPanel(codex, { doc });
+  const row = el.querySelector('tr[data-node="n_refine"]');
+  assert.equal(row.querySelector('select[data-field="subagentModel"]'), null, 'Codex takes no sub-agent model');
+  assert.deepEqual([...row.querySelectorAll('td.msw-na')].map((t) => t.textContent), ['—']);
+  assert.deepEqual(options(el, 'n_refine', 'subagentEffort'), [['', 'Default'], ['medium', 'medium'], ['high', 'high']]);
+  // Copilot: neither field.
+  const copilot = { ...codex, engine: 'copilot', subagentEfforts: [] };
+  const c = renderModelSwitchPanel(copilot, { doc }).el.querySelector('tr[data-node="n_refine"]');
+  assert.equal(c.querySelectorAll('select[data-field^="subagent"]').length, 0);
+  assert.deepEqual([...c.querySelectorAll('td.msw-na')].map((t) => t.textContent), ['—', '—']);
+});
+
+test('a stored sub-agent value the run does not offer shows as itself and changes no pick (I1)', () => {
+  const p = { ...withStage('n_refine', { subagentModel: 'fable', subagentEffort: 'xhigh' }),
+    engine: 'codex', subagentModels: ['sonnet', 'opus'], subagentEfforts: ['medium', 'high'] };
+  const panel = renderModelSwitchPanel(p, { doc });
+  const sel = (f) => panel.el.querySelector(`tr[data-node="n_refine"] select[data-field="${f}"]`);
+  assert.deepEqual(options(panel.el, 'n_refine', 'subagentModel').at(-1), ['fable', 'fable (not offered on this run)']);
+  assert.deepEqual(options(panel.el, 'n_refine', 'subagentEffort').at(-1), ['xhigh', 'xhigh (not offered on this run)']);
+  assert.deepEqual([sel('subagentModel').value, sel('subagentEffort').value], ['fable', 'xhigh']);
+  assert.deepEqual(diffChanges(p.stages, panel.picks()), {}, 'rendering sends nothing');
+  sel('subagentEffort').value = 'high'; sel('subagentEffort').dispatchEvent(ev());
+  assert.deepEqual(diffChanges(p.stages, panel.picks()), { n_refine: { subagentEffort: 'high' } });
 });
 
 test('cursor: effort selects are disabled and sub-agent cells read em dashes', () => {

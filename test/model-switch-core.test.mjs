@@ -4,7 +4,13 @@ import assert from 'node:assert/strict';
 import { buildGraphManifest } from '../src/shared/graph/manifest.mjs';
 import { GRAPH_DEFAULT_WORKFLOW } from '../src/core/workflows.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
-import { completedNodeIds, switchableStages, stageChangeError, applyModelSwitch, validateChanges, engineCatalog, assertPerStageModels } from '../src/core/model-switch.mjs';
+import { completedNodeIds, switchableStages, stageChangeError, applyModelSwitch, validateChanges, engineCatalog, assertPerStageModels,
+  subagentModelsOf, subagentEffortsOf } from '../src/core/model-switch.mjs';
+import { EFFORTS, ALL_EFFORTS, SUBAGENT_MODEL_VALUES } from '../src/core/model-env.mjs';
+import { HARNESS_EFFORTS } from '../src/shared/connections.mjs';
+import { ctxSubagentModel, investigatorAgents, INVESTIGATOR_AGENT } from '../src/core/phases.mjs';
+import { codexInvestigatorRole } from '../src/core/engines/codex.mjs';
+import { copilotInvestigatorAgent } from '../src/core/engines/copilot.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 const manifest = buildGraphManifest(GRAPH_DEFAULT_WORKFLOW, loadAgentRegistry());
@@ -160,8 +166,51 @@ test('stageChangeError: an effort on a foreign model is refused; sub-agent chang
   assert.match(stageChangeError(foreign, { effort: 'low' }, ALL, { engine: 'codex' }), /runs on Claude, not on Codex/);
   assert.equal(stageChangeError(foreign, { effort: '' }, ALL, { engine: 'codex' }), '');
   assert.match(stageChangeError(foreign, { effort: 'medium' }, ALL, { engine: 'cursor' }), /runs on Claude, not on Cursor/);
-  assert.equal(stageChangeError(foreign, { subagentEffort: 'low' }, ALL, { engine: 'codex' }), '');
-  assert.equal(stageChangeError(foreign, { subagentModel: 'opus' }, ALL, { engine: 'codex' }), '');
+  assert.equal(stageChangeError(foreign, { subagentEffort: 'high' }, ALL, { engine: 'codex' }), '');
+  assert.equal(stageChangeError(foreign, { subagentModel: '' }, ALL, { engine: 'codex' }), '');
+});
+
+test('stageChangeError: a sub-agent value the run engine would drop is refused; clearing passes (I1)', () => {
+  const cell = { model: '', effort: '', subagentModel: 'opus', subagentEffort: 'xhigh' };
+  // Claude: every sub-agent model and effort.
+  assert.equal(stageChangeError(cell, { subagentModel: 'sonnet', subagentEffort: 'max' }, ALL), '');
+  // Codex: no sub-agent model; a sub-agent effort only where the investigator role carries it as itself.
+  assert.equal(stageChangeError(cell, { subagentEffort: 'medium' }, ALL, { engine: 'codex' }), '');
+  assert.equal(stageChangeError(cell, { subagentEffort: 'high' }, ALL, { engine: 'codex' }), '');
+  for (const e of ['minimal', 'low', 'xhigh', 'max']) {
+    assert.equal(stageChangeError(cell, { subagentEffort: e }, ALL, { engine: 'codex' }), `unknown sub-agent effort "${e}" on Codex`);
+  }
+  for (const m of ['opus', 'auto', 'inherit']) {
+    assert.equal(stageChangeError(cell, { subagentModel: m }, ALL, { engine: 'codex' }), 'Codex does not take a sub-agent model — leave it on Default');
+  }
+  // Copilot: its investigator runs on the node's model and effort.
+  assert.equal(stageChangeError(cell, { subagentModel: 'opus' }, ALL, { engine: 'copilot' }), 'Copilot does not take a sub-agent model — leave it on Default');
+  assert.equal(stageChangeError(cell, { subagentEffort: 'high' }, ALL, { engine: 'copilot' }), 'Copilot does not take a sub-agent effort — leave it on Default');
+  // Clearing always passes; a stored value nobody touched blocks nothing.
+  for (const engine of ['claude', 'codex', 'copilot', 'cursor']) {
+    assert.equal(stageChangeError(cell, { subagentModel: '', subagentEffort: '' }, ALL, { engine }), '', engine);
+  }
+  assert.equal(stageChangeError(cell, { model: CODEX.id }, ALL, { engine: 'codex' }), '');
+});
+
+test('the per-engine sub-agent lists are what each runtime applies (phases.mjs, engines/codex.mjs, engines/copilot.mjs)', () => {
+  const ctx = (node) => ({ node: { fanOut: true, ...node } });
+  // Claude: the node keeps every stored model (the prompt block) and effort (the --agents definition).
+  assert.deepEqual(subagentModelsOf('claude'), SUBAGENT_MODEL_VALUES.filter((m) => ctxSubagentModel(ctx({ subagentModel: m })) === m));
+  assert.deepEqual(subagentEffortsOf('claude'), EFFORTS.filter((e) => investigatorAgents(ctx({ subagentEffort: e }))?.[INVESTIGATOR_AGENT]?.effort === e));
+  // Codex: the role never carries a sub-agent model, and carries an effort as itself only for a Codex effort.
+  const role = (node) => codexInvestigatorRole({ agents: investigatorAgents(ctx({ subagentEffort: 'high', ...node })) });
+  assert.deepEqual(SUBAGENT_MODEL_VALUES.filter((m) => role({ subagentModel: m }).model), []);
+  assert.deepEqual(subagentModelsOf('codex'), []);
+  const carried = (e) => role({ subagentEffort: e }).toml.includes(`model_reasoning_effort = "${e}"`);
+  assert.deepEqual(subagentEffortsOf('codex'), ALL_EFFORTS.filter((e) => carried(e) && HARNESS_EFFORTS.codex.includes(e)));
+  assert.deepEqual(subagentEffortsOf('codex'), ['medium', 'high']);
+  // Copilot: the investigator agent file is the same whatever model or effort the node pins.
+  const agentFile = (node) => copilotInvestigatorAgent({ agents: investigatorAgents(ctx(node)) });
+  assert.equal(agentFile({ subagentModel: 'opus', subagentEffort: 'max' }), agentFile({ subagentModel: 'sonnet', subagentEffort: 'medium' }));
+  assert.deepEqual([subagentModelsOf('copilot'), subagentEffortsOf('copilot')], [[], []]);
+  // Cursor runs no sub-agents; an unknown engine is offered nothing.
+  assert.deepEqual([subagentModelsOf('cursor'), subagentEffortsOf('cursor'), subagentModelsOf('nope'), subagentEffortsOf('nope')], [[], [], [], []]);
 });
 
 test('engineCatalog: only the models the engine runs, efforts in its vocabulary, hidden ones dropped', () => {

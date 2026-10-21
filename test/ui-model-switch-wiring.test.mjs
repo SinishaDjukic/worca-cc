@@ -22,6 +22,7 @@ const PAYLOAD = {
   ],
   efforts: ['medium', 'high', 'xhigh', 'max'],
   subagentModels: ['sonnet', 'opus', 'fable', 'auto', 'inherit'],
+  subagentEfforts: ['medium', 'high', 'xhigh', 'max'],
   stages: [
     { nodeId: 'n_plan', key: 'planner', label: 'Planner', state: 'completed', switchable: false, model: '', effort: '', subagentModel: '', subagentEffort: '', fanOut: true },
     { nodeId: 'n_refine', key: 'refiner', label: 'Refiner', state: 'paused', switchable: true, model: 'claude-fable-5-1', effort: 'xhigh', subagentModel: '', subagentEffort: '', fanOut: true },
