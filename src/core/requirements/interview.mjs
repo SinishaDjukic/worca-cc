@@ -105,7 +105,7 @@ function charge(seq, turnId, costUsd, model) {
   recordRequirementsCostDelta({ featureSeq: seq, turnId, amountUsd: costUsd, model: model || null });
 }
 
-async function callModel(d, { cwd, systemPrompt, prompt, model, tools, maxTurns = null, timeoutMs }) {
+export async function callModel(d, { cwd, systemPrompt, prompt, model, tools, maxTurns = null, timeoutMs }) {
   const ctrl = new AbortController();
   let timedOut = false;
   const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, timeoutMs);

@@ -1,0 +1,353 @@
+// src/core/requirements/brief-job.mjs
+// The product brief job (plans/requirements-a7-design.md D3, D5, D8, D9, D13–D16, §5): one deeper read-only look at
+// the default branch of a project or of a workspace's members makes or refreshes the scope's brief. Here: the
+// refusals (nothing is written and nothing is called before they pass), the one deadline over checkout and call,
+// the spend, the merge that keeps the product owner's words, recovery after a restart, the estimate, and the cheap
+// staleness check of the brief page. A job never throws out: a failure is recorded on the brief row and an earlier
+// brief is kept.
+import { existsSync, mkdirSync, realpathSync } from 'node:fs';
+import { join } from 'node:path';
+import { runClaude, mockEnabled } from '../claude-runner.mjs';
+import { listModels } from '../config.mjs';
+import { budgetStatus, recordRequirementsCostDelta } from '../cost-budget.mjs';
+import { openRepoLook, openWorkspaceRepoLook, REPO_LOOK_MAX_MEMBERS } from '../auto/repo-look.mjs';
+import { REPO_LOOK_TOOLS } from '../auto/classify.mjs';
+import { worcaHome, listProjects } from '../projects.mjs';
+import { workspaceTarget } from '../ask/workflow-deps.mjs';
+import { readWorkspace } from '../workspaces.mjs';
+import { defaultBranchRef, commitOf, isAncestor } from '../worktree.mjs';
+import { commitsAhead, commitFilesSince } from '../git-info.mjs';
+import { RequirementsError } from './spec.mjs';
+import { RoundError } from './round.mjs';
+import { callModel, requirementsModel } from './interview.mjs';
+import {
+  getContext, getBrief, beginBrief, saveBriefResult, failBrief, addBriefCost, listMakingBriefs, recentBriefCosts,
+} from './store.mjs';
+import {
+  BRIEF_SYSTEM_PROMPT, BRIEF_OUT_OF_STEPS, buildBriefPrompt, normalizeBrief, mergeBrief, mockBrief, touchedAreas,
+} from './brief.mjs';
+
+/** At most this many briefs are made at once (separate from the interview's MAX_JOBS), one per scope. */
+export const MAX_BRIEF_JOBS = 2;
+export const BRIEF_MAX_TURNS = 40;
+/** Bounds checkout and call together (D3). */
+export const BRIEF_TIMEOUT_MS = 600_000;
+/** Bounds the git calls the brief page makes on load (D9). */
+export const STALENESS_TIMEOUT_MS = 10_000;
+// Each git call of a page load gets a little longer than the page's race, so a git timeout never reads as an
+// answer ("the branch is gone") before the race has said "slow"; it only reaps the process.
+const GIT_TIMEOUT_MS = STALENESS_TIMEOUT_MS + 2_000;
+const MEMO_MS = 30_000;
+const FILES_MAX = 2000;   // commitFilesSince's default page
+
+const DEFAULTS = Object.freeze({
+  runClaudeImpl: runClaude, listModels, listProjects, workspaceTarget, readWorkspace,
+  openLook: openRepoLook, openWorkspaceLook: openWorkspaceRepoLook, budget: () => budgetStatus(), onChange: () => {},
+});
+
+const jobs = new Map();   // '<scopeType>:<scopeKey>' → the job's promise
+const jobKey = (scopeType, scopeKey) => `${scopeType}:${scopeKey}`;
+export const isBriefBusy = (scopeType, scopeKey) => jobs.has(jobKey(scopeType, scopeKey));
+/** Resolves when the scope's running brief job (if any) has finished. */
+export const briefSettled = (scopeType, scopeKey) => jobs.get(jobKey(scopeType, scopeKey)) || Promise.resolve();
+
+const message = (err) => (err && err.message ? err.message : String(err));
+const coded = (code, msg) => Object.assign(new Error(msg), { code });
+const byKey = (a, b) => (a.projectKey < b.projectKey ? -1 : a.projectKey > b.projectKey ? 1 : 0);
+const hasGit = (dir) => { try { return !!dir && existsSync(join(dir, '.git')); } catch { return false; } };
+const scratchDir = () => { const d = join(worcaHome(), 'tmp', 'requirements'); mkdirSync(d, { recursive: true }); return d; };
+
+/** `p`, or `fallback` once `ms` have passed. */
+function within(p, ms, fallback) {
+  let timer;
+  const late = new Promise((res) => { timer = setTimeout(() => res(fallback), ms); });
+  return Promise.race([p, late]).finally(() => clearTimeout(timer));
+}
+
+function notify(d, scopeType, scopeKey) {
+  try { d.onChange(scopeType, scopeKey); } catch (e) { console.error('requirements: brief onChange failed:', message(e)); }
+}
+
+// ---------------------------------------------------------------- the two places the A1.1 merge changes (§9)
+
+/** The brief's model (D5): before the A1.1 merge the requirements model; after it, interviewModel(d). */
+export async function briefModel(d) {
+  return { model: await requirementsModel(d.listModels), effort: null };
+}
+
+/** The brief's one model call (D5): before the A1.1 merge A1's callModel with the look's tools; after it,
+ *  callModel(d, { kind: 'look', cwd, prompt, model, timeoutMs, systemPrompt: BRIEF_SYSTEM_PROMPT, maxTurns: BRIEF_MAX_TURNS }). */
+function briefCall(d, { cwd, prompt, model, timeoutMs }) {
+  return callModel(d, { cwd, systemPrompt: BRIEF_SYSTEM_PROMPT, prompt, model, tools: REPO_LOOK_TOOLS, maxTurns: BRIEF_MAX_TURNS, timeoutMs });
+}
+
+// ---------------------------------------------------------------- target
+
+/** Each dir with the default branch the look reads (D8); a dir without one is left out, as is one whose git is too slow. */
+async function withBase(list) {
+  const out = await Promise.all(list.map(async (x) => ({ ...x, base: await within(defaultBranchRef(x.dir, { timeout: GIT_TIMEOUT_MS }), STALENESS_TIMEOUT_MS, null) })));
+  return out.filter((x) => x.base);
+}
+
+/** What a brief of the scope looks at. Project: `{ name, dirs }`; workspace: `{ name, description, seed, dirs, leftOut }`
+ *  (D13: members in key order, the first REPO_LOOK_MAX_MEMBERS repositories; `leftOut` names the ones past them). */
+export async function briefTarget(scopeType, scopeKey, deps = {}) {
+  const d = { ...DEFAULTS, ...deps };
+  if (scopeType === 'project') {
+    const p = (await d.listProjects()).find((x) => x && x.key === scopeKey);
+    const dirs = p && p.exists && p.path ? await withBase([{ project: scopeKey, dir: p.path }]) : [];
+    return { name: (p && p.name) || scopeKey, dirs };
+  }
+  const ws = await d.workspaceTarget(scopeKey);
+  if (!ws) return { name: scopeKey, description: '', seed: null, dirs: [], leftOut: [] };
+  const repos = [...(ws.members || [])].filter((m) => m && m.projectKey).sort(byKey).filter((m) => hasGit(m.projectDir));
+  const leftOut = repos.slice(REPO_LOOK_MAX_MEMBERS).map((m) => m.projectName || m.projectKey);
+  const description = String(ws.description || '');
+  let seed = null;
+  if (description.trim()) {
+    let row = null;
+    try { row = await d.readWorkspace(scopeKey); } catch { row = null; }
+    const scannedAt = row && row.descriptionOrigin === 'generated' && row.mapSummary ? row.mapSummary.scannedAt : null;
+    seed = scannedAt ? { kind: 'workspace-map', scannedAt } : { kind: 'workspace-description' };
+  }
+  const dirs = await withBase(repos.slice(0, REPO_LOOK_MAX_MEMBERS)
+    .map((m) => ({ project: m.projectKey, name: m.projectName || m.projectKey, dir: m.projectDir })));
+  return { name: ws.name || scopeKey, description, seed, dirs, leftOut };
+}
+
+// ---------------------------------------------------------------- the job
+
+function assertBriefBudget(d) {
+  const b = d.budget();
+  if (b && b.blocked) {
+    throw new RequirementsError('BUDGET', `The spending limit${b.totalLimitUsd != null ? ` of $${b.totalLimitUsd}` : ''} is reached for this period. Worca can make the brief when the limit resets or is raised.`);
+  }
+}
+
+function failureOf(err) {
+  if (err instanceof RoundError) {
+    const m = message(err);
+    return { code: 'BAD_REPLY', message: m === BRIEF_OUT_OF_STEPS ? m : `Worca's reply could not be read (${m}). Try again.` };
+  }
+  return { code: (err && typeof err.code === 'string' && err.code) || 'FAILED', message: message(err) };
+}
+
+function book(id, costUsd, model) {
+  if (!(costUsd > 0)) return;
+  try {
+    addBriefCost(id, costUsd);
+    recordRequirementsCostDelta({ briefId: id, amountUsd: costUsd, model: model || null });
+  } catch (e) { console.error('requirements: could not book a brief look:', message(e)); }
+}
+
+/** The checkout's own path and its real path (the Read tool may report either). */
+function cwdsOf(cwd) {
+  const out = [cwd];
+  try { const real = realpathSync(cwd); if (real !== cwd) out.push(real); } catch { /* gone: the path as given */ }
+  return out;
+}
+
+async function mockSources(target) {
+  const out = [];
+  for (const x of target.dirs) {
+    out.push({ project: x.project, branch: x.base.branch, ref: x.base.ref, sha: await commitOf(x.dir, x.base.ref, { timeout: GIT_TIMEOUT_MS }) });
+  }
+  return out;
+}
+
+function runJob(row, target, scopeType, scopeKey, by, d) {
+  return (async () => {
+    const deadline = Date.now() + BRIEF_TIMEOUT_MS;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), BRIEF_TIMEOUT_MS);
+    let look = null;
+    let model = null;
+    let cost = 0;
+    try {
+      let fresh;
+      let sources;
+      if (mockEnabled({})) {
+        fresh = mockBrief(target.name);
+        sources = await mockSources(target);
+      } else {
+        const scratch = scratchDir();
+        if (scopeType === 'project') {
+          const x = target.dirs[0];
+          look = await d.openLook(x.dir, scratch, { signal: ctrl.signal, ref: x.base.ref });
+        } else {
+          look = await d.openWorkspaceLook(target.dirs.map((x) => ({ projectKey: x.project, projectName: x.name, projectDir: x.dir })), scratch,
+            { signal: ctrl.signal, refs: Object.fromEntries(target.dirs.map((x) => [x.project, x.base.ref])) });
+        }
+        if (ctrl.signal.aborted) throw coded('TIMEOUT', 'Worca could not check out the code in time. Try again.');
+        if (!look) throw coded('NO_REPO', 'Worca could not check out the code. Try again.');
+        ({ model } = await briefModel(d));
+        assertBriefBudget(d);   // again: the limit may have been reached since the press (a recorded failure now)
+        const now = getBrief(scopeType, scopeKey);
+        const members = look.members || null;
+        const prompt = buildBriefPrompt({
+          scopeName: target.name, notes: getContext(scopeType, scopeKey).body, workspaceDescription: target.description || '',
+          current: now && now.madeAt ? now.sections : null, edited: (now && now.edited) || {}, members,
+        });
+        let reply;
+        try { reply = await briefCall(d, { cwd: look.cwd, prompt, model, timeoutMs: Math.max(1, deadline - Date.now()) }); }
+        catch (err) { cost = Number(err?.costUsd) || 0; throw err; }
+        cost = Number(reply.costUsd) || 0;
+        fresh = normalizeBrief(reply.text, { cwds: cwdsOf(look.cwd), members });   // while the checkout is still there
+        sources = scopeType === 'project'
+          ? [{ project: target.dirs[0].project, branch: target.dirs[0].base.branch, ref: target.dirs[0].base.ref, sha: look.commit || null }]
+          : target.dirs.filter((x) => (members || []).includes(x.project))
+            .map((x) => ({ project: x.project, branch: x.base.branch, ref: x.base.ref, sha: (look.commits && look.commits[x.project]) || null }));
+      }
+      // The row as it is now: the product owner may have edited it while the look ran (D6).
+      const merged = mergeBrief(getBrief(scopeType, scopeKey), fresh);
+      saveBriefResult(row.id, { sections: merged.sections, edited: merged.edited, sources, files: fresh.files, seed: target.seed || null, model }, { by });
+    } catch (err) {
+      try { failBrief(row.id, failureOf(err)); } catch (e) { console.error('requirements: could not record a failed brief:', message(e)); }
+    } finally {
+      clearTimeout(timer);
+      book(row.id, cost, model);
+      if (look) { try { await look.close(); } catch (e) { console.error('requirements: could not close a brief look:', message(e)); } }
+      jobs.delete(jobKey(scopeType, scopeKey));
+      notify(d, scopeType, scopeKey);
+    }
+  })();
+}
+
+/**
+ * Create or refresh the scope's brief. Refuses (throws RequirementsError) before anything is written or called:
+ * the switch off, no repository or default branch, already being made, MAX_BRIEF_JOBS running, the budget.
+ * Resolves, once the job has started, to `{ brief, job }`: the row now `making`, and the job's promise (which
+ * never rejects; callers need not await it). The refusals need the target's git probes, hence the promise.
+ */
+export async function makeBrief(scopeType, scopeKey, { by = null } = {}, deps = {}) {
+  const d = { ...DEFAULTS, ...deps };
+  const where = scopeType === 'workspace' ? 'workspace' : 'project';
+  if (!getContext(scopeType, scopeKey).lookAtCode) {
+    throw new RequirementsError('CONFLICT', `Looking at the code is off for this ${where}. Turn it on under Your notes for Worca.`);
+  }
+  const target = await briefTarget(scopeType, scopeKey, d);
+  // From here to the job's start nothing awaits: two presses cannot both pass the checks below.
+  if (!target.dirs.length) throw new RequirementsError('CONFLICT', 'There is no repository to look at.');
+  if (isBriefBusy(scopeType, scopeKey)) throw new RequirementsError('BUSY', 'Worca is already making this brief.');
+  if (jobs.size >= MAX_BRIEF_JOBS) throw new RequirementsError('BUSY', 'Worca is making other briefs; try again in a moment.');
+  assertBriefBudget(d);
+  const row = beginBrief(scopeType, scopeKey, { by });
+  const job = runJob(row, target, scopeType, scopeKey, by, d);
+  jobs.set(jobKey(scopeType, scopeKey), job);
+  notify(d, scopeType, scopeKey);
+  return { brief: row, job };
+}
+
+/** Boot sweep (D15): a brief left `making` by a restart, whose job is not running, gets INTERRUPTED. */
+export function recoverBriefs() {
+  let n = 0;
+  for (const b of listMakingBriefs()) {
+    if (isBriefBusy(b.scopeType, b.scopeKey)) continue;
+    failBrief(b.id, { code: 'INTERRUPTED', message: 'The look at the code did not finish because Worca restarted. Try again.' });
+    n += 1;
+  }
+  return n;
+}
+
+// ---------------------------------------------------------------- estimate
+
+/** What the next brief look likely costs (median of the last 10, in cents; null without any) and with which model. */
+export async function briefEstimate(deps = {}) {
+  const d = { ...DEFAULTS, ...deps };
+  const costs = recentBriefCosts(10).filter((c) => Number.isFinite(c)).sort((a, b) => a - b);
+  let costUsd = null;
+  if (costs.length) {
+    const m = costs.length >> 1;
+    const median = costs.length % 2 ? costs[m] : (costs[m - 1] + costs[m]) / 2;
+    costUsd = Math.round(median * 100) / 100;
+  }
+  const { model: id } = await briefModel(d);
+  if (!id) return { costUsd, model: null };
+  let label = id;
+  try { const e = (await d.listModels(null)).find((x) => x && x.id === id); if (e && e.label) label = e.label; } catch { /* the id */ }
+  return { costUsd, model: { id, label } };
+}
+
+// ---------------------------------------------------------------- staleness (D9)
+
+const STALENESS_DEFAULTS = Object.freeze({
+  listProjects, workspaceTarget,
+  commitOf: (dir, ref) => commitOf(dir, ref, { timeout: GIT_TIMEOUT_MS }),
+  isAncestor: (dir, a, b) => isAncestor(dir, a, b, { timeout: GIT_TIMEOUT_MS }),
+  commitsAhead: (dir, a, b) => commitsAhead(dir, a, b, { timeout: GIT_TIMEOUT_MS }),
+  commitFilesSince: (dir, a, b) => commitFilesSince(dir, a, b, { timeout: GIT_TIMEOUT_MS }),
+});
+const memo = new Map();   // '<id>:<madeAt>' → { at, value }
+const SLOW = Object.freeze({ known: false, reason: 'slow' });
+
+/** One source in its project's own checkout, no model. → `{ entry, commits, partial }`. */
+async function checkSource(src, dir, d) {
+  const ref = src.ref || `refs/heads/${src.branch}`;
+  const base = { project: src.project, branch: src.branch || null, ref, sha: src.sha };
+  const no = (reason) => ({ entry: { ...base, known: false, reason }, commits: [], partial: false });
+  if (!dir || !existsSync(dir)) return no('missing');
+  if (!(await d.commitOf(dir, ref))) return no('branch-gone');
+  if (!(await d.isAncestor(dir, src.sha, ref))) return no('rewritten');
+  const n = await d.commitsAhead(dir, src.sha, ref);
+  if (n == null) return no('rewritten');
+  const list = await d.commitFilesSince(dir, src.sha, ref);
+  if (!list) return no('slow');
+  const commits = Array.isArray(list.commits) ? list.commits : [];
+  // partial: more commits than the file scan reads, or the scan came back full (it saw only the newest page)
+  return { entry: { ...base, known: true, commits: n }, commits, partial: n > FILES_MAX || commits.length >= FILES_MAX };
+}
+
+async function checkProject(brief, src, d) {
+  const p = (await d.listProjects()).find((x) => x && x.key === brief.scopeKey);
+  const r = await checkSource(src, p && p.exists !== false ? p.path : null, d);
+  if (!r.entry.known) return { known: false, reason: r.entry.reason, branch: src.branch || null, sha: src.sha };
+  const t = touchedAreas(brief.sections, brief.edited, [{ project: src.project, commits: r.commits }]);
+  return { known: true, commits: r.entry.commits, touching: t.touching, areas: t.areas, checked: t.checked, partial: r.partial, sources: [r.entry] };
+}
+
+async function checkWorkspace(brief, sources, d) {
+  const ws = await d.workspaceTarget(brief.scopeKey);
+  const members = [...((ws && ws.members) || [])].filter((m) => m && m.projectKey).sort(byKey);
+  const byProject = new Map(members.map((m) => [m.projectKey, m]));
+  const nameOf = (k) => (byProject.get(k) && byProject.get(k).projectName) || k;
+  // a member removed from the workspace since the brief is not counted at all
+  const results = await Promise.all(sources.filter((s) => byProject.has(s.project)).map((s) => checkSource(s, byProject.get(s.project).projectDir, d)));
+  const known = results.filter((r) => r.entry.known);
+  const unknown = results.filter((r) => !r.entry.known).map((r) => nameOf(r.entry.project));
+  const covered = new Set((brief.sources || []).map((s) => s && s.project));
+  const added = members.filter((m) => hasGit(m.projectDir)).slice(0, REPO_LOOK_MAX_MEMBERS)
+    .filter((m) => !covered.has(m.projectKey)).map((m) => m.projectName || m.projectKey);
+  const entries = results.map((r) => r.entry);
+  if (!known.length) return { known: false, reason: (entries[0] && entries[0].reason) || 'missing', unknown, added, sources: entries };
+  const t = touchedAreas(brief.sections, brief.edited, known.map((r) => ({ project: r.entry.project, commits: r.commits })));
+  return {
+    known: true, commits: known.reduce((s, r) => s + r.entry.commits, 0), touching: t.touching, areas: t.areas, checked: t.checked,
+    partial: known.some((r) => r.partial), unknown, added, sources: entries,
+  };
+}
+
+const isSlow = (v) => !v || v.reason === 'slow' || (v.sources || []).some((s) => s.reason === 'slow');
+
+/**
+ * How far the code moved on since the brief (D9), or null when there is nothing to compare (never made, no
+ * source with a sha). The whole check is raced against STALENESS_TIMEOUT_MS ("slow"). Memoised 30 s per brief and
+ * made_at; a result that says "slow" anywhere is not kept.
+ */
+export async function briefStaleness(brief, deps = {}) {
+  if (!brief || !brief.madeAt) return null;
+  const sources = (brief.sources || []).filter((s) => s && typeof s.sha === 'string' && s.sha && s.project);
+  if (!sources.length) return null;
+  const key = `${brief.id}:${brief.madeAt}`;
+  const hit = memo.get(key);
+  if (hit && Date.now() - hit.at < MEMO_MS) return hit.value;
+  const d = { ...STALENESS_DEFAULTS, ...deps };
+  const run = brief.scopeType === 'workspace' ? checkWorkspace(brief, sources, d) : checkProject(brief, sources[0], d);
+  let value;
+  try { value = await within(run, STALENESS_TIMEOUT_MS, SLOW); } catch { value = SLOW; }
+  if (value === SLOW) return { ...SLOW };
+  const now = Date.now();
+  for (const [k, v] of memo) if (now - v.at >= MEMO_MS) memo.delete(k);
+  if (isSlow(value)) memo.delete(key);
+  else memo.set(key, { at: now, value });
+  return value;
+}

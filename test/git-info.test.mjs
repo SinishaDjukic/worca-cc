@@ -204,3 +204,13 @@ test('commitFilesSince on a real repository: commits since a sha with their file
     assert.equal(await commitFilesSince(dir, 'deadbeef', 'main'), null, 'unknown sha → git fails → null');
   } finally { rmTmp(dir, { recursive: true, force: true, maxRetries: 3 }); }
 });
+
+test('commitsAhead forwards an additive timeout to the runner (none by default)', async () => {
+  const seen = [];
+  gitInfo.setRunner((cmd, args, o) => { seen.push(o); return Promise.resolve({ ok: true, stdout: '2\n', stderr: '', code: 0 }); });
+  assert.equal(await commitsAhead('/r', 'abc1234', 'main', { timeout: 1234 }), 2);
+  assert.equal(await commitsAhead('/r', 'abc1234', 'main'), 2);
+  gitInfo.reset();
+  assert.equal(seen[0].timeout, 1234);
+  assert.ok(!seen[1].timeout, 'no timeout unless asked');
+});

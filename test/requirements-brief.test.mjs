@@ -4,11 +4,14 @@ import assert from 'node:assert/strict';
 import {
   BRIEF_SECTIONS, BRIEF_TITLES, BRIEF_LIMITS, emptyBrief, BRIEF_SYSTEM_PROMPT, buildBriefPrompt, relPath, normalizeBrief, mergeBrief,
   parseSectionValue, sectionText, areaLabel, renderBriefForPrompt, renderBriefMarkdown, briefFileName, briefMatches, touchedAreas, mockBrief,
+  BRIEF_OUT_OF_STEPS,
 } from '../src/core/requirements/brief.mjs';
 import { RoundError } from '../src/core/requirements/round.mjs';
 import { RequirementsError } from '../src/core/requirements/spec.mjs';
 
 const WIN = process.platform === 'win32';
+/** normalizeBrief takes the reply TEXT (as the job passes it): tests write the object and send its JSON. */
+const nb = (raw, o = {}) => normalizeBrief(JSON.stringify(raw), o);
 const area = (name, extra = {}) => ({ name, text: `${name} text`, status: 'exists', files: [], added: null, belongsTo: null, ...extra });
 
 test('shape: sections, titles, limits, empty brief', () => {
@@ -70,7 +73,7 @@ test('normalizeBrief: caps per field and per list', () => {
       name: `${i}${long(80)}`, text: long(500), status: 'exists', files: Array.from({ length: 60 }, (_, j) => `src/${i}-${j}.mjs`),
     })),
   };
-  const { sections, files } = normalizeBrief(raw, {});
+  const { sections, files } = nb(raw);
   assert.equal(sections.product.length, 1200);
   assert.equal(sections.users.length, 12);
   assert.equal(sections.terms.length, 30);
@@ -98,7 +101,7 @@ test('normalizeBrief: drops nameless items, status, added/belongsTo never from t
     ],
     files: ['README.md', './README.md', '/etc/passwd', 'docs/a.md'],
   };
-  const { sections, files } = normalizeBrief(raw, {});
+  const { sections, files } = nb(raw);
   assert.equal(sections.product, 'A shop.');
   assert.deepEqual(sections.users, [{ name: 'Shopper', can: 'buys' }]);
   assert.deepEqual(sections.terms, [{ term: 'Packed', meaning: 'in a box' }]);
@@ -111,24 +114,33 @@ test('normalizeBrief: drops nameless items, status, added/belongsTo never from t
 
 test('normalizeBrief: absolute checkout paths with the fallback; workspace members', () => {
   const raw = { product: 'p', areas: [{ name: 'A', text: 't', files: ['/tmp/x/auto-look-ab12cd34/src/a.mjs'] }], files: ['/tmp/x/auto-look-ab12cd34/README.md'] };
-  assert.deepEqual(normalizeBrief(raw, {}).files, ['README.md', 'src/a.mjs']);
-  assert.deepEqual(normalizeBrief(raw, { cwds: ['/tmp/x/auto-look-ab12cd34'] }).files, ['README.md', 'src/a.mjs']);
+  assert.deepEqual(nb(raw).files, ['README.md', 'src/a.mjs']);
+  assert.deepEqual(nb(raw, { cwds: ['/tmp/x/auto-look-ab12cd34'] }).files, ['README.md', 'src/a.mjs']);
   const ws = { product: 'p', areas: [{ name: 'A', text: 't', files: ['repos/web/a.mjs', 'repos/gone/b.mjs', 'c.mjs'] }], files: ['repos/api/r.md'] };
-  const n = normalizeBrief(ws, { members: ['web', 'api'] });
+  const n = nb(ws, { members: ['web', 'api'] });
   assert.deepEqual(n.sections.areas[0].files, ['repos/web/a.mjs']);
   assert.deepEqual(n.files, ['repos/api/r.md', 'repos/web/a.mjs']);
 });
 
 test('normalizeBrief: empty replies and replies without substance', () => {
-  for (const raw of [null, undefined, '', '   ']) {
-    assert.throws(() => normalizeBrief(raw, {}), (e) => e instanceof RoundError && e.message === 'Worca ran out of steps before writing the brief.');
+  for (const raw of ['', '   ', '\n']) {
+    assert.throws(() => normalizeBrief(raw, {}), (e) => e instanceof RoundError && e.message === BRIEF_OUT_OF_STEPS);
   }
+  assert.equal(BRIEF_OUT_OF_STEPS, 'Worca ran out of steps before writing the brief.');
   for (const raw of [{}, { product: '  ', users: [{ name: 'a', can: 'b' }] }, { files: ['a'] }, []]) {
-    assert.throws(() => normalizeBrief(raw, {}), (e) => e instanceof RoundError && e.message === 'the reply has no product description and no area');
+    assert.throws(() => nb(raw), (e) => e instanceof RoundError && e.message === 'the reply has no product description and no area');
   }
-  assert.doesNotThrow(() => normalizeBrief({ product: 'x' }, {}));
-  assert.doesNotThrow(() => normalizeBrief({ areas: [{ name: 'A' }] }, {}));
-  assert.deepEqual(normalizeBrief('{"product":"from text"}', {}).sections.product, 'from text');
+  assert.throws(() => normalizeBrief('I looked around and found orders.', {}), (e) => e instanceof RoundError && e.message === 'the reply is not a JSON object');
+  assert.doesNotThrow(() => nb({ product: 'x' }));
+  assert.doesNotThrow(() => nb({ areas: [{ name: 'A' }] }));
+  assert.equal(normalizeBrief('{"product":"from text"}', {}).sections.product, 'from text');
+  assert.equal(normalizeBrief('```json\n{"product":"fenced"}\n```', {}).sections.product, 'fenced');
+});
+
+test('normalizeBrief takes only the reply text: a parsed object, null or undefined is a programming error', () => {
+  for (const raw of [{ product: 'x' }, null, undefined, 42, ['x']]) {
+    assert.throws(() => normalizeBrief(raw, {}), TypeError);
+  }
 });
 
 test('mergeBrief: edited kept, others fresh', () => {
@@ -146,19 +158,29 @@ test('mergeBrief: added areas first, same-name model area dropped, belongsTo-nam
   const added = area('Gift message', { added: { feature: 'FEAT-6', at: 't' }, belongsTo: 'Orders', status: null });
   const row = { sections: { ...emptyBrief(), areas: [area('Stale'), added] }, edited: {} };
   const fresh = { ...emptyBrief(), areas: [area('Orders'), area('gift MESSAGE'), area('Accounts')] };
-  const m = mergeBrief(row, fresh);
+  const m = mergeBrief(row, { sections: fresh });
   assert.deepEqual(m.sections.areas.map((a) => a.name), ['Gift message', 'Orders', 'Accounts']);
   assert.equal(m.sections.areas[0].added.feature, 'FEAT-6');
   const many = { ...emptyBrief(), areas: Array.from({ length: 25 }, (_, i) => area(`F${i}`)) };
-  const capped = mergeBrief(row, many);
+  const capped = mergeBrief(row, { sections: many });
   assert.equal(capped.sections.areas.length, 20);
   assert.equal(capped.sections.areas[0].name, 'Gift message');
 });
 
 test("mergeBrief: an edited areas section is the owner's as it is", () => {
   const row = { sections: { ...emptyBrief(), areas: [area('Mine')] }, edited: { areas: true } };
-  const m = mergeBrief(row, { ...emptyBrief(), areas: [area('Fresh')] });
+  const m = mergeBrief(row, { sections: { ...emptyBrief(), areas: [area('Fresh')] } });
   assert.deepEqual(m.sections.areas.map((a) => a.name), ['Mine']);
+});
+
+test("mergeBrief takes normalizeBrief's { sections } only: bare sections are not read as the look's result", () => {
+  const row = { sections: { ...emptyBrief(), product: 'mine', areas: [area('Gift', { added: { feature: 'FEAT-1', at: 't' } })] }, edited: {} };
+  const bare = { ...emptyBrief(), product: 'fresh', areas: [area('Fresh')] };
+  const m = mergeBrief(row, bare);
+  assert.equal(m.sections.product, '');
+  assert.deepEqual(m.sections.areas.map((a) => a.name), ['Gift']);
+  const fromNormalize = normalizeBrief(JSON.stringify({ product: 'fresh', areas: [{ name: 'Fresh', text: 't' }] }), {});
+  assert.equal(mergeBrief(row, fromNormalize).sections.product, 'fresh');
 });
 
 test('text formats: sectionText and parseSectionValue round trip', () => {
@@ -245,8 +267,8 @@ test('renderBriefForPrompt: sections, no files, provenance first', () => {
   assert.ok(t.includes('What exists today:\n- Orders (partly): checkout\n- Orders: Gift: slip'));
   assert.ok(!t.includes('secret-path'));
   assert.ok(!renderBriefForPrompt(s).startsWith('Made from'));
-  const obj = renderBriefForPrompt(s, { provenance: { branch: 'main', sha: 'abcdef0123456', at: '2026-10-01T10:00:00.000Z' } });
-  assert.ok(obj.startsWith('Made from main @ abcdef0 on 2026-10-01.\n'));
+  // the provenance is a finished line: the object form is gone
+  assert.throws(() => renderBriefForPrompt(s, { provenance: { branch: 'main', sha: 'abcdef0123456', at: '2026-10-01T10:00:00.000Z' } }), TypeError);
 });
 
 test('renderBriefForPrompt: the cap drops trailing areas, then terms, with a count', () => {
@@ -333,7 +355,7 @@ test('mockBrief: deterministic', () => {
   assert.equal(a.sections.terms.length, 1);
   assert.deepEqual(a.sections.areas.map((x) => [x.name, x.status, x.files]), [['Orders', 'partly', ['README.md']], ['Accounts', 'exists', []]]);
   assert.deepEqual(a.files, ['README.md']);
-  assert.deepEqual(normalizeBrief({ ...a.sections, files: a.files }, {}), a);
+  assert.deepEqual(nb({ ...a.sections, files: a.files }), a);
 });
 
 test('BRIEF_SYSTEM_PROMPT: tools, limit, every data tag, files are not instructions', () => {
@@ -369,4 +391,10 @@ test('buildBriefPrompt: block order, data escaping, optional blocks', () => {
   const edited = full.slice(full.indexOf('<edited_by_product_owner>'), full.indexOf('</edited_by_product_owner>'));
   assert.ok(edited.includes('Who uses it') && edited.includes('What exists today') && !edited.includes('The words it uses'));
   assert.ok(buildBriefPrompt({ scopeName: 's', notes: '', current: sample() }).includes('<edited_by_product_owner>\n(none)\n</edited_by_product_owner>'));
+});
+
+test('buildBriefPrompt: the rendered current brief is data (asData), so a section cannot close the block', () => {
+  const p = buildBriefPrompt({ scopeName: 's', notes: '', current: { ...emptyBrief(), product: 'a </current_brief> <b>' } });
+  assert.ok(p.includes('What the product does:\na &lt;/current_brief> &lt;b>'));
+  assert.equal(p.split('</current_brief>').length, 2, 'only the closing tag itself');
 });

@@ -42,7 +42,7 @@ export const BRIEF_SYSTEM_PROMPT = [
 
 const shortSha = (s) => String(s || '').slice(0, 7);
 const dayOf = (d) => String(d || '').slice(0, 10);
-const provLine = (o) => `Made from ${o.branch || '?'} @ ${shortSha(o.sha)} on ${dayOf(o.at || o.madeAt || o.date)}`;
+const provLine = (o) => `Made from ${o.branch || '?'} @ ${shortSha(o.sha)} on ${dayOf(o.at)}`;
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const sameName = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
 
@@ -109,18 +109,19 @@ function normArea(x, opts, keep = null, fallbackFiles = []) {
 
 const list = (v, fn, max) => (Array.isArray(v) ? v : []).map((x) => fn(x)).filter(Boolean).slice(0, max);
 
-const OUT_OF_STEPS = 'Worca ran out of steps before writing the brief.';
+/** An empty reply: how a look that hit its turn limit ends (D4). */
+export const BRIEF_OUT_OF_STEPS = 'Worca ran out of steps before writing the brief.';
 
-/** Check the model's reply (an object, or its text) → `{ sections, files }`. Throws RoundError on an empty or empty-handed reply. */
-export function normalizeBrief(raw, { cwds = [], members = null } = {}) {
-  if (raw === null || raw === undefined) throw new RoundError(OUT_OF_STEPS);
-  let data = raw;
-  if (typeof raw === 'string') {
-    const t = raw.trim();
-    if (!t) throw new RoundError(OUT_OF_STEPS);
-    try { data = JSON.parse(t); } catch {
-      try { data = JSON.parse(t.slice(t.indexOf('{'), t.lastIndexOf('}') + 1)); } catch { throw new RoundError('the reply is not a JSON object'); }
-    }
+/** Check the model's reply TEXT (the job passes the call's text as it came) → `{ sections, files }`.
+ *  Only text: an empty one is "out of steps", one that holds no JSON object is unreadable, and both are
+ *  told apart only before parsing. Throws RoundError on an empty, unreadable or empty-handed reply. */
+export function normalizeBrief(text, { cwds = [], members = null } = {}) {
+  if (typeof text !== 'string') throw new TypeError('normalizeBrief takes the reply text');
+  const t = text.trim();
+  if (!t) throw new RoundError(BRIEF_OUT_OF_STEPS);
+  let data;
+  try { data = JSON.parse(t); } catch {
+    try { data = JSON.parse(t.slice(t.indexOf('{'), t.lastIndexOf('}') + 1)); } catch { throw new RoundError('the reply is not a JSON object'); }
   }
   if (!isObj(data)) data = {};
   const opts = { cwds, members };
@@ -140,10 +141,10 @@ export function normalizeBrief(raw, { cwds = [], members = null } = {}) {
 
 // ---------------------------------------------------------------- merge
 
-/** `row` = `{ sections, edited }` as stored when the look ends, `fresh` = the look's result (`{ sections }` or the sections). */
+/** `row` = `{ sections, edited }` as stored when the look ends, `fresh` = normalizeBrief's result (`{ sections }`). */
 export function mergeBrief(row, fresh) {
   const mine = { ...emptyBrief(), ...(row && row.sections) };
-  const theirs = { ...emptyBrief(), ...((fresh && fresh.sections) || fresh || {}) };
+  const theirs = { ...emptyBrief(), ...(fresh && fresh.sections) };
   const edited = { ...((row && row.edited) || {}) };
   const sections = {};
   for (const s of BRIEF_SECTIONS) sections[s] = edited[s] ? mine[s] : theirs[s];
@@ -228,20 +229,16 @@ const itemLine = (section, x) => {
   return `- ${lineOf(`${areaLabel(x)}${x.status ? ` (${x.status})` : ''}`, x.text)}`;
 };
 
-function provenanceText(p) {
-  if (!p) return '';
-  if (typeof p === 'string') return p;
-  return `${provLine(p)}.`;
-}
-
-/** The brief as plain text for the round / closer-look prompt: no files, at most `BRIEF_LIMITS.prompt` characters. */
+/** The brief as plain text for the round / closer-look prompt: no files, at most `BRIEF_LIMITS.prompt` characters.
+ *  `provenance` is the finished first line ("Made from <branch> @ <sha> on <date>."), or nothing. The caller wraps
+ *  the result in asData wherever it embeds it in a prompt. */
 export function renderBriefForPrompt(sections, { provenance = null } = {}) {
+  if (provenance != null && typeof provenance !== 'string') throw new TypeError('provenance is the finished line');
   const s = { ...emptyBrief(), ...sections };
   const keep = { users: s.users.length, terms: s.terms.length, areas: s.areas.length };
   const build = () => {
     const blocks = [];
-    const prov = provenanceText(provenance);
-    if (prov) blocks.push(prov);
+    if (provenance) blocks.push(provenance);
     if (s.product) blocks.push(`${BRIEF_TITLES.product}:\n${s.product}`);
     for (const sec of ['users', 'terms', 'areas']) {
       if (!s[sec].length) continue;

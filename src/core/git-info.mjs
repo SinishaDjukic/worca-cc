@@ -86,10 +86,11 @@ export async function commitFilesSince(projectDir, fromSha, toRef, { max = 2000,
   return { commits };
 }
 
-/** Commits on `feature` not on `source` (`git rev-list --count source..feature`), or null on any failure. */
-export async function commitsAhead(projectDir, source, feature) {
+/** Commits on `feature` not on `source` (`git rev-list --count source..feature`), or null on any failure.
+ *  `timeout` (ms, default none) bounds the call; a timeout is a failure. */
+export async function commitsAhead(projectDir, source, feature, { timeout = 0 } = {}) {
   if (!projectDir || !source || !feature) return null;
-  const r = await _run('git', ['rev-list', '--count', `${source}..${feature}`], { cwd: projectDir });
+  const r = await _run('git', ['rev-list', '--count', `${source}..${feature}`], { cwd: projectDir, ...(timeout > 0 ? { timeout } : {}) });
   if (!r.ok) return null;
   const n = Number.parseInt(String(r.stdout || '').trim(), 10);
   return Number.isInteger(n) && n >= 0 ? n : null;

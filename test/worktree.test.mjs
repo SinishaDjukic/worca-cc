@@ -552,3 +552,15 @@ test('createDetachedWorktree returns the commit of the ref it checked out (not t
   const r = await createDetachedWorktree({ projectDir: dir, worktreeDir: wtDir, ref: 'main' });
   assert.equal(r.commit, main);
 });
+
+test('commitOf / isAncestor / defaultBranchRef take an additive timeout (the brief page bounds its git calls)', async () => {
+  const { dir, g } = _dbrRepo('main');
+  const head = g('rev-parse', 'HEAD');
+  assert.equal(await commitOf(dir, 'refs/heads/main', { timeout: 10_000 }), head);
+  assert.equal(await isAncestor(dir, head, 'refs/heads/main', { timeout: 10_000 }), true);
+  assert.deepEqual(await defaultBranchRef(dir, { timeout: 10_000 }), { branch: 'main', ref: 'refs/heads/main' });
+  // a 1 ms budget cannot spawn git: the call gives up instead of using the 30 s default
+  assert.equal(await commitOf(dir, 'refs/heads/main', { timeout: 1 }), null);
+  assert.equal(await isAncestor(dir, head, 'refs/heads/main', { timeout: 1 }), false);
+  assert.equal(await defaultBranchRef(dir, { timeout: 1 }), null);
+});
