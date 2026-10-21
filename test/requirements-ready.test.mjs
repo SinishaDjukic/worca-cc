@@ -159,15 +159,19 @@ test('changedSince', () => {
   assert.deepEqual(changedSince(null, null), []);
 });
 
-test('asked about: a later round with questions, a follow-up only for its own ids; an empty reply asks nothing', () => {
+test('asked about: a follow-up round for its own ids (even with no questions); an ordinary round only when it asked', () => {
   const s = good(); s.assumptions = [{ id: 'A-4', text: 'x', status: 'rejected' }, { id: 'A-5', text: 'y', status: 'rejected' }];
   const rej = { id: 6, kind: 'assumption', payload: { ids: ['A-4', 'A-5'], status: 'rejected' } };
   const Q1 = [{ id: 'q', question: 'Q?', options: ['a', 'b'] }];
-  // a follow-up round that came back with no questions asked nothing: both stay unasked
-  const empty = [rej, { id: 7, kind: 'followup', payload: { assumptions: ['A-4', 'A-5'] } },
-    { id: 8, kind: 'round', payload: { done: true, questions: [], followUp: ['A-4', 'A-5'] } }];
-  assert.deepEqual(unaskedRejections(s, empty), ['A-4', 'A-5']);
+  // a follow-up round that came back done with no questions asked about its ids (nothing was left to ask),
+  // never about the others
+  const empty = [rej, { id: 7, kind: 'followup', payload: { assumptions: ['A-4'] } },
+    { id: 8, kind: 'round', payload: { done: true, questions: [], followUp: ['A-4'] } }];
+  assert.deepEqual(unaskedRejections(s, empty), ['A-5']);
   assert.equal(byKey(readiness(feat(s), { turns: empty }), 'assumptions').ok, false);
+  const both = [rej, { id: 8, kind: 'round', payload: { done: true, questions: [], followUp: ['A-4', 'A-5'] } }];
+  assert.deepEqual(unaskedRejections(s, both), []);
+  assert.equal(byKey(readiness(feat(s), { turns: both }), 'assumptions').ok, true);
   // a follow-up round with questions counts for the ids it was about, not for the others
   const one = [rej, { id: 8, kind: 'round', payload: { done: false, questions: Q1, followUp: ['A-4'] } }];
   assert.deepEqual(unaskedRejections(s, one), ['A-5']);

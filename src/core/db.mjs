@@ -1108,6 +1108,7 @@ CREATE TABLE IF NOT EXISTS req_starts (
   UNIQUE (feature_seq, version)
 );
 CREATE INDEX IF NOT EXISTS req_starts_feature ON req_starts(feature_seq, version);
+CREATE INDEX IF NOT EXISTS req_starts_pipeline ON req_starts(pipeline_id);
 `;
 
 const INCREMENTAL_TABLES = {
@@ -1161,6 +1162,11 @@ const INCREMENTAL_INDEXES = {
   idx_scheduled_runs_after: {
     table: 'scheduled_runs',
     ddl: 'CREATE INDEX IF NOT EXISTS idx_scheduled_runs_after ON scheduled_runs (after_id)',
+  },
+  // A2: a resumed run finds its start by pipeline id (startByPipelineId); added after req_starts shipped.
+  req_starts_pipeline: {
+    table: 'req_starts',
+    ddl: 'CREATE INDEX IF NOT EXISTS req_starts_pipeline ON req_starts (pipeline_id)',
   },
 };
 

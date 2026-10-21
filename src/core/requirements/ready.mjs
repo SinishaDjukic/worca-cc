@@ -6,14 +6,13 @@ export const OVERRIDABLE = Object.freeze(['goal', 'criteria', 'interview', 'open
 
 const turnIds = (p) => (p && Array.isArray(p.ids) ? p.ids : (p && p.id != null ? [p.id] : []));
 
-/** Ids of rejected assumptions no round has asked about since their latest rejection (D4). A round asked
- *  about one when it came after that rejection and asked at least one question; a follow-up round counts
- *  only for the ids it was about (`payload.followUp`). A round with no questions asked nothing: neither a
- *  `done` reply to a follow-up nor a final round clears a rejection. */
+/** Ids of rejected assumptions no round has asked about since their latest rejection (D4). A round after
+ *  that rejection asked about it when it is a follow-up round naming it (`payload.followUp`), whatever its
+ *  questions: "done" with none means nothing was left to ask; or when it is an ordinary round that asked at
+ *  least one question. An ordinary round with no questions (a final round) asked nothing. */
 export function unaskedRejections(spec, turns = []) {
   const list = Array.isArray(turns) ? turns : [];
-  const asking = list.filter((t) => t && t.kind === 'round' && t.payload
-    && Array.isArray(t.payload.questions) && t.payload.questions.length > 0);
+  const rounds = list.filter((t) => t && t.kind === 'round' && t.payload);
   const out = [];
   for (const a of (spec && spec.assumptions) || []) {
     if (a.status !== 'rejected') continue;
@@ -22,8 +21,8 @@ export function unaskedRejections(spec, turns = []) {
       if (t && t.kind === 'assumption' && t.payload && t.payload.status === 'rejected'
         && turnIds(t.payload).includes(a.id) && t.id > rej) rej = t.id;
     }
-    const asked = rej !== -Infinity && asking.some((t) => t.id > rej
-      && (!Array.isArray(t.payload.followUp) || t.payload.followUp.includes(a.id)));
+    const asked = rej !== -Infinity && rounds.some((t) => t.id > rej
+      && (Array.isArray(t.payload.followUp) ? t.payload.followUp.includes(a.id) : (t.payload.questions?.length || 0) > 0));
     if (!asked) out.push(a.id);
   }
   return out;

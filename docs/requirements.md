@@ -65,14 +65,15 @@ always refuses a feature that is busy, archived or whose project or workspace is
 
 The page's **Runs from this feature** card lists every run started from the feature, with its status and
 cost, and links to the run (its live page, also after a resume, else its page in History). A run that
-waits for you, on a question or the Auto confirmation, says **Waiting for you**.
+waits for you, on a question, a gate or the Auto confirmation, says **Waiting for you**.
 
 ## Follow-up rounds
 
 After the interview, a change of mind does not need a new feature. **Reject** an assumption, then choose
 **Done, ask about A-n** to put it to a new round of questions. Follow-up rounds are not limited by the
 6-round cap of the first interview. The feature is not Ready again until a round has asked about each
-rejected assumption and the rest is decided. A round that comes back with no questions has not asked about
+rejected assumption and the rest is decided. A follow-up round counts for the assumptions it was about even
+when Worca has nothing to ask; an ordinary round that comes back with no questions has not asked about
 anything.
 
 ## After starting

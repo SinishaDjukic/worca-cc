@@ -31,3 +31,17 @@ test('a DB stamped past this version without the table is repaired', () => {
   migrate(db);
   assert.deepEqual(cols(db, 'req_starts'), COLS);
 });
+
+const hasIndex = (db, name) => db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type='index' AND name=?").get(name).n === 1;
+
+test('req_starts has an index on pipeline_id (startByPipelineId), fresh and on a DB already at this version', () => {
+  const db = new DatabaseSync(':memory:');
+  migrate(db);
+  assert.ok(hasIndex(db, 'req_starts_pipeline'), 'a fresh DB');
+  const plan = db.prepare("EXPLAIN QUERY PLAN SELECT * FROM req_starts WHERE pipeline_id = 'x'").all().map((r) => r.detail).join(' ');
+  assert.match(plan, /req_starts_pipeline/);
+  // a dev DB that got req_starts before the index existed: the reconcile path adds it
+  db.exec('DROP INDEX req_starts_pipeline');
+  migrate(db);
+  assert.ok(hasIndex(db, 'req_starts_pipeline'), 'reconciled on a DB stamped current');
+});
