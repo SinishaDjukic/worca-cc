@@ -352,6 +352,22 @@ test('run labels, live page: one .rd-labels row right after .rd-sheet-head acros
   assert.equal(edit.getAttribute('aria-label'), 'Edit labels');
 });
 
+test('run 4 D12: an empty Labels row states "None" before "Add"; a labelled row has no "None"', async () => {
+  const empty = await bootDetail({ detail: { ...DETAIL, state: { ...DETAIL.state, labels: [] } } });
+  flagsOn(empty.window);
+  await openDetail(empty, null);
+  await deliverRows(empty, [{ ...ROW, labels: [] }]);
+  const row = empty.window.document.querySelector('#hist-detail .hd-glance [data-fact="labels"] .rd-labels');
+  assert.deepEqual([...row.children].map((c) => [c.className.split(' ').find((n) => n.startsWith('rd-labels-')), c.textContent]),
+    [['rd-labels-none', 'None'], ['rd-labels-edit', 'Add']]);
+  const live = await bootApp();
+  flagsOn(live.window);
+  helloRun(live, { runId: 'run-l2', pipelineId: 'aaaa0002', labels: ['hotfix'] });
+  live.go('running/run-l2');
+  await live.settle();
+  assert.equal(live.window.document.querySelector('#run-detail .rd-labels .rd-labels-none'), null);
+});
+
 test('run labels, finished page: × PUTs the set without the word; a picker tick posts a one-run delta; one row stays', async () => {
   const puts = [];
   const posts = [];

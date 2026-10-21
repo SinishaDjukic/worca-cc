@@ -45,7 +45,7 @@ export const RESULT_STATUS = new Set(['done', 'stopped', 'error', 'failed', 'abo
 const DONE_STATUS = new Set(['done', 'complete', 'completed']);
 const NODE_COLORS = new Set(['violet', 'blue', 'green', 'red', 'peach', 'amber']);
 const KEYED = new Set(['agent', 'script']);
-const STOP_TITLE = 'Stop this pipeline';
+const STOP_TITLE = 'Stop this run';
 const SVG_NS = 'http://www.w3.org/2000/svg';
 /** 24-unit stroked glyphs (module literals only — never run data). */
 const ICONS = {
@@ -883,8 +883,10 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     kind.textContent = kindOf(curRow, s);
     open.setAttribute('href', curRow ? (curRow.groupKind === 'feature' ? `#feature/${encodeURIComponent(curRow.groupId)}` : `#group/${encodeURIComponent(curRow.groupId)}`) : progressRoute(id, s));
     if (curRow) { membersEl.replaceChildren(renderMemberRows(doc, curRow)); membersEl.hidden = false; } else { membersEl.replaceChildren(); membersEl.hidden = true; }
-    if (isNoProjectRun(s)) where.replaceChildren(...[kindChip(doc, 'none'), pid ? ` · #${pid}` : ''].filter(Boolean));
-    else where.textContent = [projectLabel(id, s), pid ? `#${pid}` : ''].filter(Boolean).join(' · ');
+    // Run 4 (D20): no id in visible text — the run id is the sub line's tooltip.
+    if (isNoProjectRun(s)) where.replaceChildren(kindChip(doc, 'none'));
+    else where.textContent = projectLabel(id, s);
+    where.title = pid ? `Run ${pid}` : '';
     const chip = autoChip(s);
     autoEl.hidden = !chip;
     autoEl.textContent = chip ? chip.text : '';

@@ -132,7 +132,7 @@ test('every button in ui/public/index.html is .btn or a control (D20, known bug 
 
 test('the Chat › Plans row and the release row links are controls, not §1.2 buttons (impl review 2)', () => {
   const doc = new JSDOM(`<ul><li class="chat-home-plan"><button class="chat-home-plan-open">Charts</button></li></ul>
-    <div class="release-row"><button class="release-row-add">+ Add a release</button><button class="release-row-edit">Edit</button></div>`).window.document;
+    <div class="release-row"><button class="release-row-edit">Edit</button></div>`).window.document;
   const controls = BUTTON_SPEC.controls.join(',');
   assert.deepEqual([...doc.querySelectorAll('button')].filter((b) => !b.closest(controls)).map((b) => b.className), []);
 });

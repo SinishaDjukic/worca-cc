@@ -855,8 +855,6 @@
                        check, and a jump to the first one to check (paintAwayAnswers). -->
                   <div class="rd-away-note" hidden><span class="rd-away-note-text"></span><button type="button" class="btn btn-sm rd-away-jump">See the answers</button></div>
                   <div class="rd-nowlist"></div>
-                  <!-- D30: while a shaped run waits on the person, Results / How it ran / the graph fold here (paintShaperWait). -->
-                  <button type="button" class="btn btn-sm btn-quiet rd-wait-more" aria-expanded="false" hidden>Run details <span aria-hidden="true">›</span></button>
                   <div class="rd-result" hidden></div>
                 </div>
                 <!-- The Live view panel. The clip lets the narrow layout open its height while the
@@ -2853,7 +2851,7 @@
       </div>
     </div>
 
-    <!-- ===== "Stop this pipeline?" confirm modal (Running card + detail) ===== -->
+    <!-- ===== "Stop this run?" confirm modal (Running card + detail) ===== -->
     <!-- No z-index of its own: it inherits .viewer-modal's z-index:50
          (style.css:781) and, following #shipit-modal in the DOM, paints above every
          other z-index:50 overlay. NOT above #confirm-modal, which carries an
@@ -2928,15 +2926,12 @@
 
     <div id="stop-modal" class="viewer-modal confirm-modal hidden" role="dialog" aria-modal="true" aria-labelledby="stop-title">
       <div class="card stop-card">
-        <h2 id="stop-title" class="stop-title">Stop this pipeline?</h2>
+        <h2 id="stop-title" class="stop-title">Stop this run?</h2>
         <p class="stop-body">A stopped run can't be resumed. Its work so far stays on its branch.</p>
-        <div class="stop-ident">
-          <div class="stop-ident-title"></div>
-          <div class="stop-ident-branch" hidden></div>
-        </div>
+        <div class="stop-ident"><div class="stop-ident-title"></div></div>
         <div class="stop-actions" data-card-actions>
           <button type="button" class="btn stop-cancel">Keep running</button>
-          <button type="button" class="btn btn-danger stop-confirm">Stop pipeline</button>
+          <button type="button" class="btn btn-danger stop-confirm">Stop run</button>
         </div>
       </div>
     </div>

@@ -11,9 +11,12 @@ const TAG = { version: 'v1.12.0', from: 'tag', lastTag: 'v1.11.0', packageVersio
 const lineOf = (el) => el.querySelector('.release-row-text').textContent + el.querySelector('.release-row-edit').textContent;
 const mount = (hint) => { const doc = docOf(); const row = renderReleaseRow(doc, hint); doc.body.appendChild(row.el); return row; };
 
-test('collapsed: "+ Add a release", and check() sends nothing', () => {
+test('collapsed: "Add a release" (a quiet small button with the plus icon), and check() sends nothing', () => {
   const row = mount(TAG);
-  assert.equal(row.el.querySelector('.release-row-add').textContent, '+ Add a release');
+  const add = row.el.querySelector('.release-row-add');
+  assert.equal(add.textContent, 'Add a release');
+  assert.ok(add.classList.contains('btn') && add.classList.contains('btn-sm') && add.classList.contains('btn-quiet'));
+  assert.equal(add.querySelectorAll('.ic').length, 1, 'run 4 D15: the plus icon, no typed "+"');
   assert.ok(row.el.hasAttribute('data-release-row'));
   assert.deepEqual(row.check(), { ok: true, value: null });
 });

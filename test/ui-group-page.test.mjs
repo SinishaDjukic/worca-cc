@@ -137,3 +137,18 @@ test('run 3: the Labels fact is the members\' labels, read-only; a cost of 0 say
   paintGroupPage(root, { row: { ...finished, groupKind: 'user' }, project: '', tab: 'runs' }, NOOP);
   assert.equal(root.querySelector('.gpage-head .kind-chip').textContent, 'Group');
 });
+
+test('run 4 D13: the Back link carries the run page\'s chevron; D2: the made answer button names the question\'s primary', () => {
+  const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+  const root = buildGroupPage(doc);
+  const mountQuestion = (slot) => {
+    slot.hidden = false;
+    slot.innerHTML = '<div class="qpanel"><div class="plan-actions"><button class="btn-primary">Approve 2 runs</button></div></div>';
+  };
+  paintGroupPage(root, { row: row(), project: 'acme-app', tab: 'runs', overview: true }, {
+    ...NOOP, mountQuestion, answerLabel: () => root.querySelector('.gpage-question .btn-primary').textContent });
+  const back = root.querySelector('.gpage-back');
+  assert.ok(back.querySelector('.ic svg'), 'the chevron');
+  assert.equal(back.textContent, 'Runs');
+  assert.equal(root.querySelector('.gpage-actions [data-model-action="answer"]').textContent, 'Approve 2 runs');
+});

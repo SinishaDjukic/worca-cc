@@ -75,6 +75,29 @@ function relativeAgo(iso) {
   return formatInstant(Date.parse(iso), browserTimeZone());
 }
 
+/** Run 4 (D22): the pause reasons the server names (src/core/failure-policy.mjs REASON, "_" as spaces), in plain words. */
+const PAUSED_WHY = Object.freeze({ drain: 'worca was stopping', 'usage limit': 'usage limit reached',
+  'cost pipeline': 'its cost limit was reached', 'cost total': 'the total budget was reached',
+  'cost pipeline policy': 'the team cost cap was reached', 'cost total policy': 'the team cost cap was reached',
+  'night guardrail': 'an Away mode limit was reached', error: 'it hit an error', recoverable: 'it hit an error' });
+const RESUME_ON = /\s*—?\s*resume on (.+?) to continue now\.$/;
+
+/** A feed message as plain words ("paused · worca was stopping") and its raw detail, for the row's tooltip. The server's
+ *  stored text is unchanged (src/core/scheduler.mjs recordOutcome), so rows written before this read the same way. */
+export function plainFeedMessage(message) {
+  const s = String(message || '');
+  const p = /^paused \(([^)]+)\)(?::\s*|\.)?([\s\S]*)$/.exec(s);
+  if (p) {
+    const resume = RESUME_ON.exec(p[2]);
+    const why = PAUSED_WHY[p[1]];
+    return { text: `paused${why ? ` · ${why}` : ''}${resume ? `. Resume on ${resume[1]} to continue now.` : ''}`,
+      detail: p[2].replace(RESUME_ON, '').trim() };
+  }
+  const raw = /^(ended with an error|could not start): ([\s\S]+?)\.?$/.exec(s);
+  if (raw) return { text: raw[1], detail: raw[2] };
+  return { text: s, detail: '' };
+}
+
 export const SCHEDULE_TABS = ['activity', 'once', 'repeating'];
 
 /**
@@ -356,6 +379,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
   // ── feed ───────────────────────────────────────────────────────────────────
   function feedItem(n) {
     const [word, family] = KIND[n.kind] || [n.kind, 'grey'];
+    const msg = plainFeedMessage(humanMessage(n));
     const ticket = n.ticketId ? model.tickets.find((t) => t.id === n.ticketId) : null;
     const series = n.scheduleId ? model.schedules.find((s) => s.id === n.scheduleId) : null;
     const acts = [];
@@ -383,7 +407,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
     return h('tr', { class: `sched-feed-item${n.unread ? ' unread' : ''}`, 'data-id': n.id },
       h('td', { class: 'sched-feed-kind', 'data-label': 'Kind' }, h('span', { class: `badge ${family}`, text: word })),
       h('td', { class: 'sched-feed-body table-main' },
-        h('div', { class: 'sched-feed-text' }, h('b', { text: n.title || 'Scheduled run' }), ` ${humanMessage(n)}`),
+        h('div', { class: 'sched-feed-text', ...(msg.detail ? { title: msg.detail } : {}) }, h('b', { text: n.title || 'Scheduled run' }), ` ${msg.text}`),
         h('div', { class: 'sched-feed-time', text: relativeAgo(n.createdAt), title: new Date(n.createdAt).toLocaleString() })),
       h('td', { class: 'sched-feed-acts', 'data-label': 'Actions' }, ...acts));
   }

@@ -25,7 +25,7 @@ test('ready: the suggested mode is the primary, the summary names runs, files an
   assert.equal(el.querySelector('.ask-mcard-title').textContent, 'Charts');
   assert.deepEqual(buttons(el).map((b) => b.textContent), ['Not now', 'Stacked PRs', 'One PR']);
   assert.ok(el.querySelector('[data-act="ship-one"]').classList.contains('btn-primary'));
-  assert.ok(el.querySelector('[data-act="ship-stacked"]').classList.contains('ask-card-not-now'));
+  assert.equal(el.querySelector('[data-act="ship-stacked"]').className, 'btn btn-sm');
   assert.ok(el.querySelector('[data-act="ship-not-now"]').classList.contains('ask-card-not-now'));
   assert.equal(el.querySelector('.ask-shipcard-stats').textContent, '3 runs · 12 files · +840 −120');
   assert.equal(el.querySelector('.ask-shipcard-why').textContent, 'This feature adds 840 lines: one PR is easier to review.');

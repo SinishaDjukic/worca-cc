@@ -1,4 +1,4 @@
-// test/ui-running-stop-modal.test.mjs — the dedicated "Stop this pipeline?" confirm
+// test/ui-running-stop-modal.test.mjs — the dedicated "Stop this run?" confirm
 // modal (design §6 / D5). Opened from the run page header's .rd-stop (the Runs list
 // rows carry no controls), which stamps the target runId. Keep running cancels, Stop
 // pipeline POSTs /api/stop, a failure renders inline, Escape + backdrop close it, and
@@ -140,16 +140,17 @@ test('the run page Stop pill opens #stop-modal with the run identity and POSTs n
 
   assert.equal(modal.classList.contains('hidden'), false, 'Stop opens the modal');
   assert.equal(modal.dataset.runId, RUN_ID, 'the opener stamps the target runId');
-  assert.equal(modal.querySelector('.stop-title').textContent, 'Stop this pipeline?');
+  assert.equal(modal.querySelector('.stop-title').textContent, 'Stop this run?');
   assert.equal(
     modal.querySelector('.stop-body').textContent,
     "A stopped run can't be resumed. Its work so far stays on its branch.",
   );
   assert.equal(modal.querySelector('.stop-ident-title').textContent, 'Implement Chat Connectivity Follow-ups');
-  assert.equal(modal.querySelector('.stop-ident-branch').textContent, BRANCH);
-  assert.equal(modal.querySelector('.stop-ident-branch').hidden, false, 'branch line shown when known');
+  assert.equal(modal.querySelector('.stop-ident-title').title, BRANCH, 'the branch is a tooltip');
+  assert.equal(modal.querySelector('.stop-ident-branch'), null);
   assert.equal(modal.querySelector('.stop-cancel').textContent, 'Keep running');
-  assert.equal(modal.querySelector('.stop-confirm').textContent, 'Stop pipeline');
+  assert.equal(modal.querySelector('.stop-confirm').textContent, 'Stop run');
+  assert.equal(ctx.window.document.activeElement, modal.querySelector('.stop-cancel'), 'D11: the safe choice has the focus');
   assert.equal(stopPosts(ctx).length, 0, 'opening the modal must not stop anything');
 });
 
@@ -181,7 +182,7 @@ test('"Keep running" and a backdrop click close the modal without POSTing /api/s
   ]);
 });
 
-test('"Stop pipeline" POSTs /api/stop {runId} and closes the modal', async () => {
+test('"Stop run" POSTs /api/stop {runId} and closes the modal', async () => {
   const ctx = await boot({
     fetchHandler: (url) => (url.includes('/api/stop')
       ? Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true }) })
@@ -224,7 +225,7 @@ test('a failed /api/stop renders inline in the modal and re-arms the button', as
   assert.match(alert.detail, /run already finished/);
   assert.equal(modal.querySelector('.stop-err'), null, 'the old inline slot is gone');
   assert.equal(ok.disabled, false, 'the confirm button is re-enabled');
-  assert.equal(ok.textContent, 'Stop pipeline', 'the busy label is restored');
+  assert.equal(ok.textContent, 'Stop run', 'the busy label is restored');
   assert.equal(modal.querySelector('.stop-cancel').disabled, false, 'Keep running is armed again');
 });
 

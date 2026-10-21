@@ -77,7 +77,9 @@ None at rest. Only floating surfaces (menus, popovers, dialogs, the dock) use `-
 `outline:2px solid var(--ink); outline-offset:2px` on `:focus-visible`; tabs and rows use an inset `-2px` offset. A
 script-focused control (a page that focuses its way back on open, a menu handing focus back to its trigger) hides the
 ring for every button, link, summary, tab, switch and `[tabindex]` while `data-input="pointer"`; a keydown brings it
-back. Fields keep their ink border on focus. Rings sit on `:focus-visible`, never on `:focus`.
+back. Only a key that moves or acts on focus counts (Tab, the arrows, Enter, Space or Escape outside a field): typing,
+Enter in a field and a modifier alone keep the pointer mode (`ui/public/input-mode.mjs`). Fields keep their ink border
+on focus. Rings sit on `:focus-visible`, never on `:focus`.
 
 ## Components
 ### Button (checked)
@@ -184,6 +186,11 @@ buttons stay 28px; the card keeps the shared 24px padding (checked by the theme 
   run's start, a waiting ticket's creation); a section with no rows is not drawn.
 - Waiting says what it waits for: `Waiting · starts after Complete Design Language Rollout · run 3`,
   `Waiting · starts 14:00`. A group in Needs you leads with the reason: `Run 1 needs you · Checks failing`.
+- Question options are divided rows: one --line between rows, no box per option; the picked row takes the --field fill
+  and the 6px corner. Recommended is the neutral chip; a confidence is a 12px figure, never a bar.
+- "Ask for changes" gives way to the field with Cancel and Send changes; Cancel gives the button back.
+- The bar's primary names the waiting card's primary ("Approve 2 runs"), and a click on it is that click.
+- A destructive confirm says what goes in plain words ("Stop this run?", "Stop run") and opens on the safe choice.
 
 ## Do and don't
 | Do | Don't | Why |

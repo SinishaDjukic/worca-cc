@@ -377,7 +377,7 @@ test('switch: one 32x18 pill track and a round knob (B6)', () => {
 // One border level per card (B2). Inputs, buttons and segments keep theirs.
 const CARD_HOSTS = /\.(?:ask-card|chat-rc|shape-feature)(?![\w-])/;
 const OWN_BORDER = /\b(?:btn|seg|textarea|input|select|field|switch|kbd)\b|input|textarea|select|:focus/;
-const IN_CARD = ['.qpanel', '.qblock', '.qopt', '.af-choice', '.af-form', '.issue-detail', '.opt-row', '.shape-plan-notes',
+const IN_CARD = ['.qpanel', '.qblock', '.af-choice', '.af-form', '.issue-detail', '.opt-row', '.shape-plan-notes',
   '.outline-slice', '.shape-plan-outline-change', '.chat-rc-result', '.shape-card'];
 test('no bordered box inside a bordered card (B2)', () => {
   const bad = ALL.filter((r) => splitTop(r.sel).some((s) => CARD_HOSTS.test(s) && s.trim().split(/\s+/).length > 1
@@ -389,6 +389,15 @@ test('no bordered box inside a bordered card (B2)', () => {
   assert.ok(ov, 'the in-card override rule exists');
   for (const c of IN_CARD) assert.ok(ov.sel.includes(`${c},`) || ov.sel.includes(`${c})`), `${c} is in the override`);
   assert.match(ov.body, /border:0;/);
+});
+
+test('run 4 D6: a question\'s options are divided rows, not boxes', () => {
+  const body = (sel) => (ALL.find((r) => r.sel === sel) || {}).body || '';
+  assert.match(body('.qopt'), /border:0;border-top:1px solid var\(--line\);border-radius:0;/);
+  assert.doesNotMatch(body('.qopt.sel'), /box-shadow/);
+  assert.match(body('.qopt.sel'), /background:var\(--field\);/);
+  assert.equal(ALL.some((r) => /\.qconf-fill/.test(r.sel)), false);
+  assert.doesNotMatch(body('.qopt::before'), /attr\(data-key\)/);
 });
 
 test('run bars are neutral: no blue fill on a progress bar (A1, spec §2.3)', () => {

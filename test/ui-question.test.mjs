@@ -347,7 +347,9 @@ test('a recommendation shows confidence bars and a Recommended badge, is presele
       const opts = [...panel.querySelectorAll('.qopt')];
       assert.equal(opts.length, 2);
       assert.deepEqual(opts.map((b) => b.dataset.key), ['A', 'B'], 'the letter keys stay');
-      assert.deepEqual(opts.map((b) => b.querySelector('.qconf-fill').style.width), ['70%', '30%'], 'bars keyed by option order');
+      assert.deepEqual(opts.map((b) => b.querySelector('.qconf').textContent), ['70%', '30%'], 'figures keyed by option order');
+      assert.equal(panel.querySelector('.qconf-fill'), null, 'run 4 D6: a figure, never a bar');
+      assert.equal(panel.querySelector('.qfree').placeholder, 'Or type your own answer…');
       assert.equal(opts[0].querySelector('.qrec'), null);
       assert.equal(opts[1].querySelector('.qrec').textContent, 'Recommended');
       assert.ok(opts[1].classList.contains('sel'));

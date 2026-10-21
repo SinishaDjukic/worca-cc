@@ -2,7 +2,7 @@
 // and the card ctx (CONTRACT §2) alone.
 //  - receipt: an action worca already applied (a setting, pause, resume, Away mode, a schedule, a direction) — what
 //    it changed, before → after, and Revert (R6).
-//  - run-stop: the stop warning itself (R7) — "Keep running" or the red "Stop pipeline".
+//  - run-stop: the stop warning itself (R7) — "Keep running" or the red "Stop run".
 //  - pull-request: a finished run's pull request offer (R9) — its button opens the Ship it dialog with the card's link.
 // The chrome is the Ask card's (.ask-card, .ask-mcard-*, .ask-card-not-now / -err); style.css
 // "Chat P2: Action cards" adds the rest. Emphasis is a background wash, never an edge line.
@@ -130,14 +130,15 @@ export function buildRunStopCard(block, ctx) {
   const root = make(doc, 'div', `ask-card ask-mcard ask-stopcard is-${block.state}`);
   root.setAttribute('data-chat-run-stop', block.state);
   root.setAttribute('role', 'group');
-  root.setAttribute('aria-label', 'Stop this pipeline?');
+  root.setAttribute('aria-label', 'Stop this run?');
   const head = make(doc, 'div', 'ask-mcard-head');
-  head.appendChild(make(doc, 'span', 'ask-mcard-title', 'Stop this pipeline?'));
+  head.appendChild(make(doc, 'span', 'ask-mcard-title', 'Stop this run?'));
   root.appendChild(head);
   const body = make(doc, 'div', 'ask-mcard-body');
   const ident = make(doc, 'div', 'ask-stopcard-ident');
-  ident.appendChild(make(doc, 'div', 'ask-stopcard-title', title));
-  if (card.branch) ident.appendChild(make(doc, 'div', 'ask-stopcard-branch', card.branch));
+  const name = make(doc, 'div', 'ask-stopcard-title', title);
+  if (card.branch) name.title = card.branch;
+  ident.appendChild(name);
   body.appendChild(ident);
   body.appendChild(make(doc, 'div', 'ask-stopcard-copy', "A stopped run can't be resumed. Its work so far stays on its branch."));
   if (block.state === 'applied') body.appendChild(make(doc, 'div', 'ask-stopcard-done', 'Stopped'));
@@ -150,8 +151,8 @@ export function buildRunStopCard(block, ctx) {
     const actions = make(doc, 'div', 'ask-mcard-actions');
     // Like #stop-modal: the way out keeps a paused run paused.
     const keep = makeButton(doc, 'btn btn-sm btn-quiet ask-card-not-now', card.status === 'paused' ? 'Keep paused' : 'Keep running', 'data-chat-stop-keep');
-    const stop = makeButton(doc, 'btn btn-sm btn-danger', 'Stop pipeline', 'data-chat-stop-confirm');
-    const busy = (on, label = 'Stop pipeline') => { keep.disabled = on; stop.disabled = on; stop.textContent = label; };
+    const stop = makeButton(doc, 'btn btn-sm btn-danger', 'Stop run', 'data-chat-stop-confirm');
+    const busy = (on, label = 'Stop run') => { keep.disabled = on; stop.disabled = on; stop.textContent = label; };
     keep.addEventListener('click', async () => {
       busy(true); err.textContent = '';
       try { await ctx.postCard(block, { state: 'declined' }); } catch (e) { err.textContent = errorOf(e); busy(false); }

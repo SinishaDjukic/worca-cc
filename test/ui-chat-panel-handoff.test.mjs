@@ -598,7 +598,7 @@ test('Stop confirmed from the live panel bar hands focus back to the panel, neve
   const modal = doc.getElementById('stop-modal');
   assert.equal(modal.classList.contains('hidden'), false, 'the Stop dialog asks first');
   const confirm = modal.querySelector('.stop-confirm');
-  assert.equal(doc.activeElement, confirm);
+  assert.equal(doc.activeElement, modal.querySelector('.stop-cancel'), 'run 4 D11: the dialog opens on the safe choice');
   click(ctx, confirm);
   await ctx.settle(8);
   assert.equal(ctx.box.stops.length, 1, 'the stop was posted');

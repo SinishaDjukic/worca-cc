@@ -71,17 +71,12 @@ test('the step card\'s head says whose turn it is, once, with the gate on and of
   }
 });
 
-test('shaped run waiting on its plan: card first, details folded, Pause hidden, top bar ⋯', async () => {
+test('shaped run waiting on its plan: card first, status card hidden whole, Pause hidden, top bar ⋯', async () => {
   const { ctx } = await openPlan();
   const g = glance(ctx);
   assert.equal(g.querySelector(':scope > .rd-now').nextElementSibling, g.querySelector('.rd-questions'));
   assert.equal(g.dataset.shaperWait, 'plan');
-  const more = g.querySelector('.rd-wait-more');
-  assert.equal(more.hidden, false);
-  assert.equal(more.getAttribute('aria-expanded'), 'false');
-  click(ctx, more);
-  assert.ok(g.hasAttribute('data-wait-open'));
-  assert.equal(more.getAttribute('aria-expanded'), 'true');
+  assert.equal(g.querySelector('.rd-wait-more'), null, 'D1: no Run details › — the whole card hides');
   const bar = doc(ctx).querySelector('#run-detail .rd-bar');
   assert.ok(bar.hasAttribute('data-shaped'));
   assert.equal(bar.querySelector('.rd-pause').hidden, true);
@@ -112,7 +107,7 @@ test('once answered the run page is back to today\'s order, nothing folded', asy
   await working(ctx);
   const g = glance(ctx);
   assert.equal(g.dataset.shaperWait, undefined);
-  assert.equal(g.querySelector('.rd-wait-more').hidden, true);
+  assert.equal(g.querySelector('.rd-wait-more'), null);
   assert.equal(g.querySelector('.rd-questions').nextElementSibling, g.querySelector('.rd-night-sec'));
   assert.equal(doc(ctx).querySelector('#run-detail .rd-pause').hidden, false);
 });
@@ -224,33 +219,30 @@ test('a failing check row wraps on a narrow card: the detail keeps a real width 
   assert.match(rule('.plan-check-detail'), /flex:1 1 \d+(?:\.\d+)?em/, 'a basis that pushes the detail to its own line');
 });
 
-const W = '.rd-glance[data-shaper-wait]:not([data-wait-open])';
-const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-test('D30, D33: while a shaped run waits, the status panel is one line — no "Waiting for you", no orb, no stats', () => {
+test('run 4 D1: while a shaped run waits, the status card and the graph hide whole; the one-line fold is gone', () => {
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
-  const pin = (rest) => assert.match(css, new RegExp(esc(`${W} ${rest}`)), rest);
-  pin('.rd-sheet-head > .rd-now-top > :is(.run-status-head,.run-status-group){display:none;}');   // the dot, "needs you: …"
-  pin('> .rd-sheet > :is(.rd-facts,.rd-nowlist,.rd-pr-box){display:none;}');   // Time · Cost · Changes, Now rows
-  pin('.rd-now-top > .run-status-bar[data-mode="stages"] > .run-prog-track{display:none;}');   // the stage words stay
-  pin('> .rd-sheet{flex-direction:row;');                                       // one row with Run details ›
-  pin('.rd-now-top > .run-status-bar:focus-visible{');                          // the hidden track carried the focus ring
-  // the existing Results / Live view fold is still there
-  assert.match(css, /\.rd-glance\[data-shaper-wait\]:not\(\[data-wait-open\]\) :is\(\.rd-result,\.rd-live,\.rd-live-row\)\{display:none;\}/);
+  assert.match(css, /\.rd-glance\[data-shaper-wait\] > :is\(\.rd-sheet,\.rd-live\)\{display:none;\}/);
+  assert.doesNotMatch(css, /data-wait-open/);
+  assert.doesNotMatch(css, /\.rd-glance\[data-shaper-wait\][^{]*\.rd-sheet\{flex-direction:row/);
 });
 
-test('the one-line state is the waiting state only: set while waiting, gone when it works, opened by Run details', async () => {
+test('run 4 D1: the waiting state is set while waiting and gone once the run works again', async () => {
   const { ctx } = await openPlan();
-  const g = glance(ctx);                               // a stable node: paintRunDetail repaints in place
+  const g = glance(ctx);
   assert.equal(g.dataset.shaperWait, 'plan');
-  assert.ok(!g.hasAttribute('data-wait-open'), 'compact by default');
-  const sheet = g.querySelector(':scope > .rd-sheet');
-  assert.equal(g.querySelector('.rd-wait-more').parentElement, sheet, 'Run details › is on the line');
-  assert.equal(g.querySelector('.rd-wait-more').hidden, false);
-  click(ctx, g.querySelector('.rd-wait-more'));
-  assert.ok(g.hasAttribute('data-wait-open'), 'Run details opens the full panel');
   ctx.dispatch({ type: 'hello', flags: { shapeFirst: true }, runs: [runRow({ pendingQuestion: null })] });
   await ctx.settle();
-  assert.equal(g.dataset.shaperWait, undefined, 'working again: today\'s panel');
-  assert.ok(!g.hasAttribute('data-wait-open'));
+  assert.equal(g.dataset.shaperWait, undefined);
+});
+
+test('run 4 D2, D3: the bar names the plan card\'s primary, and its click is that primary\'s click', async () => {
+  const { ctx, panel } = await openPlan();
+  const own = panel.querySelector('.plan-actions .btn-primary');
+  const bar = doc(ctx).querySelector('#run-detail .rd-bar .rd-actions [data-model-action="answer"]');
+  assert.equal(bar.textContent, own.textContent);
+  assert.equal(bar.textContent, 'Approve and build');
+  let clicks = 0;
+  own.addEventListener('click', () => { clicks += 1; });
+  click(ctx, bar);
+  assert.equal(clicks, 1);
 });

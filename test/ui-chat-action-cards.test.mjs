@@ -96,19 +96,20 @@ test('receipt: Changed since keeps Revert disabled with the note; another failur
 });
 
 const STOP = { kind: 'card', id: 'card_00000003', state: 'proposed', card: { type: 'run-stop', runId: 'uuid-1', pipelineId: 'aaaa0001', title: 'Fix login', branch: 'worca/fix-login', status: 'running' } };
-test('run-stop: the warning itself (R7) — title, run, branch, copy, Keep running / red Stop pipeline; busy and inline errors', async () => {
+test('run-stop: the warning itself (R7) — title, run, branch, copy, Keep running / red Stop run; busy and inline errors', async () => {
   await checkRows([
     { name: 'proposed', run: async () => {
       const { ctx, posts } = ctxOf();
       const { el } = buildRunStopCard(STOP, ctx);
-      assert.equal(el.querySelector('.ask-mcard-title').textContent, 'Stop this pipeline?');
+      assert.equal(el.querySelector('.ask-mcard-title').textContent, 'Stop this run?');
       assert.equal(el.querySelector('.ask-stopcard-title').textContent, 'Fix login');
-      assert.equal(el.querySelector('.ask-stopcard-branch').textContent, 'worca/fix-login');
+      assert.equal(el.querySelector('.ask-stopcard-title').title, 'worca/fix-login');
+      assert.equal(el.querySelector('.ask-stopcard-branch'), null);
       assert.equal(el.querySelector('.ask-stopcard-copy').textContent, "A stopped run can't be resumed. Its work so far stays on its branch.");
       const keep = el.querySelector('[data-chat-stop-keep]');
       const stop = el.querySelector('[data-chat-stop-confirm]');
       assert.equal(keep.textContent, 'Keep running');
-      assert.equal(stop.textContent, 'Stop pipeline');
+      assert.equal(stop.textContent, 'Stop run');
       assert.ok(stop.classList.contains('btn-danger'), 'the danger button: red text on the light red fill');
       click(stop);
       assert.equal(stop.textContent, 'Stopping…'); assert.equal(keep.disabled, true);
@@ -132,7 +133,7 @@ test('run-stop: the warning itself (R7) — title, run, branch, copy, Keep runni
       const stop = el.querySelector('[data-chat-stop-confirm]');
       click(stop); await tick();
       assert.equal(el.querySelector('.ask-card-err').textContent, 'card is applied');
-      assert.equal(stop.disabled, false); assert.equal(stop.textContent, 'Stop pipeline');
+      assert.equal(stop.disabled, false); assert.equal(stop.textContent, 'Stop run');
     } },
     { name: 'applied, failed, declined', run: async () => {
       const { ctx } = ctxOf();

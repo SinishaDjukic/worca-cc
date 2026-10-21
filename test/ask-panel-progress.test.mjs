@@ -94,7 +94,8 @@ test('started card with a live snapshot paints from the store and repaints in pl
       assert.equal(el.querySelector('.ask-rc-pill').textContent, 'Planner');
       assert.equal(el.querySelector('.ask-rc-pill').className, 'ask-rc-pill st-violet');
       assert.equal(el.querySelector('.ask-rc-prog').textContent, '0/2 agents');
-      assert.equal(el.querySelector('.ask-rc-sub').textContent, 'proj · #abcd1234');
+      assert.equal(el.querySelector('.ask-rc-sub').textContent, 'proj', 'run 4 D20: no id in visible text');
+      assert.equal(el.querySelector('.ask-rc-sub').title, 'Run abcd1234');
       const stage = el.querySelector('.ask-rc-graph .gv-stage');
       assert.ok(stage, 'graph mounted');
       store.byRun.set('run-uuid-1', live({ status: 'done', terminal: true, live: false, active: [], progress: { done: 2, total: 2 }, costUsd: 0.9,

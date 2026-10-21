@@ -21,6 +21,7 @@ export const ICONS = Object.freeze({
   tasks: '<path d="M10 7h10M10 12h10M10 17h10M4 7l1.2 1.2L7.5 6M4 12l1.2 1.2 2.3-2.2M4 17l1.2 1.2 2.3-2.2"></path>',
   x: '<path d="M7 7l10 10M17 7 7 17"></path>',
   chevron: '<path d="M9.5 6l6 6-6 6"></path>',
+  'chevron-left': '<path d="M14.5 6l-6 6 6 6"></path>',
   'chevron-down': '<path d="M6 9.5l6 6 6-6"></path>',
   'chevron-up': '<path d="M6 14.5l6-6 6 6"></path>',
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"></path>',

@@ -68,8 +68,10 @@ export function planSummary(md, max = 280) {
   return text.length > max ? `${text.slice(0, max - 1).replace(/\s+\S*$/, '')}…` : text;
 }
 
-const CHECK_SHORT = Object.freeze({ sections: 'sections', testable: 'measurable criteria', decisions: 'decisions',
-  paths: 'paths', tests: 'testing', placeholders: 'placeholders', checklists: 'checklists', grounded: 'grounding' });
+/** Run 4 (D10): what each failing check means, in plain words (ids: src/shared/shape/shape.mjs SHAPE_IDS). */
+const UNMET_WORDS = Object.freeze({ sections: 'missing sections', testable: 'goals you cannot check', decisions: 'open decisions',
+  paths: 'file paths not in the repo', tests: 'no test plan', placeholders: 'placeholders left in', checklists: 'missing checklists',
+  grounded: 'decisions not tied to the code' });
 const failing = (check) => (check && Array.isArray(check.items) ? check.items : []).filter((it) => !it.pass);
 
 /** "Shape 5/8 · 3 to fix" — the card's one check line (D30); the outline card passes 'Outline'. */
@@ -79,11 +81,11 @@ export function checkLine(check, name = 'Shape') {
   return n ? `${score} · ${n} to fix` : score;
 }
 
-/** "3 checks unmet: sections, decisions, testing" — under the buttons when the check fails (D32). */
+/** "Still to fix: missing sections, no test plan" — under the buttons when the check fails (D32). */
 export function unmetLine(check) {
   const bad = failing(check);
   if (!bad.length) return '';
-  return `${bad.length} check${bad.length === 1 ? '' : 's'} unmet: ${bad.map((it) => CHECK_SHORT[it.id] || it.label || it.id).join(', ')}`;
+  return `Still to fix: ${bad.map((it) => UNMET_WORDS[it.id] || it.label || it.id).join(', ')}`;
 }
 
 /** One revise for every failing check (D32 "Fix all"); a single failure reads as today's fixFeedback. */

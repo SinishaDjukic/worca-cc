@@ -223,7 +223,8 @@ test('ui-ask-progress-card: a started card goes live from the run store, repaint
   assert.equal(el.querySelector('.chat-rc-status').dataset.state, 'working', 'Running-list parity');
   assert.equal(el.querySelector('.ask-rc-pill'), null);
   assert.equal(el.querySelector('.ask-rc-prog'), null);
-  assert.equal(el.querySelector('.ask-rc-sub').textContent, 'proj · #abcd1234');
+  assert.equal(el.querySelector('.ask-rc-sub').textContent, 'proj', 'run 4 D20: no id in visible text');
+  assert.equal(el.querySelector('.chat-rc-where').title, 'Run abcd1234');
   const stage = el.querySelector('.chat-rc-graph .gv-stage');   // Chat P3: the registered chat run card (Workflows well)
   assert.ok(stage, 'the workflow graph is mounted from the live stepper');
   ctx.recv({ runId: 'run-uuid-1', type: 'done', status: 'done' });
