@@ -39,7 +39,7 @@ One scale, no half sizes. Use the tokens; never type a px size that is not a ste
 | `--fs-subpage` | 18px | 1.25 | sub-page titles (`.subpage-title`), 600 |
 | `--fs-page` | 22px | 1.25 | page titles (`.page-title`, the run and group page title), 700, -0.02em, at most 2 lines |
 | `--fs-stat` | 22px | 1.25 | stat tile values |
-| `--fs-hero` | 26px | 1.25 | the Chat home hero only (22px under 760px) |
+| `--fs-hero` | 32px | 1.25 | the Chat home hero only (22px under 760px) |
 `--lh-body` is 1.5 and `--lh-title` is 1.25. A subsection or field label is 13px / 600. Relative sizes are allowed
 only for code inside text (`.92em`) and the workflow graph's zoom (`calc(… * var(--gv-scale))`). Drift that later
 slices remove is listed in `test/fixtures/design-debt.json` under `typeScale`; that list only shrinks.

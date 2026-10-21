@@ -83,3 +83,16 @@ test('API: Delete skips a live run ("stop it first") and stamps a finished one; 
   assert.equal((await post('/api/runs/bulk', { action: 'explode' })).status, 400);
   assert.equal((await post('/api/runs/bulk', { action: 'stop', targets: [null] })).status, 400);
 });
+
+test('API: an interrupted run with no resume point is listed as not resumable and archives; one that can resume is skipped', async () => {
+  const dead = (await seedPipeline(PROJECT, { status: 'interrupted', title: 'Dead run', resumePoint: null })).id;
+  const parked = (await seedPipeline(PROJECT, { status: 'interrupted', title: 'Parked run', resumePoint: { v: 2, nodeId: 'n1' } })).id;
+  const h = await fetch(`${base}/api/history`).then((r) => r.json());
+  const listed = Object.fromEntries(h.pipelines.filter((p) => p.id === dead || p.id === parked).map((p) => [p.id, p.resumable]));
+  assert.deepEqual(listed, { [dead]: false, [parked]: true });
+  const r = await post('/api/runs/bulk', { action: 'archive', targets: [{ pipelineId: dead }, { pipelineId: parked }] });
+  assert.deepEqual(r.body.done.map((d) => d.id), [dead]);
+  assert.deepEqual(r.body.skipped.map((s) => [s.title, s.reason]), [['Parked run', 'interrupted — resume it first']]);
+  assert.ok(getDb().prepare('SELECT archived_at FROM pipelines WHERE id = ?').get(dead).archived_at);
+  assert.equal(getDb().prepare('SELECT archived_at FROM pipelines WHERE id = ?').get(parked).archived_at, null);
+});

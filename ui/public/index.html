@@ -1476,7 +1476,7 @@
                 </div>
               </div>
               <div class="wfv-float wfv-dock" id="wfv-dock" data-canvas-keys="off">
-                <button type="button" class="btn btn-primary btn-icon wfv-plus" id="wfv-add" aria-label="Add" title="Add" aria-haspopup="menu" aria-expanded="false">
+                <button type="button" class="btn btn-lg btn-primary btn-icon wfv-plus" id="wfv-add" aria-label="Add" title="Add" aria-haspopup="menu" aria-expanded="false">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
                 </button>
                 <div class="wfc" id="wfc" data-canvas-keys="off"></div>
@@ -1875,7 +1875,7 @@
                   <label class="drow-label" for="tagsEnforce">Require mandatory cost tags to start a run</label>
                   <p class="hint drow-help" id="tagsEnforceNone" hidden>No cost tag is marked Mandatory yet, so runs are not blocked.</p>
                   <p class="hint drow-help">On: a run cannot start without its mandatory cost tags (pre-filled where they can be). Off: cost tags are optional. A cost tag with values accepts only those values.</p>
-                  <span class="drow-control"><input type="checkbox" id="tagsEnforce" data-setting="enforceTags" class="sw-input" role="switch"><span class="switch" aria-hidden="true"></span></span>
+                  <label class="drow-control" for="tagsEnforce"><input type="checkbox" id="tagsEnforce" data-setting="enforceTags" class="sw-input" role="switch"><span class="switch" aria-hidden="true"></span></label>
                 </div>
                 <div class="drow drow-wide">
                   <div class="drow-control"><div id="tagDimsEditor" data-setting="tagDimensions"></div></div>
@@ -1962,7 +1962,7 @@
                 </div>
                 <div class="drow-control"><input id="budgetHumanRate" data-setting="humanRateUsdPerHour" class="input" type="number" min="0" step="1" inputmode="decimal" placeholder="35" autocomplete="off" /></div>
               </div>
-              <label class="field drow switch-drow">
+              <label class="field drow switch-drow" for="budgetLimitResume">
                 <span class="drow-label">Resume runs automatically when a usage limit resets
                   <button type="button" class="info-tip" aria-label="About resuming after a usage limit">i<span class="tip-content hidden">When a run pauses on a plan's session or weekly limit, Worca schedules its resume for 5 minutes after the reset, on the same engine, at most 3 times in a row. Cost caps still pause for you.</span></button>
                 </span>

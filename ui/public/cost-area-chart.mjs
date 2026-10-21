@@ -6,8 +6,7 @@
 import { niceScale, bucketLabel, tipDate, compactUsd, DEFAULT_FMT } from './stats-view.mjs';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
-const CW = 560, CH = 240, L = 44, R = 12, T = 18, B = 26;
-const PW = CW - L - R, PH = CH - T - B;
+const CW = 560, CH = 260, L = 44, R = 12, T = 18, B = 26;
 export const SERIES_FILLS = Object.freeze(['var(--blue)', 'var(--violet)', 'var(--teal)', 'var(--amber)', 'var(--pink)']);
 const KIND_FILLS = { other: 'var(--slate)', ask: 'var(--indigo)' };
 let chartSeq = 0;
@@ -70,6 +69,12 @@ export function stackBands(series) {
 export function createAreaChart({ doc = globalThis.document, fmt = DEFAULT_FMT, reducedMotion = false, onTagRuns = () => {} } = {}) {
   const hatchId = `cr-hatch-${++chartSeq}`;
   const fig = h(doc, 'figure', 'chart-fig cr-chart');
+  // The chart spans the full card, so a fixed 560-wide viewBox stretched its axis text to 18px+. The canvas tracks the
+  // rendered width instead (1 unit = 1 CSS px) at a fixed 260px height (docs/design-system.md › Charts), and a resize
+  // redraws it.
+  let cw = CW, pw = CW - L - R;
+  const ph = CH - T - B;
+  let last = null;
   const svg = s(doc, 'svg', { class: 'chart-svg', viewBox: `0 0 ${CW} ${CH}` });
   const defs = s(doc, 'defs');
   const pat = s(doc, 'pattern', { id: hatchId, width: 6, height: 6, patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)' });
@@ -105,19 +110,34 @@ export function createAreaChart({ doc = globalThis.document, fmt = DEFAULT_FMT, 
     const box = svg.getBoundingClientRect();
     if (!box.height) return;
     const i = Number(hit.dataset.i);
-    const v = ((T + PH - (e.clientY - box.top) * (CH / box.height)) / PH) * stack.top;
+    const v = ((T + ph - (e.clientY - box.top) * (CH / box.height)) / ph) * stack.top;
     const at = stack.bands.findIndex((b) => v >= b.lo[i] && v < b.hi[i]);
     focus(at < 0 ? null : stack.keys[at]);
   });
   legend.addEventListener('click', (e) => { if (e.target.closest('.cr-tag-runs')) onTagRuns(tagIds); });
+  const RO = doc.defaultView?.ResizeObserver;
+  if (typeof RO === 'function') {
+    new RO(([entry]) => {
+      const w = Math.round(entry.contentRect.width);
+      if (!w || w === cw) return;                       // hidden, or our own viewBox change settling
+      cw = w; pw = cw - L - R;
+      svg.setAttribute('viewBox', `0 0 ${cw} ${CH}`);
+      if (last) draw(last, false);
+    }).observe(svg);
+  }
 
-  function update({ series, buckets, bucket, metric = 'spend', unallocated = null }) {
+  function update(spec) {
+    last = spec;
+    draw(spec, !reducedMotion);
+  }
+
+  function draw({ series, buckets, bucket, metric = 'spend', unallocated = null }, morph) {
     const n = buckets.length;
     const bands = stackBands(series);
     const max = bands.length ? Math.max(0, ...bands[bands.length - 1].hi) : 0;
     const { step, top } = niceScale(max);
-    const xOf = (i) => (n > 1 ? L + (i / (n - 1)) * PW : L + PW / 2);
-    const yOf = (v) => T + PH - (v / top) * PH;
+    const xOf = (i) => (n > 1 ? L + (i / (n - 1)) * pw : L + pw / 2);
+    const yOf = (v) => T + ph - (v / top) * ph;
     stack = { keys: series.map((row) => row.key), bands, top };
     const yFmt = metric === 'hours' ? (v) => `${Math.round(v * 10) / 10} h` : (v) => compactUsd(fmt, v);
     svg.setAttribute('aria-label', metric === 'hours' ? 'Human hours by group' : 'AI spend by group');
@@ -125,15 +145,16 @@ export function createAreaChart({ doc = globalThis.document, fmt = DEFAULT_FMT, 
     axis.replaceChildren();
     for (let v = 0; v <= top + 1e-9; v += step) {
       const y = yOf(v);
-      axis.append(s(doc, 'line', { x1: L, y1: y, x2: CW - R, y2: y, stroke: v === 0 ? 'var(--line-2)' : 'var(--line)', 'stroke-width': 1 }));
-      const t = s(doc, 'text', { class: 'ch-ytick', x: L - 6, y: y + 3.5, 'text-anchor': 'end', 'font-size': 10.5, fill: 'var(--ink-3)' });
+      axis.append(s(doc, 'line', { x1: L, y1: y, x2: cw - R, y2: y, stroke: v === 0 ? 'var(--line-2)' : 'var(--line)', 'stroke-width': 1 }));
+      const t = s(doc, 'text', { class: 'ch-ytick', x: L - 6, y: y + 4, 'text-anchor': 'end', 'font-size': 11, fill: 'var(--ink-3)' });
       t.textContent = yFmt(v);
       axis.append(t);
     }
     const every = n <= 10 ? 1 : Math.ceil(n / 8);
     buckets.forEach((ms, i) => {
-      if (i % every && i !== n - 1) return;
-      const t = s(doc, 'text', { x: xOf(i), y: CH - 8, 'text-anchor': 'middle', 'font-size': 10.5, fill: 'var(--ink-3)' });
+      // The last bucket always gets a label; a regular one just before it would collide with it ("Mon 19 20").
+      if (i !== n - 1 && (i % every || n - 1 - i < every / 2)) return;
+      const t = s(doc, 'text', { x: xOf(i), y: CH - 8, 'text-anchor': 'middle', 'font-size': 11, fill: 'var(--ink-3)' });
       t.textContent = bucketLabel(ms, bucket);
       axis.append(t);
     });
@@ -149,7 +170,7 @@ export function createAreaChart({ doc = globalThis.document, fmt = DEFAULT_FMT, 
       p.classList.toggle('cr-area-none', row.kind === 'none');
       const from = p.getAttribute('d');
       p.setAttribute('d', d);
-      if (from && from !== d && !reducedMotion && typeof p.animate === 'function') {
+      if (morph && from && from !== d && typeof p.animate === 'function') {
         p.animate([{ d: `path("${from}")` }, { d: `path("${d}")` }], { duration: 320, easing: 'ease-out' });
       }
     });
@@ -158,11 +179,11 @@ export function createAreaChart({ doc = globalThis.document, fmt = DEFAULT_FMT, 
     drawn = true;
 
     hits.replaceChildren();
-    const bandW = n > 1 ? PW / (n - 1) : PW;
+    const bandW = n > 1 ? pw / (n - 1) : pw;
     const valueText = (v) => (metric === 'hours' ? fmt.hours(v) : fmt.usd(v));
     buckets.forEach((ms, i) => {
       const lines = series.filter((row) => row.values[i] > 0).map((row) => `${row.label}: ${valueText(row.values[i])}`);
-      const hit = s(doc, 'rect', { class: 'ch-hit', x: Math.max(L, xOf(i) - bandW / 2), y: T, width: bandW, height: PH,
+      const hit = s(doc, 'rect', { class: 'ch-hit', x: Math.max(L, xOf(i) - bandW / 2), y: T, width: bandW, height: ph,
         tabindex: 0, role: 'img', 'aria-label': `${tipDate(ms, bucket)}, ${lines.join(', ') || 'none'}` });
       hit.dataset.i = String(i);
       hit.dataset.tip = [tipDate(ms, bucket), ...(lines.length ? lines : ['None'])].join('\n');

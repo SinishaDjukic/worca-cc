@@ -701,7 +701,7 @@ test('no typed "+" as an icon in a label (design-debt.json)', () => {
 });
 
 // D19-D23: the type scale. A px size in font-size or the font shorthand must be a step. var(--fs-…), em and the
-// graph's calc(… * var(--gv-scale)) are not px literals and pass. 26px belongs to the Chat home hero alone.
+// graph's calc(… * var(--gv-scale)) are not px literals and pass. 32px belongs to the Chat home hero alone.
 const TYPE_SCALE = [11, 12, 13, 15, 18, 22];
 const HERO = '.chat-home-title';
 const pxOf = (p, v) => (p === 'font-size' ? v.match(/^([\d.]+)px$/) : v.match(/(?:^|\s)([\d.]+)px(?=[\s/])/))?.[1];
@@ -710,7 +710,7 @@ function offScale() {
   for (const r of ALL) for (const [p, v] of decls(r.body, 'font-size|font')) {
     const px = pxOf(p, v);
     if (px === undefined || TYPE_SCALE.includes(Number(px))) continue;
-    for (const s of splitTop(r.sel)) if (!(px === '26' && s === HERO)) out.add(`${s} → ${px}px`);
+    for (const s of splitTop(r.sel)) if (!(px === '32' && s === HERO)) out.add(`${s} → ${px}px`);
   }
   return [...out].sort();
 }
@@ -754,7 +754,7 @@ test('type: pxOf reads font-size and the font shorthand; relative sizes are not 
 test('type: the guide\'s Type table is the :root --fs-* set; titles 1.25, the rest 1.5; body is 13 / 1.5', () => {
   const g = readFileSync(GUIDE, 'utf8');
   const rows = [...g.matchAll(/^\| `(--fs-[a-z]+)` \| (\d+)px \| ([\d.]+) \|/gm)].map((m) => [m[1], Number(m[2]), m[3]]);
-  assert.deepEqual(rows.map(([, px]) => px), [11, 12, 13, 15, 18, 22, 22, 26]);
+  assert.deepEqual(rows.map(([, px]) => px), [11, 12, 13, 15, 18, 22, 22, 32]);
   const root = ALL.find((r) => r.sel === ':root').body;
   for (const [tok, px, lh] of rows) {
     assert.match(root, new RegExp(`${tok}:${px}px;`), `${tok} is ${px}px in style.css`);
@@ -770,7 +770,7 @@ test('type: the guide\'s Type table is the :root --fs-* set; titles 1.25, the re
   assert.match(ALL.filter((r) => r.sel === 'button').map((r) => r.body).join(';'), /font:inherit/, 'a bare button takes its parent\'s step');
 });
 
-test('type: every px size in style.css is a step, 26px only on the Chat home hero (design-debt.json typeScale)', () => {
+test('type: every px size in style.css is a step, 32px only on the Chat home hero (design-debt.json typeScale)', () => {
   ratchet(offScale(), DEBT.typeScale, 'off-scale font size');
 });
 
@@ -778,7 +778,7 @@ test('type: no listed off-scale size is on the shell, a shared component or a sl
   assert.deepEqual(DEBT.typeScale.filter(inSlice1), []);
 });
 
-test('type: stat values 22, the page title 22, the Chat home hero 26 (22 under 760px)', () => {
+test('type: stat values 22, the page title 22, the Chat home hero 32 (22 under 760px)', () => {
   const body = (sel) => ALL.filter((r) => splitTop(r.sel).includes(sel)).map((r) => r.body).join(';');
   assert.match(body('.stat-value'), /font-size:var\(--fs-stat\)/);
   assert.match(body('.rd-page-title'), /font:700 var\(--fs-page\)\/var\(--lh-title\)/);

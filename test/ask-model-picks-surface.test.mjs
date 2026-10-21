@@ -37,7 +37,7 @@ test('the Ask prompt lists the catalog\'s models with their picking facts — ve
   const at = p.indexOf('\n### Models (id "label": vendor · price tier · USD in/out per Mtok · prompt window · engines · efforts)\n');
   assert.ok(at > 0, 'the section');
   const opus = p.indexOf('\n- claude-opus-5-5 "Opus 5.5": anthropic · top tier · $4/$20 per Mtok · 1M context · runs on claude · efforts medium/high/xhigh/max\n');
-  const gpt = p.indexOf('\n- gpt-5.5 "GPT-5.5": openai · strong tier · $1.25/$10 per Mtok · 200k context · runs on codex · efforts minimal/low/medium/high\n');
+  const gpt = p.indexOf('\n- gpt-5.5 "GPT-5.5": openai · top tier · $5/$30 per Mtok · 200k context · runs on codex · efforts minimal/low/medium/high\n');
   assert.ok(opus > at && gpt > opus, 'Anthropic first, then OpenAI');
   assert.equal(p.includes('claude-haiku-4-5'), false, 'a hidden model is never offered');
   assert.equal(buildSystemPrompt({ ...CAT, models: [...CAT.models].reverse() }), p, 'byte-stable under permutation');
@@ -85,7 +85,7 @@ test('list_models: every model, built-ins included, carries vendor, tier, price,
   const pick = (m) => ({ vendor: m.vendor, tier: m.tier, price: m.price, free: m.free, context: m.context });
   assert.deepEqual(pick(models.find((m) => m.id === 'claude-opus-5-5')), { vendor: 'anthropic', tier: 'top', price: { input: 4, output: 20 }, free: false, context: 1_000_000 });
   assert.deepEqual(pick(models.find((m) => m.id === 'claude-sonnet-4-6[1m]')), { vendor: 'anthropic', tier: 'strong', price: { input: 3, output: 15 }, free: false, context: 1_000_000 });
-  assert.deepEqual(pick(models.find((m) => m.id === 'gpt-5.5')), { vendor: 'openai', tier: 'strong', price: { input: 1.25, output: 10 }, free: false, context: 200_000 });
+  assert.deepEqual(pick(models.find((m) => m.id === 'gpt-5.5')), { vendor: 'openai', tier: 'top', price: { input: 5, output: 30 }, free: false, context: 200_000 });
   for (const m of models) for (const k of ['vendor', 'tier', 'price', 'free', 'context']) assert.ok(k in m, `${m.id}.${k}`);
   // A Copilot import (pinned Free only for recording): list_models says how it bills, never "free".
   const { factFields } = await import('../src/core/ask/model-deps.mjs');

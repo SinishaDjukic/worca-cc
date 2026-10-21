@@ -45,15 +45,16 @@ test('home vs thread: home hides the transcript and the dock (and New chat), a t
   assert.equal(ruleBody('.chat-page[data-view="thread"] .chat-home'), 'display:none;');
   assert.match(bare, /\.chat-page\[data-view="home"\] \.ask-transcript,\.chat-page\[data-view="home"\] \.chat-dock\{display:none;\}/);
   assert.equal(ruleBody('.chat-page[data-view="home"] .chat-head [data-ask-new-btn]'), 'visibility:hidden;');
-  // #731 halved the old 16vh/160px top gap; the redesign halves it again so the heading sits close under the top bar.
-  assert.match(ruleBody('.chat-home'), /;padding:clamp\(16px,4vh,40px\) 16px 32px;$/);
+  // #731 halved the old 16vh/160px top gap and the redesign halved it again (4vh/40px); that sat the heading too tight
+  // under the top bar, so it is back to 10vh, capped at 96px.
+  assert.match(ruleBody('.chat-home'), /;padding:clamp\(32px,10vh,96px\) 16px 32px;$/);
 });
 
 test('composer popovers ride the composer: upward in the dock, downward on home, never 70% of the composer\'s height', () => {
   assert.equal(ruleBody('.chat-page .ask-composer'), '--ask-box-top:calc(100% - 10px);');
   assert.equal(ruleBody('.chat-page .ask-composer > .ask-pop'), 'max-height:min(420px,calc(100vh - 240px));');
-  // The home popover opens downward: its room is the window minus the .chat-home top padding (8vh) and the chrome above.
-  assert.equal(ruleBody('.chat-page[data-view="home"] .ask-composer > .ask-pop'), 'bottom:auto;top:calc(100% + 6px);max-height:min(420px,calc(92vh - 230px));');
+  // The home popover opens downward: its room is the window minus the .chat-home top padding (10vh) and the chrome above.
+  assert.equal(ruleBody('.chat-page[data-view="home"] .ask-composer > .ask-pop'), 'bottom:auto;top:calc(100% + 6px);max-height:min(420px,calc(90vh - 230px));');
   assert.equal(ruleBody('.chat-hero-slot .ask-composer'), 'padding:0;--ask-col-inset:0px;', 'home popovers are flush with the box, like the dock\'s');
 });
 
