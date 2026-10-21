@@ -163,6 +163,33 @@ export async function currentBranch(projectDir) {
 }
 
 /**
+ * The product's default branch and the ref to READ it at (Requirements A7, design D8 / Q-B).
+ * Differs from resolveDefaultBranch on purpose: that one answers "which branch is this work
+ * based on" and starts from the CHECKED-OUT branch; a product brief must describe the repository's
+ * default branch whatever the operator happens to have checked out, so the order is
+ * origin/HEAD, then init.defaultBranch (if it exists locally), and the checked-out branch last.
+ * @returns {Promise<{branch:string, ref:string}|null>} never throws; null = no usable branch
+ */
+export async function defaultBranchRef(projectDir) {
+  try {
+    if (!projectDir) return null;
+    const oh = await git(projectDir, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']);
+    const m = oh.ok ? /^refs\/remotes\/origin\/(.+)$/.exec(oh.stdout.trim()) : null;
+    if (m) {
+      const b = m[1];
+      if (await commitOf(projectDir, `refs/heads/${b}`)) return { branch: b, ref: `refs/heads/${b}` };
+      if (await commitOf(projectDir, `refs/remotes/origin/${b}`)) return { branch: b, ref: `refs/remotes/origin/${b}` };
+    }
+    const cfg = await git(projectDir, ['config', '--get', 'init.defaultBranch']);
+    const c = cfg.ok ? cfg.stdout.trim() : '';
+    if (c && await commitOf(projectDir, `refs/heads/${c}`)) return { branch: c, ref: `refs/heads/${c}` };
+    const cur = await currentBranch(projectDir);
+    if (cur && await commitOf(projectDir, `refs/heads/${cur}`)) return { branch: cur, ref: `refs/heads/${cur}` };
+    return null;
+  } catch { return null; }
+}
+
+/**
  * Best-effort default-branch resolution. HEAD branch, then init.defaultBranch,
  * then origin/HEAD, then first local branch. On a detached HEAD with no local
  * branches, fall back to the HEAD SHA (always a valid commit-ish for

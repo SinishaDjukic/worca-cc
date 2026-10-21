@@ -500,3 +500,55 @@ test('reusedBranchBase / isAncestor / commitOf: fork point vs <remote>/<source> 
     } },
   ]);
 });
+
+// ── defaultBranchRef (Requirements A7, design D8/Q-B) ────────────────────────────────────
+import { defaultBranchRef } from '../src/core/worktree.mjs';
+import { mkdtempSync as _mk, rmSync as _rm } from 'node:fs';
+import { tmpdir as _tmp } from 'node:os';
+
+const _dbrDirs = [];
+after(() => { for (const d of _dbrDirs) { try { _rm(d, { recursive: true, force: true, maxRetries: 3 }); } catch { /* best effort */ } } });
+const _dbrRepo = (branch = 'main') => {
+  const dir = _mk(join(_tmp(), 'worca-dbr-')); _dbrDirs.push(dir);
+  const g = (...a) => { const r = spawnSync('git', a, { cwd: dir, encoding: 'utf8' }); if (r.status !== 0) throw new Error(r.stderr); return r.stdout.trim(); };
+  g('init', '-q', '-b', branch); g('config', 'user.email', 't@t'); g('config', 'user.name', 't'); g('config', 'commit.gpgsign', 'false');
+  g('commit', '-q', '--allow-empty', '-m', 'init');
+  return { dir, g };
+};
+
+test('defaultBranchRef: origin/HEAD with the local branch present → refs/heads/<b>', async () => {
+  const { dir, g } = _dbrRepo('main');
+  g('update-ref', 'refs/remotes/origin/main', 'HEAD'); g('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+  g('checkout', '-q', '-b', 'feature');
+  assert.deepEqual(await defaultBranchRef(dir), { branch: 'main', ref: 'refs/heads/main' });
+});
+
+test('defaultBranchRef: origin/HEAD with only the remote branch → refs/remotes/origin/<b>', async () => {
+  const { dir, g } = _dbrRepo('main');
+  g('update-ref', 'refs/remotes/origin/main', 'HEAD'); g('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+  g('checkout', '-q', '-b', 'feature'); g('branch', '-D', 'main');
+  assert.deepEqual(await defaultBranchRef(dir), { branch: 'main', ref: 'refs/remotes/origin/main' });
+});
+
+test('defaultBranchRef: no origin/HEAD → init.defaultBranch when it exists locally, else the current branch, else null', async () => {
+  const { dir, g } = _dbrRepo('trunk');
+  g('checkout', '-q', '-b', 'work');
+  g('config', 'init.defaultBranch', 'trunk');
+  assert.deepEqual(await defaultBranchRef(dir), { branch: 'trunk', ref: 'refs/heads/trunk' });
+  g('config', 'init.defaultBranch', 'ghost');                       // configured but absent → current branch
+  assert.deepEqual(await defaultBranchRef(dir), { branch: 'work', ref: 'refs/heads/work' });
+  g('checkout', '-q', '--detach');                                   // detached HEAD, no usable default → null
+  g('config', '--unset', 'init.defaultBranch');
+  assert.equal(await defaultBranchRef(dir), null);
+  assert.equal(await defaultBranchRef(_mk(join(_tmp(), 'worca-dbr-nogit-'))), null);
+  assert.equal(await defaultBranchRef(''), null);
+});
+
+test('createDetachedWorktree returns the commit of the ref it checked out (not the live HEAD branch)', async () => {
+  const { dir, g } = _dbrRepo('main');
+  const main = g('rev-parse', 'HEAD');
+  g('checkout', '-q', '-b', 'other'); g('commit', '-q', '--allow-empty', '-m', 'o');
+  const wtDir = `${dir}-wt`; _dbrDirs.push(wtDir);
+  const r = await createDetachedWorktree({ projectDir: dir, worktreeDir: wtDir, ref: 'main' });
+  assert.equal(r.commit, main);
+});
