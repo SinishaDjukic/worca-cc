@@ -96,6 +96,9 @@ test('model: the popover lists the catalog; a pick relabels the button, is store
   const items = h.$$('.ask-pop-model .ask-model-item');
   assert.deepEqual(items.map((i) => i.querySelector('.ask-model-name').textContent), ['Opus 5.5', 'Sonnet 5.5']);
   assert.ok(items[0].querySelector('.ask-model-check'), 'the current pick is ticked');
+  // The one menu (docs/design-system.md › Menu), as ask-panel.mjs: .menu draws the box, .menu-item the row.
+  assert.ok(h.$('.ask-pop-model').classList.contains('menu'), 'the popover wears .menu');
+  assert.ok(items.every((i) => i.classList.contains('menu-item')), 'every row wears .menu-item');
   await h.click(items[1]);
   assert.equal(h.$('.ask-pop-model'), null, 'closes on pick');
   assert.equal(h.$('.ask-model-btn-label').textContent, 'Sonnet 5.5');
