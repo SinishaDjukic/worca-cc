@@ -699,6 +699,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .drows{container:drows / inline-size;}
 .drow{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px 24px;padding:12px 0;border-bottom:1px solid var(--line);}
 .drow:last-child{border-bottom:0;}
+.card.drows:empty{display:none;}   /* a list card (Marketplace, Providers) is not drawn while its list is empty */
 .drow-label{grid-column:1;font:500 var(--fs-body)/var(--lh-body) var(--sans);color:var(--ink);}
 .drow-help{grid-column:1;font-size:var(--fs-meta);line-height:var(--lh-body);color:var(--ink-2);}
 .drow-control{grid-column:2;grid-row:1 / span 2;display:flex;align-items:center;gap:8px;justify-self:end;}
@@ -3562,7 +3563,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
    reaches them.) */
 .mv-sec-body{display:grid;gap:18px;}
 .mv-section[data-section="builtin"] .mv-sec-body{gap:10px;}
-.mv-hide-builtin-row{display:grid;gap:6px;padding:10px 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);}
+.mv-hide-builtin-row{display:grid;gap:6px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel);}
 .mv-hide-builtin-row .hint{margin:0;}
 .mv-card{padding:var(--pad-card);display:flex;align-items:center;gap:14px;}
 .mv-body{flex:1 1 auto;min-width:0;}
@@ -3578,7 +3579,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
   .mv-card{flex-wrap:wrap;}
   .mv-body{flex-basis:100%;}
 }
-.mv-builtin{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);}
+.mv-builtin{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel);}
 .mv-builtin .mv-summary{margin:0;flex:1 1 auto;text-align:right;}
 .mv-editor-title{margin:0 0 14px;font-size:15px;}
 .mv-editor-grid{display:grid;gap:14px;}
@@ -3618,7 +3619,6 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
    because the grid/flex rules here otherwise beat the UA hidden rule. ---- */
 .mv-providers{padding:var(--pad-card);display:grid;gap:14px;}
 /* The Providers TAB: one card per account, so three unrelated sign-ins stop reading as one form. */
-.mv-providers-split{padding:0;background:transparent;box-shadow:none;}
 .mv-pv-card .mv-pv-row{border:0;padding:0;margin:0;}
 /* A provider card reads top to bottom: name + state, what it is, then its fields side by side in one row, then the
    verdict and buttons. Description beside a column of fields left the left half empty and the card tall. */
@@ -7990,6 +7990,7 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .sk-consent b{color:var(--ink);font-weight:600;}
 .sk-consent-note{margin:6px 0 0;}
 .sk-consent-note.err{color:var(--red-ink);}
+
 .sk-res-group{margin-top:16px;}
 .sk-res-group > .label{display:block;margin-bottom:6px;}
 .sk-res-head{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr) minmax(0,.7fr) minmax(0,1.6fr);gap:12px;padding:0 0 6px;

@@ -312,11 +312,10 @@ function renderSpeechRow(doc, sp) {
 export function renderProvidersCard(providers, { doc = globalThis.document, signIn = null, split = false } = {}) {
   const p = providers || {};
   const c = p.copilot || { connected: false, termsCurrent: false, accountType: 'individual', maxConcurrent: 4 };
-  // On the Providers TAB each provider is its own card: three unrelated accounts stacked in one
-  // card read as one long form, and the page has room for them now. Inside the Models view (the
-  // old home) it stays a single card. Either way the rows keep their shape, so every flow that
-  // finds .mv-pv-row[data-provider] is unaffected.
-  const root = h(doc, split ? 'div' : 'section', split ? 'mv-providers mv-providers-split drows' : 'card mv-providers');
+  // On the Providers page the card holds one divided row per provider (docs/design-system.md ›
+  // Cards versus divided rows); inside the Models view (the old home) it is the headed card. Either
+  // way the rows keep their shape, so every flow that finds .mv-pv-row[data-provider] is unaffected.
+  const root = h(doc, split ? 'div' : 'section', split ? 'card mv-providers mv-providers-split drows' : 'card mv-providers');
   if (!split) {
     const head = h(doc, 'div', 'mv-head');
     head.appendChild(h(doc, 'h3', 'section-title mv-section-title', 'Providers'));

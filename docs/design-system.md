@@ -140,7 +140,9 @@ width, `--hover` fill and `--r-sm` corner on hover, an inset ring on keyboard fo
 padding. A chevron inside a row is a `.btn-icon` quiet button, not a row.
 ### Cards versus divided rows
 Prefer divided rows (`.drows` / `.drow`): rows split by one `--line`, no box per item. A card (`.card`, 8px corner,
-24px padding) frames one thing you act on; never a card inside a card (checked). `.drow-wide` puts a wide control
+24px padding) frames one thing you act on; never a card inside a card (checked). A page list may sit on one card
+that holds its `.drows` (`.card.drows`: Marketplace, Providers, Project settings): the card frames the list, the rows
+keep their divider, and an empty list draws no card. `.drow-wide` puts a wide control
 (a textarea, a table, a path row) under its label at full width; `.drow-stack` holds rich block content (a schedule,
 a preset, a guardrail) with the same divider and padding.
 ### Table
