@@ -3,7 +3,7 @@
 // and every home animation stopped under prefers-reduced-motion.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
 const BANNER = '/* ===== Chat P6: home ===== */';
@@ -26,11 +26,11 @@ test('tokens only: no hex colour and no coloured left-edge line anywhere in the 
   assert.doesNotMatch(rules, /border-left/);
 });
 
-test('quick actions: one row of label-sized 40px tiles (icon, label, badge inline), no border, a hover tint; 2 columns below a 640px container; the phone heading shrinks', () => {
+test('quick actions: one row of label-sized 40px tiles (icon, label, badge inline), a hairline rounded border, a hover tint; 2 columns below a 640px container; the phone heading shrinks', () => {
   const b = block();
-  assert.match(b, /\.chat-home-actions\{display:flex;flex-wrap:nowrap;justify-content:center;gap:4px;overflow:hidden;\}/);
+  assert.match(b, /\.chat-home-actions\{display:flex;flex-wrap:nowrap;justify-content:center;gap:8px;overflow:hidden;\}/);
   assert.match(b, /\.chat-home-act\[data-overflow\]\{display:none;\}/);
-  assert.match(b, /\.chat-home-act\{display:flex;flex-direction:row;[^}]*flex:none;[^}]*min-height:40px;[^}]*border:0;/);
+  assert.match(b, /\.chat-home-act\{display:flex;flex-direction:row;[^}]*flex:none;[^}]*min-height:40px;[^}]*border:1px solid var\(--line-2\);border-radius:var\(--r-md\);/);
   assert.match(b, /\.chat-home-act:hover\{background:var\(--hover\);\}/);
   // Web UI review: "Shaper" broke as "Shap / er" beside its Labs badge. The label never shrinks or wraps;
   // the badge (overflow:hidden, ellipsis) is what gives way.
@@ -38,6 +38,7 @@ test('quick actions: one row of label-sized 40px tiles (icon, label, badge inlin
   assert.doesNotMatch(b, /\.chat-home-act-l\{[^}]*overflow-wrap:anywhere/);
   assert.match(b, /\.chat-home-promo-row\{display:grid;grid-template-columns:repeat\(auto-fit,minmax\(200px,1fr\)\);/, 'the Advanced Schedules promo leaves no hole either');
   assert.match(b, /\.chat-home-body\{container:chat-home \/ inline-size;/);
+  assert.match(b, /\.chat-home-body\{[^}]*margin:20px auto 32px;/, 'the bordered tiles get air under the composer');
   assert.match(b, /@container chat-home \(max-width:640px\)\{\.chat-home-actions\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\);\}/);
   assert.match(b, /@media \(max-width:760px\)\{\.chat-home-title\{font-size:var\(--fs-page\);/);
 });
@@ -103,9 +104,18 @@ test('a feature card opened in Chat › Plans draws no border of its own: the Sh
   assert.match(css, /(?:^|[,}\s])\.chat-home-plan \.shape-feature\{[^}]*border:0;/);
 });
 
-test('bundle QA 2: the "More you can do" cards are neutral: the field surface, no tint, no border', () => {
+test('the "More you can do" cards are still gradient pictures: one per card, light scheme, no border, nothing moves', () => {
   const b = block().replace(/\/\*[\s\S]*?\*\//g, '');
-  assert.match(b, /\.chat-home-promo\{[^}]*border:0;[^}]*background:var\(--field\);/);
-  assert.doesNotMatch(b, /\.chat-home-promo\[data-promo/, 'no per-card tint rule');
+  assert.match(b, /\.chat-home-promo\{[^}]*border:0;[^}]*background:var\(--field\) center\/cover no-repeat;[^}]*color-scheme:light;/,
+    'the field shows while a picture loads; the card pins a scheme so the ink never follows the page theme');
+  for (const id of ['workflows', 'away', 'schedules']) {
+    assert.match(b, new RegExp(`\\.chat-home-promo\\[data-promo="${id}"\\]\\{background-image:url\\(/assets/promo-${id}\\.jpg\\);`), id);
+    assert.ok(existsSync(new URL(`../ui/public/assets/promo-${id}.jpg`, import.meta.url)), `promo-${id}.jpg ships`);
+  }
+  // The red and the night pictures carry light ink; the button is the light one everywhere.
+  for (const id of ['workflows', 'schedules']) assert.match(b, new RegExp(`\\.chat-home-promo\\[data-promo="${id}"\\]\\{[^}]*color-scheme:dark;`), id);
+  assert.doesNotMatch(b, /\.chat-home-promo\[data-promo="away"\]\{[^}]*color-scheme/, 'the pale blue keeps the card\'s light scheme');
+  assert.match(b, /\.chat-home-promo-b\{[^}]*color-scheme:light;/);
+  assert.doesNotMatch(b, /\.chat-home-promo[\w-]*(?:\[[^\]]*\])?\{[^}]*(?:animation|transition)/, 'static: no animation on the cards');
   assert.doesNotMatch(b, /\.chat-home-promo[\w-]*(?:\[[^\]]*\])?\{[^}]*-wash\)/, 'no wash on any promo rule');
 });

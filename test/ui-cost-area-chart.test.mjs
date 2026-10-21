@@ -67,12 +67,39 @@ test('hovering an area through the tooltip rects dims the other areas; above the
   const doc = new JSDOM('<!doctype html><body></body>').window.document;
   const c = createAreaChart({ doc });
   c.update(SPEC([2, 3, 4]));
-  c.el.querySelector('svg').getBoundingClientRect = () => ({ left: 0, top: 0, width: 560, height: 240 });
+  c.el.querySelector('svg').getBoundingClientRect = () => ({ left: 0, top: 0, width: 560, height: 260 });
   const hit = c.el.querySelectorAll('.ch-hit')[0];
   const move = (clientY) => hit.dispatchEvent(new doc.defaultView.MouseEvent('pointermove', { bubbles: true, clientY }));
-  move(213);                                         // just above the baseline: inside acme's band
+  move(231);                                         // just above the baseline: inside acme's band
   assert.ok(c.el.querySelector('.cr-area[data-key="none"]').classList.contains('is-dim'));
   assert.equal(c.el.querySelector('.cr-area[data-key="v:acme"]').classList.contains('is-dim'), false);
   move(19);                                          // the top of the plot, above bucket 0's stack of 3
   assert.equal(c.el.querySelectorAll('.cr-area.is-dim').length, 0);
+});
+
+test('the canvas tracks the rendered width at a fixed 260px height, so the axis text stays 11px on a wide card; a resize does not morph', () => {
+  const doc = new JSDOM('<!doctype html><body></body>').window.document;
+  let fire = null;
+  doc.defaultView.ResizeObserver = class { constructor(cb) { fire = cb; } observe() {} };
+  const calls = [];
+  doc.defaultView.SVGElement.prototype.animate = function (k) { calls.push(k); return {}; };
+  const c = createAreaChart({ doc });
+  c.update(SPEC([2, 3, 4]));
+  fire([{ contentRect: { width: 936 } }]);
+  assert.equal(c.el.querySelector('svg').getAttribute('viewBox'), '0 0 936 260');
+  assert.equal(c.el.querySelector('.ch-ytick').getAttribute('font-size'), '11');
+  const xs = [...c.el.querySelectorAll('.cr-axis text:not(.ch-ytick)')].map((t) => Number(t.getAttribute('x')));
+  assert.equal(xs.at(-1), 936 - 12, 'the last label sits at the right edge of the wider plot');
+  assert.equal(calls.length, 0);
+  fire([{ contentRect: { width: 0 } }]);              // hidden: keep the last canvas
+  assert.equal(c.el.querySelector('svg').getAttribute('viewBox'), '0 0 936 260');
+});
+
+test('the label just before the last one is dropped instead of colliding with it', () => {
+  const doc = new JSDOM('<!doctype html><body></body>').window.document;
+  const c = createAreaChart({ doc });
+  const days = Array.from({ length: 20 }, (_, i) => new Date(2026, 9, 1 + i).getTime());
+  c.update({ buckets: days, bucket: 'day', metric: 'spend', series: [{ key: 'v:a', kind: 'value', label: 'a', values: days.map(() => 1) }] });
+  const labels = [...c.el.querySelectorAll('.cr-axis text:not(.ch-ytick)')].map((t) => t.textContent);
+  assert.deepEqual(labels, ['Thu 1', '4', '7', '10', '13', '16', '20']);
 });

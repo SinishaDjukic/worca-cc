@@ -8,6 +8,9 @@ export const BULK_ACTIONS = Object.freeze(['stop', 'archive', 'delete', 'restore
 
 /** The state the bulk table reads: a PR-raised Needs you run is a finished, in-review run (nothing to stop). */
 const bulkState = (t) => (t && t.prNeeds ? 'in-review' : t && t.state);
+/** An interrupted run with no resume point: it can never resume (and is never stopped), so Archive and Delete take it.
+ *  Only an explicit `resumable: false` counts — a live run in memory carries no flag and stays resumable. */
+const deadInterrupted = (t) => !!t && t.status === 'interrupted' && t.resumable === false;
 
 /** 'apply' | 'cancel' (a waiting run's ticket is cancelled) | 'skip'. */
 export function bulkVerdict(action, t, { inGroup = false } = {}) {
@@ -21,17 +24,19 @@ export function bulkVerdict(action, t, { inGroup = false } = {}) {
   const neverRan = !!(t && t.ticketId && !t.pipelineId);
   // Restore applies to any archived record: an archived paused row reads Paused and restorePipeline makes it interrupted.
   if (action === 'restore') return neverRan ? 'skip' : 'apply';
-  if (action === 'archive') return ENDED.has(s) && !neverRan ? 'apply' : 'skip';
-  if (action === 'delete') return s === 'waiting' ? 'cancel' : ENDED.has(s) && !neverRan ? 'apply' : 'skip';
+  const over = ENDED.has(s) || deadInterrupted(t);
+  if (action === 'archive') return over && !neverRan ? 'apply' : 'skip';
+  if (action === 'delete') return s === 'waiting' ? 'cancel' : over && !neverRan ? 'apply' : 'skip';
   return 'skip';
 }
 
 export function skipReason(action, t) {
-  // An interrupted run reads Paused (run-model.mjs), so Archive skips it too: only Resume moves it on.
+  // An interrupted run reads Paused (run-model.mjs), so Archive skips it too unless it can never resume: only Resume moves it on.
   if (action === 'stop') return t.status === 'interrupted' ? 'interrupted — resume it first' : t.state === 'waiting' ? 'not started yet' : 'already finished';
   // A waiting member carries its ticketId too (rowTarget): say "not started yet" before "never started".
   if (t.state === 'waiting') return 'not started yet';
   if (t.ticketId && !t.pipelineId) return 'never started';
+  if (t.status === 'interrupted') return 'interrupted — resume it first';
   if (action === 'delete') return 'still running — stop it first';
   return t.state === 'waiting' ? 'not started yet' : 'still running';
 }

@@ -518,7 +518,7 @@ test('the Library card is 380px wide, a min(380px, 100% − 16px) overlay at <= 
   assert.match(app, /insetRight: \(\) => \{\n\s+if \(!\(window\.innerWidth <= 760 && wfvLibrary && wfvLibrary\.isOpen\(\)\)\) return 0;\n[^\n]*\n\s+return stageW - 396 >= 200 \? 396 : 0;\n/);
 });
 
-test('roomy rows: 14px names, 12px second lines, 26px tiles, 32px folder rows (review A5) with a 20px glyph; detail, port chips and actions a notch up', async () => {
+test('roomy rows: 14px names, 12px second lines, 26px tiles, 32px folder rows (review A5) with a 24px glyph; detail, port chips and actions a notch up', async () => {
   const { readFileSync } = await import('node:fs');
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
   const rule = (sel) => { const i = css.indexOf(`\n${sel}{`); assert.ok(i >= 0, `${sel} has a rule`); return css.slice(i + sel.length + 2, css.indexOf('}', i)); };
@@ -527,7 +527,7 @@ test('roomy rows: 14px names, 12px second lines, 26px tiles, 32px folder rows (r
   assert.match(rule('.wfl-ic'), /width:26px;height:26px;/);
   assert.match(rule('.wfl-main'), /padding:9px /);
   assert.match(rule('.wfl-folder'), /min-height:32px;.*font:500 13px/);
-  assert.match(rule('.wfl-folder svg'), /width:20px;height:20px;/);
+  assert.match(rule('.wfl-folder svg'), /width:24px;height:24px;/);
   assert.match(rule('.wfl-detail'), /font-size:13px;/);
   assert.match(rule('.wfl-pchip'), /font:500 11\.5px/);
   assert.equal(css.indexOf('.wfl-actions .wfv-btn'), -1, 'the actions are .btn .btn-sm (28px, 12px): no skin of their own');
@@ -539,6 +539,7 @@ test('the search box slides over the title (reduced motion: at once); folders an
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
   assert.match(css, /\n\.wfl-sbox\{position:absolute;[^}]*transition:left \.24s /);
   assert.match(css, /\n\.wfl-head\.is-searching \.wfl-sbox\{left:7px;\}/);
+  assert.match(css, /\n\.wfl-filter-btn svg\{width:16px;height:16px;\}/, 'the search glyph matches the ✕ beside it');
   assert.match(css, /\n\.wfl-head\.is-searching \.wfl-title\{opacity:0;visibility:hidden;\}/);
   assert.match(css, /@media \(prefers-reduced-motion:reduce\)\{\.wfl-sbox,\.wfl-title,\.wfl-filter-input\{transition:none;\}\}/);
   assert.match(css, /\.wfl-tab:focus-visible\{outline:2px solid var\(--ink\);outline-offset:-2px;\}/);
