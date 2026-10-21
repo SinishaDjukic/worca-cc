@@ -238,3 +238,14 @@ test('a run in Needs you only through its PR has finished: no current-run bar (a
     assert.equal(host.querySelector('.run-status-bar').hidden, true);
   }
 });
+
+test('D4: a member row draws no chip for a pending PR (open, no verdict yet), and one for a known one', () => {
+  const doc = dom();
+  const pr = { url: 'https://github.com/acme/web/pull/821', number: 821, state: 'OPEN' };
+  const rowOf = (p) => renderMemberRows(doc, { members: [{ position: 1, title: 'Slice', href: '#running/r1',
+    model: runModel({ status: 'done', pr: p }, { now: NOW }) }] }).querySelector('.run-member');
+  const pending = rowOf({ ...pr, pending: true });
+  assert.equal(pending.querySelectorAll('.runs-pr').length, 0);
+  assert.equal(pending.dataset.state, 'in-review');
+  assert.equal(rowOf({ ...pr, checks: { state: 'passing', total: 12, failed: 0, pending: 0 } }).querySelectorAll('.runs-pr').length, 1);
+});

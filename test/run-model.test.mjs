@@ -381,3 +381,27 @@ test('memberPrState: a workspace run’s most urgent member PR and their count (
     ['in-review', 'Fixing · 3 PRs']);
   assert.equal(finishedNeedsYou({ pr: pr(1), memberPrs: marked }), false, 'a fix round on it: not Needs you');
 });
+
+test('D4: a pending PR (open, no verdict yet) keeps the run In review, never needs you, and says pending', () => {
+  const m = runModel({ status: 'done', pr: { url: 'https://github.com/acme/web/pull/821', number: 821, state: 'OPEN', pending: true } });
+  assert.equal(m.state, 'in-review');
+  assert.equal(m.pr.pending, true);
+  assert.equal(m.prNeeds, false);
+});
+
+test('D8: no own PR + inBase reads Merged · in dev with the merge icon; an own open PR still wins', () => {
+  const m = runModel({ status: 'done', inBase: { base: 'dev' } });
+  assert.deepEqual([m.state, m.line, m.pr.icon, m.pr.word, m.pr.url], ['merged', 'Merged · in dev', 'merge', 'Merged · in dev', null]);
+  const own = runModel({ status: 'done', inBase: { base: 'dev' }, pr: { url: 'https://github.com/acme/web/pull/9', number: 9, state: 'OPEN' } });
+  assert.equal(own.state, 'in-review');
+  const g = groupModel({ kind: 'feature', members: [{ status: 'done', inBase: { base: 'dev' } }, { status: 'done', pr: { url: 'https://github.com/acme/web/pull/9', number: 9, state: 'MERGED' } }] });
+  assert.equal(g.state, 'merged');
+});
+
+test('D11: waiting wording names what the run waits for', () => {
+  const line = (after, runAt = null) => runModel({ ticket: { status: 'scheduled', runAt, after } }).line;
+  assert.equal(line({ group: 'Complete Design Language Rollout', index: 3 }), 'Waiting · starts after Complete Design Language Rollout · run 3');
+  assert.equal(line({ index: 2 }), 'Waiting · starts after run 2');
+  assert.equal(line({ title: 'Nightly docs refresh' }), 'Waiting · starts after Nightly docs refresh');
+  assert.equal(line({}), 'Waiting');
+});

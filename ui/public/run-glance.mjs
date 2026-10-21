@@ -220,6 +220,7 @@ export function glanceCopy(run, { pill = null, checks = null, lastLine = '', pr 
       const fin = (icon, lead, sub) => line(lead, '', sub, { icon });
       if (changes) { const w = folderDoneWords(changes.state, files); return fin('finished', w.lead, w.sub); }
       if (p === 'MERGED') return fin('merged', 'Merged', 'The pull request was merged');
+      if (p === 'IN_BASE') return fin('merged', 'Merged', 'Its work is already in the base branch');
       if (p === 'OPEN') return fin('pr-open', 'In review', 'The pull request is open');
       if (p === 'CLOSED') return fin('pr-closed', 'PR closed', 'Closed without merging');
       if (gitChrome === false) return fin('finished', 'Finished', files === 0 ? 'No files changed' : files ? nFiles(files) : '');

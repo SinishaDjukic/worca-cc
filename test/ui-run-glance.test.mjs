@@ -134,6 +134,8 @@ test('glance state and copy for every status', () => {
   // A finished run: where the work stands NOW (the pull request outranks the review), one glyph each.
   const fin = (o) => { const c = glanceCopy({ status: 'done' }, o); return [c.title, c.icon]; };
   assert.deepEqual(fin({ pr: 'MERGED' }), ['Merged', 'merged']);
+  assert.equal(glanceCopy({ status: 'done' }, { pr: 'IN_BASE' }).sub, 'Its work is already in the base branch', 'D8: no PR of its own, already in its base');
+  assert.deepEqual(fin({ pr: 'IN_BASE' }), ['Merged', 'merged']);
   assert.deepEqual(fin({ pr: 'OPEN', checks: 3 }), ['In review', 'pr-open']);
   assert.deepEqual(fin({ pr: 'CLOSED' }), ['PR closed', 'pr-closed']);
   assert.deepEqual(fin({ pr: 'NONE', checks: 0, files: 2 }), ['Ready to ship', 'ship']);
