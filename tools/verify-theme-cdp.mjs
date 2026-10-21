@@ -578,7 +578,7 @@ const states = [
           return { doc: [d.scrollWidth, d.clientWidth], main: [main.scrollWidth, main.clientWidth] }; })()`);
         designChecks.push({ what: `no sideways scroll: #${page} at ${width}px`,
           ok: m.doc[0] === m.doc[1] && m.main[0] <= m.main[1], got: m });
-        if (width === 1440 && page !== 'workflows' && !['settings', 'projects', 'schedules', 'stats', 'team-metrics'].includes(page)) {
+        if (width === 1440 && page !== 'workflows' && !['settings', 'projects', 'schedules', 'stats', 'team-metrics', 'marketplace'].includes(page)) {
           const pi = await ev(`(() => { const v = document.querySelector('[data-view=${JSON.stringify(page)}]');
             const ps = [...v.querySelectorAll('.page-intro')].filter((e) => e.offsetParent); const t = ps[0] ? ps[0].textContent.trim() : '';
             return { n: ps.length, len: t.length, one: !/[.!?]\\s+\\S/.test(t.replace(/[.!?]$/, '')), t }; })()`);
@@ -765,7 +765,7 @@ const SLICE3_CHECKS = {
   'settings-plugins': async () => {
     // The proof server always has the built-in marketplace, so the Marketplaces list has at least 1 row (once /api/marketplaces answers).
     await until(`document.querySelector('#marketplaces-list .pl-mkt-row')`, 'the marketplace rows');
-    await dividedRows('Marketplace', '#plugins-list .plugin-card, #plugins-available .pl-avail-card, #marketplaces-list .pl-mkt-row')();
+    await dividedRows('Marketplace', '#plugins-list .plugin-card, #marketplaces-list .pl-mkt-row')();
     const gb = await ev(`(() => { const b = document.querySelector('#marketplaces-list .pl-mkt-builtin'); const p = document.createElement('span'); p.className = 'badge grey';
       document.body.append(p); const grey = getComputedStyle(p).backgroundColor; p.remove(); return b && { bg: getComputedStyle(b).backgroundColor, grey }; })()`);
     designChecks.push({ what: 'grey badge: the built-in marketplace badge is grey, not amber', ok: !!gb && gb.bg === gb.grey, got: gb });

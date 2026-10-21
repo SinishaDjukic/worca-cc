@@ -128,12 +128,26 @@ buttons stay 28px; the card keeps the shared 24px padding (checked by the theme 
   belong in a tooltip.
 - The feature is "Chat", not "Ask Worca".
 - Page header: title, then one short intro sentence (`.page-intro`), then content. A full-bleed editor (Workflows) has
-  no page header.
+  no page header; the Marketplace's tabs are its header (Marketplace exceptions).
 - Stat tiles hold numbers only (time, cost, files changed). A list of chips goes in its own labelled row under the
   tiles, for example the run page's "Cost tags" row, never stacked inside a tile. The value is sans with tabular figures.
 - Search is the top bar's "Search or ask" only. A list filter is chosen there ("Runs labelled hotfix", `label:hotfix`),
-  not from a filter button in the list's header.
+  not from a filter button in the list's header. The Marketplace's Browse search is the one exception
+  (Marketplace exceptions).
 - Phones: one 16px gutter; nothing scrolls sideways at 290px.
+
+### Marketplace exceptions
+The Marketplace page (`ui/public/marketplace/`, design `docs/superpowers/specs/2026-10-19-marketplace-redesign/`) keeps the
+catalogue structure that was approved, drawn with this system's tokens:
+- Browse is a tile grid: one bordered `.mk-tile` button per plugin, 270px minimum, 16px padding, no shadow at rest or on
+  hover. Every other list on the page stays divided rows.
+- A page-scoped "Search plugins" field and a facet rail sit beside the grid. Rail rows (`.mk-facet`) are 32px rows with a
+  count and `aria-pressed`, the selected one on the `--panel` fill; they are not filter chips.
+- No page intro: the tabs (Browse · Installed · Marketplaces, each with a count) are the header.
+- Centred empty states: a 56px tile, a 15px title, at most one meta line and one action (or the inline add field).
+- Kind colours (`.mk-t-*` on the hue families, glyphs on the `-ink-strong` shades) appear only in a plugin's monogram tile
+  and as the rail's small kind dots. The update chip ("Update 0.3.0", "2 updates") is the page's blue status chip.
+  Status chips there use `.badge.mk-chip-*` on the `-ink-strong` shades (4.5:1 or more); the global `.badge` tones do not change.
 
 ## Do and don't
 | Do | Don't | Why |

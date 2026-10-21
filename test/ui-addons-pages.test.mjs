@@ -365,7 +365,8 @@ test('an Add-ons row opens its page, lights itself and names the page in the top
       assert.deepEqual(shownView(doc), [view]);
       assert.ok(row.classList.contains('active'));
       assert.equal(row.getAttribute('aria-current'), 'page');
-      assert.deepEqual([...doc.querySelectorAll('[aria-current="page"]')], [row], 'only the open page is lit: Settings is not');
+      // The Marketplace page's own tab strip marks its selected tab too (marketplace CONTRACT §5); the sidebar lights one row.
+      assert.deepEqual([...doc.querySelectorAll('[aria-current="page"]:not(.mk-tab)')].map((n) => n === row), [true], 'only the open page is lit: Settings is not');
       assert.equal(doc.getElementById('topnav-title').textContent, label);
     } })),
     { name: 'at Simple the Models row stays on screen while Models is open, and goes when you leave', run: async () => {

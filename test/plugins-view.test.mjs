@@ -2,11 +2,12 @@
 // No app.js boot: every renderer takes `doc` explicitly and returns detached DOM.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import {
   renderPluginList, renderInstallConsent, renderUpdatePreview,
   renderConfigForm, collectConfigForm, renderConnectResult,
-  renderOrphanList, renderAvailableList, renderMarketplaceList, relTime,
+  renderOrphanList, renderMarketplaceList, relTime,
 } from '../ui/public/plugins-view.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -349,7 +350,7 @@ test('update preview: chat-channel delta — a new channel secret is red, a new 
     [['pl-delta-secret', 'NEW CHAT SECRET requested: main.botToken'], ['pl-delta', 'new chat channel: main']]);
 });
 
-// ── marketplaces: available cards, registry rows, installed provenance ───────
+// ── marketplaces: registry rows, installed provenance ───────
 
 const MKT = {
   id: 'm-1', url: '/tmp/m1', name: 'Fixture Market', description: 'x', builtin: true,
@@ -362,28 +363,11 @@ const MKT = {
   ],
 };
 
-test('renderAvailableList: install button only when installable (not installed, synced); marketplace badge; empty states', async () => {
-  await checkRows([
-    { name: 'renderAvailableList: install button only for non-installed; marketplace badge; installed tag', run: () => {
-      const el = renderAvailableList([MKT], { doc });
-      const cards = el.querySelectorAll('.pl-avail-card');
-      assert.equal(cards.length, 2);
-      const btn = cards[0].querySelector('.pl-install-avail');
-      assert.ok(btn);
-      assert.equal(btn.dataset.name, 'aa');
-      assert.equal(btn.dataset.marketplace, 'm-1');
-      assert.match(cards[0].querySelector('.pl-mkt-badge').textContent, /Fixture Market/);
-      assert.ok(!cards[1].querySelector('.pl-install-avail'), 'installed plugin has no install button');
-      assert.match(cards[1].querySelector('.pl-installed').textContent, /Installed/);
-    } },
-    { name: 'renderAvailableList: never-synced marketplace disables install; empty states', run: () => {
-      const unsynced = { ...MKT, id: 'm-2', lastSync: null, plugins: [{ name: 'cc', subdir: '', description: '', version: null, installed: false, inventory: {} }] };
-      const el = renderAvailableList([unsynced], { doc });
-      assert.ok(!el.querySelector('.pl-install-avail'), 'no install button before first sync');
-      assert.match(renderAvailableList([], { doc }).textContent, /No marketplaces yet/);
-      assert.match(renderAvailableList([{ ...MKT, plugins: [] }], { doc }).textContent, /No plugins discovered/);
-    } },
-  ]);
+test('the Available list is gone: Browse tiles replace it (marketplace P3)', async () => {
+  const mod = await import('../ui/public/plugins-view.mjs');
+  assert.equal('renderAvailableList' in mod, false);
+  assert.equal(mod.renderPluginList([], { doc }).querySelector('.hist-empty').textContent, 'No plugins installed.');
+  assert.doesNotMatch(readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8'), /\.pl-avail|\.pl-available/);
 });
 
 test('renderMarketplaceList: builtin badge, sync line, warnings, action buttons, branch named after the url', async () => {

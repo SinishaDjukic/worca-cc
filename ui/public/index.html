@@ -2359,32 +2359,29 @@
         </section>
         <!-- /view settings -->
 
-        <!-- ===== VIEW: MARKETPLACE (sidebar › Add-ons; the Plugins view, then a Settings tab, before that) ===== -->
+        <!-- ===== VIEW: MARKETPLACE (sidebar › Add-ons): Browse · Installed · Marketplaces, painted by ui/public/marketplace/
+             (marketplace CONTRACT §5). The tabs are its header: no page intro (docs/design-system.md › Marketplace exceptions). ===== -->
         <section class="view hidden" data-view="marketplace">
-            <div class="topbar">
-              <div>
-                <div class="sub page-intro">Plugins from your marketplaces: task sources, agents, skills and workflow packs.</div>
-              </div>
-              <button type="button" id="plugin-add-btn" class="btn btn-primary" data-min-level="expert">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
-                Add marketplace
-              </button>
-            </div>
             <p id="plugins-msg" class="form-msg" aria-live="polite"></p>
-            <div class="card hidden" id="marketplace-add-row" data-min-level="expert" style="padding:16px 20px;margin-bottom:14px">
-              <div class="path-row">
-                <input id="marketplace-url" class="input" type="text" placeholder="https://github.com/owner/repo · owner/repo · /abs/path/to/repo · /path/to/a/plugin-folder" spellcheck="false" />
-                <button type="button" id="marketplace-add" class="btn btn-primary btn-sm">Add</button>
+            <div id="mk-root"></div>
+            <!-- Today's Installed and Marketplaces lists, moved into their tabs on the first paint until the new tabs replace
+                 them (marketplace P5, P7). They stay in the page: app.js binds their listeners at boot. -->
+            <div id="mk-legacy" hidden>
+              <div id="mk-legacy-installed">
+                <!-- Team policy (design board 10): what a policy home expects on this machine. -->
+                <div id="plugins-policy"></div>
+                <div class="run-list" id="plugins-list"></div>
+              </div>
+              <div id="mk-legacy-marketplaces">
+                <div class="card hidden" id="marketplace-add-row" style="padding:16px 20px;margin-bottom:14px">
+                  <div class="path-row">
+                    <input id="marketplace-url" class="input" type="text" placeholder="https://github.com/owner/repo · owner/repo · /abs/path/to/repo · /path/to/a/plugin-folder" spellcheck="false" />
+                    <button type="button" id="marketplace-add" class="btn btn-primary btn-sm">Add</button>
+                  </div>
+                </div>
+                <div class="run-list" id="marketplaces-list"></div>
               </div>
             </div>
-            <!-- Team policy (design board 10): what a policy home expects on this machine. -->
-            <div id="plugins-policy"></div>
-            <h3 class="section-title pl-sec-title">Installed</h3>
-            <div class="run-list" id="plugins-list"></div>
-            <h3 class="section-title pl-sec-title">Available</h3>
-            <div class="run-list" id="plugins-available"></div>
-            <h3 class="section-title pl-sec-title" data-min-level="expert">Marketplaces</h3>
-            <div class="run-list" id="marketplaces-list" data-min-level="expert"></div>
         </section>
         <!-- /view marketplace -->
 

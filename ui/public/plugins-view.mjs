@@ -129,7 +129,7 @@ export function renderPluginList(plugins, { doc = globalThis.document, channelSt
     root.appendChild(card);
   }
   if (!plugins || !plugins.length) {
-    root.appendChild(h(doc, 'div', 'hist-empty', 'No plugins installed. Browse Available below or add a marketplace.'));
+    root.appendChild(h(doc, 'div', 'hist-empty', 'No plugins installed.'));
   }
   return root;
 }
@@ -514,45 +514,6 @@ export function relTime(iso, now = Date.now()) {
   const h = Math.round(m / 60); if (h < 24) return `${h}h ago`;
   const d = Math.round(h / 24); if (d < 30) return `${d}d ago`;
   return String(iso).slice(0, 10);
-}
-
-// renderAvailableList(marketplaces) -> <div.pl-available> of installable cards
-// across every marketplace snapshot (GET /api/marketplaces). Install buttons
-// carry data-name + data-marketplace for app.js's delegated listener; installed
-// plugins render a badge instead; a never-synced marketplace renders no button
-// (there is no sha to pin yet — Refresh first).
-export function renderAvailableList(marketplaces, { doc = globalThis.document } = {}) {
-  const root = h(doc, 'div', 'pl-available drows');
-  const mkts = marketplaces || [];
-  let cards = 0;
-  for (const m of mkts) {
-    for (const p of m.plugins || []) {
-      cards++;
-      const card = h(doc, 'section', 'drow drow-stack pl-avail-card');
-      card.dataset.name = p.name;
-      card.dataset.marketplace = m.id;
-      const head = h(doc, 'div', 'pl-head');
-      head.appendChild(h(doc, 'b', 'pl-name', p.name));
-      head.appendChild(h(doc, 'span', 'pl-version mono', p.version || sha7(m.lastSync && m.lastSync.sha)));
-      head.appendChild(h(doc, 'span', 'badge grey pl-mkt-badge', m.name || m.id));
-      if (p.installed) {
-        head.appendChild(h(doc, 'span', 'badge green pl-installed', 'Installed'));
-      } else if (m.lastSync) {
-        const b = h(doc, 'button', 'btn btn-primary btn-sm pl-install-avail', 'Install…');
-        b.type = 'button';
-        b.dataset.name = p.name;
-        b.dataset.marketplace = m.id;
-        head.appendChild(b);
-      }
-      card.appendChild(head);
-      if (p.description) card.appendChild(h(doc, 'small', 'hint', p.description));
-      card.appendChild(h(doc, 'small', 'pl-avail-src hint mono', m.url)); // C10: unspoofable source url
-      root.appendChild(card);
-    }
-  }
-  if (!mkts.length) root.appendChild(h(doc, 'div', 'hist-empty', 'No marketplaces yet — add one below.'));
-  else if (!cards) root.appendChild(h(doc, 'div', 'hist-empty', 'No plugins discovered in your marketplaces.'));
-  return root;
 }
 
 // renderMarketplaceList(marketplaces) -> <div.pl-mkts> of registry rows with

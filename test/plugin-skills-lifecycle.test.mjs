@@ -347,5 +347,5 @@ test('Plugins view: skill lines join the review lines (red ones in the secret st
   assert.equal(list.querySelector('.pl-remove[data-name="x"]').dataset.skillSets, undefined);
   const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
   const at = app.indexOf("title: 'Uninstall plugin'");
-  assert.match(app.slice(at, at + 500), /\$\{t\.dataset\.skillSets\s*\? `\\n\\nIt also removes its skills from \$\{t\.dataset\.skillSets\}\.` : ''\}/, 'the confirm names them (board 11)');
+  assert.match(app.slice(at, at + 500), /\$\{skillSets\s*\? `\\n\\nIt also removes its skills from \$\{skillSets\}\.` : ''\}/, 'the confirm names them (board 11)');
 });

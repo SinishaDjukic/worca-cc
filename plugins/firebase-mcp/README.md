@@ -7,7 +7,7 @@ The Firebase MCP server from `firebase-tools` for worca's MCP registry (plugin A
 
 1. Node.js with `npx` on PATH (worca already needs Node).
 2. Sign in once: `npx -y firebase-tools@latest login` — or use a service account key file (below).
-3. Marketplace → Available → `firebase-mcp` → **Install…**; then Connectors → a set →
+3. Marketplace → Browse → `firebase-mcp` → **Install**; then Connectors → a set →
    Add server → `firebase` → Save and test. The first Test downloads firebase-tools (about
    30 s, ~290 MB); later starts take about 2.5 s.
 

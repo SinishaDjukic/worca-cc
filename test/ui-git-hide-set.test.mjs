@@ -17,7 +17,7 @@ const MARKUP = ['#branch-fields', '#proj-add-tab-clone', '#sync-settings-card', 
   '.hd-publish', '.hd-pr-link', '.hd-push', '.hd-published', '.hd-base-check', '.hd-pr-repos', '.hd-base', '.hd-branch-copy',
   '.wiz-import', '[data-pdest="marketplace"]', '#export-marketplace-field'];   // dev's git-spawning workspace import and #717 export
 const KEPT = ['[data-nav="workspaces"]', '[data-nav="marketplace"]', '[data-nav="team-metrics"]', '[data-nav="team-policy"]',
-  '#plugin-add-btn', '#marketplace-add-row', '#proj-add-tab-folder', '#projectSelect'];
+  '#mk-root', '#marketplace-add-row', '#proj-add-tab-folder', '#projectSelect'];
 const doc = (git) => trackDom(new JSDOM(renderIndexHtml(html, 'system', 'expert', undefined, { git }))).window.document;
 const gated = (el, d = el.ownerDocument) => d.documentElement.dataset.git === 'off' && !!el.closest('[data-needs-git]');
 // The run and History pages are <template>s (#run-detail-tpl, #hist-detail-tpl): querySelectorAll never enters a
@@ -193,7 +193,7 @@ async function installScenario(git, answer) {
   };
   window.fetch = fake; globalThis.fetch = fake;
   window.location.hash = '#marketplace'; for (let i = 0; i < 8; i++) await wait(5);
-  doc.querySelector('#plugins-available .pl-install-avail').click(); await wait(5);
+  doc.querySelector('button.mk-tile[data-key="gh/gh-plugin"]').click(); await wait(5);
   const install = [...doc.querySelectorAll('#plugin-modal-actions button')].find((b) => b.textContent === 'Install');
   install.click(); if (!git) install.click();   // no git: a double click while the request runs must not POST twice
   for (let i = 0; i < 20; i++) await wait(10);
@@ -232,7 +232,7 @@ test('hide set: the plugin Install consent while git is off', async () => {
       };
       window.fetch = fake; globalThis.fetch = fake;
       window.location.hash = '#marketplace'; for (let i = 0; i < 8; i++) await wait(5);
-      doc.querySelector('#plugins-available .pl-install-avail').click(); await wait(5);
+      doc.querySelector('button.mk-tile[data-key="gh/gh-plugin"]').click(); await wait(5);
       const install = [...doc.querySelectorAll('#plugin-modal-actions button')].find((b) => b.textContent === 'Install');
       install.dispatchEvent(new window.MouseEvent('click', { bubbles: true, detail: 1 }));
       for (let i = 0; i < 5; i++) await wait(5);

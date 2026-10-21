@@ -195,3 +195,10 @@ test('auditStray is self-contained (it runs in the page as its source)', () => {
 test('typed-plus: no label is excused any more (slice 3 emptied plusDebt)', () => {
   assert.deepEqual(BUTTON_SPEC.plusDebt, []);
 });
+
+test('the Marketplace tile and facet rows are controls, not §1.2 buttons (marketplace L10)', () => {
+  const doc = new JSDOM('<div id="v"><button class="mk-tile" data-key="off/a">a</button><button class="mk-facet" aria-pressed="true">All plugins</button></div>').window.document;
+  const controls = BUTTON_SPEC.controls.join(',');
+  assert.deepEqual([...doc.querySelectorAll('button')].filter((b) => !b.closest(controls)).map((b) => b.className), []);
+  assert.deepEqual(auditStray(doc.getElementById('v'), STRAY_SPEC, { rect: () => ({ width: 10, height: 10 }) }), []);
+});

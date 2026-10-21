@@ -156,10 +156,11 @@ import { previewAskFromDef, previewFileUrl } from './ask/form-preview.mjs';
 import { projectForm } from '../../src/shared/forms/project.mjs';
 import { installSessionGuard } from './session-guard.mjs';
 import {
-  renderPluginList, renderInstallConsent, renderUpdatePreview,
+  renderInstallConsent, renderUpdatePreview,
   renderConfigForm, collectConfigForm, renderConnectResult, renderDoctorReport, renderReferences409,
-  renderOrphanList, channelBadge, renderAvailableList, renderMarketplaceList, renderNeedsGit,
+  channelBadge, renderNeedsGit,
 } from './plugins-view.mjs';
+import { mountMarketplace, tabFromParam } from './marketplace/index.mjs';
 import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
 import { renderExtensionPairings, browserLabel, formatPairCode, renderExtensionInstall, selectInstallBrowser, detectBrowser } from './extension-settings-view.mjs';
@@ -874,9 +875,7 @@ const el = {
   // Plugins view
   pluginsList: $('#plugins-list'),
   pluginsMsg: $('#plugins-msg'),
-  pluginsAvailable: $('#plugins-available'),
   marketplacesList: $('#marketplaces-list'),
-  pluginAddBtn: $('#plugin-add-btn'),
   marketplaceAddRow: $('#marketplace-add-row'),
   marketplaceUrl: $('#marketplace-url'),
   marketplaceAdd: $('#marketplace-add'),
@@ -1790,6 +1789,12 @@ function handleServerMessage(msg) {
     // Only the page GET schedules a flush: reloading it on flush-failed would loop
     // (GET → page-open flush → flush-failed → reload). The chip shows the error from the last load.
     if (msg.action !== 'flush-failed' && currentView() === 'team-metrics') loadTeamMetricsView();
+    return;
+  }
+  // A plugin or marketplace changed — another tab, the CLI, or this page's own action (CONTRACT §1.7): re-read while
+  // the page is open; never a refresh (SM6). Off the page, the next entry loads anyway.
+  if (msg.type === 'plugins-changed') {
+    if (currentView() === 'marketplace') void marketplacePage.load({ background: true });
     return;
   }
   // Team policy (team-policy design §11): discovery, an enable, a publish or a home change
@@ -16277,7 +16282,7 @@ function pluginModal(title, bodyEl, actions = [], guard = {}) {
   el.pluginModal.classList.remove('hidden');
   pluginGuard?.opened(guard);
 }
-function closePluginModal() { el.pluginModal.classList.add('hidden'); pluginDismissHooks.clear(); }
+function closePluginModal() { el.pluginModal.classList.add('hidden'); pluginDismissHooks.clear(); document.dispatchEvent(new window.CustomEvent('mk-layer-closed', { detail: { layer: 'plugin-modal' } })); }
 
 // Team metrics "Enable" dialog. Reuses the generic slot modal above; the body re-renders
 // when the "Where to record" radio changes.
@@ -16372,58 +16377,36 @@ async function pluginApi(method, url, body) {
 const isGitMissing = (r) => !!(r && !r.ok && r.status === 409 && r.data && r.data.code === 'GIT_MISSING');
 function needsGitModal(title) { pluginModal(title, renderNeedsGit(document)); }
 
-// Snapshot of the last GET /api/marketplaces payload — the delegated install
-// listener resolves the consent inventory from here (no re-fetch, no network).
+// The Marketplace page (ui/public/marketplace/, CONTRACT §3.5). `pluginsViewMarketplaces` stays the snapshot the consent
+// dialog's needs-git lookup, Team policy installs (marketplaceEntryFor), ensureMarketplacesLoaded and the policy editor read.
 let pluginsViewMarketplaces = [];
-
-function renderMarketplaceSections(list, { fromBackground = false } = {}) {
-  if (fromBackground && el.pluginModal && !el.pluginModal.classList.contains('hidden')) {
-    pluginsViewMarketplaces = list || []; // keep the data; skip the DOM swap under an open modal
-    return;
-  }
-  pluginsViewMarketplaces = list || [];
-  el.pluginsAvailable.replaceChildren(renderAvailableList(pluginsViewMarketplaces));
-  el.marketplacesList.replaceChildren(renderMarketplaceList(pluginsViewMarketplaces));
-}
-
+let marketplacePage = null;   // SM15: P5–P7 read it (e.g. the marketplace-add-changed forward)
+marketplacePage = mountMarketplace({ doc: document, win: window, deps: {
+  api: pluginApi, notify, confirmModal, openMenu, gitOn, setMsg: setPluginsMsg,
+  loadPolicy: () => loadTpScopes({ force: true }),   // SM35: state.policy (P5's Team policy card)
+  navigate: (hash) => { const t = String(hash).replace(/^#/, ''); if (location.hash.slice(1) !== t) location.hash = t; },
+  fallbacks: { openInstallConsent, openPluginSettings, updatePlugin: updateRequiredPlugin, uninstallPlugin: uninstallPluginFlow,
+    addMarketplace: openLegacyAddRow, waitModalClosed: pluginModalClosed },
+} });
+marketplacePage.onChange((s) => { pluginsViewMarketplaces = s.marketplaces; });
+// Every caller (Team policy, the action flows) reloads the page here; only a route entry passes refresh.
 async function loadPluginsView({ refresh = false } = {}) {
-  setPluginsMsg('');
-  try {
-    const [pRes, mRes] = await Promise.all([fetch('/api/plugins'), fetch('/api/marketplaces')]);
-    const data = await safeJson(pRes);
-    if (!pRes.ok) { renderMarketplaceSections([]); return setPluginsMsg(data.error || `HTTP ${pRes.status}`, 'err-inline'); }
-    let channelStatus = [];
-    try {
-      const cs = await safeJson(await fetch('/api/chat/status'));
-      channelStatus = cs.channels || [];
-    } catch { /* chat host unavailable: cards render without badges */ }
-    const parts = [renderPluginList(data.plugins || [], { channelStatus })];
-    if (Array.isArray(data.orphans) && data.orphans.length) parts.push(renderOrphanList(data.orphans));
-    el.pluginsList.replaceChildren(...parts);
-    const mData = await safeJson(mRes);
-    renderMarketplaceSections(mRes.ok ? mData.marketplaces || [] : []);
-  } catch (e) { setPluginsMsg(e.message, 'err-inline'); }
-  if (refresh) refreshMarketplacesInBackground(); // C3: only the view-open path kicks the background refresh
-  paintPluginsPolicy(refresh);                   // team policy (design board 10): the required-by strip
+  await marketplacePage.load({ refresh });
+  paintPluginsPolicy(false);                     // team policy (design board 10): the required-by strip, from the scopes load() just read
 }
-
-// Stale-while-revalidate (spec §4.6): render cached snapshots instantly, then
-// one background refresh-all; re-render on completion. Failures keep the stale
-// snapshot (per-marketplace warnings arrive in the payload).
-let marketplaceRefreshInFlight = false;
-async function refreshMarketplacesInBackground() {
-  if (marketplaceRefreshInFlight) return;
-  marketplaceRefreshInFlight = true;
-  setPluginsMsg('Refreshing marketplaces…');
-  try {
-    const { ok, data } = await pluginApi('POST', '/api/marketplaces/refresh');
-    if (ok) renderMarketplaceSections(data.marketplaces || [], { fromBackground: true });
-  } catch { /* keep stale */ } finally {
-    marketplaceRefreshInFlight = false;
-    // Clear only OUR status line — an install/remove error posted while the
-    // background refresh was in flight must survive it.
-    if (el.pluginsMsg && el.pluginsMsg.textContent === 'Refreshing marketplaces…') setPluginsMsg('');
-  }
+// One entry, one load (CONTRACT §4): a tab hop inside the page only selects the tab.
+function enterMarketplace(param, prevView) {
+  marketplacePage.setTab(tabFromParam(param));
+  if (prevView !== 'marketplace') void loadPluginsView({ refresh: true });
+}
+// Add marketplace until P7's dialog: today's add row, inside the Marketplaces tab (the page selects the tab first).
+function openLegacyAddRow() {
+  // Before the first good read the row still sits in the hidden #mk-legacy store: move it into its tab first.
+  const panel = document.querySelector('#mk-root .mk-panel[data-tab="marketplaces"]');
+  const host = document.getElementById('mk-legacy-marketplaces');
+  if (panel && host && host.parentNode !== panel) panel.replaceChildren(host);
+  el.marketplaceAddRow.classList.remove('hidden');
+  el.marketplaceUrl.focus();
 }
 
 async function addMarketplaceFromInput() {
@@ -16797,34 +16780,7 @@ if (el.pluginsList) el.pluginsList.addEventListener('click', async (e) => {
       loadPluginsView();
     });
   } else if (t.classList.contains('pl-remove')) {
-    const res = await confirmModal({
-      title: 'Uninstall plugin',
-      message: `Uninstall "${name}"?${t.dataset.mcpSets
-        ? `\n\nIts MCP servers leave these sets, with their values, secrets and test results: ${t.dataset.mcpSets}.` : ''}${t.dataset.skillSets
-        ? `\n\nIt also removes its skills from ${t.dataset.skillSets}.` : ''}`,
-      confirmLabel: 'Uninstall',
-      checkbox: { label: 'Also delete config, secrets and state (purge — cannot be undone)' },
-    });
-    if (!res.ok) return;
-    const purge = res.checked;
-    const { ok, status, data } = await pluginApi(
-      'DELETE', `/api/plugins/${encodeURIComponent(name)}${purge ? '?purge=1' : ''}`,
-    );
-    if (status === 409) {
-      const refs = data.references || [];
-      notify({ tone: 'err', title: `Cannot uninstall ${name}`, detail: String(data.error || '').split('\n')[0],
-        action: { label: 'Details', run: () => pluginModal(`Cannot uninstall ${name}`, renderReferences409(refs)) } });
-      return;
-    }
-    if (!ok) return setPluginsMsg(data.error || 'uninstall failed', 'err');
-    setPluginsMsg(
-      purge
-        ? `Uninstalled ${name} and purged its data.`
-        : `Uninstalled ${name}. Leftover data kept under ~/.worca-cc/plugins/${name}/data.`,
-      'ok',
-    );
-    invalidateAgentCaches();
-    loadPluginsView();
+    await uninstallPluginFlow(name, { mcpSets: t.dataset.mcpSets || '', skillSets: t.dataset.skillSets || '' });
   } else if (t.classList.contains('pl-purge-orphan')) {
     const sure = await confirmModal({
       title: 'Purge plugin data',
@@ -16837,20 +16793,6 @@ if (el.pluginsList) el.pluginsList.addEventListener('click', async (e) => {
     setPluginsMsg(`Purged leftover data for ${name}.`, 'ok');
     loadPluginsView();
   }
-});
-
-// Available section: Install… resolves the snapshot entry from the last
-// /api/marketplaces payload and opens the same consent modal as before.
-if (el.pluginsAvailable) el.pluginsAvailable.addEventListener('click', (e) => {
-  const t = e.target instanceof Element ? e.target.closest('.pl-install-avail') : null;
-  if (!t) return;
-  const m = pluginsViewMarketplaces.find((x) => x.id === t.dataset.marketplace);
-  const p = m && (m.plugins || []).find((x) => x.name === t.dataset.name);
-  if (!m || !p || !m.lastSync) return;
-  openInstallConsent({
-    name: p.name, subdir: p.subdir, repoUrl: m.url, sha: m.lastSync.sha,
-    inventory: p.inventory || {}, marketplace: m.id,
-  });
 });
 
 // Marketplaces section: Refresh / Remove.
@@ -16877,10 +16819,6 @@ if (el.marketplacesList) el.marketplacesList.addEventListener('click', async (e)
   }
 });
 
-if (el.pluginAddBtn) el.pluginAddBtn.addEventListener('click', () => {
-  el.marketplaceAddRow.classList.toggle('hidden');
-  if (!el.marketplaceAddRow.classList.contains('hidden')) el.marketplaceUrl.focus();
-});
 if (el.marketplaceAdd) el.marketplaceAdd.addEventListener('click', addMarketplaceFromInput);
 if (el.marketplaceUrl) el.marketplaceUrl.addEventListener('input', () => el.marketplaceAddRow.querySelector('.pl-needs-git')?.remove());
 if (el.pluginModalClose) el.pluginModalClose.addEventListener('click', () => pluginGuard?.cancel());
@@ -20618,7 +20556,7 @@ async function handlePolicyPluginClick(e) {
   // secrets blank) — the same pane the Plugins page opens from the card.
   if (t.classList.contains('pl-policy-configure')) {
     closePluginModal();
-    if (location.hash.slice(1) !== 'marketplace') location.hash = 'marketplace';
+    if (currentView() !== 'marketplace') location.hash = 'marketplace/installed';
     const req = ((tpCache.data && tpCache.data.requirements) || []).find((r) => r.name === name);
     await openPluginSettings(name, undefined, { seeds: req && req.config ? req.config : null });
     return true;
@@ -20760,11 +20698,48 @@ const skillTeamDeps = () => ({
     if (checklist) void openSetupChecklist(); else refreshMcpSurfaces();
   },
 });
+// Uninstall one plugin (the Installed list's Remove, the page's openRemove): today's confirm names the sets its MCP
+// servers and skills leave; resolves true once the plugin is gone.
+async function uninstallPluginFlow(name, { mcpSets = '', skillSets = '' } = {}) {
+  const res = await confirmModal({
+    title: 'Uninstall plugin',
+    message: `Uninstall "${name}"?${mcpSets
+      ? `\n\nIts MCP servers leave these sets, with their values, secrets and test results: ${mcpSets}.` : ''}${skillSets
+      ? `\n\nIt also removes its skills from ${skillSets}.` : ''}`,
+    confirmLabel: 'Uninstall',
+    checkbox: { label: 'Also delete config, secrets and state (purge — cannot be undone)' },
+  });
+  if (!res.ok) return false;
+  const purge = res.checked;
+  const { ok, status, data } = await pluginApi(
+    'DELETE', `/api/plugins/${encodeURIComponent(name)}${purge ? '?purge=1' : ''}`,
+  );
+  if (status === 409) {
+    const refs = data.references || [];
+    notify({ tone: 'err', title: `Cannot uninstall ${name}`, detail: String(data.error || '').split('\n')[0],
+      action: { label: 'Details', run: () => pluginModal(`Cannot uninstall ${name}`, renderReferences409(refs)) } });
+    return false;
+  }
+  if (!ok) { setPluginsMsg(data.error || 'uninstall failed', 'err'); return false; }
+  setPluginsMsg(
+    purge
+      ? `Uninstalled ${name} and purged its data.`
+      : `Uninstalled ${name}. Leftover data kept under ~/.worca-cc/plugins/${name}/data.`,
+    'ok',
+  );
+  invalidateAgentCaches();
+  loadPluginsView();
+  return true;
+}
+// Resolves once #plugin-modal is closed: a chain of dialogs waits on it (one install or update preview at a time).
+function pluginModalClosed() {
+  return new Promise((res) => { const iv = setInterval(() => { if (!el.pluginModal || el.pluginModal.classList.contains('hidden')) { clearInterval(iv); res(); } }, 200); });
+}
 // One dialog after another — a consent dialog for each missing plugin, an update preview for each
 // one below the floor — the next opens when the previous closes (done or cancelled). Nothing runs
 // without its own click; cancelling one moves on to the next.
 async function installAllRequired(reqs) {
-  const modalClosed = () => new Promise((res) => { const iv = setInterval(() => { if (!el.pluginModal || el.pluginModal.classList.contains('hidden')) { clearInterval(iv); res(); } }, 200); });
+  const modalClosed = pluginModalClosed;
   for (const r of reqs) {
     let opened = false;
     if (r.state === 'missing') opened = await installRequiredPlugin(r.name, { marketplace: r.marketplace || '' });
@@ -36683,7 +36658,7 @@ function showView(name, param = '') {
   }
   if (name === 'workflows') void enterWorkflowsView(param, prevView);
   if (name === 'settings') showSettingsTab(param);
-  if (name === 'marketplace') loadPluginsView({ refresh: true });
+  if (name === 'marketplace') enterMarketplace(param, prevView);
   if (name === 'connectors') void mcpTab().show(param);
   if (name === 'models') {
     // The Engines card (its Helper jobs rows included) is painted from GET /api/settings, so a link

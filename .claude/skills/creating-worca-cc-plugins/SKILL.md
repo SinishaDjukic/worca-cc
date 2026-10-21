@@ -697,7 +697,7 @@ worca plugin validate ./my-plugin --strict && worca plugin doctor my-plugin
 Both clean, plus at least one real (non-mock) `exec` per op.
 Then push and let users register the repo as a marketplace:
 `worca marketplace add <repo-url>` (or Marketplace › Add marketplace in the UI) →
-install from the Available list or `worca plugin install <name>`.
+install from the Marketplace's Browse tab or `worca plugin install <name>`.
 Removing a marketplace never removes installed plugins.
 From the UI or `worca workflow export <id> --format plugin --marketplace <id>`, Worca opens the PR for you:
 `plugins/<name>/` plus its `worca-cc-marketplace.json` entry (or `<name>/` at the root when the repo has no index).

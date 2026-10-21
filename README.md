@@ -443,8 +443,8 @@ level and has no **Diff**, **Changes** or **Actions**.
   Azure Boards),
   agents (with their ask forms), scripts, skills, workflow templates, models,
   chat channels, and MCP servers for the [registry](docs/mcp-servers.md).
-  Install from the **Marketplace** page (Advanced) or `worca plugin install`;
-  **Add marketplace** (a GitHub URL, `owner/repo` or a local path) is Expert.
+  Install from the **Marketplace** page's Browse tab (Advanced) or `worca plugin install`;
+  **Add marketplace** takes a GitHub URL, `owner/repo` or a local path.
   On a machine without git, marketplaces and installs work for GitHub
   repositories over HTTPS, a local plugin folder is linked, and other sources
   say `Needs git`.

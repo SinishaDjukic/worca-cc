@@ -15532,13 +15532,13 @@ app.get('/api/plugins/:name/references', (req, res) => {
   try { res.json({ references: pluginReferences(name) }); } catch (err) { sendPluginError(res, err); }
 });
 
-// Marketplaces (spec §4.7): the persisted repo registry behind the Plugins
-// view's Available/Marketplaces sections. Snapshots are cached in
+// Marketplaces (spec §4.7): the persisted repo registry behind the Marketplace
+// page's Browse and Marketplaces tabs. Snapshots are cached in
 // marketplaces.json, so GET is zero-network; refresh routes do the git work.
 
 // Merge lock membership onto each snapshot plugin. MUST wrap every response that
 // returns marketplace snapshots — refresh routes return raw entries whose plugins
-// have no `installed` key, and renderAvailableList would re-offer Install on them.
+// have no `installed` key, and the Browse tiles would re-offer Install on them.
 // A source that needs git reads Needs git, never Can't reach: it carries lastError: null (SEAMS SM4).
 function withInstalled(list) {
   const lock = readPluginsLock();

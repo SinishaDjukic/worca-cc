@@ -84,7 +84,7 @@ test('GET /api/plugins names the sets that hold each plugin\'s servers; the Remo
   assert.equal(renderPluginList([{ name: 'x', contributions: {} }], { doc }).querySelector('.pl-remove').dataset.mcpSets, undefined);
   const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
   const at = app.indexOf("title: 'Uninstall plugin'");
-  assert.match(app.slice(at, at + 300), /Its MCP servers leave these sets[^`]*\$\{t\.dataset\.mcpSets\}/, 'the confirm lists them');
+  assert.match(app.slice(at, at + 300), /Its MCP servers leave these sets[^`]*\$\{mcpSets\}/, 'the confirm lists them');
 });
 
 test('disable, any locked write, re-enable: every membership, value and secret (Team token included) stays', async () => {

@@ -70,7 +70,7 @@ test('Import skill: a 409 GIT_MISSING preview says Needs git inside the dialog; 
 
 test('index.html: Marketplace, Team metrics and Team policy carry no data-needs-git (U2a)', () => {
   const page = new JSDOM(readFileSync(htmlPath, 'utf8')).window.document;
-  for (const sel of ['[data-view="marketplace"]', '#plugin-add-btn', '#marketplace-add-row', '#plugins-available', '[data-view="team-metrics"]', '[data-view="team-policy"]']) {
+  for (const sel of ['[data-view="marketplace"]', '#mk-root', '#marketplace-add-row', '[data-view="team-metrics"]', '[data-view="team-policy"]']) {
     const node = page.querySelector(sel);
     assert.ok(node, sel);
     assert.equal(node.closest('[data-needs-git]'), null, sel);
@@ -123,7 +123,7 @@ test('app: Add marketplace 409 → the chip inside the add row; Update 409 → t
   upd.click();
   await settle();
   assert.deepEqual([d.getElementById('plugin-modal-title').textContent, d.querySelector('#plugin-modal-body .pl-needs-git').textContent], ['Update alpha', 'Needs git']);
-  d.querySelector('#plugins-available .pl-install-avail').click();
+  d.querySelector('button.mk-tile[data-key="gl/gl-plugin"]').click();
   await settle();
   assert.deepEqual(actions(d), ['Cancel']);
 });
@@ -177,7 +177,7 @@ test('app: consent names Needs git on the source line; the add-row chip is one, 
   });
   d.defaultView.location.hash = '#marketplace';
   await settle();
-  d.querySelector('#plugins-available .pl-install-avail').click();
+  d.querySelector('button.mk-tile[data-key="gl/gl-plugin"]').click();
   await settle();
   assert.equal(d.querySelector('#plugin-modal-body .pl-consent-src .pl-needs-git').textContent, 'Needs git');
   d.getElementById('plugin-modal-close').click();

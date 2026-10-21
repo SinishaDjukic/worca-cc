@@ -323,8 +323,8 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 
 | Element | Level |
 |---|---|
-| Marketplace page: installed, available, install | A |
-| Marketplace page: Add marketplace, the Marketplaces list, Doctor, leftover data | E |
+| Marketplace page: Browse, Installed and Marketplaces tabs, install, Add marketplace | A |
+| Marketplace page: Doctor, leftover data | E |
 | Connectors page: the Sets, Servers and Skills views | A |
 | Models page: the catalog, and the Engines card (Default engine, Models per engine: Step models and Helper jobs tables, including titles, Auto classifier, PR description and Memory defragment) | E |
 | Models page: the catalog toolbar (search, filter chips, folding groups), the editor dialog's Connection section, the Import-models dialog (Copilot and OpenAI-compatible sources) | E |
