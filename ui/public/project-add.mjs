@@ -21,9 +21,21 @@ export function filesLabel(n, capped) {
   return n === 1 ? '1 file' : `${n} files`;
 }
 
+/** The last path segment ("/x/loose/" → "loose"; a Windows path too), for "Add <root>". */
+const lastSegment = (p) => String(p).replace(/[\\/]+$/, '').split(/[\\/]/).pop() || String(p);
+
+/** #693: what the Folder pane offers instead of a nested folder — the registered root's page, or adding the root. */
+function rootAction(probe) {
+  if (probe.partOf) return { kind: 'open', name: probe.partOf, label: `Open ${probe.partOf}` };
+  if (probe.repoRoot) return { kind: 'add-root', path: probe.repoRoot, label: `Add ${lastSegment(probe.repoRoot)}` };
+  return null;
+}
+const withAction = (m, a) => (a ? { ...m, action: a } : m);
+
 /**
  * The detect row under the Folder field, from GET /api/projects/probe's answer.
  * chips: [{ kind?: 'git'|'folder', text, tone: ''|'warn'|'files' }]; refused blocks Add; useGit shows the switch.
+ * action (#693, only when set): the Add <root> / Open <name> button; note (only when set): the worca-made nested repo's fix.
  * No `No git` word on a machine without git (S61). An answer without a boolean `exists` is unknown, never a refusal.
  */
 export function detectModel(probe, { git = true } = {}) {
@@ -32,7 +44,11 @@ export function detectModel(probe, { git = true } = {}) {
   if (!probe.isDir) return { chips: [{ text: 'Not a folder', tone: 'warn' }], refused: true, useGit: false };
   if (probe.insideRepo) {
     const why = probe.partOf ? `Part of ${probe.partOf}` : 'Inside a git repository';
-    return { chips: [{ kind: 'git', text: 'Git', tone: '' }, { text: why, tone: 'warn' }], refused: true, useGit: false };
+    return withAction({ chips: [{ kind: 'git', text: 'Git', tone: '' }, { text: why, tone: 'warn' }], refused: true, useGit: false }, rootAction(probe));
+  }
+  if (probe.nestedHint) {
+    return withAction({ chips: [{ kind: 'git', text: 'Git', tone: '' }, { text: 'Nested repository', tone: 'warn' }],
+      refused: false, useGit: false, note: probe.nestedHint }, rootAction(probe));
   }
   if (probe.vcs === 'git') return { chips: [{ kind: 'git', text: 'Git', tone: '' }], refused: false, useGit: false };
   const chips = [{ kind: 'folder', text: 'Folder', tone: '' }];

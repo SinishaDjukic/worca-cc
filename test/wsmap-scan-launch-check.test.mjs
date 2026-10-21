@@ -2,8 +2,9 @@
 // Both Workspace scan routes — POST /api/workspaces/scan (first scan) and POST /api/workspaces/:id/scan
 // (re-scan) — refuse, before any run starts, every member a read-only scan cannot run over: a folder
 // inside another git repository, a repository with no commit. The 400 names each such member and why,
-// and every tree stays byte-identical. Plain POST /api/workspaces keeps its contract (any git work
-// tree). scanMemberProblems is the check both routes share.
+// and every tree stays byte-identical. Plain POST /api/workspaces refuses a member inside another
+// repository too (#693); a re-scan still refuses one stored before that. scanMemberProblems is the check both
+// routes share.
 // Mock-driven (WORCA_MOCK=1), chdir-sandboxed, temp WORCA_HOME.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,6 +17,7 @@ import { dirname, join } from 'node:path';
 
 import { useTempHome } from './helpers/temp-home.mjs';
 import * as workspaces from '../src/core/workspaces.mjs';
+import { getDb } from '../src/core/db.mjs';
 
 useTempHome(after);
 
@@ -120,9 +122,10 @@ test('POST /api/workspaces/scan: 400 naming each member inside another repositor
   const ok = await repo('ok', { 'package.json': '{"name":"ok"}\n' });
   const before_ = [treeState(mono), treeState(fresh), treeState(ok)];
   for (const [name, paths, bad, why] of [
-    ['Nested', [sub, ok], [sub], /is not its own git repository/],
+    // #693: a member inside another repository is refused before the scan check, for every workspace.
+    ['Nested', [sub, ok], [sub], /^member .* is inside the git repository at /],
     ['Fresh', [fresh, ok], [fresh], /has no commit/],
-    ['Both', [sub, fresh], [sub, fresh], /is not its own git repository.*has no commit|has no commit.*is not its own git repository/],
+    ['Both', [sub, fresh], [sub], /^member .* is inside the git repository at /],
   ]) {
     const res = await post('/api/workspaces/scan', { name, projectPaths: paths });
     const body = await res.json();
@@ -136,15 +139,26 @@ test('POST /api/workspaces/scan: 400 naming each member inside another repositor
   assert.deepEqual([treeState(mono), treeState(fresh), treeState(ok)], before_, 'every tree byte-identical');
 });
 
-test('POST /api/workspaces/:id/scan: 400 for a workspace whose members a scan cannot run over — plain create keeps accepting them', async () => {
+test('POST /api/workspaces/:id/scan: 400 for a workspace whose members a scan cannot run over — plain create refuses a nested member (#693)', async () => {
   const { mono, sub } = await monorepo('mono');
   const fresh = await repo('fresh', { 'package.json': '{"name":"fresh"}\n' }, { commit: false });
   const ok1 = await repo('ok', { 'a.txt': 'a\n' });
   const ok2 = await repo('ok', { 'b.txt': 'b\n' });
+  const refused = await post('/api/workspaces', { name: 'Plain Nested', projectPaths: [sub, ok1] });
+  assert.equal(refused.status, 400);
+  assert.match((await refused.json()).error, /^member .* is inside the git repository at /);
+  // A workspace stored before #693 (what plain create accepted then): seeded directly.
+  const now = new Date().toISOString();
+  getDb().prepare("INSERT INTO workspaces (id, name, description, created_at, updated_at) VALUES ('wks-plain-nested-0000a693', 'Plain Nested', '', ?, ?)").run(now, now);
+  const m = getDb().prepare('INSERT INTO workspace_projects (workspace_id, project_key, ordinal) VALUES (?, ?, ?)');
+  m.run('wks-plain-nested-0000a693', sub, 0); m.run('wks-plain-nested-0000a693', ok1, 1);
   for (const [name, paths, bad, why] of [['Plain Nested', [sub, ok1], sub, /is not its own git repository/], ['Plain Fresh', [fresh, ok2], fresh, /has no commit/]]) {
-    const cr = await post('/api/workspaces', { name, projectPaths: paths });
-    assert.equal(cr.status, 201, `${name}: plain create keeps its contract (any git work tree)`);
-    const { workspace } = await cr.json();
+    let workspace = { id: 'wks-plain-nested-0000a693' };
+    if (name === 'Plain Fresh') {
+      const cr = await post('/api/workspaces', { name, projectPaths: paths });
+      assert.equal(cr.status, 201, `${name}: plain create accepts a repository with no commit`);
+      ({ workspace } = await cr.json());
+    }
     const before_ = paths.map((p) => treeState(p === sub ? mono : p));
     const res = await post(`/api/workspaces/${workspace.id}/scan`, {});
     const body = await res.json();

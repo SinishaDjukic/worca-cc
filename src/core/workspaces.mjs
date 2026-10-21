@@ -24,7 +24,7 @@ import { execFileSync } from 'node:child_process';
 import { basename, isAbsolute, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 
-import { worcaHome, normalizeProjectPath, getProjectByPath } from './projects.mjs';
+import { worcaHome, normalizeProjectPath, getProjectByPath, enclosingRepoOf, nestedInRepoMessage } from './projects.mjs';
 import { workModeForStart, normalizeVcs, effectiveWorkMode } from './project-kind.mjs';
 import { canonicalProjectRoot, projectKey, workspaceStorePath, isNoProjectWorkDir } from './store.mjs';
 import { NO_PROJECT_ERRORS } from '../shared/no-project.mjs';
@@ -411,9 +411,9 @@ function normalizeMembers(projectPaths, rootOf = canonicalProjectRoot) {
  */
 function memoGitProbe() {
   const memo = (fn) => { const m = new Map(); return (p) => { if (!m.has(p)) m.set(p, fn(p)); return m.get(p); }; };
-  return { rootOf: memo(canonicalProjectRoot), isRepo: memo(isGitRepo), rowOf: memo(getProjectByPath), gitOn: gitAvailable };
+  return { rootOf: memo(canonicalProjectRoot), isRepo: memo(isGitRepo), rowOf: memo(getProjectByPath), gitOn: gitAvailable, nestedOf: memo(enclosingRepoOf) };
 }
-const LIVE_GIT = { rootOf: canonicalProjectRoot, isRepo: isGitRepo, rowOf: getProjectByPath, gitOn: gitAvailable };
+const LIVE_GIT = { rootOf: canonicalProjectRoot, isRepo: isGitRepo, rowOf: getProjectByPath, gitOn: gitAvailable, nestedOf: enclosingRepoOf };
 
 /**
  * Each NEW member must be an existing directory and either a registered project (a Git one must still be a
@@ -421,17 +421,20 @@ const LIVE_GIT = { rootOf: canonicalProjectRoot, isRepo: isGitRepo, rowOf: getPr
  * with git installed, an unregistered git work tree. A refusal never blames the folder for a missing git.
  */
 function checkNewMembers(paths, git = LIVE_GIT) {
+  const nested = (p) => { const enc = git.nestedOf?.(p); if (enc) throw err(`member ${nestedInRepoMessage(p, enc)}`, 'BAD_REQUEST'); };
   for (const p of paths) {
     if (!isDir(p)) throw err(`member path does not exist or is not a directory: ${p}`, 'BAD_REQUEST');
     const row = git.rowOf(p);
     if (row) {
-      if (effectiveWorkMode(row.vcs ?? 'git', git.gitOn()) === 'git' && !git.isRepo(p)) {
-        throw err(`member path is not a git repository: ${p}`, 'BAD_REQUEST');
+      if (effectiveWorkMode(row.vcs ?? 'git', git.gitOn()) === 'git') {
+        if (!git.isRepo(p)) throw err(`member path is not a git repository: ${p}`, 'BAD_REQUEST');
+        nested(p);                                                       // #693
       }
       continue;
     }
     if (!git.gitOn()) throw err(`member path is not a registered project: ${p}`, 'BAD_REQUEST');
     if (!git.isRepo(p)) throw err(`member path is not a git repository or a registered project: ${p}`, 'BAD_REQUEST');
+    nested(p);                                                           // #693
   }
 }
 

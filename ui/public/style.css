@@ -2702,6 +2702,8 @@ input.bench-case-name{width:100%;padding:9px 12px;font-size:13px;}
   font-size:12px;font-weight:600;
   color:var(--ink-2);border:1px solid var(--line-2);border-radius:var(--r-sm);padding:1px 6px;
 }
+.proj-nested{color:var(--amber-ink-strong);background:var(--amber-bg);border-color:var(--amber-line);cursor:help;}
+.pd-nested-hint{margin:6px 0 0;max-width:72ch;}
 /* ---------- Projects two-screen shell (twin of the History track) ---------- */
 .view[data-view="projects"]{flex:1 1 auto;min-height:0;padding:0;position:relative;}
 .proj-shell{position:relative;height:100%;overflow:hidden;}
@@ -4154,6 +4156,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .proj-add-tabs{margin:0 0 12px;}
 /* Add project: the Folder detect row (kind chip · No git · file count) and New's read-only Location. */
 .proj-add-detect{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:6px;}
+.proj-add-root{margin-top:6px;}
 .pad-chip{display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 9px;border-radius:var(--r-xs);background:var(--field);color:var(--ink-2);font-size:12px;font-weight:600;}
 .pad-chip.warn{background:var(--amber-bg);color:var(--amber-ink-strong);}
 .pad-files{font-family:var(--mono);font-size:12px;color:var(--ink-2);}

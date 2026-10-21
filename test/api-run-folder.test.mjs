@@ -231,3 +231,51 @@ test('A-m5 by the effective mode: a Git project\'s gone folder is refused while 
     assert.equal(existsSync(dir), false);
   } finally { process.env.WORCA_GIT = '1'; gitTesting.reset(); }
 });
+test('#693: a git-mode run in a sub-folder of a repository is refused before any row, with nothing created or git-inited', async () => {
+  const outer = templateRepo('nested-run', { branch: 'main', user: true, files: { 'o.txt': 'o\n' } }); dirs.push(outer);
+  const inner = join(outer, 'svc'); mkdirSync(inner); writeFileSync(join(inner, 'a.txt'), 'a\n');
+  const count = () => getDb().prepare('SELECT COUNT(*) AS n FROM pipelines').get().n;
+  const before = count();
+  const r = await api('POST', '/api/run', { projectDir: inner, prompt: 'x', mock: true, sourceBranch: 'main' });
+  assert.equal(r.status, 400, JSON.stringify(r.body));
+  assert.equal(r.body.code, 'NESTED_IN_REPO');
+  assert.equal(r.body.repoRoot, realpathSync(outer));
+  assert.equal(r.body.error, `${inner} is inside the git repository at ${realpathSync(outer)}. Worca runs only on the top folder of a git repository. Add ${realpathSync(outer)} as a project and run there.`);
+  assert.equal(existsSync(join(inner, '.git')), false);
+  // A path that does not exist yet inside the repository: refused, and NOT created (the mkdir comes after).
+  const later = join(outer, 'later');
+  const r2 = await api('POST', '/api/run', { projectDir: later, prompt: 'x', mock: true });
+  assert.deepEqual([r2.status, r2.body.code], [400, 'NESTED_IN_REPO']);
+  assert.equal(existsSync(later), false);
+  assert.equal(count(), before, 'no pipelines row');
+});
+
+test('#693: a worca-made nested repository: the unknown-branch 400 says how to fix it, and nothing changes', async () => {
+  const outer = templateRepo('nested-made', { branch: 'main', user: true, files: { 'o.txt': 'o\n' } }); dirs.push(outer);
+  const inner = join(outer, 'svc'); mkdirSync(inner); writeFileSync(join(inner, 'a.txt'), 'a\n');
+  const g = (a) => spawnSync('git', a, { cwd: inner });
+  g(['init', '-q', '-b', 'master']); g(['config', 'user.email', 'orchestrator@local']); g(['config', 'user.name', 'orchestrator']);
+  g(['add', '-A']); g(['commit', '-qm', 'orchestrator: initial checkpoint']);
+  spawnSync('git', ['branch', 'feature-x'], { cwd: outer });         // the user's branch lives only in the outer repo
+  const r = await api('POST', '/api/run', { projectDir: inner, prompt: 'x', mock: true, sourceBranch: 'feature-x' });
+  assert.equal(r.status, 400, JSON.stringify(r.body));
+  assert.match(r.body.error, /^unknown or invalid sourceBranch: feature-x .*An older Worca created it\..*then add /s);
+  assert.ok(existsSync(join(inner, '.git')), 'nothing removed');
+});
+
+test('#693: a workspace with an unregistered (git-mode) member nested in a repository is refused at start', async () => {
+  const a = templateRepo('ws693-a', { branch: 'main', user: true, files: { 'a.txt': 'a\n' } });
+  const outer = templateRepo('ws693-b', { branch: 'main', user: true, files: { 'b.txt': 'b\n' } });
+  dirs.push(a, outer);                                                   // templateRepo copies are the caller's to remove
+  const inner = join(outer, 'svc'); mkdirSync(inner); writeFileSync(join(inner, 'n.txt'), 'n\n');
+  const now = new Date().toISOString();
+  // Seeded directly, as P5 does: createWorkspace now refuses this member (§4.6). No projects row → git mode.
+  getDb().prepare("INSERT INTO workspaces (id, name, description, created_at, updated_at) VALUES ('wks-nested-00000693', 'nested693', '', ?, ?)").run(now, now);
+  const m = getDb().prepare('INSERT INTO workspace_projects (workspace_id, project_key, ordinal) VALUES (?, ?, ?)');
+  m.run('wks-nested-00000693', a, 0); m.run('wks-nested-00000693', inner, 1);
+  const r = await api('POST', '/api/run', { workspaceId: 'wks-nested-00000693', prompt: 'x', mock: true });
+  assert.equal(r.status, 400, JSON.stringify(r.body));
+  assert.equal(r.body.code, 'NESTED_IN_REPO');
+  assert.ok(r.body.error.startsWith(`workspace member ${inner} is inside the git repository at `), r.body.error);
+  assert.equal(existsSync(join(inner, '.git')), false);
+});

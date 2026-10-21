@@ -55,7 +55,7 @@ import {
   peekPendingCardComments, clearPendingCardComments, DiffCommentError, DC_ID_RE,
 } from '../src/core/diff-comments.mjs';
 import { listProjects, addProject, addProjects, removeProject, normalizeProjectPath, countProjects, worcaHome, getProjectByPath, displayPath,
-  getProjectByName, ownsProjectFolder, removeProjectAndFolder } from '../src/core/projects.mjs';
+  getProjectByName, ownsProjectFolder, removeProjectAndFolder, enclosingRepoOf, nestedInRepoMessage, worcaNestedRepoOf, worcaNestedRepoHint } from '../src/core/projects.mjs';
 import { effectiveWorkMode, workModeOfRow, workModeForStart, samePath } from '../src/core/project-kind.mjs';
 import { renderIndexHtml, INDEX_THEME_ANCHOR, FLAG_GATES_ANCHOR } from '../src/core/index-html.mjs';
 import { gitState, gitAvailable, currentGitState, onGitChange, GIT_MISSING } from '../src/core/git-available.mjs';
@@ -1863,6 +1863,11 @@ function badRequest(res, message) {
   res.status(400).json({ error: message });
 }
 
+/** #693: 400 NESTED_IN_REPO for a git-mode run in a folder inside a repository it is not the top of. */
+function nestedInRepoRefusal(res, dir, enc, prefix = '') {
+  return res.status(400).json({ error: `${prefix}${nestedInRepoMessage(dir, enc)}`, code: 'NESTED_IN_REPO', repoRoot: enc.repoRoot, partOf: enc.partOf ?? null });
+}
+
 /**
  * The run body's engine fields (harness bridge §10.4): `engine` names the harness for the
  * pipeline's agent nodes (the CLI's --engine), `allowUnguardedEngine` is the consent that
@@ -2777,6 +2782,10 @@ const startRunHandler = async (req, res) => {
         if (workMode === 'git' && !isGitRepo(dir)) {
           return badRequest(res, `workspace member is not a git repository: ${dir}`);
         }
+        if (workMode === 'git') {
+          const enc = enclosingRepoOf(dir);                        // #693: never git-init a nested member
+          if (enc) return nestedInRepoRefusal(res, dir, enc, 'workspace member ');
+        }
         if (workMode === 'folder') {
           const big = await _folderSizeProblem(dir);                // R6 / S9: before a row, a run root or a ticket
           if (big) return res.status(413).json(big);
@@ -2908,6 +2917,16 @@ const startRunHandler = async (req, res) => {
       // empty (with git installed a Git project keeps today's mkdir + git init). The stored row (S7), read once.
       const projectRow = getProjectByPath(projectDir); const gitOn = (await gitState()).available;
       if (projectRow && !fs.existsSync(projectDir) && effectiveWorkMode(projectRow.vcs, gitOn) === 'folder') return badRequest(res, `The folder is missing: ${projectDir}`);
+      // P1 (CONTRACT §2, U3, L4, S3): a registered Folder project — or any project while git is missing — runs on a
+      // copy; an unregistered dir keeps git mode while git is installed. Replaces P0's start guard for projects.
+      // gitOn and projectRow were read before the mkdir (A-m5): the stored row (S7), never projectKey(dir)
+      const workMode = workModeForStart({ projectDir }, { getProjectByPath: () => projectRow, gitAvailable: gitOn });
+      // #693: a git run in a folder inside a repository it is not the top of would `git init` there (or act on the
+      // parent). Refused before the mkdir, a row or a ticket; a missing path counts by its nearest existing ancestor.
+      if (workMode === 'git') {
+        const enc = enclosingRepoOf(projectDir, { gitOn });
+        if (enc) return nestedInRepoRefusal(res, projectDir, enc);
+      }
       if (!fs.existsSync(projectDir)) {
         try {
           await fsp.mkdir(projectDir, { recursive: true });
@@ -2915,11 +2934,6 @@ const startRunHandler = async (req, res) => {
           return badRequest(res, `cannot create projectDir: ${err.message}`);
         }
       }
-
-      // P1 (CONTRACT §2, U3, L4, S3): a registered Folder project — or any project while git is missing — runs on a
-      // copy; an unregistered dir keeps git mode while git is installed. Replaces P0's start guard for projects.
-      // gitOn and projectRow were read before the mkdir (A-m5): the stored row (S7), never projectKey(dir)
-      const workMode = workModeForStart({ projectDir }, { getProjectByPath: () => projectRow, gitAvailable: gitOn });
       if (workMode === 'folder') {
         if (sched?.sourceFromPrevious) return badRequest(res, "a Folder project run cannot start from the previous run's branch");
         const big = await _folderSizeProblem(projectDir);          // R6 / S9 / S69: before a row, a run root or a ticket
@@ -2940,7 +2954,8 @@ const startRunHandler = async (req, res) => {
           const why = !isSafeBranchName(branch.source) ? ''
             : r.kind === 'stale' ? ' (not a local branch, and the remote could not be reached to check)'
             : ' (not a local branch and not on the remote)';
-          return badRequest(res, `unknown or invalid sourceBranch: ${branch.source}${why}`);
+          const made = worcaNestedRepoOf(projectDir);
+          return badRequest(res, `unknown or invalid sourceBranch: ${branch.source}${why}${made ? ` ${worcaNestedRepoHint(projectDir, made)}` : ''}`);
         }
         // remote-only: the harness creates the local tracking branch (_ensureLocalSource).
       }
@@ -9438,7 +9453,15 @@ app.get('/api/branches', async (req, res) => {
 });
 
 // ownedFolder: Remove deletes this project's folder too (ownsProjectFolder), so the UI shows that warning.
-async function projectsForApi(list) { const { available } = await gitState(); return list.map((p) => ({ ...p, workMode: effectiveWorkMode(p.vcs, available), displayPath: displayPath(p.path), ownedFolder: ownsProjectFolder(p) })); }
+// nestedRepo (#693): a repository an older worca git-inited inside the user's repository — the UI warns with the fix.
+async function projectsForApi(list) {
+  const { available } = await gitState();
+  return list.map((p) => {
+    const made = p.exists ? worcaNestedRepoOf(p.path) : null;
+    return { ...p, workMode: effectiveWorkMode(p.vcs, available), displayPath: displayPath(p.path), ownedFolder: ownsProjectFolder(p),
+      ...(made ? { nestedRepo: { repoRoot: made.repoRoot, hint: worcaNestedRepoHint(p.path, made) } } : {}) };
+  });
+}
 
 app.get('/api/projects', async (_req, res) => {
   try {
@@ -9554,7 +9577,14 @@ app.post('/api/projects/create', async (req, res) => {
 app.get('/api/projects/probe', async (req, res) => {
   const raw = typeof req.query.path === 'string' ? req.query.path : '';
   if (!(await requireFsAllowed(req, res, [normalizeProjectPath(raw)]))) return;
-  try { return res.json(await probeFolder(raw)); } catch (err) { return projectAddFail(res, err); }
+  try {
+    const out = await probeFolder(raw);
+    // #693: the enclosing repository is offered as "Add <root>" only where this viewer may use it.
+    if (out.repoRoot && fsLimitedHere(req) && !(await checkInside(out.repoRoot, await fsAllowedRoots())).inside) {
+      delete out.repoRoot; delete out.nestedHint;
+    }
+    return res.json(out);
+  } catch (err) { return projectAddFail(res, err); }
 });
 
 // POST /api/projects/clone {url, branch?, name?} -> 202 {jobId}: clone a repository into the

@@ -5,13 +5,13 @@
 // one of them removes what this call made (the new folder, or the .git it made) and nothing else.
 
 import { execFile } from 'node:child_process';
-import { existsSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { readdirSync, realpathSync, statSync } from 'node:fs';
 import { mkdir, readdir, rm } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { getProjectsRoot } from './settings.mjs';
 import {
   listProjects as realListProjects, addProject as realAddProject, detectVcs, displayPath,
-  getProjectByPath, normalizeProjectPath, nestedRepoOf, worcaHome,
+  getProjectByPath, normalizeProjectPath, worcaHome, enclosingRepoOf, worcaNestedRepoOf, worcaNestedRepoHint,
 } from './projects.mjs';
 import { isWithin } from './fs-scope.mjs';
 import { gitAvailable as realGitAvailable, GIT_MISSING } from './git-available.mjs';
@@ -82,8 +82,6 @@ function withDeps(deps = {}) {
   };
 }
 
-const isDirSync = (p) => { try { return statSync(p).isDirectory(); } catch { return false; } };
-const realOr = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
 /**
  * The real path of `p` with the letter case on disk (realpathSync.native: on macOS and Windows the JS realpathSync keeps
  * the case as typed, so `/users/me` would not match `/Users/me`), or, for a path that does not exist yet, the real path
@@ -173,27 +171,8 @@ function diskClash(root, name) {
   return entries.find((e) => fold(e) === want) ?? null;
 }
 
-/**
- * R8 for a path that may not exist yet, with or without git (S53: the chip agrees with the server).
- * An existing `dir` → nestedRepoOf(dir). A missing `dir` → its nearest existing ancestor `a`: a
- * repository top (`a/.git`) ⇒ nested (a New folder directly under it would be inside it), else
- * nestedRepoOf(a).
- * @returns {{repoRoot:string, partOf:string|null}|null}
- */
-export function enclosingRepo(dir, { gitOn = realGitAvailable() } = {}) {
-  if (!dir || typeof dir !== 'string') return null;
-  const p = resolve(dir);
-  if (existsSync(p)) return isDirSync(p) ? nestedRepoOf(p, { gitOn }) : null;
-  let a = dirname(p);
-  while (!existsSync(a)) {
-    const up = dirname(a);
-    if (up === a) return null;
-    a = up;
-  }
-  if (!isDirSync(a)) return null;
-  if (detectVcs(a) === 'git') return { repoRoot: realOr(a), partOf: getProjectByPath(a)?.name ?? null };
-  return nestedRepoOf(a, { gitOn });
-}
+/** R8 for a path that may not exist yet: projects.mjs#enclosingRepoOf (one rule for Add, registration and run start). */
+export const enclosingRepo = enclosingRepoOf;
 
 /**
  * Files under `dir`, for the Folder pane's "N files" chip. Iterative; never enters `.git`, never
@@ -342,7 +321,7 @@ async function addFolderNow({ name, path, useGit = false, dryRun = false } = {},
  * What the Folder pane shows for a path: exists / is a folder, its kind, a file count (plain
  * folders outside any repository only), and the R8 chips (`insideRepo`, `partOf`).
  * @returns {Promise<{path:string, exists:boolean, isDir:boolean, vcs:'git'|'none'|null, files:number|null,
- *   filesCapped:boolean, insideRepo:boolean, partOf:string|null}>}
+ *   filesCapped:boolean, insideRepo:boolean, partOf:string|null, repoRoot?:string, nestedHint?:string}>}
  * @throws {ProjectAddError} INVALID on a blank path
  */
 export async function probeFolder(input, deps = {}) {
@@ -355,8 +334,16 @@ export async function probeFolder(input, deps = {}) {
   if (!st.isDirectory()) return { ...gone, exists: true };
   const vcs = detectVcs(path);
   const enc = await d.enclosingRepo(path, { gitOn: d.gitAvailable() });
+  // #693: a repository an older worca git-inited inside the user's one reads as Git; the dialog warns with the fix.
+  const made = vcs === 'git' ? worcaNestedRepoOf(path) : null;
   let files = null;
   let filesCapped = false;
   if (vcs === 'none' && !enc) ({ n: files, capped: filesCapped } = await countFiles(path));
-  return { path, exists: true, isDir: true, vcs, files, filesCapped, insideRepo: !!enc, partOf: enc ? enc.partOf ?? null : null };
+  const repoRoot = enc?.repoRoot ?? made?.repoRoot ?? null;
+  return {
+    path, exists: true, isDir: true, vcs, files, filesCapped, insideRepo: !!enc,
+    partOf: enc ? enc.partOf ?? null : made ? made.partOf : null,
+    ...(repoRoot ? { repoRoot } : {}),
+    ...(made ? { nestedHint: worcaNestedRepoHint(path, made) } : {}),
+  };
 }

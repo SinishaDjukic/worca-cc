@@ -27,6 +27,8 @@ import {
   removeProject,
   normalizeProjectPath,
   getProjectByPath,
+  enclosingRepoOf,
+  nestedInRepoMessage,
 } from '../core/projects.mjs';
 import { projectKey, isNoProjectKey, noProjectWorkDir, isNoProjectWorkDir } from '../core/store.mjs';
 import { NO_PROJECT_ERRORS } from '../shared/no-project.mjs';
@@ -1403,6 +1405,11 @@ async function cliWorkMode(projectDir) {
   const row = getProjectByPath(projectDir);
   const workMode = workModeForStart({ projectDir }, { getProjectByPath: () => row, gitAvailable: gitOn });
   if (row && !existsSync(projectDir) && effectiveWorkMode(row.vcs, gitOn) === 'folder') fail(`The folder is missing: ${projectDir}`);
+  // #693: never a git run in a folder inside a repository it is not the top of (it would `git init` there).
+  if (workMode === 'git') {
+    const enc = enclosingRepoOf(projectDir, { gitOn });
+    if (enc) fail(nestedInRepoMessage(projectDir, enc));
+  }
   if (workMode === 'folder') {
     const { checkFolderSize } = await import('../core/folder-copy.mjs');
     const big = await checkFolderSize(projectDir, { name: row?.name });
