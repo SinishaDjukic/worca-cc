@@ -1,5 +1,5 @@
 // plugins/azure-boards-source/connector/ado-api.mjs
-// Minimal Azure DevOps REST wrapper for the Boards connector (its own PAT; connector children get only PATH/HOME).
+// Minimal Azure DevOps REST wrapper for the Boards connector (its own PAT; connector children get only PATH/HOME and the proxy and CA variables).
 // Errors carry a `kind` the shim child forwards: auth | rate-limit | network | plugin.
 const err = (kind, message, extra = {}) => Object.assign(new Error(message), { kind, ...extra });
 

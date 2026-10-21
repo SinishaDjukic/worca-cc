@@ -132,8 +132,8 @@ the child through the environment.
 - Discovery follows the standard plugin idiom (lock → sorted → enabled →
   `pluginCurrentDir(name)`; fail closed to `[]`). Channels with unset required config get
   status `unconfigured` and are not spawned.
-- Spawn with `scrubbedEnv()` (PATH+HOME; exported from `plugin-shim.mjs` rather than
-  duplicated). Config and secrets travel only on stdin.
+- Spawn with `scrubbedEnv()` (PATH+HOME and the proxy and CA variables, #540; exported from
+  `plugin-shim.mjs` rather than duplicated). Config and secrets travel only on stdin.
 - Crash restart backoff `[1s, 5s, 30s, 60s]`, counter reset after 60 s healthy, status
   `failed` after 10 consecutive failures (no further restarts until reload). Ping every
   30 s; two missed pongs → kill + restart. Oversize frame → kill + restart (protocol).

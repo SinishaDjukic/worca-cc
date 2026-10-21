@@ -1,8 +1,9 @@
 // src/core/chat/channel-worker-child.mjs
 // Persistent channel-worker bootstrap (chat-connectivity-design.md §4.4) — the
 // long-lived analog of plugin-shim-child.mjs. Runs with a scrubbed env
-// ({PATH, HOME}), so it imports NOTHING from the worca core graph except the
-// dependency-free channel-protocol module. Protocol: JSON-lines both ways;
+// ({PATH, HOME}, the proxy and CA variables), so it imports NOTHING from the worca
+// core graph except the dependency-free channel-protocol module and env-proxy
+// (node builtins and undici, no store). Protocol: JSON-lines both ways;
 // first host frame is `hello` (config+secrets+state via stdin ONLY, never
 // argv/env); the process stays up until `shutdown`/stdin-EOF or a crash
 // (nonzero exit -> the supervisor restarts with backoff).
@@ -20,6 +21,7 @@
 import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
 import { encodeFrame, decodeFrame, isValidIncoming, isValidMessage, CONNECTION_STATES } from './channel-protocol.mjs';
+import { useEnvProxy, proxyNotice } from '../env-proxy.mjs';
 
 const CHECK_MODE = process.argv.includes('--check');
 const MAX_LOG_CHARS = 8 * 1024;
@@ -28,6 +30,13 @@ function writeFrame(frame) {
   try { process.stdout.write(encodeFrame(frame)); return true; }
   catch { return false; /* oversize/broken pipe */ }
 }
+
+// The worker's fetch() (and WebSocket) honors HTTP(S)_PROXY / NO_PROXY like
+// worca's own: same NO_PROXY merge, loopback always direct, in --check too. A
+// proxy that can't be applied is a warn line in the channel's log instead of a
+// bare "fetch failed"; --check has no log (its one result line is all the host reads).
+const proxyLine = proxyNotice(useEnvProxy());
+if (proxyLine?.level === 'warn' && !CHECK_MODE) writeFrame({ type: 'log', level: 'warn', msg: proxyLine.text });
 
 // stdout is protocol-reserved: any stray console.* from plugin code becomes a
 // log frame instead of corrupting the stream (shim-child rule, made survivable

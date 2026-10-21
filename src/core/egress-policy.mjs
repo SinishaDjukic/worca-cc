@@ -3,9 +3,10 @@
 // WORCA_EGRESS_ALLOW, WORCA_EGRESS_DENY; contract in src/core/egress-proxy.mjs). A platform such
 // as Railway has no internal-only network to confine the container to, so worca enforces the
 // policy itself: it starts the egress proxy on a loopback port inside its own process and points
-// every child it starts (agents, tools, terminals, actions, MCP servers) at it through the proxy
-// variables, the way docker/compose.egress.yml does with its sidecar. worca's own fetch() follows
-// the same variables (src/core/env-proxy.mjs), so it is held to the policy too.
+// every child it starts (agents, tools, terminals, actions, MCP servers, plugin task sources and
+// chat channels) at it through the proxy variables, the way docker/compose.egress.yml does with
+// its sidecar. worca's own fetch() follows the same variables (src/core/env-proxy.mjs), so it is
+// held to the policy too.
 //
 // Mode missing or `open`: nothing starts and the environment is left exactly as it was.
 //

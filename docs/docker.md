@@ -211,7 +211,11 @@ image relays only to allowed hosts (`WORCA_EGRESS_ALLOW` in `.env`, default:
 Tools that honour `HTTPS_PROXY` reach allowed hosts; a raw socket from
 `node -e` or `python -c` reaches nothing. Combine with the **Strict** guardrail
 set for an untrusted task. Known needs: add your package registry; Playwright's
-browser download needs its CDN or a pre-fetched browser.
+browser download needs its CDN or a pre-fetched browser; plugin task sources and
+chat channels go through the proxy too, so add their hosts: `dev.azure.com` for
+Azure Boards, `api.telegram.org`, `slack.com,.slack.com` (Socket Mode dials a
+`wss-*.slack.com` host), `discord.com,.discord.gg`, and for Teams
+`login.microsoftonline.com,login.botframework.com` plus your bot's service URL host.
 
 An entry with a leading dot (`.github.com`) allows every subdomain and the name
 itself. A refused host gets `403 egress denied: <host>`; `docker compose logs

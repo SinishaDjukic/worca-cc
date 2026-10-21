@@ -1,8 +1,8 @@
 // plugins/github-source/connector/gh-cli.mjs
 // The one subprocess seam in this connector: `gh auth token`, so a user who has
 // already run `gh auth login` needs no PAT in the plugin config. The connector
-// child runs with a scrubbed env (PATH + HOME only), which is exactly what gh
-// needs — PATH finds the binary, HOME finds ~/.config/gh and the OS keyring.
+// child runs with a scrubbed env (PATH, HOME, the proxy and CA variables), which
+// is all gh needs — PATH finds the binary, HOME finds ~/.config/gh and the OS keyring.
 //
 // The runner is injected so the mapping logic is testable without spawning gh;
 // the suite never shells out.
