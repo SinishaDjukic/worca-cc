@@ -41,7 +41,7 @@ import { projectKey, projectStorePath, workspaceStorePath, noProjectWorkDir, isN
 import { NO_PROJECT_KEY, NO_PROJECT_NAME, NO_PROJECT_ERRORS, WORK_DIR_NAME, isNoProjectKey } from '../shared/no-project.mjs';
 import { harvestWork, ownWorkDir, WORK_ARTIFACT_KIND } from './no-project-work.mjs';
 import { appendDirection, readDirections, pendingDirections, DIRECTIONS_FILE, DIRECTIONS_KIND, DIRECTIONS_CLOSED } from './directions.mjs';
-import { worcaHome } from './projects.mjs';
+import { worcaHome, getProjectByPath, enclosingRepoOf, nestedInRepoMessage, worcaNestedRepoOf, worcaNestedRepoHint } from './projects.mjs';
 import { normalizeWorkMode, workModeOfRow, folderFiles, CHANGES_FILE, CHANGES_PATCH_FILE } from './project-kind.mjs';
 import { folderMemberFiles } from './folder-members.mjs';
 import {
@@ -6450,11 +6450,11 @@ export class RunHarness extends EventEmitter {
    * @returns {Promise<string|null>}
    */
   async _ensureGitCheckpointFor(dir) {
-    // C2: `--is-inside-work-tree` is true even when dir merely sits *inside* an
-    // enclosing repo (no .git of its own). Acting on that parent repo would
-    // silently create worca-cc/* branches + checkpoint commits in the developer's
-    // real repo. Require dir to BE the repo toplevel; if it isn't (no repo, or
-    // only a parent repo), `git init` a dedicated repo here.
+    // C2 / #693: `--is-inside-work-tree` is true even when dir merely sits *inside* an enclosing repo (no .git of its
+    // own). Acting on that parent repo would create worca-cc/* branches + checkpoint commits in the developer's real
+    // repo, and `git init` here (what ≤ 1.10.0 did) made an inner repo that lacks every branch of the real one, so the
+    // worktree failed with "sourceBranch is not a valid ref". Require dir to BE the repo toplevel; a dir inside a repo
+    // is refused (terminal: a resume would replay into the same refusal); only a dir in NO repo is `git init`ed.
     const projReal = await realpath(dir).catch(() => resolve(dir));
     const top = await this._git(['rev-parse', '--show-toplevel'], { cwd: dir });
     let topReal = null;
@@ -6471,17 +6471,26 @@ export class RunHarness extends EventEmitter {
       if (why) throw new Error(`read-only workspace scan: ${dir} ${why}`);
     }
     if (!isOwnRepo) {
-      if (topReal) {
-        this._log(
-          'git',
-          'info',
-          `${dir} is nested in repo ${topReal}; initializing a dedicated repo to isolate worktrees.`,
-        );
+      // git could not answer (e.g. a "dubious ownership" parent): the stat-only walk still finds an enclosing .git.
+      const enc = topReal ? { repoRoot: topReal, partOf: getProjectByPath(topReal)?.name ?? null }
+        : enclosingRepoOf(dir, { gitOn: false });
+      if (enc) {
+        const err = markTerminal(new Error(nestedInRepoMessage(dir, enc)));
+        err.code = 'NESTED_IN_REPO';
+        throw err;
       }
       await this._git(['init'], { cwd: dir });
       // Ensure an identity exists for the commit (local, non-destructive).
       await this._git(['config', 'user.email', 'orchestrator@local'], { cwd: dir });
       await this._git(['config', 'user.name', 'orchestrator'], { cwd: dir });
+    } else {
+      // #693: a repo an older worca git-inited inside the user's repo. Warn with the fix; change nothing on disk.
+      const made = worcaNestedRepoOf(dir);
+      if (made) {
+        const hint = worcaNestedRepoHint(dir, made);
+        this._log('git', 'warn', hint);
+        if (this.pipeline) await appendAudit(this.pipeline.dir, `Warning: ${hint}`).catch(() => {});
+      }
     }
     // Is there any commit yet?
     const head = await this._git(['rev-parse', 'HEAD'], { cwd: dir });

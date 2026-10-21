@@ -4,6 +4,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { join, basename, dirname } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { gitDir as makeGitDir } from './helpers/git-dir.mjs';
@@ -258,9 +259,15 @@ test('probeFolder / countFiles: kind, file count, the R8 chips; .git never count
   const repo = gitDir('pcreate-probe');
   assert.deepEqual(await probeFolder(repo), { path: repo, exists: true, isDir: true, vcs: 'git', files: null, filesCapped: false, insideRepo: false, partOf: null });
   const mono = gitDir('pcreate-mono-p'); mkdirSync(join(mono, 'docs')); await addProject({ name: 'mono-p', path: mono });
-  assert.deepEqual(await probeFolder(join(mono, 'docs')), { path: join(mono, 'docs'), exists: true, isDir: true, vcs: 'none', files: null, filesCapped: false, insideRepo: true, partOf: 'mono-p' });
+  assert.deepEqual(await probeFolder(join(mono, 'docs')), { path: join(mono, 'docs'), exists: true, isDir: true, vcs: 'none', files: null, filesCapped: false, insideRepo: true, partOf: 'mono-p', repoRoot: realpathSync(mono) });
   assert.deepEqual(await probeFolder(join(mono, 'docs'), { gitAvailable: () => false }),
-    { path: join(mono, 'docs'), exists: true, isDir: true, vcs: 'none', files: null, filesCapped: false, insideRepo: true, partOf: 'mono-p' }, 'no git: the stat-only walk still finds the repository (S53)');
+    { path: join(mono, 'docs'), exists: true, isDir: true, vcs: 'none', files: null, filesCapped: false, insideRepo: true, partOf: 'mono-p', repoRoot: realpathSync(mono) }, 'no git: the stat-only walk still finds the repository (S53)');
+  // #693: a repository an older worca git-inited inside it: Git, not refused, with the fix text and the root.
+  const made = join(mono, 'made'); mkdirSync(made);
+  for (const a of [['init', '-q'], ['config', 'user.email', 'orchestrator@local']]) spawnSync('git', a, { cwd: made });
+  const pm = await probeFolder(made);
+  assert.deepEqual([pm.vcs, pm.insideRepo, pm.partOf, pm.repoRoot], ['git', false, 'mono-p', realpathSync(mono)]);
+  assert.match(pm.nestedHint, /An older Worca created it\./);
   const gone = { exists: false, isDir: false, vcs: null, files: null, filesCapped: false, insideRepo: false, partOf: null };
   assert.deepEqual(await probeFolder(join(plain, 'nope')), { path: join(plain, 'nope'), ...gone });
   assert.deepEqual(await probeFolder(join(plain, 'a.txt')), { path: join(plain, 'a.txt'), ...gone, exists: true });

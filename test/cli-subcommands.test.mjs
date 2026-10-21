@@ -2,7 +2,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, realpath, mkdir, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname, basename } from 'node:path';
@@ -285,4 +285,19 @@ test('workflow list prepends the graph built-ins (Default, then Memory defragmen
   const ids = r.stdout.trim().split('\n').filter(Boolean).map((l) => l.split('\t')[0]);
   assert.deepEqual(ids.slice(0, 2), ['wf_default', 'wf_memory_defrag'], r.stdout);
   assert.match(r.stdout, /wf_memory_defrag\tMemory defragment\tshared/);
+});
+
+test('#693: a run in a sub-folder of a git repository fails with the clear message; nothing is git-inited', async () => {
+  const home = await freshHome();
+  const outer = mkdtempSync(join(tmpdir(), 'worca-cli-nested-'));
+  const g = (a, cwd = outer) => spawnSync('git', a, { cwd });
+  g(['init', '-q', '-b', 'main']); g(['config', 'user.email', 't@t']); g(['config', 'user.name', 't']);
+  writeFileSync(join(outer, 'o.txt'), 'o\n'); g(['add', '-A']); g(['commit', '-qm', 'init']);
+  const sub = join(outer, 'svc'); mkdirSync(sub);
+  try {
+    const r = await run(['--prompt', 'x'], { home, cwd: sub });
+    assert.notEqual(r.code, 0);
+    assert.match(r.stderr, /svc is inside the git repository at .*Add .* as a project and run there\./);
+    assert.equal(existsSync(join(sub, '.git')), false);
+  } finally { rmSync(outer, { recursive: true, force: true }); }
 });

@@ -76,6 +76,18 @@ test('pure: the default segment, the files label, the detect model', () => {
   assert.deepEqual(detectModel({ projects: [] }), { chips: [], refused: false, useGit: false }, 'an answer without a probe shape is unknown, never a refusal');
 });
 
+test('detectModel (#693): a nested folder offers Add <root> or Open <name>; a worca-made nested repo warns with the fix', () => {
+  assert.deepEqual(detectModel({ ...PROBES['/x/loose/docs'], repoRoot: '/x/loose' }, { git: true }).action,
+    { kind: 'add-root', path: '/x/loose', label: 'Add loose' });
+  assert.deepEqual(detectModel({ ...PROBES['/x/repo/docs'], repoRoot: '/x/repo' }, { git: true }).action,
+    { kind: 'open', name: 'worca-cc', label: 'Open worca-cc' });
+  assert.equal(detectModel(PROBES['/x/loose/docs'], { git: true }).action, undefined, 'no root (a limited viewer): no action');
+  const made = detectModel({ path: '/x/r/svc', exists: true, isDir: true, vcs: 'git', files: null, filesCapped: false,
+    insideRepo: false, partOf: null, repoRoot: '/x/r', nestedHint: 'HINT' }, { git: true });
+  assert.deepEqual(made, { chips: [{ kind: 'git', text: 'Git', tone: '' }, { text: 'Nested repository', tone: 'warn' }],
+    refused: false, useGit: false, note: 'HINT', action: { kind: 'add-root', path: '/x/r', label: 'Add r' } });
+});
+
 test('Add project opens on New (canvas AddNew) — Name, Location from the dry run, Use git off; Create project posts {name}', async () => {
   const R = '/Users/me/.worca-cc/projects';
   const made = { key: 'site-00000001', name: 'site', path: `${R}/site`, displayPath: '~/.worca-cc/projects/site', exists: true, vcs: 'none' };
@@ -127,6 +139,45 @@ test('New: a refusal shows inside the dialog and disables Create; Use git re-che
   assert.equal(calls.filter((c) => c.u.endsWith('/api/projects/create')).at(-1).body.useGit, true, 'the dry run re-checks with Use git on');
   click(window, $(doc, '#proj-add-save')); await tick(); await tick();
   assert.deepEqual(calls.filter((c) => c.u.endsWith('/api/projects/create') && !c.body.dryRun).map((c) => c.body), [{ name: 'ok', useGit: true }]);
+});
+
+test('Folder pane (#693): a nested folder offers "Add <root>", which adds the repository root', async () => {
+  const probes = {
+    '/x/loose/docs': { ...PROBES['/x/loose/docs'], repoRoot: '/x/loose' },
+    '/x/loose': { path: '/x/loose', exists: true, isDir: true, vcs: 'git', files: null, filesCapped: false, insideRepo: false, partOf: null },
+  };
+  const { window, calls } = await boot({ probe: (p) => json(200, probes[p]) });
+  const doc = window.document;
+  await openAdd(window, doc);
+  click(window, $(doc, '#proj-add-tab-folder'));
+  type(window, $(doc, '#proj-add-path'), '/x/loose/docs'); await settle();
+  assert.deepEqual(chips(doc), ['Git', 'Inside a git repository'], 'the detect row is unchanged');
+  const btn = $(doc, '#proj-add-root');
+  assert.equal(btn.hidden, false);
+  assert.equal(btn.textContent, 'Add loose');
+  assert.equal(btn.title, '/x/loose');
+  click(window, btn); await settle();
+  const posts = calls.filter((c) => c.u.endsWith('/api/projects') && c.method === 'POST').map((c) => c.body);
+  assert.deepEqual(posts, [{ name: 'loose', path: '/x/loose' }]);
+});
+
+test('Folder pane (#693): a folder inside a registered project offers "Open <name>"; a plain folder offers nothing', async () => {
+  const probes = {
+    '/x/repo/docs': { ...PROBES['/x/repo/docs'], repoRoot: '/x/repo' },
+    '/x/plain': { path: '/x/plain', exists: true, isDir: true, vcs: 'none', files: 2, filesCapped: false, insideRepo: false, partOf: null },
+  };
+  const { window } = await boot({ probe: (p) => json(200, probes[p]),
+    projects: [{ name: 'worca-cc', path: '/x/repo', key: 'worca-cc-00000001', exists: true, vcs: 'git' }] });
+  const doc = window.document;
+  await openAdd(window, doc);
+  click(window, $(doc, '#proj-add-tab-folder'));
+  type(window, $(doc, '#proj-add-path'), '/x/plain'); await settle();
+  assert.equal($(doc, '#proj-add-root').hidden, true);
+  type(window, $(doc, '#proj-add-path'), '/x/repo/docs'); await settle();
+  assert.equal($(doc, '#proj-add-root').textContent, 'Open worca-cc');
+  click(window, $(doc, '#proj-add-root')); await tick(); await tick();
+  assert.ok(window.location.hash.startsWith('#projects/worca-cc-00000001'), window.location.hash);
+  assert.ok($(doc, '#project-add-modal').classList.contains('hidden'));
 });
 
 test('Folder pane (AddFolder board): Folder · No git · 214 files + Use git; Git; Part of <name> / Inside a git repository / Not found block Add', async () => {

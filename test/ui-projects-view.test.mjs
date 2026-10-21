@@ -842,3 +842,24 @@ test('a 409 DELETE_FOLDER_REQUIRED (an older list) asks again naming the folder;
   const t = lastToast(doc);
   assert.ok(t && `${t.title} ${t.detail}`.includes('could not be deleted (EBUSY)'), JSON.stringify(t));
 });
+test('#693: a worca-made nested repository shows a "Nested repo" badge with the fix, on the list and the page', async () => {
+  const hint = '/Users/me/dev/mono/svc has its own git repository inside your repository at /Users/me/dev/mono. An older Worca created it.';
+  const projects = [PROJECTS[0], { name: 'svc', path: '/Users/me/dev/mono/svc', exists: true, key: 'svc-00000003', nestedRepo: { repoRoot: '/Users/me/dev/mono', hint } }];
+  const { window } = await boot({
+    fetchHandler: (u) => (u.includes('/api/projects') ? Promise.resolve({ ok: true, status: 200, json: async () => ({ projects }) }) : null),
+  });
+  await goProjects(window);
+  const doc = window.document;
+  const rows = [...doc.querySelectorAll('#projects-list .pl-item')];
+  assert.equal(rows[0].querySelector('.proj-nested'), null);
+  const badge = rows[1].querySelector('.proj-nested');
+  assert.equal(badge.textContent, 'Nested repo');
+  assert.equal(badge.title, hint);
+  await goHash(window, 'projects/svc-00000003');
+  assert.ok(doc.querySelector('#proj-detail .pd-title .proj-nested'));
+  const line = doc.querySelector('#proj-detail .pd-nested-hint');
+  assert.equal(line.hidden, false);
+  assert.equal(line.textContent, hint);
+  await goHash(window, 'projects/alpha-00000001');
+  assert.equal(doc.querySelector('#proj-detail .pd-nested-hint').hidden, true);
+});

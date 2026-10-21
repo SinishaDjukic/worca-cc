@@ -840,6 +840,7 @@ const el = {
   projAddNewPane: $('#proj-add-new-pane'),
   projAddLocation: $('#proj-add-location'),
   projAddDetect: $('#proj-add-detect'),
+  projAddRoot: $('#proj-add-root'),
   projAddGitRow: $('#proj-add-git-row'),
   projAddGit: $('#proj-add-git'),
   projCloneUrl: $('#proj-clone-url'),
@@ -12037,6 +12038,16 @@ async function refreshProjectsPage() {
 const CHEVRON_RIGHT_SVG =
   '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>';
 
+/** #693: the "Nested repo" badge (a repository an older worca git-inited inside the user's repository), or null. */
+function nestedRepoBadge(p) {
+  if (!p.nestedRepo) return null;
+  const b = document.createElement('span');
+  b.className = 'proj-missing proj-nested';
+  b.textContent = 'Nested repo';
+  b.title = p.nestedRepo.hint;
+  return b;
+}
+
 function buildProjectRow(p) {
   const item = document.createElement('div');
   item.className = 'pl-item';
@@ -12060,6 +12071,8 @@ function buildProjectRow(p) {
     miss.textContent = 'Missing';
     name.append(' ', miss);
   }
+  const nestedBadge = nestedRepoBadge(p);
+  if (nestedBadge) name.append(' ', nestedBadge);
   const path = document.createElement('div');
   path.className = 'proj-path';
   appendBreakable(path, p.displayPath || p.path);   // a narrow column breaks it after a /, not mid-name
@@ -12769,6 +12782,10 @@ function paintProjHeader(screen, p) {
     miss.textContent = 'Missing';
     title.append(' ', miss);
   }
+  const nestedBadge = nestedRepoBadge(p);
+  if (nestedBadge) title.append(' ', nestedBadge);
+  const nestedHint = screen.querySelector('.pd-nested-hint');
+  if (nestedHint) { nestedHint.hidden = !p.nestedRepo; nestedHint.textContent = p.nestedRepo ? p.nestedRepo.hint : ''; }
   const kc = kindChip(document, projectKind(p));
   screen.querySelector('.pd-kind')?.replaceChildren(...(kc ? [kc] : []));
   const path = screen.querySelector('.pd-path');
@@ -13509,6 +13526,7 @@ function openProjectAddModal(path, { mode = 'folder', onAdded = null } = {}) {
   el.projAddGit.checked = false;
   el.projAddDetect.replaceChildren();
   el.projAddDetect.hidden = true;
+  projAddAction = null; if (el.projAddRoot) el.projAddRoot.hidden = true;
   el.projAddLocation.value = '';
   el.projAddLocation.title = '';
   projAddProbed = null;
@@ -13549,6 +13567,7 @@ let projAddRefused = false;  // the live check refused: Create project / Add pro
 let projAddSeq = 0;          // the live check's sequence: a stale answer is dropped
 let projAddTimer = null;
 let projAddProbed = null;    // the folder path the probe last answered for: Folder's Add waits for it
+let projAddAction = null;   // #693: the Folder pane's Add <root> / Open <name> action, or null
 
 function setProjAddMode(mode) {
   const prev = projAddMode;
@@ -13659,6 +13678,14 @@ function paintProjAddDetect(p) {
   setProjAddRefused(m.refused);
   el.projAddGitRow.hidden = !m.useGit;
   if (!m.useGit) el.projAddGit.checked = false;
+  // #693: a nested folder offers its repository root (or the registered root's page); a worca-made nested repo says how to fix it.
+  projAddAction = m.action || null;
+  if (el.projAddRoot) {
+    el.projAddRoot.hidden = !projAddAction;
+    el.projAddRoot.textContent = projAddAction ? projAddAction.label : '';
+    el.projAddRoot.title = projAddAction?.kind === 'add-root' ? projAddAction.path : '';
+  }
+  if (m.note) setProjAddMsg(m.note);
 }
 
 /** The folder name worca will use for a clone URL (planClone's rule), or '' when the URL does not name one repository.
@@ -14135,6 +14162,24 @@ if (el.projAddSave) {
     setProjAddMsg('');
     scheduleProjAddCheck(0);
   };
+  // #693: "Add <root>" adds the repository root in place of the nested folder (name = the root's folder name; an
+  // error such as a taken name shows in the message line). "Open <name>": the root is a project already.
+  el.projAddRoot?.addEventListener('click', () => {
+    const a = projAddAction;
+    if (!a || projAddBusy) return;
+    if (a.kind === 'add-root') {
+      el.projAddPath.value = a.path;
+      el.projAddName.value = basenameOf(a.path);
+      setProjAddMsg('');
+      setProjAddRefused(false);              // saveProjectAdd probes the root first and stops if that is refused
+      void saveProjectAdd();
+      return;
+    }
+    const p = (state.projects || []).find((x) => x && x.name === a.name);
+    if (!p) return;
+    closeProjectAddModal();
+    window.location.hash = `#projects/${encodeURIComponent(p.key)}`;
+  });
   el.projAddName.addEventListener('input', () => { if (projAddMode === 'new') scheduleProjAddCheck(); });
   el.projAddName.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (!projAddRefused && !el.projAddSave.disabled) void saveProjectAdd(); }
