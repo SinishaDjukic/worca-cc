@@ -49,6 +49,7 @@ import { inheritedTagsAtCreation } from '../core/scheduler.mjs';
 import { cmdRuns } from './runs.mjs';
 import { cmdLogs } from './logs.mjs';
 import { cmdControl } from './control.mjs';
+import { cmdSwitchModel } from './switch-model.mjs';
 import { cmdModels } from './models.mjs';
 import { cmdContainer } from './container.mjs';
 import { cmdExtension } from './extension.mjs';
@@ -303,7 +304,7 @@ Subcommands:
                               Clone a repository into the projects folder and register it.
   list                        List registered projects (tab-separated; missing dirs are flagged).
   remove <name>               Remove a registered project by name (case-insensitive).
-  resume <pipelineId>         Continue a paused pipeline (re-attaches Claude sessions).
+  resume <pipelineId>         Continue a paused pipeline (re-attaches Claude sessions; a stage whose model was switched starts fresh).
     [--ignore-cost-cap]       Resume past this pipeline's cost cap (persists on the run).
     [--past-team-cap]         Continue past a TEAM cap (soft; recorded to team metrics). Add --reason "<why>".
   run --preset <name> --prompt "…"
@@ -315,6 +316,8 @@ Subcommands:
                               --json). -f follows; Ctrl-C detaches, the run continues. See: worca logs help
   stop <id>                   Stop a live or paused run (any unique prefix). See: worca stop help
   pause <id>                  Gracefully pause a live run; resume with: worca resume <id>
+  switch-model <id>           Change a running or paused run's remaining stages' models
+                              (this run only). See: worca switch-model help
   doctor                      Reconcile crashed runs and sweep leftover run roots.
   plugin <cmd> [...]          Manage plugins: add|install|list|update|remove|purge|enable|
                               disable|doctor|link|reimport|init|validate|exec. See: worca plugin help
@@ -3300,7 +3303,7 @@ async function drainMetricsFlushes() {
 
 // ── main ──────────────────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'run', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'extension']);
+const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'run', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'extension', 'switch-model']);
 
 /** Levenshtein distance, two-row. Only ever called on short argv tokens. */
 function editDistance(a, b) {
@@ -3376,6 +3379,7 @@ async function main() {
     if (sub === 'runs') return cmdRuns(rest, { out, c, fail });
     if (sub === 'logs') return cmdLogs(rest, { out, c, fail });
     if (sub === 'stop' || sub === 'pause') return cmdControl(sub, rest, { out, c, fail });
+    if (sub === 'switch-model') return cmdSwitchModel(rest, { out, c, fail });
     if (sub === 'doctor') return cmdDoctor();
     if (sub === 'plugin') return cmdPlugin(rest);
     if (sub === 'marketplace') return cmdMarketplace(rest);

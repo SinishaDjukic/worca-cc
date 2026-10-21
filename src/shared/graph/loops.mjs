@@ -101,6 +101,28 @@ export function classifyLoops(tpl, portsFn) {
   return { loopWireIds, loopInputs, sccOf, launchOrder: condensationTopo(sccs, wires) };
 }
 
+/**
+ * Nodes that can execute more than once: every member of a nontrivial SCC, and a self-wired node.
+ * ALL wires count (unlike `loopWireIds`, which needs a blocking source): any back edge can re-fire a
+ * node. Pure and crash-free — dangling wires are dropped, as in classifyLoops.
+ * @param {{nodes?:object[], wires?:object[]}} tpl  a v2 template, or a manifest's `graph`
+ * @returns {Map<string, number>} on-cycle node id -> its group (SCC index); other nodes are absent
+ */
+export function cycleGroups(tpl) {
+  const ids = [...new Set((Array.isArray(tpl?.nodes) ? tpl.nodes : [])
+    .map((n) => n?.id).filter((id) => typeof id === 'string'))];
+  const known = new Set(ids);
+  const edges = (Array.isArray(tpl?.wires) ? tpl.wires : [])
+    .filter((w) => known.has(w?.from?.node) && known.has(w?.to?.node))
+    .map((w) => ({ from: w.from.node, to: w.to.node }));
+  const selfWired = new Set(edges.filter((e) => e.from === e.to).map((e) => e.from));
+  const groups = new Map();
+  tarjanSccs(ids, edges).forEach((scc, i) => {
+    if (scc.length > 1 || selfWired.has(scc[0])) for (const id of scc) groups.set(id, i);
+  });
+  return groups;
+}
+
 /** Kahn over the condensation: ties break by the component's minimum node id
  *  (members are sorted), which is what makes the launch order reproducible.
  *  Parallel wires collapse to one condensation edge so in-degrees stay balanced. */

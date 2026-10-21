@@ -102,6 +102,7 @@ test('a run gets its target\'s registry copies; a deny rule reaches them and cou
   const orch = createOrchestrator({ projectDir: dir, prompt: 'x', auto: true, claude: { mock: true }, runners: runners(seen), guardrailsId: gr.id });
   assert.equal((await orch.run()).status, 'done');
   assert.deepEqual(serversOf(seen[0]), [`pg_${set.slug}`, `sentry_${set.slug}`]);
+  assert.equal(orch._mcpToolNameLimit, 128, 'servers resolved: a live switch to a 64-limit model warns (switchModels)');
   assert.deepEqual(orch.guardrailPermissionRules.deny, ['mcp__pg__query', `mcp__pg_${set.slug}__query`]);
   assert.equal('mcpOptOut' in orch._buildResumePoint(null), false, 'no opt-out (propose_run, chains, CLI): none rides the resume point');
   const manifest = await readRunManifest(join(orch.getState().pipelineDir));
