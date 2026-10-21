@@ -1,60 +1,65 @@
-// Marketplace, Providers and Models carry the same card surface as Connectors, from theme tokens only.
+// Marketplace and Providers: each list is ONE card holding divided rows (docs/design-system.md › Cards versus divided
+// rows), the .card primitive with no values of its own; the rows keep their divider and are never boxes. The Models
+// page Engines card is a page card, not a flat Settings card, so no view-scoped override is needed.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { JSDOM } from 'jsdom';
+import { renderPluginList, renderOrphanList, renderAvailableList, renderMarketplaceList } from '../ui/public/plugins-view.mjs';
+import { renderProvidersCard } from '../ui/public/bridge-view.mjs';
 
-const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
-const bare = css.replace(/\/\*[\s\S]*?\*\//g, '');
+const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
+const bare = read('ui/public/style.css').replace(/\/\*[\s\S]*?\*\//g, '');
+const rules = [...bare.matchAll(/([^{}]+)\{([^}]*)\}/g)].map((m) => ({ sel: m[1].trim(), body: m[2] }));
+const doc = new JSDOM('<!doctype html><body></body>').window.document;
 
-/** Body of the LAST rule whose selector list contains `selector` (later rules win in the cascade). */
-function lastRuleBody(selector) {
-  let found = null;
-  for (const m of bare.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
-    if (m[1].split(',').map((s) => s.trim().replace(/\s+/g, ' ')).includes(selector)) found = m[2];
+test('Marketplace lists are one .card each, holding divided rows that are not boxes', () => {
+  const mkt = { id: 'demo', name: 'Demo market', url: 'https://example.test/demo', lastSync: { sha: 'abc1234' }, plugins: [{ name: 'gamma', version: '0.1.0' }] };
+  const lists = [
+    renderPluginList([{ name: 'alpha', version: '1.0.0' }, { name: 'beta', version: '2.0.0' }], { doc }),
+    renderOrphanList([{ name: 'ghost', dataDir: '/tmp/ghost' }], { doc }),
+    renderAvailableList([mkt], { doc }),
+    renderMarketplaceList([mkt], { doc }),
+  ];
+  for (const list of lists) {
+    assert.ok(list.classList.contains('card') && list.classList.contains('drows'), list.className);
+    const rows = [...list.children].filter((r) => r.classList.contains('drow'));
+    assert.ok(rows.length > 0, list.className);
+    for (const row of rows) assert.equal(row.classList.contains('card'), false, row.className);
   }
-  return found;
-}
-const noWs = (s) => s.replace(/\s+/g, '');
-
-const ROW_SELECTORS = [
-  '.pl-list > .drow', '.pl-available > .drow', '.pl-mkts > .drow', '.pl-orphans > .drow', '.mv-providers-split > .mv-pv-card',
-];
-const CONNECTORS = noWs(bare.match(/(?:^|\})\s*\.card\s*\{([^}]*)\}/)[1]); // the base .card rule, not a later override
-
-test('Connectors card chrome is the reference (guard so the needles below mean something)', () => {
-  assert.match(CONNECTORS, /background:var\(--panel\)/);
-  assert.match(CONNECTORS, /border:1pxsolidvar\(--line\)/);
-  assert.match(CONNECTORS, /border-radius:var\(--r-card\)/);
 });
 
-for (const sel of ROW_SELECTORS) {
-  test(`${sel} has the Connectors surface from tokens`, () => {
-    const body = noWs(lastRuleBody(sel) || '');
-    assert.match(body, /background:var\(--panel\)/, 'panel background');
-    assert.match(body, /border:1pxsolidvar\(--line\)/, 'hairline --line border on all four sides');
-    assert.match(body, /border-radius:var\(--r-card\)/, 'card radius');
-    assert.doesNotMatch(body, /#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(|\bwhite\b|\bblack\b/i, 'no colour literal');
-  });
-}
-
-test('Models Engines card is a card inside the Models view only', () => {
-  const body = noWs(lastRuleBody('[data-view="models"] .card.settings-card') || '');
-  assert.match(body, /background:var\(--panel\)/);
-  assert.match(body, /border:1pxsolidvar\(--line\)/);
-  assert.match(body, /border-radius:var\(--r-card\)/);
-  assert.match(body, /max-width:none/, 'as wide as the .mv-card list');
-  assert.match(noWs(lastRuleBody('.card.settings-card')), /background:none/, 'Settings cards stay flat');
+test('Providers page: the split list is one .card of divided rows; the Models-view card keeps its head', () => {
+  const split = renderProvidersCard({}, { doc, split: true });
+  assert.ok(split.classList.contains('card') && split.classList.contains('drows') && split.classList.contains('mv-providers-split'));
+  const rows = split.querySelectorAll(':scope > .mv-pv-card');
+  assert.ok(rows.length > 0);
+  for (const r of rows) assert.ok(r.classList.contains('drow') && !r.classList.contains('card'), r.className);
+  assert.ok(renderProvidersCard({}, { doc }).classList.contains('card'));
 });
 
-test('the built-in strips use the card border token, not --line-2', () => {
+test('no rule boxes a list row or restyles a list card: the .card and .drow primitives carry the look', () => {
+  const listSel = /\.(pl-list|pl-orphans|pl-available|pl-mkts|mv-providers-split|plugin-card|pl-avail-card|pl-mkt-row|pl-orphan-row|mv-pv-card)\b/;
+  const boxy = /(^|;)\s*(background|border|border-radius|box-shadow)\s*:/;
+  const bad = rules.filter((r) => listSel.test(r.sel) && !/\s/.test(r.sel.replace(/,\s*/g, ',')) && boxy.test(r.body)).map((r) => r.sel);
+  assert.deepEqual(bad, []);
+  assert.equal(rules.some((r) => r.sel.includes('[data-view="models"]') && r.sel.includes('settings-card')), false, 'no view-scoped Settings card override');
+  assert.ok(rules.some((r) => r.sel === '.card.drows:empty' && /display:none/.test(r.body)), 'an empty list draws no card');
+});
+
+test('the Models Engines card is a page card, full width, not a flat Settings card', () => {
+  const page = new JSDOM(read('ui/public/index.html')).window.document;
+  const card = page.getElementById('engine-settings-card');
+  assert.ok(card.closest('[data-view="models"]'));
+  assert.ok(card.classList.contains('card'));
+  assert.equal(card.classList.contains('settings-card'), false, '.settings-card is the flat, 760px Settings-pane card');
+});
+
+test('the built-in model strips use the card tokens, no colour literal', () => {
   for (const sel of ['.mv-builtin', '.mv-hide-builtin-row']) {
-    const body = noWs(lastRuleBody(sel));
-    assert.match(body, /border-color:var\(--line\)/, sel);
+    const body = rules.filter((r) => r.sel === sel).map((r) => r.body).join(';');
+    assert.match(body, /border:1px solid var\(--line\)/, sel);
     assert.match(body, /background:var\(--panel\)/, sel);
+    assert.doesNotMatch(body, /#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(|\bwhite\b|\bblack\b/i, sel);
   }
-});
-
-test('the new rules come after the .drow base rule, so the surface wins on order', () => {
-  assert.ok(bare.lastIndexOf('.pl-list > .drow') > bare.indexOf('.drow:last-child'));
 });

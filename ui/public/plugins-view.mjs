@@ -55,7 +55,7 @@ function contribSummary(c) {
 // data-channel-key="<plugin>/<id>" so a channel-status WS event can patch it
 // in place.
 export function renderPluginList(plugins, { doc = globalThis.document, channelStatus = [] } = {}) {
-  const root = h(doc, 'div', 'pl-list drows');
+  const root = h(doc, 'div', 'card pl-list drows');
   for (const p of plugins || []) {
     const card = h(doc, 'section', 'drow drow-stack plugin-card');
     card.dataset.name = p.name;
@@ -148,7 +148,7 @@ export function channelBadge(doc, c) {
 // Purge buttons carry data-name + .pl-purge-orphan for app.js's delegated
 // listener. Empty/nullish input -> childless container (app.js skips mounting).
 export function renderOrphanList(orphans, { doc = globalThis.document } = {}) {
-  const root = h(doc, 'div', 'pl-orphans drows');
+  const root = h(doc, 'div', 'card pl-orphans drows');
   root.dataset.minLevel = 'expert';                       // purge of leftover data (docs/ui-levels.md)
   if (!orphans || !orphans.length) return root;
   root.appendChild(h(doc, 'h3', 'pl-orphans-title', 'Leftover data'));
@@ -520,7 +520,7 @@ export function relTime(iso, now = Date.now()) {
 // plugins render a badge instead; a never-synced marketplace renders no button
 // (there is no sha to pin yet — Refresh first).
 export function renderAvailableList(marketplaces, { doc = globalThis.document } = {}) {
-  const root = h(doc, 'div', 'pl-available drows');
+  const root = h(doc, 'div', 'card pl-available drows');
   const mkts = marketplaces || [];
   let cards = 0;
   for (const m of mkts) {
@@ -557,7 +557,7 @@ export function renderAvailableList(marketplaces, { doc = globalThis.document } 
 // Refresh/Remove buttons (data-id). Sync failures surface as .pl-mkt-warning
 // lines; the snapshot stays usable (stale) per spec §4.6.
 export function renderMarketplaceList(marketplaces, { doc = globalThis.document, now = Date.now() } = {}) {
-  const root = h(doc, 'div', 'pl-mkts drows');
+  const root = h(doc, 'div', 'card pl-mkts drows');
   for (const m of marketplaces || []) {
     const row = h(doc, 'div', 'drow drow-stack pl-mkt-row');
     row.dataset.id = m.id;

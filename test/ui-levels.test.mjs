@@ -58,7 +58,7 @@ test('every nav item, Settings tab and card, and detail tab declares an explicit
       const tabs = [...doc.querySelectorAll('#settings-tabs button[data-tab]')];
       assert.ok(tabs.length >= 5);
       for (const b of tabs) assert.match(b.dataset.minLevel || '', LEVEL_RE, `Settings tab "${b.dataset.tab}"`);
-      const cards = [...doc.querySelectorAll('.settings-pane .settings-card, [data-view="models"] .settings-card')];
+      const cards = [...doc.querySelectorAll('.settings-pane .settings-card, #engine-settings-card')];
       assert.ok(cards.length >= 10);
       for (const c of cards) {
         const name = c.id || (c.querySelector('h2') || {}).textContent;
