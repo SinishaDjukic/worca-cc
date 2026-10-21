@@ -972,7 +972,7 @@ export function createAskTools(deps) {
         description: 'Resume a paused or interrupted run now, when the user asks, with its own settings. worca resumes it right after this call and posts a receipt with Revert (= pause). When the run needs the user\'s say-so first — past its cost limit, the team policy, a moved base branch, another engine — this returns ok:false and why, or the chat shows it: ask the user to press Resume on the run card. While the total cost limit is reached no resume starts. Only from your own turn.',
         inputSchema: CHAT_RUN_REF },
       { name: 'propose_stop_run',
-        description: 'Ask to stop a run: puts a warning card in the chat, and the run stops only when the user presses Stop pipeline on it. A stopped run cannot be resumed; its work so far stays on its branch. An interrupted run cannot be stopped (it stays resumable). Never claim a run stopped — the card says so. Only from your own turn.',
+        description: 'Ask to stop a run: puts a warning card in the chat, and the run stops only when the user presses Stop run on it. A stopped run cannot be resumed; its work so far stays on its branch. An interrupted run cannot be stopped (it stays resumable). Never claim a run stopped — the card says so. Only from your own turn.',
         inputSchema: CHAT_RUN_REF },
       { name: 'send_direction',
         description: `Send a short direction to a live or paused run when the user asks ("tell it to skip the docs"): the run reads it at its next step (a paused run when it resumes). Sent right after this call; a receipt shows it and it cannot be taken back. text: at most ${Number(deps.chatActions.directionMaxChars) || 4000} characters. Only from your own turn.`,
@@ -2915,7 +2915,7 @@ export function createAskTools(deps) {
       if (row && row.archived_at) return { ok: false, error: 'the run is archived' };
       if (row && CHAT_DONE.has(String(row.status))) return { ok: false, error: `the run is already ${row.status}` };
       if (row && row.status === 'interrupted') return { ok: false, error: 'an interrupted run cannot be stopped — it stays resumable' };
-      return { ok: true, requested: { kind: 'stop', runId }, note: 'A warning card asks the user; the run stops only when they press Stop pipeline. Never say it stopped.' };
+      return { ok: true, requested: { kind: 'stop', runId }, note: 'A warning card asks the user; the run stops only when they press Stop run. Never say it stopped.' };
     },
     async send_direction(input) {
       const ca = chatOf('send_direction');

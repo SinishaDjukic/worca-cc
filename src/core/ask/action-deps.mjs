@@ -201,7 +201,7 @@ export function createChatActionHost({
     }
   }
 
-  /** The run-stop card's "Stop pipeline" (R7): the same split POST /api/stop makes — a live run stops in place, a paused
+  /** The run-stop card's "Stop run" (R7): the same split POST /api/stop makes — a live run stops in place, a paused
    *  run settles from its saved row; an interrupted one is never stopped. */
   async function stop(card, { actor = 'local' } = {}) {
     const run = runOf(card && (card.pipelineId || card.runId));

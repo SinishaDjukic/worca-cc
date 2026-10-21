@@ -14598,7 +14598,7 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       return res.json({ block });
     }
     if (found.block.card && found.block.card.type === 'run-stop') {
-      // worca Chat P2 (R7): the card IS the stop warning — "Stop pipeline" stops in-process (askChatActions.stop makes
+      // worca Chat P2 (R7): the card IS the stop warning — "Stop run" stops in-process (askChatActions.stop makes
       // POST /api/stop's split); an interrupted run is refused. No event turn: like a run card, the run's own frames
       // and the card say what happened.
       if (body.state !== 'applied' && body.state !== 'declined') return badRequest(res, 'state must be "applied" or "declined"');

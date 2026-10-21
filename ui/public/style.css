@@ -8648,7 +8648,7 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .ask-actcard-stub{color:var(--ink-2);overflow-wrap:anywhere;}
 .ask-stopcard-ident{display:flex;flex-direction:column;gap:2px;min-width:0;}
 .ask-stopcard-title{font-weight:600;color:var(--ink);overflow-wrap:anywhere;}
-.ask-stopcard-branch,.ask-prcard-branch code{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);overflow-wrap:anywhere;}
+.ask-prcard-branch code{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);overflow-wrap:anywhere;}
 .ask-stopcard-copy{padding:8px 10px;border-radius:var(--r-sm);background:var(--red-bg);color:var(--ink);font-size:12.5px;}
 .ask-stopcard-done{font-weight:600;color:var(--ink-2);}
 .ask-prcard-branch{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;min-width:0;}
