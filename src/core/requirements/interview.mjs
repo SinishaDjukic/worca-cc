@@ -33,25 +33,27 @@ const DEFAULTS = Object.freeze({
 });
 
 // Keys of the user settings' `env` block that sign Claude Code in or route its traffic (A1.1 D6).
-const SIGN_IN_ENV_KEYS = new Set(['CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_BEDROCK', 'NODE_EXTRA_CA_CERTS']);
+const SIGN_IN_ENV_KEYS = new Set(['CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_BEDROCK', 'NODE_EXTRA_CA_CERTS']);
 const isSignInEnvKey = (k) => SIGN_IN_ENV_KEYS.has(k) || /^https?_proxy$/i.test(k) || k.startsWith('ANTHROPIC_');
 
 /**
  * Whether the user-level Claude Code settings carry sign-in or network configuration (A1.1 D6): a
- * non-empty `apiKeyHelper`, or an `env` block with CLAUDE_CODE_USE_VERTEX / _BEDROCK, ANTHROPIC_*,
- * HTTP(S)_PROXY (either case) or NODE_EXTRA_CA_CERTS. Then an interview keeps all setting sources, since
+ * non-empty `apiKeyHelper`, `awsAuthRefresh` or `awsCredentialExport`, or an `env` block with CLAUDE_CODE_OAUTH_TOKEN,
+ * CLAUDE_CODE_USE_VERTEX / _BEDROCK, ANTHROPIC_*, HTTP(S)_PROXY (either case) or NODE_EXTRA_CA_CERTS. Then an interview keeps all setting sources, since
  * `--setting-sources project` would drop that file and the call would not be signed in. The file is the
  * one the CLI reads: `settings.json` in CLAUDE_CONFIG_DIR, else in `<home>/.claude` (as
  * skills-registry/host.mjs). Missing, unreadable, invalid or not an object: false. Never throws.
+ * Not seen: a model profile's modelEnv can set CLAUDE_CONFIG_DIR / HOME for the child, which moves the file the CLI
+ * reads; this guard looks at the server's own environment only.
  */
-export function userClaudeSignIn({ env = process.env, home = homedir(), read = (p) => readFileSync(p, 'utf8') } = {}) {
+export function userClaudeSignIn({ env = process.env, home, read = (p) => readFileSync(p, 'utf8') } = {}) {
   try {
     const dir = typeof env?.CLAUDE_CONFIG_DIR === 'string' && env.CLAUDE_CONFIG_DIR.trim()
-      ? env.CLAUDE_CONFIG_DIR.trim() : join(home, '.claude');
+      ? env.CLAUDE_CONFIG_DIR.trim() : join(home ?? homedir(), '.claude');   // homedir() can throw: inside the try
     const raw = String(read(join(dir, 'settings.json')));
     const s = JSON.parse(raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw);   // a leading BOM is tolerated
     if (!s || typeof s !== 'object' || Array.isArray(s)) return false;
-    if (typeof s.apiKeyHelper === 'string' && s.apiKeyHelper !== '') return true;
+    for (const key of ['apiKeyHelper', 'awsAuthRefresh', 'awsCredentialExport']) if (typeof s[key] === 'string' && s[key] !== '') return true;
     const e = s.env;
     return !!e && typeof e === 'object' && !Array.isArray(e) && Object.keys(e).some(isSignInEnvKey);
   } catch { return false; }

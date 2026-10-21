@@ -90,3 +90,44 @@ test('GET /api/workflows/wf_memory_defrag pins the pair of the engine asked for'
   assert.equal(claude.body.pinnedAgentModel, undefined, 'no Claude pair stored: the template\'s own model');
   await post('/api/settings', { utilityModels: { codex: { memoryDefrag: null, title: null } } });
 });
+
+test('POST /api/settings requirementsInterview: stored per user, echoed with its default, cleared by null', async () => {
+  const g = await get('/api/settings');
+  assert.equal(g.body.requirementsInterview, null);
+  assert.match(g.body.requirementsInterviewDefault.model, /^claude-opus-/);
+  assert.equal(g.body.requirementsInterviewDefault.effort, 'medium');
+  const r = await post('/api/settings', { requirementsInterview: { model: g.body.requirementsInterviewDefault.model, effort: 'high' } });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual(r.body.requirementsInterview, { model: g.body.requirementsInterviewDefault.model, effort: 'high' });
+  assert.equal(r.body.requirementsInterviewDefault.effort, 'medium');
+  assert.deepEqual((await get('/api/settings')).body.requirementsInterview, r.body.requirementsInterview);
+  const c = await post('/api/settings', { requirementsInterview: null });
+  assert.equal(c.status, 200);
+  assert.equal(c.body.requirementsInterview, null);
+  assert.equal((await get('/api/settings')).body.requirementsInterview, null);
+});
+
+test('POST /api/settings requirementsInterview: unknown model, Codex model and a bad effort are 400s naming the field', async () => {
+  for (const value of [{ model: 'no-such-model-xyz' }, { model: 'gpt-5.5' }, { effort: 'low' }]) {
+    const r = await post('/api/settings', { requirementsInterview: value });
+    assert.equal(r.status, 400, JSON.stringify(value));
+    assert.match(r.body.field, /^requirementsInterview(.effort)?$/, JSON.stringify(r.body));
+  }
+  assert.equal((await get('/api/settings')).body.requirementsInterview, null, 'nothing was written');
+});
+
+test('POST /api/settings requirementsInterview: an effort the model does not offer is refused', async () => {
+  const { listModels } = await import('../src/core/config.mjs');
+  const m = (await listModels('')).find((x) => /^claude-/.test(x.id) && Array.isArray(x.efforts) && x.efforts.length && x.efforts.length < 4);
+  if (!m) return;   // every Claude catalog model offers every effort
+  const missing = ['medium', 'high', 'xhigh', 'max'].find((e) => !m.efforts.includes(e));
+  const r = await post('/api/settings', { requirementsInterview: { model: m.id, effort: missing } });
+  assert.equal(r.status, 400);
+  assert.equal(r.body.field, 'requirementsInterview');
+});
+
+test('POST /api/settings requirementsInterview: a change emits settings-changed', async () => {
+  const src = (await import('node:fs')).readFileSync(new URL('../ui/server.mjs', import.meta.url), 'utf8');
+  assert.match(src, /hasRequirementsInterviewKey \|\|[^\n]*emitChanged\('settings-changed'\)|emitChanged\('settings-changed'\)[^\n]*/, 'wired');
+  assert.match(src, /if \([^\n]*hasRequirementsInterviewKey[^\n]*\) emitChanged\('settings-changed'\)/);
+});

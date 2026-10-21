@@ -132,3 +132,34 @@ test('memory defragment and workspace scan follow their own run\'s engine', asyn
   assert.deepEqual(utilityModelFor('codex', 'workspaceScan', scopeForRunKey('workspaces/wks-x-deadbeef')), { model: 'gpt-5.6-luna', effort: null, source: 'user' });
   rmSync(projectDir, { recursive: true, force: true });
 });
+
+test('requirementsInterview: the stored pair resolves through utilityModelFor on Claude only, user-only, unlisted', async () => {
+  const { settingEntry, settingIds, assertProjectSettingsPatch } = await import('../src/core/settings-cascade.mjs');
+  assert.deepEqual(utilityModelFor('claude', 'requirementsInterview'), { model: null, effort: null, source: 'default' });
+  writeUser({ requirementsInterview: { model: 'claude-opus-5-5', effort: 'high' } });
+  assert.deepEqual(utilityModelFor('claude', 'requirementsInterview'), { model: 'claude-opus-5-5', effort: 'high', source: 'user' });
+  writeUser({ requirementsInterview: { effort: 'max' } });
+  assert.deepEqual(utilityModelFor('claude', 'requirementsInterview'), { model: null, effort: 'max', source: 'user' });
+  assert.deepEqual(utilityModelFor('codex', 'requirementsInterview'), { model: null, effort: null, source: 'default' });
+  assert.equal(settingEntry('models.claude.requirementsInterview').userOnly, true);
+  assert.throws(() => assertProjectSettingsPatch({ 'models.claude.requirementsInterview': { model: 'claude-opus-5-5' } }), /is set per user/);
+  assert.ok(!settingIds({ roles: ['planner'] }).some((id) => /requirementsInterview/.test(id)));
+});
+
+test('requirementsInterview: assertRequirementsInterviewInput and the codex job refusal', async () => {
+  const { assertRequirementsInterviewInput, assertUtilityModelsInput, UTILITY_JOBS } = await import('../src/core/settings.mjs');
+  const { settingsErrorReply } = await import('../src/core/settings-errors.mjs');
+  assert.deepEqual(assertRequirementsInterviewInput({ model: 'claude-opus-5-5' }), { model: 'claude-opus-5-5' });
+  assert.deepEqual(assertRequirementsInterviewInput({ effort: 'high' }), { effort: 'high' });
+  assert.deepEqual(assertRequirementsInterviewInput({ model: 'claude-opus-5-5', effort: 'xhigh' }), { model: 'claude-opus-5-5', effort: 'xhigh' });
+  assert.equal(assertRequirementsInterviewInput(null), null);
+  assert.throws(() => assertRequirementsInterviewInput({ effort: 'low' }), /effort must be one of/);
+  assert.throws(() => assertRequirementsInterviewInput({ model: 'x', foo: 1 }), /unknown field "foo"/);
+  assert.ok(!UTILITY_JOBS.includes('requirementsInterview'));
+  let err;
+  try { assertUtilityModelsInput({ codex: { requirementsInterview: { model: 'gpt-5.5' } } }); } catch (e) { err = e; }
+  assert.match(err.message, /unknown job "requirementsInterview"/);
+  const reply = settingsErrorReply(err, 'utilityModels');
+  assert.equal(reply.error, 'The requirements interview runs on Claude: set it on the Claude tab.');
+  assert.equal(reply.field, 'utilityModels');
+});

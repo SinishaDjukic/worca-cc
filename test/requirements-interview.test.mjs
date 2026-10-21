@@ -784,6 +784,18 @@ test('userClaudeSignIn: an apiKeyHelper or a sign-in / network env key in the us
   assert.equal(userClaudeSignIn({ env: {}, home: signInHome(`${String.fromCharCode(0xFEFF)}${JSON.stringify({ apiKeyHelper: 'x' })}`) }), true, 'a leading BOM is tolerated');
 });
 
+test('userClaudeSignIn: an OAuth token in env, awsAuthRefresh and awsCredentialExport also mean keep them', () => {
+  assert.equal(userClaudeSignIn({ env: {}, home: signInHome({ env: { CLAUDE_CODE_OAUTH_TOKEN: 't' } }) }), true);
+  assert.equal(userClaudeSignIn({ env: {}, home: signInHome({ awsAuthRefresh: 'aws sso login' }) }), true);
+  assert.equal(userClaudeSignIn({ env: {}, home: signInHome({ awsCredentialExport: 'aws configure export-credentials' }) }), true);
+  assert.equal(userClaudeSignIn({ env: {}, home: signInHome({ awsAuthRefresh: '', awsCredentialExport: 3 }) }), false, 'empty or not a string');
+});
+
+test('userClaudeSignIn: no home argument resolves homedir() inside the guard and never throws', () => {
+  assert.equal(typeof userClaudeSignIn({ env: {}, read: () => { throw new Error('ENOENT'); } }), 'boolean');
+  assert.equal(userClaudeSignIn({ env: {}, read: () => { throw new Error('ENOENT'); } }), false);
+});
+
 test('userClaudeSignIn: nothing to keep for other keys, an empty helper, no file, invalid JSON or not an object; never throws', () => {
   const cases = [[{ env: { FOO: '1' } }, 'other env key'], [{}, 'empty object'], [{ apiKeyHelper: '' }, 'empty helper'],
     [undefined, 'no file'], ['{ not json', 'invalid JSON'], [[{ apiKeyHelper: 'x' }], 'a JSON array'], [{ env: ['ANTHROPIC_BASE_URL'] }, 'env not an object']];
