@@ -121,7 +121,7 @@ test('runClaude systemPromptMode replace: --system-prompt starts with the preamb
   const argvFile = join(dir, 'argv.txt');
   const envFile = join(dir, 'env.txt');
   const bin = await fakeBin(dir, argvFile, envFile);
-  await withEnv({ WORCA_MOCK: undefined, ORCH_MOCK: undefined },
+  await withEnv({ WORCA_MOCK: undefined, ORCH_MOCK: undefined, WORCA_HOST_GUARD: undefined, WORCA_BROKER_URL: undefined },
     () => runClaude({ cwd: dir, prompt: 'hi', systemPrompt: 'SYS', systemPromptMode: 'replace', bin }));
   const argv = (await readFile(argvFile, 'utf8')).split('\0');
   assert.ok(!argv.includes('--append-system-prompt'), 'no append flag when replacing');
@@ -136,7 +136,7 @@ test('runClaude systemPromptMode replace: --system-prompt starts with the preamb
 test('runClaude systemPromptMode replace reaches the spawn argv with the preamble at its head (spawn-debug, any OS)', async () => {
   const dir = await tmp();
   const events = [];
-  await withEnv({ WORCA_MOCK: undefined, ORCH_MOCK: undefined, WORCA_DEBUG_SPAWN: '1' }, async () => {
+  await withEnv({ WORCA_MOCK: undefined, ORCH_MOCK: undefined, WORCA_HOST_GUARD: undefined, WORCA_BROKER_URL: undefined, WORCA_DEBUG_SPAWN: '1' }, async () => {
     await assert.rejects(runClaude({
       cwd: dir, prompt: 'hi', systemPrompt: 'SYS', systemPromptMode: 'replace',
       bin: join(dir, 'no-such-claude'), onEvent: (e) => events.push(e),
@@ -144,7 +144,9 @@ test('runClaude systemPromptMode replace reaches the spawn argv with the preambl
   });
   const line = events.find((e) => e.type === 'stderr' && /spawn-debug/.test(e.text))?.text;
   assert.ok(line, `spawn-debug line emitted: ${JSON.stringify(events)}`);
-  const argv = JSON.parse(line.match(/argv=(\[.*?\]) promptViaStdin/)[1]);
+  const m = line.match(/argv=(\[.*?\]) promptViaStdin/);
+  assert.ok(m, `spawn-debug line carries the argv: ${line}`);
+  const argv = JSON.parse(m[1]);
   assert.ok(!argv.includes('--append-system-prompt'));
   const i = argv.indexOf('--system-prompt');
   assert.ok(i > -1, JSON.stringify(argv));

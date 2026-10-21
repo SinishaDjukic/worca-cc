@@ -3,7 +3,8 @@
 // through the classifier's repo look (D7), then rounds that are single tool-less model calls. One job
 // per feature at a time; a job never throws out — a failure becomes an `error` turn and the feature goes
 // back to the product owner. Spend is checked before every call and booked after it (D9).
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { runClaude, mockEnabled } from '../claude-runner.mjs';
 import { normalizingOnEvent } from '../engines/claude-events.mjs';
@@ -28,7 +29,44 @@ export const ROUND_TIMEOUT_MS = 180_000;
 const DEFAULTS = Object.freeze({
   runClaudeImpl: runClaude, listModels, listProjects, workspaceTarget,
   openLook: openRepoLook, openWorkspaceLook: openWorkspaceRepoLook, budget: () => budgetStatus(), onChange: () => {},
+  userSignIn: () => userSignInLogged(),
 });
+
+// Keys of the user settings' `env` block that sign Claude Code in or route its traffic (A1.1 D6).
+const SIGN_IN_ENV_KEYS = new Set(['CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_BEDROCK', 'NODE_EXTRA_CA_CERTS']);
+const isSignInEnvKey = (k) => SIGN_IN_ENV_KEYS.has(k) || /^https?_proxy$/i.test(k) || k.startsWith('ANTHROPIC_');
+
+/**
+ * Whether the user-level Claude Code settings carry sign-in or network configuration (A1.1 D6): a
+ * non-empty `apiKeyHelper`, or an `env` block with CLAUDE_CODE_USE_VERTEX / _BEDROCK, ANTHROPIC_*,
+ * HTTP(S)_PROXY (either case) or NODE_EXTRA_CA_CERTS. Then an interview keeps all setting sources, since
+ * `--setting-sources project` would drop that file and the call would not be signed in. The file is the
+ * one the CLI reads: `settings.json` in CLAUDE_CONFIG_DIR, else in `<home>/.claude` (as
+ * skills-registry/host.mjs). Missing, unreadable, invalid or not an object: false. Never throws.
+ */
+export function userClaudeSignIn({ env = process.env, home = homedir(), read = (p) => readFileSync(p, 'utf8') } = {}) {
+  try {
+    const dir = typeof env?.CLAUDE_CONFIG_DIR === 'string' && env.CLAUDE_CONFIG_DIR.trim()
+      ? env.CLAUDE_CONFIG_DIR.trim() : join(home, '.claude');
+    const raw = String(read(join(dir, 'settings.json')));
+    const s = JSON.parse(raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw);   // a leading BOM is tolerated
+    if (!s || typeof s !== 'object' || Array.isArray(s)) return false;
+    if (typeof s.apiKeyHelper === 'string' && s.apiKeyHelper !== '') return true;
+    const e = s.env;
+    return !!e && typeof e === 'object' && !Array.isArray(e) && Object.keys(e).some(isSignInEnvKey);
+  } catch { return false; }
+}
+
+let signInLogged = false;
+/** The default `userSignIn`: the check, and the first time it keeps the user settings, one log line. */
+function userSignInLogged() {
+  const keep = userClaudeSignIn();
+  if (keep && !signInLogged) {
+    signInLogged = true;
+    console.warn('[worca] requirements: user Claude settings carry sign-in; keeping them for interviews');
+  }
+  return keep;
+}
 
 /** At most this many requirements jobs (looks and rounds, across all features) run at once. */
 export const MAX_JOBS = 4;
@@ -114,9 +152,12 @@ const CALL_KEYS = new Set(['cwd', 'prompt', 'model', 'systemPrompt', 'tools', 'm
 /**
  * The runClaude options of one interview call, without `signal` / `onEvent` (design §9, the lane contract).
  * `kind` is 'look' or 'round'; systemPrompt, tools, maxTurns and effort override that kind's defaults.
+ * Every call, whatever the overrides, replaces Claude Code's system prompt with Worca's and turns slash
+ * commands off; it also loads only the project's setting sources (no user plugins, hooks or skills,
+ * A1.1 D6) unless `keepUserSettings` (the user settings carry sign-in: `userClaudeSignIn`).
  * The measurement tool builds its calls through this too, so what it measures is what the interview sends.
  */
-export function interviewCallOptions(kind, args = {}) {
+export function interviewCallOptions(kind, args = {}, { keepUserSettings = false } = {}) {
   if (!Object.hasOwn(CALL_KINDS, kind)) throw new TypeError(`interviewCallOptions: unknown kind ${JSON.stringify(kind)}`);
   for (const k of Object.keys(args)) if (!CALL_KEYS.has(k)) throw new TypeError(`interviewCallOptions: unknown option "${k}"`);
   const def = CALL_KINDS[kind]();
@@ -126,8 +167,9 @@ export function interviewCallOptions(kind, args = {}) {
   if (!Array.isArray(tools)) throw new TypeError('interviewCallOptions: tools must be an array');
   const maxTurns = pick('maxTurns');
   return {
-    cwd, systemPrompt: pick('systemPrompt'), prompt, model, modelEnv: resolveModelEnv(model),
+    cwd, systemPrompt: pick('systemPrompt'), systemPromptMode: 'replace', prompt, model, modelEnv: resolveModelEnv(model),
     allowedTools: [...tools], tools: [...tools], strictMcpConfig: true,
+    ...(keepUserSettings ? {} : { settingSources: ['project'] }), disableSlashCommands: true,
     ...(maxTurns ? { maxTurns } : {}),
     effort: args.effort !== undefined ? args.effort : 'medium', permissionMode: 'acceptEdits',
     spawnKind: 'aux',   // credential broker: a short-lived token, as pr-description.mjs
@@ -135,7 +177,9 @@ export function interviewCallOptions(kind, args = {}) {
 }
 
 export async function callModel(d, { kind, cwd, prompt, model, timeoutMs, ...overrides }) {
-  const options = interviewCallOptions(kind, { cwd, prompt, model, ...overrides });
+  // Read per call, so a changed user settings file applies without a restart (D6).
+  const keepUserSettings = !!(d.userSignIn || DEFAULTS.userSignIn)();
+  const options = interviewCallOptions(kind, { cwd, prompt, model, ...overrides }, { keepUserSettings });
   const ctrl = new AbortController();
   let timedOut = false;
   const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, timeoutMs);
@@ -187,7 +231,7 @@ async function orient(f, d) {
     if (isArchived(f.seq)) return { summary: '', files: [], skipped: 'archived' };
     const { text, costUsd } = await callModel(d, {
       kind: 'look', cwd: look.cwd,
-      prompt: buildOrientationPrompt({ feature: f, context: ctx.body, members: look.members || null }),
+      prompt: buildOrientationPrompt({ feature: f, context: ctx.body, members: look.members || null, cwd: look.cwd }),
       model, timeoutMs: REPO_LOOK_TIMEOUT_MS,
     });
     return { ...normalizeOrientation(safeParseJson(text)), skipped: null, model: model || null, costUsd };

@@ -1,7 +1,7 @@
 // test/requirements-interview.test.mjs — orientation + rounds with a fake runner; never a real claude (design §4, D7-D9, D13).
 import { test, after, beforeEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
@@ -9,6 +9,7 @@ import { createFeature, getFeature, listTurns, updateFeature, appendTurn, setCon
 import { REPO_LOOK_TOOLS, REPO_LOOK_MAX_TURNS, REPO_LOOK_TIMEOUT_MS } from '../src/core/auto/classify.mjs';
 import {
   startOrientation, submitAnswers, finishInterview, followUp, retry, settled, isBusy, recoverInterrupted, requirementsModel, MAX_JOBS, interviewCallOptions, callModel,
+  userClaudeSignIn,
 } from '../src/core/requirements/interview.mjs';
 import { requirementsWindowedSpendUsd } from '../src/core/cost-budget.mjs';
 import { ROUND_SYSTEM_PROMPT, ORIENTATION_SYSTEM_PROMPT } from '../src/core/requirements/round.mjs';
@@ -52,6 +53,7 @@ function deps(runner, extra = {}) {
     openLook: async () => ({ cwd: repoDir, close: async () => { closed.push('look'); } }),
     openWorkspaceLook: async () => null,
     onChange: () => {},
+    userSignIn: () => false,   // the hermetic branch unless a test says otherwise (never the real user settings)
     ...extra,
   };
 }
@@ -649,23 +651,39 @@ test('follow-up: refused (CONFLICT) while a round\'s questions are waiting; noth
   assert.equal(isBusy(f.seq), false);
 });
 
-// ── the one call path (A1.1 Task 1): the options are A2's, written out so every later change is deliberate ──
-test('interviewCallOptions: a look is exactly what A2 sent', () => {
+// ── the one call path (A1.1 Task 1): the options written out, so every change is deliberate ──
+// Task 3: A2's options plus Worca's own system prompt (replace mode) and the hermetic flags.
+test('interviewCallOptions: a look is A2\'s options, replace mode and the hermetic flags', () => {
   assert.deepEqual(interviewCallOptions('look', { cwd: '/c', prompt: 'P', model: 'm1' }), {
-    cwd: '/c', systemPrompt: ORIENTATION_SYSTEM_PROMPT, prompt: 'P', model: 'm1', modelEnv: undefined,
+    cwd: '/c', systemPrompt: ORIENTATION_SYSTEM_PROMPT, systemPromptMode: 'replace', prompt: 'P', model: 'm1', modelEnv: undefined,
     allowedTools: [...REPO_LOOK_TOOLS], tools: [...REPO_LOOK_TOOLS], strictMcpConfig: true,
+    settingSources: ['project'], disableSlashCommands: true,
     maxTurns: REPO_LOOK_MAX_TURNS, effort: 'medium', permissionMode: 'acceptEdits', spawnKind: 'aux',
   });
 });
 
-test('interviewCallOptions: a round is exactly what A2 sent (no tools, no maxTurns)', () => {
+test('interviewCallOptions: a round is A2\'s options (no tools, no maxTurns), replace mode and the hermetic flags', () => {
   const o = interviewCallOptions('round', { cwd: '/c', prompt: 'P', model: 'm1' });
   assert.deepEqual(o, {
-    cwd: '/c', systemPrompt: ROUND_SYSTEM_PROMPT, prompt: 'P', model: 'm1', modelEnv: undefined,
+    cwd: '/c', systemPrompt: ROUND_SYSTEM_PROMPT, systemPromptMode: 'replace', prompt: 'P', model: 'm1', modelEnv: undefined,
     allowedTools: [], tools: [], strictMcpConfig: true,
+    settingSources: ['project'], disableSlashCommands: true,
     effort: 'medium', permissionMode: 'acceptEdits', spawnKind: 'aux',
   });
   assert.equal('maxTurns' in o, false);
+});
+
+test('interviewCallOptions: keepUserSettings drops only settingSources; replace mode and no slash commands stay, whatever the overrides', () => {
+  for (const kind of ['look', 'round']) {
+    const kept = interviewCallOptions(kind, { cwd: '/c', prompt: 'P', model: 'm1', systemPrompt: 'B', tools: ['Read'], maxTurns: 3, effort: 'low' }, { keepUserSettings: true });
+    assert.equal('settingSources' in kept, false, kind);
+    assert.equal(kept.systemPromptMode, 'replace', kind);
+    assert.equal(kept.disableSlashCommands, true, kind);
+    const herm = interviewCallOptions(kind, { cwd: '/c', prompt: 'P', systemPrompt: 'B' }, { keepUserSettings: false });
+    assert.deepEqual(herm.settingSources, ['project'], kind);
+    assert.equal(herm.systemPromptMode, 'replace', kind);
+    assert.equal(herm.disableSlashCommands, true, kind);
+  }
 });
 
 test('interviewCallOptions: unknown kind and unknown keys throw TypeError', () => {
@@ -686,7 +704,7 @@ test('interviewCallOptions: overrides replace the kind defaults', () => {
 
 test('callModel: sends the built options plus signal and onEvent, and books the cost', async () => {
   const seen = [];
-  const d = { runClaudeImpl: async (opts) => {
+  const d = { userSignIn: () => false, runClaudeImpl: async (opts) => {
     seen.push(opts);
     opts.onEvent({ type: 'result', raw: { type: 'result', total_cost_usd: 0.25, result: 'x' }, costUsd: 0.25 });
     return { text: 'x' };
@@ -696,4 +714,108 @@ test('callModel: sends the built options plus signal and onEvent, and books the 
   const { signal, onEvent, ...rest } = seen[0];
   assert.ok(signal && typeof onEvent === 'function');
   assert.deepEqual(rest, interviewCallOptions('round', { cwd: '/c', prompt: 'P', model: 'm1' }));
+});
+
+// ── A1.1 Task 3: Worca's own system prompt, and no user plugins in a call ──
+test('both calls replace the system prompt and are hermetic; the look keeps its tools and names its directory', async () => {
+  const f = newFeature();
+  const r = fakeRunner([{ summary: 'Orders have a status.', files: [] }, ROUND1]);
+  await startOrientation(f.seq, {}, deps(r));
+  await settled(f.seq);
+  assert.equal(r.calls.length, 2);
+  for (const c of r.calls) {
+    assert.equal(c.systemPromptMode, 'replace');
+    assert.deepEqual(c.settingSources, ['project']);
+    assert.equal(c.disableSlashCommands, true);
+  }
+  assert.equal(r.calls[0].systemPrompt, ORIENTATION_SYSTEM_PROMPT);
+  assert.deepEqual(r.calls[0].tools, [...REPO_LOOK_TOOLS]);
+  assert.equal(r.calls[0].maxTurns, REPO_LOOK_MAX_TURNS);
+  assert.ok(r.calls[0].prompt.includes(`The working directory, ${repoDir}, is a checkout of the project.`), 'the look prompt names repoDir');
+  assert.equal(r.calls[1].systemPrompt, ROUND_SYSTEM_PROMPT);
+  assert.deepEqual(r.calls[1].tools, []);
+  assert.equal('maxTurns' in r.calls[1], false);
+});
+
+test('A7\'s brief call shape (a look with its own prompt, 40 turns, high effort) keeps replace mode, the hermetic flags and the look tools', async () => {
+  const r = fakeRunner(['{}']);
+  await callModel(deps(r), { kind: 'look', cwd: repoDir, prompt: 'P', model: 'm1', timeoutMs: 5000, systemPrompt: 'BRIEF', maxTurns: 40, effort: 'high' });
+  const c = r.calls[0];
+  assert.equal(c.systemPrompt, 'BRIEF');
+  assert.equal(c.systemPromptMode, 'replace');
+  assert.deepEqual(c.settingSources, ['project']);
+  assert.equal(c.disableSlashCommands, true);
+  assert.deepEqual(c.tools, [...REPO_LOOK_TOOLS]);
+  assert.equal(c.maxTurns, 40);
+  assert.equal(c.effort, 'high');
+});
+
+test('deps.userSignIn true: no settingSources on either call, still replace mode and no slash commands; false: project only', async () => {
+  const f = newFeature();
+  const r = fakeRunner([{ summary: 'x', files: [] }, ROUND1]);
+  await startOrientation(f.seq, {}, deps(r, { userSignIn: () => true }));
+  await settled(f.seq);
+  assert.equal(r.calls.length, 2);
+  for (const c of r.calls) {
+    assert.equal('settingSources' in c, false);
+    assert.equal(c.disableSlashCommands, true);
+    assert.equal(c.systemPromptMode, 'replace');
+  }
+  const r2 = fakeRunner(['{}']);
+  await callModel(deps(r2, { userSignIn: () => false }), { kind: 'round', cwd: repoDir, prompt: 'P', model: 'm1', timeoutMs: 5000 });
+  assert.deepEqual(r2.calls[0].settingSources, ['project']);
+});
+
+/** A temp home whose .claude/settings.json holds `body` (a string is written as is; undefined writes nothing). */
+function signInHome(body) {
+  const home = mkdtempSync(join(tmpdir(), 'req-signin-'));
+  if (body !== undefined) {
+    mkdirSync(join(home, '.claude'));
+    writeFileSync(join(home, '.claude', 'settings.json'), typeof body === 'string' ? body : JSON.stringify(body));
+  }
+  return home;
+}
+
+test('userClaudeSignIn: an apiKeyHelper or a sign-in / network env key in the user settings means keep them', () => {
+  assert.equal(userClaudeSignIn({ env: {}, home: signInHome({ apiKeyHelper: 'cat /run/secrets/key' }) }), true);
+  for (const key of ['ANTHROPIC_BASE_URL', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_BEDROCK', 'HTTPS_PROXY', 'http_proxy', 'NODE_EXTRA_CA_CERTS']) {
+    assert.equal(userClaudeSignIn({ env: {}, home: signInHome({ env: { [key]: '1' } }) }), true, key);
+  }
+  assert.equal(userClaudeSignIn({ env: {}, home: signInHome(`${String.fromCharCode(0xFEFF)}${JSON.stringify({ apiKeyHelper: 'x' })}`) }), true, 'a leading BOM is tolerated');
+});
+
+test('userClaudeSignIn: nothing to keep for other keys, an empty helper, no file, invalid JSON or not an object; never throws', () => {
+  const cases = [[{ env: { FOO: '1' } }, 'other env key'], [{}, 'empty object'], [{ apiKeyHelper: '' }, 'empty helper'],
+    [undefined, 'no file'], ['{ not json', 'invalid JSON'], [[{ apiKeyHelper: 'x' }], 'a JSON array'], [{ env: ['ANTHROPIC_BASE_URL'] }, 'env not an object']];
+  for (const [body, why] of cases) assert.equal(userClaudeSignIn({ env: {}, home: signInHome(body) }), false, why);
+  assert.equal(userClaudeSignIn({ env: {}, home: signInHome({ apiKeyHelper: 'x' }), read: () => { throw new Error('EACCES'); } }), false, 'unreadable');
+});
+
+test('userClaudeSignIn: CLAUDE_CONFIG_DIR (trimmed) moves the file off <home>/.claude', () => {
+  const home = signInHome({});
+  const other = signInHome({ apiKeyHelper: 'x' });
+  assert.equal(userClaudeSignIn({ env: {}, home }), false);
+  assert.equal(userClaudeSignIn({ env: { CLAUDE_CONFIG_DIR: ` ${join(other, '.claude')} ` }, home }), true);
+  assert.equal(userClaudeSignIn({ env: { CLAUDE_CONFIG_DIR: '   ' }, home: other }), true, 'blank: back to <home>/.claude');
+});
+
+test('the default userSignIn reads the user settings per call and logs the keep line once per process', async () => {
+  const prev = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = join(signInHome({ apiKeyHelper: 'cat /run/secrets/key' }), '.claude');
+  const warn = mock.method(console, 'warn', () => {});
+  try {
+    const f = newFeature();
+    const r = fakeRunner([{ summary: 'x', files: [] }, ROUND1]);
+    const d = deps(r);
+    delete d.userSignIn;   // the module default
+    await startOrientation(f.seq, {}, d);
+    await settled(f.seq);
+    assert.equal(r.calls.length, 2);
+    for (const c of r.calls) assert.equal('settingSources' in c, false);
+    const lines = warn.mock.calls.map((c) => c.arguments[0]).filter((a) => /requirements: user Claude settings/.test(a));
+    assert.deepEqual(lines, ['[worca] requirements: user Claude settings carry sign-in; keeping them for interviews']);
+  } finally {
+    warn.mock.restore();
+    if (prev === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = prev;
+  }
 });

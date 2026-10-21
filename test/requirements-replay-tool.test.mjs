@@ -10,6 +10,7 @@ import {
   main, loadFixture, replayPlan, splitCost, summarize, compareReports, measureCall,
 } from '../tools/requirements-replay.mjs';
 import { REPO_LOOK_TOOLS } from '../src/core/auto/classify.mjs';
+import { ROUND_SYSTEM_PROMPT } from '../src/core/requirements/round.mjs';
 
 useTempHome(after);
 const work = mkdtempSync(join(tmpdir(), 'req-replay-'));
@@ -251,4 +252,59 @@ test('a call without a result frame is not ok; --yes without a resolvable model 
   assert.equal(await main(['--yes'], { spawn: f.spawn, log, env: noMock, resolveModel: async () => undefined }), 2);
   assert.match(lines.join('\n'), /--model/);
   assert.equal(f.calls.length, 0);
+});
+
+// ── A1.1 Task 3: the calls are the interview's (replace mode, hermetic), and the system-stable variant ──
+test('replayPlan: every call is replace mode and hermetic unless the user settings carry sign-in; the look names its directory', () => {
+  const plan = replayPlan(FIXTURE, { rounds: 2, lookDir: work, roundCwd: work, model: MODEL });
+  for (const c of plan) {
+    assert.equal(c.options.systemPromptMode, 'replace');
+    assert.deepEqual(c.options.settingSources, ['project']);
+    assert.equal(c.options.disableSlashCommands, true);
+  }
+  assert.ok(plan[0].options.prompt.includes(`The working directory, ${work}, is a checkout of the project.`));
+  for (const c of replayPlan(FIXTURE, { rounds: 2, lookDir: work, roundCwd: work, model: MODEL, keepUserSettings: true })) {
+    assert.equal('settingSources' in c.options, false);
+    assert.equal(c.options.disableSlashCommands, true);
+  }
+});
+
+test('replayPlan --variant system-stable: the stable blocks move into the system prompt; the look is unchanged', () => {
+  const plain = replayPlan(FIXTURE, { rounds: 3, lookDir: work, roundCwd: work, model: MODEL });
+  const plan = replayPlan(FIXTURE, { rounds: 3, lookDir: work, roundCwd: work, model: MODEL, variant: 'system-stable' });
+  assert.deepEqual(plan[0].options, plain[0].options, 'the look call is unchanged');
+  for (const c of plan.slice(1)) {
+    assert.ok(c.options.systemPrompt.startsWith(`${ROUND_SYSTEM_PROMPT}\n\n<feature id=`), `round ${c.round}`);
+    for (const tag of ['<feature id=', '<description>', '<project_context>', '<what_worca_found_in_the_code>']) {
+      assert.ok(c.options.systemPrompt.includes(tag), `${tag} in the system prompt`);
+      assert.ok(!c.options.prompt.includes(tag), `${tag} not in the prompt`);
+    }
+    assert.match(c.options.prompt, /^<thread>\n/);
+    assert.equal(c.options.systemPromptMode, 'replace');
+  }
+  assert.equal(plan[2].options.systemPrompt, plan[3].options.systemPrompt, 'one system prompt across rounds');
+  const p = plain[2].options.prompt;
+  assert.equal(`${plan[2].options.systemPrompt.slice(ROUND_SYSTEM_PROMPT.length + 2)}\n\n${plan[2].options.prompt}`, p, 'the same text, split');
+  assert.throws(() => replayPlan(FIXTURE, { rounds: 1, roundCwd: work, model: MODEL, variant: 'nope' }));
+});
+
+test('--variant system-stable and the kept user settings are recorded in the report; an unknown variant is a usage error', async () => {
+  const { log } = logger();
+  const f = fakeSpawn();
+  const out = join(work, 'variant.json');
+  const code = await main(['--rounds', '2', '--model', MODEL, '--yes', '--variant', 'system-stable', '--out', out],
+    { spawn: f.spawn, log, env: noMock, userSignIn: () => true });
+  assert.equal(code, 0);
+  const rep = JSON.parse(readFileSync(out, 'utf8'));
+  assert.equal(rep.variant, 'system-stable');
+  assert.equal(rep.keptUserSettings, true);
+  assert.equal('settingSources' in f.calls[0], false);
+  assert.ok(f.calls[0].systemPrompt.includes('<description>'));
+  assert.ok(!f.calls[0].prompt.includes('<description>'));
+  const out2 = join(work, 'plain.json');
+  await main(['--rounds', '1', '--model', MODEL, '--yes', '--out', out2], { spawn: fakeSpawn().spawn, log, env: noMock, userSignIn: () => false });
+  const rep2 = JSON.parse(readFileSync(out2, 'utf8'));
+  assert.equal(rep2.variant, null);
+  assert.equal(rep2.keptUserSettings, false);
+  assert.equal(await main(['--rounds', '1', '--model', MODEL, '--variant', 'nope'], { spawn: fakeSpawn().spawn, log, env: noMock, userSignIn: () => false }), 2);
 });

@@ -7,7 +7,7 @@
 //
 //   node tools/requirements-replay.mjs [--fixture <file>] [--rounds N] [--look <dir>] [--model <id>]
 //                                      [--effort <level>] [--max-usd <n>] [--no-cache] [--label <text>]
-//                                      [--out <file.json>] [--yes]
+//                                      [--variant system-stable] [--out <file.json>] [--yes]
 //   node tools/requirements-replay.mjs --compare <a.json> <b.json>
 //
 // Without --yes it is a dry run: it prints the calls it would make (prompt sizes) and sends nothing.
@@ -17,7 +17,11 @@
 // --rounds   rounds to replay, 1 to 6 (default 4)         --look <dir>  also replay the code look in <dir>
 // --model    model id (default: the interview's model)    --effort      effort level (default medium)
 // --no-cache set DISABLE_PROMPT_CACHING for each call     --out         write the report as JSON
+// --variant system-stable  the measured variant of design D7, not shipped: each round's stable blocks go
+//            at the end of the system prompt and only the changing part is the prompt (the look is unchanged)
 // --compare  offline: per-call and total differences between two reports; spawns nothing.
+// Like the interview, the calls keep the user's Claude settings when they carry sign-in (userClaudeSignIn);
+// the report records it as keptUserSettings.
 // Exit: 0 done; 1 a call failed or the budget stopped the replay; 2 usage or input error.
 
 import { realpathSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -33,16 +37,17 @@ import { resolveModelCost } from '../src/core/config.mjs';
 import { safeParseJson } from '../src/core/protocol.mjs';
 import { REPO_LOOK_TIMEOUT_MS } from '../src/core/auto/classify.mjs';
 import { MAX_ROUNDS, emptySpec } from '../src/core/requirements/spec.mjs';
-import { buildRoundPrompt, buildOrientationPrompt, applyRound } from '../src/core/requirements/round.mjs';
-import { interviewCallOptions, requirementsModel, ROUND_TIMEOUT_MS } from '../src/core/requirements/interview.mjs';
+import { buildRoundPrompt, roundPromptParts, buildOrientationPrompt, applyRound, ROUND_SYSTEM_PROMPT } from '../src/core/requirements/round.mjs';
+import { interviewCallOptions, requirementsModel, userClaudeSignIn, ROUND_TIMEOUT_MS } from '../src/core/requirements/interview.mjs';
 
 export const USAGE = 'usage: node tools/requirements-replay.mjs [--fixture <file>] [--rounds N] [--look <dir>] [--model <id>] '
-  + '[--effort <level>] [--max-usd <n>] [--no-cache] [--label <text>] [--out <file.json>] [--yes]\n'
+  + '[--effort <level>] [--max-usd <n>] [--no-cache] [--label <text>] [--variant system-stable] [--out <file.json>] [--yes]\n'
   + '       node tools/requirements-replay.mjs --compare <a.json> <b.json>';
 const DEFAULT_FIXTURE = join(dirname(fileURLToPath(import.meta.url)), 'requirements-replay.fixture.json');
 const DEFAULT_ROUNDS = 4;
 const DEFAULT_MAX_USD = 1.5;
 const DRY_NOTE = 'Dry run: nothing was sent. Add --yes to call the model (this costs money).';
+const VARIANTS = new Set(['system-stable']);
 
 class InputError extends Error {}
 
@@ -62,17 +67,21 @@ export function loadFixture(path) {
 /**
  * The calls of a replay, in order: the look first (when `lookDir` is given), then rounds 1..N. Each call:
  * { kind, round, options, timeoutMs, check } where `check` is what a reply is judged against.
+ * `variant` 'system-stable' moves each round's stable blocks into the system prompt (the look is unchanged);
+ * `keepUserSettings` is the interview's sign-in exception (userClaudeSignIn).
  */
-export function replayPlan(fixture, { rounds = DEFAULT_ROUNDS, lookDir = null, roundCwd, model, effort = 'medium' } = {}) {
+export function replayPlan(fixture, { rounds = DEFAULT_ROUNDS, lookDir = null, roundCwd, model, effort = 'medium', variant = null, keepUserSettings = false } = {}) {
   if (!Number.isInteger(rounds) || rounds < 1 || rounds > MAX_ROUNDS) throw new InputError(`--rounds must be 1 to ${MAX_ROUNDS}`);
+  if (variant !== null && !VARIANTS.has(variant)) throw new InputError(`unknown --variant ${variant}; known: ${[...VARIANTS].join(', ')}`);
+  const how = { keepUserSettings };
   // Round k reads the answers of fixture rounds 1..k-1, so N rounds need N-1 fixture rounds.
   if (rounds > fixture.rounds.length + 1) throw new InputError(`the fixture supports at most ${fixture.rounds.length + 1} rounds, not ${rounds}`);
   const calls = [];
   const context = fixture.context || '';
   if (lookDir) {
-    const prompt = buildOrientationPrompt({ feature: fixture.feature, context });
+    const prompt = buildOrientationPrompt({ feature: fixture.feature, context, cwd: lookDir });
     calls.push({ kind: 'look', round: null, timeoutMs: REPO_LOOK_TIMEOUT_MS, check: { kind: 'look' },
-      options: interviewCallOptions('look', { cwd: lookDir, prompt, model, effort }) });
+      options: interviewCallOptions('look', { cwd: lookDir, prompt, model, effort }, how) });
   }
   for (let k = 1; k <= rounds; k += 1) {
     const prev = k === 1 ? null : fixture.rounds[k - 2];
@@ -84,10 +93,15 @@ export function replayPlan(fixture, { rounds = DEFAULT_ROUNDS, lookDir = null, r
       turns.push({ id: 2 * j + 1, kind: 'answers', payload: { roundTurnId: 2 * j, answers: fixture.rounds[j].answers } });
     }
     const final = k >= MAX_ROUNDS;
-    const prompt = buildRoundPrompt({ feature, context, turns, final, round: k });
+    const args = { feature, context, turns, final, round: k };
+    let callArgs = { cwd: roundCwd, prompt: buildRoundPrompt(args), model, effort };
+    if (variant === 'system-stable') {
+      const parts = roundPromptParts(args);
+      callArgs = { ...callArgs, prompt: parts.changing, systemPrompt: `${ROUND_SYSTEM_PROMPT}\n\n${parts.stable}` };
+    }
     calls.push({ kind: 'round', round: k, timeoutMs: ROUND_TIMEOUT_MS,
       check: { kind: 'round', spec, criteriaSeq: prev ? prev.criteriaSeq : 0, assumptionSeq: prev ? prev.assumptionSeq : 0, final },
-      options: interviewCallOptions('round', { cwd: roundCwd, prompt, model, effort }) });
+      options: interviewCallOptions('round', callArgs, how) });
   }
   return calls;
 }
@@ -293,7 +307,10 @@ function best(cmd, args) {
   } catch { return null; }
 }
 
-export async function main(argv, { spawn = runClaudeAdapter, log = console.log, env = process.env, resolveModel = requirementsModel } = {}) {
+export async function main(argv, {
+  spawn = runClaudeAdapter, log = console.log, env = process.env, resolveModel = requirementsModel,
+  userSignIn = () => userClaudeSignIn({ env }),
+} = {}) {
   // First of all: a mock measures nothing, and nothing may run (not even the dry run) under one.
   if (env.WORCA_MOCK || env.ORCH_MOCK) {
     log('the replay measures the real model; unset WORCA_MOCK');
@@ -305,6 +322,7 @@ export async function main(argv, { spawn = runClaudeAdapter, log = console.log, 
       fixture: { type: 'string' }, rounds: { type: 'string' }, look: { type: 'string' }, model: { type: 'string' },
       effort: { type: 'string' }, 'max-usd': { type: 'string' }, 'no-cache': { type: 'boolean' }, label: { type: 'string' },
       out: { type: 'string' }, yes: { type: 'boolean' }, compare: { type: 'boolean' }, help: { type: 'boolean' },
+      variant: { type: 'string' },
     } });
   } catch (err) { log(`${err.message}\n${USAGE}`); return 2; }
   const { values: v, positionals } = args;
@@ -328,7 +346,9 @@ export async function main(argv, { spawn = runClaudeAdapter, log = console.log, 
     if (v.yes && !model) throw new InputError('no model could be resolved; pass --model <id> so before and after runs measure the same model');
     const roundCwd = join(tmpdir(), 'worca-req-replay');
     mkdirSync(roundCwd, { recursive: true });
-    const plan = replayPlan(fixture, { rounds, lookDir: v.look || null, roundCwd, model, effort });
+    const variant = v.variant === undefined ? null : v.variant;
+    const keepUserSettings = !!userSignIn();
+    const plan = replayPlan(fixture, { rounds, lookDir: v.look || null, roundCwd, model, effort, variant, keepUserSettings });
 
     if (!v.yes) {
       for (const c of plan) {
@@ -368,7 +388,7 @@ export async function main(argv, { spawn = runClaudeAdapter, log = console.log, 
       const report = {
         version: 1, label: v.label || null, at: new Date().toISOString(),
         commit: best('git', ['rev-parse', '--short', 'HEAD']), cli: best(DEFAULT_BIN, ['--version']),
-        model: model || null, effort, variant: null, noCache: !!v['no-cache'], fixture: basename(fixturePath), rounds,
+        model: model || null, effort, variant, keptUserSettings: keepUserSettings, noCache: !!v['no-cache'], fixture: basename(fixturePath), rounds,
         calls: records, totals,
       };
       writeFileSync(v.out, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
