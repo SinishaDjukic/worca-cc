@@ -15,7 +15,7 @@
 // once the cost so far reaches --max-usd (default 1.50). It refuses to run with WORCA_MOCK / ORCH_MOCK
 // set: a mock measures nothing.
 // --rounds   rounds to replay, 1 to 6 (default 4)         --look <dir>  also replay the code look in <dir>
-// --model    model id (default: the interview's model)    --effort      effort level (default medium)
+// --model    model id (default: the interview's model)    --effort      effort level (default: the interview's)
 // --no-cache set DISABLE_PROMPT_CACHING for each call     --out         write the report as JSON
 // --variant system-stable  the measured variant of design D7, not shipped: each round's stable blocks go
 //            at the end of the system prompt and only the changing part is the prompt (the look is unchanged)
@@ -38,7 +38,7 @@ import { safeParseJson } from '../src/core/protocol.mjs';
 import { REPO_LOOK_TIMEOUT_MS } from '../src/core/auto/classify.mjs';
 import { MAX_ROUNDS, emptySpec } from '../src/core/requirements/spec.mjs';
 import { buildRoundPrompt, roundPromptParts, buildOrientationPrompt, applyRound, ROUND_SYSTEM_PROMPT } from '../src/core/requirements/round.mjs';
-import { interviewCallOptions, requirementsModel, userClaudeSignIn, ROUND_TIMEOUT_MS } from '../src/core/requirements/interview.mjs';
+import { interviewCallOptions, interviewModel, DEFAULT_INTERVIEW_EFFORT, userClaudeSignIn, ROUND_TIMEOUT_MS } from '../src/core/requirements/interview.mjs';
 
 export const USAGE = 'usage: node tools/requirements-replay.mjs [--fixture <file>] [--rounds N] [--look <dir>] [--model <id>] '
   + '[--effort <level>] [--max-usd <n>] [--no-cache] [--label <text>] [--variant system-stable] [--out <file.json>] [--yes]\n'
@@ -308,7 +308,7 @@ function best(cmd, args) {
 }
 
 export async function main(argv, {
-  spawn = runClaudeAdapter, log = console.log, env = process.env, resolveModel = requirementsModel,
+  spawn = runClaudeAdapter, log = console.log, env = process.env, resolveModel = interviewModel,
   userSignIn = () => userClaudeSignIn({ env }),
 } = {}) {
   // First of all: a mock measures nothing, and nothing may run (not even the dry run) under one.
@@ -341,8 +341,10 @@ export async function main(argv, {
     if (!(maxUsd > 0)) throw new InputError('--max-usd must be a positive number');
     const fixturePath = v.fixture || DEFAULT_FIXTURE;
     const fixture = loadFixture(fixturePath);
-    const model = v.model || await resolveModel();
-    const effort = v.effort || 'medium';
+    const resolved = v.model && v.effort ? null : await resolveModel();
+    const model = v.model || (resolved && resolved.model) || undefined;
+    // With --model alone the stored pair does not apply to another model: the default effort does.
+    const effort = v.effort || (v.model ? DEFAULT_INTERVIEW_EFFORT : (resolved && resolved.effort) || null);   // null: the interview sends no effort
     if (v.yes && !model) throw new InputError('no model could be resolved; pass --model <id> so before and after runs measure the same model');
     const roundCwd = join(tmpdir(), 'worca-req-replay');
     mkdirSync(roundCwd, { recursive: true });

@@ -9,7 +9,7 @@ import { createFeature, getFeature, listTurns, updateFeature, appendTurn, setCon
 import { REPO_LOOK_TOOLS, REPO_LOOK_MAX_TURNS, REPO_LOOK_TIMEOUT_MS } from '../src/core/auto/classify.mjs';
 import {
   startOrientation, submitAnswers, finishInterview, followUp, retry, settled, isBusy, recoverInterrupted, requirementsModel, MAX_JOBS, interviewCallOptions, callModel,
-  userClaudeSignIn,
+  userClaudeSignIn, interviewModel, DEFAULT_INTERVIEW_EFFORT,
 } from '../src/core/requirements/interview.mjs';
 import { requirementsWindowedSpendUsd } from '../src/core/cost-budget.mjs';
 import { ROUND_SYSTEM_PROMPT, ORIENTATION_SYSTEM_PROMPT } from '../src/core/requirements/round.mjs';
@@ -53,6 +53,7 @@ function deps(runner, extra = {}) {
     openLook: async () => ({ cwd: repoDir, close: async () => { closed.push('look'); } }),
     openWorkspaceLook: async () => null,
     onChange: () => {},
+    interviewSlot: () => ({}),   // nothing stored: the default pair
     userSignIn: () => false,   // the hermetic branch unless a test says otherwise (never the real user settings)
     ...extra,
   };
@@ -658,7 +659,7 @@ test('interviewCallOptions: a look is A2\'s options, replace mode and the hermet
     cwd: '/c', systemPrompt: ORIENTATION_SYSTEM_PROMPT, systemPromptMode: 'replace', prompt: 'P', model: 'm1', modelEnv: undefined,
     allowedTools: [...REPO_LOOK_TOOLS], tools: [...REPO_LOOK_TOOLS], strictMcpConfig: true,
     settingSources: ['project'], disableSlashCommands: true,
-    maxTurns: REPO_LOOK_MAX_TURNS, effort: 'medium', permissionMode: 'acceptEdits', spawnKind: 'aux',
+    maxTurns: REPO_LOOK_MAX_TURNS, permissionMode: 'acceptEdits', spawnKind: 'aux',
   });
 });
 
@@ -668,8 +669,9 @@ test('interviewCallOptions: a round is A2\'s options (no tools, no maxTurns), re
     cwd: '/c', systemPrompt: ROUND_SYSTEM_PROMPT, systemPromptMode: 'replace', prompt: 'P', model: 'm1', modelEnv: undefined,
     allowedTools: [], tools: [], strictMcpConfig: true,
     settingSources: ['project'], disableSlashCommands: true,
-    effort: 'medium', permissionMode: 'acceptEdits', spawnKind: 'aux',
+    permissionMode: 'acceptEdits', spawnKind: 'aux',
   });
+  assert.equal('effort' in o, false, 'no effort unless one is given');
   assert.equal('maxTurns' in o, false);
 });
 
@@ -830,4 +832,56 @@ test('the default userSignIn reads the user settings per call and logs the keep 
     warn.mock.restore();
     if (prev === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = prev;
   }
+});
+
+// ── the interview's model and effort (A1.1 Task 5, D2) ──
+async function runBoth(slot, extra = {}) {
+  const f = newFeature();
+  const r = fakeRunner([{ summary: 'Orders.', files: [] }, ROUND1]);
+  await startOrientation(f.seq, { by: 'po' }, deps(r, { interviewSlot: slot, ...extra }));
+  await settled(f.seq);
+  return { r, f };
+}
+
+test('interview model: nothing stored -> the default Opus and medium effort on the look and the round', async () => {
+  const { r } = await runBoth(() => ({}));
+  assert.equal(r.calls.length, 2);
+  for (const c of r.calls) { assert.equal(c.model, 'claude-opus-5-5'); assert.equal(c.effort, 'medium'); }
+});
+
+test('interview model: a stored model alone is used and no effort is sent', async () => {
+  const { r, f } = await runBoth(() => ({ model: 'claude-sonnet-5' }));
+  for (const c of r.calls) { assert.equal(c.model, 'claude-sonnet-5'); assert.equal('effort' in c, false); }
+  assert.equal(listTurns(f.seq).find((t) => t.kind === 'orientation').model, 'claude-sonnet-5');
+});
+
+test('interview model: a stored effort alone -> the default Opus with that effort', async () => {
+  const { r } = await runBoth(() => ({ effort: 'high' }));
+  for (const c of r.calls) { assert.equal(c.model, 'claude-opus-5-5'); assert.equal(c.effort, 'high'); }
+});
+
+test('interview model: both stored -> both', async () => {
+  const { r } = await runBoth(() => ({ model: 'claude-sonnet-5', effort: 'low' }));
+  for (const c of r.calls) { assert.equal(c.model, 'claude-sonnet-5'); assert.equal(c.effort, 'low'); }
+});
+
+test('interview model: a stored model that left the catalog -> the default pair', async () => {
+  const { r } = await runBoth(() => ({ model: 'gone-model' }));
+  for (const c of r.calls) { assert.equal(c.model, 'claude-opus-5-5'); assert.equal(c.effort, 'medium'); }
+});
+
+test('interview model: a throwing slot reader -> the default pair', async () => {
+  const { r } = await runBoth(() => { throw new Error('unreadable'); });
+  for (const c of r.calls) { assert.equal(c.model, 'claude-opus-5-5'); assert.equal(c.effort, 'medium'); }
+});
+
+test('interviewModel: the resolved pair and its source', async () => {
+  const list = async () => [{ id: 'claude-sonnet-5' }, { id: 'claude-opus-5-5' }];
+  const at = (slot, listModels = list) => interviewModel({ interviewSlot: () => slot, listModels });
+  assert.deepEqual(await at({}), { model: 'claude-opus-5-5', effort: DEFAULT_INTERVIEW_EFFORT, source: 'default' });
+  assert.deepEqual(await at({ model: 'CLAUDE-SONNET-5' }), { model: 'CLAUDE-SONNET-5', effort: null, source: 'settings' });
+  assert.deepEqual(await at({ effort: 'max' }), { model: 'claude-opus-5-5', effort: 'max', source: 'settings' });
+  assert.deepEqual(await at({ model: 'gone' }), { model: 'claude-opus-5-5', effort: 'medium', source: 'default' });
+  // a failing catalog read: the stored model counts
+  assert.deepEqual(await at({ model: 'x-model' }, async () => { throw new Error('no catalog'); }), { model: 'x-model', effort: null, source: 'settings' });
 });

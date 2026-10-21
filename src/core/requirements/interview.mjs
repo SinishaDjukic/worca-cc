@@ -14,6 +14,7 @@ import { budgetStatus, recordRequirementsCostDelta } from '../cost-budget.mjs';
 import { openRepoLook, openWorkspaceRepoLook } from '../auto/repo-look.mjs';
 import { REPO_LOOK_TOOLS, REPO_LOOK_MAX_TURNS, REPO_LOOK_TIMEOUT_MS } from '../auto/classify.mjs';
 import { worcaHome, listProjects } from '../projects.mjs';
+import { utilityModelFor } from '../settings-cascade.mjs';
 import { workspaceTarget } from '../ask/workflow-deps.mjs';
 import { RequirementsError, MAX_ROUNDS, LIMITS, clip } from './spec.mjs';
 import { unaskedRejections } from './ready.mjs';
@@ -30,6 +31,7 @@ const DEFAULTS = Object.freeze({
   runClaudeImpl: runClaude, listModels, listProjects, workspaceTarget,
   openLook: openRepoLook, openWorkspaceLook: openWorkspaceRepoLook, budget: () => budgetStatus(), onChange: () => {},
   userSignIn: () => userSignInLogged(),
+  interviewSlot: () => utilityModelFor('claude', 'requirementsInterview'),
 });
 
 // Keys of the user settings' `env` block that sign Claude Code in or route its traffic (A1.1 D6).
@@ -90,6 +92,32 @@ export async function requirementsModel(list = listModels) {
     const m = (await list(null)).find((x) => x && /^claude-opus-/.test(x.id) && !x.id.includes('['));
     return m ? m.id : undefined;
   } catch { return undefined; }
+}
+
+export const DEFAULT_INTERVIEW_EFFORT = 'medium';
+
+/**
+ * A1.1 D2: the model and effort of an interview call. The stored `requirementsInterview` pair counts for
+ * its model only while the catalog still lists it (a failing catalog read: it counts); otherwise the
+ * default Opus applies, with the default effort unless the pair names one. Unset = the default pair.
+ * `source` is 'settings' when a stored model or effort was used. Never throws.
+ */
+export async function interviewModel(deps = {}) {
+  const d = { ...DEFAULTS, ...deps };
+  let slot = {};
+  try { slot = d.interviewSlot() || {}; } catch { slot = {}; }
+  let stored = null;
+  if (typeof slot.model === 'string' && slot.model) {
+    let listed = true;
+    try {
+      const want = slot.model.toLowerCase();
+      listed = (await d.listModels(null)).some((m) => m && typeof m.id === 'string' && m.id.toLowerCase() === want);
+    } catch { listed = true; }
+    if (listed) stored = slot.model;
+  }
+  const model = stored || await requirementsModel(d.listModels);
+  const effort = slot.effort || (stored ? null : DEFAULT_INTERVIEW_EFFORT);
+  return { model: model ?? null, effort: effort || null, source: stored || slot.effort ? 'settings' : 'default' };
 }
 
 /** `job.kind` says what is running ('look' or 'round'): an error turn records it so retry re-runs the right thing. */
@@ -173,7 +201,7 @@ export function interviewCallOptions(kind, args = {}, { keepUserSettings = false
     allowedTools: [...tools], tools: [...tools], strictMcpConfig: true,
     ...(keepUserSettings ? {} : { settingSources: ['project'] }), disableSlashCommands: true,
     ...(maxTurns ? { maxTurns } : {}),
-    effort: args.effort !== undefined ? args.effort : 'medium', permissionMode: 'acceptEdits',
+    ...(args.effort ? { effort: args.effort } : {}), permissionMode: 'acceptEdits',
     spawnKind: 'aux',   // credential broker: a short-lived token, as pr-description.mjs
   };
 }
@@ -229,12 +257,13 @@ async function orient(f, d) {
   try {
     look = await openLookFor(f, d, ctrl.signal);
     if (!look) return { summary: '', files: [], skipped: 'no-repo' };
-    model = await requirementsModel(d.listModels);
+    const im = await interviewModel(d);
+    model = im.model || undefined;
     if (isArchived(f.seq)) return { summary: '', files: [], skipped: 'archived' };
     const { text, costUsd } = await callModel(d, {
       kind: 'look', cwd: look.cwd,
       prompt: buildOrientationPrompt({ feature: f, context: ctx.body, members: look.members || null, cwd: look.cwd }),
-      model, timeoutMs: REPO_LOOK_TIMEOUT_MS,
+      model, ...(im.effort ? { effort: im.effort } : {}), timeoutMs: REPO_LOOK_TIMEOUT_MS,
     });
     return { ...normalizeOrientation(safeParseJson(text)), skipped: null, model: model || null, costUsd };
   } catch (err) {
@@ -277,14 +306,16 @@ async function runRound(seq, d, by, { final = false, followUp = null } = {}) {
   } else {
     const ctx = getContext(f.scopeType, f.scopeKey);
     const prompt = buildRoundPrompt({ feature: f, context: ctx.body, turns, final: isFinal, round: f.rounds + 1, followUp: followItems });
-    model = await requirementsModel(d.listModels);
+    const im = await interviewModel(d);
+    model = im.model || undefined;
+    const effort = im.effort || undefined;
     const cwd = scratchDir();
     const fail = (code, msg) => failTurn(seq, { code, message: msg, job: 'round', costUsd: cost, model }, by, 'your_turn');
     try {
       for (let attempt = 1; attempt <= 2 && !applied; attempt += 1) {
         if (isArchived(seq)) { if (cost > 0) fail('ARCHIVED', 'The feature was archived before the next attempt.'); return; }
         assertBudget(d);   // before every call; an earlier attempt is already counted in `cost`
-        const r = await callModel(d, { kind: 'round', cwd, prompt, model, timeoutMs: ROUND_TIMEOUT_MS });
+        const r = await callModel(d, { kind: 'round', cwd, prompt, model, ...(effort ? { effort } : {}), timeoutMs: ROUND_TIMEOUT_MS });
         cost += r.costUsd;
         try { applied = applyRound(f.spec, safeParseJson(r.text), seqs); }
         catch (err) { if (!(err instanceof RoundError)) throw err; lastErr = err; }

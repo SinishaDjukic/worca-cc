@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { WebSocket } from 'ws';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
 
@@ -116,18 +117,28 @@ test('POST /api/settings requirementsInterview: unknown model, Codex model and a
   assert.equal((await get('/api/settings')).body.requirementsInterview, null, 'nothing was written');
 });
 
-test('POST /api/settings requirementsInterview: an effort the model does not offer is refused', async () => {
+test('POST /api/settings requirementsInterview: an effort the model does not offer is refused', async (t) => {
   const { listModels } = await import('../src/core/config.mjs');
   const m = (await listModels('')).find((x) => /^claude-/.test(x.id) && Array.isArray(x.efforts) && x.efforts.length && x.efforts.length < 4);
-  if (!m) return;   // every Claude catalog model offers every effort
+  if (!m) { t.skip('every Claude catalog model offers every effort: no model to refuse an effort on'); return; }
   const missing = ['medium', 'high', 'xhigh', 'max'].find((e) => !m.efforts.includes(e));
   const r = await post('/api/settings', { requirementsInterview: { model: m.id, effort: missing } });
   assert.equal(r.status, 400);
   assert.equal(r.body.field, 'requirementsInterview');
 });
 
-test('POST /api/settings requirementsInterview: a change emits settings-changed', async () => {
-  const src = (await import('node:fs')).readFileSync(new URL('../ui/server.mjs', import.meta.url), 'utf8');
-  assert.match(src, /hasRequirementsInterviewKey \|\|[^\n]*emitChanged\('settings-changed'\)|emitChanged\('settings-changed'\)[^\n]*/, 'wired');
-  assert.match(src, /if \([^\n]*hasRequirementsInterviewKey[^\n]*\) emitChanged\('settings-changed'\)/);
+test('POST /api/settings requirementsInterview: a change emits a settings-changed frame', async () => {
+  const ws = new WebSocket(`${base.replace('http', 'ws')}/ws`);
+  const frames = [];
+  await new Promise((res, rej) => { ws.once('open', res); ws.once('error', rej); });
+  ws.on('message', (d) => { try { frames.push(JSON.parse(String(d))); } catch { /* not JSON */ } });
+  try {
+    const r = await post('/api/settings', { requirementsInterview: { effort: 'high' } });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    for (const t0 = Date.now(); !frames.some((f) => f.type === 'settings-changed') && Date.now() - t0 < 1500;) await new Promise((res) => setTimeout(res, 10));
+    assert.ok(frames.some((f) => f.type === 'settings-changed'), JSON.stringify(frames.map((f) => f.type)));
+  } finally {
+    ws.close();
+    await post('/api/settings', { requirementsInterview: null });
+  }
 });

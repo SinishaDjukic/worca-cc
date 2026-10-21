@@ -308,3 +308,24 @@ test('--variant system-stable and the kept user settings are recorded in the rep
   assert.equal(rep2.keptUserSettings, false);
   assert.equal(await main(['--rounds', '1', '--model', MODEL, '--variant', 'nope'], { spawn: fakeSpawn().spawn, log, env: noMock, userSignIn: () => false }), 2);
 });
+
+// ── the tool's defaults follow the interview's model and effort (A1.1 Task 5) ──
+test('no --model / --effort: the replay uses interviewModel()\'s pair', async () => {
+  const { log } = logger();
+  const f = fakeSpawn();
+  await main(['--rounds', '1', '--yes'], { spawn: f.spawn, log, env: noMock, resolveModel: async () => ({ model: 'claude-sonnet-5', effort: 'high', source: 'settings' }) });
+  assert.equal(f.calls[0].model, 'claude-sonnet-5');
+  assert.equal(f.calls[0].effort, 'high');
+});
+
+test('a resolved pair without effort sends none; --effort and --model override', async () => {
+  const { log } = logger();
+  const noEffort = fakeSpawn();
+  await main(['--rounds', '1', '--yes'], { spawn: noEffort.spawn, log, env: noMock, resolveModel: async () => ({ model: 'claude-sonnet-5', effort: null, source: 'settings' }) });
+  assert.equal('effort' in noEffort.calls[0], false);
+  const over = fakeSpawn();
+  await main(['--rounds', '1', '--yes', '--model', 'm-x', '--effort', 'low'], { spawn: over.spawn, log, env: noMock,
+    resolveModel: async () => { throw new Error('not asked'); } });
+  assert.equal(over.calls[0].model, 'm-x');
+  assert.equal(over.calls[0].effort, 'low');
+});

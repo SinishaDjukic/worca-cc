@@ -9028,12 +9028,12 @@ async function autoModelState() {
   return { autoWorkflowModel: stored, autoWorkflowModelEffective: { model, source } };
 }
 
-/** Settings ▸ PR description model: the stored id + what Generate with AI will actually
- *  use (stored catalog id > the Sonnet-class default). Async because the catalog is. */
 /** What "(default)" means for the Requirements interview row: the newest plain Opus at medium effort (A1-D8). */
 async function requirementsInterviewState() {
   return { requirementsInterviewDefault: { model: (await requirementsModel(() => listModels(''))) ?? null, effort: 'medium' } };
 }
+/** Settings ▸ PR description model: the stored id + what Generate with AI will actually
+ *  use (stored catalog id > the Sonnet-class default). Async because the catalog is. */
 async function prDescriptionModelState() {
   const stored = storedPrDescriptionModel();
   const { model, source } = resolvePrDescriptionModel(await listModels(''), { setting: stored });
