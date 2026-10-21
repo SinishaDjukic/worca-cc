@@ -87,13 +87,13 @@ test('plugins-changed re-reads while the page is open, never refreshes (SM6); of
   assert.equal(count(calls, 'GET /api/marketplaces'), n + 1);
 });
 
-test('a Browse tile opens today\'s dialogs until the plugin sheet lands (P4): consent for a new plugin, Settings for an installed one', async () => {
+test('a Browse tile opens the install sheet for a new plugin (P4); an installed one still opens today\'s Settings (until P6)', async () => {
   const { doc, go } = await boot({ routes: { 'GET /api/plugins/github-source/config': [200, { sources: [], channels: [] }] } });
   await go('marketplace');
   doc.querySelector('button.mk-tile[data-key="off/slack-chat"]').click(); await settle();
-  assert.deepEqual([doc.getElementById('plugin-modal-title').textContent, [...doc.querySelectorAll('#plugin-modal-actions button')].map((b) => b.textContent)],
-    ['Will install: slack-chat', ['Cancel', 'Install']]);
-  doc.getElementById('plugin-modal-close').click(); await settle();
+  assert.deepEqual([doc.getElementById('mk-sheet').dataset.mode, doc.getElementById('mk-sheet-title').textContent,
+    doc.getElementById('plugin-modal').classList.contains('hidden')], ['install', 'slack-chat', true]);
+  doc.querySelector('#mk-sheet .mk-close').click(); await settle();
   doc.querySelector('button.mk-tile[data-key="off/github-source"]').click(); await settle();
   assert.equal(doc.getElementById('plugin-modal-title').textContent, 'Settings: github-source');
 });

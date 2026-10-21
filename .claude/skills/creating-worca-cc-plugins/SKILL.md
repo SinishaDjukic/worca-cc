@@ -168,7 +168,8 @@ An agent sidecar is meta v2: typed PORTS replace the v1 channel vocabulary.
 - `placeable: false` keeps an agent off the composer canvas (off-pipeline scanners).
 - `agentFile`: optional; the prompt file for this agent. It is a **plain basename inside
   `agents/`** — no `/`, no `..`, never absolute. Defaults to nothing (the scaffold writes
-  `"<key>.md"`). The install consent card reads the tools of exactly this file.
+  `"<key>.md"`). The install sheet's Review step (and the Team policy consent) reads the tools of
+  exactly this file.
 
 A workflow template is a v2 graph, and `worca plugin init` scaffolds this shape:
 
@@ -417,7 +418,7 @@ worca plugin validate ./my-plugin --strict
 Errors name the item by its reading position — `ask.forms."review-findings" layout#2: …` — and every
 failed rule is listed, not just the first.
 
-The install consent card and `worca plugin install`'s receipt name, per agent, how many forms ship
+The install sheet's Review step, the Team policy consent and `worca plugin install`'s receipt name, per agent, how many forms ship
 and which file types they may display from the run folder — on a host that will honour them, so only
 when your manifest negotiates API 4 (below that the line is absent and the ignored-contributions line
 names the block instead). That list is read from your `accept` patterns alone, before anything is

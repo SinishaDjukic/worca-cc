@@ -9995,3 +9995,58 @@ a.badge.mk-health:focus-visible{outline:2px solid var(--ink);outline-offset:2px;
 .mk-empty-add > .btn{margin-top:2px;}   /* the 28px Add centred on the 32px field */
 .mk-empty-add > .btn[aria-busy="true"]{cursor:progress;opacity:.55;}
 @media (max-width:760px){.mk-rail{max-width:none;flex-basis:100%;}}
+
+/* ── marketplace P4 ── */
+/* Plugin sheet, install mode (Review → Install → Set up → Done) and the shared Set up fields. Tokens and scale sizes only. */
+.mk-stack{display:flex;flex-direction:column;gap:24px;}
+.mk-sheet-id{display:flex;align-items:flex-start;gap:12px;}
+.mk-sheet-id-main{flex:1;min-width:0;padding-top:4px;}
+.mk-sheet-id-main .subpage-title{overflow-wrap:anywhere;}
+.mk-steps{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0;padding:0;list-style:none;}
+.mk-step{display:inline-flex;align-items:center;gap:8px;font-size:var(--fs-body);color:var(--ink-2);}
+.mk-step[aria-current="step"]{color:var(--ink);font-weight:600;}
+.mk-step-n{display:grid;place-items:center;width:20px;height:20px;border-radius:var(--r-xs);background:var(--field);color:var(--ink-2);font-size:var(--fs-caption);font-weight:600;}
+.mk-step.is-done .mk-step-n{background:var(--green-bg);color:var(--green-ink-strong);}
+.mk-step[aria-current="step"] .mk-step-n{background:var(--ink);color:var(--on-ink);}
+.mk-step-sep{width:16px;height:1px;background:var(--line-2);}
+.mk-desc{margin:0;color:var(--ink);}
+.mk-sec{display:flex;flex-direction:column;gap:8px;}
+.mk-list{margin:0;padding:0 12px;list-style:none;border:1px solid var(--line);border-radius:var(--r-md);}
+.mk-list-row{display:flex;align-items:center;gap:12px;padding:12px 0;}
+.mk-list-row + .mk-list-row{border-top:1px solid var(--line);}
+.mk-row-main{flex:1;min-width:0;overflow-wrap:anywhere;}
+.mk-row-title{font-weight:600;overflow-wrap:anywhere;}
+.mk-mono{font-family:var(--mono);}
+.mk-ico{display:grid;place-items:center;flex:none;width:30px;height:30px;border-radius:var(--r-sm);background:var(--field);color:var(--ink-2);}
+.mk-wash{display:flex;align-items:center;gap:8px;padding:12px;border-radius:var(--r-sm);background:var(--field);color:var(--ink);font-size:var(--fs-body);}
+.mk-wash > .ic{flex:none;}
+.mk-wash-ok{background:var(--green-bg);color:var(--green-ink-strong);}
+.mk-wash-bad{background:var(--red-bg);color:var(--red-ink-strong);}
+.mk-wash-title{font-weight:600;}
+.mk-wash-text{min-width:0;overflow-wrap:anywhere;}
+.mk-wash-end{margin-left:auto;}
+.mk-setup-line{overflow-wrap:anywhere;}
+.mk-src{display:flex;align-items:center;flex-wrap:wrap;gap:8px;color:var(--ink-2);}
+.mk-src-main{flex:1;min-width:0;display:flex;flex-wrap:wrap;align-items:baseline;column-gap:8px;}
+.mk-src-url{color:var(--ink);overflow-wrap:anywhere;}
+.mk-src .pl-needs-git{color:var(--amber-ink-strong);}
+.mk-link{display:inline-flex;align-items:center;gap:4px;flex:none;font-size:var(--fs-meta);font-weight:500;color:var(--blue-ink-strong);white-space:nowrap;}
+.mk-setup-h{margin:0 0 16px;}
+.mk-req{margin-left:8px;font-size:var(--fs-caption);font-weight:400;color:var(--ink-2);}
+.mk-secret{position:relative;}
+.mk-secret > .ic{position:absolute;left:10px;top:8px;color:var(--ink-3);pointer-events:none;}
+.mk-secret > .input{padding-left:32px;}
+.mk-secret-set{display:flex;align-items:center;gap:8px;}
+.mk-secret-dots{display:flex;align-items:center;flex:1;min-width:0;color:var(--ink-2);}
+.mk-disc{align-self:flex-start;}
+.mk-disc[aria-expanded="true"] > .ic{transform:rotate(90deg);}
+.mk-done-hero{display:flex;flex-direction:column;align-items:center;gap:12px;padding:16px 0 4px;text-align:center;}
+.mk-ok-tile{display:grid;place-items:center;width:56px;height:56px;border-radius:var(--r-md);background:var(--green-bg);color:var(--green-ink-strong);}
+.mk-chips{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;}
+.mk-links{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden;}
+.mk-lrow{display:flex;align-items:center;gap:12px;min-height:40px;padding:0 12px;color:var(--ink);font-weight:500;text-decoration:none;}
+.mk-lrow + .mk-lrow{border-top:1px solid var(--line);}
+.mk-lrow:hover{background:var(--hover);color:var(--ink);text-decoration:none;}
+.mk-lrow:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.mk-lrow > .ic{margin-left:auto;color:var(--ink-3);}
+.mk-foot-start{margin-right:auto;}

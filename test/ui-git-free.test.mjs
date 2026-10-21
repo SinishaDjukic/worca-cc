@@ -125,7 +125,7 @@ test('app: Add marketplace 409 → the chip inside the add row; Update 409 → t
   assert.deepEqual([d.getElementById('plugin-modal-title').textContent, d.querySelector('#plugin-modal-body .pl-needs-git').textContent], ['Update alpha', 'Needs git']);
   d.querySelector('button.mk-tile[data-key="gl/gl-plugin"]').click();
   await settle();
-  assert.deepEqual(actions(d), ['Cancel']);
+  assert.deepEqual([...d.querySelectorAll('#mk-sheet .mk-sheet-foot [data-act]')].map((b) => b.textContent), ['Cancel']);
 });
 
 test('app: Set up team metrics posts the typed repo; Needs git disables Create branch and enable', async () => {
@@ -179,8 +179,8 @@ test('app: consent names Needs git on the source line; the add-row chip is one, 
   await settle();
   d.querySelector('button.mk-tile[data-key="gl/gl-plugin"]').click();
   await settle();
-  assert.equal(d.querySelector('#plugin-modal-body .pl-consent-src .pl-needs-git').textContent, 'Needs git');
-  d.getElementById('plugin-modal-close').click();
+  assert.equal(d.querySelector('#mk-sheet .mk-src .pl-needs-git').textContent, 'Needs git');
+  d.querySelector('#mk-sheet .mk-close').click();
   const url = d.getElementById('marketplace-url');
   url.value = 'https://gitlab.com/a/m';
   d.getElementById('marketplace-add').click();

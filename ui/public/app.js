@@ -15280,10 +15280,10 @@ if (el.chatSettingsHost) el.chatSettingsHost.addEventListener('click', async (e)
 // cards + the settings card) without a refetch.
 function onChannelStatus(msg) {
   const key = `${msg.plugin}/${msg.channelId}`;
-  for (const b of document.querySelectorAll(`.pl-channel[data-channel-key="${CSS.escape(key)}"]`)) {
+  for (const b of document.querySelectorAll(`.pl-channel[data-channel-key="${cssEscape(key)}"]`)) {
     b.replaceWith(channelBadge(document, { ...msg, displayName: b.textContent.split(' · ')[0] }));
   }
-  for (const b of document.querySelectorAll(`.chat-state[data-channel-key="${CSS.escape(key)}"]`)) {
+  for (const b of document.querySelectorAll(`.chat-state[data-channel-key="${cssEscape(key)}"]`)) {
     const stateCls = { connected: 'green', degraded: 'waiting', connecting: 'waiting', unconfigured: 'waiting' }[msg.state] || 'red';
     b.className = `badge ${stateCls} chat-state`;
     b.textContent = msg.state;
@@ -16382,7 +16382,7 @@ function needsGitModal(title) { pluginModal(title, renderNeedsGit(document)); }
 let pluginsViewMarketplaces = [];
 let marketplacePage = null;   // SM15: P5–P7 read it (e.g. the marketplace-add-changed forward)
 marketplacePage = mountMarketplace({ doc: document, win: window, deps: {
-  api: pluginApi, notify, confirmModal, openMenu, gitOn, setMsg: setPluginsMsg,
+  api: pluginApi, notify, confirmModal, openMenu, gitOn, invalidateAgentCaches, setMsg: setPluginsMsg,
   loadPolicy: () => loadTpScopes({ force: true }),   // SM35: state.policy (P5's Team policy card)
   navigate: (hash) => { const t = String(hash).replace(/^#/, ''); if (location.hash.slice(1) !== t) location.hash = t; },
   fallbacks: { openInstallConsent, openPluginSettings, updatePlugin: updateRequiredPlugin, uninstallPlugin: uninstallPluginFlow,

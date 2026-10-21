@@ -37,7 +37,8 @@ under `~/.worca-cc/mcp/` ([storage.md](storage.md)). A set holds skills as well 
 ## Bundled servers
 
 The built-in marketplace ships these servers as plugins. Install one on the **Marketplace** page
-(**Available**), then add its server to a set (**Connectors › Sets › Add server**) and fill in its fields.
+(**Browse**); its last step, **Set up in Connectors**, opens Connectors › Servers. Then add its server to a
+set (**Connectors › Sets › Add server**) and fill in its fields.
 Worca runs no OAuth flow, so each server takes a token or uses a CLI you are logged in to. Each
 plugin's `README.md` says where to get its credentials.
 

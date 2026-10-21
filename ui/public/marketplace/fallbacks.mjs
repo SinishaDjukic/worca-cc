@@ -2,20 +2,6 @@
 // action, until the plan that replaces an action deletes its function here.
 const list = (v) => (Array.isArray(v) ? v : []);
 
-/** openPlugin: a CatalogItem, or `{ name, marketplace }` resolved in state.catalog. Installed → openManage; no snapshot
- *  sha → nothing; else today's install consent. */
-export function fallbackOpenPlugin(page, deps, target) {
-  const { state } = page;
-  const item = target && typeof target.marketplace === 'object' && target.marketplace ? target
-    : state.catalog.find((i) => i.name === target?.name && (!target?.marketplace || i.marketplace.id === target.marketplace));
-  const name = item?.name ?? target?.name;
-  if (!name) return;
-  if (item ? item.installed : state.plugins.some((p) => p?.name === name)) { page.act('openManage', name); return; }
-  if (!item?.source.sha) return;
-  deps.fallbacks.openInstallConsent({ name: item.name, subdir: item.source.subdir, repoUrl: item.source.repoUrl, sha: item.source.sha,
-    inventory: item.entry?.inventory || {}, marketplace: item.marketplace.id });
-}
-
 /** openRemove: today's uninstall confirm with the sets the plugin's servers and skills leave; onRemoved after a removal. */
 export async function fallbackRemove(page, deps, name, { onRemoved = null } = {}) {
   const row = page.state.plugins.find((p) => p?.name === name);
