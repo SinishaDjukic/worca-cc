@@ -1,0 +1,512 @@
+{
+  "version": 1,
+  "feature": {
+    "id": "FEAT-1",
+    "title": "Gift message on an order",
+    "description": "Shoppers buying a present want to add a short message that is printed on the packing slip, so the recipient reads it when the parcel is opened. The slip must not show prices, because the recipient should not see what the present cost. Today there is no place to write a message, and shoppers write to support instead, who pass it on by hand and sometimes forget."
+  },
+  "context": "Worca is how this team ships changes to the online shop. The shop sells household goods to private customers in several countries. Orders are placed by shoppers at checkout, paid, then picked and packed in one warehouse. A packing slip is printed for every parcel and goes inside it. Customer service answers shoppers by email and phone and can see every order. The team prefers small changes that can go live on their own, and wants anything a shopper sees to be tested with real order examples before release.",
+  "orientation": "The shop already has orders, and each order moves through the statuses placed, paid, packed and shipped. At checkout the shopper fills in an address, picks a delivery option and pays; there is a free-text field called order note, but it is meant for delivery hints such as \"leave at the door\" and is shown to the courier, not printed on the slip. The packing slip lists the items, the quantities and the prices, and the delivery address. Prices are always shown on it today, and there is no way to switch them off for a single order. Customer service can open an order and add an internal comment, which only staff see. Orders can be changed by the shopper until they are packed, for example the delivery address. Nothing in the shop yet marks an order as a gift. The warehouse works from a pick list that shows one line per item and the order number, with no extra marks.",
+  "rounds": [
+    {
+      "questions": [
+        {
+          "id": "who-writes",
+          "question": "Who writes the gift message?",
+          "options": [
+            "The shopper at checkout",
+            "Support on the shopper's behalf",
+            "Both"
+          ],
+          "recommended": "The shopper at checkout",
+          "why": "It decides where the message is entered."
+        },
+        {
+          "id": "where-printed",
+          "question": "Where must the message appear?",
+          "options": [
+            "On the packing slip only",
+            "On the packing slip and in the confirmation email"
+          ],
+          "recommended": "On the packing slip only",
+          "why": "It sets how much has to change."
+        },
+        {
+          "id": "prices",
+          "question": "Should the packing slip still show prices for a gift order?",
+          "options": [
+            "No, hide the prices",
+            "Yes, show them"
+          ],
+          "recommended": "No, hide the prices",
+          "why": "The shopper wants the recipient not to see what it cost."
+        }
+      ],
+      "answers": [
+        {
+          "id": "who-writes",
+          "answer": "The shopper at checkout"
+        },
+        {
+          "id": "where-printed",
+          "answer": "On the packing slip only"
+        },
+        {
+          "id": "prices",
+          "answer": "No, hide the prices"
+        }
+      ],
+      "specAfter": {
+        "goal": {
+          "text": "Shoppers can add a short gift message to an order, and it is printed on the packing slip.",
+          "measure": "Fewer gift orders end in a customer-service call about the message."
+        },
+        "actors": [
+          "Shopper",
+          "Warehouse packer"
+        ],
+        "flow": [
+          "The shopper adds a message at checkout.",
+          "The warehouse prints the packing slip with the message."
+        ],
+        "edgeCases": [],
+        "rules": [],
+        "outOfScope": [],
+        "criteria": [
+          {
+            "id": "R-po-1",
+            "text": "A shopper can add a gift message of up to 200 characters when they check out."
+          },
+          {
+            "id": "R-po-2",
+            "text": "The gift message is printed on the packing slip."
+          },
+          {
+            "id": "R-po-3",
+            "text": "The packing slip for a gift order shows no prices."
+          }
+        ],
+        "assumptions": [],
+        "openQuestions": [
+          "How long may the message be?",
+          "Can the message be changed after the order is placed?"
+        ],
+        "edited": {}
+      },
+      "criteriaSeq": 3,
+      "assumptionSeq": 0
+    },
+    {
+      "questions": [
+        {
+          "id": "length",
+          "question": "How long may the message be?",
+          "options": [
+            "200 characters",
+            "500 characters",
+            "No limit"
+          ],
+          "recommended": "200 characters",
+          "why": "The slip has a limited printable area."
+        },
+        {
+          "id": "change",
+          "question": "Until when can the shopper change the message?",
+          "options": [
+            "Until the order is packed",
+            "Until the order is paid",
+            "Never"
+          ],
+          "recommended": "Until the order is packed",
+          "why": "It decides how the warehouse and the shopper stay in step."
+        }
+      ],
+      "answers": [
+        {
+          "id": "length",
+          "answer": "200 characters"
+        },
+        {
+          "id": "change",
+          "answer": "Until the order is packed"
+        }
+      ],
+      "specAfter": {
+        "goal": {
+          "text": "Shoppers can add a short gift message to an order, and it is printed on the packing slip.",
+          "measure": "Fewer gift orders end in a customer-service call about the message."
+        },
+        "actors": [
+          "Shopper",
+          "Warehouse packer"
+        ],
+        "flow": [
+          "The shopper adds a message at checkout.",
+          "The shopper may change it until the order is packed.",
+          "The warehouse prints the packing slip with the message."
+        ],
+        "edgeCases": [],
+        "rules": [
+          "The message is at most 200 characters."
+        ],
+        "outOfScope": [],
+        "criteria": [
+          {
+            "id": "R-po-1",
+            "text": "A shopper can add a gift message of up to 200 characters when they check out."
+          },
+          {
+            "id": "R-po-2",
+            "text": "The gift message is printed on the packing slip."
+          },
+          {
+            "id": "R-po-3",
+            "text": "The packing slip for a gift order shows no prices."
+          },
+          {
+            "id": "R-po-4",
+            "text": "A shopper can edit or remove the gift message until the order is packed."
+          }
+        ],
+        "assumptions": [
+          {
+            "id": "A-1",
+            "text": "Only the shopper who placed the order can write the message.",
+            "status": "open"
+          }
+        ],
+        "openQuestions": [
+          "What happens when the message is too long?"
+        ],
+        "edited": {}
+      },
+      "criteriaSeq": 4,
+      "assumptionSeq": 1
+    },
+    {
+      "questions": [
+        {
+          "id": "too-long",
+          "question": "What should happen when the message is too long?",
+          "options": [
+            "Refuse it and keep what was typed",
+            "Cut it off silently"
+          ],
+          "recommended": "Refuse it and keep what was typed",
+          "why": "A silent cut could remove the best part of the message."
+        },
+        {
+          "id": "format",
+          "question": "Which characters may the message use?",
+          "options": [
+            "Plain text only",
+            "Text and emoji"
+          ],
+          "recommended": "Plain text only",
+          "why": "The packing slip printer may not print emoji."
+        },
+        {
+          "id": "items",
+          "question": "One message per order or per item?",
+          "options": [
+            "Per order",
+            "Per item"
+          ],
+          "recommended": "Per order",
+          "why": "It changes the checkout form."
+        }
+      ],
+      "answers": [
+        {
+          "id": "too-long",
+          "answer": "Refuse it and keep what was typed"
+        },
+        {
+          "id": "format",
+          "answer": "Plain text only"
+        },
+        {
+          "id": "items",
+          "answer": "Per order"
+        }
+      ],
+      "specAfter": {
+        "goal": {
+          "text": "Shoppers can add a short gift message to an order, and it is printed on the packing slip.",
+          "measure": "Fewer gift orders end in a customer-service call about the message."
+        },
+        "actors": [
+          "Shopper",
+          "Warehouse packer"
+        ],
+        "flow": [
+          "The shopper adds a message at checkout.",
+          "The shopper may change it until the order is packed.",
+          "The warehouse prints the packing slip with the message."
+        ],
+        "edgeCases": [
+          "The message is too long."
+        ],
+        "rules": [
+          "The message is at most 200 characters.",
+          "The message is plain text.",
+          "One message per order."
+        ],
+        "outOfScope": [],
+        "criteria": [
+          {
+            "id": "R-po-1",
+            "text": "A shopper can add a gift message of up to 200 characters when they check out."
+          },
+          {
+            "id": "R-po-2",
+            "text": "The gift message is printed on the packing slip."
+          },
+          {
+            "id": "R-po-3",
+            "text": "The packing slip for a gift order shows no prices."
+          },
+          {
+            "id": "R-po-4",
+            "text": "A shopper can edit or remove the gift message until the order is packed."
+          },
+          {
+            "id": "R-po-5",
+            "text": "A gift message that is too long is refused with a clear message, and the shopper keeps what they typed."
+          }
+        ],
+        "assumptions": [
+          {
+            "id": "A-1",
+            "text": "Only the shopper who placed the order can write the message.",
+            "status": "open"
+          },
+          {
+            "id": "A-2",
+            "text": "The message is plain text, with no pictures or formatting.",
+            "status": "open"
+          },
+          {
+            "id": "A-3",
+            "text": "One message is allowed per order, not per item.",
+            "status": "open"
+          }
+        ],
+        "openQuestions": [
+          "How does the warehouse notice gift orders?"
+        ],
+        "edited": {}
+      },
+      "criteriaSeq": 5,
+      "assumptionSeq": 3
+    },
+    {
+      "questions": [
+        {
+          "id": "notice",
+          "question": "How should the warehouse notice a gift order?",
+          "options": [
+            "A \"gift\" mark on the pick list",
+            "Only the packing slip shows it"
+          ],
+          "recommended": "A \"gift\" mark on the pick list",
+          "why": "Packers prepare gift wrapping before they print the slip."
+        },
+        {
+          "id": "cancel",
+          "question": "If the order is cancelled, is anything else needed for the message?",
+          "options": [
+            "No, it just goes away",
+            "Keep it for support"
+          ],
+          "recommended": "No, it just goes away",
+          "why": "It affects what is stored."
+        }
+      ],
+      "answers": [
+        {
+          "id": "notice",
+          "answer": "A \"gift\" mark on the pick list"
+        },
+        {
+          "id": "cancel",
+          "answer": "No, it just goes away"
+        }
+      ],
+      "specAfter": {
+        "goal": {
+          "text": "Shoppers can add a short gift message to an order, and it is printed on the packing slip.",
+          "measure": "Fewer gift orders end in a customer-service call about the message."
+        },
+        "actors": [
+          "Shopper",
+          "Warehouse packer"
+        ],
+        "flow": [
+          "The shopper adds a message at checkout.",
+          "The shopper may change it until the order is packed.",
+          "The warehouse sees a gift mark on the pick list.",
+          "The warehouse prints the packing slip with the message."
+        ],
+        "edgeCases": [
+          "The message is too long.",
+          "The order is cancelled."
+        ],
+        "rules": [
+          "The message is at most 200 characters.",
+          "The message is plain text.",
+          "One message per order."
+        ],
+        "outOfScope": [
+          "Gift wrapping options."
+        ],
+        "criteria": [
+          {
+            "id": "R-po-1",
+            "text": "A shopper can add a gift message of up to 200 characters when they check out."
+          },
+          {
+            "id": "R-po-2",
+            "text": "The gift message is printed on the packing slip."
+          },
+          {
+            "id": "R-po-3",
+            "text": "The packing slip for a gift order shows no prices."
+          },
+          {
+            "id": "R-po-4",
+            "text": "A shopper can edit or remove the gift message until the order is packed."
+          },
+          {
+            "id": "R-po-5",
+            "text": "A gift message that is too long is refused with a clear message, and the shopper keeps what they typed."
+          },
+          {
+            "id": "R-po-6",
+            "text": "The warehouse sees at a glance which orders carry a gift message."
+          }
+        ],
+        "assumptions": [
+          {
+            "id": "A-1",
+            "text": "Only the shopper who placed the order can write the message.",
+            "status": "open"
+          },
+          {
+            "id": "A-2",
+            "text": "The message is plain text, with no pictures or formatting.",
+            "status": "open"
+          },
+          {
+            "id": "A-3",
+            "text": "One message is allowed per order, not per item.",
+            "status": "open"
+          }
+        ],
+        "openQuestions": [
+          "Is anything missing for returns?"
+        ],
+        "edited": {}
+      },
+      "criteriaSeq": 6,
+      "assumptionSeq": 3
+    },
+    {
+      "questions": [
+        {
+          "id": "returns",
+          "question": "Does a return of a gift order change anything for the message?",
+          "options": [
+            "No",
+            "The refund goes to the shopper, not the recipient"
+          ],
+          "recommended": "No",
+          "why": "Returns are the last open edge."
+        }
+      ],
+      "answers": [
+        {
+          "id": "returns",
+          "answer": "No"
+        }
+      ],
+      "specAfter": {
+        "goal": {
+          "text": "Shoppers can add a short gift message to an order, and it is printed on the packing slip.",
+          "measure": "Fewer gift orders end in a customer-service call about the message."
+        },
+        "actors": [
+          "Shopper",
+          "Warehouse packer"
+        ],
+        "flow": [
+          "The shopper adds a message at checkout.",
+          "The shopper may change it until the order is packed.",
+          "The warehouse sees a gift mark on the pick list.",
+          "The warehouse prints the packing slip with the message."
+        ],
+        "edgeCases": [
+          "The message is too long.",
+          "The order is cancelled.",
+          "The order is returned."
+        ],
+        "rules": [
+          "The message is at most 200 characters.",
+          "The message is plain text.",
+          "One message per order."
+        ],
+        "outOfScope": [
+          "Gift wrapping options.",
+          "Changing returns."
+        ],
+        "criteria": [
+          {
+            "id": "R-po-1",
+            "text": "A shopper can add a gift message of up to 200 characters when they check out."
+          },
+          {
+            "id": "R-po-2",
+            "text": "The gift message is printed on the packing slip."
+          },
+          {
+            "id": "R-po-3",
+            "text": "The packing slip for a gift order shows no prices."
+          },
+          {
+            "id": "R-po-4",
+            "text": "A shopper can edit or remove the gift message until the order is packed."
+          },
+          {
+            "id": "R-po-5",
+            "text": "A gift message that is too long is refused with a clear message, and the shopper keeps what they typed."
+          },
+          {
+            "id": "R-po-6",
+            "text": "The warehouse sees at a glance which orders carry a gift message."
+          }
+        ],
+        "assumptions": [
+          {
+            "id": "A-1",
+            "text": "Only the shopper who placed the order can write the message.",
+            "status": "open"
+          },
+          {
+            "id": "A-2",
+            "text": "The message is plain text, with no pictures or formatting.",
+            "status": "open"
+          },
+          {
+            "id": "A-3",
+            "text": "One message is allowed per order, not per item.",
+            "status": "open"
+          }
+        ],
+        "openQuestions": [],
+        "edited": {}
+      },
+      "criteriaSeq": 6,
+      "assumptionSeq": 3
+    }
+  ]
+}

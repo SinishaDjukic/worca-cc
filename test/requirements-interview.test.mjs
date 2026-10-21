@@ -6,11 +6,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { createFeature, getFeature, listTurns, updateFeature, appendTurn, setContext } from '../src/core/requirements/store.mjs';
-import { REPO_LOOK_TOOLS, REPO_LOOK_TIMEOUT_MS } from '../src/core/auto/classify.mjs';
+import { REPO_LOOK_TOOLS, REPO_LOOK_MAX_TURNS, REPO_LOOK_TIMEOUT_MS } from '../src/core/auto/classify.mjs';
 import {
-  startOrientation, submitAnswers, finishInterview, followUp, retry, settled, isBusy, recoverInterrupted, requirementsModel, MAX_JOBS,
+  startOrientation, submitAnswers, finishInterview, followUp, retry, settled, isBusy, recoverInterrupted, requirementsModel, MAX_JOBS, interviewCallOptions, callModel,
 } from '../src/core/requirements/interview.mjs';
 import { requirementsWindowedSpendUsd } from '../src/core/cost-budget.mjs';
+import { ROUND_SYSTEM_PROMPT, ORIENTATION_SYSTEM_PROMPT } from '../src/core/requirements/round.mjs';
 import { removeCriterion, setAssumption } from '../src/core/requirements/edits.mjs';
 
 useTempHome(after);
@@ -646,4 +647,52 @@ test('follow-up: refused (CONFLICT) while a round\'s questions are waiting; noth
   assert.throws(() => followUp(f.seq, {}, deps(fakeRunner([]))), (e) => e.code === 'CONFLICT' && /questions/.test(e.message));
   assert.equal(listTurns(f.seq).length, n, 'no followup turn');
   assert.equal(isBusy(f.seq), false);
+});
+
+// ── the one call path (A1.1 Task 1): the options are A2's, written out so every later change is deliberate ──
+test('interviewCallOptions: a look is exactly what A2 sent', () => {
+  assert.deepEqual(interviewCallOptions('look', { cwd: '/c', prompt: 'P', model: 'm1' }), {
+    cwd: '/c', systemPrompt: ORIENTATION_SYSTEM_PROMPT, prompt: 'P', model: 'm1', modelEnv: undefined,
+    allowedTools: [...REPO_LOOK_TOOLS], tools: [...REPO_LOOK_TOOLS], strictMcpConfig: true,
+    maxTurns: REPO_LOOK_MAX_TURNS, effort: 'medium', permissionMode: 'acceptEdits', spawnKind: 'aux',
+  });
+});
+
+test('interviewCallOptions: a round is exactly what A2 sent (no tools, no maxTurns)', () => {
+  const o = interviewCallOptions('round', { cwd: '/c', prompt: 'P', model: 'm1' });
+  assert.deepEqual(o, {
+    cwd: '/c', systemPrompt: ROUND_SYSTEM_PROMPT, prompt: 'P', model: 'm1', modelEnv: undefined,
+    allowedTools: [], tools: [], strictMcpConfig: true,
+    effort: 'medium', permissionMode: 'acceptEdits', spawnKind: 'aux',
+  });
+  assert.equal('maxTurns' in o, false);
+});
+
+test('interviewCallOptions: unknown kind and unknown keys throw TypeError', () => {
+  assert.throws(() => interviewCallOptions('brief', { cwd: '/c', prompt: 'P' }), TypeError);
+  assert.throws(() => interviewCallOptions('round', { cwd: '/c', prompt: 'P', settingSources: [] }), TypeError);
+});
+
+test('interviewCallOptions: overrides replace the kind defaults', () => {
+  const o = interviewCallOptions('look', { cwd: '/c', prompt: 'P', model: 'm1', systemPrompt: 'B', maxTurns: 40 });
+  assert.equal(o.systemPrompt, 'B');
+  assert.equal(o.maxTurns, 40);
+  assert.deepEqual(o.tools, [...REPO_LOOK_TOOLS]);
+  const r = interviewCallOptions('round', { cwd: '/c', prompt: 'P', tools: ['Read'], effort: 'low' });
+  assert.deepEqual(r.allowedTools, ['Read']);
+  assert.equal(r.effort, 'low');
+});
+
+test('callModel: sends the built options plus signal and onEvent, and books the cost', async () => {
+  const seen = [];
+  const d = { runClaudeImpl: async (opts) => {
+    seen.push(opts);
+    opts.onEvent({ type: 'result', raw: { type: 'result', total_cost_usd: 0.25, result: 'x' }, costUsd: 0.25 });
+    return { text: 'x' };
+  } };
+  const out = await callModel(d, { kind: 'round', cwd: '/c', prompt: 'P', model: 'm1', timeoutMs: 5000 });
+  assert.deepEqual(out, { text: 'x', costUsd: 0.25 });
+  const { signal, onEvent, ...rest } = seen[0];
+  assert.ok(signal && typeof onEvent === 'function');
+  assert.deepEqual(rest, interviewCallOptions('round', { cwd: '/c', prompt: 'P', model: 'm1' }));
 });

@@ -105,18 +105,43 @@ function charge(seq, turnId, costUsd, model) {
   recordRequirementsCostDelta({ featureSeq: seq, turnId, amountUsd: costUsd, model: model || null });
 }
 
-async function callModel(d, { cwd, systemPrompt, prompt, model, tools, maxTurns = null, timeoutMs }) {
+const CALL_KINDS = Object.freeze({
+  look: () => ({ systemPrompt: ORIENTATION_SYSTEM_PROMPT, tools: REPO_LOOK_TOOLS, maxTurns: REPO_LOOK_MAX_TURNS }),
+  round: () => ({ systemPrompt: ROUND_SYSTEM_PROMPT, tools: [], maxTurns: null }),
+});
+const CALL_KEYS = new Set(['cwd', 'prompt', 'model', 'systemPrompt', 'tools', 'maxTurns', 'effort']);
+
+/**
+ * The runClaude options of one interview call, without `signal` / `onEvent` (design §9, the lane contract).
+ * `kind` is 'look' or 'round'; systemPrompt, tools, maxTurns and effort override that kind's defaults.
+ * The measurement tool builds its calls through this too, so what it measures is what the interview sends.
+ */
+export function interviewCallOptions(kind, args = {}) {
+  if (!Object.hasOwn(CALL_KINDS, kind)) throw new TypeError(`interviewCallOptions: unknown kind ${JSON.stringify(kind)}`);
+  for (const k of Object.keys(args)) if (!CALL_KEYS.has(k)) throw new TypeError(`interviewCallOptions: unknown option "${k}"`);
+  const def = CALL_KINDS[kind]();
+  const { cwd, prompt, model } = args;
+  const pick = (k) => (args[k] !== undefined ? args[k] : def[k]);
+  const tools = pick('tools');
+  const maxTurns = pick('maxTurns');
+  return {
+    cwd, systemPrompt: pick('systemPrompt'), prompt, model, modelEnv: resolveModelEnv(model),
+    allowedTools: [...tools], tools: [...tools], strictMcpConfig: true,
+    ...(maxTurns ? { maxTurns } : {}),
+    effort: args.effort !== undefined ? args.effort : 'medium', permissionMode: 'acceptEdits',
+    spawnKind: 'aux',   // credential broker: a short-lived token, as pr-description.mjs
+  };
+}
+
+export async function callModel(d, { kind, cwd, prompt, model, timeoutMs, ...overrides }) {
+  const options = interviewCallOptions(kind, { cwd, prompt, model, ...overrides });
   const ctrl = new AbortController();
   let timedOut = false;
   const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, timeoutMs);
   let costUsd = 0;
   try {
     const res = await d.runClaudeImpl({
-      cwd, systemPrompt, prompt, model, modelEnv: resolveModelEnv(model),
-      allowedTools: [...tools], tools: [...tools], strictMcpConfig: true,
-      ...(maxTurns ? { maxTurns } : {}),
-      effort: 'medium', permissionMode: 'acceptEdits', signal: ctrl.signal,
-      spawnKind: 'aux',   // credential broker: a short-lived token, as pr-description.mjs
+      ...options, signal: ctrl.signal,
       onEvent: normalizingOnEvent((e) => {
         if (e.type !== 'result' || e.costUsd == null) return;
         const c = resolveModelCost(model, Number(e.costUsd), e.usage ?? null);
@@ -160,9 +185,9 @@ async function orient(f, d) {
     model = await requirementsModel(d.listModels);
     if (isArchived(f.seq)) return { summary: '', files: [], skipped: 'archived' };
     const { text, costUsd } = await callModel(d, {
-      cwd: look.cwd, systemPrompt: ORIENTATION_SYSTEM_PROMPT,
+      kind: 'look', cwd: look.cwd,
       prompt: buildOrientationPrompt({ feature: f, context: ctx.body, members: look.members || null }),
-      model, tools: REPO_LOOK_TOOLS, maxTurns: REPO_LOOK_MAX_TURNS, timeoutMs: REPO_LOOK_TIMEOUT_MS,
+      model, timeoutMs: REPO_LOOK_TIMEOUT_MS,
     });
     return { ...normalizeOrientation(safeParseJson(text)), skipped: null, model: model || null, costUsd };
   } catch (err) {
@@ -212,7 +237,7 @@ async function runRound(seq, d, by, { final = false, followUp = null } = {}) {
       for (let attempt = 1; attempt <= 2 && !applied; attempt += 1) {
         if (isArchived(seq)) { if (cost > 0) fail('ARCHIVED', 'The feature was archived before the next attempt.'); return; }
         assertBudget(d);   // before every call; an earlier attempt is already counted in `cost`
-        const r = await callModel(d, { cwd, systemPrompt: ROUND_SYSTEM_PROMPT, prompt, model, tools: [], timeoutMs: ROUND_TIMEOUT_MS });
+        const r = await callModel(d, { kind: 'round', cwd, prompt, model, timeoutMs: ROUND_TIMEOUT_MS });
         cost += r.costUsd;
         try { applied = applyRound(f.spec, safeParseJson(r.text), seqs); }
         catch (err) { if (!(err instanceof RoundError)) throw err; lastErr = err; }
