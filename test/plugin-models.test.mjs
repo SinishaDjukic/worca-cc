@@ -18,9 +18,10 @@ import {
 } from '../src/core/plugin-models.mjs';
 import {
   listModels, resolveModelEnv, modelHasBaseUrlRouting, referencedPluginModels,
-  setNodeModel, modelCostConfig, resolveModelCost,
+  setNodeModel, setStep, modelCostConfig, resolveModelCost,
 } from '../src/core/config.mjs';
 import { addGlobalModel, removeGlobalModel } from '../src/core/settings.mjs';
+import { pluginReferences } from '../src/core/plugin-store.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 let homeDir, worcaHomeDir, proj;
@@ -204,6 +205,11 @@ test('referencedPluginModels: refs block; global-shadow and other-plugin carve-o
   assert.equal(refs[0].nodes.length, 1);
   assert.equal(refs[0].nodes[0].nodeId, 's1_0');
   assert.deepEqual(refs[0].steps, []);
+  assert.deepEqual(pluginReferences('discretestack-models'),
+    [{ kind: 'model-selection', contributionKind: 'models', contribution: 'ds-stable', label: 'ds-stable', count: 1, href: '#models' }]);
+  await setStep(proj, 'planner', { model: 'ds-stable' });
+  assert.equal(pluginReferences('discretestack-models')[0].count, 2, 'count = step selections + node selections');
+  await setStep(proj, 'planner', { model: '' });
 
   // Carve-out: a user global entry shadows the id — refs keep resolving.
   await addGlobalModel({ id: 'ds-stable', label: 'Mine' });

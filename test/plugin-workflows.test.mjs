@@ -15,10 +15,12 @@ import { getDb, _resetForTests } from '../src/core/db.mjs';
 import { writeWorkflow, writeGraphWorkflow, readWorkflow } from '../src/core/workflows.mjs';
 import { setActiveWorkflow } from '../src/core/config.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
+import { pluginReferences } from '../src/core/plugin-store.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { readPluginsLock, writePluginsLock, pluginDir } from '../src/core/plugins-lock.mjs';
 import {
   importPluginWorkflows, readPluginWorkflows, removePluginWorkflows, referencedPluginAgents, referencedPluginScripts,
+  pluginWorkflowPins,
   ReferencedError,
 } from '../src/core/plugin-workflows.mjs';
 
@@ -394,4 +396,38 @@ test('referencedPluginScripts skips a key ANOTHER owner holds: the author who li
   // A DISABLED plugin loads nothing, so nobody "else" holds pluginOnly: it still guards.
   writePluginsLock({ ...readPluginsLock(), demo: { ...readPluginsLock().demo, enabled: false } });
   assert.deepEqual(referencedPluginScripts('demo').map((r) => r.keys), [['pluginOnly']]);
+});
+
+test('pluginWorkflowPins names the project and the paused run that pin an imported template — and deletes nothing', async () => {
+  const versionDir = installFakePlugin('demo', { 'simple.json': TPL });
+  await importPluginWorkflows('demo', versionDir);
+  const proj = await mkdtemp(join(tmpdir(), 'worca-cc-pwf-proj4-')); homes.push(proj);
+  await setActiveWorkflow(proj, 'wfp_demo_simple');
+  const { id, key } = await seedPipeline(proj, { status: 'paused', title: 'Paused run' });
+  getDb().prepare('UPDATE pipelines SET resume_point = ? WHERE id = ?')
+    .run(JSON.stringify({ version: 1, kind: 'boundary', workflowId: 'wfp_demo_simple' }), id);
+  getDb().prepare('INSERT INTO projects (key, name, path, created_at) VALUES (?, ?, ?, ?)').run(key, 'Demo project', proj, '2026-10-21T00:00:00.000Z');
+  // Another project's pin and another paused run hold a workflow that is not this plugin's: neither is listed.
+  const other = await mkdtemp(join(tmpdir(), 'worca-cc-pwf-proj5-')); homes.push(other);
+  await setActiveWorkflow(other, 'wf_not_the_plugins');
+  const unrelated = await seedPipeline(other, { status: 'paused', title: 'Other run' });
+  getDb().prepare('UPDATE pipelines SET resume_point = ? WHERE id = ?')
+    .run(JSON.stringify({ version: 1, kind: 'boundary', workflowId: 'wf_not_the_plugins' }), unrelated.id);
+  assert.deepEqual(pluginWorkflowPins('demo'), [
+    { kind: 'active-workflow', workflowId: 'wfp_demo_simple', workflowName: 'Demo Flow', projectKey: key, projectName: 'Demo project', pipelineId: null, pipelineTitle: null },
+    { kind: 'paused-run', workflowId: 'wfp_demo_simple', workflowName: 'Demo Flow', projectKey: key, projectName: 'Demo project', pipelineId: id, pipelineTitle: 'Paused run' },
+  ]);
+  assert.deepEqual(pluginReferences('demo'), [
+    { kind: 'active-workflow', contributionKind: 'workflows', contribution: 'Demo Flow', label: 'Demo project', count: 1, href: '#new' },
+    { kind: 'paused-run', contributionKind: 'workflows', contribution: 'Demo Flow', label: 'Paused run', count: 1, href: `#history/${key}/${id}` },
+  ], 'the Remove dialog names the project and the run, and where to clear each');
+  getDb().prepare('DELETE FROM projects WHERE key = ?').run(key);
+  getDb().prepare('UPDATE pipelines SET title = NULL WHERE id = ?').run(id);
+  assert.deepEqual(pluginReferences('demo').map((r) => r.label), [key, id], 'no project name / no title: the key and the id');
+  assert.ok(getDb().prepare('SELECT 1 FROM workflows WHERE id = ?').get('wfp_demo_simple'), 'a dry run deletes nothing');
+  await assert.rejects(() => removePluginWorkflows('demo'), (err) => {
+    assert.deepEqual(err.references, [{ workflowId: 'wfp_demo_simple', referencedBy: [`project_config ${key}`] },
+      { workflowId: 'wfp_demo_simple', referencedBy: [`pipeline ${id}`] }], 'the 409 payload keeps its shape');
+    return true;
+  });
 });

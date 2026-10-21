@@ -92,6 +92,17 @@ export async function fakeGithub() {
     });
     return reply(200, { status, commits, files });
   }
+  // GET /repos/:o/:r/commits?sha=&path=&per_page=&page= — git log <sha> [-- <path>], newest first, paged like GitHub.
+  function commitList(r, q) {
+    const per = Math.min(Number(q.get('per_page')) || 30, 100);
+    const page = Math.max(Number(q.get('page')) || 1, 1);
+    const path = q.get('path');
+    const log = tryRun(r.bare, ['log', '--format=%H%x00%B%x1e', q.get('sha') || 'HEAD', ...(path ? ['--', path] : [])]);
+    if (log === null) return notFound();
+    const all = log.split('\x1e').map((x) => x.trim()).filter(Boolean)
+      .map((x) => { const [sha, message] = x.split('\0'); return { sha, commit: { message: message.trim() } }; });
+    return reply(200, all.slice((page - 1) * per, page * per));
+  }
   function refUpdate(r, branch, sha, { create = false, force = false } = {}) {
     if (once.beforeRef) { const fn = once.beforeRef; once.beforeRef = null; fn(); }
     const cur = tryRun(r.bare, ['rev-parse', '--verify', '-q', `refs/heads/${branch}`]);
@@ -102,6 +113,7 @@ export async function fakeGithub() {
     return reply(create ? 201 : 200, { ref: `refs/heads/${branch}`, object: { sha, type: 'commit' } });
   }
   const ROUTES = [
+    ['GET', /^\/commits$/, (r, _m, q) => commitList(r, q)],
     ['GET', /^$/, (r) => reply(200, { full_name: r.full, default_branch: run(r.bare, ['symbolic-ref', '--short', 'HEAD']), private: false })],
     ['GET', /^\/commits\/(.+)$/, (r, [ref]) => {
       const sha = tryRun(r.bare, ['rev-parse', '--verify', `${decodeURIComponent(ref)}^{commit}`]);

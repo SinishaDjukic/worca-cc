@@ -545,3 +545,95 @@ test('the receipt carries "python not found" when a python script ships and the 
   assert.match(r.stdout, /^ {2}1 script \(python 1\) · 1 case$/m);
   assert.match(r.stdout, /^ {2}python not found$/m);
 });
+
+/** A git repo holding one plugin manifest; `manifest(extra)` rewrites it, `commit(msg)` returns the new sha. */
+async function updRepo() {
+  const repoDir = await freshDir('worca-cc-plugin-upd-');
+  const g = (args) => spawnSync('git', args, { cwd: repoDir, encoding: 'utf8' });
+  const manifest = (extra) => writeFile(join(repoDir, 'worca-cc-plugin.json'), JSON.stringify({ name: 'upd-plugin', engines: { 'worca-cc-api': '>=4 <5' }, ...extra }));
+  const commit = (msg) => { g(['add', '-A']); g(['commit', '-qm', msg]); return g(['rev-parse', 'HEAD']).stdout.trim(); };
+  g(['init', '-q', '-b', 'main']); g(['config', 'user.email', 'cli@test']); g(['config', 'user.name', 'cli-test']);
+  return { repoDir, manifest, commit };
+}
+
+test('plugin update prints the chat-channel and model delta lines in the preview\'s order and applies the commit it showed', async () => {
+  const home = await freshDir('worca-cc-cli-plugin-');
+  const { repoDir, manifest, commit } = await updRepo();
+  await manifest({ version: '0.1.0', models: [{ id: 'keep-model', label: 'Keep', env: { ANTHROPIC_BASE_URL: 'https://a.example' } }, { id: 'gone-model', label: 'Gone' }] });
+  commit('v1');
+  assert.equal((await run(['plugin', 'install', 'upd-plugin', '--repo', repoDir, '--yes'], { home })).code, 0);
+  await manifest({ version: '0.2.0',
+    models: [{ id: 'keep-model', label: 'Keep', env: { ANTHROPIC_BASE_URL: 'https://b.example' } }, { id: 'upd-model', label: 'Upd model' }],
+    modelSecrets: [{ key: 'upd-key', label: 'Key' }],
+    chatChannels: [{ id: 'main', platform: 'slack', module: './channel.mjs', configSchema: [{ key: 'botToken', secret: true, required: true }] }] });
+  await writeFile(join(repoDir, 'channel.mjs'), 'export function createChannelWorker() { return {}; }\n');
+  const sha2 = commit('add chat and model');
+  const r = await run(['plugin', 'update', 'upd-plugin', '--yes'], { home });
+  assert.equal(r.code, 0, r.stderr + r.stdout);
+  const lines = r.stdout.split('\n');
+  const want = ['  NEW CHAT SECRET requested: main.botToken', '  new chat channel: main', '  MODEL ENV CHANGED (check its base URL): keep-model',
+    '  NEW MODEL SECRET requested: upd-key', '  new model: upd-model', '  removed model: gone-model', `updated upd-plugin to ${sha2.slice(0, 7)}`];
+  const at = want.map((line) => lines.indexOf(line));
+  assert.deepEqual(want.filter((_, k) => at[k] < 0), [], `missing lines in:\n${r.stdout}`);
+  assert.deepEqual(at, [...at].sort((x, y) => x - y), `printed in renderUpdatePreview's order:\n${r.stdout}`);
+});
+
+test('plugin update applies only the commit it showed: a tip that moves while the prompt is open is STALE_PREVIEW', async () => {
+  const home = await freshDir('worca-cc-cli-plugin-');
+  const { repoDir, manifest, commit } = await updRepo();
+  await manifest({ version: '0.1.0' });
+  const v1 = commit('v1');
+  assert.equal((await run(['plugin', 'install', 'upd-plugin', '--repo', repoDir, '--yes'], { home })).code, 0);
+  await manifest({ version: '0.2.0' });
+  const v2 = commit('v2');
+  const child = spawn(process.execPath, [CLI, 'plugin', 'update', 'upd-plugin'], {
+    env: { ...process.env, WORCA_MOCK: '1', WORCA_HOME: home }, cwd: scratchCwd, stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  let stderr = '';
+  let v3 = null;
+  child.stderr.on('data', (b) => (stderr += b.toString()));
+  child.stdout.on('data', async (b) => {
+    stdout += b.toString();
+    if (v3 || !stdout.includes('Update? [y/N]')) return;
+    await manifest({ version: '0.3.0' });
+    v3 = commit('v3');
+    child.stdin.end('y\n');
+  });
+  const code = await new Promise((res) => child.on('close', (c) => res(c ?? 0)));
+  assert.match(stdout, new RegExp(`^upd-plugin: ${v1.slice(0, 7)} -> ${v2.slice(0, 7)}$`, 'm'), 'the prompt showed v2');
+  assert.equal(code, 1, stdout + stderr);
+  assert.equal(stderr, `worca plugin update: plugin "upd-plugin" moved on since the preview (${v2.slice(0, 7)} → ${v3.slice(0, 7)}) — review the update again\n`);
+  const lock = JSON.parse(await readFile(join(home, '.worca-cc', 'plugins', 'plugins.lock.json'), 'utf8'));
+  assert.equal(lock['upd-plugin'].pinnedSha, v1, 'nothing applied');
+});
+
+test('plugin purge deletes a removed plugin\'s leftover data/ — the command the remove note names', async () => {
+  const home = await freshDir('worca-cc-cli-plugin-');
+  const dir = join(await freshDir('worca-cc-plugin-init-'), 'purge-plugin');
+  await run(['plugin', 'init', 'purge-plugin', '--dir', dir], { home });
+  assert.equal((await run(['plugin', 'link', dir], { home })).code, 0);
+  const pdir = join(home, '.worca-cc', 'plugins', 'purge-plugin');
+  await mkdir(join(pdir, 'data'), { recursive: true });
+  await writeFile(join(pdir, 'data', 'secrets.json'), '{"token":"x"}');
+  const removed = await run(['plugin', 'remove', 'purge-plugin'], { home });
+  assert.match(removed.stdout, /^data\/ kept — remove it with: worca plugin purge purge-plugin$/m);
+  assert.equal((await run(['plugin', 'remove', 'purge-plugin'], { home })).code, 1, 'remove of a removed plugin is refused');
+  assert.equal(existsSync(join(pdir, 'data', 'secrets.json')), true, 'remove never deletes leftover data/');
+  const purged = await run(['plugin', 'purge', 'purge-plugin'], { home });
+  assert.equal(purged.code, 0, purged.stderr);
+  assert.match(purged.stdout, /^purged purge-plugin: data\/ deleted \(config, secrets, state\)$/m);
+  assert.equal(existsSync(pdir), false);
+  const again = await run(['plugin', 'purge', 'purge-plugin'], { home });
+  assert.equal(again.code, 1);
+  assert.match(again.stderr, /nothing to purge/);
+  const inherited = await run(['plugin', 'purge', 'constructor'], { home });
+  assert.deepEqual([inherited.code, /nothing to purge/.test(inherited.stderr)], [1, true], `an inherited name is not installed: ${inherited.stderr}`);
+  assert.match((await run(['plugin', 'help'], { home })).stdout,
+    /^  worca plugin purge <name> +Remove with data\/, or delete a removed plugin's leftover data\/$/m);
+  assert.equal((await run(['plugin', 'link', dir], { home })).code, 0);
+  const installed = await run(['plugin', 'purge', 'purge-plugin'], { home });
+  assert.equal(installed.code, 0, installed.stderr);
+  assert.match(installed.stdout, /^removed purge-plugin$/m, 'purge of an installed plugin is remove --purge');
+  assert.equal(existsSync(pdir), false);
+});

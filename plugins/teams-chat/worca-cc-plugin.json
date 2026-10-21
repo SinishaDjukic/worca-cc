@@ -32,6 +32,7 @@
           "key": "tenantType",
           "type": "select",
           "label": "Tenant type",
+          "advanced": true,
           "default": "multi-tenant",
           "options": ["multi-tenant", "single-tenant"]
         },
@@ -39,6 +40,7 @@
           "key": "tenantId",
           "type": "text",
           "label": "Tenant ID",
+          "advanced": true,
           "help": "Required for single-tenant apps: the Entra tenant GUID."
         },
         {

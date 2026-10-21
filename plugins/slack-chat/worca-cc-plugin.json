@@ -45,6 +45,7 @@
           "key": "channelAllowlist",
           "type": "text",
           "label": "Listen filter (optional)",
+          "advanced": true,
           "help": "Optional comma-separated channel IDs to listen on; empty = every channel the bot can read (commands are still gated by Allowed channel IDs)."
         }
       ]

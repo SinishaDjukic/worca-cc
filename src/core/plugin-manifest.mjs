@@ -80,7 +80,7 @@ export function builtinScriptMetas(dir = BUILTIN_SCRIPTS_DIR) {
 const KNOWN_SOURCE = new Set(['id', 'displayName', 'module', 'configSchema', 'inputs', 'multiProfile']);
 const KNOWN_CHANNEL = new Set(['id', 'displayName', 'platform', 'module', 'ingress', 'capabilities', 'configSchema']);
 const CHANNEL_INGRESS = new Set(['connect', 'webhook']);
-const KNOWN_FIELD = new Set(['key', 'type', 'label', 'secret', 'required', 'default', 'help', 'options']);
+const KNOWN_FIELD = new Set(['key', 'type', 'label', 'secret', 'required', 'default', 'help', 'options', 'advanced']);
 const KNOWN_INPUT = new Set(['key', 'type', 'label', 'default', 'optionsFrom', 'options']);
 const KNOWN_MODEL = new Set(['id', 'label', 'efforts', 'env', 'cost', 'upstream', 'engine']);
 const KNOWN_MODEL_SECRET = new Set(['key', 'label']);
@@ -272,7 +272,7 @@ function normConfigSchema(rawList, at, errors, warnings) {
     configSchema.push({
       key, type, label: str(f.label) || key,
       secret: f.secret === true, required: f.required === true,
-      default: f.default ?? null, help: str(f.help) || null, options,
+      default: f.default ?? null, help: str(f.help) || null, options, advanced: f.advanced === true,
     });
   });
   return configSchema;

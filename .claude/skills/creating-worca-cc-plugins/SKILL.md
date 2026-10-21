@@ -63,13 +63,13 @@ Only `name` is required. Unknown fields are warnings (errors under `--strict`).
 | Field | Notes |
 |---|---|
 | `name` | kebab-case, ≤64 chars, machine-unique, used as a dir name |
-| `version` | optional — absent means the pinned SHA **is** the version |
+| `version` | optional — absent means the pinned SHA **is** the version; the Marketplace offers an update only when the marketplace lists a higher `x.y.z` on the branch your install follows |
 | `engines.worca-cc-api` | `">=4 <5"` (what `plugin init` writes); `">=5 <6"` to ship MCP servers. Integer host API. Unparseable → fails closed, won't install. Host APIs are a SET ([1, 2, 3, 4, 5]); the highest version your range admits is **negotiated**, and that is what decides which features you get. API 3 adds meta v2 sidecars and v2 graph templates; **API 4 honours an agent's `ask.forms`**; **API 5 honours the manifest's `mcpServers`** |
 | `setup.node` | `true` → `npm ci --ignore-scripts --omit=dev` at install. **Lockfile mandatory** |
 | `setup.python` | only `"pyproject"` → `uv sync`. Worca CC never *runs* python; your JS spawns it |
 | `taskSources[].id` | kebab-case |
 | `taskSources[].module` | must start `./`, no `..`, no backslashes |
-| `taskSources[].configSchema[]` | persistent config — `text` \| `select`, plus `secret`/`required`/`default`/`help`/`options` |
+| `taskSources[].configSchema[]` | persistent config — `text` \| `select`, plus `secret`/`required`/`default`/`help`/`options`/`advanced` (`advanced: true` folds an optional tuning field under **More options**; hosts older than this ignore it with an unknown-field warning) |
 | `taskSources[].multiProfile` | `true` → one install holds several independent configurations (two Jira servers, two orgs), each with its own config/secrets/state. Users create profiles in the UI and bind each project/workspace to one. Omit it and the source uses a single implicit `default` profile — identical to before profiles existed |
 | `taskSources[].inputs[]` | per-run UI — see next table. **Exactly one `task-browser` required** |
 | `models[]` | catalog entries: `id`, `label`, `efforts`, `env` (literal or `{"secret": "<key>"}`), `cost` (`{free:true}` \| `{perMtok:{…}}`), and `upstream` for a bridged model — `{provider: "copilot"\|"openai"\|"anthropic", api: "anthropic"\|"openai-chat"\|"openai-responses", model, baseUrl?, apiKey? (a `${VAR}` ref only, never a literal), headers?, capabilities? (toolCalls, vision, reasoning, maxPromptTokens, maxOutputTokens, reasoningEfforts)}`. A `copilot` entry resolves against each user's own sign-in |

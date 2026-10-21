@@ -342,6 +342,13 @@ test('update preview: model delta flags — env change and new model secret are 
   assert.ok(infos.includes('removed model: ds-old'));
 });
 
+test('update preview: chat-channel delta — a new channel secret is red, a new channel is a plain line', () => {
+  const el = renderUpdatePreview({ pinnedSha: 'a'.repeat(12), candidateSha: 'b'.repeat(12), commits: [{ sha: 'b'.repeat(12), subject: 'add slack' }],
+    manifestDelta: { newChatChannels: ['main'], newChannelSecrets: ['main.botToken'] } }, { doc });
+  assert.deepEqual([...el.querySelectorAll('.pl-manifest-delta > div')].map((d) => [d.className, d.textContent]),
+    [['pl-delta-secret', 'NEW CHAT SECRET requested: main.botToken'], ['pl-delta', 'new chat channel: main']]);
+});
+
 // ── marketplaces: available cards, registry rows, installed provenance ───────
 
 const MKT = {

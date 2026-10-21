@@ -284,7 +284,9 @@ export function renderUpdatePreview(preview, { doc = globalThis.document } = {})
   const d = p.manifestDelta || {};
   const flags = [
     ...(d.newSecrets || []).map((k) => ['pl-delta-secret', `NEW SECRET requested: ${k}`]),
+    ...(d.newChannelSecrets || []).map((k) => ['pl-delta-secret', `NEW CHAT SECRET requested: ${k}`]),
     ...(d.newTaskSources || []).map((s) => ['pl-delta', `new task source: ${s}`]),
+    ...(d.newChatChannels || []).map((s) => ['pl-delta', `new chat channel: ${s}`]),
     ...(d.newAgents || []).map((a) => ['pl-delta', `new agent: ${a}`]),
     ...(d.setupChanged ? [['pl-delta', 'setup commands changed']] : []),
     // Model delta (design §9.4): an env change can silently reroute API traffic

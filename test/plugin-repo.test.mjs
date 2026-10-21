@@ -14,6 +14,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import {
   addPluginRepo, discoverAtCommit, fetchCandidate, exportVersion, repoCacheDir, parseMarketplaceManifest, repoSlug, pluginGitEnv,
+  emptyManifestDelta, manifestVersion,
 } from '../src/core/plugin-repo.mjs';
 import { ADO_GIT_CREDENTIAL_HELPER } from '../src/core/azure-credentials.mjs';
 import { withEnv } from './helpers/with-env.mjs';
@@ -126,7 +127,7 @@ test('fetchCandidate: commit list + diffstat between pinned and new HEAD', async
   assert.deepEqual(fc.commits, [{ sha: sha2, subject: 'tweak connector' }]);
   assert.match(fc.diffstat, /index\.mjs/);
   assert.deepEqual(fc.manifestDelta, {
-    newSecrets: [], newTaskSources: [], newAgents: [], setupChanged: false,
+    newSecrets: [], newTaskSources: [], newChatChannels: [], newChannelSecrets: [], newAgents: [], setupChanged: false,
     newModels: [], removedModels: [], envChangedModels: [], newModelSecrets: [],
     newMcpServers: [], removedMcpServers: [], changedMcpServers: [], mcpLines: [],
     newSkills: [], removedSkills: [], changedSkills: [], skillLines: [],
@@ -391,4 +392,33 @@ test('discoverAtCommit: discovery at a given commit of a checkout — index auth
   assert.deepEqual(atFirst.marketplace, { name: 'M', description: '' });
   const atHead = await discoverAtCommit(gitDirAbs, await git(root, 'rev-parse', 'HEAD'));
   assert.equal(atHead.discovered[0].manifest.version, '0.1.1');
+});
+
+test('fetchCandidate: versions, previewedAt and access ride at the top level; a new chat channel and its secret are in the delta', async () => {
+  const { root, sha } = await makeRepo('chan-moving', { 'worca-cc-plugin.json': JSON.stringify({ name: 'chan-plugin', version: '0.1.0' }) });
+  await addPluginRepo(root);
+  writePluginsLock({ 'chan-plugin': { repo: root, subdir: '', pinnedSha: sha, version: '0.1.0', enabled: true, installedAt: 'x' } });
+  writeTree(root, {
+    'worca-cc-plugin.json': JSON.stringify({ name: 'chan-plugin', version: '0.2.0', chatChannels: [{ id: 'main', platform: 'slack',
+      module: './w.mjs', configSchema: [{ key: 'botToken', secret: true, required: true }, { key: 'notifyChatIds' }] }] }),
+    'w.mjs': 'export {};\n',
+  });
+  await git(root, 'add', '-A');
+  await git(root, 'commit', '-qm', 'add slack');
+  const sha2 = await git(root, 'rev-parse', 'HEAD');
+  const fc = await fetchCandidate('chan-plugin');
+  assert.deepEqual([fc.pinnedVersion, fc.candidateVersion], ['0.1.0', '0.2.0']);
+  assert.match(fc.previewedAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+  assert.deepEqual([fc.manifestDelta.newChatChannels, fc.manifestDelta.newChannelSecrets], [['main'], ['main.botToken']]);
+  assert.deepEqual(fc.access, [{ kind: 'channelSecret', id: 'main.botToken', red: true }, { kind: 'chatChannel', id: 'main', red: false }]);
+  writePluginsLock({ 'chan-plugin': { repo: root, subdir: '', pinnedSha: sha2, version: '0.2.0', enabled: true, installedAt: 'x' } });
+  const same = await fetchCandidate('chan-plugin');
+  assert.deepEqual(Object.keys(same.manifestDelta).sort(), Object.keys(fc.manifestDelta).sort(), 'an equal candidate\'s delta has every key a moved one has');
+  assert.deepEqual([manifestVersion({ version: ' 0.3.0 ' }), manifestVersion({ version: '  ' }), manifestVersion(null)], ['0.3.0', null, null],
+    'normalizeManifest\'s reading: trimmed, a blank or missing version is none');
+  assert.deepEqual([same.pinnedVersion, same.candidateVersion, same.access, same.manifestDelta], ['0.2.0', '0.2.0', [], emptyManifestDelta()]);
+  writeFileSync(join(root, 'w.mjs'), 'export const v = 3;\n');   // the channel on both sides: not new
+  await git(root, 'commit', '-qam', 'touch the worker');
+  const kept = await fetchCandidate('chan-plugin');
+  assert.deepEqual([kept.candidateVersion, kept.manifestDelta.newChatChannels, kept.manifestDelta.newChannelSecrets, kept.access], ['0.2.0', [], [], []]);
 });

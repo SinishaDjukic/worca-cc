@@ -404,8 +404,9 @@ import { PORT_ID_RE } from '../src/shared/graph/constants.mjs';
 import {
   listInstalledPlugins, installPlugin, updatePlugin, uninstallPlugin, pythonNoticeFor,
   setPluginEnabled, doctorPlugin, linkPlugin,
-  listOrphanPluginData, purgePluginData,
+  listOrphanPluginData, purgePluginData, installedInventory, pluginReferences,
 } from '../src/core/plugin-store.mjs';
+import { githubWebUrl } from '../src/shared/plugin-access.mjs';
 import { fetchCandidate } from '../src/core/plugin-repo.mjs';
 import { reconcileMcpStore } from '../src/core/mcp/catalog.mjs';
 import { readMcpStore } from '../src/core/mcp/store.mjs';
@@ -1015,6 +1016,9 @@ function askFrameComposer(obj) {
 function emitChanged(type, action) {
   broadcast({ type, action: action || null });
 }
+// CONTRACT §1.7: every open Marketplace tab re-reads its lists after a plugin action (install, update, enable, remove,
+// purge, link, config; P2 adds the marketplace actions).
+function emitPluginsChanged(action) { emitChanged('plugins-changed', action); }
 
 metricsEvents.on('changed', (e) => emitChanged('team-metrics-changed', e && e.action ? e.action : null));
 policyEvents.on('changed', (e) => emitChanged('team-policy-changed', e && e.action ? e.action : null));
@@ -15415,7 +15419,7 @@ app.put('/api/scripts/:key/cases', async (req, res) => {
 const PLUGIN_NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
 function requirePlugin(req, res) {
   const name = req.params.name;
-  if (!PLUGIN_NAME_RE.test(name) || !readPluginsLock()[name]) {
+  if (!PLUGIN_NAME_RE.test(name) || !Object.hasOwn(readPluginsLock(), name)) {   // own keys: "constructor" is not installed
     res.status(404).json({ error: 'plugin not found' });
     return null;
   }
@@ -15447,6 +15451,7 @@ function pluginErrorStatus(code) {
   if (code === 'REFERENCED') return 409;
   if (code === 'EXISTS') return 409;
   if (code === 'GIT_MISSING') return 409;
+  if (code === 'STALE_PREVIEW') return 409;
   if (typeof code === 'string' && code.startsWith('GITHUB_')) return 502;   // P6: GitHub answered (or not) over HTTPS
   return 500;
 }
@@ -15455,6 +15460,7 @@ function sendPluginError(res, err) {
   if (err && (err.name === 'ReferencedError' || err.code === 'REFERENCED')) {
     return res.status(409).json({ error: message, references: err.references || [] });
   }
+  if (err?.code === 'STALE_PREVIEW') return res.status(409).json({ error: message, code: 'STALE_PREVIEW', candidateSha: err.candidateSha ?? null });
   res.status(pluginErrorStatus(err && err.code)).json({ error: message, ...(err?.code === 'GIT_MISSING' ? { code: 'GIT_MISSING' } : {}) });
 }
 
@@ -15470,29 +15476,58 @@ function readInstalledManifest(name) {
   }
 }
 
+// The API row: core's installed row plus what only the server knows (the marketplace's name, this host's python
+// notice, the MCP and skill sets an uninstall leaves). Shared by the list and the one-plugin route (SEAMS SM9).
+async function pluginApiRows(rows, mkts) {
+  // The python notice (spec §8.1) is a fact about THIS host: resolved once per
+  // request, and only when some plugin ships a python script (the probe caches 60 s).
+  const anyPython = rows.some((p) => Number((p.scriptRuntimes || {}).python) > 0);
+  const notice = anyPython ? await pythonNoticeFor([{ runtime: 'python' }]) : null;
+  const mcp = await readMcpStore();
+  return rows.map((p) => ({
+    ...p,
+    marketplaceName: p.marketplace && mkts[p.marketplace] ? mkts[p.marketplace].name : null,
+    pythonMissing: !!(notice && Number((p.scriptRuntimes || {}).python) > 0),
+    // The uninstall confirm names the MCP sets its servers leave (§4.6), and the sets its skills leave (skills §5).
+    mcpSets: mcpFootprint(mcp, (id) => id.startsWith(`plugin:${p.name}/`)).sets,
+    skillSets: skillFootprint(mcp, (id) => id.startsWith(`skill:plugin:${p.name}/`)).sets,
+  }));
+}
+
 app.get('/api/plugins', async (req, res) => {
   try {
     const mkts = readMarketplaces().marketplaces;
-    const rows = listInstalledPlugins();
-    // The python notice (spec §8.1) is a fact about THIS host: resolved once per
-    // request, and only when some plugin ships a python script (the probe caches 60 s).
-    const anyPython = rows.some((p) => Number((p.scriptRuntimes || {}).python) > 0);
-    const notice = anyPython ? await pythonNoticeFor([{ runtime: 'python' }]) : null;
-    const mcp = await readMcpStore();
     res.json({
-      plugins: rows.map((p) => ({
-        ...p,
-        marketplaceName: p.marketplace && mkts[p.marketplace] ? mkts[p.marketplace].name : null,
-        pythonMissing: !!(notice && Number((p.scriptRuntimes || {}).python) > 0),
-        // The uninstall confirm names the MCP sets its servers leave (§4.6), and the sets its skills leave (skills §5).
-        mcpSets: mcpFootprint(mcp, (id) => id.startsWith(`plugin:${p.name}/`)).sets,
-        skillSets: skillFootprint(mcp, (id) => id.startsWith(`skill:plugin:${p.name}/`)).sets,
-      })),
+      plugins: await pluginApiRows(listInstalledPlugins({ marketplaces: mkts }), mkts),
       orphans: listOrphanPluginData(),
     });
   } catch (err) {
     sendPluginError(res, err);
   }
+});
+
+// GET /api/plugins/:name — one installed plugin for its sheet (CONTRACT §1.2): the row, what it ships (installed
+// inventory, `<plugin-dir>` placeholder) and where it came from. Zero network.
+app.get('/api/plugins/:name', async (req, res) => {
+  const name = requirePlugin(req, res);
+  if (!name) return;
+  try {
+    const mkts = readMarketplaces().marketplaces;
+    const [plugin] = await pluginApiRows(listInstalledPlugins({ marketplaces: mkts }).filter((p) => p.name === name), mkts);
+    if (!plugin) return res.status(404).json({ error: 'plugin not found' });   // removed since requirePlugin read the lock
+    const e = readPluginsLock()[name] || {};
+    res.json({
+      plugin, inventory: installedInventory(name), repo: e.repo ?? null, subdir: e.subdir ?? '', sha: e.pinnedSha ?? null,
+      installedAt: e.installedAt ?? null, updatedAt: e.updatedAt ?? null, webUrl: githubWebUrl(e.repo, e.pinnedSha, e.subdir ?? ''),
+    });
+  } catch (err) { sendPluginError(res, err); }
+});
+
+// GET /api/plugins/:name/references — the Remove dialog's dry run (CONTRACT §1.3): every uninstall guard, nothing thrown.
+app.get('/api/plugins/:name/references', (req, res) => {
+  const name = requirePlugin(req, res);
+  if (!name) return;
+  try { res.json({ references: pluginReferences(name) }); } catch (err) { sendPluginError(res, err); }
 });
 
 // Marketplaces (spec §4.7): the persisted repo registry behind the Plugins
@@ -15543,6 +15578,7 @@ async function linkPluginDir(dir) {
   try { out = await linkPlugin(v.manifest.name, abs); }
   catch (err) { throw Object.assign(err instanceof Error ? err : new Error(String(err)), { code: err?.code || 'BAD_REQUEST' }); }
   reloadChatWorkers(v.manifest.name);
+  emitPluginsChanged('link');
   return out; // { ok, name, dir, workflows: { imported, skipped } }
 }
 
@@ -15612,6 +15648,7 @@ app.post('/api/plugins/install', async (req, res) => {
       repoUrl: body.repoUrl.trim(), subdir, name: body.name.trim(), sha: body.sha.trim(), marketplace,
     });
     reloadChatWorkers(body.name.trim());
+    emitPluginsChanged('install');
     res.json(out); // { ok: true, inventory, warnings, ignored }
   } catch (err) {
     sendPluginError(res, err);
@@ -15624,13 +15661,18 @@ app.post('/api/plugins/install', async (req, res) => {
 app.post('/api/plugins/:name/update', async (req, res) => {
   const name = requirePlugin(req, res);
   if (!name) return;
+  const body = req.body || {};
+  // The commit the user reviewed (CONTRACT §1.4): the apply refuses STALE_PREVIEW when the tip moved since. Absent = today.
+  if (body.confirm === true && body.candidateSha !== undefined
+    && !(typeof body.candidateSha === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(body.candidateSha))) {
+    return badRequest(res, 'candidateSha must be a commit sha');
+  }
   try {
-    if (!(req.body && req.body.confirm === true)) {
-      return res.json({ preview: await fetchCandidate(name) });
-    }
-    const updated = await updatePlugin(name);
+    if (body.confirm !== true) return res.json({ preview: await fetchCandidate(name) });
+    const updated = await updatePlugin(name, { expectSha: body.candidateSha });
     reloadChatWorkers(name);
     void retestServers((s) => s.startsWith(`plugin:${name}/`));   // MCP registry §7.3
+    emitPluginsChanged('update');
     res.json(updated);
   } catch (err) {
     sendPluginError(res, err);
@@ -15646,6 +15688,7 @@ app.post('/api/plugins/:name/enable', (req, res) => {
   try {
     setPluginEnabled(name, req.body.enabled);
     reloadChatWorkers(name);
+    emitPluginsChanged('enable');
     res.json({ ok: true, enabled: req.body.enabled });
   } catch (err) {
     sendPluginError(res, err);
@@ -15664,6 +15707,7 @@ app.delete('/api/plugins/:name', async (req, res) => {
     // the CLI's `worca plugin remove` clears them identically).
     await uninstallPlugin(name, { purge });
     reloadChatWorkers(name);
+    emitPluginsChanged('remove');
     res.json({ ok: true, purged: purge });
   } catch (err) {
     sendPluginError(res, err);
@@ -15678,7 +15722,9 @@ app.delete('/api/plugins/:name/data', (req, res) => {
   const name = req.params.name;
   if (!PLUGIN_NAME_RE.test(name)) return res.status(404).json({ error: 'plugin not found' });
   try {
-    res.json(purgePluginData(name));
+    const out = purgePluginData(name);
+    emitPluginsChanged('purge');
+    res.json(out);
   } catch (err) {
     if (err && err.code === 'INSTALLED') return res.status(409).json({ error: err.message });
     if (err && /nothing to purge/.test(err.message || '')) return res.status(404).json({ error: err.message });
@@ -15783,7 +15829,9 @@ app.post('/api/plugins/:name/profiles', (req, res) => {
     return badRequest(res, `profile id "${DEFAULT_PROFILE}" is reserved — pick another name`);
   }
   try {
-    res.json({ ok: true, profile: createProfile(name, body.id, body.label) });
+    const profile = createProfile(name, body.id, body.label);
+    emitPluginsChanged('config');
+    res.json({ ok: true, profile });
   } catch (err) {
     sendPluginError(res, err);
   }
@@ -15824,6 +15872,7 @@ app.delete('/api/plugins/:name/profiles/:id', (req, res) => {
   try {
     deleteProfile(name, req.params.id);
     const unbound = clearBindingsForProfile(name, req.params.id);
+    emitPluginsChanged('config');
     res.json({ ok: true, unbound });
   } catch (err) {
     sendPluginError(res, err);
@@ -15854,6 +15903,7 @@ app.put('/api/plugins/:name/config', (req, res) => {
     }
     try {
       writePluginConfig(name, schema, body.values);
+      emitPluginsChanged('config');
       return res.json({ ok: true });
     } catch (err) {
       return sendPluginError(res, err);
@@ -15888,6 +15938,7 @@ app.put('/api/plugins/:name/config', (req, res) => {
   try {
     writePluginConfig(name, schema, body.values, profile);
     reloadChatWorkers(name);
+    emitPluginsChanged('config');
     res.json({ ok: true });
   } catch (err) {
     sendPluginError(res, err);

@@ -136,6 +136,37 @@ export async function importPluginWorkflows(name, versionDir) {
 }
 
 /**
+ * The project pins and the live runs that hold one of this plugin's imported
+ * templates — removePluginWorkflows' own two queries, in its order (project pins,
+ * then non-archived runs with a resume point), with display names. Read-only: a
+ * dry run for the Remove dialog (CONTRACT §1.3) and the guard's input alike.
+ * @param {string} name
+ * @returns {Array<{kind: 'active-workflow'|'paused-run', workflowId: string, workflowName: string,
+ *   projectKey: string, projectName: string|null, pipelineId: string|null, pipelineTitle: string|null}>}
+ */
+export function pluginWorkflowPins(name) {
+  getDb();
+  const names = new Map(prepare('SELECT id, name FROM workflows WHERE origin = ?').all(`plugin:${name}`).map((r) => [r.id, r.name]));
+  if (!names.size) return [];
+  const projectName = (key) => prepare('SELECT name FROM projects WHERE key = ?').get(key)?.name ?? null;
+  const pins = [];
+  for (const cfg of prepare('SELECT project_key, active_workflow_id FROM project_config WHERE active_workflow_id IS NOT NULL').all()) {
+    if (!names.has(cfg.active_workflow_id)) continue;
+    pins.push({ kind: 'active-workflow', workflowId: cfg.active_workflow_id, workflowName: names.get(cfg.active_workflow_id),
+      projectKey: cfg.project_key, projectName: projectName(cfg.project_key), pipelineId: null, pipelineTitle: null });
+  }
+  // archived_at IS NULL: removePluginWorkflows' rule (an archived run can never resume, so it pins nothing).
+  for (const p of prepare('SELECT id, project_key, title, resume_point FROM pipelines WHERE resume_point IS NOT NULL AND archived_at IS NULL').all()) {
+    let rp = null;
+    try { rp = JSON.parse(p.resume_point); } catch { /* corrupt resume point: not a reference */ }
+    if (!rp || !names.has(rp.workflowId)) continue;
+    pins.push({ kind: 'paused-run', workflowId: rp.workflowId, workflowName: names.get(rp.workflowId),
+      projectKey: p.project_key, projectName: projectName(p.project_key), pipelineId: p.id, pipelineTitle: p.title || null });
+  }
+  return pins;
+}
+
+/**
  * Delete this plugin's imported workflow rows (origin = 'plugin:<name>').
  * Guarded: a project_config.active_workflow_id pinning one, or a pipeline whose
  * resume_point.workflowId pins one (resume re-reads the workflow row), throws
@@ -153,27 +184,10 @@ export async function removePluginWorkflows(name) {
   getDb();
   const rows = prepare('SELECT id FROM workflows WHERE origin = ?').all(origin);
   if (!rows.length) return { removed: [] };
-  const ids = new Set(rows.map((r) => r.id));
-
-  const references = [];
-  for (const cfg of prepare(
-    'SELECT project_key, active_workflow_id FROM project_config WHERE active_workflow_id IS NOT NULL',
-  ).all()) {
-    if (ids.has(cfg.active_workflow_id)) {
-      references.push({ workflowId: cfg.active_workflow_id, referencedBy: [`project_config ${cfg.project_key}`] });
-    }
-  }
-  // archived_at IS NULL for the same reason guardrail-store.mjs filters it: an
-  // archived row keeps its resume_point but can never be resumed or seen again,
-  // so a pin held there would strand `worca plugin remove` permanently.
-  for (const p of prepare(
-    'SELECT id, resume_point FROM pipelines WHERE resume_point IS NOT NULL AND archived_at IS NULL',
-  ).all()) {
-    try {
-      const rp = JSON.parse(p.resume_point);
-      if (rp && ids.has(rp.workflowId)) references.push({ workflowId: rp.workflowId, referencedBy: [`pipeline ${p.id}`] });
-    } catch { /* corrupt resume point: not a reference */ }
-  }
+  const references = pluginWorkflowPins(name).map((p) => ({
+    workflowId: p.workflowId,
+    referencedBy: [p.kind === 'active-workflow' ? `project_config ${p.projectKey}` : `pipeline ${p.pipelineId}`],
+  }));
   if (references.length) {
     const lines = references.map((r) => `  - ${r.workflowId} (referenced by ${r.referencedBy.join(', ')})`);
     throw new ReferencedError(
