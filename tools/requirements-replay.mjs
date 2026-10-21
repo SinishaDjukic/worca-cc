@@ -70,7 +70,7 @@ export function loadFixture(path) {
  * `variant` 'system-stable' moves each round's stable blocks into the system prompt (the look is unchanged);
  * `keepUserSettings` is the interview's sign-in exception (userClaudeSignIn).
  */
-export function replayPlan(fixture, { rounds = DEFAULT_ROUNDS, lookDir = null, roundCwd, model, effort = 'medium', variant = null, keepUserSettings = false } = {}) {
+export function replayPlan(fixture, { rounds = DEFAULT_ROUNDS, lookDir = null, roundCwd, model, effort = DEFAULT_INTERVIEW_EFFORT, variant = null, keepUserSettings = false } = {}) {
   if (!Number.isInteger(rounds) || rounds < 1 || rounds > MAX_ROUNDS) throw new InputError(`--rounds must be 1 to ${MAX_ROUNDS}`);
   if (variant !== null && !VARIANTS.has(variant)) throw new InputError(`unknown --variant ${variant}; known: ${[...VARIANTS].join(', ')}`);
   const how = { keepUserSettings };
@@ -341,9 +341,9 @@ export async function main(argv, {
     if (!(maxUsd > 0)) throw new InputError('--max-usd must be a positive number');
     const fixturePath = v.fixture || DEFAULT_FIXTURE;
     const fixture = loadFixture(fixturePath);
-    const resolved = v.model && v.effort ? null : await resolveModel();
+    const resolved = v.model ? null : await resolveModel();
     const model = v.model || (resolved && resolved.model) || undefined;
-    // With --model alone the stored pair does not apply to another model: the default effort does.
+    // With --model alone the effort is the default, not production's model-only rule (no effort): deliberately, so before/after runs compare like for like.
     const effort = v.effort || (v.model ? DEFAULT_INTERVIEW_EFFORT : (resolved && resolved.effort) || null);   // null: the interview sends no effort
     if (v.yes && !model) throw new InputError('no model could be resolved; pass --model <id> so before and after runs measure the same model');
     const roundCwd = join(tmpdir(), 'worca-req-replay');

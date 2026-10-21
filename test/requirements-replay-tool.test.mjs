@@ -329,3 +329,11 @@ test('a resolved pair without effort sends none; --effort and --model override',
   assert.equal(over.calls[0].model, 'm-x');
   assert.equal(over.calls[0].effort, 'low');
 });
+
+test('--model alone sends the default effort (medium) and does not ask the resolver', async () => {
+  const { log } = logger();
+  const f = fakeSpawn();
+  await main(['--rounds', '1', '--yes', '--model', 'm-y'], { spawn: f.spawn, log, env: noMock, resolveModel: async () => { throw new Error('not needed'); } });
+  assert.equal(f.calls[0].model, 'm-y');
+  assert.equal(f.calls[0].effort, 'medium');
+});

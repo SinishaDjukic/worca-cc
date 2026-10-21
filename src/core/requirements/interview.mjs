@@ -108,12 +108,12 @@ export async function interviewModel(deps = {}) {
   try { slot = d.interviewSlot() || {}; } catch { slot = {}; }
   let stored = null;
   if (typeof slot.model === 'string' && slot.model) {
-    let listed = true;
+    stored = slot.model;   // a failing catalog read: it counts as stored
     try {
       const want = slot.model.toLowerCase();
-      listed = (await d.listModels(null)).some((m) => m && typeof m.id === 'string' && m.id.toLowerCase() === want);
-    } catch { listed = true; }
-    if (listed) stored = slot.model;
+      const hit = (await d.listModels(null)).find((m) => m && typeof m.id === 'string' && m.id.toLowerCase() === want);
+      stored = hit ? hit.id : null;   // the catalog's spelling, so label and cost lookups agree
+    } catch { /* keep it */ }
   }
   const model = stored || await requirementsModel(d.listModels);
   const effort = slot.effort || (stored ? null : DEFAULT_INTERVIEW_EFFORT);

@@ -280,7 +280,7 @@ import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
 import { registerRequirementsRoutes, requirementsChangeNotifier } from '../src/core/requirements/routes.mjs';
 import { createRunEventHook } from '../src/core/requirements/start.mjs';
-import { recoverInterrupted as recoverRequirements, requirementsModel } from '../src/core/requirements/interview.mjs';
+import { recoverInterrupted as recoverRequirements, requirementsModel, DEFAULT_INTERVIEW_EFFORT } from '../src/core/requirements/interview.mjs';
 import { drainTimeoutMs, autoResumeEnabled, autoResumeCandidates, DRAIN_ACTIVE_STATUSES } from '../src/core/drain.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
 import {
@@ -9030,7 +9030,7 @@ async function autoModelState() {
 
 /** What "(default)" means for the Requirements interview row: the newest plain Opus at medium effort (A1-D8). */
 async function requirementsInterviewState() {
-  return { requirementsInterviewDefault: { model: (await requirementsModel(() => listModels(''))) ?? null, effort: 'medium' } };
+  return { requirementsInterviewDefault: { model: (await requirementsModel(() => listModels(''))) ?? null, effort: DEFAULT_INTERVIEW_EFFORT } };
 }
 /** Settings ▸ PR description model: the stored id + what Generate with AI will actually
  *  use (stored catalog id > the Sonnet-class default). Async because the catalog is. */

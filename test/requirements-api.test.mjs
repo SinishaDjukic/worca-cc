@@ -254,5 +254,8 @@ test('the list: lookCostUsd uses the looks of the current model when there are s
   const stub = (model) => ({ interviewModel: async () => ({ model, effort: null, source: 'settings' }) });
   assert.equal((await listWith(stub('cost-model-a'))).json.lookCostUsd, 0.3);
   assert.equal((await listWith(stub('cost-model-b'))).json.lookCostUsd, 5);
-  assert.equal((await listWith(stub('cost-model-none'))).json.lookCostUsd, 0.4, 'median of all three looks');
+  const all = (await import('../src/core/requirements/store.mjs')).recentLookCosts(10).sort((a, b) => a - b);
+  const m = all.length >> 1;
+  const median = all.length % 2 ? all[m] : (all[m - 1] + all[m]) / 2;
+  assert.equal((await listWith(stub('cost-model-none'))).json.lookCostUsd, Math.round(median * 1e4) / 1e4, 'median of all recent looks');
 });

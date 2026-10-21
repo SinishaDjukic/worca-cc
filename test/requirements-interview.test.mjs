@@ -655,23 +655,26 @@ test('follow-up: refused (CONFLICT) while a round\'s questions are waiting; noth
 // ── the one call path (A1.1 Task 1): the options written out, so every change is deliberate ──
 // Task 3: A2's options plus Worca's own system prompt (replace mode) and the hermetic flags.
 test('interviewCallOptions: a look is A2\'s options, replace mode and the hermetic flags', () => {
-  assert.deepEqual(interviewCallOptions('look', { cwd: '/c', prompt: 'P', model: 'm1' }), {
+  assert.deepEqual(interviewCallOptions('look', { cwd: '/c', prompt: 'P', model: 'm1', effort: 'medium' }), {
     cwd: '/c', systemPrompt: ORIENTATION_SYSTEM_PROMPT, systemPromptMode: 'replace', prompt: 'P', model: 'm1', modelEnv: undefined,
     allowedTools: [...REPO_LOOK_TOOLS], tools: [...REPO_LOOK_TOOLS], strictMcpConfig: true,
     settingSources: ['project'], disableSlashCommands: true,
-    maxTurns: REPO_LOOK_MAX_TURNS, permissionMode: 'acceptEdits', spawnKind: 'aux',
+    maxTurns: REPO_LOOK_MAX_TURNS, effort: 'medium', permissionMode: 'acceptEdits', spawnKind: 'aux',
   });
 });
 
+test('interviewCallOptions: no effort key unless one is given', () => {
+  for (const kind of ['look', 'round']) assert.equal('effort' in interviewCallOptions(kind, { cwd: '/c', prompt: 'P', model: 'm1' }), false, kind);
+});
+
 test('interviewCallOptions: a round is A2\'s options (no tools, no maxTurns), replace mode and the hermetic flags', () => {
-  const o = interviewCallOptions('round', { cwd: '/c', prompt: 'P', model: 'm1' });
+  const o = interviewCallOptions('round', { cwd: '/c', prompt: 'P', model: 'm1', effort: 'medium' });
   assert.deepEqual(o, {
     cwd: '/c', systemPrompt: ROUND_SYSTEM_PROMPT, systemPromptMode: 'replace', prompt: 'P', model: 'm1', modelEnv: undefined,
     allowedTools: [], tools: [], strictMcpConfig: true,
     settingSources: ['project'], disableSlashCommands: true,
-    permissionMode: 'acceptEdits', spawnKind: 'aux',
+    effort: 'medium', permissionMode: 'acceptEdits', spawnKind: 'aux',
   });
-  assert.equal('effort' in o, false, 'no effort unless one is given');
   assert.equal('maxTurns' in o, false);
 });
 
@@ -847,6 +850,11 @@ test('interview model: nothing stored -> the default Opus and medium effort on t
   const { r } = await runBoth(() => ({}));
   assert.equal(r.calls.length, 2);
   for (const c of r.calls) { assert.equal(c.model, 'claude-opus-5-5'); assert.equal(c.effort, 'medium'); }
+  // The unset production call is A2's options byte for byte (plus Task 3's replace mode and hermetic flags).
+  const strip = ({ onEvent, signal, cwd, prompt, ...rest }) => rest;
+  const a2 = (kind) => { const { cwd, prompt, ...rest } = interviewCallOptions(kind, { cwd: '/c', prompt: 'P', model: 'claude-opus-5-5', effort: 'medium' }); return rest; };
+  assert.deepEqual(strip(r.calls[0]), a2('look'));
+  assert.deepEqual(strip(r.calls[1]), a2('round'));
 });
 
 test('interview model: a stored model alone is used and no effort is sent', async () => {
@@ -879,9 +887,14 @@ test('interviewModel: the resolved pair and its source', async () => {
   const list = async () => [{ id: 'claude-sonnet-5' }, { id: 'claude-opus-5-5' }];
   const at = (slot, listModels = list) => interviewModel({ interviewSlot: () => slot, listModels });
   assert.deepEqual(await at({}), { model: 'claude-opus-5-5', effort: DEFAULT_INTERVIEW_EFFORT, source: 'default' });
-  assert.deepEqual(await at({ model: 'CLAUDE-SONNET-5' }), { model: 'CLAUDE-SONNET-5', effort: null, source: 'settings' });
+  assert.deepEqual(await at({ model: 'CLAUDE-SONNET-5' }), { model: 'claude-sonnet-5', effort: null, source: 'settings' });
   assert.deepEqual(await at({ effort: 'max' }), { model: 'claude-opus-5-5', effort: 'max', source: 'settings' });
   assert.deepEqual(await at({ model: 'gone' }), { model: 'claude-opus-5-5', effort: 'medium', source: 'default' });
   // a failing catalog read: the stored model counts
   assert.deepEqual(await at({ model: 'x-model' }, async () => { throw new Error('no catalog'); }), { model: 'x-model', effort: null, source: 'settings' });
+});
+
+test('interviewModel: a stored id matching case-insensitively comes back as the canonical id', async () => {
+  const im = await interviewModel({ interviewSlot: () => ({ model: 'CLAUDE-SONNET-5' }), listModels: async () => [{ id: 'claude-sonnet-5' }] });
+  assert.equal(im.model, 'claude-sonnet-5');
 });

@@ -84,7 +84,8 @@ async function summary(f, targetOf, runSummary) {
     latestRun: latest ? (await startView(latest, runSummary)).run : null };
 }
 
-/** Median of the recent code-look costs, for the New feature page's hint (null when there are none). */
+/** Median of the recent code-look costs, for the New feature page's hint: the looks made on `model` when there
+ *  are any, else all recent looks (null when there are none at all). */
 function lookCostUsd(model = null) {
   let costs = model ? recentLookCosts(10, { model }) : [];
   if (!costs.length) costs = recentLookCosts(10);
