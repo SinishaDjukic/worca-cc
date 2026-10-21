@@ -216,6 +216,8 @@ chat channels go through the proxy too, so add their hosts: `dev.azure.com` for
 Azure Boards, `api.telegram.org`, `slack.com,.slack.com` (Socket Mode dials a
 `wss-*.slack.com` host), `discord.com,.discord.gg`, and for Teams
 `login.microsoftonline.com,login.botframework.com` plus your bot's service URL host.
+A Jira source drives its own command-line tool: allow `<your-org>.atlassian.net`,
+and it goes through the proxy only if that tool reads the proxy variables.
 
 An entry with a leading dot (`.github.com`) allows every subdomain and the name
 itself. A refused host gets `403 egress denied: <host>`; `docker compose logs

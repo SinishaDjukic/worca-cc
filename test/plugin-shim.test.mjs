@@ -199,15 +199,18 @@ test('child env is scrubbed to PATH, HOME and the network variables — no WORCA
     `unexpected env leak: ${keys.join(',')}`);
 });
 
-test('real child: with the proxy variables set, a connector fetch() goes through the proxy; loopback and NO_PROXY go direct', async () => {
+test('real child: with the proxy variables set, a connector fetch() goes through the proxy; loopback and NO_PROXY go direct', async (t) => {
   const net = await startProxyNet();
   // http_proxy too: a loopback http fetch would reach the proxy if the child did not bypass it.
   const restore = setProxyEnv({ HTTPS_PROXY: net.proxyUrl, http_proxy: net.proxyUrl, no_proxy: NO_PROXY_HOST });
+  const stderr = t.mock.method(console, 'error', () => {});
+  _resetWithheldProxyNotice();
   try {
     const logLines = [];
     const results = await callSource({ plugin: NAME, sourceId: 'main', op: 'fetchAll', args: { urls: net.targets }, logger: (level, msg) => logLines.push(`${level}:${msg}`) });
     assertProxyRouting(net, results);
     assert.deepEqual(logLines, [], 'an applied proxy is no news: the child logs warnings only');
+    assert.deepEqual(stderr.mock.calls.map((c) => c.arguments[0]), [], 'a proxy without credentials is passed, so nothing was withheld');
   } finally {
     restore();
     await net.close();
