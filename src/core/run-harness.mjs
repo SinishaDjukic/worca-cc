@@ -975,6 +975,7 @@ export class RunHarness extends EventEmitter {
     this._answeredBy = new Map();            // question id -> who answered it (identity.mjs actor)
     this.pauseRequested = false;
     this.pauseAbort = new AbortController(); // aborts ONLY node children on pause
+    this._signalPause = null;                // a signal (SIGTERM) that came while a resume set up: pause once running
     this.pauseReason = null;                 // WHY the run paused: 'cost_pipeline'|'cost_total'|'error'|<usage-limit line>|null
     this.pauseDetail = null;                 // the human detail behind pauseReason ('error': the clipped message)
     this.pauseClass = null;                  // the class behind a 'recoverable' pause (resume point `pauseClass`)
@@ -1248,6 +1249,21 @@ export class RunHarness extends EventEmitter {
     this._setPauseReason(REASON.DRAIN, 'Paused while worca was stopping');
     this._log('orchestrator', 'info', 'worca is stopping — pausing the run; resume continues from here');
     if (this.pipeline?.dir) appendAudit(this.pipeline.dir, 'Pipeline **paused**: worca was stopping.').catch(() => {});
+    return this.pause();
+  }
+
+  /**
+   * Pause because the CLI process got `signal` (SIGTERM from a supervisor: docker stop, a pod eviction, a CI
+   * cancel): pause() with the reason 'terminated', so the resume point says why and the task source hears
+   * needs-human (nothing resumes a CLI run by itself). A resume still setting up ('idle': it claims its row
+   * long before it runs) is held the same way, as soon as it is running. Returns false for any other status.
+   */
+  pauseForSignal(signal) {
+    if (this.state.status === 'idle') { this._signalPause = signal; return true; }
+    if (this.state.status !== 'running') return false;
+    this._setPauseReason(REASON.TERMINATED, `the process received ${signal}`);
+    this._log('orchestrator', 'info', `${signal} received — pausing the run; worca resume continues from here`);
+    if (this.pipeline?.dir) appendAudit(this.pipeline.dir, `Pipeline **paused**: worca received ${signal}.`).catch(() => {});
     return this.pause();
   }
 
@@ -1957,6 +1973,7 @@ export class RunHarness extends EventEmitter {
       // or stop (§4.4 decision 2).
       this._metricsIv.lastPauseReason = null;
       this._metricsIv.lastPauseDetail = null;
+      if (this._signalPause) this.pauseForSignal(this._signalPause);
 
       // 3a') Auto workflow (spec §5.6): a run that paused BEFORE its graph was
       // decided re-enters the decision HERE — before the setup replay, so the

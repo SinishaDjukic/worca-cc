@@ -24,7 +24,20 @@ const DRAIN_TIMEOUT_MAX_MS = 600_000;
  * with the platform's grace period (docker stop -t, Railway's draining time).
  */
 export function drainTimeoutMs(env = process.env) {
-  const raw = String(env.WORCA_DRAIN_TIMEOUT_MS ?? '').trim();
+  return boundedMs(env.WORCA_DRAIN_TIMEOUT_MS);
+}
+
+/**
+ * How long a CLI run (`worca --yes`, `worca resume`) waits after SIGTERM for its pause to land before it exits
+ * anyway (143). The same 20 s default as the drain, for the same platforms: a wedged pause must end before the
+ * supervisor's SIGKILL does. Raise WORCA_SIGTERM_GRACE_MS together with the platform's grace period.
+ */
+export function sigtermGraceMs(env = process.env) {
+  return boundedMs(env.WORCA_SIGTERM_GRACE_MS);
+}
+
+function boundedMs(value) {
+  const raw = String(value ?? '').trim();
   if (!raw) return DRAIN_TIMEOUT_DEFAULT_MS;
   const n = Number(raw);
   return Number.isFinite(n) && n >= 0 ? Math.min(Math.floor(n), DRAIN_TIMEOUT_MAX_MS) : DRAIN_TIMEOUT_DEFAULT_MS;

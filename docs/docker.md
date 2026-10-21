@@ -279,6 +279,12 @@ The next start resumes those runs by itself, each as the person who last started
 Set `WORCA_AUTO_RESUME=0` to turn that off, or `WORCA_AUTO_RESUME=1` to also resume runs it finds
 interrupted by a crash. Runs paused by a person, by a cost cap or by a usage limit always wait for a person.
 
+A headless CLI run (`worca --yes`, `worca resume`) handles a stop the same way. On SIGTERM it pauses the
+run with the reason "worca was stopped", waits for the resume point to be saved, and exits 143. A second
+SIGTERM changes nothing. A task source hears `needs-human`, because nothing resumes a CLI run by
+itself: continue it with `worca resume <id>`. If the pause has not landed after
+`WORCA_SIGTERM_GRACE_MS` (20 s), the CLI exits anyway, before the platform's SIGKILL.
+
 **Single-volume hosts** (Railway and other platforms that give a service one volume,
 mounted root-owned): set `WORCA_DATA_DIR=/data`, mount the volume there and start
 the container as root. The entrypoint prepares the volume (worca home, projects and

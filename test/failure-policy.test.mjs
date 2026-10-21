@@ -185,6 +185,16 @@ test('consequences: a drain (the server stopping) is silent like a manual pause:
   assert.equal(c.severity, 'info');
 });
 
+test('consequences: a SIGTERM pause (the CLI told to stop) reports needs-human: nothing resumes it by itself', () => {
+  assert.equal(REASON.TERMINATED, 'terminated');
+  const c = pauseConsequences(REASON.TERMINATED);
+  assert.equal(c.reportsToSource, true);
+  assert.equal(c.stagesResults, false);
+  assert.equal(c.severity, 'warning');
+  assert.equal(c.label, 'worca was stopped');
+  assert.equal(pauseExitCode(REASON.TERMINATED, false), 0);
+});
+
 test('consequences: only an error-pause stages the diff artifact and reads as an error', () => {
   assert.equal(pauseConsequences(REASON.ERROR).stagesResults, true);
   assert.equal(pauseConsequences(REASON.ERROR).severity, 'error');
