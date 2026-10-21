@@ -43,7 +43,10 @@ const FILES_MAX = 2000;   // commitFilesSince's default page
 const DEFAULTS = Object.freeze({
   runClaudeImpl: runClaude, listModels, listProjects, workspaceTarget, readWorkspace,
   openLook: openRepoLook, openWorkspaceLook: openWorkspaceRepoLook, budget: () => budgetStatus(), onChange: () => {},
+  defaultBranchRef,
 });
+const CHECKOUT_TIMEOUT = 'Worca could not check out the code in time. Try again.';
+const MIN_CALL_MS = 1_000;   // less than this left after the checkout: the checkout took the time
 
 const jobs = new Map();   // '<scopeType>:<scopeKey>' → the job's promise
 const jobKey = (scopeType, scopeKey) => `${scopeType}:${scopeKey}`;
@@ -83,23 +86,36 @@ function briefCall(d, { cwd, prompt, model, timeoutMs }) {
 
 // ---------------------------------------------------------------- target
 
-/** Each dir with the default branch the look reads (D8); a dir without one is left out, as is one whose git is too slow. */
-async function withBase(list) {
-  const out = await Promise.all(list.map(async (x) => ({ ...x, base: await within(defaultBranchRef(x.dir, { timeout: GIT_TIMEOUT_MS }), STALENESS_TIMEOUT_MS, null) })));
-  return out.filter((x) => x.base);
+const SLOW_BASE = Symbol('slow');
+
+/** Each dir with the default branch the look reads (D8) → `{ dirs, slow }`. A dir without a default branch is left
+ *  out; one whose git did not answer within STALENESS_TIMEOUT_MS is left out too and named in `slow` (cannot tell,
+ *  which is not "no repository"). An abandoned defaultBranchRef may keep running its git calls in the background
+ *  until their own GIT_TIMEOUT_MS reaps them; nothing reads their answer. */
+async function withBase(list, d) {
+  const out = await Promise.all(list.map(async (x) => ({
+    ...x, base: await within(Promise.resolve(d.defaultBranchRef(x.dir, { timeout: GIT_TIMEOUT_MS })).catch(() => null), STALENESS_TIMEOUT_MS, SLOW_BASE),
+  })));
+  return {
+    dirs: out.filter((x) => x.base && x.base !== SLOW_BASE),
+    slow: out.filter((x) => x.base === SLOW_BASE).map((x) => x.name || x.project),
+  };
 }
 
-/** What a brief of the scope looks at. Project: `{ name, dirs }`; workspace: `{ name, description, seed, dirs, leftOut }`
- *  (D13: members in key order, the first REPO_LOOK_MAX_MEMBERS repositories; `leftOut` names the ones past them). */
+/** What a brief of the scope looks at. Project: `{ name, dirs, slow }`; workspace: `{ name, description, seed, dirs,
+ *  leftOut, slow }` (D13: members in key order, the first REPO_LOOK_MAX_MEMBERS repositories; `leftOut` names the ones
+ *  past them, `slow` the ones whose default branch could not be read in time). A project folder needs its own `.git`
+ *  (a folder inside another repository is not looked at, as the checkout requires). */
 export async function briefTarget(scopeType, scopeKey, deps = {}) {
   const d = { ...DEFAULTS, ...deps };
   if (scopeType === 'project') {
     const p = (await d.listProjects()).find((x) => x && x.key === scopeKey);
-    const dirs = p && p.exists && p.path ? await withBase([{ project: scopeKey, dir: p.path }]) : [];
-    return { name: (p && p.name) || scopeKey, dirs };
+    const name = (p && p.name) || scopeKey;
+    const { dirs, slow } = p && p.exists && hasGit(p.path) ? await withBase([{ project: scopeKey, name, dir: p.path }], d) : { dirs: [], slow: [] };
+    return { name, dirs, slow };
   }
   const ws = await d.workspaceTarget(scopeKey);
-  if (!ws) return { name: scopeKey, description: '', seed: null, dirs: [], leftOut: [] };
+  if (!ws) return { name: scopeKey, description: '', seed: null, dirs: [], leftOut: [], slow: [] };
   const repos = [...(ws.members || [])].filter((m) => m && m.projectKey).sort(byKey).filter((m) => hasGit(m.projectDir));
   const leftOut = repos.slice(REPO_LOOK_MAX_MEMBERS).map((m) => m.projectName || m.projectKey);
   const description = String(ws.description || '');
@@ -110,9 +126,9 @@ export async function briefTarget(scopeType, scopeKey, deps = {}) {
     const scannedAt = row && row.descriptionOrigin === 'generated' && row.mapSummary ? row.mapSummary.scannedAt : null;
     seed = scannedAt ? { kind: 'workspace-map', scannedAt } : { kind: 'workspace-description' };
   }
-  const dirs = await withBase(repos.slice(0, REPO_LOOK_MAX_MEMBERS)
-    .map((m) => ({ project: m.projectKey, name: m.projectName || m.projectKey, dir: m.projectDir })));
-  return { name: ws.name || scopeKey, description, seed, dirs, leftOut };
+  const { dirs, slow } = await withBase(repos.slice(0, REPO_LOOK_MAX_MEMBERS)
+    .map((m) => ({ project: m.projectKey, name: m.projectName || m.projectKey, dir: m.projectDir })), d);
+  return { name: ws.name || scopeKey, description, seed, dirs, leftOut, slow };
 }
 
 // ---------------------------------------------------------------- the job
@@ -155,8 +171,14 @@ async function mockSources(target) {
   return out;
 }
 
+/** Starts the job and registers it under the scope's key before any of its code can settle it: the job's body
+ *  begins after one await, so even a failure that throws synchronously (the scratch folder, a checkout that throws
+ *  at once) runs its `finally` after the registration, and the `finally` removes only its own entry. */
 function runJob(row, target, scopeType, scopeKey, by, d) {
-  return (async () => {
+  const key = jobKey(scopeType, scopeKey);
+  let self = null;
+  self = (async () => {
+    await null;
     const deadline = Date.now() + BRIEF_TIMEOUT_MS;
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), BRIEF_TIMEOUT_MS);
@@ -178,7 +200,7 @@ function runJob(row, target, scopeType, scopeKey, by, d) {
           look = await d.openWorkspaceLook(target.dirs.map((x) => ({ projectKey: x.project, projectName: x.name, projectDir: x.dir })), scratch,
             { signal: ctrl.signal, refs: Object.fromEntries(target.dirs.map((x) => [x.project, x.base.ref])) });
         }
-        if (ctrl.signal.aborted) throw coded('TIMEOUT', 'Worca could not check out the code in time. Try again.');
+        if (ctrl.signal.aborted) throw coded('TIMEOUT', CHECKOUT_TIMEOUT);
         if (!look) throw coded('NO_REPO', 'Worca could not check out the code. Try again.');
         ({ model } = await briefModel(d));
         assertBriefBudget(d);   // again: the limit may have been reached since the press (a recorded failure now)
@@ -188,8 +210,10 @@ function runJob(row, target, scopeType, scopeKey, by, d) {
           scopeName: target.name, notes: getContext(scopeType, scopeKey).body, workspaceDescription: target.description || '',
           current: now && now.madeAt ? now.sections : null, edited: (now && now.edited) || {}, members,
         });
+        const timeoutMs = deadline - Date.now();
+        if (timeoutMs < MIN_CALL_MS) throw coded('TIMEOUT', CHECKOUT_TIMEOUT);   // not "no reply within 0 seconds"
         let reply;
-        try { reply = await briefCall(d, { cwd: look.cwd, prompt, model, timeoutMs: Math.max(1, deadline - Date.now()) }); }
+        try { reply = await briefCall(d, { cwd: look.cwd, prompt, model, timeoutMs }); }
         catch (err) { cost = Number(err?.costUsd) || 0; throw err; }
         cost = Number(reply.costUsd) || 0;
         fresh = normalizeBrief(reply.text, { cwds: cwdsOf(look.cwd), members });   // while the checkout is still there
@@ -207,10 +231,12 @@ function runJob(row, target, scopeType, scopeKey, by, d) {
       clearTimeout(timer);
       book(row.id, cost, model);
       if (look) { try { await look.close(); } catch (e) { console.error('requirements: could not close a brief look:', message(e)); } }
-      jobs.delete(jobKey(scopeType, scopeKey));
+      if (jobs.get(key) === self) jobs.delete(key);
       notify(d, scopeType, scopeKey);
     }
   })();
+  jobs.set(key, self);
+  return self;
 }
 
 /**
@@ -222,18 +248,24 @@ function runJob(row, target, scopeType, scopeKey, by, d) {
 export async function makeBrief(scopeType, scopeKey, { by = null } = {}, deps = {}) {
   const d = { ...DEFAULTS, ...deps };
   const where = scopeType === 'workspace' ? 'workspace' : 'project';
-  if (!getContext(scopeType, scopeKey).lookAtCode) {
-    throw new RequirementsError('CONFLICT', `Looking at the code is off for this ${where}. Turn it on under Your notes for Worca.`);
-  }
+  const assertSwitchOn = () => {
+    if (!getContext(scopeType, scopeKey).lookAtCode) {
+      throw new RequirementsError('CONFLICT', `Looking at the code is off for this ${where}. Turn it on under Your notes for Worca.`);
+    }
+  };
+  assertSwitchOn();   // before the git probes: no git runs with the switch off
   const target = await briefTarget(scopeType, scopeKey, d);
   // From here to the job's start nothing awaits: two presses cannot both pass the checks below.
-  if (!target.dirs.length) throw new RequirementsError('CONFLICT', 'There is no repository to look at.');
+  assertSwitchOn();   // again: it may have been turned off while the target was read
+  if (!target.dirs.length) {
+    if (target.slow && target.slow.length) throw new RequirementsError('CONFLICT', 'Worca could not read the repository in time. Try again.');
+    throw new RequirementsError('CONFLICT', 'There is no repository to look at.');
+  }
   if (isBriefBusy(scopeType, scopeKey)) throw new RequirementsError('BUSY', 'Worca is already making this brief.');
   if (jobs.size >= MAX_BRIEF_JOBS) throw new RequirementsError('BUSY', 'Worca is making other briefs; try again in a moment.');
   assertBriefBudget(d);
   const row = beginBrief(scopeType, scopeKey, { by });
-  const job = runJob(row, target, scopeType, scopeKey, by, d);
-  jobs.set(jobKey(scopeType, scopeKey), job);
+  const job = runJob(row, target, scopeType, scopeKey, by, d);   // registers itself under the scope's key
   notify(d, scopeType, scopeKey);
   return { brief: row, job };
 }

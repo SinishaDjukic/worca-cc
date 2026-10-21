@@ -11,7 +11,7 @@ import { prepare } from '../src/core/db.mjs';
 import { getBrief, setBriefSections, beginBrief, setContext } from '../src/core/requirements/store.mjs';
 import { recordRequirementsCostDelta } from '../src/core/cost-budget.mjs';
 import { REPO_LOOK_TOOLS } from '../src/core/auto/classify.mjs';
-import { commitOf } from '../src/core/worktree.mjs';
+import { commitOf, defaultBranchRef } from '../src/core/worktree.mjs';
 import { BRIEF_SYSTEM_PROMPT, mockBrief } from '../src/core/requirements/brief.mjs';
 import {
   makeBrief, briefSettled, isBriefBusy, recoverBriefs, briefStaleness, briefEstimate, briefTarget,
@@ -414,7 +414,7 @@ test('briefTarget: a workspace in key order, the first 8 repositories, the names
   assert.deepEqual((await briefTarget('workspace', 'ws-t', deps({ ws: small, wsRow: { descriptionOrigin: 'generated', mapSummary: null } }))).seed, { kind: 'workspace-description' });
   assert.equal((await briefTarget('workspace', 'ws-t', deps({ ws: { ...small, description: '  ' }, wsRow: null }))).seed, null);
   const r = repo();
-  assert.deepEqual(await briefTarget('project', 'p-1', deps({ projects: [project('p-1', r.dir)] })), { name: 'Shop', dirs: [{ project: 'p-1', dir: r.dir, base: { branch: 'main', ref: 'refs/heads/main' } }] });
+  assert.deepEqual(await briefTarget('project', 'p-1', deps({ projects: [project('p-1', r.dir)] })), { name: 'Shop', dirs: [{ project: 'p-1', name: 'Shop', dir: r.dir, base: { branch: 'main', ref: 'refs/heads/main' } }], slow: [] });
 });
 
 test('a workspace look: 8 members on their default branches, the description cut at 8000, the seed, sources for what was checked out', async () => {
@@ -628,5 +628,112 @@ test('staleness: a check slower than 10 s is "slow" and not memoised; a result i
     assert.equal(n, 2, 'checked again after 30 s');
     await briefStaleness({ ...brief, madeAt: '2026-10-02T10:00:00.000Z' }, counting);
     assert.equal(n, 3, 'a refreshed brief is checked anew');
+  } finally { mock.timers.reset(); }
+});
+
+// ---------------------------------------------------------------- review fixes
+
+test('a failure before the job first waits (a checkout that throws at once) leaves the scope free: not busy, a second press runs', async () => {
+  const r = repo();
+  const lk = looks();
+  const runner = fakeRunner([goodReply(lk.lookDir)]);
+  const k = key();
+  let first = true;
+  const open = lk.openLook;
+  const openLook = (...a) => { if (first) { first = false; throw new Error('the disk is full'); } return open(...a); };   // not async: throws synchronously
+  const d = deps({ runner, lk, projects: [project(k, r.dir)], openLook });
+  const { job } = await makeBrief('project', k, {}, d);
+  await job;
+  assert.equal(getBrief('project', k).error.message, 'the disk is full');
+  assert.equal(isBriefBusy('project', k), false);
+  await (await makeBrief('project', k, {}, d)).job;
+  assert.equal(getBrief('project', k).status, 'ready');
+  assert.equal(runner.calls.length, 1);
+  assert.equal(recoverBriefs(), 0);
+});
+
+test('two presses at the same moment: one starts, the other is BUSY, one job and one call', async () => {
+  const r = repo();
+  const lk = looks();
+  const gate = deferred();   // the first look is still running while the second press is checked
+  const runner = fakeRunner([() => gate.promise.then(() => goodReply(lk.lookDir)), goodReply(lk.lookDir)]);
+  const k = key();
+  const d = deps({ runner, lk, projects: [project(k, r.dir)] });
+  const res = await Promise.allSettled([makeBrief('project', k, {}, d), makeBrief('project', k, {}, d)]);
+  gate.resolve();
+  const ok = res.filter((x) => x.status === 'fulfilled');
+  const no = res.filter((x) => x.status === 'rejected');
+  assert.equal(ok.length, 1, JSON.stringify(no.map((x) => [x.reason.code, x.reason.message])));
+  assert.equal(no.length, 1);
+  assert.equal(no[0].reason.code, 'BUSY');
+  await ok[0].value.job;
+  assert.equal(runner.calls.length, 1);
+  assert.equal(lk.opened.length, 1);
+});
+
+test('a default branch too slow to read is not "no repository": its own refusal, the slow names on the target', async () => {
+  const r = repo();
+  const k = key();
+  const hang = () => new Promise(() => {});
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const p = makeBrief('project', k, {}, deps({ projects: [project(k, r.dir)], defaultBranchRef: hang }));
+    const settled = p.then(() => null, (e) => e);
+    await new Promise(setImmediate);
+    mock.timers.tick(STALENESS_TIMEOUT_MS);
+    const e = await settled;
+    assert.deepEqual({ code: e && e.code, message: e && e.message }, { code: 'CONFLICT', message: 'Worca could not read the repository in time. Try again.' });
+    assert.equal(getBrief('project', k), null);
+
+    const members = [{ projectKey: 'a', projectName: 'Alpha', projectDir: r.dir }, { projectKey: 'b', projectName: 'Beta', projectDir: repo().dir }];
+    // b answers at once (the mocked clock would also run out a real git call still under way)
+    const slowA = async (dir) => (dir === r.dir ? hang() : { branch: 'main', ref: 'refs/heads/main' });
+    const tp = briefTarget('workspace', 'ws-slow', deps({ ws: { id: 'ws-slow', name: 'WS', description: '', members }, defaultBranchRef: slowA }));
+    for (let i = 0; i < 5; i += 1) await new Promise(setImmediate);
+    mock.timers.tick(STALENESS_TIMEOUT_MS);
+    const t = await tp;
+    assert.deepEqual(t.dirs.map((x) => x.project), ['b']);
+    assert.deepEqual(t.slow, ['Alpha']);
+    assert.deepEqual(t.leftOut, []);
+  } finally { mock.timers.reset(); }
+});
+
+test('the switch turned off while the target is read refuses the press, writing nothing', async () => {
+  const r = repo();
+  const k = key();
+  const runner = fakeRunner([]);
+  const listProjects = async () => { setContext('project', k, { lookAtCode: false }); return [project(k, r.dir)]; };
+  await assert.rejects(makeBrief('project', k, {}, deps({ runner, listProjects })),
+    (e) => e.code === 'CONFLICT' && e.message === 'Looking at the code is off for this project. Turn it on under Your notes for Worca.');
+  assert.equal(getBrief('project', k), null);
+  assert.equal(runner.calls.length, 0);
+});
+
+test('a project folder inside another repository (no .git of its own) is refused at the press', async () => {
+  const r = repo();
+  const sub = join(r.dir, 'packages', 'web');
+  mkdirSync(sub, { recursive: true });
+  const k = key();
+  const lk = looks();
+  await assert.rejects(makeBrief('project', k, {}, deps({ lk, projects: [project(k, sub)] })),
+    (e) => e.code === 'CONFLICT' && e.message === 'There is no repository to look at.');
+  assert.equal(getBrief('project', k), null);
+  assert.equal(lk.opened.length, 0);
+});
+
+test('a checkout that leaves under 1 s for the call fails with the checkout message, no call', async () => {
+  const r = repo();
+  const lk = looks();
+  const open = lk.openLook;
+  mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.now() });
+  try {
+    lk.openLook = async (...a) => { mock.timers.tick(BRIEF_TIMEOUT_MS - 500); return open(...a); };
+    const runner = fakeRunner([goodReply(lk.lookDir)]);
+    const k = key();
+    await (await makeBrief('project', k, {}, deps({ runner, lk, projects: [project(k, r.dir)] }))).job;
+    const b = getBrief('project', k);
+    assert.deepEqual({ code: b.error.code, message: b.error.message }, { code: 'TIMEOUT', message: 'Worca could not check out the code in time. Try again.' });
+    assert.equal(runner.calls.length, 0);
+    assert.equal(lk.closed, 1);
   } finally { mock.timers.reset(); }
 });
