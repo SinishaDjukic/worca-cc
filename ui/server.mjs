@@ -7032,12 +7032,14 @@ function bulkResolve(t) {
     return { id: pid || entry.id, runId: entry.id, pipelineId: pid, title: entry.title || pid || entry.id, state: m.state, status: entry.status };
   }
   if (pid) {
-    const row = getDb().prepare('SELECT title, status, project_key, workspace_key FROM pipelines WHERE id = ? AND deleted_at IS NULL').get(pid);
+    const row = getDb().prepare(`SELECT title, status, project_key, workspace_key, resume_point IS NOT NULL AS resumable
+      FROM pipelines WHERE id = ? AND deleted_at IS NULL`).get(pid);
     if (!row) return null;
     const m = runModelFor(pid);
     // runModelFor reads readPrState, so a done run whose PR needs you arrives with prNeeds (D31) and the table treats it as finished.
+    // `resumable`: an interrupted row without a resume point can never resume, so the table lets Archive / Delete take it.
     return { id: pid, pipelineId: pid, runId: entry?.id || null, title: row.title || pid, state: m ? m.state : 'stopped', status: row.status,
-      prNeeds: !!(m && m.prNeeds), key: row.project_key, workspaceKey: row.workspace_key };
+      prNeeds: !!(m && m.prNeeds), resumable: !!row.resumable, key: row.project_key, workspaceKey: row.workspace_key };
   }
   const tk = t.ticketId ? getTicket(t.ticketId) : null;
   if (!tk) return null;

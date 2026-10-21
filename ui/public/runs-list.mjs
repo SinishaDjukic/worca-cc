@@ -233,6 +233,7 @@ export function histRow(p, now = Date.now()) {
     tags: Array.isArray(p.tags) ? p.tags.map(String) : [],
     labels: Array.isArray(p.labels) ? p.labels.map(String) : [],
     archived: !!(p && p.archived),
+    ...(p.resumable === false ? { resumable: false } : {}),   // an interrupted run that can never resume (Archive takes it)
     base: String(p.base || ''),                      // #620: "conflicts with dev" / "dev moved", else ''
     unread: false, needs: needsYou({ kind: 'hist', status, prNeeds: prNeedsOf(p.run || p) }),
     cost: p.cost ?? null,

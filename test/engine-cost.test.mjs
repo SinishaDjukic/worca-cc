@@ -19,8 +19,8 @@ after(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true });
 
 test('every Codex built-in has live rates and a non-null estimate', () => {
   for (const { id } of CODEX_BUILTIN_MODELS) {
-    const [input, output] = CODEX_PRICES[id];
-    assert.deepEqual(liveCostRates(id), { input, output, cacheRead: input / 10, cacheWrite: input, cacheWrite1h: input }, id);
+    const [input, output, cached = input / 10] = CODEX_PRICES[id];
+    assert.deepEqual(liveCostRates(id), { input, output, cacheRead: cached, cacheWrite: input, cacheWrite1h: input }, id);
     assert.ok(Number.isFinite(estimateCodexCostUsd(id, { input: 1000, cached: 0, output: 100 })), id);
   }
   assert.equal(liveCostRates('gpt-5.2-codex'), null, 'an id no table knows still has no estimate');
@@ -36,5 +36,5 @@ test('a node spawn on codex carries its model to the adapter, which prices the t
   await runClaude({ ...opts, bin: codex.bin, cwd: dir, onEvent: (e) => events.push(e) });
   const result = events.find((e) => e.type === 'result');
   assert.ok(result && Number.isFinite(result.costUsd), JSON.stringify(result));
-  assert.ok(Math.abs(result.costUsd - (1000 * 5 + 20 * 30) / 1e6) < 1e-12);
+  assert.ok(Math.abs(result.costUsd - (1000 * 4 + 20 * 20) / 1e6) < 1e-12);
 });
