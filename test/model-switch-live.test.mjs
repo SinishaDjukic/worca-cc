@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { heldRun } from './helpers/held-run.mjs';
 import { readPipelineForResume } from '../src/core/artifacts.mjs';
+import { CODEX_BUILTIN_MODELS } from '../src/core/config.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { switchPausedRunModels, describeModelSwitch, heldWireIds } from '../src/core/model-switch.mjs';
 
@@ -249,4 +250,14 @@ test('a resume keeps a paused switch\'s fresh-session marker until the node star
   assert.equal(again.orch._freshSessionNodes.size, 0, 'cleared when n_impl started');
   assert.equal(savedWhileImpl, undefined, 'the saved point dropped the consumed marker at once');
   assert.equal(again.spawns.find((s) => s.nodeId === 'n_impl').model, OPUS);
+});
+
+test('a live Claude run refuses a Codex model (the harness would drop it at spawn)', { timeout: 120000 }, async () => {
+  const run = heldRun('msw-live-engine', { holdAt: (ctx) => ctx.executionId === 'x:n_plan:1' });
+  await run.held;
+  assert.equal(run.orch.modelSwitchSnapshot().engine, 'claude');
+  await assert.rejects(run.orch.switchModels({ n_impl: { model: CODEX_BUILTIN_MODELS[0].id } }),
+    (e) => e.code === 'INVALID_SELECTION' && /not on Claude/.test(e.message));
+  run.release();
+  assert.equal((await run.done).status, 'done');
 });

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { buildGraphManifest } from '../src/shared/graph/manifest.mjs';
 import { GRAPH_DEFAULT_WORKFLOW } from '../src/core/workflows.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
-import { completedNodeIds, switchableStages, stageChangeError, applyModelSwitch, validateChanges } from '../src/core/model-switch.mjs';
+import { completedNodeIds, switchableStages, stageChangeError, applyModelSwitch, validateChanges, engineCatalog } from '../src/core/model-switch.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 const manifest = buildGraphManifest(GRAPH_DEFAULT_WORKFLOW, loadAgentRegistry());
@@ -133,4 +133,37 @@ test('validateChanges: refuses unknown stages and invalid selections, normalizes
   assert.throws(() => validateChanges(stages, {}, MODELS), (e) => e.code === 'BAD_REQUEST');
   assert.deepEqual(validateChanges(stages, { n_clarify: { model: ' claude-opus-5-5 ', effort: null } }, MODELS),
     { n_clarify: { model: 'claude-opus-5-5', effort: '' } }, 'a locked stage is validated, not refused');
+});
+
+const CODEX = { id: 'gpt-6.1-sol', engine: 'codex', efforts: ['minimal', 'low', 'medium', 'high'] };
+const BOTH = { id: 'gw-shared', upstream: { provider: 'openai', api: 'openai-responses' }, efforts: ['medium', 'high'] };
+const CURSOR = { id: 'cursor-auto', engine: 'cursor', efforts: [] };
+const ALL = [...MODELS, CODEX, BOTH, CURSOR];
+
+test('stageChangeError refuses a model the run engine cannot run, and checks efforts in its vocabulary', () => {
+  const cell = { model: 'claude-opus-5-5', effort: '', subagentModel: '', subagentEffort: '' };
+  assert.match(stageChangeError(cell, { model: CODEX.id }, ALL), /runs on Codex, not on Claude/);
+  assert.match(stageChangeError(cell, { model: 'claude-opus-5-5' }, ALL, { engine: 'codex' }), /runs on Claude, not on Codex/);
+  assert.equal(stageChangeError(cell, { model: CODEX.id, effort: 'low' }, ALL, { engine: 'codex' }), '');
+  assert.match(stageChangeError(cell, { model: CODEX.id, effort: 'xhigh' }, ALL, { engine: 'codex' }), /unknown effort "xhigh"/);
+  // A model on two harnesses runs on both.
+  assert.equal(stageChangeError(cell, { model: BOTH.id }, ALL), '');
+  assert.equal(stageChangeError(cell, { model: BOTH.id }, ALL, { engine: 'codex' }), '');
+  // Cursor: no efforts, no sub-agents.
+  assert.match(stageChangeError(cell, { model: CURSOR.id, effort: 'medium' }, ALL, { engine: 'cursor' }), /unknown effort "medium"/);
+  assert.match(stageChangeError(cell, { subagentModel: 'opus' }, ALL, { engine: 'cursor' }), /runs no sub-agents/);
+  assert.equal(stageChangeError(cell, { subagentModel: '' }, ALL, { engine: 'cursor' }), '');
+});
+
+test('stageChangeError: an untouched foreign model never blocks an effort or sub-agent change (Review Focus 1)', () => {
+  const foreign = { model: 'claude-opus-5-5', effort: '', subagentModel: '', subagentEffort: '' };
+  assert.equal(stageChangeError(foreign, { subagentEffort: 'low' }, ALL, { engine: 'codex' }), '');
+  assert.equal(stageChangeError(foreign, { subagentModel: 'opus' }, ALL, { engine: 'codex' }), '');
+});
+
+test('engineCatalog: only the models the engine runs, efforts in its vocabulary, hidden ones dropped', () => {
+  const ids = (e) => engineCatalog([...ALL, { id: 'claude-hidden', hidden: true, efforts: [] }], e).map((m) => m.id);
+  assert.deepEqual(ids('claude'), ['claude-opus-5-5', 'claude-haiku-4-5', 'gw-shared']);
+  assert.deepEqual(ids('codex'), ['gpt-6.1-sol', 'gw-shared']);
+  assert.deepEqual(engineCatalog(ALL, 'codex').find((m) => m.id === 'gw-shared').efforts, ['medium', 'high']);
 });

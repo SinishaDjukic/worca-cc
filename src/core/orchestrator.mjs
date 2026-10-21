@@ -1089,6 +1089,7 @@ export class GraphOrchestrator extends RunHarness {
       active: (this._scheduler?.getState().active || []).map((a) => a.nodeId),
       held: heldWireIds(this._graphSnapshot),
       runDefault: this.claude?.model || '',
+      engine: this.claude?.engine || 'claude',
     };
   }
 
@@ -1136,7 +1137,7 @@ export class GraphOrchestrator extends RunHarness {
     // running reads the new node ctx when it starts. Re-check: a pause may have landed during the read.
     this._assertModelSwitchable();
     const stages = switchableStages(this.modelSwitchSnapshot());
-    const normalized = validateChanges(stages, changes, models);   // throws: the whole request is refused
+    const normalized = validateChanges(stages, changes, models, { engine: this.claude?.engine || 'claude' });   // throws: the whole request is refused
     const byId = new Map(stages.map((s) => [s.nodeId, s]));
     const accepted = {};
     const skipped = [];

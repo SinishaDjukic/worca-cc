@@ -6,6 +6,7 @@ import { gitDir } from './helpers/git-dir.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 import { graphResumePoint } from './helpers/graph-templates.mjs';
 import { readPipelineForResume } from '../src/core/artifacts.mjs';
+import { CODEX_BUILTIN_MODELS } from '../src/core/config.mjs';
 import { switchPausedRunModels, describeModelSwitch } from '../src/core/model-switch.mjs';
 
 useTempHome(after);
@@ -135,4 +136,21 @@ test('describe with `live` uses the caller\'s manifest, steps and scheduler view
   const d = await describeModelSwitch(id, { projectDirFor, live: { manifest, steps: [], active: ['n_clarify'], runDefault: 'claude-opus-5-5' } });
   assert.equal(d.runDefault, 'claude-opus-5-5');
   assert.equal(d.stages.find((s) => s.nodeId === 'n_clarify').state, 'running');
+});
+
+test('a paused Codex run refuses a Claude model and is described with the Codex catalog', async () => {
+  const dir = gitDir('msw-codex');
+  const rp = graphResumePoint({ pipelineDir: dir, pausedBy: 'tok-1', claude: { engine: 'codex' } });
+  const { id } = await seedPipeline(dir, { status: 'paused', stepper: rp.manifest, resumePoint: rp, steps: STEPS });
+  const projectDirFor = () => dir;
+  await assert.rejects(switchPausedRunModels(id, { changes: { n_impl: { model: 'claude-opus-5-5' } }, projectDirFor }),
+    (e) => e.code === 'INVALID_SELECTION' && /not on Codex/.test(e.message));
+  const codexId = CODEX_BUILTIN_MODELS[0].id;
+  const out = await switchPausedRunModels(id, { changes: { n_impl: { model: codexId, effort: 'low' } }, projectDirFor });
+  assert.deepEqual(out.changed.map((c) => c.nodeId), ['n_impl']);
+  const d = await describeModelSwitch(id, { projectDirFor });
+  assert.equal(d.engine, 'codex');
+  assert.ok(d.models.some((m) => m.id === codexId));
+  assert.ok(!d.models.some((m) => m.id === 'claude-opus-5-5'));
+  assert.deepEqual(d.efforts, ['minimal', 'low', 'medium', 'high']);
 });

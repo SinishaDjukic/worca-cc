@@ -19,6 +19,9 @@ import { EFFORTS, SUBAGENT_MODEL_VALUES, subagentModelIssue } from './model-env.
 import { byActor } from './identity.mjs';
 import { enqueuePipelineCommand } from './pipeline-commands.mjs';
 import { cycleGroups } from '../shared/graph/loops.mjs';
+import { runsOn, effortsOn, harnessesLabel, HARNESS_EFFORTS } from '../shared/connections.mjs';
+import { engineLabel } from '../shared/engine-switch.mjs';
+import { getEngine } from './engines/index.mjs';
 
 /** The four switchable cell fields ('' = inherit the default). */
 export const SWITCH_FIELDS = Object.freeze(['model', 'effort', 'subagentModel', 'subagentEffort']);
@@ -38,6 +41,24 @@ export class ModelSwitchError extends Error {
 
 const pick = (cell) => Object.fromEntries(SWITCH_FIELDS.map((f) => [f, typeof cell?.[f] === 'string' ? cell[f] : '']));
 const parseJson = (text) => { try { return text ? JSON.parse(text) : null; } catch { return null; } };
+
+/** The engine a saved point runs on (run-harness.mjs savedEngine's rule: a missing engine is Claude). */
+const engineOfPoint = (rp) => (typeof rp?.claude?.engine === 'string' && rp.claude.engine) || 'claude';
+/** The effort vocabulary of `engine` (connections.mjs HARNESS_EFFORTS; an unknown engine falls back to Claude's). */
+const effortsOfEngine = (engine) => HARNESS_EFFORTS[engine] || EFFORTS;
+/** Whether `engine` runs sub-agents (engines/*.mjs capabilities: only a literal false degrades). */
+function engineHasSubagents(engine) {
+  try { return getEngine(engine).capabilities?.subagents !== false; } catch { return true; }
+}
+
+/** The catalog as a run on `engine` offers it: the models that engine runs, each with its efforts
+ *  in that engine's vocabulary (a two-harness endpoint model maps them, connections.mjs effortsOn). */
+export function engineCatalog(models, engine = 'claude') {
+  return (models || []).filter((m) => !m.hidden && runsOn(m, engine)).map((m) => ({
+    id: m.id, label: m.label || m.id, efforts: effortsOn(m, engine),
+    ...(m.needsSignIn ? { needsSignIn: true } : {}),
+  }));
+}
 
 /** The wire ids a scheduler snapshot (live, or a resume point's `snapshot`) holds at a cycle-cap gate.
  *  Read as scheduler.mjs `restore` reads them: a pre-plural point carries only `gate`; an ended run none. */
@@ -117,24 +138,33 @@ export function switchableStages({ manifest, steps, active, held } = {}) {
     });
 }
 
-/** '' when `change` may be applied to `cell`. Only TOUCHED fields are checked; a model/effort
- *  touch checks the MERGED pair (setNodeModel's rules, config.mjs). */
-export function stageChangeError(cell, change, models) {
+/** '' when `change` may be applied to `cell` on a run on `engine`. Only TOUCHED fields are checked; a
+ *  model/effort touch checks the MERGED pair (setNodeModel's rules, config.mjs). A model the engine
+ *  cannot run is refused: the harness would drop it at spawn (run-harness _engineModel) and run its default. */
+export function stageChangeError(cell, change, models, { engine = 'claude' } = {}) {
   const next = { ...pick(cell), ...change };
+  const efforts = effortsOfEngine(engine);
   if ('model' in change || 'effort' in change) {
     const entry = next.model ? models.find((m) => m.id === next.model) : null;
     if (next.model && !entry) return `unknown model "${next.model}"`;
-    if (next.effort) {
-      if (!EFFORTS.includes(next.effort)) return `unknown effort "${next.effort}"`;
-      if (!entry) return 'select a model before choosing an effort';
-      if (!entry.efforts.includes(next.effort)) return `model "${next.model}" does not support effort "${next.effort}"`;
+    if ('model' in change && entry && !runsOn(entry, engine)) {
+      return `model "${entry.id}" runs on ${harnessesLabel(entry)}, not on ${engineLabel(engine)} (this run's engine)`;
     }
+    if (next.effort) {
+      if (!efforts.includes(next.effort)) return `unknown effort "${next.effort}" on ${engineLabel(engine)}`;
+      if (!entry) return 'select a model before choosing an effort';
+      if (!effortsOn(entry, engine).includes(next.effort)) return `model "${next.model}" does not support effort "${next.effort}" on ${engineLabel(engine)}`;
+    }
+  }
+  const subagentTouch = ('subagentModel' in change && change.subagentModel) || ('subagentEffort' in change && change.subagentEffort);
+  if (subagentTouch && !engineHasSubagents(engine)) {
+    return `${engineLabel(engine)} runs no sub-agents — leave the sub-agent settings on Default`;
   }
   if ('subagentModel' in change) {
     const issue = subagentModelIssue(change.subagentModel);
     if (issue) return issue;
   }
-  if ('subagentEffort' in change && change.subagentEffort && !EFFORTS.includes(change.subagentEffort)) {
+  if ('subagentEffort' in change && change.subagentEffort && !efforts.includes(change.subagentEffort)) {
     return `unknown sub-agent effort "${change.subagentEffort}"`;
   }
   return '';
@@ -191,7 +221,7 @@ function normalizeChange(raw, nodeId) {
  * a locked stage, the live path skips it (D3).
  * @returns {Record<string, object>} the normalized changes by node id
  */
-export function validateChanges(stages, changes, models) {
+export function validateChanges(stages, changes, models, { engine = 'claude' } = {}) {
   assertChanges(changes);
   const byId = new Map((stages || []).map((s) => [s.nodeId, s]));
   const out = {};
@@ -199,7 +229,7 @@ export function validateChanges(stages, changes, models) {
     const stage = byId.get(nodeId);
     if (!stage) throw new ModelSwitchError('UNKNOWN_STAGE', `no agent stage "${nodeId}" in this run`, 400);
     const change = normalizeChange(raw, nodeId);
-    const issue = stageChangeError(stage, change, models);
+    const issue = stageChangeError(stage, change, models, { engine });
     if (issue) throw new ModelSwitchError('INVALID_SELECTION', `${stage.label}: ${issue}`, 400);
     out[nodeId] = change;
   }
@@ -292,6 +322,7 @@ export async function describeModelSwitch(pipelineId, { projectDirFor, live = nu
     : { manifest: parseJson(row.stepper), steps: saved.steps, held: heldWireIds(rp?.snapshot) };
   if (!input.manifest?.graph?.nodes?.length) throw noGraph();
   const models = await listModels(await catalogDirOf(row, projectDirFor));
+  const engine = (running && live ? live.engine : engineOfPoint(rp)) || 'claude';
   return {
     pipelineId,
     title: row.title || '',
@@ -300,11 +331,10 @@ export async function describeModelSwitch(pipelineId, { projectDirFor, live = nu
     pauseDetail: !running && typeof rp.pauseDetail === 'string' ? rp.pauseDetail : null,
     runDefault: (running && live ? live.runDefault : rp?.claude?.model) || '',
     stages: switchableStages(input),
-    models: models.filter((m) => !m.hidden).map((m) => ({
-      id: m.id, label: m.label || m.id, efforts: Array.isArray(m.efforts) ? m.efforts : [],
-      ...(m.needsSignIn ? { needsSignIn: true } : {}),
-    })),
-    efforts: [...EFFORTS],
+    engine,
+    models: engineCatalog(models, engine),
+    efforts: [...effortsOfEngine(engine)],
+    subagents: engineHasSubagents(engine),
     subagentModels: [...SUBAGENT_MODEL_VALUES],
   };
 }
@@ -325,7 +355,7 @@ export async function switchPausedRunModels(pipelineId, { changes, by = 'local',
   const held = heldWireIds(rp.snapshot);
   const stages = switchableStages({ manifest: rp.manifest, steps: saved.steps, held });
   const models = await listModels(await catalogDirOf(saved.row, projectDirFor));
-  const normalized = validateChanges(stages, changes, models);
+  const normalized = validateChanges(stages, changes, models, { engine: engineOfPoint(rp) });
   for (const nodeId of Object.keys(normalized)) {
     const stage = stages.find((s) => s.nodeId === nodeId);
     if (!stage.switchable) throw lockedStageError(stage);
