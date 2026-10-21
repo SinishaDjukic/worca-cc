@@ -465,3 +465,19 @@ test('Folder members on a read-only scan (no changes file on the channel): the p
     assert.doesNotMatch(h, /changes so far|changes file|undefined/);
   });
 });
+
+// #411: a member's checkout dir can be a shortened projectKey (worktree.mjs boundCheckoutName), so the
+// relative render names the dir on disk — basename(worktreeDir) — never the projectKey.
+test('detached workspace renders: a shortened checkout is named by its dir, not its projectKey', () => {
+  const ws = { ...WS_D, projects: [{ ...WS_D.projects[0], projectKey: 'identity-access-management-1a2b3c4d',
+    worktreeDir: `${RUN_ROOT}/repos/ident-1a2b3c4d` }] };
+  withMode('detached', () => {
+    const ctx = wsCtx({ projectDir: RUN_ROOT, runRoot: RUN_ROOT, workspace: ws });
+    const h = taskHeader(ctx, 'Plan');
+    assert.match(h, /Member projects: \.\/repos\/ident-1a2b3c4d \(iam\)/);
+    assert.match(h, /worktree `repos\/ident-1a2b3c4d`/);
+    assert.match(h, /graph `repos\/ident-1a2b3c4d\/graphify-out\/`/);
+    assert.match(workspaceDiffInstruction(ctx), /git -C repos\/ident-1a2b3c4d diff sha-iam/);
+    assert.ok(!`${h}${workspaceDiffInstruction(ctx)}`.includes('repos/identity-access-management'), 'no projectKey path');
+  });
+});

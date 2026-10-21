@@ -437,6 +437,9 @@ test('_autoWorkspaceInput: a member with no checkout yet gets checkout null; no 
     ] },
     addDirs: [],
   });
+  // #411: a shortened checkout dir (worktree.mjs boundCheckoutName) is named by its dir, not its key.
+  orch.workDirs = new Map([['k-a', '/run/root/repos/k-a'], ['k-b', '/run/root/repos/short-b']]);
+  assert.equal(orch._autoWorkspaceInput().workspace.members[1].checkout, './repos/short-b');
   // Legacy, paused before _setupRunRoot: no runCwd, so nothing is readable.
   orch.runRootMode = 'legacy';
   orch.runCwd = null;

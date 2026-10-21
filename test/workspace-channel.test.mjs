@@ -60,7 +60,7 @@ const withFolder = (workflowId) => {
   return {
     ...self(), members, memberByKey: new Map(members.map((m) => [m.projectKey, m])),
     isWorkspace: true, workflowId, runRootMode: 'detached', pipeline: { dir: '/store/pipelines/p-1' },
-    workDirs: new Map([['api-1111', '/wt/api'], ['notes-9c8d7e6f', '/wt/notes']]),
+    workDirs: new Map([['api-1111', '/rr/repos/api-1111'], ['notes-9c8d7e6f', '/rr/repos/notes-9c8d7e6f']]),
     checkpointRefs: { 'api-1111': 'a1' },
     _memberWorkMode, _folderFilesFor, _isWorkspaceScan,
   };
@@ -70,7 +70,7 @@ test('a Folder member carries its changes file on the channel and the node roste
   const PATCH = folderMemberFiles('/store/pipelines/p-1', 'notes-9c8d7e6f').patch;
   await checkRows([
     { name: '_workspaceChannel: a run names the Folder member\'s changes file; a scan names none', run: () => {
-      const notes = { projectKey: 'notes-9c8d7e6f', projectName: 'notes', projectDir: resolve('/live/notes'), worktreeDir: '/wt/notes',
+      const notes = { projectKey: 'notes-9c8d7e6f', projectName: 'notes', projectDir: resolve('/live/notes'), worktreeDir: '/rr/repos/notes-9c8d7e6f',
         checkpointRef: undefined, graphInstruction: '', workMode: 'folder' };
       const run = RunHarness.prototype._workspaceChannel.call(withFolder('wf_default'));
       assert.deepEqual(run.projects[1], { ...notes, changesPatch: PATCH });
@@ -79,7 +79,7 @@ test('a Folder member carries its changes file on the channel and the node roste
       assert.deepEqual(scan.projects[0], run.projects[0], 'the Git member is the same either way');
     } },
     { name: '_reposCtx: a run names the Folder member\'s changes file; a scan names none', run: () => {
-      const notes = { projectKey: 'notes-9c8d7e6f', projectName: 'notes', dir: '/wt/notes', relDir: 'repos/notes-9c8d7e6f',
+      const notes = { projectKey: 'notes-9c8d7e6f', projectName: 'notes', dir: '/rr/repos/notes-9c8d7e6f', relDir: 'repos/notes-9c8d7e6f',
         checkpointRef: null, graphInstruction: '', workMode: 'folder' };
       const run = RunHarness.prototype._reposCtx.call(withFolder('wf_default'));
       assert.deepEqual(run[1], { ...notes, changesPatch: PATCH });
@@ -88,4 +88,15 @@ test('a Folder member carries its changes file on the channel and the node roste
       assert.deepEqual(scan[0], run[0], 'the Git member is the same either way');
     } },
   ]);
+});
+
+// #411: relDir names the checkout dir on disk (a shortened projectKey can differ from the key).
+test('_reposCtx: relDir is the checkout dir name, not the projectKey; null before the checkout exists and on legacy', () => {
+  const self = (runRootMode, workDirs) => ({ members: [{ projectKey: 'identity-access-management-1a2b3c4d', projectName: 'iam' }],
+    runRootMode, workDirs: new Map(workDirs), checkpointRefs: {}, toolInstructions: new Map(), isWorkspace: false });
+  const [m] = RunHarness.prototype._reposCtx.call(self('detached', [['identity-access-management-1a2b3c4d', '/rr/repos/ident-1a2b3c4d']]));
+  assert.equal(m.relDir, 'repos/ident-1a2b3c4d');
+  assert.equal(m.dir, '/rr/repos/ident-1a2b3c4d');
+  assert.equal(RunHarness.prototype._reposCtx.call(self('detached', []))[0].relDir, 'repos/identity-access-management-1a2b3c4d');
+  assert.equal(RunHarness.prototype._reposCtx.call(self('legacy', [['identity-access-management-1a2b3c4d', '/p/.worca-cc/worktrees/x']]))[0].relDir, null);
 });

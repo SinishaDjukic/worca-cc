@@ -3,11 +3,11 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { basename, dirname, join } from 'node:path';
+import { execSync, spawnSync } from 'node:child_process';
 
 import { writeFile as fsWriteFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { posix } from './helpers/posix-path.mjs';
 
 import {
@@ -17,6 +17,7 @@ import {
   currentBranch,
   resolveDefaultBranch,
   createWorktree,
+  boundCheckoutName,
   removeWorktree,
   deleteBranchIfAt,
   isValidSourceRef,
@@ -287,6 +288,61 @@ test('createWorktree: checkoutName names the dir (projectKey on a detached run)'
     baseDir: base, checkoutName: 'proj-abcd1234',
   });
   assert.equal(wt.worktreeDir, join(await realpath(base), 'proj-abcd1234'));
+});
+
+// #411: git's fsmonitor socket is <common dir>/worktrees/<checkout name>/fsmonitor--daemon.ipc,
+// and past AF_UNIX's sun_path its client never connects (every `git status` hangs).
+test('boundCheckoutName: keeps a name that fits, shortens only the slug of an over-budget projectKey', () => {
+  // The issue's measurement: a 58-byte common dir + `worca-cc-7f029152` puts the socket at 108 bytes.
+  const common = `/${'a'.repeat(52)}/.git`;
+  assert.equal(common.length, 58);
+  const socket = (name) => Buffer.byteLength(`${common}/worktrees/${name}/fsmonitor--daemon.ipc`);
+  assert.equal(socket('worca-cc-7f029152'), 108);
+  assert.equal(boundCheckoutName('worca-cc-7f029152', '/short/.git', 'darwin'), 'worca-cc-7f029152', 'fits: unchanged');
+  // macOS: 103 usable bytes, 2 kept for the counter git appends to a taken admin dir name.
+  const mac = boundCheckoutName('worca-cc-7f029152', common, 'darwin');
+  assert.equal(mac, 'w-7f029152');
+  assert.ok(socket(mac) + 2 <= 103);
+  // Linux has 4 more bytes.
+  const linux = boundCheckoutName('worca-cc-7f029152', common, 'linux');
+  assert.equal(linux, 'worca-7f029152');
+  assert.ok(socket(linux) + 2 <= 107);
+  // A cut that ends on a separator drops it; no room for any slug keeps the hash alone.
+  assert.equal(boundCheckoutName('ab-cd-7f029152', `/${'a'.repeat(50)}/.git`, 'darwin'), 'ab-7f029152');
+  assert.equal(boundCheckoutName('worca-cc-7f029152', `/${'a'.repeat(54)}/.git`, 'darwin'), '7f029152');
+  // So deep that even the hash alone overflows: shortening cannot help, the name stays readable.
+  assert.equal(boundCheckoutName('worca-cc-7f029152', `/${'a'.repeat(55)}/.git`, 'darwin'), 'worca-cc-7f029152');
+  // Multi-byte path characters count as the bytes sun_path holds.
+  assert.equal(boundCheckoutName('worca-cc-7f029152', `/${'é'.repeat(26)}/.git`, 'darwin'), 'w-7f029152');
+  // Never throws, never touches a name it cannot shorten safely: no hash, Windows (named pipes), no common dir.
+  assert.equal(boundCheckoutName('20585b7b-long-legacy-name', `/${'a'.repeat(80)}/.git`, 'darwin'), '20585b7b-long-legacy-name');
+  assert.equal(boundCheckoutName('worca-cc-7f029152', common, 'win32'), 'worca-cc-7f029152');
+  assert.equal(boundCheckoutName('worca-cc-7f029152', null, 'darwin'), 'worca-cc-7f029152');
+});
+
+test('createWorktree: a checkoutName that would overflow the fsmonitor socket path is shortened (#411)', { skip: process.platform === 'win32' }, async () => {
+  // Under /tmp, not tmpdir(): macOS's tmpdir alone is ~57 bytes, past what any checkout name can fix.
+  const root = await realpath(await mkdtemp('/tmp/wtd-'));
+  created.push(root);
+  const repo = join(root, 'my-awesome-microservice');
+  mkdirSync(repo, { recursive: true });
+  execSync('git init -q -b main && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init', { cwd: repo });
+  const limit = process.platform === 'linux' ? 107 : 103;
+  const base = await mkdtemp(join(tmpdir(), 'worca-cc-wt-base4-'));
+  created.push(base);
+  const name = 'my-awesome-microservice-1234abcd';
+  assert.ok(Buffer.byteLength(join(repo, '.git', 'worktrees', name, 'fsmonitor--daemon.ipc')) > limit, 'precondition: the projectKey overflows');
+  const wt = await createWorktree({
+    projectDir: repo, pipelineId: 'pid-deep', sourceBranch: 'main', featureBranch: 'worca-cc/deep',
+    baseDir: base, checkoutName: name,
+  });
+  const got = basename(wt.worktreeDir);
+  assert.notEqual(got, name);
+  assert.match(got, /^[a-z0-9-]*-?1234abcd$/, 'the hash that makes the name unique is kept');
+  assert.equal(dirname(wt.worktreeDir), await realpath(base));
+  const gitDir = spawnSync('git', ['-C', wt.worktreeDir, 'rev-parse', '--absolute-git-dir']).stdout.toString().trim();
+  assert.equal(basename(gitDir), got, 'git named the admin dir after the shortened checkout');
+  assert.ok(Buffer.byteLength(join(gitDir, 'fsmonitor--daemon.ipc')) <= limit, 'the socket path fits sun_path');
 });
 
 test('createWorktree: omitting baseDir preserves the legacy default byte-for-byte', async () => {

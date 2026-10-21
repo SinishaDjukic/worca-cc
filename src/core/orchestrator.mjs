@@ -10,7 +10,7 @@
 // an ordinary execution, `x:<nodeId>:<ordinal>:<taskId>` for a composite slice.
 // state.steps[] IS the execution ledger: one row per execution, key ===
 // executionId. There is no separate executions[] array.
-import { join, isAbsolute, extname, dirname } from 'node:path';
+import { join, isAbsolute, extname, dirname, basename } from 'node:path';
 import { rm, readFile, readdir, access, stat, writeFile, mkdir } from 'node:fs/promises';
 import { readDirections, pendingDirections } from './directions.mjs';
 import { runsOn } from '../shared/connections.mjs';
@@ -543,8 +543,9 @@ export class GraphOrchestrator extends RunHarness {
 
   /** The classifier's view of a workspace run: members + where each checkout is readable (A5).
    *  A resume decides BEFORE _replaySetup re-creates missing checkouts, so a member may have none
-   *  yet (checkout null). The detached layout is fixed (./repos/<key>, as _setupRunRoot creates
-   *  it) — never derived from runCwd, whose path is not realpath'd like the checkouts are. */
+   *  yet (checkout null). The detached layout is fixed (./repos/<dir name>, as _setupRunRoot creates
+   *  it: the projectKey, shortened when it would overflow, #411) — never derived from runCwd, whose
+   *  path is not realpath'd like the checkouts are. */
   _autoWorkspaceInput() {
     if (!this.isWorkspace) return { workspace: null, addDirs: [] };
     const primaryKey = this.members[0].projectKey;
@@ -555,7 +556,7 @@ export class GraphOrchestrator extends RunHarness {
       const dir = workDirs.get(m.projectKey) || null;
       let checkout = null;
       if (this.runCwd && dir) {
-        if (detached) checkout = `./repos/${m.projectKey}`;
+        if (detached) checkout = `./repos/${basename(dir)}`;
         else if (m.projectKey === primaryKey) checkout = '.';             // legacy: runCwd IS the primary's worktree
         else { checkout = dir; addDirs.push(dir); }                       // legacy: --add-dir per other member
       }

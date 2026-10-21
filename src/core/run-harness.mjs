@@ -5825,7 +5825,8 @@ export class RunHarness extends EventEmitter {
       projectKey: m.projectKey,
       projectName: m.projectName,
       dir: this.workDirs.get(m.projectKey) || null,
-      relDir: this.runRootMode === 'detached' ? `repos/${m.projectKey}` : null,  // render-only token
+      // render-only token: the dir on disk, a shortened projectKey when the key would overflow (#411)
+      relDir: this.runRootMode === 'detached' ? `repos/${basename(this.workDirs.get(m.projectKey) || m.projectKey)}` : null,
       checkpointRef: this.checkpointRefs[m.projectKey] || null,
       graphInstruction: this.toolInstructions.get(m.projectKey) || '',
       // P5: no changes file on a read-only scan (S51) — it writes none.
