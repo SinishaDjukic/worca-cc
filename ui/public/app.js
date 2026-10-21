@@ -3150,7 +3150,7 @@ function wfvEls() {
   return {
     root: g('wfv'), stage: g('wfv-stage'), canvas: g('wfv-canvas'), chip: g('wfv-chip'), back: g('wfv-back'),
     wfMenu: g('wfv-wf-menu'), name: g('wfv-name'), errors: g('wfv-errors'), importFile: g('wfv-import-file'),
-    libToggle: g('wfv-lib-toggle'), saveWrap: g('wfv-savewrap'), save: g('wfv-save'), add: g('wfv-add'),
+    libToggle: g('wfv-lib-toggle'), saveWrap: g('wfv-savewrap'), save: g('wfv-save'), saveReason: g('wfv-save-reason'), add: g('wfv-add'),
     autolayout: g('wfv-autolayout'), zoom: g('wfv-zoom'), zoomLabel: g('wfv-zoom-label'), overlay: g('wfv-overlay'),
     library: g('wfv-library'), sheet: g('wfv-sheet'), sheetTitle: g('wfv-sheet-title'), sheetClose: g('wfv-sheet-close'),
     dialogHost: g('wfv-dialog-host'), chat: g('wfc'),
@@ -3199,7 +3199,7 @@ async function initWorkflows() {
   insBody.className = 'wfv-ins';
   gvComposer = createComposer({
     canvas: els.canvas, chip: els.chip, name: els.name, errors: els.errors, autoBtn: els.autolayout,
-    saveBtn: els.save, saveWrap: els.saveWrap, insBody, dialogHost: els.dialogHost,
+    saveBtn: els.save, saveWrap: els.saveWrap, saveReason: els.saveReason, insBody, dialogHost: els.dialogHost,
   }, {
     doc: document, api: gvApi, portsFn: (node) => gvPortsFn(node),
     highlight: scriptHighlight,   // a script card's command/code params get the real editor
@@ -15747,7 +15747,7 @@ async function postSettingsCard(body, opts = {}) {
     // snapshot must be taken after them.
     if (paint && r.data && Object.keys(r.data).length) await paint(r.data);
     dirty?.markClean();
-    if (appliesWhen) notify({ tone: 'ok', title: 'Saved', detail: appliesWhen });
+    notify({ tone: 'ok', title: 'Saved', detail: appliesWhen, key: 'settings-saved' });
     return r;
   }
   dirty?.refresh();                           // still dirty after a failure: Save is offered again
@@ -27477,6 +27477,17 @@ function buildHdDiff(sec, record, data) {
     if (!lastPick && late) { lastPick = { entry: late.entry, key: late.key }; await select(late.entry, late.key); }
   }
 
+  // Keyboard path to the "+": the row is display:contents (no box to focus), so the line's code
+  // cell is the roving stop, one tabindex=0 per body. Windows only append rows, so focusin re-checks.
+  const diffStopCells = (body) => [...body.querySelectorAll('.hd-dl-row')]
+    .filter((r) => r.dataset.new || r.dataset.old)
+    .map((r) => r.querySelector('.hd-dl-code')).filter(Boolean);
+  function ensureStop(body) {
+    const list = diffStopCells(body);
+    list.forEach((c) => { if (!c.hasAttribute('aria-label')) c.setAttribute('aria-label', 'Diff line, press Tab for comment'); });
+    if (list.length && !list.some((c) => c.tabIndex === 0)) list[0].tabIndex = 0;
+  }
+
   // ONE button per body, moved into the hovered row's code cell. A button per row
   // would double the node count HD_DIFF_WINDOW_LINES exists to bound, and
   // `.hd-dl-row{display:contents}` gives the row no box for a CSS :hover to match
@@ -27485,6 +27496,7 @@ function buildHdDiff(sec, record, data) {
   function armCommentGutter(body, meta) {
     if (!ctx.canCreate()) return;                       // no patch: read-only, no creation
     if (ctx.guarded(meta.project, meta.path)) return;   // the floor refuses every line here  [m16]
+    ensureStop(body);                                   // also on re-arm: a repaint that replaced rows restores the roving stop
     if (body.dataset.gutterArmed === '1') return;       // idempotent: repaintCards re-arms
     body.dataset.gutterArmed = '1';
     const btn = document.createElement('button');
@@ -27494,6 +27506,7 @@ function buildHdDiff(sec, record, data) {
     btn.setAttribute('aria-label', 'Comment on this line');
     btn.textContent = '+';
     let armed = null;
+    const stopCells = () => diffStopCells(body);
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       if (!armed || !body.contains(armed)) return;
@@ -27513,15 +27526,42 @@ function buildHdDiff(sec, record, data) {
       host.appendChild(wrap);
       focus();
     });
-    body.addEventListener('mouseover', (e) => {
-      const row = e.target && e.target.closest ? e.target.closest('.hd-dl-row') : null;
-      if (!row || !body.contains(row)) return;
-      if (!row.dataset.new && !row.dataset.old) return;      // no line number -> not anchorable
+    const anchorable = (row) => !!row && !!(row.dataset.new || row.dataset.old);   // no line number -> not anchorable
+    const arm = (row) => {
+      if (btn.contains(document.activeElement)) return;     // keyboard user is on the +: do not move it
+      if (!row || !body.contains(row) || !anchorable(row)) return;
       armed = row;
       const code = row.querySelector('.hd-dl-code');
       if (code && btn.parentElement !== code) code.prepend(btn);
+    };
+    body.addEventListener('focusin', (e) => {
+      ensureStop(body);
+      const cell = e.target && e.target.closest ? e.target.closest('.hd-dl-code') : null;
+      if (cell) arm(cell.closest('.hd-dl-row'));
     });
-    body.addEventListener('mouseleave', () => { btn.remove(); armed = null; });
+    body.addEventListener('focusout', (e) => {
+      if (!e.relatedTarget) return;                          // window blur: keep the button where it is
+      if (e.relatedTarget.closest && e.relatedTarget.closest('.hd-dl-row') === armed) return;
+      if (!btn.contains(e.relatedTarget) && !btn.contains(document.activeElement)) { btn.remove(); armed = null; }
+    });
+    body.addEventListener('keydown', (e) => {
+      const cell = e.target && e.target.closest ? e.target.closest('.hd-dl-code') : null;
+      if (!cell || (e.key !== 'ArrowDown' && e.key !== 'ArrowUp')) return;
+      const list = stopCells();
+      const next = list[list.indexOf(cell) + (e.key === 'ArrowDown' ? 1 : -1)];
+      if (!next) return;
+      e.preventDefault();
+      cell.tabIndex = -1;
+      next.tabIndex = 0;
+      next.focus();
+    });
+    body.addEventListener('mouseover', (e) => {
+      arm(e.target && e.target.closest ? e.target.closest('.hd-dl-row') : null);
+    });
+    body.addEventListener('mouseleave', () => {
+      if (btn.contains(document.activeElement)) return;     // keyboard user: keep it
+      btn.remove(); armed = null;
+    });
   }
 
   function ensurePatch() {
@@ -36967,6 +37007,12 @@ function redirectRoute(view, param = '') {
 function rewriteHash([view, param]) {
   try { window.history.replaceState(null, '', `#${param ? `${view}/${param}` : view}`); } catch { /* sandboxed */ }
 }
+// An unknown address opens Chat, as boot does, in place (no new history entry).
+function fallbackToChat(raw) {
+  try { window.history.replaceState(null, '', '#chat'); } catch { /* sandboxed */ }
+  showView('chat', '');
+  if (raw) notify({ tone: 'info', title: 'Unknown address', detail: `#${raw} is not a page. Opened Chat.`, key: 'route-unknown' });
+}
 // Test hook: lets a test call the router the way an in-app caller does.
 if (typeof window !== 'undefined') window.__np = Object.assign(window.__np || {}, { showView });
 // CDP proofs (D12): flip a flag through the real API; every tab follows through the `flags` frame.
@@ -37408,7 +37454,8 @@ window.addEventListener('hashchange', () => {
   // swapped for the one it means now before anything renders (redirectRoute).
   const moved = redirectRoute(view, param);
   if (moved) { rewriteHash(moved); showView(moved[0], moved[1]); return; }
-  if (VIEW_NAMES.includes(view)) showView(view, param);
+  if (view && VIEW_NAMES.includes(view)) showView(view, param);
+  else fallbackToChat(view ? [view, param].filter(Boolean).join('/') : '');
 });
 
 // ---------------------------------------------------------------------------

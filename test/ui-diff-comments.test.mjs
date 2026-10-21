@@ -1047,3 +1047,30 @@ test('two comments on one context row, or old/new on the same number, keep list 
     } },
   ]);
 });
+
+const focusIn = (window, node) => { node.focus(); node.dispatchEvent(new window.FocusEvent('focusin', { bubbles: true })); };
+
+test('F-3: keyboard reaches the + — one roving stop, Arrow keys move it, focusin arms the line, the + survives mouse events', async () => {
+  const ctx = await bootComments();
+  const { window } = ctx;
+  const doc = window.document;
+  const cells = [...doc.querySelectorAll('.hd-dl-row')].filter((r) => r.dataset.new || r.dataset.old).map((r) => r.querySelector('.hd-dl-code'));
+  assert.equal(cells.filter((c) => c.tabIndex === 0).length, 1, 'exactly one tab stop in the body');
+  assert.ok(cells.every((c) => c.getAttribute('aria-label')), 'the focusable cell is named');
+  const [first, second] = cells;
+  assert.equal(first.tabIndex, 0);
+  focusIn(window, first);
+  const btn = doc.querySelector('.hd-cmt-add');
+  assert.equal(btn.parentElement, first, 'focusing the line puts the + inside it');
+  assert.equal(btn.tagName, 'BUTTON');
+  keydown(window, first, 'ArrowDown');
+  assert.equal(second.tabIndex, 0);
+  assert.equal(first.tabIndex, -1);
+  btn.focus();
+  const body = doc.querySelector('.hd-diff-body');
+  body.dispatchEvent(new window.MouseEvent('mouseleave'));
+  assert.ok(btn.isConnected, 'mouseleave keeps the + while it holds focus');
+  hover(window, cells[2].closest('.hd-dl-row'));
+  assert.equal(doc.activeElement, btn, 'hovering another row does not steal the focused +');
+  assert.equal(btn.parentElement, second);
+});

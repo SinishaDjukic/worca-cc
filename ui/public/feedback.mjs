@@ -56,9 +56,24 @@ export function toastRegion(doc = globalThis.document) {
 
 const toastsIn = (r) => [...r.children].filter((c) => c.classList.contains('toast'));
 
+const mainEl = (doc) => {
+  const m = doc.querySelector('main.main');
+  if (m && !m.hasAttribute('tabindex')) m.setAttribute('tabindex', '-1');
+  return m;
+};
+
+// A toast that holds focus hands it back (the element focused before it, else main, else the
+// first focusable one) so removing it never drops focus to BODY.
 function dismiss(t) {
   t._fbStop?.();
+  const doc = t.ownerDocument;
+  const held = t.contains(doc.activeElement);
+  const back = t._fbReturn;
   t.remove();
+  if (!held) return;
+  const target = back && back.isConnected && typeof back.focus === 'function' ? back
+    : mainEl(doc) || doc.querySelector('a[href], button, input, [tabindex]');
+  target?.focus?.();
 }
 
 function armAutoClose(t, ms) {
@@ -117,6 +132,9 @@ export function notify({ tone = 'info', title = '', detail = '', action = null, 
   x.append(feedbackIcon(doc, 'x'));
   x.addEventListener('click', () => dismiss(t));
   t.append(ti, body, x);
+  t.addEventListener('focusin', (e) => {
+    if (e.relatedTarget && !t.contains(e.relatedTarget)) t._fbReturn = e.relatedTarget;
+  });
   r.append(t);
 
   // At most TOAST_MAX: drop the oldest non-error first (never the one just added).
