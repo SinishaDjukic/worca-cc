@@ -17,8 +17,9 @@ import { workspaceTarget } from '../ask/workflow-deps.mjs';
 import { RequirementsError, MAX_ROUNDS, LIMITS, clip } from './spec.mjs';
 import { unaskedRejections } from './ready.mjs';
 import {
-  requireFeature, getFeature, updateFeature, appendTurn, listTurns, getContext, addFeatureCost, listFeatures,
+  requireFeature, getFeature, updateFeature, appendTurn, listTurns, getContext, addFeatureCost, listFeatures, usableBrief,
 } from './store.mjs';
+import { renderBriefForPrompt } from './brief.mjs';
 import {
   ROUND_SYSTEM_PROMPT, ORIENTATION_SYSTEM_PROMPT, buildRoundPrompt, buildOrientationPrompt, applyRound,
   normalizeOrientation, mockRoundReply, RoundError, removedCriteria, pendingRound,
@@ -145,10 +146,26 @@ async function openLookFor(f, d, signal) {
   return ws && ws.members.length ? d.openWorkspaceLook(ws.members, base, { signal }) : null;
 }
 
-/** D7: a short product-language summary of what exists, or why there is none. Never throws. */
-async function orient(f, d) {
+/** A7 D10: the scope's usable brief as the prompts carry it (provenance line first), or null. */
+function briefFor(f) {
+  const b = usableBrief(f.scopeType, f.scopeKey);
+  if (!b) return null;
+  const day = String(b.madeAt).slice(0, 10);
+  const src = (b.sources || [])[0];
+  const provenance = f.scopeType === 'workspace'
+    ? `Made from ${(b.sources || []).length} project${(b.sources || []).length === 1 ? '' : 's'} on ${day}.`
+    : `Made from ${(src && src.branch) || 'HEAD'}${src && src.sha ? ` @ ${String(src.sha).slice(0, 7)}` : ''} on ${day}.`;
+  return { id: b.id, madeAt: b.madeAt, text: renderBriefForPrompt(b.sections, { provenance }) };
+}
+
+/** D7: a short product-language summary of what exists, or why there is none. Never throws. With a brief
+ *  this is A7's closer look (D11): it asks only for what the brief does not say, and for the area. */
+async function orient(f, d, brief = null) {
   const ctx = getContext(f.scopeType, f.scopeKey);
   if (!ctx.lookAtCode) return { summary: '', files: [], skipped: 'off' };
+  if (mockEnabled({}) && brief) {
+    return { summary: `[mock] A closer look: "${f.title}" needs something the brief does not describe yet.`, files: ['/tmp/mock/auto-look-0000abcd/README.md'], area: 'Orders', skipped: null };
+  }
   if (mockEnabled({})) return { summary: `[mock] What exists around "${f.title}": orders, each with a status.`, files: [], skipped: null };
   let look = null;
   let model = null;
@@ -161,7 +178,7 @@ async function orient(f, d) {
     if (isArchived(f.seq)) return { summary: '', files: [], skipped: 'archived' };
     const { text, costUsd } = await callModel(d, {
       cwd: look.cwd, systemPrompt: ORIENTATION_SYSTEM_PROMPT,
-      prompt: buildOrientationPrompt({ feature: f, context: ctx.body, members: look.members || null }),
+      prompt: buildOrientationPrompt({ feature: f, context: ctx.body, members: look.members || null, brief: brief ? brief.text : null }),
       model, tools: REPO_LOOK_TOOLS, maxTurns: REPO_LOOK_MAX_TURNS, timeoutMs: REPO_LOOK_TIMEOUT_MS,
     });
     return { ...normalizeOrientation(safeParseJson(text)), skipped: null, model: model || null, costUsd };
@@ -173,17 +190,24 @@ async function orient(f, d) {
   }
 }
 
-async function runOrientation(seq, d, by) {
+async function runOrientation(seq, d, by, { useBrief = false } = {}) {
+  const brief = briefFor(requireFeature(seq));
+  // A7 D10: with a usable brief the automatic look is skipped, before any status, frame, budget check or call.
+  if (useBrief && brief) {
+    appendTurn(seq, { kind: 'orientation', payload: { summary: '', files: [], skipped: 'brief', error: null, briefMadeAt: brief.madeAt } }, { by });
+    updateFeature(seq, { orientation: { summary: '', files: [], skipped: 'brief', briefMadeAt: brief.madeAt, at: new Date().toISOString() } }, { by });
+    return;
+  }
   setStatus(seq, 'looking', by);
   notify(d, seq);
   const f = requireFeature(seq);
   if (getContext(f.scopeType, f.scopeKey).lookAtCode && !mockEnabled({})) assertBudget(d);   // only when a call will follow
-  const o = await orient(f, d);
+  const o = await orient(f, d, brief);
   if (o.skipped === 'archived') return;   // archived meanwhile: nothing was spent, nothing to record
   const turnId = appendTurn(seq, { kind: 'orientation', payload: { summary: o.summary, files: o.files, skipped: o.skipped, error: o.error || null },
     model: o.model || null, costUsd: o.costUsd || null }, { by });
   charge(seq, turnId, o.costUsd, o.model);
-  updateFeature(seq, { orientation: { summary: o.summary, files: o.files, skipped: o.skipped, at: new Date().toISOString() } }, { by });
+  updateFeature(seq, { orientation: { summary: o.summary, files: o.files, skipped: o.skipped, ...(o.area ? { area: o.area } : {}), at: new Date().toISOString() } }, { by });
 }
 
 async function runRound(seq, d, by, { final = false, followUp = null } = {}) {
@@ -195,6 +219,7 @@ async function runRound(seq, d, by, { final = false, followUp = null } = {}) {
   const followItems = found.length ? found : null;   // none left rejected: an ordinary round
   const isFinal = final || (!followItems && f.rounds + 1 >= MAX_ROUNDS);
   const turns = listTurns(seq);
+  const brief = briefFor(f);   // A7 D10: every round reads the scope's usable brief and records which one
   const seqs = { criteriaSeq: f.criteriaSeq, assumptionSeq: f.assumptionSeq, final: isFinal, removedCriteria: removedCriteria(turns) };
   let applied = null;
   let model = null;
@@ -204,7 +229,7 @@ async function runRound(seq, d, by, { final = false, followUp = null } = {}) {
     applied = applyRound(f.spec, mockRoundReply(f, isFinal, { followUp: followItems }), seqs);
   } else {
     const ctx = getContext(f.scopeType, f.scopeKey);
-    const prompt = buildRoundPrompt({ feature: f, context: ctx.body, turns, final: isFinal, round: f.rounds + 1, followUp: followItems });
+    const prompt = buildRoundPrompt({ feature: f, context: ctx.body, turns, final: isFinal, round: f.rounds + 1, followUp: followItems, brief: brief?.text });
     model = await requirementsModel(d.listModels);
     const cwd = scratchDir();
     const fail = (code, msg) => failTurn(seq, { code, message: msg, job: 'round', costUsd: cost, model }, by, 'your_turn');
@@ -228,7 +253,8 @@ async function runRound(seq, d, by, { final = false, followUp = null } = {}) {
     failTurn(seq, { code: 'BAD_REPLY', message: `Worca's reply could not be read (${lastErr.message}). Try again.`, job: 'round', costUsd: cost, model }, by, 'your_turn');
     return;
   }
-  const turnId = appendTurn(seq, { kind: 'round', payload: { questions: applied.questions, note: applied.note, done: applied.done, final: isFinal, ...(followItems ? { followUp: followItems.map((a) => a.id) } : {}) },
+  const turnId = appendTurn(seq, { kind: 'round', payload: { questions: applied.questions, note: applied.note, done: applied.done, final: isFinal, ...(followItems ? { followUp: followItems.map((a) => a.id) } : {}),
+    ...(brief ? { brief: { id: brief.id, madeAt: brief.madeAt } } : {}) },
     model: model || null, costUsd: cost || null }, { by });
   charge(seq, turnId, cost, model);
   setStatus(seq, applied.done ? 'done' : 'your_turn', by, {
@@ -247,9 +273,13 @@ function guard(seq) {
 /** Orientation (D7), then round 1 unless `thenRound` is false ("Look again"). */
 export function startOrientation(seq, { by = null, thenRound = true } = {}, deps = {}) {
   const d = { ...DEFAULTS, ...deps };
-  guard(seq);
+  const f = guard(seq);
+  // A7 D11: with the switch off an explicit look would overwrite the brief's skipped orientation with "off".
+  if (!thenRound && !getContext(f.scopeType, f.scopeKey).lookAtCode && usableBrief(f.scopeType, f.scopeKey)) {
+    throw new RequirementsError('CONFLICT', `Looking at the code is off for this ${f.scopeType === 'workspace' ? 'workspace' : 'project'}.`);
+  }
   return startJob(seq, d, async (job) => {
-    await runOrientation(seq, d, by);
+    await runOrientation(seq, d, by, { useBrief: thenRound });
     if (thenRound) { job.kind = 'round'; await runRound(seq, d, by); }
     else setStatus(seq, restingStatus(seq), by);
   }, by, 'look');

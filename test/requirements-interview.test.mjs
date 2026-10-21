@@ -5,7 +5,9 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { createFeature, getFeature, listTurns, updateFeature, appendTurn, setContext } from '../src/core/requirements/store.mjs';
+import {
+  createFeature, getFeature, listTurns, updateFeature, appendTurn, setContext, getBrief, beginBrief, saveBriefResult,
+} from '../src/core/requirements/store.mjs';
 import { REPO_LOOK_TOOLS, REPO_LOOK_TIMEOUT_MS } from '../src/core/auto/classify.mjs';
 import {
   startOrientation, submitAnswers, finishInterview, followUp, retry, settled, isBusy, recoverInterrupted, requirementsModel, MAX_JOBS,
@@ -646,4 +648,200 @@ test('follow-up: refused (CONFLICT) while a round\'s questions are waiting; noth
   assert.throws(() => followUp(f.seq, {}, deps(fakeRunner([]))), (e) => e.code === 'CONFLICT' && /questions/.test(e.message));
   assert.equal(listTurns(f.seq).length, n, 'no followup turn');
   assert.equal(isBusy(f.seq), false);
+});
+
+// ── A7: the product brief (plans/requirements-a7-design.md D10, D11) ─────────────────────────────────────
+const BSCOPE = 'shopb-0000beef';
+function savedBrief() {
+  const now = getBrief('project', BSCOPE);
+  if (now && now.madeAt) return now;
+  const b = beginBrief('project', BSCOPE);
+  return saveBriefResult(b.id, {
+    sections: { product: 'A shop where customers order.', users: [], terms: [],
+      areas: [{ name: 'Orders', text: 'checkout and history.', status: 'partly', files: ['src/o.js'], added: null, belongsTo: null }] },
+    sources: [{ project: BSCOPE, branch: 'main', ref: 'refs/heads/main', sha: 'abc1234def5678' }], files: ['src/o.js'],
+  });
+}
+const briefOn = () => setContext('project', BSCOPE, { lookAtCode: true });
+const newBriefFeature = () => createFeature({ scopeType: 'project', scopeKey: BSCOPE, title: 'Gift message', description: 'A note on an order' });
+/** deps for the brief's scope, recording frames (the status at each), budget checks and look checkouts. */
+function briefDeps(runner, extra = {}) {
+  const seen = { frames: [], budget: 0, opened: 0 };
+  const d = deps(runner, {
+    listProjects: async () => [{ key: BSCOPE, name: 'shopb', path: repoDir, exists: true }],
+    openLook: async () => { seen.opened += 1; return { cwd: repoDir, close: async () => {} }; },
+    onChange: (seq) => { seen.frames.push(getFeature(seq).status); },
+    budget: () => { seen.budget += 1; return { blocked: false }; },
+    ...extra,
+  });
+  return { d, seen };
+}
+const provenanceOf = (b) => `Made from main @ abc1234 on ${b.madeAt.slice(0, 10)}.`;
+
+test('brief: a new feature skips its own look: no looking status or frame, no look, no budget check; round 1 reads the brief', async () => {
+  briefOn();
+  const b = savedBrief();
+  const f = newBriefFeature();
+  updateFeature(f.seq, { status: 'your_turn' });   // any status: the skip writes none
+  const r = fakeRunner([ROUND1]);
+  const { d, seen } = briefDeps(r);
+  await startOrientation(f.seq, { by: 'po' }, d);
+  await settled(f.seq);
+  assert.equal(r.calls.length, 1, 'only the round');
+  assert.deepEqual(r.calls[0].tools, [], 'the one call is the round');
+  assert.equal(seen.opened, 0, 'no checkout');
+  assert.equal(seen.budget, 1, 'only the round checked the budget');
+  assert.equal(seen.frames[0], 'thinking', 'no frame before round 1\'s thinking');
+  assert.ok(!seen.frames.includes('looking'));
+  const prompt = r.calls[0].prompt;
+  assert.ok(prompt.includes(`</project_context>\n\n<product_brief>\n${provenanceOf(b)}\n\nWhat the product does:\nA shop where customers order.`));
+  assert.ok(prompt.indexOf('</product_brief>') < prompt.indexOf('<what_worca_found_in_the_code>'));
+  const turns = listTurns(f.seq);
+  assert.deepEqual(turns.map((t) => t.kind), ['orientation', 'round']);
+  assert.deepEqual(turns[0].payload, { summary: '', files: [], skipped: 'brief', error: null, briefMadeAt: b.madeAt });
+  assert.equal(turns[0].costUsd, null);
+  assert.deepEqual(turns[1].payload.brief, { id: b.id, madeAt: b.madeAt });
+  const g = getFeature(f.seq);
+  assert.equal(g.orientation.skipped, 'brief');
+  assert.equal(g.orientation.briefMadeAt, b.madeAt);
+  assert.equal(g.orientation.summary, '');
+  assert.equal(g.status, 'your_turn');
+  assert.equal(g.rounds, 1);
+});
+
+test('brief: later rounds read it too and record it', async () => {
+  briefOn();
+  const b = savedBrief();
+  const f = newBriefFeature();
+  const r = fakeRunner([ROUND1, ROUND2]);
+  const { d } = briefDeps(r);
+  await startOrientation(f.seq, {}, d);
+  await settled(f.seq);
+  const round = listTurns(f.seq).find((t) => t.kind === 'round');
+  await submitAnswers(f.seq, { roundTurnId: round.id, useRecommended: true }, {}, d);
+  await settled(f.seq);
+  assert.match(r.calls[1].prompt, /<product_brief>\nMade from main @ abc1234/);
+  assert.deepEqual(listTurns(f.seq).at(-1).payload.brief, { id: b.id, madeAt: b.madeAt });
+});
+
+test('without a brief: A1 behaviour, and no brief on the prompt or the round', async () => {
+  off();
+  const f = newFeature();
+  const r = fakeRunner([ROUND1]);
+  await startOrientation(f.seq, {}, deps(r));
+  await settled(f.seq);
+  assert.doesNotMatch(r.calls[0].prompt, /product_brief/);
+  assert.equal('brief' in listTurns(f.seq).at(-1).payload, false);
+  assert.equal(getFeature(f.seq).orientation.skipped, 'off');
+});
+
+test('brief, mock mode: the skip and the round\'s brief, no runner call', async () => {
+  process.env.WORCA_MOCK = '1';
+  briefOn();
+  const b = savedBrief();
+  const f = newBriefFeature();
+  const r = fakeRunner([]);
+  const { d, seen } = briefDeps(r);
+  await startOrientation(f.seq, {}, d);
+  await settled(f.seq);
+  assert.equal(r.calls.length, 0);
+  assert.equal(seen.opened, 0);
+  assert.equal(getFeature(f.seq).orientation.skipped, 'brief');
+  assert.deepEqual(listTurns(f.seq).at(-1).payload.brief, { id: b.id, madeAt: b.madeAt });
+});
+
+test('Look closer: the explicit look carries the brief, asks for what it does not say, and stores the area', async () => {
+  briefOn();
+  savedBrief();
+  const f = newBriefFeature();
+  const { d } = briefDeps(fakeRunner([ROUND1]));
+  await startOrientation(f.seq, {}, d);
+  await settled(f.seq);
+  const r = fakeRunner([{ summary: 'Orders have no note yet.', files: ['/tmp/x/auto-look-0000abcd/src/o.js'], area: 'Orders' }]);
+  const { d: d2, seen } = briefDeps(r);
+  await startOrientation(f.seq, { thenRound: false }, d2);
+  await settled(f.seq);
+  assert.equal(r.calls.length, 1);
+  assert.deepEqual(r.calls[0].tools, [...REPO_LOOK_TOOLS]);
+  assert.equal(seen.opened, 1);
+  assert.match(r.calls[0].prompt, /<product_brief>\nMade from main @ abc1234/);
+  assert.match(r.calls[0].prompt, /The product brief above already describes the product\. Look only at what this feature needs that the brief does not say/);
+  const g = getFeature(f.seq);
+  assert.equal(g.orientation.summary, 'Orders have no note yet.');
+  assert.equal(g.orientation.area, 'Orders');
+  assert.equal(g.orientation.skipped, null);
+  assert.equal(g.rounds, 1, 'no round');
+  assert.equal(g.status, 'your_turn');
+});
+
+test('Look closer, mock mode: a canned closer look with an absolute path and an area', async () => {
+  process.env.WORCA_MOCK = '1';
+  briefOn();
+  savedBrief();
+  const f = newBriefFeature();
+  const { d } = briefDeps(fakeRunner([]));
+  await startOrientation(f.seq, {}, d);
+  await settled(f.seq);
+  await startOrientation(f.seq, { thenRound: false }, d);
+  await settled(f.seq);
+  const o = getFeature(f.seq).orientation;
+  assert.match(o.summary, /^\[mock\] A closer look: /);
+  assert.deepEqual(o.files, ['/tmp/mock/auto-look-0000abcd/README.md']);
+  assert.equal(o.area, 'Orders');
+});
+
+test('switch off with a brief: creation still skips; an explicit look is refused and writes nothing', async () => {
+  setContext('project', BSCOPE, { lookAtCode: false });
+  savedBrief();
+  const f = newBriefFeature();
+  const { d } = briefDeps(fakeRunner([ROUND1]));
+  await startOrientation(f.seq, {}, d);
+  await settled(f.seq);
+  assert.equal(getFeature(f.seq).orientation.skipped, 'brief');
+  const before = { turns: listTurns(f.seq).length, f: getFeature(f.seq) };
+  const r = fakeRunner([]);
+  assert.throws(() => startOrientation(f.seq, { thenRound: false }, briefDeps(r).d),
+    (e) => e.code === 'CONFLICT' && e.message === 'Looking at the code is off for this project.');
+  assert.equal(isBusy(f.seq), false);
+  assert.equal(r.calls.length, 0);
+  assert.equal(listTurns(f.seq).length, before.turns);
+  assert.deepEqual(getFeature(f.seq).orientation, before.f.orientation);
+  assert.equal(getFeature(f.seq).status, before.f.status);
+  assert.equal(getFeature(f.seq).updatedAt, before.f.updatedAt);
+});
+
+test('brief: Try again with no orientation yet skips again', async () => {
+  briefOn();
+  savedBrief();
+  const f = newBriefFeature();
+  appendTurn(f.seq, { kind: 'error', payload: { code: 'INTERRUPTED', message: 'restart', job: 'look' } });
+  updateFeature(f.seq, { status: 'your_turn' });
+  const r = fakeRunner([ROUND1]);
+  const { d, seen } = briefDeps(r);
+  await retry(f.seq, {}, d);
+  await settled(f.seq);
+  assert.equal(seen.opened, 0);
+  assert.equal(r.calls.length, 1);
+  assert.deepEqual(r.calls[0].tools, []);
+  assert.equal(getFeature(f.seq).orientation.skipped, 'brief');
+  assert.deepEqual(listTurns(f.seq).map((t) => t.kind), ['error', 'orientation', 'round']);
+});
+
+test('brief at the spending limit: the feature is still created (no look to refuse); the round is refused as A1', async () => {
+  briefOn();
+  savedBrief();
+  const f = newBriefFeature();
+  const r = fakeRunner([]);
+  let checks = 0;
+  const { d } = briefDeps(r, { budget: () => { checks += 1; return { blocked: true, totalLimitUsd: 5 }; } });
+  await startOrientation(f.seq, {}, d);
+  await settled(f.seq);
+  assert.equal(r.calls.length, 0);
+  assert.equal(checks, 1, 'the round\'s check only');
+  const turns = listTurns(f.seq);
+  assert.deepEqual(turns.map((t) => t.kind), ['orientation', 'error']);
+  assert.equal(turns[0].payload.skipped, 'brief');
+  assert.equal(turns[1].payload.code, 'BUDGET');
+  assert.equal(turns[1].payload.job, 'round');
+  assert.equal(getFeature(f.seq).status, 'your_turn');
 });

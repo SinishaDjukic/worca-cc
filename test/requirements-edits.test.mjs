@@ -2,9 +2,12 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { createFeature, getFeature, listTurns, updateFeature, appendTurn, setContext, createStart } from '../src/core/requirements/store.mjs';
+import {
+  createFeature, getFeature, listTurns, updateFeature, appendTurn, setContext, createStart, getBrief, beginBrief, saveBriefResult,
+} from '../src/core/requirements/store.mjs';
 import {
   updateHeader, setSection, releaseSection, addCriterion, editCriterion, removeCriterion, setAssumption, setArchived, confirmOpenAssumptions, revertToStart,
+  addToBrief,
 } from '../src/core/requirements/edits.mjs';
 import { emptySpec, nextIdNumber } from '../src/core/requirements/spec.mjs';
 import { buildRoundPrompt } from '../src/core/requirements/round.mjs';
@@ -193,4 +196,117 @@ test('revertToStart: the frozen spec comes back, counters stay, one edit turn; u
   assert.equal(listTurns(f.seq).length, n);
   setArchived(f.seq, true);
   assert.throws(() => revertToStart(f.seq, 1), (e) => e.code === 'CONFLICT');
+});
+
+// ── A7 D11: Add this to the brief ────────────────────────────────────────────────────────────────────────
+const ORDERS = { name: 'Orders', text: 'checkout and history.', status: 'partly', files: ['src/o.js'], added: null, belongsTo: null };
+function briefFor(scopeType, scopeKey, { areas = [ORDERS], edited = {}, sources = null } = {}) {
+  const b = beginBrief(scopeType, scopeKey);
+  return saveBriefResult(b.id, {
+    sections: { product: 'A shop.', users: [{ name: 'Customer', can: 'orders.' }], terms: [], areas }, edited,
+    sources: sources || [{ project: scopeKey, branch: 'main', ref: 'refs/heads/main', sha: 'abc1234def' }], files: ['src/o.js'],
+  });
+}
+let briefScopes = 0;
+/** A feature in a fresh scope with a brief, after a closer look whose paths are the temp checkout's, absolute. */
+function closerLooked({ scopeType = 'project', orientation = {}, brief = {} } = {}) {
+  briefScopes += 1;
+  const scopeKey = `brief-scope-${briefScopes}`;
+  const b = briefFor(scopeType, scopeKey, brief);
+  const f = createFeature({ scopeType, scopeKey, title: 'Gift message on an order', description: 'A note' });
+  updateFeature(f.seq, { status: 'your_turn', orientation: {
+    summary: 'Orders carry no note yet.', skipped: null, area: 'Orders', at: '2026-10-20T10:00:00.000Z',
+    files: ['/tmp/worca/tmp/requirements/auto-look-0000abcd/src/o.js',
+      'C:\\Users\\po\\.worca\\tmp\\requirements\\auto-look-1234abcd\\src\\gift.js',
+      'src/notes.js', '/etc/passwd', '../outside.js'],
+    ...orientation,
+  } });
+  return { f: getFeature(f.seq), b, scopeType, scopeKey };
+}
+
+test('addToBrief: a new area named after the feature, under the look\'s area, files made relative; nothing replaced or marked edited', () => {
+  const { f, b, scopeKey } = closerLooked({ brief: { edited: { users: true } } });
+  const out = addToBrief(f.seq, { by: 'po' });
+  assert.deepEqual(out, { scopeType: 'project', scopeKey });
+  const now = getBrief('project', scopeKey);
+  assert.equal(now.sections.areas.length, 2);
+  assert.deepEqual(now.sections.areas[0], ORDERS, 'the model\'s "Orders" area is untouched');
+  const added = now.sections.areas[1];
+  const at = getFeature(f.seq).orientation.addedToBrief;
+  assert.ok(typeof at === 'string' && at);
+  assert.deepEqual(added, {
+    name: 'Gift message on an order', belongsTo: 'Orders', text: 'Orders carry no note yet.', status: null,
+    files: ['src/o.js', 'src/gift.js', 'src/notes.js'], added: { feature: f.id, at },
+  });
+  assert.deepEqual(now.edited, { users: true }, 'What exists today is not marked edited');
+  assert.deepEqual(now.sections.users, b.sections.users);
+  assert.equal(now.status, 'ready');
+  assert.equal(now.madeAt, b.madeAt);
+  const o = getFeature(f.seq).orientation;
+  assert.equal(o.summary, 'Orders carry no note yet.');
+  assert.equal(o.area, 'Orders');
+  assert.throws(() => addToBrief(f.seq), (e) => e.code === 'CONFLICT' && e.message === 'Already added to the brief.');
+  assert.equal(getBrief('project', scopeKey).sections.areas.length, 2);
+});
+
+test('addToBrief: no area named by the look gives belongsTo null; text and files are capped', () => {
+  const many = Array.from({ length: 60 }, (_, i) => `/tmp/auto-look-0000abcd/src/f${i}.js`);
+  const { f, scopeKey } = closerLooked({ orientation: { area: '', summary: 's'.repeat(3000), files: many } });
+  addToBrief(f.seq);
+  const added = getBrief('project', scopeKey).sections.areas.at(-1);
+  assert.equal(added.belongsTo, null);
+  assert.equal(added.text.length, 1000);
+  assert.equal(added.files.length, 40);
+  assert.equal(added.files[0], 'src/f0.js');
+});
+
+test('addToBrief: a workspace feature keeps repos/<member>/… paths of the brief\'s members only', () => {
+  const { f, scopeKey } = closerLooked({ scopeType: 'workspace',
+    brief: { sources: [{ project: 'api-1', branch: 'main', ref: 'refs/heads/main', sha: 'a' }, { project: 'web-2', branch: 'main', ref: 'refs/heads/main', sha: 'b' }] },
+    orientation: { files: ['/tmp/auto-look-0000abcd/repos/api-1/src/o.js', 'C:\\t\\auto-look-1234abcd\\repos\\web-2\\app.js',
+      '/tmp/auto-look-0000abcd/repos/gone-3/x.js', '/tmp/auto-look-0000abcd/README.md'] } });
+  addToBrief(f.seq);
+  assert.deepEqual(getBrief('workspace', scopeKey).sections.areas.at(-1).files, ['repos/api-1/src/o.js', 'repos/web-2/app.js']);
+});
+
+test('addToBrief refusals write nothing', async () => {
+  const none = createFeature({ scopeType: 'project', scopeKey: 'brief-none', title: 't', description: 'd' });
+  updateFeature(none.seq, { status: 'your_turn', orientation: { summary: 'x', files: [], skipped: null } });
+  assert.throws(() => addToBrief(none.seq), (e) => e.code === 'CONFLICT' && e.message === 'This project has no product brief.');
+  const making = beginBrief('project', 'brief-making');   // being made for the first time: not usable yet
+  assert.equal(making.madeAt, null);
+  const mf = createFeature({ scopeType: 'project', scopeKey: 'brief-making', title: 't', description: 'd' });
+  updateFeature(mf.seq, { status: 'your_turn', orientation: { summary: 'x', files: [], skipped: null } });
+  assert.throws(() => addToBrief(mf.seq), (e) => e.code === 'CONFLICT' && e.message === 'This project has no product brief.');
+
+  const skipped = closerLooked({ orientation: { summary: '', files: [], skipped: 'brief', area: undefined } });
+  assert.throws(() => addToBrief(skipped.f.seq), (e) => e.code === 'CONFLICT' && e.message === 'There is no closer look to add.');
+  const noLook = closerLooked();
+  updateFeature(noLook.f.seq, { orientation: null });
+  assert.throws(() => addToBrief(noLook.f.seq), (e) => e.code === 'CONFLICT' && e.message === 'There is no closer look to add.');
+
+  const full = closerLooked({ brief: { areas: Array.from({ length: 20 }, (_, i) => ({ ...ORDERS, name: `Area ${i}` })) } });
+  assert.throws(() => addToBrief(full.f.seq), (e) => e.code === 'CONFLICT' && e.message === 'The brief already has 20 areas.');
+  assert.equal(getBrief('project', full.scopeKey).sections.areas.length, 20);
+  assert.equal(getFeature(full.f.seq).orientation.addedToBrief, undefined);
+
+  const archived = closerLooked();
+  setArchived(archived.f.seq, true);
+  assert.throws(() => addToBrief(archived.f.seq), (e) => e.code === 'CONFLICT');
+  assert.equal(getBrief('project', archived.scopeKey).sections.areas.length, 1);
+
+  const busy = closerLooked();
+  setContext('project', busy.scopeKey, { lookAtCode: false });
+  let release;
+  const gate = new Promise((res) => { release = res; });
+  const d = { runClaudeImpl: async () => { await gate; return { text: '{"spec":{},"questions":[],"done":true}' }; },
+    listModels: async () => [], listProjects: async () => [], workspaceTarget: async () => null,
+    openLook: async () => null, openWorkspaceLook: async () => null, onChange: () => {} };
+  const p = startOrientation(busy.f.seq, {}, d);
+  assert.equal(isBusy(busy.f.seq), true);
+  assert.throws(() => addToBrief(busy.f.seq), (e) => e.code === 'BUSY');
+  release();
+  await p;
+  await settled(busy.f.seq);
+  assert.equal(getBrief('project', busy.scopeKey).sections.areas.length, 1);
 });

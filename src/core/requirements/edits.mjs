@@ -2,7 +2,8 @@
 // The product owner's edits (plans/requirements-design.md D6): ground truth the model may ask about but
 // never undo. Every edit is a turn, so the next round sees it in the thread.
 import { RequirementsError, SECTIONS, SCOPE_TYPES, ASSUMPTION_STATUSES, LIMITS, clip, normalizeSection, nextIdNumber } from './spec.mjs';
-import { requireFeature, updateFeature, appendTurn, listTurns, listStarts, latestStart } from './store.mjs';
+import { requireFeature, updateFeature, appendTurn, listTurns, listStarts, latestStart, usableBrief, setBriefSections } from './store.mjs';
+import { BRIEF_LIMITS, relPath } from './brief.mjs';
 import { tx } from '../db.mjs';
 import { isBusy } from './interview.mjs';
 import { isStarting } from './start.mjs';   // no cycle: start.mjs never imports this module
@@ -142,6 +143,41 @@ export function revertToStart(seq, version, { by = null } = {}) {
     appendTurn(seq, { kind: 'edit', payload: { reverted: start.version } }, { by });
     return updateFeature(seq, { spec: start.spec }, { by });
   });
+}
+
+/**
+ * **Add this to the brief** (A7 D11): the feature's closer look becomes a new area of its scope's brief, named
+ * after the feature and filed under the area the look named. It never replaces an area and does not mark
+ * "What exists today" edited (D6), so the area survives a refresh as an added one. The look's paths are the
+ * temporary checkout's, absolute: they are made relative (a workspace keeps `repos/<member>/…` of the brief's
+ * members). Returns the brief's scope, for its frame.
+ */
+export function addToBrief(seq, { by = null } = {}) {
+  const f = editable(seq);
+  const where = f.scopeType === 'workspace' ? 'workspace' : 'project';
+  const b = usableBrief(f.scopeType, f.scopeKey);
+  if (!b) throw new RequirementsError('CONFLICT', `This ${where} has no product brief.`);
+  const o = f.orientation;
+  if (!o || !o.summary) throw new RequirementsError('CONFLICT', 'There is no closer look to add.');
+  if (o.addedToBrief) throw new RequirementsError('CONFLICT', 'Already added to the brief.');
+  const areas = b.sections.areas || [];
+  if (areas.length >= BRIEF_LIMITS.areas) throw new RequirementsError('CONFLICT', `The brief already has ${BRIEF_LIMITS.areas} areas.`);
+  const members = f.scopeType === 'workspace' ? (b.sources || []).map((s) => s && s.project).filter(Boolean) : null;
+  const files = [];
+  for (const p of Array.isArray(o.files) ? o.files : []) {
+    const r = relPath(p, { cwds: [], members });
+    if (r && !files.includes(r)) files.push(r);
+  }
+  const at = new Date().toISOString();
+  const area = {
+    name: clip(f.title, BRIEF_LIMITS.name), belongsTo: clip(o.area, BRIEF_LIMITS.name) || null, text: clip(o.summary, BRIEF_LIMITS.addedText),
+    status: null, files: files.slice(0, BRIEF_LIMITS.areaFiles), added: { feature: f.id, at },
+  };
+  tx(() => {
+    setBriefSections(b.id, { sections: { ...b.sections, areas: [...areas, area] }, edited: b.edited }, { by });
+    updateFeature(seq, { orientation: { ...o, addedToBrief: at } }, { by });
+  });
+  return { scopeType: f.scopeType, scopeKey: f.scopeKey };
 }
 
 export function setArchived(seq, archived, { by = null } = {}) {
