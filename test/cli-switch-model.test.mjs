@@ -25,10 +25,12 @@ function run(args, env = {}) {
     child.on('exit', (code) => res({ code: code ?? 0, stdout, stderr }));
   });
 }
-async function seedPaused(name, status = 'paused') {
+/** `claude`: the resume point's run options (engine, modelForAll); `cells`: per-node model/effort to store. */
+async function seedPaused(name, status = 'paused', { claude, cells = {} } = {}) {
   const dir = gitDir(name);
   await addProject({ name, path: dir });
-  const rp = graphResumePoint({ pipelineDir: dir });
+  const rp = graphResumePoint({ pipelineDir: dir, ...(claude ? { claude } : {}) });
+  for (const n of rp.manifest.graph.nodes) Object.assign(n, cells[n.id] || {});
   const steps = [
     { key: 'x:n_clarify:1', executionId: 'x:n_clarify:1', nodeId: 'n_clarify', status: 'done' },
     { key: 'x:n_plan:1', executionId: 'x:n_plan:1', nodeId: 'n_plan', status: 'paused', sessionId: 's' },
@@ -96,4 +98,30 @@ test('a running run: lists with its live states; dead owner refuses; no answer r
   const idle = await seedRunning('cli-msw-idle', { pid: process.pid, beat: new Date().toISOString() });
   const t = await run(['switch-model', idle, '--stage', 'implementer', '--model', 'claude-opus-5-5'], { WORCA_CONTROL_CONFIRM_MS: '700' });
   assert.equal(t.code, 0, t.stderr); assert.match(t.stdout, /Switch sent/);
+});
+
+test('the listing names the run engine and a one-model-for-all resume (m3)', async () => {
+  const id = await seedPaused('cli-msw-head');
+  const list = await run(['switch-model', id]);
+  assert.equal(list.code, 0, list.stderr);
+  assert.match(list.stdout, /Engine: Claude\n/);
+  assert.doesNotMatch(list.stdout, /for every remaining stage/);
+  const codex = await seedPaused('cli-msw-codex', 'paused', { claude: { engine: 'codex' } });
+  assert.match((await run(['switch-model', codex])).stdout, /Engine: Codex\n/);
+  const forAll = await seedPaused('cli-msw-forall', 'paused', { claude: { model: 'claude-sonnet-5-5', modelForAll: true } });
+  assert.match((await run(['switch-model', forAll])).stdout,
+    /Resumed with claude-sonnet-5-5 for every remaining stage — per-stage models and efforts do not apply\./);
+});
+
+test('--model without --effort clears a stored effort the new model does not offer, as the panel does (m4)', async () => {
+  const OPUS = 'claude-opus-5-5';
+  const cells = { n_plan: { model: OPUS, effort: 'xhigh' }, n_refine: { model: OPUS, effort: 'xhigh' },
+    n_impl: { model: OPUS, effort: 'high' }, n_review: { model: OPUS, effort: 'xhigh' } };
+  const id = await seedPaused('cli-msw-recon', 'paused', { cells });
+  const r = await run(['switch-model', id, '--all', '--model', 'claude-haiku-4-5']);   // Haiku 4.5: medium, high
+  assert.equal(r.code, 0, r.stderr);
+  const nodes = readPipelineForResume(id).resumePoint.manifest.graph.nodes;
+  const pair = (n) => { const x = nodes.find((y) => y.id === n); return [x.model, x.effort]; };
+  assert.deepEqual(['n_plan', 'n_refine', 'n_impl', 'n_review'].map(pair), [
+    ['claude-haiku-4-5', ''], ['claude-haiku-4-5', ''], ['claude-haiku-4-5', 'high'], ['claude-haiku-4-5', '']]);
 });

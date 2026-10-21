@@ -6,6 +6,7 @@
 
 import { resolveRunRef } from './runs.mjs';
 import { cliProjectDirFor } from './control.mjs';
+import { engineLabel } from '../shared/engine-switch.mjs';
 
 export const SWITCH_HELP = `worca switch-model — change a running or paused run's models (this run only)
 
@@ -18,8 +19,13 @@ Usage:
   --json                                        Machine-readable output
 
 <stage> is a node id (n_refine) or an agent key (refiner) when only one stage uses it.
-Pass "default" to clear a field back to the run default. Efforts depend on the run's engine (Claude: medium–max, Codex: minimal–high, Copilot: none–max, Cursor: none); an effort the engine does not offer is refused.
-Sub-agent models: sonnet, opus, fable, auto, inherit.
+Pass "default" to clear a field back to the run default. Efforts depend on the run's engine
+(Claude: medium–max, Codex: minimal–high, Copilot: none–max, Cursor: none); an effort the engine
+does not offer is refused. With --model and no --effort, a stage keeps its effort only if the new
+model offers it.
+Sub-agent settings depend on the engine too: Claude takes a sub-agent model (sonnet, opus, fable,
+auto, inherit) and effort (medium–max); Codex only a sub-agent effort of medium or high; Copilot and
+Cursor neither.
 
 A stage can switch unless it is running right now or finished for good. A loop stage that
 already ran can switch while its loop is still going; its next cycle uses the new model.
@@ -74,6 +80,10 @@ function refusal(msg) {
 function printStages(info, { out, c }) {
   const tail = info.status === 'running' ? '— running' : `— paused${info.pauseReason ? ` (${info.pauseReason})` : ''}`;
   out(`${c('bold', info.title || info.pipelineId)} ${c('gray', tail)}`);
+  out(`Engine: ${engineLabel(info.engine)}`);
+  if (info.modelForAll) {
+    out(c('yellow', `Resumed with ${info.modelForAll} for every remaining stage — per-stage models and efforts do not apply.`));
+  }
   const rows = [['STAGE', 'NODE', 'STATE', 'MODEL', 'EFFORT', 'SUBS', 'SUBS EFFORT']];
   for (const s of info.stages) {
     rows.push([s.key || s.label, s.nodeId, s.state, s.model || 'default', s.effort || '—',
@@ -81,6 +91,15 @@ function printStages(info, { out, c }) {
   }
   const widths = rows[0].map((_, i) => Math.max(...rows.map((r) => String(r[i]).length)));
   for (const r of rows) out('  ' + r.map((v, i) => String(v).padEnd(widths[i])).join('  ').trimEnd());
+}
+
+/** One stage's change. `--model` without `--effort`: a stored effort the new model does not offer on this
+ *  run's engine (the describe payload's engine-scoped `models[].efforts`) is cleared — the Models panel's
+ *  reconcileEffort rule — so the pair stays valid. An explicit `--effort` is sent as given (the run checks it). */
+export function stageChange(stage, change, models) {
+  if (!('model' in change) || 'effort' in change || !stage.effort) return { ...change };
+  const offered = (models || []).find((m) => m.id === change.model)?.efforts || [];
+  return offered.includes(stage.effort) ? { ...change } : { ...change, effort: '' };
 }
 
 const switchedLine = (ch, c) => `${c('green', 'Switched')} ${c('bold', ch.label)} ${c('gray', `(${ch.nodeId})`)}: ${ch.before.model || 'default'} → ${ch.after.model || 'default'}`;
@@ -131,7 +150,7 @@ export async function cmdSwitchModel(argv, { out, c, fail }) {
     }
     const targets = a.all ? info.stages.filter((s) => s.switchable) : [resolveStage(info.stages, a.stage, fail)];
     if (!targets.length) return refusal(`run ${id} has no stage left to switch`);
-    const changes = Object.fromEntries(targets.map((s) => [s.nodeId, { ...a.change }]));
+    const changes = Object.fromEntries(targets.map((s) => [s.nodeId, stageChange(s, a.change, info.models)]));
     const res = await switchRunModels(id, { changes, by: 'local', projectDirFor: cliProjectDirFor });
     if (res.mode === 'running') return printLive(id, res, a, { out, c });
     if (a.json) { out(JSON.stringify({ id, changed: res.changed, warnings: res.warnings }, null, 2)); return 0; }
