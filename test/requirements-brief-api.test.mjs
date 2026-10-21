@@ -371,7 +371,8 @@ async function bareApp(deps, fn) {
   const { registerRequirementsRoutes } = await import('../src/core/requirements/routes.mjs');
   const app = express();
   app.use(express.json());
-  registerRequirementsRoutes(app, { broadcast: () => {}, deps });
+  // WORCA_MOCK may be unset in here while a real server is live: a model call fails loudly, it never spawns.
+  registerRequirementsRoutes(app, { broadcast: () => {}, deps: { runClaudeImpl: () => { throw new Error('no model call in tests'); }, ...deps } });
   const s = app.listen(0, '127.0.0.1');
   await new Promise((r) => s.once('listening', r));
   try { return await fn(request(() => `http://127.0.0.1:${s.address().port}`)); }

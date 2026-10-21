@@ -4,8 +4,10 @@
 // through `deps.route(param)` (#requirements/<param>).
 //
 //   const view = createRequirementsView({ host, subEl, msgEl, deps });
-//   view.show(param)    '' the list · 'new' a new feature · 'feature/<n>' one feature (the route's param)
-//   view.changed(seq)   a `requirements-changed` frame: refetch what is on screen
+//   view.show(param)    '' the list · 'new' a new feature · 'feature/<n>' one feature ·
+//                       'brief/<scopeType>/<encoded scopeKey>' a project's or workspace's Product brief (A7 §6)
+//   view.changed(seq, brief)  a `requirements-changed` frame (a feature's seq, or a brief's '<scopeType>:<scopeKey>'):
+//                       refetch what is on screen when the frame concerns it
 //   view.destroy()
 
 // The displayed state (A2 §4), always the server's `f.state`: the page never derives it. `started` is
@@ -88,6 +90,30 @@ async function api(method, url, body) {
 }
 
 const usd = (n) => `$${(Number(n) || 0).toFixed(2)}`;
+/** How old `iso` is, in words (A7 §6): "today", "yesterday", "<n> days", "<n> weeks" (up to 8), "<n> months";
+ *  by calendar day in local time; '' for something that is not a date. */
+export function age(iso, now = Date.now()) {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return '';
+  const day = (ms) => { const d = new Date(ms); return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000; };
+  const days = Math.max(0, Math.round(day(now) - day(t)));
+  if (days === 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 14) return `${days} days`;
+  if (days < 61) return `${Math.floor(days / 7)} weeks`;
+  return `${Math.max(2, Math.floor(days / 30.44))} months`;
+}
+/** "a", "a and b", "a, b and c". */
+const joinAnd = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
+/** A brief frame's key, split on its FIRST ':' (a workspace id may hold ':' itself); null when it is not one. */
+function briefScope(key) {
+  const k = typeof key === 'string' ? key : '';
+  const i = k.indexOf(':');
+  return i > 0 && i < k.length - 1 ? { scopeType: k.slice(0, i), scopeKey: k.slice(i + 1) } : null;
+}
+const scopeId = (s) => `${s.scopeType}:${s.scopeKey}`;
+const briefPath = (scopeType, scopeKey) => `brief/${scopeType}/${encodeURIComponent(scopeKey)}`;
+const decodeKey = (k) => { try { return decodeURIComponent(k); } catch { return k; } };
 const sentence = (s) => { const t = String(s || '').replace(/[_-]+/g, ' ').trim(); return t ? t[0].toUpperCase() + t.slice(1) : ''; };
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
@@ -148,7 +174,16 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   let focusNext = null;      // the data-ui field the next feature paint focuses (a field just opened)
   let targets = { projects: [], workspaces: [] };
   let filter = 'open';      // the list's filter tab (FILTERS), kept across repaints and visits
-  let paintedKey = null;     // what the host currently shows: 'list' | 'new' | 'feature/<n>'
+  let paintedKey = null;     // what the host currently shows: 'list' | 'new' | 'feature/<n>' | 'brief/<type>:<key>'
+  // The brief page (A7 §6): the scope on screen, its last body (a repaint without a fetch), a Create in flight,
+  // the notes as last painted and their unsaved text, and each feature's scope as the page has seen it
+  // (seq -> '<type>:<key>'), so a feature's frame repaints the brief page of its scope only.
+  let briefShown = null;     // { scopeType, scopeKey } | null
+  let briefData = null;
+  let creating = false;
+  let notesBase = null;      // { body, look } as painted from the server
+  let notesDraft = null;     // { body, look } typed and not saved yet
+  const seqScope = new Map();
   let focusLater = null;     // a data-ui to focus once it is on screen, while the focus is lost (a round sent)
   // Start in worca: the workflow / branch choices per feature seq ({ workflowId, sourceBranch, open }),
   // the workflow list and each project's branches (loaded once, when Change opens), a start in flight,
@@ -199,20 +234,46 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       closeDialog(false);
     }
     seqShown = next;
+    const b = /^brief\/(project|workspace)\/([^/]+)$/.exec(param);
+    const nextBrief = b ? { scopeType: b[1], scopeKey: decodeKey(b[2]) } : null;
+    if (!nextBrief || !briefShown || scopeId(nextBrief) !== scopeId(briefShown)) { briefData = null; notesBase = null; notesDraft = null; }
+    briefShown = nextBrief;
     say('');
     await paint();
   }
-  // A live frame never touches the new-feature form; on the list only the list repaints.
-  async function changed(seq) {
+  // A live frame never touches the new-feature form. The list repaints on every frame; a feature page on its own
+  // seq or its scope's brief; the brief page on its scope's brief, and on a feature's frame when that feature is
+  // of its scope (usedBy changes as rounds complete) or not seen yet (it may be).
+  async function changed(seq, brief) {
     if (param === 'new') return;
-    if (seqShown == null || Number(seq) === seqShown) await paint();
+    const scope = briefScope(brief);
+    if (briefShown) {
+      const mine = scopeId(briefShown);
+      if (scope) { if (scopeId(scope) === mine) await paint(); return; }
+      if (seq == null) return;
+      const of = seqScope.get(Number(seq));
+      if (of === undefined || of === mine) await paint();
+      return;
+    }
+    if (seqShown == null) { await paint(); return; }
+    if (scope) {
+      const f = current && current.f;
+      if (f && f.seq === seqShown && scopeId(f) === scopeId(scope)) await paint();
+      return;
+    }
+    if (Number(seq) === seqShown) await paint();
   }
 
   async function paint() {
     const mine = ++paintNo;
-    const key = param === 'new' ? 'new' : seqShown != null ? `feature/${seqShown}` : 'list';
+    const key = param === 'new' ? 'new' : seqShown != null ? `feature/${seqShown}` : briefShown ? `brief/${scopeId(briefShown)}` : 'list';
     try {
       await loadTargets();
+      if (briefShown) {
+        const data = await api('GET', `/api/requirements/${briefPath(briefShown.scopeType, briefShown.scopeKey)}`);
+        if (mine === paintNo) { paintBrief(data); paintedKey = key; }
+        return;
+      }
       if (key === 'new') {
         // The list call carries the code-look cost for the hint; the form renders without it.
         const look = await api('GET', '/api/requirements').then((d) => d.lookCostUsd, () => null);
@@ -286,14 +347,29 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       h('span', { class: 'req-cost', text: usd(f.costUsd) }));
   }
 
+  // A group header's brief (board 11, A7 §6 "Elsewhere"): none yet (no row, or an `empty` one) with Create,
+  // being made, or its age; each a link to the brief page.
+  function groupBrief(g, b) {
+    const to = briefPath(g.scopeType, g.scopeKey);
+    const link = (label) => h('a', { class: 'req-brief-link', href: `#requirements/${to}`, onclick: (e) => { e.preventDefault(); route(to); } }, label);
+    if (b && b.madeAt) {
+      const a = age(b.madeAt);
+      return h('span', { class: 'hint req-group-brief' }, link(a === 'today' || a === 'yesterday' ? `Product brief · made ${a}` : `Product brief · ${a} old`));
+    }
+    if (b && b.status === 'making') return h('span', { class: 'hint req-group-brief' }, link('Product brief: being made…'));
+    return h('span', { class: 'hint req-group-brief' }, 'Product brief: none yet · ', link('Create'));
+  }
+
   function paintList(data) {
     const all = data.features || [];
     const F = FILTERS.find((x) => x.key === filter) || FILTERS[0];
     const shown = all.filter((f) => F.has(f.state));
+    for (const f of all) seqScope.set(Number(f.seq), scopeId(f));
+    const briefs = new Map((data.briefs || []).filter((b) => b && b.scopeType && b.scopeKey).map((b) => [scopeId(b), b]));
     const groups = new Map();
     for (const f of shown) {
-      const k = `${f.scopeType}:${f.scopeKey}`;
-      if (!groups.has(k)) groups.set(k, { label: targetLabel(f), items: [] });
+      const k = scopeId(f);
+      if (!groups.has(k)) groups.set(k, { label: targetLabel(f), scopeType: f.scopeType, scopeKey: f.scopeKey, items: [] });
       groups.get(k).items.push(f);
     }
     const spend = data.spend;
@@ -306,7 +382,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         ? 'No features yet. Describe one in a few sentences and Worca interviews you about it.'
         : 'Nothing here.' }),
       [...groups.values()].map((g) => h('section', { class: 'req-group', 'aria-label': g.label },
-        h('h2', { text: g.label }),
+        h('div', { class: 'req-group-head' }, h('h2', { text: g.label }), groupBrief(g, briefs.get(scopeId(g)))),
         h('div', { class: 'card req-rows' }, g.items.map(listRow)))),
       spend && typeof spend.windowUsd === 'number'
         ? h('p', { class: 'hint req-spend', text: `Spent on requirements this ${spend.resetPeriod === 'weekly' ? 'week' : 'month'}: ${usd(spend.windowUsd)}${
@@ -351,6 +427,142 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           h('div', { class: 'req-new-btns' },
             h('button', { type: 'button', class: 'btn', onclick: () => route('') }, 'Cancel'),
             h('button', { type: 'button', class: 'btn-go', onclick: create }, 'Start the interview'))))));
+  }
+
+  // ---- the Product brief page (A7 §6; board BriefEmpty.dc.html): the header, Give Worca a head start while
+  // there is no brief yet, and Your notes for Worca (A2's Project context, moved here, D12) ----
+
+  const briefLabel = (s, name) => `${s.scopeType === 'workspace' ? 'Workspace' : 'Project'} · ${name}`;
+
+  // Read the notes' unsaved text and switch before a rebuild: kept only when they differ from what was painted.
+  function captureNotes() {
+    const s = briefShown;
+    const page = host.querySelector('[data-req-brief]');
+    if (!s || !page || page.getAttribute('data-req-brief') !== scopeId(s)) return null;
+    const active = document.activeElement;
+    const focus = active && host.contains(active) ? active.getAttribute('data-ui') : null;
+    const area = host.querySelector('[data-ui="notes-body"]');
+    const look = host.querySelector('[data-ui="notes-look"]');
+    if (area && look && notesBase) {
+      const v = { body: area.value, look: look.checked };
+      notesDraft = v.body !== notesBase.body || v.look !== notesBase.look ? v : null;
+    }
+    return focus;
+  }
+
+  function paintBrief(data) {
+    briefData = data;
+    const s = briefShown;
+    for (const u of data.usedBy || []) if (u && u.seq != null) seqScope.set(Number(u.seq), scopeId(s));
+    const focus = captureNotes();
+    const name = (data.target && data.target.name) || s.scopeKey;
+    const b = data.brief || null;
+    const made = !!(b && b.madeAt);
+    paintHost(h('div', { class: 'req-page req-brief-page', 'data-req-brief': scopeId(s) },
+      h('a', { href: '#requirements', class: 'hint req-back', onclick: (e) => { e.preventDefault(); route(''); } }, '← All features'),
+      h('div', { class: 'req-brief-head' },
+        h('div', { class: 'req-head-title' }, h('h2', { text: 'Product brief' }), h('span', { class: 'chip', text: briefLabel(s, name) })),
+        made ? null : h('p', { class: 'req-sub', text: `What the product does, in your words and Worca's. Every interview for ${name} starts from it.` })),
+      made ? null : headStartCard(data),
+      notesCard(data)));
+    if (focus) {
+      const el = host.querySelector(`[data-ui="${focus}"]`);
+      if (el && !el.disabled) el.focus();
+    }
+  }
+  const redrawBrief = () => { if (briefShown && briefData) paintBrief(briefData); };
+
+  function createBrief() {
+    if (creating || !briefShown) return;
+    const s = briefShown;
+    creating = true;
+    for (const el of host.querySelectorAll('[data-ui="brief-create"]')) el.disabled = true;
+    say('');
+    void (async () => {
+      try {
+        const data = await api('POST', `/api/requirements/${briefPath(s.scopeType, s.scopeKey)}`, {});
+        creating = false;
+        if (!briefShown || scopeId(briefShown) !== scopeId(s)) return;
+        paintNo += 1;   // a fetch already under way would paint the page as it was before the press
+        paintBrief(data);
+        paintedKey = `brief/${scopeId(s)}`;
+      } catch (err) {
+        creating = false;
+        // refused (budget, busy, the switch, no repository): said in the message line; the button stays
+        fail(err);
+        redrawBrief();
+      }
+    })();
+  }
+
+  // Give Worca a head start (board 11): the four parts and the cost box with Create; the smallest behaviours of
+  // §6 "Not on the boards": being made, a failed first make, the switch off, no repository, members left out.
+  function headStartCard(data) {
+    const s = briefShown;
+    const b = data.brief || null;
+    const t = data.target || {};
+    const est = data.estimate || {};
+    const making = !!(b && b.status === 'making');
+    const failed = !making && b && b.error && b.error.message ? b.error.message : null;
+    const switchOff = !!(data.notes && data.notes.lookAtCode === false);
+    const slow = Array.isArray(t.slow) && t.slow.length > 0;
+    const noRepo = s.scopeType === 'project' && !t.branch && !slow;
+    const whyNot = making ? 'Worca is reading the code. This takes a few minutes; you can leave this page.'
+      : switchOff ? 'Looking at the code is off. Turn it on under Your notes for Worca.'
+        : noRepo ? 'There is no repository to look at.' : null;
+    const facts = [
+      s.scopeType === 'workspace' ? ["Each project's default branch"] : t.branch ? ['Branch ', h('code', { text: t.branch })] : null,
+      typeof est.costUsd === 'number' ? ['about ', h('code', { text: usd(est.costUsd) })] : null,
+      ['3 to 5 minutes'],
+    ].filter(Boolean).flatMap((part, i) => (i ? [' · ', ...part] : part));
+    const leftOut = s.scopeType === 'workspace' && Array.isArray(t.leftOut) && t.leftOut.length ? t.leftOut : null;
+    const part = (title, rest) => h('li', {}, icon(ICONS.check, { size: 15, width: 2.4 }), h('span', {}, h('b', { text: title }), rest));
+    return h('section', { class: 'card req-brief-start', 'aria-label': 'Give Worca a head start' },
+      h('div', { class: 'req-brief-main' },
+        h('h3', { text: 'Give Worca a head start' }),
+        h('p', { class: 'req-brief-why', text: 'Today Worca looks at the code again for every new feature. A brief is one deeper look, done once, that every feature here reuses: interviews ask better questions sooner, and each feature saves its own look.' }),
+        h('ul', { class: 'req-brief-parts' },
+          part('What the product does', ', in a few sentences'),
+          part('Who uses it', ' and what each of them can do'),
+          part('The words the product uses', ': its concepts and what they mean'),
+          part('What exists today', ', area by area, and what only partly exists')),
+        h('p', { class: 'hint req-brief-plain', text: 'Plain product language, no code. You can edit every part; your text is kept.' })),
+      h('div', { class: 'req-brief-cost' },
+        h('span', { class: 'req-brief-look', text: 'One look, read-only' }),
+        h('span', { class: 'req-brief-facts' }, ...facts),
+        est.model && est.model.label ? h('span', { class: 'hint req-brief-model', text: `${est.model.label} · counts toward your limit` }) : null,
+        leftOut ? h('span', { class: 'hint req-brief-left-out',
+          text: `Worca reads at most 8 projects of a workspace: ${joinAnd(leftOut)} ${leftOut.length === 1 ? 'is' : 'are'} left out.` }) : null,
+        failed ? h('p', { class: 'form-msg err req-brief-failed', role: 'status', text: failed }) : null,
+        h('button', { type: 'button', class: 'btn-go req-brief-create', 'data-ui': 'brief-create', disabled: creating || !!whyNot, onclick: createBrief },
+          making || creating ? 'Creating…' : failed ? 'Try again' : 'Create the brief'),
+        whyNot ? h('span', { class: 'hint req-brief-why-not', text: whyNot }) : null));
+  }
+
+  // Your notes for Worca (A2's Project / Workspace context, D12): the notes and the switch, saved together.
+  function notesCard(data) {
+    const s = briefShown;
+    const n = data.notes || {};
+    notesBase = { body: typeof n.body === 'string' ? n.body : '', look: n.lookAtCode !== false };
+    const v = notesDraft || notesBase;
+    const area = h('textarea', { rows: '4', 'aria-label': 'Your notes for Worca', 'data-ui': 'notes-body',
+      placeholder: 'Actors, terms and standing rules every feature here should know' });
+    area.value = v.body;
+    const look = h('input', { type: 'checkbox', id: 'req-notes-look', 'data-ui': 'notes-look' });
+    look.checked = v.look;
+    const save = () => act(async () => {
+      await api('PUT', `/api/requirements/context/${s.scopeType}/${encodeURIComponent(s.scopeKey)}`, { body: area.value, lookAtCode: look.checked });
+      notesDraft = null; notesBase = null;
+      say('Notes saved.', 'ok');
+      await paint();
+    });
+    return h('section', { class: 'card req-brief-notes', 'aria-label': 'Your notes for Worca' },
+      h('div', { class: 'req-card-head' }, h('h3', { text: 'Your notes for Worca' }),
+        h('span', { class: 'hint req-brief-was', text: s.scopeType === 'workspace' ? 'was “Workspace context”' : 'was “Project context”' })),
+      area,
+      h('label', { for: 'req-notes-look', class: 'req-ctx-look' }, look,
+        ' Let Worca look at the code (for the brief, and when you ask it to look closer at a feature)'),
+      h('div', { class: 'req-brief-notes-foot' }, h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'notes-save', onclick: save }, 'Save notes')));
   }
 
   // ---- the feature page (board Interview.dc.html): header, the conversation left, Ready + spec right ----
@@ -1100,6 +1312,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
 
   function paintFeature(f, turns = []) {
     current = { f, turns };
+    seqScope.set(Number(f.seq), scopeId(f));
     const focus = capture(f);
     const rounds = roundsOf(turns);
     paintHost(h('div', { class: 'req-page' },

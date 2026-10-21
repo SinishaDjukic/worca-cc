@@ -85,3 +85,23 @@ test('turning the flag off while the page is open leaves it for Chat', async () 
   assert.equal(hidden(doc, 'requirements'), true);
   assert.equal(hidden(doc, 'chat'), false);
 });
+
+test('a brief frame reaches the view with its key: the brief page of that scope repaints, another scope does not', async () => {
+  const { window, recv } = await boot({ requirements: true });
+  const urls = [];
+  const was = window.fetch;
+  window.fetch = (u, o) => { urls.push(String(u)); return was(u, o); };
+  globalThis.fetch = window.fetch;
+  window.location.hash = `requirements/brief/workspace/${encodeURIComponent('ws:1')}`;
+  await settle();
+  const page = '/api/requirements/brief/workspace/ws%3A1';
+  const n = () => urls.filter((u) => u === page).length;
+  const open = n();
+  assert.ok(open > 0, 'the brief page fetched its scope');
+  recv({ type: 'requirements-changed', brief: 'workspace:other' });
+  await settle();
+  assert.equal(n(), open, 'another scope: no fetch');
+  recv({ type: 'requirements-changed', brief: 'workspace:ws:1' });
+  await settle();
+  assert.equal(n(), open + 1, 'its own scope: one fetch');
+});

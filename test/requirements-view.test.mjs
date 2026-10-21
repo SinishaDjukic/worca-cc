@@ -1475,3 +1475,287 @@ test('run pill: a live run waiting for the person says "Waiting for you" (amber)
   assert.ok(meta(1).classList.contains('need'));
   assert.equal(meta(2).textContent, 'Started · run running · Idle');
 });
+
+// ---- A7 Task 7: the brief page with no brief yet (board 11), Your notes for Worca, the list's group header ----
+
+const { age } = await import('../ui/public/requirements-view.mjs');
+const BRIEF_URL = '/api/requirements/brief/project/shop-1';
+// The brief page's body (A7 §5): no brief yet, the target with its default branch, the notes, the estimate.
+const briefBody = (over = {}) => ({ brief: null, target: { name: 'shop', branch: 'main', leftOut: [], slow: [] },
+  notes: { scopeType: 'project', scopeKey: 'shop-1', body: 'Shoppers order things.', lookAtCode: true },
+  estimate: { costUsd: 1.5, model: { id: 'claude-opus-5-5', label: 'Opus 5.5' } }, usedBy: [], staleness: null, ...over });
+const briefRow = (over = {}) => ({ id: 3, scopeType: 'project', scopeKey: 'shop-1', status: 'empty', sections: {}, edited: {}, sources: [],
+  files: [], seed: null, model: null, costUsd: 0, error: null, madeBy: null, madeAt: null, updatedAt: '2026-10-21T10:00:00Z', ...over });
+const briefRoutes = (body = briefBody(), extra = {}) => ({ ...BASE, [`GET ${BRIEF_URL}`]: typeof body === 'function' ? body : () => body, ...extra });
+const createBtn = (host) => host.querySelector('[data-ui="brief-create"]');
+const text = (el) => (el ? el.textContent.replace(/\s+/g, ' ').trim() : null);
+
+test('age: today, yesterday, days, weeks, months', () => {
+  const now = new Date(2026, 9, 21, 15, 0).getTime();
+  const at = (y, m, d, hh = 9) => new Date(y, m, d, hh).toISOString();
+  assert.equal(age(at(2026, 9, 21, 1), now), 'today');
+  assert.equal(age(at(2026, 9, 20, 23), now), 'yesterday');
+  assert.equal(age(at(2026, 9, 18), now), '3 days');
+  assert.equal(age(at(2026, 9, 8), now), '13 days');
+  assert.equal(age(at(2026, 9, 7), now), '2 weeks');
+  assert.equal(age(at(2026, 7, 26), now), '8 weeks');
+  assert.equal(age(at(2026, 7, 10), now), '2 months');
+  assert.equal(age(at(2026, 6, 1), now), '3 months');
+  assert.equal(age(at(2026, 9, 25), now), 'today', 'a time ahead of the clock reads today');
+  assert.equal(age('not a date', now), '');
+});
+
+test('brief page: the route decodes the scope key; the header, the subtitle and the back link', async () => {
+  const W = '/api/requirements/brief/workspace/ws%3A1%3Ab';
+  const calls = fakeApi({ ...BASE, 'GET /api/workspaces': { workspaces: [{ id: 'ws:1:b', name: 'Storefront' }] },
+    [`GET ${W}`]: briefBody({ target: { name: 'Storefront', branch: null, leftOut: [], slow: [] } }) });
+  const { host, view, routed } = make();
+  await view.show(`brief/workspace/${encodeURIComponent('ws:1:b')}`);
+  assert.ok(calls.some((c) => c.method === 'GET' && c.url === W), 'fetched with the key encoded again');
+  assert.equal(host.querySelector('.req-brief-page h2').textContent, 'Product brief');
+  assert.equal(host.querySelector('.req-brief-head .chip').textContent, 'Workspace · Storefront');
+  assert.equal(host.querySelector('.req-brief-head .req-sub').textContent,
+    "What the product does, in your words and Worca's. Every interview for Storefront starts from it.");
+  const back = host.querySelector('.req-back');
+  assert.equal(back.textContent, '← All features');
+  back.click();
+  assert.deepEqual(routed, ['']);
+});
+
+test('brief page, none yet: the head-start card, the four parts, the cost box with the estimate and the model', async () => {
+  fakeApi(briefRoutes());
+  const { host, view } = make();
+  await view.show('brief/project/shop-1');
+  const card = host.querySelector('section.req-brief-start');
+  assert.ok(card.classList.contains('card'));
+  assert.equal(card.querySelector('h3').textContent, 'Give Worca a head start');
+  assert.equal(text(card.querySelector('.req-brief-why')), 'Today Worca looks at the code again for every new feature. A brief is one deeper look, done once, that every feature here reuses: interviews ask better questions sooner, and each feature saves its own look.');
+  const parts = [...card.querySelectorAll('.req-brief-parts li')];
+  assert.deepEqual(parts.map(text), ['What the product does, in a few sentences', 'Who uses it and what each of them can do',
+    'The words the product uses: its concepts and what they mean', 'What exists today, area by area, and what only partly exists']);
+  assert.deepEqual(parts.map((li) => li.querySelector('b').textContent), ['What the product does', 'Who uses it', 'The words the product uses', 'What exists today']);
+  assert.ok(parts.every((li) => li.querySelector('svg').getAttribute('aria-hidden') === 'true'), 'the check icons are decorative');
+  assert.equal(text(card.querySelector('.req-brief-plain')), 'Plain product language, no code. You can edit every part; your text is kept.');
+  const box = card.querySelector('.req-brief-cost');
+  assert.equal(text(box.querySelector('.req-brief-look')), 'One look, read-only');
+  assert.equal(text(box.querySelector('.req-brief-facts')), 'Branch main · about $1.50 · 3 to 5 minutes');
+  assert.deepEqual([...box.querySelectorAll('.req-brief-facts code')].map((c) => c.textContent), ['main', '$1.50']);
+  assert.equal(text(box.querySelector('.req-brief-model')), 'Opus 5.5 · counts toward your limit');
+  const go = createBtn(host);
+  assert.equal(go.textContent, 'Create the brief');
+  assert.ok(go.classList.contains('btn-go'));
+  assert.equal(go.disabled, false);
+  assert.ok(!/null|undefined/.test(host.textContent), 'no "null" or "undefined" on the page');
+});
+
+test('brief page, none yet: no estimate hides the cost and the model line; a workspace reads each default branch', async () => {
+  fakeApi(briefRoutes(briefBody({ estimate: { costUsd: null, model: null } })));
+  const { host, view } = make();
+  await view.show('brief/project/shop-1');
+  assert.equal(text(host.querySelector('.req-brief-facts')), 'Branch main · 3 to 5 minutes');
+  assert.equal(host.querySelector('.req-brief-model'), null);
+  const W = '/api/requirements/brief/workspace/ws1';
+  fakeApi({ ...BASE, [`GET ${W}`]: briefBody({ target: { name: 'Storefront', branch: null, leftOut: [], slow: [] } }) });
+  const w = make();
+  await w.view.show('brief/workspace/ws1');
+  assert.equal(text(w.host.querySelector('.req-brief-facts')), "Each project's default branch · about $1.50 · 3 to 5 minutes");
+  assert.equal(createBtn(w.host).disabled, false, 'a workspace has no single branch: the server decides');
+  assert.equal(w.host.querySelector('.req-brief-left-out'), null);
+});
+
+test('brief page, none yet: Create posts, then paints the answer; a refused Create says why and the button stays', async () => {
+  let made = false;
+  const calls = fakeApi(briefRoutes(() => (made ? briefBody({ brief: briefRow({ status: 'making' }) }) : briefBody()), {
+    [`POST ${BRIEF_URL}`]: () => { made = true; return { __status: 202, body: briefBody({ brief: briefRow({ status: 'making' }) }) }; } }));
+  const { host, view } = make();
+  await view.show('brief/project/shop-1');
+  createBtn(host).click();
+  assert.equal(createBtn(host).disabled, true, 'disabled at once: no second press');
+  createBtn(host).click();
+  await tick(); await tick();
+  assert.equal(calls.filter((c) => c.method === 'POST' && c.url === BRIEF_URL).length, 1);
+  assert.equal(createBtn(host).textContent, 'Creating…');
+  assert.equal(createBtn(host).disabled, true);
+  // refused: budget
+  const r = fakeApi(briefRoutes(briefBody(), { [`POST ${BRIEF_URL}`]: { __status: 409, body: { error: 'The spending limit of $5 is reached for this period. Worca can make the brief when the limit resets or is raised.' } } }));
+  const b = make();
+  await b.view.show('brief/project/shop-1');
+  createBtn(b.host).click();
+  await tick(); await tick(); await tick();
+  assert.equal(r.filter((c) => c.method === 'POST').length, 1);
+  assert.match(b.msgEl.textContent, /The spending limit of \$5 is reached/);
+  assert.ok(b.msgEl.classList.contains('err'));
+  assert.equal(createBtn(b.host).textContent, 'Create the brief');
+  assert.equal(createBtn(b.host).disabled, false, 'the button stays');
+});
+
+test('brief page, none yet: making, a failed first make, the switch off, no repository, members left out', async () => {
+  const states = [
+    [briefBody({ brief: briefRow({ status: 'making' }) }), { label: 'Creating…', disabled: true,
+      hint: 'Worca is reading the code. This takes a few minutes; you can leave this page.' }],
+    [briefBody({ brief: briefRow({ status: 'empty', error: { code: 'BAD_REPLY', message: 'Worca ran out of steps before writing the brief.', at: 'x' } }) }),
+      { label: 'Try again', disabled: false, failed: 'Worca ran out of steps before writing the brief.' }],
+    [briefBody({ notes: { body: '', lookAtCode: false } }), { label: 'Create the brief', disabled: true,
+      hint: 'Looking at the code is off. Turn it on under Your notes for Worca.' }],
+    [briefBody({ target: { name: 'shop', branch: null, leftOut: [], slow: [] } }), { label: 'Create the brief', disabled: true,
+      hint: 'There is no repository to look at.' }],
+  ];
+  for (const [body, want] of states) {
+    fakeApi(briefRoutes(body));
+    const { host, view } = make();
+    await view.show('brief/project/shop-1');
+    const go = createBtn(host);
+    assert.equal(go.textContent, want.label);
+    assert.equal(go.disabled, want.disabled, want.label);
+    assert.equal(text(host.querySelector('.req-brief-why-not')), want.hint || null);
+    assert.equal(text(host.querySelector('.req-brief-failed')), want.failed || null);
+    if (want.failed) {
+      const box = host.querySelector('.req-brief-cost');
+      const kids = [...box.children];
+      assert.ok(kids.indexOf(box.querySelector('.req-brief-failed')) < kids.indexOf(go), 'the failure is said above the button');
+    }
+  }
+  // no branch on a project because git was slow: the server decides (it says so on Create)
+  fakeApi(briefRoutes(briefBody({ target: { name: 'shop', branch: null, leftOut: [], slow: ['shop'] } })));
+  const s = make();
+  await s.view.show('brief/project/shop-1');
+  assert.equal(createBtn(s.host).disabled, false);
+  assert.equal(text(s.host.querySelector('.req-brief-facts')), 'about $1.50 · 3 to 5 minutes');
+  // a workspace past the checkout cap names the members left out
+  const W = '/api/requirements/brief/workspace/ws1';
+  fakeApi({ ...BASE, [`GET ${W}`]: briefBody({ target: { name: 'Storefront', branch: null, leftOut: ['cart', 'mail', 'pay'], slow: [] } }) });
+  const w = make();
+  await w.view.show('brief/workspace/ws1');
+  assert.equal(text(w.host.querySelector('.req-brief-left-out')), 'Worca reads at most 8 projects of a workspace: cart, mail and pay are left out.');
+});
+
+test('brief page: Your notes for Worca: the card, Save notes puts the body and the switch, then repaints', async () => {
+  let look = true;
+  const calls = fakeApi(briefRoutes(() => briefBody({ notes: { body: look ? 'Shoppers order things.' : 'New notes', lookAtCode: look } }), {
+    'PUT /api/requirements/context/project/shop-1': () => { look = false; return { body: 'New notes', lookAtCode: false }; } }));
+  const { host, view } = make();
+  await view.show('brief/project/shop-1');
+  const card = host.querySelector('section.card[aria-label="Your notes for Worca"]');
+  assert.ok(card);
+  assert.equal(card.querySelector('h3').textContent, 'Your notes for Worca');
+  assert.equal(card.querySelector('.req-brief-was').textContent, 'was “Project context”');
+  const area = card.querySelector('textarea[data-ui="notes-body"]');
+  assert.equal(area.getAttribute('aria-label'), 'Your notes for Worca');
+  assert.equal(area.value, 'Shoppers order things.');
+  const sw = card.querySelector('input[type="checkbox"][data-ui="notes-look"]');
+  assert.equal(sw.checked, true);
+  assert.equal(text(sw.closest('label')), 'Let Worca look at the code (for the brief, and when you ask it to look closer at a feature)');
+  area.value = 'New notes';
+  sw.checked = false;
+  const save = btn(host, 'Save notes');
+  assert.ok(save.classList.contains('btn') && save.classList.contains('btn-mini'));
+  save.click();
+  await tick(); await tick(); await tick();
+  assert.deepEqual(calls.find((c) => c.method === 'PUT').body, { body: 'New notes', lookAtCode: false });
+  assert.ok(calls.filter((c) => c.method === 'GET' && c.url === BRIEF_URL).length >= 2, 'repainted from the server');
+  assert.equal(createBtn(host).disabled, true, 'the switch, now off, disables Create');
+  assert.equal(text(host.querySelector('.req-brief-why-not')), 'Looking at the code is off. Turn it on under Your notes for Worca.');
+  assert.equal(host.querySelector('[data-ui="notes-look"]').checked, false);
+  assert.equal(host.querySelector('[data-ui="notes-body"]').value, 'New notes');
+});
+
+test('brief page: unsaved notes survive a live repaint; a workspace says it was Workspace context', async () => {
+  fakeApi(briefRoutes());
+  const { host, view } = make();
+  await view.show('brief/project/shop-1');
+  host.querySelector('[data-ui="notes-body"]').value = 'Half typed';
+  host.querySelector('[data-ui="notes-look"]').checked = false;
+  await view.changed(undefined, 'project:shop-1');
+  assert.equal(host.querySelector('[data-ui="notes-body"]').value, 'Half typed');
+  assert.equal(host.querySelector('[data-ui="notes-look"]').checked, false);
+  // leaving the page drops the draft
+  await view.show('');
+  await view.show('brief/project/shop-1');
+  assert.equal(host.querySelector('[data-ui="notes-body"]').value, 'Shoppers order things.');
+  const W = '/api/requirements/brief/workspace/ws1';
+  fakeApi({ ...BASE, [`GET ${W}`]: briefBody({ target: { name: 'Storefront', branch: null, leftOut: [], slow: [] } }) });
+  const w = make();
+  await w.view.show('brief/workspace/ws1');
+  assert.equal(w.host.querySelector('.req-brief-was').textContent, 'was “Workspace context”');
+});
+
+test('list: each group header names its brief: none yet with Create, being made, or its age; each links to the brief page', async () => {
+  const day = 86400000;
+  fakeApi({ ...LIST_BASE, 'GET /api/workspaces': { workspaces: [{ id: 'ws:1', name: 'Storefront' }, { id: 'ws2', name: 'Mall' }] },
+    'GET /api/requirements': listOf([row(), row({ seq: 3, scopeType: 'workspace', scopeKey: 'ws:1' }), row({ seq: 6, scopeType: 'workspace', scopeKey: 'ws2' })], {
+      briefs: [{ scopeType: 'workspace', scopeKey: 'ws:1', status: 'making', madeAt: null, lookAtCode: true },
+        { scopeType: 'workspace', scopeKey: 'ws2', status: 'ready', madeAt: new Date(Date.now() - 3 * day).toISOString(), lookAtCode: true }] }) });
+  const { host, view, routed } = make();
+  await view.show('');
+  assert.deepEqual([...host.querySelectorAll('.req-group h2')].map((x) => x.textContent), ['Project · shop', 'Workspace · Storefront', 'Workspace · Mall']);
+  const heads = [...host.querySelectorAll('.req-group-brief')];
+  assert.deepEqual(heads.map(text), ['Product brief: none yet · Create', 'Product brief: being made…', 'Product brief · 3 days old']);
+  const links = heads.map((x) => x.querySelector('a'));
+  assert.deepEqual(links.map((a) => a.textContent), ['Create', 'Product brief: being made…', 'Product brief · 3 days old']);
+  assert.deepEqual(links.map((a) => a.getAttribute('href')), ['#requirements/brief/project/shop-1', '#requirements/brief/workspace/ws%3A1', '#requirements/brief/workspace/ws2']);
+  links.forEach((a) => a.click());
+  assert.deepEqual(routed, ['brief/project/shop-1', 'brief/workspace/ws%3A1', 'brief/workspace/ws2']);
+  // an `empty` row (a failed first make) reads none yet too; a brief made today says so
+  fakeApi({ ...LIST_BASE, 'GET /api/requirements': listOf([row()], { briefs: [{ scopeType: 'project', scopeKey: 'shop-1', status: 'empty', madeAt: null }] }) });
+  const e = make();
+  await e.view.show('');
+  assert.equal(text(e.host.querySelector('.req-group-brief')), 'Product brief: none yet · Create');
+  fakeApi({ ...LIST_BASE, 'GET /api/requirements': listOf([row()], { briefs: [{ scopeType: 'project', scopeKey: 'shop-1', status: 'ready', madeAt: new Date().toISOString() }] }) });
+  const t = make();
+  await t.view.show('');
+  assert.equal(text(t.host.querySelector('.req-group-brief')), 'Product brief · made today');
+});
+
+test('changed: the brief key splits on its first ":"; who repaints on a brief frame and on a seq frame', async () => {
+  const W = '/api/requirements/brief/workspace/ws%3A1';
+  const calls = fakeApi({ ...BASE, 'GET /api/workspaces': { workspaces: [{ id: 'ws:1', name: 'Storefront' }] },
+    [`GET ${W}`]: briefBody({ target: { name: 'Storefront', branch: null, leftOut: [], slow: [] }, usedBy: [{ seq: 8, id: 'FEAT-8' }] }),
+    'GET /api/requirements': listOf([row(), row({ seq: 9, scopeType: 'workspace', scopeKey: 'ws:1' })]),
+    'GET /api/requirements/4': () => ({ feature: feature(), turns: [] }) });
+  const gets = (url) => calls.filter((c) => c.method === 'GET' && c.url === url).length;
+  const { view } = make();
+  // the list: any frame
+  await view.show('');
+  let n = gets('/api/requirements');
+  await view.changed(undefined, 'project:other');
+  assert.equal(gets('/api/requirements'), n + 1);
+  // the brief page: its own scope (a key with ':' after the first), its features' seq frames, a seq it never saw
+  await view.show(`brief/workspace/${encodeURIComponent('ws:1')}`);
+  n = gets(W);
+  await view.changed(undefined, 'workspace:ws:1');
+  assert.equal(gets(W), n + 1, 'its scope');
+  await view.changed(undefined, 'workspace:ws');
+  await view.changed(undefined, 'project:ws:1');
+  assert.equal(gets(W), n + 1, 'another scope');
+  await view.changed(9);
+  assert.equal(gets(W), n + 2, 'a feature of its scope (from the list)');
+  await view.changed(8);
+  assert.equal(gets(W), n + 3, 'a feature using the brief');
+  await view.changed(4);
+  assert.equal(gets(W), n + 3, 'a feature of another scope');
+  await view.changed(77);
+  assert.equal(gets(W), n + 4, 'a feature never seen may be of this scope');
+  // the feature page: its seq, or its scope's brief
+  await view.show('feature/4');
+  n = gets('/api/requirements/4');
+  await view.changed(undefined, 'project:shop-1');
+  assert.equal(gets('/api/requirements/4'), n + 1);
+  await view.changed(undefined, 'project:shop-2');
+  await view.changed(5);
+  assert.equal(gets('/api/requirements/4'), n + 1);
+  await view.changed(4);
+  assert.equal(gets('/api/requirements/4'), n + 2);
+  // the New feature form: never
+  await view.show('new');
+  const all = calls.length;
+  await view.changed(undefined, 'project:shop-1');
+  await view.changed(4);
+  assert.equal(calls.length, all);
+});
+
+test('style.css: the req-brief rules use tokens only', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const rules = css.split('\n').filter((l) => /\.req-brief|\.req-group-/.test(l));
+  assert.ok(rules.length > 0, 'the brief page has its rules');
+  assert.ok(rules.every((l) => !/#[0-9a-fA-F]{3,8}\b|rgba?\(/.test(l)), 'no literal colour');
+});

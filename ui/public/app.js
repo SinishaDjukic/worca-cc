@@ -1341,9 +1341,10 @@ function handleServerMessage(msg) {
     refreshBudget();
     return;
   }
-  // Requirements: a feature changed (a round finished, an edit, another tab). Only the open page repaints.
+  // Requirements: a feature changed (a round finished, an edit, another tab), or a Product brief (`brief`:
+  // '<scopeType>:<scopeKey>', A7 §5). Only the open page repaints, and only when the frame concerns it.
   if (msg.type === 'requirements-changed') {
-    if (currentView() === 'requirements') void requirementsView.changed(msg.seq);
+    if (currentView() === 'requirements') void requirementsView.changed(msg.seq, msg.brief);
     return;
   }
   // Scheduled runs: a ticket or a repeating schedule changed (here, in another tab, from the
