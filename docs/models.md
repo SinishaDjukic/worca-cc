@@ -455,10 +455,10 @@ went away).
   (`NOT_SWITCHABLE_STATUS`, `NOT_RUNNING`, `NOT_READY`, `REHYDRATING`, `NO_OWNER`, `STAGE_COMPLETED`,
   `INVALID_SELECTION`, `CHANGED`, …).
 
-**Engines.** A run keeps the engine it started on, so the Models panel and `worca switch-model` offer
-only the models that engine runs, with that engine's efforts (Claude: medium–max; Codex: minimal–high;
-Cursor: none). A model that runs on another engine is refused rather than silently replaced by the
-engine's default. On an engine whose model offers no efforts (Cursor), the effort stays Default. A
+**Engines.** A run keeps the engine it started on, so the Models panel offers only the models that
+engine runs, with that engine's efforts (Claude: medium–max; Codex: minimal–high; Copilot: none–max;
+Cursor: none), and `worca switch-model` and the API refuse anything else. A model that runs on another
+engine is refused rather than silently replaced by the engine's default. On an engine whose model offers no efforts (Cursor), the effort stays Default. A
 non-empty effort on a stage whose model the run's engine cannot run is refused too (that engine would
 drop it); choose a model it runs first. To move a run to another engine, resume it on that engine.
 

@@ -18,7 +18,7 @@ Usage:
   --json                                        Machine-readable output
 
 <stage> is a node id (n_refine) or an agent key (refiner) when only one stage uses it.
-Pass "default" to clear a field back to the run default. Efforts: medium, high, xhigh, max.
+Pass "default" to clear a field back to the run default. Efforts depend on the run's engine (Claude: medium–max, Codex: minimal–high, Copilot: none–max, Cursor: none); an effort the engine does not offer is refused.
 Sub-agent models: sonnet, opus, fable, auto, inherit.
 
 A stage can switch unless it is running right now or finished for good. A loop stage that
@@ -27,7 +27,7 @@ already ran can switch while its loop is still going; its next cycle uses the ne
 Running run: the process that drives it applies the change; each switched stage uses its new
 model when it starts, and a stage that started meanwhile is skipped and reported. The run never
 pauses.
-Paused run: a stage whose model changed starts a fresh Claude session when you resume:
+Paused run: a stage whose model changed starts a fresh session when you resume:
   worca resume <id>
 `;
 
