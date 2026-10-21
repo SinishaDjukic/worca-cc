@@ -132,3 +132,43 @@ test('the primary actions use the dev primary button class, keeping the hook cla
   assert.ok(!paused.querySelector('.msw-save').classList.contains('btn-primary'));
   assert.ok(paused.querySelector('.msw-save').classList.contains('btn'));
 });
+
+const ev = () => new doc.defaultView.Event('change');
+const withStage = (id, patch) => ({ ...PAYLOAD, stages: PAYLOAD.stages.map((s) => (s.nodeId === id ? { ...s, ...patch } : s)) });
+
+test('modelForAll run: a sub-agent-only edit sends only subagentModel, never model/effort', () => {
+  const p = { ...withStage('n_refine', { model: 'gpt-x', effort: 'high' }), modelForAll: 'claude-sonnet-5-5' };
+  const panel = renderModelSwitchPanel(p, { doc });
+  const sel = panel.el.querySelector('tr[data-node="n_refine"] select[data-field="subagentModel"]');
+  sel.value = 'opus'; sel.dispatchEvent(ev());
+  assert.deepEqual(diffChanges(p.stages, panel.picks()), { n_refine: { subagentModel: 'opus' } });
+});
+
+test('rendering never changes picks: a default-model stage keeps its stored effort', () => {
+  const p = withStage('n_impl', { model: '', effort: 'high' });
+  const panel = renderModelSwitchPanel(p, { doc });
+  assert.deepEqual(diffChanges(p.stages, panel.picks()), {});
+  assert.equal(panel.el.querySelector('tr[data-node="n_impl"] select[data-field="effort"]').value, 'high');
+});
+
+test('changing a row model still reconciles its effort', () => {
+  const p = withStage('n_impl', { model: '', effort: 'high' });
+  const panel = renderModelSwitchPanel(p, { doc });
+  const sel = panel.el.querySelector('tr[data-node="n_impl"] select[data-field="model"]');
+  sel.value = 'claude-fable-5-1'; sel.dispatchEvent(ev());
+  assert.equal(panel.picks().n_impl.effort, 'high', 'Fable offers high');
+  const p2 = withStage('n_impl', { model: '', effort: 'xhigh' });
+  const panel2 = renderModelSwitchPanel(p2, { doc });
+  const sel2 = panel2.el.querySelector('tr[data-node="n_impl"] select[data-field="model"]');
+  sel2.value = 'claude-haiku-4-5'; sel2.dispatchEvent(ev());
+  assert.equal(panel2.picks().n_impl.effort, '', 'Haiku does not offer xhigh');
+});
+
+test('cursor: effort selects are disabled and sub-agent cells read em dashes', () => {
+  const p = { ...PAYLOAD, engine: 'cursor', subagents: false, efforts: [], models: PAYLOAD.models.map((m) => ({ ...m, efforts: [] })),
+    stages: PAYLOAD.stages.map((s) => ({ ...s, fanOut: true, model: s.switchable ? 'claude-opus-5-5' : s.model, effort: '' })) };
+  const { el } = renderModelSwitchPanel(p, { doc });
+  const row = el.querySelector('tr[data-node="n_refine"]');
+  assert.ok(row.querySelector('select[data-field="effort"]').disabled);
+  assert.deepEqual([...row.querySelectorAll('td.msw-na')].map((t) => t.textContent), ['—', '—']);
+});

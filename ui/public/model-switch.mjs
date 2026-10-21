@@ -90,12 +90,21 @@ export function renderModelSwitchPanel(payload, { doc = globalThis.document, onS
   const allLocked = !!payload.modelForAll;   // run-harness _nodeModelPair ignores per-stage model/effort
   if (allLocked) root.appendChild(h(doc, 'p', 'msw-note', `This run was resumed with ${payload.modelForAll} for every remaining stage — per-stage models and efforts do not apply.`));
 
-  const syncEffort = (nodeId) => {
+  // Fill-only (render): shows the stored effort even if its model does not offer it; never touches picks.
+  const fillEffort = (nodeId) => {
     const s = selects[nodeId];
     const p = picks[nodeId];
+    const offered = effortsFor(payload.models, p.model);
+    const items = [{ value: '', text: 'Default' }, ...offered.map((e) => ({ value: e, text: e }))];
+    if (p.effort && !offered.includes(p.effort)) items.push({ value: p.effort, text: `${p.effort} (not offered on this run)` });
+    fillSelect(doc, s.effort, items, p.effort);
+    s.effort.disabled = s.locked || !p.model || allLocked || offered.length === 0;
+  };
+  // A user model change (or "Set all to…"): keep the effort only if the new model offers it.
+  const syncEffort = (nodeId) => {
+    const p = picks[nodeId];
     p.effort = reconcileEffort(payload.models, p.model, p.effort);
-    fillSelect(doc, s.effort, [{ value: '', text: 'Default' }, ...effortsFor(payload.models, p.model).map((e) => ({ value: e, text: e }))], p.effort);
-    s.effort.disabled = s.locked || !p.model || allLocked;
+    fillEffort(nodeId);
   };
 
   const table = h(doc, 'table', 'msw-table');
@@ -156,7 +165,7 @@ export function renderModelSwitchPanel(payload, { doc = globalThis.document, onS
     selects[s.nodeId] = { locked };
     selects[s.nodeId].model = mk('model', modelItems(payload, s.model), s.model || '');
     selects[s.nodeId].effort = mk('effort', [{ value: '', text: 'Default' }], '');
-    syncEffort(s.nodeId);
+    fillEffort(s.nodeId);
     if (s.fanOut && payload.subagents !== false) {
       mk('subagentModel', [{ value: '', text: 'Default (agent picks)' }, ...(payload.subagentModels || []).map((v) => ({ value: v, text: v }))], s.subagentModel || '');
       mk('subagentEffort', [{ value: '', text: 'Default' }, ...(payload.efforts || []).map((v) => ({ value: v, text: v }))], s.subagentEffort || '');
