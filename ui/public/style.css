@@ -7990,6 +7990,31 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .sk-consent b{color:var(--ink);font-weight:600;}
 .sk-consent-note{margin:6px 0 0;}
 .sk-consent-note.err{color:var(--red-ink);}
+
+/* Add-on pages share the Connectors surface (Marketplace, Providers, Models): a white card on the canvas,
+   hairline --line border, --r-card radius. The rows keep their .drow grid; only the chrome is added, and every
+   colour is a theme token, so light and dark both hold. */
+.pl-list > .drow,
+.pl-available > .drow,
+.pl-mkts > .drow,
+.pl-orphans > .drow,
+.mv-providers-split > .mv-pv-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  padding: 14px 18px;
+}
+.pl-list,.pl-available,.pl-mkts,.pl-orphans,.mv-providers-split { gap: 10px; }
+.pl-orphans-title { margin: 0; }
+[data-view="models"] .card.settings-card {
+  max-width: none;
+  padding: var(--pad-card);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+}
+.mv-builtin,
+.mv-hide-builtin-row { background: var(--panel); border-color: var(--line); }
 .sk-res-group{margin-top:16px;}
 .sk-res-group > .label{display:block;margin-bottom:6px;}
 .sk-res-head{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr) minmax(0,.7fr) minmax(0,1.6fr);gap:12px;padding:0 0 6px;
