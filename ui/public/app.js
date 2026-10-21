@@ -2026,7 +2026,15 @@ function onHello(msg) {
 
   for (const r0 of list) {
     if (!r0 || !r0.runId) continue;
-    const prevQuestion = runs.get(r0.runId)?.pendingQuestion || null;
+    const prev = runs.get(r0.runId);
+    const prevQuestion = prev?.pendingQuestion || null;
+    // A finish this tab MISSED (socket down, laptop asleep, a throttled tab): a reconnect hello lists the run already
+    // terminal, and no done frame will ever come (terminal runs are never subscribed below). Only a run the tab held
+    // as live, or a new copy that supersedes a paused one it held (a scheduled resume, #792) — never a finished run
+    // the tab never knew, and never on the first hello, which acknowledges every finished run above.
+    // Read BEFORE the upsert: it overwrites prev's status and drops the superseded copy.
+    const missedFinish = !firstHello && RD_TERMINAL.includes(r0.status) && !r0.pendingQuestion
+      && (prev ? isLive(prev) : supersedesParkedCopy(r0.runId, r0.pipelineId));
     const rr = upsertRun({
       runId: r0.runId,
       title: r0.title,
@@ -2056,6 +2064,8 @@ function onHello(msg) {
     // sub-agents to their real nodes BEFORE any subagent delta paints — closing
     // the window where r.stepper is null and nothing can be resolved.
     if (r0.stepper && rr.stepper == null) rr.stepper = r0.stepper;
+    // The one terminal path a live finish takes: finished-unread (lingering), the finish time, History's refresh.
+    if (missedFinish && isPipelineRun(rr)) finishRun(rr, r0.status);
     // Already pending when the page loaded: it counts on the badge but never notifies. A reconnect
     // hello can list a wait raised while the socket was down, so it notifies; one this tab has
     // already seen is deduplicated by tag, and so is the subscribe replay below.
@@ -2277,18 +2287,52 @@ function upsertRun(partial) {
 }
 
 // A resume runs under a NEW runId. resumeRunFromCard drops the old paused copy when THIS tab resumed it; a resume
-// from elsewhere (the usage-limit auto-resume, another tab, the feature page) only shows up as the new run going
-// live, so drop the older paused/interrupted copies of its pipeline here — the server evicts the same lineage
+// from elsewhere (the usage-limit auto-resume, another tab, the feature page) only shows up as a newer copy of the
+// pipeline, so drop the older paused/interrupted copies of its pipeline here — the server evicts the same lineage
 // (ui/server.mjs, /api/resume). Without this the copy lingers as a phantom "Paused" row under Needs you.
+// The newer copy may already be FINISHED (or paused again): a tab that slept or lost its socket through the resumed
+// run first meets it in the reconnect hello, already done (#792). So any status supersedes; only the orderKey says
+// which copy is newer — a resurrected stale frame never evicts a newer copy.
 function dropSupersededPaused(r) {
-  if (!r || !r.pipelineId || (r.status !== 'starting' && r.status !== 'running')) return;
+  if (!r || !r.pipelineId || !r.status) return;
   for (const [id, e] of runs) {
     if (id === r.runId || e.pipelineId !== r.pipelineId || (e.status !== 'paused' && e.status !== 'interrupted')) continue;
     if ((e.orderKey || 0) > (r.orderKey || 0)) continue;   // a resurrected stale frame never evicts a newer copy
+    if (!r.local) followSupersedingRun(id, r);             // a resume THIS tab started lands on its run itself
     alerts.onResolved(alertRun(e));
     runs.delete(id);
     if (state.selectedRunId === id) state.selectedRunId = '';
   }
+}
+
+// A resume started elsewhere (the scheduled usage-limit resume, another tab, the CLI) superseded the run whose page
+// is open: follow it to the new run, as a manual Resume does (landOnResumedRun), instead of renderRunningView
+// bouncing the dead id away. Only THAT run's open screen moves; a tab on any other view stays where it is. The page
+// keeps its glance/Details mode and tab and REPLACES the dead address, so Back never lands on it (replaceRoute
+// rewrites the hash at once, so the bounce check in renderRunningView already sees the new id). The Chat run
+// panel follows in place, on a microtask: never remount it in the middle of upsertRun / onHello.
+function followSupersedingRun(fromId, r) {
+  if (!runDetailState.screen || runDetailState.runId !== fromId) return;
+  if (runDetailState.host === 'panel') {
+    queueMicrotask(() => landOnResumedRun(r.runId, { fromRunId: fromId, pipelineId: r.pipelineId, navigate: false }));
+    return;
+  }
+  const [view, param] = parseHash();
+  const { runId, mode, tab } = runDetailParts(param);
+  if (view !== 'running' || runId !== fromId) return;
+  replaceRoute(rdHash(r.runId, mode, tab));
+}
+
+// A run this tab is about to learn of supersedes an older paused/interrupted copy of its pipeline that the tab
+// still holds. orderKeyFor mints the same key makeRun would, so the comparison matches dropSupersededPaused's.
+function supersedesParkedCopy(runId, pipelineId) {
+  if (!pipelineId) return false;
+  const key = orderKeyFor(runId);
+  for (const e of runs.values()) {
+    if (e.runId !== runId && e.pipelineId === pipelineId && (e.status === 'paused' || e.status === 'interrupted')
+      && (e.orderKey || 0) < key) return true;
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -19570,6 +19614,15 @@ async function resumeRunFromCard(runId, btn, opts = {}) {
         if (btn && btn.isConnected) btn.focus({ preventScroll: true });   // Cancel: back to the Resume the user pressed
         return;
       }
+      // #792: the run already FINISHED (its scheduled resume ran while this tab was away, or a server restart lost
+      // the resumed copy): nothing is left to resume. Settle this stale copy as the finished run and show it —
+      // no error toast, no Retry.
+      const finishedAs = finishedResumeRefusal(data, res.status);
+      if (finishedAs) {
+        if (btn) { btn.disabled = false; btn.innerHTML = prevBtnHtml; }
+        settleFinishedParkedCopy(r, finishedAs, { navigate });
+        return;
+      }
       throw new Error((data && data.error) || `HTTP ${res.status}`);
     }
     upsertRun({
@@ -19599,6 +19652,28 @@ async function resumeRunFromCard(runId, btn, opts = {}) {
     notify({ tone: 'err', title: 'Could not resume the run', detail: err.message, key: `resume-${runId}`,
       action: { label: 'Retry', run: () => resumeRunFromCard(runId, btn && btn.isConnected ? btn : null, opts) } });
   }
+}
+
+// The /api/resume refusal for a row that is no longer parked (ui/server.mjs resumeRun: 400, and the 409 race twin)
+// carries only its text. The status it names when the run has FINISHED ('done' | 'stopped' | 'error'), else ''.
+const NOT_RESUMABLE_RE = /^pipeline is "([a-z]+)", not resumable$/;
+function finishedResumeRefusal(data, status) {
+  if (status !== 400 && status !== 409) return '';
+  const m = NOT_RESUMABLE_RE.exec(String((data && data.error) || ''));
+  return m && RD_TERMINAL.includes(m[1]) ? m[1] : '';
+}
+
+// A paused copy whose run finished elsewhere: settle it as the server's settleStaleParked would (a done with the
+// row's real status). onDone re-arms a copy that finished as paused; finishRun marks it finished-unread, repaints,
+// and refreshes History, and an open run page hands off to the saved run once History lists it (rdHandOffOpen).
+// Otherwise open it, unless the caller resumes in place (the Runs row / chat card: navigate:false).
+function settleFinishedParkedCopy(r, status, { navigate = true } = {}) {
+  alerts.onResolved(alertRun(r));   // the pause no longer waits on anyone (onDone only resolves a re-armed copy)
+  onDone(r, { status });
+  if (!navigate || currentShownView === 'chat') return;
+  if (runDetailState.screen && runDetailState.runId === r.runId) return;   // its page is open: it hands off itself
+  location.hash = rdHash(r.runId);
+  loadHistoryView({ force: true });   // the saved row the run page hands off to
 }
 
 // Resume splits (the run page's bar and the saved run's): a click outside any split closes every
