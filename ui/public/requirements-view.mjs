@@ -215,8 +215,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       await loadTargets();
       if (key === 'new') {
         // The list call carries the code-look cost for the hint; the form renders without it.
-        const look = await api('GET', '/api/requirements').then((d) => d.lookCostUsd, () => null);
-        if (mine === paintNo) { paintNew(typeof look === 'number' ? look : null); paintedKey = key; }
+        const list = await api('GET', '/api/requirements').then((d) => d, () => null);
+        const look = list && list.lookCostUsd;
+        const interview = list && list.interview && typeof list.interview === 'object' ? list.interview : null;
+        if (mine === paintNo) { paintNew(typeof look === 'number' ? look : null, interview); paintedKey = key; }
         return;
       }
       if (seqShown != null) {
@@ -317,7 +319,16 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     if (tabFocused) host.querySelector('[role="tab"][aria-selected="true"]')?.focus();
   }
 
-  function paintNew(lookCost) {
+  // The line under the form: who interviews, then (lane 2 replaces only this part) what it costs.
+  function costHint(lookCost, interview) {
+    if (!interview) return lookCost != null ? h('span', { class: 'hint req-new-cost', text: `About ${usd(lookCost)} for the code look, then cents per round.` }) : null;
+    const name = interview.label || interview.model;
+    const who = `Worca interviews with ${name}${interview.effort ? ` at ${interview.effort} effort` : ''}`;
+    const cost = lookCost != null ? ` · about ${usd(lookCost)} for the code look, then cents per round` : ' · cents per round';
+    return h('span', { class: 'hint req-new-cost' }, h('span', { class: 'req-new-model', text: who }), cost);
+  }
+
+  function paintNew(lookCost, interview = null) {
     const select = h('select', { id: 'req-new-target' },
       targets.projects.length ? h('optgroup', { label: 'Projects' }, targets.projects.map((p) => h('option', { value: `project:${p.key}`, text: p.name }))) : null,
       targets.workspaces.length ? h('optgroup', { label: 'Workspaces' }, targets.workspaces.map((w) => h('option', { value: `workspace:${w.id}`, text: w.name }))) : null);
@@ -347,7 +358,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         field('req-new-desc', ['Describe it ', h('span', { class: 'opt', text: 'who needs it, what they want to do, and why' })], desc),
         field('req-new-target', ['For'], h('div', { class: 'select-wrap' }, select), lookHint),
         h('div', { class: 'actions req-new-actions' },
-          lookCost != null ? h('span', { class: 'hint req-new-cost', text: `About ${usd(lookCost)} for the code look, then cents per round.` }) : null,
+          costHint(lookCost, interview),
           h('div', { class: 'req-new-btns' },
             h('button', { type: 'button', class: 'btn', onclick: () => route('') }, 'Cancel'),
             h('button', { type: 'button', class: 'btn-go', onclick: create }, 'Start the interview'))))));
