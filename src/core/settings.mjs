@@ -1858,7 +1858,7 @@ function sanitizeGlobalModel(raw) {
   return {
     id,
     label,
-    efforts: engine === 'cursor' ? [] : (efforts.length ? efforts : [...effortsForEngine(engine)]),
+    efforts: effortsForEngine(engine).length ? (efforts.length ? efforts : [...effortsForEngine(engine)]) : [],
     ...(engine !== 'claude' ? { engine } : {}),
     ...(Object.keys(env).length ? { env } : {}),
     ...(cost ? { cost } : {}),
@@ -1953,7 +1953,7 @@ function assertModelEngine(input) {
   if (MODEL_ENGINES.includes(input)) return input;
   throw new Error(`engine must be one of ${MODEL_ENGINES.join(' | ')}`);
 }
-/** A Cursor, Goose or OpenCode model takes no routing env and no upstream: the engine connects with its own sign-in. */
+/** A model of an own-sign-in engine (OWN_SIGNIN_ENGINES) takes no routing env and no upstream: the engine connects with its own sign-in. */
 function assertOwnSignInFields(engine, env, upstream) {
   if (!OWN_SIGNIN_ENGINES.includes(engine)) return;
   if (Object.keys(env || {}).length) throw new Error(`${aModelOf(engine)} takes no env`);
@@ -1984,9 +1984,9 @@ function assertIdForEngine(id, engine, conn = {}) {
   // A built-in id names a harness's own sign-in (ChatGPT for Codex's): an entry on another connection — a gateway, a
   // provider — that serves the same model takes an id of its own; the endpoint still gets the model's own id.
   if (engine === 'claude' && CODEX_PRICES[id.toLowerCase()]) throw new Error(`"${id}" is the id of Codex's built-in ${id} (ChatGPT sign-in) — ${handleHint(id, conn)}`);
-  // Cursor's own ids may look like Claude's (sonnet-4.5): the catalog row decides the owner. Only a built-in id is taken
-  // (a Claude built-in has a list price; settings.mjs cannot import config.mjs's PREDEFINED_MODELS).
-  if ((engine === 'cursor' || engine === 'copilot') && (CODEX_PRICES[id.toLowerCase()] || listPriceFor(id))) throw new Error(`"${id}" is a built-in model id${engine === 'copilot' ? ` — Copilot's own models are copilot/<id>, such as "copilot/${id}"` : ''}`);
+  // A sign-in engine's own ids may look like Claude's (Cursor's sonnet-4.5): the catalog row decides the owner. Only a
+  // built-in id is taken (a Claude built-in has a list price; settings.mjs cannot import config.mjs's PREDEFINED_MODELS).
+  if ((OWN_SIGNIN_ENGINES.includes(engine) || engine === 'copilot') && (CODEX_PRICES[id.toLowerCase()] || listPriceFor(id))) throw new Error(`"${id}" is a built-in model id${engine === 'copilot' ? ` — Copilot's own models are copilot/<id>, such as "copilot/${id}"` : ''}`);
   // copilot/<id> names a Copilot built-in (model-env.mjs COPILOT_MODEL_PREFIX): only a Copilot row may take one.
   if (engine !== 'copilot' && id.toLowerCase().startsWith('copilot/')) throw new Error(`"${id}" names a Copilot model — a copilot/ id is for the Copilot engine`);
   const why = modelIdProblem(engine, id);   // a Goose or OpenCode id is provider/model, so it never collides with a built-in

@@ -178,7 +178,7 @@ import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL, KEYED_KINDS, SY
 import { FORM_ID_RE, validateFormDef, normalizeAskBlock } from '../../src/shared/forms/form-def.mjs';
 import { ASK_LIMITS } from '../../src/shared/forms/catalog.mjs';
 import { WORKSPACE_MAX_PROJECTS, workspaceSizeLevel } from '../../src/shared/workspace-size.mjs';
-import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, isBetaEngine } from '../../src/shared/engine-switch.mjs';
+import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, isBetaEngine, SIGN_IN_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
 import { runsOn, effortsOn, harnessesLabel, connectionKey, modelGroups, PROVIDER_LABELS } from '../../src/shared/connections.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
@@ -4599,7 +4599,7 @@ function renderAgentRows(rows) {
     keepVisible(tagLevel(fanWrap, 'expert'), !!row.fanOut !== !!rowDef.fanOut);
     keepVisible(tagLevel(sWrap, 'expert'), (row.subagentModel || '') !== (rowDef.subagentModel || ''));
     // Only a Claude run has a sub-agent model to pick: Codex has its own spawn_agent, Copilot's sub-agents run on the
-    // node's own model, OpenCode's investigator runs on the node's model, and Cursor and Goose have none.
+    // node's own model, OpenCode's investigator runs on the node's model, and Cursor, Gemini CLI, Goose and Qwen Code have none.
     if (state.engine !== 'claude') sWrap.hidden = true;
     if (row.askQuestions !== null && row.askQuestions !== undefined) {
       const lockWhy = row.questionsLocked ? (row.askQuestions ? 'Always on for this agent' : 'Always off for this agent') : null;
@@ -4821,10 +4821,8 @@ function paintEngineHints() {
       ? `GitHub Copilot CLI runs this pipeline, including titles and summaries (on its default model). Step models: ${project ? 'project Settings' : 'Models › Copilot'}. Sign in once with copilot login.`
       : state.engine === 'cursor'
       ? `Cursor runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : 'Models › Cursor'}.`
-      : state.engine === 'goose'
-      ? `Goose runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : 'Models › Goose'}.`
-      : state.engine === 'opencode'
-      ? `OpenCode runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : 'Models › OpenCode'}.`
+      : SIGN_IN_ENGINE_NAMES.includes(state.engine)
+      ? `${engineLabel(state.engine)} runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : `Models › ${engineLabel(state.engine)}`}.`
       : `Codex runs this pipeline, including titles and summaries. Its models: ${project ? 'project Settings' : 'Models › Codex'}`;
   }
   if (el.engineDefaultHint) {
@@ -5174,7 +5172,7 @@ function goAddModel(restore) {
   mvState.editing = null;
   mvState.openCreate = true;
   mvState.openShare = false;
-  // "+ Add model…" on a Codex or Cursor run starts a model of that engine (D10); the editor applies `engine`.
+  // "+ Add model…" on a non-Claude run starts a model of that engine (D10); the editor applies `engine`.
   mvState.prefill = state.engine !== 'claude' ? { id: '', engine: state.engine } : null;
   mvState.openEditorOnLoad = true;         // survives the view switch: loadModelsView opens it
   showView('models');
@@ -18407,7 +18405,6 @@ function renderModelsViewBody() {
     predefined: d.predefined || [],
     codex: d.codex || [],
     codexEfforts: d.codexEfforts || [],
-    cursorEfforts: d.cursorEfforts || [],
     copilot: d.copilot || [],
     copilotEfforts: d.copilotEfforts || [],
     gooseEfforts: d.gooseEfforts || [],

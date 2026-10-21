@@ -1,0 +1,5 @@
+{"type":"init","timestamp":"2026-10-08T20:27:49.208Z","session_id":"fc4c73af-7822-4746-ad1b-db326fb52e76","model":"auto"}
+{"type":"message","timestamp":"2026-10-08T20:27:49.209Z","role":"user","content":"What text did the echo tool return earlier? Answer in one line, no tools."}
+{"type":"message","timestamp":"2026-10-08T20:28:19.111Z","role":"assistant","content":"PING","delta":true}
+{"type":"message","timestamp":"2026-10-08T20:28:19.164Z","role":"assistant","content":" (token=s3cr3t)","delta":true}
+{"type":"result","timestamp":"2026-10-08T20:28:19.249Z","status":"success","stats":{"total_tokens":13773,"input_tokens":10563,"output_tokens":39,"cached":0,"input":10563,"duration_ms":30044,"tool_calls":0,"models":{"gemini-3.5-flash-lite":{"total_tokens":1671,"input_tokens":1167,"output_tokens":29,"cached":0,"input":1167},"gemini-3.8-flash":{"total_tokens":12102,"input_tokens":9396,"output_tokens":10,"cached":0,"input":9396}}}}

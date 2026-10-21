@@ -61,8 +61,8 @@ test('a model of the other engine, or an effort the engine lacks, is refused nam
   assert.equal(effort.status, 400);
   assert.equal(effort.body.error, '“Step models” must be one of minimal, low, medium, high.');
   assert.equal(effort.body.field, 'stepModels.codex.reviewer.effort');
-  const engine = await post('/api/settings', { stepModels: { gemini: {} } });
-  assert.match(engine.body.error, /unknown engine "gemini"/);
+  const engine = await post('/api/settings', { stepModels: { gpt: {} } });
+  assert.match(engine.body.error, /unknown engine "gpt"/);
   assert.deepEqual((await get('/api/settings')).body.stepModels, before);
 });
 
