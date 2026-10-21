@@ -31,6 +31,26 @@ Nothing is built until you press **Start in worca** (below). Each look and round
 feature, counts toward your spending limit, and is part of the spend in Statistics and the account menu.
 Worca runs at most four requirements looks or rounds at a time.
 
+## Which model interviews
+
+The newest Opus at medium effort, unless **Requirements interview** on Models › Engines › Claude › Helper
+jobs says otherwise. A model removed from the catalog falls back to the default. The New feature page
+names the model and effort ("Worca interviews with …").
+
+## What a look or round loads
+
+Worca's own instructions, not Claude Code's coding-agent ones, and none of your user-level Claude Code
+plugins, hooks, skills or settings. The look's temporary checkout still loads the project's own
+`.claude/settings.json` hooks and `CLAUDE.md`.
+
+One exception: when your user-level Claude Code settings (`settings.json` in `~/.claude`, or in
+`CLAUDE_CONFIG_DIR`) hold your sign-in or network setup, Worca keeps them for interviews so the sign-in
+keeps working. That means an `apiKeyHelper`, `awsAuthRefresh` or `awsCredentialExport`, or an `env` block
+with `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CODE_USE_VERTEX` / `CLAUDE_CODE_USE_BEDROCK`, your own
+`ANTHROPIC_*` endpoint, `HTTP_PROXY` / `HTTPS_PROXY` or `NODE_EXTRA_CA_CERTS` (Docker's compose-secret
+setup is one). Worca says so once in its log ("user Claude settings carry sign-in; keeping them for
+interviews"). Your plugins and hooks then load as they did before; slash commands still do not.
+
 ## Ready
 
 A feature is **Ready** when six checks pass; Worca computes them from what is stored, no model is asked:

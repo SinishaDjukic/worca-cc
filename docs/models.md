@@ -283,6 +283,10 @@ failing the run. The Models page picks the model for each helper call — *Title
 (the Create PR dialog's Generate with AI; Sonnet-class by default) — so pointing them at
 a steadier model leaves a flaky free model touching only the pipeline steps.
 
+The *Requirements interview* helper (the Requirements page's looks and rounds) runs on Claude only and is
+set per user. Unlike Memory defragment, it takes an effort without a model: the default model then runs at
+that effort.
+
 **The daily allowance.** Separately, OpenRouter caps how many `:free` requests a key
 sends per day: **1000** on an account that has bought at least $10 of credit, **50**
 below, reset at 00:00 UTC. Every model call is one request — each agent turn, each
