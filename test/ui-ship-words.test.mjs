@@ -40,6 +40,13 @@ test('F-9: the four run-time surfaces route through whenLabel, none through form
 
 test('F-22: a zero diff count is neutral ink and the files tile is a link', () => {
   const css = read('style.css');
-  assert.match(css, /\.rd-stats \.hd-diff-counts \.is-zero\{color:var\(--ink-3\);\}/);
+  // --ink-2, not --ink-3: --ink-3 is 2.58:1 on the tile (the theme proof's AA gate).
+  assert.match(css, /\.rd-stats \.hd-diff-counts \.is-zero\{color:var\(--ink-2\);\}/);
   assert.match(read('app.js'), /diff-del\$\{f\.removed === 0 \? ' is-zero' : ''\}/);
+});
+
+test('the stat card sub line is sans --ink-2: dropping .mono left the baseline, and --ink-3 is 2.8:1', () => {
+  const css = read('style.css');
+  assert.match(css, /\.hd-ov-card \.hd-ov-sub\{color:var\(--ink-2\);\}/);
+  assert.match(read('app.js'), /s\.className = 'hd-ov-sub';/);
 });
