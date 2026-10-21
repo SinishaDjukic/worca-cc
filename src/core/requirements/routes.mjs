@@ -8,18 +8,21 @@ import { workspaceTarget } from '../ask/workflow-deps.mjs';
 import { RequirementsError, parseFeatureSeq, SCOPE_TYPES } from './spec.mjs';
 import {
   createFeature, requireFeature, listFeatures, listTurns, getContext, setContext, updateFeature, listStarts, latestStart, recentLookCosts,
+  getBrief, usableBrief, listBriefs, setBriefSections, deleteBrief, briefUsers,
 } from './store.mjs';
 import { startOrientation, submitAnswers, finishInterview, followUp, retry, isBusy, assertCapacity } from './interview.mjs';
 import { pendingRound } from './round.mjs';
 import {
   updateHeader, setSection, releaseSection, addCriterion, editCriterion, removeCriterion, setAssumption, confirmOpenAssumptions, setArchived,
-  revertToStart,
+  revertToStart, addToBrief,
 } from './edits.mjs';
 import { readiness, displayState, changedSince, unaskedRejections } from './ready.mjs';
 import { startFeature, startView } from './start.mjs';
 import { budgetStatus, requirementsWindowedSpendUsd } from '../cost-budget.mjs';
 import { renderSpecMarkdown } from './markdown.mjs';
 import { saveSpecToCheckout, specFileName } from './save.mjs';
+import { BRIEF_SECTIONS, parseSectionValue, renderBriefMarkdown, briefFileName, briefMatches } from './brief.mjs';
+import { makeBrief, isBriefBusy, briefTarget, briefEstimate, briefStaleness } from './brief-job.mjs';
 
 const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_FOUND: 404, BUSY: 409, CONFLICT: 409, BUDGET: 409, NOT_READY: 409 });
 const P = '/api/requirements';
@@ -28,12 +31,17 @@ const P = '/api/requirements';
  *  and the flag-off test walks, so no route can skip the `requirements` gate unnoticed. */
 export const REQUIREMENTS_ROUTES = Object.freeze([
   ['GET', `${P}/context/:scopeType/:scopeKey`], ['PUT', `${P}/context/:scopeType/:scopeKey`],
+  // A7 §5: the brief, before the /:seq routes
+  ['GET', `${P}/brief/:scopeType/:scopeKey`], ['POST', `${P}/brief/:scopeType/:scopeKey`], ['DELETE', `${P}/brief/:scopeType/:scopeKey`],
+  ['GET', `${P}/brief/:scopeType/:scopeKey/markdown`],
+  ['PUT', `${P}/brief/:scopeType/:scopeKey/sections/:section`], ['DELETE', `${P}/brief/:scopeType/:scopeKey/sections/:section/edited`],
   ['GET', P], ['POST', P],
   ['GET', `${P}/:seq`], ['PATCH', `${P}/:seq`],
   ['POST', `${P}/:seq/answers`], ['POST', `${P}/:seq/finish`], ['POST', `${P}/:seq/retry`], ['POST', `${P}/:seq/look`],
   ['PUT', `${P}/:seq/spec/:section`], ['DELETE', `${P}/:seq/spec/:section/edited`],
   ['POST', `${P}/:seq/criteria`], ['PUT', `${P}/:seq/criteria/:id`], ['DELETE', `${P}/:seq/criteria/:id`],
-  ['POST', `${P}/:seq/assumptions`], ['POST', `${P}/:seq/assumptions/:id`], ['POST', `${P}/:seq/follow-up`], ['POST', `${P}/:seq/archive`],
+  ['POST', `${P}/:seq/assumptions`], ['POST', `${P}/:seq/assumptions/:id`], ['POST', `${P}/:seq/follow-up`], ['POST', `${P}/:seq/brief-addition`],
+  ['POST', `${P}/:seq/archive`],
   ['GET', `${P}/:seq/markdown`], ['POST', `${P}/:seq/save`],
   ['POST', `${P}/:seq/start`], ['POST', `${P}/:seq/revert`],
 ].map(([method, path]) => Object.freeze({ method, path })));
@@ -44,7 +52,24 @@ export function requirementsChangeNotifier(broadcast) {
   return (seq) => { if (flagEnabled('requirements')) broadcast({ type: 'requirements-changed', seq: Number(seq) }); };
 }
 
+/** The brief change hook (A7 §5 Frames): `{ type: 'requirements-changed', brief: '<scopeType>:<scopeKey>' }`, no
+ *  `seq`, only while the flag is on (read at send time, so a brief job still running goes silent with the flag). */
+export function requirementsBriefNotifier(broadcast) {
+  return (scopeType, scopeKey) => {
+    if (flagEnabled('requirements')) broadcast({ type: 'requirements-changed', brief: `${scopeType}:${scopeKey}` });
+  };
+}
+
 const noSummary = () => null;
+
+/** What the feature page shows of its scope's brief (A7 §5, board 14): its status and age, the sources, the
+ *  area names and terms the feature mentions, and the switch; null without a usable brief. */
+function featureBrief(f) {
+  const b = usableBrief(f.scopeType, f.scopeKey);
+  if (!b) return null;
+  return { status: b.status, madeAt: b.madeAt, sources: b.sources, matches: briefMatches(b.sections, f),
+    lookAtCode: getContext(f.scopeType, f.scopeKey).lookAtCode };
+}
 
 /** A feature's view (A1 §5, A2 §4): the stored feature plus what the page derives nothing of itself:
  *  readiness, the displayed state, the unasked rejections, the starts (newest first; the newest with its
@@ -62,7 +87,8 @@ export async function featureView(seq, d = {}) {
   return {
     feature: { ...f, busy, pending, lastError: last && last.kind === 'error' ? last.payload.message : null,
       readiness: ready, state: displayState({ ...f, busy }, { ready, starts: rows }), unaskedRejections: unaskedRejections(f.spec, turns),
-      starts, changedSinceStart: rows.length ? changedSince(rows[0].spec, f.spec) : [] },
+      starts, changedSinceStart: rows.length ? changedSince(rows[0].spec, f.spec) : [],
+      brief: featureBrief(f), lookCostUsd: lookCostUsd() },
     turns,
   };
 }
@@ -100,6 +126,42 @@ function requirementsSpend() {
     resetPeriod: b.resetPeriod === 'weekly' ? 'weekly' : 'monthly' };
 }
 
+const BRIEF_FIELDS = ['id', 'scopeType', 'scopeKey', 'status', 'sections', 'edited', 'sources', 'files', 'seed', 'model',
+  'costUsd', 'error', 'madeBy', 'madeAt', 'updatedAt'];
+const briefFields = (b) => (b ? Object.fromEntries(BRIEF_FIELDS.map((k) => [k, b[k]])) : null);
+
+/**
+ * The brief page's body (A7 §5): `{ brief, target: { name, branch, leftOut, slow }, notes, estimate, usedBy,
+ * staleness }`. `branch` is the default branch the next look reads (a project; a workspace: null), `leftOut` the
+ * workspace members past the checkout cap, `slow` the repositories whose default branch could not be read in
+ * time. The target's git probes and the staleness check run side by side, each bounded by STALENESS_TIMEOUT_MS
+ * (D9), so a slow repository never holds the page for much longer than that.
+ */
+async function briefPage(scopeType, scopeKey, t, d) {
+  const b = getBrief(scopeType, scopeKey);
+  const [target, estimate, staleness] = await Promise.all([
+    briefTarget(scopeType, scopeKey, d), briefEstimate(d), b ? briefStaleness(b, d) : null,
+  ]);
+  const first = scopeType === 'project' ? target.dirs[0] : null;
+  return {
+    brief: briefFields(b),
+    target: { name: t.name, branch: (first && first.base && first.base.branch) || null, leftOut: target.leftOut || [], slow: target.slow || [] },
+    notes: getContext(scopeType, scopeKey), estimate, usedBy: briefUsers(scopeType, scopeKey), staleness,
+  };
+}
+
+/** The scope's brief once made (the owner edits only a made brief), else CONFLICT. */
+function madeBrief(scopeType, scopeKey) {
+  const b = usableBrief(scopeType, scopeKey);
+  if (!b) throw new RequirementsError('CONFLICT', 'There is no brief yet.');
+  return b;
+}
+
+function briefSection(section) {
+  if (!BRIEF_SECTIONS.includes(section)) throw new RequirementsError('BAD_REQUEST', `unknown section "${String(section).slice(0, 40)}"`);
+  return section;
+}
+
 async function checkTarget(scopeType, scopeKey) {
   if (!SCOPE_TYPES.includes(scopeType)) throw new RequirementsError('BAD_REQUEST', 'scopeType must be "project" or "workspace"');
   if (typeof scopeKey !== 'string' || !scopeKey.trim()) throw new RequirementsError('BAD_REQUEST', 'scopeKey is required');
@@ -130,7 +192,9 @@ async function targetFor(f) {
 export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
   const gate = requireFlag('requirements');
   const onChange = requirementsChangeNotifier(broadcast);
+  const onBriefChange = requirementsBriefNotifier(broadcast);
   const d = { ...deps, onChange };
+  const briefDeps = { ...deps, onChange: onBriefChange };   // the brief job's onChange names a scope, not a feature
   const handle = (fn) => async (req, res) => {
     try { await fn(req, res); }
     catch (err) {
@@ -146,6 +210,11 @@ export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
   };
   const by = (req) => actorOf(req);
   const changed = async (res, seq, code = 200) => { onChange(seq); res.status(code).json(await featureView(seq, d)); };
+  const scope = (req) => [req.params.scopeType, req.params.scopeKey];
+  const briefChanged = async (res, [scopeType, scopeKey], t) => {
+    onBriefChange(scopeType, scopeKey);
+    res.json(await briefPage(scopeType, scopeKey, t, briefDeps));
+  };
 
   const handlers = {
     [`GET ${P}/context/:scopeType/:scopeKey`]: async (req, res) => {
@@ -157,6 +226,48 @@ export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
       const b = req.body || {};
       res.json(setContext(req.params.scopeType, req.params.scopeKey, { body: b.body, lookAtCode: b.lookAtCode }, { by: by(req) }));
     },
+    [`GET ${P}/brief/:scopeType/:scopeKey`]: async (req, res) => {
+      const t = await checkTarget(...scope(req));
+      res.json(await briefPage(...scope(req), t, briefDeps));
+    },
+    [`POST ${P}/brief/:scopeType/:scopeKey`]: async (req, res) => {
+      const t = await checkTarget(...scope(req));
+      // The refusals reject before anything is written; the job is not awaited (it never rejects, and it sends
+      // the scope's frames itself as it starts and as it settles).
+      await makeBrief(...scope(req), { by: by(req) }, briefDeps);
+      res.status(202).json(await briefPage(...scope(req), t, briefDeps));
+    },
+    [`DELETE ${P}/brief/:scopeType/:scopeKey`]: async (req, res) => {
+      const t = await checkTarget(...scope(req));
+      if (isBriefBusy(...scope(req))) throw new RequirementsError('BUSY', 'Worca is making this brief. Try again when it is done.');
+      deleteBrief(...scope(req));
+      await briefChanged(res, scope(req), t);
+    },
+    [`GET ${P}/brief/:scopeType/:scopeKey/markdown`]: async (req, res) => {
+      const t = await checkTarget(...scope(req));
+      const b = usableBrief(...scope(req));
+      if (!b) throw new RequirementsError('NOT_FOUND', 'There is no brief yet.');
+      res.type('text/markdown; charset=utf-8');
+      if (req.query && req.query.download === '1') res.set('Content-Disposition', `attachment; filename="${briefFileName(t.name)}"`);
+      res.send(renderBriefMarkdown(b, { scopeLabel: t.name }));
+    },
+    [`PUT ${P}/brief/:scopeType/:scopeKey/sections/:section`]: async (req, res) => {
+      const t = await checkTarget(...scope(req));
+      const section = briefSection(req.params.section);
+      const b = madeBrief(...scope(req));
+      const value = parseSectionValue(section, (req.body || {}).value, b.sections);
+      setBriefSections(b.id, { sections: { ...b.sections, [section]: value }, edited: { ...b.edited, [section]: true } }, { by: by(req) });
+      await briefChanged(res, scope(req), t);
+    },
+    [`DELETE ${P}/brief/:scopeType/:scopeKey/sections/:section/edited`]: async (req, res) => {
+      const t = await checkTarget(...scope(req));
+      const section = briefSection(req.params.section);
+      const b = madeBrief(...scope(req));
+      const edited = { ...b.edited };
+      delete edited[section];
+      setBriefSections(b.id, { sections: b.sections, edited }, { by: by(req) });
+      await briefChanged(res, scope(req), t);
+    },
     [`GET ${P}`]: async (req, res) => {
       const q = req.query || {};
       const targets = new Map();
@@ -167,7 +278,8 @@ export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
       };
       const list = listFeatures({ scopeType: q.scopeType || null, scopeKey: q.scopeKey || null, archived: q.archived === '1' });
       const features = await Promise.all(list.map((f) => summary(f, targetOf, d.runSummary || noSummary)));
-      res.json({ features, lookCostUsd: lookCostUsd(), spend: requirementsSpend() });
+      const briefs = listBriefs().map((b) => ({ ...b, lookAtCode: getContext(b.scopeType, b.scopeKey).lookAtCode }));
+      res.json({ features, lookCostUsd: lookCostUsd(), spend: requirementsSpend(), briefs });
     },
     [`POST ${P}`]: async (req, res) => {
       const b = req.body || {};
@@ -240,6 +352,12 @@ export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
       const seq = seqOf(req);
       followUp(seq, { by: by(req) }, d);
       await changed(res, seq, 202);
+    },
+    [`POST ${P}/:seq/brief-addition`]: async (req, res) => {
+      const seq = seqOf(req);
+      const { scopeType, scopeKey } = addToBrief(seq, { by: by(req) });
+      onBriefChange(scopeType, scopeKey);
+      await changed(res, seq);
     },
     [`POST ${P}/:seq/assumptions/:id`]: async (req, res) => {
       const seq = seqOf(req);

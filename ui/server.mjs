@@ -280,6 +280,7 @@ import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
 import { registerRequirementsRoutes, requirementsChangeNotifier } from '../src/core/requirements/routes.mjs';
 import { createRunEventHook } from '../src/core/requirements/start.mjs';
 import { recoverInterrupted as recoverRequirements } from '../src/core/requirements/interview.mjs';
+import { recoverBriefs } from '../src/core/requirements/brief-job.mjs';
 import { drainTimeoutMs, autoResumeEnabled, autoResumeCandidates, DRAIN_ACTIVE_STATUSES } from '../src/core/drain.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
 import {
@@ -14730,7 +14731,7 @@ app.use((err, _req, res, next) => {
  *        sweep keeps its own console default.
  */
 export async function bootMaintenance({ log } = {}) {
-  const summary = { reconciled: 0, sweptV1: 0, runRoots: null, legacy: null, ask: null, askWorktrees: null, repoLooks: null, requirementsRepoLooks: null, bench: null };
+  const summary = { reconciled: 0, sweptV1: 0, recoveredBriefs: 0, runRoots: null, legacy: null, ask: null, askWorktrees: null, repoLooks: null, requirementsRepoLooks: null, bench: null };
   const sink = (scope) => (typeof log === 'function' ? (level, msg) => log(scope, level, msg) : undefined);
 
   // Runs left 'running' by a previous process that died before writing a terminal
@@ -14760,6 +14761,14 @@ export async function bootMaintenance({ log } = {}) {
     if (n) console.log(`[worca-ui] requirements: ${n} interrupted round(s) handed back`);
   } catch (err) {
     console.error(`[worca-ui] requirements sweep failed: ${err && err.message ? err.message : err}`);
+  }
+  // Requirements A7 (D15): a product brief left `making` by this restart gets INTERRUPTED. This runs before the
+  // first await, but boot maintenance is not awaited before listen, so recoverBriefs skips a brief whose job runs.
+  try {
+    summary.recoveredBriefs = recoverBriefs();
+    if (summary.recoveredBriefs) console.log(`[worca-ui] requirements: ${summary.recoveredBriefs} interrupted product brief(s) marked`);
+  } catch (err) {
+    console.error(`[worca-ui] product brief sweep failed: ${err && err.message ? err.message : err}`);
   }
 
   try {

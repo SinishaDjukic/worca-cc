@@ -82,8 +82,11 @@ test('the whole flow in mock mode, with frames', async () => {
     assert.ok(listed.lookCostUsd === null || typeof listed.lookCostUsd === 'number');
     assert.equal(typeof listed.spend.windowUsd, 'number');
     assert.ok('totalLimitUsd' in listed.spend);
+    assert.deepEqual(listed.briefs, [], 'A7 §5: no scope has a brief row yet');
     v = (await call('GET', `/api/requirements/${seq}`)).json;
     assert.equal(v.feature.readiness.total, 6);
+    assert.equal(v.feature.brief, null, 'A7 §5: no brief for the scope');
+    assert.ok('lookCostUsd' in v.feature);
     assert.deepEqual(v.feature.starts, []);
     assert.equal((await call('POST', `/api/requirements/${seq}/revert`, { version: 1 })).status, 404);
     assert.equal((await call('POST', `/api/requirements/${seq}/revert`, {})).status, 400);
@@ -109,6 +112,14 @@ test('the route table is exactly what gets registered', async () => {
   assert.ok(REQUIREMENTS_ROUTES.length >= 19);
   for (const p of ['/:seq/start', '/:seq/revert']) assert.ok(REQUIREMENTS_ROUTES.some((r) => r.method === 'POST' && r.path.endsWith(p)), p);
   for (const r of REQUIREMENTS_ROUTES) assert.doesNotMatch(fill(r.path), /:/, `every param is substituted: ${r.path}`);
+  // A7 §5: the brief routes come before the /:seq routes (else `brief` would be read as a feature seq),
+  // and brief-addition sits right after follow-up.
+  const keys = REQUIREMENTS_ROUTES.map((r) => `${r.method} ${r.path}`);
+  const at = (m, p) => keys.indexOf(`${m} /api/requirements${p}`);
+  const brief = [['GET', ''], ['POST', ''], ['DELETE', ''], ['GET', '/markdown'], ['PUT', '/sections/:section'], ['DELETE', '/sections/:section/edited']]
+    .map(([m, p]) => at(m, `/brief/:scopeType/:scopeKey${p}`));
+  for (const i of brief) assert.ok(i >= 0 && i < at('GET', ''), `the brief routes precede GET /api/requirements: ${brief}`);
+  assert.equal(at('POST', '/:seq/brief-addition'), at('POST', '/:seq/follow-up') + 1);
 });
 
 test("flag off: every route in the table answers the flag gate's 404", async () => {

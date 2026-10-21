@@ -231,3 +231,21 @@ test('bootMaintenance retires runs left paused on the v1 engine', async () => {
   assert.equal(row.status, 'interrupted');
   assert.equal(row.resume_point, null);
 });
+
+// Requirements A7 (D15): a product brief left `making` by a restart, whose job is not running, gets INTERRUPTED
+// through the boot path (next to the interview's own sweep). The helper is unit-tested in
+// requirements-brief-job.test.mjs; this pins the WIRING.
+test('boot: a product brief left making by a restart becomes INTERRUPTED', async () => {
+  const { beginBrief, getBrief } = await import('../src/core/requirements/store.mjs');
+  beginBrief('project', 'boot-brief-1');
+  assert.equal(getBrief('project', 'boot-brief-1').status, 'making');
+
+  const res = await bootMaintenance({ log: () => {} });
+
+  assert.equal(res.recoveredBriefs, 1);
+  const b = getBrief('project', 'boot-brief-1');
+  assert.equal(b.status, 'empty', 'never made: back to empty');
+  assert.equal(b.error.code, 'INTERRUPTED');
+  assert.equal(b.error.message, 'The look at the code did not finish because Worca restarted. Try again.');
+  assert.equal((await bootMaintenance({ log: () => {} })).recoveredBriefs, 0, 'idempotent');
+});
