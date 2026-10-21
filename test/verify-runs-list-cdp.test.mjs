@@ -8,7 +8,8 @@ const src = readFileSync(new URL('../tools/verify-runs-list-cdp.mjs', import.met
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
 test('the Runs list proof covers 290, 375 and 1440, light and dark, the View menu, the row ⋯ menu, Add to group and the resize handle', () => {
-  for (const needle of ['290', '375', '1440', 'runs-resize', 'Page.reload', "'light'", "'dark'", 'runs-view-btn', 'runs-more', 'group-picker', 'auditRunsLayout', 'auditButtons', 'full width minus 16px']) {
+  for (const needle of ['290', '375', '1440', 'runs-resize', 'Page.reload', "'light'", "'dark'", 'runs-view-btn', 'runs-more', 'group-picker', 'auditRunsLayout', 'auditButtons', 'full width minus 16px',
+    'runs-sec-waiting', 'PASS waiting section']) {
     assert.ok(src.includes(needle), `the proof names ${needle}`);
   }
   assert.equal(pkg.scripts['verify:runs-list'], 'node --disable-warning=ExperimentalWarning tools/verify-runs-list-cdp.mjs');

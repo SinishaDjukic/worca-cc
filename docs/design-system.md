@@ -173,6 +173,10 @@ buttons stay 28px; the card keeps the shared 24px padding (checked by the theme 
 - Search is the top bar's "Search or ask" only. A list filter is chosen there ("Runs labelled hotfix", `label:hotfix`),
   not from a filter button in the list's header.
 - Phones: one 16px gutter; nothing scrolls sideways at 290px.
+- Runs list order: Needs you (most urgent first), Running, Waiting, Recent. Each section is newest dispatch first (a
+  run's start, a waiting ticket's creation); a section with no rows is not drawn.
+- Waiting says what it waits for: `Waiting · starts after Complete Design Language Rollout · run 3`,
+  `Waiting · starts 14:00`. A group in Needs you leads with the reason: `Run 1 needs you · Checks failing`.
 
 ## Do and don't
 | Do | Don't | Why |

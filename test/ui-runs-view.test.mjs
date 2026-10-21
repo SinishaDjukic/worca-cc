@@ -83,6 +83,7 @@ async function boot({ url = 'http://localhost:4317/', storage = {}, projects = [
   const groupPosts = [];
   const schedCalls = [];
   const labelPosts = [];
+  let prToken = null;                                  // the History PR lookup's token (POST /api/history/pr)
   const ok =(body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
   window.fetch = (u, init = {}) => {
     const s = String(u);
@@ -95,6 +96,7 @@ async function boot({ url = 'http://localhost:4317/', storage = {}, projects = [
       labelPosts.push(body);
       return ok({ runs: body.pipelineIds.map((id) => ({ id, labels: body.add || [], changed: true })), missing: [] });
     }
+    if (s.endsWith('/api/history/pr') && method === 'POST') { prToken = body && body.token; return ok({}); }
     if (s.includes('/api/run-groups') && method !== 'GET') { groupPosts.push({ method, url: s, body }); onGroupCall({ method, url: s, body }); return ok({ ok: true }); }
     if (s.endsWith('/api/run-groups')) return ok({ groups: runGroups });
     if (s.includes('/api/projects')) return ok({ projects });
@@ -104,6 +106,7 @@ async function boot({ url = 'http://localhost:4317/', storage = {}, projects = [
     if (s.endsWith('/api/history')) return Promise.resolve(typeof history === 'function' ? history() : history).then((pipelines) => ok({ pipelines, ghAvailable: true }));
     // The detail itself only: a looser match would answer its /log, /diff and /comments with a state body.
     if (/\/api\/history\/[^/]+\/aaaa000[12]$/.test(s)) return ok({ state: { title: 'Merged thing', status: 'done', steps: [], stepper: null } });
+    if (/\/api\/history\/[^/]+\/p-roll\d$/.test(s)) return ok({ state: { title: 'Tokens', status: 'done', steps: [], stepper: null } });
     // An archived run's detail: the stamp is what flips the header to Restore.
     if (/\/api\/history\/[^/]+\/cccc0009$/.test(s)) return ok({ state: { title: 'Archived thing', status: 'done', steps: [], stepper: null, archivedAt: ARCH.archivedAt } });
     if (s.includes('/api/runs/cccc0009/restore')) return ok({ ok: true, id: 'cccc0009', restored: true, warnings: [] });
@@ -127,7 +130,7 @@ async function boot({ url = 'http://localhost:4317/', storage = {}, projects = [
     click(window, window.document.getElementById(yes ? 'confirm-ok' : 'confirm-cancel'));
     await settle(window, 8);
   };
-  return { window, doc: window.document, recv, posts, groupPosts, schedCalls, labelPosts, confirmWith };
+  return { window, doc: window.document, recv, posts, groupPosts, schedCalls, labelPosts, confirmWith, prToken: () => prToken };
 }
 
 test('one Runs nav item; a bare #running or #history lands on #runs with the empty state', async () => {
@@ -313,7 +316,7 @@ test('the View menu: Show and Group by narrow and regroup the list, the chip res
       assert.equal(chip.hidden, true, 'no chip for the default view');
       click(window, doc.getElementById('runs-view-btn'));
       const items = [...doc.querySelectorAll('.wfv-menu [role="menuitemradio"]')].map((n) => [n.querySelector('.wfv-menu-l').textContent, n.querySelector('.wfv-menu-hint')?.textContent || '']);
-      assert.deepEqual(items.slice(0, 5), [['All', '3'], ['Needs you', '0'], ['Running', '1'], ['Finished', '2'], ['Archived', '']]);
+      assert.deepEqual(items.slice(0, 6), [['All', '3'], ['Needs you', '0'], ['Running', '1'], ['Waiting', '0'], ['Finished', '2'], ['Archived', '']]);
       click(window, doc.querySelector('.wfv-menu [role="menuitemradio"]'));   // All again: closes it
       await settle(window);
       await pickView(window, doc, 'Finished');
@@ -1077,4 +1080,94 @@ test('openRunsSelected (Statistics › Cost "Tag N runs"): routes to #runs with 
   assert.equal(window.location.hash, '#runs');
   assert.equal(doc.getElementById('runs-bulk-n').textContent, '2 selected');
   assert.equal(doc.querySelector('#toasts .toast .tt').textContent, 'Selected 2 of 3 runs');
+});
+
+// Honest status (run 2 of 4): a finished member still in the live map, its stored PR and cost, the pending chip.
+const FAILING = { url: 'https://github.com/acme/web/pull/821', number: 821, state: 'OPEN', mergeable: 'MERGEABLE',
+  checks: { state: 'failing', total: 12, failed: 3, pending: 0 } };
+const ROLLOUT = { id: 'feat_000000000002', kind: 'feature', title: 'Complete Design Language Rollout', projectKey: null,
+  cost: { usd: 313.7, byPipeline: { 'p-roll1': 135.95, 'p-roll2': 141.19, 'p-roll3': 36.56 } }, members: [
+    { position: 1, title: 'Tokens', pipelineId: 'p-roll1', ticketId: null, status: 'done', pr: FAILING, ticket: null, adhoc: false, after: null },
+    { position: 2, title: 'Buttons', pipelineId: 'p-roll2', ticketId: null, status: 'done', pr: null, ticket: null, adhoc: false, after: 1 },
+    { position: 3, title: 'Forms', pipelineId: 'p-roll3', ticketId: null, status: 'running', pr: null, ticket: null, adhoc: false, after: 2 }] };
+const rollHist = (id, extra = {}) => ({ id, projectKey: KEY, projectName: 'proj', projectDir: PROJECT, title: id, status: 'done',
+  startedAt: '2026-10-20T09:00:00Z', mtime: 1, ...extra });
+
+test('D1/D2: a finished member still live, with no History PR yet, shows its group member\'s stored PR everywhere', async () => {
+  const { window, doc, recv } = await boot({ runGroups: [ROLLOUT],
+    history: [rollHist('p-roll1', { totalCostUsd: 135.95 }), rollHist('p-roll2', { totalCostUsd: 141.19 })] });
+  recv({ type: 'hello', runs: [live('r-roll1', { pipelineId: 'p-roll1', status: 'done' }), live('r-roll3', { pipelineId: 'p-roll3' })] });
+  go(window, 'runs'); await settle(window);
+  const g = groupItem(doc, `chain:${ROLLOUT.id}`);
+  assert.equal(g.closest('.runs-sec').dataset.section, 'needs');
+  assert.equal(g.querySelector(':scope > a.runs-row .runs-row-sub').textContent, 'Run 1 needs you · Checks failing');
+  assert.equal(doc.querySelector('#runs-list .runs-sec-needs .runs-count').textContent, '1');
+  const m1 = g.querySelector('.runs-members a.runs-row[data-pipeline-id="p-roll1"]');
+  assert.equal(m1.dataset.state, 'needs-you');
+  assert.equal(m1.querySelector('.runs-pr-word').textContent, 'Checks failing');
+  assert.equal(m1.dataset.line, 'Checks failing · PR #821', 'the run page\'s line (rdModel) is the same');
+  assert.equal(m1.querySelector('.runs-row-sub').textContent, 'In review', 'a PR-raised member: the chip says what is wrong, the line says In review (D31, listLine)');
+  go(window, `feature/${ROLLOUT.id}`); await settle(window, 8);
+  const mm = doc.querySelector('.run-member[data-key="p-roll1"]');
+  assert.equal(mm.dataset.state, 'needs-you');
+  assert.equal(mm.querySelector('.runs-pr-word').textContent, 'Checks failing');
+  go(window, `history/${KEY}/p-roll1`); await settle(window, 8);
+  assert.equal(doc.querySelector('#hist-detail .hd-glance .run-status-text').textContent, 'Needs you · Checks failing · PR #821',
+    'the run page reads what the list reads');
+});
+
+test('D5: a finished member still in the live map at $0 shows its stored cost in the list and on the feature page', async () => {
+  const { window, doc, recv } = await boot({ runGroups: [ROLLOUT],
+    history: [rollHist('p-roll1', { totalCostUsd: 135.95 }), rollHist('p-roll2', { totalCostUsd: 141.19 })] });
+  recv({ type: 'hello', runs: [live('r-roll1', { pipelineId: 'p-roll1', status: 'done' }), live('r-roll2', { pipelineId: 'p-roll2', status: 'done' })] });
+  go(window, 'runs'); await settle(window);
+  const g = groupItem(doc, `chain:${ROLLOUT.id}`);
+  assert.equal(g.querySelector('.runs-members a.runs-row[data-pipeline-id="p-roll1"]').title, 'Cost $135.95');
+  assert.equal(g.querySelector(':scope > a.runs-row').title, 'Group total $313.70');
+  go(window, `feature/${ROLLOUT.id}`); await settle(window, 8);
+  const cost = (pid) => doc.querySelector(`.run-member[data-key="${pid}"] .run-member-cost`).textContent;
+  assert.deepEqual([cost('p-roll1'), cost('p-roll2')], ['$135.95', '$141.19']);
+});
+
+test('D5: a single finished run still live at $0 and a feature\'s planning run show their stored cost', async () => {
+  const grp = { ...ROLLOUT, planning: { pipelineId: 'p-plan', title: 'Planning', status: 'done' },
+    cost: { usd: 9, byPipeline: { 'p-plan': 4.5, 'p-roll1': 2, 'p-roll2': 2.5 } }, members: ROLLOUT.members.slice(0, 2).map((m) => ({ ...m, pr: null })) };
+  const { window, doc, recv } = await boot({ runGroups: [grp],
+    history: [rollHist('p-solo', { totalCostUsd: 12.34 }), rollHist('p-plan', { totalCostUsd: 4.5 }), rollHist('p-roll1'), rollHist('p-roll2')] });
+  recv({ type: 'hello', runs: [live('r-solo', { pipelineId: 'p-solo' }), live('r-plan', { pipelineId: 'p-plan', status: 'done' })] });
+  recv({ type: 'done', runId: 'r-solo', status: 'done' });   // a run that ends live lingers until opened, at cost 0
+  go(window, 'runs'); await settle(window);
+  assert.equal(rowEl(doc, '[data-run-id="r-solo"]').title, 'Cost $12.34');
+  go(window, `feature/${grp.id}`); await settle(window, 8);
+  assert.equal(doc.querySelector('.run-member[data-key="planning"] .run-member-cost').textContent, '$4.50');
+});
+
+test('D4: a deep-linked feature page draws no PR chip until the PR state is known', async () => {
+  const open = { url: 'https://github.com/acme/web/pull/822', number: 822, state: 'OPEN' };   // stored, no verdict
+  const grp = { ...ROLLOUT, members: [{ ...ROLLOUT.members[0], pr: open }, ROLLOUT.members[1]] };
+  const { window, doc, recv, prToken } = await boot({ runGroups: [grp], history: [rollHist('p-roll1')] });   // History has no `pr` yet
+  recv({ type: 'hello', runs: [] });                          // the boot's History load (phase 1; phase 2 not answered)
+  go(window, `feature/${grp.id}`); await settle(window, 8);
+  const row = doc.querySelector('.run-member[data-key="p-roll1"]');
+  assert.equal(row.querySelector('.runs-pr'), null, 'no green "Ready" before the state arrives');
+  assert.equal(row.dataset.state, 'in-review');
+  recv({ type: 'history-pr', token: prToken(), done: true, items: [{ projectKey: KEY, id: 'p-roll1',
+    pr: { ...open, checks: { state: 'passing', total: 12, failed: 0, pending: 0 }, mergeable: 'MERGEABLE' } }] });
+  await settle(window, 8);
+  const after = doc.querySelector('.run-member[data-key="p-roll1"]');
+  assert.equal(after.querySelectorAll('.runs-pr').length, 1, 'exactly one chip once the verdict lands');
+  assert.equal(after.querySelector('.runs-pr-word').textContent, 'Ready');
+});
+
+test('D10/D11: a ticket queued after a feature slice sits in Waiting and names the group and the run', async () => {
+  const tickets = [{ id: 't-docs', title: 'Nightly docs refresh', status: 'scheduled', runAt: '9999-12-31T00:00:00.000Z',
+    createdAt: '2026-10-20T10:00:00Z', projectDir: PROJECT, after: { kind: 'pipeline', id: 'p-roll3', title: 'Forms', pipelineId: 'p-roll3' } }];
+  const { window, doc, recv } = await boot({ runGroups: [ROLLOUT], tickets,
+    history: [rollHist('p-roll1', { totalCostUsd: 135.95 }), rollHist('p-roll2', { totalCostUsd: 141.19 })] });
+  recv({ type: 'hello', runs: [live('r-roll3', { pipelineId: 'p-roll3' })] });
+  go(window, 'runs'); await settle(window, 8);
+  assert.deepEqual([...doc.querySelectorAll('#runs-list .runs-sec')].map((s) => s.dataset.section), ['needs', 'waiting']);
+  const row = groupItem(doc, 'sched:t-docs');
+  assert.equal(row.closest('.runs-sec').dataset.section, 'waiting');
+  assert.equal(row.querySelector('.runs-row-sub').textContent, 'Waiting · starts after Complete Design Language Rollout · run 3');
 });

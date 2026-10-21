@@ -100,7 +100,7 @@ import { runProgress, progressWidth } from '../../src/shared/run-progress.mjs';
 import { DEFAULT_HOME_PINS, isPinned, pinWorkflow, unpinWorkflow } from '../../src/shared/home-pins.mjs';
 import { worktreeNoticeModel, renderWorktreeNotice, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
-import { buildRunsModel, countNeedsYou, isRowSelected, renderRunsList, RECENT_PAGE, groupRow, memberPrsOf, prChip } from './runs-list.mjs';
+import { buildRunsModel, countNeedsYou, isRowSelected, renderRunsList, RECENT_PAGE, groupRow, memberPrsOf, prChip, memberCostUsd } from './runs-list.mjs';
 import { paintRunStatus, syncActions, pauseResumeOwn } from './run-status-card.mjs';
 import { buildGroupPage, paintGroupPage, runReceipts } from './group-page.mjs';
 import { delegateQuestion } from './question-delegate.mjs';
@@ -31756,21 +31756,51 @@ function runsLiveItem(r) {
     // The run model reads the raw run (runs-list.mjs runModel); its monotonic progress memo is kept per run. A finished
     // run takes its History row's PR (rdModelRun), so it reads In review here as on the run page.
     run: rdModelRun(r), memo: memoFor(r.pipelineId || r.runId),
-    cost: engineReportsCost(r.runEngine) ? (r.totalCostUsd ?? null) : null,   // D32: "Cost unknown" for an engine with none
+    // D32: "Cost unknown" for an engine with none. D5: a finished run still live at 0 takes its History row's cost.
+    cost: engineReportsCost(r.runEngine) ? memberCostUsd(r.totalCostUsd, rec && rec.totalCostUsd) : null,
   };
 }
 /** A Run-after chain member (scheduler.mjs runChains) has `state` done|current|waiting|failed and `prUrl`, never a
  *  status or a PR object; a /api/run-groups member has the DB `status` and `pr`. Without a live run, the History row
  *  is the best source (its status and its PR state, so a merged member reads Merged, not Ready). */
 const CHAIN_MEMBER_STATUS = { done: 'done', failed: 'error', current: 'running' };
+/** The /api/run-groups member (and the group's stored cost) for a pipeline: an index rebuilt when the groups reload. */
+let memberIndexFor = null;
+let memberIndex = new Map();
+function groupMemberFor(pid) {
+  if (!pid) return null;
+  if (memberIndexFor !== state.runGroups) {
+    memberIndexFor = state.runGroups;
+    memberIndex = new Map();
+    for (const g of state.runGroups || []) {
+      for (const m of [...(g.members || []), ...(g.planning ? [g.planning] : [])]) {
+        if (m && m.pipelineId) memberIndex.set(m.pipelineId, { m, stored: g.cost && g.cost.byPipeline ? g.cost.byPipeline[m.pipelineId] : undefined });
+      }
+    }
+  }
+  return memberIndex.get(pid) || null;
+}
+const storedPrOf = (pid) => { const x = groupMemberFor(pid); return x && x.m.pr && typeof x.m.pr === 'object' ? x.m.pr : null; };
+const prVerdictKnown = (pr) => pr.checks !== undefined || pr.mergeable !== undefined || pr.reviewDecision !== undefined;
+/** D1: a finished run's PR. Its History row's PR wins (clarify); the group member's stored PR (with its stored verdict,
+ *  D3) only fills the gap. D4: a stored PR still open with no verdict is `pending`: no chip, never "Ready". */
+function runPrFor(h, stored) {
+  if (h && h.pr && typeof h.pr === 'object' && (h.pr.url || h.pr.number != null)) return h.pr;
+  if (!stored || (!stored.url && stored.number == null)) return null;
+  const open = !['MERGED', 'CLOSED'].includes(String(stored.state || '').toUpperCase());
+  return open && !prVerdictKnown(stored) ? { ...stored, pending: true } : stored;
+}
+const histOf = (pid) => (pid ? (state.historyAll || []).find((p) => p && p.id === pid) || null : null);
 function memberRun(m) {
-  const h = m.pipelineId ? (state.historyAll || []).find((p) => p.id === m.pipelineId) : null;
+  const h = histOf(m.pipelineId);
   // Runs redesign slice 4 (D24): a member's round / Watch PR facts pass through untouched; the run model words them.
   const facts = { round: m.round || (h && h.round) || null, watch: m.watch || (h && h.watch) || null };
-  if (h) return { status: h.status, pauseReason: h.pauseReason, pr: h.pr && typeof h.pr === 'object' ? h.pr : null, ...facts };
-  if (m.status) return { status: m.status, pr: m.pr || null, ...facts };
-  return { status: CHAIN_MEMBER_STATUS[m.state] || 'stopped', pr: m.prUrl ? { url: m.prUrl } : null, ...facts };
+  if (h) return { status: h.status, pauseReason: h.pauseReason, pr: runPrFor(h, m.pr), ...(h.inBase ? { inBase: h.inBase } : {}), ...facts };
+  if (m.status) return { status: m.status, pr: runPrFor(null, m.pr), ...facts };
+  return { status: CHAIN_MEMBER_STATUS[m.state] || 'stopped', pr: runPrFor(null, m.prUrl ? { url: m.prUrl } : null), ...facts };
 }
+/** A live chain member has no /api/run-groups entry: once it has ended with no History PR, its chain's prUrl fills in. */
+const withChainPr = (x, m) => (x && !x.pr && m.prUrl && isTerminalStatus(x.status) ? { ...x, pr: runPrFor(null, { url: m.prUrl }) } : x);
 
 /** A group (a Run-after chain from schedulesView, or a feature / user group from /api/run-groups) as the list's group
  *  item: members carry their raw run from this tab's live map, else memberRun, else their ticket. */
@@ -31780,10 +31810,13 @@ function runsGroupItem({ id, groupKind, title, members, cost = null, planning = 
   const histPk = (pid) => (pid ? (((state.historyAll || []).find((p) => p && p.id === pid)) || {}).projectKey || '' : '');
   const items = members.map((m, i) => {
     const r = m.pipelineId ? latestPipelineRun(m.pipelineId) : null;
+    const h = histOf(m.pipelineId);
     // An after-ticket has no start time: never pass its AFTER_RUN_AT sentinel (runModel does not read ticket.after).
     // `m.after` (D29): the 1-based position of the member this one runs after (runChains and listRunGroups both send it),
     // so runModel reads "Waiting · starts after run 1"; a timed ticket keeps its start time instead.
-    const run = r || (m.pipelineId ? memberRun(m)
+    // D2: a live member reads what its run page reads (rdModelRun: History PR, else the stored member PR, D1; Watch PR;
+    // inBase). The raw live run carries no PR, so a finished member with failing checks read "Ready to ship".
+    const run = r ? withChainPr(rdModelRun(r), m) : (m.pipelineId ? memberRun(m)
       : { ticket: { status: m.ticket ? m.ticket.status : 'scheduled', runAt: m.ticket && !m.ticket.after ? m.ticket.runAt : null,
         after: m.after ? { index: m.after } : null } });
     const pk = m.historyKey || m.projectKey || histPk(m.pipelineId);
@@ -31792,19 +31825,22 @@ function runsGroupItem({ id, groupKind, title, members, cost = null, planning = 
     return { position: m.position || i + 1, title: m.title, adhoc: !!m.adhoc, href, pipelineId: m.pipelineId || (r && r.pipelineId) || null,
       ticketId: m.ticketId || null, runId: r ? r.runId : '', kind: r ? 'live' : m.pipelineId ? 'hist' : 'sched', run,
       memo: memoFor(m.pipelineId || m.ticketId || `${id}:${i}`),
-      // D32: the member's own cost (a chain's total sums these): live first, else its History row's stored total.
-      cost: r && typeof r.totalCostUsd === 'number' ? r.totalCostUsd
-        : m.pipelineId ? ((state.historyAll || []).find((p) => p.id === m.pipelineId) || {}).totalCostUsd ?? null : null };
+      startedAt: (r && r.startedAt) || (h && h.startedAt) || null,       // D12: the group's dispatch time
+      // D32: the member's own cost (a chain's total sums these). D5: max(live, History, the group's stored byPipeline):
+      // a finished run in the live map at 0 never wins.
+      cost: memberCostUsd(r && r.totalCostUsd, h && h.totalCostUsd, cost && cost.byPipeline ? cost.byPipeline[m.pipelineId] : undefined) };
   });
   // Slice 4 (D8): a feature's separate planning run, built the way a member is; its memo key is its pipeline id, the
   // key the list uses for that run, so both read the same fill.
   const planningItem = planning ? (() => {
     const r = latestPipelineRun(planning.pipelineId);
+    const hp = histOf(planning.pipelineId);
     const pk = planning.projectKey || histPk(planning.pipelineId);
     return { title: 'Planning', pipelineId: planning.pipelineId, runId: r ? r.runId : '', kind: r ? 'live' : 'hist',
-      run: r || memberRun(planning), memo: memoFor(planning.pipelineId),
+      run: r ? rdModelRun(r) : memberRun(planning), memo: memoFor(planning.pipelineId),
       href: r ? `#running/${r.runId}` : pk ? `#history/${pk}/${planning.pipelineId}` : `#feature/${encodeURIComponent(id)}`,
-      cost: r && typeof r.totalCostUsd === 'number' ? r.totalCostUsd : null };
+      startedAt: (r && r.startedAt) || (hp && hp.startedAt) || null,
+      cost: memberCostUsd(r && r.totalCostUsd, hp && hp.totalCostUsd, cost && cost.byPipeline ? cost.byPipeline[planning.pipelineId] : undefined) };
   })() : null;
   const first = members[0] || {};
   const g = runsGroupFor({ pipelineId: first.pipelineId || '', projectDir: first.projectDir || '', workspaceId: first.workspaceId || '', projectKey: first.projectKey || '' });
@@ -32028,7 +32064,7 @@ async function paintGroupDecisions(host, row) {
 /** The work mode the run model reads: a run without a project (its reserved key too), a Folder run, else git. */
 const modelWorkMode = (...xs) => (xs.some((x) => x && isNoProjectRun(x)) ? 'none' : xs.map(workModeOf).find((m) => m !== 'git') || 'git');
 const histRun = (p, st = null) => ({ status: String((p && p.status) || (st && st.status) || '').toLowerCase(),
-  pauseReason: (p && p.pauseReason) || '', pr: p && p.pr && typeof p.pr === 'object' ? p.pr : null,
+  pauseReason: (p && p.pauseReason) || '', pr: runPrFor(p, storedPrOf(p && p.id)), ...(p && p.inBase ? { inBase: p.inBase } : {}),
   ...(memberPrsOf(p).length ? { memberPrs: memberPrsOf(p) } : {}),
   // D24: passed through for the model; the saved state's branch carries a round marker on a frozen row.
   round: (p && p.round) || null, branch: (st && st.branch) || null, watch: (p && p.watch) || null,
@@ -32058,10 +32094,18 @@ function runsHistItem(p) {
     cost: engineReportsCost(p.runEngine) ? (p.totalCostUsd ?? null) : null,
   };
 }
+/** D11: an after-ticket's predecessor inside a /api/run-groups group, worded "Complete Design Language Rollout · run 3". */
+function afterInGroup(a) {
+  for (const g of state.runGroups || []) {
+    const m = (g.members || []).find((x) => (a.pipelineId && x.pipelineId === a.pipelineId) || (a.id && (x.ticketId === a.id || x.pipelineId === a.id)));
+    if (m) return { group: g.title, index: m.position };
+  }
+  return {};
+}
 function runsSchedItem(t) {
   const g = runsGroupFor({ projectDir: t.projectDir || '', workspaceId: t.workspaceId || '', projectKey: t.projectKey || '' });
-  return { id: t.id, scheduleId: t.scheduleId || '', title: t.title, status: t.status, after: t.after || null,
-    queued: !!t.queued, retryAt: t.retryAt || null, runAt: t.runAt,
+  return { id: t.id, scheduleId: t.scheduleId || '', title: t.title, status: t.status, after: t.after ? { ...t.after, ...afterInGroup(t.after) } : null,
+    queued: !!t.queued, retryAt: t.retryAt || null, runAt: t.runAt, createdAt: t.createdAt || null,
     groupKey: g.key, groupName: g.name, by: runsPersonKey(t.createdBy) };
 }
 
@@ -32069,10 +32113,10 @@ function runsSchedItem(t) {
 // and the focus fallbacks below match on it).
 // A group line's fraction is patched in place (paintRunsProgress); its presence is structural (the model's state).
 const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.model.state, r.model.symbol || '', r.model.line, r.model.pulse ? 1 : 0, r.count || '',
-  r.model.pr ? [r.model.pr.id, r.model.pr.word, r.model.pr.title, r.model.pr.icon] : 0, r.model.progress && r.model.progress.mode === 'stages' ? [r.model.progress.stage, r.model.progress.label] : 0,
+  r.model.pr ? [r.model.pr.id, r.model.pr.word, r.model.pr.title, r.model.pr.icon, r.model.pr.pending ? 1 : 0] : 0, r.model.progress && r.model.progress.mode === 'stages' ? [r.model.progress.stage, r.model.progress.label] : 0,
   r.activityMs || 0, r.groupName, r.cost ?? null, r.costUsd ?? null, r.needs ? 1 : 0,
   r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.key, m.model.state, m.model.line, m.title, m.href, m.cost ?? null, m.model.symbol || '',
-    m.model.pr ? [m.model.pr.id, m.model.pr.word, m.model.pr.icon] : 0])] : 0, (r.labels || []).join('\n')];
+    m.model.pr ? [m.model.pr.id, m.model.pr.word, m.model.pr.title, m.model.pr.icon, m.model.pr.pending ? 1 : 0] : 0])] : 0, (r.labels || []).join('\n')];
 // Where focus goes back to after the list is rebuilt under it. A row can change key in the
 // rebuild: opening a finished run acknowledges it, and the same paint turns live:<runId> into
 // hist:<projectKey>/<pipelineId>. Its pipeline id carries over, then the selected row stands in;
@@ -33918,11 +33962,12 @@ function rdModelRun(r) {
   const base = Object.keys(kind).length ? { ...r, ...kind } : r;
   if (!isTerminalStatus(r.status)) return base;
   const h = rdHistoryRecord(r);
-  const pr = h && h.pr && typeof h.pr === 'object' && typeof h.pr.url === 'string' ? h.pr : null;
+  const pr = runPrFor(h, storedPrOf(r.pipelineId));       // D1: History's PR, else the group member's stored one
   const watch = (h && h.watch) || r.watch || null;       // D24: the Watch PR fact, when the History row carries it
   const memberPrs = memberPrsOf(h);                      // #784: a workspace run's member PRs roll into the chip
-  return pr || watch || memberPrs.length
-    ? { ...base, ...(pr ? { pr } : {}), ...(watch ? { watch } : {}), ...(memberPrs.length ? { memberPrs } : {}) } : base;
+  const inBase = (h && h.inBase) || null;                // D8: the work is already in its base (History, local refs)
+  return pr || watch || memberPrs.length || inBase
+    ? { ...base, ...(pr ? { pr } : {}), ...(watch ? { watch } : {}), ...(memberPrs.length ? { memberPrs } : {}), ...(inBase ? { inBase } : {}) } : base;
 }
 const rdModel = (r) => runModel(rdModelRun(r), { memo: memoFor(r.pipelineId || r.runId) });
 /** `r` is the live run from `runs` (never paintRdGlance's rdGlanceRun display copy), so the memo and the PR lookup
@@ -34320,6 +34365,7 @@ function glancePrInput(record) {
   const pr = record && record.pr;
   if (pr && typeof pr === 'object') return String(pr.state || '').toUpperCase() || 'UNAVAILABLE';
   if (!record) return 'PENDING';
+  if (record.inBase) return 'IN_BASE';                    // D8: no PR of its own, its work already in its base
   if (record.sameAsSource && record.mergeBack?.merged !== false) return 'UNAVAILABLE';   // on the source (head == base): no PR, no "checking" placeholder
   if (!prHostAvailable()) return 'UNAVAILABLE';
   if (pr === undefined) return 'PENDING';

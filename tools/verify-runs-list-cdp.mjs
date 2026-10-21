@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // tools/verify-runs-list-cdp.mjs — headless-Chrome proof of the Runs list layout (runs redesign §3.3a, Known bugs 5, 8, 9;
 // D27). At 290px, 375px and 1440px, in light and dark, it runs the pure layout audit (tools/runs-layout-audit.mjs) over the
-// list, then again with the View menu open, with a row's ⋯ menu open and with the Add to group picker open, and the
+// list, checks the section order (Needs you, Running, Waiting, Recent) and that the one-off ticket waits, then again with the View menu open, with a row's ⋯ menu open and with the Add to group picker open, and the
 // one-button-style audit (tools/button-audit.mjs). At 1440px it also drives the list's resize handle (QA 2). It prints every problem and exits 1 on any. NOT part of `npm test`:
 // it needs Chrome (test/verify-runs-list-cdp.test.mjs keeps its coverage from shrinking).
 // Run: node tools/verify-runs-list-cdp.mjs   (or: npm run verify:runs-list)
@@ -178,6 +178,25 @@ for (const width of [290, 375, 1440]) {
     await ev(`document.documentElement.dataset.theme=${JSON.stringify(theme)};0`);
     await sleep(400);
     await audit(`the list, ${at}`);
+    // Honest status (D13): the sections read Needs you, Running, Waiting, Recent; the one-off ticket three hours out sits
+    // in Waiting and says when it starts; nothing scrolls sideways (only a sub-line may ellipsise; data-line keeps it whole).
+    const w = await ev(`(() => {
+      const list = document.getElementById('runs-list');
+      const ids = [...list.querySelectorAll('.runs-sec')].map((s) => s.dataset.section);
+      const t = [...list.querySelectorAll('.runs-row-title')].find((n) => n.textContent === 'Nightly docs refresh');
+      const a = t ? t.closest('a.runs-row') : null;
+      const sub = a ? a.querySelector('.runs-row-sub') : null;
+      return { ids, inWaiting: !!(a && a.closest('.runs-sec-waiting')), sub: sub ? sub.textContent : '', line: a ? a.dataset.line : '',
+        sideways: list.scrollWidth > list.clientWidth };
+    })()`);
+    const ORDER = ['needs', 'running', 'waiting', 'recent'];
+    const pos = w.ids.map((id) => ORDER.indexOf(id));
+    const okOrder = pos.every((p, i) => p >= 0 && (i === 0 || p > pos[i - 1]));
+    const okWait = w.inWaiting && w.sub.startsWith('Waiting · starts') && w.line.startsWith(w.sub.replace(/…$/, ''));
+    check(okOrder, `${at}: the sections read Needs you, Running, Waiting, Recent`, JSON.stringify(w.ids));
+    check(okWait, `${at}: the one-off ticket is in .runs-sec-waiting and reads "Waiting · starts …"`, JSON.stringify(w));
+    check(!w.sideways, `${at}: the list does not scroll sideways`);
+    if (okOrder && okWait && !w.sideways) log(`PASS waiting section ${at}`);
     // The View menu.
     await ev("document.getElementById('runs-view-btn').click();0");
     await waitFor("!!document.querySelector('.wfv-menu')", `the View menu at ${at}`);

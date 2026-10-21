@@ -299,3 +299,19 @@ test('rowToHistoryEntry: a "not merged back" member whose work has landed (or wh
   assert.equal(at(open.id).merged, false, 'a branch still ahead of main keeps the card');
   assert.equal(at(open.id).members[0].kind, 'diverged');
 });
+
+test('rowToHistoryEntry: a run whose branch reached main through another branch carries inBase (D7)', async () => {
+  const { listPipelines } = await import('../src/core/artifacts.mjs');
+  const g = (...a) => spawnSync('git', a, { cwd: repo, encoding: 'utf8' }).stdout.trim();
+  const start = g('rev-parse', 'main');
+  g('checkout', '-q', '-b', 'worca-cc/bundled', start);
+  await writeFile(join(repo, 'h.txt'), 'x\n'); g('add', '-A'); g('commit', '-qm', 'bundled work');
+  g('checkout', '-q', 'main'); g('merge', '-q', '--no-ff', '-m', 'bundle PR', 'worca-cc/bundled');
+  const inDev = await seedPipeline(repo, { title: 'Bundled', status: 'done', startedAt: '2026-06-03T00:00:00Z',
+    branch: { source: 'main', feature: 'worca-cc/bundled', baseSha: start } });
+  const ahead = await seedPipeline(repo, { title: 'Ahead', status: 'done', startedAt: '2026-06-03T00:00:00Z',
+    branch: { source: 'main', feature: 'worca-cc/feat-1', baseSha: start } });
+  const rows = await listPipelines(repo);
+  assert.deepEqual(rows.find((r) => r.id === inDev.id).inBase, { base: 'main' });
+  assert.equal('inBase' in rows.find((r) => r.id === ahead.id), false, 'a branch still ahead: no key');
+});
