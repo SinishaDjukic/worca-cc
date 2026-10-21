@@ -50,6 +50,6 @@ test('kind chip CSS: modifiers scoped to .kind-chip, readable tokens in both the
   assert.match(css, /\.kind-chip\.kind-git\{background:var\(--blue-bg\);color:var\(--blue-ink-strong\);\}/);
   assert.match(css, /\.kind-chip\.kind-folder\{background:var\(--teal-bg\);color:var\(--teal-ink-strong\);\}/);
   assert.match(css, /\.kind-chip\.kind-none\{background:var\(--slate-bg\);color:var\(--slate-ink\);\}/);
-  assert.match(css, /\.kind-chip\.kind-ws\{background:var\(--violet-bg\);color:var\(--violet-ink\);\}/);
+  assert.match(css, /\.kind-chip\.kind-ws\{background:var\(--slate-bg\);color:var\(--slate-ink\);\}/);
   assert.doesNotMatch(css, /(^|[^.\w-])\.kind-(git|folder|none|ws)\{/m, 'no bare modifier rule');
 });

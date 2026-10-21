@@ -46,6 +46,7 @@ test('eight tiles before any pin shows — six intents, Add project and More —
     'Explain a diff', 'Write a script', 'Add project', 'More']);
   assert.deepEqual(tiles.map((b) => b.dataset.minLevel), ['simple', 'simple', 'advanced', 'simple', 'advanced', 'simple', 'simple', 'simple']);
   assert.ok(tiles.every((b) => b.type === 'button' && b.querySelector('.chat-ic svg')));
+  assert.ok(tiles.every((b) => b.classList.contains('btn') && b.classList.contains('btn-lg')), 'F-15: a tile wears the one button, large');
   assert.equal(s.actions.el.getAttribute('role'), 'group');
   assert.equal(s.actions.el.getAttribute('aria-label'), 'Quick actions');
   assert.equal(s.more().getAttribute('aria-haspopup'), 'menu');

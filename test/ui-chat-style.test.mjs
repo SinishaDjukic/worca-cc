@@ -83,7 +83,7 @@ test('the P1 section uses tokens only: no colour literal, no coloured left-edge 
 });
 
 test('the Chat row dot rides the rail corner; the logo links show a focus ring', () => {
-  assert.equal(ruleBody('.nav-count.nav-dot'), 'width:8px;height:8px;padding:0;border-radius:50%;background:var(--violet);');
+  assert.equal(ruleBody('.nav-count.nav-dot'), 'width:8px;height:8px;padding:0;border-radius:50%;background:var(--slate);');
   assert.match(ruleBody('.brand a.logo-mark:focus-visible'), /outline:2px solid var\(--ink\)/);
 });
 

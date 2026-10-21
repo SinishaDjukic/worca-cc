@@ -4,7 +4,7 @@
 // (Edit…); its Save and Decline are free (the composer route starts no turn) and the context header reports the state on
 // the next turn. The graph card saves the drafts it uses first (a declined one refuses), then asks the server to save the
 // graph — Save and Decline start the workflow-card event turn — or opens it on the canvas as a NEW unsaved workflow.
-import { cardKit, draftCardView, buildCardView } from './workflows/card-views.mjs';
+import { cardKit, draftCardView, buildCardView, okChip } from './workflows/card-views.mjs';
 import { renderAutoProposal } from './auto-proposal.mjs';
 
 export const ASK_COMPOSER_CARD_TYPES = Object.freeze(['agent-draft', 'script-draft', 'workflow-build']);
@@ -187,7 +187,7 @@ export function createAskComposerCards({ doc, fetch, blocks = () => [], postCard
           button('Open in Workflows', 'btn btn-sm', () => openBuild(b)),
           button(c.thenRun ? 'Save & propose' : 'Save as workflow', 'btn btn-sm btn-primary', () => saveBuild(b)));
       } else if (b.state === 'saved') {
-        row.append(h('span', 'wfc-chip-ok', `✓ Saved as ${b.workflowId || c.name}`), h('span', 'wfc-spacer'), button('Open in Workflows', 'btn btn-sm', () => openBuild(b)));
+        row.append(okChip(h, `Saved as ${b.workflowId || c.name}`), h('span', 'wfc-spacer'), button('Open in Workflows', 'btn btn-sm', () => openBuild(b)));
       } else {
         row.appendChild(h('span', 'wfc-muted', String(b.state || '')));
       }

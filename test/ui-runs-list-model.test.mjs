@@ -498,7 +498,7 @@ test('Needs you: a workspace run with a conflicting member PR is listed and coun
 
 test('style.css: the chip colours #784’s states from tokens; the glyph rules are gone', () => {
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
-  const colours = { 'is-draft': '--ink-2', 'is-ready': '--green-ink', 'is-merged': '--violet-ink', 'is-closed': '--red-ink' };
+  const colours = { 'is-draft': '--ink-2', 'is-ready': '--green-ink', 'is-merged': '--slate-ink', 'is-closed': '--red-ink' };
   for (const [cls, token] of Object.entries(colours)) assert.ok(css.includes(`.runs-pr.${cls}{color:var(${token});}`), cls);
   assert.match(css, /\.runs-pr\.is-conflicts,\.runs-pr\.is-failing\{color:var\(--red-ink\);\}/);
   for (const gone of ['.runs-pr-open{', '.runs-pr-cut{', '.runs-pr-count{', '.runs-pr{flex:none']) assert.equal(css.includes(gone), false, gone);

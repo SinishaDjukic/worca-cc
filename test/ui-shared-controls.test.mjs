@@ -77,8 +77,8 @@ test('colour: a color-mix() recipe used twice is a named token', () => {
     }
   }
   assert.deepEqual([...seen].filter(([, lines]) => lines.length > 1).map(([k, l]) => `${k} @ ${l.join(',')}`), []);
-  for (const t of ['--btn-hover', '--quiet-hover', '--danger-hover', '--amber-ring', '--red-ring', '--red-tint', '--violet-glow',
-    '--violet-glow-strong', '--violet-ring', '--violet-clear', '--panel-veil', '--red-ink-soft']) {
+  for (const t of ['--btn-hover', '--quiet-hover', '--danger-hover', '--amber-ring', '--red-ring', '--red-tint', '--blue-glow',
+    '--blue-glow-strong', '--blue-ring', '--blue-clear', '--blue-sheen', '--panel-veil', '--red-ink-soft']) {
     assert.match(ROOT_RULE.body, new RegExp(`${t}:color-mix\\(`), `${t} is a token`);
   }
 });

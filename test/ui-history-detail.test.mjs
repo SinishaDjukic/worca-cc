@@ -78,7 +78,7 @@ test('team-metrics line: recorded / pending push / not enabled on terminal runs,
       const doc = ctx.window.document;
       const tm = doc.querySelector('#hist-detail .hd-tm');
       assert.ok(tm, 'the .hd-tm span renders for a terminal run');
-      assert.equal(tm.textContent, 'recorded to team metrics ✓');
+      assert.equal(tm.textContent, 'recorded to team metrics');
       assert.ok(tm.classList.contains('st-ok'));
     } },
     { name: 'a pending team-metrics entry shows the pending-push wording', run: async () => {
