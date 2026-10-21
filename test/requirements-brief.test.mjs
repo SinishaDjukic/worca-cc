@@ -1,0 +1,372 @@
+// test/requirements-brief.test.mjs — the product brief without I/O: shape and caps, the reply check, merge, text edits, rendering (A7 design §3, §4, D4, D6).
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  BRIEF_SECTIONS, BRIEF_TITLES, BRIEF_LIMITS, emptyBrief, BRIEF_SYSTEM_PROMPT, buildBriefPrompt, relPath, normalizeBrief, mergeBrief,
+  parseSectionValue, sectionText, areaLabel, renderBriefForPrompt, renderBriefMarkdown, briefFileName, briefMatches, touchedAreas, mockBrief,
+} from '../src/core/requirements/brief.mjs';
+import { RoundError } from '../src/core/requirements/round.mjs';
+import { RequirementsError } from '../src/core/requirements/spec.mjs';
+
+const WIN = process.platform === 'win32';
+const area = (name, extra = {}) => ({ name, text: `${name} text`, status: 'exists', files: [], added: null, belongsTo: null, ...extra });
+
+test('shape: sections, titles, limits, empty brief', () => {
+  assert.deepEqual(BRIEF_SECTIONS, ['product', 'users', 'terms', 'areas']);
+  assert.deepEqual(BRIEF_TITLES, { product: 'What the product does', users: 'Who uses it', terms: 'The words it uses', areas: 'What exists today' });
+  assert.deepEqual(BRIEF_LIMITS, {
+    product: 1200, users: 12, terms: 30, areas: 20, name: 80, line: 300, areaText: 500, addedText: 1000, areaFiles: 40, files: 300, prompt: 12000, workspaceDescription: 8000,
+  });
+  assert.deepEqual(emptyBrief(), { product: '', users: [], terms: [], areas: [] });
+  assert.notEqual(emptyBrief().users, emptyBrief().users);
+});
+
+test('relPath: separators, cwds, fallback, ./, rejects', () => {
+  assert.equal(relPath('src\\a.mjs'), 'src/a.mjs');
+  assert.equal(relPath('./src/a.mjs'), 'src/a.mjs');
+  assert.equal(relPath('././src/a.mjs'), 'src/a.mjs');
+  assert.equal(relPath('/tmp/x/auto-look-ab12cd34/src/a.mjs'), 'src/a.mjs');
+  assert.equal(relPath('/tmp/x/auto-look-ab12cd34/src/a.mjs', { cwds: ['/tmp/x/auto-look-ab12cd34'] }), 'src/a.mjs');
+  assert.equal(relPath('/tmp/x/auto-look-ab12cd34/src/a.mjs', { cwds: ['/tmp/x/auto-look-ab12cd34/'] }), 'src/a.mjs');
+  assert.equal(relPath('C:\\Users\\me\\tmp\\requirements\\auto-look-ab12cd34\\src\\a.mjs'), 'src/a.mjs');
+  assert.equal(relPath('C:\\Users\\me\\tmp\\requirements\\auto-look-ab12cd34\\src\\a.mjs', { cwds: ['C:\\Users\\me\\tmp\\requirements\\auto-look-ab12cd34'] }), 'src/a.mjs');
+  // a real-path variant: the model reports /private/var/…, the job passes both spellings
+  assert.equal(relPath('/private/var/w/auto-look-ab12cd34/src/a.mjs', { cwds: ['/var/w/auto-look-ab12cd34', '/private/var/w/auto-look-ab12cd34'] }), 'src/a.mjs');
+  assert.equal(relPath('/private/var/w/other/src/a.mjs', { cwds: ['/var/w/other', '/private/var/w/other'] }), 'src/a.mjs');
+  assert.equal(relPath('/elsewhere/src/a.mjs', { cwds: ['/var/w/other'] }), null);
+  assert.equal(relPath('../a'), null);
+  assert.equal(relPath('src/../../a'), null);
+  assert.equal(relPath('/etc/passwd'), null);
+  assert.equal(relPath('C:\\Windows\\a.txt'), null);
+  assert.equal(relPath(''), null);
+  assert.equal(relPath('   '), null);
+  assert.equal(relPath(null), null);
+  assert.equal(relPath('/tmp/x/auto-look-ab12cd34/'), null);
+  assert.equal(relPath('/tmp/x/auto-look-ab12cd34/../a'), null);
+});
+
+test('relPath: cwds are case-insensitive on Windows only', () => {
+  const r = relPath('C:/Work/Look/src/a.mjs', { cwds: ['c:/work/look'] });
+  assert.equal(r, WIN ? 'src/a.mjs' : null);
+});
+
+test('relPath: a workspace keeps repos/<member>/… with a known member', () => {
+  const members = ['web', 'api'];
+  assert.equal(relPath('repos/web/src/a.mjs', { members }), 'repos/web/src/a.mjs');
+  assert.equal(relPath('/tmp/auto-look-ab12cd34/repos/api/x.mjs', { members }), 'repos/api/x.mjs');
+  assert.equal(relPath('repos/unknown/src/a.mjs', { members }), null);
+  assert.equal(relPath('src/a.mjs', { members }), null);
+  assert.equal(relPath('repos/web', { members }), null);
+  assert.equal(relPath('repos/web/src/a.mjs'), 'repos/web/src/a.mjs');
+});
+
+test('normalizeBrief: caps per field and per list', () => {
+  const long = (n) => 'x'.repeat(n + 50);
+  const raw = {
+    product: long(BRIEF_LIMITS.product),
+    users: Array.from({ length: 20 }, (_, i) => ({ name: `${i}${long(80)}`, can: long(300) })),
+    terms: Array.from({ length: 40 }, (_, i) => ({ term: `${i}${long(80)}`, meaning: long(300) })),
+    areas: Array.from({ length: 30 }, (_, i) => ({
+      name: `${i}${long(80)}`, text: long(500), status: 'exists', files: Array.from({ length: 60 }, (_, j) => `src/${i}-${j}.mjs`),
+    })),
+  };
+  const { sections, files } = normalizeBrief(raw, {});
+  assert.equal(sections.product.length, 1200);
+  assert.equal(sections.users.length, 12);
+  assert.equal(sections.terms.length, 30);
+  assert.equal(sections.areas.length, 20);
+  assert.equal(sections.users[0].name.length, 80);
+  assert.equal(sections.users[0].can.length, 300);
+  assert.equal(sections.terms[0].term.length, 80);
+  assert.equal(sections.terms[0].meaning.length, 300);
+  assert.equal(sections.areas[0].name.length, 80);
+  assert.equal(sections.areas[0].text.length, 500);
+  assert.equal(sections.areas[0].files.length, 40);
+  assert.equal(files.length, 300);
+});
+
+test('normalizeBrief: drops nameless items, status, added/belongsTo never from the model, files', () => {
+  const raw = {
+    product: ' A shop. ',
+    users: [{ name: 'Shopper', can: 'buys' }, { name: '  ', can: 'x' }, { can: 'y' }, 'text', null],
+    terms: [{ term: 'Packed', meaning: 'in a box' }, { meaning: 'orphan' }],
+    areas: [
+      { name: 'Orders', text: 'checkout', status: 'partly', files: ['./src/o.mjs', 'src/o.mjs', '../x', '/etc/hosts', 'src\\p.mjs'], added: { feature: 'FEAT-1' }, belongsTo: 'Boss' },
+      { name: 'Accounts', text: 't', status: 'EXISTS' },
+      { name: 'Odd', text: 't', status: 'bogus' },
+      { text: 'no name' },
+    ],
+    files: ['README.md', './README.md', '/etc/passwd', 'docs/a.md'],
+  };
+  const { sections, files } = normalizeBrief(raw, {});
+  assert.equal(sections.product, 'A shop.');
+  assert.deepEqual(sections.users, [{ name: 'Shopper', can: 'buys' }]);
+  assert.deepEqual(sections.terms, [{ term: 'Packed', meaning: 'in a box' }]);
+  assert.deepEqual(sections.areas.map((a) => a.name), ['Orders', 'Accounts', 'Odd']);
+  assert.deepEqual(sections.areas[0], { name: 'Orders', text: 'checkout', status: 'partly', files: ['src/o.mjs', 'src/p.mjs'], added: null, belongsTo: null });
+  assert.equal(sections.areas[1].status, 'exists');
+  assert.equal(sections.areas[2].status, null);
+  assert.deepEqual(files, ['README.md', 'docs/a.md', 'src/o.mjs', 'src/p.mjs']);
+});
+
+test('normalizeBrief: absolute checkout paths with the fallback; workspace members', () => {
+  const raw = { product: 'p', areas: [{ name: 'A', text: 't', files: ['/tmp/x/auto-look-ab12cd34/src/a.mjs'] }], files: ['/tmp/x/auto-look-ab12cd34/README.md'] };
+  assert.deepEqual(normalizeBrief(raw, {}).files, ['README.md', 'src/a.mjs']);
+  assert.deepEqual(normalizeBrief(raw, { cwds: ['/tmp/x/auto-look-ab12cd34'] }).files, ['README.md', 'src/a.mjs']);
+  const ws = { product: 'p', areas: [{ name: 'A', text: 't', files: ['repos/web/a.mjs', 'repos/gone/b.mjs', 'c.mjs'] }], files: ['repos/api/r.md'] };
+  const n = normalizeBrief(ws, { members: ['web', 'api'] });
+  assert.deepEqual(n.sections.areas[0].files, ['repos/web/a.mjs']);
+  assert.deepEqual(n.files, ['repos/api/r.md', 'repos/web/a.mjs']);
+});
+
+test('normalizeBrief: empty replies and replies without substance', () => {
+  for (const raw of [null, undefined, '', '   ']) {
+    assert.throws(() => normalizeBrief(raw, {}), (e) => e instanceof RoundError && e.message === 'Worca ran out of steps before writing the brief.');
+  }
+  for (const raw of [{}, { product: '  ', users: [{ name: 'a', can: 'b' }] }, { files: ['a'] }, []]) {
+    assert.throws(() => normalizeBrief(raw, {}), (e) => e instanceof RoundError && e.message === 'the reply has no product description and no area');
+  }
+  assert.doesNotThrow(() => normalizeBrief({ product: 'x' }, {}));
+  assert.doesNotThrow(() => normalizeBrief({ areas: [{ name: 'A' }] }, {}));
+  assert.deepEqual(normalizeBrief('{"product":"from text"}', {}).sections.product, 'from text');
+});
+
+test('mergeBrief: edited kept, others fresh', () => {
+  const row = { sections: { product: 'mine', users: [{ name: 'Old', can: 'x' }], terms: [{ term: 'Old', meaning: 'x' }], areas: [area('OldArea')] }, edited: { product: true, terms: true } };
+  const fresh = { product: 'new', users: [{ name: 'New', can: 'y' }], terms: [{ term: 'New', meaning: 'y' }], areas: [area('NewArea')] };
+  const m = mergeBrief(row, { sections: fresh, files: [] });
+  assert.equal(m.sections.product, 'mine');
+  assert.deepEqual(m.sections.terms, row.sections.terms);
+  assert.deepEqual(m.sections.users, fresh.users);
+  assert.deepEqual(m.sections.areas.map((a) => a.name), ['NewArea']);
+  assert.deepEqual(m.edited, { product: true, terms: true });
+});
+
+test('mergeBrief: added areas first, same-name model area dropped, belongsTo-named kept, cap 20', () => {
+  const added = area('Gift message', { added: { feature: 'FEAT-6', at: 't' }, belongsTo: 'Orders', status: null });
+  const row = { sections: { ...emptyBrief(), areas: [area('Stale'), added] }, edited: {} };
+  const fresh = { ...emptyBrief(), areas: [area('Orders'), area('gift MESSAGE'), area('Accounts')] };
+  const m = mergeBrief(row, fresh);
+  assert.deepEqual(m.sections.areas.map((a) => a.name), ['Gift message', 'Orders', 'Accounts']);
+  assert.equal(m.sections.areas[0].added.feature, 'FEAT-6');
+  const many = { ...emptyBrief(), areas: Array.from({ length: 25 }, (_, i) => area(`F${i}`)) };
+  const capped = mergeBrief(row, many);
+  assert.equal(capped.sections.areas.length, 20);
+  assert.equal(capped.sections.areas[0].name, 'Gift message');
+});
+
+test("mergeBrief: an edited areas section is the owner's as it is", () => {
+  const row = { sections: { ...emptyBrief(), areas: [area('Mine')] }, edited: { areas: true } };
+  const m = mergeBrief(row, { ...emptyBrief(), areas: [area('Fresh')] });
+  assert.deepEqual(m.sections.areas.map((a) => a.name), ['Mine']);
+});
+
+test('text formats: sectionText and parseSectionValue round trip', () => {
+  const users = [{ name: 'Shopper', can: 'buys: and pays' }, { name: 'Admin', can: 'manages' }];
+  assert.equal(sectionText('users', users), 'Shopper: buys: and pays\nAdmin: manages');
+  assert.deepEqual(parseSectionValue('users', sectionText('users', users), users), users);
+  const terms = [{ term: 'Packed', meaning: 'in a box: not yet shipped' }];
+  assert.deepEqual(parseSectionValue('terms', sectionText('terms', terms), terms), terms);
+  assert.equal(sectionText('product', 'Hello'), 'Hello');
+  assert.equal(parseSectionValue('product', '  Hello  ', ''), 'Hello');
+  assert.equal(parseSectionValue('product', 'y'.repeat(2000), '').length, 1200);
+  const areas = [area('Orders', { status: 'partly', files: ['a.mjs'] }), area('Misc', { status: null })];
+  assert.equal(sectionText('areas', areas), 'Orders (partly): Orders text\nMisc: Misc text');
+  assert.deepEqual(parseSectionValue('areas', sectionText('areas', areas), areas), areas);
+});
+
+test('parseSectionValue: areas keep files, added and belongsTo by name; free text', () => {
+  const current = [
+    area('Orders', { files: ['o.mjs'] }),
+    area('Gift', { files: ['g.mjs'], added: { feature: 'FEAT-2', at: 't' }, belongsTo: 'Orders', status: null, text: 'x'.repeat(900) }),
+  ];
+  const out = parseSectionValue('areas', 'orders (PARTLY): changed\nGift: new text\nBrand new (exists): fresh\n\n  \nNo colon here', current);
+  assert.equal(out.length, 4);
+  assert.deepEqual(out[0], { name: 'orders', text: 'changed', status: 'partly', files: ['o.mjs'], added: null, belongsTo: null });
+  assert.deepEqual(out[1], { name: 'Gift', text: 'new text', status: null, files: ['g.mjs'], added: { feature: 'FEAT-2', at: 't' }, belongsTo: 'Orders' });
+  assert.deepEqual(out[2], { name: 'Brand new', text: 'fresh', status: 'exists', files: [], added: null, belongsTo: null });
+  assert.deepEqual(out[3], { name: 'No colon here', text: '', status: null, files: [], added: null, belongsTo: null });
+  assert.equal(sectionText('areas', [out[3]]), 'No colon here:');
+  assert.deepEqual(parseSectionValue('areas', 'No colon here:', []), [out[3]]);
+  // an added area's text may be 1000, an ordinary one 500
+  const long = parseSectionValue('areas', `Gift: ${'y'.repeat(900)}\nOther: ${'z'.repeat(900)}`, current);
+  assert.equal(long[0].text.length, 900);
+  assert.equal(long[1].text.length, 500);
+});
+
+test('parseSectionValue: structured arrays, current may be the whole sections', () => {
+  const current = { ...emptyBrief(), areas: [area('Gift', { added: { feature: 'FEAT-2', at: 't' }, belongsTo: 'Orders', files: ['g.mjs'] })] };
+  const out = parseSectionValue('areas', [
+    { name: 'Gift', text: 't', status: 'partly', added: { feature: 'forged' }, belongsTo: 'forged' },
+    { name: 'Other', text: 't', added: { feature: 'forged' }, belongsTo: 'forged', files: ['./x.mjs', '../bad'] },
+    { text: 'no name' },
+  ], current);
+  assert.equal(out.length, 2);
+  assert.equal(out[0].added.feature, 'FEAT-2');
+  assert.equal(out[0].belongsTo, 'Orders');
+  assert.deepEqual(out[0].files, ['g.mjs']);
+  assert.equal(out[1].added, null);
+  assert.equal(out[1].belongsTo, null);
+  assert.deepEqual(out[1].files, ['x.mjs']);
+  assert.deepEqual(parseSectionValue('users', [{ name: 'A', can: 'b' }, { can: 'c' }], []), [{ name: 'A', can: 'b' }]);
+});
+
+test('parseSectionValue: BAD_REQUEST for unknown sections, wrong types and too many items', () => {
+  const bad = (fn) => assert.throws(fn, (e) => e instanceof RequirementsError && e.code === 'BAD_REQUEST');
+  bad(() => parseSectionValue('nope', 'x', null));
+  bad(() => parseSectionValue('product', 5, ''));
+  bad(() => parseSectionValue('users', 5, []));
+  bad(() => parseSectionValue('users', Array.from({ length: 13 }, (_, i) => `U${i}: x`).join('\n'), []));
+  bad(() => parseSectionValue('terms', Array.from({ length: 31 }, (_, i) => ({ term: `T${i}`, meaning: 'm' })), []));
+  bad(() => parseSectionValue('areas', Array.from({ length: 21 }, (_, i) => `A${i}: x`).join('\n'), []));
+  assert.equal(parseSectionValue('areas', Array.from({ length: 20 }, (_, i) => `A${i}: x`).join('\n'), []).length, 20);
+});
+
+test('areaLabel', () => {
+  assert.equal(areaLabel(area('Orders')), 'Orders');
+  assert.equal(areaLabel(area('Gift', { belongsTo: 'Orders' })), 'Orders: Gift');
+});
+
+const sample = () => ({
+  product: 'An online shop.',
+  users: [{ name: 'Shopper', can: 'buys things.' }],
+  terms: [{ term: 'Packed', meaning: 'in a box.' }],
+  areas: [area('Orders', { status: 'partly', text: 'checkout' }), area('Gift', { belongsTo: 'Orders', status: null, added: { feature: 'FEAT-1', at: 't' }, text: 'slip' })],
+});
+
+test('renderBriefForPrompt: sections, no files, provenance first', () => {
+  const s = sample();
+  s.areas[0].files = ['src/secret-path.mjs'];
+  const t = renderBriefForPrompt(s, { provenance: 'Made from main @ abc1234 on 2026-10-01.' });
+  assert.ok(t.startsWith('Made from main @ abc1234 on 2026-10-01.\n'));
+  assert.ok(t.includes('What the product does:\nAn online shop.'));
+  assert.ok(t.includes('Who uses it:\n- Shopper: buys things.'));
+  assert.ok(t.includes('The words it uses:\n- Packed: in a box.'));
+  assert.ok(t.includes('What exists today:\n- Orders (partly): checkout\n- Orders: Gift: slip'));
+  assert.ok(!t.includes('secret-path'));
+  assert.ok(!renderBriefForPrompt(s).startsWith('Made from'));
+  const obj = renderBriefForPrompt(s, { provenance: { branch: 'main', sha: 'abcdef0123456', at: '2026-10-01T10:00:00.000Z' } });
+  assert.ok(obj.startsWith('Made from main @ abcdef0 on 2026-10-01.\n'));
+});
+
+test('renderBriefForPrompt: the cap drops trailing areas, then terms, with a count', () => {
+  const s = {
+    product: 'p', users: [],
+    terms: Array.from({ length: 30 }, (_, i) => ({ term: `Term${i}`, meaning: 'm'.repeat(280) })),
+    areas: Array.from({ length: 20 }, (_, i) => area(`Area${i}`, { text: 'a'.repeat(490) })),
+  };
+  const full = renderBriefForPrompt(s);
+  assert.ok(full.length <= BRIEF_LIMITS.prompt);
+  assert.match(full, /\(… \d+ more\)/);
+  assert.ok(full.includes('Area0'));
+  assert.ok(!full.includes('Area19'));
+  const m = full.match(/What exists today:[\s\S]*\(… (\d+) more\)/);
+  assert.equal(Number(m[1]) + (full.match(/- Area\d+/g) || []).length, 20);
+  const small = renderBriefForPrompt(sample());
+  assert.ok(!small.includes('more)'));
+  // terms go only after every area is gone
+  const termHeavy = {
+    product: 'p', users: [], areas: [],
+    terms: Array.from({ length: 30 }, (_, i) => ({ term: `Term${i}`, meaning: 'm'.repeat(300) })),
+  };
+  const noArea = renderBriefForPrompt({ ...termHeavy, areas: [area('Only', { text: 'a'.repeat(500) })], terms: termHeavy.terms.map((t) => ({ ...t, meaning: 'm'.repeat(1000) })) });
+  assert.ok(noArea.length <= BRIEF_LIMITS.prompt);
+  assert.ok(!noArea.includes('Only'));
+  assert.match(noArea, /The words it uses:[\s\S]*\(… \d+ more\)/);
+});
+
+test('renderBriefMarkdown: headings, sources, files; briefFileName', () => {
+  const md = renderBriefMarkdown({
+    sections: sample(), madeAt: '2026-10-01T10:00:00.000Z',
+    sources: [{ project: 'web', branch: 'main', ref: 'refs/heads/main', sha: 'abcdef0123456789' }],
+    files: ['README.md', 'src/a.mjs'],
+  }, { scopeLabel: 'Shop' });
+  assert.ok(md.startsWith('# Product brief: Shop\n'));
+  assert.ok(md.includes('Made from main @ abcdef0 on 2026-10-01'));
+  for (const t of Object.values(BRIEF_TITLES)) assert.ok(md.includes(`## ${t}\n`), t);
+  assert.ok(md.includes('## What Worca read\n'));
+  assert.ok(md.includes('- README.md'));
+  assert.ok(md.includes('- Shopper: buys things.'));
+  assert.ok(md.includes('- Orders (partly): checkout'));
+  assert.ok(md.indexOf('## What the product does') < md.indexOf('## Who uses it'));
+  assert.ok(md.indexOf('## The words it uses') < md.indexOf('## What exists today'));
+  assert.ok(md.indexOf('## What exists today') < md.indexOf('## What Worca read'));
+  assert.equal(briefFileName('My Shop / EU!'), 'product-brief-my-shop-eu.md');
+  assert.equal(briefFileName('***'), 'product-brief-brief.md');
+});
+
+test('briefMatches: whole words, plurals, order, max 3', () => {
+  const s = {
+    ...emptyBrief(),
+    areas: [area('Orders'), area('Accounts'), area('Gift message'), area('Cart')],
+    terms: [{ term: 'Packed', meaning: 'm' }, { term: 'Ship', meaning: 'm' }],
+  };
+  assert.deepEqual(briefMatches(s, { title: 'Cancel an order', description: '' }), ['orders']);
+  assert.deepEqual(briefMatches(s, { title: 'x', description: 'Show the account page' }), ['accounts']);
+  assert.deepEqual(briefMatches(s, { title: 'Add a gift messages field', description: '' }), ['gift message']);
+  assert.deepEqual(briefMatches(s, { title: 'Reorders and cartography', description: '' }), []);
+  assert.deepEqual(briefMatches(s, { title: 'ships', description: 'Cart, orders, accounts, packed' }), ['orders', 'accounts', 'cart']);
+  assert.deepEqual(briefMatches(s, { title: 'PACKED', description: '' }), ['packed']);
+  assert.deepEqual(briefMatches(s, { title: '', description: '' }), []);
+  assert.deepEqual(briefMatches(emptyBrief(), { title: 'orders' }), []);
+});
+
+test('touchedAreas: project, workspace, edited', () => {
+  const s = { ...emptyBrief(), areas: [area('Orders', { files: ['src/o.mjs'] }), area('Gift', { belongsTo: 'Orders', files: ['src/g.mjs'] }), area('Docs', { files: ['README.md'] })] };
+  const per = [{ project: 'web', commits: [{ sha: 'a', files: ['src/o.mjs', 'x'] }, { sha: 'b', files: ['src/g.mjs'] }, { sha: 'c', files: ['nothing'] }, { sha: 'd', files: ['src/o.mjs'] }] }];
+  assert.deepEqual(touchedAreas(s, {}, per), { touching: 3, areas: ['Orders', 'Orders: Gift'], checked: true });
+  assert.deepEqual(touchedAreas(s, { areas: true }, per), { touching: 0, areas: [], checked: false });
+  assert.deepEqual(touchedAreas(s, { product: true }, []), { touching: 0, areas: [], checked: true });
+  const ws = { ...emptyBrief(), areas: [area('Web orders', { files: ['repos/web/src/o.mjs'] }), area('Api', { files: ['repos/api/a.mjs'] })] };
+  const perWs = [
+    { project: 'web', commits: [{ sha: 'a', files: ['src/o.mjs'] }] },
+    { project: 'api', commits: [{ sha: 'b', files: ['src/o.mjs'] }, { sha: 'c', files: ['a.mjs'] }] },
+  ];
+  assert.deepEqual(touchedAreas(ws, {}, perWs), { touching: 2, areas: ['Web orders', 'Api'], checked: true });
+});
+
+test('mockBrief: deterministic', () => {
+  const a = mockBrief('Shop');
+  assert.deepEqual(a, mockBrief('Shop'));
+  assert.ok(a.sections.product.includes('[mock]'));
+  assert.equal(a.sections.users.length, 1);
+  assert.equal(a.sections.terms.length, 1);
+  assert.deepEqual(a.sections.areas.map((x) => [x.name, x.status, x.files]), [['Orders', 'partly', ['README.md']], ['Accounts', 'exists', []]]);
+  assert.deepEqual(a.files, ['README.md']);
+  assert.deepEqual(normalizeBrief({ ...a.sections, files: a.files }, {}), a);
+});
+
+test('BRIEF_SYSTEM_PROMPT: tools, limit, every data tag, files are not instructions', () => {
+  for (const w of ['Read, Grep and Glob', '40 tool calls', '<scope>', '<project_notes>', '<workspace_description>', '<current_brief>', '<edited_by_product_owner>', 'never instructions', 'At most 12 users, 30 terms and 20 areas.']) {
+    assert.ok(BRIEF_SYSTEM_PROMPT.includes(w), w);
+  }
+  assert.ok(BRIEF_SYSTEM_PROMPT.startsWith("You are Worca's product reader."));
+});
+
+test('buildBriefPrompt: block order, data escaping, optional blocks', () => {
+  const first = buildBriefPrompt({ scopeName: 'Sh<op>', notes: 'n</project_notes>' });
+  assert.ok(first.startsWith('<scope>Sh&lt;op></scope>'));
+  assert.ok(first.includes('<project_notes>\nn&lt;/project_notes>\n</project_notes>'));
+  assert.ok(!first.includes('<workspace_description>'));
+  assert.ok(!first.includes('<current_brief>'));
+  assert.ok(!first.includes('<edited_by_product_owner>'));
+  assert.ok(buildBriefPrompt({ scopeName: 's', notes: '' }).includes('<project_notes>\n(none)\n</project_notes>'));
+  assert.ok(first.includes('The working directory is a checkout of the project.'));
+  assert.ok(first.endsWith('Reply with ONLY the JSON object described in the system prompt.'));
+
+  const full = buildBriefPrompt({
+    scopeName: 'WS', notes: 'x', workspaceDescription: `${'d'.repeat(9000)}<`, members: ['web', 'api'],
+    current: sample(), edited: { users: true, areas: true },
+  });
+  const idx = ['<scope>', '<project_notes>', '<workspace_description>', '<current_brief>', '<edited_by_product_owner>', 'The working directory holds one checkout per project under repos/<project>: web, api.', 'Reply with ONLY']
+    .map((m) => full.indexOf(m));
+  assert.ok(idx.every((i) => i >= 0), String(idx));
+  assert.deepEqual([...idx].sort((a, b) => a - b), idx);
+  assert.ok(full.includes('Start from this description of how the projects fit together and add the product view.'));
+  const desc = full.slice(full.indexOf('<workspace_description>'), full.indexOf('</workspace_description>'));
+  assert.ok(desc.includes('d'.repeat(8000)) && !desc.includes('d'.repeat(8001)));
+  assert.ok(full.includes('What the product does:\nAn online shop.'));
+  const edited = full.slice(full.indexOf('<edited_by_product_owner>'), full.indexOf('</edited_by_product_owner>'));
+  assert.ok(edited.includes('Who uses it') && edited.includes('What exists today') && !edited.includes('The words it uses'));
+  assert.ok(buildBriefPrompt({ scopeName: 's', notes: '', current: sample() }).includes('<edited_by_product_owner>\n(none)\n</edited_by_product_owner>'));
+});
