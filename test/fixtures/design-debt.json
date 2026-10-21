@@ -18,8 +18,7 @@
   ],
   "typedPlus": [
     "ui/public/app.js",
-    "ui/public/engine-settings-view.mjs",
-    "ui/public/shape/release-row.mjs"
+    "ui/public/engine-settings-view.mjs"
   ],
   "typeScale": [
     "#wfc-attach[data-count]::after → 9px",
@@ -300,8 +299,6 @@
     ".shipit-sub → 13.5px",
     ".sk-md → 11.5px",
     ".status-label → 14.5px",
-    ".stop-body → 13.5px",
-    ".stop-title → 17px",
     ".sync-checked → 12.5px",
     ".sync-commits → 12.5px",
     ".sync-note → 12.5px",

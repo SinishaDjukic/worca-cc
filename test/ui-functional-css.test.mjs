@@ -166,3 +166,16 @@ test('the chat card footer actions are a wrapping row with a gap between the but
   assert.equal(r.style.getPropertyValue('display'), 'flex');
   assert.equal(r.style.getPropertyValue('gap'), '8px');
 });
+
+test('run 4 D21, D14: the Chat run card is divided sections, the group page Ship card sits under one divider, and the in-card override stays last', () => {
+  const body = (sel) => (flat.find((r) => r.selectorText === sel) || {}).style;
+  const section = body('.ask-card.chat-rc > :is(.ask-rc-stats,.chat-rc-well,.chat-rc-q,.chat-rc-result,.chat-rc-foot)');
+  assert.ok(section, 'the section rule exists');
+  assert.equal(section.getPropertyValue('border-top'), '1px solid var(--line)');
+  assert.equal(section.getPropertyValue('padding-top'), '12px');
+  const ship = body('.feature-page .shape-feature > .ask-shipcard');
+  assert.ok(ship, 'the group page Ship card rule exists');
+  assert.equal(ship.getPropertyValue('border-top'), '1px solid var(--line)');
+  assert.equal(ship.getPropertyValue('border-radius'), '0px');
+  assert.match(flat.at(-1).selectorText, /^:is\(\.ask-card,\.chat-rc,\.shape-feature\) :is\(\.qpanel,/, 'the in-card override is the last rule');
+});

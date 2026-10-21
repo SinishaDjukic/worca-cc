@@ -1031,6 +1031,8 @@ test('History opens on the glance: page title, status line, facts, the tab rows;
   const tabs = [...doc.querySelectorAll('#hist-detail .hd-tab')].map((b) => b.dataset.sec);
   assert.deepEqual(rows, tabs, 'one row per tab, in the tab bar\'s order');
   assert.ok([...hd.querySelectorAll('.hd-result [data-rd-tab]')].every((b) => b.querySelector('svg.rd-srow-ico')), 'each row carries its tab icon');
+  assert.equal(hd.querySelector('.hd-result .mono'), null, 'run 4: the values in Results and How it ran are body font');
+  assert.ok([...hd.querySelectorAll('.hd-result .rd-srow-v')].every((v) => !v.classList.contains('mono')));
   assert.doesNotMatch(hd.querySelector('.hd-glance').textContent, /\b\d+ of \d+\b/);
 
   // A row deep-links into Details › that tab; the graph moved into Workflow.
@@ -1441,7 +1443,8 @@ test('History bar, paused saved run: Stop settles it (and a pre-restart copy in 
       assert.equal(modal.dataset.pipelineId, ROW.id);
       assert.equal(modal.dataset.runId, undefined);
       assert.equal(modal.querySelector('.stop-ident-title').textContent, ROW.title);
-      assert.equal(modal.querySelector('.stop-ident-branch').textContent, ROW.branch);
+      assert.equal(modal.querySelector('.stop-ident-title').title, ROW.branch);
+      assert.equal(modal.ownerDocument.activeElement, modal.querySelector('.stop-cancel'), 'a paused run: Keep paused has the focus');
       assert.equal(modal.querySelector('.stop-cancel').textContent, 'Keep paused');
       const fetchesBefore = ctx.calls.filter((c) => c.url.endsWith(DETAIL_URL)).length;
       click(ctx.window, modal.querySelector('.stop-confirm'));

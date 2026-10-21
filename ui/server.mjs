@@ -126,6 +126,7 @@ import {
   newAskId as askNewId, findPullRequestCards as askFindPullRequestCards, findFixRunCards as askFindFixRunCards,
 } from '../src/core/ask/store.mjs';
 import { sanitizeTitle as askSanitizeTitle } from '../src/core/title.mjs';
+import { stripIntentLead } from '../src/shared/intent-leads.mjs';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
 import { contextEntries as askContextEntries } from '../src/core/ask/contexts.mjs';
 import { askWebAccess, WEB_OFF } from '../src/core/ask/web-access.mjs';
@@ -13601,7 +13602,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     // (§17 Q&A 1). deterministicTitle is only the turn's fallback for an
     // empty haiku result (turn.mjs _kickoffTitle), never written here.
     const titleWasAuto = thread.title == null;
-    const deterministicTitle = titleWasAuto && !synthetic ? (askSanitizeTitle(text.slice(0, 80)) || 'New chat') : thread.title;
+    const deterministicTitle = titleWasAuto && !synthetic ? (askSanitizeTitle(stripIntentLead(text).slice(0, 80)) || 'New chat') : thread.title;
     // P3: a synthetic row keeps the EVENT as its text (buildRestoredPrompt replays it truthfully) and carries the
     // human notice as a block the panel renders instead of a bubble.
     const userMsg = askAppendMessage(id, synthetic

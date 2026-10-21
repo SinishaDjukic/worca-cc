@@ -15,7 +15,7 @@ test('every icon is a 2px round-capped stroke on a 24x24 box, aria-hidden', () =
 });
 
 test('the set has the replacements for the removed glyphs', () => {
-  for (const name of ['x', 'more', 'check', 'chevron', 'chevron-down', 'chevron-up', 'play', 'plus', 'pause', 'arrow-up',
+  for (const name of ['x', 'more', 'check', 'chevron', 'chevron-left', 'chevron-down', 'chevron-up', 'play', 'plus', 'pause', 'arrow-up',
     'arrow-down', 'copy', 'refresh']) assert.ok(Object.hasOwn(ICONS, name), name);
 });
 

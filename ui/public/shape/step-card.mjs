@@ -40,6 +40,14 @@ export function stepTitle(pq, who = '') {
   }
 }
 
+/** Run 4 (D4): the control a waiting question takes the focus on — the card's own primary (Approve 2 runs, Approve and
+ *  build) when it has an enabled one, else its first control that is not a menu trigger (a run row's ⋯). */
+export function questionFocusTarget(root) {
+  if (!root) return null;
+  return root.querySelector('.qpanel:not(.hidden) .plan-actions .btn-primary:not([disabled])')
+    || root.querySelector('.qpanel:not(.hidden) :is(button, input, textarea, [tabindex]):not([disabled]):not([aria-haspopup])');
+}
+
 export function stepHead(doc, title, chip) {
   const head = doc.createElement('div');
   head.className = 'ask-mcard-head step-head';

@@ -554,7 +554,8 @@ const states = [
       await ev(`document.documentElement.dataset.input='pointer';0`);
       const onOpen = await ring();
       designChecks.push({ what: `project Back (${theme[0]}): focused on open with no ring`, ok: onOpen.input === 'pointer' && onOpen.back && onOpen.outline === 'none', got: onOpen });
-      for (const type of ['keyDown', 'keyUp']) await cdp('Input.dispatchKeyEvent', { type, key: 'Shift', code: 'ShiftLeft', windowsVirtualKeyCode: 16 });
+      // Run 4 (D5): a modifier alone no longer flips the mode; an arrow key does and moves no focus off a button.
+      for (const type of ['keyDown', 'keyUp']) await cdp('Input.dispatchKeyEvent', { type, key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40 });
       const afterKey = await ring();
       designChecks.push({ what: `project Back (${theme[0]}): the ring after a keydown`, ok: afterKey.input === 'keyboard' && afterKey.back && afterKey.outline === 'solid', got: afterKey });
     }
@@ -837,6 +838,14 @@ const noRingOnLoad = (what, sel) => async () => {
   designChecks.push({ what: `no ring on load: ${what} shows a 2px solid ring after a key press`, ok: k.mode === 'keyboard' && k.style === 'solid' && k.width === '2px', got: k });
   await ev(`document.activeElement && document.activeElement.blur && document.activeElement.blur(); document.documentElement.dataset.input = 'pointer'; 0`);
 };
+const typingKeepsPointer = (what, sel) => async () => {
+  await pointerMode();
+  const r = await ev(`(() => { const t = document.createElement('textarea'); document.body.append(t);
+    t.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); t.dispatchEvent(new KeyboardEvent('keydown', { key: 'Shift', bubbles: true })); t.remove();
+    const e = document.querySelector(${JSON.stringify(sel)}); e.focus(); return { mode: document.documentElement.dataset.input, outline: getComputedStyle(e).outlineStyle }; })()`);
+  designChecks.push({ what: `no ring after typing: ${what}`, ok: !!r && r.mode === 'pointer' && r.outline === 'none', got: r });
+  await ev(`document.activeElement && document.activeElement.blur && document.activeElement.blur(); 0`);
+};
 const scopeLabelCheck = async (what) => {
   const s = await ev(`(() => { const l = document.querySelector('[data-view="chat"] .ask-scope-btn:not(.ask-sets-btn) .ask-scope-label'); const cs = l && getComputedStyle(l);
     const row = document.querySelector('[data-view="chat"] .ask-composer-row');
@@ -845,6 +854,27 @@ const scopeLabelCheck = async (what) => {
 };
 const showHdMenuParts = () => ev(`(() => { for (const s of ['.hd-more', '.hd-archive', '.hd-report']) { const e = document.querySelector('#hist-detail ' + s); if (e) e.hidden = false; } return 1; })()`);
 const CONTROL_CHECKS = {
+  // Run 4 (D6, D7): the Clarify card's free-text field shows its whole 24-character placeholder, and a long recommended
+  // row stays inside the card, at 290, 375 and 1440px. The live mock run (phase A) is held at a Clarify question.
+  'running-detail': async () => {
+    for (const width of [290, 375, 1440]) {
+      await cdp('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: width < 600 });
+      await sleep(200);
+      const r = await ev(`(() => { const host = document.querySelector('#run-detail .rd-questions'); const free = host && host.querySelector('.qfree');
+        const opts = host && host.querySelector('.qopts'); if (!free || !opts) return null;
+        const probe = document.createElement('button'); probe.type = 'button'; probe.className = 'qopt';
+        const t = document.createElement('span'); t.className = 'qopt-txt'; t.textContent = 'A very long recommended option label that has to wrap inside the card at 290px';
+        const rec = document.createElement('span'); rec.className = 'qrec'; rec.textContent = 'Recommended';
+        const conf = document.createElement('span'); conf.className = 'qconf'; conf.textContent = '70%';
+        probe.append(t, rec, conf); opts.append(probe);
+        const out = { placeholder: free.placeholder, freeCut: free.scrollWidth > free.clientWidth, rowFits: probe.scrollWidth <= probe.clientWidth, optsFit: opts.scrollWidth <= opts.clientWidth,
+          pageFits: document.documentElement.scrollWidth <= document.documentElement.clientWidth };
+        probe.remove(); return out; })()`);
+      designChecks.push({ what: `clarify card at ${width}px: placeholder whole, long recommended row inside the card`,
+        ok: !!r && r.placeholder === 'Or type your own answer…' && !r.freeCut && r.rowFits && r.optsFit && r.pageFits, got: r });
+    }
+    await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+  },
   kitchen: async () => {
     await ev(`document.getElementById('kit-indeterminate').indeterminate = true; 0`);
     await switchCheck('kitchen sink, all five states', '[data-kit="controls"]', 5)();
@@ -883,7 +913,8 @@ const CONTROL_CHECKS = {
   'ask-model-picker': menuCheck('the Chat model picker', '.ask-pop-model'),
   'history-menu': menuCheck('the run header ⋯ menu', '#hist-detail .hd-menu'),
   'projects-detail': noRingOnLoad('the project Back', '.pd-header .pd-back'),
-  'history-detail-details': async () => { await showHdMenuParts(); await noRingOnLoad('the run header ⋯', '#hist-detail .hd-more')(); },
+  'history-detail-details': async () => { await showHdMenuParts(); await noRingOnLoad('the run header ⋯', '#hist-detail .hd-more')();
+    await typingKeepsPointer('the run header ⋯', '#hist-detail .hd-more')(); },
   stats: async () => {
     const p = await ev(`[...document.querySelectorAll('.stat-tile, .chart-card')].filter((e) => e.offsetParent).map((e) => [e.classList.contains('stat-tile') ? 'stat-tile' : 'chart-card', getComputedStyle(e).paddingTop])`);
     designChecks.push({ what: 'card padding: stat tiles pad 16px, chart cards 24px', ok: p.length > 0 && p.every(([c, v]) => v === (c === 'stat-tile' ? '16px' : '24px')), got: p });
@@ -949,7 +980,7 @@ try {
   const phaseA = new Set(['running-list', 'running-list-compact', 'running-detail', 'running-detail-details', 'running-detail-tabs']);
   for (const [id, prepare, cleanup] of states) {
     if (!phaseA.has(id) || (ONLY.length && !ONLY.includes(id))) continue;
-    log(`state ${id}`); await prepare(); if (!['running-detail-tabs', 'layout-widths', 'dialog-sizes'].includes(id)) await auditCurrent(id); if (cleanup) await cleanup();
+    log(`state ${id}`); await prepare(); if (CONTROL_CHECKS[id]) await CONTROL_CHECKS[id](); if (!['running-detail-tabs', 'layout-widths', 'dialog-sizes'].includes(id)) await auditCurrent(id); if (cleanup) await cleanup();
   }
   // answer → finish → history has a pipeline with a diff
   const q = entry.pendingQuestion;

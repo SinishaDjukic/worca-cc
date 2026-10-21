@@ -1562,7 +1562,8 @@ test('the release row: collapsed it sends nothing; expanded with the remotes hin
   const modal = await openModal(ctx);
   const row = modal.querySelector('.shipit-release [data-release-row]');
   assert.ok(row, 'the dialog carries the release row');
-  assert.equal(row.querySelector('.release-row-add').textContent, '+ Add a release');
+  assert.equal(row.querySelector('.release-row-add').textContent, 'Add a release');
+  assert.ok(row.querySelector('.release-row-add').matches('.btn.btn-sm.btn-quiet'));
   click(ctx.window, row.querySelector('.release-row-add'));
   assert.equal(row.querySelector('.release-row-text').textContent + row.querySelector('.release-row-edit').textContent,
     'Release v1.12.0 · draft after merge · Edit');

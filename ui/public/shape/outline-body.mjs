@@ -6,7 +6,7 @@
 // them (L4). The UI says "run"; the engine, payloads and server error texts keep "slice".
 // src/shared is served as is (ui/server.mjs:1556), the same way plan-body.mjs imports it.
 import { applyOutlineEdits, checkSlices, outlineFixAllFeedback } from '../../../src/shared/shape/slices.mjs';
-import { fold, buildCheckFold } from './check-row.mjs';
+import { swapOpen, buildCheckFold } from './check-row.mjs';
 import { stepHead, stepSender } from './step-card.mjs';
 import { toggleMenu } from '../workflows/menu.mjs';
 import { icon } from '../icons.mjs';
@@ -47,6 +47,7 @@ export function renderOutlineBody(panel, pq, deps) {
     const typed = h('textarea', 'plan-feedback');
     typed.rows = 2; typed.placeholder = 'Ask for changes to the runs in your own words…';
     typed.setAttribute('aria-label', 'Changes to the runs');
+    const cancel = btn('btn-quiet plan-typed-cancel', 'Cancel');
     const sendBtn = btn('plan-revise', 'Send changes');
     sendBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -54,8 +55,9 @@ export function renderOutlineBody(panel, pq, deps) {
       if (!text) { setErrors([{ path: 'feedback', message: 'Write what should change first' }]); return; }
       send({ decision: 'revise', feedback: text });
     });
-    const row = h('div', 'plan-typed'); row.append(typed, sendBtn);
-    return { row, typed };
+    const acts = h('div', 'plan-typed-acts'); acts.append(cancel, sendBtn);
+    const row = h('div', 'plan-typed'); row.append(typed, acts);
+    return { row, typed, cancel };
   };
 
   const summary = h('p', 'plan-summary outline-summary');
@@ -79,7 +81,7 @@ export function renderOutlineBody(panel, pq, deps) {
     send({ decision: 'approve', ...(edits.length ? { edits } : {}), approveEach: eachBox.checked });
   });
   const foot = h('div', 'qpanel-foot plan-actions');
-  if (typed) foot.appendChild(fold(btn('plan-ask-changes', 'Ask for changes'), typed.row, () => typed.typed.focus()));
+  if (typed) foot.appendChild(swapOpen(btn('plan-ask-changes', 'Ask for changes'), typed.row, typed.cancel, () => typed.typed.focus()));
   foot.append(approve, moreButton());
   body.append(err, foot);
   if (plan.error) { err.hidden = false; err.textContent = plan.error; }
@@ -102,6 +104,7 @@ export function renderOutlineBody(panel, pq, deps) {
     checks.update(runWorded(checkSlices(outline)));
     undo.hidden = !edits.length;
     approve.textContent = approveRunsLabel(n);
+    panel.dispatchEvent(new doc.defaultView.CustomEvent('step-primary', { bubbles: true }));
   }
 
   // The number is the existing `.outline-slice-title::before` CSS counter: no second number in the markup.
@@ -110,7 +113,7 @@ export function renderOutlineBody(panel, pq, deps) {
     li.dataset.slice = s.id;
     const head = h('div', 'outline-slice-head');
     head.appendChild(h('b', 'outline-slice-title', s.title));
-    if (s.estimate) head.appendChild(h('span', `outline-est ${s.estimate}`, s.estimate));
+    if (s.estimate) head.appendChild(h('span', 'badge grey outline-est', s.estimate));
     const tools = [
       ...(i + 1 < n ? [{ label: 'Merge with next', onSelect: () => { edits = [...edits, { op: 'merge', id: s.id }]; paint(); } }] : []),
       ...(n > 1 ? [{ label: 'Remove', onSelect: () => { edits = [...edits, { op: 'remove', id: s.id }]; paint(); } }] : []),

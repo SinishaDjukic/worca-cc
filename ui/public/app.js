@@ -290,12 +290,13 @@ import { registerDirectionAddon } from './chat/direction.mjs';
 import { shapeFirstOn, onShapeFirstChange } from './chat/shape-gate.mjs';
 import { renderPlanBody } from './shape/plan-body.mjs';
 import { renderOutlineBody } from './shape/outline-body.mjs';
-import { renderFeature } from './shape/feature-view.mjs';
+import { renderFeature, featureModelOf } from './shape/feature-view.mjs';
 import { renderReleaseRow } from './shape/release-row.mjs';
-import { featureFocusOf, focusFeatureControl } from './shape/feature-actions.mjs';
+import { featureFocusOf, focusFeatureControl, featureMenuItems } from './shape/feature-actions.mjs';
 import { decorateShapingQuestions } from './shape/questions.mjs';
 import { isShapingRun, shaperWait } from './shape/plan-text.mjs';
-import { stepChip, stepTitle, isStepCard, renderGateCard, renderRecoveryCard } from './shape/step-card.mjs';
+import { stepChip, stepTitle, isStepCard, renderGateCard, renderRecoveryCard, questionFocusTarget } from './shape/step-card.mjs';
+import { installInputMode } from './input-mode.mjs';
 import { noteAnswer, forgetAnswer } from './shape/step-receipt.mjs';
 import { renderChecklistGroups } from './shape/checklist-view.mjs';
 import { toggleMenu, openMenu } from './workflows/menu.mjs';
@@ -479,7 +480,7 @@ async function paintShapeFeature(host) {
     openRun: (ref) => openShapeRun(ref, f.projectKey),
     openPlan: (c) => openRunPlan({ pipelineId: c.planPipelineId }, f.projectKey),
     // The group page's model footer owns Pause and Stop, and Resume whenever its model offers it (D10).
-    ...(opts.inGroup ? { omit: host.__groupOmit || [] } : {
+    ...(opts.inGroup ? { omit: host.__groupOmit || [], inGroup: true } : {
       pause: (t, btn) => chatRunControls.pause({ ...t, projectKey: f.projectKey }, btn),
       stop: (t) => chatRunControls.stop({ ...t, projectKey: f.projectKey }, () => paintShapeFeature(host)),
     }),
@@ -5992,7 +5993,7 @@ function renderClarifyBody(r, panel, pq) {
       free = document.createElement('input');
       free.className = 'qfree';
       free.type = 'text';
-      free.placeholder = 'Or type your own answer… (e.g. "B but change the port")';
+      free.placeholder = 'Or type your own answer…';
     }
 
     // Night mode (Step 14): the agent's confidence per option (one bar each, keyed by
@@ -6019,9 +6020,7 @@ function renderClarifyBody(r, panel, pq) {
       btn.type = 'button';
       btn.className = 'qopt';
       btn.setAttribute('aria-pressed', 'false');
-      // A/B/C/D key (MAX_CLARIFY_OPTIONS is 4) so a free-text answer can refer
-      // back to an option by name, e.g. "B but change the port". The stylesheet
-      // draws it as the option's key square, so the label is the option alone.
+      // The key letter stays as data, so a typed answer can name an option; it is no longer drawn.
       btn.dataset.key = String.fromCharCode(65 + optIdx);
       const label = document.createElement('span');
       label.className = 'qopt-txt';
@@ -6034,14 +6033,13 @@ function renderClarifyBody(r, panel, pq) {
         btn.appendChild(badge);
       }
       if (conf) {
-        const bar = document.createElement('span');
-        bar.className = 'qconf';
-        bar.setAttribute('aria-label', `${conf[optIdx]}% confidence`);
-        const fill = document.createElement('span');
-        fill.className = 'qconf-fill';
-        fill.style.width = `${conf[optIdx]}%`;
-        bar.appendChild(fill);
-        btn.appendChild(bar);
+        // Run 4 (D6): the confidence is a figure at the row's end, not a bar under every option.
+        const pct = document.createElement('span');
+        pct.className = 'qconf';
+        pct.textContent = `${conf[optIdx]}%`;
+        pct.title = `${conf[optIdx]}% confidence`;
+        pct.setAttribute('aria-label', `${conf[optIdx]}% confidence`);
+        btn.appendChild(pct);
       }
       btn.addEventListener('click', () => select(btn, optText));
       optsWrap.appendChild(btn);
@@ -19648,21 +19646,19 @@ function openStopModal(target) {
   const q = (sel) => modal.querySelector(sel);
   if (t.runId) modal.dataset.runId = t.runId;        // both openers stamp the target
   else modal.dataset.pipelineId = t.pipelineId;
-  q('.stop-ident-title').textContent = (r ? r.title : t.title) || t.runId || t.pipelineId;
-  const branch = (r ? r.branchFeature : t.branch) || '';
-  const branchEl = q('.stop-ident-branch');
-  branchEl.textContent = branch;
-  branchEl.hidden = !branch;                         // no branch -> no blank line
+  const ident = q('.stop-ident-title');
+  ident.textContent = (r ? r.title : t.title) || 'Untitled run';     // never an id in visible text
+  ident.title = (r ? r.branchFeature : t.branch) || '';               // run 4 (D11): the branch is a tooltip
   const card = q('.stop-actions').parentElement;
   cardAlert(card, null);
   const ok = q('.stop-confirm');
   const cancel = q('.stop-cancel');
-  ok.disabled = false; ok.textContent = 'Stop pipeline';
+  ok.disabled = false; ok.textContent = 'Stop run';
   // A paused run is not running: the way out of the dialog keeps it paused.
   cancel.textContent = (r ? isPaused(r) : true) ? 'Keep paused' : 'Keep running';
   cancel.disabled = false;                           // a prior generation may have parked it
   modal.classList.remove('hidden');
-  ok.focus();
+  cancel.focus();                                    // run 4 (D11): a destructive dialog opens on the safe choice
 
   // Nothing aborts the POST, so once it has left the browser a "cancel" can only
   // suppress the UI feedback while the orchestrator stops the run anyway — the
@@ -19701,7 +19697,7 @@ function openStopModal(target) {
     if (closed) return;                 // torn down from outside while in flight
     if (res && res.ok) { done(); if (t.onStopped) t.onStopped(); return; }
     ok.disabled = false;                // stopRun already re-enabled it; be explicit
-    ok.textContent = 'Stop pipeline';
+    ok.textContent = 'Stop run';
     cancel.disabled = false;            // the run is still live — retry or keep it
     cardAlert(card, { title: 'Could not stop the run', detail: (res && res.error) || 'unknown error' });
   };
@@ -30099,7 +30095,7 @@ function runAction(ref0, id, btn = null, m = null) {
     case 'pause': return chatRunControls.pause(ref, btn);
     case 'resume': return chatRunControls.resume(ref, btn);
     case 'stop': return chatRunControls.stop(ref);
-    case 'answer': return focusQuestionOf(btn, ref);
+    case 'answer': return answerOrApprove(btn, ref);
     case 'report': return pid ? openReportModal(pid) : undefined;
     case 'archive': return runBulkAction('archive', [rowTarget({ key: pid, title: ref.title || pid, model: m || { state: 'stopped' }, run: r, pipelineId: pid, runId: r ? r.runId : null })]);
     case 'start-now': return ref.ticketId ? scheduleCall('POST', `/api/schedules/${encodeURIComponent(ref.ticketId)}/run-now`, 'Run started', 'start the run now') : undefined;
@@ -30118,12 +30114,20 @@ function runAction(ref0, id, btn = null, m = null) {
     default: return undefined;                    // retry, ask-changes: their buttons are disabled (D5, D24)
   }
 }
+/** Run 4 (D3): a bar Answer that names the card's primary ("Approve 2 runs") is that primary: its click is the card's
+ *  click (stepSender's busy guard stops a second post). Any other Answer takes the person to the question. */
+function answerOrApprove(btn, ref = {}) {
+  const root = (btn && btn.closest('.chat-rc, .gpage, .rd')) || document;
+  const own = root.querySelector('.qpanel:not(.hidden) .plan-actions .btn-primary:not([disabled])');
+  if (own && btn && btn.textContent === own.textContent) { own.click(); return undefined; }
+  return focusQuestionOf(btn, ref);
+}
 /** Answer: focus the first control of the nearest drawn question (card, run page or group page); with none drawn
  *  there (a group card that is not the current member's), open the run's page. */
 function focusQuestionOf(btn, ref = {}) {
   // `.rd` is the run template's root, so the Chat run panel's copy of the run page (not inside #run-detail) is found too.
   const root = (btn && btn.closest('.chat-rc, .gpage, .rd')) || document;
-  const q = root.querySelector('.qpanel:not(.hidden) button:not([disabled]), .qpanel:not(.hidden) input, .qpanel:not(.hidden) textarea');
+  const q = questionFocusTarget(root);
   if (q) { if (typeof q.scrollIntoView === 'function') q.scrollIntoView({ block: 'nearest' }); q.focus(); return; }
   if (ref.runId) location.hash = rdHash(ref.runId);
   else if (ref.href) location.hash = ref.href;
@@ -30918,7 +30922,7 @@ function focusQuestionPanel(ctx) {
   }
   if (screen && screen.contains(panel)) { scrollToQuestions(screen); return; }
   panel.scrollIntoView({ block: 'nearest' });
-  const focusable = panel.querySelector('button, [tabindex]');
+  const focusable = questionFocusTarget(panel);
   if (focusable && typeof focusable.focus === 'function') focusable.focus();
 }
 
@@ -30932,7 +30936,7 @@ function scrollToQuestions(screen) {
   const head = host.querySelector('.rd-ask-head');
   const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
   (head && head.textContent ? head : host).scrollIntoView({ block: 'start', behavior: reduce ? 'auto' : 'smooth' });
-  const focusable = host.querySelector('.qpanel button, .qpanel input, .qpanel [tabindex]');
+  const focusable = questionFocusTarget(host);
   if (focusable && typeof focusable.focus === 'function') focusable.focus({ preventScroll: true });
 }
 
@@ -31905,7 +31909,8 @@ async function loadRunGroups() {
 // ── The group page (runs redesign slice 4, D13 to D17): #feature/ID[/tab] and #group/ID[/tab] ──
 // Run 3 (D2): loading / gone / error keep the bar's Back, so a phone is never stranded. Returns the message line.
 function groupMessage(host, cls, text) {
-  const back = Object.assign(document.createElement('a'), { className: 'btn gpage-back', href: '#runs', textContent: 'Runs' });
+  const back = Object.assign(document.createElement('a'), { className: 'btn gpage-back', href: '#runs' });
+  back.append(icon(document, 'chevron-left', 15), 'Runs');
   back.setAttribute('aria-label', 'Back to the runs list');
   const bar = Object.assign(document.createElement('div'), { className: 'gpage-bar rd-bar' });
   bar.append(back);
@@ -31987,7 +31992,12 @@ function paintGroupPageNow() {
     return;                                        // not loaded yet: "Loading group…" stays; loadRunGroups repaints
   }
   const row = groupRow(it, { now: Date.now() });
-  if (!host.__gp) { host.__gp = buildGroupPage(document); keepGroupBack(host, () => host.replaceChildren(host.__gp)); }
+  if (!host.__gp) {
+    host.__gp = buildGroupPage(document);
+    // Run 4 (D2): a Shaper card set or changed its primary's label: the bar's Answer follows it.
+    host.__gp.addEventListener('step-primary', () => scheduleGroupPagePaint());
+    keepGroupBack(host, () => host.replaceChildren(host.__gp));
+  }
   const base = `${route === 'feature' ? '#feature' : '#group'}/${encodeURIComponent(id)}`;
   // The run page's Logs tab is Expert-only, so the group page offers its Logs (links to those tabs) at Expert too.
   // Run 3 (D15): the group's Labels fact is the read-only union of its members' History labels.
@@ -31998,6 +32008,7 @@ function paintGroupPageNow() {
     labelChip: (d, l) => labelChip(d, l, {}),
     onTab: (t) => { location.hash = t === 'runs' ? base : `${base}/${t}`; },
     mountQuestion: (slot, mb) => paintGroupQuestion(slot, mb),
+    answerLabel: () => answerLabelOf(host.__gp.querySelector('.gpage-question')),
     // Mount once per feature: paintGroupPageNow runs on every run frame, and a remount would refetch and rebuild the
     // Shaper view each time.
     // D10/D12: the group model's footer owns Pause / Stop / Resume, so the Shaper view omits what it already shows; a
@@ -32608,9 +32619,39 @@ function runsRowMenuItems(r, more) {
     ...(r.groupKind === 'feature' ? [{ label: 'Open feature', onSelect: () => { location.hash = r.href; } }] : []),
   ];
 }
-function openGroupMoreMenu(anchor, row) {
+/** Run 4 (D18): a feature's own ⋯ items (Re-plan the rest, Cancel the rest, Ask before each run, Open the plan) lead the
+ *  group page's header ⋯; the Overview draws no ⋯ of its own (clarify answer 3). Fetched per open: the feature object is
+ *  only loaded once Overview is mounted, and the header ⋯ works on every tab. */
+async function groupFeatureMenuItems(anchor, row) {
+  if (row.groupKind !== 'feature' || !shapeFirstOn()) return [];
+  const res = await fetch(`/api/shape/features/${encodeURIComponent(row.groupId)}`).catch(() => null);
+  const f = res && res.ok ? await res.json().catch(() => null) : null;
+  if (!f) { notify({ tone: 'err', title: 'That did not work', detail: "The feature's actions could not be loaded." }); return []; }
+  const c = featureModelOf(f, (pid) => askRunStore.byPipeline(pid)).controls;
+  return featureMenuItems(c, {
+    confirm: confirmModal,
+    openPlan: (cc) => openRunPlan({ pipelineId: cc.planPipelineId }, f.projectKey),
+    act: async (action, body) => {
+      const r = await fetch(`/api/shape/features/${encodeURIComponent(f.id)}/${action}`, { method: 'POST',
+        headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}) }).catch(() => null);
+      const out = r ? await r.json().catch(() => ({})) : {};
+      const ov = document.querySelector('#group-detail .gpage-overview');
+      if (ov && SHAPE_FEATURE_HOSTS.get(ov)) void paintShapeFeature(ov);
+      return r && r.ok ? { ok: true } : { ok: false, error: out.error || 'That did not work. Try again.' };
+    },
+    fail: (text) => notify({ tone: 'err', title: 'That did not work', detail: text }),
+  }, anchor);
+}
+async function openGroupMoreMenu(anchor, row) {
+  // A second press while the fetch is pending is ignored (it would queue a toggle that closes the menu again).
+  if (anchor.getAttribute('aria-busy') === 'true') return;
   const items = runsRowMenuItems(row, anchor).filter((it) => it.label !== 'Select' && it.label !== 'Open feature');
-  toggleMenu({ doc: document, anchor, items, align: 'end', label: `More for ${row.title}` });
+  anchor.setAttribute('aria-busy', 'true');
+  let feature;
+  try { feature = await groupFeatureMenuItems(anchor, row); } finally { anchor.removeAttribute('aria-busy'); }
+  if (!anchor.isConnected) return;
+  toggleMenu({ doc: document, anchor, align: 'end', label: `More for ${row.title}`,
+    items: [...feature, ...(feature.length && items.length ? [{ sep: true }] : []), ...items] });
 }
 function openAddToGroup(anchor, r) {
   const groups = (state.runGroups || []).map((g) => {
@@ -32988,11 +33029,7 @@ function routeRunDetail(param, { instant = false } = {}) {
 // way back (setRdMode / setHdMode) so a keyboard user lands somewhere sensible; the
 // browser then paints that as :focus-visible even after a click, which reads as a
 // stuck hover. style.css hides the ring in the bars unless the keyboard is in use.
-document.documentElement.dataset.input = 'pointer';
-document.addEventListener('keydown', (e) => {
-  if (!e.metaKey && !e.ctrlKey) document.documentElement.dataset.input = 'keyboard';
-}, true);
-document.addEventListener('pointerdown', () => { document.documentElement.dataset.input = 'pointer'; }, true);
+installInputMode(document);
 
 function setRdMode(screen, mode, tab = '', { focus = true } = {}) {
   if (!screen) return;
@@ -33192,13 +33229,8 @@ function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
     if (r && r.pipelineId) location.hash = `#new/after/${r.pipelineId}`;
   });
 
-  // D30: "Run details ›" opens Results, How it ran and the graph while a shaped run waits on the person.
-  screen.querySelector('.rd-wait-more').addEventListener('click', (e) => {
-    const glance = screen.querySelector('.rd-glance');
-    const open = !glance.hasAttribute('data-wait-open');
-    glance.toggleAttribute('data-wait-open', open);
-    e.currentTarget.setAttribute('aria-expanded', String(open));
-  });
+  // Run 4 (D2): a Shaper card set or changed its primary's label: the bar's Answer follows it.
+  screen.addEventListener('step-primary', () => { const r = runs.get(runId); if (r) paintRdActions(screen, r); });
 
   // D31: a shaped run's ⋯ drives the bar controls CSS hides — the same select, button and pane.
   screen.querySelector('.rd-bar-more').addEventListener('click', (e) => {
@@ -34098,6 +34130,12 @@ function prCovered(screen) {
 }
 /** D4 on the run page: the model decides which bar buttons show. Called last by every painter that used to write
  *  their `hidden` (paintRdStatus, and the ends of paintRdHeader, paintRdTerminal and paintRdPrCta). */
+/** Run 4 (D2): the bar's Answer names the waiting card's own primary ("Approve 2 runs", "Approve and build"). Read from
+ *  the card, so it follows the person's merges and removals; '' (→ "Answer") for a Clarify, gate or form ask. */
+function answerLabelOf(root) {
+  const own = root && root.querySelector('.qpanel:not(.hidden) .plan-actions .btn-primary');
+  return own ? own.textContent : '';
+}
 function paintRdActions(screen, r, m = rdModel(r)) {
   const bar = screen.querySelector('.rd-bar-end');
   const slot = bar && bar.querySelector('.rd-actions');
@@ -34114,6 +34152,7 @@ function paintRdActions(screen, r, m = rdModel(r)) {
     covered: prCovered(screen),
     // The model reads pausing as paused, but chatRunControls.resume does nothing while the run is still live.
     disable: { 'ask-changes': "Ask for changes from the run's chat", ...(st === 'pausing' ? { resume: 'Pausing…' } : {}) },
+    labels: { answer: answerLabelOf(screen.querySelector('.rd-questions')) },
     onAction: (id, b) => runAction({ runId: r.runId, pipelineId: r.pipelineId, title: r.title, status: st, workspaceId: r.workspaceId || null }, id, b, m),
   });
   if (split) split.hidden = !!pause && pause.hidden;      // the split wrapper follows its button
@@ -35006,19 +35045,15 @@ function askHeading(r, pq) {
   }
 }
 
-/** D30: a shaped run waiting on Shaper's own step puts its card first and folds Results / How it ran. */
+/** D30, run 4 D1: a shaped run waiting on Shaper's own step puts its card first; style.css hides the status card and the
+ *  graph until it is answered. */
 function paintShaperWait(screen, r) {
   const glance = screen.querySelector('.rd-glance');
   const host = screen.querySelector('.rd-questions');
   if (!glance || !host) return;
   const wait = shaperWait(r, shapeFirstOn());
   if (wait) glance.dataset.shaperWait = wait;
-  else { delete glance.dataset.shaperWait; glance.removeAttribute('data-wait-open'); }
-  const more = screen.querySelector('.rd-wait-more');
-  if (more) {
-    more.hidden = !wait;
-    more.setAttribute('aria-expanded', String(!!wait && glance.hasAttribute('data-wait-open')));
-  }
+  else delete glance.dataset.shaperWait;
   // The Chat panel moved .rd-questions into its own head (presentRunScreenInPanel): leave it there.
   if (host.parentElement !== glance) return;
   const now = glance.querySelector(':scope > .rd-now');
@@ -35379,6 +35414,8 @@ function paintRunLabels(host, { pipelineId, labels, onSaved = () => {} }) {
   };
   const list = labels || [];
   row.append(...list.map((l) => labelChip(document, l, pipelineId ? { onRemove: remove } : {})));
+  // Run 4 (D12): with no labels the row states it, so "Add" is not alone on its row.
+  if (!list.length && pipelineId) row.append(Object.assign(document.createElement('span'), { className: 'rd-labels-none', textContent: 'None' }));
   if (pipelineId) {
     const b = document.createElement('button');
     b.type = 'button';

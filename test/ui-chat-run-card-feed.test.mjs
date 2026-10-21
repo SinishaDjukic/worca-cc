@@ -128,7 +128,8 @@ test('controller: a started run proposal learns its pipeline id from the store, 
       store.snaps.set('run-uuid-9', liveSnap({ runId: 'run-uuid-9' }));
       store.poke('run-uuid-9');
       await settle();
-      assert.equal(built.el.querySelector('.ask-rc-sub').textContent, 'proj · #abcd1234');
+      assert.equal(built.el.querySelector('.ask-rc-sub').textContent, 'proj');
+      assert.equal(built.el.querySelector('.chat-rc-where').title, 'Run abcd1234');
       ctl.destroy();
     } },
     { name: 'from the run links after a reload (P1 ctx.runLinkFor), then REST', run: async () => {
@@ -716,7 +717,8 @@ test('controller: a fix card\'s outcome patch reaches the same card element (han
   assert.equal(typeof built.handle.blockChanged, 'function');
   built.handle.blockChanged({ ...FIX, card: { ...FIX.card, pipelineId: 'abcd1234', fix: { ...FIX.card.fix, outcome: { kind: 'failed', reason: 'fix-failed' } } } });
   assert.equal(built.el.querySelector('.chat-rc-fix-out').textContent, 'Not pushed: the fix run failed');
-  assert.ok(built.el.querySelector('.ask-rc-sub').textContent.includes('#abcd1234'), 'the pipeline id from the patch');
+  assert.ok(built.el.querySelector('.chat-rc-where').title.includes('abcd1234'), 'the pipeline id from the patch, in the tooltip');
+  assert.ok(!built.el.textContent.includes('#abcd1234'), 'run 4 D20: never in visible text');
   built.dispose(); ctl.destroy();
 });
 

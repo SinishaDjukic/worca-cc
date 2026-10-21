@@ -83,7 +83,7 @@ export function renderShipCard(doc, m, handlers = {}) {
     });
   }
   for (const [mode, label] of [['stacked', 'Stacked PRs'], ['one', 'One PR']]) {
-    const b = button(m.suggested === mode ? 'btn btn-sm btn-primary' : 'btn btn-sm btn-quiet ask-card-not-now', label, `ship-${mode}`);
+    const b = button(m.suggested === mode ? 'btn btn-sm btn-primary' : 'btn btn-sm', label, `ship-${mode}`);
     b.addEventListener('click', async () => {
       const rel = row.check();
       if (!rel.ok) return;                                   // the row shows why; nothing is posted

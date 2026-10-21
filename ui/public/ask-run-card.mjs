@@ -229,7 +229,8 @@ export function createRunProgressCard({ doc, ident, onOpen = null }) {
     pillText.textContent = p.text;
     if (snap && snap.title) title.textContent = snap.title;
     const pid = (snap && snap.pipelineId) || ident.pipelineId;
-    sub.textContent = [projectLabel(ident, snap), pid ? `#${pid}` : ''].filter(Boolean).join(' · ');
+    sub.textContent = projectLabel(ident, snap);
+    sub.title = pid ? `Run ${pid}` : '';
     timeEl.textContent = fmtDur(snap ? snap.elapsedMs : 0);
     costEl.textContent = snap && snap.costUsd == null ? 'cost unknown' : fmtUsd(snap ? snap.costUsd : 0);
     const prog = snap && snap.progress;

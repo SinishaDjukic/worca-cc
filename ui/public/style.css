@@ -1140,39 +1140,39 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .qblock{padding:13px 0 0;}
 .qtext{font-weight:500;font-size:13px;margin:0 0 9px;display:flex;align-items:flex-start;
   gap:9px;line-height:1.45;}
-.qtext .qn{flex:0 0 auto;width:19px;height:19px;border-radius:var(--r-sm);background:var(--ink);color:var(--on-ink);
-  font-family:var(--mono);font-size:var(--fs-caption);font-weight:600;display:grid;place-items:center;margin-top:1px;}
-/* the option column and the free-text field line up under the number circle */
-.qopts{display:flex;flex-direction:column;align-items:stretch;gap:7px;margin:0 0 7px;padding-left:28px;}
-.qopt{display:flex;align-items:center;gap:10px;font-family:inherit;font-weight:500;font-size:var(--fs-body);
-  color:var(--ink);background:var(--panel);border:1.5px solid var(--line);border-radius:var(--r-sm);
-  padding:9px 14px 9px 10px;cursor:pointer;transition:.14s;text-align:left;width:100%;}
-/* The letter key and its check are drawn entirely in CSS: renderClarifyBody emits
-   a <button> with the option's label span (plus the night-mode badge/bar), its letter in data-key. Picked, the
-   square fills ink and the check is a HOLE masked out of it, so it shows the tile's
-   own panel colour in both themes — no painted glyph colour to go wrong in dark. */
-.qopt::before{content:attr(data-key);flex:0 0 auto;display:grid;place-items:center;box-sizing:border-box;
-  width:20px;height:20px;border-radius:var(--r-sm);border:1px solid var(--line-2);background:var(--field);
-  font:600 var(--fs-caption) var(--mono);color:var(--ink-2);}
+.qtext .qn{flex:0 0 auto;min-width:12px;font:600 var(--fs-body)/var(--lh-body) var(--sans);color:var(--ink-2);margin-top:0;}
+/* the option column and the free-text field line up under the number */
+.qopts{display:flex;flex-direction:column;align-items:stretch;gap:0;margin:0 0 8px;padding-left:24px;}
+/* Run 4 (D6): divided rows — one --line between options, no box each. A picked row takes the --field fill and the 6px
+   corner and drops the lines around it (docs/design-system.md › Corners: a highlighted list row). */
+.qopt{display:flex;align-items:center;gap:12px;min-height:40px;font-family:inherit;font-weight:500;font-size:var(--fs-body);
+  color:var(--ink);background:none;border:0;border-top:1px solid var(--line);border-radius:0;
+  padding:8px 12px 8px 8px;cursor:pointer;text-align:left;width:100%;}
+.qopt:first-child{border-top-color:transparent;}
+/* The mark: an empty 16px square, drawn entirely in CSS (no letter; the key stays in data-key). Picked, it fills ink and
+   the check is a HOLE masked out of it, so it shows the row's own colour in both themes — no painted glyph colour to
+   go wrong in dark. */
+.qopt::before{content:'';flex:0 0 auto;box-sizing:border-box;width:16px;height:16px;border-radius:var(--r-xs);
+  border:1px solid var(--line-2);background:none;}
 .qopt.sel::before{content:'';background:var(--ink);border-color:var(--ink);
   -webkit-mask:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'><mask id='k'><rect width='20' height='20' fill='white'/><path d='M7.1 10.2l1.8 1.9 4-4' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/></mask><rect width='20' height='20' mask='url(%23k)'/></svg>") center/100% 100% no-repeat;mask:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'><mask id='k'><rect width='20' height='20' fill='white'/><path d='M7.1 10.2l1.8 1.9 4-4' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/></mask><rect width='20' height='20' mask='url(%23k)'/></svg>") center/100% 100% no-repeat;}
-/* Night mode (Step 14): the agent's recommendation badge and per-option confidence bar. */
-.qopt .qrec{margin-left:8px;padding:1px 6px;border-radius:var(--r-xs);font-size:11px;font-weight:600;background:var(--blue-bg);color:var(--blue-ink-strong)}   /* 11px on --blue-bg: --blue-ink is 3.6:1 in light */
-/* The bar wraps onto its own line under the label (key square 20px + gap 10px = the 30px indent). */
-.qopt:has(.qconf){flex-wrap:wrap;row-gap:6px}
-.qopt .qconf{display:block;flex:0 0 calc(100% - 30px);margin-left:30px;height:3px;border-radius:var(--r-xs);background:var(--line)}
-.qopt .qconf-fill{display:block;height:100%;border-radius:var(--r-xs);background:var(--blue)}
-.qopt:hover{border-color:var(--ink-3);}
-.qopt.sel{background:var(--panel);color:var(--ink);border-color:var(--ink);box-shadow:0 0 0 3px var(--line);}
-.qopt:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* Night mode (Step 14): the agent's recommendation chip and per-option confidence figure. */
+.qopt .qrec{display:inline-flex;align-items:center;height:18px;margin-left:8px;padding:0 6px;border-radius:var(--r-xs);
+  font-size:var(--fs-caption);font-weight:500;background:var(--line);color:var(--ink-2);}
+.qopt .qopt-txt,.qopt > span:not(.qrec):not(.qconf){min-width:0;overflow-wrap:anywhere;}
+.qopt .qconf{margin-left:auto;flex:none;font-size:var(--fs-meta);font-weight:400;color:var(--ink-2);font-variant-numeric:tabular-nums;}   /* --ink-3 on --panel / --field misses AA at 12px (verify:theme) */
+.qopt:hover{background:var(--hover);}
+.qopt.sel{background:var(--field);color:var(--ink);border-radius:var(--r-sm);border-top-color:transparent;}
+.qopt.sel + .qopt{border-top-color:transparent;}
+.qopt:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .qfree{width:100%;font-family:inherit;font-size:var(--fs-body);color:var(--ink);background:var(--field);
-  border:1.5px solid var(--line);border-radius:var(--r-sm);padding:10px 14px;transition:.14s;}
+  border:1px solid var(--line-2);border-radius:var(--r-sm);padding:6px 12px;transition:.14s;}
 .qfree::placeholder{color:var(--ink-3);}
 /* `.has` is toggled by renderClarifyBody's own input handler the moment the field
    holds a non-empty, non-option value — the ink border IS that state, as on a picked option. */
 .qfree:focus{outline:none;background:var(--panel);border-color:var(--ink);}
 .qfree.has{background:var(--panel);border-color:var(--ink);}
-.qblock > .qfree{margin-left:28px;width:calc(100% - 28px);}
+.qblock > .qfree{margin-left:24px;width:calc(100% - 24px);}
 .qpanel-foot{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:14px;}
 /* secondary "Open run" — card only (§4.3) */
 .qopen{padding:9px 16px;border:1.5px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);
@@ -1234,26 +1234,19 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    options apart. Medium, not semibold: a question can run a whole paragraph. */
 :is(.rd-questions,.chat-rc-q) .qtext{grid-column:1;grid-row:1 / span 2;display:grid;grid-template-columns:minmax(0,1fr);row-gap:12px;
   margin:0;font-weight:500;font-size:var(--fs-section);line-height:1.5;letter-spacing:-.005em;}
-:is(.rd-questions,.chat-rc-q) .qtext .qn{grid-area:1 / 1;justify-self:start;width:22px;height:22px;font-size:var(--fs-caption);margin-top:0;}
+:is(.rd-questions,.chat-rc-q) .qtext .qn{grid-area:1 / 1;justify-self:start;margin-top:0;}
 /* Answered: read off the picked state the renderer already keeps, so no extra markup (a
    night-mode recommendation preselected with data-preset is not an answer yet). The
-   pill shares the number's cell, pushed past the 22px circle. */
+   pill shares the number's cell, pushed past the number. */
 :is(.rd-questions,.chat-rc-q) .qblock:has(.qopt.sel:not([data-preset]),.qfree.has) .qtext::after{content:'Answered';grid-area:1 / 1;justify-self:start;
-  align-self:center;margin-left:32px;padding:3px 10px;border-radius:var(--r-sm);background:var(--green-bg);color:var(--green-ink);
+  align-self:center;margin-left:24px;padding:3px 10px;border-radius:var(--r-sm);background:var(--green-bg);color:var(--green-ink);
   font-size:var(--fs-meta);font-weight:600;line-height:1.4;letter-spacing:0;}
-:is(.rd-questions,.chat-rc-q) .qopts{grid-column:2;gap:8px;margin:0;padding-left:0;}
-:is(.rd-questions,.chat-rc-q) .qopt{min-height:52px;gap:14px;padding:11px 16px 11px 12px;border-radius:var(--r-sm);font-size:var(--fs-body);line-height:1.5;}
-:is(.rd-questions,.chat-rc-q) .qopt::before{width:28px;height:28px;border-radius:var(--r-sm);font-size:12px;}
-/* Night mode: the confidence bar keeps its indent under the bigger key (28px + 14px gap). */
-:is(.rd-questions,.chat-rc-q) .qopt .qconf{flex-basis:calc(100% - 42px);margin-left:42px}
-/* "Write your own" is the last tile: dashed until it holds a value, a pencil where the
-   options have their key, its text lined up with theirs (1.5 + 12 + 28 + 14 = 55.5px). */
-:is(.rd-questions,.chat-rc-q) .qblock > .qfree{grid-column:2;margin-left:0;width:100%;min-height:52px;padding:11px 16px 11px 54px;
-  border-radius:var(--r-sm);border-style:dashed;border-color:var(--line-2);font-size:var(--fs-body);line-height:1.5;
-  background-color:var(--canvas-2);background-repeat:no-repeat;background-position:19px center;background-size:14px 14px;
-  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239A9AA1' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><path d='M4 20h4L18.5 9.5a2.1 2.1 0 0 0-3-3L5 17v3z'/></svg>");}
-:is(.rd-questions,.chat-rc-q) .qblock > .qfree:is(:focus,.has){border-style:solid;border-color:var(--ink);background-color:var(--panel);
-  box-shadow:0 0 0 3px var(--line);}
+:is(.rd-questions,.chat-rc-q) .qopts{grid-column:2;gap:0;margin:0;padding-left:0;}
+:is(.rd-questions,.chat-rc-q) .qopt{font-size:var(--fs-body);line-height:1.5;}
+/* Run 4 (D7): "Write your own" is the shared field, after the options. */
+:is(.rd-questions,.chat-rc-q) .qblock > .qfree{grid-column:2;margin-left:0;margin-top:8px;width:100%;min-height:32px;padding:6px 12px;
+  border:1px solid var(--line-2);border-radius:var(--r-sm);font-size:var(--fs-body);line-height:1.5;background:var(--field);}
+:is(.rd-questions,.chat-rc-q) .qblock > .qfree:is(:focus,.has){border-color:var(--ink);background:var(--field);box-shadow:none;}
 /* one card (gate, recovery, workflow): the actions sit across its foot, under a rule */
 :is(.rd-questions,.chat-rc-q) .qpanel-foot{margin-top:24px;padding-top:20px;border-top:1px solid var(--line);}
 /* a stack of cards (clarify, form): the footer is a pill bar of its own beneath them */
@@ -4833,6 +4826,7 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .rd-error[hidden]{display:none;}
 /* .rd-back is focused programmatically by openRunDetail — same reasoning as the .hd-back arm. */
 .rd-back{display:inline-flex;align-items:center;gap:8px;}
+.gpage-back{display:inline-flex;align-items:center;gap:8px;}   /* run 4 (D13): the run page's Back, chevron included */
 .rd-back:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 
 /* MUST sit after the rules above: @media contributes no specificity, so an
@@ -5388,7 +5382,7 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
 .rd-graph.settled .run-flow .run-node .fan .sq.on{animation:none;}
 
 
-/* ---------- "Stop this pipeline?" confirm modal (design §6) ---------- */
+/* ---------- "Stop this run?" confirm modal (design §6) ---------- */
 /* WIDTH GOES ON `#stop-modal .card`, NOT `.stop-card`. The markup is
    `<div class="card stop-card">` inside `.viewer-modal`, and
    `.viewer-modal .card{width:min(860px,100%);…}` (:786) is (0,2,0): a bare
@@ -5396,13 +5390,9 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
    precedent: `#shipit-modal .card` (:1864). */
 #stop-modal .card{width:min(560px,100%);}
 .stop-card{padding:24px;animation:wr-rise .28s cubic-bezier(.2,.7,.3,1) both;}
-.stop-title{margin:0 0 12px;font:700 17px/1.25 var(--sans);letter-spacing:-.015em;}
-.stop-body{margin:0;font:400 13.5px/1.6 var(--sans);color:var(--ink-2);}
-.stop-ident{margin-top:14px;padding:11px 13px;background:var(--field);border-radius:var(--r-ctrl);
-  font:400 12px/1.6 var(--mono);color:var(--ink-2);word-break:break-all;}
-/* author display rule beats the UA [hidden] rule — a branch-less run must not
-   leave a blank mono line in the block */
-.stop-ident-branch[hidden]{display:none;}
+.stop-title{margin:0 0 12px;font:600 var(--fs-section)/var(--lh-title) var(--sans);}
+.stop-body{margin:0;font:400 var(--fs-body)/var(--lh-body) var(--sans);color:var(--ink-2);}
+.stop-ident{margin-top:12px;font:600 var(--fs-body)/var(--lh-body) var(--sans);color:var(--ink);overflow-wrap:anywhere;}
 .stop-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:22px;}
 /* The mockup's hover is #F7D2CD — a shade §9 does not name and no token carries.
    brightness() keeps the darker-on-hover intent inside the existing palette (and
@@ -7939,9 +7929,7 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .runs-label-filter{display:flex;flex-wrap:wrap;gap:6px;padding:0 14px 6px 20px;}
 .runs-label-filter[hidden]{display:none;}
 .rd-labels{display:flex;flex-wrap:wrap;align-items:center;gap:6px;}
-/* Shaper wait: .rd-sheet is a flex row there (see the .rd-glance[data-shaper-wait] rules); the labels take their own line under the head. */
-.rd-glance[data-shaper-wait]:not([data-wait-open]) > .rd-sheet > .rd-kv{flex-basis:100%;}
-.rd-glance[data-shaper-wait]:not([data-wait-open]) > .rd-sheet > .rd-kv > .rd-kv-row:not([data-fact="labels"]){display:none;}
+.rd-labels-none{color:var(--ink-3);}
 .chat-rc-labels{display:flex;flex-wrap:wrap;gap:4px;}
 .chat-rc-labels:empty{display:none;}
 .label-picker{position:fixed;z-index:60;width:280px;max-width:calc(100vw - 16px);max-height:60vh;overflow:auto;background:var(--panel);
@@ -8676,8 +8664,9 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .ask-shipcard-rel.is-failed{color:var(--red-ink);}
 .ask-shipcard-wait{font-size:var(--fs-meta);color:var(--ink-2);}
 .release-row{display:flex;flex-direction:column;gap:2px;font-size:12.5px;min-width:0;}
-.release-row-add,.release-row-edit{padding:0;border:0;background:none;color:var(--blue-ink-strong);font:inherit;cursor:pointer;}
-.release-row-add:focus-visible,.release-row-edit:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-sm);}
+.release-row-edit{padding:0;border:0;background:none;color:var(--blue-ink-strong);font:inherit;cursor:pointer;}
+.release-row-add{align-self:flex-start;}
+.release-row-edit:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-sm);}
 .release-row-line{display:flex;flex-wrap:wrap;align-items:baseline;gap:0 4px;color:var(--ink);}
 .release-row-input{width:9em;padding:2px 6px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--field);color:var(--ink);font-family:var(--mono);font-size:12px;}
 .release-row-source{font-size:11.5px;color:var(--ink-2);}
@@ -9477,8 +9466,13 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .plan-err{color:var(--red-ink);font-size:12px;}
 .plan-err.ok{color:var(--green-ink);}
 .plan-err[hidden]{display:none;}
-.plan-typed{display:flex;align-items:flex-end;gap:8px;}
-.plan-typed textarea{flex:1;min-width:0;resize:vertical;}
+/* Run 4 (D8): the changes field is the shared field; Cancel and Send changes sit under it. */
+.plan-typed{display:flex;flex-direction:column;align-items:stretch;gap:8px;}
+.plan-typed textarea{min-height:64px;min-width:0;padding:6px 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);
+  background:var(--field);color:var(--ink);font:400 var(--fs-body)/var(--lh-body) var(--sans);resize:vertical;}
+.plan-typed textarea:focus-visible{outline:none;}   /* the shared :focus ink border is the focus state (no 2px ring) */
+.plan-typed-acts{display:flex;justify-content:flex-end;gap:8px;}
+.plan-typed[hidden]{display:none;}
 .plan-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
 .plan-actions .plan-stop{margin-left:auto;}
 .shape-chips{display:flex;flex-wrap:wrap;gap:6px;}
@@ -9549,22 +9543,10 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .rd-kv-v{margin:0;min-width:0;font-size:var(--fs-body);line-height:var(--lh-body);color:var(--ink);display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;overflow-wrap:anywhere;}
 @container rd-kv (max-width:420px){.rd-kv-row{grid-template-columns:minmax(0,1fr);gap:2px;}}
 .rd-kv:not(:has(> .rd-kv-row:not([hidden]))){display:none;}
-/* D30: while a shaped run waits on the person, Results / How it ran and the graph fold under "Run details ›" */
-.rd-wait-more{align-self:flex-start;}
-.rd-glance[data-shaper-wait]:not([data-wait-open]) :is(.rd-result,.rd-live,.rd-live-row){display:none;}
-/* D30, D33: while a shaped run waits on the person, the card says what is needed; the status panel is one line —
-   the stage words and "Run details ›" — with no "Waiting for you" of its own. Run details › (data-wait-open) and
-   the run working again bring today's panel back. */
-.rd-glance[data-shaper-wait]:not([data-wait-open]) > .rd-sheet{flex-direction:row;flex-wrap:wrap;align-items:center;gap:6px 16px;padding:10px 16px;}
-.rd-glance[data-shaper-wait]:not([data-wait-open]) > .rd-sheet > :is(.rd-facts,.rd-nowlist,.rd-pr-box){display:none;}
-.rd-glance[data-shaper-wait]:not([data-wait-open]) > .rd-sheet > :is(.rd-banners,.rd-away-note){flex-basis:100%;margin:0;}
-.rd-glance[data-shaper-wait]:not([data-wait-open]) .rd-sheet-head{display:flex;flex:1 1 auto;min-width:0;flex-wrap:wrap;align-items:center;gap:6px 16px;}
-.rd-glance[data-shaper-wait]:not([data-wait-open]) .rd-sheet-head > .rd-now-top > :is(.run-status-head,.run-status-group){display:none;}  /* no dot / "needs you: …" of its own */
-.rd-glance[data-shaper-wait]:not([data-wait-open]) .rd-now-top > .run-status-bar{margin-top:0;}
-.rd-glance[data-shaper-wait]:not([data-wait-open]) .rd-now-top > .run-status-bar[data-mode="stages"] > .run-prog-track{display:none;}   /* the stage words stay */
-.rd-glance[data-shaper-wait]:not([data-wait-open]) .rd-now-top > .run-status-bar:focus-visible{outline:2px solid var(--blue-line);outline-offset:2px;border-radius:var(--r-sm);}
-.rd-glance[data-shaper-wait]:not([data-wait-open]) .rd-now-top > .run-status-bar .run-prog-marks{display:flex;gap:12px;margin-top:0;font-size:12px;}
-.rd-glance[data-shaper-wait]:not([data-wait-open]) > .rd-sheet > .rd-wait-more{align-self:center;}
+/* D30, run 4 D1: while a shaped run waits on the person (Clarify or the plan), the question card is the page: the status
+   card (status block, facts, labels, Results) and the graph hide until it is answered. Keyed on the glance, not on
+   .rd-questions, because the Chat panel moves the question out of the glance. */
+.rd-glance[data-shaper-wait] > :is(.rd-sheet,.rd-live){display:none;}
 .chat-rc-shaped{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin-top:8px;font-size:12px;color:var(--ink-2);}
 .chat-rc-shaped:empty{display:none;}
 .chat-rc-shaped-stages{color:var(--green-ink);font-weight:500;}
@@ -9620,8 +9602,6 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .outline-slice{counter-increment:outline;display:flex;flex-direction:column;gap:4px;padding:8px 12px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--panel);}
 .outline-slice-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;}
 .outline-slice-title::before{content:counter(outline) '. ';color:var(--ink-3);font-weight:500;}
-.outline-est{padding:1px 8px;border-radius:var(--r-xs);background:var(--amber-bg);color:var(--amber-ink);font-size:var(--fs-caption);font-weight:600;}
-.outline-est.small{background:var(--green-bg);color:var(--green-ink);}
 .outline-goal{color:var(--ink-2);overflow-wrap:anywhere;}
 .outline-acceptance{margin:0;padding-left:18px;color:var(--ink-2);font-size:12px;overflow-wrap:anywhere;}
 .outline-slice-tools{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px;}
@@ -9657,6 +9637,8 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .feature-page-error{color:var(--red-ink);}
 .feature-page-error .btn{margin-left:8px;}
 .feature-page .shape-feature{width:100%;box-sizing:border-box;font-size:var(--fs-body);border:0;}
+/* Run 4 (D14): on the group page the Ship card is a section of the Overview, under one divider — no box in a box. */
+.feature-page .shape-feature > .ask-shipcard{padding:16px 0 0;border:0;border-top:1px solid var(--line);border-radius:0;background:none;}
 /* In Chat › Plans the row is the frame: the feature view draws no border, so its Ship card keeps the one border (D16). */
 .chat-home-plan .shape-feature{border:0;}
 .shape-feature-order{color:var(--ink-3);font-size:12px;}
@@ -9807,9 +9789,17 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .ask-ref-pill.tone-blue{color:var(--h-blue-ink);}
 .ask-ref-pill.tone-slate{color:var(--slate-ink);}
 
-/* One border level per card (review B2): inside a chat card the nested boxes drop their border and take a tint (a
-   question the amber wash). It stays LAST in the file: at (0,2,0) it only beats earlier rules of the same weight, and a
+/* Run 4 (D21): the Chat run card is one box of divided sections (docs/design-system.md › Cards versus divided rows):
+   stats, the graph, the question, the result and the footer each sit under one --line, with no fill, border or corner
+   of their own. At (0,3,0) and up these beat the in-card override below, which stays last. */
+.ask-card.chat-rc > :is(.ask-rc-stats,.chat-rc-well,.chat-rc-q,.chat-rc-result,.chat-rc-foot){margin-top:12px;padding-top:12px;border-top:1px solid var(--line);}
+.ask-card.chat-rc .ask-rc-stats > .ask-rc-stat{padding:0;border-radius:0;background:none;}
+.ask-card.chat-rc > .run-flow-wrap.chat-rc-well{border:0;border-top:1px solid var(--line);border-radius:0;background-color:transparent;}
+.ask-card.chat-rc > .chat-rc-result{padding:12px 0 0;border:0;border-top:1px solid var(--line);border-radius:0;background:none;}
+.ask-card.chat-rc > .chat-rc-q :is(.qpanel,.qblock){padding-left:0;padding-right:0;border-radius:0;background:none;}
+.ask-card.chat-rc .chat-rc-art-rows{border:0;border-radius:0;}
+
+/* One border level per card (review B2): inside a chat card the nested boxes drop their border and take a tint. It stays LAST in the file: at (0,2,0) it only beats earlier rules of the same weight, and a
    later state rule resetting the border shorthand would draw the box again. Outside cards the base rules keep theirs. */
-:is(.ask-card,.chat-rc,.shape-feature) :is(.qpanel,.qblock,.qopt,.af-choice,.af-form,.issue-detail,.opt-row,.shape-plan-notes,
+:is(.ask-card,.chat-rc,.shape-feature) :is(.qpanel,.qblock,.af-choice,.af-form,.issue-detail,.opt-row,.shape-plan-notes,
   .outline-slice,.shape-plan-outline-change,.chat-rc-result,.shape-card){border:0;background:var(--field);}
-.chat-rc-q:where(:not(.chat-q)) :is(.qpanel,.qblock){background:var(--amber-bg);}

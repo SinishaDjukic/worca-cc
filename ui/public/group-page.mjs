@@ -16,7 +16,8 @@ export function buildGroupPage(doc) {
   const root = el(doc, 'div', 'gpage');
   // Run 3 (D13): the run page's bar — Back (slide layout) or the crumbs (split), then the primary action, Stop, ⋯.
   const bar = el(doc, 'div', 'gpage-bar rd-bar');
-  const back = el(doc, 'a', 'btn gpage-back', 'Runs');
+  const back = el(doc, 'a', 'btn gpage-back');
+  back.append(icon(doc, 'chevron-left', 15), 'Runs');   // run 4 (D13): the run page's Back, chevron included
   back.setAttribute('href', '#runs');
   back.setAttribute('aria-label', 'Back to the runs list');
   const crumbs = el(doc, 'nav', 'rd-crumbs');
@@ -74,7 +75,7 @@ export function headerActions(m) {
 /**
  * Paint (idempotent). `view`: { row (groupRow output), project, tab, overview:boolean, logs:boolean, labels: [] (the
  * members' labels) }.
- * `deps`: { onAction(id, btn), onTab(tab), onMore(anchor), mountQuestion(slot, member|null), mountOverview(host),
+ * `deps`: { onAction(id, btn), onTab(tab), onMore(anchor), mountQuestion(slot, member|null), answerLabel?(), mountOverview(host),
  * mountDecisions(host, row), logsHref(member), labelChip(doc, label) }.
  */
 export function paintGroupPage(root, view, deps) {
@@ -109,9 +110,10 @@ export function paintGroupPage(root, view, deps) {
   // Stop acts on the member the status block names (the row ⋯ Stop's call); its title says which.
   const stop = root.querySelector('.gpage-stop');
   stop.title = current ? `Stop ${current.isPlanning ? 'Planning' : `Run ${current.position}`}` : 'Stop';
-  syncActions(root.querySelector('.gpage-actions'), headerActions(m), { own: { stop }, pool: [stop], onAction: deps.onAction,
-    disable: { 'ask-changes': "Ask for changes from the run's chat" } });
+  // Run 4 (D2): the question is mounted first, so the bar's Answer can name the card's own primary.
   deps.mountQuestion(root.querySelector('.gpage-question'), current);
+  syncActions(root.querySelector('.gpage-actions'), headerActions(m), { own: { stop }, pool: [stop], onAction: deps.onAction,
+    disable: { 'ask-changes': "Ask for changes from the run's chat" }, labels: { answer: deps.answerLabel ? deps.answerLabel() : '' } });
   const offered = (id) => (id !== 'overview' || !!view.overview) && (id !== 'logs' || !!view.logs);
   const tab = GROUP_TABS.some(([id]) => id === view.tab) && offered(view.tab) ? view.tab : 'runs';
   for (const t of root.querySelectorAll('.gpage-tabs .rd-tab')) {

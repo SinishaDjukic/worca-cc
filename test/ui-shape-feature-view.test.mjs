@@ -171,3 +171,15 @@ test('the merge (D10, D12): omit drops what the host\'s model footer shows; no p
   assert.equal(el.querySelector('[data-act="feature-stop"]'), null);
   assert.equal(el.querySelectorAll('.shape-feature-head, .shape-feature-status, .shape-feature-runs, ol.chat-rc-members').length, 0);
 });
+
+test('run 4 D17: on the group page the view has no merge-order line and no ⋯; elsewhere it keeps both', () => {
+  const f = { id: 'f1', title: 'Add billing', status: 'active', total: 2, done: 0, approveEach: false, open: true, halted: null,
+    slices: [1, 2].map((index) => ({ index, title: `S${index}`, state: 'queued', pipelineId: `p${index}`, pr: null })), ship: {} };
+  const d = { act: async () => ({ ok: true }), confirm: async () => true, openRun() {}, openPlan() {} };
+  const inGroup = renderFeature(doc, f, { ...d, inGroup: true });
+  assert.equal(inGroup.querySelector('.shape-feature-order'), null);
+  assert.equal(inGroup.querySelector('[data-act="feature-more"]'), null);
+  const plans = renderFeature(doc, f, d);
+  assert.ok(plans.querySelector('.shape-feature-order'));
+  assert.ok(plans.querySelector('[data-act="feature-more"]'));
+});

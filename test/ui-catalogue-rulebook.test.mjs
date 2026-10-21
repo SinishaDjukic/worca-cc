@@ -214,12 +214,12 @@ test('the typed-plus ratchet lost the four slice-3 files', () => {
   for (const s of ['.mv-filter.on', '.wfl-chip[aria-pressed="true"]']) assert.ok(!debt.solidPressed.includes(s), s);
   // qa-2-2: the three entries left are not .btn labels, so the empty BUTTON_SPEC.plusDebt cannot flag them at runtime
   // (auditButtons only checks typed-plus on .btn). app.js and engine-settings-view.mjs type "+" into <option> text
-  // ("+ Add model…", "+ Add project…", "+ Override a …"), which cannot hold an icon; release-row.mjs's "+ Add a release"
-  // is button.release-row-add, which is not .btn and is excused in BUTTON_SPEC.controls (Shaper, out of scope).
-  assert.deepEqual(debt.typedPlus, ['ui/public/app.js', 'ui/public/engine-settings-view.mjs', 'ui/public/shape/release-row.mjs']);
+  // ("+ Add model…", "+ Add project…", "+ Override a …"), which cannot hold an icon. Run 4 (D15): release-row.mjs's
+  // "Add a release" is a quiet small button with the plus icon, so it left this list.
+  assert.deepEqual(debt.typedPlus, ['ui/public/app.js', 'ui/public/engine-settings-view.mjs']);
   assert.match(read('ui/public/app.js'), /option\('__add__', '\+ Add model…'\)/);
   assert.match(read('ui/public/engine-settings-view.mjs'), /doc\.createElement\('option'\), \{ value: '', textContent: `\+ Override a/);
-  assert.match(read('ui/public/shape/release-row.mjs'), /h\('button', 'release-row-add', '\+ Add a release'\)/);
+  assert.doesNotMatch(read('ui/public/shape/release-row.mjs'), /'\+ Add a release'/);
 });
 
 test('sideways scroll: the Marketplace header wraps and a long marketplace URL breaks at 290 and 375px', () => {
