@@ -257,7 +257,8 @@ check('Create in mock mode: the made brief page shows its four sections and "Mad
     const keys = [...h.querySelectorAll('.req-brief-card [data-section]')].map((x) => x.getAttribute('data-section'));
     return keys.length === 4 && /Made from/.test(h.textContent); })()`), 15000));
 // A commit to the test repo: the brief page then says the code moved on. The server remembers a repository
-// check for 30 s (MEMO_MS in brief-job.mjs), so wait that out, then reopen the page so it is read again.
+// check for MEMO_MS (brief-job.mjs, 30 s), so wait that out, then reopen the page so it is read again.
+// test/requirements-brief-job.test.mjs keeps this sleep at MEMO_MS + 1000.
 await sleep(31000);
 writeFileSync(path.join(projDir, 'README.md'), 'orders\n');
 git('add', 'README.md'); git('commit', '-m', 'moved on');

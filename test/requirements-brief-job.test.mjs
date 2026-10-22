@@ -2,7 +2,7 @@
 // check on temp repositories; never a real model call (A7 design D3, D5, D8, D9, D13–D16, §5).
 import { test, after, beforeEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -15,7 +15,7 @@ import { commitOf, defaultBranchRef } from '../src/core/worktree.mjs';
 import { BRIEF_SYSTEM_PROMPT, mockBrief } from '../src/core/requirements/brief.mjs';
 import {
   makeBrief, briefSettled, isBriefBusy, recoverBriefs, briefStaleness, briefEstimate, briefTarget,
-  MAX_BRIEF_JOBS, BRIEF_MAX_TURNS, BRIEF_TIMEOUT_MS, STALENESS_TIMEOUT_MS, BRIEF_PRESS_PROBE_MS,
+  MAX_BRIEF_JOBS, BRIEF_MAX_TURNS, BRIEF_TIMEOUT_MS, STALENESS_TIMEOUT_MS, BRIEF_PRESS_PROBE_MS, MEMO_MS,
 } from '../src/core/requirements/brief-job.mjs';
 
 useTempHome(after);
@@ -132,6 +132,11 @@ test('constants', () => {
   assert.equal(BRIEF_TIMEOUT_MS, 600_000);
   assert.equal(STALENESS_TIMEOUT_MS, 10_000);
   assert.equal(BRIEF_PRESS_PROBE_MS, 30_000, 'Create / Refresh probe the default branches longer than a page load');
+});
+
+test('the browser proof waits out the staleness memo exactly: MEMO_MS + 1 s', () => {
+  const tool = readFileSync(new URL('../tools/verify-requirements-cdp.mjs', import.meta.url), 'utf8');
+  assert.match(tool, new RegExp(`await sleep\\(${MEMO_MS + 1000}\\);`), 'tools/verify-requirements-cdp.mjs sleeps MEMO_MS + 1000');
 });
 
 test('refusals write nothing and call nothing: switch off, no repository, no default branch, the budget', async () => {

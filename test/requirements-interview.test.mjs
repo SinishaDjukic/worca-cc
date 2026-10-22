@@ -1146,3 +1146,55 @@ test('interviewModel: a stored id matching case-insensitively comes back as the 
   const im = await interviewModel({ interviewSlot: () => ({ model: 'CLAUDE-SONNET-5' }), listModels: async () => [{ id: 'claude-sonnet-5' }] });
   assert.equal(im.model, 'claude-sonnet-5');
 });
+
+// ── the final review: spend booked in one transaction, one deadline for a look ──
+
+test('a look books its cost on the feature and the ledger together: a ledger write that fails leaves both untouched', async () => {
+  setContext('project', 'shop-1234abcd', { lookAtCode: true });
+  const { getDb } = await import('../src/core/db.mjs');
+  const f = newFeature();
+  const before = spent();
+  getDb().exec("CREATE TEMP TRIGGER req_ledger_down BEFORE INSERT ON req_cost_ledger BEGIN SELECT RAISE(ABORT, 'ledger down'); END;");
+  const orig = console.error;
+  console.error = () => {};
+  try {
+    await startOrientation(f.seq, {}, deps(fakeRunner([{ summary: 'Orders exist.', files: [] }, ROUND1])));
+    await settled(f.seq);
+  } finally {
+    console.error = orig;
+    getDb().exec('DROP TRIGGER IF EXISTS req_ledger_down');
+  }
+  near(spent(), before);
+  near(getFeature(f.seq).costUsd, 0);
+});
+
+test('a look has one deadline: the call gets only the time the checkout left', async () => {
+  setContext('project', 'shop-1234abcd', { lookAtCode: true });
+  const f = newFeature();
+  let release;
+  let entered;
+  const inCall = new Promise((res) => { entered = res; });
+  const round = fakeRunner([ROUND1]);
+  let calls = 0;
+  const d = deps({
+    // the look's call hangs until its timer aborts it; round 1 then answers as usual
+    runClaudeImpl: (opts) => (calls++ ? round.runClaudeImpl(opts) : new Promise((_res, rej) => {
+      opts.signal.addEventListener('abort', () => rej(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+      entered();
+    })),
+  }, { openLook: () => new Promise((res) => { release = () => res({ cwd: repoDir, close: async () => {} }); }) });
+  mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.now() });
+  let done = false;
+  try {
+    const p = startOrientation(f.seq, {}, d).then(() => settled(f.seq)).then(() => { done = true; });
+    for (let i = 0; i < 50 && !release; i += 1) await new Promise((r) => setImmediate(r));
+    mock.timers.tick(100_000);   // the checkout takes 100 s of the look's time
+    release();
+    await inCall;
+    mock.timers.tick(REPO_LOOK_TIMEOUT_MS - 100_000 + 1);
+    for (let i = 0; i < 50 && !done; i += 1) await new Promise((r) => setImmediate(r));
+    assert.equal(done, true, 'the call was cut at the one deadline, not a fresh timeout later');
+    await p;
+  } finally { mock.timers.reset(); }
+  assert.equal(getFeature(f.seq).orientation.skipped, 'failed');
+});

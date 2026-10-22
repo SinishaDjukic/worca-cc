@@ -1210,8 +1210,7 @@ const ROUND_OF_INDEX_DDL = `CREATE INDEX IF NOT EXISTS idx_pipelines_round_of ON
 
 // v71 Requirements (plans/requirements-design.md §3): product-owner feature specs (FEAT-<seq>), their append-only
 // interview thread, the shared context per project/workspace, and the spend counted toward the limit (D9).
-// IF NOT EXISTS only and listed in INCREMENTAL_TABLES: reconcile-safe — a DB stamped 57/58 by the pre-merge local
-// numbering (these tables) or by Shaper (upstream's 57/58) reaches 72 with both sets of tables.
+// Reconcile-safe: IF NOT EXISTS + INCREMENTAL_TABLES.
 const REQUIREMENTS_DDL = `
 CREATE TABLE IF NOT EXISTS req_features (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1288,8 +1287,7 @@ CREATE INDEX IF NOT EXISTS req_starts_pipeline ON req_starts(pipeline_id);
 `;
 
 // v73 Requirements A7 (plans/requirements-a7-design.md §3): the optional Product brief, one row per project or
-// workspace. IF NOT EXISTS + an INCREMENTAL_TABLES entry: reconcile-safe (it was v59 before the merge with dev,
-// where 59 is run tags).
+// workspace. Reconcile-safe: IF NOT EXISTS + INCREMENTAL_TABLES.
 const REQUIREMENTS_BRIEFS_DDL = `
 CREATE TABLE IF NOT EXISTS req_briefs (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,

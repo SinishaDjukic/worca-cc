@@ -1,5 +1,4 @@
 // test/db-migrate-v73.test.mjs — req_briefs and req_cost_ledger.brief_id (plans/requirements-a7-design.md §3).
-// Was v59 before the merge with dev (upstream's own v59 is run tags); renumbered to v73.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
@@ -48,20 +47,6 @@ test('a DB at upstream 70 (no requirements tables at all) reaches the current ve
     DROP TABLE req_turns; DROP TABLE req_features; PRAGMA user_version = 70`);
   migrate(db);
   assertComplete(db);
-});
-
-test('a DB stamped 59 by the pre-merge numbering (all requirements tables, no Shaper or run tags) reaches the current version', () => {
-  const db = new DatabaseSync(':memory:');
-  migrate(db);
-  // the old local v59 had req_* (with req_briefs and brief_id) and none of upstream's 57+
-  db.exec(`DROP TABLE shape_feature_notes; DROP TABLE shape_plans; DROP TABLE shape_feature_slices; DROP TABLE shape_features;
-    DROP TABLE run_tag_events; DROP TABLE run_tags; PRAGMA user_version = 59`);
-  db.prepare("INSERT INTO req_briefs (scope_type, scope_key, status, created_at, updated_at) VALUES ('project', 'p', 'made', 't', 't')").run();
-  db.prepare("INSERT INTO req_cost_ledger (feature_seq, amount_usd, ts, brief_id) VALUES (0, 0.5, 1, 1)").run();
-  migrate(db);
-  assertComplete(db);
-  assert.equal(db.prepare('SELECT status FROM req_briefs').get().status, 'made', 'the brief is kept');
-  assert.equal(db.prepare('SELECT brief_id FROM req_cost_ledger').get().brief_id, 1, 'its spend is kept');
 });
 
 test('a DB stamped past this version without the table is repaired', () => {

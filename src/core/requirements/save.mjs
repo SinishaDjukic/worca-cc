@@ -1,7 +1,7 @@
 // src/core/requirements/save.mjs
 // Save to specs/ (plans/requirements-design.md D11): writes specs/FEAT-<n>-<slug>.md into the project's
-// checkout and never commits. The checks are those of Shaper's "Save to plans/" (src/core/shape/save.mjs,
-// not merged yet): to be shared once both are on dev.
+// checkout and never commits. The checks are those of Shaper's "Save to plans/" (src/core/shape/save.mjs);
+// sharing one helper between the two is a possible follow-up.
 import { realpath, lstat, stat, mkdir, writeFile } from 'node:fs/promises';
 import { join, relative, isAbsolute } from 'node:path';
 

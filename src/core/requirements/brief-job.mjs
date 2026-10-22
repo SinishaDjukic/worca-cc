@@ -40,7 +40,8 @@ const GIT_TIMEOUT_MS = STALENESS_TIMEOUT_MS + 2_000;
 /** Bounds the default-branch probes of a Create / Refresh press: longer than a page load's, as a member read too
  *  late there is refused by name (a brief is never made from the rest without saying so). */
 export const BRIEF_PRESS_PROBE_MS = 30_000;
-const MEMO_MS = 30_000;
+/** How long a repository's staleness check is remembered (tools/verify-requirements-cdp.mjs waits it out). */
+export const MEMO_MS = 30_000;
 const FILES_MAX = 2000;   // commitFilesSince's default page
 
 const DEFAULTS = Object.freeze({

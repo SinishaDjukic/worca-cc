@@ -13,6 +13,7 @@ import { safeParseJson } from '../protocol.mjs';
 import { budgetStatus, recordRequirementsCostDelta } from '../cost-budget.mjs';
 import { openRepoLook, openWorkspaceRepoLook } from '../auto/repo-look.mjs';
 import { gitAvailable } from '../git-available.mjs';
+import { tx } from '../db.mjs';
 import { REPO_LOOK_TOOLS, REPO_LOOK_MAX_TURNS, REPO_LOOK_TIMEOUT_MS } from '../auto/classify.mjs';
 import { worcaHome, listProjects } from '../projects.mjs';
 import { utilityModelFor } from '../settings-cascade.mjs';
@@ -181,10 +182,13 @@ function assertBudget(d) {
   }
 }
 
+/** The cost on the feature and its ledger row, in one transaction: both or neither (the brief's book() does the same). */
 function charge(seq, turnId, costUsd, model) {
   if (!(costUsd > 0)) return;
-  addFeatureCost(seq, costUsd);
-  recordRequirementsCostDelta({ featureSeq: seq, turnId, amountUsd: costUsd, model: model || null });
+  tx(() => {
+    addFeatureCost(seq, costUsd);
+    recordRequirementsCostDelta({ featureSeq: seq, turnId, amountUsd: costUsd, model: model || null });
+  });
 }
 
 const CALL_KINDS = Object.freeze({
@@ -271,6 +275,9 @@ function briefFor(f) {
   return { id: b.id, madeAt: b.madeAt, text: renderBriefForPrompt(b.sections, { provenance }) };
 }
 
+// Less time than this left after the checkout: the look fails as a timeout rather than starting a call it cannot finish.
+const LOOK_MIN_CALL_MS = 1000;
+
 /** D7: a short product-language summary of what exists, or why there is none. Never throws. With a brief
  *  this is A7's closer look (D11): it asks only for what the brief does not say, and for the area. */
 async function orient(f, d, brief = null) {
@@ -285,6 +292,8 @@ async function orient(f, d, brief = null) {
   if (mockEnabled({})) return { summary: `[mock] What exists around "${f.title}": orders, each with a status.`, files: [], skipped: null };
   let look = null;
   let model = null;
+  // One deadline over checkout and call (as the brief job): the checkout is aborted at it, the call gets what is left.
+  const deadline = Date.now() + REPO_LOOK_TIMEOUT_MS;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), REPO_LOOK_TIMEOUT_MS);
   try {
@@ -293,10 +302,12 @@ async function orient(f, d, brief = null) {
     const im = await interviewModel(d);
     model = im.model || undefined;
     if (isArchived(f.seq)) return { summary: '', files: [], skipped: 'archived' };
+    const timeoutMs = deadline - Date.now();
+    if (timeoutMs < LOOK_MIN_CALL_MS) throw Object.assign(new Error('Worca could not read the code in time. Try again.'), { code: 'TIMEOUT' });
     const { text, costUsd } = await callModel(d, {
       kind: 'look', cwd: look.cwd,
       prompt: buildOrientationPrompt({ feature: f, context: ctx.body, members: look.members || null, cwd: look.cwd, brief: brief ? brief.text : null }),
-      model, ...(im.effort ? { effort: im.effort } : {}), timeoutMs: REPO_LOOK_TIMEOUT_MS,
+      model, ...(im.effort ? { effort: im.effort } : {}), timeoutMs,
     });
     return { ...normalizeOrientation(safeParseJson(text)), skipped: null, model: model || null, costUsd };
   } catch (err) {
