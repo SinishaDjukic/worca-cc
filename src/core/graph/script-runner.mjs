@@ -7,12 +7,12 @@
 // Cost is $0; the result is repeatable; every error thrown here carries
 // errorClass:null (D9) so the node site's '*' row applies — pause, resumable —
 // and a 10-minute test suite is never "retried as network".
-import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
 import { readFile, writeFile, mkdir, rm } from 'node:fs/promises';
 import { delimiter, dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { mockEnabled, buildSpawnEnv } from '../claude-runner.mjs';
+import { mockEnabled } from '../claude-runner.mjs';
+import { childEnv, spawnChild, spawnChildSync } from '../spawn.mjs';
 import { scrubbedEnv } from '../plugin-shim.mjs';            // PATH/HOME, the proxy and CA variables + the Windows start-up baseline (P11); no cycle: plugin-shim imports no graph module
 import { normalizeReview } from '../protocol.mjs';
 import { readVerdict, missingVerdictWarning } from './exec-io.mjs';
@@ -173,6 +173,14 @@ export function buildEnvelope(ctx) {
   };
 }
 
+/** The per-step names envForShell sets for the envelope's ports and params (WORCA_IN_<PORT>, WORCA_OUT_<PORT> for an
+ *  output with a path, WORCA_PARAM_<NAME>): what a sandbox env declares for the step, exact names (child-env.mjs). */
+export function scriptContractNames(envelope) {
+  return [...Object.keys(envelope.inputs || {}).map((id) => `WORCA_IN_${upperSnake(id)}`),
+    ...Object.entries(envelope.outputs || {}).filter(([, p]) => p?.path).map(([id]) => `WORCA_OUT_${upperSnake(id)}`),
+    ...Object.keys(envelope.params || {}).map((id) => `WORCA_PARAM_${upperSnake(id)}`)];
+}
+
 /** The child's environment (D11 + §4.3): the server's env minus WORCA_HOME /
  *  WORCA_RUN_ROOT / WORCA_HOST_PID, plus the envelope as WORCA_* variables. Both
  *  runtimes get it; the shell reads it, the node child gets the envelope on stdin too. */
@@ -208,12 +216,12 @@ export function envForShell(envelope, baseEnv = process.env) {
 }
 
 /** The env a script child STARTS from (P11). With the run's env-scrub guardrail on it is
- *  what that run's agents get (buildSpawnEnv: base vars + the per-project allowlist) over
+ *  the allowlist child env (childEnv kind 'script': base names + the per-project allowlist) over
  *  scrubbedEnv (PATH/HOME, the proxy and CA variables, and the baseline a Windows child needs
  *  to start at all: SYSTEMROOT/COMSPEC/PATHEXT/TEMP…) — a script never sees MORE of the host
  *  environment than the agents beside it. Scrub off: the server's env (D11). */
 export function scriptBaseEnv(claudeOpts, platform = process.platform) {
-  const scrubbed = buildSpawnEnv(claudeOpts?.envScrub, claudeOpts?.envAllowlist);
+  const scrubbed = claudeOpts?.envScrub ? childEnv({ kind: 'script', allowlist: claudeOpts?.envAllowlist }).env : null;
   // Never a GitHub or Azure DevOps credential, nor a proxy URL with a login, like the agents
   // (src/core/host-credentials.mjs, env-proxy.mjs withoutProxyLogin).
   return withNoGitPath(withoutProxyLogin(stripHostCredentials(scrubbed ? { ...scrubbedEnv(platform), ...scrubbed } : process.env)), { platform });
@@ -306,7 +314,7 @@ export function killTree(child, platform = process.platform) {
   if (platform === 'win32') {
     // taskkill /T needs the root alive to walk the tree; once it is gone there is nothing left to address.
     if (child.exitCode === null && child.signalCode === null) {
-      try { spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }); } catch { /* best effort */ }
+      try { spawnChildSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }); } catch { /* best effort */ }
       try { child.kill('SIGKILL'); } catch { /* gone */ }
     }
     return;
@@ -356,7 +364,7 @@ export function spawnScript({ file, args, cwd, env, stdin = null, timeoutMs, sig
     }
     const child = remote
       ? remote.spawn(file, args, { cwd, env, stdin })
-      : spawn(spawnFile, spawnArgs, {
+      : spawnChild(spawnFile, spawnArgs, {
         cwd,
         env: spawnEnv,
         detached: platform !== 'win32',
@@ -582,7 +590,8 @@ export async function runScriptExecution(ctx) {
   if (remote && script.file) await remote.uploadTrees(scriptUploadRoots(script.file));
   // CHROME_NO_SANDBOX: the sandbox VM is the isolation boundary, and Chrome's own namespace sandbox needs kernel
   // support the template user may not have (promo-kit/tools/cdp.mjs, scripts/c4-raster.mjs read it).
-  const runEnv = remote ? { ...remote.envFor(env, { keep: Object.keys(ctx.runCtx?.secretEnv || {}) }), CHROME_NO_SANDBOX: '1' } : env;
+  // The step's own port and param vars are declared by exact name (scriptContractNames): no WORCA_IN_* family.
+  const runEnv = remote ? { ...remote.envFor(env, { keep: [...Object.keys(ctx.runCtx?.secretEnv || {}), ...scriptContractNames(envelope)] }), CHROME_NO_SANDBOX: '1' } : env;
   // Clamped as well as validated (v4 T3): the bench and the CLI build a ctx without going through V22, and a delay
   // past 2^31-1 ms makes the timer fire after one millisecond.
   const timeoutMs = Number.isInteger(script.timeoutMs) && script.timeoutMs >= MIN_TIMEOUT_MS ? Math.min(script.timeoutMs, MAX_TIMEOUT_MS) : DEFAULT_TIMEOUT_MS;

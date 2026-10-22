@@ -336,7 +336,7 @@ test('read-only sandbox: --sandbox read-only, the shell off and no writable dirs
   assert.deepEqual(buildCodexArgs({}).slice(4, 6), ['--sandbox', 'workspace-write'], 'the default is unchanged');
 });
 
-test('a read-only codex spawn (a utility job over untrusted input) gets a scrubbed env; a node spawn keeps the host env', { skip: process.platform === 'win32' }, async () => {
+test('every codex spawn gets the catalog allowlist; a read-only one (a utility job over untrusted input) not even the project allowlist', { skip: process.platform === 'win32' }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'worca-codex-env-'));
   const keys = { AWS_SECRET_ACCESS_KEY: 'aws-secret', ANTHROPIC_API_KEY: 'anthropic-secret', OPENAI_API_KEY: 'openai-key' };
   const prev = Object.fromEntries(Object.keys(keys).map((k) => [k, process.env[k]]));
@@ -351,7 +351,14 @@ test('a read-only codex spawn (a utility job over untrusted input) gets a scrubb
     assert.ok(env.PATH && env.HOME, 'the base env survives');
     const rw = fakeCodexBin(mkdtempSync(join(tmpdir(), 'worca-codex-env-rw-')), 'ok');
     await runCodexProcess({ cwd: dir, bin: rw.bin, prompt: 'P', usageDir: dir });
-    assert.equal(rw.env().AWS_SECRET_ACCESS_KEY, 'aws-secret', 'an agent node spawn is unchanged (its guardrails decide)');
+    assert.equal(rw.env().AWS_SECRET_ACCESS_KEY, undefined, 'an agent node spawn gets the allowlist too (decision 3)');
+    assert.equal(rw.env().ANTHROPIC_API_KEY, undefined, "never another engine's credential");
+    const al = fakeCodexBin(mkdtempSync(join(tmpdir(), 'worca-codex-env-al-')), 'ok');
+    await runCodexProcess({ cwd: dir, bin: al.bin, prompt: 'P', usageDir: dir, envAllowlist: ['AWS_SECRET_ACCESS_KEY'] });
+    assert.equal(al.env().AWS_SECRET_ACCESS_KEY, 'aws-secret', "the project's allowlist adds a name");
+    const ral = fakeCodexBin(mkdtempSync(join(tmpdir(), 'worca-codex-env-ral-')), 'ok');
+    await runCodexProcess({ cwd: dir, bin: ral.bin, prompt: 'P', sandbox: 'read-only', usageDir: dir, envAllowlist: ['AWS_SECRET_ACCESS_KEY'] });
+    assert.equal(ral.env().AWS_SECRET_ACCESS_KEY, undefined, 'not for a read-only spawn');
   } finally {
     for (const [k, v] of Object.entries(prev)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
     rmSync(dir, { recursive: true, force: true });

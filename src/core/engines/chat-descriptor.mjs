@@ -40,13 +40,14 @@ const ready = async () => ({});
  *   modelProblem(id)    why a model of this engine cannot run a chat (a provider that is itself an agent CLI, one that
  *                       refuses a request without the shell), or null; the picker leaves such a model out
  *   ownFolder           a chat runs in a folder of its own under the scratch dir (the engine keeps sessions per folder)
- *   signIn(model, env)  the env names (a trailing `_` = a prefix) the engine signs in with for `model`: handed on to
- *                       worca's own MCP child too (chatSignInEnv), whose Auto classifier runs on the chat's engine
+ *   signInMode(model, env)  the catalog sign-in mode (engine-switch.mjs `signIn.modes[].id`) a chat on `model` signs in
+ *                       with, or null for every mode's: its exact names, and the engine's endpoint names, are handed on
+ *                       to worca's own MCP child too (chatSignInEnv), whose Auto classifier runs on the chat's engine
  */
 export function makeChatDescriptor({
   engine, lockdown, askSupport = ready, selfTest = null, preflight = ready, listRates = null, resumeNotFound = never,
   docsAnchor, setupLabel, noLockdownMessage, shellTrippedMessage, titles = true, suggestionModel = CHAT_MODEL, prompt = {},
-  notReadyFlag, metaTools = [], modelProblem = null, ownFolder = false, turnImages = false, signIn = () => [],
+  notReadyFlag, metaTools = [], modelProblem = null, ownFolder = false, turnImages = false, signInMode = () => null,
 }) {
   const label = engineLabel(engine);
   const chat = ENGINES[engine]?.chat || { images: false, pdfs: false };
@@ -66,7 +67,7 @@ export function makeChatDescriptor({
     metaTools: Object.freeze([...metaTools]),
     modelProblem: typeof modelProblem === 'function' ? modelProblem : () => null,
     ownFolder: ownFolder === true,
-    signIn: typeof signIn === 'function' ? signIn : () => [],
+    signInMode: typeof signInMode === 'function' ? signInMode : () => null,
     suggestionModel: typeof suggestionModel === 'string' && suggestionModel ? suggestionModel : null,
     prompt: Object.freeze({
       cli: prompt.cli || `${label} with its own sign-in`,
@@ -92,11 +93,18 @@ export function composerBinaryWords(label, { images = false, pdfs = false } = {}
   return `A ${label} chat cannot view images or PDFs: read_attachment returns only their kind and size.`;
 }
 
-/** The names in `env` that a chat on `d` signs in with for `model` (its descriptor's `signIn`; never a WORCA_ name). */
+/** The names in `env` that a chat on `d` signs in with for `model`, exact names only (decision 3): the catalog sign-in
+ *  mode its descriptor's `signInMode` names (null: every mode's), plus the engine's endpoint names (its `env.relayOwned`
+ *  that no mode holds as a credential). Never a WORCA_ name. */
 export function chatSignInEnv(d, model, env = process.env) {
-  const want = d ? d.signIn(model, env) : [];
-  return Object.keys(env).filter((k) => !/^WORCA_/.test(k) && typeof env[k] === 'string' && env[k] !== ''
-    && want.some((w) => (w.endsWith('_') ? k.startsWith(w) : k === w))).sort();
+  const entry = d ? ENGINES[d.engine] : null;
+  if (!entry?.signIn) return [];
+  const modes = entry.signIn.modes;
+  const id = d.signInMode(model, env);
+  const creds = new Set(modes.filter((m) => m.kind !== 'own').flatMap((m) => m.env));
+  const want = new Set([...(id == null ? modes : modes.filter((m) => m.id === id)).flatMap((m) => m.env),
+    ...entry.env.relayOwned.filter((k) => !creds.has(k))]);
+  return Object.keys(env).filter((k) => want.has(k) && !/^WORCA_/.test(k) && typeof env[k] === 'string' && env[k] !== '').sort();
 }
 
 /** The error a per-turn cost cap gives a chat on `d` for `model`, or null when worca can keep the turn under it:
@@ -120,20 +128,4 @@ export function providerListRates(id) {
   if (p === 'anthropic') return listPriceFor(m[2]);
   if (p === 'openai') return openaiListRates(m[2]);
   return null;
-}
-
-/** Extra env prefixes a provider's key and settings go by, beyond its own upper-cased name. */
-const PROVIDER_ENV_EXTRA = Object.freeze({
-  google: ['GEMINI_'], gemini: ['GOOGLE_'], gcp_vertex_ai: ['GOOGLE_', 'GCP_'], 'google-vertex': ['GOOGLE_', 'GCP_'], vertex: ['GOOGLE_', 'GCP_'],
-  aws_bedrock: ['AWS_'], 'amazon-bedrock': ['AWS_'], bedrock: ['AWS_'], azure_openai: ['AZURE_'], azure: ['AZURE_OPENAI_'],
-});
-/**
- * The env prefixes of a chat model's provider (`provider/model`): the ones a chat on Goose or OpenCode keeps through its
- * env scrub, so a key in worca's environment reaches that provider and no other's. A chat has no shell, so the engine
- * reads them only to call its provider (and worca's MCP child inherits them).
- */
-export function providerEnvPrefixes(modelId) {
-  const p = String(modelId || '').split('/')[0].trim().toLowerCase();
-  if (!/^[a-z0-9][a-z0-9_.-]*$/.test(p) || !String(modelId).includes('/')) return [];
-  return [...new Set([`${p.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_`, ...(PROVIDER_ENV_EXTRA[p] || [])])];
 }

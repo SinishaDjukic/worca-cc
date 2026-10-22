@@ -141,9 +141,9 @@ test('runCodexProcess: an Ask lockdown spawn reads the MCP config, keeps its env
   const fake = fakeCodex(dir, 'ok');
   const cfg = join(dir, 'mcp.json');
   writeFileSync(cfg, JSON.stringify({ mcpServers: { worca: { type: 'stdio', command: process.execPath, args: ['/s.mjs'], env: { WORCA_ASK_RELAY_TOKEN: 'tok-SECRET', WORCA_ASK_ENGINE: 'codex' } } } }));
-  process.env.CODEX_TEST_MARK = '1';   // codex's own prefix rides even a scrubbed env
+  const prevOrg = process.env.OPENAI_ORG_ID; process.env.OPENAI_ORG_ID = 'org-test';   // a catalog name of codex rides every spawn
   try { await runCodexProcess({ cwd: dir, bin: fake.bin, prompt: 'P', sandbox: 'read-only', askLockdown: CANDIDATE_LOCKDOWN, mcpConfigPath: cfg, images: ['/img/a.png'], envScrub: true, envAllowlist: [], usageDir: dir }); }
-  finally { delete process.env.CODEX_TEST_MARK; }
+  finally { if (prevOrg === undefined) delete process.env.OPENAI_ORG_ID; else process.env.OPENAI_ORG_ID = prevOrg; }
   const args = fake.args();
   assert.ok(args.includes('mcp_servers.worca.required=true'));
   assert.deepEqual(args.slice(0, 3), ['exec', '-i', '/img/a.png']);
@@ -153,8 +153,8 @@ test('runCodexProcess: an Ask lockdown spawn reads the MCP config, keeps its env
   // codex gives an MCP server a short default env plus env_vars: every name codex itself got is listed, so the worca
   // server sees the same env a Claude chat's child inherits.
   const names = JSON.parse(args.find((a) => a.startsWith('mcp_servers.worca.env_vars=')).slice('mcp_servers.worca.env_vars='.length));
-  for (const k of ['PATH', 'HOME', 'CODEX_TEST_MARK']) assert.ok(names.includes(k), k);
-  assert.equal(fake.env().CODEX_TEST_MARK, '1');
+  for (const k of ['PATH', 'HOME', 'OPENAI_ORG_ID']) assert.ok(names.includes(k), k);
+  assert.equal(fake.env().OPENAI_ORG_ID, 'org-test');
 });
 
 test('runCodexProcess: a pipeline spawn attaches its stdio servers, fills ${VAR} refs from the spawn env, redacts the secrets, skips remote ones', POSIX, async () => {
@@ -194,7 +194,8 @@ test('runCodexProcess: ${VAR} in a server\'s command and args reaches codex fill
   const cfg = join(dir, 'mcp.json');
   writeFileSync(cfg, JSON.stringify({ mcpServers: { fs: { command: '${CODEX_TEST_BIN}', args: ['--root', '${CODEX_TEST_ROOT:-/fallback}'] } } }));
   const prev = process.env.CODEX_TEST_BIN; process.env.CODEX_TEST_BIN = '/usr/bin/true';
-  try { await runCodexProcess({ cwd: dir, bin: fake.bin, prompt: 'P', mcpConfigPath: cfg, usageDir: dir }); }
+  // A reference expands from the spawn's own env: the allowlist names what of worca's env that holds.
+  try { await runCodexProcess({ cwd: dir, bin: fake.bin, prompt: 'P', mcpConfigPath: cfg, usageDir: dir, envAllowlist: ['CODEX_TEST_BIN'] }); }
   finally { if (prev === undefined) delete process.env.CODEX_TEST_BIN; else process.env.CODEX_TEST_BIN = prev; }
   const args = fake.args();
   assert.ok(args.includes('mcp_servers.fs.command="/usr/bin/true"'));

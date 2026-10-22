@@ -1,7 +1,7 @@
 // src/core/pac-eval.mjs — ask a PAC script which proxy it picks for one URL, without running it in this process.
 // The script runs in pac-worker.mjs under `node --permission` (only that file readable, no child processes or
 // workers), a 64 MB heap and a kill timer. This side answers its DNS lookups and parses the answer.
-import { spawn } from 'node:child_process';
+import { spawnChild } from './spawn.mjs';
 import { lookup } from 'node:dns/promises';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -31,7 +31,7 @@ export function parsePacResult(text) {
 
 function runWorker(payload, { timeoutMs, execPath }) {
   return new Promise((resolve) => {
-    const child = spawn(execPath, ['--permission', `--allow-fs-read=${WORKER}`, '--max-old-space-size=64', WORKER],
+    const child = spawnChild(execPath, ['--permission', `--allow-fs-read=${WORKER}`, '--max-old-space-size=64', WORKER],
       // No inherited env (no token or proxy login reaches the script); Windows needs SystemRoot for Node to start.
       { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true, env: process.platform === 'win32' && process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {} });
     let out = ''; let done = false;

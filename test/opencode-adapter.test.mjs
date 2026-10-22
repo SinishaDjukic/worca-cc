@@ -207,16 +207,20 @@ test('preflight: a spawn without a model refuses (OpenCode would pick its own de
   await withEnv({ [OPT_IN]: '1' }, async () => assert.deepEqual(await opencodePreflight({ bin, defaultModel: true }), {}));
 });
 
-test('preflight: the credential check sees the env the agent gets — a key scrub keeps from it does not count', POSIX, async () => {
+test('preflight: the credential check sees the env the agent gets — a key the allowlist withholds does not count', POSIX, async () => {
   const dir = tmp();
   const bin = join(dir, 'opencode');
+  // DEEPSEEK_API_KEY: a provider key the catalog does not name (src/shared/engine-switch.mjs ENGINES.opencode), so the
+  // agent gets it only through the allowlist; ANTHROPIC_API_KEY is one of its sign-in names and always passes.
   writeFileSync(bin, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo 1.18.23; exit 0; fi\n' +
-    'if [ -n "$ANTHROPIC_API_KEY" ]; then echo "0 credentials"; echo "1 environment variables"; else echo "0 credentials"; echo "0 environment variables"; fi\n');
+    'if [ -n "$DEEPSEEK_API_KEY$ANTHROPIC_API_KEY" ]; then echo "0 credentials"; echo "1 environment variables"; else echo "0 credentials"; echo "0 environment variables"; fi\n');
   chmodSync(bin, 0o755);
-  await withEnv({ [OPT_IN]: undefined, ANTHROPIC_API_KEY: 'worca-only' }, async () => {
-    assert.deepEqual(await opencodePreflight({ bin }), {}, 'no scrub: the agent gets the key too');
-    assert.match((await opencodePreflight({ bin, envScrub: true })).refusal, /no provider credentials in the agent's environment/);
-    assert.deepEqual(await opencodePreflight({ bin, envScrub: true, envAllowlist: ['ANTHROPIC_API_KEY'] }), {});
+  await withEnv({ [OPT_IN]: undefined, DEEPSEEK_API_KEY: 'worca-only', ANTHROPIC_API_KEY: undefined }, async () => {
+    assert.match((await opencodePreflight({ bin })).refusal, /no provider credentials in the agent's environment/);
+    assert.deepEqual(await opencodePreflight({ bin, envAllowlist: ['DEEPSEEK_API_KEY'] }), {});
+  });
+  await withEnv({ [OPT_IN]: undefined, DEEPSEEK_API_KEY: undefined, ANTHROPIC_API_KEY: 'worca-key' }, async () => {
+    assert.deepEqual(await opencodePreflight({ bin }), {}, 'a catalog sign-in name: the agent gets it too');
   });
 });
 

@@ -339,7 +339,7 @@ test('runClaude FORWARDS redactValues: every event, the result text and the erro
   assert.ok(!JSON.stringify(events).includes('s3cret-value-123'));
 });
 // ── guardrails: env scrub ────────────────────────────────────────────────────
-import { buildSpawnEnv } from '../src/core/claude-runner.mjs';
+import { childEnv } from '../src/core/spawn.mjs';
 
 /** A fake `claude` that dumps its own environment (KEY=VALUE lines) to a file. */
 async function fakeEnvBin(dir, outFile) {
@@ -349,17 +349,17 @@ async function fakeEnvBin(dir, outFile) {
   return bin;
 }
 
-test('buildSpawnEnv: scrub on -> base + ANTHROPIC_*/CLAUDE_* + allowlist only', POSIX_SHIM, () => {
+test('childEnv (claude): base + its catalog names + its sign-in + allowlist only', POSIX_SHIM, () => {
   const prev = { AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY, NPM_TOKEN: process.env.NPM_TOKEN, ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY };
   process.env.AWS_SECRET_ACCESS_KEY = 'leak-me';
   process.env.NPM_TOKEN = 'npm-secret';
   process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
   try {
-    const env = buildSpawnEnv(true, ['NPM_TOKEN']);
+    const env = childEnv({ engine: 'claude', allowlist: ['NPM_TOKEN'] }).env;
     assert.equal(env.AWS_SECRET_ACCESS_KEY, undefined, 'cloud creds are scrubbed');
     assert.equal(env.NPM_TOKEN, 'npm-secret', 'allowlisted var passes through');
     assert.equal(env.ANTHROPIC_API_KEY, 'sk-ant-test', 'claude auth survives');
-    assert.equal(env.PATH, process.env.PATH, 'base PATH survives');
+    assert.ok(env.PATH.endsWith(process.env.PATH), 'base PATH survives');
   } finally {
     for (const [k, v] of Object.entries(prev)) {
       if (v === undefined) delete process.env[k]; else process.env[k] = v;
@@ -411,15 +411,15 @@ async function runWithEnvDump(extraOpts, { leak } = {}) {
   return readFile(out, 'utf8');
 }
 
-test('modelEnv reaches the spawn env: inherited around it with scrub off; survives scrub and wins an ambient collision', POSIX_SHIM, async () => {
+test('modelEnv reaches the spawn env: the allowlist around it, scrub or not; it wins an ambient collision', POSIX_SHIM, async () => {
   await checkRows([
-    { name: 'runClaude FORWARDS modelEnv into the spawn env; parent env still inherited (scrub off)', run: async () => {
+    { name: 'runClaude FORWARDS modelEnv into the spawn env; the parent env only through the allowlist (scrub off)', run: async () => {
       const dump = await runWithEnvDump(
         { modelEnv: { ANTHROPIC_BASE_URL: 'https://proxy.test/v1' } },
         { leak: 'inherited' },
       );
       assert.ok(dump.includes('ANTHROPIC_BASE_URL=https://proxy.test/v1'), 'modelEnv reached the child');
-      assert.ok(dump.includes('WORCA_TEST_LEAK=inherited'), 'still inherits process.env around it');
+      assert.ok(!dump.includes('WORCA_TEST_LEAK'), 'the allowlist withholds a name it does not list (decision 3)');
     } },
     { name: 'modelEnv SURVIVES env scrub and WINS collisions with the ambient env', run: async () => {
       const prevUrl = process.env.ANTHROPIC_BASE_URL;
@@ -461,10 +461,10 @@ test('reserved modelEnv keys are re-dropped at the spawn (defense-in-depth, with
   assert.equal(warnings.filter((w) => w.includes('modelEnv: dropping')).length, 2, `one warn per dropped key: ${JSON.stringify(warnings)}`);
 });
 
-test('absent/empty modelEnv keeps the spawn env byte-identical (inherit path)', POSIX_SHIM, async () => {
+test('absent/empty modelEnv keeps the spawn env the allowlist env; an allowlisted name passes', POSIX_SHIM, async () => {
   for (const extra of [{}, { modelEnv: {} }, { modelEnv: undefined }]) {
-    const dump = await runWithEnvDump(extra, { leak: 'inherited' });
-    assert.ok(dump.includes('WORCA_TEST_LEAK=inherited'), `inherits for ${JSON.stringify(extra)}`);
+    const dump = await runWithEnvDump({ ...extra, envAllowlist: ['WORCA_TEST_LEAK'] }, { leak: 'inherited' });
+    assert.ok(dump.includes('WORCA_TEST_LEAK=inherited'), `allowlisted for ${JSON.stringify(extra)}`);
   }
 });
 
@@ -492,12 +492,12 @@ async function dumpWithAmbientCap(ambient, extraOpts, opts) {
   };
 }
 
-test('spawnEnv: replaces an ambient value with the parent env inherited, survives scrub, and loses to a model env setting the same key', POSIX_SHIM, async () => {
+test('spawnEnv: replaces an ambient value, the allowlist around it, survives scrub, and loses to a model env setting the same key', POSIX_SHIM, async () => {
   await checkRows([
-    { name: 'runClaude FORWARDS spawnEnv into the spawn env: it replaces an ambient value, the parent env is still inherited', run: async () => {
+    { name: 'runClaude FORWARDS spawnEnv into the spawn env: it replaces an ambient value; the parent env only through the allowlist', run: async () => {
       const env = await dumpWithAmbientCap('2', { spawnEnv: { [CAP_KEY]: '8' } }, { leak: 'inherited' });
       assert.equal(env.line(CAP_KEY), `${CAP_KEY}=8`, 'the run-level value replaces the ambient 2');
-      assert.ok(env.has('WORCA_TEST_LEAK=inherited'), 'still inherits process.env around it');
+      assert.ok(!env.has('WORCA_TEST_LEAK'), 'the allowlist withholds a name it does not list');
     } },
     { name: 'spawnEnv survives env scrub, and a model env that sets the same key wins', run: async () => {
       const scrubbed = await dumpWithAmbientCap(undefined,
@@ -517,9 +517,9 @@ test('spawnEnv never sets a reserved key or a non-string; absent keeps the env b
   assert.ok(!bad.has('WORCA_MOCK=1'), 'reserved WORCA_ key dropped');
   assert.equal(bad.line('NUMERIC'), '', 'non-string dropped');
   for (const extra of [{}, { spawnEnv: undefined }, { spawnEnv: {} }]) {
-    const env = await dumpWithAmbientCap(undefined, extra, { leak: 'inherited' });
+    const env = await dumpWithAmbientCap(undefined, { ...extra, envAllowlist: ['WORCA_TEST_LEAK'] }, { leak: 'inherited' });
     assert.equal(env.line(CAP_KEY), '', JSON.stringify(extra));
-    assert.ok(env.has('WORCA_TEST_LEAK=inherited'), `inherits for ${JSON.stringify(extra)}`);
+    assert.ok(env.has('WORCA_TEST_LEAK=inherited'), `allowlisted for ${JSON.stringify(extra)}`);
   }
 });
 
@@ -800,7 +800,7 @@ test('WORCA_DEBUG_SPAWN on: ONE stderr event with bin + argv + routing env; NO s
 
 // ── GitHub credentials never reach claude (src/core/github-credentials.mjs) ──
 
-test('no GitHub or Azure DevOps credential reaches claude: scrub off, scrub on with it allowlisted, or set by a model env', POSIX_SHIM, async () => {
+test('no GitHub or Azure DevOps credential reaches claude: allowlisted, scrub on with it allowlisted, or set by a model env', POSIX_SHIM, async () => {
   const ADO_KEYS = ['WORCA_ADO_TOKEN', 'WORCA_ADO_READ_TOKEN', 'WORCA_ADO_WRITE_TOKEN', 'AZURE_DEVOPS_EXT_PAT', 'WORCA_ADO_GIT_TOKEN', 'WORCA_ADO_BOARDS_TOKEN',
     'WORCA_BB_TOKEN', 'WORCA_BB_READ_TOKEN', 'WORCA_BB_WRITE_TOKEN', 'WORCA_BB_EMAIL', 'WORCA_BB_GIT_TOKEN', 'WORCA_BB_GIT_USER'];
   const keys = ['GH_TOKEN', 'GITHUB_TOKEN', 'WORCA_GH_READ_TOKEN', 'WORCA_GH_WRITE_TOKEN', ...ADO_KEYS];
@@ -808,7 +808,7 @@ test('no GitHub or Azure DevOps credential reaches claude: scrub off, scrub on w
   for (const k of keys) process.env[k] = `secret-${k}`;
   try {
     const dumps = [
-      await runWithEnvDump({}, { leak: 'x' }),                                              // Permissive / Normal: scrub off
+      await runWithEnvDump({ envAllowlist: keys }, { leak: 'x' }),                          // allowlisted, scrub off
       await runWithEnvDump({ envScrub: true, envAllowlist: keys }),                         // Strict, allowlisted anyway
       await runWithEnvDump({ modelEnv: { GH_TOKEN: 'from-model', ANTHROPIC_BASE_URL: 'http://p' } }),
     ];
@@ -817,7 +817,7 @@ test('no GitHub or Azure DevOps credential reaches claude: scrub off, scrub on w
       for (const k of ADO_KEYS) assert.ok(!d.includes(`${k}=`), `${k} is not in the child env`);
       assert.ok(d.includes('PATH='), 'the child still got a usable env');
     }
-    assert.ok(dumps[0].includes('WORCA_TEST_LEAK=x'), 'scrub off still inherits everything else');
+    assert.ok(!dumps[0].includes('WORCA_TEST_LEAK'), 'the allowlist withholds everything it does not list');
   } finally {
     for (const k of keys) if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k];
   }

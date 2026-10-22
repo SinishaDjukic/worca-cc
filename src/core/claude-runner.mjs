@@ -47,7 +47,7 @@ export {
   subagentHooksEnabled, debugSpawnEnabled, ARGV_INLINE_LIMIT, argvLength, redactArgvForLog,
   planClaudeInvocation, stageClaudeInvocation, extractResultCost, BENIGN_STDERR_PATTERNS, isBenignStderrLine, brokerRouteFor, isHookEvent,
 } from './engines/claude.mjs';
-export { DEFAULT_SIGKILL_GRACE_MS, sigkillGraceMs, buildSpawnEnv, cleanRunEnv, SPAWN_ENV_BASE } from './engines/spawn.mjs';
+export { DEFAULT_SIGKILL_GRACE_MS, sigkillGraceMs, cleanRunEnv, SPAWN_ENV_BASE } from './spawn.mjs';
 export { MOCK_WRITER_ROLES, MOCK_ROLE_CLARIFY, MOCK_ROLE_DECOMPOSER, MOCK_ROLE_MEMORY_DEFRAG, memoryDirsFromPrompt, mockSpawnLog, recordMockSpawn } from './engines/mock.mjs';
 
 /**
@@ -198,6 +198,9 @@ export async function runClaude(o = {}) {
     // The run's remote execution environment (src/core/exec-env/; e2b mode only): the spawn runs in its
     // sandbox. Absent on local runs.
     execEnv,
+    workRoot = null,
+    // Decision 11: switch the engine's sub-agent tool off (engines/index.mjs subagentPolicy 'deny').
+    subagentsOff = false,
     // Which engine adapter runs this spawn (engines/index.mjs). Default claude.
     engine: engineName,
     // Credential broker (broker-client.mjs): who pays for this spawn, what kind it is (sets
@@ -300,6 +303,8 @@ export async function runClaude(o = {}) {
     argvInlineLimit,
     asAgent,
     execEnv,
+    workRoot,
+    subagentsOff,
     billTo,
     spawnKind,
     runId,

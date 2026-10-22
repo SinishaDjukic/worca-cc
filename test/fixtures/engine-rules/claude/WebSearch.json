@@ -1,0 +1,12 @@
+{
+  "rules": {
+    "deny": [
+      "WebSearch"
+    ]
+  },
+  "expected": {
+    "deny": [
+      "WebSearch"
+    ]
+  }
+}

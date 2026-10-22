@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Security: one owner per engine boundary (core protection layer, part 1)
+
+- Every engine's agents get an allowlist environment, Claude's included and with env scrub off: the base names, the engine's own exact names from its catalog entry (`src/shared/engine-switch.mjs`), its sign-in names and the guardrail set's allowlist. No prefix family (`CLAUDE_*`, `COPILOT_*`) passes any more, locally or in a sandbox, so `COPILOT_ALLOW_ALL` and another engine's keys never reach an agent. Each run names what it withheld in one log line (`env: N variables not passed to <engine> (allowlist): …`), names only.
+- Chat spawns go through the same allowlist: every chat engine's turn, its title, suggestion and classifier helper calls, and the MCP servers they start get the allowlist environment with the one sign-in its model uses, never worca's whole env.
+- A stop kills an agent's whole process tree: a backgrounded dev server or MCP server started by the agent dies with the step, locally and in an E2B sandbox (the step runs under `setsid` and its group is signalled; the sandbox and its model relay keep running).
+- The engine gate reads the catalog for every engine, Claude included: a rule kind that is not proven held (a recorded denial under `test/fixtures/engine-rules/`) is refused without `--allow-unguarded-engine`. A run with path rules on an engine with a shell logs that the shell can still reach those paths. A local native run says it is not a sandbox.
+- An engine's sub-agent tool is switched off unless the catalog proves its sub-agents keep the run's rules (Codex `multi_agent`, Copilot `task`; Claude's are proven).
+- Archiving a run removes its engine sessions (Claude Code transcripts, codex rollouts, Copilot session state, Cursor chats), never a sign-in file.
+- A model id that starts with `-` is refused before anything spawns; run-start checks run under the run's own env.
+- **Upgrade notes.**
+  - Bedrock, Vertex and Foundry users must allowlist their cloud variables by name (`AWS_PROFILE`, `AWS_REGION`, `GOOGLE_APPLICATION_CREDENTIALS`, …) in the guardrail set's environment allowlist, scrub on or off. The run log names every variable it did not pass.
+  - Claude Code 2.1.308 does not consult `Write(…)` rules (Edit rules cover every file-editing tool) and has no Grep or Glob tool: such rules now need `--allow-unguarded-engine` on Claude too. Its `Read`, `Edit`, `Bash`, `WebFetch`, `WebSearch` and MCP rules are held (each has a recorded denial) and need no flag.
+  - The gate now also reads the project's own `.claude/settings.json` deny rules on Claude, as on the other engines: a project that denies `Write(…)`, `Grep` or `Glob` there needs `--allow-unguarded-engine` to start on Claude.
+  - On Codex, Copilot and Cursor a bare `Bash`, `WebSearch`, `WebFetch` or MCP rule needs the flag as well: no rule kind of theirs has a recorded denial yet.
+
 ### Security: worca's trust boundaries
 
 - Worca's own git calls in a project or run checkout never run a hook or config command an agent planted in the shared `.git`, including a filter behind a conditional include on `git worktree add` (runs, terminal branch folders, team metrics, policy and memory). Model-chosen code in the chat (`test_script` with a draft, a `command`/`code` param, or a built-in or plugin script) runs only behind an approval card that shows every value it runs. Under agent isolation, every caller on the box (all of 127.0.0.0/8 included) needs the instance token. `/answer`, `/approve`, `/retry`, `/abort` and `/cancel` follow the `/direct` rule in group chats. The credential broker gives the body budget back at a deadline and books paused readers, large JSON answers and every stream flag. Artifact routes read the file the link check passed. A relayed chat's MCP config is readable only by that person's agent user.

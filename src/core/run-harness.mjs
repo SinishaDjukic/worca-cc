@@ -76,7 +76,7 @@ import {
 } from './preflight.mjs';
 import { fanoutCap, mapWithCap } from './fanout.mjs';
 import { resolveStepModels, observeModelCost, resolveModelCost, modelCostConfig, readTeamMetricsPrefs, modelHasBaseUrlRouting, bridgedModelInfo, catalogHasModel, engineOfModel, enginesOfModel, modelRunsOn, modelConnection, foreignRunModel, modelForEngine, listModels, liveCostRates, estimateCost } from './config.mjs';
-import { getEngine, selectRunEngine, CAPABILITY_FALLBACKS, describeUnattachableMcp } from './engines/index.mjs';
+import { getEngine, selectRunEngine, CAPABILITY_FALLBACKS, describeUnattachableMcp, ruleSupport, subagentPolicy } from './engines/index.mjs';
 import { bridgeCallsFor, bridgeCostFor, forgetBridgeTag } from './bridge/telemetry.mjs';
 import { readGuardrailSet, defaultGuardrailSetId } from './guardrail-store.mjs';
 import { unionGuardrails, guardrailsToPermissionRules, mergePermissionRules } from './guardrails.mjs';
@@ -170,7 +170,9 @@ import { nightModeToggleFor, nightModeHereSinceFor, personAwayStatus, awayPerPer
 import { probeTargetForModel, probeReachable, hostOf } from './upstream-probe.mjs';
 import { waitForNetwork, NETWORK_ACTOR } from './network-wait.mjs';
 import { MCP_TOOL_NAME_400_RE, MCP_TOOL_NAME_TOO_LONG } from '../shared/mcp-tool-name.mjs';
-import { usageLimitSwitches, engineList, engineLabel } from '../shared/engine-switch.mjs';
+import { usageLimitSwitches, engineList, engineLabel, engineEntry, NATIVE_NOTICE, DEFAULT_ENGINE } from '../shared/engine-switch.mjs';
+import { childEnv, formatDropped } from './spawn.mjs';
+import { detectDeployment } from './deployment.mjs';
 import { effortOn, runsOn, connectionLabel } from '../shared/connections.mjs';
 import { readyEnginesCached } from './engines/ready-cache.mjs';
 import { shapeRecordFrom, buildShapeStats } from './shape/stats.mjs';
@@ -3233,16 +3235,18 @@ export class RunHarness extends EventEmitter {
    */
   _engineGate(nodes = Object.values(this.resolved?.nodeCtx || {})) {
     const name = this.claude.engine || 'claude';
+    // Product, not security: the run's own model (--model / the start body) naming another engine's model is refused,
+    // never dropped — dropping it would run every node on the CLI default model, often the most expensive one. Another
+    // engine drops a Claude model per node instead (the model lines below).
     if (name === 'claude') {
-      // The run's own model (--model / the start body) naming another engine's model: refused, never dropped —
-      // dropping it would run every node on the CLI default model, often the most expensive one.
-      const why = foreignRunModel(this.claude.model, name, this.projectDir);
-      if (why) throw engineRefusal(name, why);
-      return [];
+      const foreign = foreignRunModel(this.claude.model, name, this.projectDir);
+      if (foreign) throw engineRefusal(name, foreign);
     }
     const projectRules = this._engineProjectRules ?? null;
     const why = this._engineRefusal({ rules: this.guardrailPermissionRules, guardrailsId: this.guardrailsId, projectRules, nodes });
     if (why) throw engineRefusal(name, why);
+    // Decision 11: the sub-agent tool is switched off on every spawn unless the catalog proves sub-agents keep the rules.
+    this._subagentsOff = subagentPolicy(name) === 'deny';
     const caps = getEngine(name).capabilities;
     const lines = Object.entries(caps).filter(([, v]) => v === false)
       .map(([k]) => `engine ${name}: no ${k} — ${CAPABILITY_FALLBACKS[k] || 'not available'}`);
@@ -3262,18 +3266,35 @@ export class RunHarness extends EventEmitter {
     }
     if (caps.permissionRules !== false) {
       // An engine that holds part of the rules: say which it holds, which it holds only in part and which it does
-      // not (those two passed the gate only with --allow-unguarded-engine).
+      // not (those two passed the gate only with --allow-unguarded-engine). One that holds them all says nothing.
       const both = (f) => [...new Set([...f(this.guardrailPermissionRules), ...f(projectRules)])];
       const partial = both((r) => this._enginePartial(r));
-      const enforced = both((r) => (Array.isArray(r?.deny) ? r.deny : []).filter((x) => !this._engineUnenforced(r).includes(x) && !this._enginePartial(r).includes(x)));
-      if (enforced.length) lines.push(`engine ${name}: deny rules enforced on ${name}: ${ruleNames(enforced)}`);
-      if (partial.length) lines.push(`engine ${name}: deny rules held on ${name} only in part, as ${this._enginePartialKind()} — ${this._engineRuleReach()} (--allow-unguarded-engine): ${ruleNames(partial)}`);
       const gSkip = this._engineUnenforced(this.guardrailPermissionRules);
-      if (gSkip.length) lines.push(`engine ${name}: guardrail set "${this.guardrailsId}": rules NOT enforced on ${name} (--allow-unguarded-engine): ${ruleNames(gSkip)}`);
       const pSkip = this._engineUnenforced(projectRules);
+      const enforced = both((r) => (Array.isArray(r?.deny) ? r.deny : []).filter((x) => !this._engineUnenforced(r).includes(x) && !this._enginePartial(r).includes(x)));
+      if (enforced.length && (partial.length || gSkip.length || pSkip.length)) lines.push(`engine ${name}: deny rules enforced on ${name}: ${ruleNames(enforced)}`);
+      if (partial.length) lines.push(`engine ${name}: deny rules held on ${name} only in part, as ${this._enginePartialKind()} — ${this._engineRuleReach()} (--allow-unguarded-engine): ${ruleNames(partial)}`);
+      if (gSkip.length) lines.push(`engine ${name}: guardrail set "${this.guardrailsId}": rules NOT enforced on ${name} (--allow-unguarded-engine): ${ruleNames(gSkip)}`);
       if (pSkip.length) lines.push(`engine ${name}: the project's .claude/settings.json deny rules NOT enforced on ${name} (--allow-unguarded-engine): ${ruleNames(pSkip)}`);
-      if (hostGuardEnabled()) lines.push(`engine ${name}: the host-guard hook does not run on ${name} (its preamble still does)`);
+      // Decision 10, one baseline for every shell engine: path rules bind the engine's own tools, never its shell.
+      const shellPaths = both((r) => ruleSupport(name, r).shellPaths);
+      if (shellPaths.length) lines.push(`engine ${name}: path rules (${ruleNames(shellPaths)}) bind ${name}'s own tools; its shell can still reach those paths`);
     }
+    // The host guard is a Claude Code hook (hookTelemetry): every engine without hooks is told so, rules or not.
+    if (caps.hookTelemetry === false && hostGuardEnabled()) lines.push(`engine ${name}: the host-guard hook does not run on ${name} (its preamble still does)`);
+    if (this._subagentsOff) {
+      const tool = engineEntry(name)?.subagents?.tool;
+      lines.push(`engine ${name}: its sub-agent tool (${tool}) is off: its sub-agents are not proven to keep this run's rules`);
+    } else if (subagentPolicy(name) === 'refuse') {
+      lines.push(`engine ${name}: its sub-agents (${engineEntry(name)?.subagents?.tool}) may not keep this run's rules and cannot be switched off (--allow-unguarded-engine)`);
+    }
+    // Decision 3: what the allowlist keeps from this engine, named once (never a value).
+    if (!this.claude.mock) {
+      const dropped = formatDropped(name, childEnv({ engine: name, allowlist: this.guardrails?.envAllowlist || [] }).dropped);
+      if (dropped) lines.push(dropped);
+    }
+    // Decision 4: a local run on this machine is no sandbox, and says so.
+    if (!this.claude.mock && !this._execBackend && detectDeployment() === 'local') lines.push(NATIVE_NOTICE);
     // A node model this harness cannot run (its connection reaches other harnesses only) is dropped, and said so.
     for (const m of this._engineGateModels(nodes)) {
       const harnesses = enginesOfModel(m, { projectDir: this.projectDir });
@@ -3297,7 +3318,7 @@ export class RunHarness extends EventEmitter {
    * itself, another engine does not), from _engineChecks.
    */
   _engineRefusal({ rules, guardrailsId, projectRules = null, nodes, allowed = this._allowUnguardedEngine }) {
-    const name = this.claude.engine || 'claude';
+    const name = this._engineName();
     const caps = getEngine(name).capabilities;
     // The credential broker's promise is that worca holds no model credential; this engine
     // signs in with its own, which the broker can neither bill nor revoke.
@@ -3330,6 +3351,10 @@ export class RunHarness extends EventEmitter {
     if (pPart.length && !allowed) {
       return `the project's .claude/settings.json denies ${ruleNames(pPart)}, which this engine holds only in part: ${this._engineRuleReach()} — pass --allow-unguarded-engine to run it with them as a partial guard`;
     }
+    // Decision 11: sub-agents not proven to keep the rules, on an engine that cannot switch its sub-agent tool off.
+    if (subagentPolicy(name) === 'refuse' && !allowed) {
+      return `this engine's sub-agents (its ${engineEntry(name)?.subagents?.tool} tool) are not proven to keep the run's rules, and it cannot switch that tool off — pass --allow-unguarded-engine to run it anyway`;
+    }
     if (caps.mcpTools === false) {
       const n = nodes.find((nc) => Array.isArray(nc?.tools) && nc.tools.some((t) => String(t).startsWith('mcp__')));
       if (n) return `node "${n.key || n.nodeId}" needs MCP tools, which this engine cannot attach`;
@@ -3347,23 +3372,23 @@ export class RunHarness extends EventEmitter {
     return null;
   }
 
-  /** The deny rules of `rules` this run's engine cannot hold: all of them on an engine without permission
-   *  rules, the adapter's answer on one that holds part (codex: command prefixes), none on Claude. */
+  /** The deny rules of `rules` this run's engine cannot hold (engines/index.mjs ruleSupport `refused`: the catalog's
+   *  unenforced, unverified and unlisted kinds and what the adapter cannot translate; every rule on an engine without
+   *  permission rules). */
   _engineUnenforced(rules) {
-    const name = this.claude.engine || 'claude';
-    if (name === 'claude' || !hasPermissionRules(rules)) return [];
-    const adapter = getEngine(name);
-    if (adapter.capabilities.permissionRules === false) return Object.values(rules).flat().filter((r) => typeof r === 'string');
-    return typeof adapter.unenforcedRules === 'function' ? adapter.unenforcedRules(rules) : [];
+    if (!hasPermissionRules(rules)) return [];
+    if (getEngine(this._engineName()).capabilities.permissionRules === false) return Object.values(rules).flat().filter((r) => typeof r === 'string');
+    return ruleSupport(this._engineName(), rules).refused;
   }
 
-  /** The deny rules of `rules` this run's engine holds only in part (codex: command rules, CODEX_COMMAND_RULE_REACH). */
+  /** The deny rules of `rules` this run's engine holds only in part (ruleSupport `partial`; codex: command rules). */
   _enginePartial(rules) {
-    const name = this.claude.engine || 'claude';
-    if (name === 'claude' || !hasPermissionRules(rules)) return [];
-    const adapter = getEngine(name);
-    return adapter.capabilities.permissionRules !== false && typeof adapter.partialRules === 'function' ? adapter.partialRules(rules) : [];
+    if (!hasPermissionRules(rules)) return [];
+    return getEngine(this._engineName()).capabilities.permissionRules === false ? [] : ruleSupport(this._engineName(), rules).partial;
   }
+
+  /** This run's engine (the catalog's default when none is named). */
+  _engineName() { return this.claude.engine || DEFAULT_ENGINE; }
 
   /** In words, how far this run's engine holds the rules it holds only in part (the adapter's `ruleReach`). */
   _engineRuleReach() {
@@ -3390,8 +3415,7 @@ export class RunHarness extends EventEmitter {
    * @returns {Promise<object[]>}
    */
   async _engineResumeGate(rp) {
-    const name = this.claude.engine || 'claude';
-    if (name === 'claude') return [];
+    const name = this._engineName();
     const { id, rules, projectRules } = await this._engineSetRules(rp.guardrailsId || 'permissive');
     const nodes = await this._engineGateNodes(rp);
     const why = this._engineRefusal({ rules, guardrailsId: id, projectRules, nodes });
@@ -3456,8 +3480,7 @@ export class RunHarness extends EventEmitter {
 
   /** The shared body of engineStartRefusal / engineResumeRefusal. */
   async _engineEarlyRefusal(guardrailsId, gateNodes) {
-    const name = this.claude.engine || 'claude';
-    if (name === 'claude') return null;
+    const name = this._engineName();
     let args, mcp;
     try {
       const { id, rules, projectRules } = await this._engineSetRules(guardrailsId, { quiet: true });
@@ -3497,12 +3520,13 @@ export class RunHarness extends EventEmitter {
    *  .mcp.json servers Claude Code has approved are in mcp.json on every such engine, so they meet the same checks;
    *  the others are named by the run context (run-context.mjs attachCommittedMcp). Never throws. */
   _engineMcpWarnings(rc) {
-    const name = this.claude.engine || 'claude';
-    if (name === 'claude' || !rc) return [];
+    const name = this._engineName();
+    if (!rc) return [];
     let written = {};
     try { if (rc.mcpConfigPath) written = JSON.parse(readFileSync(rc.mcpConfigPath, 'utf8'))?.mcpServers || {}; } catch { /* unreadable: nothing to say */ }
     const out = [];
-    const native = (rc.mcpServerNames || []).filter((n) => !Object.hasOwn(written, n));
+    // An engine that loads Claude Code's own servers itself (catalog `loadsClaudeMcp`) misses none of them.
+    const native = engineEntry(name)?.loadsClaudeMcp ? [] : (rc.mcpServerNames || []).filter((n) => !Object.hasOwn(written, n));
     if (native.length) out.push(`engine ${name}: MCP servers Claude Code loads on its own are not attached on ${name}: ${native.join(', ')}`);
     const unattachable = getEngine(name).unattachableMcp;
     const problems = typeof unattachable === 'function' ? unattachable(written) : [];
@@ -3513,9 +3537,9 @@ export class RunHarness extends EventEmitter {
   /** Why this run's engine refuses these MCP registry copies ({copies, servers}: a registry result), or null:
    *  the copies the adapter cannot attach, grouped by its reason (Codex attaches stdio servers only, for one). */
   _engineMcpRefusal(layer) {
-    const name = this.claude.engine || 'claude';
+    const name = this._engineName();
     const copies = layer?.copies;
-    if (name === 'claude' || !copies?.length) return null;
+    if (!copies?.length) return null;
     if (getEngine(name).capabilities.mcpTools === false) {
       return `this run attaches MCP servers (${copies.map((c) => c.name).join(', ')}), which this engine cannot attach`;
     }
@@ -3583,23 +3607,23 @@ export class RunHarness extends EventEmitter {
    * @param {(member:object)=>boolean} honors whether a member's project settings are honored
    * @param {{quiet?:boolean, guardrails?:object}} [opts] quiet: skip the preflight's warning line (a
    *   check made before the run exists; run() checks again and warns then); guardrails: the run's set, whose env
-   *   scrub the OpenCode check reads its credentials through
+   *   allowlist the check runs under (the run's own when omitted)
    * @returns {Promise<{deny:string[]}|null>}
    */
   async _engineChecks(honors, { quiet = false, guardrails = null } = {}) {
-    const name = this.claude.engine || 'claude';
-    if (name === 'claude') return null;
+    const name = this._engineName();
     const adapter = getEngine(name);
-    if (!this.claude.mock && name === 'codex') this._codexSignIn = await this._codexNeedsSignIn();
+    const extra = this.claude.mock ? {} : await this._enginePreflightOptions();
     // A remote run's agents run the sandbox template's own pinned CLI, whose model calls worca's relay signs with the
     // server's credential: the backend's preflight checks that credential (e2bPreflight → engineCredential). Its helper jobs still run this machine's CLI when
     // they stay on the run engine (helperEngineFor: codex, copilot), so that CLI is checked too, and its failure warns,
     // naming those jobs: the agents do not need it.
     const remote = this._execBackend;
     if (!this.claude.mock && (!remote || helperEngineFor(name) === name) && typeof adapter.preflight === 'function') {
-      const r = await adapter.preflight({ ...(this.claude.bin ? { bin: this.claude.bin } : {}), ...(name === 'codex' ? { signIn: this._codexSignIn } : {}),
-        ...(name === 'opencode' ? { defaultModel: await this._opencodeOnDefaultModel(), envScrub: !!guardrails?.envScrub,
-          envAllowlist: guardrails?.envScrub ? guardrails.envAllowlist : undefined } : {}) });
+      // The check runs under the run's own env (src/core/spawn.mjs execCheck): the catalog allowlist plus the set's
+      // (`guardrails`: the set a check made before the run exists passes; else the run's).
+      const set = guardrails || this.guardrails;
+      const r = await adapter.preflight({ ...(this.claude.bin ? { bin: this.claude.bin } : {}), ...extra, envAllowlist: set?.envAllowlist || [] });
       if (r?.refusal && !remote) throw engineRefusal(name, r.refusal);
       const why = r?.refusal || r?.warning;
       if (why && !quiet) {
@@ -3613,6 +3637,18 @@ export class RunHarness extends EventEmitter {
       if (s?.permissions) rules = mergePermissionRules(rules, s.permissions);
     }
     return rules;
+  }
+
+  /** Product, not security: the options this run's engine preflight takes beyond the binary. Codex skips its own
+   *  sign-in check when every Codex model the run can name runs on its own endpoint (_codexNeedsSignIn, kept on
+   *  `_codexSignIn` for the sync remote preflight). */
+  async _enginePreflightOptions() {
+    const name = this.claude.engine || 'claude';
+    // OpenCode refuses a step that names no model unless the user opted in (opencodePreflight `defaultModel`).
+    if (name === 'opencode') return { defaultModel: await this._opencodeOnDefaultModel() };
+    if (name !== 'codex') return {};
+    this._codexSignIn = await this._codexNeedsSignIn();
+    return { signIn: this._codexSignIn };
   }
 
   /** Engine hook: the agent nodes a resume point will run, as `{nodeId, key, model, tools}`
@@ -8376,7 +8412,8 @@ export class RunHarness extends EventEmitter {
       // Same env policy as the pipeline nodes. Both undefined on an unconfigured
       // project ⇒ byte-identical spawn env (legacy parity).
       envScrub: this.guardrails?.envScrub || undefined,
-      envAllowlist: this.guardrails?.envScrub ? this.guardrails.envAllowlist : undefined,
+      // The project's allowlist adds names to every engine's catalog allowlist (src/core/spawn.mjs childEnv), scrub or not.
+      envAllowlist: this.guardrails?.envAllowlist?.length ? this.guardrails.envAllowlist : undefined,
     };
   }
 

@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { runOpencodeProcess, createOpencodeNormalizer, opencodeChat, OPENCODE_ASK_LOCKDOWN } from '../src/core/engines/opencode.mjs';
 import { runGooseProcess, buildGooseArgs, gooseChat, gooseChatModelProblem, GOOSE_ASK_LOCKDOWN } from '../src/core/engines/goose.mjs';
-import { providerEnvPrefixes } from '../src/core/engines/chat-descriptor.mjs';
+import { chatSignInEnv } from '../src/core/engines/chat-descriptor.mjs';
 import { fakeOpencode } from './helpers/fake-opencode.mjs';
 import { fakeGoose } from './helpers/fake-goose.mjs';
 
@@ -125,8 +125,10 @@ test('a relayed Goose chat (the agent user): its home is a worca folder in the a
 test('Goose chat: an agent-CLI provider is refused; a model provider is not', () => {
   for (const id of ['claude-acp/default', 'codex/gpt-5', 'cursor-agent/auto', 'gemini-cli/pro', 'amp-acp/x']) assert.match(gooseChatModelProblem(id), /agent CLI/, id);
   for (const id of ['google/gemini-3-flash', 'openai/gpt-5.5', 'anthropic/claude-sonnet-5-5', 'openrouter/qwen/qwen3', 'ollama/llama3']) assert.equal(gooseChatModelProblem(id), null, id);
-  assert.deepEqual(providerEnvPrefixes('openrouter/qwen/qwen3'), ['OPENROUTER_']);
-  assert.deepEqual(providerEnvPrefixes('aws_bedrock/x'), ['AWS_BEDROCK_', 'AWS_']);
+  // The provider's catalog sign-in names, exact (decision 3): never another provider's key, never a prefix family.
+  const env = { OPENROUTER_API_KEY: 'r', OPENAI_API_KEY: 'o', AWS_SECRET_ACCESS_KEY: 's', AWS_BEDROCK_X: 'b', GOOSE_PROVIDER: 'p' };
+  assert.deepEqual(chatSignInEnv(gooseChat, 'openrouter/qwen/qwen3', env), ['GOOSE_PROVIDER', 'OPENROUTER_API_KEY']);
+  assert.deepEqual(chatSignInEnv(gooseChat, 'aws_bedrock/x', env), ['GOOSE_PROVIDER'], 'a provider with no catalog sign-in mode keeps no key');
 });
 
 test('Goose chat: a session goose no longer knows is the turn\'s to handle', POSIX, async () => {

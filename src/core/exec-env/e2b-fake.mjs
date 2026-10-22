@@ -3,8 +3,12 @@
 // A "sandbox" is a host directory; commands run with real bash there. Never used with
 // real E2B. `onCommand(cmd, opts)` may return { lines, stderr, exitCode } to fake a
 // command (e.g. a canned `claude` stream) instead of running it, or throw to fake an SDK error.
-import { spawn } from 'node:child_process';
-import { appendFileSync, createReadStream, mkdirSync, rmSync } from 'node:fs';
+//
+// Like envd (plans/2026-10-22-e2b-kill-egress-checks.md §1), a command's pid does not lead a process group (it runs in
+// the group of a per-command stand-in for envd's) and a handle kill reaches that one pid only: a backgrounded
+// grandchild survives it, as it does in E2B. `setsid` is on PATH (a perl shim where the host has none: macOS).
+import { spawn, spawnSync } from 'node:child_process';
+import { appendFileSync, chmodSync, createReadStream, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile, writeFile, mkdir, stat } from 'node:fs/promises';
 import { Readable } from 'node:stream';
 import { delimiter, dirname, join } from 'node:path';
@@ -37,8 +41,16 @@ export function createFakeE2b({ root, onCommand = null, logFile = null } = {}) {
   const events = [];
   let seq = 0;
   const log = (e) => { const row = { at: Date.now(), ...e }; events.push(row); if (logFile) { mkdirSync(dirname(logFile), { recursive: true }); appendFileSync(logFile, JSON.stringify(row) + '\n'); } };
-  // A command's whole process group: killing only bash would leave e.g. `sleep` holding the pipes open.
-  const killGroup = (c) => { try { process.kill(-c.pid, 'SIGKILL'); } catch { c.kill('SIGKILL'); } };
+  // Everything a command started: its envd stand-in's group, and the group its pid leads after `setsid`.
+  const killGroup = (c) => { for (const g of [c.pid, c.innerPid]) { if (g) { try { process.kill(-g, 'SIGKILL'); } catch { /* none */ } } } try { c.kill('SIGKILL'); } catch { /* gone */ } };
+  // A `setsid` for hosts without one (macOS): `setsid -w cmd` from a process that leads no group (as here) runs cmd in
+  // a new session without forking, so its pid leads the new group.
+  let shimDir = null;
+  if (spawnSync('sh', ['-c', 'command -v setsid'], { stdio: 'ignore' }).status !== 0) {
+    shimDir = join(root, '.fake-bin'); mkdirSync(shimDir, { recursive: true });
+    writeFileSync(join(shimDir, 'setsid'), `#!/bin/sh\n[ "$1" = "-w" ] && shift\nexec perl -MPOSIX -e 'POSIX::setsid() or die "setsid: $!\\n"; exec { $ARGV[0] } @ARGV or die "setsid: $ARGV[0]: $!\\n"' -- "$@"\n`);
+    chmodSync(join(shimDir, 'setsid'), 0o755);
+  }
   const toBytes = async (data) => typeof data === 'string' ? Buffer.from(data) : data instanceof Blob ? Buffer.from(await data.arrayBuffer()) : Buffer.from(data);
   const control = (id) => { const sb = live.get(id); if (!sb) throw new SandboxNotFoundError(`sandbox ${id} not found`); return sb; };
 
@@ -64,7 +76,12 @@ export function createFakeE2b({ root, onCommand = null, logFile = null } = {}) {
     async _run(cmd, { background = false, cwd, envs = {}, user, stdin = false, onStdout, onStderr } = {}) {
       this._alive();
       log({ type: 'command', sandboxId: this.sandboxId, cmd: cmd.slice(0, 400), ...(user ? { user } : {}) });
-      const canned = onCommand ? await onCommand(cmd, { cwd, envs, user, sandbox: this }) : null;   // may throw
+      // A sandbox has its own pid namespace: a group kill reaches only a group this sandbox started (here the commands
+      // run on the host, so any other pid is someone else's process).
+      const groupKill = /^kill -[A-Z]+ -- -(\d+)\b/.exec(cmd);
+      if (groupKill && ![...this.children].some((c) => c.innerPid === Number(groupKill[1]))) return background ? { pid: ++seq, wait: async () => ({ exitCode: 0, stdout: '', stderr: '' }), kill: async () => true } : { exitCode: 0, stdout: '', stderr: '' };
+      // onCommand sees the step's own command: a RemoteChild's group wrapper (`exec setsid -w `) is not part of it.
+      const canned = onCommand ? await onCommand(cmd.replace(/^exec setsid -w /, ''), { cwd, envs, user, sandbox: this }) : null;   // may throw
       let stdout = ''; let stderr = ''; let killed = false; let child = null;
       const done = new Promise((resolveP) => {
         if (canned) {
@@ -75,18 +92,32 @@ export function createFakeE2b({ root, onCommand = null, logFile = null } = {}) {
         }
         // node first on PATH: the snapshot (`node -e`) and script nodes need it even when the test
         // runner was started by absolute path. tools/test.mjs's no-real-claude dir stays on PATH.
-        child = spawn('bash', ['-c', cmd], { cwd: cwd || this.pathPrefix, detached: true,
-          env: { PATH: `${dirname(process.execPath)}${delimiter}${process.env.PATH || ''}`, HOME: join(this.pathPrefix, 'home', 'user'), ...envs } });
+        // The envd stand-in leads a group; the command (`bash -c cmd`, its pid the handle's) runs in it. fd 3 says its pid.
+        child = spawn('bash', ['-c', 'bash -c "$1" 0<&0 3>&- & echo $! >&3; exec 3>&-; wait $!', 'envd', cmd], { cwd: cwd || this.pathPrefix, detached: true,
+          stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
+          env: { PATH: [shimDir, dirname(process.execPath), process.env.PATH || ''].filter(Boolean).join(delimiter), HOME: join(this.pathPrefix, 'home', 'user'), ...envs } });
         this.children.add(child);
         child.stdin.on('error', () => {});   // a write after the command closed its stdin (EPIPE) must not crash the process
         child.stdout.setEncoding('utf8').on('data', (d) => { stdout += d; onStdout?.(d); });
         child.stderr.setEncoding('utf8').on('data', (d) => { stderr += d; onStderr?.(d); });
-        child.on('close', (code) => { this.children.delete(child); resolveP(killed ? 137 : code ?? 1); });
+        // Like envd, the command ends when its process does, not when the last holder of its pipes does (a backgrounded
+        // grandchild keeps them open): a short drain for the output, then the exit code.
+        let closed = false;
+        child.on('close', () => { closed = true; });
+        child.on('exit', (code) => {
+          const end = () => { this.children.delete(child); resolveP(killed ? 137 : code ?? 1); };
+          if (closed) end(); else { const t = setTimeout(end, 200); child.on('close', () => { clearTimeout(t); end(); }); }
+        });
       });
       const wait = async () => { const exitCode = await done;
         if (exitCode !== 0) throw new CommandExitError(`exit ${exitCode}`, { exitCode, stdout, stderr });
         return { exitCode, stdout, stderr }; };
-      const handle = { pid: child?.pid ?? ++seq, wait, kill: async () => { killed = true; if (child) killGroup(child); return true; },
+      if (child) {
+        child.innerPid = await new Promise((res) => { let b = ''; child.stdio[3].setEncoding('utf8').on('data', (d) => { b += d; }).on('end', () => res(Number(b.trim()) || null)).on('error', () => res(null)); });
+      }
+      // E2B kills the command's pid only (SIGKILL): what it started keeps running, as in a real sandbox.
+      const handle = { pid: child ? (child.innerPid ?? child.pid) : ++seq, wait, kill: async () => {
+        killed = true; if (child) { try { process.kill(child.innerPid ?? child.pid, 'SIGKILL'); } catch { /* gone */ } } return true; },
         get stdout() { return stdout; }, get stderr() { return stderr; } };
       if (stdin && child) handle.sendStdin = (d) => new Promise((res, rej) => child.stdin.write(d, (e) => (e ? rej(e) : res())));
       return background ? handle : wait();

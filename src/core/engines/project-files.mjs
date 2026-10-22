@@ -5,12 +5,11 @@
 // The harness (run-harness.mjs _registerEngineConfig, _injectedFor, _engineConfigState) reads ALL_PROJECT_FILES and
 // worcaOwnsProjectFile, so a file an earlier segment of a run wrote on another engine is still cleaned up.
 import { mkdirSync, readFileSync, writeFileSync, renameSync, rmSync, appendFileSync, chmodSync, existsSync, readdirSync, statSync, lstatSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { join, dirname, isAbsolute, resolve } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { gitAvailable } from '../git-available.mjs';
-import { guardedGitEnvSync } from '../git-guard.mjs';
+import { gitOutputSync } from '../git-guard.mjs';
 
 /** Per engine: the dir its files sit in, the files (relative to the cwd), and its display name. */
 const ENGINES = Object.freeze({
@@ -31,7 +30,7 @@ const engineOf = (name) => {
 /** The engine whose project file `rel` is, or null. */
 const engineOfFile = (rel) => Object.keys(ENGINES).find((k) => ENGINES[k].files.includes(rel)) ?? null;
 
-const git = (cwd, args) => { if (!gitAvailable()) return null; try { return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], env: guardedGitEnvSync(cwd) }).trim(); } catch { return null; } };
+const git = (cwd, args) => (gitAvailable() ? gitOutputSync(cwd, args) : null);
 const excludeNote = (engine) => `# worca: ${engineOf(engine).label} engine config written into run checkouts (engines/project-files.mjs)`;
 /** Whether `dir` or a parent holds a `.git` (so a failed `git rev-parse` is a git failure, not "no repository"). */
 const gitAbove = (dir) => { for (let d = resolve(dir); ; d = dirname(d)) { if (existsSync(join(d, '.git'))) return true; if (dirname(d) === d) return false; } };

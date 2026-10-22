@@ -17,13 +17,13 @@ import { ENGINES } from './helpers/engines.mjs';
 import { fakeCodex } from './helpers/fake-codex.mjs';
 import { mockSpawnLog } from '../src/core/claude-runner.mjs';
 import { CODEX_DEFAULT_MODEL } from '../src/core/engines/codex.mjs';
-import { writableRootsInWorcaHome } from '../src/core/engines/spawn.mjs';
+import { writableRootsInWorcaHome } from '../src/core/spawn.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 import { writeCursorProjectFiles } from '../src/core/engines/cursor.mjs';
 import { writeProjectFiles } from '../src/core/engines/project-files.mjs';
 import { fakeCursor } from './helpers/fake-cursor.mjs';
 import { removeInjectedPaths, writeRunManifest, readRunManifest } from '../src/core/run-manifest.mjs';
-import { readGuardrailSet } from '../src/core/guardrail-store.mjs';
+import { readGuardrailSet, writeGuardrailSet } from '../src/core/guardrail-store.mjs';
 import { guardrailsToPermissionRules } from '../src/core/guardrails.mjs';
 
 useTempHome(after);
@@ -47,11 +47,13 @@ test('an unknown engine fails at construction', () => {
   assert.throws(() => orch({ engine: 'mock' }), /"mock" is not a run engine \(choose one of: claude, codex, copilot, cursor, gemini, goose, opencode, qwen\); the offline mock runs under --mock/);
 });
 
-test('claude (the default) passes the gate with nothing to say', () => {
+test('claude (the default) passes the gate on its catalog: its shell reaches the paths its rules name, and it says so', () => {
   const o = orch();
   assert.equal(o.claude.engine, 'claude');
   o.guardrailPermissionRules = RULES;
-  assert.deepEqual(o._engineGate(), []);
+  assert.deepEqual(o._engineGate(), ["engine claude: path rules (Read(.env*)) bind claude's own tools; its shell can still reach those paths"]);
+  o.guardrailPermissionRules = { deny: ['Bash(curl:*)'] };
+  assert.deepEqual(o._engineGate(), [], 'a command rule it holds: nothing to say');
 });
 
 test('codex: every missing capability is one audit line with its fallback', () => {
@@ -74,35 +76,42 @@ test('codex holds command rules only in part: a set of them needs --allow-unguar
   const o = withNodes(orch({ engine: 'codex' }), {});
   o.guardrailPermissionRules = CMD_RULES;
   o.guardrailsId = 'cmds';
-  assert.throws(() => o._engineGate(), new RegExp(`guardrail set "cmds" has command rules this engine holds only in part \\(Bash\\(curl:\\*\\), Bash\\(git push\\)\\): ${REACH.replace(/&/g, '&')} — run it with --guardrails permissive, or pass --allow-unguarded-engine to run it with them as a partial guard`));
+  // WebSearch removes codex's search tool: no denial can be recorded, so the catalog says unverified (refused first).
+  assert.throws(() => o._engineGate(), /guardrail set "cmds" has permission rules this engine cannot enforce \(WebSearch\)/);
+  const cmds = withNodes(orch({ engine: 'codex' }), {});
+  cmds.guardrailPermissionRules = { deny: ['Bash(curl:*)', 'Bash(git push)'] };
+  cmds.guardrailsId = 'cmds';
+  assert.throws(() => cmds._engineGate(), new RegExp(`guardrail set "cmds" has command rules this engine holds only in part \\(Bash\\(curl:\\*\\), Bash\\(git push\\)\\): ${REACH.replace(/&/g, '&')} — run it with --guardrails permissive, or pass --allow-unguarded-engine to run it with them as a partial guard`));
   const allowed = withNodes(orch({ engine: 'codex', allowUnguardedEngine: true }), {});
   allowed.guardrailPermissionRules = CMD_RULES;
   allowed.guardrailsId = 'cmds';
   const lines = allowed._engineGate();
-  assert.ok(lines.includes('engine codex: deny rules enforced on codex: WebSearch'), lines.join('\n'));
   assert.ok(lines.includes(`engine codex: deny rules held on codex only in part, as command rules — ${REACH} (--allow-unguarded-engine): Bash(curl:*), Bash(git push)`), lines.join('\n'));
-  assert.equal(lines.some((l) => /NOT enforced/.test(l)), false);
-  // A set that only turns the shell or web search off is fully held: no consent needed.
+  assert.ok(lines.includes('engine codex: guardrail set "cmds": rules NOT enforced on codex (--allow-unguarded-engine): WebSearch'), lines.join('\n'));
+  // A set that only turns the shell or web search off removes tools: with no recorded denial, the catalog holds them
+  // only in part (Bash) or not at all (WebSearch), so they need consent too (decision 9).
   const off = withNodes(orch({ engine: 'codex' }), {});
   off.guardrailPermissionRules = { deny: ['Bash', 'WebSearch'] };
-  assert.deepEqual(off._engineGate().filter((l) => /deny rules/.test(l)), ['engine codex: deny rules enforced on codex: Bash, WebSearch']);
+  assert.throws(() => off._engineGate(), /cannot enforce \(WebSearch\)/);
 });
 
 test('codex does not hold WebFetch while its shell or web search can still fetch: the gate asks for consent and the audit says so', () => {
   const o = withNodes(orch({ engine: 'codex' }), {});
   o.guardrailPermissionRules = { deny: ['WebFetch', 'WebSearch'] };
   o.guardrailsId = 'web';
-  assert.throws(() => o._engineGate(), /guardrail set "web" has permission rules this engine cannot enforce \(WebFetch\)/);
+  assert.throws(() => o._engineGate(), /guardrail set "web" has permission rules this engine cannot enforce \(WebFetch, WebSearch\)/);
   const allowed = withNodes(orch({ engine: 'codex', allowUnguardedEngine: true }), {});
   allowed.guardrailPermissionRules = { deny: ['WebFetch', 'WebSearch'] };
   allowed.guardrailsId = 'web';
   const lines = allowed._engineGate();
-  assert.ok(lines.includes('engine codex: deny rules enforced on codex: WebSearch'), lines.join('\n'));
-  assert.ok(lines.includes('engine codex: guardrail set "web": rules NOT enforced on codex (--allow-unguarded-engine): WebFetch'), lines.join('\n'));
-  // With the shell and web search both off, codex has no way left to fetch a page.
-  const off = withNodes(orch({ engine: 'codex' }), {});
+  assert.ok(lines.includes('engine codex: guardrail set "web": rules NOT enforced on codex (--allow-unguarded-engine): WebFetch, WebSearch'), lines.join('\n'));
+  // With the shell and web search both off, codex has no way left to fetch a page; the catalog still holds none of the
+  // three without a recorded denial, so the audit names them.
+  const off = withNodes(orch({ engine: 'codex', allowUnguardedEngine: true }), {});
   off.guardrailPermissionRules = { deny: ['Bash', 'WebSearch', 'WebFetch'] };
-  assert.deepEqual(off._engineGate().filter((l) => /deny rules/.test(l)), ['engine codex: deny rules enforced on codex: Bash, WebSearch, WebFetch']);
+  assert.deepEqual(off._engineGate().filter((l) => /deny rules|NOT enforced/.test(l)), [
+    `engine codex: deny rules held on codex only in part, as command rules — ${REACH} (--allow-unguarded-engine): Bash`,
+    'engine codex: guardrail set "permissive": rules NOT enforced on codex (--allow-unguarded-engine): WebSearch, WebFetch']);
 });
 
 test('--allow-unguarded-engine runs it anyway and says so in the audit', () => {
@@ -631,17 +640,28 @@ test('an opencode run refuses when a spawn names no model, and checks credential
     const r = await createOrchestrator({ projectDir: dir, guardrailsId: 'permissive', claude: { engine: 'opencode', bin } }).engineStartRefusal();
     assert.equal(r.overridable, false);
     assert.match(r.error, /^engine opencode: .*names no model: .*OpenCode Zen/);
-    const named = createOrchestrator({ projectDir: dir, guardrailsId: 'permissive', claude: { engine: 'opencode', bin, model: 'anthropic/claude-sonnet-4-5' } });
+    // --allow-unguarded-engine: OpenCode cannot switch its sub-agent tool off yet (decision 11, engines/index.mjs subagentPolicy).
+    const named = createOrchestrator({ projectDir: dir, guardrailsId: 'permissive',
+      claude: { engine: 'opencode', bin, model: 'anthropic/claude-sonnet-4-5', allowUnguardedEngine: true } });
     assert.equal(await named._opencodeOnDefaultModel(), false);
     assert.equal(await named.engineStartRefusal(), null);
-    // A set that scrubs the env keeps worca's key from the agent: OpenCode would have no credential.
+    // The check runs under the agent's env (the catalog allowlist): a key worca has under a name OpenCode's catalog
+    // entry does not list, and the set does not allowlist, is not the agent's.
+    delete process.env.ANTHROPIC_API_KEY;
+    process.env.CONF_PROVIDER_KEY = 'worca-only';
+    writeFileSync(bin, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo 1.18.23; exit 0; fi\n' +
+      'if [ -n "$CONF_PROVIDER_KEY" ]; then echo "0 credentials"; echo "1 environment variables"; else echo "0 credentials"; echo "0 environment variables"; fi\n');
     const logs = [];
     named.on('log', (l) => logs.push(l));
-    await named._engineChecks(() => true, { guardrails: { envScrub: true, envAllowlist: [] } });
+    await named._engineChecks(() => true, { guardrails: { envAllowlist: [] } });
     assert.ok(logs.some((l) => /no provider credentials in the agent's environment/.test(l.text)), JSON.stringify(logs));
+    logs.length = 0;
+    await named._engineChecks(() => true, { guardrails: { envAllowlist: ['CONF_PROVIDER_KEY'] } });
+    assert.equal(logs.some((l) => /no provider credentials/.test(l.text)), false, JSON.stringify(logs));
   } finally {
     if (keep.key === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = keep.key;
     if (keep.optIn !== undefined) process.env.WORCA_OPENCODE_ALLOW_DEFAULT_MODEL = keep.optIn;
+    delete process.env.CONF_PROVIDER_KEY;
   }
 });
 
@@ -823,24 +843,25 @@ test('a result with no cost warns on a reporting engine, not on cursor; a per-Mt
 
 // ── OpenCode (engines/opencode.mjs) ──────────────────────────────────────────
 
-test('opencode: Permissive passes, one audit line per missing capability; cost is reported', () => {
-  const lines = withNodes(orch({ engine: 'opencode' }), {})._engineGate();
+test('opencode: Permissive passes with --allow-unguarded-engine (its sub-agent tool cannot be switched off), one audit line per missing capability; cost is reported', () => {
+  assert.throws(() => withNodes(orch({ engine: 'opencode' }), {})._engineGate(), /sub-agents \(its task tool\) are not proven/);
+  const lines = withNodes(orch({ engine: 'opencode', allowUnguardedEngine: true }), {})._engineGate();
   const caps = lines.filter((l) => /^engine opencode: no \w+ — /.test(l));
   assert.deepEqual(caps.map((l) => l.split(':')[1].trim().split(' ')[1]).sort(), ['allowedTools', 'hookTelemetry']);
 });
 
-test('opencode: the Normal set holds in part — it needs --allow-unguarded-engine, then names its permission rules', async () => {
+test('opencode: no rule kind is proven held yet — the Normal set needs --allow-unguarded-engine, then says so', async () => {
+  // Decision 9: a kind the catalog does not list (ENGINES.opencode.rules) counts as unenforced.
   const rules = await NORMAL_RULES();
   const o = withNodes(orch({ engine: 'opencode' }), {});
   o.guardrailPermissionRules = rules;
   o.guardrailsId = 'normal';
-  assert.throws(() => o._engineGate(), (err) => /holds only in part/.test(err.message) && /permission rules/.test(err.message));
+  assert.throws(() => o._engineGate(), (err) => /cannot enforce/.test(err.message));
   const allowed = withNodes(orch({ engine: 'opencode', allowUnguardedEngine: true }), {});
   allowed.guardrailPermissionRules = rules;
   allowed.guardrailsId = 'normal';
   const lines = allowed._engineGate();
-  assert.ok(lines.some((l) => l.startsWith('engine opencode: deny rules held on opencode only in part, as permission rules — command rules match each command')), lines.join('\n'));
-  assert.equal(lines.some((l) => /NOT enforced on opencode/.test(l)), false, 'every Normal rule reaches OpenCode');
+  assert.ok(lines.some((l) => /^engine opencode: guardrail set "normal": rules NOT enforced on opencode/.test(l)), lines.join('\n'));
 });
 
 test('engineStartRefusal: a missing opencode binary is not liftable', POSIX, async () => {
@@ -1166,4 +1187,138 @@ test('a resume that switched a Gemini CLI run to Claude still registers the earl
   writeFileSync(join(wt, '.gemini', 'settings.json'), '{"agent":true}\n');
   assert.deepEqual(switched._injectedFor('pk', wt), [], 'the agent\'s file survives teardown');
   assert.deepEqual(await switched._engineConfigState(wt), { owned: [], forced: ['.gemini/settings.json'] });
+});
+
+// ── the gate reads the catalog (plans/core-protection-layer-design.md §4.4, decisions 4, 9, 10) ─────────────────
+import { ENGINES as CATALOG, setCatalogForTest, NATIVE_NOTICE } from '../src/shared/engine-switch.mjs';
+
+test('claude passes the gate on its declaration', () => {
+  try {
+    setCatalogForTest({ ...CATALOG, claude: { ...CATALOG.claude, rules: { ...CATALOG.claude.rules, WebFetch: 'unverified' } } });
+    const o = withNodes(orch(), {});
+    o.guardrailPermissionRules = { deny: ['WebFetch(domain:example.com)'] };
+    o.guardrailsId = 'web';
+    assert.throws(() => o._engineGate(), /engine claude: guardrail set "web" has permission rules this engine cannot enforce \(WebFetch\(domain:example\.com\)\) — run it with --guardrails permissive, or pass --allow-unguarded-engine/);
+  } finally { setCatalogForTest(null); }
+  const o = withNodes(orch(), {});
+  o.guardrailPermissionRules = { deny: ['WebFetch(domain:example.com)'] };
+  assert.deepEqual(o._engineGate(), [], 'the real catalog holds it (a recorded denial)');
+});
+
+test('unlisted kind fails closed', () => {
+  for (const engine of ['claude', 'codex', 'copilot', 'cursor']) {
+    const o = withNodes(orch({ engine }), {});
+    o.guardrailPermissionRules = { deny: ['Foo(x)'] };
+    o.guardrailsId = 'odd';
+    assert.throws(() => o._engineGate(), /cannot enforce \(Foo\(x\)\)/, engine);
+  }
+});
+
+test('partial command rule is refused', () => {
+  const o = withNodes(orch({ engine: 'codex' }), {});
+  o.guardrailPermissionRules = { deny: ['Bash(rm:*)'] };
+  o.guardrailsId = 'rm';
+  assert.throws(() => o._engineGate(), (e) => e.engineRefused === true && /holds only in part \(Bash\(rm:\*\)\)/.test(e.message));
+  const allowed = withNodes(orch({ engine: 'codex', allowUnguardedEngine: true }), {});
+  allowed.guardrailPermissionRules = { deny: ['Bash(rm:*)'] };
+  assert.ok(allowed._engineGate().some((l) => /only in part, as command rules .*: Bash\(rm:\*\)$/.test(l)));
+});
+
+test('shell baseline line, never a block', () => {
+  const o = withNodes(orch(), {});
+  o.guardrailPermissionRules = { deny: ['Read(./secrets/**)', 'Edit(./secrets/**)', 'Bash(git push:*)'] };
+  const lines = o._engineGate();
+  const base = lines.filter((l) => /^engine claude: path rules .* its shell can still reach those paths$/.test(l));
+  assert.deepEqual(base, ["engine claude: path rules (Read(./secrets/**), Edit(./secrets/**)) bind claude's own tools; its shell can still reach those paths"]);
+});
+
+test('native line', () => {
+  const native = withNodes(orch({ mock: false }), {});
+  assert.ok(native._engineGate().includes(NATIVE_NOTICE), 'a local native run says it is not a sandbox');
+  const e2b = withNodes(orch({ mock: false }), {});
+  e2b.execEnvKind = 'e2b';
+  assert.equal(e2b._engineGate().includes(NATIVE_NOTICE), false, 'an E2B run does not');
+});
+
+test('host-guard line without permission rules', () => {
+  const prev = process.env.WORCA_HOST_GUARD; delete process.env.WORCA_HOST_GUARD;
+  try {
+    const codex = withNodes(orch({ engine: 'codex' }), {});
+    assert.ok(codex._engineGate().includes('engine codex: the host-guard hook does not run on codex (its preamble still does)'), 'no rules, still said');
+    const claude = withNodes(orch(), {});
+    assert.equal(claude._engineGate().some((l) => /host-guard hook does not run/.test(l)), false, 'claude runs the hook');
+  } finally { if (prev !== undefined) process.env.WORCA_HOST_GUARD = prev; }
+});
+
+test('the run log names what the allowlist withheld, once', () => {
+  const prev = process.env.WORCA_GATE_TEST_DROPPED; process.env.WORCA_GATE_TEST_DROPPED = 'v';
+  try {
+    const lines = withNodes(orch({ mock: false }), {})._engineGate();
+    const env = lines.filter((l) => /^env: \d+ variables? not passed to claude \(allowlist\): /.test(l));
+    assert.equal(env.length, 1, lines.join('\n'));
+    assert.ok(env[0].split(': ').at(-1).split(', ').includes('WORCA_GATE_TEST_DROPPED'));
+    assert.equal(env[0].includes('=v'), false, 'names, never values');
+  } finally { if (prev === undefined) delete process.env.WORCA_GATE_TEST_DROPPED; else process.env.WORCA_GATE_TEST_DROPPED = prev; }
+});
+
+// ── Claude meets the same gate (no exemption): its catalog leaves Grep/Glob unverified and Write unenforced ─────────
+
+/** A saved set whose one deny rule Claude cannot hold: its catalog says Grep is unverified (no Grep tool). */
+const claudeUnheldSet = () => writeGuardrailSet({ name: `Claude Grep ${Math.random().toString(36).slice(2, 8)}`,
+  settings: { honorProjectSettings: true, envScrub: false, envAllowlist: [], protectedPaths: [], deny: ['Grep(secrets/**)'] } });
+// The refusal's lead; its hint (which flag, or which UI control) is worded per surface elsewhere.
+const claudeUnheld = (id) => `engine claude: guardrail set "${id}" has permission rules this engine cannot enforce (Grep(secrets/**)) — `;
+/** The early refusal's answer, liftable by the consent. */
+const assertUnheld = (r, id) => { assert.equal(r?.overridable, true, JSON.stringify(r)); assert.ok(r.error.startsWith(claudeUnheld(id)), r.error); };
+
+/** A Claude run paused at its first producer, and its saved resume point. */
+async function pausedClaudeRun(dir, onProduce = () => {}) {
+  let hang = true;
+  let ref = null;
+  const runners = {
+    producer: async (ctx) => {
+      onProduce(ctx);
+      if (hang) {
+        hang = false;
+        queueMicrotask(() => ref.pause());
+        return new Promise((_r, rej) => {
+          const onAbort = () => { const e = new Error('aborted'); e.name = 'AbortError'; rej(e); };
+          if (ctx.signal.aborted) onAbort(); else ctx.signal.addEventListener('abort', onAbort, { once: true });
+        });
+      }
+      return { status: 'ok', summary: 'ok' };
+    },
+    verifier: async () => ({ status: 'ok', issues: [], review: { issues: [] }, summary: '' }),
+  };
+  ref = ENGINES[0].create({ projectDir: dir, prompt: 'demo', auto: true, guardrailsId: 'permissive', claude: { mock: true }, runners });
+  assert.equal((await ref.run()).status, 'paused');
+  return { id: ref.state.id, runners, saved: readPipelineForResume(ref.state.id) };
+}
+
+test('C1: engineStartRefusal / engineResumeRefusal refuse Claude on a rule its catalog does not hold, and the consent lifts it', async () => {
+  const dir = tmp();
+  execSync('git init -q && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init', { cwd: dir });
+  const gr = await claudeUnheldSet();
+  const make = (claude = {}) => createOrchestrator({ projectDir: dir, guardrailsId: gr.id, claude: { mock: true, ...claude } });
+  assertUnheld(await make().engineStartRefusal(), gr.id);
+  assert.equal(await make({ allowUnguardedEngine: true }).engineStartRefusal(), null, 'the consent lifts it');
+  const { saved } = await pausedClaudeRun(dir);
+  const pinned = { ...saved, resumePoint: { ...saved.resumePoint, guardrailsId: gr.id } };
+  const probe = ENGINES[0].create({ projectDir: dir, auto: true, claude: { mock: true }, resume: pinned });
+  assertUnheld(await probe.engineResumeRefusal(), gr.id);
+});
+
+test('C1: resuming a Claude run whose set holds a rule Claude cannot enforce is refused before the paused run is touched', async () => {
+  const dir = tmp();
+  execSync('git init -q && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init', { cwd: dir });
+  const gr = await claudeUnheldSet();
+  let produced = 0;
+  const { id, runners, saved } = await pausedClaudeRun(dir, () => { produced += 1; });
+  const pinned = { ...saved, resumePoint: { ...saved.resumePoint, guardrailsId: gr.id } };
+  const ref = ENGINES[0].create({ projectDir: dir, auto: true, claude: { mock: true }, runners, resume: pinned });
+  await assert.rejects(() => ref.resume(), (err) => err.message.startsWith(claudeUnheld(gr.id)));
+  assert.equal(produced, 1, 'no agent spawned on the refused resume');
+  const kept = readPipelineForResume(id);
+  assert.equal(kept.row.status, 'paused');
+  assert.ok(kept.resumePoint, 'the resume point is kept');
 });

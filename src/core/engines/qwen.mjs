@@ -42,10 +42,10 @@
 //   there starts a memory agent with file tools, QWEN_CODE_SAFE_MODE=1 drops the core allowlist. The chat's env sets
 //   every such switch (QWEN_ASK_ENV) to a non-empty value, and the self-test runs with the user's real files.
 import { readFileSync, writeFileSync } from 'node:fs';
-import { execFile } from 'node:child_process';
 import { join } from 'node:path';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
 import { createClaudeNormalizer } from './claude-events.mjs';
+import { argValue } from '../spawn.mjs';
 import {
   claudeToolName, commandRuleBody, familyMcpServers, classifyFamilyError, familyPreflight, runFamilyProcess,
   homeOf, readDotenv, settingsAuthType, foldSystemPrompt, NO_MCP_SERVER, FAMILY_ARGV_LIMIT, absolutePaths,
@@ -181,7 +181,7 @@ function machineSystemSettings(bin) {
  *  [--append-system-prompt P] [--include-directories D]… --allowed-mcp-server-names N…`. The prompt travels on stdin. */
 export function buildQwenArgs({ sessionId, resume = false, model, systemPrompt, includeDirs = [], mcpNames = [], ask = false } = {}) {
   const args = ['--output-format', 'stream-json', '--approval-mode', 'yolo', resume ? '--resume' : '--session-id', String(sessionId)];
-  if (model) args.push('--model', String(model));
+  if (model) args.push('--model', argValue(String(model), 'model'));
   if (systemPrompt) args.push('--append-system-prompt', systemPrompt);
   for (const d of includeDirs) args.push('--include-directories', d);
   for (const n of mcpNames.length ? mcpNames : [NO_MCP_SERVER]) args.push('--allowed-mcp-server-names', n);
@@ -264,29 +264,23 @@ export function qwenSignedIn(given = process.env) {
   return !!qwenAuthType(given);
 }
 
-// The env names each Qwen Code sign-in reads, beyond its own QWEN_ ones.
-const QWEN_AUTH_PREFIXES = Object.freeze({
-  openai: ['OPENAI_', 'DASHSCOPE_'], gemini: ['GEMINI_'], 'vertex-ai': ['GOOGLE_'], anthropic: ['ANTHROPIC_'],
-});
-
-/** The env prefixes that survive scrub for Qwen: its own, plus only the provider it is set to. Qwen runs in YOLO mode
- *  with a free shell, so another provider's key (worca's own Anthropic or OpenAI key) must never reach it. */
-export function qwenEnvPrefixes(given = process.env) {
-  return ['QWEN_', ...(QWEN_AUTH_PREFIXES[qwenAuthType(given)] || [])];
-}
+/** The catalog sign-in mode (src/shared/engine-switch.mjs ENGINES.qwen.signIn) whose names a Qwen child keeps: the
+ *  auth type it is set to (the mode ids are Qwen's auth types), else none. Qwen runs in YOLO mode with a free shell, so
+ *  another provider's key (worca's own Anthropic or OpenAI key) must never reach it. */
+export const qwenSignInMode = (given = process.env) => qwenAuthType(given) || 'none';
 
 /** The run-start check (engines/index.mjs `preflight`). Never rejects: {refusal} | {warning} | {}. */
-export function qwenPreflight({ bin = qwenDefaultBin(), timeoutMs = 10000, env = process.env } = {}) {
-  return familyPreflight({ bin, env, timeoutMs, label: 'Qwen Code (npm i -g @qwen-code/qwen-code)', binEnv: 'WORCA_QWEN_BIN',
-    signedIn: qwenSignedIn, signInHint: QWEN_SIGNED_OUT_HINT });
+export function qwenPreflight({ bin = qwenDefaultBin(), timeoutMs = 10000, env = process.env, envAllowlist = [] } = {}) {
+  return familyPreflight({ bin, engine: 'qwen', env, envAllowlist, timeoutMs, label: 'Qwen Code (npm i -g @qwen-code/qwen-code)', binEnv: 'WORCA_QWEN_BIN',
+    signedIn: qwenSignedIn, signInHint: QWEN_SIGNED_OUT_HINT, signInMode: qwenSignInMode });
 }
 
 // ── spawn ────────────────────────────────────────────────────────────────────
 
 const QWEN_SPEC = Object.freeze({
   name: 'qwen', label: 'Qwen Code', prefix: QWEN_SESSION_PREFIX,
-  // Qwen signs in through whichever provider it is set to: that provider's env names survive scrub too, no other's.
-  envPrefixes: qwenEnvPrefixes,
+  // Qwen signs in through whichever provider it is set to: the child keeps that provider's names, no other's.
+  signInMode: qwenSignInMode,
   classify: classifyQwenError, resumeNotFoundRe: QWEN_RESUME_NOT_FOUND_RE,
   createNormalizer: createQwenNormalizer,
   askLockdown: QWEN_ASK_LOCKDOWN,
@@ -355,6 +349,6 @@ export const qwenChat = makeChatDescriptor({
   preflight: (_ctx, impl = qwenPreflight) => impl(),
   resumeNotFound: (err) => QWEN_RESUME_NOT_FOUND_RE.test(String((err && err.message) || err || '')),
   docsAnchor: 'gemini-cli-and-qwen-code',
-  signIn: (_model, env) => qwenEnvPrefixes(env),
+  signInMode: (_model, env) => qwenSignInMode(env),
   prompt: { cli: "Qwen Code with Qwen Code's own sign-in" },
 });

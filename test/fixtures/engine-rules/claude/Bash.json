@@ -1,0 +1,14 @@
+{
+  "rules": {
+    "deny": [
+      "Bash(git push)",
+      "Bash(git push:*)"
+    ]
+  },
+  "expected": {
+    "deny": [
+      "Bash(git push)",
+      "Bash(git push:*)"
+    ]
+  }
+}

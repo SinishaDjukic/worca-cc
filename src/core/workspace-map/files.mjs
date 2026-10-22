@@ -4,13 +4,13 @@
 // (size cap, binary sniff, no symlinks — not even a symlinked directory on the way), and run git
 // without a shell and without the caller's GIT_DIR.
 
-import { execFile } from 'node:child_process';
 import { lstat, readdir, readFile, realpath } from 'node:fs/promises';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep, dirname } from 'node:path';
 
 import { LIMITS } from '../../shared/workspace-map/limits.mjs';
 import { gitAvailable } from '../git-available.mjs';
 import { guardedGitEnv } from '../git-guard.mjs';
+import { runCapture } from '../spawn.mjs';
 
 export const SKIP_DIRS = Object.freeze(['.git', 'node_modules', 'vendor', 'dist', 'build', 'target', 'out',
   '.next', '.nuxt', 'coverage', 'graphify-out', '.venv', 'venv', '__pycache__', '.gradle', '.idea', '.vscode',
@@ -66,22 +66,17 @@ const inside = (root, abs) => {
   return !!back && back !== '..' && !back.startsWith(`..${sep}`) && !isAbsolute(back);
 };
 
-/** Runs git (no shell; GIT_DIR & co. dropped from its env) in `dir` → git's stdout as printed
+/** Runs git (no shell; GIT_DIR & co. dropped from its env; it never walks above `dir`: GIT_CEILING_DIRECTORIES, so a
+ *  member that is no repository never borrows the repository around it) in `dir` → git's stdout as printed
  *  (untrimmed: callers trim), or null on any failure — and for a missing / non-string `dir`
  *  (never the process cwd). */
 export function gitOutput(dir, args, { timeoutMs = 30000, maxBuffer = 256 * 1024 * 1024 } = {}) {
   if (typeof dir !== 'string' || !dir || !Array.isArray(args) || !gitAvailable()) return Promise.resolve(null);
-  const base = { ...process.env };
+  const base = { ...process.env, GIT_CEILING_DIRECTORIES: dirname(resolve(dir)) };
   for (const k of GIT_ENV_DROP) delete base[k];
   // No planted hook or config command runs (git-guard.mjs, G2): `ls-files` alone starts core.fsmonitor.
-  return guardedGitEnv(dir, { env: base }).then((env) => new Promise((done) => {
-    try {
-      execFile('git', args, { cwd: dir, env, encoding: 'utf8', timeout: timeoutMs, maxBuffer, windowsHide: true },
-        (err, stdout) => done(err ? null : String(stdout)));
-    } catch {
-      done(null);
-    }
-  }), () => null);
+  return guardedGitEnv(dir, { env: base }).then((env) => runCapture('git', args, { cwd: dir, env, timeoutMs, maxBuffer })
+    .then((r) => (r.code === 0 ? r.stdout : null)), () => null);
 }
 
 async function walk(dir, maxFiles) {

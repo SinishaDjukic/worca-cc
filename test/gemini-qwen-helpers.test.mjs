@@ -47,9 +47,10 @@ for (const { engine, fake, hint, signedOut } of ENGINES) {
   test(`${engine}: a mock run puts agent nodes on ${engine} and the title spawn on Claude`, { timeout: 120000 }, async () => {
     const titles = [];
     mockSpawnLog.length = 0;
+    // --allow-unguarded-engine: Qwen cannot switch its sub-agent tool off yet (decision 11, engines/index.mjs subagentPolicy).
     const orch = createOrchestrator({
       projectDir: gitDir(`${engine}-run`), prompt: 'Add a settings page', auto: true, guardrailsId: 'permissive',
-      claude: { mock: true, engine, bin: `/nonexistent/${engine}` },
+      claude: { mock: true, engine, bin: `/nonexistent/${engine}`, allowUnguardedEngine: true },
       titleRunClaude: async (o) => { titles.push(o); return { text: 'Add a settings page' }; },
     });
     const res = await orch.run();

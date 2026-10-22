@@ -15,7 +15,7 @@
 // WORCA_MOCK=1: no children — in-memory mock workers, instantly 'connected',
 // with test hooks mirroring plugin-shim.mjs setMockSourceResponses.
 
-import { spawn } from 'node:child_process';
+import { spawnChild } from '../spawn.mjs';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -113,10 +113,10 @@ export function discoverChannels() {
  * @param {{logger?:(level:string,msg:string)=>void,
  *          onInbound?:(ev:{plugin:string,channelId:string,platform:string,msg:object})=>void,
  *          onStatus?:(ev:{plugin:string,channelId:string,platform:string,state:string,detail:string|null})=>void,
- *          _spawn?:typeof spawn, _backoffMs?:number[], _healthyAfterMs?:number}} opts
+ *          _spawn?:typeof spawnChild, _backoffMs?:number[], _healthyAfterMs?:number}} opts
  *   `_spawn`/`_backoffMs`/`_healthyAfterMs` are test seams only.
  */
-export function createChannelHost({ logger, onInbound, onStatus, _spawn = spawn, _backoffMs = RESTART_BACKOFF_MS, _healthyAfterMs = HEALTHY_AFTER_MS } = {}) {
+export function createChannelHost({ logger, onInbound, onStatus, _spawn = spawnChild, _backoffMs = RESTART_BACKOFF_MS, _healthyAfterMs = HEALTHY_AFTER_MS } = {}) {
   const log = typeof logger === 'function' ? logger : (level, msg) => console.error(`chat ${level}: ${msg}`);
   const workers = new Map(); // key -> worker record
   let stopping = false;

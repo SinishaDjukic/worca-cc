@@ -1,81 +1,37 @@
-// src/core/engines/spawn.mjs
-// Engine-agnostic process supervision for every harness adapter: spawn (as the
-// agent user when asked), line framing of stdout/stderr, abort -> SIGTERM ->
-// grace -> SIGKILL, staged-file cleanup, the scrubbed spawn env. What a stdout
-// line MEANS is the adapter's business (onStdoutLine); this module never parses one.
-import { spawn } from 'node:child_process';
+// src/core/spawn.mjs
+// The child-process owner (plans/core-protection-layer-design.md §4.1): the one allowlist child env (childEnv), process
+// supervision for every harness adapter (spawn as the agent user when asked, line framing of stdout/stderr, abort ->
+// SIGTERM to the process group -> grace -> SIGKILL, staged-file cleanup), the argv value guard (argValue) and the
+// run-start check runner (execCheck). What a stdout line MEANS is the adapter's business (onStdoutLine); this module
+// never parses one.
+import { spawn, spawnSync, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { createInterface } from 'node:readline';
 import { realpathSync } from 'node:fs';
 import { join, resolve, dirname, basename } from 'node:path';
-import { strongestClass } from '../recoverable-error.mjs';
-import { stripHostCredentials } from '../host-credentials.mjs';
-import { agentSpawn, killAgentGroup, shareWithAgent } from '../agent-user.mjs';
-import { agentIdentityFor } from '../agent-pool.mjs';
-import { currentOwner } from '../billing.mjs';
-import { isReservedModelEnvKey } from '../model-env.mjs';
-import { worcaHome } from '../projects.mjs';
-import { isWithin } from '../fs-scope.mjs';
-import { withNoGitPath } from '../nogit-stub.mjs';
-import { withoutProxyLogin } from '../env-proxy.mjs';
+import { strongestClass } from './recoverable-error.mjs';
+import { agentSpawn, killAgentGroup, shareWithAgent } from './agent-user.mjs';
+import { agentIdentityFor } from './agent-pool.mjs';
+import { currentOwner } from './billing.mjs';
+import { isReservedModelEnvKey } from './model-env.mjs';
+import { worcaHome } from './projects.mjs';
+import { isWithin } from './fs-scope.mjs';
+import { withNoGitPath } from './nogit-stub.mjs';
+import { composeChildEnv } from './child-env.mjs';
 
-// Grace between the abort SIGTERM and the SIGKILL escalation. Claude Code shuts
-// down synchronously (fsync'd ~/.claude.json saves); a SIGKILL that lands inside
-// such a write strands ~/.claude.json.tmp.<pid>.<hex> (2026-08-30: 2099 files,
-// 4.4 GB, all from test runs under IO load). 5 s is generous on an idle disk
-// (SIGTERM exits in ~0.5 s) and only delays a stop when the child is wedged.
-export const DEFAULT_SIGKILL_GRACE_MS = 5000;
-export function sigkillGraceMs() {
-  const n = Number(process.env.WORCA_SIGKILL_GRACE_MS);
-  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_SIGKILL_GRACE_MS;
-}
-
-// Base env a headless claude needs to function at all; everything else is
-// withheld under scrub. ANTHROPIC_*/CLAUDE_* prefixes carry the CLI's own auth
-// and configuration and MUST survive, or every scrubbed run would fail auth.
-// The proxy / CA vars are CONNECTIVITY config, not secrets: without them a
-// scrubbed run behind a TLS-intercepting corporate proxy fails TLS on every
-// spawn (the 2.1.220 binary reads all of them). Cloud-provider creds
-// (AWS_*/GOOGLE_APPLICATION_CREDENTIALS/AZURE_*) are intentionally NOT here —
-// a Bedrock/Vertex/Foundry deployment allowlists them per-project (documented).
-export const SPAWN_ENV_BASE = [
-  'PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'SHELL', 'USER', 'LOGNAME', 'TERM',
-  'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy',
-  // Worca's corporate-proxy marker (proxy-credentials.mjs CORPORATE_PROXY_VAR; a test pins the value).
-  'WORCA_CORPORATE_PROXY_URL',
-  'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR',
-  // The single-bundle CA names git, curl and Python Requests read (the container entrypoint sets them).
-  'GIT_SSL_CAINFO', 'CURL_CA_BUNDLE', 'REQUESTS_CA_BUNDLE',
-];
+export { formatDropped, SPAWN_ENV_BASE, DEFAULT_SIGKILL_GRACE_MS, sigkillGraceMs } from './child-env.mjs';
+import { sigkillGraceMs } from './child-env.mjs';
 
 /**
- * The spawn env under guardrails. undefined when scrub is off — spawn() then
- * inherits process.env exactly as today. When on: base vars + every `ANTHROPIC_`-
- * and `CLAUDE_`-prefixed var + the per-project allowlist. (Do not rewrite those
- * prefixes with a `*` glob here — the resulting `*` + `/` would end this comment.)
- *
- * We deliberately do NOT set CLAUDE_CODE_SUBPROCESS_ENV_SCRUB. On CLI 2.1.220
- * (live-verified 2026-08-01) a truthy value forces the permission mode to
- * "default", overriding our `--permission-mode acceptEdits` (and, per static
- * analysis, forces a strict sandbox) — which would break scrubbed pipeline runs.
- * Do not reinstate it without re-verifying against the installed CLI.
- *
- * @param {boolean|undefined} envScrub
- * @param {string[]|undefined} envAllowlist
- * @param {string[]} [prefixes]  the engine's own env prefixes, kept under scrub (claude: ANTHROPIC_, CLAUDE_)
- * @returns {Record<string,string>|undefined}
+ * The one env builder for a child (child-env.mjs composeChildEnv: the catalog allowlist of exact names, local or
+ * remote), with the no-git PATH stub on a local child.
+ * @returns {{env: Record<string,string>, dropped: string[]}}
  */
-export function buildSpawnEnv(envScrub, envAllowlist, prefixes = ['ANTHROPIC_', 'CLAUDE_']) {
-  if (!envScrub) return undefined;
-  const allow = new Set(Array.isArray(envAllowlist) ? envAllowlist : []);
-  const env = {};
-  for (const [k, v] of Object.entries(process.env)) {
-    if (v === undefined) continue;
-    if (SPAWN_ENV_BASE.includes(k) || prefixes.some((p) => k.startsWith(p)) || allow.has(k)) {
-      env[k] = v;
-    }
-  }
-  return env;
+export function childEnv(spec = {}) {
+  const r = composeChildEnv(spec);
+  return spec.remote ? r : { env: withNoGitPath(r.env), dropped: r.dropped };
 }
+
 
 /**
  * The run-level spawn env (runClaude's `spawnEnv`, wsmap D9) as it may reach a child: string
@@ -91,28 +47,77 @@ export function cleanRunEnv(env) {
   return Object.keys(out).length ? out : null;
 }
 
+// ── process primitives for children with their own lifecycle ───────────────
+// The script runner, the terminal, plugin shims and channel workers supervise their own children (a capped capture, a
+// pty, a JSON-RPC pipe): they start them here, never from node:child_process themselves, and always say which env the
+// child gets (childEnv, or a builder of their own such as plugin-shim.mjs scrubbedEnv).
+
+/** node's spawn for a long-lived child. `options.env` is required: a child never inherits worca's env by default. */
+export function spawnChild(file, args, options) {
+  if (!options || typeof options.env !== 'object' || options.env === null) throw new Error(`spawnChild ${file}: options.env is required`);
+  return spawn(file, args, options);
+}
+/** node's spawnSync, for a short host probe or a tree kill (`ps`, `taskkill`). */
+export function spawnChildSync(file, args, options = {}) { return spawnSync(file, args, options); }
+/** node's execFile as a promise (rejects with stdout/stderr on a failure), maxBuffer 16 MiB unless given. */
+const execFileP = promisify(execFile);
+export function execFileAsync(file, args, options = {}) { return execFileP(file, args, { maxBuffer: 16 * 1024 * 1024, ...options }); }
+
 /**
- * The final child env, in the order the claude runner always applied it: the
- * scrubbed env (undefined when scrub is off -> process.env), the run-level env
- * (cleanRunEnv) over it, the adapter's overlay (the model env) merged LAST so it
- * survives scrub and wins collisions, WORCA_HOST_PID after that, no GitHub
- * or Azure DevOps credential in any tier (host-credentials.mjs), never the credential broker's own secret, and no
- * proxy URL that carries a login (env-proxy.mjs withoutProxyLogin: the corporate proxy is off then, so the child
- * goes direct rather than get the password). With
- * no run env and no overlay the env is byte-identical to the scrub result.
- * @returns {{env: Record<string,string>, scrubbed: boolean}}
+ * A value that lands in argv after a flag (a model id, branch, path or rule word): returned as is, or refused before
+ * anything spawns when it is empty or starts with "-" (it would be read as a flag: `--model -oProxyCommand=x`).
+ * @throws {Error} errorClass 'config'
  */
-export function composeSpawnEnv({ envScrub, envAllowlist, prefixes, runEnv, overlay, hostPid } = {}) {
-  const scrubbedEnv = buildSpawnEnv(envScrub, envAllowlist, prefixes);
-  let env = scrubbedEnv;
-  if (runEnv) env = { ...(env ?? process.env), ...runEnv };
-  if (overlay) env = { ...(env ?? process.env), ...overlay };
-  if (hostPid != null) env = { ...(env ?? process.env), WORCA_HOST_PID: String(hostPid) };
-  env = stripHostCredentials(env ?? process.env);
-  delete env.WORCA_BROKER_SECRET;
-  delete env.WORCA_BROKER_SECRET_FILE;
-  env = withNoGitPath(withoutProxyLogin(env));
-  return { env, scrubbed: !!scrubbedEnv };
+export function argValue(value, what) {
+  const v = typeof value === 'string' ? value : value == null ? '' : String(value);
+  if (!v.trim()) throw Object.assign(new Error(`${what} is empty`), { errorClass: 'config' });
+  if (v.startsWith('-')) throw Object.assign(new Error(`${what} "${v}" cannot start with "-"`), { errorClass: 'config' });
+  return v;
+}
+
+/**
+ * The run-start check runner (an engine's preflight: `codex login status`, `copilot --version`, `cursor-agent status`,
+ * `claude --version`): `file args` under `childEnv(spec)`, the exact spec the run spawns with, so the check's answer
+ * comes from the run's env. Never rejects.
+ * @param {string} file
+ * @param {string[]} args
+ * @param {{spec?: object, timeoutMs?: number, maxBuffer?: number, cwd?: string, signal?: AbortSignal}} [o]
+ * @returns {Promise<{code: number|null, stdout: string, stderr: string, error?: Error}>} `error` when the command did not
+ *   run to an exit code (ENOENT, a timeout); `code` is its exit code, null then
+ */
+export function execCheck(file, args, { spec = {}, timeoutMs = 10000, maxBuffer = 4 * 1024 * 1024, cwd, signal } = {}) {
+  const { env } = childEnv({ kind: 'preflight', ...spec });
+  return new Promise((done) => {
+    try {
+      execFile(file, args, { env, timeout: timeoutMs, maxBuffer, windowsHide: true, ...(cwd ? { cwd } : {}), ...(signal ? { signal, killSignal: 'SIGKILL' } : {}) }, (err, stdout, stderr) => {
+        const out = { code: err ? (typeof err.code === 'number' ? err.code : null) : 0, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') };
+        done(err && typeof err.code !== 'number' ? { ...out, error: err } : out);
+      });
+    } catch (err) { done({ code: null, stdout: '', stderr: '', error: err }); }
+  });
+}
+
+/**
+ * A one-shot command worca runs for itself (a probe, a build helper), to completion: `file args` with no shell, its
+ * stdout and stderr captured, killed with SIGKILL at `timeoutMs`. The env is `childEnv(spec)` when `spec` is given,
+ * else `env` (default: this process's env; a caller that hands a child its own env decides that here). `signal` kills it
+ * early (SIGKILL). Never rejects.
+ * @returns {Promise<{code: number|null, stdout: string, stderr: string, timedOut: boolean, error?: Error}>}
+ */
+export function runCapture(file, args, { spec = null, env = undefined, cwd, timeoutMs = 30000, maxBuffer = 16 * 1024 * 1024, input = null, signal } = {}) {
+  const childEnvOf = spec ? childEnv({ kind: 'preflight', ...spec }).env : (env ?? process.env);
+  return new Promise((done) => {
+    let child;
+    try {
+      child = execFile(file, args, { env: childEnvOf, cwd, timeout: timeoutMs, killSignal: 'SIGKILL', maxBuffer, windowsHide: true, ...(signal ? { signal } : {}) },
+        (err, stdout, stderr) => {
+          const timedOut = !!err?.killed && err?.signal === 'SIGKILL';
+          const out = { code: err ? (typeof err.code === 'number' ? err.code : null) : 0, stdout: String(stdout ?? ''), stderr: String(stderr ?? ''), timedOut };
+          done(err && typeof err.code !== 'number' ? { ...out, error: err } : out);
+        });
+    } catch (err) { done({ code: null, stdout: '', stderr: '', timedOut: false, error: err }); return; }
+    if (input != null && child.stdin) { child.stdin.on('error', () => {}); child.stdin.end(input); }
+  });
 }
 
 export function safeEmit(onEvent, e) {
@@ -122,6 +127,20 @@ export function safeEmit(onEvent, e) {
     /* listener errors must not break the stream */
   }
 }
+
+// Group kill (plans/core-protection-layer-design.md §4.1 item 2): on POSIX every local child leads its own process
+// group. Windows has no process groups (child.kill only).
+const GROUP_KILL = process.platform !== 'win32';
+/** `signal` to the child's process group (`group`), else to the child; never throws (a gone group answers ESRCH). */
+function signalGroup(child, signal, group) {
+  if (group) { try { process.kill(-child.pid, signal); return; } catch { /* gone, or never a leader: the child alone */ } }
+  try { child.kill(signal); } catch { /* ignore */ }
+}
+/** The process groups of the local children still supervised: a POSIX child leads its own group, so a terminal's
+ *  Ctrl+C no longer reaches it, and a worca that exits first (the CLI's hard exit, a crash) must take them along.
+ *  An 'exit' listener must be synchronous: process.kill is. A SIGKILLed worca cannot run it; nothing can. */
+const liveGroups = new Set();
+process.on('exit', () => { for (const pid of liveGroups) { try { process.kill(-pid, 'SIGKILL'); } catch { /* gone */ } } });
 
 // Cap for the stderr detail embedded in a non-zero-exit Error message. The
 // audit trail and the UI error banner consume that message; an uncapped
@@ -187,11 +206,13 @@ export function superviseSpawn(o) {
         for (const d of [stagedDir].flat()) if (d) shareWithAgent(typeof d === 'string' ? d : d.dir, agentId, { stopAt: join(worcaHome(), 'tmp'), writable: typeof d === 'object' && d.writable === true });
         ({ file: exe, args: argv, env: childEnv } = agentSpawn(file, args, childEnv, agentId, agentHome ? { home: agentHome(agentId) } : {}));
       }
+      // A local POSIX child leads its own process group, so a stop reaches the tool shells, dev servers and MCP
+      // servers it started (onAbort signals the group); the host-exit reaper below covers a worca that exits first.
       child = remote
         ? remote.spawn(exe, argv, { cwd, env: childEnv, stdin, uploads: [stagedDir].flat().filter(Boolean).map((d) => (typeof d === 'string' ? d : d.dir)) })
         : spawn(exe, argv, {
           cwd, stdio: [stdin != null ? 'pipe' : 'ignore', 'pipe', 'pipe'], ...(childEnv ? { env: childEnv } : {}),
-          ...(agentId ? { detached: true } : {}),
+          ...(agentId || GROUP_KILL ? { detached: true } : {}),
         });
     } catch (err) {
       cleanup();
@@ -214,24 +235,21 @@ export function superviseSpawn(o) {
     let killTimer = null;
     let terminationStarted = false;
 
+    const group = !remote && GROUP_KILL && typeof child.pid === 'number';
+    if (group) liveGroups.add(child.pid);
     const terminateChild = () => {
       if (terminationStarted) return;
       terminationStarted = true;
-      try {
-        child.kill('SIGTERM');
-      } catch {
-        /* ignore */
-      }
+      // The whole group: a backgrounded grandchild (`npm run dev &`) dies with the step. A remote child signals its
+      // own group in the sandbox (remote-child.mjs: the line runs under `setsid`).
+      signalGroup(child, 'SIGTERM', group);
       // Escalate if it ignores SIGTERM.
       killTimer = setTimeout(() => {
         // Only a sudo still running holds the group: after it exits the pid may be reused.
         const stuck = child.exitCode === null && child.signalCode === null;
-        if (!stuck) return;
-        try {
-          child.kill('SIGKILL');
-        } catch {
-          /* ignore */
-        }
+        // The group may outlive its leader (a backgrounded grandchild); the leader alone only while it still runs.
+        if (group && liveGroups.has(child.pid)) signalGroup(child, 'SIGKILL', true);
+        else if (stuck) signalGroup(child, 'SIGKILL', false);
         if (agentId && stuck) killAgentGroup(child.pid, agentId);
       }, sigkillGraceMs()).unref?.();
     };
@@ -244,8 +262,12 @@ export function superviseSpawn(o) {
     const finish = (fn, arg) => {
       if (settled) return;
       settled = true;
+      // Kept until the grace kill once a stop started: the group may outlive its leader.
+      if (group && !terminationStarted) liveGroups.delete(child.pid);
+      else if (group) setTimeout(() => liveGroups.delete(child.pid), sigkillGraceMs() + 50).unref?.();
       if (signal) signal.removeEventListener?.('abort', onAbort);
-      if (killTimer) clearTimeout(killTimer);
+      // A group's escalation outlives its leader's exit (above); a lone child's ends with it.
+      if (killTimer && !group) clearTimeout(killTimer);
       cleanup();
       fn(arg);
     };

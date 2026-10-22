@@ -4315,7 +4315,8 @@ app.post('/api/schedules/resume', async (req, res) => {
         projectDir: dirs.projectDir, ...(dirs.workspace ? { workspace: dirs.workspace } : {}), agentsDir: AGENTS_DIR,
         claude: { permissionMode: 'acceptEdits', mock: serverMockMode(), engine }, resume: saved,
       });
-      const refusal = (probe.claude?.engine || 'claude') !== 'claude' ? await probe.engineResumeRefusal() : null;
+      // Every engine, Claude included (decision 9: its unheld kinds refuse as any engine's do).
+      const refusal = await probe.engineResumeRefusal();
       if (refusal) return res.status(409).json({ error: engineRefusalFor(refusal.error, 'ui'), code: 'engine-refused', overridable: refusal.overridable, engine });
     }
     const afterName = afterRef ? `‘${afterRef.title || afterRef.id.slice(0, 8)}’` : '';

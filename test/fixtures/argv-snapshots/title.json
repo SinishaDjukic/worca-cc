@@ -23,6 +23,7 @@
   "files": {},
   "envAdded": {
     "CLAUDE_CODE_FORK_SUBAGENT": "0",
+    "PWD": "<PROJECT_DIR>",
     "WORCA_HOST_PID": "<PID>"
   }
 }

@@ -40,6 +40,7 @@ import { deleteCommentsForRun } from './diff-comments.mjs';
 import { byActor } from './identity.mjs';
 import { workModeOfRow } from './project-kind.mjs';
 import { writeChangesRecordInTx } from './folder-apply.mjs';
+import { removeRunSessions } from './engines/index.mjs';
 
 /**
  * Final PR observation while the branches still exist (spec §6.8.3). A workspace run
@@ -307,6 +308,15 @@ export async function archivePipeline({ projectDir = null, key = null, workspace
     if (res.removed) report.runRoot = runRoot;
     else report.warnings.push(`run-root: ${res.reason || 'removal refused'}`);
   }
+
+  // 2c) The run's engine sessions (the catalog's `sessions`): its steps' Claude Code transcripts, codex rollouts,
+  //     Copilot session state and Cursor chats. Only the ids this run stored; never a sign-in file. A removal that
+  //     fails is a warning: the archive goes on.
+  try {
+    const sessionIds = getDb().prepare('SELECT DISTINCT session_id FROM pipeline_steps WHERE pipeline_id = ? AND session_id IS NOT NULL')
+      .all(row.id).map((r) => r.session_id);
+    for (const r of await removeRunSessions({ sessionIds })) report.warnings.push(...r.warnings);
+  } catch (e) { report.warnings.push(`engine sessions: ${e?.message || e}`); }
 
   // 3) The run folder itself (prompt.md, pipeline.md header, extras/, any
   //    pipeline-local md). Everything else lives inside it.

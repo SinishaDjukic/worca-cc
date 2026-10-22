@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { createFakeE2b } from '../src/core/exec-env/e2b-fake.mjs';
 import { E2bExecEnv } from '../src/core/exec-env/e2b-env.mjs';
-import { superviseSpawn } from '../src/core/engines/spawn.mjs';
+import { superviseSpawn } from '../src/core/spawn.mjs';
 import { runClaude } from '../src/core/claude-runner.mjs';
 import { scratchDirs, fixture, makeEnvOpts, git } from './helpers/e2b-fixture.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
@@ -20,8 +20,12 @@ const { tmp, cleanup } = scratchDirs(); after(cleanup);
 
 /** Resolves once `cond()` holds (polled), or when `p` settles first: an abort waits for the command to really start,
  *  not for a fixed delay that a loaded machine overruns while the pre-step sync is still running. */
-const until = (cond, p) => Promise.race([new Promise((r) => { const iv = setInterval(() => { if (cond()) { clearInterval(iv); r(); } }, 5); }),
-  p.then(() => {}, () => {})]);
+// The poll stops either way: one left running keeps the whole file from exiting when `p` settles first.
+const until = (cond, p) => {
+  let iv;
+  return Promise.race([new Promise((r) => { iv = setInterval(() => { if (cond()) r(); }, 5); }), p.then(() => {}, () => {})])
+    .finally(() => clearInterval(iv));
+};
 
 /** An env on a fresh fake sandbox. The template's engine CLIs (RemoteExecEnv.ensureCli probes them) are all there unless
  *  `missing` names one: every probe is answered here, never by the fake's real bash, whose PATH is this machine's (it may
@@ -60,6 +64,49 @@ test('superviseSpawn on a remote child: lines framed across chunks, step output 
   await env.close('test');
 });
 
+/** Polls `cond` every 10 ms; throws after `ms` instead of hanging. */
+const settle = async (cond, ms = 5000) => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) { if (cond()) return; await new Promise((r) => setTimeout(r, 10)); }
+  throw new Error('timed out waiting');
+};
+const groupKills = (sdk) => sdk.events.filter((e) => e.type === 'command' && /^kill -(TERM|KILL) -- -\d+/.test(e.cmd)).map((e) => e.cmd);
+
+test('a stop after the remote command exited signals no group: its pid may belong to another command by then', POSIX, async () => {
+  const { f, sdk, env } = await started();
+  try {
+    const child = env.spawn('bash', ['-c', 'true'], { cwd: f.repo });
+    child.stdout.resume(); child.stderr.resume();
+    await once(child, 'close');
+    assert.ok(child.remotePid != null, 'the command ran');
+    child.kill('SIGTERM'); child.kill('SIGKILL'); child.kill();
+    await new Promise((r) => setTimeout(r, 300));
+    assert.deepEqual(groupKills(sdk), []);
+  } finally { await env.close('test'); }
+});
+
+test('a stop with no signal (a script\'s) signals the remote step group, so a backgrounded grandchild dies with it', POSIX, async () => {
+  const { f, sdk, env } = await started();
+  const prevGrace = process.env.WORCA_SIGKILL_GRACE_MS;
+  process.env.WORCA_SIGKILL_GRACE_MS = '100';
+  let gp = null;
+  try {
+    const pidFile = env.sb(join(f.repo, 'gp'));
+    const child = env.spawn('bash', ['-c', `sleep 600 & echo $! > '${pidFile}'; wait`], { cwd: f.repo });
+    child.stdout.resume(); child.stderr.resume();
+    const closed = once(child, 'close');
+    await settle(() => { try { gp = Number(readFileSync(pidFile, 'utf8')) || null; } catch { /* not yet */ } return gp && child.remotePid != null; });
+    child.kill();
+    await settle(() => groupKills(sdk).some((c) => c.startsWith(`kill -TERM -- -${child.remotePid} `)));
+    await closed;
+    await settle(() => { try { process.kill(gp, 0); return false; } catch (e) { return e.code === 'ESRCH'; } });
+  } finally {
+    if (prevGrace === undefined) delete process.env.WORCA_SIGKILL_GRACE_MS; else process.env.WORCA_SIGKILL_GRACE_MS = prevGrace;
+    if (gp) { try { process.kill(gp, 'SIGKILL'); } catch { /* gone, as it should be */ } }
+    await env.close('test');
+  }
+});
+
 test('a non-zero exit rejects with the code and stderr', POSIX, async () => {
   const { f, env } = await started();
   await assert.rejects(supervise(env, { args: ['-c', 'echo boom >&2; exit 3'], cwd: f.repo }), /claude exited with code 3: boom/);
@@ -84,7 +131,7 @@ test('an abort also ends a handle whose wait() rejects without an exit code', PO
   let killed = 0; let launched = false;
   const realRun = env.sandbox.commands.run;
   env.sandbox.commands.run = async (cmd, opts) => {
-    if (!opts?.background || !cmd.startsWith("'bash'")) return realRun(cmd, opts);   // worca's own commands run too (_sh)
+    if (!opts?.background || !cmd.startsWith("exec setsid -w 'bash'")) return realRun(cmd, opts);   // worca's own commands run too (_sh)
     launched = true;
     let fail; const ended = new Promise((_, rej) => { fail = rej; });
     return { pid: 4242, wait: () => ended, kill: async () => { killed += 1; fail(new Error('stream closed')); return true; } };
@@ -104,7 +151,7 @@ test('stdin goes in as a sandbox file, removed afterwards; the staged dir is upl
   const staged = tmp('worca-claude-'); writeFileSync(join(staged, 'p.md'), 'staged prompt\n');
   const { lines } = await supervise(env, { args: ['-c', `cat; cat '${env.sb(join(staged, 'p.md'))}'`], cwd: f.repo, stdin: 'hello\n', stagedDir: staged });
   assert.deepEqual(lines, ['hello', 'staged prompt']);
-  const cmd = sdk.events.filter((e) => e.type === 'command' && e.cmd.startsWith("'bash'")).at(-1).cmd;
+  const cmd = sdk.events.filter((e) => e.type === 'command' && e.cmd.startsWith("exec setsid -w 'bash'")).at(-1).cmd;
   const file = cmd.match(/< '([^']+stdin-\d+)'$/)?.[1];
   assert.ok(file, cmd);
   for (let i = 0; i < 50 && existsSync(file); i++) await new Promise((r) => setTimeout(r, 20));

@@ -103,7 +103,7 @@ const FOREGROUND_FANOUT = Object.freeze(['workspaceScanner', 'workspaceUsageMapp
  * (as Ask Worca's ASK_SPAWN_ENV does): every dispatch runs in the foreground, and the CLI drops
  * `run_in_background` from the Agent, Bash and PowerShell tools' schemas. undefined for every node
  * that cannot fan out ⇒ that spawn env stays byte-identical. Never part of modelEnv: a catalog entry
- * that sets either variable wins over it (engines/spawn.mjs composeSpawnEnv merge order). Pure (the env is a
+ * that sets either variable wins over it (spawn.mjs childEnv merge order). Pure (the env is a
  * parameter) + exported for testing.
  * @param {object} ctx
  * @param {Record<string, string|undefined>} [env] the parent env
@@ -828,6 +828,9 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
   const excluded = bridgedModelInfo(c.model)?.excludeTools;
   return {
     cwd: ctx.projectDir,
+    // The run's work root (its worktree, or work/ of a run without a project): childEnv sets the agent's git ceiling to
+    // its parent, so the agent's own git never walks above the run.
+    workRoot: ctx.projectDir,
     systemPrompt,
     prompt: (ctx.resumeSessionId ? RESUME_HEADER + prompt : prompt)
       + questionsPromptBlock(ctx) + formRepairBlock(ctx) + directionsPromptBlock(ctx),
@@ -907,6 +910,8 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     permissionRules: c.permissionRules,
     envScrub: c.envScrub,
     envAllowlist: c.envAllowlist,
+    // Decision 11: the engine's sub-agent tool switched off (the run gate decided: engines/index.mjs subagentPolicy).
+    ...(c.subagentsOff ? { subagentsOff: true } : {}),
     // Every role and node is a pipeline agent: under WORCA_AGENT_USER when the container has one.
     asAgent: true,
     bin: c.bin,

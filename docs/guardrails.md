@@ -188,6 +188,12 @@ not seen; the fixed keys and hooks have no such window. `http.sslCAInfo` is left
   the egress overlay makes non-allowlisted hosts unreachable at the packet
   level. The Normal and Strict sets also deny `Read` on `/run/secrets/**`,
   where a compose secret (an API key via `apiKeyHelper`) lands.
+- **Every engine's agents get an allowlist environment, scrub on or off**: the
+  base names, the engine's own exact names (its catalog entry in
+  `src/shared/engine-switch.mjs`), its sign-in names and this set's
+  environment allowlist. No prefix family passes. The run log names each
+  variable it did not pass, once per run (names only); add one to the
+  allowlist to pass it. Scrub on additionally limits script nodes.
 - Env scrub failing a pipeline that needed an unlisted var fails visibly
   (tool errors in the transcript) — add the var to the allowlist; there is no
   silent fallback. Common cases: a corporate TLS-intercepting proxy already
@@ -200,11 +206,9 @@ not seen; the fixed keys and hooks have no such window. `http.sslCAInfo` is left
   `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` marker: on current CLIs setting it forces
   the child's permission mode back to `default`, overriding Worca's
   `--permission-mode acceptEdits` and breaking scrubbed pipeline runs.
-- Not setting that marker is not the same as blocking it: if **your own shell**
-  exports `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`, it survives the scrub (the
-  `CLAUDE_*` keep-rule passes it through) and inflicts exactly the breakage
-  above on every spawned `claude` — unset it before launching Worca, or expect
-  degraded runs.
+- `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` exported by **your own shell** is not in
+  Claude's catalog names, so the allowlist withholds it (the run log names it);
+  allowlisting it brings back exactly the breakage above.
 - Strict denies `curl`, which the manual web-UI-testing agent uses to poll a
   dev server — it falls back to the `browser_*` MCP tools (not denied), so that
   flow degrades rather than breaks. `.env*` also matches `.env.example` /

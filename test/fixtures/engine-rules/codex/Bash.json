@@ -1,0 +1,26 @@
+{
+  "rules": {
+    "deny": [
+      "Bash(git push)",
+      "Bash(git push:*)"
+    ]
+  },
+  "expected": {
+    "prefixes": [
+      [
+        "git",
+        "push"
+      ]
+    ],
+    "shellOff": false,
+    "webSearchOff": false,
+    "mcpServersOff": [],
+    "mcpToolsOff": {},
+    "enforced": [],
+    "partial": [
+      "Bash(git push)",
+      "Bash(git push:*)"
+    ],
+    "unenforced": []
+  }
+}

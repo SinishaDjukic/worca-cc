@@ -1,0 +1,12 @@
+{
+  "rules": {
+    "deny": [
+      "WebFetch"
+    ]
+  },
+  "expected": {
+    "deny": [
+      "WebFetch"
+    ]
+  }
+}

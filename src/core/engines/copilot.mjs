@@ -2,7 +2,7 @@
 // The GitHub Copilot CLI adapter: `copilot --output-format json` argv, the JSONL session-event
 // stream normalized into worca's event vocabulary (src/core/engines/events.mjs), token usage from
 // the CLI's cumulative per-session usage file, error classification, and the spawn path on the
-// shared supervisor (engines/spawn.mjs).
+// shared supervisor (src/core/spawn.mjs).
 //
 // Facts this module encodes (checked against @github/copilot 1.0.92, its shipped
 // schemas/session-events.schema.json, and a stand-in OpenAI Responses endpoint in BYOK mode):
@@ -41,18 +41,18 @@
 import { mkdirSync, readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { execFile } from 'node:child_process';
 import { join, dirname, resolve } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { CAPABILITY_KEYS, describeUnattachableMcp } from './capabilities.mjs';
-import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit, writableRootsInWorcaHome } from './spawn.mjs';
+import { superviseSpawn, childEnv, execCheck, argValue, cleanRunEnv, safeEmit, writableRootsInWorcaHome } from '../spawn.mjs';
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 import { mcpResultText } from './codex.mjs';
 import { makeChatDescriptor } from './chat-descriptor.mjs';
 import { copilotWireModel, COPILOT_EFFORTS as MODEL_ENV_COPILOT_EFFORTS } from '../model-env.mjs';
 import { sandboxMcpConfig } from '../exec-env/policy.mjs';
+import { removeSessionEntries } from './sessions.mjs';
 
 export const COPILOT_DEFAULT_BIN = process.env.WORCA_COPILOT_BIN || 'copilot';
 
@@ -239,6 +239,24 @@ export function mcpEnvRefNames(servers) {
   return [...names];
 }
 
+/**
+ * Archive (catalog `sessions: 'user-store'`): a run's Copilot sessions are `<COPILOT_HOME or ~/.copilot>/session-state/
+ * <uuid>` (a folder or a .jsonl), plus worca's usage file per session. Removes exactly those of `sessionIds`
+ * (`copilot:<uuid>`), never the sign-in.
+ * @returns {Promise<{removed: string[], failed: {path: string, error: string}[]}>}
+ */
+export async function removeCopilotSessions({ sessionIds = [], env = process.env, usageDir = defaultUsageDir() } = {}) {
+  const ids = new Set(sessionIds.map((id) => copilotSessionOf(id)).filter(Boolean));
+  const out = { removed: [], failed: [] };
+  if (!ids.size) return out;
+  const home = (env.COPILOT_HOME && env.COPILOT_HOME.trim()) || join(env.HOME || homedir(), '.copilot');
+  for (const r of [
+    await removeSessionEntries(join(home, 'session-state'), (n) => ids.has(n) || (n.endsWith('.jsonl') && ids.has(n.slice(0, -6)))),
+    await removeSessionEntries(usageDir, (n) => n.endsWith('.json') && ids.has(n.slice(0, -5))),
+  ]) { out.removed.push(...r.removed); out.failed.push(...r.failed); }
+  return out;
+}
+
 /** The names of the user's own Copilot MCP servers (~/.copilot/mcp-config.json), which a spawn turns off:
  *  worca's guardrails never saw them. Never throws. */
 export function userCopilotMcpNames(env = process.env) {
@@ -316,7 +334,7 @@ export function buildCopilotArgs({ sessionId, resume = false, model, effort, age
   if (ask) args.push('--no-custom-instructions');
   if (sessionId) args.push(resume ? `--resume=${sessionId}` : `--session-id=${sessionId}`);
   // A catalog id names a Copilot built-in as copilot/<id>: copilot is given its own id (model-env.mjs).
-  if (model) args.push('--model', copilotWireModel(String(model)));
+  if (model) args.push('--model', argValue(copilotWireModel(String(model)), 'model'));
   if (effort && COPILOT_EFFORTS.includes(effort)) args.push('--reasoning-effort', effort);
   if (agent) args.push('--agent', agent);
   for (const d of [...new Set((Array.isArray(addDirs) ? addDirs : []).filter((x) => typeof x === 'string' && x))]) args.push('--add-dir', d);
@@ -518,19 +536,21 @@ export function copilotResumeNotFound(err) { return COPILOT_RESUME_NOT_FOUND_RE.
  * sign-in status command, so a signed-out CLI shows on the first spawn (an auth-class failure).
  * Never rejects: `{refusal}` when the binary cannot run, `{warning}` when the check itself failed, `{}` otherwise.
  */
-export function copilotPreflight({ bin = COPILOT_DEFAULT_BIN, timeoutMs = 15000 } = {}) {
-  return new Promise((resolve) => {
-    execFile(bin, ['--version', '--no-auto-update'], { timeout: timeoutMs, env: { ...process.env, COPILOT_AUTO_UPDATE: 'false' } }, (err, stdout) => {
-      if (err && typeof err.code !== 'number') {
-        resolve(/^(ENOENT|EACCES|EINVAL)$/.test(String(err.code))
-          ? { refusal: `cannot run ${bin} (${err.code}) — install the GitHub Copilot CLI (npm i -g @github/copilot), or point WORCA_COPILOT_BIN at it` }
-          : { warning: `could not check ${bin} (${err.message})` });
-        return;
-      }
-      if (err) { resolve({ warning: `${bin} --version exited with code ${err.code}` }); return; }
-      resolve(/copilot/i.test(String(stdout)) ? {} : { warning: `${bin} --version did not name GitHub Copilot CLI` });
-    });
-  });
+export async function copilotPreflight({ bin = COPILOT_DEFAULT_BIN, timeoutMs = 15000, envAllowlist = [], spec = copilotSpawnSpec({ envAllowlist }) } = {}) {
+  const { code, stdout, error } = await execCheck(bin, ['--version', '--no-auto-update'], { spec, timeoutMs });
+  if (error) {
+    return /^(ENOENT|EACCES|EINVAL)$/.test(String(error.code))
+      ? { refusal: `cannot run ${bin} (${error.code}) — install the GitHub Copilot CLI (npm i -g @github/copilot), or point WORCA_COPILOT_BIN at it` }
+      : { warning: `could not check ${bin} (${error.message})` };
+  }
+  if (code) return { warning: `${bin} --version exited with code ${code}` };
+  return /copilot/i.test(String(stdout)) ? {} : { warning: `${bin} --version did not name GitHub Copilot CLI` };
+}
+
+/** The childEnv spec a copilot run spawns with (engine, the run's allowlist, cwd and work root, the host pid, and
+ *  no auto-update): run and preflight build their env from it. */
+export function copilotSpawnSpec({ envAllowlist = [], cwd = null, workRoot = null, hostPid = null } = {}) {
+  return { engine: 'copilot', allowlist: envAllowlist, cwd, root: workRoot, hostPid, overlay: { COPILOT_AUTO_UPDATE: 'false' } };
 }
 
 // ── spawn ────────────────────────────────────────────────────────────────────
@@ -557,22 +577,18 @@ export const COPILOT_ASK_LOCKDOWN = true;
  * Can this copilot be locked down for an Ask chat? Every flag in COPILOT_ASK_FLAGS must exist: an older copilot
  * without `--available-tools` would leave the chat its shell. Never rejects: `{refusal}` or `{}`.
  */
-export function copilotAskSupport({ bin = COPILOT_DEFAULT_BIN, timeoutMs = 15000 } = {}) {
-  return new Promise((resolve) => {
-    execFile(bin, ['--help'], { timeout: timeoutMs, env: { ...process.env, COPILOT_AUTO_UPDATE: 'false' }, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
-      if (err && typeof err.code !== 'number') {
-        resolve({ refusal: /^(ENOENT|EACCES|EINVAL)$/.test(String(err.code))
-          ? `cannot run ${bin} (${err.code}) — install the GitHub Copilot CLI (npm i -g @github/copilot), or point WORCA_COPILOT_BIN at it`
-          : `could not ask ${bin} which flags it has (${err.message})` });
-        return;
-      }
-      const help = String(stdout || '');
-      const missing = COPILOT_ASK_FLAGS.filter((f) => !new RegExp(`(^|\\s)${f.replace(/-/g, '\\-')}(\\s|=|$)`, 'm').test(help));
-      resolve(missing.length
-        ? { refusal: `this copilot has no ${missing.join(', ')} to lock a chat down — update the GitHub Copilot CLI to ${COPILOT_ASK_MIN_VERSION} or newer` }
-        : {});
-    });
-  });
+export async function copilotAskSupport({ bin = COPILOT_DEFAULT_BIN, timeoutMs = 15000, spec = copilotSpawnSpec() } = {}) {
+  const { stdout, error } = await execCheck(bin, ['--help'], { spec, timeoutMs });
+  if (error) {
+    return { refusal: /^(ENOENT|EACCES|EINVAL)$/.test(String(error.code))
+      ? `cannot run ${bin} (${error.code}) — install the GitHub Copilot CLI (npm i -g @github/copilot), or point WORCA_COPILOT_BIN at it`
+      : `could not ask ${bin} which flags it has (${error.message})` };
+  }
+  const help = String(stdout || '');
+  const missing = COPILOT_ASK_FLAGS.filter((f) => !new RegExp(`(^|\\s)${f.replace(/-/g, '\\-')}(\\s|=|$)`, 'm').test(help));
+  return missing.length
+    ? { refusal: `this copilot has no ${missing.join(', ')} to lock a chat down — update the GitHub Copilot CLI to ${COPILOT_ASK_MIN_VERSION} or newer` }
+    : {};
 }
 
 /**
@@ -586,7 +602,7 @@ export async function runCopilotProcess({
   cwd = process.cwd(), systemPrompt = '', prompt = '', model, effort, onEvent = () => {}, signal,
   bin = COPILOT_DEFAULT_BIN, resumeSessionId, addDirs, writableDirs, sandbox, envScrub, envAllowlist, asAgent, usageDir = defaultUsageDir(),
   mcpConfigPath, spawnEnv: runSpawnEnv, redactValues, maxTurns, askLockdown,
-  permissionRules, allowedTools, agents, appendSubagentSystemPrompt, scratchBase = join(worcaHome(), 'tmp', 'copilot'), execEnv,
+  permissionRules, allowedTools, agents, appendSubagentSystemPrompt, scratchBase = join(worcaHome(), 'tmp', 'copilot'), execEnv, workRoot = null, subagentsOff = false,
 } = {}) {
   if (signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
   const secrets = Array.isArray(redactValues) ? redactValues : [];
@@ -627,7 +643,9 @@ export async function runCopilotProcess({
 
   // MCP: the spawn's --mcp-config servers in Copilot's shape. `${VAR}` references stay references; their values
   // (the run's MCPSECRET_* names) join the copilot env, filled from this spawn's env plus the run's spawn env.
-  const envOpts = { envScrub: envScrub || readOnly, envAllowlist, prefixes: ['COPILOT_'], hostPid: guardOn ? process.pid : null };
+  // The catalog allowlist (childEnv); a read-only spawn (a helper job over untrusted text) gets no project allowlist.
+  // A chat (ask) has no shell: it keeps its allowlist (its sign-in and the names its MCP child needs, ask/spawn.mjs).
+  const spec = copilotSpawnSpec({ envAllowlist: readOnly && !ask ? [] : envAllowlist, cwd, workRoot, hostPid: guardOn ? process.pid : null });
   let mcpServers = null;
   if (mcpConfigPath) {
     let doc;
@@ -641,29 +659,27 @@ export async function runCopilotProcess({
   }
   const refEnv = {};
   if (mcpServers) {
-    const from = composeSpawnEnv({ ...envOpts, runEnv: cleanRunEnv(runSpawnEnv) }).env;
+    const from = childEnv({ ...spec, runEnv: cleanRunEnv(runSpawnEnv) }).env;
     for (const n of mcpEnvRefNames(mcpServers)) if (typeof from[n] === 'string') refEnv[n] = from[n];
   }
   // An Ask chat hands its spawn env to its MCP servers the way a Claude chat does (the agent-mode command token,
   // ask/spawn.mjs): a local server inherits copilot's env, and the chat has no shell to read it there.
   const askEnv = ask ? cleanRunEnv(runSpawnEnv) : null;
   const runEnv = { ...refEnv, ...(askEnv ?? {}) };
-  const { env } = composeSpawnEnv({ ...envOpts, ...(Object.keys(runEnv).length ? { runEnv } : {}) });
   // P3-D20: the run env stays out of this child's env (its shell would read the registry secrets), but the git ceiling
-  // of a run without a project is no secret and must reach the agent's own git.
-  if (typeof runSpawnEnv?.GIT_CEILING_DIRECTORIES === 'string') env.GIT_CEILING_DIRECTORIES = runSpawnEnv.GIT_CEILING_DIRECTORIES;
-  env.COPILOT_AUTO_UPDATE = 'false';
-  // Either would widen the allow list buildCopilotArgs sets (see the notes at the top).
-  delete env.COPILOT_ALLOW_ALL;
-  delete env.COPILOT_ASSISTED_APPROVAL;
+  // of a run without a project is no secret and must reach the agent's own git (childEnv merges its own `root` over it).
+  // COPILOT_ALLOW_ALL and COPILOT_ASSISTED_APPROVAL, either of which would widen the allow list buildCopilotArgs sets,
+  // are in no catalog list: childEnv withholds them.
+  const ceiling = typeof runSpawnEnv?.GIT_CEILING_DIRECTORIES === 'string' ? { GIT_CEILING_DIRECTORIES: runSpawnEnv.GIT_CEILING_DIRECTORIES } : {};
+  const { env } = childEnv({ ...spec, runEnv: { ...runEnv, ...ceiling } });
   // The relay route, the sandbox env and the template's copilot, BEFORE anything is staged or the session is named: a
   // refusal or a template without copilot leaves nothing behind.
-  let childEnv = env;
+  let spawnEnv = env;
   let relayRoute = null;
   if (remote) {
     try {
       relayRoute = remote.openEngineRoute('copilot', { spawnEnv: { ...env, ...cleanRunEnv(runSpawnEnv) }, model: copilotWireModel(String(model)) });
-      childEnv = remote.envFor(env, { engine: 'copilot', keep: Object.keys(refEnv), route: relayRoute });
+      spawnEnv = remote.envFor(env, { engine: 'copilot', keep: Object.keys(refEnv), route: relayRoute });
       await remote.ensureCli(exe);
     } catch (err) { if (relayRoute) remote.closeModelRoute(relayRoute.id); throw redacted(err); }
     onEvent = remote.meteredEvents(relayRoute.id, onEvent);
@@ -694,6 +710,8 @@ export async function runCopilotProcess({
   // Guardrails and the tool set: deny rules worca can express, the per-role tool list, read-only.
   const rules = copilotRulePlan(permissionRules);
   const tools = readOnly ? { deny: [], excluded: [] } : copilotToolPlan(allowedTools);
+  // Decision 11: no `task` sub-agents unless the catalog proves they keep the rules (engines/index.mjs subagentPolicy).
+  if (subagentsOff && !tools.excluded.includes('task')) tools.excluded.push('task');
   const args = buildCopilotArgs({
     sessionId: session, resume, model, effort, agent: COPILOT_NODE_AGENT,
     addDirs: [scratch, ...(readOnly ? [] : [...(addDirs || []), ...(writableDirs || [])])],
@@ -732,7 +750,7 @@ export async function runCopilotProcess({
   };
   const closeRoute = () => { if (relayRoute) { remote.closeEngineRoute(relayRoute.id, onEvent); relayRoute = null; } };
   const res = await superviseSpawn({
-    file: exe, args, displayBin: bin, cwd, env: childEnv, stdin: String(prompt ?? ''), signal: spawnSignal,
+    file: exe, args, displayBin: bin, cwd, env: spawnEnv, stdin: String(prompt ?? ''), signal: spawnSignal,
     // Copilot writes its usage file into the scratch folder, so an agent user gets it writable.
     asAgent: remote ? false : asAgent, stagedDir: remote ? scratch : (asAgent ? { dir: scratch, writable: true } : null), onEvent, execEnv: remote,
     cleanup: () => {},
@@ -798,7 +816,7 @@ export const copilotChat = makeChatDescriptor({
   // GPT-5 Mini is one of Copilot's included models (0× premium requests on a paid plan): a suggestion after every reply
   // costs no premium request there (one on the free plan).
   suggestionModel: 'gpt-5-mini',
-  signIn: () => ['COPILOT_', 'GH_TOKEN', 'GITHUB_TOKEN', 'GH_HOST'],
+  signInMode: () => null,
   prompt: {
     cli: "the GitHub Copilot CLI with Copilot's own sign-in",
     webOff: "Copilot's own web tools stay off.",

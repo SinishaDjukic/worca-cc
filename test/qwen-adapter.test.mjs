@@ -9,8 +9,9 @@ import { join } from 'node:path';
 import {
   buildQwenArgs, createQwenNormalizer, classifyQwenError, QWEN_SESSION_PREFIX, qwenRulePlan, qwenSystemSettings,
   qwenCapabilities, qwenPreflight, runQwenProcess, QWEN_ASK_LOCKDOWN, QWEN_RESUME_NOT_FOUND_RE, qwenSignedIn,
-  qwenEnvPrefixes,
+  qwenSignInMode,
 } from '../src/core/engines/qwen.mjs';
+import { childEnv } from '../src/core/spawn.mjs';
 import { NO_MCP_SERVER } from '../src/core/engines/gemini-family.mjs';
 import { EVENT_TYPES, isNormalized } from '../src/core/engines/events.mjs';
 import { CAPABILITY_KEYS } from '../src/core/engines/capabilities.mjs';
@@ -118,26 +119,32 @@ test('sign-in: a chosen auth type, or env naming a whole provider (also from .en
   assert.equal(qwenSignedIn({ HOME: home, QWEN_HOME: chosen }), true);
 });
 
-test('env prefixes: Qwen\'s own, plus only the provider it is set to — never another provider\'s key', () => {
+test('sign-in mode: only the provider Qwen is set to — never another provider\'s key', () => {
   const home = tmp();
-  assert.deepEqual(qwenEnvPrefixes({ HOME: home }), ['QWEN_'], 'no sign-in: no provider\'s names');
-  assert.deepEqual(qwenEnvPrefixes({ HOME: home, QWEN_OAUTH: '1', ANTHROPIC_API_KEY: 'k', OPENAI_API_KEY: 'k' }), ['QWEN_']);
-  assert.deepEqual(qwenEnvPrefixes({ HOME: home, OPENAI_API_KEY: 'k', OPENAI_MODEL: 'm', OPENAI_BASE_URL: 'https://x', ANTHROPIC_API_KEY: 'k' }),
-    ['QWEN_', 'OPENAI_', 'DASHSCOPE_']);
-  assert.deepEqual(qwenEnvPrefixes({ HOME: home, GEMINI_API_KEY: 'k', GEMINI_MODEL: 'g' }), ['QWEN_', 'GEMINI_']);
+  assert.equal(qwenSignInMode({ HOME: home }), 'none', 'no sign-in: no provider\'s names');
+  assert.equal(qwenSignInMode({ HOME: home, QWEN_OAUTH: '1', ANTHROPIC_API_KEY: 'k', OPENAI_API_KEY: 'k' }), 'qwen-oauth');
+  assert.equal(qwenSignInMode({ HOME: home, OPENAI_API_KEY: 'k', OPENAI_MODEL: 'm', OPENAI_BASE_URL: 'https://x', ANTHROPIC_API_KEY: 'k' }), 'openai');
+  assert.equal(qwenSignInMode({ HOME: home, GEMINI_API_KEY: 'k', GEMINI_MODEL: 'g' }), 'gemini');
   const chosen = tmp();
   writeFileSync(join(chosen, 'settings.json'), JSON.stringify({ security: { auth: { selectedType: 'anthropic' } } }));
-  assert.deepEqual(qwenEnvPrefixes({ HOME: home, QWEN_HOME: chosen, OPENAI_API_KEY: 'k', OPENAI_MODEL: 'm', OPENAI_BASE_URL: 'https://x' }),
-    ['QWEN_', 'ANTHROPIC_'], 'the chosen sign-in wins over env');
+  assert.equal(qwenSignInMode({ HOME: home, QWEN_HOME: chosen, OPENAI_API_KEY: 'k', OPENAI_MODEL: 'm', OPENAI_BASE_URL: 'https://x' }),
+    'anthropic', 'the chosen sign-in wins over env');
+  // The catalog modes are those auth types: the child keeps the chosen provider's key only.
+  const base = { OPENAI_API_KEY: 'o', ANTHROPIC_API_KEY: 'a', GEMINI_API_KEY: 'g', GOOGLE_API_KEY: 'v', OPENAI_MODEL: 'm' };
+  const keys = (mode) => ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY'].filter((k) => k in childEnv({ engine: 'qwen', signInMode: mode, base }).env);
+  assert.deepEqual(keys('openai'), ['OPENAI_API_KEY']);
+  assert.deepEqual(keys('anthropic'), ['ANTHROPIC_API_KEY']);
+  assert.deepEqual(keys('qwen-oauth'), []);
+  assert.deepEqual(keys('none'), []);
 });
 
-test('spawn with scrub on: worca\'s other provider keys stay out of the agent\'s env', POSIX, async () => {
+test('spawn: worca\'s other provider keys stay out of the agent\'s env, scrub or not', POSIX, async () => {
   const fake = fakeQwen(tmp(), 'ok');
   const keep = { ...process.env };
   Object.assign(process.env, { HOME: tmp(), QWEN_OAUTH: '1', ANTHROPIC_API_KEY: 'worca-anthropic', OPENAI_API_KEY: 'worca-openai', GEMINI_API_KEY: 'g' });
   delete process.env.QWEN_HOME;
   try {
-    await runQwenProcess({ cwd: tmp(), bin: fake.bin, prompt: 'go', envScrub: true });
+    await runQwenProcess({ cwd: tmp(), bin: fake.bin, prompt: 'go' });
   } finally {
     for (const k of Object.keys(process.env)) if (!(k in keep)) delete process.env[k];
     Object.assign(process.env, keep);

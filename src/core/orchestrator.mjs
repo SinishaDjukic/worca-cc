@@ -471,7 +471,7 @@ export class GraphOrchestrator extends RunHarness {
       // Stop OR pause ends the call (the same composition every node spawn uses).
       signal: AbortSignal.any([this.abort.signal, this.pauseAbort.signal]),
       envScrub: this.guardrails?.envScrub || undefined,
-      envAllowlist: this.guardrails?.envScrub ? this.guardrails.envAllowlist : undefined,
+      envAllowlist: this.guardrails?.envAllowlist?.length ? this.guardrails.envAllowlist : undefined,
       // A bridged Auto model: the upstream's own cost comes back under this tag (classify.mjs).
       bridgeTag: `auto-classify:${this.pipeline?.id || 'run'}:${round}`,
     };
@@ -1984,14 +1984,22 @@ export class GraphOrchestrator extends RunHarness {
         ...this._nodeModelPair(nc),
         permissionRules: this._spawnPermissionRules(),
         envScrub: this.guardrails?.envScrub || undefined,
-        // §5.5.1: a scrubbed spawn with a registry stdio copy keeps the launcher's keep-list.
-        envAllowlist: this.guardrails?.envScrub
-          ? (this.mcpLayer?.allowlist?.length ? [...this.guardrails.envAllowlist, ...this.mcpLayer.allowlist] : this.guardrails.envAllowlist)
-          : undefined,
+        // The project's allowlist adds names to the engine's catalog allowlist (src/core/spawn.mjs childEnv), scrub or
+        // not; §5.5.1: a spawn with a registry stdio copy keeps the launcher's keep-list.
+        envAllowlist: this._spawnAllowlist(),
+        // Decision 11: the engine's sub-agent tool is off unless the catalog proves its sub-agents keep the rules.
+        ...(this._subagentsOff ? { subagentsOff: true } : {}),
         mock: this.claude.mock,
         execEnv: this.execEnv || undefined,
       },
     };
+  }
+
+  /** The names a spawn adds to its engine's catalog allowlist: the guardrail set's envAllowlist and the MCP registry's
+   *  launcher keep-list (§5.5.1); undefined when there are none. */
+  _spawnAllowlist() {
+    const names = [...(this.guardrails?.envAllowlist || []), ...(this.mcpLayer?.allowlist || [])];
+    return names.length ? [...new Set(names)] : undefined;
   }
 
   /** The allocation context of one execution. `_execCtx` and `_finishRoleReview` share it, so a role reviewer's

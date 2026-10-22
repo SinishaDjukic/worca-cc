@@ -6,8 +6,7 @@
 // no .git. Any failure before the swap+lock lands removes versions/<sha7> and
 // leaves prior state untouched (§6.1 step 4).
 
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { execFileAsync } from './spawn.mjs';
 import { createHash } from 'node:crypto';
 import {
   existsSync, readdirSync, readFileSync, readlinkSync,
@@ -45,9 +44,7 @@ import { agentIdentity } from './agent-user.mjs';
 import { gitAvailable } from './git-available.mjs';
 import { withNoGitPath } from './nogit-stub.mjs';
 
-const execFileP = promisify(execFile);
-const defaultExec = (cmd, args, opts = {}) =>
-  execFileP(cmd, args, { maxBuffer: 16 * 1024 * 1024, ...opts });
+const defaultExec = (cmd, args, opts = {}) => execFileAsync(cmd, args, opts);
 
 const IS_WINDOWS = process.platform === 'win32';
 

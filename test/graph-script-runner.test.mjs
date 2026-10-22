@@ -869,7 +869,7 @@ describe('e2b', { skip: process.platform === 'win32' ? 'e2b mode is POSIX-only' 
     const env = new E2bExecEnv(e2bEnvOpts(tmp, sdk, f));
     await env.start();
     after(() => env.close('test'));
-    const commands = () => sdk.events.filter((e) => e.type === 'command').map((e) => e.cmd);
+    const commands = () => sdk.events.filter((e) => e.type === 'command').map((e) => e.cmd.replace(/^exec setsid -w /, '')); // the step's own command (RemoteChild runs it under setsid)
     return { f, sdk, env, commands, ctx: (o) => ctxFor({ ...o, pipelineDir: f.pipelineDir, cwd: f.repo, execEnv: env }) };
   }
 
@@ -919,10 +919,11 @@ export default async function ({ outputs }) {
     let envs = null;
     const { ctx } = await e2b({ onCommand: (cmd, o) => { if (cmd.startsWith("'/bin/sh'")) envs = o.envs; return null; } });
     const c = ctx({ meta: shellMeta(), params: { command: 'true' }, ports: { ...PORTS, outputs: PORTS.outputs.filter((o) => o.id !== 'report') } });
-    await withEnv({ WORCA_HEARTBEAT_TOKEN: 'hb', OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer x', E2B_API_KEY: 'e2b_k', E2B_API_URL: 'http://localhost:3000' },
-      () => runScriptExecution(c));
+    await withEnv({ WORCA_HEARTBEAT_TOKEN: 'hb', OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer x', E2B_API_KEY: 'e2b_k', E2B_API_URL: 'http://localhost:3000',
+      WORCA_IN_HOST: '/host', WORCA_PARAM_HOST_TOKEN: 'host' }, () => runScriptExecution(c));
     for (const k of ['WORCA_CWD', 'WORCA_PIPELINE_DIR', 'WORCA_RUN_ID', 'WORCA_OUT_LOG', 'WORCA_PARAM_COMMAND', 'WORCA_ENVELOPE']) assert.ok(envs[k], k);
-    for (const k of ['WORCA_HEARTBEAT_TOKEN', 'OTEL_EXPORTER_OTLP_HEADERS', 'E2B_API_KEY', 'E2B_API_URL']) assert.equal(k in envs, false, k);
+    // The step's own port and param names (declared, exact); a host var that only looks like one stays out.
+    for (const k of ['WORCA_HEARTBEAT_TOKEN', 'OTEL_EXPORTER_OTLP_HEADERS', 'E2B_API_KEY', 'E2B_API_URL', 'WORCA_IN_HOST', 'WORCA_PARAM_HOST_TOKEN']) assert.equal(k in envs, false, k);
     // the program runs in a Linux sandbox and knows it (promo-kit find-tools toolHints); the VM is Chrome's sandbox
     assert.equal(envs.WORCA_PLATFORM, 'linux');
     assert.equal(envs.WORCA_EXEC_ENV, 'e2b');

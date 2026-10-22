@@ -12,7 +12,7 @@ import { RemoteExecEnv } from '../src/core/exec-env/remote-env.mjs';
 import { remotePreflight, remoteRefusesDefault, instanceTag, INSTANCE_ID_FILE } from '../src/core/exec-env/policy.mjs';
 import { REMOTE_ENGINES } from '../src/shared/exec-env.mjs';
 import { ENGINES, ENGINE_NAMES } from '../src/shared/engine-switch.mjs';
-import { engineCredential, sandboxEnv as sbxEnv, ENGINE_SANDBOX } from '../src/core/exec-env/policy.mjs';
+import { engineCredential, sandboxEnv as sbxEnv } from '../src/core/exec-env/policy.mjs';
 
 const scratch = []; after(() => scratch.forEach((d) => rmSync(d, { recursive: true, force: true })));
 const OK_ENV = { E2B_API_KEY: 'e2b_1234567890abcdef', E2B_API_URL: 'http://localhost:3000', CLAUDE_CODE_OAUTH_TOKEN: 'oat' };
@@ -30,10 +30,10 @@ test('preflight: a clean e2b claude single-project run passes', () => {
 });
 
 test('an engine without sandbox support in the catalog (gemini, qwen, goose, opencode) is refused at run start: it runs locally only for now', () => {
-  // The catalog flag decides, never a name list: REMOTE_ENGINES is exactly the catalog's sandbox engines.
-  assert.deepEqual(REMOTE_ENGINES, ENGINE_NAMES.filter((e) => ENGINES[e].sandbox));
+  // The catalog flag decides, never a name list: REMOTE_ENGINES is exactly the catalog's remote engines.
+  assert.deepEqual(REMOTE_ENGINES, ENGINE_NAMES.filter((e) => ENGINES[e].remote));
   for (const engine of ['gemini', 'qwen', 'goose', 'opencode']) {
-    assert.equal(ENGINES[engine].sandbox, false, engine);
+    assert.equal(ENGINES[engine].remote, false, engine);
     const errs = pre({ engine }).errors;
     assert.equal(errs.length, 1, engine);
     assert.match(errs[0], new RegExp(`^E2B execution runs the claude, codex, copilot and cursor engines only \\(this run uses ${engine}\\): ${ENGINES[engine].label} runs locally only for now\\. Pick Local, or switch the engine\\.$`));
@@ -135,9 +135,12 @@ test('sandboxEnv: allowlist + keep, never host paths or GitHub/ADO tokens', () =
     ANTHROPIC_MODEL: 'm', CLAUDE_CODE_MAX_OUTPUT_TOKENS: '1', WORCA_HOST_PID: '1', WORCA_HOME: '/w',
     WORCA_IN_PLAN: '/p', GH_TOKEN: 'ghp_x', WORCA_GH_WRITE_TOKEN: 'x', AWS_SECRET_ACCESS_KEY: 's', MY_SECRET: 'v',
     LANG: 'C', API_TIMEOUT_MS: '600000', MCPSECRET_ABCD1234: 'only-if-referenced' },
-  { keep: ['MY_SECRET', 'PATH'] });
+  { keep: ['MY_SECRET', 'PATH', 'WORCA_IN_PLAN'] });
   assert.deepEqual(Object.keys(env).sort(),
     ['ANTHROPIC_MODEL', 'API_TIMEOUT_MS', 'CLAUDE_CODE_MAX_OUTPUT_TOKENS', 'LANG', 'MY_SECRET', 'WORCA_IN_PLAN']);
+  // A port or param var is an exact name the step declares, never a prefix family: an undeclared one stays out.
+  assert.deepEqual(Object.keys(sandboxEnv({ WORCA_IN_PLAN: '/p', WORCA_PARAM_TOKEN: 'host', WORCA_OUT_X: '/x', WORCA_ENVELOPE: '/e' }, { keep: ['WORCA_IN_PLAN'] })).sort(),
+    ['WORCA_ENVELOPE', 'WORCA_IN_PLAN']);
 });
 
 test('sandboxEnv: only the script contract WORCA_* vars, no OTEL_*, no E2B/GitHub/secret-named var, never the model credential', () => {
@@ -154,7 +157,7 @@ test('sandboxEnv: only the script contract WORCA_* vars, no OTEL_*, no E2B/GitHu
     WORCA_MOCK: '0', WORCA_BENCH: '1', WORCA_IN_PLAN: '/p/plan.md', WORCA_OUT_LOG: '/p/log.md', WORCA_PARAM_API_KEY: 'a param' };
   const credential = { ANTHROPIC_API_KEY: 'k', ANTHROPIC_AUTH_TOKEN: 'g', CLAUDE_CODE_OAUTH_TOKEN: 'o' };
   const env = sandboxEnv({ ...host, ...contract, ...credential, MCPSECRET_0A1B2C3D: 'kept', STRIPE_KEY: 'declared' },
-    { keep: ['MCPSECRET_0A1B2C3D', 'STRIPE_KEY', 'E2B_API_KEY', 'GITHUB_PERSONAL_ACCESS_TOKEN'] });
+    { keep: ['MCPSECRET_0A1B2C3D', 'STRIPE_KEY', 'E2B_API_KEY', 'GITHUB_PERSONAL_ACCESS_TOKEN', 'WORCA_IN_PLAN', 'WORCA_OUT_LOG', 'WORCA_PARAM_API_KEY'] });
   for (const k of Object.keys(host)) assert.equal(k in env, false, k);
   assert.deepEqual(env, { ...contract, MCPSECRET_0A1B2C3D: 'kept', STRIPE_KEY: 'declared' },
     'the run`s own declared keys (keep) still pass, except an E2B or GitHub name; the model credential stays in worca');
@@ -270,10 +273,6 @@ test('isSandboxGone / isSandboxUnreachable recognise SDK classes and names', () 
 });
 
 const PAT = `github_pat_${'A1b2'.repeat(10)}`;
-
-test('every remote engine has its sandbox rules, and only those', () => {
-  assert.deepEqual(Object.keys(ENGINE_SANDBOX), [...REMOTE_ENGINES]);
-});
 
 test('sandboxEnv per engine: its own config keys only, never a credential or endpoint of any engine, no host-path keys', () => {
   const host = { ANTHROPIC_API_KEY: 'sk-ant', CLAUDE_CODE_OAUTH_TOKEN: 'oat', OPENAI_API_KEY: 'sk-oai', OPENAI_BASE_URL: 'https://api.example',

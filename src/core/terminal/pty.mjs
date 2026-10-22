@@ -2,7 +2,7 @@
 // dependency) or, where node-pty is missing, over plain pipes (issue #573). Both return the same small
 // handle. Over pipes there is no tty: commands, markers and Stop work; full-screen programs do not.
 import { createRequire } from 'node:module';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnChild, spawnChildSync } from '../spawn.mjs';
 import { chmodSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
@@ -104,7 +104,7 @@ function viaPty(pty, { file, args, cwd, env, cols, rows, platform }) {
 }
 
 function viaPipes({ file, args, cwd, env, platform }) {
-  const child = spawn(file, args, {
+  const child = spawnChild(file, args, {
     cwd, env,
     detached: platform !== 'win32',          // own process group: SIGINT/SIGHUP reach the shell and its jobs
     windowsHide: true,
@@ -138,7 +138,7 @@ function viaPipes({ file, args, cwd, env, platform }) {
 
 /** [[pid, ppid], …] of every process (POSIX ps). */
 function psRows() {
-  const r = spawnSync('ps', ['-A', '-o', 'pid=,ppid='], { encoding: 'utf8' });
+  const r = spawnChildSync('ps', ['-A', '-o', 'pid=,ppid='], { encoding: 'utf8' });
   if (r.status !== 0) return [];
   return r.stdout.split('\n').map((l) => l.trim().split(/\s+/).map(Number)).filter((a) => a.length === 2 && a.every(Number.isFinite));
 }

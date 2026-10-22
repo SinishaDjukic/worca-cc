@@ -11,7 +11,7 @@ import { normalizeShape } from '../../shared/graph/assemble.mjs';
 import { extractChecklist } from '../../shared/shape/checklist.mjs';
 import { extractText, extractResultCost } from './claude.mjs';
 import { writeMockSurvey, writeMockUsage, writeMockSynthesis } from '../workspace-scan-mock.mjs';
-import { safeEmit } from './spawn.mjs';
+import { safeEmit } from '../spawn.mjs';
 import { writeMockC4 } from '../c4-mock.mjs';
 import { demoAskReply, demoChunks } from '../demo-scenario.mjs';
 

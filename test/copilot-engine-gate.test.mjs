@@ -31,13 +31,19 @@ test('copilot refuses a set with rules it cannot hold, and asks consent for thos
   const part = withNodes(orch({ engine: 'copilot' }), {});
   part.guardrailPermissionRules = { deny: ['Bash(git push:*)', 'Edit(secrets.txt)', 'mcp__github', 'Bash'] };
   part.guardrailsId = 'cmds';
-  assert.throws(() => part._engineGate(), /guardrail set "cmds" has command and write rules this engine holds only in part \(Bash\(git push:\*\), Edit\(secrets\.txt\)\)/);
+  // An MCP rule removes the tool: no denial can be recorded, so the catalog says unverified, which the gate refuses.
+  assert.throws(() => part._engineGate(), /guardrail set "cmds" has permission rules this engine cannot enforce \(mcp__github\)/);
+  const held = withNodes(orch({ engine: 'copilot' }), {});
+  held.guardrailPermissionRules = { deny: ['Bash(git push:*)', 'Edit(secrets.txt)', 'Bash'] };
+  held.guardrailsId = 'cmds';
+  assert.throws(() => held._engineGate(), /guardrail set "cmds" has command and write rules this engine holds only in part \(Bash\(git push:\*\), Edit\(secrets\.txt\), Bash\)/);
   const allowed = withNodes(orch({ engine: 'copilot', allowUnguardedEngine: true }), {});
   allowed.guardrailPermissionRules = part.guardrailPermissionRules;
   allowed.guardrailsId = 'cmds';
   const lines = allowed._engineGate();
-  assert.ok(lines.includes('engine copilot: deny rules enforced on copilot: mcp__github, Bash'), lines.join('\n'));
-  assert.ok(lines.includes(`engine copilot: deny rules held on copilot only in part, as command and write rules — ${COPILOT_COMMAND_RULE_REACH} (--allow-unguarded-engine): Bash(git push:*), Edit(secrets.txt)`), lines.join('\n'));
+  assert.ok(lines.includes('engine copilot: guardrail set "cmds": rules NOT enforced on copilot (--allow-unguarded-engine): mcp__github'), lines.join('\n'));
+  assert.ok(lines.includes(`engine copilot: deny rules held on copilot only in part, as command and write rules — ${COPILOT_COMMAND_RULE_REACH} (--allow-unguarded-engine): Bash(git push:*), Edit(secrets.txt), Bash`), lines.join('\n'));
+  assert.ok(lines.includes("engine copilot: path rules (Edit(secrets.txt)) bind copilot's own tools; its shell can still reach those paths"), lines.join('\n'));
 });
 
 test('copilot names its models its own way: its catalog models run, another engine\'s are dropped, any other id runs as named', () => {

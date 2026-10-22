@@ -50,6 +50,7 @@ import { worcaHome } from '../projects.mjs';
 import { homedir } from 'node:os';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
 import { writeProjectFiles } from './project-files.mjs';
+import { argValue } from '../spawn.mjs';
 import {
   claudeToolName, commandRuleBody, mcpRuleParts, familyMcpServers, classifyFamilyError, familyPreflight, runFamilyProcess,
   homeOf, readDotenv, settingsAuthType, foldSystemPrompt, NO_MCP_SERVER, absolutePaths, familyAskSupport, mergeSettings,
@@ -193,7 +194,7 @@ export function geminiPolicyToml(rules) {
  *  [--include-directories D]… --allowed-mcp-server-names N…`. The prompt travels on stdin. */
 export function buildGeminiArgs({ sessionId, resume = false, model, policyFile, includeDirs = [], mcpNames = [], ask = false } = {}) {
   const args = ['--output-format', 'stream-json', '--approval-mode', 'yolo', resume ? '--resume' : '--session-id', String(sessionId)];
-  if (model) args.push('--model', String(model));
+  if (model) args.push('--model', argValue(String(model), 'model'));
   if (policyFile) args.push('--admin-policy', policyFile);
   for (const d of includeDirs) args.push('--include-directories', d);
   for (const n of mcpNames.length ? mcpNames : [NO_MCP_SERVER]) args.push('--allowed-mcp-server-names', n);
@@ -293,8 +294,8 @@ export function geminiSignedIn(given = process.env) {
 }
 
 /** The run-start check (engines/index.mjs `preflight`). Never rejects: {refusal} | {warning} | {}. */
-export function geminiPreflight({ bin = geminiDefaultBin(), timeoutMs = 10000, env = process.env } = {}) {
-  return familyPreflight({ bin, env, timeoutMs, label: 'Gemini CLI (npm i -g @google/gemini-cli)', binEnv: 'WORCA_GEMINI_BIN',
+export function geminiPreflight({ bin = geminiDefaultBin(), timeoutMs = 10000, env = process.env, envAllowlist = [] } = {}) {
+  return familyPreflight({ bin, engine: 'gemini', env, envAllowlist, timeoutMs, label: 'Gemini CLI (npm i -g @google/gemini-cli)', binEnv: 'WORCA_GEMINI_BIN',
     signedIn: geminiSignedIn, signInHint: GEMINI_SIGNED_OUT_HINT });
 }
 
@@ -335,7 +336,7 @@ function prepareAsk({ cwd, bin, sys, prompt, model, effort, servers, scratchDir,
 }
 
 const GEMINI_SPEC = Object.freeze({
-  name: 'gemini', label: 'Gemini CLI', prefix: GEMINI_SESSION_PREFIX, envPrefixes: ['GEMINI_', 'GOOGLE_'],
+  name: 'gemini', label: 'Gemini CLI', prefix: GEMINI_SESSION_PREFIX,
   classify: classifyGeminiError, resumeNotFoundRe: GEMINI_RESUME_NOT_FOUND_RE,
   fatalStderrRe: GEMINI_POLICY_ERROR_RE, fatalMessage: 'Gemini CLI could not load worca\'s policy file, so the guardrail rules would not hold — stopped',
   createNormalizer: createGeminiNormalizer,
@@ -411,6 +412,6 @@ export const geminiChat = Object.freeze({ ...makeChatDescriptor({
   preflight: (_ctx, impl = geminiPreflight) => impl(),
   resumeNotFound: (err) => GEMINI_RESUME_NOT_FOUND_RE.test(String((err && err.message) || err || '')),
   docsAnchor: 'gemini-cli-and-qwen-code',
-  signIn: () => ['GEMINI_', 'GOOGLE_'],
+  signInMode: () => null,
   prompt: { cli: "Gemini CLI with Gemini CLI's own sign-in" },
 }), ownFolder: true });

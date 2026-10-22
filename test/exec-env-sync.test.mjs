@@ -429,7 +429,8 @@ test('envFor: a spawn env holding a secret value under any key is refused, never
     return true;
   });
   refused({ ANTHROPIC_EXTRA: 'x gateway-key-0123456 y' }, ['ANTHROPIC_EXTRA'], 'ANTHROPIC_EXTRA', 'gateway-key-0123456');
-  refused({ CLAUDE_CODE_NOTE: 'server-oauth-0123456789' }, [], 'CLAUDE_CODE_NOTE', 'server-oauth');   // the server's own credential
+  refused({ ANTHROPIC_SMALL_FAST_MODEL: 'server-oauth-0123456789' }, [], 'ANTHROPIC_SMALL_FAST_MODEL', 'server-oauth');   // the server's own credential
+  assert.deepEqual(env.envFor({ CLAUDE_CODE_NOTE: 'server-oauth-0123456789' }, { route }).CLAUDE_CODE_NOTE, undefined, 'a name no catalog lists never enters');
   refused({ ANTHROPIC_MODEL: 'm', MY_NOTE: 'sk-spawn-env-key-0123', ANTHROPIC_API_KEY: 'sk-spawn-env-key-0123' }, ['MY_NOTE'], 'MY_NOTE', 'sk-spawn-env-key');
   assert.equal(env.envFor({ ANTHROPIC_MODEL: 'm' }, { route }).ANTHROPIC_MODEL, 'm', 'a clean env passes');
   assert.equal(env.envFor({ ANTHROPIC_MODEL: 'gateway' }, { route: routeOf({ secrets: ['gate'] }) }).ANTHROPIC_MODEL, 'gateway', 'values under 8 chars are no secret');

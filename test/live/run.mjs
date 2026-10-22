@@ -7,6 +7,7 @@
 //   WORCA_ALLOW_LIVE=1 node test/live/run.mjs [--engine claude] [--tier smoke|core|full]
 //        [--only <id,glob*>] [--models cheap|matrix|<id,id>] [--repeat N] [--concurrency N]
 //        [--baseline <checkout>] [--repo <checkout>] [--out <dir>] [--list]
+//   WORCA_ALLOW_LIVE=1 node test/live/run.mjs --capture-denials claude [--only Read,Bash]   (capture-denials.mjs)
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -20,10 +21,11 @@ const REPO_DEFAULT = resolve(HERE, '..', '..');
 const TIERS = ['smoke', 'core', 'full'];
 
 function parseArgs(argv) {
-  const o = { engine: 'claude', tier: 'core', only: null, models: null, repeat: 1, concurrency: 3, baseline: null, repo: REPO_DEFAULT, out: null, list: false, keep: true };
+  const o = { captureDenials: null, engine: 'claude', tier: 'core', only: null, models: null, repeat: 1, concurrency: 3, baseline: null, repo: REPO_DEFAULT, out: null, list: false, keep: true };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]; const v = () => argv[++i];
-    if (a === '--engine') o.engine = v();
+    if (a === '--capture-denials') o.captureDenials = v();
+    else if (a === '--engine') o.engine = v();
     else if (a === '--tier') o.tier = v();
     else if (a === '--only') o.only = v().split(',').filter(Boolean);
     else if (a === '--models') o.models = v();
@@ -120,6 +122,11 @@ async function runOne(job, opt, profile, outDir) {
 
 async function main() {
   const opt = parseArgs(process.argv.slice(2));
+  if (opt.captureDenials) {
+    const { captureDenials } = await import(pathToFileURL(join(HERE, 'capture-denials.mjs')).href);
+    const report = await captureDenials(opt.captureDenials, { only: opt.only });
+    process.exit(report.every((r) => r.ok) ? 0 : 1);
+  }
   const profile = (await import(pathToFileURL(join(HERE, 'profiles', `${opt.engine}.mjs`)).href)).default;
   let scenarios = (await loadScenarios()).filter((s) => TIERS.indexOf(s.tier) <= TIERS.indexOf(opt.tier));
   if (opt.only) scenarios = scenarios.filter((s) => opt.only.some((g) => globRe(g).test(s.id)));

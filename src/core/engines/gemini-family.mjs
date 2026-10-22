@@ -8,13 +8,12 @@
 //
 // Verified on gemini 0.63.0 and qwen 0.25.0 (test/fixtures/gemini/README.md, test/fixtures/qwen/README.md).
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
-import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join, relative, resolve, sep, isAbsolute } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
-import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit, writableRootsInWorcaHome } from './spawn.mjs';
+import { superviseSpawn, childEnv, execCheck, runCapture, cleanRunEnv, safeEmit, writableRootsInWorcaHome } from '../spawn.mjs';
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 
@@ -173,22 +172,20 @@ export function settingsAuthType(file) {
 
 /**
  * The run-start check (engines/index.mjs `preflight`). Never rejects: {refusal} | {warning} | {}. The binary must run
- * (`--version`); `signedIn(env)` says whether a sign-in is configured (neither CLI has a status command, so this reads
- * its env and settings files, never its credentials).
+ * (`--version`) under the env the run gets (src/core/spawn.mjs execCheck: `engine`'s catalog allowlist plus the
+ * run's); `signedIn(env)` says whether a sign-in is configured in that env (neither CLI has a status command, so this
+ * reads its env and settings files, never its credentials).
  */
-export function familyPreflight({ bin, env = process.env, timeoutMs = 10000, label, binEnv, signedIn, signInHint }) {
-  return new Promise((resolve) => {
-    execFile(bin, ['--version'], { timeout: timeoutMs, env: { ...process.env, ...env } }, (err) => {
-      if (err && typeof err.code !== 'number') {
-        resolve(/^(ENOENT|EACCES|EINVAL)$/.test(String(err.code))
-          ? { refusal: `cannot run ${bin} (${err.code}) — install ${label}, or point ${binEnv} at it` }
-          : { warning: `could not run ${bin} --version (${err.message})` });
-        return;
-      }
-      if (err) { resolve({ warning: `${bin} --version exited with code ${err.code}` }); return; }
-      resolve(signedIn(env) ? {} : { refusal: `${bin} is not signed in — ${signInHint}` });
-    });
-  });
+export async function familyPreflight({ bin, engine, env = process.env, envAllowlist = [], timeoutMs = 10000, label, binEnv, signedIn, signInHint, signInMode = null }) {
+  const spec = { engine, signInMode: signInMode ? signInMode(env) : null, allowlist: envAllowlist, base: env };
+  const { code, error } = await execCheck(bin, ['--version'], { spec, timeoutMs });
+  if (error) {
+    return /^(ENOENT|EACCES|EINVAL)$/.test(String(error.code))
+      ? { refusal: `cannot run ${bin} (${error.code}) — install ${label}, or point ${binEnv} at it` }
+      : { warning: `could not run ${bin} --version (${error.message})` };
+  }
+  if (code !== 0) return { warning: `${bin} --version exited with code ${code}` };
+  return signedIn(childEnv({ kind: 'preflight', ...spec }).env) ? {} : { refusal: `${bin} is not signed in — ${signInHint}` };
 }
 
 // ── chat ─────────────────────────────────────────────────────────────────────
@@ -206,9 +203,11 @@ export function versionAtLeast(a, b) {
  * least the one the lockdown was verified on. Never rejects: {refusal} or {}.
  */
 export function familyAskSupport({ bin, timeoutMs = 15000, flags, minVersion, label, install, binEnv, extra = null }) {
-  const run = (args) => new Promise((resolve) => {
-    execFile(bin, args, { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => resolve({ err, out: String(stdout || '') }));
-  });
+  // The owner's runner with the base env only (no engine names, no credential): --version and --help need none.
+  const run = async (args) => {
+    const r = await runCapture(bin, args, { spec: {}, timeoutMs, maxBuffer: 4 * 1024 * 1024 });
+    return { err: r.error || (r.code !== 0 ? { code: r.code } : null), out: r.stdout };
+  };
   return (async () => {
     const v = await run(['--version']);
     if (v.err && typeof v.err.code !== 'number') {
@@ -287,14 +286,15 @@ export const foldSystemPrompt = (sys, prompt) => (sys ? `=== SYSTEM ===\n${sys}\
  * - spec.prepare writes the engine's config (a scratch folder under Worca's home, or the checkout) and returns
  *   {argsFor(session, resume), stdin, env}; spec.fatalStderrRe stops the child on a stderr line that means its rules
  *   did not load.
- * @param {object} spec {name, label, prefix, envPrefixes (a list, or a function of worca's env), classify,
+ * @param {object} spec {name, label, prefix, signInMode? (a function of worca's env: the catalog sign-in mode whose names
+ *   the child keeps, null for every mode's), classify,
  *   resumeNotFoundRe, fatalStderrRe?, fatalMessage?, askLockdown?, createNormalizer({model, mcpNames}), prepare(ctx)};
  *   prepare's result may carry cleanup(), run when the spawn is over
  */
 export async function runFamilyProcess(spec, {
   cwd = process.cwd(), systemPrompt = '', prompt = '', model, effort, onEvent = () => {}, signal, bin, resumeSessionId,
-  addDirs, writableDirs, sandbox, askLockdown, envScrub, envAllowlist, asAgent, mcpConfigPath, spawnEnv: runSpawnEnv,
-  redactValues, maxTurns, permissionRules, noGit = false, probe = null,
+  addDirs, writableDirs, sandbox, askLockdown, envAllowlist, asAgent, mcpConfigPath, spawnEnv: runSpawnEnv,
+  redactValues, maxTurns, permissionRules, noGit = false, probe = null, workRoot = null,
 } = {}) {
   const { name, label, prefix } = spec;
   if (signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
@@ -342,9 +342,10 @@ export async function runFamilyProcess(spec, {
   let prepared = null;
   try {
     prepared = spec.prepare({ cwd, bin, sys, prompt: String(prompt ?? ''), model, effort, servers, permissionRules, includeDirs, scratchDir, noGit, ask, probe });
-    // The engine's own env names survive scrub; the run env carries the MCP servers' ${VAR} values.
-    const prefixes = typeof spec.envPrefixes === 'function' ? spec.envPrefixes(process.env) : spec.envPrefixes;
-    const { env } = composeSpawnEnv({ envScrub, envAllowlist, prefixes, runEnv,
+    // The catalog allowlist (src/core/spawn.mjs childEnv: the engine's exact names and sign-in names); the run env
+    // carries the MCP servers' ${VAR} values.
+    const signInMode = spec.signInMode ? spec.signInMode(process.env) : null;
+    const { env } = childEnv({ engine: name, signInMode, allowlist: envAllowlist, cwd, root: workRoot, runEnv: cleanRunEnv(runSpawnEnv),
       overlay: prepared.env, hostPid: guardOn ? process.pid : null });
     const mcpNames = Object.keys(servers || {});
     const cap = Number.isInteger(maxTurns) && maxTurns > 0 ? maxTurns : null;

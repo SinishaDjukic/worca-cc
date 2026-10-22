@@ -16,7 +16,7 @@ import { commitStagedWork, createWorktree, createDetachedWorktree } from '../src
 import { openBranchWorktree } from '../src/core/terminal/worktrees.mjs';
 import { pushBranch, diffPatch, diffNumstat } from '../src/core/git-info.mjs';
 import { fetchRemote, fastForward } from '../src/core/git-sync.mjs';
-import { guardEntries, parseConfigList, safeLocalSshCommand, guardedGitEnv, guardedGitEnvSync, guardedWorktreeAdd } from '../src/core/git-guard.mjs';
+import { guardEntries, parseConfigList, safeLocalSshCommand, guardedGitEnv, guardedGitEnvSync, guardedWorktreeAdd, gitOutputSync } from '../src/core/git-guard.mjs';
 import { existsSync } from 'node:fs';
 
 useTempHome(after);
@@ -326,4 +326,22 @@ test('guardedGitEnv refuses a repository whose config sets a first-wins command 
   assert.throws(() => guardedGitEnvSync(repo), { code: 'GIT_CONFIG_REFUSED' });
   const missing = guardedGitEnvSync(join(repo, 'no-such-dir'));
   assert.ok(Number(missing.GIT_CONFIG_COUNT) > 0);
+});
+
+// The caller's timeout bounds the guard's config listing too: a git slower than the budget gives up within it (a
+// PATH shim that waits 3 s, as test/worktree.test.mjs does for the async callers). POSIX only (a script shim).
+test('gitOutputSync gives up within its timeout when git is slow, the config listing included', { skip: process.platform === 'win32' }, () => {
+  const repo = tmp('worca-guard-slow-');
+  spawnSync('git', ['init', '-q'], { cwd: repo });
+  const realGit = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+  const shim = tmp('worca-slow-git-');
+  writeFileSync(join(shim, 'git'), `#!/bin/sh\nsleep 3\nexec "${realGit}" "$@"\n`, { mode: 0o755 });
+  const env = { ...process.env, PATH: `${shim}:${process.env.PATH}` };
+  const PATH = process.env.PATH;
+  process.env.PATH = env.PATH;
+  try {
+    const t0 = Date.now();
+    assert.equal(gitOutputSync(repo, ['rev-parse', '--git-dir'], { env, timeoutMs: 200 }), null);
+    assert.ok(Date.now() - t0 < 2_500, `gave up within the budget (${Date.now() - t0} ms)`);
+  } finally { process.env.PATH = PATH; }
 });

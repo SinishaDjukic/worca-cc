@@ -20,7 +20,7 @@ import { test, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
@@ -175,6 +175,7 @@ function scrubber(extra = []) {
     [worcaHome(), '<WORCA_HOME>'],
     [pipelineDir, '<PIPELINE_DIR>'],
     [projectDir, '<PROJECT_DIR>'],
+    // The git ceiling a run's agents get (src/core/spawn.mjs childEnv: dirname of the work root), as a whole value.
     [projectKey(projectDir), '<STORE_KEY>'],
     [shimDir, '<SHIM_DIR>'],
     [REPO, '<REPO>'],
@@ -193,7 +194,9 @@ function envDelta(childEnv, scrub, secrets = []) {
   const out = {};
   for (const [k, v] of Object.entries(childEnv).sort(([a], [b]) => a.localeCompare(b))) {
     if (process.env[k] === v) continue;
-    out[k] = secrets.includes(v) ? '<SECRET>' : v === String(process.pid) ? '<PID>' : scrub(v);
+    // The git ceiling (src/core/spawn.mjs childEnv): the parent of the run's work root, a temp dir here.
+    out[k] = secrets.includes(v) ? '<SECRET>' : v === String(process.pid) ? '<PID>'
+      : k === 'GIT_CEILING_DIRECTORIES' && projectDir && v === dirname(projectDir) ? '<PROJECT_PARENT>' : scrub(v);
   }
   return out;
 }

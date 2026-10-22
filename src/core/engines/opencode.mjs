@@ -1,7 +1,7 @@
 // src/core/engines/opencode.mjs
 // The OpenCode CLI adapter (sst/opencode): `opencode run --format json` argv, the JSON event stream normalized into
 // worca's event vocabulary, the cost and tokens OpenCode prices per step, error classes, the run-start preflight, the
-// guardrail rule plan, and the spawn path on the shared supervisor (engines/spawn.mjs). Everything worca configures
+// guardrail rule plan, and the spawn path on the shared supervisor (src/core/spawn.mjs). Everything worca configures
 // rides the OPENCODE_CONFIG_CONTENT env var: worca writes nothing into the run checkout.
 //
 // Facts this module builds on, checked against opencode 1.18.23 (test/fixtures/opencode/README.md has the captures):
@@ -59,24 +59,21 @@
 //   user's own MCP servers still start (their tools are denied); their instructions files still reach the prompt.
 // - OpenCode Zen's free models (`opencode/…`) refuse a request without the shell, so a chat never runs on them.
 import { mkdirSync, readFileSync, writeFileSync, rmSync, existsSync, realpathSync } from 'node:fs';
-import { execFile } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join, relative } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
-import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit } from './spawn.mjs';
+import { superviseSpawn, childEnv, execCheck, runCapture, argValue, cleanRunEnv, safeEmit } from '../spawn.mjs';
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 import { envFlag } from '../model-env.mjs';
-import { makeChatDescriptor, providerEnvPrefixes, providerListRates } from './chat-descriptor.mjs';
+import { makeChatDescriptor, providerListRates } from './chat-descriptor.mjs';
 import { chatSelfTest } from './chat-selftest.mjs';
 
 /** Read at call time (not import time), so a test or a server child can point it at a fake after import. */
 export const opencodeDefaultBin = () => process.env.WORCA_OPENCODE_BIN || 'opencode';
 export const OPENCODE_SESSION_PREFIX = 'opencode:';
-/** The only env names besides the base set that survive scrub on OpenCode: provider keys need the allowlist. */
-const OPENCODE_ENV_PREFIXES = ['OPENCODE_'];
 /** The opt-in that lets a spawn without a model run on OpenCode's own default (possibly a free OpenCode Zen model). */
 export const OPENCODE_DEFAULT_MODEL_OPT_IN = 'WORCA_OPENCODE_ALLOW_DEFAULT_MODEL';
 const defaultModelAllowed = () => envFlag(OPENCODE_DEFAULT_MODEL_OPT_IN);
@@ -237,7 +234,7 @@ const envRefNames = (mcp) => [...new Set([...JSON.stringify(mcp).matchAll(/\{env
 export function buildOpencodeArgs({ agent, model, effort, sessionId } = {}) {
   const args = ['run', '--format', 'json', '--auto', '--pure', '--print-logs', '--log-level', 'ERROR'];
   if (agent) args.push('--agent', String(agent));
-  if (model) args.push('-m', String(model));
+  if (model) args.push('-m', argValue(String(model), 'model'));
   if (effort) args.push('--variant', String(effort));
   if (sessionId) args.push('-s', String(sessionId));
   return args;
@@ -422,15 +419,17 @@ export const OPENCODE_SIGNED_OUT_HINT = 'run `opencode auth login`, or set a pro
  * The run-start check (engines/index.mjs `preflight`). Never rejects: {refusal} | {warning} | {}. The binary must run.
  * `defaultModel`: whether some spawn of the run names no model (true), every one names one (false), or unknown
  * (undefined: the readiness check). A spawn without a model refuses without the opt-in. The credential check runs with
- * the env the agent gets (`envScrub`, `envAllowlist`): a key only worca has does not count. With no credential, only
- * OpenCode Zen's free models run: a refusal unless every spawn names its model or the user opted in.
+ * the env the agent gets (src/core/spawn.mjs execCheck: the catalog allowlist plus `envAllowlist`): a key only worca
+ * has does not count. With no credential, only OpenCode Zen's free models run: a refusal unless every spawn names its
+ * model or the user opted in.
  */
-export function opencodePreflight({ bin = opencodeDefaultBin(), timeoutMs = 15000, envScrub, envAllowlist, defaultModel } = {}) {
+export function opencodePreflight({ bin = opencodeDefaultBin(), timeoutMs = 15000, envAllowlist = [], defaultModel, env = process.env } = {}) {
   const allowed = defaultModelAllowed();
-  const { env } = composeSpawnEnv({ envScrub, envAllowlist, prefixes: OPENCODE_ENV_PREFIXES });
-  const run = (args) => new Promise((resolve) => {
-    execFile(bin, args, { timeout: timeoutMs, env: { ...env, OPENCODE_DISABLE_AUTOUPDATE: '1' } }, (err, stdout, stderr) => resolve({ err, stdout, stderr }));
-  });
+  const spec = { ...opencodeSpawnSpec({ envAllowlist }), base: env, overlay: { OPENCODE_DISABLE_AUTOUPDATE: '1' } };
+  const run = async (args) => {
+    const r = await execCheck(bin, args, { spec, timeoutMs });
+    return { err: r.error || (r.code !== 0 ? { code: r.code } : null), stdout: r.stdout, stderr: r.stderr };
+  };
   return (async () => {
     const v = await run(['--version']);
     if (v.err) {
@@ -454,6 +453,19 @@ export function opencodePreflight({ bin = opencodeDefaultBin(), timeoutMs = 1500
   })();
 }
 
+/** The childEnv spec an OpenCode run spawns with (engine, the run's allowlist, cwd and work root, the host pid): run and
+ *  preflight build their env from it, so the check sees the run's env. */
+export function opencodeSpawnSpec({ envAllowlist = [], cwd = null, workRoot = null, hostPid = null, signInMode = null } = {}) {
+  return { engine: 'opencode', signInMode, allowlist: envAllowlist, cwd, root: workRoot, hostPid };
+}
+
+/** The catalog sign-in mode a `provider/model` id signs in with: its provider; '' for an id with no provider, which
+ *  keeps no provider key. */
+export function opencodeProviderOf(model) {
+  const s = String(model ?? '').trim();
+  return s.includes('/') ? s.slice(0, s.indexOf('/')).toLowerCase() : '';
+}
+
 // ── spawn ────────────────────────────────────────────────────────────────────
 
 /** OpenCode's answer to `-s <unknown session>`. */
@@ -475,9 +487,9 @@ const instructionFiles = (cwd) => ['AGENTS.md', 'CLAUDE.md'].map((f) => join(cwd
  */
 export async function runOpencodeProcess({
   cwd = process.cwd(), systemPrompt = '', prompt = '', model, effort, onEvent = () => {}, signal,
-  bin = opencodeDefaultBin(), resumeSessionId, sandbox, askLockdown, envScrub, envAllowlist, asAgent,
+  bin = opencodeDefaultBin(), resumeSessionId, sandbox, askLockdown, envAllowlist, asAgent,
   mcpConfigPath, spawnEnv: runSpawnEnv, redactValues, maxTurns, permissionRules, allowedTools, appendSubagentSystemPrompt,
-  scratchBase = null, probe = null,
+  scratchBase = null, probe = null, workRoot = null,
 } = {}) {
   if (signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
   // A chat (askLockdown): OPENCODE_ASK_LOCKDOWN, on a model it names (never OpenCode's default, never OpenCode Zen).
@@ -567,20 +579,20 @@ export async function runOpencodeProcess({
   const config = { agent, ...(Object.keys(rules.permission).length ? { permission: rules.permission } : {}), ...(mcp ? { mcp } : {}),
     ...(instructions.length ? { instructions } : {}), ...(provider ? { provider } : {}) };
 
-  // OPENCODE_ vars and the provider keys in worca's env survive no scrub but their own prefix; the MCP servers'
-  // {env:…} values join from the run env.
-  // A chat keeps its model's provider env too (its key in worca's environment): it has no shell to read it.
-  const envOpts = { envScrub, envAllowlist, prefixes: [...OPENCODE_ENV_PREFIXES, ...(ask ? providerEnvPrefixes(model) : [])], hostPid: guardOn ? process.pid : null };
+  // The catalog allowlist (src/core/spawn.mjs childEnv: OpenCode's own names, the provider keys it signs in with); the
+  // MCP servers' {env:…} values join from the run env. P3-D20: the run env itself stays out, but the git ceiling of a run
+  // without a project is no secret and must reach the agent's git (childEnv merges its own `root` over it). OpenCode
+  // takes its project folder from PWD, not from its process cwd: childEnv sets it to the cwd. A chat keeps only its
+  // model's provider key (the catalog sign-in mode of that provider): it has no shell to read it.
+  const spec = opencodeSpawnSpec({ envAllowlist, cwd, workRoot, hostPid: guardOn ? process.pid : null, signInMode: ask ? opencodeProviderOf(model) : null });
   const refEnv = {};
   if (mcp) {
-    const from = { ...composeSpawnEnv({ ...envOpts, runEnv: cleanRunEnv(runSpawnEnv) }).env, ...(ask ? Object.fromEntries((envAllowlist || []).filter((k) => typeof process.env[k] === 'string').map((k) => [k, process.env[k]])) : {}) };
+    const from = childEnv({ ...spec, runEnv: cleanRunEnv(runSpawnEnv) }).env;
     for (const n of envRefNames(mcp)) if (typeof from[n] === 'string') refEnv[n] = from[n];
   }
-  const { env } = composeSpawnEnv({ ...envOpts, ...(Object.keys(refEnv).length ? { runEnv: refEnv } : {}) });
-  // OpenCode takes its project folder from PWD, not from its process cwd: an inherited PWD (worca's own) would put the
-  // agent in the wrong folder.
-  Object.assign(env, { PWD: cwd, OPENCODE_CONFIG_CONTENT: JSON.stringify(config), OPENCODE_DISABLE_PROJECT_CONFIG: '1', OPENCODE_DISABLE_AUTOUPDATE: '1', OPENCODE_DISABLE_SHARE: '1' },
-    probe ? probe.env : {});
+  const ceiling = typeof runSpawnEnv?.GIT_CEILING_DIRECTORIES === 'string' ? { GIT_CEILING_DIRECTORIES: runSpawnEnv.GIT_CEILING_DIRECTORIES } : {};
+  const { env } = childEnv({ ...spec, runEnv: { ...refEnv, ...ceiling }, overlay: { OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
+    OPENCODE_DISABLE_PROJECT_CONFIG: '1', OPENCODE_DISABLE_AUTOUPDATE: '1', OPENCODE_DISABLE_SHARE: '1', ...(probe ? probe.env : {}) } });
 
   const turnCap = () => Object.assign(new Error(`${bin}: stopped after ${cap} turns (the turn cap)`), { turnCap: true });
   const attempt = async (sessionId) => {
@@ -630,9 +642,8 @@ export async function runOpencodeProcess({
   const subSpend = async (subs) => {
     let costUsd = 0; let usage = { ...ZERO_USAGE }; const missed = [];
     for (const { sessionId: id, toolUseId } of subs) {
-      const text = await new Promise((resolve) => {
-        execFile(bin, ['export', id], { cwd, env, timeout: 20000, maxBuffer: 64 * 1024 * 1024 }, (err, stdout) => resolve(err ? null : stdout));
-      });
+      const r = await runCapture(bin, ['export', id], { env, cwd, timeoutMs: 20000, maxBuffer: 64 * 1024 * 1024 });
+      const text = r.code === 0 ? r.stdout : null;
       const s = text == null ? null : readSubsession(text, { parentId: toolUseId, mcpServers: Object.keys(mcp || {}) });
       if (!s) { missed.push(id); continue; }
       for (const e of s.events) safeEmit(onEvent, e);
@@ -677,7 +688,9 @@ export const OPENCODE_ASK_MIN_VERSION = '1.19.4';
 /** Can this opencode be locked down for a chat? OpenCode 1.x at least OPENCODE_ASK_MIN_VERSION. Never rejects. */
 export function opencodeAskSupport({ bin = opencodeDefaultBin(), timeoutMs = 15000 } = {}) {
   return new Promise((resolve) => {
-    execFile(bin, ['--version'], { timeout: timeoutMs, env: { ...process.env, OPENCODE_DISABLE_AUTOUPDATE: '1' } }, (err, stdout) => {
+    // Through the owner, under OpenCode's own catalog allowlist (never worca's whole env).
+    execCheck(bin, ['--version'], { spec: { ...opencodeSpawnSpec(), overlay: { OPENCODE_DISABLE_AUTOUPDATE: '1' } }, timeoutMs }).then(({ error, code, stdout }) => {
+      const err = error || (code !== 0 ? Object.assign(new Error(`${bin} --version exited ${code}`), { code }) : null);
       if (err) { resolve({ refusal: /^(ENOENT|EACCES|EINVAL)$/.test(String(err.code)) ? `cannot run ${bin} (${err.code}) — install OpenCode 1.x (npm i -g opencode-ai), or point WORCA_OPENCODE_BIN at it` : `could not ask ${bin} its version (${err.message})` }); return; }
       const v = /(\d+)\.(\d+)\.(\d+)/.exec(String(stdout));
       const n = v ? v.slice(1).map(Number) : null;
@@ -716,7 +729,7 @@ export const opencodeChat = makeChatDescriptor({
   preflight: (_ctx, impl = opencodePreflight) => impl({ defaultModel: false, envScrub: true, envAllowlist: [] }),
   resumeNotFound: (err) => OPENCODE_RESUME_NOT_FOUND_RE.test(String((err && err.message) || err || '')),
   modelProblem: (id) => (ZEN_PROVIDER_RE.test(String(id || '')) ? "OpenCode Zen's free models refuse a request without the shell, and a chat has none" : null),
-  signIn: (model) => ['OPENCODE_', ...providerEnvPrefixes(model)],
+  signInMode: (model) => opencodeProviderOf(model),
   listRates: providerListRates,
   prompt: { cli: "OpenCode with OpenCode's own providers" },
 });

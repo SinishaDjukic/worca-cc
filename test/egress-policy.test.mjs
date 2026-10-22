@@ -19,7 +19,7 @@ import {
   startEgressPolicy, egressChildEnv, inheritsEgressProxy, egressNotice, egressSummary, EGRESS_PROXY_VAR,
 } from '../src/core/egress-policy.mjs';
 import { deploymentFacts } from '../src/core/deployment.mjs';
-import { buildSpawnEnv } from '../src/core/claude-runner.mjs';
+import { childEnv } from '../src/core/spawn.mjs';
 
 const PLATFORM_ALLOW = 'app.worca.dev,worca-run-broker.railway.internal';
 
@@ -244,7 +244,7 @@ test('child env: a scrubbed agent spawn keeps the proxy variables and the corpor
   const saved = {};
   for (const k of Object.keys(vars)) { saved[k] = process.env[k]; process.env[k] = vars[k]; }
   try {
-    const env = buildSpawnEnv(true, []);
+    const env = childEnv({ engine: 'claude' }).env;
     for (const k of ['HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy', 'NO_PROXY', 'no_proxy', 'WORCA_CORPORATE_PROXY_URL']) assert.equal(env[k], vars[k], k);
   } finally {
     for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
@@ -782,7 +782,7 @@ test('fixedPort: the local proxy listens on 127.0.0.1:fixedPort and `worca proxy
 });
 
 test('WORCA_CORPORATE_PROXY_URL: one value in proxy-credentials, spawn.mjs and the promo-kit cdp helper', async () => {
-  const { SPAWN_ENV_BASE } = await import('../src/core/engines/spawn.mjs');
+  const { SPAWN_ENV_BASE } = await import('../src/core/spawn.mjs');
   assert.equal(CORPORATE_PROXY_VAR, 'WORCA_CORPORATE_PROXY_URL');
   assert.ok(SPAWN_ENV_BASE.includes(CORPORATE_PROXY_VAR), 'a scrubbed agent spawn keeps the marker');
   const cdp = readFileSync(fileURLToPath(new URL('../assets/promo-kit/tools/cdp.mjs', import.meta.url)), 'utf8');

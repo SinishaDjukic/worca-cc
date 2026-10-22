@@ -201,7 +201,7 @@ export function withStreamTimeouts(env) {
 // mode, the claude binary path, the effort flag name). Everything else —
 // including all other ANTHROPIC_* / CLAUDE_* — is allowed: routing them is the
 // point. CLAUDE_CODE_SUBPROCESS_ENV_SCRUB is the CLI-2.1.220 permission-mode
-// landmine documented at claude-runner.mjs#buildSpawnEnv.
+// landmine documented at child-env.mjs#composeChildEnv.
 // CLAUDE_CODE_SUBAGENT_MODEL is reserved too: the per-node `subagentModel`
 // prompt policy is the only sanctioned wire for a child's model, and a catalog
 // entry silently flooring every fan-out child would contradict the per-node
@@ -221,7 +221,7 @@ export function isReservedModelEnvKey(key) {
     || RESERVED_MODEL_ENV_PREFIXES.some((p) => typeof key === 'string' && key.startsWith(p));
 }
 
-// A registry spawn's own env names (MCP registry §5.5.6): composeSpawnEnv (engines/spawn.mjs) merges the model env over the run env, so a
+// A registry spawn's own env names (MCP registry §5.5.6): childEnv (src/core/spawn.mjs) merges the model env over the run env, so a
 // model entry that set one would replace a copy's secret. Refused by prepareModelEnv and the plugin manifest —
 // deliberately NOT reserved: cleanRunEnv shares isReservedModelEnvKey and must keep the registry env.
 export function isMcpRegistryEnvKey(key) {

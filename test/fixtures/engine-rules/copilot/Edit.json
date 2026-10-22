@@ -1,0 +1,16 @@
+{
+  "rules": {
+    "deny": [
+      "Edit(./src/locked/**)"
+    ]
+  },
+  "expected": {
+    "deny": [],
+    "excluded": [],
+    "enforced": [],
+    "partial": [],
+    "unenforced": [
+      "Edit(./src/locked/**)"
+    ]
+  }
+}

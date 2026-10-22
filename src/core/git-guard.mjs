@@ -257,6 +257,14 @@ export function guardedGitEnvSync(cwd, { env = process.env, hooks = false, timeo
   return finish(cwd, env, { hooks }, { stdout, error });
 }
 
+/** One git call in `cwd` under guardedGitEnvSync over `env`: its trimmed stdout, or null on any failure (stderr
+ *  ignored). For the sync git callers outside the child-process owner (engines/cursor.mjs, workspace-map). */
+export function gitOutputSync(cwd, args, { env = process.env, timeoutMs = 10000 } = {}) {
+  try {
+    return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], env: guardedGitEnvSync(cwd, { env, timeout: timeoutMs }), timeout: timeoutMs, windowsHide: true }).trim();
+  } catch { return null; }
+}
+
 /**
  * `git worktree add` with the guard listed where the files are checked out (security G2). A plain
  * `worktree add` lists config in the project, then checks out under `.git/worktrees/<name>`, where a

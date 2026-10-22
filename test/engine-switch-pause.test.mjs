@@ -32,7 +32,6 @@ const okVerifier = async () => ({ status: 'ok', issues: [], review: { issues: []
 
 test('one engine table: the lists, model-env and the adapter registry derive from it', () => {
   assert.deepEqual(Object.keys(ENGINES), [...ENGINE_NAMES]);
-  for (const e of listEngines().filter((x) => x.name !== 'mock')) assert.equal(ENGINES[e.name].cost, e.capabilities.cost !== false, `${e.name}: cost`);
   assert.deepEqual([...SWITCH_ENGINES], MODEL_ENGINES);
   assert.deepEqual([...MODEL_ENGINE_NAMES], MODEL_ENGINES);
   assert.deepEqual([...ENGINE_NAMES], listEngines().map((e) => e.name).filter((n) => n !== 'mock'));

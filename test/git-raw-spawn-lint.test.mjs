@@ -14,17 +14,14 @@ const RAW = /\b(?:execFile|execFileSync|execFileP|spawn|spawnSync|exec|execSync)
 
 // file → [count, why]
 const ALLOWED = {
-  'src/core/git-guard.mjs': [3, 'the guard itself: the config listing (async + sync) and guardedWorktreeAdd, which pass the guarded env'],
+  'src/core/git-guard.mjs': [4, 'the guard itself: the config listing (async + sync), guardedWorktreeAdd and gitOutputSync, which pass the guarded env'],
   'src/core/worktree.mjs': [1, 'git(): env from guardedGitEnv'],
   'src/core/run-harness.mjs': [1, '_git(): env from guardedGitEnv'],
   'src/core/git-sync.mjs': [1, 'env from guardedGitEnv'],
   'src/core/metrics/sync.mjs': [2, 'defaultGit(): env from guardedGitEnv; originUrl(): plumbing (remote get-url)'],
-  'src/core/preflight.mjs': [1, 'env from guardedGitEnvSync'],
   'src/core/mcpjson-approval.mjs': [1, 'env from guardedGitEnvSync'],
   'src/core/run-context.mjs': [2, 'env from guardedGitEnvSync'],
-  'src/core/engines/project-files.mjs': [1, 'git(): env from guardedGitEnvSync (the Cursor and Gemini CLI project files)'],
   'src/core/exec-env/git-transfer.mjs': [2, 'git() and patchedText(): env from guardedGitEnv (patchedText also sets GIT_CEILING_DIRECTORIES: a scratch folder, no repository)'],
-  'src/core/workspace-map/files.mjs': [1, 'env from guardedGitEnv'],
   'src/core/git-lock.mjs': [1, 'plumbing: rev-parse / for-each-ref'],
   'src/core/in-base.mjs': [1, 'plumbing: merge-base / rev-parse'],
   'src/core/store.mjs': [1, 'plumbing: rev-parse --git-common-dir'],
@@ -32,7 +29,6 @@ const ALLOWED = {
   'src/core/workspace-import.mjs': [1, 'plumbing: rev-parse / remote get-url / for-each-ref, no optional locks'],
   'src/core/script-bench.mjs': [1, 'plumbing: rev-parse HEAD'],
   'src/core/checkout.mjs': [1, 'plumbing: worktree prune (removes stale registrations, runs no command)'],
-  'src/core/workspace-map/detectors/git-submodules.mjs': [1, 'plumbing: remote get-url'],
   'src/core/git-available.mjs': [1, 'git --version, no repository'],
   'src/core/project-create.mjs': [3, 'git init of a new folder worca creates; git remote get-url / add origin: plumbing, no index refresh, hook or network'],
   'src/core/skills-registry/import.mjs': [1, 'clone/fetch of a registry into a worca-owned cache, never a project'],

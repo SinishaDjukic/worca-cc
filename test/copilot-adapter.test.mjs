@@ -48,6 +48,24 @@ test('copilot is a run engine with its own preflight, rule plan and MCP check', 
   assert.equal(getEngine('copilot', { mock: true }).name, 'mock');
 });
 
+test('read-only (a helper job over untrusted text): the project allowlist does not reach copilot\'s env', POSIX, async () => {
+  const dir = tmp();
+  const f = fakeCopilot(dir, { fixture: fixturePath('tools.jsonl'), envNames: ['WORCA_TEST_PROJECT_SECRET'] });
+  process.env.WORCA_TEST_PROJECT_SECRET = 'allowlisted-value';
+  try {
+    await runCopilotProcess({ bin: f.bin, cwd: dir, prompt: 'x', sandbox: 'read-only', envAllowlist: ['WORCA_TEST_PROJECT_SECRET'],
+      usageDir: join(dir, 'u'), scratchBase: join(dir, 's') });
+  } finally { delete process.env.WORCA_TEST_PROJECT_SECRET; }
+  assert.equal(f.record().env.WORCA_TEST_PROJECT_SECRET, null);
+  // A writable spawn keeps it (the allowlist is the project's to grant).
+  const rw = fakeCopilot(dir, { fixture: fixturePath('tools.jsonl'), envNames: ['WORCA_TEST_PROJECT_SECRET'] });
+  process.env.WORCA_TEST_PROJECT_SECRET = 'allowlisted-value';
+  try {
+    await runCopilotProcess({ bin: rw.bin, cwd: dir, prompt: 'x', envAllowlist: ['WORCA_TEST_PROJECT_SECRET'], usageDir: join(dir, 'u'), scratchBase: join(dir, 's') });
+  } finally { delete process.env.WORCA_TEST_PROJECT_SECRET; }
+  assert.equal(rw.record().env.WORCA_TEST_PROJECT_SECRET, 'allowlisted-value');
+});
+
 test('capabilities: every key declared; only cost, hook telemetry and the turn budget degrade', () => {
   assert.deepEqual(Object.keys(copilotCapabilities).sort(), [...CAPABILITY_KEYS].sort());
   assert.deepEqual(Object.entries(copilotCapabilities).filter(([, v]) => v === false).map(([k]) => k).sort(), ['cost', 'hookTelemetry', 'turnBudget']);

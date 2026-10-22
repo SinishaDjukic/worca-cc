@@ -1,0 +1,12 @@
+{
+  "rules": {
+    "deny": [
+      "mcp__pg__drop"
+    ]
+  },
+  "expected": {
+    "deny": [
+      "mcp__pg__drop"
+    ]
+  }
+}

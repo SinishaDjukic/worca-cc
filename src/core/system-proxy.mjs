@@ -9,7 +9,7 @@
 //            through kreadconfig6/5 (manual, PAC URL, WPAD, or "use the environment"); last, the
 //            HTTPS_PROXY / HTTP_PROXY / NO_PROXY Worca started with (before its own local proxy took them).
 // A PAC script is evaluated by pac-eval.mjs, never in this process. Probes are injected for tests.
-import { execFile } from 'node:child_process';
+import { runCapture } from './spawn.mjs';
 import { readFile, access } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { evaluatePac } from './pac-eval.mjs';
@@ -20,9 +20,11 @@ export const DETECT_TARGET = 'https://api.anthropic.com/';
 const WPAD_URL = 'http://wpad/wpad.dat';
 const PAC_MAX_BYTES = 1024 * 1024;
 
-const run = (cmd, args, { timeoutMs = 5000 } = {}) => new Promise((resolve) => {
-  execFile(cmd, args, { timeout: timeoutMs, windowsHide: true, maxBuffer: 256 * 1024 }, (err, stdout) => resolve(err ? null : String(stdout)));
-});
+// The OS's own proxy tools keep this process's env, as before the child-process owner (GNOME's gsettings needs the session bus).
+const run = async (cmd, args, { timeoutMs = 5000 } = {}) => {
+  const r = await runCapture(cmd, args, { env: process.env, timeoutMs, maxBuffer: 256 * 1024 });
+  return r.code === 0 ? r.stdout : null;
+};
 
 /** One direct (no proxy) Agent: the server's global dispatcher may itself route through the local proxy. */
 let directAgent;

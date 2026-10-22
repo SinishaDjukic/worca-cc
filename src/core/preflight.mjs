@@ -9,59 +9,34 @@
 // Every probe is wrapped so that a missing binary, missing file, or failing
 // subprocess resolves to `false` and NEVER throws.
 
-import { spawn, spawnSync } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { constants as FS, existsSync, statSync, openSync, readSync, closeSync, mkdirSync, writeFileSync } from 'node:fs';
 import { gitAvailable } from './git-available.mjs';
-import { guardedGitEnvSync } from './git-guard.mjs';
+import { gitOutputSync } from './git-guard.mjs';
+import { execCheck, runCapture } from './spawn.mjs';
 import { withNoGitPath } from './nogit-stub.mjs';
 
 const _probeChildren = new Set();
 /** Test seam: kill the probes still running (each resolves null), so a stopped run's preflight cannot hold a test process open. */
-export function _stopToolProbes() { for (const child of _probeChildren) { try { child.kill('SIGKILL'); } catch { /* gone */ } } }
+export function _stopToolProbes() { for (const ac of _probeChildren) ac.abort(); }
 
 /**
  * Run a command and resolve to its trimmed stdout, or null on any failure.
- * Times out defensively so a hung probe can't block preflight.
+ * Times out defensively so a hung probe can't block preflight. An engine's own check (`engine`) runs under that
+ * engine's run env (execCheck); a host-tool probe (`which`, `pipx`, `pip`) is worca's own, under worca's env.
  */
-function execSafe(cmd, args, { timeout = 4000 } = {}) {
-  return new Promise((resolveP) => {
-    let child;
-    try {
-      child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], env: withNoGitPath(process.env) });
-    } catch {
-      resolveP(null);
-      return;
-    }
-    _probeChildren.add(child);
-    let out = '';
-    let settled = false;
-    const done = (val) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      _probeChildren.delete(child);
-      resolveP(val);
-    };
-    const timer = setTimeout(() => {
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        /* ignore */
-      }
-      done(null);
-    }, timeout);
-
-    child.stdout?.on('data', (d) => {
-      out += d.toString();
-    });
-    // Drain stderr so the child can't block on a full pipe.
-    child.stderr?.on('data', () => {});
-    child.on('error', () => done(null));
-    child.on('close', (code) => done(code === 0 ? out.trim() : null));
-  });
+async function execSafe(cmd, args, { timeout = 4000, engine = null } = {}) {
+  const ac = new AbortController();
+  _probeChildren.add(ac);
+  try {
+    const r = engine ? await execCheck(cmd, args, { spec: { engine }, timeoutMs: timeout, signal: ac.signal })
+      : await runCapture(cmd, args, { env: withNoGitPath(process.env), timeoutMs: timeout, signal: ac.signal });
+    return r.code === 0 ? r.stdout.trim() : null;
+  } finally {
+    _probeChildren.delete(ac);
+  }
 }
 
 /** True if `which <name>` resolves to a path. */
@@ -263,44 +238,16 @@ export function runGraphifyUpdate({ dir, cwd, timeoutMs = 120000 } = {}) {
   try {
     if (!existsSync(dir)) throw new Error('no dir');
     // A repo that commits its graph keeps doing so: hiding only the NEW files would commit half a graph.
-    const tracked = gitAvailable() ? spawnSync('git', ['ls-files', '--', 'graphify-out'], { cwd: dir, encoding: 'utf8', timeout: 10000, env: guardedGitEnvSync(dir) }) : null;
-    if (!(tracked && tracked.status === 0 && tracked.stdout.trim())) {
+    const tracked = gitAvailable() ? gitOutputSync(dir, ['ls-files', '--', 'graphify-out']) : null;
+    if (!tracked) {
       mkdirSync(join(dir, 'graphify-out'), { recursive: true });
       writeFileSync(join(dir, 'graphify-out', '.gitignore'), '*\n', 'utf8');
     }
   } catch { /* the build still runs; the output is just not hidden */ }
-  return new Promise((resolveP) => {
-    let child;
-    try {
-      child = spawn('graphify', ['update', dir], { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
-    } catch (err) {
-      resolveP({ ok: false, code: -1, timedOut: false, stderr: err.message });
-      return;
-    }
-    let stderr = '';
-    let settled = false;
-    let timedOut = false;
-    const done = (val) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolveP(val);
-    };
-    const timer = setTimeout(() => {
-      timedOut = true;
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        /* ignore */
-      }
-      done({ ok: false, code: -1, timedOut: true, stderr: 'graphify update timed out' });
-    }, timeoutMs);
-    child.stdout?.on('data', () => {});
-    child.stderr?.on('data', (d) => {
-      stderr += d.toString();
-    });
-    child.on('error', (err) => done({ ok: false, code: -1, timedOut, stderr: stderr || err.message }));
-    child.on('close', (code) => done({ ok: code === 0, code: code ?? -1, timedOut, stderr }));
+  return runCapture('graphify', ['update', dir], { cwd, timeoutMs }).then((r) => {
+    if (r.timedOut) return { ok: false, code: -1, timedOut: true, stderr: 'graphify update timed out' };
+    if (r.error) return { ok: false, code: -1, timedOut: false, stderr: r.stderr || r.error.message };
+    return { ok: r.code === 0, code: r.code ?? -1, timedOut: false, stderr: r.stderr };
   });
 }
 
@@ -511,8 +458,8 @@ export function explainUnspawnableClaude(bin = 'claude', {
 export async function probeClaudeCapabilities(bin = 'claude') {
   const name = bin && String(bin).trim() ? String(bin).trim() : 'claude';
   const exe = resolveClaudeBin(name).bin; // same resolution as the runner's spawn (npm shim → native .exe)
-  const help = await execSafe(exe, ['--help'], { timeout: 8000 });
-  const raw = await execSafe(exe, ['--version'], { timeout: 8000 });
+  const help = await execSafe(exe, ['--help'], { timeout: 8000, engine: 'claude' });
+  const raw = await execSafe(exe, ['--version'], { timeout: 8000, engine: 'claude' });
   const version = raw ? (/(\d+\.\d+\.\d+)/.exec(raw)?.[1] ?? raw.split(/\s+/)[0] ?? null) : null;
   // pluginDir (skills registry §4.1): a set's skills reach a spawn only through --plugin-dir.
   return { mcpConfig: !!help && help.includes('--mcp-config'), pluginDir: !!help && help.includes('--plugin-dir'), version };
@@ -569,20 +516,9 @@ export function parseClaudeAuthStatus(text) {
 
 /** Run a command with any exit code: resolves {code, out} (stdout+stderr), or
  *  null on a spawn failure / timeout. `auth status` exits non-zero when signed out. */
-function execAnyExit(cmd, args, { timeout = 8000 } = {}) {
-  return new Promise((resolveP) => {
-    let child;
-    try { child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], env: withNoGitPath(process.env) }); }
-    catch { resolveP(null); return; }
-    let out = '';
-    let settled = false;
-    const done = (val) => { if (settled) return; settled = true; clearTimeout(timer); resolveP(val); };
-    const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* ignore */ } done(null); }, timeout);
-    child.stdout?.on('data', (d) => { out += d.toString(); });
-    child.stderr?.on('data', (d) => { out += d.toString(); });
-    child.on('error', () => done(null));
-    child.on('close', (code) => done({ code, out }));
-  });
+async function execAnyExit(cmd, args, { timeout = 8000 } = {}) {
+  const r = await execCheck(cmd, args, { spec: { engine: 'claude' }, timeoutMs: timeout });
+  return r.error ? null : { code: r.code, out: r.stdout + r.stderr };
 }
 
 /** The refusal every surface shows for a signed-out CLI (the API's `code`, and its text). */

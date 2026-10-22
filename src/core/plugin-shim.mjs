@@ -16,8 +16,8 @@
 // never touches the store). WORCA_MOCK=1 short-circuits the spawn with canned
 // per-op responses so smoke/tests run offline with zero plugins installed.
 
-import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { spawnChild } from './spawn.mjs';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -180,7 +180,7 @@ export function scrubbedEnv(platform = process.platform, env = process.env) {
 }
 
 const NO_PROXY_NAMES = ['NO_PROXY', 'no_proxy'];
-/** The CA names engines/spawn.mjs SPAWN_ENV_BASE passes too: node reads the first,
+/** The CA names spawn.mjs SPAWN_ENV_BASE passes too: node reads the first,
  *  the tools a connector may run (gh, curl, git, Python) the rest. */
 const CA_NAMES = ['NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'GIT_SSL_CAINFO', 'CURL_CA_BUNDLE', 'REQUESTS_CA_BUNDLE'];
 
@@ -320,7 +320,7 @@ export async function callSource({ plugin, sourceId, op, args = {}, profile, tim
     // WORCA_PLUGIN_INSPECT=1 attaches the debugger to the connector child
     // (`worca plugin exec --inspect` sets it; spec §7.2 debuggability).
     const run = pluginChildSpawn([...(process.env.WORCA_PLUGIN_INSPECT ? ['--inspect-brk'] : []), CHILD_PATH]);
-    const child = spawn(run.file, run.args, { ...run.options, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawnChild(run.file, run.args, { ...run.options, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     let timedOut = false;

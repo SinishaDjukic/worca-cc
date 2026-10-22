@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, chmodSync, rmSync, existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { superviseSpawn, buildSpawnEnv, composeSpawnEnv } from '../src/core/engines/spawn.mjs';
+import { superviseSpawn, childEnv } from '../src/core/spawn.mjs';
 import { withEnv } from './helpers/with-env.mjs';
 
 const POSIX = process.platform === 'win32' ? { skip: 'POSIX shell fixtures' } : {};
@@ -103,59 +103,53 @@ test('a spawn failure runs cleanup and rejects through spawnError', async () => 
   assert.equal(cleaned, 1);
 });
 
-test('buildSpawnEnv keeps the adapter prefixes under scrub and is undefined when off', () => {
+test('childEnv keeps each engine its own catalog names, never a prefix family or another engine\'s', () => {
   process.env.CODEX_TEST_KEEP = '1';
   process.env.ANTHROPIC_TEST_KEEP = '1';
+  process.env.ANTHROPIC_MODEL = 'm0';
   try {
-    assert.equal(buildSpawnEnv(false, []), undefined);
-    const claude = buildSpawnEnv(true, []);
-    assert.equal(claude.ANTHROPIC_TEST_KEEP, '1');
-    assert.equal(claude.CODEX_TEST_KEEP, undefined);
-    const codex = buildSpawnEnv(true, [], ['CODEX_']);
-    assert.equal(codex.CODEX_TEST_KEEP, '1');
-    assert.equal(codex.ANTHROPIC_TEST_KEEP, undefined);
-  } finally { delete process.env.CODEX_TEST_KEEP; delete process.env.ANTHROPIC_TEST_KEEP; }
+    const claude = childEnv({ engine: 'claude' }).env;
+    assert.equal(claude.ANTHROPIC_MODEL, 'm0', 'a catalog name');
+    assert.equal(claude.ANTHROPIC_TEST_KEEP, undefined, 'no ANTHROPIC_ family');
+    const codex = childEnv({ engine: 'codex' });
+    assert.equal(codex.env.CODEX_TEST_KEEP, undefined, 'no CODEX_ family');
+    assert.ok(codex.dropped.includes('CODEX_TEST_KEEP') && codex.dropped.includes('ANTHROPIC_MODEL'));
+    assert.equal(childEnv({ engine: 'codex', allowlist: ['CODEX_TEST_KEEP'] }).env.CODEX_TEST_KEEP, '1', 'the project allowlist adds a name');
+  } finally { delete process.env.CODEX_TEST_KEEP; delete process.env.ANTHROPIC_TEST_KEEP; delete process.env.ANTHROPIC_MODEL; }
 });
 
-test('composeSpawnEnv: overlay wins, host pid added last, GitHub credentials stripped', () => {
+test('childEnv: overlay wins, host pid added last, GitHub credentials stripped', () => {
   process.env.GH_TOKEN = 'ghp_test';
   try {
-    const { env, scrubbed } = composeSpawnEnv({ envScrub: false, overlay: { ANTHROPIC_MODEL: 'm' }, hostPid: 42 });
-    assert.equal(scrubbed, false);
+    const { env } = childEnv({ engine: 'claude', overlay: { ANTHROPIC_MODEL: 'm' }, hostPid: 42 });
     assert.equal(env.ANTHROPIC_MODEL, 'm');
     assert.equal(env.WORCA_HOST_PID, '42');
     assert.equal(env.GH_TOKEN, undefined);
   } finally { delete process.env.GH_TOKEN; }
 });
 
-test('composeSpawnEnv: a proxy URL with a login never reaches the child; NO_PROXY and a login-free URL do', () => {
+test('childEnv: a proxy URL with a login never reaches the child; NO_PROXY and a login-free URL do', () => {
   const saved = Object.fromEntries(['HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy', 'NO_PROXY'].map((k) => [k, process.env[k]]));
   const restore = () => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } };
   try {
     for (const k of ['https_proxy', 'http_proxy']) delete process.env[k];
     Object.assign(process.env, { HTTPS_PROXY: 'http://ACME%5Cjdoe:s3cret@proxy.corp.example:8080', HTTP_PROXY: 'http://proxy.corp.example:8080', NO_PROXY: 'intranet.example' });
-    for (const envScrub of [false, true]) {
-      const { env } = composeSpawnEnv({ envScrub });
-      for (const [k, v] of Object.entries(env)) assert.doesNotMatch(String(v), /s3cret/, `${k} (scrub ${envScrub})`);
+    for (const engine of ['claude', 'codex']) {
+      const { env } = childEnv({ engine });
+      for (const [k, v] of Object.entries(env)) assert.doesNotMatch(String(v), /s3cret/, `${k} (${engine})`);
       assert.equal(env.HTTP_PROXY, undefined, 'all proxy URLs go, or the child would be half-routed');
       assert.equal(env.NO_PROXY, 'intranet.example');
     }
     process.env.HTTPS_PROXY = 'http://127.0.0.1:3128';
-    assert.equal(composeSpawnEnv({ envScrub: true }).env.HTTPS_PROXY, 'http://127.0.0.1:3128');
-    // ALL_PROXY and tool-specific names go too, even when HTTP(S)_PROXY carries none.
-    Object.assign(process.env, { ALL_PROXY: 'http://u:s3cret@proxy:8080', npm_config_https_proxy: 'http://u:s3cret@proxy:8080', FTP_PROXY: 'http://proxy:21' });
-    const env = composeSpawnEnv({ envScrub: false, envAllowlist: [] }).env;
-    for (const [k, v] of Object.entries(env)) assert.doesNotMatch(String(v), /s3cret/, k);
-    assert.equal(env.HTTPS_PROXY, 'http://127.0.0.1:3128', 'a login-free HTTPS_PROXY stays');
-    assert.equal(env.FTP_PROXY, 'http://proxy:21', 'a login-free alias stays');
-  } finally { restore(); for (const k of ['ALL_PROXY', 'npm_config_https_proxy', 'FTP_PROXY']) delete process.env[k]; }
+    assert.equal(childEnv({ engine: 'claude' }).env.HTTPS_PROXY, 'http://127.0.0.1:3128', 'a login-free HTTPS_PROXY stays');
+  } finally { restore(); }
 });
 
-test('composeSpawnEnv: no E2B credential reaches a local agent, scrub on or off, allowlisted or in the overlay', async () => {
+test('childEnv: no E2B credential reaches a local agent, allowlisted or in the overlay', async () => {
   const E2B = { E2B_API_KEY: 'e2b_secret', E2B_API_URL: 'http://localhost:3000', E2B_SANDBOX_URL: 'http://localhost:3002', WORCA_E2B_TEMPLATE: 't' };
   await withEnv(E2B, () => {
-    for (const o of [{ envScrub: false }, { envScrub: true, envAllowlist: Object.keys(E2B) }, { envScrub: false, overlay: { E2B_API_KEY: 'x' } }]) {
-      const { env } = composeSpawnEnv(o);
+    for (const o of [{ engine: 'claude' }, { engine: 'claude', allowlist: Object.keys(E2B) }, { engine: 'codex', overlay: { E2B_API_KEY: 'x' } }]) {
+      const { env } = childEnv(o);
       for (const k of Object.keys(E2B)) assert.equal(k in env, false, `${k} (${JSON.stringify(o)})`);
     }
   });

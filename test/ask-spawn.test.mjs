@@ -11,7 +11,9 @@ import {
   ASK_DENY_RULES, ASK_SPAWN_ENV, SANDBOX_NOTE, ASK_PERMISSION_MODE, ASK_MCP_SERVER_PATH,
   askWorktreeAllowRules, webMcpEnv, webKeyVar, SANDBOX_NOTE_WEB,
 } from '../src/core/ask/spawn.mjs';
-import { buildClaudeArgs, runClaude, buildSpawnEnv } from '../src/core/claude-runner.mjs';
+import { buildClaudeArgs, runClaude } from '../src/core/claude-runner.mjs';
+import { childEnv } from '../src/core/spawn.mjs';
+const buildSpawnEnv = (_scrub, allowlist) => childEnv({ engine: 'claude', allowlist }).env;
 
 const POSIX_SHIM = { skip: process.platform === 'win32' ? 'fake claude shim is a POSIX shell script (no .exe stand-in on Windows)' : false };
 

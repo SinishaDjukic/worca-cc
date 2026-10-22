@@ -2,7 +2,7 @@
 // The Cursor CLI adapter: `cursor-agent -p --output-format stream-json` argv, the stream normalized into worca's
 // event vocabulary (no cost: Cursor bills by subscription and reports none), error classes, the run-start preflight,
 // the guardrail rule plan written to `<cwd>/.cursor/cli.json`, MCP servers written to `<cwd>/.cursor/mcp.json`, and
-// the spawn path on the shared supervisor (engines/spawn.mjs).
+// the spawn path on the shared supervisor (src/core/spawn.mjs).
 //
 // Facts this module builds on. NONE IS VERIFIED: the Cursor CLI was not installed where this adapter was written and
 // no capture exists (test/fixtures/cursor is hand-written). Each line is a lead from Cursor's CLI docs. Check it
@@ -33,12 +33,13 @@
 //   hooks, a skills folder, a turn or spend cap, and any switch that turns the shell or file tools off — so an Ask
 //   chat (CURSOR_ASK_LOCKDOWN) and a read-only spawn refuse.
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
-import { execFile } from 'node:child_process';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
-import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit } from './spawn.mjs';
+import { removeSessionEntries } from './sessions.mjs';
+import { superviseSpawn, childEnv, execCheck, argValue, cleanRunEnv, safeEmit } from '../spawn.mjs';
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 import { ARGV_INLINE_LIMIT } from './claude.mjs';
@@ -56,6 +57,18 @@ export const CURSOR_SESSION_PREFIX = 'cursor:';
 export function cursorChatOf(sessionId) {
   return typeof sessionId === 'string' && sessionId.startsWith(CURSOR_SESSION_PREFIX) && sessionId.length > CURSOR_SESSION_PREFIX.length
     ? sessionId.slice(CURSOR_SESSION_PREFIX.length) : null;
+}
+
+/**
+ * Archive (catalog `sessions: 'user-store'`): cursor-agent keeps a chat as `<CURSOR_CONFIG_DIR or ~/.cursor>/chats/
+ * <workspace>/<chatId>/`. Removes exactly those of `sessionIds` (`cursor:<chatId>`), never the sign-in.
+ * @returns {Promise<{removed: string[], failed: {path: string, error: string}[]}>}
+ */
+export function removeCursorSessions({ sessionIds = [], env = process.env } = {}) {
+  const ids = new Set(sessionIds.map((id) => cursorChatOf(id)).filter(Boolean));
+  if (!ids.size) return Promise.resolve({ removed: [], failed: [] });
+  const home = (env.CURSOR_CONFIG_DIR && env.CURSOR_CONFIG_DIR.trim()) || join(env.HOME || homedir(), '.cursor');
+  return removeSessionEntries(join(home, 'chats'), (n) => ids.has(n), { depth: 1 });
 }
 
 const CURSOR_FALSE = new Set(['systemPromptFlag', 'allowedTools', 'effort', 'cost', 'subagents', 'hookTelemetry', 'skills', 'subagentSystemPrompt', 'turnBudget']);
@@ -154,7 +167,7 @@ export const restoreCursorProjectFiles = (cwd, files, opts) => restoreProjectFil
 export function buildCursorArgs({ prompt = '', model, resumeChatId, approveMcps = false } = {}) {
   const args = ['-p', '--output-format', 'stream-json', '--force'];
   if (approveMcps) args.push('--approve-mcps');
-  if (model) args.push('--model', String(model));
+  if (model) args.push('--model', argValue(String(model), 'model'));
   if (resumeChatId) args.push('--resume', String(resumeChatId));
   args.push(String(prompt));
   return args;
@@ -292,22 +305,25 @@ export const CURSOR_SIGNED_OUT_HINT = 'run `cursor-agent login`, or set CURSOR_A
 
 /** The run-start check (engines/index.mjs `preflight`). Never rejects: {refusal} | {warning} | {}. A CURSOR_API_KEY
  *  in worca's environment stands in for the login; the binary must still run. */
-export function cursorPreflight({ bin = cursorDefaultBin(), timeoutMs = 10000, env = process.env } = {}) {
-  return new Promise((resolve) => {
-    execFile(bin, ['status'], { timeout: timeoutMs, env: { ...process.env, ...env } }, (err, stdout, stderr) => {
-      if (err && typeof err.code !== 'number') {
-        resolve(/^(ENOENT|EACCES|EINVAL)$/.test(String(err.code))
-          ? { refusal: `cannot run ${bin} (${err.code}) — install the Cursor CLI (cursor-agent), or point WORCA_CURSOR_BIN at it` }
-          : { warning: `could not check the Cursor sign-in (${err.message})` });
-        return;
-      }
-      if (typeof env.CURSOR_API_KEY === 'string' && env.CURSOR_API_KEY.trim()) { resolve({}); return; }
-      const signedIn = parseCursorStatus({ code: err ? err.code : 0, stdout, stderr });
-      if (signedIn === false) resolve({ refusal: `${bin} is not signed in — ${CURSOR_SIGNED_OUT_HINT}` });
-      else if (signedIn === null) resolve({ warning: `could not tell whether ${bin} is signed in (\`${bin} status\` said nothing recognizable)` });
-      else resolve({});
-    });
-  });
+export async function cursorPreflight({ bin = cursorDefaultBin(), timeoutMs = 10000, env = process.env, envAllowlist = [], spec: given = cursorSpawnSpec({ envAllowlist }) } = {}) {
+  const spec = { ...given, base: env };
+  const { code, stdout, stderr, error } = await execCheck(bin, ['status'], { spec, timeoutMs });
+  if (error) {
+    return /^(ENOENT|EACCES|EINVAL)$/.test(String(error.code))
+      ? { refusal: `cannot run ${bin} (${error.code}) — install the Cursor CLI (cursor-agent), or point WORCA_CURSOR_BIN at it` }
+      : { warning: `could not check the Cursor sign-in (${error.message})` };
+  }
+  if (childEnv({ kind: 'preflight', ...spec }).env.CURSOR_API_KEY?.trim()) return {};
+  const signedIn = parseCursorStatus({ code, stdout, stderr });
+  if (signedIn === false) return { refusal: `${bin} is not signed in — ${CURSOR_SIGNED_OUT_HINT}` };
+  if (signedIn === null) return { warning: `could not tell whether ${bin} is signed in (\`${bin} status\` said nothing recognizable)` };
+  return {};
+}
+
+/** The childEnv spec a cursor run spawns with (engine, the run's allowlist and env, cwd and work root, the host pid):
+ *  run and preflight build their env from it, so a CURSOR_API_KEY the run gets counts for the check too. */
+export function cursorSpawnSpec({ envAllowlist = [], cwd = null, workRoot = null, hostPid = null, runEnv = null } = {}) {
+  return { engine: 'cursor', allowlist: envAllowlist, cwd, root: workRoot, hostPid, runEnv };
 }
 
 // ── spawn ────────────────────────────────────────────────────────────────────
@@ -324,7 +340,7 @@ export const CURSOR_RESUME_NOT_FOUND_RE = /(?:chat|conversation|session)[^.\n]*n
 export async function runCursorProcess({
   cwd = process.cwd(), systemPrompt = '', prompt = '', model, onEvent = () => {}, signal,
   bin = cursorDefaultBin(), resumeSessionId, sandbox, askLockdown, envScrub, envAllowlist, asAgent,
-  mcpConfigPath, spawnEnv: runSpawnEnv, redactValues, maxTurns, permissionRules, noGit = false, execEnv,
+  mcpConfigPath, spawnEnv: runSpawnEnv, redactValues, maxTurns, permissionRules, noGit = false, execEnv, workRoot = null,
 } = {}) {
   if (signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
   if (askLockdown) throw new Error(`${bin}: Cursor cannot be locked down for a chat (no switch for its shell or file tools) — Chat on Cursor is unavailable`);
@@ -363,19 +379,19 @@ export async function runCursorProcess({
   if (remote && bin !== 'cursor-agent') safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] cursor: ${bin} (this machine's binary) is ignored; the ${remote.label} runs its own pinned cursor-agent` });
   const exe = remote ? 'cursor-agent' : bin;
   const guardOn = hostGuardEnabled() && !remote;
-  // CURSOR_API_KEY (and any CURSOR_ var) survives scrub; the run env carries the MCP servers' ${env:…} values.
-  const { env } = composeSpawnEnv({ envScrub, envAllowlist, prefixes: ['CURSOR_'], runEnv: cleanRunEnv(runSpawnEnv) ?? undefined, hostPid: guardOn ? process.pid : null });
+  // The catalog allowlist (childEnv: CURSOR_API_KEY, its config dir); the run env carries the MCP servers' ${env:…} values.
+  const { env } = childEnv(cursorSpawnSpec({ envAllowlist, cwd, workRoot, hostPid: guardOn ? process.pid : null, runEnv: cleanRunEnv(runSpawnEnv) }));
   // In a sandbox only the kept MCP servers' ${env:…} values ride along (the run env holds every registry secret).
   // The relay route and the template's cursor-agent come first, then its config dir (CURSOR_CONFIG_DIR: the HTTP/1.1
   // agent stream the relay can carry) and the .cursor files: a refusal leaves nothing in the sandbox.
-  let childEnv = env;
+  let spawnEnv = env;
   let relayRoute = null;
   if (remote) {
     try {
       relayRoute = remote.openEngineRoute('cursor', { spawnEnv: env, model });
       const routed = remote.envFor(env, { engine: 'cursor', keep: remote.mcpEnvRefs, route: relayRoute });
       await remote.ensureCli(exe);
-      childEnv = { ...routed, ...(await remote.engineHome('cursor', { files: [{ rel: 'cli-config.json', data: CURSOR_CLI_CONFIG }] })) };
+      spawnEnv = { ...routed, ...(await remote.engineHome('cursor', { files: [{ rel: 'cli-config.json', data: CURSOR_CLI_CONFIG }] })) };
       await remote.syncEngineFiles(Object.keys(files).map((rel) => join(cwd, rel)));
     } catch (err) { if (relayRoute) remote.closeModelRoute(relayRoute.id); throw redacted(err); }
     onEvent = remote.meteredEvents(relayRoute.id, onEvent);
@@ -422,7 +438,7 @@ export async function runCursorProcess({
     let res;
     try {
       res = await superviseSpawn({
-        file: exe, args, displayBin: bin, cwd, env: childEnv, stdin: null, signal: spawnSignal, asAgent: remote ? false : asAgent, stagedDir, onEvent,
+        file: exe, args, displayBin: bin, cwd, env: spawnEnv, stdin: null, signal: spawnSignal, asAgent: remote ? false : asAgent, stagedDir, onEvent,
         execEnv: remote,
         cleanup: () => {},
         stdoutErrorDetail: () => normalizer.finish().error || '',
