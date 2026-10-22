@@ -49,8 +49,13 @@ test('the canvas-keys fence covers every non-canvas surface', () => {
   for (const f of floats) assert.equal(f.dataset.canvasKeys, 'off', f.className);
 });
 
-test('full screen: the sidebar and the top bar are hidden on the view', () => {
-  assert.match(css, /body\.view-workflows \.sidebar,body\.view-workflows #topnav\{display:none !important;\}/);
+test('the Workflows view renders inside the app shell: under .main, beside the sidebar and top bar (F-18)', () => {
+  const view = doc.querySelector('section[data-view="workflows"]');
+  assert.ok(view.closest('main.main'), 'the view lives in the content area');
+  assert.ok(doc.getElementById('topnav') && doc.querySelector('.sidebar'), 'the shell exists');
+  assert.doesNotMatch(css, /body\.view-workflows[^{]*(\.sidebar|#topnav)[^{]*\{[^}]*display:none/, 'no rule hides the shell');
+  assert.match(css, /body\.view-workflows \.main\{padding:0;overflow:hidden;display:flex;flex-direction:column;\}/);
+  assert.match(css, /\.view\[data-view="workflows"\]\{flex:1 1 auto;min-height:0;position:relative;\}/);
 });
 
 test('narrow screens: only Auto-layout goes icon-only (the zoom keeps its %), and the selection toolbar stays on the stage', () => {

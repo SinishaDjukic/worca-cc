@@ -86,7 +86,7 @@ export const SURFACE_SPEC = Object.freeze({
   heights: [28, 32, 40],
   infoMin: 28,
   controls: ['.tab', '.seg', '.wfl-folder', '.chat-home-preset', '.filter-chip'],
-  tiles: { sel: '.chat-home-act', min: 56, max: 64 },
+  tiles: { sel: '.chat-home-act:not(.btn)', min: 56, max: 64 },   // a tile wearing .btn.btn-lg is a 40px control, checked with the heights
   cards: ['.ask-card', '.chat-rc', '.shape-feature', '.rd-sheet', '.card'],
   fields: '.file, .ta-hl-back',   // input-like boxes (the file drop zone, a textarea's highlight backdrop) keep their borders
   floating: '[role="menu"], [role="dialog"], [role="listbox"], [role="tooltip"], .confirm-modal, .info-bubble, .tsearch-list',

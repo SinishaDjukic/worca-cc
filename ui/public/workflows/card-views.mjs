@@ -2,6 +2,14 @@
 // The DOM of a drafted agent / script card and of a proposed whole workflow, shared by the Workflows chat
 // (chat-cards.mjs: canvas buttons) and Ask Worca (ask-composer-cards.mjs: no canvas). Pure DOM: the host passes the
 // state to show, the callbacks and any extra buttons; nothing here posts, saves or touches a canvas.
+import { icon } from '../icons.mjs';
+
+/** The green saved/applied chip: a check icon, then the words. */
+export function okChip(h, text) {
+  const s = h('span', 'wfc-chip-ok');
+  s.append(icon(s.ownerDocument, 'check', 12), ` ${text}`);
+  return s;
+}
 export const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const RUNNER_SIDE = { code: 'code: edits the worktree (implementer tool set)', memory: 'memory: edits worca memory only (no Bash)' };
 
@@ -75,11 +83,11 @@ export function draftCardView(b, { h, button, state = b.state, notAdded = '', on
   const name = m.displayName || d.key;
   if (state === 'declined') row.appendChild(h('span', 'wfc-muted', `Declined: ${name}`));
   else if (state === 'failed') row.appendChild(h('span', 'wfc-err', b.error || 'failed'));
-  else if (state === 'added') row.appendChild(h('span', 'wfc-chip-ok', '✓ Saved and added'));
+  else if (state === 'added') row.appendChild(okChip(h, 'Saved and added'));
   else if (state === 'superseded') row.append(h('span', 'wfc-muted', 'Replaced by a newer draft'), h('span', 'wfc-spacer'), button('Decline', 'btn btn-sm', () => onDecline()));
   else if (state === 'saved') {
     if (notAdded) el.appendChild(h('p', 'wfc-err', `Not added to the canvas: ${notAdded}`));   // above the actions row
-    row.appendChild(h('span', 'wfc-chip-ok', `✓ Saved to your ${isAgent ? 'agents' : 'scripts'}`));
+    row.appendChild(okChip(h, `Saved to your ${isAgent ? 'agents' : 'scripts'}`));
     if (savedExtra) savedExtra(row);
   } else {
     row.append(

@@ -77,7 +77,7 @@ test('import sheet: rows, disabled policy rows, status column, select-all and co
   const rows = [...sheet.querySelectorAll('tbody tr')];
   assert.equal(rows.length, 3);
   assert.equal(rows[0].querySelector('.mvi-status').textContent, 'preview');
-  assert.equal(rows[1].querySelector('.mvi-status').textContent, 'in catalog ✓');
+  assert.equal(rows[1].querySelector('.mvi-status').textContent, 'in catalog');
   assert.match(rows[2].querySelector('.mvi-status').textContent, /disabled: enable it/);
   assert.ok(rows[2].classList.contains('mvi-disabled'));
   assert.equal(rows[2].querySelector('.mvi-cb').disabled, true);

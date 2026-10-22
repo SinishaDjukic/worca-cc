@@ -108,6 +108,10 @@ test('auditSurface: each rule returns for its failing fixture (review A–C)', (
   assert.deepEqual(surface('<div class="tabs"><span class="flag-chip">Beta</span></div>'), ['chip-outside-label']);
 });
 
+test('auditSurface: a Chat home tile that wears .btn.btn-lg is a 40px control (F-15)', () => {
+  assert.deepEqual(surface('<button class="btn btn-lg chat-home-act" id="a">New run</button>', { heights: { a: 40 } }), []);
+});
+
 test('auditSurface: the passing fixture returns nothing', () => {
   assert.deepEqual(surface(`<div class="tabs"><button class="tab">General <span class="flag-chip">Beta</span></button></div>
     <button class="chat-home-act" id="a">New run</button><button class="info-tip" id="i">i</button>

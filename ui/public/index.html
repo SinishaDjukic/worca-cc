@@ -286,7 +286,7 @@
                   <span id="preset-chip" class="chip" hidden></span>
                   <button type="button" id="preset-update" class="btn btn-sm" hidden>Update preset</button>
                   <span class="preset-pick">
-                    <button type="button" id="preset-btn" class="btn btn-sm btn-quiet preset-btn" aria-haspopup="menu" aria-expanded="false">Preset ▾</button>
+                    <button type="button" id="preset-btn" class="btn btn-sm btn-quiet preset-btn" aria-haspopup="menu" aria-expanded="false">Preset</button>
                     <button type="button" id="preset-clear" class="btn btn-sm btn-quiet btn-icon preset-clear" aria-label="Clear preset" title="Clear preset" hidden></button>
                   </span>
                   <select id="presetSelect" hidden aria-hidden="true" tabindex="-1"><option value="">No preset</option></select>
@@ -513,7 +513,7 @@
                     <input id="featureBranch" class="input" type="text" placeholder="e.g. feat/rate-limiter" spellcheck="false" />
                     <small class="hint" id="featureBranchHint">Leave empty and Worca will propose one.</small>
                     <label class="switch-row same-src-row">
-                      <input id="sameAsSource" class="sw-input" type="checkbox" aria-describedby="sameAsSourceHint">
+                      <input id="sameAsSource" class="sw-input" type="checkbox" role="switch" aria-describedby="sameAsSourceHint">
                       <span class="switch"></span><span class="txt">Run on the source branch</span>
                     </label>
                     <small class="hint" id="sameAsSourceHint" hidden>The run's commits land on the source branch when it finishes (fast-forward only). No new branch is kept.</small>
@@ -556,7 +556,7 @@
                     <!-- Auto only (spec §7.2 / D20): the ONE agent-level option. The .sw-input bridge
                          (style.css:3370) paints the same switch as #mock-switch from a REAL checkbox — no JS mirror. -->
                     <label class="switch-row" id="hitl-row" hidden>
-                      <input id="humanInLoop" class="sw-input" type="checkbox" checked aria-describedby="hitlHint">
+                      <input id="humanInLoop" class="sw-input" type="checkbox" role="switch" checked aria-describedby="hitlHint">
                       <span class="switch"></span>
                       <span class="txt">Human in the loop: Auto shows its proposal, clarifies, and agents may ask</span>
                       <span class="switch-why" id="hitl-why" hidden>Needs a project</span>
@@ -565,7 +565,7 @@
                     <!-- Away mode per-run mark (src/core/night/*): worca may answer this run's
                          questions while you are away (Settings › Away mode sets when and how). -->
                     <label class="switch-row" id="night-row">
-                      <input id="nightMode" class="sw-input" type="checkbox">
+                      <input id="nightMode" class="sw-input" type="checkbox" role="switch">
                       <span class="switch"></span>
                       <span class="txt">Mark this run: worca may answer for me</span>
                     </label>
@@ -1031,7 +1031,7 @@
                   <h1 class="hd-title"></h1>
                   <span class="auto-badge" hidden></span>
                   <span class="hist-merge" hidden data-min-level="expert" data-needs-git></span>
-                  <button type="button" class="btn btn-primary hd-pr" hidden data-min-level="advanced" data-needs-git>Create PR</button>
+                  <button type="button" class="btn btn-primary hd-pr" hidden data-min-level="advanced" data-needs-git>Ship it</button>
                   <!-- Publish branch (#618): push a finished run's branch without a PR. Painted by paintHdPublish. -->
                   <button type="button" class="hd-publish btn" hidden data-min-level="advanced" data-needs-git>Publish branch</button>
                   <span class="act-pill-slot"></span>
@@ -1057,7 +1057,7 @@
                     <svg class="sic sic-paused" width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"></rect><rect x="14" y="5" width="4" height="14" rx="1.5"></rect></svg>
                     <svg class="sic sic-error" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 6.5v7"></path><path d="M12 17.4h.01"></path></svg>
                   </span>
-                  <div class="hd-meta mono"></div>
+                  <div class="hd-meta"></div>
                 </div>
                 <div class="hd-row3">
                   <span class="hd-base mono" data-min-level="advanced" data-needs-git></span>
@@ -1477,7 +1477,7 @@
                   <button type="button" class="btn btn-quiet btn-icon" id="wfv-lib-toggle" aria-label="Library" title="Library" aria-pressed="true" aria-controls="wfv-library">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.2H19.5A1.5 1.5 0 0 1 21 9.7v8.3A1.5 1.5 0 0 1 19.5 19.5h-15A1.5 1.5 0 0 1 3 18z"></path></svg>
                   </button>
-                  <span class="wfv-savewrap" id="wfv-savewrap"><button type="button" class="btn btn-primary" id="wfv-save">Save</button></span>
+                  <span class="wfv-savewrap" id="wfv-savewrap"><span class="wfv-save-reason hint" id="wfv-save-reason" hidden></span><button type="button" class="btn btn-primary" id="wfv-save" aria-describedby="wfv-save-reason">Save</button></span>
                 </div>
               </div>
               <div class="wfv-float wfv-dock" id="wfv-dock" data-canvas-keys="off">
@@ -1695,11 +1695,11 @@
                 <label class="drow switch-drow">
                   <span class="drow-label">Desktop notifications</span>
                   <small class="hint drow-help" id="alertsNotifyHint" hidden></small>
-                  <span class="drow-control"><input id="alertsNotify" class="sw-input" type="checkbox" aria-describedby="alertsNotifyHint"><span class="switch"></span></span>
+                  <span class="drow-control"><input id="alertsNotify" class="sw-input" type="checkbox" role="switch" aria-describedby="alertsNotifyHint"><span class="switch"></span></span>
                 </label>
                 <label class="drow switch-drow alerts-badge-row">
                   <span class="drow-label">Badge when something is waiting</span>
-                  <span class="drow-control"><input id="alertsBadge" class="sw-input" type="checkbox"><span class="switch"></span></span>
+                  <span class="drow-control"><input id="alertsBadge" class="sw-input" type="checkbox" role="switch"><span class="switch"></span></span>
                 </label>
               </div>
               <button type="button" id="alertsTest" class="btn btn-sm alerts-test" disabled>Send test notification</button>
@@ -2030,7 +2030,7 @@
               <div class="drows">
               <label class="drow switch-drow" id="syncDefBeforeRunRow">
                 <span class="drow-label">Sync the source branch before each run</span>
-                <span class="drow-control"><input id="syncDefBeforeRun" data-setting="sync.beforeRun" class="sw-input" type="checkbox" checked><span class="switch"></span></span>
+                <span class="drow-control"><input id="syncDefBeforeRun" data-setting="sync.beforeRun" class="sw-input" type="checkbox" role="switch" checked><span class="switch"></span></span>
               </label>
                 <div class="field drow">
                   <div class="label-row drow-label">
@@ -2132,7 +2132,7 @@
               <div class="drows">
               <label class="drow switch-drow" id="networkWaitEnabledRow">
                 <span class="drow-label">Wait for the network to come back</span>
-                <span class="drow-control"><input id="networkWaitEnabled" data-setting="networkWait.enabled" class="sw-input" type="checkbox" checked><span class="switch"></span></span>
+                <span class="drow-control"><input id="networkWaitEnabled" data-setting="networkWait.enabled" class="sw-input" type="checkbox" role="switch" checked><span class="switch"></span></span>
               </label>
               <div class="field drow">
                 <label class="drow-label" for="networkWaitMaxMin">Longest wait</label>
@@ -2873,7 +2873,7 @@
         <p class="shipit-slice-note" hidden></p>
         <div class="shipit-actions" data-card-actions>
           <button type="button" class="shipit-cancel btn">Cancel</button>
-          <button type="button" class="btn btn-primary shipit-ok">Open pull request</button>
+          <button type="button" class="btn btn-primary shipit-ok">Create pull request</button>
         </div>
       </div>
     </div>

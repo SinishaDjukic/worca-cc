@@ -585,7 +585,7 @@ test('a "Save & add" whose add the canvas refuses still saves, and the card says
   const refused = await run({ ok: false, error: 'x' });
   assert.deepEqual(refused.post, { state: 'saved', card: { savedKey: 'releaseNotes' } }, 'saved all the same');
   assert.deepEqual(refused.err, ['Not added to the canvas: x']);
-  assert.match(refused.text, /✓ Saved to your agents/);
+  assert.match(refused.text, /Saved to your agents/);
   assert.equal(refused.why(), 'x', 'the dock\'s live region reads it');
   assert.deepEqual((await run({ ok: false })).err, ['Not added to the canvas: the canvas refused it'], 'a refusal with no reason still says so');
   const took = await run({ ok: true, depth: 1 });
@@ -1792,7 +1792,7 @@ test('card-views: one DOM for both chats — a draft card shows the state its ho
   const shownSaved = draftCardView(b, { h, button, state: 'saved', onEdit: () => {}, onDecline: () => {}, onSave: () => {} });
   assert.equal(shownSaved.querySelector('.wfc-chip').textContent, 'saved');
   assert.equal(shownSaved.querySelectorAll('.wfc-actions button').length, 0);
-  assert.match(shownSaved.textContent, /✓ Saved to your agents/);
+  assert.match(shownSaved.textContent, /Saved to your agents/);
   const graph = h('div', 'my-graph');
   const build = buildCardView(card('card_0000f002', 'proposed', { type: 'workflow-build', name: 'G', workflow: { nodes: [], wires: [] }, counts: {} }),
     { h, graph, actions: (row) => row.appendChild(h('span', 'x', 'act')) });

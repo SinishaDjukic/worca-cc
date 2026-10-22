@@ -3408,12 +3408,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     let fan = 0;
     for (const r of lane.rows) {
       const c = laneEffective(lane, r);
-      const k = c.model ? modelLabel(lane, c.model) : 'inherit';
+      const k = c.model ? `on ${modelLabel(lane, c.model)}` : 'on the workflow’s model';
       counts.set(k, (counts.get(k) || 0) + 1);
       if (c.fanOut || fanForced(lane, r)) fan++;
     }
     const picked = laneProposedCount(lane);
-    return `${lane.rows.length} agents · ${[...counts].map(([k, v]) => `${k} ×${v}`).join(' · ')}${fan ? ` · ${fan} fan-out` : ''}${picked ? ` · ${picked} picked by Chat` : ''}`;
+    return `${lane.rows.length} agents · ${[...counts].map(([k, v]) => `${v} ${k}`).join(' · ')}${fan ? ` · ${fan} fan-out` : ''}${picked ? ` · ${picked} picked by Chat` : ''}`;
   }
   function laneSet(lane, row, patch) {
     const next = { ...(lane.edits[row.nodeId] || {}), ...patch };

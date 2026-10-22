@@ -23,7 +23,7 @@ export function guardrailSummary(s) {
 
 function originBadge(doc, origin) {
   if (origin === 'builtin') return h(doc, 'span', 'badge waiting grv-origin', 'built-in');
-  if (typeof origin === 'string' && origin.startsWith('plugin:')) return h(doc, 'span', 'badge violet grv-origin', origin);
+  if (typeof origin === 'string' && origin.startsWith('plugin:')) return h(doc, 'span', 'badge slate grv-origin', origin);
   // Team policy sets (gp:<id>): blue, like every policy origin; the title names the home.
   if (typeof origin === 'string' && origin.startsWith('policy:')) {
     const b = h(doc, 'span', 'badge slate grv-origin', 'policy');

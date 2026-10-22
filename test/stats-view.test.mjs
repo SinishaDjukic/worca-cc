@@ -2,6 +2,7 @@
 // No app.js boot: every renderer takes `doc` explicitly and returns detached DOM.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import {
   BUDGET_WARN_AT, renderKpiRow,
@@ -134,6 +135,18 @@ test('renderStatsBody: KPI row + two chart cards; empty range -> chart-empty not
     series: [] }, { doc });
   assert.equal(empty.querySelectorAll('.chart-empty').length, 2);
   assert.equal(empty.querySelector('svg.chart-svg'), null);
+});
+
+test('F-20: the two chart cards read "Spend per day" and "Runs per day", and the docs name the same bucket words', () => {
+  const body = renderStatsBody({ ...MODEL, bucket: 'day', windowStartMs: 1, windowEndMs: 5,
+    series: RUNS.series.map((r, i) => ({ ...r, spentUsd: SPEND.series[i].spentUsd })) }, { doc });
+  const titles = [...body.querySelectorAll('.chart-card h2')].map((e) => e.textContent);
+  assert.deepEqual(titles, ['Spend per day', 'Runs per day']);
+  const labels = [...body.querySelectorAll('.chart-card svg.chart-svg')].map((e) => e.getAttribute('aria-label'));
+  assert.match(labels[0], /^Spend per day, /);
+  assert.match(labels[1], /^Runs per day by outcome, /);
+  const docs = readFileSync(new URL('../docs/statistics.md', import.meta.url), 'utf8');
+  for (const w of ['per hour', 'per day', 'per month']) assert.ok(docs.includes(w), w);
 });
 
 test('renderSpendChart: the chart has a legend like the Runs chart', () => {

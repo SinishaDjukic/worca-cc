@@ -1041,7 +1041,7 @@ try {
     }
     const sysLight = report['system-light'].filter((v) => !v.advisory && !baseline.has(key(v)) && !isDrift(v));
     console.log(`${sysLight.length ? 'FAIL' : 'PASS'} system-light equals light: ${sysLight.length} failures outside the light baseline`);
-    if (sysLight.length) failed += 1;
+    if (sysLight.length) { failed += 1; console.log(JSON.stringify(sysLight.slice(0, 40), null, 1)); }
   }
   await writeFile(path.join(OUT, 'button-audit.json'), JSON.stringify(buttonReport, null, 1));
   console.log(`${buttonReport.length ? 'FAIL' : 'PASS'} one button style: ${buttonReport.length} button(s) outside 3 sizes x 4 variants`);

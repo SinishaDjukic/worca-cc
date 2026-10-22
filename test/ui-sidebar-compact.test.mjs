@@ -99,9 +99,9 @@ test('New run has no sidebar row (the top bar\'s button opens it): no "+" tile, 
   assert.ok(themeTool.includes("'.topnav-new'"), 'verify:theme hovers New run in the top bar');
 });
 
-test('the Getting started pill keeps the 32px rhythm: a full violet outline and a count pill of its own', () => {
+test('the Getting started pill keeps the 32px rhythm: a full blue outline and a count pill of its own', () => {
   const pill = ruleBody('.nav button.gs-pill');
-  assert.match(pill, /border:1\.5px solid var\(--violet\);padding:0 6\.5px 0 7\.5px;/);
+  assert.match(pill, /border:1\.5px solid var\(--blue\);padding:0 6\.5px 0 7\.5px;/);
   assert.doesNotMatch(pill, /height|border-left/);
   assert.match(ruleBody('.nav button.gs-pill .gs-pill-count'), /height:18px;padding:0 6px;border-radius:var\(--r-xs\);/);
 });

@@ -298,7 +298,7 @@ test('paintIdentityCard: only a shared identity gets "Signed in as"', () => {
   }
 });
 
-test('style.css: the away badge is the same 11px dot, ink with a panel-coloured walking person, shown only when away', () => {
+test('style.css: the away badge is the same 11px dot, slate with a panel-coloured walking person, shown only when away', () => {
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
   const rule = (sel) => {
     const m = css.match(new RegExp(`(?:^|\\n)${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\{([^}]*)\\}`));
@@ -307,7 +307,7 @@ test('style.css: the away badge is the same 11px dot, ink with a panel-coloured 
   };
   const dot = rule('.acct-dot');
   for (const decl of ['position:absolute', 'right:1px', 'bottom:1px', 'width:11px', 'height:11px', 'border-radius:50%',
-    'background:var(--ink)', 'color:var(--panel)', 'box-shadow:0002pxvar(--panel)', 'display:none']) {
+    'background:var(--slate)', 'color:var(--panel)', 'box-shadow:0002pxvar(--panel)', 'display:none']) {
     assert.ok(dot.includes(`${decl};`) || dot.endsWith(decl), `.acct-dot keeps ${decl}`);
   }
   assert.doesNotMatch(dot, /violet|#[0-9a-f]{3,8}\b/i, 'tokens only, never violet (Labs / merged)');

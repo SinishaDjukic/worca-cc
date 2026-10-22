@@ -6,6 +6,7 @@
 //  - pull-request: a finished run's pull request offer (R9) — its button opens the Ship it dialog with the card's link.
 // The chrome is the Ask card's (.ask-card, .ask-mcard-*, .ask-card-not-now / -err); style.css
 // "Chat P2: Action cards" adds the rest. Emphasis is a background wash, never an edge line.
+import { SHIP_LABEL } from '../ship-words.mjs';
 import { registerChatCard } from './extensions.mjs';
 import { buildShipChatCard } from '../shape/ship-card.mjs';
 import { buildChangesChatCard } from '../shape/changes-card.mjs';
@@ -273,7 +274,7 @@ export function buildPullRequestCard(block, ctx) {
     const actions = make(doc, 'div', 'ask-mcard-actions');
     actions.dataset.needsGit = '';
     const later = makeButton(doc, 'btn btn-sm btn-quiet ask-card-not-now', 'Not now', 'data-chat-pr-decline');
-    const create = makeButton(doc, 'btn btn-sm btn-primary', 'Create pull request', 'data-chat-pr-create');
+    const create = makeButton(doc, 'btn btn-sm btn-primary', SHIP_LABEL, 'data-chat-pr-create');
     const lock = (on) => { later.disabled = on; create.disabled = on; };
     later.addEventListener('click', async () => {
       lock(true); err.textContent = '';

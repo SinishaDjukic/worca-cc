@@ -29,7 +29,7 @@ test('header meta: status word · day · clock · duration · cost · +A −R, f
       await openDetail(ctx);
       const meta = ctx.window.document.querySelector('#hist-detail .hd-meta');
       assert.ok(meta, 'the detail header carries a meta line');
-      assert.match(meta.textContent, /Done/);
+      assert.match(meta.textContent, /Ready to ship/);
       assert.match(meta.textContent, /\+412/);
       assert.match(meta.textContent, /−188/);            // U+2212, never an ASCII hyphen
       assert.match(meta.textContent, /\$153\.21/);
@@ -39,7 +39,7 @@ test('header meta: status word · day · clock · duration · cost · +A −R, f
       assert.ok(meta.querySelector('.hd-day').textContent.length > 0, 'the day segment paints');
       assert.doesNotMatch(meta.textContent, /Invalid Date/);
       const word = meta.querySelector('.hd-status-word');
-      assert.equal(word.textContent, 'Done');
+      assert.equal(word.textContent, 'Ready to ship');
       assert.ok(word.classList.contains('st-done'), 'the status word wears its family class');
       // Persisted results win over the list row's live counts.
       assert.equal(meta.querySelector('.diff-add').textContent, '+412');
@@ -65,7 +65,7 @@ test('header meta: status word · day · clock · duration · cost · +A −R, f
       assert.equal(meta.querySelector('.hd-day'), null);
       assert.equal(meta.querySelector('.hd-clock'), null);
       assert.doesNotMatch(meta.textContent, /Invalid Date/);
-      assert.match(meta.textContent, /Done/, 'the status word still paints');
+      assert.match(meta.textContent, /Ready to ship|Done/, 'the status word still paints');
     } },
   ]);
 });
@@ -78,7 +78,7 @@ test('team-metrics line: recorded / pending push / not enabled on terminal runs,
       const doc = ctx.window.document;
       const tm = doc.querySelector('#hist-detail .hd-tm');
       assert.ok(tm, 'the .hd-tm span renders for a terminal run');
-      assert.equal(tm.textContent, 'recorded to team metrics ✓');
+      assert.equal(tm.textContent, 'recorded to team metrics');
       assert.ok(tm.classList.contains('st-ok'));
     } },
     { name: 'a pending team-metrics entry shows the pending-push wording', run: async () => {
@@ -806,4 +806,57 @@ test('worktree notice: a workspace run names each member, and Get the diff asks 
   click(ctx.window, n.querySelectorAll('button')[1]);
   await settle(ctx.window, 4);
   assert.match(ctx.calls.find((c) => c.url.includes('/checkout/diff')).url, /\?workspaceId=ws1&member=app-11111111$/);
+});
+
+test('F-2: the notice card, the Overview WORKTREE row and the Actions strip read one checkout', async () => {
+  const actModel = (checkedOut) => ({
+    runId: ROW.id, workspace: false, finished: true, enabled: true,
+    members: [{ projectKey: KEY, projectName: 'Alpha', branch: ROW.branch, state: checkedOut ? 'checked-out' : 'not-checked-out',
+      checkout: checkedOut ? { setup: { status: 'ok' } } : null, actions: [], builtins: [] }],
+    instances: [], stacks: [], stackStates: [],
+  });
+  let model = actModel(true);
+  const ctx = await bootDetail({
+    rows: [checkoutRow()],
+    arms: (url) => {
+      if (url.endsWith('/api/actions/running')) return ok([]);
+      if (url.includes(`/api/runs/${ROW.id}/actions?`)) return ok(model);
+      return null;
+    },
+  });
+  await openDetail(ctx, 'details/overview');
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  const wt = () => doc.querySelector('#hist-detail .hd-ov-wt');
+  assert.match(wt().textContent, /checked out/);
+  assert.doesNotMatch(wt().textContent, /released/);
+  assert.match(wt().querySelector('.hd-ov-wt-path').title, /\/tmp\/co/);
+  assert.match(noticeOf(doc).textContent, /Worktree: \/tmp\/co/);
+  const strip = () => secOf(doc, 'overview').querySelector('.act-strip');
+  assert.ok(![...strip().querySelectorAll('button')].some((b) => b.textContent === 'Check out'), 'no Check out while checked out');
+  // Discarded: the row, then both change events
+  model = actModel(false);
+  await deliverRows(ctx, [ROW]);
+  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'actions-changed', action: 'checkout' }) });
+  await settle(ctx.window, 6);
+  assert.match(wt().textContent, /released/);
+  assert.ok([...strip().querySelectorAll('button')].some((b) => b.textContent === 'Check out'));
+});
+
+test('F-11: a finished run with no PR reads Ready to ship; an open PR reads In review', async () => {
+  const ctx = await bootDetail({ detail: { ...DETAIL, results: RESULTS } });
+  await openDetail(ctx);
+  const word = () => ctx.window.document.querySelector('#hist-detail .hd-status-word').textContent;
+  assert.equal(word(), 'Ready to ship');
+  await deliverRows(ctx, [{ ...ROW, pr: { url: 'https://github.com/acme/web/pull/7', number: 7, state: 'OPEN' } }]);
+  await settle(ctx.window, 4);
+  assert.equal(word(), 'In review');
+});
+
+test('F-1 / F-10 style rules: the header row wraps, the meta line is sans', async () => {
+  const { readFileSync } = await import('node:fs');
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  assert.match(css, /\.hd-row1,\.pd-row1\{[^}]*flex-wrap:wrap/);
+  assert.match(css, /@media \(max-width:640px\)\{\.hd-row1 > \.hd-title,\.pd-row1 > \.pd-title\{flex:1 1 100%;\}\}/);
+  assert.match(css, /\.hd-meta\{[^}]*var\(--sans\)/);
 });

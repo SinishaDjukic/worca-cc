@@ -98,9 +98,10 @@ import { workModeOf, isGitRun, isFolderRun, isNoProjectRun, NO_PROJECT_KEY, proj
 import { changesCounts, filesWord, renderCountsNode, applyBarModel, paintApplyBar, runChangesUrl, openApplyDialog, discardChanges, CHANGE_SIGN, CHANGE_WORD } from './folder-changes.mjs';
 import { runProgress, progressWidth } from '../../src/shared/run-progress.mjs';
 import { DEFAULT_HOME_PINS, isPinned, pinWorkflow, unpinWorkflow } from '../../src/shared/home-pins.mjs';
-import { worktreeNoticeModel, renderWorktreeNotice, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome } from './worktree-notice.mjs';
+import { SHIP_LABEL, doneStatusWord } from './ship-words.mjs';
+import { worktreeNoticeModel, worktreeRowState, renderWorktreeNotice, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
-import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, RECENT_PAGE, groupRow, memberPrsOf, prChip, memberCostUsd } from './runs-list.mjs';
+import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, RECENT_PAGE, groupRow, memberPrsOf, prChip, memberCostUsd, whenLabel } from './runs-list.mjs';
 import { paintRunStatus, syncActions, pauseResumeOwn } from './run-status-card.mjs';
 import { buildGroupPage, paintGroupPage, runReceipts } from './group-page.mjs';
 import { runPositionLabel, groupKindWord, pageModel, runCrumbs, paintCrumbs, syncFacts } from './run-page-head.mjs';
@@ -254,7 +255,7 @@ import {
   runOutcomeModel, openSyncDialog, chooseSyncRefusal,
 } from './branch-sync.mjs';
 import { baseCheckModel, baseRowNote, newerBaseCheck } from './base-check.mjs';
-import { describeRule, formatInstant } from '../../src/shared/schedule/recurrence.mjs';
+import { describeRule } from '../../src/shared/schedule/recurrence.mjs';
 import { statusActions, RUN_SWITCH_OPTIONS, RUN_SWITCH_TIP, kindShort, awayAnswerRows, awayAnswerCounts, checksFirst, awayAnswersSummary, decidedByText, awayAskCaption } from '../../src/shared/away-mode/labels.mjs';
 import { parseWindow } from '../../src/shared/away-mode/activation.mjs';
 import { runCostBreakdown, floorText, auxLabelForSubagent } from '../../src/shared/cost/breakdown.mjs';
@@ -2168,7 +2169,7 @@ async function ensureAgentMeta(onReady) {
 }
 
 // The palette the graph cards and the frozen-v1 chip strip read for --c.
-const COMPOSER_COLORS = { green: 'var(--green)', peach: 'var(--peach)', red: 'var(--red)', blue: 'var(--blue)', violet: 'var(--violet)', amber: 'var(--amber)' };
+const COMPOSER_COLORS = { green: 'var(--green)', peach: 'var(--peach)', red: 'var(--red)', blue: 'var(--blue)', violet: 'var(--slate)', amber: 'var(--amber)' };
 
 // Pick the manifest to render. A v2 run always carries one; a run with no
 // manifest at all (pre-stepper history) renders NOTHING rather than the v1
@@ -3149,7 +3150,7 @@ function wfvEls() {
   return {
     root: g('wfv'), stage: g('wfv-stage'), canvas: g('wfv-canvas'), chip: g('wfv-chip'), back: g('wfv-back'),
     wfMenu: g('wfv-wf-menu'), name: g('wfv-name'), errors: g('wfv-errors'), importFile: g('wfv-import-file'),
-    libToggle: g('wfv-lib-toggle'), saveWrap: g('wfv-savewrap'), save: g('wfv-save'), add: g('wfv-add'),
+    libToggle: g('wfv-lib-toggle'), saveWrap: g('wfv-savewrap'), save: g('wfv-save'), saveReason: g('wfv-save-reason'), add: g('wfv-add'),
     autolayout: g('wfv-autolayout'), zoom: g('wfv-zoom'), zoomLabel: g('wfv-zoom-label'), overlay: g('wfv-overlay'),
     library: g('wfv-library'), sheet: g('wfv-sheet'), sheetTitle: g('wfv-sheet-title'), sheetClose: g('wfv-sheet-close'),
     dialogHost: g('wfv-dialog-host'), chat: g('wfc'),
@@ -3198,7 +3199,7 @@ async function initWorkflows() {
   insBody.className = 'wfv-ins';
   gvComposer = createComposer({
     canvas: els.canvas, chip: els.chip, name: els.name, errors: els.errors, autoBtn: els.autolayout,
-    saveBtn: els.save, saveWrap: els.saveWrap, insBody, dialogHost: els.dialogHost,
+    saveBtn: els.save, saveWrap: els.saveWrap, saveReason: els.saveReason, insBody, dialogHost: els.dialogHost,
   }, {
     doc: document, api: gvApi, portsFn: (node) => gvPortsFn(node),
     highlight: scriptHighlight,   // a script card's command/code params get the real editor
@@ -4000,7 +4001,7 @@ function renderModelEffortPair(modelSel, effortSel, caption, sel = {}) {
   // it is THIS selection, which still resolves and must stay visible.
   appendModelGroups(modelSel, state.models.filter((m) => usable(m) && (m.custom || !m.hidden || m.id === sel.model)), {
     engine, text: (m) => modelOptionText(m) + (m.costUnreliable ? ' ⚠cost' : '') + (m.needsSignIn ? ' (needs sign-in)' : '') + credentialSuffix(m.id) });
-  modelSel.appendChild(option('__add__', '+ Add model…'));
+  modelSel.appendChild(option('__add__', 'Add model…'));
   modelSel.value = sel.model || '';
 
   // Effort dropdown: filtered to the selected model's supported efforts. With no
@@ -7845,7 +7846,7 @@ function renderProjectOptions(selectName, { quiet = false } = {}) {
 
   const add = document.createElement('option');
   add.value = '__add__';
-  add.textContent = '+ Add project…';
+  add.textContent = 'Add project…';
   el.projectSelect.appendChild(add);
 
   // Restore by index (not value) so duplicate paths can't pick the wrong name.
@@ -11362,7 +11363,7 @@ function buildPortRow(side, port) {
       fmCheck('pf-required', 'required', p.required !== false && !p.loop),
       fmCheck('pf-loop', 'loop', p.loop === true),
       fmCheck('pf-expands', 'expands', p.expands === true),
-      fmMini('pf-directive-toggle', p.directive ? 'directive ✓' : 'directive', 'Prompt text injected when this port fires'),
+      fmMini('pf-directive-toggle', p.directive ? 'directive on' : 'directive', 'Prompt text injected when this port fires'),
     );
     row.appendChild(flags);
     const dirWrap = document.createElement('div');
@@ -11594,7 +11595,7 @@ function buildPortsSection(side, ports) {
   const head = document.createElement('div');
   head.className = 'agent-ports-head';
   const title = document.createElement('b');
-  title.textContent = side === 'in' ? 'INPUTS' : 'OUTPUTS';
+  title.textContent = side === 'in' ? 'Inputs' : 'Outputs';
   const count = document.createElement('span');
   count.className = 'pf-count hint';
   const add = fmMini(`pf-add-${side}`, side === 'in' ? '+ input' : '+ output');
@@ -14907,15 +14908,17 @@ el.form.addEventListener('submit', async (e) => {
       // 202: nothing is running — the request is a ticket now. Show it where it lives.
       if (data.status === 'scheduled') {
         startSubmitInFlight = false;
+        const picked = pendingSchedule;   // read before the form resets
+        const line = `${title || 'Untitled run'} · ${picked ? scheduleWhenText(picked) : 'Starts later'}`;
         setPendingSchedule(null);   // the form is a plain Start run form again
         resetSyncChoice();
         showEngineRefusal(null);
         clearTask(submittedTask);
         applyPresetSwitches();   // clearTask unchecks Run on the source branch (#688); a preset keeps its own
-        // Keep the warn tone when the server attached a budget warning. showView('schedules')
-        // already shows the ticket, so the toast needs no Open action.
-        notify({ tone: data.budgetWarning ? 'warn' : 'ok', title: 'Scheduled', detail: data.budgetWarning || title || '' });
-        showView('schedules');
+        // Keep the warn tone when the server attached a budget warning. The Schedules page already
+        // shows the ticket, so the toast needs no Open action.
+        notify({ tone: data.budgetWarning ? 'warn' : 'ok', title: 'Scheduled', detail: data.budgetWarning ? `${line} · ${data.budgetWarning}` : line });
+        location.hash = picked && picked.repeat ? 'schedules/repeating' : 'schedules/once';   // a hash route: Back and reload keep the tab
         return { ok: true };
       }
 
@@ -14931,8 +14934,13 @@ el.form.addEventListener('submit', async (e) => {
       clearTask(submittedTask);
       applyPresetSwitches();
       // D6: the user is on the run's page now, so the result is a toast, not a #form-msg line.
-      notify({ tone: 'ok', title: 'Run started', detail: title || '', key: `run-${data.runId}`,
-        action: { label: 'Open run', run: () => { location.hash = rdHash(data.runId); } } });
+      // The run's page is the confirmation (audit F-24): no toast when it is already open.
+      const [openView, openParam] = parseHash();
+      const onThatRun = (openView === 'running' && runDetailParts(openParam).runId === data.runId) || state.selectedRunId === data.runId;
+      if (!onThatRun) {
+        notify({ tone: 'ok', title: 'Run started', detail: title || '', key: `run-${data.runId}`,
+          action: { label: 'Open run', run: () => { location.hash = rdHash(data.runId); } } });
+      }
       if (extras.length) {
         appendLog({
           source: 'ui',
@@ -14966,6 +14974,7 @@ function newFormCard() { return el.form; }
 let pendingSchedule = null;
 const newScheduleSheetOpts = (runTitle = '') => ({
   mode: 'create', runTitle, defaults: schedulesView.defaults, candidates: fetchAfterCandidates,
+  confirmLabel: 'Set time',   // the form's Schedule button schedules; this one only sets the time
   warning: 'A scheduled run is unattended. If this workflow asks questions, the run waits for your answer. Chat notifications can reach you.',
   sync: scheduleSyncOpt(),
 });
@@ -14992,6 +15001,13 @@ const pendingScheduleInitial = () => (pendingSchedule
     ...(pendingSchedule.sync ? { sync: pendingSchedule.sync } : {}),
   }
   : {});
+/** The schedule line the form and the toast share: "Starts Tue, 02:00", the rule in words, or the predecessor. */
+function scheduleWhenText(pick) {
+  if (pick.after) return `Starts when ‘${pick.after.title || 'the run before it'}’ finishes`;
+  if (pick.repeat) return describeRule(pick.repeat.rule);
+  const ms = Date.parse(pick.scheduledFor);
+  return Number.isFinite(ms) ? `Starts ${whenLabel(ms, Date.now(), browserTimeZone())}` : 'Starts later';
+}
 function setPendingSchedule(pick) {
   pendingSchedule = pick || null;
   if (!el.newSched) return;
@@ -15005,15 +15021,14 @@ function setPendingSchedule(pick) {
   if (!pendingSchedule) { syncPreviousBranchEverywhere(); return; }
   if (pendingSchedule.after) {
     el.newSchedBadge.textContent = 'After run';
-    el.newSchedText.textContent = `Starts when ‘${pendingSchedule.after.title || 'the run before it'}’ finishes`
+    el.newSchedText.textContent = scheduleWhenText(pendingSchedule)
       + (pendingSchedule.after.branchGone ? ' · its branch is gone, so pick a source branch' : '');
   } else if (pendingSchedule.repeat) {
     el.newSchedBadge.textContent = 'Repeats';
-    el.newSchedText.textContent = describeRule(pendingSchedule.repeat.rule);
+    el.newSchedText.textContent = scheduleWhenText(pendingSchedule);
   } else {
-    const ms = Date.parse(pendingSchedule.scheduledFor);
     el.newSchedBadge.textContent = 'Scheduled';
-    el.newSchedText.textContent = Number.isFinite(ms) ? `Starts ${formatInstant(ms, browserTimeZone())}` : 'Starts later';
+    el.newSchedText.textContent = scheduleWhenText(pendingSchedule);
   }
   if (el.wsSourcePrevious) delete el.wsSourcePrevious.dataset.off;   // a NEW pick starts with the switch ON
   syncPreviousBranchEverywhere();
@@ -15024,8 +15039,13 @@ async function openScheduleForNew() {
   const el0 = el.prompt;
   const titleEl = document.getElementById('title');
   const runTitle = titleEl && typeof titleEl.value === 'string' ? titleEl.value.trim() : '';
-  const picked = await openScheduleSheet({ ...newScheduleSheetOpts(runTitle), initial: pendingScheduleInitial() });
-  if (picked) setPendingSchedule(picked);
+  const view = document.querySelector('.view[data-view="new"]');
+  try {
+    const picked = await openScheduleSheet({ ...newScheduleSheetOpts(runTitle), initial: pendingScheduleInitial() });
+    if (picked) setPendingSchedule(picked);
+  } finally {
+    view?.classList.remove('sched-first');
+  }
   try { el0?.focus(); } catch { /* jsdom */ }
 }
 el.newSchedChange?.addEventListener('click', () => { void openScheduleForNew(); });
@@ -15741,7 +15761,7 @@ async function postSettingsCard(body, opts = {}) {
     // snapshot must be taken after them.
     if (paint && r.data && Object.keys(r.data).length) await paint(r.data);
     dirty?.markClean();
-    if (appliesWhen) notify({ tone: 'ok', title: 'Saved', detail: appliesWhen });
+    notify({ tone: 'ok', title: 'Saved', detail: appliesWhen, key: 'settings-saved' });
     return r;
   }
   dirty?.refresh();                           // still dirty after a failure: Save is offered again
@@ -19102,11 +19122,11 @@ async function testModelFlow(btn) {
   try {
     const res = await fetch(`/api/models/${encodeURIComponent(id)}/test`, { method: 'POST' });
     const data = await safeJson(res);
-    if (!res.ok) return paint(`✗ ${data.error || `HTTP ${res.status}`}`, true);
-    if (data.ok) return paint(`✓ replied: ${data.text}`);
-    paint(`✗ ${data.hint || data.message}`, true);
+    if (!res.ok) return paint(`${data.error || `HTTP ${res.status}`}`, true);
+    if (data.ok) return paint(`Replied: ${data.text}`);
+    paint(`${data.hint || data.message}`, true);
   } catch (e) {
-    paint(`✗ ${e.message}`, true);
+    paint(`${e.message}`, true);
   } finally {
     btn.disabled = false;
   }
@@ -23383,7 +23403,7 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
   modal._releaseRow = relRow;
   const okBtn = q('.shipit-ok');
   const cancelBtn = q('.shipit-cancel');
-  okBtn.disabled = false; okBtn.textContent = 'Open pull request';
+  okBtn.disabled = false; okBtn.textContent = 'Create pull request';
   cancelBtn.disabled = false;                       // a previous open may have parked it mid-POST
   modal.classList.remove('hidden');
   okBtn.focus();
@@ -23523,6 +23543,7 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
       const screen = hdShowsRun(record) ? histDetailState.screen : null;
       if (screen) {
         paintHdPr(screen, record, histDetailState.data);
+        paintHdHeaderMeta(screen, record, histDetailState.data);
         paintHdAfter(screen, record, histDetailState.data);
         void paintHdSavePreset(screen, histDetailState.data);
         const mergeEl = screen.querySelector('.hist-merge');
@@ -23543,7 +23564,7 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
       if (closed) return;
       okBtn.disabled = false;
       cancelBtn.disabled = false;
-      okBtn.textContent = 'Open pull request';
+      okBtn.textContent = 'Create pull request';
       if (!q('.shipit-remotes').hidden || !q('.shipit-base-wrap').hidden) setShipItRemotesDisabled(modal, false);
       cardAlert(card, { title: 'Not shipped', detail: e2.message });
     }
@@ -24091,6 +24112,7 @@ function hdSyncPr(projectKey, id, row) {
   if (histDetailState.id !== id || histDetailState.key !== projectKey) return;
   if (row) histDetailState.record = row;   // a deep link's minimal record upgrades to the real row
   paintHdPr(histDetailState.screen, histDetailState.record, histDetailState.data);
+  paintHdHeaderMeta(histDetailState.screen, histDetailState.record, histDetailState.data);
   paintHdOvPrs(histDetailState.screen.querySelector('.hd-ov-prs'), histDetailState.record);
   paintHdBase(histDetailState.screen, histDetailState.record, histDetailState.data);   // an open PR owns the pipeline Resolve
   paintHdAfter(histDetailState.screen, histDetailState.record, histDetailState.data);
@@ -24349,6 +24371,11 @@ function hdRunEngine(record, data) {
 /** The pipeline's run in this tab that stands for the record (hdPipelineRun: its live run, else the newest one that
  *  ended, which a History row still reading `running` or `paused` has not caught up with), else the saved row. */
 const hdModelRun = (record, data) => { const r = hdPipelineRun(record); return r ? rdModelRun(r) : histRun(record, data && data.state); };
+/** The run-model state of a saved run, the one the Runs list and hdChip read (ready, in-review, merged, needs-you ...). */
+function hdDoneState(record, data) {
+  const rec = (state.historyAll || []).find((x) => x.id === record.id) || record;
+  return runModel(hdModelRun(rec, data), { memo: memoFor(record.id) }).state;
+}
 /** Runs redesign slice 4 (D4): the finished page's bar buttons, decided by the run model. */
 function paintHdActions(screen, record, data) {
   const bar = screen.querySelector('.rd-bar-end');
@@ -24755,13 +24782,11 @@ function openPublishModal(screen, record, data, members) {
 
 // --- detail header: meta line, branch copy, Resume, Archive, banners --------
 
-// "8/17/2026, 8:54:42 PM" -> { day, clock } (locale-driven; no comma -> clock '').
-// fmtDate returns '' for a falsy value, so a record with no timestamp yields two
-// empty segments and the painter skips both — never "Invalid Date".
+// The Runs list time style as { day, clock: '' } (audit F-9: one label, so no second clock segment).
+// whenLabel returns '' for a falsy value, so a record with no timestamp yields empty segments
+// and the painter skips them — never "Invalid Date".
 function splitDateStamp(iso) {
-  const s = fmtDate(iso);
-  const i = s.indexOf(', ');
-  return i === -1 ? { day: s, clock: '' } : { day: s.slice(0, i), clock: s.slice(i + 2) };
+  return { day: whenLabel(iso), clock: '' };
 }
 
 function hdDot() {
@@ -24786,7 +24811,7 @@ function paintHdFacts(screen, record, data) {
   const fc = folder ? changesCounts(hdChangesOf(record, data) || { state: 'pending' }) : null;
   const activeMs = typeof st.totalActiveMs === 'number' ? st.totalActiveMs : liveTotalMs(st.steps, 0);
   const tags = costTagsFact(st.tags, record && record.projectDir, () => { if (screen.isConnected) paintHdGlance(screen, record, data); }, record && record.target);
-  paintGlanceFacts(glance, { summary: folder ? null : (s || null), changes: fc, activeMs, cost: engineReportsCost(st.runEngine) ? (st.totalCostUsd || 0) : null,
+  paintGlanceFacts(glance, { summary: folder ? null : (s || null), changes: fc, diffHref: `#${hdHash({ projectKey: record.projectKey, id: record.id }, 'details', 'diff')}`, activeMs, cost: engineReportsCost(st.runEngine) ? (st.totalCostUsd || 0) : null,
     costNote: costSummaryText(runCostBreakdown(st.steps, st.totalCostUsd), fmtUsd),
     // D16: a finished run always has the row while runTags is on, so "Add cost tags" stays reachable.
     costTags: flagOn('runTags') ? (tags || { tags: [], missing: [] }) : null });
@@ -24870,9 +24895,10 @@ function paintHdHeaderMeta(screen, record, data) {
   const costFocus = costTriggerFocused(meta);
   meta.innerHTML = '';
   const { family, word } = histStatusMeta({ status: st.status });
+  const doneWord = st.status === 'done' ? doneStatusWord(hdDoneState(record, data)) : '';
   const w = document.createElement('span');
   w.className = `hd-status-word st-${family}`;
-  w.textContent = word;
+  w.textContent = doneWord || word;
   meta.appendChild(w);
   // The engine that runs the agents (a resume on another engine shows the new one): every run names it.
   const engine = ENGINE_NAMES.includes(st.runEngine) ? st.runEngine : 'claude';
@@ -24896,6 +24922,7 @@ function paintHdHeaderMeta(screen, record, data) {
     seg.className = cls + (strong ? ' strong' : '');
     seg.textContent = text;
     if (cls === 'hd-cost') seg.title = hdCost.title || estTitle(st.totalCostUsd);
+    if (cls === 'hd-day') seg.title = fmtDate(st.startedAt || record.startedAt || record.mtime);
     meta.appendChild(seg);
   }
   paintCostBreakdown(screen.querySelector('.hd-header'), meta.querySelector('.hd-cost'), runCostBreakdown(st.steps, st.totalCostUsd), costFocus,
@@ -24960,7 +24987,7 @@ function paintHdHeaderMeta(screen, record, data) {
   const terminal = ['done', 'error', 'stopped'].includes(st.status);
   if (terminal) {
     const TM_TEXT = {
-      recorded: ['recorded to team metrics ✓', 'st-ok'],
+      recorded: ['recorded to team metrics', 'st-ok'],
       pending: ['team metrics · pending push', 'st-warn'],
       skipped: [`team metrics · not recorded${tm.reason ? ` (${tm.reason.replace(/-/g, ' ')})` : ''}`, 'st-err'],
       'not-enabled': ['team metrics · not enabled', 'st-muted'],
@@ -26782,10 +26809,10 @@ function hdFileCountsNode(doc, f) {
   }
   if (f.added == null) return out;
   const add = doc.createElement('span');
-  add.className = 'diff-add';
+  add.className = `diff-add${f.added === 0 ? ' is-zero' : ''}`;
   add.textContent = `+${f.added}`;
   const del = doc.createElement('span');
-  del.className = 'diff-del';
+  del.className = `diff-del${f.removed === 0 ? ' is-zero' : ''}`;
   del.textContent = `−${f.removed}`;
   out.append(add, doc.createTextNode(' '), del);
   return out;
@@ -27464,6 +27491,17 @@ function buildHdDiff(sec, record, data) {
     if (!lastPick && late) { lastPick = { entry: late.entry, key: late.key }; await select(late.entry, late.key); }
   }
 
+  // Keyboard path to the "+": the row is display:contents (no box to focus), so the line's code
+  // cell is the roving stop, one tabindex=0 per body. Windows only append rows, so focusin re-checks.
+  const diffStopCells = (body) => [...body.querySelectorAll('.hd-dl-row')]
+    .filter((r) => r.dataset.new || r.dataset.old)
+    .map((r) => r.querySelector('.hd-dl-code')).filter(Boolean);
+  function ensureStop(body) {
+    const list = diffStopCells(body);
+    list.forEach((c) => { if (!c.hasAttribute('aria-label')) c.setAttribute('aria-label', 'Diff line, press Tab for comment'); });
+    if (list.length && !list.some((c) => c.tabIndex === 0)) list[0].tabIndex = 0;
+  }
+
   // ONE button per body, moved into the hovered row's code cell. A button per row
   // would double the node count HD_DIFF_WINDOW_LINES exists to bound, and
   // `.hd-dl-row{display:contents}` gives the row no box for a CSS :hover to match
@@ -27472,6 +27510,7 @@ function buildHdDiff(sec, record, data) {
   function armCommentGutter(body, meta) {
     if (!ctx.canCreate()) return;                       // no patch: read-only, no creation
     if (ctx.guarded(meta.project, meta.path)) return;   // the floor refuses every line here  [m16]
+    ensureStop(body);                                   // also on re-arm: a repaint that replaced rows restores the roving stop
     if (body.dataset.gutterArmed === '1') return;       // idempotent: repaintCards re-arms
     body.dataset.gutterArmed = '1';
     const btn = document.createElement('button');
@@ -27481,6 +27520,7 @@ function buildHdDiff(sec, record, data) {
     btn.setAttribute('aria-label', 'Comment on this line');
     btn.textContent = '+';
     let armed = null;
+    const stopCells = () => diffStopCells(body);
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       if (!armed || !body.contains(armed)) return;
@@ -27500,15 +27540,42 @@ function buildHdDiff(sec, record, data) {
       host.appendChild(wrap);
       focus();
     });
-    body.addEventListener('mouseover', (e) => {
-      const row = e.target && e.target.closest ? e.target.closest('.hd-dl-row') : null;
-      if (!row || !body.contains(row)) return;
-      if (!row.dataset.new && !row.dataset.old) return;      // no line number -> not anchorable
+    const anchorable = (row) => !!row && !!(row.dataset.new || row.dataset.old);   // no line number -> not anchorable
+    const arm = (row) => {
+      if (btn.contains(document.activeElement)) return;     // keyboard user is on the +: do not move it
+      if (!row || !body.contains(row) || !anchorable(row)) return;
       armed = row;
       const code = row.querySelector('.hd-dl-code');
       if (code && btn.parentElement !== code) code.prepend(btn);
+    };
+    body.addEventListener('focusin', (e) => {
+      ensureStop(body);
+      const cell = e.target && e.target.closest ? e.target.closest('.hd-dl-code') : null;
+      if (cell) arm(cell.closest('.hd-dl-row'));
     });
-    body.addEventListener('mouseleave', () => { btn.remove(); armed = null; });
+    body.addEventListener('focusout', (e) => {
+      if (!e.relatedTarget) return;                          // window blur: keep the button where it is
+      if (e.relatedTarget.closest && e.relatedTarget.closest('.hd-dl-row') === armed) return;
+      if (!btn.contains(e.relatedTarget) && !btn.contains(document.activeElement)) { btn.remove(); armed = null; }
+    });
+    body.addEventListener('keydown', (e) => {
+      const cell = e.target && e.target.closest ? e.target.closest('.hd-dl-code') : null;
+      if (!cell || (e.key !== 'ArrowDown' && e.key !== 'ArrowUp')) return;
+      const list = stopCells();
+      const next = list[list.indexOf(cell) + (e.key === 'ArrowDown' ? 1 : -1)];
+      if (!next) return;
+      e.preventDefault();
+      cell.tabIndex = -1;
+      next.tabIndex = 0;
+      next.focus();
+    });
+    body.addEventListener('mouseover', (e) => {
+      arm(e.target && e.target.closest ? e.target.closest('.hd-dl-row') : null);
+    });
+    body.addEventListener('mouseleave', () => {
+      if (btn.contains(document.activeElement)) return;     // keyboard user: keep it
+      btn.remove(); armed = null;
+    });
   }
 
   function ensurePatch() {
@@ -27671,12 +27738,13 @@ function hdWorktreeRow(word, dir) {
   row.className = 'hd-ov-wt';
   row.dataset.needsGit = '';
   row.dataset.sig = `${word}|${dir}`;
-  const l =document.createElement('span'); l.className = 'hd-ov-label'; l.textContent = 'WORKTREE';
+  const l =document.createElement('span'); l.className = 'hd-ov-label'; l.textContent = 'Worktree';
   const w = document.createElement('span'); w.className = 'hd-ov-wt-state'; w.textContent = word;
   row.append(l, w);
   if (word === 'released' || !dir) {
     const n = document.createElement('span'); n.className = 'hd-ov-wt-note';
     n.textContent = word === 'released' ? 'Removed when the run ended' : '';
+    if (word === 'checked out') n.textContent = 'Checked out to try; discard it from the card above';
     if (n.textContent) row.appendChild(n);
     return row;
   }
@@ -27701,9 +27769,9 @@ function hdStatCard(kind, label, value, sub) {
   const card = document.createElement('div');
   card.className = `hd-ov-card hd-ov-card-${kind}`;
   const l = document.createElement('div'); l.className = 'hd-ov-label'; l.textContent = label;
-  const v = document.createElement('div'); v.className = 'hd-ov-value mono'; v.textContent = value;
+  const v = document.createElement('div'); v.className = 'hd-ov-value'; v.textContent = value;
   card.append(l, v);
-  if (sub) { const s = document.createElement('div'); s.className = 'hd-ov-sub mono'; s.textContent = sub; card.appendChild(s); }
+  if (sub) { const s = document.createElement('div'); s.className = 'hd-ov-sub'; s.textContent = sub; card.appendChild(s); }
   return card;
 }
 
@@ -27731,7 +27799,7 @@ function hdFilesChangedBox(sec, results, { diffLink = true } = {}) {
   box.className = 'hd-ov-files';
   const head = document.createElement('div'); head.className = 'hd-ov-files-head';
   const l = document.createElement('div'); l.className = 'hd-ov-label';
-  l.textContent = rows.length === 1 ? 'FILES CHANGED · 1' : `FILES CHANGED · ${rows.length}`;
+  l.textContent = rows.length === 1 ? 'Files changed · 1' : `Files changed · ${rows.length}`;
   const open = tagLevel(document.createElement('button'), 'advanced');
   open.type = 'button'; open.className = 'link-btn'; open.textContent = 'Open the diff';
   open.dataset.needsGit = '';
@@ -27820,13 +27888,13 @@ function buildHdOverview(sec, record, data) {
   grid.className = 'hd-ov-grid';
   const steps = Array.isArray(st.steps) ? st.steps : [];
   const maxCycle = steps.reduce((m, s) => Math.max(m, Number(s && s.cycle) || 0), 0) || 1;
-  grid.appendChild(hdStatCard('duration', 'DURATION',
+  grid.appendChild(hdStatCard('duration', 'Duration',
     typeof st.totalActiveMs === 'number' ? fmtDuration(st.totalActiveMs) : '—',
     isGraphManifest(st.stepper)
       ? histCountsLine(st)
       : `${steps.length} step${steps.length === 1 ? '' : 's'} · ${maxCycle} cycle${maxCycle === 1 ? '' : 's'}`));
   const histCost = runCostText(st, st.totalCostUsd, '—');
-  const costCard = hdStatCard('cost', 'COST',
+  const costCard = hdStatCard('cost', 'Cost',
     histCost.text,
     [`across ${steps.length} step${steps.length === 1 ? '' : 's'}`,
       costSummaryText(runCostBreakdown(steps, st.totalCostUsd), fmtUsd)].filter(Boolean).join(' · '));
@@ -27853,7 +27921,12 @@ function buildHdOverview(sec, record, data) {
   // call away: the header painters run on every row arrival, but the tab bodies do
   // not, so without it the card would read `released` for the life of the screen.)
   wrap.appendChild(grid);
-  if (git) wrap.appendChild(tagLevel(hdWorktreeRow(retained ? 'retained' : 'released', wt.worktreeDir || ''), 'expert'));
+  // The row and the notice card read one model (audit F-2): a checkout shows here as well as on the card.
+  const ovModel = worktreeNoticeModel({ ...hdRetainedFor(record, st), checkout: hdCheckoutFor(record),
+    workspace: record.target === 'workspace', names: memberNamesOf(record) });
+  const wtRowState = worktreeRowState(ovModel, { dir: wt.worktreeDir || '' });
+  if (wtRowState.word === 'released' && retained) wtRowState.word = 'retained';
+  if (git) wrap.appendChild(tagLevel(hdWorktreeRow(wtRowState.word, wtRowState.dir || wt.worktreeDir || ''), 'expert'));
   // Skills registry §6 board 9: the set skills the run got (run.json.skillMount, in the detail payload).
   const skillsCard = renderRunSkills(data.skillMount, { doc: document });
   if (skillsCard) wrap.appendChild(tagLevel(skillsCard, 'advanced'));
@@ -27864,7 +27937,7 @@ function buildHdOverview(sec, record, data) {
   if (memRows.length) {
     const box = tagLevel(document.createElement('div'), 'expert');
     box.className = 'hd-ov-mem';
-    const l = document.createElement('div'); l.className = 'hd-ov-label'; l.textContent = 'MEMORY CHANGES';
+    const l = document.createElement('div'); l.className = 'hd-ov-label'; l.textContent = 'Memory changes';
     box.appendChild(l);
     for (const row of memRows) {
       const line = document.createElement('div'); line.className = 'hd-mem-row';
@@ -29218,7 +29291,7 @@ function rdOvStats(host, r) {
   const { n, m, name } = runStepLabel(r);
   const stepSub = `step ${n}/${m}${name ? ` · ${name}` : ''}`;
 
-  const elapsed = hdStatCard('elapsed', 'ELAPSED',
+  const elapsed = hdStatCard('elapsed', 'Elapsed',
     fmtDuration(liveTotalMs(r.steps, Date.now())) || '0s', stepSub);
   // `.run-time` is the class the 1 s interval writes, so tagging the value node
   // makes this card tick with the header and the graph — one timer, no second
@@ -29238,7 +29311,7 @@ function rdOvStats(host, r) {
     : `across ${steps.length} step${steps.length === 1 ? '' : 's'}`,
   costSummaryText(runCostBreakdown(steps, r.totalCostUsd), fmtUsd)].filter(Boolean).join(' · ');
   const soFar = runCostText(r, r.totalCostUsd);
-  const cost = hdStatCard('cost', 'COST SO FAR', soFar.text, costSub);
+  const cost = hdStatCard('cost', 'Cost so far', soFar.text, costSub);
   cost.querySelector('.hd-ov-value').title = soFar.title || estTitle(r.totalCostUsd || 0);
   host.appendChild(cost);
 
@@ -29250,7 +29323,12 @@ function rdOvStats(host, r) {
   const held = !!r.worktreeDir && r.worktreeRemoved !== true;
   // Live frames repaint this grid: keep the row (its hover and "copied" tick) while
   // nothing about it changed.
-  const wtRow = hdWorktreeRow(held ? 'active' : 'released', r.worktreeDir || '');
+  const wtRec = r.pipelineId ? rdHistoryRecord(r) : null;
+  const wtModel = wtRec ? worktreeNoticeModel({ ...hdRetainedFor(wtRec, null), checkout: RD_TERMINAL.includes(r.status) ? hdCheckoutFor(wtRec) : null,
+    workspace: wtRec.target === 'workspace', names: memberNamesOf(wtRec) }) : null;
+  const wtState = worktreeRowState(wtModel && wtModel.kind === 'checkout' ? wtModel : null,
+    { live: held, dir: r.worktreeDir || '', removed: r.worktreeRemoved });
+  const wtRow = hdWorktreeRow(wtState.word, wtState.dir || r.worktreeDir || '');
   host.appendChild(prevWt && prevWt.dataset.sig === wtRow.dataset.sig ? prevWt : tagLevel(wtRow, 'expert'));
 }
 
@@ -34547,7 +34625,7 @@ function paintRdGlance(screen, r) {
   })() : null;
   const liveDiff = terminal ? null : rdDiffBadge(live);
   paintGlanceFacts(glance, {
-    summary: folder ? null : summary, changes: terminal ? fc : null, liveFiles: liveDiff != null && liveDiff !== '' ? Number(liveDiff) : null,
+    summary: folder ? null : summary, changes: terminal ? fc : null, diffHref: `#${rdHash(r.runId, 'details', 'diff')}`, liveFiles: liveDiff != null && liveDiff !== '' ? Number(liveDiff) : null,
     activeMs: rdActiveMs(r), cost: engineReportsCost(r.runEngine) ? (r.totalCostUsd || 0) : null,
     costNote: costSummaryText(runCostBreakdown(r.steps, r.totalCostUsd), fmtUsd),
     ticking: (r.status === 'running' || r.status === 'starting') && r.pendingQuestion == null,
@@ -34744,7 +34822,7 @@ const costTagsFact = (tags, projectDir, onLoad, target = 'project') => {
   return (tags || []).length || missing.length ? { tags: tags || [], missing } : null;
 };
 
-function glanceTiles({ summary = null, liveFiles = null, activeMs = null, cost = null, costNote = '', ticking = false, changes = null } = {}) {
+function glanceTiles({ summary = null, liveFiles = null, activeMs = null, cost = null, costNote = '', ticking = false, changes = null, diffHref = '' } = {}) {
   const tiles = document.createElement('div');
   tiles.className = 'rd-stats';
   const tile = (big, small, cls = '') => {
@@ -34762,8 +34840,18 @@ function glanceTiles({ summary = null, liveFiles = null, activeMs = null, cost =
   if (changes) tiles.append(tile(renderCountsNode(document, changes), 'files changed', 'fc-tile'));
   else if (summary) {
     const files = (summary.filesNew || 0) + (summary.filesChanged || 0);
-    tiles.append(tile(hdFileCountsNode(document, { added: summary.linesAdded || 0, removed: summary.linesRemoved || 0 }),
-      `${files} file${files === 1 ? '' : 's'} changed`));
+    const filesTile = tile(hdFileCountsNode(document, { added: summary.linesAdded || 0, removed: summary.linesRemoved || 0 }),
+      `${files} file${files === 1 ? '' : 's'} changed`);
+    if (diffHref) {
+      // The tile opens the diff, like the Overview's "Open the diff" (audit F-22).
+      const a = document.createElement('a');
+      a.className = 'rd-stat-link';
+      a.href = diffHref;
+      const counts = filesTile.querySelector('b');
+      counts.replaceWith(a);
+      a.appendChild(counts);
+    }
+    tiles.append(filesTile);
   } else if (liveFiles != null) {
     tiles.append(tile(String(liveFiles), `file${liveFiles === 1 ? '' : 's'} changed`));
   }
@@ -34851,7 +34939,7 @@ function setCtaContent(node, icon, label) {
 const PR_CTA_MORPH_MS = 420;
 const PR_CTA_OUT_MS = 380;
 const PR_CTA_LOOK = {
-  create: { look: '', icon: 'pr-create', label: 'Create pull request' },
+  create: { look: '', icon: 'pr-create', label: SHIP_LABEL },
   push: { look: '', icon: 'pr-create', label: 'Push the source branch' },   // a run on its source branch (paintHdPush)
   view: { look: 'pr-view', icon: 'external', label: 'View pull request' },
   merged: { look: 'pr-merged', icon: 'merged', label: 'View pull request' },
@@ -35726,7 +35814,7 @@ function paintRdHeader(screen, r) {
   screen.querySelector('.rd-title').textContent = r.title || r.runId;
   screen.querySelector('.rd-bar-title').textContent = r.title || r.runId;
   paintPageHead(screen.querySelector('.rd-glance'), r.title || r.runId,
-    [isNoProjectRun(r) ? '' : projectName(r.projectDir), r.startedAt ? `started ${startedLabel(r.startedAt)}` : '']);
+    [isNoProjectRun(r) ? '' : projectName(r.projectDir), r.startedAt ? `started ${whenLabel(r.startedAt)}` : '']);
   paintAutoBadge(screen.querySelector('.rd-row1 .auto-badge'), r.stepper);
 
   // Status pill: statusPill's family + word (spec §4.3 pins it as the source).
@@ -35769,7 +35857,7 @@ function paintRdHeader(screen, r) {
     : (step && step.name ? `step ${step.n}/${step.m} · ${step.name}` : '');
   const segs = [
     ['rd-project', isNoProjectRun(r) ? '' : projectName(r.projectDir), false],   // P3-D10: its folder is not a project
-    ['rd-clock', r.startedAt ? `started ${startedLabel(r.startedAt)}` : '', false],
+    ['rd-clock', r.startedAt ? `started ${whenLabel(r.startedAt)}` : '', false],
     // `run-time` is load-bearing, not decorative: the existing 1 s interval finds
     // its tick targets with `querySelectorAll('.run-time')`. Without this class
     // the header elapsed freezes at its paint value and only the Overview stat
@@ -36170,6 +36258,7 @@ function maybeWelcome() {
   const modal = document.getElementById('welcome-modal');
   if (!modal) return;
   gs.welcomeShown = true;
+  setMobileNavOpen(false);   // a phone drawer opened before the onboarding fetch landed must not stay up behind the dialog
   const close = () => { modal.classList.add('hidden'); if (gsWelcomeUnbind) { gsWelcomeUnbind(); gsWelcomeUnbind = null; } };
   gsWelcomeUnbind = bindWelcome(modal, {
     win: window,
@@ -36933,6 +37022,12 @@ function redirectRoute(view, param = '') {
 function rewriteHash([view, param]) {
   try { window.history.replaceState(null, '', `#${param ? `${view}/${param}` : view}`); } catch { /* sandboxed */ }
 }
+// An unknown address opens Chat, as boot does, in place (no new history entry).
+function fallbackToChat(raw) {
+  try { window.history.replaceState(null, '', '#chat'); } catch { /* sandboxed */ }
+  showView('chat', '');
+  if (raw) notify({ tone: 'info', title: 'Unknown address', detail: `#${raw} is not a page. Opened Chat.`, key: 'route-unknown' });
+}
 // Test hook: lets a test call the router the way an in-app caller does.
 if (typeof window !== 'undefined') window.__np = Object.assign(window.__np || {}, { showView });
 // CDP proofs (D12): flip a flag through the real API; every tab follows through the `flags` frame.
@@ -37192,6 +37287,7 @@ function showView(name, param = '') {
     // The hash is then plain #new, so Back and a reload never re-open it.
     if (param === 'schedule') {
       try { window.history.replaceState(null, '', '#new'); } catch { /* ignore */ }
+      document.querySelector('.view[data-view="new"]')?.classList.add('sched-first');   // no empty form behind the sheet
       setTimeout(() => { void openScheduleForNew(); }, 0);
     }
     if (param.startsWith('after/')) {
@@ -37374,7 +37470,8 @@ window.addEventListener('hashchange', () => {
   // swapped for the one it means now before anything renders (redirectRoute).
   const moved = redirectRoute(view, param);
   if (moved) { rewriteHash(moved); showView(moved[0], moved[1]); return; }
-  if (VIEW_NAMES.includes(view)) showView(view, param);
+  if (view && VIEW_NAMES.includes(view)) showView(view, param);
+  else fallbackToChat(view ? [view, param].filter(Boolean).join('/') : '');
 });
 
 // ---------------------------------------------------------------------------
@@ -37874,7 +37971,7 @@ function paintPresetChip() {
   }
   if (el.presetUpdate) el.presetUpdate.hidden = !(p && p.modified);
   if (el.presetBtn) {
-    el.presetBtn.textContent = p ? `${p.name} ▾` : 'Preset ▾';
+    el.presetBtn.replaceChildren(p ? p.name : 'Preset', icon(document, 'chevron-down', 12));
     el.presetBtn.classList.toggle('is-on', !!p);
     el.presetBtn.title = p ? `Preset: ${p.name}` : 'Start from a preset';
   }

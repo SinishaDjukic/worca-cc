@@ -343,7 +343,7 @@ test('Preset ▾: one quiet button with No preset; its menu lists the presets, S
   applyFlags({ runPresets: true }, ctx.doc);
   await waitFor(() => ctx.doc.querySelectorAll('#presetSelect option').length > 1);
   const btn = ctx.doc.getElementById('preset-btn');
-  assert.equal(btn.textContent, 'Preset ▾');
+  assert.equal(btn.textContent, 'Preset');
   assert.ok(btn.classList.contains('btn-quiet') && !btn.classList.contains('is-on'));
   assert.equal(ctx.doc.getElementById('preset-clear').hidden, true);
   assert.equal(ctx.doc.getElementById('preset-summary').hidden, true);
@@ -363,7 +363,7 @@ test('Preset ▾ with a preset applied: the filled name, ✕ clears it, the menu
   const ctx = await boot({ presets: [preset()] });
   await pick(ctx, 'rp_aaaaaaaaaaaa');
   const btn = ctx.doc.getElementById('preset-btn');
-  assert.equal(btn.textContent, 'Quick fix ▾');
+  assert.equal(btn.textContent, 'Quick fix');
   assert.equal(ctx.doc.getElementById('preset-clear').hidden, false);
   openPresetMenu(ctx.doc);
   assert.equal(menuItem(ctx.doc, 'Quick fix').getAttribute('aria-checked'), 'true');
@@ -371,7 +371,7 @@ test('Preset ▾ with a preset applied: the filled name, ✕ clears it, the menu
   openPresetMenu(ctx.doc);
   ctx.doc.getElementById('preset-clear').click();
   assert.equal(ctx.doc.getElementById('presetSelect').value, '');
-  assert.equal(btn.textContent, 'Preset ▾');
+  assert.equal(btn.textContent, 'Preset');
   assert.equal(ctx.doc.getElementById('preset-clear').hidden, true);
   assert.equal(ctx.doc.activeElement, btn);
   applyFlags({ runPresets: false }, ctx.doc);
@@ -410,7 +410,7 @@ test('Delete… from the Preset menu: the danger confirm; Cancel sends nothing; 
   menuItem(ctx.doc, 'Delete…').click();
   await waitFor(() => !ctx.doc.querySelector('#confirm-modal').classList.contains('hidden'));
   ctx.doc.querySelector('#confirm-ok').click();
-  await waitFor(() => ctx.calls.filter((c) => c.method === 'DELETE').length === 1 && btn.textContent === 'Preset ▾');
+  await waitFor(() => ctx.calls.filter((c) => c.method === 'DELETE').length === 1 && btn.textContent === 'Preset');
   await waitFor(() => ctx.doc.activeElement === btn);
   assert.equal(ctx.doc.getElementById('preset-clear').hidden, true);
   assert.equal(ctx.doc.getElementById('presetSelect').value, '');

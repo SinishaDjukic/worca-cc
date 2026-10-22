@@ -8012,6 +8012,7 @@ app.post('/api/runs/:id/checkout', async (req, res) => {
         .then(({ evicted }) => { if (evicted.length) emitChanged('pipelines-changed', 'updated'); }).catch(() => {});
     }
     emitChanged('pipelines-changed', 'updated');
+    emitChanged('actions-changed', 'checkout');   // the Actions strips read their own cache (audit F-2)
     res.json(r);
   } catch (e) { sendCheckoutError(res, e); }
 });
@@ -8023,6 +8024,7 @@ app.delete('/api/runs/:id/checkout', async (req, res) => {
     const r = await discardCheckout({ id: row.id, members, force: req.body?.force === true, by: actorOf(req),
       stopServices: stopCheckoutServices });
     emitChanged('pipelines-changed', 'updated');
+    emitChanged('actions-changed', 'checkout');   // the Actions strips read their own cache (audit F-2)
     res.json(r);
   } catch (e) { sendCheckoutError(res, e); }
 });

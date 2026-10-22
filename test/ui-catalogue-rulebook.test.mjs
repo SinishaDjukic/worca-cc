@@ -212,13 +212,12 @@ test('the typed-plus ratchet lost the four slice-3 files', () => {
   for (const f of ['mcp-view.mjs', 'mcp-definition-form.mjs', 'team-policy-view.mjs', 'script-bench-view.mjs'])
     assert.ok(!debt.typedPlus.includes(`ui/public/${f}`), f);
   for (const s of ['.mv-filter.on', '.wfl-chip[aria-pressed="true"]']) assert.ok(!debt.solidPressed.includes(s), s);
-  // qa-2-2: the three entries left are not .btn labels, so the empty BUTTON_SPEC.plusDebt cannot flag them at runtime
-  // (auditButtons only checks typed-plus on .btn). app.js and engine-settings-view.mjs type "+" into <option> text
-  // ("+ Add model…", "+ Add project…", "+ Override a …"), which cannot hold an icon. Run 4 (D15): release-row.mjs's
-  // "Add a release" is a quiet small button with the plus icon, so it left this list.
-  assert.deepEqual(debt.typedPlus, ['ui/public/app.js', 'ui/public/engine-settings-view.mjs']);
-  assert.match(read('ui/public/app.js'), /option\('__add__', '\+ Add model…'\)/);
-  assert.match(read('ui/public/engine-settings-view.mjs'), /doc\.createElement\('option'\), \{ value: '', textContent: `\+ Override a/);
+  // Run 3 (F-12): app.js and engine-settings-view.mjs typed "+" into <option> text, which cannot hold an icon; the
+  // plus is dropped ("Add model…", "Add project…", "Override a …"), so the list is empty. Run 4 (D15): release-row.mjs's
+  // "Add a release" is a quiet small button with the plus icon.
+  assert.deepEqual(debt.typedPlus, []);
+  assert.match(read('ui/public/app.js'), /option\('__add__', 'Add model…'\)/);
+  assert.match(read('ui/public/engine-settings-view.mjs'), /doc\.createElement\('option'\), \{ value: '', textContent: `Override a/);
   assert.doesNotMatch(read('ui/public/shape/release-row.mjs'), /'\+ Add a release'/);
 });
 

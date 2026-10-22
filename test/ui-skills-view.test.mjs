@@ -143,14 +143,14 @@ test('the Skills catalog: source and origin, badges, the counts line, In sets li
     } },
     { name: 'an invalid plugin skill: red badge, the problem, never mounted, Add to set disabled', run: () => {
       const row = rowOf(host, 'skill:plugin:acme/broken');
-      assert.deepEqual(badges(row), ['violet:acme', 'red:invalid']);
+      assert.deepEqual(badges(row), ['slate:acme', 'red:invalid']);
       assert.equal(row.querySelector('small.hint.err').textContent, 'invalid: SKILL.md has no frontmatter · never mounted');
       assert.equal(row.querySelector('[data-skill-add-to]').disabled, true);
       assert.deepEqual(acts(row), ['Add to set', 'View SKILL.md'], 'a plugin skill is neither updated nor removed here');
     } },
-    { name: 'a plugin skill: violet plugin badge, pinned sha; one that declares hooks says what they do', run: () => {
+    { name: 'a plugin skill: slate plugin badge, pinned sha; one that declares hooks says what they do', run: () => {
       const row = rowOf(host, 'skill:plugin:acme/deploy-checklist');
-      assert.deepEqual(badges(row), ['violet:acme', 'red:declares hooks']);
+      assert.deepEqual(badges(row), ['slate:acme', 'red:declares hooks']);
       assert.equal(row.querySelector('small.hint.err').textContent,
         "declares hooks — they run shell commands outside Worca's guardrails when the skill is used");
       assert.equal(row.querySelector('.pl-head .mono.hint').textContent, '@ 3f9a1c2');
@@ -159,7 +159,7 @@ test('the Skills catalog: source and origin, badges, the counts line, In sets li
     { name: 'a linked, disabled plugin with plugin-root refs', run: () => {
       const row = rowOf(host, 'skill:plugin:graphify/graphify');
       assert.equal(row.querySelector('.pl-head .mono.hint').textContent, 'linked');
-      assert.deepEqual(badges(row), ['violet:graphify', 'amber:plugin disabled', 'amber:plugin-root refs']);
+      assert.deepEqual(badges(row), ['slate:graphify', 'amber:plugin disabled', 'amber:plugin-root refs']);
       assert.equal(row.querySelector('small.hint.warn').textContent, 'references its plugin’s other files, so it may not work from a set');
     } },
   ]);
@@ -551,7 +551,7 @@ test('a user set: the prefix hint, skill cards (qualified name, source, counts, 
   const gone = cardOf(m.host, 'skill:library:gone');
   assert.deepEqual([gone.querySelector('[data-skill-md]'), gone.querySelector('.sk-facts')], [null, null], 'nothing to count or read');
   assert.equal(gone.querySelector('[data-skill-toggle]').disabled, true, 'a skill no longer installed cannot be switched (P2 answers 404), only removed');
-  assert.ok(cardOf(m.host, 'skill:plugin:graphify/graphify').querySelector('.badge.violet'), 'a plugin skill wears the violet plugin badge');
+  assert.ok(cardOf(m.host, 'skill:plugin:graphify/graphify').querySelector('.badge.slate'), 'a plugin skill wears the slate plugin badge');
   assert.equal(cardOf(m.host, 'skill:plugin:office/pdf-tools').querySelector('.sk-hooks').textContent,
     "declares hooks they run shell commands outside Worca's guardrails when the skill is used", 'the badge, then the rest of SKILL_HOOKS_TEXT');
   assert.equal(cardOf(m.host, id).querySelector('.sk-hooks'), null);
