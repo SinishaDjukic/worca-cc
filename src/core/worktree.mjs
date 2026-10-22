@@ -19,7 +19,7 @@ import { mkdir, rm, realpath, readdir, rename, stat } from 'node:fs/promises';
 import { basename, join, resolve, sep } from 'node:path';
 
 import { slugify } from './artifacts.mjs';
-import { clearStaleIndexLock } from './git-lock.mjs';
+import { clearStaleGitLocks } from './git-lock.mjs';
 // settings.mjs is a leaf (node builtins only), so importing the §10 flag reader here
 // adds no dependency on the DB layer — worktree.mjs stays DB-free.
 import { runRootMode } from './settings.mjs';
@@ -530,7 +530,7 @@ export function runGitCapture(cwd, args, { signal, timeoutMs = SLOW_GIT_TIMEOUT_
  * dropped from the index first (`git add -A` with an exclude never unstages) and excluded from `add -A`
  * while it still exists on disk — and the same attempts: the repo's identity, then a local fallback
  * identity, then, only when `bypassHooks` (a detached run, exactly as at teardown), once more with hooks
- * off. Never overrides signing. A stale index.lock is cleared once. Never throws. With `branch`, it refuses
+ * off. Never overrides signing. Stale git locks are cleared once. Never throws. With `branch`, it refuses
  * (step 'branch') unless HEAD is that branch: a person may have detached or switched the retained worktree
  * while recovering by hand, and Apply deletes the worktree after a good commit. For the same reason it refuses
  * (step 'add') a worktree with unresolved conflicts, which `add -A` would mark resolved.
@@ -542,7 +542,7 @@ export async function commitStagedWork(worktreeDir, { message, exclude = [], byp
   const msgOf = (r) => r.stderr.trim() || r.stdout.trim() || `exit ${r.code}`;
   const indexWrite = async (args) => {
     let r = await run(args);
-    if (!r.ok && await clearStaleIndexLock(worktreeDir)) r = await run(args);
+    if (!r.ok && (await clearStaleGitLocks(worktreeDir)).length) r = await run(args);
     return r;
   };
   const status = await run(['status', '--porcelain']);
@@ -603,21 +603,21 @@ export async function indexTracks(dir, rel) {
  * name. A clean tree is SUCCESS with `file: null` (nothing to save is not a
  * failure — discard after a manual commit relies on it). A git failure returns
  * without removing anything so the checkout stays authoritative.
- * When a stale index lock had to be removed first, every result after that carries
- * `clearedLock: { path, ageMs }` so the caller can leave a trace of it.
+ * When stale git locks had to be removed first, every result after that carries
+ * `clearedLocks: [{ kind, path, ageMs }]` so the caller can leave a trace of each.
  */
 export async function snapshotWorktreePatch(worktreeDir, outFile) {
   if (!worktreeDir || !outFile) {
     return { ok: false, step: 'path', message: 'worktreeDir and outFile are required' };
   }
   let add = await git(worktreeDir, ['add', '-A'], { timeout: SLOW_GIT_TIMEOUT_MS });
-  // A leftover lock from a killed git is the usual reason a retained run's commit failed;
-  // without this, discard and delete could never save the work once it is stale.
-  const clearedLock = add.ok ? null : await clearStaleIndexLock(worktreeDir);
-  if (clearedLock) {
+  // Leftover locks from a killed git are the usual reason a retained run's commit failed;
+  // without this, discard and delete could never save the work once they are stale.
+  const clearedLocks = add.ok ? [] : await clearStaleGitLocks(worktreeDir);
+  if (clearedLocks.length) {
     add = await git(worktreeDir, ['add', '-A'], { timeout: SLOW_GIT_TIMEOUT_MS });
   }
-  const done = (res) => (clearedLock ? { ...res, clearedLock } : res);
+  const done = (res) => (clearedLocks.length ? { ...res, clearedLocks } : res);
   if (!add.ok) {
     return done({ ok: false, step: 'add', message: add.stderr.trim() || `exit ${add.code}`, fromStderr: !!add.stderr.trim() });
   }
