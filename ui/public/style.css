@@ -8246,11 +8246,12 @@ button.act-srow-name{cursor:pointer}
 }
 
 /* ========================================================================== */
-/* Workflows view (fills the content area under the top bar): the canvas card and the Library card side by  */
+/* Workflows view (full screen): the canvas card and the Library card side by  */
 /* side; every control floats over the canvas in small 40px bars             */
 /* (composer-mockup.html base + canvas CSS). Prefix wfv- (chrome), wfl-        */
 /* (Library), wfc- (chat).                                                     */
 /* ========================================================================== */
+body.view-workflows .sidebar,body.view-workflows #topnav{display:none !important;}
 body.view-workflows .main{padding:0;overflow:hidden;display:flex;flex-direction:column;}
 .view[data-view="workflows"]{flex:1 1 auto;min-height:0;position:relative;}
 .wfv{position:absolute;inset:0;display:flex;gap:8px;padding:8px;background:var(--bg);font-size:12px;}

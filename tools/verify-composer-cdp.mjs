@@ -18,7 +18,7 @@
 //     (7)       measured post-fit containment of every node box
 //     (10)      the 380px Library card right of the stage, open on Agents: the selector's
 //               three tabs, the section's folders collapsed
-//     (11)      the top bar's rendered controls; the app chrome (sidebar, top bar) stays in place around the view
+//     (11)      the top bar's rendered controls; the app chrome computes display:none
 //     (12)      frosted cards: a backdrop blur and a 0.4–0.6 alpha in both themes
 //     (13)      the PAINTED wires are orthogonal lane routes; a loop's pill sits under its cards
 //     (14)      the zoom menu's items and a real Zoom in (100% -> 120%); the zoom and
@@ -420,9 +420,9 @@ try {
     const disp=(s)=>{const e=q(s);return e?getComputedStyle(e).display:'absent';};
     return {ctl,sidebar:disp('.sidebar'),topnav:disp('#topnav'),dock:disp('body > .ask-dock'),errorsShown:shown(q('#wfv-errors'))};})()`);
   const expectBar = ['wfv-back', 'wfv-wf-menu', 'wfv-name', ...(bar.errorsShown ? ['wfv-errors'] : []), 'wfv-lib-toggle', 'wfv-save'];
-  check(11, 'the top bar holds exactly Back, the workflow menu, the name, (errors), the Library toggle and Save; the app chrome stays around the view',
+  check(11, 'the top bar holds exactly Back, the workflow menu, the name, (errors), the Library toggle and Save; the app chrome is hidden',
     JSON.stringify([...bar.ctl].sort()) === JSON.stringify([...expectBar].sort())
-    && bar.sidebar !== 'none' && bar.topnav !== 'none' && bar.dock !== 'block', { ...bar, expectBar });
+    && bar.sidebar === 'none' && bar.topnav === 'none' && (bar.dock === 'none' || bar.dock === 'absent'), { ...bar, expectBar });
   const frost = async () => ev(`(()=>{const n=document.querySelector('#wfv-canvas .gv-world .node');if(!n)return null;const cs=getComputedStyle(n);
     const m=cs.backgroundColor.match(/rgba?\\(([^)]+)\\)/);const parts=m?m[1].split(/[ ,/]+/).filter(Boolean).map(Number):[];
     return {blur:cs.backdropFilter||cs.webkitBackdropFilter||'',bg:cs.backgroundColor,alpha:parts.length>=4?parts[3]:1,theme:document.documentElement.dataset.theme||''};})()`);
@@ -555,7 +555,7 @@ try {
   await load();
   await ev(`(()=>{const {c}=window.__gv();c.select({kind:'node',id:'n_agent'});c.view.centerOn('n_agent');return 1;})()`);
   await settle('pop-select');
-  // The narrower stage (the app sidebar stays) can scroll the toolbar's More out of view: bring it in, as a user would.
+  // A narrow stage can scroll the toolbar's More out of view: bring it in, as a user would.
   await ev(`(()=>{const m=document.querySelector('.wfv-tb [data-tb="more"]');if(m)m.scrollIntoView({block:'nearest',inline:'nearest'});return 1;})()`); await settle('pop-more-visible');
   const more = await rect('.wfv-tb [data-tb="more"]');
   if (more) { await press(more.l + more.w / 2, more.t + more.h / 2); await mup(more.l + more.w / 2, more.t + more.h / 2); await settle('pop-open'); }
