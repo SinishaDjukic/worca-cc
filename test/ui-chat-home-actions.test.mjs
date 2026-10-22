@@ -150,7 +150,7 @@ test('default pin: Shaper is the 2nd tile (right after New run) while the flag i
   assert.equal(t.dataset.minLevel, 'simple');
   assert.equal(t.querySelector('.chat-home-act-l').textContent, 'Shaper');
   assert.equal(t.querySelector('.chat-home-act-help'), null);
-  assert.equal(t.querySelector('.chat-home-act-badge').textContent, 'Labs');
+  assert.equal(t.querySelector('.chat-home-act-badge').textContent, 'Beta');
   assert.equal(s.tile('run').querySelector('.chat-home-act-badge'), null);
   assert.equal(t.previousElementSibling, s.tile('run'), 'pins sit right after New run (priority order)');
   t.click();

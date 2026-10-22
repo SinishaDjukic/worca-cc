@@ -270,3 +270,20 @@ test('projectSyncBlock: an unsyncable explicit base reads unknown for THAT name,
   assert.equal(b.behind, undefined, 'dev\'s "1 behind" must not be reported for plus+branch');
   assert.equal((await projectSyncBlock({ dir: a })).state, 'behind', 'no base → HEAD\'s branch, as before');
 });
+
+test('an unborn repo (git init, no commit): base is the branch HEAD names, noCommits is set', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'project-sync-unborn-'));
+  try {
+    spawnSync('git', ['init', '-q', '-b', 'trunk'], { cwd: dir });
+    const b = await projectSyncBlock({ dir });
+    assert.equal(b.base, 'trunk', 'not init.defaultBranch (dev) and not main');
+    assert.equal(b.remote, null);
+    assert.equal(b.noCommits, true);
+    spawnSync('git', ['remote', 'add', 'origin', 'https://example.invalid/me/x.git'], { cwd: dir });
+    const r = await projectSyncBlock({ dir });
+    assert.equal(r.remote, 'origin');
+    assert.equal(r.noCommits, true);
+    spawnSync('git', ['commit', '-q', '--allow-empty', '-m', 'c'], { cwd: dir });
+    assert.equal((await projectSyncBlock({ dir })).noCommits, undefined, 'a repo with a commit carries no flag');
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});

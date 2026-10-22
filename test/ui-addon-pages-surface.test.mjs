@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
-import { renderPluginList, renderOrphanList, renderAvailableList, renderMarketplaceList } from '../ui/public/plugins-view.mjs';
+import { renderAllInstalled, renderLeftover } from '../ui/public/marketplace/installed-view.mjs';
 import { renderProvidersCard } from '../ui/public/bridge-view.mjs';
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
@@ -14,16 +14,13 @@ const rules = [...bare.matchAll(/([^{}]+)\{([^}]*)\}/g)].map((m) => ({ sel: m[1]
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 
 test('Marketplace lists are one .card each, holding divided rows that are not boxes', () => {
-  const mkt = { id: 'demo', name: 'Demo market', url: 'https://example.test/demo', lastSync: { sha: 'abc1234' }, plugins: [{ name: 'gamma', version: '0.1.0' }] };
   const lists = [
-    renderPluginList([{ name: 'alpha', version: '1.0.0' }, { name: 'beta', version: '2.0.0' }], { doc }),
-    renderOrphanList([{ name: 'ghost', dataDir: '/tmp/ghost' }], { doc }),
-    renderAvailableList([mkt], { doc }),
-    renderMarketplaceList([mkt], { doc }),
-  ];
+    renderAllInstalled(doc, [{ name: 'alpha', version: '1.0.0', enabled: true }, { name: 'beta', version: '2.0.0', enabled: true }]),
+    renderLeftover(doc, [{ name: 'ghost', dataDir: '/tmp/ghost' }]),
+  ].map((sec) => sec.querySelector(':scope > ul.mk-rows'));
   for (const list of lists) {
-    assert.ok(list.classList.contains('card') && list.classList.contains('drows'), list.className);
-    const rows = [...list.children].filter((r) => r.classList.contains('drow'));
+    assert.ok(list.classList.contains('card'), list.className);
+    const rows = [...list.children].filter((r) => r.classList.contains('mk-row'));
     assert.ok(rows.length > 0, list.className);
     for (const row of rows) assert.equal(row.classList.contains('card'), false, row.className);
   }
@@ -39,7 +36,7 @@ test('Providers page: the split list is one .card of divided rows; the Models-vi
 });
 
 test('no rule boxes a list row or restyles a list card: the .card and .drow primitives carry the look', () => {
-  const listSel = /\.(pl-list|pl-orphans|pl-available|pl-mkts|mv-providers-split|plugin-card|pl-avail-card|pl-mkt-row|pl-orphan-row|mv-pv-card)\b/;
+  const listSel = /\.(mk-rows|mk-row|mv-providers-split|mv-pv-card)(?![\w-])/;
   const boxy = /(^|;)\s*(background|border|border-radius|box-shadow)\s*:/;
   const bad = rules.filter((r) => listSel.test(r.sel) && !/\s/.test(r.sel.replace(/,\s*/g, ',')) && boxy.test(r.body)).map((r) => r.sel);
   assert.deepEqual(bad, []);
@@ -52,7 +49,7 @@ test('the Models Engines card is a page card, full width, not a flat Settings ca
   const card = page.getElementById('engine-settings-card');
   assert.ok(card.closest('[data-view="models"]'));
   assert.ok(card.classList.contains('card'));
-  assert.equal(card.classList.contains('settings-card'), false, '.settings-card is the flat, 760px Settings-pane card');
+  assert.equal(card.classList.contains('settings-card'), false, '.settings-card is the 760px Settings-pane card');
 });
 
 test('the built-in model strips use the card tokens, no colour literal', () => {

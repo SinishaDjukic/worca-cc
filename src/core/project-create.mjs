@@ -10,13 +10,14 @@ import { mkdir, readdir, rm } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { getProjectsRoot } from './settings.mjs';
 import {
-  listProjects as realListProjects, addProject as realAddProject, detectVcs, displayPath,
+  listProjects as realListProjects, addProject as realAddProject, markProjectGit as realMarkProjectGit, detectVcs, displayPath,
   getProjectByPath, normalizeProjectPath, worcaHome, enclosingRepoOf, worcaNestedRepoOf, worcaNestedRepoHint,
 } from './projects.mjs';
 import { isWithin } from './fs-scope.mjs';
 import { gitAvailable as realGitAvailable, GIT_MISSING } from './git-available.mjs';
 import { isNoProjectWorkDir } from './store.mjs';
 import { NO_PROJECT_ERRORS } from '../shared/no-project.mjs';
+import { isAzureHost } from '../shared/azure-remote.mjs';
 
 /** A refusal or failure of New / add-a-folder / probe. `code` picks the HTTP status (PROJECT_ADD_STATUS). */
 export class ProjectAddError extends Error {
@@ -28,7 +29,7 @@ export class ProjectAddError extends Error {
   }
 }
 
-export const PROJECT_ADD_STATUS = Object.freeze({ INVALID: 400, EXISTS: 400, NESTED_IN_REPO: 400, GIT_MISSING: 409, FAILED: 500 });
+export const PROJECT_ADD_STATUS = Object.freeze({ INVALID: 400, EXISTS: 400, NESTED_IN_REPO: 400, NOT_FOUND: 404, GIT_MISSING: 409, FAILED: 500 });
 
 const invalid = (message) => new ProjectAddError('INVALID', message);
 const fold = (s) => String(s).normalize('NFC').toLowerCase();   // macOS stores NFD; macOS/Windows ignore case
@@ -40,6 +41,24 @@ const RESERVED = /^(con|prn|aux|nul|conin\$|conout\$|com[0-9¹²³]|lpt[0-9¹²�
 const BAD_CHARS = /[<>:"|?*\u0000-\u001f\u007f-\u009f\u2028\u2029\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
 const utf8Size = (s) => Buffer.byteLength(s, 'utf8');
 const HOLDS_WORCA = 'this folder holds worca\'s data or projects folder; Use git here would put every project inside one repository';
+const BAD_REMOTE = 'not a valid git remote URL; use https://host/owner/repo or git@host:owner/repo.git';
+const REMOTE_CREDS = 'the URL contains credentials; remove them (git asks your credential helper or SSH key instead)';
+const SCP_REMOTE_RE = /^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[A-Za-z0-9._~/-]+$/;
+
+/** A remote URL Use git / Link remote may pass to `git remote add origin` (argv, never a shell). Returns it trimmed. */
+export function checkRemoteUrl(raw) {
+  const url = typeof raw === 'string' ? raw.trim() : '';
+  if (!url) throw invalid('a remote URL is required');
+  if (url.length > 2048 || /[\s\0]/.test(url) || url.startsWith('-')) throw invalid(BAD_REMOTE);
+  if (SCP_REMOTE_RE.test(url)) return url;
+  let u;
+  try { u = new URL(url); } catch { throw invalid(BAD_REMOTE); }
+  if (u.protocol !== 'https:' && u.protocol !== 'ssh:') throw invalid('only https:// and ssh remote URLs are supported');
+  if (u.password || (u.protocol === 'https:' && u.username && !isAzureHost(u.hostname))) throw invalid(REMOTE_CREDS);
+  if (u.search || u.hash) throw invalid('the URL must not have a query or fragment');
+  if (!u.hostname || !u.pathname.split('/').some(Boolean)) throw invalid('the URL must name a repository path');
+  return url;
+}
 
 /**
  * The New name rule: one portable folder name (a project made on Linux opens on Windows).
@@ -77,8 +96,10 @@ function withDeps(deps = {}) {
     gitAvailable: deps.gitAvailable || realGitAvailable,
     enclosingRepo: deps.enclosingRepo || enclosingRepo,
     gitInit: deps.gitInit || runGitInit,
+    gitRemote: deps.gitRemote || runGitRemote,
     listProjects: deps.listProjects || realListProjects,
     addProject: deps.addProject || realAddProject,
+    markProjectGit: deps.markProjectGit || realMarkProjectGit,
   };
 }
 
@@ -213,6 +234,18 @@ export function runGitInit(dir, { timeoutMs = 15_000 } = {}) {
   });
 }
 
+/** `git remote ARGS` in `dir` (no prompt, bounded). Resolves { ok, stdout, stderr }; never rejects. */
+export function runGitRemote(dir, args, { timeoutMs = 15_000 } = {}) {
+  if (!realGitAvailable()) return Promise.resolve({ ok: false, stdout: '', stderr: GIT_MISSING.message });
+  return new Promise((done) => {
+    execFile('git', ['remote', ...args], {
+      cwd: dir, timeout: timeoutMs, windowsHide: true, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+    }, (err, stdout, stderr) => {
+      done({ ok: !err, stdout: String(stdout || ''), stderr: String(stderr || (err && err.message) || '') });
+    });
+  });
+}
+
 /**
  * New: a folder named folderNameFor(`name`) under the projects root (made on first use), registered as a Folder
  * project, or a Git one with `useGit` (git init once). Nothing is created on any refusal.
@@ -315,6 +348,59 @@ async function addFolderNow({ name, path, useGit = false, dryRun = false } = {},
   }
   const project = (Array.isArray(projects) ? projects : []).find((p) => p.path === dir) || { name: label, path: dir, vcs: hasGit || willInit ? 'git' : 'none' };
   return { project, projects };
+}
+
+const ALREADY_GIT = 'this folder already has a .git; remove the project (the folder stays) and add the folder again to use it as a Git project';
+
+/**
+ * Use git (Folder → Git in place) or Link remote (a Git project without origin), chosen by the stored vcs.
+ * Folder: guards, git init, optional `git remote add origin`, then vcs 'git' — any failure after init removes the
+ * .git this call made. No commit: the first run's initial checkpoint makes it (run-harness).
+ * @returns {Promise<{project:{key:string,name:string,path:string,vcs:'git'}, initialized:boolean, remote:string|null}>}
+ * @throws {ProjectAddError}
+ */
+export async function makeGitProject({ key, remoteUrl = null } = {}, deps = {}) {
+  const d = withDeps(deps);
+  const p = (await d.listProjects()).find((x) => x.key === key);
+  if (!p) throw new ProjectAddError('NOT_FOUND', 'project not found');
+  return oneAddAtATime(realOnDisk(p.path), () => makeGitNow(p, remoteUrl, d));
+}
+
+async function makeGitNow(p, remoteUrl, d) {
+  if (remoteUrl != null && typeof remoteUrl !== 'string') throw invalid('remoteUrl must be a string');   // the route forwards the body untyped
+  const url = remoteUrl == null || remoteUrl.trim() === '' ? null : checkRemoteUrl(remoteUrl);
+  const dir = p.path;
+  let st;
+  try { st = statSync(dir); } catch { throw invalid('folder does not exist'); }
+  if (!st.isDirectory()) throw invalid('path is not a directory');
+  const gitOn = d.gitAvailable();
+  if (!gitOn) throw new ProjectAddError('GIT_MISSING', GIT_MISSING.message);
+  if (p.vcs === 'git') return linkOrigin(p, url, d);
+  if (detectVcs(dir) === 'git') throw invalid(ALREADY_GIT);
+  const enc = await d.enclosingRepo(dir, { gitOn });
+  if (enc) throw nestedError(enc);
+  if (holdsWorcaFolders(dir, d.projectsRoot)) throw invalid(HOLDS_WORCA);
+  const madeGit = join(dir, '.git');
+  const fail = async (message) => { await removeQuietly(madeGit); return new ProjectAddError('FAILED', message); };
+  const r = await d.gitInit(dir);
+  if (!r || !r.ok) throw await fail(`git init failed: ${lastLine(r && r.stderr) || 'unknown error'}`);
+  if (url) {
+    const a = await d.gitRemote(dir, ['add', 'origin', url]);
+    if (!a || !a.ok) throw await fail(`git remote add failed: ${lastLine(a && a.stderr) || 'unknown error'}`);
+  }
+  let moved = false;
+  try { moved = d.markProjectGit(p.key); } catch (err) { throw await fail(`could not record the change: ${err.message}`); }
+  if (!moved) throw await fail('the project changed meanwhile; reload the page and try again');
+  return { project: { key: p.key, name: p.name, path: dir, vcs: 'git' }, initialized: true, remote: url };
+}
+
+async function linkOrigin(p, url, d) {
+  if (!url) throw invalid('a remote URL is required');
+  if (detectVcs(p.path) !== 'git') throw invalid('this folder has no .git');
+  if ((await d.gitRemote(p.path, ['get-url', 'origin'])).ok) throw new ProjectAddError('EXISTS', 'this project already has an origin remote');
+  const a = await d.gitRemote(p.path, ['add', 'origin', url]);
+  if (!a || !a.ok) throw new ProjectAddError('FAILED', `git remote add failed: ${lastLine(a && a.stderr) || 'unknown error'}`);
+  return { project: { key: p.key, name: p.name, path: p.path, vcs: 'git' }, initialized: false, remote: url };
 }
 
 /**

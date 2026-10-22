@@ -32,6 +32,31 @@ export function pickNamingModel(rows, costOf) {
   return best ? { model: best.id, effort: best.efforts?.[0] || null } : null;
 }
 
+/**
+ * Which model (and effort) Smart run naming runs on: the stored Models-page pair (settings.mjs#namingModel)
+ * while the catalog still carries it, else pickNamingModel's cheapest ready Claude model at its lowest effort,
+ * else nothing (suggestNames then falls back to resolveTitleModel). Mirrors agent-gen.mjs#resolveAgentGenModel:
+ * an effort the model does not offer is dropped, and `stale` names a stored id the catalog no longer carries.
+ * @param {{model:string|null, effort:string|null}} stored
+ * @param {Array<object>} rows the effective catalog (listModels)
+ * @param {Function} [costOf] the cost config pickNamingModel prices with
+ * @returns {{model:string|null, effort:string|null, source:'settings'|'auto'|'default', stale:string|null}}
+ */
+export function resolveNamingModel(stored, rows, costOf) {
+  const list = Array.isArray(rows) ? rows : [];
+  const want = stored && typeof stored.model === 'string' ? stored.model.trim() : '';
+  if (want) {
+    const hit = list.find((m) => m && typeof m.id === 'string' && m.id.toLowerCase() === want.toLowerCase());
+    if (hit) {
+      const effort = stored.effort && Array.isArray(hit.efforts) && hit.efforts.includes(stored.effort) ? stored.effort : null;
+      return { model: hit.id, effort, source: 'settings', stale: null };
+    }
+  }
+  const auto = pickNamingModel(list, costOf);
+  const stale = want || null;
+  return auto ? { ...auto, source: 'auto', stale } : { model: null, effort: null, source: 'default', stale };
+}
+
 const SYSTEM = (types) => [
   'You name a software task. Reply with ONE JSON object and nothing else:',
   '{"title": 3-8 words, no trailing period, "type": exactly one of ' + JSON.stringify(types) + ',',
@@ -59,13 +84,16 @@ export function parseSuggestion(raw, types) {
 
 /**
  * One model call -> { source:'model', title, type, slug, reason, branch, types, pattern, model } or
- * { source:'fallback', error }. Never throws. `deps.run` / `deps.onCost` inject the spawn and the cost sink.
+ * { source:'fallback', error }. Never throws. `deps.run` / `deps.onCost` inject the spawn and the cost sink;
+ * `deps.pickModel` returns the resolved `{ model, effort }` (resolveNamingModel), or null.
  */
 export async function suggestNames({ prompt, title = '', projectDir, signal, mock = false }, deps = {}) {
   const cfg = (deps.settings || smartNaming)(projectDir ? { projectDir } : undefined);
   const text = String(prompt || '').trim();
   if (!text) return { source: 'fallback', error: 'empty task' };
-  const chosen = cfg.model || deps.pickModel?.() || null;
+  // The server resolves the pair per suggestion (resolveNamingModel: the Models page's Run naming, else the
+  // cheapest ready Claude model); with neither, the title model, as before the setting existed.
+  const chosen = deps.pickModel?.() || null;
   const model = chosen?.model || resolveTitleModel({}).model || undefined;
   try {
     const out = await auxTextCall({

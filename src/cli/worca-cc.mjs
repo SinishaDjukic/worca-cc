@@ -1582,7 +1582,7 @@ Usage:
   worca plugin list                               Installed plugins (from plugins.lock.json)
   worca plugin update <name> [--yes] [--diff]     Preview commits, diffstat + manifest delta (--diff: full diff), then update
   worca plugin remove <name> [--purge]            Uninstall (--purge also deletes data/)
-  worca plugin purge <name>                       Shorthand for remove --purge
+  worca plugin purge <name>                       Remove with data/, or delete a removed plugin's leftover data/
   worca plugin enable <name> | disable <name>     Toggle without removing files
   worca plugin doctor [name] [--fix]              Health checks (--fix re-runs deterministic setup on failure)
   worca plugin link <dir>                         Dev mode: use a local dir as "current"
@@ -2165,9 +2165,15 @@ async function cmdPlugin(argv) {
         // §6.2 manifest delta — the red-flag review lines.
         const delta = cand.manifestDelta || {};
         for (const k of delta.newSecrets || []) out(c('red', `  NEW SECRET requested: ${k}`));
+        for (const k of delta.newChannelSecrets || []) out(c('red', `  NEW CHAT SECRET requested: ${k}`));
         for (const s of delta.newTaskSources || []) out(c('yellow', `  new task source: ${s}`));
+        for (const s of delta.newChatChannels || []) out(c('yellow', `  new chat channel: ${s}`));
         for (const ag of delta.newAgents || []) out(c('yellow', `  new agent: ${ag}`));
         if (delta.setupChanged) out(c('yellow', '  setup commands changed'));
+        for (const m of delta.envChangedModels || []) out(c('red', `  MODEL ENV CHANGED (check its base URL): ${m}`));
+        for (const k of delta.newModelSecrets || []) out(c('red', `  NEW MODEL SECRET requested: ${k}`));
+        for (const m of delta.newModels || []) out(c('yellow', `  new model: ${m}`));
+        for (const m of delta.removedModels || []) out(c('yellow', `  removed model: ${m}`));
         for (const l of delta.mcpLines || []) out(c(l.red ? 'red' : 'yellow', `  ${l.text}`));
         for (const l of delta.skillLines || []) out(c(l.red ? 'red' : 'yellow', `  ${l.text}`));
         if (a.diff && cand.diffFull) out(cand.diffFull);
@@ -2175,7 +2181,8 @@ async function cmdPlugin(argv) {
           out('aborted (still pinned)');
           return 1;
         }
-        await store.updatePlugin(name);
+        // The commit shown above is the one applied: a tip that moved on meanwhile is STALE_PREVIEW (exit 1).
+        await store.updatePlugin(name, { expectSha: cand.candidateSha });
         out(`updated ${name} to ${cand.candidateSha.slice(0, 7)}`);
         return 0;
       }
@@ -2185,6 +2192,12 @@ async function cmdPlugin(argv) {
         const a = pluginArgs(rest, [], ['--purge']);
         const name = a._[0];
         if (!name) fail(`Usage: worca plugin ${verb} <name>${verb === 'remove' ? ' [--purge]' : ''}`);
+        const { readPluginsLock } = await import('../core/plugins-lock.mjs');
+        if (verb === 'purge' && !Object.hasOwn(readPluginsLock(), name)) {
+          store.purgePluginData(name);   // a removed plugin's leftover data/ — what the remove note tells users to run
+          out(`purged ${name}: data/ deleted (config, secrets, state)`);
+          return 0;
+        }
         const purge = verb === 'purge' || !!a.purge;
         await store.uninstallPlugin(name, { purge });
         out(`removed ${name}`);

@@ -122,13 +122,13 @@ level and has no **Diff**, **Changes** or **Actions**.
   and what is running; Settings › General › **Alerts** adds desktop
   notifications and a tab badge when a run waits for you. **Archived runs**
   (Advanced) lists deleted runs and restores them.
-- **One-click PRs** — a finished run's page offers **Create pull request**:
-  *Ship it?* shows the files and +/− lines, lets you write the description or
+- **One-click PRs** — a finished run's page offers **Create PR**:
+  *Create pull request* shows the files and +/− lines, lets you write the description or
   **Generate with AI**, open it as a draft and watch it, then pushes the branch
   and opens the PR with the GitHub CLI (`gh`), or on
   [Azure DevOps](docs/azure-devops.md) with a personal access token. A run
   started from a GitHub issue closes it on merge, and a workspace run opens one
-  linked PR per changed repo. The button then becomes **View pull request**.
+  linked PR per changed repo. The button then becomes **View PR**.
   **Publish branch** (Advanced) pushes the branch without a PR.
 - **Watch PR and conflicts** — with **Watch PR** on, Worca reads the open PR
   about once a minute; a failing check, a merge conflict or a requested change
@@ -143,7 +143,7 @@ level and has no **Diff**, **Changes** or **Actions**.
 
 ![Runs in Simple mode: three runs waiting on clarify questions under Needs you, the rest grouped by project, and a finished run's summary open — Ready to ship, 21m 32s, $4.82, +36 −0 across 4 files](docs/screenshots/running.png)
 
-![The Ship it? dialog for the finished run CSV export for contacts: 4 files, +36 −0, its worca-cc/ branch into main, Push branch to and Open PR in (GitHub) pickers set to origin — nimbus/nimbus-crm, a PR description previewed as What and How to test, Open as draft unticked and Watch PR ticked, Try it first with the Run, Test and Cursor buttons, and Cancel beside Open pull request](docs/screenshots/ship-it.png)
+![The Create pull request dialog for the finished run CSV export for contacts: 4 files, +36 −0, its worca-cc/ branch into main, Push branch to and Open PR in (GitHub) pickers set to origin — nimbus/nimbus-crm, a PR description previewed as What and How to test, Open as draft unticked and Watch PR ticked, Try it first with the Run, Test and Cursor buttons, and Cancel beside Create pull request](docs/screenshots/ship-it.png)
 
 ### Agents
 
@@ -445,17 +445,21 @@ level and has no **Diff**, **Changes** or **Actions**.
   Azure Boards),
   agents (with their ask forms), scripts, skills, workflow templates, models,
   chat channels, and MCP servers for the [registry](docs/mcp-servers.md).
-  Install from the **Marketplace** page (Advanced) or `worca plugin install`;
-  **Add marketplace** (a GitHub URL, `owner/repo` or a local path) is Expert.
+  Install from the **Marketplace** page's Browse tab (Advanced) or `worca plugin install`;
+  **Add marketplace** takes a GitHub URL, `owner/repo` or a local path.
   On a machine without git, marketplaces and installs work for GitHub
   repositories over HTTPS, a local plugin folder is linked, and other sources
   say `Needs git`.
   Installing from the UI is an explicit consent ceremony pinned to the commit
   you saw: what's installed, which ask forms an agent can show and which file
   types they may display, which secrets each part requests, where models
-  route, which setup commands run. **Update** previews the commits and a
-  diffstat, and flags new secrets, changed setup and changed model env, before
-  you accept (`worca plugin update --diff` adds the full diff). Package your
+  route, which setup commands run. **Update all** reviews every update in one
+  sheet — the plugin folder's commits, a diffstat and what changes; an update
+  that asks for new access (a new secret, changed setup or model env, a new
+  source, channel, agent or model, an MCP server or skill change) waits until
+  you tick it as reviewed, and each applies exactly the commit you reviewed
+  (`worca plugin update --diff` adds the full diff; `worca plugin purge <name>`
+  deletes a removed plugin's leftover settings and secrets). Package your
   own with **Export…** on a saved workflow or **Share as plugin…** on the
   Models page; see the [authoring guide](.claude/skills/creating-worca-cc-plugins/SKILL.md).
 - **Built-in marketplace** — **Worca CC Official**, Worca's GitHub repository on
@@ -564,7 +568,7 @@ level and has no **Diff**, **Changes** or **Actions**.
 
 ### Away mode
 
-- **Runs keep going while you're away** — during your away hours, or after you click **Step away**
+- **Runs keep going while you're away** — during your away hours, or after you turn on **Away**
   in the account menu (the corner at the foot of the sidebar), Worca answers what a run would wait on: clarifying
   questions, mid-step questions, input forms, review-loop gates, proposed workflows and failed-step
   retries. It trusts the agent's recommendation when the agent is sure enough. Otherwise a
@@ -587,7 +591,7 @@ level and has no **Diff**, **Changes** or **Actions**.
   and the deciding model), one group per ask, with the answers to check marked and listed first.
   A note above it reads like "5 answers while you were away — 2 to check". A
   short notice says when away hours start and end, and a violet dot sits on your avatar while you
-  are away; **I'm back** in the account menu ends it.
+  are away; turning **Away** off in the account menu ends it.
 
 ### Scheduled runs
 
@@ -773,9 +777,10 @@ level and has no **Diff**, **Changes** or **Actions**.
 - **Off until you turn them on** — unfinished features ship behind machine-wide
   flags: **Settings › Labs**, `worca flags on|off <key>`, or
   `WORCA_FLAGS=<key>` at start. See [`docs/feature-flags.md`](docs/feature-flags.md).
-- **Shaper** (`shapeFirst`) — Worca shapes a thin or large task first: at most 3
+- **Shaper** (`shapeFirst`, beta, on by default) — Worca shapes a thin or large task first: at most 3
   questions, a plan for the perspectives you pick, rule checks on the plan, and
   your approval before anything is built; a large task can be cut into slices.
+  Turn it off in **Settings › Labs** or with `worca flags off shapeFirst`.
   See [`docs/shape-it-first.md`](docs/shape-it-first.md).
 - **Run tags** (`runTags`) — `key:value` tags such as `client:acme` on New
   pipeline, run pages and Ask run cards (`--tag` on the CLI), optional
@@ -982,9 +987,9 @@ worca plugin validate ./my-plugin --run-cases
 # the browser extension packaged with Worca
 worca extension --open          # the packaged browser extension folder
 
-# experimental features
+# feature flags
 worca flags                     # list them
-worca flags on shapeFirst
+worca flags off shapeFirst      # Shaper is beta and on by default
 ```
 
 Run `worca --help` for every subcommand — projects (`add`, `list`,
@@ -1027,7 +1032,7 @@ The skill starts the same deterministic orchestrator as the CLI;
 - [Architecture](docs/ARCHITECTURE.md) — the whole stack in one picture, and how Auto picks a run's topology
 - [Scripts](docs/scripts.md) — script cards that run your own program instead of an agent, the Library's Scripts tab, testing a script by itself
 - [Scheduled runs](docs/scheduled-runs.md) — start a run later, once or on a repeat, from the web UI, the CLI or the API
-- [Shaper](docs/shape-it-first.md) — plan a task with Worca before it builds, in Chat, and cut a large one into slices (experimental)
+- [Shaper](docs/shape-it-first.md) — plan a task with Worca before it builds, in Chat, and cut a large one into slices (beta, on by default)
 - [Feature flags](docs/feature-flags.md) — the experimental features, and how to turn them on and off
 - [Guardrails](docs/guardrails.md) — per-run policy sets (Permissive, Normal, Strict), enforcement, honest limitations
 - [Workspace map](docs/workspace-map.md) — how a workspace scan maps relations, reviewing them, measuring a scan

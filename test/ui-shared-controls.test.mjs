@@ -150,6 +150,9 @@ const JS_CHECKBOX_OK = [
   ['app.js', 'wiz-proj-cb', 'picks projects'], ['app.js', 'wiz-import-cb', 'picks imports'], ['app.js', 'wd-add-row', 'picks rows'],
   ['app.js', 'pb-include', 'picks items'], ['app.js', 'shipit-repo-pick', 'picks repos'], ['app.js', 'publish-pick', 'picks items'],
   ['app.js', 'cb.value = opt', 'picks chips'],
+  ['marketplace/browse.mjs', 'mk-hide-installed', 'Hide installed: an opt-in filter next to the list'],
+  ['marketplace/remove-view.mjs', 'mk-purge-box', 'opt-in consent in the Remove dialog'],
+  ['marketplace/update-view.mjs', 'mk-reviewed', 'acknowledges the reviewed changes'], ['marketplace/update-view.mjs', 'mk-include', 'picks updates'],
 ].map(([file, token, reason]) => ({ file: `ui/public/${file}`, token, reason }));
 function checkboxEmitters(files) {
   const out = [];
@@ -265,7 +268,8 @@ test('one menu: openMenu emits .menu / .menu-item and marks a danger item .is-da
 test('badges: Official and policy are slate, "not installed" is never amber', () => {
   assert.match(bodyOf('.badge.slate'), /background:var\(--slate-bg\);color:var\(--slate-ink\)/);
   const src = (p) => code(read(p));
-  assert.match(src('ui/public/plugins-view.mjs'), /'badge slate pl-mkt-badge'/);
+  assert.match(bodyOf('.badge.mk-chip-built'), /background:var\(--slate-bg\)/);   // the Marketplace's Built-in chip
+  assert.match(src('ui/public/marketplace/marketplaces-view.mjs'), /chip\(doc, 'built', 'Built-in'\)/);
   for (const p of ['ui/public/team-policy-view.mjs', 'ui/public/models-view.mjs', 'ui/public/guardrails-view.mjs']) {
     const lines = src(p).split('\n').filter((l) => /['"`](?:team )?policy['"`]/i.test(l) && /badge/.test(l));
     assert.ok(lines.length, `${p} has a policy badge`);
@@ -312,7 +316,7 @@ const TILES = ['.stat-tile', '.chat-run-tile', '.mcp-setlist'];
 test('cards: every page card pads --pad-card, every tile --pad-tile', () => {
   for (const s of PAGE_CARDS) assert.match(bodyOf(s), /padding:var\(--pad-card\)/, s);
   for (const s of TILES) assert.match(bodyOf(s), /padding:var\(--pad-tile\)/, s);
-  assert.match(bodyOf('.card.settings-card'), /padding:0 0 var\(--pad-card\)/);
+  assert.equal(bodyOf('.card.settings-card'), '', 'a Settings section is a real .card: no rule strips its fill, border or padding');
 });
 
 test('tables: every header is 12/600 --ink-2', () => {

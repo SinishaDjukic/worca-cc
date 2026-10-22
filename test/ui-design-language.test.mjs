@@ -81,7 +81,8 @@ test('the one button: 32px default, 28px small, 40px large, 40px minimum under a
   assert.match(body('.btn-sm'), /height:28px;/);
   assert.match(body('.btn-lg'), /height:40px;/);
   assert.match(css, /@media \(pointer:coarse\)\{\.btn\{min-height:40px;\}\.btn-icon\{min-width:40px;\}\}/);
-  assert.match(body('.confirm-modal .btn-danger:hover:not(:disabled)'), /var\(--red-ink-strong\)/, 'solid red stays solid on hover');
+  assert.match(body('.confirm-modal .btn-danger:hover:not(:disabled)'), /var\(--danger-solid-hover\)/, 'solid red stays solid on hover');
+  assert.match(css, /--danger-solid-hover:color-mix\(in srgb,var\(--ink\) 12%,var\(--red-ink-strong\)\)/, 'the shared hover recipe is on the solid red');
   for (const sel of ['.btn:hover:not(:disabled)', '.btn-primary:hover:not(:disabled)']) {
     assert.doesNotMatch(body(sel), /transform|box-shadow/, `${sel} lifts or washes`);
   }
@@ -830,9 +831,10 @@ test('no glyph at the edge of a visible string; use icon(doc, …) (F-12)', () =
 });
 
 // F-13: violet is Labs-only (docs/design-system.md colour table). The merged status dot and the merged run orb are the
-// two named exceptions (slice 1 shipped them as the shipped-state colour), plus the Smart run naming Labs chip and shimmer. Exact selectors, no substring match.
+// two named exceptions (slice 1 shipped them as the shipped-state colour), plus the Smart run naming Labs chip and shimmer, and the
+// Marketplace kind colours give the chat kind its violet tile and facet dot (docs/design-system.md › Marketplace exceptions). Exact selectors, no substring match.
 const VIOLET_OK = new Set(['.badge.flag-stage-experimental', '.status-dot.is-violet', '.rg-orb-merged .rg-orb-bg', '.rg-orb-merged .rg-orb-line',
-  '.sn-chip', '.sn-adorn.sn-loading .input']);
+  '.sn-chip', '.sn-adorn.sn-loading .input', '.mk-t-chat', '.mk-dot-chat']);
 test('violet only inside Labs selectors and the merged dot and orb (F-13)', () => {
   const bad = ALL.filter((r) => r.sel !== ':root' && /var\(--violet/.test(r.body) && !splitTop(r.sel).every((s) => VIOLET_OK.has(s.trim())))
     .map((r) => where(r, 'violet'));

@@ -173,7 +173,7 @@ export function renderHealthCard(report, { doc = globalThis.document, host = nul
  *  (click, Enter, Space) and holds no interactive descendant; the meta line beside it may hold the
  *  source run's link (D6). */
 export function renderFileList(files, { doc = globalThis.document, selected = '', runInfo = () => null } = {}) {
-  const wrap = h(doc, 'div', 'mem-list');
+  const wrap = h(doc, 'div', 'card mem-list');
   const head = h(doc, 'div', 'mem-list-head');
   head.appendChild(h(doc, 'span', 'mem-list-title', 'Files'));
   const add = h(doc, 'button', 'btn btn-sm mem-new', 'New file');
@@ -250,7 +250,7 @@ export function collectEditor(rootEl) {
 
 /** The snapshot ring, newest first, one Restore per row (disabled while a defragment run is live). */
 export function renderMemoryHistory(snapshots, { doc = globalThis.document, locked = false, runInfo = () => null } = {}) {
-  const wrap = h(doc, 'div', 'mem-history');
+  const wrap = h(doc, 'div', 'card mem-history');
   wrap.dataset.minLevel = 'expert';             // snapshot restore: expert (docs/ui-levels.md)
   wrap.appendChild(h(doc, 'div', 'mem-list-title', 'History'));
   const list = Array.isArray(snapshots) ? [...snapshots].reverse() : [];

@@ -9,6 +9,7 @@ import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { lastToast } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { useAppTimers } from './helpers/app-timers.mjs';
+import { ICONS } from '../ui/public/icons.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -1133,10 +1134,14 @@ test('a finished run: its headline, the facts, what to check, Create pull reques
   assert.equal(result.querySelector('[data-rd-tab="diff"] .rd-srow-v').classList.contains('mono'), false, 'run 3 (D14): sans values');
   const pr = rd.querySelector('.rd-pr-slot .rd-create-pr');
   assert.ok(pr, 'an eligible run offers Create pull request');
-  assert.equal(pr.textContent, 'Ship it');
+  assert.equal(pr.textContent, 'Create PR');
   // The card's one button is the pull request, behind its glyph; following up is the bar's Run after.
-  assert.deepEqual([...rd.querySelectorAll('.rd-pr-slot > *')].map((b) => b.firstElementChild.dataset.icon),
-    ['pr-create']);
+  assert.deepEqual([...rd.querySelectorAll('.rd-pr-slot > *')].map((b) => b.querySelector(':scope > .ic svg').innerHTML),
+    [ICONS['pr-create']]);
+  // PR controls (design system): a 32px primary at its natural width, 16px glyph, beside the status in the card's head.
+  assert.deepEqual([...pr.classList], ['btn', 'btn-primary', 'rd-create-pr']);
+  assert.equal(pr.querySelector('.ic').style.width, '16px');
+  assert.equal(pr.closest('.rd-pr-slot').parentElement, rd.querySelector('.rd-sheet-head'));
   assert.equal(result.querySelector('.rd-follow-up'), null, 'no follow-up CTA on the card');
   const after = rd.querySelector('.rd-bar .rd-after');
   assert.equal(after.hidden, false, 'a finished run keeps Run after in the bar');
@@ -1217,8 +1222,11 @@ test('run 3: an open PR is one bar under the facts; the header carries View PR; 
   assert.equal(chip.querySelector('.runs-pr-word').textContent, 'Checks failing');
   assert.equal(box.querySelector('.rd-prs-detail').textContent, '1 of 15 checks failed');
   assert.ok(box.querySelector('.rd-prs-watch [role="switch"]'), 'Watch, the standard switch');
-  const primary = [...scr.querySelectorAll('.rd-bar-end .rd-actions .btn-primary')].filter((b) => !b.hidden);
-  assert.deepEqual(primary.map((b) => b.textContent.trim()), ['View PR']);
+  // View PR is navigation: a secondary bar button with the open PR's glyph, never the primary.
+  const viewPr = [...scr.querySelectorAll('.rd-bar-end .rd-actions .btn')].filter((b) => !b.hidden && b.textContent.trim() === 'View PR');
+  assert.equal(viewPr.length, 1);
+  assert.equal(viewPr[0].classList.contains('btn-primary'), false);
+  assert.equal(viewPr[0].querySelector(':scope > .ic svg').innerHTML, ICONS['pull-request']);
   assert.doesNotMatch(scr.querySelector('.rd-sheet .run-status-text').textContent, /PR #/);
   assert.equal(scr.querySelector('.rd-sheet .run-status-text').textContent, 'Needs you · Checks failing');
   assert.equal(scr.querySelector('.rd-result [data-rd-cta]'), null, 'nothing PR-shaped under Results');

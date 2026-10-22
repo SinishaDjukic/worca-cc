@@ -1,7 +1,7 @@
 // src/core/shape/gate.mjs — the ONE server gate for Shape it first (spec D12). Every server call site asks
-// shapeFirstEnabled()/requireShapeFirst(), never the flag itself. The switch is the experimental feature flag in
-// src/shared/flags/registry.mjs (docs/feature-flags.md): Settings › Labs, or WORCA_FLAGS. Read fresh on
-// every call, so turning it on or off needs no restart.
+// shapeFirstEnabled()/requireShapeFirst(), never the flag itself. The switch is the beta feature flag in
+// src/shared/flags/registry.mjs (docs/feature-flags.md), on by default: turned off in Settings › Labs, or with
+// WORCA_FLAGS. Read fresh on every call, so turning it on or off needs no restart.
 import { flagEnabled } from '../flags.mjs';
 
 export function shapeFirstEnabled() {

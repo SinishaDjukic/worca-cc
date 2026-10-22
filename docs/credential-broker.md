@@ -173,8 +173,10 @@ restarts.
 | `upstream.baseUrl` (bridged) on an https origin no built-in or operator slot pins | `p-<plugin>-<host>`; the bridge finds it by origin like any other slot |
 
 Each person adds the key on the key page, which shows the one host it is sent to. The
-plugin's own *Model secrets* are never read with the broker on: its settings show a note
-instead of the form, and worca refuses to start while one still holds a value (clear it).
+plugin's own *Model secrets* are never read with the broker on: its plugin sheet shows a
+**Credential broker** chip and a link to the key page instead of the form (Team policy's
+Configure… dialog keeps the note), and worca refuses to start while one still holds a value
+(the sheet's **Clear saved values** clears them).
 
 A plugin slot is narrow: a `p-` id that can't replace a built-in or operator slot (the slots
 file can't use `p-` ids), per-person only, a plain key header, the protocol's paths under the

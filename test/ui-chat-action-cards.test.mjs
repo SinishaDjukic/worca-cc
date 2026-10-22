@@ -6,6 +6,7 @@ import { JSDOM } from 'jsdom';
 import { buildReceiptCard, buildRunStopCard, buildPullRequestCard, registerChatActionCards, refreshChatPrWatch } from '../ui/public/chat/action-cards.mjs';
 import { chatCardBuilder, _resetChatExtensions } from '../ui/public/chat/extensions.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { ICONS } from '../ui/public/icons.mjs';
 
 const doms = [];
 afterEach(() => { for (const d of doms.splice(0)) d.window.close(); _resetChatExtensions(); });
@@ -159,6 +160,12 @@ test('pull-request: branch → base and files ±; Create opens Ship it with the 
       assert.equal(el.querySelector('.ask-prcard-branch').textContent, 'worca/fix-login→main');
       assert.equal(el.querySelector('.ask-prcard-stat').textContent, '14 files · +412 −188');
       const create = el.querySelector('[data-chat-pr-create]');
+      // PR controls (design system): a small primary button led by the pr-create glyph at 14px.
+      assert.equal(create.className, 'btn btn-sm btn-primary');
+      assert.equal(create.firstElementChild.className, 'ic');
+      assert.equal(create.firstElementChild.style.width, '14px');
+      assert.equal(create.querySelector('.ic svg').innerHTML, ICONS['pr-create']);
+      assert.equal(create.textContent, 'Create PR');
       click(create); await tick();
       assert.deepEqual(opened, [[{ pipelineId: 'aaaa0005', projectKey: 'shop-1a2b3c4d' }, { askThreadId: 'ask_aaaaaaaa', askCardId: 'card_00000004' }]]);
       assert.equal(create.disabled, true, 'one dialog per card');
@@ -186,19 +193,19 @@ test('pull-request: branch → base and files ±; Create opens Ship it with the 
       const { ctx } = ctxOf({ openShipIt: () => undefined });
       const { el } = buildPullRequestCard(PR, ctx);
       click(el.querySelector('[data-chat-pr-create]')); await tick();
-      assert.equal(el.querySelector('.ask-card-err').textContent, 'Could not open the Ship it dialog.');
+      assert.equal(el.querySelector('.ask-card-err').textContent, 'Could not open the Create PR dialog.');
       assert.equal(el.querySelector('[data-chat-pr-create]').disabled, false);
     } },
-    { name: 'applied: View pull request opens in a new tab; a workspace lists each member; declined is a stub', run: async () => {
+    { name: 'applied: View PR opens in a new tab; a workspace lists each member; declined is a stub', run: async () => {
       const { ctx } = ctxOf();
       const one = buildPullRequestCard({ ...PR, state: 'applied', card: { ...PR.card, result: { url: 'https://x/pull/7', draft: false, existed: false } } }, ctx).el;
       const a = one.querySelector('.ask-prcard-link');
-      assert.equal(a.textContent, 'View pull request'); assert.equal(a.href, 'https://x/pull/7');
+      assert.equal(a.textContent, 'View PR'); assert.equal(a.href, 'https://x/pull/7');
       assert.equal(a.target, '_blank'); assert.equal(a.rel, 'noopener noreferrer');
       assert.equal(one.querySelector('[data-chat-pr-create]'), null);
       const ws = buildPullRequestCard({ ...PR, state: 'applied', card: { ...PR.card, result: { url: 'https://x/pull/1', draft: false, existed: false,
         members: [{ url: 'https://x/pull/1', memberKey: 'api-11111111' }, { url: 'https://x/pull/2', draft: true, memberKey: 'web-22222222' }] } } }, ctx).el;
-      assert.deepEqual([...ws.querySelectorAll('.ask-prcard-link')].map((x) => x.textContent), ['View pull request · api', 'View pull request · web']);
+      assert.deepEqual([...ws.querySelectorAll('.ask-prcard-link')].map((x) => x.textContent), ['View PR · api', 'View PR · web']);
       assert.equal(ws.querySelectorAll('.ask-prcard-links .ask-mcard-kind').length, 1, 'one Draft chip');
       assert.equal(buildPullRequestCard({ ...PR, state: 'declined' }, ctx).el.textContent, 'Not now: Fix login');
     } },

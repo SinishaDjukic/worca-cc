@@ -73,11 +73,11 @@ test('Not now posts not-now', async () => {
   assert.deepEqual(posts, [{ verb: 'not-now' }]);
 });
 
-test('applied: Shipped as one PR, View pull request, the closed drafts and the release line', () => {
+test('applied: Shipped as one PR, View PR, the closed drafts and the release line', () => {
   const { el } = chat({ id: 'card_00000001', state: 'applied',
     card: { ...READY, result: { mode: 'one', prUrl: 'https://github.com/o/r/pull/9', closed: 3, release: { version: 'v1.12.0', url: null, error: null } } } });
   assert.equal(el.querySelector('.ask-mcard-kind').textContent, 'Shipped');
-  assert.match(el.querySelector('.ask-shipcard-done').textContent, /^Shipped as one PR · View pull request$/);
+  assert.match(el.querySelector('.ask-shipcard-done').textContent, /^Shipped as one PR · View PR$/);
   assert.equal(el.querySelector('.ask-shipcard-pr').href, 'https://github.com/o/r/pull/9');
   assert.equal(el.querySelector('.ask-shipcard-closed').textContent, 'Closed 3 drafts');
   assert.equal(el.querySelector('.ask-shipcard-rel').textContent, 'Release v1.12.0 · draft after merge');

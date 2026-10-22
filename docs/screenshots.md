@@ -114,7 +114,7 @@ is held in memory and never written anywhere.
 | `team-metrics.png` | Team metrics for `nimbus-crm`, "Last month" | Expert | records on the `worca-metrics` branch |
 | `workspace-map.png` | The `Nimbus` workspace's Map tab | Advanced | stored scan result |
 | `actions.png` | A finished run's Actions tab after a Test run | Advanced | project actions, checkout, real `npm test` |
-| `ship-it.png` | The CSV run's *Ship it?* dialog: files and lines, push and base remotes, a previewed description, Watch PR ticked, Try it first | Advanced | the CSV run's Create PR button; a GitHub push URL set for this shot only, closed with Cancel |
+| `ship-it.png` | The CSV run's *Create pull request* dialog: files and lines, push and base remotes, a previewed description, Watch PR ticked, Try it first | Advanced | the CSV run's Create PR button; a GitHub push URL set for this shot only, closed with Cancel |
 | `engine-picker.png` | New pipeline (`#new`) for `nimbus-crm` with a task typed and Engine set to Codex (Beta) | Advanced | the form filled in place; nothing is started |
 | `scripts.png` | Workflows (`#workflows/scripts`), the Library's Scripts section with every domain folder expanded, showing the built-in script rows | Expert | built-in scripts |
 

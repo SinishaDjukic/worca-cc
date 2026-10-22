@@ -16,7 +16,7 @@ a `color-mix()` recipe used twice is a named token (`--btn-hover`, `--red-tint`,
 | amber | `--amber*` | needs you, attention, waiting; a PR problem | a brand mark, "not installed", "built-in" |
 | red | `--red*` | failed, destructive | a warning that needs no action |
 | blue | `--blue*` | information (the Beta chip), in-progress text, links | a status dot, a bar, team policy |
-| violet | `--violet*` | Labs only (the merged status dot and merged run orb are the two named exceptions) | sources, "Official", policy, a badge, a chart series |
+| violet | `--violet*` | Labs only (the merged status dot and merged run orb are the two named exceptions; the Marketplace chat kind tile and dot follow its kind colours, › Marketplace exceptions) | sources, "Official", policy, a badge, a chart series |
 | slate | `--slate*` | neutral metadata: a source, "Official", policy (`.badge.slate`) | a state |
 Status-dot exceptions: peach = working (it pulses), violet = merged. They are the dots only, never a badge.
 Surfaces: `--panel` page, `--surface` raised, `--field` field and tint fill; `--line` dividers, `--line-2` control borders.
@@ -87,6 +87,25 @@ square. One primary per group. Labels of 1–3 words, verb first. Icons come fro
 button outside `.btn` must be a shared control or a row a person opens (checked by the stray audit). The composer's
 disabled Save keeps its ink fill at 70% opacity, not the 45% grey of other disabled buttons, so it still reads as the
 primary.
+### PR controls (checked)
+Every pull request button and link looks the same everywhere (`test/ui-pr-controls.test.mjs`).
+1. Variant. Create PR and Push are the ship actions: `.btn.btn-primary`. View PR is navigation: a plain secondary
+   `.btn`, for an open PR and a merged one alike. Nothing is a custom pill.
+2. Size by context. On a page (the run page's card head, the History Details header, the Ship it dialog) `.btn`, 32px.
+   Inside a card or bar (the Chat run card, the Chat pull request card, the run and group page bar buttons that
+   `syncActions` makes) `.btn.btn-sm`, 28px. Never full width (`.btn-block`).
+3. Icon. Every PR button leads with one glyph from `icon(doc, name, size)` (`ui/public/icons.mjs`): 16px on `.btn`,
+   14px on `.btn-sm`. Create PR `pr-create`; View PR `pull-request` while the PR is open, `merge` once merged; Push
+   `arrow-up`.
+4. Labels. "Create PR" (`CREATE_PR_LABEL`, `ui/public/ship-words.mjs`); "View PR" for an open and a merged PR; Push says
+   the header's `Push main` (the source branch). The Ship it dialog keeps its title "Create pull request", and its "Try
+   it first" Check out is a secondary `.btn-sm`, so the dialog has one primary.
+5. Links. A PR text link (`.rd-prs-link`, `.chat-rc-watch-pr`, `.ask-prcard-link`, `.ask-shipcard-pr`,
+   `.hd-pr-repo-link`) is `--blue-ink-strong`, weight 600.
+Placement: on the run page the button sits at the right of the status block in the card's head (`.rd-sheet-head >
+.rd-pr-slot`), centred on the status line; under 420px of head width it wraps onto its own row below the status, on the
+left edge. The PR bar (the run's own PR, its checks and Watch) sits under the facts. Runs list PR chips (`.runs-pr`) are
+chips, not PR controls.
 ### Field
 `.input` / `.select` / text, number and select elements: 32px, 13px, `--field` fill, 6px corner, ink border on focus.
 `.input-sm` / `.select-sm`: 28px, 12px. A textarea grows; it keeps the same fill, corner and padding sides. Search, url, email,
@@ -140,7 +159,8 @@ padding. A chevron inside a row is a `.btn-icon` quiet button, not a row.
 Prefer divided rows (`.drows` / `.drow`): rows split by one `--line`, no box per item. A card (`.card`, 8px corner,
 24px padding) frames one thing you act on; never a card inside a card (checked). A page list may sit on one card
 that holds its `.drows` (`.card.drows`: Marketplace, Providers, Project settings): the card frames the list, the rows
-keep their divider, and an empty list draws no card. `.drow-wide` puts a wide control
+keep their divider, and an empty list draws no card. Each Settings section is one such card (`.card.settings-card`,
+760px, centred), and so are the Guardrails and Memory lists. `.drow-wide` puts a wide control
 (a textarea, a table, a path row) under its label at full width; `.drow-stack` holds rich block content (a schedule,
 a preset, a guardrail) with the same divider and padding.
 ### Table
@@ -170,17 +190,20 @@ buttons stay 28px; the card keeps the shared 24px padding (checked by the theme 
   belong in a tooltip.
 - The feature is "Chat", not "Ask Worca".
 - Page header: title, then one short intro sentence (`.page-intro`), then content. A full-bleed editor (Workflows) has
-  no page header.
+  no page header; the Marketplace's tabs are its header (Marketplace exceptions).
 - Stat tiles hold numbers only (time, cost, files changed). A list of chips goes in its own labelled row, for example
   the Cost tags row in the run page's facts block, never stacked inside a tile. The value is sans with tabular figures.
 - Run and group pages share one head: the bar (the breadcrumb `Runs › Run tags › Run 2` beside the list, Back on
   phones; on the right the one primary action, Stop, ⋯), the title with its kind chip (`Run 2 of 3`, `Run`, or
-  `Feature` / `Chain` / `Group`), then the card: the status block, the facts block (`.rd-kv`: 12px `--ink-2` labels,
-  13px values, one row per fact and one place to edit it), the PR bar (only for the run's own PR), the tiles.
+  `Feature` / `Chain` / `Group`), then the card: the status block with the PR button at its right (Create PR, View PR or
+  Push; see PR controls), the facts block (`.rd-kv`: 12px `--ink-2` labels, 13px values, one row per fact and one place
+  to edit it; a quiet button that leads a value pulls back by its padding so its text sits on the value column), the PR
+  bar under the facts (only for the run's own PR), the tiles.
 - Runs navigation: every row opens its own page in the right pane and the list stays. A group row opens the group
   page; the ⌄ only expands. A group whose run is open shows the lighter `--row-open` fill.
 - Search is the top bar's "Search or ask" only. A list filter is chosen there ("Runs labelled hotfix", `label:hotfix`),
-  not from a filter button in the list's header.
+  not from a filter button in the list's header. The Marketplace's Browse search is the one exception
+  (Marketplace exceptions).
 - Phones: one 16px gutter; nothing scrolls sideways at 290px.
 - Runs list order: Needs you (most urgent first), Running, Waiting, Recent. Each section is newest dispatch first (a
   run's start, a waiting ticket's creation); a section with no rows is not drawn.
@@ -191,6 +214,20 @@ buttons stay 28px; the card keeps the shared 24px padding (checked by the theme 
 - "Ask for changes" gives way to the field with Cancel and Send changes; Cancel gives the button back.
 - The bar's primary names the waiting card's primary ("Approve 2 runs"), and a click on it is that click.
 - A destructive confirm says what goes in plain words ("Stop this run?", "Stop run") and opens on the safe choice.
+
+### Marketplace exceptions
+The Marketplace page (`ui/public/marketplace/`, design `docs/superpowers/specs/2026-10-19-marketplace-redesign/`) keeps the
+catalogue structure that was approved, drawn with this system's tokens:
+- Browse is a tile grid: one bordered `.mk-tile` button per plugin, 270px minimum, 16px padding, no shadow at rest or on
+  hover. Every other list on the page stays divided rows, except the Marketplaces tab: one `.card.mk-mkt` per
+  marketplace (board 4.1), with 16px 20px padding.
+- A page-scoped "Search plugins" field and a facet rail sit beside the grid. Rail rows (`.mk-facet`) are 32px rows with a
+  count and `aria-pressed`, the selected one on the `--panel` fill; they are not filter chips.
+- No page intro: the tabs (Browse · Installed · Marketplaces, each with a count) are the header.
+- Centred empty states: a 56px tile, a 15px title, at most one meta line and one action (or the inline add field).
+- Kind colours (`.mk-t-*` on the hue families, glyphs on the `-ink-strong` shades) appear only in a plugin's monogram tile
+  and as the rail's small kind dots. The update chip ("Update 0.3.0", "2 updates") is the page's blue status chip.
+  Status chips there use `.badge.mk-chip-*` on the `-ink-strong` shades (4.5:1 or more); the global `.badge` tones do not change.
 
 ## Do and don't
 | Do | Don't | Why |

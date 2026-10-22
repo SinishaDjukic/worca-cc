@@ -12,6 +12,7 @@ import { lastToast } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { setShapeFirst } from './helpers/shape-gate.mjs';
 import { useAppTimers } from './helpers/app-timers.mjs';
+import { ICONS } from '../ui/public/icons.mjs';
 
 // Click the action button of the newest toast (Retry | Details).
 const clickToastAction = (window) => {
@@ -1058,7 +1059,8 @@ test('History opens on the glance: page title, status line, facts, the tab rows;
 // Resume split, Pause, Stop, then the terminal button), in both modes. "Resume on <other engine>" lives in the
 // split's menu, never as a button of its own. The Details header
 // keeps only the PR controls and the ⋯ menu, and the glance card carries no run control. Run 3 (D13): the bar ends
-// with its own ⋯ (Save as preset, Run after and Terminal fold into it; CSS hides the three).
+// with its own ⋯ (Save as preset and Terminal fold into it; CSS hides the two). Run after stays a quick button beside
+// Resume and Stop, so ⋯ does not repeat it.
 const HD_BAR_ORDER = ['hd-save-preset', 'hd-after', 'rd-actions', 'hd-resume-split', 'hd-pause', 'hd-stop', 'term-opener', 'hd-bar-more'];
 // A step in flight: the one run model reads a running run with no step as Starting, which offers no Pause (slice 4).
 const STEPPING = { steps: [{ executionId: 'x:n_impl:1', nodeId: 'n_impl', ordinal: 1, cycle: 1, kind: 'cycle', status: 'start',
@@ -1071,6 +1073,7 @@ test('History bar per finished/paused status: Run after, Resume split only when 
   ]) {
     rows.push({ name: `History bar, ${status} run: Run after${resumable ? ' and the Resume split' : ''}, ${status === 'paused' ? 'Stop' : 'no Stop'} and no Pause without a live run`, run: async () => {
       const ctx = await bootDetail({ detail: { ...DETAIL, state: { ...DETAIL.state, status } }, rows: [{ ...ROW, status }] });
+      ctx.window.document.documentElement.dataset.level = 'advanced';
       await openDetail(ctx, '');
       await settle(ctx.window, 6);
       const hd = ctx.window.document.querySelector('#hist-detail .hd');
@@ -1081,6 +1084,11 @@ test('History bar per finished/paused status: Run after, Resume split only when 
       assert.equal(after.dataset.minLevel, 'advanced');
       assert.equal(after.textContent.trim(), 'Run after');
       assert.ok(after.querySelector('svg'), 'the Running bar\'s arrow leads the label');
+      click(ctx.window, end.querySelector('.hd-bar-more'));
+      const moreLabels = [...ctx.window.document.querySelectorAll('.wfv-menu .wfv-menu-item .wfv-menu-l')].map((n) => n.textContent);
+      assert.ok(moreLabels.includes('Terminal'), `⋯ opened: ${moreLabels}`);
+      assert.ok(!moreLabels.includes('Run after'), 'Run after is the bar\'s own button, not a ⋯ item');
+      click(ctx.window, end.querySelector('.hd-bar-more'));
       const title = finished ? 'Start a follow-up run' : 'Schedule a run after this';
       assert.equal(after.title, title);
       assert.equal(after.getAttribute('aria-label'), title);
@@ -1635,14 +1643,16 @@ test('History glance: one Create pull request when eligible; the PR bar for an o
       const slot = glance.querySelector('.rd-pr-slot');
       const box = glance.querySelector('.rd-pr-box');
       assert.equal(slot.closest('.hd-result'), null, 'outside the result host paintHdGlance rebuilds');
-      assert.equal(box.previousElementSibling, glance.querySelector('.rd-sheet > .rd-kv'), 'the PR place sits right under the facts');
+      assert.equal(slot.parentElement, glance.querySelector('.rd-sheet > .rd-sheet-head'), 'the button sits beside the status');
+      assert.equal(box.previousElementSibling, glance.querySelector('.rd-sheet > .rd-kv'), 'the PR bar sits right under the facts');
       if (!pr) {
         assert.equal(slot.hidden, false);
         const ctas = [...slot.children];
         assert.equal(ctas.length, 1, 'one button, the pull request');
         assert.ok(ctas[0].hasAttribute('data-rd-cta') && ctas[0].classList.contains('hd-g-pr'), ctas[0].className);
-        assert.equal(ctas[0].firstElementChild.dataset.icon, 'pr-create');
-        assert.equal(ctas[0].textContent, 'Ship it');
+        assert.equal(ctas[0].querySelector(':scope > .ic svg').innerHTML, ICONS['pr-create']);
+        assert.equal(ctas[0].classList.contains('btn-block'), false, 'at its natural width');
+        assert.equal(ctas[0].textContent, 'Create PR');
         return;
       }
       assert.equal(slot.hidden, true, 'no View pull request button');
@@ -1689,7 +1699,10 @@ test('History glance PR lookup pending: a busy placeholder morphs in place into 
       assert.ok(slot.classList.contains('is-pending'), slot.className);
       assert.equal(slot.getAttribute('aria-busy'), 'true');
       assert.ok(slot.querySelector('.rd-pr-spin'), 'a spinner');
-      assert.match(slot.textContent, /Checking the pull request…/);
+      const wait = slot.querySelector('.rd-pr-wait');
+      assert.equal(wait.textContent, 'Create PR', 'the placeholder holds the button\'s own words, so it is the button\'s width');
+      assert.equal(wait.getAttribute('aria-hidden'), 'true');
+      assert.equal(slot.getAttribute('aria-label'), 'Checking the pull request…');
       assert.equal(slot.querySelector('button, a, [data-rd-cta]'), null, 'not clickable');
       const url = 'https://github.com/o/r/pull/7';
       const timers = useAppTimers(t);
@@ -1699,6 +1712,7 @@ test('History glance PR lookup pending: a busy placeholder morphs in place into 
         await timers.advance(MORPH_MS);
         assert.equal(ctx.window.document.querySelector('#hist-detail .hd-glance .rd-pr-slot'), slot, 'the slot is never replaced');
         assert.equal(slot.getAttribute('aria-busy'), null);
+        assert.equal(slot.getAttribute('aria-label'), null);
         assert.equal(slot.querySelector('[data-rd-cta]'), null, 'the run\'s own PR is no slot button');
         const chip = ctx.window.document.querySelector('#hist-detail .hd-glance .rd-pr-status .rd-prs-sum a.runs-pr.is-merged');
         assert.ok(chip, 'the PR bar shows the merged chip');
@@ -1715,7 +1729,7 @@ test('History glance PR lookup pending: a busy placeholder morphs in place into 
       assert.ok(slot.classList.contains('is-morph'), slot.className);
       const btn = slot.querySelector('button[data-rd-cta].hd-g-pr');
       assert.ok(btn, slot.innerHTML);
-      assert.equal(btn.textContent, 'Ship it');
+      assert.equal(btn.textContent, 'Create PR');
       let forwarded = 0;
       ctx.window.document.querySelector('#hist-detail .hd-pr').onclick = () => { forwarded += 1; };
       click(ctx.window, btn);

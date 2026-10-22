@@ -16,7 +16,8 @@ export const BUTTON_SPEC = Object.freeze({
     'button.pd-ov-card', 'button.wd-member', 'button.ask-activity-head', 'button.act-srow-name', 'button.runs-sec-head',
     'button.gp-row', 'button.agent-row-head', 'button.hd-tree-file', 'button.hd-tree-dir', 'button.ask-filescard-thumb', 'button.ask-filescard-name', 'button.chat-home-act',
     'button.chat-home-wf', 'button.chat-home-chat', 'button.chat-home-plan-open', 'button.release-row-edit',
-    '.row-btn', 'button.mcp-setrow', 'button.xtoggle', 'button.gs-tile',
+    '.row-btn', 'button.mcp-setrow', 'button.xtoggle', 'button.gs-tile', 'button.mk-tile', 'button.mk-facet', 'button.mk-name',
+    '.mk-upd > button.mk-disc',
     '.mv-cp-terms-pill', '.cost-bd-btn', '.linkish', '.hd-dl-more-btn', '.plan-fold', '.plan-persp-edit', '.qopt', '.afb-main',
     '.afb-folder', '.acct', '.sn-btn', '[class*="chip"]'],
   // .btn labels that still type "+" instead of icon(doc, 'plus'), exactly as shown; slice 3 emptied this
@@ -60,10 +61,11 @@ export function auditButtons(root, spec, env) {
     if (cs.fontSize !== spec.fontSizes[size]) bad('font-size', cs.fontSize);
     const weight = variants[0] === 'btn-primary' ? '600' : '500';
     if (String(cs.fontWeight) !== weight) bad('font-weight', cs.fontWeight);
-    // A14: at most 3 words of visible text (the aria-label may be longer); one decided exception.
+    // A14: at most 3 words of visible text (the aria-label may be longer); decided exceptions: "Approve with N open
+    // issue(s)", the Add marketplace result's "Browse these N plugins" and "N notes from the manifest" (marketplace P7).
     const shown = (el.textContent || '').replace(/[…]/g, '').trim();
     const words = shown.split(/\s+/).filter((w) => /\w/.test(w));
-    if (words.length > 3 && !/^Approve with \d+ open issues?$/.test(shown)) bad('long-label', shown.slice(0, 40));
+    if (words.length > 3 && !/^(?:Approve with \d+ open issues?|Browse these \d+ plugins|\d+ notes? from the manifest)$/.test(shown)) bad('long-label', shown.slice(0, 40));
     if (/^\+ ?[A-Z][a-z]/.test(shown) && !spec.plusDebt.includes(shown)) bad('typed-plus', shown.slice(0, 40));
   }
   // One primary per group of actions (spec §1.3). A .btn-split (main half + caret) is one action (D11).
@@ -222,7 +224,7 @@ export function auditType(root, spec, env) {
 export const STRAY_SPEC = Object.freeze({
   allow: ['.tab', '[role="tab"]', '.seg button', '.seg-btn', '.filter-chip', '.switch', '[role="switch"]', '[role^="menuitem"]',
     '[role="option"]', '[role="radio"]', '.info-tip', '.row-btn', 'div.wfl-main', 'button.mcp-setrow', 'button.gs-tile',
-    'button.ob-door', 'button.wfc-chip-btn'],
+    'button.ob-door', 'button.wfc-chip-btn', 'button.mk-tile', 'button.mk-facet', 'button.mk-name', '.mk-upd > button.mk-disc'],
   skip: '#wfv-canvas',
 });
 export function auditStray(root, spec, env) {

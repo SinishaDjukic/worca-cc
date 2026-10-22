@@ -77,6 +77,38 @@ test('flag on: the saved pattern and the field switches are honoured', async () 
   await call('POST', '/api/settings', { smartNaming: null });
 });
 
+test('GET /api/naming/config: picked follows namingModel, and leaves it after a clear', async () => {
+  process.env.WORCA_FLAGS = 'smartRunNaming';
+  let r = await call('POST', '/api/settings', { namingModel: { model: 'claude-opus-5-5', effort: 'high' } });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  let c = (await call('GET', '/api/naming/config')).body;
+  assert.deepEqual([c.picked.model, c.picked.effort, c.picked.source], ['claude-opus-5-5', 'high', 'settings']);
+  assert.equal('model' in c, false, 'the smartNaming block carries no model any more');
+  r = await call('POST', '/api/settings', { namingModel: null });
+  assert.equal(r.status, 200);
+  c = (await call('GET', '/api/naming/config')).body;
+  assert.notEqual(c.picked?.source, 'settings', 'cleared: the cheapest ready Claude model, or none in a sandbox with no sign-in');
+});
+
+test('GET /api/naming/config: a stale namingModel warns once per id, not on every resolve', async () => {
+  process.env.WORCA_FLAGS = 'smartRunNaming';
+  const { writeFile, readFile, mkdir } = await import('node:fs/promises');
+  const file = join(sandboxHome, '.worca-cc', 'settings.json');
+  await mkdir(join(sandboxHome, '.worca-cc'), { recursive: true });
+  let cur = {};
+  try { cur = JSON.parse(await readFile(file, 'utf8')); } catch { /* none yet */ }
+  await writeFile(file, JSON.stringify({ ...cur, namingModel: { model: 'gone-naming-model' } }));
+  const warn = console.warn;
+  const warnings = [];
+  console.warn = (...a) => { warnings.push(a.join(' ')); };
+  try {
+    for (let i = 0; i < 3; i++) assert.equal((await call('GET', '/api/naming/config')).body.picked.stale, 'gone-naming-model');
+  } finally { console.warn = warn; }
+  const hits = warnings.filter((w) => w === '[worca] namingModel "gone-naming-model" is no longer in the catalog — run naming uses the cheapest ready Claude model');
+  assert.equal(hits.length, 1, warnings.join('\n'));
+  await call('POST', '/api/settings', { namingModel: null });
+});
+
 test('start body markers must be booleans', async () => {
   process.env.WORCA_FLAGS = 'smartRunNaming';
   const r = await call('POST', '/api/run', { projectDir, prompt: TASK, featureBranchSuggested: 'yes' });

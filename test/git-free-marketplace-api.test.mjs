@@ -80,9 +80,11 @@ test('without git: owner/repo is GitHub; a local repository or another host answ
   assert.equal(r.status, 200);
   assert.equal((await r.json()).marketplace.url, 'https://github.com/acme/short');
   for (const url of ['https://gitlab.com/acme/market', gh.repo('acme/localrepo', { files: MARKET }).bare]) {
-    r = await post('/api/marketplaces', { url });
-    assert.equal(r.status, 409);
-    assert.deepEqual(await r.json(), { error: 'git is not installed on this machine', code: 'GIT_MISSING' });
+    for (const body of [{ url }, { url, progress: true }]) {   // the add job never defers this refusal (CONTRACT §2.1)
+      r = await post('/api/marketplaces', body);
+      assert.equal(r.status, 409);
+      assert.deepEqual(await r.json(), { error: 'git is not installed on this machine', code: 'GIT_MISSING' });
+    }
   }
   const folder = mkdtempSync(join(ROOT, 'plugdir-'));
   writeFileSync(join(folder, 'worca-cc-plugin.json'), MANIFEST('folder-plugin'));
@@ -98,14 +100,16 @@ test('a marketplace on another host stays listed without git: needsGit, untouche
   const id = marketplaceId(url);
   const st = readMarketplaces();
   st.marketplaces[id] = { id, url, name: 'GL', description: '', addedAt: '2026-10-01T00:00:00.000Z',
-    lastSync: { sha: 'a'.repeat(40), at: '2026-10-01T00:00:00.000Z' }, plugins: [{ name: 'gl-plugin', subdir: 'p', description: '', version: null, inventory: {} }], warnings: [] };
+    lastSync: { sha: 'a'.repeat(40), at: '2026-10-01T00:00:00.000Z' }, plugins: [{ name: 'gl-plugin', subdir: 'p', description: '', version: null, inventory: {} }], warnings: [],
+    lastError: { message: 'HTTP 403', code: 'UNREACHABLE', at: '2026-10-01T00:00:00.000Z' } };
   writeMarketplaces(st);
   withNoGit(t);
   const list = await (await get('/api/marketplaces')).json();
-  assert.equal(list.marketplaces.find((m) => m.id === id).needsGit, true);
+  const listed = list.marketplaces.find((m) => m.id === id);
+  assert.deepEqual([listed.needsGit, listed.lastError], [true, null], 'SM4: a source that needs git is never shown unreachable');
   const all = await (await post('/api/marketplaces/refresh', {})).json();
   const kept = all.marketplaces.find((m) => m.id === id);
-  assert.deepEqual([kept.needsGit, kept.warnings, kept.lastSync.sha], [true, [], 'a'.repeat(40)]);
+  assert.deepEqual([kept.needsGit, kept.warnings, kept.lastSync.sha, kept.lastError], [true, [], 'a'.repeat(40), null]);
   const one = await post(`/api/marketplaces/${id}/refresh`, {});
   assert.deepEqual([one.status, await one.json()], [409, { error: 'git is not installed on this machine', code: 'GIT_MISSING' }]);
   assert.equal(readMarketplaces().marketplaces[id].lastSync.sha, 'a'.repeat(40));
@@ -162,4 +166,20 @@ test('worca marketplace list / refresh without git say "needs git" for a marketp
   assert.equal((await cli('0', 'list')).stdout, `GL\t${id}\t${url}\taaaaaaa (1 plugins)\tneeds git\n`);
   assert.equal((await cli('0', 'refresh')).stdout, 'GL\taaaaaaa (1 plugins)\tneeds git\n');
   assert.equal((await cli('1', 'list')).stdout, `GL\t${id}\t${url}\taaaaaaa (1 plugins)\n`);
+});
+
+test('without git the add job reads GitHub over HTTPS and ends done with the marketplace', async (t) => {
+  const { sha } = gh.repo('acme/jobbed', { files: MARKET });
+  withNoGit(t);
+  const r = await post('/api/marketplaces', { url: 'acme/jobbed', progress: true });
+  assert.equal(r.status, 202);
+  const { jobId } = await r.json();
+  let job;
+  for (let i = 0; i < 200; i++) {
+    job = (await (await get(`/api/marketplaces/jobs/${jobId}`)).json()).job;
+    if (job.state !== 'running') break;
+    await new Promise((res) => setTimeout(res, 50));
+  }
+  assert.deepEqual([job.state, job.phase, job.resolvedUrl, job.sha, job.done, job.total, job.marketplace.name],
+    ['done', 'saved', 'https://github.com/acme/jobbed', sha, 2, 2, 'Acme Market']);
 });

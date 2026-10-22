@@ -1,5 +1,5 @@
 // The words the run summary and the run details page share (audit F-7, F-11).
-export const SHIP_LABEL = 'Ship it';
+export const CREATE_PR_LABEL = 'Create PR';
 
 // runModel(run).state in src/shared/run-model.mjs gives 'ready' | 'in-review' | 'merged' | 'needs-you' for a done run.
 const DONE_WORDS = Object.freeze({

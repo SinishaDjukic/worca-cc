@@ -22,7 +22,7 @@ import { setBinding, listBindingsForScope } from '../src/core/source-bindings.mj
 import {
   installPlugin, buildInstallInventory, runSetup, updatePlugin, uninstallPlugin,
   setPluginEnabled, listInstalledPlugins, doctorPlugin, linkPlugin,
-  listOrphanPluginData, purgePluginData,
+  listOrphanPluginData, purgePluginData, pluginReferences,
   pythonNoticeFor, pythonProbeOrNull, PYTHON_MISSING_NOTICE,
 } from '../src/core/plugin-store.mjs';
 
@@ -786,6 +786,7 @@ test('uninstall guard: scripts-only, agents-only and both kinds (one row per wor
       const dev = join(scratch, 'dev-guarded');
       writeTree(dev, { 'worca-cc-plugin.json': manifestFor('guarded-plugin'), ...GUARD_AGENT_FILES, ...guardScriptFiles('guardScript') });
       await linkPlugin('guarded-plugin', dev);
+      assert.deepEqual(pluginReferences('guarded-plugin'), [], 'nothing uses it yet');
       const { writeGraphWorkflow } = await import('../src/core/workflows.mjs');
 
       await writeGraphWorkflow({
@@ -807,6 +808,11 @@ test('uninstall guard: scripts-only, agents-only and both kinds (one row per wor
           { id: 'n_s', kind: 'script', key: 'guardScript', x: 400, y: 0, config: {} }],
         wires: [],
       });
+      assert.deepEqual(pluginReferences('guarded-plugin'), [
+        { kind: 'workflow', contributionKind: 'agents', contribution: 'guardAgent', label: 'Agent And Script', count: 1, href: '#workflows/wf_g2' },
+        { kind: 'workflow', contributionKind: 'scripts', contribution: 'guardScript', label: 'Agent And Script', count: 1, href: '#workflows/wf_g2' },
+        { kind: 'workflow', contributionKind: 'agents', contribution: 'guardAgent', label: 'Agent Only', count: 1, href: '#workflows/wf_g1' },
+      ], 'the dry run names every blocker the Remove click would hit');
       await assert.rejects(() => uninstallPlugin('guarded-plugin'), (err) => {
         assert.match(err.message, /^plugin "guarded-plugin" agents and scripts are referenced by: /);
         assert.deepEqual(err.references.map((r) => r.workflowId).sort(), ['wf_g1', 'wf_g2']);
@@ -814,6 +820,17 @@ test('uninstall guard: scripts-only, agents-only and both kinds (one row per wor
         assert.deepEqual(both.keys, ['guardAgent', 'guardScript'], 'one row per workflow, both keys');
         return true;
       });
+    } },
+    { name: 'references on one workflow sort by contribution: a script key before an agent key when it orders first', run: async () => {
+      const dev = join(scratch, 'dev-order');
+      const zAgent = Object.fromEntries(Object.entries(GUARD_AGENT_FILES).map(([f, v]) => [f.replace('guardAgent', 'zAgent'), v.replaceAll('guardAgent', 'zAgent')]));
+      writeTree(dev, { 'worca-cc-plugin.json': manifestFor('order-plugin'), ...zAgent, ...guardScriptFiles('aScript') });
+      await linkPlugin('order-plugin', dev);
+      const { writeGraphWorkflow } = await import('../src/core/workflows.mjs');
+      await writeGraphWorkflow({ id: 'wf_o1', name: 'Ordered', domain: 'general',
+        nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} }, { id: 'n_a', kind: 'agent', key: 'zAgent', x: 200, y: 0, config: {} },
+          { id: 'n_s', kind: 'script', key: 'aScript', x: 400, y: 0, config: {} }], wires: [] });
+      assert.deepEqual(pluginReferences('order-plugin').map((r) => [r.contributionKind, r.contribution]), [['scripts', 'aScript'], ['agents', 'zAgent']]);
     } },
   ]);
 });

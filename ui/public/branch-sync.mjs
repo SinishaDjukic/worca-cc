@@ -107,11 +107,15 @@ export function runOutcomeModel(sync, { origin = true, base = '' } = {}) {
   return o;
 }
 
+/** An unborn repo (Use git, no commit yet): the no-remote bar's and the Branch card's hint. */
+export const NO_COMMITS_HINT = 'No commits yet · the first run commits these files';
+
 /** One row of the Workspaces list's project table (design board 1): what the repo is, and the one
  *  thing Worca can do about it. action ∈ sync|details|retry|null — Worca never merges or resets.
  *  `dirty` no longer hides `behind`: a dirty repo that is behind says both. */
 export function listRowModel(b) {
   if (!b || !b.remote) return { icon: 'local', tone: 'muted', label: 'No remote', hint: '', action: null, state: 'none' };
+  if (b.noCommits) return { icon: 'local', tone: 'ink', label: 'No commits yet', hint: 'The first run commits these files', action: null, state: 'local' };
   if (b.state === 'unknown') return { icon: 'none', tone: 'muted', label: 'Status unknown', hint: '', action: null, state: 'none' };
   const dirty = !!(b.dirty && b.checkedOutHere);
   const autoSync = !(b.settings && b.settings.beforeRun === false);
@@ -142,7 +146,7 @@ const BAR_GROUP = { ok: 'ok', behind: 'behind', diverged: 'diverged', dirty: 'di
 export function projectBarModel(b) {
   const base = { hint: '', action: null, actionLabel: '', vs: '' };
   if (b === undefined) return { ...base, icon: 'spin', tone: 'grey', label: 'Checking…', state: 'checking', group: null };
-  if (!b || !b.remote) return { ...base, icon: 'noRemote', tone: 'none', label: 'No git remote', hint: 'Local folder · nothing to sync', state: 'none', group: 'local' };
+  if (!b || !b.remote) return { ...base, icon: 'noRemote', tone: 'none', label: 'No git remote', hint: b && b.noCommits ? NO_COMMITS_HINT : 'Local folder · nothing to sync', state: 'none', group: 'local' };
   const m = listRowModel(b);
   const bar = { ...m, tone: BAR_TONE[m.state] || 'grey', actionLabel: BAR_ACTION[m.action] || '',
     vs: b.base && m.state !== 'local' ? `${b.remote}/${b.base}` : '', group: BAR_GROUP[m.state] || null };

@@ -308,6 +308,8 @@ test('POST /api/models/export-plugin: scaffold with value stripping and `cost`; 
       const blob = readFileSync(join(dest, 'worca-cc-plugin.json'), 'utf8') + readFileSync(join(dest, 'README.md'), 'utf8');
       assert.doesNotMatch(blob, /sk-live-strip-me/, 'secret value stripped from every scaffold file');
       assert.ok(existsSync(join(dest, 'README.md')));
+      assert.match(readFileSync(join(dest, 'README.md'), 'utf8'), /^worca → Marketplace → Add marketplace → paste the repo URL → Add → Install\.$/m, 'the README walks the Add marketplace dialog');
+      assert.match(readFileSync(join(dest, 'README.md'), 'utf8'), /^Model secrets are asked for in the install's Set up step\.$/m, 'model secrets: the install sheet\'s Set up step (P4)');
 
       // Rejections.
       const cases = [

@@ -94,6 +94,12 @@ const PAIRS = [
   ['--amber-ink-strong', '--field', 4.5], ['--red-ink-strong', '--field', 4.5],   // the account menu's spend card tones on its --field panel
   ['--side-ink', '--side-bg', 4.5], ['--side-sel-ink', '--side-sel-bg', 4.5],   // the sidebar rows and group labels (.nav button, .nav-sect) and the open page
   ['--on-signal', '--amber', 4.5], ['--on-signal', '--red', 4.5],   // the status dot's '?' / '!' glyph (ui/public/status-dot.mjs)
+  ['--violet-ink-strong', '--violet-bg', 4.5], ['--lime-ink-strong', '--lime-bg', 4.5], ['--slate-ink-strong', '--slate-bg', 4.5],
+  ['--pink-ink-strong', '--pink-bg', 4.5],   // the Marketplace kind tiles' glyphs (.mk-t-chat / -skill / -wf / -mix)
+  ['--teal-ink-strong', '--teal-bg', 4.5], ['--indigo-ink', '--indigo-bg', 4.5], ['--cocoa-ink', '--cocoa-bg', 4.5],   // and .mk-t-mcp / -model / -script
+  ['--green-ink-strong', '--green-bg', 4.5], ['--amber-ink-strong', '--amber-bg', 4.5], ['--red-ink-strong', '--red-bg', 4.5],   // Marketplace status chips (L19)
+  ['--ink-2', '--hover', 4.5],   // the Marketplace "off" chip (.mk-chip-off)
+  ['--ink-2', '--line', 4.5],   // the Marketplace counts (.mk-count in the tabs and group heads, LC-P3-18)
   ['--slate-ink', '--slate-bg', 4.5],   // .badge.slate: the Official and policy badges
 ];
 const DARK_ONLY = [   // light fails these today (spec §7.4 baseline); dark must not

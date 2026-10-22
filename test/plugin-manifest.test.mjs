@@ -1,7 +1,7 @@
 // test/plugin-manifest.test.mjs — worca-cc-plugin.json parsing/validation (spec §4.1, §6.6).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -161,7 +161,7 @@ test('taskSources normalize with defaults', () => {
   assert.equal(s.displayName, 'github'); // defaults to id
   assert.deepEqual(s.configSchema[0], {
     key: 'token', type: 'text', label: 'GitHub token',
-    secret: true, required: true, default: null, help: null, options: [],
+    secret: true, required: true, default: null, help: null, options: [], advanced: false,
   });
   assert.deepEqual(s.inputs[1], {
     key: 'filter', type: 'text', label: 'filter',
@@ -322,7 +322,7 @@ test('chatChannels: normalization defaults (ingress connect, both capabilities, 
         capabilities: { inbound: true, outbound: true },
         configSchema: [{
           key: 'botToken', type: 'text', label: 'botToken',
-          secret: true, required: true, default: null, help: null, options: [],
+          secret: true, required: true, default: null, help: null, options: [], advanced: false,
         }],
       });
     } },
@@ -833,4 +833,20 @@ test('models: a Codex model names its engine, takes Codex efforts and refuses ro
   assert.ok(cursorEnv.errors.some((e) => /"cu".*a cursor model takes no env/.test(e)), JSON.stringify(cursorEnv.errors));
   const eff = normalizeManifest({ name: 'p', models: [{ id: 'cx', engine: 'codex', efforts: ['max'] }] });
   assert.ok(eff.errors.some((e) => /unknown effort "max" — must be one of minimal \| low \| medium \| high/.test(e)), JSON.stringify(eff.errors));
+});
+
+test('configSchema `advanced` folds an optional field: a boolean, no warning; the bundled chat plugins mark their tuning fields', () => {
+  const r = normalizeManifest({ name: 'p', chatChannels: [CH({ configSchema: [{ key: 'a', advanced: true }, { key: 'b', advanced: 'yes' }, { key: 'c' }] })] });
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.warnings, []);
+  assert.deepEqual(r.manifest.chatChannels[0].configSchema.map((f) => [f.key, f.advanced]), [['a', true], ['b', false], ['c', false]]);
+  const root = fileURLToPath(new URL('../plugins/', import.meta.url));
+  const advanced = {};
+  for (const p of ['slack-chat', 'discord-chat', 'teams-chat', 'telegram-chat', 'github-source', 'azure-boards-source']) {
+    const b = normalizeManifest(JSON.parse(readFileSync(join(root, p, 'worca-cc-plugin.json'), 'utf8')));
+    assert.deepEqual([b.ok, b.warnings], [true, []], p);
+    advanced[p] = [...b.manifest.taskSources, ...b.manifest.chatChannels].flatMap((s) => s.configSchema.filter((f) => f.advanced).map((f) => f.key));
+  }
+  assert.deepEqual(advanced, { 'slack-chat': ['channelAllowlist'], 'discord-chat': ['channelAllowlist'], 'teams-chat': ['tenantType', 'tenantId'],
+    'telegram-chat': [], 'github-source': [], 'azure-boards-source': [] });
 });

@@ -13,6 +13,11 @@ import { projectKey } from '../src/core/store.mjs';
 import { createThread, appendMessage, listMessages, listRunLinks, newAskId } from '../src/core/ask/store.mjs';
 
 useTempHome(after);
+// Shaper is on by default and turns a fix run into a round of the PR's run (the s5 tests below, withGate). The card
+// tests before them are the gate-off path: lock it off for the file, as test/shape-server-slices.test.mjs does.
+const savedFlags = process.env.WORCA_FLAGS;
+process.env.WORCA_FLAGS = '-shapeFirst';
+after(() => { if (savedFlags === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = savedFlags; });
 let mod, srv, base;
 const tmpDirs = [];
 before(async () => {

@@ -7,6 +7,7 @@ import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { cardAlertOf } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { ICONS } from '../ui/public/icons.mjs';
 import { backdropClick, pressEscape, discardPrompt, keepEditing, discardChanges } from './helpers/popups.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
@@ -244,7 +245,7 @@ test('detail Create PR opens the ship-it modal with the summary + branch → bas
   const ctx = await bootShip({ detail: { ...DETAIL, results: RESULTS } });
   const modal = await openModal(ctx);
   assert.equal(modal.classList.contains('hidden'), false);
-  assert.match(modal.textContent, /Ship it\?/);
+  assert.match(modal.textContent, /Create pull request/);
   assert.match(modal.textContent, /14 files/);        // filesNew + filesChanged, 'D' rows not double-counted
   assert.match(modal.textContent, /\+412/);
   assert.match(modal.textContent, /−188/);            // U+2212 — this is a COUNT
@@ -587,7 +588,8 @@ test('a successful ship updates the list row, and PR-enrichment hooks repaint th
       });
       await settle(window);
       assert.equal(hdPr(window).hidden, true);
-      assert.equal(hdPrLink(window).textContent, 'Merged');
+      assert.equal(hdPrLink(window).textContent, 'View PR');
+      assert.equal(hdPrLink(window).querySelector(':scope > .ic svg').innerHTML, ICONS.merge);
     } },
   ]);
 });
@@ -599,13 +601,17 @@ test('a successful ship updates the list row, and PR-enrichment hooks repaint th
 test('OPEN/MERGED records render links, not the button, even when the merged branch is gone', async () => {
   await checkRows([
     { name: 'OPEN/MERGED records render links, not the button', run: async () => {
-      for (const [state, label] of [['OPEN', 'View PR'], ['MERGED', 'Merged']]) {
+      // PR controls (design system): View PR for an open and a merged PR alike, a secondary .btn led by the state glyph.
+      for (const [state, glyph] of [['OPEN', 'pull-request'], ['MERGED', 'merge']]) {
         const ctx = await bootShip({ rows: [row({ pr: { state, url: 'https://x/pull/5' } })] });
         await openDetail(ctx);
         const link = hdPrLink(ctx.window);
         assert.equal(hdPr(ctx.window).hidden, true, `${state}: no Create-PR button`);
         assert.equal(link.hidden, false, `${state}: the link renders`);
-        assert.equal(link.textContent, label);
+        assert.equal(link.textContent, 'View PR');
+        assert.ok(link.classList.contains('btn') && !link.classList.contains('btn-primary'), `${state}: ${link.className}`);
+        assert.equal(link.querySelector(':scope > .ic svg').innerHTML, ICONS[glyph], state);
+        assert.equal(link.querySelector('.ic').style.width, '16px');
         assert.equal(link.classList.contains('merged'), state === 'MERGED');
       }
     } },
@@ -616,7 +622,7 @@ test('OPEN/MERGED records render links, not the button, even when the merged bra
       });
       await openDetail(ctx);
       assert.equal(hdPrLink(ctx.window).hidden, false);
-      assert.equal(hdPrLink(ctx.window).textContent, 'Merged');
+      assert.equal(hdPrLink(ctx.window).textContent, 'View PR');
     } },
   ]);
 });

@@ -128,11 +128,17 @@ for (const [name, opts] of [['an unshaped run (gate on)', { row: { shaping: unde
   });
 }
 
-test('run 3 (D16): the Live view never takes a second column; a waiting card follows the column order', () => {
+test('wide Live view: the graph sits beside the card, but a shaped run waiting on the person stays one column (D30)', () => {
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
-  assert.equal(css.indexOf('@container rd (min-width: 960px)'), -1);
-  assert.doesNotMatch(css, /\.rd-glance\[data-live="on"\][^{]*\{[^}]*grid-(row|column)/);
-  // Every glance child but the graph keeps the 544px measure; the graph takes the pane's content width.
+  const at = css.indexOf('@container rd (min-width: 960px)');
+  assert.ok(at > -1, 'a wide pane lays the graph beside the card');
+  const wide = css.slice(at, css.indexOf('\n}\n', at));
+  const rules = wide.match(/\.rd-glance\[data-live="on"\][^{]*\{/g) || [];
+  assert.ok(rules.length, 'the wide rules key on the glance\'s data-live');
+  // Its card and graph hide while it waits (run 4 D1), so no wide rule may place them.
+  for (const r of rules) assert.match(r, /^\.rd-glance\[data-live="on"\]:not\(\[data-shaper-wait\]\)/, r);
+  // Narrow, and while a shaped run waits: every glance child but the graph keeps the 544px measure; the graph takes the
+  // pane's content width.
   assert.match(css, /\.rd-glance > :not\(\.rd-live\)\{width:100%;max-width:544px;align-self:center;\}/);
   assert.match(css, /\.rd-glance > \.rd-live\{align-self:stretch;width:100%;max-width:none;\}/);
 });

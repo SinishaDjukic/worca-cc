@@ -199,7 +199,7 @@ test('Ship it already open (History\'s own): the card says so and offers Create 
   const el = await prCard(ctx.window, B, []);
   click(ctx.window, el.querySelector('[data-chat-pr-create]'));
   await settle(10);
-  assert.equal(el.querySelector('.ask-card-err').textContent, 'The Ship it dialog is already open.');
+  assert.equal(el.querySelector('.ask-card-err').textContent, 'The Create PR dialog is already open.');
   assert.equal(el.querySelector('[data-chat-pr-create]').disabled, false);
 });
 

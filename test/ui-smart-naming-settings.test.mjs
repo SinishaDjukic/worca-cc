@@ -1,4 +1,4 @@
-// test/ui-smart-naming-settings.test.mjs — Settings › Runs › Smart run naming (Labs): the card sits after Keep awake, the master
+// test/ui-smart-naming-settings.test.mjs — Settings › Runs › Smart run naming (Labs): the card sits after Away mode, the master
 // switch is the flag, the pattern preview is live, Save and Use defaults post to /api/settings, a server error shows on the
 // card, the last type cannot be switched off, the rows are muted while the flag is off.
 import { test } from 'node:test';
@@ -11,7 +11,7 @@ import { applyFlags } from '../ui/public/flags.mjs';
 const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const tick = (n = 1) => new Promise((r) => setTimeout(r, n));
-const STORED = { suggestTitle: true, suggestBranch: true, model: null, pattern: '{type}/{slug}', types: ['feat', 'fix', 'chore', 'docs', 'refactor', 'test'], trigger: 'debounce', addRunId: false };
+const STORED = { suggestTitle: true, suggestBranch: true, pattern: '{type}/{slug}', types: ['feat', 'fix', 'chore', 'docs', 'refactor', 'test'], trigger: 'debounce', addRunId: false };
 const MODELS = [{ id: 'claude-haiku-5-5', label: 'Haiku 5.5', efforts: ['low', 'high'], engine: 'claude' }];
 
 async function boot({ postStatus = 200, postBody = null } = {}) {
@@ -29,7 +29,7 @@ async function boot({ postStatus = 200, postBody = null } = {}) {
     }
     if (u.endsWith('/api/settings')) return json({ root: '/r', default: '/r', smartNaming: STORED, flags: {} });
     if (u.includes('/api/flags')) { flagCalls.push([method, opts.body ? JSON.parse(opts.body) : null]); return json({ flags: [{ key: 'smartRunNaming', on: false, locked: false }] }); }
-    if (u.includes('/api/naming/config')) return json({ ...STORED, estimatedUsd: 0.00005 });
+    if (u.includes('/api/naming/config')) return json({ ...STORED, picked: { model: 'claude-haiku-5-5', effort: 'low', source: 'auto' }, estimatedUsd: 0.00005 });
     if (u.includes('/api/config')) return json({ config: { steps: {}, customModels: [] }, models: MODELS, efforts: [] });
     if (u.includes('/api/projects')) return json({ projects: [] });
     if (u.includes('/api/workspaces')) return json({ workspaces: [] });
@@ -48,16 +48,28 @@ async function boot({ postStatus = 200, postBody = null } = {}) {
 const $ = (ctx, id) => ctx.doc.getElementById(id);
 const input = (ctx, el, v) => { el.value = v; el.dispatchEvent(new ctx.window.Event('input', { bubbles: true })); };
 
-test('the card follows Keep awake and shows the stored values', async () => {
+test('the card follows Away mode and shows the stored values', async () => {
   const ctx = await boot();
   const card = $(ctx, 'smart-naming-settings-card');
-  assert.equal($(ctx, 'keepawake-settings-card').nextElementSibling, card);
+  assert.equal($(ctx, 'night-settings-card').nextElementSibling, card);
   assert.equal($(ctx, 'smartNamingPattern').value, '{type}/{slug}');
   assert.equal($(ctx, 'smartNamingTitle').checked, true);
   assert.equal($(ctx, 'smartNamingRunId').checked, false);
   assert.equal($(ctx, 'smartNamingTrigger').value, 'debounce');
   assert.deepEqual([...ctx.doc.querySelectorAll('#smartNamingTypes [aria-pressed="true"]')].map((b) => b.textContent), STORED.types);
-  assert.ok([...$(ctx, 'smartNamingModel').options].some((o) => o.value === 'claude-haiku-5-5'));
+});
+
+test('the Model row has no picker: it links to Models › Helper jobs (Expert only) and names the resolved model and cost', async () => {
+  const ctx = await boot();
+  assert.equal($(ctx, 'smartNamingModel'), null, 'the model is a helper job now');
+  const link = ctx.doc.querySelector('#smartNamingModelRow a[href="#models"]');
+  assert.equal(link.textContent, 'Models › Helper jobs › Run naming');
+  assert.ok(link.closest('#smartNamingModelRow [data-min-level="expert"]'), 'the Engines card is Expert-only, so is the link');
+  assert.equal($(ctx, 'smartNamingCost').textContent, 'Shown in Statistics as Naming, never billed to the run.');
+  applyFlags({ smartRunNaming: true }, ctx.doc);
+  await tick(40);
+  assert.match($(ctx, 'smartNamingCost').textContent, /^claude-haiku-5-5 \(cheapest ready\)\. About 300 tokens in, 30 out: ≈ \$0\.00005 per suggestion\. /);
+  applyFlags({ smartRunNaming: false }, ctx.doc);
 });
 
 test('the rows are muted while the flag is off and live when it is on', async () => {
@@ -87,12 +99,10 @@ test('the live preview uses the pattern; an unusable pattern says why', async ()
 test('Save posts the whole block; Use defaults posts null', async () => {
   const ctx = await boot();
   input(ctx, $(ctx, 'smartNamingPattern'), '{type}/x-{slug}');
-  $(ctx, 'smartNamingModel').value = 'claude-haiku-5-5';
-  $(ctx, 'smartNamingModel').dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
   await tick(5);
   $(ctx, 'smartNamingSave').click();
   await tick(40);
-  assert.deepEqual(ctx.posts[0].smartNaming, { ...STORED, pattern: '{type}/x-{slug}', model: { model: 'claude-haiku-5-5', effort: 'low' } });
+  assert.deepEqual(ctx.posts[0].smartNaming, { ...STORED, pattern: '{type}/x-{slug}' });
   $(ctx, 'smartNamingReset').click();
   await tick(40);
   assert.deepEqual(ctx.posts[1], { smartNaming: null });

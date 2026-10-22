@@ -12,7 +12,8 @@ import { planApprovedLine } from '../log-line.mjs';
 import { mountRunGraph } from '../graph/run-hosts.mjs';
 import { fmtDur, fmtUsd, isGraphManifest, manifestNodes } from '../graph/run-decor.mjs';
 import { askKindOf } from '../ask/registry.mjs';
-import { SHIP_LABEL } from '../ship-words.mjs';
+import { CREATE_PR_LABEL } from '../ship-words.mjs';
+import { icon as uiIcon } from '../icons.mjs';
 import { shapeFirstOn } from './shape-gate.mjs';
 import { checklistScore } from '../../../src/shared/shape/review-checklist.mjs';
 import { NO_PROJECT_KEY, NO_PROJECT_NAME } from '../../../src/shared/no-project.mjs';
@@ -294,6 +295,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   let shownFor = null;   // the question whose receipt shows the "Answered" fallback (its answer may still be in flight)
   let curRow = null;          // the group row while this card shows a group (D11)
   let createPrBtn = null;     // the result's "Create pull request" button while paintResult shows it (D4: it is `ship`)
+  let viewPrLink = null;      // the result's View PR link while paintResult shows it (it is `open-pr` while the PR is open)
   let lastM = null;           // the model update() painted last, for the Pause click's repaint
   let fm = null;              // the feature card model of the last paint (null: a plain run, or Shape it first off)
   let roundRef = null;        // D25: set by update(): the live round's run ref, or null
@@ -595,6 +597,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     if (!word) {
       if (!resultSec.hidden || resultSig) { resultSec.hidden = true; resultSec.replaceChildren(); resultSig = ''; }
       createPrBtn = null;
+      viewPrLink = null;
       return;
     }
     const r = s.results || null;
@@ -609,6 +612,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     if (sig === resultSig) return;
     resultSig = sig;
     createPrBtn = null;
+    viewPrLink = null;
     resultSec.replaceChildren();
     const rhead = h('div', 'chat-rc-res-head');
     const glyph = h('span', `chat-rc-res-glyph tone-${word.tone}`);
@@ -712,13 +716,17 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       const rfoot = h('div', 'chat-rc-res-foot');
       rfoot.dataset.minLevel = 'advanced';              // Create PR / View PR: the run page's level (docs/ui-levels.md)
       if (prUrl) {
-        const a = h('a', 'chat-rc-view-pr', 'View pull request');
+        // PR controls (design system): View PR is a secondary small button, led by the PR's state glyph.
+        const a = h('a', 'btn btn-sm chat-rc-view-pr');
+        a.append(uiIcon(doc, word.key === 'merged' ? 'merge' : 'pull-request', 14), 'View PR');
+        viewPrLink = a;
         a.setAttribute('href', prUrl);
         a.target = '_blank';
         a.rel = 'noopener';
         rfoot.appendChild(a);
       } else {
-        const b = button('chat-rc-create-pr', SHIP_LABEL);
+        const b = button('btn btn-sm btn-primary chat-rc-create-pr');
+        b.append(uiIcon(doc, 'pr-create', 14), CREATE_PR_LABEL);
         createPrBtn = b;
         const why = h('span', 'chat-rc-res-err');
         why.hidden = true;
@@ -727,7 +735,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
           if (b.disabled) return;
           b.disabled = true;
           why.hidden = true;
-          // P2 openShipItFor: settles when the Ship it dialog closes ({opened, url?}), or at once with
+          // P2 openShipItFor: settles when the Create PR dialog closes ({opened, url?}), or at once with
           // {opened:false, error} when it cannot open — the reason stays in this card. Either way re-read the PR.
           Promise.resolve(call(controls.openShipIt, ref()))
             .then((res) => { if (!dead && res && res.opened === false && res.error) { why.textContent = String(res.error); why.hidden = false; } })
@@ -780,7 +788,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     if (watchEl.dataset.sig === sig) return;                 // the 1 s tick must not steal a link's focus
     watchEl.dataset.sig = sig;
     const extras = [];
-    if (withPr) extras.push(link('chat-rc-watch-pr', w.prUrl, 'Open PR'));
+    if (withPr) extras.push(link('chat-rc-watch-pr', w.prUrl, 'View PR'));
     if (withAsk) {
       const ask = button('btn btn-sm btn-quiet chat-rc-watch-ask', 'Ask for changes');
       ask.addEventListener('click', askForChanges);
@@ -830,9 +838,12 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     stopBtn.hidden = true;
     // contains(), not isConnected: a card that is not in the document yet still has it. Never on a group card (its
     // ship is the group's, D6), and only at Advanced and above: the button's row (.chat-rc-res-foot) is
-    // data-min-level="advanced", so below that the footer makes its own Ship it.
+    // data-min-level="advanced", so below that the footer makes its own Create PR.
     if (!curRow && createPrBtn && resultSec.contains(createPrBtn) && levelAtLeast('advanced', doc)) own.ship = createPrBtn;
     else if (createPrBtn) delete createPrBtn.dataset.modelAction;
+    // The same for View PR while the model offers it (an open PR): one View PR on the card, not a second in the footer.
+    if (!curRow && viewPrLink && resultSec.contains(viewPrLink) && levelAtLeast('advanced', doc) && ((m && m.actions) || []).includes('open-pr')) own['open-pr'] = viewPrLink;
+    else if (viewPrLink) delete viewPrLink.dataset.modelAction;
     const changesWhy = changesView && !changesSlot.hidden ? ''
       : !shapeFirstOn() ? 'Turn on Shaper to ask for changes' : 'Ask for changes from the chat that started this run';
     // A group row goes along, so app.js hands the action to groupAction (D6, D11).
@@ -845,7 +856,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     if (fc) paintFeatureActions(doc, fActions, fc, featureDeps, { omit: m.actions });
     // Clear the sig too: else the next feature paint's sig matches and returns early, leaving an empty host.
     else { fActions.replaceChildren(); fActions.hidden = true; delete fActions.dataset.sig; }
-    // A footer with nothing visible stays hidden (a Ready run whose Ship it is the result's Create pull request).
+    // A footer with nothing visible stays hidden (a Ready run whose Create PR is the result's own button).
     foot.hidden = ![...footActions.children, ...fActions.children].some((b) => !b.hidden) && footErr.hidden;
   }
 

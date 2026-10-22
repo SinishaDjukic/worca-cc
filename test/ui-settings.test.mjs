@@ -53,7 +53,7 @@ test('Settings sits in the account menu (not the page list), loads root, and sav
   const doc = window.document;
   assert.equal(doc.querySelector('.nav [data-nav="settings"]'), null, 'not a sidebar page any more');
   const rows = [...doc.querySelectorAll('#acct-menu > .msect > button')].map((el) => el.id);
-  assert.deepEqual(rows, ['acct-lvl', 'acct-settings', 'acct-away'], 'Interface mode, Settings, then the away row last');
+  assert.deepEqual(rows, ['acct-lvl', 'acct-settings', 'acct-away', 'acct-keepawake'], 'Interface mode, Settings, then the two switches');
   assert.equal(doc.getElementById('acct-settings').dataset.nav, 'settings');
 
   // (2) navigating to it loads the current root (default shown as placeholder).

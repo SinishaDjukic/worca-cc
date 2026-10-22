@@ -50,7 +50,7 @@ export function renderShipCard(doc, m, handlers = {}) {
     const r = m.result || {};
     const done = h('div', 'ask-shipcard-done', r.mode === 'one' ? 'Shipped as one PR' : 'Shipped as stacked PRs');
     if (r.prUrl) {
-      const a = h('a', 'ask-shipcard-pr', 'View pull request');
+      const a = h('a', 'ask-shipcard-pr', 'View PR');
       a.href = r.prUrl; a.target = '_blank'; a.rel = 'noopener';
       done.append(' · ', a);
     }

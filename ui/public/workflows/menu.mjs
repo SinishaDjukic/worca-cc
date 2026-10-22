@@ -4,13 +4,15 @@
 // press or focus leaving close it. It OWNS every key it receives: the composer's document keydown
 // acts on arrows/Delete/Space whatever the modifiers (memory: app-js-escape-handlers), so plain keys
 // stop at the menu.
+import { icon } from '../icons.mjs';
+
 let current = null;
 
 /**
  * @param {object} o
  * @param {Document} o.doc
  * @param {HTMLElement} o.anchor  the trigger: aria-expanded tracks the menu; Escape and a pick return focus to it
- * @param {Array<{label:string, hint?:string, chip?:Node, checked?:boolean, disabled?:boolean, danger?:boolean, title?:string, onSelect?:Function}
+ * @param {Array<{label:string, icon?:string, danger?:boolean, hint?:string, chip?:Node, checked?:boolean, disabled?:boolean, title?:string, onSelect?:Function}
  *   |{sep:true}|{header:string}>} o.items
  * @param {'start'|'end'} [o.align]  the edge shared with the anchor
  * @param {'bottom'|'top'} [o.side]   open below (default) or above the anchor
@@ -35,6 +37,7 @@ export function openMenu({ doc, anchor, items, align = 'start', side = 'bottom',
     b.setAttribute('role', it.checked == null ? 'menuitem' : 'menuitemradio');
     if (it.checked != null) b.setAttribute('aria-checked', it.checked ? 'true' : 'false');
     b.tabIndex = -1;
+    if (it.icon) b.appendChild(icon(doc, it.icon, 16, 'ic wfv-menu-ic'));   // an icons.mjs glyph before the label
     const l = doc.createElement('span');
     l.className = 'wfv-menu-l';
     l.textContent = it.label;

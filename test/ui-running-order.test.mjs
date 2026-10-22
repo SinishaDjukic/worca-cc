@@ -2,7 +2,7 @@
 // Row/tab ordering is STABLE while pipelines run: log activity must not
 // reshuffle; group-rank transitions (question, finish) still regroup. Each run is listed once (runs
 // redesign §3.1), so the live rows are read in list order across the sections.
-import { test, afterEach, mock } from 'node:test';
+import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -109,17 +109,15 @@ test('log activity never reorders or rebuilds the Runs rows, while a question st
 
 // Resume drops the superseded paused run from the runs map, but a trailing
 // tagged frame for that dead runId re-materializes it through upsertRun. The
-// resurrected run must keep its ORIGINAL creation key — minting a fresh one
-// would make the stale run read as the newest and outrank the run the user
-// just resumed.
-// The list sorts by start time (second resolution), so the resurrected run must also keep its ORIGINAL start time:
-// the Date is moved on across the wall-clock second the way a loaded CI runner does.
-test('a trailing frame for a superseded run does not outrank the resumed run', async () => {
-  mock.timers.enable({ apis: ['Date'], now: new Date(2026, 0, 5, 10, 0, 0, 500) });
-  try { await trailingFrameCase(); } finally { mock.timers.reset(); }
-});
-
-async function trailingFrameCase() {
+// resurrected run must keep its ORIGINAL creation key and start time — minting
+// fresh ones would make the stale run read as the newest and outrank the run
+// the user just resumed. The Runs list orders live rows by start time, to the
+// second (runs-list.mjs byDispatch), so the clock is pinned and moved on a
+// second before the resume and again before the trailing frame: a run stamped
+// "now" when it comes back would sort first every time, not only when a real
+// second boundary happens to fall in between.
+test('a trailing frame for a superseded run does not outrank the resumed run', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: new Date(2026, 9, 21, 12, 0, 0, 500).getTime() });
   const { window, np, recv, selectProject, tick } = await boot();
   selectProject();
   window.location.hash = 'runs';
@@ -128,22 +126,43 @@ async function trailingFrameCase() {
   await tick();
 
   const r1 = np.getRun('r1');
+  const r1StartedAt = r1.startedAt;
   np.onState(r1, { status: 'running', id: 'p1' });   // capture the pipelineId
   np.onState(r1, { status: 'paused' });
+  t.mock.timers.setTime(Date.now() + 1000);
   await np.resumeRunFromCard('r1');
   await tick();
   assert.equal(np.getRun('r1'), undefined, 'resume drops the superseded run');
 
-  mock.timers.tick(3000);
   // Trailing frame for the dead runId → upsertRun re-materializes it.
+  t.mock.timers.setTime(Date.now() + 1000);
   recv({ type: 'log', runId: 'r1', source: 'planner', level: 'info', text: 'late', ts: 9 });
   await tick();
   window.location.hash = 'runs';
   window.dispatchEvent(new window.Event('hashchange'));
   await tick();
 
+  assert.equal(np.getRun('r1').startedAt, r1StartedAt, 'the resurrected run keeps the start time it was created with');
   assert.deepEqual(cardOrder(window), ['r-new', 'r1'], 'resumed run stays above the resurrected stale run');
-}
+});
+
+// The same, for a start time the server sent on a state frame: the resurrected run keeps THAT one.
+test('a resurrected run keeps the start time its last state frame gave it', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: new Date(2026, 9, 21, 12, 0, 0, 500).getTime() });
+  const { np, recv, tick } = await boot();
+  recv({ type: 'phase', runId: 'r1', phase: 'plan', cycle: 0 });
+  await tick();
+  const r1 = np.getRun('r1');
+  np.onState(r1, { status: 'running', id: 'p1', startedAt: '2026-10-21T08:59:00.000Z' });
+  np.onState(r1, { status: 'paused' });
+  t.mock.timers.setTime(Date.now() + 1000);
+  await np.resumeRunFromCard('r1');
+  await tick();
+  t.mock.timers.setTime(Date.now() + 1000);
+  recv({ type: 'log', runId: 'r1', source: 'planner', level: 'info', text: 'late', ts: 9 });
+  await tick();
+  assert.equal(np.getRun('r1').startedAt, '2026-10-21T08:59:00.000Z');
+});
 
 // Resumed ELSEWHERE (the usage-limit auto-resume, another tab, the feature page): this tab never called
 // resumeRunFromCard, so the new runId's state frame is what tells it. The old paused copy must go, or it

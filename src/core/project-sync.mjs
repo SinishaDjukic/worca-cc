@@ -7,7 +7,7 @@ import { syncDefaults, normalizeSyncSettings } from './settings.mjs';
 import { readSyncPrefs } from './config.mjs';
 import { listProjects } from './projects.mjs';
 import { readWorkspace } from './workspaces.mjs';
-import { currentBranch, resolveDefaultBranch } from './worktree.mjs';
+import { currentBranch, unbornBranch, resolveDefaultBranch } from './worktree.mjs';
 import { mapWithCap, fanoutCap } from './fanout.mjs';
 import { gitAvailable, onGitChange } from './git-available.mjs';
 import {
@@ -24,10 +24,15 @@ export function effectiveSyncSettings(projectKey) {
   return normalizeSyncSettings(own || {}, syncDefaults());
 }
 
-/** The branch a project's chip describes: HEAD's branch, else the default branch; null if not a branch. */
+async function chipHead(dir) {
+  const head = await currentBranch(dir);
+  const unborn = head ? null : await unbornBranch(dir);
+  const b = head || unborn || (await resolveDefaultBranch(dir));
+  return { base: isSafeBranchName(b) ? b : null, noCommits: !!unborn };
+}
+/** The branch a project's chip describes: HEAD's branch (an unborn one too), else the default branch; null if not a branch. */
 export async function chipBase(dir) {
-  const b = (await currentBranch(dir)) || (await resolveDefaultBranch(dir));
-  return isSafeBranchName(b) ? b : null;
+  return (await chipHead(dir)).base;
 }
 
 /**
@@ -40,19 +45,21 @@ export async function projectSyncBlock({ dir, projectKey = null, base = null, mo
   // An explicit base that is not syncable (a tag, a SHA, 'plus+branch') describes THAT ref as
   // unknown; it is never swapped for HEAD's branch, which would report another branch's state.
   const explicit = base != null && base !== '';
-  const b = explicit ? (isSafeBranchName(base) ? base : null) : await chipBase(dir);
+  const head = explicit ? null : await chipHead(dir);
+  const b = explicit ? (isSafeBranchName(base) ? base : null) : head.base;
+  const nc = head && head.noCommits ? { noCommits: true } : {};   // an unborn repo (Use git, no commit yet)
   const info = await remoteInfo(dir, settings.remote);
   const pub = { beforeRun: settings.beforeRun, onDiverged: settings.onDiverged };
-  if (!info.ok) return { base: explicit ? base : b, remote: null, state: 'unknown', settings: pub };
-  if (explicit && !b) return { base, remote: info.name, remoteLabel: info.label, state: 'unknown', settings: pub };
-  if (!b) return { base: null, remote: info.name, remoteLabel: info.label, state: 'unknown', settings: pub };
+  if (!info.ok) return { base: explicit ? base : b, remote: null, state: 'unknown', settings: pub, ...nc };
+  if (explicit && !b) return { base, remote: info.name, remoteLabel: info.label, state: 'unknown', settings: pub, ...nc };
+  if (!b) return { base: null, remote: info.name, remoteLabel: info.label, state: 'unknown', settings: pub, ...nc };
   const r = await syncRepo(dir, { base: b, remote: info.name, mode, maxAgeMs, timeoutMs });
   const block = {
     base: b, remote: info.name, remoteLabel: info.label, state: r.state || 'unknown',
     ahead: r.ahead || 0, behind: r.behind || 0, dirty: !!r.dirty, dirtyCount: r.dirtyCount || 0,
     checkedOutHere: !!r.checkedOutHere, shallow: !!r.shallow, headSha: r.headSha || null, remoteSha: r.remoteSha || null,
     fetchedAt: r.fetch?.fetchedAt || r.fetchedAt || null, stale: !!r.stale, settings: pub,
-    ...(r.fetchError ? { fetchError: r.fetchError } : {}), ...(r.ff ? { ff: r.ff } : {}),
+    ...(r.fetchError ? { fetchError: r.fetchError } : {}), ...(r.ff ? { ff: r.ff } : {}), ...nc,
   };
   if (details) {
     const [local, remoteTip, incoming] = await Promise.all([

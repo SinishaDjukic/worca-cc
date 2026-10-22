@@ -122,7 +122,7 @@
           </div>
           <!-- The account corner (account-menu.mjs): who is looking (GET /api/whoami), the spend ring
                (paintBudget) and the away dot. It opens #acct-menu: spend, interface mode, Settings,
-               away mode and appearance. -->
+               the Away and Keep awake switches and appearance. -->
           <button type="button" class="acct" id="side-acct" data-min-level="simple" aria-haspopup="menu" aria-expanded="false" aria-controls="acct-menu"
                   aria-label="Profile: spend, away mode, interface mode and settings" title="Profile: spend, away mode, interface mode and settings">
             <span class="acct-ring-wrap">
@@ -155,11 +155,23 @@
               <span class="mi-lbl">Settings</span>
             </button>
           </div>
-          <div class="msect" role="group">
-            <button type="button" class="mi menu-item away-item" id="acct-away" role="menuitem" data-state="here" data-min-level="simple">
+          <!-- The switches (Away, Keep awake): each whole row is the control, a menuitemcheckbox whose
+               aria-checked says on or off; the .switch at its right edge only shows it (aria-hidden).
+               Away: app.js#paintAwayMenuRow (on = away). Keep awake: the keepAwake flag, bound by
+               flags-view.mjs#bindFlagSwitch, one source with Settings › Labs. A toggle leaves the menu open. -->
+          <div class="msect sw-sect" role="group" aria-label="Switches">
+            <button type="button" class="mi menu-item away-item sw-item" id="acct-away" role="menuitemcheckbox" aria-checked="false" data-state="here" data-min-level="simple"
+                    title="worca answers waiting run questions for you while you're away." aria-description="worca answers waiting run questions for you while you're away.">
               <svg class="mi-ic" viewBox="0 0 24 24" aria-hidden="true"></svg>
-              <span class="mi-lbl">Step away</span>
+              <span class="mi-lbl">Away</span>
               <span class="mi-hint"></span>
+              <span class="switch" aria-hidden="true"></span>
+            </button>
+            <button type="button" class="mi menu-item sw-item" id="acct-keepawake" role="menuitemcheckbox" aria-checked="false" data-min-level="simple"
+                    title="Keeps the computer awake while runs are working. The display may still turn off." aria-description="Keeps the computer awake while runs are working. The display may still turn off.">
+              <svg class="mi-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 9h11v5a5 5 0 0 1-5 5h-1a5 5 0 0 1-5-5z"></path><path d="M16 10.5h1.5a2.5 2.5 0 0 1 0 5H16"></path><path d="M9 3.5v2.5M12.5 3.5v2.5"></path></svg>
+              <span class="mi-lbl">Keep awake</span>
+              <span class="switch" aria-hidden="true"></span>
             </button>
           </div>
           <!-- Appearance, one row: its visible label (it names the group) and three icon segments, the
@@ -813,7 +825,7 @@
                   <button type="button" class="term-opener btn" aria-label="Open the terminal" aria-expanded="false" title="Terminal (Ctrl+`)">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2.5"></rect><path d="M7.5 9.5l3 2.5-3 2.5"></path><path d="M13 15h3.5"></path></svg>
                   </button>
-                  <!-- D31, run 3 D13: every run's Away mode, Run after and terminal in one menu (paintRdHeader). -->
+                  <!-- D31, run 3 D13: every run's Away mode and terminal in one menu (paintRdHeader); a shaped run's Run after too. -->
                   <button type="button" class="btn btn-quiet btn-icon rd-bar-more" aria-haspopup="menu" aria-expanded="false" title="More for this run" aria-label="More for this run" hidden>
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg>
                   </button>
@@ -832,7 +844,8 @@
                   </header>
                 </div>
                 <div class="rd-sheet">
-                  <!-- The card's head: the status line top left, the Live view switch top right. -->
+                  <!-- The card's head: the status line top left; top right the Live view switch while the run is live,
+                       the pull request button once it ended. -->
                   <div class="rd-sheet-head">
                     <!-- The shared status block (run-status-card.mjs, slice 4 D19): dot or symbol, status line, the run's
                          bar. It keeps the rd-now-top class: the click-to-question handler and the guide tour find it. -->
@@ -843,6 +856,9 @@
                       <span class="txt">Live view</span>
                       <div class="switch rd-live-switch" role="switch" tabindex="0" aria-checked="false" aria-label="Live view"></div>
                     </div>
+                    <!-- The pull request button beside the status (Create PR, View PR, Push): one node for the screen's
+                         life, outside the result (rebuilt), so its loading placeholder can morph (paintPrCta). -->
+                    <div class="rd-pr-slot" data-needs-git hidden></div>
                   </div>
                   <!-- Run 3 (D8): the facts block, one row per fact and one place to edit it. The Project row's value is the
                        old meta line (paintPageHead owns its first text node); the branch chip copies the name (paintPageBranch). -->
@@ -853,10 +869,8 @@
                     <div class="rd-kv-row" data-fact="labels" hidden><dt class="rd-kv-k">Labels</dt><dd class="rd-kv-v"></dd></div>
                     <div class="rd-kv-row" data-fact="tags" hidden><dt class="rd-kv-k">Cost tags</dt><dd class="rd-kv-v"></dd></div>
                   </dl>
-                  <!-- The PR bar (run 3 D11): the run's own PR, its checks and Watch; or the Create pull request button. One node
-                       for the screen's life, outside the result (rebuilt), so its loading placeholder can morph (paintPrCta). -->
+                  <!-- The PR bar (run 3 D11): the run's own PR, its checks and Watch. Its button is in the head (.rd-pr-slot). -->
                   <div class="rd-pr-box" data-needs-git>
-                    <div class="rd-pr-slot" hidden></div>
                     <!-- The open PR's chip, checks, conflicts and Watch PR (paintRdPrStatus). -->
                     <div class="rd-pr-status" hidden></div>
                   </div>
@@ -989,7 +1003,7 @@
                   <button type="button" class="term-opener btn" aria-label="Open the terminal" aria-expanded="false" title="Terminal (Ctrl+`)">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2.5"></rect><path d="M7.5 9.5l3 2.5-3 2.5"></path><path d="M13 15h3.5"></path></svg>
                   </button>
-                  <!-- Run 3 (D13): Save as preset, Run after and the terminal in one menu (openHistDetail binds it). -->
+                  <!-- Run 3 (D13): Save as preset and the terminal in one menu (openHistDetail binds it). -->
                   <button type="button" class="btn btn-quiet btn-icon hd-bar-more" aria-haspopup="menu" aria-expanded="false" title="More for this run" aria-label="More for this run">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg>
                   </button>
@@ -1007,6 +1021,8 @@
                 <div class="rd-sheet">
                   <div class="rd-sheet-head">
                     <div class="rd-now-top run-status"></div>
+                    <!-- The pull request button beside the status: one node for the screen's life (paintPrCta). -->
+                    <div class="rd-pr-slot" data-needs-git hidden></div>
                   </div>
                   <!-- Run 3 (D8): the facts block, one row per fact and one place to edit it. The Project row's value is the
                        old meta line (paintPageHead owns its first text node); the branch chip copies the name (paintPageBranch). -->
@@ -1017,10 +1033,8 @@
                     <div class="rd-kv-row" data-fact="labels" hidden><dt class="rd-kv-k">Labels</dt><dd class="rd-kv-v"></dd></div>
                     <div class="rd-kv-row" data-fact="tags" hidden><dt class="rd-kv-k">Cost tags</dt><dd class="rd-kv-v"></dd></div>
                   </dl>
-                  <!-- The PR bar (run 3 D11): the run's own PR, its checks and Watch; or the Create pull request button. One node
-                       for the screen's life, outside the result (rebuilt), so its loading placeholder can morph (paintPrCta). -->
+                  <!-- The PR bar (run 3 D11): the run's own PR, its checks and Watch. Its button is in the head (.rd-pr-slot). -->
                   <div class="rd-pr-box" data-needs-git>
-                    <div class="rd-pr-slot" hidden></div>
                     <!-- The open PR's chip, checks, conflicts and Watch PR (paintRdPrStatus). -->
                     <div class="rd-pr-status" hidden></div>
                   </div>
@@ -1048,11 +1062,11 @@
                   <h1 class="hd-title"></h1>
                   <span class="auto-badge" hidden></span>
                   <span class="hist-merge" hidden data-min-level="expert" data-needs-git></span>
-                  <button type="button" class="btn btn-primary hd-pr" hidden data-min-level="advanced" data-needs-git>Ship it</button>
+                  <button type="button" class="btn btn-primary hd-pr" hidden data-min-level="advanced" data-needs-git>Create PR</button>
                   <!-- Publish branch (#618): push a finished run's branch without a PR. Painted by paintHdPublish. -->
                   <button type="button" class="hd-publish btn" hidden data-min-level="advanced" data-needs-git>Publish branch</button>
                   <span class="act-pill-slot"></span>
-                  <a class="hd-pr-link" hidden data-min-level="advanced" data-needs-git target="_blank" rel="noopener"></a>
+                  <a class="btn hd-pr-link" hidden data-min-level="advanced" data-needs-git target="_blank" rel="noopener"></a>
                   <button type="button" class="btn btn-primary hd-push" hidden data-min-level="advanced" data-needs-git></button>
                 </div>
                 <!-- "Published to <remote>/<branch>" (#618): its own line, so a long branch never squeezes the title. -->
@@ -1061,7 +1075,7 @@
                 <div class="hd-base-check" data-needs-git hidden>
                   <ul class="hd-base-members"></ul>
                 </div>
-                <!-- Workspace runs: one line per member repo (View PR / Merged / No changes).
+                <!-- Workspace runs: one line per member repo (View PR, open or merged / No changes).
                      Painted by paintHdPr; never shown for a single-project run. -->
                 <ul class="hd-pr-repos" hidden data-min-level="advanced" data-needs-git aria-label="Pull requests per repository"></ul>
                 <!-- Status pip leads the META line, not row 1: it reads as the icon
@@ -1441,6 +1455,12 @@
                   <button type="button" class="pd-history btn">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
                     Show in Runs
+                  </button>
+                  <!-- Use git (a Folder project) / Link remote (a Git project without origin): paintProjGitButton
+                       shows it and sets the word; POST /api/projects/:key/git-init. -->
+                  <button type="button" class="pd-git btn" data-needs-git hidden>
+                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.2"></circle><circle cx="6" cy="18" r="2.2"></circle><circle cx="18" cy="9" r="2.2"></circle><path d="M6 8.2v7.6M18 11.2c0 3-3 3.8-9.8 5.6"></path></svg>
+                    <span class="pd-git-label">Use git</span>
                   </button>
                   <span class="pd-spacer"></span>
                   <!-- The label lives in its own span so a busy state can swap the word and keep the icon. -->
@@ -2017,21 +2037,6 @@
               </div>
             </section>
 
-            <!-- Keep awake (UI/UX review F): the keepAwake beta flag, the same value as its Settings › Labs row. -->
-            <section class="card settings-card" id="keepawake-settings-card" data-min-level="simple">
-              <div class="card-head">
-                <div class="label-row"><h2>Keep awake</h2></div>
-              </div>
-              <div class="drows">
-                <div class="drow switch-drow" id="keepAwakeRow">
-                  <span class="drow-label" id="keepAwakeTxt" data-flag-chip="keepAwake">Keep the computer awake while runs are working</span>
-                  <small class="hint drow-help">The display may still turn off. No effect on a container or hosted worca.</small>
-                  <div class="drow-control"><div class="switch on" role="switch" tabindex="0" id="keepAwakeSwitch" aria-checked="true" aria-labelledby="keepAwakeTxt"></div></div>
-                </div>
-              </div>
-              <p class="form-msg" id="keepAwakeMsg" role="status"></p>
-            </section>
-
             <!-- Smart run naming (Labs): the smartRunNaming flag, the same value as its Settings › Labs row. -->
             <section class="card settings-card" id="smart-naming-settings-card" data-min-level="simple">
               <div class="card-head">
@@ -2052,9 +2057,8 @@
                   <span class="drow-control"><input id="smartNamingBranch" data-setting="smartNaming.suggestBranch" class="sw-input" type="checkbox" role="switch" checked><span class="switch"></span></span>
                 </label>
                 <div class="field drow" id="smartNamingModelRow">
-                  <label class="drow-label" for="smartNamingModel">Model</label>
-                  <div class="drow-control select-wrap"><select id="smartNamingModel" class="select" data-setting="smartNaming.model"></select></div>
-                  <small class="hint drow-help" id="smartNamingModelHint"></small>
+                  <span class="drow-label">Model</span>
+                  <small class="hint drow-help" id="smartNamingModelHint"><span data-min-level="expert"><a href="#models">Models › Helper jobs › Run naming</a>. </span><span id="smartNamingCost"></span></small>
                 </div>
                 <div class="field drow" id="smartNamingPatternRow">
                   <label class="drow-label" for="smartNamingPattern">Branch pattern</label>
@@ -2459,32 +2463,11 @@
         </section>
         <!-- /view settings -->
 
-        <!-- ===== VIEW: MARKETPLACE (sidebar › Add-ons; the Plugins view, then a Settings tab, before that) ===== -->
+        <!-- ===== VIEW: MARKETPLACE (sidebar › Add-ons): Browse · Installed · Marketplaces, painted by ui/public/marketplace/
+             (marketplace CONTRACT §5). The tabs are its header: no page intro (docs/design-system.md › Marketplace exceptions). ===== -->
         <section class="view hidden" data-view="marketplace">
-            <div class="topbar">
-              <div>
-                <div class="sub page-intro">Plugins from your marketplaces: task sources, agents, skills and workflow packs.</div>
-              </div>
-              <button type="button" id="plugin-add-btn" class="btn btn-primary" data-min-level="expert">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
-                Add marketplace
-              </button>
-            </div>
             <p id="plugins-msg" class="form-msg" aria-live="polite"></p>
-            <div class="card hidden" id="marketplace-add-row" data-min-level="expert" style="padding:16px 20px;margin-bottom:14px">
-              <div class="path-row">
-                <input id="marketplace-url" class="input" type="text" placeholder="https://github.com/owner/repo · owner/repo · /abs/path/to/repo · /path/to/a/plugin-folder" spellcheck="false" />
-                <button type="button" id="marketplace-add" class="btn btn-primary btn-sm">Add</button>
-              </div>
-            </div>
-            <!-- Team policy (design board 10): what a policy home expects on this machine. -->
-            <div id="plugins-policy"></div>
-            <h3 class="section-title pl-sec-title">Installed</h3>
-            <div class="run-list" id="plugins-list"></div>
-            <h3 class="section-title pl-sec-title">Available</h3>
-            <div class="run-list" id="plugins-available"></div>
-            <h3 class="section-title pl-sec-title" data-min-level="expert">Marketplaces</h3>
-            <div class="run-list" id="marketplaces-list" data-min-level="expert"></div>
+            <div id="mk-root"></div>
         </section>
         <!-- /view marketplace -->
 
@@ -2788,7 +2771,7 @@
           <span class="hint">The pull request targets the branch the marketplace tracks, else its default branch. Without push access it comes from your fork.</span>
           <!-- Only when no marketplace can take a pull request: the registered ones that were left out, with why. -->
           <span id="export-marketplace-skipped" class="hint hidden"></span>
-          <!-- Draft is opt-in per export (unchecked on every open), like Ship it? (#597). -->
+          <!-- Draft is opt-in per export (unchecked on every open), like Create PR (#597). -->
           <label class="switch-row" for="export-draft"><input id="export-draft" class="sw-input" type="checkbox" role="switch" /><span class="switch" aria-hidden="true"></span><span class="switch-label">Open as draft</span></label>
         </div>
         <div id="export-folder-field" class="export-field hidden">
@@ -2847,12 +2830,12 @@
       </div>
     </div>
 
-    <!-- ===== "Ship it?" PR confirm modal (History detail) ===== -->
+    <!-- ===== "Create pull request" confirm modal (History detail) ===== -->
     <!-- No z-index of its own: #confirm-modal.viewer-modal{z-index:60} (style.css:781)
          exists because #confirm-modal precedes #plugin-modal in the DOM, and this
          dialog never coexists with another overlay — the Escape guard and the
          double-open guard keep them mutually exclusive. -->
-    <div id="shipit-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-label="Open a pull request">
+    <div id="shipit-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-label="Create pull request">
       <div class="card shipit-card">
         <div class="shipit-ico-wrap">
           <div class="shipit-spark"></div>
@@ -2860,7 +2843,7 @@
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6.5" cy="6" r="2.4"></circle><circle cx="6.5" cy="18" r="2.4"></circle><circle cx="17.5" cy="12" r="2.4"></circle><path d="M6.5 8.4v7.2M8.9 17c4.1 0 6-1.8 6.2-3.6M8.9 7c4.1 0 6 1.8 6.2 3.6"></path></svg>
           </div>
         </div>
-        <h2>Ship it?</h2>
+        <h2>Create pull request</h2>
         <p class="shipit-sub"></p>
         <div class="shipit-summary mono">
           <span class="shipit-files"></span>
@@ -3111,6 +3094,26 @@
         <div class="confirm-actions">
           <button type="button" id="proj-add-cancel" class="btn">Cancel</button>
           <button type="button" id="proj-add-save" class="btn btn-primary">Add project</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== Use git / Link remote modal (POST /api/projects/:key/git-init) ===== -->
+    <div id="project-git-modal" class="viewer-modal confirm-modal hidden" role="dialog" aria-modal="true" aria-labelledby="proj-git-title" aria-describedby="proj-git-lead">
+      <div class="card">
+        <div class="card-head">
+          <h2 id="proj-git-title">Use git for this project</h2>
+        </div>
+        <p class="confirm-message" id="proj-git-lead"></p>
+        <div class="field">
+          <!-- type=text: type=url would mark the scp form git@host:owner/repo.git invalid. -->
+          <label for="proj-git-url">Remote URL <span class="opt" id="proj-git-url-opt">(optional)</span></label>
+          <input id="proj-git-url" class="input" type="text" spellcheck="false" autocomplete="off" placeholder="https://github.com/owner/repo or git@github.com:owner/repo.git" />
+        </div>
+        <small class="hint" id="proj-git-msg" aria-live="polite"></small>
+        <div class="confirm-actions">
+          <button type="button" id="proj-git-cancel" class="btn">Cancel</button>
+          <button type="button" id="proj-git-save" class="btn btn-primary">Use git</button>
         </div>
       </div>
     </div>

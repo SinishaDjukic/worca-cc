@@ -460,6 +460,7 @@ export function createChannelHost({ logger, onInbound, onStatus, _spawn = spawn,
         dropped: w.dropped,
         restarts: w.consecutiveFailures,
         deliveries: w.deliveries.slice(),
+        missingConfig: [...(w.entry.missingConfig || [])],
       }));
     },
 

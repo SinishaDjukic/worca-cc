@@ -131,10 +131,15 @@ test('[hidden] beats the author display rule on every element app.js hides by at
       }
       assert.deepEqual(shown, []);
     } },
-    { name: 'ui-running-detail: the run page is one column at every width (run 3, D16)', run: () => {
-      assert.equal(css.includes('@container rd ('), false, 'no container query lays the run page out');
-      assert.deepEqual(displays('.rd-glance').filter(({ s }) => subject(s).includes('.rd-glance[data-live="on"]')).map(({ s }) => s), []);
-      assert.doesNotMatch(css, /\.rd-glance[^{]*\{[^}]*grid-template-columns/);
+    { name: 'ui-running-detail: the Live view sits beside the card when the pane has room, under it otherwise; the two-column layout never outranks [hidden]', run: () => {
+      const live = displays('.rd-glance').filter(({ s }) => subject(s).includes('.rd-glance[data-live="on"]'));
+      assert.ok(live.length, 'the wide layout sets display somewhere');
+      assert.deepEqual(live.filter(({ s }) => !subject(s).includes(':not([hidden])')).map(({ s }) => s), []);
+      assert.deepEqual(live.filter(({ r }) => !(r.parentRule?.conditionText === 'rd (min-width: 960px)')).map(({ s }) => s), [],
+        'only a wide pane (the rd container) lays the glance out in two columns');
+      const graph = flat.find((r) => r.parentRule?.conditionText === 'rd (min-width: 960px)'
+        && sels(r).some((s) => /^\.rd-glance\[data-live="on"\]\S*\s*>\s*\.rd-live$/.test(s)));
+      assert.equal(graph?.style.getPropertyValue('grid-column'), '2', 'the graph takes the column beside the card');
     } },
   ]);
 });

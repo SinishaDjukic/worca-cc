@@ -4,8 +4,8 @@ Plan a task with Worca before it builds, in Chat, and cut a large one into slice
 Nothing here changes a run that does not ask for it: a run without `shape` in its
 request behaves exactly as before.
 
-> **Labs.** Shaper is behind a switch until the feature flag ships.
-> See [Turning it on](#turning-it-on).
+> **Beta.** Shaper is on by default. You can turn it off in Settings › Labs.
+> See [Turning it off](#turning-it-off).
 
 ## What it is
 
@@ -18,11 +18,12 @@ The plan is checked by rules, not by a model: the shape check reads the plan tex
 and tells you what is missing. The approved plan is what the build follows, and the
 review later checks the code against the checklists the plan ended with.
 
-## Turning it on
+## Turning it off
 
-Shaper is an experimental feature, off by default. Turn on **Shaper** in
+Shaper is in beta and on by default. To turn it off, switch off **Shaper** in
 Settings › Labs (the `shapeFirst` feature flag, see [Feature flags](feature-flags.md)),
-or start Worca with `WORCA_FLAGS=shapeFirst`. It takes effect at once, without a restart.
+run `worca flags off shapeFirst`, or start Worca with `WORCA_FLAGS=-shapeFirst`. It takes
+effect at once, without a restart, and the choice is kept until you turn it back on.
 While it is off, everything below is hidden or refused: the **Plan it
 with me** tile, the nudge on a run card, the **Plans** tab, the `shape` field on
 `POST /api/run` (it answers "shape is not available on this server") and every
@@ -224,7 +225,7 @@ when the card will come. Either way, one entry for the feature goes into the
 project's `CHANGELOG.md` under `## Unreleased`, committed on the last slice's
 branch, so it ships with the feature.
 
-**Release.** The Ship card and a single run's **Ship it** dialog carry an optional
+**Release.** The Ship card and a single run's **Create PR** dialog carry an optional
 release row. **+ Add a release** suggests the next version: the last tag plus a
 minor (`v1.11.0` → `v1.12.0`), else the version in `package.json`, else you type
 one. Worca records the choice and, once the ship pull request merges (the one PR, or
@@ -297,7 +298,7 @@ reads `Running · Round 2 · fix failing checks` (the trigger words: `fix failin
 `address changes requested`, `resolve conflicts`, `merge dev in`). Its log line ends with the outcome:
 `Round 2 · fix failing checks · pushed a1b2c3d`, or `· nothing pushed: conflict markers left`. With Shaper on, no
 card is posted per fix run. When the watch gives up, the run card says so under its log
-(`Watch stopped · 3 fix runs, checks still failing`) with **Open PR** and **Ask for changes**. On the pull-request
+(`Watch stopped · 3 fix runs, checks still failing`) with **View PR** and **Ask for changes**. On the pull-request
 card the watch is only the PR link's tooltip (`PR #781 · watched`). With Shaper off, each fix run still gets its own
 `PR fix run` card.
 
