@@ -40,6 +40,9 @@
 
 ### Task 1: Schema v59, the briefs store, brief spend
 
+> Renumbered on the merge with `dev` 1.12.0: the brief migration is **v73** and its test `test/db-migrate-v73.test.mjs`;
+> the pinned ledger columns live in `test/db-migrate-v71.test.mjs` (see the A7 design §3). The steps below are the original record.
+
 **Files:**
 - Modify: `src/core/db.mjs` (`SCHEMA_VERSION` 58 → 59; `REQUIREMENTS_BRIEFS_DDL` after `REQUIREMENTS_STARTS_DDL` ~line 1112; `INCREMENTAL_TABLES` entry `req_briefs`; `INCREMENTAL_COLUMNS` entry `req_cost_ledger: { brief_id: 'INTEGER' }`; rung `if (current < 59) { db.exec(REQUIREMENTS_BRIEFS_DDL); repairSchemaGaps(db, schemaGaps(db)); }` after the v58 rung ~line 2229)
 - Modify: `src/core/requirements/store.mjs`

@@ -50,9 +50,13 @@ is kept. The brief records the commit and branch it was made from and says when 
 
 ## 3. Data
 
-Migration v59 (A2 took v58; A1.1 adds no schema; renumber on merge with Shaper as A1 §3 says). The table
-is `IF NOT EXISTS` and in `INCREMENTAL_TABLES`; the ledger column is in `INCREMENTAL_COLUMNS`, and the v59
-rung runs `repairSchemaGaps` after its DDL so a fresh database gets the column in the same migration.
+Migration **v73** (A1.1 adds no schema). It was v59 on this branch; on the merge with `dev` 1.12.0 (at v70,
+where 57-58 are Shaper's and 59 is run tags) A1 became v71, A2 v72 and this v73. The table is `IF NOT EXISTS`
+and in `INCREMENTAL_TABLES`; the ledger column is in `INCREMENTAL_COLUMNS`, and the v73 rung runs
+`repairSchemaGaps` after its DDL so a database coming from below v71 (whose ledger is created at v71, after the
+ladder's hoisted repair) gets the column in the same migration. A database stamped 59 by the old local
+numbering, one at 72 and one at upstream's 70 all reach 73 with every table, column and index
+(`test/db-migrate-v73.test.mjs`).
 
 ```sql
 CREATE TABLE IF NOT EXISTS req_briefs (
@@ -273,15 +277,16 @@ and the feature page of a feature in that scope repaint; the New feature form do
 - `src/core/git-info.mjs`: `commitFilesSince`.
 - `src/core/cost-budget.mjs`: `briefId` in `recordRequirementsCostDelta`. `src/core/stats.mjs`: the
   distinct-feature count ignores 0.
-- `src/core/db.mjs`: `req_briefs`, `req_cost_ledger.brief_id`, v59.
+- `src/core/db.mjs`: `req_briefs`, `req_cost_ledger.brief_id`, v73 (was v59 before the merge with `dev`).
 - `ui/server.mjs`: `recoverBriefs()` at boot next to `recoverRequirements()`.
 - `ui/public/requirements-view.mjs`, `ui/public/style.css`, `ui/public/app.js` (pass `msg.brief`).
 - `tools/verify-requirements-cdp.mjs`; `docs/requirements.md` (a **Product brief** section).
 
 ## 8. Testing
 
-- **Store / migration:** `test/db-migrate-v59.test.mjs` (table on a fresh db and on one stamped 58, the
-  ledger column on both); `test/db-migrate-v57.test.mjs`'s pinned ledger columns gain `brief_id`; one row per
+- **Store / migration:** `test/db-migrate-v73.test.mjs` (table on a fresh db and on one stamped 72, the
+  ledger column on both, plus 59-by-the-old-numbering and upstream 70); `test/db-migrate-v71.test.mjs`'s pinned
+  ledger columns gain `brief_id`; one row per
   scope; JSON round trips; `briefUsers` (current brief id only); `recentBriefCosts`; Statistics' feature count
   ignores brief spend; budget totals include it.
 - **brief.mjs:** normalisation (caps; POSIX, Windows and real-path absolute paths made relative; outside
