@@ -65,7 +65,7 @@ test('the seeded builtin marketplace (GitHub, branch dev) refreshes, installs an
   const next = gh.commit('acme/worca', { branch: 'dev', message: 'alpha v2', files: { 'plugins/alpha/index.mjs': `${INDEX}// v2\n` } });
   r = await post('/api/plugins/alpha-plugin/update', {});
   assert.deepEqual((await r.json()).preview.commits.map((c) => c.subject), ['alpha v2']);
-  r = await post('/api/plugins/alpha-plugin/update', { confirm: true });
+  r = await post('/api/plugins/alpha-plugin/update', { confirm: true, sha: next });
   assert.equal(r.status, 200);
   assert.equal(readPluginsLock()['alpha-plugin'].pinnedSha, next);
   r = await fetch(`${base}/api/plugins/alpha-plugin`, { method: 'DELETE' });

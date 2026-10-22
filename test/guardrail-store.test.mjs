@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import {
   BUILTIN_GUARDRAIL_SET_IDS, isBuiltinGuardrailSetId, listBuiltinGuardrailSets,
   readGuardrailSet, listGuardrailSets, writeGuardrailSet, deleteGuardrailSet,
-  guardrailSetReferences, ReferencedError,
+  guardrailSetReferences, ReferencedError, defaultGuardrailSetId,
 } from '../src/core/guardrail-store.mjs';
 import { GUARDRAIL_PRESETS, sanitizeGuardrails } from '../src/core/guardrails.mjs';
 import { getDb, _resetForTests } from '../src/core/db.mjs';
@@ -54,6 +54,14 @@ test('built-ins are virtual: readGuardrailSet resolves Permissive/Normal/Strict 
   assert.equal(getDb().prepare('SELECT 1 FROM guardrail_sets WHERE id = ?').get('secure'), undefined);
   assert.deepEqual(listBuiltinGuardrailSets().map((s) => [s.id, s.name, s.origin]),
     [['permissive', 'Permissive', 'builtin'], ['normal', 'Normal', 'builtin'], ['secure', 'Strict', 'builtin']]);
+});
+
+test('defaultGuardrailSetId (G13): Normal on a fresh install, the recorded default on an upgraded one', () => {
+  assert.equal(defaultGuardrailSetId(), 'normal', 'a fresh store has no recorded default');
+  getDb().prepare('INSERT INTO store_meta (key, kind, data) VALUES (?, ?, ?)').run('guardrails:default', 'setting', '"permissive"');
+  assert.equal(defaultGuardrailSetId(), 'permissive', 'an install upgraded from before v71 keeps Permissive');
+  getDb().prepare('UPDATE store_meta SET data = ? WHERE key = ?').run('42', 'guardrails:default');
+  assert.equal(defaultGuardrailSetId(), 'normal', 'a malformed row falls back to Normal');
 });
 
 test('writeGuardrailSet mints gr_<slug>, sanitizes settings, roundtrips through readGuardrailSet', async () => {

@@ -110,8 +110,8 @@ if nobody answers it says **The pairing request expired**, and if you click Canc
 
 **Under agent isolation** (`WORCA_AGENT_USER` set), approve through Worca's published address, not
 from a loopback browser on the same machine. On loopback, a person and an agent running as the
-same user look the same to Worca, so the approval is refused with `extension-agent-blocked`, exactly
-as Terminal is.
+same user look the same to Worca, so it refuses the whole API there (`AGENT_CALLER_BLOCKED`, see
+[docker.md](docker.md)), the approval included.
 
 ## What goes with a message
 
@@ -290,7 +290,7 @@ Firefox's manifest declares that the extension collects no data.
   [Pinpoint on web pages](#pinpoint-on-web-pages)).
 - **"Worca could not capture this page".** The extension lost its access to the tab (usually after a
   navigation). Click the toolbar button or press **Alt+Shift+S** and capture again.
-- **The approval is refused with `extension-agent-blocked`.** Agent isolation is on: approve
+- **The approval is refused with `AGENT_CALLER_BLOCKED`.** Agent isolation is on: approve
   through Worca's published address (see [Pairing](#pairing)).
 
 ## Safari

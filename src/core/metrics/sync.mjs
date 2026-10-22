@@ -11,6 +11,7 @@ import { projectKey, canonicalProjectRoot } from '../store.mjs';
 import { listRemotes, parseRemoteUrl } from '../git-info.mjs';
 import { gitEnvFor, githubOnlyEnv, hostLookupNeeded, stripHostCredentials } from '../host-credentials.mjs';
 import { gitAvailable, gitMissingResult, GIT_MISSING, onGitChange } from '../git-available.mjs';
+import { guardedGitEnv, guardedWorktreeAdd } from '../git-guard.mjs';
 import { teamOverHttps, projectSlugHttps } from '../git-free/team-repo.mjs';
 import { repoOfSlug, lsRemoteHttps, readBranchFile, createOrphanBranch, commitFiles, syncSnapshot, TEAM_FLUSH_BATCH } from '../git-free/team-branch.mjs';
 
@@ -105,6 +106,15 @@ function hookFreeArgs() {
   return ['-c', `core.hooksPath=${dir}`, '-c', 'commit.gpgsign=false', '-c', 'push.gpgSign=false'];
 }
 
+/** `base` without STRIP_ENV, non-interactive and untranslated. */
+function gitBaseEnv(base) {
+  const out = { ...base };
+  for (const k of STRIP_ENV) delete out[k];
+  // No GIT_SSH_COMMAND override: it would silently beat the user's core.sshCommand (agents, keys).
+  // A passphrase prompt is bounded by the per-command timeout instead.
+  return { ...out, LC_ALL: 'C', GIT_TERMINAL_PROMPT: '0', GIT_PAGER: 'cat', GIT_ASKPASS: '', SSH_ASKPASS: '' };
+}
+
 async function defaultGit(cwd, args, { timeoutMs = 60_000, env = null } = {}) {
   // The write credential (it reads too): metrics and policy branches are fetched and pushed.
   // In App mode a fresh token per call; a failed mint degrades to no credential (git then
@@ -119,17 +129,15 @@ async function defaultGit(cwd, args, { timeoutMs = 60_000, env = null } = {}) {
   } else {
     base = stripHostCredentials(process.env);
   }
-  for (const k of STRIP_ENV) delete base[k];
+  // The metrics worktree shares the project's .git: no planted hook or config command runs (git-guard.mjs, G2).
+  let guarded;
+  try { guarded = await guardedGitEnv(cwd, { env: { ...gitBaseEnv(base), ...(env || {}) } }); }
+  catch (err) { return { ok: false, code: -1, stdout: '', stderr: err.message }; }
   return new Promise((done) => {
     execFile('git', [...hookFreeArgs(), ...args], {
       cwd, timeout: timeoutMs, killSignal: 'SIGKILL', maxBuffer: 32 * 1024 * 1024,
       // Non-interactive and untranslated (isNonFastForward/pushHint parse stderr); same hardening as worktree.mjs ASK_GIT_ENV.
-      env: {
-        // No GIT_SSH_COMMAND override: it would silently beat the user's core.sshCommand (agents, keys).
-        // A passphrase prompt is bounded by the per-command timeout instead.
-        ...base, LC_ALL: 'C', GIT_TERMINAL_PROMPT: '0', GIT_PAGER: 'cat', GIT_ASKPASS: '', SSH_ASKPASS: '',
-        ...(env || {}),
-      },
+      env: guarded,
     }, (err, stdout, stderr) => done({
       ok: !err,
       code: err ? (typeof err.code === 'number' ? err.code : -1) : 0,
@@ -138,6 +146,7 @@ async function defaultGit(cwd, args, { timeoutMs = 60_000, env = null } = {}) {
     }));
   });
 }
+let _worktreeAddImpl = guardedWorktreeAdd;
 let _gitImpl = defaultGit; const _git = (cwd, args, o) => (gitAvailable() ? _gitImpl(cwd, args, o) : Promise.resolve(gitMissingResult()));
 export function runGit(cwd, args, opts) { return _git(cwd, args, opts); }
 
@@ -539,16 +548,26 @@ export async function ensureWorktree(slug, projectDir) {
   await mkdir(dirname(dir), { recursive: true });
   const f = await fetchMetricsBranch(projectDir);
   if (!f.ok) throw metricsError('FETCH_FAILED', firstLine(f.stderr) || 'git fetch failed', { stderr: f.stderr });
-  // defaultGit already disables hooks (a failing post-checkout would otherwise fail `worktree add`).
-  let add = await _git(projectDir, ['worktree', 'add', '--detach', '--force', dir, REMOTE_REF]);
-  if (!add.ok) {
+  const err = await addBranchWorktree(projectDir, dir, REMOTE_REF);
+  if (err) throw metricsError('WORKTREE_FAILED', firstLine(err), { stderr: err });
+  return dir;
+}
+
+/** Detached worktree of `ref` at `dir`, for the metrics and policy branches: null, or git's stderr.
+ *  Through guardedWorktreeAdd (G2), hook-free like every metrics git call. */
+export async function addBranchWorktree(projectDir, dir, ref) {
+  if (!gitAvailable()) return GIT_MISSING.message;
+  const add = () => _worktreeAddImpl(projectDir, dir, ref, {
+    detach: true, force: true, env: gitBaseEnv(stripHostCredentials(process.env)), configArgs: hookFreeArgs(), timeout: 60_000,
+  });
+  let r = await add();
+  if (!r.ok) {
     // A half-created directory from the first attempt makes the retry fail with "already exists".
     await rm(dir, { recursive: true, force: true, maxRetries: 10 });
     await _git(projectDir, ['worktree', 'prune']);
-    add = await _git(projectDir, ['worktree', 'add', '--detach', '--force', dir, REMOTE_REF]);
-    if (!add.ok) throw metricsError('WORKTREE_FAILED', firstLine(add.stderr), { stderr: add.stderr });
+    r = await add();
   }
-  return dir;
+  return r.ok ? null : r.stderr;
 }
 
 async function removeWorktreeDir(dir, projectDir) {
@@ -1328,6 +1347,7 @@ export { readRunLedger };
 
 export const _testing = {
   setGit(fn) { _gitImpl = fn; },
-  reset() { _gitImpl = defaultGit; _queues.clear(); _scheduled.clear(); _lastFailedAt.clear(); },
+  setWorktreeAdd(fn) { _worktreeAddImpl = fn; },
+  reset() { _gitImpl = defaultGit; _worktreeAddImpl = guardedWorktreeAdd; _queues.clear(); _scheduled.clear(); _lastFailedAt.clear(); },
   defaultGit,
 };

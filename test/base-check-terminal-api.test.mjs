@@ -70,7 +70,7 @@ test('resolve-terminal refuses raw fields like the terminal route (400 RAW_FIELD
 test('resolve-terminal cross-origin is 403 like every terminal route', async () => {
   const r = await req('POST', `/api/runs/${id}/resolve-terminal?projectKey=${key}`, {},
     { host: `127.0.0.1:${port}`, origin: 'http://127.0.0.1:4401' });
-  assert.equal(r.status, 403); assert.equal(r.json.code, 'TERMINAL_CROSS_ORIGIN');
+  assert.equal(r.status, 403);   // G10: the global Origin check refuses it before the terminal gate
   assert.equal(JSON.parse(findPipelineRowById(id).branch).baseResolve, undefined);
 });
 

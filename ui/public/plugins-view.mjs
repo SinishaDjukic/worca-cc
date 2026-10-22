@@ -255,7 +255,8 @@ export function renderInstallConsent(entry, inventory, { doc = globalThis.docume
   setup.appendChild(h(doc, 'div', 'pl-consent-row',
     inv.depCount == null ? 'no dependencies' : `${inv.depCount} npm dependencies (from lockfile)`));
   for (const cmd of inv.setupCommands || []) setup.appendChild(h(doc, 'div', 'pl-consent-row mono pl-setup-cmd', cmd));
-  root.appendChild(h(doc, 'p', 'hint', 'Plugins run with your user privileges. Install only sources you trust.'));
+  root.appendChild(h(doc, 'p', 'hint pl-consent-trust',
+    "Plugins run with your user privileges: their code can read anything Worca can, other plugins' secrets included. Install only sources you trust."));
   return root;
 }
 

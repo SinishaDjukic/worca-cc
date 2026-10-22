@@ -589,6 +589,7 @@ test('show_files copies on the attachment route: an SVG gets the sandbox CSP; ?a
     { name: 'shared sign-in: another person gets 404 on ?as=text, the owner gets 200', run: async () => {
       const prev = process.env.WORCA_IDENTITY_HEADER;
       process.env.WORCA_IDENTITY_HEADER = 'x-test-user';
+      process.env.WORCA_IDENTITY_TRUSTED_PROXIES = '127.0.0.1,::1';   // X1: the in-process server's callers are loopback
       try {
         const t = store.createThread({ createdBy: 'bob@example.com' });
         const md = store.addAttachment(t.id, null, { name: 'r.md', kind: 'text', mime: 'text/markdown', text: 'mine' });
@@ -640,6 +641,7 @@ test('Show in folder: GET /api/ask/reveal says whether a folder opens here; the 
     { name: 'shared sign-in: another person gets 404', run: async () => {
       const prev = process.env.WORCA_IDENTITY_HEADER;
       process.env.WORCA_IDENTITY_HEADER = 'x-test-user';
+      process.env.WORCA_IDENTITY_TRUSTED_PROXIES = '127.0.0.1,::1';   // X1: the in-process server's callers are loopback
       try {
         const t = store.createThread({ createdBy: 'bob@example.com' });
         const up = store.addAttachment(t.id, null, { name: 'a.md', text: 'a' });

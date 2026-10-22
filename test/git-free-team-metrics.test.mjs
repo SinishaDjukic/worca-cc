@@ -482,7 +482,11 @@ test('git installed right after an HTTPS read: the next read of that project bui
   const calls = [];
   syncTesting.setGit(async (cwd, args) => {
     calls.push(args[0]);
-    if (args[0] === 'worktree' && args[1] === 'add') mkdirSync(args[4], { recursive: true });
+    return { ok: true, code: 0, stdout: '', stderr: '' };
+  });
+  syncTesting.setWorktreeAdd(async (_projectDir, dir) => {
+    calls.push('worktree');
+    mkdirSync(dir, { recursive: true });
     return { ok: true, code: 0, stdout: '', stderr: '' };
   });
   gitArrives();

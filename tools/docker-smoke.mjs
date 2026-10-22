@@ -183,9 +183,9 @@ async function agentIsolation(inBox) {
   ok('agent isolation: the server knows its agent user');
 
   const perms = inBox('stat -c "%a %G %n" /data/projects /data/worca/.worca-cc/runs /data/worca/.worca-cc/store /data/agent-home /data/worca/.worca-cc');
-  const want = ['2770 worca-share /data/projects', '2770 worca-share /data/worca/.worca-cc/runs', '2770 worca-share /data/worca/.worca-cc/store', '700 worca-share /data/agent-home', '711 worca /data/worca/.worca-cc'];
+  const want = ['2770 worca-share /data/projects', '3770 worca-share /data/worca/.worca-cc/runs', '3770 worca-share /data/worca/.worca-cc/store', '700 worca-share /data/agent-home', '711 worca /data/worca/.worca-cc'];
   if (perms !== want.join('\n')) fail(`agent isolation: permissions\n${perms}`);
-  else ok('agent isolation: shared dirs are setgid worca-share, the worca home is traverse-only');
+  else ok('agent isolation: shared dirs are setgid worca-share, runs and store are sticky, the worca home is traverse-only');
 
   inBox('cd /data/projects && umask 0007 && git init -q -b main iso && cd iso && git -c user.name=s -c user.email=s@x commit -q --allow-empty -m init', 'worca');
   writeFileSync(join(tmpdir(), `fake-claude-${stamp}`), [

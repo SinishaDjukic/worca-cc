@@ -1,9 +1,9 @@
 // src/core/chat/channel-host.mjs
 // Supervisor for persistent channel workers (chat-connectivity-design.md §4.4).
 // One child process per enabled+configured chatChannels entry: spawned with the
-// same scrubbed env as connector ops, fed config/secrets/state via the hello
-// frame on stdin, restarted with backoff on crash, killed on plugin
-// disable/uninstall and on server shutdown. All worker-originated strings are
+// same scrubbed env and user as connector ops (plugin-shim.mjs pluginChildSpawn),
+// fed config/secrets/state via the hello frame on stdin, restarted with backoff
+// on crash, killed on plugin disable/uninstall and on server shutdown. All worker-originated strings are
 // redacted before they reach the logger or the UI.
 //
 // Worker contract: a worker that emits any 'status' frame before 'ready' will
@@ -20,7 +20,7 @@ import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
-import { PluginOpError, scrubbedEnv, warnWithheldProxy } from '../plugin-shim.mjs';
+import { PluginOpError, pluginChildSpawn, killPluginChild, warnWithheldProxy } from '../plugin-shim.mjs';
 import { normalizeManifest, negotiatedApi } from '../plugin-manifest.mjs';
 import { WORCA_PLUGIN_API } from '../plugin-api.mjs';
 import { readPluginsLock, pluginCurrentDir } from '../plugins-lock.mjs';
@@ -241,10 +241,12 @@ export function createChannelHost({ logger, onInbound, onStatus, _spawn = spawn,
     if (stopping) return;
     setStatus(w, 'connecting', null);
     warnWithheldProxy();
-    const proc = _spawn(process.execPath,
-      [...(process.env.WORCA_PLUGIN_INSPECT ? ['--inspect'] : []), CHILD_PATH],
-      { env: scrubbedEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
+    // As the container's plugin user when there is one (plugin-shim.mjs pluginChildSpawn).
+    const run = pluginChildSpawn([...(process.env.WORCA_PLUGIN_INSPECT ? ['--inspect'] : []), CHILD_PATH]);
+    const proc = _spawn(run.file, run.args, { ...run.options, stdio: ['pipe', 'pipe', 'pipe'] });
+    const kill = () => killPluginChild(proc, run.user);
     w.proc = proc;
+    w.kill = kill;
     w.missedPongs = 0;
     w.spawnedAt = Date.now();
     w.statusSinceSpawn = false;
@@ -258,7 +260,7 @@ export function createChannelHost({ logger, onInbound, onStatus, _spawn = spawn,
     rl.on('line', (line) => {
       if (Buffer.byteLength(line, 'utf8') > MAX_FRAME_BYTES) {
         log('error', `[chat:${w.key}] oversize frame — protocol violation, restarting worker`);
-        proc.kill('SIGKILL');
+        kill();
         return;
       }
       const frame = decodeFrame(line);
@@ -271,7 +273,7 @@ export function createChannelHost({ logger, onInbound, onStatus, _spawn = spawn,
       w.missedPongs += 1;
       if (w.missedPongs > 2) {
         log('warn', `[chat:${w.key}] unresponsive (missed pongs) — restarting worker`);
-        w.proc.kill('SIGKILL');
+        kill();
         return;
       }
       try { writeFrame(w, { type: 'ping', id: `ping-${Date.now()}` }); } catch { /* exit handler owns it */ }
@@ -312,7 +314,7 @@ export function createChannelHost({ logger, onInbound, onStatus, _spawn = spawn,
     proc.on('error', (err) => {
       const msg = w.redact(err?.message || String(err));
       log('error', `[chat:${w.key}] worker process error: ${msg}`);
-      if (proc.pid) { try { proc.kill('SIGKILL'); } catch { /* gone */ } }
+      if (proc.pid) kill();
       else { w.spawnErrorDetail = msg; onExit(-1, null); }
     });
 
@@ -382,11 +384,12 @@ export function createChannelHost({ logger, onInbound, onStatus, _spawn = spawn,
     clearTimeout(w.restartTimer);
     clearInterval(w.pingTimer);
     const proc = w.proc;
+    const kill = w.kill;
     if (!proc || proc.killed) { setStatus(w, 'disconnected', null); return; }
     w.shuttingDown = true;
     try { writeFrame(w, { type: 'shutdown' }); } catch { /* dying already */ }
     await new Promise((resolveWait) => {
-      const t = setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* gone */ } }, SHUTDOWN_GRACE_MS);
+      const t = setTimeout(kill, SHUTDOWN_GRACE_MS);
       t.unref?.();
       proc.once('exit', () => { clearTimeout(t); resolveWait(); });
       if (proc.exitCode !== null) { clearTimeout(t); resolveWait(); }
@@ -525,10 +528,11 @@ export function createChannelHost({ logger, onInbound, onStatus, _spawn = spawn,
       if (mockMode()) return { ok: true, mock: true };
       warnWithheldProxy();
       return new Promise((resolveCheck, rejectCheck) => {
-        const proc = _spawn(process.execPath, [CHILD_PATH, '--check'], { env: scrubbedEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
+        const run = pluginChildSpawn([CHILD_PATH, '--check']);
+        const proc = _spawn(run.file, run.args, { ...run.options, stdio: ['pipe', 'pipe', 'pipe'] });
         let stdout = '';
         let settled = false;
-        const timer = setTimeout(() => { settled = true; proc.kill('SIGKILL'); rejectCheck(new PluginOpError('timeout', `validateConfig timed out after ${timeoutMs}ms`)); }, timeoutMs);
+        const timer = setTimeout(() => { settled = true; killPluginChild(proc, run.user); rejectCheck(new PluginOpError('timeout', `validateConfig timed out after ${timeoutMs}ms`)); }, timeoutMs);
         timer.unref?.();
         proc.stdout.setEncoding('utf8');
         proc.stdout.on('data', (d) => { stdout += d; });

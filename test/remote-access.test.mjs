@@ -5,7 +5,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseAllowedHosts, readRemoteAccessConfig, checkRemoteAccessConfig, isRemoteMode,
-  createHostGuard, isInContainer, isPeerThisMachine, createIdentityCheck, hostnameOf,
+  createHostGuard, isInContainer, isPeerThisMachine, isThisBox, createIdentityCheck, hostnameOf,
+  createPeerGuard, isLoopbackPeer, routeGateways, readRouteGateways,
 } from '../src/core/remote-access.mjs';
 import { TEAM, AUD, makeAccessKey, signAccessJwt, certsFetch } from './helpers/access-jwt.mjs';
 
@@ -70,7 +71,9 @@ test('Cloudflare Access config: both halves required; valid config has no errors
 
 test('warnings: exposed bind without allowlist, Access without allowlist, redundant insecure flag', () => {
   const w = (env, bindHost) => checkRemoteAccessConfig(readRemoteAccessConfig(env), { bindHost }).warnings.join('\n');
-  assert.match(w({}, '0.0.0.0'), /every request not addressed to localhost gets a 403/);
+  assert.match(w({}, '0.0.0.0'), /only connections from this machine are answered, every other caller gets a 403/);
+  assert.match(checkRemoteAccessConfig(readRemoteAccessConfig({}), { bindHost: '0.0.0.0', gateways: ['172.19.0.1'] }).warnings[0],
+    /from this machine or through Docker's gateway \(172\.19\.0\.1\) are answered/);
   assert.equal(w({}, '127.0.0.1'), '');
   assert.match(w({ ...CF }, '127.0.0.1'), /only localhost requests are accepted/);
   assert.match(w({ WORCA_ALLOWED_HOSTS: 'w.example.com', ...CF, WORCA_INSECURE_NO_IDENTITY_CHECK: '1' }, '::'), /is ignored/);
@@ -98,13 +101,59 @@ test('host guard: loopback always, exact names, leading-dot suffixes, Origin che
 
 test('host guard with an empty allowlist is exactly the old loopback-only guard', () => {
   const g = createHostGuard([]);
-  assert.equal(g(req({ host: '127.0.0.1:4317', origin: 'http://localhost:4317' })), true);
+  assert.equal(g(req({ host: '127.0.0.1:4317', origin: 'http://127.0.0.1:4317' })), true);
   assert.equal(g(req({ host: 'worca-01.example.com' })), false);
   assert.equal(g(req({ host: 'localhost', origin: 'https://evil.net' })), false);
 });
 
-test('isInContainer needs a loopback peer AND a loopback Host', () => {
+test('G10 host guard: a browser Origin must name this server exactly, port included', () => {
+  const g = createHostGuard([]);
+  assert.equal(g(req({ host: 'localhost:4317', origin: 'http://localhost:4317' })), true);
+  assert.equal(g(req({ host: 'LOCALHOST:4317', origin: 'http://localhost:4317' })), true, 'case-insensitive');
+  assert.equal(g(req({ host: 'localhost:4317', origin: 'http://localhost:3000' })), false, 'a dev server on another port');
+  assert.equal(g(req({ host: 'localhost:4317', origin: 'http://127.0.0.1:4317' })), false, 'another origin on the same port');
+  assert.equal(g(req({ host: '127.0.0.1:4317', origin: 'http://localhost:4317' })), false);
+  assert.equal(g(req({ host: 'localhost:4317', origin: 'null' })), false);
+  assert.equal(g(req({ host: 'localhost:4317' })), true, 'no Origin: the CLI, curl, an editor extension in Node');
+  const remote = createHostGuard(['worca-01.example.com']);
+  assert.equal(remote(req({ host: 'localhost:4317', origin: 'https://worca-01.example.com' })), true,
+    'an allowlisted public name, for a proxy that rewrites Host');
+  assert.equal(remote(req({ host: 'worca-01.example.com', origin: 'http://localhost:3000' })), false);
+});
+
+test('G4 peer guard: local mode trusts a loopback peer or a listed gateway, never a spoofed Host alone', () => {
+  const local = createPeerGuard(readRemoteAccessConfig({}));
+  assert.equal(local(req({ host: 'localhost:4317', peer: '127.0.0.1' })), true);
+  assert.equal(local(req({ host: 'localhost:4317', peer: '127.0.0.2' })), true, '127.0.0.0/8');
+  assert.equal(local(req({ host: 'localhost:4317', peer: '::ffff:127.0.0.1' })), true);
+  assert.equal(local(req({ host: 'localhost:4317', peer: '::1' })), true);
+  assert.equal(local(req({ host: 'localhost:4317', peer: '192.168.0.20' })), false, 'a LAN caller sending Host: localhost');
+  assert.equal(local(req({ host: 'localhost:4317', peer: undefined })), false);
+  const image = createPeerGuard(readRemoteAccessConfig({}), { gateways: ['172.19.0.1'] });
+  assert.equal(image(req({ peer: '172.19.0.1' })), true, "Docker's published port");
+  assert.equal(image(req({ peer: '::ffff:172.19.0.1' })), true);
+  assert.equal(image(req({ peer: '172.19.0.3' })), false, 'a sidecar on the same network');
+  const remote = createPeerGuard(readRemoteAccessConfig({ WORCA_ALLOWED_HOSTS: 'w.example.com', ...CF }));
+  assert.equal(remote(req({ peer: '10.0.0.5' })), true, 'remote mode: the identity check decides');
+  assert.equal(isLoopbackPeer('127.0.0.1.evil'), false);
+});
+
+test('routeGateways reads the IPv4 gateways of /proc/net/route; none where it is missing', () => {
+  // As read inside a container on a user-defined Docker network (probe, Docker 29).
+  const table = [
+    'Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT',
+    'eth0\t00000000\t010013AC\t0003\t0\t0\t0\t00000000\t0\t0\t0',
+    'eth0\t000013AC\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0',
+  ].join('\n');
+  assert.deepEqual(routeGateways(table), ['172.19.0.1']);
+  assert.deepEqual(routeGateways(''), []);
+  assert.deepEqual(readRouteGateways(() => { throw new Error('ENOENT'); }), []);
+});
+
+test('isInContainer needs a peer on this box AND a loopback Host', () => {
   assert.equal(isInContainer(req({ host: 'localhost:4317', peer: '127.0.0.1' })), true);
+  assert.equal(isInContainer(req({ host: 'localhost:4317', peer: '127.0.0.2' })), true, 'all of 127/8, as G4 trusts it');
+  assert.equal(isInContainer(req({ host: 'localhost:4317', peer: '::ffff:127.0.0.2' })), true);
   assert.equal(isInContainer(req({ host: 'localhost:4317', peer: '::ffff:127.0.0.1' })), true);
   assert.equal(isInContainer(req({ host: 'localhost:4317', peer: 'fd12::5' })), false, 'cloudflared on the private network');
   assert.equal(isInContainer(req({ host: 'worca-01.example.com', peer: '127.0.0.1' })), false, 'a same-box proxy forwarding the public Host');
@@ -118,6 +167,15 @@ test('isPeerThisMachine: own interface addresses (v4, v4-mapped, v6) yes; other 
   assert.equal(isPeerThisMachine(req('::1'), ifaces), true);
   assert.equal(isPeerThisMachine(req('172.17.0.1'), ifaces), false);   // Docker gateway: a person via a published port
   assert.equal(isPeerThisMachine(req(undefined), ifaces), false);
+});
+
+test('isThisBox: any loopback peer (127/8, ::1, v4-mapped) or an own interface address; never header text', () => {
+  const ifaces = { lo: [{ address: '127.0.0.1' }], eth0: [{ address: '172.17.0.2' }] };
+  const r = (a, host = 'worca.example.com') => ({ socket: { remoteAddress: a }, headers: { host } });
+  for (const a of ['127.0.0.1', '127.0.0.2', '127.255.0.9', '::1', '::ffff:127.0.0.2', '172.17.0.2', '::ffff:172.17.0.2']) {
+    assert.equal(isThisBox(r(a), ifaces), true, a);
+  }
+  for (const a of ['172.17.0.1', '10.0.0.5', 'fd12::5', undefined]) assert.equal(isThisBox(r(a, 'localhost'), ifaces), false, String(a));
 });
 
 test('createIdentityCheck reads Cf-Access-Jwt-Assertion', async () => {

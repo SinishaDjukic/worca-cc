@@ -78,7 +78,7 @@ What each setup protects:
 | Agents can't read a model key | No | No | Yes | Yes |
 | Each person uses their own credentials | n/a | n/a | n/a | Yes |
 | Every call charged to the person who caused it | n/a | n/a | n/a | Yes (good faith) |
-| Spend capped per spawn and per person | No | Run caps only | Yes | Yes |
+| Spend capped per person and per Ask turn | No | Run caps only | Yes | Yes |
 | One person's agents can't read another's processes | n/a | n/a | n/a | With agent users per person |
 
 ## Architecture
@@ -116,7 +116,7 @@ Credentials cross exactly one boundary: from the broker to the provider.
 | K1 | No model credential exists anywhere an agent can reach. | Keys exist only in the broker. worca refuses to start in broker mode while it finds one in its environment, in a Claude Code sign-in (its own or an agent's HOME), in the model catalog or in provider settings. |
 | K2 | The broker alone decides where each credential goes. | Each slot has a fixed upstream origin in the broker's configuration, or registered by worca for an enabled plugin ([Plugin slots](#plugin-slots)). A request names a slot, never a host. A saved key is bound to the origin it was saved for: a slot that later points elsewhere never sends it there. |
 | K3 | What an agent holds is worthless outside the instance. | Per-spawn `wbt_` tokens work only on the broker's private port, expire, and are revoked when their process exits. |
-| K4 | The broker never sends a credential back. | Allowlisted headers each way, no redirects followed, and provider error messages scrubbed of the key and of known key shapes. worca also removes `wbt_` tokens from everything agents print. |
+| K4 | The broker never sends a credential back. | Allowlisted headers each way, no redirects followed, and provider error messages, and every answer to a `GET` (model lists, OpenRouter's key info, which labels the key masked), scrubbed of the key and of known key shapes. Model output streams through unscrubbed: the model never sees the key. worca also removes `wbt_` tokens from everything agents print. |
 
 ### One spawn
 
@@ -182,6 +182,12 @@ base path, and https (http only for a private host). Saving a key checks it agai
 endpoint's model list; an endpoint without one (404) accepts any key the first real call
 doesn't refuse. When a plugin update moves its endpoint, keys saved for the old host show
 *enter it again* and are never sent to the new one.
+
+In single mode the plugin slot's key is the operator's `WORCA_BROKER_KEY_P_…`, and the
+broker sends it only to the origin `WORCA_BROKER_KEY_P_…_ORIGIN` names (for example
+`WORCA_BROKER_KEY_P_ACME_ACMEKEY_ORIGIN=https://llm.acme.dev`). worca registers the slot, so
+its host is not the operator's word: without that variable, or when the slot moves elsewhere,
+the call is refused with the variable to set.
 
 Refused by name, so the model can't be used with the broker on (its plugin author can fix
 it): a base URL that is a `${VAR}` or missing, a secret in any other variable (such as
@@ -343,8 +349,10 @@ store, and its key page on its own hostname behind its own Cloudflare Access app
 | `WORCA_BROKER_PUBLIC_URL` | `https://worca-01-keys.example.com` | The key page's address |
 | `WORCA_BROKER_RETURN_URL` | `https://worca-01.example.com` | Optional "Back to worca" link |
 | `WORCA_CF_ACCESS_TEAM_DOMAIN`, `WORCA_CF_ACCESS_AUD` | | The key page's **own** Access application (a different AUD from worca's) |
-| `WORCA_IDENTITY_HEADER` | `X-Forwarded-Email` | Instead of Access, a header a verifying proxy sets |
+| `WORCA_IDENTITY_HEADER` | `X-Forwarded-Email` | Instead of Access, a header a verifying proxy sets. Needs `WORCA_IDENTITY_TRUSTED_PROXIES` |
+| `WORCA_IDENTITY_TRUSTED_PROXIES` | `172.30.0.10` | The address(es) or CIDRs that proxy connects from. The header from any other peer gets 403: worca and its agents share the broker's network and could otherwise sign in as anyone. Give the proxy a fixed address (Compose: `ipv4_address`), and never list a range that includes worca |
 | `WORCA_BROKER_DEFAULT_DAILY_USD`, `WORCA_BROKER_DEFAULT_MONTHLY_USD` | `50`, `500` | Per-person budget per slot; people may set a lower one |
+| `WORCA_BROKER_UNPRICED_USD_PER_MTOK` | `3,15` | The rate, input and output in USD per million tokens, for a model with no list price. Unset: the highest list rate. `0` books such models at $0 and lets them past every budget. See [Budgets and prices](#budgets-and-prices) |
 | `WORCA_BROKER_LOCAL_URL` | `http://host.docker.internal:11434` | A keyless local model server (Anthropic API) as slot `local` |
 | `WORCA_BROKER_SLOTS_FILE` | | JSON array of extra or overridden slots |
 | `WORCA_BROKER_ALLOW_TEAM_KEYS` | `1` | Allow an operator key on a slot everyone uses (off: a shared key is what multi mode removes) |
@@ -382,7 +390,18 @@ credential is still within agents' reach:
 - a provider key or Copilot sign-in on the Providers page;
 - a plugin's Model secret that holds a value.
 
-It also exits when the broker can't be reached within 60 seconds, or the secrets differ.
+It also exits when the broker can't be reached within 60 seconds, or the secrets differ, and
+in multi mode when agents run as worca itself (no [agent users](#agent-users-per-person)):
+they could read the shared secret from worca's process, then mint tokens charged to anyone or
+fetch a person's GitHub token. `WORCA_AGENT_ISOLATION=0` accepts that explicitly, with a
+warning.
+
+worca reads `WORCA_BROKER_SECRET` (or the file `WORCA_BROKER_SECRET_FILE` names) once at start
+and removes both variables from its environment before it starts anything, so no child inherits
+the secret or the file's path: not an agent, a script tool, an MCP server, a terminal or a git
+hook. With agents under their own users, worca does not start while that file is readable by
+its group or by others: make it `0600`, owned by the user worca runs as (a compose secret keeps
+the host file's mode).
 
 ### Only Claude runs
 
@@ -504,6 +523,8 @@ Use a **first-level** hostname for the key page (`worca-01-keys.example.com`, no
    `worca-01-keys.example.com` → HTTP → `broker.railway.internal:8081`. Never route port 8080.
 2. **Access application.** Add a self-hosted application for `worca-01-keys.example.com` with
    the same Allow policy as worca's. Its AUD tag is the broker's `WORCA_CF_ACCESS_AUD`.
+   Use Access here rather than `WORCA_IDENTITY_HEADER`: a Railway service's private address
+   changes with each deploy, so there is no fixed proxy address to trust.
 3. **Railway service.** New service `broker` from the same image and version as worca:
    start command `worca-entrypoint worca broker`, a volume at `/data`,
    `RAILWAY_RUN_UID=0` (the entrypoint prepares the volume and drops to `worca`),
@@ -521,13 +542,50 @@ checks the key page and, with `--in-container`, the agent boundary.
 ## Costs per person
 
 **Stats** has a *By person* card: each person's model spend, requests and tokens in the
-selected period, with the providers they used, as the broker metered them. Subscription
-calls count tokens and requests but no dollars.
+selected period, with the providers they used, as the broker metered them. Subscription,
+Copilot and keyless (local) calls count tokens and requests but no dollars.
+
+### Budgets and prices
+
+The broker prices every call itself, because the agent writes the request and could
+otherwise pick what it costs:
+
+- **The provider's own figure wins.** OpenRouter reports what a call cost; the broker sets
+  `usage.include` on every OpenRouter chat request so it always does, and
+  `stream_options.include_usage` on every streamed OpenAI-style chat request so its tokens
+  are counted.
+- **Otherwise the list price.** Anthropic and OpenAI models are priced from worca's list-price
+  tables (`src/core/list-prices.mjs`).
+- **A model with no list price is never free.** It is booked at the fallback rate: the highest
+  list rate (today $10 in and $50 out per million tokens) unless
+  `WORCA_BROKER_UNPRICED_USD_PER_MTOK` sets another. The broker logs one line per such model
+  (`no list price for model … booked at the fallback rate`), so an operator can see which
+  models to price, or set a fallback that suits their gateways.
+- **No dollars** for a Claude subscription, for Copilot (billed per seat and premium request,
+  not per token; Copilot's own limits apply) and for a keyless slot such as `local`. These
+  calls record tokens only, and dollar budgets don't apply to them.
+- **A hang-up doesn't end the bill.** When an agent drops a streaming call, the broker keeps
+  reading the response to its end and books every token, so aborting mid-stream can't hide
+  spend. The provider finishes the response, so a dropped call costs what a finished one
+  would (a stopped run's in-flight calls included).
+
+Three budgets are checked before each call, and a spent one refuses it with a 403
+`worca-broker: quota reached: …`:
+
+- the person's daily and monthly budget per slot (their own cap on the key page, else
+  `WORCA_BROKER_DEFAULT_DAILY_USD` / `WORCA_BROKER_DEFAULT_MONTHLY_USD`);
+- the spawn's own budget: an Ask turn's token carries the per-turn cap (Settings › Chat,
+  `ask.maxBudgetUsd`). Pipeline runs keep worca's run and total caps, which are checked
+  between steps; the broker's per-person budgets bound a step.
+
+A budget is checked before a call and a call's cost is known only after it, so the last
+call can go past a budget by its own cost.
 
 ## Agent users per person
 
 On a shared instance, run agents under their own users so one person's agents can't read
-another's processes (where a live spawn's token sits):
+another's processes (where a live spawn's token sits), or worca's (where the broker's shared
+secret sits). In multi mode worca refuses to start without them:
 
 - **Railway** and other single-volume hosts (`WORCA_DATA_DIR`) do this already.
 - **Compose** (a Linux server, or a Mac hosting a local model): add
@@ -549,6 +607,13 @@ resumes pays. Work with no signed-in person uses the shared `worca-agent`. With 
 people, the rest share users by a stable hash (worca warns once). `WORCA_AGENT_POOL=0` turns
 the pool off.
 
+Each pool user also has a group of its own that only it and `worca` are in. A run's own
+folders (its store folder, with the verdicts and outputs, and `runs/<id>`) get its starter's
+group, so one person's agents can neither read nor edit another person's run. `store/` and
+`runs/` are sticky, so an agent cannot rename or delete a run folder it does not own. Folders
+shared by every run of a project (its plans and reviews) and the shared `worca-agent` keep the
+`worca-share` group. Runs made before this change keep the shared group.
+
 Chat runs as the person's agent user too. Its worca tools (runs, projects, memory…)
 then run inside the worca server: the chat's tool process only relays each call over
 loopback with a token that lives for one turn.
@@ -563,6 +628,14 @@ loopback with a token that lives for one turn.
 | The broker sees every prompt and response | A valuable target | Small, dependency-free, logs metadata only; same image as worca |
 | An MCP secret the operator passes through `${VAR}` | Readable by agents | An explicit operator choice; literal ones are blocked |
 | An MCP registry secret in a set a run uses | Readable by that run's agents | The set was assigned on purpose; each run warns (outside K1) |
+| Single mode without agent users: agents run as worca and can read the broker's shared secret from worca's process (`/proc/<pid>/environ`) | An agent can mint tokens and spend the one key, or read its usage; never a model key | One person's own key, within the broker's budgets and limits; add `compose.isolation.yml` to close it |
+| Code running as worca's own user (not an agent user) | Can read the shared secret from worca's memory | Running code as worca is already full control of worca |
+
+The broker holds each request body in memory until its call ends. A body is at most 32 MiB
+(a larger declared length gets a 413 before any of it is read), and the bodies of all calls
+in flight, across every agent, share 64 MiB, sized for the broker container's 256 MB memory
+limit. A call that doesn't fit gets a 503 `overloaded_error` with `retry-after: 2`, which the
+agents' clients retry.
 
 Not built: Amazon Bedrock and Google Vertex (the broker would have to sign requests with the
 person's cloud credentials), and plugin model keys sent any way but one `Authorization` or

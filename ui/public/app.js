@@ -31,7 +31,8 @@ const state = {
   // CLI's Task tool refuses catalog ids), not a slice of `models`.
   subagentModels: ['sonnet', 'opus', 'fable', 'auto', 'inherit'],
   workflowId: 'wf_default', // currently selected workflow in New Pipeline
-  guardrailsId: 'permissive', // the guardrail set the next run applies ('permissive' = unrestricted default)
+  guardrailsId: null, // the guardrail set the next run applies; null until the list names the install default
+  guardrailsDefault: 'normal', // the install's default set, from GET /api/guardrails (Normal on a fresh install)
   mcpOptOut: [], // New Pipeline › MCP servers: the '<setId>|<serverId>' memberships the next run opts out of
   mcpPreview: null, // POST /api/mcp/preview for the selected target, or null (control hidden)
   memoryScope: 'global', // Memory defragment only: the scope the next run restructures
@@ -4203,7 +4204,9 @@ async function listGuardrailsApi() {
   try {
     const res = await fetch('/api/guardrails');
     const data = await safeJson(res);
-    return res.ok && Array.isArray(data.guardrails) ? data.guardrails : null;
+    if (!res.ok || !Array.isArray(data.guardrails)) return null;
+    if (typeof data.default === 'string' && data.default) state.guardrailsDefault = data.default;
+    return data.guardrails;
   } catch { return null; }
 }
 
@@ -4214,7 +4217,7 @@ function updateGuardrailsHint() {
   if (!el.guardrailsHint) return;
   const sel = state.guardrailSets.find((g) => g.id === state.guardrailsId) || null;
   if (!sel || sel.id === 'permissive') {
-    el.guardrailsHint.textContent = 'Applies to every agent this run spawns. Permissive = no restrictions (the legacy default).';
+    el.guardrailsHint.textContent = 'Applies to every agent this run spawns. Permissive = no restrictions.';
     return;
   }
   const members = state.runTarget === 'workspace' ? ' across every workspace member' : '';
@@ -4239,10 +4242,11 @@ async function loadGuardrailsInto(selectId) {
   }
   const list = sets.length ? sets : [{ id: 'permissive', name: 'Permissive', settings: null }];
   state.guardrailSets = list;
-  const want = selectId || state.guardrailsId || 'permissive';
+  const dflt = list.some((g) => g.id === state.guardrailsDefault) ? state.guardrailsDefault : list[0].id;
+  const want = selectId || state.guardrailsId || dflt;
   sel.innerHTML = '';
-  list.forEach((g) => sel.appendChild(option(g.id, g.id === 'permissive' ? 'Permissive (default)' : g.name)));
-  // Fall back to the Permissive default if the wanted id is gone (deleted set) —
+  list.forEach((g) => sel.appendChild(option(g.id, g.id === dflt ? `${g.name} (default)` : g.name)));
+  // Fall back to the install default if the wanted id is gone (deleted set) —
   // and SAY so via the form's message line: a vanished selection must never
   // silently revert while the user believes it is still selected.
   if (state.preset && !list.some((g) => g.id === want)) {
@@ -4253,9 +4257,10 @@ async function loadGuardrailsInto(selectId) {
     o.disabled = true;
     sel.appendChild(o);
   } else {
-    state.guardrailsId = list.some((g) => g.id === want) ? want : 'permissive';
-    if (want !== 'permissive' && state.guardrailsId === 'permissive') {
-      setFormMsg(`Guardrail set "${want}" no longer exists. This run will use Permissive (no restrictions).`, 'err');
+    state.guardrailsId = list.some((g) => g.id === want) ? want : dflt;
+    if (state.guardrailsId !== want) {
+      const name = (list.find((g) => g.id === dflt) || {}).name || dflt;
+      setFormMsg(`Guardrail set "${want}" no longer exists. This run will use ${name}${dflt === 'permissive' ? ' (no restrictions)' : ''}.`, 'err');
     }
   }
   sel.value = state.guardrailsId;
@@ -4407,7 +4412,7 @@ function paintHiddenSettings() {
   const items = [];
   if (!levelAtLeast('advanced')) {
     const gr = (state.guardrailSets || []).find((g) => g.id === state.guardrailsId);
-    if (state.guardrailsId && state.guardrailsId !== 'permissive') items.push(`${(gr && gr.name) || state.guardrailsId} guardrails`);
+    if (state.guardrailsId && state.guardrailsId !== state.guardrailsDefault) items.push(`${(gr && gr.name) || state.guardrailsId} guardrails`);
     if (state.preset) items.push(...presetHiddenItems(state.preset.setup));   // the preset's picks, counted once (#712)
     else {
       const n = Object.values(agentRowsById || {}).filter((r) => r && r.modified).length;
@@ -14659,12 +14664,10 @@ function buildRunBody() {
   const body = {
     title: title || undefined,
     workflowId: state.workflowId || 'wf_default',
-    // Omit-when-default: 'permissive' IS the server default, so the key is
-    // absent on default runs — byte-identical legacy request bodies. (The
-    // server normalizes omitted/''/null to 'permissive'; always-sending would
-    // be equivalent but would change every legacy-shaped request for no gain.)
-    guardrailsId: isDefragRun && state.guardrailsId === 'permissive' ? 'normal'
-      : (state.guardrailsId !== 'permissive' ? state.guardrailsId : undefined),
+    // Always the picked set: the server's default for an omitted key is the
+    // install default, which is not Permissive on a fresh install (G13), so an
+    // explicit Permissive pick must be sent. Absent only when the list never loaded.
+    guardrailsId: isDefragRun && state.guardrailsId === 'permissive' ? 'normal' : (state.guardrailsId || undefined),
     // MCP registry (§6.2): absent unless something is opted out, so default bodies stay byte-identical;
     // a memory-defrag run starts no registry servers (§6.1), so it sends none.
     mcpOptOut: state.mcpOptOut.length && !isDefragRun ? [...state.mcpOptOut] : undefined,
@@ -17040,7 +17043,7 @@ if (el.pluginsList) el.pluginsList.addEventListener('click', async (e) => {
     const confirmBtn = body.querySelector('.pl-confirm-update');
     if (confirmBtn) confirmBtn.addEventListener('click', async () => {
       confirmBtn.disabled = true;
-      const r2 = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/update`, { confirm: true });
+      const r2 = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/update`, { confirm: true, sha: data.preview.candidateSha });
       closePluginModal();
       if (!r2.ok) return setPluginsMsg(r2.data.error || 'update failed', 'err');
       setPluginsMsg(`Updated ${name}.`, 'ok');
@@ -20690,7 +20693,7 @@ async function paintPolicyLine() {
   const scope = currentRunScopeId();
   const seq = ++policyLineSeq;
   if (!scope) { el.policyLine.hidden = true; el.policyLine.replaceChildren(); return; }
-  const qs = new URLSearchParams({ scope, guardrailsId: state.guardrailsId || 'permissive' });
+  const qs = new URLSearchParams({ scope, guardrailsId: state.guardrailsId || state.guardrailsDefault });
   // What the run will actually pick: the Agents accordion's model selects (per workflow node),
   // falling back to the legacy per-role config when the accordion has not painted yet.
   const models = selectedRunModels();
@@ -20701,7 +20704,8 @@ async function paintPolicyLine() {
   if (seq !== policyLineSeq) return;
   if (!data || !data.policy) { el.policyLine.hidden = true; el.policyLine.replaceChildren(); return; }
   // The team's default guardrail set preselects the picker until the user picks one themselves.
-  if (data.guardrailsDefault && !state.guardrailsTouched && state.guardrailsId === 'permissive' && el.guardrailsSelect
+  if (data.guardrailsDefault && !state.guardrailsTouched && state.guardrailsId === state.guardrailsDefault
+      && data.guardrailsDefault !== state.guardrailsId && el.guardrailsSelect
       && [...el.guardrailsSelect.options].some((o) => o.value === data.guardrailsDefault)) {
     state.guardrailsId = data.guardrailsDefault;
     el.guardrailsSelect.value = data.guardrailsDefault;
@@ -20920,7 +20924,7 @@ async function updateRequiredPlugin(name) {
   // #555 D5: the dialog's own button carries the progress; the result is a toast after it closes.
   if (confirmBtn) confirmBtn.addEventListener('click', async () => {
     const r2 = await withButton(confirmBtn, async () => {
-      const r = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/update`, { confirm: true });
+      const r = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/update`, { confirm: true, sha: data.preview.candidateSha });
       return r.ok ? r : { ...r, ok: false };
     }, { busy: 'Updating…', done: 'Updated' });
     if (r2.skipped) return;

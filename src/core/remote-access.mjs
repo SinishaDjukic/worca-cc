@@ -18,13 +18,14 @@
 //                                   (the proxy alone is trusted); never the default
 //
 // Fail closed: an allowlist without an identity check is a startup error unless
-// the insecure flag says so explicitly. With none of these set, nothing changes.
+// the insecure flag says so explicitly. With none of these set, local mode: a
+// loopback Host from a loopback TCP peer (createPeerGuard), whatever the bind.
+import fs from 'node:fs';
 import os from 'node:os';
 import { createAccessVerifier, normalizeTeamDomain } from './cf-access.mjs';
 import { createIssuerVerifier, normalizeIssuer } from './issuer-jwt.mjs';
 
 export const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
-const LOOPBACK_ADDRS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const LOOPBACK_BINDS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
 const HOST_ENTRY_RE = /^\.?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
 
@@ -103,7 +104,7 @@ export function isRemoteMode(cfg) {
  * Validate a config against the bind address. Errors stop the server from
  * starting; warnings are logged. Both are one-line, actionable messages.
  */
-export function checkRemoteAccessConfig(cfg, { bindHost = '127.0.0.1' } = {}) {
+export function checkRemoteAccessConfig(cfg, { bindHost = '127.0.0.1', gateways = [] } = {}) {
   const errors = [];
   const warnings = [];
   if (cfg.invalidHosts.length) {
@@ -140,7 +141,8 @@ export function checkRemoteAccessConfig(cfg, { bindHost = '127.0.0.1' } = {}) {
     warnings.push(`${vars} is set but WORCA_ALLOWED_HOSTS is empty: only localhost requests are accepted`);
   }
   if (!LOOPBACK_BINDS.has(String(bindHost).toLowerCase()) && !remote) {
-    warnings.push(`listening on ${bindHost} but WORCA_ALLOWED_HOSTS is empty: every request not addressed to localhost gets a 403`);
+    const via = gateways.length ? ` or through Docker's gateway (${gateways.join(', ')})` : '';
+    warnings.push(`listening on ${bindHost} but WORCA_ALLOWED_HOSTS is empty: only connections from this machine${via} are answered, every other caller gets a 403`);
   }
   return { errors, warnings };
 }
@@ -151,39 +153,98 @@ export function identityLabel(identity) {
   return identity.provider === 'issuer' ? 'an identity issuer check' : 'a Cloudflare Access check';
 }
 
-/** (req) => true when Host and (if present) Origin are loopback or allowlisted. */
+/** (req) => true when Host is loopback or allowlisted and a browser Origin, if present, is this server.
+ *  Header text only: in local mode createPeerGuard decides who may send them.
+ *  G10: the Origin must name the Host exactly, port included (or an allowlisted public name, for a proxy
+ *  that rewrites Host). A hostname match let a page on any other localhost port — a dev server, an Action
+ *  an agent wrote — open /ws and read every run, and send body-less POSTs. No Origin = not a browser page. */
 export function createHostGuard(allowedHosts = []) {
+  const listed = (h) => allowedHosts.some((a) => (a.startsWith('.') ? h.endsWith(a) : h === a));
   const allowed = (name) => {
     if (!name) return false;
     const h = name.toLowerCase();
-    if (LOCAL_HOSTNAMES.has(h)) return true;
-    return allowedHosts.some((a) => (a.startsWith('.') ? h.endsWith(a) : h === a));
+    return LOCAL_HOSTNAMES.has(h) || listed(h);
+  };
+  const originOk = (origin, host) => {
+    let u;
+    try { u = new URL(origin); } catch { return false; }   // 'null' (sandboxed or opaque pages) too
+    if (u.host.toLowerCase() === String(host || '').toLowerCase()) return true;
+    return listed(u.hostname.toLowerCase());
   };
   return function isAllowedRequest(req) {
     if (!allowed(hostnameOf(req.headers.host))) return false;
     const origin = req.headers.origin;
-    if (origin && !allowed(hostnameOf(origin))) return false;
+    if (origin && !originOk(origin, req.headers.host)) return false;
     return true;
   };
 }
 
 /**
  * A connection from inside this machine/container (`worca ui stop`, the CLI,
- * curl in a shell): loopback TCP peer AND loopback Host. A proxy on another
+ * curl in a shell): a peer on this box (isThisBox) AND loopback Host. A proxy on another
  * host (cloudflared as its own service) never matches, so it is always checked.
  */
-export function isInContainer(req) {
-  return LOOPBACK_ADDRS.has(req.socket?.remoteAddress)
-    && LOCAL_HOSTNAMES.has(hostnameOf(req.headers.host));
+export function isInContainer(req, ifaces) {
+  return isThisBox(req, ifaces) && LOCAL_HOSTNAMES.has(hostnameOf(req.headers.host));
+}
+
+/**
+ * The one "is this caller on this box" test (G1, G4, isInContainer): a loopback peer (all of 127.0.0.0/8 and
+ * ::1, v4-mapped or not, the set createPeerGuard trusts; any local user can bind 127.0.0.2) or one of this
+ * machine's own interface addresses. Header text plays no part.
+ */
+export function isThisBox(req, ifaces) {
+  return isLoopbackPeer(req?.socket?.remoteAddress) || isPeerThisMachine(req, ifaces);
 }
 
 const unmapV4 = (a) => String(a || '').replace(/^::ffff:/i, '').toLowerCase();
+
+/** A loopback TCP peer address: 127.0.0.0/8 or ::1, v4-mapped or not. */
+export function isLoopbackPeer(address) {
+  const a = unmapV4(address);
+  return a === '::1' || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(a);
+}
+
+/** The IPv4 gateways in a /proc/net/route table (Linux, hex little-endian), deduped. */
+export function routeGateways(table) {
+  const out = [];
+  for (const line of String(table || '').split('\n').slice(1)) {
+    const hex = line.trim().split(/\s+/)[2];
+    if (!/^[0-9a-f]{8}$/i.test(hex || '') || /^0+$/.test(hex)) continue;
+    const ip = [6, 4, 2, 0].map((i) => parseInt(hex.slice(i, i + 2), 16)).join('.');
+    if (!out.includes(ip)) out.push(ip);
+  }
+  return out;
+}
+
+/** This machine's route gateways, or [] where there is no /proc/net/route (macOS, Windows). */
+export function readRouteGateways(read = () => fs.readFileSync('/proc/net/route', 'utf8')) {
+  try { return routeGateways(read()); } catch { return []; }
+}
+
+/**
+ * G4: who may talk to a local-mode server at all. The Host guard reads header text, so on a
+ * non-loopback bind (WORCA_HOST=0.0.0.0) a network caller could send `Host: localhost` and get the
+ * whole API, terminal included. Local mode therefore also needs a loopback TCP peer, or one of
+ * `gateways`: in the worca image Docker's published port arrives from the container's gateway, while
+ * a sidecar on the same network keeps its own address. Remote mode is unchanged: every caller there
+ * passes the identity check, and isInContainer still requires a peer on this box (isThisBox).
+ */
+export function createPeerGuard(cfg, { gateways = [] } = {}) {
+  if (isRemoteMode(cfg)) return () => true;
+  const trusted = new Set(gateways.map(unmapV4));
+  return (req) => {
+    const peer = req?.socket?.remoteAddress;
+    return isLoopbackPeer(peer) || trusted.has(unmapV4(peer));
+  };
+}
 /**
  * The TCP peer is one of this machine's own addresses (any interface, loopback included).
- * With agent isolation on (#529 D4) such a caller may be the agent: in local mode the host guard
- * accepts `Host: localhost` from any peer, so isInContainer alone misses the container's eth0.
+ * With agent isolation on (#529 D4) such a caller may be the agent: the host guard reads only header
+ * text, so isInContainer alone misses the container's eth0 (local mode's createPeerGuard refuses it too).
  */
-export function isPeerThisMachine(req, ifaces = os.networkInterfaces()) {
+export function isPeerThisMachine(req, ifaces) {
+  ifaces ??= os.networkInterfaces();
   const peer = unmapV4(req?.socket?.remoteAddress);
   if (!peer) return false;
   for (const list of Object.values(ifaces || {})) for (const i of list || []) if (unmapV4(i?.address) === peer) return true;

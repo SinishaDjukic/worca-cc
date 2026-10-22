@@ -8,11 +8,11 @@
 // timeline and machine state live in the DB (pipeline_events + the pipelines row),
 // which is the authoritative store (no more pipeline.md / state.json on disk).
 
-import { mkdir, writeFile, readFile, copyFile, readdir, access, stat, lstat, realpath } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, copyFile, readdir, access, open as openFile } from 'node:fs/promises';
 import { NON_BROWSABLE_KIND_LIST } from '../shared/artifact-kinds.mjs';
-import { join, basename, resolve, isAbsolute, relative, sep } from 'node:path';
+import { join, basename, resolve, isAbsolute } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { realpathSync, existsSync, statSync, constants as fsConstants } from 'node:fs';
+import { realpathSync, existsSync, statSync, lstatSync, constants as fsConstants } from 'node:fs';
 import { hostname } from 'node:os';
 import { projectKey, projectKey as projectKeyOf, projectStorePath, canonicalProjectRoot, workspaceStorePath, isNoProjectKey, noProjectWorkDir, NO_PROJECT_KEY } from './store.mjs';
 import { NO_PROJECT_NAME } from '../shared/no-project.mjs';
@@ -21,6 +21,7 @@ import { rollupChanges } from './folder-members.mjs';
 import { harvestWork, WORK_ARTIFACT_KIND } from './no-project-work.mjs';
 import { updateRunManifest } from './run-manifest.mjs';
 import { listProjects, worcaHome } from './projects.mjs';
+import { claimRunDir } from './agent-pool.mjs';
 import { branchExists, diffShortstat, anyPrHost, findPrForBranch, commitsAhead } from './git-info.mjs';
 import { getDb, tx } from './db.mjs';
 import { rollupMemberPrs, workspaceMembers, changedFileCount } from './workspace-prs.mjs';
@@ -362,16 +363,15 @@ export async function listRunArtifacts(pipelineId, filter = {}) {
   const isWs = row.target === 'workspace' || !!row.workspace_key;
   const storeRoot = isWs ? workspaceStorePath(row.workspace_key) : projectStorePath(row.project_key);
   const runDir = await runDirForRow(row);
-  // isFile(), for the same reason resolveIndexedArtifactFileForRow requires it: a
-  // DIRECTORY at <runDir>/<rel> stats fine and would fix the base here, so the
-  // row would report a directory's inode size while the viewer reads the
-  // store-root file. The two must agree on which copy they mean.
+  // The same base rule as resolveIndexedArtifactFileForRow (artifactFileUnder): a
+  // DIRECTORY at <runDir>/<rel> would otherwise fix the base here, so the row
+  // would report a directory's inode size while the viewer reads the store-root
+  // file, and a planted link would report the size of a file the viewer refuses.
+  // The two must agree on which copy they mean.
   const sizeOf = (rel) => {
     for (const base of [runDir, storeRoot]) {
-      try {
-        const st = statSync(join(base, rel));
-        if (st.isFile()) return st.size;
-      } catch { /* try next base */ }
+      const st = artifactFileUnder(base, rel);
+      if (st) return st.size;
     }
     return 0;
   };
@@ -1223,6 +1223,7 @@ export async function createPipeline(projectDir, opts = {}) {
   const dirName = `${today()}-${slug}-${id}`;
   const dir = join(paths.pipelines, dirName);
   await mkdir(dir, { recursive: true });
+  claimRunDir(dir);   // G19: verdicts and outputs writable by this run's owner's agent only
 
   // Seed the prompt. If a markdown file was provided, copy it verbatim;
   // otherwise persist the inline text. Either way prompt.md is the source.
@@ -3157,10 +3158,14 @@ export async function resolveIndexedArtifactForRow(row, rel) {
   // the file can vanish between the stat and this read. Before the selection was
   // split out, a failed read simply fell through and the route answered 404;
   // letting it throw here turns that race into a 500.
+  const fh = await openArtifactUnder(f.base, f.rel);
+  if (!fh) return null;
   try {
-    return { rel: f.rel, text: await readFile(f.file, 'utf8') };
+    return { rel: f.rel, text: await fh.readFile('utf8') };
   } catch {
     return null;
+  } finally {
+    await fh.close().catch(() => {});
   }
 }
 
@@ -3193,8 +3198,7 @@ export async function resolveIndexedArtifactFileForRow(row, rel) {
     // EISDIR — a 500 — instead of falling through to the store-root copy that
     // actually holds the artifact.
     try {
-      if (!(await stat(file)).isFile()) continue;
-      if (hit.kind === WORK_ARTIFACT_KIND && !(await workFileInside(base, file))) continue;
+      if (!artifactFileUnder(base, hit.relPath)) continue;
       await access(file, fsConstants.R_OK);
       return { rel: hit.relPath, file, base };
     } catch { /* try the next base */ }
@@ -3203,16 +3207,40 @@ export async function resolveIndexedArtifactFileForRow(row, rel) {
 }
 
 /**
- * P3-D13 at serve time: a no-project run's work/ was an agent's cwd and can still be one after the move (a process
- * that outlived the run moved with it), so a `work` row is served only as a real file whose real path stays inside
- * <base>/work — never a link (or a linked parent folder) planted after the index.
+ * The one rule every artifact kind is served (and sized) by: `<base>/<rel>` must be a real FILE with no link anywhere
+ * between base and itself — its real path is exactly the base's real path joined with rel. The run dir and the store
+ * root are agent-writable (a no-project run's work/ was an agent's cwd and can still be one after the move, P3-D13), so
+ * a file or folder swapped for a link after the index would otherwise make the artifact routes serve any file the worca
+ * user can read (G11). Indexing never records a link (harvestWork skips them), so a legitimate artifact always passes.
+ * The base itself may sit behind a link (a linked HOME); only what lies below it is checked. Stats | null.
  */
-async function workFileInside(base, file) {
+function artifactFileUnder(base, rel) {
   try {
-    if (!(await lstat(file)).isFile()) return false;
-    const rel = relative(await realpath(join(base, 'work')), await realpath(file));
-    return !!rel && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
-  } catch { return false; }
+    const file = join(base, rel);
+    const st = lstatSync(file);
+    if (!st.isFile()) return null;
+    return realpathSync(file) === join(realpathSync(base), rel) ? st : null;
+  } catch { return null; }
+}
+
+/**
+ * `<base>/<rel>` opened for reading, only when it passes artifactFileUnder AND the opened file is the one checked
+ * (same dev/ino): the check and a later read by path leave a window in which an agent swaps a folder or the file
+ * for a link (V9). Opened first, O_NOFOLLOW (a link as the last part never opens) and O_NONBLOCK (a FIFO never
+ * holds the request); checked after, so a swap back in between still fails the inode match. FileHandle | null;
+ * the caller closes it.
+ */
+export async function openArtifactUnder(base, rel) {
+  let fh;
+  try { fh = await openFile(join(base, rel), fsConstants.O_RDONLY | (fsConstants.O_NONBLOCK ?? 0) | (fsConstants.O_NOFOLLOW ?? 0)); }
+  catch { return null; }
+  try {
+    const checked = artifactFileUnder(base, rel);
+    const st = await fh.stat();
+    if (checked && st.isFile() && st.dev === checked.dev && st.ino === checked.ino) return fh;
+  } catch { /* refused below */ }
+  await fh.close().catch(() => {});
+  return null;
 }
 
 /** The keyed form (`/api/history/:key/:id`, workspace twin) over lookupPipelineRow. */

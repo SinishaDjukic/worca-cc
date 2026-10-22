@@ -194,3 +194,28 @@ test('POST /api/run validates guardrailsId: unknown 400, non-string 400, a built
     await rm(projectDir, { recursive: true, force: true });
   }
 });
+
+test('G13: GET /api/guardrails names the default (Normal on a fresh install); POST /api/run without guardrailsId runs it', async () => {
+  const { prepare, tx } = await import('../src/core/db.mjs');
+  const { runs } = await import('../ui/server.mjs');
+  const projectDir = await mkdtemp(join(tmpdir(), 'worca-cc-grdef-'));
+  const postRun = (extra = {}) => fetch(`${base}/api/run`, {
+    method: 'POST', headers: JSONH, body: JSON.stringify({ projectDir, prompt: 'demo task', mock: true, ...extra }),
+  });
+  const ranOn = async (r) => {
+    assert.equal(r.status, 200);
+    const { runId } = await r.json();
+    return runs.get(runId).orch.guardrailsId;
+  };
+  try {
+    assert.equal((await (await fetch(`${base}/api/guardrails`)).json()).default, 'normal');
+    assert.equal(await ranOn(await postRun()), 'normal', 'an omitted guardrailsId takes the install default');
+    assert.equal(await ranOn(await postRun({ guardrailsId: 'permissive' })), 'permissive', 'an explicit Permissive pick is kept');
+    tx(() => { prepare('INSERT OR REPLACE INTO store_meta (key, kind, data) VALUES (?, ?, ?)').run('guardrails:default', 'setting', '"permissive"'); });
+    assert.equal((await (await fetch(`${base}/api/guardrails`)).json()).default, 'permissive', 'an upgraded install keeps Permissive');
+    assert.equal(await ranOn(await postRun()), 'permissive');
+  } finally {
+    tx(() => { prepare('DELETE FROM store_meta WHERE key = ?').run('guardrails:default'); });
+    await rm(projectDir, { recursive: true, force: true });
+  }
+});

@@ -100,7 +100,8 @@ test('applying a plugin update re-tests that plugin\'s memberships', async () =>
   assert.equal((await readMcpStore()).tests[KEY]?.at, TEST.at);
   const git = (...a) => run('git', ['-C', repo, '-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...a]);
   writeFileSync(join(repo, 'CHANGELOG.md'), 'c2\n'); await git('add', '-A'); await git('commit', '-qm', 'c2');
-  const r = await post('/api/plugins/acme-tools/update', { confirm: true });
+  const { preview } = await (await post('/api/plugins/acme-tools/update', {})).json();
+  const r = await post('/api/plugins/acme-tools/update', { confirm: true, sha: preview.candidateSha });
   assert.equal(r.status, 200, await r.text());
   for (const t0 = Date.now(); ;) {
     const t = (await readMcpStore()).tests[KEY];
