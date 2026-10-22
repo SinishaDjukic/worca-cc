@@ -11,7 +11,6 @@ import { runClaude, mockEnabled } from '../claude-runner.mjs';
 import { listModels } from '../config.mjs';
 import { budgetStatus, recordRequirementsCostDelta } from '../cost-budget.mjs';
 import { openRepoLook, openWorkspaceRepoLook, REPO_LOOK_MAX_MEMBERS } from '../auto/repo-look.mjs';
-import { REPO_LOOK_TOOLS } from '../auto/classify.mjs';
 import { worcaHome, listProjects } from '../projects.mjs';
 import { workspaceTarget } from '../ask/workflow-deps.mjs';
 import { readWorkspace } from '../workspaces.mjs';
@@ -19,7 +18,7 @@ import { defaultBranchRef, commitOf, isAncestor } from '../worktree.mjs';
 import { commitsAhead, commitFilesSince } from '../git-info.mjs';
 import { RequirementsError } from './spec.mjs';
 import { RoundError } from './round.mjs';
-import { callModel, requirementsModel } from './interview.mjs';
+import { callModel, interviewModel } from './interview.mjs';
 import {
   getContext, getBrief, beginBrief, saveBriefResult, failBrief, addBriefCost, listMakingBriefs, recentBriefCosts,
 } from './store.mjs';
@@ -71,17 +70,21 @@ function notify(d, scopeType, scopeKey) {
   try { d.onChange(scopeType, scopeKey); } catch (e) { console.error('requirements: brief onChange failed:', message(e)); }
 }
 
-// ---------------------------------------------------------------- the two places the A1.1 merge changes (§9)
+// ---------------------------------------------------------------- the model and the call: A1.1's (design §9)
 
-/** The brief's model (D5): before the A1.1 merge the requirements model; after it, interviewModel(d). */
+/** The brief's model and effort (D5): the interview's, `interviewModel(d)` (A1.1 D2). */
 export async function briefModel(d) {
-  return { model: await requirementsModel(d.listModels), effort: null };
+  return interviewModel(d);
 }
 
-/** The brief's one model call (D5): before the A1.1 merge A1's callModel with the look's tools; after it,
- *  callModel(d, { kind: 'look', cwd, prompt, model, timeoutMs, systemPrompt: BRIEF_SYSTEM_PROMPT, maxTurns: BRIEF_MAX_TURNS }). */
-function briefCall(d, { cwd, prompt, model, timeoutMs }) {
-  return callModel(d, { cwd, systemPrompt: BRIEF_SYSTEM_PROMPT, prompt, model, tools: REPO_LOOK_TOOLS, maxTurns: BRIEF_MAX_TURNS, timeoutMs });
+/** The brief's one model call (D5) through A1.1's call path: a look (replace mode, the hermetic flags, the
+ *  look's tools REPO_LOOK_TOOLS) with the brief's own system prompt and turn cap. callModel does not fill the
+ *  effort, so the interview's effort is passed here. */
+function briefCall(d, { cwd, prompt, model, effort, timeoutMs }) {
+  return callModel(d, {
+    kind: 'look', cwd, prompt, model, ...(effort ? { effort } : {}), timeoutMs,
+    systemPrompt: BRIEF_SYSTEM_PROMPT, maxTurns: BRIEF_MAX_TURNS,
+  });
 }
 
 // ---------------------------------------------------------------- target
@@ -184,6 +187,7 @@ function runJob(row, target, scopeType, scopeKey, by, d) {
     const timer = setTimeout(() => ctrl.abort(), BRIEF_TIMEOUT_MS);
     let look = null;
     let model = null;
+    let effort = null;
     let cost = 0;
     try {
       let fresh;
@@ -202,18 +206,18 @@ function runJob(row, target, scopeType, scopeKey, by, d) {
         }
         if (ctrl.signal.aborted) throw coded('TIMEOUT', CHECKOUT_TIMEOUT);
         if (!look) throw coded('NO_REPO', 'Worca could not check out the code. Try again.');
-        ({ model } = await briefModel(d));
+        ({ model, effort } = await briefModel(d));
         assertBriefBudget(d);   // again: the limit may have been reached since the press (a recorded failure now)
         const now = getBrief(scopeType, scopeKey);
         const members = look.members || null;
         const prompt = buildBriefPrompt({
           scopeName: target.name, notes: getContext(scopeType, scopeKey).body, workspaceDescription: target.description || '',
-          current: now && now.madeAt ? now.sections : null, edited: (now && now.edited) || {}, members,
+          current: now && now.madeAt ? now.sections : null, edited: (now && now.edited) || {}, members, cwd: look.cwd,
         });
         const timeoutMs = deadline - Date.now();
         if (timeoutMs < MIN_CALL_MS) throw coded('TIMEOUT', CHECKOUT_TIMEOUT);   // not "no reply within 0 seconds"
         let reply;
-        try { reply = await briefCall(d, { cwd: look.cwd, prompt, model, timeoutMs }); }
+        try { reply = await briefCall(d, { cwd: look.cwd, prompt, model: model || undefined, effort, timeoutMs }); }
         catch (err) { cost = Number(err?.costUsd) || 0; throw err; }
         cost = Number(reply.costUsd) || 0;
         fresh = normalizeBrief(reply.text, { cwds: cwdsOf(look.cwd), members });   // while the checkout is still there

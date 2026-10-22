@@ -20,8 +20,10 @@ export const BRIEF_SYSTEM_PROMPT = [
   "You are Worca's product reader. You look at a code repository for a product owner and write a product",
   'brief: what the product does, for someone who does not read code. Every interview about a new feature of',
   'this product starts from your brief.',
-  'You have three read-only tools: Read, Grep and Glob. You cannot run commands or change anything. You have at',
-  'most 40 tool calls: stop reading well before that and reply. Your final message is the JSON object below.',
+  'You have three read-only tools: Read, Grep and Glob. Glob finds files by name pattern, Grep searches file',
+  'contents, Read reads one file (use paths under the working directory the message names). You cannot run',
+  'commands or change anything. You have at most 40 tool calls: stop reading well before that and reply.',
+  'Your final message is ONLY the JSON object below: no prose before or after it.',
   'Read enough to be right, not everything: the README and other docs, the screens, pages, routes and messages',
   'people see, the main concepts and their names. Prefer breadth over depth.',
   'Write plain product language: no file paths, code identifiers or technology names in the brief\'s text.',
@@ -293,7 +295,7 @@ export function briefFileName(scopeName) {
 
 // ---------------------------------------------------------------- prompt
 
-export function buildBriefPrompt({ scopeName, notes, workspaceDescription = '', current = null, edited = {}, members = null }) {
+export function buildBriefPrompt({ scopeName, notes, workspaceDescription = '', current = null, edited = {}, members = null, cwd = null }) {
   const blocks = [
     `<scope>${asData(scopeName)}</scope>`,
     `<project_notes>\n${asData(notes) || '(none)'}\n</project_notes>`,
@@ -308,9 +310,12 @@ export function buildBriefPrompt({ scopeName, notes, workspaceDescription = '', 
     const names = BRIEF_SECTIONS.filter((x) => edited && edited[x]).map((x) => BRIEF_TITLES[x]);
     blocks.push(`<edited_by_product_owner>\n${names.join(', ') || '(none)'}\n</edited_by_product_owner>`);
   }
+  // A1.1's wording: the look's directory is named here (the replaced system prompt names none); without it, A1's.
   blocks.push(members && members.length
-    ? `The working directory holds one checkout per project under repos/<project>: ${members.map(asData).join(', ')}.`
-    : 'The working directory is a checkout of the project.');
+    ? (cwd
+      ? `The working directory, ${asData(cwd)}, holds one checkout per project under repos/<project>: ${members.map(asData).join(', ')}.`
+      : `The working directory holds one checkout per project under repos/<project>: ${members.map(asData).join(', ')}.`)
+    : (cwd ? `The working directory, ${asData(cwd)}, is a checkout of the project.` : 'The working directory is a checkout of the project.'));
   blocks.push('Reply with ONLY the JSON object described in the system prompt.');
   return blocks.join('\n\n');
 }

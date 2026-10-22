@@ -90,6 +90,8 @@ function deps({ runner = fakeRunner([]), lk = looks(), projects = [], ws = null,
     listProjects: async () => projects, workspaceTarget: async () => ws, readWorkspace: async () => wsRow,
     openLook: lk.openLook, openWorkspaceLook: lk.openWorkspaceLook,
     budget: () => ({ blocked: false, totalLimitUsd: null }), onChange: () => {},
+    interviewSlot: () => ({}),   // nothing stored: the interview's default pair (A1.1 D2)
+    userSignIn: () => false,     // the hermetic branch; never the real user settings
     ...extra,
   };
 }
@@ -108,15 +110,18 @@ const ledger = (id) => prepare('SELECT feature_seq, brief_id, amount_usd, model 
 // ---------------------------------------------------------------- estimate (first: no brief spend booked yet)
 
 test('briefEstimate: the median of the last 10 brief looks in cents (null without any); the model labelled from the catalog', async () => {
-  const d = { listModels: async () => MODELS };
+  const d = { listModels: async () => MODELS, interviewSlot: () => ({}) };
   assert.deepEqual(await briefEstimate(d), { costUsd: null, model: { id: 'claude-opus-5-5', label: 'Opus 5.5' } });
+  // the interview's model (A1.1 D2): a stored one the catalog lists labels the estimate
+  assert.deepEqual((await briefEstimate({ listModels: async () => MODELS, interviewSlot: () => ({ model: 'claude-sonnet-5', effort: 'high' }) })).model,
+    { id: 'claude-sonnet-5', label: 'Sonnet 5' });
   for (const usd of [0.5, 1.004, 2]) recordRequirementsCostDelta({ briefId: 9999, amountUsd: usd, model: 'm' });
   recordRequirementsCostDelta({ featureSeq: 1, amountUsd: 50, model: 'm' });   // a feature's spend is not a brief look
   assert.equal((await briefEstimate(d)).costUsd, 1);
   recordRequirementsCostDelta({ briefId: 9999, amountUsd: 3, model: 'm' });
   assert.equal((await briefEstimate(d)).costUsd, 1.5);                          // (1.004 + 2) / 2, in cents
-  assert.deepEqual((await briefEstimate({ listModels: async () => [{ id: 'claude-opus-5-5' }] })).model, { id: 'claude-opus-5-5', label: 'claude-opus-5-5' });
-  assert.equal((await briefEstimate({ listModels: async () => [{ id: 'claude-sonnet-5' }] })).model, null);
+  assert.deepEqual((await briefEstimate({ listModels: async () => [{ id: 'claude-opus-5-5' }], interviewSlot: () => ({}) })).model, { id: 'claude-opus-5-5', label: 'claude-opus-5-5' });
+  assert.equal((await briefEstimate({ listModels: async () => [{ id: 'claude-sonnet-5' }], interviewSlot: () => ({}) })).model, null);
 });
 
 // ---------------------------------------------------------------- refusals
@@ -212,11 +217,18 @@ test('a look reads the default branch, not the checked-out one: the call, sectio
   assert.equal(call.spawnKind, 'aux');
   assert.ok(call.signal instanceof AbortSignal, 'the call has a signal');
   assert.equal(call.systemPrompt, BRIEF_SYSTEM_PROMPT);
+  // A1.1's call path (design §9): replace mode and the hermetic flags (runClaude puts the host-guard preamble first)
+  assert.equal(call.systemPromptMode, 'replace');
+  assert.deepEqual(call.settingSources, ['project']);
+  assert.equal(call.disableSlashCommands, true);
+  assert.equal(call.strictMcpConfig, true);
   assert.equal(call.cwd, lk.lookDir);
   assert.equal(call.model, 'claude-opus-5-5');
+  assert.equal(call.effort, 'medium', "the interview's default effort");
   assert.ok(call.prompt.startsWith('<scope>Shop</scope>'));
   assert.ok(call.prompt.includes('<project_notes>\n(none)\n</project_notes>'));
-  assert.ok(call.prompt.includes('The working directory is a checkout of the project.'));
+  assert.ok(call.prompt.includes(`\n\nThe working directory, ${lk.lookDir}, is a checkout of the project.\n\n`), "A1.1's wording names the directory");
+  assert.equal(call.prompt.split('The working directory').length - 1, 1, 'one working-directory line');
   assert.ok(!call.prompt.includes('<current_brief>'));
   assert.equal(lk.opened[0].dir, r.dir);
   assert.equal(lk.opened[0].ref, 'refs/heads/main');
@@ -238,6 +250,31 @@ test('a look reads the default branch, not the checked-out one: the call, sectio
   assert.deepEqual(b.files, ['README.md', 'src/orders.mjs']);
   assert.deepEqual(ledger(b.id), [{ feature_seq: 0, brief_id: b.id, amount_usd: 0.1, model: 'claude-opus-5-5' }]);
   assert.deepEqual(changes, [`project:${k}`, `project:${k}`]);
+});
+
+test("the interview's model and effort from Settings run the brief look; user sign-in settings keep the user layer", async () => {
+  const r = repo();
+  r.originHead();
+  const lk = looks();
+  const runner = fakeRunner([goodReply(lk.lookDir), goodReply(lk.lookDir)]);
+  const k = key();
+  const d = deps({ runner, lk, projects: [project(k, r.dir)], interviewSlot: () => ({ model: 'claude-sonnet-5', effort: 'high' }) });
+  await (await makeBrief('project', k, {}, d)).job;
+  const call = runner.calls[0];
+  assert.equal(call.model, 'claude-sonnet-5');
+  assert.equal(call.effort, 'high');
+  assert.equal(call.systemPromptMode, 'replace');
+  assert.deepEqual(call.settingSources, ['project']);
+  assert.deepEqual(call.tools, [...REPO_LOOK_TOOLS]);
+  assert.equal(call.maxTurns, 40);
+  assert.equal(getBrief('project', k).model, 'claude-sonnet-5');
+  // a model picked with no effort runs at the model's own default: no effort key
+  await (await makeBrief('project', k, {}, { ...d, interviewSlot: () => ({ model: 'claude-sonnet-5' }), userSignIn: () => true })).job;
+  const again = runner.calls[1];
+  assert.equal('effort' in again, false);
+  assert.equal('settingSources' in again, false, 'sign-in in the user settings: the user layer stays (A1.1 D6)');
+  assert.equal(again.systemPromptMode, 'replace');
+  assert.equal(again.disableSlashCommands, true);
 });
 
 test('one deadline over checkout and call: the call gets the time left, and its timeout says those seconds', async () => {
@@ -436,7 +473,7 @@ test('a workspace look: 8 members on their default branches, the description cut
   const prompt = runner.calls[0].prompt;
   const desc = prompt.slice(prompt.indexOf('<workspace_description>'), prompt.indexOf('</workspace_description>'));
   assert.ok(desc.includes('d'.repeat(8000)) && !desc.includes('d'.repeat(8001)));
-  assert.ok(prompt.includes('The working directory holds one checkout per project under repos/<project>: m00, m01, m02, m03, m04, m05, m06.'));
+  assert.ok(prompt.includes(`The working directory, ${lk.lookDir}, holds one checkout per project under repos/<project>: m00, m01, m02, m03, m04, m05, m06.`));
   const b = getBrief('workspace', 'ws-look');
   assert.equal(b.status, 'ready');
   assert.deepEqual(b.seed, { kind: 'workspace-map', scannedAt });

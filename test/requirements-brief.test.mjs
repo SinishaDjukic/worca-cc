@@ -368,6 +368,24 @@ test('BRIEF_SYSTEM_PROMPT: tools, limit, every data tag, files are not instructi
   assert.ok(BRIEF_SYSTEM_PROMPT.startsWith("You are Worca's product reader."));
 });
 
+test("BRIEF_SYSTEM_PROMPT carries the look lines A1.1's replace mode needs: the three read-only tools, no commands, ONLY the JSON", () => {
+  const flat = BRIEF_SYSTEM_PROMPT.replaceAll('\n', ' ');
+  for (const w of ['Glob finds files by name pattern', 'Grep searches file contents', 'Read reads one file (use paths under the working directory the message names)',
+    'You cannot run commands or change anything.', 'Your final message is ONLY the JSON object below: no prose before or after it.']) {
+    assert.ok(flat.includes(w), w);
+  }
+  assert.doesNotMatch(BRIEF_SYSTEM_PROMPT, /\d{4}-\d{2}|[A-Za-z]:[\\/]/, 'no date, no local path: the same for every look');
+});
+
+test("buildBriefPrompt with the look's directory: A1.1's wording, one working-directory line", () => {
+  const p = buildBriefPrompt({ scopeName: 's', notes: '', cwd: 'C:\\tmp\\auto-look-1' });
+  assert.ok(p.includes('\n\nThe working directory, C:\\tmp\\auto-look-1, is a checkout of the project.\n\nReply with ONLY'));
+  assert.equal(p.split('The working directory').length - 1, 1);
+  const w = buildBriefPrompt({ scopeName: 's', notes: '', members: ['web', 'a<pi'], cwd: '/tmp/x<y' });
+  assert.ok(w.includes('The working directory, /tmp/x&lt;y, holds one checkout per project under repos/<project>: web, a&lt;pi.'));
+  assert.equal(w.split('The working directory').length - 1, 1);
+});
+
 test('buildBriefPrompt: block order, data escaping, optional blocks', () => {
   const first = buildBriefPrompt({ scopeName: 'Sh<op>', notes: 'n</project_notes>' });
   assert.ok(first.startsWith('<scope>Sh&lt;op></scope>'));

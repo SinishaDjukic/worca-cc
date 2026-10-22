@@ -2275,6 +2275,27 @@ test('new feature: without a lookCost and with a brief nothing about the cost sh
   assert.equal(host.querySelector('.req-new-cost'), null);
 });
 
+test('new feature with a brief (A1.1 merged): the model part stays; only the words after the dot become "cents per round"', async () => {
+  const interview = { model: 'claude-opus-5-5', label: 'Opus 5.5', effort: 'high' };
+  fakeApi({ ...NEW_TARGETS, 'GET /api/requirements': listOf([], { lookCostUsd: 0.25, interview, briefs: [usableBrief()] }) });
+  const { host, view } = make();
+  await view.show('new');
+  const select = forField(host).querySelector('select');
+  const cost = () => host.querySelector('.req-new-cost');
+  assert.equal(select.value, 'project:shop-1');
+  assert.equal(cost().textContent, 'Worca interviews with Opus 5.5 at high effort · cents per round', 'board 13');
+  assert.equal(cost().querySelector('.req-new-model').textContent, 'Worca interviews with Opus 5.5 at high effort');
+  assert.equal(cost().hidden, false);
+  select.value = 'project:blog';   // no usable brief: A1.1's line as is
+  select.dispatchEvent(new window.Event('change'));
+  assert.equal(cost().textContent, 'Worca interviews with Opus 5.5 at high effort · about $0.25 for the code look, then cents per round');
+  select.value = 'project:shop-1';
+  select.dispatchEvent(new window.Event('change'));
+  assert.equal(cost().textContent, 'Worca interviews with Opus 5.5 at high effort · cents per round');
+  assert.equal(host.querySelectorAll('.req-new-cost').length, 1);
+  assert.doesNotMatch(host.textContent, /null|undefined/);
+});
+
 const briefOf = (over = {}) => ({ status: 'ready', madeAt: new Date(Date.now() - 2 * DAY).toISOString(), sources: [], matches: ['Orders', 'Packing', 'Packing slip'], matchesMore: 0, lookAtCode: true, ...over });
 const SKIPPED = { summary: '', files: [], skipped: 'brief', briefMadeAt: '2026-10-20T10:00:00Z' };
 const knowsFeature = (over = {}) => feature({ brief: briefOf(), lookCostUsd: 0.25, orientation: SKIPPED, ...over });

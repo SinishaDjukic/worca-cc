@@ -445,3 +445,34 @@ test('look prompt: the working directory named in exactly one sentence, for a pr
   assert.ok(buildOrientationPrompt({ feature, context: 'c', members: ['shop', 'api'] })
     .includes('\n\nThe working directory holds one checkout per project under repos/<project>: shop, api.\n\n'));
 });
+
+// ── A7 on A1.1 (plans/requirements-a7-design.md §9): the brief in the stable part, one working-directory line ──
+test('with a brief: rounds 2 and 3 share a stable part that holds <product_brief>; the later prompt starts with it', () => {
+  const r2 = roundPromptParts({ ...roundArgs(2), brief: BRIEF_TEXT });
+  const r3 = roundPromptParts({ ...roundArgs(3), brief: BRIEF_TEXT });
+  assert.equal(r3.stable, r2.stable);
+  assert.ok(r2.stable.includes('</project_context>\n\n<product_brief>\nMade from main @ abc1234 on 2026-10-01.'));
+  assert.ok(r2.stable.endsWith('</what_worca_found_in_the_code>'));
+  assert.ok(!r2.changing.includes('product_brief'));
+  const p3 = buildRoundPrompt({ ...roundArgs(3), brief: BRIEF_TEXT });
+  assert.ok(p3.startsWith(`${r2.stable}\n\n<thread>\n`), 'the later prompt starts with the earlier stable part');
+  // without a brief the stable part is A2's (A1.1's pin holds)
+  assert.equal(buildRoundPrompt({ feature: PIN_FEATURE(), context: 'Terms: order', turns: PIN_TURNS(), round: 2, brief: null }), A2_ROUND_PROMPT);
+});
+
+test('the closer look with the directory: one working-directory line, in design §9 order', () => {
+  const dir = join(tmpdir(), 'look-abc123');
+  const order = (p, wd) => ['<feature>', '<description>', '<project_context>', '<product_brief>', wd, BRIEF_LINE, 'Reply with ONLY the JSON object described in the system prompt.']
+    .map((m) => p.indexOf(m));
+  const p = buildOrientationPrompt({ feature: A2_FEATURE(), context: 'Terms: order', cwd: dir, brief: BRIEF_TEXT });
+  assert.equal(p.split('The working directory').length - 1, 1, 'exactly one working-directory line');
+  const idx = order(p, `The working directory, ${dir}, is a checkout of the project.`);
+  assert.ok(idx.every((i) => i >= 0), String(idx));
+  assert.deepEqual([...idx].sort((a, b) => a - b), idx);
+  assert.ok(p.endsWith(`</product_brief>\n\nThe working directory, ${dir}, is a checkout of the project.\n\n${BRIEF_LINE}\n\nReply with ONLY the JSON object described in the system prompt.`));
+  const w = buildOrientationPrompt({ feature: A2_FEATURE(), context: 'c', members: ['shop', 'api'], cwd: dir, brief: BRIEF_TEXT });
+  assert.equal(w.split('The working directory').length - 1, 1);
+  const widx = order(w, `The working directory, ${dir}, holds one checkout per project under repos/<project>: shop, api.`);
+  assert.ok(widx.every((i) => i >= 0), String(widx));
+  assert.deepEqual([...widx].sort((a, b) => a - b), widx);
+});

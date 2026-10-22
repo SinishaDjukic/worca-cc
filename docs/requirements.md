@@ -54,6 +54,12 @@ compose-secret setup is one). A settings file that exists but cannot be read or 
 one, or one that is not a JSON object, means the hermetic call. Worca says so once in its log ("user Claude
 settings carry or may carry sign-in; keeping them for interviews"). Your plugins and hooks then load as they did before; slash commands still do not.
 
+The product brief's look (one deeper read-only look at a project's or workspace's default branch, made from
+the Product brief page) is the same kind of call: it runs with the interview's model and effort, Worca's own
+instructions, the look's read-only tools, and the same settings rule, sign-in exception included. So an
+install whose sign-in lives only in user-level Claude Code settings that Worca cannot recognise fails a brief
+look with "Not logged in" exactly as it fails a round.
+
 ## Ready
 
 A feature is **Ready** when six checks pass; Worca computes them from what is stored, no model is asked:
