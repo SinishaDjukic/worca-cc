@@ -374,9 +374,15 @@
 
                 <!-- Title: names the run, so it sits with the task, not behind Advanced. -->
                 <div class="field field-compact">
-                  <label for="title">Title <span class="opt">(optional)</span></label>
-                  <input id="title" name="title" class="input" type="text" placeholder="Short name for this run" spellcheck="false" />
-                  <small class="hint">Leave empty and Worca will propose one.</small>
+                  <label for="title">Title <span class="opt">(optional)</span><span class="sn-chip-slot" id="titleSnChip"></span></label>
+                  <div class="sn-adorn">
+                    <input id="title" name="title" class="input" type="text" placeholder="Short name for this run" spellcheck="false" />
+                    <span class="sn-actions" data-flag="smartRunNaming">
+                      <button type="button" class="sn-btn" id="titleSnRetry" aria-label="Suggest again" title="Suggest again"></button>
+                      <button type="button" class="sn-btn" id="titleSnClear" aria-label="Clear suggestion" title="Clear suggestion"></button>
+                    </span>
+                  </div>
+                  <small class="hint" id="titleHint">Leave empty and Worca will propose one.</small>
                 </div>
                 <!-- Run tags (#718): who the work is for, so its cost can be allocated. Chips from tag-input.mjs. -->
                 <div class="field field-compact run-tags-field" data-flag="runTags" data-flag-chip>
@@ -521,8 +527,19 @@
                     <span class="txt">Branch off the run before it</span>
                   </div>
                   <div class="branches-new">
-                    <label for="featureBranch">New branch <span class="opt">(optional)</span></label>
-                    <input id="featureBranch" class="input" type="text" placeholder="e.g. feat/rate-limiter" spellcheck="false" />
+                    <label for="featureBranch">New branch <span class="opt">(optional)</span><span class="sn-chip-slot" id="branchSnChip"></span></label>
+                    <div class="sn-branch-row">
+                      <span class="select-wrap sn-type" id="branchTypeWrap" data-flag="smartRunNaming" hidden>
+                        <select id="branchType" class="select" aria-label="Branch type"></select>
+                      </span>
+                      <div class="sn-adorn">
+                        <input id="featureBranch" class="input" type="text" placeholder="e.g. feat/rate-limiter" spellcheck="false" />
+                        <span class="sn-actions" data-flag="smartRunNaming">
+                          <button type="button" class="sn-btn" id="branchSnRetry" aria-label="Suggest again" title="Suggest again"></button>
+                          <button type="button" class="sn-btn" id="branchSnClear" aria-label="Clear suggestion" title="Clear suggestion"></button>
+                        </span>
+                      </div>
+                    </div>
                     <small class="hint" id="featureBranchHint">Leave empty and Worca will propose one.</small>
                     <label class="switch-row same-src-row">
                       <input id="sameAsSource" class="sw-input" type="checkbox" role="switch" aria-describedby="sameAsSourceHint">
@@ -2018,6 +2035,62 @@
                 <button type="button" id="nightModeReset" class="btn btn-sm">Use defaults</button>
                 <button type="button" id="nightModeSave" class="btn btn-primary btn-sm">Save</button>
               </div>
+            </section>
+
+            <!-- Smart run naming (Labs): the smartRunNaming flag, the same value as its Settings › Labs row. -->
+            <section class="card settings-card" id="smart-naming-settings-card" data-min-level="simple">
+              <div class="card-head">
+                <div class="label-row"><h2>Smart run naming</h2></div>
+              </div>
+              <div class="drows" id="smartNamingRows">
+                <div class="drow switch-drow" id="smartNamingMasterRow">
+                  <span class="drow-label" id="smartNamingTxt" data-flag-chip="smartRunNaming">Suggest a title and a branch name for new runs</span>
+                  <small class="hint drow-help">A very low effort model reads the task. You can edit both before Start.</small>
+                  <div class="drow-control"><div class="switch" role="switch" tabindex="0" id="smartNamingSwitch" aria-checked="false" aria-labelledby="smartNamingTxt"></div></div>
+                </div>
+                <label class="drow switch-drow" id="smartNamingTitleRow">
+                  <span class="drow-label">Suggest the run title</span>
+                  <span class="drow-control"><input id="smartNamingTitle" data-setting="smartNaming.suggestTitle" class="sw-input" type="checkbox" role="switch" checked><span class="switch"></span></span>
+                </label>
+                <label class="drow switch-drow" id="smartNamingBranchRow">
+                  <span class="drow-label">Suggest the branch name</span>
+                  <span class="drow-control"><input id="smartNamingBranch" data-setting="smartNaming.suggestBranch" class="sw-input" type="checkbox" role="switch" checked><span class="switch"></span></span>
+                </label>
+                <div class="field drow" id="smartNamingModelRow">
+                  <span class="drow-label">Model</span>
+                  <small class="hint drow-help" id="smartNamingModelHint"><span data-min-level="expert"><a href="#models">Models › Helper jobs › Run naming</a>. </span><span id="smartNamingCost"></span></small>
+                </div>
+                <div class="field drow" id="smartNamingPatternRow">
+                  <label class="drow-label" for="smartNamingPattern">Branch pattern</label>
+                  <div class="drow-control"><input id="smartNamingPattern" class="input mono" type="text" spellcheck="false" data-setting="smartNaming.pattern" /></div>
+                  <small class="hint drow-help" id="smartNamingPreview"></small>
+                </div>
+                <div class="field drow" id="smartNamingTypesRow">
+                  <span class="drow-label" id="smartNamingTypesTxt">Types the model may pick</span>
+                  <div class="drow-control sn-types" id="smartNamingTypes" role="group" aria-labelledby="smartNamingTypesTxt"></div>
+                  <input id="smartNamingTypesValue" type="hidden" data-setting="smartNaming.types" />
+                </div>
+                <div class="field drow" id="smartNamingTriggerRow">
+                  <label class="drow-label" for="smartNamingTrigger">When to suggest</label>
+                  <div class="drow-control select-wrap">
+                    <select id="smartNamingTrigger" class="select" data-setting="smartNaming.trigger">
+                      <option value="debounce">While I type the task</option>
+                      <option value="manual">Only when I press Suggest again</option>
+                    </select>
+                  </div>
+                </div>
+                <label class="drow switch-drow" id="smartNamingRunIdRow">
+                  <span class="drow-label">Add the run id to the branch</span>
+                  <small class="hint drow-help">Appends a dash and the short run id when the pattern has no id placeholder.</small>
+                  <span class="drow-control"><input id="smartNamingRunId" data-setting="smartNaming.addRunId" class="sw-input" type="checkbox" role="switch"><span class="switch"></span></span>
+                </label>
+              </div>
+              <p class="hint" id="smartNamingProjectNote">A project can override the pattern and the types in its own Settings.</p>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="smartNamingReset" class="btn btn-sm">Use defaults</button>
+                <button type="button" id="smartNamingSave" class="btn btn-primary btn-sm">Save</button>
+              </div>
+              <p class="form-msg" id="smartNamingMsg" role="status"></p>
             </section>
 
             <!-- Scheduled runs: the defaults a NEW schedule inherits. Each schedule keeps
