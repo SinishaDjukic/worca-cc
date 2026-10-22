@@ -16,7 +16,7 @@ a `color-mix()` recipe used twice is a named token (`--btn-hover`, `--red-tint`,
 | amber | `--amber*` | needs you, attention, waiting; a PR problem | a brand mark, "not installed", "built-in" |
 | red | `--red*` | failed, destructive | a warning that needs no action |
 | blue | `--blue*` | information (the Beta chip), in-progress text, links | a status dot, a bar, team policy |
-| violet | `--violet*` | Labs only (the merged status dot and merged run orb are the two named exceptions) | sources, "Official", policy, a badge, a chart series |
+| violet | `--violet*` | Labs only (the merged status dot and merged run orb are the two named exceptions; the Marketplace chat kind tile and dot follow its kind colours, › Marketplace exceptions) | sources, "Official", policy, a badge, a chart series |
 | slate | `--slate*` | neutral metadata: a source, "Official", policy (`.badge.slate`) | a state |
 Status-dot exceptions: peach = working (it pulses), violet = merged. They are the dots only, never a badge.
 Surfaces: `--panel` page, `--surface` raised, `--field` field and tint fill; `--line` dividers, `--line-2` control borders.
@@ -190,7 +190,7 @@ buttons stay 28px; the card keeps the shared 24px padding (checked by the theme 
   belong in a tooltip.
 - The feature is "Chat", not "Ask Worca".
 - Page header: title, then one short intro sentence (`.page-intro`), then content. A full-bleed editor (Workflows) has
-  no page header.
+  no page header; the Marketplace's tabs are its header (Marketplace exceptions).
 - Stat tiles hold numbers only (time, cost, files changed). A list of chips goes in its own labelled row, for example
   the Cost tags row in the run page's facts block, never stacked inside a tile. The value is sans with tabular figures.
 - Run and group pages share one head: the bar (the breadcrumb `Runs › Run tags › Run 2` beside the list, Back on
@@ -202,7 +202,8 @@ buttons stay 28px; the card keeps the shared 24px padding (checked by the theme 
 - Runs navigation: every row opens its own page in the right pane and the list stays. A group row opens the group
   page; the ⌄ only expands. A group whose run is open shows the lighter `--row-open` fill.
 - Search is the top bar's "Search or ask" only. A list filter is chosen there ("Runs labelled hotfix", `label:hotfix`),
-  not from a filter button in the list's header.
+  not from a filter button in the list's header. The Marketplace's Browse search is the one exception
+  (Marketplace exceptions).
 - Phones: one 16px gutter; nothing scrolls sideways at 290px.
 - Runs list order: Needs you (most urgent first), Running, Waiting, Recent. Each section is newest dispatch first (a
   run's start, a waiting ticket's creation); a section with no rows is not drawn.
@@ -213,6 +214,20 @@ buttons stay 28px; the card keeps the shared 24px padding (checked by the theme 
 - "Ask for changes" gives way to the field with Cancel and Send changes; Cancel gives the button back.
 - The bar's primary names the waiting card's primary ("Approve 2 runs"), and a click on it is that click.
 - A destructive confirm says what goes in plain words ("Stop this run?", "Stop run") and opens on the safe choice.
+
+### Marketplace exceptions
+The Marketplace page (`ui/public/marketplace/`, design `docs/superpowers/specs/2026-10-19-marketplace-redesign/`) keeps the
+catalogue structure that was approved, drawn with this system's tokens:
+- Browse is a tile grid: one bordered `.mk-tile` button per plugin, 270px minimum, 16px padding, no shadow at rest or on
+  hover. Every other list on the page stays divided rows, except the Marketplaces tab: one `.card.mk-mkt` per
+  marketplace (board 4.1), with 16px 20px padding.
+- A page-scoped "Search plugins" field and a facet rail sit beside the grid. Rail rows (`.mk-facet`) are 32px rows with a
+  count and `aria-pressed`, the selected one on the `--panel` fill; they are not filter chips.
+- No page intro: the tabs (Browse · Installed · Marketplaces, each with a count) are the header.
+- Centred empty states: a 56px tile, a 15px title, at most one meta line and one action (or the inline add field).
+- Kind colours (`.mk-t-*` on the hue families, glyphs on the `-ink-strong` shades) appear only in a plugin's monogram tile
+  and as the rail's small kind dots. The update chip ("Update 0.3.0", "2 updates") is the page's blue status chip.
+  Status chips there use `.badge.mk-chip-*` on the `-ink-strong` shades (4.5:1 or more); the global `.badge` tones do not change.
 
 ## Do and don't
 | Do | Don't | Why |

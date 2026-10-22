@@ -241,6 +241,7 @@ test('unconfigured channel: not spawned, sendMessage fails closed', async () => 
   const row = host.status()[0];
   assert.equal(row.state, 'unconfigured');
   assert.match(row.detail, /missing config: token/);
+  assert.deepEqual(row.missingConfig, ['token'], 'CONTRACT §1.6: the keys, not only the sentence');
   await assert.rejects(
     host.sendMessage({ plugin: NAME, channelId: 'main', chatId: '1', message: { title: null, body: [], severity: 'info' } }),
     /unconfigured/,
@@ -257,6 +258,7 @@ test('reloadPlugin restarts workers against fresh config', async () => {
   await waitFor(() => host.status()[0]?.state === 'connected', { label: 'connect' });
   await host.reloadPlugin(NAME);
   await waitFor(() => host.status()[0]?.state === 'connected', { label: 'reconnect after reload' });
+  assert.deepEqual(host.status()[0].missingConfig, []);
   assert.equal(host.status().length, 1, 'no duplicate workers after reload');
   await host.stop();
 });

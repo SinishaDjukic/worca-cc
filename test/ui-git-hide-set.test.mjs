@@ -17,7 +17,7 @@ const MARKUP = ['#branch-fields', '#proj-add-tab-clone', '#sync-settings-card', 
   '.hd-publish', '.hd-pr-link', '.hd-push', '.hd-published', '.hd-base-check', '.hd-pr-repos', '.hd-base', '.hd-branch-copy',
   '.wiz-import', '[data-pdest="marketplace"]', '#export-marketplace-field'];   // dev's git-spawning workspace import and #717 export
 const KEPT = ['[data-nav="workspaces"]', '[data-nav="marketplace"]', '[data-nav="team-metrics"]', '[data-nav="team-policy"]',
-  '#plugin-add-btn', '#marketplace-add-row', '#proj-add-tab-folder', '#projectSelect'];
+  '#mk-root', '#proj-add-tab-folder', '#projectSelect'];
 const doc = (git) => trackDom(new JSDOM(renderIndexHtml(html, 'system', 'expert', undefined, { git }))).window.document;
 const gated = (el, d = el.ownerDocument) => d.documentElement.dataset.git === 'off' && !!el.closest('[data-needs-git]');
 // The run and History pages are <template>s (#run-detail-tpl, #hist-detail-tpl): querySelectorAll never enters a
@@ -173,10 +173,12 @@ test('hide set: JS-built surfaces and requests', async () => {
   ]);
 });
 
-// Part 3 — the plugin Install consent while git is off: the server decides (P6 installs GitHub repos over HTTPS
-// without git), and its GIT_MISSING refusal stays inside the dialog (U17).
+// Part 3 — the plugin install sheet while git is off: the server decides (P6 installs GitHub repos over HTTPS
+// without git), and its GIT_MISSING refusal stays inside the sheet (U17).
 const MKT = { id: 'gh', url: 'https://github.com/acme/m', name: 'GH', builtin: false, warnings: [],
   lastSync: { sha: 'a'.repeat(40), at: '2026-10-01T00:00:00.000Z' }, plugins: [{ name: 'gh-plugin', subdir: 'p', inventory: {} }] };
+const sheetOpen = (doc) => { const h = doc.getElementById('mk-sheet-host'); return !!h && !h.hidden && !h.classList.contains('hidden'); };
+const sheetFoot = (doc) => [...doc.querySelectorAll('#mk-sheet .mk-sheet-foot [data-act]')].map((b) => b.textContent);
 async function installScenario(git, answer) {
   const { window, doc } = await bootApp({ git });
   for (const k of ['Element', 'HTMLElement', 'Node', 'Event', 'CustomEvent']) Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true });
@@ -193,29 +195,29 @@ async function installScenario(git, answer) {
   };
   window.fetch = fake; globalThis.fetch = fake;
   window.location.hash = '#marketplace'; for (let i = 0; i < 8; i++) await wait(5);
-  doc.querySelector('#plugins-available .pl-install-avail').click(); await wait(5);
-  const install = [...doc.querySelectorAll('#plugin-modal-actions button')].find((b) => b.textContent === 'Install');
+  doc.querySelector('button.mk-tile[data-key="gh/gh-plugin"]').click(); await wait(5);
+  const install = doc.querySelector('#mk-sheet .mk-sheet-foot [data-act="install"]');
   install.click(); if (!git) install.click();   // no git: a double click while the request runs must not POST twice
   for (let i = 0; i < 20; i++) await wait(10);
-  const errEl = doc.querySelector('#plugin-modal-body .hint.err');
-  return { posts: posts.length, modalOpen: !doc.querySelector('#plugin-modal').classList.contains('hidden'),
-    err: errEl && !errEl.hidden ? errEl.textContent : null,
+  const chipEl = doc.querySelector('#mk-sheet .mk-src .pl-needs-git');
+  return { posts: posts.length, sheetOpen: sheetOpen(doc), chip: chipEl ? chipEl.textContent : null,
+    step: doc.querySelector('#mk-sheet .mk-step[aria-current="step"] .mk-step-label')?.textContent ?? null,
     reloaded: seq.slice(seq.indexOf('/api/plugins/install') + 1).some((x) => x.startsWith('/api/plugins')) };
 }
 
-test('hide set: the plugin Install consent while git is off', async () => {
+test('hide set: the plugin install sheet while git is off', async () => {
   await checkRows([
-    { name: 'the server answers GIT_MISSING: the message stays in the dialog, one POST', run: async () => {
+    { name: 'the server answers GIT_MISSING: the Needs git chip stays in the sheet, one POST', run: async () => {
       const r = await installScenario(false, { status: 409, body: { error: 'git is not installed on this machine', code: 'GIT_MISSING' } });
-      assert.deepEqual([r.posts, r.modalOpen, r.err], [1, true, 'git is not installed on this machine']);
+      assert.deepEqual([r.posts, r.sheetOpen, r.chip], [1, true, 'Needs git']);
     } },
-    { name: 'the server installs anyway (P6: a GitHub repo over HTTPS): the dialog closes, one POST, the Plugins view reloads', run: async () => {
+    { name: 'the server installs anyway (P6: a GitHub repo over HTTPS): one POST, the sheet lands on Done, the page reloads', run: async () => {
       const r = await installScenario(false, { status: 200, body: { ok: true } });
-      assert.deepEqual([r.posts, r.modalOpen, r.reloaded], [1, false, true]);
+      assert.deepEqual([r.posts, r.step, r.reloaded], [1, 'Done', true]);
     } },
-    { name: 'git on: today\'s flow (closes first, one POST)', run: async () => {
+    { name: 'git on: the same sheet (one POST, Done, the page reloads)', run: async () => {
       const r = await installScenario(true, { status: 200, body: { ok: true } });
-      assert.deepEqual([r.posts, r.modalOpen, r.reloaded], [1, false, true]);
+      assert.deepEqual([r.posts, r.step, r.reloaded], [1, 'Done', true]);
     } },
     { name: 'the second click of a double click (detail 2) lands after the 409: no second POST', run: async () => {
       const { window, doc } = await bootApp({ git: false });
@@ -232,11 +234,11 @@ test('hide set: the plugin Install consent while git is off', async () => {
       };
       window.fetch = fake; globalThis.fetch = fake;
       window.location.hash = '#marketplace'; for (let i = 0; i < 8; i++) await wait(5);
-      doc.querySelector('#plugins-available .pl-install-avail').click(); await wait(5);
-      const install = [...doc.querySelectorAll('#plugin-modal-actions button')].find((b) => b.textContent === 'Install');
+      doc.querySelector('button.mk-tile[data-key="gh/gh-plugin"]').click(); await wait(5);
+      const install = doc.querySelector('#mk-sheet .mk-sheet-foot [data-act="install"]');
       install.dispatchEvent(new window.MouseEvent('click', { bubbles: true, detail: 1 }));
       for (let i = 0; i < 5; i++) await wait(5);
-      assert.equal(install.disabled, false, 'the refusal re-enabled Install');
+      assert.deepEqual(sheetFoot(doc), ['Cancel'], 'the refusal leaves Cancel only');
       install.dispatchEvent(new window.MouseEvent('click', { bubbles: true, detail: 2 }));
       for (let i = 0; i < 5; i++) await wait(5);
       assert.equal(posts, 1);

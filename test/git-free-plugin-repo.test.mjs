@@ -35,12 +35,14 @@ const MARKET = {
 
 test('discovery over HTTPS equals discovery over git for the same commit; only plugin folders reach the disk', async (t) => {
   const { bare, sha } = gh.repo('acme/market', { files: MARKET });
-  const viaGit = await addPluginRepo(bare);
+  const gitEvents = []; const viaGit = await addPluginRepo(bare, { onProgress: (e) => gitEvents.push(e) });
   withNoGit(t);
-  const viaHttps = await addPluginRepo('acme/market');
+  const httpsEvents = []; const viaHttps = await addPluginRepo('acme/market', { onProgress: (e) => httpsEvents.push(e) });
   assert.equal(viaHttps.repoUrl, 'https://github.com/acme/market');
   assert.equal(viaHttps.sha, sha);
   assert.deepEqual([viaHttps.discovered, viaHttps.warnings, viaHttps.marketplace], [viaGit.discovered, viaGit.warnings, viaGit.marketplace]);
+  assert.ok(viaHttps.discovered.every((d) => Array.isArray(d.warnings)), 'G14: each discovered plugin carries its own notes over HTTPS too');
+  assert.deepEqual([gitEvents, httpsEvents], [[{ phase: 'reading', sha }], [{ phase: 'reading', sha }]]);
   assert.deepEqual(viaHttps.discovered.map((d) => [d.name, d.subdir]), [['alpha-plugin', 'plugins/alpha'], ['beta-plugin', 'plugins/beta']]);
   const snap = join(repoSnapshotRoot('https://github.com/acme/market'), sha);
   assert.equal(existsSync(join(snap, 'plugins', 'alpha', 'index.mjs')), true);

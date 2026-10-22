@@ -13,6 +13,8 @@ import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
+import { readMarketplaces, writeMarketplaces } from '../src/core/marketplaces.mjs';
+import { readPluginsLock, writePluginsLock } from '../src/core/plugins-lock.mjs';
 
 useTempHome(after);
 const run = promisify(execFile);
@@ -76,7 +78,9 @@ test('marketplace lifecycle: add -> list -> install (consent snapshot) -> remove
   assert.equal(marketplace.plugins[0].inventory.taskSources[0].secrets[0], 'token');
 
   // duplicate -> 409
-  assert.equal((await post('/api/marketplaces', { url: dir })).status, 409);
+  r = await post('/api/marketplaces', { url: dir });
+  assert.deepEqual([r.status, await r.json()], [409, { error: `marketplace already added: ${dir}`, code: 'EXISTS',
+    existing: { id: marketplace.id, name: 'API Fixture Market' } }], 'CONTRACT §2.1: EXISTS names the marketplace');
   // junk -> 400
   assert.equal((await post('/api/marketplaces', { url: join(tmpdir(), 'nope-does-not-exist') })).status, 400);
 
@@ -152,4 +156,25 @@ test('marketplace id cannot reach Object.prototype (no pollution, 404 not 200) (
   // the defense is deliberately redundant (Object.hasOwn AND downstream NOT_FOUND AND the
   // null-proto map), so no lone mutation flips a 404. The null-proto map itself is pinned
   // directly by the A5 test in test/marketplaces.test.mjs.
+});
+
+test('GET /api/plugins and GET /api/marketplaces name a manifest-less marketplace owner/repo, never its hashed id (G6)', async () => {
+  const id = 'github.com-acme-nameless-0000aaaa';
+  const st = readMarketplaces();
+  st.marketplaces[id] = { id, url: 'https://github.com/acme/nameless', name: id, description: '', addedAt: '2026-09-03T00:00:00.000Z', lastSync: null, plugins: [], warnings: [] };
+  writeMarketplaces(st);
+  const lock = readPluginsLock();
+  // A lock row with no folder on disk: listed as broken, which is all this test needs (its marketplace provenance).
+  writePluginsLock({ ...lock, 'ghost-nameless': { repo: 'https://github.com/acme/nameless', subdir: '', pinnedSha: 'a'.repeat(40), version: '0.1.0', enabled: true, installedAt: '2026-09-03T00:00:00.000Z', marketplace: id } });
+  try {
+    const row = (await (await get('/api/plugins')).json()).plugins.find((p) => p.name === 'ghost-nameless');
+    assert.equal(row.marketplaceName, 'acme/nameless');
+    const listed = (await (await get('/api/marketplaces')).json()).marketplaces.find((m) => m.id === id);
+    assert.deepEqual([listed.name, listed.lastError], ['acme/nameless', null]);
+  } finally {
+    writePluginsLock(lock);
+    const back = readMarketplaces();
+    delete back.marketplaces[id];
+    writeMarketplaces(back);
+  }
 });

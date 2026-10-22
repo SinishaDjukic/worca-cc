@@ -20,6 +20,7 @@ import { githubEnv } from './github-credentials.mjs';
 import { withAzureToken, readAzureCredentials } from './azure-credentials.mjs';
 import { mcpUpdatePreview } from './mcp/plugin-lifecycle.mjs';
 import { gitAvailable } from './git-available.mjs';
+import { accessChanges } from '../shared/plugin-access.mjs';
 
 // Without git a GitHub repository is read over HTTPS (P6). Lazy: plugin-store.mjs imports this module statically and
 // git-free/plugin-repo.mjs imports both, so the git path never loads git-free/ (and no import cycle forms at load).
@@ -40,7 +41,7 @@ const defaultExec = async (cmd, args, opts = {}) => {
     maxBuffer: 16 * 1024 * 1024,
     timeout: 120_000,
     killSignal: 'SIGKILL',
-    env: { ...env, GIT_TERMINAL_PROMPT: '0' },
+    env: { ...env, GIT_TERMINAL_PROMPT: '0', ...(cmd === 'git' ? { LC_ALL: 'C' } : {}) },   // git's errors in English: syncErrorOf reads them
     ...opts,
   });
 };
@@ -53,7 +54,7 @@ export function repoSlug(repoUrl) {
   const s = String(repoUrl);
   const readable = s
     .replace(/^[a-z+]+:\/\//i, '').replace(/\.git$/i, '')
-    .replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '')
+    .replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|(?<!-)-+$/g, '')   // the lookbehind keeps a long run of dashes linear
     .slice(0, 80) || 'repo';
   return `${readable}-${createHash('sha1').update(s).digest('hex').slice(0, 8)}`;
 }
@@ -213,7 +214,7 @@ export async function discoverPlugins(allPaths, readText) {
       continue;
     }
     seenNames.add(res.manifest.name);
-    discovered.push({ name: res.manifest.name, subdir, manifest: res.manifest });
+    discovered.push({ name: res.manifest.name, subdir, manifest: res.manifest, warnings: res.warnings });
   }
   return { discovered, warnings, marketplace };
 }
@@ -225,15 +226,16 @@ export async function discoverPlugins(allPaths, readText) {
  * @returns {{repoUrl:string, sha:string, discovered:Array<{name,subdir,manifest}>,
  *   warnings:string[], marketplace:{name:string, description:string}|null}}
  */
-export async function addPluginRepo(repoUrl, { exec = defaultExec, ref = null } = {}) {
+export async function addPluginRepo(repoUrl, { exec = defaultExec, ref = null, onProgress = null } = {}) {
   // `owner/repo` shorthand -> GitHub URL (spec §4.3) — only when it is not a
   // real local path (local fixture repos in tests stay untouched).
   if (/^[\w.-]+\/[\w.-]+$/.test(repoUrl) && !existsSync(repoUrl)) {
     repoUrl = `https://github.com/${repoUrl}`;
   }
-  if (!gitAvailable()) return (await httpsRepo()).addPluginRepoHttps(repoUrl, { ref });
+  if (!gitAvailable()) return (await httpsRepo()).addPluginRepoHttps(repoUrl, { ref, onProgress });
   const cache = await ensureCache(repoUrl, exec);
   const sha = await tipSha(cache, ref, exec);
+  onProgress?.({ phase: 'reading', sha });
   return { repoUrl, ...(await discoverAtCommit(cache, sha, { exec })) };
 }
 
@@ -241,6 +243,12 @@ export async function addPluginRepo(repoUrl, { exec = defaultExec, ref = null } 
 function manifestSecretKeys(manifest) {
   return (manifest?.taskSources || []).flatMap((s) =>
     (s.configSchema || []).filter((f) => f && f.secret === true).map((f) => `${s.id}.${f.key}`));
+}
+
+/** `<channelId>.<key>` for every secret configSchema field of a manifest's chat channels. */
+function manifestChannelSecretKeys(manifest) {
+  return (manifest?.chatChannels || []).flatMap((c) =>
+    (c.configSchema || []).filter((f) => f && f.secret === true).map((f) => `${c.id}.${f.key}`));
 }
 
 /** Normalized models/modelSecrets view of a RAW manifest ({} on any failure —
@@ -324,7 +332,7 @@ async function computeManifestDelta(name, cache, entry, pinnedSha, candidateSha,
       .catch(() => (process.platform === 'win32' ? null : exec('rm', ['-rf', scratch])))
       .catch(() => {});
   }
-  return assembleManifestDelta({ pin, cand, newAgents, lifecycle });
+  return { manifestDelta: assembleManifestDelta({ pin, cand, newAgents, lifecycle }), version: manifestVersion(cand) };
 }
 
 /** The update-review manifest delta from both sides' RAW manifests, the added agents and the MCP/skills preview
@@ -334,6 +342,10 @@ export function assembleManifestDelta({ pin, cand, newAgents, lifecycle }) {
   const candSecrets = manifestSecretKeys(cand);
   const pinIds = (pin?.taskSources || []).map((s) => s.id);
   const candIds = (cand?.taskSources || []).map((s) => s.id);
+  const pinCh = (pin?.chatChannels || []).map((c) => c.id);
+  const candCh = (cand?.chatChannels || []).map((c) => c.id);
+  const pinChSecrets = manifestChannelSecretKeys(pin);
+  const candChSecrets = manifestChannelSecretKeys(cand);
   // Model delta (design §9.4): env changes — a base-URL swap redirects ALL API
   // traffic for that model — are the red-highlight review inputs.
   const pinM = manifestModels(pin);
@@ -345,6 +357,8 @@ export function assembleManifestDelta({ pin, cand, newAgents, lifecycle }) {
   return {
     newSecrets: candSecrets.filter((k) => !pinSecrets.includes(k)),
     newTaskSources: candIds.filter((id) => !pinIds.includes(id)),
+    newChatChannels: candCh.filter((id) => !pinCh.includes(id)),
+    newChannelSecrets: candChSecrets.filter((k) => !pinChSecrets.includes(k)),
     newAgents,
     setupChanged: JSON.stringify(pin?.setup ?? null) !== JSON.stringify(cand?.setup ?? null),
     newModels: [...candModels.values()].filter((m) => !pinModels.has(m.id.toLowerCase())).map((m) => m.id),
@@ -356,6 +370,34 @@ export function assembleManifestDelta({ pin, cand, newAgents, lifecycle }) {
       .filter((k) => !pinM.modelSecrets.some((f) => f.key === k)),
     // MCP servers (registry §4.6) and skills (skills registry §5): new/removed/changed names + the red lines.
     ...lifecycle,
+  };
+}
+
+/** The manifest delta of a candidate equal to the pin: every key, nothing new (shared with the HTTPS preview). */
+export function emptyManifestDelta() {
+  return {
+    newSecrets: [], newTaskSources: [], newChatChannels: [], newChannelSecrets: [], newAgents: [], setupChanged: false,
+    newModels: [], removedModels: [], envChangedModels: [], newModelSecrets: [],
+    newMcpServers: [], removedMcpServers: [], changedMcpServers: [], mcpLines: [],
+    newSkills: [], removedSkills: [], changedSkills: [], skillLines: [],
+  };
+}
+
+/** A RAW manifest's version as normalizeManifest reads it (trimmed, non-empty), else null — also for no manifest. */
+export function manifestVersion(raw) {
+  return typeof raw?.version === 'string' && raw.version.trim() ? raw.version.trim() : null;
+}
+
+/** The update preview both paths return (CONTRACT §1.4): the versions, when it was read and the new access ride at the
+ *  top level, beside the manifest delta they are read from (an equal candidate keeps the installed version). */
+export function finishPreview({ entry, pinnedSha, candidateSha, candidateVersion, commits, diffstat, diffFull, manifestDelta }) {
+  return {
+    pinnedSha, candidateSha,
+    pinnedVersion: entry.version ?? null,
+    candidateVersion: candidateSha === pinnedSha ? entry.version ?? null : candidateVersion,
+    previewedAt: new Date().toISOString(),
+    commits, diffstat, diffFull, manifestDelta,
+    access: accessChanges(manifestDelta),
   };
 }
 
@@ -375,24 +417,21 @@ export async function fetchCandidate(name, { exec = defaultExec, fullDiff = fals
   let commits = [];
   let diffstat = '';
   let diffFull = '';
-  let manifestDelta = {
-    newSecrets: [], newTaskSources: [], newAgents: [], setupChanged: false,
-    newModels: [], removedModels: [], envChangedModels: [], newModelSecrets: [],
-    newMcpServers: [], removedMcpServers: [], changedMcpServers: [], mcpLines: [],
-    newSkills: [], removedSkills: [], changedSkills: [], skillLines: [],
-  };
+  let manifestDelta = emptyManifestDelta();
+  let candidateVersion = null;
   if (candidateSha !== pinnedSha) {
-    const log = await gitDir(cache, ['log', '--format=%H%x09%s', `${pinnedSha}..${candidateSha}`], exec);
+    // The plugin folder's commits only (a root plugin: the whole repository), as the diffstat below is scoped.
+    const scope = entry.subdir ? ['--', entry.subdir] : [];
+    const log = await gitDir(cache, ['log', '--format=%H%x09%s', `${pinnedSha}..${candidateSha}`, ...scope], exec);
     commits = log.split('\n').filter(Boolean).map((l) => {
       const i = l.indexOf('\t');
       return { sha: l.slice(0, i), subject: l.slice(i + 1) };
     });
-    const scope = entry.subdir ? ['--', entry.subdir] : [];
     diffstat = (await gitDir(cache, ['diff', '--stat', pinnedSha, candidateSha, ...scope], exec)).trim();
     if (fullDiff) diffFull = (await gitDir(cache, ['diff', pinnedSha, candidateSha, ...scope], exec)).trim();
-    manifestDelta = await computeManifestDelta(name, cache, entry, pinnedSha, candidateSha, exec);
+    ({ manifestDelta, version: candidateVersion } = await computeManifestDelta(name, cache, entry, pinnedSha, candidateSha, exec));
   }
-  return { pinnedSha, candidateSha, commits, diffstat, diffFull, manifestDelta };
+  return finishPreview({ entry, pinnedSha, candidateSha, candidateVersion, commits, diffstat, diffFull, manifestDelta });
 }
 
 /**

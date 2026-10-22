@@ -71,9 +71,12 @@ test('#555 D1: a delete success (marketplace / guardrail set / model) survives t
         'GET /api/plugins': { status: 200, body: { plugins: [], orphans: [] } },
         'GET /api/chat/status': { status: 200, body: { channels: [] } },
       } });
-      await go('marketplace');
-      window.document.querySelector('.pl-mkt-remove[data-id="acme"]').click();
-      await confirmDialog(window);
+      await go('marketplace/marketplaces');
+      const doc = window.document;
+      doc.querySelector('.mk-mkt-more[data-id="acme"]').click();
+      [...doc.querySelectorAll('.wfv-menu [role^="menuitem"]')].find((b) => b.querySelector('.wfv-menu-l').textContent === 'Remove…').click();
+      for (let i = 0; i < 4; i++) await tick();
+      doc.querySelector('#mk-dialog[data-kind="remove-marketplace"] .mk-confirm').click();
       for (let i = 0; i < 10; i++) await tick();
       assert.deepEqual(lastToast(window.document), { tone: 'ok', title: 'Marketplace removed. Installed plugins remain.', detail: '', action: '' });
       assert.equal(window.document.getElementById('plugins-msg').textContent, '');
@@ -121,23 +124,29 @@ test('#555: a load failure stays on the inline line and raises no toast', async 
   assert.equal(lastToast(window.document), null);
 });
 
-test('#555: a plugin uninstall refused with 409 is an error toast whose Details opens the references', async () => {
+test('#555: a plugin remove refused with 409 stays inside the Remove dialog — no toast, no other dialog', async () => {
   const { window, go } = await boot({ routes: {
-    'DELETE /api/plugins/acme-jira': { status: 409, body: { error: 'used by saved workflow(s): Docs Flow\nremove it there first', references: [{ kind: 'workflow', id: 'wf_docs', name: 'Docs Flow' }] } },
+    'DELETE /api/plugins/acme-jira': { status: 409, body: { error: 'used by saved workflow(s): Docs Flow\nremove it there first', references: [{ workflowId: 'wf_docs', name: 'Docs Flow', keys: ['triager'] }] } },
+    'GET /api/plugins/acme-jira/references': { status: 200, body: { references: [] } },
+    'GET /api/plugins/acme-jira': { status: 200, body: { plugin: { name: 'acme-jira' }, inventory: { agents: [{ key: 'triager' }] }, repo: null, subdir: '', sha: 'a'.repeat(40), installedAt: null, updatedAt: null, webUrl: null } },
     'GET /api/plugins': { status: 200, body: { plugins: [{ name: 'acme-jira', version: '1.0.0', enabled: true }], orphans: [] } },
     'GET /api/marketplaces': { status: 200, body: { marketplaces: [] } },
     'POST /api/marketplaces/refresh': { status: 200, body: { marketplaces: [] } },
     'GET /api/chat/status': { status: 200, body: { channels: [] } },
   } });
-  await go('marketplace');
-  window.document.querySelector('.pl-remove[data-name="acme-jira"], [data-name="acme-jira"] .pl-remove').click();
-  await confirmDialog(window);
+  await go('marketplace/installed');
+  const doc = window.document;
+  doc.querySelector('section.mk-all .mk-more[data-name="acme-jira"]').click();
+  [...doc.querySelectorAll('.wfv-menu [role="menuitem"]')].find((b) => b.textContent === 'Remove…').click();
   for (let i = 0; i < 10; i++) await tick();
-  assert.deepEqual(lastToast(window.document), { tone: 'err', title: 'Cannot uninstall acme-jira', detail: 'used by saved workflow(s): Docs Flow', action: 'Details' });
-  assert.ok(window.document.getElementById('plugin-modal').classList.contains('hidden'), 'no dialog until Details is pressed');
-  window.document.querySelector('#toasts .toast-act').click();
-  assert.equal(window.document.getElementById('plugin-modal').classList.contains('hidden'), false);
-  assert.match(window.document.getElementById('plugin-modal-body').textContent, /Docs Flow/);
+  const dlg = doc.getElementById('mk-dialog');
+  assert.equal(dlg.dataset.kind, 'remove');
+  dlg.querySelector('[data-dlg="remove"]').click();
+  for (let i = 0; i < 10; i++) await tick();
+  const err = dlg.querySelector('.mk-dlg-err');
+  assert.deepEqual([err.hidden, err.textContent], [false, 'used by saved workflow(s): Docs Flow']);
+  assert.equal(lastToast(doc), null, 'no toast');
+  assert.ok(doc.getElementById('plugin-modal').classList.contains('hidden'), 'no other dialog');
 });
 
 test('#555: the model editor Save — a missing id is a field error, a refusal a card alert, success a toast', async () => {

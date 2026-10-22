@@ -445,17 +445,21 @@ level and has no **Diff**, **Changes** or **Actions**.
   Azure Boards),
   agents (with their ask forms), scripts, skills, workflow templates, models,
   chat channels, and MCP servers for the [registry](docs/mcp-servers.md).
-  Install from the **Marketplace** page (Advanced) or `worca plugin install`;
-  **Add marketplace** (a GitHub URL, `owner/repo` or a local path) is Expert.
+  Install from the **Marketplace** page's Browse tab (Advanced) or `worca plugin install`;
+  **Add marketplace** takes a GitHub URL, `owner/repo` or a local path.
   On a machine without git, marketplaces and installs work for GitHub
   repositories over HTTPS, a local plugin folder is linked, and other sources
   say `Needs git`.
   Installing from the UI is an explicit consent ceremony pinned to the commit
   you saw: what's installed, which ask forms an agent can show and which file
   types they may display, which secrets each part requests, where models
-  route, which setup commands run. **Update** previews the commits and a
-  diffstat, and flags new secrets, changed setup and changed model env, before
-  you accept (`worca plugin update --diff` adds the full diff). Package your
+  route, which setup commands run. **Update all** reviews every update in one
+  sheet — the plugin folder's commits, a diffstat and what changes; an update
+  that asks for new access (a new secret, changed setup or model env, a new
+  source, channel, agent or model, an MCP server or skill change) waits until
+  you tick it as reviewed, and each applies exactly the commit you reviewed
+  (`worca plugin update --diff` adds the full diff; `worca plugin purge <name>`
+  deletes a removed plugin's leftover settings and secrets). Package your
   own with **Export…** on a saved workflow or **Share as plugin…** on the
   Models page; see the [authoring guide](.claude/skills/creating-worca-cc-plugins/SKILL.md).
 - **Built-in marketplace** — **Worca CC Official**, Worca's GitHub repository on
