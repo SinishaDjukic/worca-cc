@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import {
   worktreeNoticeModel, renderWorktreeNotice, memberLabel, recoveryPatchKind, uncommittedPatchName,
-  applyConfirmMessage, applyOutcome, NOTICE_TITLES, worktreeRowState,
+  applyConfirmMessage, applyOutcome, NOTICE_TITLES, worktreeRowState, checkoutRowValue, TRY_IT_ROW,
 } from '../ui/public/worktree-notice.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
@@ -68,37 +68,27 @@ test('retained, provisional: the facts but no actions', () => {
   assert.equal(el.querySelector('.wt-actions'), null);
 });
 
-test('checkout: where, since when, why things are refused; Discard + Get the diff + the Actions tab (Advanced)', () => {
-  const calls = [];
-  const el = host(renderWorktreeNotice(worktreeNoticeModel({ checkout: CHECKOUT }), {
-    doc, when: (iso) => `@${iso}`,
-    handlers: { onReleaseCheckout: (m) => calls.push(['release', m.projectKey, m.external]), onDiff: (m) => calls.push(['diff', m.projectKey]),
-      onOpenActions: () => calls.push(['tab']) },
-  }));
-  assert.equal(el.querySelector('h4').textContent, NOTICE_TITLES.checkout);
-  assert.match(el.textContent, /worca-cc\/x is checked out in a worktree since @2026-10-14T08:00:00Z/);
-  assert.match(el.textContent, /Worktree: \/h\/runs\/ab\/repos\/app/);
-  assert.match(el.textContent, /Check out, Archive and a new run on this branch are refused/);
-  assert.deepEqual(labels(el), ['Discard', 'Get the diff', 'Actions tab ›']);
-  assert.equal(el.querySelector('.wt-actions-row').dataset.minLevel, 'advanced', 'only the tab link is level-gated');
-  for (const b of el.querySelectorAll('button')) b.click();
-  assert.deepEqual(calls, [['release', 'app-0cea65fb', false], ['diff', 'app-0cea65fb'], ['tab']]);
+const when = (iso) => `@${iso.slice(11, 16)}`;
+
+test('a checkout renders nothing on the glance: the Actions tab owns it', () => {
+  for (const co of [CHECKOUT, LINKED]) {
+    const el = host(renderWorktreeNotice(worktreeNoticeModel({ checkout: co }), { doc, handlers: {} }));
+    assert.equal(el.childNodes.length, 0);
+    assert.doesNotMatch(el.textContent, /worktree/i);
+  }
 });
 
-test('a linked folder is named as yours and offers Unlink, never Discard', () => {
-  const el = host(renderWorktreeNotice(worktreeNoticeModel({ checkout: LINKED }), {
-    doc, handlers: { onReleaseCheckout: () => {}, onDiff: () => {} } }));
-  assert.equal(el.querySelector('h4').textContent, NOTICE_TITLES.linked);
-  assert.match(el.textContent, /checked out in your folder/);
-  assert.match(el.textContent, /Your folder: \/Users\/ada\/app/);
-  assert.deepEqual(labels(el), ['Unlink', 'Get the diff']);
-});
-
-test('a workspace lists its members', () => {
-  const two = { members: [CHECKOUT.members[0], { ...CHECKOUT.members[0], projectKey: 'api-11111111', worktreeDir: '/h/runs/ab/repos/api', branch: 'worca-cc/x' }] };
-  const el = host(renderWorktreeNotice(worktreeNoticeModel({ checkout: two, workspace: true }), { doc, handlers: { onDiff: () => {} } }));
-  assert.deepEqual([...el.querySelectorAll('.wt-members strong')].map((s) => s.textContent), ['app', 'api']);
-  assert.equal(labels(el).filter((l) => l === 'Get the diff').length, 2, 'one per member');
+test('checkoutRowValue: local copy, linked folder, several members, none', () => {
+  assert.equal(checkoutRowValue(CHECKOUT, { when }), 'Local copy open · since @08:00');
+  assert.equal(checkoutRowValue(LINKED, { when }), 'Linked to your folder · since @08:00');
+  const two = { members: [CHECKOUT.members[0], { ...CHECKOUT.members[0], projectKey: 'api-11111111', at: '2026-10-14T07:30:00Z' }] };
+  assert.equal(checkoutRowValue(two, { when }), '2 local copies open · since @07:30', 'the earliest checkout');
+  const mixed = { members: [CHECKOUT.members[0], { ...LINKED.members[0], projectKey: 'api-11111111' }] };
+  assert.equal(checkoutRowValue(mixed, { when }), '2 local copies open · since @08:00');
+  assert.equal(checkoutRowValue({ members: [{ ...CHECKOUT.members[0], at: null }] }, { when }), 'Local copy open');
+  assert.equal(checkoutRowValue(null, { when, canTry: true }), TRY_IT_ROW);
+  assert.equal(TRY_IT_ROW, 'Try it on this machine');
+  assert.equal(checkoutRowValue({ members: [] }, { when, canTry: false }), '');
 });
 
 test('data is text: a hostile git message renders inert', () => {

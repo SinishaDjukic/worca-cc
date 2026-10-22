@@ -610,34 +610,102 @@ test('with a saved run open, the popup for that run names the step from its save
 });
 
 // ---------------------------------------------------------------------------
-// The worktree notice (summary card): a checkout, a linked folder, Apply to branch
+// The summary card: the checkout's Actions row (Simple: a plain row with Discard / Unlink), the retained notice
 // ---------------------------------------------------------------------------
 
+// Seeded "now": whenLabel then reads HH:MM (today), even near midnight.
 const checkoutRow = (member = {}) => ({ ...ROW, checkout: { members: [{ projectKey: KEY, worktreeDir: '/tmp/co', branch: ROW.branch,
-  at: '2026-10-14T09:00:00Z', policy: 'on-demand', setup: { status: 'ok' }, ...member }] } });
+  at: new Date().toISOString(), policy: 'on-demand', setup: { status: 'ok' }, ...member }] } });
 const noticeOf = (doc) => doc.querySelector('#hist-detail .hd-glance .retained-banner');
+const glanceOf = (doc) => doc.querySelector('#hist-detail .hd-glance');
+const actionsRowOf = (doc) => doc.querySelector('#hist-detail .hd-glance .rd-result .rd-srow[data-rd-tab="actions"]');
+const actionsValueOf = (doc) => { const v = actionsRowOf(doc)?.querySelector('.rd-srow-v'); return v ? v.textContent : ''; };
+const simpleRowOf = (doc) => doc.querySelector('#hist-detail .hd-glance .rd-result .rd-srow-checkout');
 const buttonsOf = (el) => [...el.querySelectorAll('button')].map((b) => b.textContent);
+const atSimple = (ctx) => { ctx.window.document.documentElement.dataset.level = 'simple'; };
+const atAdvanced = (ctx) => { ctx.window.document.documentElement.dataset.level = 'advanced'; };
+/** Browsers blur a focused button the moment it becomes disabled; jsdom does not. Blur first: jsdom's blur() does
+ *  nothing on a button that is already disabled. */
+function blurOnDisable(btn) {
+  const proto = Object.getPrototypeOf(btn);
+  const desc = Object.getOwnPropertyDescriptor(proto, 'disabled') || Object.getOwnPropertyDescriptor(Object.getPrototypeOf(proto), 'disabled');
+  Object.defineProperty(btn, 'disabled', {
+    configurable: true,
+    get() { return desc.get.call(this); },
+    set(v) { if (v) this.blur(); desc.set.call(this, v); },
+  });
+}
 
-test('worktree notice: a checked-out run says where and why, at every level, and blocks Archive', async () => {
+test('checkout: no box on the glance; the Actions row says where the local copy stands; Archive stays blocked', async () => {
   const ctx = await bootDetail({ rows: [checkoutRow()] });
+  atAdvanced(ctx);
   await openDetail(ctx, '');
   await settle(ctx.window, 6);
   const doc = ctx.window.document;
   const n = noticeOf(doc);
-  assert.equal(n.hidden, false);
-  assert.equal(n.dataset.kind, 'checkout');
-  assert.equal(n.getAttribute('role'), 'status');
-  assert.equal(n.closest('[data-min-level]'), null, 'never level-gated');
-  assert.match(n.textContent, /Checked out in a worktree/);
-  assert.match(n.textContent, /Worktree: \/tmp\/co/);
-  assert.match(n.textContent, /Check out, Archive and a new run on this branch are refused/);
-  assert.deepEqual(buttonsOf(n), ['Discard', 'Get the diff', 'Actions tab ›']);
+  assert.equal(n.hidden, true);
+  assert.notEqual(n.dataset.kind, 'checkout');
+  assert.match(actionsValueOf(doc), /^Local copy open · since \d{1,2}:\d{2}$/);
+  const v = actionsRowOf(doc).querySelector('.rd-srow-v');
+  assert.equal(actionsRowOf(doc).lastElementChild, v, 'the value is the row\'s last child, before the CSS chevron');
+  assert.equal(simpleRowOf(doc), null, 'the tab row owns it at Advanced');
+  assert.doesNotMatch(glanceOf(doc).textContent, /worktree/i);
   const archive = doc.querySelector('#hist-detail .hd-archive');
   assert.equal(archive.disabled, true);
   assert.match(archive.title, /Discard the checkout/);
 });
 
-test('worktree notice: Discard uses the Actions tab\'s confirm and DELETE, then the notice goes', async () => {
+test('checkout row: before Check out it offers the try; a linked folder reads as yours', async () => {
+  const ctx = await bootDetail({ rows: [ROW] });
+  atAdvanced(ctx);
+  await openDetail(ctx, '');
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  assert.equal(actionsValueOf(doc), 'Try it on this machine');
+  await deliverRows(ctx, [checkoutRow({ worktreeDir: '/Users/ada/app', external: true, policy: 'external' })]);
+  assert.match(actionsValueOf(doc), /^Linked to your folder · since \d{1,2}:\d{2}$/);
+  assert.equal(actionsRowOf(doc).querySelectorAll('.rd-srow-v').length, 1, 'patched in place, never stacked');
+});
+
+test('checkout row: a workspace with two local copies; at Simple one Discard per member', async () => {
+  const ws = { ...ROW, target: 'workspace', projectKey: 'workspaces/ws1', projectDir: null,
+    members: [{ memberKey: 'app-11111111', name: 'App' }, { memberKey: 'api-22222222', name: 'API' }],
+    checkout: { members: [
+      { projectKey: 'app-11111111', worktreeDir: '/tmp/a', branch: ROW.branch, at: new Date().toISOString() },
+      { projectKey: 'api-22222222', worktreeDir: '/tmp/b', branch: ROW.branch, at: new Date().toISOString() }] } };
+  const ctx = await bootDetail({
+    rows: [ws],
+    arms: (url) => (new URL(url, 'http://localhost:4317').pathname === `/api/workspaces/ws1/runs/${ROW.id}` ? ok(DETAIL) : null),
+  });
+  atAdvanced(ctx);
+  go(ctx.window, `history/workspaces/ws1/${ROW.id}`);
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  assert.match(actionsValueOf(doc), /^2 local copies open · since /);
+  atSimple(ctx);
+  await deliverRows(ctx, [structuredClone(ws)]);
+  const row = simpleRowOf(doc);
+  assert.ok(row, 'at Simple a plain row carries the way out');
+  assert.match(row.textContent, /^2 local copies open · since /);
+  assert.deepEqual([...row.querySelectorAll('.rd-srow-acts button')].map((b) => b.textContent), ['Discard app', 'Discard api']);
+  // At 375px the buttons wrap under the text: the text keeps a basis instead of shrinking into a narrow column.
+  const { readFileSync } = await import('node:fs');
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  assert.match(css, /\.rd-srow-checkout \.rd-srow-tx\{flex:1 1 \d+em;\}/);
+});
+
+test('checkout row: retained work shows the retained notice and no Actions row value', async () => {
+  const ctx = await bootDetail({ rows: [retainedRow()] });
+  atAdvanced(ctx);
+  await openDetail(ctx, '');
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  assert.equal(noticeOf(doc).dataset.kind, 'retained');
+  assert.ok(actionsRowOf(doc), 'the Actions tab row is there');
+  assert.equal(actionsRowOf(doc).querySelector('.rd-srow-v'), null);
+});
+
+test('Simple: Discard on the checkout row uses the Actions tab\'s confirm and DELETE, then the row goes', async () => {
   const calls = [];
   const ctx = await bootDetail({
     rows: [checkoutRow()],
@@ -647,35 +715,100 @@ test('worktree notice: Discard uses the Actions tab\'s confirm and DELETE, then 
       return ok({ removed: [KEY], patches: [], unlinked: [] });
     },
   });
+  atSimple(ctx);
   await openDetail(ctx, '');
   await settle(ctx.window, 6);
   const doc = ctx.window.document;
-  click(ctx.window, [...noticeOf(doc).querySelectorAll('button')].find((b) => b.textContent === 'Discard'));
+  assert.equal(actionsRowOf(doc), null, 'no Actions tab at Simple');
+  const row = simpleRowOf(doc);
+  assert.match(row.textContent, /^Local copy open · since /);
+  assert.deepEqual(buttonsOf(row), ['Discard']);
+  assert.doesNotMatch(glanceOf(doc).textContent, /worktree/i);
+  click(ctx.window, row.querySelector('button'));
   await settle(ctx.window, 2);
   assert.equal(doc.getElementById('confirm-title').textContent, 'Discard the checkout?');
   await confirmDialog(ctx.window);
   await settle(ctx.window, 6);
   assert.deepEqual(calls.filter((c) => c[0] === 'DELETE'), [['DELETE', `/api/runs/${ROW.id}/checkout?projectKey=${KEY}`, { members: [KEY] }]]);
-  assert.equal(noticeOf(doc).hidden, true);
+  await deliverRows(ctx, [ROW]);
+  assert.equal(simpleRowOf(doc), null);
   assert.equal(doc.querySelector('#hist-detail .hd-archive').disabled, false);
 });
 
-test('worktree notice: a linked folder offers Unlink; Get the diff on a clean folder says so', async () => {
+test('Simple: a linked folder\'s row offers Unlink with its own confirm, and only unlinks', async () => {
+  const calls = [];
   const ctx = await bootDetail({
     rows: [checkoutRow({ worktreeDir: '/Users/ada/app', external: true, policy: 'external' })],
-    arms: (url) => (url.includes(`/api/runs/${ROW.id}/checkout/diff?`) ? Promise.resolve({ ok: true, status: 204, json: async () => ({}) }) : null),
+    arms: (url, opts = {}) => {
+      if (!url.includes(`/api/runs/${ROW.id}/checkout?`)) return null;
+      calls.push([opts.method, url, opts.body ? JSON.parse(opts.body) : null]);
+      return ok({ removed: [], patches: [], unlinked: [KEY] });
+    },
   });
+  atSimple(ctx);
   await openDetail(ctx, '');
   await settle(ctx.window, 6);
   const doc = ctx.window.document;
-  const n = noticeOf(doc);
-  assert.match(n.textContent, /Linked to your folder/);
-  assert.deepEqual(buttonsOf(n), ['Unlink', 'Get the diff', 'Actions tab ›']);
-  click(ctx.window, [...n.querySelectorAll('button')].find((b) => b.textContent === 'Get the diff'));
+  const row = simpleRowOf(doc);
+  assert.match(row.textContent, /^Linked to your folder · since /);
+  assert.deepEqual(buttonsOf(row), ['Unlink']);
+  assert.doesNotMatch(glanceOf(doc).textContent, /worktree/i);
+  click(ctx.window, row.querySelector('button'));
+  await settle(ctx.window, 2);
+  assert.equal(doc.getElementById('confirm-title').textContent, 'Stop using this folder?');
+  await confirmDialog(ctx.window);
+  await settle(ctx.window, 6);
+  assert.deepEqual(calls, [['DELETE', `/api/runs/${ROW.id}/checkout?projectKey=${KEY}`, { members: [KEY] }]]);
+  assert.deepEqual(lastToast(doc), { tone: 'ok', title: 'Folder unlinked', detail: 'The folder stays as it was.', action: '' });
+  await deliverRows(ctx, [ROW]);
+  assert.equal(simpleRowOf(doc), null);
+});
+
+test('Simple: an unchanged row repainted keeps the same checkout button node (D14)', async () => {
+  const row = checkoutRow();
+  const ctx = await bootDetail({ rows: [row] });
+  atSimple(ctx);
+  await openDetail(ctx, '');
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  const before = simpleRowOf(doc).querySelector('button');
+  before.focus();
+  await deliverRows(ctx, [structuredClone(row)]);
+  assert.equal(simpleRowOf(doc).querySelector('button'), before, 'a button replaced between press and release drops its click');
+  assert.equal(before.isConnected, true);
+  assert.equal(doc.activeElement, before, 'the Results rebuild detaches the row for a moment; focus comes back');
+});
+
+test('Actions tab: Download patch asks for the member\'s diff; a clean folder says so and keeps focus', async () => {
+  const actModel = {
+    runId: ROW.id, workspace: false, finished: true, enabled: true,
+    members: [{ projectKey: KEY, projectName: 'Alpha', branch: ROW.branch, state: 'checked-out',
+      checkout: { setup: { status: 'ok' }, worktreeDir: '/tmp/co' }, actions: [], builtins: [] }],
+    instances: [], stacks: [], stackStates: [],
+  };
+  const ctx = await bootDetail({
+    rows: [checkoutRow()],
+    arms: (url) => {
+      if (url.endsWith('/api/actions/running')) return ok([]);
+      if (url.includes(`/api/runs/${ROW.id}/actions?`)) return ok(actModel);
+      if (url.includes(`/api/runs/${ROW.id}/checkout/diff?`)) return Promise.resolve({ ok: true, status: 204, json: async () => ({}) });
+      return null;
+    },
+  });
+  atAdvanced(ctx);
+  await openDetail(ctx, 'details/actions');
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  const btn = secOf(doc, 'actions').querySelector('.act-diff');
+  assert.equal(btn.textContent, 'Download patch');
+  blurOnDisable(btn);
+  btn.focus();
+  click(ctx.window, btn);
   await settle(ctx.window, 4);
   const req = ctx.calls.find((c) => c.url.includes('/checkout/diff'));
-  assert.match(req.url, new RegExp(`projectKey=${KEY}&member=${KEY}`));
+  assert.match(req.url, new RegExp(`^/api/runs/${ROW.id}/checkout/diff\\?projectKey=${KEY}&member=${KEY}$`));
   assert.equal(lastToast(doc).title, 'Nothing uncommitted');
+  assert.equal(doc.activeElement, btn, 'focus is back on the button');
 });
 
 test('worktree notice: Apply to branch commits the retained work and clears the notice', async () => {
@@ -710,6 +843,7 @@ test('worktree notice: Apply to branch commits the retained work and clears the 
   assert.ok(actionsGets() > getsBefore, 'the Actions model is refetched: it no longer offers the released worktree');
 });
 
+
 test('worktree notice: a commit that fails again keeps the notice and shows git\'s message', async () => {
   const ctx = await bootDetail({
     rows: [retainedRow()],
@@ -731,6 +865,7 @@ test('worktree notice: a commit that fails again keeps the notice and shows git\
   assert.equal(t.detail, 'lint failed: 3 errors');
 });
 
+
 test('worktree notice: after a discard, a cache-warm row (no retainedWork key) does not bring back a provisional notice', async () => {
   const ctx = await bootDetail({
     rows: [], detail: structuredClone(COMMIT_FAILED_DETAIL), deepLink: true,
@@ -749,66 +884,8 @@ test('worktree notice: after a discard, a cache-warm row (no retainedWork key) d
   assert.equal(doc.querySelector('#hist-detail .hd-archive').disabled, false);
 });
 
-test('worktree notice: Unlink uses the linked folder\'s own confirm and only unlinks', async () => {
-  const calls = [];
-  const ctx = await bootDetail({
-    rows: [checkoutRow({ worktreeDir: '/Users/ada/app', external: true, policy: 'external' })],
-    arms: (url, opts = {}) => {
-      if (!url.includes(`/api/runs/${ROW.id}/checkout?`)) return null;
-      calls.push([opts.method, url, opts.body ? JSON.parse(opts.body) : null]);
-      return ok({ removed: [], patches: [], unlinked: [KEY] });
-    },
-  });
-  await openDetail(ctx, '');
-  await settle(ctx.window, 6);
-  const doc = ctx.window.document;
-  click(ctx.window, [...noticeOf(doc).querySelectorAll('button')].find((b) => b.textContent === 'Unlink'));
-  await settle(ctx.window, 2);
-  assert.equal(doc.getElementById('confirm-title').textContent, 'Stop using this folder?');
-  await confirmDialog(ctx.window);
-  await settle(ctx.window, 6);
-  assert.deepEqual(calls, [['DELETE', `/api/runs/${ROW.id}/checkout?projectKey=${KEY}`, { members: [KEY] }]]);
-  assert.equal(noticeOf(doc).hidden, true);
-  assert.deepEqual(lastToast(doc), { tone: 'ok', title: 'Folder unlinked', detail: 'The folder stays as it was.', action: '' });
-});
 
-test('worktree notice: an unchanged row repainted keeps the same button nodes (D14)', async () => {
-  const ctx = await bootDetail({ rows: [checkoutRow()] });
-  await openDetail(ctx, '');
-  await settle(ctx.window, 6);
-  const doc = ctx.window.document;
-  const before = noticeOf(doc).querySelector('button');
-  await deliverRows(ctx, [checkoutRow()]);
-  assert.equal(noticeOf(doc).querySelector('button'), before, 'a button replaced between press and release drops its click');
-  assert.equal(before.isConnected, true);
-});
-
-test('worktree notice: a workspace run names each member, and Get the diff asks for that member', async () => {
-  const ws = { ...ROW, target: 'workspace', projectKey: 'workspaces/ws1', projectDir: null,
-    members: [{ memberKey: 'app-11111111', name: 'App' }, { memberKey: 'api-22222222', name: 'API' }],
-    checkout: { members: [
-      { projectKey: 'app-11111111', worktreeDir: '/tmp/a', branch: ROW.branch, at: '2026-10-14T09:00:00Z' },
-      { projectKey: 'api-22222222', worktreeDir: '/tmp/b', branch: ROW.branch, at: '2026-10-14T09:00:00Z', external: true }] } };
-  const ctx = await bootDetail({
-    rows: [ws],
-    arms: (url) => {
-      if (new URL(url, 'http://localhost:4317').pathname === `/api/workspaces/ws1/runs/${ROW.id}`) return ok(DETAIL);
-      return url.includes('/checkout/diff') ? Promise.resolve({ ok: true, status: 204, json: async () => ({}) }) : null;
-    },
-  });
-  go(ctx.window, `history/workspaces/ws1/${ROW.id}`);
-  await settle(ctx.window, 6);
-  const doc = ctx.window.document;
-  const n = noticeOf(doc);
-  assert.equal(n.hidden, false);
-  assert.deepEqual([...n.querySelectorAll('.wt-members strong')].map((s) => s.textContent), ['App', 'API']);
-  assert.deepEqual(buttonsOf(n), ['Discard', 'Get the diff', 'Unlink', 'Get the diff', 'Actions tab ›']);
-  click(ctx.window, n.querySelectorAll('button')[1]);
-  await settle(ctx.window, 4);
-  assert.match(ctx.calls.find((c) => c.url.includes('/checkout/diff')).url, /\?workspaceId=ws1&member=app-11111111$/);
-});
-
-test('F-2: the notice card, the Overview WORKTREE row and the Actions strip read one checkout', async () => {
+test('F-2: the Actions row, the Overview WORKTREE row and the Actions strip read one checkout', async () => {
   const actModel = (checkedOut) => ({
     runId: ROW.id, workspace: false, finished: true, enabled: true,
     members: [{ projectKey: KEY, projectName: 'Alpha', branch: ROW.branch, state: checkedOut ? 'checked-out' : 'not-checked-out',
@@ -824,6 +901,7 @@ test('F-2: the notice card, the Overview WORKTREE row and the Actions strip read
       return null;
     },
   });
+  atAdvanced(ctx);
   await openDetail(ctx, 'details/overview');
   await settle(ctx.window, 6);
   const doc = ctx.window.document;
@@ -831,7 +909,7 @@ test('F-2: the notice card, the Overview WORKTREE row and the Actions strip read
   assert.match(wt().textContent, /checked out/);
   assert.doesNotMatch(wt().textContent, /released/);
   assert.match(wt().querySelector('.hd-ov-wt-path').title, /\/tmp\/co/);
-  assert.match(noticeOf(doc).textContent, /Worktree: \/tmp\/co/);
+  assert.match(actionsValueOf(doc), /^Local copy open · since /);
   const strip = () => secOf(doc, 'overview').querySelector('.act-strip');
   assert.ok(![...strip().querySelectorAll('button')].some((b) => b.textContent === 'Check out'), 'no Check out while checked out');
   // Discarded: the row, then both change events
@@ -840,6 +918,7 @@ test('F-2: the notice card, the Overview WORKTREE row and the Actions strip read
   ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'actions-changed', action: 'checkout' }) });
   await settle(ctx.window, 6);
   assert.match(wt().textContent, /released/);
+  assert.equal(actionsValueOf(doc), 'Try it on this machine');
   assert.ok([...strip().querySelectorAll('button')].some((b) => b.textContent === 'Check out'));
 });
 

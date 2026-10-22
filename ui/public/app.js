@@ -99,7 +99,7 @@ import { changesCounts, filesWord, renderCountsNode, applyBarModel, paintApplyBa
 import { runProgress, progressWidth } from '../../src/shared/run-progress.mjs';
 import { DEFAULT_HOME_PINS, isPinned, pinWorkflow, unpinWorkflow } from '../../src/shared/home-pins.mjs';
 import { CREATE_PR_LABEL, doneStatusWord } from './ship-words.mjs';
-import { worktreeNoticeModel, worktreeRowState, renderWorktreeNotice, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome } from './worktree-notice.mjs';
+import { worktreeNoticeModel, worktreeRowState, renderWorktreeNotice, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome, checkoutRowValue, memberLabel } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
 import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, RECENT_PAGE, groupRow, memberPrsOf, prChip, memberCostUsd, whenLabel } from './runs-list.mjs';
 import { paintRunStatus, syncActions, pauseResumeOwn } from './run-status-card.mjs';
@@ -17600,7 +17600,7 @@ function mountActionsController(sec, runId, scopeQuery) {
   const host = document.createElement('div'); sec.replaceChildren(host);
   const ctl = createActionsController({ runId, scopeQuery, host, doc: document,
     api: actionsCall, ws: { send: (o) => { if (state.ws && state.wsReady) state.ws.send(JSON.stringify(o)); } },
-    confirm: confirmModal, navigate: (hash) => { location.hash = hash; },
+    confirm: confirmModal, navigate: (hash) => { location.hash = hash; }, downloadPatch,
     onModel: (m) => { actionsModelCache.set(runId, m); paintActionsStrips(runId); } });
   // destroy() also drops the controller from the live set, so frames stop reaching it.
   const wrapped = { ...ctl, destroy: () => { actionControllers.delete(wrapped); ctl.destroy(); } };
@@ -22190,7 +22190,7 @@ function dropCheckoutMembers(p, keys) {
   p.checkout = left.length ? { members: left } : null;
 }
 
-// Discard / Unlink from the notice: the Actions tab's flow and copy (actions-view.mjs releaseCheckout).
+// Discard / Unlink from the Simple checkout row: the Actions tab's flow and copy (actions-view.mjs releaseCheckout).
 // Check out / Discard emit only `pipelines-changed`, never `actions-changed`, so the strips' model cache
 // is refetched here.
 async function releaseCheckoutFlow(btn, p, m) {
@@ -22220,34 +22220,36 @@ async function releaseCheckoutFlow(btn, p, m) {
       : (patches.length ? 'Uncommitted changes were saved as a patch in the run\'s files.' : 'Nothing uncommitted needed saving.') });
 }
 
-// Get the diff: a read-only patch of the checkout's uncommitted changes against its own HEAD
+// Download patch (the Actions tab): a read-only patch of the checkout's uncommitted changes against its own HEAD
 // (GET …/checkout/diff, built in a temporary git index), downloaded as a file. 204 = nothing uncommitted.
-async function downloadCheckoutDiff(btn, p, m) {
-  const qs = runActionQuery(p.projectDir || null, p);
-  if (m.projectKey) qs.set('member', m.projectKey);
-  btn.disabled = true;
+async function downloadPatch({ url, branch, btn }) {
+  const hadFocus = !!btn && document.activeElement === btn;
+  if (btn) btn.disabled = true;
   let res = null;
   let blob = null;
   let error = '';
   try {
-    res = await fetch(`/api/runs/${encodeURIComponent(p.id)}/checkout/diff?${qs}`);
+    res = await fetch(url);
     if (res.ok && res.status !== 204) blob = await res.blob();
     else if (!res.ok) { const data = await safeJson(res); error = (data && data.error) || `HTTP ${res.status}`; }
   } catch (e) {
     error = e.message;
   } finally {
-    if (btn.isConnected) btn.disabled = false;
+    if (btn && btn.isConnected) {
+      btn.disabled = false;
+      if (hadFocus && document.activeElement !== btn) btn.focus();   // disabling a focused button drops its focus
+    }
   }
   if (error) { notify({ tone: 'err', title: 'Could not get the diff', detail: error, key: 'wt-diff' }); return; }
   if (!blob) { notify({ tone: 'info', title: 'Nothing uncommitted', detail: 'The folder has no uncommitted changes.', key: 'wt-diff' }); return; }
-  const url = URL.createObjectURL(blob);
+  const href = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url;
-  a.download = uncommittedPatchName(m.branch || p.id);
+  a.href = href;
+  a.download = uncommittedPatchName(branch);
   document.body.appendChild(a);
   a.click();
   a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);   // not 0: Firefox can cancel a download whose URL is revoked at once
+  setTimeout(() => URL.revokeObjectURL(href), 1000);   // not 0: Firefox can cancel a download whose URL is revoked at once
 }
 
 // Resume a paused pipeline from its history card. POST /api/resume returns the
@@ -24132,12 +24134,20 @@ function paintHdGlance(screen, record, data) {
 
   // The result: every tab, the actions. The things to check live in Overview only.
   const host = glance.querySelector('.hd-result');
+  const keptRow = host.querySelector('.rd-srow-checkout');
+  const keptFocus = keptRow && keptRow.contains(document.activeElement) ? document.activeElement : null;
   host.replaceChildren();
   const trail = trailColumns(run);
+  const co = hdCheckoutFor(record);
+  const held = hdRetainedFor(record, st);
+  const canTry = hdCanTry(record, st, held.retained, held.provisional);
   host.append(...rdActivityGroups(screen, {
     overview: activityOverviewValue(results),
     workflow: trail.count ? `${trail.count} step${trail.count === 1 ? '' : 's'}` : '',
+    actions: checkoutRowValue(co, { when: shortWhen, canTry }),
   }));
+  paintActionsRowValue(screen, co, canTry, () => hdCurrentRecord(record), keptRow);
+  if (keptFocus && keptFocus.isConnected) keptFocus.focus();   // detaching the row dropped its focus
 
   // P5: a workspace run applies per member (its Changes tab), never from a run-level bar.
   const hdFm = hdFolderMembers(record, data);
@@ -25292,7 +25302,7 @@ function paintHdBanners(screen, record, data) {
     banners.prepend(banner);
   }
 
-  // The worktree notice: retained work (the end-of-run commit failed), else a live checkout. A PROVISIONAL
+  // The worktree notice: retained work (the end-of-run commit failed); a live checkout is the Actions row. A PROVISIONAL
   // retention (deep link, cache-warm row) shows the facts but offers no action: Apply and Discard must act
   // on the authoritative row, which arrives one fetch later and re-runs this painter. Handlers read the
   // record at click time (hdCurrentRecord): refreshHdFromRow REPLACES histDetailState.record.
@@ -25300,7 +25310,7 @@ function paintHdBanners(screen, record, data) {
   const checkout = hdCheckoutFor(record);
   renderMergeBack(screen, record);
   const model = worktreeNoticeModel({
-    retained, checkout, provisional,
+    retained, checkout: null, provisional,   // a checkout lives in the Actions row and tab, never in this notice
     workspace: record.target === 'workspace', names: memberNamesOf(record),
     recoveryPatch: recoveryPatchKind(data.artifacts),
   });
@@ -25311,11 +25321,9 @@ function paintHdBanners(screen, record, data) {
     handlers: {
       onApply: (btn) => applyRetainedFlow(btn, cur(), model),
       onDiscardRetained: (btn) => discardRetainedWorktree(btn, cur().projectDir || null, cur()),
-      onReleaseCheckout: (m, btn) => releaseCheckoutFlow(btn, cur(), m),
-      onDiff: (m, btn) => downloadCheckoutDiff(btn, cur(), m),
-      onOpenActions: () => hdGoDetails('actions'),
     },
   });
+  paintActionsRowValue(screen, checkout, hdCanTry(record, st, retained, provisional), cur);
   return { retained, checkout };
 }
 
@@ -25365,6 +25373,10 @@ function hdSetArchiveGate(btn, retained, checkout = null) {
 // Base conflicts (#620): one line per branch from the loaded detail (data.state), Re-check / Update branch /
 // Resolve in a pipeline / Resolve in a terminal. Idempotent (re-run by refreshHdFromRow); handlers are properties.
 const BASE_FINISHED = new Set(['done', 'stopped', 'error']);
+// The Actions row offers "Try it on this machine" only when Check out would be accepted: finished, a branch, no kept work.
+function hdCanTry(record, st, retained, provisional) {
+  return !!(record && record.branch) && BASE_FINISHED.has(st && st.status) && !retained && !provisional;
+}
 
 /** [{ key, name, rec, published, resolving, prOpen }] from the detail state; a row-level summary newer than the
  *  detail wins (no file list then). `published`: the branch's last recorded push. `prOpen`: the branch has an open
@@ -34638,13 +34650,17 @@ function rdSheetRow({ label, detail = '', value = '', tab = '', state = '', icon
   }
   b.appendChild(tx);
   if (value) {
-    const v = document.createElement('span');
-    v.className = 'rd-srow-v';
+    const v = rdSrowValue(value);
     if (since) v.dataset.since = since;   // a live elapsed time: _timerTick keeps it moving
-    v.textContent = value;
     b.appendChild(v);
   }
   return b;
+}
+function rdSrowValue(text) {
+  const v = document.createElement('span');
+  v.className = 'rd-srow-v';
+  v.textContent = text;
+  return v;
 }
 
 // The glance's way into Details (there is no Details button): EVERY tab the run has and
@@ -34683,6 +34699,52 @@ function rdActivityGroups(screen, values = {}) {
     if (rows.length) out.push(rdSheetGroup(title, rows));
   }
   return out;
+}
+
+// The Results › Actions row says where the local copy stands. At Advanced it is the Actions tab's row (the tab owns
+// the controls), patched in place: the banner painters rerun on every History row, the activity groups only when
+// they rebuild. At Simple there is no Actions tab, so a plain row carries Discard / Unlink while a checkout exists:
+// Archive is blocked until it goes, so the way out may never be hidden. `carrier()` is the current History record.
+// `kept`: the plain row of a Results list the caller just rebuilt, reused while it still says the same (D14).
+const shortWhen = (iso) => whenLabel(iso, Date.now(), browserTimeZone());
+function paintActionsRowValue(screen, checkout, canTry, carrier, kept = null) {
+  const list = screen && screen.querySelector('.rd-result .rd-slist');   // the Results group comes first
+  if (!list) return;
+  const text = checkoutRowValue(checkout, { when: shortWhen, canTry });
+  const tabRow = list.querySelector('.rd-srow[data-rd-tab="actions"]');
+  let plain = list.querySelector('.rd-srow-checkout');
+  if (!plain && kept) { list.appendChild(kept); plain = kept; }
+  if (tabRow) {
+    if (plain) plain.remove();
+    const v = tabRow.querySelector('.rd-srow-v');
+    if (!text) { if (v) v.remove(); return; }
+    if (!v) tabRow.appendChild(rdSrowValue(text));
+    else if (v.textContent !== text) v.textContent = text;
+    return;
+  }
+  const members = (checkout && checkout.members) || [];
+  if (!members.length) { if (plain) plain.remove(); return; }
+  const sig = `${text}|${members.map((m) => `${m.projectKey}:${m.external === true}`).join(',')}`;
+  if (plain && plain.dataset.sig === sig) return;              // same nodes across repaints
+  const row = rdSheetRow({ label: text });
+  row.classList.add('rd-srow-checkout');
+  row.dataset.needsGit = '';
+  row.dataset.sig = sig;
+  const acts = document.createElement('span');
+  acts.className = 'rd-srow-acts';   // wraps: a workspace's "Discard <member>" buttons must fit a 375px card
+  const many = members.length > 1;
+  for (const m of members) {
+    const external = m.external === true;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'btn btn-sm';
+    b.textContent = `${external ? 'Unlink' : 'Discard'}${many ? ` ${memberLabel(m.projectKey)}` : ''}`;
+    b.addEventListener('click', () => releaseCheckoutFlow(b, carrier(),
+      { projectKey: m.projectKey || null, external, dir: m.worktreeDir || '', branch: m.branch || null }));
+    acts.appendChild(b);
+  }
+  row.appendChild(acts);
+  if (plain) plain.replaceWith(row); else list.appendChild(row);
 }
 
 // The run's name as the glance's page title, with a short meta line under it.
@@ -35353,10 +35415,19 @@ function paintRdResult(screen, r, { glance = 'run', trailCount = 0 } = {}) {
   const sig = [r.status, glance, data ? 1 : 0, r.totalCostUsd, steps, currentLevel(), rdChangesRowValue(r)].join('|');
   if (host.dataset.key === sig) return;
   host.dataset.key = sig;
+  const keptRow = host.querySelector('.rd-srow-checkout');
+  const keptFocus = keptRow && keptRow.contains(document.activeElement) ? document.activeElement : null;
   host.replaceChildren();
 
   const results = data && data.results;
-  host.append(...rdActivityGroups(screen, { overview: activityOverviewValue(results), workflow: steps, diff: rdDiffRowValue(r), changes: rdChangesRowValue(r) }));
+  const rec = r.pipelineId ? rdHistoryRecord(r) : null;
+  const co = hdCheckoutFor(rec);
+  const kept = !(r._retainedDiscarded || r._retainedApplied) && ((rec && rec.retainedWork) || rdRetainedFor(r));
+  const canTry = !!(rec && rec.branch) && !kept;
+  host.append(...rdActivityGroups(screen, { overview: activityOverviewValue(results), workflow: steps, diff: rdDiffRowValue(r), changes: rdChangesRowValue(r),
+    actions: checkoutRowValue(co, { when: shortWhen, canTry }) }));
+  paintActionsRowValue(screen, co, canTry, () => rdNoticeCarrier(r), keptRow);
+  if (keptFocus && keptFocus.isConnected) keptFocus.focus();   // detaching the row dropped its focus
 }
 
 // The heading over a waiting question on the glance: what is asked, by which step. It
@@ -35539,7 +35610,7 @@ function paintRdBanners(screen, r) {
     banners.prepend(b);
   }
 
-  // ---- the worktree notice: retained work, else a live checkout ----
+  // ---- the worktree notice (retained work) and the Actions row ----
   paintRdWorktreeNotice(screen, r);
 }
 
@@ -35552,9 +35623,9 @@ function rdNoticeCarrier(r) {
     ...(ws ? { target: 'workspace' } : {}), retainedWork: rdRetainedFor(r) };
 }
 
-// The run page's worktree notice. Retained work comes from History's row when it lists some (every member,
-// existsSync-gated), else from the live run's branch.commitFailed (a run whose row has not landed yet). A
-// checkout comes from History's row only: a Check out is a DB write the run's own frames never carry, and
+// The run page's worktree notice (retained work) and the Actions row. Retained work comes from History's row when it
+// lists some (every member, existsSync-gated), else from the live run's branch.commitFailed (a run whose row has not
+// landed yet). A checkout comes from History's row only: a Check out is a DB write the run's own frames never carry, and
 // `pipelines-changed` reloads the rows on this view (rdRepaintOpenGlance then repaints here). The clears
 // live on the run, outside `branch`, because every later `state` frame replaces `r.branch` wholesale.
 function paintRdWorktreeNotice(screen, r) {
@@ -35563,7 +35634,7 @@ function paintRdWorktreeNotice(screen, r) {
   const retained = cleared ? null : ((rec && rec.retainedWork) || rdRetainedFor(r));
   const checkout = RD_TERMINAL.includes(r.status) ? hdCheckoutFor(rec) : null;
   const model = worktreeNoticeModel({
-    retained, checkout, provisional: !r.pipelineId,
+    retained, checkout: null, provisional: !r.pipelineId,   // a checkout lives in the Actions row and tab
     workspace: !!(r.workspaceId || (rec && rec.target === 'workspace')), names: memberNamesOf(rec),
     recoveryPatch: recoveryPatchKind(r.artifacts),
   });
@@ -35577,11 +35648,10 @@ function paintRdWorktreeNotice(screen, r) {
     handlers: {
       onApply: (btn) => applyRetainedFlow(btn, rdNoticeCarrier(r), model, () => { r._retainedApplied = true; repaint(); }),
       onDiscardRetained: (btn) => discardRetainedWorktree(btn, r.projectDir || null, rdNoticeCarrier(r), () => { r._retainedDiscarded = true; repaint(); }),
-      onReleaseCheckout: (m, btn) => releaseCheckoutFlow(btn, rdNoticeCarrier(r), m),
-      onDiff: (m, btn) => downloadCheckoutDiff(btn, rdNoticeCarrier(r), m),
-      onOpenActions: () => rdGoDetails('actions'),
     },
   });
+  const canTry = !!(rec && rec.branch) && RD_TERMINAL.includes(r.status) && !retained && !!r.pipelineId;
+  paintActionsRowValue(screen, checkout, canTry, () => rdNoticeCarrier(r));
 }
 
 // Delegated controls on the rebuilt parts of the detail screen. #run-detail is a
