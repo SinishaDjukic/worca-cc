@@ -9425,7 +9425,7 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .req-new select,.req-new input,.req-new textarea,.req-edit input,.req-edit textarea{width:100%;box-sizing:border-box}
 .req-edit{display:flex;flex-direction:column;gap:8px;margin-top:6px}
 .req-edit .req-actions{margin:0}
-.req-ctx-look{display:flex;align-items:center;gap:8px;font-size:13px}
+.req-brief-notes-look{display:flex;align-items:center;gap:8px;font-size:13px}
 .req-why{margin:2px 0 6px 28px}
 .req-q .req-q-note{margin:8px 0 0}
 .req-error{display:flex;flex-wrap:wrap;gap:8px;align-items:center}

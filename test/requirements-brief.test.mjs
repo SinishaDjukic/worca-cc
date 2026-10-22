@@ -317,20 +317,23 @@ test('renderBriefMarkdown: headings, sources, files; briefFileName', () => {
   assert.equal(briefFileName('***'), 'product-brief-brief.md');
 });
 
-test('briefMatches: whole words, plurals, order, max 3', () => {
+test('briefMatches: whole words, plurals, as written, areas first, 3 names and how many more', () => {
   const s = {
     ...emptyBrief(),
     areas: [area('Orders'), area('Accounts'), area('Gift message'), area('Cart')],
-    terms: [{ term: 'Packed', meaning: 'm' }, { term: 'Ship', meaning: 'm' }],
+    terms: [{ term: 'Packed', meaning: 'm' }, { term: 'Ship', meaning: 'm' }, { term: 'Order', meaning: 'm' }, { term: ' Refund ', meaning: 'm' }],
   };
-  assert.deepEqual(briefMatches(s, { title: 'Cancel an order', description: '' }), ['orders']);
-  assert.deepEqual(briefMatches(s, { title: 'x', description: 'Show the account page' }), ['accounts']);
-  assert.deepEqual(briefMatches(s, { title: 'Add a gift messages field', description: '' }), ['gift message']);
-  assert.deepEqual(briefMatches(s, { title: 'Reorders and cartography', description: '' }), []);
-  assert.deepEqual(briefMatches(s, { title: 'ships', description: 'Cart, orders, accounts, packed' }), ['orders', 'accounts', 'cart']);
-  assert.deepEqual(briefMatches(s, { title: 'PACKED', description: '' }), ['packed']);
-  assert.deepEqual(briefMatches(s, { title: '', description: '' }), []);
-  assert.deepEqual(briefMatches(emptyBrief(), { title: 'orders' }), []);
+  const none = { names: [], more: 0 };
+  assert.deepEqual(briefMatches(s, { title: 'Cancel an order', description: '' }), { names: ['Orders'], more: 0 }, 'the area "Orders" and the term "Order" are one entry');
+  assert.deepEqual(briefMatches(s, { title: 'x', description: 'Show the account page' }), { names: ['Accounts'], more: 0 });
+  assert.deepEqual(briefMatches(s, { title: 'Add a gift messages field', description: '' }), { names: ['Gift message'], more: 0 });
+  assert.deepEqual(briefMatches(s, { title: 'Reorders and cartography', description: '' }), none);
+  assert.deepEqual(briefMatches(s, { title: 'cart', description: 'orders, accounts, packed' }), { names: ['Orders', 'Accounts', 'Cart'], more: 1 }, '4 matches: 3 names and 1 more');
+  assert.deepEqual(briefMatches(s, { title: 'ships', description: 'Cart, orders, accounts, packed' }), { names: ['Orders', 'Accounts', 'Cart'], more: 2 });
+  assert.deepEqual(briefMatches(s, { title: 'PACKED', description: '' }), { names: ['Packed'], more: 0 }, 'as the brief writes it');
+  assert.deepEqual(briefMatches(s, { title: 'a refund', description: '' }), { names: ['Refund'], more: 0 }, 'trimmed');
+  assert.deepEqual(briefMatches(s, { title: '', description: '' }), none);
+  assert.deepEqual(briefMatches(emptyBrief(), { title: 'orders' }), none);
 });
 
 test('touchedAreas: project, workspace, edited', () => {

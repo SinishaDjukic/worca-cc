@@ -320,20 +320,29 @@ export function buildBriefPrompt({ scopeName, notes, workspaceDescription = '', 
 const stem = (w) => (w.length > 1 && w.endsWith('s') ? w.slice(0, -1) : w);
 const words = (t) => (String(t || '').toLowerCase().match(/[\p{L}\p{N}]+/gu) || []).map(stem);
 
-/** Up to 3 area names or terms (lower-cased, areas first) that a feature's title / description mentions as whole words. */
+/**
+ * The area names and terms a feature's title / description mentions as whole words (plurals folded), areas first,
+ * as the brief writes them: `{ names, more }`, at most 3 names and how many more matched. "Orders" (an area) and
+ * "Order" (a term) are one entry, the first one met.
+ */
 export function briefMatches(sections, { title = '', description = '' } = {}) {
   const s = { ...emptyBrief(), ...sections };
   const text = words(`${title} ${description}`);
-  const out = [];
-  for (const name of [...s.areas.map((a) => a.name), ...s.terms.map((t) => t.term)]) {
+  const names = [];
+  const seen = new Set();
+  let more = 0;
+  for (const raw of [...s.areas.map((a) => a && a.name), ...s.terms.map((t) => t && t.term)]) {
+    const name = String(raw ?? '').trim();
     const w = words(name);
-    if (!w.length || out.includes(String(name).toLowerCase())) continue;
-    for (let i = 0; i + w.length <= text.length; i += 1) {
-      if (w.every((x, j) => text[i + j] === x)) { out.push(String(name).toLowerCase()); break; }
-    }
-    if (out.length >= 3) break;
+    const key = w.join(' ');
+    if (!w.length || seen.has(key)) continue;
+    let hit = false;
+    for (let i = 0; !hit && i + w.length <= text.length; i += 1) hit = w.every((x, j) => text[i + j] === x);
+    if (!hit) continue;
+    seen.add(key);
+    if (names.length < 3) names.push(name); else more += 1;
   }
-  return out;
+  return { names, more };
 }
 
 /** Which areas the commits since the brief touched. `perSource` = `[{ project, commits: [{ sha, files }] }]`; a workspace brief stores `repos/<project>/<path>`. */

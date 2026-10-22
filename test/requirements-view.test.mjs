@@ -1774,6 +1774,7 @@ test('style.css: the req-brief rules use tokens only', () => {
   assert.ok(!/padding:(?!0[;}])/.test(code), `no padding: ${code}`);
   assert.ok(!/background:(?!none)/.test(code), `no box: ${code}`);
   assert.equal(css.includes('.req-context'), false, 'the removed panel left no rules');
+  assert.equal(css.includes('.req-ctx-'), false, 'nor its class names');
 });
 
 // ---- A7 Task 8: the brief page with a made brief (board 12): chips, the code-moved-on notice, the brief card and
@@ -1949,7 +1950,13 @@ test('brief page, made: the code-moved-on notice, with the changed areas or none
   // partial: the file scan saw only the newest 2000 commits
   const part = await openBrief(madeBody({ staleness: { ...STALE, commits: 2400, partial: true } }));
   assert.equal(text(notice(part.host).querySelector('.req-brief-stale-text')),
-    'More than 2000 commits on main since 3f9c2a1; 6 of them change areas the brief describes: Orders and Payments. Interviews still use the brief as it is.');
+    'More than 2000 commits on main since 3f9c2a1; of the newest 2000, 6 change areas the brief describes: Orders and Payments. Interviews still use the brief as it is.');
+  const part1 = await openBrief(madeBody({ staleness: { ...STALE, commits: 2400, partial: true, touching: 1, areas: ['Orders'] } }));
+  assert.equal(text(notice(part1.host).querySelector('.req-brief-stale-text')),
+    'More than 2000 commits on main since 3f9c2a1; of the newest 2000, 1 changes areas the brief describes: Orders. Interviews still use the brief as it is.');
+  const part0 = await openBrief(madeBody({ staleness: { ...STALE, commits: 2400, partial: true, touching: 0, areas: [] } }));
+  assert.equal(text(notice(part0.host).querySelector('.req-brief-stale-text')),
+    'More than 2000 commits on main since 3f9c2a1; of the newest 2000, none change areas the brief describes. Interviews still use the brief as it is.');
   // no notice: 0 commits, the areas section edited (not checked), no staleness
   for (const staleness of [{ ...STALE, commits: 0, touching: 0, areas: [] }, { ...STALE, touching: 0, areas: [], checked: false }, null]) {
     const x = await openBrief(madeBody({ staleness }));
@@ -2245,7 +2252,7 @@ test('new feature: without a lookCost and with a brief nothing about the cost sh
   assert.equal(host.querySelector('.req-new-cost'), null);
 });
 
-const briefOf = (over = {}) => ({ status: 'ready', madeAt: new Date(Date.now() - 2 * DAY).toISOString(), sources: [], matches: ['orders', 'packing', 'the packing slip'], lookAtCode: true, ...over });
+const briefOf = (over = {}) => ({ status: 'ready', madeAt: new Date(Date.now() - 2 * DAY).toISOString(), sources: [], matches: ['Orders', 'Packing', 'Packing slip'], matchesMore: 0, lookAtCode: true, ...over });
 const SKIPPED = { summary: '', files: [], skipped: 'brief', briefMadeAt: '2026-10-20T10:00:00Z' };
 const knowsFeature = (over = {}) => feature({ brief: briefOf(), lookCostUsd: 0.25, orientation: SKIPPED, ...over });
 const knows = (host) => host.querySelector('.req-left > section.req-knows');
@@ -2270,7 +2277,7 @@ test('What Worca knows, before a closer look: from the brief, the matches, the h
   assert.equal(meta.querySelector('a').getAttribute('href'), '#requirements/brief/project/shop-1');
   meta.querySelector('a').click();
   assert.deepEqual(routed, ['brief/project/shop-1']);
-  assert.equal(text(card.querySelector('.req-knows-text')), 'Worca works from the shop brief: orders, packing and the packing slip are described there. It has not looked at the code for this feature.');
+  assert.equal(text(card.querySelector('.req-knows-text')), 'Worca works from the shop brief: Orders, Packing and Packing slip are described there. It has not looked at the code for this feature.');
   assert.equal(text(card.querySelector('.req-knows-foot .hint')), 'Worth it when the feature touches something the brief only skims.');
   const go = card.querySelector('[data-ui="look-closer"]');
   assert.equal(go.textContent, 'Look closer · about $0.25');
@@ -2285,8 +2292,10 @@ test('What Worca knows, before a closer look: from the brief, the matches, the h
 
 test('What Worca knows, before: one match, no match, no price, made today, a failed closer look, the switch off, locked', async () => {
   const say = async (over) => text(knows((await openKnows(knowsFeature(over))).host).querySelector('.req-knows-text'));
-  assert.equal(await say({ brief: briefOf({ matches: ['orders'] }) }), 'Worca works from the shop brief: orders is described there. It has not looked at the code for this feature.');
-  assert.equal(await say({ brief: briefOf({ matches: [] }) }), 'Worca works from the shop brief. It has not looked at the code for this feature.');
+  assert.equal(await say({ brief: briefOf({ matches: ['Orders'] }) }), 'Worca works from the shop brief: Orders is described there. It has not looked at the code for this feature.');
+  assert.equal(await say({ brief: briefOf({ matchesMore: 2 }) }), 'Worca works from the shop brief: Orders, Packing, Packing slip and 2 more are described there. It has not looked at the code for this feature.');
+  assert.equal(await say({ brief: briefOf({ matches: ['Orders', 'Refund'], matchesMore: undefined }) }), 'Worca works from the shop brief: Orders and Refund are described there. It has not looked at the code for this feature.');
+  assert.equal(await say({ brief: briefOf({ matches: [], matchesMore: 0 }) }), 'Worca works from the shop brief. It has not looked at the code for this feature.');
   const today = await openKnows(knowsFeature({ brief: briefOf({ madeAt: new Date().toISOString() }), lookCostUsd: null }));
   assert.equal(text(knows(today.host).querySelector('.req-knows-meta')), 'from the product brief · made today');
   assert.equal(knows(today.host).querySelector('[data-ui="look-closer"]').textContent, 'Look closer', 'no price without an estimate');
@@ -2375,6 +2384,12 @@ test('⋯ with a brief: Look closer while the look was skipped for the brief, Lo
   // without a brief, a look skipped for a (since deleted) brief is looked at again
   const d = await openKnows(feature({ orientation: SKIPPED }));
   assert.deepEqual(labels(d.host), ['Your notes for Worca', 'Look again', 'Archive']);
+  // with a brief the entry says what the card says: Look closer until a closer look has been made
+  for (const orientation of [null, { summary: '', files: [], skipped: 'failed' }, { summary: '', files: [], skipped: 'no-repo' }, { summary: '', files: [], skipped: 'off' }]) {
+    const e = await openKnows(knowsFeature({ orientation }));
+    assert.deepEqual(labels(e.host), ['Your notes for Worca', 'Look closer', 'Archive'], JSON.stringify(orientation));
+    assert.ok(knows(e.host).querySelector('[data-ui="look-closer"]'), 'and the card offers Look closer');
+  }
   const w = await openKnows(knowsFeature({ scopeType: 'workspace', scopeKey: 'ws:1' }));
   w.host.querySelector('[data-ui="menu-more"]').click();
   w.host.querySelector('[data-ui="mi-notes"]').click();

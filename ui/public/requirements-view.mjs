@@ -631,7 +631,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       h('div', { class: 'req-card-head' }, h('h3', { text: 'Your notes for Worca' }),
         h('span', { class: 'hint req-brief-was', text: s.scopeType === 'workspace' ? 'was “Workspace context”' : 'was “Project context”' })),
       area,
-      h('label', { for: 'req-notes-look', class: 'req-ctx-look' }, look,
+      h('label', { for: 'req-notes-look', class: 'req-brief-notes-look' }, look,
         ' Let Worca look at the code (for the brief, and when you ask it to look closer at a feature)'),
       h('div', { class: 'req-brief-notes-foot' },
         onCancel ? h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'notes-cancel', onclick: onCancel }, 'Cancel') : null,
@@ -766,12 +766,14 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       const sha = typeof src.sha === 'string' ? src.sha.slice(0, 7) : '';
       const where = ws ? [' in its projects since this brief']
         : [...(src.branch ? [' on ', h('code', { text: src.branch })] : []), ...(sha ? [' since ', h('code', { text: sha })] : [' since this brief'])];
-      const what = m <= 0 ? ['; none of them change areas the brief describes.']
-        : areas.length ? [`; ${m} of them ${m === 1 ? 'changes' : 'change'} areas the brief describes: `, ...boldList(areas), '.']
-          : [`; ${m} of them ${m === 1 ? 'changes' : 'change'} areas the brief describes.`];
-      // partial (D9): the file scan read only the newest STALE_SCAN commits, so the areas are those commits'
-      const count = st.partial && n > STALE_SCAN ? `More than ${STALE_SCAN} commits` : plural(n, 'commit');
-      says = [count, ...where, ...what, ' Interviews still use the brief as it is.'];
+      // partial (D9): the file scan read only the newest STALE_SCAN commits, so the area count is of those, and says so
+      const partial = !!st.partial && n > STALE_SCAN;
+      const of = partial ? `; of the newest ${STALE_SCAN}, ` : '; ';
+      const some = partial ? `${m}` : `${m} of them`;
+      const what = m <= 0 ? [`${of}${partial ? 'none' : 'none of them'} change areas the brief describes.`]
+        : areas.length ? [`${of}${some} ${m === 1 ? 'changes' : 'change'} areas the brief describes: `, ...boldList(areas), '.']
+          : [`${of}${some} ${m === 1 ? 'changes' : 'change'} areas the brief describes.`];
+      says = [partial ? `More than ${STALE_SCAN} commits` : plural(n, 'commit'), ...where, ...what, ' Interviews still use the brief as it is.'];
     } else if (st.known === false) {
       const branch = st.branch || ((Array.isArray(st.sources) ? st.sources : []).find((x) => x && x.known === false && x.branch) || {}).branch || null;
       const why = STALE_REASON[st.reason];
@@ -1524,8 +1526,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     let body;
     let foot = null;
     if (!looked) {
-      const matches = (Array.isArray(b.matches) ? b.matches : []).filter((m) => typeof m === 'string' && m);
-      const what = matches.length ? `: ${joinAnd(matches)} ${matches.length === 1 ? 'is' : 'are'} described there.` : '.';
+      // the brief's own names (areas first, then terms), at most 3, and how many more matched (A7 §5)
+      const names = (Array.isArray(b.matches) ? b.matches : []).filter((m) => typeof m === 'string' && m);
+      const more = names.length && Number.isInteger(b.matchesMore) && b.matchesMore > 0 ? b.matchesMore : 0;
+      const what = names.length ? `: ${more ? `${names.join(', ')} and ${more} more` : joinAnd(names)} ${names.length + more === 1 ? 'is' : 'are'} described there.` : '.';
       meta = ['from the ', briefLink(to), ` · ${ageOld(b.madeAt)}`];
       body = [h('p', { class: 'req-knows-text', text: `Worca works from the ${targetName(f)} brief${what} It has not looked at the code for this feature.` }),
         o && o.skipped === 'failed' ? h('p', { class: 'hint req-knows-failed', text: 'Worca could not look at the code this time.' }) : null];
@@ -1621,7 +1625,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           menuItem('Your notes for Worca', () => route(briefPath(f.scopeType, f.scopeKey)), { ui: 'mi-notes' }),
           // with a brief: Look closer while Worca works from it alone; none with the switch off (D11)
           f.brief && f.brief.lookAtCode === false ? null
-            : menuItem(f.brief && f.orientation && f.orientation.skipped === 'brief' ? 'Look closer' : 'Look again', () => postLook(f),
+            : menuItem(f.brief && !(f.orientation && !f.orientation.skipped) ? 'Look closer' : 'Look again', () => postLook(f),
               { disabled: isLocked(f), ui: 'mi-look' }),
           menuItem(archived ? 'Restore' : 'Archive', () => act(async () => {
             await api('POST', `/api/requirements/${f.seq}/archive`, archived ? { restore: true } : {});

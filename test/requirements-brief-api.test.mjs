@@ -240,7 +240,8 @@ test('a feature with a brief: its view, Add this to the brief, the look refused 
     assert.equal(f.brief.status, 'ready');
     assert.ok(f.brief.madeAt);
     assert.equal(f.brief.sources[0].branch, 'main');
-    assert.ok(f.brief.matches.includes('orders'), JSON.stringify(f.brief.matches));
+    assert.ok(f.brief.matches.includes('Orders'), JSON.stringify(f.brief.matches));
+    assert.equal(typeof f.brief.matchesMore, 'number');
     assert.equal(f.brief.lookAtCode, true);
     assert.ok('lookCostUsd' in f && (f.lookCostUsd === null || typeof f.lookCostUsd === 'number'));
     assert.equal(f.brief.sections, undefined, 'the feature view carries the brief\'s status, not its text');

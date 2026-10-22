@@ -67,7 +67,8 @@ const noSummary = () => null;
 function featureBrief(f) {
   const b = usableBrief(f.scopeType, f.scopeKey);
   if (!b) return null;
-  return { status: b.status, madeAt: b.madeAt, sources: b.sources, matches: briefMatches(b.sections, f),
+  const m = briefMatches(b.sections, f);
+  return { status: b.status, madeAt: b.madeAt, sources: b.sources, matches: m.names, matchesMore: m.more,
     lookAtCode: getContext(f.scopeType, f.scopeKey).lookAtCode };
 }
 
