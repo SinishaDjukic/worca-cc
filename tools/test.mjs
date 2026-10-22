@@ -27,9 +27,12 @@ export function selectFiles({ all, tier = 'all', tiers = {} }) {
 }
 
 export function planShards(files, timings, n) {
-  const known = Object.values(timings).sort((a, b) => a - b);
-  const median = known.length ? known[Math.floor(known.length / 2)] : 1;
-  const w = (f) => (timings[f] ?? median) + PER_FILE_S;
+  // A file with no recorded time weighs the MEAN, not the median: most files take ~0 s, so the
+  // median (0.2 s) priced a new file far under what new files actually cost (2.3 s on average on
+  // 2026-10-22, when 636 untimed files had piled onto one shard and made it the CI long pole).
+  const known = Object.values(timings);
+  const mean = known.length ? known.reduce((a, b) => a + b, 0) / known.length : 1;
+  const w = (f) => (timings[f] ?? mean) + PER_FILE_S;
   // Code-unit tie-break, never localeCompare: every CI shard must compute the same plan.
   const order = [...files].sort((a, b) => w(b) - w(a) || (a < b ? -1 : a > b ? 1 : 0));
   const shards = Array.from({ length: n }, () => ({ load: 0, files: [] }));
@@ -87,7 +90,8 @@ function main() {
     const m = /^(\d+)\/(\d+)$/.exec(o.shard);
     if (!m || +m[1] < 1 || +m[1] > +m[2]) { console.error(`bad shard "${o.shard}" (want i/n)`); process.exit(2); }
     files = planShards(files, timings, +m[2])[+m[1] - 1];
-    console.log(`shard ${o.shard}: ${files.length} files`);
+    const untimed = files.filter((f) => !(f in timings)).length;
+    console.log(`shard ${o.shard}: ${files.length} files${untimed ? ` (${untimed} with no recorded time: npm run test:timings rebalances)` : ''}`);
   } else {
     files = planShards(files, timings, 1)[0];
   }

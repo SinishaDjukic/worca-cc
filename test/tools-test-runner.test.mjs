@@ -28,9 +28,15 @@ test('shards are balanced by recorded time (max/min load within one file of each
   assert.ok(Math.max(...loads) - Math.min(...loads) <= 10.5, loads.join(','));
 });
 
-test('unknown files get the median weight and are still placed', () => {
+test('unknown files get the mean weight and are still placed', () => {
   const extra = [...files, 'test/new-file.test.mjs'];
   assert.ok(planShards(extra, timings, 3).flat().includes('test/new-file.test.mjs'));
+  // Mostly-zero timings: the median is 0, the mean 3.2. Priced at the mean (3.7 with the per-file
+  // cost) the new file goes on the 6 s shard ahead of the zeros, which then split across both
+  // shards; priced at the median every zero and the new file would stack behind the 6 s file.
+  const skewed = { 'test/a.test.mjs': 10, 'test/b.test.mjs': 6, 'test/c.test.mjs': 0, 'test/d.test.mjs': 0, 'test/e.test.mjs': 0 };
+  assert.deepEqual(planShards([...Object.keys(skewed), 'test/new.test.mjs'], skewed, 2),
+    [['test/a.test.mjs', 'test/d.test.mjs'], ['test/b.test.mjs', 'test/new.test.mjs', 'test/c.test.mjs', 'test/e.test.mjs']]);
 });
 
 test('tier selection: slow globs and keepFast override', () => {
