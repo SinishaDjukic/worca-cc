@@ -230,7 +230,7 @@ test('a revision after the interview is done: answers to an earlier round, 202, 
 });
 
 // ── the list's interview info and look cost (A1.1 Task 5) ──
-async function listWith(deps) {
+async function listWith(deps, path = '/api/requirements') {
   const express = (await import('express')).default;
   const { registerRequirementsRoutes } = await import('../src/core/requirements/routes.mjs');
   const app = express();
@@ -239,7 +239,7 @@ async function listWith(deps) {
   const s = app.listen(0, '127.0.0.1');
   await new Promise((r) => s.once('listening', r));
   try {
-    const r = await fetch(`http://127.0.0.1:${s.address().port}/api/requirements`);
+    const r = await fetch(`http://127.0.0.1:${s.address().port}${path}`);
     return { status: r.status, json: await r.json() };
   } finally { s.closeAllConnections?.(); await new Promise((r) => s.close(r)); }
 }
@@ -269,4 +269,12 @@ test('the list: lookCostUsd uses the looks of the current model when there are s
   const m = all.length >> 1;
   const median = all.length % 2 ? all[m] : (all[m - 1] + all[m]) / 2;
   assert.equal((await listWith(stub('cost-model-none'))).json.lookCostUsd, Math.round(median * 1e4) / 1e4, 'median of all recent looks');
+  // the feature page's "Look closer · about $X" is the same model-scoped estimate as the New feature line
+  const view = async (model) => (await listWith(stub(model), `/api/requirements/${f.seq}`)).json.feature.lookCostUsd;
+  assert.equal(await view('cost-model-a'), 0.3);
+  assert.equal(await view('cost-model-b'), 5);
+  assert.equal(await view('cost-model-none'), Math.round(median * 1e4) / 1e4);
+  const broken = await listWith({ interviewModel: async () => { throw new Error('boom'); } }, `/api/requirements/${f.seq}`);
+  assert.equal(broken.status, 200, 'an unresolvable model still shows the page');
+  assert.equal(broken.json.feature.lookCostUsd, Math.round(median * 1e4) / 1e4);
 });

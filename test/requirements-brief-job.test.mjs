@@ -425,6 +425,26 @@ test('a call that throws after spending books what it spent; the checkout is clo
   assert.equal(lk.closed, 1);
 });
 
+test('the cost of a look is booked on the brief and in the ledger together: a ledger insert that fails leaves neither', async () => {
+  const r = repo();
+  const lk = looks();
+  const runner = fakeRunner([goodReply(lk.lookDir)]);
+  const k = key();
+  prepare("CREATE TRIGGER no_brief_ledger BEFORE INSERT ON req_cost_ledger WHEN NEW.brief_id IS NOT NULL BEGIN SELECT RAISE(ABORT, 'the ledger is full'); END").run();
+  const errors = mock.method(console, 'error', () => {});
+  try {
+    await (await makeBrief('project', k, {}, deps({ runner, lk, projects: [project(k, r.dir)] }))).job;
+  } finally {
+    errors.mock.restore();
+    prepare('DROP TRIGGER no_brief_ledger').run();
+  }
+  const b = getBrief('project', k);
+  assert.equal(b.status, 'ready', 'the brief itself is saved');
+  assert.equal(b.costUsd, 0, 'no cost on the brief without its ledger row');
+  assert.deepEqual(ledger(b.id), []);
+  assert.ok(errors.mock.calls.some((c) => /could not book a brief look/.test(String(c.arguments[0]))), 'the failure is logged');
+});
+
 // ---------------------------------------------------------------- workspace
 
 function workspace(n, { plain = [] } = {}) {
@@ -528,6 +548,23 @@ test('mock mode: no checkout, no call, the canned brief, sources from the projec
   assert.deepEqual(ledger(b.id), []);
 });
 
+test('the mock switch is a dep: mockEnabled() true runs the canned brief without WORCA_MOCK, false the real path with it set', async () => {
+  const r = repo();
+  r.originHead();
+  const never = async () => { throw new Error('mock mode must not get here'); };
+  const k = key();
+  await (await makeBrief('project', k, {}, deps({ runner: { calls: [], runClaudeImpl: never }, projects: [project(k, r.dir)], openLook: never,
+    mockEnabled: () => true }))).job;
+  assert.deepEqual(getBrief('project', k).sections, mockBrief('Shop').sections);
+  process.env.WORCA_MOCK = '1';
+  const lk = looks();
+  const runner = fakeRunner([goodReply(lk.lookDir)]);
+  const k2 = key();
+  await (await makeBrief('project', k2, {}, deps({ runner, lk, projects: [project(k2, r.dir)], mockEnabled: () => false }))).job;
+  assert.equal(runner.calls.length, 1, 'the real path: one (fake) call');
+  assert.equal(getBrief('project', k2).sections.product, 'An online shop for home goods.');
+});
+
 // ---------------------------------------------------------------- staleness
 
 let sid = 1000;
@@ -619,6 +656,16 @@ test('staleness of a workspace: a removed member is skipped, a missing one is un
   assert.equal(none.known, false);
   assert.equal(none.reason, 'missing');
   assert.deepEqual(none.unknown, ['Beta']);
+
+  // every member the brief was made from has left the workspace: its own reason, not a missing folder
+  const gone = await briefStaleness({ ...brief, id: ++sid },
+    { listProjects: async () => [], workspaceTarget: async () => ({ id: 'ws-stale', name: 'WS', description: '', members: [members[2]] }) });
+  assert.equal(gone.known, false);
+  assert.equal(gone.reason, 'removed');
+  assert.deepEqual(gone.unknown, []);
+  assert.deepEqual(gone.added, ['Delta']);
+  const empty = await briefStaleness({ ...brief, id: ++sid }, { listProjects: async () => [], workspaceTarget: async () => null });
+  assert.equal(empty.reason, 'removed', 'the workspace itself is gone');
 });
 
 test('staleness: commitsAhead past 2000, or a full page of commits, is partial; an unreadable count is rewritten; no file list is slow', async () => {

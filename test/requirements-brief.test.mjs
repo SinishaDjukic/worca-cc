@@ -216,6 +216,42 @@ test('parseSectionValue: areas keep files, added and belongsTo by name; free tex
   assert.equal(long[1].text.length, 500);
 });
 
+test('parseSectionValue: names holding ": " survive a save when they are current names (the longest match first)', () => {
+  // an added area named after a feature title with a colon, filed under another area (D6 / D11 markers kept)
+  const gift = area('Checkout: gift message', { added: { feature: 'FEAT-7', at: 't' }, belongsTo: 'Orders', files: ['slip.mjs'], status: null, text: 'a note: printed on the slip' });
+  const plain = area('Admin: billing', { status: 'partly', files: ['b.mjs'] });
+  const checkout = area('Checkout', { files: ['c.mjs'] });
+  const areas = [gift, plain, checkout];
+  const text = sectionText('areas', areas);
+  assert.equal(text, 'Checkout: gift message: a note: printed on the slip\nAdmin: billing (partly): Admin: billing text\nCheckout (exists): Checkout text');
+  assert.deepEqual(parseSectionValue('areas', text, areas), areas, 'round trip unchanged');
+  // edited text keeps the matched area's markers; a shorter current name ("Checkout") does not steal the line
+  const out = parseSectionValue('areas', 'checkout: GIFT MESSAGE: changed\nAdmin: billing:\nCheckout: gift message is now on every order', areas);
+  assert.deepEqual(out[0], { ...gift, name: 'checkout: GIFT MESSAGE', text: 'changed' });
+  assert.deepEqual(out[1], { ...plain, status: null, text: '' });
+  assert.deepEqual(out[2], { ...checkout, status: null, text: 'gift message is now on every order' }, 'only the name followed by ": " or nothing matches');
+  // no current name matches: the first ": " splits, as before
+  assert.deepEqual(parseSectionValue('areas', 'New: thing: here', areas), [{ name: 'New', text: 'thing: here', status: null, files: [], added: null, belongsTo: null }]);
+  // users and terms
+  const users = [{ name: 'Admin: billing', can: 'refunds orders: in full' }, { name: 'Admin', can: 'manages' }];
+  assert.equal(sectionText('users', users), 'Admin: billing: refunds orders: in full\nAdmin: manages');
+  assert.deepEqual(parseSectionValue('users', sectionText('users', users), users), users);
+  const terms = [{ term: 'Status: packed', meaning: 'in a box: not shipped' }];
+  assert.deepEqual(parseSectionValue('terms', sectionText('terms', terms), terms), terms);
+  assert.deepEqual(parseSectionValue('terms', 'Status: packed', terms), [{ term: 'Status: packed', meaning: '' }], 'the name alone');
+});
+
+test('parseSectionValue: a name given twice keeps the first item only (text and lists)', () => {
+  const current = [area('Orders', { files: ['o.mjs'], added: { feature: 'FEAT-2', at: 't' } })];
+  const out = parseSectionValue('areas', 'Orders: first\nother: x\norders (partly): second', current);
+  assert.deepEqual(out.map((a) => [a.name, a.text]), [['Orders', 'first'], ['other', 'x']]);
+  assert.equal(out.filter((a) => a.added).length, 1, 'one area carries the added marker');
+  assert.deepEqual(parseSectionValue('users', [{ name: 'A', can: '1' }, { name: 'a ', can: '2' }], []), [{ name: 'A', can: '1' }]);
+  assert.deepEqual(parseSectionValue('terms', 'Order: one\nORDER: two', []), [{ term: 'Order', meaning: 'one' }]);
+  // duplicates do not count toward the cap
+  assert.equal(parseSectionValue('areas', Array.from({ length: 25 }, (_, i) => `A${i % 20}: x`).join('\n'), []).length, 20);
+});
+
 test('parseSectionValue: structured arrays, current may be the whole sections', () => {
   const current = { ...emptyBrief(), areas: [area('Gift', { added: { feature: 'FEAT-2', at: 't' }, belongsTo: 'Orders', files: ['g.mjs'] })] };
   const out = parseSectionValue('areas', [

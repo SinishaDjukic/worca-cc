@@ -169,6 +169,42 @@ function splitLine(line) {
   return [line.trim(), ''];
 }
 
+const STATUS_AFTER_NAME = /^\s*\((exists|partly)\)/i;
+
+/**
+ * One editor line → `{ name, text, status }`. A name may itself hold ": " (an added area is named after a feature
+ * title), so the line is first matched against the section's current names, longest first and ignoring case:
+ * `<name>( (exists|partly))?: <text>`, `<name>:` or the name alone. Only when no current name matches does the
+ * first ": " split the line (and, for areas, a trailing "(exists)" / "(partly)" is read off the head).
+ */
+function readLine(line, names, areas) {
+  const low = line.toLowerCase();
+  for (const n of names) {
+    if (!low.startsWith(n.toLowerCase())) continue;
+    let rest = line.slice(n.length);
+    let status = null;
+    const m = areas ? STATUS_AFTER_NAME.exec(rest) : null;
+    if (m) { status = m[1]; rest = rest.slice(m[0].length); }
+    if (rest === '' || rest === ':') return { name: line.slice(0, n.length), text: '', status };
+    if (rest.startsWith(': ')) return { name: line.slice(0, n.length), text: rest.slice(2).trim(), status };
+  }
+  const [head, text] = splitLine(line);
+  if (!areas) return { name: head, text, status: null };
+  const m = /^(.*?)\s*\((exists|partly)\)$/i.exec(head);
+  return { name: m ? m[1] : head, text, status: m ? m[2] : null };
+}
+
+/** The first item of each name (ignoring case and spaces at the ends): a name given twice keeps its first item. */
+function firstOfEachName(items, nameOf) {
+  const seen = new Set();
+  return items.filter((x) => {
+    const k = String(nameOf(x) || '').trim().toLowerCase();
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
 const currentList = (section, current) => {
   const v = isObj(current) && !Array.isArray(current) && section in current ? current[section] : current;
   return Array.isArray(v) ? v : [];
@@ -197,21 +233,24 @@ export function parseSectionValue(section, value, current) {
     else items = list(value, (a) => { const k = find(isObj(a) ? a.name : ''); return normArea(a, {}, k, k ? k.files || [] : []); }, Infinity);
   } else {
     items = [];
+    const nameKey = section === 'terms' ? 'term' : 'name';
+    const names = cur.map((x) => (x && typeof x[nameKey] === 'string' ? x[nameKey].trim() : '')).filter(Boolean)
+      .sort((a, b) => b.length - a.length);
     for (const line of value.split(/\r?\n/)) {
       const t = line.trim();
       if (!t) continue;
-      const [head, text] = splitLine(t);
-      if (section === 'users') items.push(normUser({ name: head, can: text }));
-      else if (section === 'terms') items.push(normTerm({ term: head, meaning: text }));
+      const { name, text, status } = readLine(t, names, section === 'areas');
+      if (section === 'users') items.push(normUser({ name, can: text }));
+      else if (section === 'terms') items.push(normTerm({ term: name, meaning: text }));
       else {
-        const m = /^(.*?)\s*\((exists|partly)\)$/i.exec(head);
-        const name = m ? m[1] : head;
         const k = find(name);
-        items.push(normArea({ name, text, status: m ? m[2] : null, files: k ? k.files || [] : [] }, {}, k));
+        items.push(normArea({ name, text, status, files: k ? k.files || [] : [] }, {}, k));
       }
     }
     items = items.filter(Boolean);
   }
+  // A name given twice keeps its first item only, so two areas never both carry one area's markers (added, files).
+  items = firstOfEachName(items, (x) => (section === 'terms' ? x.term : x.name));
   if (items.length > BRIEF_LIMITS[section]) throw badRequest(`at most ${BRIEF_LIMITS[section]} ${section} fit in the brief`);
   return items;
 }

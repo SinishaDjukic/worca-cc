@@ -736,7 +736,9 @@ test('without a brief: A1 behaviour, and no brief on the prompt or the round', a
   await settled(f.seq);
   assert.doesNotMatch(r.calls[0].prompt, /product_brief/);
   assert.equal('brief' in listTurns(f.seq).at(-1).payload, false);
-  assert.equal(getFeature(f.seq).orientation.skipped, 'off');
+  const o = getFeature(f.seq).orientation;
+  assert.equal(o.skipped, 'off');
+  assert.deepEqual([o.scopeType, o.scopeKey, o.briefId], [f.scopeType, f.scopeKey, null], 'a look without a brief: the scope, no brief id');
 });
 
 test('brief, mock mode: the skip and the round\'s brief, no runner call', async () => {
@@ -756,7 +758,7 @@ test('brief, mock mode: the skip and the round\'s brief, no runner call', async 
 
 test('Look closer: the explicit look carries the brief, asks for what it does not say, and stores the area', async () => {
   briefOn();
-  savedBrief();
+  const b = savedBrief();
   const f = newBriefFeature();
   const { d } = briefDeps(fakeRunner([ROUND1]));
   await startOrientation(f.seq, {}, d);
@@ -774,6 +776,10 @@ test('Look closer: the explicit look carries the brief, asks for what it does no
   assert.equal(g.orientation.summary, 'Orders have no note yet.');
   assert.equal(g.orientation.area, 'Orders');
   assert.equal(g.orientation.skipped, null);
+  // stamped with the scope it was made for and the brief it was made against (Add this to the brief checks both)
+  assert.equal(g.orientation.scopeType, 'project');
+  assert.equal(g.orientation.scopeKey, BSCOPE);
+  assert.equal(g.orientation.briefId, b.id);
   assert.equal(g.rounds, 1, 'no round');
   assert.equal(g.status, 'your_turn');
 });

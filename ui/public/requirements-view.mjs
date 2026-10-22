@@ -527,6 +527,14 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   }
 
   function paintBrief(data) {
+    // A brief that was being made and is not any more (the frame-driven repaint after the job): said once in the
+    // message line, the polite live region, for whoever is not looking at the page.
+    const wasMaking = !!(briefData && briefData.brief && briefData.brief.status === 'making');
+    const now = data && data.brief;
+    if (wasMaking && now && now.status !== 'making') {
+      if (now.error && now.error.message) say(`The product brief could not be made: ${now.error.message}`, 'err');
+      else if (now.madeAt) say('The product brief is ready.', 'ok');
+    }
     briefData = data;
     const s = briefShown;
     for (const u of data.usedBy || []) if (u && u.seq != null) seqScope.set(Number(u.seq), scopeId(s));
@@ -594,7 +602,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const failed = !making && b && b.error && b.error.message ? b.error.message : null;
     const switchOff = !!(data.notes && data.notes.lookAtCode === false);
     const slow = Array.isArray(t.slow) && t.slow.length > 0;
-    const noRepo = s.scopeType === 'project' && !t.branch && !slow;
+    // no repository: a project without a default branch, a workspace whose members have none (`repositories` 0)
+    const noRepo = !slow && (s.scopeType === 'project' ? !t.branch : t.repositories === 0);
     const whyNot = making ? 'Worca is reading the code. This takes a few minutes; you can leave this page.'
       : switchOff ? 'Looking at the code is off. Turn it on under Your notes for Worca.'
         : noRepo ? 'There is no repository to look at.' : null;
@@ -749,7 +758,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   /** "A", "A and B", "A, B and C", each bold. */
   const boldList = (xs) => xs.flatMap((x, i) => [i === 0 ? null : i === xs.length - 1 ? ' and ' : ', ', h('b', { text: x })]).filter(Boolean);
   const STALE_REASON = Object.freeze({
-    missing: () => ["the project's folder is missing."],
+    missing: (branch, ws) => [ws ? "a project's folder is missing." : "the project's folder is missing."],
+    removed: () => ['none of the projects it was made from is in the workspace any more.'],
     'branch-gone': (branch) => (branch ? ['the branch ', h('code', { text: branch }), ' no longer exists.'] : ['its branch no longer exists.']),
     rewritten: (branch) => (branch ? ['the commit this brief was made from is no longer on ', h('code', { text: branch }), '.']
       : ['the commit this brief was made from is no longer on its branch.']),
@@ -796,7 +806,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     } else if (st.known === false) {
       const branch = st.branch || ((Array.isArray(st.sources) ? st.sources : []).find((x) => x && x.known === false && x.branch) || {}).branch || null;
       const why = STALE_REASON[st.reason];
-      says = why ? ['Worca cannot tell how far the code moved on: ', ...why(branch)] : ['Worca cannot tell how far the code moved on.'];
+      says = why ? ['Worca cannot tell how far the code moved on: ', ...why(branch, ws)] : ['Worca cannot tell how far the code moved on.'];
     } else return small();
     return h('section', { class: 'req-changed req-brief-stale', 'aria-label': 'The brief is behind the code' },
       icon(ICONS.warn, { size: 18 }),
@@ -1562,8 +1572,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       const nFiles = (Array.isArray(o.files) ? o.files : []).length;
       meta = [['brief + a closer look', nFiles ? plural(nFiles, 'file') : null, usd(cost)].filter(Boolean).join(' · ')];
       const add = () => act(async () => { await api('POST', `/api/requirements/${f.seq}/brief-addition`, {}); await paint(); });
+      // Only a look made for this scope against this brief can be added (the server refuses any other, A7 D11).
+      const ofThisBrief = o.scopeType === f.scopeType && o.scopeKey === f.scopeKey && o.briefId != null && (b.id == null || o.briefId === b.id);
       body = [h('p', { class: 'req-knows-text', text: o.summary || 'Nothing relevant found.' }),
-        o.summary && !o.addedToBrief ? h('p', { class: 'hint req-knows-add' }, 'Not in the brief yet. ',
+        o.summary && !o.addedToBrief && ofThisBrief ? h('p', { class: 'hint req-knows-add' }, 'Not in the brief yet. ',
           h('button', { type: 'button', class: 'link-btn', 'data-ui': 'brief-add', disabled: locked, onclick: add }, 'Add this to the brief')) : null];
       if (lookOn) foot = [h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'look-again', disabled: locked, onclick: () => postLook(f) }, 'Look again')];
     }

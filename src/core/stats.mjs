@@ -103,7 +103,8 @@ function askTotals(fromMs, toMs) {
 }
 
 /** Requirements window aggregate (plans/requirements-design.md D9): spend, and the DISTINCT features
- *  that spent in the window (orientation passes and interview rounds). */
+ *  that spent in the window (orientation passes and interview rounds). Product brief looks (A7: feature_seq 0
+ *  with a brief_id) count in the spend but not in the feature count. */
 function requirementsTotals(fromMs, toMs) {
   const row = prepare(`
     SELECT COALESCE(SUM(amount_usd), 0) AS s, COUNT(DISTINCT NULLIF(feature_seq, 0)) AS features

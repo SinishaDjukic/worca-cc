@@ -63,13 +63,14 @@ export function requirementsBriefNotifier(broadcast) {
 
 const noSummary = () => null;
 
-/** What the feature page shows of its scope's brief (A7 §5, board 14): its status and age, the sources, the
- *  area names and terms the feature mentions, and the switch; null without a usable brief. */
+/** What the feature page shows of its scope's brief (A7 §5, board 14): its id (a closer look made against another
+ *  brief offers no Add), status and age, the sources, the area names and terms the feature mentions, and the
+ *  switch; null without a usable brief. */
 function featureBrief(f) {
   const b = usableBrief(f.scopeType, f.scopeKey);
   if (!b) return null;
   const m = briefMatches(b.sections, f);
-  return { status: b.status, madeAt: b.madeAt, sources: b.sources, matches: m.names, matchesMore: m.more,
+  return { id: b.id, status: b.status, madeAt: b.madeAt, sources: b.sources, matches: m.names, matchesMore: m.more,
     lookAtCode: getContext(f.scopeType, f.scopeKey).lookAtCode };
 }
 
@@ -86,11 +87,14 @@ export async function featureView(seq, d = {}) {
   const rows = listStarts(seq);
   const runSummary = d.runSummary || noSummary;
   const starts = await Promise.all(rows.map(async (s, i) => ({ ...(await startView(s, runSummary)), ...(i === 0 ? { spec: s.spec } : {}) })));
+  // "Look closer · about $X": the same model-scoped estimate as the New feature line (all looks when unresolved)
+  let model = null;
+  try { model = ((await (d.interviewModel || interviewModel)(d)) || {}).model || null; } catch { model = null; }
   return {
     feature: { ...f, busy, pending, lastError: last && last.kind === 'error' ? last.payload.message : null,
       readiness: ready, state: displayState({ ...f, busy }, { ready, starts: rows }), unaskedRejections: unaskedRejections(f.spec, turns),
       starts, changedSinceStart: rows.length ? changedSince(rows[0].spec, f.spec) : [],
-      brief: featureBrief(f), lookCostUsd: lookCostUsd() },
+      brief: featureBrief(f), lookCostUsd: lookCostUsd(model) },
     turns,
   };
 }
@@ -146,8 +150,9 @@ const BRIEF_FIELDS = ['id', 'scopeType', 'scopeKey', 'status', 'sections', 'edit
 const briefFields = (b) => (b ? Object.fromEntries(BRIEF_FIELDS.map((k) => [k, b[k]])) : null);
 
 /**
- * The brief page's body (A7 §5): `{ brief, target: { name, branch, leftOut, slow }, notes, estimate, usedBy,
- * staleness }`. `branch` is the default branch the next look reads (a project; a workspace: null), `leftOut` the
+ * The brief page's body (A7 §5): `{ brief, target: { name, branch, repositories, leftOut, slow }, notes, estimate, usedBy,
+ * staleness }`. `branch` is the default branch the next look reads (a project; a workspace: null), `repositories`
+ * how many repositories it reads (0: there is no repository to look at, unless `slow` names some), `leftOut` the
  * workspace members past the checkout cap, `slow` the repositories whose default branch could not be read in
  * time. The target's git probes and the staleness check run side by side, each bounded by STALENESS_TIMEOUT_MS
  * (D9), so a slow repository never holds the page for much longer than that. `known` is a briefTarget already read
@@ -161,7 +166,8 @@ async function briefPage(scopeType, scopeKey, t, d, known = null) {
   const first = scopeType === 'project' ? target.dirs[0] : null;
   return {
     brief: briefFields(b),
-    target: { name: t.name, branch: (first && first.base && first.base.branch) || null, leftOut: target.leftOut || [], slow: target.slow || [] },
+    target: { name: t.name, branch: (first && first.base && first.base.branch) || null, repositories: target.dirs.length,
+      leftOut: target.leftOut || [], slow: target.slow || [] },
     notes: getContext(scopeType, scopeKey), estimate, usedBy: briefUsers(scopeType, scopeKey), staleness,
   };
 }

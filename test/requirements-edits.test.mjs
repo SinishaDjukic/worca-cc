@@ -208,6 +208,8 @@ function briefFor(scopeType, scopeKey, { areas = [ORDERS], edited = {}, sources 
   });
 }
 let briefScopes = 0;
+/** What runOrientation stamps on a look: the scope it was made for and the brief it was made against. */
+const stampOf = (f) => ({ scopeType: f.scopeType, scopeKey: f.scopeKey, briefId: getBrief(f.scopeType, f.scopeKey).id });
 /** A feature in a fresh scope with a brief, after a closer look whose paths are the temp checkout's, absolute. */
 function closerLooked({ scopeType = 'project', orientation = {}, brief = {} } = {}) {
   briefScopes += 1;
@@ -215,7 +217,7 @@ function closerLooked({ scopeType = 'project', orientation = {}, brief = {} } = 
   const b = briefFor(scopeType, scopeKey, brief);
   const f = createFeature({ scopeType, scopeKey, title: 'Gift message on an order', description: 'A note' });
   updateFeature(f.seq, { status: 'your_turn', orientation: {
-    summary: 'Orders carry no note yet.', skipped: null, area: 'Orders', at: '2026-10-20T10:00:00.000Z',
+    ...stampOf(f), summary: 'Orders carry no note yet.', skipped: null, area: 'Orders', at: '2026-10-20T10:00:00.000Z',
     files: ['/tmp/worca/tmp/requirements/auto-look-0000abcd/src/o.js',
       'C:\\Users\\po\\.worca\\tmp\\requirements\\auto-look-1234abcd\\src\\gift.js',
       'src/notes.js', '/etc/passwd', '../outside.js'],
@@ -319,7 +321,7 @@ test('addToBrief again after a new closer look updates the feature\'s own area i
   assert.equal(once.length, 2);
   const firstAt = once[1].added.at;
   // a new Look closer replaces the orientation: addedToBrief is gone, the summary, files and area are new
-  updateFeature(f.seq, { orientation: { summary: 'Orders now need a gift flag.', skipped: null, area: 'Checkout', at: '2026-10-21T10:00:00.000Z',
+  updateFeature(f.seq, { orientation: { ...stampOf(f), summary: 'Orders now need a gift flag.', skipped: null, area: 'Checkout', at: '2026-10-21T10:00:00.000Z',
     files: ['/tmp/auto-look-0000abcd/src/gift-flag.js'] } });
   addToBrief(f.seq, { by: 'po' });
   const twice = getBrief('project', scopeKey).sections.areas;
@@ -334,7 +336,7 @@ test('addToBrief again after a new closer look updates the feature\'s own area i
   assert.ok(twice[1].added.at >= firstAt);
   // another feature's add still appends
   const other = createFeature({ scopeType: 'project', scopeKey, title: 'Wrap an order', description: 'd' });
-  updateFeature(other.seq, { status: 'your_turn', orientation: { summary: 'No wrapping.', files: [], skipped: null, area: 'Orders' } });
+  updateFeature(other.seq, { status: 'your_turn', orientation: { ...stampOf(other), summary: 'No wrapping.', files: [], skipped: null, area: 'Orders' } });
   addToBrief(other.seq);
   assert.equal(getBrief('project', scopeKey).sections.areas.length, 3);
 });
@@ -343,13 +345,43 @@ test('addToBrief: with 20 areas a re-add of the feature\'s own area succeeds; a 
   const { f, scopeKey } = closerLooked({ brief: { areas: Array.from({ length: 19 }, (_, i) => ({ ...ORDERS, name: `Area ${i}` })) } });
   addToBrief(f.seq);
   assert.equal(getBrief('project', scopeKey).sections.areas.length, 20);
-  updateFeature(f.seq, { orientation: { summary: 'A second look.', files: [], skipped: null, area: 'Orders' } });
+  updateFeature(f.seq, { orientation: { ...stampOf(f), summary: 'A second look.', files: [], skipped: null, area: 'Orders' } });
   addToBrief(f.seq);
   const areas = getBrief('project', scopeKey).sections.areas;
   assert.equal(areas.length, 20);
   assert.equal(areas[19].text, 'A second look.');
   assert.equal(areas[19].added.feature, f.id);
   const other = createFeature({ scopeType: 'project', scopeKey, title: 'Another', description: 'd' });
-  updateFeature(other.seq, { status: 'your_turn', orientation: { summary: 'x', files: [], skipped: null } });
+  updateFeature(other.seq, { status: 'your_turn', orientation: { ...stampOf(other), summary: 'x', files: [], skipped: null } });
   assert.throws(() => addToBrief(other.seq), (e) => e.code === 'CONFLICT' && e.message === 'The brief already has 20 areas.');
+});
+
+test('addToBrief refuses a closer look made for another scope, or before the brief (no brief id, or an earlier brief), writing nothing', () => {
+  const unchanged = (x) => {
+    assert.equal(getBrief(x.scopeType, x.scopeKey).sections.areas.length, 1);
+    assert.equal(getFeature(x.f.seq).orientation.addedToBrief, undefined);
+  };
+  // the feature moved to another project (which has a brief too) after its look
+  const moved = closerLooked();
+  const there = closerLooked();
+  updateHeader(moved.f.seq, { scopeType: 'project', scopeKey: there.scopeKey });
+  assert.throws(() => addToBrief(moved.f.seq),
+    (e) => e.code === 'CONFLICT' && e.message === 'This closer look was made for another project or workspace. Look again first.');
+  unchanged(there);
+  // a look made before the brief existed carries no brief id
+  const early = closerLooked({ orientation: { briefId: null } });
+  assert.throws(() => addToBrief(early.f.seq),
+    (e) => e.code === 'CONFLICT' && e.message === 'This closer look was made before the product brief. Look again first.');
+  unchanged(early);
+  // ... and a look without any stamp (made before looks were stamped) is refused the same way
+  const legacy = closerLooked();
+  const { scopeType: _t, scopeKey: _k, briefId: _b, ...bare } = getFeature(legacy.f.seq).orientation;
+  updateFeature(legacy.f.seq, { orientation: bare });
+  assert.throws(() => addToBrief(legacy.f.seq), (e) => e.code === 'CONFLICT' && /^This closer look was made /.test(e.message));
+  unchanged(legacy);
+  // a look made against an earlier brief of the scope (deleted and made again since)
+  const old = closerLooked({ orientation: { briefId: -1 } });
+  assert.throws(() => addToBrief(old.f.seq),
+    (e) => e.code === 'CONFLICT' && e.message === 'This closer look was made before the product brief. Look again first.');
+  unchanged(old);
 });

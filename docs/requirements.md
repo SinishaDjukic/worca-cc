@@ -48,11 +48,14 @@ features use it, what Worca read, and your notes.
 
 **Create and Refresh.** **Create the brief** (and later **Refresh**) is one deeper, read-only look at the
 repository's **main branch**, not at whatever branch happens to be checked out, so the brief describes what
-the product is and not a half-finished change. The cost is shown before you press the button; the estimate is
-the median of recent brief looks, failed ones included, project and workspace briefs alike. A brief look is a
-model call like any other here: it counts toward your spending limit and takes a few minutes, and you can leave
-the page while it works. Worca refuses it, and spends nothing, when looking at the code is switched off, when
-there is no repository or main branch, when a brief is already being made, or when the limit is reached.
+the product is and not a half-finished change (only when no main branch can be found does Worca read the
+checked-out branch). Once there is an estimate, the cost is shown before you press the button; the estimate is
+the median of recent brief looks, failed ones included, project and workspace briefs alike (before the first
+brief look there is none). A brief look is a model call like any other here: it counts toward your spending
+limit and takes a few minutes, and you can leave the page while it works; the page says when the brief is ready
+or could not be made. Worca refuses it, and spends nothing, when looking at the code is switched off, when there
+is no repository or main branch, when this brief is already being made, when two other briefs are being made,
+or when the limit is reached.
 
 **Your edits win.** Edit any part with the pencil; Worca keeps your text and a refresh never overwrites it
 (**Let Worca rewrite this** hands a part back). Editing **What exists today** makes the areas yours: a refresh
@@ -62,9 +65,10 @@ survive a refresh too.
 **Staleness.** A brief says what it was made from, for example *Made from main @ 3f96738*. When the main branch
 has moved, the page says **The code moved on since this brief**: how many commits since, and which of the areas
 it describes they touch (areas are matched by the files they name). Interviews keep using the brief as it is
-until you refresh. Where Worca cannot tell, it says so and why: the commit is no longer on the branch, the
-branch cannot be found, or checking took too long. A workspace brief also names projects it did not check or
-that joined after it was made.
+until you refresh. Where Worca cannot tell, it says so and why: the project's folder is missing, the commit is
+no longer on the branch, the branch cannot be found, or checking took too long (for a workspace brief, also that
+none of the projects it was made from is in the workspace any more). A workspace brief also names projects it
+did not check or that joined after it was made.
 
 **Your notes for Worca.** Standing facts every feature there should know (actors, terms, rules) and the switch
 for looking at the code. This is what was called *Project context*. It is
@@ -75,7 +79,9 @@ says "Worca knows <name> from its product brief" and the cost is cents per round
 away. The feature page shows *What Worca knows*. When the brief is not enough, **Look closer** makes one look at
 the code for that feature (its cost is shown first). **Add this to the brief** then keeps what it found as a new
 area named after the feature ("Orders: <feature title>"); it never replaces an area that is already there. A
-closer look is not part of the brief until you add it.
+closer look is not part of the brief until you add it, and only a look made for the feature's current project
+or workspace, against its current brief, can be added (otherwise **Look again** first). With looking at the code
+switched off, interviews still read an existing brief; only new looks (Create, Refresh, Look closer) stop.
 
 **Workspaces.** A workspace brief starts from the workspace's own description (its map of projects) and reads at
 most 8 of its projects, each at its main branch; any left out are named on the page before you create it.

@@ -9425,7 +9425,6 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .req-new select,.req-new input,.req-new textarea,.req-edit input,.req-edit textarea{width:100%;box-sizing:border-box}
 .req-edit{display:flex;flex-direction:column;gap:8px;margin-top:6px}
 .req-edit .req-actions{margin:0}
-.req-brief-notes-look{display:flex;align-items:center;gap:8px;font-size:13px}
 .req-why{margin:2px 0 6px 28px}
 .req-q .req-q-note{margin:8px 0 0}
 /* Narrow screens: the footer (count + Finish now / Skip / Submit) wraps instead of pushing the count off the card (as .chat-rc-q). */
@@ -9557,6 +9556,7 @@ a.req-run-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-brief-notes{padding:18px 22px;display:flex;flex-direction:column;gap:10px}
 .req-brief-notes .req-card-head{margin:0}
 .req-brief-notes textarea{width:100%;box-sizing:border-box;min-height:84px}
+.req-brief-notes-look{display:flex;align-items:center;gap:8px;font-size:13px}
 .req-brief-notes-foot{display:flex;justify-content:flex-end;gap:8px}
 /* A7: the brief page once made (board Brief.dc.html): the chips and the two menus, the code-moved-on notice (the
    amber .req-changed box), the brief card left, How Worca uses it / Your notes / What Worca read right. */

@@ -7,6 +7,7 @@
 // brief is kept.
 import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
+import { tx } from '../db.mjs';
 import { runClaude, mockEnabled } from '../claude-runner.mjs';
 import { listModels } from '../config.mjs';
 import { budgetStatus, recordRequirementsCostDelta } from '../cost-budget.mjs';
@@ -43,6 +44,8 @@ const DEFAULTS = Object.freeze({
   runClaudeImpl: runClaude, listModels, listProjects, workspaceTarget, readWorkspace,
   openLook: openRepoLook, openWorkspaceLook: openWorkspaceRepoLook, budget: () => budgetStatus(), onChange: () => {},
   defaultBranchRef,
+  // Mock mode (WORCA_MOCK) as a dep, so a test can switch it for one job without touching the process's env.
+  mockEnabled: () => mockEnabled({}),
 });
 const CHECKOUT_TIMEOUT = 'Worca could not check out the code in time. Try again.';
 const MIN_CALL_MS = 1_000;   // less than this left after the checkout: the checkout took the time
@@ -151,11 +154,14 @@ function failureOf(err) {
   return { code: (err && typeof err.code === 'string' && err.code) || 'FAILED', message: message(err) };
 }
 
+/** The look's cost on the brief row and its ledger row, in one transaction: both or neither. */
 function book(id, costUsd, model) {
   if (!(costUsd > 0)) return;
   try {
-    addBriefCost(id, costUsd);
-    recordRequirementsCostDelta({ briefId: id, amountUsd: costUsd, model: model || null });
+    tx(() => {
+      addBriefCost(id, costUsd);
+      recordRequirementsCostDelta({ briefId: id, amountUsd: costUsd, model: model || null });
+    });
   } catch (e) { console.error('requirements: could not book a brief look:', message(e)); }
 }
 
@@ -192,7 +198,7 @@ function runJob(row, target, scopeType, scopeKey, by, d) {
     try {
       let fresh;
       let sources;
-      if (mockEnabled({})) {
+      if (d.mockEnabled()) {
         fresh = mockBrief(target.name);
         sources = await mockSources(target);
       } else {
@@ -368,6 +374,8 @@ function staleness(brief, src, git) {
   const known = git.results.filter((r) => r.entry.known);
   const unknown = git.results.filter((r) => !r.entry.known).map((r) => git.names[r.entry.project] || r.entry.project);
   const entries = git.results.map((r) => r.entry);
+  // every member the brief was made from has left the workspace (or the workspace is gone): nothing to check
+  if (!git.results.length) return { known: false, reason: 'removed', unknown, added: git.added, sources: entries };
   if (!known.length) return { known: false, reason: (entries[0] && entries[0].reason) || 'missing', unknown, added: git.added, sources: entries };
   const t = touched(known);
   return {

@@ -217,7 +217,7 @@ const briefById = (id) => toBrief(prepare('SELECT * FROM req_briefs WHERE id = ?
 export function getBrief(scopeType, scopeKey) {
   checkScope(scopeType, scopeKey);
   getDb();
-  return toBrief(prepare('SELECT * FROM req_briefs WHERE scope_type = ? AND scope_key = ?').get(scopeType, scopeKey));
+  return toBrief(prepare('SELECT * FROM req_briefs WHERE scope_type = ? AND scope_key = ?').get(scopeType, scopeKey.trim()));
 }
 
 /** The brief once it has been made (also while it is being refreshed), else null. */
@@ -286,7 +286,7 @@ export function addBriefCost(id, usd) {
 export function deleteBrief(scopeType, scopeKey) {
   checkScope(scopeType, scopeKey);
   getDb();
-  return Number(prepare('DELETE FROM req_briefs WHERE scope_type = ? AND scope_key = ?').run(scopeType, scopeKey).changes) > 0;
+  return Number(prepare('DELETE FROM req_briefs WHERE scope_type = ? AND scope_key = ?').run(scopeType, scopeKey.trim()).changes) > 0;
 }
 
 /** Features of the scope (not archived) with a round that names the scope's current brief id. */
@@ -296,7 +296,7 @@ export function briefUsers(scopeType, scopeKey) {
   return prepare(`SELECT f.seq FROM req_features f WHERE f.scope_type = ? AND f.scope_key = ? AND f.status != 'archived'
       AND EXISTS (SELECT 1 FROM req_turns t WHERE t.feature_seq = f.seq AND t.kind = 'round'
         AND json_extract(t.payload_json, '$.brief.id') = ?) ORDER BY f.seq`)
-    .all(scopeType, scopeKey, b.id).map((r) => ({ seq: Number(r.seq), id: featureId(r.seq) }));
+    .all(scopeType, b.scopeKey, b.id).map((r) => ({ seq: Number(r.seq), id: featureId(r.seq) }));
 }
 
 /** Costs of the newest brief looks (ledger rows with a brief_id), newest first. */

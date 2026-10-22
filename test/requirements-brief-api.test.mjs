@@ -95,7 +95,7 @@ test('the brief page before any brief: no brief, the default branch, the notes, 
   const r = await call('GET', B(shop));
   assert.equal(r.status, 200);
   assert.equal(r.json.brief, null);
-  assert.deepEqual(r.json.target, { name: 'shop', branch: 'main', leftOut: [], slow: [] });
+  assert.deepEqual(r.json.target, { name: 'shop', branch: 'main', repositories: 1, leftOut: [], slow: [] });
   assert.equal(r.json.notes.lookAtCode, true);
   assert.equal(r.json.notes.body, '');
   assert.equal(r.json.estimate.costUsd, null);
@@ -106,6 +106,7 @@ test('the brief page before any brief: no brief, the default branch, the notes, 
   assert.equal((await call('GET', '/api/requirements/brief/team/x')).status, 400);
   const none = (await call('GET', B(bare))).json;
   assert.equal(none.target.branch, null, 'a folder without a repository has no branch to read');
+  assert.equal(none.target.repositories, 0);
   assert.equal((await call('PUT', B(shop, '/sections/users'), { value: 'Buyer: buys' })).status, 409);
   assert.equal((await call('PUT', B(shop, '/sections/users'), { value: 'Buyer: buys' })).json.error, 'There is no brief yet.');
   assert.equal((await call('DELETE', B(shop, '/sections/users/edited'))).status, 409);
@@ -238,6 +239,7 @@ test('a feature with a brief: its view, Add this to the brief, the look refused 
     let f = (await call('GET', `/api/requirements/${seq}`)).json.feature;
     assert.equal(f.orientation.skipped, 'brief');
     assert.equal(f.brief.status, 'ready');
+    assert.equal(f.brief.id, store.getBrief('project', shop.key).id);
     assert.ok(f.brief.madeAt);
     assert.equal(f.brief.sources[0].branch, 'main');
     assert.ok(f.brief.matches.includes('Orders'), JSON.stringify(f.brief.matches));
@@ -256,6 +258,8 @@ test('a feature with a brief: its view, Add this to the brief, the look refused 
     git(shop.dir, 'commit', '-q', '-am', 'gift');
     assert.deepEqual((await call('GET', B(shop))).json.staleness.areas, ['Orders']);
     const n = ws.seen.length;
+    const looked = (await call('GET', `/api/requirements/${seq}`)).json.feature.orientation;
+    assert.deepEqual([looked.scopeType, looked.scopeKey, looked.briefId], ['project', shop.key, f.brief.id], 'the look is stamped');
     const add = await call('POST', `/api/requirements/${seq}/brief-addition`, {});
     assert.equal(add.status, 200, JSON.stringify(add.json));
     assert.ok(add.json.feature.orientation.addedToBrief);
@@ -372,7 +376,7 @@ async function bareApp(deps, fn) {
   const { registerRequirementsRoutes } = await import('../src/core/requirements/routes.mjs');
   const app = express();
   app.use(express.json());
-  // WORCA_MOCK may be unset in here while a real server is live: a model call fails loudly, it never spawns.
+  // A test may switch mock mode off for its brief jobs (deps.mockEnabled): a model call then fails loudly, it never spawns.
   registerRequirementsRoutes(app, { broadcast: () => {}, deps: { runClaudeImpl: () => { throw new Error('no model call in tests'); }, ...deps } });
   const s = app.listen(0, '127.0.0.1');
   await new Promise((r) => s.once('listening', r));
@@ -396,10 +400,10 @@ test('while a brief is being made (a job held open, no model): create and delete
   await makeReady(hold);
   let release;
   const gate = new Promise((r) => { release = r; });
-  const mockWas = process.env.WORCA_MOCK;
-  delete process.env.WORCA_MOCK;   // the real job path, with a checkout that waits and then finds nothing (NO_REPO)
+  // The real job path for this job only (an injected mock predicate: WORCA_MOCK stays set for the live server), with
+  // a checkout that waits and then finds nothing (NO_REPO).
   try {
-    await bareApp({ openLook: () => gate.then(() => null) }, async (req) => {
+    await bareApp({ mockEnabled: () => false, openLook: () => gate.then(() => null) }, async (req) => {
       const c = await req('POST', B(hold));
       assert.equal(c.status, 202);
       assert.equal(c.json.brief.status, 'making');
@@ -416,7 +420,7 @@ test('while a brief is being made (a job held open, no model): create and delete
       release();
       await briefJob.briefSettled('project', hold.key);
     });
-  } finally { release(); if (mockWas === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = mockWas; }
+  } finally { release(); }
   const b = store.getBrief('project', hold.key);
   assert.equal(b.status, 'ready', 'the earlier brief is kept');
   assert.equal(b.error.code, 'NO_REPO');
@@ -432,6 +436,7 @@ test('a workspace brief: no branch on the page; the export names each member on 
   assert.equal(page.target.name, 'Market');
   assert.equal(page.target.branch, null);
   assert.deepEqual(page.target.leftOut, []);
+  assert.equal(page.target.repositories, 2, 'the repositories the next look reads');
   const c = await call('POST', W());
   assert.equal(c.status, 202, JSON.stringify(c.json));
   await briefJob.briefSettled('workspace', ws.id);

@@ -199,6 +199,16 @@ test('briefs: failBrief returns to ready when it was made, else empty; setBriefS
   assert.equal(deleteBrief('workspace', 'bw1'), false);
 });
 
+test('briefs: getBrief, usableBrief and deleteBrief trim the scope key as beginBrief does', () => {
+  const b = beginBrief('project', '  trim-1  ');
+  assert.equal(b.scopeKey, 'trim-1');
+  assert.equal(getBrief('project', ' trim-1 ').id, b.id);
+  saveBriefResult(b.id, { sections: { product: 'p', users: [], terms: [], areas: [] } });
+  assert.equal(usableBrief('project', 'trim-1 ').id, b.id);
+  assert.equal(deleteBrief('project', ' trim-1'), true);
+  assert.equal(getBrief('project', 'trim-1'), null);
+});
+
 test('briefUsers counts only rounds naming the current brief id; archived features are left out', () => {
   const b = beginBrief('project', 'bu1');
   saveBriefResult(b.id, { sections: { product: 'x', users: [], terms: [], areas: [] } });

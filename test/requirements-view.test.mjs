@@ -2044,9 +2044,72 @@ test('brief page, made: a workspace notice names the members not checked and tho
   fakeApi({ ...BASE, [`GET ${W1}`]: wsBody({ staleness: { known: false, reason: 'missing', unknown: ['cart', 'mail'], added: [], sources: [] } }) });
   const u = make();
   await u.view.show('brief/workspace/ws1');
-  assert.equal(text(notice(u.host).querySelector('.req-brief-stale-text')), "Worca cannot tell how far the code moved on: the project's folder is missing.");
+  assert.equal(text(notice(u.host).querySelector('.req-brief-stale-text')), "Worca cannot tell how far the code moved on: a project's folder is missing.");
   assert.equal(text(notice(u.host).querySelector('.req-brief-stale-unknown')), 'Not checked: cart and mail.');
   assert.equal(notice(u.host).querySelector('.req-brief-stale-added'), null);
+  // every member it was made from has left the workspace
+  fakeApi({ ...BASE, [`GET ${W1}`]: wsBody({ staleness: { known: false, reason: 'removed', unknown: [], added: ['pay'], sources: [] } }) });
+  const r = make();
+  await r.view.show('brief/workspace/ws1');
+  assert.equal(text(notice(r.host).querySelector('.req-brief-stale-text')),
+    'Worca cannot tell how far the code moved on: none of the projects it was made from is in the workspace any more.');
+  assert.equal(text(notice(r.host).querySelector('.req-brief-stale-added')), 'pay joined after this brief; refresh to include them.');
+});
+
+test('brief page: a brief that finishes or fails while the page is open is announced once in the message line', async () => {
+  let body = briefBody({ brief: briefRow({ status: 'making' }) });
+  fakeApi(briefRoutes(() => body));
+  const { msgEl, view } = make();
+  await view.show('brief/project/shop-1');
+  assert.equal(msgEl.textContent, '');
+  await view.changed(undefined, 'project:shop-1');   // still making: nothing said
+  assert.equal(msgEl.textContent, '');
+  body = madeBody({ staleness: null });
+  await view.changed(undefined, 'project:shop-1');
+  assert.equal(msgEl.textContent, 'The product brief is ready.');
+  assert.ok(msgEl.classList.contains('ok'));
+  msgEl.textContent = '';
+  await view.changed(undefined, 'project:shop-1');
+  assert.equal(msgEl.textContent, '', 'said once, not on every repaint');
+  // a refresh that fails keeps the earlier brief (ready, with the error)
+  body = madeBody({ brief: madeRow({ status: 'making' }), staleness: null });
+  await view.changed(undefined, 'project:shop-1');
+  body = madeBody({ brief: madeRow({ error: { code: 'TIMEOUT', message: 'Worca got no reply within 600 seconds. Try again.', at: 'x' } }), staleness: null });
+  await view.changed(undefined, 'project:shop-1');
+  assert.equal(msgEl.textContent, 'The product brief could not be made: Worca got no reply within 600 seconds. Try again.');
+  assert.ok(msgEl.classList.contains('err'));
+  // a first make that fails
+  let first = briefBody({ brief: briefRow({ status: 'making' }) });
+  fakeApi(briefRoutes(() => first));
+  const f = make();
+  await f.view.show('brief/project/shop-1');
+  first = briefBody({ brief: briefRow({ status: 'empty', error: { code: 'BAD_REPLY', message: 'Worca ran out of steps before writing the brief.', at: 'x' } }) });
+  await f.view.changed(undefined, 'project:shop-1');
+  assert.equal(f.msgEl.textContent, 'The product brief could not be made: Worca ran out of steps before writing the brief.');
+  // opened when already made: nothing to announce
+  fakeApi(briefRoutes(madeBody({ staleness: null })));
+  const o = make();
+  await o.view.show('brief/project/shop-1');
+  await o.view.changed(undefined, 'project:shop-1');
+  assert.equal(o.msgEl.textContent, '');
+});
+
+test('brief page, none yet: a workspace with no repository disables Create and says why, like a project', async () => {
+  const W = '/api/requirements/brief/workspace/ws1';
+  const at = async (target) => {
+    fakeApi({ ...BASE, [`GET ${W}`]: briefBody({ target: { name: 'Storefront', branch: null, leftOut: [], slow: [], ...target } }) });
+    const m = make();
+    await m.view.show('brief/workspace/ws1');
+    return m.host;
+  };
+  const none = await at({ repositories: 0 });
+  assert.equal(createBtn(none).disabled, true);
+  assert.equal(text(none.querySelector('.req-brief-why-not')), 'There is no repository to look at.');
+  const two = await at({ repositories: 2 });
+  assert.equal(createBtn(two).disabled, false);
+  assert.equal(two.querySelector('.req-brief-why-not'), null);
+  const slow = await at({ repositories: 0, slow: ['cart'] });
+  assert.equal(createBtn(slow).disabled, false, 'a slow repository is not "no repository": the server decides on Create');
 });
 
 test('brief page, made: the brief card, its four sections, the edited mark and the pencils', async () => {
@@ -2296,7 +2359,7 @@ test('new feature with a brief (A1.1 merged): the model part stays; only the wor
   assert.doesNotMatch(host.textContent, /null|undefined/);
 });
 
-const briefOf = (over = {}) => ({ status: 'ready', madeAt: new Date(Date.now() - 2 * DAY).toISOString(), sources: [], matches: ['Orders', 'Packing', 'Packing slip'], matchesMore: 0, lookAtCode: true, ...over });
+const briefOf = (over = {}) => ({ id: 3, status: 'ready', madeAt: new Date(Date.now() - 2 * DAY).toISOString(), sources: [], matches: ['Orders', 'Packing', 'Packing slip'], matchesMore: 0, lookAtCode: true, ...over });
 const SKIPPED = { summary: '', files: [], skipped: 'brief', briefMadeAt: '2026-10-20T10:00:00Z' };
 const knowsFeature = (over = {}) => feature({ brief: briefOf(), lookCostUsd: 0.25, orientation: SKIPPED, ...over });
 const knows = (host) => host.querySelector('.req-left > section.req-knows');
@@ -2359,8 +2422,16 @@ test('What Worca knows, before: one match, no match, no price, made today, a fai
 });
 
 test('What Worca knows, after a closer look: brief + a closer look, the summary, Add this to the brief until added, Look again', async () => {
-  const LOOKED = { summary: 'The packing slip is printed from the order with its prices.', files: ['src/slip.mjs', 'src/order.mjs'], skipped: null, area: 'Orders' };
+  const LOOKED = { summary: 'The packing slip is printed from the order with its prices.', files: ['src/slip.mjs', 'src/order.mjs'], skipped: null, area: 'Orders',
+    scopeType: 'project', scopeKey: 'shop-1', briefId: 3 };
   const turns = [{ id: 2, kind: 'orientation', costUsd: 0, payload: SKIPPED }, { id: 7, kind: 'orientation', costUsd: 0.22, payload: { ...LOOKED } }];
+  // a look made for another scope, before any brief, or against an earlier brief: no Add (the server refuses it too)
+  for (const stale of [{ scopeKey: 'other-2' }, { scopeType: 'workspace' }, { briefId: null }, { briefId: 2 }, { scopeType: undefined, scopeKey: undefined, briefId: undefined }]) {
+    const x = await openKnows(knowsFeature({ orientation: { ...LOOKED, ...stale } }), turns);
+    assert.equal(knows(x.host).querySelector('[data-ui="brief-add"]'), null, JSON.stringify(stale));
+    assert.doesNotMatch(text(knows(x.host)), /Not in the brief yet/);
+    assert.equal(text(knows(x.host).querySelector('.req-knows-text')), LOOKED.summary, 'the summary still shows');
+  }
   const { host, calls, set, view } = await openKnows(knowsFeature({ orientation: LOOKED }), turns, {
     'POST /api/requirements/4/brief-addition': () => { set(knowsFeature({ orientation: { ...LOOKED, addedToBrief: '2026-10-22T10:00:00Z' } })); return { feature: knowsFeature(), turns }; },
     'POST /api/requirements/4/look': { feature: knowsFeature(), turns } });

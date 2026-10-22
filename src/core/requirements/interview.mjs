@@ -304,11 +304,15 @@ async function orient(f, d, brief = null) {
 }
 
 async function runOrientation(seq, d, by, { useBrief = false } = {}) {
-  const brief = briefFor(requireFeature(seq));
+  const f0 = requireFeature(seq);
+  const brief = briefFor(f0);
+  // A7 D11: every stored look names the scope it was made for and the brief it was made against (null: none yet).
+  // The scope cannot change while the look runs (header edits wait for the job), so it is read here.
+  const stamp = { scopeType: f0.scopeType, scopeKey: f0.scopeKey, briefId: brief ? brief.id : null };
   // A7 D10: with a usable brief the automatic look is skipped, before any status, frame, budget check or call.
   if (useBrief && brief) {
     appendTurn(seq, { kind: 'orientation', payload: { summary: '', files: [], skipped: 'brief', error: null, briefMadeAt: brief.madeAt } }, { by });
-    updateFeature(seq, { orientation: { summary: '', files: [], skipped: 'brief', briefMadeAt: brief.madeAt, at: new Date().toISOString() } }, { by });
+    updateFeature(seq, { orientation: { summary: '', files: [], skipped: 'brief', briefMadeAt: brief.madeAt, ...stamp, at: new Date().toISOString() } }, { by });
     return;
   }
   setStatus(seq, 'looking', by);
@@ -320,7 +324,8 @@ async function runOrientation(seq, d, by, { useBrief = false } = {}) {
   const turnId = appendTurn(seq, { kind: 'orientation', payload: { summary: o.summary, files: o.files, skipped: o.skipped, error: o.error || null },
     model: o.model || null, costUsd: o.costUsd || null }, { by });
   charge(seq, turnId, o.costUsd, o.model);
-  updateFeature(seq, { orientation: { summary: o.summary, files: o.files, skipped: o.skipped, ...(brief && o.area ? { area: o.area } : {}), at: new Date().toISOString() } }, { by });
+  updateFeature(seq, { orientation: { summary: o.summary, files: o.files, skipped: o.skipped, ...(brief && o.area ? { area: o.area } : {}), ...stamp,
+    at: new Date().toISOString() } }, { by });
 }
 
 async function runRound(seq, d, by, { final = false, followUp = null } = {}) {
