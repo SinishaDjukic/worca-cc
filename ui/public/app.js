@@ -23717,12 +23717,18 @@ function setShipItRowOpened(row, pr) {
   row.statusEl.replaceChildren();
   row.statusEl.classList.remove('err');
   const merged = prStateOf(pr) === 'MERGED';
+  row.statusEl.append(merged ? 'PR merged: ' : 'PR open: ', prRepoLink(pr));
+  row.statusEl.hidden = false;
+}
+
+// One repository's PR as a text link (design system, PR controls): "View PR", led by the merge glyph once merged.
+function prRepoLink(pr) {
+  const merged = prStateOf(pr) === 'MERGED';
   const a = document.createElement('a');
   a.className = merged ? 'hd-pr-repo-link merged' : 'hd-pr-repo-link';
   a.href = pr.url; a.target = '_blank'; a.rel = 'noopener';
-  a.textContent = merged ? 'Merged' : 'View PR';
-  row.statusEl.append(merged ? 'PR merged: ' : 'PR open: ', a);
-  row.statusEl.hidden = false;
+  a.append(icon(document, merged ? 'merge' : 'pull-request', 14), 'View PR');
+  return a;
 }
 
 function setShipItRowDisabled(row, on) {
@@ -24067,7 +24073,7 @@ function paintHdPush(screen, record) {
   if (!btn || record.target === 'workspace' || !record.sourceBranch || !record.mergeBack || record.mergeBack.merged !== true) return true;
   btn.hidden = false;
   btn.disabled = false;
-  btn.textContent = `Push ${record.sourceBranch}`;
+  setCtaContent(btn, 'arrow-up', `Push ${record.sourceBranch}`);
   // The run summary's CTA (.hd-g-push) clicks this button: keep its label and state in step with it.
   const mirror = (label, disabled) => {
     const g = screen.querySelector('.hd-g-push');
@@ -24077,7 +24083,7 @@ function paintHdPush(screen, record) {
   };
   btn.onclick = async () => {               // property, not addEventListener: paintHdPr re-runs (as its own btn.onclick, :18315)
     btn.disabled = true;
-    btn.textContent = 'Pushing…';
+    setCtaContent(btn, 'arrow-up', 'Pushing…');
     mirror('Pushing…', true);
     try {
       const res = await fetch('/api/push', {
@@ -24088,11 +24094,11 @@ function paintHdPush(screen, record) {
       });
       const dd = await safeJson(res);
       if (!res.ok) throw new Error((dd && dd.error) || `HTTP ${res.status}`);
-      btn.textContent = `Pushed to ${dd.remote || 'the remote'}`;
+      setCtaContent(btn, 'arrow-up', `Pushed to ${dd.remote || 'the remote'}`);
       mirror(btn.textContent, true);
     } catch (err) {
       btn.disabled = false;
-      btn.textContent = `Push ${record.sourceBranch}`;
+      setCtaContent(btn, 'arrow-up', `Push ${record.sourceBranch}`);
       btn.title = err && err.message ? err.message : String(err);
       mirror(`Push failed: ${btn.title}`, false);
     }
@@ -24206,7 +24212,8 @@ function paintHdGlance(screen, record, data) {
     // The one wiring: the header's button opens the ship-it modal (re-read at click time).
     paintPrCta(slot, { state: 'create', cls: 'hd-g-pr', onClick: () => { const b = screen.querySelector('.hd-pr'); if (b) b.click(); } });
   } else if (shown(pushBtn) && !pushBtn.hidden) {
-    paintPrCta(slot, { state: 'push', cls: 'hd-g-push', onClick: () => { const b = screen.querySelector('.hd-push'); if (b) b.click(); } });
+    paintPrCta(slot, { state: 'push', cls: 'hd-g-push', label: `Push ${record.sourceBranch}`,
+      onClick: () => { const b = screen.querySelector('.hd-push'); if (b) b.click(); } });
   } else if (pr === 'PENDING' && shown(createBtn)) {
     paintPrCta(slot, { state: 'pending' });
   } else {
@@ -24514,6 +24521,7 @@ function paintHdPr(screen, record, data) {
   if (!btn || !link) return;
   btn.hidden = true;
   link.hidden = true;
+  if (!btn.querySelector('.ic')) setCtaContent(btn, 'pr-create', CREATE_PR_LABEL);
   const repos = screen.querySelector('.hd-pr-repos');
   if (repos) { repos.hidden = true; repos.replaceChildren(); }
   if (!(gitOn() && isGitRun(hdRunOf(record, data)))) { paintHdPush(screen, null); return; }
@@ -24525,7 +24533,7 @@ function paintHdPr(screen, record, data) {
   if (pr && (prState === 'OPEN' || prState === 'MERGED') && pr.url) {
     link.hidden = false;
     link.href = pr.url;
-    link.textContent = prState === 'MERGED' ? 'Merged' : 'View PR';
+    setCtaContent(link, prState === 'MERGED' ? 'merge' : 'pull-request', 'View PR');
     link.classList.toggle('merged', prState === 'MERGED');
     return;
   }
@@ -24584,12 +24592,7 @@ function hdWsRepoItem(m) {
   // textContent (screen readers' fallback, copy/paste, the tests) would read "apiMerged".
   li.append(name, ' ');
   if (prLive(m.pr)) {
-    const merged = prStateOf(m.pr) === 'MERGED';
-    const a = document.createElement('a');
-    a.className = merged ? 'hd-pr-repo-link merged' : 'hd-pr-repo-link';
-    a.href = m.pr.url; a.target = '_blank'; a.rel = 'noopener';
-    a.textContent = merged ? 'Merged' : 'View PR';
-    li.appendChild(a);
+    li.appendChild(prRepoLink(m.pr));
     const pill = document.createElement('span');     // post-ship mergeability, like the single header pill
     pill.className = 'hist-merge';
     pill.dataset.minLevel = 'expert';
@@ -34909,29 +34912,21 @@ function glancePrInput(record) {
   return histPrEligible(record) ? 'NONE' : 'UNAVAILABLE';
 }
 
-// The glance's action buttons lead with a glyph: 24-unit, stroked like HD_TAB_ICONS.
-const CTA_ICONS = {
-  // A pull request with a plus where its head will be.
-  'pr-create': '<circle cx="6" cy="6" r="2.5"/><path d="M6 8.5V21M13 6h3a2 2 0 0 1 2 2v3M18 15v6M15 18h6"/>',
-  // An open pull request is on the code host: a box with an arrow leaving it (a new tab).
-  external: '<path d="M18 13.5V18a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4.5"/><path d="M14 4h6v6M20 4l-9 9"/>',
-  // Merged: two lines joining into one.
-  merged: '<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 8.5V21M6 9a9 9 0 0 0 9 9h.5"/>',
-};
-function setCtaContent(node, icon, label) {
-  node.innerHTML = `<svg class="rd-cta-ico" data-icon="${icon}" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${CTA_ICONS[icon]}</svg>`;
+// A page's PR button (design system, PR controls): its icons.mjs glyph at 16px, then its label.
+function setCtaContent(node, name, label) {
   const tx = document.createElement('span');
   tx.textContent = label;
-  node.appendChild(tx);
+  node.replaceChildren(icon(document, name, 16), tx);
 }
 
 // The glance's pull request button, in its slot: one node per screen (the templates'
 // .rd-pr-slot, outside the result hosts their painters rebuild), because a recreated node
 // cannot morph. `state`: 'pending' (the lookup runs: a white placeholder with a spinner at
 // the button's height, nothing to click), 'create' | 'view' | 'merged' (the button in its
-// colour; View and Merged link to `href`, Create calls `onClick`), 'none' (no slot).
+// colour; View and Merged link to `href`, Create calls `onClick`), 'push' (Create's look, its
+// `label` the header's "Push <branch>"), 'none' (no slot).
 // Pending -> a button morphs: the colour grows as a circle from the spinner (.rd-pr-fill),
-// the spinner fades, the icon and label come in. Pending -> none fades out and collapses.
+// the spinner fades, the icon and label come in. Pending -> none fades out in place.
 // Any other change paints the end state at once, so a known state (a cached row) never
 // animates and a repaint never replays. Every animation is CSS; these timers only end them
 // (the slowest CSS animation is shorter) and remove the spinner and the colour layer.
@@ -34939,52 +34934,52 @@ const PR_CTA_MORPH_MS = 420;
 const PR_CTA_OUT_MS = 380;
 const PR_CTA_LOOK = {
   create: { look: '', icon: 'pr-create', label: CREATE_PR_LABEL },
-  push: { look: '', icon: 'pr-create', label: 'Push the source branch' },   // a run on its source branch (paintHdPush)
-  view: { look: 'pr-view', icon: 'external', label: 'View PR' },
-  merged: { look: 'pr-merged', icon: 'merged', label: 'View PR' },
+  push: { look: '', icon: 'arrow-up', label: '' },   // a run on its source branch: the caller's label (paintHdPush)
+  view: { look: 'pr-view', icon: 'pull-request', label: 'View PR' },
+  merged: { look: 'pr-merged', icon: 'merge', label: 'View PR' },
 };
-function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '' } = {}) {
+function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '', label: own = '' } = {}) {
   if (!slot) return;
   slot._prClick = onClick;                         // read at click time: a repaint re-binds it
-  const sig = `${state}|${href}|${cls}`;
+  const sig = `${state}|${href}|${cls}|${own}`;
   if (slot.dataset.sig === sig) return;
   const from = slot.dataset.state || 'none';
   slot.dataset.sig = sig;
   slot.dataset.state = state;
   clearTimeout(slot._prTimer);
   slot.classList.remove('is-pending', 'is-morph', 'is-out');
-  slot.style.removeProperty('--h');
   slot.removeAttribute('aria-busy');
+  slot.removeAttribute('aria-label');
   const done = (fn) => { slot._prTimer = setTimeout(fn, state === 'none' ? PR_CTA_OUT_MS : PR_CTA_MORPH_MS); };
 
   if (state === 'pending') {
     const spin = document.createElement('span');
     spin.className = 'rd-pr-spin';
-    // The button's own glyph and line, invisible, hold its final height.
+    // The button's own glyph and label, invisible, hold its final size; the sentence is for assistive tech.
     const wait = document.createElement('div');
     wait.className = 'rd-pr-wait';
-    setCtaContent(wait, 'pr-create', 'Checking the pull request…');
+    wait.setAttribute('aria-hidden', 'true');
+    setCtaContent(wait, 'pr-create', CREATE_PR_LABEL);
     slot.replaceChildren(spin, wait);
     slot.classList.add('is-pending');
     slot.setAttribute('aria-busy', 'true');
+    slot.setAttribute('aria-label', 'Checking the pull request…');
     slot.hidden = false;
     return;
   }
 
   if (state === 'none') {
     if (from !== 'pending') { slot.replaceChildren(); slot.hidden = true; return; }
-    slot.style.setProperty('--h', `${slot.offsetHeight}px`);
     slot.classList.add('is-out');
     done(() => {
       slot.classList.remove('is-out');
-      slot.style.removeProperty('--h');
       slot.replaceChildren();
       slot.hidden = true;
     });
     return;
   }
 
-  const { look, icon, label } = PR_CTA_LOOK[state];
+  const { look, icon: glyph, label } = PR_CTA_LOOK[state];
   let ctl;
   if (state === 'create' || state === 'push') {
     ctl = document.createElement('button');
@@ -34996,9 +34991,9 @@ function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '' 
     ctl.target = '_blank';
     ctl.rel = 'noopener';
   }
-  ctl.className = ['btn', 'btn-block', look ? '' : 'btn-primary', look, cls].filter(Boolean).join(' ');
+  ctl.className = ['btn', look ? '' : 'btn-primary', look, cls].filter(Boolean).join(' ');
   ctl.setAttribute('data-rd-cta', '');
-  setCtaContent(ctl, icon, label);
+  setCtaContent(ctl, glyph, own || label);
   slot.hidden = false;
   const wait = from === 'pending' && slot.querySelector('.rd-pr-wait');
   if (!wait) { slot.replaceChildren(ctl); return; }

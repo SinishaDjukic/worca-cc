@@ -7,6 +7,7 @@
 // The chrome is the Ask card's (.ask-card, .ask-mcard-*, .ask-card-not-now / -err); style.css
 // "Chat P2: Action cards" adds the rest. Emphasis is a background wash, never an edge line.
 import { CREATE_PR_LABEL } from '../ship-words.mjs';
+import { icon } from '../icons.mjs';
 import { registerChatCard } from './extensions.mjs';
 import { buildShipChatCard } from '../shape/ship-card.mjs';
 import { buildChangesChatCard } from '../shape/changes-card.mjs';
@@ -275,6 +276,7 @@ export function buildPullRequestCard(block, ctx) {
     actions.dataset.needsGit = '';
     const later = makeButton(doc, 'btn btn-sm btn-quiet ask-card-not-now', 'Not now', 'data-chat-pr-decline');
     const create = makeButton(doc, 'btn btn-sm btn-primary', CREATE_PR_LABEL, 'data-chat-pr-create');
+    create.prepend(icon(doc, 'pr-create', 14));      // PR controls (design system): the glyph leads
     const lock = (on) => { later.disabled = on; create.disabled = on; };
     later.addEventListener('click', async () => {
       lock(true); err.textContent = '';

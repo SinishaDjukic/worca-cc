@@ -1779,15 +1779,6 @@ dialog.discard-modal::backdrop{background:transparent;}
 .hist-merge.bad{background:var(--red-bg);color:var(--red-ink);}
 .hist-merge.unknown{background:var(--amber-bg);color:var(--amber-ink);}
 
-/* The PR link (the saved run's Details header). Without these rules it ships as a
-   default UA anchor — browser blue, underlined. A pill beside .hd-pr in the glance
-   PR states' colours (.rd-pr-fill.pr-view / .pr-merged): blue while the PR is open, violet
-   once merged. Its font and flex sizing sit with .hd-pr's rules. */
-.hd-pr-link{display:inline-flex;align-items:center;padding:9px 18px;border:1.5px solid transparent;border-radius:var(--r-sm);
-  background:var(--blue-bg);color:var(--blue-ink-strong);text-decoration:none;white-space:nowrap;}
-.hd-pr-link:hover{border-color:currentColor;}
-.hd-pr-link.merged{background:var(--slate-bg);color:var(--slate-ink);}
-
 /* Discard-worktree button. The class moved from the retired card accordion to the
    detail screen's banner block; nothing about it was card-position-dependent. */
 .hist-discard{display:inline-flex;align-items:center;
@@ -4415,19 +4406,18 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .hd-sec-logs .log-filters{margin-bottom:10px;}
 
 /* ---------- History detail: PR controls + the "Ship it?" modal ---------- */
-/* Detail-header PR controls (spec §5.2: black pill). `.hd-pr-link`'s pill, its removed
-   underline and its open/merged colours live beside .hist-merge. */
+/* Detail-header PR controls (design system, PR controls): Create PR and Push are .btn-primary, View PR (`.hd-pr-link`,
+   open or merged) a secondary .btn; each leads with its icons.mjs glyph. These rules only place them. */
 .hd-pr,.hd-push{flex:0 0 auto;}
 .hd-pr[hidden],.hd-push[hidden]{display:none;}
-.hd-pr-link{flex:0 0 auto;font:600 var(--fs-body) var(--sans);}
+.hd-pr-link{flex:0 0 auto;}
 .hd-pr-link[hidden]{display:none;}
 /* Workspace runs: one line per member repo under the header row. */
 .hd-pr-repos{display:flex;flex-wrap:wrap;gap:6px 16px;margin:10px 0 0;padding:0;list-style:none;font:500 var(--fs-body) var(--sans);}
 .hd-pr-repos[hidden]{display:none;}
 .hd-pr-repo{display:inline-flex;align-items:center;gap:8px;}
-.hd-pr-repo-link{font-weight:600;color:var(--green-ink);text-decoration:none;}
+.hd-pr-repo-link{display:inline-flex;align-items:center;gap:4px;font-weight:600;color:var(--blue-ink-strong);text-decoration:none;}
 .hd-pr-repo-link:hover{text-decoration:underline;}
-.hd-pr-repo-link.merged{color:var(--ink-3);}
 .hd-pr-repo-note{color:var(--ink-3);}
 /* Watch PR (#619): a member row's failed toggle alert takes its own line under the row. */
 .hd-pr-repo{flex-wrap:wrap;}
@@ -4623,7 +4613,7 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
    node openHistDetail focuses programmatically, and for the `.hd-tab` tablist.
    `.hd-diff-file` already has its own (inset) ring and is not repeated here. */
 .hd-back:focus-visible,.pd-back:focus-visible,.pd-new:focus-visible,.pd-history:focus-visible,.pd-sec:focus-visible,.proj-open:focus-visible,.pd-ov-link:focus-visible,
-.hd-report:focus-visible,.hd-archive:focus-visible,.hd-pr-link:focus-visible,.hd-sec:focus-visible,.shipit-cancel:focus-visible{
+.hd-report:focus-visible,.hd-archive:focus-visible,.hd-sec:focus-visible,.shipit-cancel:focus-visible{
   outline:2px solid var(--ink);outline-offset:2px;}
 
 /* ---------- Run rows (.rc-*): the Schedules view's ticket and schedule rows ----------
@@ -4954,10 +4944,17 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .rd-page-branch.copied .ico-copy{display:none;}
 .rd-page-branch.copied .ico-check{display:inline;color:var(--green-ink);}
 /* The card's head: the status line top left, the Live view switch (app.js paintRdLive)
-   top right, level with the state word. */
-.rd-sheet-head{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;min-width:0;}
+   top right, level with the state word; after it the pull request button (.rd-pr-slot, paintPrCta). The live row
+   shows only while the run has not ended and the button only once it has, so the two never meet; if they did, the
+   button takes its own column after the row. */
+.rd-sheet-head{container:rd-head / inline-size;display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:start;min-width:0;}
 .rd-sheet-head > .rd-now-top{grid-area:1 / 1;}
 .rd-sheet-head > .rd-live-row{grid-area:1 / 2;height:23px;margin-left:16px;}   /* the state word's line box (18px × 1.3) */
+/* Centred on the 13px × 1.5 status line: the 32px button overhangs it by 6.25px each way, so the head is the status
+   line's height with or without the button, and its fade-out moves nothing. */
+.rd-sheet-head > .rd-pr-slot{grid-area:1 / 3;margin:-6.25px 0 -6.25px 16px;}
+/* A narrow card: the button wraps onto its own row under the status, on the left edge. */
+@container rd-head (max-width:420px){.rd-sheet-head > .rd-pr-slot{grid-area:2 / 1 / 3 / -1;justify-self:start;margin:12px 0 0;}}
 /* The status line (.rd-now-top) is the shared status block (run-status-card.mjs, .run-status below). */
 
 /* The status glyph (run-glance.mjs renderOrb): colour is the state. */
@@ -5044,22 +5041,22 @@ button.rd-srow:hover{background:var(--hover-on-field);}
 .rd-stats .rd-stat-link{color:inherit;text-decoration:none;}
 .rd-stats .rd-stat-link:hover b{text-decoration:underline;}
 .rd-stats > div > span{font-size:var(--fs-meta);color:var(--ink-2);}
-.rd-cta-ico{flex:0 0 auto;}
 /* The pull request button's slot (app.js paintPrCta): one node for the screen's life, so the
-   lookup's placeholder can become the button. Pending: a white button with a hairline and a
-   spinner, at the button's own height (.rd-pr-wait holds its glyph and line, invisible). On
-   the answer, the state's colour grows as a circle from the spinner (.rd-pr-fill, the size of
-   the slot's diagonal and more, clipped by the slot's radius), the spinner fades, then the icon
-   and label come in. Compositor-only: transform and opacity, will-change only on the nodes
-   that animate; the slot's height never changes during the morph. With no button after all,
-   the placeholder fades out and the slot then folds away (the one height change, at the end). */
-.rd-pr-slot{position:relative;border-radius:var(--r-ctrl);}
+   lookup's placeholder can become the button. It is as wide as its button, never the card.
+   Pending: a white button with a hairline and a spinner, at the button's own size (.rd-pr-wait
+   holds its glyph and line, invisible). On the answer, the state's colour grows as a circle from
+   the spinner (.rd-pr-fill, the size of the slot's diagonal and more, clipped by the slot's
+   radius), the spinner fades, then the icon and label come in. Compositor-only: transform and
+   opacity, will-change only on the nodes that animate; the slot's height never changes during
+   the morph. With no button after all, the placeholder fades out in place (in a narrow head, where
+   the slot is a row of its own, that row then closes at once: accepted, it is a rare case). */
+.rd-pr-slot{position:relative;width:fit-content;border-radius:var(--r-ctrl);}
 .rd-pr-slot[hidden]{display:none;}
 .rd-pr-status[hidden]{display:none;}
-/* An open PR with a status: the button and its footer are one card. */
+/* The PR bar: the run's own PR, its checks and Watch, as one card; nothing (no gap) without them. */
 .rd-pr-box:has(> .rd-pr-status:not([hidden])){border-radius:var(--r-ctrl);overflow:hidden;background:var(--blue-wash);
   box-shadow:inset 0 0 0 1px var(--blue-line);}
-.rd-pr-box:has(> .rd-pr-status:not([hidden])) [data-rd-cta]{border-radius:var(--r-sm) var(--r-sm) 0 0;}
+.rd-pr-box:not(:has(> .rd-pr-status:not([hidden]))){display:none;}
 .rd-pr-status{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px;
   border-top:1px solid var(--blue-line);font-size:13px;color:var(--ink-2);}
 .rd-prs-sum{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-width:0;}
@@ -5086,7 +5083,7 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
 .rd-prs-watch{display:flex;align-items:center;gap:8px;flex:0 0 auto;margin-left:auto;cursor:pointer;font-weight:500;}
 .rd-pr-slot:is(.is-pending,.is-morph,.is-out){overflow:hidden;background:var(--panel);box-shadow:inset 0 0 0 1px var(--line);}
 .rd-pr-slot > [data-rd-cta]{position:relative;}   /* above the colour layer */
-.rd-pr-wait{display:flex;align-items:center;justify-content:center;gap:6px;box-sizing:border-box;width:100%;height:32px;padding:0 12px;
+.rd-pr-wait{display:flex;align-items:center;justify-content:center;gap:6px;box-sizing:border-box;height:32px;padding:0 12px;
   font:500 13px var(--sans);color:var(--ink-2);cursor:default;}
 .rd-pr-wait > *{opacity:0;}
 .rd-pr-spin{position:absolute;left:50%;top:50%;width:20px;height:20px;margin:-10px 0 0 -10px;box-sizing:border-box;
@@ -5099,14 +5096,11 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
 .rd-pr-slot.is-morph > [data-rd-cta]{background:transparent;transition:none;}
 .rd-pr-slot.is-morph > [data-rd-cta] > *{will-change:transform,opacity;animation:rd-pr-in .18s ease-out .22s both;}
 .rd-pr-slot.is-morph > .rd-pr-spin{animation:ws-spin .9s linear infinite,rd-pr-fade .15s ease-out both;}
-.rd-pr-slot.is-out{will-change:opacity;animation:rd-pr-fade .18s ease-out both,rd-pr-fold .2s ease-in-out .18s both;}
+.rd-pr-slot.is-out{will-change:opacity;animation:rd-pr-fade .18s ease-out both;}
 @keyframes rd-pr-grow{from{transform:scale(0);}to{transform:scale(1);}}
 @keyframes rd-pr-fade{to{opacity:0;}}
 @keyframes rd-pr-in{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
 @keyframes rd-pr-show{from{opacity:0;}to{opacity:1;}}
-/* The no-button exit: from the slot's height (app.js sets --h) to nothing, the sheet's 16px gap
-   above it included, so hiding it afterwards moves nothing. */
-@keyframes rd-pr-fold{from{height:var(--h);}to{height:0;margin-top:-16px;}}
 @media (prefers-reduced-motion: reduce){
   .rd-pr-fill{animation-name:rd-pr-show;}
   .rd-pr-slot.is-morph > [data-rd-cta] > *{animation-name:rd-pr-show;}
@@ -8701,14 +8695,15 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .ask-prcard-branch{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;min-width:0;}
 .ask-prcard-stat{font-size:12px;color:var(--ink-2);}
 .ask-prcard-links{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;}
-.ask-prcard-link{color:var(--blue-ink-strong);}
+.ask-prcard-link{color:var(--blue-ink-strong);font-weight:600;}
 .ask-prcard-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-sm);}
 /* Shaper s4: the Ship card (ui/public/shape/ship-card.mjs), in the chat and on the group page / Plans tab, and its
    release row (ui/public/shape/release-row.mjs), also in the Ship it dialog. Tight radii, no pills. */
 .ask-shipcard-stats{font-size:var(--fs-body);color:var(--ink);font-variant-numeric:tabular-nums;}
 .ask-shipcard-why,.ask-shipcard-closed{font-size:12px;color:var(--ink-2);}
 .ask-shipcard-done{font-weight:600;color:var(--green-ink);}
-.ask-shipcard-pr,.ask-shipcard-rel a{color:var(--blue-ink-strong);font-weight:400;}
+.ask-shipcard-pr{color:var(--blue-ink-strong);font-weight:600;}
+.ask-shipcard-rel a{color:var(--blue-ink-strong);font-weight:400;}
 .ask-shipcard-rel{font-size:12px;color:var(--ink-2);overflow-wrap:anywhere;}
 .ask-shipcard-rel.is-failed{color:var(--red-ink);}
 .ask-shipcard-wait{font-size:var(--fs-meta);color:var(--ink-2);}
@@ -8751,7 +8746,7 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .chat-rc-notes[hidden]{display:none;}
 .chat-rc-watch{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;margin-top:6px;font-size:12px;color:var(--red-ink);min-width:0;}
 .chat-rc-watch[hidden]{display:none;}
-.chat-rc-watch-pr{color:var(--blue-ink-strong);}
+.chat-rc-watch-pr{color:var(--blue-ink-strong);font-weight:600;}
 .chat-rc-watch-ask{padding:0;border:0;background:none;color:var(--blue-ink-strong);font:inherit;cursor:pointer;}
 .chat-rc-watch-pr:focus-visible,.chat-rc-watch-ask:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-sm);}
 .chat-rc-changes[hidden]{display:none;}
@@ -8907,10 +8902,10 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .chat-rc-res-foot{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:12px;}
 .chat-rc-res-err{margin-right:auto;font-size:12px;color:var(--red-ink-soft);}
 .chat-rc-res-err[hidden]{display:none;}
-.chat-rc-create-pr,.chat-rc-view-pr,.chat-rc-apply{display:inline-flex;align-items:center;height:30px;padding:0 14px;border:0;border-radius:var(--r-sm);background:var(--ink);color:var(--panel);font:inherit;font-weight:600;font-size:12px;text-decoration:none;white-space:nowrap;cursor:pointer;}
-.chat-rc-create-pr:hover,.chat-rc-view-pr:hover,.chat-rc-apply:hover{box-shadow:inset 0 0 0 999px var(--solid-hover);}
-.chat-rc-create-pr:disabled,.chat-rc-apply:disabled{opacity:.5;cursor:default;}
-.chat-rc-create-pr:focus-visible,.chat-rc-view-pr:focus-visible,.chat-rc-apply:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.chat-rc-apply{display:inline-flex;align-items:center;height:30px;padding:0 14px;border:0;border-radius:var(--r-sm);background:var(--ink);color:var(--panel);font:inherit;font-weight:600;font-size:12px;text-decoration:none;white-space:nowrap;cursor:pointer;}
+.chat-rc-apply:hover{box-shadow:inset 0 0 0 999px var(--solid-hover);}
+.chat-rc-apply:disabled{opacity:.5;cursor:default;}
+.chat-rc-apply:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .chat-rc-foot{display:flex;align-items:center;gap:8px;margin-top:14px;}
 .chat-rc-foot[hidden]{display:none;}
 .chat-rc-factions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
@@ -9595,6 +9590,9 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .rd-kv-row[hidden]{display:none;}
 .rd-kv-k{font-size:var(--fs-meta);line-height:var(--lh-body);color:var(--ink-2);}
 .rd-kv-v{margin:0;min-width:0;font-size:var(--fs-body);line-height:var(--lh-body);color:var(--ink);display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;overflow-wrap:anywhere;}
+/* A quiet button that leads a value (Add to group…, the branch chip) pulls back by its padding and border, so its text
+   sits on the value column like Project's; its hover fill still shows. Trailing Add/Edit buttons keep their place. */
+.rd-kv-v > .btn-sm.btn-quiet:first-child{margin-inline-start:-11px;}
 @container rd-kv (max-width:420px){.rd-kv-row{grid-template-columns:minmax(0,1fr);gap:2px;}}
 .rd-kv:not(:has(> .rd-kv-row:not([hidden]))){display:none;}
 /* D30, run 4 D1: while a shaped run waits on the person (Clarify or the plan), the question card is the page: the status

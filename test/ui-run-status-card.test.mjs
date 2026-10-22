@@ -34,7 +34,7 @@ test('statusText and actions for rounds and a stopped Watch PR: the model\'s wor
   syncActions(host, stopped, { onAction: () => {}, disable: { 'ask-changes': "Ask for changes from the run's chat" } });
   const btns = [...host.querySelectorAll('button[data-model-action]')];
   assert.deepEqual(btns.map((b) => [b.textContent, b.disabled]), [['View PR', false], ['Ask for changes', true]]);
-  assert.ok(btns[0].classList.contains('btn-primary'));
+  assert.ok(!btns[0].classList.contains('btn-primary'), 'View PR is navigation, never the primary (PR controls)');
   assert.equal(btns[1].title, "Ask for changes from the run's chat");
   // D8: Ask for changes has a flow now (Shaper): with no host reason it is enabled.
   const open = doc.createElement('div');
