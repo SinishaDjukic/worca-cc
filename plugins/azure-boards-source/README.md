@@ -38,7 +38,7 @@ and a Code PAT is never handed to this plugin unless you type
 
 worca resolves `{"$env":…}` in its own host process when it reads the plugin
 config, and hands the value to the connector in its config. Connector children
-get only `PATH` and `HOME`. `WORCA_ADO_BOARDS_TOKEN` is a strip-only variable:
+get only `PATH`, `HOME` and the proxy and CA variables. `WORCA_ADO_BOARDS_TOKEN` is a strip-only variable:
 worca removes it from the environment of every claude, script and action it
 spawns. worca itself reads it for one thing only: the Chat's work item chips
 read a work item's title, state and type with it (see

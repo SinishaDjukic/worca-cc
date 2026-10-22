@@ -6,14 +6,23 @@
 // only ever path-joins through it, so both work).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { writePluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs';
 import { writePluginConfig, writePluginState, readPluginState, createProfile, deleteProfile } from '../src/core/plugin-config.mjs';
-import { callSource, PluginOpError, setMockSourceResponses } from '../src/core/plugin-shim.mjs';
+import { callSource, PluginOpError, setMockSourceResponses, _resetWithheldProxyNotice } from '../src/core/plugin-shim.mjs';
+import { startProxyNet, setProxyEnv, assertProxyRouting, NO_PROXY_HOST } from './helpers/proxy-net.mjs';
+import { importClosure } from './helpers/import-closure.mjs';
 
 useTempHome(after);
+// The developer's own proxy variables never reach these real children (the proxy
+// tests set their own) or spend the once-per-process withheld-proxy warning early.
+after(setProxyEnv({}));
 
 const NAME = 'mock-echo';
 const SCHEMA = [{ key: 'token', type: 'text', label: 'Token', secret: true }];
@@ -36,6 +45,14 @@ const CONNECTOR = [
   "    async boom() { const e = new Error('token expired'); e.kind = 'auth'; throw e; },",
   '    async never() { return new Promise(() => {}); },',
   "    async noisy() { console.log('junk before the frame'); return { fine: true }; },",
+  '    async fetchAll(args) {',
+  '      const out = [];',
+  '      for (const url of args.urls) {',
+  '        try { const res = await fetch(url); out.push({ url, status: res.status, body: await res.text() }); }',
+  '        catch (err) { out.push({ url, error: String((err.cause && err.cause.code) || err.message) }); }',
+  '      }',
+  '      return out;',
+  '    },',
   '  };',
   '}',
 ].join('\n');
@@ -165,12 +182,96 @@ test('timeout kills the child and rejects with kind timeout', async () => {
   assert.ok(Date.now() - t0 < 5000, 'rejected promptly after the kill, not at some default');
 });
 
-test('child env is scrubbed to PATH+HOME — no WORCA_*/npm_* leakage', async () => {
+test('the connector child loads no worca module but env-proxy, and no node:http until a proxy is set', () => {
+  // It runs with no WORCA_HOME, so a module that reached the store would resolve wrong paths;
+  // and every connector op starts one, so a proxy-less op pays for no http stack.
+  assert.deepEqual(importClosure('src/core/plugin-shim-child.mjs'), {
+    modules: ['src/core/env-proxy.mjs'],
+    bare: ['node:module', 'node:url'],
+  });
+});
+
+test('child env is scrubbed to PATH, HOME and the network variables — no WORCA_*/npm_* leakage', async () => {
   const keys = await callSource({ plugin: NAME, sourceId: 'main', op: 'envKeys' });
   assert.ok(Array.isArray(keys) && keys.includes('PATH'), 'PATH is passed through');
   assert.ok(!keys.includes('WORCA_HOME'), 'WORCA_HOME must NOT leak (it IS set in this test process)');
   assert.ok(!keys.some((k) => k.startsWith('WORCA_') || k.startsWith('npm_')),
     `unexpected env leak: ${keys.join(',')}`);
+});
+
+test('real child: with the proxy variables set, a connector fetch() goes through the proxy; loopback and NO_PROXY go direct', async (t) => {
+  const net = await startProxyNet();
+  // http_proxy too: a loopback http fetch would reach the proxy if the child did not bypass it.
+  const restore = setProxyEnv({ HTTPS_PROXY: net.proxyUrl, http_proxy: net.proxyUrl, no_proxy: NO_PROXY_HOST });
+  const stderr = t.mock.method(console, 'error', () => {});
+  _resetWithheldProxyNotice();
+  try {
+    const logLines = [];
+    const results = await callSource({ plugin: NAME, sourceId: 'main', op: 'fetchAll', args: { urls: net.targets }, logger: (level, msg) => logLines.push(`${level}:${msg}`) });
+    assertProxyRouting(net, results);
+    assert.deepEqual(logLines, [], 'an applied proxy is no news: the child logs warnings only');
+    assert.deepEqual(stderr.mock.calls.map((c) => c.arguments[0]), [], 'a proxy without credentials is passed, so nothing was withheld');
+  } finally {
+    restore();
+    await net.close();
+  }
+});
+
+test('a proxy URL with credentials never reaches the connector child; worca warns once on stderr, even when the first caller logs nowhere', async (t) => {
+  const restore = setProxyEnv({ HTTPS_PROXY: 'http://user:s3cret@proxy.corp:8080', http_proxy: 'http://proxy.corp:3128', NO_PROXY: 'corp.example' });
+  const stderr = t.mock.method(console, 'error', () => {});
+  _resetWithheldProxyNotice();
+  try {
+    // Ask's task lookups pass a no-op logger: the once-per-process warning must not be spent there unseen.
+    const keys = await callSource({ plugin: NAME, sourceId: 'main', op: 'envKeys', logger: () => {} });
+    assert.ok(keys.includes('NO_PROXY'), `NO_PROXY still passes: ${keys}`);
+    assert.ok(!keys.some((k) => /^https?_proxy$/i.test(k)), `no proxy URL may reach the child: ${keys}`);
+    const logLines = [];
+    await callSource({ plugin: NAME, sourceId: 'main', op: 'envKeys', logger: (level, msg) => logLines.push(`${level}:${msg}`) });
+    const warned = stderr.mock.calls.map((c) => String(c.arguments[0]));
+    assert.equal(warned.length, 1, `one warning per process, got: ${JSON.stringify(warned)}`);
+    assert.match(warned[0], /^worca: proxy: .*credentials.*go direct$/);
+    assert.doesNotMatch(warned[0], /s3cret|proxy\.corp/);
+    assert.deepEqual(logLines, [], 'the warning is the process\'s, not an op log line');
+  } finally {
+    restore();
+  }
+});
+
+const SERVER = fileURLToPath(new URL('../ui/server.mjs', import.meta.url));
+// PORT=0 means "default" to the server (4317, maybe the user's own UI): pick a free one.
+const freePort = () => new Promise((r) => { const s = createServer().listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => r(port)); }); });
+
+test('the UI server says it at boot, before any plugin spawn could spend it unseen', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'worca-proxy-boot-'));
+  const child = spawn(process.execPath, [SERVER], {
+    // No egress policy: it would replace the proxy variables before the line is printed.
+    env: { ...process.env, WORCA_MOCK: '1', WORCA_HOME: home, HOME: home, USERPROFILE: home, PORT: String(await freePort()),
+      WORCA_EGRESS_MODE: '', HTTPS_PROXY: 'http://user:s3cret@proxy.corp.invalid:8080' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let out = '';
+  const onData = (c) => { out += c; if (/carries credentials|listening on/.test(out)) child.kill('SIGTERM'); };
+  child.stdout.on('data', onData);
+  child.stderr.on('data', onData);
+  const timer = setTimeout(() => child.kill('SIGKILL'), 60_000);
+  await new Promise((r) => child.on('exit', r));
+  clearTimeout(timer);
+  rmSync(home, { recursive: true, force: true, maxRetries: 5 });
+  assert.match(out, /^\[worca-ui\] proxy: HTTP\(S\)_PROXY carries credentials, which plugin code never receives; .* go direct$/m, out);
+  assert.doesNotMatch(out, /s3cret/);
+});
+
+test('a proxy the connector child cannot apply is a warning in the op logs, not a bare "fetch failed"', async () => {
+  const restore = setProxyEnv({ HTTPS_PROXY: 'http://[not-a-host' });
+  try {
+    const logLines = [];
+    await callSource({ plugin: NAME, sourceId: 'main', op: 'echoOp', logger: (level, msg) => logLines.push(`${level}:${msg}`) });
+    assert.equal(logLines.length, 1, `one proxy warning, got: ${JSON.stringify(logLines)}`);
+    assert.match(logLines[0], /^warn:proxy: .*not a valid proxy URL; outbound requests go direct$/);
+  } finally {
+    restore();
+  }
 });
 
 test('stateDelta is applied host-side via writePluginState; logs route to the passed logger', async () => {

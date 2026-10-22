@@ -449,7 +449,7 @@ import {
   isValidTimeZone, formatInstant, occurrenceStamp, OVERLAP_POLICIES, MISSED_POLICIES,
 } from '../src/shared/schedule/recurrence.mjs';
 import { REASON } from '../src/core/failure-policy.mjs';
-import { callSource, PluginOpError } from '../src/core/plugin-shim.mjs';
+import { callSource, PluginOpError, withheldProxyNotice } from '../src/core/plugin-shim.mjs';
 import { resolveAutoModel, AUTO_MODEL_ENV } from '../src/core/auto/model.mjs';
 import { sweepRepoLooks } from '../src/core/auto/repo-look.mjs';
 import {
@@ -17304,6 +17304,11 @@ if (isMain) {
   // broker check below is already one.
   const proxyLine = proxyNotice(useEnvProxy());
   if (proxyLine) console[proxyLine.level === 'warn' ? 'warn' : 'log'](`[worca-ui] ${proxyLine.text}`);
+  // A proxy URL with credentials never reaches plugin code (scrubbedEnv). Said here, before
+  // any plugin spawns, so the once-per-process warning is never spent unseen by a caller
+  // that logs nowhere (Ask's task lookups); later spawns stay quiet.
+  const withheldLine = withheldProxyNotice();
+  if (withheldLine) console.warn(`[worca-ui] ${withheldLine}`);
 
   // Remote access fails closed: an unsafe or broken config never starts serving.
   if (REMOTE_ACCESS_CHECK.errors.length) {

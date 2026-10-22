@@ -6,7 +6,8 @@
 //   stdout : { ok:true, result, stateDelta, logs }
 //          | { ok:false, error:{ kind, message }, logs }
 // Config+secrets+state travel via STDIN — never argv (visible in `ps`), never env
-// (inherited by grandchildren). The child env is scrubbed to {PATH, HOME} only, so
+// (inherited by grandchildren). The child env is scrubbed to {PATH, HOME}, the
+// proxy variables (never a proxy URL with credentials) and the CA bundle paths, so
 // plugin X can never read plugin Y's secrets or the host environment. stateDelta
 // is applied HOST-side via writePluginState (the child has no WORCA_HOME and
 // never touches the store). WORCA_MOCK=1 short-circuits the spawn with canned
@@ -112,21 +113,69 @@ function loadSource(plugin, sourceId) {
   return { dir, source, apiVersion };
 }
 
-/** Child env: PATH + HOME ONLY (spec §7.2). Notably NOT WORCA_*, tokens, npm_*.
- *  Exported for the channel-worker supervisor (chat/channel-host.mjs), which
- *  spawns persistent children under the same rule. */
-export function scrubbedEnv(platform = process.platform) {
-  const env = {};
-  if (process.env.PATH) env.PATH = process.env.PATH;
-  if (process.env.HOME) env.HOME = process.env.HOME;
+/** Child env: PATH + HOME (spec §7.2), the proxy variables and the CA bundle
+ *  paths. Notably NOT WORCA_*, tokens, npm_*. Exported for the channel-worker
+ *  supervisor (chat/channel-host.mjs), which spawns persistent children under the
+ *  same rule. `env` is the host env to read (tests pass a plain object: a Windows
+ *  process.env answers every casing of a name). */
+export function scrubbedEnv(platform = process.platform, env = process.env) {
+  const child = {};
+  if (env.PATH) child.PATH = env.PATH;
+  if (env.HOME) child.HOME = env.HOME;
+  // The proxy and CA variables are connectivity config: the child routes its
+  // fetch() through them (env-proxy.mjs), or it fails on a proxy-only network,
+  // and a proxy that re-signs TLS needs its CA. A proxy URL with credentials is a
+  // secret, though, so then NO proxy URL passes (one alone would half-route the
+  // child): it goes direct, and worca says why (withheldProxyNotice). NO_PROXY
+  // and the CA paths never carry one.
+  const names = proxyHasCredentials(env) ? NO_PROXY_NAMES : [...PROXY_URL_NAMES, ...NO_PROXY_NAMES];
+  for (const k of [...names, ...CA_NAMES]) if (env[k]) child[k] = env[k];
   // Windows has no HOME and a child cannot even start without SYSTEMROOT (Node
   // docs); the rest are the non-secret system vars node/npm need to resolve
   // temp dirs, the shell, and the .cmd/.exe lookup. Still no WORCA_*, tokens
   // or npm_* — the §7.2 rule is unchanged, only the platform baseline differs.
   if (platform === 'win32') {
-    for (const k of WIN32_ENV_BASELINE) if (process.env[k]) env[k] = process.env[k];
+    for (const k of WIN32_ENV_BASELINE) if (env[k]) child[k] = env[k];
   }
-  return env;
+  return child;
+}
+
+const PROXY_URL_NAMES = ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy'];
+const NO_PROXY_NAMES = ['NO_PROXY', 'no_proxy'];
+/** The CA names engines/spawn.mjs SPAWN_ENV_BASE passes too: node reads the first,
+ *  the tools a connector may run (gh, curl, git) the other two. */
+const CA_NAMES = ['NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR'];
+
+/** URL credentials always need an '@' (user:password@, token@, the scheme-less
+ *  user:password@host form) and a host never has one, so any '@' counts, even
+ *  in a value that is not a valid URL. */
+function proxyHasCredentials(env = process.env) {
+  return PROXY_URL_NAMES.some((k) => String(env[k] || '').includes('@'));
+}
+
+let withheldProxyNoticed = false;
+
+/** The warning, once per process, when scrubbedEnv() withholds the proxy URLs
+ *  for their credentials; null otherwise (and after the first call). It names
+ *  the variables only, never a value. The UI server prints it at boot, before
+ *  any plugin spawn; every other process at its first one (warnWithheldProxy). */
+export function withheldProxyNotice() {
+  if (withheldProxyNoticed || !proxyHasCredentials()) return null;
+  withheldProxyNoticed = true;
+  return 'proxy: HTTP(S)_PROXY carries credentials, which plugin code never receives; plugin connectors and chat channels go direct';
+}
+
+/** Every plugin spawn calls this: withheldProxyNotice() on stderr, the process's
+ *  own output. Never through the caller's logger, which can be a no-op (Ask's task
+ *  lookups pass one) and would spend the once-per-process warning unseen. */
+export function warnWithheldProxy() {
+  const text = withheldProxyNotice();
+  if (text) console.error(`worca: ${text}`);
+}
+
+/** Tests: the next withheldProxyNotice() fires again. */
+export function _resetWithheldProxyNotice() {
+  withheldProxyNoticed = false;
 }
 
 /** Non-secret Windows system vars a child needs to run at all (spec §7.2 note). */
@@ -211,6 +260,8 @@ export async function callSource({ plugin, sourceId, op, args = {}, profile, tim
     state: readPluginState(plugin, prof),
     args,
   });
+
+  warnWithheldProxy();
 
   const frame = await new Promise((resolveFrame, rejectFrame) => {
     // WORCA_PLUGIN_INSPECT=1 attaches the debugger to the connector child

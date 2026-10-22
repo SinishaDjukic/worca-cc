@@ -13,7 +13,7 @@ import { readFile, writeFile, mkdir, rm } from 'node:fs/promises';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mockEnabled, buildSpawnEnv } from '../claude-runner.mjs';
-import { scrubbedEnv } from '../plugin-shim.mjs';            // PATH/HOME + the Windows start-up baseline (P11); no cycle: plugin-shim imports no graph module
+import { scrubbedEnv } from '../plugin-shim.mjs';            // PATH/HOME, the proxy and CA variables + the Windows start-up baseline (P11); no cycle: plugin-shim imports no graph module
 import { normalizeReview } from '../protocol.mjs';
 import { readVerdict, missingVerdictWarning } from './exec-io.mjs';
 import { AWAIT_PORT, PARAMS_PORT } from '../../shared/graph/constants.mjs';
@@ -182,8 +182,8 @@ export function envForShell(envelope, baseEnv = process.env) {
 
 /** The env a script child STARTS from (P11). With the run's env-scrub guardrail on it is
  *  what that run's agents get (buildSpawnEnv: base vars + the per-project allowlist) over
- *  the platform baseline a child needs to start at all (scrubbedEnv: PATH/HOME, and on
- *  Windows SYSTEMROOT/COMSPEC/PATHEXT/TEMP…) — a script never sees MORE of the host
+ *  scrubbedEnv (PATH/HOME, the proxy and CA variables, and the baseline a Windows child needs
+ *  to start at all: SYSTEMROOT/COMSPEC/PATHEXT/TEMP…) — a script never sees MORE of the host
  *  environment than the agents beside it. Scrub off: the server's env (D11). */
 export function scriptBaseEnv(claudeOpts, platform = process.platform) {
   const scrubbed = buildSpawnEnv(claudeOpts?.envScrub, claudeOpts?.envAllowlist);

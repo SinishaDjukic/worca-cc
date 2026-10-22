@@ -1,13 +1,21 @@
 // src/core/plugin-shim-child.mjs
-// Ephemeral connector runner (spec §7.2). Deliberately imports NOTHING from
-// worca: it runs with a scrubbed env (PATH+HOME only, no WORCA_HOME), so any
+// Ephemeral connector runner (spec §7.2). Deliberately imports nothing from
+// worca but env-proxy.mjs (node builtins and undici, no store): it runs with a
+// scrubbed env (PATH, HOME, the proxy and CA variables, no WORCA_HOME), so any
 // store/db import here would resolve wrong paths. Protocol: read ONE JSON doc
 // from stdin, run ONE op, write ONE JSON frame to stdout, exit 0. The child
 // ALWAYS exits 0 after writing a frame — a nonzero exit means "crashed before
 // the frame" and the parent maps it to PluginOpError('protocol').
 import { pathToFileURL } from 'node:url';
+import { useEnvProxy, proxyNotice } from './env-proxy.mjs';
 
 const logs = [];
+
+// The connector's fetch() honors HTTP(S)_PROXY / NO_PROXY like worca's own:
+// same NO_PROXY merge, loopback always direct. A proxy that can't be applied is
+// a warning in the op's logs instead of a bare "fetch failed".
+const proxyLine = proxyNotice(useEnvProxy());
+if (proxyLine?.level === 'warn') logs.push({ level: 'warn', msg: proxyLine.text });
 
 async function main() {
   process.stdin.setEncoding('utf8');
