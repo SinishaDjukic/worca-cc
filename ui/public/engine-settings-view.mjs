@@ -25,7 +25,7 @@ export const JOB_HINTS = Object.freeze({
   memoryDefrag: 'Runs Memory defragment, which restructures saved memory.',
   agentGen: 'Drafts a new agent\'s prompt and metadata in Workflows › Agents (Generate).',
   workspaceScan: 'Runs the workspace scan that maps how member projects connect.',
-  requirementsInterview: 'Looks at the code once and runs the interview rounds on the Requirements page.',
+  requirementsInterview: 'Makes product briefs, looks at the code for a feature and runs the interview rounds on the Requirements page.',
 });
 
 /** One section of an engine tab (level 3): a heading with its controls on the right, a Model / Effort table (level 4)

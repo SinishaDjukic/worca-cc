@@ -8,9 +8,9 @@
 
 **Tech Stack:** Node ESM, `node:test`, jsdom, Express (`ui/server.mjs`), vanilla DOM (`ui/public/*.mjs`), Claude Code CLI (headless `-p`, stream-json).
 
-**Spec:** `plans/requirements-a11-design.md` (decisions D1–D9 and the lane contract §9 win where this plan is unclear). A1: `plans/requirements-design.md`, A2: `plans/requirements-a2-design.md`. Lane 2's plan (`plans/requirements-a7-plan.md` on `feat/req-a7-product-brief`) is read-only reference.
+**Spec:** `plans/requirements-a11-design.md` (decisions D1–D9 and the A1.1/A7 contract §9 win where this plan is unclear). A1: `plans/requirements-design.md`, A2: `plans/requirements-a2-design.md`. A7's plan (`plans/requirements-a7-plan.md`) is read-only reference.
 
-**Visual reference (UI task):** boards 10 (**Models › Engines › Helper jobs**, `ModelsHelper.dc.html`) and 13 (**New feature with a brief**, `NewFeatureBrief.dc.html`) of the canvas "Requirements — design round 2"; their folder is given with the UI task's dispatch (not part of the repository). They use upstream's classes and tokens; inline styles are layout hints. Where the design doc deviates (D3: no Models subtitle change; the cost words after the dot), the doc wins.
+**Visual reference (UI task):** boards 10 (**Models › Engines › Helper jobs**, `ModelsHelper.dc.html`) and 13 (**New feature with a brief**, `NewFeatureBrief.dc.html`) of the approved mock "Requirements — design round 2" (not in the repository). They use upstream's classes and tokens; inline styles are layout hints. Where the design doc deviates (D3: no Models subtitle change; the cost words after the dot), the doc wins.
 
 ## Global Constraints
 
@@ -18,8 +18,8 @@
 - No database schema change, no new route (D9). The setting is the `settings.json` key `requirementsInterview`; it is **not** in `UTILITY_JOBS` and not in `settingIds()` (D1).
 - `systemPromptMode` is default-off: absent, `'append'` or any other value ⇒ every argv byte-identical to today (`test/claude-argv-snapshot.test.mjs` stays green unchanged).
 - The host-guard preamble stays at the head of every real spawn's system prompt, replaced or appended.
-- **Lane contract (design §9), binding:** `callModel(d, { kind, cwd, prompt, model, timeoutMs, ...overrides })` exported, `interviewCallOptions(kind, { cwd, prompt, model, ...overrides })`; kinds `'look'` | `'round'` only; overrides `systemPrompt`, `tools`, `maxTurns`, `effort` and nothing else (anything else throws `TypeError`). In `round.mjs` lane 1 edits only: the new header lines of both system prompts, `roundPromptParts` / `buildRoundPrompt`, and the existing working-directory ternary of `buildOrientationPrompt`. Never edit: the data-rule lines and the "Do not ask what …" line of `ROUND_SYSTEM_PROMPT`, the data line and the JSON line of `ORIENTATION_SYSTEM_PROMPT`, anything before `buildOrientationPrompt`'s reply line other than the ternary, `startOrientation`, `runOrientation`. No import from Shaper code.
-- Tests never spawn a real claude (`node tools/test.mjs` sets the guard). The measurement tool spends money only with `--yes`, and only Task 8 runs it, after the user's explicit go-ahead.
+- **The A1.1/A7 contract (design §9), binding:** `callModel(d, { kind, cwd, prompt, model, timeoutMs, ...overrides })` exported, `interviewCallOptions(kind, { cwd, prompt, model, ...overrides })`; kinds `'look'` | `'round'` only; overrides `systemPrompt`, `tools`, `maxTurns`, `effort` and nothing else (anything else throws `TypeError`). In `round.mjs` A1.1 edits only: the new header lines of both system prompts, `roundPromptParts` / `buildRoundPrompt`, and the existing working-directory ternary of `buildOrientationPrompt`. Never edit: the data-rule lines and the "Do not ask what …" line of `ROUND_SYSTEM_PROMPT`, the data line and the JSON line of `ORIENTATION_SYSTEM_PROMPT`, anything before `buildOrientationPrompt`'s reply line other than the ternary, `startOrientation`, `runOrientation`. No import from Shaper code.
+- Tests never spawn a real claude (`node tools/test.mjs` sets the guard). The measurement tool spends money only with `--yes`, and only Task 8 runs it, after an explicit go-ahead.
 - No local machine paths in committed files (fixture included). Every file written is valid UTF-8 (`iconv -f utf-8 -t utf-8 <file> >/dev/null`).
 - `style.css`: tokens only, never a hex colour.
 - One test file: `node tools/test.mjs test/<file>.test.mjs`. Tests marked POSIX-only (`POSIX_SHIM`) skip on Windows; say so in the report rather than claiming them.
@@ -28,25 +28,25 @@
 
 1. **Replace mode reaches the CLI** inline and staged, with the preamble first, and never alongside an `--append-system-prompt*` flag; append mode unchanged (Task 2).
 2. **The look still works without Claude Code's default prompt:** same tools, same turn cap, the working directory named once, JSON as the final message (Task 3, fake runner; Task 8, a real look before and after, required).
-3. **The call path is the lane contract:** exactly two kinds and four overrides; A7's brief call shape keeps replace mode and the hermetic flags (Tasks 1, 3).
+3. **The call path is the A1.1/A7 contract:** exactly two kinds and four overrides; A7's brief call shape keeps replace mode and the hermetic flags (Tasks 1, 3).
 4. **Model and effort resolution:** unset ⇒ newest plain Opus at `medium`; model only ⇒ no effort flag; effort only ⇒ newest Opus at that effort; a model gone from the catalog or a throwing reader ⇒ the default (Task 5).
 5. **Flag off:** no Requirements interview row; the entry is in no settings listing; the API still accepts the key (harmless) (Tasks 4, 6).
 6. **The tool never spends by accident:** mock refused first, dry run by default, `--max-usd` cap, the before run is A2's exact behaviour (Tasks 1, 8).
 
 ## Who does what
 
-The controller (the main session, Opus 5.5) dispatches one implementer per task, then one reviewer (spec compliance and code quality, Opus 5.5) per task; fixes go back to the same implementer. A whole-branch review (Opus 5.5) follows Task 7.
+Each task has one implementer, then one review (spec compliance and code quality); fixes go back to the same implementer. A whole-branch review follows Task 7.
 
 | Task | Implementer | Why |
 |---|---|---|
 | 1 Tool + the call path | Sonnet 5.5 | mechanical; exact spec below |
 | 2 Runner `systemPromptMode` | Opus 5.5 | the spawn gate; byte-identity matters |
-| 3 System prompts, hermetic calls, prompt parts | Opus 5.5 | prompt wording, the A2-identity test, the lane seams |
+| 3 System prompts, hermetic calls, prompt parts | Opus 5.5 | prompt wording, the A2-identity test, the seams with A7 |
 | 4 Setting and settings API | Sonnet 5.5 | follows the Ask model entry and `memoryDefrag` patterns |
 | 5 Resolution, list, tool defaults | Sonnet 5.5 | |
 | 6 UI (boards 10, 13) | Sonnet 5.5 | small DOM changes, jsdom tests |
 | 7 Proof, docs, whole-branch check | Sonnet 5.5 | |
-| 8 Real measurement | the controller itself, no subagent | spends money; only after the user says yes |
+| 8 Real measurement | by hand | spends money; only after an explicit go-ahead |
 
 ---
 
@@ -59,7 +59,7 @@ The controller (the main session, Opus 5.5) dispatches one implementer per task,
 - Create: `test/requirements-replay-tool.test.mjs`
 - Modify: `test/requirements-interview.test.mjs`
 
-**Interfaces (the lane contract, design §9):**
+**Interfaces (the A1.1/A7 contract, design §9):**
 - `interviewCallOptions(kind, { cwd, prompt, model, systemPrompt, tools, maxTurns, effort })` (exported) → the `runClaude` options of one call without `signal` / `onEvent`. `kind` `'look'` or `'round'`, anything else throws `TypeError`; a key other than these seven throws `TypeError`. Per-kind defaults: look → `ORIENTATION_SYSTEM_PROMPT`, `REPO_LOOK_TOOLS`, `REPO_LOOK_MAX_TURNS`; round → `ROUND_SYSTEM_PROMPT`, `[]`, no `maxTurns`; `effort` default `'medium'` (Task 5 removes the default). In this task the result is exactly what `callModel` sends today: `{ cwd, systemPrompt, prompt, model, modelEnv: resolveModelEnv(model), allowedTools: [...tools], tools: [...tools], strictMcpConfig: true, maxTurns (when set), effort, permissionMode: 'acceptEdits', spawnKind: 'aux' }`.
 - `export async function callModel(d, { kind, cwd, prompt, model, timeoutMs, ...overrides })` → `{ text, costUsd }`, builds through `interviewCallOptions(kind, { cwd, prompt, model, ...overrides })`; behaviour otherwise unchanged (timeout, cost through `resolveModelCost`, the error carrying `costUsd`).
 
@@ -126,12 +126,12 @@ The controller (the main session, Opus 5.5) dispatches one implementer per task,
 
 **Interfaces:**
 - `roundPromptParts(args)` (same arguments as `buildRoundPrompt`) → `{ stable, changing }`: `stable` = the `<feature>`, `<description>`, `<project_context>`, `<what_worca_found_in_the_code>` blocks joined with a blank line; `changing` = `<thread>`, `<current_spec>`, `<edited_by_product_owner>`, the round line, the follow-up line (when any), the reply line. `buildRoundPrompt(args)` = `` `${stable}\n\n${changing}` ``, byte-identical to A2.
-- `buildOrientationPrompt({ feature, context, members, cwd = null })`: the existing ternary becomes, with `cwd`, `` `The working directory, ${asData(cwd)}, holds one checkout per project under repos/<project>: ${…}.` `` / `` `The working directory, ${asData(cwd)}, is a checkout of the project.` ``; without `cwd`, today's two sentences. Nothing else in the function changes (lane 2 adds its block and line).
+- `buildOrientationPrompt({ feature, context, members, cwd = null })`: the existing ternary becomes, with `cwd`, `` `The working directory, ${asData(cwd)}, holds one checkout per project under repos/<project>: ${…}.` `` / `` `The working directory, ${asData(cwd)}, is a checkout of the project.` ``; without `cwd`, today's two sentences. Nothing else in the function changes (A7 adds its block and line).
 
 - [ ] **Step 1: Pin A2's text first.** On the unchanged code, write a round-test that builds `buildRoundPrompt` for a fixed feature (title, description, context, orientation summary, a thread with one round, its answers, an edited section, round 2) and compares it with a string literal captured from today's output (paste it into the test). It must stay green after Step 3.
 - [ ] **Step 2: System prompts** (design §9's line order). Add lines at the top only; every existing line stays byte-identical:
   - `ROUND_SYSTEM_PROMPT`, first line: `You are Worca's requirements interviewer. You talk with a product owner through Worca's Requirements page, never through a terminal, and you have no tools: everything you know is in the message.` then an empty line.
-  - `ORIENTATION_SYSTEM_PROMPT`, three new first lines: `You are Worca's requirements reader.`; `You can only read: Glob finds files by name pattern, Grep searches file contents, Read reads one file (use paths under the working directory the message names). You cannot run commands or change anything, and you have only a few steps: answer before they run out.`; `Your final message is only the JSON object below: no prose before or after it.` The data line and the JSON line are lane 2's: untouched.
+  - `ORIENTATION_SYSTEM_PROMPT`, three new first lines: `You are Worca's requirements reader.`; `You can only read: Glob finds files by name pattern, Grep searches file contents, Read reads one file (use paths under the working directory the message names). You cannot run commands or change anything, and you have only a few steps: answer before they run out.`; `Your final message is only the JSON object below: no prose before or after it.` The data line and the JSON line are A7's: untouched.
   - Neither prompt may contain a date, a path, a pid or any per-call value (test: no drive letter, no `\d{4}-\d{2}`, no `/` path segment outside the JSON example; the constants are equal across two imports).
 - [ ] **Step 3: Parts.** `roundPromptParts` as above; `buildRoundPrompt` joins them. Comment above the stable list: `// Stable for a feature across rounds (cache-friendly: first). A7's <product_brief> goes after <project_context>, only with a brief.`
 - [ ] **Step 4: Look prompt.** The ternary as above; `orient` passes `cwd: look.cwd`.
@@ -210,7 +210,7 @@ The controller (the main session, Opus 5.5) dispatches one implementer per task,
   - `interview`, no look cost: "Worca interviews with Opus 5.5 at medium effort · cents per round";
   - `interview.effort` null: "Worca interviews with Sonnet 5" (no "at … effort");
   - no `interview`: today's "About $0.25 for the code look, then cents per round." or nothing.
-  The model name is `interview.label || interview.model`. Lane 2 later replaces only the part after " · ".
+  The model name is `interview.label || interview.model`. A7 later replaces only the part after " · ".
 - [ ] **Step 4: Tests.** Engines: the Claude card lists the row with its label and hint only when the `requirements` flag is on (set `<html data-flags>` as the existing flag tests do); the empty choices name the default pair; picking Sonnet + high and saving posts `{ requirementsInterview: { model, effort } }`; × posts `{ requirementsInterview: null }`; after Save the card repaints from the POST answer with the default labels intact; the Codex card never has the row; `enginePatchToSettingsBody` maps the id. View: the forms above and today's form (update the existing "cost hint" test, do not delete it).
 - [ ] **Step 5:** `node tools/test.mjs test/ui-settings-engines.test.mjs test/requirements-view.test.mjs test/requirements-app.test.mjs`; screenshots of the Models row (desktop) and New feature (desktop and phone width) in the report. Commit `Requirements: Requirements interview on the Models page; New feature says who interviews`.
 
@@ -229,14 +229,14 @@ The controller (the main session, Opus 5.5) dispatches one implementer per task,
 
 ---
 
-### Task 8: Measure with the real model (only after the user's go-ahead)
+### Task 8: Measure with the real model (only after an explicit go-ahead)
 
-Spends money: about $2–3 in all (estimate). **Do not start without the user's explicit yes**, given with the estimate and the runs below. Every run is capped with `--max-usd` (default 1.50). Run with the real `HOME` (a sandboxed home is not signed in to Claude Code), Worca's server untouched; the tool writes nothing into Worca's data. Reports go to the scratchpad, not the repository. The look reads a read-only checkout of a registered project the user names (`<dir>` below; for a fair pair, the same commit before and after).
+Spends money: about $2–3 in all (estimate). **Do not start without an explicit yes**, given with the estimate and the runs below. Every run is capped with `--max-usd` (default 1.50). Run with the real `HOME` (a sandboxed home is not signed in to Claude Code), Worca's server untouched; the tool writes nothing into Worca's data. Reports go to the scratchpad, not the repository. The look reads a read-only checkout of a registered project the user names (`<dir>` below; for a fair pair, the same commit before and after).
 
 - [ ] **Step 1:** `claude --version` into the report; Task 2's offline flag probe again.
 - [ ] **Step 2: Before** (A2's behaviour): `git switch --detach <Task 1 commit>`; `node tools/requirements-replay.mjs --rounds 4 --look <dir> --model claude-opus-5-5 --effort medium --label before --out <scratch>/before.json --yes`; `git switch -`.
 - [ ] **Step 3: After** (branch head): the same command with `--label after --out <scratch>/after.json`. **Required:** the look's `replyReadable` is true (a JSON reply within `REPO_LOOK_MAX_TURNS`), its `systemPromptFlag` is `'replace'`, and `loaded.plugins` / `loaded.skills` dropped against before (when the user settings carry no sign-in keys, the hermetic branch applies: the report's `keptUserSettings` must be false). A failed look is a finding: report it and stop; do not tune the prompt in this task.
 - [ ] **Step 4: Variant** (rounds only): `--rounds 4 --variant system-stable --label variant --out <scratch>/variant.json`.
-- [ ] **Step 5 (optional, if the user chose it): caching off**, rounds only: `--rounds 4 --no-cache --label nocache --out <scratch>/nocache.json` (`DISABLE_PROMPT_CACHING` is not a reserved env key, `model-env.mjs:159-164`).
+- [ ] **Step 5 (optional, if chosen): caching off**, rounds only: `--rounds 4 --no-cache --label nocache --out <scratch>/nocache.json` (`DISABLE_PROMPT_CACHING` is not a reserved env key, `model-env.mjs:159-164`).
 - [ ] **Step 6:** `--compare before.json after.json`, `--compare after.json variant.json` (judged by `promptCostRounds2toN`), and `--compare after.json nocache.json` when run. Every round's `replyReadable` must be true after; a false one is a finding.
 - [ ] **Step 7:** Fill in §10 of `plans/requirements-a11-design.md` (per configuration: total cost, prompt-side and output-side parts, input tokens, cache writes and reads, output tokens, median round latency; the look before and after; what the init frame loaded; the CLI version) and, under open question 1, what the variant saved. Commit `Requirements: A1.1 measured before and after`.

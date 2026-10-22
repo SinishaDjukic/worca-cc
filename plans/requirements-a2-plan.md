@@ -10,7 +10,7 @@
 
 **Spec:** `plans/requirements-a2-design.md` (decisions D1–D14 win where this plan is unclear). A1's design is `plans/requirements-design.md` (A1-D<n>).
 
-**Visual reference (UI tasks):** the approved mock's source files, one per board (their folder is given with each UI task's dispatch; they are not part of the repository): `Main.dc.html` (list), `NewFeature.dc.html`, `Interview.dc.html` (feature page, your turn), `Decisions.dc.html` (Decide), `Ready.dc.html`, `StartAnyway.dc.html` (start-before-Ready dialog), `Started.dc.html`, `Stats.dc.html`, `Sidebar.dc.html`. They use upstream's own classes (`card`, `badge`, `chip`, `seg`, `qpanel`, `qopt`, `btn`, `btn-go`, `btn-mini`, `pill-run`, `stat-tile`, `hint`, `code`) and tokens; the inline styles in them are layout hints, not code to copy. Where the design doc deviates from a board (D1 label, D11 no "Keep" button) the doc wins.
+**Visual reference (UI tasks):** the approved mock's source files, one per board (not in the repository): `Main.dc.html` (list), `NewFeature.dc.html`, `Interview.dc.html` (feature page, your turn), `Decisions.dc.html` (Decide), `Ready.dc.html`, `StartAnyway.dc.html` (start-before-Ready dialog), `Started.dc.html`, `Stats.dc.html`, `Sidebar.dc.html`. They use upstream's own classes (`card`, `badge`, `chip`, `seg`, `qpanel`, `qopt`, `btn`, `btn-go`, `btn-mini`, `pill-run`, `stat-tile`, `hint`, `code`) and tokens; the inline styles in them are layout hints, not code to copy. Where the design doc deviates from a board (D1 label, D11 no "Keep" button) the doc wins.
 
 ## Global Constraints
 

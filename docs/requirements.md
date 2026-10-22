@@ -11,7 +11,7 @@ turn on **Requirements** in Settings › Labs (the `requirements` flag), or star
    plain words, what already exists in that area. You see it under *What Worca found in the code*;
    **Look again** (in the **⋯** menu) refreshes it. With a [product brief](#product-brief) for the project or
    workspace, a new feature skips this look and shows *What Worca knows* instead. Turn looking at the code off
-   per project or workspace in **Your notes for Worca** (also in **⋯**; it was called Project context).
+   per project or workspace in **Your notes for Worca** (also in **⋯**).
 3. **The interview**: rounds of at most 3 questions, each with options and a recommended answer, at most
    6 rounds. **Skip, use recommended** answers the rest for you; **Finish now** ends it early. Earlier
    rounds stay on the page with the answers you gave; **Change** reopens a round, and Worca continues from
@@ -28,7 +28,7 @@ If a look or a round fails (no reply, an unreadable reply, the spending limit, o
 page says why and offers **Try again**, which re-runs exactly what failed. **Archive** hides a feature
 from the list; the **Archived** filter lists it again, and **Restore** brings it back where it was.
 
-Nothing is built until you press **Start in worca** (below). Each look and round is one model call; its cost is shown on the
+Nothing is built until you press **Start in Worca** (below). Each look and round is one model call; its cost is shown on the
 feature, counts toward your spending limit, and is part of the spend in Statistics and the account menu.
 Worca runs at most four requirements looks or rounds at a time.
 
@@ -44,18 +44,22 @@ described: a short, plain-language picture that every interview there starts fro
 
 It is written in product language, without code. The Requirements list shows it on each project's header
 ("Product brief: none yet · Create", or its age); the brief page has the four parts, who made it, which
-features use it, what Worca read, and your notes.
+features use it, what Worca read, and your notes. The list has a header only for a project or workspace with a
+feature, so before the first feature the brief page opens only from its address
+(`#requirements/brief/project/<key>` or `#requirements/brief/workspace/<id>`).
 
 **Create and Refresh.** **Create the brief** (and later **Refresh**) is one deeper, read-only look at the
-repository's **main branch**, not at whatever branch happens to be checked out, so the brief describes what
-the product is and not a half-finished change (only when no main branch can be found does Worca read the
-checked-out branch). Once there is an estimate, the cost is shown before you press the button; the estimate is
+repository's **default branch** (main, for most), not at whatever branch happens to be checked out, so the brief
+describes what the product is and not a half-finished change (only when no default branch can be found does Worca
+read the checked-out branch). Once there is an estimate, the cost is shown before you press the button; the estimate is
 the median of recent brief looks, failed ones included, project and workspace briefs alike (before the first
 brief look there is none). A brief look is a model call like any other here: it counts toward your spending
 limit and takes a few minutes, and you can leave the page while it works; the page says when the brief is ready
-or could not be made. Worca refuses it, and spends nothing, when looking at the code is switched off, when there
-is no repository or main branch, when a repository could not be read in time (Worca names it; try again), when
+or could not be made. Worca refuses it, and spends nothing, when looking at the code is switched off, when git is not installed, when there
+is no repository or default branch, when a repository could not be read in time (Worca names it; try again), when
 this brief is already being made, when two other briefs are being made, or when the limit is reached.
+Without git on this machine, Create, Refresh, Look closer and Look again are not offered (the API answers 409
+`GIT_MISSING`); a new feature then skips its look at the code and the interview starts right away.
 
 **Your edits win.** Edit any part with the pencil; Worca keeps your text and a refresh never overwrites it
 (**Let Worca rewrite this** hands a part back). Each user, word and area needs its own name: a name given twice
@@ -63,7 +67,7 @@ is refused, and your text stays in the editor to fix. Editing **What exists toda
 no longer updates them, and "the code moved on" no longer checks them. Areas added from a closer look (below)
 survive a refresh too.
 
-**Staleness.** A brief says what it was made from, for example *Made from main @ 3f96738*. When the main branch
+**Staleness.** A brief says what it was made from, for example *Made from main @ 3f96738*. When the default branch
 has moved, the page says **The code moved on since this brief**: how many commits since, and which of the areas
 it describes they touch (areas are matched by the files they name). Interviews keep using the brief as it is
 until you refresh. Where Worca cannot tell, it says so and why: the project's folder is missing, the commit is
@@ -72,8 +76,7 @@ none of the projects it was made from is in the workspace any more). A workspace
 did not check or that joined after it was made.
 
 **Your notes for Worca.** Standing facts every feature there should know (actors, terms, rules) and the switch
-for looking at the code. This is what was called *Project context*. It is
-opened from the brief page or from **⋯** on a feature.
+for looking at the code. It is opened from the brief page or from **⋯** on a feature.
 
 **How interviews use it.** With a brief, a new feature skips its own look at the code: the New feature page
 says "Worca knows <name> from its product brief" and the cost is cents per round, and round 1 starts right
@@ -85,7 +88,7 @@ or workspace, against its current brief, can be added (otherwise **Look again** 
 switched off, interviews still read an existing brief; only new looks (Create, Refresh, Look closer) stop.
 
 **Workspaces.** A workspace brief starts from the workspace's own description (its map of projects) and reads at
-most 8 of its projects, each at its main branch; any left out are named on the page before you create it.
+most 8 of its projects, each at its default branch; any left out are named on the page before you create it.
 
 ## Which model interviews
 
@@ -129,7 +132,7 @@ A feature is **Ready** when six checks pass; Worca computes them from what is st
 
 The Ready panel shows each check and what is missing. The list and the page header say **Decide** when the
 interview is done but a check still fails; **Confirm the N left** settles them in one click. When all six pass, a
-**Ready to build** card offers **Start in worca**.
+**Ready to build** card offers **Start in Worca**.
 
 You can start before it is Ready: **Start before it's Ready...** asks for a reason, which is required.
 Worca keeps the reason, your name and the checks that failed on the feature, and the run is marked as
@@ -138,7 +141,7 @@ always refuses a feature that is busy, archived or whose project or workspace is
 
 ## Start in Worca
 
-**Start in worca** starts a normal run from the feature:
+**Start in Worca** starts a normal run from the feature:
 
 - The run's task is the spec, with the acceptance criteria (`R-po-1`, ...) as its definition of done. The
   run title is `FEAT-<n>: <title>`.

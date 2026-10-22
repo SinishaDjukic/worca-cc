@@ -292,7 +292,7 @@ archived features too. **New feature**: title, description, project or workspace
 - Saving workspace features into a repository; two-way sync of `specs/` files.
 - Requirements calls on engines other than Claude.
 
-## 10. Open questions (defaults taken until someone objects)
+## 10. Open questions (each with the default this branch ships)
 
 1. **Default model:** the newest Opus (D8). Rounds resend the thread, so cost grows a little with each
    round; the limit (D9) caps it.
