@@ -16206,7 +16206,7 @@ function snPaintTypes() {
   value.value = snTypesOn.join(',');
   host.replaceChildren(...snTypesAll.map((t) => {
     const b = document.createElement('button');
-    b.type = 'button'; b.className = 'sn-type-chip'; b.textContent = t;
+    b.type = 'button'; b.className = 'filter-chip'; b.textContent = t;
     b.setAttribute('aria-pressed', String(snTypesOn.includes(t)));
     b.addEventListener('click', () => {
       const msg = document.getElementById('smartNamingMsg');
@@ -16219,7 +16219,7 @@ function snPaintTypes() {
     return b;
   }), (() => {
     const add = document.createElement('button');
-    add.type = 'button'; add.className = 'sn-type-chip'; add.textContent = '+ Add type';
+    add.type = 'button'; add.className = 'filter-chip'; add.textContent = '+ Add type';
     add.addEventListener('click', () => {
       const input = document.createElement('input');
       input.type = 'text'; input.className = 'input mono'; input.maxLength = 16; input.setAttribute('aria-label', 'New type'); input.size = 10;

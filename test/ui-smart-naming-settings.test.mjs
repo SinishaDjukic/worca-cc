@@ -109,7 +109,7 @@ test('a server refusal shows on the card', async () => {
 
 test('types: the last one cannot be switched off; a custom type is added once and validated', async () => {
   const ctx = await boot();
-  const chipOf = (t) => [...ctx.doc.querySelectorAll('#smartNamingTypes .sn-type-chip')].find((b) => b.textContent === t);
+  const chipOf = (t) => [...ctx.doc.querySelectorAll('#smartNamingTypes .filter-chip')].find((b) => b.textContent === t);
   for (const t of ['feat', 'chore', 'docs', 'refactor', 'test']) chipOf(t).click();
   assert.equal(ctx.doc.querySelectorAll('#smartNamingTypes [aria-pressed="true"]').length, 1);
   chipOf('fix').click();

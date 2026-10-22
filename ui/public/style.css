@@ -9831,8 +9831,6 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .hint.warn{color:var(--amber-ink-strong)}
 #smart-naming-settings-card [aria-disabled="true"]{opacity:.55}
 .sn-types{display:flex;flex-wrap:wrap;gap:6px}
-.sn-type-chip{height:24px;padding:0 8px;border:1px solid var(--line-2);border-radius:var(--r-xs);background:var(--field);color:var(--ink-2);font:500 12px/1 var(--mono);cursor:pointer}
-.sn-type-chip[aria-pressed="true"]{background:var(--violet-bg);color:var(--violet-ink);border-color:transparent}
 @media (max-width:480px){.sn-branch-row{grid-template-columns:1fr}}
 @media (prefers-reduced-motion:reduce){.sn-adorn.sn-loading .input{animation:none}}
 
