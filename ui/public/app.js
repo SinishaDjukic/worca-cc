@@ -2216,6 +2216,17 @@ function orderKeyFor(runId) {
   return key;
 }
 
+// runId -> startedAt, kept for the same reason: the Runs list sorts by start time (second resolution), so a
+// re-materialized run must not read as started later than the run that superseded it.
+const runStartedAts = new Map();
+
+function startedAtFor(runId, startedAt) {
+  if (startedAt) { runStartedAts.set(runId, startedAt); return startedAt; }
+  let at = runStartedAts.get(runId);
+  if (at === undefined) { at = nowHMS(); runStartedAts.set(runId, at); }
+  return at;
+}
+
 function nowHMS() {
   const d = new Date();
   return d.toTimeString().slice(0, 8);
@@ -2234,7 +2245,7 @@ function makeRun({
     projectDir: projectDir || '',
     projectNames,         // string[] for workspace runs (all member names); null otherwise
     status,
-    startedAt: startedAt || nowHMS(),
+    startedAt: startedAtFor(runId, startedAt),
     local,
     kind,                 // 'run' | 'workspace-run' | 'agentgen' (only first two get tabs)
     pipelineId,           // matches a History row id once persisted; used to hide lingerers from History

@@ -2,7 +2,7 @@
 // Row/tab ordering is STABLE while pipelines run: log activity must not
 // reshuffle; group-rank transitions (question, finish) still regroup. Each run is listed once (runs
 // redesign §3.1), so the live rows are read in list order across the sections.
-import { test, afterEach } from 'node:test';
+import { test, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -112,7 +112,14 @@ test('log activity never reorders or rebuilds the Runs rows, while a question st
 // resurrected run must keep its ORIGINAL creation key — minting a fresh one
 // would make the stale run read as the newest and outrank the run the user
 // just resumed.
+// The list sorts by start time (second resolution), so the resurrected run must also keep its ORIGINAL start time:
+// the Date is moved on across the wall-clock second the way a loaded CI runner does.
 test('a trailing frame for a superseded run does not outrank the resumed run', async () => {
+  mock.timers.enable({ apis: ['Date'], now: new Date(2026, 0, 5, 10, 0, 0, 500) });
+  try { await trailingFrameCase(); } finally { mock.timers.reset(); }
+});
+
+async function trailingFrameCase() {
   const { window, np, recv, selectProject, tick } = await boot();
   selectProject();
   window.location.hash = 'runs';
@@ -127,6 +134,7 @@ test('a trailing frame for a superseded run does not outrank the resumed run', a
   await tick();
   assert.equal(np.getRun('r1'), undefined, 'resume drops the superseded run');
 
+  mock.timers.tick(3000);
   // Trailing frame for the dead runId → upsertRun re-materializes it.
   recv({ type: 'log', runId: 'r1', source: 'planner', level: 'info', text: 'late', ts: 9 });
   await tick();
@@ -135,7 +143,7 @@ test('a trailing frame for a superseded run does not outrank the resumed run', a
   await tick();
 
   assert.deepEqual(cardOrder(window), ['r-new', 'r1'], 'resumed run stays above the resurrected stale run');
-});
+}
 
 // Resumed ELSEWHERE (the usage-limit auto-resume, another tab, the feature page): this tab never called
 // resumeRunFromCard, so the new runId's state frame is what tells it. The old paused copy must go, or it
