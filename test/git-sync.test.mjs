@@ -373,9 +373,14 @@ test('a timed-out fetch kills its whole process group (no orphaned ssh left wait
   // An "ssh" that never answers; it records its pid first.
   const pidFile = join(root, `ssh-${n}.pid`), fake = join(root, `fake-ssh-${n}.sh`);
   await writeFile(fake, `#!/bin/sh\necho $$ > "${pidFile}"\nexec sleep 30\n`); await chmod(fake, 0o755);
-  g(a, 'config', 'core.sshCommand', fake);
+  // The server's own env, not the repository's config: a local core.sshCommand that is not `ssh -i <key>` is
+  // replaced (git-guard.mjs, G2).
   g(a, 'remote', 'set-url', 'origin', 'ssh://git@example.invalid/x.git');
-  const r = await fetchRemote(a, { timeoutMs: 700, maxAgeMs: 0 });
+  const prev = process.env.GIT_SSH_COMMAND;
+  process.env.GIT_SSH_COMMAND = fake;
+  let r;
+  try { r = await fetchRemote(a, { timeoutMs: 700, maxAgeMs: 0 }); }
+  finally { if (prev === undefined) delete process.env.GIT_SSH_COMMAND; else process.env.GIT_SSH_COMMAND = prev; }
   assert.equal(r.ok, false); assert.equal(r.kind, 'timeout');
   const pid = Number((await readFile(pidFile, 'utf8')).trim());
   const deadline = Date.now() + 5_000;

@@ -72,7 +72,7 @@ import { fanoutCap, mapWithCap } from './fanout.mjs';
 import { resolveStepModels, observeModelCost, resolveModelCost, modelCostConfig, readTeamMetricsPrefs, modelHasBaseUrlRouting, bridgedModelInfo, catalogHasModel, engineOfModel, enginesOfModel, modelRunsOn, modelConnection, foreignRunModel, modelForEngine, listModels, liveCostRates, estimateCost } from './config.mjs';
 import { getEngine, selectRunEngine, CAPABILITY_FALLBACKS, describeUnattachableMcp } from './engines/index.mjs';
 import { bridgeCallsFor, bridgeCostFor, forgetBridgeTag } from './bridge/telemetry.mjs';
-import { readGuardrailSet } from './guardrail-store.mjs';
+import { readGuardrailSet, defaultGuardrailSetId } from './guardrail-store.mjs';
 import { unionGuardrails, guardrailsToPermissionRules, mergePermissionRules } from './guardrails.mjs';
 import { collectRequiredSkills, validateSkills, injectSkills, pluginSkillDirs, pluginAssetDirs } from './skills.mjs';
 import { isBrowsableKind, BULK_ARTIFACT_THRESHOLD } from '../shared/artifact-kinds.mjs';
@@ -99,6 +99,7 @@ import { isNormalized } from './engines/events.mjs';
 import { createClaudeNormalizer } from './engines/claude-events.mjs';
 import { cachedFreeDailyCounts } from './openrouter-free.mjs';
 import { withBillTo, currentBillTo } from './billing.mjs';
+import { claimRunDir } from './agent-pool.mjs';
 import { brokerEnabled, brokerEngineRefusal, brokerInfo, personSlots } from './broker-client.mjs';
 import { mockEnabled } from './claude-runner.mjs';
 import { modelSlot, manifestModels, manifestNeedsModel, missingCredentials, describeMissing } from './broker-routing.mjs';
@@ -158,6 +159,8 @@ import { effortOn, runsOn, connectionLabel } from '../shared/connections.mjs';
 import { readyEnginesCached } from './engines/ready-cache.mjs';
 import { shapeRecordFrom, buildShapeStats } from './shape/stats.mjs';
 import { gitAvailable, gitMissingResult } from './git-available.mjs';
+import { guardedGitEnv } from './git-guard.mjs';
+import { stripHostCredentials } from './host-credentials.mjs';
 
 // worca-cc repo root; holds skills/. fileURLToPath, never URL.pathname: the
 // latter is `/C:/…` on Windows and %-encoded everywhere (see DEFAULT_AGENTS_DIR
@@ -909,10 +912,10 @@ export class RunHarness extends EventEmitter {
       throw new Error('the Workspace scan workflow runs over a workspace only — start it from Workspaces › Create workspace');
     }
     // Which guardrail set governs this run (guardrails are selected PER RUN;
-    // there is no per-project guardrails dimension). 'permissive' = the empty
-    // policy = byte-identical legacy spawn, so callers that never pass the
-    // option (CLI, tests, pre-picker API bodies) keep today's behavior exactly.
-    this.guardrailsId = this.opts.guardrailsId || 'permissive';
+    // there is no per-project guardrails dimension). Callers that never pass the
+    // option (the CLI, API bodies without one) get the install's default: Normal
+    // on a fresh install, Permissive (the empty policy) on one from before v71.
+    this.guardrailsId = this.opts.guardrailsId || defaultGuardrailSetId();
     // MCP registry (design §6.2, D16): the run's per-membership opt-out ('<setId>|<serverId>'),
     // validated by POST /api/run; rides the resume point, restored beside guardrailsId.
     this.mcpOptOut = Array.isArray(this.opts.mcpOptOut) ? this.opts.mcpOptOut : [];
@@ -1938,9 +1941,10 @@ export class RunHarness extends EventEmitter {
       this._recordAction('resume', this.opts.resumedBy || null);
       // Rehydrate the run's selection BEFORE re-resolving so resume enforces the
       // LATEST saved set definition (missing set -> warn + Permissive, inside
-      // _resolveGuardrails). Legacy resume points without the field fall back to
-      // the constructor default ('permissive'). Keep state in sync for re-persist.
-      this.guardrailsId = rp.guardrailsId || this.guardrailsId;
+      // _resolveGuardrails). Legacy resume points without the field were written
+      // before the per-run picker, when every run was Permissive: they stay so,
+      // whatever the install default is now. Keep state in sync for re-persist.
+      this.guardrailsId = rp.guardrailsId || 'permissive';
       this.state.guardrailsId = this.guardrailsId;
       this.mcpOptOut = Array.isArray(rp.mcpOptOut) ? rp.mcpOptOut : [];
       await this._resolveGuardrails();
@@ -2507,7 +2511,11 @@ export class RunHarness extends EventEmitter {
     const detached = this.runRootMode === 'detached';
     this.runRoot = detached ? join(worcaHome(), 'runs', this.pipeline.id) : null;
     const reposBase = detached ? join(this.runRoot, 'repos') : null;
-    if (detached) await mkdir(reposBase, { recursive: true });
+    if (detached) {
+      await mkdir(this.runRoot, { recursive: true });
+      claimRunDir(this.runRoot);                          // G19: this run's owner's agent only
+      await mkdir(reposBase, { recursive: true });
+    }
 
     this._log('worktree', 'info', `Resolving source/feature branches for ${this.members.length} member(s)…`);
     // Settle EVERY member before propagating any failure — carried VERBATIM from
@@ -2802,6 +2810,8 @@ export class RunHarness extends EventEmitter {
     this.state.runRootMode = 'detached';
     this.runRoot = join(worcaHome(), 'runs', this.pipeline.id);
     const work = join(this.runRoot, WORK_DIR_NAME);
+    await mkdir(this.runRoot, { recursive: true });
+    claimRunDir(this.runRoot);                            // G19: this run's owner's agent only
     await mkdir(work, { recursive: true });
     this.workDirs.set(NO_PROJECT_KEY, work);
     this.workDir = work;
@@ -2823,6 +2833,8 @@ export class RunHarness extends EventEmitter {
     this.runRootMode = 'detached';
     this.state.runRootMode = 'detached';
     this.runRoot = join(worcaHome(), 'runs', this.pipeline.id);
+    await mkdir(this.runRoot, { recursive: true });
+    claimRunDir(this.runRoot);                            // G19: this run's owner's agent only
     for (const m of this.members) {
       if (this._memberWorkMode(m.projectKey) !== 'folder') continue;
       const copyDir = join(this.runRoot, 'repos', m.projectKey);
@@ -3200,15 +3212,18 @@ export class RunHarness extends EventEmitter {
     // signs in with its own, which the broker can neither bill nor revoke.
     const brokerRefusal = brokerEngineRefusal(name);
     if (brokerRefusal) return brokerRefusal;
+    // The CLI's wording, like "pass --allow-unguarded-engine" (engineRefusalFor rewords both for the UI and chat). A resume
+    // keeps the set its run pinned, so `worca resume` has no --guardrails to name.
+    const permissive = this.resumeOpts ? 'run it with the Permissive set' : 'run it with --guardrails permissive';
     if (caps.permissionRules === false && hasPermissionRules(rules) && !allowed) {
-      return `guardrail set "${guardrailsId}" has permission rules this engine cannot enforce — run it with the Permissive set, or pass --allow-unguarded-engine to run it without them`;
+      return `guardrail set "${guardrailsId}" has permission rules this engine cannot enforce — ${permissive}, or pass --allow-unguarded-engine to run it without them`;
     }
     if (caps.permissionRules === false && hasPermissionRules(projectRules) && !allowed) {
       return `the project's .claude/settings.json denies ${ruleList(projectRules)}, which this engine cannot enforce — pass --allow-unguarded-engine to run it without them`;
     }
     const gSkip = caps.permissionRules === false ? [] : this._engineUnenforced(rules);
     if (gSkip.length && !allowed) {
-      return `guardrail set "${guardrailsId}" has permission rules this engine cannot enforce (${ruleNames(gSkip)}) — run it with the Permissive set, or pass --allow-unguarded-engine to run it without them`;
+      return `guardrail set "${guardrailsId}" has permission rules this engine cannot enforce (${ruleNames(gSkip)}) — ${permissive}, or pass --allow-unguarded-engine to run it without them`;
     }
     const pSkip = caps.permissionRules === false ? [] : this._engineUnenforced(projectRules);
     if (pSkip.length && !allowed) {
@@ -3218,7 +3233,7 @@ export class RunHarness extends EventEmitter {
     // a choice, like running without a rule.
     const gPart = caps.permissionRules === false ? [] : this._enginePartial(rules);
     if (gPart.length && !allowed) {
-      return `guardrail set "${guardrailsId}" has ${this._enginePartialKind()} this engine holds only in part (${ruleNames(gPart)}): ${this._engineRuleReach()} — run it with the Permissive set, or pass --allow-unguarded-engine to run it with them as a partial guard`;
+      return `guardrail set "${guardrailsId}" has ${this._enginePartialKind()} this engine holds only in part (${ruleNames(gPart)}): ${this._engineRuleReach()} — ${permissive}, or pass --allow-unguarded-engine to run it with them as a partial guard`;
     }
     const pPart = caps.permissionRules === false ? [] : this._enginePartial(projectRules);
     if (pPart.length && !allowed) {
@@ -3286,7 +3301,7 @@ export class RunHarness extends EventEmitter {
   async _engineResumeGate(rp) {
     const name = this.claude.engine || 'claude';
     if (name === 'claude') return [];
-    const { id, rules, projectRules } = await this._engineSetRules(rp.guardrailsId || this.guardrailsId);
+    const { id, rules, projectRules } = await this._engineSetRules(rp.guardrailsId || 'permissive');
     const nodes = await this._engineGateNodes(rp);
     const why = this._engineRefusal({ rules, guardrailsId: id, projectRules, nodes });
     if (why) throw engineRefusal(name, why);
@@ -3337,7 +3352,7 @@ export class RunHarness extends EventEmitter {
     const rp = this.resumeOpts?.resumePoint;
     if (!rp) return null;
     this.mcpOptOut = Array.isArray(rp.mcpOptOut) ? rp.mcpOptOut : [];
-    return this._engineEarlyRefusal(rp.guardrailsId || this.guardrailsId, () => this._engineGateNodes(rp));
+    return this._engineEarlyRefusal(rp.guardrailsId || 'permissive', () => this._engineGateNodes(rp));
   }
 
   /** This run target's Team set input from the policy cache (mcp/registry.mjs cachedTeamFor); null when none or unreadable. */
@@ -5338,11 +5353,12 @@ export class RunHarness extends EventEmitter {
     // Plain commit first (uses the repo's configured identity); fall back to a
     // local identity so a repo with no user.name/email still commits — mirrors
     // _ensureGitCheckpoint's belt-and-braces.
-    let commit = await this._gitIndexWrite(['commit', '-m', msg], gitOpts);
+    // The one place worca runs the project's own commit hooks (git-guard.mjs: never under agent isolation).
+    let commit = await this._gitIndexWrite(['commit', '-m', msg], { ...gitOpts, hooks: true });
     if (!commit.ok) {
       commit = await this._git(
         ['-c', 'user.email=orchestrator@local', '-c', 'user.name=orchestrator', 'commit', '-m', msg],
-        gitOpts,
+        { ...gitOpts, hooks: true },
       );
     }
     if (!commit.ok && this.runRootMode === 'detached') {
@@ -6892,14 +6908,21 @@ export class RunHarness extends EventEmitter {
    * the stop/teardown path (which deliberately ignores the abort signal) held
    * the whole process, and under `npm test` the runner, until the CI job's
    * 30-minute limit killed it.
+   * Repository-local hooks and config commands never run (git-guard.mjs, security G2), except the
+   * project's hooks for `hooks: true` (the end-of-run commit), with every host credential stripped.
    */
-  _git(args, { cwd, ignoreAbort = false, timeoutMs = HARNESS_GIT_TIMEOUT_MS } = {}) {
-    if (!gitAvailable()) return Promise.resolve(gitMissingResult());
+  async _git(args, { cwd, ignoreAbort = false, timeoutMs = HARNESS_GIT_TIMEOUT_MS, hooks = false } = {}) {
+    if (!gitAvailable()) return gitMissingResult();
+    let env;
+    try {
+      env = await guardedGitEnv(cwd || this.projectDir, hooks ? { hooks, env: stripHostCredentials(process.env) } : {});
+    } catch (err) { return { ok: false, code: -1, stdout: '', stderr: err.message }; }
     return new Promise((resolveP) => {
       let child;
       try {
         child = spawn('git', args, {
           cwd: cwd || this.projectDir,
+          env,
           stdio: ['ignore', 'pipe', 'pipe'],
           // ignoreAbort: teardown commits run AFTER the run is aborted (stop/error);
           // binding the aborted signal here would kill them instantly and leave the

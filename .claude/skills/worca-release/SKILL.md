@@ -202,7 +202,7 @@ branch leaves the line stale.
 
 ```bash
 npm version <VERSION> --no-git-tag-version
-git add package.json package-lock.json
+git add package.json npm-shrinkwrap.json
 git commit -m "chore(release): @worca/app <VERSION>"
 git tag -a worca-app-v<VERSION> -m "@worca/app <VERSION>"
 git push origin HEAD

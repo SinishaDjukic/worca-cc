@@ -116,7 +116,8 @@ test('boot: WORCA_GH_AS_PERSON without a GitHub slot on the broker is a warning'
   process.env.HOME = home;
   try {
   slots = [{ id: 'anthropic', auth: 'x-api-key', upstream: 'https://api.anthropic.com' }];
-  const env = { WORCA_BROKER_URL: url, WORCA_BROKER_SECRET: SECRET, WORCA_GH_AS_PERSON: 'required', HOME: home };
+  // Multi mode: agents under their own user, or worca refuses to start (broker-secret-seal.test.mjs).
+  const env = { WORCA_BROKER_URL: url, WORCA_BROKER_SECRET: SECRET, WORCA_GH_AS_PERSON: 'required', HOME: home, WORCA_AGENT_USER: 'worca-agent', WORCA_AGENT_HOME: join(home, 'agent') };
   const r = await checkBrokerAtBoot({ env, waitMs: 0, log: () => {} });
   assert.deepEqual(r.fatal, []);
   assert.match(r.warnings.join(' '), /no GitHub slot.*every push will fail/);

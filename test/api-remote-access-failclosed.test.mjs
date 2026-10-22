@@ -55,6 +55,13 @@ test('boot: allowlist without an identity check exits 1 before listening', async
   assert.doesNotMatch(out, /listening on/);
 });
 
+test('boot: an identity header without trusted proxies exits 1 (X1: the header would name anyone who sends it)', async () => {
+  const { code, out } = await boot({ WORCA_IDENTITY_HEADER: 'X-Forwarded-Email', WORCA_IDENTITY_TRUSTED_PROXIES: '' });
+  assert.equal(code, 1);
+  assert.match(out, /identity header: WORCA_IDENTITY_HEADER needs WORCA_IDENTITY_TRUSTED_PROXIES/);
+  assert.doesNotMatch(out, /listening on/);
+});
+
 test('boot: half a Cloudflare Access config exits 1', async () => {
   const { code, out } = await boot({ WORCA_ALLOWED_HOSTS: 'worca-01.example.com', WORCA_CF_ACCESS_TEAM_DOMAIN: TEAM });
   assert.equal(code, 1);

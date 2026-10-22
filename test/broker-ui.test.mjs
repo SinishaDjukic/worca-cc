@@ -59,7 +59,7 @@ async function session(email) {
 test('over https the CSRF cookie is __Host- prefixed (a proxy for sibling hosts forwards only those); a plain one is ignored', async () => {
   const res = await fetch(`${base}/api/me`, { headers: { 'cf-access-jwt-assertion': jwt('host@example.com') } });
   const setCookie = res.headers.get('set-cookie');
-  assert.match(setCookie, /^__Host-wb_csrf=[A-Za-z0-9_-]{43}; Path=\/; HttpOnly; SameSite=Strict; Secure$/);
+  assert.match(setCookie, /^__Host-wb_csrf=[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}; Path=\/; HttpOnly; SameSite=Strict; Secure$/);
   const { csrf } = await res.json();
   const save = (cookie) => fetch(`${base}/api/slots/anthropic`, {
     method: 'DELETE',

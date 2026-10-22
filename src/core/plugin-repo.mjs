@@ -14,7 +14,7 @@ import { mkdirSync, existsSync, renameSync, rmSync, unlinkSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { pluginsRoot, pluginDir, readPluginsLock } from './plugins-lock.mjs';
+import { pluginsRoot, pluginVersionDir, readPluginsLock } from './plugins-lock.mjs';
 import { normalizeManifest, findEscapingSymlinks } from './plugin-manifest.mjs';
 import { githubEnv } from './github-credentials.mjs';
 import { withAzureToken, readAzureCredentials } from './azure-credentials.mjs';
@@ -408,9 +408,9 @@ export async function exportVersion(name, sha, { exec = defaultExec, repoUrl, su
   const repo = repoUrl ?? entry.repo;
   const sub = subdir ?? entry.subdir ?? '';
   if (!repo) throw new Error(`plugin "${name}": no repo known (pass { repoUrl } on first install)`);
+  const versionDir = pluginVersionDir(name, sha); // refuses a pin that would leave versions/, before any read or write
   if (!gitAvailable()) return (await httpsRepo()).exportVersionHttps(name, sha, { repoUrl: repo, subdir: sub });
   const cache = existsSync(repoCacheDir(repo)) ? repoCacheDir(repo) : await ensureCache(repo, exec);
-  const versionDir = join(pluginDir(name), 'versions', sha.slice(0, 7));
   rmSync(versionDir, { recursive: true, force: true }); // re-export = fresh dir
   mkdirSync(versionDir, { recursive: true });
   const scratch = await mkdtemp(join(tmpdir(), 'worca-cc-export-'));

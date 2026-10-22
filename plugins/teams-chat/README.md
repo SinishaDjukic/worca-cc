@@ -62,6 +62,10 @@ you discover the conversation ID.
 - Inbound is deduplicated on `activity.id` (Bot Framework retries deliveries).
 - **An allowed conversation is control of worca-cc** (approve gates, stop/pause
   runs). `allowedChatIds` is deny-by-default.
+- `allowedUserIds` (optional) narrows an allowed chat to named senders; everyone
+  else in it is ignored. `/direct` and the answer commands (`/answer`, `/approve`, `/retry`, `/abort`,
+  `/cancel`) steer a live run, so in a group chat they are accepted only from those senders unless `directInGroups` is `anyone`; a direct
+  message to the bot always works.
 
 ## Behavior notes
 

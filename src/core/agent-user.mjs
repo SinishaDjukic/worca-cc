@@ -14,7 +14,7 @@
 // as the server, as on every local install.
 import { spawn, spawnSync } from 'node:child_process';
 import { chmodSync, chownSync, readdirSync, statSync } from 'node:fs';
-import { delimiter, isAbsolute, join } from 'node:path';
+import { delimiter, dirname, isAbsolute, join } from 'node:path';
 
 const USER_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
 
@@ -25,6 +25,14 @@ export function agentIdentity(env = process.env) {
   if (!USER_RE.test(user) || !isAbsolute(home)) return null;
   const gid = Number.parseInt(env.WORCA_AGENT_GID, 10);
   return { user, home, gid: Number.isInteger(gid) && gid > 0 ? gid : null };
+}
+
+/** { user, home, gid } for plugin connector and chat-channel children when the container has a
+ *  plugin user (WORCA_PLUGIN_USER / WORCA_PLUGIN_HOME, docker/entrypoint.sh), else null. Its own
+ *  uid and HOME: it reads plugin code through the shared group, but neither worca's home (plugin
+ *  secrets, settings, database) nor the agents' HOME. Pure: reads only `env`. */
+export function pluginIdentity(env = process.env) {
+  return agentIdentity({ WORCA_AGENT_USER: env.WORCA_PLUGIN_USER, WORCA_AGENT_HOME: env.WORCA_PLUGIN_HOME, WORCA_AGENT_GID: env.WORCA_AGENT_GID });
 }
 
 /** An absolute path for `bin` from PATH (sudo's secure_path must not change which binary runs). */
@@ -89,4 +97,30 @@ export function shareWithAgent(dir, id) {
       chmodSync(p, 0o640);
     }
   } catch { /* the agent reports what it cannot read */ }
+}
+
+/** Hand one run's own folder to its owner's agent (G19): the pool user's own group (`id.runGid`,
+ *  which only worca and that user are in) with setgid 2770, so what either writes inside keeps the
+ *  group and no other person's agent can open it; the parent becomes sticky, so an agent can
+ *  neither rename nor delete a run folder it does not own. A no-op without a run group (no pool,
+ *  the shared agent user, a local install). Best effort, like shareWithAgent. */
+/** Give one FILE to an agent user's own group (`id.runGid`, agent-pool.mjs: worca and that user only), mode 0640:
+ *  the relayed Ask turn's MCP config, which holds its relay token (V10). Without a pool group the file keeps the
+ *  shared group. Never throws. */
+export function claimFileForAgent(file, id, fsOps = { chownSync, chmodSync }) {
+  if (!id || !Number.isInteger(id.runGid)) return;
+  try {
+    fsOps.chownSync(file, -1, id.runGid);
+    fsOps.chmodSync(file, 0o640);
+  } catch { /* the file keeps the shared group: as before */ }
+}
+
+export function claimForAgent(dir, id, fsOps = { chownSync, chmodSync, statSync }) {
+  if (!id || !Number.isInteger(id.runGid)) return;
+  try {
+    fsOps.chownSync(dir, -1, id.runGid);
+    fsOps.chmodSync(dir, 0o2770);
+    const parent = dirname(dir);
+    fsOps.chmodSync(parent, (fsOps.statSync(parent).mode & 0o7777) | 0o1000);
+  } catch { /* the folder keeps the shared group: as before */ }
 }

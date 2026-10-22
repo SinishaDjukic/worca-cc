@@ -29,7 +29,7 @@ const ENV_KEYS = ['WORCA_MOCK', 'ORCH_MOCK', 'WORCA_BROKER_URL', 'WORCA_BROKER_S
 async function brokerFor(mode) {
   const env = { WORCA_BROKER_MODE: mode, WORCA_BROKER_SECRET: SECRET, WORCA_BROKER_HOST: '127.0.0.1', WORCA_BROKER_PORT: '0', WORCA_BROKER_UI_PORT: '0' };
   if (mode === 'single') env.WORCA_BROKER_KEY_ANTHROPIC = GOOD_KEY;
-  else Object.assign(env, { WORCA_BROKER_VAULT_KEY: Buffer.alloc(32, 7).toString('base64'), WORCA_BROKER_PUBLIC_URL: 'https://keys.example.com', WORCA_IDENTITY_HEADER: 'x-email' });
+  else Object.assign(env, { WORCA_BROKER_VAULT_KEY: Buffer.alloc(32, 7).toString('base64'), WORCA_BROKER_PUBLIC_URL: 'https://keys.example.com', WORCA_IDENTITY_HEADER: 'x-email', WORCA_IDENTITY_TRUSTED_PROXIES: '127.0.0.1' });
   const { config, errors } = readBrokerConfig(env);
   assert.deepEqual(errors, []);
   return startBroker({ config: { ...config, uiPort: 0 }, slots: mergeSlots(builtinSlots(), [{ id: 'anthropic', upstream: up.url }]), log: () => {} });
@@ -123,6 +123,14 @@ test('runClaude forwards billTo, spawnKind, runId and threadId to the spawn toke
   });
   const row = single.store.db.prepare('SELECT bill_to, kind, run_id, thread_id FROM tokens ORDER BY created_at DESC LIMIT 1').get();
   assert.deepEqual({ ...row }, { bill_to: 'ada@acme.dev', kind: 'aux', run_id: 'run_gate1', thread_id: 'ask_gate1' });
+});
+
+test('a spawn with a cost cap (an Ask turn) gets the same cap as its token budget (G7)', POSIX, async () => {
+  useBroker(single);
+  await runClaude({ bin: stub, prompt: 'hi', model: 'claude-sonnet-5', spawnKind: 'ask', maxBudgetUsd: 2.5 });
+  assert.equal(single.store.db.prepare('SELECT budget_usd FROM tokens ORDER BY created_at DESC LIMIT 1').get().budget_usd, 2.5);
+  await runClaude({ bin: stub, prompt: 'hi', model: 'claude-sonnet-5', spawnKind: 'aux' });
+  assert.equal(single.store.db.prepare('SELECT budget_usd FROM tokens ORDER BY created_at DESC LIMIT 1').get().budget_usd, null, 'no cap, no budget');
 });
 
 test('a model routed straight to a provider is refused (keys must not bypass the broker)', POSIX, async () => {

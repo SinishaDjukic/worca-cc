@@ -1,6 +1,6 @@
 {
   "name": "teams-chat",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Two-way Microsoft Teams channel via Bot Framework: pipeline notifications + chat commands (webhook ingress through a tunnel)",
   "license": "MIT",
   "engines": { "worca-cc-api": ">=2 <3" },
@@ -60,6 +60,20 @@
           "type": "text",
           "label": "Allowed conversation IDs (commands)",
           "help": "Comma-separated conversation IDs allowed to send commands. EMPTY = nobody: anyone in an allowed conversation controls worca-cc."
+        },
+        {
+          "key": "allowedUserIds",
+          "type": "text",
+          "label": "Allowed user IDs (optional)",
+          "help": "Comma-separated Entra object IDs (aadObjectId) of the people. When set, only these people may send commands, even in an allowed chat; others are ignored. EMPTY = everyone in an allowed chat. In a group chat, /direct and the answer commands are only accepted from these people."
+        },
+        {
+          "key": "directInGroups",
+          "type": "select",
+          "label": "/direct and answers in group chats",
+          "default": "listed users",
+          "options": ["listed users", "anyone"],
+          "help": "/direct, /answer, /approve, /retry, /abort and /cancel steer a live run. listed users (default): in a group chat, only Allowed user IDs may use them (nobody when that is empty); direct messages to the bot always work. anyone: every member of an allowed group chat may."
         }
       ]
     }

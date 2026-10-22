@@ -370,12 +370,15 @@ export function createCommandRouter({ actions, chatContext, logger = () => {}, o
       return reply(`Could not resume \`${runRef(t.row.id)}\`${on}: ${why || 'unknown error'}`, 'error');
     },
 
-    approve: async (env) => answerDecision(env, 'approve'),
-    retry: async (env) => answerDecision(env, 'retry'),
-    abort: async (env) => answerDecision(env, 'abort'),
-    cancel: async (env) => answerDecision(env, 'cancel'),
+    approve: async (env) => groupRefusal(env, 'approve') || answerDecision(env, 'approve'),
+    retry: async (env) => groupRefusal(env, 'retry') || answerDecision(env, 'retry'),
+    abort: async (env) => groupRefusal(env, 'abort') || answerDecision(env, 'abort'),
+    cancel: async (env) => groupRefusal(env, 'cancel') || answerDecision(env, 'cancel'),
 
-    answer: async ({ chatKey, args, actor }) => {
+    answer: async (env) => {
+      const refused = groupRefusal(env, 'answer');
+      if (refused) return refused;
+      const { chatKey, args, actor } = env;
       const t = resolveTarget(args[0] && args[0].startsWith('*') ? args[0] : '', scopedRuns(chatKey), [], { wantLive: true });
       if (t.error) return t.error;
       const pq = actions.pendingQuestion(t.run.runId);
@@ -474,7 +477,10 @@ export function createCommandRouter({ actions, chatContext, logger = () => {}, o
     // /direct [*ref] <free text> — a non-blocking direction for a live run. The
     // text is sliced off msg.text, not rebuilt from args: parseCommand collapses
     // whitespace and drops @mentions, and a direction must arrive verbatim.
-    direct: async ({ chatKey, args, msg, platform }) => {
+    direct: async (env) => {
+      const { chatKey, args, msg, platform } = env;
+      const refused = groupRefusal(env, 'direct');
+      if (refused) return refused;
       // A ref is only a ref if it NAMES one of this chat's live runs. Shape alone
       // is not enough to tell one from ordinary prose: `*never*` has a trailing
       // asterisk, but `*please remove* the roadmap` opens with a bare `*please`
@@ -611,6 +617,16 @@ export function createCommandRouter({ actions, chatContext, logger = () => {}, o
     },
   };
 
+  // G18: the commands that steer a live run (/direct, and the answers that decide what it does next) are
+  // refused in a group chat unless the sender is named in allowedUserIds, or the channel opts in
+  // (directInGroups: anyone): being a member of an allowed group is not enough. A chat the worker did not
+  // mark as 1:1 (meta.isGroup !== false) counts as a group. The one rule for all of them.
+  function groupRefusal({ msg, plugin, channelConfig, guard }, command) {
+    if (msg?.meta?.isGroup === false || guard?.isListedSender(msg?.userId) || channelConfig?.directInGroups === 'anyone') return null;
+    return reply(`\`/${command}\` is off in group chats. Send it to the bot in a direct message, `
+      + `or add your user ID (\`${msg?.userId}\`) to **Allowed user IDs** in worca → Marketplace → ${plugin} → Settings.`, 'warning');
+  }
+
   async function answerDecision({ chatKey, args, actor }, verb) {
     const t = resolveTarget(args[0], scopedRuns(chatKey), [], { wantLive: true });
     if (t.error) return t.error;
@@ -658,13 +674,17 @@ export function createCommandRouter({ actions, chatContext, logger = () => {}, o
     async handleIncoming({ plugin, channelId, platform, channelConfig, msg }) {
       const guard = createAllowlistGuard(parseIdList(channelConfig?.allowedChatIds), {
         debug: (m) => logger('info', m),
-      });
+      }, parseIdList(channelConfig?.allowedUserIds));
       const parsed = parseCommand(msg.text);
       if (!guard.isAllowed({ platform, chatId: msg.chatId })) {
         // Chatter in a watched group is never a refusal; a command is — tell the
         // observer (Settings shows it) and maybe the chat (refuse()).
         return parsed ? refuse({ plugin, channelId, platform, channelConfig, msg }, parsed.command) : null;
       }
+      // An allowed chat that names its senders (allowedUserIds): anyone else in it is
+      // ignored without a reply. The refusal hint names the CHAT to add, which is
+      // already there, and a reply would tell a stranger the bot listens.
+      if (!guard.isSenderAllowed({ platform, chatId: msg.chatId, userId: msg.userId })) return null;
       if (!parsed) return null; // non-commands are never interpreted
       const handler = Object.hasOwn(handlers, parsed.command) ? handlers[parsed.command] : null;
       const chatKey = `${platform}:${msg.chatId}`;
@@ -674,7 +694,7 @@ export function createCommandRouter({ actions, chatContext, logger = () => {}, o
       const meta = msg.meta && typeof msg.meta === 'object' ? msg.meta : {};
       const actor = chatActor({ platform, userName: meta.username || meta.name || meta.userName || null, userId: msg.userId });
       try {
-        return await handler({ chatKey, platform, plugin, channelId, msg, args: parsed.args, actor });
+        return await handler({ chatKey, platform, plugin, channelId, channelConfig, guard, msg, args: parsed.args, actor });
       } catch (err) {
         logger('error', `chat command /${parsed.command} failed: ${err?.message || err}`);
         return reply(`Command failed: ${String(err?.message || err).slice(0, 200)}`, 'error');

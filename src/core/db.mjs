@@ -63,7 +63,10 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 70;
+export const SCHEMA_VERSION = 71;
+
+/** store_meta row holding the install's default guardrail set id (JSON string). */
+export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -1904,6 +1907,15 @@ function applySchemaV69(db) {
   } catch { /* never fail the migration on the backfill */ }
 }
 
+/** v71 (G13): a fresh install starts runs on Normal guardrails (guardrail-store.mjs
+ *  defaultGuardrailSetId). An install that existed before keeps today's default, so
+ *  it is recorded as Permissive here; a value already there is kept. */
+function applySchemaV71(db, { existing }) {
+  if (!existing || !hasSqliteTable(db, 'store_meta')) return;
+  db.prepare('INSERT OR IGNORE INTO store_meta (key, kind, data) VALUES (?, ?, ?)')
+    .run(GUARDRAILS_DEFAULT_META_KEY, 'setting', JSON.stringify('permissive'));
+}
+
 /** applySchemaV52's column guard (the presentationSeedable precedent). */
 function memberPrBackfillable(db) {
   if (!hasSqliteTable(db, 'pipelines') || !hasSqliteTable(db, 'pipeline_member_prs')) return false;
@@ -2371,6 +2383,7 @@ export function migrate(db) {
     if (current < 68) db.exec(RUN_LABELS_DDL);   // v68 run labels
     if (current < 69) applySchemaV69(db);
     // v70: ask_attachments.source_run_id / source_project_key / source_rel (Show in folder's fallback) — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    if (current < 71) applySchemaV71(db, { existing: current >= 1 });  // G13 guardrail default
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

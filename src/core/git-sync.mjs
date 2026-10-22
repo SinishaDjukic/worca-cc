@@ -24,6 +24,7 @@ import { parseRemoteUrl, prBaseBranch } from './git-info.mjs';
 import { forgeOf } from './forge.mjs';
 import { mapWithCap } from './fanout.mjs';
 import { gitAvailable, gitMissingResult } from './git-available.mjs';
+import { guardedGitEnv } from './git-guard.mjs';
 
 export const INTERACTIVE_TTL_MS = 45_000;
 export const INTERACTIVE_TIMEOUT_MS = 8_000;
@@ -50,13 +51,12 @@ const QUIET_ENV = Object.freeze({ LC_ALL: 'C', GIT_TERMINAL_PROMPT: '0', GIT_ASK
  *  Windows (v8): no setsid. Git for Windows' ssh can still prompt on an inherited console; on a
  *  timeout the whole tree is ended with `taskkill /T /F`, as script-runner.mjs:264-272 does. */
 const NETWORK_CMDS = new Set(['fetch', 'merge', 'merge-tree']);
-/** Every git-sync call runs with an empty hooks directory (metrics/sync.mjs hookFreeArgs, decision 33):
- *  `reference-transaction` fires on fetch / update-ref / branch and `post-merge` on merge --ff-only,
- *  with the spawn env — worca's GitHub credential included. Run worktrees share the project's
- *  .git/hooks, so an agent could plant one there. On POSIX the hooks path is the null device, which
- *  can hold no hooks (a directory could be created and filled later); on Windows, a worca-home
- *  folder that does not exist simply has no hooks. The shared .git/config is just as writable, so
- *  a planted core.fsmonitor command (run by `git status`) and http.sslVerify=false are overridden too. */
+/** Every git-sync call runs with git-guard.mjs's env (security G2): `reference-transaction` fires on
+ *  fetch / update-ref / branch and `post-merge` on merge --ff-only, with the spawn env — worca's GitHub
+ *  credential included — and run worktrees share the project's .git/hooks and .git/config, so an agent
+ *  could plant a hook, a core.fsmonitor command or a smudge filter there. hookFreeArgs is the same
+ *  hooks-off set for a repository worca made itself (marketplace-publish's scratch clone): on POSIX
+ *  the null device, which can hold no hooks; on Windows, a worca-home folder that does not exist. */
 export function hookFreeArgs() {
   let dir = devNull;
   if (process.platform === 'win32') { try { dir = join(worcaHome(), 'no-hooks'); } catch { /* devNull */ } }
@@ -72,15 +72,17 @@ function trackGroup(pid) {
   exitHooked = true;
   process.on('exit', () => { for (const p of liveGroups) { try { process.kill(-p, 'SIGKILL'); } catch { /* gone */ } } });
 }
-function defaultRun(args, { cwd, timeoutMs = LOCAL_TIMEOUT_MS, env = null } = {}) {
+async function defaultRun(args, { cwd, timeoutMs = LOCAL_TIMEOUT_MS, env = null } = {}) {
+  let guarded;
+  try { guarded = await guardedGitEnv(cwd, { env: { ...(env || stripHostCredentials(process.env)), ...QUIET_ENV } }); }
+  catch (err) { return { ok: false, stdout: '', stderr: err.message, code: -1, timedOut: false }; }
   return new Promise((done) => {
     const network = NETWORK_CMDS.has(args[0]);
     const win = process.platform === 'win32';
     const group = network && !win;
     let child;
     try {
-      child = spawn('git', [...hookFreeArgs(), ...args], { cwd, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: group,
-        env: { ...(env || stripHostCredentials(process.env)), ...QUIET_ENV } });
+      child = spawn('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: group, env: guarded });
     } catch (err) { done({ ok: false, stdout: '', stderr: err.message, code: -1, timedOut: false }); return; }
     if (group && child.pid) trackGroup(child.pid);
     let stdout = '', stderr = '', settled = false, timer = null;

@@ -42,6 +42,11 @@ import { validateProjectProposal } from './project-deps.mjs';
 import { validateWorkspaceChange } from './workspace-deps.mjs';
 import { validateActionsChange } from './actions-deps.mjs';
 import { actionsProposalInput } from './actions-proposal.mjs';
+import { scriptApprovalCard } from './script-approval.mjs';
+import { defaultScriptDeps } from './script-deps.mjs';
+import { claimFileForAgent } from '../agent-user.mjs';
+import { agentIdentityFor } from '../agent-pool.mjs';
+import { currentOwner } from '../billing.mjs';
 import { createWebValidator } from './web-proposal.mjs';
 import { validateScheduleChange } from './schedule-deps.mjs';
 import { lookupTask } from './source-deps.mjs';
@@ -249,6 +254,8 @@ class AskTurn extends EventEmitter {
       validateWorkspaceChange: deps.validateWorkspaceChange ?? validateWorkspaceChange,
       validateActionsChange: deps.validateActionsChange ?? validateActionsChange,
       // The web card's authoritative check runs against THIS turn's resolved access (allowlist + team cap).
+      claimAgentFile: deps.claimAgentFile ?? ((file) => claimFileForAgent(file, agentIdentityFor(currentOwner()))),
+      readScript: deps.readScript ?? ((key) => defaultScriptDeps({ threadId: this.threadId }).scripts.read(key)),
       validateWebProposal: deps.validateWebProposal ?? ((input) => createWebValidator({
         allowed: () => (this.web ? this.web.allowedDomains : []), teamCap: () => (this.web ? this.web.teamCap ?? null : null) })(input)),
       // P4: the scope card's parent re-check (SEAMS S22/S45: the card shows P1a's display path; listProjects rows carry none).
@@ -707,6 +714,21 @@ class AskTurn extends EventEmitter {
     this._persistBlocks();
   }
 
+  /** G6: save_script / a draft test_script answered pending in the child (nothing written, nothing run): the card that
+   *  shows the user the program, minted from the tool INPUT. The card route runs or saves it behind their click. */
+  async _onScriptApproval(name, input) {
+    // A run by key: the card shows the saved script as the parent reads it, never what the child said.
+    const key = input && typeof input === 'object' && typeof input.key === 'string' ? input.key.trim() : '';
+    let saved = null;
+    if (name === 'test_script' && !(input && input.draft) && key) {
+      try { saved = await this.deps.readScript(key); } catch { saved = null; }
+    }
+    const r = scriptApprovalCard(name, input, { pin: this.pinnedScope, saved });
+    this.reducer.addBlock(r.ok ? { kind: 'card', id: this.deps.newAskId('card'), state: 'proposed', card: r.card }
+      : { kind: 'notice', text: `Script card not shown: ${r.error}` });
+    this._persistBlocks();
+  }
+
   /** propose_web_access RESULT: the clone card's split — a child {ok:false} already reached the model as text. */
   async _onWebProposal(input, text, isError) {
     if (isError || !this.web) return;
@@ -925,6 +947,7 @@ class AskTurn extends EventEmitter {
       onWorkspaceProposal: ({ input, text, isError }) => this._onWorkspaceProposal(input, text, isError),
       onActionsProposal: ({ input, text, isError }) => this._onActionsProposal(input, text, isError),
       onWebProposal: ({ input, text, isError }) => this._onWebProposal(input, text, isError),
+      onScriptApproval: ({ name, input }) => this._onScriptApproval(name, input),
       onScopeSwitch: this.composer ? null : ({ input, text, isError }) => this._onScopeSwitch(input, text, isError),
       // pause / resume / skip / mark-read in the child → the server's schedules-changed frames.
       onScheduleMutation: (e) => { try { this.deps.onScheduleMutation(e); } catch { /* a broken sink never breaks the turn */ } },
@@ -1352,11 +1375,13 @@ class AskTurn extends EventEmitter {
         // MCP registry §9.2: the copies ride after `worca` — refs only (`${MCPSECRET_…}`); the values go in spawnEnv.
         JSON.stringify(d.buildMcpConfig({ homeBase, threadId: this.threadId, serverPath: d.serverPath, git: d.gitAvailable(), ...(claudeAuth ? { claudeAuth } : {}), ...(this.reader ? { reader: this.reader } : {}), ...(this.relay ? { relay: this.relay } : {}), ...(this.web ? { web: this.web } : {}), ...(this.mcp ? { extraServers: this.mcp.servers } : {}), ...(this.commands ? { commands: this.commands } : {}), ...(this.lockedDown ? { engine: this.engine } : {}), ...(skillRoot ? { skillRoot } : {}) }), null, 2),
         // Never a key value (webKeyVar: the key rides the process env). A relayed turn runs as
-        // the person's agent user (agent-pool.mjs), which reads this file through its group: the
-        // scratch dir is setgid worca-share (2770), so 0640 reaches the agent users and nobody
-        // else. It carries this turn's relay token, which that agent must present anyway.
+        // the person's agent user (agent-pool.mjs), which reads this file through its group. It
+        // carries this turn's relay token: with a pool the file goes to that user's own group (worca
+        // and that user only), so another person's agent or plugin code in worca-share cannot read
+        // it (V10); the scratch dir is sticky (docker/entrypoint.sh), so nobody else replaces it.
         { encoding: 'utf8', mode: this.relay ? 0o640 : 0o600 },
       );
+      if (this.relay) d.claimAgentFile(mcpConfigPath);
       // One 30-minute budget for the whole turn, retry included. The timedOut
       // flag and abort() run in ONE synchronous callback, so R-C always reads
       // the flag set (the awaiting continuation resumes a microtask later);

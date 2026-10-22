@@ -17,7 +17,7 @@ import {
 } from '../src/core/plugin-repo.mjs';
 import { ADO_GIT_CREDENTIAL_HELPER } from '../src/core/azure-credentials.mjs';
 import { withEnv } from './helpers/with-env.mjs';
-import { writePluginsLock } from '../src/core/plugins-lock.mjs';
+import { writePluginsLock, pluginsRoot } from '../src/core/plugins-lock.mjs';
 
 const WIN_SYMLINK = { skip: process.platform === 'win32' ? 'creating symlinks needs a privilege (Developer Mode / admin) on Windows' : false };
 
@@ -391,4 +391,15 @@ test('discoverAtCommit: discovery at a given commit of a checkout — index auth
   assert.deepEqual(atFirst.marketplace, { name: 'M', description: '' });
   const atHead = await discoverAtCommit(gitDirAbs, await git(root, 'rev-parse', 'HEAD'));
   assert.equal(atHead.discovered[0].manifest.version, '0.1.1');
+});
+
+test('exportVersion refuses a revision whose version dir would leave versions/ (G8)', async () => {
+  const { root, sha } = await makeRepo('traverse', { 'worca-cc-plugin.json': MANIFEST('trav-plugin'), 'index.mjs': 'export default () => ({});\n' });
+  writePluginsLock({ canary: { repo: root, subdir: '', pinnedSha: sha, version: '0.1.0', enabled: true } });
+  const lockFile = join(pluginsRoot(), 'plugins.lock.json');
+  for (const rev of ['../../.', '..', '.', 'a/../..', '-c', '']) {
+    await assert.rejects(exportVersion('trav-plugin', rev, { repoUrl: root }), /invalid revision/, JSON.stringify(rev));
+    assert.equal(existsSync(lockFile), true, `plugins store untouched by ${JSON.stringify(rev)}`);
+  }
+  assert.equal((await exportVersion('trav-plugin', sha, { repoUrl: root })).versionDir, join(pluginsRoot(), 'trav-plugin', 'versions', sha.slice(0, 7)));
 });

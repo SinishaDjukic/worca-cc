@@ -139,6 +139,7 @@ test('PUT /api/runs/:id/tags retags, writes one audit row with the actor, and ch
   // resolveIdentity reads the env at request time; restore it so later tests keep the default identity.
   const prev = process.env.WORCA_IDENTITY_HEADER;
   process.env.WORCA_IDENTITY_HEADER = 'X-Forwarded-Email';
+  process.env.WORCA_IDENTITY_TRUSTED_PROXIES = '127.0.0.1,::1';   // X1: the in-process server's callers are loopback
   t.after(() => { if (prev === undefined) delete process.env.WORCA_IDENTITY_HEADER; else process.env.WORCA_IDENTITY_HEADER = prev; });
   const a = await startTagged({ tags: ['client:acme'] });
   const b = await startTagged({ prompt: 'y', tags: ['client:acme'] });
@@ -250,6 +251,7 @@ const clear = async () => {
 const withIdentity = (t) => {
   const prev = process.env.WORCA_IDENTITY_HEADER;
   process.env.WORCA_IDENTITY_HEADER = 'X-Forwarded-Email';
+  process.env.WORCA_IDENTITY_TRUSTED_PROXIES = '127.0.0.1,::1';   // X1: the in-process server's callers are loopback
   t.after(() => { if (prev === undefined) delete process.env.WORCA_IDENTITY_HEADER; else process.env.WORCA_IDENTITY_HEADER = prev; });
 };
 const postAs = (body, email) => fetch(`${base}/api/run`, { method: 'POST', headers: { ...JSONH, 'x-forwarded-email': email },

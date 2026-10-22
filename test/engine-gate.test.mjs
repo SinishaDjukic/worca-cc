@@ -35,7 +35,7 @@ let prevMock;
 beforeEach(() => { prevMock = process.env.WORCA_MOCK; delete process.env.WORCA_MOCK; });
 afterEach(() => { if (prevMock === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = prevMock; });
 
-const orch = (claude = {}) => createOrchestrator({ projectDir: '/tmp/gate-proj', claude: { mock: true, ...claude } });
+const orch = (claude = {}) => createOrchestrator({ projectDir: '/tmp/gate-proj', guardrailsId: 'permissive', claude: { mock: true, ...claude } });
 const withNodes = (o, nodes) => { o.resolved = { nodeCtx: nodes }; return o; };
 const RULES = { deny: ['Bash(curl:*)', 'Read(.env*)'] };   // a command codex can hold, a path it cannot
 const CMD_RULES = { deny: ['Bash(curl:*)', 'Bash(git push)', 'WebSearch'] };
@@ -73,7 +73,7 @@ test('codex holds command rules only in part: a set of them needs --allow-unguar
   const o = withNodes(orch({ engine: 'codex' }), {});
   o.guardrailPermissionRules = CMD_RULES;
   o.guardrailsId = 'cmds';
-  assert.throws(() => o._engineGate(), new RegExp(`guardrail set "cmds" has command rules this engine holds only in part \\(Bash\\(curl:\\*\\), Bash\\(git push\\)\\): ${REACH.replace(/&/g, '&')} — run it with the Permissive set, or pass --allow-unguarded-engine to run it with them as a partial guard`));
+  assert.throws(() => o._engineGate(), new RegExp(`guardrail set "cmds" has command rules this engine holds only in part \\(Bash\\(curl:\\*\\), Bash\\(git push\\)\\): ${REACH.replace(/&/g, '&')} — run it with --guardrails permissive, or pass --allow-unguarded-engine to run it with them as a partial guard`));
   const allowed = withNodes(orch({ engine: 'codex', allowUnguardedEngine: true }), {});
   allowed.guardrailPermissionRules = CMD_RULES;
   allowed.guardrailsId = 'cmds';
@@ -364,7 +364,7 @@ test('a codex run\'s own writable roots pass the Worca-home check: they live in 
     producer: async (ctx) => { look(ctx); return { status: 'ok', summary: 'ok' }; },
     verifier: async (ctx) => { look(ctx); return { status: 'ok', issues: [], review: { issues: [] }, summary: '' }; },
   };
-  const res = await engine.create({ projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true, engine: 'codex' }, runners }).run();
+  const res = await engine.create({ projectDir: dir, prompt: 'demo', auto: true, guardrailsId: 'permissive', claude: { mock: true, engine: 'codex' }, runners }).run();
   assert.equal(res.status, 'done', res.error);
   assert.ok(seen.length > 1 && seen.some((s) => s.roots.some((r) => r.startsWith(worcaHome()))), JSON.stringify(seen));
   for (const s of seen) assert.deepEqual(writableRootsInWorcaHome(s), [], JSON.stringify(s));
@@ -460,12 +460,12 @@ test('the MCP layer refusal runs at run start and before a resume touches the pa
     verifier: async () => ({ status: 'ok', issues: [], review: { issues: [] }, summary: '' }),
   });
   const ok = () => ({ status: 'ok', summary: 'ok' });
-  const refused = await withCopies(engine.create({ projectDir: dir, prompt: 'demo', auto: true, claude, runners: runners(ok) })).run();
+  const refused = await withCopies(engine.create({ projectDir: dir, prompt: 'demo', auto: true, guardrailsId: 'permissive', claude, runners: runners(ok) })).run();
   assert.equal(refused.status, 'error');
   assert.match(refused.error, /engine codex: this run attaches MCP servers codex cannot attach — remote, and codex attaches stdio servers only: sentry_billing/);
   // A paused codex run whose layer gained a copy since: the resume is refused and the row stays paused.
   let ref = null;
-  ref = engine.create({ projectDir: dir, prompt: 'demo', auto: true, claude, runners: runners((ctx) => {
+  ref = engine.create({ projectDir: dir, prompt: 'demo', auto: true, guardrailsId: 'permissive', claude, runners: runners((ctx) => {
     queueMicrotask(() => ref.pause());
     return new Promise((_r, rej) => {
       const onAbort = () => { const e = new Error('aborted'); e.name = 'AbortError'; rej(e); };
@@ -483,7 +483,7 @@ test("the project's own .claude/settings.json deny rules refuse a codex run too,
   const dir = tmp();
   execSync('mkdir -p .claude', { cwd: dir });
   writeFileSync(join(dir, '.claude', 'settings.json'), JSON.stringify({ permissions: { deny: ['Bash(rm:*)', 'Read(.env)'], allow: ['Bash(ls:*)'] } }));
-  const mk = (claude) => withNodes(createOrchestrator({ projectDir: dir, claude: { mock: true, engine: 'codex', ...claude } }), {});
+  const mk = (claude) => withNodes(createOrchestrator({ projectDir: dir, guardrailsId: 'permissive', claude: { mock: true, engine: 'codex', ...claude } }), {});
   const o = mk({});
   o._engineProjectRules = await o._engineChecks(() => true);
   assert.deepEqual(o._engineProjectRules, { deny: ['Bash(rm:*)', 'Read(.env)'] }, 'deny only: allow is never lifted');
@@ -502,7 +502,7 @@ test("a single-project codex run's project deny rules reach every codex spawn an
   execSync('git init -q -b main && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init', { cwd: dir });
   execSync('mkdir -p .claude', { cwd: dir });
   writeFileSync(join(dir, '.claude', 'settings.json'), JSON.stringify({ permissions: { deny: ['Bash(git push:*)'] } }));
-  const make = (claude) => engine.create({ projectDir: dir, prompt: 'x', auto: true, branch: { source: 'main' }, claude: { mock: true, ...claude } });
+  const make = (claude) => engine.create({ projectDir: dir, prompt: 'x', auto: true, branch: { source: 'main' }, guardrailsId: 'permissive', claude: { mock: true, ...claude } });
   // Without the consent the Permissive set's run is refused: the command rule holds only in part.
   assert.deepEqual(await make({ engine: 'codex' }).engineStartRefusal(), {
     error: `engine codex: the project's .claude/settings.json denies Bash(git push:*), which this engine holds only in part: ${REACH} — pass --allow-unguarded-engine to run it with them as a partial guard`,
@@ -540,13 +540,13 @@ test("a real (non-mock) codex run checks the engine's binary and sign-in before 
 
 test('engineStartRefusal answers before a run exists, and says when the consent would lift it', async () => {
   const dir = tmp();
-  const make = (claude, extra = {}) => createOrchestrator({ projectDir: dir, ...extra, claude: { mock: true, ...claude } });
+  const make = (claude, extra = {}) => createOrchestrator({ projectDir: dir, guardrailsId: 'permissive', ...extra, claude: { mock: true, ...claude } });
   assert.equal(await make({}).engineStartRefusal(), null, 'Claude: nothing to check');
   assert.equal(await make({ engine: 'codex' }).engineStartRefusal(), null, 'the Permissive set has no rules');
 
   const strict = make({ engine: 'codex' }, { guardrailsId: 'normal' });
   assert.deepEqual(await strict.engineStartRefusal(), {
-    error: 'engine codex: guardrail set "normal" has permission rules this engine cannot enforce (Read(.env*), Edit(.env*), Read(*.pem) (+28 more)) — run it with the Permissive set, or pass --allow-unguarded-engine to run it without them',
+    error: 'engine codex: guardrail set "normal" has permission rules this engine cannot enforce (Read(.env*), Edit(.env*), Read(*.pem) (+28 more)) — run it with --guardrails permissive, or pass --allow-unguarded-engine to run it without them',
     overridable: true,
   });
   assert.equal(await make({ engine: 'codex', allowUnguardedEngine: true }, { guardrailsId: 'normal' }).engineStartRefusal(), null);
@@ -625,7 +625,7 @@ test('engineStartRefusal logs nothing: a preflight warning is left to run()', PO
   const bin = join(dir, 'codex-vague');
   writeFileSync(bin, '#!/bin/sh\necho "hmm"\nexit 0\n');
   chmodSync(bin, 0o755);
-  const o = createOrchestrator({ projectDir: dir, claude: { engine: 'codex', bin } });
+  const o = createOrchestrator({ projectDir: dir, guardrailsId: 'permissive', claude: { engine: 'codex', bin } });
   const logs = [];
   o.on('log', (l) => logs.push(l));
   assert.equal(await o.engineStartRefusal(), null);
@@ -989,7 +989,7 @@ test('stopPaused registers the Cursor files even when memory never mounted, and 
     execSync('git init -q && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init', { cwd: dir });
     let orchRef = null;
     const o1 = createOrchestrator({
-      projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true, engine: 'cursor' },
+      projectDir: dir, prompt: 'demo', auto: true, guardrailsId: 'permissive', claude: { mock: true, engine: 'cursor' },
       runners: {
         producer: async (ctx) => {
           queueMicrotask(() => orchRef.pause());

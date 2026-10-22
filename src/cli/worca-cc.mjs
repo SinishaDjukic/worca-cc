@@ -152,6 +152,7 @@ function parseArgs(argv) {
     '--tag',
     '--model',
     '--engine',
+    '--guardrails',
     '--permission-mode',
     '--workflow',
     '--install',
@@ -171,6 +172,7 @@ function parseArgs(argv) {
     '--tag': 'tags',
     '--model': 'model',
     '--engine': 'engine',
+    '--guardrails': 'guardrailsId',
     '--permission-mode': 'permissionMode',
     '--workflow': 'workflow',
     '--install': 'install',
@@ -354,6 +356,8 @@ Options:
   --model <m>              Claude model id
   --engine <name>          Agent harness for the pipeline's agent nodes: claude (default) | codex (beta) | copilot (beta) | cursor (beta)
   --allow-unguarded-engine Run on an engine that cannot fully enforce the guardrail set's permission rules
+  --guardrails <id>        Guardrail set the run uses: permissive | normal | secure (Strict) | a saved set's id
+                           (default: the install's default set, Normal on a new install)
   --permission-mode <m>    Claude permission mode: default | acceptEdits | plan |
                            bypassPermissions (default acceptEdits)
   --workflow <id>          Saved pipeline template to run (default: wf_default — the built-in graph)
@@ -2175,7 +2179,7 @@ async function cmdPlugin(argv) {
           out('aborted (still pinned)');
           return 1;
         }
-        await store.updatePlugin(name);
+        await store.updatePlugin(name, { expectedSha: cand.candidateSha });   // exactly the commit shown above (G9)
         out(`updated ${name} to ${cand.candidateSha.slice(0, 7)}`);
         return 0;
       }
@@ -3510,6 +3514,11 @@ async function main() {
       fail(`workflow "${flags.workflow}" is started from the worca app (POST /api/run with shape), not the CLI`);
     }
   }
+  // --guardrails: an unknown set would silently run on Permissive (_resolveGuardrails' fallback).
+  if (flags.guardrailsId) {
+    const { readGuardrailSet } = await import('../core/guardrail-store.mjs');
+    if (!(await readGuardrailSet(flags.guardrailsId))) fail(`unknown guardrail set "${flags.guardrailsId}" (see the Guardrails view for the ids)`);
+  }
   {
     const { validateMemoryScope } = await import('../core/memory-sync.mjs');
     const reason = validateMemoryScope({ workflowId: flags.workflow || 'wf_default', memoryScope: flags.memoryScope, isWorkspace: false });
@@ -3548,6 +3557,7 @@ async function main() {
     workflowId: flags.workflow || undefined,
     template: row,
     memoryScope: flags.memoryScope || undefined,
+    ...(flags.guardrailsId ? { guardrailsId: flags.guardrailsId } : {}),
     branch: { source: flags.sourceBranch, feature: flags.featureBranch, ...(flags.onSourceBranch ? { sameAsSource: true } : {}) },
     claude: {
       permissionMode: flags.permissionMode,

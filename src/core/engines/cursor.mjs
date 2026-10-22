@@ -24,7 +24,9 @@
 // - unverified: permissions come from `<cwd>/.cursor/cli.json` `permissions.{allow,deny}` with `Shell(cmd)` (matched
 //   on the command's first word), `Read(glob)` and `Write(glob)` tokens, deny winning, merged with the user's
 //   ~/.cursor/cli-config.json; MCP servers from `<cwd>/.cursor/mcp.json` (`mcpServers`, `${env:NAME}` expanded from
-//   the process env). No flag is known that makes Cursor ignore the user-level files (codex has --ignore-user-config).
+//   the process env). No flag is known that makes Cursor ignore the user-level files (codex has --ignore-user-config),
+//   nor one that reads the project rules from outside the cwd, so the agent can edit them: each spawn puts worca's copy
+//   back when it ends (restoreCursorProjectFiles, G14). With --force, approval is deny-list only.
 // - unverified: the prompt is the last positional argument (no stdin mode is relied on); the agent can read a file
 //   outside its cwd when told to (the long-prompt staging relies on it).
 // - assumed absent (capability false): a system-prompt flag, an effort flag, a per-spawn tool allowlist, sub-agents,
@@ -42,6 +44,7 @@ import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 import { ARGV_INLINE_LIMIT } from './claude.mjs';
 import { gitAvailable } from '../git-available.mjs';
+import { guardedGitEnvSync } from '../git-guard.mjs';
 
 /** Read at call time (not import time), so a test or a server child can point it at a fake after import. */
 export const cursorDefaultBin = () => process.env.WORCA_CURSOR_BIN || 'cursor-agent';
@@ -128,7 +131,7 @@ export function cursorMcpDocument(servers) {
 
 // ── the run checkout's .cursor files ─────────────────────────────────────────
 
-const git = (cwd, args) => { if (!gitAvailable()) return null; try { return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return null; } };
+const git = (cwd, args) => { if (!gitAvailable()) return null; try { return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], env: guardedGitEnvSync(cwd) }).trim(); } catch { return null; } };
 const EXCLUDE_NOTE = '# worca: Cursor engine config written into run checkouts (engines/cursor.mjs)';
 /** Whether `dir` or a parent holds a `.git` (so a failed `git rev-parse` is a git failure, not "no repository"). */
 const gitAbove = (dir) => { for (let d = resolve(dir); ; d = dirname(d)) { if (existsSync(join(d, '.git'))) return true; if (dirname(d) === d) return false; } };
@@ -239,6 +242,27 @@ export function writeCursorProjectFiles(cwd, files, { git: useGit = true } = {})
       throw err;
     }
   }
+}
+
+/**
+ * After a spawn: put back each of `files` that no longer holds worca's text (G14). Cursor reads its deny rules from
+ * `<cwd>/.cursor/cli.json`, inside the checkout the agent writes, and no flag is known that points Cursor elsewhere, so
+ * an agent can loosen them. What it changed must not reach the next spawn or a resume: a changed file, or one replaced
+ * by a symlink or a folder, is unlinked (never followed) and written again; a deleted one is written again. Returns the
+ * paths it put back. A `.cursor` that became a symlink is not written through: it throws, and the next spawn refuses.
+ * Mid-spawn the agent's edit may still bind (when Cursor rereads the file is unverified): the rules are deny-list only.
+ */
+export function restoreCursorProjectFiles(cwd, files, opts) {
+  const changed = Object.entries(files).filter(([rel, text]) => {
+    try { return !lstatSync(join(cwd, rel)).isFile() || readFileSync(join(cwd, rel), 'utf8') !== text; } catch { return true; }
+  }).map(([rel]) => rel);
+  if (!changed.length) return changed;
+  let linked = false;
+  try { linked = lstatSync(join(cwd, '.cursor')).isSymbolicLink(); } catch { /* absent: written again below */ }
+  if (linked) throw new Error(`${join(cwd, '.cursor')} became a symlink — worca will not restore Cursor's config through it`);
+  for (const rel of changed) { const abs = join(cwd, rel); rmSync(abs, { recursive: true, force: true }); forgetOwned(abs); }
+  writeCursorProjectFiles(cwd, files, opts);
+  return changed;
 }
 
 // ── argv ─────────────────────────────────────────────────────────────────────
@@ -466,6 +490,16 @@ export async function runCursorProcess({
   // CURSOR_API_KEY (and any CURSOR_ var) survives scrub; the run env carries the MCP servers' ${env:…} values.
   const { env } = composeSpawnEnv({ envScrub, envAllowlist, prefixes: ['CURSOR_'], runEnv: cleanRunEnv(runSpawnEnv) ?? undefined, hostPid: guardOn ? process.pid : null });
 
+  // G14: what the agent changed in worca's .cursor files during a spawn is put back before the next one (or a retry).
+  const restore = () => {
+    let changed;
+    try { changed = restoreCursorProjectFiles(cwd, files, { git: !noGit }); } catch (err) {
+      safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] cursor: could not restore worca's .cursor files: ${err.message}` });
+      return;
+    }
+    if (changed.length) safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] cursor: the agent changed ${changed.join(' and ')} during the spawn — worca put its own copy back` });
+  };
+
   const cap = Number.isInteger(maxTurns) && maxTurns > 0 ? maxTurns : null;
   const turnCap = () => Object.assign(new Error(`${bin}: stopped after ${cap} tool calls (the turn cap)`), { turnCap: true });
   const attempt = async (resumeChatId) => {
@@ -474,32 +508,37 @@ export async function runCursorProcess({
     let toolCalls = 0; let capped = false; let sawSession = false;
     const spawnSignal = cap ? (signal ? AbortSignal.any([signal, capCtrl.signal]) : capCtrl.signal) : signal;
     const args = buildCursorArgs({ prompt: positional, model, resumeChatId, approveMcps: !!servers });
-    const res = await superviseSpawn({
-      file: bin, args, displayBin: bin, cwd, env, stdin: null, signal: spawnSignal, asAgent, stagedDir, onEvent,
-      cleanup: () => {},
-      stdoutErrorDetail: () => normalizer.finish().error || '',
-      classify: (m) => classifyCursorError(m),
-      redactText: redactor ? (t) => redactor.text(t) : null,
-      spawnError: (err, pfx) => Object.assign(new Error(`${pfx}: ${err.message}`), { errorClass: /ENOENT|EINVAL/.test(String(err.code || err.message)) ? 'network' : null }),
-      onDone: (code) => ({ code }),
-      onStdoutLine: (line) => {
-        for (const e of normalizer.push(line)) {
-          safeEmit(onEvent, e);
-          if (cap && !capped && e.type === 'tool' && (e.parentId ?? null) === null && (toolCalls += e.calls.length) > cap) { capped = true; capCtrl.abort(); }
-          // Pause/Resume: the runner's own session event (no `init`) is the one the harness stamps on the step.
-          if (e.type === 'session') { sawSession = true; safeEmit(onEvent, { type: 'session', sessionId: e.sessionId }); }
+    let res;
+    try {
+      res = await superviseSpawn({
+        file: bin, args, displayBin: bin, cwd, env, stdin: null, signal: spawnSignal, asAgent, stagedDir, onEvent,
+        cleanup: () => {},
+        stdoutErrorDetail: () => normalizer.finish().error || '',
+        classify: (m) => classifyCursorError(m),
+        redactText: redactor ? (t) => redactor.text(t) : null,
+        spawnError: (err, pfx) => Object.assign(new Error(`${pfx}: ${err.message}`), { errorClass: /ENOENT|EINVAL/.test(String(err.code || err.message)) ? 'network' : null }),
+        onDone: (code) => ({ code }),
+        onStdoutLine: (line) => {
+          for (const e of normalizer.push(line)) {
+            safeEmit(onEvent, e);
+            if (cap && !capped && e.type === 'tool' && (e.parentId ?? null) === null && (toolCalls += e.calls.length) > cap) { capped = true; capCtrl.abort(); }
+            // Pause/Resume: the runner's own session event (no `init`) is the one the harness stamps on the step.
+            if (e.type === 'session') { sawSession = true; safeEmit(onEvent, { type: 'session', sessionId: e.sessionId }); }
+          }
+        },
+      }).catch((err) => {
+        if (capped && !signal?.aborted) throw turnCap();
+        const f = normalizer.finish();
+        if (f.error && err?.name !== 'AbortError' && err?.stream === 'err') {
+          err.message = `${bin}: ${f.error} — ${err.message}`;
+          err.errorClass = strongestClass(err.errorClass ?? null, classifyCursorError(f.error));
         }
-      },
-    }).catch((err) => {
-      if (capped && !signal?.aborted) throw turnCap();
-      const f = normalizer.finish();
-      if (f.error && err?.name !== 'AbortError' && err?.stream === 'err') {
-        err.message = `${bin}: ${f.error} — ${err.message}`;
-        err.errorClass = strongestClass(err.errorClass ?? null, classifyCursorError(f.error));
-      }
-      err.sawSession = sawSession;
-      throw err;
-    });
+        err.sawSession = sawSession;
+        throw err;
+      });
+    } finally {
+      restore();
+    }
     const final = normalizer.finish();
     if (capped && !signal?.aborted) throw turnCap();
     if (final.error) throw Object.assign(new Error(`${bin}: ${final.error}`), { errorClass: classifyCursorError(final.error), sawSession });

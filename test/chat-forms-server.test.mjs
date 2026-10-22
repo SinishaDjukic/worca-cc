@@ -58,7 +58,7 @@ const lastReplyText = () => {
   return sent.length ? sent.at(-1).message.body.map((s) => s.value).join('\n') : null;
 };
 const inject = (text) => {
-  channelHost.injectInboundMessage(NAME, 'main', { chatId: '42', userId: 'u1', text, meta: {} });
+  channelHost.injectInboundMessage(NAME, 'main', { chatId: '42', userId: 'u1', text, meta: { isGroup: false } });
   return settle(40); // handleChatInbound is fire-and-forget async
 };
 

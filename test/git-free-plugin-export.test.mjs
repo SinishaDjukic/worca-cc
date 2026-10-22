@@ -471,3 +471,13 @@ test('uninstall renames the snapshot root aside before removing it: a removal th
     for (const d of [root, ...trash]) if (existsSync(ro(d))) chmodSync(ro(d), 0o755);
   }
 });
+
+test('without git too, a pin whose version dir would leave versions/ is refused before anything is read or removed (G8)', async (t) => {
+  const { sha } = gh.repo('acme/trav', { files: { 'p/worca-cc-plugin.json': MANIFEST('trav-plugin'), 'p/index.mjs': INDEX } });
+  writePluginsLock({ ...readPluginsLock(), canary: { repo: 'https://github.com/acme/trav', subdir: 'p', pinnedSha: sha, version: '0.1.0', enabled: true } });
+  withNoGit(t);
+  for (const rev of ['../../.', '..', 'a/../..', '-c']) {
+    await assert.rejects(exportVersion('trav-plugin', rev, { repoUrl: 'https://github.com/acme/trav', subdir: 'p' }), /invalid revision/, rev);
+  }
+  assert.equal(readPluginsLock().canary.pinnedSha, sha, 'plugins store untouched');
+});

@@ -55,10 +55,10 @@ jobs:
     outputs:
       engine: ${{ steps.filter.outputs.engine }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - id: filter
-        uses: dorny/paths-filter@v4
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
           filters: |
             engine:
@@ -70,7 +70,7 @@ jobs:
               - 'skills/**'
               - 'scripts/**'
               - 'package.json'
-              - 'package-lock.json'
+              - 'npm-shrinkwrap.json'
               - 'test/helpers/**'
               - 'test/fixtures/**'
               - 'test/tiers.json'
@@ -128,10 +128,10 @@ jobs:
       matrix:
         shard: [1, 2, 3, 4]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           # package.json engines: node >=22.13.0 — CI proves the floor.
           node-version: 22
@@ -171,10 +171,10 @@ jobs:
       matrix:
         shard: [1, 2, 3]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 22
           cache: "npm"
@@ -205,10 +205,10 @@ jobs:
           - group: ask-forms + workspace-map + flags
             proofs: "verify:ask-forms verify:workspace-map verify:flags"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 22
           cache: "npm"
@@ -250,15 +250,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with: { node-version: 22, cache: npm }
       - run: npm ci
       - run: npm run ext:zip
       - run: npm run ext:lint:firefox
       - run: npm run e2e:firefox-smoke
         env: { CI: "true" }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with: { name: worca-extension-zips, path: extension/dist/*.zip }
 
   # The Playwright E2E runs in the SAME image that renders the Linux baselines (e2e:extension:update-linux), so
@@ -273,14 +273,14 @@ jobs:
       image: mcr.microsoft.com/playwright:v1.56.0-noble   # == devDependencies["@playwright/test"] (pinned by a test)
       options: --ipc=host
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with: { node-version: 22, cache: npm }
       - run: npm ci
       - run: npm run e2e:extension
         env: { HOME: /root }
       - if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with: { name: extension-playwright-report, path: e2e/extension/playwright-report }
 
   # The container image (docs/docker.md): build it from this checkout's
@@ -295,10 +295,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 22
           cache: "npm"
@@ -307,7 +307,7 @@ jobs:
         run: npm ci
 
       - name: Lint Dockerfile
-        uses: hadolint/hadolint-action@v3.5.0
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:
           dockerfile: docker/Dockerfile
 
@@ -333,10 +333,10 @@ jobs:
           done
           echo "apt_refresh=$apt_refresh" | tee -a "$GITHUB_OUTPUT"
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - name: Build image (slim, amd64)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           file: docker/Dockerfile
@@ -358,7 +358,7 @@ jobs:
       # fix and arrive with the weekly rebuild's newer base, so they are reported
       # (next step) but do not fail the PR.
       - name: Scan OS layer
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ghcr.io/sinishadjukic/worca:ci
           scan-type: image
@@ -369,7 +369,7 @@ jobs:
           trivyignores: docker/.trivyignore
 
       - name: Report library findings (non-blocking)
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ghcr.io/sinishadjukic/worca:ci
           scan-type: image
