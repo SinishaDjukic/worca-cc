@@ -192,3 +192,26 @@ test('the clear button empties a suggestion and keeps it from coming back', asyn
   await tick(1150);
   assert.equal($(ctx, 'title').value, '', 'an emptied title is the person\'s choice');
 });
+
+// A browser throws "Illegal invocation" when setTimeout / clearTimeout run with a `this` that is not the window; Node
+// and jsdom do not, so this stands in for Chrome. reset() runs after every Start, flag on or off (1.13.0 regression:
+// the form said "Run not started" for a run that had started).
+test('browser timers: Start clears the task and reports no error, flag off and on', async (t) => {
+  const real = { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout };
+  const strict = (fn) => function (...args) {
+    if (this !== undefined && this !== globalThis) throw new TypeError('Illegal invocation');
+    return fn(...args);
+  };
+  globalThis.setTimeout = strict(real.setTimeout);
+  globalThis.clearTimeout = strict(real.clearTimeout);
+  t.after(() => Object.assign(globalThis, real));
+  for (const on of [false, true]) {
+    const ctx = await boot({ on });
+    await typeTask(ctx, { suggests: on });
+    $(ctx, 'start-btn').click();
+    for (const end = Date.now() + 3000; $(ctx, 'prompt').value && Date.now() < end; await tick(10));
+    assert.equal(ctx.runBodies.length, 1, `flag ${on ? 'on' : 'off'}: one run started`);
+    assert.equal($(ctx, 'prompt').value, '', `flag ${on ? 'on' : 'off'}: the started task is cleared`);
+    assert.doesNotMatch(ctx.doc.body.textContent, /Run not started|Illegal invocation/);
+  }
+});
