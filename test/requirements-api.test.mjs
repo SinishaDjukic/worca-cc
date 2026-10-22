@@ -80,6 +80,10 @@ test('the whole flow in mock mode, with frames', async () => {
     assert.equal(typeof row.ready, 'number');
     assert.equal(row.latestRun, null);
     assert.ok(listed.lookCostUsd === null || typeof listed.lookCostUsd === 'number');
+    assert.match(listed.interview.model, /^claude-opus-/);
+    assert.ok(listed.interview.label && listed.interview.label.length > 0);
+    assert.equal(listed.interview.effort, 'medium');
+    assert.equal(listed.interview.source, 'default');
     assert.equal(typeof listed.spend.windowUsd, 'number');
     assert.ok('totalLimitUsd' in listed.spend);
     assert.deepEqual(listed.briefs, [], 'A7 §5: no scope has a brief row yet');
@@ -223,4 +227,46 @@ test('a revision after the interview is done: answers to an earlier round, 202, 
   assert.equal(rev.payload.answers.find((a) => a.id === q.id).answer, other);
   const newRound = turns.filter((t) => t.kind === 'round').at(-1);
   assert.ok(newRound.id > rev.id, 'a new round runs after the revision');
+});
+
+// ── the list's interview info and look cost (A1.1 Task 5) ──
+async function listWith(deps) {
+  const express = (await import('express')).default;
+  const { registerRequirementsRoutes } = await import('../src/core/requirements/routes.mjs');
+  const app = express();
+  app.use(express.json());
+  registerRequirementsRoutes(app, { broadcast: () => {}, deps });
+  const s = app.listen(0, '127.0.0.1');
+  await new Promise((r) => s.once('listening', r));
+  try {
+    const r = await fetch(`http://127.0.0.1:${s.address().port}/api/requirements`);
+    return { status: r.status, json: await r.json() };
+  } finally { s.closeAllConnections?.(); await new Promise((r) => s.close(r)); }
+}
+
+test('the list: interview is null (and the list still answers) when the interview model cannot be resolved', async () => {
+  const r = await listWith({ interviewModel: async () => { throw new Error('boom'); } });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.interview, null);
+  assert.ok(Array.isArray(r.json.features));
+});
+
+test('the list: a stubbed interview model shows its label (the id when the catalog has none) and effort', async () => {
+  const r = await listWith({ interviewModel: async () => ({ model: 'my-unlisted-model', effort: 'high', source: 'settings' }) });
+  assert.deepEqual(r.json.interview, { model: 'my-unlisted-model', label: 'my-unlisted-model', effort: 'high', source: 'settings' });
+});
+
+test('the list: lookCostUsd uses the looks of the current model when there are some, else all looks', async () => {
+  const { createFeature, appendTurn } = await import('../src/core/requirements/store.mjs');
+  const f = createFeature({ scopeType: 'project', scopeKey: projKey, title: 'Cost', description: 'd' });
+  appendTurn(f.seq, { kind: 'orientation', model: 'cost-model-a', costUsd: 0.2 });
+  appendTurn(f.seq, { kind: 'orientation', model: 'cost-model-a', costUsd: 0.4 });
+  appendTurn(f.seq, { kind: 'orientation', model: 'cost-model-b', costUsd: 5 });
+  const stub = (model) => ({ interviewModel: async () => ({ model, effort: null, source: 'settings' }) });
+  assert.equal((await listWith(stub('cost-model-a'))).json.lookCostUsd, 0.3);
+  assert.equal((await listWith(stub('cost-model-b'))).json.lookCostUsd, 5);
+  const all = (await import('../src/core/requirements/store.mjs')).recentLookCosts(10).sort((a, b) => a - b);
+  const m = all.length >> 1;
+  const median = all.length % 2 ? all[m] : (all[m - 1] + all[m]) / 2;
+  assert.equal((await listWith(stub('cost-model-none'))).json.lookCostUsd, Math.round(median * 1e4) / 1e4, 'median of all recent looks');
 });

@@ -10,7 +10,8 @@ import {
   createFeature, requireFeature, listFeatures, listTurns, getContext, setContext, updateFeature, listStarts, latestStart, recentLookCosts,
   getBrief, usableBrief, listBriefs, setBriefSections, deleteBrief, briefUsers,
 } from './store.mjs';
-import { startOrientation, submitAnswers, finishInterview, followUp, retry, isBusy, assertCapacity } from './interview.mjs';
+import { startOrientation, submitAnswers, finishInterview, followUp, retry, isBusy, assertCapacity, interviewModel } from './interview.mjs';
+import { listModels } from '../config.mjs';
 import { pendingRound } from './round.mjs';
 import {
   updateHeader, setSection, releaseSection, addCriterion, editCriterion, removeCriterion, setAssumption, confirmOpenAssumptions, setArchived,
@@ -110,13 +111,26 @@ async function summary(f, targetOf, runSummary) {
     latestRun: latest ? (await startView(latest, runSummary)).run : null };
 }
 
-/** Median of the recent code-look costs, for the New feature page's hint (null when there are none). */
-function lookCostUsd() {
-  const costs = recentLookCosts(10).sort((a, b) => a - b);
+/** Median of the recent code-look costs, for the New feature page's hint: the looks made on `model` when there
+ *  are any, else all recent looks (null when there are none at all). */
+function lookCostUsd(model = null) {
+  let costs = model ? recentLookCosts(10, { model }) : [];
+  if (!costs.length) costs = recentLookCosts(10);
+  costs = costs.sort((a, b) => a - b);
   if (!costs.length) return null;
   const m = costs.length >> 1;
   const mid = costs.length % 2 ? costs[m] : (costs[m - 1] + costs[m]) / 2;
   return Math.round(mid * 1e4) / 1e4;
+}
+
+/** The interview's model for the New feature line: { model, label, effort, source }, or null when it cannot be told. */
+async function interviewInfo(resolve, list) {
+  try {
+    const im = await resolve();
+    if (!im || !im.model) return null;
+    const entry = (await list('')).find((m) => m && m.id === im.model);
+    return { model: im.model, label: (entry && entry.label) || im.model, effort: im.effort ?? null, source: im.source };
+  } catch { return null; }
 }
 
 /** Requirements spend in the budget window budgetStatus() uses, the total limit (null: none) and the
@@ -281,8 +295,9 @@ export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
       };
       const list = listFeatures({ scopeType: q.scopeType || null, scopeKey: q.scopeKey || null, archived: q.archived === '1' });
       const features = await Promise.all(list.map((f) => summary(f, targetOf, d.runSummary || noSummary)));
+      const interview = await interviewInfo(() => (d.interviewModel || interviewModel)(d), d.listModels || listModels);
       const briefs = listBriefs().map((b) => ({ ...b, lookAtCode: getContext(b.scopeType, b.scopeKey).lookAtCode }));
-      res.json({ features, lookCostUsd: lookCostUsd(), spend: requirementsSpend(), briefs });
+      res.json({ features, interview, lookCostUsd: lookCostUsd(interview && interview.model), spend: requirementsSpend(), briefs });
     },
     [`POST ${P}`]: async (req, res) => {
       const b = req.body || {};

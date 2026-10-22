@@ -421,6 +421,29 @@ test('new feature: back link, heading, field blocks, the For select with its gro
   assert.doesNotMatch(host.textContent, /null|false|undefined/);
 });
 
+test('new feature: the hint says who interviews, then the cost (lane 2 replaces only the part after the dot)', async () => {
+  const hint = async (extra) => {
+    fakeApi({ ...LIST_BASE, 'GET /api/requirements': listOf([], extra) });
+    const { host, view } = make();
+    await view.show('new');
+    assert.doesNotMatch(host.textContent, /null|false|undefined/);
+    return host.querySelector('.req-new-cost');
+  };
+  let el = await hint({ lookCostUsd: 0.25, interview: { model: 'claude-opus-5-5', label: 'Opus 5.5', effort: 'medium' } });
+  assert.equal(el.textContent, 'Worca interviews with Opus 5.5 at medium effort · about $0.25 for the code look, then cents per round');
+  assert.equal(el.querySelector('.req-new-model').textContent, 'Worca interviews with Opus 5.5 at medium effort');
+  assert.ok(el.classList.contains('hint'));
+  el = await hint({ lookCostUsd: null, interview: { model: 'claude-opus-5-5', label: 'Opus 5.5', effort: 'medium' } });
+  assert.equal(el.textContent, 'Worca interviews with Opus 5.5 at medium effort · cents per round');
+  el = await hint({ lookCostUsd: 0.25, interview: { model: 'claude-sonnet-5', label: 'Sonnet 5', effort: null } });
+  assert.equal(el.querySelector('.req-new-model').textContent, 'Worca interviews with Sonnet 5');
+  el = await hint({ lookCostUsd: null, interview: { model: 'claude-sonnet-5', effort: null } });
+  assert.equal(el.textContent, 'Worca interviews with claude-sonnet-5 · cents per round', 'no label: the model id');
+  el = await hint({ lookCostUsd: 0.25, interview: null });
+  assert.equal(el.textContent, 'About $0.25 for the code look, then cents per round.', "no interview info: today's hint");
+  assert.equal(await hint({ lookCostUsd: null, interview: null }), null);
+});
+
 test('new feature: the cost hint shows only when lookCostUsd is a number (from the list call)', async () => {
   const calls = fakeApi({ ...LIST_BASE, 'GET /api/requirements': listOf([], { lookCostUsd: 0.25 }) });
   const { host, view } = make();

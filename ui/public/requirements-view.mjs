@@ -304,10 +304,13 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         return;
       }
       if (key === 'new') {
-        // The list call carries the code-look cost for the hint and the briefs (A7 board 13); the form renders without it.
-        const d = await api('GET', '/api/requirements').catch(() => ({}));
-        const look = d && typeof d.lookCostUsd === 'number' ? d.lookCostUsd : null;
-        if (mine === paintNo) { paintNew(look, Array.isArray(d && d.briefs) ? d.briefs : []); paintedKey = key; }
+        // The list call carries the code-look cost for the hint, who interviews (A1.1) and the briefs (A7 board 13);
+        // the form renders without it.
+        const list = await api('GET', '/api/requirements').then((d) => d, () => null);
+        const look = list && list.lookCostUsd;
+        const interview = list && list.interview && typeof list.interview === 'object' ? list.interview : null;
+        const briefs = list && Array.isArray(list.briefs) ? list.briefs : [];
+        if (mine === paintNo) { paintNew(typeof look === 'number' ? look : null, interview, briefs); paintedKey = key; }
         return;
       }
       if (seqShown != null) {
@@ -430,7 +433,23 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   }
   const briefLink = (to) => h('a', { class: 'req-brief-link', href: `#requirements/${to}`, onclick: (e) => { e.preventDefault(); route(to); } }, 'product brief');
 
-  function paintNew(lookCost, briefs = []) {
+  // The line under the form: who interviews (A1.1), then what it costs. With a usable brief for the chosen
+  // target there is no code look (A7 D10), so only the cost words after the dot change, to "cents per round"
+  // (board 13); the model part never does. Without interview info: A2's hint, hidden with a brief.
+  function costHint(lookCost, interview) {
+    if (!interview) {
+      const el = lookCost != null ? h('span', { class: 'hint req-new-cost', text: `About ${usd(lookCost)} for the code look, then cents per round.` }) : null;
+      return { el, brief: (on) => { if (el) el.hidden = on; } };
+    }
+    const name = interview.label || interview.model;
+    const who = `Worca interviews with ${name}${interview.effort ? ` at ${interview.effort} effort` : ''}`;
+    const words = (on) => (lookCost != null && !on ? ` · about ${usd(lookCost)} for the code look, then cents per round` : ' · cents per round');
+    const tail = document.createTextNode(words(false));
+    return { el: h('span', { class: 'hint req-new-cost' }, h('span', { class: 'req-new-model', text: who }), tail),
+      brief: (on) => { tail.data = words(on); } };
+  }
+
+  function paintNew(lookCost, interview = null, briefs = []) {
     const select = h('select', { id: 'req-new-target' },
       targets.projects.length ? h('optgroup', { label: 'Projects' }, targets.projects.map((p) => h('option', { value: `project:${p.key}`, text: p.name }))) : null,
       targets.workspaces.length ? h('optgroup', { label: 'Workspaces' }, targets.workspaces.map((w) => h('option', { value: `workspace:${w.id}`, text: w.name }))) : null);
@@ -438,7 +457,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const desc = h('textarea', { id: 'req-new-desc', rows: '5', placeholder: 'A few sentences, the way you would tell a colleague.' });
     // A brief is usable once made (D10), also while it is being refreshed.
     const usable = new Map(briefs.filter((b) => b && b.scopeType && b.scopeKey && b.madeAt).map((b) => [scopeId(b), b]));
-    const costHint = lookCost != null ? h('span', { class: 'hint req-new-cost', text: `About ${usd(lookCost)} for the code look, then cents per round.` }) : null;
+    const cost = costHint(lookCost, interview);
     let lookHint = h('span', { class: 'hint req-new-look' });
     const sayLook = () => {
       const [scopeType, ...rest] = select.value.split(':');
@@ -450,8 +469,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           : "Worca looks at this project's code once, read-only, to learn what already exists. Change that in Your notes for Worca." });
       if (lookHint.parentNode) lookHint.replaceWith(next);
       lookHint = next;
-      // with a brief, the code look's cost is not said (before the A1.1 merge: A2's hint is hidden, A7 §6 / §9)
-      if (costHint) costHint.hidden = !!b;
+      // with a brief, the code look's cost is not said: only the words after the dot change (A7 §6 / §9)
+      cost.brief(!!b);
     };
     select.addEventListener('change', sayLook);
     sayLook();
@@ -471,7 +490,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         field('req-new-desc', ['Describe it ', h('span', { class: 'opt', text: 'who needs it, what they want to do, and why' })], desc),
         field('req-new-target', ['For'], h('div', { class: 'select-wrap' }, select), lookHint),
         h('div', { class: 'actions req-new-actions' },
-          costHint,
+          cost.el,
           h('div', { class: 'req-new-btns' },
             h('button', { type: 'button', class: 'btn', onclick: () => route('') }, 'Cancel'),
             h('button', { type: 'button', class: 'btn-go', onclick: create }, 'Start the interview'))))));

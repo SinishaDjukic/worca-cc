@@ -16686,12 +16686,18 @@ const HELPER_ENGINES = ['claude', 'codex'];
 // Claude's helper slots at user level are their own settings keys (settings-cascade.mjs CLAUDE_USER): a model id for
 // titles, Auto and PR descriptions (no effort), and the Memory defragment pair. No user-level overview slot.
 const CLAUDE_USER_HELPER_JOBS = ['title', 'classifier', 'prDescription', 'memoryDefrag'];
+// The Requirements interview is a user-only slot (settings key requirementsInterview), listed only while its flag is on:
+// asked at paint time, never a module constant.
+const claudeUserHelperJobs = () => (flagOn('requirements') ? [...CLAUDE_USER_HELPER_JOBS, 'requirementsInterview'] : CLAUDE_USER_HELPER_JOBS);
 const CLAUDE_USER_HELPER_OWN = (data) => ({
   title: data.titleModel ? { model: data.titleModel } : undefined,
   classifier: data.autoWorkflowModel ? { model: data.autoWorkflowModel } : undefined,
   prDescription: data.prDescriptionModel ? { model: data.prDescriptionModel } : undefined,
   memoryDefrag: data.memoryDefrag && data.memoryDefrag.model ? { model: data.memoryDefrag.model, ...(data.memoryDefrag.effort ? { effort: data.memoryDefrag.effort } : {}) } : undefined,
+  requirementsInterview: data.requirementsInterview && (data.requirementsInterview.model || data.requirementsInterview.effort)
+    ? { ...(data.requirementsInterview.model ? { model: data.requirementsInterview.model } : {}), ...(data.requirementsInterview.effort ? { effort: data.requirementsInterview.effort } : {}) } : undefined,
 });
+let lastEngineSettingsData = null;
 async function paintEngineSettings(data) {
   const root = document.getElementById('engine-settings-root');
   if (!root) return;
@@ -16705,11 +16711,16 @@ async function paintEngineSettings(data) {
     for (const job of CODEX_HELPER_JOBS) fields[utilityId(engine, job)] = { own: data.utilityModels?.[engine]?.[job], inherited: { value: undefined, source: 'default' } };
   }
   const claudeOwn = CLAUDE_USER_HELPER_OWN(data || {});
-  for (const job of CLAUDE_USER_HELPER_JOBS) fields[utilityId('claude', job)] = { own: claudeOwn[job], inherited: { value: undefined, source: 'default' } };
+  const claudeJobs = claudeUserHelperJobs();
+  for (const job of claudeJobs) fields[utilityId('claude', job)] = { own: claudeOwn[job], inherited: { value: undefined, source: 'default' } };
+  // The interview's empty choices read "Opus 5.5 (default)" and "medium (default)" (the answer's requirementsInterviewDefault).
+  const interviewDefault = data?.requirementsInterviewDefault;
+  if (interviewDefault?.model && claudeJobs.includes('requirementsInterview')) fields[utilityId('claude', 'requirementsInterview')].inherited = { value: { model: interviewDefault.model, ...(interviewDefault.effort ? { effort: interviewDefault.effort } : {}) }, source: 'default' };
   renderEngineSection(root, { level: 'user', roles, catalog, fields, status: document.getElementById('engineSettingsMsg'), onTest: testModelRow,
     noEffort: ['title', 'classifier', 'prDescription'].map((job) => utilityId('claude', job)),
     defaultLabels: { claude: 'the default model' },
-    jobs: { claude: CLAUDE_USER_HELPER_JOBS, codex: CODEX_HELPER_JOBS, cursor: [] } });
+    jobs: { claude: claudeJobs, codex: CODEX_HELPER_JOBS, cursor: [] } });
+  lastEngineSettingsData = data;
   // Each non-Claude card's readiness line (GET /api/engines). Only on the Models page, where the cards live: a
   // settings-changed broadcast repaints this from any view, and that must not spawn a preflight.
   if (currentView() === 'models') void paintEngineCardStatus(root);
@@ -16726,6 +16737,8 @@ async function paintEngineCardStatus(root) {
       : `${e.label} can start runs: its CLI is installed and signed in.${e.reason ? ` Note: ${String(e.reason).replace(/\.$/, '')}.` : ''}`;
   }
 }
+// The flag flips while the Models page is open: the Engines card gains / loses the interview row.
+onFlagChange('requirements', () => { if (currentView() === 'models' && lastEngineSettingsData) void paintEngineSettings(lastEngineSettingsData); });
 document.getElementById('engineSettingsSave')?.addEventListener('click', async () => {
   const root = document.getElementById('engine-settings-root');
   const body = enginePatchToSettingsBody(readEngineSection(root));

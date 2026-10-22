@@ -5,10 +5,11 @@ export const ENGINE_EFFORTS = Object.freeze({ claude: Object.freeze(['medium', '
 // An inherited value's label; an unset one stays null, so the field shows its bare heading.
 const engineName = (v) => (v == null ? null : engineLabel(v));
 const CURSOR_HELPERS_NOTE = "Cursor runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on Claude — see the Claude tab.";
-export const JOB_LABELS = Object.freeze({ title: 'Titles', classifier: 'Auto workflow classifier', overview: 'Run overview', prDescription: 'PR description', memoryDefrag: 'Memory defragment', workspaceScan: 'Workspace scan' });
+export const JOB_LABELS = Object.freeze({ title: 'Titles', classifier: 'Auto workflow classifier', overview: 'Run overview', prDescription: 'PR description', memoryDefrag: 'Memory defragment', workspaceScan: 'Workspace scan', requirementsInterview: 'Requirements interview' });
 // The setting id of an engine's helper slot, as settings-cascade.mjs names it: memory defragment
-// and workspace scan are runs of their own (spec §3.1 "own-run models"), the rest are utility jobs.
-const OWN_RUN_JOBS = new Set(['memoryDefrag', 'workspaceScan']);
+// and workspace scan are runs of their own (spec §3.1 "own-run models"), the rest are utility jobs. The
+// requirements interview is a bare id too: a user-only slot of its own, not a cascade utility job.
+const OWN_RUN_JOBS = new Set(['memoryDefrag', 'workspaceScan', 'requirementsInterview']);
 export const utilityId = (engine, job) => (OWN_RUN_JOBS.has(job) ? `models.${engine}.${job}` : `models.${engine}.utility.${job}`);
 const EMPTY = Object.freeze({ own: undefined, inherited: { value: undefined, source: 'default' } });
 // What each helper job does, as the hover hint on its row's name.
@@ -19,6 +20,7 @@ export const JOB_HINTS = Object.freeze({
   prDescription: 'Drafts the pull request description ("Generate with AI").',
   memoryDefrag: 'Runs Memory defragment, which restructures saved memory.',
   workspaceScan: 'Runs the workspace scan that maps how member projects connect.',
+  requirementsInterview: 'Looks at the code once and runs the interview rounds on the Requirements page.',
 });
 
 /** One section of an engine tab (level 3): a heading with its controls on the right, a Model / Effort table (level 4)
@@ -152,6 +154,10 @@ export function enginePatchToSettingsBody(patch) {
     match = /^models\.(codex)\.(?:utility\.)?(title|classifier|overview|prDescription|memoryDefrag|workspaceScan)$/.exec(id); if (match) ((body.utilityModels ||= {})[match[1]] ||= {})[match[2]] = value;
     // Claude's helper slots live in their own settings keys: a model id (title, Auto, PR description), and the
     // Memory defragment pair.
+    if (id === 'models.claude.requirementsInterview') {
+      const pair = {}; if (value && value.model) pair.model = value.model; if (value && value.effort) pair.effort = value.effort;
+      body.requirementsInterview = Object.keys(pair).length ? pair : null; continue;
+    }
     match = /^models\.claude\.(?:utility\.)?(title|classifier|prDescription|memoryDefrag)$/.exec(id);
     if (match) { const key = CLAUDE_HELPER_KEYS[match[1]]; body[key] = key === 'memoryDefrag' ? (value && value.model ? { model: value.model, effort: value.effort || '' } : null) : (value && value.model) || ''; }
   }

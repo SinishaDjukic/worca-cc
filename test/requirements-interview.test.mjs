@@ -1,18 +1,20 @@
 // test/requirements-interview.test.mjs — orientation + rounds with a fake runner; never a real claude (design §4, D7-D9, D13).
 import { test, after, beforeEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import {
   createFeature, getFeature, listTurns, updateFeature, appendTurn, setContext, getBrief, beginBrief, saveBriefResult, deleteBrief,
 } from '../src/core/requirements/store.mjs';
-import { REPO_LOOK_TOOLS, REPO_LOOK_TIMEOUT_MS } from '../src/core/auto/classify.mjs';
+import { REPO_LOOK_TOOLS, REPO_LOOK_MAX_TURNS, REPO_LOOK_TIMEOUT_MS } from '../src/core/auto/classify.mjs';
 import {
-  startOrientation, submitAnswers, finishInterview, followUp, retry, settled, isBusy, recoverInterrupted, requirementsModel, MAX_JOBS,
+  startOrientation, submitAnswers, finishInterview, followUp, retry, settled, isBusy, recoverInterrupted, requirementsModel, MAX_JOBS, interviewCallOptions, callModel,
+  userClaudeSignIn, interviewModel, DEFAULT_INTERVIEW_EFFORT,
 } from '../src/core/requirements/interview.mjs';
 import { requirementsWindowedSpendUsd } from '../src/core/cost-budget.mjs';
+import { ROUND_SYSTEM_PROMPT, ORIENTATION_SYSTEM_PROMPT } from '../src/core/requirements/round.mjs';
 import { removeCriterion, setAssumption } from '../src/core/requirements/edits.mjs';
 
 useTempHome(after);
@@ -53,6 +55,8 @@ function deps(runner, extra = {}) {
     openLook: async () => ({ cwd: repoDir, close: async () => { closed.push('look'); } }),
     openWorkspaceLook: async () => null,
     onChange: () => {},
+    interviewSlot: () => ({}),   // nothing stored: the default pair
+    userSignIn: () => false,   // the hermetic branch unless a test says otherwise (never the real user settings)
     ...extra,
   };
 }
@@ -874,4 +878,265 @@ test('a look without a brief never stores an area, even when the reply names one
   const o = getFeature(f.seq).orientation;
   assert.equal(o.summary, 'Orders exist.');
   assert.equal('area' in o, false);
+});
+
+// ── the one call path (A1.1 Task 1): the options written out, so every change is deliberate ──
+// Task 3: A2's options plus Worca's own system prompt (replace mode) and the hermetic flags.
+test('interviewCallOptions: a look is A2\'s options, replace mode and the hermetic flags', () => {
+  assert.deepEqual(interviewCallOptions('look', { cwd: '/c', prompt: 'P', model: 'm1', effort: 'medium' }), {
+    cwd: '/c', systemPrompt: ORIENTATION_SYSTEM_PROMPT, systemPromptMode: 'replace', prompt: 'P', model: 'm1', modelEnv: undefined,
+    allowedTools: [...REPO_LOOK_TOOLS], tools: [...REPO_LOOK_TOOLS], strictMcpConfig: true,
+    settingSources: ['project'], disableSlashCommands: true,
+    maxTurns: REPO_LOOK_MAX_TURNS, effort: 'medium', permissionMode: 'acceptEdits', spawnKind: 'aux',
+  });
+});
+
+test('interviewCallOptions: no effort key unless one is given', () => {
+  for (const kind of ['look', 'round']) assert.equal('effort' in interviewCallOptions(kind, { cwd: '/c', prompt: 'P', model: 'm1' }), false, kind);
+});
+
+test('interviewCallOptions: a round is A2\'s options (no tools, no maxTurns), replace mode and the hermetic flags', () => {
+  const o = interviewCallOptions('round', { cwd: '/c', prompt: 'P', model: 'm1', effort: 'medium' });
+  assert.deepEqual(o, {
+    cwd: '/c', systemPrompt: ROUND_SYSTEM_PROMPT, systemPromptMode: 'replace', prompt: 'P', model: 'm1', modelEnv: undefined,
+    allowedTools: [], tools: [], strictMcpConfig: true,
+    settingSources: ['project'], disableSlashCommands: true,
+    effort: 'medium', permissionMode: 'acceptEdits', spawnKind: 'aux',
+  });
+  assert.equal('maxTurns' in o, false);
+});
+
+test('interviewCallOptions: keepUserSettings drops only settingSources; replace mode and no slash commands stay, whatever the overrides', () => {
+  for (const kind of ['look', 'round']) {
+    const kept = interviewCallOptions(kind, { cwd: '/c', prompt: 'P', model: 'm1', systemPrompt: 'B', tools: ['Read'], maxTurns: 3, effort: 'low' }, { keepUserSettings: true });
+    assert.equal('settingSources' in kept, false, kind);
+    assert.equal(kept.systemPromptMode, 'replace', kind);
+    assert.equal(kept.disableSlashCommands, true, kind);
+    const herm = interviewCallOptions(kind, { cwd: '/c', prompt: 'P', systemPrompt: 'B' }, { keepUserSettings: false });
+    assert.deepEqual(herm.settingSources, ['project'], kind);
+    assert.equal(herm.systemPromptMode, 'replace', kind);
+    assert.equal(herm.disableSlashCommands, true, kind);
+  }
+});
+
+test('interviewCallOptions: unknown kind and unknown keys throw TypeError', () => {
+  assert.throws(() => interviewCallOptions('brief', { cwd: '/c', prompt: 'P' }), TypeError);
+  assert.throws(() => interviewCallOptions('round', { cwd: '/c', prompt: 'P', settingSources: [] }), TypeError);
+  assert.throws(() => interviewCallOptions('round', { cwd: '/c', prompt: 'P', tools: 'Read' }), TypeError);
+});
+
+test('interviewCallOptions: overrides replace the kind defaults', () => {
+  const o = interviewCallOptions('look', { cwd: '/c', prompt: 'P', model: 'm1', systemPrompt: 'B', maxTurns: 40 });
+  assert.equal(o.systemPrompt, 'B');
+  assert.equal(o.maxTurns, 40);
+  assert.deepEqual(o.tools, [...REPO_LOOK_TOOLS]);
+  const r = interviewCallOptions('round', { cwd: '/c', prompt: 'P', tools: ['Read'], effort: 'low' });
+  assert.deepEqual(r.allowedTools, ['Read']);
+  assert.equal(r.effort, 'low');
+});
+
+test('callModel: sends the built options plus signal and onEvent, and books the cost', async () => {
+  const seen = [];
+  const d = { userSignIn: () => false, runClaudeImpl: async (opts) => {
+    seen.push(opts);
+    opts.onEvent({ type: 'result', raw: { type: 'result', total_cost_usd: 0.25, result: 'x' }, costUsd: 0.25 });
+    return { text: 'x' };
+  } };
+  const out = await callModel(d, { kind: 'round', cwd: '/c', prompt: 'P', model: 'm1', timeoutMs: 5000 });
+  assert.deepEqual(out, { text: 'x', costUsd: 0.25 });
+  const { signal, onEvent, ...rest } = seen[0];
+  assert.ok(signal && typeof onEvent === 'function');
+  assert.deepEqual(rest, interviewCallOptions('round', { cwd: '/c', prompt: 'P', model: 'm1' }));
+});
+
+// ── A1.1 Task 3: Worca's own system prompt, and no user plugins in a call ──
+test('both calls replace the system prompt and are hermetic; the look keeps its tools and names its directory', async () => {
+  const f = newFeature();
+  const r = fakeRunner([{ summary: 'Orders have a status.', files: [] }, ROUND1]);
+  await startOrientation(f.seq, {}, deps(r));
+  await settled(f.seq);
+  assert.equal(r.calls.length, 2);
+  for (const c of r.calls) {
+    assert.equal(c.systemPromptMode, 'replace');
+    assert.deepEqual(c.settingSources, ['project']);
+    assert.equal(c.disableSlashCommands, true);
+  }
+  assert.equal(r.calls[0].systemPrompt, ORIENTATION_SYSTEM_PROMPT);
+  assert.deepEqual(r.calls[0].tools, [...REPO_LOOK_TOOLS]);
+  assert.equal(r.calls[0].maxTurns, REPO_LOOK_MAX_TURNS);
+  assert.ok(r.calls[0].prompt.includes(`The working directory, ${repoDir}, is a checkout of the project.`), 'the look prompt names repoDir');
+  assert.equal(r.calls[1].systemPrompt, ROUND_SYSTEM_PROMPT);
+  assert.deepEqual(r.calls[1].tools, []);
+  assert.equal('maxTurns' in r.calls[1], false);
+});
+
+test('A7\'s brief call shape (a look with its own prompt, 40 turns, high effort) keeps replace mode, the hermetic flags and the look tools', async () => {
+  const r = fakeRunner(['{}']);
+  await callModel(deps(r), { kind: 'look', cwd: repoDir, prompt: 'P', model: 'm1', timeoutMs: 5000, systemPrompt: 'BRIEF', maxTurns: 40, effort: 'high' });
+  const c = r.calls[0];
+  assert.equal(c.systemPrompt, 'BRIEF');
+  assert.equal(c.systemPromptMode, 'replace');
+  assert.deepEqual(c.settingSources, ['project']);
+  assert.equal(c.disableSlashCommands, true);
+  assert.deepEqual(c.tools, [...REPO_LOOK_TOOLS]);
+  assert.equal(c.maxTurns, 40);
+  assert.equal(c.effort, 'high');
+});
+
+test('deps.userSignIn true: no settingSources on either call, still replace mode and no slash commands; false: project only', async () => {
+  const f = newFeature();
+  const r = fakeRunner([{ summary: 'x', files: [] }, ROUND1]);
+  await startOrientation(f.seq, {}, deps(r, { userSignIn: () => true }));
+  await settled(f.seq);
+  assert.equal(r.calls.length, 2);
+  for (const c of r.calls) {
+    assert.equal('settingSources' in c, false);
+    assert.equal(c.disableSlashCommands, true);
+    assert.equal(c.systemPromptMode, 'replace');
+  }
+  const r2 = fakeRunner(['{}']);
+  await callModel(deps(r2, { userSignIn: () => false }), { kind: 'round', cwd: repoDir, prompt: 'P', model: 'm1', timeoutMs: 5000 });
+  assert.deepEqual(r2.calls[0].settingSources, ['project']);
+});
+
+/** A temp home whose .claude/settings.json holds `body` (a string is written as is; undefined writes nothing). */
+function signInHome(body) {
+  const home = mkdtempSync(join(tmpdir(), 'req-signin-'));
+  if (body !== undefined) {
+    mkdirSync(join(home, '.claude'));
+    writeFileSync(join(home, '.claude', 'settings.json'), typeof body === 'string' ? body : JSON.stringify(body));
+  }
+  return home;
+}
+
+test('userClaudeSignIn: an apiKeyHelper or a sign-in / network env key in the user settings means keep them', () => {
+  assert.equal(userClaudeSignIn({ env: {}, home: signInHome({ apiKeyHelper: 'cat /run/secrets/key' }) }), true);
+  for (const key of ['ANTHROPIC_BASE_URL', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_FOUNDRY', 'AWS_PROFILE', 'AWS_REGION',
+    'CLOUD_ML_REGION', 'GOOGLE_APPLICATION_CREDENTIALS', 'CLAUDE_CODE_CLIENT_CERT', 'CLAUDE_CODE_CLIENT_KEY', 'HTTPS_PROXY', 'http_proxy', 'NODE_EXTRA_CA_CERTS']) {
+    assert.equal(userClaudeSignIn({ env: {}, home: signInHome({ env: { [key]: '1' } }) }), true, key);
+  }
+  assert.equal(userClaudeSignIn({ env: {}, home: signInHome(`${String.fromCharCode(0xFEFF)}${JSON.stringify({ apiKeyHelper: 'x' })}`) }), true, 'a leading BOM is tolerated');
+});
+
+test('userClaudeSignIn: an OAuth token in env, awsAuthRefresh and awsCredentialExport also mean keep them', () => {
+  assert.equal(userClaudeSignIn({ env: {}, home: signInHome({ env: { CLAUDE_CODE_OAUTH_TOKEN: 't' } }) }), true);
+  assert.equal(userClaudeSignIn({ env: {}, home: signInHome({ awsAuthRefresh: 'aws sso login' }) }), true);
+  assert.equal(userClaudeSignIn({ env: {}, home: signInHome({ awsCredentialExport: 'aws configure export-credentials' }) }), true);
+  assert.equal(userClaudeSignIn({ env: {}, home: signInHome({ awsAuthRefresh: '', awsCredentialExport: 3 }) }), false, 'empty or not a string');
+});
+
+test('userClaudeSignIn: no home argument resolves homedir() inside the guard and never throws', () => {
+  const missing = () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); };
+  assert.equal(typeof userClaudeSignIn({ env: {}, read: missing }), 'boolean');
+  assert.equal(userClaudeSignIn({ env: {}, read: missing }), false);
+});
+
+test('userClaudeSignIn: nothing to keep for other keys, an empty helper, no file, invalid JSON or not an object; never throws', () => {
+  const cases = [[{ env: { FOO: '1' } }, 'other env key'], [{}, 'empty object'], [{ apiKeyHelper: '' }, 'empty helper'],
+    [undefined, 'no file'], ['null', 'JSON null'], [[{ apiKeyHelper: 'x' }], 'a JSON array'], [{ env: ['ANTHROPIC_BASE_URL'] }, 'env not an object']];
+  for (const [body, why] of cases) assert.equal(userClaudeSignIn({ env: {}, home: signInHome(body) }), false, why);
+});
+
+test('userClaudeSignIn: a file that exists but cannot be read or parsed means keep the user settings; a missing or blank one is hermetic', () => {
+  const err = (code) => () => { throw Object.assign(new Error(code), { code }); };
+  assert.equal(userClaudeSignIn({ env: {}, home: signInHome({}), read: err('EACCES') }), true, 'unreadable');
+  assert.equal(userClaudeSignIn({ env: {}, home: signInHome({}), read: err('EISDIR') }), true, 'not a file');
+  assert.equal(userClaudeSignIn({ env: {}, home: signInHome({}), read: err('ENOENT') }), false, 'missing');
+  assert.equal(userClaudeSignIn({ env: {}, home: signInHome({}), read: err('ENOTDIR') }), false, 'parent is not a directory');
+  assert.equal(userClaudeSignIn({ env: {}, home: signInHome('{ not json') }), true, 'invalid JSON');
+  assert.equal(userClaudeSignIn({ env: {}, home: signInHome('// comment\n{"a":1}') }), true, 'comments');
+  assert.equal(userClaudeSignIn({ env: {}, home: signInHome('') }), false, 'empty file: nothing to keep');
+  assert.equal(userClaudeSignIn({ env: {}, home: signInHome(' ' + String.fromCharCode(10, 9) + ' ') }), false, 'whitespace only: nothing to keep');
+  assert.equal(userClaudeSignIn({ env: {}, home: signInHome(`${String.fromCharCode(0xFEFF)}  `) }), false, 'BOM and blanks: nothing to keep');
+});
+
+test('userClaudeSignIn: CLAUDE_CONFIG_DIR (trimmed) moves the file off <home>/.claude', () => {
+  const home = signInHome({});
+  const other = signInHome({ apiKeyHelper: 'x' });
+  assert.equal(userClaudeSignIn({ env: {}, home }), false);
+  assert.equal(userClaudeSignIn({ env: { CLAUDE_CONFIG_DIR: ` ${join(other, '.claude')} ` }, home }), true);
+  assert.equal(userClaudeSignIn({ env: { CLAUDE_CONFIG_DIR: '   ' }, home: other }), true, 'blank: back to <home>/.claude');
+});
+
+test('the default userSignIn reads the user settings per call and logs the keep line once per process', async () => {
+  const prev = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = join(signInHome({ apiKeyHelper: 'cat /run/secrets/key' }), '.claude');
+  const warn = mock.method(console, 'warn', () => {});
+  try {
+    const f = newFeature();
+    const r = fakeRunner([{ summary: 'x', files: [] }, ROUND1]);
+    const d = deps(r);
+    delete d.userSignIn;   // the module default
+    await startOrientation(f.seq, {}, d);
+    await settled(f.seq);
+    assert.equal(r.calls.length, 2);
+    for (const c of r.calls) assert.equal('settingSources' in c, false);
+    const lines = warn.mock.calls.map((c) => c.arguments[0]).filter((a) => /requirements: user Claude settings/.test(a));
+    assert.deepEqual(lines, ['[worca] requirements: user Claude settings carry or may carry sign-in; keeping them for interviews']);
+  } finally {
+    warn.mock.restore();
+    if (prev === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = prev;
+  }
+});
+
+// ── the interview's model and effort (A1.1 Task 5, D2) ──
+async function runBoth(slot, extra = {}) {
+  const f = newFeature();
+  const r = fakeRunner([{ summary: 'Orders.', files: [] }, ROUND1]);
+  await startOrientation(f.seq, { by: 'po' }, deps(r, { interviewSlot: slot, ...extra }));
+  await settled(f.seq);
+  return { r, f };
+}
+
+test('interview model: nothing stored -> the default Opus and medium effort on the look and the round', async () => {
+  const { r } = await runBoth(() => ({}));
+  assert.equal(r.calls.length, 2);
+  for (const c of r.calls) { assert.equal(c.model, 'claude-opus-5-5'); assert.equal(c.effort, 'medium'); }
+  // The unset production call is A2's options byte for byte (plus Task 3's replace mode and hermetic flags).
+  const strip = ({ onEvent, signal, cwd, prompt, ...rest }) => rest;
+  const a2 = (kind) => { const { cwd, prompt, ...rest } = interviewCallOptions(kind, { cwd: '/c', prompt: 'P', model: 'claude-opus-5-5', effort: 'medium' }); return rest; };
+  assert.deepEqual(strip(r.calls[0]), a2('look'));
+  assert.deepEqual(strip(r.calls[1]), a2('round'));
+});
+
+test('interview model: a stored model alone is used and no effort is sent', async () => {
+  const { r, f } = await runBoth(() => ({ model: 'claude-sonnet-5' }));
+  for (const c of r.calls) { assert.equal(c.model, 'claude-sonnet-5'); assert.equal('effort' in c, false); }
+  assert.equal(listTurns(f.seq).find((t) => t.kind === 'orientation').model, 'claude-sonnet-5');
+});
+
+test('interview model: a stored effort alone -> the default Opus with that effort', async () => {
+  const { r } = await runBoth(() => ({ effort: 'high' }));
+  for (const c of r.calls) { assert.equal(c.model, 'claude-opus-5-5'); assert.equal(c.effort, 'high'); }
+});
+
+test('interview model: both stored -> both', async () => {
+  const { r } = await runBoth(() => ({ model: 'claude-sonnet-5', effort: 'low' }));
+  for (const c of r.calls) { assert.equal(c.model, 'claude-sonnet-5'); assert.equal(c.effort, 'low'); }
+});
+
+test('interview model: a stored model that left the catalog -> the default pair', async () => {
+  const { r } = await runBoth(() => ({ model: 'gone-model' }));
+  for (const c of r.calls) { assert.equal(c.model, 'claude-opus-5-5'); assert.equal(c.effort, 'medium'); }
+});
+
+test('interview model: a throwing slot reader -> the default pair', async () => {
+  const { r } = await runBoth(() => { throw new Error('unreadable'); });
+  for (const c of r.calls) { assert.equal(c.model, 'claude-opus-5-5'); assert.equal(c.effort, 'medium'); }
+});
+
+test('interviewModel: the resolved pair and its source', async () => {
+  const list = async () => [{ id: 'claude-sonnet-5' }, { id: 'claude-opus-5-5' }];
+  const at = (slot, listModels = list) => interviewModel({ interviewSlot: () => slot, listModels });
+  assert.deepEqual(await at({}), { model: 'claude-opus-5-5', effort: DEFAULT_INTERVIEW_EFFORT, source: 'default' });
+  assert.deepEqual(await at({ model: 'CLAUDE-SONNET-5' }), { model: 'claude-sonnet-5', effort: null, source: 'settings' });
+  assert.deepEqual(await at({ effort: 'max' }), { model: 'claude-opus-5-5', effort: 'max', source: 'settings' });
+  assert.deepEqual(await at({ model: 'gone' }), { model: 'claude-opus-5-5', effort: 'medium', source: 'default' });
+  // a failing catalog read: the stored model counts
+  assert.deepEqual(await at({ model: 'x-model' }, async () => { throw new Error('no catalog'); }), { model: 'x-model', effort: null, source: 'settings' });
+});
+
+test('interviewModel: a stored id matching case-insensitively comes back as the canonical id', async () => {
+  const im = await interviewModel({ interviewSlot: () => ({ model: 'CLAUDE-SONNET-5' }), listModels: async () => [{ id: 'claude-sonnet-5' }] });
+  assert.equal(im.model, 'claude-sonnet-5');
 });

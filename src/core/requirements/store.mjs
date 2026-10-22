@@ -186,11 +186,14 @@ export function linkPipeline(runId, pipelineId) {
   return Number(r.changes) > 0;
 }
 
-/** Costs of the newest orientation ("look at the code") turns that cost something, newest first. */
-export function recentLookCosts(limit = 10) {
+/** Costs of the newest orientation ("look at the code") turns that cost something, newest first.
+ *  With `model`, only the looks made on that model. */
+export function recentLookCosts(limit = 10, { model = null } = {}) {
   getDb();
-  return prepare(`SELECT cost_usd FROM req_turns WHERE kind = 'orientation' AND cost_usd > 0
-      ORDER BY id DESC LIMIT ?`).all(Number(limit)).map((r) => Number(r.cost_usd));
+  const sql = `SELECT cost_usd FROM req_turns WHERE kind = 'orientation' AND cost_usd > 0${model ? ' AND model = ?' : ''}
+      ORDER BY id DESC LIMIT ?`;
+  const args = model ? [String(model), Number(limit)] : [Number(limit)];
+  return prepare(sql).all(...args).map((r) => Number(r.cost_usd));
 }
 
 // ---- product briefs (plans/requirements-a7-design.md §3) ----

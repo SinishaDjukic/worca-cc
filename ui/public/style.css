@@ -9428,6 +9428,9 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .req-brief-notes-look{display:flex;align-items:center;gap:8px;font-size:13px}
 .req-why{margin:2px 0 6px 28px}
 .req-q .req-q-note{margin:8px 0 0}
+/* Narrow screens: the footer (count + Finish now / Skip / Submit) wraps instead of pushing the count off the card (as .chat-rc-q). */
+.req-q .qpanel-foot{flex-wrap:wrap;row-gap:8px}
+.req-q .qpanel-foot > button{max-width:100%;white-space:normal;text-wrap:balance}
 .req-error{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .req-retry{margin-left:8px}
 .req-confirm[aria-pressed="true"]{border-color:var(--green-ink);color:var(--green-ink)}

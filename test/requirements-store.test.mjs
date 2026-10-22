@@ -223,3 +223,16 @@ test('recentBriefCosts: the newest ledger rows with a brief id', () => {
   assert.deepEqual(recentBriefCosts(2), [0.3, 0.1]);
   assert.deepEqual(recentBriefCosts(), [0.3, 0.1]);
 });
+
+test('recentLookCosts: with a model, only the looks made on that model', () => {
+  const f = createFeature({ scopeType: 'project', scopeKey: 'st5', title: 'A', description: 'd' });
+  appendTurn(f.seq, { kind: 'orientation', model: 'rl-model-x', costUsd: 0.5 });
+  appendTurn(f.seq, { kind: 'orientation', model: 'rl-model-y', costUsd: 0.7 });
+  appendTurn(f.seq, { kind: 'orientation', model: 'rl-model-x', costUsd: 0.25 });
+  appendTurn(f.seq, { kind: 'orientation', model: 'rl-model-x', costUsd: 0 });
+  appendTurn(f.seq, { kind: 'round', model: 'rl-model-x', costUsd: 9 });
+  assert.deepEqual(recentLookCosts(10, { model: 'rl-model-x' }), [0.25, 0.5]);
+  assert.deepEqual(recentLookCosts(1, { model: 'rl-model-x' }), [0.25]);
+  assert.deepEqual(recentLookCosts(10, { model: 'rl-model-none' }), []);
+  assert.ok(recentLookCosts(10).includes(0.7), 'without a model, every model counts');
+});

@@ -94,6 +94,55 @@ test('an explicit limit forces staging for a small prompt; a missing dir is an e
   assert.throws(() => planClaudeInvocation(opts, { bin: 'claude', limit: 10 }), /staging dir/);
 });
 
+// Requirements A1.1: `systemPromptMode: 'replace'` swaps Claude Code's own system prompt
+// for ours. Same argv slot, other flag name; anything but 'replace' is today's argv.
+const SMALL = { prompt: 'p', systemPrompt: 'SYS', permissionMode: 'acceptEdits', resumeSessionId: 'sess-9' };
+
+test('systemPromptMode replace, inline: --system-prompt SYS in the --append-system-prompt slot, no append flag', () => {
+  const plan = planClaudeInvocation({ ...SMALL, systemPromptMode: 'replace' }, { bin: 'claude' });
+  assert.equal(plan.staged, false);
+  assert.equal(plan.args[plan.args.indexOf('--system-prompt') + 1], 'SYS');
+  assert.ok(!plan.args.includes('--append-system-prompt') && !plan.args.includes('--system-prompt-file'));
+  const append = buildClaudeArgs(SMALL);
+  assert.deepEqual(plan.args, append.map((a) => (a === '--append-system-prompt' ? '--system-prompt' : a)), 'only the flag name differs');
+  assert.equal(plan.args.indexOf('--system-prompt'), plan.args.indexOf('--resume') + 2, 'right after --resume');
+});
+
+test('systemPromptMode replace, staged: --system-prompt-file <stage>/system-prompt.md holding the text, no append flags', () => {
+  const plan = planClaudeInvocation({ ...OPTS, systemPromptMode: 'replace' }, { bin: 'claude', dir: '/stage' });
+  assert.equal(plan.staged, true);
+  const spFile = join('/stage', 'system-prompt.md');
+  assert.equal(plan.args[plan.args.indexOf('--system-prompt-file') + 1], spFile);
+  for (const f of ['--append-system-prompt-file', '--append-system-prompt', '--system-prompt']) {
+    assert.ok(!plan.args.includes(f), `${f} absent: ${JSON.stringify(plan.args)}`);
+  }
+  assert.equal(plan.files.find((f) => f.path === spFile).content, 'be terse');
+  const append = planClaudeInvocation(OPTS, { bin: 'claude', dir: '/stage' });
+  assert.deepEqual(plan.args, append.args.map((a) => (a === '--append-system-prompt-file' ? '--system-prompt-file' : a)));
+  assert.deepEqual(plan.files, append.files);
+});
+
+test('systemPromptMode replace: stageClaudeInvocation writes the replacing text to system-prompt.md', async () => {
+  const staged = stageClaudeInvocation({ ...OPTS, systemPromptMode: 'replace' }, { bin: 'claude' });
+  tmp.push(staged.dir);
+  assert.equal(staged.args[staged.args.indexOf('--system-prompt-file') + 1], join(staged.dir, 'system-prompt.md'));
+  assert.equal(await readFile(join(staged.dir, 'system-prompt.md'), 'utf8'), 'be terse');
+});
+
+test("systemPromptMode 'append', absent or 'bogus': argv byte-identical to the call without the option, inline and staged", () => {
+  for (const base of [SMALL, OPTS]) {
+    const without = planClaudeInvocation(base, { bin: 'claude', dir: '/stage' });
+    for (const mode of ['append', undefined, 'bogus', 'REPLACE', true]) {
+      assert.deepEqual(planClaudeInvocation({ ...base, systemPromptMode: mode }, { bin: 'claude', dir: '/stage' }), without, `mode ${String(mode)}`);
+    }
+  }
+});
+
+test('systemPromptMode replace with no system prompt: nothing emitted (same as append)', () => {
+  const base = { prompt: 'p', permissionMode: 'acceptEdits' };
+  assert.deepEqual(buildClaudeArgs({ ...base, systemPromptMode: 'replace' }), buildClaudeArgs(base));
+});
+
 test('buildSettingsArgs: inline JSON by default, a path when a settings file is given; null payload when nothing to carry', () => {
   assert.deepEqual(buildSettingsArgs(RULES), ['--settings', JSON.stringify({ permissions: RULES })]);
   assert.deepEqual(buildSettingsArgs(RULES, '/s/settings.json'), ['--settings', '/s/settings.json']);

@@ -3,7 +3,8 @@
 // through the classifier's repo look (D7), then rounds that are single tool-less model calls. One job
 // per feature at a time; a job never throws out — a failure becomes an `error` turn and the feature goes
 // back to the product owner. Spend is checked before every call and booked after it (D9).
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { runClaude, mockEnabled } from '../claude-runner.mjs';
 import { normalizingOnEvent } from '../engines/claude-events.mjs';
@@ -13,6 +14,7 @@ import { budgetStatus, recordRequirementsCostDelta } from '../cost-budget.mjs';
 import { openRepoLook, openWorkspaceRepoLook } from '../auto/repo-look.mjs';
 import { REPO_LOOK_TOOLS, REPO_LOOK_MAX_TURNS, REPO_LOOK_TIMEOUT_MS } from '../auto/classify.mjs';
 import { worcaHome, listProjects } from '../projects.mjs';
+import { utilityModelFor } from '../settings-cascade.mjs';
 import { workspaceTarget } from '../ask/workflow-deps.mjs';
 import { RequirementsError, MAX_ROUNDS, LIMITS, clip } from './spec.mjs';
 import { unaskedRejections } from './ready.mjs';
@@ -25,11 +27,63 @@ import {
   normalizeOrientation, mockRoundReply, RoundError, removedCriteria, pendingRound,
 } from './round.mjs';
 
-const ROUND_TIMEOUT_MS = 180_000;
+export const ROUND_TIMEOUT_MS = 180_000;
 const DEFAULTS = Object.freeze({
   runClaudeImpl: runClaude, listModels, listProjects, workspaceTarget,
   openLook: openRepoLook, openWorkspaceLook: openWorkspaceRepoLook, budget: () => budgetStatus(), onChange: () => {},
+  userSignIn: () => userSignInLogged(),
+  interviewSlot: () => utilityModelFor('claude', 'requirementsInterview'),
 });
+
+// Keys of the user settings' `env` block that sign Claude Code in or route its traffic (A1.1 D6).
+const SIGN_IN_ENV_KEYS = new Set([
+  'CLAUDE_CODE_OAUTH_TOKEN', 'NODE_EXTRA_CA_CERTS', 'CLOUD_ML_REGION', 'GOOGLE_APPLICATION_CREDENTIALS',
+  'CLAUDE_CODE_CLIENT_CERT', 'CLAUDE_CODE_CLIENT_KEY',
+]);
+const isSignInEnvKey = (k) => SIGN_IN_ENV_KEYS.has(k) || /^https?_proxy$/i.test(k) || k.startsWith('ANTHROPIC_')
+  || k.startsWith('CLAUDE_CODE_USE_') || k.startsWith('AWS_');
+
+/**
+ * Whether the user-level Claude Code settings carry sign-in or network configuration (A1.1 D6): a
+ * non-empty `apiKeyHelper`, `awsAuthRefresh` or `awsCredentialExport`, or an `env` block with CLAUDE_CODE_OAUTH_TOKEN,
+ * CLAUDE_CODE_USE_* (Vertex, Bedrock, Foundry...), AWS_*, CLOUD_ML_REGION, GOOGLE_APPLICATION_CREDENTIALS,
+ * CLAUDE_CODE_CLIENT_CERT / _KEY, ANTHROPIC_*, HTTP(S)_PROXY (either case) or NODE_EXTRA_CA_CERTS. Then an interview keeps all setting sources, since
+ * `--setting-sources project` would drop that file and the call would not be signed in. The file is the
+ * one the CLI reads: `settings.json` in CLAUDE_CONFIG_DIR, else in `<home>/.claude` (as
+ * skills-registry/host.mjs). A MISSING file (ENOENT / ENOTDIR), a blank one, or valid JSON that is not an object means false
+ * (hermetic); a file that exists but cannot be read or parsed means true (keep user settings, A2's behaviour). Never throws.
+ * Not seen: a model profile's modelEnv can set CLAUDE_CONFIG_DIR / HOME for the child, which moves the file the CLI
+ * reads; this guard looks at the server's own environment only.
+ */
+export function userClaudeSignIn({ env = process.env, home, read = (p) => readFileSync(p, 'utf8') } = {}) {
+  try {
+    const dir = typeof env?.CLAUDE_CONFIG_DIR === 'string' && env.CLAUDE_CONFIG_DIR.trim()
+      ? env.CLAUDE_CONFIG_DIR.trim() : join(home ?? homedir(), '.claude');   // homedir() can throw: inside the try
+    let raw;
+    try { raw = String(read(join(dir, 'settings.json'))); } catch (err) {
+      return !(err && (err.code === 'ENOENT' || err.code === 'ENOTDIR'));   // missing: hermetic; unreadable: keep
+    }
+    const text = raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw;   // a leading BOM is tolerated
+    if (!text.trim()) return false;   // a blank file holds no sign-in: hermetic
+    let s;
+    try { s = JSON.parse(text); } catch { return true; }
+    if (!s || typeof s !== 'object' || Array.isArray(s)) return false;
+    for (const key of ['apiKeyHelper', 'awsAuthRefresh', 'awsCredentialExport']) if (typeof s[key] === 'string' && s[key] !== '') return true;
+    const e = s.env;
+    return !!e && typeof e === 'object' && !Array.isArray(e) && Object.keys(e).some(isSignInEnvKey);
+  } catch { return false; }
+}
+
+let signInLogged = false;
+/** The default `userSignIn`: the check, and the first time it keeps the user settings, one log line. */
+function userSignInLogged() {
+  const keep = userClaudeSignIn();
+  if (keep && !signInLogged) {
+    signInLogged = true;
+    console.warn('[worca] requirements: user Claude settings carry or may carry sign-in; keeping them for interviews');
+  }
+  return keep;
+}
 
 /** At most this many requirements jobs (looks and rounds, across all features) run at once. */
 export const MAX_JOBS = 4;
@@ -51,6 +105,32 @@ export async function requirementsModel(list = listModels) {
     const m = (await list(null)).find((x) => x && /^claude-opus-/.test(x.id) && !x.id.includes('['));
     return m ? m.id : undefined;
   } catch { return undefined; }
+}
+
+export const DEFAULT_INTERVIEW_EFFORT = 'medium';
+
+/**
+ * A1.1 D2: the model and effort of an interview call. The stored `requirementsInterview` pair counts for
+ * its model only while the catalog still lists it (a failing catalog read: it counts); otherwise the
+ * default Opus applies, with the default effort unless the pair names one. Unset = the default pair.
+ * `source` is 'settings' when a stored model or effort was used. Never throws.
+ */
+export async function interviewModel(deps = {}) {
+  const d = { ...DEFAULTS, ...deps };
+  let slot = {};
+  try { slot = d.interviewSlot() || {}; } catch { slot = {}; }
+  let stored = null;
+  if (typeof slot.model === 'string' && slot.model) {
+    stored = slot.model;   // a failing catalog read: it counts as stored
+    try {
+      const want = slot.model.toLowerCase();
+      const hit = (await d.listModels(null)).find((m) => m && typeof m.id === 'string' && m.id.toLowerCase() === want);
+      stored = hit ? hit.id : null;   // the catalog's spelling, so label and cost lookups agree
+    } catch { /* keep it */ }
+  }
+  const model = stored || await requirementsModel(d.listModels);
+  const effort = slot.effort || (stored ? null : DEFAULT_INTERVIEW_EFFORT);
+  return { model: model ?? null, effort: effort || null, source: stored || slot.effort ? 'settings' : 'default' };
 }
 
 /** `job.kind` says what is running ('look' or 'round'): an error turn records it so retry re-runs the right thing. */
@@ -106,18 +186,50 @@ function charge(seq, turnId, costUsd, model) {
   recordRequirementsCostDelta({ featureSeq: seq, turnId, amountUsd: costUsd, model: model || null });
 }
 
-export async function callModel(d, { cwd, systemPrompt, prompt, model, tools, maxTurns = null, timeoutMs }) {
+const CALL_KINDS = Object.freeze({
+  look: () => ({ systemPrompt: ORIENTATION_SYSTEM_PROMPT, tools: REPO_LOOK_TOOLS, maxTurns: REPO_LOOK_MAX_TURNS }),
+  round: () => ({ systemPrompt: ROUND_SYSTEM_PROMPT, tools: [], maxTurns: null }),
+});
+const CALL_KEYS = new Set(['cwd', 'prompt', 'model', 'systemPrompt', 'tools', 'maxTurns', 'effort']);
+
+/**
+ * The runClaude options of one interview call, without `signal` / `onEvent` (design §9, the lane contract).
+ * `kind` is 'look' or 'round'; systemPrompt, tools, maxTurns and effort override that kind's defaults.
+ * Every call, whatever the overrides, replaces Claude Code's system prompt with Worca's and turns slash
+ * commands off; it also loads only the project's setting sources (no user plugins, hooks or skills,
+ * A1.1 D6) unless `keepUserSettings` (the user settings carry sign-in: `userClaudeSignIn`).
+ * The measurement tool builds its calls through this too, so what it measures is what the interview sends.
+ */
+export function interviewCallOptions(kind, args = {}, { keepUserSettings = false } = {}) {
+  if (!Object.hasOwn(CALL_KINDS, kind)) throw new TypeError(`interviewCallOptions: unknown kind ${JSON.stringify(kind)}`);
+  for (const k of Object.keys(args)) if (!CALL_KEYS.has(k)) throw new TypeError(`interviewCallOptions: unknown option "${k}"`);
+  const def = CALL_KINDS[kind]();
+  const { cwd, prompt, model } = args;
+  const pick = (k) => (args[k] !== undefined ? args[k] : def[k]);
+  const tools = pick('tools');
+  if (!Array.isArray(tools)) throw new TypeError('interviewCallOptions: tools must be an array');
+  const maxTurns = pick('maxTurns');
+  return {
+    cwd, systemPrompt: pick('systemPrompt'), systemPromptMode: 'replace', prompt, model, modelEnv: resolveModelEnv(model),
+    allowedTools: [...tools], tools: [...tools], strictMcpConfig: true,
+    ...(keepUserSettings ? {} : { settingSources: ['project'] }), disableSlashCommands: true,
+    ...(maxTurns ? { maxTurns } : {}),
+    ...(args.effort ? { effort: args.effort } : {}), permissionMode: 'acceptEdits',
+    spawnKind: 'aux',   // credential broker: a short-lived token, as pr-description.mjs
+  };
+}
+
+export async function callModel(d, { kind, cwd, prompt, model, timeoutMs, ...overrides }) {
+  // Read per call, so a changed user settings file applies without a restart (D6).
+  const keepUserSettings = !!(d.userSignIn || DEFAULTS.userSignIn)();
+  const options = interviewCallOptions(kind, { cwd, prompt, model, ...overrides }, { keepUserSettings });
   const ctrl = new AbortController();
   let timedOut = false;
   const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, timeoutMs);
   let costUsd = 0;
   try {
     const res = await d.runClaudeImpl({
-      cwd, systemPrompt, prompt, model, modelEnv: resolveModelEnv(model),
-      allowedTools: [...tools], tools: [...tools], strictMcpConfig: true,
-      ...(maxTurns ? { maxTurns } : {}),
-      effort: 'medium', permissionMode: 'acceptEdits', signal: ctrl.signal,
-      spawnKind: 'aux',   // credential broker: a short-lived token, as pr-description.mjs
+      ...options, signal: ctrl.signal,
       onEvent: normalizingOnEvent((e) => {
         if (e.type !== 'result' || e.costUsd == null) return;
         const c = resolveModelCost(model, Number(e.costUsd), e.usage ?? null);
@@ -174,12 +286,13 @@ async function orient(f, d, brief = null) {
   try {
     look = await openLookFor(f, d, ctrl.signal);
     if (!look) return { summary: '', files: [], skipped: 'no-repo' };
-    model = await requirementsModel(d.listModels);
+    const im = await interviewModel(d);
+    model = im.model || undefined;
     if (isArchived(f.seq)) return { summary: '', files: [], skipped: 'archived' };
     const { text, costUsd } = await callModel(d, {
-      cwd: look.cwd, systemPrompt: ORIENTATION_SYSTEM_PROMPT,
-      prompt: buildOrientationPrompt({ feature: f, context: ctx.body, members: look.members || null, brief: brief ? brief.text : null }),
-      model, tools: REPO_LOOK_TOOLS, maxTurns: REPO_LOOK_MAX_TURNS, timeoutMs: REPO_LOOK_TIMEOUT_MS,
+      kind: 'look', cwd: look.cwd,
+      prompt: buildOrientationPrompt({ feature: f, context: ctx.body, members: look.members || null, cwd: look.cwd, brief: brief ? brief.text : null }),
+      model, ...(im.effort ? { effort: im.effort } : {}), timeoutMs: REPO_LOOK_TIMEOUT_MS,
     });
     return { ...normalizeOrientation(safeParseJson(text)), skipped: null, model: model || null, costUsd };
   } catch (err) {
@@ -230,14 +343,16 @@ async function runRound(seq, d, by, { final = false, followUp = null } = {}) {
   } else {
     const ctx = getContext(f.scopeType, f.scopeKey);
     const prompt = buildRoundPrompt({ feature: f, context: ctx.body, turns, final: isFinal, round: f.rounds + 1, followUp: followItems, brief: brief?.text });
-    model = await requirementsModel(d.listModels);
+    const im = await interviewModel(d);
+    model = im.model || undefined;
+    const effort = im.effort || undefined;
     const cwd = scratchDir();
     const fail = (code, msg) => failTurn(seq, { code, message: msg, job: 'round', costUsd: cost, model }, by, 'your_turn');
     try {
       for (let attempt = 1; attempt <= 2 && !applied; attempt += 1) {
         if (isArchived(seq)) { if (cost > 0) fail('ARCHIVED', 'The feature was archived before the next attempt.'); return; }
         assertBudget(d);   // before every call; an earlier attempt is already counted in `cost`
-        const r = await callModel(d, { cwd, systemPrompt: ROUND_SYSTEM_PROMPT, prompt, model, tools: [], timeoutMs: ROUND_TIMEOUT_MS });
+        const r = await callModel(d, { kind: 'round', cwd, prompt, model, ...(effort ? { effort } : {}), timeoutMs: ROUND_TIMEOUT_MS });
         cost += r.costUsd;
         try { applied = applyRound(f.spec, safeParseJson(r.text), seqs); }
         catch (err) { if (!(err instanceof RoundError)) throw err; lastErr = err; }

@@ -81,6 +81,7 @@ import {
   runEngineSetting, assertRunEngineInput, setRunEngineSetting,
   stepModelsSetting, assertStepModelsInput, setStepModels,
   utilityModelsSetting, assertUtilityModelsInput, setUtilityModels,
+  requirementsInterviewSetting, assertRequirementsInterviewInput, setRequirementsInterview,
   askEngineSetting, assertAskEngineInput, setAskEngineSetting, askModelsSetting, assertAskModelsInput, setAskModels,
 } from '../src/core/settings.mjs';
 import { resolveSetting, resolveAll, writeProjectSettings, assertProjectSettingsPatch, resolveRunEngine, defragSlotPair } from '../src/core/settings-cascade.mjs';
@@ -279,7 +280,7 @@ import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
 import { registerRequirementsRoutes, requirementsChangeNotifier } from '../src/core/requirements/routes.mjs';
 import { createRunEventHook } from '../src/core/requirements/start.mjs';
-import { recoverInterrupted as recoverRequirements } from '../src/core/requirements/interview.mjs';
+import { recoverInterrupted as recoverRequirements, requirementsModel, DEFAULT_INTERVIEW_EFFORT } from '../src/core/requirements/interview.mjs';
 import { recoverBriefs } from '../src/core/requirements/brief-job.mjs';
 import { drainTimeoutMs, autoResumeEnabled, autoResumeCandidates, DRAIN_ACTIVE_STATUSES } from '../src/core/drain.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
@@ -9006,6 +9007,7 @@ const settingsState = () => ({
   stepModels: stepModelsSetting(),
   utilityModels: utilityModelsSetting(),
   askEngine: askEngineSetting() ?? null,                  // Ask Worca: the engine new chats start on (D17)
+  requirementsInterview: requirementsInterviewSetting() ?? null,   // Models › Engines › Claude: the STORED { model?, effort? } (null = the default)
   askModels: askModelsSetting(),                          // Ask Worca: the model per engine (D17)
   nightMode: nightModeSettings(),                         // night mode: the user layer (only the fields set)
   nightModeEffective: resolveNightConfig({ user: nightModeSettings() }).config,   // no project: the global view
@@ -9027,6 +9029,10 @@ async function autoModelState() {
   return { autoWorkflowModel: stored, autoWorkflowModelEffective: { model, source } };
 }
 
+/** What "(default)" means for the Requirements interview row: the newest plain Opus at medium effort (A1-D8). */
+async function requirementsInterviewState() {
+  return { requirementsInterviewDefault: { model: (await requirementsModel(() => listModels(''))) ?? null, effort: DEFAULT_INTERVIEW_EFFORT } };
+}
 /** Settings ▸ PR description model: the stored id + what Generate with AI will actually
  *  use (stored catalog id > the Sonnet-class default). Async because the catalog is. */
 async function prDescriptionModelState() {
@@ -9423,7 +9429,7 @@ app.post('/api/shutdown', (req, res) => {
 
 app.get('/api/settings', async (req, res) => {
   const person = awayPersonOf(req);   // B4: a signed-in person sees their own Away switch
-  res.json({ ...settingsState(), ...(person ? { nightModeToggle: nightModeToggleFor(person), nightModePerPerson: person } : {}), ...(await autoModelState()), ...(await prDescriptionModelState()), chat: chatPrefs(), app: APP_INFO });
+  res.json({ ...settingsState(), ...(person ? { nightModeToggle: nightModeToggleFor(person), nightModePerPerson: person } : {}), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await requirementsInterviewState()), chat: chatPrefs(), app: APP_INFO });
 });
 
 app.get('/api/budget', (_req, res) => {
@@ -9460,7 +9466,7 @@ app.post('/api/settings', async (req, res) => {
     has('projectsRoot') ? normalizeProjectPath(body.projectsRoot) : null]))) return;
   try {
     const { actionsWarnings } = await applySettingsPatch(body, { person: awayPersonOf(req) });
-    res.json({ ...settingsState(), ...(await autoModelState()), ...(await prDescriptionModelState()), chat: chatPrefs(),
+    res.json({ ...settingsState(), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await requirementsInterviewState()), chat: chatPrefs(),
       ...(actionsWarnings ? { actionsWarnings } : {}) });
   } catch (err) {
     // 400 with the user's words and, when known, the body path of the bad field (#555).
@@ -9506,6 +9512,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const hasUtilityModelsKey = has('utilityModels');
   const hasAskEngineKey = has('askEngine');
   const hasAskModelsKey = has('askModels');
+  const hasRequirementsInterviewKey = has('requirementsInterview');
   const hasActionsKey = has('actions');
   const wsScanModels = hasWorkspaceScanKey ? (autoModels || defragModels || await listModels('')) : null;
   // #422: the title model is a SELECT over the catalog, so an id that is not a
@@ -9530,7 +9537,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   if (has('askMaxTurns')) ask.askMaxTurns = body.askMaxTurns ?? '';
   if (has('askMaxBudgetUsd')) ask.askMaxBudgetUsd = body.askMaxBudgetUsd === undefined ? '' : body.askMaxBudgetUsd;
   {   // was the route's try: a refusal now reaches the caller (the route maps it to 400, the chat to a notice)
-    for (const key of ['titleModel', 'autoWorkflowModel', 'prDescriptionModel', 'memoryDefrag', 'workspaceScan']) {
+    for (const key of ['titleModel', 'autoWorkflowModel', 'prDescriptionModel', 'memoryDefrag', 'workspaceScan', 'requirementsInterview']) {
       if (has(key)) asSettingsField(key, () => refuseNonClaudeUtilityModel(key, body[key]));
     }
     // Each validator / setter that can refuse a value runs tagged with the body key it checks,
@@ -9568,6 +9575,10 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasWorkspaceScanKey) asSettingsField('workspaceScan', () => assertWorkspaceScanInput(body.workspaceScan, wsScanModels));
     if (hasRunEngineKey) asSettingsField('runEngine', () => assertRunEngineInput(body.runEngine));
     if (hasAskEngineKey) asSettingsField('askEngine', () => assertAskEngineInput(body.askEngine));
+    if (hasRequirementsInterviewKey) await asSettingsField('requirementsInterview', async () => {
+      const v = assertRequirementsInterviewInput(body.requirementsInterview);
+      if (v?.model) await assertSlotModels([{ id: 'requirementsInterview', engine: 'claude', value: v }]);
+    });
     if (hasAskModelsKey) await asSettingsField('askModels', async () => {
       const patch = assertAskModelsInput(body.askModels);
       await assertSlotModels(Object.entries(patch).filter(([, value]) => value).map(([engine, value]) => ({ id: `askModels.${engine}`, engine, value })));
@@ -9628,6 +9639,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasUtilityModelsKey) await asSettingsField('utilityModels', () => setUtilityModels(body.utilityModels));
     if (hasAskEngineKey) await asSettingsField('askEngine', () => setAskEngineSetting(body.askEngine));
     if (hasAskModelsKey) await asSettingsField('askModels', () => setAskModels(body.askModels));
+    if (hasRequirementsInterviewKey) await asSettingsField('requirementsInterview', () => setRequirementsInterview(body.requirementsInterview));
     if (has('schedule')) await asSettingsField('schedule', () => setScheduleDefaults(body.schedule && typeof body.schedule === 'object' ? body.schedule : {}));
     if (has('nightMode')) await setNightMode(body.nightMode);
     if (has('nightModeToggle') && !(await setPersonNightModeToggle(person, body.nightModeToggle))) await setNightModeToggle(body.nightModeToggle);
@@ -9638,7 +9650,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasBudgetKey) emitChanged('budget-changed');
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
-    if (hasAskKey || hasAskWeb || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;

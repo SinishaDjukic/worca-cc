@@ -876,3 +876,26 @@ test('runClaude FORWARDS pluginDirs and extraSettings to runReal (both reach the
   assert.deepEqual(JSON.parse(argv[argv.indexOf('--settings') + 1]),
     { disableSkillShellExecution: true, permissions: { deny: ['Read(.env*)'] } });
 });
+
+test('runClaude FORWARDS systemPromptMode to runReal (--system-prompt reaches the spawn; absent keeps the append flag)', POSIX_SHIM, async () => {
+  const prevMock = process.env.WORCA_MOCK;
+  delete process.env.WORCA_MOCK;                       // must reach runReal, not runMock
+  const spawnArgv = async (extra) => {
+    const dir = await tmp();
+    const out = join(dir, 'argv.txt');
+    const bin = await fakeBin(dir, out);
+    await runClaude({ cwd: dir, bin, prompt: 'p', systemPrompt: 'SYS', ...extra });
+    return (await readFile(out, 'utf8')).split('\0').filter(Boolean);
+  };
+  try {
+    const replaced = await spawnArgv({ systemPromptMode: 'replace' });
+    assert.equal(replaced[replaced.indexOf('--system-prompt') + 1], 'SYS', JSON.stringify(replaced));
+    assert.ok(!replaced.includes('--append-system-prompt'));
+    const appended = await spawnArgv({});
+    assert.equal(appended[appended.indexOf('--append-system-prompt') + 1], 'SYS');
+    assert.ok(!appended.includes('--system-prompt'));
+  } finally {
+    if (prevMock === undefined) delete process.env.WORCA_MOCK;
+    else process.env.WORCA_MOCK = prevMock;
+  }
+});

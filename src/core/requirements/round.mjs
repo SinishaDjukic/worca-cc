@@ -14,7 +14,11 @@ const NEW_ITEMS_PER_ROUND = 20;
 /** User- or model-written text goes into prompts as data: `<` becomes `&lt;` so it can neither close nor open a tag. */
 export function asData(text) { return String(text ?? '').replaceAll('<', '&lt;'); }
 
+// Both system prompts REPLACE Claude Code's own (A1.1 D4/D5): they say who Worca is, and they carry no
+// date, path or per-call value, so each is the same for every call (D7).
 export const ROUND_SYSTEM_PROMPT = [
+  "You are Worca's requirements interviewer. You talk with a product owner through Worca's Requirements page, never through a terminal, and you have no tools: everything you know is in the message.",
+  '',
   'You help a product owner turn a feature idea into a clear, testable specification by interviewing them.',
   'The product owner is not a developer. Ask about outcomes, people, behaviour, rules and limits: never about code, files, frameworks, databases or APIs. Write the spec in plain product language.',
   '',
@@ -41,6 +45,9 @@ export const ROUND_SYSTEM_PROMPT = [
 ].join('\n');
 
 export const ORIENTATION_SYSTEM_PROMPT = [
+  "You are Worca's requirements reader.",
+  'You can only read: Glob finds files by name pattern, Grep searches file contents, Read reads one file (use paths under the working directory the message names). You cannot run commands or change anything, and you have only a few steps: answer before they run out.',
+  'Your final message is only the JSON object below: no prose before or after it.',
   'You look at a code repository for a product owner who is about to describe a feature. The product owner does not read code.',
   'Read only what you need: a few searches, a few files. Then describe what the product already does in the area of this feature: the existing concepts and the names the product uses for them, and anything that partly exists already.',
   'Use plain product language: no file paths, no code identifiers, no technology names. At most 250 words.',
@@ -125,16 +132,24 @@ function threadText(turns) {
   return lines.join('\n') || '(nothing yet: this is the first round)';
 }
 
-export function buildRoundPrompt({ feature, context = '', turns = [], final = false, round = 1, followUp = null, brief = null }) {
+/**
+ * A round's user prompt in its two parts (A1.1 D7): `stable`, the same for a feature in every round, and
+ * `changing`, what each round brings (led by the thread, which only grows). A7: `brief`, the rendered
+ * product brief, joins `stable` after <project_context>, and only when the scope has a usable one.
+ */
+export function roundPromptParts({ feature, context = '', turns = [], final = false, round = 1, followUp = null, brief = null }) {
   const spec = { ...feature.spec };
   const edited = Object.keys(spec.edited || {}).filter((k) => spec.edited[k]);
   delete spec.edited;
-  return [
+  // Stable for a feature across rounds (cache-friendly: first). A7's <product_brief> goes after <project_context>, only with a brief.
+  const stable = [
     `<feature id="${asData(feature.id)}">${asData(feature.title)}</feature>`,
     `<description>\n${asData(feature.description)}\n</description>`,
     `<project_context>\n${asData(context) || '(none)'}\n</project_context>`,
     ...(brief ? [`<product_brief>\n${asData(brief)}\n</product_brief>`] : []),   // A7: only with a usable brief
     `<what_worca_found_in_the_code>\n${asData(feature.orientation?.summary) || '(nothing: the code was not looked at)'}\n</what_worca_found_in_the_code>`,
+  ];
+  const changing = [
     `<thread>\n${threadText(turns)}\n</thread>`,
     `<current_spec>\n${asData(JSON.stringify(spec, null, 2))}\n</current_spec>`,
     `<edited_by_product_owner>${edited.map(asData).join(', ') || '(none)'}</edited_by_product_owner>`,
@@ -148,18 +163,33 @@ export function buildRoundPrompt({ feature, context = '', turns = [], final = fa
       ? [`This is a follow-up round. The product owner rejected these assumptions: ${followUp.map((a) => `${asData(a.id)}: ${asData(a.text)}`).join('; ')}. Ask only what you need to replace them (at most ${MAX_QUESTIONS} questions). Keep them as rejected; never propose them again with the same meaning. Do not set "done" unless nothing is left to ask about them.`]
       : []),
     'Reply with ONLY the JSON object described in the system prompt.',
-  ].join('\n\n');
+  ];
+  return { stable: stable.join('\n\n'), changing: changing.join('\n\n') };
 }
 
-export function buildOrientationPrompt({ feature, context = '', members = null, brief = null }) {
+/** A round's user prompt: A2's text, byte for byte (the stable part, a blank line, the changing part);
+ *  with a usable brief, the same plus the <product_brief> block (A7). */
+export function buildRoundPrompt(args) {
+  const { stable, changing } = roundPromptParts(args);
+  return `${stable}
+
+${changing}`;
+}
+
+/** The look's user prompt. `cwd`, the look's directory, is named here and not in the system prompt, which
+ *  stays the same for every look (A1.1 D5); without it the working-directory sentence is A2's. A7: with a
+ *  brief, the <product_brief> block after <project_context> and the brief line right before the reply line. */
+export function buildOrientationPrompt({ feature, context = '', members = null, cwd = null, brief = null }) {
   return [
     `<feature>${asData(feature.title)}</feature>`,
     `<description>\n${asData(feature.description)}\n</description>`,
     `<project_context>\n${asData(context) || '(none)'}\n</project_context>`,
     ...(brief ? [`<product_brief>\n${asData(brief)}\n</product_brief>`] : []),   // A7 D11: the closer look
     members && members.length
-      ? `The working directory holds one checkout per project under repos/<project>: ${members.map(asData).join(', ')}.`
-      : 'The working directory is a checkout of the project.',
+      ? (cwd
+        ? `The working directory, ${asData(cwd)}, holds one checkout per project under repos/<project>: ${members.map(asData).join(', ')}.`
+        : `The working directory holds one checkout per project under repos/<project>: ${members.map(asData).join(', ')}.`)
+      : (cwd ? `The working directory, ${asData(cwd)}, is a checkout of the project.` : 'The working directory is a checkout of the project.'),
     ...(brief ? ['The product brief above already describes the product. Look only at what this feature needs that the brief does not say, and name the product area it belongs to in "area".'] : []),
     'Reply with ONLY the JSON object described in the system prompt.',
   ].join('\n\n');

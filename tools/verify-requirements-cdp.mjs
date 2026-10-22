@@ -158,6 +158,8 @@ await A.evalJs(`window.__np.flags.set('requirements', true)`);
 check('flag on: the row appears without a reload', await until(navShown, 2000));
 await A.evalJs(`location.hash = '#requirements/new'`);
 check('the new-feature form renders', await until(() => A.evalJs(`!!document.getElementById('req-new-title')`)));
+check('the New feature page names the interview model ("Worca interviews with …")',
+  await until(() => A.evalJs(`(document.querySelector('.req-new .req-new-cost')?.textContent || '').startsWith('Worca interviews with')`), 4000));
 const filled = await A.evalJs(`(() => { const sel = document.getElementById('req-new-target');
   const opt = [...sel.options].find((o) => o.text === 'shop'); if (!opt) return false; sel.value = opt.value;
   document.getElementById('req-new-title').value = 'Cancel an order';
