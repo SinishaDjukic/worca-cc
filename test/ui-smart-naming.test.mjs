@@ -56,7 +56,18 @@ async function boot({ suggest = () => SUGGESTION, config = { trigger: 'debounce'
 const type = (ctx, el, v) => { el.value = v; el.dispatchEvent(new ctx.window.Event('input', { bubbles: true })); };
 const $ = (ctx, id) => ctx.doc.getElementById(id);
 const chips = (ctx) => ctx.doc.querySelectorAll('.sn-chip').length;
-async function typeTask(ctx) { type(ctx, $(ctx, 'prompt'), TASK); await tick(1150); }
+// The debounce is armed only once /api/naming/config resolves, so on a busy runner the call can go out after 1150ms:
+// wait for it (and a tick for its answer) instead of trusting the fixed delay. `suggests: false` for the no-call cases.
+async function typeTask(ctx, { suggests = true } = {}) {
+  const before = ctx.naming().length;
+  type(ctx, $(ctx, 'prompt'), TASK);
+  await tick(1150);
+  if (!suggests) return;
+  for (const end = Date.now() + 5000; ctx.naming().length === before; await tick(10)) {
+    if (Date.now() > end) throw new Error('no naming call within 6s of typing the task');
+  }
+  await tick(20);
+}
 
 test('flag off: typing a task never calls the model and shows no chip', async () => {
   const ctx = await boot({ on: false });
@@ -154,7 +165,7 @@ test('a still-suggested branch is marked on Start; a typed one is not', async ()
 
 test('manual trigger: no call until the retry button is pressed', async () => {
   const ctx = await boot({ config: { trigger: 'manual', pattern: '{type}/{slug}' } });
-  await typeTask(ctx);
+  await typeTask(ctx, { suggests: false });
   assert.equal(ctx.naming().length, 0);
   $(ctx, 'titleSnRetry').click();
   await tick(20);
@@ -168,7 +179,7 @@ test('a short task or "run on the source branch" asks nothing', async () => {
   await tick(1150);
   assert.equal(ctx.naming().length, 0);
   $(ctx, 'sameAsSource').checked = true;
-  await typeTask(ctx);
+  await typeTask(ctx, { suggests: false });
   assert.equal(ctx.naming().length, 0);
 });
 
