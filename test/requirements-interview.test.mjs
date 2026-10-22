@@ -783,7 +783,8 @@ function signInHome(body) {
 
 test('userClaudeSignIn: an apiKeyHelper or a sign-in / network env key in the user settings means keep them', () => {
   assert.equal(userClaudeSignIn({ env: {}, home: signInHome({ apiKeyHelper: 'cat /run/secrets/key' }) }), true);
-  for (const key of ['ANTHROPIC_BASE_URL', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_BEDROCK', 'HTTPS_PROXY', 'http_proxy', 'NODE_EXTRA_CA_CERTS']) {
+  for (const key of ['ANTHROPIC_BASE_URL', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_FOUNDRY', 'AWS_PROFILE', 'AWS_REGION',
+    'CLOUD_ML_REGION', 'GOOGLE_APPLICATION_CREDENTIALS', 'CLAUDE_CODE_CLIENT_CERT', 'CLAUDE_CODE_CLIENT_KEY', 'HTTPS_PROXY', 'http_proxy', 'NODE_EXTRA_CA_CERTS']) {
     assert.equal(userClaudeSignIn({ env: {}, home: signInHome({ env: { [key]: '1' } }) }), true, key);
   }
   assert.equal(userClaudeSignIn({ env: {}, home: signInHome(`${String.fromCharCode(0xFEFF)}${JSON.stringify({ apiKeyHelper: 'x' })}`) }), true, 'a leading BOM is tolerated');
@@ -797,15 +798,26 @@ test('userClaudeSignIn: an OAuth token in env, awsAuthRefresh and awsCredentialE
 });
 
 test('userClaudeSignIn: no home argument resolves homedir() inside the guard and never throws', () => {
-  assert.equal(typeof userClaudeSignIn({ env: {}, read: () => { throw new Error('ENOENT'); } }), 'boolean');
-  assert.equal(userClaudeSignIn({ env: {}, read: () => { throw new Error('ENOENT'); } }), false);
+  const missing = () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); };
+  assert.equal(typeof userClaudeSignIn({ env: {}, read: missing }), 'boolean');
+  assert.equal(userClaudeSignIn({ env: {}, read: missing }), false);
 });
 
 test('userClaudeSignIn: nothing to keep for other keys, an empty helper, no file, invalid JSON or not an object; never throws', () => {
   const cases = [[{ env: { FOO: '1' } }, 'other env key'], [{}, 'empty object'], [{ apiKeyHelper: '' }, 'empty helper'],
-    [undefined, 'no file'], ['{ not json', 'invalid JSON'], [[{ apiKeyHelper: 'x' }], 'a JSON array'], [{ env: ['ANTHROPIC_BASE_URL'] }, 'env not an object']];
+    [undefined, 'no file'], ['null', 'JSON null'], [[{ apiKeyHelper: 'x' }], 'a JSON array'], [{ env: ['ANTHROPIC_BASE_URL'] }, 'env not an object']];
   for (const [body, why] of cases) assert.equal(userClaudeSignIn({ env: {}, home: signInHome(body) }), false, why);
-  assert.equal(userClaudeSignIn({ env: {}, home: signInHome({ apiKeyHelper: 'x' }), read: () => { throw new Error('EACCES'); } }), false, 'unreadable');
+});
+
+test('userClaudeSignIn: a file that exists but cannot be read or parsed means keep the user settings; only a missing one is hermetic', () => {
+  const err = (code) => () => { throw Object.assign(new Error(code), { code }); };
+  assert.equal(userClaudeSignIn({ env: {}, home: signInHome({}), read: err('EACCES') }), true, 'unreadable');
+  assert.equal(userClaudeSignIn({ env: {}, home: signInHome({}), read: err('EISDIR') }), true, 'not a file');
+  assert.equal(userClaudeSignIn({ env: {}, home: signInHome({}), read: err('ENOENT') }), false, 'missing');
+  assert.equal(userClaudeSignIn({ env: {}, home: signInHome({}), read: err('ENOTDIR') }), false, 'parent is not a directory');
+  assert.equal(userClaudeSignIn({ env: {}, home: signInHome('{ not json') }), true, 'invalid JSON');
+  assert.equal(userClaudeSignIn({ env: {}, home: signInHome('// comment\n{"a":1}') }), true, 'comments');
+  assert.equal(userClaudeSignIn({ env: {}, home: signInHome('') }), true, 'empty file');
 });
 
 test('userClaudeSignIn: CLAUDE_CONFIG_DIR (trimmed) moves the file off <home>/.claude', () => {

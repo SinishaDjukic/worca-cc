@@ -285,7 +285,8 @@ a steadier model leaves a flaky free model touching only the pipeline steps.
 
 The *Requirements interview* helper (the Requirements page's looks and rounds) runs on Claude only and is
 set per user. Unlike Memory defragment, it takes an effort without a model: the default model then runs at
-that effort.
+that effort. A model picked with no effort runs at that model's own default effort. A model removed from the
+catalog falls back to the default model but keeps a stored effort.
 
 **The daily allowance.** Separately, OpenRouter caps how many `:free` requests a key
 sends per day: **1000** on an account that has bought at least $10 of credit, **50**

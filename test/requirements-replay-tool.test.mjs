@@ -155,7 +155,7 @@ test('--yes: the report adds up, sets WORCA_DEBUG_SPAWN, and --out writes the JS
   const { lines, log } = logger();
   const f = fakeSpawn({ cost: 0.1 });
   const out = join(work, 'report.json');
-  const code = await main(['--rounds', '3', '--model', MODEL, '--yes', '--label', 'before', '--out', out], { spawn: f.spawn, log, env: noMock });
+  const code = await main(['--rounds', '3', '--model', MODEL, '--yes', '--label', 'before', '--out', out], { spawn: f.spawn, log, env: noMock, userSignIn: () => false });
   assert.equal(code, 0);
   assert.deepEqual(f.debugSpawn, ['1', '1', '1'], 'WORCA_DEBUG_SPAWN is 1 during every call');
   assert.equal(process.env.WORCA_DEBUG_SPAWN, undefined);   // restored after the run
@@ -184,7 +184,7 @@ test('--max-usd 0.15 with $0.10 calls stops after two and marks the rest skipped
   const { log } = logger();
   const f = fakeSpawn({ cost: 0.1 });
   const out = join(work, 'capped.json');
-  const code = await main(['--rounds', '4', '--model', MODEL, '--yes', '--max-usd', '0.15', '--out', out], { spawn: f.spawn, log, env: noMock });
+  const code = await main(['--rounds', '4', '--model', MODEL, '--yes', '--max-usd', '0.15', '--out', out], { spawn: f.spawn, log, env: noMock, userSignIn: () => false });
   assert.equal(code, 1);
   assert.equal(f.calls.length, 2);
   const rep = JSON.parse(readFileSync(out, 'utf8'));
@@ -194,7 +194,7 @@ test('--max-usd 0.15 with $0.10 calls stops after two and marks the rest skipped
 test('--no-cache passes DISABLE_PROMPT_CACHING to every call', async () => {
   const { log } = logger();
   const f = fakeSpawn();
-  await main(['--rounds', '2', '--model', MODEL, '--yes', '--no-cache'], { spawn: f.spawn, log, env: noMock });
+  await main(['--rounds', '2', '--model', MODEL, '--yes', '--no-cache'], { spawn: f.spawn, log, env: noMock, userSignIn: () => false });
   assert.equal(f.calls.length, 2);
   for (const c of f.calls) assert.deepEqual(c.spawnEnv, { DISABLE_PROMPT_CACHING: '1' });
 });
@@ -203,7 +203,7 @@ test('a throwing call is recorded, the replay goes on, and the exit code is 1', 
   const { log } = logger();
   const f = fakeSpawn({ fail: [0] });
   const out = join(work, 'failed.json');
-  const code = await main(['--rounds', '2', '--model', MODEL, '--yes', '--out', out], { spawn: f.spawn, log, env: noMock });
+  const code = await main(['--rounds', '2', '--model', MODEL, '--yes', '--out', out], { spawn: f.spawn, log, env: noMock, userSignIn: () => false });
   assert.equal(code, 1);
   assert.equal(f.calls.length, 2);
   const rep = JSON.parse(readFileSync(out, 'utf8'));
