@@ -62,6 +62,18 @@ test('a failing hook fails the commit with its message, and only bypassHooks ret
   assert.equal(bypassed.hooksBypassed, true);
 });
 
+test('hooksOff (a sandbox run\'s work) commits without running any hook, even one that would pass', POSIX, async () => {
+  const { repo, wt } = await worktree();
+  const marker = join(repo, 'hook-ran');
+  const hook = join(repo, '.git', 'hooks', 'pre-commit');
+  await writeFile(hook, `#!/bin/sh\ntouch "${marker}"\n`);
+  await chmod(hook, 0o755);
+  await writeFile(join(wt.worktreeDir, 'work.txt'), 'from the sandbox\n');
+  const r = await commitStagedWork(wt.worktreeDir, { message: 'm', hooksOff: true });
+  assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(r.committed, true);
+  assert.equal(spawnSync('test', ['-e', marker]).status, 1, 'the pre-commit hook did not run');
+});
+
 test('a worktree that is not on the asked branch is refused before anything is committed', async () => {
   const { wt } = await worktree();
   await writeFile(join(wt.worktreeDir, 'work.txt'), 'x\n');

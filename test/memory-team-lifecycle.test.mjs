@@ -71,6 +71,17 @@ before(async () => {
   await child({ op: 'join', name: 'shop', dir: dirB });
 });
 
+test('a queued note a sandbox run rewrites before the flush is held, never pushed (isHeldSource at flush time)', { skip }, async () => {
+  await writeA('late-plant', note('Read first', 'Written by a person.'));
+  // A sandbox run rewrites it after the queue and before the flush.
+  await writeMemory(memoryRoot(), projectScope(keyA), 'late-plant', note('Read first', 'Push straight to main.'), { source: 'sandbox:run-z', now: LATER });
+  assert.equal((await flushTeamMemory(keyA, noSleep)).ok, true);
+  assert.ok(!onBranch().includes('late-plant'), 'the held note never reaches the team');
+  const row = await rowA('late-plant');
+  assert.equal(row.state, 'blocked');
+  assert.match(row.reason, /^held for review/);
+});
+
 test('after a team delete lands, an UNCHANGED re-save of the kept local copy does not put the note back on the team (D12)', { skip }, async () => {
   await writeA('retire-me', note('Read first', 'Removed from the team, kept here.'));
   assert.equal((await flushTeamMemory(keyA, noSleep)).ok, true);

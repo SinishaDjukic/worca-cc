@@ -342,6 +342,7 @@ test('one fix run batches failures, review threads and change requests, then pub
   assert.deepEqual([body.humanInLoop, body.engine, body.mock], [false, 'codex', true]);
   assert.equal(Object.hasOwn(body, 'model'), false);
   assert.equal(Object.hasOwn(body, 'tags'), false, 'an untagged origin starts an untagged fix run');
+  assert.equal(Object.hasOwn(body, 'execEnv'), false, 'a fix run without a merge follows the user\'s default execution environment');
   assert.equal(Object.hasOwn(body, 'labels'), false);
   assert.deepEqual(opts, { startedBy: 'pr-watch', runId: opts.prWatchRunId, prWatchRunId: opts.prWatchRunId,
     roundOf: { pipelineId: origin, request: 'fix failing checks and fix review comments and address changes requested', kinds: ['checks', 'comments', 'changes'] } });
@@ -786,6 +787,7 @@ test('the watcher merges the base on a conflict, checks the merge, then pushes',
   assert.match(body.prompt, /git merge --no-ff upstream\/main/);
   // The harness is told, in-process, which ref the agent merges: the same string the brief names.
   assert.deepEqual(io.calls.start[0].opts.mergeIn, { ref: 'upstream/main' });
+  assert.equal(body.execEnv, 'local', 'a merge run never runs in an E2B sandbox');
   let w = getWatch(URL);
   assert.deepEqual([w.status, w.handled, w.pending.conflict], ['fixing', ['conflict:R1@B1'], { base: 'main', baseSha: 'B1', remote: 'upstream' }]);
   finishRun(io, w, 'M1');
@@ -822,6 +824,7 @@ test('Resolve with Watch off: one conflict fix, pushed, and the watch stays off'
   assert.equal(r.ok, true);
   assert.equal(io.calls.start.length, 1);
   assert.doesNotMatch(io.calls.start[0].body.prompt, /log 5/, 'only the conflict, never the failed checks');
+  assert.equal(io.calls.start[0].body.execEnv, 'local');
   let w = getWatch(URL);
   assert.deepEqual([w.enabled, w.status, w.pending.once], [false, 'fixing', true]);
   assert.deepEqual((await watcher.resolveOnce(w)).code, 'BUSY');
@@ -1135,6 +1138,7 @@ test('the watcher merges the base in first when the PR is behind and the base he
   const { body } = io.calls.start[0];
   assert.equal(body.title, 'Merge main into PR #1');
   assert.match(body.prompt, /git merge --no-ff upstream\/main/);
+  assert.equal(body.execEnv, 'local');
   let w = getWatch(URL);
   assert.deepEqual([w.handled, w.pending.conflict], [['behind:unit'], { base: 'main', baseSha: 'B1', why: 'behind', checks: ['unit'], remote: 'upstream' }]);
   finishRun(io, w, 'M1');
@@ -1173,6 +1177,7 @@ test('merge-first: conflicts fall back to the agent run; leftover markers or a r
   assert.equal(h.io.calls.start[0].body.title, 'Merge main into PR #1');
   assert.deepEqual(h.io.calls.start[0].opts.mergeIn, { ref: 'origin/main' });
   assert.match(h.io.calls.start[0].body.prompt, /git merge --no-ff origin\/main/);
+  assert.equal(h.io.calls.start[0].body.execEnv, 'local');
 
   for (const [setup, reason] of [[(io) => { io.merge = { ok: true, merged: true, markers: ['f.txt:3'] }; }, 'conflict-markers'],
     [(io, deps) => { deps.git.push = async () => ({ ok: false, error: 'rejected' }); }, 'push-refused']]) {
