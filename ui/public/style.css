@@ -3773,7 +3773,8 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
    flush to the scrollport top. Inner padding drops 32 -> 24 so the title lands a
    card-like distance from the border instead of 56px from the viewport edge. */
 .hd-header,.pd-header{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);margin:20px 32px 0;padding:20px 24px 18px;}
-.hd-row1,.pd-row1{display:flex;align-items:center;gap:14px;}
+.hd-row1,.pd-row1{display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;}
+@media (max-width:640px){.hd-row1 > .hd-title,.pd-row1 > .pd-title{flex:1 1 100%;}}
 .pd-row1:has(> .pd-kind:not(:empty)) > .pd-title{flex:0 1 auto;}
 .pd-row1 > .pd-kind{flex:none;display:inline-flex;}
 .pd-row1 > .pd-kind:empty{display:none;}
@@ -3873,7 +3874,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 /* Meta line is now a flex CHILD, so it takes the row's leftover width (min-width:0
    lets it wrap instead of pushing the pip off-row). */
 .hd-meta{display:flex;align-items:center;flex-wrap:wrap;gap:8px;min-width:0;flex:1;
-  font:400 var(--fs-meta) var(--mono);color:var(--ink-3);}
+  font:400 var(--fs-meta) var(--sans);color:var(--ink-3);}
 /* 30px is the row-1 size; on a 12.5px meta line the pip shrinks to match the text. */
 .hd-row2 .hd-sic{width:24px;height:24px;}
 .hd-meta .strong{font-weight:700;color:var(--ink);}   /* no global .strong rule exists */
@@ -4318,6 +4319,8 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .pd-ov-label{font:500 var(--fs-meta)/var(--lh-body) var(--sans);color:var(--ink-2);}
 .hd-ov-value,.pd-ov-value{margin-top:10px;font-size:22px;color:var(--ink);}
 .hd-ov-sub,.pd-ov-sub{margin-top:6px;font-size:var(--fs-meta);color:var(--ink-3);overflow-wrap:anywhere;}
+/* The stat cards' sub line is sans (no .mono); --ink-3 there is 2.8:1 on the card (AA needs 4.5). */
+.hd-ov-card .hd-ov-sub{color:var(--ink-2);}
 .hd-ov-task{padding:var(--pad-card);background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
 .hd-ov-task-h{font:600 13px var(--sans);}
 /* overflow-wrap:anywhere like its sibling .hd-ov-sub — prompts routinely carry
@@ -5035,6 +5038,9 @@ button.rd-srow:hover{background:var(--hover-on-field);}
    diff pane's darker count tokens, not the 4.45:1 --red-ink. */
 .rd-stats .hd-diff-counts .diff-add{color:var(--hd-count-add);}
 .rd-stats .hd-diff-counts .diff-del{color:var(--hd-count-del);}
+.rd-stats .hd-diff-counts .is-zero{color:var(--ink-2);}   /* --ink-3 is 2.58:1 on the tile */
+.rd-stats .rd-stat-link{color:inherit;text-decoration:none;}
+.rd-stats .rd-stat-link:hover b{text-decoration:underline;}
 .rd-stats > div > span{font-size:var(--fs-meta);color:var(--ink-2);}
 .rd-cta-ico{flex:0 0 auto;}
 /* The pull request button's slot (app.js paintPrCta): one node for the screen's life, so the

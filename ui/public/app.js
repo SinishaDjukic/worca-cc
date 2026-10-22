@@ -98,9 +98,10 @@ import { workModeOf, isGitRun, isFolderRun, isNoProjectRun, NO_PROJECT_KEY, proj
 import { changesCounts, filesWord, renderCountsNode, applyBarModel, paintApplyBar, runChangesUrl, openApplyDialog, discardChanges, CHANGE_SIGN, CHANGE_WORD } from './folder-changes.mjs';
 import { runProgress, progressWidth } from '../../src/shared/run-progress.mjs';
 import { DEFAULT_HOME_PINS, isPinned, pinWorkflow, unpinWorkflow } from '../../src/shared/home-pins.mjs';
-import { worktreeNoticeModel, renderWorktreeNotice, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome } from './worktree-notice.mjs';
+import { SHIP_LABEL, doneStatusWord } from './ship-words.mjs';
+import { worktreeNoticeModel, worktreeRowState, renderWorktreeNotice, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
-import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, RECENT_PAGE, groupRow, memberPrsOf, prChip, memberCostUsd } from './runs-list.mjs';
+import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, RECENT_PAGE, groupRow, memberPrsOf, prChip, memberCostUsd, whenLabel } from './runs-list.mjs';
 import { paintRunStatus, syncActions, pauseResumeOwn } from './run-status-card.mjs';
 import { buildGroupPage, paintGroupPage, runReceipts } from './group-page.mjs';
 import { runPositionLabel, groupKindWord, pageModel, runCrumbs, paintCrumbs, syncFacts } from './run-page-head.mjs';
@@ -254,7 +255,7 @@ import {
   runOutcomeModel, openSyncDialog, chooseSyncRefusal,
 } from './branch-sync.mjs';
 import { baseCheckModel, baseRowNote, newerBaseCheck } from './base-check.mjs';
-import { describeRule, formatInstant } from '../../src/shared/schedule/recurrence.mjs';
+import { describeRule } from '../../src/shared/schedule/recurrence.mjs';
 import { statusActions, RUN_SWITCH_OPTIONS, RUN_SWITCH_TIP, kindShort, awayAnswerRows, awayAnswerCounts, checksFirst, awayAnswersSummary, decidedByText, awayAskCaption } from '../../src/shared/away-mode/labels.mjs';
 import { parseWindow } from '../../src/shared/away-mode/activation.mjs';
 import { runCostBreakdown, floorText, auxLabelForSubagent } from '../../src/shared/cost/breakdown.mjs';
@@ -14931,8 +14932,13 @@ el.form.addEventListener('submit', async (e) => {
       clearTask(submittedTask);
       applyPresetSwitches();
       // D6: the user is on the run's page now, so the result is a toast, not a #form-msg line.
-      notify({ tone: 'ok', title: 'Run started', detail: title || '', key: `run-${data.runId}`,
-        action: { label: 'Open run', run: () => { location.hash = rdHash(data.runId); } } });
+      // The run's page is the confirmation (audit F-24): no toast when it is already open.
+      const [openView, openParam] = parseHash();
+      const onThatRun = (openView === 'running' && runDetailParts(openParam).runId === data.runId) || state.selectedRunId === data.runId;
+      if (!onThatRun) {
+        notify({ tone: 'ok', title: 'Run started', detail: title || '', key: `run-${data.runId}`,
+          action: { label: 'Open run', run: () => { location.hash = rdHash(data.runId); } } });
+      }
       if (extras.length) {
         appendLog({
           source: 'ui',
@@ -15013,7 +15019,7 @@ function setPendingSchedule(pick) {
   } else {
     const ms = Date.parse(pendingSchedule.scheduledFor);
     el.newSchedBadge.textContent = 'Scheduled';
-    el.newSchedText.textContent = Number.isFinite(ms) ? `Starts ${formatInstant(ms, browserTimeZone())}` : 'Starts later';
+    el.newSchedText.textContent = Number.isFinite(ms) ? `Starts ${whenLabel(ms, Date.now(), browserTimeZone())}` : 'Starts later';
   }
   if (el.wsSourcePrevious) delete el.wsSourcePrevious.dataset.off;   // a NEW pick starts with the switch ON
   syncPreviousBranchEverywhere();
@@ -23383,7 +23389,7 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
   modal._releaseRow = relRow;
   const okBtn = q('.shipit-ok');
   const cancelBtn = q('.shipit-cancel');
-  okBtn.disabled = false; okBtn.textContent = 'Open pull request';
+  okBtn.disabled = false; okBtn.textContent = 'Create pull request';
   cancelBtn.disabled = false;                       // a previous open may have parked it mid-POST
   modal.classList.remove('hidden');
   okBtn.focus();
@@ -23523,6 +23529,7 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
       const screen = hdShowsRun(record) ? histDetailState.screen : null;
       if (screen) {
         paintHdPr(screen, record, histDetailState.data);
+        paintHdHeaderMeta(screen, record, histDetailState.data);
         paintHdAfter(screen, record, histDetailState.data);
         void paintHdSavePreset(screen, histDetailState.data);
         const mergeEl = screen.querySelector('.hist-merge');
@@ -23543,7 +23550,7 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
       if (closed) return;
       okBtn.disabled = false;
       cancelBtn.disabled = false;
-      okBtn.textContent = 'Open pull request';
+      okBtn.textContent = 'Create pull request';
       if (!q('.shipit-remotes').hidden || !q('.shipit-base-wrap').hidden) setShipItRemotesDisabled(modal, false);
       cardAlert(card, { title: 'Not shipped', detail: e2.message });
     }
@@ -24091,6 +24098,7 @@ function hdSyncPr(projectKey, id, row) {
   if (histDetailState.id !== id || histDetailState.key !== projectKey) return;
   if (row) histDetailState.record = row;   // a deep link's minimal record upgrades to the real row
   paintHdPr(histDetailState.screen, histDetailState.record, histDetailState.data);
+  paintHdHeaderMeta(histDetailState.screen, histDetailState.record, histDetailState.data);
   paintHdOvPrs(histDetailState.screen.querySelector('.hd-ov-prs'), histDetailState.record);
   paintHdBase(histDetailState.screen, histDetailState.record, histDetailState.data);   // an open PR owns the pipeline Resolve
   paintHdAfter(histDetailState.screen, histDetailState.record, histDetailState.data);
@@ -24349,6 +24357,11 @@ function hdRunEngine(record, data) {
 /** The pipeline's run in this tab that stands for the record (hdPipelineRun: its live run, else the newest one that
  *  ended, which a History row still reading `running` or `paused` has not caught up with), else the saved row. */
 const hdModelRun = (record, data) => { const r = hdPipelineRun(record); return r ? rdModelRun(r) : histRun(record, data && data.state); };
+/** The run-model state of a saved run, the one the Runs list and hdChip read (ready, in-review, merged, needs-you ...). */
+function hdDoneState(record, data) {
+  const rec = (state.historyAll || []).find((x) => x.id === record.id) || record;
+  return runModel(hdModelRun(rec, data), { memo: memoFor(record.id) }).state;
+}
 /** Runs redesign slice 4 (D4): the finished page's bar buttons, decided by the run model. */
 function paintHdActions(screen, record, data) {
   const bar = screen.querySelector('.rd-bar-end');
@@ -24755,13 +24768,11 @@ function openPublishModal(screen, record, data, members) {
 
 // --- detail header: meta line, branch copy, Resume, Archive, banners --------
 
-// "8/17/2026, 8:54:42 PM" -> { day, clock } (locale-driven; no comma -> clock '').
-// fmtDate returns '' for a falsy value, so a record with no timestamp yields two
-// empty segments and the painter skips both — never "Invalid Date".
+// The Runs list time style as { day, clock: '' } (audit F-9: one label, so no second clock segment).
+// whenLabel returns '' for a falsy value, so a record with no timestamp yields empty segments
+// and the painter skips them — never "Invalid Date".
 function splitDateStamp(iso) {
-  const s = fmtDate(iso);
-  const i = s.indexOf(', ');
-  return i === -1 ? { day: s, clock: '' } : { day: s.slice(0, i), clock: s.slice(i + 2) };
+  return { day: whenLabel(iso), clock: '' };
 }
 
 function hdDot() {
@@ -24786,7 +24797,7 @@ function paintHdFacts(screen, record, data) {
   const fc = folder ? changesCounts(hdChangesOf(record, data) || { state: 'pending' }) : null;
   const activeMs = typeof st.totalActiveMs === 'number' ? st.totalActiveMs : liveTotalMs(st.steps, 0);
   const tags = costTagsFact(st.tags, record && record.projectDir, () => { if (screen.isConnected) paintHdGlance(screen, record, data); }, record && record.target);
-  paintGlanceFacts(glance, { summary: folder ? null : (s || null), changes: fc, activeMs, cost: engineReportsCost(st.runEngine) ? (st.totalCostUsd || 0) : null,
+  paintGlanceFacts(glance, { summary: folder ? null : (s || null), changes: fc, diffHref: `#${hdHash({ projectKey: record.projectKey, id: record.id }, 'details', 'diff')}`, activeMs, cost: engineReportsCost(st.runEngine) ? (st.totalCostUsd || 0) : null,
     costNote: costSummaryText(runCostBreakdown(st.steps, st.totalCostUsd), fmtUsd),
     // D16: a finished run always has the row while runTags is on, so "Add cost tags" stays reachable.
     costTags: flagOn('runTags') ? (tags || { tags: [], missing: [] }) : null });
@@ -24870,9 +24881,10 @@ function paintHdHeaderMeta(screen, record, data) {
   const costFocus = costTriggerFocused(meta);
   meta.innerHTML = '';
   const { family, word } = histStatusMeta({ status: st.status });
+  const doneWord = st.status === 'done' ? doneStatusWord(hdDoneState(record, data)) : '';
   const w = document.createElement('span');
   w.className = `hd-status-word st-${family}`;
-  w.textContent = word;
+  w.textContent = doneWord || word;
   meta.appendChild(w);
   // The engine that runs the agents (a resume on another engine shows the new one): every run names it.
   const engine = ENGINE_NAMES.includes(st.runEngine) ? st.runEngine : 'claude';
@@ -24896,6 +24908,7 @@ function paintHdHeaderMeta(screen, record, data) {
     seg.className = cls + (strong ? ' strong' : '');
     seg.textContent = text;
     if (cls === 'hd-cost') seg.title = hdCost.title || estTitle(st.totalCostUsd);
+    if (cls === 'hd-day') seg.title = fmtDate(st.startedAt || record.startedAt || record.mtime);
     meta.appendChild(seg);
   }
   paintCostBreakdown(screen.querySelector('.hd-header'), meta.querySelector('.hd-cost'), runCostBreakdown(st.steps, st.totalCostUsd), costFocus,
@@ -26782,10 +26795,10 @@ function hdFileCountsNode(doc, f) {
   }
   if (f.added == null) return out;
   const add = doc.createElement('span');
-  add.className = 'diff-add';
+  add.className = `diff-add${f.added === 0 ? ' is-zero' : ''}`;
   add.textContent = `+${f.added}`;
   const del = doc.createElement('span');
-  del.className = 'diff-del';
+  del.className = `diff-del${f.removed === 0 ? ' is-zero' : ''}`;
   del.textContent = `−${f.removed}`;
   out.append(add, doc.createTextNode(' '), del);
   return out;
@@ -27677,6 +27690,7 @@ function hdWorktreeRow(word, dir) {
   if (word === 'released' || !dir) {
     const n = document.createElement('span'); n.className = 'hd-ov-wt-note';
     n.textContent = word === 'released' ? 'Removed when the run ended' : '';
+    if (word === 'checked out') n.textContent = 'Checked out to try; discard it from the card above';
     if (n.textContent) row.appendChild(n);
     return row;
   }
@@ -27701,9 +27715,9 @@ function hdStatCard(kind, label, value, sub) {
   const card = document.createElement('div');
   card.className = `hd-ov-card hd-ov-card-${kind}`;
   const l = document.createElement('div'); l.className = 'hd-ov-label'; l.textContent = label;
-  const v = document.createElement('div'); v.className = 'hd-ov-value mono'; v.textContent = value;
+  const v = document.createElement('div'); v.className = 'hd-ov-value'; v.textContent = value;
   card.append(l, v);
-  if (sub) { const s = document.createElement('div'); s.className = 'hd-ov-sub mono'; s.textContent = sub; card.appendChild(s); }
+  if (sub) { const s = document.createElement('div'); s.className = 'hd-ov-sub'; s.textContent = sub; card.appendChild(s); }
   return card;
 }
 
@@ -27853,7 +27867,12 @@ function buildHdOverview(sec, record, data) {
   // call away: the header painters run on every row arrival, but the tab bodies do
   // not, so without it the card would read `released` for the life of the screen.)
   wrap.appendChild(grid);
-  if (git) wrap.appendChild(tagLevel(hdWorktreeRow(retained ? 'retained' : 'released', wt.worktreeDir || ''), 'expert'));
+  // The row and the notice card read one model (audit F-2): a checkout shows here as well as on the card.
+  const ovModel = worktreeNoticeModel({ ...hdRetainedFor(record, st), checkout: hdCheckoutFor(record),
+    workspace: record.target === 'workspace', names: memberNamesOf(record) });
+  const wtRowState = worktreeRowState(ovModel, { dir: wt.worktreeDir || '' });
+  if (wtRowState.word === 'released' && retained) wtRowState.word = 'retained';
+  if (git) wrap.appendChild(tagLevel(hdWorktreeRow(wtRowState.word, wtRowState.dir || wt.worktreeDir || ''), 'expert'));
   // Skills registry §6 board 9: the set skills the run got (run.json.skillMount, in the detail payload).
   const skillsCard = renderRunSkills(data.skillMount, { doc: document });
   if (skillsCard) wrap.appendChild(tagLevel(skillsCard, 'advanced'));
@@ -29250,7 +29269,12 @@ function rdOvStats(host, r) {
   const held = !!r.worktreeDir && r.worktreeRemoved !== true;
   // Live frames repaint this grid: keep the row (its hover and "copied" tick) while
   // nothing about it changed.
-  const wtRow = hdWorktreeRow(held ? 'active' : 'released', r.worktreeDir || '');
+  const wtRec = r.pipelineId ? rdHistoryRecord(r) : null;
+  const wtModel = wtRec ? worktreeNoticeModel({ ...hdRetainedFor(wtRec, null), checkout: RD_TERMINAL.includes(r.status) ? hdCheckoutFor(wtRec) : null,
+    workspace: wtRec.target === 'workspace', names: memberNamesOf(wtRec) }) : null;
+  const wtState = worktreeRowState(wtModel && wtModel.kind === 'checkout' ? wtModel : null,
+    { live: held, dir: r.worktreeDir || '', removed: r.worktreeRemoved });
+  const wtRow = hdWorktreeRow(wtState.word, wtState.dir || r.worktreeDir || '');
   host.appendChild(prevWt && prevWt.dataset.sig === wtRow.dataset.sig ? prevWt : tagLevel(wtRow, 'expert'));
 }
 
@@ -34547,7 +34571,7 @@ function paintRdGlance(screen, r) {
   })() : null;
   const liveDiff = terminal ? null : rdDiffBadge(live);
   paintGlanceFacts(glance, {
-    summary: folder ? null : summary, changes: terminal ? fc : null, liveFiles: liveDiff != null && liveDiff !== '' ? Number(liveDiff) : null,
+    summary: folder ? null : summary, changes: terminal ? fc : null, diffHref: `#${rdHash(r.runId, 'details', 'diff')}`, liveFiles: liveDiff != null && liveDiff !== '' ? Number(liveDiff) : null,
     activeMs: rdActiveMs(r), cost: engineReportsCost(r.runEngine) ? (r.totalCostUsd || 0) : null,
     costNote: costSummaryText(runCostBreakdown(r.steps, r.totalCostUsd), fmtUsd),
     ticking: (r.status === 'running' || r.status === 'starting') && r.pendingQuestion == null,
@@ -34744,7 +34768,7 @@ const costTagsFact = (tags, projectDir, onLoad, target = 'project') => {
   return (tags || []).length || missing.length ? { tags: tags || [], missing } : null;
 };
 
-function glanceTiles({ summary = null, liveFiles = null, activeMs = null, cost = null, costNote = '', ticking = false, changes = null } = {}) {
+function glanceTiles({ summary = null, liveFiles = null, activeMs = null, cost = null, costNote = '', ticking = false, changes = null, diffHref = '' } = {}) {
   const tiles = document.createElement('div');
   tiles.className = 'rd-stats';
   const tile = (big, small, cls = '') => {
@@ -34762,8 +34786,18 @@ function glanceTiles({ summary = null, liveFiles = null, activeMs = null, cost =
   if (changes) tiles.append(tile(renderCountsNode(document, changes), 'files changed', 'fc-tile'));
   else if (summary) {
     const files = (summary.filesNew || 0) + (summary.filesChanged || 0);
-    tiles.append(tile(hdFileCountsNode(document, { added: summary.linesAdded || 0, removed: summary.linesRemoved || 0 }),
-      `${files} file${files === 1 ? '' : 's'} changed`));
+    const filesTile = tile(hdFileCountsNode(document, { added: summary.linesAdded || 0, removed: summary.linesRemoved || 0 }),
+      `${files} file${files === 1 ? '' : 's'} changed`);
+    if (diffHref) {
+      // The tile opens the diff, like the Overview's "Open the diff" (audit F-22).
+      const a = document.createElement('a');
+      a.className = 'rd-stat-link';
+      a.href = diffHref;
+      const counts = filesTile.querySelector('b');
+      counts.replaceWith(a);
+      a.appendChild(counts);
+    }
+    tiles.append(filesTile);
   } else if (liveFiles != null) {
     tiles.append(tile(String(liveFiles), `file${liveFiles === 1 ? '' : 's'} changed`));
   }
@@ -34851,7 +34885,7 @@ function setCtaContent(node, icon, label) {
 const PR_CTA_MORPH_MS = 420;
 const PR_CTA_OUT_MS = 380;
 const PR_CTA_LOOK = {
-  create: { look: '', icon: 'pr-create', label: 'Create pull request' },
+  create: { look: '', icon: 'pr-create', label: SHIP_LABEL },
   push: { look: '', icon: 'pr-create', label: 'Push the source branch' },   // a run on its source branch (paintHdPush)
   view: { look: 'pr-view', icon: 'external', label: 'View pull request' },
   merged: { look: 'pr-merged', icon: 'merged', label: 'View pull request' },
@@ -35726,7 +35760,7 @@ function paintRdHeader(screen, r) {
   screen.querySelector('.rd-title').textContent = r.title || r.runId;
   screen.querySelector('.rd-bar-title').textContent = r.title || r.runId;
   paintPageHead(screen.querySelector('.rd-glance'), r.title || r.runId,
-    [isNoProjectRun(r) ? '' : projectName(r.projectDir), r.startedAt ? `started ${startedLabel(r.startedAt)}` : '']);
+    [isNoProjectRun(r) ? '' : projectName(r.projectDir), r.startedAt ? `started ${whenLabel(r.startedAt)}` : '']);
   paintAutoBadge(screen.querySelector('.rd-row1 .auto-badge'), r.stepper);
 
   // Status pill: statusPill's family + word (spec §4.3 pins it as the source).
@@ -35769,7 +35803,7 @@ function paintRdHeader(screen, r) {
     : (step && step.name ? `step ${step.n}/${step.m} · ${step.name}` : '');
   const segs = [
     ['rd-project', isNoProjectRun(r) ? '' : projectName(r.projectDir), false],   // P3-D10: its folder is not a project
-    ['rd-clock', r.startedAt ? `started ${startedLabel(r.startedAt)}` : '', false],
+    ['rd-clock', r.startedAt ? `started ${whenLabel(r.startedAt)}` : '', false],
     // `run-time` is load-bearing, not decorative: the existing 1 s interval finds
     // its tick targets with `querySelectorAll('.run-time')`. Without this class
     // the header elapsed freezes at its paint value and only the Overview stat

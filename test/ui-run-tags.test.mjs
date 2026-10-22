@@ -244,9 +244,10 @@ test('policy off: a run without a tag ticked Mandatory starts quietly — no war
   assert.equal(ctx.doc.getElementById('runTagDimsWarn').hidden, true, 'no "is required" warning under the field');
   const body = await submit(ctx);
   assert.equal(body.tags, undefined, 'the run is posted with no tags');
-  const toast = [...ctx.doc.querySelectorAll('.toast')].at(-1);
-  assert.doesNotMatch(toast.textContent, /Missing required tag/);
-  assert.doesNotMatch(toast.className, /warn/);
+  for (const toast of ctx.doc.querySelectorAll('.toast')) {   // the run page opens, so no "Run started" toast (F-24)
+    assert.doesNotMatch(toast.textContent, /Missing required tag/);
+    assert.doesNotMatch(toast.className, /warn/);
+  }
 });
 
 test('enforced: a pre-filled mandatory tag shows as a chosen value; Start is enabled and posts it', async () => {

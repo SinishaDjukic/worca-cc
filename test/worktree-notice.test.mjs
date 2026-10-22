@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import {
   worktreeNoticeModel, renderWorktreeNotice, memberLabel, recoveryPatchKind, uncommittedPatchName,
-  applyConfirmMessage, applyOutcome, NOTICE_TITLES,
+  applyConfirmMessage, applyOutcome, NOTICE_TITLES, worktreeRowState,
 } from '../ui/public/worktree-notice.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
@@ -121,4 +121,14 @@ test('helpers: recovery patch kind, the diff file name, the Apply confirm and ou
     mergeBack: { merged: false, kind: 'diverged', reason: 'main has new commits since the run started', source: 'main' } }], failed: [] });
   assert.equal(mb.tone, 'warn');
   assert.match(mb.detail, /not merged back into main: main has new commits/);
+});
+
+test('worktreeRowState: one word for the Overview row from the notice model (F-2)', () => {
+  const co = worktreeNoticeModel({ checkout: { members: [{ branch: 'b', worktreeDir: '/w/co' }] } });
+  assert.deepEqual(worktreeRowState(co, { dir: '/w/old' }), { word: 'checked out', dir: '/w/co' });
+  const re = worktreeNoticeModel({ retained: { members: [{ branch: 'b', worktreeDir: '/w/re' }] } });
+  assert.equal(worktreeRowState(re).word, 'retained');
+  assert.equal(worktreeRowState(re).dir, '/w/re');
+  assert.deepEqual(worktreeRowState(null), { word: 'released', dir: '' });
+  assert.deepEqual(worktreeRowState(null, { live: true, dir: '/w/x', removed: false }), { word: 'active', dir: '/w/x' });
 });

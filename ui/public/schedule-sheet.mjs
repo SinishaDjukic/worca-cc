@@ -13,10 +13,11 @@
 //   + sync: { beforeRun?, onDiverged? }  only with the opt-in `sync` option, and only what was set
 
 import {
-  WEEKDAYS, normalizeRule, previewOccurrences, describeRule, formatInstant, formatCountdown,
+  WEEKDAYS, normalizeRule, previewOccurrences, describeRule, formatCountdown,
   zonedToUtc, zonedParts, localDate, isValidTimeZone,
 } from '../../src/shared/schedule/recurrence.mjs';
 import { guardModal } from './modal-guard.mjs';
+import { whenLabel } from './runs-list.mjs';
 
 const DAY_LABEL = { mo: 'Mo', tu: 'Tu', we: 'We', th: 'Th', fr: 'Fr', sa: 'Sa', su: 'Su' };
 const DAY_NAME = { mo: 'Monday', tu: 'Tuesday', we: 'Wednesday', th: 'Thursday', fr: 'Friday', sa: 'Saturday', su: 'Sunday' };
@@ -407,7 +408,7 @@ export function openScheduleSheet({
         if (ms == null) problem = 'Pick a date and a time.';
         else if (ms <= Date.now()) problem = 'That time is already in the past.';
         sentence.replaceChildren(
-          h('b', { text: ms == null ? 'Once' : `Once, on ${formatInstant(ms, tz, { withYear: true })}` }),
+          h('b', { text: ms == null ? 'Once' : `Once, on ${whenLabel(ms, Date.now(), tz)}` }),
           h('div', { class: 'sched-next', text: ms != null && ms > Date.now() ? `Starts in ${formatCountdown(ms - Date.now())}` : '' }));
       } else {
         const norm = currentRule();
@@ -423,7 +424,7 @@ export function openScheduleSheet({
           if (!next.length) problem = 'This schedule has no future run.';
           sentence.replaceChildren(
             h('b', { text: describeRule(norm.rule) }),
-            h('div', { class: 'sched-next', text: next.length ? `Next: ${next.map((t) => formatInstant(t, tz)).join('  ·  ')}` : '' }));
+            h('div', { class: 'sched-next', text: next.length ? `Next: ${next.map((t) => whenLabel(t, Date.now(), tz)).join('  ·  ')}` : '' }));
         }
       }
       sentence.classList.toggle('bad', !!problem);

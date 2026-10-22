@@ -71,7 +71,7 @@ test('#new/schedule opens the sheet first; the pick waits on the form and the ha
   const line = doc.getElementById('new-sched');
   assert.equal(line.hidden, false);
   assert.equal(doc.getElementById('new-sched-badge').textContent, 'Scheduled');
-  assert.match(doc.getElementById('new-sched-text').textContent, /^Starts [A-Z][a-z]{2} [A-Z][a-z]{2} \d{1,2}, 02:00$/);
+  assert.match(doc.getElementById('new-sched-text').textContent, /^Starts ([A-Z][a-z]{2}|[A-Z][a-z]{2} \d{1,2}), 02:00$/);
   assert.equal(doc.getElementById('start-btn-label').textContent, 'Schedule');
   assert.equal(doc.getElementById('start-btn-clock').hasAttribute('hidden'), false);
   assert.equal(doc.getElementById('start-btn-play').hasAttribute('hidden'), true, 'the attribute, not the property — an <svg> has no .hidden');

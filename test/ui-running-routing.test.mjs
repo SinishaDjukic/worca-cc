@@ -137,7 +137,7 @@ test('#running/<id> opens the detail screen and paints its header', async () => 
   assert.equal(status.querySelector('.rd-status-word').textContent, 'Running');
   assert.match(doc.querySelector('#run-detail .rd-meta').textContent, /proj/);
   // startedLabel passes a bare time string through unchanged (app.js:10912-10917).
-  assert.match(doc.querySelector('#run-detail .rd-meta').textContent, /10:00:00/);
+  assert.match(doc.querySelector('#run-detail .rd-meta').textContent, /started 10:00/);
   // A run with no step yet reads Starting in the one run model (runs redesign slice 4): Stop, and Pause once a step runs.
   assert.equal(doc.querySelector('#run-detail .rd-pause').hidden, true, 'a starting run offers no Pause yet');
   assert.equal(doc.querySelector('#run-detail .rd-stop').hidden, false);

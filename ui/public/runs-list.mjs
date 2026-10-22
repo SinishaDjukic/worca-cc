@@ -63,6 +63,28 @@ export function rowTime(v, now = Date.now()) {
   return d.getFullYear() === n.getFullYear() ? md : `${md}, ${d.getFullYear()}`;
 }
 
+// The wall clock of `ms` in zone `tz` as a local Date, so rowTime's local getters read that zone's fields.
+function inZone(ms, tz) {
+  if (!tz) return ms;
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
+    timeZone: tz, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric',
+  }).formatToParts(ms).map((p) => [p.type, p.value]));
+  return new Date(+parts.year, +parts.month - 1, +parts.day, +parts.hour, +parts.minute).getTime();
+}
+
+/** A run time for any surface: rowTime's style, with the 24h clock after the day when it is not today.
+ *  "17:45" today, "Thu, 02:00" this week, "Sep 12, 14:05" this year, "Dec 3, 2025, 14:05" before. */
+export function whenLabel(v, now = Date.now(), tz = '') {
+  const t = timeMs(v, now);
+  if (!Number.isFinite(t)) return '';
+  const when = inZone(t, tz);
+  const ref = inZone(now, tz);
+  const day = rowTime(when, ref);
+  const d = new Date(when);
+  const clock = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  return day === clock ? clock : `${day}, ${clock}`;
+}
+
 const DONE = new Set(['done', 'complete', 'completed']);
 const FAILED = new Set(['error', 'failed']);
 const STOPPED = new Set(['stopped', 'aborted']);
