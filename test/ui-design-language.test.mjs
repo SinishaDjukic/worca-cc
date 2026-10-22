@@ -114,7 +114,7 @@ const REMOVED = ['btn-go', 'btn-ghost', 'btn-mini', 'btn-clear', 'btn-expand', '
   'wfv-btn', 'wfv-btn-primary', 'wfv-icon-btn', 'apv-btn', 'apv-btn-primary', 'pp-btn', 'chat-rc-btn', 'ask-icon-btn'];
 // D5: single-element hooks that stay for JS and tests, with layout only.
 const HOOKS = ['stop-confirm', 'stop-cancel', 'shipit-ok', 'guide-next', 'mc-btn', 'pp-send', 'gv-nav-btn', 'ask-cmd-stop',
-  'sync-check-now', 'hd-stop', 'rd-stop', 'rd-pause', 'topnav-new', 'hd-more', 'ask-card-not-now', 'btn-split-more',
+  'sync-check-now', 'hd-stop', 'rd-stop', 'rd-pause', 'topnav-new', 'ask-card-not-now', 'btn-split-more',
   'chat-home-act', 'chat-run-tile-open'];
 // A whole class token: not part of a longer class or of a data- attribute (data-ask-card-start stays).
 const classRe = (c) => new RegExp(`(?<![\\w-])${c}(?![\\w-])`);

@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
-import { runModel, groupModel } from '../src/shared/run-model.mjs';
+import { runModel, groupModel, MENU_ACTIONS } from '../src/shared/run-model.mjs';
 import { buildRunsModel, renderRunsList, memberPrsOf } from '../ui/public/runs-list.mjs';
 import { createChatRunCard } from '../ui/public/chat/run-card.mjs';
 import { paintRunStatus, syncActions, statusText, memberStatusText } from '../ui/public/run-status-card.mjs';
@@ -192,7 +192,9 @@ test('§5.3 boot: #running/r1 paints the one status block and the model actions 
     const m = runModel({ ...c.raw, pendingQuestion: c.raw.pendingQuestion || null, pr: null });
     assert.equal(block.dataset.state, m.state);
     assert.equal(block.dataset.line, m.line);
-    assert.deepEqual(new Set(shownActions(bar)), new Set(m.actions), 'the bar shows the model actions');
+    // Slice 2: Archive and Report live in the run page's ⋯, never in its bar.
+    assert.deepEqual(new Set(shownActions(bar)), new Set(m.actions.filter((id) => !MENU_ACTIONS.includes(id))), 'the bar shows the model actions');
+    assert.equal(bar.querySelector('[data-model-action="report"]'), null);
     const dot = block.querySelector('.status-dot');
     if (c.symbol) assert.equal(dot.dataset.symbol, c.symbol); else assert.equal(dot.querySelector('svg'), null);
   } })));
@@ -244,7 +246,7 @@ async function finishedPage({ row, detail, ghAvailable = false, more = () => nul
   return { ctx, end: ctx.window.document.querySelector('#hist-detail .hd-bar .rd-bar-end'), doc: ctx.window.document };
 }
 
-test('§5.3 boot: the finished page owns its Resume for a resumable paused row, and makes a disabled one for an archived row', async () => {
+test('§5.3 boot: the finished page owns its Resume for a resumable paused row, and makes none for an archived row', async () => {
   await checkRows([
     { name: 'paused, resumable', run: async () => {
       const { ctx, end } = await finishedPage({ row: { ...hd.ROW, status: 'paused' }, detail: { ...hd.DETAIL, state: { ...hd.DETAIL.state, status: 'paused', resumable: true } } });
@@ -261,9 +263,7 @@ test('§5.3 boot: the finished page owns its Resume for a resumable paused row, 
       const { end } = await finishedPage({ row: { ...hd.ROW, status: 'paused' },
         detail: { ...hd.DETAIL, state: { ...hd.DETAIL.state, status: 'paused', archivedAt: '2026-10-18T10:00:00Z' } } });
       assert.equal(end.querySelector('.hd-resume').hidden, true);
-      const made = end.querySelector('.rd-actions [data-model-action="resume"]');
-      assert.equal(made.disabled, true);
-      assert.equal(made.title, 'This run cannot be resumed');
+      assert.equal(end.querySelector('.rd-actions [data-model-action="resume"]'), null, 'slice 2: never a Resume that cannot work');
     } },
     { name: 'failed: the saved state\'s ledger gives the card\'s line (stage and failed step), not a bare "Failed"', run: async () => {
       const failed = RUN_STATE_ROWS.find((r) => r.state === 'failed').run;
@@ -300,4 +300,29 @@ test('§5.3 boot: the finished page owns its Resume for a resumable paused row, 
       assert.equal(end.querySelectorAll('.rd-actions [data-model-action="ship"]').length, 0, 'no second Ship it');
     } },
   ]);
+});
+
+test('slice 2: the run pages\' bars never make Archive or Report (stopped, merged, failed, stopped resumable) at any level', async () => {
+  const merged = { state: 'MERGED', url: 'https://github.com/acme/app/pull/759', number: 759 };
+  const CASES = [
+    { name: 'stopped', status: 'stopped' },
+    { name: 'merged', status: 'done', pr: merged },
+    { name: 'failed', status: 'error' },
+    { name: 'stopped, resumable', status: 'stopped', resumable: true },
+  ];
+  const none = (root, where) => {
+    assert.equal(root.querySelectorAll('.rd-actions [data-model-action="archive"]').length, 0, `${where}: no Archive`);
+    assert.equal(root.querySelectorAll('.rd-actions [data-model-action="report"]').length, 0, `${where}: no Report`);
+  };
+  await checkRows(CASES.flatMap((c) => ['simple', 'advanced', 'expert'].map((level) => ({ name: `${c.name} at ${level}`, run: async () => {
+    const live = await runPage([frameOf(workingFrame, { status: c.status, active: [], ...(c.pr ? { pr: c.pr } : {}), ...(c.resumable ? { resumable: true } : {}) })]);
+    live.doc.documentElement.dataset.level = level;
+    live.ctx.dispatch(frameOf(workingFrame, { status: c.status, active: [], ...(c.pr ? { pr: c.pr } : {}), ...(c.resumable ? { resumable: true } : {}) }));
+    await live.ctx.settle(4);
+    none(live.doc.querySelector('#run-detail'), 'live');
+    const saved = await finishedPage({ row: { ...hd.ROW, status: c.status, ...(c.pr ? { pr: c.pr } : {}) },
+      detail: { ...hd.DETAIL, state: { ...hd.DETAIL.state, status: c.status, ...(c.resumable ? { resumable: true } : {}) } } });
+    saved.doc.documentElement.dataset.level = level;
+    none(saved.doc.querySelector('#hist-detail'), 'saved');
+  } }))));
 });

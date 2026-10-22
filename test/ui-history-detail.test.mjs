@@ -336,7 +336,7 @@ test('Archive is disabled with a tooltip when the list row reports retained work
   const doc = ctx.window.document;
   const archive = doc.querySelector('#hist-detail .hd-archive');
   assert.equal(archive.disabled, true);
-  assert.match(archive.title, /Recover or discard/);
+  assert.equal(archive.title, 'Recover or discard the kept work first');
   const banner = doc.querySelector('#hist-detail .retained-banner');
   assert.equal(banner.hidden, false);
   // The banner's CONTENT, not just its visibility: this block is the only
@@ -652,7 +652,7 @@ test('checkout: no box on the glance; the Actions row says where the local copy 
   assert.doesNotMatch(glanceOf(doc).textContent, /worktree/i);
   const archive = doc.querySelector('#hist-detail .hd-archive');
   assert.equal(archive.disabled, true);
-  assert.match(archive.title, /Discard the checkout/);
+  assert.equal(archive.title, 'Close the local copy in Actions first');
 });
 
 test('checkout row: before Check out it offers the try; a linked folder reads as yours', async () => {
@@ -938,4 +938,66 @@ test('F-1 / F-10 style rules: the header row wraps, the meta line is sans', asyn
   assert.match(css, /\.hd-row1,\.pd-row1\{[^}]*flex-wrap:wrap/);
   assert.match(css, /@media \(max-width:640px\)\{\.hd-row1 > \.hd-title,\.pd-row1 > \.pd-title\{flex:1 1 100%;\}\}/);
   assert.match(css, /\.hd-meta\{[^}]*var\(--sans\)/);
+});
+
+// ---------------------------------------------------------------------------
+// Slice 2: the run page's one ⋯ (needle test e, saved page)
+// ---------------------------------------------------------------------------
+
+const openMore = (ctx, sel = '#hist-detail .hd-bar-more') => {
+  const doc = ctx.window.document;
+  doc.querySelector(sel).dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
+  return doc.querySelector('body > .wfv-menu');
+};
+const itemsOf = (menu) => [...menu.querySelectorAll('.menu-item')];
+const labelOf = (b) => b.querySelector('.wfv-menu-l').textContent;
+// A control a person can reach: not inside (or itself) [hidden].
+const reachableArchive = (root) => [...root.querySelectorAll('button')]
+  .filter((b) => b.textContent.trim() === 'Archive' && !b.closest('[hidden]'));
+
+for (const level of ['simple', 'advanced', 'expert']) {
+  test(`needle (e) at ${level}: one Archive, in ⋯, confirmed; none in .rd-actions`, async () => {
+    const ctx = await bootDetail({ rows: [{ ...ROW, status: 'stopped' }] });
+    ctx.window.document.documentElement.dataset.level = level;
+    await openDetail(ctx, '');
+    await settle(ctx.window, 6);
+    const doc = ctx.window.document;
+    const screen = doc.querySelector('#hist-detail');
+    assert.equal(reachableArchive(screen).length, 0, 'no Archive on the page outside the ⋯');
+    assert.equal(screen.querySelectorAll('.rd-actions [data-model-action="archive"], .rd-actions [data-model-action="report"]').length, 0);
+    assert.equal(screen.querySelector('.hd-more, .hd-menu'), null, 'the Details ⋯ is gone');
+    const menu = openMore(ctx);
+    const items = itemsOf(menu);
+    assert.equal(items.filter((b) => labelOf(b) === 'Archive').length, 1);
+    assert.deepEqual(items.map(labelOf).slice(-2), ['Report this run', 'Archive']);
+    assert.equal(items.find((b) => labelOf(b) === 'Terminal').querySelector('.wfv-menu-hint').textContent, 'Ctrl+`');
+    const archive = items.find((b) => labelOf(b) === 'Archive');
+    assert.ok(archive.classList.contains('is-danger'));
+    archive.click();
+    await settle(ctx.window, 4);
+    assert.equal(doc.getElementById('confirm-title').textContent, 'Archive this run?');
+  });
+}
+
+test('needle (e): checked out, the ⋯ Archive is disabled with "Close the local copy in Actions first"', async () => {
+  const ctx = await bootDetail({ rows: [checkoutRow()] });
+  atSimple(ctx);
+  await openDetail(ctx, '');
+  await settle(ctx.window, 6);
+  const archive = itemsOf(openMore(ctx)).find((b) => labelOf(b) === 'Archive');
+  assert.equal(archive.disabled, true);
+  assert.equal(archive.title, 'Close the local copy in Actions first');
+  archive.click();
+  await settle(ctx.window, 2);
+  assert.equal(ctx.window.document.querySelector('#confirm-modal').classList.contains('hidden'), true, 'no confirm opens');
+});
+
+test('slice 2: an archived saved run\'s ⋯ ends with Restore and has no Archive', async () => {
+  const ctx = await bootDetail({ detail: { ...DETAIL, state: { ...DETAIL.state, archivedAt: '2026-10-18T10:00:00Z' } } });
+  atSimple(ctx);
+  await openDetail(ctx, '');
+  await settle(ctx.window, 6);
+  const labels = itemsOf(openMore(ctx)).map(labelOf);
+  assert.equal(labels.at(-1), 'Restore');
+  assert.equal(labels.includes('Archive'), false);
 });

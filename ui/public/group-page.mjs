@@ -16,10 +16,11 @@ export function buildGroupPage(doc) {
   const root = el(doc, 'div', 'gpage');
   // Run 3 (D13): the run page's bar — Back (slide layout) or the crumbs (split), then the primary action, Stop, ⋯.
   const bar = el(doc, 'div', 'gpage-bar rd-bar');
-  const back = el(doc, 'a', 'btn gpage-back');
-  back.append(icon(doc, 'chevron-left', 15), 'Runs');   // run 4 (D13): the run page's Back, chevron included
+  const back = el(doc, 'a', 'btn btn-sm btn-quiet btn-icon gpage-back');
+  back.append(icon(doc, 'chevron-left', 16));            // slice 2: the run page's 28px Back
   back.setAttribute('href', '#runs');
-  back.setAttribute('aria-label', 'Back to the runs list');
+  back.setAttribute('aria-label', 'Back to Runs');
+  back.title = 'Back to Runs';
   const crumbs = el(doc, 'nav', 'rd-crumbs');
   crumbs.setAttribute('aria-label', 'Breadcrumb');
   crumbs.hidden = true;

@@ -219,11 +219,12 @@ test('the History ⋯ menu carries "Report this run"; it opens the preview modal
   const ctx = await boot({ fetchHandler: arms() });
   await openHistoryDetail(ctx);
   const doc = ctx.window.document;
-  const more = doc.querySelector('#hist-detail .hd-more');
+  // Slice 2: the bar's one ⋯ (runMoreItems) lists it; its item clicks the hidden .hd-report carrier.
+  const more = doc.querySelector('#hist-detail .hd-bar-more');
   const moreHidden = more.hidden;
   click(ctx.window, more);
   await settle(ctx.window);
-  const item = doc.querySelector('#hist-detail .hd-menu .hd-report');
+  const item = [...doc.querySelectorAll('body > .wfv-menu .menu-item')].find((b) => b.textContent.trim() === 'Report this run');
   const btn = doc.querySelector('#hist-detail .hd-report');
   const menu = { itemHidden: item?.hidden, role: item?.getAttribute('role'), text: item?.textContent.trim(),
     posts: reportPosts(ctx).length, btnHidden: btn?.hidden };
@@ -323,9 +324,9 @@ test('the issue link is inert while a rebuild is in flight', async () => {
   assert.equal(link.getAttribute('href'), REPORT.issue.url, 'and it arrives with the payload');
 });
 
-// The report flow is reached from ONE place: History's per-run ⋯ menu. A finished run
-// on Running detail has no report button; its saved page (where the menu is) takes over.
-test('a done, stopped or error run\'s Running header has no report button', async () => {
+// Slice 2: the report flow is reached from the run page's one ⋯ menu, live and saved. A finished run
+// on Running detail has no visible report button; its ⋯ lists Report this run (a hidden carrier).
+test('a done, stopped or error run\'s Running header has no report button; its ⋯ lists Report this run', async () => {
   // A boot per status (the loop's rows).
   await checkRows(['done', 'stopped', 'error'].map((status) => ({
     name: `a ${status} run's Running header has no report button`,
@@ -338,8 +339,9 @@ test('a done, stopped or error run\'s Running header has no report button', asyn
       // the thing that paints the terminal header — is never called at all.
       await armRunning(ctx, { status: 'running' });
       const doc = ctx.window.document;
-      assert.equal(doc.querySelector('#run-detail .rd-report'), null,
-        'the run-detail template carries no report button at all');
+      assert.ok(doc.querySelector('#run-detail .rd-report').closest('.run-menu-carriers[hidden]'),
+        'the run-detail template carries the report carrier, never shown');
+      assert.equal(doc.querySelector('#run-detail .rd-report').hidden, true, 'a running run is not offered it');
 
       ctx.dispatch({ type: 'state', runId: RUN_ID, status });
       await settle(ctx.window, 8);
@@ -348,7 +350,10 @@ test('a done, stopped or error run\'s Running header has no report button', asyn
       assert.equal([...header.querySelectorAll('button, a')].some((b) => /Report this run/.test(b.textContent)),
         false, 'nothing in the header offers to report the run');
       assert.equal(header.querySelector('.rd-history-link'), null, 'no link to click: the saved run opens on its own');
-      assert.equal(doc.querySelector('#run-detail .rd-bar .rd-report'), null, 'nor does the shared bar');
+      assert.ok(doc.querySelector('#run-detail .rd-bar .rd-report').closest('[hidden]'), 'nor does the shared bar show one');
+      doc.querySelector('#run-detail .rd-bar-more').dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
+      const items = [...doc.querySelectorAll('body > .wfv-menu .menu-item')].map((b) => b.querySelector('.wfv-menu-l').textContent);
+      assert.ok(items.includes('Report this run'), 'the ⋯ lists Report this run');
     },
   })));
 });

@@ -148,7 +148,7 @@ One menu skin. The box is `.menu`: 4px padding, `--panel`, 1px `--line`, `--r-md
 600 `--ink-2`) divide and head. A disabled row is `--ink-3` with no hover; a destructive row is `.menu-item.is-danger`
 (red ink, `--red-bg` on hover) and nothing else in a menu is red or amber. `openMenu({ doc, anchor, items, align, side,
 label })` (`ui/public/workflows/menu.mjs`) emits it, and its items take `danger`. The sidebar flyouts (`.nav-fly`), the
-composer pickers (`.ask-pop`), the split-button menus (`.btn-split-menu`) and the run header ⋯ (`.hd-menu`) keep their
+composer pickers (`.ask-pop`) and the split-button menus (`.btn-split-menu`) keep their
 own builders and positions and add `.menu` / `.menu-item`; they carry no box or row skin of their own. No hand-built
 dropdowns.
 ### Row button
@@ -193,12 +193,17 @@ buttons stay 28px; the card keeps the shared 24px padding (checked by the theme 
   no page header; the Marketplace's tabs are its header (Marketplace exceptions).
 - Stat tiles hold numbers only (time, cost, files changed). A list of chips goes in its own labelled row, for example
   the Cost tags row in the run page's facts block, never stacked inside a tile. The value is sans with tabular figures.
-- Run and group pages share one head: the bar (the breadcrumb `Runs › Run tags › Run 2` beside the list, Back on
-  phones; on the right the one primary action, Stop, ⋯), the title with its kind chip (`Run 2 of 3`, `Run`, or
+- Run and group pages share one head: the bar (Back, a 28px chevron `Back to Runs`, in every layout; the breadcrumb
+  `Runs › Run tags › Run 2` beside it when the list stands beside the page; Run after; on the right the one primary
+  action, Stop, ⋯), the title with its kind chip (`Run 2 of 3`, `Run`, or
   `Feature` / `Chain` / `Group`), then the card: the status block with the PR button at its right (Create PR, View PR or
   Push; see PR controls), the facts block (`.rd-kv`: 12px `--ink-2` labels, 13px values, one row per fact and one place
   to edit it; a quiet button that leads a value pulls back by its padding so its text sits on the value column), the PR
   bar under the facts (only for the run's own PR), the tiles.
+- The run page's ⋯ holds run-scope actions, the same on the live and saved pages at every level: Away mode (while
+  live), Save as preset, Terminal (Ctrl+`), then Report this run and Archive (Restore once archived). Archive asks
+  "Archive this run?" and is disabled, with the reason as its tooltip, while a local copy is open or kept work waits.
+  The bar never makes an Archive or Report button: a failed run's Report this run is in ⋯ only.
 - Runs navigation: every row opens its own page in the right pane and the list stays. A group row opens the group
   page; the ⌄ only expands. A group whose run is open shows the lighter `--row-open` fill.
 - Search is the top bar's "Search or ask" only. A list filter is chosen there ("Runs labelled hotfix", `label:hotfix`),
