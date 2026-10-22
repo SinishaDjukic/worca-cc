@@ -187,7 +187,7 @@ button{font:inherit;}
 /* ---------- Sidebar ---------- */
 /* Three bands in one column: the logo row (.brand) and the foot (.side-foot) stay put,
    and #side-scroll between them is the only thing that scrolls — .sidebar itself never
-   does. 254px wide; the rail (.sidebar.collapsed, "Collapsible sidebar" below) is 60px.
+   does. 224px wide; the rail (.sidebar.collapsed, "Collapsible sidebar" below) is 60px.
    `width` is inert while .app is a flex row — flex-basis decides the used main size,
    and that is what animates. `width` is listed too so the fallback path animates if
    the flex context ever changes. It must stay a TRANSITION: the reduced-motion blanket
@@ -196,7 +196,7 @@ button{font:inherit;}
    capture up to the first closing brace, so a comment inside a rule body truncates the
    capture. */
 .sidebar{
-  width:254px;flex:0 0 254px;min-height:0;
+  width:224px;flex:0 0 224px;min-height:0;
   background:var(--side-bg);
   display:flex;flex-direction:column;
   border-right:1px solid var(--line);
@@ -5413,7 +5413,7 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
    out of Task 12's "one occurrence per new literal" assertion). */
 
 /* ---------- Collapsible sidebar: the 60px icon rail ---------- */
-/* No rule here restyles anything the expanded 254px column already had: the rail
+/* No rule here restyles anything the expanded 224px column already had: the rail
    rules are scoped under `.sidebar.collapsed`, and the rest (`.brand .logo-mark`) styles
    a node that exists only because of this feature. Below 1080px the rail is forced (tablets) and at 760px
    the full column becomes the phone drawer; app.js#railCollapsed decides, and the
@@ -5515,7 +5515,7 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
   .mbar-menu{position:relative;display:flex;flex:0 0 auto;}
   .mbar-menu svg{width:22px;height:22px;}
   .mbar-menu .nav-rollup{position:absolute;top:6px;right:6px;margin:0;border:2px solid var(--panel);}
-  .sidebar{position:fixed;top:0;bottom:0;left:0;z-index:42;width:min(254px,86vw);
+  .sidebar{position:fixed;top:0;bottom:0;left:0;z-index:42;width:min(224px,86vw);
     box-shadow:var(--shadow-sheet);transform:translateX(-100%);visibility:hidden;
     transition:transform .22s cubic-bezier(.65,.02,.28,1),visibility 0s linear .22s;}
   body.nav-open .sidebar{transform:none;visibility:visible;
