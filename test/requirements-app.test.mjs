@@ -8,6 +8,12 @@ import { dirname, join } from 'node:path';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 
 const trackDom = useDomRelease(afterEach);
+// boot() points globalThis.fetch at the test window's fake; put Node's own back after each test.
+const realFetch = Object.getOwnPropertyDescriptor(globalThis, 'fetch');
+afterEach(() => {
+  if (realFetch) Object.defineProperty(globalThis, 'fetch', realFetch);
+  else delete globalThis.fetch;
+});
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', 'ui', 'public');
 const html = readFileSync(join(root, 'index.html'), 'utf8');
 const tick = () => new Promise((r) => setTimeout(r, 0));

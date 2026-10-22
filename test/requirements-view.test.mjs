@@ -1759,3 +1759,385 @@ test('style.css: the req-brief rules use tokens only', () => {
   assert.ok(rules.length > 0, 'the brief page has its rules');
   assert.ok(rules.every((l) => !/#[0-9a-fA-F]{3,8}\b|rgba?\(/.test(l)), 'no literal colour');
 });
+
+// ---- A7 Task 8: the brief page with a made brief (board 12): chips, the code-moved-on notice, the brief card and
+// its editors, the right column, Export and ⋯ ----
+
+const DAY = 86400000;
+const MADE_SECTIONS = {
+  product: 'An online shop for home goods. Shoppers browse a catalog and follow their order.',
+  users: [{ name: 'Shopper', can: 'browses, orders, pays.' }, { name: 'Support agent', can: 'sees every order.' }],
+  terms: [{ term: 'Packed', meaning: 'in a box at the warehouse.' }, { term: 'Refund', meaning: 'money back.' }],
+  areas: [
+    { name: 'Orders', text: 'checkout, order history; no cancel action', status: 'partly', files: ['src/orders.mjs'], added: null, belongsTo: null },
+    { name: 'Catalog', text: 'categories and product pages', status: 'exists', files: [], added: null, belongsTo: null },
+    { name: 'Gift message on an order', text: 'The packing slip is printed from the order.', status: null, files: ['src/slip.mjs'],
+      added: { feature: 'FEAT-6', at: '2026-10-20T10:00:00Z' }, belongsTo: 'Orders' },
+  ],
+};
+const madeRow = (over = {}) => briefRow({ status: 'ready', sections: MADE_SECTIONS, edited: { users: true },
+  sources: [{ project: 'shop-1', branch: 'main', ref: 'refs/heads/main', sha: '3f9c2a1deadbeef00' }], files: ['README.md', 'src/orders.mjs', 'src/slip.mjs'],
+  model: 'claude-opus-5-5', costUsd: 1.42, madeBy: 'po', madeAt: new Date(Date.now() - 2 * DAY).toISOString(), ...over });
+const STALE = { known: true, commits: 38, touching: 6, areas: ['Orders', 'Payments'], checked: true, partial: false,
+  sources: [{ project: 'shop-1', branch: 'main', ref: 'refs/heads/main', sha: '3f9c2a1deadbeef00', known: true, commits: 38 }] };
+const madeBody = (over = {}) => briefBody({ brief: madeRow(), usedBy: [{ seq: 2, id: 'FEAT-2' }, { seq: 3, id: 'FEAT-3' }], staleness: STALE, ...over });
+const W1 = '/api/requirements/brief/workspace/ws1';
+const wsBody = (over = {}) => madeBody({ target: { name: 'Storefront', branch: null, leftOut: [], slow: [] },
+  brief: madeRow({ scopeType: 'workspace', scopeKey: 'ws1', seed: { kind: 'workspace-map', scannedAt: '2026-10-18T09:30:00Z' },
+    sources: ['cart', 'pay', 'mail'].map((p) => ({ project: p, branch: 'main', ref: 'refs/heads/main', sha: `${p}0000000aaa` })) }),
+  usedBy: [{ seq: 2, id: 'FEAT-2' }], ...over });
+const chips = (host) => [...host.querySelectorAll('.req-brief-chips > *')].map(text);
+const notice = (host) => host.querySelector('section[aria-label="The brief is behind the code"]');
+const openBrief = async (body, extra = {}) => {
+  const calls = fakeApi(briefRoutes(body, extra));
+  const m = make();
+  await m.view.show('brief/project/shop-1');
+  return { ...m, calls };
+};
+const withConfirm = async (answer, fn) => {
+  const was = window.confirm;
+  const asked = [];
+  window.confirm = (q) => { asked.push(q); return answer; };
+  try { await fn(); } finally { window.confirm = was; }
+  return asked;
+};
+
+test('brief page, made: the chips (branch @ sha · age, cost, used by), no head-start card, Export and ⋯', async () => {
+  const { host } = await openBrief(madeBody());
+  assert.equal(host.querySelector('.req-brief-start'), null, 'no head-start card');
+  assert.equal(host.querySelector('.req-brief-head .req-sub'), null, 'no subtitle once made');
+  assert.equal(host.querySelector('.req-brief-head .req-head-title .chip').textContent, 'Project · shop');
+  assert.deepEqual(chips(host), ['Made from main @ 3f9c2a1 · 2 days ago', '$1.42', 'Used by 2 features']);
+  assert.equal(host.querySelector('.req-brief-chips code').textContent, 'main @ 3f9c2a1');
+  assert.equal(host.querySelector('.req-brief-chips .badge'), null, 'no Refreshing badge');
+  assert.ok(btn(host, 'Export ▾'), 'Export ▾');
+  assert.ok(host.querySelector('[data-ui="brief-more"][aria-label="More actions"]'), '⋯');
+  assert.ok(!/null|undefined/.test(host.textContent), 'no "null" or "undefined" on the page');
+  // made today, one user
+  const t = await openBrief(madeBody({ brief: madeRow({ madeAt: new Date().toISOString() }), usedBy: [{ seq: 2, id: 'FEAT-2' }] }));
+  assert.deepEqual(chips(t.host), ['Made from main @ 3f9c2a1 · today', '$1.42', 'Used by 1 feature']);
+});
+
+test('brief page, made: a workspace counts its projects and names the workspace map; Refreshing while it is made again', async () => {
+  fakeApi({ ...BASE, [`GET ${W1}`]: wsBody() });
+  const w = make();
+  await w.view.show('brief/workspace/ws1');
+  assert.deepEqual(chips(w.host), ['Made from 3 projects · 2 days ago', '$1.42', 'Used by 1 feature', 'Built from the workspace map, scanned 2026-10-18']);
+  // a description written by hand: no map chip
+  fakeApi({ ...BASE, [`GET ${W1}`]: wsBody({ brief: madeRow({ scopeType: 'workspace', scopeKey: 'ws1', seed: { kind: 'workspace-description' } }) }) });
+  const d = make();
+  await d.view.show('brief/workspace/ws1');
+  assert.ok(!chips(d.host).some((c) => /workspace map/.test(c)));
+  // refreshing: the running badge, the Refresh controls disabled, the sections still editable
+  const r = await openBrief(madeBody({ brief: madeRow({ status: 'making' }) }));
+  const badge = r.host.querySelector('.req-brief-chips .badge');
+  assert.equal(badge.textContent, 'Refreshing');
+  assert.ok(badge.classList.contains('running'));
+  assert.equal(r.host.querySelector('[data-ui="brief-refresh"]').disabled, true, 'the notice button');
+  assert.equal(r.host.querySelector('[data-ui="mi-brief-refresh"]').disabled, true, 'the ⋯ entry');
+  assert.equal(r.host.querySelector('[data-ui="mi-brief-delete"]').disabled, true, 'no delete while it is being made');
+  assert.ok([...r.host.querySelectorAll('[data-ui^="brief-edit-"]')].every((b) => !b.disabled), 'the pencils stay');
+});
+
+test('brief page, made: a failed refresh is said under the chips with Refresh', async () => {
+  let made = false;
+  const { host, calls } = await openBrief(() => madeBody({ brief: madeRow(made ? { status: 'making' } : { error: { code: 'TIMEOUT', message: 'Worca could not check out the code in time. Try again.', at: 'x' } }) }), {
+    [`POST ${BRIEF_URL}`]: () => { made = true; return { __status: 202, body: madeBody({ brief: madeRow({ status: 'making' }) }) }; } });
+  const line = host.querySelector('.req-brief-refresh-failed');
+  assert.equal(text(line), 'The last refresh failed: Worca could not check out the code in time. Try again. Refresh');
+  const kids = [...host.querySelector('.req-brief-head').children];
+  assert.ok(kids.indexOf(line) > kids.indexOf(host.querySelector('.req-brief-head-row')), 'under the chips');
+  const go = line.querySelector('button');
+  assert.ok(go.classList.contains('btn') && go.classList.contains('btn-mini'));
+  go.click();
+  assert.equal(go.disabled, true, 'disabled at once');
+  go.click();
+  await tick(); await tick();
+  assert.equal(calls.filter((c) => c.method === 'POST' && c.url === BRIEF_URL).length, 1);
+  assert.equal(host.querySelector('.req-brief-refresh-failed'), null, 'gone once it runs again');
+  assert.equal(host.querySelector('.req-brief-chips .badge').textContent, 'Refreshing');
+  // no failure line while a refresh runs
+  const ok = await openBrief(madeBody({ brief: madeRow({ status: 'making', error: { code: 'X', message: 'old', at: 'x' } }) }));
+  assert.equal(ok.host.querySelector('.req-brief-refresh-failed'), null);
+});
+
+test('brief page, made: Export (Copy Markdown, Download .md) and ⋯ (Refresh with the estimate, Delete with a confirmation)', async () => {
+  const { host, msgEl, calls } = await openBrief(madeBody(), {
+    [`POST ${BRIEF_URL}`]: { __status: 202, body: madeBody({ brief: madeRow({ status: 'making' }) }) },
+    [`DELETE ${BRIEF_URL}`]: briefBody(), [`GET ${BRIEF_URL}/markdown`]: {} });
+  btn(host, 'Export ▾').click();
+  const exp = host.querySelector('[data-menu="brief-export"] [role="menu"]');
+  assert.equal(exp.hidden, false);
+  assert.deepEqual([...exp.querySelectorAll('[role="menuitem"]')].map((x) => x.textContent), ['Copy Markdown', 'Download .md']);
+  assert.equal(exp.querySelector('a[role="menuitem"]').getAttribute('href'), `${BRIEF_URL}/markdown?download=1`);
+  clip.length = 0;
+  btn(host, 'Copy Markdown').click();
+  await tick(); await tick();
+  assert.ok(calls.some((c) => c.method === 'GET' && c.url === `${BRIEF_URL}/markdown`));
+  assert.deepEqual(clip, ['# md']);
+  assert.equal(msgEl.textContent, 'Copied as Markdown.');
+  assert.equal(exp.hidden, true, 'a choice closes the menu');
+  host.querySelector('[data-ui="brief-more"]').click();
+  const more = host.querySelector('[data-menu="brief-more"] [role="menu"]');
+  assert.equal(more.hidden, false);
+  assert.deepEqual([...more.querySelectorAll('[role="menuitem"]')].map((x) => x.textContent), ['Refresh the brief · about $1.50', 'Delete the brief']);
+  // Delete: the confirmation names the features using the brief; No keeps it
+  let asked = await withConfirm(false, async () => { host.querySelector('[data-ui="mi-brief-delete"]').click(); await tick(); await tick(); });
+  assert.deepEqual(asked, ['Delete the brief? FEAT-2 and FEAT-3 use this brief; they go back to looking at the code when asked.']);
+  assert.equal(calls.filter((c) => c.method === 'DELETE').length, 0);
+  await withConfirm(true, async () => { host.querySelector('[data-ui="mi-brief-delete"]').click(); await tick(); await tick(); });
+  assert.equal(calls.filter((c) => c.method === 'DELETE' && c.url === BRIEF_URL).length, 1);
+  assert.ok(host.querySelector('.req-brief-start'), 'painted from the answer: none yet again');
+  // Refresh from ⋯ posts once; without an estimate the entry has no cost
+  const r = await openBrief(madeBody({ estimate: { costUsd: null, model: null } }), { [`POST ${BRIEF_URL}`]: { __status: 202, body: madeBody({ brief: madeRow({ status: 'making' }) }) } });
+  assert.equal(r.host.querySelector('[data-ui="mi-brief-refresh"]').textContent, 'Refresh the brief');
+  r.host.querySelector('[data-ui="mi-brief-refresh"]').click();
+  await tick(); await tick();
+  assert.equal(r.calls.filter((c) => c.method === 'POST' && c.url === BRIEF_URL).length, 1);
+  assert.equal(r.host.querySelector('.req-brief-chips .badge').textContent, 'Refreshing');
+  // one user, no user
+  const one = await openBrief(madeBody({ usedBy: [{ seq: 2, id: 'FEAT-2' }] }));
+  asked = await withConfirm(false, async () => { one.host.querySelector('[data-ui="mi-brief-delete"]').click(); await tick(); });
+  assert.deepEqual(asked, ['Delete the brief? FEAT-2 uses this brief; it goes back to looking at the code when asked.']);
+  const none = await openBrief(madeBody({ usedBy: [] }));
+  asked = await withConfirm(false, async () => { none.host.querySelector('[data-ui="mi-brief-delete"]').click(); await tick(); });
+  assert.deepEqual(asked, ['Delete the brief? No feature uses this brief yet.']);
+});
+
+test('brief page, made: the code-moved-on notice, with the changed areas or none, and its Refresh', async () => {
+  const { host, calls } = await openBrief(madeBody(), { [`POST ${BRIEF_URL}`]: { __status: 202, body: madeBody({ brief: madeRow({ status: 'making' }) }) } });
+  const n = notice(host);
+  assert.ok(n, 'the notice');
+  assert.ok(n.classList.contains('req-changed'), 'the amber wash');
+  assert.equal(n.querySelector('svg').getAttribute('aria-hidden'), 'true', 'the warning icon');
+  assert.equal(n.querySelector('b').textContent, 'The code moved on since this brief');
+  const p = n.querySelector('.req-brief-stale-text');
+  assert.equal(text(p), '38 commits on main since 3f9c2a1; 6 of them change areas the brief describes: Orders and Payments. Interviews still use the brief as it is.');
+  assert.deepEqual([...p.querySelectorAll('code')].map((c) => c.textContent), ['main', '3f9c2a1']);
+  assert.deepEqual([...p.querySelectorAll('b')].map((c) => c.textContent), ['Orders', 'Payments']);
+  const go = n.querySelector('[data-ui="brief-refresh"]');
+  assert.equal(go.textContent, 'Refresh · about $1.50');
+  assert.ok(go.classList.contains('btn') && go.classList.contains('btn-mini'));
+  assert.equal(n.querySelectorAll('button').length, 1, 'one Refresh (Q2)');
+  go.click();
+  await tick(); await tick();
+  assert.equal(calls.filter((c) => c.method === 'POST' && c.url === BRIEF_URL).length, 1);
+  // m = 0, one commit; no estimate
+  const z = await openBrief(madeBody({ estimate: { costUsd: null, model: null }, staleness: { ...STALE, commits: 1, touching: 0, areas: [] } }));
+  assert.equal(text(notice(z.host).querySelector('.req-brief-stale-text')), '1 commit on main since 3f9c2a1; none of them change areas the brief describes. Interviews still use the brief as it is.');
+  assert.equal(notice(z.host).querySelector('[data-ui="brief-refresh"]').textContent, 'Refresh');
+  // three areas, an added one by its label; one commit touching
+  const three = await openBrief(madeBody({ staleness: { ...STALE, touching: 1, areas: ['Orders', 'Catalog', 'Orders: Gift message on an order'] } }));
+  assert.equal(text(notice(three.host).querySelector('.req-brief-stale-text')),
+    '38 commits on main since 3f9c2a1; 1 of them changes areas the brief describes: Orders, Catalog and Orders: Gift message on an order. Interviews still use the brief as it is.');
+  // no notice: 0 commits, the areas section edited (not checked), no staleness
+  for (const staleness of [{ ...STALE, commits: 0, touching: 0, areas: [] }, { ...STALE, touching: 0, areas: [], checked: false }, null]) {
+    const x = await openBrief(madeBody({ staleness }));
+    assert.equal(notice(x.host), null, JSON.stringify(staleness));
+  }
+  const ed = await openBrief(madeBody({ brief: madeRow({ edited: { areas: true } }), staleness: { known: false, reason: 'slow' } }));
+  assert.equal(notice(ed.host), null, 'the owner owns What exists today: no notice at all');
+});
+
+test('brief page, made: a staleness that cannot be told says why, with the same Refresh', async () => {
+  const cases = [
+    [{ known: false, reason: 'missing', branch: 'main', sha: '3f9c2a1deadbeef00' }, "Worca cannot tell how far the code moved on: the project's folder is missing."],
+    [{ known: false, reason: 'branch-gone', branch: 'trunk', sha: '3f9c2a1deadbeef00' }, 'Worca cannot tell how far the code moved on: the branch trunk no longer exists.'],
+    [{ known: false, reason: 'rewritten', branch: 'main', sha: '3f9c2a1deadbeef00' }, 'Worca cannot tell how far the code moved on: the commit this brief was made from is no longer on main.'],
+    [{ known: false, reason: 'slow' }, 'Worca cannot tell how far the code moved on: checking took too long; reload to try again.'],
+  ];
+  for (const [staleness, want] of cases) {
+    const { host } = await openBrief(madeBody({ staleness }));
+    const n = notice(host);
+    assert.ok(n, staleness.reason);
+    assert.equal(n.querySelector('b').textContent, 'The code moved on since this brief');
+    assert.equal(text(n.querySelector('.req-brief-stale-text')), want);
+    assert.equal(n.querySelector('[data-ui="brief-refresh"]').textContent, 'Refresh · about $1.50');
+  }
+  const { host } = await openBrief(madeBody({ staleness: { known: false, reason: 'branch-gone', branch: 'trunk' } }));
+  assert.equal(notice(host).querySelector('.req-brief-stale-text code').textContent, 'trunk');
+});
+
+test('brief page, made: a workspace notice names the members not checked and those that joined after the brief', async () => {
+  const st = { known: true, commits: 5, touching: 2, areas: ['Orders'], checked: true, partial: false, unknown: ['mail'], added: ['cart', 'pay'],
+    sources: [{ project: 'cart', branch: 'main', sha: 'cart0000000aaa', known: true, commits: 5 }, { project: 'mail', known: false, reason: 'missing' }] };
+  fakeApi({ ...BASE, [`GET ${W1}`]: wsBody({ staleness: st }) });
+  const w = make();
+  await w.view.show('brief/workspace/ws1');
+  const n = notice(w.host);
+  assert.equal(text(n.querySelector('.req-brief-stale-text')), '5 commits in its projects since this brief; 2 of them change areas the brief describes: Orders. Interviews still use the brief as it is.');
+  assert.equal(text(n.querySelector('.req-brief-stale-unknown')), 'Not checked: mail.');
+  assert.equal(text(n.querySelector('.req-brief-stale-added')), 'cart and pay joined after this brief; refresh to include them.');
+  // nothing moved on: no notice (0 commits)
+  fakeApi({ ...BASE, [`GET ${W1}`]: wsBody({ staleness: { ...st, commits: 0, touching: 0, areas: [], unknown: [] } }) });
+  const q = make();
+  await q.view.show('brief/workspace/ws1');
+  assert.equal(notice(q.host), null);
+  // every member unknown: the reason, and who was not checked
+  fakeApi({ ...BASE, [`GET ${W1}`]: wsBody({ staleness: { known: false, reason: 'missing', unknown: ['cart', 'mail'], added: [], sources: [] } }) });
+  const u = make();
+  await u.view.show('brief/workspace/ws1');
+  assert.equal(text(notice(u.host).querySelector('.req-brief-stale-text')), "Worca cannot tell how far the code moved on: the project's folder is missing.");
+  assert.equal(text(notice(u.host).querySelector('.req-brief-stale-unknown')), 'Not checked: cart and mail.');
+  assert.equal(notice(u.host).querySelector('.req-brief-stale-added'), null);
+});
+
+test('brief page, made: the brief card, its four sections, the edited mark and the pencils', async () => {
+  const { host } = await openBrief(madeBody());
+  const card = host.querySelector('section.card[aria-label="The brief"]');
+  assert.ok(card);
+  assert.deepEqual([...card.querySelectorAll('.req-sect')].map((s) => s.getAttribute('data-section')), ['product', 'users', 'terms', 'areas']);
+  assert.deepEqual([...card.querySelectorAll('h4')].map(text), ['What the product does', 'Who uses it · edited by you', 'The words it uses', 'What exists today']);
+  assert.ok(card.querySelector('[data-section="users"] h4 .req-edited'), 'edited by you in amber');
+  const pencils = [...card.querySelectorAll('button.req-ico')];
+  assert.deepEqual(pencils.map((b) => b.getAttribute('aria-label')), ['Edit What the product does', 'Edit Who uses it', 'Edit The words it uses', 'Edit What exists today']);
+  assert.deepEqual(pencils.map((b) => b.getAttribute('data-ui')), ['brief-edit-product', 'brief-edit-users', 'brief-edit-terms', 'brief-edit-areas']);
+  assert.equal(text(card.querySelector('[data-section="product"] p')), MADE_SECTIONS.product);
+  const users = [...card.querySelectorAll('[data-section="users"] li')];
+  assert.deepEqual(users.map(text), ['Shopper: browses, orders, pays.', 'Support agent: sees every order.']);
+  assert.deepEqual(users.map((li) => li.querySelector('b').textContent), ['Shopper', 'Support agent']);
+  const terms = card.querySelector('[data-section="terms"] .req-brief-terms');
+  assert.deepEqual([...terms.querySelectorAll('b')].map((x) => x.textContent), ['Packed', 'Refund']);
+  assert.deepEqual([...terms.querySelectorAll('span')].map((x) => x.textContent), ['in a box at the warehouse.', 'money back.']);
+  const areas = [...card.querySelectorAll('[data-section="areas"] .req-brief-area')];
+  assert.deepEqual(areas.map(text), ['Orders · checkout, order history; no cancel action Partly', 'Catalog · categories and product pages Exists',
+    'Orders: Gift message on an order · The packing slip is printed from the order.']);
+  assert.deepEqual(areas.map((a) => a.querySelector('b').textContent), ['Orders', 'Catalog', 'Orders: Gift message on an order']);
+  assert.ok(areas[0].querySelector('.badge').classList.contains('amber'));
+  assert.ok(areas[1].querySelector('.badge').classList.contains('green'));
+  assert.equal(areas[2].querySelector('.badge'), null, 'no status, no badge');
+  // Let Worca rewrite this only on the edited section
+  assert.deepEqual([...card.querySelectorAll('.req-rewrite')].map((b) => b.closest('[data-section]').getAttribute('data-section')), ['users']);
+  // empty sections
+  const e = await openBrief(madeBody({ brief: madeRow({ sections: { product: '', users: [], terms: [], areas: [] }, edited: {} }) }));
+  assert.deepEqual([...e.host.querySelectorAll('section[aria-label="The brief"] .req-sect')].map((s) => text(s.querySelector('.hint'))), ['Not yet.', 'Not yet.', 'Not yet.', 'Not yet.']);
+});
+
+test('brief page, made: a pencil opens the section in its text form; Save puts the text, Cancel closes; one editor at a time', async () => {
+  const S = `${BRIEF_URL}/sections`;
+  const { host, calls } = await openBrief(madeBody(), {
+    [`PUT ${S}/users`]: madeBody({ brief: madeRow({ sections: { ...MADE_SECTIONS, users: [{ name: 'Buyer', can: 'buys.' }] } }) }),
+    [`DELETE ${S}/users/edited`]: madeBody({ brief: madeRow({ edited: {} }) }) });
+  const ed = () => host.querySelector('[data-ui="brief-edit-text"]');
+  host.querySelector('[data-ui="brief-edit-users"]').click();
+  assert.equal(ed().tagName, 'TEXTAREA');
+  assert.equal(ed().getAttribute('aria-label'), 'Who uses it');
+  assert.equal(ed().value, 'Shopper: browses, orders, pays.\nSupport agent: sees every order.');
+  host.querySelector('[data-ui="brief-edit-areas"]').click();
+  assert.equal(host.querySelectorAll('[data-ui="brief-edit-text"]').length, 1, 'one at a time');
+  assert.equal(ed().closest('[data-section]').getAttribute('data-section'), 'areas');
+  assert.equal(ed().value, 'Orders (partly): checkout, order history; no cancel action\nCatalog (exists): categories and product pages\nGift message on an order: The packing slip is printed from the order.');
+  btn(host, 'Cancel').click();
+  assert.equal(ed(), null);
+  assert.equal(calls.filter((c) => c.method === 'PUT').length, 0);
+  host.querySelector('[data-ui="brief-edit-product"]').click();
+  assert.equal(ed().value, MADE_SECTIONS.product);
+  btn(host, 'Cancel').click();
+  host.querySelector('[data-ui="brief-edit-users"]').click();
+  ed().value = 'Buyer: buys.';
+  btn(host, 'Save').click();
+  await tick(); await tick();
+  assert.deepEqual(calls.find((c) => c.method === 'PUT').body, { value: 'Buyer: buys.' });
+  assert.equal(calls.find((c) => c.method === 'PUT').url, `${S}/users`);
+  assert.equal(ed(), null, 'closed after the save');
+  assert.equal(text(host.querySelector('[data-section="users"] li')), 'Buyer: buys.', 'painted from the answer');
+  // Let Worca rewrite this
+  host.querySelector('.req-rewrite').click();
+  await tick(); await tick();
+  assert.equal(calls.filter((c) => c.method === 'DELETE' && c.url === `${S}/users/edited`).length, 1);
+  assert.equal(host.querySelector('.req-rewrite'), null);
+  assert.equal(text(host.querySelector('[data-section="users"] h4')), 'Who uses it');
+});
+
+test('brief page, made: an open editor keeps its text, focus and caret over a live repaint; a refused save keeps it open', async () => {
+  const S = `${BRIEF_URL}/sections`;
+  const { host, view, msgEl } = await openBrief(madeBody(), { [`PUT ${S}/terms`]: { __status: 400, body: { error: 'at most 30 terms fit in the brief' } } });
+  document.body.append(host);
+  host.querySelector('[data-ui="brief-edit-terms"]').click();
+  const ed = () => host.querySelector('[data-ui="brief-edit-text"]');
+  assert.equal(document.activeElement, ed(), 'the editor takes the focus');
+  ed().value = 'Packed: boxed.\nHalf typ';
+  ed().setSelectionRange(3, 6);
+  await view.changed(undefined, 'project:shop-1');
+  assert.equal(ed().value, 'Packed: boxed.\nHalf typ');
+  assert.equal(document.activeElement, ed());
+  assert.deepEqual([ed().selectionStart, ed().selectionEnd], [3, 6]);
+  btn(host, 'Save').click();
+  await tick(); await tick(); await tick();
+  assert.match(msgEl.textContent, /at most 30 terms/);
+  assert.equal(ed().value, 'Packed: boxed.\nHalf typ', 'kept after a refusal');
+  // leaving the page drops the editor
+  await view.show('');
+  await view.show('brief/project/shop-1');
+  assert.equal(ed(), null);
+  host.remove();
+});
+
+test('brief page: the notes keep their caret over a live repaint', async () => {
+  const { host, view } = await openBrief(briefBody());
+  document.body.append(host);
+  const area = () => host.querySelector('[data-ui="notes-body"]');
+  area().focus();
+  area().value = 'Shoppers order things, often.';
+  area().setSelectionRange(9, 14);
+  await view.changed(undefined, 'project:shop-1');
+  assert.equal(document.activeElement, area());
+  assert.deepEqual([area().selectionStart, area().selectionEnd], [9, 14]);
+  host.remove();
+});
+
+test('brief page, made: How Worca uses it, Your notes for Worca with Edit notes, What Worca read', async () => {
+  const { host, routed, calls } = await openBrief(madeBody(), {
+    'PUT /api/requirements/context/project/shop-1': { body: 'New notes', lookAtCode: true } });
+  const side = host.querySelector('.req-brief-side');
+  assert.ok(side, 'the right column');
+  const how = side.querySelector('section[aria-label="How Worca uses it"]');
+  assert.equal(how.querySelector('h3').textContent, 'How Worca uses it');
+  assert.equal(text(how.querySelector('p')), 'Every interview round for shop reads it. New features no longer need their own look at the code; Look closer on a feature adds one when the brief is not enough.');
+  assert.equal(how.querySelector('p b').textContent, 'Look closer');
+  const used = how.querySelector('.req-brief-used');
+  assert.equal(text(used), 'Used by FEAT-2, FEAT-3');
+  const links = [...used.querySelectorAll('a')];
+  assert.deepEqual(links.map((a) => a.getAttribute('href')), ['#requirements/feature/2', '#requirements/feature/3']);
+  links[1].click();
+  assert.deepEqual(routed, ['feature/3']);
+  const notes = side.querySelector('details.req-brief-notes-read');
+  assert.ok(notes.open, 'open');
+  assert.equal(text(notes.querySelector('summary')), 'Your notes for Worca');
+  assert.equal(text(notes.querySelector('p')), 'Shoppers order things.');
+  assert.equal(host.querySelector('[data-ui="notes-body"]'), null, 'no editor until Edit notes');
+  btn(host, 'Edit notes').click();
+  const area = host.querySelector('.req-brief-side [data-ui="notes-body"]');
+  assert.ok(area, "Task 7's editor, in place");
+  assert.equal(area.value, 'Shoppers order things.');
+  area.value = 'New notes';
+  btn(host, 'Save notes').click();
+  await tick(); await tick(); await tick();
+  assert.deepEqual(calls.find((c) => c.method === 'PUT').body, { body: 'New notes', lookAtCode: true });
+  assert.equal(host.querySelector('[data-ui="notes-body"]'), null, 'back to the notes after a save');
+  const read = host.querySelector('.req-brief-side details.req-brief-read');
+  assert.equal(read.open, false, 'folded');
+  assert.equal(text(read.querySelector('summary')), 'What Worca read 3 files');
+  assert.deepEqual([...read.querySelectorAll('li')].map((x) => x.textContent), ['README.md', 'src/orders.mjs', 'src/slip.mjs']);
+  // no users, no notes
+  const e = await openBrief(madeBody({ usedBy: [], notes: { body: '', lookAtCode: true }, brief: madeRow({ files: ['README.md'] }) }));
+  assert.equal(e.host.querySelector('.req-brief-used'), null);
+  assert.equal(text(e.host.querySelector('details.req-brief-notes-read p')), 'No notes yet.');
+  assert.equal(text(e.host.querySelector('details.req-brief-read summary')), 'What Worca read 1 file');
+});
+
+test('brief page, made: an open notes editor and the folds survive a live repaint', async () => {
+  const { host, view } = await openBrief(madeBody());
+  btn(host, 'Edit notes').click();
+  host.querySelector('[data-ui="notes-body"]').value = 'Half typed';
+  host.querySelector('details.req-brief-read').open = true;
+  await view.changed(undefined, 'project:shop-1');
+  assert.equal(host.querySelector('[data-ui="notes-body"]').value, 'Half typed');
+  assert.equal(host.querySelector('details.req-brief-read').open, true);
+  // Cancel goes back to the notes and drops what was typed
+  btn(host, 'Cancel').click();
+  assert.equal(host.querySelector('[data-ui="notes-body"]'), null);
+  assert.equal(text(host.querySelector('details.req-brief-notes-read p')), 'Shoppers order things.');
+  btn(host, 'Edit notes').click();
+  assert.equal(host.querySelector('[data-ui="notes-body"]').value, 'Shoppers order things.');
+});

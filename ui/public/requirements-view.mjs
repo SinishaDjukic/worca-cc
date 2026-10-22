@@ -37,6 +37,20 @@ const SECTIONS = [['goal', 'Goal'], ['actors', 'Actors'], ['flow', 'Main flow'],
 const FOLDED = ['flow', 'edgeCases', 'rules', 'outOfScope'];
 const KEYS = ['A', 'B', 'C', 'D'];
 const MAX_ROUNDS = 6;
+// The Product brief's four sections (A7 D2) and an area's status badge.
+const BRIEF_SECTIONS = [['product', 'What the product does'], ['users', 'Who uses it'], ['terms', 'The words it uses'], ['areas', 'What exists today']];
+const AREA_STATUS = Object.freeze({ exists: { label: 'Exists', cls: 'green' }, partly: { label: 'Partly', cls: 'amber' } });
+const BRIEF_FORMAT = Object.freeze({ users: 'One per line, as Name: what they can do.', terms: 'One per line, as Term: what it means.',
+  areas: 'One per line, as Name (exists or partly): what exists. The status is optional.' });
+/** An area as the page names it: "<belongsTo>: <name>" for one added from a closer look (A7 D11). */
+const areaLabel = (a) => (a.belongsTo ? `${a.belongsTo}: ${a.name}` : a.name);
+/** A section as the editor's text (A7 §3, the server's `sectionText`): one item per line, split on the first ": ". */
+function briefSectionText(key, value) {
+  if (key === 'product') return String(value ?? '');
+  const line = (head, text) => `${head || ''}: ${text || ''}`.trimEnd();
+  return (Array.isArray(value) ? value : []).filter(Boolean).map((x) => (key === 'users' ? line(x.name, x.can)
+    : key === 'terms' ? line(x.term, x.meaning) : line(`${x.name}${x.status ? ` (${x.status})` : ''}`, x.text))).join('\n');
+}
 
 function h(tag, attrs = {}, ...kids) {
   const node = document.createElement(tag);
@@ -183,6 +197,14 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   let creating = false;
   let notesBase = null;      // { body, look } as painted from the server
   let notesDraft = null;     // { body, look } typed and not saved yet
+  // The made brief (board 12): the section open in its editor and its unsaved text ({ key, text }), the notes
+  // editor opened from Edit notes, the right column's folds, a save in flight, the field the next paint focuses.
+  let briefEditing = null;
+  let briefEditVal = null;
+  let notesEditing = false;
+  let briefFolds = { notes: true, read: false };
+  let briefSaving = false;
+  let briefFocusNext = null;
   const seqScope = new Map();
   let focusLater = null;     // a data-ui to focus once it is on screen, while the focus is lost (a round sent)
   // Start in worca: the workflow / branch choices per feature seq ({ workflowId, sourceBranch, open }),
@@ -236,7 +258,11 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     seqShown = next;
     const b = /^brief\/(project|workspace)\/([^/]+)$/.exec(param);
     const nextBrief = b ? { scopeType: b[1], scopeKey: decodeKey(b[2]) } : null;
-    if (!nextBrief || !briefShown || scopeId(nextBrief) !== scopeId(briefShown)) { briefData = null; notesBase = null; notesDraft = null; }
+    if (!nextBrief || !briefShown || scopeId(nextBrief) !== scopeId(briefShown)) {
+      briefData = null; notesBase = null; notesDraft = null;
+      briefEditing = null; briefEditVal = null; notesEditing = false; briefFolds = { notes: true, read: false }; briefFocusNext = null;
+      if (ui.menu && ui.menu.startsWith('brief-')) ui.menu = null;
+    }
     briefShown = nextBrief;
     say('');
     await paint();
@@ -434,58 +460,79 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
 
   const briefLabel = (s, name) => `${s.scopeType === 'workspace' ? 'Workspace' : 'Project'} · ${name}`;
 
-  // Read the notes' unsaved text and switch before a rebuild: kept only when they differ from what was painted.
-  function captureNotes() {
+  // Read the page's unsaved input before a rebuild: the notes' text and switch (kept only when they differ from
+  // what was painted), the open section editor's text, the folds, and the focused field with its caret.
+  function captureBrief() {
     const s = briefShown;
     const page = host.querySelector('[data-req-brief]');
     if (!s || !page || page.getAttribute('data-req-brief') !== scopeId(s)) return null;
     const active = document.activeElement;
     const focus = active && host.contains(active) ? active.getAttribute('data-ui') : null;
+    const typed = !!(focus && (active.tagName === 'TEXTAREA' || (active.tagName === 'INPUT' && active.type === 'text')));
+    const sel = typed ? [active.selectionStart, active.selectionEnd, active.selectionDirection] : null;
     const area = host.querySelector('[data-ui="notes-body"]');
     const look = host.querySelector('[data-ui="notes-look"]');
     if (area && look && notesBase) {
       const v = { body: area.value, look: look.checked };
       notesDraft = v.body !== notesBase.body || v.look !== notesBase.look ? v : null;
     }
-    return focus;
+    const ed = host.querySelector('[data-ui="brief-edit-text"]');
+    if (ed && briefEditing) briefEditVal = { key: ed.closest('[data-section]')?.getAttribute('data-section'), text: ed.value };
+    const notesFold = host.querySelector('details.req-brief-notes-read');
+    if (notesFold) briefFolds.notes = notesFold.open;
+    const readFold = host.querySelector('details.req-brief-read');
+    if (readFold) briefFolds.read = readFold.open;
+    return { focus, sel };
   }
 
   function paintBrief(data) {
     briefData = data;
     const s = briefShown;
     for (const u of data.usedBy || []) if (u && u.seq != null) seqScope.set(Number(u.seq), scopeId(s));
-    const focus = captureNotes();
+    const kept = captureBrief();
     const name = (data.target && data.target.name) || s.scopeKey;
     const b = data.brief || null;
     const made = !!(b && b.madeAt);
-    paintHost(h('div', { class: 'req-page req-brief-page', 'data-req-brief': scopeId(s) },
+    if (!made) { briefEditing = null; briefEditVal = null; notesEditing = false; }
+    paintHost(h('div', { class: `req-page req-brief-page${made ? ' req-brief-made' : ''}`, 'data-req-brief': scopeId(s) },
       h('a', { href: '#requirements', class: 'hint req-back', onclick: (e) => { e.preventDefault(); route(''); } }, '← All features'),
-      h('div', { class: 'req-brief-head' },
-        h('div', { class: 'req-head-title' }, h('h2', { text: 'Product brief' }), h('span', { class: 'chip', text: briefLabel(s, name) })),
-        made ? null : h('p', { class: 'req-sub', text: `What the product does, in your words and Worca's. Every interview for ${name} starts from it.` })),
-      made ? null : headStartCard(data),
-      notesCard(data)));
-    if (focus) {
-      const el = host.querySelector(`[data-ui="${focus}"]`);
-      if (el && !el.disabled) el.focus();
+      briefHead(data, name, made),
+      made ? staleNotice(data) : headStartCard(data),
+      made ? h('div', { class: 'req-brief-cols' }, briefCard(b), briefSide(data, name)) : notesCard(data)));
+    if (briefEditVal && briefEditVal.key !== briefEditing) briefEditVal = null;
+    // A field just opened takes the focus; otherwise the focused field keeps it, with its caret and selection.
+    const want = briefFocusNext || (kept && kept.focus);
+    const sel = briefFocusNext ? null : kept && kept.sel;
+    briefFocusNext = null;
+    const el = want ? host.querySelector(`[data-ui="${want}"]`) : null;
+    if (el && !el.disabled) {
+      el.focus();
+      if (sel && typeof el.setSelectionRange === 'function') { try { el.setSelectionRange(sel[0], sel[1], sel[2] || 'none'); } catch { /* not a text field */ } }
     }
   }
   const redrawBrief = () => { if (briefShown && briefData) paintBrief(briefData); };
+  const briefApi = (s) => `/api/requirements/${briefPath(s.scopeType, s.scopeKey)}`;
+  // Paint a brief route's answer (the GET body) when the page still shows that scope.
+  function paintAnswer(s, data) {
+    if (!briefShown || scopeId(briefShown) !== scopeId(s)) return;
+    paintNo += 1;   // a fetch already under way would paint the page as it was before
+    paintBrief(data);
+    paintedKey = `brief/${scopeId(s)}`;
+  }
 
+  // Create, and Refresh (the same POST, D7): every control that starts it is marked `data-brief-go` and disabled
+  // at once, so a double press posts once.
   function createBrief() {
     if (creating || !briefShown) return;
     const s = briefShown;
     creating = true;
-    for (const el of host.querySelectorAll('[data-ui="brief-create"]')) el.disabled = true;
+    for (const el of host.querySelectorAll('[data-brief-go]')) el.disabled = true;
     say('');
     void (async () => {
       try {
-        const data = await api('POST', `/api/requirements/${briefPath(s.scopeType, s.scopeKey)}`, {});
+        const data = await api('POST', briefApi(s), {});
         creating = false;
-        if (!briefShown || scopeId(briefShown) !== scopeId(s)) return;
-        paintNo += 1;   // a fetch already under way would paint the page as it was before the press
-        paintBrief(data);
-        paintedKey = `brief/${scopeId(s)}`;
+        paintAnswer(s, data);
       } catch (err) {
         creating = false;
         // refused (budget, busy, the switch, no repository): said in the message line; the button stays
@@ -534,13 +581,14 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         leftOut ? h('span', { class: 'hint req-brief-left-out',
           text: `Worca reads at most 8 projects of a workspace: ${joinAnd(leftOut)} ${leftOut.length === 1 ? 'is' : 'are'} left out.` }) : null,
         failed ? h('p', { class: 'form-msg err req-brief-failed', role: 'status', text: failed }) : null,
-        h('button', { type: 'button', class: 'btn-go req-brief-create', 'data-ui': 'brief-create', disabled: creating || !!whyNot, onclick: createBrief },
+        h('button', { type: 'button', class: 'btn-go req-brief-create', 'data-ui': 'brief-create', 'data-brief-go': true, disabled: creating || !!whyNot, onclick: createBrief },
           making || creating ? 'Creating…' : failed ? 'Try again' : 'Create the brief'),
         whyNot ? h('span', { class: 'hint req-brief-why-not', text: whyNot }) : null));
   }
 
-  // Your notes for Worca (A2's Project / Workspace context, D12): the notes and the switch, saved together.
-  function notesCard(data) {
+  // Your notes for Worca (A2's Project / Workspace context, D12): the notes and the switch, saved together. On a
+  // made brief it is opened by Edit notes (`onCancel` closes it) and goes back to the notes once saved.
+  function notesCard(data, { onCancel = null } = {}) {
     const s = briefShown;
     const n = data.notes || {};
     notesBase = { body: typeof n.body === 'string' ? n.body : '', look: n.lookAtCode !== false };
@@ -553,6 +601,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const save = () => act(async () => {
       await api('PUT', `/api/requirements/context/${s.scopeType}/${encodeURIComponent(s.scopeKey)}`, { body: area.value, lookAtCode: look.checked });
       notesDraft = null; notesBase = null;
+      if (notesEditing) { notesEditing = false; briefFocusNext = 'notes-edit'; }
       say('Notes saved.', 'ok');
       await paint();
     });
@@ -562,7 +611,230 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       area,
       h('label', { for: 'req-notes-look', class: 'req-ctx-look' }, look,
         ' Let Worca look at the code (for the brief, and when you ask it to look closer at a feature)'),
-      h('div', { class: 'req-brief-notes-foot' }, h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'notes-save', onclick: save }, 'Save notes')));
+      h('div', { class: 'req-brief-notes-foot' },
+        onCancel ? h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'notes-cancel', onclick: onCancel }, 'Cancel') : null,
+        h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'notes-save', onclick: save }, 'Save notes')));
+  }
+
+  // ---- the brief page once made (board Brief.dc.html; A7 §6 "Board 12 states" and "Elsewhere") ----
+
+  /** The header: the title and target chip; once made, the chips, Export ▾ and ⋯, and a failed refresh under them. */
+  function briefHead(data, name, made) {
+    const s = briefShown;
+    const title = h('div', { class: 'req-head-title' }, h('h2', { text: 'Product brief' }), h('span', { class: 'chip', text: briefLabel(s, name) }));
+    if (!made) {
+      return h('div', { class: 'req-brief-head' },
+        h('div', { class: 'req-brief-head-row' }, h('div', { class: 'req-brief-head-main' }, title)),
+        h('p', { class: 'req-sub', text: `What the product does, in your words and Worca's. Every interview for ${name} starts from it.` }));
+    }
+    const b = data.brief;
+    const making = b.status === 'making';
+    const failed = !making && b.error && b.error.message ? String(b.error.message) : null;
+    return h('div', { class: 'req-brief-head' },
+      h('div', { class: 'req-brief-head-row' },
+        h('div', { class: 'req-brief-head-main' }, title,
+          h('div', { class: 'req-brief-chips' }, ...briefChips(data), making ? h('span', { class: 'badge running', text: 'Refreshing' }) : null)),
+        h('div', { class: 'req-head-tools' }, exportMenu(), moreMenu(data))),
+      failed ? h('p', { class: 'form-msg err req-brief-refresh-failed', role: 'status' }, `The last refresh failed: ${failed} `,
+        refreshButton(data, 'Refresh', 'brief-refresh-again')) : null);
+  }
+
+  /** "Made from <branch @ sha> · <age> ago" (a workspace: its number of projects), the cost, the features using it,
+   *  and for a workspace seeded from its map, when the map was scanned. */
+  function briefChips(data) {
+    const b = data.brief;
+    const a = age(b.madeAt);
+    const when = a === 'today' || a === 'yesterday' ? a : a ? `${a} ago` : '';
+    const srcs = (b.sources || []).filter((x) => x && typeof x.sha === 'string' && x.sha);
+    let from;
+    if (briefShown.scopeType === 'workspace' && srcs.length) from = [`Made from ${plural(srcs.length, 'project')}`];
+    else if (srcs.length) from = ['Made from ', h('code', { text: `${srcs[0].branch ? `${srcs[0].branch} @ ` : ''}${srcs[0].sha.slice(0, 7)}` })];
+    else from = ['Made'];
+    const used = (data.usedBy || []).length;
+    const seed = b.seed && b.seed.kind === 'workspace-map' ? b.seed : null;
+    return [
+      h('span', { class: 'chip' }, ...from, when ? (srcs.length ? ` · ${when}` : ` ${when}`) : ''),
+      h('span', { class: 'chip', text: usd(b.costUsd) }),
+      h('span', { class: 'chip', text: `Used by ${plural(used, 'feature')}` }),
+      seed ? h('span', { class: 'chip', text: `Built from the workspace map${seed.scannedAt ? `, scanned ${String(seed.scannedAt).slice(0, 10)}` : ''}` }) : null,
+    ];
+  }
+
+  const estimateText = (data) => (data.estimate && typeof data.estimate.costUsd === 'number' ? ` · about ${usd(data.estimate.costUsd)}` : '');
+  /** A Refresh button (the notice's, the failed refresh's): the same POST as Create, disabled while the brief is made. */
+  function refreshButton(data, label, key) {
+    const making = !!(data.brief && data.brief.status === 'making');
+    return h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': key, 'data-brief-go': true, disabled: creating || making, onclick: createBrief }, label);
+  }
+
+  function exportMenu() {
+    const s = briefShown;
+    const copy = () => act(async () => {
+      const res = await fetch(`${briefApi(s)}/markdown`);
+      if (!res.ok) throw new Error(`Could not copy the Markdown (HTTP ${res.status}).`);
+      await navigator.clipboard.writeText(await res.text());
+      say('Copied as Markdown.', 'ok');
+    });
+    return menu('brief-export', h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'brief-export' }, 'Export ▾'), [
+      menuItem('Copy Markdown', copy, { ui: 'mi-brief-copy' }),
+      h('a', { role: 'menuitem', class: 'req-menu-item', 'data-ui': 'mi-brief-download', href: `${briefApi(s)}/markdown?download=1`, download: '' }, 'Download .md'),
+    ]);
+  }
+
+  // ⋯: Refresh the brief (D7) and Delete the brief, whose confirmation names the features using it (§6).
+  function moreMenu(data) {
+    const s = briefShown;
+    const making = data.brief.status === 'making';
+    const refresh = menuItem(`Refresh the brief${estimateText(data)}`, createBrief, { disabled: creating || making, ui: 'mi-brief-refresh' });
+    refresh.setAttribute('data-brief-go', '');
+    const del = () => act(async () => {
+      const ids = ((briefData && briefData.usedBy) || []).map((u) => u && (u.id || (u.seq != null ? `FEAT-${u.seq}` : null))).filter(Boolean);
+      const who = !ids.length ? 'No feature uses this brief yet.'
+        : ids.length === 1 ? `${ids[0]} uses this brief; it goes back to looking at the code when asked.`
+          : `${joinAnd(ids)} use this brief; they go back to looking at the code when asked.`;
+      if (!window.confirm(`Delete the brief? ${who}`)) return;
+      briefEditing = null; briefEditVal = null; notesEditing = false;
+      paintAnswer(s, await api('DELETE', briefApi(s)));
+    });
+    return menu('brief-more', h('button', { type: 'button', class: 'req-ico', 'aria-label': 'More actions', title: 'More actions', 'data-ui': 'brief-more' },
+      icon(ICONS.dots, { size: 18, fill: 'currentColor', stroke: 'none' })), [
+      refresh,
+      menuItem('Delete the brief', del, { disabled: making, ui: 'mi-brief-delete' }),
+    ]);
+  }
+
+  /** "A", "A and B", "A, B and C", each bold. */
+  const boldList = (xs) => xs.flatMap((x, i) => [i === 0 ? null : i === xs.length - 1 ? ' and ' : ', ', h('b', { text: x })]).filter(Boolean);
+  const STALE_REASON = Object.freeze({
+    missing: () => ["the project's folder is missing."],
+    'branch-gone': (branch) => (branch ? ['the branch ', h('code', { text: branch }), ' no longer exists.'] : ['its branch no longer exists.']),
+    rewritten: (branch) => (branch ? ['the commit this brief was made from is no longer on ', h('code', { text: branch }), '.']
+      : ['the commit this brief was made from is no longer on its branch.']),
+    slow: () => ['checking took too long; reload to try again.'],
+  });
+
+  /**
+   * The code moved on since this brief (board 12, D9): the commits since, the areas they change, and one Refresh
+   * (D7/Q2); or, when that cannot be told, why. None when nothing moved on, when the areas were not checked, or
+   * when the product owner owns What exists today (D6).
+   */
+  function staleNotice(data) {
+    const b = data.brief;
+    const st = data.staleness;
+    if (!st || typeof st !== 'object' || (b.edited && b.edited.areas)) return null;
+    const ws = briefShown.scopeType === 'workspace';
+    let says;
+    if (st.known === true) {
+      const n = Number(st.commits) || 0;
+      if (n <= 0 || st.checked === false) return null;
+      const m = Number(st.touching) || 0;
+      const areas = Array.isArray(st.areas) ? st.areas.filter((x) => typeof x === 'string' && x) : [];
+      const src = (Array.isArray(st.sources) && st.sources[0]) || (b.sources || [])[0] || {};
+      const sha = typeof src.sha === 'string' ? src.sha.slice(0, 7) : '';
+      const where = ws ? [' in its projects since this brief']
+        : [...(src.branch ? [' on ', h('code', { text: src.branch })] : []), ...(sha ? [' since ', h('code', { text: sha })] : [' since this brief'])];
+      const what = m <= 0 ? ['; none of them change areas the brief describes.']
+        : areas.length ? [`; ${m} of them ${m === 1 ? 'changes' : 'change'} areas the brief describes: `, ...boldList(areas), '.']
+          : [`; ${m} of them ${m === 1 ? 'changes' : 'change'} areas the brief describes.`];
+      says = [plural(n, 'commit'), ...where, ...what, ' Interviews still use the brief as it is.'];
+    } else if (st.known === false) {
+      const branch = st.branch || ((Array.isArray(st.sources) ? st.sources : []).find((x) => x && x.known === false && x.branch) || {}).branch || null;
+      const why = STALE_REASON[st.reason];
+      says = why ? ['Worca cannot tell how far the code moved on: ', ...why(branch)] : ['Worca cannot tell how far the code moved on.'];
+    } else return null;
+    const unknown = ws && Array.isArray(st.unknown) ? st.unknown.filter(Boolean) : [];
+    const added = ws && Array.isArray(st.added) ? st.added.filter(Boolean) : [];
+    return h('section', { class: 'req-changed req-brief-stale', 'aria-label': 'The brief is behind the code' },
+      icon(ICONS.warn, { size: 18 }),
+      h('div', { class: 'req-changed-body' },
+        h('b', { text: 'The code moved on since this brief' }),
+        h('p', { class: 'req-brief-stale-text' }, ...says),
+        unknown.length ? h('p', { class: 'req-brief-stale-unknown', text: `Not checked: ${joinAnd(unknown)}.` }) : null,
+        added.length ? h('p', { class: 'req-brief-stale-added', text: `${joinAnd(added)} joined after this brief; refresh to include them.` }) : null,
+        h('div', { class: 'req-actions' }, refreshButton(data, `Refresh${estimateText(data)}`, 'brief-refresh'))));
+  }
+
+  /** One section's body as read (D2, §6): the product text, users with the name bold, terms as a grid, areas as rows. */
+  function briefSectionBody(key, value) {
+    const none = () => h('p', { class: 'hint', text: 'Not yet.' });
+    if (key === 'product') return typeof value === 'string' && value.trim() ? h('p', { class: 'req-brief-product', text: value }) : none();
+    const list = Array.isArray(value) ? value.filter((x) => x && typeof x === 'object') : [];
+    if (!list.length) return none();
+    if (key === 'users') return h('ul', { class: 'req-brief-users' }, ...list.map((u) => h('li', {}, h('b', { text: u.name || '' }), u.can ? `: ${u.can}` : '')));
+    if (key === 'terms') return h('div', { class: 'req-brief-terms' }, ...list.flatMap((t) => [h('b', { text: t.term || '' }), h('span', { text: t.meaning || '' })]));
+    return h('div', { class: 'req-brief-areas' }, ...list.map((a) => {
+      const st = AREA_STATUS[a.status];
+      return h('div', { class: 'req-brief-area' },
+        h('span', {}, h('b', { text: areaLabel(a) || '' }), a.text ? ` · ${a.text}` : ''),
+        st ? ' ' : null, st ? h('span', { class: `badge ${st.cls}`, text: st.label }) : null);
+    }));
+  }
+
+  // One section with its head (the pencil, "· edited by you", Let Worca rewrite this) and its body, or A1's inline
+  // editor (§3 text, Save / Cancel). Editable while a refresh runs (D6).
+  function briefSection(b, key, title) {
+    const s = briefShown;
+    const edited = !!(b.edited && b.edited[key]);
+    const value = (b.sections || {})[key];
+    const url = `${briefApi(s)}/sections/${key}`;
+    let body;
+    if (briefEditing === key) {
+      const text = briefEditVal && briefEditVal.key === key ? briefEditVal.text : briefSectionText(key, value);
+      const lines = text.split('\n').length;
+      const ta = h('textarea', { rows: String(Math.min(14, Math.max(5, lines + 2))), 'aria-label': title, 'data-ui': 'brief-edit-text' });
+      ta.value = text;
+      const save = () => act(async () => {
+        if (briefSaving) return;
+        briefSaving = true;
+        try {
+          const out = await api('PUT', url, { value: ta.value });
+          briefEditing = null; briefEditVal = null; briefFocusNext = `brief-edit-${key}`;
+          paintAnswer(s, out);
+        } finally { briefSaving = false; }
+      });
+      body = h('div', { class: 'req-edit' }, ta,
+        BRIEF_FORMAT[key] ? h('p', { class: 'hint', text: BRIEF_FORMAT[key] }) : null,
+        h('div', { class: 'req-actions' },
+          h('button', { type: 'button', class: 'btn btn-mini', onclick: () => { briefEditing = null; briefEditVal = null; briefFocusNext = `brief-edit-${key}`; redrawBrief(); } }, 'Cancel'),
+          h('button', { type: 'button', class: 'btn-go', onclick: save }, 'Save')));
+    } else body = briefSectionBody(key, value);
+    const rewrite = () => act(async () => { briefFocusNext = `brief-edit-${key}`; paintAnswer(s, await api('DELETE', `${url}/edited`)); });
+    return h('section', { class: 'req-sect', 'data-section': key },
+      h('div', { class: 'req-sect-head' },
+        h('h4', {}, title, edited ? h('span', { class: 'req-edited', text: ' · edited by you' }) : null),
+        edited ? h('button', { type: 'button', class: 'link-btn req-rewrite', 'aria-label': `Let Worca rewrite ${title}`, onclick: rewrite }, 'Let Worca rewrite this') : null,
+        icoBtn('pencil', `Edit ${title}`, () => { briefEditing = key; briefEditVal = null; briefFocusNext = 'brief-edit-text'; redrawBrief(); },
+          { cls: null, 'data-ui': `brief-edit-${key}` })),
+      body);
+  }
+
+  const briefCard = (b) => h('section', { class: 'card req-brief-card', 'aria-label': 'The brief' }, ...BRIEF_SECTIONS.map(([key, title]) => briefSection(b, key, title)));
+
+  /** The right column: How Worca uses it (with the features using the brief), Your notes for Worca, What Worca read. */
+  function briefSide(data, name) {
+    const b = data.brief;
+    const used = (data.usedBy || []).filter((u) => u && u.seq != null);
+    const featureLink = (u) => h('a', { class: 'req-brief-link', href: `#requirements/feature/${u.seq}`,
+      onclick: (e) => { e.preventDefault(); route(`feature/${u.seq}`); } }, u.id || `FEAT-${u.seq}`);
+    const notesBody = data.notes && typeof data.notes.body === 'string' ? data.notes.body : '';
+    const notes = notesEditing
+      ? notesCard(data, { onCancel: () => { notesEditing = false; notesDraft = null; briefFocusNext = 'notes-edit'; redrawBrief(); } })
+      : h('details', { class: 'card req-brief-notes-read', open: briefFolds.notes },
+        h('summary', {}, 'Your notes for Worca'),
+        notesBody.trim() ? h('p', { text: notesBody }) : h('p', { class: 'hint', text: 'No notes yet.' }),
+        h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'notes-edit',
+          onclick: () => { notesEditing = true; notesDraft = null; briefFocusNext = 'notes-body'; redrawBrief(); } }, 'Edit notes'));
+    const files = Array.isArray(b.files) ? b.files.filter((p) => typeof p === 'string') : [];
+    return h('aside', { class: 'req-brief-side' },
+      h('section', { class: 'card req-brief-how', 'aria-label': 'How Worca uses it' },
+        h('h3', { text: 'How Worca uses it' }),
+        h('p', {}, `Every interview round for ${name} reads it. New features no longer need their own look at the code; `,
+          h('b', { text: 'Look closer' }), ' on a feature adds one when the brief is not enough.'),
+        used.length ? h('p', { class: 'req-brief-used' }, 'Used by ', ...used.flatMap((u, i) => [i ? ', ' : null, featureLink(u)])) : null),
+      notes,
+      h('details', { class: 'card req-brief-read', open: briefFolds.read },
+        h('summary', {}, 'What Worca read', ' ', h('span', { class: 'hint req-brief-read-n', text: plural(files.length, 'file') })),
+        files.length ? h('ul', { class: 'req-brief-files' }, ...files.map((p) => h('li', { text: p }))) : null));
   }
 
   // ---- the feature page (board Interview.dc.html): header, the conversation left, Ready + spec right ----

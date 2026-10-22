@@ -9555,9 +9555,46 @@ a.req-run-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-brief-notes{padding:18px 22px;display:flex;flex-direction:column;gap:10px}
 .req-brief-notes .req-card-head{margin:0}
 .req-brief-notes textarea{width:100%;box-sizing:border-box;min-height:84px}
-.req-brief-notes-foot{display:flex;justify-content:flex-end}
+.req-brief-notes-foot{display:flex;justify-content:flex-end;gap:8px}
+/* A7: the brief page once made (board Brief.dc.html): the chips and the two menus, the code-moved-on notice (the
+   amber .req-changed box), the brief card left, How Worca uses it / Your notes / What Worca read right. */
+.req-brief-page.req-brief-made{max-width:1180px}
+.req-brief-head-row{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px 16px}
+.req-brief-head-main{display:flex;flex-direction:column;gap:8px;min-width:0}
+.req-brief-chips{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.req-brief-chips code{font-family:var(--mono);font-size:11.5px}
+.req-brief-head .req-brief-refresh-failed{margin:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.req-brief-stale-text b{font-size:inherit;font-weight:600;color:var(--ink)}
+.req-brief-stale-text code{font-family:var(--mono);font-size:12px;padding:1px 6px;border-radius:6px;background:var(--surface)}
+.req-brief-cols{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:22px;align-items:start}
+.req-brief-card{padding:18px 22px;display:flex;flex-direction:column;gap:18px;min-width:0}
+.req-brief-card .req-rewrite{font-size:12px}
+.req-brief-card .req-brief-product{margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
+.req-brief-card .req-brief-users{display:flex;flex-direction:column;gap:4px;margin:6px 0 0}
+.req-brief-users b,.req-brief-terms b,.req-brief-area b{font-weight:600}
+.req-brief-terms{display:grid;grid-template-columns:minmax(90px,150px) minmax(0,1fr);gap:4px 14px;margin:6px 0 0;font-size:13px;overflow-wrap:anywhere}
+.req-brief-areas{margin:4px 0 0}
+.req-brief-area{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:baseline;padding:8px 0;border-top:1px solid var(--line);font-size:13px;overflow-wrap:anywhere}
+.req-brief-area:first-child{border-top:0}
+.req-brief-card .req-edit .hint{margin:0}
+.req-brief-card .req-edit textarea{min-height:96px}
+.req-brief-side{display:flex;flex-direction:column;gap:14px;min-width:0}
+.req-brief-how{padding:16px 18px;display:flex;flex-direction:column;gap:8px}
+.req-brief-how h3{margin:0;font-size:13px;font-weight:600}
+.req-brief-how p{margin:0;font-size:13px;color:var(--ink-2)}
+.req-brief-how p b{font-weight:600;color:var(--ink)}
+.req-brief-how .req-brief-used{margin:0;font-size:12.5px}
+.req-brief-notes-read,.req-brief-read{padding:14px 18px}
+.req-brief-notes-read summary,.req-brief-read summary{cursor:pointer;font-size:13px;font-weight:600}
+.req-brief-read .req-brief-read-n{display:inline;margin:0;font-weight:400}
+.req-brief-notes-read p{margin:8px 0 0;font-size:13px;color:var(--ink-2);white-space:pre-wrap;overflow-wrap:anywhere}
+.req-brief-notes-read .btn{margin-top:10px}
+.req-brief-files{margin:10px 0 0;padding-left:18px;max-height:320px;overflow:auto;font-family:var(--mono);font-size:12px;color:var(--ink-2);overflow-wrap:anywhere}
+@media (max-width:900px){.req-brief-cols{grid-template-columns:1fr}}
 @media (max-width:600px){
   .req-brief-start{grid-template-columns:1fr;padding:18px 16px}
   .req-brief-cost{min-width:0;max-width:none}
   .req-brief-notes{padding:16px}
+  .req-brief-card{padding:16px}
+  .req-brief-terms{grid-template-columns:minmax(0,38%) minmax(0,1fr)}
 }
