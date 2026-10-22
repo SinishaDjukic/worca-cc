@@ -1,12 +1,13 @@
 # docker/e2b/e2b.Dockerfile — the E2B sandbox template for worca's e2b execution
 # environment (plans/e2b-execution-design.md §13). The agent's half of docker/Dockerfile:
-# the same pinned Claude Code (docker/CLAUDE_CODE_VERSION), plus git, node, python and
-# common build toolchains — no worca server (that stays on the PC).
+# the same pinned Claude Code (docker/CLAUDE_CODE_VERSION) and the codex, copilot and cursor-agent
+# CLIs (docker/e2b/engine-clis.json), plus git, node, python and common build toolchains — no worca
+# server (that stays on the PC).
 #
 #   E2B_API_KEY=… E2B_API_URL=http://localhost:3000 npm run e2b:build
 #
-# build.mjs replaces __CLAUDE_CODE_VERSION__ (E2B's converter turns ARG into a persistent ENV and
-# takes no build args). Single stage: Template.fromDockerfile refuses multi-stage files and
+# build.mjs replaces __CLAUDE_CODE_VERSION__ and the engine CLI placeholders (E2B's converter turns
+# ARG into a persistent ENV and takes no build args). Single stage: Template.fromDockerfile refuses multi-stage files and
 # COPY --from. No SHELL line: the converter ignores it (with a warning), so RUN lines stay POSIX sh.
 # Pinned by digest (the multi-arch index of node:22-bookworm), so a rebuild gets the same base on amd64 and arm64.
 # To move it: read the index digest of the new tag and replace both.
@@ -22,6 +23,21 @@ RUN apt-get update \
 # Claude Code, pinned; its updater is off (a newer CLI is a new template build).
 RUN npm install -g "@anthropic-ai/claude-code@__CLAUDE_CODE_VERSION__" \
  && npm cache clean --force
+
+# The other engines' CLIs, pinned (docker/e2b/engine-clis.json; build.mjs fills the placeholders): a newer CLI is a
+# new template build. No updater runs (worca passes --no-auto-update / COPILOT_AUTO_UPDATE=false to copilot).
+RUN npm install -g "@openai/codex@__CODEX_VERSION__" "@github/copilot@__COPILOT_VERSION__" \
+ && npm cache clean --force \
+ && codex --version \
+ && copilot --version --no-auto-update
+
+# cursor-agent from Cursor's own download (the URL its install script uses), at the pinned build, for the VM's arch.
+RUN arch="$(uname -m)"; case "$arch" in x86_64|amd64) arch=x64;; aarch64|arm64) arch=arm64;; *) echo "unsupported arch $arch" >&2; exit 1;; esac \
+ && mkdir -p /opt/cursor-agent \
+ && curl -fsSL "https://downloads.cursor.com/lab/__CURSOR_AGENT_VERSION__/linux/${arch}/agent-cli-package.tar.gz" \
+    | tar --strip-components=1 -xzf - -C /opt/cursor-agent \
+ && ln -s /opt/cursor-agent/cursor-agent /usr/local/bin/cursor-agent \
+ && cursor-agent --version
 
 # graphify, pinned (PyPI `graphifyy`): worca builds the run worktree's code graph in the sandbox after the clone
 # (run-harness _buildSandboxGraph), so the host builds and uploads none. On PATH for the agents too.

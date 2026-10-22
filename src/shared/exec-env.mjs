@@ -4,8 +4,8 @@
 // and the New run dialog (ui/public/app.js), so the dialog shows the environment the run really gets.
 import { ENGINES, ENGINE_NAMES, engineLabel } from './engine-switch.mjs';
 
-/** The engines a remote sandbox runs: the engine catalog's `sandbox` flag (src/shared/engine-switch.mjs). An engine
- *  without it runs locally only for now. */
+/** The engines a remote sandbox runs: the engine catalog's `sandbox` flag (src/shared/engine-switch.mjs). Each one's
+ *  env, sign-in and host-only keys are exec-env/policy.mjs ENGINE_SANDBOX; an engine without the flag runs locally only for now. */
 export const REMOTE_ENGINES = Object.freeze(ENGINE_NAMES.filter((e) => ENGINES[e].sandbox));
 
 /** "claude", or "claude, codex and cursor", for messages. */

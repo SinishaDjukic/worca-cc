@@ -9,11 +9,12 @@ import { mkdtempSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _resetForTests } from '../src/core/db.mjs';
-import { addGlobalModel, updateProvider } from '../src/core/settings.mjs';
+import { addGlobalModel, updateProvider, setUtilityModels } from '../src/core/settings.mjs';
 import { codexEndpointSpawn, findCodexEndpointEntry, CODEX_PROVIDER_KEY_ENV } from '../src/core/engines/codex-endpoint.mjs';
 import { runCodexProcess, codexModelPriced, codexInvestigatorRole } from '../src/core/engines/codex.mjs';
 import { testModel, CODEX_ENDPOINT_NETWORK_HINT } from '../src/core/model-test.mjs';
 import { fakeCodex } from './helpers/fake-codex.mjs';
+import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { startFakeResponses, FAKE_RESPONSES_KEY } from './helpers/fake-openai-responses.mjs';
 
 const POSIX = { skip: process.platform === 'win32' };
@@ -140,4 +141,27 @@ test('live: the real codex binary answers through a fake Responses endpoint, wit
     assert.equal(result.usage.input_tokens, 120);
     assert.ok(!('costUsd' in result));
   } finally { await srv.close(); }
+});
+
+test('an E2B codex run whose every model is on its own endpoint is asked for no OpenAI sign-in at start', POSIX, async () => {
+  await addGlobalModel({ id: 'Cx.Remote', engine: 'codex', upstream: UP });
+  await setUtilityModels({ codex: Object.fromEntries(['title', 'overview', 'prDescription', 'memoryDefrag'].map((j) => [j, { model: 'Cx.Remote' }])) });
+  const keys = ['CODEX_API_KEY', 'OPENAI_API_KEY', 'CODEX_HOME'];
+  const prev = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  delete process.env.CODEX_API_KEY; delete process.env.OPENAI_API_KEY;
+  process.env.CODEX_HOME = tmp();   // no auth.json: this server has no codex sign-in at all
+  try {
+    // Not mock, so e2bPreflight checks the sign-in. The nonexistent bin is the helper jobs' codex: its check only warns.
+    const mk = (model) => createOrchestrator({ projectDir: tmp(), prompt: 'x', execEnv: 'e2b', claude: { engine: 'codex', model, bin: '/nonexistent/worca-test/codex' } });
+    const endpointOnly = mk('Cx.Remote');
+    // Until the gate's async half has looked at the models (a 409 path that names no engine), the sign-in is asked.
+    assert.match(endpointOnly.execEnvStartRefusal() || '', /Codex in a sandbox needs CODEX_API_KEY or OPENAI_API_KEY/);
+    await endpointOnly._engineChecks(() => true);
+    assert.doesNotMatch(endpointOnly.execEnvStartRefusal() || '', /Codex cannot sign in/);
+    const builtIn = mk('gpt-5.5');
+    await builtIn._engineChecks(() => true);
+    assert.match(builtIn.execEnvStartRefusal() || '', /Codex in a sandbox needs CODEX_API_KEY or OPENAI_API_KEY/);
+  } finally {
+    for (const k of keys) { if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k]; }
+  }
 });

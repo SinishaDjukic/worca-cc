@@ -5,6 +5,7 @@
 // `lost`, which the harness turns into a clean terminal failure. The backend's client (exec-env/backend.mjs
 // BackendClient) is the only thing that knows the provider. Sync runs at the SPAWN boundary
 // (RemoteChild, runInProcess): executors read results right after a spawn.
+import { createHash } from 'node:crypto';
 import { readFile, writeFile, appendFile, mkdir, rename, rm, stat, readdir, lstat } from 'node:fs/promises';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -13,12 +14,12 @@ import { fileURLToPath } from 'node:url';
 import { RemoteChild } from './remote-child.mjs';
 import { shq, shellJoin, mkdirsScript } from './shell.mjs';
 import { ExecEnvLostError, ExecEnvSyncError, LOST_HINT, EXEC_ENV_CODES } from './index.mjs';
-import { SANDBOX_TIMEOUT_MS, HEARTBEAT_MS, SHELL_COMMAND_TIMEOUT_MS, sandboxEnv, sandboxMcpConfig } from './policy.mjs';
+import { SANDBOX_TIMEOUT_MS, HEARTBEAT_MS, SHELL_COMMAND_TIMEOUT_MS, sandboxEnv, sandboxMcpConfig, engineSandbox } from './policy.mjs';
 import { ModelRelay, leakedSecret } from './model-relay.mjs';
 import { withStreamTimeouts } from '../model-env.mjs';
 import { MODEL_CREDENTIAL_ENV_KEYS } from '../broker-guard.mjs';
-import { remoteModelRoute } from './relay-route.mjs';
-import { createRouteMeter } from './relay-usage.mjs';
+import { remoteModelRoute, engineModelRoute } from './relay-route.mjs';
+import { createRouteMeter, relayUsageTotal } from './relay-usage.mjs';
 import { createSourceBundle, overlayFiles, makeTarGz, walkFiles, applyPatch, patchAlreadyApplied, patchPaths, hostRunChanges, injectedPaths, cloneScript, treeScript,
   mergesScript, diffScript, SNAPSHOT_JS } from './git-transfer.mjs';
 
@@ -29,6 +30,7 @@ export const SCRIPT_SUPPORT_FILES = Object.freeze([
 // The in-sandbox half of the model relay (plans/model-relay-design.md §3), uploaded as <work>/model-relay.mjs.
 const RELAY_SCRIPT = fileURLToPath(new URL('./sandbox-relay.mjs', import.meta.url));
 const RELAY_NAME = 'model-relay.mjs';
+const DEFAULT_HOME = '/home/user';                    // backend.homeDir: the sandbox user's HOME (E2B's convention)
 const DEFAULT_WORK = '/tmp/worca-exec';               // sandbox scratch (backend.workDir): bundle, tars, patches, temp index, stdin files
 const SKIP_NAMES = new Set(['live-log.ndjson']);      // host-only, large, never read by an agent
 const APPEND_ONLY = new Set(['directions.ndjson']);   // two writers (directions.mjs): merge, never overwrite
@@ -52,20 +54,23 @@ const RELAY_RETRY_MS = 1000;
 const RELAY_STICK_MS = 10_000;
 // Model credentials a spawn env must never carry into the sandbox under any name (envFor); not the file path in
 // GOOGLE_APPLICATION_CREDENTIALS.
-const LEAK_KEYS = MODEL_CREDENTIAL_ENV_KEYS.filter((k) => k !== 'GOOGLE_APPLICATION_CREDENTIALS');
+const LEAK_KEYS = [...MODEL_CREDENTIAL_ENV_KEYS.filter((k) => k !== 'GOOGLE_APPLICATION_CREDENTIALS'), 'COPILOT_GITHUB_TOKEN', 'CURSOR_AUTH_TOKEN'];
 const credentialValues = (env) => LEAK_KEYS.map((k) => env?.[k]).filter((v) => typeof v === 'string' && v.trim()).map((v) => v.trim());
 
 export class RemoteExecEnv {
   constructor({ backend, client, environment = null, environmentBuild = null, worktreeDir, pipelineDir, storeRoots = [], mcpConfigPath = null,
     injected = [], refreshPaths = [], syncExcludes = [], supportFiles = SCRIPT_SUPPORT_FILES, metadata, scratchDir,
     log = () => {}, env = process.env, startedAt = Date.now(), onMaxWait = null, onPark = null, onReview = null, syncBudget = null,
-    mcpjsonProjectDir = null, homeDir = homedir() }) {
+    mcpjsonProjectDir = null, homeDir = homedir(), rebuildHint = backend.rebuildHint ?? null, relayUpstreams = null }) {
     Object.assign(this, { backend, client, environment, environmentBuild, worktreeDir, pipelineDir, storeRoots, mcpConfigPath, injected,
       refreshPaths, syncExcludes, supportFiles, metadata, scratchDir, log, env, startedAt, onMaxWait, onPark, onReview,
-      mcpjsonProjectDir, homeDir });
+      mcpjsonProjectDir, homeDir, rebuildHint });
+    // Where the engine routes' calls go when not the vendor's own API (relay-route.mjs ENGINE_UPSTREAMS): tests only.
+    this.relayUpstreams = relayUpstreams;
     this.parkedUntil = null;     // epoch ms the parked sandbox is released at, while an ask waits (onPark tells the host)
     this.kind = backend.name; this.label = backend.label; this.title = backend.title;
     this.work = backend.workDir || DEFAULT_WORK;
+    this.home = backend.homeDir || DEFAULT_HOME;
     this.sandbox = null; this.sandboxId = null; this.prefix = '';
     this.syncedTree = null; this.baseHead = null; this.lost = null; this.syncFailure = null;
     // Host-side record of the last tree the host worktree really holds; survives a crash (scratchDir
@@ -78,6 +83,10 @@ export class RemoteExecEnv {
     this._inputs = new Set();    // bound inputs outside this run's own files (an older plan), uploaded when changed
     this._dirs = new Set();      // sandbox dirs already created
     this._trees = new Set();     // host dirs uploaded whole once (script program roots)
+    this._homeFiles = new Map();  // sandbox path under the engine home -> sha256 of what worca last put there
+    this._engineFiles = new Set(); // host paths syncEngineFiles mirrored (only these are ever removed again)
+    this._excluded = new Set();    // the anchored lines syncEngineFiles put in the sandbox clone's info/exclude
+    this._clis = new Map();        // engine CLI -> Promise<boolean>: whether this sandbox's template has it (ensureCli)
     this._chain = Promise.resolve();
     this._heartbeat = null; this._patchNo = 0; this._seq = 0;
     this._budget = { ...SYNC_BUDGET, ...(syncBudget || {}) }; this._pulledBytes = 0;
@@ -88,6 +97,7 @@ export class RemoteExecEnv {
     this._relayChain = Promise.resolve(); this._relayFails = 0; this._relayAutoAt = 0; this._closing = false; this._relayRetryTimer = null;
     this._keylessLogged = new Set();   // origins of keyless routes already named in the run log
     this._meters = new Map();    // route id -> its usage meter (relay-usage.mjs)
+    this._authCache = new Map(); // engine routes' Copilot host lookups and Cursor access tokens (relay-route.mjs), per credential
     this._refused = new Set();   // host paths an upload refused (a link out of its root), each logged once
   }
   get remote() { return true; }
@@ -315,6 +325,40 @@ export class RemoteExecEnv {
     return rest;
   }
 
+  /** A route for one spawn of `engine` (codex, copilot, cursor): relay-route.mjs engineModelRoute decides where its calls
+   *  go and how worca signs them (the server's key, a token worca derives from it, or a codex endpoint model's own key).
+   *  The sandbox gets only the relay URL and a dummy credential: `env`, and for codex the `-c` overrides in `args`.
+   *  Throws the route's refusals (errorClass 'config'). */
+  openEngineRoute(engine, { spawnEnv = {}, model = null, endpoint = null } = {}) {
+    const route = engineModelRoute({ engine, serverEnv: this.env, spawnEnv, model, endpoint, label: this.label, upstreams: this.relayUpstreams, cache: this._authCache });
+    const meter = createRouteMeter();
+    route.meter = meter.reply;
+    const { id, baseUrl } = this.relay.addRoute(route);
+    this._meters.set(id, meter);
+    const spawn = route.spawn(baseUrl);
+    return { id, env: spawn.env, args: spawn.args || [], secrets: route.secrets };
+  }
+  /** A remote engine spawn's onEvent, metered by route `id` (security evaluation E4: the sandbox writes the CLI's
+   *  stream, so its usage and cost are a claim). Each `result` carries what the relay measured since the previous one:
+   *  with `cost` (codex, which books list prices) as `relay`, which the harness books in place of the CLI's figure;
+   *  without (copilot, cursor: subscription-billed, no cost of their own) the relay's token counts replace the result's
+   *  `usage`, and a cost the sandbox claimed is dropped. */
+  meteredEvents(id, onEvent, { cost = false } = {}) {
+    return (e) => {
+      if (e?.type !== 'result') return onEvent(e);
+      const relay = this.routeUsage(id);
+      if (cost) return onEvent(relay ? { ...e, relay } : e);
+      const { costUsd, ...rest } = e;
+      return onEvent({ ...rest, ...(relay ? { usage: relayUsageTotal(relay) } : {}) });
+    };
+  }
+  /** End an engine route at its spawn's end. With `cost`, the calls no result covered go out as `relayCost` (booked
+   *  like a result's, as a claude spawn's are). */
+  closeEngineRoute(id, onEvent, { cost = false } = {}) {
+    const rest = this.closeModelRoute(id);
+    if (cost && rest?.messages) { try { onEvent({ type: 'relayCost', messages: rest.messages, byModel: rest.byModel }); } catch { /* listener */ } }
+  }
+
   async _cloneIn() {
     const bundle = await createSourceBundle({ worktreeDir: this.worktreeDir, outFile: join(this.scratchDir, 'source.bundle') });
     await this._putHost(`${this.work}/source.bundle`, await readFile(bundle.file));
@@ -533,22 +577,101 @@ export class RemoteExecEnv {
   }
 
   // ── spawning ──
-  /** The env a sandbox command gets: the allowlist + `keep`, never a model credential, base URL or custom headers
-   *  (sandboxEnv drops them, even when kept), plus a model route's relay URL and id when given (openModelRoute).
-   *  Scripts pass no route: they call no model. A route's spawn sees a custom endpoint (the relay URL), so it gets
-   *  the stream ceilings one gets locally, and on a first-party route tool search, which the CLI turns off for a
-   *  custom endpoint. Refused (errorClass 'config'), never stripped: an env holding a route secret or a model
-   *  credential's value under any other key. */
-  envFor(env, { keep = [], route = null } = {}) {
-    const out = sandboxEnv(env, { keep });
+  /** The env a sandbox command of `engine` gets: that engine's allowlist + `keep`, never any engine's model credential,
+   *  endpoint or custom headers (sandboxEnv drops them, even when kept), plus a model route's env when given
+   *  (openModelRoute for claude, openEngineRoute for the others: the relay URL and a route id or dummy). Scripts pass no
+   *  route: they call no model. A claude route's spawn sees a custom endpoint (the relay URL), so it gets the stream
+   *  ceilings one gets locally, and on a first-party route tool search, which the CLI turns off for a custom endpoint.
+   *  Refused (errorClass 'config'), never stripped: an env holding a route secret or any engine's credential value
+   *  (from the spawn's env or the server's) under any key. */
+  envFor(env, { engine = 'claude', keep = [], route = null } = {}) {
+    const out = sandboxEnv(env, { keep, engine });
     if (!route) return out;
-    const child = withStreamTimeouts({ ...out, ...route.env });
-    if (route.firstParty && child.ENABLE_TOOL_SEARCH === undefined) {
-      child.ENABLE_TOOL_SEARCH = typeof env?.ENABLE_TOOL_SEARCH === 'string' ? env.ENABLE_TOOL_SEARCH : 'true';
+    let child = { ...out, ...route.env };
+    if ((engine || 'claude') === 'claude') {
+      child = withStreamTimeouts(child);
+      if (route.firstParty && child.ENABLE_TOOL_SEARCH === undefined) {
+        child.ENABLE_TOOL_SEARCH = typeof env?.ENABLE_TOOL_SEARCH === 'string' ? env.ENABLE_TOOL_SEARCH : 'true';
+      }
     }
     const leak = leakedSecret(child, [...(route.secrets || []), ...credentialValues(env), ...credentialValues(this.env)]);
     if (leak) throw Object.assign(new Error(`${leak} holds a model credential, which never enters the ${this.label}. Remove the credential from ${leak}, or pick Local for this model.`), { errorClass: 'config' });
     return child;
+  }
+
+  /** `engine`'s own dir in the sandbox HOME (policy.mjs ENGINE_SANDBOX home: codex's CODEX_HOME, cursor's
+   *  CURSOR_CONFIG_DIR) with the files worca puts there: `files` ({ rel, data, mode? }: codex's rules, cursor's
+   *  cli-config.json). Never a sign-in file: the model relay signs every call in worca. HOME is outside the worktree
+   *  and every synced root: nothing here travels back. A file goes up again only when its content changed; `remove`
+   *  deletes what worca put there before. Resolves the env that points the CLI at the dir ({} for an engine without
+   *  one). Serialised with the spawn syncs. One dir per sandbox and engine is enough: a run's rules are run-level
+   *  (RunHarness._spawnPermissionRules), so every node writes the same files. */
+  engineHome(engine, { files = [], remove = [] } = {}) {
+    const spec = engineSandbox(engine);
+    if (!spec.home) return Promise.resolve({});
+    const dir = `${this.home}/${spec.home.dir}`;
+    return this._serial(async () => {
+      for (const f of files) {
+        const p = `${dir}/${f.rel}`;
+        const buf = Buffer.isBuffer(f.data) ? f.data : Buffer.from(String(f.data));
+        const sig = createHash('sha256').update(buf).digest('hex');
+        if (this._homeFiles.get(p) === sig) continue;
+        await this._putHost(p, buf);
+        await this._sh(`chmod ${(f.mode ?? 0o644).toString(8)} ${shq(this.sb(p))}`);
+        this._homeFiles.set(p, sig);
+      }
+      const gone = remove.map((rel) => `${dir}/${rel}`).filter((p) => this._homeFiles.has(p));
+      if (gone.length) {
+        await this._sh(`rm -f -- ${gone.map((p) => shq(this.sb(p))).join(' ')}`);
+        for (const p of gone) this._homeFiles.delete(p);
+      }
+      return { [spec.home.env]: this.sb(dir) };
+    });
+  }
+
+  /** Host files an adapter rewrites per spawn outside the synced roots (Cursor's .cursor/*.json in the checkout, which
+   *  _uploadDelta never walks): each of `paths` is uploaded to its mirrored path, and an earlier one no longer wanted is
+   *  removed. Only paths this method put are ever removed: an agent's own file of the same name stays. The sandbox clone
+   *  has no host info/exclude line for them, so each one under the worktree gets an anchored line in the clone's own
+   *  info/exclude: the agents' git (status, diff, stageAll's intent-to-add) never sees worca's file, as on a local run,
+   *  and treeScript's `git add -A` never puts it in a patch (worca writes only untracked .cursor files). Not syncExcludes:
+   *  that would also drop an agent's edit to a .cursor file the project tracks. */
+  syncEngineFiles(paths) {
+    return this._serial(async () => {
+      // The exclude lines go in BEFORE the files: an agent's `git add -A` running in between never stages worca's file.
+      const lines = paths.map((p) => relative(this.worktreeDir, p)).filter((r) => r && !r.startsWith('..'))
+        .map((r) => `/${r.split(sep).join('/')}`).filter((l) => !this._excluded.has(l));
+      if (lines.length) {
+        await this._sh(`cd ${shq(this.sb(this.worktreeDir))} && f="$(git rev-parse --git-path info/exclude)" && mkdir -p "$(dirname "$f")" && touch "$f" && `
+          + lines.map((l) => `{ grep -qxF ${shq(l)} "$f" || printf '%s\\n' ${shq(l)} >> "$f"; }`).join(' && '));
+        for (const l of lines) this._excluded.add(l);
+      }
+      for (const p of paths) { await this._putHost(p, await readFile(p)); this._engineFiles.add(p); }
+      const gone = [...this._engineFiles].filter((p) => !paths.includes(p));
+      if (gone.length) {
+        await this._sh(`rm -f -- ${gone.map((p) => shq(this.sb(p))).join(' ')}`);
+        for (const p of gone) this._engineFiles.delete(p);
+      }
+    });
+  }
+
+  /** Removes a path an adapter staged at its mirrored path (copilot's per-spawn scratch dir: its agent file and MCP
+   *  config must not outlive the spawn in the sandbox). Never throws: a failed removal leaves one stale dir. */
+  removeUploaded(hostPath) {
+    return this._serial(() => this._sh(`rm -rf -- ${shq(this.sb(hostPath))}`)).then(() => {}, () => {});
+  }
+  /** The template's `bin`, an engine CLI other than claude, looked up (`command -v`) before that engine's first spawn in this
+   *  sandbox: a template built before the engine joined it has none, and the step would end in a bare "command not found"
+   *  (exit 127). Throws the step's failure with how to rebuild (`rebuildHint`). The answer is kept with this env, once per
+   *  sandbox and CLI (a reconnected env, or a fresh sandbox, asks again); a lookup the sandbox did not answer is not kept. */
+  async ensureCli(bin) {
+    let found = this._clis.get(bin);
+    if (!found) {
+      found = this._sh(`command -v ${shq(bin)} || true`).then((out) => !!out.trim());
+      this._clis.set(bin, found);
+      found.catch(() => { if (this._clis.get(bin) === found) this._clis.delete(bin); });
+    }
+    if (!(await found)) throw new Error(`the ${this.title} ${this.backend.environmentNoun} has no ${bin}: rebuild it${this.rebuildHint ? ` (${this.rebuildHint})` : ''}`);
   }
   /** A child-like handle running `file args` in the sandbox (./remote-child.mjs). */
   spawn(file, args, { cwd, env = {}, stdin = null, uploads = [] } = {}) {

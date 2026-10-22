@@ -2,9 +2,10 @@
 // docker/e2b/: the E2B sandbox template (pinned Claude Code, single stage) and its API build — no network.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { renderTemplateDockerfile, parseArgs, buildTemplate } from '../docker/e2b/build.mjs';
 import { pinnedClaudeCodeVersion } from '../tools/docker-build.mjs';
-import { renderProjectDockerfile, e2bBaseVersion, MISE_VERSION, MISE_SHA256 } from '../src/core/exec-env/backends/e2b-template.mjs';
+import { renderProjectDockerfile, e2bBaseVersion, MISE_VERSION, MISE_SHA256, pinnedEngineClis, cliVersionsLine } from '../src/core/exec-env/backends/e2b-template.mjs';
 import { e2bClient } from '../src/core/exec-env/backends/e2b.mjs';
 import { normalizeEnvSpec } from '../src/core/exec-env/env-spec.mjs';
 import { e2bEnvironmentName, TEMPLATE_RE } from '../src/core/exec-env/backends/e2b.mjs';
@@ -67,7 +68,7 @@ test('an empty spec adds no tool layer', () => {
   assert.doesNotMatch(df, /mise/); assert.doesNotMatch(df, /apt-get install -y --no-install-recommends '/);
 });
 test('the base version names the pinned Claude Code, the base Dockerfile and mise', () => {
-  assert.match(e2bBaseVersion(), new RegExp(`^claude-code@${pinnedClaudeCodeVersion().replaceAll('.', '\\.')}\\+worca-agent@[0-9a-f]{12}\\+mise@`));
+  assert.match(e2bBaseVersion(), new RegExp(`^claude-code@${pinnedClaudeCodeVersion().replaceAll('.', '\\.')}\\+codex@`));
   assert.notEqual(e2bBaseVersion({ text: 'FROM x\n' }), e2bBaseVersion());
   assert.equal(e2bBaseVersion({ text: '# a\nFROM x\n\n# b\nRUN y\n' }), e2bBaseVersion({ text: 'FROM x\nRUN y\n' }), 'comments do not count');
 });
@@ -116,4 +117,27 @@ test('a project template name is worca-agent-<key>, cut to 63 chars keeping the 
   const long = `${'a'.repeat(80)}-1234abcd`;
   const name = e2bEnvironmentName(long);
   assert.equal(name.length, 63); assert.ok(name.endsWith('-1234abcd')); assert.match(name, TEMPLATE_RE);
+});
+
+test('the template pins codex, copilot and cursor-agent from docker/e2b/engine-clis.json', () => {
+  const clis = pinnedEngineClis();
+  assert.deepEqual(Object.keys(clis), ['codex', 'copilot', 'cursor']);
+  const df = renderTemplateDockerfile(pinnedClaudeCodeVersion());
+  assert.match(df, new RegExp(`@openai/codex@${clis.codex.replaceAll('.', '\\.')}`));
+  assert.match(df, new RegExp(`@github/copilot@${clis.copilot.replaceAll('.', '\\.')}`));
+  assert.match(df, new RegExp(`downloads\\.cursor\\.com/lab/${clis.cursor.replaceAll('.', '\\.')}/linux/`));
+  assert.doesNotMatch(df, /__[A-Z_]+_VERSION__/);
+  assert.equal(df.match(/^FROM /gm).length, 1);
+  assert.throws(() => pinnedEngineClis('{"codex":"latest","copilot":"1.0.100","cursor":"2026.10.19-6bbf2c4"}'), /codex: "latest" is not a pinned version/);
+  assert.throws(() => pinnedEngineClis('{"codex":"0.163.0","copilot":"1.0.100"}'), /cursor/);
+  assert.throws(() => renderTemplateDockerfile(pinnedClaudeCodeVersion(), undefined, { ...clis, cursor: '$(id)' }), /cursor/);
+  assert.ok(JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).files.includes('docker/e2b/engine-clis.json'));
+});
+
+test('the base version names every pinned CLI, so a new pin makes every project build stale', () => {
+  const v = pinnedClaudeCodeVersion(); const c = pinnedEngineClis();
+  assert.equal(e2bBaseVersion().replace(/worca-agent@[0-9a-f]{12}/, 'worca-agent@H'),
+    `claude-code@${v}+codex@${c.codex}+copilot@${c.copilot}+cursor-agent@${c.cursor}+worca-agent@H+mise@${MISE_VERSION}`);
+  assert.notEqual(e2bBaseVersion({ clis: { ...c, codex: '0.164.0' } }), e2bBaseVersion());
+  assert.equal(cliVersionsLine(), `claude-code ${v}, codex ${c.codex}, copilot ${c.copilot}, cursor-agent ${c.cursor}`);
 });

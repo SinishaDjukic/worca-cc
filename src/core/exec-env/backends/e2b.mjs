@@ -141,6 +141,7 @@ export const e2bBackend = Object.freeze({
   title: 'E2B',
   environmentNoun: 'template',
   workDir: '/tmp/worca-e2b',
+  rebuildHint: 'npm run e2b:build',
   capabilities: Object.freeze({ pause: false, buildEnvironment: true,
     defaultMaxConcurrent: DEFAULT_E2B_MAX_SANDBOXES, defaultMaxWaitMin: DEFAULT_E2B_MAX_WAIT_MIN }),
   limitSettings: Object.freeze({ maxConcurrent: 'e2bMaxSandboxes', maxWaitMin: 'e2bMaxWaitMin' }),

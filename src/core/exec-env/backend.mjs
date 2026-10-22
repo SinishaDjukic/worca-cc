@@ -10,15 +10,19 @@
  * @property {string} title             the provider's short name ('E2B': "E2B execution cannot start")
  * @property {string} environmentNoun   what an environment is called here ('template')
  * @property {string} [workDir]         scratch dir INSIDE the sandbox (default '/tmp/worca-exec')
+ * @property {string} [homeDir]         the sandbox user's HOME (default '/home/user'): engine homes (codex's CODEX_HOME) live there
+ * @property {string} [rebuildHint]     how to rebuild the default environment ('npm run e2b:build'): named when one lacks an
+ *   engine's CLI (RemoteExecEnv.ensureCli); a project's own build is rebuilt from its page instead (project-env.mjs)
  * @property {{pause: boolean, buildEnvironment: boolean, defaultMaxConcurrent: number, defaultMaxWaitMin: number}} capabilities
  * @property {{maxConcurrent?: string, maxWaitMin?: string}} [limitSettings]  user setting keys (settings.mjs execEnvLimitSetting)
  * @property {RegExp} secretEnv         env keys that are this backend's secrets: stripped from every host child
  * @property {Array<{key: string, label: string, hint: string, validate: (value: string) => boolean}>} [projectFields]
- * @property {(ctx: {engine: string, isWorkspace: boolean, mock: boolean, brokerOn: boolean, runRootMode: string}) => {errors: string[], warnings: string[]}} preflight
+ * @property {(ctx: {engine: string, isWorkspace: boolean, mock: boolean, brokerOn: boolean, runRootMode: string, needsSignIn?: boolean}) => {errors: string[], warnings: string[]}} preflight
  *   sync (the server's 409 path). Only the backend's OWN checks (keys, SDK, endpoint): the harness adds
- *   policy.mjs remotePreflight (workspace, engine, run-root mode, platform) for every backend.
+ *   policy.mjs remotePreflight (workspace, engine, run-root mode, platform) for every backend. `needsSignIn` false: the
+ *   run engine's sign-in is not needed (a codex run on endpoint models only), so it is not checked.
  * @property {(run: {workspace: boolean, engine: string|null}) => string|null} [refusesDefault]  extra reasons a SAVED
- *   default does not apply (policy.mjs remoteRefusesDefault already covers workspace runs and other engines)
+ *   default does not apply (policy.mjs remoteRefusesDefault already covers workspace runs and engines no sandbox runs)
  * @property {(env?: object) => boolean} configured   keys present and SDK installed (the boot sweep)
  * @property {(o?: {mock?: boolean, env?: object}) => Promise<BackendClient>} open
  * @property {(o: {config: object, build: object|null, env?: object}) => {name: string, source: 'project'|'build'|'env'|'default', from: string}} resolveEnvironment

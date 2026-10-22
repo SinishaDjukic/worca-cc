@@ -793,3 +793,102 @@ test('ordinary config edits come home quietly: .gitattributes, tsconfig, a docs 
   for (const [rel, text] of Object.entries(write)) assert.equal(readFileSync(join(f.repo, rel), 'utf8'), text);
   assert.equal(r.warns, ''); assert.deepEqual(r.reviews, []);
 });
+
+test('envFor per engine: no engine credential under any name; a route adds only its relay URL and dummy; claude unchanged', POSIX, () => {
+  const f = fixture();
+  const PAT = `github_pat_${'q'.repeat(30)}`;
+  const env = makeEnv(createFakeE2b({ root: tmp('worca-e2b-root-') }), f, { env: { COPILOT_GITHUB_TOKEN: PAT, CODEX_API_KEY: 'sk-server-codex', CURSOR_API_KEY: 'crsr-server-key' } });
+  assert.deepEqual(env.envFor({ COPILOT_GITHUB_TOKEN: 'ghp_inherited_classic_token_value_xx', ANTHROPIC_API_KEY: 'sk-ant', COPILOT_AUTO_UPDATE: 'false' }, { engine: 'copilot' }),
+    { COPILOT_AUTO_UPDATE: 'false' });
+  assert.deepEqual(env.envFor({ OPENAI_API_KEY: 'sk-inherited', CODEX_HOME: '/Users/x/.codex' }, { engine: 'codex' }), {}, 'no key, no host CODEX_HOME');
+  assert.deepEqual(env.envFor({ CURSOR_API_KEY: 'crsr-inherited' }, { engine: 'cursor' }), {});
+  const route = { env: { WORCA_RELAY_KEY: 'worca-relay-no-credential' }, secrets: ['sk-server-codex'] };
+  assert.deepEqual(env.envFor({ OPENAI_ORG_ID: 'o' }, { engine: 'codex', route }), { OPENAI_ORG_ID: 'o', WORCA_RELAY_KEY: 'worca-relay-no-credential' });
+  // A server credential's value under any other name is refused, never stripped.
+  assert.throws(() => env.envFor({ OPENAI_ORG_ID: 'x sk-server-codex' }, { engine: 'codex', route }), (e) => /OPENAI_ORG_ID holds a model credential/.test(e.message) && e.errorClass === 'config');
+  assert.throws(() => env.envFor({ CURSOR_MODEL: 'crsr-server-key' }, { engine: 'cursor', route: { env: {}, secrets: [] } }), /CURSOR_MODEL holds a model credential/);
+  assert.throws(() => env.envFor({ COPILOT_AUTO_UPDATE: PAT }, { engine: 'copilot', route: { env: {}, secrets: [] } }), /COPILOT_AUTO_UPDATE holds a model credential/);
+  assert.equal(env.envFor({ ANTHROPIC_API_KEY: 'x' }).ANTHROPIC_API_KEY, undefined, 'scripts: no credential');
+});
+
+test('engineHome: the files worca puts in an engine`s sandbox HOME, once, never travelling back', POSIX, async () => {
+  const f = fixture(); const sdk = createFakeE2b({ root: tmp('worca-e2b-root-') });
+  const env = makeEnv(sdk, f); await env.start();
+  const out = await env.engineHome('codex', { files: [{ rel: 'rules/worca.rules', data: 'prefix_rule()\n' }] });
+  const dir = env.sb('/home/user/.codex');
+  assert.deepEqual(out, { CODEX_HOME: dir });
+  assert.equal(statSync(join(dir, 'rules/worca.rules')).mode & 0o777, 0o644);
+  assert.equal(existsSync(join(dir, 'auth.json')), false, 'never a sign-in file');
+  const chmods = () => sdk.events.filter((e) => e.type === 'command' && /chmod/.test(e.cmd)).length;
+  const before = chmods();
+  await env.engineHome('codex', { files: [{ rel: 'rules/worca.rules', data: 'prefix_rule()\n' }] });
+  assert.equal(chmods(), before, 'unchanged content is not uploaded again');
+  writeFileSync(join(dir, 'rules', 'agent-own.rules'), 'mine\n');
+  await env.engineHome('codex', { remove: ['rules/worca.rules', 'rules/agent-own.rules'] });
+  assert.equal(existsSync(join(dir, 'rules/worca.rules')), false);
+  assert.equal(readFileSync(join(dir, 'rules', 'agent-own.rules'), 'utf8'), 'mine\n', '`remove` deletes only what worca put there');
+  const cursor = await env.engineHome('cursor', { files: [{ rel: 'cli-config.json', data: '{}\n' }] });
+  assert.deepEqual(cursor, { CURSOR_CONFIG_DIR: env.sb('/home/user/.cursor') });
+  assert.deepEqual(await env.engineHome('copilot', { files: [{ rel: 'x', data: 'y' }] }), {}, 'an engine without a home gets none');
+  await env.close('test');
+});
+
+test('syncEngineFiles mirrors the files an adapter rewrites per spawn and removes only its own earlier ones', POSIX, async () => {
+  const f = fixture(); const env = makeEnv(createFakeE2b({ root: tmp('worca-e2b-root-') }), f); await env.start();
+  const cli = join(f.repo, '.cursor', 'cli.json'); const mcp = join(f.repo, '.cursor', 'mcp.json');
+  mkdirSync(join(f.repo, '.cursor'), { recursive: true }); writeFileSync(cli, '{"a":1}\n'); writeFileSync(mcp, '{"m":1}\n');
+  await env.syncEngineFiles([cli, mcp]);
+  assert.equal(readFileSync(env.sb(cli), 'utf8'), '{"a":1}\n');
+  writeFileSync(env.sb(join(f.repo, '.cursor', 'agent-own.json')), 'mine\n');
+  await env.syncEngineFiles([cli]);
+  assert.equal(existsSync(env.sb(mcp)), false, 'worca`s earlier file is gone');
+  assert.equal(readFileSync(env.sb(join(f.repo, '.cursor', 'agent-own.json')), 'utf8'), 'mine\n', 'never the agent`s');
+  // The sandbox clone has no host info/exclude line: worca adds its own, so the agents' git (status, diff, the
+  // stageAll intent-to-add) never sees worca's file, as locally. core.excludesFile=/dev/null: a developer's global
+  // ignore of .cursor/ must not make this pass on its own.
+  const status = git(env.sb(f.repo), '-c', 'core.excludesFile=/dev/null', 'status', '--porcelain', '--untracked-files=all');
+  assert.equal(/\.cursor\/(cli|mcp)\.json/.test(status), false, status);
+  assert.match(status, /\.cursor\/agent-own\.json/, 'the agent`s own file is still visible');
+  const exclude = () => readFileSync(join(env.sb(f.repo), '.git', 'info', 'exclude'), 'utf8').split('\n');
+  await env.syncEngineFiles([cli]);
+  env._excluded.clear();                                       // a reconnected env: worca's record is gone, the file is not
+  await env.syncEngineFiles([cli]);
+  assert.equal(exclude().filter((l) => l === '/.cursor/cli.json').length, 1, 'one line per file, never repeated (grep -qxF)');
+  // A host file outside the worktree is mirrored, but gets no exclude line (it is not in the clone).
+  const outside = join(f.runRoot, 'engine-outside.json'); writeFileSync(outside, '{}\n');
+  await env.syncEngineFiles([cli, outside]);
+  assert.equal(readFileSync(env.sb(outside), 'utf8'), '{}\n');
+  assert.equal(exclude().some((l) => l.startsWith('/..')), false, 'no line for a path outside the worktree');
+  await env.close('test');
+});
+
+test('the exclude line alone keeps worca`s mirrored file out of the patch; an edit to a TRACKED .cursor file is refused', POSIX, async () => {
+  const f = fixture();
+  // The project tracks its own .cursor/mcp.json (worca never writes a tracked one: writeCursorProjectFiles refuses).
+  mkdirSync(join(f.repo, '.cursor'), { recursive: true }); writeFileSync(join(f.repo, '.cursor', 'mcp.json'), '{"user":1}\n');
+  git(f.repo, 'add', '.cursor/mcp.json'); git(f.repo, 'commit', '-qm', 'track mcp');
+  // The fixture's syncExcludes (no .cursor entry), as the harness passes them (Step 5).
+  const env = makeEnv(createFakeE2b({ root: tmp('worca-e2b-root-') }), f); await env.start();
+  try {
+    const cli = join(f.repo, '.cursor', 'cli.json'); writeFileSync(cli, '{"worca":1}\n');
+    await env.syncEngineFiles([cli]);
+    await env.beforeSpawn();
+    writeFileSync(env.sb(cli), '{"agent":1}\n');                                 // the agent rewrites worca's file
+    await env.afterSpawn();                                                      // not in the patch: no config refusal
+    assert.equal(readFileSync(cli, 'utf8'), '{"worca":1}\n', 'worca`s mirrored file never comes back');
+    writeFileSync(env.sb(join(f.repo, '.cursor', 'mcp.json')), '{"user":2}\n');   // the agent edits the project's file
+    await assert.rejects(env.afterSpawn(), (e) => e.code === 'EXEC_ENV_CONFIG_CHANGE', 'agent config never comes back from a sandbox');
+    assert.equal(readFileSync(join(f.repo, '.cursor', 'mcp.json'), 'utf8'), '{"user":1}\n');
+  } finally { await env.close('test'); }
+});
+
+test('removeUploaded drops a staged dir from the sandbox and never throws', POSIX, async () => {
+  const f = fixture(); const sdk = createFakeE2b({ root: tmp('worca-e2b-root-') }); const env = makeEnv(sdk, f); await env.start();
+  const dir = tmp('worca-copilot-scratch-');
+  mkdirSync(env.sb(dir), { recursive: true }); writeFileSync(join(env.sb(dir), 'agent.md'), 'x');
+  await env.removeUploaded(dir);
+  assert.equal(existsSync(env.sb(dir)), false);
+  await sdk.Sandbox.kill(env.sandboxId);
+  await env.removeUploaded(dir);   // a lost sandbox: still no throw
+  await env.close('test').catch(() => {});
+});

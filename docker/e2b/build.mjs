@@ -7,7 +7,7 @@
 //        [--cpu 2] [--memory-mb 4096] [--no-cache]
 import { pathToFileURL } from 'node:url';
 // One renderer for this script and the server's project builds (src/core/exec-env/backends/e2b-template.mjs).
-import { renderTemplateDockerfile, pinnedClaudeCodeVersion } from '../../src/core/exec-env/backends/e2b-template.mjs';
+import { renderTemplateDockerfile, pinnedClaudeCodeVersion, cliVersionsLine } from '../../src/core/exec-env/backends/e2b-template.mjs';
 
 export { renderTemplateDockerfile };
 
@@ -38,7 +38,7 @@ async function main() {
   if (!process.env.E2B_API_KEY) { console.error('e2b:build: E2B_API_KEY is not set'); process.exit(2); }
   let sdk; try { sdk = await import('e2b'); } catch { console.error('e2b:build: the optional "e2b" package is missing (npm install e2b@2.56.0)'); process.exit(1); }
   const conn = { apiKey: process.env.E2B_API_KEY, ...(process.env.E2B_API_URL ? { apiUrl: process.env.E2B_API_URL } : {}) };
-  console.log(`e2b:build: ${o.name} (claude-code ${pinnedClaudeCodeVersion()}, ${o.cpuCount} vCPU, ${o.memoryMB} MB) via ${conn.apiUrl || 'E2B Cloud'}`);
+  console.log(`e2b:build: ${o.name} (${cliVersionsLine()}, ${o.cpuCount} vCPU, ${o.memoryMB} MB) via ${conn.apiUrl || 'E2B Cloud'}`);
   const info = await buildTemplate({ sdk, ...o, conn });
   console.log(`e2b:build: done — template ${info.name || o.name} (${info.templateId}, build ${info.buildId})`);
 }

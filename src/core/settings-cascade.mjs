@@ -271,8 +271,8 @@ export function resolveRunEngine({ explicit = null, projectDir = null, projectKe
   return { engine: result.value, source: result.source };
 }
 /** Where a run executes (plans/e2b-execution-design.md §12): local | a registered backend. A SAVED remote
- *  default does not apply to a run no remote backend can take (a workspace run, an engine other than Claude)
- *  or that its backend refuses: that run stays local, and `fallback` says why. Only an explicit per-run
+ *  default does not apply to a run no remote backend can take (a workspace run, a Folder project, a run without a
+ *  project, an engine no sandbox runs) or that its backend refuses: that run stays local, and `fallback` says why. Only an explicit per-run
  *  backend is refused at the start. */
 export function resolveRunExecEnv({ explicit = null, projectDir = null, projectKey = null, workspace = false, engine = null, workMode = 'git' } = {}) {
   if (typeof explicit === 'string' && explicit.trim()) return { execEnv: explicit.trim(), source: 'run' };
@@ -291,7 +291,7 @@ export function resolveRunExecEnv({ explicit = null, projectDir = null, projectK
  * execute, resolved through the `run.execEnv` cascade. Local adds NOTHING to the run options, so a
  * default run's options stay exactly as they were. The Watch PR fix and Resolve starts pass their
  * body through the same handler, so their explicit `execEnv: 'local'` resolves to {} here. A saved e2b
- * default never reaches a workspace run or another engine's run (resolveRunExecEnv's fallback): that run
+ * default never reaches a workspace run or a run on an engine no sandbox runs (resolveRunExecEnv's fallback): that run
  * gets `execEnvFallback`, the reason its log names. Only an explicit per-run e2b is refused with 409 for those.
  * @returns {{ error: string } | { opts: { execEnv?: string, execEnvFallback?: string } }}
  */

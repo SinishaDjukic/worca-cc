@@ -3482,7 +3482,7 @@ const startRunHandler = async (req, res) => {
       const refusal = await orch.engineStartRefusal();
       if (refusal) return res.status(409).json({ error: presetEngineMessage(presetRow, runEngine, engineRefusalFor(refusal.error, 'ui')), code: 'engine-refused', overridable: refusal.overridable });
     }
-    // The e2b preflight (single-project, claude, credentials, …): refused here, before anything is announced.
+    // The e2b preflight (single-project, a remote engine and its sign-in, …): refused here, before anything is announced.
     const execRefusal = orch.execEnvStartRefusal();
     if (execRefusal) return res.status(409).json({ error: execRefusal, code: 'exec-env-refused' });
 

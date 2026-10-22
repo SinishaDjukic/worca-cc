@@ -143,7 +143,7 @@ test('an explicit local beats a user default of e2b and adds no run option (the 
   } finally { await saveUser({}); }
 });
 
-test('a saved e2b default does not refuse runs it cannot take: a workspace run and a codex schedule start locally', async () => {
+test('a saved e2b default does not refuse runs: a workspace run starts locally, and a codex schedule is accepted', async () => {
   await saveUser({ execEnv: 'e2b' });
   try {
     const workspaceId = await seedWorkspace();
