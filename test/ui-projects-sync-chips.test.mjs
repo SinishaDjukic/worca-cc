@@ -30,9 +30,10 @@ const NOW = new Date().toISOString();
 const blk = (base, over = {}) => ({ base, remote: 'origin', state: 'up-to-date', ahead: 0, behind: 0, dirty: false,
   checkedOutHere: true, fetchedAt: NOW, stale: false, settings: { beforeRun: true, onDiverged: 'ask' }, ...over });
 const ok = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
+const reply = (status, body) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
 
 async function boot({ projects = PROJECTS, workspaces = WORKSPACES, git = 'on', chips = () => ({ projects: { k1: blk('dev', { state: 'behind', behind: 3 }), k2: blk('main') } }),
-  all = () => ({ projects: { k1: blk('dev'), k2: blk('main') } }), post = () => ({ sync: blk('dev') }) } = {}) {
+  all = () => ({ projects: { k1: blk('dev'), k2: blk('main') } }), post = () => ({ sync: blk('dev') }), gitInit = null } = {}) {
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4321/' }));
   const { window } = dom;
   // P0's gitOn() reads <html data-git>; the server renders it, so set it before app.js loads.
@@ -53,6 +54,7 @@ async function boot({ projects = PROJECTS, workspaces = WORKSPACES, git = 'on', 
     if (u.includes('/api/sync/projects')) return ok(chips());
     if (u.includes('/api/sync/all')) return ok(all(opts.body ? JSON.parse(opts.body) : {}));
     if (/\/api\/projects\/[^/]+\/sync/.test(u) && method === 'POST') return ok(post());
+    if (gitInit && /\/api\/projects\/[^/]+\/git-init$/.test(u) && method === 'POST') return gitInit(opts.body ? JSON.parse(opts.body) : {});
     if (u.includes('/api/projects')) return ok({ projects });
     if (u.includes('/api/workspaces')) return ok({ workspaces });
     return ok({ config: { steps: {}, customModels: [] }, models: [], efforts: [], branches: [], workspaces: [], agents: [], channels: [] });
@@ -447,13 +449,146 @@ test('Folder rows: a Folder chip, a No git box where the branch bar goes, a Fold
     assert.equal(row('k3').querySelector('.proj-path').title, '/Users/me/notes');
     assert.equal(row('k1').querySelector('.proj-path').textContent, '/p/alpha', 'no displayPath: the path as today');
     assert.equal(row('k3').querySelector('.proj-sync'), null, 'no branch / origin bar');
-    assert.equal(row('k3').querySelector('.pl-sync .proj-nogit').textContent, 'No git');
+    assert.equal(row('k3').querySelector('.pl-sync .proj-nogit .proj-nogit-txt').textContent, 'No git');
+    assert.equal(row('k3').querySelector('.proj-nogit-act').textContent, 'Use git');
+    assert.equal(row('k1').querySelector('.proj-nogit-act'), null, 'a Git row has no Use git');
     assert.ok(row('k3').querySelector('.pl-sync').hasAttribute('data-needs-git'), 'gated with the column (P0)');
     assert.match(readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8'),
       /#projects-list \.pl-sync:not\(:has\(> \.proj-sync:not\(\[hidden\]\), > \.proj-nogit\)\)\{display:none;\}/, 'the No git box keeps its column (jsdom has no cascade)');
     assert.deepEqual([...ctx.doc.querySelectorAll('.proj-filters .filter-chip')].map((c) => c.textContent), ['All 3', 'Behind 1', 'Up to date 1', 'Folder 1']);
     click(ctx.window, ctx.doc.querySelector('.filter-chip[data-filter="folder"]'));
     assert.deepEqual([...ctx.doc.querySelectorAll('#projects-list .pl-item')].filter((n) => !n.hidden).map((n) => n.dataset.key), ['k3']);
+    click(ctx.window, row('k3').querySelector('.proj-nogit-act')); await timers.settle();
+    assert.equal(ctx.doc.getElementById('project-git-modal').classList.contains('hidden'), false, 'Use git opens the dialog');
+    assert.equal(ctx.window.location.hash, '#projects', 'the row did not open its page');
+  } finally { t.mock.timers.reset(); }
+});
+
+test('Use git from the list: focus lands on the row and stays there through the projects-changed rebuild that follows', async (t) => {
+  const projects = [{ ...PROJECTS[0], vcs: 'git' }, { name: 'notes', path: '/p/notes', exists: true, key: 'k3', vcs: 'none' }];
+  const ctx = await boot({
+    projects,
+    chips: () => ({ projects: { k1: blk('dev'), k3: { base: null, remote: null, state: 'unknown' } } }),
+    gitInit: () => {
+      projects[1] = { ...projects[1], vcs: 'git' };
+      return reply(200, { project: { key: 'k3', name: 'notes', vcs: 'git' }, initialized: true, remote: null, projects });
+    },
+  });
+  const timers = useAppTimers(t);
+  try {
+    await go(ctx.window, timers, 'projects');
+    const rowFocus = () => ctx.doc.querySelector('#projects-list .pl-item[data-key="k3"] .pl-row');
+    click(ctx.window, ctx.doc.querySelector('.pl-item[data-key="k3"] .proj-nogit-act')); await timers.settle();
+    const modal = ctx.doc.getElementById('project-git-modal');
+    click(ctx.window, ctx.doc.getElementById('proj-git-save'));
+    await waitFor(timers, () => modal.classList.contains('hidden'));
+    assert.equal(ctx.doc.activeElement, rowFocus());
+    ctx.recv({ type: 'projects-changed', action: 'updated' });
+    await timers.settle(); await timers.advance(400);
+    assert.ok(rowFocus(), 'the row was rebuilt');
+    assert.equal(ctx.doc.activeElement, rowFocus(), 'the rebuilt row has the focus, not <body>');
+  } finally { t.mock.timers.reset(); }
+});
+
+const NOTES ={ name: 'notes', path: '/Users/me/notes', displayPath: '~/notes', exists: true, key: 'k3', vcs: 'none', workMode: 'folder', ownedFolder: false };
+const FOLDER_BLOCK = { base: null, remote: null, state: 'unknown' };
+
+test('Use git on the project page: posts {}, repaints as Git without a reload, the Branch card waits for the new block, then Link remote', async (t) => {
+  const projects = [{ ...PROJECTS[0], vcs: 'git' }, { ...NOTES }];
+  let converted = false;
+  const posts = [];
+  const ctx = await boot({
+    projects,
+    chips: () => ({ projects: { k1: blk('dev'), k3: converted ? { base: 'trunk', remote: null, state: 'unknown', noCommits: true } : FOLDER_BLOCK } }),
+    gitInit: (body) => {
+      posts.push(body);
+      converted = true;
+      projects[1] = { ...NOTES, vcs: 'git', workMode: 'git' };
+      return reply(200, { project: { key: 'k3', name: 'notes', path: NOTES.path, vcs: 'git' }, initialized: true, remote: null, projects });
+    },
+  });
+  const timers = useAppTimers(t);
+  try {
+    await go(ctx.window, timers, 'projects/k3');
+    await waitFor(timers, () => chipGets(ctx.calls) >= 1);
+    const scr = ctx.doc.querySelector('#proj-detail');
+    const btn = () => scr.querySelector('.pd-git');
+    const sub = () => scr.querySelector('.pd-ov-card-branch .pd-ov-sub');
+    assert.equal(btn().hidden, false);
+    assert.equal(btn().textContent.trim(), 'Use git');
+    assert.ok(btn().hasAttribute('data-needs-git'));
+    assert.equal(scr.querySelector('.pd-kind .kind-chip').textContent, 'Folder');
+    assert.equal(scr.querySelector('.pd-ov-card-branch'), null);
+    click(ctx.window, btn()); await timers.settle();
+    const modal = ctx.doc.getElementById('project-git-modal');
+    assert.equal(modal.classList.contains('hidden'), false);
+    assert.equal(ctx.doc.getElementById('proj-git-title').textContent, 'Use git for this project');
+    assert.equal(ctx.doc.getElementById('proj-git-url-opt').hidden, false, 'the URL is optional for Use git');
+    assert.equal(ctx.doc.activeElement, ctx.doc.getElementById('proj-git-url'));
+    const gets = chipGets(ctx.calls);
+    click(ctx.window, ctx.doc.getElementById('proj-git-save'));
+    await waitFor(timers, () => modal.classList.contains('hidden'));
+    assert.deepEqual(posts, [{}], 'no remoteUrl when the field is empty');
+    assert.equal(scr.querySelector('.pd-kind .kind-chip').textContent, 'Git');
+    assert.ok(scr.querySelector('.pd-ov-card-branch'), 'the Branch card appears without a reload');
+    assert.equal(sub().textContent, 'checking…', 'never the folder block\'s "No remote · runs use your local copy"');
+    assert.equal(btn().hidden, true, 'no block yet: neither Use git nor Link remote');
+    assert.equal(ctx.doc.activeElement, scr.querySelector('.pd-new'));
+    await waitFor(timers, () => chipGets(ctx.calls) > gets && sub().textContent !== 'checking…');
+    assert.equal(sub().textContent, 'No commits yet · the first run commits these files');
+    assert.equal(btn().hidden, false);
+    assert.equal(btn().textContent.trim(), 'Link remote', 'a Git project without origin now offers Link remote');
+  } finally { t.mock.timers.reset(); }
+});
+
+test('Use git: a 400 lands in the dialog, which stays open; Cancel hands focus back; once the chips land, origin hides the button and no origin shows Link remote', async (t) => {
+  const projects = [{ ...PROJECTS[0], vcs: 'git' }, { ...PROJECTS[1], vcs: 'git' }, { ...NOTES }];
+  const creds = 'the URL contains credentials; remove them (git asks your credential helper or SSH key instead)';
+  const ctx = await boot({
+    projects,
+    chips: () => ({ projects: { k1: blk('dev'), k2: { base: 'main', remote: null, state: 'unknown' }, k3: FOLDER_BLOCK } }),
+    gitInit: () => reply(400, { error: creds, code: 'INVALID' }),
+  });
+  const timers = useAppTimers(t);
+  try {
+    await checkRows([
+      { name: 'a server error shows in #proj-git-msg; Save is enabled again; Cancel focuses .pd-git', run: async () => {
+        await go(ctx.window, timers, 'projects/k3');
+        const open = ctx.doc.querySelector('#proj-detail .pd-git');
+        click(ctx.window, open); await timers.settle();
+        const url = ctx.doc.getElementById('proj-git-url');
+        url.value = 'https://me:tok@github.com/me/notes';
+        url.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
+        click(ctx.window, ctx.doc.getElementById('proj-git-save'));
+        const msg = ctx.doc.getElementById('proj-git-msg');
+        await waitFor(timers, () => msg.className === 'hint err');
+        assert.equal(msg.textContent, creds);
+        assert.equal(ctx.doc.getElementById('project-git-modal').classList.contains('hidden'), false);
+        assert.equal(ctx.doc.getElementById('proj-git-save').disabled, false);
+        assert.equal(ctx.doc.activeElement, url, 'focus is back in the field');
+        click(ctx.window, ctx.doc.getElementById('proj-git-cancel')); await timers.settle();
+        assert.equal(ctx.doc.getElementById('project-git-modal').classList.contains('hidden'), true);
+        assert.equal(ctx.doc.activeElement, ctx.doc.querySelector('#proj-detail .pd-git'), 'Cancel hands focus back');
+      } },
+      { name: 'Link remote: an empty Save says "Remote URL is required." and posts nothing', run: async () => {
+        await go(ctx.window, timers, 'projects/k2');
+        const btn = () => ctx.doc.querySelector('#proj-detail .pd-git');
+        await waitFor(timers, () => !btn().hidden);
+        assert.equal(btn().textContent.trim(), 'Link remote');
+        click(ctx.window, btn()); await timers.settle();
+        assert.equal(ctx.doc.getElementById('proj-git-url-opt').hidden, true, 'no "(optional)" for Link remote');
+        const before = ctx.calls.filter((c) => c.url.endsWith('/git-init')).length;
+        click(ctx.window, ctx.doc.getElementById('proj-git-save')); await timers.settle();
+        assert.equal(ctx.doc.getElementById('proj-git-msg').textContent, 'Remote URL is required.');
+        assert.equal(ctx.calls.filter((c) => c.url.endsWith('/git-init')).length, before);
+        click(ctx.window, ctx.doc.getElementById('proj-git-cancel')); await timers.settle();
+      } },
+      { name: 'a Git project with origin: no button, checked AFTER its block landed', run: async () => {
+        await go(ctx.window, timers, 'projects/k1');
+        await waitFor(timers, () => ctx.doc.querySelector('#proj-detail .pd-ov-card-branch span.mono'));
+        assert.equal(ctx.doc.querySelector('#proj-detail .pd-git').hidden, true);
+      } },
+    ]);
   } finally { t.mock.timers.reset(); }
 });
 
