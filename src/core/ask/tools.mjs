@@ -979,7 +979,7 @@ export function createAskTools(deps) {
         inputSchema: SCHEMA.obj({ runId: CHAT_RUN_ID, pipelineId: CHAT_PIPELINE_ID, projectKey: SCHEMA.s('scope to a project'),
           workspaceId: SCHEMA.s('scope to a workspace'), text: SCHEMA.s('the direction, in the user\'s words') }, ['text']) },
       { name: 'propose_pull_request',
-        description: 'Offer a pull request for a finished run with changes: puts a card in the chat whose button opens the Ship it dialog, where the user reviews the description and opens the pull request — nothing is pushed until they do. Never claim a pull request was opened — the card says so. Only from your own turn.',
+        description: 'Offer a pull request for a finished run with changes: puts a card in the chat whose button opens the Create PR dialog, where the user reviews the description and opens the pull request — nothing is pushed until they do. Never claim a pull request was opened — the card says so. Only from your own turn.',
         inputSchema: CHAT_RUN_REF },
     ] : []),
     ...(shapeToolsOn ? [
@@ -2946,7 +2946,7 @@ export function createAskTools(deps) {
           if (pr && pr.url) return { ok: false, error: `the run already has a pull request: ${pr.url}` };
         }
       }
-      return { ok: true, requested: { kind: 'pull-request', runId }, note: 'A card offers it; the user opens the pull request from its Ship it dialog. Never say one was opened.' };
+      return { ok: true, requested: { kind: 'pull-request', runId }, note: 'A card offers it; the user opens the pull request from its Create PR dialog. Never say one was opened.' };
     },
     async propose_changes(input) {
       const st = shapeToolOf('propose_changes');

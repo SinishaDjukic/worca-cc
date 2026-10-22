@@ -1133,7 +1133,7 @@ test('a finished run: its headline, the facts, what to check, Create pull reques
   assert.equal(result.querySelector('[data-rd-tab="diff"] .rd-srow-v').classList.contains('mono'), false, 'run 3 (D14): sans values');
   const pr = rd.querySelector('.rd-pr-slot .rd-create-pr');
   assert.ok(pr, 'an eligible run offers Create pull request');
-  assert.equal(pr.textContent, 'Ship it');
+  assert.equal(pr.textContent, 'Create PR');
   // The card's one button is the pull request, behind its glyph; following up is the bar's Run after.
   assert.deepEqual([...rd.querySelectorAll('.rd-pr-slot > *')].map((b) => b.firstElementChild.dataset.icon),
     ['pr-create']);

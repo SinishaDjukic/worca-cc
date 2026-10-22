@@ -1649,7 +1649,7 @@ test('History glance: one Create pull request when eligible; the PR bar for an o
         assert.equal(ctas.length, 1, 'one button, the pull request');
         assert.ok(ctas[0].hasAttribute('data-rd-cta') && ctas[0].classList.contains('hd-g-pr'), ctas[0].className);
         assert.equal(ctas[0].firstElementChild.dataset.icon, 'pr-create');
-        assert.equal(ctas[0].textContent, 'Ship it');
+        assert.equal(ctas[0].textContent, 'Create PR');
         return;
       }
       assert.equal(slot.hidden, true, 'no View pull request button');
@@ -1722,7 +1722,7 @@ test('History glance PR lookup pending: a busy placeholder morphs in place into 
       assert.ok(slot.classList.contains('is-morph'), slot.className);
       const btn = slot.querySelector('button[data-rd-cta].hd-g-pr');
       assert.ok(btn, slot.innerHTML);
-      assert.equal(btn.textContent, 'Ship it');
+      assert.equal(btn.textContent, 'Create PR');
       let forwarded = 0;
       ctx.window.document.querySelector('#hist-detail .hd-pr').onclick = () => { forwarded += 1; };
       click(ctx.window, btn);

@@ -7,8 +7,8 @@ at a time; agents never get it, in any guardrail set.
 
 ## What works
 
-- **Ship it.** A finished run's **Create pull request** pushes the branch and opens the pull request
-  over the Azure DevOps REST API (7.1). The run page then links to it (**View pull request**) and
+- **Create PR.** A finished run's **Create PR** pushes the branch and opens the pull request
+  over the Azure DevOps REST API (7.1). The run page then links to it (**View PR**) and
   shows whether it can merge. History shows it, and the `until-pr` stop works as on GitHub. A
   description longer than Azure's 4,000 characters is cut, with a note saying so. **Open as draft**
   opens it as a draft. A run that came from a GitHub issue adds no `Closes` line here.

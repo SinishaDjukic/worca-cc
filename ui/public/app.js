@@ -98,7 +98,7 @@ import { workModeOf, isGitRun, isFolderRun, isNoProjectRun, NO_PROJECT_KEY, proj
 import { changesCounts, filesWord, renderCountsNode, applyBarModel, paintApplyBar, runChangesUrl, openApplyDialog, discardChanges, CHANGE_SIGN, CHANGE_WORD } from './folder-changes.mjs';
 import { runProgress, progressWidth } from '../../src/shared/run-progress.mjs';
 import { DEFAULT_HOME_PINS, isPinned, pinWorkflow, unpinWorkflow } from '../../src/shared/home-pins.mjs';
-import { SHIP_LABEL, doneStatusWord } from './ship-words.mjs';
+import { CREATE_PR_LABEL, doneStatusWord } from './ship-words.mjs';
 import { worktreeNoticeModel, worktreeRowState, renderWorktreeNotice, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
 import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, RECENT_PAGE, groupRow, memberPrsOf, prChip, memberCostUsd, whenLabel } from './runs-list.mjs';
@@ -23330,7 +23330,7 @@ async function openShipItFor(ref = {}, link = null) {
   const askLink = link && link.askThreadId && link.askCardId ? { askThreadId: link.askThreadId, askCardId: link.askCardId } : null;
   return new Promise((resolve) => {
     const shown = openShipItModal(record, data, { link: askLink, onClose: (out) => resolve(out) });
-    if (!shown) resolve({ opened: false, error: 'The Ship it dialog is already open.' });
+    if (!shown) resolve({ opened: false, error: 'The Create PR dialog is already open.' });
   });
 }
 
@@ -30469,7 +30469,7 @@ function runAction(ref0, id, btn = null, m = null) {
       const shipRef = { ...ref, pipelineId: pid, projectKey: ref.projectKey || (hist && hist.projectKey) || '',
         workspaceId: ref.workspaceId || (r && r.workspaceId) || null };
       return Promise.resolve(chatRunControls.openShipIt(shipRef)).then((res) => {
-        if (res && res.error) notify({ tone: 'err', title: 'Could not open Ship it', detail: res.error });
+        if (res && res.error) notify({ tone: 'err', title: 'Could not open Create PR', detail: res.error });
       });
     }
     case 'open-pr': { const url = m && m.pr && m.pr.url; if (url) window.open(url, '_blank', 'noopener'); return undefined; }
@@ -34938,10 +34938,10 @@ function setCtaContent(node, icon, label) {
 const PR_CTA_MORPH_MS = 420;
 const PR_CTA_OUT_MS = 380;
 const PR_CTA_LOOK = {
-  create: { look: '', icon: 'pr-create', label: SHIP_LABEL },
+  create: { look: '', icon: 'pr-create', label: CREATE_PR_LABEL },
   push: { look: '', icon: 'pr-create', label: 'Push the source branch' },   // a run on its source branch (paintHdPush)
-  view: { look: 'pr-view', icon: 'external', label: 'View pull request' },
-  merged: { look: 'pr-merged', icon: 'merged', label: 'View pull request' },
+  view: { look: 'pr-view', icon: 'external', label: 'View PR' },
+  merged: { look: 'pr-merged', icon: 'merged', label: 'View PR' },
 };
 function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '' } = {}) {
   if (!slot) return;
