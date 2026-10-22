@@ -26,6 +26,8 @@ walk from the first hop, so a replayed guide explains every stop again.
 
 On a machine without git the Add project dialog has no **Clone from URL** tab and no **Use git** switch, runs (steps 3 and 5, and the last hop of step 6) work on a copy of the folder, applied back with **Apply to folder**, the workspace of step 7 is made from registered projects and its runs work on a copy of each member, and the setup dialogs of steps 8 and 9 work for a team repository on github.com (a folder asks for it once: **GitHub repository**) and show `Needs git` for one on another host.
 
+A Folder project can become a Git project later. Use **Use git** on its row's No git box or on its page header, optionally with a remote URL. The folder's files stay as they are, and the first run commits them. A Git project without an origin gets **Link remote** on its page header.
+
 Every tour runs to the thing its tile promises, never to the first click of a
 multi-step action: a project registered, a run on its card under Running, the
 answer in the transcript, a workspace saved, team metrics enabled, a policy home

@@ -291,7 +291,7 @@ inside the view.
 
 | Element | Level |
 |---|---|
-| Projects list, add, project page Overview, remove | S |
+| Projects list, add, project page Overview, remove, Use git (Folder projects) and Link remote (Git projects without origin) | S |
 | Project Memory tab (view and edit files) | A |
 | Project page Actions tab | A |
 | Workspaces list, create wizard (with its Add… / paste-box import), workspace page Overview (projects, description, re-scan, delete) | A |

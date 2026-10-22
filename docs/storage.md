@@ -161,8 +161,11 @@ The Runs list's groups (runs redesign §3.3) are the one new named state of the 
   derived from the repository's identity (the parent of its shared `.git`).
   It is **stable across all git worktrees of the same repo**, so every
   worktree shares one history. A plain folder's key is its realpath's;
-  projects.vcs ('git' | 'none', schema v69) records the kind once, at add
-  time, and never changes it on its own. A run without a project uses the
+  projects.vcs ('git' | 'none', schema v69) records the kind at add time.
+  It changes at most once afterwards: **Use git** on a Folder project runs
+  `git init` in its folder and sets it to 'git' (`markProjectGit`). Nothing
+  changes it the other way. The key stays the same, because a folder's
+  realpath is also the root of the repository git init makes there. A run without a project uses the
   reserved key `no-project-00000000`; no project row is ever made for it.
 - **projects root** = `WORCA_PROJECTS_ROOT` if set, else Settings › Projects root folder, else
   `<worcaHome>/projects` (created on the first New or Clone).

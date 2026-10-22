@@ -812,6 +812,31 @@ test('Remove of any other project keeps today\'s confirm and sends no deleteFold
   assert.doesNotMatch(calls[0], /deleteFolder/);
 });
 
+test('Remove of a converted project (vcs git, ownedFolder false): the plain confirm, and no deleteFolder', async () => {
+  const CONVERTED = [{ ...OWNED[0], vcs: 'git', workMode: 'git', ownedFolder: false }, PROJECTS[1]];
+  const calls = [];
+  const { window } = await boot({ fetchHandler: (u, opts) => {
+    if (u.includes('/api/projects') && opts.method === 'DELETE') { calls.push(u); return reply(200, { projects: [PROJECTS[1]] }); }
+    if (u.includes('/api/projects')) return reply(200, { projects: CONVERTED });
+    return null;
+  } });
+  await goHash(window, 'projects/alpha-00000001');
+  const doc = window.document;
+  assert.equal(doc.querySelector('#proj-detail .pd-kind .kind-chip').textContent, 'Git');
+  click(window, doc.querySelector('#proj-detail .pd-remove'));
+  await tick();
+  assert.equal(doc.querySelector('#confirm-modal').classList.contains('hidden'), false);
+  assert.equal(doc.querySelector('#confirm-title').textContent, 'Remove project');
+  const msg = doc.querySelector('#confirm-message').textContent;
+  assert.match(msg, /The folder on disk and its run history are left untouched\./);
+  assert.doesNotMatch(msg, /deleted permanently/);
+  assert.equal(doc.querySelector('#confirm-ok').classList.contains('danger'), false);
+  click(window, doc.querySelector('#confirm-ok'));
+  await tick(); await tick(); await tick();
+  assert.equal(calls.length, 1);
+  assert.match(calls[0], /\?name=alpha$/, 'no deleteFolder');
+});
+
 test('a 409 DELETE_FOLDER_REQUIRED (an older list) asks again naming the folder; a folder that could not be deleted is reported', async () => {
   const calls = [];
   const { window } = await boot({ fetchHandler: (u, opts) => {

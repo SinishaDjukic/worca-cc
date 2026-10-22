@@ -2616,6 +2616,7 @@ input.bench-case-name{width:100%;padding:9px 12px;font-size:13px;}
 #projects-list .pl-sync:not(:has(> .proj-sync:not([hidden]), > .proj-nogit)){display:none;}
 .proj-nogit{display:flex;align-items:center;gap:10px;min-height:58px;padding:9px 12px 9px 14px;border:1px solid var(--line-2);border-radius:var(--r-card);background:var(--panel);color:var(--ink-3);}
 .proj-nogit-txt{font-family:var(--mono);font-size:13px;color:var(--ink-2);}
+.proj-nogit-act{margin-left:auto;}
 #projects-list .proj-zero{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 20px;}
 #projects-list .pl-team{grid-area:team;min-width:0;}
 #projects-list .proj-open{grid-area:chev;}
