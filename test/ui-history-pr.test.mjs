@@ -9,6 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { ICONS } from '../ui/public/icons.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -224,6 +225,10 @@ test('same-branch, merged back: Push replaces Create PR and posts /api/push; the
   assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-page-branch-name').textContent, 'main');
   const cta = doc.querySelector('#hist-detail .hd-g-push');
   assert.ok(cta, 'the run summary offers Push');
+  // PR controls (design system): Push is a primary .btn led by arrow-up, and the summary says the header's words.
+  assert.equal(cta.textContent, 'Push main');
+  assert.ok(cta.classList.contains('btn-primary'), cta.className);
+  for (const b of [push, cta]) assert.equal(b.querySelector(':scope > .ic svg').innerHTML, ICONS['arrow-up'], b.className);
   cta.click();   // the summary's button drives the header's (one wiring) and must show the outcome too
   await ctx.settle();
   assert.deepEqual(pushes[0], { projectKey: DONE.projectKey, projectDir: DONE.projectDir, id: 'ps' });

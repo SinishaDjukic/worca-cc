@@ -827,7 +827,8 @@
                   </header>
                 </div>
                 <div class="rd-sheet">
-                  <!-- The card's head: the status line top left, the Live view switch top right. -->
+                  <!-- The card's head: the status line top left; top right the Live view switch while the run is live,
+                       the pull request button once it ended. -->
                   <div class="rd-sheet-head">
                     <!-- The shared status block (run-status-card.mjs, slice 4 D19): dot or symbol, status line, the run's
                          bar. It keeps the rd-now-top class: the click-to-question handler and the guide tour find it. -->
@@ -838,6 +839,9 @@
                       <span class="txt">Live view</span>
                       <div class="switch rd-live-switch" role="switch" tabindex="0" aria-checked="false" aria-label="Live view"></div>
                     </div>
+                    <!-- The pull request button beside the status (Create PR, View PR, Push): one node for the screen's
+                         life, outside the result (rebuilt), so its loading placeholder can morph (paintPrCta). -->
+                    <div class="rd-pr-slot" data-needs-git hidden></div>
                   </div>
                   <!-- Run 3 (D8): the facts block, one row per fact and one place to edit it. The Project row's value is the
                        old meta line (paintPageHead owns its first text node); the branch chip copies the name (paintPageBranch). -->
@@ -848,10 +852,8 @@
                     <div class="rd-kv-row" data-fact="labels" hidden><dt class="rd-kv-k">Labels</dt><dd class="rd-kv-v"></dd></div>
                     <div class="rd-kv-row" data-fact="tags" hidden><dt class="rd-kv-k">Cost tags</dt><dd class="rd-kv-v"></dd></div>
                   </dl>
-                  <!-- The PR bar (run 3 D11): the run's own PR, its checks and Watch; or the Create pull request button. One node
-                       for the screen's life, outside the result (rebuilt), so its loading placeholder can morph (paintPrCta). -->
+                  <!-- The PR bar (run 3 D11): the run's own PR, its checks and Watch. Its button is in the head (.rd-pr-slot). -->
                   <div class="rd-pr-box" data-needs-git>
-                    <div class="rd-pr-slot" hidden></div>
                     <!-- The open PR's chip, checks, conflicts and Watch PR (paintRdPrStatus). -->
                     <div class="rd-pr-status" hidden></div>
                   </div>
@@ -1002,6 +1004,8 @@
                 <div class="rd-sheet">
                   <div class="rd-sheet-head">
                     <div class="rd-now-top run-status"></div>
+                    <!-- The pull request button beside the status: one node for the screen's life (paintPrCta). -->
+                    <div class="rd-pr-slot" data-needs-git hidden></div>
                   </div>
                   <!-- Run 3 (D8): the facts block, one row per fact and one place to edit it. The Project row's value is the
                        old meta line (paintPageHead owns its first text node); the branch chip copies the name (paintPageBranch). -->
@@ -1012,10 +1016,8 @@
                     <div class="rd-kv-row" data-fact="labels" hidden><dt class="rd-kv-k">Labels</dt><dd class="rd-kv-v"></dd></div>
                     <div class="rd-kv-row" data-fact="tags" hidden><dt class="rd-kv-k">Cost tags</dt><dd class="rd-kv-v"></dd></div>
                   </dl>
-                  <!-- The PR bar (run 3 D11): the run's own PR, its checks and Watch; or the Create pull request button. One node
-                       for the screen's life, outside the result (rebuilt), so its loading placeholder can morph (paintPrCta). -->
+                  <!-- The PR bar (run 3 D11): the run's own PR, its checks and Watch. Its button is in the head (.rd-pr-slot). -->
                   <div class="rd-pr-box" data-needs-git>
-                    <div class="rd-pr-slot" hidden></div>
                     <!-- The open PR's chip, checks, conflicts and Watch PR (paintRdPrStatus). -->
                     <div class="rd-pr-status" hidden></div>
                   </div>
@@ -1047,7 +1049,7 @@
                   <!-- Publish branch (#618): push a finished run's branch without a PR. Painted by paintHdPublish. -->
                   <button type="button" class="hd-publish btn" hidden data-min-level="advanced" data-needs-git>Publish branch</button>
                   <span class="act-pill-slot"></span>
-                  <a class="hd-pr-link" hidden data-min-level="advanced" data-needs-git target="_blank" rel="noopener"></a>
+                  <a class="btn hd-pr-link" hidden data-min-level="advanced" data-needs-git target="_blank" rel="noopener"></a>
                   <button type="button" class="btn btn-primary hd-push" hidden data-min-level="advanced" data-needs-git></button>
                 </div>
                 <!-- "Published to <remote>/<branch>" (#618): its own line, so a long branch never squeezes the title. -->
@@ -1056,7 +1058,7 @@
                 <div class="hd-base-check" data-needs-git hidden>
                   <ul class="hd-base-members"></ul>
                 </div>
-                <!-- Workspace runs: one line per member repo (View PR / Merged / No changes).
+                <!-- Workspace runs: one line per member repo (View PR, open or merged / No changes).
                      Painted by paintHdPr; never shown for a single-project run. -->
                 <ul class="hd-pr-repos" hidden data-min-level="advanced" data-needs-git aria-label="Pull requests per repository"></ul>
                 <!-- Status pip leads the META line, not row 1: it reads as the icon

@@ -11,7 +11,10 @@ import { icon } from './icons.mjs';
 
 const BAR_STATES = new Set(['starting', 'working', 'needs-you', 'paused']);       // D20: the states the list draws a bar for
 const GROUP_ENDED = new Set(['ready', 'in-review', 'merged']);
-const PRIMARY = new Set(['answer', 'resume', 'retry', 'start-now', 'ship', 'open-pr']);
+// View PR is navigation, never the primary (design system, PR controls).
+const PRIMARY = new Set(['answer', 'resume', 'retry', 'start-now', 'ship']);
+// A PR bar button leads with its icons.mjs glyph, 14px on .btn-sm.
+const ACTION_ICON = Object.freeze({ ship: 'pr-create', 'open-pr': 'pull-request' });
 // D5, D24: actions the model lists that have no flow yet. Shown (one model on every surface), but disabled with the
 // reason. Ask for changes has one now (Shaper): each host says when it is not available there (disable['ask-changes']).
 const UNAVAILABLE = Object.freeze({ retry: 'Start a new run to try again' });
@@ -131,7 +134,7 @@ export function syncActions(host, m, { own = {}, pool = [], covered = {}, disabl
     }
     // Run 4 (D2): a host may name an action after what it does here ("Approve 2 runs" for answer); set on every sync.
     const label = labels[id] || ACTION_LABEL[id] || id;
-    if (b.textContent !== label) b.textContent = label;
+    if (b.textContent !== label) b.replaceChildren(...(ACTION_ICON[id] ? [icon(doc, ACTION_ICON[id], 14)] : []), label);
     // Set on every sync, so a reason that no longer holds (a run that finished pausing) re-enables the button.
     const why = UNAVAILABLE[id] || disable[id] || '';
     b.disabled = !!why;

@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { cardAlertOf } from './helpers/feedback.mjs';
 import { backdropClick, pressEscape, discardPrompt, discardChanges } from './helpers/popups.mjs';
+import { ICONS } from '../ui/public/icons.mjs';
 
 // Workspace runs: one PR per AFFECTED member repo. The saved-run detail header's
 // per-repo list and the workspace Ship-it dialog (per-repo rows, sequential POSTs,
@@ -261,9 +262,11 @@ test('detail header lists every member repo with its status', async () => {
   // Name and status asserted separately (v2 review M2) ...
   assert.deepEqual(lis.map((li) => li.querySelector('b').textContent), ['api', 'web', 'doc', 'ops', 'cli']);
   assert.deepEqual(lis.map((li) => (li.querySelector('.hd-pr-repo-link, .hd-pr-repo-note') || {}).textContent),
-    ['Merged', 'No PR yet', 'No changes, skipped', 'Branch no longer exists', 'No branch recorded']);
+    ['View PR', 'No PR yet', 'No changes, skipped', 'Branch no longer exists', 'No branch recorded']);
   // ... and the rendered line reads with a space between them (the ' ' text node).
-  assert.equal(lis[0].textContent.replace(/\s+/g, ' ').trim(), 'api Merged');
+  assert.equal(lis[0].textContent.replace(/\s+/g, ' ').trim(), 'api View PR');
+  // PR controls (design system): a merged repo's link is "View PR" led by the merge glyph.
+  assert.equal(list.querySelector('.hd-pr-repo-link > .ic svg').innerHTML, ICONS.merge);
   assert.equal(list.querySelector('.hd-pr-repo-link').href, 'https://x/api/pull/1');
   assert.equal(hdPr(ctx.window).hidden, false, 'web can still be shipped');
   assert.equal(hdPrLink(ctx.window).hidden, true, 'never the single-PR link');

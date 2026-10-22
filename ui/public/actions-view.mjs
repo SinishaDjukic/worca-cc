@@ -25,7 +25,7 @@ export function appendWithPageLinks(doc, el, text, extra = []) {
 /** The project's own Actions tab, where its setup and actions are edited. */
 export const projectActionsHref = (key) => `#projects/${encodeURIComponent(key)}/actions`;
 // `tip`: what the button does, on hover (every command on the Actions surfaces says it).
-const btn = (doc, label, cls, onClick, tip) => { const b = h(doc, 'button', `btn ${cls || 'btn'} btn btn-sm`, label); b.type = 'button'; if (tip) b.title = tip; if (onClick) b.addEventListener('click', onClick); return b; };
+const btn = (doc, label, cls, onClick, tip) => { const b = h(doc, 'button', `btn ${cls ? `${cls} ` : ''}btn-sm`, label); b.type = 'button'; if (tip) b.title = tip; if (onClick) b.addEventListener('click', onClick); return b; };
 /** Hover text of a built-in: what it opens, and where. */
 const builtinTip = (key, label, where = 'the checkout') => (key === 'editor' ? `Open ${where} in ${label}`
   : key === 'terminal' ? `Open ${label} in ${where}` : key === 'fileManager' ? `Show ${where} in ${label}` : label);
@@ -363,7 +363,8 @@ export function renderShipItStrip(model, { doc, handlers = {} } = {}) {
   const row = h(doc, 'div', 'act-row act-shipit');
   row.append(h(doc, 'span', 'act-label', 'Try it first'));
   if (!m.checkout) {
-    row.append(btn(doc, 'Check out', 'btn-primary', () => handlers.onCheckout?.(model.workspace ? undefined : [m.projectKey]), 'Put this run\'s branch in a folder of its own, to try it before you open the PR'));
+    // Secondary: the dialog's one primary is Create pull request.
+    row.append(btn(doc, 'Check out', null, () => handlers.onCheckout?.(model.workspace ? undefined : [m.projectKey]), 'Put this run\'s branch in a folder of its own, to try it before you open the PR'));
     return row;
   }
   const mine = instancesOf(model, m.projectKey);

@@ -229,8 +229,8 @@ The **Auto** workflow option is available for both targets — a project and a w
 
 An open github.com or Azure DevOps pull request shows its state as GitHub's merge box would
 (Draft, Merge conflicts, Changes requested, checks failed or running, Review
-required, Out of date, Blocked, Ready to merge) in two places: the footer of the
-run page's pull request button, and a "Pull request" row under the review verdict
+required, Out of date, Blocked, Ready to merge) in two places: the run page's PR bar
+under the facts, and a "Pull request" row under the review verdict
 on the Overview tab (one row per repository for a workspace run). Both show at
 every level; the Watch switch in them is advanced.
 
