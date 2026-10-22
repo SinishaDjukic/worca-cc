@@ -14908,15 +14908,17 @@ el.form.addEventListener('submit', async (e) => {
       // 202: nothing is running — the request is a ticket now. Show it where it lives.
       if (data.status === 'scheduled') {
         startSubmitInFlight = false;
+        const picked = pendingSchedule;   // read before the form resets
+        const line = `${title || 'Untitled run'} · ${picked ? scheduleWhenText(picked) : 'Starts later'}`;
         setPendingSchedule(null);   // the form is a plain Start run form again
         resetSyncChoice();
         showEngineRefusal(null);
         clearTask(submittedTask);
         applyPresetSwitches();   // clearTask unchecks Run on the source branch (#688); a preset keeps its own
-        // Keep the warn tone when the server attached a budget warning. showView('schedules')
-        // already shows the ticket, so the toast needs no Open action.
-        notify({ tone: data.budgetWarning ? 'warn' : 'ok', title: 'Scheduled', detail: data.budgetWarning || title || '' });
-        showView('schedules');
+        // Keep the warn tone when the server attached a budget warning. The Schedules page already
+        // shows the ticket, so the toast needs no Open action.
+        notify({ tone: data.budgetWarning ? 'warn' : 'ok', title: 'Scheduled', detail: data.budgetWarning ? `${line} · ${data.budgetWarning}` : line });
+        location.hash = picked && picked.repeat ? 'schedules/repeating' : 'schedules/once';   // a hash route: Back and reload keep the tab
         return { ok: true };
       }
 
@@ -14972,6 +14974,7 @@ function newFormCard() { return el.form; }
 let pendingSchedule = null;
 const newScheduleSheetOpts = (runTitle = '') => ({
   mode: 'create', runTitle, defaults: schedulesView.defaults, candidates: fetchAfterCandidates,
+  confirmLabel: 'Set time',   // the form's Schedule button schedules; this one only sets the time
   warning: 'A scheduled run is unattended. If this workflow asks questions, the run waits for your answer. Chat notifications can reach you.',
   sync: scheduleSyncOpt(),
 });
@@ -14998,6 +15001,13 @@ const pendingScheduleInitial = () => (pendingSchedule
     ...(pendingSchedule.sync ? { sync: pendingSchedule.sync } : {}),
   }
   : {});
+/** The schedule line the form and the toast share: "Starts Tue, 02:00", the rule in words, or the predecessor. */
+function scheduleWhenText(pick) {
+  if (pick.after) return `Starts when ‘${pick.after.title || 'the run before it'}’ finishes`;
+  if (pick.repeat) return describeRule(pick.repeat.rule);
+  const ms = Date.parse(pick.scheduledFor);
+  return Number.isFinite(ms) ? `Starts ${whenLabel(ms, Date.now(), browserTimeZone())}` : 'Starts later';
+}
 function setPendingSchedule(pick) {
   pendingSchedule = pick || null;
   if (!el.newSched) return;
@@ -15011,15 +15021,14 @@ function setPendingSchedule(pick) {
   if (!pendingSchedule) { syncPreviousBranchEverywhere(); return; }
   if (pendingSchedule.after) {
     el.newSchedBadge.textContent = 'After run';
-    el.newSchedText.textContent = `Starts when ‘${pendingSchedule.after.title || 'the run before it'}’ finishes`
+    el.newSchedText.textContent = scheduleWhenText(pendingSchedule)
       + (pendingSchedule.after.branchGone ? ' · its branch is gone, so pick a source branch' : '');
   } else if (pendingSchedule.repeat) {
     el.newSchedBadge.textContent = 'Repeats';
-    el.newSchedText.textContent = describeRule(pendingSchedule.repeat.rule);
+    el.newSchedText.textContent = scheduleWhenText(pendingSchedule);
   } else {
-    const ms = Date.parse(pendingSchedule.scheduledFor);
     el.newSchedBadge.textContent = 'Scheduled';
-    el.newSchedText.textContent = Number.isFinite(ms) ? `Starts ${whenLabel(ms, Date.now(), browserTimeZone())}` : 'Starts later';
+    el.newSchedText.textContent = scheduleWhenText(pendingSchedule);
   }
   if (el.wsSourcePrevious) delete el.wsSourcePrevious.dataset.off;   // a NEW pick starts with the switch ON
   syncPreviousBranchEverywhere();
@@ -15030,8 +15039,13 @@ async function openScheduleForNew() {
   const el0 = el.prompt;
   const titleEl = document.getElementById('title');
   const runTitle = titleEl && typeof titleEl.value === 'string' ? titleEl.value.trim() : '';
-  const picked = await openScheduleSheet({ ...newScheduleSheetOpts(runTitle), initial: pendingScheduleInitial() });
-  if (picked) setPendingSchedule(picked);
+  const view = document.querySelector('.view[data-view="new"]');
+  try {
+    const picked = await openScheduleSheet({ ...newScheduleSheetOpts(runTitle), initial: pendingScheduleInitial() });
+    if (picked) setPendingSchedule(picked);
+  } finally {
+    view?.classList.remove('sched-first');
+  }
   try { el0?.focus(); } catch { /* jsdom */ }
 }
 el.newSchedChange?.addEventListener('click', () => { void openScheduleForNew(); });
@@ -36244,6 +36258,7 @@ function maybeWelcome() {
   const modal = document.getElementById('welcome-modal');
   if (!modal) return;
   gs.welcomeShown = true;
+  setMobileNavOpen(false);   // a phone drawer opened before the onboarding fetch landed must not stay up behind the dialog
   const close = () => { modal.classList.add('hidden'); if (gsWelcomeUnbind) { gsWelcomeUnbind(); gsWelcomeUnbind = null; } };
   gsWelcomeUnbind = bindWelcome(modal, {
     win: window,
@@ -37272,6 +37287,7 @@ function showView(name, param = '') {
     // The hash is then plain #new, so Back and a reload never re-open it.
     if (param === 'schedule') {
       try { window.history.replaceState(null, '', '#new'); } catch { /* ignore */ }
+      document.querySelector('.view[data-view="new"]')?.classList.add('sched-first');   // no empty form behind the sheet
       setTimeout(() => { void openScheduleForNew(); }, 0);
     }
     if (param.startsWith('after/')) {

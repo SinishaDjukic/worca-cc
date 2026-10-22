@@ -137,3 +137,11 @@ test('the History list scrolls, the open chat\'s row is marked, the trash waits 
 test('a focused trash shows without :focus-visible too (a mouse Cancel puts the focus back on it)', () => {
   assert.match(css, /,\.chat-history \.ask-thread-trash:focus\{opacity:1;\}/);
 });
+
+test('the run proposal card fits the 760px text column and its kicker is not monospace (F-27)', () => {
+  assert.match(ruleBody('.chat-page'), /--chat-text-max:760px;/);
+  const width = ruleBody('.chat-convo .ask-msg > .ask-card.ask-rp');
+  assert.match(width, /^width:min\(var\(--chat-text-max\),100cqi\);margin-left:calc\(\(100% - min\(var\(--chat-text-max\),100cqi\)\) \/ 2\);/);
+  assert.doesNotMatch(width, /chat-card-max/);
+  for (const sel of ['.ask-rp-kicker', '.ask-rp-from', '.ask-rp-summary']) assert.doesNotMatch(ruleBody(sel), /var\(--mono\)/, sel);
+});

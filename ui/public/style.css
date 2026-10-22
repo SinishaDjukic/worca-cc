@@ -436,6 +436,7 @@ body.view-workspaces .main{display:flex;flex-direction:column;overflow:hidden;pa
 .grid{display:grid;grid-template-columns:minmax(360px,1fr) minmax(420px,1.25fr);gap:22px;align-items:start;}
 .grid.single{grid-template-columns:minmax(0,864px);justify-content:center;}
 .view[data-view="new"] .topbar{justify-content:center;text-align:center;}
+.view[data-view="new"].sched-first > *{visibility:hidden;}
 .col{display:flex;flex-direction:column;gap:22px;}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);padding:var(--pad-card);}
 .card-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;}
@@ -5776,9 +5777,9 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-rp>*{min-width:0;}
 .ask-rp-head{padding:16px 18px 14px;background:var(--slate-bg);border-bottom:1px solid var(--line);}
 .ask-rp-eyebrow{display:flex;align-items:center;gap:8px;height:20px;}
-.ask-rp-kicker{font-family:var(--mono);font-size:12px;color:var(--slate-ink);font-weight:600;}
+.ask-rp-kicker{font-family:var(--sans);font-size:12px;color:var(--slate-ink);font-weight:600;}
 .ask-rp-kicker::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--slate);margin-right:7px;vertical-align:1px;}
-.ask-rp-from{font-family:var(--mono);font-size:11px;color:var(--ink-3);}
+.ask-rp-from{font-family:var(--sans);font-size:11px;color:var(--ink-3);}
 .ask-rp-title{margin:8px 0 0;display:flex;align-items:center;gap:8px;}
 .ask-rp-edit{font-size:11px;color:var(--ink-3);white-space:nowrap;}
 .ask-rp-why{margin:6px 0 0;font-size:12px;line-height:1.55;color:var(--ink-2);max-width:66ch;}
@@ -5822,7 +5823,7 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-rp-eff button.on{background:var(--ink);color:var(--on-ink);}
 .ask-rp-eff button[disabled]{opacity:.35;cursor:default;}
 .ask-rp-eff.unset button{visibility:hidden;}
-.ask-rp-eff.unset::after{content:"inherits workflow";position:absolute;inset:0;display:grid;place-items:center;font-family:var(--mono);font-size:11px;color:var(--ink-3);}
+.ask-rp-eff.unset::after{content:"workflow’s setting";position:absolute;inset:0;display:grid;place-items:center;font-family:var(--sans);font-size:11px;color:var(--ink-3);}
 .ask-rp-ctl{display:inline-flex;align-items:center;gap:8px;}
 .ask-rp-ctl > span:first-child{font:500 var(--fs-body)/var(--lh-body) var(--sans);color:var(--ink);}
 .ask-rp-agents-foot{display:flex;align-items:center;gap:8px;padding:8px 14px;border-top:1px solid var(--line);font-size:11px;color:var(--ink-3);}
@@ -5842,7 +5843,7 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-rp-pill button{border:0;background:none;padding:0;color:var(--ink-3);font-family:inherit;cursor:pointer;}
 .ask-rp-foot{display:flex;align-items:center;gap:10px;padding:12px 18px 14px;background:var(--canvas-2);flex-wrap:wrap;}
 .ask-rp-foot .ask-card-open-np{font-size:12px;font-weight:500;}
-.ask-rp-summary{font-family:var(--mono);font-size:11px;color:var(--ink-3);text-align:right;margin-left:auto;}
+.ask-rp-summary{font-family:var(--sans);font-size:11px;color:var(--ink-3);text-align:right;margin-left:auto;}
 .ask-rp-foot [data-ask-card-start] svg{width:11px;height:11px;}
 /* Shaper (D20): the small proposal card — clamped brief, the main fields, a collapsed Advanced. */
 .ask-rp-kicker.ask-rp-kicker-shape{color:var(--slate-ink);}
@@ -6615,6 +6616,11 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .ob-door-icon{display:grid;place-items:center;width:34px;height:34px;border-radius:var(--r-sm);background:var(--blue-bg);color:var(--blue-ink);flex:0 0 auto;}
 .ob-door-icon svg{width:19px;height:19px;}
 .ob-door-arrow{margin-left:auto;color:var(--ink-2);font-size:18px;line-height:1;}
+@media (max-width:760px){
+  .ob-welcome{max-height:calc(100dvh - 24px);overflow:auto;}
+  .ob-door{min-height:44px;}
+  .ob-headline{font-size:18px;}
+}
 .ob-skip{display:flex;margin:16px auto 0;}
 .ob-claude{width:min(92vw,560px);padding:24px;}
 .ob-claude-lead,.ob-claude-note{margin:0;font-size:13px;line-height:1.5;color:var(--ink-2);}
@@ -8240,12 +8246,11 @@ button.act-srow-name{cursor:pointer}
 }
 
 /* ========================================================================== */
-/* Workflows view (full screen): the canvas card and the Library card side by  */
+/* Workflows view (fills the content area under the top bar): the canvas card and the Library card side by  */
 /* side; every control floats over the canvas in small 40px bars             */
 /* (composer-mockup.html base + canvas CSS). Prefix wfv- (chrome), wfl-        */
 /* (Library), wfc- (chat).                                                     */
 /* ========================================================================== */
-body.view-workflows .sidebar,body.view-workflows #topnav{display:none !important;}
 body.view-workflows .main{padding:0;overflow:hidden;display:flex;flex-direction:column;}
 .view[data-view="workflows"]{flex:1 1 auto;min-height:0;position:relative;}
 .wfv{position:absolute;inset:0;display:flex;gap:8px;padding:8px;background:var(--bg);font-size:12px;}
@@ -8573,6 +8578,8 @@ body.view-chat .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .chat-hero-slot .ask-composer-box{border-radius:var(--r-lg);}
 .chat-page .ask-composer-box:has(.guide-target){-webkit-backdrop-filter:none;backdrop-filter:none;}
 .chat-convo .ask-msg > :is(.ask-card,.ask-card-stub){width:min(var(--chat-card-max),100cqi);margin-left:calc((100% - min(var(--chat-card-max),100cqi)) / 2);}
+/* The run proposal is a form: it keeps the 760px text column, not the wide card column. */
+.chat-convo .ask-msg > .ask-card.ask-rp{width:min(var(--chat-text-max),100cqi);margin-left:calc((100% - min(var(--chat-text-max),100cqi)) / 2);}
 /* The composer's popovers ride the composer (ask-panel.mjs openPopover): above the box in the dock, under it on
    home, and never sized against the composer's own height. On home the cap is 100vh less .chat-home's 10vh top padding. */
 .chat-page .ask-composer{--ask-box-top:calc(100% - 10px);}
