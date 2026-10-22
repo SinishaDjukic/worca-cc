@@ -1,7 +1,7 @@
 // test/requirements-git-missing.test.mjs — Requirements with git missing (upstream's P0 contract, as
 // test/git-missing-routes.test.mjs checks it for its own routes): the product brief's Create / Refresh and Look closer /
 // Look again are GIT_ONLY_ROUTES entries and answer 409 GIT_MISSING; creating a feature still works and its automatic
-// look is skipped as "no repository" (no checkout, no call); with git back the routes reach their handlers again.
+// look is skipped as "no git" (no checkout, no call); with git back the routes reach their handlers again.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -57,13 +57,13 @@ test('requirements while git is missing', async (t) => {
         assert.ok(layers.filter((l) => l.route.path === p && l.route.methods[m]).length >= 2, `${m} ${p} shadows a handler`);
       }
     } },
-    { name: 'creating a feature still works: the look is skipped as no repository and the interview goes on', run: async () => {
+    { name: 'creating a feature still works: the look is skipped for git and the interview goes on', run: async () => {
       const c = await call('POST', '/api/requirements', { scopeType: 'project', scopeKey: projKey, title: 'Cancel order', description: 'Before it ships' });
       assert.equal(c.status, 201);
       seq = c.json.feature.seq;
       await waitFor(async () => (await feature(seq)).status === 'your_turn');
       const f = await feature(seq);
-      assert.equal(f.orientation.skipped, 'no-repo');
+      assert.equal(f.orientation.skipped, 'no-git', 'said as no git, so the page stays right once git is back');
       assert.equal(f.orientation.summary, '', 'no mock look either: nothing was read');
       assert.equal(f.pending.questions.length, 2, 'round 1 asks as usual');
     } },
@@ -78,6 +78,15 @@ test('requirements while git is missing', async (t) => {
       assert.equal(r.status, 409); assert.deepEqual(r.json, BODY);
       const page = (await call('GET', `/api/requirements/brief/project/${projKey}`)).json;
       assert.ok(!page.brief || !page.brief.madeAt, 'no brief was made or started');
+    } },
+    { name: 'a made brief: the page says its staleness is unknown for git, never that the branch is gone', run: async () => {
+      const store = await import('../src/core/requirements/store.mjs');
+      const b = store.beginBrief('project', projKey);
+      store.saveBriefResult(b.id, { sources: [{ project: projKey, branch: 'main', ref: 'refs/heads/main', sha: 'a'.repeat(40) }] });
+      const page = (await call('GET', `/api/requirements/brief/project/${projKey}`)).json;
+      assert.ok(page.brief.madeAt);
+      assert.deepEqual(page.staleness, { known: false, reason: 'no-git' });
+      store.deleteBrief('project', projKey);
     } },
     { name: 'git on: the same requests reach their handlers (never GIT_MISSING)', run: async () => {
       gitArrives();

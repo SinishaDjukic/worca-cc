@@ -124,7 +124,7 @@ export function getContext(scopeType, scopeKey) {
 export function setContext(scopeType, scopeKey, { body, lookAtCode } = {}, { by = null } = {}) {
   const cur = getContext(scopeType, scopeKey);
   const b = body === undefined ? cur.body : String(body ?? '');
-  if (b.length > LIMITS.context) throw new RequirementsError('BAD_REQUEST', `the context is longer than ${LIMITS.context} characters`);
+  if (b.length > LIMITS.context) throw new RequirementsError('BAD_REQUEST', `Your notes are longer than ${LIMITS.context} characters.`);
   const look = lookAtCode === undefined ? cur.lookAtCode : !!lookAtCode;
   prepare(`INSERT INTO req_contexts (scope_type, scope_key, body, look_at_code, updated_by, updated_at)
       VALUES (?, ?, ?, ?, ?, ?)

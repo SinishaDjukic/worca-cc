@@ -1685,7 +1685,9 @@ const GIT_ONLY_ROUTES = Object.freeze([
   // code with git. Creating a feature is not here: without git its automatic look is skipped (interview.mjs orient).
   ['post', '/api/requirements/brief/:scopeType/:scopeKey'], ['post', '/api/requirements/:seq/look'],
 ]);
-for (const [method, route] of GIT_ONLY_ROUTES) app[method](route, (_req, res, next) => (gitAvailable() ? next() : gitMissing(res)));
+// A requirements entry passes through while its flag is off, so requireFlag answers 404 first (the routes stay unseen).
+const behindOffFlag = (route) => route.startsWith('/api/requirements/') && !flagEnabled('requirements');
+for (const [method, route] of GIT_ONLY_ROUTES) app[method](route, (_req, res, next) => (gitAvailable() || behindOffFlag(route) ? next() : gitMissing(res)));
 
 if (HLJS_ASSETS) {
   const sendHljsModule = (file) => (_req, res, next) => {

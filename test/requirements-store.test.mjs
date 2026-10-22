@@ -83,7 +83,7 @@ test('contexts: defaults, upsert, partial update', () => {
   setContext('project', 'ctx-1', { lookAtCode: false });
   const c = getContext('project', 'ctx-1');
   assert.deepEqual([c.body, c.lookAtCode], ['Actors: buyer', false]);
-  assert.throws(() => setContext('project', 'ctx-1', { body: 'x'.repeat(LIMITS.context + 1) }), (e) => e.code === 'BAD_REQUEST');
+  assert.throws(() => setContext('project', 'ctx-1', { body: 'x'.repeat(LIMITS.context + 1) }), (e) => e.code === 'BAD_REQUEST' && e.message === `Your notes are longer than ${LIMITS.context} characters.`);
 });
 
 test('a title is one line: inner whitespace and newlines collapse to single spaces', () => {

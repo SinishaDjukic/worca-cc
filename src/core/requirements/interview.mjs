@@ -276,9 +276,9 @@ function briefFor(f) {
 async function orient(f, d, brief = null) {
   const ctx = getContext(f.scopeType, f.scopeKey);
   if (!ctx.lookAtCode) return { summary: '', files: [], skipped: 'off' };
-  // No git on this machine: no checkout to read, so the look is skipped as for a folder without a repository
-  // (Look closer and the brief answer GIT_MISSING at the route, ui/server.mjs GIT_ONLY_ROUTES).
-  if (!gitAvailable()) return { summary: '', files: [], skipped: 'no-repo' };
+  // No git on this machine: no checkout to read, so the look is skipped, recorded as 'no-git' so the page can say
+  // why after git comes back (Look closer and the brief answer GIT_MISSING at the route, ui/server.mjs GIT_ONLY_ROUTES).
+  if (!gitAvailable()) return { summary: '', files: [], skipped: 'no-git' };
   if (mockEnabled({}) && brief) {
     return { summary: `[mock] A closer look: "${f.title}" needs something the brief does not describe yet.`, files: ['/tmp/mock/auto-look-0000abcd/README.md'], area: 'Orders', skipped: null };
   }

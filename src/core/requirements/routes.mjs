@@ -2,6 +2,7 @@
 // /api/requirements/* (plans/requirements-design.md §5). One registration call from ui/server.mjs; every
 // route in REQUIREMENTS_ROUTES is behind the `requirements` flag (404 while off), and so is the change frame.
 import { requireFlag, flagEnabled } from '../flags.mjs';
+import { gitAvailable } from '../git-available.mjs';
 import { actorOf } from '../identity.mjs';
 import { listProjects } from '../projects.mjs';
 import { workspaceTarget } from '../ask/workflow-deps.mjs';
@@ -161,7 +162,8 @@ const briefFields = (b) => (b ? Object.fromEntries(BRIEF_FIELDS.map((k) => [k, b
 async function briefPage(scopeType, scopeKey, t, d, known = null) {
   const b = getBrief(scopeType, scopeKey);
   const [target, estimate, staleness] = await Promise.all([
-    known || briefTarget(scopeType, scopeKey, d), briefEstimate(d), b ? briefStaleness(b, d) : null,
+    // without git nothing is known about the code: no probe, and never a reason ('branch-gone') that is not true
+    known || briefTarget(scopeType, scopeKey, d), briefEstimate(d), b ? (gitAvailable() ? briefStaleness(b, d) : { known: false, reason: 'no-git' }) : null,
   ]);
   const first = scopeType === 'project' ? target.dirs[0] : null;
   return {
