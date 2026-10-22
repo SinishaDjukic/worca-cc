@@ -15,7 +15,7 @@
 ## Global Constraints
 
 - One commit per task (Task 10 is a merge commit plus one follow-up commit); every message ends with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Subjects start `Requirements:`.
-- **Lane rules.** Before Task 10, edits to `src/core/requirements/round.mjs` and `interview.mjs` are only the hunks named in Tasks 4 and 5 (lane 1 rewrites the system prompts, the prompt order, the call options and the model choice). Never touch `node_modules` (a junction), never run `npm install`, never push or touch remotes. No local machine paths in shipped files.
+- **Lane rules.** Before Task 10, edits to `src/core/requirements/round.mjs` and `interview.mjs` are only the hunks named in Tasks 4 and 5 (lane 1 rewrites the system prompts, the prompt order, the call options and the model choice). No local machine paths in shipped files.
 - No model call in the brief job before the refusals of design §5 (switch off, no repository or default branch, busy, `MAX_BRIEF_JOBS`, budget) have passed; a refusal writes nothing.
 - The brief look reads the ref from `defaultBranchRef` (the checked-out branch only as its last fallback), uses `REPO_LOOK_TOOLS` only, `BRIEF_MAX_TURNS = 40`, `BRIEF_TIMEOUT_MS = 600_000` over checkout and call together, an aux spawn through `callModel` (only through the `briefCall` helper); every checkout is closed in `finally`.
 - Every stored path is relative to the checkout (workspace: `repos/<key>/…`), with `/` separators, in the brief and in areas added from a closer look.
@@ -25,7 +25,7 @@
 - Mock mode (`WORCA_MOCK=1`) never spawns a model and never writes outside `<worcaHome>/tmp/requirements`.
 - No import from Shaper code. Core modules never import `ui/server.mjs`; `git-info.mjs` stays a leaf (brief-job imports it, never the reverse). `style.css`: tokens only.
 - Errors from routes: `{ error }` with 400 / 404 / 409 / 500 (A1 §5).
-- One test file: `node tools/test.mjs test/<file>.test.mjs`. Full suite: `npm test` (compare failures with the base branch before blaming this one: this laptop has known baseline failures).
+- One test file: `node tools/test.mjs test/<file>.test.mjs`. Full suite: `npm test` (compare failures with the base branch before blaming this one).
 
 ## Review Focus
 

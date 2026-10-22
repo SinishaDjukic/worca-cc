@@ -14,16 +14,15 @@
 
 ## Global Constraints
 
-- One commit per task; subjects start `Requirements:`; every message ends with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Local only: never push or touch remotes.
+- One commit per task; subjects start `Requirements:`; every message ends with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 - No database schema change, no new route (D9). The setting is the `settings.json` key `requirementsInterview`; it is **not** in `UTILITY_JOBS` and not in `settingIds()` (D1).
 - `systemPromptMode` is default-off: absent, `'append'` or any other value ⇒ every argv byte-identical to today (`test/claude-argv-snapshot.test.mjs` stays green unchanged).
 - The host-guard preamble stays at the head of every real spawn's system prompt, replaced or appended.
 - **Lane contract (design §9), binding:** `callModel(d, { kind, cwd, prompt, model, timeoutMs, ...overrides })` exported, `interviewCallOptions(kind, { cwd, prompt, model, ...overrides })`; kinds `'look'` | `'round'` only; overrides `systemPrompt`, `tools`, `maxTurns`, `effort` and nothing else (anything else throws `TypeError`). In `round.mjs` lane 1 edits only: the new header lines of both system prompts, `roundPromptParts` / `buildRoundPrompt`, and the existing working-directory ternary of `buildOrientationPrompt`. Never edit: the data-rule lines and the "Do not ask what …" line of `ROUND_SYSTEM_PROMPT`, the data line and the JSON line of `ORIENTATION_SYSTEM_PROMPT`, anything before `buildOrientationPrompt`'s reply line other than the ternary, `startOrientation`, `runOrientation`. No import from Shaper code.
 - Tests never spawn a real claude (`node tools/test.mjs` sets the guard). The measurement tool spends money only with `--yes`, and only Task 8 runs it, after the user's explicit go-ahead.
-- `node_modules` in this worktree is a junction: never delete, move or reinstall it; never run `npm install`.
 - No local machine paths in committed files (fixture included). Every file written is valid UTF-8 (`iconv -f utf-8 -t utf-8 <file> >/dev/null`).
 - `style.css`: tokens only, never a hex colour.
-- One test file: `node tools/test.mjs test/<file>.test.mjs`. On this Windows machine ~170 tests fail on the clean base too: judge a failure only by re-running the same file on `ec8aed1c`. Tests marked POSIX-only (`POSIX_SHIM`) skip here; say so in the report rather than claiming them.
+- One test file: `node tools/test.mjs test/<file>.test.mjs`. Tests marked POSIX-only (`POSIX_SHIM`) skip on Windows; say so in the report rather than claiming them.
 
 ## Review Focus
 
@@ -236,7 +235,7 @@ Spends money: about $2–3 in all (estimate). **Do not start without the user's 
 
 - [ ] **Step 1:** `claude --version` into the report; Task 2's offline flag probe again.
 - [ ] **Step 2: Before** (A2's behaviour): `git switch --detach <Task 1 commit>`; `node tools/requirements-replay.mjs --rounds 4 --look <dir> --model claude-opus-5-5 --effort medium --label before --out <scratch>/before.json --yes`; `git switch -`.
-- [ ] **Step 3: After** (branch head): the same command with `--label after --out <scratch>/after.json`. **Required:** the look's `replyReadable` is true (a JSON reply within `REPO_LOOK_MAX_TURNS`), its `systemPromptFlag` is `'replace'`, and `loaded.plugins` / `loaded.skills` dropped against before (this machine's user settings carry no sign-in keys, so the hermetic branch applies: the report's `keptUserSettings` must be false). A failed look is a finding: report it and stop; do not tune the prompt in this task.
+- [ ] **Step 3: After** (branch head): the same command with `--label after --out <scratch>/after.json`. **Required:** the look's `replyReadable` is true (a JSON reply within `REPO_LOOK_MAX_TURNS`), its `systemPromptFlag` is `'replace'`, and `loaded.plugins` / `loaded.skills` dropped against before (when the user settings carry no sign-in keys, the hermetic branch applies: the report's `keptUserSettings` must be false). A failed look is a finding: report it and stop; do not tune the prompt in this task.
 - [ ] **Step 4: Variant** (rounds only): `--rounds 4 --variant system-stable --label variant --out <scratch>/variant.json`.
 - [ ] **Step 5 (optional, if the user chose it): caching off**, rounds only: `--rounds 4 --no-cache --label nocache --out <scratch>/nocache.json` (`DISABLE_PROMPT_CACHING` is not a reserved env key, `model-env.mjs:159-164`).
 - [ ] **Step 6:** `--compare before.json after.json`, `--compare after.json variant.json` (judged by `promptCostRounds2toN`), and `--compare after.json nocache.json` when run. Every round's `replyReadable` must be true after; a false one is a finding.

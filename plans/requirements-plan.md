@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Branch `feat/req-a1-feature-spec` from `dev`. **Never push.** One commit per task; every message ends with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
+- Branch `feat/req-a1-feature-spec` from `dev`. One commit per task; every message ends with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 - No run, worktree, branch or pipeline row is ever created for a requirement (D1). The only checkouts are the repo look's temporary detached ones, always closed in `finally` (D7).
 - Ids: `FEAT-<seq>` (AUTOINCREMENT), `R-po-<n>`, `A-<n>`; assigned in code, never by the model, never reused (D3).
 - At most 3 questions per round, 2–4 options each; at most 6 rounds (D5).
@@ -22,7 +22,7 @@
 - No import from Shaper code (`src/core/shape/*`, `ui/public/shape/*`) (D14).
 - `style.css`: tokens only, never a hex colour (tests count hex values).
 - Errors from routes: `{ error }` with 400 / 404 / 409 / 500.
-- One test file: `node tools/test.mjs test/<file>.test.mjs` (sets the hermetic home and the no-real-claude guard). Full suite: `npm test`. On this Windows machine ~170 tests fail on clean `dev` too: judge a failure only by re-running the same files on `dev` (`git stash; git switch dev; node tools/test.mjs <files>`).
+- One test file: `node tools/test.mjs test/<file>.test.mjs` (sets the hermetic home and the no-real-claude guard). Full suite: `npm test`.
 
 ## Review Focus
 
