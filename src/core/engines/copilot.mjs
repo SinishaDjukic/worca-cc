@@ -52,6 +52,7 @@ import { strongestClass } from '../recoverable-error.mjs';
 import { mcpResultText } from './codex.mjs';
 import { makeChatDescriptor } from './chat-descriptor.mjs';
 import { copilotWireModel, COPILOT_EFFORTS as MODEL_ENV_COPILOT_EFFORTS } from '../model-env.mjs';
+import { sandboxMcpConfig } from '../exec-env/policy.mjs';
 
 export const COPILOT_DEFAULT_BIN = process.env.WORCA_COPILOT_BIN || 'copilot';
 
@@ -585,7 +586,7 @@ export async function runCopilotProcess({
   cwd = process.cwd(), systemPrompt = '', prompt = '', model, effort, onEvent = () => {}, signal,
   bin = COPILOT_DEFAULT_BIN, resumeSessionId, addDirs, writableDirs, sandbox, envScrub, envAllowlist, asAgent, usageDir = defaultUsageDir(),
   mcpConfigPath, spawnEnv: runSpawnEnv, redactValues, maxTurns, askLockdown,
-  permissionRules, allowedTools, agents, appendSubagentSystemPrompt, scratchBase = join(worcaHome(), 'tmp', 'copilot'),
+  permissionRules, allowedTools, agents, appendSubagentSystemPrompt, scratchBase = join(worcaHome(), 'tmp', 'copilot'), execEnv,
 } = {}) {
   if (signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
   const secrets = Array.isArray(redactValues) ? redactValues : [];
@@ -612,7 +613,16 @@ export async function runCopilotProcess({
     const inHome = writableRootsInWorcaHome({ cwd, roots: [...(addDirs || []), ...(writableDirs || [])] });
     if (inHome.length) throw new Error(`${bin}: refusing to start copilot — it would be able to write ${inHome.join(', ')}, inside Worca's home (${worcaHome()}), where Worca keeps its database, settings and plugins; copilot cannot hold the rules that protect them`);
   }
-  const guardOn = hostGuardEnabled();
+  // A remote run (exec-env, e2b): the template's pinned copilot in offline mode, its model calls through worca's model
+  // relay, which signs them with the server's fine-grained token (no GitHub token in the sandbox); no host guard, the
+  // run's url MCP servers only (sandboxMcpConfig), the scratch dir uploaded and its sandbox copy removed. Offline mode
+  // has no default model and no GitHub MCP server, web tools or updater.
+  const remote = execEnv?.remote ? execEnv : null;
+  // Offline mode has no default model of its own, and worca names none in its place: the step names one.
+  if (remote && !model) throw Object.assign(new Error('Copilot in a sandbox needs a model; pick one for this step.'), { errorClass: 'config' });
+  if (remote && bin !== 'copilot') safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] copilot: ${bin} (this machine's binary) is ignored; the ${remote.label} runs its own pinned copilot` });
+  const exe = remote ? 'copilot' : bin;
+  const guardOn = hostGuardEnabled() && !remote;
   const sys = guardOn ? [hostGuardSystemPrompt(process.pid), systemPrompt].filter(Boolean).join('\n\n') : String(systemPrompt || '');
 
   // MCP: the spawn's --mcp-config servers in Copilot's shape. `${VAR}` references stay references; their values
@@ -622,6 +632,8 @@ export async function runCopilotProcess({
   if (mcpConfigPath) {
     let doc;
     try { doc = JSON.parse(readFileSync(mcpConfigPath, 'utf8')); } catch (err) { throw new Error(`${bin}: cannot read the MCP config ${mcpConfigPath}: ${err.message}`); }
+    // In a sandbox only its url servers exist (the env logged each dropped one at sandbox start).
+    if (remote) doc = sandboxMcpConfig(doc).config;
     const all = doc && typeof doc.mcpServers === 'object' ? doc.mcpServers : {};
     const skipped = copilotMcpProblems(all);
     if (skipped.length) safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] MCP servers not attached on copilot — ${describeUnattachableMcp('copilot', skipped)}` });
@@ -644,6 +656,18 @@ export async function runCopilotProcess({
   // Either would widen the allow list buildCopilotArgs sets (see the notes at the top).
   delete env.COPILOT_ALLOW_ALL;
   delete env.COPILOT_ASSISTED_APPROVAL;
+  // The relay route, the sandbox env and the template's copilot, BEFORE anything is staged or the session is named: a
+  // refusal or a template without copilot leaves nothing behind.
+  let childEnv = env;
+  let relayRoute = null;
+  if (remote) {
+    try {
+      relayRoute = remote.openEngineRoute('copilot', { spawnEnv: { ...env, ...cleanRunEnv(runSpawnEnv) }, model: copilotWireModel(String(model)) });
+      childEnv = remote.envFor(env, { engine: 'copilot', keep: Object.keys(refEnv), route: relayRoute });
+      await remote.ensureCli(exe);
+    } catch (err) { if (relayRoute) remote.closeModelRoute(relayRoute.id); throw redacted(err); }
+    onEvent = remote.meteredEvents(relayRoute.id, onEvent);
+  }
 
   // Scratch folder: the node agent (system prompt), the investigator, the MCP config and the usage file.
   const scratch = join(scratchBase, `${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
@@ -663,6 +687,7 @@ export async function runCopilotProcess({
     usageFile = join(scratch, 'usage.json');
   } catch (err) {
     cleanup();
+    if (relayRoute) remote.closeModelRoute(relayRoute.id);
     throw new Error(`${bin}: cannot prepare the spawn: ${err.message}`);
   }
 
@@ -674,7 +699,7 @@ export async function runCopilotProcess({
     addDirs: [scratch, ...(readOnly ? [] : [...(addDirs || []), ...(writableDirs || [])])],
     // Off: the user's own Copilot servers, and the project's `.mcp.json` servers Copilot would load itself in a trusted
     // folder, but never a server worca hands it (an approved one of the same name stays on).
-    mcpConfigFile, disableMcp: [...new Set([...userCopilotMcpNames(env), ...projectCopilotMcpNames(cwd).filter((n) => !Object.hasOwn(mcpServers || {}, n))])],
+    mcpConfigFile, disableMcp: [...new Set([...(remote ? [] : userCopilotMcpNames(env)), ...projectCopilotMcpNames(cwd).filter((n) => !Object.hasOwn(mcpServers || {}, n))])],
     // Read-only: no built-in tool at all (the shell and file tools would read the whole checkout's secrets);
     // only the MCP servers it was handed (worca's own read_file/grep/glob behind the secret-path denies).
     availableTools: readOnly ? Object.keys(mcpServers || {}) : undefined,
@@ -699,10 +724,17 @@ export async function runCopilotProcess({
     if (total) storeUsage(usageDir, session, total);
     return total ? diffUsage(total, priorUsage) : null;
   };
+  // Remote: the staged scratch dir (system prompt, MCP config) must not outlive the spawn there. The usage file stays in
+  // the sandbox: the sandbox writes it, so the result's tokens are what the relay measured (meteredEvents).
+  const settleRemote = async () => {
+    if (!remote) return;
+    await remote.removeUploaded(scratch);
+  };
+  const closeRoute = () => { if (relayRoute) { remote.closeEngineRoute(relayRoute.id, onEvent); relayRoute = null; } };
   const res = await superviseSpawn({
-    file: bin, args, displayBin: bin, cwd, env, stdin: String(prompt ?? ''), signal: spawnSignal, asAgent,
+    file: exe, args, displayBin: bin, cwd, env: childEnv, stdin: String(prompt ?? ''), signal: spawnSignal,
     // Copilot writes its usage file into the scratch folder, so an agent user gets it writable.
-    stagedDir: asAgent ? { dir: scratch, writable: true } : null, onEvent,
+    asAgent: remote ? false : asAgent, stagedDir: remote ? scratch : (asAgent ? { dir: scratch, writable: true } : null), onEvent, execEnv: remote,
     cleanup: () => {},
     redactText: redactor ? (t) => redactor.text(t) : null,
     stdoutErrorDetail: () => normalizer.finish().error || '',
@@ -717,9 +749,11 @@ export async function runCopilotProcess({
         }
       }
     },
-  }).catch((err) => {
+  }).catch(async (err) => {
+    await settleRemote();
     settleUsage();
     cleanup();
+    closeRoute();
     const f = normalizer.finish();
     if (capped && !signal?.aborted) throw redacted(Object.assign(new Error(`${bin}: stopped after ${cap} tool calls (the turn cap)`), { turnCap: true }));
     // The session's own error (session.error on stdout) leads, and its class counts too.
@@ -729,17 +763,20 @@ export async function runCopilotProcess({
     }
     throw redacted(err);
   });
+  await settleRemote();
   const delta = settleUsage();
   cleanup();
   const final = normalizer.finish();
-  if (capped && !signal?.aborted) throw redacted(Object.assign(new Error(`${bin}: stopped after ${cap} tool calls (the turn cap)`), { turnCap: true }));
+  if (capped && !signal?.aborted) { closeRoute(); throw redacted(Object.assign(new Error(`${bin}: stopped after ${cap} tool calls (the turn cap)`), { turnCap: true })); }
   if (final.error) {
+    closeRoute();
     const err = new Error(`${bin}: ${final.error}`);
     err.errorClass = classifyCopilotError({ errorType: final.errorType, message: final.error });
     throw redacted(err);
   }
   const out = redactor ? redactor.text(final.text) : final.text;
   safeEmit(onEvent, { type: 'result', text: out, isError: false, sessionId, ...(delta ? { usage: claudeStyleUsage(delta) } : {}) });
+  closeRoute();
   return { text: out, exitCode: res.code };
 }
 

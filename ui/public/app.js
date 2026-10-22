@@ -4893,7 +4893,8 @@ function setRunEngine(engine) {
 }
 
 // The environment a run gets when nobody picks one: the saved default, except a saved remote default on a run
-// no remote backend can take (another engine, a workspace run), which the server runs locally (resolveRunExecEnv).
+// no remote backend can take (an engine no sandbox runs, a workspace run, a Folder project, a run without a project),
+// which the server runs locally (resolveRunExecEnv).
 function runExecEnvDefault() {
   const saved = state.execEnvDefault || 'local';
   if (saved === 'local') return 'local';
@@ -4906,10 +4907,11 @@ function setRunExecEnv(v) {
   state.execEnv = execEnvKnown(v) ? v : 'local';
   if (el.execEnvSelect) el.execEnvSelect.value = state.execEnv;
   const saved = state.execEnvDefault || 'local';
-  const skipped = state.execEnv === 'local' && saved !== 'local' && runExecEnvDefault() === 'local';
+  const why = remoteRefusesDefault({ engine: state.engine, workspace: state.runTarget === 'workspace', workMode: formWorkMode() || 'git' });
+  const skipped = state.execEnv === 'local' && saved !== 'local' && !!why;
   if (el.execEnvHint) {
     el.execEnvHint.hidden = !skipped;
-    if (skipped) el.execEnvHint.textContent = `Runs locally: the saved ${execEnvTitle(saved)} default applies to Claude single-project runs only.`;
+    if (skipped) el.execEnvHint.textContent = `Runs locally: the saved ${execEnvTitle(saved)} default does not apply to ${why}.`;
   }
   keepVisible(document.getElementById('exec-env-row'), state.execEnv !== 'local' || skipped);
   paintExecEnvStatus();
@@ -19298,8 +19300,12 @@ async function paintEngineCardStatus(root) {
   for (const line of root.querySelectorAll('.engine-card .engine-card-status')) {
     const e = list && list.find((x) => x && x.name === line.closest('.engine-card')?.dataset.engine);
     // Say what was checked: the engine's run-start preflight (its CLI is installed and signed in).
-    line.textContent = !e ? '' : !e.ready ? `${e.label} can't start runs yet: ${String(e.reason || 'its check did not answer').replace(/\.$/, '')}.`
+    const base = !e ? '' : !e.ready ? `${e.label} can't start runs yet: ${String(e.reason || 'its check did not answer').replace(/\.$/, '')}.`
       : `${e.label} can start runs: its CLI is installed and signed in.${e.reason ? ` Note: ${String(e.reason).replace(/\.$/, '')}.` : ''}`;
+    // A configured remote backend (GET /api/engines `sandbox`): whether worca can sign this engine's model calls from a
+    // sandbox (the credential stays on the server; the sandbox reaches the model through worca's relay).
+    const box = e?.sandbox ? ` Remote sandbox (${e.sandbox.titles.join(', ')}): ${e.sandbox.ready ? 'worca can sign its model calls from the sandbox.' : `${String(e.sandbox.reason || 'worca cannot sign its model calls').replace(/\.$/, '')}.`}` : '';
+    line.textContent = base + box;
   }
 }
 // The flag flips while the Models page is open: the Engines card gains / loses the interview row. Refetched, since

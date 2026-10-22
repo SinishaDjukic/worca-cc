@@ -722,3 +722,67 @@ test('createByteScrubber: any chunking yields the same scrubbed bytes', () => {
   const none = createByteScrubber([]);
   assert.ok(none.push(Buffer.from('xyz')).equals(Buffer.from('xyz')));
 });
+
+// ── per-route rules (Codex, Copilot and Cursor routes, relay-route.mjs engineModelRoute) ──
+
+test('a route`s own allowlist: its methods and paths only, GET without a body, refusals in its protocol`s shape', POSIX, async (t) => {
+  const up = await stubUpstream(t);
+  const { relay } = await startRelay(t);
+  const { baseUrl } = relay.addRoute(route(up.url, { protocol: 'openai', call: 'an OpenAI Responses call', allow: [['POST', '/responses'], ['GET', '/models']] }));
+  assert.equal((await post(`${baseUrl}/responses`)).status, 200);
+  const g = await fetch(`${baseUrl}/models`);
+  assert.equal(g.status, 200);
+  assert.equal(up.seen.at(-1).method, 'GET'); assert.equal(up.seen.at(-1).body.length, 0);
+  for (const [method, path] of [['POST', '/v1/messages'], ['POST', '/models'], ['DELETE', '/models'], ['GET', '/responses']]) {
+    const r = await fetch(`${baseUrl}${path}`, { method, ...(method === 'POST' ? { body: '{}' } : {}) });
+    assert.equal(r.status, 403, `${method} ${path}`);
+    const j = await r.json();
+    assert.match(j.error.message, new RegExp(`^worca-relay: ${method} ${path} is not an OpenAI Responses call$`));
+    assert.equal(j.error.type, 'permission_error');
+  }
+  assert.deepEqual(up.seen.map((s) => `${s.method} ${s.url}`), ['POST /responses', 'GET /models']);
+  const c = relay.addRoute(route(up.url, { protocol: 'connect', allow: [['POST', /^\/agent\.v1\.AgentService\/RunSSE$/]] }));
+  assert.equal((await post(`${c.baseUrl}/agent.v1.AgentService/RunSSE`)).status, 200, 'a RegExp path');
+  const refused = await post(`${c.baseUrl}/agent.v1.AgentService/Run`);
+  assert.equal(refused.status, 403);
+  assert.deepEqual(Object.keys(await refused.json()), ['code', 'message'], 'a Connect-shaped refusal');
+});
+
+test('a route`s forwarded request headers and kept response headers; the dummy credential never reaches the upstream', POSIX, async (t) => {
+  const up = await stubUpstream(t, (req, res) => { res.writeHead(200, { 'content-type': 'application/json', 'connect-content-encoding': 'identity', 'x-other': '1' }); res.end('{}'); });
+  const { relay } = await startRelay(t);
+  const statuses = [];
+  const { baseUrl } = relay.addRoute(route(up.url, { allow: [['POST', '/x']], forwardHeaders: ['x-initiator'], responseHeaders: ['connect-content-encoding'],
+    extraHeaders: { 'copilot-integration-id': 'copilot-developer-cli' }, onStatus: (s) => statuses.push(s) }));
+  const r = await post(`${baseUrl}/x`, { headers: { 'content-type': 'application/json', 'x-initiator': 'user', 'x-client-machine-id': 'm', 'x-api-key': 'dummy-from-the-sandbox', authorization: 'Bearer dummy-from-the-sandbox' } });
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get('connect-content-encoding'), 'identity');
+  assert.equal(r.headers.get('x-other'), null);
+  const h = up.seen[0].headers;
+  assert.equal(h['x-initiator'], 'user');
+  assert.equal(h['x-client-machine-id'], undefined);
+  assert.equal(h['x-api-key'], undefined);
+  assert.equal(h.authorization, `Bearer ${SECRET}`);
+  assert.equal(h['copilot-integration-id'], 'copilot-developer-cli');
+  assert.deepEqual(statuses, [200]);
+});
+
+test('async auth and upstream: a token worca derives is scrubbed from replies; a failure is a refusal without the secret', POSIX, async (t) => {
+  const DERIVED = 'derived-access-token-0123456789'; const LATER = 'refresh-token-added-later-0123';
+  const up = await stubUpstream(t, (req, res) => { res.writeHead(200, { 'content-type': 'text/plain' }); res.end(`echo ${req.headers.authorization} ${LATER}`); });
+  const { relay } = await startRelay(t);
+  const secrets = [SECRET];
+  const { baseUrl } = relay.addRoute(route(async () => up.url, { allow: [['POST', '/x']], secrets,
+    authHeaders: async () => { await pause(5); secrets.push(LATER); return { authorization: `Bearer ${DERIVED}` }; } }));
+  const r = await post(`${baseUrl}/x`);
+  const text = await r.text();
+  assert.equal(up.seen[0].headers.authorization, `Bearer ${DERIVED}`);
+  assert.equal(text.includes(DERIVED), false, text);
+  assert.equal(text.includes(LATER), false, 'a secret the route added at call time is scrubbed too');
+  const bad = relay.addRoute(route(up.url, { allow: [['POST', '/x']], authHeaders: async () => { throw new Error(`exchange refused for ${SECRET}`); } }));
+  const j = await relayError(await post(`${bad.baseUrl}/x`), 502);
+  assert.match(j.error.message, /^worca-relay: worca could not sign the call: exchange refused for \[removed/);
+  const noHost = relay.addRoute(route(async () => { throw new Error('no Copilot host'); }, { allow: [['POST', '/x']] }));
+  assert.match((await relayError(await post(`${noHost.baseUrl}/x`), 502)).error.message, /no Copilot host/);
+  assert.equal(up.seen.length, 1, 'a failed sign-in never reaches the upstream');
+});

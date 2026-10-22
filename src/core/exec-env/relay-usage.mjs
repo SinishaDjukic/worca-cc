@@ -3,6 +3,7 @@
 // stream-json in a sandbox is the sandbox's word: root there can write any `result` frame (cost, usage, success) to
 // the CLI's stdout. Every model reply passes through worca's half of the relay, so the relay meters the upstream's
 // own `usage` per route (one spawn), and the harness books that instead of the sandbox's figure.
+import { gunzipSync } from 'node:zlib';
 import { estimateCost, liveCostRates, modelCostConfig } from '../config.mjs';
 
 const MAX_JSON = 4 << 20;    // a non-streamed reply bigger than this is not metered (the CLI streams)
@@ -28,21 +29,57 @@ function addInto(total, usage) {
   for (const k of EPHEMERAL) total.cache_creation[k] += count(usage.cache_creation?.[k]);
 }
 
-/** One reply's meter: `push(chunk)` the upstream bytes as they arrive, `end()` once. Reports each finished message
- *  as `commit(model, usage)`. An SSE stream (the CLI's calls) or one JSON message; anything else (count_tokens, a
- *  reply it cannot parse) reports nothing. Never throws. */
-function replyMeter(commit) {
-  const decoder = new TextDecoder();
-  let mode = null; let buf = ''; let skipping = false; let cur = null; let done = false;
+/** Anthropic Messages: SSE frames (message_start, message_delta, message_stop) or one JSON message. */
+function anthropicParser(commit) {
+  let cur = null;
   const finish = () => { if (cur) { commit(cur.model, cur.usage); cur = null; } };
-  const onFrame = (ev) => {
-    if (ev?.type === 'message_start') { finish(); cur = { model: String(ev.message?.model || ''), usage: overlay(emptyUsage(), ev.message?.usage) }; }
-    else if (ev?.type === 'message_delta' && cur) overlay(cur.usage, ev.usage);
-    else if (ev?.type === 'message_stop') finish();
+  return {
+    frame(ev) {
+      if (ev?.type === 'message_start') { finish(); cur = { model: String(ev.message?.model || ''), usage: overlay(emptyUsage(), ev.message?.usage) }; }
+      else if (ev?.type === 'message_delta' && cur) overlay(cur.usage, ev.usage);
+      else if (ev?.type === 'message_stop') finish();
+    },
+    json(m) { if (m?.type === 'message') commit(String(m.model || ''), overlay(emptyUsage(), m.usage)); },
+    end: finish,
   };
+}
+
+/** An OpenAI usage object (Responses: input_tokens/output_tokens; Chat Completions: prompt_tokens/completion_tokens;
+ *  cached reads under *_tokens_details.cached_tokens, which the input count includes) in the result `usage` shape. */
+function openaiUsage(u) {
+  const input = count(u?.input_tokens ?? u?.prompt_tokens);
+  const cached = Math.min(input, count(u?.input_tokens_details?.cached_tokens ?? u?.prompt_tokens_details?.cached_tokens));
+  return { ...emptyUsage(), input_tokens: input - cached, cache_read_input_tokens: cached, output_tokens: count(u?.output_tokens ?? u?.completion_tokens) };
+}
+
+/** OpenAI Responses (codex, copilot): the terminal response.completed / .incomplete / .failed frame carries the usage. */
+function responsesParser(commit) {
+  const take = (r) => { if (r?.usage && typeof r.usage === 'object') commit(String(r.model || ''), openaiUsage(r.usage)); };
+  return {
+    frame(ev) { if (/^response\.(completed|incomplete|failed)$/.test(String(ev?.type || ''))) take(ev.response); },
+    json(m) { if (m?.object === 'response') take(m); },
+    end() {},
+  };
+}
+
+/** OpenAI Chat Completions (copilot): the usage rides the last chunk (or the one JSON completion). */
+function chatParser(commit) {
+  let last = null;
+  return {
+    frame(ev) { if (ev?.usage && typeof ev.usage === 'object') last = { model: String(ev.model || ''), usage: openaiUsage(ev.usage) }; },
+    json(m) { if (m?.object === 'chat.completion' && m.usage) commit(String(m.model || ''), openaiUsage(m.usage)); },
+    end() { if (last) { commit(last.model, last.usage); last = null; } },
+  };
+}
+
+/** One text reply's meter for `parser`: `push(chunk)` the upstream bytes as they arrive, `end()` once. An SSE stream
+ *  (the CLIs' calls) or one JSON body; anything else (count_tokens, a reply it cannot parse) reports nothing. Never throws. */
+function textMeter(parser) {
+  const decoder = new TextDecoder();
+  let mode = null; let buf = ''; let skipping = false; let done = false;
   const onLine = (line) => {
     if (!line.startsWith('data:')) return;
-    try { onFrame(JSON.parse(line.slice(5))); } catch { /* not a JSON frame */ }
+    try { parser.frame(JSON.parse(line.slice(5))); } catch { /* not a JSON frame ([DONE]) */ }
   };
   const take = (text, final) => {
     if (mode === null) {
@@ -53,9 +90,7 @@ function replyMeter(commit) {
     if (mode === 'json') {
       buf += text;
       if (buf.length > MAX_JSON) { done = true; buf = ''; return; }
-      if (final) {
-        try { const m = JSON.parse(buf); if (m?.type === 'message') commit(String(m.model || ''), overlay(emptyUsage(), m.usage)); } catch { /* not one message */ }
-      }
+      if (final) { try { parser.json(JSON.parse(buf)); } catch { /* not one message */ } }
       return;
     }
     buf += text;
@@ -66,7 +101,7 @@ function replyMeter(commit) {
       onLine(line);
     }
     if (buf.length > MAX_LINE) { buf = ''; skipping = true; }
-    if (final) { if (!skipping) onLine(buf); buf = ''; finish(); }
+    if (final) { if (!skipping) onLine(buf); buf = ''; parser.end(); }
   };
   return {
     push(chunk) { if (!done) { try { take(decoder.decode(chunk, { stream: true }), false); } catch { done = true; } } },
@@ -74,8 +109,87 @@ function replyMeter(commit) {
   };
 }
 
+// ── Cursor (Connect over HTTP/1.1) ──
+// A streamed reply is a run of envelopes: 1 flag byte (bit 0 compressed, bit 1 end of stream), a 4-byte big-endian
+// length, then the message. agent.v1.AgentService/RunSSE sends AgentServerMessage protos; a turn's usage is
+// interaction_update (field 1) → turn_ended (field 14) → input (1), output (2), cache read (3), cache write (4).
+
+/** The fields of one protobuf message: [field number, wire type, value (a number, or a Buffer for LEN)]. Throws on a
+ *  malformed message. */
+function protoFields(buf) {
+  const out = []; let i = 0;
+  const varint = () => {
+    let n = 0; let mul = 1;
+    for (let k = 0; k < 10; k++) {
+      if (i >= buf.length) throw new Error('truncated');
+      const b = buf[i++]; n += (b & 0x7f) * mul; mul *= 128;
+      if (!(b & 0x80)) return n;
+    }
+    throw new Error('varint too long');
+  };
+  while (i < buf.length) {
+    const key = varint(); const no = Math.floor(key / 8); const wt = key & 7;
+    if (wt === 0) out.push([no, wt, varint()]);
+    else if (wt === 1) { i += 8; out.push([no, wt, null]); }
+    else if (wt === 5) { i += 4; out.push([no, wt, null]); }
+    else if (wt === 2) { const len = varint(); if (i + len > buf.length) throw new Error('truncated'); out.push([no, wt, buf.subarray(i, i + len)]); i += len; }
+    else throw new Error('unsupported wire type');
+    if (i > buf.length) throw new Error('truncated');
+  }
+  return out;
+}
+const protoMessage = (fields, no) => fields.find(([n, wt]) => n === no && wt === 2)?.[2] ?? null;
+const protoNumber = (fields, no) => { const f = fields.find(([n, wt]) => n === no && wt === 0); return f ? count(f[2]) : 0; };
+
+/** The usage of an AgentServerMessage that ends a turn, or null. */
+export function cursorTurnUsage(msg) {
+  try {
+    const update = protoMessage(protoFields(msg), 1);
+    const ended = update && protoMessage(protoFields(update), 14);
+    if (!ended) return null;
+    const f = protoFields(ended);
+    return { ...emptyUsage(), input_tokens: protoNumber(f, 1), output_tokens: protoNumber(f, 2),
+      cache_read_input_tokens: protoNumber(f, 3), cache_creation_input_tokens: protoNumber(f, 4) };
+  } catch { return null; }
+}
+
+function connectMeter(commit) {
+  let buf = Buffer.alloc(0); let done = false;
+  return {
+    push(chunk) {
+      if (done) return;
+      buf = buf.length ? Buffer.concat([buf, chunk]) : Buffer.from(chunk);
+      while (buf.length >= 5) {
+        const flag = buf[0]; const len = buf.readUInt32BE(1);
+        if (len > MAX_JSON) { done = true; buf = Buffer.alloc(0); return; }   // not metered: no usage message is this big
+        if (buf.length < 5 + len) return;
+        let msg = buf.subarray(5, 5 + len); buf = buf.subarray(5 + len);
+        if (flag & 2) continue;                       // end of stream: the JSON trailer
+        if (flag & 1) { try { msg = gunzipSync(msg, { maxOutputLength: MAX_JSON }); } catch { continue; } }
+        const usage = cursorTurnUsage(msg);
+        if (usage) commit('', usage);                 // the reply names no model: the dispatched one prices it
+      }
+    },
+    end() { done = true; buf = Buffer.alloc(0); },
+  };
+}
+
+const NOT_METERED = Object.freeze({ push() {}, end() {} });
+const CURSOR_TURN_PATH = '/agent.v1.AgentService/RunSSE';
+
+/** The meter for one reply on `pathname`: by the call's API. Anthropic Messages when the path names no other API (a
+ *  Claude route; count_tokens reports nothing). Other Connect calls (Cursor's dashboard and model lists) report nothing. */
+function replyMeter(pathname, commit) {
+  const p = String(pathname || '');
+  if (p.endsWith('/responses')) return textMeter(responsesParser(commit));
+  if (p.endsWith('/chat/completions')) return textMeter(chatParser(commit));
+  if (p === CURSOR_TURN_PATH) return connectMeter(commit);
+  if (/^\/[a-z0-9]+\.v\d+\./i.test(p)) return NOT_METERED;
+  return textMeter(anthropicParser(commit));
+}
+
 /**
- * The meter of one route: `reply()` makes the per-reply meter the relay feeds (model-relay.mjs route.meter), and
+ * The meter of one route: `reply(pathname)` makes the per-reply meter the relay feeds (model-relay.mjs route.meter), and
  * `take()` hands over what finished since the last take: `{ messages, byModel: { <model>: usage } }`. A message is
  * counted when it ends (message_stop, or its reply ends): a reply still streaming at a take is in the next one.
  */
@@ -86,7 +200,7 @@ export function createRouteMeter() {
     addInto(pending.byModel[model] ||= emptyUsage(), usage);
   };
   return {
-    reply: () => replyMeter(commit),
+    reply: (pathname = '') => replyMeter(pathname, commit),
     take() { const out = pending; pending = { messages: 0, byModel: {} }; return out; },
   };
 }

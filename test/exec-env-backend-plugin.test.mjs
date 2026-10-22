@@ -132,10 +132,48 @@ test('a lost box fails the run cleanly through the generic classifyError', POSIX
   assert.match(r.error, /Loopback box lb\d+ is gone/);
 });
 
-test('the generic guards apply to a second backend: workspace runs and other engines are refused at start', () => {
-  // mirrors exec-env-pipeline.test.mjs's preflight test (the e2b version); the loopback preflight itself returns no errors
+test('the generic guards apply to a second backend: workspace runs are refused at start; every remote engine passes', () => {
   const mk = (o) => createOrchestrator({ projectDir: freshRepo(), prompt: 'x', claude: { mock: true, ...(o.claude || {}) }, execEnv: 'loopback', ...o });
-  assert.match(mk({ claude: { engine: 'codex' } }).execEnvStartRefusal(), /^Loopback execution cannot start: Loopback execution runs the claude engine only \(this run uses codex\): Codex runs locally only for now/);
+  for (const engine of ['codex', 'copilot', 'cursor']) assert.equal(mk({ claude: { engine } }).execEnvStartRefusal(), null, engine);
+  assert.match(mk({ claude: { engine: 'gemini' } }).execEnvStartRefusal(), /^Loopback execution cannot start: Loopback execution runs the claude, codex, copilot and cursor engines only \(this run uses gemini\): Gemini CLI runs locally only for now/);
   assert.match(wsOrch('loopback').execEnvStartRefusal(), /Loopback execution runs single-project runs only/);
   assert.equal(mk({}).execEnvStartRefusal(), null);
+});
+
+test('a remote run checks this machine`s CLI only for helper jobs that run on it, and a failure warns instead of refusing', async () => {
+  // A nonexistent bin: a check that should not run fails loudly here, and never starts this machine's real CLI.
+  const mk = (execEnv, engine = 'codex') => createOrchestrator({ projectDir: freshRepo(), prompt: 'x', execEnv,
+    claude: { engine, bin: `/nonexistent/worca-test/${engine}` } });
+  await assert.rejects(mk('local')._engineChecks(() => true), /codex/);
+  const warnings = async (orch, opts) => {
+    const logs = []; orch.on('log', (e) => logs.push(e));
+    assert.equal(await orch._engineChecks(() => true, opts), null, 'never refused');
+    return logs.filter((l) => l.level === 'warn').map((l) => l.text);
+  };
+  // Codex and Copilot keep their helper jobs on the run engine (helperEngineFor), and those run this machine's CLI.
+  for (const engine of ['codex', 'copilot']) {
+    const w = await warnings(mk('loopback', engine));
+    assert.equal(w.length, 1, `${engine}: ${JSON.stringify(w)}`);
+    assert.match(w[0], new RegExp(`^engine ${engine}: cannot run /nonexistent/worca-test/${engine} \\(ENOENT\\).*`
+      + `the title, overview, PR description, Auto classifier and Away decider jobs run on this machine's ${engine}`));
+  }
+  // The server's early check is quiet: run() checks again and warns then.
+  assert.deepEqual(await warnings(mk('loopback'), { quiet: true }), []);
+  // Cursor hands its helper jobs to Claude: this machine's cursor-agent is not involved at all.
+  assert.deepEqual(await warnings(mk('loopback', 'cursor')), []);
+});
+
+test('Cursor`s engine files are not overlaid at sandbox start, and stay out of syncExcludes (a tracked one must sync)', () => {
+  const orch = createOrchestrator({ projectDir: freshRepo(), prompt: 'x', claude: { mock: true }, execEnv: 'loopback' });
+  const key = orch.members[0].projectKey;
+  orch.pipeline = { id: 'abcd1234', dir: tmp('worca-pipe-') };
+  orch.injectedPaths = { [key]: [{ path: '.cursor/cli.json', kind: 'engineConfig' }, { path: '.cursor/mcp.json', kind: 'engineConfig' },
+    { path: 'CLAUDE.md', kind: 'claudeMdSection' }, { path: '.claude/rules/worca', kind: 'memory' }] };
+  const opts = orch._execEnvOpts({}, { name: 'tpl', rebuild: null });
+  // Today's value: the sandbox clone's info/exclude line (syncEngineFiles) keeps worca's own files out of the patch; a
+  // syncExcludes entry would also drop an agent's edit to a .cursor/mcp.json the project tracks (Step 4's test).
+  assert.deepEqual(opts.syncExcludes, ['.claude/rules/worca']);
+  // Not overlaid at start: syncEngineFiles is the only thing that puts (and removes) them in the sandbox, so an
+  // upload at start never bypasses its record and its exclude lines.
+  assert.deepEqual(opts.injected, ['CLAUDE.md', '.claude/rules/worca']);
 });

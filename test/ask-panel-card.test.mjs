@@ -1305,11 +1305,11 @@ test('ask-panel-card: the Runs in field — Default sends none, a proposed envir
       assert.equal(rec.runBodies.length, 1);
       assert.equal('execEnv' in rec.runBodies[0], false);
     } },
-    { name: 'a saved E2B default on another engine reads as Local, as the run start resolves it', run: async () => {
+    { name: 'a saved E2B default on codex reads as E2B sandbox (default)', run: async () => {
       const rec = { execEnv: 'e2b', runEngine: 'codex' };
       const ctx = await openWithCard(PROJECT_CARD, rec);
       for (let i = 0; i < 10; i++) await ctx.tick();
-      assert.equal(ctx.doc.querySelector('.ask-card-exec-env').options[0].textContent, 'Local (default)');
+      assert.equal(ctx.doc.querySelector('.ask-card-exec-env').options[0].textContent, 'E2B sandbox (default)');
     } },
     { name: 'a proposed environment is preselected, stays visible at every mode and is sent', run: async () => {
       const rec = {};

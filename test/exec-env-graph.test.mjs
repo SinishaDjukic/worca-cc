@@ -78,7 +78,7 @@ test('a remote run spawns no host graphify and gives no instruction until the sa
   await withPath(graphifyPath(`touch "${marker}"`), () => orch._buildWorktreeGraph());
   assert.equal(existsSync(marker), false, 'graphify never ran on the host');
   assert.equal(orch.toolInstruction, '');
-  assert.equal(orch._execEnvOpts({}, 'worca-agent').injected.includes('graphify-out'), false, 'nothing to upload');
+  assert.equal(orch._execEnvOpts({}, { name: 'worca-agent', rebuild: null }).injected.includes('graphify-out'), false, 'nothing to upload');
 });
 
 test('_buildSandboxGraph: success sets the instruction and logs the time; a failure warns and leaves none', async () => {

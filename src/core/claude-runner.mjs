@@ -221,7 +221,7 @@ export async function runClaude(o = {}) {
     throw err;
   }
 
-  // BEFORE getEngine: it returns the mock adapter for any name when mock is on.
+  // BEFORE getEngine, so a mock run is gated with the same words.
   const engineRefusal = execEnv?.remote ? remoteEngineRefusal(execEnv.title || 'Remote', engineName) : null;
   if (engineRefusal) throw new Error(engineRefusal);
   const engine = getEngine(engineName || 'claude', { mock: mockEnabled(o) });

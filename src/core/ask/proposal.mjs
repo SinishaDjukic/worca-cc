@@ -74,7 +74,7 @@ export const PROPOSAL_ERRORS = Object.freeze({
   unknownGuardrails: (id) => `unknown guardrailsId "${id}"`,
   unknownExecEnv: (v) => `unknown execEnv "${v}" — one of ${execEnvNames().join(', ')}, or omit it for the default`,
   // The run start refuses the same (run-harness execEnvStartRefusal): say so before the user presses Start.
-  execEnvRefused: (name, why) => `execEnv "${name}": ${execEnvLabelOf(name)} runs Claude single-project runs only, not ${why} — omit execEnv or give "local"`,
+  execEnvRefused: (name, why) => `execEnv "${name}": ${execEnvLabelOf(name)} cannot take ${why} — omit execEnv or give "local"`,
   permissive: 'guardrailsId "permissive" is not allowed for proposed runs — use "normal" or a stricter set',
   briefRequired: 'brief is required',
   briefAndSource: 'give brief OR source, not both — with a task source the run reads the task itself; put what you learned in the note',
@@ -424,8 +424,9 @@ export function createProposalValidator({
     }
 
     // ── execution environment: only when named; omitted, /api/run resolves the run.execEnv default ──
-    // A remote one takes what the run start takes (resolveRunExecEnv's rule): Claude, one project. The backend's own
-    // readiness (its key, its template) is the start's to check: the chat's MCP child never holds its credentials.
+    // A remote one takes what the run start takes (resolveRunExecEnv's rule): one git project, on an engine a sandbox
+    // runs. The backend's own readiness (its key, its template) is the start's to check: the chat's MCP child never
+    // holds its credentials.
     let execEnv = null;
     if (inp.execEnv !== undefined && inp.execEnv !== null && inp.execEnv !== '') {
       const x = typeof inp.execEnv === 'string' ? inp.execEnv.trim().toLowerCase() : '';

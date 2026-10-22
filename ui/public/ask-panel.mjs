@@ -3602,7 +3602,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
   const laneEffective = (lane, row) => ({ ...row, ...(lane.edits[row.nodeId] || {}) });
   /** Where the card's run executes with "Default" picked: the saved run.execEnv, except a saved remote default on a run
-   *  no remote backend takes (another engine, a workspace run), which the server runs locally (resolveRunExecEnv). */
+   *  no remote backend takes (an engine no sandbox runs, a workspace run), which the server runs locally (resolveRunExecEnv). */
   function cardExecEnvDefault(lane, local) {
     const saved = lane && execEnvKnown(lane.savedExecEnv) ? lane.savedExecEnv : 'local';
     if (saved === 'local') return 'local';

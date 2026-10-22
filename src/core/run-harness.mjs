@@ -3577,6 +3577,8 @@ export class RunHarness extends EventEmitter {
    * which spawns nothing; then the DENY rules of each honoring member's own
    * `.claude/settings.json` (run-context.mjs#discoverProjectSettings, the file Claude
    * Code reads itself). A preflight refusal throws. Returns the merged deny rules, or null.
+   * A codex run also keeps whether it needs codex's sign-in (`_codexSignIn`), which the sync
+   * remote preflight (_execEnvPreflight) reads.
    * @param {(member:object)=>boolean} honors whether a member's project settings are honored
    * @param {{quiet?:boolean, guardrails?:object}} [opts] quiet: skip the preflight's warning line (a
    *   check made before the run exists; run() checks again and warns then); guardrails: the run's set, whose env
@@ -3587,13 +3589,21 @@ export class RunHarness extends EventEmitter {
     const name = this.claude.engine || 'claude';
     if (name === 'claude') return null;
     const adapter = getEngine(name);
-    if (!this.claude.mock && typeof adapter.preflight === 'function') {
-      const r = await adapter.preflight({ ...(this.claude.bin ? { bin: this.claude.bin } : {}),
-        ...(name === 'codex' ? { signIn: await this._codexNeedsSignIn() } : {}),
+    if (!this.claude.mock && name === 'codex') this._codexSignIn = await this._codexNeedsSignIn();
+    // A remote run's agents run the sandbox template's own pinned CLI, whose model calls worca's relay signs with the
+    // server's credential: the backend's preflight checks that credential (e2bPreflight → engineCredential). Its helper jobs still run this machine's CLI when
+    // they stay on the run engine (helperEngineFor: codex, copilot), so that CLI is checked too, and its failure warns,
+    // naming those jobs: the agents do not need it.
+    const remote = this._execBackend;
+    if (!this.claude.mock && (!remote || helperEngineFor(name) === name) && typeof adapter.preflight === 'function') {
+      const r = await adapter.preflight({ ...(this.claude.bin ? { bin: this.claude.bin } : {}), ...(name === 'codex' ? { signIn: this._codexSignIn } : {}),
         ...(name === 'opencode' ? { defaultModel: await this._opencodeOnDefaultModel(), envScrub: !!guardrails?.envScrub,
           envAllowlist: guardrails?.envScrub ? guardrails.envAllowlist : undefined } : {}) });
-      if (r?.refusal) throw engineRefusal(name, r.refusal);
-      if (r?.warning && !quiet) this._log('orchestrator', 'warn', `engine ${name}: ${r.warning}`);
+      if (r?.refusal && !remote) throw engineRefusal(name, r.refusal);
+      const why = r?.refusal || r?.warning;
+      if (why && !quiet) {
+        this._log('orchestrator', 'warn', `engine ${name}: ${why}${remote ? `. The agents run the ${remote.label}'s own ${name}, but the title, overview, PR description, Auto classifier and Away decider jobs run on this machine's ${name}: they fail until it works here.` : ''}`);
+      }
     }
     let rules = null;
     for (const m of this.members) {
@@ -8573,7 +8583,10 @@ export class RunHarness extends EventEmitter {
     const ctx = { engine: this.claude.engine, isWorkspace: this.isWorkspace, workMode: this.workMode,
       mock: mockEnabled({ mock: this.claude.mock }), brokerOn: brokerEnabled(),
       // this.runRootMode is set only at _setupRunRoot, after the gate; until then the setting decides.
-      runRootMode: this.runRootMode || runRootMode() };
+      runRootMode: this.runRootMode || runRootMode(),
+      // Set by the gate's async half (_engineChecks), which every start and resume path runs first; until then
+      // (undefined) the backend asks for the sign-in.
+      needsSignIn: this._codexSignIn };
     const own = b.preflight(ctx);
     return { errors: [...new Set([...remotePreflight({ title: b.title, ...ctx }), ...own.errors])], warnings: own.warnings };
   }
@@ -8624,18 +8637,24 @@ export class RunHarness extends EventEmitter {
     await this._buildSandboxGraph();
     await this._persist(); this._emit('state', this.getState());
   }
-  /** `target`: resolveRunEnvironment's pick for a new sandbox; null on a reconnect (the record names it). */
+  /** `target`: resolveRunEnvironment's { name, buildId, rebuild }; a reconnect starts nothing, so it has no name or build. */
   _execEnvOpts(client, target) {
     const m = this.members[0];
     const paths = artifactPaths(this.projectDir, this.workspaceKey);
     const entries = this.injectedPaths?.[m.projectKey] || [];
-    return { backend: this._execBackend, client, environment: target?.name ?? null, environmentBuild: target?.buildId ?? null, worktreeDir: this.workDirs.get(m.projectKey), pipelineDir: this.pipeline.dir,
+    return { backend: this._execBackend, client, environment: target?.name ?? null, environmentBuild: target?.buildId ?? null,
+      rebuildHint: target?.rebuild,
+      worktreeDir: this.workDirs.get(m.projectKey), pipelineDir: this.pipeline.dir,
       storeRoots: [paths.plans, paths.reviews], mcpConfigPath: this.mcpConfigPath,
-      // §8.8 injected paths (memory mount, skills, engine config); the code graph is built in the sandbox instead
-      injected: entries.map((e) => e.path).filter(Boolean),
+      // §8.8 injected paths (memory mount, skills); the code graph is built in the sandbox instead. Engine config files
+      // (Cursor's .cursor/*.json) are not overlaid at start: the adapter mirrors them per spawn (syncEngineFiles), which
+      // also removes the ones it no longer writes and hides them from the sandbox clone's git.
+      injected: entries.filter((e) => e.kind !== 'engineConfig').map((e) => e.path).filter(Boolean),
       // Re-uploaded when the host changes them mid-run: the memory rules mount (refreshMount), self-ignoring.
       refreshPaths: entries.filter((e) => e.kind === MEMORY_INJECTED_ENTRY.kind).map((e) => e.path),
-      // Kept out of the sync tree: the same entries _excludePathspecs keeps out of the host's staging.
+      // Kept out of the sync tree: the same entries _excludePathspecs keeps out of the host's staging. Not Cursor's
+      // engine files: syncEngineFiles' info/exclude line keeps worca's own out of the patch, and a .cursor file the
+      // project tracks (registered on every Cursor run) must still bring the agent's edits home.
       syncExcludes: entries.filter((e) => e?.path && e.kind !== 'claudeMdSection' && e.kind !== 'engineConfig').map((e) => e.path),
       // The run-root CLAUDE.md sits above the worktree; Claude Code loads it from a parent dir.
       supportFiles: [...SCRIPT_SUPPORT_FILES, ...(this.runRoot ? [join(this.runRoot, 'CLAUDE.md')] : [])],
@@ -8721,7 +8740,8 @@ export class RunHarness extends EventEmitter {
     if (!record?.sandboxId) { await this._startExecEnv(); return; }   // paused before the sandbox existed
     const client = await this._openExecClient();
     this._execEnvRelease = await acquireSandboxSlot({ pool: b.name, cap: this._execEnvLimit('maxConcurrent'), force: true });
-    try { this.execEnv = await RemoteExecEnv.reconnect(record, this._execEnvOpts(client, null)); }
+    const { rebuild } = resolveRunEnvironment(b, this.members[0].projectKey);
+    try { this.execEnv = await RemoteExecEnv.reconnect(record, this._execEnvOpts(client, { name: null, rebuild })); }
     catch (err) {
       this._releaseExecEnvSlot();
       if (err?.sandboxGone) {

@@ -132,14 +132,17 @@ test('local mode is unchanged: no outcome key, no sandbox, no resume-point key',
   if (row.resume_point) assert.equal(Object.hasOwn(JSON.parse(row.resume_point), 'execEnv'), false);
 });
 
-test('CLI: an e2b run on another engine is refused before anything is created (non-zero exit)', POSIX, () => {
+test('CLI: an e2b run the remote layer cannot take is refused before anything is created (non-zero exit)', POSIX, () => {
   const repo = freshRepo();
   const before = getDb().prepare('SELECT COUNT(*) AS n FROM pipelines').get().n;
-  const r = spawnSync(process.execPath, [CLI, '--project', repo, '--prompt', 'demo task', '--yes', '--engine', 'codex', '--exec-env', 'e2b'],
-    { env: { ...process.env, WORCA_HOME: home, WORCA_MOCK: '1', HOME: userHome, USERPROFILE: userHome }, encoding: 'utf8' });
+  // WORCA_MOCK alone leaves claude.mock off, so the gate checks the helper jobs' codex on this machine: never the real one.
+  // Permissive guardrails: codex cannot enforce the default set's rules, and that refusal would come first.
+  const r = spawnSync(process.execPath, [CLI, '--project', repo, '--prompt', 'demo task', '--yes', '--engine', 'codex', '--exec-env', 'e2b',
+    '--guardrails', 'permissive'],
+    { env: { ...process.env, WORCA_HOME: home, WORCA_MOCK: '1', WORCA_RUN_ROOT: 'legacy', HOME: userHome, USERPROFILE: userHome,
+      WORCA_CODEX_BIN: '/nonexistent/worca-test/codex' }, encoding: 'utf8' });
   assert.notEqual(r.status, 0, r.stdout);
-  // The engine gate may refuse codex first here (not signed in); the e2b refusal itself is asserted in-process below.
-  assert.match(r.stdout + r.stderr, /claude engine only|engine codex/);
+  assert.match(r.stdout + r.stderr, /detached run-root mode/);
   assert.equal(getDb().prepare('SELECT COUNT(*) AS n FROM pipelines').get().n, before, 'a launch error: no pipeline row');
 });
 
@@ -301,10 +304,10 @@ test('capacity queue: the run waits for a slot with execEnvWaiting, then runs; a
   assert.equal(orch.getState().execEnvWaiting, undefined);
 }));
 
-test('preflight refusals: codex, a workspace run, the legacy run-root mode; a plain mock project run passes', POSIX, async () => {
+test('preflight refusals: a workspace run, the legacy run-root mode; a plain mock project run passes', POSIX, async () => {
   const repo = freshRepo();
   const mk = (o) => createOrchestrator({ projectDir: repo, prompt: 'x', claude: { mock: true, ...(o.claude || {}) }, execEnv: 'e2b', ...o });
-  assert.match(mk({ claude: { mock: true, engine: 'codex' } }).execEnvStartRefusal(), /claude engine only/);
+  assert.equal(mk({ claude: { mock: true, engine: 'codex' } }).execEnvStartRefusal(), null);
   const ws = createOrchestrator({ prompt: 'x', claude: { mock: true }, execEnv: 'e2b',
     workspace: { id: 'wks-a-12345678', key: 'wks-a-12345678', name: 'A', projects: [
       { projectDir: repo, projectKey: 'r1', projectName: 'r1', branch: { source: 'main' } },
@@ -575,3 +578,17 @@ test('a Bedrock model is refused for a remote run', POSIX, (t) => withRealClaude
   assert.equal(sdk.events.some((e) => e.type === 'command' && e.cmd.startsWith("'claude'")), false, 'claude never started');
   assert.equal(env.relay.routes.size, 0);
 }));
+test('a codex run executes its agents in the e2b sandbox (mock): one sandbox, every spawn recorded there', POSIX, async () => {
+  const fake = useFake();
+  const from = mockSpawnLog.length;
+  const orch = createOrchestrator({ projectDir: freshRepo(), workflowId: await askingWorkflow(), prompt: 'codex in e2b',
+    claude: { mock: true, engine: 'codex', allowUnguardedEngine: true }, execEnv: 'e2b' });
+  answerAll(orch);
+  const r = await orch.run();
+  assert.equal(r.status, 'done', r.error);
+  const sandboxId = ofType(fake, 'create')[0].sandboxId;
+  const spawns = mockSpawnLog.slice(from).filter((s) => s.execEnv === sandboxId);
+  assert.ok(spawns.length >= 2, JSON.stringify(spawns));
+  assert.ok(spawns.every((s) => s.engine === 'codex'));
+  assert.equal(ofType(fake, 'create').length, 1);
+});

@@ -2,10 +2,12 @@
 // Pure policy for the e2b execution environment: connection, preflight, request timeouts. No SDK
 // import here (./e2b-sdk.mjs loads it lazily). The backend-neutral policy lives in ./policy.mjs;
 // its names are re-exported here so existing imports keep working.
-import { modelCredential, redactKey, remotePreflight } from './policy.mjs';
+import { engineCredential, redactKey, remotePreflight } from './policy.mjs';
+import { REMOTE_ENGINES } from '../../shared/exec-env.mjs';
 import { goesDirect, parseNoProxy } from '../upstream-proxy.mjs';
 export { SANDBOX_TIMEOUT_MS, HEARTBEAT_MS, AGENT_COMMAND_TIMEOUT_MS, SHELL_COMMAND_TIMEOUT_MS, redactKey,
-  modelCredential, MODEL_CREDENTIAL_KEYS, sandboxEnv, isLoopbackHost, sandboxMcpConfig, instanceTag } from './policy.mjs';
+  modelCredential, MODEL_CREDENTIAL_KEYS, sandboxEnv, isLoopbackHost, sandboxMcpConfig, instanceTag,
+  engineCredential, engineSandbox, ENGINE_SANDBOX, FINE_GRAINED_PAT_RE, isLoopbackUrl } from './policy.mjs';
 
 export const E2B_SDK_VERSION = '2.56.0';
 export const E2B_DEFAULT_TEMPLATE = 'worca-agent';
@@ -51,15 +53,22 @@ const verAtLeast = (v, min) => {
   return true;
 };
 
-/** Run-start checks for an e2b run. Sync (the server's 409 path calls it). */
+/** Run-start checks for an e2b run. Sync (the server's 409 path calls it). The credential the relay signs the run
+ *  engine's calls with (policy.mjs engineCredential) must be in the server's env; `needsSignIn: false` skips it (a codex
+ *  run whose every model is on its own endpoint, which carries its own key: the harness's _codexNeedsSignIn). */
 export function e2bPreflight({ engine, isWorkspace, workMode = 'git', mock = false, env = process.env, platform = process.platform,
-  nodeVersion = process.versions.node, sdkInstalled = () => true, brokerOn = false, runRootMode = 'detached' } = {}) {
+  nodeVersion = process.versions.node, sdkInstalled = () => true, brokerOn = false, runRootMode = 'detached', needsSignIn = true } = {}) {
   const errors = remotePreflight({ title: 'E2B', engine, isWorkspace, workMode, runRootMode, platform }); const warnings = [];
+  const name = engine || 'claude';
   if (!mock) {
     if (!env.E2B_API_KEY) errors.push("E2B_API_KEY is not set in the worca server's environment.");
     if (String(env.E2B_DEBUG || '').toLowerCase() === 'true') errors.push('E2B_DEBUG=true makes the e2b SDK fake every sandbox; unset it.');
-    // The credential never enters the sandbox: the model relay adds it on the server. With the broker on, the broker holds the keys.
-    if (!brokerOn && !modelCredential(env)) errors.push("Neither CLAUDE_CODE_OAUTH_TOKEN nor ANTHROPIC_API_KEY is set in the worca server's environment; it stays on the server and signs the sandbox's model calls.");
+    // The credential never enters the sandbox: the model relay adds it on the server. With the broker on, the broker
+    // holds Claude's keys (and the run start refuses the other engines).
+    if (needsSignIn && REMOTE_ENGINES.includes(name) && !(name === 'claude' && brokerOn)) {
+      const cred = engineCredential(name, env);
+      if (cred.problem) errors.push(cred.problem);
+    }
     if (!verAtLeast(nodeVersion, MIN_NODE_FOR_E2B)) errors.push(`The e2b SDK needs Node 22.19 or newer (this server runs ${nodeVersion}).`);
     else if (!sdkInstalled()) errors.push(`The optional "e2b" package is not installed. Run: npm install e2b@${E2B_SDK_VERSION} (in the worca install directory).`);
     // E2B Cloud is a deliberate choice: the run's code and history leave this machine for a third party (docs/e2b.md).

@@ -545,7 +545,7 @@ export function createAskTools(deps) {
           description: 'run tags for cost allocation, always "key:value" (client:acme, team:web). Only when the user names them.' },
         memoryScope: SCHEMA.s('Memory defragment workflow only: "global" | "project"'),
         engine: SCHEMA.s('claude | codex | copilot | cursor | gemini | goose | opencode | qwen — only when the user asked for that engine; omit for the default. Every engine but claude is beta: never pick one on your own'),
-        execEnv: SCHEMA.s('local | e2b — where the run\'s agents and scripts execute; e2b runs them in one remote sandbox per run while commits, pushes and PRs stay on this machine, and needs the Claude engine and a project target. Only when the user asks for it; omit for the default'),
+        execEnv: SCHEMA.s('local | e2b — where the run\'s agents and scripts execute; e2b runs them in one remote sandbox per run while commits, pushes and PRs stay on this machine, and needs a project target (one git project)' + (deps.remoteEngines?.length ? ` on the ${deps.remoteEngines.length > 1 ? `${deps.remoteEngines.slice(0, -1).join(', ')} or ${deps.remoteEngines.at(-1)}` : deps.remoteEngines[0]} engine` : '') + '. Only when the user asks for it; omit for the default'),
         sourceBranch: SCHEMA.s('branch to start from (default: current)'), featureBranch: SCHEMA.s('feature branch name'),
         sameAsSource: SCHEMA.b('commit straight onto the source branch instead of a separate feature branch: the run fast-forwards the source to its work when it finishes. Only when the user asks for it.'),
         note: SCHEMA.s('one line shown on the card: why this workflow fits the work (≤ 200 chars)'),

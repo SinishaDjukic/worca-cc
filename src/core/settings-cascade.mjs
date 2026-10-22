@@ -257,8 +257,8 @@ export function resolveRunEngine({ explicit = null, projectDir = null, projectKe
   return { engine: result.value, source: result.source };
 }
 /** Where a run executes (plans/e2b-execution-design.md §12): local | a registered backend. A SAVED remote
- *  default does not apply to a run no remote backend can take (a workspace run, an engine other than Claude)
- *  or that its backend refuses: that run stays local, and `fallback` says why. Only an explicit per-run
+ *  default does not apply to a run no remote backend can take (a workspace run, a Folder project, a run without a
+ *  project, an engine no sandbox runs) or that its backend refuses: that run stays local, and `fallback` says why. Only an explicit per-run
  *  backend is refused at the start. */
 export function resolveRunExecEnv({ explicit = null, projectDir = null, projectKey = null, workspace = false, engine = null, workMode = 'git' } = {}) {
   if (typeof explicit === 'string' && explicit.trim()) return { execEnv: explicit.trim(), source: 'run' };

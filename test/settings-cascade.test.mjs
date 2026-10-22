@@ -199,8 +199,9 @@ test('run.execEnv: user default, project override, the run wins, an invalid stor
   // A saved e2b default does not reach a run e2b cannot take: it stays local and says why.
   assert.deepEqual(resolveRunExecEnv({ workspace: true }),
     { execEnv: 'local', source: 'user', fallback: 'the saved E2B default does not apply to a workspace run; it runs locally' });
-  assert.deepEqual(resolveRunExecEnv({ projectDir: dir, engine: 'codex' }),
-    { execEnv: 'local', source: 'user', fallback: 'the saved E2B default does not apply to the codex engine; it runs locally' });
+  assert.deepEqual(resolveRunExecEnv({ projectDir: dir, engine: 'codex' }), { execEnv: 'e2b', source: 'user' });
+  assert.deepEqual(resolveRunExecEnv({ projectDir: dir, engine: 'gemini' }),
+    { execEnv: 'local', source: 'user', fallback: 'the saved E2B default does not apply to the gemini engine; it runs locally' });
   assert.deepEqual(resolveRunExecEnv({ projectDir: dir, engine: 'claude' }), { execEnv: 'e2b', source: 'user' });
   assert.deepEqual(resolveRunExecEnv({ projectDir: dir, workMode: 'folder' }),
     { execEnv: 'local', source: 'user', fallback: 'the saved E2B default does not apply to a Folder project; it runs locally' });

@@ -19,7 +19,11 @@ export const MAX_LINE = Math.ceil(MAX_REQUEST_BYTES / 3) * 4 + (64 << 10);
 // process: past it a call gets 529. Claude Code retries both.
 const MAX_INFLIGHT_BYTES = 2 * MAX_REQUEST_BYTES;
 const MAX_TOTAL_INFLIGHT_BYTES = 8 * MAX_REQUEST_BYTES;
-const ALLOWED_PATHS = new Set(['/v1/messages', '/v1/messages/count_tokens']);
+// A route without its own `allow` (a Claude route): the Messages API only.
+const CLAUDE_ALLOW = Object.freeze([['POST', '/v1/messages'], ['POST', '/v1/messages/count_tokens']]);
+const NO_BODY = new Set(['GET', 'HEAD']);
+// The error code a Connect client (Cursor) reads for each refusal status.
+const CONNECT_CODES = { 403: 'permission_denied', 413: 'resource_exhausted', 429: 'resource_exhausted', 502: 'unavailable', 504: 'deadline_exceeded', 529: 'unavailable' };
 const SAFE_QUERY = /^[A-Za-z0-9_=&.-]*$/;
 const REMOVED_BYTES = Buffer.from(REMOVED);
 const SEND_BATCH = 1 << 20;            // one sendStdin carries at most this many chars (a longer frame goes alone)
@@ -85,6 +89,16 @@ const b64Bytes = (s) => Math.max(0, Math.floor(s.length * 3 / 4) - (s.endsWith('
 
 const relayError = (status, type, message) => ({ status, type, message });
 const lowerKeys = (o) => Object.fromEntries(Object.entries(o || {}).map(([k, v]) => [k.toLowerCase(), v]));
+/** Whether `route` takes `method pathname`: its `allow` list of [method, exact path | RegExp] (CLAUDE_ALLOW without one). */
+const allows = (route, method, pathname) => (route.allow || CLAUDE_ALLOW)
+  .some(([m, p]) => m === method && (p instanceof RegExp ? p.test(pathname) : p === pathname));
+/** A refusal body in the shape the route's client reads: Anthropic's (the default), OpenAI's or Connect's. */
+function refusalBody(protocol, { status, type, message }) {
+  const msg = `worca-relay: ${message}`;
+  if (protocol === 'openai') return { error: { message: msg, type, code: null } };
+  if (protocol === 'connect') return { code: CONNECT_CODES[status] || 'unknown', message: msg };
+  return { type: 'error', error: { type, message: msg } };
+}
 
 export class ModelRelay {
   /** `onDrop()`: a ready relay ended without stop() (it exited, its command stream dropped, a write to it failed or it
@@ -246,9 +260,9 @@ export class ModelRelay {
     await this._send({ t: 'end', id }, gen);
   }
 
-  async _refuse(f, where, { status, type, message }) {
+  async _refuse(f, where, { status, type, message }, protocol = 'anthropic') {
     this.log('warn', `model relay: refused ${String(f.method).slice(0, 10)} ${where} → ${status} (${message})`);
-    const body = Buffer.from(JSON.stringify({ type: 'error', error: { type, message: `worca-relay: ${message}` } }));
+    const body = Buffer.from(JSON.stringify(refusalBody(protocol, { status, type, message })));
     await this._reply(f, status, { 'content-type': 'application/json', 'content-length': String(body.length) }, body);
   }
 
@@ -273,15 +287,16 @@ export class ModelRelay {
     if (f.method === 'HEAD' && pathname === '/api/hello' && !query) return this._reply(f, 200, {}, Buffer.alloc(0));
     const entry = this.routes.get(id);
     if (!id || !entry) return this._refuse(f, where, relayError(403, 'permission_error', 'unknown or ended route'));
-    if (f.method !== 'POST' || !ALLOWED_PATHS.has(pathname) || !SAFE_QUERY.test(query) || query.includes('..')) {
-      return this._refuse(f, where, relayError(403, 'permission_error', `${String(f.method).slice(0, 10)} ${pathname.slice(0, 100)} is not a Messages API call`));
+    const proto = entry.route.protocol;
+    if (!allows(entry.route, f.method, pathname) || !SAFE_QUERY.test(query) || query.includes('..')) {
+      return this._refuse(f, where, relayError(403, 'permission_error', `${String(f.method).slice(0, 10)} ${pathname.slice(0, 100)} is not ${entry.route.call || 'a Messages API call'}`), proto);
     }
     // Every limit is checked on the size the base64 announces, before decoding it.
     const size = b64Bytes(b64);
-    if (f.over || size > MAX_REQUEST_BYTES) return this._refuse(f, where, relayError(413, 'request_too_large', `the request body is over ${MAX_REQUEST_BYTES >> 20} MiB`));
-    if (entry.active >= this.maxConcurrent) return this._refuse(f, where, relayError(429, 'rate_limit_error', `more than ${this.maxConcurrent} calls at once on one route`));
-    if (this._bytes + size > this.maxBytes) return this._refuse(f, where, relayError(429, 'rate_limit_error', `more than ${mib(this.maxBytes)} MiB of request bodies in flight from this sandbox`));
-    if (this.budget.used + size > this.budget.limit) return this._refuse(f, where, relayError(529, 'overloaded_error', `worca is relaying more than ${mib(this.budget.limit)} MiB of request bodies at once`));
+    if (f.over || size > MAX_REQUEST_BYTES) return this._refuse(f, where, relayError(413, 'request_too_large', `the request body is over ${MAX_REQUEST_BYTES >> 20} MiB`), proto);
+    if (entry.active >= this.maxConcurrent) return this._refuse(f, where, relayError(429, 'rate_limit_error', `more than ${this.maxConcurrent} calls at once on one route`), proto);
+    if (this._bytes + size > this.maxBytes) return this._refuse(f, where, relayError(429, 'rate_limit_error', `more than ${mib(this.maxBytes)} MiB of request bodies in flight from this sandbox`), proto);
+    if (this.budget.used + size > this.budget.limit) return this._refuse(f, where, relayError(529, 'overloaded_error', `worca is relaying more than ${mib(this.budget.limit)} MiB of request bodies at once`), proto);
     const body = Buffer.from(b64, 'base64');
     // One controller per call: a client hang-up ('close' frame), stop(), a relay exit or upstream silence ends it.
     const ac = new AbortController();
@@ -289,31 +304,50 @@ export class ModelRelay {
     const idle = setTimeout(() => call.abort('idle'), this.idleMs); idle.unref?.();
     call.touch = () => idle.refresh();
     entry.active++; this.inflight.set(f.id, call); this._bytes += size; this.budget.used += size;
-    try { await this._forward(f, entry.route, headers, rest, body, where, ac.signal, call); }
+    try { await this._forward(f, entry.route, headers, rest, pathname, body, where, ac.signal, call); }
     finally {
       clearTimeout(idle); ac.abort(); if (this.inflight.get(f.id) === call) this.inflight.delete(f.id); entry.active--;
       this._bytes -= size; this.budget.used -= size;
     }
   }
 
-  async _forward(f, route, headers, rest, body, where, signal, call) {
-    const url = String(route.upstream).replace(/\/+$/, '') + rest;
-    const out = { ...upstreamRequestHeaders(headers), ...lowerKeys(route.extraHeaders), ...route.authHeaders(headers) };
-    const stalled = () => this._refuse(f, where, relayError(504, 'api_error', 'the model endpoint stopped answering'));
+  async _forward(f, route, headers, rest, pathname, body, where, signal, call) {
+    const proto = route.protocol;
+    const stalled = () => this._refuse(f, where, relayError(504, 'api_error', 'the model endpoint stopped answering'), proto);
+    // The upstream and the auth headers may come from a call worca makes first (a host lookup, a token exchange):
+    // their failure is a refusal, worded without any secret.
+    let url; let out;
+    try {
+      const base = typeof route.upstream === 'function' ? await route.upstream() : route.upstream;
+      url = String(base).replace(/\/+$/, '') + rest;
+      const auth = lowerKeys(await route.authHeaders(headers));
+      // Whatever worca signs with is scrubbed from every reply, also a token the route derived just now.
+      for (const k of ['authorization', 'x-api-key']) {
+        if (auth[k] !== undefined) { const s = String(auth[k]); this.secrets.add(s); this.secrets.add(s.replace(/^(Bearer|token)\s+/i, '')); }
+      }
+      for (const s of route.secrets || []) this.secrets.add(s);
+      out = { ...upstreamRequestHeaders(headers, route.forwardHeaders), ...lowerKeys(route.extraHeaders), ...auth };
+    } catch (err) {
+      if (call.why) return;
+      return this._refuse(f, where, relayError(502, 'api_error', scrubText(`worca could not sign the call: ${err?.message || err}`, [...this.secrets]).slice(0, 300)), proto);
+    }
     let r;
-    try { r = await this.fetchImpl(url, { method: 'POST', headers: out, body: body.length ? body : undefined, redirect: 'manual', signal }); }
+    try { r = await this.fetchImpl(url, { method: f.method, headers: out, body: body.length && !NO_BODY.has(f.method) ? body : undefined, redirect: 'manual', signal }); }
     catch {
       if (call.why === 'idle') return stalled();
       if (call.why) return;   // the caller hung up or the relay stopped: nobody to answer
-      return this._refuse(f, where, relayError(502, 'api_error', 'the model endpoint could not be reached'));
+      return this._refuse(f, where, relayError(502, 'api_error', 'the model endpoint could not be reached'), proto);
     }
     call.touch();
+    try { route.onStatus?.(r.status); } catch { /* a route's bookkeeping never breaks the call */ }
     if (r.status >= 300 && r.status < 400) {
       try { await r.body?.cancel(); } catch { /* ignore */ }
-      return this._refuse(f, where, relayError(502, 'api_error', 'the upstream redirected'));
+      return this._refuse(f, where, relayError(502, 'api_error', 'the upstream redirected'), proto);
     }
     const secrets = [...this.secrets];
-    const rh = cleanHeaders(agentResponseHeaders(Object.fromEntries(r.headers)), secrets);
+    const upHeaders = Object.fromEntries(r.headers);
+    const extra = Object.fromEntries((route.responseHeaders || []).filter((k) => upHeaders[k] !== undefined).map((k) => [k, upHeaders[k]]));
+    const rh = cleanHeaders({ ...agentResponseHeaders(upHeaders), ...extra }, secrets);
     if (r.status < 200 || r.status >= 300) {
       const parts = []; let n = 0;
       try { for await (const c of r.body || []) { call.touch(); parts.push(c); n += c.length; if (n >= MAX_ERROR_BODY) break; } } catch { /* what arrived */ }
@@ -326,7 +360,7 @@ export class ModelRelay {
     if (!await this._send({ t: 'head', id: f.id, status: r.status, headers: rh }, f.gen)) return;
     const scrub = createByteScrubber(secrets);
     // The route's meter (relay-usage.mjs): worca's own count of what the reply used, never the sandbox's.
-    const meter = route.meter?.() || null;
+    const meter = route.meter?.(pathname) || null;
     try {
       for await (const c of r.body || []) {
         call.touch();

@@ -252,7 +252,8 @@ printf 'export CLAUDE_CODE_OAUTH_TOKEN=%s\n' "$(pbpaste)" > ~/.config/worca-e2b/
 ```
 
 (copy the token to the clipboard first), or `export ANTHROPIC_API_KEY=…` in its place. Neither file goes into a
-repository.
+repository. The other engines' keys (`CODEX_API_KEY`, `COPILOT_GITHUB_TOKEN`, `CURSOR_API_KEY`) go in the same file,
+one `export` line each.
 
 ## 8. Start the Worca server against it
 

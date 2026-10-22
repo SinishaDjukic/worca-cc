@@ -1,6 +1,6 @@
 // Execution environment in worca Chat (docs/e2b.md): propose_run's `execEnv`, its validation (the same rule the
-// run start and New pipeline apply: a remote backend takes Claude single-project runs only), the chat's settings
-// (run.execEnv + the E2B limits) and the rule that tells the chat when to name one.
+// run start and New pipeline apply: a remote backend takes single-project runs of a git project on the remote engines
+// only), the chat's settings (run.execEnv + the E2B limits) and the rule that tells the chat when to name one.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkRows } from './helpers/rows.mjs';
@@ -38,7 +38,7 @@ test('propose_run execEnv: omitted keeps the card shape, a known environment rid
   assert.match(PROPOSAL_ERRORS.unknownExecEnv('docker'), /one of local, e2b/);
 });
 
-test('propose_run execEnv: a remote environment takes Claude single-project runs only, as the run start refuses', async () => {
+test('propose_run execEnv: a remote environment takes single-project runs of a git project on any remote engine, as the run start does', async () => {
   await checkRows([
     { name: 'a workspace target', run: async () => {
       const { validateProposal } = createProposalValidator(deps);
@@ -47,13 +47,13 @@ test('propose_run execEnv: a remote environment takes Claude single-project runs
     } },
     { name: 'an engine the proposal names', run: async () => {
       const { validateProposal } = createProposalValidator(deps);
-      assert.deepEqual(errs(await validateProposal({ ...P, engine: 'codex', execEnv: 'e2b' })), [PROPOSAL_ERRORS.execEnvRefused('e2b', 'the codex engine')]);
+      assert.equal(ok(await validateProposal({ ...P, engine: 'codex', execEnv: 'e2b' })).execEnv, 'e2b');
       assert.equal(ok(await validateProposal({ ...P, engine: 'claude', execEnv: 'e2b' })).execEnv, 'e2b');
     } },
     { name: 'the default engine the run would take', run: async () => {
       const seen = [];
       const { validateProposal } = createProposalValidator({ ...deps, resolveEngine: (scope) => { seen.push(scope); return 'cursor'; } });
-      assert.deepEqual(errs(await validateProposal({ ...P, execEnv: 'e2b' })), [PROPOSAL_ERRORS.execEnvRefused('e2b', 'the cursor engine')]);
+      assert.equal(ok(await validateProposal({ ...P, execEnv: 'e2b' })).execEnv, 'e2b');
       assert.deepEqual(seen, [{ projectDir: '/p/demo' }]);
       // A local pick never asks.
       seen.length = 0;
@@ -61,7 +61,7 @@ test('propose_run execEnv: a remote environment takes Claude single-project runs
       assert.deepEqual(seen, []);
     } },
   ]);
-  assert.match(PROPOSAL_ERRORS.execEnvRefused('e2b', 'the codex engine'), /E2B sandbox runs Claude single-project runs only.*the codex engine/);
+  assert.match(PROPOSAL_ERRORS.execEnvRefused('e2b', 'a workspace run'), /E2B sandbox cannot take a workspace run/);
 });
 
 test('propose_run schema: execEnv lists the registered environments and says when to name one', () => {

@@ -2150,7 +2150,7 @@ function runEngineOpts(body, scope = {}) {
  * execute, resolved through the `run.execEnv` cascade. Local adds NOTHING to the run options, so a
  * default run's options stay exactly as they were. The Watch PR fix and Resolve starts pass their
  * body through the same handler, so their explicit `execEnv: 'local'` resolves to {} here. A saved e2b
- * default never reaches a workspace run or another engine's run (resolveRunExecEnv's fallback): that run
+ * default never reaches a workspace run or a run on an engine no sandbox runs (resolveRunExecEnv's fallback): that run
  * gets `execEnvFallback`, the reason its log names. Only an explicit per-run e2b is refused with 409 for those.
  * @returns {{ error: string } | { opts: { execEnv?: string, execEnvFallback?: string } }}
  */
@@ -3372,7 +3372,7 @@ const startRunHandler = async (req, res) => {
       const refusal = await orch.engineStartRefusal();
       if (refusal) return res.status(409).json({ error: presetEngineMessage(presetRow, runEngine, engineRefusalFor(refusal.error, 'ui')), code: 'engine-refused', overridable: refusal.overridable });
     }
-    // The e2b preflight (single-project, claude, credentials, …): refused here, before anything is announced.
+    // The e2b preflight (single-project, a remote engine and its sign-in, …): refused here, before anything is announced.
     const execRefusal = orch.execEnvStartRefusal();
     if (execRefusal) return res.status(409).json({ error: execRefusal, code: 'exec-env-refused' });
 
