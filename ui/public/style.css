@@ -10028,9 +10028,7 @@ a.badge.mk-health:focus-visible{outline:2px solid var(--ink);outline-offset:2px;
 /* ── marketplace P5 ── */
 /* Installed tab (board 3.1): one column; each list is ONE card of divided rows (canvas .card.rows). P4's
    .mk-row-main / .mk-meta / .mk-mono / .mk-list* / .mk-sec / .mk-link are reused as they are (SM23). */
-.mk-installed{display:flex;flex-direction:column;gap:24px;max-width:980px;}
-/* The tab header sits on the same 980px column as the lists (board 3.1): Update all ends at the cards’ right edge. */
-#mk-root:has(> .mk-panel[data-tab="installed"]:not([hidden])) > .mk-head{max-width:980px;}
+.mk-installed{display:flex;flex-direction:column;gap:24px;}
 .mk-sec-head{display:flex;align-items:center;gap:8px;margin:0 0 12px;}
 .mk-sec-head .section-title{margin:0;}
 .mk-rows{list-style:none;margin:0;padding:0;}
@@ -10140,7 +10138,7 @@ button.mk-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;bor
 
 /* ── marketplace P7 ── */
 /* Marketplaces tab (board 4.1): one card per marketplace; Remove lives in its ⋯ menu. Tokens and scale sizes only. */
-.mk-mkts{display:flex;flex-direction:column;gap:12px;max-width:980px;}
+.mk-mkts{display:flex;flex-direction:column;gap:12px;}
 .mk-mkt{display:flex;align-items:flex-start;gap:12px;padding:16px 20px;}
 .mk-mkt:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .mk-mkt-main{flex:1;min-width:0;display:flex;flex-direction:column;}
