@@ -3342,8 +3342,9 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 /* ---------- The account corner and its menu (account-menu.mjs) ---------- */
 /* The corner closes the foot band: the avatar in its spend ring, the name, an up-down glyph.
    The ring shows only under a total limit (data-spend ok | warn | over) and is never hidden
-   while blocked; the violet dot says "away" (data-presence). On the rail only the avatar,
-   its ring and its dot show. */
+   while blocked; an ink dot with a panel-coloured walking person (icons.mjs stepped-out, the
+   switch's on pairing) says "away" (data-presence). On the rail only the avatar, its ring and
+   its dot show. */
 .acct{display:flex;align-items:center;gap:9px;width:100%;height:46px;padding:0 8px 0 4px;border:0;border-radius:var(--r-sm);
   background:transparent;color:var(--ink);font-family:inherit;text-align:left;cursor:pointer;}
 .acct:hover,.acct[aria-expanded="true"]{background:var(--field);}
@@ -3359,8 +3360,9 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .acct-ava{display:grid;place-items:center;width:30px;height:30px;border-radius:50%;
   background:var(--line-2);color:var(--ink);font:600 11px/1 var(--sans);letter-spacing:.02em;}
 .acct-dot{position:absolute;right:1px;bottom:1px;width:11px;height:11px;border-radius:50%;
-  background:var(--violet);box-shadow:0 0 0 2px var(--panel);display:none;}
-.acct[data-presence="away"] .acct-dot{display:block;}
+  background:var(--ink);color:var(--panel);box-shadow:0 0 0 2px var(--panel);display:none;}
+.acct[data-presence="away"] .acct-dot{display:grid;place-items:center;}
+.acct-dot svg{stroke-width:3;}
 .acct-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 12px/1.2 var(--sans);color:var(--ink-2);}
 .acct:hover .acct-name,.acct[aria-expanded="true"] .acct-name{color:var(--ink);}
 .acct-updown{width:14px;height:14px;flex:none;fill:none;stroke:var(--ink-3);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
