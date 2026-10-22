@@ -1,6 +1,7 @@
 // test/cost-report-requirements.test.mjs — Requirements spend (plans/requirements-design.md D9) in the Statistics ›
 // Cost report, mirroring the Ask Worca (Chat) tests in cost-allocation, ui-cost-report and stats-groups: its own last
-// row, part of the total, never allocated, out of the hours chart, dropped by a filter, and only with the flag on.
+// row, part of the total, never allocated, out of the hours chart, dropped by a filter; with the flag off only money
+// already spent shows.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -61,17 +62,17 @@ const DATA = {
     requirements: { spentUsd: 0.75, prevSpentUsd: 0.25, series: [0.5, 0.25] },
   },
 };
-function mount(requirementsEnabled, data = DATA) {
+function mount(data = DATA) {
   const doc = new JSDOM('<!doctype html><body></body>').window.document;
-  const r = createCostReport({ doc, storage: mem(), requirementsEnabled });
+  const r = createCostReport({ doc, storage: mem() });
   doc.body.append(r.el);
   r.update({ data, dims: [{ key: 'client', label: 'Client' }], rangeLabel: 'Oct', range: 'month' });
   return doc;
 }
 const rowLabels = (doc) => [...doc.querySelectorAll('.cr-table tbody tr')].map((tr) => tr.querySelector('.cr-name').textContent);
 
-test('report UI, flag on: a muted Requirements row after Chat, no hours, and Spent adds it in', () => {
-  const doc = mount(true);
+test('report UI: a muted Requirements row after Chat, no hours, and Spent adds it in', () => {
+  const doc = mount();
   assert.deepEqual(rowLabels(doc), ['acme', 'globex', 'Unallocated', 'Chat', 'Requirements']);
   const tr = [...doc.querySelectorAll('.cr-table tbody tr')].at(-1);
   assert.ok(tr.classList.contains('cr-kind-requirements'));
@@ -81,19 +82,14 @@ test('report UI, flag on: a muted Requirements row after Chat, no hours, and Spe
   assert.match(readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8'), /\.cr-table tr\.cr-kind-requirements td/);
 });
 
-test('report UI, flag off: no Requirements row and Spent leaves it out', () => {
-  const doc = mount(false);
-  assert.deepEqual(rowLabels(doc), ['acme', 'globex', 'Unallocated', 'Chat']);
-  assert.match(doc.querySelector('.cr-kpis .stat-tile').textContent, /\$10\.50/);
-});
 
 test('report UI: no report.requirements (a filtered server answer, or an older server) → no row', () => {
-  const doc = mount(true, { ...DATA, report: { ...DATA.report, requirements: null } });
+  const doc = mount({ ...DATA, report: { ...DATA.report, requirements: null } });
   assert.equal(rowLabels(doc).includes('Requirements'), false);
 });
 
 test('report UI: a filter chip drops Requirements like Chat', () => {
-  const doc = mount(true);
+  const doc = mount();
   doc.querySelector('tr[data-path="v:acme"] .cr-value').click();
   assert.equal(rowLabels(doc).includes('Requirements'), false);
   assert.equal(rowLabels(doc).includes('Chat'), false);
@@ -120,7 +116,7 @@ after(async () => {
 });
 
 test('report data: requirements beside ask; runs + Chat + Requirements = Spent; series per bucket', () => {
-  const s = getStats({ range: 'lastMonth', now: NOW, report: true });
+  const s = getStats({ requirementsEnabled: true, range: 'lastMonth', now: NOW, report: true });
   const r = s.report.requirements;
   assert.equal(r.spentUsd, 0.75);
   assert.equal(r.prevSpentUsd, 0.25);
@@ -130,7 +126,18 @@ test('report data: requirements beside ask; runs + Chat + Requirements = Spent; 
 });
 
 test('report data: a filter drops Requirements like Chat', () => {
-  const s = getStats({ range: 'lastMonth', now: NOW, report: true, filter: { person: 'alice' } });
+  const s = getStats({ requirementsEnabled: true, range: 'lastMonth', now: NOW, report: true, filter: { person: 'alice' } });
   assert.equal(s.report.requirements, null);
   assert.equal(s.report.ask, null);
+});
+
+test('report data, flag off: report.requirements only when there is spend to show', () => {
+  const s = getStats({ requirementsEnabled: false, range: 'lastMonth', now: NOW, report: true });
+  assert.equal(s.report.requirements.spentUsd, 0.75, 'August spend stays visible');
+  assert.equal(roundUsd(s.totals.pipelineSpendUsd + s.report.ask.spentUsd + s.report.requirements.spentUsd), s.totals.spentUsd);
+  const none = getStats({ requirementsEnabled: false, range: 'lastMonth', now: new Date(2025, 8, 10, 12), report: true });
+  assert.equal('requirements' in none.report, false, 'no spend: the API shape is the one without Requirements');
+  assert.equal('requirements' in none.totals, false);
+  const filtered = getStats({ requirementsEnabled: false, range: 'lastMonth', now: NOW, report: true, filter: { person: 'alice' } });
+  assert.equal('requirements' in filtered.report, false);
 });

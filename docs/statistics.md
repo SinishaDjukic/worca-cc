@@ -25,8 +25,8 @@ equally long period for Custom.
   `client:acme` tag matches exactly; a bare `client` matches any client value.
 - **Person**: only runs started by that person.
 
-Every tile, chart and grouped row follows the filters. Chat spend is not tied to a run,
-so any active filter leaves it out, and the Spent tile drops its budget meter (the limit covers
+Every tile, chart and grouped row follows the filters. Chat and Requirements spend are not tied to a run,
+so any active filter leaves them out, and the Spent tile drops its budget meter (the limit covers
 the whole account, not the filtered slice).
 
 The **Cost** view has its own filter bar instead (see below): there the Cost tags field and the Person
@@ -61,7 +61,8 @@ The Cost and value report splits the period's spend and asks what it bought.
   key. Then by can be None.
 - **Rows**: the top 5 values by spend, then **Other (n)** when 2 or more values are left over (a single
   leftover value shows as itself), then **Unallocated** (runs without the value, only when there are
-  any), then **Chat** (chat spend, only without filter chips). Shares are of the whole report total
+  any), then **Chat** (chat spend), then **Requirements** (the Requirements page's spend,
+  also after its flag is turned off), each only without filter chips. Shares are of the whole report total
   at both levels; under one percent reads `<1%`, never `0%`, and no spend reads `—`. The rows add up to
   the Spent tile, and each row's second-level rows add up to it. Expand a row to see its then by values;
   a row of Other expands to the values it folds.
@@ -130,5 +131,8 @@ With `report=1` the response adds `report`:
   `orphan: true`. The facts' `usd` add up to `totals.pipelineSpendUsd`.
 - `prevRuns`: the previous period's facts (no buckets), `null` for All time.
 - `ask`: `{ spentUsd, prevSpentUsd, series }` for Chat, `null` while a filter is active.
+- `requirements`: `{ spentUsd, prevSpentUsd, series }` for the Requirements page, `null` while a filter
+  is active. With the `requirements` flag off it is there only when this period or the one before has
+  Requirements spend, and `totals.requirements` (the Statistics tile's figures) is left out.
 
 Without `report=1` there is no `report` key.

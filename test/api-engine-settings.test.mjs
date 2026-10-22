@@ -92,7 +92,26 @@ test('GET /api/workflows/wf_memory_defrag pins the pair of the engine asked for'
   await post('/api/settings', { utilityModels: { codex: { memoryDefrag: null, title: null } } });
 });
 
-test('POST /api/settings requirementsInterview: stored per user, echoed with its default, cleared by null', async () => {
+// The Requirements interview row is behind the `requirements` flag (docs/feature-flags.md): on for its own tests.
+const reqFlagOn = (t) => {
+  const was = process.env.WORCA_FLAGS;
+  process.env.WORCA_FLAGS = 'requirements';
+  t.after(() => { if (was === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = was; });
+};
+
+test('requirementsInterview with the requirements flag off: GET has neither key and POST ignores it', async () => {
+  const g = await get('/api/settings');
+  assert.equal('requirementsInterview' in g.body, false);
+  assert.equal('requirementsInterviewDefault' in g.body, false);
+  const r = await post('/api/settings', { requirementsInterview: { effort: 'high' } });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal('requirementsInterview' in r.body, false);
+  const { requirementsInterviewSetting } = await import('../src/core/settings.mjs');
+  assert.equal(requirementsInterviewSetting() ?? null, null, 'nothing stored');
+});
+
+test('POST /api/settings requirementsInterview: stored per user, echoed with its default, cleared by null', async (t) => {
+  reqFlagOn(t);
   const g = await get('/api/settings');
   assert.equal(g.body.requirementsInterview, null);
   assert.match(g.body.requirementsInterviewDefault.model, /^claude-opus-/);
@@ -108,7 +127,8 @@ test('POST /api/settings requirementsInterview: stored per user, echoed with its
   assert.equal((await get('/api/settings')).body.requirementsInterview, null);
 });
 
-test('POST /api/settings requirementsInterview: unknown model, Codex model and a bad effort are 400s naming the field', async () => {
+test('POST /api/settings requirementsInterview: unknown model, Codex model and a bad effort are 400s naming the field', async (t) => {
+  reqFlagOn(t);
   for (const value of [{ model: 'no-such-model-xyz' }, { model: 'gpt-5.5' }, { effort: 'low' }]) {
     const r = await post('/api/settings', { requirementsInterview: value });
     assert.equal(r.status, 400, JSON.stringify(value));
@@ -118,6 +138,7 @@ test('POST /api/settings requirementsInterview: unknown model, Codex model and a
 });
 
 test('POST /api/settings requirementsInterview: an effort the model does not offer is refused', async (t) => {
+  reqFlagOn(t);
   const { listModels } = await import('../src/core/config.mjs');
   const m = (await listModels('')).find((x) => /^claude-/.test(x.id) && Array.isArray(x.efforts) && x.efforts.length && x.efforts.length < 4);
   if (!m) { t.skip('every Claude catalog model offers every effort: no model to refuse an effort on'); return; }
@@ -127,7 +148,8 @@ test('POST /api/settings requirementsInterview: an effort the model does not off
   assert.equal(r.body.field, 'requirementsInterview');
 });
 
-test('POST /api/settings requirementsInterview: a change emits a settings-changed frame', async () => {
+test('POST /api/settings requirementsInterview: a change emits a settings-changed frame', async (t) => {
+  reqFlagOn(t);
   const ws = new WebSocket(`${base.replace('http', 'ws')}/ws`);
   const frames = [];
   await new Promise((res, rej) => { ws.once('open', res); ws.once('error', rej); });

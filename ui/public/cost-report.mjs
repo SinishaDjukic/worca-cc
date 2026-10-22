@@ -6,7 +6,6 @@ import {
   allocate, allocationSeries, matchesFilters, dimensionOptions, valueOptions, valueLabel, formatShare, reportCsv,
 } from '../../src/shared/cost/allocation.mjs';
 import { statTile, statDeltaChip, STAT_ICONS, signedUsd, SAVED_NOTE, DEFAULT_FMT } from './stats-view.mjs';
-import { flagOn } from './flags.mjs';
 import { createAreaChart } from './cost-area-chart.mjs';
 import { openDimensionPicker } from './cost-dimension-picker.mjs';
 import { icon } from './icons.mjs';
@@ -82,7 +81,7 @@ export function defaultBy(options) {
  */
 export function createCostReport({ doc = globalThis.document, fmt = DEFAULT_FMT, storage = null, reducedMotion = false,
   onOpenRuns = () => {}, onDownload = () => {}, stateKey = COST_STATE_KEY, viewsKey = COST_VIEWS_KEY,
-  csvName = (s, key) => `statistics-${s.range}-cost-${key}.csv`, extras = null, requirementsEnabled = undefined } = {}) {
+  csvName = (s, key) => `statistics-${s.range}-cost-${key}.csv`, extras = null } = {}) {
   const canOpen = typeof onOpenRuns === 'function';
   const st = { ...cleanState(readJson(storage, stateKey, {})), view: '', expanded: new Set(),
     data: null, dims: [], rangeLabel: '', range: 'month' };
@@ -107,9 +106,9 @@ export function createCostReport({ doc = globalThis.document, fmt = DEFAULT_FMT,
   const persist = () => writeJson(storage, stateKey, cleanState(st));
   const dimLabel = (dim) => options.find((o) => o.id === dim)?.label || (dim.startsWith('tag:') ? dim.slice(4) : dim);
   const askOn = () => !st.filters.length && !!st.data?.report?.ask;
-  // Requirements spend: like Chat's, but only while the requirements flag is on (as the Statistics tile).
-  const reqOn = () => !st.filters.length && !!st.data?.report?.requirements
-    && (requirementsEnabled ?? flagOn('requirements', doc));
+  // Requirements spend: like Chat's. With its flag off the server sends it only for money already spent, which
+  // stays in Spent, so the row stays too and the report agrees with Statistics.
+  const reqOn = () => !st.filters.length && !!st.data?.report?.requirements;
 
   function paintKpis(prev) {
     const t = model.total;

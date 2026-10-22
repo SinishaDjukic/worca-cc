@@ -40,7 +40,7 @@ before(async () => {
 });
 
 test('unfiltered: Spent carries Requirements spend and every group table has a Requirements row that reconciles', () => {
-  const s = getStats({ range: 'lastMonth', now: NOW, groupBy: 'tag:client', tagKeys: ['client'] });
+  const s = getStats({ requirementsEnabled: true, range: 'lastMonth', now: NOW, groupBy: 'tag:client', tagKeys: ['client'] });
   assert.deepEqual(s.totals.requirements, { spendUsd: 0.75, features: 2 });
   assert.equal(s.totals.spentUsd, 3.5);                  // 2 run + 0.75 Chat + 0.75 Requirements
   const req = s.groups.rows.find((r) => r.kind === 'requirements');
@@ -58,7 +58,7 @@ test('unfiltered: Spent carries Requirements spend and every group table has a R
 
 test('a filter (tag or person) drops Requirements spend everywhere, like Chat spend', () => {
   for (const filter of [{ tags: ['client:acme'] }, { person: 'alice' }]) {
-    const s = getStats({ range: 'lastMonth', now: NOW, filter, groupBy: 'person' });
+    const s = getStats({ requirementsEnabled: true, range: 'lastMonth', now: NOW, filter, groupBy: 'person' });
     assert.deepEqual(s.totals.requirements, { spendUsd: 0, features: 0 });
     assert.equal(s.totals.spentUsd, 2, JSON.stringify(filter));
     assert.ok(!s.groups.rows.some((r) => r.kind === 'requirements' || r.kind === 'ask'));
@@ -67,8 +67,17 @@ test('a filter (tag or person) drops Requirements spend everywhere, like Chat sp
 });
 
 test('all time: Requirements spend counts and the group rows reconcile', () => {
-  const s = getStats({ range: 'all', now: NOW, groupBy: 'person' });
+  const s = getStats({ requirementsEnabled: true, range: 'all', now: NOW, groupBy: 'person' });
   assert.deepEqual(s.totals.requirements, { spendUsd: 0.75, features: 2 });
   assert.equal(sum(s.groups.rows), s.totals.spentUsd);
   assert.equal(s.groups.rows.find((r) => r.kind === 'requirements').spentUsd, 0.75);
+});
+
+test('flag off: the money already spent stays in Spent and keeps its Requirements row; only the tile totals go', () => {
+  const s = getStats({ requirementsEnabled: false, range: 'lastMonth', now: NOW, groupBy: 'tag:client', tagKeys: ['client'] });
+  assert.equal('requirements' in s.totals, false, 'no tile figures');
+  assert.equal('requirements' in s.prev, false);
+  assert.equal(s.totals.spentUsd, 3.5, 'Spent still counts it');
+  assert.equal(s.groups.rows.find((r) => r.kind === 'requirements').spentUsd, 0.75, 'the row stays, so the table reconciles');
+  assert.equal(sum(s.groups.rows), s.totals.spentUsd);
 });

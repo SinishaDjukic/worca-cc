@@ -10745,7 +10745,8 @@ const settingsState = () => ({
   stepModels: stepModelsSetting(),
   utilityModels: utilityModelsSetting(),
   askEngine: askEngineSetting() ?? null,                  // Chat: the engine new chats start on (D17)
-  requirementsInterview: requirementsInterviewSetting() ?? null,   // Models › Engines › Claude: the STORED { model?, effort? } (null = the default)
+  // Models › Engines › Claude: the STORED { model?, effort? } (null = the default); only while the requirements flag is on
+  ...(flagEnabled('requirements') ? { requirementsInterview: requirementsInterviewSetting() ?? null } : {}),
   askModels: askModelsSetting(),                          // Chat: the model per engine (D17)
   nightMode: nightModeSettings(),                         // night mode: the user layer (only the fields set)
   nightModeEffective: resolveNightConfig({ user: nightModeSettings() }).config,   // no project: the global view
@@ -10767,8 +10768,10 @@ async function autoModelState() {
   return { autoWorkflowModel: stored, autoWorkflowModelEffective: { model, source } };
 }
 
-/** What "(default)" means for the Requirements interview row: the newest plain Opus at medium effort (A1-D8). */
+/** What "(default)" means for the Requirements interview row: the newest plain Opus at medium effort (A1-D8).
+ *  Nothing while the requirements flag is off. */
 async function requirementsInterviewState() {
+  if (!flagEnabled('requirements')) return {};
   return { requirementsInterviewDefault: { model: (await requirementsModel(() => listModels(''))) ?? null, effort: DEFAULT_INTERVIEW_EFFORT } };
 }
 /** Settings ▸ PR description model: the stored id + what Generate with AI will actually
@@ -11280,7 +11283,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const hasUtilityModelsKey = has('utilityModels');
   const hasAskEngineKey = has('askEngine');
   const hasAskModelsKey = has('askModels');
-  const hasRequirementsInterviewKey = has('requirementsInterview');
+  const hasRequirementsInterviewKey = has('requirementsInterview') && flagEnabled('requirements');   // ignored while the flag is off
   const hasActionsKey = has('actions');
   const hasNetworkWaitKey = has('networkWait');
   const wsScanModels = hasWorkspaceScanKey ? (autoModels || defragModels || await listModels('')) : null;
@@ -11306,7 +11309,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   if (has('askMaxTurns')) ask.askMaxTurns = body.askMaxTurns ?? '';
   if (has('askMaxBudgetUsd')) ask.askMaxBudgetUsd = body.askMaxBudgetUsd === undefined ? '' : body.askMaxBudgetUsd;
   {   // was the route's try: a refusal now reaches the caller (the route maps it to 400, the chat to a notice)
-    for (const key of ['titleModel', 'autoWorkflowModel', 'prDescriptionModel', 'memoryDefrag', 'agentGenModel', 'workspaceScan', 'requirementsInterview']) {
+    for (const key of ['titleModel', 'autoWorkflowModel', 'prDescriptionModel', 'memoryDefrag', 'agentGenModel', 'workspaceScan', ...(hasRequirementsInterviewKey ? ['requirementsInterview'] : [])]) {
       if (has(key)) asSettingsField(key, () => refuseNonClaudeUtilityModel(key, body[key]));
     }
     // Each validator / setter that can refuse a value runs tagged with the body key it checks,

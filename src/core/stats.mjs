@@ -15,6 +15,7 @@
 // (tag value or person) that reconcile exactly with the Spent total.
 
 import { prepare } from './db.mjs';
+import { flagEnabled } from './flags.mjs';
 import { parseTag, formatTag, MAX_TAGS, TAG_KEY_RE } from '../shared/run-tags.mjs';
 import { actorLabel } from './identity.mjs';
 import { readTagsFor } from './run-tags-store.mjs';
@@ -479,8 +480,9 @@ function buildBuckets(windowStart, now, bucket) {
   return out;
 }
 
-/** GET /api/stats backing (spec §6.9). @throws {RangeError} on unknown range. */
-export function getStats({ range = 'month', now = new Date(), from = null, to = null, filter: rawFilter = null, groupBy = null, tagKeys = null, report = false } = {}) {
+/** GET /api/stats backing (spec §6.9). `requirementsEnabled` defaults to the `requirements` flag. @throws {RangeError} on unknown range. */
+export function getStats({ range = 'month', now = new Date(), from = null, to = null, filter: rawFilter = null, groupBy = null, tagKeys = null, report = false,
+  requirementsEnabled = undefined } = {}) {
   if (!RANGES.includes(range)) throw new RangeError(`unknown stats range: ${range}`);
   const filter = normaliseStatsFilter(rawFilter || {});
   const filtered = isFiltered(filter);
@@ -621,6 +623,14 @@ export function getStats({ range = 'month', now = new Date(), from = null, to = 
         series: seriesWindows.map((b) => roundUsd(requirementsWindowedSpendUsd(b.startMs, b.endMs))),
       },
     };
+  }
+  // The requirements flag off: money already spent stays in Spent, its Group by row and the report (so they
+  // reconcile), but the tile's figures go, and report.requirements is sent only when there is spend to show.
+  if (!(requirementsEnabled ?? flagEnabled('requirements'))) {
+    delete totals.requirements;
+    if (prev) delete prev.requirements;
+    const r = out.report && out.report.requirements;
+    if (out.report && !(r && (r.spentUsd || r.prevSpentUsd || r.series.some((x) => x)))) delete out.report.requirements;
   }
   return out;
 }
