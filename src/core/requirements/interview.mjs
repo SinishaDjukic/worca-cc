@@ -12,6 +12,7 @@ import { resolveModelEnv, resolveModelCost, listModels } from '../config.mjs';
 import { safeParseJson } from '../protocol.mjs';
 import { budgetStatus, recordRequirementsCostDelta } from '../cost-budget.mjs';
 import { openRepoLook, openWorkspaceRepoLook } from '../auto/repo-look.mjs';
+import { gitAvailable } from '../git-available.mjs';
 import { REPO_LOOK_TOOLS, REPO_LOOK_MAX_TURNS, REPO_LOOK_TIMEOUT_MS } from '../auto/classify.mjs';
 import { worcaHome, listProjects } from '../projects.mjs';
 import { utilityModelFor } from '../settings-cascade.mjs';
@@ -275,6 +276,9 @@ function briefFor(f) {
 async function orient(f, d, brief = null) {
   const ctx = getContext(f.scopeType, f.scopeKey);
   if (!ctx.lookAtCode) return { summary: '', files: [], skipped: 'off' };
+  // No git on this machine: no checkout to read, so the look is skipped as for a folder without a repository
+  // (Look closer and the brief answer GIT_MISSING at the route, ui/server.mjs GIT_ONLY_ROUTES).
+  if (!gitAvailable()) return { summary: '', files: [], skipped: 'no-repo' };
   if (mockEnabled({}) && brief) {
     return { summary: `[mock] A closer look: "${f.title}" needs something the brief does not describe yet.`, files: ['/tmp/mock/auto-look-0000abcd/README.md'], area: 'Orders', skipped: null };
   }
@@ -318,7 +322,7 @@ async function runOrientation(seq, d, by, { useBrief = false } = {}) {
   setStatus(seq, 'looking', by);
   notify(d, seq);
   const f = requireFeature(seq);
-  if (getContext(f.scopeType, f.scopeKey).lookAtCode && !mockEnabled({})) assertBudget(d);   // only when a call will follow
+  if (getContext(f.scopeType, f.scopeKey).lookAtCode && gitAvailable() && !mockEnabled({})) assertBudget(d);   // only when a call will follow
   const o = await orient(f, d, brief);
   if (o.skipped === 'archived') return;   // archived meanwhile: nothing was spent, nothing to record
   const turnId = appendTurn(seq, { kind: 'orientation', payload: { summary: o.summary, files: o.files, skipped: o.skipped, error: o.error || null },
