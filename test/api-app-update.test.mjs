@@ -100,3 +100,15 @@ test('Settings: updates.{check,auto} round-trip; WORCA_UPDATE_CHECK=0 wins over 
     delete process.env.WORCA_UPDATE_CHECK;
   }
 });
+
+test('the WebSocket hello carries the account chip’s slice: current, target, updateAvailable', async () => {
+  const { WebSocket } = await import('ws');
+  const ws = new WebSocket(`${base.replace('http', 'ws')}/ws`);
+  const hello = await new Promise((resolve, reject) => {
+    ws.on('message', (raw) => { const m = JSON.parse(String(raw)); if (m.type === 'hello') resolve(m); });
+    ws.on('error', reject);
+  });
+  ws.close();
+  assert.deepEqual(Object.keys(hello.appUpdate).sort(), ['current', 'target', 'updateAvailable']);
+  assert.equal(hello.appUpdate.updateAvailable, true, 'the check above found 99.0.0');
+});

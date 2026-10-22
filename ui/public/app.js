@@ -1632,8 +1632,10 @@ function handleServerMessage(msg) {
     refreshRunningActions();
     if (terminalPane) terminalPane.onHello(msg);
     if (Array.isArray(msg.extensionPairs)) msg.extensionPairs.forEach((r) => void promptExtensionPair(r));
+    paintUpdateBadge(document, msg.appUpdate);   // the account menu's "a newer Worca is out" chip (#841)
     return;
   }
+  if (msg.type === 'app-update') { paintUpdateBadge(document, msg.appUpdate); return; }
   if (msg.type === 'flags') {                 // D6: a flag changed (Settings in any tab, or the API)
     applyFlags(msg.flags);
     if (flagsTabCtl && currentView() === 'settings' && currentSettingsTab === 'experimental') void flagsTabCtl.load();
@@ -15412,10 +15414,6 @@ function paintAbout(info) {
   // so the static hrefs in index.html keep working.
   paintAboutInto(document, info);
 }
-
-// Settings ▸ About ▸ Updates (#841) and the account menu's "Update" chip. Boot paints the
-// chip once; opening Settings repaints both (about-update.mjs).
-void fetch('/api/app/update').then((r) => (r.ok ? r.json() : null)).then((s) => paintUpdateBadge(document, s)).catch(() => {});
 
 // #555 D8: a failed Settings GET is shown above the tabs, at every UI level.
 function setSettingsLoadMsg(text) {

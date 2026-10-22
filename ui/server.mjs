@@ -885,6 +885,7 @@ wss.on('connection', (ws, req) => {
 
   send(ws, { type: 'hello', bootId: BOOT_ID, serverMock: serverMockMode(), flags: allFlags(), runs: summarizeRuns(), ask: askHello(ws),
     git: { available: gitAvailable() },
+    appUpdate: appUpdateBadge(),   // the account menu's "a newer Worca is out" chip (#841)
     extensionPairs: REMOTE_MODE ? [] : extensionPairing.pendingPublic() });
 
   if (id && runs.has(id)) {
@@ -10844,6 +10845,13 @@ const appUpdateStatus = () => ({
   restart: { available: !!uiControl.token, busy: updateBusyReason() },
 });
 
+/** The account menu chip's slice of the status, sent in `hello` and as an `app-update` frame after each check. */
+const appUpdateBadge = () => {
+  const st = appUpdates.status({ policy: currentUpdatePolicy(), deployment: DEPLOYMENT, installKind: APP_INSTALL_KIND });
+  return { current: st.current, target: st.target, updateAvailable: st.updateAvailable };
+};
+const broadcastAppUpdate = () => broadcast({ type: 'app-update', appUpdate: appUpdateBadge() });
+
 /** What would be interrupted by a restart right now, or null when idle: a live run or a chat turn. */
 const LIVE_RUN_STATUSES = new Set(['created', 'starting', 'running', 'resuming', 'queued', 'pending']);
 function updateBusyReason() {
@@ -10876,6 +10884,7 @@ function scheduleUpdateCheck({ delayMs = 30_000 } = {}) {
     updateTimer = null;
     try {
       await appUpdates.check();
+      broadcastAppUpdate();
       await autoUpdateTick();
     } catch (err) {
       console.warn(`[worca-ui] update check: ${err?.message || err}`);
@@ -10914,6 +10923,7 @@ app.get('/api/app/update', (_req, res) => {
 app.post('/api/app/update/check', async (_req, res) => {
   if (!currentUpdatePolicy().check) return res.status(409).json({ code: 'CHECK_OFF', error: 'Update checks are off on this instance', ...appUpdateStatus() });
   await appUpdates.check({ force: true });
+  broadcastAppUpdate();
   res.json(appUpdateStatus());
 });
 
@@ -10925,6 +10935,7 @@ app.post('/api/app/update/apply', async (req, res) => {
   try {
     const out = await appUpdates.apply({ version: version || null, policy, root: PROJECT_ROOT });
     console.log(`[worca-ui] update: installed ${out.version} (restart pending)`);
+    broadcastAppUpdate();
     res.json({ ok: true, installed: out.version, output: out.output, ...appUpdateStatus() });
   } catch (err) {
     res.status(UPDATE_APPLY_STATUS[err.code] || 500).json({ code: err.code || 'INSTALL_FAILED', error: err.message });
@@ -11534,7 +11545,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasSmartNaming) await setSmartNaming(body.smartNaming);
     if (hasDebugSpawnKey) await setDebugSpawnEnabled(body.debugSpawnEnabled);
     if (hasLimitResumeKey) await setResumeAfterUsageLimit(body.resumeAfterUsageLimit);
-    if (hasUpdatesKey) { await setUpdateSettings(body.updates); scheduleUpdateCheck(); }
+    if (hasUpdatesKey) { await setUpdateSettings(body.updates); scheduleUpdateCheck(); broadcastAppUpdate(); }
     if (hasTitleModelKey) await setTitleModel(titleModelInput);
     if (hasHideBuiltinKey) await setHideBuiltinModels(body.hideBuiltinModels);
     if (hasThemeKey) await setTheme(body.theme);

@@ -10,6 +10,8 @@
 // A managed instance (hosted, container, IT-managed laptop, source checkout) never gets an
 // install button: it shows the version, whether a newer one exists, and who updates it.
 
+import { makeSwitch } from './switch.mjs';
+
 const MANAGED_WHY = {
   hosted: 'This instance is hosted. Its administrator upgrades it by deploying a new image tag.',
   container: 'This instance runs from a container image. Pull the new image to update it.',
@@ -94,11 +96,15 @@ export function paintUpdateInto(root, s) {
   // deployment already decided).
   if (s.deployment !== 'hosted' && s.check?.lockedBy !== 'env') {
     const sw = h(doc, 'div', { class: 'about-update-switches' });
-    sw.append(h(doc, 'label', {}, h(doc, 'input', { type: 'checkbox', id: 'aboutUpdateCheckToggle', 'data-pref': 'check', checked: !!s.check?.enabled }), doc.createTextNode(' Check for updates')));
+    const check = makeSwitch(doc, { label: 'Check for updates', checked: !!s.check?.enabled, data: { pref: 'check' } });
+    check.input.id = 'aboutUpdateCheckToggle';
+    sw.append(check.row);
     if (s.apply === 'self') {
-      sw.append(h(doc, 'label', { title: 'Stable releases only. Installs while nothing is running, then restarts once idle.' },
-        h(doc, 'input', { type: 'checkbox', id: 'aboutUpdateAutoToggle', 'data-pref': 'auto', checked: !!s.auto?.enabled, disabled: !s.auto?.allowed }),
-        doc.createTextNode(' Install updates automatically')));
+      const auto = makeSwitch(doc, { label: 'Install updates automatically', checked: !!s.auto?.enabled, data: { pref: 'auto' },
+        locked: s.auto?.allowed ? null : 'Turn on update checks first' });
+      auto.input.id = 'aboutUpdateAutoToggle';
+      if (s.auto?.allowed) auto.row.title = 'Stable releases only. Installs while nothing is running, then restarts once idle.';
+      sw.append(auto.row);
     }
     box.append(sw);
   }
