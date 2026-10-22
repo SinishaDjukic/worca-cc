@@ -1,4 +1,4 @@
-// The ONE Shape-it-first gate (server + client): the experimental shapeFirst feature flag.
+// The ONE Shape-it-first gate (server + client): the shapeFirst feature flag (beta, on by default).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

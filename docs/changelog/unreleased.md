@@ -29,13 +29,15 @@ Pull requests (add each number when it opens):
 
 - Re-scans run on the model you chose
 
-## Shape it first (experimental)
+## Shape it first (beta)
 
 **Plan it before it builds.**
 
 Worca now shapes a thin or large task first: at most 3 questions, a plan written for the perspectives you pick, your approval, and then the run only builds. A task too big for one change is cut into slices, each with its own run, branch and pull request, stacked one on the next.
 
-Chips: Shaper · the plan card · checklists in review · plan in slices · experimental: turn it on in Settings › Labs
+Shaper is now in beta and on by default; turn it off in Settings › Labs or with `worca flags off shapeFirst`.
+
+Chips: Shaper · the plan card · checklists in review · plan in slices · beta: on by default, turn it off in Settings › Labs
 
 Read it: [Shape it first](../shape-it-first.md)
 
