@@ -312,7 +312,7 @@ const TILES = ['.stat-tile', '.chat-run-tile', '.mcp-setlist'];
 test('cards: every page card pads --pad-card, every tile --pad-tile', () => {
   for (const s of PAGE_CARDS) assert.match(bodyOf(s), /padding:var\(--pad-card\)/, s);
   for (const s of TILES) assert.match(bodyOf(s), /padding:var\(--pad-tile\)/, s);
-  assert.match(bodyOf('.card.settings-card'), /padding:0 0 var\(--pad-card\)/);
+  assert.equal(bodyOf('.card.settings-card'), '', 'a Settings section is a real .card: no rule strips its fill, border or padding');
 });
 
 test('tables: every header is 12/600 --ink-2', () => {

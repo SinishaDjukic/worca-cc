@@ -3459,11 +3459,9 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .spend-ind-meter-fill{display:block;height:100%;border-radius:var(--r-sm);background:var(--blue-ink);}
 
 /* ---------- Settings cards ---------- */
-/* One width/centering/gap rule for every Settings card. */
+/* One width/centering/gap rule for every Settings card. A Settings section is a real .card (--panel on --bg,
+   like the Models and Marketplace cards), so its fields and rows read against the page. */
 .settings-card{max-width:760px;padding:var(--pad-card);margin-left:auto;margin-right:auto;}
-/* Sections, not cards (review B3): heading, content, a 1px divider. The border comes from .card, so the override
-   names that compound. */
-.card.settings-card{padding:0 0 var(--pad-card);border:0;border-bottom:1px solid var(--line);border-radius:0;background:none;box-shadow:none;}
 .settings-card + .settings-card{margin-top:18px;}
 .settings-card[hidden]{display:none;}
 /* The Models page: Title generation, Auto workflow model and PR description model side by side
@@ -3498,14 +3496,14 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .xi{display:flex;flex-direction:column;gap:10px;margin-bottom:18px;}
 .xi-head{margin:0;color:var(--ink);}
 .xi-tabs{align-self:flex-start;}
-.xi-panel{display:flex;flex-direction:column;gap:8px;padding:12px;border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);}
+.xi-panel{display:flex;flex-direction:column;gap:8px;padding:12px;border-radius:var(--r-card);background:var(--field);}
 .xi-panel[hidden]{display:none;}
 .xi-path-row{display:flex;align-items:center;gap:10px;min-width:0;}
-.xi-path{flex:1 1 auto;min-width:0;font-family:var(--mono, 'JetBrains Mono', monospace);font-size:12px;color:var(--ink);background:var(--field);border-radius:var(--r-sm);padding:7px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.xi-path{flex:1 1 auto;min-width:0;font-family:var(--mono, 'JetBrains Mono', monospace);font-size:12px;color:var(--ink);background:var(--surface);border-radius:var(--r-sm);padding:7px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .xi-path-row .xi-copy{flex:none;}
 .xi-steps{margin:0;padding-left:20px;font-size:13px;color:var(--ink);display:flex;flex-direction:column;gap:2px;}
 .xi-note{margin:0;font-size:13px;color:var(--ink-2);}
-.xi-cmd{align-self:flex-start;font-family:var(--mono, 'JetBrains Mono', monospace);font-size:12px;color:var(--ink);background:var(--field);border-radius:var(--r-sm);padding:5px 10px;}
+.xi-cmd{align-self:flex-start;font-family:var(--mono, 'JetBrains Mono', monospace);font-size:12px;color:var(--ink);background:var(--surface);border-radius:var(--r-sm);padding:5px 10px;}
 .xi-meta{margin:0;font-size:12px;color:var(--ink-2);}
 .xi-link{color:var(--ink);text-decoration:underline;text-underline-offset:2px;}
 
@@ -5205,7 +5203,7 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
 .night-crit{display:inline-flex;align-items:center;gap:4px;margin:0 10px 6px 0;font-size:12px}
 .pd-night-card{margin-top:14px}
 /* Away mode card (night-mode-form.mjs): live summary, status strip, sections, radio group. */
-.away-summary{margin:0 0 12px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--panel);font-size:13px;line-height:1.5}
+.away-summary{margin:0 0 12px;padding:10px 12px;border-radius:var(--r-ctrl);background:var(--field);font-size:13px;line-height:1.5}
 .away-line{display:block}
 .away-status{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}
 .away-basic h3{margin:4px 0 10px}

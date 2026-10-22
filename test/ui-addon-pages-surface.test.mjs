@@ -52,7 +52,7 @@ test('the Models Engines card is a page card, full width, not a flat Settings ca
   const card = page.getElementById('engine-settings-card');
   assert.ok(card.closest('[data-view="models"]'));
   assert.ok(card.classList.contains('card'));
-  assert.equal(card.classList.contains('settings-card'), false, '.settings-card is the flat, 760px Settings-pane card');
+  assert.equal(card.classList.contains('settings-card'), false, '.settings-card is the 760px Settings-pane card');
 });
 
 test('the built-in model strips use the card tokens, no colour literal', () => {

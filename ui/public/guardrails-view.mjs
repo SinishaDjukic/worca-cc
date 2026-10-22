@@ -38,9 +38,9 @@ export function isReadOnlyGuardrailSet(s) {
   return !!s && (s.origin === 'builtin' || (typeof s.origin === 'string' && s.origin.startsWith('policy:')));
 }
 
-// renderGuardrailList(sets) -> <div.grv-list.drows> of divided rows; built-ins get View + no Delete.
+// renderGuardrailList(sets) -> <div.card.grv-list.drows> of divided rows; built-ins get View + no Delete.
 export function renderGuardrailList(sets, { doc = globalThis.document } = {}) {
-  const root = h(doc, 'div', 'grv-list drows');
+  const root = h(doc, 'div', 'card grv-list drows');
   for (const s of sets || []) {
     const card = h(doc, 'div', 'drow drow-stack grv-card');
     card.dataset.id = s.id;
