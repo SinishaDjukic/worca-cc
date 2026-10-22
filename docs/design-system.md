@@ -20,7 +20,7 @@ a `color-mix()` recipe used twice is a named token (`--btn-hover`, `--red-tint`,
 | slate | `--slate*` | neutral metadata: a source, "Official", policy (`.badge.slate`) | a state |
 Status-dot exceptions: peach = working (it pulses), violet = merged. They are the dots only, never a badge.
 Surfaces: `--panel` page, `--surface` raised, `--field` field and tint fill; `--line` dividers, `--line-2` control borders.
-`--row-open` is 50% of `--field` (no new hue): the lighter row highlight of a Runs group whose run is open.
+`--row-open` is 50% of `--field` (no new hue): the lighter row highlight of a collapsed Runs group whose run is open.
 
 Known drift (left for a later run): amber `badge waiting` on Guardrails' "built-in"
 and Models' "endpoint-routed", "project (legacy)" and "plugin:" labels; blue engine and credential badges. The interface
@@ -200,7 +200,9 @@ buttons stay 28px; the card keeps the shared 24px padding (checked by the theme 
   to edit it; a quiet button that leads a value pulls back by its padding so its text sits on the value column), the PR
   bar under the facts (only for the run's own PR), the tiles.
 - Runs navigation: every row opens its own page in the right pane and the list stays. A group row opens the group
-  page; the ⌄ only expands. A group whose run is open shows the lighter `--row-open` fill.
+  page; the ⌄ only expands. One row is highlighted at a time, the one whose page is open: a collapsed group whose run
+  is open shows the lighter `--row-open` fill over its whole row; expanded, only the open run's row is highlighted.
+  Rows inside a group draw no dividers; the group keeps its own divider before the next row.
 - Search is the top bar's "Search or ask" only. A list filter is chosen there ("Runs labelled hotfix", `label:hotfix`),
   not from a filter button in the list's header. The Marketplace's Browse search is the one exception
   (Marketplace exceptions).
