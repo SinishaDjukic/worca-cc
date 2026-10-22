@@ -243,7 +243,7 @@ test('an edit for another document fails without touching the canvas; another se
   await cc.sweep();
   assert.deepEqual(composer.log, []);
   assert.deepEqual(posts, [['card_0000aaaa', 'failed']]);
-  assert.match(cc.render(blocks[1]).textContent, /Not applied — made for an earlier visit/);
+  assert.match(cc.render(blocks[1]).textContent, /Not applied\. Made for an earlier visit/);
 });
 
 test('a built workflow waits for Apply; Apply asks to discard, saves its drafts, opens a NEW unsaved workflow', async () => {
@@ -358,7 +358,7 @@ test('a build whose draft was declined is not applied: one toast, no discard que
   assert.deepEqual(composer.log, [], 'loadDraft would place a script no library has');
   assert.deepEqual(posts, []);
   assert.equal(asked, 0);
-  assert.deepEqual(notes, ['Not applied — this workflow needs "lintAll", which was declined.']);
+  assert.deepEqual(notes, ['Not applied: this workflow needs "lintAll", which was declined.']);
 });
 
 test('a canvas edit waits while a popover field has focus and lands once it blurs; after dispose() a waiting edit never lands', async () => {
@@ -497,7 +497,7 @@ test('an applied edit from another tab or visit has no ⌘Z here: its disabled U
   const undoOf = (b) => [...cc.render(b).querySelectorAll('button')].find((x) => x.textContent === 'Undo');
   const theirs = undoOf({ kind: 'card', id: 'card_0000bbbb', state: 'applied', card: { type: 'canvas-edit', sessionId: 'cs_zzzzzzzz', docToken: 'd_ab12cd34', summary: 'old', ops: [] } });
   assert.equal(theirs.disabled, true);
-  assert.equal(theirs.title, 'Applied in another tab or visit — undo it there');
+  assert.equal(theirs.title, 'Applied in another tab or visit. Undo it there');
   assert.equal(undoOf(card('card_0000aaaa', 'applied', { type: 'canvas-edit', summary: 'x', ops: [] })).title, 'Use Ctrl+Z on the canvas', 'jsdom names no platform: not a Mac');
   // The title names the chord this keyboard has: ⌘Z on a Mac, Ctrl+Z on Windows and Linux (the platform check of global-search.mjs shortcutLabel).
   for (const [platform, chord] of [['MacIntel', '⌘Z'], ['iPad', '⌘Z'], ['Win32', 'Ctrl+Z'], ['Linux x86_64', 'Ctrl+Z']]) {
@@ -584,10 +584,10 @@ test('a "Save & add" whose add the canvas refuses still saves, and the card says
   }
   const refused = await run({ ok: false, error: 'x' });
   assert.deepEqual(refused.post, { state: 'saved', card: { savedKey: 'releaseNotes' } }, 'saved all the same');
-  assert.deepEqual(refused.err, ['Not added to the canvas — x']);
-  assert.match(refused.text, /✓ Saved to your agents/);
+  assert.deepEqual(refused.err, ['Not added to the canvas: x']);
+  assert.match(refused.text, /Saved to your agents/);
   assert.equal(refused.why(), 'x', 'the dock\'s live region reads it');
-  assert.deepEqual((await run({ ok: false })).err, ['Not added to the canvas — the canvas refused it'], 'a refusal with no reason still says so');
+  assert.deepEqual((await run({ ok: false })).err, ['Not added to the canvas: the canvas refused it'], 'a refusal with no reason still says so');
   const took = await run({ ok: true, depth: 1 });
   assert.deepEqual([took.post.state, took.err, took.why()], ['added', [], '']);
   const plain = createCardController({ doc: dom.window.document, composer: fakeComposer(), sessionId: 'cs_ab12cd34', client: { postCard: async () => ({ ok: true }) } });
@@ -1138,8 +1138,8 @@ test('a refused "Save & add" is said: the card and the live region tell why the 
   assert.deepEqual(s.f.calls.filter((c) => /\/cards\//.test(c.url)).at(-1).body, { state: 'saved', card: { savedKey: 'releaseNotes' } }, 'saved all the same');
   s.dock.pushFrame({ type: 'ask-card', threadId: THREAD.id, messageId: 'msg_0000bbbb', seq: 3, block: { ...draft, state: 'saved' } });   // the server's flip
   await new Promise((r) => setTimeout(r, 0));
-  assert.equal(s.g('wfc').querySelector('.wfc-sr').textContent, 'Saved agent: Release Notes — not added to the canvas: it would add an error: Release Notes needs an input');
-  assert.equal(s.g('wfc').querySelector('[data-card-id="card_0000dddd"] .wfc-err').textContent, 'Not added to the canvas — it would add an error: Release Notes needs an input');
+  assert.equal(s.g('wfc').querySelector('.wfc-sr').textContent, 'Saved agent: Release Notes. Not added to the canvas: it would add an error: Release Notes needs an input');
+  assert.equal(s.g('wfc').querySelector('[data-card-id="card_0000dddd"] .wfc-err').textContent, 'Not added to the canvas: it would add an error: Release Notes needs an input');
 });
 
 test('a clicked Send or Stop never keeps the focus on a button the turn hides: Send hands it to Stop, Stop back to Send', async () => {
@@ -1195,7 +1195,7 @@ test('another workflow opened while a draft\'s registry reload runs takes none o
   [...cc.render({ ...b, state: 'saved' }).querySelectorAll('button')].find((x) => x.textContent === 'Add to canvas').click();
   for (let i = 0; i < 4; i += 1) await new Promise((r) => setTimeout(r, 0));
   assert.deepEqual(composer.log, [], 'its reload switched documents again: nothing applied');
-  assert.deepEqual(notes, ['Not added — another workflow was opened meanwhile.']);
+  assert.deepEqual(notes, ['Not added: another workflow was opened meanwhile.']);
   assert.equal(posts.length, 1, 'no "added" flip');
   dom.window.close();
 });
@@ -1792,7 +1792,7 @@ test('card-views: one DOM for both chats — a draft card shows the state its ho
   const shownSaved = draftCardView(b, { h, button, state: 'saved', onEdit: () => {}, onDecline: () => {}, onSave: () => {} });
   assert.equal(shownSaved.querySelector('.wfc-chip').textContent, 'saved');
   assert.equal(shownSaved.querySelectorAll('.wfc-actions button').length, 0);
-  assert.match(shownSaved.textContent, /✓ Saved to your agents/);
+  assert.match(shownSaved.textContent, /Saved to your agents/);
   const graph = h('div', 'my-graph');
   const build = buildCardView(card('card_0000f002', 'proposed', { type: 'workflow-build', name: 'G', workflow: { nodes: [], wires: [] }, counts: {} }),
     { h, graph, actions: (row) => row.appendChild(h('span', 'x', 'act')) });

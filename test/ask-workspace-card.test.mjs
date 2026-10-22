@@ -250,6 +250,12 @@ before(async () => {
   const r = await post('/api/workspaces', { name: 'Card WS', projectPaths: [projects[0].path, projects[1].path] });
   assert.equal(r.status, 201, await r.clone().text());
   ws = (await r.json()).workspace;
+  // A pick-less workspace's members-change auto-rescan answers needsModel by design (the page
+  // asks the user). The card tests the auto-re-scan itself, so save a pick the way the page does.
+  const pick = await fetch(`${base}/api/workspaces/${ws.id}/scan-models`, {
+    method: 'PUT', headers: JSONH, body: JSON.stringify({ workspaceScan: { scanModel: 'claude-opus-5-5', scanEffort: 'high', agentModel: 'opus', agentEffort: 'xhigh' } }),
+  });
+  assert.equal(pick.status, 200, `PUT /scan-models: ${(await pick.json()).error || pick.status}`);
 });
 
 after(async () => {

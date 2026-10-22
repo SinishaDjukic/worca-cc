@@ -14,6 +14,15 @@ export function fold(b, region, onOpen) {
   return b;
 }
 
+/** Run 4 (D8): a control that gives way to `region` (Ask for changes → the changes field); `cancel` gives it back. */
+export function swapOpen(b, region, cancel, onOpen) {
+  b.setAttribute('aria-expanded', 'false');
+  const show = (open) => { region.hidden = !open; b.hidden = open; b.setAttribute('aria-expanded', String(open)); };
+  b.addEventListener('click', () => { show(true); if (onOpen) onOpen(); });
+  cancel.addEventListener('click', (e) => { e.stopPropagation(); show(false); b.focus(); });
+  return b;
+}
+
 /** The rows of a check: one `.plan-check-row` per item, ✓ met / ✕ unmet with its detail. */
 export function buildCheckRows(doc, check) {
   const h = (tag, cls, text) => { const e = doc.createElement(tag); e.className = cls; if (text != null) e.textContent = text; return e; };

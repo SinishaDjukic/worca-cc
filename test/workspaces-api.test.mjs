@@ -188,6 +188,16 @@ const get = (p) => fetch(`${base}${p}`);
 const post = (p, body) => fetch(`${base}${p}`, { method: 'POST', headers: JSONH, body: JSON.stringify(body) });
 const patch = (p, body) => fetch(`${base}${p}`, { method: 'PATCH', headers: JSONH, body: JSON.stringify(body) });
 const del = (p) => fetch(`${base}${p}`, { method: 'DELETE' });
+const put = (p, body) => fetch(`${base}${p}`, { method: 'PUT', headers: JSONH, body: JSON.stringify(body) });
+// A pick-less workspace's add/remove auto-rescan answers { rescan: { needsModel: true } } by
+// design (the page asks the user). Tests about the auto re-scan itself give the fresh workspace a
+// saved pick first — exactly what the prompted page does — so the re-scan starts silently.
+const savePick = async (wsId) => {
+  const r = await put(`/api/workspaces/${wsId}/scan-models`, {
+    workspaceScan: { scanModel: 'claude-opus-5-5', scanEffort: 'high', agentModel: 'opus', agentEffort: 'xhigh' },
+  });
+  assert.equal(r.status, 200, `PUT /scan-models: ${(await r.json()).error || r.status}`);
+};
 
 // ───────────────────────────────────────────────────────────────────────────
 // Workspace CRUD
@@ -448,6 +458,7 @@ test('a member change starts a Workspace scan run of the new set (graphs, map, d
   const b = await freshRepo();
   const c = await freshRepo();
   const { workspace } = await (await post('/api/workspaces', { name: 'Rescanned', projectPaths: [a, b], description: 'old text' })).json();
+  await savePick(workspace.id);
   const r = await post(`/api/workspaces/${workspace.id}/members`, { add: [c] });
   assert.equal(r.status, 200, await r.clone().text());
   const body = await r.json();
@@ -471,6 +482,7 @@ test('a second member change supersedes the automatic re-scan; a scan the user s
   const b = await freshRepo();
   const c = await freshRepo();
   const { workspace } = await (await post('/api/workspaces', { name: 'Superseded', projectPaths: [a, b] })).json();
+  await savePick(workspace.id);
   const stopped = [];
   runs.set('auto-scan-1', { id: 'auto-scan-1', kind: 'workspace-run', workspaceId: workspace.id, status: 'running', autoRescan: true,
     events: [], orch: { stop() { stopped.push('auto-scan-1'); } } });

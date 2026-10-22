@@ -1,5 +1,5 @@
 // test/ui-sidebar-compact.test.mjs — the compact sidebar (plan P1, docs/superpowers/plans/2026-10-08-compact-sidebar.md):
-// three bands, the 254px column and the 60px rail, the row rhythm, the counts and the Nodes flyout, read
+// three bands, the 224px column and the 60px rail, the row rhythm, the counts and the Nodes flyout, read
 // straight from index.html and style.css. jsdom has no layout, so sizes are pinned in the stylesheet; the
 // behaviour lives in ui-sidebar-collapse, ui-nodes-flyout, ui-mobile-nav and side-flyout tests.
 import { test } from 'node:test';
@@ -30,9 +30,9 @@ test('three bands: the logo row and the foot stay put, the pages scroll between 
   }
 });
 
-test('the column is 254px and never scrolls itself; #side-scroll is the one scroller; the rail is 60px', () => {
+test('the column is 224px and never scrolls itself; #side-scroll is the one scroller; the rail is 60px', () => {
   const side = ruleBody('.sidebar');
-  assert.match(side, /width:254px;flex:0 0 254px;/);
+  assert.match(side, /width:224px;flex:0 0 224px;/);
   assert.match(side, /display:flex;flex-direction:column;/);
   assert.match(side, /overflow:hidden;/);
   assert.doesNotMatch(side, /overflow-y|padding/, 'the bands own the padding and the scrolling');
@@ -52,7 +52,7 @@ test('the column is 254px and never scrolls itself; #side-scroll is the one scro
 });
 
 test('the phone drawer follows the new widths; no 298 / 76px literal is left', () => {
-  assert.match(css, /\.sidebar\{position:fixed;top:0;bottom:0;left:0;z-index:42;width:min\(254px,86vw\);/);
+  assert.match(css, /\.sidebar\{position:fixed;top:0;bottom:0;left:0;z-index:42;width:min\(224px,86vw\);/);
   // The Ask threads popover's right:76px sits on the right edge: it is not the rail.
   const rest = css.replace('.ask-pop-threads{top:46px;right:76px;', '');
   assert.doesNotMatch(rest, /\b298\b|\b76px\b/);
@@ -99,9 +99,9 @@ test('New run has no sidebar row (the top bar\'s button opens it): no "+" tile, 
   assert.ok(themeTool.includes("'.topnav-new'"), 'verify:theme hovers New run in the top bar');
 });
 
-test('the Getting started pill keeps the 32px rhythm: a full violet outline and a count pill of its own', () => {
+test('the Getting started pill keeps the 32px rhythm: a full blue outline and a count pill of its own', () => {
   const pill = ruleBody('.nav button.gs-pill');
-  assert.match(pill, /border:1\.5px solid var\(--violet\);padding:0 6\.5px 0 7\.5px;/);
+  assert.match(pill, /border:1\.5px solid var\(--blue\);padding:0 6\.5px 0 7\.5px;/);
   assert.doesNotMatch(pill, /height|border-left/);
   assert.match(ruleBody('.nav button.gs-pill .gs-pill-count'), /height:18px;padding:0 6px;border-radius:var\(--r-xs\);/);
 });

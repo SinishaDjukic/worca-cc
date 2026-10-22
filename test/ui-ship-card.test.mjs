@@ -25,7 +25,7 @@ test('ready: the suggested mode is the primary, the summary names runs, files an
   assert.equal(el.querySelector('.ask-mcard-title').textContent, 'Charts');
   assert.deepEqual(buttons(el).map((b) => b.textContent), ['Not now', 'Stacked PRs', 'One PR']);
   assert.ok(el.querySelector('[data-act="ship-one"]').classList.contains('btn-primary'));
-  assert.ok(el.querySelector('[data-act="ship-stacked"]').classList.contains('ask-card-not-now'));
+  assert.equal(el.querySelector('[data-act="ship-stacked"]').className, 'btn btn-sm');
   assert.ok(el.querySelector('[data-act="ship-not-now"]').classList.contains('ask-card-not-now'));
   assert.equal(el.querySelector('.ask-shipcard-stats').textContent, '3 runs · 12 files · +840 −120');
   assert.equal(el.querySelector('.ask-shipcard-why').textContent, 'This feature adds 840 lines: one PR is easier to review.');
@@ -73,11 +73,11 @@ test('Not now posts not-now', async () => {
   assert.deepEqual(posts, [{ verb: 'not-now' }]);
 });
 
-test('applied: Shipped as one PR, View pull request, the closed drafts and the release line', () => {
+test('applied: Shipped as one PR, View PR, the closed drafts and the release line', () => {
   const { el } = chat({ id: 'card_00000001', state: 'applied',
     card: { ...READY, result: { mode: 'one', prUrl: 'https://github.com/o/r/pull/9', closed: 3, release: { version: 'v1.12.0', url: null, error: null } } } });
   assert.equal(el.querySelector('.ask-mcard-kind').textContent, 'Shipped');
-  assert.match(el.querySelector('.ask-shipcard-done').textContent, /^Shipped as one PR · View pull request$/);
+  assert.match(el.querySelector('.ask-shipcard-done').textContent, /^Shipped as one PR · View PR$/);
   assert.equal(el.querySelector('.ask-shipcard-pr').href, 'https://github.com/o/r/pull/9');
   assert.equal(el.querySelector('.ask-shipcard-closed').textContent, 'Closed 3 drafts');
   assert.equal(el.querySelector('.ask-shipcard-rel').textContent, 'Release v1.12.0 · draft after merge');

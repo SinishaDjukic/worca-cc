@@ -2,10 +2,11 @@
 // and the card ctx (CONTRACT §2) alone.
 //  - receipt: an action worca already applied (a setting, pause, resume, Away mode, a schedule, a direction) — what
 //    it changed, before → after, and Revert (R6).
-//  - run-stop: the stop warning itself (R7) — "Keep running" or the red "Stop pipeline".
-//  - pull-request: a finished run's pull request offer (R9) — its button opens the Ship it dialog with the card's link.
+//  - run-stop: the stop warning itself (R7) — "Keep running" or the red "Stop run".
+//  - pull-request: a finished run's pull request offer (R9) — its button opens the Create PR dialog with the card's link.
 // The chrome is the Ask card's (.ask-card, .ask-mcard-*, .ask-card-not-now / -err); style.css
 // "Chat P2: Action cards" adds the rest. Emphasis is a background wash, never an edge line.
+import { CREATE_PR_LABEL } from '../ship-words.mjs';
 import { registerChatCard } from './extensions.mjs';
 import { buildShipChatCard } from '../shape/ship-card.mjs';
 import { buildChangesChatCard } from '../shape/changes-card.mjs';
@@ -84,7 +85,7 @@ export function buildReceiptCard(block, ctx) {
   }
   const note = make(doc, 'div', 'ask-rcard-note');   // no live region: ctx.announce speaks each outcome once
   if (reverted) note.textContent = 'Reverted';
-  else if (result.code === 'CHANGED_SINCE') note.textContent = 'Changed since — not reverted';
+  else if (result.code === 'CHANGED_SINCE') note.textContent = 'Not reverted: it changed since';
   body.appendChild(note);
   root.appendChild(body);
   const err = make(doc, 'div', 'ask-card-err');
@@ -108,7 +109,7 @@ export function buildReceiptCard(block, ctx) {
         const code = e && e.body && e.body.code;
         revert.textContent = 'Revert';
         if (code === 'CHANGED_SINCE' || code === 'ALREADY_REVERTED') {   // stays disabled (R6)
-          note.textContent = code === 'CHANGED_SINCE' ? 'Changed since — not reverted' : 'Already reverted';
+          note.textContent = code === 'CHANGED_SINCE' ? 'Not reverted: it changed since' : 'Already reverted';
           announce(ctx, note.textContent);
           return;
         }
@@ -126,18 +127,19 @@ export function buildRunStopCard(block, ctx) {
   const doc = ctx.doc;
   const card = block.card || {};
   const title = card.title || card.pipelineId || 'this run';
-  if (block.state === 'declined') return { el: make(doc, 'div', 'ask-card-stub ask-actcard-stub', `Not stopped — ${title}`) };
+  if (block.state === 'declined') return { el: make(doc, 'div', 'ask-card-stub ask-actcard-stub', `Not stopped: ${title}`) };
   const root = make(doc, 'div', `ask-card ask-mcard ask-stopcard is-${block.state}`);
   root.setAttribute('data-chat-run-stop', block.state);
   root.setAttribute('role', 'group');
-  root.setAttribute('aria-label', 'Stop this pipeline?');
+  root.setAttribute('aria-label', 'Stop this run?');
   const head = make(doc, 'div', 'ask-mcard-head');
-  head.appendChild(make(doc, 'span', 'ask-mcard-title', 'Stop this pipeline?'));
+  head.appendChild(make(doc, 'span', 'ask-mcard-title', 'Stop this run?'));
   root.appendChild(head);
   const body = make(doc, 'div', 'ask-mcard-body');
   const ident = make(doc, 'div', 'ask-stopcard-ident');
-  ident.appendChild(make(doc, 'div', 'ask-stopcard-title', title));
-  if (card.branch) ident.appendChild(make(doc, 'div', 'ask-stopcard-branch', card.branch));
+  const name = make(doc, 'div', 'ask-stopcard-title', title);
+  if (card.branch) name.title = card.branch;
+  ident.appendChild(name);
   body.appendChild(ident);
   body.appendChild(make(doc, 'div', 'ask-stopcard-copy', "A stopped run can't be resumed. Its work so far stays on its branch."));
   if (block.state === 'applied') body.appendChild(make(doc, 'div', 'ask-stopcard-done', 'Stopped'));
@@ -150,8 +152,8 @@ export function buildRunStopCard(block, ctx) {
     const actions = make(doc, 'div', 'ask-mcard-actions');
     // Like #stop-modal: the way out keeps a paused run paused.
     const keep = makeButton(doc, 'btn btn-sm btn-quiet ask-card-not-now', card.status === 'paused' ? 'Keep paused' : 'Keep running', 'data-chat-stop-keep');
-    const stop = makeButton(doc, 'btn btn-sm btn-danger', 'Stop pipeline', 'data-chat-stop-confirm');
-    const busy = (on, label = 'Stop pipeline') => { keep.disabled = on; stop.disabled = on; stop.textContent = label; };
+    const stop = makeButton(doc, 'btn btn-sm btn-danger', 'Stop run', 'data-chat-stop-confirm');
+    const busy = (on, label = 'Stop run') => { keep.disabled = on; stop.disabled = on; stop.textContent = label; };
     keep.addEventListener('click', async () => {
       busy(true); err.textContent = '';
       try { await ctx.postCard(block, { state: 'declined' }); } catch (e) { err.textContent = errorOf(e); busy(false); }
@@ -214,7 +216,7 @@ export function buildPullRequestCard(block, ctx) {
   const doc = ctx.doc;
   const card = block.card || {};
   const title = card.title || card.pipelineId || 'this run';
-  if (block.state === 'declined') return { el: make(doc, 'div', 'ask-card-stub ask-actcard-stub', `Not now — ${title}`) };
+  if (block.state === 'declined') return { el: make(doc, 'div', 'ask-card-stub ask-actcard-stub', `Not now: ${title}`) };
   const root = make(doc, 'div', `ask-card ask-mcard ask-prcard is-${block.state}`);
   root.setAttribute('data-chat-pr', block.state);
   root.setAttribute('role', 'group');
@@ -241,7 +243,7 @@ export function buildPullRequestCard(block, ctx) {
     const anchors = new Map();
     for (const m of entries) {
       if (!m || !m.url) continue;
-      const a = make(doc, 'a', 'ask-card-link ask-prcard-link', entries.length > 1 && m.memberKey ? `View pull request · ${shortKey(m.memberKey)}` : 'View pull request');
+      const a = make(doc, 'a', 'ask-card-link ask-prcard-link', entries.length > 1 && m.memberKey ? `View PR · ${shortKey(m.memberKey)}` : 'View PR');
       a.href = m.url; a.target = '_blank'; a.rel = 'noopener noreferrer';
       links.appendChild(a);
       anchors.set(m, a);
@@ -272,7 +274,7 @@ export function buildPullRequestCard(block, ctx) {
     const actions = make(doc, 'div', 'ask-mcard-actions');
     actions.dataset.needsGit = '';
     const later = makeButton(doc, 'btn btn-sm btn-quiet ask-card-not-now', 'Not now', 'data-chat-pr-decline');
-    const create = makeButton(doc, 'btn btn-sm btn-primary', 'Create pull request', 'data-chat-pr-create');
+    const create = makeButton(doc, 'btn btn-sm btn-primary', CREATE_PR_LABEL, 'data-chat-pr-create');
     const lock = (on) => { later.disabled = on; create.disabled = on; };
     later.addEventListener('click', async () => {
       lock(true); err.textContent = '';
@@ -280,7 +282,7 @@ export function buildPullRequestCard(block, ctx) {
     });
     create.addEventListener('click', async () => {
       err.textContent = '';
-      if (typeof ctx.openShipIt !== 'function') { err.textContent = 'Could not open the Ship it dialog.'; return; }
+      if (typeof ctx.openShipIt !== 'function') { err.textContent = 'Could not open the Create PR dialog.'; return; }
       lock(true);                                      // one dialog per card, until it closes
       let r = null;
       try {
@@ -288,7 +290,7 @@ export function buildPullRequestCard(block, ctx) {
         r = await ctx.openShipIt({ pipelineId: card.pipelineId, projectKey: card.projectKey, ...(card.workspaceId ? { workspaceId: card.workspaceId } : {}) },
           { askThreadId: ctx.threadId(), askCardId: block.id });
       } catch (e) { r = { opened: false, error: errorOf(e) }; }
-      if (!r || typeof r !== 'object') r = { opened: false, error: 'Could not open the Ship it dialog.' };   // no opener assigned yet
+      if (!r || typeof r !== 'object') r = { opened: false, error: 'Could not open the Create PR dialog.' };   // no opener assigned yet
       if (r.error) err.textContent = r.error;
       if (r.opened) { announce(ctx, 'Pull request opened'); return; }   // POST /api/pr flipped the card; it rebuilds as applied
       lock(false);

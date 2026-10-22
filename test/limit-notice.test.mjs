@@ -48,7 +48,7 @@ test('A: no known reset time leaves the lead to the caller', () => {
 test('B: reset ahead — sentence, countdown to the reset, schedule at reset + margin', () => {
   const n = limitNotice({ pauseDetail: DETAIL, whose: WHOSE, limitResetAt: RESET, now: NOW });
   assert.equal(n.state, 'B');
-  assert.equal(n.lead, "Paused — Claude's session limit.");
+  assert.equal(n.lead, "Paused: Claude's session limit.");
   assert.equal(n.sentence, 'It resets at {t}');
   assert.equal(n.timeAt, t('15:00'));
   assert.equal(n.countdownTo, t('15:00'));
@@ -69,7 +69,7 @@ test('B inside the margin: "It reset at", button kept, repaint at the one-click 
 test('B2: past reset + margin — no action, resume to continue', () => {
   const n = limitNotice({ pauseDetail: DETAIL, whose: WHOSE, limitResetAt: RESET, now: t('15:06') });
   assert.equal(n.state, 'B2');
-  assert.equal(n.sentence, 'It reset at {t} — resume to continue');
+  assert.equal(n.sentence, 'It reset at {t}. Resume to continue');
   assert.equal(n.timeAt, t('15:00'));
   assert.equal(n.action, null);
   assert.equal(n.repaintAt, null);
@@ -100,19 +100,19 @@ test('D: a due or firing ticket is resuming', () => {
   const due = { id: 'tk1', runAt: '2026-10-11T15:05:00Z', status: 'scheduled' };
   const d1 = limitNotice({ pauseDetail: DETAIL, whose: WHOSE, ticket: due, now: t('15:05') });
   assert.equal(d1.state, 'D');
-  assert.equal(d1.lead, 'Paused — resuming…');
+  assert.equal(d1.lead, 'Paused: resuming…');
   assert.equal(d1.action, null);
   const firing = { id: 'tk1', runAt: '2026-10-11T15:05:00Z', status: 'firing' };
   const d2 = limitNotice({ pauseDetail: DETAIL, whose: WHOSE, ticket: firing, now: NOW });
   assert.equal(d2.state, 'D');
-  assert.equal(d2.lead, 'Paused — resuming…');
+  assert.equal(d2.lead, 'Paused: resuming…');
 });
 
 test('OpenRouter detail: B has its own lead, a button only', () => {
   const detail = "OpenRouter's free-model requests are used up until 00:00 UTC";
   const n = limitNotice({ pauseDetail: detail, whose: '', limitResetAt: RESET, now: NOW });
   assert.equal(n.state, 'B');
-  assert.equal(n.lead, `Paused — ${detail}.`);
+  assert.equal(n.lead, `Paused: ${detail}.`);
   assert.equal(n.sentence, '');
   assert.equal(n.countdownTo, null);
   assert.equal(n.timeAt, null);

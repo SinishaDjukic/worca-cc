@@ -129,7 +129,7 @@ test('Team policy: sentence-case labels, a sans sync chip, grey "not installed",
   assert.ok(!chip.classList.contains('tp-chip') && chip.classList.contains('tp-sync'), 'the editor value-chip rule (mono) no longer reaches the sync chip');
   assert.match(src, /missing: \['grey', 'not installed'\]/);
   assert.match(src, /'not-installed': \['grey', 'Not installed'/);
-  assert.match(src, /h\(doc, 'span', 'badge grey', 'Team policy'\)/);
+  assert.match(src, /h\(doc, 'span', 'badge slate', 'Team policy'\)/);
   assert.doesNotMatch(src, /h\(doc, 'button', '(?:linkish|tp-unset|tp-chip-rm)/, 'linkish stays only on the a.tp-open-page link');
   assert.doesNotMatch(src, /['"`]\+ ?[A-Za-z]/, 'no typed plus, lowercase "+ add" included');
   assert.doesNotMatch(src, /'✕'/);
@@ -142,7 +142,7 @@ test('Team policy: sentence-case labels, a sans sync chip, grey "not installed",
 // markup has no footer button; the proof's dialog-sizes state and the source pins below cover them.
 const DIALOGS = ['#model-editor-modal', '#model-import-modal', '#viewer-card', '#folder-browser', '#mode-modal', '#confirm-modal',
   '#report-modal', '#export-modal', '#shipit-modal', '#publish-modal', '#welcome-modal', '#claude-setup-modal', '#stop-modal',
-  '#project-add-modal', '#project-bulk-modal', '#plugin-modal'];
+  '#project-add-modal', '#project-bulk-modal', '#plugin-modal', '#scan-model-modal'];
 // D12: the action rows, and the head Close / Full screen buttons.
 const FOOT = ['.confirm-actions', '.stop-actions', '.add-project-actions', '.mode-foot', '.report-head-actions', '.publish-actions',
   '.shipit-actions', '.mv-editor-btns', '.viewer-actions', '[data-card-actions]'].map((s) => `${s} .btn`).concat('#plugin-modal-close', '#claude-setup-close').join(', ');
@@ -198,7 +198,7 @@ test('the theme proof measures the slice-3 pages, intros and dialogs, and runs t
   assert.match(proof, /\['dialog-sizes', async \(\) => \{/);
   // Both Phase B skip lists (the running and the history variants) exclude dialog-sizes, so it adds no audit rows.
   assert.match(proof, /\['running-detail-tabs', 'layout-widths', 'dialog-sizes'\]\.includes\(id\)/, 'running skip list');
-  assert.match(proof, /\['history-detail-tabs', 'layout-widths', 'dialog-sizes'\]\.includes\(id\)/, 'history skip list');
+  assert.match(proof, /\['history-detail-tabs', 'history-menu', 'layout-widths', 'dialog-sizes'\]\.includes\(id\)/, 'history skip list');
   assert.match(proof, /strayReport\.push\(\{ state: `dialog-sizes #\$\{id\}`/, 'every index.html dialog is stray-audited');
   // The proof's FOOT selector is the unit test's, so the two dialog lists cannot drift.
   const line = proof.match(/const FOOT = (\[[\s\S]*?\.join\(', '\));/);
@@ -211,14 +211,13 @@ test('the typed-plus ratchet lost the four slice-3 files', () => {
   for (const f of ['mcp-view.mjs', 'mcp-definition-form.mjs', 'team-policy-view.mjs', 'script-bench-view.mjs'])
     assert.ok(!debt.typedPlus.includes(`ui/public/${f}`), f);
   for (const s of ['.mv-filter.on', '.wfl-chip[aria-pressed="true"]']) assert.ok(!debt.solidPressed.includes(s), s);
-  // qa-2-2: the three entries left are not .btn labels, so the empty BUTTON_SPEC.plusDebt cannot flag them at runtime
-  // (auditButtons only checks typed-plus on .btn). app.js and engine-settings-view.mjs type "+" into <option> text
-  // ("+ Add model…", "+ Add project…", "+ Override a …"), which cannot hold an icon; release-row.mjs's "+ Add a release"
-  // is button.release-row-add, which is not .btn and is excused in BUTTON_SPEC.controls (Shaper, out of scope).
-  assert.deepEqual(debt.typedPlus, ['ui/public/app.js', 'ui/public/engine-settings-view.mjs', 'ui/public/shape/release-row.mjs']);
-  assert.match(read('ui/public/app.js'), /option\('__add__', '\+ Add model…'\)/);
-  assert.match(read('ui/public/engine-settings-view.mjs'), /doc\.createElement\('option'\), \{ value: '', textContent: `\+ Override a/);
-  assert.match(read('ui/public/shape/release-row.mjs'), /h\('button', 'release-row-add', '\+ Add a release'\)/);
+  // Run 3 (F-12): app.js and engine-settings-view.mjs typed "+" into <option> text, which cannot hold an icon; the
+  // plus is dropped ("Add model…", "Add project…", "Override a …"), so the list is empty. Run 4 (D15): release-row.mjs's
+  // "Add a release" is a quiet small button with the plus icon.
+  assert.deepEqual(debt.typedPlus, []);
+  assert.match(read('ui/public/app.js'), /option\('__add__', 'Add model…'\)/);
+  assert.match(read('ui/public/engine-settings-view.mjs'), /doc\.createElement\('option'\), \{ value: '', textContent: `Override a/);
+  assert.doesNotMatch(read('ui/public/shape/release-row.mjs'), /'\+ Add a release'/);
 });
 
 test('sideways scroll: the Marketplace header wraps and a long marketplace URL breaks at 290 and 375px', () => {

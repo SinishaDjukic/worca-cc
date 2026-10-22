@@ -97,7 +97,7 @@ export function reportResultControl(pipelineId, { doc = globalThis.document, pos
     wrap._pending = (async () => {
       try {
         const out = await post(`/api/pipelines/${encodeURIComponent(pipelineId)}/report-result`);
-        status.textContent = out && out.ok ? (out.skipped ? 'nothing to report' : 'reported ✓') : `failed: ${out?.error || 'unknown'}`;
+        status.textContent = out && out.ok ? (out.skipped ? 'nothing to report' : 'reported') : `failed: ${out?.error || 'unknown'}`;
       } catch (e) {
         status.textContent = `failed: ${e.message}`;
       } finally {
@@ -117,7 +117,7 @@ export function workflowPickerLabel(wf, enabledPluginNames = []) {
   if (!origin.startsWith('plugin:')) return wf?.name || '';
   const plugin = origin.slice('plugin:'.length);
   const disabled = Array.isArray(enabledPluginNames) && !enabledPluginNames.includes(plugin);
-  return `${wf.name} [plugin: ${plugin}${disabled ? ' — disabled' : ''}]`;
+  return `${wf.name} [plugin: ${plugin}${disabled ? ', disabled' : ''}]`;
 }
 
 /**
@@ -138,7 +138,7 @@ export function memoryChangesRows(memory) {
       ...(c.added || []).map((r) => ({ kind: 'add', text: `+ ${file(r)}`, scope: r.scope, name: r.name })),
       ...(c.modified || []).map((r) => ({ kind: 'mod', text: `~ ${file(r)}`, scope: r.scope, name: r.name })),
       ...(c.deleted || []).map((r) => ({ kind: 'del', text: `− ${file(r)}`, scope: r.scope, name: r.name })),
-      ...(c.rejected || []).map((r) => ({ kind: 'rej', text: `✕ ${file(r)}`, title: String(r.reason || ''), scope: r.scope, name: r.name })),
+      ...(c.rejected || []).map((r) => ({ kind: 'rej', text: file(r), title: String(r.reason || ''), scope: r.scope, name: r.name })),
       // A write that never reached the mount (a refused tool call): nothing in the store to open.
       ...(c.failed || []).map((r) => ({ kind: 'fail', text: `⊘ ${file(r)}`, title: String(r.reason || ''), scope: r.scope, name: r.name })),
     ];

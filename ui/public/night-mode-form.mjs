@@ -158,7 +158,7 @@ function deciderModelField(doc, level, values, inh, inhSrc, models) {
     // failed GET) condemns nothing. Ids match case-insensitively, like the resolver.
     const lc = stored.toLowerCase();
     const gone = Array.isArray(models) && models.length > 0 && !models.some((m) => m && typeof m.id === 'string' && m.id.toLowerCase() === lc);
-    const o = el(doc, 'option', null, gone ? `${stored} — ${DECIDER_WORDS.notInstalled}` : stored);
+    const o = el(doc, 'option', null, gone ? `${stored} (${DECIDER_WORDS.notInstalled})` : stored);
     o.value = stored; o.disabled = gone; sel.append(o);
   }
   sel.value = stored;
@@ -214,7 +214,7 @@ export function renderNightForm(root, { level, values = {}, effective = {}, sour
 
   // C. When and where worca answers (open).
   const basic = el(doc, 'div', 'away-basic');
-  basic.append(el(doc, 'h3', null, 'When and where worca answers'));
+  basic.append(el(doc, 'h3', 'subsection-title', 'When and where worca answers'));
 
   const win = field(doc, FIELD_LABELS.window.label, FIELD_LABELS.window.hint);
   const [ws, we] = typeof values.window === 'string' ? values.window.split('-') : ['', ''];

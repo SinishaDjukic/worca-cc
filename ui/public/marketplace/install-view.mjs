@@ -159,7 +159,7 @@ export function renderReview(doc, item, { needsGit = false, error = null } = {})
       ul.append(li);
     }
     adds.append(ul);
-    if (!Array.isArray(inv.mcpServers)) adds.append(make(doc, 'div', 'mk-wash', 'MCP servers: unknown — refresh the marketplace'));
+    if (!Array.isArray(inv.mcpServers)) adds.append(make(doc, 'div', 'mk-wash', 'MCP servers: unknown. Refresh the marketplace'));
     body.append(adds);
   }
 

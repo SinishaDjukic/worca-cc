@@ -5,6 +5,7 @@
 // owns fetching, state and the delegated events (every control carries a data-tl-* attribute).
 // Calendar windows are in the viewer's LOCAL time — a PM reads "Thursday", not a UTC day.
 import { icon } from './icons.mjs';
+import { makeSwitch } from './switch.mjs';
 import { summarizeWindow, groupByPerson } from '../../src/shared/team-metrics/timeline.mjs';
 import { safeHttpUrl } from '../../src/shared/team-metrics/aggregate.mjs';
 import { TM_FMT } from './team-metrics-view.mjs';
@@ -29,7 +30,7 @@ export const TL_STATUS = Object.freeze({
   attention: { label: 'Needs attention', tone: 'red' },
   stopped: { label: 'Stopped', tone: 'slate' },
   closed: { label: 'Closed, not merged', tone: 'slate' },
-  done: { label: 'Done', tone: 'violet' },
+  done: { label: 'Done', tone: 'slate' },
 });
 
 // ---- calendar ------------------------------------------------------------------------------
@@ -194,10 +195,8 @@ function controls(doc, { zoom, anchor, mode, outside, hasOutside }) {
   left.append(prev, next, btn(doc, 'btn btn-sm tl-today', 'Today', { tlToday: 1 }), crumbs(doc, zoom, anchor));
   const right = h(doc, 'div', 'tl-opts');
   if (hasOutside) {
-    const lbl = h(doc, 'label', 'tl-toggle');
-    const cb = h(doc, 'input');
-    cb.type = 'checkbox'; cb.id = 'tl-outside'; cb.checked = !!outside; cb.dataset.tlOutside = '1';
-    lbl.append(cb, 'PRs outside Worca');
+    const { row: lbl, input: cb } = makeSwitch(doc, { label: 'PRs outside Worca', checked: !!outside, rowClass: 'tl-toggle', data: { tlOutside: '1' } });
+    cb.id = 'tl-outside';
     lbl.title = 'Show pull requests that have no Worca run behind them';
     right.append(lbl);
   }

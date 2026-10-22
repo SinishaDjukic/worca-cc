@@ -4,6 +4,7 @@
 // detached DOM; painters write into a copy of the shell's markup.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { BUDGET_WARN_AT } from '../ui/public/stats-view.mjs';
 import {
@@ -13,6 +14,7 @@ import {
 import { describeAwayRow } from '../src/shared/away-mode/describe.mjs';
 import { createLevelController, levelMenuHtml, LEVEL_SHORT, LEVEL_INFO, UI_LEVELS } from '../ui/public/ui-level.mjs';
 import { freeDailyRow } from '../ui/public/openrouter-free-view.mjs';
+import { ICONS } from '../ui/public/icons.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
@@ -128,7 +130,7 @@ test('free-request row: "Free requests today  37 / 50", amber when low, red when
     { name: 'freeDailyRow: null when off or unknown; the count, tone and tip otherwise', run: () => {
       for (const s of [null, { enabled: false }, FREE({ known: false })]) assert.equal(freeDailyRow(s, { now }), null);
       assert.deepEqual(freeDailyRow(FREE(), { now }), { text: '37 / 50', tone: '',
-        title: 'OpenRouter free-model requests left today: 37 of 50 · resets 00:00 UTC, in 3h 0m — every model call on a :free model is one request' });
+        title: 'OpenRouter free-model requests left today: 37 of 50 · resets 00:00 UTC, in 3h 0m. Every model call on a :free model is one request' });
       assert.equal(freeDailyRow(FREE({ remaining: 4 }), { now }).tone, 'warn', 'under 10% left');
       assert.equal(freeDailyRow(FREE({ remaining: 0 }), { now }).tone, 'over', 'used up');
       assert.match(freeDailyRow(FREE({ remaining: 0 }), { now }).title, /one request\. Used up: free models pause until the reset\.$/);
@@ -144,7 +146,7 @@ test('free-request row: "Free requests today  37 / 50", amber when low, red when
     } },
     { name: 'no budget yet: the free row alone; nothing at all: no card', run: () => {
       const only = renderSpendCard(null, { doc, free: FREE(), now });
-      assert.deepEqual([...only.children].map((c) => c.className), ['mi mc-free']);
+      assert.deepEqual([...only.children].map((c) => c.className), ['mi menu-item mc-free']);
       assert.equal(only.getAttribute('aria-label'), 'Spend');
       assert.equal(renderSpendCard(null, { doc, free: null }), null);
       assert.equal(renderSpendCard(NO_LIMIT, { doc, free: FREE({ known: false }) }).querySelector('.mc-free'), null);
@@ -163,8 +165,11 @@ const SHELL = `<button type="button" class="acct" id="side-acct"><span class="ac
 <span class="acct-ava" aria-hidden="true">P</span><i class="acct-dot" aria-hidden="true"></i></span>
 <span class="acct-name">Profile</span></button>
 <div class="mcard id-card" id="acct-id" hidden><span class="mc-k">Signed in as</span><b class="id-name"></b><small class="id-via"></small></div>
-<button type="button" class="mi away-item" id="acct-away" role="menuitem"><svg class="mi-ic" viewBox="0 0 24 24" aria-hidden="true"></svg><span class="mi-lbl">Step away</span><span class="mi-hint"></span></button>`;
+<button type="button" class="mi menu-item away-item sw-item" id="acct-away" role="menuitemcheckbox" aria-checked="false" data-state="here"><svg class="mi-ic" viewBox="0 0 24 24" aria-hidden="true"></svg><span class="mi-lbl">Away</span><span class="mi-hint"></span><span class="switch" aria-hidden="true"></span></button>`;
 const shell = () => new JSDOM(`<!doctype html><body>${SHELL}</body>`).window.document;
+// The walking person's path data, from the one icon set; the corner's badge and the away row both draw it.
+const STEPPED_OUT = [...ICONS['stepped-out'].matchAll(/\bd="([^"]+)"/g)].map((m) => m[1]);
+const dsOf = (el) => [...el.querySelectorAll('path')].map((p) => p.getAttribute('d'));
 
 test('describeAccount: shared = initials + the name up to "@" + the card; operator = initials + name, no card; anything else = Profile', async () => {
   await checkRows([
@@ -246,6 +251,22 @@ test('paintAccountCorner: initials, the short name, the ring and the away dot; n
       assert.equal(btn.querySelector('.acct-name').textContent, 'Solo Operator');
       assert.match(btn.getAttribute('aria-label'), /^Solo Operator · away: /);
     } },
+    { name: 'the dot carries the walking person from the icon set, aria-hidden, drawn once however often it is painted', run: () => {
+      const doc = shell();
+      const btn = doc.getElementById('side-acct');
+      const dot = btn.querySelector('.acct-dot');
+      paintAccountCorner(btn, describeAccount(SOLO), { away: true });
+      const svg = dot.querySelector('svg');
+      assert.ok(svg, 'the glyph is in the dot');
+      assert.deepEqual([svg.getAttribute('width'), svg.getAttribute('height'), svg.getAttribute('viewBox')], ['8', '8', '0 0 24 24']);
+      assert.equal(svg.getAttribute('aria-hidden'), 'true');
+      assert.equal(dot.getAttribute('aria-hidden'), 'true', 'the label says away; the badge stays silent');
+      assert.deepEqual(dsOf(svg), STEPPED_OUT);
+      paintAccountCorner(btn, describeAccount(SOLO), { away: false });
+      paintAccountCorner(btn, describeAccount(SOLO), { away: true });
+      assert.equal(dot.querySelectorAll('svg').length, 1, 'repaints never stack the glyph');
+      assert.equal(btn.dataset.presence, 'away');
+    } },
     { name: 'a name is painted as text, never markup', run: () => {
       const doc = shell();
       const btn = doc.getElementById('side-acct');
@@ -277,33 +298,54 @@ test('paintIdentityCard: only a shared identity gets "Signed in as"', () => {
   }
 });
 
+test('style.css: the away badge is the same 11px dot, slate with a panel-coloured walking person, shown only when away', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const rule = (sel) => {
+    const m = css.match(new RegExp(`(?:^|\\n)${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\{([^}]*)\\}`));
+    assert.ok(m, `${sel} has a rule`);
+    return m[1].replace(/\s+/g, '');
+  };
+  const dot = rule('.acct-dot');
+  for (const decl of ['position:absolute', 'right:1px', 'bottom:1px', 'width:11px', 'height:11px', 'border-radius:50%',
+    'background:var(--slate)', 'color:var(--panel)', 'box-shadow:0002pxvar(--panel)', 'display:none']) {
+    assert.ok(dot.includes(`${decl};`) || dot.endsWith(decl), `.acct-dot keeps ${decl}`);
+  }
+  assert.doesNotMatch(dot, /violet|#[0-9a-f]{3,8}\b/i, 'tokens only, never violet (Labs / merged)');
+  assert.match(rule('.acct[data-presence="away"] .acct-dot'), /^display:grid;place-items:center;?$/, 'shown, glyph centred, only when away');
+  const glyph = rule('.acct-dot svg');
+  assert.match(glyph, /stroke-width:[\d.]+/, 'the glyph stroke is tuned for 8px');
+  assert.doesNotMatch(css, /\.sidebar\.collapsed[^{]*\.acct-dot/, 'the rail keeps the badge');
+});
+
 // ── the away row ────────────────────────────────────────────────────────────────
 
 const C = { window: '22:00-07:00', timeZone: 'UTC', graceMinutes: 30, enabled: false, neverDecide: [] };
 const rowAt = (iso, o = {}) => describeAwayRow({ config: C, toggle: 'auto', localZone: 'UTC', now: Date.parse(iso), ...o });
 
-test('paintAwayRow: icon, label, hint and tip from describeAwayRow; busy or unread settings disable it', () => {
+test('paintAwayRow: aria-checked follows the state under a steady "Away"; one icon; hint and tip (title and description); busy or unread settings disable it', () => {
   const doc = shell();
   const btn = doc.getElementById('acct-away');
   const icon = () => [...btn.querySelectorAll('.mi-ic path')].map((p) => p.getAttribute('d')).join(' ');
+  const view = () => [btn.dataset.state, btn.getAttribute('aria-checked'), btn.querySelector('.mi-lbl').textContent, btn.querySelector('.mi-hint').textContent];
   paintAwayRow(btn, rowAt('2026-09-28T15:00:00Z'));
-  assert.deepEqual([btn.dataset.state, btn.dataset.status, btn.querySelector('.mi-lbl').textContent, btn.querySelector('.mi-hint').textContent],
-    ['here', 'here', 'Step away', 'away at 22:00']);
-  assert.match(icon(), /^M14 2\.2a1\.8/, 'here: a person walking out, never a sign-out arrow, never the moon (that is Dark in the appearance switcher)');
+  assert.deepEqual(view(), ['here', 'false', 'Away', 'away at 22:00']);
+  assert.equal(btn.dataset.status, 'here');
+  assert.equal(icon(), STEPPED_OUT.join(' '), 'the icon set\'s stepped-out, the same person as the corner\'s badge');
   assert.equal(btn.getAttribute('aria-disabled'), null);
-  assert.match(btn.title, /Step away to have worca answer on every run now\.$/);
+  assert.match(btn.title, /Turn Away on to have worca answer waiting run questions for you now\.$/);
+  assert.equal(btn.getAttribute('aria-description'), btn.title, 'the tip is the accessible description too');
   paintAwayRow(btn, rowAt('2026-09-28T23:00:00Z'));
-  assert.deepEqual([btn.dataset.state, btn.querySelector('.mi-lbl').textContent, btn.querySelector('.mi-hint').textContent],
-    ['away', "I'm back", 'until 07:00']);
-  assert.match(icon(), /^M3\.5 10\.5L12 3\.5/, 'away: the home');
-  assert.equal(btn.querySelectorAll('.mi-ic path').length, 3, 'the icon is replaced, not stacked');
+  assert.deepEqual(view(), ['away', 'true', 'Away', 'until 07:00'], 'the switch says away; the label never swaps');
+  assert.equal(icon(), STEPPED_OUT.join(' '), 'away: the same icon');
+  assert.equal(btn.querySelectorAll('.mi-ic path').length, STEPPED_OUT.length, 'drawn once, not stacked');
   paintAwayRow(btn, rowAt('2026-09-28T23:00:00Z'), { busy: true });
   assert.equal(btn.getAttribute('aria-disabled'), 'true', 'a click in flight');
   paintAwayRow(btn, rowAt('2026-09-28T23:00:00Z'), { err: 'HTTP 500' });
   assert.equal(btn.getAttribute('aria-disabled'), null);
   assert.match(btn.title, / \(Could not change it: HTTP 500\)$/);
+  assert.equal(btn.getAttribute('aria-description'), btn.title);
   paintAwayRow(btn, describeAwayRow({ config: null, now: 0 }));
-  assert.deepEqual([btn.getAttribute('aria-disabled'), btn.title], ['true', 'Away mode settings could not be read.']);
+  assert.deepEqual([btn.getAttribute('aria-disabled'), btn.title, btn.getAttribute('aria-checked')], ['true', 'Away mode settings could not be read.', 'false']);
 });
 
 // ── the Interface mode row and its side menu ───────────────────────────────────

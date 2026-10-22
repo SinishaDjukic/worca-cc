@@ -75,6 +75,29 @@ function relativeAgo(iso) {
   return formatInstant(Date.parse(iso), browserTimeZone());
 }
 
+/** Run 4 (D22): the pause reasons the server names (src/core/failure-policy.mjs REASON, "_" as spaces), in plain words. */
+const PAUSED_WHY = Object.freeze({ drain: 'worca was stopping', 'usage limit': 'usage limit reached',
+  'cost pipeline': 'its cost limit was reached', 'cost total': 'the total budget was reached',
+  'cost pipeline policy': 'the team cost cap was reached', 'cost total policy': 'the team cost cap was reached',
+  'night guardrail': 'an Away mode limit was reached', error: 'it hit an error', recoverable: 'it hit an error' });
+const RESUME_ON = /\s*—?\s*resume on (.+?) to continue now\.$/;
+
+/** A feed message as plain words ("paused · worca was stopping") and its raw detail, for the row's tooltip. The server's
+ *  stored text is unchanged (src/core/scheduler.mjs recordOutcome), so rows written before this read the same way. */
+export function plainFeedMessage(message) {
+  const s = String(message || '');
+  const p = /^paused \(([^)]+)\)(?::\s*|\.)?([\s\S]*)$/.exec(s);
+  if (p) {
+    const resume = RESUME_ON.exec(p[2]);
+    const why = PAUSED_WHY[p[1]];
+    return { text: `paused${why ? ` · ${why}` : ''}${resume ? `. Resume on ${resume[1]} to continue now.` : ''}`,
+      detail: p[2].replace(RESUME_ON, '').trim() };
+  }
+  const raw = /^(ended with an error|could not start): ([\s\S]+?)\.?$/.exec(s);
+  if (raw) return { text: raw[1], detail: raw[2] };
+  return { text: s, detail: '' };
+}
+
 export const SCHEDULE_TABS = ['activity', 'once', 'repeating'];
 
 /**
@@ -142,23 +165,23 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
     const src = item.summary.source && item.summary.source.type === 'plugin' ? item.summary.source : null;
     const git = typeof deps.gitOn !== 'function' || deps.gitOn();
     body.append(...[
-      row('Task', src ? `${src.plugin} · ${src.taskId} — fetched when the run starts` : (item.summary.prompt || '—')),
+      row('Task', src ? `${src.plugin} · ${src.taskId} (fetched when the run starts)` : (item.summary.prompt || '—')),
       row('Created by', shown(item.createdBy)),
       shown(item.updatedBy) && shown(item.updatedBy) !== shown(item.createdBy) ? row('Changed by', shown(item.updatedBy)) : null,
       item.after ? row('After', `${(item.after.title || item.after.id.slice(0, 8))} · ${afterWord(item.after)}`) : null,
       item.after ? row('If it fails', item.after.policy === 'any' ? 'Start anyway' : 'Do not start') : null,
       git && item.sourceFromPrevious ? row('Source branch', 'the run before it') : null,
-      git ? row('Feature branch', item.summary.sameAsSource ? 'none — commits onto the source branch'
+      git ? row('Feature branch', item.summary.sameAsSource ? 'none (commits onto the source branch)'
         : (item.summary.featureBranch ? (item.kind === 'recurring' ? `${item.summary.featureBranch}-<date>` : item.summary.featureBranch) : '')) : null,
       row('Guardrails', item.summary.guardrailsId && item.summary.guardrailsId !== 'permissive' ? item.summary.guardrailsId : ''),
-      row('Preset', item.presetId ? (item.presetName ? `${item.presetName} — read when the run starts`
-        : `${item.presetGoneName || 'A preset'} — deleted; the next run will fail`) : ''),
+      row('Preset', item.presetId ? (item.presetName ? `${item.presetName} (read when the run starts)`
+        : `${item.presetGoneName || 'A preset'} (deleted: the next run will fail)`) : ''),
       row('Extra files', item.summary.extras ? String(item.summary.extras) : ''),
       item.after ? null : row('If Worca is not running', item.ifMissed === 'skip' ? 'Skip it' : `Start it late, at most ${item.graceMin >= 60 && item.graceMin % 60 === 0 ? `${item.graceMin / 60} h` : `${item.graceMin} min`}`),
       item.kind === 'recurring' ? row('If the previous run is still going', { skip: 'Skip this one', queue: 'Wait, then start', start: 'Start anyway' }[item.overlap]) : null,
       item.kind === 'recurring' ? row('Pause after failures in a row', item.maxFailures ? String(item.maxFailures) : 'Never') : null,
       item.kind === 'recurring' ? row('Runs so far', String(item.runsCount)) : null,
-      item.ownerPid != null && item.status === 'scheduled' ? row('Held by', 'a waiting terminal (worca --wait) — it starts the run') : null,
+      item.ownerPid != null && item.status === 'scheduled' ? row('Held by', 'a waiting terminal (worca --wait), which starts the run') : null,
     ].filter(Boolean));
     return body;
   }
@@ -264,7 +287,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
 
     const acts = h('div', { class: 'sched-acts' });
     if (!ended) {
-      const runNow = h('button', { type: 'button', class: 'btn btn-sm', text: 'Run now', title: 'Start one extra run now — the schedule itself does not shift' });
+      const runNow = h('button', { type: 'button', class: 'btn btn-sm', text: 'Run now', title: 'Start one extra run now. The schedule itself does not shift' });
       runNow.addEventListener('click', () => act(async () => {
         const out = await api('POST', `/api/schedules/${s.id}/run-now`);
         if (out.status === 'failed') throw new Error(out.failReason || 'The run could not be started.');
@@ -312,7 +335,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
     for (const c of host.querySelectorAll('.sched-item')) if (openIds.has(c.dataset.id)) c.querySelector('.sched-more').click();
   }
   const emptyOnce = () => h('p', { class: 'empty-line' }, 'No one-off run is waiting. Pick a time with ',
-    h('a', { href: '#new/schedule', text: 'Schedule a run' }), ', then describe the task — or use Schedule… next to Start run on New run.');
+    h('a', { href: '#new/schedule', text: 'Schedule a run' }), ', then describe the task. Or use Schedule… next to Start run on New run.');
   const emptyRepeating = () => h('p', { class: 'empty-line' }, 'No repeating schedule. Pick a time with ',
     h('a', { href: '#new/schedule', text: 'Schedule a run' }), ' and choose Every day, Weekdays, Weekly or Monthly.');
 
@@ -356,6 +379,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
   // ── feed ───────────────────────────────────────────────────────────────────
   function feedItem(n) {
     const [word, family] = KIND[n.kind] || [n.kind, 'grey'];
+    const msg = plainFeedMessage(humanMessage(n));
     const ticket = n.ticketId ? model.tickets.find((t) => t.id === n.ticketId) : null;
     const series = n.scheduleId ? model.schedules.find((s) => s.id === n.scheduleId) : null;
     const acts = [];
@@ -383,7 +407,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
     return h('tr', { class: `sched-feed-item${n.unread ? ' unread' : ''}`, 'data-id': n.id },
       h('td', { class: 'sched-feed-kind', 'data-label': 'Kind' }, h('span', { class: `badge ${family}`, text: word })),
       h('td', { class: 'sched-feed-body table-main' },
-        h('div', { class: 'sched-feed-text' }, h('b', { text: n.title || 'Scheduled run' }), ` ${humanMessage(n)}`),
+        h('div', { class: 'sched-feed-text', ...(msg.detail ? { title: msg.detail } : {}) }, h('b', { text: n.title || 'Scheduled run' }), ` ${msg.text}`),
         h('div', { class: 'sched-feed-time', text: relativeAgo(n.createdAt), title: new Date(n.createdAt).toLocaleString() })),
       h('td', { class: 'sched-feed-acts', 'data-label': 'Actions' }, ...acts));
   }

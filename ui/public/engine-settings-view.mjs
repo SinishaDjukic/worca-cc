@@ -6,11 +6,12 @@ export const ENGINE_EFFORTS = Object.freeze({ claude: Object.freeze(['medium', '
   copilot: Object.freeze(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']) });
 // An inherited value's label; an unset one stays null, so the field shows its bare heading.
 const engineName = (v) => (v == null ? null : engineLabel(v));
-const CURSOR_HELPERS_NOTE = "Cursor runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on Claude — see the Claude tab.";
+const CURSOR_HELPERS_NOTE = "Cursor runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on Claude. See the Claude tab.";
 const COPILOT_HELPERS_NOTE = "Copilot runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on its own default model.";
-export const JOB_LABELS = Object.freeze({ title: 'Titles', classifier: 'Auto workflow classifier', overview: 'Run overview', prDescription: 'PR description', memoryDefrag: 'Memory defragment', workspaceScan: 'Workspace scan' });
+export const JOB_LABELS = Object.freeze({ title: 'Titles', classifier: 'Auto workflow classifier', overview: 'Run overview', prDescription: 'PR description', memoryDefrag: 'Memory defragment', agentGen: 'Agent generation', workspaceScan: 'Workspace scan' });
 // The setting id of an engine's helper slot, as settings-cascade.mjs names it: memory defragment
 // and workspace scan are runs of their own (spec §3.1 "own-run models"), the rest are utility jobs.
+// Agent generation has no cascade entry (user-only, Claude-only); its id is the Chat registry's.
 const OWN_RUN_JOBS = new Set(['memoryDefrag', 'workspaceScan']);
 export const utilityId = (engine, job) => (OWN_RUN_JOBS.has(job) ? `models.${engine}.${job}` : `models.${engine}.utility.${job}`);
 const EMPTY = Object.freeze({ own: undefined, inherited: { value: undefined, source: 'default' } });
@@ -21,6 +22,7 @@ export const JOB_HINTS = Object.freeze({
   overview: 'Writes the overview a finished run opens on.',
   prDescription: 'Drafts the pull request description ("Generate with AI").',
   memoryDefrag: 'Runs Memory defragment, which restructures saved memory.',
+  agentGen: 'Drafts a new agent\'s prompt and metadata in Workflows › Agents (Generate).',
   workspaceScan: 'Runs the workspace scan that maps how member projects connect.',
 });
 
@@ -65,7 +67,7 @@ function slotTable(doc, cls, title, rows, { what, from, onTest = null, always = 
       ? `Every ${what} follows ${from}.`
       : `${hidden.length} other ${what}${hidden.length === 1 ? '' : 's'} follow${hidden.length === 1 ? 's' : ''} ${from}.`;
     rest.hidden = !rest.textContent;
-    add.replaceChildren(Object.assign(doc.createElement('option'), { value: '', textContent: `+ Override a ${what}…` }));
+    add.replaceChildren(Object.assign(doc.createElement('option'), { value: '', textContent: `Override a ${what}…` }));
     for (const r of hidden) add.append(Object.assign(doc.createElement('option'), { value: r.id, textContent: r.label }));
     add.value = ''; add.hidden = !hidden.length;
     all.textContent = showAll ? 'Show only changes' : `Show all ${rows.length}`;
@@ -113,11 +115,11 @@ export function renderEngineSection(host, options) {
   };
   for (const engine of MODEL_ENGINE_NAMES) {
     const btn = doc.createElement('button'); btn.type = 'button'; btn.dataset.engine = engine; btn.textContent = engineLabel(engine);
-    if (isBetaEngine(engine)) { const beta = doc.createElement('span'); beta.className = 'badge violet beta-badge'; beta.textContent = 'Beta'; btn.append(beta); }
+    if (isBetaEngine(engine)) { const beta = doc.createElement('span'); beta.className = 'flag-chip flag-chip-beta beta-badge'; beta.textContent = 'Beta'; btn.append(beta); }
     btn.addEventListener('click', () => pick(engine)); sw.append(btn);
     const card = doc.createElement('section'); card.className = 'engine-card'; card.dataset.engine = engine; card.dataset.minLevel = 'advanced';
     // Advanced has no switch: the tab names its engine. Expert's switch already does (style.css hides this there).
-    const heading = doc.createElement('h3'); heading.className = 'engine-card-name'; heading.textContent = engineLabel(engine); if (isBetaEngine(engine)) { const beta = doc.createElement('span'); beta.className = 'badge violet beta-badge'; beta.textContent = 'Beta'; heading.append(beta); } card.append(heading);
+    const heading = doc.createElement('h3'); heading.className = 'engine-card-name'; heading.textContent = engineLabel(engine); if (isBetaEngine(engine)) { const beta = doc.createElement('span'); beta.className = 'flag-chip flag-chip-beta beta-badge'; beta.textContent = 'Beta'; heading.append(beta); } card.append(heading);
     // A non-Claude tab's readiness line (GET /api/engines), filled by app.js on the Models page.
     if (engine !== 'claude') { const status = doc.createElement('small'); status.className = 'engine-card-status'; card.append(status); }
     if (options.notes?.[engine]) { const note = doc.createElement('small'); note.className = 'hint engine-card-note'; note.textContent = options.notes[engine]; card.append(note); }
@@ -146,7 +148,8 @@ export function renderEngineSection(host, options) {
   return {};
 }
 export const readEngineSection = (host) => readDirtyFields(host);
-const CLAUDE_HELPER_KEYS = Object.freeze({ title: 'titleModel', classifier: 'autoWorkflowModel', prDescription: 'prDescriptionModel', memoryDefrag: 'memoryDefrag' });
+const CLAUDE_HELPER_KEYS = Object.freeze({ title: 'titleModel', classifier: 'autoWorkflowModel', prDescription: 'prDescriptionModel', memoryDefrag: 'memoryDefrag', agentGen: 'agentGenModel' });
+const CLAUDE_PAIR_KEYS = new Set(['memoryDefrag', 'agentGenModel']);
 export function enginePatchToSettingsBody(patch) {
   const body = {};
   for (const [id, value] of Object.entries(patch || {})) {
@@ -154,9 +157,9 @@ export function enginePatchToSettingsBody(patch) {
     let match = /^models\.(claude|codex|cursor)\.steps\.(.+)$/.exec(id); if (match) { ((body.stepModels ||= {})[match[1]] ||= {})[match[2]] = value; continue; }
     match = /^models\.(codex)\.(?:utility\.)?(title|classifier|overview|prDescription|memoryDefrag|workspaceScan)$/.exec(id); if (match) ((body.utilityModels ||= {})[match[1]] ||= {})[match[2]] = value;
     // Claude's helper slots live in their own settings keys: a model id (title, Auto, PR description), and the
-    // Memory defragment pair.
-    match = /^models\.claude\.(?:utility\.)?(title|classifier|prDescription|memoryDefrag)$/.exec(id);
-    if (match) { const key = CLAUDE_HELPER_KEYS[match[1]]; body[key] = key === 'memoryDefrag' ? (value && value.model ? { model: value.model, effort: value.effort || '' } : null) : (value && value.model) || ''; }
+    // Memory defragment and Agent generation pairs.
+    match = /^models\.claude\.(?:utility\.)?(title|classifier|prDescription|memoryDefrag|agentGen)$/.exec(id);
+    if (match) { const key = CLAUDE_HELPER_KEYS[match[1]]; body[key] = CLAUDE_PAIR_KEYS.has(key) ? (value && value.model ? { model: value.model, effort: value.effort || '' } : null) : (value && value.model) || ''; }
   }
   return body;
 }

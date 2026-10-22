@@ -69,7 +69,10 @@ const STRAY_ROOTS = { workflows: '[data-view="workflows"]', 'workflows-library-s
   'workflows-chat-open': '[data-view="workflows"]', 'settings-plugins': '[data-view="marketplace"]', connectors: '[data-view="connectors"]',
   'settings-models': '[data-view="models"]', 'settings-providers': '[data-view="providers"]', 'team-policy': '[data-view="team-policy"]',
   'getting-started': '[data-view="getting-started"]', 'modal-confirm': '#confirm-modal', 'modal-export': '#export-modal',
-  'modal-stop': '#stop-modal', 'modal-shipit': '#shipit-modal', 'modal-viewer': '#viewer-card' };
+  'modal-stop': '#stop-modal', 'modal-shipit': '#shipit-modal', 'modal-viewer': '#viewer-card',
+  'settings-general': '.settings-pane[data-tab="general"]', 'settings-runs': '.settings-pane[data-tab="runs"]', 'settings-tags': '.settings-pane[data-tab="tags"]',
+  'settings-ask': '.settings-pane[data-tab="ask"]', 'settings-experimental': '.settings-pane[data-tab="experimental"]',
+  'settings-memory': '.settings-pane[data-tab="memory"]', projects: '[data-view="projects"]' };
 const STRAY_AUDIT = (sel) => `(${auditStray})(document.querySelector(${JSON.stringify(sel)}), ${JSON.stringify(STRAY_SPEC)}, null)`;
 const strayReport = [];   // { state, theme, sig, rule, text }
 // Beside STRAY_ROOTS: the same action selector as test/ui-catalogue-rulebook.test.mjs (keep both in step).
@@ -465,40 +468,48 @@ const states = [
   // History opens on the glance (like the Running detail); Details is its own state.
   ['history-detail', async () => { await go(`history/${projectKey}/${pipelineId}`); await until(`document.querySelector('.hd-glance:not([hidden]) .hd-result .rd-sgroup')`, 'the history glance'); }],
   // D15/D16: the Cost tags row under the three tiles; one wrapping row, the control last, no sideways scroll.
+  // The run header's ⋯ menu, open (measured by CONTROL_CHECKS; the page behind it is audited as history-detail-details). (the shared .menu: 8px corner, the menu shadow, rows of 30px or more).
+  // The ⋯ lives in the Details pane. Its trigger and rows stay hidden for a run that can be neither archived nor reported (app.js setupHdActions): the
+  // proof un-hides them to measure the menu's CSS.
+  ['history-menu', async () => { await go(`history/${projectKey}/${pipelineId}/details`); await until(`document.querySelector('.hd-details:not([hidden]) .hd-tabs .hd-tab')`, 'history tabs'); await showHdMenuParts(); await clickSel('#hist-detail .hd-more'); await until(`document.querySelector('#hist-detail .hd-menu:not([hidden])')`, 'the ⋯ menu'); },
+    async () => { await ev(`document.querySelector('#hist-detail .hd-more').click()`); }],
   ['history-detail-cost-tags', async () => {
     const json = { 'content-type': 'application/json' };
     await api('/api/flags', { method: 'PATCH', headers: json, body: JSON.stringify({ runTags: true }) });
     await api(`/api/runs/${encodeURIComponent(pipelineId)}/tags`, { method: 'PUT', headers: json, body: JSON.stringify({ tags: ['client:northwind', 'team:docs'] }) });
     await go(`history/${projectKey}/${pipelineId}`);
-    await until(`document.querySelector('#hist-detail .rd-facts .rd-cost-row .hd-tags-edit')`, 'the Cost tags row');
-    // prepare() runs before auditCurrent's theme loop, so the row is measured in light and dark here (R-ux-5).
+    await until(`document.querySelector('#hist-detail .rd-kv [data-fact="tags"] .rd-cost-row .hd-tags-edit')`, 'the Cost tags row');
+    // prepare() runs before auditCurrent's theme loop, so the row is measured in light and dark here (R-ux-5). Run 3 (D8):
+    // the row is the facts block's Cost tags row, above the tiles, inside the card.
     for (const theme of THEMES.slice(0, 2)) for (const width of [1440, 375, 290]) {
       await setTheme(theme);
       await cdp('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: width < 600 });
       await freeze(`cost-tags-${theme[0]}-${width}`);
       const m = await ev(`(() => { const f = document.querySelector('#hist-detail .rd-facts');
-        const stats = f.querySelector('.rd-stats'); const row = f.querySelector('.rd-cost-row'); const cs = getComputedStyle(row);
+        const stats = f.querySelector('.rd-stats'); const row = document.querySelector('#hist-detail .rd-kv [data-fact="tags"] .rd-cost-row'); const cs = getComputedStyle(row);
+        const sheet = row.closest('.rd-sheet').getBoundingClientRect(); const r = row.getBoundingClientRect();
         const tops = [...row.querySelectorAll(':scope > .tag-chip')].map((c) => Math.round(c.getBoundingClientRect().top));
-        return { tiles: [...stats.children].map((d) => d.querySelector('span').textContent), label: row.firstElementChild.textContent,
-          below: row.getBoundingClientRect().top >= stats.getBoundingClientRect().bottom, oneLine: new Set(tops).size === 1,
+        return { tiles: [...stats.children].map((d) => d.querySelector('span').textContent), label: row.closest('.rd-kv-row').querySelector('.rd-kv-k').textContent,
+          above: r.bottom <= stats.getBoundingClientRect().top && !!(row.compareDocumentPosition(f) & Node.DOCUMENT_POSITION_FOLLOWING),
+          inCard: r.left >= sheet.left - 0.5 && r.right <= sheet.right + 0.5, oneLine: new Set(tops).size === 1,
           wraps: cs.display === 'flex' && cs.flexWrap === 'wrap', last: !!row.lastElementChild.querySelector('.hd-tags-edit'),
           scroll: document.scrollingElement.scrollWidth, client: document.scrollingElement.clientWidth }; })()`);
-      designChecks.push({ what: `cost tags row (${theme[0]}) at ${width}px: three tiles, one row under them, the control last, no sideways scroll`,
-        ok: m.tiles.length === 3 && !m.tiles.includes('cost tags') && m.label === 'Cost tags' && m.below && m.wraps && m.last
+      designChecks.push({ what: `cost tags row (${theme[0]}) at ${width}px: three tiles, the facts block's Cost tags row above them inside the card, the control last, no sideways scroll`,
+        ok: m.tiles.length === 3 && !m.tiles.includes('cost tags') && m.label === 'Cost tags' && m.above && m.inCard && m.wraps && m.last
           && (width === 290 || m.oneLine) && m.scroll === m.client, got: m });
     }
     await setTheme(THEMES[0]);
     // The inline editor opens inside the row: at 290px (still emulated) it must not push the page sideways either.
-    await ev(`document.querySelector('#hist-detail .rd-cost-row .hd-tags-edit').click();0`);
-    await until(`document.querySelector('#hist-detail .rd-cost-row .hd-tags .tag-input-text')`, 'the cost tags editor');
+    await ev(`document.querySelector('#hist-detail .rd-kv [data-fact="tags"] .rd-cost-row .hd-tags-edit').click();0`);
+    await until(`document.querySelector('#hist-detail .rd-kv [data-fact="tags"] .rd-cost-row .hd-tags .tag-input-text')`, 'the cost tags editor');
     await freeze('cost-tags-editor-290');
     const ed = await ev(`({ scroll: document.scrollingElement.scrollWidth, client: document.scrollingElement.clientWidth,
-      inRow: !!document.querySelector('#hist-detail .rd-facts .rd-cost-row .tag-input-text') })`);
+      inRow: !!document.querySelector('#hist-detail .rd-kv [data-fact="tags"] .rd-cost-row .tag-input-text') })`);
     designChecks.push({ what: 'cost tags row at 290px: the open editor stays in the row, no sideways scroll',
       ok: ed.inRow && ed.scroll === ed.client, got: ed });
     // Close it without saving (a reload drops the unsaved editor), so the audits below see the resting row.
     await go(`history/${projectKey}/${pipelineId}`);
-    await until(`document.querySelector('#hist-detail .rd-facts .rd-cost-row .hd-tags-edit')`, 'the Cost tags row');
+    await until(`document.querySelector('#hist-detail .rd-kv [data-fact="tags"] .rd-cost-row .hd-tags-edit')`, 'the Cost tags row');
     await cdp('Emulation.clearDeviceMetricsOverride');
     await freeze('cost-tags');
   }, async () => {
@@ -543,7 +554,8 @@ const states = [
       await ev(`document.documentElement.dataset.input='pointer';0`);
       const onOpen = await ring();
       designChecks.push({ what: `project Back (${theme[0]}): focused on open with no ring`, ok: onOpen.input === 'pointer' && onOpen.back && onOpen.outline === 'none', got: onOpen });
-      for (const type of ['keyDown', 'keyUp']) await cdp('Input.dispatchKeyEvent', { type, key: 'Shift', code: 'ShiftLeft', windowsVirtualKeyCode: 16 });
+      // Run 4 (D5): a modifier alone no longer flips the mode; an arrow key does and moves no focus off a button.
+      for (const type of ['keyDown', 'keyUp']) await cdp('Input.dispatchKeyEvent', { type, key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40 });
       const afterKey = await ring();
       designChecks.push({ what: `project Back (${theme[0]}): the ring after a keydown`, ok: afterKey.input === 'keyboard' && afterKey.back && afterKey.outline === 'solid', got: afterKey });
     }
@@ -601,6 +613,14 @@ const states = [
           const ok = width === 1440 ? st.right && st.h === 32 && st.swRight : st.below && st.full && st.h === 32 && st.swRight;
           designChecks.push({ what: `settings field at ${width}px: ${width === 1440 ? 'control right of the label' : 'control under the label at full width'}, 32px; the switch stays right`, ok, got: st });
         }
+      }
+      if (width === 290) {   // run 1: the Chat composer's scope button on a phone shows its whole label or the icon alone
+        await cdp('Page.navigate', { url: `${base}/?w=${width}&p=chat#chat/new` });
+        await waitEvent('Page.loadEventFired');
+        await until('window.__np && window.__np.getRun', 'app boot');
+        await until(`document.querySelector('[data-view="chat"]:not(.hidden) [data-chat-page] textarea.ask-input')`, 'the Chat page');
+        await sleep(400); await ev(READY); await freeze('chat');
+        await scopeLabelCheck('#chat/new at 290px');
       }
     }
     await cdp('Emulation.clearDeviceMetricsOverride', {});
@@ -786,6 +806,123 @@ const SLICE3_CHECKS = {
   },
 };
 
+// ---- Run 1 (shared controls): measured in Chrome, light and dark (THEMES.slice(0, 2)), then back to light ------------
+const both = async (fn) => { for (const t of THEMES.slice(0, 2)) { await setTheme(t); await fn(t[0]); } await setTheme(THEMES[0]); };
+const switchCheck = (what, scope, min = 1) => async () => both(async (theme) => {
+  const s = await ev(`(() => { const lum = (c) => { const m = c.match(/[\\d.]+/g).map(Number).slice(0, 3).map((v) => { v /= 255; return v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; });
+      return .2126 * m[0] + .7152 * m[1] + .0722 * m[2]; };
+    const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + .05) / (y + .05); };
+    return [...document.querySelectorAll(${JSON.stringify(scope)} + ' .switch')].filter((e) => e.offsetParent).map((e) => {
+      const r = e.getBoundingClientRect(); const k = getComputedStyle(e, '::after'); const cs = getComputedStyle(e);
+      return { w: Math.round(r.width), h: Math.round(r.height), knob: parseFloat(k.width), opacity: Number(cs.opacity), contrast: ratio(cs.backgroundColor, k.backgroundColor) }; }); })()`);
+  const ok = s.length >= min && s.every((x) => x.w === 32 && x.h === 18 && x.knob === 14 && x.opacity === 1 && x.contrast >= 1.5);
+  designChecks.push({ what: `switch: ${what} (${theme}) — ${s.length} switches 32x18, knob 14px, knob against track 1.5:1 or more in off, on, disabled off and disabled on, opacity 1`, ok, got: s });
+});
+const menuCheck = (what, sel) => async () => {
+  const m = await ev(`(() => { const p = document.createElement('div'); p.style.boxShadow = 'var(--shadow-menu)'; document.body.append(p);
+    const want = getComputedStyle(p).boxShadow; p.remove(); const el = document.querySelector(${JSON.stringify(sel)}); if (!el) return null; const cs = getComputedStyle(el);
+    const rows = [...el.querySelectorAll('.menu-item')].filter((b) => b.offsetParent).map((b) => ({ h: Math.round(b.getBoundingClientRect().height), r: getComputedStyle(b).borderTopLeftRadius }));
+    return { radius: cs.borderTopLeftRadius, shadow: cs.boxShadow === want, rows }; })()`);
+  const ok = !!m && m.radius === '8px' && m.shadow && m.rows.length > 0 && m.rows.every((x) => x.h >= 30 && x.r === '6px');
+  designChecks.push({ what: `menu: ${what} has the 8px corner, the menu shadow and rows of 30px or more with a 6px corner`, ok, got: m });
+};
+// The pointer suppressor only applies while html[data-input=pointer], and earlier states dispatch a synthetic Escape
+// that flips it to keyboard. So the check sets the pointer mode itself and asserts the mode too.
+const pointerMode = () => ev(`document.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); document.documentElement.dataset.input`);
+const noRingOnLoad = (what, sel) => async () => {
+  await pointerMode();
+  const r = await ev(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); return e && { mode: document.documentElement.dataset.input, outline: getComputedStyle(e).outlineStyle }; })()`);
+  designChecks.push({ what: `no ring on load: ${what}`, ok: !!r && r.mode === 'pointer' && r.outline === 'none', got: r });
+  // Keyboard: a keydown flips the mode, then a script focus() shows the 2px solid ring.
+  const k = await ev(`(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true })); const e = document.querySelector(${JSON.stringify(sel)}); e.focus();
+    const cs = getComputedStyle(e); return { mode: document.documentElement.dataset.input, style: cs.outlineStyle, width: cs.outlineWidth }; })()`);
+  designChecks.push({ what: `no ring on load: ${what} shows a 2px solid ring after a key press`, ok: k.mode === 'keyboard' && k.style === 'solid' && k.width === '2px', got: k });
+  await ev(`document.activeElement && document.activeElement.blur && document.activeElement.blur(); document.documentElement.dataset.input = 'pointer'; 0`);
+};
+const typingKeepsPointer = (what, sel) => async () => {
+  await pointerMode();
+  const r = await ev(`(() => { const t = document.createElement('textarea'); document.body.append(t);
+    t.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); t.dispatchEvent(new KeyboardEvent('keydown', { key: 'Shift', bubbles: true })); t.remove();
+    const e = document.querySelector(${JSON.stringify(sel)}); e.focus(); return { mode: document.documentElement.dataset.input, outline: getComputedStyle(e).outlineStyle }; })()`);
+  designChecks.push({ what: `no ring after typing: ${what}`, ok: !!r && r.mode === 'pointer' && r.outline === 'none', got: r });
+  await ev(`document.activeElement && document.activeElement.blur && document.activeElement.blur(); 0`);
+};
+const scopeLabelCheck = async (what) => {
+  const s = await ev(`(() => { const l = document.querySelector('[data-view="chat"] .ask-scope-btn:not(.ask-sets-btn) .ask-scope-label'); const cs = l && getComputedStyle(l);
+    const row = document.querySelector('[data-view="chat"] .ask-composer-row');
+    return l && { hidden: cs.display === 'none', cut: l.scrollWidth > l.clientWidth + 1, w: l.clientWidth, title: l.closest('button').title, rowScroll: row ? row.scrollWidth <= row.clientWidth : true }; })()`);
+  designChecks.push({ what: `scope label: ${what} shows the whole label or the icon only, never a stub`, ok: !!s && (s.hidden || !s.cut || s.w >= 56) && /^Chat scope: /.test(s.title) && s.rowScroll, got: s });
+};
+const showHdMenuParts = () => ev(`(() => { for (const s of ['.hd-more', '.hd-archive', '.hd-report']) { const e = document.querySelector('#hist-detail ' + s); if (e) e.hidden = false; } return 1; })()`);
+const CONTROL_CHECKS = {
+  // Run 4 (D6, D7): the Clarify card's free-text field shows its whole 24-character placeholder, and a long recommended
+  // row stays inside the card, at 290, 375 and 1440px. The live mock run (phase A) is held at a Clarify question.
+  'running-detail': async () => {
+    for (const width of [290, 375, 1440]) {
+      await cdp('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: width < 600 });
+      await sleep(200);
+      const r = await ev(`(() => { const host = document.querySelector('#run-detail .rd-questions'); const free = host && host.querySelector('.qfree');
+        const opts = host && host.querySelector('.qopts'); if (!free || !opts) return null;
+        const probe = document.createElement('button'); probe.type = 'button'; probe.className = 'qopt';
+        const t = document.createElement('span'); t.className = 'qopt-txt'; t.textContent = 'A very long recommended option label that has to wrap inside the card at 290px';
+        const rec = document.createElement('span'); rec.className = 'qrec'; rec.textContent = 'Recommended';
+        const conf = document.createElement('span'); conf.className = 'qconf'; conf.textContent = '70%';
+        probe.append(t, rec, conf); opts.append(probe);
+        const out = { placeholder: free.placeholder, freeCut: free.scrollWidth > free.clientWidth, rowFits: probe.scrollWidth <= probe.clientWidth, optsFit: opts.scrollWidth <= opts.clientWidth,
+          pageFits: document.documentElement.scrollWidth <= document.documentElement.clientWidth };
+        probe.remove(); return out; })()`);
+      designChecks.push({ what: `clarify card at ${width}px: placeholder whole, long recommended row inside the card`,
+        ok: !!r && r.placeholder === 'Or type your own answer…' && !r.freeCut && r.rowFits && r.optsFit && r.pageFits, got: r });
+    }
+    await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+  },
+  kitchen: async () => {
+    await ev(`document.getElementById('kit-indeterminate').indeterminate = true; 0`);
+    await switchCheck('kitchen sink, all five states', '[data-kit="controls"]', 5)();
+    await both(async (theme) => {
+      const c = await ev(`(() => { const tok = (v) => { const p = document.createElement('span'); p.style.color = v; document.body.append(p); const c = getComputedStyle(p).color; p.remove(); return c; };
+        const q = (sel) => document.querySelector('[data-kit="controls"] ' + sel); const bg = (e) => e && getComputedStyle(e).backgroundColor;
+        return { ink: tok('var(--ink)'), green: tok('var(--green)'), box: bg(q('input[type="checkbox"]:checked:not(:disabled)')),
+          mixed: bg(q('#kit-indeterminate')), radio: bg(q('input[type="radio"]:checked')), sw: bg(q('.sw-input:checked:not(:disabled) + .switch')) }; })()`);
+      designChecks.push({ what: `checkbox ink: a checked box, an indeterminate box, a checked radio and an on switch fill --ink, none --green (${theme})`,
+        ok: c.box === c.ink && c.mixed === c.ink && c.radio === c.ink && c.sw === c.ink && ![c.box, c.mixed, c.radio, c.sw].includes(c.green), got: c });
+    });
+    await menuCheck('the kitchen-sink menu', '[data-kit="controls"] .menu')();
+    await menuCheck('the kitchen-sink split menu (two-line items)', '[data-kit="controls"] .btn-split-menu')();
+    const why = await ev(`(() => { const w = document.querySelector('[data-kit="controls"] .switch-why:not([hidden])'); return w && { fs: getComputedStyle(w).fontSize, shown: !!w.offsetParent, text: w.textContent }; })()`);
+    designChecks.push({ what: 'switch reason: the locked kitchen-sink switch shows its reason as 12px text', ok: !!why && why.shown && why.fs === '12px' && why.text.length > 0, got: why });
+    const chips = await ev(`[...document.querySelectorAll('[data-kit="controls"] :is(.tag-chip,.ps-pill,.ask-cmd-pill,.tp-tab-badge)')].map((e) => { const cs = getComputedStyle(e);
+      return { cls: e.className.split(' ')[0], h: Math.round(e.getBoundingClientRect().height), r: cs.borderTopLeftRadius, bw: cs.borderTopWidth, dashed: cs.borderTopStyle === 'dashed', missing: e.classList.contains('tag-missing') }; })`);
+    designChecks.push({ what: 'chip: tag chips, the sync pill, the command pill and the tab count are 18px with a 4px corner; only the missing slot has a (dashed) border',
+      ok: ['tag-chip', 'ps-pill', 'ask-cmd-pill', 'tp-tab-badge'].every((c) => chips.some((x) => x.cls === c)) && chips.every((x) => x.h === 18 && x.r === '4px' && (x.missing ? x.dashed : x.bw === '0px')), got: chips });
+    const slate = await ev(`(() => { const b = document.querySelector('[data-kit="controls"] .badge.slate'); return b && getComputedStyle(b).backgroundColor; })()`);
+    designChecks.push({ what: 'badge slate: the kitchen-sink slate badge paints', ok: !!slate && slate !== 'rgba(0, 0, 0, 0)', got: slate });
+  },
+  'settings-tags': async () => {
+    // The proof's home has no cost tags: add two rows to the (unsaved) editor so the table has rows to measure.
+    await ev(`(() => { const b = document.querySelector('#tagDimsEditor .tag-dim-add'); if (b) { b.click(); b.click(); } return 1; })()`);
+    await switchCheck('Settings › Labels & cost tags', '#tag-dims-settings-card')();
+    const t = await ev(`(() => { const rows = [...document.querySelectorAll('#tagDimsEditor tr.tag-dim-row')];
+      return rows.map((r) => { const d = r.querySelector('.tag-dim-default'); const k = r.querySelector('.tag-dim-key-small'); const kc = k && getComputedStyle(k);
+        return { def: d.tagName === 'SELECT' ? d.options[0].textContent : d.placeholder, sw: !!r.querySelector('td[data-label="Mandatory"] .switch'), mono: kc && /mono/i.test(kc.fontFamily), size: kc && kc.fontSize }; }); })()`);
+    designChecks.push({ what: `labels table: "No default" in every row, a Mandatory switch, the key in mono 11px (${t.length} rows)`,
+      ok: t.length > 0 && t.every((x) => x.def === 'No default' && x.sw && x.mono && x.size === '11px'), got: t });
+  },
+  'settings-experimental': switchCheck('Settings › Labs', '.settings-pane[data-tab="experimental"]'),
+  'settings-runs': switchCheck('Settings › Runs', '.settings-pane[data-tab="runs"]'),
+  'ask-scope-picker': menuCheck('the Chat scope picker', '.ask-pop-scope'),
+  'ask-model-picker': menuCheck('the Chat model picker', '.ask-pop-model'),
+  'history-menu': menuCheck('the run header ⋯ menu', '#hist-detail .hd-menu'),
+  'projects-detail': noRingOnLoad('the project Back', '.pd-header .pd-back'),
+  'history-detail-details': async () => { await showHdMenuParts(); await noRingOnLoad('the run header ⋯', '#hist-detail .hd-more')();
+    await typingKeepsPointer('the run header ⋯', '#hist-detail .hd-more')(); },
+  stats: async () => {
+    const p = await ev(`[...document.querySelectorAll('.stat-tile, .chart-card')].filter((e) => e.offsetParent).map((e) => [e.classList.contains('stat-tile') ? 'stat-tile' : 'chart-card', getComputedStyle(e).paddingTop])`);
+    designChecks.push({ what: 'card padding: stat tiles pad 16px, chart cards 24px', ok: p.length > 0 && p.every(([c, v]) => v === (c === 'stat-tile' ? '16px' : '24px')), got: p });
+  },
+  'ask-sheet': () => scopeLabelCheck('the Chat page'),
+};
+
 // ---- collection ---------------------------------------------------------------
 const report = { light: [], dark: [], 'system-dark': [], 'system-light': [] };   // violations per theme id
 const identity = {};                                                             // light identity rows per state
@@ -844,7 +981,7 @@ try {
   const phaseA = new Set(['running-list', 'running-list-compact', 'running-detail', 'running-detail-details', 'running-detail-tabs']);
   for (const [id, prepare, cleanup] of states) {
     if (!phaseA.has(id) || (ONLY.length && !ONLY.includes(id))) continue;
-    log(`state ${id}`); await prepare(); if (!['running-detail-tabs', 'layout-widths', 'dialog-sizes'].includes(id)) await auditCurrent(id); if (cleanup) await cleanup();
+    log(`state ${id}`); await prepare(); if (CONTROL_CHECKS[id]) await CONTROL_CHECKS[id](); if (!['running-detail-tabs', 'layout-widths', 'dialog-sizes'].includes(id)) await auditCurrent(id); if (cleanup) await cleanup();
   }
   // answer → finish → history has a pipeline with a diff
   const q = entry.pendingQuestion;
@@ -860,7 +997,7 @@ try {
   // Phase B: everything else.
   for (const [id, prepare, cleanup] of states) {
     if (phaseA.has(id) || (ONLY.length && !ONLY.includes(id))) continue;
-    log(`state ${id}`); await prepare(); if (SLICE3_CHECKS[id]) await SLICE3_CHECKS[id](); if (!['history-detail-tabs', 'layout-widths', 'dialog-sizes'].includes(id)) await auditCurrent(id); if (cleanup) await cleanup();
+    log(`state ${id}`); await prepare(); if (SLICE3_CHECKS[id]) await SLICE3_CHECKS[id](); if (CONTROL_CHECKS[id]) await CONTROL_CHECKS[id](); if (!['history-detail-tabs', 'history-menu', 'layout-widths', 'dialog-sizes'].includes(id)) await auditCurrent(id); if (cleanup) await cleanup();
   }
 
   // ---- outputs ------------------------------------------------------------------
@@ -905,7 +1042,7 @@ try {
     }
     const sysLight = report['system-light'].filter((v) => !v.advisory && !baseline.has(key(v)) && !isDrift(v));
     console.log(`${sysLight.length ? 'FAIL' : 'PASS'} system-light equals light: ${sysLight.length} failures outside the light baseline`);
-    if (sysLight.length) failed += 1;
+    if (sysLight.length) { failed += 1; console.log(JSON.stringify(sysLight.slice(0, 40), null, 1)); }
   }
   await writeFile(path.join(OUT, 'button-audit.json'), JSON.stringify(buttonReport, null, 1));
   console.log(`${buttonReport.length ? 'FAIL' : 'PASS'} one button style: ${buttonReport.length} button(s) outside 3 sizes x 4 variants`);
@@ -924,7 +1061,9 @@ try {
     if (!c.ok) { failed += 1; console.log(JSON.stringify(c.got)); }
   }
   const missing = ['project Back', 'filter chip', 'table', 'divided row', 'cost tags row', 'no sideways scroll', 'fresh load', 'stats range at 290px', 'settings field at',
-    'divided rows', 'quiet chip', 'grey badge', 'team policy type', 'page intro', 'dialog'].filter((w) => !designChecks.some((c) => c.what.startsWith(w)));
+    'divided rows', 'quiet chip', 'grey badge', 'team policy type', 'page intro', 'dialog'].filter((w) => !designChecks.some((c) => c.what.startsWith(w)))
+    // Run 1 (shared controls): matched as `name:` prefixes, so `chip` cannot be satisfied by an unrelated line starting with chip.
+    .concat(['switch', 'checkbox ink', 'menu', 'badge slate', 'no ring on load', 'labels table', 'chip', 'card padding', 'scope label'].filter((w) => !designChecks.some((c) => c.what.startsWith(`${w}:`))));
   if (missing.length && !ONLY.length) { failed += 1; console.log(`FAIL design checks never ran: ${missing.join(', ')}`); }
   console.log(`${pageErrors.length ? 'FAIL' : 'PASS'} no page errors (${pageErrors.length})`);
   if (pageErrors.length) { failed += 1; console.log(pageErrors.slice(0, 10).join('\n')); }

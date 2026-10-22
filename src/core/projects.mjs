@@ -8,7 +8,7 @@
 // persist inside a single db.mjs tx(). Each row is keyed by projectKey(path)
 // (store.mjs), so every worktree of a repo maps to one row.
 
-import { existsSync, statSync, realpathSync, lstatSync } from 'node:fs';
+import { existsSync, statSync, realpathSync, lstatSync, readFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { join, resolve, dirname } from 'node:path';
 import { getWorcaRoot, defaultRoot, worcaProjectsFolder } from './settings.mjs';
@@ -120,10 +120,11 @@ export function countProjects() {
 /**
  * Validate one {name, path, vcs?} and insert it in its own tx(). Synchronous (node:sqlite): callers
  * await gitState() first. `vcs` omitted → detectVcs(path) when the path exists, else 'git' (a path
- * registered before it exists is created and git-inited by its first run).
+ * registered before it exists is created and git-inited by its first run, only outside any repository).
  * @returns {{key:string, name:string, path:string, vcs:'git'|'none'}} the stored row
  * @throws {Error} on empty name/path, a path that exists but is not a directory, a vcs other than
- *   'git' / 'none', a Folder inside a git work tree it is not the top of (code NESTED_IN_REPO),
+ *   'git' / 'none', a folder inside a git work tree it is not the top of, or a missing path whose nearest
+ *   existing ancestor is (code NESTED_IN_REPO),
  *   a duplicate name (case-insensitive), or a duplicate path/key.
  */
 export function insertProject(input, { gitOn = gitAvailable() } = {}) {
@@ -140,14 +141,14 @@ export function insertProject(input, { gitOn = gitAvailable() } = {}) {
 
   const vcs = input?.vcs != null ? input.vcs : existsSync(path) ? detectVcs(path) : 'git';
   if (vcs !== 'git' && vcs !== 'none') throw new Error('vcs must be "git" or "none"');
-  if (vcs === 'none') {
-    // Before the same-key check: a nested folder's projectKey is its parent's, so "already registered" would hide why.
-    const nested = nestedRepoOf(path, { gitOn });
-    if (nested) {
-      const err = new Error(nested.partOf ? `Part of ${nested.partOf}` : 'Inside a git repository');
-      err.code = 'NESTED_IN_REPO'; err.repoRoot = nested.repoRoot; err.partOf = nested.partOf;
-      throw err;
-    }
+  // Every kind (R8): a folder inside a git work tree it is not the top of is never a project. A path that does not
+  // exist yet counts by its nearest existing ancestor: its first run would otherwise `git init` inside the repository
+  // (#693). Before the same-key check: a nested folder's projectKey is its parent's, so "already registered" would hide why.
+  const nested = existsSync(path) ? nestedRepoOf(path, { gitOn }) : enclosingRepoOf(path, { gitOn });
+  if (nested) {
+    const err = new Error(nested.partOf ? `Part of ${nested.partOf}` : 'Inside a git repository');
+    err.code = 'NESTED_IN_REPO'; err.repoRoot = nested.repoRoot; err.partOf = nested.partOf;
+    throw err;
   }
   const key = projectKey(path);
   const createdAt = new Date().toISOString();
@@ -197,6 +198,61 @@ export function nestedRepoOf(path, { gitOn = gitAvailable() } = {}) {
   }
   const row = readRows().find((e) => samePath(real(e.path), root));
   return { repoRoot: root, partOf: row ? row.name : null };
+}
+
+/**
+ * R8 for a path that may not exist yet, with or without git (S53: the Add chip, registration and run start agree).
+ * An existing `dir` → nestedRepoOf(dir). A missing `dir` → its nearest existing ancestor `a`: a repository top
+ * (`a/.git`) ⇒ nested (a folder made directly under it would be inside it), else nestedRepoOf(a).
+ * @returns {{repoRoot:string, partOf:string|null}|null}
+ */
+export function enclosingRepoOf(dir, { gitOn = gitAvailable() } = {}) {
+  if (!dir || typeof dir !== 'string') return null;
+  const p = resolve(dir);
+  if (existsSync(p)) return isDir(p) ? nestedRepoOf(p, { gitOn }) : null;
+  let a = dirname(p);
+  while (!existsSync(a)) {
+    const up = dirname(a);
+    if (up === a) return null;
+    a = up;
+  }
+  if (!isDir(a)) return null;
+  if (detectVcs(a) === 'git') return { repoRoot: real(a), partOf: getProjectByPath(a)?.name ?? null };
+  return nestedRepoOf(a, { gitOn });
+}
+
+/** The refusal for a run (or a project) in a folder inside a git repository it is not the top of (#693). */
+export function nestedInRepoMessage(dir, { repoRoot, partOf = null } = {}) {
+  const rule = 'Worca runs only on the top folder of a git repository.';
+  return partOf
+    ? `${dir} is inside the project "${partOf}" (${repoRoot}). ${rule} Run on "${partOf}" instead.`
+    : `${dir} is inside the git repository at ${repoRoot}. ${rule} Add ${repoRoot} as a project and run there.`;
+}
+
+/**
+ * A repository an older worca (≤ 1.10.0) `git init`ed inside the user's repository (#693): `dir/.git` is a directory,
+ * its local config carries worca's identity `orchestrator@local` (only that `git init` ever wrote it there — every
+ * other worca commit passes it with `-c`), and an ancestor holds a `.git`. Stat and one small read: no git, no write.
+ * @returns {{repoRoot:string, partOf:string|null}|null} the enclosing repository, or null
+ */
+export function worcaNestedRepoOf(dir) {
+  if (!dir || typeof dir !== 'string' || !isDir(dir)) return null;
+  const gitDir = join(dir, '.git');
+  try { if (!lstatSync(gitDir).isDirectory()) return null; } catch { return null; }
+  let config;
+  try { config = readFileSync(join(gitDir, 'config'), 'utf8'); } catch { return null; }
+  if (!/^\s*email\s*=\s*orchestrator@local\s*$/m.test(config)) return null;
+  const repoRoot = nearestGitAncestor(real(dir));
+  if (!repoRoot) return null;
+  return { repoRoot: real(repoRoot), partOf: getProjectByPath(repoRoot)?.name ?? null };
+}
+
+/** How to fix a worca-made nested repository. Worca never changes it by itself (#693). */
+export function worcaNestedRepoHint(dir, { repoRoot }) {
+  return `${dir} has its own git repository inside your repository at ${repoRoot}. An older Worca created it. ` +
+    'Runs here use that inner repository, not yours, so your branches are not in it. ' +
+    `To fix it: check that ${join(dir, '.git')} holds nothing you need, delete it, remove this project from Worca, then add ${repoRoot}. ` +
+    'Worca does not change it for you.';
 }
 
 /** The STORED registry row whose path is realpath-equal to `dir` (samePath, S7), or null. */

@@ -11,7 +11,7 @@ import { perspectiveByKey, PERSPECTIVES, chipsHiddenFor } from '../../../src/sha
 import { levelAtLeast } from '../ui-level.mjs';
 import { toggleMenu } from '../workflows/menu.mjs';
 import { icon } from '../icons.mjs';
-import { fold, buildCheckFold } from './check-row.mjs';
+import { fold, swapOpen, buildCheckFold } from './check-row.mjs';
 import { SEND_FAILED, stepHead, stepSender } from './step-card.mjs';
 
 export { SEND_FAILED };
@@ -46,6 +46,7 @@ export function renderPlanBody(panel, pq, deps) {
     typed.rows = 2;
     typed.placeholder = 'Ask for changes in your own words…';
     typed.setAttribute('aria-label', 'Changes to the plan');
+    const cancel = btn('btn-quiet plan-typed-cancel', 'Cancel');
     const sendBtn = btn('plan-revise', 'Send changes');
     sendBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -53,8 +54,9 @@ export function renderPlanBody(panel, pq, deps) {
       if (!text) { setErrors([{ path: 'feedback', message: 'Write what should change first' }]); return; }
       send({ decision: 'revise', feedback: text });
     });
-    const row = h('div', 'plan-typed'); row.append(typed, sendBtn);
-    return { row, typed };
+    const acts = h('div', 'plan-typed-acts'); acts.append(cancel, sendBtn);
+    const row = h('div', 'plan-typed'); row.append(typed, acts);
+    return { row, typed, cancel };
   };
   // A role's findings: a 2px severity chip, the plan section, the one-line fix, and fixed in vN or open (D10).
   const findingList = (findings) => {
@@ -139,7 +141,7 @@ export function renderPlanBody(panel, pq, deps) {
       send({ decision: 'revise', feedback: perspectiveChangeFeedback(perspectives, after), perspectives: after });
     });
     const row = h('div', 'plan-perspectives'); row.hidden = true; row.append(chips.el, update);
-    pline.append(' — ', fold(btn('plan-persp-edit', 'edit'), row));
+    pline.append(' · ', fold(btn('plan-persp-edit', 'edit'), row));
     body.appendChild(row);
   }
 
@@ -174,7 +176,7 @@ export function renderPlanBody(panel, pq, deps) {
   if (typed) { typed.row.hidden = true; body.appendChild(typed.row); }
 
   const foot = h('div', 'qpanel-foot plan-actions');
-  if (typed) foot.appendChild(fold(btn('plan-ask-changes', 'Ask for changes'), typed.row, () => typed.typed.focus()));
+  if (typed) foot.appendChild(swapOpen(btn('plan-ask-changes', 'Ask for changes'), typed.row, typed.cancel, () => typed.typed.focus()));
   foot.appendChild(fullButton());
   const approve = btn('btn-primary plan-approve', planApproveLabel(plan, openBlocking(plan.roleReviews)));
   approve.addEventListener('click', (e) => { e.stopPropagation(); send({ decision: 'approve' }); });
@@ -183,6 +185,7 @@ export function renderPlanBody(panel, pq, deps) {
   body.append(err, foot);
   if (check && check.ok === false && unmetLine(check)) body.appendChild(h('div', 'plan-unmet', unmetLine(check)));
   panel.appendChild(body);
+  panel.dispatchEvent(new doc.defaultView.CustomEvent('step-primary', { bubbles: true }));
 
   /** Gate on: the inline fold (Full plan / Hide plan). Gate off: the artifact popup. Same label either way. */
   function fullButton() {
@@ -252,7 +255,7 @@ export function renderPlanBody(panel, pq, deps) {
       const t = code.textContent.trim();
       const g = marks.find((m) => t === m.path || t.startsWith(`${m.path}:`));
       if (!g) continue;
-      code.after(h('span', `plan-ground ${g.found ? 'found' : g.isNew ? 'new' : 'missing'}`, g.found ? '✓ exists' : g.isNew ? 'new' : 'not found'));
+      code.after(h('span', `plan-ground ${g.found ? 'found' : g.isNew ? 'new' : 'missing'}`, g.found ? 'exists' : g.isNew ? 'new' : 'not found'));
     }
   }
 

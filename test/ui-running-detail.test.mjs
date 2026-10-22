@@ -1123,13 +1123,17 @@ test('a finished run: its headline, the facts, what to check, Create pull reques
   assert.equal(facts.children.length, 3);
   assert.deepEqual([...facts.querySelectorAll('div > span')].map((s) => s.textContent), ['time', 'cost', '2 files changed']);
   assert.match(facts.textContent, /\+12/);
+  const filesLink = facts.querySelector('a.rd-stat-link');
+  assert.match(filesLink.getAttribute('href'), /\/details\/diff$/, 'F-22: the files tile opens the diff');
+  assert.match(rd.querySelector('.rd-clock') ? rd.querySelector('.rd-clock').textContent : 'started 00:00', /^started (\d{2}:\d{2}|[A-Z][a-z]{2}(, \d{2}:\d{2}| \d+, \d{2}:\d{2}))/, 'F-9: the Runs list time style');
   const result = rd.querySelector('.rd-result');
   assert.equal(result.hidden, false);
   assert.equal(result.querySelector('.issues'), null, 'the things to check live in Overview only');
   assert.equal(result.querySelector('[data-rd-tab="diff"] .rd-srow-v').textContent, '2 files');
+  assert.equal(result.querySelector('[data-rd-tab="diff"] .rd-srow-v').classList.contains('mono'), false, 'run 3 (D14): sans values');
   const pr = rd.querySelector('.rd-pr-slot .rd-create-pr');
   assert.ok(pr, 'an eligible run offers Create pull request');
-  assert.equal(pr.textContent, 'Create pull request');
+  assert.equal(pr.textContent, 'Create PR');
   // The card's one button is the pull request, behind its glyph; following up is the bar's Run after.
   assert.deepEqual([...rd.querySelectorAll('.rd-pr-slot > *')].map((b) => b.firstElementChild.dataset.icon),
     ['pr-create']);
@@ -1173,41 +1177,126 @@ test('a finished run whose branch has only a closed pull request: Create pull re
     'the Ship it dialog opens on arrival');
 });
 
-test('a finished run with an open or merged pull request links to it, behind its glyph', async () => {
-  await checkRows([['OPEN', 'external', 'pr-view'], ['MERGED', 'merged', 'pr-merged']].map(([state, icon, cls]) => ({
-    name: `a finished run with an ${state.toLowerCase()} pull request links to it, behind its glyph`,
-    run: async () => {
-      const url = 'https://github.com/o/r/pull/7';
-      const row = { ...HISTORY_ROW, id: 'p1', live: true, survived: true, branch: 'worca-cc/dark-p1', sourceBranch: 'main', pr: { state, url } };
-      const ctx = await boot({
-        fetchHandler: (u) => {
-          if (u.endsWith('/api/history/pr')) return ok({ ok: true });
-          if (u.endsWith('/api/history')) return ok({ pipelines: [row], ghAvailable: true });
-          if (u.endsWith('/api/budget')) return ok(okBudget());
-          if (u.includes('/api/runs/p1?projectDir=')) return ok({ state: { status: 'done' }, results: null, clarify: { questions: [], answers: [] } });
-          return null;
-        },
-      });
-      frame(ctx, { type: 'hello', runs: [] });
-      await settle(ctx.window, 6);
-      const rd = await openGlance(ctx);
-      frame(ctx, { type: 'done', runId: 'r1', status: 'done' });
-      await settle(ctx.window, 10);
-      const slot = rd.querySelector('.rd-pr-slot');
-      const link = slot.querySelector('a[data-rd-cta]');
-      assert.ok(link, 'the pull request is a link');
-      assert.equal(link.getAttribute('href'), url);
-      assert.equal(link.textContent, 'View pull request');
-      assert.equal(link.firstElementChild.dataset.icon, icon);
-      assert.ok(link.classList.contains(cls), `the ${state.toLowerCase()} PR wears its colour: ${link.className}`);
-      assert.equal(link.classList.contains('alt'), false, 'never the grey secondary');
-      assert.equal(link.target, '_blank', 'GitHub opens in a new tab');
-      assert.equal(slot.children.length, 1, 'the card carries the pull request alone');
-      // Known when the run finished: the button directly, no placeholder and no morph.
-      assert.equal(slot.classList.contains('is-pending') || slot.classList.contains('is-morph'), false, slot.className);
-      assert.equal(slot.querySelector('.rd-pr-spin, .rd-pr-fill'), null);
+// Run 3 (D11): the run's own PR is one bar right under the facts block: the list's chip with "PR #N", the checks fact and
+// Watch at its right. The header carries the one View PR; the slot holds no button and nothing sits under Results.
+function prBarBoot(state, calls) {
+  const url = 'https://github.com/o/r/pull/781';
+  const row = { ...HISTORY_ROW, id: 'p1', live: true, survived: true, branch: 'worca-cc/dark-p1', sourceBranch: 'main',
+    pr: { state, url, number: 781, ...(state === 'OPEN' ? { checks: { state: 'failing', total: 15, failed: 1, pending: 0 } } : {}) } };
+  return boot({
+    fetchHandler: (u) => {
+      if (u.includes('/api/pr/checks')) {
+        calls.push(u);
+        return ok({ checks: { state: 'failure', failed: 1, total: 15 }, status: { tone: 'bad', label: 'Checks failing', detail: '1 of 15 checks failed' }, watch: { watching: false } });
+      }
+      if (u.endsWith('/api/history/pr')) return ok({ ok: true });
+      if (u.endsWith('/api/history')) return ok({ pipelines: [row], ghAvailable: true });
+      if (u.endsWith('/api/budget')) return ok(okBudget());
+      if (u.includes('/api/runs/p1?projectDir=')) return ok({ state: { status: 'done' }, results: null, clarify: { questions: [], answers: [] } });
+      return null;
     },
-  })));
+  });
+}
+test('run 3: an open PR is one bar under the facts; the header carries View PR; no slot button, no bottom block', async () => {
+  const calls = [];
+  const ctx = await prBarBoot('OPEN', calls);
+  frame(ctx, { type: 'hello', runs: [] });
+  await settle(ctx.window, 6);
+  await openGlance(ctx);
+  frame(ctx, { type: 'done', runId: 'r1', status: 'done' });
+  await settle(ctx.window, 10);
+  const scr = ctx.window.document.querySelector('#run-detail');
+  const sheet = scr.querySelector('.rd-sheet');
+  const box = sheet.querySelector('.rd-pr-box');
+  assert.equal(box.previousElementSibling, sheet.querySelector('.rd-kv'), 'the PR bar sits right under the facts');
+  assert.equal(scr.querySelector('.rd-pr-slot').hidden, true, 'no View pull request button');
+  const chip = box.querySelector('.rd-pr-status .rd-prs-sum a.runs-pr');
+  assert.ok(chip, 'the chip links the PR');
+  assert.equal(chip.getAttribute('href'), 'https://github.com/o/r/pull/781');
+  assert.equal(chip.querySelector('.runs-pr-num').textContent, 'PR #781');
+  assert.equal(chip.querySelector('.runs-pr-word').textContent, 'Checks failing');
+  assert.equal(box.querySelector('.rd-prs-detail').textContent, '1 of 15 checks failed');
+  assert.ok(box.querySelector('.rd-prs-watch [role="switch"]'), 'Watch, the standard switch');
+  const primary = [...scr.querySelectorAll('.rd-bar-end .rd-actions .btn-primary')].filter((b) => !b.hidden);
+  assert.deepEqual(primary.map((b) => b.textContent.trim()), ['View PR']);
+  assert.doesNotMatch(scr.querySelector('.rd-sheet .run-status-text').textContent, /PR #/);
+  assert.equal(scr.querySelector('.rd-sheet .run-status-text').textContent, 'Needs you · Checks failing');
+  assert.equal(scr.querySelector('.rd-result [data-rd-cta]'), null, 'nothing PR-shaped under Results');
+});
+
+test('run 3: a merged PR paints the chip alone: no checks fetch, no Watch', async () => {
+  const calls = [];
+  const ctx = await prBarBoot('MERGED', calls);
+  frame(ctx, { type: 'hello', runs: [] });
+  await settle(ctx.window, 6);
+  await openGlance(ctx);
+  frame(ctx, { type: 'done', runId: 'r1', status: 'done' });
+  await settle(ctx.window, 10);
+  const scr = ctx.window.document.querySelector('#run-detail');
+  const status = scr.querySelector('.rd-pr-box .rd-pr-status');
+  assert.equal(status.hidden, false);
+  assert.equal(scr.querySelector('.rd-pr-slot').hidden, true);
+  const chip = status.querySelector('.rd-prs-sum .runs-pr');
+  assert.equal(chip.querySelector('.runs-pr-num').textContent, 'PR #781');
+  assert.equal(chip.querySelector('svg').innerHTML.length > 0, true);
+  assert.equal(status.querySelector('.rd-prs-watch'), null, 'no Watch on a merged PR');
+  assert.deepEqual(calls, [], 'no checks fetch');
+});
+
+// Run 3 (D11), review M2: an open PR that merges on the open page keeps its chip alone. Neither a checks read still in
+// flight nor a pr-watch-changed refresh paints its checks line or Watch back.
+test('run 3: a PR that merges while its page is open never gets its checks line or Watch back', async () => {
+  const url = 'https://github.com/o/r/pull/790';
+  const row = { ...HISTORY_ROW, id: 'p1', live: true, survived: true, branch: 'worca-cc/dark-p1', sourceBranch: 'main',
+    pr: { state: 'OPEN', url, number: 790, checks: { state: 'pending', total: 15, failed: 0, pending: 3 } } };
+  const ANSWER = { checks: { state: 'pending', total: 15, failed: 0, pending: 3 }, mergeable: 'MERGEABLE',
+    status: { tone: 'run', label: 'Checks running', detail: '3 of 15 checks running' }, watch: { watching: true } };
+  const held = [];
+  let hold = false;
+  let reads = 0;
+  const ctx = await boot({
+    fetchHandler: (u) => {
+      if (u.includes('/api/pr/checks')) {
+        reads += 1;
+        if (!hold) return ok(ANSWER);
+        return new Promise((resolve) => held.push(() => resolve(ok(ANSWER))));
+      }
+      if (u.endsWith('/api/history/pr')) return ok({ ok: true });
+      if (u.endsWith('/api/history')) return ok({ pipelines: [structuredClone(row)], ghAvailable: true });
+      if (u.endsWith('/api/budget')) return ok(okBudget());
+      if (u.includes('/api/runs/p1?projectDir=')) return ok({ state: { status: 'done' }, results: null, clarify: { questions: [], answers: [] } });
+      return null;
+    },
+  });
+  frame(ctx, { type: 'hello', runs: [] });
+  await settle(ctx.window, 6);
+  const rd = await openGlance(ctx);
+  frame(ctx, { type: 'done', runId: 'r1', status: 'done' });
+  await settle(ctx.window, 10);
+  const box = rd.querySelector('.rd-pr-status');
+  assert.ok(box.querySelector('.rd-prs-watch'), 'the open PR has Watch');
+  assert.match(box.textContent, /3 of 15 checks running/);
+  // A refresh whose read is still in flight when the PR merges.
+  hold = true;
+  frame(ctx, { type: 'pr-watch-changed', projectKey: row.projectKey, pipelineId: 'p1' });
+  await settle(ctx.window, 4);
+  assert.equal(held.length, 1, 'the refresh read is in flight');
+  row.pr = { state: 'MERGED', url, number: 790 };
+  frame(ctx, { type: 'pipelines-changed' });
+  await settle(ctx.window, 10);
+  assert.equal(box.querySelector('.rd-prs-watch'), null, 'merged: no Watch');
+  assert.equal(box.querySelector('.rd-prs-sum .runs-pr .runs-pr-word').textContent, 'Merged');
+  held.shift()();
+  await settle(ctx.window, 10);
+  assert.equal(box.querySelector('.rd-prs-watch'), null, 'the late answer paints no Watch');
+  assert.doesNotMatch(box.textContent, /checks running/, 'the late answer paints no checks line');
+  hold = false;
+  const before = reads;
+  frame(ctx, { type: 'pr-watch-changed', projectKey: row.projectKey, pipelineId: 'p1' });
+  await settle(ctx.window, 10);
+  assert.equal(reads, before, 'a refresh reads no checks for a merged PR');
+  assert.equal(box.querySelector('.rd-prs-watch'), null, 'a refresh paints no Watch');
+  assert.doesNotMatch(box.textContent, /checks running/, 'a refresh paints no checks line');
 });
 
 // QA 3: the run page PR box leads with the Runs list's own chip (prChip over the run model's prState), the same word and
@@ -1246,6 +1335,7 @@ test('QA 3: the run page PR box leads with the list\'s chip, also after a pr-wat
     assert.equal(box.hidden, false, 'the box shows');
     assert.ok(chip() && chip().classList.contains(c.cls), `the list's chip leads: ${box.innerHTML}`);
     assert.equal(chip().querySelector('.runs-pr-word').textContent, c.word);
+    assert.equal(chip().querySelector('.runs-pr-num').textContent, 'PR #803', 'run 3 (D11): the bar names its PR');
     assert.equal(chip().querySelector('svg').innerHTML, ICONS[c.icon], `the ${c.icon} icon`);
     if (c.noText) assert.doesNotMatch(box.textContent, new RegExp(c.noText), 'GitHub\'s restatement of the PR state is gone');
     if (c.note) assert.match(box.textContent, new RegExp(c.note), 'a verdict the chip does not say stays');
@@ -1597,7 +1687,9 @@ const CHAIN_OF_THREE = () => [{ id: 'p:p0', title: 'Chain', members: [
 ] }];
 const FEATURE_OF_THREE = () => [{ id: 'feat_1', kind: 'feature', title: 'Charts', projectKey: null, planning: null, cost: { usd: 0, byPipeline: {} },
   members: [1, 2, 3].map((i) => ({ position: i, title: `Slice ${i}`, pipelineId: `p${i - 1}`, ticketId: null, status: i === 1 ? 'done' : 'running', pr: null, ticket: null, adhoc: false, after: null })) }];
-const groupLineOf = (screen) => screen.querySelector('.rd-glance .rd-page-head .rd-group-line');
+// Run 3 (D8): the group is the facts block's first row; its dt names the kind, its dd links the group page.
+const groupLineOf = (screen) => screen.querySelector('.rd-glance .rd-sheet .rd-kv [data-fact="group"]');
+const groupValueOf = (screen) => groupLineOf(screen).querySelector('.rd-kv-v');
 const lineText = (el) => el.textContent.replace(/\s+/g, ' ').trim();
 
 async function openChainRun(ctx) {
@@ -1614,7 +1706,8 @@ test('a run in a chain of three says "Part of Chain · run 2 of 3", linking the 
   const screen = await openChainRun(ctx);
   const line = groupLineOf(screen);
   assert.equal(line.hidden, false);
-  assert.equal(lineText(line), 'Group Part of Chain · run 2 of 3');
+  assert.equal(line.querySelector('.rd-kv-k').textContent, 'Chain');
+  assert.equal(lineText(groupValueOf(screen)), 'Chain · run 2 of 3');
   assert.equal(line.querySelector('a.rd-group-link').getAttribute('href'), '#group/p%3Ap0');
   assert.equal(screen.querySelector('.rd-prog-chain'), null);
   assert.equal(runBarOf(screen).querySelectorAll('.run-prog-sec').length, 4, 'only the run\'s own four sections');
@@ -1628,7 +1721,8 @@ test('a live slice says "Part of Charts · run 2 of 3" linking the feature page;
   await settle(ctx.window, 4);
   const screen = await openChainRun(ctx);
   const line = groupLineOf(screen);
-  assert.equal(lineText(line), 'Group Part of Charts · run 2 of 3');
+  assert.equal(line.querySelector('.rd-kv-k').textContent, 'Feature');
+  assert.equal(lineText(groupValueOf(screen)), 'Charts · run 2 of 3');
   assert.equal(line.querySelector('a.rd-group-link').getAttribute('href'), '#feature/feat_1');
   assert.equal(screen.querySelector('.rd-slice-line'), null, 'the Group row replaces the slice line');
   frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: STAGED_V2(), steps: V2_STEPS(), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }], subAgents: [], totalCostUsd: 2 });
@@ -1643,7 +1737,7 @@ test('chain freshness: no group at first, a schedules-changed frame then shows t
   ctx.box.chains = CHAIN_OF_THREE();
   frame(ctx, { type: 'schedules-changed' });
   await settle(ctx.window, 8);
-  assert.equal(lineText(groupLineOf(screen)), 'Group Part of Chain · run 2 of 3');
+  assert.equal(lineText(groupValueOf(screen)), 'Chain · run 2 of 3');
 });
 
 test('a failing /api/schedules is not refetched by repaints; the run reads as in no group', async () => {

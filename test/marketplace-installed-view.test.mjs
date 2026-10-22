@@ -138,7 +138,7 @@ test('Needs attention: Update / Review by access (L7), Needs setup with the live
   assert.deepEqual(act(li('old-plugin')), ['btn btn-sm', 'health', 'old-plugin', 'Check health']);
   assert.deepEqual(chips(li('py')), [['badge mk-chip mk-chip-warn', 'Python not found'], ['badge mk-chip mk-chip-bad', '2 ignored']]);
   assert.deepEqual([...li('py').querySelectorAll('ul.mk-lines > li')].map((n) => n.textContent),
-    ['agents/x.md — collides with a built-in agent', 'workflows/y.json — v1 steps template']);
+    ['agents/x.md: collides with a built-in agent', 'workflows/y.json: v1 steps template']);
   assert.equal(renderAttention(doc, [], { channelStatus: [] }), null);
 });
 

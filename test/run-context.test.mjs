@@ -218,8 +218,8 @@ test('generated CLAUDE.md: title + rosters + per-member sections, byte-identical
   const a = await writeTree(await tmp('worca-cc-rc-alpha-'), { 'CLAUDE.md': 'ALPHA MEMORY\n' });
   const b = await writeTree(await tmp('worca-cc-rc-beta-'), { '.claude/CLAUDE.md': 'BETA MEMORY\n' });
   const members = [
-    { projectKey: 'alpha-1', projectName: 'Alpha', projectDir: a, worktreeDir: join(await tmp(), 'wa') },
-    { projectKey: 'beta-2', projectName: 'Beta', projectDir: b, worktreeDir: join(await tmp(), 'wb') },
+    { projectKey: 'alpha-1', projectName: 'Alpha', projectDir: a, worktreeDir: join(await tmp(), 'alpha-1') },
+    { projectKey: 'beta-2', projectName: 'Beta', projectDir: b, worktreeDir: join(await tmp(), 'beta-2') },
   ];
   const rr1 = await mkRunRoot('pidaaaa1');
   const rr2 = await mkRunRoot('pidaaaa1');   // same pipelineId -> same bytes
@@ -331,7 +331,7 @@ test('§8.20: a DELETED member real dir degrades to worktree-only context with a
   const rr = await mkRunRoot();
   const rc = await assemble({
     runRoot: rr,
-    members: [{ projectKey: 'ghost-1', projectName: 'Ghost', projectDir: gone, worktreeDir: join(await tmp(), 'w') }],
+    members: [{ projectKey: 'ghost-1', projectName: 'Ghost', projectDir: gone, worktreeDir: join(await tmp(), 'ghost-1') }],
   });
   const text = await readFile(rc.claudeMdPath, 'utf8');
   assert.match(text, /^## Project: Ghost — repos\/ghost-1$/m, 'the roster stays symmetric');
@@ -1776,4 +1776,35 @@ test('generateClaudeMd: an all-Folder workspace names one copy per project; a on
   const one = generateClaudeMd({ pipelineId: 'p', projectsRoot: '/r', graphInstructions: {}, members: [m('a-1', 'a')] }).text;
   assert.ok(one.includes('a copy of the project\'s folder (not a git repository: never run git there)'));
   assert.ok(one.includes('- `repos/<projectKey>/` — a copy of the project\'s folder (no git). **All code edits happen here.**'));
+});
+
+// #411: a detached checkout's dir can be a shortened projectKey (worktree.mjs boundCheckoutName), so every
+// `repos/<…>` an agent reads names the dir on disk: basename(worktreeDir), not the projectKey.
+test('generateClaudeMd / assembleSkills: a shortened checkout is named by its dir, not its projectKey', async () => {
+  const key = 'my-awesome-microservice-1234abcd';
+  const m = { projectKey: key, projectName: 'svc', projectDir: '/r/svc', worktreeDir: '/rr/repos/my-awe-1234abcd',
+    branch: 'worca-cc/x', checkpointRef: 'abc', workMode: 'git' };
+  const text = generateClaudeMd({ pipelineId: 'p1', projectsRoot: '/root', graphInstructions: {}, members: [m],
+    projectAgents: { [key]: ['helper.md'] } }).text;
+  assert.ok(text.includes('- `repos/my-awe-1234abcd` — **svc**'), 'the roster line');
+  assert.ok(text.includes('- **svc** (`repos/my-awe-1234abcd`): helper.md'), 'the sub-agents note');
+  assert.ok(text.includes('## Project: svc — repos/my-awe-1234abcd'), 'the memory heading');
+  assert.ok(!text.includes(`repos/${key}`), 'the projectKey never stands in for the dir');
+  // No worktreeDir yet (a pending member): the projectKey, as before.
+  assert.ok(generateClaudeMd({ pipelineId: 'p1', projectsRoot: '/root', graphInstructions: {},
+    members: [{ ...m, worktreeDir: undefined }] }).text.includes(`- \`repos/${key}\` — **svc**`));
+
+  const proj = await mkdtemp(join(tmpdir(), 'worca-cc-rc-short-'));
+  const target = await mkdtemp(join(tmpdir(), 'worca-cc-rc-short-t-'));
+  try {
+    await mkdir(join(proj, '.claude', 'skills', 'svc-skill'), { recursive: true });
+    await writeFile(join(proj, '.claude', 'skills', 'svc-skill', 'SKILL.md'), '---\nname: svc-skill\ndescription: d\n---\nbody\n');
+    const out = await assembleSkills({ target: join(target, '.claude', 'skills'), members: [{ ...m, projectDir: proj }], homeDir: target });
+    const rec = out.roster.find((s) => s.name.endsWith('svc-skill'));
+    assert.ok(rec, 'the member skill is mounted');
+    assert.equal(rec.origin, 'svc (repos/my-awe-1234abcd)');
+  } finally {
+    await rm(proj, { recursive: true, force: true });
+    await rm(target, { recursive: true, force: true });
+  }
 });

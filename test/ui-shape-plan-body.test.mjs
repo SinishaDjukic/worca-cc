@@ -82,7 +82,7 @@ test('one primary "Approve and build", the same with unmet checks, plus the reas
   assert.deepEqual(ok.calls.submit, [{ decision: 'approve' }]);
   const bad = setup();
   assert.equal(bad.$('.plan-approve').textContent, 'Approve and build');
-  assert.equal(bad.$('.plan-unmet').textContent, '1 check unmet: paths');
+  assert.equal(bad.$('.plan-unmet').textContent, 'Still to fix: file paths not in the repo');
   assert.equal(bad.$('.plan-actions').nextElementSibling, bad.$('.plan-unmet'));
 });
 
@@ -324,7 +324,7 @@ test('gate on and gate off draw the same head and foot; the gate off drops only 
   assert.equal(off.calls.fetch.length, 0);
   assert.equal(off.$('.plan-persp-names').textContent, 'Product · Architect');
   assert.equal(off.$('.plan-check-line .plan-fold-text').textContent, 'Shape 2/3 · 1 to fix');
-  assert.equal(off.$('.plan-unmet').textContent, '1 check unmet: paths');
+  assert.equal(off.$('.plan-unmet').textContent, 'Still to fix: file paths not in the repo');
   off.$('.plan-approve').click();
   await flush();
   off.$('.plan-feedback').value = 'more tests';
@@ -370,7 +370,7 @@ test('the rendered plan carries perspective tags on ## headings and grounding ma
   assert.deepEqual(tags, [['Product'], ['Architect']]);
   const marks = $$('.plan-ground').map((m) => [m.previousSibling.textContent, m.className, m.textContent]);
   assert.deepEqual(marks, [
-    ['src/a.mjs:12', 'plan-ground found', '✓ exists'],
+    ['src/a.mjs:12', 'plan-ground found', 'exists'],
     ['src/new.mjs', 'plan-ground new', 'new'],
     ['src/gone.mjs', 'plan-ground missing', 'not found'],
   ]);
@@ -472,7 +472,7 @@ test('plan-body draws no check row itself and has no local fold (one check-row c
   const src = readFileSync(new URL('../ui/public/shape/plan-body.mjs', import.meta.url), 'utf8');
   assert.doesNotMatch(src, /plan-check-row/);
   assert.doesNotMatch(src, /function fold\(|const fold = \(/);
-  assert.match(src, /import \{ fold, buildCheckFold \} from '\.\/check-row\.mjs';/);
+  assert.match(src, /import \{ fold, swapOpen, buildCheckFold \} from '\.\/check-row\.mjs';/);
 });
 
 test('slice 4 CSS: 2px/4px radii only, light-dark colour tokens only, 1px dividers, the finding line wraps', () => {
@@ -490,4 +490,21 @@ test('slice 4 CSS: 2px/4px radii only, light-dark colour tokens only, 1px divide
   assert.match(css, /\.plan-sev\{[^}]*border-radius:var\(--r-xs\)/);
   assert.match(css, /\.plan-finding\{[^}]*flex-wrap:wrap/);
   assert.match(css, /\.plan-finding-fix\{[^}]*overflow-wrap:anywhere/);
+});
+
+test('run 4 D8: Ask for changes swaps for the field, Cancel swaps back', () => {
+  const { $, panel } = setup();
+  doc.body.appendChild(panel);
+  const ask = $('.plan-ask-changes');
+  ask.click();
+  assert.equal(ask.hidden, true, 'the button gives way to the field');
+  assert.equal($('.plan-typed').hidden, false);
+  assert.equal(ask.getAttribute('aria-expanded'), 'true');
+  assert.deepEqual([...$('.plan-typed').querySelectorAll('button')].map((b) => b.textContent), ['Cancel', 'Send changes']);
+  assert.equal(doc.activeElement, $('.plan-feedback'));
+  $('.plan-typed-cancel').click();
+  assert.equal($('.plan-typed').hidden, true);
+  assert.equal(ask.hidden, false);
+  assert.equal(doc.activeElement, ask);
+  panel.remove();
 });

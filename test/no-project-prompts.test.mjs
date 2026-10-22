@@ -120,7 +120,7 @@ test('generateClaudeMd: a sole no-project member gets the work/ intro, layout li
   assert.doesNotMatch(text, /repos\/|git checkout|git worktree/);
   assert.doesNotMatch(text, /no CLAUDE\.md found in this project/);
   // A git member keeps today's bytes.
-  const git = generateClaudeMd({ pipelineId: 'abcd1234', members: [{ ...m, projectKey: 'site-00000001', projectName: 'site', workMode: undefined }] }).text;
+  const git = generateClaudeMd({ pipelineId: 'abcd1234', members: [{ ...m, projectKey: 'site-00000001', projectName: 'site', worktreeDir: '/rr/repos/site-00000001', workMode: undefined }] }).text;
   assert.match(git, /one git checkout per project below/);
   assert.match(git, /## Project: site — repos\/site-00000001/);
 });

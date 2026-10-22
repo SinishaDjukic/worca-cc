@@ -28,7 +28,7 @@ test('install consent lists a requested secret (.pl-secret) + setup commands ver
   assert.ok(secret, 'secret request must render');
   assert.match(secret.textContent, /token/);
   assert.match(el.textContent, /a1b2c3d/);                       // pinned sha7
-  assert.match(el.textContent, /issueTriager — tools: Bash, Read/);
+  assert.match(el.textContent, /issueTriager \(tools: Bash, Read\)/);
   assert.match(el.textContent, /12 npm dependencies/);
   assert.match(el.querySelector('.pl-setup-cmd').textContent, /npm ci --prefix <dir> --ignore-scripts --omit=dev/);
 });
@@ -51,7 +51,7 @@ test('install consent: an ask-forms line only for agents with forms; a pre-forms
       assert.equal(rows.length, 1, 'only the agent that HAS forms gets the line');
       assert.equal(rows[0].textContent,
         '1 form: review-mockups · may display application/pdf, image/* from the run folder');
-      assert.match(el.textContent, /mockupReviewer — tools: Read/, 'the tools line is untouched');
+      assert.match(el.textContent, /mockupReviewer \(tools: Read\)/, 'the tools line is untouched');
     } },
     { name: 'install consent tolerates a snapshot taken before ask forms existed', run: () => {
       const el = renderInstallConsent(
@@ -60,7 +60,7 @@ test('install consent: an ask-forms line only for agents with forms; a pre-forms
         { doc },
       );
       assert.equal(el.querySelector('.pl-consent-forms'), null);
-      assert.match(el.textContent, /legacy — tools: Read/);
+      assert.match(el.textContent, /legacy \(tools: Read\)/);
     } },
   ]);
 });
@@ -78,7 +78,7 @@ test('install consent: chat channels render security-loud with secrets; absent -
     { doc },
   );
   assert.match(el.textContent, /Chat channels \(1\)/);
-  assert.match(el.textContent, /Telegram \(telegram, inbound \+ outbound\) — runs a persistent worker/);
+  assert.match(el.textContent, /Telegram \(telegram, inbound \+ outbound\): runs a persistent worker/);
   assert.match(el.querySelector('.pl-secret').textContent, /botToken/);
   const warn = el.querySelector('.pl-channel-warn');
   assert.ok(warn, 'security warning must render');
@@ -320,16 +320,16 @@ test('scripts: consent rows (runtime, command, case count), card count, python-m
       const el = renderInstallConsent({ name: 'p', repoUrl: 'https://x/y', sha: 'a'.repeat(40) },
         { agents: [], taskSources: [], scripts: [{ key: 'tidy', runtime: 'shell', file: null, command: 'npm run tidy' }, { key: 'lint', runtime: 'node', file: 'lint.mjs', command: null }], skills: [], workflows: [] }, { doc });
       assert.match(el.textContent, /Scripts \(2\)/);
-      assert.match(el.textContent, /tidy — shell · npm run tidy/);
-      assert.match(el.textContent, /lint — node · lint\.mjs/);
+      assert.match(el.textContent, /tidy: shell · npm run tidy/);
+      assert.match(el.textContent, /lint: node · lint\.mjs/);
     } },
     { name: 'a consent script row counts its cases', run: () => {
       const el = renderInstallConsent({ name: 'p', repoUrl: 'https://x/y', sha: 'a'.repeat(40) },
         { agents: [], taskSources: [], skills: [], workflows: [],
           scripts: [{ key: 'tidy', runtime: 'shell', file: null, command: 'npm run tidy', cases: 2 },
             { key: 'lint', runtime: 'node', file: 'lint.mjs', command: null, cases: 1 }] }, { doc });
-      assert.match(el.textContent, /tidy — shell · npm run tidy · 2 cases/);
-      assert.match(el.textContent, /lint — node · lint\.mjs · 1 case/);
+      assert.match(el.textContent, /tidy: shell · npm run tidy · 2 cases/);
+      assert.match(el.textContent, /lint: node · lint\.mjs · 1 case/);
     } },
   ]);
 });

@@ -167,33 +167,101 @@ check(runs.ownRow === 0, 'no separate row for slice 2\'s run');
 await auditButtonsBoth('the Runs list');
 const runsShot = await shot('runs');
 
+// ---- run 3 (D1-D6): the group page opens in the Runs pane beside the list, and a member run opens beside it too.
+await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+await ev(`localStorage.removeItem('worca-cc.runs.last');0`);   // the bare list: no remembered page reopens over it
+await cdp('Page.navigate', { url: `${base}/?w=1440#runs` });
+await waitFor("!!document.querySelector('#runs-list .runs-item[data-level=\"top\"][data-row-key^=\"chain:\"] > a.runs-row')", 'the feature row at 1440');
+await ev(`document.querySelector('#runs-list .runs-item[data-level="top"][data-row-key^="chain:"] > a.runs-row').click();0`);
+await waitFor("!!document.querySelector('#runs-pane[data-kind=\"group\"] #group-detail .gpage .run-members.is-table')", 'the group page in the pane');
+const inPane = await ev(`(() => {
+  const row = document.querySelector('#runs-list .runs-item[data-level="top"][data-row-key^="chain:"] > a.runs-row');
+  return { listW: document.getElementById('runs-list-pane').offsetWidth, selected: row.classList.contains('selected'),
+    current: row.getAttribute('aria-current'), kind: document.getElementById('runs-pane').dataset.kind,
+    crumbs: [...document.querySelectorAll('#group-detail .gpage-bar .rd-crumbs:not([hidden]) .rd-crumb')].map((c) => c.textContent),
+    bar: document.querySelector('#group-detail .gpage-bar').getBoundingClientRect().height,
+    headGap: document.querySelector('#group-detail .gpage-head').getBoundingClientRect().top - document.querySelector('#group-detail .gpage-bar').getBoundingClientRect().bottom };
+})()`);
+check(inPane.listW > 0 && inPane.selected && inPane.current === 'true', `PASS group page in the pane: the list stays and the feature row is .selected (${JSON.stringify(inPane)})`);
+check(inPane.kind === 'group', `PASS group page in the pane: #runs-pane[data-kind="group"] (${inPane.kind})`);
+check(JSON.stringify(inPane.crumbs) === JSON.stringify(['Runs', 'Run tags and cost allocation']), `PASS group page in the pane: the breadcrumb reads Runs › the feature (${JSON.stringify(inPane.crumbs)})`);
+// Member 2 (the paused slice) from the group page's runs table: its run page opens beside the list.
+await ev(`[...document.querySelectorAll('#group-detail .run-member-title')].find((a) => /Run tags$/.test(a.textContent)).click();0`);
+await waitFor("!!document.querySelector('#runs-pane[data-kind=\"hist\"] #hist-detail .hd-glance .rd-page-title')", 'member 2\'s run page');
+await waitFor("document.querySelectorAll('#hist-detail .hd-bar .rd-crumbs:not([hidden]) .rd-crumb').length === 3", 'the run page breadcrumb');
+const member = await ev(`(() => {
+  const row = document.querySelector('#runs-list .runs-item[data-level="top"][data-row-key^="chain:"] > a.runs-row');
+  return { open: row.classList.contains('member-open'), selected: row.classList.contains('selected'), current: row.getAttribute('aria-current'),
+    crumbs: [...document.querySelectorAll('#hist-detail .hd-bar .rd-crumbs .rd-crumb')].map((c) => c.textContent),
+    chip: document.querySelector('#hist-detail .hd-glance .rd-title-row .kind-chip').textContent,
+    bar: document.querySelector('#hist-detail .hd-bar').getBoundingClientRect().height,
+    headGap: document.querySelector('#hist-detail .hd-glance .rd-page-head').getBoundingClientRect().top - document.querySelector('#hist-detail .hd-bar').getBoundingClientRect().bottom };
+})()`);
+check(member.open && !member.selected && member.current === 'location', `PASS group page in the pane: a member open turns its group row member-open (${JSON.stringify(member)})`);
+check(JSON.stringify(member.crumbs) === JSON.stringify(['Runs', 'Run tags and cost allocation', 'Run 2']) && member.chip === 'Run 2 of 3',
+  `PASS group page in the pane: the run page reads Runs › the feature › Run 2, chip "Run 2 of 3" (${JSON.stringify(member.crumbs)}, ${member.chip})`);
+check(Math.abs(inPane.bar - member.bar) <= 1 && Math.abs(inPane.headGap - member.headGap) <= 1,
+  `PASS group page in the pane: the group bar is the run page's bar (height ${inPane.bar} vs ${member.bar}) and the title sits as far under it (${inPane.headGap} vs ${member.headGap})`);
+// A phone: the row tap slides the group page in, full screen, with its Back; the list is inert.
+await cdp('Emulation.setDeviceMetricsOverride', { width: 375, height: 800, deviceScaleFactor: 1, mobile: true });
+await ev(`localStorage.removeItem('worca-cc.runs.last');0`);
+await cdp('Page.navigate', { url: `${base}/?w=375#runs` });
+await waitFor("!!document.querySelector('#runs-list .runs-item[data-level=\"top\"][data-row-key^=\"chain:\"] > a.runs-row')", 'the feature row at 375');
+await ev(`document.querySelector('#runs-list .runs-item[data-level="top"][data-row-key^="chain:"] > a.runs-row').click();0`);
+await waitFor("!!document.querySelector('#runs-pane[data-kind=\"group\"] #group-detail .gpage')", 'the group page at 375');
+await sleep(600);   // the slide
+const phone = await ev(`(() => { const b = document.querySelector('#group-detail .gpage-back'); const bar = b.closest('.gpage-bar'); const p = document.getElementById('runs-pane').getBoundingClientRect();
+  return { back: !!b && b.offsetWidth > 0, chevron: !!b.querySelector('svg'), backInset: Math.round(b.getBoundingClientRect().left - bar.getBoundingClientRect().left), barPad: Math.round(parseFloat(getComputedStyle(bar).paddingLeft)),
+    inert: document.getElementById('runs-list-pane').hasAttribute('inert'), paneLeft: Math.round(p.left), paneW: Math.round(p.width),
+    crumbs: getComputedStyle(document.querySelector('#group-detail .rd-crumbs')).display }; })()`);
+check(phone.back && phone.chevron && Math.abs(phone.backInset - phone.barPad) <= 1 && phone.inert && phone.paneLeft === 0 && phone.crumbs === 'none',
+  `PASS group page in the pane at 375px: full screen with Back (chevron, at the bar's padding), the list inert, no breadcrumb (${JSON.stringify(phone)})`);
+await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+
 // ---- the feature page: the group page's model block owns the head, status and members; its Overview tab holds Shaper's
-// head-less view (log, ⋯, Ship card). The bundle merge (D12): one status line, at most one member list.
+// head-less view (log, ⋯, Ship card). The bundle merge (D12): one status line, at most one member list. Run 3 (D1): the
+// page renders in the Runs pane (#group-detail), so "the page" is the pane, not a section of its own.
 await cdp('Page.navigate', { url: `${base}/#feature/${f.id}/overview` });
-const OV = '[data-view="feature"] .gpage-panel[data-tab="overview"] .shape-feature';
+const OV = '#runs-pane #group-detail .gpage-panel[data-tab="overview"] .shape-feature';
 await waitFor(`!!document.querySelector('${OV}')`, 'the feature page');
+// Run 1, run 4 (D17, D18): a pointer user gets no ring on the header ⋯ after the page opens; a real Tab brings the 2px ring back.
+const HDR_MORE = '#runs-pane #group-detail .gpage-bar .gpage-more';
+await cdp('Emulation.setFocusEmulationEnabled', { enabled: true });
+await ev(`document.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));0`);
+const ringOpen = await ev(`(() => { const m = document.querySelector('${HDR_MORE}');
+  return m && { mode: document.documentElement.dataset.input, outline: getComputedStyle(m).outlineStyle }; })()`);
+check(!!ringOpen && ringOpen.mode === 'pointer' && ringOpen.outline === 'none', `no ring on load: the header ⋯ (${JSON.stringify(ringOpen)})`);
+for (const type of ['keyDown', 'keyUp']) await cdp('Input.dispatchKeyEvent', { type, key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
+const ringKey = await ev(`(() => { const m = document.querySelector('${HDR_MORE}'); m.focus(); const cs = getComputedStyle(m);
+  return { mode: document.documentElement.dataset.input, style: cs.outlineStyle, width: cs.outlineWidth }; })()`);
+check(ringKey.mode === 'keyboard' && ringKey.style === 'solid' && ringKey.width === '2px', `no ring on load: the header ⋯ shows a 2px solid ring after a key press (${JSON.stringify(ringKey)})`);
+await ev(`document.activeElement && document.activeElement.blur && document.activeElement.blur(); document.documentElement.dataset.input = 'pointer'; 0`);
 const page = await ev(`(() => {
   const el = document.querySelector('${OV}');
-  const main = document.querySelector('[data-view="feature"]');
+  const main = document.querySelector('#runs-pane');
   return {
     statusLines: main.querySelectorAll('.run-status-text').length,
     memberLists: main.querySelectorAll('ol.run-members').length,
     dupes: el.querySelectorAll('.shape-feature-head, .shape-feature-status, .shape-feature-runs, ol.chat-rc-members').length,
-    replanButton: !!el.querySelector('[data-act="feature-replan"]'), more: !!el.querySelector('.shape-feature-more svg'),
-    menu: (() => { el.querySelector('.shape-feature-more')?.click();
-      return [...document.querySelectorAll('.wfv-menu .wfv-menu-item')].map((b) => b.textContent); })(),
+    replanButton: !!el.querySelector('[data-act="feature-replan"]'), more: !!el.querySelector('.shape-feature-more'),
+    order: !!el.querySelector('.shape-feature-order'),
+    ship: (document.querySelector('#runs-pane #group-detail .gpage-ship') || {}).textContent || '',
     width: el.getBoundingClientRect().width, mainWidth: main.getBoundingClientRect().width,
   };
 })()`);
 check(page.statusLines === 1, `one status line on the page (${page.statusLines})`);
 check(page.memberLists <= 1, `at most one member list (${page.memberLists})`);
 check(page.dupes === 0, 'the Shaper view draws no head, status, runs fold or member list');
-check(page.replanButton && page.more, 'halted: Re-plan the rest beside an icon ⋯');
-check(['Re-plan the rest', 'Cancel the rest'].every((l) => page.menu.includes(l)), `⋯ holds ${JSON.stringify(page.menu)}`);
+check(page.replanButton && !page.more, 'halted: Re-plan the rest as a button, and the Overview draws no ⋯ of its own');
+check(!page.order && page.ship.length > 0, `the Overview has no "Merge in order" line; the Runs tab keeps its .gpage-ship line (${JSON.stringify(page.ship)})`);
+await ev(`document.querySelector('${HDR_MORE}').click();0`);
+await waitFor("!!document.querySelector('.wfv-menu .wfv-menu-item')", 'the header ⋯ menu');
+const hdrMenu = await ev(`[...document.querySelectorAll('.wfv-menu .wfv-menu-item')].map((b) => b.textContent)`);
+check(['Re-plan the rest', 'Cancel the rest'].every((l) => hdrMenu.includes(l)), `the header ⋯ holds ${JSON.stringify(hdrMenu)}`);
 check(page.width > 0.8 * page.mainWidth, `full width (${Math.round(page.width)} of ${Math.round(page.mainWidth)})`);
 const pageShot = await shot('page');
 // A second ⋯ click closes the menu (toggleMenu); a document-level Escape would not reach the menu's own keydown.
-await ev(`document.querySelector('${OV} .shape-feature-more').click(), !document.querySelector('.wfv-menu')`);
+await ev(`document.querySelector('${HDR_MORE}').click(), !document.querySelector('.wfv-menu')`);
 await auditButtonsBoth('the feature page');
 
 // ---- the group page (runs redesign slice 4, D21): title row, status card, tabs and Runs table share their edges,
@@ -202,7 +270,7 @@ const LAYOUT_AUDIT = `(${auditGroupPageLayout})(document.querySelector('.gpage')
 for (const width of [290, 375, 1440]) {
   await cdp('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: width < 600 });
   await cdp('Page.navigate', { url: `${base}/?w=${width}#feature/${f.id}` });
-  await waitFor("!!document.querySelector('[data-view=\"feature\"] .gpage .run-members.is-table')", `the group page at ${width}`);
+  await waitFor("!!document.querySelector('#runs-pane #group-detail .gpage .run-members.is-table')", `the group page at ${width}`);
   for (const theme of ['light', 'dark']) {
     await ev(`document.documentElement.dataset.theme=${JSON.stringify(theme)};0`);
     const bad = await ev(LAYOUT_AUDIT);

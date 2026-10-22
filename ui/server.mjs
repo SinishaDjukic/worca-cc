@@ -55,7 +55,7 @@ import {
   peekPendingCardComments, clearPendingCardComments, DiffCommentError, DC_ID_RE,
 } from '../src/core/diff-comments.mjs';
 import { listProjects, addProject, addProjects, removeProject, normalizeProjectPath, countProjects, worcaHome, getProjectByPath, displayPath,
-  getProjectByName, ownsProjectFolder, removeProjectAndFolder } from '../src/core/projects.mjs';
+  getProjectByName, ownsProjectFolder, removeProjectAndFolder, enclosingRepoOf, nestedInRepoMessage, worcaNestedRepoOf, worcaNestedRepoHint } from '../src/core/projects.mjs';
 import { effectiveWorkMode, workModeOfRow, workModeForStart, samePath } from '../src/core/project-kind.mjs';
 import { renderIndexHtml, INDEX_THEME_ANCHOR, FLAG_GATES_ANCHOR } from '../src/core/index-html.mjs';
 import { gitState, gitAvailable, currentGitState, onGitChange, GIT_MISSING } from '../src/core/git-available.mjs';
@@ -80,6 +80,7 @@ import {
   autoWorkflowModel as storedAutoWorkflowModel, setAutoWorkflowModel, assertAutoWorkflowModelInput,
   prDescriptionModel as storedPrDescriptionModel, setPrDescriptionModel, assertPrDescriptionModelInput,
   memoryDefragModel, setMemoryDefragModel, assertMemoryDefragModelInput,
+  agentGenModel as storedAgentGenModel, setAgentGenModel, assertAgentGenModelInput,
   workspaceScanModels, setWorkspaceScanModels, assertWorkspaceScanInput,
   scheduleDefaults, setScheduleDefaults,
   userTagDimensions, setUserTagDimensions, userEnforceTags, setUserEnforceTags,
@@ -119,13 +120,14 @@ import {
   findCard as askFindCard, updateCardBlock as askUpdateCardBlock,
   addAttachment as askAddAttachment, listAttachments as askListAttachments,
   getAttachment as askGetAttachment, attachmentPath as askAttachmentPath, readAttachmentText as askReadAttachmentText,
-  attachmentSourcePath as askAttachmentSourcePath,
   linkRun as askLinkRun, updateRunLink as askUpdateRunLink, listRunLinks as askListRunLinks,
   findRunLinksByPipeline as askFindRunLinksByPipeline, runLinkTarget,
   finishMessage as askFinishMessage, newAskId,
   newAskId as askNewId, findPullRequestCards as askFindPullRequestCards, findFixRunCards as askFindFixRunCards,
 } from '../src/core/ask/store.mjs';
+import { revealTargetFor as askRevealTargetFor } from '../src/core/ask/show-files-deps.mjs';
 import { sanitizeTitle as askSanitizeTitle } from '../src/core/title.mjs';
+import { stripIntentLead } from '../src/shared/intent-leads.mjs';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
 import { contextEntries as askContextEntries } from '../src/core/ask/contexts.mjs';
 import { askWebAccess, WEB_OFF } from '../src/core/ask/web-access.mjs';
@@ -346,7 +348,7 @@ import {
   updateWorkspace, deleteWorkspace, isGitRepo, WORKSPACE_KEY_RE, countWorkspaces,
   readWorkspaceMap, setWorkspaceEdgeState, addWorkspaceManualEdge, removeWorkspaceManualEdge,
   regenerateWorkspaceDescription, readWorkspaceStacks, updateWorkspaceStacks, workspaceMembers,
-  addWorkspaceMembers, removeWorkspaceMember, rootsHash, workspaceSetHash, memberWorkMode, memberHasTeamRepo,
+  addWorkspaceMembers, removeWorkspaceMember, rootsHash, workspaceSetHash, memberWorkMode, memberHasTeamRepo, setWorkspaceScanPick,
 } from '../src/core/workspaces.mjs';
 import { effectiveEdges } from '../src/shared/workspace-map/overrides.mjs';
 import { WORKSPACE_SCAN_WORKFLOW_ID, WORKSPACE_SCAN_DEFAULT_MODELS, PR_FIX_WORKFLOW_ID, GRAPH_SHAPE_WORKFLOW, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from '../src/core/graph/builtin-workflows.mjs';
@@ -392,7 +394,7 @@ import { settingsErrorReply, asSettingsField } from '../src/core/settings-errors
 import { configuredClaudeBin, onboardingStatus } from '../src/core/onboarding.mjs';   // a THIRD settings import line (the two blocks above are unrelated readers)
 import { probeClaudeAuth, CLAUDE_SIGNED_OUT_CODE, CLAUDE_SIGNED_OUT_MESSAGE } from '../src/core/preflight.mjs';
 import { failedBecauseSignedOut } from '../src/core/claude-auth.mjs';
-import { createAgentGen } from '../src/core/agent-gen.mjs';
+import { createAgentGen, resolveAgentGenModel } from '../src/core/agent-gen.mjs';
 import { listAgents, readAgent, createAgent, updateAgent, deleteAgent, AGENT_KEY_RE } from '../src/core/agent-store.mjs';
 import {
   listScripts, readScript, createScript, updateScript, deleteScript, duplicateScript, writeCases,
@@ -450,7 +452,7 @@ import {
   isValidTimeZone, formatInstant, occurrenceStamp, OVERLAP_POLICIES, MISSED_POLICIES,
 } from '../src/shared/schedule/recurrence.mjs';
 import { REASON } from '../src/core/failure-policy.mjs';
-import { callSource, PluginOpError } from '../src/core/plugin-shim.mjs';
+import { callSource, PluginOpError, withheldProxyNotice } from '../src/core/plugin-shim.mjs';
 import { resolveAutoModel, AUTO_MODEL_ENV } from '../src/core/auto/model.mjs';
 import { sweepRepoLooks } from '../src/core/auto/repo-look.mjs';
 import {
@@ -1867,6 +1869,11 @@ function badRequest(res, message) {
   res.status(400).json({ error: message });
 }
 
+/** #693: 400 NESTED_IN_REPO for a git-mode run in a folder inside a repository it is not the top of. */
+function nestedInRepoRefusal(res, dir, enc, prefix = '') {
+  return res.status(400).json({ error: `${prefix}${nestedInRepoMessage(dir, enc)}`, code: 'NESTED_IN_REPO', repoRoot: enc.repoRoot, partOf: enc.partOf ?? null });
+}
+
 /**
  * The run body's engine fields (harness bridge §10.4): `engine` names the harness for the
  * pipeline's agent nodes (the CLI's --engine), `allowUnguardedEngine` is the consent that
@@ -2175,7 +2182,7 @@ function askTrackRun(threadId, input, pin) {
   let entry = liveRunEntry(raw);
   let state = null;
   if (entry) {
-    if (!entry.pipelineId) return { ok: false, error: 'the run has no pipeline id yet — try again in a moment' };
+    if (!entry.pipelineId) return { ok: false, error: 'the run has no pipeline id yet. Try again in a moment' };
     state = readPipelineStateById(entry.pipelineId);
   } else {
     const scopeKey = typeof input.projectKey === 'string' && input.projectKey ? input.projectKey
@@ -2490,13 +2497,13 @@ const startRunHandler = async (req, res) => {
       const ts = m && (m.taskSources || []).find((s) => s.id === source.sourceId);
       if (ts && ts.multiProfile) {
         if (!source.profile) {
-          return badRequest(res, `source.profile is required — task source "${source.sourceId}" has per-profile configuration`);
+          return badRequest(res, `source.profile is required: task source "${source.sourceId}" has per-profile configuration`);
         }
         if (!listProfileIds(source.plugin).includes(source.profile)) {
-          return badRequest(res, `plugin "${source.plugin}" has no profile "${source.profile}" — it may have been deleted; re-select one`);
+          return badRequest(res, `plugin "${source.plugin}" has no profile "${source.profile}". It may have been deleted; re-select one`);
         }
       } else if (ts && source.profile) {
-        return badRequest(res, `task source "${source.sourceId}" does not use profiles — omit source.profile`);
+        return badRequest(res, `task source "${source.sourceId}" does not use profiles, so omit source.profile`);
       }
     }
 
@@ -2781,6 +2788,10 @@ const startRunHandler = async (req, res) => {
         if (workMode === 'git' && !isGitRepo(dir)) {
           return badRequest(res, `workspace member is not a git repository: ${dir}`);
         }
+        if (workMode === 'git') {
+          const enc = enclosingRepoOf(dir);                        // #693: never git-init a nested member
+          if (enc) return nestedInRepoRefusal(res, dir, enc, 'workspace member ');
+        }
         if (workMode === 'folder') {
           const big = await _folderSizeProblem(dir);                // R6 / S9: before a row, a run root or a ticket
           if (big) return res.status(413).json(big);
@@ -2912,6 +2923,16 @@ const startRunHandler = async (req, res) => {
       // empty (with git installed a Git project keeps today's mkdir + git init). The stored row (S7), read once.
       const projectRow = getProjectByPath(projectDir); const gitOn = (await gitState()).available;
       if (projectRow && !fs.existsSync(projectDir) && effectiveWorkMode(projectRow.vcs, gitOn) === 'folder') return badRequest(res, `The folder is missing: ${projectDir}`);
+      // P1 (CONTRACT §2, U3, L4, S3): a registered Folder project — or any project while git is missing — runs on a
+      // copy; an unregistered dir keeps git mode while git is installed. Replaces P0's start guard for projects.
+      // gitOn and projectRow were read before the mkdir (A-m5): the stored row (S7), never projectKey(dir)
+      const workMode = workModeForStart({ projectDir }, { getProjectByPath: () => projectRow, gitAvailable: gitOn });
+      // #693: a git run in a folder inside a repository it is not the top of would `git init` there (or act on the
+      // parent). Refused before the mkdir, a row or a ticket; a missing path counts by its nearest existing ancestor.
+      if (workMode === 'git') {
+        const enc = enclosingRepoOf(projectDir, { gitOn });
+        if (enc) return nestedInRepoRefusal(res, projectDir, enc);
+      }
       if (!fs.existsSync(projectDir)) {
         try {
           await fsp.mkdir(projectDir, { recursive: true });
@@ -2919,11 +2940,6 @@ const startRunHandler = async (req, res) => {
           return badRequest(res, `cannot create projectDir: ${err.message}`);
         }
       }
-
-      // P1 (CONTRACT §2, U3, L4, S3): a registered Folder project — or any project while git is missing — runs on a
-      // copy; an unregistered dir keeps git mode while git is installed. Replaces P0's start guard for projects.
-      // gitOn and projectRow were read before the mkdir (A-m5): the stored row (S7), never projectKey(dir)
-      const workMode = workModeForStart({ projectDir }, { getProjectByPath: () => projectRow, gitAvailable: gitOn });
       if (workMode === 'folder') {
         if (sched?.sourceFromPrevious) return badRequest(res, "a Folder project run cannot start from the previous run's branch");
         const big = await _folderSizeProblem(projectDir);          // R6 / S9 / S69: before a row, a run root or a ticket
@@ -2944,7 +2960,8 @@ const startRunHandler = async (req, res) => {
           const why = !isSafeBranchName(branch.source) ? ''
             : r.kind === 'stale' ? ' (not a local branch, and the remote could not be reached to check)'
             : ' (not a local branch and not on the remote)';
-          return badRequest(res, `unknown or invalid sourceBranch: ${branch.source}${why}`);
+          const made = worcaNestedRepoOf(projectDir);
+          return badRequest(res, `unknown or invalid sourceBranch: ${branch.source}${why}${made ? ` ${worcaNestedRepoHint(projectDir, made)}` : ''}`);
         }
         // remote-only: the harness creates the local tracking branch (_ensureLocalSource).
       }
@@ -3121,8 +3138,8 @@ const startRunHandler = async (req, res) => {
         } catch (e) { console.error('[diff-comments] pending-card handoff failed:', e && e.message ? e.message : e); }
         const startedMsg = askAppendMessage(askLink.threadId, {
           role: 'system',
-          text: `Run started — "${title}"`,
-          blocks: [{ kind: 'notice', text: `Run started — "${title}"`, href: `#running/${runId}` }],
+          text: `Run started: "${title}"`,
+          blocks: [{ kind: 'notice', text: `Run started: "${title}"`, href: `#running/${runId}` }],
         });
         broadcast({ type: 'ask-message', threadId: askLink.threadId, message: startedMsg });
         attachAskFollower(orch, { threadId: askLink.threadId, runId, cardId: askLink.cardId });
@@ -3399,20 +3416,20 @@ async function validateResumeTarget(pipelineId) {
   const saved = readPipelineForResume(pipelineId.trim());
   if (!saved) return { ok: false, status: 404, body: { error: 'pipeline not found' } };
   if (saved.row.status !== 'paused' && saved.row.status !== 'interrupted') {
-    return { ok: false, status: 409, body: { error: `run is "${saved.row.status}" — only a paused run can get a scheduled resume` } };
+    return { ok: false, status: 409, body: { error: `run is "${saved.row.status}". Only a paused run can get a scheduled resume` } };
   }
   if (!saved.resumePoint) return { ok: false, status: 400, body: { error: 'run has no resume point' } };
   if (saved.resumePoint.version !== 2) return { ok: false, status: 409, body: { code: 'ENGINE_RETIRED', error: V1_RUN_RETIRED } };
   if (saved.row.archived_at) return { ok: false, status: 409, body: { error: 'run is archived' } };
   const reason = saved.resumePoint.pauseReason || null;
   if (TEAM_CAP_PAUSE_REASONS.has(reason)) {
-    return { ok: false, status: 409, body: { code: 'CAP_PAUSE', error: 'this run paused on a team cost cap — continuing past it is a live decision and cannot be scheduled' } };
+    return { ok: false, status: 409, body: { code: 'CAP_PAUSE', error: 'this run paused on a team cost cap. Continuing past it is a live decision and cannot be scheduled' } };
   }
   if (CAP_PAUSE_REASONS.has(reason)) {
-    return { ok: false, status: 409, body: { code: 'CAP_PAUSE', error: 'this run paused on a cost cap — continuing past it needs the explicit “Continue without cap” decision and cannot be scheduled' } };
+    return { ok: false, status: 409, body: { code: 'CAP_PAUSE', error: 'this run paused on a cost cap. Continuing past it needs the explicit “Continue without cap” decision and cannot be scheduled' } };
   }
   if (resumeTicketsFor(saved.row.id).length) {
-    return { ok: false, status: 409, body: { error: 'a scheduled resume already exists for this run — change or cancel it in Schedules' } };
+    return { ok: false, status: 409, body: { error: 'a scheduled resume already exists for this run. Change or cancel it in Schedules' } };
   }
   const workspaceId = saved.row.target === 'workspace' ? (saved.row.workspace_key || null) : null;
   let projectDir = null;
@@ -3575,11 +3592,11 @@ async function fireResumeTicket(ticket, pipelineId) {
   const saved = readPipelineForResume(pipelineId);
   if (!saved) return { ok: false, skip: true, error: 'the run no longer exists' };
   if (saved.row.status !== 'paused' && saved.row.status !== 'interrupted') {
-    return { ok: false, skip: true, error: `the run is now "${saved.row.status}" — it was resumed or stopped meanwhile` };
+    return { ok: false, skip: true, error: `the run is now "${saved.row.status}". It was resumed or stopped meanwhile` };
   }
   const reason = saved.resumePoint && saved.resumePoint.pauseReason;
   if (reason && CAP_PAUSE_REASONS.has(reason)) {
-    return { ok: false, error: 'the run paused on a cost cap meanwhile — continuing past it needs a live decision', transient: false };
+    return { ok: false, error: 'the run paused on a cost cap meanwhile. Continuing past it needs a live decision', transient: false };
   }
   const scheduledBy = ticket.createdBy || null;
   try {
@@ -3727,7 +3744,7 @@ function afterRunSettled(orch) {
   try {
     const st = orch.getState?.();
     if (orch.runShape?.slice && st?.status === 'done' && st.id) {
-      // s4: the draft first, then the Ship card (it needs the last slice's PR for "View pull request").
+      // s4: the draft first, then the Ship card (it needs the last slice's PR for "View PR").
       draft = openSliceDraft(st.id).catch((err) => console.error(`[worca-ui] slice draft PR failed: ${err?.message || err}`))
         .then(() => offerShipCard(st.id))
         .catch((err) => console.error(`[worca-ui] ship card failed: ${err?.message || err}`));
@@ -3843,7 +3860,7 @@ function networkWatch() {
         mock: isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK),
       });
       const since = new Date(r.resumePoint.network.since);
-      appendAuditById(r.id, `Network back: ${hostOf(r.resumePoint.network.origin)} answers again — run resumed${byActor(NETWORK_ACTOR)} (waiting since ${since.toISOString().slice(11, 16)} UTC).`, { actor: NETWORK_ACTOR });
+      appendAuditById(r.id, `Network back: ${hostOf(r.resumePoint.network.origin)} answers again. Run resumed${byActor(NETWORK_ACTOR)} (waiting since ${since.toISOString().slice(11, 16)} UTC).`, { actor: NETWORK_ACTOR });
       return out;
     },
     log: (m) => console.warn(`[worca-ui] network watch: ${m}`),
@@ -4049,7 +4066,7 @@ async function predecessorBranchGone(ref, projectDir) {
 app.get('/api/schedules/after/:id', async (req, res) => {
   try {
     const id = req.params.id;
-    if (id.startsWith('sch_')) return badRequest(res, 'after a repeating schedule is not supported — give the id of one of its runs');
+    if (id.startsWith('sch_')) return badRequest(res, 'after a repeating schedule is not supported. Give the id of one of its runs');
     const ref = afterRefOf(id);
     if (!ref || ref.scheduleId) return res.status(404).json({ error: 'run not found' });
     let projectDir = null;
@@ -4122,7 +4139,7 @@ async function scheduleVerb(verb, id, body = {}, { by = null } = {}) {
           if (body.sourceFromPrevious && (patch.runAtMs != null || (!patch.after && !found.item.after))) return out(400, { error: 'sourceFromPrevious needs after' });
           patch.sourceFromPrevious = body.sourceFromPrevious;
         }
-        if (found.item.scheduleId && (patch.runAtMs != null || patch.after)) return out(400, { error: 'an occurrence of a repeating schedule cannot be moved — edit the schedule, or skip this occurrence' });
+        if (found.item.scheduleId && (patch.runAtMs != null || patch.after)) return out(400, { error: 'an occurrence of a repeating schedule cannot be moved. Edit the schedule, or skip this occurrence' });
         const t = updateTicket(found.item.id, patch, { by: by || undefined });
         if (!t) return out(409, { error: `this run is ${found.item.status} and can no longer be changed` });
         const item = withAfter(t);
@@ -4157,7 +4174,7 @@ async function scheduleVerb(verb, id, body = {}, { by = null } = {}) {
       deleteSchedule(found.item.id);
       releaseAskCard(found.item);
     } else {
-      if (found.item.scheduleId) return out(400, { error: 'this is an occurrence of a repeating schedule — skip it instead' });
+      if (found.item.scheduleId) return out(400, { error: 'this is an occurrence of a repeating schedule. Skip it instead' });
       const t = cancelTicket(found.item.id, { by: by || undefined });
       if (!t) return out(409, { error: `this run is ${found.item.status} and can no longer be canceled` });
       releaseAskCard(t);
@@ -4173,7 +4190,7 @@ async function scheduleVerb(verb, id, body = {}, { by = null } = {}) {
       if (!prev) return out(409, { error: `Start ‘${p.title || 'the run before it'}’ first, or change its source branch` });
       // A run on its source branch is still merging back: a forced ticket would skip the gate and hit fireTicket's
       // transient backstop, i.e. a retry_at of ≥ 1 min. Say so now instead.
-      if (prev.pending) return out(409, { error: `‘${p.title || 'the run before it'}’ is still merging its work back — try again in a moment` });
+      if (prev.pending) return out(409, { error: `‘${p.title || 'the run before it'}’ is still merging its work back. Try again in a moment` });
     }
     const ticket = found.kind === 'recurring' ? runScheduleNow(found.item.id, { by: by || undefined }) : requestRunNow(found.item.id, { by: by || undefined });
     if (!ticket) return out(409, { error: `this ${found.kind === 'recurring' ? 'schedule' : 'run'} is ${found.item.status} and cannot be started` });
@@ -4216,7 +4233,7 @@ async function applyScheduleCard(card, { by = null } = {}) {
     const it = b.item;
     detail = !it ? 'changed'
       : it.nextRunAt ? `next run ${formatInstant(Date.parse(it.nextRunAt), it.tz || 'UTC')}`
-        : it.status === 'paused' ? 'still paused — resume it to run again' : `the schedule is ${it.status}`;
+        : it.status === 'paused' ? 'still paused (resume it to run again)' : `the schedule is ${it.status}`;
   }
   else detail = card.action === 'cancel' ? 'canceled' : 'deleted';
   return { ok: true, detail, ...(b.runId ? { runId: b.runId } : {}), ...(b.pipelineId ? { pipelineId: b.pipelineId } : {}) };
@@ -4467,7 +4484,7 @@ async function stopRun(runId, by = 'local') {
   if (!entry) throw new Error('unknown runId');
   if (entry.status === 'paused' && entry.pipelineId) return stopPausedPipeline(entry.pipelineId, by);
   if (entry.status === 'interrupted') {
-    throw new StopPausedError('INTERRUPTED', 'pipeline is interrupted — it stays resumable; only a paused run can be stopped');
+    throw new StopPausedError('INTERRUPTED', 'pipeline is interrupted. It stays resumable, and only a paused run can be stopped');
   }
   entry.lastAction = { kind: 'stop', by: by || 'local', at: new Date().toISOString() };
   entry.orch.stop(entry.lastAction.by);
@@ -4537,7 +4554,7 @@ async function stopPausedPipelineOnce(pipelineId, by = 'local') {
         // wins, or the resume sees the stopped row and refuses.
         for (const e of runs.values()) {
           if (e.pipelineId === pipelineId && !SETTLED_RUN.has(String(e.status || ''))) {
-            throw new StopPausedError('LIVE', 'pipeline is live — stop its run instead');
+            throw new StopPausedError('LIVE', 'pipeline is live: stop its run instead');
           }
         }
         // Read before the entry is re-pointed: nothing that can throw runs after the swap below.
@@ -5209,7 +5226,7 @@ function resumeModelOpts(model, effort, engine) {
   if (typeof model !== 'string' || model.length > 200) throw new ResumeError(400, { error: 'model must be a model id' });
   if (effort != null && effort !== '' && typeof effort !== 'string') throw new ResumeError(400, { error: 'effort must be a string' });
   const id = model.trim();
-  if (!catalogHasModel(id)) throw new ResumeError(400, { error: `unknown model "${id}" — add it to the catalog first` });
+  if (!catalogHasModel(id)) throw new ResumeError(400, { error: `unknown model "${id}". Add it to the catalog first` });
   if (modelRunsOn(id, engine) === false) {
     throw new ResumeError(400, { error: `model "${id}" runs on ${(enginesOfModel(id) || []).map(engineLabel).join(' or ')}, not on ${engineLabel(engine)}` });
   }
@@ -5348,7 +5365,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
     throw new ResumeError(pipeGate.code === 'reason_required' ? 400 : 403, { error: pipeGate.error, code: pipeGate.code, policy: pipeGate.policy, needsPolicyOverride: pipeGate.code === 'team_pipeline' });
   }
   // Who continued past a team cap, and why (the audit timeline; policy_state keeps it too).
-  const why = (r) => (r ? ` — reason: ${String(r).replace(/[\r\n]+/g, ' ').slice(0, 300)}` : '');
+  const why = (r) => (r ? ` (reason: ${String(r).replace(/[\r\n]+/g, ' ').slice(0, 300)})` : '');
   if (totalGate.ack) appendAuditById(pipelineId, `Continued past the team total cap${byActor(by)}${why(totalGate.ack.reason)}.`, { actor: by });
   if (pipeGate.fresh) appendAuditById(pipelineId, `Continued past the team cost cap${byActor(by)}${why(pipeGate.reason)}.`, { actor: by });
 
@@ -5430,7 +5447,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
       // A PR fix-run card follows quietly (askPostPrFixCards): it shows the resumed run itself — no "Run resumed" row.
       const quiet = askLinkIsPrFix(link);
       if (!quiet) {
-        const text = `Run resumed — "${saved.row.title || 'run'}"`;
+        const text = `Run resumed: "${saved.row.title || 'run'}"`;
         const m = askAppendMessage(link.threadId, { role: 'system', text, blocks: [{ kind: 'notice', text, href: `#running/${runId}` }] });
         broadcast({ type: 'ask-message', threadId: link.threadId, message: m });
       }
@@ -6828,7 +6845,7 @@ async function commentsCreate(req, res, storeKey, id) {
     // as the 400 an anchor failure would get.
     if (!patchText) {
       // 409, not 400: the request is well-formed, the RUN is no longer commentable.
-      return res.status(409).json({ error: 'this run has no stored diff — comments cannot be created on it' });
+      return res.status(409).json({ error: 'this run has no stored diff, so comments cannot be created on it' });
     }
     const comment = addDiffComment({
       storeKey, pipelineId: row.id, patchText,
@@ -7079,7 +7096,7 @@ app.post('/api/runs/bulk', async (req, res) => {
       stop: (t) => {
         const entry = t.runId ? runs.get(t.runId) : null;
         if (entry && !SETTLED_RUN.has(entry.status)) return stopRun(t.runId, by);
-        if (!t.pipelineId) throw new Error('it is starting — try again in a moment');   // a firing ticket
+        if (!t.pipelineId) throw new Error('it is starting. Try again in a moment');   // a firing ticket
         return stopPausedPipeline(t.pipelineId, by);
       },
       archive: audited(archivePipeline),
@@ -8001,6 +8018,7 @@ app.post('/api/runs/:id/checkout', async (req, res) => {
         .then(({ evicted }) => { if (evicted.length) emitChanged('pipelines-changed', 'updated'); }).catch(() => {});
     }
     emitChanged('pipelines-changed', 'updated');
+    emitChanged('actions-changed', 'checkout');   // the Actions strips read their own cache (audit F-2)
     res.json(r);
   } catch (e) { sendCheckoutError(res, e); }
 });
@@ -8012,6 +8030,7 @@ app.delete('/api/runs/:id/checkout', async (req, res) => {
     const r = await discardCheckout({ id: row.id, members, force: req.body?.force === true, by: actorOf(req),
       stopServices: stopCheckoutServices });
     emitChanged('pipelines-changed', 'updated');
+    emitChanged('actions-changed', 'checkout');   // the Actions strips read their own cache (audit F-2)
     res.json(r);
   } catch (e) { sendCheckoutError(res, e); }
 });
@@ -8762,8 +8781,8 @@ app.post('/api/pr', async (req, res) => {
   const sameBr = (body.memberKey && state.branches && state.branches[body.memberKey]) || state.branch;
   if (sameBr && sameBr.sameAsSource === true && sameBr.mergeBack?.merged !== false) {
     return res.status(409).json({ error: sameBr.mergeBack?.merged === true
-      ? 'this run\'s work is already on its source branch — push the source instead of opening a pull request'
-      : 'this run is still merging its work back into the source branch — try again in a moment' });
+      ? 'this run\'s work is already on its source branch. Push the source instead of opening a pull request'
+      : 'this run is still merging its work back into the source branch. Try again in a moment' });
   }
 
   const target = prTargetFor(state, body.memberKey);
@@ -9023,12 +9042,12 @@ app.post('/api/push', async (req, res) => {
   if (!resolved) return;
   const { id, state } = resolved;
   const b = state.branch || {};
-  if (b.sameAsSource !== true) return res.status(409).json({ error: 'only a run on its source branch is pushed here — open a pull request instead' });
+  if (b.sameAsSource !== true) return res.status(409).json({ error: 'only a run on its source branch is pushed here. Open a pull request instead' });
   if (state.target === 'workspace') return res.status(409).json({ error: 'a workspace run is pushed per project by hand (see its merge-back banner)' });
   // isSafeBranchName: setup already refused any other source; this keeps an edited record out of git's argv.
   if (!state.projectDir || !b.source || !isSafeBranchName(b.source)) return badRequest(res, 'pipeline has no branch info to push');
   if (!(b.mergeBack && b.mergeBack.merged === true)) {
-    return res.status(409).json({ error: `the run's work is not on ${b.source} (not merged back) — merge it by hand first` });
+    return res.status(409).json({ error: `the run's work is not on ${b.source} (not merged back). Merge it by hand first` });
   }
   // The run's sync remote — validated like the branch (the record's value ends up in git's argv).
   const remote = isSafeRemoteName(b.sync?.remote) ? b.sync.remote
@@ -9442,7 +9461,15 @@ app.get('/api/branches', async (req, res) => {
 });
 
 // ownedFolder: Remove deletes this project's folder too (ownsProjectFolder), so the UI shows that warning.
-async function projectsForApi(list) { const { available } = await gitState(); return list.map((p) => ({ ...p, workMode: effectiveWorkMode(p.vcs, available), displayPath: displayPath(p.path), ownedFolder: ownsProjectFolder(p) })); }
+// nestedRepo (#693): a repository an older worca git-inited inside the user's repository — the UI warns with the fix.
+async function projectsForApi(list) {
+  const { available } = await gitState();
+  return list.map((p) => {
+    const made = p.exists ? worcaNestedRepoOf(p.path) : null;
+    return { ...p, workMode: effectiveWorkMode(p.vcs, available), displayPath: displayPath(p.path), ownedFolder: ownsProjectFolder(p),
+      ...(made ? { nestedRepo: { repoRoot: made.repoRoot, hint: worcaNestedRepoHint(p.path, made) } } : {}) };
+  });
+}
 
 app.get('/api/projects', async (_req, res) => {
   try {
@@ -9558,7 +9585,14 @@ app.post('/api/projects/create', async (req, res) => {
 app.get('/api/projects/probe', async (req, res) => {
   const raw = typeof req.query.path === 'string' ? req.query.path : '';
   if (!(await requireFsAllowed(req, res, [normalizeProjectPath(raw)]))) return;
-  try { return res.json(await probeFolder(raw)); } catch (err) { return projectAddFail(res, err); }
+  try {
+    const out = await probeFolder(raw);
+    // #693: the enclosing repository is offered as "Add <root>" only where this viewer may use it.
+    if (out.repoRoot && fsLimitedHere(req) && !(await checkInside(out.repoRoot, await fsAllowedRoots())).inside) {
+      delete out.repoRoot; delete out.nestedHint;
+    }
+    return res.json(out);
+  } catch (err) { return projectAddFail(res, err); }
 });
 
 // POST /api/projects/clone {url, branch?, name?} -> 202 {jobId}: clone a repository into the
@@ -9788,7 +9822,7 @@ function registerMemoryRoutes(prefix, { family }) {
   };
   const named = (req, res) => {
     const name = String(req.params.name || '');
-    if (!isValidMemoryName(name)) { badRequest(res, `invalid memory name — ${MEMORY_NAME_HELP}`); return null; }
+    if (!isValidMemoryName(name)) { badRequest(res, `invalid memory name: ${MEMORY_NAME_HELP}`); return null; }
     return name;
   };
   /** B23: while a defragment run is live on this scope, that run's final sync would silently
@@ -9796,7 +9830,7 @@ function registerMemoryRoutes(prefix, { family }) {
   const defragLocked = (res, key) => {
     const live = liveDefragRun(key);
     if (!live) return false;
-    res.status(409).json({ error: 'a defragment run is live on this memory scope — wait for it to finish', runId: live.id });
+    res.status(409).json({ error: 'a defragment run is live on this memory scope. Wait for it to finish', runId: live.id });
     return true;
   };
   const onError = (p, err) => console.warn(`[worca-ui] memory: ${p}: ${err && err.message ? err.message : err}`);
@@ -9845,7 +9879,7 @@ function registerMemoryRoutes(prefix, { family }) {
     try {
       if (family === 'projects') return await defragRequest(req, res, { memoryScope: 'project', projectKey: String(req.params.key || '') });
       const key = req.body && typeof req.body.projectKey === 'string' ? req.body.projectKey.trim() : '';
-      if (!key) return badRequest(res, 'projectKey is required — a global defragment run is hosted by a project');
+      if (!key) return badRequest(res, 'projectKey is required: a global defragment run is hosted by a project');
       return await defragRequest(req, res, { memoryScope: 'global', projectKey: key });
     } catch (err) { return memoryError(res, err); }
   });
@@ -10089,14 +10123,18 @@ async function supersedeRescans(id) {
  * POST /api/workspaces/:id/scan (scanRequest), and tag its run as automatic. A workspace the
  * scan cannot read (a member that is not its own repository with a commit), a scan model that
  * no longer fits, or a signed-out CLI skips it with the reason — the page offers Re-scan.
- * @returns {Promise<{runId:string}|{skipped:string}>}
+ * { needsModel: true } when the workspace has no usable stored pick (the page asks the user).
+ * @returns {Promise<{runId:string}|{skipped:string}|{needsModel:boolean}>}
  */
 async function startAutoRescan(ws) {
   const problems = scanMemberProblems(ws.projectPaths);
   if (problems.length) return { skipped: `read-only workspace scan: ${problems.join('; ')}` };
   let models;
-  try { models = await scanModelsFor({}, ws.projectPaths); }
+  try { models = await scanModelsFor({}, ws.projectPaths, ws); }
   catch (err) { return { skipped: err && err.message ? err.message : String(err) }; }
+  // No usable stored pick (a legacy workspace, or one whose model left the catalog): the page
+  // opens the pick-a-model window and starts the scan itself; the member change stands.
+  if (models && models.needsModel) return { needsModel: true };
   if (!(models && modelHasBaseUrlRouting(models.scanModel))) {
     const { state } = await probeClaudeAuth({ bin: configuredClaudeBin(), mock: isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK) });
     if (state === 'signed-out') return { skipped: CLAUDE_SIGNED_OUT_MESSAGE };
@@ -10123,7 +10161,7 @@ let autoRescanOn = true; // test seam: _testing.setAutoRescan(false) skips the r
  * automatic re-scan of the old set, and re-scan the workspace — per-member graphify graphs, the
  * map and a new description, saved when the run ends done. Runs build their own graphs per
  * member worktree from the registry at start, so the next run already covers the new set.
- * @returns {Promise<{runId:string}|{skipped:string}>}
+ * @returns {Promise<{runId:string}|{skipped:string}|{needsModel:boolean}>}
  */
 async function afterMembersChanged(workspace, added = []) {
   for (const dir of added) {
@@ -10337,10 +10375,37 @@ async function refuseSignedOutScan(res, models) {
   return refuseSignedOutClaude(res);
 }
 
-/** The scan's models (D18): the request's pick, else Settings › Runs › Workspaces, else the
- *  defaults — checked against the primary member's catalog. Throws on a bad explicit pick (400). */
-async function scanModelsFor(body, projectPaths) {
-  return resolveScanModels({ explicit: body && body.models, stored: workspaceScanModels(), models: await listModels(primaryMemberOf(projectPaths)) });
+/** Whether the workspace's OWN stored scan pick still holds against the primary member's catalog.
+ *  Missing/empty catalog = "no info" (e.g. a failed catalog GET) condemns nothing, matching
+ *  resolveScanModels' defaultScanModelsOrThrow. A pick whose scan model left the catalog (or no
+ *  longer offers its effort) is UNUSABLE: it would fail at the endpoint, so the rescan must ask the
+ *  user instead of silently degrading to Settings/default (the pick was deliberately chosen once). */
+function workspacePickUsable(pick, models) {
+  if (!pick || typeof pick !== 'object') return false;
+  if (!Array.isArray(models) || !models.length) return true;
+  try { assertWorkspaceScanInput(pick, models); return true; } catch { return false; }
+}
+
+/** The scan's models (D18, D19): the request's pick, else the workspace's stored pick (source
+ *  'workspace' — captured at creation, reused by auto re-scans), else Settings › Runs › Workspaces,
+ *  else the defaults (only when a known catalog offers the default) — checked against the primary
+ *  member's catalog. Throws on a bad explicit pick (400) or when no model is available (D19).
+ *  A RE-SCAN of a workspace with no usable stored pick — every legacy pre-v57 workspace, or one
+ *  whose model left the catalog — is NOT silently resolved: scanModelsFor returns the marker
+ *  { needsModel: true, models: <PRIMARY_CATALOG> } and the caller asks the user to pick a model
+ *  (D20). An explicit body.models always wins (the prompted client sends one; API/CLI callers can
+ *  still force a pick). */
+async function scanModelsFor(body, projectPaths, workspace = null) {
+  const models = await listModels(primaryMemberOf(projectPaths));
+  if (workspace && !(body && body.models) && !workspacePickUsable(workspace.scanModels, models)) {
+    return { needsModel: true, models };
+  }
+  return resolveScanModels({
+    explicit: body && body.models,
+    stored: workspaceScanModels(),
+    workspacePick: workspace && workspace.scanModels ? workspace.scanModels : null,
+    models,
+  });
 }
 
 /** Start a scan through the ONE run handler (the defragRequest pattern). startRunHandler reads
@@ -10425,6 +10490,11 @@ app.post('/api/workspaces/scan', async (req, res) => {
 });
 
 // POST /api/workspaces/:id/scan (re-scan): the description is replaced when the run ends done.
+// 428 SCAN_MODEL_REQUIRED when the workspace has no usable stored scan pick and the request names
+// none — the page opens the pick-a-model window (a legacy pre-v57 workspace, or a pick whose model
+// left the catalog, must never silently fall to Settings/default). An explicit body.models always
+// proceeds; the prompted page sends it after the user picks. `autoRescan: true` (internal) tags the
+// run so the next member change supersedes it exactly like a server-started auto-rescan.
 app.post('/api/workspaces/:id/scan', async (req, res) => {
   const id = req.params.id;
   if (!WORKSPACE_KEY_RE.test(id)) return res.status(404).json({ error: 'workspace not found' });
@@ -10436,12 +10506,59 @@ app.post('/api/workspaces/:id/scan', async (req, res) => {
     const problems = scanMemberProblems(ws.projectPaths);
     if (problems.length) return badRequest(res, `read-only workspace scan: ${problems.join('; ')}`);
     let models;
-    try { models = await scanModelsFor(req.body || {}, ws.projectPaths); }
+    try { models = await scanModelsFor(req.body || {}, ws.projectPaths, ws); }
     catch (err) { return badRequest(res, err && err.message ? err.message : String(err)); }
     if (await refuseSignedOutScan(res, models)) return;
+    if (models && models.needsModel) {
+      return res.status(428).json({
+        code: 'SCAN_MODEL_REQUIRED', workspace: ws,
+        error: 'This workspace has no scan model saved (or the saved model is no longer available) — choose one to scan.',
+      });
+    }
+    if (req.body && req.body.autoRescan === true) {
+      // The prompted add/remove flow: start it like startAutoRescan would (same stub-res capture,
+      // same autoRescan tag) so a next member change supersedes this run exactly like a
+      // server-started auto-rescan.
+      let out = { status: 200, body: null };
+      const stub = {
+        statusCode: 200, headersSent: false,
+        status(c) { this.statusCode = c; return this; },
+        json(p) { out = { status: this.statusCode, body: p }; this.headersSent = true; return this; },
+      };
+      await scanRequest(req, stub, { id: ws.id, name: ws.name, projectPaths: ws.projectPaths, rescan: true, models });
+      const runId = out.body && out.body.runId;
+      const entry = runId ? runs.get(runId) : null;
+      if (entry) entry.autoRescan = true;
+      return res.status(out.status).json(out.body || {});
+    }
     return await scanRequest(req, res, { id: ws.id, name: ws.name, projectPaths: ws.projectPaths, rescan: true, models });
   } catch (err) {
     if (!res.headersSent) res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// PUT /api/workspaces/:id/scan-models — the workspace's OWN scan-model pick (the page's "Scan
+// model" header control and the pick-a-model window a rescan opens). Body { workspaceScan:
+// { scanModel, scanEffort, agentModel, agentEffort } } or null to clear. Validated against the
+// primary member's catalog (mirrors the Settings route); persisted via setWorkspaceScanPick, which
+// re-reads under the write lock so a pick a scan's finalize landed mid-write is never clobbered.
+app.put('/api/workspaces/:id/scan-models', async (req, res) => {
+  const id = req.params.id;
+  if (!WORKSPACE_KEY_RE.test(id)) return res.status(404).json({ error: 'workspace not found' });
+  try {
+    const ws = await readWorkspace(id);
+    if (!ws) return res.status(404).json({ error: 'workspace not found' });
+    const hasKey = req.body && Object.prototype.hasOwnProperty.call(req.body, 'workspaceScan');
+    const raw = hasKey ? req.body.workspaceScan : undefined;
+    if (!hasKey) return badRequest(res, 'give workspaceScan: { scanModel, scanEffort, agentModel, agentEffort } or null to clear');
+    let pick;
+    try { pick = assertWorkspaceScanInput(raw, await listModels(primaryMemberOf(ws.projectPaths))); }
+    catch (err) { return badRequest(res, err && err.message ? err.message : String(err)); }
+    const workspace = await setWorkspaceScanPick(id, pick);
+    emitChanged('workspaces-changed', 'scan-models');
+    res.json({ workspace });
+  } catch (err) {
+    if (!res.headersSent) return res.status(workspaceErrorStatus(err && err.code)).json({ error: err && err.message ? err.message : String(err) });
   }
 });
 
@@ -10615,6 +10732,13 @@ async function prDescriptionModelState() {
   const stored = storedPrDescriptionModel();
   const { model, source } = resolvePrDescriptionModel(await listModels(''), { setting: stored });
   return { prDescriptionModel: stored, prDescriptionModelEffective: { model, source } };
+}
+
+/** Settings ▸ Agent generation model: the stored pair + what Generate will actually run on
+ *  (the stored catalog model, else the CLI default). Async because the catalog is. */
+async function agentGenModelState() {
+  const stored = storedAgentGenModel();
+  return { agentGenModel: stored, agentGenModelEffective: resolveAgentGenModel(stored, await listModels('')) };
 }
 
 // ---------------------------------------------------------------------------
@@ -11025,7 +11149,7 @@ app.post('/api/shutdown', (req, res) => {
 
 app.get('/api/settings', async (req, res) => {
   const person = awayPersonOf(req);   // B4: a signed-in person sees their own Away switch
-  res.json({ ...settingsState(), ...(person ? { nightModeToggle: nightModeToggleFor(person), nightModePerPerson: person } : {}), ...(await autoModelState()), ...(await prDescriptionModelState()), chat: chatPrefs(), app: APP_INFO });
+  res.json({ ...settingsState(), ...(person ? { nightModeToggle: nightModeToggleFor(person), nightModePerPerson: person } : {}), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), chat: chatPrefs(), app: APP_INFO });
 });
 
 app.get('/api/budget', (_req, res) => {
@@ -11040,7 +11164,7 @@ app.get('/api/budget', (_req, res) => {
 
 /**
  * The Models page's utility pickers (title, Auto classifier, PR description, memory defragment,
- * workspace scan) are Claude's slots (cascading-settings-design.md D10/§3.1): a Codex or Cursor id there is
+ * agent generation, workspace scan) are Claude's slots (cascading-settings-design.md D10/§3.1): a Codex or Cursor id there is
  * a 400 that names it. A Codex run's utility jobs run on Codex's own default for now.
  * @throws {Error}
  */
@@ -11048,7 +11172,7 @@ function refuseNonClaudeUtilityModel(key, value) {
   const id = typeof value === 'string' ? value.trim()
     : (value && typeof value === 'object' ? String(value.model ?? value.scanModel ?? '').trim() : '');
   const harnesses = id ? enginesOfModel(id) : null;   // null: no catalog knows the id — allowed, as today
-  if (harnesses && !harnesses.includes('claude')) throw new Error(`${key}: "${id}" runs on ${harnesses.map(engineLabel).join(' or ')} — this setting picks a model Claude Code can run`);
+  if (harnesses && !harnesses.includes('claude')) throw new Error(`${key}: "${id}" runs on ${harnesses.map(engineLabel).join(' or ')}. This setting picks a model Claude Code can run`);
 }
 
 app.post('/api/settings', async (req, res) => {
@@ -11062,7 +11186,7 @@ app.post('/api/settings', async (req, res) => {
     has('projectsRoot') ? normalizeProjectPath(body.projectsRoot) : null]))) return;
   try {
     const { actionsWarnings } = await applySettingsPatch(body, { person: awayPersonOf(req) });
-    res.json({ ...settingsState(), ...(await autoModelState()), ...(await prDescriptionModelState()), chat: chatPrefs(),
+    res.json({ ...settingsState(), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), chat: chatPrefs(),
       ...(actionsWarnings ? { actionsWarnings } : {}) });
   } catch (err) {
     // 400 with the user's words and, when known, the body path of the bad field (#555).
@@ -11102,6 +11226,9 @@ async function applySettingsPatch(body, { person = null } = {}) {
   // project-less catalog the Settings pickers offer (a run re-checks it against its own).
   const hasMemoryDefragKey = has('memoryDefrag');
   const defragModels = hasMemoryDefragKey ? (autoModels || await listModels('')) : null;
+  // The agent wizard's Generate pair: agent generation has no project, so the project-less catalog.
+  const hasAgentGenKey = has('agentGenModel');
+  const agentGenModels = hasAgentGenKey ? (autoModels || defragModels || await listModels('')) : null;
   const hasWorkspaceScanKey = has('workspaceScan');
   const hasRunEngineKey = has('runEngine');
   const hasStepModelsKey = has('stepModels');
@@ -11133,7 +11260,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   if (has('askMaxTurns')) ask.askMaxTurns = body.askMaxTurns ?? '';
   if (has('askMaxBudgetUsd')) ask.askMaxBudgetUsd = body.askMaxBudgetUsd === undefined ? '' : body.askMaxBudgetUsd;
   {   // was the route's try: a refusal now reaches the caller (the route maps it to 400, the chat to a notice)
-    for (const key of ['titleModel', 'autoWorkflowModel', 'prDescriptionModel', 'memoryDefrag', 'workspaceScan']) {
+    for (const key of ['titleModel', 'autoWorkflowModel', 'prDescriptionModel', 'memoryDefrag', 'agentGenModel', 'workspaceScan']) {
       if (has(key)) asSettingsField(key, () => refuseNonClaudeUtilityModel(key, body[key]));
     }
     // Each validator / setter that can refuse a value runs tagged with the body key it checks,
@@ -11168,6 +11295,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasAutoKey) asSettingsField('autoWorkflowModel', () => assertAutoWorkflowModelInput(body.autoWorkflowModel ?? '', autoModels));
     if (hasPrDescKey) asSettingsField('prDescriptionModel', () => assertPrDescriptionModelInput(body.prDescriptionModel ?? '', prDescModels));
     if (hasMemoryDefragKey) asSettingsField('memoryDefrag', () => assertMemoryDefragModelInput(body.memoryDefrag, defragModels));
+    if (hasAgentGenKey) asSettingsField('agentGenModel', () => assertAgentGenModelInput(body.agentGenModel, agentGenModels));
     if (hasWorkspaceScanKey) asSettingsField('workspaceScan', () => assertWorkspaceScanInput(body.workspaceScan, wsScanModels));
     if (hasRunEngineKey) asSettingsField('runEngine', () => assertRunEngineInput(body.runEngine));
     if (hasAskEngineKey) asSettingsField('askEngine', () => assertAskEngineInput(body.askEngine));
@@ -11233,6 +11361,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasAutoKey) await setAutoWorkflowModel(body.autoWorkflowModel ?? '', { models: autoModels });
     if (hasPrDescKey) await setPrDescriptionModel(body.prDescriptionModel ?? '', { models: prDescModels });
     if (hasMemoryDefragKey) await setMemoryDefragModel(body.memoryDefrag, { models: defragModels });
+    if (hasAgentGenKey) await setAgentGenModel(body.agentGenModel, { models: agentGenModels });
     if (hasWorkspaceScanKey) await setWorkspaceScanModels(body.workspaceScan, { models: wsScanModels });
     if (hasRunEngineKey) await asSettingsField('runEngine', () => setRunEngineSetting(body.runEngine));
     if (hasStepModelsKey) await asSettingsField('stepModels', () => setStepModels(body.stepModels));
@@ -11252,7 +11381,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasBudgetKey) emitChanged('budget-changed');
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
-    if (hasAskKey || hasAskWeb || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasNetworkWaitKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasNetworkWaitKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;
@@ -11960,7 +12089,7 @@ app.post('/api/models/:id/test', async (req, res) => {
     const unset = pluginModelSecretStatus(plugin.plugin)
       .filter((s) => plugin.secrets.includes(s.key) && !s.set).map((s) => s.key);
     if (unset.length) {
-      return badRequest(res, `secret ${unset.join(', ')} is not set — configure it in the plugin's settings`);
+      return badRequest(res, `secret ${unset.join(', ')} is not set. Configure it in the plugin's settings`);
     }
   }
   if (modelTestsInFlight.has(lc)) return badRequest(res, 'test already running for this model');
@@ -13200,11 +13329,13 @@ app.post('/api/ask/threads/:id/attachments/:attId/reveal', async (req, res) => {
   if (REMOTE_MODE) return res.status(403).json({ error: 'Folders open on the machine worca runs on, so Show in folder is off on a hosted worca.', code: 'REVEAL_REMOTE' });
   if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
   if (!askGetAttachment(id, attId)) return res.status(404).json({ error: 'attachment not found' });
-  const source = askAttachmentSourcePath(id, attId);
-  if (!source) return res.status(409).json({ error: 'This file was not shown from a folder.', code: 'NO_SOURCE' });
-  let st = null;
-  try { st = fs.statSync(source); } catch { st = null; }
-  if (!st || !st.isFile()) return res.status(409).json({ error: 'The original file is gone: it was moved or deleted after it was shown.', code: 'SOURCE_GONE' });
+  // The original, or (a run's worktree is gone once the run ended) the same file in the project's own folder.
+  let target;
+  try { target = await askRevealTargetFor(id, attId); }
+  catch (e) { return res.status(500).json({ error: e?.message || String(e) }); }
+  if (!target) return res.status(409).json({ error: 'This file was not shown from a folder.', code: 'NO_SOURCE' });
+  if (target.error) return res.status(409).json({ error: target.error, code: 'SOURCE_GONE' });
+  const source = target.file;
   const dir = path.dirname(source);
   let l;
   try { l = revealLaunch(source, dir, builtins()); }
@@ -13513,7 +13644,7 @@ function mockAskCard(ctx = {}, text = '') {
     ? { workspaceId: ctx.workspaceId }
     : { projectKey: ctx.projectKey || 'mock-project-00000000' };
   return { ...target, workflowId: 'wf_default', guardrailsId: 'normal', brief: text.slice(0, 200) || 'Mock run',
-    note: 'Mock proposal — a fixed shape so the offline card can be exercised.' };
+    note: 'Mock proposal: a fixed shape so the offline card can be exercised.' };
 }
 
 /** The engine an existing Ask chat is locked to (D12), or null before its first turn (any engine may start it). */
@@ -13608,7 +13739,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     // (§17 Q&A 1). deterministicTitle is only the turn's fallback for an
     // empty haiku result (turn.mjs _kickoffTitle), never written here.
     const titleWasAuto = thread.title == null;
-    const deterministicTitle = titleWasAuto && !synthetic ? (askSanitizeTitle(text.slice(0, 80)) || 'New chat') : thread.title;
+    const deterministicTitle = titleWasAuto && !synthetic ? (askSanitizeTitle(stripIntentLead(text).slice(0, 80)) || 'New chat') : thread.title;
     // P3: a synthetic row keeps the EVENT as its text (buildRestoredPrompt replays it truthfully) and carries the
     // human notice as a block the panel renders instead of a bubble.
     const userMsg = askAppendMessage(id, synthetic
@@ -14332,7 +14463,7 @@ async function saveBuildCard(threadId, block, { acceptScripts = null } = {}) {
     const message = err && err.message ? err.message : String(err);
     if (code === 'INVALID_GRAPH') {
       const issues = (err.errors || []).slice(0, 3).map((e) => e && e.message).filter(Boolean).join('; ');
-      return { ok: false, status: 422, error: `the workflow is not valid any more — ${issues || message}`, errors: err.errors || [] };
+      return { ok: false, status: 422, error: `the workflow is not valid any more: ${issues || message}`, errors: err.errors || [] };
     }
     if (code === 'SCRIPTS_UNCONFIRMED') return { ok: false, status: 409, error: message, code, scriptNodes: err.scriptNodes || [] };
     if (code === 'BAD_REQUEST') return { ok: false, status: 400, error: message };
@@ -14602,7 +14733,7 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       return res.json({ block });
     }
     if (found.block.card && found.block.card.type === 'run-stop') {
-      // worca Chat P2 (R7): the card IS the stop warning — "Stop pipeline" stops in-process (askChatActions.stop makes
+      // worca Chat P2 (R7): the card IS the stop warning — "Stop run" stops in-process (askChatActions.stop makes
       // POST /api/stop's split); an interrupted run is refused. No event turn: like a run card, the run's own frames
       // and the card say what happened.
       if (body.state !== 'applied' && body.state !== 'declined') return badRequest(res, 'state must be "applied" or "declined"');
@@ -14673,7 +14804,7 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
     if (found.block.card && found.block.card.type === 'pull-request') {
       // worca Chat P2 (R9): "Not now" only — the pull request is opened from the Ship it dialog, and POST /api/pr flips
       // the card to applied through its ask link.
-      if (body.state !== 'declined') return badRequest(res, 'state must be "declined" — a pull request is opened from the Ship it dialog');
+      if (body.state !== 'declined') return badRequest(res, 'state must be "declined". A pull request is opened from the Create PR dialog');
       if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
       const block = flipCard(id, cardId, { state: 'declined' });
       if (!block) return res.status(409).json({ error: 'card vanished' });
@@ -14749,7 +14880,7 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
         try {
           const host = found.block.card.change?.host;
           const now = askWebAccessFor(id, askGetThread(id)?.context || {});
-          if (!now.enabled) throw new Error('web access is off for this chat — switch it on in Settings → Chat → Web access');
+          if (!now.enabled) throw new Error('web access is off for this chat. Switch it on in Settings → Chat → Web access');
           if (Array.isArray(now.teamCap) && !askHostAllowed(host, now.teamCap)) throw new Error(`${host} is outside the team policy's web allowlist`);
           if (body.scope === 'always') { await addAskWebHost(host); emitChanged('settings-changed'); }
           result = { ok: true, scope: body.scope };
@@ -15028,10 +15159,17 @@ function agentErrorBody(err) {
  * follow-up POST /api/agents.
  * @returns {string} genId
  */
-function startAgentGen(input) {
+async function startAgentGen(input) {
+  // The Models page's Claude tab › Agent generation, read per Generate. Unset, or a model the
+  // catalog no longer carries: no --model, the CLI's default (as before the setting existed).
+  const pick = resolveAgentGenModel(storedAgentGenModel(), await listModels(''));
+  if (pick.stale) console.warn(`[worca] agentGenModel ${JSON.stringify(pick.stale)} is no longer in the catalog — agent generation uses the CLI default`);
   const orch = createAgentGen({
     ...input,
-    claude: { permissionMode: 'acceptEdits', mock: serverMockMode() },
+    claude: {
+      permissionMode: 'acceptEdits', mock: serverMockMode(),
+      ...(pick.model ? { model: pick.model, ...(pick.effort ? { effort: pick.effort } : {}) } : {}),
+    },
   });
   // The engine mints its own genId (agen_<uuid>) and tags every emitted event
   // with it; use THAT as the runs-Map key + the returned id so the entry, its
@@ -15080,7 +15218,7 @@ app.post('/api/agents/generate', async (req, res) => {
     const byKey = Object.fromEntries(allAgents.map((m) => [m.key, m]));
     const pick = (keys) => (Array.isArray(keys) ? keys : []).map((k) => byKey[k]).filter(Boolean);
     if (await refuseSignedOutClaude(res)) return;
-    const genId = startAgentGen({
+    const genId = await startAgentGen({
       name, purpose: String(body.purpose || ''), details: String(body.details || ''),
       expectedBefore: pick(body.expectedBefore), expectedAfter: pick(body.expectedAfter),
       userMarkdown,
@@ -15819,7 +15957,7 @@ app.get('/api/plugins/:name/config', async (req, res) => {
   const name = requirePlugin(req, res);
   if (!name) return;
   const manifest = readInstalledManifest(name);
-  if (!manifest) return res.status(409).json({ error: 'plugin manifest unreadable — run doctor' });
+  if (!manifest) return res.status(409).json({ error: 'plugin manifest unreadable. Run doctor' });
   const wanted = typeof req.query.profile === 'string' && req.query.profile ? req.query.profile : null;
   if (wanted && !isValidProfileId(wanted)) return badRequest(res, 'invalid profile id');
   try {
@@ -15882,7 +16020,7 @@ app.post('/api/plugins/:name/profiles', (req, res) => {
   if (!name) return;
   const body = req.body || {};
   const manifest = readInstalledManifest(name);
-  if (!manifest) return res.status(409).json({ error: 'plugin manifest unreadable — run doctor' });
+  if (!manifest) return res.status(409).json({ error: 'plugin manifest unreadable. Run doctor' });
   const source = (manifest.taskSources || []).find((s) => s.id === body.sourceId);
   if (!source) return badRequest(res, 'sourceId does not match a task source of this plugin');
   if (!source.multiProfile) return badRequest(res, `task source "${source.id}" does not support profiles`);
@@ -15894,7 +16032,7 @@ app.post('/api/plugins/:name/profiles', (req, res) => {
   // roster it would become deletable like any member — and deleting it wipes
   // that shared bucket. createProfile throws too; 400 with the reason here.
   if (body.id === DEFAULT_PROFILE) {
-    return badRequest(res, `profile id "${DEFAULT_PROFILE}" is reserved — pick another name`);
+    return badRequest(res, `profile id "${DEFAULT_PROFILE}" is reserved. Pick another name`);
   }
   try {
     const profile = createProfile(name, body.id, body.label);
@@ -15916,7 +16054,7 @@ app.delete('/api/plugins/:name/profiles/:id', (req, res) => {
   const name = requirePlugin(req, res);
   if (!name) return;
   const manifest = readInstalledManifest(name);
-  if (!manifest) return res.status(409).json({ error: 'plugin manifest unreadable — run doctor' });
+  if (!manifest) return res.status(409).json({ error: 'plugin manifest unreadable. Run doctor' });
   const sourceId = typeof req.query.sourceId === 'string' ? req.query.sourceId : '';
   const sources = manifest.taskSources || [];
   const source = sources.find((s) => s.id === sourceId) || (sources.length === 1 ? sources[0] : null);
@@ -15932,7 +16070,7 @@ app.delete('/api/plugins/:name/profiles/:id', (req, res) => {
   // would strip the shared bucket (chat-channel config, model secrets,
   // migrated legacy data) out of all three files.
   if (req.params.id === DEFAULT_PROFILE) {
-    return badRequest(res, `profile id "${DEFAULT_PROFILE}" is reserved — it cannot be deleted`);
+    return badRequest(res, `profile id "${DEFAULT_PROFILE}" is reserved, so it cannot be deleted`);
   }
   if (!listProfiles(name).some((p) => p.id === req.params.id)) {
     return badRequest(res, `plugin "${name}" has no profile "${req.params.id}"`);
@@ -15959,7 +16097,7 @@ app.put('/api/plugins/:name/config', (req, res) => {
     return badRequest(res, 'values must be an object');
   }
   const manifest = readInstalledManifest(name);
-  if (!manifest) return res.status(409).json({ error: 'plugin manifest unreadable — run doctor' });
+  if (!manifest) return res.status(409).json({ error: 'plugin manifest unreadable. Run doctor' });
   // { target: 'modelSecrets', values } writes the plugin-level model secrets
   // (design §9.7) — same write-only semantics, routed by the synthesized schema.
   if (body.target === 'modelSecrets') {
@@ -15999,7 +16137,7 @@ app.put('/api/plugins/:name/config', (req, res) => {
     // just-deleted) id as a real profile with secrets stored under it.
     // Creation stays solely on POST /profiles.
     if (source.multiProfile && !listProfiles(name).some((p) => p.id === profile)) {
-      return badRequest(res, `plugin "${name}" has no profile "${profile}" — create it first`);
+      return badRequest(res, `plugin "${name}" has no profile "${profile}". Create it first`);
     }
     schema = source.configSchema;
   }
@@ -16575,7 +16713,7 @@ app.post('/api/skills/:id/update/preview', async (req, res) => {
     if (!lib[name].origin) return res.status(409).json({ error: 'a pasted skill has no origin: import it again to change it' });
     const o = lib[name].origin;   // hosted: a folder or non-https origin would re-read the server's disk
     const hostedGit = SKILL_FOLDER_IMPORTS ? null : o.kind === 'git' ? hostedGitRefusal(o.url) : SKILL_HOSTED_GIT;
-    if (hostedGit) return res.status(409).json({ error: `this skill's origin cannot be fetched here — ${hostedGit}` });
+    if (hostedGit) return res.status(409).json({ error: `this skill's origin cannot be fetched here: ${hostedGit}` });
     const diff = await skImport.updatePreview(name);
     skillUpdateBases.set(diff.stage, lib[name].hash ?? null);
     // The Skills view's "update available" badge: this check's answer, kept until Update, Remove or a server restart.
@@ -16732,7 +16870,7 @@ app.post('/api/sources/call', async (req, res) => {
     return badRequest(res, `plugin "${plugin}" has no profile "${profile}"`);
   }
   if (!source.multiProfile && profile) {
-    return badRequest(res, `task source "${sourceId}" does not use profiles — omit profile`);
+    return badRequest(res, `task source "${sourceId}" does not use profiles, so omit profile`);
   }
   try {
     const result = await callSource({ plugin, sourceId, op, args, profile });
@@ -17307,6 +17445,11 @@ if (isMain) {
   // broker check below is already one.
   const proxyLine = proxyNotice(useEnvProxy());
   if (proxyLine) console[proxyLine.level === 'warn' ? 'warn' : 'log'](`[worca-ui] ${proxyLine.text}`);
+  // A proxy URL with credentials never reaches plugin code (scrubbedEnv). Said here, before
+  // any plugin spawns, so the once-per-process warning is never spent unseen by a caller
+  // that logs nowhere (Ask's task lookups); later spawns stay quiet.
+  const withheldLine = withheldProxyNotice();
+  if (withheldLine) console.warn(`[worca-ui] ${withheldLine}`);
 
   // Remote access fails closed: an unsafe or broken config never starts serving.
   if (REMOTE_ACCESS_CHECK.errors.length) {

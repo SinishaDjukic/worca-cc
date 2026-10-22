@@ -14,7 +14,7 @@ import { addProject } from '../src/core/projects.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 import { graphResumePoint } from './helpers/graph-templates.mjs';
 import {
-  drainTimeoutMs, autoResumeMode, autoResumeCandidates, DRAIN_TIMEOUT_DEFAULT_MS,
+  drainTimeoutMs, sigtermGraceMs, autoResumeMode, autoResumeCandidates, DRAIN_TIMEOUT_DEFAULT_MS,
 } from '../src/core/drain.mjs';
 import { pauseConsequences, REASON } from '../src/core/failure-policy.mjs';
 
@@ -109,6 +109,15 @@ test('drainTimeoutMs: 20 s by default, the env overrides it, junk falls back, ca
   assert.equal(drainTimeoutMs({ WORCA_DRAIN_TIMEOUT_MS: '0' }), 0);
   assert.equal(drainTimeoutMs({ WORCA_DRAIN_TIMEOUT_MS: 'soon' }), DRAIN_TIMEOUT_DEFAULT_MS);
   assert.equal(drainTimeoutMs({ WORCA_DRAIN_TIMEOUT_MS: '99999999' }), 600_000);
+});
+
+test('sigtermGraceMs: 20 s by default, WORCA_SIGTERM_GRACE_MS overrides it, junk falls back, capped at 10 min', () => {
+  assert.equal(sigtermGraceMs({}), 20_000);
+  assert.equal(sigtermGraceMs({ WORCA_SIGTERM_GRACE_MS: '1500' }), 1500);
+  assert.equal(sigtermGraceMs({ WORCA_SIGTERM_GRACE_MS: '0' }), 0);
+  assert.equal(sigtermGraceMs({ WORCA_SIGTERM_GRACE_MS: 'soon' }), 20_000);
+  assert.equal(sigtermGraceMs({ WORCA_SIGTERM_GRACE_MS: '99999999' }), 600_000);
+  assert.equal(sigtermGraceMs({ WORCA_DRAIN_TIMEOUT_MS: '5000' }), 20_000, 'the server drain bound is a separate knob');
 });
 
 test('autoResumeMode: drained runs by default, everything with =1, nothing with =0', () => {

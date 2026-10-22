@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { mkdtemp, mkdir, rm, symlink, realpath, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _resetForTests } from '../src/core/db.mjs';
@@ -313,6 +314,27 @@ test('remote mode: the Add project probe stays inside Worca\'s folders; New crea
   const made = await remote('POST', '/api/projects/create', { name: 'hosted-new' });
   assert.equal(made.status, 201, JSON.stringify(made.body));
   assert.equal(made.body.project.path, join(projects, 'hosted-new'));
+});
+
+test('remote mode (#693): the probe offers an enclosing repository root only inside Worca\'s folders', async () => {
+  const docs = join(projects, 'other', 'docs');
+  const probe693 = join(homeDir, '.worca-cc', 'probe693');
+  await mkdir(docs, { recursive: true });
+  await mkdir(probe693, { recursive: true });
+  for (const d of [join(projects, 'other'), homeDir]) spawnSync('git', ['init', '-q'], { cwd: d });
+  try {
+    const inRoots = await remote('GET', `/api/projects/probe?path=${encodeURIComponent(docs)}`);
+    assert.equal(inRoots.status, 200, JSON.stringify(inRoots.body));
+    assert.deepEqual([inRoots.body.insideRepo, inRoots.body.repoRoot], [true, join(projects, 'other')]);
+    const outRoots = await remote('GET', `/api/projects/probe?path=${encodeURIComponent(probe693)}`);
+    assert.equal(outRoots.status, 200, JSON.stringify(outRoots.body));
+    assert.equal(outRoots.body.insideRepo, true);
+    assert.equal('repoRoot' in outRoots.body, false, 'a root outside the allowed folders is not disclosed');
+    process.env.WORCA_ACTIONS_REMOTE = '1';                       // not limited: the root is offered
+    assert.equal((await remote('GET', `/api/projects/probe?path=${encodeURIComponent(probe693)}`)).body.repoRoot, homeDir);
+  } finally {
+    for (const d of [join(projects, 'other', '.git'), join(homeDir, '.git'), docs, probe693]) await rm(d, { recursive: true, force: true });
+  }
 });
 
 test('remote mode: a project card adding a folder outside Worca\'s folders fails FS_OUTSIDE_ALLOWED at apply and touches nothing', async () => {

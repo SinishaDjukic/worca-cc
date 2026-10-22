@@ -69,6 +69,13 @@ entry's env, wins. First-party spawns keep the CLI defaults. Each retry the CLI
 makes shows in the run log as a warning, for example `API call failed: no HTTP
 response (timeout or connection error); retry 5/10 in 4.1s`.
 
+**No fork sub-agents.** Every Claude spawn carries `CLAUDE_CODE_FORK_SUBAGENT=0`.
+From Claude Code 2.1.302, `claude -p` offers `subagent_type: "fork"`: a child
+that inherits the agent's context, tools and model. Such a child would skip
+worca's read-only investigator and the node's sub-agent model. A value set in
+the shell Worca starts from does not change this, and an entry's env may not
+set the key.
+
 ## The catalog
 
 The Models page is the catalog and nothing else. Above the rows sit a search
@@ -279,9 +286,12 @@ returned error", a rate-limited step backs off and retries before it pauses, and
 Worca's small helper calls — the title and the Auto workflow classifier — retry
 too; a classifier that still fails falls back to the default workflow instead of
 failing the run. The Models page picks the model for each helper call — *Title model*,
-*Auto workflow model* (`WORCA_AUTO_MODEL` overrides it) and *PR description model*
-(the Create PR dialog's Generate with AI; Sonnet-class by default) — so pointing them at
-a steadier model leaves a flaky free model touching only the pipeline steps.
+*Auto workflow model* (`WORCA_AUTO_MODEL` overrides it), *PR description model*
+(the Create PR dialog's Generate with AI; Sonnet-class by default) and *Agent generation*
+(Workflows › Agents › + › Generate; a model and an effort, the Claude tab only, since agent
+generation always runs on Claude; unset, or a model since removed from the catalog, uses
+the Claude CLI's default model) — so pointing them at a steadier model leaves a flaky
+free model touching only the pipeline steps.
 
 **The daily allowance.** Separately, OpenRouter caps how many `:free` requests a key
 sends per day: **1000** on an account that has bought at least $10 of credit, **50**
@@ -412,13 +422,14 @@ On a Codex run the helper jobs (titles, the run overview, the PR description, th
 - Other servers Claude Code loads on its own (user scope, plugins) are not attached on Codex.
 - Codex gives all of a run's servers one shared environment. Copies of a registry server, such as two GitHub copies with their own `GITHUB_TOKEN`, each get their own variable names there, so they attach side by side. Two other servers may not declare the same variable with different values.
 
-**Guardrails on Codex.** Codex holds a guardrail set's command rules only in part, and not its file rules.
+**Guardrails on Codex.** Codex holds a guardrail set's MCP rules, its command rules only in part, and not its file rules.
 
 - A deny rule for a command, such as `Bash(git push:*)` or `Bash(curl)`, becomes a Codex command rule. These rules catch a command run directly, by full path or in an `&&` chain, but not one with a redirect, a substitution or a variable. Codex checks the commands of a shell line only when the line is plain words. Add `2>&1`, `> file`, `$(…)`, `$VAR` or `VAR=x` and the rule no longer sees the command, so `curl -sI https://example.com 2>&1` runs under a `Bash(curl)` rule. Nor do they catch a command inside `bash -c` or `env`.
 - Because of that, a run with command rules needs **Allow unguarded** (`--allow-unguarded-engine`), the same as a run with rules Codex cannot hold at all. The rules still apply to the run as a partial guard. This applies to the set's rules and to the deny rules in the project's own `.claude/settings.json`.
 - A bare `Bash` rule turns Codex's shell off, and `WebSearch` turns its web search off. These hold fully.
 - Codex has no fetch tool to deny, and it can fetch a page with its shell (`curl`) or its web search. A `WebFetch` rule holds only when the same set also has a bare `Bash` and a `WebSearch` rule. Otherwise it is not held, and the run needs **Allow unguarded**.
-- File rules (`Read(…)`, `Edit(…)`, and the protected paths of the Normal and Secure sets) and MCP tool rules cannot be held on Codex. A run whose set has any of them needs **Allow unguarded** too. The run log lists the rules that are held fully, the ones held only in part, and the ones that are not held.
+- A deny rule for one MCP tool, such as `mcp__postgres__drop_table`, holds: Codex is never offered that tool. A rule for a whole server (`mcp__postgres` or `mcp__postgres__*`) holds too: worca does not attach that server. A rule that names its tools with any other wildcard (`mcp__postgres__drop*`) is not held.
+- File rules (`Read(…)`, `Edit(…)`, and the protected paths of the Normal and Secure sets) cannot be held on Codex. A run whose set has any of them needs **Allow unguarded** too. The run log lists the rules that are held fully, the ones held only in part, and the ones that are not held.
 - The Normal and Secure sets also protect worca's own state in `~/.worca-cc`: the database, `settings.json`, the MCP registry, plugin secrets, and the plugins, scripts, agents, workflows and policy folders. Codex cannot hold those rules either. Its sandbox already keeps it from writing outside the run's checkout and the folders worca adds for the run's outputs, and worca refuses to start Codex when any folder it could write is inside `~/.worca-cc`, other than the run store and the run's own folder. Codex can still read those files. A Claude agent can too, through its shell: the Read rules stop only Claude Code's file tools (see [Honest limitations](guardrails.md#honest-limitations)). Container mode is the containment on both engines.
 - worca keeps the command rules in a Codex home of its own under `~/.worca-cc/engines/codex/homes/`, one per rule set, linked to your Codex sign-in (`auth.json`). The link follows your Codex home if it moves, and goes when you sign out. If you sign in to Codex some other way, a guarded run cannot find your sign-in.
 - Changing a paused run's guardrail set moves it to another Codex home. On resume, worca links the paused step's Codex session file into the new home, so the step continues where it stopped.

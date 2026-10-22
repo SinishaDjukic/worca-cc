@@ -209,7 +209,7 @@ try {
     head.tab === true && head.title === 'Settings' && head.badge === 'Healthy' && /\bgreen\b/.test(head.cls)
     && head.rows.join(',') === 'style,testing,traps' && head.hooks.join('|') === 'Terse commit subjects.|How the suite runs|grep -P does not exist on macOS.'
     && head.defragDisabled === false && head.runEl === false
-    && head.defragText === 'Defragment' && head.hint === 'Runs on memproof — pick another project on the New run page.', head);
+    && head.defragText === 'Defragment' && head.hint === 'Runs on memproof. Pick another project on the New run page.', head);
 
   // ---- (2) the deep link opens the file, read-locked on its name -------------
   await go('settings/memory/testing');

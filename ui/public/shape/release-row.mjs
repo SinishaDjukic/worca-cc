@@ -1,6 +1,7 @@
-// ui/public/shape/release-row.mjs — Shaper s4: "+ Add a release" → "Release v1.12.0 · draft after merge · Edit".
+// ui/public/shape/release-row.mjs — Shaper s4: "Add a release" → "Release v1.12.0 · draft after merge · Edit".
 // One component for the Ship card (chat, group page, Plans) and the single-run Ship it dialog.
 import { isReleaseVersion } from '../../../src/shared/release-version.mjs';
+import { icon } from '../icons.mjs';
 
 const SOURCE = (h) => (h && h.from === 'tag' ? `Last tag ${h.lastTag} + minor`
   : h && h.from === 'package' ? `From package.json ${h.packageVersion}`
@@ -25,7 +26,8 @@ export function renderReleaseRow(doc, hint = null) {
   function paint() {
     el.replaceChildren();
     if (!open) {
-      const add = h('button', 'release-row-add', '+ Add a release'); add.type = 'button';
+      const add = h('button', 'btn btn-sm btn-quiet release-row-add'); add.type = 'button';
+      add.append(icon(doc, 'plus', 12), 'Add a release');
       add.addEventListener('click', () => { open = true; version = cur && cur.version ? cur.version : null; editing = !version; paint(); if (editing) input.focus(); });
       el.appendChild(add);
       return;

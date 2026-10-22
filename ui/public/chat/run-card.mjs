@@ -12,6 +12,7 @@ import { planApprovedLine } from '../log-line.mjs';
 import { mountRunGraph } from '../graph/run-hosts.mjs';
 import { fmtDur, fmtUsd, isGraphManifest, manifestNodes } from '../graph/run-decor.mjs';
 import { askKindOf } from '../ask/registry.mjs';
+import { CREATE_PR_LABEL } from '../ship-words.mjs';
 import { shapeFirstOn } from './shape-gate.mjs';
 import { checklistScore } from '../../../src/shared/shape/review-checklist.mjs';
 import { NO_PROJECT_KEY, NO_PROJECT_NAME } from '../../../src/shared/no-project.mjs';
@@ -45,7 +46,7 @@ export const RESULT_STATUS = new Set(['done', 'stopped', 'error', 'failed', 'abo
 const DONE_STATUS = new Set(['done', 'complete', 'completed']);
 const NODE_COLORS = new Set(['violet', 'blue', 'green', 'red', 'peach', 'amber']);
 const KEYED = new Set(['agent', 'script']);
-const STOP_TITLE = 'Stop this pipeline';
+const STOP_TITLE = 'Stop this run';
 const SVG_NS = 'http://www.w3.org/2000/svg';
 /** 24-unit stroked glyphs (module literals only — never run data). */
 const ICONS = {
@@ -126,7 +127,7 @@ export function resultWord(snap) {
   }
   if (snap.workMode === 'folder') { const c = changesCounts(snap.changes); const w = folderDoneWords(snap.changes && snap.changes.state, c ? c.total : null); return { key: 'folder', tone: 'green', glyph: 'check', title: w.lead, sub: w.sub }; }
   const pr = snap.pr && snap.pr.url ? String(snap.pr.state || '').toUpperCase() : '';
-  if (pr === 'MERGED') return { key: 'merged', tone: 'violet', glyph: 'merged', title: 'Merged', sub: 'The pull request was merged' };
+  if (pr === 'MERGED') return { key: 'merged', tone: 'slate', glyph: 'merged', title: 'Merged', sub: 'The pull request was merged' };
   if (pr === 'OPEN') return { key: 'review', tone: 'blue', glyph: 'review', title: 'In review', sub: 'The pull request is open' };
   if (pr === 'CLOSED') return { key: 'closed', tone: 'red', glyph: 'stop', title: 'PR closed', sub: 'Closed without merging' };
   const r = snap.results;
@@ -137,7 +138,7 @@ export function resultWord(snap) {
   if (!r) return { key: 'ship', tone: 'green', glyph: 'check', title: 'Finished', sub: '' };
   const checks = Number(r.checks) || 0;
   return { key: 'ship', tone: 'green', glyph: 'ship', title: checks ? 'Ready to review' : 'Ready to ship',
-    sub: checks ? `${checks} thing${checks === 1 ? '' : 's'} to check` : 'Clean — no blocking issues flagged' };
+    sub: checks ? `${checks} thing${checks === 1 ? '' : 's'} to check` : 'Clean: no blocking issues flagged' };
 }
 
 /** The receipt line a question collapses into once it is resolved (mockup §5c/§5d): the named decision this tab sent
@@ -711,13 +712,13 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       const rfoot = h('div', 'chat-rc-res-foot');
       rfoot.dataset.minLevel = 'advanced';              // Create PR / View PR: the run page's level (docs/ui-levels.md)
       if (prUrl) {
-        const a = h('a', 'chat-rc-view-pr', 'View pull request');
+        const a = h('a', 'chat-rc-view-pr', 'View PR');
         a.setAttribute('href', prUrl);
         a.target = '_blank';
         a.rel = 'noopener';
         rfoot.appendChild(a);
       } else {
-        const b = button('chat-rc-create-pr', 'Create pull request');
+        const b = button('chat-rc-create-pr', CREATE_PR_LABEL);
         createPrBtn = b;
         const why = h('span', 'chat-rc-res-err');
         why.hidden = true;
@@ -726,7 +727,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
           if (b.disabled) return;
           b.disabled = true;
           why.hidden = true;
-          // P2 openShipItFor: settles when the Ship it dialog closes ({opened, url?}), or at once with
+          // P2 openShipItFor: settles when the Create PR dialog closes ({opened, url?}), or at once with
           // {opened:false, error} when it cannot open — the reason stays in this card. Either way re-read the PR.
           Promise.resolve(call(controls.openShipIt, ref()))
             .then((res) => { if (!dead && res && res.opened === false && res.error) { why.textContent = String(res.error); why.hidden = false; } })
@@ -779,7 +780,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     if (watchEl.dataset.sig === sig) return;                 // the 1 s tick must not steal a link's focus
     watchEl.dataset.sig = sig;
     const extras = [];
-    if (withPr) extras.push(link('chat-rc-watch-pr', w.prUrl, 'Open PR'));
+    if (withPr) extras.push(link('chat-rc-watch-pr', w.prUrl, 'View PR'));
     if (withAsk) {
       const ask = button('btn btn-sm btn-quiet chat-rc-watch-ask', 'Ask for changes');
       ask.addEventListener('click', askForChanges);
@@ -811,7 +812,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     if (!inFlight) {
       pauseBtn.dataset.action = resume ? 'resume' : 'pause';
       pauseBtn.textContent = resume ? 'Resume' : status === 'pausing' || pauseAsked ? 'Pausing…' : 'Pause';
-      pauseBtn.title = resume ? 'Resume — restart this paused pipeline where it left off' : 'Pause — gracefully stop the session so it can be resumed';
+      pauseBtn.title = resume ? 'Resume: restart this paused pipeline where it left off' : 'Pause: gracefully stop the session so it can be resumed';
     }
     pauseBtn.disabled = inFlight || !!pauseAsked || (!resume && status !== 'running');
   }
@@ -829,7 +830,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     stopBtn.hidden = true;
     // contains(), not isConnected: a card that is not in the document yet still has it. Never on a group card (its
     // ship is the group's, D6), and only at Advanced and above: the button's row (.chat-rc-res-foot) is
-    // data-min-level="advanced", so below that the footer makes its own Ship it.
+    // data-min-level="advanced", so below that the footer makes its own Create PR.
     if (!curRow && createPrBtn && resultSec.contains(createPrBtn) && levelAtLeast('advanced', doc)) own.ship = createPrBtn;
     else if (createPrBtn) delete createPrBtn.dataset.modelAction;
     const changesWhy = changesView && !changesSlot.hidden ? ''
@@ -844,7 +845,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     if (fc) paintFeatureActions(doc, fActions, fc, featureDeps, { omit: m.actions });
     // Clear the sig too: else the next feature paint's sig matches and returns early, leaving an empty host.
     else { fActions.replaceChildren(); fActions.hidden = true; delete fActions.dataset.sig; }
-    // A footer with nothing visible stays hidden (a Ready run whose Ship it is the result's Create pull request).
+    // A footer with nothing visible stays hidden (a Ready run whose Create PR is the result's own button).
     foot.hidden = ![...footActions.children, ...fActions.children].some((b) => !b.hidden) && footErr.hidden;
   }
 
@@ -883,8 +884,10 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     kind.textContent = kindOf(curRow, s);
     open.setAttribute('href', curRow ? (curRow.groupKind === 'feature' ? `#feature/${encodeURIComponent(curRow.groupId)}` : `#group/${encodeURIComponent(curRow.groupId)}`) : progressRoute(id, s));
     if (curRow) { membersEl.replaceChildren(renderMemberRows(doc, curRow)); membersEl.hidden = false; } else { membersEl.replaceChildren(); membersEl.hidden = true; }
-    if (isNoProjectRun(s)) where.replaceChildren(...[kindChip(doc, 'none'), pid ? ` · #${pid}` : ''].filter(Boolean));
-    else where.textContent = [projectLabel(id, s), pid ? `#${pid}` : ''].filter(Boolean).join(' · ');
+    // Run 4 (D20): no id in visible text — the run id is the sub line's tooltip.
+    if (isNoProjectRun(s)) where.replaceChildren(kindChip(doc, 'none'));
+    else where.textContent = projectLabel(id, s);
+    where.title = pid ? `Run ${pid}` : '';
     const chip = autoChip(s);
     autoEl.hidden = !chip;
     autoEl.textContent = chip ? chip.text : '';

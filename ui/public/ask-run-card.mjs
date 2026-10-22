@@ -216,7 +216,7 @@ export function createRunProgressCard({ doc, ident, onOpen = null }) {
     banner.hidden = !q;
     if (!q) return;
     const n = Array.isArray(q.questions) && q.questions.length ? q.questions.length : (Array.isArray(q.issues) && q.issues.length ? q.issues.length : 1);
-    banner.textContent = q.kind === 'workflow' ? 'Waiting for your decision on the proposed workflow' : `Waiting for your answer — ${n} question${n === 1 ? '' : 's'}`;
+    banner.textContent = q.kind === 'workflow' ? 'Waiting for your decision on the proposed workflow' : `Waiting for your answer (${n} question${n === 1 ? '' : 's'})`;
   }
   function update(snap, now = Date.now()) {
     lastSnap = snap || null;
@@ -229,7 +229,8 @@ export function createRunProgressCard({ doc, ident, onOpen = null }) {
     pillText.textContent = p.text;
     if (snap && snap.title) title.textContent = snap.title;
     const pid = (snap && snap.pipelineId) || ident.pipelineId;
-    sub.textContent = [projectLabel(ident, snap), pid ? `#${pid}` : ''].filter(Boolean).join(' · ');
+    sub.textContent = projectLabel(ident, snap);
+    sub.title = pid ? `Run ${pid}` : '';
     timeEl.textContent = fmtDur(snap ? snap.elapsedMs : 0);
     costEl.textContent = snap && snap.costUsd == null ? 'cost unknown' : fmtUsd(snap ? snap.costUsd : 0);
     const prog = snap && snap.progress;

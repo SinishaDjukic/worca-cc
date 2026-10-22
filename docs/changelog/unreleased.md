@@ -3,6 +3,32 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Plugins work behind a proxy
+
+Plugin task sources (GitHub, Azure Boards) and chat channels (Telegram, Slack, Discord, Teams) now follow `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` like worca itself, so they work on a network whose only way out is a proxy; loopback and `NO_PROXY` hosts go direct. They get `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE` and `SSL_CERT_DIR` too, for a proxy that re-signs TLS. A proxy the plugin can't use is a warning in its log instead of a bare `fetch failed`. A proxy URL that carries a user name and password is never handed to plugin code. Plugins then go direct, and worca says why: the UI server when it starts, the CLI at its first plugin call. A plugin that drives its own command-line tool goes through the proxy only if that tool reads the variables.
+
+Upgrading: plugin calls that went direct now go to the proxy. Add a tracker on your own network to `NO_PROXY`. Under an outbound network policy in `allow` mode, or the Docker egress overlay, allow the plugins' hosts, or their calls are refused.
+
+## Re-scans run on the model you chose
+
+**Workspaces stop silently defaulting to a scan model.**
+
+A workspace keeps the scan model it was created with, and every re-scan — the automatic one
+after **Add projects** / **Remove**, and the header's Re-scan — runs on that saved pick. A
+workspace with no saved model (an older workspace, or one whose saved model left the catalog)
+does not fall back to a default: the re-scan opens the choose-a-model window (the same menu as
+the create wizard, pre-filled from Settings › Runs › Workspaces). Save it and the scan runs on
+it and keeps it for later; close the window and the re-scan is skipped. The workspace header's
+**Scan model** control shows the saved pick and changes or clears it any time.
+
+Chips: Workspaces · scan model · re-scan
+
+Read it: [Workspace map](../workspace-map.md)
+
+Pull requests (add each number when it opens):
+
+- Re-scans run on the model you chose
+
 ## Shape it first (experimental)
 
 **Plan it before it builds.**

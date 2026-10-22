@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { SEND_FAILED, stepChip, stepTitle, stepKind, isStepCard, stepSender, stepHead, renderGateCard, renderRecoveryCard }
+import { SEND_FAILED, stepChip, stepTitle, stepKind, isStepCard, stepSender, stepHead, renderGateCard, renderRecoveryCard, questionFocusTarget }
   from '../ui/public/shape/step-card.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
@@ -205,4 +205,16 @@ test('the step head is the only title in every host: the old .qpanel-head is hid
   assert.match(css, /\.chat-rc-q \.qpanel-head\{display:none;\}/);
   assert.match(css, /\.rd-glance > \.rd-questions \.qpanel-head\{display:none;\}/);
   assert.match(css, /\.shape-feature-ask \.qpanel:has\(\.step-head\) \.qpanel-head\{display:none;\}/);
+});
+
+test('run 4 D4: a waiting card takes the focus on its primary, never on a row ⋯', () => {
+  const { window: w } = new JSDOM(`<div id="h"><div class="qpanel"><ol><li><button class="outline-row-more" aria-haspopup="menu">⋯</button></li></ol>
+    <div class="plan-actions"><button class="plan-ask-changes">Ask for changes</button><button class="btn-primary outline-approve">Approve 2 runs</button></div></div></div>
+    <div id="c"><div class="qpanel"><button class="qopt">Postgres</button><button class="btn-go">Answer</button></div></div>`);
+  const d = w.document;
+  assert.equal(questionFocusTarget(d.getElementById('h')).textContent, 'Approve 2 runs');
+  assert.equal(questionFocusTarget(d.getElementById('c')).textContent, 'Postgres', 'a Clarify card: its first option');
+  assert.equal(questionFocusTarget(null), null);
+  const m = new JSDOM('<div id="m"><div class="qpanel"><button aria-haspopup="menu" tabindex="0">⋯</button><div tabindex="0" id="t">row</div></div></div>').window.document;
+  assert.equal(questionFocusTarget(m.getElementById('m')).id, 't', 'a menu trigger with a tabindex is skipped too');
 });

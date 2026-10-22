@@ -110,7 +110,7 @@ test("hosted: a git source is https:// only and inside WORCA_CLONE_ALLOW — fil
   await commitImport(stageDirOf(staged.stage), 'graphify');
   const r = await remote('POST', `/api/skills/${encodeURIComponent('skill:library:graphify')}/update/preview`);
   assert.equal(r.status, 409, JSON.stringify(r.body));
-  assert.equal(r.body.error, "this skill's origin cannot be fetched here — a hosted Worca imports skills from an https:// git URL only");
+  assert.equal(r.body.error, "this skill's origin cannot be fetched here: a hosted Worca imports skills from an https:// git URL only");
   // …nor a git origin that is not an https:// one (written while this Worca was local): git never runs for it.
   const libFile = join(skillsDir(), 'library.json');
   const lib = JSON.parse(await readFile(libFile, 'utf8'));
@@ -127,7 +127,7 @@ test("hosted: a git source is https:// only and inside WORCA_CLONE_ALLOW — fil
   try {
     const h = await remote('POST', `/api/skills/${encodeURIComponent('skill:library:graphify')}/update/preview`);
     assert.equal(h.status, 409, JSON.stringify(h.body));
-    assert.equal(h.body.error, "this skill's origin cannot be fetched here — git.internal.example/ops/skills is not in WORCA_CLONE_ALLOW");
+    assert.equal(h.body.error, "this skill's origin cannot be fetched here: git.internal.example/ops/skills is not in WORCA_CLONE_ALLOW");
   } finally {
     if (prevAllow2 === undefined) delete process.env.WORCA_CLONE_ALLOW; else process.env.WORCA_CLONE_ALLOW = prevAllow2;
   }

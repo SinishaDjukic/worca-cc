@@ -16,7 +16,7 @@ const CHOICES = new Set(['off', 'needs-consent', 'opted-out', 'chat-off']);   //
 export function mcpSkipView(s) {
   return {
     name: s.copy ?? s.serverId,
-    why: s.reason === 'needs-consent' && s.why ? `off — ${s.why}` : (s.why || s.reason),
+    why: s.reason === 'needs-consent' && s.why ? `off: ${s.why}` : (s.why || s.reason),
     problem: !CHOICES.has(s.reason),
   };
 }
@@ -46,7 +46,7 @@ export function renderRunSkills(mount, { doc = globalThis.document } = {}) {
     : plugins.flatMap((p) => (Array.isArray(p.skills) ? p.skills : []).map((s) => `${p.pluginName}:${s}`));
   if (blocked) line('hint hd-ov-skills-blocked', `skills from sets not loaded: ${mount.layer.text || blocked}`);
   else if (names.length) line('mono hd-ov-skills-names', names.join(', '));
-  if (skipped.length) line('hint hd-ov-skills-skipped', `skipped: ${skipped.map((s) => `${s.qualifiedName ?? s.name} (${s.setName} — ${s.why || s.reason})`).join(', ')}`);
+  if (skipped.length) line('hint hd-ov-skills-skipped', `skipped: ${skipped.map((s) => `${s.qualifiedName ?? s.name} (${s.setName}: ${s.why || s.reason})`).join(', ')}`);
   const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
   // A run on another engine with no `.agents/skills` mount gets no skill from a folder at all: no note.
   if (blocked !== 'engine-no-skill-mount') line('hint', blocked ? 'Your personal Claude Code skills still load.'
@@ -66,7 +66,7 @@ export function mcpCopyNote(preview, c) {
 export function skillSkipView(s) {
   return {
     name: s.qualifiedName ?? (s.pluginName ? `${s.pluginName}:${s.name}` : s.name),
-    why: s.reason === 'needs-consent' && s.why ? `off — ${s.why}` : (s.why || s.reason),
+    why: s.reason === 'needs-consent' && s.why ? `off: ${s.why}` : (s.why || s.reason),
     problem: !CHOICES.has(s.reason),
   };
 }

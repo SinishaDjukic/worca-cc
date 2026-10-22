@@ -241,7 +241,7 @@ export function decorFromState(st, { live = true, now = Date.now(), subsOf = nul
 function buildEndResult(endNode, result) {
   const path = result && result.path ? String(result.path) : null;
   const rel = path ? path.split('/').filter(Boolean).pop() : null;
-  return { nodeId: endNode.id, path, rel, text: path ? rel : '— completed', kind: path ? 'path' : 'void' };
+  return { nodeId: endNode.id, path, rel, text: path ? rel : 'completed', kind: path ? 'path' : 'void' };
 }
 
 /** `cycle 2 · fix` (loop-port re-fire) / `cycle 2` / the task title for slices. */
@@ -456,7 +456,7 @@ export function applyDecor(view, decor) {
     view.setNodeChrome(nodeId, {
       color: decor.colors[nodeId] || '',
       gate: decor.gate && decor.gate.nodeId === nodeId
-        ? { wireId: decor.gate.wireId, title: 'waiting on a loop gate — open the question panel' } : null,
+        ? { wireId: decor.gate.wireId, title: 'waiting on a loop gate. Open the question panel' } : null,
       totals: full ? (decor.totals[nodeId] || null) : null,
     });
     const foot = full ? (decor.footers[nodeId] || null) : null;

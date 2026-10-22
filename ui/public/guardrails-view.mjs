@@ -23,11 +23,11 @@ export function guardrailSummary(s) {
 
 function originBadge(doc, origin) {
   if (origin === 'builtin') return h(doc, 'span', 'badge waiting grv-origin', 'built-in');
-  if (typeof origin === 'string' && origin.startsWith('plugin:')) return h(doc, 'span', 'badge violet grv-origin', origin);
+  if (typeof origin === 'string' && origin.startsWith('plugin:')) return h(doc, 'span', 'badge slate grv-origin', origin);
   // Team policy sets (gp:<id>): blue, like every policy origin; the title names the home.
   if (typeof origin === 'string' && origin.startsWith('policy:')) {
-    const b = h(doc, 'span', 'badge blue grv-origin', 'policy');
-    b.title = `Shipped by the team policy on ${origin.slice(7)} — edit it on the Team policy page`;
+    const b = h(doc, 'span', 'badge slate grv-origin', 'policy');
+    b.title = `Shipped by the team policy on ${origin.slice(7)}. Edit it on the Team policy page`;
     return b;
   }
   return h(doc, 'span', 'badge green grv-origin', 'user');
@@ -38,9 +38,9 @@ export function isReadOnlyGuardrailSet(s) {
   return !!s && (s.origin === 'builtin' || (typeof s.origin === 'string' && s.origin.startsWith('policy:')));
 }
 
-// renderGuardrailList(sets) -> <div.grv-list.drows> of divided rows; built-ins get View + no Delete.
+// renderGuardrailList(sets) -> <div.card.grv-list.drows> of divided rows; built-ins get View + no Delete.
 export function renderGuardrailList(sets, { doc = globalThis.document } = {}) {
-  const root = h(doc, 'div', 'grv-list drows');
+  const root = h(doc, 'div', 'card grv-list drows');
   for (const s of sets || []) {
     const card = h(doc, 'div', 'drow drow-stack grv-card');
     card.dataset.id = s.id;

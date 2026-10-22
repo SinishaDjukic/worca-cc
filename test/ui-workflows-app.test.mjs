@@ -1495,7 +1495,7 @@ test('a tool frame mid-turn keeps a card that did not change: the System prompt 
   recv({ type: 'ask-card', threadId: 'ask_0000abcd', messageId: 'askm_0000bbbb', seq: 4, block: { ...draft, state: 'declined' } });
   await tick(3);
   assert.notEqual(doc.querySelector(sel), det.closest('[data-card-id]'), 'a new state is a new element');
-  assert.match(doc.querySelector(sel).textContent, /Declined — Release Notes/);
+  assert.match(doc.querySelector(sel).textContent, /Declined: Release Notes/);
 });
 
 const chatSend = async (w, text) => {
@@ -1923,4 +1923,31 @@ test('Projects, any way U9: the composer dock\'s scope menu lists the workspaces
   w.document.getElementById('wfc-scope').click();
   await tick(6);
   assert.deepEqual([...w.document.querySelectorAll('.wfv-menu .wfv-menu-l')].map((x) => x.textContent), ['No project', 'Team']);
+});
+
+test('F-26: the Save reason shows as text, linked by aria-describedby, and hides on a valid canvas', async () => {
+  const { window: win } = await boot();
+  await go(win, 'workflows');
+  const doc = win.document;
+  const save = doc.getElementById('wfv-save');
+  const reason = doc.getElementById('wfv-save-reason');
+  assert.equal(save.getAttribute('aria-describedby'), 'wfv-save-reason');
+  win.__gv().c.loadTemplate({ id: 'wf_bad', name: 'Bad', version: 2, domain: 'coding',
+    nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} }, { id: 'n_plan', kind: 'agent', key: 'planner', x: 300, y: 0, config: {} },
+      { id: 'n_end', kind: 'end', x: 900, y: 0, config: {} }],
+    wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } }] });
+  await tick(); await tick();
+  assert.equal(save.disabled, true);
+  assert.notEqual(save.title, '');
+  assert.equal(reason.hidden, false);
+  assert.equal(reason.textContent, save.title);
+  win.__gv().c.loadTemplate({ id: 'wf_ok', name: 'Ok', version: 2, domain: 'coding',
+    nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} }, { id: 'n_plan', kind: 'agent', key: 'planner', x: 300, y: 0, config: {} },
+      { id: 'n_rev', kind: 'agent', key: 'reviewer', x: 600, y: 0, config: {} }, { id: 'n_end', kind: 'end', x: 900, y: 0, config: {} }],
+    wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
+      { id: 'w2', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_rev', port: 'plan' } },
+      { id: 'w3', from: { node: 'n_rev', port: 'review' }, to: { node: 'n_plan', port: 'revise' } },
+      { id: 'w4', from: { node: 'n_rev', port: 'pass' }, to: { node: 'n_end', port: 'result' } }] });
+  await tick(); await tick();
+  assert.equal(reason.hidden, true);
 });

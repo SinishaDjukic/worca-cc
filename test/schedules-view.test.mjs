@@ -73,8 +73,22 @@ test('a row that follows a preset names it; a deleted preset says the next run w
   try {
     const text = document.body.textContent;
     assert.match(text, /preset Quick fix/);
-    assert.match(text, /Quick fix — read when the run starts/);
+    assert.match(text, /Quick fix \(read when the run starts\)/);
     assert.match(text, /preset deleted/);
-    assert.match(text, /Old fix — deleted; the next run will fail/);
+    assert.match(text, /Old fix \(deleted: the next run will fail\)/);
   } finally { view.destroy(); }
+});
+
+test('run 4 D22: feed messages read as plain words; the raw detail is kept for the tooltip', async () => {
+  const { plainFeedMessage } = await import('../ui/public/schedules-view.mjs');
+  assert.deepEqual(plainFeedMessage('paused (drain): Paused while worca was stopping'),
+    { text: 'paused · worca was stopping', detail: 'Paused while worca was stopping' });
+  assert.deepEqual(plainFeedMessage("paused (usage limit): You've hit your usage limit — resume on Claude, Copilot or Cursor to continue now."),
+    { text: 'paused · usage limit reached. Resume on Claude, Copilot or Cursor to continue now.', detail: "You've hit your usage limit" });
+  assert.deepEqual(plainFeedMessage('paused (usage limit). resume on Claude to continue now.'),
+    { text: 'paused · usage limit reached. Resume on Claude to continue now.', detail: '' });
+  assert.deepEqual(plainFeedMessage('ended with an error: spawn ENOENT'), { text: 'ended with an error', detail: 'spawn ENOENT' });
+  assert.deepEqual(plainFeedMessage('could not start: project not found.'), { text: 'could not start', detail: 'project not found' });
+  assert.deepEqual(plainFeedMessage('finished.'), { text: 'finished.', detail: '' });
+  assert.deepEqual(plainFeedMessage('paused (something new): x'), { text: 'paused', detail: 'x' });
 });

@@ -8,7 +8,7 @@ import { dirname, basename, join, resolve, sep } from 'node:path';
 import { getDb, tx } from './db.mjs';
 import { worcaHome } from './projects.mjs';
 import { createWorktree, removeWorktree, worktreePathForBranch, snapshotWorktreePatch } from './worktree.mjs';
-import { staleIndexLockNote } from './git-lock.mjs';
+import { staleGitLockNote } from './git-lock.mjs';
 import { readRunManifest, writeRunManifest, updateRunManifest, rmGuarded, RETAIN_REASONS, liveRetainMembers } from './run-manifest.mjs';
 import { findPipelineRowById, retainedWorkFor, checkoutRecordsFor, readPrState, appendAuditById,
   readStoreMeta, runRootSweepLookups } from './artifacts.mjs';
@@ -254,7 +254,7 @@ export function discardCheckout({ id, members = null, force = false, stopService
       if (rec.external) { unlinked.push(rec.projectKey); continue; }       // a linked folder: never snapshot, never remove
       const out = join(patchDir, `checkout-discard-${rec.projectKey}-${Date.now()}.patch`);
       const snap = await snapshotWorktreePatch(rec.worktreeDir, out);        // {ok,file,bytes} | {ok:false,step,message}
-      if (snap.clearedLock) appendAuditById(row.id, `${rec.projectKey}: ${staleIndexLockNote(snap.clearedLock)}`, { actor: by });
+      for (const lock of snap.clearedLocks || []) appendAuditById(row.id, `${rec.projectKey}: ${staleGitLockNote(lock)}`, { actor: by });
       if (!snap.ok && !force) throw cerr(`Could not save uncommitted changes (${snap.message || snap.step}). Discard anyway to lose them.`, 'SNAPSHOT_FAILED');
       if (snap.ok && snap.file) patches.push(snap.file);                    // clean tree → file:null, no patch
       const m = membersOfRow(row).find((x) => x.projectKey === rec.projectKey);

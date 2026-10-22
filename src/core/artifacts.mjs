@@ -32,6 +32,7 @@ import { actorLabel } from './identity.mjs';
 import { attachWatchPipeline, getWatch, watchActive } from './pr-watch.mjs';
 import { insertRunTags, readRunTags, readTagsFor } from './run-tags-store.mjs';
 import { insertRunLabels, readLabelsFor, readRunLabels } from './run-labels-store.mjs';
+import { workInBase } from './in-base.mjs';
 
 // ── DB row <-> state object mapping (Phase 3) ──────────────────────────────────
 // JSON columns are TEXT; (de)serialize at THIS boundary only. Reads are fail-safe:
@@ -2368,6 +2369,13 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     entry.members = await workspaceMemberFacts(row, results, opts);
   }
   const hasMembers = Array.isArray(entry.members) && entry.members.length > 0;
+  // Honest status (D7): a single-project run with no PR of its own whose work already reached its base through
+  // another branch reads "Merged · in dev". Local refs only, cached per (head, base) in in-base.mjs; the key is set
+  // only when true, so every other row's shape is unchanged.
+  if (!hasMembers && !opts.lite && repoDir && feature && survived && !mergeBack) {
+    const inBase = await workInBase({ repoDir, feature, source, startSha: branchObj?.baseSha || null });
+    if (inBase) entry.inBase = inBase;
+  }
   // Live PR state (opt-in; only the UI history endpoints request it). When no PR host is
   // available we still set pr:null (the field is present whenever requested), so
   // callers can distinguish "looked, none" from "did not look".

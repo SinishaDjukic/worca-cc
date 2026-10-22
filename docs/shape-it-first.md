@@ -177,7 +177,7 @@ every host. Beside the ⋯ button:
 - once the feature halts (`Failed · Run 2 · Review`, `Paused · Run 2 · Build`):
   **Resume**, which resumes a paused run and restarts a stopped one as a new run, then
   re-chains the runs after it, and **Re-plan the rest**. The runs that wait read
-  `Waiting`;
+  `Waiting · starts after run 2`;
 - while re-planning, ready to ship, shipped or canceled: no buttons.
 
 The ⋯ menu lists, in this order:
@@ -224,7 +224,7 @@ when the card will come. Either way, one entry for the feature goes into the
 project's `CHANGELOG.md` under `## Unreleased`, committed on the last slice's
 branch, so it ships with the feature.
 
-**Release.** The Ship card and a single run's **Ship it** dialog carry an optional
+**Release.** The Ship card and a single run's **Create PR** dialog carry an optional
 release row. **+ Add a release** suggests the next version: the last tag plus a
 minor (`v1.11.0` → `v1.12.0`), else the version in `package.json`, else you type
 one. Worca records the choice and, once the ship pull request merges (the one PR, or
@@ -297,7 +297,7 @@ reads `Running · Round 2 · fix failing checks` (the trigger words: `fix failin
 `address changes requested`, `resolve conflicts`, `merge dev in`). Its log line ends with the outcome:
 `Round 2 · fix failing checks · pushed a1b2c3d`, or `· nothing pushed: conflict markers left`. With Shaper on, no
 card is posted per fix run. When the watch gives up, the run card says so under its log
-(`Watch stopped · 3 fix runs, checks still failing`) with **Open PR** and **Ask for changes**. On the pull-request
+(`Watch stopped · 3 fix runs, checks still failing`) with **View PR** and **Ask for changes**. On the pull-request
 card the watch is only the PR link's tooltip (`PR #781 · watched`). With Shaper off, each fix run still gets its own
 `PR fix run` card.
 

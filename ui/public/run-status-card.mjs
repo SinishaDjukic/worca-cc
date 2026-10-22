@@ -92,7 +92,7 @@ export function paintRunStatus(host, m) {
  * data-model-action. Own elements that live inside `host` (the chat card's Pause / Stop) are ordered with the made
  * ones; own elements elsewhere (the run page's bar) are only shown or hidden.
  */
-export function syncActions(host, m, { own = {}, pool = [], covered = {}, disable = {}, onAction = () => {} } = {}) {
+export function syncActions(host, m, { own = {}, pool = [], covered = {}, disable = {}, labels = {}, onAction = () => {} } = {}) {
   if (!host) return;
   const doc = host.ownerDocument;
   const want = (m && m.actions) || [];
@@ -126,10 +126,12 @@ export function syncActions(host, m, { own = {}, pool = [], covered = {}, disabl
       b = doc.createElement('button');
       b.type = 'button';
       b.dataset.modelAction = id;
-      b.textContent = ACTION_LABEL[id] || id;
       b.addEventListener('click', () => { if (!b.disabled) host.__onAction(b.dataset.modelAction, b); });
       made.set(id, b);
     }
+    // Run 4 (D2): a host may name an action after what it does here ("Approve 2 runs" for answer); set on every sync.
+    const label = labels[id] || ACTION_LABEL[id] || id;
+    if (b.textContent !== label) b.textContent = label;
     // Set on every sync, so a reason that no longer holds (a run that finished pausing) re-enables the button.
     const why = UNAVAILABLE[id] || disable[id] || '';
     b.disabled = !!why;
@@ -189,7 +191,7 @@ export function renderMemberRows(doc, row) {
     const line = textEl(doc, 'span', 'run-member-line', memberStatusText(m));
     const pr = textEl(doc, 'span', 'run-member-pr', '');
     if (mb.adhoc) pr.append(textEl(doc, 'span', 'runs-indep', 'Independent'));
-    if (m.pr) pr.append(prChip(doc, m.pr, { link: true }));
+    if (m.pr && !m.pr.pending) pr.append(prChip(doc, m.pr, { link: true }));
     const num = textEl(doc, 'span', 'run-member-num', unnumbered ? '' : String(mb.position));
     const main = textEl(doc, 'span', 'run-member-main', '');
     main.append(title, line);

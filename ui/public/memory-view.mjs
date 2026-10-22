@@ -163,7 +163,7 @@ export function renderHealthCard(report, { doc = globalThis.document, host = nul
   }
   if (isGlobal && !runId) {
     card.appendChild(h(doc, 'small', 'hint mem-host-hint',
-      host ? `Runs on ${host.name || host.key}${defragModelPhrase(report?.defragModel)} — pick another project on the New run page.` : NO_HOST_HINT));
+      host ? `Runs on ${host.name || host.key}${defragModelPhrase(report?.defragModel)}. Pick another project on the New run page.` : NO_HOST_HINT));
   }
   card.appendChild(h(doc, 'small', 'hint', 'A defragment run merges duplicate topics, splits overgrown files, drops stale rules and tightens hooks. It is an ordinary pipeline run; the previous files stay in History.'));
   return card;
@@ -173,7 +173,7 @@ export function renderHealthCard(report, { doc = globalThis.document, host = nul
  *  (click, Enter, Space) and holds no interactive descendant; the meta line beside it may hold the
  *  source run's link (D6). */
 export function renderFileList(files, { doc = globalThis.document, selected = '', runInfo = () => null } = {}) {
-  const wrap = h(doc, 'div', 'mem-list');
+  const wrap = h(doc, 'div', 'card mem-list');
   const head = h(doc, 'div', 'mem-list-head');
   head.appendChild(h(doc, 'span', 'mem-list-title', 'Files'));
   const add = h(doc, 'button', 'btn btn-sm mem-new', 'New file');
@@ -181,11 +181,11 @@ export function renderFileList(files, { doc = globalThis.document, selected = ''
   head.appendChild(add);
   wrap.appendChild(head);
   const list = Array.isArray(files) ? files : [];
-  if (!list.length) { wrap.appendChild(h(doc, 'div', 'hist-empty', 'No memory files yet — agents and Chat add them, or click New file.')); return wrap; }
+  if (!list.length) { wrap.appendChild(h(doc, 'div', 'hist-empty', 'No memory files yet. Agents and Chat add them, or click New file.')); return wrap; }
   for (const f of list) {
     const row = h(doc, 'div', `mem-row${f.name === selected ? ' on' : ''}`);
     row.dataset.name = f.name;
-    const main = h(doc, 'div', 'mem-row-main');
+    const main = h(doc, 'div', 'mem-row-main row-btn');
     main.setAttribute('role', 'button'); main.tabIndex = 0;
     main.setAttribute('aria-label', `Open ${f.name}.md`);
     main.appendChild(h(doc, 'div', 'mem-row-name mono', `${f.name}.md`));
@@ -225,9 +225,9 @@ export function renderEditor(file, { doc = globalThis.document, isNew = false, m
   ta.rows = 16; ta.spellcheck = false;
   ta.value = file?.text || (isNew ? '---\nname: \ndescription: \n---\n' : '');
   textField.appendChild(ta);
-  textField.appendChild(h(doc, 'small', 'hint', 'Keep name, description (one line: when the file matters — shown here and to Chat) and optional paths (the file loads only when a matching file is read) in the frontmatter; worca stamps source and updated.'));
+  textField.appendChild(h(doc, 'small', 'hint', 'Keep name, description (one line on when the file matters, shown here and to Chat) and optional paths (the file loads only when a matching file is read) in the frontmatter; worca stamps source and updated.'));
   wrap.appendChild(textField);
-  const text = msg || (locked ? 'A defragment run is live on this scope — Save and Delete resume when it finishes.' : '');
+  const text = msg || (locked ? 'A defragment run is live on this scope. Save and Delete resume when it finishes.' : '');
   const status = h(doc, 'div', `hint mem-msg${msgErr ? ' err' : ''}`, text);
   status.setAttribute('role', 'status');
   wrap.appendChild(status);
@@ -250,11 +250,11 @@ export function collectEditor(rootEl) {
 
 /** The snapshot ring, newest first, one Restore per row (disabled while a defragment run is live). */
 export function renderMemoryHistory(snapshots, { doc = globalThis.document, locked = false, runInfo = () => null } = {}) {
-  const wrap = h(doc, 'div', 'mem-history');
+  const wrap = h(doc, 'div', 'card mem-history');
   wrap.dataset.minLevel = 'expert';             // snapshot restore: expert (docs/ui-levels.md)
   wrap.appendChild(h(doc, 'div', 'mem-list-title', 'History'));
   const list = Array.isArray(snapshots) ? [...snapshots].reverse() : [];
-  if (!list.length) { wrap.appendChild(h(doc, 'div', 'hist-empty', 'No snapshots yet — every write takes one.')); return wrap; }
+  if (!list.length) { wrap.appendChild(h(doc, 'div', 'hist-empty', 'No snapshots yet. Every write takes one.')); return wrap; }
   for (const s of list) {
     const row = h(doc, 'div', 'mem-snap');
     row.dataset.id = s.id;

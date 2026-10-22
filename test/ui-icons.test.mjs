@@ -15,7 +15,7 @@ test('every icon is a 2px round-capped stroke on a 24x24 box, aria-hidden', () =
 });
 
 test('the set has the replacements for the removed glyphs', () => {
-  for (const name of ['x', 'more', 'check', 'chevron', 'chevron-down', 'chevron-up', 'play', 'plus', 'pause', 'arrow-up',
+  for (const name of ['x', 'more', 'check', 'chevron', 'chevron-left', 'chevron-down', 'chevron-up', 'play', 'plus', 'pause', 'arrow-up',
     'arrow-down', 'copy', 'refresh']) assert.ok(Object.hasOwn(ICONS, name), name);
 });
 
@@ -23,6 +23,12 @@ test('the set has the run-state symbols and the PR state icons (runs redesign §
   for (const name of ['question', 'alert', 'pull-request', 'pull-request-draft', 'pull-request-closed', 'merge']) {
     assert.ok(Object.hasOwn(ICONS, name), name);
   }
+});
+
+test('stepped-out is the walking person (the away badge, the away row); away stays the moon', () => {
+  assert.match(ICONS['stepped-out'], /^<path d="M14 2\.2a1\.8 1\.8 0 1 1 0 3\.6/);
+  assert.equal((ICONS['stepped-out'].match(/<path /g) || []).length, 5);
+  assert.match(ICONS.away, /^<path d="M19\.5 14\.5A8 8/);
 });
 
 test('an unknown or inherited name renders an empty box, as homeIcon did', () => {

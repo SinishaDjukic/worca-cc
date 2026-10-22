@@ -14,7 +14,7 @@ import { copyFile, lstat, mkdir, readFile, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import {
-  checkNewWorkspace, createWorkspace, memberHasTeamRepo, readWorkspace, saveWorkspaceScanResult, isWorkspaceMap, rootsHash,
+  checkNewWorkspace, createWorkspace, memberHasTeamRepo, readWorkspace, saveWorkspaceScanResult, isWorkspaceMap, rootsHash, scanModelsPick,
 } from './workspaces.mjs';
 import { workspaceStorePath } from './store.mjs';
 import { autoMetricsHome } from './metrics/sync.mjs';
@@ -64,29 +64,55 @@ export function describeScanModels(m) {
   return `scan agent ${m.scanModel}${m.scanEffort ? ` · ${m.scanEffort}` : ''}, project agents ${m.agentModel} · ${m.agentEffort}`;
 }
 
+/** The scan models EVERY scan with no usable stored pick falls to: WORKSPACE_SCAN_DEFAULT_MODELS,
+ *  or — when a KNOWN catalog (the primary member's) lacks the default SCAN agent model — a THROWN
+ *  Error (the caller's 400, or the automatic re-scan's skip reason). An absent or empty catalog
+ *  ("no info", e.g. a failed catalog GET) keeps today's look-the-other-way default. Never silently
+ *  pick a model this deployment demonstrably does not have (the reported bug). */
+function defaultScanModelsOrThrow(models, warning) {
+  const d = WORKSPACE_SCAN_DEFAULT_MODELS;
+  if (!Array.isArray(models) || models.length === 0) return { ...d, source: 'default', warning: warning ?? null };
+  if (!models.some((m) => m && typeof m.id === 'string' && m.id.toLowerCase() === d.scanModel.toLowerCase())) {
+    const available = models.map((m) => m.id).join(', ');
+    throw new Error(
+      `no workspace scan model is available: the default "${d.scanModel}" is not in this deployment's model catalog (available: ${available}) — configure a scan model in Settings › Runs › Workspaces before scanning`
+    );
+  }
+  return { ...d, source: 'default', warning: warning ?? null };
+}
+
 /**
- * The models ONE scan runs with (D18): the pick sent with the scan (checked strictly — a bad one is
- * the caller's 400), else Settings › Runs › Workspaces (a pick that no longer fits this catalog
- * degrades to the defaults with a warning, never a refused scan), else Sonnet · medium for both.
+ * The models ONE scan runs with (D18, D19): the pick sent with the scan (checked strictly — a bad
+ * one is the caller's 400), else the workspace's OWN stored pick (captured at creation: source
+ * 'workspace'), else Settings › Runs › Workspaces (source 'settings') — a stored pick that no longer
+ * fits this catalog degrades to the next source with a warning, never a refused scan — else the
+ * defaults; the defaults are only used when a known catalog actually offers the default scan agent
+ * model, otherwise resolveScanModels THROWS so the caller blocks with clear guidance (D19).
  * `models` = the catalog of the scan's primary member (what the run resolves against).
+ * @param {{explicit?:object, stored?:object|null, workspacePick?:object|null, models?:Array|null}} opts
  * @returns {{scanModel:string, scanEffort:(string|null), agentModel:string, agentEffort:string,
- *   source:'explicit'|'settings'|'default', warning:(string|null)}}
- * @throws {Error} on a malformed or unknown explicit pick
+ *   source:'explicit'|'workspace'|'settings'|'default', warning:(string|null)}}
+ * @throws {Error} on a malformed/unknown explicit pick, or when the last resort has no usable model
  */
-export function resolveScanModels({ explicit, stored = null, models = null } = {}) {
+export function resolveScanModels({ explicit, stored = null, workspacePick = null, models = null } = {}) {
   const picked = assertWorkspaceScanInput(explicit, models);
   if (picked) return { ...picked, source: 'explicit', warning: null };
-  if (stored) {
+
+  let degraded = null;
+  for (const [source, label, pick] of [
+    ['workspace', 'the workspace\'s create-time scan pick', workspacePick],
+    ['settings', 'Settings › Runs › Workspaces', stored],
+  ]) {
+    if (!pick) continue;
     try {
-      return { ...assertWorkspaceScanInput(stored, models), source: 'settings', warning: null };
+      return { ...assertWorkspaceScanInput(pick, models), source, warning: null };
     } catch (err) {
-      return {
-        ...WORKSPACE_SCAN_DEFAULT_MODELS, source: 'default',
-        warning: `Workspace scan models (Settings › Runs › Workspaces) no longer fit: ${err.message} — this scan uses ${describeScanModels(WORKSPACE_SCAN_DEFAULT_MODELS)}`,
-      };
+      // A stored pick that no longer fits this catalog degrades (never refuses)…
+      degraded = `${source === 'settings' ? 'Workspace scan models' : 'The workspace\'s scan pick'} (${label}) no longer fit: ${err.message} — this scan uses ${describeScanModels(WORKSPACE_SCAN_DEFAULT_MODELS)}`;
+      // …and falls through to the next source; the last resort blocks when the default is absent.
     }
   }
-  return { ...WORKSPACE_SCAN_DEFAULT_MODELS, source: 'default', warning: null };
+  return defaultScanModelsOrThrow(models, degraded);
 }
 
 /**
@@ -97,7 +123,7 @@ export function resolveScanModels({ explicit, stored = null, models = null } = {
  * request never pays for the per-member home scans (~0.2 s a member).
  * @returns {Promise<{workspace:object, metricsHomeAuto:boolean}>}
  */
-export async function createWorkspaceWithHomes({ name, projectPaths, description = '', metricsProject = null, policyProject = null } = {}) {
+export async function createWorkspaceWithHomes({ name, projectPaths, description = '', metricsProject = null, policyProject = null, scanModels = null } = {}) {
   checkNewWorkspace({ name, projectPaths });   // createWorkspace re-checks inside its tx
   const explicit = typeof metricsProject === 'string' && metricsProject ? metricsProject : null;
   // P5: a Folder member has no origin to record on — the home scans read git members only (no git in a Folder's folder).
@@ -109,7 +135,7 @@ export async function createWorkspaceWithHomes({ name, projectPaths, description
     const viaMetrics = metrics ? await resolveProjectPolicy(metrics, { discover: false }).catch(() => null) : null;
     policy = viaMetrics?.ok ? metrics : await autoPolicyHome({ projectPaths: gitPaths }).catch(() => null);
   }
-  const workspace = await createWorkspace({ name, projectPaths, description, metricsProject: metrics, policyProject: policy });
+  const workspace = await createWorkspace({ name, projectPaths, description, metricsProject: metrics, policyProject: policy, scanModels });
   return { workspace, metricsHomeAuto: !explicit && !!metrics };
 }
 
@@ -189,10 +215,10 @@ export async function adoptGraphFile(map, { pipelineDir, storeDir, renameFile = 
  * survive the re-scan; the merged graph is copied into the workspace store. Without a map the
  * render card's markdown (workspace-scan.md) is saved as before. Either way the description is
  * marked 'generated'. Never throws.
- * @param {{workspaceId:string, name:string, projectPaths:string[], pipelineDir:string}} opts
+ * @param {{workspaceId:string, name:string, projectPaths:string[], pipelineDir:string, models?:object|null}} opts
  * @returns {Promise<{outcome:'created'|'updated'|'failed', workspaceId:string, error?:string, code?:string|null}>}
  */
-export async function finalizeWorkspaceScan({ workspaceId, name, projectPaths, pipelineDir }) {
+export async function finalizeWorkspaceScan({ workspaceId, name, projectPaths, pipelineDir, models = null }) {
   let description = '';
   try {
     description = (await readFile(join(pipelineDir, WORKSPACE_SCAN_OUTPUT_FILE), 'utf8')).trim();
@@ -208,6 +234,14 @@ export async function finalizeWorkspaceScan({ workspaceId, name, projectPaths, p
     if (existing && rootsHash(existing.projectPaths) !== rootsHash(projectPaths)) {
       return { outcome: 'failed', workspaceId, error: 'the workspace\'s members changed while the scan ran; nothing saved (a re-scan of the new set replaces it)', code: 'SET_CHANGED' };
     }
+    // An EXISTING workspace pick is persisted lazily ONLY for a scan that ran on a deliberately
+    // chosen model (source 'explicit' — the create wizard's pick or the pick-a-model window a rescan
+    // opens for a pick-less/stale workspace). A scan that fell through to Settings › Runs › Workspaces
+    // or the default must NOT bake that snapshot into the workspace: the pick-a-model flow is the
+    // only thing that establishes a legacy (pre-v57) workspace's pick, and a never-chosen default
+    // must not silently stick. The persisting is lazy in saveWorkspaceScanResult (nothing stored on
+    // a pick the workspace already has; nothing storable on a resume, models null).
+    const resolvedPick = existing && models && models.source === 'explicit' ? scanModelsPick(models) : null;
     if (!existing) {
       // The run is filed under the id the launch froze (scan D3): a workspace created under any
       // other id — a member's repository root moved while the scan ran — would never list it.
@@ -215,12 +249,17 @@ export async function finalizeWorkspaceScan({ workspaceId, name, projectPaths, p
       if (fresh !== workspaceId) {
         return { outcome: 'failed', workspaceId, error: `the project set now keys as ${fresh}, not ${workspaceId}: a member's repository root changed during the scan; nothing saved`, code: 'ID_MISMATCH' };
       }
-      const { workspace } = await createWorkspaceWithHomes({ name, projectPaths, description });
+      // Persist the wizard's deliberate pick (explicit only) on creation — a scan that fell through
+      // to settings/defaults must not bake those into the workspace. Re-scans keep the stored pick.
+      const scanModels = models && models.source === 'explicit'
+        ? scanModelsPick(models)
+        : null;
+      const { workspace } = await createWorkspaceWithHomes({ name, projectPaths, description, scanModels });
       id = workspace.id;
       outcome = 'created';
     }
     const map = scan ? await adoptGraphFile(scan.map, { pipelineDir, storeDir: workspaceStorePath(id) }) : null;
-    await saveWorkspaceScanResult(id, { description, map, synthesis: scan ? scan.synthesis : null });
+    await saveWorkspaceScanResult(id, { description, map, synthesis: scan ? scan.synthesis : null, scanModels: resolvedPick });
     return { outcome, workspaceId: id };
   } catch (err) {
     return { outcome: 'failed', workspaceId, error: (err && err.message) || String(err), code: (err && err.code) || null };

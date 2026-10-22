@@ -6,7 +6,7 @@
 // Layout (legacy, the retained default):
 //         <projectDir>/.worca-cc/worktrees/<pipelineId>/   <- checkout
 // Layout (detached, caller passes baseDir + checkoutName):
-//         <worcaHome>/runs/<pipelineId>/repos/<projectKey>/
+//         <worcaHome>/runs/<pipelineId>/repos/<projectKey>/   (shortened by boundCheckoutName)
 // Either way the shared .git store stays in <projectDir>/.git <- no duplication.
 //
 // Branch naming: callers pass a fully-formed feature branch (e.g. "worca-cc/foo-abc12345")
@@ -19,7 +19,7 @@ import { mkdir, rm, realpath, readdir, rename, stat } from 'node:fs/promises';
 import { basename, join, resolve, sep } from 'node:path';
 
 import { slugify } from './artifacts.mjs';
-import { clearStaleIndexLock } from './git-lock.mjs';
+import { clearStaleGitLocks } from './git-lock.mjs';
 // settings.mjs is a leaf (node builtins only), so importing the §10 flag reader here
 // adds no dependency on the DB layer — worktree.mjs stays DB-free.
 import { runRootMode } from './settings.mjs';
@@ -223,6 +223,43 @@ export async function worktreePathForBranch(projectDir, branch) {
   return null;
 }
 
+// git's fsmonitor daemon binds `<git common dir>/worktrees/<checkout name>/fsmonitor--daemon.ipc`
+// and its client connects by that ABSOLUTE path. Past AF_UNIX's sun_path the daemon still binds (it
+// chdirs first) but no client ever connects, so with core.fsmonitor on every index refresh in the
+// checkout hangs and leaks one daemon (#411). Usable bytes: 103 on macOS/BSD, 107 on Linux; Windows
+// uses named pipes. git appends a counter to an admin dir name that is taken (another run of the same
+// project), so 2 bytes are kept for it.
+const FSMONITOR_IPC_TAIL = '/fsmonitor--daemon.ipc';
+const ADMIN_COUNTER_RESERVE = 2;
+const KEY_HASH_RE = /^(.*)-([0-9a-f]{8})$/;
+
+/**
+ * The checkout dir name to use for `name` in the repo whose git common dir is `gitCommonDir`: `name`
+ * itself when the fsmonitor socket path fits, else a projectKey-shaped name (`<slug>-<8 hex>`) with
+ * only its slug cut, so the hash that makes it unique stays. Never throws: a long path only hurts
+ * with core.fsmonitor on, so a name it cannot shorten safely (no hash), or one no shortening would
+ * make fit, is returned unchanged.
+ */
+export function boundCheckoutName(name, gitCommonDir, platform = process.platform) {
+  if (platform === 'win32' || !gitCommonDir) return name;
+  const usable = platform === 'linux' ? 107 : 103;
+  const budget = usable - ADMIN_COUNTER_RESERVE
+    - Buffer.byteLength(`${gitCommonDir}/worktrees/${FSMONITOR_IPC_TAIL}`);
+  if (Buffer.byteLength(name) <= budget) return name;
+  const m = KEY_HASH_RE.exec(name);
+  // No hash to keep, or a common dir so deep that even the hash alone overflows: no name can help.
+  if (!m || budget < m[2].length) return name;
+  const slug = m[1].slice(0, Math.max(0, budget - 9)).replace(/[-._]+$/, '');
+  return slug ? `${slug}-${m[2]}` : m[2];
+}
+
+/** The realpath'd git common dir of `projectDir` (what git builds the fsmonitor socket path from), or null. */
+async function gitCommonDir(projectDir) {
+  const r = await git(projectDir, ['rev-parse', '--git-common-dir']);
+  const out = r.ok ? r.stdout.trim() : '';
+  return out ? realpath(resolve(projectDir, out)).catch(() => null) : null;
+}
+
 /**
  * Create a worktree checking out a new branch <featureBranch> off <sourceBranch>.
  * When the branch already exists locally we attach to it instead of forking (resume
@@ -264,10 +301,12 @@ export async function createWorktree({
   // reports (git emits realpaths). Without this the M2 self-equality check below
   // mis-fires on symlinked roots (e.g. macOS /tmp -> /private/tmp).
   const baseReal = await realpath(base).catch(() => resolve(base));
-  const name = checkoutName || pipelineId;
-  if (!/^[A-Za-z0-9._-]+$/.test(name) || name === '.' || name === '..') {
-    throw new Error(`invalid checkout name: ${JSON.stringify(name)}`);
+  if (checkoutName && (!/^[A-Za-z0-9._-]+$/.test(checkoutName) || checkoutName === '.' || checkoutName === '..')) {
+    throw new Error(`invalid checkout name: ${JSON.stringify(checkoutName)}`);
   }
+  // A caller-named checkout (a detached run's projectKey) is bounded so git's fsmonitor socket fits
+  // (#411); the returned worktreeDir is the name on disk, so callers render basename(worktreeDir).
+  const name = checkoutName ? boundCheckoutName(checkoutName, await gitCommonDir(projectDir)) : pipelineId;
   const worktreeDir = join(baseReal, name);
   // Belt-and-braces: the sanitized name can't traverse, but assert containment
   // so a future caller can't turn this into a delete-anything primitive.
@@ -491,7 +530,7 @@ export function runGitCapture(cwd, args, { signal, timeoutMs = SLOW_GIT_TIMEOUT_
  * dropped from the index first (`git add -A` with an exclude never unstages) and excluded from `add -A`
  * while it still exists on disk — and the same attempts: the repo's identity, then a local fallback
  * identity, then, only when `bypassHooks` (a detached run, exactly as at teardown), once more with hooks
- * off. Never overrides signing. A stale index.lock is cleared once. Never throws. With `branch`, it refuses
+ * off. Never overrides signing. Stale git locks are cleared once. Never throws. With `branch`, it refuses
  * (step 'branch') unless HEAD is that branch: a person may have detached or switched the retained worktree
  * while recovering by hand, and Apply deletes the worktree after a good commit. For the same reason it refuses
  * (step 'add') a worktree with unresolved conflicts, which `add -A` would mark resolved.
@@ -503,7 +542,7 @@ export async function commitStagedWork(worktreeDir, { message, exclude = [], byp
   const msgOf = (r) => r.stderr.trim() || r.stdout.trim() || `exit ${r.code}`;
   const indexWrite = async (args) => {
     let r = await run(args);
-    if (!r.ok && await clearStaleIndexLock(worktreeDir)) r = await run(args);
+    if (!r.ok && (await clearStaleGitLocks(worktreeDir)).length) r = await run(args);
     return r;
   };
   const status = await run(['status', '--porcelain']);
@@ -564,21 +603,21 @@ export async function indexTracks(dir, rel) {
  * name. A clean tree is SUCCESS with `file: null` (nothing to save is not a
  * failure — discard after a manual commit relies on it). A git failure returns
  * without removing anything so the checkout stays authoritative.
- * When a stale index lock had to be removed first, every result after that carries
- * `clearedLock: { path, ageMs }` so the caller can leave a trace of it.
+ * When stale git locks had to be removed first, every result after that carries
+ * `clearedLocks: [{ kind, path, ageMs }]` so the caller can leave a trace of each.
  */
 export async function snapshotWorktreePatch(worktreeDir, outFile) {
   if (!worktreeDir || !outFile) {
     return { ok: false, step: 'path', message: 'worktreeDir and outFile are required' };
   }
   let add = await git(worktreeDir, ['add', '-A'], { timeout: SLOW_GIT_TIMEOUT_MS });
-  // A leftover lock from a killed git is the usual reason a retained run's commit failed;
-  // without this, discard and delete could never save the work once it is stale.
-  const clearedLock = add.ok ? null : await clearStaleIndexLock(worktreeDir);
-  if (clearedLock) {
+  // Leftover locks from a killed git are the usual reason a retained run's commit failed;
+  // without this, discard and delete could never save the work once they are stale.
+  const clearedLocks = add.ok ? [] : await clearStaleGitLocks(worktreeDir);
+  if (clearedLocks.length) {
     add = await git(worktreeDir, ['add', '-A'], { timeout: SLOW_GIT_TIMEOUT_MS });
   }
-  const done = (res) => (clearedLock ? { ...res, clearedLock } : res);
+  const done = (res) => (clearedLocks.length ? { ...res, clearedLocks } : res);
   if (!add.ok) {
     return done({ ok: false, step: 'add', message: add.stderr.trim() || `exit ${add.code}`, fromStderr: !!add.stderr.trim() });
   }

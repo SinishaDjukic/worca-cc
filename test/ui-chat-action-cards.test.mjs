@@ -55,7 +55,7 @@ test('receipt: Changed since keeps Revert disabled with the note; another failur
       const { el } = buildReceiptCard(RECEIPT, ctx);
       const revert = el.querySelector('[data-chat-revert]');
       click(revert); await tick();
-      assert.equal(el.querySelector('.ask-rcard-note').textContent, 'Changed since — not reverted');
+      assert.equal(el.querySelector('.ask-rcard-note').textContent, 'Not reverted: it changed since');
       assert.equal(revert.disabled, true);
       assert.equal(el.querySelector('.ask-card-err').textContent, '');
     } },
@@ -63,7 +63,7 @@ test('receipt: Changed since keeps Revert disabled with the note; another failur
       const { ctx } = ctxOf();
       const { el } = buildReceiptCard({ ...RECEIPT, card: { ...RECEIPT.card, result: { code: 'CHANGED_SINCE', error: 'Changed since — not reverted' } } }, ctx);
       assert.equal(el.querySelector('[data-chat-revert]').disabled, true);
-      assert.equal(el.querySelector('.ask-rcard-note').textContent, 'Changed since — not reverted');
+      assert.equal(el.querySelector('.ask-rcard-note').textContent, 'Not reverted: it changed since');
     } },
     { name: 'a failed write', run: async () => {
       const { ctx } = ctxOf({ post: async () => { throw refused('REVERT_FAILED', 'The run is still pausing — try again in a moment'); } });
@@ -96,19 +96,20 @@ test('receipt: Changed since keeps Revert disabled with the note; another failur
 });
 
 const STOP = { kind: 'card', id: 'card_00000003', state: 'proposed', card: { type: 'run-stop', runId: 'uuid-1', pipelineId: 'aaaa0001', title: 'Fix login', branch: 'worca/fix-login', status: 'running' } };
-test('run-stop: the warning itself (R7) — title, run, branch, copy, Keep running / red Stop pipeline; busy and inline errors', async () => {
+test('run-stop: the warning itself (R7) — title, run, branch, copy, Keep running / red Stop run; busy and inline errors', async () => {
   await checkRows([
     { name: 'proposed', run: async () => {
       const { ctx, posts } = ctxOf();
       const { el } = buildRunStopCard(STOP, ctx);
-      assert.equal(el.querySelector('.ask-mcard-title').textContent, 'Stop this pipeline?');
+      assert.equal(el.querySelector('.ask-mcard-title').textContent, 'Stop this run?');
       assert.equal(el.querySelector('.ask-stopcard-title').textContent, 'Fix login');
-      assert.equal(el.querySelector('.ask-stopcard-branch').textContent, 'worca/fix-login');
+      assert.equal(el.querySelector('.ask-stopcard-title').title, 'worca/fix-login');
+      assert.equal(el.querySelector('.ask-stopcard-branch'), null);
       assert.equal(el.querySelector('.ask-stopcard-copy').textContent, "A stopped run can't be resumed. Its work so far stays on its branch.");
       const keep = el.querySelector('[data-chat-stop-keep]');
       const stop = el.querySelector('[data-chat-stop-confirm]');
       assert.equal(keep.textContent, 'Keep running');
-      assert.equal(stop.textContent, 'Stop pipeline');
+      assert.equal(stop.textContent, 'Stop run');
       assert.ok(stop.classList.contains('btn-danger'), 'the danger button: red text on the light red fill');
       click(stop);
       assert.equal(stop.textContent, 'Stopping…'); assert.equal(keep.disabled, true);
@@ -132,7 +133,7 @@ test('run-stop: the warning itself (R7) — title, run, branch, copy, Keep runni
       const stop = el.querySelector('[data-chat-stop-confirm]');
       click(stop); await tick();
       assert.equal(el.querySelector('.ask-card-err').textContent, 'card is applied');
-      assert.equal(stop.disabled, false); assert.equal(stop.textContent, 'Stop pipeline');
+      assert.equal(stop.disabled, false); assert.equal(stop.textContent, 'Stop run');
     } },
     { name: 'applied, failed, declined', run: async () => {
       const { ctx } = ctxOf();
@@ -141,7 +142,7 @@ test('run-stop: the warning itself (R7) — title, run, branch, copy, Keep runni
       assert.equal(applied.querySelector('[data-chat-stop-confirm]'), null);
       assert.equal(buildRunStopCard({ ...STOP, state: 'failed', error: "An interrupted run can't be stopped — it stays resumable" }, ctx).el.querySelector('.ask-mcard-failed').textContent,
         "Could not stop: An interrupted run can't be stopped — it stays resumable");
-      assert.equal(buildRunStopCard({ ...STOP, state: 'declined' }, ctx).el.textContent, 'Not stopped — Fix login');
+      assert.equal(buildRunStopCard({ ...STOP, state: 'declined' }, ctx).el.textContent, 'Not stopped: Fix login');
     } },
   ]);
 });
@@ -185,21 +186,21 @@ test('pull-request: branch → base and files ±; Create opens Ship it with the 
       const { ctx } = ctxOf({ openShipIt: () => undefined });
       const { el } = buildPullRequestCard(PR, ctx);
       click(el.querySelector('[data-chat-pr-create]')); await tick();
-      assert.equal(el.querySelector('.ask-card-err').textContent, 'Could not open the Ship it dialog.');
+      assert.equal(el.querySelector('.ask-card-err').textContent, 'Could not open the Create PR dialog.');
       assert.equal(el.querySelector('[data-chat-pr-create]').disabled, false);
     } },
-    { name: 'applied: View pull request opens in a new tab; a workspace lists each member; declined is a stub', run: async () => {
+    { name: 'applied: View PR opens in a new tab; a workspace lists each member; declined is a stub', run: async () => {
       const { ctx } = ctxOf();
       const one = buildPullRequestCard({ ...PR, state: 'applied', card: { ...PR.card, result: { url: 'https://x/pull/7', draft: false, existed: false } } }, ctx).el;
       const a = one.querySelector('.ask-prcard-link');
-      assert.equal(a.textContent, 'View pull request'); assert.equal(a.href, 'https://x/pull/7');
+      assert.equal(a.textContent, 'View PR'); assert.equal(a.href, 'https://x/pull/7');
       assert.equal(a.target, '_blank'); assert.equal(a.rel, 'noopener noreferrer');
       assert.equal(one.querySelector('[data-chat-pr-create]'), null);
       const ws = buildPullRequestCard({ ...PR, state: 'applied', card: { ...PR.card, result: { url: 'https://x/pull/1', draft: false, existed: false,
         members: [{ url: 'https://x/pull/1', memberKey: 'api-11111111' }, { url: 'https://x/pull/2', draft: true, memberKey: 'web-22222222' }] } } }, ctx).el;
-      assert.deepEqual([...ws.querySelectorAll('.ask-prcard-link')].map((x) => x.textContent), ['View pull request · api', 'View pull request · web']);
+      assert.deepEqual([...ws.querySelectorAll('.ask-prcard-link')].map((x) => x.textContent), ['View PR · api', 'View PR · web']);
       assert.equal(ws.querySelectorAll('.ask-prcard-links .ask-mcard-kind').length, 1, 'one Draft chip');
-      assert.equal(buildPullRequestCard({ ...PR, state: 'declined' }, ctx).el.textContent, 'Not now — Fix login');
+      assert.equal(buildPullRequestCard({ ...PR, state: 'declined' }, ctx).el.textContent, 'Not now: Fix login');
     } },
   ]);
 });
@@ -253,7 +254,7 @@ test('refine cycle 2: Away now names itself once; declined stubs carry the reada
   assert.equal(away.querySelector('[data-chat-revert]').getAttribute('aria-label'), 'Revert Away mode');
   assert.equal(away.querySelector('.ask-rcard-note').hasAttribute('role'), false, 'no live region beside ctx.announce');
   click(away.querySelector('[data-chat-revert]')); await tick();
-  assert.deepEqual(said, ['Changed since — not reverted']);
+  assert.deepEqual(said, ['Not reverted: it changed since']);
   assert.ok(buildRunStopCard({ ...STOP, state: 'declined' }, ctx).el.classList.contains('ask-actcard-stub'));
   assert.ok(buildPullRequestCard({ ...PR, state: 'declined' }, ctx).el.classList.contains('ask-actcard-stub'));
 });

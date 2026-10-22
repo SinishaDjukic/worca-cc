@@ -32,11 +32,12 @@ test('labels: the record round-trips them and drops non-strings; a labels-only f
 });
 
 test('menu items: Show with counts, Group by, Select; Started by only on shared deployments', () => {
-  const items = viewMenuItems({ show: 'all', groupBy: 'none', person: '' }, { all: 41, needs: 2, running: 3, finished: 36, archived: null },
+  const items = viewMenuItems({ show: 'all', groupBy: 'none', person: '' }, { all: 41, needs: 2, running: 3, waiting: 2, finished: 36, archived: null },
     { people: [], onPick: () => {} });
   assert.deepEqual(items.filter((i) => i.header).map((i) => i.header), ['Show', 'Group by']);
-  assert.deepEqual(items.filter((i) => i.checked != null).slice(0, 5).map((i) => [i.label, i.hint, i.checked]),
-    [['All', '41', true], ['Needs you', '2', false], ['Running', '3', false], ['Finished', '36', false], ['Archived', '', false]]);
+  assert.deepEqual(items.filter((i) => i.checked != null).slice(0, 6).map((i) => [i.label, i.hint, i.checked]),
+    [['All', '41', true], ['Needs you', '2', false], ['Running', '3', false], ['Waiting', '2', false], ['Finished', '36', false], ['Archived', '', false]]);
+  assert.equal(viewChip({ show: 'waiting', groupBy: 'none', person: '' }, { shown: 2, total: 41 }), 'Waiting · 2 of 41 runs');
   assert.ok(items.some((i) => i.label === 'Select'));
   const shared = viewMenuItems(DEFAULT_VIEW, {}, { people: [{ key: 'ana', name: 'Ana' }], onPick: () => {} });
   assert.ok(shared.some((i) => i.header === 'Started by'));

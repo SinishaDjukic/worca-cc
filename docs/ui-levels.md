@@ -139,7 +139,7 @@ be skipped by forgetting it.
 | Runs counts: the amber Needs-you number (no symbol), else the live count as a grey number | S — each hidden at zero |
 | Chat (the first sidebar row; the app's home) | S |
 | Chat home: Start from a preset chips; "N more…" opens New run below Advanced and Settings › Presets from Advanced | S |
-| The account corner and its menu: Interface mode, Settings, the away row, "Signed in as" (a shared identity) | S |
+| The account corner and its menu: Interface mode, Settings, the Away and Keep awake switches, "Signed in as" (a shared identity) | S |
 | The spend ring on the avatar and the menu's spend card (with the free-request row) | S — never hidden: a blocked limit turns the ring red and full, and the card and the New pipeline note say until when |
 | Statistics, Workspaces | A |
 | Add-ons: the group label, Marketplace, Connectors | A |
@@ -183,7 +183,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Run page Overview: Perspective checklists (Shaper, gated): the latest review cycle as one summary line, unmet items open with their evidence, met items behind "Show N met items", earlier cycles behind "Earlier cycles" | S |
 | Run page: usage-limit notice (reset time, Resume at HH:MM, Cancel) | S |
 | Runs list / glance: "resets HH:MM" / "resumes HH:MM" | S |
-| Runs list: the View menu (Show with counts, Group by, Started by on a shared deployment, Select) and its chip; the row and member checkboxes, Select all, Space / ⌘A / Esc; the action bar's Stop and Archive (Undo); the row ⋯ menu's Stop, Archive, Open PR and Open feature | S |
+| Runs list: the View menu (Show with counts, Group by, Started by on a shared deployment, Select) and its chip; the row and member checkboxes, Select all, Space / ⌘A / Esc; the action bar's Stop and Archive (Undo); the row ⋯ menu's Stop, Archive, View PR and Open feature | S |
 | Runs list: the label filter (chosen from the top search, "Runs labelled hotfix" or label:hotfix) and its chips with × under the header; the action bar's Label (with runLabels) | S |
 | Runs list: Delete (the action bar and the row ⋯ menu); Add to group… and Remove from group (the row ⋯ menu) | A |
 | Run page: "Add to group…" on the Group row of a run in no group, the same as in the list's row menu | A |
@@ -295,6 +295,7 @@ inside the view.
 | Project Memory tab (view and edit files) | A |
 | Project page Actions tab | A |
 | Workspaces list, create wizard (with its Add… / paste-box import), workspace page Overview (projects, description, re-scan, delete) | A |
+| Workspace header "Scan model" control (view / change / clear the saved re-scan model); the choose-a-model window a re-scan opens when the workspace has no usable pick — it unblocks the re-scan, so it shows at any level | A |
 | Workspace page Map tab (coverage, graph, edges, confirm / reject / clear, add / delete manual edges, Regenerate description) | A |
 | Workspace page Actions tab | A |
 | Memory health, Defragment, snapshot restore | E — the health card stays visible when overdue or failing |
@@ -350,10 +351,10 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Ask: live run card, "Clarify ✓ · Plan ✓ · Refine ✓ while planning", plan file, saved path + Open | S |
 | Ask: live run card, the feature strip of a sliced plan: progress, each slice's state and PR, Review plan / Answer / Open / Resume slice / Re-plan the rest / Cancel the rest / Open the re-plan, "Approve each slice's plan" | S |
 | Ask: run card result, the checklist tally ("Checklist: 3 met · 1 unmet · 1 n/a") on a finished shaped run | S |
-| Ask: the run card's agent model label, its artifact chips and "All artifacts", Create pull request / View pull request | A — as on the run page |
+| Ask: the run card's agent model label, its artifact chips and "All artifacts", Create PR / View PR | A — as on the run page |
 | Ask: a run without a project's file list on its run card (Artifacts · n; each file's name, size and Download; "All artifacts") | S — its Artifacts tab is Simple too |
 | Ask: the pull-request card's Watch PR state, as its PR link tooltip (read-only; the switch stays on the run page) | all |
-| Ask: the run card's stopped-watch line (`Watch stopped · …`, Open PR, Ask for changes) | all (rule 1) |
+| Ask: the run card's stopped-watch line (`Watch stopped · …`, View PR, Ask for changes) | all (rule 1) |
 | Ask: the Ask for changes field on finished run, feature, Ship and pull-request cards | all (rule 1) |
 | Ask: the Changes card (`Changes to …`, Start round 2 / Add to Run 3's plan / Add Run 4 / Start Run 4, Not now) | all (rule 1) |
 | Ask: the Route card (`Where does this go?`, Add to … / Own run now / Save for later, Not now) | all (rule 1) |

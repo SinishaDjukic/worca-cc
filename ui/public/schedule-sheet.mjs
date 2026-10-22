@@ -13,10 +13,11 @@
 //   + sync: { beforeRun?, onDiverged? }  only with the opt-in `sync` option, and only what was set
 
 import {
-  WEEKDAYS, normalizeRule, previewOccurrences, describeRule, formatInstant, formatCountdown,
+  WEEKDAYS, normalizeRule, previewOccurrences, describeRule, formatCountdown,
   zonedToUtc, zonedParts, localDate, isValidTimeZone,
 } from '../../src/shared/schedule/recurrence.mjs';
 import { guardModal } from './modal-guard.mjs';
+import { whenLabel } from './runs-list.mjs';
 
 const DAY_LABEL = { mo: 'Mo', tu: 'Tu', we: 'We', th: 'Th', fr: 'Fr', sa: 'Sa', su: 'Su' };
 const DAY_NAME = { mo: 'Monday', tu: 'Tuesday', we: 'Wednesday', th: 'Thursday', fr: 'Friday', sa: 'Saturday', su: 'Sunday' };
@@ -231,7 +232,7 @@ export function openScheduleSheet({
     const divergedSel = selectEl('sched-sync-diverged', divergedOpts, divergedStart, 'If the base has diverged');
     const syncRow = showSync ? h('div', { class: 'field-grid-2 sched-sync' },
       h('div', { class: 'field field-compact' }, h('span', { class: 'label', text: 'Sync' }),
-        h('label', { class: 'switch-row' }, syncAutoIn, h('span', { class: 'switch switch-sm' }), h('span', { class: 'txt', text: 'Auto-sync before the run' }))),
+        h('label', { class: 'switch-row' }, syncAutoIn, h('span', { class: 'switch' }), h('span', { class: 'txt', text: 'Auto-sync before the run' }))),
       h('div', { class: 'field field-compact' }, h('label', { for: 'sched-sync-diverged', text: 'If the base has diverged' }), divergedSel)) : null;
     syncAutoIn.addEventListener('change', () => { syncAutoTouched = true; });
     /** Only what the person chose: undefined when nothing was set, so no `sync` key at all. */
@@ -250,10 +251,9 @@ export function openScheduleSheet({
     const err = h('div', { class: 'hint err sched-err', hidden: true });
     const cancelBtn = h('button', { type: 'button', class: 'btn sched-cancel', text: 'Cancel' });
     const okBtn = h('button', { type: 'button', class: 'btn btn-primary sched-ok', text: confirmLabel });
-    const closeBtn = h('button', { type: 'button', class: 'btn', text: 'Close' });
 
     const card = h('div', { class: 'card sched-card' },
-      h('div', { class: 'card-head' }, h('h2', { id: 'sched-title', text: heading }), closeBtn),
+      h('div', { class: 'card-head' }, h('h2', { id: 'sched-title', text: heading })),
       runTitle ? h('div', { class: 'sched-run-title', text: runTitle }) : null,
       showKind ? kindSeg : null,
       showPresets ? seg : null,
@@ -407,7 +407,7 @@ export function openScheduleSheet({
         if (ms == null) problem = 'Pick a date and a time.';
         else if (ms <= Date.now()) problem = 'That time is already in the past.';
         sentence.replaceChildren(
-          h('b', { text: ms == null ? 'Once' : `Once, on ${formatInstant(ms, tz, { withYear: true })}` }),
+          h('b', { text: ms == null ? 'Once' : `Once, on ${whenLabel(ms, Date.now(), tz)}` }),
           h('div', { class: 'sched-next', text: ms != null && ms > Date.now() ? `Starts in ${formatCountdown(ms - Date.now())}` : '' }));
       } else {
         const norm = currentRule();
@@ -423,7 +423,7 @@ export function openScheduleSheet({
           if (!next.length) problem = 'This schedule has no future run.';
           sentence.replaceChildren(
             h('b', { text: describeRule(norm.rule) }),
-            h('div', { class: 'sched-next', text: next.length ? `Next: ${next.map((t) => formatInstant(t, tz)).join('  ·  ')}` : '' }));
+            h('div', { class: 'sched-next', text: next.length ? `Next: ${next.map((t) => whenLabel(t, Date.now(), tz)).join('  ·  ')}` : '' }));
         }
       }
       sentence.classList.toggle('bad', !!problem);
@@ -482,7 +482,6 @@ export function openScheduleSheet({
       resolve(result);
     }
     cancelBtn.addEventListener('click', () => finish(null));
-    closeBtn.addEventListener('click', () => finish(null));
     okBtn.addEventListener('click', () => {
       const maxFailures = Number.isInteger(state.maxFailures) && state.maxFailures >= 0 && state.maxFailures <= 100 ? state.maxFailures : defaults.maxFailures;
       const common = { ifMissed: state.ifMissed, graceMin: state.graceMin };
@@ -504,7 +503,7 @@ export function openScheduleSheet({
     document.body.append(modal);
     paint();
     // A form: a backdrop click never closes it; Escape closes it untouched and asks once a time, a preset
-    // or a policy changed (the run list it loads later is not a change). Cancel and Close discard at once.
+    // or a policy changed (the run list it loads later is not a change). Cancel discards at once.
     guardModal(modal, { kind: 'form', close: () => finish(null) }).opened();
     (showKind ? kindSeg.querySelector('button.on') : showPresets ? seg.querySelector('button.on') : dateIn)?.focus();
   });

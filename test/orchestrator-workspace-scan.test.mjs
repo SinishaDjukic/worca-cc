@@ -205,6 +205,57 @@ test('scan models pin all three agent nodes and the investigators of both fan-ou
   assert.deepEqual([y.model, y.effort, y.fanOut], ['claude-opus-5-5', 'high', false]);
 });
 
+test('a first scan captures the explicit scanModels pick on the created workspace (readWorkspace.scanModels)', async (t) => {
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const orch = createOrchestrator({
+    ...scanOpts([a, b], 'Pick Persist WS'),
+    scanModels: { scanModel: 'claude-opus-5-5', scanEffort: 'high', agentModel: 'fable', agentEffort: 'max', source: 'explicit', warning: null },
+  });
+  assert.equal((await runUntilAbort(t, orch)).status, 'done');
+  const id = workspaceKey({ name: 'Pick Persist WS', projectPaths: [a, b] });
+  const ws = await readWorkspace(id);
+  assert.deepEqual(ws.scanModels, { scanModel: 'claude-opus-5-5', scanEffort: 'high', agentModel: 'fable', agentEffort: 'max' });
+});
+
+test('a settings- or default-resolved snapshot is never baked into an existing pick-less workspace (v57-era workspaces stay pick-less; outcome updated)', async (t) => {
+  const a = await freshRepo();
+  const b = await freshRepo();
+  // Pre-fix workspace: created WITHOUT a pick → scan_models_json NULL.
+  const ws = await createWorkspace({ name: 'Legacy Pick WS', projectPaths: [a, b] });
+  assert.equal(ws.scanModels, null, 'legacy shape: no stored pick');
+  const opts = scanOpts([a, b], 'Legacy Pick WS');
+  assert.equal(opts.workspace.id, ws.id);
+  // A scan that fell through to Settings/sthe default must NOT lock that snapshot in: only a
+  // deliberately chosen model (source 'explicit') persists, and the server now answers
+  // SCAN_MODEL_REQUIRED instead of falling through for a pick-less workspace anyway.
+  const orch = createOrchestrator({
+    ...opts,
+    scanModels: { scanModel: 'claude-sonnet-5', scanEffort: 'medium', agentModel: 'sonnet', agentEffort: 'medium', source: 'default', warning: null },
+  });
+  assert.equal((await runUntilAbort(t, orch)).status, 'done');
+  assert.equal(orch.state.workspaceScan.outcome, 'updated');
+  const saved = await readWorkspace(ws.id);
+  assert.equal(saved.scanModels, null,
+    'the workspace keeps no pick: a default/settings snapshot must not stick (only an explicit choice does)');
+});
+
+test('an explicit scanModels pick persists on an EXISTING pick-less workspace (the prompted re-scan path: the pick-a-model window saved it, so finalize keeps it)', async (t) => {
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const ws = await createWorkspace({ name: 'Legacy Explicit WS', projectPaths: [a, b] });
+  assert.equal(ws.scanModels, null, 'legacy shape: no stored pick');
+  const orch = createOrchestrator({
+    ...scanOpts([a, b], 'Legacy Explicit WS'),
+    scanModels: { scanModel: 'claude-opus-5-5', scanEffort: 'high', agentModel: 'fable', agentEffort: 'max', source: 'explicit', warning: null },
+  });
+  assert.equal((await runUntilAbort(t, orch)).status, 'done');
+  assert.equal(orch.state.workspaceScan.outcome, 'updated');
+  const saved = await readWorkspace(ws.id);
+  assert.deepEqual(saved.scanModels, { scanModel: 'claude-opus-5-5', scanEffort: 'high', agentModel: 'fable', agentEffort: 'max' },
+    'a deliberately chosen model is the workspace pick, so the next scan reuses it');
+});
+
 test('a stale stored pick runs on the defaults and says so in the run log (Review Focus 5)', async () => {
   const a = await freshRepo();
   const b = await freshRepo();
@@ -293,6 +344,7 @@ test('v3 end to end (detached): read-only scan maps the npm dependency, saves th
       assert.ok(ws, 'workspace created');
       assert.equal(ws.name, 'Map WS');
       assert.match(ws.description, /## Interconnections/);
+      assert.equal(ws.scanModels, null, 'no explicit pick: the template-default scan stores nothing');
       const out = await readFile(join(orch.getState().pipelineDir, WORKSPACE_SCAN_OUTPUT_FILE), 'utf8');
       assert.equal(ws.description, out.trim());
       assert.equal(orch.state.workspaceScan.outcome, 'created');

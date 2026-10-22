@@ -84,10 +84,10 @@ export function createInstallSheet({ doc, win, page, deps }) {
   }
 
   async function install(ev) {
-    if (ev.detail > 1 || ev.target.closest?.('[data-act]')?.dataset.fbState) return;   // a dblclick's 2nd half; "✓ Install" until Set up paints
+    if (ev.detail > 1 || ev.target.closest?.('[data-act]')?.dataset.fbState) return;   // a dblclick's 2nd half; ✓ Install until Set up paints
     const e = epoch;
     const it = item;
-    if (installing) return;   // one install at a time (LC-P4-30): SM70 may close the sheet mid-install, "✓ Install" turns idle
+    if (installing) return;   // one install at a time (LC-P4-30): SM70 may close the sheet mid-install, ✓ Install turns idle
     installing = true;
     try {
       const cancel = button(doc, 'cancel', 'Cancel', 'btn btn-quiet');

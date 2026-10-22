@@ -40,6 +40,14 @@ export function stepTitle(pq, who = '') {
   }
 }
 
+/** Run 4 (D4): the control a waiting question takes the focus on — the card's own primary (Approve 2 runs, Approve and
+ *  build) when it has an enabled one, else its first control that is not a menu trigger (a run row's ⋯). */
+export function questionFocusTarget(root) {
+  if (!root) return null;
+  return root.querySelector('.qpanel:not(.hidden) .plan-actions .btn-primary:not([disabled])')
+    || root.querySelector('.qpanel:not(.hidden) :is(button, input, textarea, [tabindex]):not([disabled]):not([aria-haspopup])');
+}
+
 export function stepHead(doc, title, chip) {
   const head = doc.createElement('div');
   head.className = 'ask-mcard-head step-head';
@@ -126,7 +134,7 @@ function appendRecoveryBody(doc, panel, rec) {
   const hint = rec.cls === 'auth'
     ? 'Re-authenticate (e.g. run `claude setup-token` or `/login`), then Retry.'
     : 'Fix the problem (wait out a limit, restore connectivity, top up credit), then Retry.';
-  intro.textContent = `This step could not reach the model. ${hint} Or pause the run and come back later — only Stop ends it.`;
+  intro.textContent = `This step could not reach the model. ${hint} Or pause the run and come back later. Only Stop ends it.`;
   panel.appendChild(intro);
 
   if (rec.message) {
@@ -189,7 +197,7 @@ export function renderRecoveryCard(panel, pq, deps) {
   const quit = ownButton(doc, abort ? 'recovery-abort' : 'recovery-pause', abort ? 'Abort' : 'Pause',
     () => send({ decision: abort ? 'abort' : 'pause' }));
   quit.title = abort ? 'End the run here with this error. The worktree is torn down.'
-    : 'Park the run here with this error as the reason. Nothing is discarded — Resume retries the step later.';
+    : 'Park the run here with this error as the reason. Nothing is discarded. Resume retries the step later.';
   const foot = doc.createElement('div');
   foot.className = 'qpanel-foot gate-actions';
   foot.append(quit, ownButton(doc, 'btn-primary recovery-retry', 'Retry', () => send({ decision: 'retry' })));

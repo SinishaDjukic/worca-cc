@@ -44,7 +44,7 @@ test('problemsOf: needs update WINS over broken (one chip); python and ignored a
   assert.deepEqual(problemsOf(row('p', { pythonMissing: true, ignored: [
     { file: 'agents/x.md', reason: 'collides with a built-in agent' }, { file: 'workflows/y.json', reason: 'v1 steps template' }] })), {
     chips: [{ key: 'python', label: 'Python not found', tone: 'warn' }, { key: 'ignored', label: '2 ignored', tone: 'bad' }],
-    lines: ['agents/x.md — collides with a built-in agent', 'workflows/y.json — v1 steps template'],
+    lines: ['agents/x.md: collides with a built-in agent', 'workflows/y.json: v1 steps template'],
   });
   assert.deepEqual(problemsOf(row('fine')), { chips: [], lines: [] });
   assert.deepEqual(problemsOf({ name: 'bare' }), { chips: [], lines: [] });

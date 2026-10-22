@@ -160,7 +160,7 @@ export function renderSourcePane(source, { call, doc = globalThis.document, time
             s.appendChild(opt);
           }
         })().catch(() => {
-          s.replaceChildren(h(doc, 'option', '', 'failed to load — refocus to retry'));
+          s.replaceChildren(h(doc, 'option', '', 'failed to load. Refocus to retry'));
           s._load = null;                          // allow retry
         });
       });

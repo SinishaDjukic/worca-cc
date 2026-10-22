@@ -12,14 +12,14 @@ export function fillMarketplaceSelect(select, targets, { doc = document, keep = 
   if (!targets.length) {
     const o = doc.createElement('option');
     o.value = ''; o.disabled = true; o.selected = true;
-    o.textContent = emptyText || 'No GitHub or Azure DevOps marketplace — add one on the Marketplace page';
+    o.textContent = emptyText || 'No GitHub or Azure DevOps marketplace. Add one on the Marketplace page';
     select.appendChild(o);
     return 0;
   }
   for (const t of targets) {
     const o = doc.createElement('option');
     o.value = t.id;
-    o.textContent = `${t.name} — ${t.repo}${t.ref ? ` (${t.ref})` : ''}`;
+    o.textContent = `${t.name}: ${t.repo}${t.ref ? ` (${t.ref})` : ''}`;
     select.appendChild(o);
   }
   select.value = targets.some((t) => t.id === keep) ? keep : targets[0].id;
@@ -39,7 +39,7 @@ export function renderMarketplaceSkipped(el, skipped, { doc = document } = {}) {
     if (i) el.appendChild(doc.createTextNode('; '));
     const b = doc.createElement('b');
     b.textContent = s.name || s.id;
-    el.append(b, ` — ${s.reason}`);
+    el.append(b, ` (${s.reason})`);
   });
   return skipped.length;
 }
@@ -129,13 +129,13 @@ export function marketplaceDoneView(r, { doc = document } = {}) {
   const v = r.newVersion ? ` v${r.newVersion}` : '';      // D18: never "vnull"
   if (r.status === 'unchanged') {
     lines.push(['Plugin', `${r.name} (${r.versionText})`], ['Branch', r.base], ...warnings);
-    return { title: 'No changes', lines, next: `${r.marketplace.name} already has this export of "${r.name}" — no pull request was opened.` };
+    return { title: 'No changes', lines, next: `${r.marketplace.name} already has this export of "${r.name}". No pull request was opened.` };
   }
   const from = r.pushTo === 'fork' && r.fork ? ` (from ${r.fork.repo})` : '';
   lines.push(['Pull request', link(doc, r.prUrl)]);
   if (r.status === 'up-to-date') {                          // nothing was pushed: no version or file-count claim
     lines.push(['Branch', `${r.branch} → ${r.base}${from}`], ...warnings);
-    return { title: `No changes — the open pull request already has "${r.name}"${v}`, lines, next: 'The open pull request is unchanged. After it merges, Refresh on the Marketplace page lists the plugin and Install works.' };
+    return { title: `No changes: the open pull request already has "${r.name}"${v}`, lines, next: 'The open pull request is unchanged. After it merges, Refresh on the Marketplace page lists the plugin and Install works.' };
   }
   lines.push(['Version', r.versionText], ['Branch', `${r.branch} → ${r.base}${from}`]);
   const n = r.files.created.length + r.files.updated.length;

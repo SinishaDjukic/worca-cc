@@ -12,7 +12,15 @@ export class RunGroupError extends Error {
 }
 const iso = (ms = Date.now()) => new Date(ms).toISOString();
 const qs = (list) => list.map(() => '?').join(', ');
-const prOf = (r) => (r && (r.pr_url || r.pr_number != null) ? { url: r.pr_url || null, number: r.pr_number ?? null, state: r.pr_state || null } : null);
+// D3: the stored CI verdict (pr_verdict, written by artifacts.mjs persistPrState) rides on the member's PR, as
+// readPrState spreads it, so a member whose History row has no PR yet still says "Checks failing". No Watch PR read:
+// this route stays one DB pass.
+const prOf = (r) => {
+  if (!r || (!r.pr_url && r.pr_number == null)) return null;
+  let v = null;
+  try { v = r.pr_verdict ? JSON.parse(r.pr_verdict) : null; } catch { v = null; }
+  return { url: r.pr_url || null, number: r.pr_number ?? null, state: r.pr_state || null, ...(v && typeof v === 'object' ? v : {}) };
+};
 // An after-ticket's run_at is a far-future sentinel (scheduler.mjs AFTER_RUN_AT): never a start time.
 const ticketOf = (t) => (t ? { id: t.id, status: t.status, runAt: t.after ? null : (t.runAt || null), after: !!t.after } : null);
 
@@ -20,7 +28,7 @@ function pipelineRows(ids) {
   if (!ids.length) return new Map();
   // Deleted rows are read too: purgePipeline keeps the row and its status, and a deleted feature slice must still
   // count as the slice it was (3/3 done), not fall through runModel to 'stopped' and become the group's current member.
-  const rows = getDb().prepare(`SELECT id, title, status, pr_url, pr_number, pr_state, project_key FROM pipelines
+  const rows = getDb().prepare(`SELECT id, title, status, pr_url, pr_number, pr_state, pr_verdict, project_key FROM pipelines
     WHERE id IN (${qs(ids)})`).all(...ids);
   return new Map(rows.map((r) => [r.id, r]));
 }

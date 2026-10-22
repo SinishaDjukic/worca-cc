@@ -340,11 +340,11 @@ meaning (the leading dot also matches the name itself) as long as `WORCA_EGRESS_
 In `block` and `allow` mode worca starts the egress proxy (`src/core/egress-proxy.mjs`, the one the
 [Docker overlay](docker.md#egress-allowlist) runs as a sidecar) on a loopback port inside its own
 process at boot, before anything else, and sets `HTTPS_PROXY`, `HTTP_PROXY` and their lower-case
-forms to it for every process it starts: agents, tools, the terminal, actions, MCP servers and a
-`worca` CLI started under it. `NO_PROXY` is replaced with loopback only, so no other host goes
-around the proxy. worca's own outbound calls (`fetch`) go through it too. The overlay's default
-allowlist never applies under a mode. If the proxy can't start, worca does not start (exit 78).
-`open` or no mode: no proxy, nothing changes.
+forms to it for every process it starts: agents, tools, the terminal, actions, MCP servers, plugin
+task sources and chat channels, and a `worca` CLI started under it. `NO_PROXY` is replaced with
+loopback only, so no other host goes around the proxy. worca's own outbound calls (`fetch`) go
+through it too. The overlay's default allowlist never applies under a mode. If the proxy can't
+start, worca does not start (exit 78). `open` or no mode: no proxy, nothing changes.
 
 A refused host gets a `403` whose body names the host and says the organization's outbound
 network policy blocked it, so an agent's tool error says why (`curl`, `git` and `npm` show it as

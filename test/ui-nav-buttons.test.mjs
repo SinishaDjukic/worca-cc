@@ -120,3 +120,35 @@ test('reload on #running/<id> keeps the Runs view (no reset to New)', async () =
   assert.ok(doc.querySelector('#run-shell').classList.contains('detail-open'),
     'the deep link lands on the detail screen, not the list');
 });
+
+test('F-5: an unknown address opens Chat, rewrites the hash and says so; an empty one is silent', async () => {
+  const { window } = await boot();
+  const doc = window.document;
+  const toastTitles = () => [...doc.querySelectorAll('#toasts .toast .tt')].map((n) => n.textContent);
+  await checkRows([
+    { name: '#nope and #statistics fall back to Chat with an "Unknown address" toast', run: async () => {
+      for (const bad of ['nope', 'statistics']) {
+        click(window, doc.querySelector('.nav button[data-nav="runs"]'));
+        await tick();
+        assert.equal(hidden(doc, 'runs'), false);
+        window.location.hash = bad;
+        window.dispatchEvent(new window.Event('hashchange'));
+        await tick();
+        assert.equal(window.location.hash, '#chat');
+        assert.equal(hidden(doc, 'chat'), false, `${bad}: Chat shown`);
+        assert.equal(hidden(doc, 'runs'), true, `${bad}: the previous page is hidden`);
+        assert.ok(toastTitles().includes('Unknown address'));
+      }
+    } },
+    { name: 'an empty hash shows Chat and raises no toast', run: async () => {
+      doc.getElementById('toasts').replaceChildren();
+      click(window, doc.querySelector('.nav button[data-nav="runs"]'));
+      await tick();
+      window.location.hash = '';
+      window.dispatchEvent(new window.Event('hashchange'));
+      await tick();
+      assert.equal(hidden(doc, 'chat'), false);
+      assert.deepEqual(toastTitles(), []);
+    } },
+  ]);
+});

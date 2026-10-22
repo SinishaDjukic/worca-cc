@@ -45,11 +45,11 @@ test('kind chip CSS: modifiers scoped to .kind-chip, readable tokens in both the
   assert.match(css, /--teal-ink-strong:light-dark\(#1F6B63,#9FE0D8\)/);
   // Runs redesign (D13): corners and type come from the one grouped chip rule; the own rule sets neither.
   // The design-system feature put the 18px height first in that rule; corners and type still come only from it.
-  assert.match(css, /^:is\(\.badge,[^{]*\.kind-chip\)\{[^}]*border-radius:var\(--r-xs\);font:500 11px\/1 var\(--sans\);/m);
+  assert.match(css, /^:is\(\.badge,[^{]*\.kind-chip[^{]*\)\{[^}]*border-radius:var\(--r-xs\);font:500 11px\/1 var\(--sans\);/m);
   assert.doesNotMatch(css, /(^|[^-\w])\.kind-chip\{[^}]*(font|border-radius|letter-spacing):/m);
   assert.match(css, /\.kind-chip\.kind-git\{background:var\(--blue-bg\);color:var\(--blue-ink-strong\);\}/);
   assert.match(css, /\.kind-chip\.kind-folder\{background:var\(--teal-bg\);color:var\(--teal-ink-strong\);\}/);
   assert.match(css, /\.kind-chip\.kind-none\{background:var\(--slate-bg\);color:var\(--slate-ink\);\}/);
-  assert.match(css, /\.kind-chip\.kind-ws\{background:var\(--violet-bg\);color:var\(--violet-ink\);\}/);
+  assert.match(css, /\.kind-chip\.kind-ws\{background:var\(--slate-bg\);color:var\(--slate-ink\);\}/);
   assert.doesNotMatch(css, /(^|[^.\w-])\.kind-(git|folder|none|ws)\{/m, 'no bare modifier rule');
 });

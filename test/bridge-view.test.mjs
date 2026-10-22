@@ -77,8 +77,8 @@ test('import sheet: rows, disabled policy rows, status column, select-all and co
   const rows = [...sheet.querySelectorAll('tbody tr')];
   assert.equal(rows.length, 3);
   assert.equal(rows[0].querySelector('.mvi-status').textContent, 'preview');
-  assert.equal(rows[1].querySelector('.mvi-status').textContent, 'in catalog ✓');
-  assert.match(rows[2].querySelector('.mvi-status').textContent, /disabled — enable it/);
+  assert.equal(rows[1].querySelector('.mvi-status').textContent, 'in catalog');
+  assert.match(rows[2].querySelector('.mvi-status').textContent, /disabled: enable it/);
   assert.ok(rows[2].classList.contains('mvi-disabled'));
   assert.equal(rows[2].querySelector('.mvi-cb').disabled, true);
   assert.equal(rows[0].querySelectorAll('td')[3].textContent, '128k');
@@ -111,7 +111,7 @@ test('connection: create defaults to direct with the provider block hidden; prov
   // Expandable like every other disclosure (New pipeline's Advanced): the chevron says so without a hover.
   const sum = conn.querySelector('.mv-conn-adv > summary');
   assert.ok(sum.querySelector('.adv-chev[aria-hidden="true"]'), 'the Advanced summary carries the disclosure chevron');
-  assert.equal(sum.textContent.trim(), 'Advanced — base URL, API key, extra headers');
+  assert.equal(sum.textContent.trim(), 'Advanced: base URL, API key, extra headers');
   assert.match(conn.querySelector('.mv-conn-note').textContent, /Translated/);
   conn.querySelector('.mv-conn-provider').value = 'anthropic';
   applyConnectionMode(conn);
@@ -189,7 +189,7 @@ test('cards: bridged badge, needs-sign-in pill + Sign in button, degradation lin
   assert.equal(card.querySelector('.mv-bridged').textContent, 'bridged: copilot');
   assert.equal(card.querySelector('.mv-needs-signin-badge').textContent, 'needs sign-in');
   assert.equal(card.querySelector('.mv-signin').dataset.provider, 'copilot');
-  assert.equal(card.querySelector('.mv-degradation').textContent, 'translated — no thinking blocks, no WebSearch/WebFetch, prompt limit ~128k tokens');
+  assert.equal(card.querySelector('.mv-degradation').textContent, 'translated: no thinking blocks, no WebSearch/WebFetch, prompt limit ~128k tokens');
   assert.match(card.querySelector('.mv-summary').textContent, /→ gpt-5/);
   const c2 = list.querySelector('.mv-card[data-id="copilot-claude"]');
   assert.equal(c2.querySelector('.mv-needs-signin'), null);
@@ -212,8 +212,8 @@ test('connection + cards: the Responses API is offered for copilot and openai, l
   assert.equal(collectConnection(conn).upstream.api, 'openai-responses');
   setModelUpstream(conn, { provider: 'copilot', api: 'openai-responses', model: 'gpt-6-astra' });
   assert.match(conn.querySelector('.mv-conn-note').textContent, /Copilot bills premium requests, so Pricing defaults to Free\.$/);
-  assert.equal(degradationLine({ upstream: { api: 'openai-responses', capabilities: { maxPromptTokens: 272000 } } }), 'translated — reasoning summaries only, no WebSearch/WebFetch, prompt limit ~272k tokens');
-  assert.equal(degradationLine({ upstream: { api: 'openai-chat', capabilities: {} } }), 'translated — no thinking blocks, no WebSearch/WebFetch');
+  assert.equal(degradationLine({ upstream: { api: 'openai-responses', capabilities: { maxPromptTokens: 272000 } } }), 'translated: reasoning summaries only, no WebSearch/WebFetch, prompt limit ~272k tokens');
+  assert.equal(degradationLine({ upstream: { api: 'openai-chat', capabilities: {} } }), 'translated: no thinking blocks, no WebSearch/WebFetch');
   assert.match(bridgedBadge({ bridged: 'copilot', upstream: { model: 'gpt-6-astra', api: 'openai-responses' } }, { doc }).title, /as gpt-6-astra \(OpenAI Responses\)/);
 });
 

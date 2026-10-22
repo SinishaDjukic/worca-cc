@@ -1,9 +1,12 @@
 // ui/public/group-page.mjs — the group page (runs redesign spec §3.4, §3.5): today's Feature page as the group page,
-// and the page for user groups and Run-after chains. Same layout as the run page: header actions · title + kind ·
-// meta · status card (status block, inline question) · tabs Runs · Overview · Decisions · Logs. Pure DOM; app.js
-// owns the data (runs-list.mjs groupRow) and binds every dep. Classes use `gpage-`: group-picker.mjs owns `gp-`.
-import { paintRunStatus, kindLabel, syncActions, renderMemberRows, groupShipLine } from './run-status-card.mjs';
+// and the page for user groups and Run-after chains. Same head as the run page (run 3): the bar (crumbs, the one
+// primary action, Stop, ⋯) · title + kind · the card (status block, facts block, inline question) · tabs Runs ·
+// Overview · Decisions · Logs. Pure DOM; app.js owns the data (runs-list.mjs groupRow) and binds every dep. Classes
+// use `gpage-`: group-picker.mjs owns `gp-`.
+import { paintRunStatus, syncActions, renderMemberRows, groupShipLine } from './run-status-card.mjs';
 import { fmtUsd } from './graph/run-decor.mjs';
+import { groupKindWord, pageModel, paintCrumbs, buildFacts, setFactText, factRow, syncFacts, GROUP_FACTS } from './run-page-head.mjs';
+import { icon } from './icons.mjs';
 
 export const GROUP_TABS = Object.freeze([['runs', 'Runs'], ['overview', 'Overview'], ['decisions', 'Decisions'], ['logs', 'Logs']]);
 const el = (doc, tag, cls, text = '') => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; };
@@ -11,18 +14,36 @@ const el = (doc, tag, cls, text = '') => { const e = doc.createElement(tag); if 
 /** The page skeleton, built once per host. */
 export function buildGroupPage(doc) {
   const root = el(doc, 'div', 'gpage');
-  const bar = el(doc, 'div', 'gpage-bar');
-  const back = el(doc, 'a', 'btn btn-quiet gpage-back', 'Runs');
+  // Run 3 (D13): the run page's bar — Back (slide layout) or the crumbs (split), then the primary action, Stop, ⋯.
+  const bar = el(doc, 'div', 'gpage-bar rd-bar');
+  const back = el(doc, 'a', 'btn gpage-back');
+  back.append(icon(doc, 'chevron-left', 15), 'Runs');   // run 4 (D13): the run page's Back, chevron included
   back.setAttribute('href', '#runs');
-  bar.append(back, el(doc, 'span', 'gpage-spacer'), el(doc, 'span', 'gpage-actions'));
+  back.setAttribute('aria-label', 'Back to the runs list');
+  const crumbs = el(doc, 'nav', 'rd-crumbs');
+  crumbs.setAttribute('aria-label', 'Breadcrumb');
+  crumbs.hidden = true;
+  const stop = el(doc, 'button', 'btn btn-danger gpage-stop', 'Stop');
+  stop.type = 'button';
+  stop.hidden = true;
+  stop.addEventListener('click', () => { if (root.__onAction) root.__onAction('stop', stop); });
+  const more = el(doc, 'button', 'btn btn-quiet btn-icon gpage-more');
+  more.type = 'button';
+  more.setAttribute('aria-haspopup', 'menu');
+  more.setAttribute('aria-expanded', 'false');
+  more.setAttribute('aria-label', 'More for this group');
+  more.title = 'More for this group';
+  more.append(icon(doc, 'more', 16));
+  more.addEventListener('click', () => { if (root.__onMore) root.__onMore(more); });
+  bar.append(back, crumbs, el(doc, 'span', 'gpage-spacer'), el(doc, 'span', 'gpage-actions'), stop, more);
   const head = el(doc, 'header', 'gpage-head');
   const titleRow = el(doc, 'div', 'rd-title-row');
   titleRow.append(el(doc, 'h1', 'gpage-title rd-page-title'), el(doc, 'span', 'kind-chip'));
-  head.append(titleRow, el(doc, 'p', 'gpage-meta rd-page-meta'));
+  head.append(titleRow);
   const card = el(doc, 'section', 'gpage-card rd-sheet');
   const q = el(doc, 'div', 'gpage-question');
   q.hidden = true;
-  card.append(el(doc, 'div', 'run-status'), q);
+  card.append(el(doc, 'div', 'run-status'), buildFacts(doc, GROUP_FACTS), q);
   const tabs = el(doc, 'nav', 'gpage-tabs rd-tabs tabs');
   tabs.setAttribute('role', 'tablist');
   const panels = [];
@@ -46,31 +67,53 @@ export function buildGroupPage(doc) {
   return root;
 }
 
-/** QA 7: with several PRs a header "Open PR" is ambiguous; each row's chip opens its own. */
+/** QA 7: with several PRs a header "View PR" is ambiguous; each row's chip opens its own. */
 export function headerActions(m) {
   return m.prCount === 1 ? m : { ...m, actions: m.actions.filter((a) => a !== 'open-pr') };
 }
 
 /**
- * Paint (idempotent). `view`: { row (groupRow output), project, tab, overview:boolean, logs:boolean }.
- * `deps`: { onAction(id, btn), onTab(tab), mountQuestion(slot, member|null), mountOverview(host), mountDecisions(host, row), logsHref(member) }.
+ * Paint (idempotent). `view`: { row (groupRow output), project, tab, overview:boolean, logs:boolean, labels: [] (the
+ * members' labels) }.
+ * `deps`: { onAction(id, btn), onTab(tab), onMore(anchor), mountQuestion(slot, member|null), answerLabel?(), mountOverview(host),
+ * mountDecisions(host, row), logsHref(member), labelChip(doc, label) }.
  */
 export function paintGroupPage(root, view, deps) {
   const doc = root.ownerDocument;
   const { row } = view;
   const m = row.model;
   root.__onTab = deps.onTab;
+  root.__onAction = deps.onAction;
+  root.__onMore = deps.onMore || null;
   const title = root.querySelector('.gpage-title');
   title.textContent = row.title;
   title.title = row.title;   // D13: the heading clamps at 2 lines
-  root.querySelector('.gpage-head .kind-chip').textContent = kindLabel(row);
-  // groupRow's costUsd is always a number: a group with no cost yet says nothing, never "Cost $0.00 total".
-  root.querySelector('.gpage-meta').textContent = [view.project, row.costUsd > 0 ? `Cost ${fmtUsd(row.costUsd)} total` : ''].filter(Boolean).join(' · ');
-  paintRunStatus(root.querySelector('.gpage-card .run-status'), m);
-  syncActions(root.querySelector('.gpage-actions'), headerActions(m), { onAction: deps.onAction, disable: { 'ask-changes': "Ask for changes from the run's chat" } });
+  root.querySelector('.gpage-head .kind-chip').textContent = groupKindWord(row);   // run 3 (D7): the group's kind
+  paintCrumbs(root.querySelector('.gpage-bar .rd-crumbs'), [{ label: 'Runs', href: '#runs' }, { label: row.title }]);
+  paintRunStatus(root.querySelector('.gpage-card .run-status'), pageModel(m));   // run 3 (D10)
+  // Run 3 (D15): the facts block — Project, Runs, Total cost, Labels (the read-only union of the members' labels).
+  const kv = root.querySelector('.gpage-card > .rd-kv');
+  const { done, total } = m.count;
+  setFactText(kv, 'project', view.project || '');
+  setFactText(kv, 'runs', `${total} run${total === 1 ? '' : 's'} · ${done} done`);
+  // groupRow's costUsd is always a number: a group with no cost yet says nothing, never "$0.00".
+  setFactText(kv, 'cost', row.costUsd > 0 ? fmtUsd(row.costUsd) : '');
+  const labelsHost = factRow(kv, 'labels').querySelector('.rd-kv-v');
+  const labels = view.labels || [];
+  if (labelsHost.dataset.sig !== labels.join('\n')) {
+    labelsHost.dataset.sig = labels.join('\n');
+    labelsHost.replaceChildren(...labels.map((l) => (deps.labelChip ? deps.labelChip(doc, l) : el(doc, 'span', 'label-chip', l))));
+  }
+  syncFacts(kv);
   const all = [...(row.planning ? [{ ...row.planning, isPlanning: true }] : []), ...row.members];
   const current = all.find((mb) => mb.model === m.current) || null;
+  // Stop acts on the member the status block names (the row ⋯ Stop's call); its title says which.
+  const stop = root.querySelector('.gpage-stop');
+  stop.title = current ? `Stop ${current.isPlanning ? 'Planning' : `Run ${current.position}`}` : 'Stop';
+  // Run 4 (D2): the question is mounted first, so the bar's Answer can name the card's own primary.
   deps.mountQuestion(root.querySelector('.gpage-question'), current);
+  syncActions(root.querySelector('.gpage-actions'), headerActions(m), { own: { stop }, pool: [stop], onAction: deps.onAction,
+    disable: { 'ask-changes': "Ask for changes from the run's chat" }, labels: { answer: deps.answerLabel ? deps.answerLabel() : '' } });
   const offered = (id) => (id !== 'overview' || !!view.overview) && (id !== 'logs' || !!view.logs);
   const tab = GROUP_TABS.some(([id]) => id === view.tab) && offered(view.tab) ? view.tab : 'runs';
   for (const t of root.querySelectorAll('.gpage-tabs .rd-tab')) {

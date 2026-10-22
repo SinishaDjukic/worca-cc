@@ -261,7 +261,7 @@ test('detail header lists every member repo with its status', async () => {
   // Name and status asserted separately (v2 review M2) ...
   assert.deepEqual(lis.map((li) => li.querySelector('b').textContent), ['api', 'web', 'doc', 'ops', 'cli']);
   assert.deepEqual(lis.map((li) => (li.querySelector('.hd-pr-repo-link, .hd-pr-repo-note') || {}).textContent),
-    ['Merged', 'No PR yet', 'No changes — skipped', 'Branch no longer exists', 'No branch recorded']);
+    ['Merged', 'No PR yet', 'No changes, skipped', 'Branch no longer exists', 'No branch recorded']);
   // ... and the rendered line reads with a space between them (the ' ' text node).
   assert.equal(lis[0].textContent.replace(/\s+/g, ' ').trim(), 'api Merged');
   assert.equal(list.querySelector('.hd-pr-repo-link').href, 'https://x/api/pull/1');
@@ -279,7 +279,7 @@ test('dialog lists affected repos (ticked), says which were skipped, loads remot
   const rows = [...modal.querySelectorAll('#shipit-repos .shipit-repo')];
   assert.deepEqual(rows.map((r) => r.dataset.memberKey), [API, WEB]);
   assert.ok(rows.every((r) => r.querySelector('.shipit-repo-pick').checked), 'default: all affected');
-  assert.match(modal.querySelector('.shipit-skipped').textContent, /No changes in doc — skipped/);
+  assert.match(modal.querySelector('.shipit-skipped').textContent, /No changes in doc\. Skipped\./);
   assert.equal(rows[0].querySelector('.shipit-repo-stat').textContent, '2 files · +7 −1');
   const keys = remotesCalls(ctx).map((c) => new URL(c.url, 'http://x').searchParams.get('memberKey')).sort();
   assert.deepEqual(keys, [API, WEB]);
@@ -452,7 +452,7 @@ test('a Folder member: the header names its Changes state, Ship it leaves it out
   click(ctx.window, hdPr(ctx.window)); await settle(ctx.window, 6);
   const modal = modalOf(ctx.window);
   assert.deepEqual([...modal.querySelectorAll('#shipit-repos .shipit-repo')].map((r) => r.dataset.memberKey), [API]);
-  assert.equal(modal.querySelector('.shipit-folder-skipped').textContent, 'notes (Folder) — skipped.');
+  assert.equal(modal.querySelector('.shipit-folder-skipped').textContent, 'notes (Folder). Skipped.');
   assert.ok(!remotesCalls(ctx).some((c) => c.url.includes(NOTES)), 'no git remotes read for a Folder member');
 });
 
@@ -549,16 +549,16 @@ test('an all-Folder workspace run: no Diff, Changes per member with the summed b
 });
 
 
-test('an unchanged Folder member reads No changes — skipped and is named only in the No changes line', async () => {
+test('an unchanged Folder member reads No changes, skipped and is named only in the No changes line', async () => {
   const quiet = member(DOCS, 'docs', { workMode: 'folder', branch: null, sourceBranch: null, survived: false, affected: false,
     added: 0, removed: 0, diffFrozen: false, changes: { state: 'discarded', counts: { added: 0, modified: 0, deleted: 0 } } });
   const ctx = await bootShip({ detail: WS_DETAIL, rows: [wsRow([member(API, 'api'), folderMember('pending'), quiet])] });
   await openDetail(ctx, wksDetailHash);
-  assert.equal(hdRepos(ctx.window).querySelector(`.hd-pr-repo[data-member-key="${DOCS}"] .hd-pr-repo-note`).textContent, 'No changes — skipped');
+  assert.equal(hdRepos(ctx.window).querySelector(`.hd-pr-repo[data-member-key="${DOCS}"] .hd-pr-repo-note`).textContent, 'No changes, skipped');
   click(ctx.window, hdPr(ctx.window)); await settle(ctx.window, 6);
   const modal = modalOf(ctx.window);
   assert.deepEqual([...modal.querySelectorAll('#shipit-repos p')].map((p) => p.textContent),
-    ['No changes in docs — skipped.', 'notes (Folder) — skipped.']);
+    ['No changes in docs. Skipped.', 'notes (Folder). Skipped.']);
 });
 
 test('a mixed workspace run: the Diff tab lists and counts its Git member only (the Folder member is in Changes)', async () => {

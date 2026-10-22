@@ -82,8 +82,15 @@ Explorer select it; a Linux file manager opens the folder). It opens the **origi
 screenshot that is `$WORCA_ASK_OUT`, for a project file the project folder, for a run artifact the run's folder.
 
 - The original path stays on the server (`ask_attachments.source_path`). The card only knows that the file has one.
-- If the original was moved or deleted after Ask showed it, the button says so and opens nothing. The copy in the
-  chat still opens and downloads.
+- A file found under a run's checkout or a project's folder also keeps where it came from: the run, the project (for
+  a workspace run, the member's project) and its path below that folder (`source_run_id`, `source_project_key`,
+  `source_rel`, server-only too).
+- A run's worktree is removed or cleaned once the run ends. When the original is gone, the button opens the same
+  relative path inside the project's registered folder, if that file is there. That path is realpath'd and must stay
+  inside the project folder (case-insensitive on Windows and macOS); a `..` or a symlink out of it opens nothing.
+- If neither is there, the button says so and opens nothing: "The run's folder was cleaned up after the run" for a
+  run's file, "it was moved or deleted after it was shown" otherwise (and for copies shown before this was recorded).
+  The copy in the chat still opens and downloads.
 - Files you uploaded, and attachments Ask showed by id, have no original folder, so they have no button.
 - The folder opens on the machine worca runs on. The button is never shown on a hosted worca, to a caller that may
   be an agent, or where no file manager was found (a container, a Linux machine with no display).

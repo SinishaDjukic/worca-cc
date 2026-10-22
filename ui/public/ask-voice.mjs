@@ -42,7 +42,7 @@ const ACK_AFTER_MS = 4000;
 
 /** Can this page capture audio at all? { ok } or { ok:false, reason } for the composer. */
 export function voiceSupport(win) {
-  if (!win || !win.isSecureContext) return { ok: false, reason: 'Voice needs a secure page — open worca over https or http://localhost, not a LAN IP over plain http.' };
+  if (!win || !win.isSecureContext) return { ok: false, reason: 'Voice needs a secure page. Open worca over https or http://localhost, not a LAN IP over plain http.' };
   if (!win.navigator || !win.navigator.mediaDevices || typeof win.navigator.mediaDevices.getUserMedia !== 'function') return { ok: false, reason: 'This browser gives the page no microphone access.' };
   if (!win.AudioContext && !win.webkitAudioContext) return { ok: false, reason: 'This browser has no Web Audio support.' };
   return { ok: true };
@@ -137,7 +137,7 @@ async function errorOf(res, fallback) {
 
 function micError(err) {
   const name = err && err.name;
-  if (name === 'NotAllowedError' || name === 'SecurityError') return 'Microphone permission was denied — allow it in the browser to use voice.';
+  if (name === 'NotAllowedError' || name === 'SecurityError') return 'Microphone permission was denied. Allow it in the browser to use voice.';
   if (name === 'NotFoundError' || name === 'OverconstrainedError') return 'No microphone was found.';
   return err && err.message ? err.message : String(err);
 }
@@ -271,7 +271,7 @@ export function createVoiceController({ win, doc, fetch, loadVad, playAudio, bro
         text = cleanTranscript((await r.json()).text);
       }
     } catch (err) {
-      if (gen === s.gen) fail(`transcription failed — ${err && err.message ? err.message : err}`);
+      if (gen === s.gen) fail(`transcription failed: ${err && err.message ? err.message : err}`);
       return;
     }
     if (gen !== s.gen) return;
@@ -426,7 +426,7 @@ export function createVoiceController({ win, doc, fetch, loadVad, playAudio, bro
     if (gen !== s.gen) return;
     stopPlayback();
     s.ttsEnabled = false;
-    try { onNotice(`Voice replies are text only for now — ${err && err.message ? err.message : err}`); } catch { /* ignore */ }
+    try { onNotice(`Voice replies are text only for now: ${err && err.message ? err.message : err}`); } catch { /* ignore */ }
     maybeListen();
   }
 

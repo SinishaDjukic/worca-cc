@@ -227,18 +227,24 @@ test('A4: a tab gets its Beta chip inside the label as plain text; other hosts k
   const b = doc.createElement('button'); b.dataset.flag = 'flagsDemo'; doc.body.appendChild(b);
   chip(b);
   assert.equal(b.nextElementSibling.tagName, 'A', 'a non-tab button keeps the sibling link');
-  const txt = doc.getElementById('keepAwakeTxt');
-  const c = txt.querySelector('.flag-chip');
-  assert.ok(c, 'the Keep awake row shows its Beta chip');
+  const named = doc.createElement('span'); named.dataset.flagChip = 'keepAwake'; doc.body.appendChild(named);
+  chip(named);
+  const c = named.querySelector('.flag-chip');
+  assert.ok(c, 'a data-flag-chip host shows its Beta chip');
   assert.equal(c.textContent, 'Beta');
   assert.equal(c.dataset.flag, undefined, 'an ungated host: the chip is never hidden by the flag gate');
 });
 
-test('bindFlagSwitch (Settings › Runs, review F): one source with the Labs page', async () => {
+test('bindFlagSwitch (the account menu Keep awake row, review F): one source with the Labs page', async () => {
   const { document: doc } = page({ flags: { keepAwake: true } });
-  const el = doc.getElementById('keepAwakeSwitch');
-  const msg = doc.getElementById('keepAwakeMsg');
+  const el = doc.getElementById('acct-keepawake');
+  const said = [];
+  const onMsg = (text, o) => said.push([text, o.error]);
   await checkRows([
+    { name: 'the Settings › Runs card is gone: the menu row is the only switch outside Labs', run: () => {
+      for (const id of ['keepawake-settings-card', 'keepAwakeSwitch', 'keepAwakeMsg']) assert.equal(doc.getElementById(id), null, `#${id}`);
+      assert.equal(el.getAttribute('role'), 'menuitemcheckbox');
+    } },
     { name: 'paints from data-flags, then a click sends PATCH {keepAwake:false} and repaints off', run: async () => {
       const calls = [];
       const api = async (method, body) => {
@@ -246,7 +252,7 @@ test('bindFlagSwitch (Settings › Runs, review F): one source with the Labs pag
         return method === 'GET' ? { ok: true, status: 200, data: { flags: [{ key: 'keepAwake', on: true, locked: false }] } }
           : { ok: true, status: 200, data: { flags: [{ key: 'keepAwake', on: body.keepAwake }] } };
       };
-      const off = bindFlagSwitch(el, 'keepAwake', { api, msgEl: msg });
+      const off = bindFlagSwitch(el, 'keepAwake', { api, onMsg });
       assert.equal(el.getAttribute('aria-checked'), 'true');
       await tick();
       el.click();
@@ -264,28 +270,50 @@ test('bindFlagSwitch (Settings › Runs, review F): one source with the Labs pag
     { name: 'a locked flag disables the switch; a click then sends nothing', run: async () => {
       const calls = [];
       const api = async (method, body) => { calls.push([method, body]); return { ok: true, status: 200, data: { flags: [{ key: 'keepAwake', on: true, locked: true }] } }; };
-      const off = bindFlagSwitch(el, 'keepAwake', { api, msgEl: msg });
+      const off = bindFlagSwitch(el, 'keepAwake', { api, onMsg });
       await tick();
       assert.ok(el.classList.contains('disabled'));
       assert.equal(el.getAttribute('aria-disabled'), 'true');
-      assert.equal(msg.textContent, 'Locked by WORCA_FLAGS', 'the status line says why the switch is dead');
+      assert.deepEqual(said.at(-1), ['Locked by WORCA_FLAGS', false], 'the message says why the switch is dead');
       el.click();
       await tick();
       assert.deepEqual(calls.map((c) => c[0]), ['GET']);
       off();
       el.classList.remove('disabled'); el.removeAttribute('aria-disabled'); el.tabIndex = 0;
-      msg.textContent = '';
+    } },
+    { name: 'a button row gets no key handler: Enter is the button\'s own click, so a bare keydown sends nothing', run: async () => {
+      const calls = [];
+      const api = async (method, body) => { calls.push(method); return { ok: true, status: 200, data: { flags: [{ key: 'keepAwake', on: method === 'PATCH' ? body.keepAwake : true }] } }; };
+      const off = bindFlagSwitch(el, 'keepAwake', { api, onMsg });
+      await tick();
+      el.dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      el.dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }));
+      await tick();
+      assert.deepEqual(calls, ['GET'], 'no PATCH from keydown');
+      off();
+      applyFlags({ keepAwake: true }, doc);
+    } },
+    { name: 'a successful flip clears the message (onMsg gets an empty text, no error)', run: async () => {
+      said.length = 0;
+      const api = async (method, body) => ({ ok: true, status: 200, data: { flags: [{ key: 'keepAwake', on: method === 'PATCH' ? body.keepAwake : true, locked: false }] } });
+      const off = bindFlagSwitch(el, 'keepAwake', { api, onMsg });
+      await tick();
+      el.click();
+      await tick();
+      assert.deepEqual(said, [['', false]]);
+      off();
+      applyFlags({ keepAwake: true }, doc);
     } },
     { name: 'a 409 reverts the switch, disables it and writes the error', run: async () => {
       const api = async (method) => (method === 'GET' ? { ok: true, status: 200, data: { flags: [{ key: 'keepAwake', on: true, locked: false }] } }
         : { ok: false, status: 409, data: { error: 'keepAwake is locked by WORCA_FLAGS' } });
-      const off = bindFlagSwitch(el, 'keepAwake', { api, msgEl: msg });
+      const off = bindFlagSwitch(el, 'keepAwake', { api, onMsg });
       await tick();
       el.click();
       await tick();
       assert.equal(el.getAttribute('aria-checked'), 'true', 'reverted');
       assert.ok(el.classList.contains('disabled'));
-      assert.equal(msg.textContent, 'keepAwake is locked by WORCA_FLAGS');
+      assert.deepEqual(said.at(-1), ['keepAwake is locked by WORCA_FLAGS', true]);
       off();
     } },
   ]);

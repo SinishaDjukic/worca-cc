@@ -4,7 +4,7 @@
 // The list, the chat card, the run and group pages (ui/), the CLI (src/cli/runs.mjs) and Ask Worca
 // (src/core/ask/tools.mjs via src/core/run-status.mjs) all call it, so the words are the same everywhere (§5a.7).
 // Input: a run state as runProgress reads it (src/shared/run-progress.mjs header) plus `pauseReason`, `pr`
-// ({url, number, state, draft? | isDraft?, mergeable?, reviewDecision?}), `ticket` ({status, runAt, after:{index}}) for a run that has not
+// ({url, number, state, draft? | isDraft?, mergeable?, reviewDecision?}), `ticket` ({status, runAt, after:{index, group, title}}) for a run that has not
 // started, and `resumable`. Shared code: no imports from core/ or ui/.
 // Optional: `round` ({n, request, by}) or the raw marker `branch.roundOf` ({round, request, by}), a round of the same
 // run (spec §3.6); `watch` ({status, reason, fixRuns}), the run's Watch PR (§3.6a, statuses of src/core/pr-watch.mjs).
@@ -31,7 +31,7 @@ export const RUN_STATES = Object.freeze({
 
 export const ACTION_LABEL = Object.freeze({
   stop: 'Stop', pause: 'Pause', answer: 'Answer', resume: 'Resume', 'start-now': 'Start now', cancel: 'Cancel',
-  retry: 'Retry', report: 'Report', archive: 'Archive', ship: 'Ship it', 'open-pr': 'Open PR', 'ask-changes': 'Ask for changes',
+  retry: 'Retry', report: 'Report', archive: 'Archive', ship: 'Create PR', 'open-pr': 'View PR', 'ask-changes': 'Ask for changes',
 });
 
 const ACTIONS = Object.freeze({
@@ -97,7 +97,8 @@ export function prState(pr) {
     : number == null ? 'Pull request' : /github\.com\//.test(url || '') ? `PR #${number} · open on GitHub` : `PR #${number}`;
   // #784: Azure DevOps calls a closed-without-merging PR abandoned; the id, icon and colour stay `closed`.
   const word = id === 'closed' && parseAzurePrUrl(url) ? 'Abandoned' : PR_STATES[id].word;
-  return { id, ...PR_STATES[id], icon: gitIcon(s, pr), word, number, url, title, needsYou: id === 'conflicts' || id === 'failing' };
+  return { id, ...PR_STATES[id], icon: gitIcon(s, pr), word, number, url, title, needsYou: id === 'conflicts' || id === 'failing',
+    ...(pr.pending ? { pending: true } : {}) };
 }
 
 // #784's order for a workspace run's member PRs (what needs a person first), on the chip's ids.
@@ -167,14 +168,18 @@ function singleLine(state, run, prog, pr, opts) {
     }
     case 'waiting': {
       const at = run.ticket && run.ticket.runAt ? clock(run.ticket.runAt, opts) : '';
-      const after = run.ticket && run.ticket.after && run.ticket.after.index;
-      return join('Waiting', at ? `starts ${at}` : after ? `starts after run ${after}` : '');
+      // D11: what it waits for. A slice of a group names the group and the run; a member names its run; a plain
+      // after-ticket names the run before it.
+      const a = (run.ticket && run.ticket.after) || null;
+      const after = !a ? '' : a.group && a.index ? `starts after ${a.group} · run ${a.index}`
+        : a.index ? `starts after run ${a.index}` : a.title ? `starts after ${a.title}` : '';
+      return join('Waiting', at ? `starts ${at}` : after);
     }
     case 'failed': return join(where, 'failed', failedStep(run, where));
     case 'stopped': return where ? `Stopped at ${where}` : 'Stopped';
     case 'ready': return 'Ready to ship';
     case 'in-review': return pr && pr.number != null ? `In review · PR #${pr.number}` : 'In review';
-    default: return 'Merged';
+    default: return pr && pr.inBase ? pr.word : 'Merged';
   }
 }
 
@@ -204,13 +209,18 @@ function watchOf(w) {
   const n = Number(w.fixRuns) || 0;
   return { live: false, stopped: true, line: join('Needs you', 'Watch stopped', `${plural(n, 'fix run')}, ${WATCH_WHY[w.reason] || 'needs a person'}`) };
 }
-/** The PR as prState reads it: a workspace run's member PRs first (#784), else its own PR. A live fix round marks the
- *  run's own PR `fixing` (among the members, the one with the same url), which prState ranks above Conflicts / Checks failing. */
+/** D8: a run with no PR of its own whose work is already in its base (History `inBase`, local refs): the merged chip,
+ *  with no url, so nothing offers to open a PR. */
+const inBaseChip = (r) => (r.inBase && r.inBase.base ? { id: 'merged', ...PR_STATES.merged, icon: 'merge', word: `Merged · in ${r.inBase.base}`,
+  number: null, url: null, title: `Already in ${r.inBase.base} through another branch · no pull request of its own`, needsYou: false, inBase: true } : null);
+/** The PR as prState reads it: a workspace run's member PRs first (#784), else its own PR, else the in-base chip (D8).
+ *  A live fix round marks the run's own PR `fixing` (among the members, the one with the same url), which prState
+ *  ranks above Conflicts / Checks failing. */
 const prOf = (r, watch) => {
   const own = watch && watch.live && r.pr && typeof r.pr === 'object' ? r.pr : null;
   const members = own && Array.isArray(r.memberPrs)
     ? r.memberPrs.map((p) => (p && p.url && p.url === own.url ? { ...p, fixing: true } : p)) : r.memberPrs;
-  return memberPrState(members) || prState(own ? { ...own, fixing: true } : r.pr);
+  return memberPrState(members) || prState(own ? { ...own, fixing: true } : r.pr) || inBaseChip(r);
 };
 
 /** A finished run that needs a person without a question: its PR fails checks or conflicts with no fix round on it
@@ -278,7 +288,7 @@ export function runModel(run, opts = {}) {
   const fin = state === 'ready' ? finishedWords(r, mode) : null;
   const prog = r.status ? runProgress(r, opts.memo || null) : null;
   const meta = RUN_STATES[state];
-  // A PR-driven Needs you has no question to answer; its line is the chip's reason (QA 3) and its action Open PR (D31).
+  // A PR-driven Needs you has no question to answer; its line is the chip's reason (QA 3) and its action View PR (D31).
   const prNeeds = state === 'needs-you' && r.pendingQuestion == null && (watchNeeds || !!(pr && pr.needsYou));
   const actions = fin ? [] : watchNeeds ? ['open-pr', 'ask-changes'] : prNeeds ? ['open-pr']
     : state === 'stopped' && r.resumable === true ? ['resume', 'archive'] : ACTIONS[state];
@@ -351,7 +361,7 @@ export function groupModel(group, opts = {}) {
   const symbol = state === 'needs-you' && !asks ? null : meta.symbol;
   // QA 7: how many distinct PRs the group has: its own, plus its members' that are not closed (a feature shipped as one
   // PR closes its slice drafts, and its chain-root member can carry the group PR itself). The one url when exactly one.
-  const prList = [pr, ...members.map((m) => m.pr).filter((p) => p && p.id !== 'closed')].filter(Boolean);
+  const prList = [pr, ...members.map((m) => m.pr).filter((p) => p && p.id !== 'closed' && !p.inBase)].filter(Boolean);
   const seen = new Set();
   let prCount = 0;
   for (const p of prList) {

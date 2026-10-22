@@ -5,6 +5,8 @@
 // node:test drives these via jsdom. (One exception: the Ask web fields keep their own
 // dirty flag with input/change listeners on their detached wrapper — no I/O.)
 
+import { makeSwitch } from './switch.mjs';
+
 function h(doc, tag, cls, text) {
   const n = doc.createElement(tag);
   if (cls) n.className = cls;
@@ -13,7 +15,7 @@ function h(doc, tag, cls, text) {
 }
 
 const EVENTS = [
-  ['question', 'Approval / question needed', 'a pipeline is blocked waiting on you — the one to keep on'],
+  ['question', 'Approval / question needed', 'a pipeline is blocked waiting on you (the one to keep on)'],
   ['done', 'Run finished (done / stopped)', ''],
   ['error', 'Run failed', ''],
   ['paused', 'Run paused (incl. cost limits)', ''],
@@ -44,7 +46,7 @@ export function renderChatSettings({ prefs, channels } = {}, { doc = globalThis.
     row.appendChild(h(doc, 'span', 'drow-label', label));
     if (hint) row.appendChild(h(doc, 'small', 'hint drow-help', hint));
     const ctl = h(doc, 'span', 'drow-control');
-    ctl.append(cb, h(doc, 'span', 'switch switch-sm'));
+    ctl.append(cb, h(doc, 'span', 'switch'));
     row.appendChild(ctl);
     evBox.appendChild(row);
   }
@@ -68,7 +70,7 @@ export function renderChatSettings({ prefs, channels } = {}, { doc = globalThis.
     cb.checked = p.channels?.[key]?.enabled !== false;
     cb.setAttribute('aria-label', `Enable ${c.displayName || c.channelId}`);
     toggle.appendChild(cb);
-    toggle.appendChild(h(doc, 'span', 'switch switch-sm'));
+    toggle.appendChild(h(doc, 'span', 'switch'));
     toggle.appendChild(h(doc, 'span', '', `${c.displayName || c.channelId} (${c.platform})`));
     row.appendChild(toggle);
     const ctl = h(doc, 'span', 'drow-control');
@@ -97,7 +99,7 @@ export function renderChatSettings({ prefs, channels } = {}, { doc = globalThis.
     if (cmd && cmd.lastRefused) {
       const r = cmd.lastRefused;
       const refused = h(doc, 'small', 'hint warn chat-refused',
-        `Ignored /${r.command} from chat ${r.chatId} — it is not in Allowed chat IDs.`);
+        `Ignored /${r.command} from chat ${r.chatId}: it is not in Allowed chat IDs.`);
       refused.dataset.channelKey = key;
       if (r.at) refused.title = r.at;
       chBox.appendChild(refused);
@@ -125,14 +127,8 @@ export function collectChatSettings(root) {
  * Default ON: only a stored `false` switches the chat's save_script / test_script off.
  */
 export function renderScriptToolsToggle({ prefs } = {}, { doc = globalThis.document } = {}) {
-  const row = h(doc, 'label', 'check-row');
-  row.setAttribute('for', 'askScriptTools');
-  const cb = h(doc, 'input', 'ask-script-tools');
-  cb.type = 'checkbox';
-  cb.id = 'askScriptTools';
-  cb.checked = prefs?.scriptTools !== false;
-  row.appendChild(cb);
-  row.appendChild(doc.createTextNode(' Create and run scripts'));
+  const { row, input } = makeSwitch(doc, { label: 'Create and run scripts', checked: prefs?.scriptTools !== false, inputClass: 'ask-script-tools' });
+  input.id = 'askScriptTools';
   return row;
 }
 
@@ -145,14 +141,8 @@ export function collectScriptToolsToggle(root) {
 /** Settings → Ask Worca "Suggest a next prompt" row: the ghost text after each reply (one cheap model call per reply).
  *  Default ON; saved with the Ask Worca card. */
 export function renderSuggestionsToggle({ prefs } = {}, { doc = globalThis.document } = {}) {
-  const row = h(doc, 'label', 'check-row');
-  row.setAttribute('for', 'askSuggestions');
-  const cb = h(doc, 'input', 'ask-suggestions');
-  cb.type = 'checkbox';
-  cb.id = 'askSuggestions';
-  cb.checked = prefs?.suggestions !== false;
-  row.appendChild(cb);
-  row.appendChild(doc.createTextNode(' Suggest a next prompt after each reply'));
+  const { row, input } = makeSwitch(doc, { label: 'Suggest a next prompt after each reply', checked: prefs?.suggestions !== false, inputClass: 'ask-suggestions' });
+  input.id = 'askSuggestions';
   return row;
 }
 
@@ -167,12 +157,10 @@ export function renderAskWebFields({ askWeb } = {}, { doc = globalThis.document 
   const w = askWeb || { enabled: false, anyHost: false, allowedDomains: [], search: null };
   const wrap = h(doc, 'div', 'ask-web drows');
   wrap.append(h(doc, 'div', 'label-row', 'Web access'));
-  const row = h(doc, 'label', 'check-row'); row.setAttribute('for', 'askWebEnabled');
-  const cb = h(doc, 'input'); cb.type = 'checkbox'; cb.id = 'askWebEnabled'; cb.checked = w.enabled === true;
-  row.append(cb, doc.createTextNode(' Let Chat read web pages'));
-  const anyRow = h(doc, 'label', 'check-row'); anyRow.setAttribute('for', 'askWebAnyHost');
-  const any = h(doc, 'input'); any.type = 'checkbox'; any.id = 'askWebAnyHost'; any.checked = w.anyHost === true;
-  anyRow.append(any, doc.createTextNode(' Any site, without asking'));
+  const { row, input: cb } = makeSwitch(doc, { label: 'Let Chat read web pages', checked: w.enabled === true });
+  cb.id = 'askWebEnabled';
+  const { row: anyRow, input: any } = makeSwitch(doc, { label: 'Any site, without asking', checked: w.anyHost === true });
+  any.id = 'askWebAnyHost';
   const anyHint = h(doc, 'small', 'hint drow-help', 'Risky: a web page or a file Ask reads can then make it send data to any site in a URL. Leave off to approve each new site from the chat.');
   const domains = h(doc, 'textarea', 'textarea'); domains.id = 'askWebDomains'; domains.rows = 4;
   domains.dataset.setting = 'askWeb.allowedDomains'; domains.setAttribute('aria-label', 'Allowed domains');

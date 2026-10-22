@@ -199,7 +199,7 @@ test('a Codex run with no model: an effort codex\'s default model does not offer
   const logged = [];
   orch._log = (source, level, text) => logged.push({ source, level, text });
   await answerOne(orch, clock, 'cx3');
-  assert.equal(seen[0].model, 'gpt-5.6-sol');
+  assert.equal(seen[0].model, 'gpt-6.1-sol');
   assert.equal(seen[0].effort, 'medium');
   assert.equal(logged.filter((l) => /does not offer effort "max"/.test(l.text)).length, 1, JSON.stringify(logged));
 });

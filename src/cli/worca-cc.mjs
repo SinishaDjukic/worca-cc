@@ -27,6 +27,8 @@ import {
   removeProject,
   normalizeProjectPath,
   getProjectByPath,
+  enclosingRepoOf,
+  nestedInRepoMessage,
 } from '../core/projects.mjs';
 import { projectKey, isNoProjectKey, noProjectWorkDir, isNoProjectWorkDir } from '../core/store.mjs';
 import { NO_PROJECT_ERRORS } from '../shared/no-project.mjs';
@@ -39,6 +41,7 @@ import { projectForm } from '../shared/forms/project.mjs';
 import { createFormAsker } from './forms.mjs';
 import { kindLabel } from '../shared/away-mode/labels.mjs';
 import { pauseExitCode, describePauseReason, promptOptions, REASON } from '../core/failure-policy.mjs';
+import { sigtermGraceMs } from '../core/drain.mjs';
 import { effectiveDebugSpawn } from '../core/settings.mjs';
 import { SCHEDULE_VALUE_FLAGS, wantsSchedule, readScheduleFlags, createFromFlags, waitAndRun, cmdSchedule, resolveAfterId } from './schedule.mjs';
 import { applyTagRules } from '../core/tag-dimensions.mjs';
@@ -583,9 +586,9 @@ function stdinCanAnswer() {
 }
 
 /**
- * Wire readline Q&A, log/phase rendering, and SIGINT pause/stop onto an
- * orchestrator, then drive it. `start` launches run() or resume(). Returns the
- * process exit code (pauseExitCode, failure-policy.mjs):
+ * Wire readline Q&A, log/phase rendering, SIGINT pause/stop and the SIGTERM pause
+ * onto an orchestrator, then drive it. `start` launches run() or resume(). Returns
+ * the process exit code (pauseExitCode, failure-policy.mjs):
  *   0  done — and an INTERACTIVE pause the user chose or a limit/cap forced (they
  *      witnessed it and can resume);
  *   1  a terminal error (a launch failure, an unrecoverable resume, a stop) and an
@@ -595,6 +598,8 @@ function stdinCanAnswer() {
  *      exhausted retries, an error) with nobody attached to resume it, so a
  *      wrapper must not read success. Under --yes a parked run's cause prints
  *      on STDOUT with the pause block; only a terminal error reaches stderr.
+ *   143 a SIGTERM (docker stop, a pod eviction, a CI cancel) — the run was paused
+ *      for `worca resume`, or the pause did not land within WORCA_SIGTERM_GRACE_MS.
  */
 async function attachAndDrive(orch, flags, start) {
   // Refuse an unanswerable interactive run BEFORE start(). The orchestrator
@@ -824,12 +829,33 @@ async function attachAndDrive(orch, flags, start) {
   };
   process.on('SIGINT', onSigint);
 
+  // SIGTERM: a supervisor winding the run up. Pause it like the first Ctrl+C, so it
+  // stays resumable and the task source hears needs-human (reason 'terminated'),
+  // let start() settle while that pause persists, then exit 143. A second SIGTERM
+  // changes nothing. The grace bounds a wedged pause: an exit before the
+  // supervisor's SIGKILL still runs the exit hooks that end the agent children.
+  let terminated = false;
+  const onSigterm = () => {
+    if (terminated) return;
+    terminated = true;
+    const graceMs = sigtermGraceMs();
+    setTimeout(() => {
+      process.stderr.write(`worca: the run did not pause within ${Math.round(graceMs / 1000)} s of SIGTERM; exiting\n`);
+      process.exit(143);
+    }, graceMs).unref();
+    out(c('yellow', '\nSIGTERM received — pausing the run…'));
+    orch.pauseForSignal('SIGTERM');
+  };
+  process.on('SIGTERM', onSigterm);
+
   let result;
   try {
     result = await start();
   } finally {
     if (rl) rl.close();
     process.removeListener('SIGINT', onSigint);
+    // Once terminated, the handler stays: a later SIGTERM must not kill the exit it waits for.
+    if (!terminated) process.removeListener('SIGTERM', onSigterm);
   }
 
   out('');
@@ -868,6 +894,7 @@ async function attachAndDrive(orch, flags, start) {
   if (result?.pipelineDir) {
     out(`Pipeline directory: ${c('bold', result.pipelineDir)}`);
   }
+  if (terminated) return 143;
   // An unanswered question is a failure even if the run somehow settled `done`.
   if (answerFailure) return 1;
   if (result?.status === 'done') return 0;
@@ -1378,6 +1405,11 @@ async function cliWorkMode(projectDir) {
   const row = getProjectByPath(projectDir);
   const workMode = workModeForStart({ projectDir }, { getProjectByPath: () => row, gitAvailable: gitOn });
   if (row && !existsSync(projectDir) && effectiveWorkMode(row.vcs, gitOn) === 'folder') fail(`The folder is missing: ${projectDir}`);
+  // #693: never a git run in a folder inside a repository it is not the top of (it would `git init` there).
+  if (workMode === 'git') {
+    const enc = enclosingRepoOf(projectDir, { gitOn });
+    if (enc) fail(nestedInRepoMessage(projectDir, enc));
+  }
   if (workMode === 'folder') {
     const { checkFolderSize } = await import('../core/folder-copy.mjs');
     const big = await checkFolderSize(projectDir, { name: row?.name });

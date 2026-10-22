@@ -110,7 +110,7 @@ test('ask-ref-chips: one batched lookup after the answer is done; titles, pills 
   const [pr, wi, run, chat] = [...div.querySelectorAll('a.ask-ref-chip')];
   assert.equal(pr.querySelector('.ask-ref-title').textContent, 'fix(promo-kit): startApp.stop() waits for the process group to die');
   assert.equal(pr.querySelector('.ask-ref-pill').textContent, 'Merged');
-  assert.ok(pr.querySelector('.ask-ref-pill').classList.contains('tone-violet'));
+  assert.ok(pr.querySelector('.ask-ref-pill').classList.contains('tone-slate'));
   assert.match(pr.title, /^GitHub pull request SinishaDjukic\/worca-cc#777 · fix\(promo-kit\)/);
   assert.deepEqual([wi.querySelector('.ask-ref-label').textContent, wi.querySelector('.ask-ref-pill').textContent], ['AB#123', 'Active']);
   assert.equal(run.getAttribute('href'), '#history/worca-cc-ace1a602/5c40dcc6', 'a confirmed bare id links to its run page');
@@ -286,5 +286,6 @@ test('style.css: a ref chip uses the token corner, a neutral fill and a coloured
     assert.doesNotMatch(body, /999px|box-shadow/, `${sel}: no pill, no shadow`);
     if (sel.includes('.ask-ref-pill')) assert.doesNotMatch(body, /background/, `${sel}: the word carries the colour, nothing fills behind it`);
   }
-  assert.match(css, /\.ask-ref-pill\.tone-violet\{color:var\(--violet-ink\);\}/);
+  assert.match(css, /\.ask-ref-pill\.tone-slate\{color:var\(--slate-ink\);\}/);
+  assert.doesNotMatch(css, /\.ask-ref-pill\.tone-violet/);
 });

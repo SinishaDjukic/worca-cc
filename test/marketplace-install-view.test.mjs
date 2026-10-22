@@ -134,7 +134,7 @@ test('renderReview: the other shapes', async () => {
     { name: 'a snapshot from before MCP inventories says so inside Adds (today\'s consent line)', run: () => {
       const inv = INV({ taskSources: [{ id: 'jira', displayName: 'Jira', secrets: ['pat'] }] }); delete inv.mcpServers;
       const adds = renderReview(doc, item('jira-source', { inventory: inv }), {}).querySelector('section.mk-sec');
-      assert.deepEqual([adds.querySelector('h3').textContent, adds.querySelector('.mk-wash').textContent], ['Adds', 'MCP servers: unknown — refresh the marketplace']);
+      assert.deepEqual([adds.querySelector('h3').textContent, adds.querySelector('.mk-wash').textContent], ['Adds', 'MCP servers: unknown. Refresh the marketplace']);
     } },
   ]);
 });
@@ -148,7 +148,7 @@ test('addsRows / renderReview details: command wins over file, one case, fileTyp
   assert.equal(renderReview(doc, SLACK, {}).querySelector('#mk-r-adds ~ ul .mk-row-title').className, 'mk-row-title');
   const old = renderReview(doc, item('old', { inventory: { depCount: null, setupCommands: [] } }), {});
   assert.deepEqual([...old.querySelectorAll('section.mk-sec h3')].map((h) => h.textContent), ['Adds', 'Setup', 'Source']);
-  assert.equal(old.querySelector('section.mk-sec .mk-wash').textContent, 'MCP servers: unknown — refresh the marketplace');
+  assert.equal(old.querySelector('section.mk-sec .mk-wash').textContent, 'MCP servers: unknown. Refresh the marketplace');
 });
 
 test('renderSetupStep: the installed wash, then one Set up section per source / channel (board 1.3)', () => {

@@ -30,7 +30,7 @@ import {
   claimPausedForStop, claimForResume, findPipelineRowById, readPipelineForResume,
 } from './artifacts.mjs';
 import { diffNameStatus, diffNumstat, diffPatch, untrackedFiles, untrackedPatch } from './git-info.mjs';
-import { clearStaleIndexLock, staleIndexLockNote } from './git-lock.mjs';
+import { clearStaleGitLocks, staleGitLockNote } from './git-lock.mjs';
 import { claimPipelineCommand, discardPendingPipelineCommands, controlCheckIntervalMs } from './pipeline-commands.mjs';
 import {
   assembleResults, persistResults, persistDiffPatch, buildPerProject, rollupSummary,
@@ -41,7 +41,7 @@ import { projectKey, projectStorePath, workspaceStorePath, noProjectWorkDir, isN
 import { NO_PROJECT_KEY, NO_PROJECT_NAME, NO_PROJECT_ERRORS, WORK_DIR_NAME, isNoProjectKey } from '../shared/no-project.mjs';
 import { harvestWork, ownWorkDir, WORK_ARTIFACT_KIND } from './no-project-work.mjs';
 import { appendDirection, readDirections, pendingDirections, DIRECTIONS_FILE, DIRECTIONS_KIND, DIRECTIONS_CLOSED } from './directions.mjs';
-import { worcaHome } from './projects.mjs';
+import { worcaHome, getProjectByPath, enclosingRepoOf, nestedInRepoMessage, worcaNestedRepoOf, worcaNestedRepoHint } from './projects.mjs';
 import { normalizeWorkMode, workModeOfRow, folderFiles, CHANGES_FILE, CHANGES_PATCH_FILE } from './project-kind.mjs';
 import { folderMemberFiles } from './folder-members.mjs';
 import {
@@ -975,6 +975,7 @@ export class RunHarness extends EventEmitter {
     this._answeredBy = new Map();            // question id -> who answered it (identity.mjs actor)
     this.pauseRequested = false;
     this.pauseAbort = new AbortController(); // aborts ONLY node children on pause
+    this._signalPause = null;                // a signal (SIGTERM) that came while a resume set up: pause once running
     this.pauseReason = null;                 // WHY the run paused: 'cost_pipeline'|'cost_total'|'error'|<usage-limit line>|null
     this.pauseDetail = null;                 // the human detail behind pauseReason ('error': the clipped message)
     this.pauseClass = null;                  // the class behind a 'recoverable' pause (resume point `pauseClass`)
@@ -1248,6 +1249,21 @@ export class RunHarness extends EventEmitter {
     this._setPauseReason(REASON.DRAIN, 'Paused while worca was stopping');
     this._log('orchestrator', 'info', 'worca is stopping — pausing the run; resume continues from here');
     if (this.pipeline?.dir) appendAudit(this.pipeline.dir, 'Pipeline **paused**: worca was stopping.').catch(() => {});
+    return this.pause();
+  }
+
+  /**
+   * Pause because the CLI process got `signal` (SIGTERM from a supervisor: docker stop, a pod eviction, a CI
+   * cancel): pause() with the reason 'terminated', so the resume point says why and the task source hears
+   * needs-human (nothing resumes a CLI run by itself). A resume still setting up ('idle': it claims its row
+   * long before it runs) is held the same way, as soon as it is running. Returns false for any other status.
+   */
+  pauseForSignal(signal) {
+    if (this.state.status === 'idle') { this._signalPause = signal; return true; }
+    if (this.state.status !== 'running') return false;
+    this._setPauseReason(REASON.TERMINATED, `the process received ${signal}`);
+    this._log('orchestrator', 'info', `${signal} received — pausing the run; worca resume continues from here`);
+    if (this.pipeline?.dir) appendAudit(this.pipeline.dir, `Pipeline **paused**: worca received ${signal}.`).catch(() => {});
     return this.pause();
   }
 
@@ -1957,6 +1973,7 @@ export class RunHarness extends EventEmitter {
       // or stop (§4.4 decision 2).
       this._metricsIv.lastPauseReason = null;
       this._metricsIv.lastPauseDetail = null;
+      if (this._signalPause) this.pauseForSignal(this._signalPause);
 
       // 3a') Auto workflow (spec §5.6): a run that paused BEFORE its graph was
       // decided re-enters the decision HERE — before the setup replay, so the
@@ -5047,7 +5064,7 @@ export class RunHarness extends EventEmitter {
     if (!pipelineDir || !info?.worktreeDir) return;
     const name = retainedWorkPatchName(this.isWorkspace ? key : null);
     const snap = await snapshotWorktreePatch(info.worktreeDir, join(pipelineDir, name));
-    if (snap.clearedLock) await this._recordRunWarning(staleIndexLockNote(snap.clearedLock));
+    for (const lock of snap.clearedLocks || []) await this._recordRunWarning(staleGitLockNote(lock));
     if (snap.ok && snap.file) {
       recordArtifact(this.pipeline.id, 'retained-work-patch', name);
       this._log('git', 'info', `Retained-work recovery patch saved: ${name}`);
@@ -5220,6 +5237,7 @@ export class RunHarness extends EventEmitter {
       name: this.workspace.name,
       projectPaths: this.members.map((m) => resolve(m.projectDir)),
       pipelineDir: this.pipeline.dir,
+      models: this.opts.scanModels ?? null,
     });
     this.state.workspaceScan = { ...res, at: new Date().toISOString() };
     if (res.outcome === 'failed') {
@@ -5808,7 +5826,8 @@ export class RunHarness extends EventEmitter {
       projectKey: m.projectKey,
       projectName: m.projectName,
       dir: this.workDirs.get(m.projectKey) || null,
-      relDir: this.runRootMode === 'detached' ? `repos/${m.projectKey}` : null,  // render-only token
+      // render-only token: the dir on disk, a shortened projectKey when the key would overflow (#411)
+      relDir: this.runRootMode === 'detached' ? `repos/${basename(this.workDirs.get(m.projectKey) || m.projectKey)}` : null,
       checkpointRef: this.checkpointRefs[m.projectKey] || null,
       graphInstruction: this.toolInstructions.get(m.projectKey) || '',
       // P5: no changes file on a read-only scan (S51) — it writes none.
@@ -6450,11 +6469,11 @@ export class RunHarness extends EventEmitter {
    * @returns {Promise<string|null>}
    */
   async _ensureGitCheckpointFor(dir) {
-    // C2: `--is-inside-work-tree` is true even when dir merely sits *inside* an
-    // enclosing repo (no .git of its own). Acting on that parent repo would
-    // silently create worca-cc/* branches + checkpoint commits in the developer's
-    // real repo. Require dir to BE the repo toplevel; if it isn't (no repo, or
-    // only a parent repo), `git init` a dedicated repo here.
+    // C2 / #693: `--is-inside-work-tree` is true even when dir merely sits *inside* an enclosing repo (no .git of its
+    // own). Acting on that parent repo would create worca-cc/* branches + checkpoint commits in the developer's real
+    // repo, and `git init` here (what ≤ 1.10.0 did) made an inner repo that lacks every branch of the real one, so the
+    // worktree failed with "sourceBranch is not a valid ref". Require dir to BE the repo toplevel; a dir inside a repo
+    // is refused (terminal: a resume would replay into the same refusal); only a dir in NO repo is `git init`ed.
     const projReal = await realpath(dir).catch(() => resolve(dir));
     const top = await this._git(['rev-parse', '--show-toplevel'], { cwd: dir });
     let topReal = null;
@@ -6471,17 +6490,26 @@ export class RunHarness extends EventEmitter {
       if (why) throw new Error(`read-only workspace scan: ${dir} ${why}`);
     }
     if (!isOwnRepo) {
-      if (topReal) {
-        this._log(
-          'git',
-          'info',
-          `${dir} is nested in repo ${topReal}; initializing a dedicated repo to isolate worktrees.`,
-        );
+      // git could not answer (e.g. a "dubious ownership" parent): the stat-only walk still finds an enclosing .git.
+      const enc = topReal ? { repoRoot: topReal, partOf: getProjectByPath(topReal)?.name ?? null }
+        : enclosingRepoOf(dir, { gitOn: false });
+      if (enc) {
+        const err = markTerminal(new Error(nestedInRepoMessage(dir, enc)));
+        err.code = 'NESTED_IN_REPO';
+        throw err;
       }
       await this._git(['init'], { cwd: dir });
       // Ensure an identity exists for the commit (local, non-destructive).
       await this._git(['config', 'user.email', 'orchestrator@local'], { cwd: dir });
       await this._git(['config', 'user.name', 'orchestrator'], { cwd: dir });
+    } else {
+      // #693: a repo an older worca git-inited inside the user's repo. Warn with the fix; change nothing on disk.
+      const made = worcaNestedRepoOf(dir);
+      if (made) {
+        const hint = worcaNestedRepoHint(dir, made);
+        this._log('git', 'warn', hint);
+        if (this.pipeline) await appendAudit(this.pipeline.dir, `Warning: ${hint}`).catch(() => {});
+      }
     }
     // Is there any commit yet?
     const head = await this._git(['rev-parse', 'HEAD'], { cwd: dir });
@@ -6839,16 +6867,17 @@ export class RunHarness extends EventEmitter {
 
   /**
    * `_git` for a command that writes the index (add / rm --cached / commit). When git refuses
-   * because `index.lock` exists and the lock is stale — a leftover from a killed git, not a live
-   * one — remove it, record a run warning, and retry once. Without this one leftover lock fails
-   * every later staging and then the teardown commit, retaining the whole run.
+   * because a lock exists (`index.lock`, or `HEAD.lock` / the branch ref lock a commit takes) and
+   * the lock is stale — a leftover from a killed git, not a live one — remove every stale lock,
+   * record one run warning per lock, and retry once. Without this one leftover lock fails every
+   * later staging and then the teardown commit, retaining the whole run.
    */
   async _gitIndexWrite(args, opts) {
     const res = await this._git(args, opts);
     if (res.ok) return res;
-    const cleared = await clearStaleIndexLock(opts?.cwd || this.projectDir);
-    if (!cleared) return res;
-    await this._recordRunWarning(staleIndexLockNote(cleared));
+    const cleared = await clearStaleGitLocks(opts?.cwd || this.projectDir);
+    if (!cleared.length) return res;
+    for (const lock of cleared) await this._recordRunWarning(staleGitLockNote(lock));
     return this._git(args, opts);
   }
 

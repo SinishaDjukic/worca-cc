@@ -377,7 +377,7 @@ test('while a clone runs the way out says Hide: hiding keeps the clone going wit
   click(window, way);
   assert.equal(isHidden(doc), true);
   assert.deepEqual(lastToast(doc), { tone: 'info', title: 'Cloning in the background',
-    detail: 'https://github.com/acme/api — a notification says when it is done.', action: '' });
+    detail: 'https://github.com/acme/api. A notification says when it is done.', action: '' });
   window.__projects.openProjectAddModal('');                   // reopened: the progress, locked
   assert.equal(selected(doc), 'clone');
   assert.match($(doc, '#proj-add-msg').textContent, /^Cloning https:\/\/github\.com\/acme\/api …$/);

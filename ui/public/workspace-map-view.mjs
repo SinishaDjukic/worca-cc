@@ -11,7 +11,7 @@ import { mapSummary } from '../../src/shared/workspace-map/summary.mjs';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const CONF_TONE = { exact: 'green', verified: 'blue', heuristic: 'amber', inferred: 'grey' };
-const STATE_TONE = { auto: 'grey', confirmed: 'green', rejected: 'red', manual: 'violet', missing: 'amber', stale: 'amber' };
+const STATE_TONE = { auto: 'grey', confirmed: 'green', rejected: 'red', manual: 'slate', missing: 'amber', stale: 'amber' };
 const ACTIONS = {
   auto: [['wm-confirm', 'Confirm'], ['wm-reject', 'Reject']],
   confirmed: [['wm-reject', 'Reject'], ['wm-clear', 'Clear']],

@@ -7,6 +7,7 @@
 // purely local (a show-all toggle, chip add/remove inside the editor).
 
 import { icon } from './icons.mjs';
+import { makeSwitch } from './switch.mjs';
 import { engineLabel } from '../../src/shared/engine-switch.mjs';
 import { normaliseDimension } from '../../src/shared/tag-dimensions.mjs';
 const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -229,8 +230,8 @@ export function renderPolicyEnableDialogBody({ project, origin, candidates = [],
       ? 'Only projects that carry a policy are listed. Preselected to match where this project\'s metrics go.'
       : 'Only projects that carry a policy are listed.'));
   }
-  if (change) where.append(h(doc, 'small', 'hint', 'This project already has a marker branch — pick a new home.'));
-  if (!candidates.length) where.append(h(doc, 'small', 'hint', 'No project carries a policy yet — set one up here first, then point other projects at it.'));
+  if (change) where.append(h(doc, 'small', 'hint', 'This project already has a marker branch. Pick a new home.'));
+  if (!candidates.length) where.append(h(doc, 'small', 'hint', 'No project carries a policy yet. Set one up here first, then point other projects at it.'));
   root.append(where);
   const warn = h(doc, 'div', 'hint tm-warn');
   warn.append('Protect ', code(doc, 'worca-policy'), ' on your git host so only maintainers can push. Worca reads it for everyone and writes it only from the Team policy page. This is the opposite of ', code(doc, 'worca-metrics'), ', which every teammate must be able to push to.');
@@ -242,7 +243,7 @@ export function renderPolicyEnableDialogBody({ project, origin, candidates = [],
 const GROUP_LABELS = { cost: 'Cost', ask: 'Chat', guardrails: 'Guardrails', models: 'Models', plugins: 'Plugins', runs: 'Runs' };
 const kindChip = (doc, kind, declaredKind) => {
   const c = h(doc, 'span', `tp-kind ${declaredKind === 'hard' ? 'hard' : kind}`, declaredKind === 'hard' ? 'hard' : kind);
-  if (declaredKind === 'hard') c.title = 'Hard constraints are not enforced by this version — treated as soft';
+  if (declaredKind === 'hard') c.title = 'Hard constraints are not enforced by this version, so they are treated as soft';
   return c;
 };
 
@@ -295,7 +296,7 @@ export function renderEffectiveTable(payload, { doc = globalThis.document, showA
   }
   if (!rows.some((r) => r.shown) && !showAll) {
     const tr = h(doc, 'tr'); const td = h(doc, 'td'); td.colSpan = 5;
-    td.append(h(doc, 'small', 'hint', 'The policy sets no fields yet — your local settings apply.')); tr.append(td); tbody.append(tr);
+    td.append(h(doc, 'small', 'hint', 'The policy sets no fields yet. Your local settings apply.')); tr.append(td); tbody.append(tr);
   }
   table.append(tbody);
   card.append(table);
@@ -349,9 +350,9 @@ export function renderPolicyHeader(payload, { doc = globalThis.document, now = D
     const v = [h(doc, 'span', null, 'Policy home '), ref(doc, policy.home || '—')];
     if (policy.delegated && policy.from) v.push(h(doc, 'span', null, ' · the home follows it through '), ref(doc, policy.from));
     fact('Source', ...v);
-    fact('Applies to', 'Workspace runs of ', ref(doc, scope.name || 'this workspace'), ' — the policy\'s workspace-run values sit on top');
+    fact('Applies to', 'Workspace runs of ', ref(doc, scope.name || 'this workspace'), ' (the policy\'s workspace-run values sit on top)');
   } else if (policy.delegated) {
-    fact('Source', h(doc, 'span', null, 'Follows '), ref(doc, policy.home || '—'), h(doc, 'span', null, ' — the document lives there'));
+    fact('Source', h(doc, 'span', null, 'Follows '), ref(doc, policy.home || '—'), h(doc, 'span', null, ' (the document lives there)'));
     fact('Applies to', 'Runs on ', ref(doc, scope.name || 'this project'));
   } else {
     fact('Source', h(doc, 'span', null, 'This project\'s own '), code(doc, 'worca-policy'), h(doc, 'span', null, ' branch'));
@@ -414,7 +415,7 @@ export function renderPolicyStats(payload, { doc = globalThis.document } = {}) {
     .map((st) => [off.filter((r) => r.state === st).length, st === 'outdated' ? 'below the floor' : st])
     .filter(([n]) => n > 0).map(([n, label]) => `${n} ${label}`);
   statCard('Required plugins', reqs.length ? `${reqs.length - off.length}/${reqs.length}` : 'none',
-    reqs.length ? (off.length ? `${byState.join(' · ')} — see the Plugins tab` : 'all installed') : 'the policy expects none',
+    reqs.length ? (off.length ? `${byState.join(' · ')}. See the Plugins tab` : 'all installed') : 'the policy expects none',
     off.length ? 'warn' : null);
   const dev = payload.deviations || [];
   statCard('Off-policy here', dev.length ? String(dev.length) : 'none',
@@ -422,7 +423,12 @@ export function renderPolicyStats(payload, { doc = globalThis.document } = {}) {
   return grid;
 }
 
-const PLUGIN_STATE = { ok: ['green', 'installed'], missing: ['grey', 'not installed'], outdated: ['amber', 'below the floor'], disabled: ['amber', 'disabled here'] };
+const PLUGIN_STATE = {
+  ok: ['green', 'installed'],
+  missing: ['grey', 'not installed'],
+  outdated: ['amber', 'below the floor'],
+  disabled: ['amber', 'disabled here'],
+};
 
 /** The Plugins tab (board 11): what the policy expects, against what this machine has. */
 export function renderPolicyPluginsPanel(payload, { doc = globalThis.document } = {}) {
@@ -507,7 +513,7 @@ export function renderPolicyCatalogPanel(payload, { doc = globalThis.document } 
       main.append(h(doc, 'b', null, g.name || g.id), ' ', code(doc, `gp:${g.id}`));
       const bits = [g.envScrub ? 'env scrubbed' : 'env passed through', `${(g.protectedPaths || []).length} protected path${(g.protectedPaths || []).length === 1 ? '' : 's'}`, `${(g.deny || []).length} deny rule${(g.deny || []).length === 1 ? '' : 's'}`];
       main.append(h(doc, 'small', 'hint', bits.join(' · ')));
-      row.append(main, h(doc, 'span', 'badge blue', 'policy'));
+      row.append(main, h(doc, 'span', 'badge slate', 'policy'));
       list.append(row);
     }
     sc.append(list);
@@ -524,10 +530,10 @@ export function renderPolicyCatalogPanel(payload, { doc = globalThis.document } 
       const row = h(doc, 'div', 'tp-cat-row');
       const main = h(doc, 'div', 'tp-cat-main');
       main.append(h(doc, 'b', null, m.label || m.id), ' ', code(doc, m.id));
-      if (m.engine && m.engine !== 'claude') main.append(' ', h(doc, 'span', 'badge violet tp-engine', engineLabel(m.engine)));
+      if (m.engine && m.engine !== 'claude') main.append(' ', h(doc, 'span', 'badge slate tp-engine', engineLabel(m.engine)));
       const envKeys = Object.keys(m.env || {});
       main.append(h(doc, 'small', 'hint', [(m.efforts || []).join(' · ') || 'default efforts', envKeys.length ? `${envKeys.length} env var${envKeys.length === 1 ? '' : 's'}` : null, m.env?.ANTHROPIC_BASE_URL ? 'routes via base URL' : null].filter(Boolean).join(' · ')));
-      row.append(main, h(doc, 'span', 'badge blue', 'policy'));
+      row.append(main, h(doc, 'span', 'badge slate', 'policy'));
       list.append(row);
     }
     mc.append(list);
@@ -586,8 +592,8 @@ function writeItems(row, items) { row.dataset.json = JSON.stringify(items); }
 // ---- the catalog editor: guardrail sets and models as forms ------------------------------------
 const CAT_TITLE = { guardrailSets: 'Guardrail sets', models: 'Models' };
 const CAT_HINT = {
-  guardrailSets: 'Sets every teammate gets as read-only rows (gp:<id>) — the policy\'s default set and minimum tier point at them.',
-  models: 'Model entries every teammate gets as read-only rows — "allowed models" can name them. Env may use ${VAR} for tokens; a literal secret is refused at publish.',
+  guardrailSets: 'Sets every teammate gets as read-only rows (gp:<id>). The policy\'s default set and minimum tier point at them.',
+  models: 'Model entries every teammate gets as read-only rows, which "allowed models" can name. Env may use ${VAR} for tokens; a literal secret is refused at publish.',
 };
 /** A chip list for a catalog item field: the row idiom (dataset.json + .tp-list + an add row) on a small wrapper. */
 function chipField(doc, label, key, items, placeholder) {
@@ -609,9 +615,7 @@ function textField(doc, label, cls, value, placeholder, mono = false) {
   return wrap;
 }
 function boolField(doc, label, cls, on) {
-  const lab = h(doc, 'label', 'check-row tp-cat-bool'); const cb = h(doc, 'input', cls); cb.type = 'checkbox'; cb.checked = !!on;
-  lab.append(cb, ` ${label}`);
-  return lab;
+  return makeSwitch(doc, { label, checked: !!on, inputClass: cls, rowClass: 'tp-cat-bool' }).row;
 }
 function catalogItem(doc, cat, item) {
   const it = h(doc, 'div', 'tp-cat-item'); it.dataset.cat = cat;
@@ -632,7 +636,7 @@ function catalogItem(doc, cat, item) {
       chipField(doc, 'Deny rules', 'deny', item?.deny, 'Bash(git push)'),
       chipField(doc, 'Env allowlist', 'envAllowlist', item?.envAllowlist, 'HOME'));
   } else {
-    head.append(h(doc, 'b', null, item?.label || item?.id || 'New model'), ...(item?.engine && item.engine !== 'claude' ? [h(doc, 'span', 'badge violet tp-engine', engineLabel(item.engine))] : []), rm);
+    head.append(h(doc, 'b', null, item?.label || item?.id || 'New model'), ...(item?.engine && item.engine !== 'claude' ? [h(doc, 'span', 'badge slate tp-engine', engineLabel(item.engine))] : []), rm);
     grid.append(
       textField(doc, 'Id', 'tp-cat-id', item?.id, 'acme-proxy-opus', true),
       textField(doc, 'Label', 'tp-cat-label', item?.label, 'Opus via Acme gateway'),
@@ -718,7 +722,7 @@ function valueControl(doc, meta, entry, row) {
       const lab = h(doc, 'label', 'switch-row'); const cb = h(doc, 'input', 'sw-input tp-val'); cb.type = 'checkbox'; cb.checked = v === true;
       cb.setAttribute('aria-label', meta.label);
       if (meta.offOnly) cb.disabled = true;             // a policy can only switch it off (registry: offOnly)
-      lab.append(cb, h(doc, 'span', 'switch switch-sm'), h(doc, 'span', 'txt', v === true ? 'on' : 'off'));
+      lab.append(cb, h(doc, 'span', 'switch'), h(doc, 'span', 'txt', v === true ? 'on' : 'off'));
       cb.addEventListener('change', () => { lab.querySelector('.txt').textContent = cb.checked ? 'on' : 'off'; });
       wrap.append(lab); break;
     }
@@ -810,7 +814,7 @@ function valueControl(doc, meta, entry, row) {
       const label = h(doc, 'input', 'input tp-dim-label'); label.type = 'text'; label.placeholder = 'label (Cost centre)'; label.setAttribute('aria-label', 'Label');
       const values = h(doc, 'input', 'input tp-dim-values'); values.type = 'text'; values.placeholder = 'allowed values, comma-separated (optional)'; values.setAttribute('aria-label', 'Allowed values');
       const def = h(doc, 'input', 'input tp-dim-default'); def.type = 'text'; def.placeholder = 'default (optional)'; def.setAttribute('aria-label', 'Default');
-      const req = h(doc, 'label', 'check-row'); const cb = h(doc, 'input', 'tp-dim-required'); cb.type = 'checkbox'; req.append(cb, ' Required');
+      const req = makeSwitch(doc, { label: 'Required', inputClass: 'tp-dim-required' }).row;
       const b = h(doc, 'button', 'btn btn-sm tp-add-btn', 'Add'); b.prepend(icon(doc, 'plus', 14)); b.type = 'button';
       add.append(key, label, values, def, req, b); wrap.append(add);
       break;
@@ -873,8 +877,7 @@ function editorRow(doc, meta, entry, scope) {
     const sw = h(doc, 'span', 'select-wrap'); const sel = h(doc, 'select', 'select tp-onbreach-sel');
     for (const val of ['pause', 'warn']) { const o = h(doc, 'option', null, val); o.value = val; if ((entry?.onBreach || 'pause') === val) o.selected = true; sel.append(o); }
     sw.append(sel); lab.append(sw);
-    const rr = h(doc, 'label', 'check-row tp-require'); const cb = h(doc, 'input', 'tp-require-reason'); cb.type = 'checkbox'; cb.checked = !!entry?.requireReason;
-    rr.append(cb, ' reason required');
+    const rr = makeSwitch(doc, { label: 'reason required', checked: !!entry?.requireReason, inputClass: 'tp-require-reason', rowClass: 'tp-require' }).row;
     extra.append(lab, rr, h(doc, 'span', 'tp-src', 'soft cap: the run pauses (or warns) at the tighter of team and local'));
     const sync = () => { extra.hidden = seg.querySelector('.on')?.dataset.kind !== 'soft'; };
     seg.addEventListener('click', () => setTimeout(sync, 0)); sync();
@@ -1329,7 +1332,7 @@ export function renderWsPolicyLine(w, { doc = globalThis.document } = {}) {
     for (const m of members) counts.set(m.state, (counts.get(m.state) || 0) + 1);
     const parts = [...counts.entries()].sort((a, b) => (WS_MEMBER_RANK[a[0]] ?? 99) - (WS_MEMBER_RANK[b[0]] ?? 99)).map(([state, n]) => `${n} ${memberWord(state, n)}`);
     const dd = fact('Members', parts.join(' · '));
-    if (counts.get('none')) dd.append(' — ', h(doc, 'span', 'ws-sum-warn', 'a member with no branch keeps its own settings for project runs'));
+    if (counts.get('none')) dd.append('; ', h(doc, 'span', 'ws-sum-warn', 'a member with no branch keeps its own settings for project runs'));
   }
   root.append(facts);
   if (home.state === 'unset') root.append(h(doc, 'small', 'hint ws-home-hint', 'Workspace runs use your local settings until a policy home is chosen. The home is a per-machine choice; it defaults to the metrics home.'));
@@ -1370,7 +1373,7 @@ export function renderTeamChip({ kind, display }, { doc = globalThis.document } 
 export function renderPolicyNotesLine({ policy, notes = [] }, { doc = globalThis.document } = {}) {
   const root = h(doc, 'div', 'policy-line');
   const head = h(doc, 'div', 'pl-head-row');
-  head.append(h(doc, 'span', 'badge blue', 'team policy'), ref(doc, policy?.home || '—'));
+  head.append(h(doc, 'span', 'badge slate', 'team policy'), ref(doc, policy?.home || '—'));
   const n = notes.length;
   head.append(h(doc, 'span', 'muted', n ? ` · ${n} note${n === 1 ? '' : 's'} · nothing here blocks the run` : ' · nothing to note'));
   root.append(head);
@@ -1393,7 +1396,7 @@ export function renderPolicyNotesLine({ policy, notes = [] }, { doc = globalThis
 export function renderTeamCapPauseBanner(rec, { doc = globalThis.document, budget = null } = {}) {
   const total = rec.pauseReason === 'cost_total_policy';
   const el = h(doc, 'div', `cost-banner cb-policy ${total ? 'cb-policy-total' : 'cb-policy-pipeline'}`);
-  el.append(h(doc, 'b', null, total ? 'Paused — team total cap reached' : 'Paused — team cost cap reached'));
+  el.append(h(doc, 'b', null, total ? 'Paused: team total cap reached' : 'Paused: team cost cap reached'));
   const text = h(doc, 'div', 'cb-text');
   // The harness detail carries the numbers and the home: "team cost cap reached ($11.40 >= $10.00, acme/gateway)"
   // or "team total cap reached ($160.00 >= $150.00 this month, acme/gateway)".
@@ -1459,7 +1462,7 @@ export function renderRequiredStrip(requirements = [], blockedPlugins = [], { do
   // the head — the Team policy page's Plugins tab, in short form.
   const root = h(doc, 'section', 'card pl-required-card');
   const head = h(doc, 'div', 'card-head');
-  head.append(h(doc, 'span', 'badge blue', 'team policy'), h(doc, 'b', null, 'Required by team policy'), h(doc, 'span', 'badge', String(off.length + blocked.length)));
+  head.append(h(doc, 'span', 'badge slate', 'team policy'), h(doc, 'b', null, 'Required by team policy'), h(doc, 'span', 'badge', String(off.length + blocked.length)));
   const actions = h(doc, 'div', 'pl-required-actions');
   actions.append(requiredActions(doc, requirements));
   head.append(actions);
@@ -1540,12 +1543,12 @@ export function renderMcpStrip(rows = [], { doc = globalThis.document, skills = 
     const one = homeList.length === 1;
     const required = (skills || []).filter((r) => homeList.includes(r.home));
     const what = required.length === 1 ? `the skill ${required[0].name} · ${required[0].plugin}` : `${required.length} skills`;
-    const todo = openSkills.length < required.length ? ` — ${openSkills.length} to set up` : '';
-    head.append(h(doc, 'span', 'badge grey', 'Team policy'), h(doc, 'b', null, `${homes} ${one ? 'requires' : 'require'} ${what} in ${one ? 'its Team set' : 'their Team sets'}${todo}`));
+    const todo = openSkills.length < required.length ? ` (${openSkills.length} to set up)` : '';
+    head.append(h(doc, 'span', 'badge slate', 'Team policy'), h(doc, 'b', null, `${homes} ${one ? 'requires' : 'require'} ${what} in ${one ? 'its Team set' : 'their Team sets'}${todo}`));
   } else {
     const what = [`${open.length} MCP item${open.length === 1 ? '' : 's'}`,
       openSkills.length ? `${openSkills.length} skill${openSkills.length === 1 ? '' : 's'}` : null].filter(Boolean).join(' and ');
-    head.append(h(doc, 'span', 'badge blue', 'team policy'), h(doc, 'b', null, `${homes}: ${what} to set up`));
+    head.append(h(doc, 'span', 'badge slate', 'team policy'), h(doc, 'b', null, `${homes}: ${what} to set up`));
   }
   const actions = h(doc, 'div', 'pl-required-actions'); actions.append(btn(doc, 'pl-policy-setup', 'Set up…'));
   head.append(actions);
@@ -1655,8 +1658,8 @@ export function renderSetupChecklist({ home, requirements = [], seeds = [], trus
   root.append(list);
   const trust = h(doc, 'label', 'switch-row tp-trust-row');
   const cb = h(doc, 'input', 'sw-input tp-trust'); cb.type = 'checkbox'; cb.checked = !!trusted; cb.dataset.home = home || '';
-  const txt = h(doc, 'span', 'txt'); txt.append(h(doc, 'b', null, 'Trust this policy home'), h(doc, 'small', 'hint', `Install and update required plugins from ${home || 'this home'} automatically on this machine, without this checklist. Plugins run with your user privileges. MCP servers are never installed or turned on automatically, and required skills are never turned on automatically — but updates to required skills apply without another review when you trust this home. You can turn this off on the Marketplace page at any time.`));
-  trust.append(cb, h(doc, 'span', 'switch switch-sm'), txt);
+  const txt = h(doc, 'span', 'txt'); txt.append(h(doc, 'b', null, 'Trust this policy home'), h(doc, 'small', 'hint', `Install and update required plugins from ${home || 'this home'} automatically on this machine, without this checklist. Plugins run with your user privileges. MCP servers are never installed or turned on automatically, and required skills are never turned on automatically. However, updates to required skills apply without another review when you trust this home. You can turn this off on the Marketplace page at any time.`));
+  trust.append(cb, h(doc, 'span', 'switch'), txt);
   root.append(trust);
   // One footer action: the modal's own Close is the way out (a "Later" here said the same twice).
   const actions = h(doc, 'div', 'confirm-actions');
@@ -1697,7 +1700,7 @@ function skillRowParts(doc, r) {
 // import src/core, so a test pins the two equal).
 const SKILL_HOOKS_TEXT = "declares hooks — they run shell commands outside Worca's guardrails when the skill is used";
 // Skills registry spec §4.1: `${CLAUDE_PLUGIN_ROOT}` points into the plugin Worca generates for a set, not the source plugin.
-const SKILL_PLUGIN_ROOT_TEXT = "references its plugin's other files — may not work from a set";
+const SKILL_PLUGIN_ROOT_TEXT = "references its plugin's other files, so it may not work from a set";
 const kb = (n) => (n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} kB`);
 /** The Turn on dialog body (board 10): the GET …/consent payload — where the skill comes from, what it ships and may
  *  run, the set it joins, and its SKILL.md as text. */
@@ -1712,7 +1715,7 @@ export function renderSkillConsent(c, { doc = globalThis.document } = {}) {
   fact('From', `${c.home} · worca-policy @ ${String(c.sha || '').slice(0, 7)}`);
   fact('Files', `${c.files} · ${kb(c.bytes)}`);
   fact('Scripts', c.scripts.length ? code(doc, c.scripts.join(' · ')) : 'none');
-  fact('Shell blocks', c.shellBlocks ? `${c.shellBlocks} in SKILL.md — they run in pipeline runs without guardrail checks; Chat never runs them` : 'none');
+  fact('Shell blocks', c.shellBlocks ? `${c.shellBlocks} in SKILL.md (they run in pipeline runs without guardrail checks; Chat never runs them)` : 'none');
   if (c.hooks) fact('Hooks', h(doc, 'span', 'hint err', SKILL_HOOKS_TEXT));
   if (c.pluginRootRefs) fact('Plugin files', h(doc, 'span', 'hint err', SKILL_PLUGIN_ROOT_TEXT));
   if (c.allowedTools) fact('Allowed tools', code(doc, c.allowedTools));
@@ -1766,7 +1769,7 @@ export async function handleTeamSkillClick(e, deps) {
 }
 
 export function renderPolicyBadgeFor(origin, { doc = globalThis.document } = {}) {
-  const b = h(doc, 'span', 'badge blue tp-origin', 'policy');
+  const b = h(doc, 'span', 'badge slate tp-origin', 'policy');
   if (origin) b.title = `from the team policy on ${origin}`;
   return b;
 }

@@ -23,7 +23,7 @@ export const SCREENS = Object.freeze([
   { key: 'runs', hash: '#runs', ready: view('runs') },
   { key: 'run-page', hash: '#history/{run}', ready: '.hd .rd-glance:not([hidden])',
     also: { hash: '#history/{run}/details', ready: '.hd-tabs [role="tab"]' } },
-  { key: 'group-page', hash: '#feature/{feature}', ready: view('feature') },
+  { key: 'group-page', hash: '#feature/{feature}', ready: '#runs-pane #group-detail .gpage' },
   { key: 'schedules', hash: '#schedules', ready: view('schedules') }, { key: 'workflows', hash: '#workflows', ready: view('workflows') },
   { key: 'statistics', hash: '#stats', ready: view('stats') }, { key: 'settings', hash: '#settings/runs', ready: view('settings') },
   { key: 'feature-card', hash: '#chat', prep: 'open-plan', ready: '.chat-home-plan .shape-feature' },

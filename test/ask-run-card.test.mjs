@@ -146,7 +146,7 @@ test('createRunProgressCard: head, stats, chips, graph, question banner, error r
       card.update({ ...snapshotFromState(STATE(), { now: 0 }), source: 'live', runId: 'r', pendingQuestion: { kind: 'questions', questions: [{}, {}] } }, 0);
       const banner = card.el.querySelector('.ask-rc-banner');
       assert.equal(banner.hidden, false);
-      assert.equal(banner.textContent, 'Waiting for your answer — 2 questions');
+      assert.equal(banner.textContent, 'Waiting for your answer (2 questions)');
       assert.equal(card.el.querySelector('.ask-rc-pill').textContent, 'Waiting for your answer');
       card.update({ ...snapshotFromState(STATE({ status: 'error', active: [] }), { now: 0 }) }, 0);
       assert.equal(banner.hidden, true);

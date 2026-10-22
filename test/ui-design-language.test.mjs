@@ -81,7 +81,8 @@ test('the one button: 32px default, 28px small, 40px large, 40px minimum under a
   assert.match(body('.btn-sm'), /height:28px;/);
   assert.match(body('.btn-lg'), /height:40px;/);
   assert.match(css, /@media \(pointer:coarse\)\{\.btn\{min-height:40px;\}\.btn-icon\{min-width:40px;\}\}/);
-  assert.match(body('.confirm-modal .btn-danger:hover:not(:disabled)'), /var\(--red-ink-strong\)/, 'solid red stays solid on hover');
+  assert.match(body('.confirm-modal .btn-danger:hover:not(:disabled)'), /var\(--danger-solid-hover\)/, 'solid red stays solid on hover');
+  assert.match(css, /--danger-solid-hover:color-mix\(in srgb,var\(--ink\) 12%,var\(--red-ink-strong\)\)/, 'the shared hover recipe is on the solid red');
   for (const sel of ['.btn:hover:not(:disabled)', '.btn-primary:hover:not(:disabled)']) {
     assert.doesNotMatch(body(sel), /transform|box-shadow/, `${sel} lifts or washes`);
   }
@@ -113,7 +114,8 @@ const REMOVED = ['btn-go', 'btn-ghost', 'btn-mini', 'btn-clear', 'btn-expand', '
   'wfv-btn', 'wfv-btn-primary', 'wfv-icon-btn', 'apv-btn', 'apv-btn-primary', 'pp-btn', 'chat-rc-btn', 'ask-icon-btn'];
 // D5: single-element hooks that stay for JS and tests, with layout only.
 const HOOKS = ['stop-confirm', 'stop-cancel', 'shipit-ok', 'guide-next', 'mc-btn', 'pp-send', 'gv-nav-btn', 'ask-cmd-stop',
-  'sync-check-now', 'hd-stop', 'rd-stop', 'rd-pause', 'topnav-new', 'hd-more', 'ask-card-not-now', 'btn-split-more'];
+  'sync-check-now', 'hd-stop', 'rd-stop', 'rd-pause', 'topnav-new', 'hd-more', 'ask-card-not-now', 'btn-split-more',
+  'chat-home-act', 'chat-run-tile-open'];
 // A whole class token: not part of a longer class or of a data- attribute (data-ask-card-start stays).
 const classRe = (c) => new RegExp(`(?<![\\w-])${c}(?![\\w-])`);
 
@@ -193,7 +195,7 @@ test('no coloured left-border accent cards (D16)', () => {
 });
 
 const KIND_CHIPS = ['.badge', '.flag-chip', '.issue-sev', '.artifact-kind', '.tp-kind', '.sk-kind', '.team-chip .kind',
-  '.hd-ov-file-kind', '.ask-mcard-kind', '.wf-log-live', '.kind-chip'];
+  '.hd-ov-file-kind', '.ask-mcard-kind', '.wf-log-live', '.kind-chip', '.tag-chip', '.ps-pill', '.ask-cmd-pill', '.tp-tab-badge'];
 test('kind and state chips are one 11px sans chip with 4px corners (D13)', () => {
   const group = ALL.find((r) => r.sel.startsWith(':is(.badge,'));
   assert.ok(group, 'the grouped chip rule');
@@ -347,7 +349,7 @@ test('the tab-emitter scan flags a bare per-view tab (self-test)', () => {
 
 // Size scale (review A5, C): controls at 28/32/40, tiles 56-64, an info tip's hit target at least 24.
 const CONTROL_HEIGHTS = { '.tab': 32, '.seg button': 28, '.chat-home-preset': 28, '.filter-chip': 28,
-  '.wfl-folder': 32, '.info-tip': 28, '.chat-home-act': 40 };
+  '.wfl-folder': 32, '.info-tip': 28 };
 const OFF_SCALE = [26, 31, 34, 36, 43, 44, 55, 78];
 const CONTROL_WORD = /^(?:tab|tabs|seg|btn|chip|preset|act|folder|switch|button)$/;
 // Rows, not controls (spec §1.2): allowed at their own height. Each entry names its reason.
@@ -377,7 +379,7 @@ test('switch: one 32x18 pill track and a round knob (B6)', () => {
 // One border level per card (B2). Inputs, buttons and segments keep theirs.
 const CARD_HOSTS = /\.(?:ask-card|chat-rc|shape-feature)(?![\w-])/;
 const OWN_BORDER = /\b(?:btn|seg|textarea|input|select|field|switch|kbd)\b|input|textarea|select|:focus/;
-const IN_CARD = ['.qpanel', '.qblock', '.qopt', '.af-choice', '.af-form', '.issue-detail', '.opt-row', '.shape-plan-notes',
+const IN_CARD = ['.qpanel', '.qblock', '.af-choice', '.af-form', '.issue-detail', '.opt-row', '.shape-plan-notes',
   '.outline-slice', '.shape-plan-outline-change', '.chat-rc-result', '.shape-card'];
 test('no bordered box inside a bordered card (B2)', () => {
   const bad = ALL.filter((r) => splitTop(r.sel).some((s) => CARD_HOSTS.test(s) && s.trim().split(/\s+/).length > 1
@@ -389,6 +391,15 @@ test('no bordered box inside a bordered card (B2)', () => {
   assert.ok(ov, 'the in-card override rule exists');
   for (const c of IN_CARD) assert.ok(ov.sel.includes(`${c},`) || ov.sel.includes(`${c})`), `${c} is in the override`);
   assert.match(ov.body, /border:0;/);
+});
+
+test('run 4 D6: a question\'s options are divided rows, not boxes', () => {
+  const body = (sel) => (ALL.find((r) => r.sel === sel) || {}).body || '';
+  assert.match(body('.qopt'), /border:0;border-top:1px solid var\(--line\);border-radius:0;/);
+  assert.doesNotMatch(body('.qopt.sel'), /box-shadow/);
+  assert.match(body('.qopt.sel'), /background:var\(--field\);/);
+  assert.equal(ALL.some((r) => /\.qconf-fill/.test(r.sel)), false);
+  assert.doesNotMatch(body('.qopt::before'), /attr\(data-key\)/);
 });
 
 test('run bars are neutral: no blue fill on a progress bar (A1, spec §2.3)', () => {
@@ -450,17 +461,17 @@ test('badges never truncate: no text-overflow on a badge class', () => {
 });
 
 // QA 8: narrow layouts follow their own container: the run page's stat boxes (.rd-facts), the group page's table
-// (.gpage-runs), and the run page's Group row on a phone.
-test('narrow layouts: stat boxes 2 per row, the Group row stacks, group page rows put chip and cost under the title', () => {
+// (.gpage-runs), and the facts block (.rd-kv, run 3 D8) in a narrow card.
+test('narrow layouts: stat boxes 2 per row, the facts block stacks label over value, group page rows put chip and cost under the title', () => {
   assert.ok(ALL.some((r) => r.sel === '.rd-facts' && /container:rd-facts \/ inline-size/.test(r.body)), 'the facts are a container');
   const facts = css.match(/@container rd-facts \(max-width:420px\)\{([^\n]*)\}/);
   assert.ok(facts, 'the narrow stat boxes block exists');
   assert.match(facts[1], /\.rd-stats\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\);\}/);
   assert.match(facts[1], /\.rd-stats\[data-n="3"\] > div:last-child\{grid-column:1 \/ -1;\}/);
-  const phone = css.match(/@media \(max-width:640px\)\{\.rd-group-line\{([^}]*)\}([^\n]*)\}/);
-  assert.ok(phone, 'the phone Group row block exists');
-  assert.match(phone[1], /flex-direction:column/);
-  assert.match(phone[2], /\.rd-group-sep\{display:none;?\}/);
+  assert.ok(ALL.some((r) => r.sel === '.rd-kv' && /container:rd-kv \/ inline-size/.test(r.body)), 'the facts block is a container');
+  const kv = css.match(/@container rd-kv \(max-width:420px\)\{([^\n]*)\}/);
+  assert.ok(kv, 'the narrow facts block exists');
+  assert.match(kv[1], /\.rd-kv-row\{grid-template-columns:minmax\(0,1fr\);/);
   assert.ok(ALL.some((r) => r.sel === '.gpage-runs' && /container:gpage-runs \/ inline-size/.test(r.body)), 'the group table host is a container');
   const at = css.indexOf('@container gpage-runs (max-width:480px)');
   assert.ok(at > 0, 'the narrow group table block exists');
@@ -666,10 +677,18 @@ test('Runs list: selected and Needs-you rows take the sidebar nav item\'s corner
   }
 });
 
-test('a script-focused Back button shows no ring for a pointer user', () => {
-  const r = ALL.find((x) => x.sel.startsWith(':root[data-input="pointer"]') && x.sel.includes('.pd-header'));
-  assert.ok(r, 'the pointer suppressor covers .pd-header');
+test('a script-focused control shows no ring for a pointer user; fields keep their focus border', () => {
+  const r = ALL.find((x) => x.sel.startsWith(':root[data-input="pointer"] :is(button,'));
+  assert.ok(r, 'the pointer suppressor covers every button, link, summary, tab, switch and [tabindex]');
   assert.match(r.body, /outline:none/);
+  for (const k of ['button', 'a', 'summary', '[role="tab"]', '[role="switch"]', '[tabindex]']) assert.ok(r.sel.includes(k), k);
+  assert.doesNotMatch(r.sel.replace('[data-input="pointer"]', ''), /input|textarea|select/);   // the attribute is named data-input
+});
+
+test('focus rings: no :focus rule (without -visible) draws an outline ring', () => {
+  const bad = ALL.filter((x) => /:focus(?![-\w])/.test(x.sel))
+    .flatMap((x) => decls(x.body, 'outline').filter(([, v]) => !/^(?:none|0)$/.test(v)).map(([, v]) => where(x, v)));
+  assert.deepEqual(bad, []);
 });
 
 // The same pattern as the button audit's typed-plus rule: "+" then a capitalised word ("+ Add", "+ Case", "+ Override").
@@ -701,7 +720,7 @@ function offScale() {
 // When the browser type audit (8c) finds an off-scale text on a slice-1 state that these miss, add its prefix here.
 const SHARED_TYPE = ['body', 'button', '.topbar .sub', '.pill-status', '.pill-run', '.card h2', '.card-head h2', '.input', '.select',
   '.textarea', '.ta-hl-back', 'input[type="text"]', 'input[type="number"]', 'input[type="file"]', 'textarea', 'select', '.input-sm',
-  '.select-sm', '.btn-sm', '.btn-lg', '.check-inline', '.file .state', '.extra-pill-x', '.mention-item', '.form-msg', '.toast .tt',
+  '.select-sm', '.btn-sm', '.btn-lg', '.file .state', '.extra-pill-x', '.mention-item', '.form-msg', '.toast .tt',
   '.field-error', '.card-alert .ca-title', '.dirty-mark', '.field-compact .hint', '.check-row', '.opt-row', '.opt-row .opt-sub',
   '.confirm-field > label', '.confirm-field .input', '.confirm-checkbox', '.stat-value', '.stat-frac', '.stat-sub'];
 const SLICE1_TYPE = new RegExp('(?:^|[\\s(,>+~])(?:' + [
@@ -784,4 +803,56 @@ test('charts: the guide sets their heights and text steps; off-scale SVG text si
   assert.match(charts, /Axis labels are 11px/);
   assert.match(charts, /legends 12px/);
   ratchet([...new Set(scan(SVG_TYPE).map((h) => h.split(':')[0]))].sort(), DEBT.svgTypeScale, 'off-scale SVG font size');
+});
+
+// F-8: a typed uppercase kicker is a string literal of capitals set as visible text.
+const STATE_CODES = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPEN', 'MERGED', 'CLOSED', 'UNKNOWN', 'UNAVAILABLE', 'FAILED', 'DRAFT',
+  'BUTTON', 'SELECT', 'SPAN', 'MERGEABLE', 'CONFLICTING', 'PENDING', 'NONE'];
+const KICKER = new RegExp(`(['"\`])(?!(?:${STATE_CODES.join('|')})\\1)[A-Z][A-Z0-9 ·&/-]{2,}[A-Z0-9]\\1`);
+const KICKER_FILES = ['ui/public/app.js', 'ui/public/team-metrics-view.mjs'].map((f) => join(ROOT, f));
+test('no typed uppercase kicker in app.js or team-metrics-view.mjs (F-8, spec §1.3)', () => {
+  assert.equal(KICKER.test("l.textContent = 'FILES CHANGED';"), true);
+  assert.equal(KICKER.test("method: 'GET'"), false);
+  // Raw lines, not code(): app.js holds a string with `/*` that code() reads as a block comment, hiding ~1300 lines.
+  const hits = KICKER_FILES.flatMap((f) => readFileSync(f, 'utf8').split('\n')
+    .flatMap((l, i) => (KICKER.test(l) && !/^\s*(?:\/\/|\*|\/\*)/.test(l) ? [`${rel(f)}:${i + 1}: ${l.trim().slice(0, 120)}`] : [])));
+  assert.deepEqual(hits, []);
+});
+
+// F-12: a visible string that starts or ends with a glyph. `// glyph-ok` on the line keeps one (tool output, ANSI).
+const EDGE_GLYPH = /['"`]\s*[✓✕✗▾▸⋯↻]\s|\s[✓✕✗▾▸⋯↻]\s*['"`]/;
+test('no glyph at the edge of a visible string; use icon(doc, …) (F-12)', () => {
+  assert.equal(EDGE_GLYPH.test("'✓ Saved'"), true);
+  assert.equal(EDGE_GLYPH.test("'in catalog ✓'"), true);
+  assert.equal(EDGE_GLYPH.test("'a ✓ b'"), false);
+  const raw = FILES.filter((f) => /\.m?js$/.test(f)).flatMap((f) => readFileSync(f, 'utf8').split('\n')
+    .map((l, i) => [`${rel(f)}:${i + 1}: ${l.trim().slice(0, 120)}`, l]).filter(([, l]) => EDGE_GLYPH.test(l) && !/\/\/ glyph-ok/.test(l) && !/^\s*(?:\/\/|\*|\/\*)/.test(l)));
+  assert.deepEqual(raw.map(([h]) => h), []);
+});
+
+// F-13: violet is Labs-only (docs/design-system.md colour table). The merged status dot and the merged run orb are the
+// two named exceptions (slice 1 shipped them as the shipped-state colour), and the Marketplace kind colours give the chat
+// kind its violet tile and facet dot (docs/design-system.md › Marketplace exceptions). Exact selectors, no substring match.
+const VIOLET_OK = new Set(['.badge.flag-stage-experimental', '.status-dot.is-violet', '.rg-orb-merged .rg-orb-bg', '.rg-orb-merged .rg-orb-line',
+  '.mk-t-chat', '.mk-dot-chat']);
+test('violet only inside Labs selectors and the merged dot and orb (F-13)', () => {
+  const bad = ALL.filter((r) => r.sel !== ':root' && /var\(--violet/.test(r.body) && !splitTop(r.sel).every((s) => VIOLET_OK.has(s.trim())))
+    .map((r) => where(r, 'violet'));
+  assert.deepEqual(bad, []);
+  assert.equal(VIOLET_OK.has('.rg-orb-merged-foo'), false);
+  const js = scan(/\b(?:badge|pill-run) violet\b|\bn-violet\b|tone: 'violet'|var\(--violet/, FILES.filter((f) => /\.m?js$/.test(f)));
+  assert.deepEqual(js, []);
+});
+
+test('type: no px size outside 11/12/13/15/18/22 in style.css or the chart SVG text (F-14)', () => {
+  assert.deepEqual(offScale(), []);
+  assert.deepEqual(DEBT.typeScale, []);
+  assert.deepEqual(DEBT.svgTypeScale, []);
+  assert.deepEqual(DEBT.typedPlus, []);
+});
+
+test('a project card sync bar is not a bordered block (F-16)', () => {
+  const r = ALL.filter((x) => splitTop(x.sel).includes('.proj-sync'));
+  assert.ok(r.length);
+  for (const x of r) assert.deepEqual(decls(x.body, 'border|border-radius|border-style|background'), [], where(x, 'box'));
 });

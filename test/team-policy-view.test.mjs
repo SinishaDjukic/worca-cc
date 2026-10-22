@@ -70,7 +70,7 @@ test('enable dialog body (board 3): here / follow, preselected metrics delegate,
   assert.match(follow.textContent, /Preselected to match where this project's metrics go/);
   const change = renderPolicyEnableDialogBody({ project: { name: 'x' }, origin: 'x', candidates: [{ slug: 'acme/gateway', label: 'acme/gateway' }], mode: 'follow', change: true }, { doc });
   assert.equal(change.querySelector('input[name="tp-where"][value="here"]').disabled, true);
-  assert.match(change.textContent, /pick a new home/);
+  assert.match(change.textContent, /Pick a new home/);
   const none = renderPolicyEnableDialogBody({ project: { name: 'x' }, origin: 'x', candidates: [], mode: 'here' }, { doc });
   assert.equal(none.querySelector('input[name="tp-where"][value="follow"]').disabled, true);
 });
@@ -185,7 +185,7 @@ test('team-cap pause banner (board 9) and the stats-view delegation', () => {
   const rec = { pauseReason: 'cost_pipeline_policy', pauseDetail: 'team cost cap reached ($10.00 >= $10.00, acme/gateway)', pipelineId: 'p1', totalCostUsd: 10 };
   const b = renderTeamCapPauseBanner(rec, { doc, budget: { pipelineLimitUsd: 25 } });
   assert.equal(b.className, 'cost-banner cb-policy cb-policy-pipeline');
-  assert.equal(b.querySelector('b').textContent, 'Paused — team cost cap reached');
+  assert.equal(b.querySelector('b').textContent, 'Paused: team cost cap reached');
   // Board 9: the figures and the home from the harness detail, and the developer's own limit.
   assert.equal(b.querySelector('.cb-text').textContent,
     "This pipeline's estimated cost hit $10.00, the per-pipeline cap of $10.00 set by acme/gateway's team policy. Your own limit is $25.00. You can continue past the team cap for this pipeline; the overshoot is recorded to team metrics.");
@@ -197,7 +197,7 @@ test('team-cap pause banner (board 9) and the stats-view delegation', () => {
   assert.ok(b.querySelector('.cb-policy-open'));
   assert.equal(b.querySelector('.cb-override'), null, 'never the local-cap action');
   const t = renderTeamCapPauseBanner({ pauseReason: 'cost_total_policy', pauseDetail: '' }, { doc });
-  assert.equal(t.querySelector('b').textContent, 'Paused — team total cap reached');
+  assert.equal(t.querySelector('b').textContent, 'Paused: team total cap reached');
   assert.equal(t.querySelector('.cb-past-team-cap').textContent, 'Continue past team cap (this period)');
   for (const reason of POLICY_PAUSE_REASONS) {
     const via = renderCostPauseBanner({ pauseReason: reason, pipelineId: 'p1', totalCostUsd: 1 }, { doc, budget: {} });
@@ -293,7 +293,7 @@ test('header panel: the published document — title, source, version, notes, an
   assert.equal(card.querySelector('.tp-head-title').textContent, 'Gateway team policy');
   const facts = [...card.querySelectorAll('.tp-facts dt')].map((dt, i) => [dt.textContent, card.querySelectorAll('.tp-facts dd')[i].textContent]);
   assert.deepEqual(facts.map((f) => f[0]), ['Source', 'Applies to', 'Version', 'Notes']);
-  assert.equal(facts[0][1], 'Follows gateway — the document lives there');
+  assert.equal(facts[0][1], 'Follows gateway (the document lives there)');
   assert.equal(facts[1][1], 'Runs on billing-api');
   assert.match(facts[2][1], /^3fc3cee · updated 11 min ago by Mara Lindqvist$/);
   assert.match(card.querySelectorAll('.tp-facts dd')[2].querySelector('code').title, /commit 3fc3cee on gateway's worca-policy branch/);

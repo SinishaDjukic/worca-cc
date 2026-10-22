@@ -11,6 +11,7 @@ import { WebSocket } from 'ws';
 
 import { useTempHome } from './helpers/temp-home.mjs';
 import { holdMockTurn, isAssistant, isTextDelta } from './helpers/ask-hold.mjs';
+import { INTENT_LEADS } from '../src/shared/intent-leads.mjs';
 
 useTempHome(after);
 
@@ -97,6 +98,18 @@ test('validation: 404 unknown thread, 400 model/effort/context/text', async () =
   assert.equal((await post(`/api/ask/threads/${t.id}/messages`, { text: 'x', model: 'claude-opus-5-5', effort: 'ultra' })).status, 400);
   assert.equal((await post(`/api/ask/threads/${t.id}/messages`, { text: 'x', ...MODEL, context: { pipelineId: 'zz' } })).status, 400);
   assert.equal((await post(`/api/ask/threads/${t.id}/messages`, { text: '   ', ...MODEL })).status, 400);
+});
+
+test('run 4 D19: a first message led by the Shaper lead is titled from what was typed', async () => {
+  const t = await newThread();
+  const { ws, msgs, opened } = openWs(`?threadId=${t.id}`);
+  await opened;
+  const r = await post(`/api/ask/threads/${t.id}/messages`, { text: `${INTENT_LEADS.shape}\n\nUploads fail on large files`, ...MODEL });
+  assert.equal(r.status, 202);
+  // Under WORCA_MOCK the generated title is refused, so the deterministic fallback is the title.
+  const titled = await waitFor(() => msgs.find((m) => m.type === 'ask-title' && m.threadId === t.id));
+  assert.equal(titled.title, 'Uploads fail on large files');
+  ws.close();
 });
 
 test('a full mock turn: 202, stamped frames to ask-done, persistence, session, title, echo', async () => {

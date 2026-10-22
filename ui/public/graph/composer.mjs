@@ -215,6 +215,10 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
       hostEls.saveBtn.title = tip;
     }
     if (hostEls.saveWrap) hostEls.saveWrap.title = tip;
+    if (hostEls.saveReason) {
+      hostEls.saveReason.textContent = tip;
+      hostEls.saveReason.hidden = !tip;
+    }
     if (hostEls.errors) {
       const pristine = isPristine();
       const quiet = !real && todo > 0 && !pristine;
@@ -226,7 +230,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
         ? `${real} error${real === 1 ? '' : 's'}`
         : quiet ? `${todo} port${todo === 1 ? '' : 's'} to wire`
           : warned ? `${warn} warning${warn === 1 ? '' : 's'}` : '';
-      hostEls.errors.setAttribute('aria-label', hostEls.errors.hidden ? '' : `${hostEls.errors.textContent} — show the first one`);
+      hostEls.errors.setAttribute('aria-label', hostEls.errors.hidden ? '' : `${hostEls.errors.textContent}. Show the first one`);
     }
   }
 
@@ -810,7 +814,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
       domain: tpl.domain || '', domains: savedDomains,
       title: mode.copy ? 'Save a copy' : 'Save pipeline',
       note: mode.plugin
-        ? `This pipeline belongs to plugin "${mode.plugin}" and is replaced on plugin update — saving creates your own copy.`
+        ? `This pipeline belongs to plugin "${mode.plugin}" and is replaced on plugin update. Saving creates your own copy.`
         : '',
       doc,
     });
@@ -1021,7 +1025,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     const r = applyCanvasOps(tpl, ops, { portsFn });
     if (!r.ok) return r;
     const broke = newRealErrors(validateGraph(tpl, portsFn), validateGraph(r.tpl, portsFn));
-    if (broke.length) return { ok: false, error: `that change would now leave the graph invalid — ${broke[0].message}` };
+    if (broke.length) return { ok: false, error: `that change would now leave the graph invalid (${broke[0].message})` };
     commit(label, () => { tpl.nodes = r.tpl.nodes; tpl.wires = r.tpl.wires; });
     if (sel && ((sel.kind === 'node' && !nodeById(sel.id)) || (sel.kind === 'wire' && !wireById(sel.id)))) select(null);
     return { ok: true, depth: undoStack.length, added: r.added, removed: r.removed };

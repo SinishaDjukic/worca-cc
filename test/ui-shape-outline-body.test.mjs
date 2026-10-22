@@ -76,7 +76,7 @@ test('gate on and off: the same card — head, runs, goals and estimates, one nu
   assert.equal($$('.outline-goal')[0].textContent, 'Make s1 possible for people');
   assert.equal($$('.outline-acceptance').length, 0, 'the list is compact');
   assert.deepEqual($$('.outline-est').map((n) => n.textContent), ['medium', 'large']);
-  assert.ok($$('.outline-est')[1].classList.contains('large'));
+  assert.deepEqual($$('.outline-est').map((n) => n.className), ['badge grey outline-est', 'badge grey outline-est'], 'run 4 D9: a size is neither amber nor green');
   assert.equal($$('.outline-slice-n').length, 0, 'no second number in the markup');
   assert.equal($('.outline-approve').textContent, 'Approve 2 runs');
   assert.ok($('.outline-undo').hidden);
@@ -105,9 +105,9 @@ test('closed: summary, compact runs, folded check line, Stop only in ⋯, box cl
   assert.equal($('.outline-flat'), null, 'Don\'t split lives in ⋯');
   assert.equal($$('.btn-primary').length, 1);
   assert.deepEqual(reachable($$).map((n) => n.className.replace(/^btn /, '').split(' ').pop() || n.type),
-    ['outline-row-more', 'outline-row-more', 'checkbox', 'plan-ask-changes', 'outline-approve', 'plan-more']);
+    ['outline-row-more', 'outline-row-more', 'sw-input', 'plan-ask-changes', 'outline-approve', 'plan-more']);
   assert.equal($$('.outline-row-more')[1].getAttribute('aria-label'), 'More for run 2');
-  assert.equal($('.outline-approve-each').textContent, ' Ask me before each run');
+  assert.equal($('.outline-approve-each').textContent.trim(), 'Ask me before each run');
   assert.doesNotMatch(visibleText(panel), /slice/i);
 });
 
@@ -157,7 +157,13 @@ test('Ask for changes opens the box and focuses it; Send changes posts the revis
   assert.equal(askBtn.getAttribute('aria-expanded'), 'false');
   askBtn.click();
   assert.equal(askBtn.getAttribute('aria-expanded'), 'true');
+  assert.equal(askBtn.hidden, true, 'run 4 D8: the button gives way to the field');
   assert.equal($('.plan-feedback').closest('[hidden]'), null);
+  assert.deepEqual([...$('.plan-typed').querySelectorAll('button')].map((b) => b.textContent), ['Cancel', 'Send changes']);
+  $('.plan-typed-cancel').click();
+  assert.equal($('.plan-typed').hidden, true);
+  assert.equal(askBtn.hidden, false);
+  askBtn.click();
   $('.plan-revise').click();
   assert.equal($('.plan-err').textContent, 'Write what should change first');
   $('.plan-feedback').value = '  split the export out  ';
@@ -342,4 +348,9 @@ test('a plan with no outline renders an empty list without throwing', () => {
   const { $, $$ } = setup({ pq: { id: 'q', kind: 'plan', plan: {} } });
   assert.equal($$('.outline-slice').length, 0);
   assert.ok($('.outline-approve'));
+});
+
+test('run 4 D9: the approve-each switch is the shared switch', () => {
+  const { $ } = setup();
+  assert.equal($('.outline-approve-each input').getAttribute('role'), 'switch');
 });

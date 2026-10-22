@@ -198,7 +198,7 @@ export function sourceRefNote(ref) {
   const bits = [];
   if (ref.remoteOnly) bits.push('remote only');
   if (ref.behind > 0) bits.push(`${ref.behind} behind`);
-  if (ref.stale) bits.push('could not fetch — last known refs');
+  if (ref.stale) bits.push('could not fetch: last known refs');
   return bits.length ? `from ${ref.ref} (${bits.join(', ')})` : '';
 }
 

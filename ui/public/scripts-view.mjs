@@ -751,7 +751,7 @@ export function createScriptsController({
     const path = st.root.querySelector('.script-path');
     if (!path || !path.textContent) return;
     const clip = doc.defaultView.navigator && doc.defaultView.navigator.clipboard;
-    if (!clip) { say('Clipboard unavailable — select the path and copy it.', 'err'); return; }
+    if (!clip) { say('Clipboard unavailable. Select the path and copy it.', 'err'); return; }
     try {
       await clip.writeText(path.textContent);
       btn.textContent = 'Copied';

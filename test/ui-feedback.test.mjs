@@ -292,3 +292,30 @@ test('controlSnapshot: every control value or check, minus [data-dirty-ignore], 
     + '<input type="button" value="b"><input type="file"></div>');
   assert.equal(controlSnapshot(doc.getElementById('c')), JSON.stringify(['a', true, 'x', 't']));
 });
+
+test('dismiss: a toast that holds focus hands it back, never to BODY', () => {
+  const setup = (withMain = true) => {
+    const w = new JSDOM(`<!doctype html><body>${withMain ? '<main class="main"></main>' : ''}<button id="trig">Go</button><div id="toasts" class="toasts"></div></body>`, { pretendToBeVisual: true }).window;
+    return w;
+  };
+  const w = setup(); const doc = w.document;
+  const trig = doc.getElementById('trig');
+  trig.focus();
+  const { el } = notify({ tone: 'ok', title: 'x', action: { label: 'Undo', run() {} } }, { doc });
+  el.querySelector('.toast-x').focus();
+  assert.equal(doc.activeElement.className.includes('toast-x'), true);
+  el.querySelector('.toast-x').click();
+  assert.equal(doc.activeElement, trig, 'returns to the element focused before the toast');
+
+  const w2 = setup(); const d2 = w2.document;
+  const e2 = notify({ tone: 'err', title: 'boom' }, { doc: d2 }).el;
+  e2.querySelector('.toast-x').focus();
+  e2.querySelector('.toast-x').click();
+  assert.equal(d2.activeElement, d2.querySelector('main.main'), 'no remembered element: main');
+
+  const w3 = setup(false); const d3 = w3.document;
+  const e3 = notify({ tone: 'err', title: 'boom' }, { doc: d3 }).el;
+  e3.querySelector('.toast-x').focus();
+  e3.querySelector('.toast-x').click();
+  assert.notEqual(d3.activeElement, d3.body, 'no main: first focusable');
+});

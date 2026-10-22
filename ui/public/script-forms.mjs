@@ -10,6 +10,7 @@
 // `data-port-add`, `data-port-remove` are exactly P1b's, so the composer's
 // routing and its tests hold after the move.
 import { icon } from './icons.mjs';
+import { makeSwitch } from './switch.mjs';
 import { effectiveScriptParams, paramValueError, readConfigPorts } from '../../src/shared/graph/script-meta.mjs';
 import { createCodeEditor } from './code-editor.mjs';
 
@@ -51,12 +52,15 @@ export function select(doc, cls, name, label, items, value, { disabled = false, 
 export function toggle(doc, cls, name, label, hint, { checked = false, disabled = false, title = '' } = {}) {
   const row = h(doc, 'div', `ins-tog ${cls}`);
   if (title) row.title = title;
-  const box = doc.createElement('input');
-  box.type = 'checkbox'; box.dataset.field = name; box.checked = Boolean(checked); box.disabled = Boolean(disabled);
+  // A disabled switch with a title says why in a visible line; without one it is just off-limits.
+  const sw = makeSwitch(doc, { checked, data: { field: name }, locked: disabled && title ? title : null });
+  if (disabled) sw.input.disabled = true;
   const body = h(doc, 'span', 'ins-tog-b');
   body.appendChild(h(doc, 'span', 'ins-tog-t', label));
   if (hint) body.appendChild(h(doc, 'small', 'ins-tog-h', hint));
-  row.append(box, body);
+  body.appendChild(sw.row.querySelector('.switch-why'));
+  sw.row.appendChild(body);
+  row.appendChild(sw.row);
   return row;
 }
 
@@ -207,10 +211,9 @@ export function renderPortEditor(rawPorts, { doc = globalThis.document, hasVerdi
     return s;
   };
   const check = (name, label, checked) => {
-    const l = h(doc, 'label', 'ins-pcheck');
-    const box = doc.createElement('input'); box.type = 'checkbox'; box.dataset.field = name; box.checked = Boolean(checked); box.disabled = readOnly;
-    l.append(box, doc.createTextNode(label));
-    return l;
+    const sw = makeSwitch(doc, { label, checked, rowClass: 'ins-pcheck', data: { field: name } });
+    sw.input.disabled = readOnly;
+    return sw.row;
   };
   const zone = (label, dir, list) => {
     wrap.appendChild(h(doc, 'div', 'ins-zone', label));

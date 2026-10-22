@@ -63,7 +63,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 69;
+export const SCHEMA_VERSION = 70;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -868,7 +868,10 @@ const INCREMENTAL_COLUMNS = {
   artifacts:              { step_key: 'TEXT', node_id: 'TEXT', cycle: 'INTEGER', created_at: 'TEXT' }, // per-step attribution
   ask_attachments:        { kind: "TEXT NOT NULL DEFAULT 'text'",  // v27: text | image | binary (#398)
                             mime: 'TEXT',                 // v27: sniffed mime; NULL on pre-v27 rows (= text)
-                            source_path: 'TEXT' },        // v64: the real path a show_files copy came from (server-only); NULL = an upload
+                            source_path: 'TEXT',          // v64: the real path a show_files copy came from (server-only); NULL = an upload
+                            // v70: where a copy found under a run's or project's folder came from, for Show in folder's
+                            // fallback once a run's worktree is gone; NULL = out folder, worktree or an older row
+                            source_run_id: 'TEXT', source_project_key: 'TEXT', source_rel: 'TEXT' },
   project_config:         { human_in_loop: 'INTEGER NOT NULL DEFAULT 1' },   // v28: the Auto entry's human-in-the-loop switch
   diff_comments:          { parent_id: 'TEXT REFERENCES diff_comments(id) ON DELETE CASCADE',  // v29: reply threads; NULL = thread root
                             author_name: 'TEXT' },   // v37: who wrote it (identity.mjs actor); NULL = before attribution / Ask
@@ -896,7 +899,8 @@ const INCREMENTAL_COLUMNS = {
                             map_json: 'TEXT',           // v40: the last scan's { map, synthesis } (workspace map); NULL = none yet
                             map_overrides_json: 'TEXT', // v40: confirm / reject / manual edge overrides; NULL = none
                             description_origin: 'TEXT',     // v40: 'generated' | 'edited'; NULL = before v40
-                            actions_json: 'TEXT' },         // v47: stack actions { stacks:[…] } (issue #529); NULL = none
+                            actions_json: 'TEXT',           // v47: stack actions { stacks:[…] } (issue #529); NULL = none
+                            scan_models_json: 'TEXT' },     // v57: the scan pick captured at creation { scanModel, scanEffort, agentModel, agentEffort }; NULL = none
   schedules:              { ask_thread_id: 'TEXT', ask_card_id: 'TEXT',   // v31: the Ask Worca card a series came from
                             created_by: 'TEXT', updated_by: 'TEXT',   // v39: who made / last changed it (identity.mjs actor)
                             preset_id: 'TEXT' },   // v63: the run preset the series follows (read at fire time); NULL = none
@@ -2366,6 +2370,7 @@ export function migrate(db) {
     }
     if (current < 68) db.exec(RUN_LABELS_DDL);   // v68 run labels
     if (current < 69) applySchemaV69(db);
+    // v70: ask_attachments.source_run_id / source_project_key / source_rel (Show in folder's fallback) — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

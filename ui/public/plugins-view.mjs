@@ -50,7 +50,7 @@ export function renderInstallConsent(entry, inventory, { doc = globalThis.docume
   const agents = section(`Agents (${(inv.agents || []).length})`);
   for (const a of inv.agents || []) {
     agents.appendChild(h(doc, 'div', 'pl-consent-row mono',
-      `${a.key} — tools: ${(a.tools || []).join(', ') || 'none declared'}`));
+      `${a.key} (tools: ${(a.tools || []).join(', ') || 'none declared'})`));
     // Ask forms (spec §10): how many question forms this agent can put on
     // screen, and which file types they may display from the run folder. An
     // older snapshot has neither key, so both are read defensively.
@@ -66,7 +66,7 @@ export function renderInstallConsent(entry, inventory, { doc = globalThis.docume
     const scripts = section(`Scripts (${inv.scripts.length})`);
     for (const s of inv.scripts) {
       scripts.appendChild(h(doc, 'div', 'pl-consent-row mono',
-        `${s.key} — ${s.runtime}${s.command ? ` · ${s.command}` : s.file ? ` · ${s.file}` : ''}`
+        `${s.key}: ${s.runtime}${s.command ? ` · ${s.command}` : s.file ? ` · ${s.file}` : ''}`
         + `${s.cases ? ` · ${s.cases} case${s.cases === 1 ? '' : 's'}` : ''}`));
     }
   }
@@ -81,7 +81,7 @@ export function renderInstallConsent(entry, inventory, { doc = globalThis.docume
     for (const ch of inv.chatChannels) {
       const dirs = [ch.inbound && 'inbound', ch.outbound && 'outbound'].filter(Boolean).join(' + ');
       const row = h(doc, 'div', 'pl-consent-row',
-        `${ch.displayName || ch.id} (${ch.platform}, ${dirs}) — runs a persistent worker`);
+        `${ch.displayName || ch.id} (${ch.platform}, ${dirs}): runs a persistent worker`);
       for (const key of ch.secrets || []) row.appendChild(h(doc, 'span', 'pl-secret', `requests secret: ${key}`));
       channels.appendChild(row);
     }
@@ -107,11 +107,11 @@ export function renderInstallConsent(entry, inventory, { doc = globalThis.docume
   }
   // MCP servers (MCP registry §4.1): a snapshot persisted before API 5 has no
   // key at all — that is "unknown", never "none".
-  if (!Array.isArray(inv.mcpServers)) section('MCP servers: unknown — refresh the marketplace');
+  if (!Array.isArray(inv.mcpServers)) section('MCP servers: unknown. Refresh the marketplace');
   else if (inv.mcpServers.length) {
     const mcp = section(`MCP servers (${inv.mcpServers.length})`);
     for (const s of inv.mcpServers) {
-      mcp.appendChild(h(doc, 'div', 'pl-consent-row mono', `${s.name} (${s.type}) — ${s.command || s.url}`));
+      mcp.appendChild(h(doc, 'div', 'pl-consent-row mono', `${s.name} (${s.type}): ${s.command || s.url}`));
     }
   }
   const skills = section(`Skills (${(inv.skills || []).length})`);
@@ -232,7 +232,7 @@ export function renderConfigForm(sections, { doc = globalThis.document } = {}) {
       // Nothing to write into: creating the profile is a separate call, and the
       // server rejects a save without one. Offer the add button, not a form.
       if (!src.profile) {
-        root.appendChild(h(doc, 'p', 'hint', 'No profiles yet — add one to configure this source.'));
+        root.appendChild(h(doc, 'p', 'hint', 'No profiles yet. Add one to configure this source.'));
         continue;
       }
     }

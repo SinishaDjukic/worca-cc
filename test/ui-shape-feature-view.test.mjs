@@ -142,11 +142,11 @@ test('the Ship card: the waiting line until every run is done, no buttons; the r
   assert.deepEqual(d.acts.at(-1), { action: 'ship', body: { mode: 'one' }, opts: { focus: 'ship-one' } });
 });
 
-test('the Ship card once shipped: Shipped as stacked PRs with View pull request on the last run\'s PR', () => {
+test('the Ship card once shipped: Shipped as stacked PRs with View PR on the last run\'s PR', () => {
   const done = { ...PAGE(), status: 'done', done: 3, slices: PAGE().slices.map((s) => ({ ...s, state: 'done', pr: s.pr && { ...s.pr, draft: false } })) };
   const shipped = mount({ ...done, ship: { ready: false, mode: 'stacked', prUrl: null, lastPrUrl: 'https://github.com/o/r/pull/2',
     result: { mode: 'stacked', prUrl: 'https://github.com/o/r/pull/2', closed: 0, release: null } } }, PLANS()).el;
-  assert.match(shipped.querySelector('.ask-shipcard-done').textContent, /^Shipped as stacked PRs · View pull request$/);
+  assert.match(shipped.querySelector('.ask-shipcard-done').textContent, /^Shipped as stacked PRs · View PR$/);
   assert.equal(shipped.querySelector('.ask-shipcard-pr').getAttribute('href'), 'https://github.com/o/r/pull/2');
   assert.equal(shipped.querySelectorAll('button[data-act^="ship-"]').length, 0);
 });
@@ -170,4 +170,16 @@ test('the merge (D10, D12): omit drops what the host\'s model footer shows; no p
   assert.equal(el.querySelector('[data-act="feature-pause"]'), null);
   assert.equal(el.querySelector('[data-act="feature-stop"]'), null);
   assert.equal(el.querySelectorAll('.shape-feature-head, .shape-feature-status, .shape-feature-runs, ol.chat-rc-members').length, 0);
+});
+
+test('run 4 D17: on the group page the view has no merge-order line and no ⋯; elsewhere it keeps both', () => {
+  const f = { id: 'f1', title: 'Add billing', status: 'active', total: 2, done: 0, approveEach: false, open: true, halted: null,
+    slices: [1, 2].map((index) => ({ index, title: `S${index}`, state: 'queued', pipelineId: `p${index}`, pr: null })), ship: {} };
+  const d = { act: async () => ({ ok: true }), confirm: async () => true, openRun() {}, openPlan() {} };
+  const inGroup = renderFeature(doc, f, { ...d, inGroup: true });
+  assert.equal(inGroup.querySelector('.shape-feature-order'), null);
+  assert.equal(inGroup.querySelector('[data-act="feature-more"]'), null);
+  const plans = renderFeature(doc, f, d);
+  assert.ok(plans.querySelector('.shape-feature-order'));
+  assert.ok(plans.querySelector('[data-act="feature-more"]'));
 });

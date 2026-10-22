@@ -12,6 +12,7 @@ import {
 import { openArtifactPicker, readInputFile } from './artifact-picker.mjs';
 import { escapeHtml } from './code-editor.mjs';
 import { icon } from './icons.mjs';
+import { makeSwitch } from './switch.mjs';
 import {
   CASE_ID_RE, EXPECT_VERDICTS, MAX_CASES, MAX_CASE_NAME, evaluateExpect,
 } from '../../src/shared/graph/script-cases.mjs';
@@ -106,10 +107,8 @@ function inputRows(doc, ports) {
     const row = h(doc, 'div', 'bench-port');
     row.dataset.port = p.id;
     row.dataset.type = p.type;
-    const bind = h(doc, 'label', 'bench-bind');
-    const box2 = doc.createElement('input');
-    box2.type = 'checkbox'; box2.dataset.field = `in:${p.id}:bound`;
-    bind.append(box2, h(doc, 'span', 'bench-port-id mono', p.id), h(doc, 'span', 'chip bench-port-type', p.type));
+    const bind = makeSwitch(doc, { rowClass: 'bench-bind', data: { field: `in:${p.id}:bound` } }).row;
+    bind.append(h(doc, 'span', 'bench-port-id mono', p.id), h(doc, 'span', 'chip bench-port-type', p.type));
     row.appendChild(bind);
     if (p.type === 'void') {
       row.appendChild(h(doc, 'span', 'bench-void-fired', 'fired'));
@@ -214,7 +213,7 @@ function benchBar(doc, projects) {
   sel.appendChild(scratch);
   for (const p of projects || []) {
     const o = doc.createElement('option');
-    o.value = `project:${p.key}`; o.textContent = `${p.name} — ${p.path}`;
+    o.value = `project:${p.key}`; o.textContent = `${p.name} (${p.path})`;
     o.disabled = p.exists === false;
     sel.appendChild(o);
   }

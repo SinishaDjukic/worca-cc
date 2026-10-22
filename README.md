@@ -122,13 +122,13 @@ level and has no **Diff**, **Changes** or **Actions**.
   and what is running; Settings › General › **Alerts** adds desktop
   notifications and a tab badge when a run waits for you. **Archived runs**
   (Advanced) lists deleted runs and restores them.
-- **One-click PRs** — a finished run's page offers **Create pull request**:
-  *Ship it?* shows the files and +/− lines, lets you write the description or
+- **One-click PRs** — a finished run's page offers **Create PR**:
+  *Create pull request* shows the files and +/− lines, lets you write the description or
   **Generate with AI**, open it as a draft and watch it, then pushes the branch
   and opens the PR with the GitHub CLI (`gh`), or on
   [Azure DevOps](docs/azure-devops.md) with a personal access token. A run
   started from a GitHub issue closes it on merge, and a workspace run opens one
-  linked PR per changed repo. The button then becomes **View pull request**.
+  linked PR per changed repo. The button then becomes **View PR**.
   **Publish branch** (Advanced) pushes the branch without a PR.
 - **Watch PR and conflicts** — with **Watch PR** on, Worca reads the open PR
   about once a minute; a failing check, a merge conflict or a requested change
@@ -143,7 +143,7 @@ level and has no **Diff**, **Changes** or **Actions**.
 
 ![Runs in Simple mode: three runs waiting on clarify questions under Needs you, the rest grouped by project, and a finished run's summary open — Ready to ship, 21m 32s, $4.82, +36 −0 across 4 files](docs/screenshots/running.png)
 
-![The Ship it? dialog for the finished run CSV export for contacts: 4 files, +36 −0, its worca-cc/ branch into main, Push branch to and Open PR in (GitHub) pickers set to origin — nimbus/nimbus-crm, a PR description previewed as What and How to test, Open as draft unticked and Watch PR ticked, Try it first with the Run, Test and Cursor buttons, and Cancel beside Open pull request](docs/screenshots/ship-it.png)
+![The Create pull request dialog for the finished run CSV export for contacts: 4 files, +36 −0, its worca-cc/ branch into main, Push branch to and Open PR in (GitHub) pickers set to origin — nimbus/nimbus-crm, a PR description previewed as What and How to test, Open as draft unticked and Watch PR ticked, Try it first with the Run, Test and Cursor buttons, and Cancel beside Create pull request](docs/screenshots/ship-it.png)
 
 ### Agents
 
@@ -394,7 +394,9 @@ level and has no **Diff**, **Changes** or **Actions**.
   or bring repos straight in with **Add…** or a pasted list (a repo, a folder of repos, a VS Code
   `.code-workspace` file; a ticked repo that is not a project yet becomes one) — **Scan
   interconnections**; the workspace is saved when that scan ends. **Add projects** / **Remove** on
-  its Overview tab re-scan the new set.
+  its Overview tab re-scan the new set on the workspace's saved scan model — view or change it
+  with the header **Scan model** control (a re-scan with no usable pick asks you to choose one
+  first).
 - **A map built from code, with evidence** — the scan is itself a pipeline run that never
   changes a member. Code detectors find REST, gRPC and GraphQL APIs, message queues, build
   dependencies, shared databases and service calls and do the matching; agents fill what
@@ -566,7 +568,7 @@ level and has no **Diff**, **Changes** or **Actions**.
 
 ### Away mode
 
-- **Runs keep going while you're away** — during your away hours, or after you click **Step away**
+- **Runs keep going while you're away** — during your away hours, or after you turn on **Away**
   in the account menu (the corner at the foot of the sidebar), Worca answers what a run would wait on: clarifying
   questions, mid-step questions, input forms, review-loop gates, proposed workflows and failed-step
   retries. It trusts the agent's recommendation when the agent is sure enough. Otherwise a
@@ -589,7 +591,7 @@ level and has no **Diff**, **Changes** or **Actions**.
   and the deciding model), one group per ask, with the answers to check marked and listed first.
   A note above it reads like "5 answers while you were away — 2 to check". A
   short notice says when away hours start and end, and a violet dot sits on your avatar while you
-  are away; **I'm back** in the account menu ends it.
+  are away; turning **Away** off in the account menu ends it.
 
 ### Scheduled runs
 

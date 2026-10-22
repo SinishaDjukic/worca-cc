@@ -713,7 +713,7 @@ test('MAJ-4: a plugin-owned row defaults to Save-a-copy with a note; a user row 
       assert.equal(dlg.querySelector('.sd-title').textContent, 'Save a copy');
       assert.equal(dlg.querySelector('.sd-name').value, 'demo-plug example flow copy');
       assert.equal(dlg.querySelector('.sd-note').textContent,
-        'This pipeline belongs to plugin "demo-plug" and is replaced on plugin update — saving creates your own copy.');
+        'This pipeline belongs to plugin "demo-plug" and is replaced on plugin update. Saving creates your own copy.');
       dlg.querySelector('.sd-confirm').dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
       await new Promise((r) => setTimeout(r, 0));
       assert.equal(posts[0].id, undefined, 'the plugin row id is never overwritten');
@@ -1174,7 +1174,7 @@ test('applyOps refuses a batch that would NOW add a real error (D12): the user d
   const wires = JSON.stringify(s.c.template().wires);
   const r = s.c.applyOps(chat, 'chat: connect');
   assert.equal(r.ok, false);
-  assert.match(r.error, /^that change would now leave the graph invalid — cycle without a blocking-source edge: n_agent, n_b /);
+  assert.match(r.error, /^that change would now leave the graph invalid \(cycle without a blocking-source edge: n_agent, n_b /);
   assert.equal(s.c.undoDepth(), depth, 'no undo entry');
   assert.equal(JSON.stringify(s.c.template().wires), wires, 'the wires are unchanged');
   assert.equal(s.c.applyOps([{ op: 'move_node', node: 'n_b', x: 420, y: 420 }], 'chat: move').ok, true, 'a clean batch still applies');

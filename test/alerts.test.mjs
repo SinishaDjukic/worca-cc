@@ -212,6 +212,7 @@ test('pause table: a usage limit, an error and a cost cap each have a title; a m
   assert.equal(pauseTitle('recoverable'), 'Worca: Run paused on an error');
   for (const r of ['cost_pipeline', 'cost_total', 'cost_pipeline_policy', 'cost_total_policy']) assert.equal(pauseTitle(r), 'Worca: Cost cap reached', r);
   assert.equal(pauseTitle('night_guardrail'), 'Worca: Night guardrail reached');
+  assert.equal(pauseTitle('terminated'), 'Worca: Run paused when worca was stopped');
   for (const r of [null, undefined, '', 'drain', 'toString']) assert.equal(pauseTitle(r), null, String(r));
   assert.ok(Object.isFrozen(PAUSE_TITLES));
   assert.equal(pauseTag('r1'), 'worca:r1:pause');

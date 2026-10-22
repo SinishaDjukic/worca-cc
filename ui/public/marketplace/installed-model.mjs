@@ -41,7 +41,7 @@ export function problemsOf(row) {
   const ignored = list(row?.ignored);
   if (ignored.length) {
     chips.push({ key: 'ignored', label: `${ignored.length} ignored`, tone: 'bad' });
-    for (const i of ignored) lines.push(`${i?.file} — ${i?.reason}`);
+    for (const i of ignored) lines.push(`${i?.file}: ${i?.reason}`);
   }
   return { chips, lines };
 }

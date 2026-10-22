@@ -16,7 +16,7 @@ import { runGitCapture } from '../src/core/worktree.mjs';
 import { RunHarness } from '../src/core/run-harness.mjs';
 import { openBranchWorktree } from '../src/core/terminal/worktrees.mjs';
 import { listMemberFiles } from '../src/core/workspace-map/files.mjs';
-import { clearStaleIndexLock } from '../src/core/git-lock.mjs';
+import { clearStaleGitLocks } from '../src/core/git-lock.mjs';
 import { envForShell } from '../src/core/graph/script-runner.mjs';
 
 useTempHome(after);
@@ -66,7 +66,7 @@ test('async wrappers while git is missing', async (t) => {
       const lock = join(repo, '.git', 'index.lock'); writeFileSync(lock, '');
       const old = new Date(Date.now() - 3_600_000); utimesSync(lock, old, old);
       assert.equal((await listMemberFiles(repo)).via, 'walk');
-      assert.equal(await clearStaleIndexLock(repo), null);
+      assert.deepEqual(await clearStaleGitLocks(repo), []);
       assert.ok(existsSync(lock));
     } },
     { name: 'git on again: the same calls reach git (the gate is the only change)', run: async () => {

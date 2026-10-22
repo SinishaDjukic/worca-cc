@@ -112,7 +112,7 @@ test('#new/after/p1: the pick waits on the form, the branch select leads with th
   assert.equal(sel.options[0].textContent, 'Branch of the run before it');
   assert.equal(sel.value, '__previous__', 'selected by default on an after-pick');
   assert.deepEqual([...sel.querySelectorAll('optgroup')].map((g) => g.label), ['Branches', 'Run branches']);
-  assert.equal(sel.querySelector('optgroup[label="Run branches"] option').textContent, 'worca/refactor-p1 — Refactor · running');
+  assert.equal(sel.querySelector('optgroup[label="Run branches"] option').textContent, 'worca/refactor-p1: Refactor · running');
   assert.equal(sel.querySelector('optgroup[label="Branches"] option[value="worca/refactor-p1"]'), null, 'not repeated under Branches');
   doc.getElementById('prompt').value = 'Add tests';
   doc.getElementById('start-btn').click();
@@ -248,7 +248,7 @@ test('the previous-run option survives a branch rebuild for another project', as
 test('a predecessor that cannot be waited on is refused (t9 unregistered project, t8 already-ended ticket)', async () => {
   await checkRows([
     { name: '#new/after/t:t9: a predecessor in a project this worca does not know is refused', hash: '#new/after/t:t9', msg: 'That run’s project is not registered.' },
-    { name: '#new/after/t:t8: a ticket predecessor that already ended is refused — nothing to wait for', hash: '#new/after/t:t8', msg: '‘Gone’ was canceled — nothing to wait for.' },
+    { name: '#new/after/t:t8: a ticket predecessor that already ended is refused — nothing to wait for', hash: '#new/after/t:t8', msg: '‘Gone’ was canceled. Nothing to wait for.' },
   ].map(({ name, hash, msg }) => ({ name, run: async () => {
     const { window } = await boot(hash);
     const doc = window.document;
@@ -325,19 +325,19 @@ async function bootNew(runReply) {
 }
 const settle = async (doc) => { for (let i = 0; i < 200 && doc.getElementById('start-btn').dataset.fbState === 'busy'; i++) await tick(5); };
 
-test('a started run toasts "Run started" with Open run, and repeated Starts each post and never leave the form stuck', async () => {
+test('a started run opens its page without a "Run started" toast (F-24), and repeated Starts each post and never leave the form stuck', async () => {
   const { window, runBodies } = await bootNew((body, n) => ({ data: { runId: `r-${n}` }, status: 200 }));
   const doc = window.document;
   const btn = doc.getElementById('start-btn');
   await checkRows([
-    { name: 'D6: a started run raises a "Run started" toast with Open run, and leaves no line on #form-msg', run: async () => {
+    { name: 'F-24: a started run lands on its own page, so no "Run started" toast, and no line on #form-msg', run: async () => {
       doc.getElementById('prompt').value = 'Add tests';
       doc.getElementById('start-btn').click();
       await settle(doc);
       assert.equal(runBodies.length, 1);
       assert.match(window.location.hash, /^#running\/r-1/);   // the first call's runId
       assert.equal(doc.getElementById('form-msg').textContent, '');
-      assert.deepEqual(lastToast(doc), { tone: 'ok', title: 'Run started', detail: '', action: 'Open run' });
+      assert.equal(lastToast(doc), null, 'the run page is the confirmation');
       assert.equal(doc.getElementById('start-btn').dataset.fbState, 'done');
       assert.equal(doc.getElementById('start-btn').textContent.trim(), 'Started');
     } },

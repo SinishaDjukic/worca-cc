@@ -35,6 +35,10 @@ test('enginePatchToSettingsBody maps setting ids onto the settings keys', () => 
     stepModels: { codex: { planner: { model: 'gpt-5.5' } }, claude: { reviewer: null } },
     utilityModels: { codex: { title: { model: 'gpt-5.5', effort: 'low' }, memoryDefrag: null } },
   });
+  // Agent generation is Claude's alone, a pair on its own settings key.
+  assert.deepEqual(enginePatchToSettingsBody({ 'models.claude.utility.agentGen': { model: 'claude-opus-5-5', effort: 'high' } }),
+    { agentGenModel: { model: 'claude-opus-5-5', effort: 'high' } });
+  assert.deepEqual(enginePatchToSettingsBody({ 'models.claude.utility.agentGen': null }), { agentGenModel: null });
 });
 
 test('renderEngineSection: a row per role and job, each engine\'s models only', () => {
@@ -70,7 +74,7 @@ test('renderEngineSection: the Cursor card has step rows, no helper rows, its ow
   assert.match(plan.options[0].textContent, /Cursor's default model/);
   assert.equal(card.querySelector('.engine-helpers .engine-slot'), null, 'no helper rows');
   assert.equal(card.querySelector('.engine-helpers h4').textContent, 'Helper jobs');
-  assert.match(card.querySelector('.engine-helpers .engine-slot-rest').textContent, /^Cursor runs its helper jobs \(titles, overview, PR description, Auto classifier, Away mode's decider\) on Claude — see the Claude tab\.$/);
+  assert.match(card.querySelector('.engine-helpers .engine-slot-rest').textContent, /^Cursor runs its helper jobs \(titles, overview, PR description, Auto classifier, Away mode's decider\) on Claude\. See the Claude tab\.$/);
   assert.ok(card.querySelector('.engine-card-status'), 'a status line app.js fills');
   assert.equal(host.querySelector('.engine-card[data-engine="claude"] .engine-card-status'), null);
   assert.deepEqual(enginePatchToSettingsBody({ 'models.cursor.steps.planner': { model: 'my-cursor-m' } }), { stepModels: { cursor: { planner: { model: 'my-cursor-m' } } } });
@@ -123,9 +127,11 @@ test('the Models page: stored picks paint, Claude\'s helper jobs are rows of its
   assert.equal(root.querySelector('[data-setting="run.engine"] .inherit-input').value, 'codex');
   assert.equal(root.querySelector('[data-setting="models.codex.steps.planner"] .inherit-model').value, 'gpt-5.5');
   const claude = doc.querySelector('.engine-card[data-engine="claude"]');
-  for (const job of ['utility.title', 'utility.classifier', 'utility.prDescription', 'memoryDefrag']) {
+  for (const job of ['utility.title', 'utility.classifier', 'utility.prDescription', 'memoryDefrag', 'utility.agentGen']) {
     assert.ok(claude.querySelector(`.engine-helpers [data-setting="models.claude.${job}"]`), `${job} is a Helper jobs row`);
   }
+  assert.match(claude.querySelector('[data-setting="models.claude.utility.agentGen"]').textContent, /Agent generation/);
+  assert.equal(root.querySelector('[data-setting*=".agentGen"]:not([data-setting="models.claude.utility.agentGen"])'), null, 'agent generation runs on Claude only: no other engine has the row');
   const eng = root.querySelector('[data-setting="run.engine"] .inherit-input');
   eng.value = '';
   eng.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -152,6 +158,24 @@ test('the Models page: a Claude helper row saves onto its legacy key (titleModel
   assert.equal(posts.at(-1).titleModel, 'claude-opus-5-5');
   assert.equal(posts.at(-1).memoryDefrag.model, 'claude-opus-5-5');
   assert.equal(posts.at(-1).utilityModels, undefined, 'never under utilityModels.claude');
+});
+
+test('the Models page: the Agent generation row paints the stored pair and saves onto agentGenModel', async () => {
+  const { doc, window, posts, tick } = await boot({ agentGenModel: { model: 'claude-opus-5-5', effort: 'high' } }, { hash: 'models' });
+  const row = doc.querySelector('[data-setting="models.claude.utility.agentGen"]');
+  assert.equal(row.querySelector('.inherit-model').value, 'claude-opus-5-5');
+  assert.equal(row.querySelector('.inherit-effort').value, 'high');
+  assert.equal(row.querySelector('.inherit-effort').disabled, false, 'the row takes an effort, unlike Titles');
+  const effort = row.querySelector('.inherit-effort');
+  effort.value = 'max'; effort.dispatchEvent(new window.Event('change', { bubbles: true }));
+  doc.getElementById('engineSettingsSave').click();
+  for (let i = 0; i < 6; i++) await tick();
+  assert.deepEqual(posts.at(-1), { agentGenModel: { model: 'claude-opus-5-5', effort: 'max' } });
+  const model = row.isConnected ? row.querySelector('.inherit-model') : doc.querySelector('[data-setting="models.claude.utility.agentGen"] .inherit-model');
+  model.value = ''; model.dispatchEvent(new window.Event('change', { bubbles: true }));
+  doc.getElementById('engineSettingsSave').click();
+  for (let i = 0; i < 6; i++) await tick();
+  assert.deepEqual(posts.at(-1), { agentGenModel: null }, 'a cleared row clears the setting');
 });
 
 test('opening the Models page directly paints the Engines card (a link or a reload lands there)', async () => {
@@ -195,7 +219,7 @@ test('renderEngineSection: one card at a time, only the changed steps, one-line 
   assert.deepEqual(visible(), ['models.codex.steps.reviewer']);
   assert.equal(codex.querySelector('.engine-slot-rest').textContent, '2 other steps follow your settings.');
   const add = codex.querySelector('.engine-slot-add');
-  assert.deepEqual([...add.options].map((o) => o.textContent), ['+ Override a step…', 'Plan', 'Implement']);
+  assert.deepEqual([...add.options].map((o) => o.textContent), ['Override a step…', 'Plan', 'Implement']);
   add.value = 'models.codex.steps.planner';
   add.dispatchEvent(new doc.defaultView.Event('change', { bubbles: true }));
   assert.deepEqual(visible(), ['models.codex.steps.planner', 'models.codex.steps.reviewer']);

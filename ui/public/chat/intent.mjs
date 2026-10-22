@@ -12,6 +12,7 @@
 import { registerComposerAddon } from './extensions.mjs';
 import { homeIcon } from './home-icons.mjs';
 import { shapeFirstOn } from './shape-gate.mjs';
+import { INTENT_LEADS } from '../../../src/shared/intent-leads.mjs';
 
 export const INTENT_ADDON_ID = 'intent';
 export const EXAMPLE_MS = 3500;
@@ -21,20 +22,20 @@ export const EXAMPLE_MS = 3500;
  *  `badge` shows under its label on the home. Shaper (`shape`) is Shape it first's, gated.
  *  Every one is a real Ask Worca capability (src/core/ask/tools.mjs — the map is in home-actions.mjs). */
 export const INTENTS = Object.freeze({
-  run: Object.freeze({ label: 'New run', icon: 'run', placeholder: 'Describe the task…', lead: 'Propose a pipeline run for this task.' }),
+  run: Object.freeze({ label: 'New run', icon: 'run', placeholder: 'Describe the task…', lead: INTENT_LEADS.run }),
   shape: Object.freeze({ label: 'Shaper', icon: 'shape', placeholder: 'Describe the problem…',
-    lead: 'Shape this task first: propose a run with `shape`.', badge: 'Labs' }),
-  workflow: Object.freeze({ label: 'Build workflow', icon: 'workflow', placeholder: 'Describe the workflow…', lead: 'Build a workflow from this description.' }),
-  schedule: Object.freeze({ label: 'Schedule a run', icon: 'schedule', placeholder: 'What should run, and when?', lead: 'Propose a scheduled run for this.' }),
-  track: Object.freeze({ label: 'Track a run', icon: 'track', placeholder: 'Which run? Pick one or type its name', lead: 'Track this run here.' }),
-  diff: Object.freeze({ label: 'Explain a diff', icon: 'diff', placeholder: 'Which run’s changes?', lead: 'Explain what this run changed.' }),
-  script: Object.freeze({ label: 'Write a script', icon: 'script', placeholder: 'What should the script check?', lead: 'Write a script for this.' }),
-  away: Object.freeze({ label: 'Step away', icon: 'away', placeholder: "I'm away now", lead: 'Turn Away mode on now.', prefill: "I'm away now" }),
-  metrics: Object.freeze({ label: 'Team metrics', icon: 'metrics', placeholder: 'Which project or workspace?', lead: 'Show my team metrics.' }),
-  model: Object.freeze({ label: 'Add a model', icon: 'model', placeholder: 'Which model or endpoint?', lead: 'Help me add this model.' }),
-  workspace: Object.freeze({ label: 'New workspace', icon: 'workspace', placeholder: 'Name it and list its projects', lead: 'Create a new workspace.' }),
-  remember: Object.freeze({ label: 'Remember something', icon: 'remember', placeholder: 'What should worca remember?', lead: 'Remember this.' }),
-  tasks: Object.freeze({ label: 'Find tasks', icon: 'tasks', placeholder: 'Which tracker, and what to look for?', lead: 'Find tasks in my trackers.' }),
+    lead: INTENT_LEADS.shape, badge: 'Labs' }),
+  workflow: Object.freeze({ label: 'Build workflow', icon: 'workflow', placeholder: 'Describe the workflow…', lead: INTENT_LEADS.workflow }),
+  schedule: Object.freeze({ label: 'Schedule a run', icon: 'schedule', placeholder: 'What should run, and when?', lead: INTENT_LEADS.schedule }),
+  track: Object.freeze({ label: 'Track a run', icon: 'track', placeholder: 'Which run? Pick one or type its name', lead: INTENT_LEADS.track }),
+  diff: Object.freeze({ label: 'Explain a diff', icon: 'diff', placeholder: 'Which run’s changes?', lead: INTENT_LEADS.diff }),
+  script: Object.freeze({ label: 'Write a script', icon: 'script', placeholder: 'What should the script check?', lead: INTENT_LEADS.script }),
+  away: Object.freeze({ label: 'Step away', icon: 'away', placeholder: "I'm away now", lead: INTENT_LEADS.away, prefill: "I'm away now" }),
+  metrics: Object.freeze({ label: 'Team metrics', icon: 'metrics', placeholder: 'Which project or workspace?', lead: INTENT_LEADS.metrics }),
+  model: Object.freeze({ label: 'Add a model', icon: 'model', placeholder: 'Which model or endpoint?', lead: INTENT_LEADS.model }),
+  workspace: Object.freeze({ label: 'New workspace', icon: 'workspace', placeholder: 'Name it and list its projects', lead: INTENT_LEADS.workspace }),
+  remember: Object.freeze({ label: 'Remember something', icon: 'remember', placeholder: 'What should worca remember?', lead: INTENT_LEADS.remember }),
+  tasks: Object.freeze({ label: 'Find tasks', icon: 'tasks', placeholder: 'Which tracker, and what to look for?', lead: INTENT_LEADS.tasks }),
 });
 
 /** The rotating home placeholders: each is something worca really does (a run, a workflow, a schedule of the

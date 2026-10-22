@@ -139,9 +139,9 @@ test('checkLine and unmetLine name the count and the short check names', () => {
     { id: 'sections', label: 'S', pass: false }, { id: 'decisions', label: 'D', pass: false },
     { id: 'tests', label: 'T', pass: false }, { id: 'paths', label: 'P', pass: true }] };
   assert.equal(checkLine(check), 'Shape 5/8 · 3 to fix');
-  assert.equal(unmetLine(check), '3 checks unmet: sections, decisions, testing');
+  assert.equal(unmetLine(check), 'Still to fix: missing sections, open decisions, no test plan');
   assert.equal(checkLine({ passed: 8, total: 8, items: [] }), 'Shape 8/8');
-  assert.equal(unmetLine({ items: [{ id: 'paths', pass: false }] }), '1 check unmet: paths');
+  assert.equal(unmetLine({ items: [{ id: 'paths', pass: false }] }), 'Still to fix: file paths not in the repo');
   assert.equal(unmetLine({ items: [] }), '');
   assert.equal(checkLine({ passed: 4, total: 5, items: [{ pass: false }] }, 'Outline'), 'Outline 4/5 · 1 to fix');
   assert.equal(checkLine({ passed: 5, total: 5, items: [] }, 'Outline'), 'Outline 5/5');

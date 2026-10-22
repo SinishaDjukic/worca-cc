@@ -17,7 +17,7 @@ export function createHomePresets({ doc, onUse, onMore }) {
   const h = (tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   const el = h('section', 'chat-home-presets');
   el.hidden = true;
-  const hd = h('h2', 'chat-home-presets-h', 'Start from a preset');
+  const hd = h('h2', 'section-title chat-home-presets-h', 'Start from a preset');
   hd.id = 'chat-home-presets-h';
   el.setAttribute('aria-labelledby', hd.id);
   const row = h('div', 'chat-home-preset-row');

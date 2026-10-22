@@ -39,6 +39,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { maxListWidth, LIST_W_KEY } from '../ui/public/runs-resize.mjs';
 
 // Chrome is overridable so this proof also runs on a Linux CI runner: CHROME_BIN
 // picks the binary, and headless Chrome refuses to start as root (containers)
@@ -355,6 +356,54 @@ try {
     !g2.missing && Math.abs(g2.stage.t - g2.pad.t) < 0.6 && Math.abs(g2.stage.h - g2.pad.h) < 0.6
     && Math.abs(g2.stage.l - g2.pad.l) < 0.6 && Math.abs(g2.stage.w - g2.pad.w) < 0.6
     && g2.hostPos === 'absolute' && g2.hostPad === '0px' && g2.hostDisplay === 'block', g2);
+
+  // (1d) the Live view graph sits beside the card when the run pane is wide (the `rd` container at 960px or more: the
+  // card keeps its 544px column, the graph's top is level with the card's and it is 320px tall at least), and under the
+  // run details otherwise, as wide as the pane's content (the glance's content box) (run 3, D16). Windows 1440 and 1920,
+  // the list at its 280px floor and at its max (maxListWidth: 640 at both); the matrix must see both layouts. The key is
+  // worca-cc.runs.listWidth (runs-resize LIST_W_KEY).
+  const liveLayouts = new Set();
+  for (const w of [1440, 1920]) {
+    for (const lw of ['280', String(maxListWidth(w))]) {
+      await ev(`localStorage.setItem(${JSON.stringify(LIST_W_KEY)},${JSON.stringify(lw)});0`);
+      await cdp('Emulation.setDeviceMetricsOverride', { width: w, height: 900, deviceScaleFactor: 1, mobile: false });
+      await go(`running/${runId}`);
+      await until(`document.querySelector('#run-detail .rd-glance .rd-sheet')`, `the run page at ${w}px`);
+      // Live view on: the switch is the person's remembered choice.
+      await ev(`(()=>{const row=document.querySelector('#run-detail .rd-live-row');const sw=row&&row.querySelector('.rd-live-switch');
+        if(row&&!row.hidden&&sw&&sw.getAttribute('aria-checked')!=='true')sw.click();return 0;})()`);
+      const shown = await until(`document.querySelector('#run-detail .rd-live.is-in')`, `the Live view at ${w}px, list ${lw}px`).then(() => true, () => false);
+      await settle(`live ${w}/${lw}`);
+      // Measure at rest: the card's slide (flipGlance) and the panel's entrance run on their own elements only (the
+      // graph inside keeps its infinite wire animations, so no subtree).
+      for (let i = 0; i < 40; i += 1) {
+        if (await ev(`['.rd-now','.rd-sheet','.rd-live'].every((s)=>{const n=document.querySelector('#run-detail .rd-glance > '+s);
+          return !n||n.getAnimations().every((a)=>a.playState!=='running');})`)) break;
+        await kick(); await sleep(50);
+      }
+      const geo = await ev(`(()=>{const q=(s)=>document.querySelector('#run-detail '+s);const glance=q('.rd-glance');const live=q('.rd-glance > .rd-live');
+        const sheet=q('.rd-glance > .rd-sheet');const now=q('.rd-glance > .rd-now');if(!glance||!live||!sheet||!now)return {missing:true};
+        const rd=glance.closest('.rd');const rcs=getComputedStyle(rd);
+        const cs=getComputedStyle(glance);const g=glance.getBoundingClientRect();const pl=parseFloat(cs.paddingLeft),pr=parseFloat(cs.paddingRight);
+        const s=sheet.getBoundingClientRect();const l=live.getBoundingClientRect();
+        return {rd:rd.clientWidth-parseFloat(rcs.paddingLeft)-parseFloat(rcs.paddingRight),pane:{left:g.left+pl,width:g.width-pl-pr},
+          sheet:{top:s.top,right:s.right,bottom:s.bottom,width:s.width},live:{top:l.top,left:l.left,width:l.width,height:l.height},
+          now:now.getBoundingClientRect().width,list:document.querySelector('#runs-list-pane').getBoundingClientRect().width};})()`);
+      const wide = !geo.missing && geo.rd >= 960;
+      liveLayouts.add(wide ? 'beside' : 'under');
+      check('1d', wide
+        ? `1d graph beside the card at ${w}px, list ${lw}px (pane ${Math.round(geo.rd)}px): .rd-live right of .rd-sheet, tops level, 320px tall at least; the card and .rd-now stay at or under 545px`
+        : `1d graph under the details at ${w}px, list ${lw}px (pane ${Math.round(geo.rd)}px): .rd-live under .rd-sheet at the pane's content width; the card and .rd-now stay at or under 545px`,
+        shown && !geo.missing && geo.sheet.width <= 545 && geo.now <= 545 && (wide
+          ? geo.live.left >= geo.sheet.right + 27 && Math.abs(geo.live.top - geo.sheet.top) <= 1 && geo.live.height >= 319
+          : geo.live.top >= geo.sheet.bottom - 1 && Math.abs(geo.live.left - geo.pane.left) <= 1 && Math.abs(geo.live.width - geo.pane.width) <= 1),
+        { shown, ...geo });
+    }
+  }
+  check('1d', '1d the matrix saw the graph both beside the card and under it', liveLayouts.size === 2, [...liveLayouts]);
+  // Back to the width and window the run started with: the checks below were measured there.
+  await ev(`localStorage.setItem(${JSON.stringify(LIST_W_KEY)},'280');0`);
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
 
   // (9a) the node axis is live on the Logs tab bar, with MANIFEST labels
   await go(`running/${runId}/details/logs`);
@@ -711,8 +760,8 @@ try {
       endCardResult:(document.querySelector('${HD} .gv-world .node[data-node-id="n_end"] .xresult')||{}).textContent||null,
       warn:!!document.querySelector('#hist-detail .hd-banners .run-warn:not([hidden])'),
       ovNote:(document.querySelector('#hist-detail .hd-ov-note')||{}).textContent||null};})()`);
-  check(8, 'History header meta carries the End chip (— completed) for a run that reached End, and no quiescence banner',
-    head.endReached === true && head.text === '— completed' && head.endCardResult === '— completed'
+  check(8, 'History header meta carries the End chip (completed) for a run that reached End, and no quiescence banner',
+    head.endReached === true && head.text === 'completed' && head.endCardResult === 'completed'
     && head.warn === false && head.ovNote === null, head);
   // The seeded run REACHES End, so there is no quiescence banner on it. Prove the
   // copy where it lives instead: paint a quiescent bag into the REAL .hd-banners

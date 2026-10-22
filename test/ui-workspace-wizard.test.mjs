@@ -401,12 +401,12 @@ test('size limits: no note up to 10, warnings above 10 and 20, Scan blocked abov
       assert.equal(sizeLevel(doc), 'none');
       tickFirst(window, 11);
       assert.equal(sizeLevel(doc), 'big');
-      assert.match(note.textContent, /A bit big — 11 projects/);
+      assert.match(note.textContent, /A bit big \(11 projects\)/);
       tickFirst(window, 20);
       assert.equal(sizeLevel(doc), 'big');
       tickFirst(window, 21);
       assert.equal(sizeLevel(doc), 'very-big');
-      assert.match(note.textContent, /Big workspace — 21 projects/);
+      assert.match(note.textContent, /Big workspace \(21 projects\)/);
       tickFirst(window, 40);
       assert.equal(sizeLevel(doc), 'very-big');
       assert.equal(start.disabled, false, '40 may be scanned');

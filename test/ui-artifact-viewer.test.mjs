@@ -507,10 +507,10 @@ test('a slow answer for the file left behind never changes the file shown now: a
   assert.equal(root.querySelector('.apv-note').hidden, true, 'and so did the stale download failure');
 });
 
-test('the popup sits in the --hd-syntax-* token scope (the tokens are not on :root), so highlighted code is coloured', async () => {
+test('the --hd-syntax-* tokens are in the :root token block, so highlighted code is coloured wherever it sits', async () => {
   const { readFileSync } = await import('node:fs');
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
-  assert.match(css, /\.hd-diff-pane,\.ask-md,\.code-editor,\.apv\{\s*--hd-syntax-comment:/);
+  assert.match(css.slice(css.indexOf(':root{'), css.indexOf('/* ---------- base reset')), /--hd-syntax-comment:/);
 });
 
 // ── refine cycle 2: behaviours the popup claims that the rows above did not pin ──

@@ -33,6 +33,7 @@ test('a Codex id in a Claude utility setting is a 400 naming it; nothing is writ
     ['autoWorkflowModel', 'gpt-5.5', 'gpt-5.5'],
     ['prDescriptionModel', 'gpt-5.6-sol', 'gpt-5.6-sol'],
     ['memoryDefrag', { model: 'gpt-5.5', effort: 'low' }, 'gpt-5.5'],
+    ['agentGenModel', { model: 'gpt-5.5', effort: 'high' }, 'gpt-5.5'],
     ['workspaceScan', { scanModel: 'gpt-5.5', scanEffort: 'low', agentModel: 'sonnet', agentEffort: 'medium' }, 'gpt-5.5'],
   ];
   for (const [key, value, id] of cases) {
@@ -40,12 +41,13 @@ test('a Codex id in a Claude utility setting is a 400 naming it; nothing is writ
     assert.equal(r.status, 400, key);
     const body = await r.json();
     // #555: the error names the setting by its visible label, and `field` by its key.
-    assert.match(body.error, new RegExp(`^“[^”]+”: "${id.replace(/\./g, '\\.')}" runs on Codex — this setting picks a model Claude Code can run\\.$`), key);
+    assert.match(body.error, new RegExp(`^“[^”]+”: "${id.replace(/\./g, '\\.')}" runs on Codex\\. This setting picks a model Claude Code can run\\.$`), key);
     assert.equal(body.field.split('.')[0], key);
   }
   const s = await get();
   assert.equal(s.prDescriptionModel, '');
   assert.equal(s.autoWorkflowModel, '');
+  assert.deepEqual(s.agentGenModel, { model: null, effort: null });
   assert.notEqual(s.theme, 'dark', 'a refused POST writes no key');
   const ok = await post({ titleModel: 'claude-haiku-4-5' });
   assert.equal(ok.status, 200, 'a Claude id is still accepted');
@@ -69,5 +71,5 @@ test('a Cursor id in a Claude utility setting is a 400 naming it', async () => {
   await addGlobalModel({ id: 'cursor-m', engine: 'cursor' });
   const r = await post({ titleModel: 'cursor-m' });
   assert.equal(r.status, 400);
-  assert.match((await r.json()).error, /^“[^”]+”: "cursor-m" runs on Cursor — this setting picks a model Claude Code can run\.$/);
+  assert.match((await r.json()).error, /^“[^”]+”: "cursor-m" runs on Cursor\. This setting picks a model Claude Code can run\.$/);
 });

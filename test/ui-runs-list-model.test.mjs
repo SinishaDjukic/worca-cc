@@ -6,8 +6,8 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
 import {
-  rowTime, liveRowState, histRowState, schedRowState, countNeedsYou, needsYouItems,
-  buildRunsModel, isRowSelected, renderRunsList, dateBucket, DATE_BUCKETS, listLine, groupRow, groupCostUsd, costTitle,
+  rowTime, whenLabel, liveRowState, histRowState, schedRowState, countNeedsYou, needsYouItems,
+  buildRunsModel, isRowSelected, isMemberOpen, renderRunsList, dateBucket, DATE_BUCKETS, listLine, groupRow, groupCostUsd, costTitle, memberCostUsd,
 } from '../ui/public/runs-list.mjs';
 import { RUN_STATES } from '../src/shared/run-model.mjs';
 import { checkRows } from './helpers/rows.mjs';
@@ -107,9 +107,11 @@ test('scheduled rows: a clock, what they wait for, and the Schedules tab that li
   assert.equal(schedRowState({ status: 'missed' }).word, 'Missed');
   assert.equal(schedRowState({ status: 'firing' }).word, 'Starting');
   const once = buildRunsModel({ scheduled: [{ id: 't1', title: null, status: 'scheduled', runAt: at(30, 17, 0), groupKey: 'g', groupName: 'G' }], now: NOW });
+  assert.equal(once.sections[0].id, 'waiting', 'D10: a one-off ticket waits');
   assert.equal(once.sections[0].rows[0].href, '#schedules/once');
   assert.equal(once.sections[0].rows[0].title, 'Scheduled run', 'a ticket title can be null');
   const series = buildRunsModel({ scheduled: [{ id: 't2', scheduleId: 's1', status: 'scheduled', runAt: at(30, 17, 0), groupKey: 'g', groupName: 'G' }], now: NOW });
+  assert.equal(series.sections[0].id, 'recent', 'D10: a series occurrence stays in Recent');
   assert.equal(series.sections[0].rows[0].href, '#schedules/repeating');
   // A firing ticket's id IS its run's id (app.js:23648): once the run is live, it shows once.
   const firing = buildRunsModel({
@@ -185,6 +187,11 @@ test('listLine: say each thing once (§3.1)', async () => {
     { name: 'recent, failed', run: () => assert.equal(listLine(row('failed', { mode: 'stages', label: 'Review' }), { time: 'Fri' }), 'Failed at Review · Fri') },
     { name: 'recent, merged with PR', run: () => assert.equal(listLine(row('merged', null, { pr: { id: 'merged', word: 'Merged' } }), { time: 'Fri' }), 'Fri') },
     { name: 'recent, waiting group', run: () => assert.equal(listLine(groupRowOf('waiting', 2, ''), {}), 'Waiting · Run 2') },
+    { name: 'waiting group names its current member\'s wait (D11)', run: () => {
+      const g = groupRowOf('waiting', 2, '');
+      g.model.current.line = 'Waiting · starts after run 1';
+      assert.equal(listLine(g, {}), 'Waiting · Run 2 · starts after run 1');
+    } },
     { name: 'mixed, group needs you', run: () => assert.equal(listLine(groupRowOf('needs-you', 3, 'Plan'), {}), 'Needs you · Run 3 · Plan') },
     { name: 'needs section, paused group keeps its word', run: () => assert.equal(listLine(groupRowOf('paused', 2, 'Build'), { section: 'needs' }), 'Paused · Run 2 · Build') },
     { name: 'a usage-limit pause keeps its reset note', run: () => assert.equal(listLine({ ...row('paused'), detail: 'resets 18:00', model: { ...row('paused').model, line: 'Paused · usage limit' } }, { section: 'needs' }), 'Paused · usage limit · resets 18:00') },
@@ -202,7 +209,7 @@ const HIST5 = Array.from({ length: 5 }, (_, i) => histIt(`d${i}`, { run: { statu
 
 test('Show / Group by: counts, Running excludes ended runs, project grouping keeps Needs you on top', () => {
   const m = buildRunsModel({ live: LIVE3, history: HIST5, show: 'running', now: NOW });   // LIVE3: ask + 2 working; HIST5: 5 done
-  assert.deepEqual(m.counts, { all: 8, needs: 1, running: 3, finished: 5, archived: null });
+  assert.deepEqual(m.counts, { all: 8, needs: 1, running: 3, waiting: 0, finished: 5, archived: null });
   assert.deepEqual(m.sections.map((s) => s.id), ['running']);
   const p = buildRunsModel({ live: LIVE3, history: HIST5, groupBy: 'project', now: NOW });
   assert.equal(p.sections[0].id, 'needs');
@@ -275,13 +282,23 @@ test('a finished run whose PR fails checks needs you (D31): Needs you, the badge
   assert.equal(needsYouItems({ history: [{ id: 'h1', status: 'done', pr: { ...pr, fixing: true } }] }).history.length, 0, 'a live fix run: not counted');
 });
 
-test('isRowSelected: a group row is selected by any member pipeline or run', () => {
-  const g = groupRow({ id: 'p:p1', groupKind: 'chain', title: 'C', members: [
-    { position: 1, pipelineId: 'p1', runId: 'r1', kind: 'live', run: { status: 'running' } },
-    { position: 2, ticketId: 't2', kind: 'sched', run: { ticket: { status: 'scheduled', runAt: null } } }] }, { now: NOW });
-  assert.equal(isRowSelected(g, { pipelineId: 'p1' }), true);
-  assert.equal(isRowSelected(g, { runId: 'r1' }), true);
-  assert.equal(isRowSelected(g, { runId: 'zz' }), false);
+test('run 3 (D3): every group row links its own page — #group/… for a chain or a user group', () => {
+  const g = groupRow({ id: 'p:p0', groupKind: 'chain', title: 'C', members: [
+    { position: 1, pipelineId: 'p0', runId: 'r1', kind: 'live', href: '#running/r1', run: { status: 'running' } }] }, { now: NOW });
+  assert.equal(g.href, '#group/p%3Ap0', 'not the current member\'s #running/r1');
+  const u = groupRow({ id: 'g_1', groupKind: 'user', title: 'U', members: [{ position: 1, pipelineId: 'u1', kind: 'hist', run: { status: 'done' } }] }, { now: NOW });
+  assert.equal(u.href, '#group/g_1');
+});
+
+test('selection is two levels: the group row on its own page, member-open while a member runs', () => {
+  const row = { kind: 'chain', groupId: 'feat_1', memberKeys: new Set(['p:p1', 'r:r2']) };
+  assert.equal(isRowSelected(row, { groupId: 'feat_1' }), true);
+  assert.equal(isRowSelected(row, { runId: 'r2', pipelineId: 'p2' }), false);
+  assert.equal(isMemberOpen(row, { runId: 'r2', pipelineId: 'p2' }), true);
+  assert.equal(isMemberOpen(row, { groupId: 'feat_1' }), false);
+  assert.equal(isMemberOpen({ kind: 'hist', pipelineId: 'p1' }, { pipelineId: 'p1' }), false);
+  assert.equal(isRowSelected({ kind: 'hist', pipelineId: 'p1', projectKey: 'k' }, { pipelineId: 'p1', groupId: 'feat_1' }), false,
+    'while a group page is open no run row is selected');
 });
 
 test('dateBucket: an ended group files under its latest member\'s time, a working group under Today', () => {
@@ -304,12 +321,12 @@ test('dateBucket: an ended group files under its latest member\'s time, a workin
   assert.equal(host.querySelector('.runs-item[data-row-key="chain:grp_r"] > a.runs-row > .runs-row-sub').textContent, `Ready to ship · ${rowTime(NOW - 60000, NOW)}`);
 });
 
-test('D29: an all-waiting chain in Recent is open; the person\'s toggle wins; an all-merged chain starts closed', () => {
+test('D29: an all-waiting chain in Waiting is open; the person\'s toggle wins; an all-merged chain starts closed', () => {
   const waiting = { id: 'p:x', groupKind: 'chain', title: 'Later', members: [1, 2, 3].map((i) => (
     { position: i, ticketId: `tx${i}`, kind: 'sched', run: { ticket: { status: 'scheduled', runAt: null } } })) };
   const scheduled = [1, 2, 3].map((i) => ({ id: `tx${i}`, status: 'scheduled', runAt: at(30, 21, 0), groupKey: 'g', groupName: 'G' }));
   const m = buildRunsModel({ scheduled, groups: [waiting], now: NOW });
-  assert.equal(m.sections.find((s) => s.id === 'recent').rows[0].open, true);
+  assert.equal(m.sections.find((s) => s.id === 'waiting').rows[0].open, true, 'D10: a group whose next member waits is in Waiting');
   assert.equal(buildRunsModel({ scheduled, groups: [waiting], toggled: new Map([['chain:p:x', false]]), now: NOW }).sections[0].rows[0].open, false);
   const merged = { url: 'https://github.com/o/r/pull/1', number: 1, state: 'MERGED' };
   const done = { id: 'p:y', groupKind: 'chain', title: 'Done', members: [1, 2].map((i) => (
@@ -348,6 +365,7 @@ test('rows, members and symbols: Needs you / Failed draw the 12px symbol, never 
   assert.equal(g.querySelector(':scope > .runs-row-tail .runs-expand').getAttribute('aria-expanded'), 'true');
   assert.equal(g.querySelector(':scope > a.runs-row').dataset.memberKeys.split(' ').sort().join(' '), 'p:bad p:good t:t3',
     'the row carries its member keys so the selection repaint can rebuild them from the DOM');
+  assert.equal(g.querySelector(':scope > a.runs-row').dataset.groupId, 'feat_x', 'and its group id (D4)');
 });
 
 test('a group row reads its count once and its bar glides from lineFrom; a single live row draws the four-section stage block', () => {
@@ -480,8 +498,108 @@ test('Needs you: a workspace run with a conflicting member PR is listed and coun
 
 test('style.css: the chip colours #784’s states from tokens; the glyph rules are gone', () => {
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
-  const colours = { 'is-draft': '--ink-2', 'is-ready': '--green-ink', 'is-merged': '--violet-ink', 'is-closed': '--red-ink' };
+  const colours = { 'is-draft': '--ink-2', 'is-ready': '--green-ink', 'is-merged': '--slate-ink', 'is-closed': '--red-ink' };
   for (const [cls, token] of Object.entries(colours)) assert.ok(css.includes(`.runs-pr.${cls}{color:var(${token});}`), cls);
   assert.match(css, /\.runs-pr\.is-conflicts,\.runs-pr\.is-failing\{color:var\(--red-ink\);\}/);
   for (const gone of ['.runs-pr-open{', '.runs-pr-cut{', '.runs-pr-count{', '.runs-pr{flex:none']) assert.equal(css.includes(gone), false, gone);
+});
+
+test('D5: a member\'s cost is the highest known of live, History and the group\'s byPipeline; null when none is known', () => {
+  assert.equal(memberCostUsd(0, 135.95, 135.95), 135.95, 'a finished run still in the live map at 0');
+  assert.equal(memberCostUsd(2.5, 1.2, undefined), 2.5, 'a live run ahead of the stored numbers');
+  assert.equal(memberCostUsd(undefined, null, 141.19), 141.19);
+  assert.equal(memberCostUsd(undefined, null, undefined), null);
+});
+
+test('D4: a pending PR draws no chip and the member line keeps "In review"', () => {
+  const run = { status: 'done', pr: { url: 'https://github.com/acme/web/pull/821', number: 821, state: 'OPEN', pending: true } };
+  const m = buildRunsModel({ history: [histIt('p1', { pr: null, run })], now: NOW });
+  const r = rowsOf(m)[0];
+  const frag = renderRunsList(doc, m);
+  assert.equal(frag[0].querySelector('.runs-pr'), null);
+  assert.match(listLine(r, { time: 'Fri' }), /^In review/);
+});
+
+test('D9: a group in Needs you through member 1\'s PR leads with the reason; the count matches', () => {
+  const failing = { url: 'https://github.com/acme/web/pull/821', number: 821, state: 'OPEN', checks: { state: 'failing', total: 12, failed: 3, pending: 0 } };
+  const grp = { id: 'feat_roll', groupKind: 'feature', title: 'Complete Design Language Rollout', members: [
+    { position: 1, pipelineId: 'p1', kind: 'hist', run: { status: 'done', pr: failing } },
+    { position: 2, pipelineId: 'p2', runId: 'r2', kind: 'live', run: { status: 'running', steps: [{ nodeId: 'build', status: 'start' }] } }] };
+  const m = buildRunsModel({ live: [liveIt('r2', { pipelineId: 'p2' })], groups: [grp], now: NOW });
+  const needs = m.sections.find((s) => s.id === 'needs');
+  assert.equal(needs.count, 1);
+  assert.equal(listLine(needs.rows[0], { section: 'needs' }), 'Run 1 needs you · Checks failing');
+});
+
+test('D10/D12: sections read Needs you, Running, Waiting, Recent; Waiting holds one-off tickets, newest first', () => {
+  const tickets = [
+    { id: 't-after', title: 'Nightly docs refresh', status: 'scheduled', runAt: '9999-12-31T00:00:00.000Z', createdAt: at(30, 10, 0),
+      after: { kind: 'pipeline', id: 'p-roll3', title: 'Forms', group: 'Complete Design Language Rollout', index: 3 } },
+    { id: 't-once', title: 'Release notes', status: 'scheduled', runAt: at(30, 14, 0), createdAt: at(30, 11, 0), after: null },
+    { id: 't-series', scheduleId: 'sch_daily', title: 'Daily triage', status: 'scheduled', runAt: at(30, 16, 0), createdAt: at(30, 9, 0), after: null },
+  ];
+  const m = buildRunsModel({
+    live: [liveIt('ask', { ask: { kind: 'plan' } }), liveIt('work')], scheduled: tickets,
+    history: [histIt('old', { startedAt: at(29, 9, 0), mtime: Date.parse(at(30, 14, 59)) }), histIt('new', { startedAt: at(30, 8, 0) })], now: NOW });
+  assert.deepEqual(m.sections.map((s) => s.id), ['needs', 'running', 'waiting', 'recent']);
+  const waiting = m.sections.find((s) => s.id === 'waiting');
+  assert.deepEqual(waiting.rows.map((r) => r.key), ['sched:t-once', 'sched:t-after'], 'created 11:00 before created 10:00');
+  assert.equal(waiting.rows[1].model.line, 'Waiting · starts after Complete Design Language Rollout · run 3');
+  assert.equal(waiting.rows[0].model.line, 'Waiting · starts 14:00');
+  const recent = m.sections.find((s) => s.id === 'recent');
+  assert.deepEqual(recent.rows.map((r) => r.key).filter((k) => k.startsWith('hist:')), ['hist:worca-00000002/new', 'hist:worca-00000002/old'],
+    'by start time: the older run\'s fresh activity does not lift it');
+  assert.ok(recent.rows.some((r) => r.key === 'sched:t-series'), 'a series occurrence stays in Recent (clarify)');
+  assert.equal(m.counts.waiting, 2);
+});
+
+test('D10: Show = Waiting lists only waiting rows; Show = Running no longer counts them; empty Waiting has its note', () => {
+  const t = { id: 't-once', title: 'Release notes', status: 'scheduled', runAt: at(30, 14, 0), createdAt: at(30, 11, 0), after: null };
+  const w = buildRunsModel({ live: [liveIt('work')], scheduled: [t], show: 'waiting', now: NOW });
+  assert.deepEqual(w.sections.map((s) => [s.id, s.title, s.count]), [['waiting', 'Waiting', 1]]);
+  assert.equal(buildRunsModel({ live: [liveIt('work')], scheduled: [t], show: 'running', now: NOW }).shown, 1);
+  const empty = buildRunsModel({ live: [liveIt('work')], show: 'waiting', now: NOW });
+  assert.equal(renderRunsList(doc, empty).at(-1).textContent, 'Nothing is waiting.');
+});
+
+test('D12: Running sorts by start, newest first; Needs you ties on urgency break by dispatch time', () => {
+  const m = buildRunsModel({ live: [liveIt('a', { startedAt: at(30, 8, 0) }), liveIt('b', { startedAt: at(30, 9, 0) }),
+    liveIt('q1', { ask: { kind: 'plan' }, startedAt: at(30, 7, 0) }), liveIt('q2', { ask: { kind: 'plan' }, startedAt: at(30, 10, 0) })], now: NOW });
+  assert.deepEqual(m.sections.find((s) => s.id === 'running').rows.map((r) => r.key.split(':').pop()), ['b', 'a']);
+  assert.deepEqual(m.sections.find((s) => s.id === 'needs').rows.map((r) => r.key.split(':').pop()), ['q2', 'q1']);
+});
+
+test('D14: a group of in-base members reads merged like its members; a PR-driven Needs you group has no "?" glyph', () => {
+  const g = buildRunsModel({ groups: [{ id: 'g-ib', groupKind: 'feature', title: 'Bundle', members: [
+    { position: 1, pipelineId: 'i1', kind: 'hist', run: { status: 'done', inBase: { base: 'dev' } } },
+    { position: 2, pipelineId: 'i2', kind: 'hist', run: { status: 'done', inBase: { base: 'dev' } } }] }],
+  history: [histIt('i1'), histIt('i2')], now: NOW });
+  assert.equal(rowsOf(g)[0].model.state, 'merged');
+  const failing = { url: 'https://github.com/acme/web/pull/821', number: 821, state: 'OPEN', checks: { state: 'failing', total: 12, failed: 3, pending: 0 } };
+  const n = buildRunsModel({ groups: [{ id: 'g-pr', groupKind: 'feature', title: 'Rollout', members: [
+    { position: 1, pipelineId: 'p1', kind: 'hist', run: { status: 'done', pr: failing } }] }],
+  history: [histIt('p1', { run: { status: 'done', pr: failing } })], now: NOW });
+  assert.equal(rowsOf(n)[0].needs, true);
+  assert.equal(rowsOf(n)[0].model.symbol || '', '', 'no "?" for a PR-driven Needs you');
+});
+
+test('D12: groups in Recent sort by their first member\'s start, newest first', () => {
+  const mk = (id, startedAt) => ({ id, groupKind: 'feature', title: id, members: [
+    { position: 1, pipelineId: `${id}-1`, kind: 'hist', startedAt, run: { status: 'done' } },
+    { position: 2, pipelineId: `${id}-2`, kind: 'hist', startedAt: at(30, 14, 0), run: { status: 'done' } }] });
+  const m = buildRunsModel({ groups: [mk('g-old', at(28, 9, 0)), mk('g-new', at(29, 9, 0))],
+    history: ['g-old-1', 'g-old-2', 'g-new-1', 'g-new-2'].map((id) => histIt(id)), now: NOW });
+  assert.deepEqual(m.sections.find((s) => s.id === 'recent').rows.map((r) => r.key), ['chain:g-new', 'chain:g-old']);
+});
+
+test('whenLabel: rowTime style with the clock after a non-today day (F-9)', () => {
+  const now = new Date(2026, 8, 14, 18, 0).getTime();       // Mon 14 Sep 2026
+  assert.equal(whenLabel(new Date(2026, 8, 14, 17, 45).getTime(), now), '17:45');
+  assert.equal(whenLabel(new Date(2026, 8, 16, 2, 0).getTime(), now), 'Wed, 02:00');
+  assert.equal(whenLabel(new Date(2026, 7, 12, 14, 5).getTime(), now), 'Aug 12, 14:05');
+  assert.equal(whenLabel(new Date(2025, 11, 3, 14, 5).getTime(), now), 'Dec 3, 2025, 14:05');
+  assert.equal(whenLabel(0, now), '');
+  assert.equal(whenLabel('garbage', now), '');
+  const inst = Date.UTC(2026, 8, 14, 3, 30);                // 12:30 in Tokyo
+  assert.equal(whenLabel(inst, inst, 'Asia/Tokyo'), '12:30');
 });

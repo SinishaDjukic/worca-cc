@@ -1,7 +1,7 @@
 // test/workspaces-folder-members.test.mjs
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
@@ -9,6 +9,7 @@ import { templateRepo } from './helpers/git-dir.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { withNoGit } from './helpers/git-off.mjs';
 import { addProject } from '../src/core/projects.mjs';
+import { getDb } from '../src/core/db.mjs';
 import {
   createWorkspace, readWorkspace, addWorkspaceMembers, checkNewWorkspace, memberWorkMode, scanMemberProblems,
 } from '../src/core/workspaces.mjs';
@@ -57,6 +58,18 @@ test('git on: registered Folder projects join; the stored kind rides the read; a
         (e) => e.code === 'BAD_REQUEST' && e.message === `member path is not a git repository: ${lost}`);
     } },
   ]);
+});
+
+test('#693: a git-mode member inside another repository is refused, registered (a legacy row) or not', async () => {
+  const g = repo(); const outer = repo();
+  const sub = join(outer, 'svc'); mkdirSync(sub);
+  await assert.rejects(() => createWorkspace({ name: 'Nested', projectPaths: [g, sub] }),
+    (e) => e.code === 'BAD_REQUEST' && /^member .*svc is inside the git repository at /.test(e.message));
+  // A Git row registered at the sub-folder before registration refused it (what 1.10.0 could store).
+  const legacy = join(outer, 'legacy'); mkdirSync(legacy);
+  getDb().prepare("INSERT INTO projects (key, name, path, created_at, vcs) VALUES ('legacy-0000a693', 'legacy693', ?, ?, 'git')").run(legacy, new Date().toISOString());
+  await assert.rejects(() => createWorkspace({ name: 'Legacy', projectPaths: [g, legacy] }),
+    (e) => e.code === 'BAD_REQUEST' && /^member .*legacy is inside the git repository at /.test(e.message));
 });
 
 test('no git on this machine: Folder and orphan Git projects join; an unregistered path is refused without blaming git', async (t) => {

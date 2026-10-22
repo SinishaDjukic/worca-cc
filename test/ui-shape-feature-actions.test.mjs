@@ -4,7 +4,7 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
-import { featureButtons, featureMenu, paintFeatureActions } from '../ui/public/shape/feature-actions.mjs';
+import { featureButtons, featureMenu, featureMenuItems, paintFeatureActions } from '../ui/public/shape/feature-actions.mjs';
 import { closeMenus } from '../ui/public/workflows/menu.mjs';
 
 const track = useDomRelease(afterEach);
@@ -175,4 +175,27 @@ test('a running feature with no pause/stop deps paints no Pause or Stop (the gro
   assert.equal(host.querySelector('[data-act="feature-pause"]'), null);
   assert.equal(host.querySelector('[data-act="feature-stop"]'), null);
   assert.ok(host.querySelector('[data-act="feature-more"]'));
+});
+
+test('run 4 D18: featureMenuItems runs the footer ⋯ actions from another menu and gives the focus back to it', async () => {
+  const { window: w } = new JSDOM('<button id="a">⋯</button>');
+  const anchor = w.document.getElementById('a');
+  const posts = []; const confirms = [];
+  const c = { active: true, rest: true, approveEach: false, planPipelineId: 'p0' };
+  const items = featureMenuItems(c, { act: async (a, body) => { posts.push([a, body]); return { ok: true }; },
+    confirm: async (o) => { confirms.push(o.title); return true; }, openPlan: () => posts.push(['plan']) }, anchor);
+  assert.deepEqual(items.map((i) => i.label), ['Re-plan the rest', 'Cancel the rest', 'Ask before each run', 'Open the plan']);
+  assert.equal(items[2].checked, false);
+  await items[0].onSelect();
+  await items[2].onSelect();
+  assert.deepEqual(confirms, ['Re-plan the rest']);
+  assert.deepEqual(posts, [['replan', null], ['approve-each', { on: true }]]);
+  assert.equal(w.document.activeElement, anchor);
+});
+
+test('run 4 D17: paintFeatureActions with menu:false draws no ⋯', () => {
+  const dom = track(new JSDOM('<!doctype html><body></body>'));
+  const host = dom.window.document.body.appendChild(dom.window.document.createElement('div'));
+  paintFeatureActions(dom.window.document, host, C(), { act: async () => ({ ok: true }), confirm: async () => true, pause: async () => {}, stop() {}, openPlan() {} }, { menu: false });
+  assert.equal(host.querySelector('[data-act="feature-more"]'), null);
 });

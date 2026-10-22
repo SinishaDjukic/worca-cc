@@ -121,7 +121,7 @@ test('the Skills catalog: source and origin, badges, the counts line, In sets li
   await checkRows([
     { name: 'a folder import: Imported, folder, Windows badge for a .sh script, Check for updates, Remove', run: () => {
       const row = rowOf(host, 'skill:library:db-migrations');
-      assert.deepEqual(badges(row), ['-:Imported', 'amber:shell scripts — Windows']);
+      assert.deepEqual(badges(row), ['-:Imported', 'amber:shell scripts (may not run on Windows)']);
       assert.equal(row.querySelector('.pl-head .mono.hint').textContent, 'folder');
       assert.equal(row.querySelector('small.hint').textContent, 'Write, review and apply SQL migrations · 7 files · 2 scripts · 1 shell block');
       assert.deepEqual(acts(row), ['Add to set', 'Check for updates', 'Remove', 'View SKILL.md']);
@@ -136,21 +136,21 @@ test('the Skills catalog: source and origin, badges, the counts line, In sets li
     { name: 'a git import with an update: the badge and a primary Update…', run: () => {
       const row = rowOf(host, 'skill:library:release-notes');
       assert.equal(row.querySelector('.pl-head .mono.hint').textContent, 'git · main');
-      assert.deepEqual(badges(row), ['-:Imported', 'amber:update available', 'amber:shell scripts — Windows']);
+      assert.deepEqual(badges(row), ['-:Imported', 'amber:update available', 'amber:shell scripts (may not run on Windows)']);
       assert.deepEqual(acts(row), ['Add to set', 'Update…', 'Remove', 'View SKILL.md']);
       assert.ok(row.querySelector('[data-skill-update]').classList.contains('btn-primary'));
       assert.deepEqual([...row.querySelectorAll('a.chip')].map((a) => a.getAttribute('href')), ['#connectors/sets/billing', '#connectors']);
     } },
     { name: 'an invalid plugin skill: red badge, the problem, never mounted, Add to set disabled', run: () => {
       const row = rowOf(host, 'skill:plugin:acme/broken');
-      assert.deepEqual(badges(row), ['violet:acme', 'red:invalid']);
+      assert.deepEqual(badges(row), ['slate:acme', 'red:invalid']);
       assert.equal(row.querySelector('small.hint.err').textContent, 'invalid: SKILL.md has no frontmatter · never mounted');
       assert.equal(row.querySelector('[data-skill-add-to]').disabled, true);
       assert.deepEqual(acts(row), ['Add to set', 'View SKILL.md'], 'a plugin skill is neither updated nor removed here');
     } },
-    { name: 'a plugin skill: violet plugin badge, pinned sha; one that declares hooks says what they do', run: () => {
+    { name: 'a plugin skill: slate plugin badge, pinned sha; one that declares hooks says what they do', run: () => {
       const row = rowOf(host, 'skill:plugin:acme/deploy-checklist');
-      assert.deepEqual(badges(row), ['violet:acme', 'red:declares hooks']);
+      assert.deepEqual(badges(row), ['slate:acme', 'red:declares hooks']);
       assert.equal(row.querySelector('small.hint.err').textContent,
         "declares hooks — they run shell commands outside Worca's guardrails when the skill is used");
       assert.equal(row.querySelector('.pl-head .mono.hint').textContent, '@ 3f9a1c2');
@@ -159,8 +159,8 @@ test('the Skills catalog: source and origin, badges, the counts line, In sets li
     { name: 'a linked, disabled plugin with plugin-root refs', run: () => {
       const row = rowOf(host, 'skill:plugin:graphify/graphify');
       assert.equal(row.querySelector('.pl-head .mono.hint').textContent, 'linked');
-      assert.deepEqual(badges(row), ['violet:graphify', 'amber:plugin disabled', 'amber:plugin-root refs']);
-      assert.equal(row.querySelector('small.hint.warn').textContent, 'references its plugin’s other files — may not work from a set');
+      assert.deepEqual(badges(row), ['slate:graphify', 'amber:plugin disabled', 'amber:plugin-root refs']);
+      assert.equal(row.querySelector('small.hint.warn').textContent, 'references its plugin’s other files, so it may not work from a set');
     } },
   ]);
   const { host: empty, ctl: c2 } = mount({ skills: [] });
@@ -168,7 +168,7 @@ test('the Skills catalog: source and origin, badges, the counts line, In sets li
   assert.equal(empty.querySelector('.hist-empty').textContent, 'No skills yet. Install a plugin that ships some, or Import skill.');
   // A newer or damaged library.json reads as empty (P1): the view says why no imported skill is listed.
   for (const [library, text] of [
-    [{ newer: false, damaged: true }, 'The skill library file skills/library.json is damaged — fix it or remove it: imported skills are not listed'],
+    [{ newer: false, damaged: true }, 'The skill library file skills/library.json is damaged (fix it or remove it): imported skills are not listed'],
     [{ newer: true, damaged: false }, 'The skill library needs a newer Worca: imported skills are not listed']]) {
     const plugins = SKILLS.filter((s) => s.source === 'plugin');
     const v = mount({ over: { 'GET /api/skills': { ok: true, status: 200, data: { newer: false, library, skills: plugins } } } });
@@ -545,17 +545,17 @@ test('a user set: the prefix hint, skill cards (qualified name, source, counts, 
     ['billing:db-migrations', 'Imported', 'off', 'mcp-state hint'],
     ['billing:graphify', 'graphify', 'plugin disabled', 'mcp-state hint warn'],
     ['billing:broken', 'acme', 'invalid: SKILL.md has no frontmatter', 'mcp-state hint err'],
-    ['billing:pdf-tools', 'office', 'in runs · references its plugin’s other files — may not work from a set', 'mcp-state hint warn'],
+    ['billing:pdf-tools', 'office', 'in runs · references its plugin’s other files, so it may not work from a set', 'mcp-state hint warn'],
     ['billing:gone', 'Imported', 'the skill is no longer installed', 'mcp-state hint err'],
   ]);
   const gone = cardOf(m.host, 'skill:library:gone');
   assert.deepEqual([gone.querySelector('[data-skill-md]'), gone.querySelector('.sk-facts')], [null, null], 'nothing to count or read');
   assert.equal(gone.querySelector('[data-skill-toggle]').disabled, true, 'a skill no longer installed cannot be switched (P2 answers 404), only removed');
-  assert.ok(cardOf(m.host, 'skill:plugin:graphify/graphify').querySelector('.badge.violet'), 'a plugin skill wears the violet plugin badge');
+  assert.ok(cardOf(m.host, 'skill:plugin:graphify/graphify').querySelector('.badge.slate'), 'a plugin skill wears the slate plugin badge');
   assert.equal(cardOf(m.host, 'skill:plugin:office/pdf-tools').querySelector('.sk-hooks').textContent,
     "declares hooks they run shell commands outside Worca's guardrails when the skill is used", 'the badge, then the rest of SKILL_HOOKS_TEXT');
   assert.equal(cardOf(m.host, id).querySelector('.sk-hooks'), null);
-  assert.equal(cardOf(m.host, id).querySelector('.sk-facts').textContent, '4 files · 1 script · 2 shell blocksshell scripts — Windows');
+  assert.equal(cardOf(m.host, id).querySelector('.sk-facts').textContent, '4 files · 1 script · 2 shell blocksshell scripts (may not run on Windows)');
   assert.equal(cardOf(m.host, 'skill:library:db-migrations').querySelector('.sk-facts').textContent, '7 files · 2 scripts · 1 shell block');
   assert.deepEqual([...cardOf(m.host, id).querySelectorAll('.pl-head button')].map((b) => b.textContent), ['View SKILL.md', 'Remove']);
   const sw = cardOf(m.host, id).querySelector('[data-skill-toggle]');
@@ -582,7 +582,7 @@ test('a renamed prefix badge; an empty set; a Team set (no Add, no Remove, the n
   const m = mount({ setViews: SET_VIEWS });
   await m.ctl.show('sets/shop');
   assert.equal(m.host.querySelector('.sk-prefix .badge.amber').textContent, 'loads as shop-set:');
-  assert.equal(m.host.querySelector('.sk-prefix .hint').textContent, '— a Claude Code plugin named shop is installed');
+  assert.equal(m.host.querySelector('.sk-prefix .hint').textContent, 'because a Claude Code plugin named shop is installed');
   assert.equal(m.host.querySelector('.sk-head + .hist-empty').textContent, 'No skills in this set yet.');
   await m.ctl.show('sets/team-acme-platform-9333');
   assert.equal(m.host.querySelector('[data-act="add-skill"]'), null);
@@ -596,7 +596,7 @@ test('a renamed prefix badge; an empty set; a Team set (no Add, no Remove, the n
   assert.equal(m.host.querySelector('.mcp-set .sk-prefix').textContent, 'skills load as team-platfor:');
   await m.ctl.show('sets/team-acme-other-5095');
   assert.equal(m.host.querySelector('.sk-head + .hist-empty').textContent,
-    'No skill this team policy requires is installed here — its setup checklist lists what it requires.',
+    'No skill this team policy requires is installed here. Its setup checklist lists what it requires.',
     'a required plugin not installed yet brings no skill: the policy may still require some');
   await m.ctl.show('sets/legacy');
   assert.equal(m.host.querySelector('.sk-head'), null);

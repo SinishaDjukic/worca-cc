@@ -564,7 +564,7 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
     stopBtn.hidden = !live;
     sendBtn.hidden = Boolean(live);
     newBtn.disabled = newOff;
-    newBtn.title = newBtn.disabled ? 'New chat — after this reply' : 'New chat';
+    newBtn.title = newBtn.disabled ? 'New chat (after this reply)' : 'New chat';
     if (replying()) input.placeholder = REPLY_PLACEHOLDER;
     else if (input.placeholder === REPLY_PLACEHOLDER) input.placeholder = PLACEHOLDERS[ph];
     paintScope();
@@ -585,7 +585,7 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
     if (!kind) return '';
     const name = (c.draft && ((c.draft.meta && c.draft.meta.displayName) || c.draft.key)) || kind;
     const why = cards.notAdded(b.id);                                  // "Save & add" saved it, the canvas refused the add
-    return b.state === 'proposed' ? `New ${kind}: ${name}` : b.state === 'saved' ? `Saved ${kind}: ${name}${why ? ` — not added to the canvas: ${why}` : ''}` : b.state === 'added' ? `Saved and added ${kind}: ${name}` : '';
+    return b.state === 'proposed' ? `New ${kind}: ${name}` : b.state === 'saved' ? `Saved ${kind}: ${name}${why ? `. Not added to the canvas: ${why}` : ''}` : b.state === 'added' ? `Saved and added ${kind}: ${name}` : '';
   }
   let srModel = null;           // the thread model the announcer last read; a new one (load, New chat) is read silently
   const srSeen = new Map();     // card id → the state already announced

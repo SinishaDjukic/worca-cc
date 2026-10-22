@@ -10,7 +10,7 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const MONTH_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 /** Series palette (mockup legend order): blue-ink, amber-ink, violet-ink, green-ink, red-ink, ink-3. */
-export const SERIES_COLORS = ['var(--blue-ink)', 'var(--amber-ink)', 'var(--violet-ink)', 'var(--green-ink)', 'var(--red-ink)', 'var(--ink-3)'];
+export const SERIES_COLORS = ['var(--blue-ink)', 'var(--amber-ink)', 'var(--pink-ink)', 'var(--green-ink)', 'var(--red-ink)', 'var(--ink-3)'];
 const RESULT_STACKS = [
   { key: 'done', label: 'Done', color: 'var(--green-ink)' },
   { key: 'failed', label: 'Failed', color: 'var(--red-ink)' },
@@ -290,7 +290,7 @@ export function renderStackedWeekChart({ title, weeks, stacks, valueOf, yFmt, ti
   const svg = s(doc, 'svg', { class: 'chart-svg', viewBox: `0 0 ${CW} ${CH}`, 'aria-label': title });
   for (let v = 0; v <= top + 1e-9; v += step) {
     svg.append(s(doc, 'line', { x1: L, y1: yOf(v), x2: CW - R, y2: yOf(v), stroke: v === 0 ? 'var(--line-2)' : 'var(--line)', 'stroke-width': 1 }));
-    const t = s(doc, 'text', { x: L - 6, y: yOf(v) + 3.5, 'text-anchor': 'end', 'font-size': 10.5, fill: 'var(--ink-3)' });
+    const t = s(doc, 'text', { x: L - 6, y: yOf(v) + 3.5, 'text-anchor': 'end', 'font-size': 11, fill: 'var(--ink-3)' });
     // class="ch-ytick" as in stats-view.mjs chartScaffold (:415-455) — the Stats stylesheet already
     // styles that class, and without it the new charts render their ticks unstyled.
     t.setAttribute('class', 'ch-ytick');
@@ -315,7 +315,7 @@ export function renderStackedWeekChart({ title, weeks, stacks, valueOf, yFmt, ti
       tipLines.push(`${st.label}: ${tipFmt(v)}`);
     }
     if (i % every === 0 || i === weeks.length - 1) {
-      const t = s(doc, 'text', { x: bx + band / 2, y: CH - 8, 'text-anchor': 'middle', 'font-size': 10.5, fill: 'var(--ink-3)' });
+      const t = s(doc, 'text', { x: bx + band / 2, y: CH - 8, 'text-anchor': 'middle', 'font-size': 11, fill: 'var(--ink-3)' });
       t.textContent = TM_FMT.day(new Date(pt.weekStartMs).toISOString()); svg.append(t);
     }
     const hit = s(doc, 'rect', { class: 'ch-hit', x: bx, y: T, width: band, height: PH, tabindex: 0, role: 'img', 'aria-label': `Week of ${TM_FMT.day(new Date(pt.weekStartMs).toISOString())}: ${tipLines.join(', ') || 'none'}` });
@@ -403,7 +403,7 @@ export function renderBreakdownTable(dim, rows, { doc = globalThis.document, sor
         if (dim === 'actor' && r.label) lab.title = String(r.label);
         td.append(lab);
         if (r.sub) td.append(' ', h(doc, 'small', 'hint', r.sub));
-        if (dim === 'project' && homeSlug && r.key === homeSlug) td.append(' ', h(doc, 'span', 'badge violet', 'metrics home'));
+        if (dim === 'project' && homeSlug && r.key === homeSlug) td.append(' ', h(doc, 'span', 'badge slate', 'metrics home'));
       } else if (key === 'share' || key === 'runShare') {
         const bar = h(doc, 'span', 'tm-share'); const fill = h(doc, 'span', 'tm-share-fill');
         fill.style.width = `${Math.round((r[key] || 0) * 100)}%`; bar.append(fill); td.append(bar);

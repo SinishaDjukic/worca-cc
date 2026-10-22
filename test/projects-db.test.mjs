@@ -10,10 +10,12 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 
 import { addProject, removeProject, listProjects, insertProject, getProjectByPath, displayPath,
-  getProjectByName, ownsProjectFolder, removeProjectAndFolder } from '../src/core/projects.mjs';
+  getProjectByName, ownsProjectFolder, removeProjectAndFolder, enclosingRepoOf, worcaNestedRepoOf, nestedInRepoMessage,
+  worcaNestedRepoHint } from '../src/core/projects.mjs';
 import { createProject } from '../src/core/project-create.mjs';
 import { checkRows } from './helpers/rows.mjs';
-import { mkdtempSync, mkdirSync, symlinkSync, rmSync, writeFileSync, existsSync, lstatSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, symlinkSync, rmSync, writeFileSync, existsSync, lstatSync, realpathSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { templateRepo } from './helpers/git-dir.mjs';
 import { withNoGit } from './helpers/git-off.mjs';
 import { getDb, _resetForTests } from '../src/core/db.mjs';
@@ -160,6 +162,44 @@ test('R8: a Folder inside a git work tree is refused — git on (rev-parse) and 
     const free = mk('worca-projdb-free-');
     assert.equal((await addProject({ name: 'free', path: free })).find((p) => p.name === 'free').vcs, 'none');
   } finally { restore(); }
+});
+
+test('a nested path is refused whatever its kind: a missing path inside a repository, an explicit vcs git', async () => {
+  const outer = repoOf('projdb-outer2', { branch: 'main', user: true, files: { 'o.txt': 'o\n' } });
+  const later = join(outer, 'later');                       // does not exist yet
+  await assert.rejects(addProject({ name: 'later', path: later }),
+    (e) => e.code === 'NESTED_IN_REPO' && e.message === 'Inside a git repository' && e.repoRoot === realpathSync(outer));
+  assert.equal(existsSync(later), false, 'nothing is created');
+  const inner = join(outer, 'inner2'); mkdirSync(inner);
+  await assert.rejects(addProject({ name: 'inner2', path: inner, vcs: 'git' }), (e) => e.code === 'NESTED_IN_REPO');
+});
+
+test('enclosingRepoOf / worcaNestedRepoOf / the two messages', async () => {
+  const outer = repoOf('projdb-outer3', { branch: 'main', user: true, files: { 'o.txt': 'o\n' } });
+  const root = realpathSync(outer);
+  assert.deepEqual(enclosingRepoOf(join(outer, 'a', 'b')), { repoRoot: root, partOf: null }, 'a missing path: its nearest existing ancestor');
+  assert.equal(enclosingRepoOf(outer), null, 'the repository top is not nested');
+  // A folder an older worca git-inited inside the repository.
+  const made = join(outer, 'made'); mkdirSync(made);
+  const g = (args) => spawnSync('git', args, { cwd: made });
+  g(['init', '-q', '-b', 'main']); g(['config', 'user.email', 'orchestrator@local']); g(['config', 'user.name', 'orchestrator']);
+  g(['commit', '-q', '--allow-empty', '-m', 'orchestrator: initial checkpoint']);
+  assert.deepEqual(worcaNestedRepoOf(made), { repoRoot: root, partOf: null });
+  assert.equal(enclosingRepoOf(made), null, 'it is its own repository now');
+  // The user's own nested repository (no worca identity) is not reported.
+  const mine = join(outer, 'mine'); mkdirSync(mine);
+  spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: mine });
+  assert.equal(worcaNestedRepoOf(mine), null);
+  // A worca-inited repository with no parent repository is not reported either.
+  const lone = mkdtempSync(join(tmpdir(), 'projdb-lone-'));
+  spawnSync('git', ['init', '-q'], { cwd: lone }); spawnSync('git', ['config', 'user.email', 'orchestrator@local'], { cwd: lone });
+  assert.equal(worcaNestedRepoOf(lone), null);
+  rmSync(lone, { recursive: true, force: true });
+  assert.equal(nestedInRepoMessage('/w/r/svc', { repoRoot: '/w/r', partOf: null }),
+    '/w/r/svc is inside the git repository at /w/r. Worca runs only on the top folder of a git repository. Add /w/r as a project and run there.');
+  assert.equal(nestedInRepoMessage('/w/r/svc', { repoRoot: '/w/r', partOf: 'r' }),
+    '/w/r/svc is inside the project "r" (/w/r). Worca runs only on the top folder of a git repository. Run on "r" instead.');
+  assert.match(worcaNestedRepoHint(made, { repoRoot: root }), /An older Worca created it\..*delete it, remove this project from Worca, then add /s);
 });
 
 // Remove takes the folder only when worca owns it: a Folder project directly in <worcaHome>/projects.

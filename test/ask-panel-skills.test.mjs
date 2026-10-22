@@ -115,7 +115,7 @@ test('level 1: "N servers · N skills · route" under the set name, started/tota
       assert.match(pop(ctx).textContent, /No sets in play\./);
       state.preview = null;
       ctx.window.dispatchEvent(new ctx.window.Event('hashchange')); await settle(ctx);
-      assert.match(pop(ctx).textContent, /Could not load the sets — reopen to retry\./);
+      assert.match(pop(ctx).textContent, /Could not load the sets\. Reopen to retry\./);
       ctx.panel.destroy();
     } },
   ]);
@@ -172,7 +172,7 @@ test('level 2: Servers then Skills captions, skill switches by qualified name, s
       await openPicker(ctx);
       drill(ctx, 4);
       assert.deepEqual([...pop(ctx).querySelectorAll('.is-skipped')].map((n) => [n.querySelector('.ask-model-name').textContent, n.querySelector('.ask-pop-row-value').textContent, n.classList.contains('is-problem')]),
-        [['datadog_team-platfor', `off — ${why}`, false], ['team-platfor:deploy-checklist', `off — ${why}`, false]]);
+        [['datadog_team-platfor', `off: ${why}`, false], ['team-platfor:deploy-checklist', `off: ${why}`, false]]);
       ctx.panel.destroy();
     } },
   ]);
@@ -237,5 +237,5 @@ test('the activity label names the skill; the level-1 small line has its own sty
   assert.equal(labelForTool('Skill', {}), 'Using a skill');
   const { readFileSync } = await import('node:fs');
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
-  assert.match(css, /\n\.ask-pop-mcp \.ask-model-name small\{display:block;font-size:11\.5px;font-weight:400;color:var\(--ink-3\);\}\n/);
+  assert.match(css, /\n\.ask-pop-mcp \.ask-model-name small\{display:block;font-size:var\(--fs-caption\);font-weight:400;color:var\(--ink-3\);\}\n/);
 });

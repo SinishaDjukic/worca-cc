@@ -87,7 +87,7 @@ export function freeDailyRow(s, { now = Date.now() } = {}) {
   const reset = Date.parse(s.resetAt || '');
   const title = `OpenRouter free-model requests left today: ${s.remaining} of ${s.limit}` +
     (Number.isFinite(reset) ? ` · resets ${utcClock(s.resetAt)}, in ${untilText(reset - now)}` : '') +
-    ' — every model call on a :free model is one request' +
+    '. Every model call on a :free model is one request' +
     (level === 'out' ? '. Used up: free models pause until the reset.' : '');
   return { text: `${s.remaining} / ${s.limit}`, tone: level === 'low' ? 'warn' : level === 'out' ? 'over' : '', title };
 }

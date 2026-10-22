@@ -285,7 +285,7 @@ export function renderInterfacePanel({
   }
   if (runtime === 'shell' && !configPorts) {
     const tog = h(doc, 'div', 'wz-routing');
-    const b = h(doc, 'button', `tog${routing ? ' on' : ''}`);
+    const b = h(doc, 'button', `switch${routing ? ' on' : ''}`);
     b.type = 'button'; b.dataset.routing = ''; b.setAttribute('role', 'switch');
     b.setAttribute('aria-checked', routing ? 'true' : 'false'); b.setAttribute('aria-label', 'Route by exit code'); b.disabled = readOnly;
     tog.append(b, h(doc, 'span', 'wz-routing-line', 'exit 0 → pass · exit 1 → fail'));

@@ -3,7 +3,8 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { mkdtemp, mkdir, rm, readdir, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _resetForTests, getDb } from '../src/core/db.mjs';
@@ -155,6 +156,20 @@ test('DELETE /api/projects: a New Folder project goes with its folder only on de
       assert.equal((await post('/api/projects', { name: 'rm-outside', path: outside })).status, 200);
       const by = Object.fromEntries((await listed()).map((p) => [p.name, p.ownedFolder]));
       assert.deepEqual([by['rm-own'], by['rm-git'], by['rm-outside']], [true, false, false]);
+    } },
+    { name: 'nestedRepo (#693): a repository an older worca git-inited inside the user\'s repository; every other row has none', run: async () => {
+      const outer = gitDir('pcapi-outer693');
+      const svc = join(outer, 'svc'); mkdirSync(svc);
+      // A 1.10.0 row (registration refuses it now), then what its first run left behind.
+      getDb().prepare("INSERT INTO projects (key, name, path, created_at, vcs) VALUES ('svc-0000aaaa', 'svc693', ?, ?, 'git')").run(svc, new Date().toISOString());
+      for (const a of [['init', '-q'], ['config', 'user.email', 'orchestrator@local']]) spawnSync('git', a, { cwd: svc });
+      try {
+        const list = await listed();
+        const row = list.find((p) => p.name === 'svc693');
+        assert.equal(row.nestedRepo.repoRoot, realpathSync(outer));
+        assert.match(row.nestedRepo.hint, /An older Worca created it\./);
+        assert.deepEqual(list.filter((p) => 'nestedRepo' in p).map((p) => p.name), ['svc693']);
+      } finally { getDb().prepare("DELETE FROM projects WHERE key = 'svc-0000aaaa'").run(); }
     } },
     { name: 'eligible without deleteFolder=1: 409 DELETE_FOLDER_REQUIRED naming the folder; nothing removed', run: async () => {
       const r = await del('rm-own');

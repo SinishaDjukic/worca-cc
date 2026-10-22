@@ -15,8 +15,8 @@ export const BUTTON_SPEC = Object.freeze({
     '.wfl-tab', '.chat-home-tab', '.hd-cmt-tab', 'button.rd-srow', 'button.tl-tile', 'button.af-gal-card',
     'button.pd-ov-card', 'button.wd-member', 'button.ask-activity-head', 'button.act-srow-name', 'button.runs-sec-head',
     'button.gp-row', 'button.agent-row-head', 'button.hd-tree-file', 'button.hd-tree-dir', 'button.ask-filescard-thumb', 'button.ask-filescard-name', 'button.chat-home-act',
-    'button.chat-home-wf', 'button.chat-home-chat', 'button.chat-home-plan-open', 'button.release-row-add', 'button.release-row-edit',
-    'button.wfl-folder', 'button.mcp-setrow', 'button.proj-open', 'button.xtoggle', 'button.gs-tile', 'button.mk-tile', 'button.mk-facet', 'button.mk-name',
+    'button.chat-home-wf', 'button.chat-home-chat', 'button.chat-home-plan-open', 'button.release-row-edit',
+    '.row-btn', 'button.mcp-setrow', 'button.xtoggle', 'button.gs-tile', 'button.mk-tile', 'button.mk-facet', 'button.mk-name',
     '.mk-upd > button.mk-disc',
     '.mv-cp-terms-pill', '.cost-bd-btn', '.linkish', '.hd-dl-more-btn', '.plan-fold', '.plan-persp-edit', '.qopt', '.afb-main',
     '.afb-folder', '.acct', '[class*="chip"]'],
@@ -88,7 +88,7 @@ export const SURFACE_SPEC = Object.freeze({
   heights: [28, 32, 40],
   infoMin: 28,
   controls: ['.tab', '.seg', '.wfl-folder', '.chat-home-preset', '.filter-chip'],
-  tiles: { sel: '.chat-home-act', min: 56, max: 64 },
+  tiles: { sel: '.chat-home-act:not(.btn)', min: 56, max: 64 },   // a tile wearing .btn.btn-lg is a 40px control, checked with the heights
   cards: ['.ask-card', '.chat-rc', '.shape-feature', '.rd-sheet', '.card'],
   fields: '.file, .ta-hl-back',   // input-like boxes (the file drop zone, a textarea's highlight backdrop) keep their borders
   floating: '[role="menu"], [role="dialog"], [role="listbox"], [role="tooltip"], .confirm-modal, .info-bubble, .tsearch-list',
@@ -153,7 +153,8 @@ export function auditSurface(root, spec, env) {
 /** Field, segmented and chip sizes (docs/design-system.md › Field, Segmented control, Chips). `spec.debt` holds the
  *  field selectors test/fixtures/design-debt.json still allows their own size; a field they match is skipped. */
 export const SIZE_SPEC = Object.freeze({
-  fields: 'input[type="text"],input[type="number"],select,.input,.select',
+  // .tag-dim-key-small is the borderless key line under a cost tag's name (an editable caption, not a boxed field).
+  fields: 'input[type="text"]:not(.tag-dim-key-small),input[type="number"],select,.input:not(.tag-dim-key-small),.select',
   fieldHeights: [28, 32],
   fieldCorner: '6px',
   seg: '.seg button',
@@ -192,7 +193,7 @@ export function auditSizes(root, spec, env) {
 /** Type scale (docs/design-system.md › Type): every visible element with its own text renders at a step. The graph
  *  canvases, SVG and the terminal are skipped (D23). One entry per element signature. */
 export const TYPE_SPEC = Object.freeze({
-  sizes: [11, 12, 13, 15, 18, 22, 26],
+  sizes: [11, 12, 13, 15, 18, 22, 26, 32],               // 32 = --fs-hero, the Chat home hero only
   skip: 'svg, .run-flow, .gv-world, .xterm',
 });
 
@@ -222,7 +223,7 @@ export function auditType(root, spec, env) {
 // the rows and tiles a person opens (docs/design-system.md › Cards versus divided rows). Nothing screen-specific.
 export const STRAY_SPEC = Object.freeze({
   allow: ['.tab', '[role="tab"]', '.seg button', '.seg-btn', '.filter-chip', '.switch', '[role="switch"]', '[role^="menuitem"]',
-    '[role="option"]', '[role="radio"]', '.info-tip', 'button.wfl-folder', 'div.wfl-main', 'button.mcp-setrow', 'button.gs-tile',
+    '[role="option"]', '[role="radio"]', '.info-tip', '.row-btn', 'div.wfl-main', 'button.mcp-setrow', 'button.gs-tile',
     'button.ob-door', 'button.wfc-chip-btn', 'button.mk-tile', 'button.mk-facet', 'button.mk-name', '.mk-upd > button.mk-disc'],
   skip: '#wfv-canvas',
 });

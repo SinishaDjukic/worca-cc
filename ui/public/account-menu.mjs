@@ -5,6 +5,7 @@
 // fetch, no listeners. app.js fetches, mounts and routes; every figure and name is painted as text.
 import { BUDGET_WARN_AT, DEFAULT_FMT, fmtResetAt, periodWord, windowSaved, signedUsd, SAVED_NOTE } from './stats-view.mjs';
 import { freeDailyRow } from './openrouter-free-view.mjs';
+import { ICONS, iconSvg } from './icons.mjs';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -89,7 +90,7 @@ export function renderSpendCard(budget, { doc = globalThis.document, fmt = DEFAU
     card.dataset.spend = ring ? (ring.tone || 'ok') : 'none';
     card.title = `Estimated spend this ${periodWord(b)}: ${fmt.usd4(b.windowSpendUsd)}` +
       (limit ? ` of ${fmt.usd(b.totalLimitUsd)}` : '') +
-      ` · resets ${fmtResetAt(b.windowEndMs)} — Claude Code client-side estimate (total_cost_usd), not authoritative billing` +
+      ` · resets ${fmtResetAt(b.windowEndMs)}. Claude Code client-side estimate (total_cost_usd), not authoritative billing` +
       (saved != null ? `. Saved this ${periodWord(b)}: ${signedUsd(fmt, saved)} (${SAVED_NOTE})` : '');
     const head = h(doc, 'div', 'mc-head');
     if (ring) head.appendChild(ringSvg(doc, 'mini-ring', 20, MINI_R, ring.ratio));
@@ -114,7 +115,7 @@ export function renderSpendCard(budget, { doc = globalThis.document, fmt = DEFAU
     if (b.blocked) card.appendChild(h(doc, 'p', 'mc-note', `New runs are blocked until ${fmtResetAt(b.windowEndMs)}.`));
   }
   if (fr) {
-    const btn = h(doc, 'button', 'mi mc-free');
+    const btn = h(doc, 'button', 'mi menu-item mc-free');
     btn.type = 'button';
     btn.setAttribute('role', 'menuitem');
     btn.dataset.nav = 'providers';
@@ -173,13 +174,15 @@ export function accountLabel(acct, { away = false, budget = null, fmt = DEFAULT_
 }
 
 /** Paint the corner button (#side-acct): the avatar's initials, the short name, the spend ring
- *  (data-spend none | ok | warn | over), the away dot (data-presence) and the label. */
+ *  (data-spend none | ok | warn | over), the away badge with its walking person (data-presence) and the label. */
 export function paintAccountCorner(btn, acct, { budget = null, away = false, fmt = DEFAULT_FMT } = {}) {
   if (!btn) return;
   const ring = spendRing(budget);
   btn.dataset.account = acct.kind;
   btn.dataset.spend = ring ? (ring.tone || 'ok') : 'none';
   btn.dataset.presence = away ? 'away' : 'here';
+  const dot = btn.querySelector('.acct-dot');
+  if (dot && !dot.firstChild) dot.innerHTML = iconSvg('stepped-out', 8);   // the icon set's own literal, never data
   const arc = btn.querySelector('.acct-ring .arc');
   if (arc) arc.setAttribute('stroke-dasharray', ringDash(ring ? ring.ratio : 0, RING_R));
   const ava = btn.querySelector('.acct-ava');
@@ -204,34 +207,33 @@ export function paintIdentityCard(card, acct) {
 
 // ── The away row ─────────────────────────────────────────────────────────────
 
-/** Here: a person walking out (a step-out arrow read as Sign out; a moon read as
- *  dark mode, the appearance switcher's own icon). Away: a home, to come back to. */
-const AWAY_ICON_PATHS = Object.freeze({
-  here: ['M14 2.2a1.8 1.8 0 1 1 0 3.6 1.8 1.8 0 0 1 0-3.6z', 'M13 8l-1.5 5.5', 'M8.5 12l2-3.2 2.5-.8 2.5 2.5 2.5 1',
-    'M11.5 13.5l2.5 3 1 4.5', 'M11.5 13.5l-1.5 3.5-3 3.5'],
-  away: ['M3.5 10.5L12 3.5l8.5 7', 'M5.5 9v11h13V9', 'M10 20v-5.5h4V20'],
-});
+/** The away row's icon: a person walking out (a step-out arrow read as Sign out; a moon read as dark
+ *  mode, the appearance switcher's own icon), the same person as the corner's away badge. One icon in
+ *  both states: the switch at the row's right edge shows whether you are away. */
+const AWAY_ICON_PATHS = Object.freeze([...ICONS['stepped-out'].matchAll(/\bd="([^"]+)"/g)].map((m) => m[1]));
 
-/** Paint the away row (#acct-away) from describeAwayRow's answer. `busy`: a click is in flight;
- *  `err`: the last click's failure, kept in the tip until the next one. */
+/** Paint the away row (#acct-away, a menuitemcheckbox: checked = away) from describeAwayRow's answer.
+ *  The label stays "Away"; aria-checked carries the state. `busy`: a click is in flight; `err`: the last
+ *  click's failure, kept in the tip (title and aria-description) until the next one. */
 export function paintAwayRow(btn, row, { busy = false, err = '' } = {}) {
   if (!btn || !row) return;
   btn.dataset.state = row.state;
   btn.dataset.status = row.status;
+  btn.setAttribute('aria-checked', String(row.state === 'away'));
   const ic = btn.querySelector('.mi-ic');
-  if (ic) {
+  if (ic && !ic.firstChild) {
     const doc = btn.ownerDocument;
-    ic.replaceChildren(...AWAY_ICON_PATHS[row.state === 'away' ? 'away' : 'here'].map((d) => {
+    ic.replaceChildren(...AWAY_ICON_PATHS.map((d) => {
       const p = doc.createElementNS(SVG_NS, 'path');
       p.setAttribute('d', d);
       return p;
     }));
   }
-  const label = btn.querySelector('.mi-lbl');
-  if (label) label.textContent = row.label;
   const hint = btn.querySelector('.mi-hint');
   if (hint) hint.textContent = row.hint;
-  btn.title = err ? `${row.tip} (Could not change it: ${err})` : row.tip;
+  const tip = err ? `${row.tip} (Could not change it: ${err})` : row.tip;
+  btn.title = tip;
+  btn.setAttribute('aria-description', tip);
   if (row.disabled || busy) btn.setAttribute('aria-disabled', 'true');
   else btn.removeAttribute('aria-disabled');
 }

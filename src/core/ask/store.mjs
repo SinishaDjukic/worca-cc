@@ -483,7 +483,7 @@ export function sweepStreamingMessages({ text = 'interrupted by restart' } = {})
  * redactAskText guard that runs over text attachment content structurally
  * cannot apply to them; the model reads them via its Read tool as-is.
  */
-export function addAttachment(threadId, messageId, { name, text, kind = 'text', mime = null, data = null, sourcePath = null } = {}) {
+export function addAttachment(threadId, messageId, { name, text, kind = 'text', mime = null, data = null, sourcePath = null, sourceOrigin = null } = {}) {
   getDb();
   if (!prepare('SELECT 1 FROM ask_threads WHERE id = ?').get(threadId)) {
     throw new Error(`addAttachment: unknown thread ${threadId}`);
@@ -502,8 +502,12 @@ export function addAttachment(threadId, messageId, { name, text, kind = 'text', 
     bytes = data.length;
     writeFileSync(join(dir, `${id}${extensionForAttachment(kind, mime)}`), data); // no encoding: raw bytes
   }
-  prepare('INSERT INTO ask_attachments (id, thread_id, message_id, name, bytes, kind, mime, source_path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(id, threadId, messageId ?? null, safeName, bytes, kind, mime, typeof sourcePath === 'string' && sourcePath ? sourcePath : null, now());
+  const src = typeof sourcePath === 'string' && sourcePath ? sourcePath : null;
+  const str = (v) => (typeof v === 'string' && v ? v : null);
+  // v70: an origin is kept only with its project and relative path: that pair is all Show in folder's fallback reads.
+  const o = src && str(sourceOrigin?.projectKey) && str(sourceOrigin?.rel) ? sourceOrigin : null;
+  prepare('INSERT INTO ask_attachments (id, thread_id, message_id, name, bytes, kind, mime, source_path, source_run_id, source_project_key, source_rel, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(id, threadId, messageId ?? null, safeName, bytes, kind, mime, src, o ? str(o.runId) : null, o ? o.projectKey : null, o ? o.rel : null, now());
   return getAttachment(threadId, id);
 }
 
@@ -558,6 +562,17 @@ export function attachmentSourcePath(threadId, id) {
   getDb();
   const r = prepare('SELECT source_path FROM ask_attachments WHERE thread_id = ? AND id = ?').get(threadId, id);
   return r && typeof r.source_path === 'string' && r.source_path ? r.source_path : null;
+}
+
+/** Where a show_files copy found under a run's or project's folder came from (v70): { runId, projectKey, rel } with
+ *  `rel` the POSIX path below that folder, or null (an upload, a copy from the out folder, an older row, another thread).
+ *  Server-only, like attachmentSourcePath: Show in folder falls back to `rel` inside the project once the run's
+ *  worktree is gone. */
+export function attachmentSourceOrigin(threadId, id) {
+  getDb();
+  const r = prepare('SELECT source_run_id, source_project_key, source_rel FROM ask_attachments WHERE thread_id = ? AND id = ?').get(threadId, id);
+  if (!r || !r.source_project_key || !r.source_rel) return null;
+  return { runId: r.source_run_id ?? null, projectKey: r.source_project_key, rel: r.source_rel };
 }
 
 /** Raw thread-scoped read for the download route: any kind, body as a Buffer. */

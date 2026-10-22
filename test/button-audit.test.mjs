@@ -108,6 +108,10 @@ test('auditSurface: each rule returns for its failing fixture (review A–C)', (
   assert.deepEqual(surface('<div class="tabs"><span class="flag-chip">Beta</span></div>'), ['chip-outside-label']);
 });
 
+test('auditSurface: a Chat home tile that wears .btn.btn-lg is a 40px control (F-15)', () => {
+  assert.deepEqual(surface('<button class="btn btn-lg chat-home-act" id="a">New run</button>', { heights: { a: 40 } }), []);
+});
+
 test('auditSurface: the passing fixture returns nothing', () => {
   assert.deepEqual(surface(`<div class="tabs"><button class="tab">General <span class="flag-chip">Beta</span></button></div>
     <button class="chat-home-act" id="a">New run</button><button class="info-tip" id="i">i</button>
@@ -132,7 +136,7 @@ test('every button in ui/public/index.html is .btn or a control (D20, known bug 
 
 test('the Chat › Plans row and the release row links are controls, not §1.2 buttons (impl review 2)', () => {
   const doc = new JSDOM(`<ul><li class="chat-home-plan"><button class="chat-home-plan-open">Charts</button></li></ul>
-    <div class="release-row"><button class="release-row-add">+ Add a release</button><button class="release-row-edit">Edit</button></div>`).window.document;
+    <div class="release-row"><button class="release-row-edit">Edit</button></div>`).window.document;
   const controls = BUTTON_SPEC.controls.join(',');
   assert.deepEqual([...doc.querySelectorAll('button')].filter((b) => !b.closest(controls)).map((b) => b.className), []);
 });
@@ -180,10 +184,16 @@ test('auditType: 12.5px and 13.33px text fail once per signature; steps, em code
   assert.deepEqual(auditType(doc.body, TYPE_SPEC, env).map((v) => [v.sig, v.got]), [['p.m', '12.5px'], ['button', '13.3333px']]);
 });
 
+test('auditType: the Chat home hero (--fs-hero, 32px) is a step of the scale (docs/design-system.md › Type)', () => {
+  const doc = new JSDOM('<body><h1 class="chat-home-title">What should worca do?</h1></body>').window.document;
+  const env = { style: () => ({ fontSize: '32px' }), rect: () => ({ width: 10, height: 10 }) };
+  assert.deepEqual(auditType(doc.body, TYPE_SPEC, env), []);
+});
+
 test('auditStray: a button outside .btn and outside the shared controls is listed; .btn, chips, tabs and rows are not', () => {
   const { window } = new JSDOM(`<body><div id="v">
     <button class="btn btn-sm">Ok</button><button class="filter-chip" aria-pressed="true">All</button>
-    <button class="tab" role="tab">A</button><button class="wfl-folder">F</button>
+    <button class="tab" role="tab">A</button><button class="wfl-folder row-btn">F</button><div role="button" class="row-btn">R</div>
     <button class="linkish">Show all</button><button class="tp-chip-rm">x</button><div role="button" class="odd">r</div></div></body>`);
   const env = { rect: () => ({ width: 10, height: 10 }) };
   const got = auditStray(window.document.getElementById('v'), STRAY_SPEC, env).map((f) => f.sig);

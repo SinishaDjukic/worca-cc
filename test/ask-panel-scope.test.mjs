@@ -191,7 +191,7 @@ test('P4 scope pill and menu (canvas ScopeMenu): every level, the dashed circle,
   const btn = ctx.doc.querySelector('[data-ask-scope-btn]');
   assert.equal(btn.dataset.minLevel, undefined, 'the pill shows at every interface level');
   assert.equal(ctx.doc.querySelector('[data-ask-mcp-btn]').dataset.minLevel, 'advanced', 'Sets · N stays Advanced');
-  assert.deepEqual(['aria-haspopup', 'aria-expanded', 'aria-label', 'title'].map((a) => btn.getAttribute(a)), ['menu', 'false', 'Chat scope: No project', 'Chat scope']);
+  assert.deepEqual(['aria-haspopup', 'aria-expanded', 'aria-label', 'title'].map((a) => btn.getAttribute(a)), ['menu', 'false', 'Chat scope: No project', 'Chat scope: No project']);
   assert.equal(label(btn), 'No project');
   assert.ok(btn.querySelector(':scope > svg circle[stroke-dasharray="3 3"]'), 'No project: the dashed circle');
   btn.click();
@@ -420,4 +420,23 @@ test('P4 divider (canvas Switched): a system divider block is a centered rule wi
   assert.deepEqual(quiet.map((r) => r.children.length), [0], 'S39: the quiet event row renders nothing');
   assert.deepEqual([...ctx.doc.querySelectorAll('.ask-msg-user:not([hidden])')].map((r) => r.textContent), ['make the photo bigger', 'Workflow "X" saved'], 'a loud synthetic notice still shows');
   ctx.panel.destroy();
+});
+
+test('run 1: a scope label that would be cut under 56px hides; the icon stays and the tooltip names the scope', async () => {
+  const ctx = makePanel({ fetchHandler: handler({ patches: [], bodies: [], snap: null }), resizeObserver: true });
+  ctx.panel.open();
+  const btn = ctx.doc.querySelector('[data-ask-scope-btn]');
+  const label = btn.querySelector('.ask-scope-label');
+  assert.equal(btn.title, 'Chat scope: No project');
+  const ro = ctx.resizeObservers.find((o) => o.targets.includes(btn.closest('.ask-composer-row')));
+  assert.ok(ro, 'the composer row is observed');
+  Object.defineProperty(label, 'scrollWidth', { configurable: true, get: () => 70 });
+  Object.defineProperty(label, 'clientWidth', { configurable: true, get: () => 22 });
+  ro.cb([]);
+  assert.ok(btn.classList.contains('is-compact'), 'a 22px slice of a 70px label: icon only');
+  Object.defineProperty(label, 'clientWidth', { configurable: true, get: () => 70 });
+  ro.cb([]);
+  assert.ok(!btn.classList.contains('is-compact'), 'the whole label fits again');
+  ctx.panel.destroy();
+  assert.equal(ro.disconnected, true, 'destroy() disconnects it');
 });

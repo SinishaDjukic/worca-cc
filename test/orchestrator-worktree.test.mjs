@@ -5,7 +5,7 @@ import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { projectKey } from '../src/core/store.mjs';
@@ -172,9 +172,9 @@ test('C1: on stop the worktree dir is removed but the branch is KEPT with partia
   assert.match(fileInCommit.stdout.toString(), /work in progress/);
 });
 
-// ── C2: nested projectDir must NOT mutate the enclosing repo ──────────────────
-// (an UNREGISTERED nested dir: git mode, L4)
-test('C2: a projectDir nested in an enclosing repo gets its own repo, parent untouched', async () => {
+// ── C2 / #693: a projectDir nested in an enclosing repo is refused, never git-inited ──
+// (an UNREGISTERED nested dir: git mode, L4 — e.g. a CLI run in a sub-folder)
+test('C2 (#693): a projectDir nested in an enclosing repo ends the run with a clear error; nothing is git-inited', async () => {
   const parent = await mkdtemp(join(tmpdir(), 'worca-cc-parent-'));
   created.push(parent);
   const gp = (a) => spawnSync('git', a, { cwd: parent });
@@ -182,21 +182,62 @@ test('C2: a projectDir nested in an enclosing repo gets its own repo, parent unt
   gp(['config', 'user.email', 't@t']); gp(['config', 'user.name', 't']);
   await writeFile(join(parent, 'root.txt'), 'root\n');
   gp(['add', '-A']); gp(['commit', '-qm', 'init']);
-
-  // Nested dir with NO .git of its own (this is the C2 footgun).
   const sub = join(parent, 'sub');
   await mkdir(sub, { recursive: true });
   await writeFile(join(sub, 'app.txt'), 'app\n');
 
   const orch = createOrchestrator({ projectDir: sub, prompt: 'x', auto: true, claude: { mock: true } });
+  const errors = [];
+  orch.on('error', (e) => errors.push(e.message));
+  const result = await orch.run();
+  assert.equal(result.status, 'error', JSON.stringify(result));   // terminal: not "Paused after an error"
+  assert.match(errors.join('\n'), /is inside the git repository at .*Worca runs only on the top folder of a git repository\. Add .* as a project and run there\./);
+  assert.equal(existsSync(join(sub, '.git')), false, 'sub must NOT be git-inited');
+  assert.ok(!branchList(parent).some((b) => b.startsWith('worca-cc/')), 'parent repo must have no worca-cc/* branches');
+  assert.equal(gp(['status', '--porcelain']).stdout.toString(), '?? sub/\n', 'the parent work tree only has the user\'s own untracked sub/');
+});
+
+test('C2 (#693): where git cannot see the enclosing repo (a ceiling, a "dubious ownership" parent), the stat walk still refuses', async () => {
+  const parent = await mkdtemp(join(tmpdir(), 'worca-cc-parent-')); created.push(parent);
+  const gp = (a) => spawnSync('git', a, { cwd: parent });
+  gp(['init', '-q', '-b', 'main']); gp(['config', 'user.email', 't@t']); gp(['config', 'user.name', 't']);
+  await writeFile(join(parent, 'root.txt'), 'root\n'); gp(['add', '-A']); gp(['commit', '-qm', 'init']);
+  const sub = join(parent, 'sub'); await mkdir(sub, { recursive: true }); await writeFile(join(sub, 'app.txt'), 'app\n');
+  const prev = process.env.GIT_CEILING_DIRECTORIES;
+  process.env.GIT_CEILING_DIRECTORIES = realpathSync(parent);             // rev-parse in sub no longer finds parent
+  try {
+    const orch = createOrchestrator({ projectDir: sub, prompt: 'x', auto: true, claude: { mock: true } });
+    const errors = [];
+    orch.on('error', (e) => errors.push(e.message));
+    assert.equal((await orch.run()).status, 'error');
+    assert.match(errors.join('\n'), /sub is inside the git repository at /);
+    assert.equal(existsSync(join(sub, '.git')), false, 'sub must NOT be git-inited');
+  } finally {
+    if (prev === undefined) delete process.env.GIT_CEILING_DIRECTORIES; else process.env.GIT_CEILING_DIRECTORIES = prev;
+  }
+});
+
+test('#693: a repository an older worca git-inited inside the user\'s repository runs, with a warning that says how to fix it', async () => {
+  const parent = await mkdtemp(join(tmpdir(), 'worca-cc-parent-')); created.push(parent);
+  const gp = (a) => spawnSync('git', a, { cwd: parent });
+  gp(['init', '-q', '-b', 'main']); gp(['config', 'user.email', 't@t']); gp(['config', 'user.name', 't']);
+  await writeFile(join(parent, 'root.txt'), 'root\n'); gp(['add', '-A']); gp(['commit', '-qm', 'init']);
+  const sub = join(parent, 'sub'); await mkdir(sub, { recursive: true }); await writeFile(join(sub, 'app.txt'), 'app\n');
+  // What 1.10.0 left behind (run-harness _ensureGitCheckpointFor's old !isOwnRepo branch).
+  const gs = (a) => spawnSync('git', a, { cwd: sub });
+  gs(['init', '-q', '-b', 'main']); gs(['config', 'user.email', 'orchestrator@local']); gs(['config', 'user.name', 'orchestrator']);
+  gs(['add', '-A']); gs(['commit', '-qm', 'orchestrator: initial checkpoint']);
+  const configBefore = readFileSync(join(sub, '.git', 'config'), 'utf8');
+
+  const orch = createOrchestrator({ projectDir: sub, prompt: 'x', auto: true, claude: { mock: true } });
+  const warns = [];
+  orch.on('log', (e) => { if (e.level === 'warn' && e.source === 'git') warns.push(e.text); });
   const result = await orch.run();
   assert.equal(result.status, 'done', JSON.stringify(result));
-
-  assert.ok(existsSync(join(sub, '.git')), 'sub should have been given its OWN git repo');
-  const feature = orch.getState().branch.feature;
-  assert.ok(branchList(sub).includes(feature), `feature branch should live in sub's repo`);
-  assert.ok(!branchList(parent).includes(feature), `parent repo must NOT have ${feature}`);
-  assert.ok(!branchList(parent).some((b) => b.startsWith('worca-cc/')), 'parent repo must have no worca-cc/* branches');
+  assert.equal(warns.length, 1, warns.join('\n'));
+  assert.match(warns[0], /An older Worca created it\..*delete it, remove this project from Worca, then add /s);
+  assert.ok(existsSync(join(sub, '.git')), 'nothing removed');
+  assert.equal(readFileSync(join(sub, '.git', 'config'), 'utf8'), configBefore, 'its config is untouched');
 });
 
 test('C2 (Folder mode): the same nested dir on a copy gets no .git, the parent repo is left alone, the run root is used even under legacy', async () => {

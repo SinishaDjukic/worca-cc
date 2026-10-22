@@ -19,7 +19,7 @@
 import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
@@ -124,12 +124,15 @@ async function main() {
         runRoot,
         claudeMd: !!runRoot && existsSync(join(runRoot, 'CLAUDE.md')),
         strayAtRoot: !!runRoot && existsSync(join(runRoot, 'src')),
-        members: members.map((m) => ({
-          key: m.projectKey,
-          repo: !!runRoot && existsSync(join(runRoot, 'repos', m.projectKey)),
-          edited: !!runRoot && existsSync(join(runRoot, 'repos', m.projectKey, 'src', 'feature.mjs'))
-            && existsSync(join(runRoot, 'repos', m.projectKey, 'test', 'feature.test.mjs')),
-        })),
+        members: members.map((m) => {
+          // repos/<projectKey>, or the shortened name createWorktree gave it (#411).
+          const repo = join(runRoot || '', 'repos', basename(orch.workDirs.get(m.projectKey) || m.projectKey));
+          return {
+            key: m.projectKey,
+            repo: !!runRoot && existsSync(repo),
+            edited: !!runRoot && existsSync(join(repo, 'src', 'feature.mjs')) && existsSync(join(repo, 'test', 'feature.test.mjs')),
+          };
+        }),
       };
       return origTeardown();
     };

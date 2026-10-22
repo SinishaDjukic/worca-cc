@@ -4,7 +4,7 @@
 // (Edit…); its Save and Decline are free (the composer route starts no turn) and the context header reports the state on
 // the next turn. The graph card saves the drafts it uses first (a declined one refuses), then asks the server to save the
 // graph — Save and Decline start the workflow-card event turn — or opens it on the canvas as a NEW unsaved workflow.
-import { cardKit, draftCardView, buildCardView } from './workflows/card-views.mjs';
+import { cardKit, draftCardView, buildCardView, okChip } from './workflows/card-views.mjs';
 import { renderAutoProposal } from './auto-proposal.mjs';
 
 export const ASK_COMPOSER_CARD_TYPES = Object.freeze(['agent-draft', 'script-draft', 'workflow-build']);
@@ -80,10 +80,10 @@ export function createAskComposerCards({ doc, fetch, blocks = () => [], postCard
   async function saveDraft(b) {
     const c = b.card;
     const kind = kindOf(c);
-    if (superseded(b)) return fail(b, `Not saved — a newer draft of "${c.draft.key}" replaced this one.`);
+    if (superseded(b)) return fail(b, `Not saved: a newer draft of "${c.draft.key}" replaced this one.`);
     const r = heldFor(b) ? { ok: true, key: c.draft.key }
       : kind === 'agent' ? await act('saveAgentDraft', c.draft) : await act('saveScriptDraft', c.draft);
-    if (!r || !r.ok) return fail(b, `Not saved — ${(r && r.error) || 'failed'}`);
+    if (!r || !r.ok) return fail(b, `Not saved: ${(r && r.error) || 'failed'}`);
     (kind === 'agent' ? lib.agents : lib.scripts).add(r.key);
     savedFrom.set(c.draft.key, b.id);
     recordFailed.delete(b.id);
@@ -94,7 +94,7 @@ export function createAskComposerCards({ doc, fetch, blocks = () => [], postCard
     if (!f.ok && f.status !== 409) {
       flipped.delete(b.id);                 // not recorded: shown unsaved (its Save records it), the sweep retries at the TTL
       recordFailed.set(b.id, now());
-      return fail(b, `Saved, but the card was not updated — ${f.error}`);
+      return fail(b, `Saved, but the card was not updated: ${f.error}`);
     }
     return { ok: true, key: r.key };
   }
@@ -105,7 +105,7 @@ export function createAskComposerCards({ doc, fetch, blocks = () => [], postCard
       // A key another card of it saved is no save of the newest card's program: that card saves as itself (D12).
       if (libraryHas(key) && !(d && d.state === 'proposed' && savedByOther(d))) continue;
       if (!d) return fail(b, `The draft "${key}" is no longer in this chat.`);
-      if (d.state === 'declined' || d.state === 'failed') return fail(b, `Not saved — this workflow needs "${key}", which was ${d.state === 'declined' ? 'declined' : 'not saved'}.`);
+      if (d.state === 'declined' || d.state === 'failed') return fail(b, `Not saved: this workflow needs "${key}", which was ${d.state === 'declined' ? 'declined' : 'not saved'}.`);
       if (d.state === 'proposed') { const s = await saveDraft(d); if (!s.ok) return s; }
     }
     return { ok: true };
@@ -127,10 +127,10 @@ export function createAskComposerCards({ doc, fetch, blocks = () => [], postCard
       const card = errEls.get(b.id) && errEls.get(b.id).parentNode;
       const box = commandsOf({ scriptNodes: listed });
       if (card && box) { const old = card.querySelector('.gv-import-scripts'); if (old) old.replaceWith(box); else card.insertBefore(box, card.querySelector('.wfc-actions')); }
-      fail(b, 'Not saved — check the commands this workflow runs (listed above), then save again to confirm them.');
+      fail(b, 'Not saved. Check the commands this workflow runs (listed above), then save again to confirm them.');
       return;
     }
-    if (!f.ok) { fail(b, `Not saved — ${f.error}`); return; }
+    if (!f.ok) { fail(b, `Not saved: ${f.error}`); return; }
     const turn = f.body && f.body.turn;
     if (turn && turn.error) fail(b, `Saved. Chat could not reply: ${turn.error}`);
   }
@@ -143,7 +143,7 @@ export function createAskComposerCards({ doc, fetch, blocks = () => [], postCard
   }
   async function decline(b) {
     const f = await flip(b, { state: 'declined' });
-    if (!f.ok) fail(b, `Not declined — ${f.error}`);
+    if (!f.ok) fail(b, `Not declined: ${f.error}`);
   }
 
   /** The footer text a graph card shows for `key` (the composer's description): the newest live draft of it in this
@@ -187,7 +187,7 @@ export function createAskComposerCards({ doc, fetch, blocks = () => [], postCard
           button('Open in Workflows', 'btn btn-sm', () => openBuild(b)),
           button(c.thenRun ? 'Save & propose' : 'Save as workflow', 'btn btn-sm btn-primary', () => saveBuild(b)));
       } else if (b.state === 'saved') {
-        row.append(h('span', 'wfc-chip-ok', `✓ Saved as ${b.workflowId || c.name}`), h('span', 'wfc-spacer'), button('Open in Workflows', 'btn btn-sm', () => openBuild(b)));
+        row.append(okChip(h, `Saved as ${b.workflowId || c.name}`), h('span', 'wfc-spacer'), button('Open in Workflows', 'btn btn-sm', () => openBuild(b)));
       } else {
         row.appendChild(h('span', 'wfc-muted', String(b.state || '')));
       }

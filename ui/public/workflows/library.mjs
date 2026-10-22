@@ -29,7 +29,7 @@ const TRASH_GLYPH = '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3
 const FLOW_DESC = {
   task: 'The pipeline entry: the prompt and its attached files.',
   end: 'The pipeline sink. A token arriving here completes the run.',
-  and: 'Fires when ALL of its inputs are fresh. Payloads discarded — pure sequencing.',
+  and: 'Fires when ALL of its inputs are fresh. Payloads discarded (pure sequencing).',
   or: 'Fires on ANY fresh input and forwards the freshest payload.',
   combine: 'Joins its md inputs into one document, in port order.',
 };
@@ -203,7 +203,7 @@ export function createLibrary({ doc, host, actions }) {
   // Built once and kept across repaints, so the search box's slide (CSS, .is-searching) runs and typing never loses
   // the field. Folded: "Library  🔍 ✕". Open: "🔍 Search agents…  ✕" — the box's left edge slides over the title.
   const head = h('div', 'wfl-head');
-  const title = h('h2', 'wfl-title', 'Library');
+  const title = h('h2', 'section-title wfl-title', 'Library');
   const sbox = h('div', 'wfl-sbox');
   const searchBtn = h('button', 'btn btn-quiet btn-icon wfl-filter-btn');
   searchBtn.type = 'button';
@@ -321,7 +321,7 @@ export function createLibrary({ doc, host, actions }) {
   // ── folders ────────────────────────────────────────────────────────────────
   function folderRow(path, count) {
     const key = path.join('/');
-    const row = h('button', 'wfl-folder');
+    const row = h('button', 'wfl-folder row-btn');
     row.type = 'button';
     row.dataset.folder = key;
     row.dataset.focusKey = `folder:${key}`;
@@ -433,7 +433,7 @@ export function createLibrary({ doc, host, actions }) {
       fam: a.color || 'blue', glyph: safeAgentIcon(a) || '', viewBox: '0 0 24 24', draggable: placeable,
       detail: () => {
         const d = h('div', 'wfl-detail');
-        d.appendChild(h('p', 'wfl-desc', `${a.key} · ${a.runnerType || 'producer'} — ${a.description || a.portSummary || ''}`));
+        d.appendChild(h('p', 'wfl-desc', `${a.key} · ${a.runnerType || 'producer'}: ${a.description || a.portSummary || ''}`));
         d.append(h('div', 'wfl-k', 'Inputs'), portChips(a.inputs, { dir: 'in' }), h('div', 'wfl-k', 'Outputs'), portChips(a.outputs, { dir: 'out' }));
         const caps = h('div', 'wfl-caps');
         if (a.fanOut) caps.appendChild(h('span', 'wfl-qchip', 'Research fan-out'));

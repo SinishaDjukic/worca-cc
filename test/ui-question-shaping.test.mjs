@@ -79,6 +79,14 @@ test('a shaping run\'s Clarify is a step card: Answer, Use defaults, the head sa
   assert.equal(head.textContent, '', 'the run page heading stays empty for a step card');
 });
 
+test('run 4 D2, D3: on a Clarify ask the bar reads "Answer", and its click focuses the first option', async () => {
+  const { ctx, panel } = await openShaping();
+  const bar = ctx.window.document.querySelector('#run-detail .rd-bar .rd-actions [data-model-action="answer"]');
+  assert.equal(bar.textContent, 'Answer');
+  click(ctx, bar);
+  assert.equal(ctx.window.document.activeElement, panel.querySelector('.qopt'));
+});
+
 test('Answer posts the picked answers once', async () => {
   const { ctx, panel, answers } = await openShaping();
   click(ctx, panel.querySelectorAll('.qblock')[1].querySelector('.qopt'));
@@ -161,7 +169,7 @@ const look = (panel) => ({
 async function groupPageHost(ctx) {
   ctx.go('feature/feat_1');
   await ctx.settle();
-  return ctx.window.document.querySelector('[data-view="feature"] .gpage-card .gpage-question .qpanel');
+  return ctx.window.document.querySelector('#group-detail .gpage-card .gpage-question .qpanel');
 }
 
 for (const [name, pq, shaping, title, chip] of KINDS) {

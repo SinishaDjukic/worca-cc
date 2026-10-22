@@ -184,8 +184,8 @@ test('openMenu: an item may lead with an icons.mjs glyph and be destructive', ()
   const anchor = doc.getElementById('opener');
   const m = openMenu({ doc, anchor, label: 'github-source actions', items: [{ label: 'Check health', icon: 'pulse' }, { sep: true }, { label: 'Remove…', icon: 'trash', danger: true }] });
   const [health, remove] = m.el.querySelectorAll('.wfv-menu-item');
-  assert.deepEqual([health.className, health.firstElementChild.className, health.firstElementChild.innerHTML.includes(ICONS.pulse)], ['wfv-menu-item', 'ic wfv-menu-ic', true]);
-  assert.deepEqual([remove.className, remove.textContent], ['wfv-menu-item is-danger', 'Remove…']);
+  assert.deepEqual([health.className, health.firstElementChild.className, health.firstElementChild.innerHTML.includes(ICONS.pulse)], ['menu-item wfv-menu-item', 'ic wfv-menu-ic', true]);
+  assert.deepEqual([remove.className, remove.textContent], ['menu-item wfv-menu-item is-danger', 'Remove…']);
   m.close();
 });
 

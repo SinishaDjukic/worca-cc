@@ -20,12 +20,12 @@ test('fillMarketplaceSelect: options, kept selection, empty state', () => {
   const d = doc(); const s = d.getElementById('s');
   const targets = [{ id: 'a', name: 'Acme', repo: 'acme/market', ref: 'dev' }, { id: 'b', name: 'Beta', repo: 'b/m', ref: null }];
   assert.equal(fillMarketplaceSelect(s, targets, { doc: d, keep: 'b' }), 2);
-  assert.deepEqual([...s.options].map((o) => [o.value, o.textContent]), [['a', 'Acme — acme/market (dev)'], ['b', 'Beta — b/m']]);
+  assert.deepEqual([...s.options].map((o) => [o.value, o.textContent]), [['a', 'Acme: acme/market (dev)'], ['b', 'Beta: b/m']]);
   assert.equal(s.value, 'b');
   assert.equal(fillMarketplaceSelect(s, [], { doc: d }), 0);
   assert.equal(s.options.length, 1);
   assert.equal(s.options[0].disabled, true);
-  assert.match(s.options[0].textContent, /add one on the Marketplace page/);
+  assert.match(s.options[0].textContent, /Add one on the Marketplace page/);
   // a failed load is not "no marketplaces": the one disabled option says the list could not be read
   assert.equal(fillMarketplaceSelect(s, [], { doc: d, emptyText: 'Marketplaces could not be loaded' }), 0);
   assert.deepEqual([s.options.length, s.options[0].disabled, s.options[0].textContent], [1, true, 'Marketplaces could not be loaded']);
@@ -38,10 +38,10 @@ test('renderMarketplaceSkipped: each registered marketplace left out, with why; 
   assert.equal(renderMarketplaceSkipped(el, skipped, { doc: d }), 2);
   assert.equal(el.classList.contains('hidden'), false);
   assert.deepEqual([...el.querySelectorAll('b')].map((b) => b.textContent), ['Local plugins', 'Enterprise']);
-  assert.match(el.textContent, /Local plugins — not a GitHub or Azure DevOps repository/);
-  assert.match(el.textContent, /Enterprise — ghe\.acme\.dev\/acme\/market is not in WORCA_CLONE_ALLOW/);
+  assert.match(el.textContent, /Local plugins \(not a GitHub or Azure DevOps repository\)/);
+  assert.match(el.textContent, /Enterprise \(ghe\.acme\.dev\/acme\/market is not in WORCA_CLONE_ALLOW\)/);
   assert.equal(renderMarketplaceSkipped(el, [{ id: 'x', reason: 'r' }], { doc: d }), 1);  // no name: the id stands in
-  assert.match(el.textContent, /x — r/);
+  assert.match(el.textContent, /x \(r\)/);
   assert.equal(renderMarketplaceSkipped(el, [], { doc: d }), 0);
   assert.equal(el.textContent, '');
   assert.equal(el.classList.contains('hidden'), true);
@@ -115,7 +115,7 @@ test('marketplaceDoneView: PR link, version, fork; "No changes" without a PR', (
   assert.equal(none.title, 'No changes');
   assert.equal(none.lines.some(([k]) => k === 'Pull request'), false);
   const same = marketplaceDoneView({ ...RES, status: 'up-to-date', prUrl: 'https://github.com/acme/market/pull/9', index: { present: true, added: true } }, { doc: d });
-  assert.match(same.title, /^No changes — the open pull request already has/);
+  assert.match(same.title, /^No changes: the open pull request already has/);
   // nothing was pushed: no "N changed" / version-bump claim, but the PR link and branch stay
   assert.equal(same.lines.some(([k]) => k === 'Files' || k === 'Version'), false);
   assert.equal(same.lines.some(([k]) => k === 'Pull request'), true);

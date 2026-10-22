@@ -55,7 +55,7 @@ test('Overview: clean verdict + stat cards + task card; a non-done run shows the
       const verdict = sec.querySelector('.hd-ov-verdict');
       assert.ok(verdict, 'the verdict banner renders');
       assert.ok(verdict.classList.contains('clean'), 'an empty keyThingsToCheck is a clean verdict');
-      assert.match(verdict.textContent, /Clean — no blocking issues flagged\./);
+      assert.match(verdict.textContent, /Clean: no blocking issues flagged\./);
       assert.equal(sec.querySelector('ul.issues'), null, 'nothing to list when there are no findings');
 
       const dur = sec.querySelector('.hd-ov-card-duration');
@@ -99,7 +99,7 @@ test('Overview: clean verdict + stat cards + task card; a non-done run shows the
 
       const verdict = sec.querySelector('.hd-ov-verdict');
       assert.ok(verdict.classList.contains('none'));
-      assert.match(verdict.textContent, /No review results captured — the run did not complete\./);
+      assert.match(verdict.textContent, /No review results captured\. The run did not complete\./);
       const chip = sec.querySelector('.hd-ov-chip');
       assert.ok(chip.classList.contains('st-stopped'), 'the chip wears the status family class');
       assert.equal(chip.textContent, 'Stopped');
@@ -436,7 +436,7 @@ test('Clarify tab: Q/A cards + step rounds, caption without cycle when the stepK
       // An unanswered step question keeps its ANS row and says so.
       assert.match(cards[1].textContent, /Keep flag\?/);
       assert.match(cards[1].textContent, /\(none\)/);
-      assert.match(sec.querySelector('.hd-cl-caption').textContent, /implementer — round 1 · cycle 2/);
+      assert.match(sec.querySelector('.hd-cl-caption').textContent, /implementer, round 1 · cycle 2/);
     } },
     { name: 'Clarify caption drops the cycle when the stepKey carries none', run: async () => {
       const ctx = await bootDetail({
@@ -450,7 +450,7 @@ test('Clarify tab: Q/A cards + step rounds, caption without cycle when the stepK
         },
       });
       const sec = await openTab(ctx, 'clarify');
-      assert.equal(sec.querySelector('.hd-cl-caption').textContent, 'plan — round 2');
+      assert.equal(sec.querySelector('.hd-cl-caption').textContent, 'plan, round 2');
       // A whitespace-only choice is not an answer.
       assert.match(sec.querySelector('.hd-cl-card').textContent, /\(none\)/);
     } },
@@ -1031,6 +1031,8 @@ test('History opens on the glance: page title, status line, facts, the tab rows;
   const tabs = [...doc.querySelectorAll('#hist-detail .hd-tab')].map((b) => b.dataset.sec);
   assert.deepEqual(rows, tabs, 'one row per tab, in the tab bar\'s order');
   assert.ok([...hd.querySelectorAll('.hd-result [data-rd-tab]')].every((b) => b.querySelector('svg.rd-srow-ico')), 'each row carries its tab icon');
+  assert.equal(hd.querySelector('.hd-result .mono'), null, 'run 4: the values in Results and How it ran are body font');
+  assert.ok([...hd.querySelectorAll('.hd-result .rd-srow-v')].every((v) => !v.classList.contains('mono')));
   assert.doesNotMatch(hd.querySelector('.hd-glance').textContent, /\b\d+ of \d+\b/);
 
   // A row deep-links into Details › that tab; the graph moved into Workflow.
@@ -1055,8 +1057,10 @@ test('History opens on the glance: page title, status line, facts, the tab rows;
 // The saved run's bar carries the Running bar's controls in its order (Run after, the
 // Resume split, Pause, Stop, then the terminal button), in both modes. "Resume on <other engine>" lives in the
 // split's menu, never as a button of its own. The Details header
-// keeps only the PR controls and the ⋯ menu, and the glance card carries no run control.
-const HD_BAR_ORDER = ['hd-save-preset', 'hd-after', 'rd-actions', 'hd-resume-split', 'hd-pause', 'hd-stop', 'term-opener'];
+// keeps only the PR controls and the ⋯ menu, and the glance card carries no run control. Run 3 (D13): the bar ends
+// with its own ⋯ (Save as preset and Terminal fold into it; CSS hides the two). Run after stays a quick button beside
+// Resume and Stop, so ⋯ does not repeat it.
+const HD_BAR_ORDER = ['hd-save-preset', 'hd-after', 'rd-actions', 'hd-resume-split', 'hd-pause', 'hd-stop', 'term-opener', 'hd-bar-more'];
 // A step in flight: the one run model reads a running run with no step as Starting, which offers no Pause (slice 4).
 const STEPPING = { steps: [{ executionId: 'x:n_impl:1', nodeId: 'n_impl', ordinal: 1, cycle: 1, kind: 'cycle', status: 'start',
   startedAt: '2026-01-01T00:00:00Z' }], active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:1' }] };
@@ -1068,6 +1072,7 @@ test('History bar per finished/paused status: Run after, Resume split only when 
   ]) {
     rows.push({ name: `History bar, ${status} run: Run after${resumable ? ' and the Resume split' : ''}, ${status === 'paused' ? 'Stop' : 'no Stop'} and no Pause without a live run`, run: async () => {
       const ctx = await bootDetail({ detail: { ...DETAIL, state: { ...DETAIL.state, status } }, rows: [{ ...ROW, status }] });
+      ctx.window.document.documentElement.dataset.level = 'advanced';
       await openDetail(ctx, '');
       await settle(ctx.window, 6);
       const hd = ctx.window.document.querySelector('#hist-detail .hd');
@@ -1078,6 +1083,11 @@ test('History bar per finished/paused status: Run after, Resume split only when 
       assert.equal(after.dataset.minLevel, 'advanced');
       assert.equal(after.textContent.trim(), 'Run after');
       assert.ok(after.querySelector('svg'), 'the Running bar\'s arrow leads the label');
+      click(ctx.window, end.querySelector('.hd-bar-more'));
+      const moreLabels = [...ctx.window.document.querySelectorAll('.wfv-menu .wfv-menu-item .wfv-menu-l')].map((n) => n.textContent);
+      assert.ok(moreLabels.includes('Terminal'), `⋯ opened: ${moreLabels}`);
+      assert.ok(!moreLabels.includes('Run after'), 'Run after is the bar\'s own button, not a ⋯ item');
+      click(ctx.window, end.querySelector('.hd-bar-more'));
       const title = finished ? 'Start a follow-up run' : 'Schedule a run after this';
       assert.equal(after.title, title);
       assert.equal(after.getAttribute('aria-label'), title);
@@ -1440,7 +1450,8 @@ test('History bar, paused saved run: Stop settles it (and a pre-restart copy in 
       assert.equal(modal.dataset.pipelineId, ROW.id);
       assert.equal(modal.dataset.runId, undefined);
       assert.equal(modal.querySelector('.stop-ident-title').textContent, ROW.title);
-      assert.equal(modal.querySelector('.stop-ident-branch').textContent, ROW.branch);
+      assert.equal(modal.querySelector('.stop-ident-title').title, ROW.branch);
+      assert.equal(modal.ownerDocument.activeElement, modal.querySelector('.stop-cancel'), 'a paused run: Keep paused has the focus');
       assert.equal(modal.querySelector('.stop-cancel').textContent, 'Keep paused');
       const fetchesBefore = ctx.calls.filter((c) => c.url.endsWith(DETAIL_URL)).length;
       click(ctx.window, modal.querySelector('.stop-confirm'));
@@ -1610,15 +1621,16 @@ test('History bar: a live pause after load (error cause named / total-budget pau
   await checkRows(rows);
 });
 
-// The card's bottom: one pull request button at most, each state in its own colour.
-test('History glance carries exactly one PR button (eligible / open / merged)', async () => {
+// The card's PR place (run 3, D11): an eligible run's one Create pull request button in the slot; a run with its own PR
+// shows the PR bar instead (the chip with "PR #7", right under the facts block) and the slot holds no button.
+test('History glance: one Create pull request when eligible; the PR bar for an open or merged PR', async () => {
   const rows = [];
-  for (const [label, pr, cls, icon, text] of [
-    ['eligible', null, 'hd-g-pr', 'pr-create', 'Create pull request'],
-    ['open', { state: 'OPEN', url: 'https://github.com/o/r/pull/7' }, 'pr-view', 'external', 'View pull request'],
-    ['merged', { state: 'MERGED', url: 'https://github.com/o/r/pull/7' }, 'pr-merged', 'merged', 'View pull request'],
+  for (const [label, pr, word] of [
+    ['eligible', null, ''],
+    ['open', { state: 'OPEN', number: 7, url: 'https://github.com/o/r/pull/7' }, 'Ready'],
+    ['merged', { state: 'MERGED', number: 7, url: 'https://github.com/o/r/pull/7' }, 'Merged'],
   ]) {
-    rows.push({ name: `History glance, ${label} PR: the card carries exactly one PR button`, run: async () => {
+    rows.push({ name: `History glance, ${label} PR`, run: async () => {
       const row = { ...ROW, pr };
       const ctx = await bootDetail({
         rows: [row],
@@ -1626,25 +1638,27 @@ test('History glance carries exactly one PR button (eligible / open / merged)', 
       });
       await openDetail(ctx, '');
       await settle(ctx.window, 6);
-      const slot = ctx.window.document.querySelector('#hist-detail .hd-glance .rd-pr-slot');
-      assert.ok(slot, 'the card has its pull request slot');
+      const glance = ctx.window.document.querySelector('#hist-detail .hd-glance');
+      const slot = glance.querySelector('.rd-pr-slot');
+      const box = glance.querySelector('.rd-pr-box');
       assert.equal(slot.closest('.hd-result'), null, 'outside the result host paintHdGlance rebuilds');
-      assert.equal(slot.hidden, false);
-      // Known at first paint (a cached row): the button directly, no placeholder and no morph.
-      assert.equal(slot.classList.contains('is-pending') || slot.classList.contains('is-morph'), false, slot.className);
-      assert.equal(slot.querySelector('.rd-pr-spin, .rd-pr-fill'), null);
-      const ctas = [...slot.children];
-      assert.equal(ctas.length, 1, 'one button, the pull request');
-      const [cta] = ctas;
-      assert.ok(cta.hasAttribute('data-rd-cta') && cta.classList.contains('btn') && cta.classList.contains(cls), `${cls}: ${cta.className}`);
-      assert.equal(cta.classList.contains('alt'), false, 'no grey secondary');
-      assert.equal(cta.firstElementChild.dataset.icon, icon);
-      assert.equal(cta.textContent, text);
-      if (pr) {
-        assert.equal(cta.tagName, 'A');
-        assert.equal(cta.getAttribute('href'), pr.url);
-        assert.equal(cta.target, '_blank', 'GitHub opens in a new tab');
+      assert.equal(box.previousElementSibling, glance.querySelector('.rd-sheet > .rd-kv'), 'the PR place sits right under the facts');
+      if (!pr) {
+        assert.equal(slot.hidden, false);
+        const ctas = [...slot.children];
+        assert.equal(ctas.length, 1, 'one button, the pull request');
+        assert.ok(ctas[0].hasAttribute('data-rd-cta') && ctas[0].classList.contains('hd-g-pr'), ctas[0].className);
+        assert.equal(ctas[0].firstElementChild.dataset.icon, 'pr-create');
+        assert.equal(ctas[0].textContent, 'Create PR');
+        return;
       }
+      assert.equal(slot.hidden, true, 'no View pull request button');
+      const chip = glance.querySelector('.rd-pr-status .rd-prs-sum a.runs-pr');
+      assert.ok(chip, 'the PR bar leads with the linked chip');
+      assert.equal(chip.getAttribute('href'), pr.url);
+      assert.equal(chip.querySelector('.runs-pr-num').textContent, 'PR #7');
+      assert.equal(chip.querySelector('.runs-pr-word').textContent, word);
+      assert.equal(glance.querySelector('.rd-result [data-rd-cta]'), null, 'nothing PR-shaped under Results');
     } });
   }
   await checkRows(rows);
@@ -1676,7 +1690,7 @@ async function pendingGlance(shared = ROW, { ghAvailable = true, level = '' } = 
 
 test('History glance PR lookup pending: a busy placeholder morphs in place into the link, or into Create forwarding to the header button', async (t) => {
   await checkRows([
-    { name: 'History glance, PR lookup pending: a busy placeholder, then the SAME slot morphs into the link', run: async () => {
+    { name: 'History glance, PR lookup pending: a busy placeholder, then the PR bar takes over (run 3, D11)', run: async () => {
       const { ctx, slot } = await pendingGlance();
       assert.equal(slot.hidden, false);
       assert.ok(slot.classList.contains('is-pending'), slot.className);
@@ -1689,23 +1703,14 @@ test('History glance PR lookup pending: a busy placeholder morphs in place into 
       try {
         prBatch(ctx, [{ projectKey: KEY, id: ROW.id, pr: { state: 'MERGED', url } }]);
         await timers.settle();
-        assert.equal(ctx.window.document.querySelector('#hist-detail .hd-glance .rd-pr-slot'), slot, 'the slot is never replaced');
-        assert.ok(slot.classList.contains('is-morph'), slot.className);
-        assert.equal(slot.getAttribute('aria-busy'), null);
-        assert.ok(slot.querySelector('.rd-pr-fill.pr-merged'), 'the merged colour grows from the spinner');
-        const link = slot.querySelector('a[data-rd-cta].hd-g-pr-link.pr-merged');
-        assert.ok(link, slot.innerHTML);
-        assert.equal(link.getAttribute('href'), url);
-        assert.equal(link.target, '_blank');
-        assert.equal(link.rel, 'noopener');
         await timers.advance(MORPH_MS);
-        assert.equal(slot.classList.contains('is-morph'), false);
-        assert.deepEqual([...slot.children], [link], 'the spinner and the colour layer are removed');
-        // paintHdGlance repaints on every PR batch for this run: no rebuild, no replay.
-        prBatch(ctx, [{ projectKey: KEY, id: ROW.id, pr: { state: 'MERGED', url } }]);
-        await timers.settle();
-        assert.equal(slot.classList.contains('is-morph'), false, 'the morph plays once');
-        assert.equal(slot.querySelector('a[data-rd-cta]'), link, 'the same link');
+        assert.equal(ctx.window.document.querySelector('#hist-detail .hd-glance .rd-pr-slot'), slot, 'the slot is never replaced');
+        assert.equal(slot.getAttribute('aria-busy'), null);
+        assert.equal(slot.querySelector('[data-rd-cta]'), null, 'the run\'s own PR is no slot button');
+        const chip = ctx.window.document.querySelector('#hist-detail .hd-glance .rd-pr-status .rd-prs-sum a.runs-pr.is-merged');
+        assert.ok(chip, 'the PR bar shows the merged chip');
+        assert.equal(chip.getAttribute('href'), url);
+        assert.equal(chip.target, '_blank');
       } finally {
         t.mock.timers.reset();
       }
@@ -1717,7 +1722,7 @@ test('History glance PR lookup pending: a busy placeholder morphs in place into 
       assert.ok(slot.classList.contains('is-morph'), slot.className);
       const btn = slot.querySelector('button[data-rd-cta].hd-g-pr');
       assert.ok(btn, slot.innerHTML);
-      assert.equal(btn.textContent, 'Create pull request');
+      assert.equal(btn.textContent, 'Create PR');
       let forwarded = 0;
       ctx.window.document.querySelector('#hist-detail .hd-pr').onclick = () => { forwarded += 1; };
       click(ctx.window, btn);
@@ -1726,17 +1731,20 @@ test('History glance PR lookup pending: a busy placeholder morphs in place into 
   ]);
 });
 
-test('History glance meta: a feature-branch chip that copies it, none without a branch', async () => {
+// Run 3 (D8): the chip is the facts block's Branch row; the Project row's value keeps paintPageHead's text.
+test('History glance facts: a feature-branch chip that copies it, none without a branch', async () => {
   await checkRows([
-    { name: 'History glance: the meta line carries the feature branch as a chip that copies it', run: async () => {
+    { name: 'History glance: the Branch row carries the feature branch as a chip that copies it', run: async () => {
       const ctx = await bootDetail();
       await openDetail(ctx, '');
       await settle(ctx.window, 6);
       const { window } = ctx;
-      const meta = window.document.querySelector('#hist-detail .hd-glance .rd-page-meta');
-      const chip = meta.querySelector('.rd-page-branch');
-      assert.ok(chip, 'the chip is in the meta line');
+      const meta = window.document.querySelector('#hist-detail .hd-glance .rd-kv [data-fact="project"] .rd-page-meta');
+      const branchRow = window.document.querySelector('#hist-detail .hd-glance .rd-kv [data-fact="branch"]');
+      const chip = branchRow.querySelector('.rd-page-branch');
+      assert.ok(chip, 'the chip is in the Branch row');
       assert.equal(chip.hidden, false);
+      assert.equal(branchRow.hidden, false);
       assert.equal(chip.dataset.minLevel, 'advanced', 'the Details branch button\'s level');
       assert.equal(chip.querySelector('.rd-page-branch-name').textContent, ROW.branch);
       assert.equal(chip.title, ROW.branch, 'the full name in the tooltip');
@@ -1750,8 +1758,8 @@ test('History glance meta: a feature-branch chip that copies it, none without a 
       assert.ok(chip.classList.contains('copied'), 'the copied tick, as in Details');
       // The row repaints the header (refreshHdFromRow): the same chip, bound once.
       await deliverRows(ctx, [{ ...ROW }]);
-      assert.equal(meta.querySelectorAll('.rd-page-branch').length, 1);
-      assert.equal(meta.querySelector('.rd-page-branch'), chip);
+      assert.equal(branchRow.querySelectorAll('.rd-page-branch').length, 1);
+      assert.equal(branchRow.querySelector('.rd-page-branch'), chip);
       click(window, chip);
       await settle(window, 2);
       assert.deepEqual(writes, [ROW.branch, ROW.branch], 'one copy per click');
@@ -1764,6 +1772,7 @@ test('History glance meta: a feature-branch chip that copies it, none without a 
       await openDetail(ctx, '');
       await settle(ctx.window, 6);
       assert.equal(ctx.window.document.querySelector('#hist-detail .hd-glance .rd-page-branch').hidden, true);
+      assert.equal(ctx.window.document.querySelector('#hist-detail .hd-glance .rd-kv [data-fact="branch"]').hidden, true);
     } },
   ]);
 });

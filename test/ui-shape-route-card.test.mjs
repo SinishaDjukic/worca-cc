@@ -12,7 +12,7 @@ test('the guess is preselected with its reason; the primary names the choice and
   const d = docOf(); const posted = [];
   const el = renderRouteCard(d, { state: 'proposed', card: CARD }, { onChoose: async (v) => posted.push(v), onNotNow: async () => {} });
   assert.equal(el.querySelector('.ask-mcard-kind').textContent, 'Route');
-  assert.equal(el.querySelector('.ask-routecard-guess').textContent, 'Worca\'s guess: Add to Charts — touches "legend", which run 3 changes');
+  assert.equal(el.querySelector('.ask-routecard-guess').textContent, 'Worca\'s guess: Add to Charts (touches "legend", which run 3 changes)');
   assert.equal(el.querySelector('input[value="add"]').checked, true);
   const primary = el.querySelector('.btn-primary');
   assert.equal(primary.textContent, 'Add to Charts');

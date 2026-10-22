@@ -122,12 +122,13 @@ test('live run page: one set of cost tag chips (in the facts row) after repeated
   helloRun(ctx, { runId: 'run-t1', pipelineId: 'aaaa0001', tags: ['client:acme'] });
   await ctx.settle();
   const doc = ctx.window.document;
-  assert.deepEqual([...doc.querySelectorAll('#run-detail .rd-facts .tag-chip')].map((c) => c.textContent), ['client:acme']);
-  assert.equal(doc.querySelectorAll('#run-detail .rd-page-meta .tag-chip').length, 0);
+  assert.deepEqual([...doc.querySelectorAll('#run-detail .rd-kv [data-fact="tags"] .tag-chip')].map((c) => c.textContent), ['client:acme']);
+  assert.equal(doc.querySelectorAll('#run-detail .rd-page-meta .tag-chip, #run-detail .rd-facts .tag-chip').length, 0);
   applyFlags({ runTags: false }, doc);
   helloRun(ctx, { runId: 'run-t1', pipelineId: 'aaaa0001', tags: ['client:acme'] });
   await ctx.settle();
-  assert.equal(doc.querySelectorAll('#run-detail .rd-facts .tag-chip, #run-detail .rd-page-meta .tag-chip').length, 0);
+  assert.equal(doc.querySelectorAll('#run-detail .rd-kv .tag-chip, #run-detail .rd-facts .tag-chip').length, 0);
+  assert.equal(doc.querySelector('#run-detail .rd-kv [data-fact="tags"]').hidden, true, 'the empty row hides');
 });
 
 test('finished run page: chips in the Cost tags row + Edit cost tags, an editor that survives a repaint, a PUT, and the server\'s list after Save', async () => {
@@ -148,14 +149,16 @@ test('finished run page: chips in the Cost tags row + Edit cost tags, an editor 
   await deliverRows(ctx, [ROW]);
   const doc = ctx.window.document;
   // The landing page's Cost tags row carries the chips and, last, the editor; Details › Overview has both (D15, D16).
-  const row2 = () => doc.querySelector('#hist-detail .rd-facts .rd-cost-row');
-  const facts = () => [...doc.querySelectorAll('#hist-detail .rd-facts .tag-chip')].map((c) => c.textContent);
+  // Run 3 (D8): the Cost tags row is the facts block's last row.
+  const row2 = () => doc.querySelector('#hist-detail .rd-kv [data-fact="tags"] > .rd-kv-v > .rd-cost-row');
+  const facts = () => [...doc.querySelectorAll('#hist-detail .rd-kv [data-fact="tags"] .tag-chip')].map((c) => c.textContent);
   assert.equal(row2().querySelectorAll('.hd-tags').length, 1, 'two header paints, one tag box');
   assert.equal(row2().querySelectorAll('.hd-tags .tag-chip').length, 0, 'no duplicate chips beside the button');
   assert.deepEqual(facts(), ['client:acme']);
   assert.deepEqual([...doc.querySelectorAll('#hist-detail .hd-row2 .hd-tags .tag-chip')].map((c) => c.textContent), ['client:acme']);
   const edit = row2().querySelector('.hd-tags-edit');
-  assert.equal(edit.textContent, 'Edit cost tags');
+  assert.equal(edit.textContent, 'Edit');
+  assert.equal(edit.getAttribute('aria-label'), 'Edit cost tags');
   click(ctx.window, edit);
   const input = () => row2().querySelector('.hd-tags .tag-input-text');
   input().value = 'client:globex';
@@ -197,12 +200,13 @@ test('finished run page: "Add cost tags" when the run has none; no tag UI with t
   flagsOn(ctx.window);
   await deliverRows(ctx, [ROW]);
   // D16: with no tags the row still shows, so "Add cost tags" stays reachable.
-  const row = doc.querySelector('#hist-detail .rd-facts .rd-cost-row');
-  assert.equal(row.firstElementChild.textContent, 'Cost tags');
-  assert.equal(row.lastElementChild.querySelector('.hd-tags-edit').textContent, 'Add cost tags');
-  for (const host of ['.rd-facts .rd-cost-row', '.hd-row2']) {
+  const row = doc.querySelector('#hist-detail .rd-kv [data-fact="tags"] > .rd-kv-v > .rd-cost-row');
+  assert.equal(row.closest('.rd-kv-row').querySelector('.rd-kv-k').textContent, 'Cost tags');
+  assert.equal(row.querySelector('.rd-cost-row-label'), null, 'the dt names the row');
+  assert.equal(row.lastElementChild.querySelector('.hd-tags-edit').textContent, 'Add');
+  for (const [host, word] of [['.rd-kv [data-fact="tags"] > .rd-kv-v > .rd-cost-row', 'Add'], ['.hd-row2', 'Add cost tags']]) {
     const edit = doc.querySelector(`#hist-detail ${host} .hd-tags-edit`);
-    assert.equal(edit.textContent, 'Add cost tags', host);
+    assert.equal(edit.textContent, word, host);
     // B7: the one button component, quiet — like "Add to group…" — never a link-styled button.
     assert.deepEqual([...edit.classList], ['btn', 'btn-sm', 'btn-quiet', 'hd-tags-edit'], host);
     assert.equal(doc.querySelectorAll(`#hist-detail ${host} .tag-chip`).length, 0, host);
@@ -240,9 +244,10 @@ test('policy off: a run without a tag ticked Mandatory starts quietly — no war
   assert.equal(ctx.doc.getElementById('runTagDimsWarn').hidden, true, 'no "is required" warning under the field');
   const body = await submit(ctx);
   assert.equal(body.tags, undefined, 'the run is posted with no tags');
-  const toast = [...ctx.doc.querySelectorAll('.toast')].at(-1);
-  assert.doesNotMatch(toast.textContent, /Missing required tag/);
-  assert.doesNotMatch(toast.className, /warn/);
+  for (const toast of ctx.doc.querySelectorAll('.toast')) {   // the run page opens, so no "Run started" toast (F-24)
+    assert.doesNotMatch(toast.textContent, /Missing required tag/);
+    assert.doesNotMatch(toast.className, /warn/);
+  }
 });
 
 test('enforced: a pre-filled mandatory tag shows as a chosen value; Start is enabled and posts it', async () => {
@@ -339,9 +344,29 @@ test('run labels, live page: one .rd-labels row right after .rd-sheet-head acros
   const doc = ctx.window.document;
   const rows = doc.querySelectorAll('#run-detail .rd-labels');
   assert.equal(rows.length, 1, 'three header paints, one row');
-  assert.ok(rows[0].previousElementSibling.classList.contains('rd-sheet-head'));
+  assert.ok(rows[0].parentElement.matches('.rd-kv [data-fact="labels"] > .rd-kv-v'), 'in the facts block\'s Labels row');
+  assert.equal(rows[0].closest('.rd-kv-row').hidden, false);
   assert.deepEqual([...rows[0].querySelectorAll('.label-chip-t')].map((c) => c.textContent), ['hotfix']);
-  assert.equal(rows[0].querySelector('.rd-labels-edit').textContent, 'Label');
+  const edit = rows[0].querySelector('.rd-labels-edit');
+  assert.equal(edit.textContent, 'Add');
+  assert.ok(edit.querySelector('svg'), 'the plus icon');
+  assert.equal(edit.getAttribute('aria-label'), 'Edit labels');
+});
+
+test('run 4 D12: an empty Labels row states "None" before "Add"; a labelled row has no "None"', async () => {
+  const empty = await bootDetail({ detail: { ...DETAIL, state: { ...DETAIL.state, labels: [] } } });
+  flagsOn(empty.window);
+  await openDetail(empty, null);
+  await deliverRows(empty, [{ ...ROW, labels: [] }]);
+  const row = empty.window.document.querySelector('#hist-detail .hd-glance [data-fact="labels"] .rd-labels');
+  assert.deepEqual([...row.children].map((c) => [c.className.split(' ').find((n) => n.startsWith('rd-labels-')), c.textContent]),
+    [['rd-labels-none', 'None'], ['rd-labels-edit', 'Add']]);
+  const live = await bootApp();
+  flagsOn(live.window);
+  helloRun(live, { runId: 'run-l2', pipelineId: 'aaaa0002', labels: ['hotfix'] });
+  live.go('running/run-l2');
+  await live.settle();
+  assert.equal(live.window.document.querySelector('#run-detail .rd-labels .rd-labels-none'), null);
 });
 
 test('run labels, finished page: × PUTs the set without the word; a picker tick posts a one-run delta; one row stays', async () => {
@@ -362,7 +387,7 @@ test('run labels, finished page: × PUTs the set without the word; a picker tick
   await deliverRows(ctx, [ROW]);
   const doc = ctx.window.document;
   const row = () => doc.querySelector('#hist-detail .hd-glance .rd-labels');
-  assert.ok(row().previousElementSibling.classList.contains('rd-sheet-head'));
+  assert.ok(row().parentElement.matches('.rd-kv [data-fact="labels"] > .rd-kv-v'));
   click(ctx.window, row().querySelector('.label-x'));
   await settle(ctx.window, 6);
   assert.deepEqual(puts, [{ labels: ['spike'] }]);
@@ -397,7 +422,9 @@ test('run labels, finished page: "Add label" when the run has none; no row with 
   assert.equal(doc.querySelector('#hist-detail .rd-labels'), null, 'flag off: nothing');
   flagsOn(ctx.window);
   await deliverRows(ctx, [ROW]);
-  assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-labels .rd-labels-edit').textContent, 'Add label');
+  const add = doc.querySelector('#hist-detail .hd-glance .rd-labels .rd-labels-edit');
+  assert.equal(add.textContent, 'Add');
+  assert.equal(add.getAttribute('aria-label'), 'Add a label');
   assert.equal(doc.querySelectorAll('#hist-detail .hd-glance .label-chip').length, 0);
 });
 
@@ -485,10 +512,11 @@ test('run page head: time, cost and changes tiles only; one Cost tags row under 
   const tiles = [...doc.querySelectorAll('#run-detail .rd-facts .rd-stats > div > span')].map((s) => s.textContent);
   assert.equal(tiles.includes('cost tags'), false, 'no cost tags tile');
   assert.equal(doc.querySelectorAll('#run-detail .rd-stats .tag-chip').length, 0);
-  const row = doc.querySelector('#run-detail .rd-facts .rd-stats + .rd-cost-row');
-  assert.ok(row, 'the row sits right under the tiles');
-  assert.equal(row.firstElementChild.className, 'rd-cost-row-label');
-  assert.equal(row.firstElementChild.textContent, 'Cost tags');
+  const row = doc.querySelector('#run-detail .rd-kv [data-fact="tags"] > .rd-kv-v > .rd-cost-row');
+  assert.ok(row, 'the row sits in the facts block');
+  assert.equal(doc.querySelector('#run-detail .rd-facts .rd-cost-row'), null, 'not under the tiles any more');
+  assert.equal(row.querySelector('.rd-cost-row-label'), null);
+  assert.equal(row.closest('.rd-kv-row').querySelector('.rd-kv-k').textContent, 'Cost tags');
   assert.deepEqual([...row.querySelectorAll(':scope > .tag-chip')].map((c) => c.textContent), ['team:web', 'client · missing']);
   assert.ok(row.querySelector(':scope > .tag-missing'));
   assert.equal(row.querySelector('.hd-tags-edit'), null, 'the live page has no editor (D16)');
@@ -512,9 +540,13 @@ test('finished run page: the Cost tags row holds the chips, the missing key and 
   await deliverRows(ctx, [ROW]);
   await settle(ctx.window, 4);
   const doc = ctx.window.document;
-  const row = doc.querySelector('#hist-detail .rd-facts .rd-stats + .rd-cost-row');
+  const row = doc.querySelector('#hist-detail .rd-kv [data-fact="tags"] > .rd-kv-v > .rd-cost-row');
   assert.deepEqual([...row.querySelectorAll(':scope > .tag-chip')].map((c) => c.textContent), ['team:web', 'client · missing']);
   assert.ok(row.lastElementChild.classList.contains('hd-tags'), 'the control is the row\'s last item');
-  assert.equal(row.lastElementChild.querySelector('.hd-tags-edit').textContent, 'Edit cost tags');
+  assert.equal(row.lastElementChild.querySelector('.hd-tags-edit').textContent, 'Edit');
+  // Brief §2.4: the tiles stay time, cost and changes; no tags tile.
+  const tiles = [...doc.querySelectorAll('#hist-detail .rd-facts .rd-stats > div > span')].map((t) => t.textContent);
+  assert.ok(tiles.length && tiles.every((t) => !/tag/i.test(t)), tiles.join(', '));
+  assert.equal(doc.querySelector('#hist-detail .rd-facts .rd-cost-row'), null);
   assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-page-meta .hd-tags'), null);
 });

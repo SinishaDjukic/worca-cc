@@ -20,7 +20,8 @@ export function featureHeadline(f) {
   return `${f.done} of ${f.total} slices done`;
 }
 
-const modelOf = (f, snapOf) => featureCardModel({ card: { pipelineId: f.originPipelineId || null, feature: f, log: f.log || [] }, snapOf: snapOf || (() => null) });
+/** Run 4 (D18): the feature's card model, also for the group page's header ⋯. */
+export const featureModelOf = (f, snapOf) => featureCardModel({ card: { pipelineId: f.originPipelineId || null, feature: f, log: f.log || [] }, snapOf: snapOf || (() => null) });
 
 /** s4: the Ship card (ship-card.mjs) in place of the old Ship as block: the waiting line while runs go on, the ready
  *  card without Not now, the applied card once shipped; nothing for a canceled or re-planned feature. A failure comes
@@ -41,11 +42,12 @@ function shipBlock(doc, f, deps) {
 /**
  * deps: { act(action, body, {focus}) → Promise<{ok, error?}>, confirm, openRun(ref), openPlan(controls), snapOf?(pid),
  *         pause?(target, btn), stop?(target), mountAsk?(slot, step), runsOpen?: boolean, error?: string,
- *         omit?: string[] (feature-actions keys the host's model footer already shows) }
+ *         omit?: string[] (feature-actions keys the host's model footer already shows), inGroup?: boolean (the group page:
+ *         no merge-order line and no ⋯, the page header owns both) }
  */
 export function renderFeature(doc, f, deps) {
   const h = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
-  const m = modelOf(f, deps.snapOf);
+  const m = featureModelOf(f, deps.snapOf);
   const el = h('section', `shape-feature${m.controls && m.controls.halted ? ' is-halted' : ''}`);
   el.dataset.feature = f.id;
   // F47: the host asked for an earlier feature; this is the one its Re-plan the rest started.
@@ -55,7 +57,8 @@ export function renderFeature(doc, f, deps) {
   const log = h('ol', 'chat-rc-log shape-feature-log'); log.setAttribute('aria-label', 'Steps');
   el.appendChild(log);
   paintFeatureLog(doc, log, m.log);
-  if (f.slices.length > 1) {
+  // Run 4 (D17): the group page states the merge order on its Runs tab and owns the ⋯ in its header.
+  if (f.slices.length > 1 && !deps.inGroup) {
     const order = h('div', 'shape-feature-order', 'Merge in order: each run\'s branch starts from the one before.');
     order.dataset.needsGit = '';
     el.appendChild(order);
@@ -63,6 +66,6 @@ export function renderFeature(doc, f, deps) {
   el.appendChild(shipBlock(doc, f, deps));
   const foot = h('div', 'shape-feature-actions');
   el.appendChild(foot);
-  paintFeatureActions(doc, foot, m.controls, deps, { omit: deps.omit || [] });
+  paintFeatureActions(doc, foot, m.controls, deps, { omit: deps.omit || [], menu: !deps.inGroup });
   return el;
 }

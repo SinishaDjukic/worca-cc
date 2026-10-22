@@ -78,7 +78,7 @@ export function createRunTile({ doc, snap, onOpen = null, onAnswer = null }) {
   const head = h('div', 'chat-run-tile-head');
   const tt = h('div', 'chat-run-tile-tt');
   // The title IS the tile's open control: a button whose ::after (style.css) stretches over the tile.
-  const open = h('button', 'chat-run-tile-open');
+  const open = h('button', 'btn btn-quiet chat-run-tile-open');
   open.type = 'button';
   const sub = h('span', 'chat-run-tile-sub');
   tt.append(open, sub);
@@ -100,7 +100,7 @@ export function createRunTile({ doc, snap, onOpen = null, onAnswer = null }) {
   well.append(host, note);
   const foot = h('div', 'chat-run-tile-foot');
   const stats = h('span', 'chat-run-tile-stats');
-  const answer = h('button', 'chat-run-tile-answer', 'Answer');
+  const answer = h('button', 'btn btn-sm chat-run-tile-answer', 'Answer');
   answer.type = 'button';
   answer.hidden = true;
   foot.append(stats, answer);

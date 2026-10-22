@@ -137,7 +137,7 @@ export function decorateArtifact({ pinpoint, doc, win, stage, body, root, file, 
       ? `<button type="button" class="btn btn-sm btn-quiet" data-a="clear">Clear</button><span class="pp-sp"></span>${canSend
         ? `<button type="button" class="btn btn-sm" data-a="chat">Send to chat</button><button type="button" class="btn btn-sm btn-primary" data-a="send"${sending ? ' disabled' : ''}>${esc(sendLabel)}</button>`
         : '<button type="button" class="btn btn-sm btn-primary" data-a="chat">Send to chat</button>'}`
-      : `<span class="pp-hintl">Select text to disagree, add a note or pick an alternative — your changes collect here${plan ? ' and go back to the planner together' : ''}.</span>`;
+      : `<span class="pp-hintl">Select text to disagree, add a note or pick an alternative. Your changes collect here${plan ? ' and go back to the planner together' : ''}.</span>`;
     trayEl.classList.toggle('is-folded', folded && !!items.length);
     trayEl.innerHTML = `<div class="pp-tray-h"><b>${items.length ? plural(items.length, 'pending change') : 'No pending changes'}</b><span>${esc(where)}</span>${items.length
       ? `<button type="button" class="btn btn-sm btn-quiet btn-icon pp-x pp-fold" data-fold aria-label="${folded ? 'Show changes' : 'Hide changes'}" aria-expanded="${!folded}">${iconSvg('chevron-down', 14)}</button>` : ''}</div>
@@ -160,7 +160,7 @@ export function decorateArtifact({ pinpoint, doc, win, stage, body, root, file, 
       const n = tray.items.length;
       tray = { items: [], seq: tray.seq };
       save(tray);
-      note = `${plural(n, 'change')} sent to the run — the next step reads ${n === 1 ? 'it' : 'them'}.`;
+      note = `${plural(n, 'change')} sent to the run. The next step reads ${n === 1 ? 'it' : 'them'}.`;
       repaint();
     }
   }

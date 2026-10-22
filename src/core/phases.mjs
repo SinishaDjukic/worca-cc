@@ -19,7 +19,7 @@ import { SUBAGENT_AUTO, SUBAGENT_INHERIT, SUBAGENT_MODELS, EFFORTS, effectiveSub
 import { readClarify, readReview } from './protocol.mjs';
 import { writeClarify, readClarifyRow } from './artifacts.mjs';
 import { renderDirectionsBlock } from './directions.mjs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { LIMITS } from '../shared/workspace-map/limits.mjs';
 import { QUOTED_TEXT_NOTE, ROLE_QUOTE_LABELS } from '../shared/workspace-map/render.mjs';
 
@@ -299,9 +299,10 @@ function isDetachedWorkspace(ctx) {
   return isDetachedRun(ctx) && wsMembers(ctx).length > 0;
 }
 
-/** Render-only relative checkout path for a member (§5.8: never persisted anywhere). */
+/** Render-only relative checkout path for a member (§5.8: never persisted anywhere). Its dir on disk,
+ *  which can be a shortened projectKey (worktree.mjs boundCheckoutName, #411); the key before it exists. */
 function relRepo(p) {
-  return p && p.projectKey ? `repos/${p.projectKey}` : null;
+  return p && p.projectKey ? `repos/${p.worktreeDir ? basename(p.worktreeDir) : p.projectKey}` : null;
 }
 
 /**

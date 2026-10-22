@@ -175,7 +175,7 @@ test('sync copy helpers: sourceRefNote, syncStageLabel, ffRefusalCopy and fetchF
       assert.equal(sourceRefNote({ ref: 'dev' }), '');
       assert.equal(sourceRefNote({ ref: 'origin/feat', remoteOnly: true }), 'from origin/feat (remote only)');
       assert.equal(sourceRefNote({ ref: 'dev', behind: 2 }), 'from dev (2 behind)');
-      assert.equal(sourceRefNote({ ref: 'dev', behind: 2, stale: true }), 'from dev (2 behind, could not fetch — last known refs)');
+      assert.equal(sourceRefNote({ ref: 'dev', behind: 2, stale: true }), 'from dev (2 behind, could not fetch: last known refs)');
     } },
     { name: 'syncStageLabel for all five results', run: () => {
       assert.equal(syncStageLabel(null), 'Sync');

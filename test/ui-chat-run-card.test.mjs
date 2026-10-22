@@ -108,7 +108,8 @@ test('chat run card: head, sub-line, stats, agent chips with model + cycle, Auto
       assert.equal($('.ask-rc-head > .kind-chip').textContent, 'Run');
       assert.equal($('.chat-rc-status.run-status').dataset.state, 'working');
       assert.equal($('.ask-rc-title').textContent, 'Fix login');
-      assert.equal($('.ask-rc-sub').textContent, 'proj · #abcd1234');
+      assert.equal($('.ask-rc-sub').textContent, 'proj');
+      assert.equal($('.chat-rc-where').title, 'Run abcd1234');
       assert.equal($('.ask-rc-time').textContent, '1m 5s');
       assert.equal($('.ask-rc-cost').textContent, '$0.42');
       assert.equal($('.ask-rc-prog'), null, 'no Progress tile repeating the status line (Known bug 9)');
@@ -245,7 +246,7 @@ test('chat run card controls: Pause / Resume / Stop through `controls`, disabled
       assert.equal($('.chat-rc-stop').disabled, false, 'a paused row stops by pipeline id');
       card.update(live());
       assert.equal($('.chat-rc-stop').disabled, false, 'the live model arrived (hello): Stop is back');
-      assert.equal($('.chat-rc-stop').title, 'Stop this pipeline');
+      assert.equal($('.chat-rc-stop').title, 'Stop this run');
     } },
     { name: 'Stop calls controls.stop(ref, onStopped); onStopped asks the owner to refresh; a Ready run\'s Ship it is the result\'s Create pull request', run: async () => {
       let stopped = null;
@@ -375,7 +376,7 @@ test('chat run card result region: words, churn, top files → Diff, artifact ch
       card.update(done(EXTRAS));
       assert.equal($('.chat-rc-result').hidden, false);
       assert.equal($('.chat-rc-res-title').textContent, 'Ready to ship');
-      assert.equal($('.chat-rc-res-sub').textContent, 'Clean — no blocking issues flagged');
+      assert.equal($('.chat-rc-res-sub').textContent, 'Clean: no blocking issues flagged');
       assert.equal($('.chat-rc-res-churn').textContent, '+12 −3 · 2 files changed');
       const files = [...card.el.querySelectorAll('.chat-rc-file')];
       assert.deepEqual(files.map((f) => f.textContent), ['src/a.mjs+10−2', 'img/x.png']);
@@ -634,7 +635,7 @@ test('chat run card CSS: the Runs page ask card in one column (the run side pane
     '.chat-rc-res-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;}',
     '.chat-rc-res-text{flex:1 1 200px;min-width:0;}',
     '.chat-rc-res-sub{margin-top:2px;font-size:12px;color:var(--ink-2);}',
-    '.chat-rc-res-churn{flex:0 0 auto;margin-left:auto;font-family:var(--mono);font-size:11.5px;color:var(--ink-2);}',
+    '.chat-rc-res-churn{flex:0 0 auto;margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--ink-2);}',
   ]) assert.ok(p3.includes(rule), rule);
   // The card's own copies of Runs page rules are gone: the `:is(.rd-questions,.chat-rc-q)` rules draw both mounts.
   for (const gone of ['.chat-rc-q .issue{border-color', '.chat-rc-q .issue-loc{', '.chat-rc-q .qanswered{', '.chat-rc-q .qtune .select-wrap select{', '.chat-rc-q .qpanel :is(.qfree,.af-inp){']) {
@@ -645,10 +646,10 @@ test('chat run card CSS: the Runs page ask card in one column (the run side pane
   const chatRules = [...bare.matchAll(/([^{}]*)\{([^{}]*)\}/g)].filter((m) => /\.chat-rc-q\b/.test(m[1]));
   assert.deepEqual(chatRules.filter((m) => /--amber-line/.test(m[2])).map((m) => m[2].trim()), ['border-color:var(--amber-line);']);
   assert.deepEqual(chatRules.filter((m) => /--amber-wash/.test(m[2])).map((m) => m[1].trim()), [], 'no amber wash in the chat question');
-  // The run card's question is tinted amber; a free-standing question card (`section.chat-rc-q.chat-q`) keeps the white ask card.
-  assert.deepEqual(chatRules.filter((m) => /^background:var\(--amber-bg\);$/.test(m[2].trim())).map((m) => m[1].trim()), ['.chat-rc-q:where(:not(.chat-q)) :is(.qpanel,.qblock)']);
+  // Run 4 (D21): the run card's question is a divided section with no tint (the status line's "?" says Needs you).
+  assert.deepEqual(chatRules.filter((m) => /^background:var\(--amber-bg\);$/.test(m[2].trim())).map((m) => m[1].trim()), []);
   // P2's ask-card field metrics stand down inside the question, so its fields keep the Runs page's own.
-  assert.ok(css.includes('.ask-card :is(select,input[type="text"],textarea):where(:not(.chat-rc-q *)){font-size:12.5px;padding:8px 11px;border-radius:var(--r-sm);}'));
+  assert.ok(css.includes('.ask-card :is(select,input[type="text"],textarea):where(:not(.chat-rc-q *)){font-size:12px;padding:8px 11px;border-radius:var(--r-sm);}'));
 });
 
 // ---- The question's styles, replayed over style.css. jsdom computes no cascade, so (as test/ui-functional-css.test.mjs
@@ -740,7 +741,7 @@ function askMounts(kind) {
   return { chat: card.el.querySelector('.chat-rc-q'), runs: runs.querySelector('.rd-questions') };
 }
 
-test('chat run card CSS: one border level (review B2): the question\'s boxes are tinted, not boxed (the question amber, the form --field), the pill footer keeps its 1px amber line, the Runs page keeps its grey line, and no amber wash anywhere in the chat question', async () => {
+test('chat run card CSS: one border level (review B2): the question\'s boxes are bare, not boxed (the question no tint, the form --field), the pill footer keeps its 1px amber line, the Runs page keeps its grey line, and no amber wash anywhere in the chat question', async () => {
   const look = (el) => ({ bg: cascaded(el, ['background', 'background-color']), line: cascaded(el, ['border', 'border-color']) });
   await checkRows(ASK_KINDS.map((kind) => ({ name: kind, run: () => {
     const { chat, runs } = askMounts(kind);
@@ -756,7 +757,7 @@ test('chat run card CSS: one border level (review B2): the question\'s boxes are
     assert.equal(cards(chat).length, kind === 'clarify' || kind === 'form' ? 2 : 1);
     for (const el of cards(chat)) {
       const want = el.matches('.qpanel-foot') ? { bg: 'var(--panel)', line: 'var(--amber-line)' }
-        : { bg: el.matches('.af-form') ? 'var(--field)' : 'var(--amber-bg)', line: '0px' };
+        : { bg: el.matches('.af-form') ? 'var(--field)' : 'none', line: '0px' };
       assert.deepEqual(look(el), want, `chat ${el.className}`);
     }
     for (const el of cards(runs)) assert.deepEqual(look(el), { bg: 'var(--panel)', line: '1px solid var(--line)' }, `Runs page ${el.className}`);
@@ -830,7 +831,7 @@ test('chat run card CSS: the question heading is the Runs page heading (amber di
         }
       }
       const { chat } = askMounts('clarify');
-      assert.equal(cascaded(chat.querySelector('.qblock > .qfree'), ['padding']), '11px 16px 11px 54px', 'the pencil tile');
+      assert.equal(cascaded(chat.querySelector('.qblock > .qfree'), ['padding']), '6px 12px', 'run 4 D7: the shared 32px field');
       assert.equal(cascaded(chat.querySelector('.qanswered'), ['color']), 'var(--ink)');
     } },
   ]);
@@ -961,10 +962,10 @@ test('chat run card CSS: the result counts and error, a hovered file row or Stop
   const mixed = (tok) => `color-mix(in srgb, var(${tok}) 85%, var(--ink))`;
   for (const rule of [
     `.chat-rc-add{color:${mixed('--green-ink')};}`,
-    `.chat-rc-del{color:${mixed('--red-ink')};}`,
-    `.chat-rc-res-err{margin-right:auto;font-size:12px;color:${mixed('--red-ink')};}`,
-    '.chat-rc-agent-model{min-width:0;flex:0 100000 auto;overflow:hidden;text-overflow:ellipsis;color:var(--ink-2);font-family:var(--mono);font-size:10.5px;font-weight:500;}',
-    '.chat-rc-deciding{padding:28px 16px;text-align:center;color:var(--ink-2);font-size:12.5px;}',
+    '.chat-rc-del{color:var(--red-ink-soft);}',
+    '.chat-rc-res-err{margin-right:auto;font-size:12px;color:var(--red-ink-soft);}',
+    '.chat-rc-agent-model{min-width:0;flex:0 100000 auto;overflow:hidden;text-overflow:ellipsis;color:var(--ink-2);font-family:var(--mono);font-size:11px;font-weight:500;}',
+    '.chat-rc-deciding{padding:28px 16px;text-align:center;color:var(--ink-2);font-size:12px;}',
   ]) assert.ok(p3.includes(rule), rule);
   assert.ok(!p3.includes('.chat-rc-stop:hover'), 'Stop takes the .btn-danger hover, no rule of its own');
   assert.ok(css.includes(':is(.rd-questions,.chat-rc-q) .qanswered{font:600 var(--fs-body) var(--sans);color:var(--ink);}'));
@@ -1542,7 +1543,8 @@ test('chat run card: a run without a project names No project and lists its file
   doc.body.appendChild(card.el);
   const where = card.el.querySelector('.chat-rc-where');
   assert.equal(where.querySelector('.kind-chip.kind-none').textContent, 'No project');
-  assert.equal(where.textContent, 'No project · #a41c09d2');
+  assert.equal(where.textContent, 'No project');
+  assert.equal(where.title, 'Run a41c09d2');
   const list = card.el.querySelector('.chat-rc-arts-list');
   assert.equal(list.querySelector('.cap').textContent, 'Artifacts · 2');
   assert.equal(list.getAttribute('aria-label'), 'Artifacts');

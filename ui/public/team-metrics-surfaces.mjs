@@ -50,7 +50,7 @@ function recordSwitch(doc, s) {
   // Personal, per-machine opt-out — worded as a share choice so it reads as
   // distinct from the team-level setup button of the Off state.
   cb.setAttribute('aria-label', `Include my runs for ${s.name}`);
-  label.append(cb, h(doc, 'span', 'switch switch-sm'), h(doc, 'span', 'txt', 'Include my runs'));
+  label.append(cb, h(doc, 'span', 'switch'), h(doc, 'span', 'txt', 'Include my runs'));
   return label;
 }
 
@@ -240,7 +240,7 @@ export function renderEnableDialogBody({ project, origin, candidates = [], mode 
   // {mode:'here'} against a branch that already exists, which enable answers with 'joined' — the
   // dialog would close as if it had worked while the delegation stayed broken.
   where.append(radioCard(doc, { name: 'tm-where', value: 'here', checked: mode === 'here' && !change, disabled: change, title: 'Here, on this repository',
-    body: ['Creates an orphan branch ', { code: 'worca-metrics' }, ' on origin holding only ', { code: '.worca-metrics/' }, '. Every finished run — done, failed or stopped — is pushed there as one file, by every teammate whose Worca sees the branch.'] }));
+    body: ['Creates an orphan branch ', { code: 'worca-metrics' }, ' on origin holding only ', { code: '.worca-metrics/' }, '. Every finished run (done, failed or stopped) is pushed there as one file, by every teammate whose Worca sees the branch.'] }));
   const delegateCard = radioCard(doc, { name: 'tm-where', value: 'delegate', checked: mode === 'delegate', disabled: candidates.length === 0,
     title: 'In another project that already records',
     body: ["A tiny marker branch on this origin points teammates at the target. This project's single-project runs land on the target's branch, still labelled with this project."] });
@@ -254,8 +254,8 @@ export function renderEnableDialogBody({ project, origin, candidates = [], mode 
     delegateCard.append(wrap);
     delegateCard.append(h(doc, 'small', 'hint', "Only projects that record locally are listed. Attribution follows the target's policy (git user name)."));
   }
-  if (change) where.append(h(doc, 'small', 'hint', 'This project already has a marker branch — pick a new target.'));
-  if (!candidates.length) where.append(h(doc, 'small', 'hint', 'No project records locally yet — record here first, then point other projects at it.'));
+  if (change) where.append(h(doc, 'small', 'hint', 'This project already has a marker branch. Pick a new target.'));
+  if (!candidates.length) where.append(h(doc, 'small', 'hint', 'No project records locally yet. Record here first, then point other projects at it.'));
   root.append(where);
 
   if (mode === 'here') {
@@ -269,7 +269,7 @@ export function renderEnableDialogBody({ project, origin, candidates = [], mode 
     root.append(attr);
   }
   const warn = h(doc, 'div', 'hint tm-warn');
-  warn.append('If your repository protects branches by wildcard, exempt ', code(doc, 'worca-metrics'), ' first — Worca pushes to it directly, without a pull request.');
+  warn.append('If your repository protects branches by wildcard, exempt ', code(doc, 'worca-metrics'), ' first. Worca pushes to it directly, without a pull request.');
   root.append(warn);
   return root;
 }

@@ -58,10 +58,10 @@ export function focusFeatureControl(host, act) {
  *         pause?(target, btn) → Promise<string|void> (a reason when refused), stop?(target), error?: string }
  * omit: the button keys the host's run-model footer already shows (pause / stop / resume), so none shows twice.
  */
-export function paintFeatureActions(doc, host, c, deps, { omit = [] } = {}) {
+export function paintFeatureActions(doc, host, c, deps, { omit = [], menu: withMenu = true } = {}) {
   const buttons = featureButtons(c).filter((b) => !omit.includes(b.key)
     && (b.key === 'pause' ? !!deps.pause : b.key === 'stop' ? !!deps.stop : true));
-  const menu = featureMenu(c);
+  const menu = withMenu ? featureMenu(c) : [];
   // Set before the signature check: a host hidden by the caller (run-card.mjs, a non-feature paint) must reappear
   // even when the controls it shows did not change. An error (a Ship as failure on a finished feature) shows on its own.
   host.hidden = !buttons.length && !menu.length && !deps.error;
@@ -144,4 +144,27 @@ export function paintFeatureActions(doc, host, c, deps, { omit = [] } = {}) {
   }
   host.appendChild(err);
   focusFeatureControl(host, had);
+}
+
+/** Run 4 (D18): the ⋯ items as entries for a menu outside the controls host (the group page's header ⋯), with the same
+ *  confirms and posts. `anchor` gets the focus back after a confirm (Chromium drops it to <body> when the dialog closes).
+ *  deps: { act(action, body) → Promise<{ok, error?}>, confirm(opts) → Promise<boolean>, openPlan(c), fail?(text) } */
+export function featureMenuItems(c, deps, anchor) {
+  const fail = deps.fail || (() => {});
+  const run = async (action, body) => {
+    const r = await Promise.resolve().then(() => deps.act(action, body)).catch(() => ({ ok: false }));
+    if (!r || !r.ok) fail((r && r.error) || FAILED);
+  };
+  const confirmed = async (opts, action) => {
+    const ok = await deps.confirm(opts);
+    if (anchor && anchor.isConnected) anchor.focus();
+    if (ok) await run(action, null);
+  };
+  const pick = {
+    replan: () => confirmed(REPLAN_CONFIRM, 'replan'),
+    cancel: () => confirmed(CANCEL_CONFIRM, 'cancel'),
+    'approve-each': () => run('approve-each', { on: !c.approveEach }),
+    plan: () => deps.openPlan(c),
+  };
+  return featureMenu(c).map((i) => ({ label: i.label, ...(i.checked != null ? { checked: i.checked } : {}), onSelect: () => pick[i.key]() }));
 }

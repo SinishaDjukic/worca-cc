@@ -10,7 +10,7 @@ const APPLIED = {
 export function renderChangesCard(doc, { state, card }, { onStart, onNotNow }) {
   const h = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
   const l = card.landing;
-  if (state === 'declined') { const s = h('div', 'ask-card-stub ask-actcard-stub', `Not now — ${l.title}`); s.dataset.changesCard = 'declined'; return s; }
+  if (state === 'declined') { const s = h('div', 'ask-card-stub ask-actcard-stub', `Not now: ${l.title}`); s.dataset.changesCard = 'declined'; return s; }
   const root = h('div', `ask-card ask-mcard ask-changescard is-${state}`);
   root.dataset.changesCard = state; root.dataset.landing = l.kind;
   const head = h('div', 'ask-mcard-head');

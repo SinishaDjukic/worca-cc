@@ -51,7 +51,7 @@ test('cell copy, actions and the Include my runs switch', () => {
   assert.ok(mineDel.querySelector('.tm-dot.grey'));
   assert.match(on.textContent, /On · since Sep 3 · 167 runs recorded/);
   const sw = on.querySelector('input.sw-input.tm-record');
-  assert.ok(sw && sw.checked); assert.equal(sw.nextElementSibling.className, 'switch switch-sm');
+  assert.ok(sw && sw.checked); assert.equal(sw.nextElementSibling.className, 'switch');
   assert.equal(on.querySelector('.tm-status').title, 'Disable for the whole team: git push origin --delete worca-metrics');
 
   const off = renderProjectTmCell({ ...base, enabled: false }, { doc });

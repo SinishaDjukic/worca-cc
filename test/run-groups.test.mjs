@@ -143,3 +143,15 @@ test('planning: null while slice 1 is the planning run; the origin run once slic
   assert.ok(!g.members.some((m) => m.pipelineId === f.s1), 'planning is not counted as a member');
   for (const u of listRunGroups().filter((x) => x.kind === 'user')) assert.equal(u.planning, null);
 });
+
+test('a member\'s stored PR carries its stored verdict (D3): Checks failing survives without a History PR', () => {
+  const f = featureWithTwoDone();
+  getDb().prepare('UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = ?, pr_verdict = ? WHERE id = ?')
+    .run('https://github.com/acme/web/pull/821', 821, 'OPEN',
+      JSON.stringify({ mergeable: 'MERGEABLE', checks: { state: 'failing', total: 12, failed: 3, pending: 0 } }), f.s1);
+  const m = listRunGroups().find((g) => g.id === f.id).members[0];
+  assert.deepEqual(m.pr, { url: 'https://github.com/acme/web/pull/821', number: 821, state: 'OPEN', mergeable: 'MERGEABLE',
+    checks: { state: 'failing', total: 12, failed: 3, pending: 0 } });
+  const plain = listRunGroups().find((g) => g.id === f.id).members[1];
+  assert.equal(plain.pr, null, 'no stored PR: still null');
+});

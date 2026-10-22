@@ -29,7 +29,7 @@ import { listPluginModels, allPluginModels, flattenPluginModelEnv } from './plug
 import { brokerEnabled } from './broker-client.mjs';
 // Team policy defaults (team-policy design §6, §8): read from the discovery CACHE only (a leaf module).
 import { policyCatalogModels, teamDefault } from './policy/cache.mjs';
-import { PREDEFINED_LIST_PRICES, CODEX_PRICES } from './list-prices.mjs';
+import { PREDEFINED_LIST_PRICES, CODEX_PRICES, codexCachedRate } from './list-prices.mjs';
 import { validateNightPatch } from './night/config.mjs';
 import { normalizeProjectActions, EMPTY_PROJECT_ACTIONS } from './actions/model.mjs';
 import { setCascadeModelOwnerReader, resolveSetting } from './settings-cascade.mjs';
@@ -600,7 +600,7 @@ export function liveCostRates(modelId) {
   const base = id.toLowerCase().replace(/\[1m\]$/, '').replace(/-\d{8}$/, '');
   if (PREDEFINED_LIST_PRICES[base]) return PREDEFINED_LIST_PRICES[base];
   const cx = CODEX_PRICES[id.toLowerCase()];
-  return cx ? { input: cx[0], output: cx[1], cacheRead: cx[0] / 10, cacheWrite: cx[0], cacheWrite1h: cx[0] } : null;
+  return cx ? { input: cx[0], output: cx[1], cacheRead: codexCachedRate(cx), cacheWrite: cx[0], cacheWrite1h: cx[0] } : null;
 }
 
 /**

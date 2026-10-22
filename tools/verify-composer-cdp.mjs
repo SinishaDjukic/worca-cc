@@ -555,6 +555,8 @@ try {
   await load();
   await ev(`(()=>{const {c}=window.__gv();c.select({kind:'node',id:'n_agent'});c.view.centerOn('n_agent');return 1;})()`);
   await settle('pop-select');
+  // A narrow stage can scroll the toolbar's More out of view: bring it in, as a user would.
+  await ev(`(()=>{const m=document.querySelector('.wfv-tb [data-tb="more"]');if(m)m.scrollIntoView({block:'nearest',inline:'nearest'});return 1;})()`); await settle('pop-more-visible');
   const more = await rect('.wfv-tb [data-tb="more"]');
   if (more) { await press(more.l + more.w / 2, more.t + more.h / 2); await mup(more.l + more.w / 2, more.t + more.h / 2); await settle('pop-open'); }
   const p17 = { more, pop: await rect('.wfv-pop'), stage: await rect('#wfv-stage'), dock: await rect('#wfv-dock'), tb: await rect('.wfv-tb') };
@@ -580,12 +582,12 @@ try {
       }
       await settle(`room-${width}`);
       room.push({ width, lib: await rect('#wfv-library'), stage: await rect('#wfv-stage'), tl: await rect('#wfv-stage .wfv-tl .wfv-bar'),
-        tr: await rect('#wfv-stage .wfv-tr .wfv-bar'), name: await ev(`document.getElementById('wfv-name').value`) });
+        tr: await rect('#wfv-stage .wfv-tr .wfv-bar'), main: await rect('main.main'), name: await ev(`document.getElementById('wfv-name').value`) });
     }
     await cdp('Emulation.clearDeviceMetricsOverride');
-    check(18, 'beside the 380px Library the stage keeps its room: ≥ 1030px at 1440 and ≥ 610px at 1024, and with Default open the top-left bar ends left of the top-right bar',
+    check(18, 'beside the 380px Library the stage keeps its room: the content area less the Library and the 8px padding and gap at 1440 and 1024, and with Default open the top-left bar ends left of the top-right bar',
       room.length === 2 && room.every((m) => !!m.lib && !!m.stage && !!m.tl && !!m.tr && Math.abs(m.lib.w - 380) < 0.6 && m.name === 'Default' && m.tl.r < m.tr.l)
-      && room[0].stage.w >= 1030 && room[1].stage.w >= 610, room);
+      && room.every((m) => !!m.main && m.stage.w >= m.main.w - 380 - 24 - 0.6), room);
   }
 
   // ---- (19) the Workflows tour walks the Library's selector and folders at 1440, 760 and 390 px ------------

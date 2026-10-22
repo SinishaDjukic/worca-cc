@@ -223,8 +223,8 @@ test('a pinned transcript stays at the bottom when its column grows with no fram
   ctx.panel.open({ threadId: TID });
   await ticks(ctx);
   ctx.flush();
-  const [ro] = ctx.resizeObservers;
   const col = ctx.doc.querySelector('.ask-transcript-col');
+  const ro = ctx.resizeObservers.find((o) => o.targets.includes(col)) || ctx.resizeObservers[0];   // the composer's scope button observes its row too
   assert.ok(ro.targets.includes(col), 'the panel observes the transcript column');
   const t = ctx.doc.querySelector('.ask-transcript');
   let sh = 1000;
@@ -412,8 +412,8 @@ test('the conversation column is observed too (the rail, the history column and 
   ctx.panel.open({ threadId: TID });
   await ticks(ctx);
   ctx.flush();
-  const [ro] = ctx.resizeObservers;
   const convo = ctx.doc.querySelector('.chat-convo');
+  const ro = ctx.resizeObservers.find((o) => o.targets.includes(convo)) || ctx.resizeObservers[0];
   assert.ok(ro.targets.includes(convo), 'the panel observes the conversation column');
   const t = ctx.doc.querySelector('.ask-transcript');
   let sh = 1000;

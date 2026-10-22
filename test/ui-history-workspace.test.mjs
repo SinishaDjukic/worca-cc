@@ -192,7 +192,7 @@ test('detail: a workspace run whose primary branch was dropped (no changes) show
   assert.equal(doc.querySelector('#hist-detail .hd-branch-copy').hidden, true, 'no copy button for a deleted branch');
   const base = doc.querySelector('#hist-detail .hd-base');
   assert.equal(base.hidden, false);
-  assert.match(base.textContent, /No branch — no changes/);
+  assert.match(base.textContent, /No branch: no changes/);
 });
 
 test('detail: a kept workspace branch still paints source → feature with a copy button', async () => {

@@ -412,7 +412,7 @@ test('Marketplaces tab: the ⋯ menu ends at its button with copy / external / t
   more.click();
   const menu = doc.querySelector('.wfv-menu');
   assert.equal(menu.style.left, '628px', 'align: end (SM17, as P5\'s ⋯ menu)');
-  assert.deepEqual([...menu.children].map((c) => c.className), ['wfv-menu-item', 'wfv-menu-item', 'wfv-menu-sep', 'wfv-menu-item is-danger']);
+  assert.deepEqual([...menu.children].map((c) => c.className), ['menu-item wfv-menu-item', 'menu-item wfv-menu-item', 'menu-sep wfv-menu-sep', 'menu-item wfv-menu-item is-danger']);
   assert.deepEqual([...menu.querySelectorAll('.wfv-menu-ic')].map((s) => s.innerHTML), ['copy', 'external', 'trash'].map((n) => iconSvg(n, 16)));
   pick(doc, 'Remove…'); await settle();
   const err = dialog(doc).querySelector('.mk-dlg-err');

@@ -165,11 +165,11 @@ test('placeholder ownership: clearing gives back only a placeholder this add-on 
   s.ctl.set('run');
   assert.equal(s.input.placeholder, 'Describe the task…');
   // P3's direction chip set its own placeholder in the same flush (it registered first, so it painted first).
-  s.input.placeholder = 'Tell the run what to change — the next step reads it';
+  s.input.placeholder = 'Tell the run what to change. The next step reads it';
   const n = s.ph.length;
   s.ctl.clear();
   assert.equal(s.ph.length, n, 'not ours any more: no setPlaceholder(null)');
-  assert.equal(s.input.placeholder, 'Tell the run what to change — the next step reads it');
+  assert.equal(s.input.placeholder, 'Tell the run what to change. The next step reads it');
   s.input.placeholder = DEFAULT_PH;
   s.ctl.set('run');
   s.ctl.clear();

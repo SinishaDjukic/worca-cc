@@ -23,21 +23,20 @@ export function openMenu({ doc, anchor, items, align = 'start', side = 'bottom',
   closeMenus();
   const win = doc.defaultView || globalThis;
   const el = doc.createElement('div');
-  el.className = 'wfv-menu';
+  el.className = 'menu wfv-menu';
   el.setAttribute('role', 'menu');
   if (label) el.setAttribute('aria-label', label);
   el.dataset.canvasKeys = 'off';
   const buttons = [];
   for (const it of items) {
-    if (it.sep) { const s = doc.createElement('div'); s.className = 'wfv-menu-sep'; s.setAttribute('role', 'separator'); el.appendChild(s); continue; }
-    if (it.header) { const h = doc.createElement('div'); h.className = 'wfv-menu-h'; h.textContent = it.header; el.appendChild(h); continue; }
+    if (it.sep) { const s = doc.createElement('div'); s.className = 'menu-sep wfv-menu-sep'; s.setAttribute('role', 'separator'); el.appendChild(s); continue; }
+    if (it.header) { const h = doc.createElement('div'); h.className = 'menu-h wfv-menu-h'; h.textContent = it.header; el.appendChild(h); continue; }
     const b = doc.createElement('button');
     b.type = 'button';
-    b.className = 'wfv-menu-item';
+    b.className = it.danger ? 'menu-item wfv-menu-item is-danger' : 'menu-item wfv-menu-item';
     b.setAttribute('role', it.checked == null ? 'menuitem' : 'menuitemradio');
     if (it.checked != null) b.setAttribute('aria-checked', it.checked ? 'true' : 'false');
     b.tabIndex = -1;
-    if (it.danger) b.classList.add('is-danger');   // a destructive pick (marketplace P3)
     if (it.icon) b.appendChild(icon(doc, it.icon, 16, 'ic wfv-menu-ic'));   // an icons.mjs glyph before the label
     const l = doc.createElement('span');
     l.className = 'wfv-menu-l';

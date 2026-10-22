@@ -67,7 +67,7 @@ export function createQuickActions({ doc, deps, getRuns = () => ({ live: [], fin
   function tile(id, label, icon, badge) {
     const b = doc.createElement('button');
     b.type = 'button';
-    b.className = 'chat-home-act';
+    b.className = 'btn btn-lg chat-home-act';
     b.dataset.minLevel = ACTION_LEVEL[id] || 'simple';
     if (ACTION_NEEDS_GIT.includes(id)) b.dataset.needsGit = '';
     b.appendChild(homeIcon(doc, icon, 20));

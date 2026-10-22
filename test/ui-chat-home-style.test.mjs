@@ -30,8 +30,9 @@ test('quick actions: one row of label-sized 40px tiles (icon, label, badge inlin
   const b = block();
   assert.match(b, /\.chat-home-actions\{display:flex;flex-wrap:nowrap;justify-content:center;gap:8px;overflow:hidden;\}/);
   assert.match(b, /\.chat-home-act\[data-overflow\]\{display:none;\}/);
-  assert.match(b, /\.chat-home-act\{display:flex;flex-direction:row;[^}]*flex:none;[^}]*min-height:40px;[^}]*border:1px solid var\(--line-2\);border-radius:var\(--r-md\);/);
-  assert.match(b, /\.chat-home-act:hover\{background:var\(--hover\);\}/);
+  // F-15: the tile wears .btn.btn-lg in markup (40px, hairline border, hover tint); the hook sets layout only.
+  assert.match(b, /\.chat-home-act\{display:flex;flex-direction:row;[^}]*flex:none;[^}]*text-align:left;\}/);
+  assert.doesNotMatch(b.match(/\.chat-home-act\{[^}]*\}/)[0], /min-height|padding|border|background|color|font/);
   // Web UI review: "Shaper" broke as "Shap / er" beside its Labs badge. The label never shrinks or wraps;
   // the badge (overflow:hidden, ellipsis) is what gives way.
   assert.match(b, /\.chat-home-act-l\{flex:none;white-space:nowrap;\}/);

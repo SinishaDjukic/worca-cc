@@ -27,7 +27,8 @@ async function boot(fetchHandler = handler) {
   await ctx.settle();
   return ctx;
 }
-const pageOf = (ctx) => ctx.window.document.querySelector('[data-view="feature"] .feature-page');
+// Run 3 (D1): the group page renders inside the Runs pane.
+const pageOf = (ctx) => ctx.window.document.querySelector('#runs-pane #group-detail');
 
 test('#feature/:id for an existing feature renders the group page (Runs tab first)', async () => {
   const ctx = await boot();
@@ -35,8 +36,9 @@ test('#feature/:id for an existing feature renders the group page (Runs tab firs
   await ctx.settle(6);
   const gp = pageOf(ctx).querySelector('.gpage');
   assert.ok(gp, 'the group page rendered');
+  assert.ok(ctx.window.document.querySelector('#runs-pane[data-kind="group"]'), 'the pane shows the group page');
   assert.equal(gp.querySelector('.gpage-title').textContent, 'Run tags');
-  assert.equal(gp.querySelector('.kind-chip').textContent, 'Feature · 2 runs');
+  assert.equal(gp.querySelector('.kind-chip').textContent, 'Feature');   // run 3 (D7): the group's kind
   assert.equal(gp.querySelector('.rd-tab[aria-selected="true"]').dataset.tab, 'runs');
   assert.equal(gp.querySelector('.gpage-ship').textContent, 'Merge in order 1 → 2, or ship as one PR');
   ctx.go('feature/feat_1/overview');
@@ -52,15 +54,16 @@ test('#feature/:id for an unknown id says so; #group/:id renders a user group wi
   const ctx = await boot();
   ctx.go('feature/feat_gone');
   await ctx.settle(6);
-  assert.equal(pageOf(ctx).textContent.trim(), 'This feature no longer exists. Open the Runs list');
+  assert.equal(pageOf(ctx).querySelector('.feature-page-gone').textContent.trim(), 'This feature no longer exists. Open the Runs list');
+  assert.ok(pageOf(ctx).querySelector('.gpage-bar .gpage-back'), 'the gone state keeps the bar\'s Back');
   ctx.go('group/g_1');
   await ctx.settle(6);
   const gp = pageOf(ctx).querySelector('.gpage');
-  assert.equal(gp.querySelector('.kind-chip').textContent, 'Group · 2 runs');
+  assert.equal(gp.querySelector('.kind-chip').textContent, 'Group');
   assert.equal(gp.querySelector('.rd-tab[data-tab="overview"]').hidden, true);
   ctx.go('group/p:gone');
   await ctx.settle(6);
-  assert.equal(pageOf(ctx).textContent.trim(), 'This chain has finished. Its runs are in the Runs list. Open the Runs list');
+  assert.equal(pageOf(ctx).querySelector('.feature-page-gone').textContent.trim(), 'This chain has finished. Its runs are in the Runs list. Open the Runs list');
 });
 
 test('offline: a failed /api/run-groups shows the error with Try again, not "no longer exists" (§5a.2)', async () => {
@@ -126,7 +129,7 @@ test('#group/:chainId deep link loads the chains first; never "no longer exists"
   await ctx.settle(8);
   const gp = pageOf(ctx).querySelector('.gpage');
   assert.ok(gp, 'the chain page rendered');
-  assert.equal(gp.querySelector('.kind-chip').textContent, 'Chain · 2 runs');
+  assert.equal(gp.querySelector('.kind-chip').textContent, 'Chain');
 });
 
 test('#feature/:id renders the group page with the Shaper flag off, without Overview', async () => {

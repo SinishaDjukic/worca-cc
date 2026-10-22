@@ -133,8 +133,8 @@ function textWidget(item, ctx) {
   // The engine tells the surface ONLY that the variable is set (`envSet`) — never its value.
   if (item.secret === true && item.envDefault) {
     input.placeholder = item.envSet
-      ? 'Using $' + item.envDefault + ' from the environment — type to override'
-      : '$' + item.envDefault + ' is not set — paste a key or leave empty to skip';
+      ? 'Using $' + item.envDefault + ' from the environment. Type to override'
+      : '$' + item.envDefault + ' is not set. Paste a key or leave empty to skip';
   }
   if (s.maxLength != null) input.maxLength = Number(s.maxLength);
   input.value = current;

@@ -342,7 +342,7 @@ async function openFeaturePage({ server = featureServer(), runs = [] } = {}) {
   await ctx.settle();
   ctx.go('feature/feat_1/overview');                // the group page's Overview hosts the Shaper view (slice 4, D14)
   await ctx.settle(6);
-  const page = ctx.window.document.querySelector('[data-view="feature"] .feature-page');
+  const page = ctx.window.document.querySelector('#group-detail');
   return { ctx, server, page };
 }
 
@@ -394,8 +394,8 @@ test('#feature with the gate off still renders the group page, without Overview 
   ctx.go('feature/feat_1');
   await ctx.settle(4);
   assert.deepEqual(server.gets, [], 'no Shaper read with the flag off');
-  const view = ctx.window.document.querySelector('[data-view="feature"]');
-  assert.equal(view.classList.contains('hidden'), false);
+  assert.equal(ctx.window.document.querySelector('[data-view="runs"]').classList.contains('hidden'), false);
+  const view = ctx.window.document.querySelector('#group-detail');
   assert.ok(view.querySelector('.gpage'));
   assert.equal(view.querySelector('.gpage .rd-tab[data-tab="overview"]').hidden, true);
 });
@@ -443,14 +443,18 @@ test('group page: a ⋯ pick of Ask before each run posts approve-each {on:false
   const { ctx, page } = await openFeaturePage({ server });
   const doc = ctx.window.document;
   const item = () => [...doc.querySelectorAll('.wfv-menu-item')].find((b) => b.textContent.trim() === 'Ask before each run');
-  click(ctx, page.querySelector('[data-act="feature-more"]'));
+  click(ctx, page.querySelector('.gpage-bar .gpage-more'));
+  await ctx.settle(8);
+  assert.equal(page.querySelector('[data-act="feature-more"]'), null, 'run 4 D17: the Overview draws no ⋯ of its own');
+  assert.equal(page.querySelector('.shape-feature-order'), null, 'run 4 D17: the merge order stays on the Runs tab');
   assert.equal(item().getAttribute('aria-checked'), 'true');
   click(ctx, item());
   await ctx.settle(8);
   assert.deepEqual(server.posts, [{ id: 'feat_1', action: 'approve-each', body: { on: false } }]);
   ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
   await ctx.settle(6);
-  click(ctx, page.querySelector('[data-act="feature-more"]'));
+  click(ctx, page.querySelector('.gpage-bar .gpage-more'));
+  await ctx.settle(8);
   assert.equal(item().getAttribute('aria-checked'), 'false');
 });
 
@@ -460,7 +464,8 @@ test('Open the plan opens the origin run\'s newest plan artifact in the popup (a
     const inner = server.fetchHandler;
     server.fetchHandler = (url, opts) => (url === '/api/runs/p1/artifacts' ? res(200, { runId: 'p1', artifacts: rows, truncated: false }) : inner(url, opts));
     const { ctx, page } = await openFeaturePage({ server });
-    click(ctx, page.querySelector('[data-act="feature-more"]'));
+    click(ctx, page.querySelector('.gpage-bar .gpage-more'));
+    await ctx.settle(8);
     click(ctx, [...ctx.window.document.querySelectorAll('.wfv-menu-item')].find((b) => b.textContent.trim() === 'Open the plan'));
     await ctx.settle(8);
     return ctx;
