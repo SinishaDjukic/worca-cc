@@ -93,3 +93,19 @@ test('PATCH /api/config keeps accepting nightMode (compatibility)', async () => 
   assert.deepEqual(g.body.effective['nightMode.strategy'], { value: 'weights', source: 'project' });
   await call('PATCH', '/api/config', { projectDir, nightMode: null });
 });
+
+test('smartNaming: a project overrides pattern and types only; null restores the inherited values', async () => {
+  const { smartNaming } = await import('../src/core/settings.mjs');
+  const url = `/api/projects/${key}/settings`;
+  const set = await call('PATCH', url, { smartNaming: { types: ['docs'], pattern: '{type}/{ticket}-{slug}' } });
+  assert.equal(set.status, 200);
+  assert.deepEqual(smartNaming({ projectDir }).types, ['docs']);
+  assert.equal(smartNaming({ projectDir }).pattern, '{type}/{ticket}-{slug}');
+  assert.equal(smartNaming().pattern, '{type}/{slug}', 'the user layer is untouched');
+  const refused = await call('PATCH', url, { smartNaming: { addRunId: true } });
+  assert.equal(refused.status, 400);
+  assert.match(refused.body.error, /per user/);
+  assert.equal((await call('PATCH', url, { smartNaming: { pattern: '{type}/x' } })).status, 400);
+  assert.equal((await call('PATCH', url, { smartNaming: null })).status, 200);
+  assert.deepEqual(smartNaming({ projectDir }).types, ['feat', 'fix', 'chore', 'docs', 'refactor', 'test']);
+});

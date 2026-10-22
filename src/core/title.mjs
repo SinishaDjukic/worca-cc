@@ -196,7 +196,7 @@ export async function auxTextCall({ systemPrompt, prompt, model, engine = null }
       // env everywhere the id is used.
       modelEnv: engine ? undefined : resolveModelEnv(model, { tag: opts.bridgeTag || undefined }),   // tag: read a bridged model's upstream cost back
       ...(engine ? { engine, sandbox: 'read-only' } : {}),
-      effort: (engine && typeof opts.effort === 'string' && opts.effort) || AUX_EFFORT,
+      effort: opts.effortOverride || (engine && typeof opts.effort === 'string' && opts.effort) || AUX_EFFORT,
       permissionMode: opts.permissionMode || 'acceptEdits',
       allowedTools: [],            // empty → no --allowedTools flag → claude defaults; pure text gen
       signal: opts.signal,

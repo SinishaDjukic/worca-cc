@@ -10,7 +10,9 @@ import { readWorkflow as realReadWorkflow, assertRunnableWorkflow as realAssertR
 import { readGuardrailSet as realReadGuardrailSet } from '../guardrail-store.mjs';
 import { validateMemoryScope } from '../memory-sync.mjs';
 import { WORKSPACE_SCAN_WORKFLOW_ID, GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW, AUTO_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from '../graph/builtin-workflows.mjs';
-import { sanitizeBranchName, suggestBranchName } from '../worktree.mjs';
+import { sanitizeBranchName } from '../worktree.mjs';
+import { deriveBranchName } from '../naming.mjs';
+import { flagEnabled } from '../flags.mjs';
 import { sanitizeTitle } from '../title.mjs';
 import { ASK_LIMITS } from './limits.mjs';
 import { resolveScheduleSpec } from './schedule-spec.mjs';
@@ -46,7 +48,6 @@ import { NO_PROJECT_ERRORS } from '../../shared/no-project.mjs';
 import { ensureHouseBrief } from '../house-brief.mjs';
 import { presetProposalInput, PRESET_PROPOSAL_ERRORS } from './proposal-preset.mjs';
 import { readPreset as readPresetRow } from '../run-presets-store.mjs';
-import { flagEnabled } from '../flags.mjs';
 
 export const PROPOSAL_ERRORS = Object.freeze({
   bothTargets: 'provide workspaceId OR projectKey, not both',
@@ -493,9 +494,16 @@ export function createProposalValidator({
       || (runSource ? sanitizeTitle(runSource.title || `${runSource.taskId}`) : '')
       || 'Proposed run';
     let featureBranch = none ? null : typeof inp.featureBranch === 'string' ? sanitizeBranchName(inp.featureBranch) : '';
+    // Smart run naming: a branch derived here (not given by the model or the person) is marked, so Start can tell the
+    // server it is a suggestion that must stay unique. Only while the flag is on: a flag-off card keeps its shape.
+    let featureBranchDerived = false;
     if (!none && !featureBranch) {
       const m = typeof cardId === 'string' ? CARD_HEX_RE.exec(cardId) : null;
-      featureBranch = suggestBranchName({ prompt: brief || title, title, pipelineId: m ? m[1] : '' });
+      featureBranch = deriveBranchName({
+        prompt: brief || title, title, pipelineId: m ? m[1] : '',
+        ticket: runSource?.taskId || '', projectDir: target.projectDir || undefined,
+      });
+      featureBranchDerived = flagEnabled('smartRunNaming');
     }
     if (inp.sameAsSource !== undefined && inp.sameAsSource !== null && typeof inp.sameAsSource !== 'boolean') errors.push('sameAsSource must be true or false');
     const sameAsSource = !none && inp.sameAsSource === true;
@@ -559,6 +567,7 @@ export function createProposalValidator({
       ok: true,
       ...(signedOutNote ? { notes: [PROPOSAL_ERRORS.signedOutPlain] } : {}),
       card: { ...target, workflowId: wf.id, workflowName: wf.name, guardrailsId, memoryScope, brief, title, sourceBranch, featureBranch, sourceBranchByKey,
+        ...(featureBranchDerived ? { featureBranchDerived: true } : {}),
         note: cleanNote(inp.note), attachments: pickCardAttachments(inp.attachmentIds, attachments),
         // Only a scheduled proposal carries the key: a plain run card keeps its shape byte for byte.
         ...(spec.schedule ? { schedule: spec.schedule } : {}),

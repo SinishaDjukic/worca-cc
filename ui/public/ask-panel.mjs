@@ -5313,7 +5313,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const feature = rootEl.querySelector('.ask-card-feature').value.trim();
     const same = rootEl.querySelector('.ask-card-same-source');
     if (same && same.checked) body.sameAsSource = true;   // the run auto-names its hidden branch
-    else if (feature) body.featureBranch = feature;
+    else if (feature) {
+      body.featureBranch = feature;
+      // Smart run naming: the card's own derived name, still untouched, is a suggestion (kept unique at start).
+      if (card.featureBranchDerived === true && feature === card.featureBranch) body.featureBranchSuggested = true;
+    }
     if (local.target === 'workspace') {
       body.workspaceId = rootEl.querySelector('.ask-card-workspace-select').value;
       const src = rootEl.querySelector('.ask-card-source-input');

@@ -152,7 +152,7 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
     // key, each with a value its setter accepts as "no change / default".
     const probes = {
       projectsRoot: '', chat: {}, pipelineCostLimitUsd: '', totalCostLimitUsd: '', costLimitResetPeriod: '', humanRateUsdPerHour: '',
-      askMaxTurns: '', askMaxBudgetUsd: '', askWeb: null, debugSpawnEnabled: false, resumeAfterUsageLimit: false,
+      askMaxTurns: '', askMaxBudgetUsd: '', askWeb: null, smartNaming: null, debugSpawnEnabled: false, resumeAfterUsageLimit: false,
       titleModel: '', hideBuiltinModels: false, theme: '', uiLevel: '',
       autoWorkflowModel: '',
       prDescriptionModel: '',
@@ -242,6 +242,23 @@ test('GET has askWeb; POST askWeb validates, saves, and null clears', async () =
   const bad = await postJson({ askWeb: { enabled: true, allowedDomains: ['nope'] } });
   assert.equal(bad.status, 400); assert.match((await bad.json()).error, /not a host name/);
   assert.deepEqual((await (await postJson({ askWeb: null })).json()).askWeb, { enabled: false, anyHost: false, allowedDomains: [], search: null });
+});
+
+test('smartNaming: GET has defaults, POST saves a partial block, rejects a bad pattern, null clears', async () => {
+  const get = async () => (await fetch(`${base}/api/settings`)).json();
+  const g = (await get()).smartNaming;
+  assert.equal(g.pattern, '{type}/{slug}'); assert.equal(g.trigger, 'debounce'); assert.equal(g.addRunId, false);
+  const ok = await postJson({ smartNaming: { pattern: '{type}/{ticket}-{slug}', types: ['fix', 'feat'] } });
+  assert.equal(ok.status, 200);
+  const saved = (await get()).smartNaming;
+  assert.equal(saved.pattern, '{type}/{ticket}-{slug}'); assert.deepEqual(saved.types, ['fix', 'feat']);
+  const bad = await postJson({ smartNaming: { pattern: '{type}/no-slug' } });
+  assert.equal(bad.status, 400);
+  const body = await bad.json();
+  assert.match(body.error, /\{slug\}/); assert.equal(body.field, 'smartNaming');
+  assert.equal((await postJson({ smartNaming: { types: ['Bad Type'] } })).status, 400);
+  assert.equal((await get()).smartNaming.pattern, '{type}/{ticket}-{slug}', 'a refused save writes nothing');
+  assert.deepEqual((await (await postJson({ smartNaming: null })).json()).smartNaming.types, ['feat', 'fix', 'chore', 'docs', 'refactor', 'test']);
 });
 
 // #555: a POST /api/settings validation failure answers 400 { error, field }, where `field` is the

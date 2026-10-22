@@ -274,6 +274,8 @@ import { createTagInput, tagChip, fetchTagVocabulary, createDimensionSlots, crea
 import { normaliseTags, formatTag, parseTag } from '../../src/shared/run-tags.mjs';
 import { splitByDimensions, tagGroupOptions, tagsProblemText } from '../../src/shared/tag-dimensions.mjs';
 import { createFlagsView, bindFlagSwitch } from './flags-view.mjs';
+import { createSmartNaming } from './smart-naming.mjs';
+import { renderPattern, patternProblem, PRESET_TYPES, TYPE_RE } from '../../src/shared/naming/pattern.mjs';
 import { createFlyout } from './side-flyout.mjs';
 import * as runPanel from './chat/run-panel.mjs';
 import { createTopnavSearch } from './topnav-search.mjs';
@@ -623,9 +625,13 @@ const readyFor = (pause, onLoad) => (pause?.reason === 'usage_limit' && pause?.l
 // ---------------------------------------------------------------------------
 // Elements
 // ---------------------------------------------------------------------------
+// Smart run naming (flag smartRunNaming): the New run form's title / branch suggestion controller, built at boot.
+// Declared above everything that reads it, so an early paint finds null instead of a TDZ.
+let smartNaming = null;
 const el = {
   form: $('#run-form'),
   keepAwakeSwitch: $('#keepAwakeSwitch'),
+  smartNamingSwitch: $('#smartNamingSwitch'),
   projectSelect: $('#projectSelect'),
   projectHint: $('#projectHint'),
   addProject: $('#add-project'),
@@ -649,8 +655,10 @@ const el = {
   folderMsg: $('#folderMsg'),
   folderScope: $('#folderScope'),
   title: $('#title'),
+  titleRetry: $('#titleSnRetry'), titleClear: $('#titleSnClear'),
   sourceBranch: $('#sourceBranch'),
   featureBranch: $('#featureBranch'),
+  branchType: $('#branchType'), branchTypeWrap: $('#branchTypeWrap'), branchRetry: $('#branchSnRetry'), branchClear: $('#branchSnClear'),
   sameAsSource: $('#sameAsSource'),
   presetSelect: $('#presetSelect'),
   presetChip: $('#preset-chip'),
@@ -7270,6 +7278,7 @@ function setTask(t) {
   if (el.sameAsSource && el.sameAsSource.checked !== !!t.sameAsSource) { el.sameAsSource.checked = !!t.sameAsSource; paintSameAsSource(); }
   scheduleMentionHighlight(el.prompt);
   scheduleMentionHighlight(el.promptMarkdown);
+  smartNaming?.reset({ keep: !!(t.title || '').trim() });   // a restored or cleared task drops our suggestions, keeps typed names
 }
 /** After a start: clear the submitted task — unless something new was typed while it started. */
 function clearTask(submitted) {
@@ -8127,6 +8136,7 @@ function projectOutcome() {
 /** New branch hint: the real names the run creates — one per project in a workspace, suffixed. */
 function paintFeatureHint() {
   if (!el.featureBranchHint) return;
+  if (smartNaming?.ownsBranchHint()) return;   // Smart run naming shows its own reason / warning there
   if (el.sameAsSource && el.sameAsSource.checked) { el.featureBranchHint.textContent = ''; return; }   // #sameAsSourceHint says what happens
   const f = el.featureBranch ? el.featureBranch.value.trim() : '';
   const ws = state.runTarget === 'workspace' ? state.workspaces.find((w) => w && w.id === state.selectedWorkspaceId) : null;
@@ -14692,6 +14702,7 @@ function buildRunBody() {
   };
   // Run on the source branch: a flag on the wire, never a feature name (the run auto-names its hidden branch).
   if (el.sameAsSource && el.sameAsSource.checked) { body.sameAsSource = true; delete body.featureBranch; }
+  else if (smartNaming) Object.assign(body, smartNaming.bodyExtras());   // Smart run naming: a still-suggested branch is marked
   if (target === 'workspace') {
     body.workspaceId = workspaceId;
     // Per-project source branches: { [projectKey]: branch }. Omit empties (the
@@ -14805,9 +14816,9 @@ el.form.addEventListener('submit', async (e) => {
     if (schedSync && typeof schedSync.beforeRun === 'boolean') body.syncBeforeStart = schedSync.beforeRun;
     if (schedSync && (schedSync.onDiverged === 'origin' || schedSync.onDiverged === 'fail')) body.syncOnDiverged = schedSync.onDiverged;
   }
-  if (!gitOn()) for (const k of ['sourceBranch', 'sourceBranchByKey', 'featureBranch', 'sameAsSource', 'sourceFromPrevious', 'syncBeforeStart', 'syncOnDiverged']) delete body[k];
-  if (target === 'none') for (const k of ['sourceBranch', 'sourceBranchByKey', 'featureBranch', 'sameAsSource', 'sourceFromPrevious', 'syncBeforeStart', 'syncOnDiverged']) delete body[k];   // schedule fields stay: the server's 400 shows in the card
-  if ((target === 'project' || target === 'workspace') && el.form.dataset.workMode === 'folder') for (const k of ['sourceBranch', 'sourceBranchByKey', 'featureBranch', 'sameAsSource', 'sourceFromPrevious', 'syncBeforeStart', 'syncOnDiverged']) delete body[k];
+  if (!gitOn()) for (const k of ['sourceBranch', 'sourceBranchByKey', 'featureBranch', 'featureBranchSuggested', 'featureBranchFallback', 'sameAsSource', 'sourceFromPrevious', 'syncBeforeStart', 'syncOnDiverged']) delete body[k];
+  if (target === 'none') for (const k of ['sourceBranch', 'sourceBranchByKey', 'featureBranch', 'featureBranchSuggested', 'featureBranchFallback', 'sameAsSource', 'sourceFromPrevious', 'syncBeforeStart', 'syncOnDiverged']) delete body[k];   // schedule fields stay: the server's 400 shows in the card
+  if ((target === 'project' || target === 'workspace') && el.form.dataset.workMode === 'folder') for (const k of ['sourceBranch', 'sourceBranchByKey', 'featureBranch', 'featureBranchSuggested', 'featureBranchFallback', 'sameAsSource', 'sourceFromPrevious', 'syncBeforeStart', 'syncOnDiverged']) delete body[k];
   // Run presets (#712): the run-only lane. Agent picks and loop budgets ride the per-run overlay and
   // human-in-the-loop its body key, so the project config never changes; every other key came from the form.
   if (state.preset) {
@@ -15277,6 +15288,7 @@ async function loadSettings() {
     paintNightSettings(data);
     paintSyncSettings(data);
     paintNetworkWaitSettings(data);
+    paintSmartNamingSettings(data);
     paintActionsSettings(data);
     paintDebugSpawnSettings(data);
     await paintEngineSettings(data);
@@ -16165,6 +16177,127 @@ document.getElementById('networkWaitSave')?.addEventListener('click', (e) => pos
 document.getElementById('networkWaitReset')?.addEventListener('click', (e) => postNetworkWait(
   { networkWait: null }, { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
 settingsCardDirty('networkWaitSave');
+
+// Settings › Runs › Smart run naming (Labs, flag smartRunNaming). The rows stay editable while the flag is off (muted), so a
+// team can prepare them. The master switch is the flag itself (bindFlagSwitch, below the Keep awake one).
+const snCard = () => document.getElementById('smart-naming-settings-card');
+const SN_PREVIEW = { type: 'fix', slug: 'safari-sso-redirect-loop', ticket: 'proj-123' };
+let snTypesOn = [];            // the enabled types, in order
+let snTypesAll = [];           // the toggles shown: the presets, then any custom type
+let snModelRows = null;        // the Claude catalog rows, fetched once
+function snPaintMuted() {
+  const card = snCard();
+  if (!card) return;
+  const off = !flagOn('smartRunNaming');
+  for (const row of card.querySelectorAll('.drows > :not(#smartNamingMasterRow)')) row.setAttribute('aria-disabled', off ? 'true' : 'false');
+}
+function snPaintPreview() {
+  const input = document.getElementById('smartNamingPattern');
+  const out = document.getElementById('smartNamingPreview');
+  if (!input || !out) return;
+  const problem = patternProblem(input.value.trim());
+  out.textContent = problem ? `Not usable: ${problem}.` : `Preview: ${renderPattern(input.value.trim(), SN_PREVIEW)}`;
+  out.classList.toggle('warn', !!problem);
+}
+function snPaintTypes() {
+  const host = document.getElementById('smartNamingTypes');
+  const value = document.getElementById('smartNamingTypesValue');
+  if (!host || !value) return;
+  value.value = snTypesOn.join(',');
+  host.replaceChildren(...snTypesAll.map((t) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'sn-type-chip'; b.textContent = t;
+    b.setAttribute('aria-pressed', String(snTypesOn.includes(t)));
+    b.addEventListener('click', () => {
+      const msg = document.getElementById('smartNamingMsg');
+      if (snTypesOn.includes(t) && snTypesOn.length === 1) { if (msg) msg.textContent = 'At least one type stays on.'; return; }
+      if (msg) msg.textContent = '';
+      snTypesOn = snTypesAll.filter((x) => (x === t ? !snTypesOn.includes(t) : snTypesOn.includes(x)));
+      snPaintTypes();
+      value.dispatchEvent(new window.Event('change', { bubbles: true }));
+    });
+    return b;
+  }), (() => {
+    const add = document.createElement('button');
+    add.type = 'button'; add.className = 'sn-type-chip'; add.textContent = '+ Add type';
+    add.addEventListener('click', () => {
+      const input = document.createElement('input');
+      input.type = 'text'; input.className = 'input mono'; input.maxLength = 16; input.setAttribute('aria-label', 'New type'); input.size = 10;
+      const take = () => {
+        const t = input.value.trim().toLowerCase();
+        const msg = document.getElementById('smartNamingMsg');
+        if (!t) { snPaintTypes(); return; }
+        if (!TYPE_RE.test(t)) { if (msg) msg.textContent = 'A type is a short lowercase word, such as perf.'; input.focus(); return; }
+        if (msg) msg.textContent = '';
+        if (!snTypesAll.includes(t)) snTypesAll = [...snTypesAll, t];
+        if (!snTypesOn.includes(t)) snTypesOn = [...snTypesOn, t];
+        snPaintTypes();
+        value.dispatchEvent(new window.Event('change', { bubbles: true }));
+      };
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); take(); } else if (e.key === 'Escape') snPaintTypes(); });
+      input.addEventListener('blur', take);
+      add.replaceWith(input);
+      input.focus();
+    });
+    return add;
+  })());
+}
+async function snPaintModel(stored, naming) {
+  const sel = document.getElementById('smartNamingModel');
+  const hint = document.getElementById('smartNamingModelHint');
+  if (!sel) return;
+  if (!snModelRows) {
+    try { const cfg = await safeJson(await fetch('/api/config')); snModelRows = (cfg?.models || []).filter((m) => m && !m.needsSignIn && (m.harnesses || [m.engine || 'claude']).includes('claude')); } catch { snModelRows = []; }
+  }
+  const opt = (v, label) => { const o = document.createElement('option'); o.value = v; o.textContent = label; return o; };
+  sel.replaceChildren(opt('', 'Auto: the cheapest ready Claude model'), ...snModelRows.map((m) => opt(m.id, m.label || m.id)));
+  if (stored?.model && !snModelRows.some((m) => m.id === stored.model)) sel.append(opt(stored.model, `${stored.model} (not in the catalog)`));
+  sel.value = stored?.model || '';
+  const base = 'Shown in Statistics as Naming, never billed to the run.';
+  hint.textContent = base;
+  if (flagOn('smartRunNaming')) {
+    const c = naming || await safeJson(await fetch('/api/naming/config').catch(() => null));
+    if (c && typeof c.estimatedUsd === 'number') hint.textContent = `About 300 tokens in, 30 out: ≈ $${c.estimatedUsd.toFixed(5)} per suggestion. ${base}`;
+  }
+  settingsCardPainted('smartNamingSave');
+}
+function paintSmartNamingSettings(data) {
+  const d = data && data.smartNaming;
+  const card = snCard();
+  if (!d || !card) return;
+  const set = (id, v) => { const n = document.getElementById(id); if (n) n.checked = !!v; };
+  set('smartNamingTitle', d.suggestTitle); set('smartNamingBranch', d.suggestBranch); set('smartNamingRunId', d.addRunId);
+  const trig = document.getElementById('smartNamingTrigger'); if (trig) trig.value = d.trigger;
+  const pat = document.getElementById('smartNamingPattern'); if (pat) pat.value = d.pattern;
+  snTypesOn = [...d.types];
+  snTypesAll = [...new Set([...PRESET_TYPES, ...d.types])];
+  snPaintPreview(); snPaintTypes(); snPaintMuted();
+  settingsCardPainted('smartNamingSave');
+  void snPaintModel(d.model, null);
+}
+function readSmartNamingForm() {
+  const model = document.getElementById('smartNamingModel')?.value || '';
+  const row = (snModelRows || []).find((m) => m.id === model);
+  const efforts = row && Array.isArray(row.efforts) ? row.efforts : [];
+  return {
+    suggestTitle: document.getElementById('smartNamingTitle').checked,
+    suggestBranch: document.getElementById('smartNamingBranch').checked,
+    addRunId: document.getElementById('smartNamingRunId').checked,
+    trigger: document.getElementById('smartNamingTrigger').value,
+    pattern: document.getElementById('smartNamingPattern').value.trim(),
+    types: [...snTypesOn],
+    model: model ? { model, effort: efforts[0] || null } : null,
+  };
+}
+function postSmartNaming(body, opts = {}) {
+  return postSettingsCard(body, { card: snCard(), paint: paintSmartNamingSettings, dirty: settingsCardDirty('smartNamingSave'), ...opts });
+}
+document.getElementById('smartNamingPattern')?.addEventListener('input', snPaintPreview);
+document.getElementById('smartNamingSave')?.addEventListener('click', (e) => postSmartNaming({ smartNaming: readSmartNamingForm() }, { button: e.currentTarget }));
+document.getElementById('smartNamingReset')?.addEventListener('click', (e) => postSmartNaming(
+  { smartNaming: null }, { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
+settingsCardDirty('smartNamingSave');
+onFlagChange('smartRunNaming', () => { snPaintMuted(); void snPaintModel({ model: document.getElementById('smartNamingModel')?.value || null }, null); });
 
 function paintAskSettings(data) {
   const turns = document.getElementById('askMaxTurns');
@@ -37772,6 +37905,7 @@ async function applyAskPrefill() {
   if (el.advancedConfig) el.advancedConfig.open = true;
   if (el.sameAsSource && el.sameAsSource.checked) { el.sameAsSource.checked = false; paintSameAsSource(); }
   if (el.featureBranch) el.featureBranch.value = p.featureBranch || '';
+  smartNaming?.reset({ keep: true });   // a prefilled name counts as typed: a later suggestion never overwrites it
   if (p.target === 'workspace') {
     // the per-member selects are rebuilt asynchronously on the change above
     // populateBranchSelect rebuilds each member select's options when its fetch
@@ -38243,6 +38377,30 @@ const offPresetsFlag = onFlagChange('runPresets', (on) => {
 });
 // Test hook: flags.mjs's listener map outlives a jsdom boot, so a suite unsubscribes the previous app first.
 if (typeof window !== 'undefined') window.__np = Object.assign(window.__np || {}, { offPresetsFlag });
+
+// Smart run naming (Labs): built once; every handler checks flagOn('smartRunNaming') itself, so it is inert while off.
+if (el.title && el.featureBranch && el.prompt && el.branchType && el.titleRetry) {
+  window.__np.offSmartNaming?.();
+  smartNaming = createSmartNaming({
+    doc: document, el, flagOn, icon,
+    getProjectDir: () => (state.runTarget === 'project' ? selectedProjectPath() || undefined : undefined),
+    api: async (method, path, body, signal) => {
+      try {
+        const res = await fetch(path, body === undefined ? { method, signal }
+          : { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal });
+        return res.ok ? await safeJson(res) : null;
+      } catch (err) { return err?.name === 'AbortError' ? { aborted: true } : null; }
+    },
+  });
+  window.__np.offSmartNaming = () => smartNaming?.dispose();
+}
+
+// Settings › Runs › Smart run naming: the master switch is the flag itself, one source with Settings › Labs.
+if (el.smartNamingSwitch) {
+  window.__np.offSmartNamingSwitch?.();
+  window.__np.offSmartNamingSwitch = bindFlagSwitch(el.smartNamingSwitch, 'smartRunNaming', {
+    api: (method, body) => mcpApi(method, '/api/flags', body), msgEl: $('#smartNamingMsg') });
+}
 
 // Settings › Runs › Keep awake (UI/UX review F): the keepAwake flag's own switch, one source with Settings › Labs.
 if (el.keepAwakeSwitch) {

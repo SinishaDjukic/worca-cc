@@ -68,6 +68,7 @@ import { validateNightPatch, NIGHT_TOGGLES } from './night/config.mjs';
 import { normalizeDomainList, normalizeDomainPattern, domainError, DOMAIN_LIST_MAX, RESERVED_KEY_VAR } from './web-allowlist.mjs';
 import { normaliseDimensions } from '../shared/tag-dimensions.mjs';
 import { normalizePins, storedPins } from '../shared/home-pins.mjs';
+import { DEFAULT_PATTERN, DEFAULT_TYPES, TYPE_RE, patternProblem } from '../shared/naming/pattern.mjs';
 
 /**
  * The real OS home base, honoring HOME/USERPROFILE so tests can sandbox it.
@@ -815,6 +816,60 @@ export async function setAskWeb(input) {
   return { askWeb: askWeb() };
 }
 
+// ── Smart run naming (src/core/naming.mjs, flag smartRunNaming) ───────────────
+// `smartNaming` = { suggestTitle, suggestBranch, model, pattern, types, trigger, addRunId }. The stored
+// block holds only what differs from the defaults. The project layer may hold `pattern` and `types` only.
+export const SMART_NAMING_DEFAULTS = Object.freeze({
+  suggestTitle: true, suggestBranch: true, model: null,
+  pattern: DEFAULT_PATTERN, types: Object.freeze([...DEFAULT_TYPES]), trigger: 'debounce', addRunId: false,
+});
+
+/** Validate + normalise a user-layer block (partial allowed). Throws Error with a field-ready message. */
+export function assertSmartNamingInput(input) {
+  if (!isObj(input)) throw new Error('smart run naming must be an object');
+  const out = {};
+  for (const k of ['suggestTitle', 'suggestBranch', 'addRunId']) {
+    if (k in input) { if (typeof input[k] !== 'boolean') throw new Error(`${k} must be true or false`); out[k] = input[k]; }
+  }
+  if ('pattern' in input) { const p = patternProblem(input.pattern); if (p) throw new Error(p); out.pattern = input.pattern.trim(); }
+  if ('types' in input) {
+    const t = input.types;
+    if (!Array.isArray(t) || !t.length || t.length > 20 || t.some((x) => typeof x !== 'string' || !TYPE_RE.test(x))) {
+      throw new Error('types must be 1 to 20 short lowercase words');
+    }
+    out.types = [...new Set(t)];
+  }
+  if ('trigger' in input) { if (!['debounce', 'manual'].includes(input.trigger)) throw new Error('trigger must be debounce or manual'); out.trigger = input.trigger; }
+  if ('model' in input) {
+    const m = input.model;
+    if (m !== null && !(m && typeof m.model === 'string' && m.model.trim() && (m.effort == null || typeof m.effort === 'string'))) throw new Error('model must be null or {model, effort}');
+    out.model = m === null ? null : { model: m.model.trim(), effort: m.effort || null };
+  }
+  return out;
+}
+
+/** Effective config: defaults, then the user block, then the project layer (pattern and types only). */
+export function smartNaming(scope) {
+  const user = readSettings().smartNaming;
+  const proj = projectOverride('smartNaming', scope);
+  const pick = (o) => (isObj(o) ? o : {});
+  const merged = { ...SMART_NAMING_DEFAULTS, ...pick(user) };
+  merged.types = [...merged.types];
+  for (const k of ['pattern', 'types']) if (pick(proj)[k] !== undefined) merged[k] = k === 'types' ? [...proj[k]] : proj[k];
+  return merged;
+}
+
+/** `null` deletes the block; otherwise the validated keys merge over the stored block and keys equal to the default are dropped. */
+export async function setSmartNaming(input) {
+  const settings = readSettings();
+  if (input === null) { delete settings.smartNaming; await persistSettings(settings); return { smartNaming: smartNaming() }; }
+  const next = { ...(isObj(settings.smartNaming) ? settings.smartNaming : {}), ...assertSmartNamingInput(input) };
+  for (const [k, def] of Object.entries(SMART_NAMING_DEFAULTS)) if (JSON.stringify(next[k]) === JSON.stringify(def)) delete next[k];
+  if (Object.keys(next).length) settings.smartNaming = next; else delete settings.smartNaming;
+  await persistSettings(settings);
+  return { smartNaming: smartNaming() };
+}
+
 // ── Night mode (src/core/night/*) ─────────────────────────────────────────────
 // `nightMode` is the user layer of the night config (only the fields the user set);
 // `nightModeToggle` is the live global switch and is NOT part of the field precedence.
@@ -1153,6 +1208,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'pipelineCostLimitUsd', 'totalCostLimitUsd', 'costLimitResetPeriod', 'humanRateUsdPerHour',
   'askMaxTurns', 'askMaxBudgetUsd',
   'askWeb',                                  // Chat web access { enabled, allowedDomains, search }
+  'smartNaming',                             // Smart run naming { suggestTitle, suggestBranch, model, pattern, types, trigger, addRunId }
   'debugSpawnEnabled',
   'resumeAfterUsageLimit',
   'titleModel', 'hideBuiltinModels',

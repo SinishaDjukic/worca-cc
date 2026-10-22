@@ -222,7 +222,7 @@ export function renderKpiRow(model, { doc = globalThis.document, fmt = DEFAULT_F
   // Ask Worca (D5/D6): chat spend; a session = a thread with a costed turn in
   // the range, so cost/session is window spend over that count.
   const ask = totals.ask || { spendUsd: 0, sessions: 0, turns: 0 };
-  row.appendChild(tile(doc, {
+  const chatTile = tile(doc, {
     iconD: ICONS.ask, label: 'Chat',
     chip: prev ? deltaChip(doc, ask.spendUsd, prev.ask?.spendUsd, range) : null,
     valueNodes: [doc.createTextNode(fmt.usd(ask.spendUsd))],
@@ -230,7 +230,14 @@ export function renderKpiRow(model, { doc = globalThis.document, fmt = DEFAULT_F
       ? `${ask.sessions} session${ask.sessions === 1 ? '' : 's'} · ${fmt.usd(ask.spendUsd / ask.sessions)}/session · ${ask.turns} turn${ask.turns === 1 ? '' : 's'}`
       : 'no sessions in this period',
     title: fmt.estTitle(ask.spendUsd),
-  }));
+  });
+  // Smart run naming (Labs): spend with no run behind it, its own line and never part of the spend above.
+  const naming = model.utility?.naming;
+  if (naming && naming.usd > 0) {
+    const cents = naming.usd < 0.01 ? naming.usd.toFixed(4) : naming.usd.toFixed(2);
+    chatTile.appendChild(subEl(doc, `Naming $${cents} · ${naming.count} suggestion${naming.count === 1 ? '' : 's'}`));
+  }
+  row.appendChild(chatTile);
 
   // Time worked
   row.appendChild(tile(doc, {

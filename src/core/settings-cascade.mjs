@@ -4,7 +4,7 @@ import {
   readSettings, setProjectLayerReader, nightModeSettings, memoryDefragModel,
   runEngineSetting, stepModelsSetting, utilityModelsSetting, normalizeModelPair, SETTING_CHECKS,
   askEngineSetting, askModelsSetting,
-  assertAskWebInput, askWebStoreShape, UTILITY_JOBS,
+  assertAskWebInput, askWebStoreShape, assertSmartNamingInput, SMART_NAMING_DEFAULTS, UTILITY_JOBS,
   DEFAULT_CONTEXT_MAX_BYTES_PER_FILE, DEFAULT_CONTEXT_MAX_BYTES_TOTAL, DEFAULT_SKILL_MOUNT,
   DEFAULT_MEMORY_SOFT_BYTES_PER_FILE, DEFAULT_MEMORY_HARD_BYTES_PER_FILE, DEFAULT_MEMORY_MAX_FILES_PER_SCOPE,
   DEFAULT_MEMORY_HOOK_MAX_CHARS, DEFAULT_MEMORY_DEFRAG_WRITES, DEFAULT_MEMORY_DEFRAG_FILES,
@@ -52,6 +52,7 @@ const SCALARS = [
   scalar({ id: 'askMaxTurns', check: SETTING_CHECKS.askMaxTurns, def: DEFAULT_ASK_MAX_TURNS, teamKey: 'ask.maxTurns', hint: 'must be an integer between 1 and 500' }),
   scalar({ id: 'askMaxBudgetUsd', check: SETTING_CHECKS.askMaxBudgetUsd, def: DEFAULT_ASK_MAX_BUDGET_USD, teamKey: 'ask.maxBudgetUsd', hint: 'must be a valid budget' }),
   scalar({ id: 'askWeb', check: (value) => { try { assertAskWebInput(webIn(value)); return true; } catch { return false; } }, def: OFF_WEB, hint: 'must be web settings', readUser: (ctx) => ctx.settings().askWeb ?? undefined }),
+  scalar({ id: 'smartNaming', check: (value) => { try { assertSmartNamingInput(value); return true; } catch { return false; } }, def: SMART_NAMING_DEFAULTS, hint: 'must be smart run naming settings', readUser: (ctx) => ctx.settings().smartNaming ?? undefined }),
   scalar({ id: 'contextMaxBytesPerFile', check: SETTING_CHECKS.byteCap, def: DEFAULT_CONTEXT_MAX_BYTES_PER_FILE }),
   scalar({ id: 'contextMaxBytesTotal', check: SETTING_CHECKS.byteCap, def: DEFAULT_CONTEXT_MAX_BYTES_TOTAL }),
   scalar({ id: 'skillMount', check: SETTING_CHECKS.skillMount, def: DEFAULT_SKILL_MOUNT }),
@@ -189,6 +190,10 @@ export function assertProjectSettingsPatch(patch, { roles = null } = {}) {
       try { value = normalizeModelPair(entry.engine, raw, id); } catch (error) { throw badPatch(error.message); }
     } else if (entry.id === 'askWeb') {
       try { value = askWebStoreShape(assertAskWebInput(raw)); } catch (error) { throw badPatch(`askWeb: ${error.message}`); }
+    } else if (entry.id === 'smartNaming') {
+      const extra = isObj(raw) ? Object.keys(raw).filter((k) => k !== 'pattern' && k !== 'types') : [];
+      if (extra.length) throw badPatch(`smartNaming: ${extra[0]} is set per user, not per project (only pattern and types)`);
+      try { value = assertSmartNamingInput(raw); } catch (error) { throw badPatch(`smartNaming: ${error.message}`); }
     } else if (entry.store === 'nightMode') {
       const field = entry.path[0];
       const error = field === 'spendCapUsd' ? 'spendCapUsd is set per user, not per project (it spans all runs)' : nightFieldError(field, raw);

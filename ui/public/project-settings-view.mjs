@@ -5,6 +5,8 @@ import { ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
 
 // A USD field's inherited value as the placeholder shows it: "$5.00", or "no cap" when unset.
 const usd = (value) => (value == null ? 'no cap' : `$${Number(value).toFixed(2)}`);
+// "fix, feat chore" → ['fix', 'feat', 'chore'] (the server validates each word).
+const typesOf = (text) => String(text).toLowerCase().split(/[\s,]+/).filter(Boolean);
 export const PROJECT_CARDS = Object.freeze([
   { key: 'cost', title: 'Cost', fields: [{ id: 'pipelineCostLimitUsd', label: 'Per-pipeline cap (USD)', kind: 'number', min: .01, step: .01, format: usd }, { id: 'humanRateUsdPerHour', label: 'Developer rate (USD/h)', kind: 'number', min: .01, step: .01, format: usd }] },
   { key: 'ask', title: 'Chat', fields: [{ id: 'askMaxTurns', label: 'Turn limit', kind: 'number', min: 1, step: 1 }, { id: 'askMaxBudgetUsd', label: 'Per-turn cost cap (USD)', kind: 'number', min: .1, step: .1, format: usd }] },
@@ -15,18 +17,36 @@ const JOBS = ['title', 'classifier', 'overview', 'prDescription', 'memoryDefrag'
 const HELPER_ENGINES = ['claude', 'codex'];
 function makeCard(doc, key, title) { const card = doc.createElement('section'); card.className = 'card pd-settings-card'; card.dataset.card = key; const heading = doc.createElement('h3'); heading.textContent = title; const body = doc.createElement('div'); body.className = 'pd-settings-body drows'; const save = doc.createElement('button'); save.type = 'button'; save.className = 'btn btn-primary btn-sm pd-settings-save'; save.textContent = 'Save'; const msg = doc.createElement('small'); msg.className = 'hint pd-settings-msg'; const actions = doc.createElement('div'); actions.className = 'add-project-actions engine-save-row'; actions.append(msg, save); card.append(heading, body, actions); return { card, body, save, msg }; }
 export function mountProjectSettings(host, { projectKey, projectDir, fetchFn = (url, options) => fetch(url, options), onTest = null }) {
-  const doc = host.ownerDocument; const url = `/api/projects/${encodeURIComponent(projectKey)}/settings`; let catalog = [];
+  const doc = host.ownerDocument; const url = `/api/projects/${encodeURIComponent(projectKey)}/settings`; let catalog = []; let current = { own: {} };
   const render = (data) => {
-    host.replaceChildren(); const field = (id) => ({ own: data.own[id], inherited: inheritedOf(data.layers[id]) }); const roles = data.roles || [];
+    current = data; host.replaceChildren(); const field = (id) => ({ own: data.own[id], inherited: inheritedOf(data.layers[id]) }); const roles = data.roles || [];
     const models = makeCard(doc, 'models', 'Engine and models'); const ids = ['run.engine']; for (const engine of ENGINE_NAMES) { for (const role of roles) ids.push(`models.${engine}.steps.${role.key}`); if (HELPER_ENGINES.includes(engine)) for (const job of JOBS) ids.push(utilityId(engine, job)); }
     renderEngineSection(models.body, { level: 'project', roles, catalog, fields: Object.fromEntries(ids.map((id) => [id, field(id)])), jobs: { claude: JOBS, codex: JOBS, cursor: [] }, status: models.msg, onTest, notes: { claude: 'Claude step models set here apply to the Default workflow; other workflows keep their own node picks.' } }); host.append(models.card);
     for (const spec of PROJECT_CARDS) { const item = makeCard(doc, spec.key, spec.title); for (const row of spec.fields) item.body.append(renderInheritField(doc, { ...row, level: 'project', ...field(row.id) })); host.append(item.card); item.save.addEventListener('click', () => void save(item)); }
     models.save.addEventListener('click', () => void save(models));
+    const naming = namingCard(data); host.append(naming.card); naming.save.addEventListener('click', () => void save(naming));
+  };
+  // Smart run naming (Labs): one stored block per project ({pattern, types}), edited as two inherit fields.
+  const namingCard = (data) => {
+    const item = makeCard(doc, 'smartNaming', 'Smart run naming');
+    const own = data.own.smartNaming || {}; const layers = data.layers.smartNaming || {};
+    const spec = (k, label, extra) => ({ id: `smartNaming.${k}`, label, level: 'project', kind: 'text', own: k === 'types' && own.types ? own.types.join(', ') : own[k],
+      inherited: inheritedOf({ user: layers.user?.[k] ?? layers.default?.[k], team: layers.team?.[k], default: layers.default?.[k] }), toValue: k === 'types' ? typesOf : undefined, ...extra });
+    const fmt = (v) => (Array.isArray(v) ? v.join(', ') : v == null ? null : String(v));
+    item.body.append(
+      renderInheritField(doc, spec('pattern', 'Branch pattern', { mono: true, format: fmt, hint: 'Placeholders: type, slug, ticket, id, each in braces. Needs the slug placeholder.' })),
+      renderInheritField(doc, spec('types', 'Types the model may pick', { mono: true, format: fmt, hint: 'Short lowercase words separated by commas. The first is the fallback.' })));
+    return item;
   };
   // #555: a result is a card alert (failure) or a toast (saved); the line under Save only says "Nothing changed.".
   const save = async (item) => {
     cardAlert(item.card, null);
     const patch = readDirtyFields(item.body);
+    if ('smartNaming.pattern' in patch || 'smartNaming.types' in patch) {
+      const next = { ...(current.own.smartNaming || {}) };
+      for (const k of ['pattern', 'types']) { const v = patch[`smartNaming.${k}`]; if (v === null) delete next[k]; else if (v !== undefined) next[k] = v; delete patch[`smartNaming.${k}`]; }
+      patch.smartNaming = Object.keys(next).length ? next : null;
+    }
     item.msg.textContent = Object.keys(patch).length ? '' : 'Nothing changed.';
     if (!Object.keys(patch).length) return;
     let response; let data;
