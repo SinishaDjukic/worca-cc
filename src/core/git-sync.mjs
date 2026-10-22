@@ -353,6 +353,28 @@ export async function fetchRemote(dir, { remote = 'origin', timeoutMs = INTERACT
   return shared;
 }
 
+/**
+ * Fetch a GitHub pull request's head (`refs/pull/<n>/head`, which also serves a fork's PR) into the
+ * remote-tracking ref `refs/remotes/<remote>/worca-pr-<n>`, so a run can start from `<remote>/worca-pr-<n>` (#711's
+ * PR review). → { ok:true, ref, sha } | { ok:false, kind, error }
+ */
+export async function fetchPullHead(dir, { remote = 'origin', number, timeoutMs = RUN_TIMEOUT_MS } = {}) {
+  const n = Number(number);
+  if (!dir || !Number.isSafeInteger(n) || n <= 0) return { ok: false, kind: 'failed', error: 'a project and a pull request number are required' };
+  if (!isSafeRemoteName(remote)) return { ok: false, kind: 'failed', error: `invalid remote ${remote}` };
+  const info = await remoteInfo(dir, remote);
+  if (!info.ok) return info;
+  const cred = await readCred(info);
+  const local = `refs/remotes/${remote}/worca-pr-${n}`;
+  const r = await _run(['fetch', '--no-tags', info.name, `+refs/pull/${n}/head:${local}`], { cwd: dir, env: cred.env, timeoutMs });
+  if (!r.ok) {
+    return { ok: false, kind: r.timedOut ? 'timeout' : classifyFetchError(r.stderr),
+      error: scrubGitText(r.stderr) || (r.timedOut ? `git fetch timed out after ${timeoutMs} ms` : `git fetch exited ${r.code}`) };
+  }
+  const sha = await _run(['rev-parse', '--verify', `${local}^{commit}`], { cwd: dir });
+  return { ok: true, ref: `${remote}/worca-pr-${n}`, sha: sha.ok ? String(sha.stdout || '').trim() : null };
+}
+
 /** No network. The last failed fetch of `remote` when it is newer than its last good one (the
  *  rule fetchRemote's cache uses), else null: a status read must still read Offline after a
  *  background refresh or a Sync that could not fetch. Server clock on both sides. */

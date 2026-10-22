@@ -105,6 +105,18 @@ export const FLAGS = Object.freeze([
     reviewBy: '2027-01-20',
     docs: 'docs/feature-flags.md',
   }),
+  entry({
+    key: 'gitAutomations',
+    title: 'Git event automations',
+    description: 'Start a workflow when an issue or pull request is opened in a project: rules, the Auto-handle switches (propose a fix, full fix, automatic review) and the GitHub webhook. Off: nothing polls GitHub and the routes answer 404.',
+    stage: 'experimental',
+    default: false,
+    owner: 'denislavprinov',
+    since: '1.13.0',
+    added: '2026-10-22',
+    reviewBy: '2027-01-20',
+    docs: 'docs/git-automations.md',
+  }),
 ]);
 
 const BY_KEY = new Map(FLAGS.map((f) => [f.key, f]));

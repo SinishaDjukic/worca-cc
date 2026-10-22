@@ -271,6 +271,7 @@ import { PROBE_DEBOUNCE_MS, defaultAddMode, detectModel } from './project-add.mj
 import { presetMenuGroups, presetHiddenItems, presetNodePick, renderBrokenCard, resetItem, saveDialogError, configWithPreset } from './run-presets-picker.mjs';
 import { runPresetScopeOptions, runPresetRequest, runPresetErrorText, RUN_PRESET_SAVED_NOTE } from './run-presets-save.mjs';
 import { renderPresetsList } from './run-presets-view.mjs';
+import { renderAutomations } from './automations-view.mjs';
 import { presetSetupSummary, presetSavedNote, workflowNamesFrom } from './run-presets-names.mjs';
 import { setupFromBody } from '../../src/shared/run-presets.mjs';
 import { createTagInput, tagChip, fetchTagVocabulary, createDimensionSlots, createDimensionEditor, flashFilled, missingSlot } from './tag-input.mjs';
@@ -1676,6 +1677,11 @@ function handleServerMessage(msg) {
   // same broadcast socket. Handle them BEFORE the !msg.runId early-return below.
   if (msg.type === 'history-pr') {
     onHistoryPr(msg);
+    return;
+  }
+
+  if (msg.type === 'automations-changed') {
+    if (currentView() === 'settings' && currentSettingsTab === 'automations' && flagOn('gitAutomations')) void loadAutomationsView(automationsProjectKey);
     return;
   }
 
@@ -12989,6 +12995,7 @@ function openProjDetail(p, parsed, { instant = false } = {}) {
   screen.querySelector('.pd-new').addEventListener('click', () => { newPipelineForProject(p.key); });
   screen.querySelector('.pd-history').addEventListener('click', () => { openRunsForProject(p.key); });
   screen.querySelector('.pd-remove').addEventListener('click', () => { void removeProjectFromPage(p.key); });
+  screen.querySelector('.pd-automations')?.addEventListener('click', () => { location.hash = `settings/automations/${encodeURIComponent(p.key)}`; });
   screen.querySelector('.pd-git').addEventListener('click', (e) => {
     const action = e.currentTarget.dataset.action;
     if (action) openProjectGitModal(p.key, action, () => projDetail && projDetail.screen.querySelector('.pd-git'));
@@ -37049,7 +37056,7 @@ document.addEventListener('worca:level', () => {
 // The tab is the Settings view's hash param; a guardrail deep link nests its id
 // behind it (#settings/guardrails/<id>). parseHash splits on the FIRST '/' only,
 // so that is view 'settings', param 'guardrails/<id>' — no parseHash change.
-const SETTINGS_TABS = ['general', 'tags', 'presets', 'runs', 'experimental', 'ask', 'guardrails', 'memory'];
+const SETTINGS_TABS = ['general', 'tags', 'presets', 'runs', 'automations', 'experimental', 'ask', 'guardrails', 'memory'];
 // Tabs whose cards are painted from GET /api/settings (loadSettings paints every card, wherever
 // it sits). The Models page loads it too: it holds the Engines card and the Claude helper pickers.
 const SETTINGS_FORM_TABS = ['general', 'tags', 'runs', 'ask'];
@@ -37081,6 +37088,7 @@ function parseSettingsParam(param = '') {
   const sub = i === -1 ? '' : param.slice(i + 1);
   if (tab === 'tags' && !flagOn('runTags')) return ['general', ''];   // the Tags tab exists only while runTags is on
   if (tab === 'presets' && !flagOn('runPresets')) return ['general', ''];
+  if (tab === 'automations' && !flagOn('gitAutomations')) return ['general', ''];
   return SETTINGS_TABS.includes(tab) ? [tab, sub] : ['general', ''];
 }
 // The canonical param for a tab: General is plain '#settings', never '#settings/general'.
@@ -37417,6 +37425,7 @@ function showSettingsTab(param = '') {
   }
   if (tab === 'tags') { void loadTagsTeam(); void loadLabelsSection(); }
   if (tab === 'presets') void loadPresetsView();
+  if (tab === 'automations') void loadAutomationsView(sub);
   if (tab === 'ask') void paintAskMcpBlock(document.getElementById('ask-mcp-host'), { api: mcpApi });
   if (tab === 'guardrails') loadGuardrailsView(sub);
   if (tab === 'memory') loadMemoryTab(sub);
@@ -38383,6 +38392,77 @@ async function deletePreset(p) {
   return r;
 }
 const presetChangeError = (r) => notify({ tone: 'err', title: 'Could not change the preset', detail: (r.data && r.data.error) || `HTTP ${r.status}` });
+
+// Settings › Automations (automations-view.mjs, docs/git-automations.md): one project at a time — the param after the
+// tab names it (#settings/automations/<projectKey>), else the first project with a rule, else the first project.
+let automationsProjectKey = '';
+let automationsSeq = 0;
+async function loadAutomationsView(sub = '') {
+  const host = document.getElementById('automations-body');
+  const pick = document.getElementById('automations-project');
+  if (!host || !pick || !flagOn('gitAutomations')) return;
+  const seq = ++automationsSeq;
+  if (!(state.projects || []).length) await loadProjects();
+  const projects = (state.projects || []).filter((p) => p && p.key && p.path);
+  if (!projects.length) { host.replaceChildren(Object.assign(document.createElement('div'), { className: 'hist-empty', textContent: 'Add a project first.' })); return; }
+  const wanted = decodeURIComponent(String(sub || '')) || automationsProjectKey;
+  const proj = projects.find((p) => p.key === wanted) || projects[0];
+  automationsProjectKey = proj.key;
+  pick.replaceChildren(...projects.map((p) => Object.assign(document.createElement('option'), { value: p.key, textContent: p.name, selected: p.key === proj.key })));
+  pick.onchange = () => { location.hash = `settings/automations/${encodeURIComponent(pick.value)}`; };
+  const [r, wf] = await Promise.all([mcpApi('GET', `/api/automations?projectDir=${encodeURIComponent(proj.path)}`), mcpApi('GET', '/api/workflows')]);
+  if (seq !== automationsSeq) return;
+  if (!r.ok) { host.replaceChildren(Object.assign(document.createElement('p'), { className: 'hint err', textContent: (r.data && r.data.error) || `HTTP ${r.status}` })); return; }
+  const workflows = (wf.ok && Array.isArray(wf.data?.workflows) ? wf.data.workflows : []).map((w) => ({ id: w.id, name: w.name || w.id }));
+  const workflowNames = Object.fromEntries([['wf_default', 'Default'], ...workflows.map((w) => [w.id, w.name])]);
+  const fail = (res, title) => { if (!res.ok) notify({ tone: 'err', title, detail: (res.data && res.data.error) || `HTTP ${res.status}` }); };
+  const reload = () => loadAutomationsView(proj.key);
+  host.replaceChildren(renderAutomations(document, r.data, {
+    workflowNames,
+    onSwitch: async (key, on) => { const res = await mcpApi('PUT', '/api/automations/auto-handle', { projectDir: proj.path, key, on }); fail(res, 'Could not change Auto-handle'); await reload(); },
+    onCheckNow: async () => { fail(await mcpApi('POST', '/api/automations/poll', {}), 'Could not check GitHub'); await reload(); },
+    onToggleRule: async (rule, on) => { fail(await mcpApi('PATCH', `/api/automations/rules/${encodeURIComponent(rule.id)}`, { enabled: on }), 'Could not change the rule'); await reload(); },
+    onDeleteRule: async (rule) => {
+      if (!(await confirmModal({ title: 'Delete rule', message: 'Delete this rule? Runs it started are not affected.', confirmLabel: 'Delete rule', danger: true }))) return;
+      fail(await mcpApi('DELETE', `/api/automations/rules/${encodeURIComponent(rule.id)}`), 'Could not delete the rule');
+      await reload();
+    },
+    onApprove: async (ev) => {
+      if (!(await confirmModal({ title: 'Approve the fix', message: `Start the fix for #${ev.number} with the proposed plan? Worca opens a draft pull request when it is done.`, confirmLabel: 'Start the fix' }))) return;
+      fail(await mcpApi('POST', `/api/automations/events/${encodeURIComponent(ev.id)}/approve`, {}), 'The fix did not start');
+      await reload();
+    },
+    onOpenRun: (ev) => {
+      if (ev.runId && runs.has(ev.runId)) { location.hash = `running/${ev.runId}`; return; }
+      location.hash = `history/${histDetailParam({ id: ev.pipelineId, projectKey: proj.key })}`;
+    },
+    onAddRule: async () => {
+      const v = await promptModal({ title: 'Add rule', confirmLabel: 'Add rule', fields: [
+        { id: 'when', label: 'When', value: 'issue.opened:propose', options: [
+          { value: 'issue.opened:propose', text: 'An issue is opened → propose a fix (plan only)', group: 'Issues' },
+          { value: 'issue.opened:fix', text: 'An issue is opened → full fix, draft PR', group: 'Issues' },
+          { value: 'issue.opened:run', text: 'An issue is opened → run a workflow', group: 'Issues' },
+          { value: 'pr.opened:review', text: 'A PR is opened or ready → review it', group: 'Pull requests' },
+          { value: 'pr.opened:run', text: 'A PR is opened or ready → run a workflow', group: 'Pull requests' }] },
+        { id: 'workflowId', label: 'Workflow (for "run a workflow")', value: 'wf_default',
+          options: [{ value: 'wf_default', text: 'Default' }, ...workflows.filter((w) => w.id !== 'wf_default').map((w) => ({ value: w.id, text: w.name }))] },
+        { id: 'labels', label: 'Only with these labels', placeholder: 'bug, regression', hint: 'Comma separated; empty: any.' },
+        { id: 'triggerLabel', label: 'Trigger label', value: 'worca', hint: 'A maintainer adds it to let an outsider\'s issue start. Empty: outsiders never start one.' },
+        { id: 'allowLogins', label: 'Also trust these logins', placeholder: 'octocat' },
+        { id: 'dailyRuns', label: 'Runs per day', value: '10' },
+        { id: 'maxCostUsd', label: 'Cost cap per run (USD)', value: '5' },
+        { id: 'maxConcurrent', label: 'Runs at a time in this project', value: '1' }] });
+      if (!v) return;
+      const [event, action] = v.when.split(':');
+      const res = await mcpApi('POST', '/api/automations/rules', { projectDir: proj.path, event, action,
+        ...(action === 'run' ? { workflowId: v.workflowId } : {}),
+        filter: { labels: v.labels, triggerLabel: v.triggerLabel, allowLogins: v.allowLogins },
+        limits: { dailyRuns: v.dailyRuns, maxCostUsd: v.maxCostUsd, maxConcurrent: v.maxConcurrent } });
+      fail(res, 'Could not add the rule');
+      await reload();
+    },
+  }));
+}
 
 // Settings › Presets (run-presets-view.mjs): Use / Rename / Duplicate / Edit scope / Delete.
 async function loadPresetsView() {

@@ -320,7 +320,7 @@ import {
 import {
   fetchRemote, remoteInfo, syncStatus, fastForward, resolveSourceRef, commitsBetween, isSafeBranchName, isSafeRemoteName, scrubGitText,
   INTERACTIVE_TTL_MS, INTERACTIVE_TIMEOUT_MS, RUN_TIMEOUT_MS, checkBaseMerge, mergeBaseInto, startConflictMerge, branchCheckouts,
-  commitFileOnBranch,
+  commitFileOnBranch, fetchPullHead,
 } from '../src/core/git-sync.mjs';
 import { shipFeature, SHIP_MODES, shipCardVerb } from '../src/core/shape/ship.mjs';
 import { releaseVersionHint, recordRunRelease, draftReleasesOnMerge } from '../src/core/draft-release.mjs';
@@ -332,9 +332,16 @@ import { mapWithCap, fanoutCap } from '../src/core/fanout.mjs';
 import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, prBaseBranch, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips, tipsRelation,
   prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl,
   prWatchSnapshot, prChecks, prWatchJobLog, prWatchRerun, prWatchReply, prWatchComment, commitSubjects, checkConflictMerge,
-  markPrReady, closePr, uncommittedPatch, ghItemSummaries } from '../src/core/git-info.mjs';
+  markPrReady, closePr, uncommittedPatch, ghItemSummaries, ghApi } from '../src/core/git-info.mjs';
 import { prNumberFromUrl, watchablePrUrl, forgeOfPrUrl, FORGE_LABEL } from '../src/core/forge.mjs';
 import { getWatch, setWatch, createPrWatcher, watchActive, FIX_WORKFLOW_ID, stoppedWatchFact } from '../src/core/pr-watch.mjs';
+import {
+  createAutomationEngine, listRules as listAutomationRules, getRule as getAutomationRule, createRule as createAutomationRule,
+  updateRule as updateAutomationRule, deleteRule as deleteAutomationRule, validateRule as validateAutomationRule, listEvents as listAutomationEvents,
+  autoHandleState, setAutoHandle, AUTO_HANDLE, verifyGithubSignature, recordDelivery, normalizeFilter as normalizeAutomationFilter,
+  normalizeLimits as normalizeAutomationLimits,
+} from '../src/core/automations.mjs';
+import { ensureAutomationTemplate, listAutomationTemplates, TEMPLATE_FOR_ACTION } from '../src/core/automation-templates.mjs';
 import { forkRefusal, workItemIdFromSourceRef, prSummary, workItemSummaries } from '../src/core/pr/azure.mjs';
 import { workspaceMembers as prStateMembers, memberPrTarget, relatedPrsBlock, withRelatedPrsBlock } from '../src/core/workspace-prs.mjs';
 import { isSyntacticRef } from '../src/core/ask/proposal.mjs';
@@ -448,7 +455,7 @@ import {
   chainBaseBranchesOf, stackedPrBaseOf, resumeTicketsFor, cancelResumeTicketsFor, inheritedTagsAtCreation, runChains,
 } from '../src/core/scheduler.mjs';
 import {
-  onNotification, listNotifications, unreadCount, latestNotificationId, markRead, markAllRead, purgeNotifications,
+  addNotification, onNotification, listNotifications, unreadCount, latestNotificationId, markRead, markAllRead, purgeNotifications,
 } from '../src/core/notifications.mjs';
 import {
   normalizeRule, nextOccurrence, previewOccurrences, describeRule, parseScheduledFor, localDate,
@@ -1530,6 +1537,36 @@ app.post('/api/ingress/teams/:plugin/:channelId/:token',
   });
 
 // ---------------------------------------------------------------------------
+// GitHub webhook ingress (#711, docs/git-automations.md): the second exemption from the loopback guard, mounted
+// here for the same reason as Teams'. It answers 404 to everything unless the gitAutomations flag is on, a secret is
+// set (WORCA_GH_WEBHOOK_SECRET) and the body's HMAC-SHA256 matches X-Hub-Signature-256 — so a probe cannot tell it
+// exists. Bodies are never logged. A repeated X-GitHub-Delivery is acknowledged and dropped. The event is handled
+// after the answer: GitHub waits 10 s at most.
+// ---------------------------------------------------------------------------
+const githubIngressBucket = new TokenBucket(120);
+app.post('/api/ingress/github', express.raw({ type: '*/*', limit: '1mb' }), (req, res) => {
+  const notFound = () => res.status(404).json({ error: 'not found' });
+  if (!flagEnabled('gitAutomations')) return notFound();
+  const secret = String(process.env.WORCA_GH_WEBHOOK_SECRET || '').trim();
+  if (!secret) return notFound();
+  if (!githubIngressBucket.tryConsume()) return res.status(429).json({ error: 'rate limited' });
+  const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+  const delivery = String(req.get('x-github-delivery') || '').slice(0, 100);
+  const name = String(req.get('x-github-event') || '').slice(0, 50);
+  if (!verifyGithubSignature(secret, raw, req.get('x-hub-signature-256'))) {
+    console.warn(`[worca-ui] GitHub webhook refused: bad or missing signature (event ${name || '?'}, delivery ${delivery || '?'}, ${raw.length} bytes)`);
+    return notFound();
+  }
+  if (name === 'ping') return res.status(200).json({ ok: true });
+  let payload;
+  try { payload = JSON.parse(raw.toString('utf8')); } catch { return res.status(400).json({ error: 'not JSON' }); }
+  if (!recordDelivery(delivery)) return res.status(200).json({ ok: true, duplicate: true });
+  res.status(202).json({ ok: true });
+  Promise.resolve().then(() => automations.handleWebhook(name, payload))
+    .catch((err) => console.warn(`[worca-ui] GitHub webhook ${name} (${delivery}): ${err?.message || err}`));
+});
+
+// ---------------------------------------------------------------------------
 // Express middleware + static
 // ---------------------------------------------------------------------------
 
@@ -2029,10 +2066,19 @@ export function firstInjectionSource(sourceByKey = {}) {
 // via resolveTaskInput (src/core/sources.mjs) so the task is fetched exactly
 // once — the server must never resolve it too.
 // Returns null when absent, else { ok:true, source } | { ok:false, error }.
-function normalizeRunSource(raw) {
+function normalizeRunSource(raw, { automation = false } = {}) {
   if (raw === undefined || raw === null) return null;
   if (typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, error: 'source must be an object' };
   const type = raw.type;
+  // A Git event automation's issue or PR (#711). In-process only (invokeStartRun's `automation`), never from HTTP:
+  // a hand-built body must not claim an issue it was not started from.
+  if (type === 'github' && automation) {
+    if (!(typeof raw.prompt === 'string' && raw.prompt.trim()) || !(typeof raw.url === 'string' && /^https:\/\/github\.com\//.test(raw.url))) {
+      return { ok: false, error: 'source.prompt and a github.com source.url are required for type "github"' };
+    }
+    return { ok: true, source: { type: 'github', kind: raw.kind === 'pr' ? 'pr' : 'issue', repo: String(raw.repo || ''),
+      number: Number.isSafeInteger(raw.number) ? raw.number : null, url: raw.url, title: String(raw.title || '').slice(0, 300), prompt: raw.prompt } };
+  }
   if (type === 'prompt') {
     if (!(typeof raw.prompt === 'string' && raw.prompt.trim())) {
       return { ok: false, error: 'source.prompt is required for type "prompt"' };
@@ -2490,7 +2536,7 @@ const startRunHandler = async (req, res) => {
     // NEW (plugins §7.3): body.source is the task-source descriptor; shape-check
     // only and pass through — the orchestrator resolves it exactly once. Absent
     // -> the legacy branch below runs byte-identical.
-    const sourceCheck = normalizeRunSource(body.source);
+    const sourceCheck = normalizeRunSource(body.source, { automation: !!req._automation });
     if (sourceCheck && !sourceCheck.ok) return badRequest(res, sourceCheck.error);
     const source = sourceCheck ? sourceCheck.source : null;
 
@@ -2606,7 +2652,7 @@ const startRunHandler = async (req, res) => {
     // Their tags are stored data (a ticket's request, a predecessor's or parent's tags, a changes/route card's origin
     // run's tags), so the key:value rule skips them too.
     const tagExempt = !!internal?.ticket || !!scanTarget || !!req._resolveOf || !!req._prWatchRunId
-      || req._startedBy === 'pr-watch' || body.workflowId === MEMORY_DEFRAG_WORKFLOW_ID
+      || req._startedBy === 'pr-watch' || !!req._automation || body.workflowId === MEMORY_DEFRAG_WORKFLOW_ID
       || req._cardStart === true;   // Shaper s5 (D19): a run started from a changes/route card; its tags are the origin's stored tags
     let tags = [];
     if (body.tags !== undefined) {
@@ -3531,7 +3577,7 @@ function releaseAskCard(item) {
 }
 
 /** Call startRunHandler without HTTP. Resolves { status, body }. */
-async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, roundOf = null } = {}) {
+async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, roundOf = null, automation = false } = {}) {
   let out = { status: 200, body: null };
   const res = {
     statusCode: 200,
@@ -3539,7 +3585,7 @@ async function invokeStartRun(body, internal, { startedBy = null, runId = null, 
     json(payload) { out = { status: this.statusCode, body: payload }; return this; },
   };
   await startRunHandler({ body, headers: {}, _internal: internal, _startedBy: startedBy, _runId: runId,
-    _prWatchRunId: prWatchRunId, ...(roundOf ? { _roundOf: roundOf } : {}) }, res);
+    _prWatchRunId: prWatchRunId, ...(roundOf ? { _roundOf: roundOf } : {}), ...(automation ? { _automation: true } : {}) }, res);
   return out;
 }
 
@@ -3758,6 +3804,8 @@ const ranMergeBack = (st) => !!st && [st.branch, ...Object.values(st.branches ||
 // before teardown). First, so it runs whether or not the run merged back. Returns the draft promise (the test awaits it).
 function afterRunSettled(orch) {
   let draft;
+  // Git event automations (#711): a finished event run writes back now, not at the next tick.
+  if (automationsOn()) kickAutomations();
   try {
     const st = orch.getState?.();
     if (orch.runShape?.slice && st?.status === 'done' && st.id) {
@@ -7647,6 +7695,243 @@ const prWatcherDeps = {
 const prWatcher = createPrWatcher(prWatcherDeps);
 /** Nudge the loop after a toggle; a no-op unless it started (listen) and WORCA_PR_WATCH is on. */
 const kickPrWatch = () => { void prWatcher.runner.kick(); };
+
+// ---------------------------------------------------------------------------
+// Git event automations and Auto-handle (#711, docs/git-automations.md; flag gitAutomations). A rule starts a run
+// when an issue or PR is opened in its project. src/core/automations.mjs owns the decisions; everything below is IO:
+// GitHub through `gh api` with worca's own credential (agents never get one), runs through invokeStartRun, the
+// Activity feed and chat through addNotification. Delivery: the poll below, plus the signed webhook route above the
+// loopback guard when WORCA_GH_WEBHOOK_SECRET is set.
+// ---------------------------------------------------------------------------
+const automationsOn = () => flagEnabled('gitAutomations');
+const webhookSecret = () => String(process.env.WORCA_GH_WEBHOOK_SECRET || '').trim();
+let ownLoginsCache = { at: 0, logins: [] };
+/** The account behind worca's GitHub credential, cached for an hour (an App token has no /user: none). */
+async function automationOwnLogins() {
+  if (Date.now() - ownLoginsCache.at < 3_600_000) return ownLoginsCache.logins;
+  const r = await ghApi({ path: 'user' });
+  ownLoginsCache = { at: Date.now(), logins: r.ok && r.json?.login ? [r.json.login] : [] };
+  return ownLoginsCache.logins;
+}
+/** The project's remote whose GitHub repository is `repo` (the remote a PR head is fetched from), else origin. */
+async function automationRemote(projectDir, repo) {
+  const rl = await listRemotes(projectDir);
+  const hit = rl.ok ? rl.remotes.find((r) => r.forge === 'github' && String(r.slug || '').toLowerCase() === String(repo).toLowerCase()) : null;
+  return hit?.name || 'origin';
+}
+/** A project's GitHub repository: its origin remote's when that is on GitHub, else the first GitHub remote. */
+async function projectGithubRepo(projectDir) {
+  const rl = await listRemotes(projectDir);
+  if (!rl.ok) return null;
+  const gh = rl.remotes.filter((r) => r.forge === 'github' && r.slug);
+  return (gh.find((r) => r.name === 'origin') || gh[0])?.slug || null;
+}
+async function automationPlanText(pipelineId) {
+  const row = findPipelineRowById(pipelineId);
+  if (!row) return null;
+  // Oldest first: the last one is the newest plan version (the refined plan).
+  const plans = (await listRunArtifacts(row.id)).filter((a) => a.kind === 'plan' || /^plans\//.test(a.relPath));
+  if (!plans.length) return null;
+  const hit = await resolveIndexedArtifactForRow(row, plans[plans.length - 1].relPath);
+  return hit ? hit.text : null;
+}
+/** Open the fix run's draft PR (createRunPr: the issue source adds `Closes #N`) and turn on Watch PR for it. */
+async function automationDraftPr(pipelineId) {
+  if (!(await anyPrHost())) return { ok: false, error: 'no pull request host is available (install the GitHub CLI)' };
+  const state = readPipelineStateById(pipelineId);
+  if (!state) return { ok: false, error: 'the run is gone' };
+  const target = prTargetFor(state);
+  if (target.error || !target.repoDir) return { ok: false, error: target.error || 'the run has no project' };
+  const walked = chainBaseBranchesOf(pipelineId);
+  const chain = (walked.length ? walked : (target.source ? [target.source] : [])).filter((b) => b !== target.feature);
+  const base = chain[0] || null;
+  if (!base) return { ok: false, error: 'the run has no base branch' };
+  let out = await createRunPr({ id: pipelineId, state, target, base, draft: true, actor: 'automation' });
+  if (!out.ok && /draft/i.test(out.error || '')) out = await createRunPr({ id: pipelineId, state, target, base, draft: false, actor: 'automation' });
+  if (!out.ok) return { ok: false, error: out.error };
+  if (watchablePrUrl(out.pr.url)) {
+    try {
+      setWatch({ prUrl: out.pr.url, pipelineId: out.pipelineIdForPr, memberKey: '', pushRemote: out.pushRemote, enabled: true, enabledBy: 'automation' });
+      broadcast(prWatchFrame(out.pipelineIdForPr, null));
+      kickPrWatch();
+    } catch (err) { console.error(`[worca-ui] automation: could not watch ${out.pr.url}: ${err?.message || err}`); }
+  }
+  return { ok: true, url: out.pr.url };
+}
+const automationHost = {
+  listIssues: async ({ repo, since, etag }) => {
+    const q = new URLSearchParams({ state: 'open', sort: 'updated', direction: 'asc', since, per_page: '50' });
+    const r = await ghApi({ repo, path: `repos/${repo}/issues?${q}`, etag });
+    return r.ok ? { ok: true, notModified: !!r.notModified, items: Array.isArray(r.json) ? r.json : [], etag: r.etag } : r;
+  },
+  getPr: async ({ repo, number }) => { const r = await ghApi({ repo, path: `repos/${repo}/pulls/${Number(number)}` }); return r.ok ? { ok: true, pr: r.json } : r; },
+  getIssue: async ({ repo, number }) => { const r = await ghApi({ repo, path: `repos/${repo}/issues/${Number(number)}` }); return r.ok ? { ok: true, issue: r.json } : r; },
+  listComments: async ({ repo, since }) => {
+    const q = new URLSearchParams({ sort: 'updated', direction: 'asc', since, per_page: '100' });
+    const r = await ghApi({ repo, path: `repos/${repo}/issues/comments?${q}` });
+    return r.ok ? { ok: true, items: Array.isArray(r.json) ? r.json : [] } : r;
+  },
+  comment: ({ repo, number, body }) => ghApi({ role: 'write', repo, method: 'POST', path: `repos/${repo}/issues/${Number(number)}/comments`, body: { body } }),
+  // One review, event COMMENT: Worca never approves or requests changes.
+  review: ({ repo, number, commitId, review }) => ghApi({ role: 'write', repo, method: 'POST', path: `repos/${repo}/pulls/${Number(number)}/reviews`,
+    body: { ...(commitId ? { commit_id: commitId } : {}), event: 'COMMENT', body: review.body, comments: review.comments } }),
+  prFiles: async ({ repo, number }) => {
+    const r = await ghApi({ repo, path: `repos/${repo}/pulls/${Number(number)}/files?per_page=100` });
+    return r.ok ? { ok: true, files: (Array.isArray(r.json) ? r.json : []).map((f) => f.filename) } : r;
+  },
+  fetchPrHead: async ({ projectDir, repo, number, headSha }) => {
+    const remote = await automationRemote(projectDir, repo);
+    const r = await fetchPullHead(projectDir, { remote, number });
+    if (!r.ok) return r;
+    if (headSha && r.sha && r.sha !== headSha) return { ok: false, error: 'the pull request moved while Worca fetched it' };
+    return { ok: true, ref: r.ref, remote };
+  },
+};
+function automationNotify({ kind, event, rule, message }) {
+  const quiet = kind === 'started' || kind === 'done' || kind === 'queued' || (kind === 'skipped' && event?.reason !== 'daily-cap');
+  addNotification({ kind: `automation_${kind}`, severity: quiet ? 'info' : 'problem', pipelineId: event?.pipelineId || null,
+    projectDir: rule?.projectDir || null, title: event ? `${event.repo}#${event.number}` : 'Automation', message });
+  emitChanged('notifications-changed');
+}
+const automations = createAutomationEngine({
+  host: automationHost,
+  ownLogins: automationOwnLogins,
+  isOwnPr: (url) => !!getDb().prepare('SELECT 1 FROM pipelines WHERE pr_url = ? UNION SELECT 1 FROM pipeline_member_prs WHERE pr_url = ? LIMIT 1').get(url, url),
+  ensureTemplate: (action) => ensureAutomationTemplate(TEMPLATE_FOR_ACTION[action] || 'fix'),
+  startRun: async (body, { startedBy, trigger }) => {
+    const out = await invokeStartRun(body, null, { startedBy, automation: true });
+    if (out.status === 200 && out.body?.runId) {
+      const entry = runs.get(out.body.runId);
+      if (entry) entry.automationTrigger = trigger;
+    }
+    return out;
+  },
+  pipelineOfRun: (runId) => {
+    const entry = runs.get(runId);
+    if (!entry?.pipelineId) return null;
+    if (entry.automationTrigger && !entry.automationAudited) {
+      entry.automationAudited = true;
+      try { appendAuditById(entry.pipelineId, `Started by a Git event automation: ${entry.automationTrigger}.`, { actor: 'automation' }); } catch { /* best effort */ }
+    }
+    return entry.pipelineId;
+  },
+  // `done` arrives before teardown commits the run's work: a run still finishing reads as running, so a fix run's
+  // draft PR is never opened from a branch that is not committed yet.
+  pipelineStatus: (id) => {
+    const e = liveRunEntry(id);
+    if ((e && !e.settled) || isFinishingRun(id)) return e && !SETTLED_RUN.has(String(e.status || '')) ? String(e.status || 'running') : 'running';
+    return findPipelineRowById(id)?.status || null;
+  },
+  pipelineCost: (id) => Number(findPipelineRowById(id)?.total_cost_usd) || 0,
+  stopRun: async (pipelineId) => {
+    const e = liveRunEntry(pipelineId);
+    const runId = e ? [...runs.entries()].find(([, v]) => v === e)?.[0] : null;
+    if (runId) await stopRun(runId, 'automation');
+  },
+  planText: automationPlanText,
+  reviews: (pipelineId) => readPipelineExtras(pipelineId).reviews.filter((r) => r.kind === 'impl' || r.kind === 'impl-review' || !r.kind),
+  openDraftPr: (pipelineId) => automationDraftPr(pipelineId),
+  runUrl: () => null,
+  notify: automationNotify,
+  onChange: () => broadcast({ type: 'automations-changed' }),
+  enabled: automationsOn,
+  // Runs are followed every minute (the cost cap); with webhooks GitHub itself is polled only as a 5-minute catch-up.
+  intervalMs: 60_000,
+  pollEveryMs: () => (webhookSecret() ? 300_000 : 60_000),
+  log: (m) => console.warn(`[worca-ui] ${m}`),
+});
+const kickAutomations = () => { void automations.runner.kick(); };
+
+/** The registered project a request names (projectDir), with its GitHub repository; answers the error itself. */
+async function automationProject(req, res, dirIn) {
+  const dir = resolveProjectDir(dirIn);
+  const project = dir ? await registeredProjectForDir(dir) : null;
+  if (!project) { badRequest(res, 'projectDir must be a registered project'); return null; }
+  const repo = await projectGithubRepo(project.path);
+  return { project, projectDir: project.path, projectKey: projectKey(project.path), repo };
+}
+
+app.use('/api/automations', requireFlag('gitAutomations'));
+// GET /api/automations?projectDir=  -> { rules, events, autoHandle, repo, templates, webhook }; no projectDir: every rule.
+app.get('/api/automations', syncRoute(async (req, res) => {
+  let scope = null;
+  if (req.query.projectDir) { scope = await automationProject(req, res, req.query.projectDir); if (!scope) return; }
+  const key = scope ? scope.projectKey : null;
+  res.json({
+    rules: listAutomationRules({ projectKey: key }),
+    events: listAutomationEvents({ projectKey: key, limit: Number(req.query.limit) || 50 }),
+    ...(scope ? { autoHandle: autoHandleState(key), repo: scope.repo } : {}),
+    switches: Object.entries(AUTO_HANDLE).map(([k, v]) => ({ key: k, label: v.label })),
+    templates: listAutomationTemplates(),
+    webhook: { configured: !!webhookSecret(), path: '/api/ingress/github' },
+    polling: String(process.env.WORCA_AUTOMATIONS_POLL ?? '1') !== '0',
+  });
+}));
+// POST /api/automations/rules { projectDir, event, action, workflowId?, filter?, limits?, guardrailsId?, enabled? }
+app.post('/api/automations/rules', syncRoute(async (req, res) => {
+  const body = req.body || {};
+  const scope = await automationProject(req, res, body.projectDir);
+  if (!scope) return;
+  if (!scope.repo) return res.status(409).json({ error: 'this project has no GitHub remote: automations watch a GitHub repository' });
+  const v = validateAutomationRule(body);
+  if (!v.ok) return badRequest(res, v.error);
+  if (v.rule.workflowId) { try { await assertRunnableWorkflow(v.rule.workflowId); } catch (err) { return badRequest(res, err.message); } }
+  if (!(await readGuardrailSet(v.rule.guardrailsId))) return badRequest(res, `unknown guardrailsId "${v.rule.guardrailsId}"`);
+  const rule = createAutomationRule({ ...v.rule, projectKey: scope.projectKey, projectDir: scope.projectDir, repo: scope.repo, createdBy: actorOf(req) });
+  broadcast({ type: 'automations-changed' }); kickAutomations();
+  res.status(201).json({ rule });
+}));
+// PATCH /api/automations/rules/:id { workflowId?, filter?, limits?, guardrailsId?, enabled? }
+app.patch('/api/automations/rules/:id', syncRoute(async (req, res) => {
+  const cur = getAutomationRule(req.params.id);
+  if (!cur) return res.status(404).json({ error: 'not found' });
+  const b = req.body || {};
+  const patch = {};
+  if (b.enabled !== undefined) { if (typeof b.enabled !== 'boolean') return badRequest(res, 'enabled must be true or false'); patch.enabled = b.enabled; }
+  if (b.filter !== undefined) patch.filter = normalizeAutomationFilter(b.filter);
+  if (b.limits !== undefined) patch.limits = normalizeAutomationLimits(b.limits);
+  if (b.workflowId !== undefined) {
+    if (cur.action !== 'run') return badRequest(res, 'only a "run" rule names its workflow');
+    try { await assertRunnableWorkflow(b.workflowId); } catch (err) { return badRequest(res, err.message); }
+    patch.workflowId = b.workflowId;
+  }
+  if (b.guardrailsId !== undefined) {
+    if (typeof b.guardrailsId !== 'string' || !(await readGuardrailSet(b.guardrailsId))) return badRequest(res, 'unknown guardrailsId');
+    patch.guardrailsId = b.guardrailsId;
+  }
+  const rule = updateAutomationRule(cur.id, patch);
+  broadcast({ type: 'automations-changed' });
+  res.json({ rule });
+}));
+app.delete('/api/automations/rules/:id', (req, res) => {
+  if (!deleteAutomationRule(req.params.id)) return res.status(404).json({ error: 'not found' });
+  broadcast({ type: 'automations-changed' });
+  res.json({ ok: true });
+});
+// PUT /api/automations/auto-handle { projectDir, key: propose|fix|review, on }
+app.put('/api/automations/auto-handle', syncRoute(async (req, res) => {
+  const body = req.body || {};
+  if (!Object.hasOwn(AUTO_HANDLE, body.key)) return badRequest(res, `key must be one of ${Object.keys(AUTO_HANDLE).join(', ')}`);
+  if (typeof body.on !== 'boolean') return badRequest(res, 'on must be true or false');
+  const scope = await automationProject(req, res, body.projectDir);
+  if (!scope) return;
+  if (body.on && !scope.repo) return res.status(409).json({ error: 'this project has no GitHub remote: automations watch a GitHub repository' });
+  const autoHandle = setAutoHandle({ projectKey: scope.projectKey, projectDir: scope.projectDir, repo: scope.repo, key: body.key, on: body.on, by: actorOf(req) });
+  broadcast({ type: 'automations-changed' }); kickAutomations();
+  res.json({ autoHandle });
+}));
+// POST /api/automations/events/:id/approve -> the fix run of a proposed plan.
+app.post('/api/automations/events/:id/approve', syncRoute(async (req, res) => {
+  const r = await automations.approve(req.params.id, { by: actorOf(req) });
+  if (r.code === 'NOT_FOUND') return res.status(404).json({ error: 'not found' });
+  if (!r.ok) return res.status(409).json({ error: { NOT_WAITING: 'this item is not waiting for approval', CLOSED: 'the issue is closed', READ_FAILED: 'GitHub could not be read; try again' }[r.code] || 'the fix did not start', event: r.event });
+  res.json({ ok: true, event: r.event });
+}));
+// POST /api/automations/poll -> one poll now (the Check now button).
+app.post('/api/automations/poll', syncRoute(async (req, res) => {
+  await automations.tick({ force: true });
+  res.json({ ok: true });
+}));
 
 // ---------------------------------------------------------------------------
 // Terminal (issue #573): worca-owned shells in the right-side pane. Sessions live in a TerminalManager;
@@ -17644,7 +17929,7 @@ if (isMain) {
     }, drainTimeoutMs() + SHUTDOWN_STEPS_MS + 5_000);
     // B2: pause the active runs first (bounded), so they come back paused with a resume point.
     drainServer({ reason: signal })
-      .then(() => settleShutdownSteps({ chat: () => channelHost.stop(), actions: () => actions.stopAll(), terminals: () => terminals.closeAll(), prWatch: () => prWatcher.runner.stop() }))
+      .then(() => settleShutdownSteps({ chat: () => channelHost.stop(), actions: () => actions.stopAll(), terminals: () => terminals.closeAll(), prWatch: () => prWatcher.runner.stop(), automations: () => automations.runner.stop() }))
       .finally(() => { clearTimeout(hardExit); keepAwake.stop(); process.exit(exitCodeFor(signal)); });
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
@@ -17681,6 +17966,9 @@ if (isMain) {
     // Watch PR (#619): its stop is awaited by shutdown's settleShutdownSteps.
     try { prWatcher.runner.start(); }
     catch (err) { console.warn(`[worca-ui] PR watch: ${err?.message || err}`); }
+    // Git event automations (#711): ticks only while the gitAutomations flag is on; a project with no rule polls nothing.
+    try { automations.runner.start(); }
+    catch (err) { console.warn(`[worca-ui] automations: ${err?.message || err}`); }
     // Model bridge (model-bridge-design.md §4.1): up before the first bridged
     // spawn so resolveModelEnv's synchronous start is the exception, not the rule.
     startBridge({ log: (m) => console.warn(m) }).catch((err) => console.warn(`[worca-ui] model bridge: ${err?.message || err}`));
@@ -17731,7 +18019,7 @@ export const _testing = {
   broadcast, askFilesRunDir,
   validateResumeTarget, resumeTargetDirs, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
   trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
-  askCommandBridge, askCommands, askCommandsEnabled, askCommandTarget, drainAskDeferred, startScopeEventTurn, startTerminalEventTurn, terminals, prWatcher, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
+  askCommandBridge, askCommands, askCommandsEnabled, askCommandTarget, drainAskDeferred, startScopeEventTurn, startTerminalEventTurn, terminals, prWatcher, automations, automationHost, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
   prWatcherDeps, askPrFixRun, askLinkIsPrFix, prFixRoundOf,
   applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps, askShapeAction,
   openSliceDraft, afterRunSettled, offerShipCard, syncShipCard, draftReleasesOnMerge,
