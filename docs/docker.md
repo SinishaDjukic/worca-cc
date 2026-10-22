@@ -429,3 +429,6 @@ dependencies run install scripts: `node-pty` builds its native module (or is ski
 where there is no compiler) and `ffmpeg-static` downloads its ffmpeg binary.
 
 Hacking on Worca inside the box: [CONTRIBUTING.md](../CONTRIBUTING.md#in-a-container).
+
+See also: [Running agents in E2B sandboxes](e2b.md), which keeps Worca on your machine and runs only the
+agents of a run in a self-hosted E2B sandbox.

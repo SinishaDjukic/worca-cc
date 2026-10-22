@@ -107,6 +107,7 @@ import {
   networkProxySettings, networkProxyEnabled, migrateCorporateProxyFlag,
   keepAwakeEnabled, setKeepAwake, assertKeepAwakeInput, migrateKeepAwakeFlag,
   runEngineSetting, assertRunEngineInput, setRunEngineSetting,
+  execEnvSetting, assertExecEnvInput, setExecEnvSetting, e2bIntSettingRaw, assertE2bIntInput, setE2bIntSetting,
   stepModelsSetting, assertStepModelsInput, setStepModels,
   modelRolesSetting, assertModelRolesInput, setModelRoles,
   utilityModelsSetting, assertUtilityModelsInput, setUtilityModels,
@@ -114,7 +115,12 @@ import {
   askEngineSetting, assertAskEngineInput, setAskEngineSetting, askModelsSetting, assertAskModelsInput, setAskModels,
   chatHomePinsFor, setChatHomePinsFor,
 } from '../src/core/settings.mjs';
-import { resolveSetting, resolveAll, writeProjectSettings, assertProjectSettingsPatch, resolveRunEngine, defragSlotPair } from '../src/core/settings-cascade.mjs';
+import { resolveSetting, resolveAll, writeProjectSettings, assertProjectSettingsPatch, resolveRunEngine, resolveRunExecEnv, defragSlotPair } from '../src/core/settings-cascade.mjs';
+import { selectExecEnv, describeExecEnvs, listExecBackends, defaultBuildBackend } from '../src/core/exec-env/index.mjs';
+import { execEnvStatuses } from '../src/core/exec-env/status.mjs';
+import { sweepBackend } from '../src/core/exec-env/sweep.mjs';
+import { markServerProcess, startEnvironmentBuild, latestBuildJob, publicBuildJob, buildJobLog } from '../src/core/exec-env/build.mjs';
+import { projectExecEnvView, setProjectEnvSpec, clearProjectEnvSpec, setProjectBackendConfig } from '../src/core/exec-env/project-env.mjs';
 import { resolveNightConfig, validateNightPatch } from '../src/core/night/config.mjs';
 import { effectiveNightConfig, nightLayers } from '../src/core/night/effective.mjs';
 import { readNightDecisions, nightAnsweredSince } from '../src/core/night/store.mjs';
@@ -567,6 +573,9 @@ preflightNode();
 // (express, ws and htmlparser2 are imported statically above, so a missing one of
 // those still fails at load, before this line.)
 preflightDeps();
+// This process is the worca server: the only one that may build project environments (it holds the backend
+// keys; plans/e2b-execution-design.md §18). A test that imports this module acts as the server.
+markServerProcess();
 // CONTRACT §0: one git answer before anything can spawn git — at import, so every process that loads this module has it:
 // `npm start` / `worca ui`, and the CDP proofs and screenshot tools (tools/verify-*-cdp.mjs) that import the server and call
 // listen themselves. WORCA_GIT=0|1 answers without a probe (the suite runs with 1).
@@ -1332,6 +1341,12 @@ function summarizeRuns() {
     limitEngine: r.limitEngine || null,
     limitResetAt: r.limitResetAt || null,
     runEngine: r.orch?.state?.runEngine || null,
+    // Where the run executes (e2b mode only) and whether it still waits for a sandbox slot.
+    ...(r.orch?.state?.execEnv ? { execEnv: r.orch.state.execEnv, execEnvWaiting: !!r.orch.state.execEnvWaiting,
+      // While a question waits: when the parked sandbox is released (the run page's "Answer by" line).
+      ...(r.orch.state.execEnvWaitUntil ? { execEnvWaitUntil: r.orch.state.execEnvWaitUntil } : {}),
+      // Files from the sandbox to review before running them here (the run page's banner).
+      ...(Array.isArray(r.orch.state.execEnvReview) ? { execEnvReview: r.orch.state.execEnvReview } : {}) } : {}),
     startedAt: r.startedAt,
     startedBy: r.startedBy || null,
     // Who last stopped / paused / resumed it ({ kind, by, at }), or null.
@@ -2130,6 +2145,27 @@ function runEngineOpts(body, scope = {}) {
   return { opts: { engine, ...(body.allowUnguardedEngine === true ? { allowUnguardedEngine: true } : {}) } };
 }
 
+/**
+ * The run body's `execEnv` (plans/e2b-execution-design.md §12): where the run's agent and script steps
+ * execute, resolved through the `run.execEnv` cascade. Local adds NOTHING to the run options, so a
+ * default run's options stay exactly as they were. The Watch PR fix and Resolve starts pass their
+ * body through the same handler, so their explicit `execEnv: 'local'` resolves to {} here. A saved e2b
+ * default never reaches a workspace run or another engine's run (resolveRunExecEnv's fallback): that run
+ * gets `execEnvFallback`, the reason its log names. Only an explicit per-run e2b is refused with 409 for those.
+ * @returns {{ error: string } | { opts: { execEnv?: string, execEnvFallback?: string } }}
+ */
+function runExecEnvOpts(body, scope = {}, engine = 'claude') {
+  if (body.execEnv != null && body.execEnv !== '' && typeof body.execEnv !== 'string') return { error: 'execEnv must be a string' };
+  let execEnv; let fallback;
+  try {
+    const resolved = resolveRunExecEnv({ explicit: typeof body.execEnv === 'string' ? body.execEnv : null, ...scope, engine });
+    fallback = resolved.fallback;
+    execEnv = selectExecEnv(resolved.execEnv);
+  } catch (err) { return { error: err.message }; }
+  if (execEnv !== 'local') return { opts: { execEnv } };
+  return { opts: fallback ? { execEnvFallback: fallback } : {} };
+}
+
 // A workspace id/key is "wks-<nameSlug>-<sha1[:8]>". WORKSPACE_KEY_RE is imported
 // from src/core/workspaces.mjs (one source of truth) and validated against any
 // :id/workspaceId before a disk touch: a value failing it can never contain "/"
@@ -2649,6 +2685,10 @@ const startRunHandler = async (req, res) => {
         return res.status(409).json({ error: `card is ${found.block.state}` });
       }
       askLink = { threadId: body.askThreadId, cardId: body.askCardId };
+      // The card's Runs in pick (docs/e2b.md): a request with no execEnv key at all comes from a page older than the
+      // field, so the run goes where the card said. The card's own "Default" sends '' and keeps the default.
+      const cardExecEnv = found.block.card && found.block.card.execEnv;
+      if (!Object.hasOwn(body, 'execEnv') && typeof cardExecEnv === 'string' && cardExecEnv) body.execEnv = cardExecEnv;
     }
 
     // Run on the source branch: an explicit boolean, validated before a schedule stores it.
@@ -2844,6 +2884,13 @@ const startRunHandler = async (req, res) => {
     const engineShape = runEngineOpts(body, hasWorkspace ? { workspace: true } : { projectDir: resolveProjectDir(body.projectDir) });
     if (engineShape.error) return badRequest(res, engineShape.error);
     const runEngine = engineShape.opts;
+    // Where the run executes (e2b mode): `{}` for a local run, spread at the TOP level of the options.
+    // A Folder project or a run without a project cannot take a saved remote default (no git bundle to send in).
+    const execProjectDir = hasWorkspace || noProject ? null : resolveProjectDir(body.projectDir);
+    const execWorkMode = noProject ? 'none'
+      : execProjectDir ? workModeForStart({ projectDir: execProjectDir }, { getProjectByPath, gitAvailable: (await gitState()).available }) : 'git';
+    const execEnvShape = runExecEnvOpts(body, hasWorkspace ? { workspace: true } : { projectDir: execProjectDir, workMode: execWorkMode }, runEngine.engine || 'claude');
+    if (execEnvShape.error) return badRequest(res, execEnvShape.error);
 
     // Per-run agent picks (the Ask run card's lane; docs/models.md "Per-agent models for one run"): `overlay.nodes`
     // merges PER NODE over the project's saved agent settings for THIS run only and never writes them. Checked here
@@ -3050,14 +3097,19 @@ const startRunHandler = async (req, res) => {
       if (Array.isArray(body.tags)) tags = body.tags;
       if (sched) {
         // The engine gate's early refusals answer when the run is scheduled, not hours later when it fires.
-        if (runEngine.engine) {
+        if (runEngine.engine || execEnvShape.opts.execEnv) {
           const probe = await createOrchestratorFor({
             workspace: { id: ws.id, key: ws.id, name: ws.name, description: ws.description, projects: buildWorkspaceMembers(projects, branch, sourceByKey) },
             prompt: effectivePrompt, title, agentsDir: AGENTS_DIR, workflowId, template: workflowRow, guardrailsId,
             mcpOptOut: await knownMcpOptOut(optOut.list, mcpWorkspaceTarget(ws)), claude: { mock, ...runEngine },
+            ...execEnvShape.opts,
           });
-          const refusal = await probe.engineStartRefusal();
-          if (refusal) return res.status(409).json({ error: presetEngineMessage(presetRow, runEngine, engineRefusalFor(refusal.error, 'ui')), code: 'engine-refused', overridable: refusal.overridable });
+          if (runEngine.engine) {
+            const refusal = await probe.engineStartRefusal();
+            if (refusal) return res.status(409).json({ error: presetEngineMessage(presetRow, runEngine, engineRefusalFor(refusal.error, 'ui')), code: 'engine-refused', overridable: refusal.overridable });
+          }
+          const execRefusal = probe.execEnvStartRefusal();
+          if (execRefusal) return res.status(409).json({ error: execRefusal, code: 'exec-env-refused' });
         }
         return res.status(202).json(await scheduleRequest({ body: runOverlay ? { ...body, overlay: runOverlay } : body, sched, title, askLink, budget, workspaceId: ws.id, projectDir: projects[0].projectDir, startedBy,
           preset: presetRow ? { id: presetRow.id, name: presetRow.name, owner: presetOwner, overrides: overriddenKeys(body, presetRow.setup) } : null }));
@@ -3107,6 +3159,7 @@ const startRunHandler = async (req, res) => {
         // Human in the loop is per run on a workspace (D-W1): the body wins, else on.
         humanInLoop: bodyHumanInLoop ?? true,
         claude: { permissionMode: stored.permissionMode || 'acceptEdits', ...(stored.model ? { model: stored.model } : {}), mock, ...runEngine },
+        ...execEnvShape.opts,
         // A CLI-made ticket may carry `--yes`: the explicit non-interactive choice survives the wait.
         ...(stored.auto ? { auto: true } : {}),
         ...(nightMode ? { nightMode: true } : {}),
@@ -3223,15 +3276,20 @@ const startRunHandler = async (req, res) => {
       const storedBody = runOverlay ? { ...pairBody, overlay: runOverlay } : pairBody;
       if (sched) {
         // The engine gate's early refusals answer when the run is scheduled, not hours later when it fires.
-        if (runEngine.engine) {
+        if (runEngine.engine || execEnvShape.opts.execEnv) {
           const probe = await createOrchestratorFor({
             projectDir, prompt: effectivePrompt, title, agentsDir: AGENTS_DIR, workflowId, template: workflowRow, guardrailsId,
             workMode, ...(projectRow && workMode !== 'git' ? { projectKey: projectRow.key } : {}),
             mcpOptOut: await knownMcpOptOut(optOut.list, { kind: 'project', key: runKey, name: path.basename(projectDir), rank: 0 }),
             claude: { mock, ...runEngine },
+            ...execEnvShape.opts,
           });
-          const refusal = await probe.engineStartRefusal();
-          if (refusal) return res.status(409).json({ error: presetEngineMessage(presetRow, runEngine, engineRefusalFor(refusal.error, 'ui')), code: 'engine-refused', overridable: refusal.overridable });
+          if (runEngine.engine) {
+            const refusal = await probe.engineStartRefusal();
+            if (refusal) return res.status(409).json({ error: presetEngineMessage(presetRow, runEngine, engineRefusalFor(refusal.error, 'ui')), code: 'engine-refused', overridable: refusal.overridable });
+          }
+          const execRefusal = probe.execEnvStartRefusal();
+          if (execRefusal) return res.status(409).json({ error: execRefusal, code: 'exec-env-refused' });
         }
         return res.status(202).json(await scheduleRequest({ body: storedBody, sched, title, askLink, budget, projectDir, startedBy,
           preset: presetRow ? { id: presetRow.id, name: presetRow.name, owner: presetOwner, overrides: overriddenKeys(body, presetRow.setup) } : null }));
@@ -3281,6 +3339,7 @@ const startRunHandler = async (req, res) => {
           mock,
           ...runEngine,
         },
+        ...execEnvShape.opts,
         // A CLI-made ticket may carry `--yes`: the explicit non-interactive choice survives the wait.
         ...(stored.auto ? { auto: true } : {}),
         ...(nightMode ? { nightMode: true } : {}),
@@ -3313,6 +3372,9 @@ const startRunHandler = async (req, res) => {
       const refusal = await orch.engineStartRefusal();
       if (refusal) return res.status(409).json({ error: presetEngineMessage(presetRow, runEngine, engineRefusalFor(refusal.error, 'ui')), code: 'engine-refused', overridable: refusal.overridable });
     }
+    // The e2b preflight (single-project, claude, credentials, …): refused here, before anything is announced.
+    const execRefusal = orch.execEnvStartRefusal();
+    if (execRefusal) return res.status(409).json({ error: execRefusal, code: 'exec-env-refused' });
 
     if (internal) {
       entry.ticketId = internal.ticket.id;
@@ -5622,6 +5684,12 @@ app.get('/api/engines', async (req, res) => {
   catch (err) { res.status(500).json({ error: String(err?.message || err) }); }
 });
 
+// The registered execution environments, for every "Runs in" picker (plans/e2b-execution-design.md §17).
+app.get('/api/exec-envs', (_req, res) => { res.json({ execEnvs: describeExecEnvs() }); });
+// Their live status (exec-env/status.mjs): reachable, key, sandboxes running of the cap, runs queued for a slot; one
+// `servers` entry per backend today. Cached a few seconds, so the chips' polling from many pages stays cheap.
+app.get('/api/exec-envs/status', async (_req, res) => { res.json({ execEnvs: await execEnvStatuses({ mock: serverMockMode() }) }); });
+
 app.get('/api/run-defaults', (req, res) => {
   const raw = typeof req.query.projectDir === 'string' && req.query.projectDir ? req.query.projectDir : null;
   const projectDir = raw ? resolveProjectDir(raw) : null;
@@ -5631,8 +5699,10 @@ app.get('/api/run-defaults', (req, res) => {
     // Run tags (#718): the project's default tags (a New run prefill) and its store key, which the
     // form needs to save new defaults.
     const key = projectDir ? projectKey(projectDir) : null;
+    const exec = resolveRunExecEnv(projectDir ? { projectDir } : {});
     res.json({ engine: { value: result.value, source: result.source },
       steps: Object.fromEntries(MODEL_ENGINES.map((e) => [e, stepSlotDefaults(e, { projectDir })])),
+      execEnv: { value: exec.execEnv, source: exec.source },
       projectKey: key,
       tags: key ? readProjectDefaultTags(key) : [] });
   } catch (error) { res.status(500).json({ error: error?.message || String(error) }); }
@@ -5924,6 +5994,10 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
     const refusal = await orch.engineResumeRefusal();
     if (refusal) throw new ResumeError(409, { error: refusal.error, code: 'engine-refused', overridable: refusal.overridable, engine: orch.claude.engine });
   }
+  // The e2b preflight, also before the resume is committed (the kind comes back from the resume point;
+  // a local run answers null).
+  const execRefusal = orch.execEnvStartRefusal();
+  if (execRefusal) throw new ResumeError(409, { error: execRefusal, code: 'exec-env-refused' });
 
   // A scheduled resume for this run is moot the moment any resume is committed.
   cancelScheduledResumes(pipelineId, { by, reason: `the run was resumed${byActor(by || 'local')}` });
@@ -7232,6 +7306,74 @@ app.patch('/api/projects/:key/settings', async (req, res) => {
   const project = await tmProject(req, res); if (!project) return;
   // A refused team-memory switch keeps its code (NO_GIT, FOLDER_PROJECT, NO_ORIGIN) so the client can say why.
   try { res.json(await applyProjectSettingsPatch(project, req.body)); } catch (error) { res.status(400).json({ error: error?.message || String(error), ...(error?.status === 400 && typeof error.code === 'string' ? { code: error.code } : {}) }); }
+});
+
+// A project's sandbox environment (plans/e2b-execution-design.md §18, docs/e2b.md "Per-project templates"): the
+// backend fields (e2b: template), the read-only spec, builds. The spec is set here or with `worca exec-env spec`.
+const execEnvView = (key) => projectExecEnvView(key, { jobFor: (backend) => publicBuildJob(latestBuildJob(key, backend)) });
+const execEnvError = (res, err) => {
+  if (err?.code === 'EXEC_ENV_SPEC_INVALID' || err?.code === 'EXEC_ENV_CONFIG_INVALID' || /unknown execution environment/.test(err?.message || '')) {
+    return res.status(400).json({ error: err.message, code: err.code || 'EXEC_ENV_UNKNOWN' });
+  }
+  if (err?.status) return res.status(err.status).json({ error: err.message, code: err.code });
+  return res.status(500).json({ error: err?.message || String(err) });
+};
+app.get('/api/projects/:key/exec-env', async (req, res) => {
+  const p = await tmProject(req, res); if (!p) return;
+  try { res.json(execEnvView(p.key)); } catch (err) { execEnvError(res, err); }
+});
+// The writes refuse an isolated agent (as PUT /actions does, D4): the spec decides what every later sandbox of
+// the project contains, and a build spends the server's backend credit — the very thing agents never get.
+// A browser Origin must also name this server exactly (host-guard ignores the port: a page on another localhost
+// port — a dev server, an Action service — must not set a spec or spend credit; terminalSameOrigin, D13).
+// (refuseAgentCaller's text is about Actions, hence own codes.)
+function execEnvWriteAllowed(req, res) {
+  if (agentMayBeCaller(req)) {
+    res.status(403).json({ error: 'Sandbox environments cannot be changed or built from inside the container while agent isolation is on. Open Worca through its published address.', code: 'EXEC_ENV_AGENT_BLOCKED' });
+    return false;
+  }
+  if (!terminalSameOrigin(req)) {
+    res.status(403).json({ error: 'Sandbox environments can only be changed from pages served by this Worca.', code: 'EXEC_ENV_CROSS_ORIGIN' });
+    return false;
+  }
+  return true;
+}
+app.put('/api/projects/:key/exec-env/spec', async (req, res) => {
+  if (!execEnvWriteAllowed(req, res)) return;
+  const p = await tmProject(req, res); if (!p) return;
+  try { setProjectEnvSpec(p.key, req.body); res.json(execEnvView(p.key)); } catch (err) { execEnvError(res, err); }
+});
+app.delete('/api/projects/:key/exec-env/spec', async (req, res) => {
+  if (!execEnvWriteAllowed(req, res)) return;
+  const p = await tmProject(req, res); if (!p) return;
+  try { clearProjectEnvSpec(p.key); res.json(execEnvView(p.key)); } catch (err) { execEnvError(res, err); }
+});
+// PATCH {backend, values: {field: string|null}}
+app.patch('/api/projects/:key/exec-env/config', async (req, res) => {
+  if (!execEnvWriteAllowed(req, res)) return;
+  const p = await tmProject(req, res); if (!p) return;
+  const { backend, values } = req.body || {};
+  if (typeof backend !== 'string') return badRequest(res, 'backend must be a string');
+  try { setProjectBackendConfig(p.key, backend, values); res.json(execEnvView(p.key)); } catch (err) { execEnvError(res, err); }
+});
+// POST {backend?} -> 202 {job}: builds in the background (a clone-job twin: poll GET /api/exec-env/builds/:id,
+// 'exec-env-build-changed' broadcasts the start and the end). Everything after tmProject sits inside try:
+// Express 4 does not catch an async throw, and the server has no unhandledRejection handler.
+app.post('/api/projects/:key/exec-env/build', async (req, res) => {
+  if (!execEnvWriteAllowed(req, res)) return;
+  const p = await tmProject(req, res); if (!p) return;
+  try {
+    const backend = typeof req.body?.backend === 'string' ? req.body.backend : defaultBuildBackend()?.name;
+    if (!backend) return badRequest(res, 'no execution backend can build environments');
+    const job = startEnvironmentBuild({ projectKey: p.key, backend, mock: mockEnabled(),
+      onState: (j) => broadcast({ type: 'exec-env-build-changed', job: publicBuildJob(j) }) });
+    res.status(202).json({ job: publicBuildJob(job) });
+  } catch (err) { execEnvError(res, err); }
+});
+app.get('/api/exec-env/builds/:id', (req, res) => {
+  const r = buildJobLog(req.params.id, Number(req.query.since) || 0);
+  if (!r) return res.status(404).json({ error: 'build job not found (finished jobs are kept for an hour)', code: 'NOT_FOUND' });
+  res.json(r);
 });
 
 /** PATCH /api/projects/:key/settings' body for one registered project ({key, path}): validate, write in one
@@ -9828,6 +9970,7 @@ app.post('/api/runs/:id/resolve-pipeline', async (req, res) => {
       sourceBranch: m.br.source,
       featureBranch: m.br.feature,
       syncBeforeStart: false,
+      execEnv: 'local',   // the agent merges the base: a sandbox cannot bring a merge back (docs/e2b.md)
       ...(row.guardrails_id ? { guardrailsId: row.guardrails_id } : {}),
       engine: runEngineOfRow(row),
       // #617: a mock run is resolved by a mock run. Best effort: the resume point records `mock: true` while it
@@ -11626,6 +11769,10 @@ const settingsState = () => ({
   workspaceScan: workspaceScanModels(),                   // Settings › Runs › Workspaces: the STORED pick (null = the defaults)
   workspaceScanDefault: WORKSPACE_SCAN_DEFAULT_MODELS,    // what null means: Sonnet 5 · medium, project agents sonnet · medium
   runEngine: runEngineSetting() ?? null,
+  // Raw values (unlike askMaxTurns): an unset field stays empty and Save never persists a default nobody typed.
+  execEnv: execEnvSetting() ?? null,
+  e2bMaxSandboxes: e2bIntSettingRaw('e2bMaxSandboxes'),
+  e2bMaxWaitMin: e2bIntSettingRaw('e2bMaxWaitMin'),
   stepModels: stepModelsSetting(),
   modelRoles: modelRolesSetting(),                         // Models › Roles (D1): { <engine>: { deep|everyday|quick: { model, effort } } }
   utilityModels: utilityModelsSetting(),
@@ -12275,6 +12422,8 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const csModels = hasCommandSummaryModelKey ? (autoModels || defragModels || agentGenModels || namingModels || await listModels('')) : null;
   const hasWorkspaceScanKey = has('workspaceScan');
   const hasRunEngineKey = has('runEngine');
+  const hasExecEnvKey = has('execEnv');
+  const e2bIntKeys = ['e2bMaxSandboxes', 'e2bMaxWaitMin'].filter((k) => has(k));
   const hasStepModelsKey = has('stepModels');
   const hasModelRolesKey = has('modelRoles');
   const hasUtilityModelsKey = has('utilityModels');
@@ -12349,6 +12498,8 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasCommandSummaryModelKey) asSettingsField('commandSummaryModel', () => assertCommandSummaryModelInput(body.commandSummaryModel, csModels));
     if (hasWorkspaceScanKey) asSettingsField('workspaceScan', () => assertWorkspaceScanInput(body.workspaceScan, wsScanModels));
     if (hasRunEngineKey) asSettingsField('runEngine', () => assertRunEngineInput(body.runEngine));
+    if (hasExecEnvKey) asSettingsField('execEnv', () => assertExecEnvInput(body.execEnv));
+    for (const k of e2bIntKeys) asSettingsField(k, () => assertE2bIntInput(k, body[k]));
     if (hasAskEngineKey) asSettingsField('askEngine', () => assertAskEngineInput(body.askEngine));
     if (hasRequirementsInterviewKey) await asSettingsField('requirementsInterview', async () => {
       const v = assertRequirementsInterviewInput(body.requirementsInterview);
@@ -12433,6 +12584,8 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasCommandSummaryModelKey) await setCommandSummaryModel(body.commandSummaryModel, { models: csModels });
     if (hasWorkspaceScanKey) await setWorkspaceScanModels(body.workspaceScan, { models: wsScanModels });
     if (hasRunEngineKey) await asSettingsField('runEngine', () => setRunEngineSetting(body.runEngine));
+    if (hasExecEnvKey) await asSettingsField('execEnv', () => setExecEnvSetting(body.execEnv));
+    for (const k of e2bIntKeys) await asSettingsField(k, () => setE2bIntSetting(k, body[k]));
     if (hasStepModelsKey) await asSettingsField('stepModels', () => setStepModels(body.stepModels));
     if (hasModelRolesKey) await asSettingsField('modelRoles', () => setModelRoles(modelRolesPatch));
     if (hasUtilityModelsKey) await asSettingsField('utilityModels', () => setUtilityModels(body.utilityModels));
@@ -18861,7 +19014,7 @@ app.use((err, _req, res, next) => {
  *        sweep keeps its own console default.
  */
 export async function bootMaintenance({ log } = {}) {
-  const summary = { reconciled: 0, sweptV1: 0, recoveredBriefs: 0, recoveredAttachmentReads: 0, attachmentReadFolders: null, attachmentTempBodies: null, runRoots: null, legacy: null, ask: null, askWorktrees: null, repoLooks: null, requirementsRepoLooks: null, bench: null };
+  const summary = { reconciled: 0, sweptV1: 0, recoveredBriefs: 0, recoveredAttachmentReads: 0, attachmentReadFolders: null, attachmentTempBodies: null, runRoots: null, legacy: null, ask: null, askWorktrees: null, repoLooks: null, requirementsRepoLooks: null, bench: null, e2b: null };
   const sink = (scope) => (typeof log === 'function' ? (level, msg) => log(scope, level, msg) : undefined);
 
   // Runs left 'running' by a previous process that died before writing a terminal
@@ -18923,6 +19076,21 @@ export async function bootMaintenance({ log } = {}) {
   } catch (err) {
     console.error(`[worca-ui] run-root sweep failed: ${err && err.message ? err.message : err}`);
   }
+
+  // Orphan sandboxes of this instance, per backend (docs/e2b.md): before autoResumeOnBoot, and keeping
+  // every sandbox whose run is not done/error/stopped, so auto-resumed runs still find theirs. A no-op
+  // for a backend without configuration. Backends sweep in parallel (each has its own 30 s cap), under
+  // summary.execEnvs so a backend name can never overwrite another summary key; summary.e2b keeps its shape.
+  summary.execEnvs = {};
+  await Promise.all(listExecBackends().map(async (backend) => {
+    try {
+      const r = summary.execEnvs[backend.name] = await sweepBackend(backend);
+      if (r.killed?.length) console.log(`[worca-ui] ${backend.name}: removed ${r.killed.length} orphan sandbox(es)`);
+    } catch (err) {
+      console.error(`[worca-ui] ${backend.name} sweep failed: ${err?.message || err}`);
+    }
+  }));
+  summary.e2b = summary.execEnvs.e2b ?? null;
 
   // The one-time legacy sweep (§6 Phase 7). A TOTAL no-op while the effective mode is
   // `legacy` — under legacy those paths hold every live and every paused run, so

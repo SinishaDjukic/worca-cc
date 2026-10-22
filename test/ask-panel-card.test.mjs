@@ -81,7 +81,7 @@ function apiHandler(recorder = {}) {
       if (recorder.configResponse) return recorder.configResponse;
       return { ok: true, status: 200, json: async () => ({ config: configBody().config }) };
     }
-    if (path === '/api/run-defaults') return { ok: true, status: 200, json: async () => ({ engine: { value: recorder.runEngine || 'claude', source: 'default' } }) };
+    if (path === '/api/run-defaults') return { ok: true, status: 200, json: async () => ({ engine: { value: recorder.runEngine || 'claude', source: 'default' }, ...(recorder.execEnv ? { execEnv: { value: recorder.execEnv, source: 'user' } } : {}) }) };
     if (url === '/api/projects') return { ok: true, status: 200, json: async () => ({ projects: recorder.projects || [{ name: 'proj', path: '/repos/proj', exists: true }, { name: 'other', path: '/repos/other', exists: false }] }) };
     if (url === '/api/workflows') return { ok: true, status: 200, json: async () => ({ workflows: recorder.workflows || [{ id: 'wf_default', name: 'Default' }, { id: 'wf_review', name: 'Review only' }] }) };
     if (url === '/api/guardrails') return { ok: true, status: 200, json: async () => ({ guardrails: [{ id: 'permissive', name: 'Permissive' }, { id: 'normal', name: 'Normal' }, { id: 'strict', name: 'Strict' }] }) };
@@ -296,6 +296,7 @@ test('ask-panel-card: Open in New Pipeline hands over the CURRENT values', async
     prompt: 'edited brief', title: 'Fix login', sourceBranch: '', featureBranch: 'worca/fix-login',
     memoryScope: null,
     engine: null,
+    execEnv: null,
   });
 });
 
@@ -1283,6 +1284,65 @@ test('ask-panel-card: the Engine field — Default sends none, a proposed engine
       ctx.doc.querySelector('[data-ask-card-open-np]').click();
       for (let i = 0; i < 6; i++) await ctx.tick();
       assert.equal(handed[0].engine, 'codex');
+    } },
+  ]);
+});
+
+// Execution environment (docs/e2b.md): like the engine, "Default" sends none (/api/run resolves run.execEnv) and names
+// what the run would get; a proposal that names one preselects it, and Start and Open in New Pipeline both carry it.
+test('ask-panel-card: the Runs in field — Default sends none, a proposed environment rides Start and the New Pipeline handoff', async () => {
+  await checkRows([
+    { name: 'Default names the saved environment and Start sends none', run: async () => {
+      const rec = { execEnv: 'e2b' };
+      const ctx = await openWithCard(PROJECT_CARD, rec);
+      for (let i = 0; i < 10; i++) await ctx.tick();
+      const sel = ctx.doc.querySelector('.ask-card-exec-env');
+      assert.equal(sel.value, '');
+      assert.equal(sel.options[0].textContent, 'E2B sandbox (default)');
+      assert.deepEqual([...sel.options].filter((o) => !o.hidden).map((o) => o.value), ['', 'local'], 'E2B is listed once, as the default');
+      ctx.doc.querySelector('[data-ask-card-start]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.equal(rec.runBodies.length, 1);
+      assert.equal('execEnv' in rec.runBodies[0], false);
+    } },
+    { name: 'a saved E2B default on another engine reads as Local, as the run start resolves it', run: async () => {
+      const rec = { execEnv: 'e2b', runEngine: 'codex' };
+      const ctx = await openWithCard(PROJECT_CARD, rec);
+      for (let i = 0; i < 10; i++) await ctx.tick();
+      assert.equal(ctx.doc.querySelector('.ask-card-exec-env').options[0].textContent, 'Local (default)');
+    } },
+    { name: 'a proposed environment is preselected, stays visible at every mode and is sent', run: async () => {
+      const rec = {};
+      const ctx = await openWithCard({ ...PROJECT_CARD, execEnv: 'e2b' }, rec);
+      const sel = ctx.doc.querySelector('.ask-card-exec-env');
+      assert.equal(sel.value, 'e2b');
+      const field = sel.closest('.ask-rp-field');
+      assert.equal(field.dataset.minLevel, 'advanced');
+      assert.equal(field.dataset.levelKeep, '1');
+      ctx.doc.querySelector('[data-ask-card-start]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.equal(rec.runBodies[0].execEnv, 'e2b');
+    } },
+    { name: 'Default on a card that proposed an environment sends an empty one, so the server keeps the default', run: async () => {
+      const rec = {};
+      const ctx = await openWithCard({ ...PROJECT_CARD, execEnv: 'e2b' }, rec);
+      const sel = ctx.doc.querySelector('.ask-card-exec-env');
+      sel.value = '';
+      sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+      ctx.doc.querySelector('[data-ask-card-start]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.equal(rec.runBodies[0].execEnv, '');
+    } },
+    { name: 'a picked environment is handed to New Pipeline', run: async () => {
+      const handed = [];
+      const ctx = await openWithCard(PROJECT_CARD, {}, { openNewPipeline: (p) => handed.push(p) });
+      const sel = ctx.doc.querySelector('.ask-card-exec-env');
+      assert.equal(sel.closest('.ask-rp-field').dataset.levelKeep, undefined, 'no proposed environment: Advanced and up only');
+      sel.value = 'e2b';
+      sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+      ctx.doc.querySelector('[data-ask-card-open-np]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.equal(handed[0].execEnv, 'e2b');
     } },
   ]);
 });

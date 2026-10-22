@@ -911,6 +911,8 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     asAgent: true,
     bin: c.bin,
     engine: c.engine,
+    // The run's E2B execution environment (src/core/exec-env/); undefined on local runs.
+    execEnv: c.execEnv,
     mock: c.mock,
     signal: ctx.signal,
     onEvent: (e) => {

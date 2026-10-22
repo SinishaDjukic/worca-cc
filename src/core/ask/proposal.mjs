@@ -29,6 +29,8 @@ import { runsOn } from '../../shared/connections.mjs';
 import { normaliseTags } from '../../shared/run-tags.mjs';
 import { listModels as realListModels, modelCostConfig, modelHasBaseUrlRouting } from '../config.mjs';
 import { resolveRunEngine } from '../settings-cascade.mjs';
+import { execEnvNames, isExecEnvName, getExecBackend } from '../exec-env/index.mjs';
+import { remoteRefusesDefault } from '../../shared/exec-env.mjs';
 import { cachedPolicyFor } from '../policy/cache.mjs';
 import { fieldsForRun, deviationsFor } from '../policy/effective.mjs';
 import { autoModelsFor } from '../auto/runnable.mjs';
@@ -47,6 +49,9 @@ import { NO_PROJECT_ERRORS } from '../../shared/no-project.mjs';
 import { ensureHouseBrief } from '../house-brief.mjs';
 import { presetProposalInput, PRESET_PROPOSAL_ERRORS } from './proposal-preset.mjs';
 import { readPreset as readPresetRow } from '../run-presets-store.mjs';
+
+/** A backend's picker label ("E2B sandbox"); the bare name for one no longer registered. */
+function execEnvLabelOf(name) { try { return getExecBackend(name).label; } catch { return name; } }
 
 export const PROPOSAL_ERRORS = Object.freeze({
   bothTargets: 'provide workspaceId OR projectKey, not both',
@@ -67,6 +72,9 @@ export const PROPOSAL_ERRORS = Object.freeze({
   guardrailsType: 'guardrailsId must be a string',
   unknownEngine: (e) => `unknown engine "${e}" — one of ${ENGINE_NAMES.join(', ')}, or omit it for the user's default`,
   unknownGuardrails: (id) => `unknown guardrailsId "${id}"`,
+  unknownExecEnv: (v) => `unknown execEnv "${v}" — one of ${execEnvNames().join(', ')}, or omit it for the default`,
+  // The run start refuses the same (run-harness execEnvStartRefusal): say so before the user presses Start.
+  execEnvRefused: (name, why) => `execEnv "${name}": ${execEnvLabelOf(name)} runs Claude single-project runs only, not ${why} — omit execEnv or give "local"`,
   permissive: 'guardrailsId "permissive" is not allowed for proposed runs — use "normal" or a stricter set',
   briefRequired: 'brief is required',
   briefAndSource: 'give brief OR source, not both — with a task source the run reads the task itself; put what you learned in the note',
@@ -318,7 +326,7 @@ export function createProposalValidator({
       if (!p) { errors.push(PROPOSAL_ERRORS.unknownProject(projectKeyIn)); return fail(); }
       if (!pathExists(p.path)) { errors.push(PROPOSAL_ERRORS.projectPathMissing(p.path)); return fail(); }
       target = { target: 'project', projectKey: p.key, projectName: p.name, projectDir: p.path,
-        workspaceId: null, workspaceName: null, members: null };
+        workspaceId: null, workspaceName: null, members: null, ...(p.vcs === 'none' ? { workMode: 'folder' } : {}) };
     } else {
       if (!WORKSPACE_KEY_RE.test(workspaceIdIn)) { errors.push(PROPOSAL_ERRORS.workspaceNotFound); return fail(); }
       const ws = await readWorkspace(workspaceIdIn);
@@ -413,6 +421,22 @@ export function createProposalValidator({
     if (inp.engine !== undefined && inp.engine !== null && inp.engine !== '') {
       const e = typeof inp.engine === 'string' ? inp.engine.trim().toLowerCase() : '';
       if (ENGINE_NAMES.includes(e)) engine = e; else errors.push(PROPOSAL_ERRORS.unknownEngine(String(inp.engine)));
+    }
+
+    // ── execution environment: only when named; omitted, /api/run resolves the run.execEnv default ──
+    // A remote one takes what the run start takes (resolveRunExecEnv's rule): Claude, one project. The backend's own
+    // readiness (its key, its template) is the start's to check: the chat's MCP child never holds its credentials.
+    let execEnv = null;
+    if (inp.execEnv !== undefined && inp.execEnv !== null && inp.execEnv !== '') {
+      const x = typeof inp.execEnv === 'string' ? inp.execEnv.trim().toLowerCase() : '';
+      if (!isExecEnvName(x)) errors.push(PROPOSAL_ERRORS.unknownExecEnv(String(inp.execEnv)));
+      else if (x !== 'local') {
+        const workspace = target.target === 'workspace';
+        const runEngine = engine || resolveEngine(workspace ? { workspace: true } : { projectDir: target.projectDir });
+        const workMode = target.target === 'none' ? 'none' : target.workMode || 'git';
+        const why = remoteRefusesDefault({ engine: runEngine, workspace, workMode }) ?? getExecBackend(x).refusesDefault?.({ engine: runEngine, workspace, workMode }) ?? null;
+        if (why) errors.push(PROPOSAL_ERRORS.execEnvRefused(x, why)); else execEnv = x;
+      } else execEnv = x;
     }
 
     // ── per-agent picks (`nodes`): a per-run overlay over the project's agent settings ──
@@ -574,6 +598,8 @@ export function createProposalValidator({
         ...(sourceWarning ? { sourceWarning } : {}),
         // Only a proposal that names an engine: the card otherwise starts on the default, like New pipeline.
         ...(engine ? { engine } : {}),
+        // Likewise an execution environment: the card otherwise runs where the run.execEnv default says.
+        ...(execEnv ? { execEnv } : {}),
         // Only when the source is remote-only, behind its remote or unverifiable (offline).
         ...(sourceRef ? { sourceRef } : {}),
         // Only a proposal with per-agent picks: { nodeId: { model, effort, subagentModel?, reason?, facts? } } and the

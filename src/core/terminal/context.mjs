@@ -6,6 +6,7 @@ import { delimiter, dirname } from 'node:path';
 import { membersOfRow, checkoutPathFor } from '../checkout.mjs';
 import { checkoutRecordsFor } from '../artifacts.mjs';
 import { actionBaseEnv } from '../actions/spawn.mjs';
+import { pickBackendSecrets } from '../host-credentials.mjs';
 import { withNoGitPath } from '../nogit-stub.mjs';
 import { RUN_ROOT_REMOVE as FINISHED } from '../worktree.mjs';   // done | stopped | error
 import { workModeOfRow } from '../project-kind.mjs';
@@ -60,7 +61,9 @@ const envPart = (s) => String(s).toUpperCase().replace(/[^A-Z0-9]+/g, '_').repla
  */
 export function terminalEnv({ base = process.env, sessionId, mode, runId = null, member = null, projectKey = null, branch = null,
   cwd, workspace = false, actionSnaps = [], shellEnv = {}, agent = false }) {
-  const env = withNoGitPath({ ...actionBaseEnv(base), ...shellEnv,
+  // The person's own pane keeps the backend keys (they type `worca run --exec-env e2b`, `worca e2b sweep` here);
+  // the Ask agent terminal does not (host-credentials.mjs strips them from every other child).
+  const env = withNoGitPath({ ...actionBaseEnv(base), ...(agent ? {} : pickBackendSecrets(base)), ...shellEnv,
     TERM: mode === 'pty' ? 'xterm-256color' : 'dumb', COLORTERM: 'truecolor',
     WORCA_TERMINAL: '1', WORCA_TERMINAL_SESSION: sessionId, WORCA_WORKTREE: cwd });
   delete env.PORT;                   // worca's own port (`worca ui`, the Docker image): an app started here must not bind it

@@ -2,7 +2,7 @@ import { getDb, prepare, tx } from './db.mjs';
 import { projectKey as keyOfDir } from './store.mjs';
 import {
   readSettings, setProjectLayerReader, nightModeSettings, memoryDefragModel,
-  runEngineSetting, stepModelsSetting, utilityModelsSetting, normalizeModelPair, SETTING_CHECKS,
+  runEngineSetting, execEnvSetting, stepModelsSetting, utilityModelsSetting, normalizeModelPair, SETTING_CHECKS,
   askEngineSetting, askModelsSetting, requirementsInterviewSetting,
   assertAskWebInput, askWebStoreShape, assertSmartNamingInput, SMART_NAMING_DEFAULTS, UTILITY_JOBS,
   DEFAULT_CONTEXT_MAX_BYTES_PER_FILE, DEFAULT_CONTEXT_MAX_BYTES_TOTAL, DEFAULT_SKILL_MOUNT,
@@ -15,6 +15,9 @@ import { cachedPolicyForKey } from './policy/cache.mjs';
 import { fieldsForRun } from './policy/effective.mjs';
 import { MODEL_ENGINES, HELPER_ENGINES, ASK_ENGINES } from './model-env.mjs';
 import { NIGHT_FIELDS, NIGHT_DEFAULTS, fieldError as nightFieldError } from './night/config.mjs';
+import { EXEC_ENVS } from './exec-env/index.mjs';
+import { getExecBackend } from './exec-env/registry.mjs';
+import { remoteRefusesDefault } from './exec-env/policy.mjs';
 
 export const LAYERS = Object.freeze(['project', 'user', 'team']);
 const isObj = (value) => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -47,6 +50,7 @@ function scalar({ id, path = [id], check, def, teamKey = null, hint, readUser = 
 }
 const SCALARS = [
   scalar({ id: 'run.engine', path: ['runEngine'], check: SETTING_CHECKS.runEngine, def: 'claude', hint: 'must be an engine', readUser: runEngineSetting }),
+  scalar({ id: 'run.execEnv', path: ['execEnv'], check: SETTING_CHECKS.execEnv, def: 'local', hint: `must be ${EXEC_ENVS.join(' or ')}`, readUser: execEnvSetting }),
   scalar({ id: 'pipelineCostLimitUsd', check: SETTING_CHECKS.usdCap, def: null, hint: 'must be a positive number of USD' }),
   scalar({ id: 'humanRateUsdPerHour', check: SETTING_CHECKS.usdCap, def: DEFAULT_HUMAN_RATE_USD, teamKey: 'cost.humanRateUsd', hint: 'must be a positive number of USD' }),
   scalar({ id: 'askMaxTurns', check: SETTING_CHECKS.askMaxTurns, def: DEFAULT_ASK_MAX_TURNS, teamKey: 'ask.maxTurns', hint: 'must be an integer between 1 and 500' }),
@@ -251,6 +255,21 @@ export function resolveRunEngine({ explicit = null, projectDir = null, projectKe
   if (typeof explicit === 'string' && explicit.trim()) return { engine: explicit.trim(), source: 'run' };
   const result = resolveSetting('run.engine', { projectDir, projectKey, workspace });
   return { engine: result.value, source: result.source };
+}
+/** Where a run executes (plans/e2b-execution-design.md §12): local | a registered backend. A SAVED remote
+ *  default does not apply to a run no remote backend can take (a workspace run, an engine other than Claude)
+ *  or that its backend refuses: that run stays local, and `fallback` says why. Only an explicit per-run
+ *  backend is refused at the start. */
+export function resolveRunExecEnv({ explicit = null, projectDir = null, projectKey = null, workspace = false, engine = null, workMode = 'git' } = {}) {
+  if (typeof explicit === 'string' && explicit.trim()) return { execEnv: explicit.trim(), source: 'run' };
+  const result = resolveSetting('run.execEnv', { projectDir, projectKey, workspace });
+  if (result.value !== 'local') {
+    let backend = null;
+    try { backend = getExecBackend(result.value); } catch { /* a saved name no longer registered: selectExecEnv names it at start */ }
+    const why = backend ? (remoteRefusesDefault({ workspace, engine, workMode }) ?? backend.refusesDefault?.({ workspace, engine, workMode }) ?? null) : null;
+    if (why) return { execEnv: 'local', source: result.source, fallback: `the saved ${backend.title} default does not apply to ${why}; it runs locally` };
+  }
+  return { execEnv: result.value, source: result.source };
 }
 export function resolvedModelPair(engine, family, name, scope = null) {
   return resolveSetting(`models.${engine}.${family}.${name}`, scope).value;

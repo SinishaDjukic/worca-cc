@@ -3,6 +3,8 @@
 // reads. Engine-neutral: no wire format here.
 export const EVENT_TYPES = Object.freeze(new Set([
   'session', 'text', 'usage', 'tool', 'toolResult', 'subagent', 'result', 'retry', 'hook', 'stderr', 'log', 'compact',
+  // A remote spawn's model calls that no `result` covered, as worca's relay measured them: { messages, byModel }.
+  'relayCost',
 ]));
 
 /** Already normalized? `hook` is the one type that carries `raw`; for every other

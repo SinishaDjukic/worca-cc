@@ -191,6 +191,11 @@ test('detached + keep on-success: a finished run keeps its checkout, protected a
 
 test('detached: a failed teardown commit retains the worktree + run root and persists the reason', async () => {
   const repo = await freshRepo();
+  // G22: a literal secret the WORCA_MCP_SECRETS=warn screen lets through lands in <runRoot>/mcp.json.
+  await writeFile(join(repo, '.mcp.json'), JSON.stringify({ mcpServers: { db: { command: 'node', args: ['/abs/db.js'], env: { DB_TOKEN: 'literal-secret' } } } }));
+  const prevMode = process.env.WORCA_MCP_SECRETS;
+  process.env.WORCA_MCP_SECRETS = 'warn';
+  after(() => { if (prevMode === undefined) delete process.env.WORCA_MCP_SECRETS; else process.env.WORCA_MCP_SECRETS = prevMode; });
   await withMode('detached', async () => {
     const orch = createOrchestrator({
       projectDir: repo, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
@@ -209,6 +214,8 @@ test('detached: a failed teardown commit retains the worktree + run root and per
     assert.ok(existsSync(st.branch.worktreeDir), 'the only checkout containing the work survives');
     const runRoot = join(worcaHome(), 'runs', st.id);
     assert.ok(existsSync(runRoot), 'the containing run root survives too');
+    assert.ok(!existsSync(join(runRoot, 'mcp.json')), 'G22: the merged MCP config (literal secrets) does not outlive the run');
+    assert.deepEqual((await readRunManifest(runRoot)).mcpServerNames, ['db'], 'the run did get the server');
     const saved = await readPipelineByKey(projectKey(repo), st.id);
     assert.equal(saved.state.status, 'done', 'commit failure is orthogonal to pipeline status');
     assert.equal(saved.state.branch.commitFailed.code, 'commit_failed');

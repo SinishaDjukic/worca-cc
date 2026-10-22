@@ -56,7 +56,8 @@ key.
 
 ## Support matrix
 
-Every container setup runs Linux containers, so the broker behaves the same on every host.
+Every container setup runs Linux containers, so the broker behaves the same on every container host. An E2B
+sandbox runs the agent remotely; what matters there is the worca host, which must be macOS or Linux.
 
 | Setup | macOS (Apple silicon) | Linux | Windows | Windows + WSL2 |
 | --- | --- | --- | --- | --- |
@@ -64,9 +65,13 @@ Every container setup runs Linux containers, so the broker behaves the same on e
 | Local container, one person, no broker | Supported | Supported | Supported (Linux containers) | Supported |
 | Local container, one person, broker **single** mode | Supported | Supported | Supported (Linux containers) | Supported |
 | Hosted, a team, broker **multi** mode | **Target** (local model on the host, Metal) | **Target** (Compose, Kubernetes, Railway) | Works, not a target | Works, not a target |
+| Runs in an E2B sandbox, broker on (any mode) | Works | Works | Not supported (E2B needs a macOS or Linux worca host) | Works (WSL2 counts as Linux) |
 
 - The broker is never used natively: the agent runs as your OS user and can read everything
   you can, so there is no boundary to enforce.
+- An E2B sandbox ([E2B](e2b.md)) works with the broker: no key and no broker token ever enters the
+  sandbox. worca carries the sandbox's model calls to the broker over the command's stdin and stdout and
+  attaches the spawn's token on its own side. Bedrock, Vertex and Foundry models are refused for sandbox runs.
 - Windows containers (as opposed to Linux containers on Windows) aren't supported.
 - On macOS a container has no GPU (no Metal passthrough). A local model server (Ollama, LM
   Studio, llama-server, MLX) runs on the host, and the broker reaches it.
@@ -477,6 +482,9 @@ on purpose.
 | `warn` (default without the broker) | The server stays; the run's log says agents can read its secret |
 | `off` | No check |
 
+In `warn` mode the secret also sits in the run's `mcp.json` while the run lasts; worca deletes that file when the
+run ends, even when the run folder is kept (a retained checkout), and a resume writes it again.
+
 The check makes the exposure visible; it can't make an MCP secret safe. Prefer MCP servers
 that need no secret, or accept the risk with `warn`.
 
@@ -642,6 +650,9 @@ The broker holds each request body in memory until its call ends. A body is at m
 in flight, across every agent, share 64 MiB, sized for the broker container's 256 MB memory
 limit. A call that doesn't fit gets a 503 `overloaded_error` with `retry-after: 2`, which the
 agents' clients retry.
+
+A sandbox run in E2B holds no broker token either: the relay on worca's side attaches the spawn's token, so an
+agent there can spend credits through its run's relay (within the budgets) but cannot take a token away.
 
 Not built: Amazon Bedrock and Google Vertex (the broker would have to sign requests with the
 person's cloud credentials), and plugin model keys sent any way but one `Authorization` or

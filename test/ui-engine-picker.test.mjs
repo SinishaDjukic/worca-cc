@@ -39,7 +39,7 @@ const freshBody = (dir, over = {}) => {
 };
 const ok = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
 
-async function boot({ fresh = null, syncGet = null, syncPost = null, run = null, workspaces = [] } = {}) {
+async function boot({ fresh = null, syncGet = null, syncPost = null, run = null, workspaces = [], runDefaults = null, execEnvs = null } = {}) {
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
@@ -56,9 +56,10 @@ async function boot({ fresh = null, syncGet = null, syncPost = null, run = null,
     const method = opts.method || 'GET';
     calls.push({ url: u, method, body: opts.body ? JSON.parse(opts.body) : null });
     // The server always answers the run defaults; Claude with nothing set (Plan 2a).
-    if (u.includes('/api/run-defaults')) return Promise.resolve(ok({ engine: { value: 'claude', source: 'default' }, steps: { claude: {}, codex: {} } }));
+    if (u.includes('/api/run-defaults')) return Promise.resolve(ok({ engine: { value: 'claude', source: 'default' }, steps: { claude: {}, codex: {} }, ...(runDefaults || {}) }));
     if (u.includes('/api/projects')) return Promise.resolve(ok({ projects: PROJECTS }));
     if (u.includes('/api/workspaces')) return Promise.resolve(ok({ workspaces }));
+    if (execEnvs && u.includes('/api/exec-envs')) return Promise.resolve(ok({ execEnvs }));
     if (u.includes('/api/branches')) {
       const q = new URL(u, 'http://x').searchParams;
       const dir = q.get('projectDir') || '';
@@ -233,6 +234,7 @@ test('engine: the hint and the checkbox row really hide (explicit [hidden] rules
   const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
   assert.match(css, /#engine-hint\[hidden\]/);
   assert.match(css, /#engineAllowRow\[hidden\]/);
+  assert.match(css, /#exec-env-hint\[hidden\]/);
 });
 
 test('engine: the Codex hint says the whole pipeline runs on Codex and where its models live', async () => {
@@ -314,3 +316,94 @@ for (const [engine, label] of [['gemini', 'Gemini CLI'], ['qwen', 'Qwen Code']])
     assert.equal(ctx.doc.querySelector('#agents-rows .step-subagent').closest('.select-wrap').hidden, true);
   });
 }
+
+const pickExecEnv = (ctx, v) => { const s = ctx.doc.getElementById('execEnvSelect'); s.value = v; s.dispatchEvent(new ctx.doc.defaultView.Event('change', { bubbles: true })); };
+
+test('execution environment: a server without the field, or a local default, sends nothing', async () => {
+  for (const runDefaults of [null, { execEnv: { value: 'local', source: 'default' } }]) {
+    const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }), runDefaults });
+    assert.equal(ctx.doc.getElementById('execEnvSelect').value, 'local');
+    assert.equal(ctx.doc.getElementById('exec-env-row').dataset.minLevel, 'advanced');
+    await submit(ctx);
+    assert.equal('execEnv' in ctx.posted.at(-1), false, JSON.stringify(runDefaults));
+  }
+});
+
+test('execution environment: an Ask card\'s Runs in pick survives the target change and the defaults that load after it', async () => {
+  const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }), runDefaults: { execEnv: { value: 'local', source: 'default' } } });
+  ctx.window.__np.openNewPipeline({ target: 'project', projectDir: PROJECTS[1].path, workflowId: 'wf_default', guardrailsId: 'normal',
+    prompt: 'x', title: 'X', featureBranch: '', execEnv: 'e2b' });
+  ctx.window.dispatchEvent(new ctx.window.Event('hashchange'));
+  for (let i = 0; i < 12; i++) await tick();
+  assert.equal(ctx.doc.getElementById('execEnvSelect').value, 'e2b');
+  await submit(ctx);
+  assert.equal(ctx.posted.at(-1).execEnv, 'e2b');
+});
+
+test('execution environment: picking E2B sends execEnv e2b', async () => {
+  const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }) });
+  pickExecEnv(ctx, 'e2b');
+  await submit(ctx);
+  assert.equal(ctx.posted.at(-1).execEnv, 'e2b');
+});
+
+test('execution environment: an e2b default preselects E2B; choosing Local sends execEnv local', async () => {
+  const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }), runDefaults: { execEnv: { value: 'e2b', source: 'user' } } });
+  await waitFor(() => ctx.doc.getElementById('execEnvSelect').value === 'e2b');
+  assert.equal(ctx.doc.getElementById('exec-env-row').dataset.levelKeep !== undefined, true, 'Simple still shows a non-local default');
+  pickExecEnv(ctx, 'local');
+  await submit(ctx);
+  assert.equal(ctx.posted.at(-1).execEnv, 'local');
+});
+
+test('execution environment: an e2b default does not apply to another engine or a workspace run: Local, a hint, nothing sent', async () => {
+  const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }), runDefaults: { execEnv: { value: 'e2b', source: 'user' } } });
+  const select = ctx.doc.getElementById('execEnvSelect');
+  const hint = ctx.doc.getElementById('exec-env-hint');
+  const row = ctx.doc.getElementById('exec-env-row');
+  await waitFor(() => select.value === 'e2b');
+  assert.equal(hint.hidden, true);
+  pick(ctx, 'codex');
+  assert.equal(select.value, 'local', 'the run falls back to Local, so the dialog shows Local');
+  assert.equal(hint.hidden, false);
+  assert.match(hint.textContent, /E2B default applies to Claude single-project runs only/);
+  assert.notEqual(row.dataset.levelKeep, undefined, 'Simple still shows the row with its hint');
+  await submit(ctx);
+  assert.equal('execEnv' in ctx.posted.at(-1), false, 'unsent: the server falls back itself and logs why');
+  pick(ctx, 'claude');
+  assert.equal(select.value, 'e2b');
+  assert.equal(hint.hidden, true);
+  ctx.doc.querySelector('#target-seg button[data-target="workspace"]').click();
+  await waitFor(() => select.value === 'local');
+  assert.equal(hint.hidden, false, 'a workspace run cannot take the E2B default either');
+});
+
+test('execution environment: an explicit E2B pick on another engine is still sent (the server refuses it)', async () => {
+  const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }), runDefaults: { execEnv: { value: 'e2b', source: 'user' } } });
+  await waitFor(() => ctx.doc.getElementById('execEnvSelect').value === 'e2b');
+  pick(ctx, 'codex');
+  pickExecEnv(ctx, 'e2b');
+  assert.equal(ctx.doc.getElementById('exec-env-hint').hidden, true);
+  await submit(ctx);
+  assert.equal(ctx.posted.at(-1).execEnv, 'e2b');
+});
+
+test('execution environment: a saved default of another backend follows the same rule, and the hint names it', async () => {
+  const execEnvs = [{ name: 'local', label: 'Local', title: 'Local' }, { name: 'e2b', label: 'E2B sandbox', title: 'E2B' },
+    { name: 'loopback', label: 'Loopback sandbox', title: 'Loopback' }];
+  const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }), execEnvs, runDefaults: { execEnv: { value: 'loopback', source: 'user' } } });
+  const select = ctx.doc.getElementById('execEnvSelect');
+  const hint = ctx.doc.getElementById('exec-env-hint');
+  await waitFor(() => select.value === 'loopback');
+  assert.equal(hint.hidden, true);
+  pick(ctx, 'codex');
+  assert.equal(select.value, 'local');
+  assert.equal(hint.hidden, false);
+  assert.match(hint.textContent, /saved Loopback default applies to Claude single-project runs only/);
+  await submit(ctx);
+  assert.equal('execEnv' in ctx.posted.at(-1), false);
+  pick(ctx, 'claude');
+  assert.equal(select.value, 'loopback');
+  await submit(ctx);
+  assert.equal('execEnv' in ctx.posted.at(-1), false, 'the run gets the saved default: nothing to send');
+});

@@ -23,6 +23,7 @@ const ALLOWED = {
   'src/core/mcpjson-approval.mjs': [1, 'env from guardedGitEnvSync'],
   'src/core/run-context.mjs': [2, 'env from guardedGitEnvSync'],
   'src/core/engines/project-files.mjs': [1, 'git(): env from guardedGitEnvSync (the Cursor and Gemini CLI project files)'],
+  'src/core/exec-env/git-transfer.mjs': [2, 'git() and patchedText(): env from guardedGitEnv (patchedText also sets GIT_CEILING_DIRECTORIES: a scratch folder, no repository)'],
   'src/core/workspace-map/files.mjs': [1, 'env from guardedGitEnv'],
   'src/core/git-lock.mjs': [1, 'plumbing: rev-parse / for-each-ref'],
   'src/core/in-base.mjs': [1, 'plumbing: merge-base / rev-parse'],

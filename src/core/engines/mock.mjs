@@ -17,8 +17,11 @@ import { demoAskReply, demoChunks } from '../demo-scenario.mjs';
 
 export const MOCK_SPAWN_LOG_MAX = 500;
 export const mockSpawnLog = [];
-export function recordMockSpawn({ engine, sandbox, model } = {}) {
-  mockSpawnLog.push({ engine: engine || 'claude', sandbox: sandbox ?? null, model: model ?? null });
+// `execEnv` (the sandbox id of an e2b run) and `resume` join the record only when present: a local
+// mock spawn's record keeps its three keys (deep-equal pins in the engine tests).
+export function recordMockSpawn({ engine, sandbox, model, execEnv, resume } = {}) {
+  mockSpawnLog.push({ engine: engine || 'claude', sandbox: sandbox ?? null, model: model ?? null,
+    ...(execEnv ? { execEnv } : {}), ...(resume ? { resume } : {}) });
   if (mockSpawnLog.length > MOCK_SPAWN_LOG_MAX) mockSpawnLog.splice(0, mockSpawnLog.length - MOCK_SPAWN_LOG_MAX);
 }
 
