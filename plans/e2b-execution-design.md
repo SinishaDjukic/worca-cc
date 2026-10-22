@@ -32,7 +32,7 @@ Goals:
 
 Non-goals (v1):
 - workspace (multi-project) runs — refused with a clear preflight error;
-- engines other than claude — refused;
+- engines outside REMOTE_ENGINES (claude, codex, copilot, cursor) — refused;
 - the legacy run-root mode (`WORCA_RUN_ROOT=legacy`, the run-root rollback) — refused: it puts
   the worktree inside the real checkout with no run root, run-root `CLAUDE.md` or `mcp.json`;
 - recreating a lost sandbox — a lost sandbox fails the run cleanly;
@@ -267,7 +267,17 @@ is `execEnvFatal`: the orchestrator skips its retry, recovery and pause policy.
   refused for remote spawns. Scripts get no model credential and no model route. Design:
   `plans/model-relay-design.md`.
 - **`agentSpawn` / sudo isolation** applies on the host only; there is no pool in a sandbox.
-- **Other engines** are refused.
+- **Engines.** `ENGINE_SANDBOX` holds each engine's allowlist, relay-owned keys (credential, endpoint,
+  provider: none enters a sandbox for any engine) and host-only keys. Codex, Copilot and Cursor go
+  through the model relay too (`relay-route.mjs engineModelRoute`): the CLI gets the relay URL and a
+  placeholder, worca signs on the host with the server env's key (`engineCredential`): codex an API
+  key only (a ChatGPT `auth.json` is refused, never copied), Copilot a fine-grained PAT in offline
+  BYOK mode, Cursor an access token worca exchanges for `CURSOR_API_KEY` and caches. Each route has
+  its own path allowlist, forwarded headers and usage meter; derived tokens are scrubbed from replies.
+  MCP per engine: codex attaches none (it attaches command servers only); copilot and cursor get the
+  URL servers. Cursor's `.cursor/*.json` are mirrored per spawn (`syncEngineFiles`) and hidden from
+  the sandbox clone's git by an `info/exclude` line, so they stay out of the sync tree. Engines
+  outside `REMOTE_ENGINES` are refused.
 
 ## 12. Settings and UI
 
@@ -285,10 +295,11 @@ is `execEnvFatal`: the orchestrator skips its retry, recovery and pause policy.
 ## 13. Template
 
 `docker/e2b/e2b.Dockerfile` is the agent's half of `docker/Dockerfile`: `node:22-bookworm`,
-git, python, build toolchains and the pinned Claude Code (`docker/CLAUDE_CODE_VERSION`), user
+git, python, build toolchains, the pinned Claude Code (`docker/CLAUDE_CODE_VERSION`) and the pinned
+codex, copilot and cursor-agent CLIs (`docker/e2b/engine-clis.json`), user
 `user` with home `/home/user`. Single stage, no `SHELL` line, no `COPY --from` (E2B's Dockerfile
 converter refuses or ignores those). `docker/e2b/build.mjs` (`npm run e2b:build`) substitutes
-the pinned version and builds through `Template.build`.
+the pinned versions and builds through `Template.build`.
 
 ## 14. Testing
 
@@ -316,6 +327,9 @@ the pinned version and builds through `Template.build`.
 - background `onStdout` latency is fine for live UI streaming;
 - a 24 h command `timeoutMs` is accepted;
 - Claude Code signs in from `CLAUDE_CODE_OAUTH_TOKEN` inside the VM;
+- codex, copilot (offline mode) and cursor-agent (HTTP/1.1 agent stream) complete a turn through the
+  model relay inside the VM, with a placeholder credential;
+- codex's own `workspace-write` sandbox (Landlock/seccomp) works inside the VM;
 - `--resume` works across commands in one sandbox (session files persist under `/home/user/.claude`);
 - the max `setTimeout` value the self-hosted server accepts (≥ `e2bMaxWaitMin`), and whether it
   counts from now;
@@ -382,11 +396,12 @@ parking, pause and resume, the capacity slots (one pool per backend), the boot s
 
 **What the client must guarantee:** paths are mirrored under the handle's `pathPrefix`; `run` rejects a non-zero
 exit with an error carrying a numeric `exitCode` (and `stderr`), in the foreground and through a background
-handle's `wait()`; the sandbox image has `bash`, `git`, `node`, `tar`, `python3` (script nodes) and the `claude`
-CLI on `PATH`; `user: 'root'` is honoured or safely ignored; `classifyError` tells 'gone' from 'unreachable'.
+handle's `wait()`; the sandbox image has `bash`, `git`, `node`, `tar`, `python3` (script nodes) and the engine's
+pinned CLI on `PATH` (`claude`, `codex`, `copilot`, `cursor-agent`); `user: 'root'` is honoured or safely ignored;
+`classifyError` tells 'gone' from 'unreachable'.
 
-**Generic guards.** `policy.mjs remotePreflight` (single-project runs, the claude engine, the detached run root,
-a POSIX host) and `remoteRefusesDefault` (a saved default does not apply to workspace runs or other engines; the
+**Generic guards.** `policy.mjs remotePreflight` (single-project runs, the REMOTE_ENGINES, the detached run root,
+a POSIX host) and `remoteRefusesDefault` (a saved default does not apply to workspace runs or engines no sandbox runs; the
 New run dialog applies the same rule from `src/shared/exec-env.mjs`) apply to every backend automatically. A backend's `preflight` adds only its own checks (keys, SDK, endpoint).
 Its `secretEnv` keys never reach agents, scripts, actions, git or the Ask agent terminal; the person's own
 terminal pane keeps them, so `worca run --exec-env <name>` typed there still works.
@@ -413,7 +428,8 @@ tools, `kind: 'system'` rows named `apt:<pkg>` become apt packages. In this vers
 else `WORCA_E2B_TEMPLATE`, else `worca-agent`. The run log names the template and where it came from.
 
 **Builds.** A project build is ONE single-stage Dockerfile: `docker/e2b/e2b.Dockerfile` at the pinned Claude Code
-plus a tool layer (apt packages, then mise `2026.10.7` installing the tools under `/opt/mise`, shims on `PATH`
+and the pinned codex, copilot and cursor-agent CLIs (`docker/e2b/engine-clis.json`, all part of the base version) plus
+a tool layer (apt packages, then mise `2026.10.7` installing the tools under `/opt/mise`, shims on `PATH`
 through `ENV` and `/etc/profile.d/mise.sh`). It is not `Template().fromTemplate('worca-agent')`: the base
 template's Claude Code version and Dockerfile cannot be read back from E2B, so the build's base version would be a
 guess. The build is named `worca-agent-<projectKey>` (cut to 63 characters, keeping the key's hash). Builds run
@@ -423,7 +439,8 @@ successful build replaces the record; a failed one leaves the previous record an
 keeps its error and log tail in memory for an hour.
 
 **Staleness.** A recorded build is stale when the spec's hash changed since the build, the spec was removed, or the
-backend's base version moved (`claude-code@<pin>+worca-agent@<hash of the base Dockerfile's instructions>+mise@<pin>`).
+backend's base version moved (`claude-code@<pin>+codex@<pin>+copilot@<pin>+cursor-agent@<pin>+worca-agent@<hash of the
+base Dockerfile's instructions>+mise@<pin>`).
 A run on a stale build warns in the run log and still uses it. Runs never block on a build and never rebuild.
 
 **Unverified:** mise's `curl | sh` installer inside E2B's Dockerfile builder (self-hosted); whether a failed

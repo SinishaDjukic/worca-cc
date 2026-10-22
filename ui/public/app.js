@@ -5280,7 +5280,8 @@ function setRunEngine(engine) {
 }
 
 // The environment a run gets when nobody picks one: the saved default, except a saved remote default on a run
-// no remote backend can take (another engine, a workspace run), which the server runs locally (resolveRunExecEnv).
+// no remote backend can take (an engine no sandbox runs, a workspace run, a Folder project, a run without a project),
+// which the server runs locally (resolveRunExecEnv).
 function runExecEnvDefault() {
   const saved = state.execEnvDefault || 'local';
   if (saved === 'local') return 'local';
@@ -5293,10 +5294,11 @@ function setRunExecEnv(v) {
   state.execEnv = execEnvKnown(v) ? v : 'local';
   if (el.execEnvSelect) el.execEnvSelect.value = state.execEnv;
   const saved = state.execEnvDefault || 'local';
-  const skipped = state.execEnv === 'local' && saved !== 'local' && runExecEnvDefault() === 'local';
+  const why = remoteRefusesDefault({ engine: state.engine, workspace: state.runTarget === 'workspace', workMode: formWorkMode() || 'git' });
+  const skipped = state.execEnv === 'local' && saved !== 'local' && !!why;
   if (el.execEnvHint) {
     el.execEnvHint.hidden = !skipped;
-    if (skipped) el.execEnvHint.textContent = `Runs locally: the saved ${execEnvTitle(saved)} default applies to Claude single-project runs only.`;
+    if (skipped) el.execEnvHint.textContent = `Runs locally: the saved ${execEnvTitle(saved)} default does not apply to ${why}.`;
   }
   keepVisible(document.getElementById('exec-env-row'), state.execEnv !== 'local' || skipped);
   paintExecEnvStatus();

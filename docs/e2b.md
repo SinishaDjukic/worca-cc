@@ -9,8 +9,8 @@ What it gives you: the agents work in a disposable VM. They cannot read your mac
 (`~/.ssh`, `~/.aws`, keychains, browser profiles), touch files outside the run, or see your processes. Worca
 brings their changes back after every step and commits them on your machine, as it always does. What it does
 **not** give you: a different set of tools than your template has, access to services on your machine, or
-your personal Claude Code setup (`~/.claude` skills, global `CLAUDE.md`, plugins). Local stays the default; a
-local run is exactly what it was before.
+your personal agent setup (`~/.claude`, `~/.codex`, `~/.copilot`, `~/.cursor`: skills, global instructions,
+plugins). Local stays the default; a local run is exactly what it was before.
 
 ## Quick start
 
@@ -36,9 +36,10 @@ local run is exactly what it was before.
    ```
 
 3. Give the server a model credential: `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) or
-   `ANTHROPIC_API_KEY`, in the environment the Worca server starts with. It stays on the server and never
-   enters a sandbox (see [Keys and child processes](#keys-and-child-processes)). With the
-   [credential broker](credential-broker.md) on, the server needs no credential at all.
+   `ANTHROPIC_API_KEY`, in the environment the Worca server starts with. For Codex, Copilot or Cursor runs, set
+   that engine's key instead (see [Required environment](#required-environment)). It stays on the server and
+   never enters a sandbox (see [Keys and child processes](#keys-and-child-processes)). With the
+   [credential broker](credential-broker.md) on, Claude runs need no credential at all.
 
 4. Start a run in a sandbox: see [Starting a run in E2B](#starting-a-run-in-e2b).
 
@@ -51,7 +52,10 @@ local run is exactly what it was before.
 | `WORCA_E2B_CLOUD` | for E2B Cloud | `1` sends runs to E2B Cloud (`api.e2b.app`) when `E2B_API_URL` is unset. Without it, an unset URL is refused rather than silently using Cloud (see [What leaves this machine](#what-leaves-this-machine)). |
 | `E2B_SANDBOX_URL` | for self-hosted | The sandbox traffic endpoint, e.g. `http://localhost:3002`. |
 | `WORCA_E2B_TEMPLATE` | no | The fallback template (default `worca-agent`) when the project sets none and has no build. |
-| `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` | yes, unless the credential broker is on | The model credential. It stays on the Worca server, which adds it to the sandbox's model calls; the sandbox never holds it. OAuth wins when both are set. |
+| `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` | Claude runs, unless the credential broker is on | The model credential. It stays on the Worca server, which adds it to the sandbox's model calls; the sandbox never holds it. OAuth wins when both are set. |
+| `CODEX_API_KEY` or `OPENAI_API_KEY` | Codex runs (not when every model is on its own endpoint) | An OpenAI API key; `CODEX_API_KEY` wins. A ChatGPT sign-in (`codex login`) cannot be used in a sandbox. |
+| `COPILOT_GITHUB_TOKEN` | Copilot runs | A fine-grained personal access token (`github_pat_…`) with only the Copilot Requests permission. Classic and OAuth tokens are refused. |
+| `CURSOR_API_KEY` | Cursor runs | A Cursor API key. Worca exchanges it for a short-lived access token on the server. |
 
 Agents, scripts and actions on your machine never get the `E2B_*` and `WORCA_E2B_*` variables, and neither
 does a sandbox (see [Keys and child processes](#keys-and-child-processes)).
@@ -122,8 +126,8 @@ Where it runs is picked with the `run.execEnv` setting, first match wins:
 - **For you:** Settings → Runs → Execution environment → Default execution environment (Expert level).
 
 A run preset carries no execution environment: `worca run --preset NAME` follows the project and user
-defaults. A saved E2B default applies to Claude runs of one git project only; workspace runs, Folder projects and runs
-without a project run locally and the run log says why (see [Limitations](#limitations)).
+defaults. A saved E2B default applies to runs of one git project on Claude, Codex, Copilot or Cursor; workspace runs,
+Folder projects and runs without a project run locally, and the run log says why (see [Limitations](#limitations)).
 
 ## How a run works
 
@@ -230,6 +234,8 @@ worca exec-env build --project <key|dir>                  # build or rebuild wor
 
 The project page shows the spec read-only, the template in use, the last build, and a **Build environment** /
 **Rebuild environment** button. A build is `worca-agent` plus the spec's packages and tools, as one template.
+The template pins Claude Code (`docker/CLAUDE_CODE_VERSION`) and the codex, copilot and cursor-agent CLIs
+(`docker/e2b/engine-clis.json`); `npm run e2b:build` prints every pinned version.
 
 - Builds run only in the Worca server, which holds the E2B keys. `worca exec-env build` asks the running server
   (start it with `worca ui`). Under remote access the CLI's call needs a sign-in, so build from the project page
@@ -238,8 +244,9 @@ The project page shows the spec read-only, the template in use, the last build, 
 - A project template gets the size of the server's `worca-agent` (or `WORCA_E2B_TEMPLATE`), read from the E2B API
   at build time: build `worca-agent` with `npm run e2b:build -- --cpu 4 --memory-mb 8192` and rebuild the project.
   When the base cannot be read, the build uses 2 vCPU and 4096 MB and says so in its log.
-- A build goes stale when the spec changes or the base moves (a new pinned Claude Code, an edited
-  `e2b.Dockerfile`). A run on a stale build warns in the run log and still uses it; nothing rebuilds on its own.
+- A build goes stale when the spec changes or the base moves (any new pin in `docker/CLAUDE_CODE_VERSION` or
+  `docker/e2b/engine-clis.json`, an edited `e2b.Dockerfile`). A run on a stale build warns in the run log and still
+  uses it; nothing rebuilds on its own.
 - `worca-agent` ships graphify (for the code graph above) but no browser and no ffmpeg. The Promo video workflow's Render step and the C4 diagram
   renderer need them, so a project that runs those in a sandbox adds `"apt": ["chromium", "ffmpeg"]` to its spec
   and builds. A script in a sandbox gets `WORCA_EXEC_ENV` (the backend, e.g. `e2b`) and `CHROME_NO_SANDBOX=1`;
@@ -249,8 +256,9 @@ The project page shows the spec read-only, the template in use, the last build, 
 
 A run in a sandbox sends to the E2B server: the run's branch with its whole git history, your uncommitted and
 untracked (not ignored) files, Worca's injected files (skills, memory rules), the run's pipeline folder and plans,
-and the model calls Claude Code makes, which pass through the relay described below. The model credential
-(`CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`) does not go: it stays on the Worca server. The sandbox runs as
+and the model calls the agent CLI makes, which pass through the relay described below. The model credential
+(`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, or the Codex, Copilot or Cursor key) does not go: it stays on the
+Worca server. The sandbox runs as
 a user with passwordless sudo and has open network access, so code in it can still send what it can see (your
 repository, the run's files) to any address on the internet. E2B Cloud is never a silent default: with `E2B_API_URL` unset a run is
 refused, unless `WORCA_E2B_CLOUD=1` says the code may go to E2B Cloud.
@@ -282,20 +290,57 @@ only forwards the Messages API calls Claude Code makes, to the one upstream Worc
   budgets cap that; without the broker nothing does), and code in a sandbox can still send data out over the
   open internet.
 
+**Codex, Copilot and Cursor** go through the same relay. Each CLI is pointed at it with a placeholder in place of
+its credential, and Worca signs each call on the server and sends it to that engine's one API. Every other path is
+refused, and every reply is scrubbed of the keys and tokens Worca signs with.
+
+- **Codex** calls the relay as a custom model provider (`-c model_providers.worca_relay.*`, Responses API, no
+  WebSocket) with a placeholder key. Worca signs with `CODEX_API_KEY` (or `OPENAI_API_KEY`) for
+  `api.openai.com`, or with a catalog model's own endpoint key and headers. Plugin sync, apps, remote plugins, the
+  updater and analytics are switched off, so codex makes no other call. Only `POST /responses` and `GET /models`
+  pass.
+- **Copilot** runs in its offline mode (`COPILOT_OFFLINE=true`) with the relay as its provider
+  (`COPILOT_PROVIDER_*`, set by Worca). Worca looks up your account's Copilot API host once with the token and
+  signs each call with it, adding the Copilot CLI's integration headers. Claude models use the Messages API,
+  GPT-5 and o-series models the Responses API, other models Chat Completions. Only that one API passes.
+- **Cursor** gets the relay as its API endpoint and a placeholder token. Worca exchanges `CURSOR_API_KEY` for an
+  access token on the server, keeps it until shortly before it expires, and signs each call with it. The access
+  and refresh tokens never reach the sandbox. `cursor-agent` runs its agent stream over HTTP/1.1
+  (`network.useHttp1ForAgent` in its config dir in the sandbox), because the relay cannot carry the HTTP/2 stream.
+  Only Cursor's dashboard, server-config, model and agent calls pass. Its key exchange and the HTTP/2 agent call
+  are refused.
+- Worca books the token usage its relay measured, not the CLI's own report: the cost of a Codex step, and the
+  tokens of a Copilot or Cursor step (those engines report no cost).
+
 `E2B_*` and `WORCA_E2B_*` are removed from the env of agents, scripts, actions, git calls and the Ask agent
 terminal. Only the server (and the `worca` CLI you run yourself) talks to E2B. Your own terminal pane keeps them,
 so `worca run --exec-env e2b`, `worca e2b sweep` and `npm run e2b:build` work there.
 
 ## Limitations
 
-- Claude engine only: Codex, Copilot, Cursor, Gemini CLI, Goose, OpenCode and Qwen Code run locally only for now (the
-  engine catalog's `sandbox` flag, `src/shared/engine-switch.mjs`, says which engines a sandbox runs); single-project runs of a git project only (not a Folder project, not a run without a
-  project: the code goes in as a git bundle); macOS or Linux hosts only; the detached run-root mode only
-  (`WORCA_RUN_ROOT=legacy` is refused). A saved E2B default skips workspace runs and runs on another engine:
-  they run locally, the New run dialog shows Local for them, and the run log says why. Only an explicit
-  per-run E2B pick is refused for them. Another engine joins only once its CLI can run behind the model
-  relay with no key in the sandbox. [The relay design, §12](../plans/model-relay-design.md) has the rules,
-  what was found for Codex, Copilot and Cursor, and the HTTPS-interception fallback kept for engines that can't.
+- The claude, codex, copilot and cursor engines only: Gemini CLI, Goose, OpenCode and Qwen Code run locally only for
+  now (the engine catalog's `sandbox` flag, `src/shared/engine-switch.mjs`, says which engines a sandbox runs).
+  Single-project runs of a git project only (not a Folder project, not a run without a project: the code goes in
+  as a git bundle); macOS or Linux hosts only; the detached run-root mode only (`WORCA_RUN_ROOT=legacy` is
+  refused). A saved E2B default skips workspace runs and runs on another engine: they run locally, the New run
+  dialog shows Local for them, and the run log says why. Only an explicit per-run E2B pick is refused for them.
+- Codex in a sandbox attaches no MCP server. It attaches command servers only, and those run on the worca host;
+  the run log names them. Copilot and Cursor get the run's remote URL servers, as Claude does.
+- A codex model on its own endpoint works in a sandbox, also at a local address: the relay calls it from the server.
+- Codex takes an API key only: a ChatGPT sign-in (`codex login`, `~/.codex/auth.json`) holds a refresh token and
+  calls ChatGPT's own hosts, so it is never copied into a sandbox nor relayed. Copilot takes a fine-grained
+  personal access token only. A Copilot provider of your own (`COPILOT_PROVIDER_*` in the environment) is refused:
+  Worca sets those itself.
+- Copilot in offline mode has no GitHub MCP server, web tools or updater, and no default model: a step without a
+  model runs `gpt-5-mini`, and the run log says so.
+- If Cursor's servers ever force its agent stream onto HTTP/2, Cursor steps in a sandbox fail; the relay cannot
+  carry that stream.
+- An agent's own `.cursor/cli.json` or `.cursor/mcp.json` written in a sandbox does not come back to the run branch.
+- The `WORCA_CODEX_BIN`, `WORCA_COPILOT_BIN` and `WORCA_CURSOR_BIN` overrides (paths on your machine) do not apply
+  in a sandbox; the run log says so.
+- Three checks against real accounts are still open: a Copilot turn signed with a fine-grained personal access
+  token, Cursor's HTTP/2 policy (whether its servers keep accepting the HTTP/1.1 agent stream the relay carries),
+  and a Cursor turn with tool calls. Until they pass, treat Copilot and Cursor in a sandbox as unverified.
 - Scripts: `WORCA_PROJECT_DIR` (the envelope's `ctx.projectDir`) names your real project checkout, which the
   sandbox does not have. Use `WORCA_CWD`, the run's worktree.
 - Model calls go through the relay on the server, so the sandbox holds no model credential and the credential
@@ -309,14 +354,19 @@ so `worca run --exec-env e2b`, `worca e2b sweep` and `npm run e2b:build` work th
   token, or any secret the [MCP check](credential-broker.md#mcp-servers-with-secrets) finds, in every
   `WORCA_MCP_SECRETS` mode) are dropped; each is named in the run log. Secrets reach the sandbox only as the
   `${NAME}` references of the servers it keeps, and the run log names those variables per server (never a value).
-- Environment: a sandbox gets Claude Code's own `ANTHROPIC_*`/`CLAUDE_*` settings, the locale and, for scripts, the `WORCA_*` script variables. Other `WORCA_*` variables, `OTEL_*`
-  (telemetry exporters), `E2B_*`, `GH_*`/`GITHUB_*` and any other `*_TOKEN`, `*_SECRET` or `*_KEY` stay on
-  your machine. A script's own secret fields still reach it.
+- Environment: a sandbox gets the run engine's own settings (`ANTHROPIC_*`/`CLAUDE_*`, `OPENAI_*`/`CODEX_*`,
+  `COPILOT_*` or `CURSOR_*`), the locale and, for scripts, the `WORCA_*` script variables. No engine's credential,
+  endpoint or provider variable goes in, even when declared. Other `WORCA_*` variables, `OTEL_*` (telemetry
+  exporters), `E2B_*`, `GH_*`/`GITHUB_*` and any other `*_TOKEN`, `*_SECRET` or `*_KEY` stay on your machine. A
+  script's own secret fields still reach it.
 - Hooks: the host guard is off inside the sandbox (no Worca server runs there), and agent-user isolation
   (`agentSpawn`, sudo) does not apply. A model routed through the model bridge or a `localhost`
   `ANTHROPIC_BASE_URL` works: the relay reaches it from the server.
 - Helper jobs (titles, PR descriptions, the classifier, the Away decider, graphify, flow cards) run on your
   machine.
+- On a codex or copilot run, the title, overview, PR description, Auto classifier and Away decider jobs use this
+  machine's codex or copilot CLI, as a Local run does. Worca checks that CLI at run start: when it is missing or
+  signed out, the run still starts, the run log warns, and those jobs fail. A Cursor run hands them to Claude.
 - Scripts that need services on your machine fail in the sandbox. Built-in scripts get Worca's `src/`,
   `scripts/`, `ui/public/{c4,fonts}` and the `yaml`/`smol-toml` packages; user and plugin scripts get their own
   directory tree only, so an npm package outside the template fails.
@@ -326,8 +376,8 @@ so `worca run --exec-env e2b`, `worca e2b sweep` and `npm run e2b:build` work th
 - Losing the sandbox (an E2B restart kills sandboxes, or it expired) fails the run cleanly; the work synced so
   far is committed to the run's branch. Start a new run to continue.
 - Pausing needs nothing from E2B: Worca keeps the sandbox alive, it does not use E2B's own pause.
-- Claude Code in the sandbox sees no `~/.claude` from your machine (personal skills, global `CLAUDE.md`,
-  plugins).
+- The agent CLI in the sandbox sees none of your machine's `~/.claude`, `~/.codex`, `~/.copilot` or `~/.cursor`
+  (personal skills, global instructions, plugins, sign-ins).
 - A dropped SSH tunnel fails the current step with an ordinary, retryable error; only a sandbox the E2B API no
   longer knows ends the run.
 - Commits an agent makes in the sandbox are flattened into Worca's commit at the end of the run (their messages
@@ -363,7 +413,7 @@ Each refusal names its cause before the run starts:
 
 | Message | Fix |
 |---|---|
-| E2B execution runs the claude engine only (this run uses gemini): Gemini CLI runs locally only for now | Pick Local, or switch the engine to Claude. |
+| E2B execution runs the claude, codex, copilot and cursor engines only (this run uses gemini): Gemini CLI runs locally only for now | The engine has no sandbox support yet. Pick Local, or switch the engine. |
 | E2B execution runs single-project runs only | Pick Local for workspace runs. |
 | E2B execution needs a git project; this is a Folder project | Pick Local, or use a git project. |
 | E2B execution needs a project; this run has none | Pick Local, or pick a git project. |
@@ -372,10 +422,17 @@ Each refusal names its cause before the run starts:
 | E2B_API_KEY is not set in the worca server's environment | Set it where the server starts, then restart the server. |
 | E2B_API_URL is not set, so runs would go to E2B Cloud | Set `E2B_API_URL` to your E2B server, or `WORCA_E2B_CLOUD=1` to use E2B Cloud. |
 | E2B_DEBUG=true makes the e2b SDK fake every sandbox | Unset `E2B_DEBUG`. |
-| Neither CLAUDE_CODE_OAUTH_TOKEN nor ANTHROPIC_API_KEY is set | Set one in the server's environment. |
+| Neither CLAUDE_CODE_OAUTH_TOKEN nor ANTHROPIC_API_KEY is set | Claude runs: set one in the server's environment. |
+| COPILOT_GITHUB_TOKEN is a classic token (ghp_) … | Create a fine-grained token (github_pat_…) with only the Copilot Requests permission and set it in the worca server's environment. |
+| COPILOT_GITHUB_TOKEN is not set | Copilot runs: set a fine-grained token in the server's environment. |
+| Codex in a sandbox needs CODEX_API_KEY or OPENAI_API_KEY | Set an OpenAI API key in the server's environment. A ChatGPT sign-in cannot be used in a sandbox. |
+| This run's environment sets COPILOT_PROVIDER_… | Remove it where the server starts, or pick Local. In a sandbox Worca points Copilot at its relay itself. |
+| worca-relay: worca could not sign the call: … | Worca could not look up the Copilot API host or exchange the Cursor key. The message names the answer it got: check the token's permission or the key. |
+| worca-relay: … is not … call | The CLI called an API the relay does not carry (a new CLI version, or a feature that calls another service). Pick Local for that task. |
+| CURSOR_API_KEY is not set | Set it in the server's environment. |
 | The e2b SDK needs Node 22.19 or newer | Upgrade Node. |
 | The optional "e2b" package is not installed | `npm install e2b@2.56.0` in the Worca install directory. |
-| This run's model goes through a local endpoint | Pick Local for this model, or a model the sandbox can reach. |
+| the E2B template has no codex (or copilot, cursor-agent): rebuild it | The template was built before that engine joined it; the step fails at its first spawn. Rebuild `worca-agent` (`npm run e2b:build`), then rebuild the project's template on the project page. |
 | The sandbox's changes did not apply to the local worktree | Do not edit the run's worktree mid-run; the patch is in the pipeline folder. |
 | The agent committed a merge in the E2B sandbox | Run the task with the Local execution environment. |
 | The agent changed git hook files in the E2B sandbox (`EXEC_ENV_HOOK_CHANGE`) | Run the task with Local; worca does not bring hook changes back from a sandbox. |

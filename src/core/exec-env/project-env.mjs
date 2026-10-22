@@ -67,7 +67,8 @@ export function usableBuild(backend, build, env = process.env) {
   return { build: null, elsewhere: { builtOn: build.server.label, here: here.label } };
 }
 
-/** Which environment a run of `projectKey` uses on `backend`, plus run-log notes. Never throws, never blocks. */
+/** Which environment a run of `projectKey` uses on `backend`, plus run-log notes and `rebuild`: how to rebuild it when it
+ *  lacks an engine's CLI (RemoteExecEnv.ensureCli), or null when the backend names no way. Never throws, never blocks. */
 export function resolveRunEnvironment(backend, projectKey, { env = process.env } = {}) {
   let rec; try { rec = readProjectExecEnv(projectKey); } catch { rec = { config: {}, spec: null, builds: {} }; }
   const recorded = rec.builds[backend.name] || null;
@@ -83,8 +84,10 @@ export function resolveRunEnvironment(backend, projectKey, { env = process.env }
   } else if (rec.spec && backend.capabilities.buildEnvironment && !recorded) {
     notes.push({ level: 'info', text: `the project has an environment spec but no built ${backend.environmentNoun} yet; this run uses ${target.name}. Build it on the project page, or run: worca exec-env build --project ${projectKey}` });
   }
+  const rebuild = target.source === 'build' ? `Rebuild environment on the project page, or run: worca exec-env build --project ${projectKey}`
+    : backend.rebuildHint ?? null;
   // The build the sandbox starts from: a rebuild keeps the name, so a resume compares this too.
-  return { ...target, buildId: target.source === 'build' ? build.buildId ?? null : null, notes };
+  return { ...target, buildId: target.source === 'build' ? build.buildId ?? null : null, notes, rebuild };
 }
 
 /** GET /api/projects/:key/exec-env. `jobFor(backendName)` is the server's latest build job (build.mjs). */

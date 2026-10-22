@@ -47,8 +47,10 @@ export const hasCodexEndpoint = (id) => !!findCodexEndpointEntry(id);
 
 /**
  * What one codex spawn needs to run catalog model `id` on its endpoint, or null when the model has none:
- * `{model, args, env, secrets}` — `model` the upstream id for `-m`, `args` the `-c` overrides, `env` the
- * key and header values for the codex process, `secrets` the values a redactor must hide.
+ * `{model, args, env, secrets, baseUrl, apiKey, headers}` — `model` the upstream id for `-m`, `args` the `-c` overrides,
+ * `env` the key and header values for the codex process, `secrets` the values a redactor must hide; `baseUrl`,
+ * `apiKey` and `headers` the endpoint itself (a sandboxed codex reaches it through worca's model relay, which signs
+ * the calls with them).
  * Throws an `auth`-class error (with `bridgeReason`, like resolveModelEnv) when the endpoint has no
  * usable key, so the spawn fails fast instead of with an opaque 401.
  */
@@ -76,5 +78,5 @@ export function codexEndpointSpawn(id) {
     headers.forEach(([, v], i) => { env[`${HEADER_ENV_PREFIX}${i}`] = v; });
     args.push('-c', `${at}.env_http_headers={${headers.map(([k], i) => `${tomlStr(k)}=${tomlStr(`${HEADER_ENV_PREFIX}${i}`)}`).join(',')}}`);
   }
-  return { model: us.model, args, env, secrets: Object.values(env) };
+  return { model: us.model, args, env, secrets: Object.values(env), baseUrl: us.baseUrl, apiKey: us.apiKey || '', headers: Object.fromEntries(headers) };
 }

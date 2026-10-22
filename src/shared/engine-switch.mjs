@@ -27,9 +27,9 @@
  */
 export const ENGINES = Object.freeze({
   claude: Object.freeze({ label: 'Claude Code', models: true, cost: true, subagents: true, helpers: true, beta: false, signin: false, chat: Object.freeze({ images: true, pdfs: true }), sandbox: true }),
-  codex: Object.freeze({ label: 'OpenAI Codex', models: true, cost: true, subagents: true, helpers: true, beta: true, signin: false, chat: Object.freeze({ images: true, pdfs: false }), sandbox: false }),
-  copilot: Object.freeze({ label: 'GitHub Copilot', models: true, cost: false, subagents: true, helpers: true, beta: true, signin: false, chat: Object.freeze({ images: true, pdfs: true }), sandbox: false }),
-  cursor: Object.freeze({ label: 'Cursor', models: true, cost: false, subagents: false, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: false, pdfs: false, verified: false }), sandbox: false }),
+  codex: Object.freeze({ label: 'OpenAI Codex', models: true, cost: true, subagents: true, helpers: true, beta: true, signin: false, chat: Object.freeze({ images: true, pdfs: false }), sandbox: true }),
+  copilot: Object.freeze({ label: 'GitHub Copilot', models: true, cost: false, subagents: true, helpers: true, beta: true, signin: false, chat: Object.freeze({ images: true, pdfs: true }), sandbox: true }),
+  cursor: Object.freeze({ label: 'Cursor', models: true, cost: false, subagents: false, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: false, pdfs: false, verified: false }), sandbox: true }),
   gemini: Object.freeze({ label: 'Gemini CLI', models: true, cost: false, subagents: false, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: true, pdfs: true }), sandbox: false }),
   goose: Object.freeze({ label: 'Goose', models: true, cost: true, subagents: false, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: true, pdfs: false }), sandbox: false }),
   opencode: Object.freeze({ label: 'OpenCode', models: true, cost: true, subagents: true, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: true, pdfs: true }), sandbox: false }),

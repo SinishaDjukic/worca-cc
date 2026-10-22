@@ -356,7 +356,7 @@ test('execution environment: an e2b default preselects E2B; choosing Local sends
   assert.equal(ctx.posted.at(-1).execEnv, 'local');
 });
 
-test('execution environment: an e2b default does not apply to another engine or a workspace run: Local, a hint, nothing sent', async () => {
+test('execution environment: an e2b default applies to every remote engine; a workspace run falls back to Local with a hint', async () => {
   const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }), runDefaults: { execEnv: { value: 'e2b', source: 'user' } } });
   const select = ctx.doc.getElementById('execEnvSelect');
   const hint = ctx.doc.getElementById('exec-env-hint');
@@ -364,28 +364,25 @@ test('execution environment: an e2b default does not apply to another engine or 
   await waitFor(() => select.value === 'e2b');
   assert.equal(hint.hidden, true);
   pick(ctx, 'codex');
-  assert.equal(select.value, 'local', 'the run falls back to Local, so the dialog shows Local');
-  assert.equal(hint.hidden, false);
-  assert.match(hint.textContent, /E2B default applies to Claude single-project runs only/);
-  assert.notEqual(row.dataset.levelKeep, undefined, 'Simple still shows the row with its hint');
-  await submit(ctx);
-  assert.equal('execEnv' in ctx.posted.at(-1), false, 'unsent: the server falls back itself and logs why');
-  pick(ctx, 'claude');
-  assert.equal(select.value, 'e2b');
+  assert.equal(select.value, 'e2b', 'codex takes the saved E2B default');
   assert.equal(hint.hidden, true);
+  await submit(ctx);
+  assert.equal('execEnv' in ctx.posted.at(-1), false, 'unsent: the run gets the saved default');
   ctx.doc.querySelector('#target-seg button[data-target="workspace"]').click();
   await waitFor(() => select.value === 'local');
-  assert.equal(hint.hidden, false, 'a workspace run cannot take the E2B default either');
+  assert.equal(hint.hidden, false, 'a workspace run cannot take the E2B default');
+  assert.match(hint.textContent, /saved E2B default does not apply to a workspace run/);
+  assert.notEqual(row.dataset.levelKeep, undefined, 'Simple still shows the row with its hint');
 });
 
-test('execution environment: an explicit E2B pick on another engine is still sent (the server refuses it)', async () => {
+test('execution environment: codex takes the saved E2B default: an explicit E2B pick equals it, so nothing is sent', async () => {
   const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }), runDefaults: { execEnv: { value: 'e2b', source: 'user' } } });
   await waitFor(() => ctx.doc.getElementById('execEnvSelect').value === 'e2b');
   pick(ctx, 'codex');
   pickExecEnv(ctx, 'e2b');
   assert.equal(ctx.doc.getElementById('exec-env-hint').hidden, true);
   await submit(ctx);
-  assert.equal(ctx.posted.at(-1).execEnv, 'e2b');
+  assert.equal('execEnv' in ctx.posted.at(-1), false);
 });
 
 test('execution environment: a saved default of another backend follows the same rule, and the hint names it', async () => {
@@ -396,14 +393,13 @@ test('execution environment: a saved default of another backend follows the same
   const hint = ctx.doc.getElementById('exec-env-hint');
   await waitFor(() => select.value === 'loopback');
   assert.equal(hint.hidden, true);
-  pick(ctx, 'codex');
-  assert.equal(select.value, 'local');
+  ctx.doc.querySelector('#target-seg button[data-target="workspace"]').click();
+  await waitFor(() => select.value === 'local');
   assert.equal(hint.hidden, false);
-  assert.match(hint.textContent, /saved Loopback default applies to Claude single-project runs only/);
-  await submit(ctx);
-  assert.equal('execEnv' in ctx.posted.at(-1), false);
-  pick(ctx, 'claude');
-  assert.equal(select.value, 'loopback');
+  assert.match(hint.textContent, /saved Loopback default does not apply to a workspace run/);
+  // Back to a project before any submit: no workspace is selected, so the workspace target cannot start.
+  ctx.doc.querySelector('#target-seg button[data-target="project"]').click();
+  await waitFor(() => select.value === 'loopback');
   await submit(ctx);
   assert.equal('execEnv' in ctx.posted.at(-1), false, 'the run gets the saved default: nothing to send');
 });

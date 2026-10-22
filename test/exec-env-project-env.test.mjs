@@ -86,6 +86,7 @@ test('a build made on another server is skipped: project setting → build for T
   assert.equal(resolveRunEnvironment(e2b, k, { env: remote }).name, `worca-agent-${k}`);
   let t = resolveRunEnvironment(e2b, k, { env: local });
   assert.equal(t.name, 'worca-agent'); assert.equal(t.source, 'default');
+  assert.equal(t.rebuild, 'npm run e2b:build', 'the default template is rebuilt the backend`s way');
   assert.equal(t.notes[0].level, 'warn');
   assert.match(t.notes[0].text, new RegExp(`template worca-agent-${k} was built on another E2B server \\(http://localhost:3000 \\(key e2b_…key1\\)\\); this server is http://localhost:3000 \\(key e2b_…ey99\\)\\. This run uses worca-agent \\(the default\\)\\. Rebuild it`));
   assert.equal(resolveRunEnvironment(e2b, k, { env: { ...local, WORCA_E2B_TEMPLATE: 'envt' } }).name, 'envt');
@@ -104,7 +105,9 @@ test('a build recorded before servers were recorded (no server) is still used', 
   const spec = setProjectEnvSpec(k, {});
   recordProjectBuild(k, 'e2b', { name: `worca-agent-${k}`, specHash: spec.hash, baseVersion: e2b.baseVersion() });
   assert.equal(readProjectExecEnv(k).builds.e2b.server, null);
-  assert.equal(resolveRunEnvironment(e2b, k, { env: { E2B_API_KEY: 'e2b_anykey123' } }).name, `worca-agent-${k}`);
+  const t = resolveRunEnvironment(e2b, k, { env: { E2B_API_KEY: 'e2b_anykey123' } });
+  assert.equal(t.name, `worca-agent-${k}`);
+  assert.equal(t.rebuild, `Rebuild environment on the project page, or run: worca exec-env build --project ${k}`, 'a project template is rebuilt from its page');
 });
 
 test('staleness: spec hash or base version moved; a matching build is fresh', () => {
@@ -121,9 +124,11 @@ test('resolveRunEnvironment: a stale build warns and is still used; a spec witho
   const spec = setProjectEnvSpec(k, { tools: [{ name: 'node', version: '24.21.0' }] });
   let t = resolveRunEnvironment(lb.backend, k);
   assert.equal(t.name, 'loopback-base'); assert.equal(t.notes[0].level, 'info');
+  assert.equal(t.rebuild, null, 'a backend that names no way to rebuild its default');
   recordProjectBuild(k, 'loopback', { name: `loopback-${k}`, specHash: spec.hash, baseVersion: 'loopback-base@1' });
   t = resolveRunEnvironment(lb.backend, k);
   assert.equal(t.name, `loopback-${k}`); assert.deepEqual(t.notes, []);
+  assert.match(t.rebuild, /^Rebuild environment on the project page/);
   setProjectEnvSpec(k, { tools: [{ name: 'node', version: '24.22.0' }] });
   t = resolveRunEnvironment(lb.backend, k);
   assert.equal(t.name, `loopback-${k}`); assert.equal(t.notes[0].level, 'warn'); assert.match(t.notes[0].text, /is stale \(the environment spec changed/);
