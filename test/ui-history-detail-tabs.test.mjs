@@ -1058,7 +1058,8 @@ test('History opens on the glance: page title, status line, facts, the tab rows;
 // Resume split, Pause, Stop, then the terminal button), in both modes. "Resume on <other engine>" lives in the
 // split's menu, never as a button of its own. The Details header
 // keeps only the PR controls and the ⋯ menu, and the glance card carries no run control. Run 3 (D13): the bar ends
-// with its own ⋯ (Save as preset, Run after and Terminal fold into it; CSS hides the three).
+// with its own ⋯ (Save as preset and Terminal fold into it; CSS hides the two). Run after stays a quick button beside
+// Resume and Stop, so ⋯ does not repeat it.
 const HD_BAR_ORDER = ['hd-save-preset', 'hd-after', 'rd-actions', 'hd-resume-split', 'hd-pause', 'hd-stop', 'term-opener', 'hd-bar-more'];
 // A step in flight: the one run model reads a running run with no step as Starting, which offers no Pause (slice 4).
 const STEPPING = { steps: [{ executionId: 'x:n_impl:1', nodeId: 'n_impl', ordinal: 1, cycle: 1, kind: 'cycle', status: 'start',
@@ -1071,6 +1072,7 @@ test('History bar per finished/paused status: Run after, Resume split only when 
   ]) {
     rows.push({ name: `History bar, ${status} run: Run after${resumable ? ' and the Resume split' : ''}, ${status === 'paused' ? 'Stop' : 'no Stop'} and no Pause without a live run`, run: async () => {
       const ctx = await bootDetail({ detail: { ...DETAIL, state: { ...DETAIL.state, status } }, rows: [{ ...ROW, status }] });
+      ctx.window.document.documentElement.dataset.level = 'advanced';
       await openDetail(ctx, '');
       await settle(ctx.window, 6);
       const hd = ctx.window.document.querySelector('#hist-detail .hd');
@@ -1081,6 +1083,11 @@ test('History bar per finished/paused status: Run after, Resume split only when 
       assert.equal(after.dataset.minLevel, 'advanced');
       assert.equal(after.textContent.trim(), 'Run after');
       assert.ok(after.querySelector('svg'), 'the Running bar\'s arrow leads the label');
+      click(ctx.window, end.querySelector('.hd-bar-more'));
+      const moreLabels = [...ctx.window.document.querySelectorAll('.wfv-menu .wfv-menu-item .wfv-menu-l')].map((n) => n.textContent);
+      assert.ok(moreLabels.includes('Terminal'), `⋯ opened: ${moreLabels}`);
+      assert.ok(!moreLabels.includes('Run after'), 'Run after is the bar\'s own button, not a ⋯ item');
+      click(ctx.window, end.querySelector('.hd-bar-more'));
       const title = finished ? 'Start a follow-up run' : 'Schedule a run after this';
       assert.equal(after.title, title);
       assert.equal(after.getAttribute('aria-label'), title);

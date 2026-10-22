@@ -22831,14 +22831,12 @@ function openHistDetail(parsed, { instant = false, host: where = 'page' } = {}) 
   const toDetails = (tab = '') => { hdGoDetails(tab); };
   const toRun = () => { if (histDetailState && histDetailState.host !== 'panel') location.hash = hdHash(histDetailState); };
   screen.querySelector('.hd-to-run').addEventListener('click', toRun);
-  // Run 3 (D13): the saved bar is the primary action, Stop and ⋯; ⋯ drives the controls CSS hides there.
+  // Run 3 (D13): the saved bar is the primary action, Run after, Stop and ⋯; ⋯ drives the controls CSS hides there.
   screen.querySelector('.hd-bar-more')?.addEventListener('click', (e) => {
     const anchor = e.currentTarget;
     const items = [];
     const preset = screen.querySelector('.hd-save-preset');
-    const after = screen.querySelector('.hd-after');
     if (preset && !preset.hidden && flagOn('runPresets')) items.push({ label: 'Save as preset', title: preset.title, onSelect: () => preset.click() });
-    if (after && !after.hidden && levelAtLeast('advanced')) items.push({ label: after.querySelector('.hd-btn-label').textContent, title: after.title, onSelect: () => after.click() });
     if (screen.dataset.presentation !== 'panel') items.push({ label: 'Terminal', onSelect: () => terminalPane?.toggle() });
     toggleMenu({ doc: document, anchor, items, align: 'end', label: 'More for this run' });
   });
@@ -33612,7 +33610,8 @@ function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
       }
       items.push({ sep: true });
     }
-    if (after && !after.hidden && levelAtLeast('advanced')) {
+    // Run after is the bar's own quick button; only a shaped run's bar folds it (D31), so only there does ⋯ carry it.
+    if (after && !after.hidden && levelAtLeast('advanced') && screen.querySelector('.rd-bar')?.hasAttribute('data-shaped')) {
       items.push({ label: after.querySelector('.rd-btn-label').textContent, title: after.title, onSelect: () => after.click() });
     }
     // The Chat panel hides the terminal opener on purpose (.crp .term-opener): no Terminal item there either.
@@ -35932,8 +35931,8 @@ function paintRdHeader(screen, r) {
   const STOP_INTERRUPTED = 'An interrupted run cannot be stopped';
   if (r.status === 'interrupted') { stopBtn.disabled = true; stopBtn.title = STOP_INTERRUPTED; }
   else if (stopBtn.title === STOP_INTERRUPTED) { stopBtn.disabled = false; stopBtn.title = ''; }
-  // Run 3 (D13): every run page's bar is the primary action, Stop and ⋯ (D31's fold, for every run now; CSS hides
-  // Away mode, Run after and the terminal, and ⋯ drives them).
+  // Run 3 (D13): every run page's bar is the primary action, Run after, Stop and ⋯ (D31's fold, for every run now; CSS
+  // hides Away mode and the terminal, and ⋯ drives them; a shaped run's bar folds Run after too).
   const shapedBar = shapeFirstOn() && isShapingRun(r);
   screen.querySelector('.rd-bar')?.toggleAttribute('data-shaped', shapedBar);
   const barMore = screen.querySelector('.rd-bar-more');

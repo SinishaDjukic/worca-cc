@@ -9547,9 +9547,10 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 /* D31: a shaped run's bar — the three controls live in the ⋯ menu */
 .rd-bar[data-shaped] .rd-bar-end > :is(.rd-night-wrap,.rd-after,.term-opener){display:none;}
 .rd-bar-more{flex:none;}   /* ⋯ is .btn .btn-quiet .btn-icon in markup */
-/* Run 3 (D13): the bar is the primary action, Stop and ⋯ on every run page; ⋯ drives the controls hidden here. */
-.rd-bar .rd-bar-end > :is(.rd-night-wrap,.rd-after,.term-opener){display:none;}
-.hd-bar .rd-bar-end > :is(.hd-save-preset,.hd-after,.term-opener){display:none;}
+/* Run 3 (D13): the bar is the primary action, Run after, Stop and ⋯ on every run page; ⋯ drives the controls hidden here.
+   Run after stays a quick button beside the Resume split and Stop (folded only on a shaped run's bar, above). */
+.rd-bar .rd-bar-end > :is(.rd-night-wrap,.term-opener){display:none;}
+.hd-bar .rd-bar-end > :is(.hd-save-preset,.term-opener){display:none;}
 /* At 290px the bar shrinks by rule: the primary label ellipsizes, Stop and the icon buttons keep their size. */
 .rd-bar-end,.gpage-actions{min-width:0;flex:0 1 auto;}
 :is(.rd-actions,.gpage-actions) .btn-primary{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
