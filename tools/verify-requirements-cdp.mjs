@@ -7,7 +7,7 @@
 // with their answer and a Change; the Ready panel shows the server's six checks with Start enabled exactly when
 // the feature is Ready; the Export menu opens and Escape closes it; the Decide card, the start-before-Ready
 // dialog (focus on the reason, Escape returns it; its button is disabled until a reason is typed), Confirm the N
-// left leading to the Ready to build card; Start in worca on that card gives one run row linking to #running/<id>
+// left leading to the Ready to build card; Start in Worca on that card gives one run row linking to #running/<id>
 // and the API's starts[0].runId (the mock run is then stopped); the feature page has no context panel and its
 // menu's Your notes for Worca opens the project's brief page with the notes (A7 D12); the product brief flow
 // (Create, the code moved on, New feature knows the brief, Look closer, Add this to the brief); no page errors.
@@ -219,18 +219,18 @@ check('the dialog Start button is disabled while the reason is empty and enabled
     d.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     return empty && typed && !document.querySelector('.req-dialog'); })()`));
 await A.evalJs(`document.querySelector('#requirements-host [data-ui="confirm-all"]').click()`);
-check('Confirm the N left: the feature is Ready and the Ready to build card offers Start in worca',
+check('Confirm the N left: the feature is Ready and the Ready to build card offers Start in Worca',
   await until(() => A.evalJs(`(() => { const c = document.querySelector('#requirements-host .req-left .req-build');
     return !!c && document.querySelector('#requirements-host .req-head .badge')?.textContent === 'Ready'
       && !c.querySelector('[data-ui="start-go"]').disabled; })()`)));
 const seqNo = await A.evalJs(`location.hash.split('/').pop()`);
 await A.evalJs(`document.querySelector('#requirements-host .req-build [data-ui="start-go"]').click()`);
-check('Start in worca: one run row links to #running/<id> and the API has starts[0].runId',
+check('Start in Worca: one run row links to #running/<id> and the API has starts[0].runId',
   await until(() => A.evalJs(`(async () => { const rows = [...document.querySelectorAll('#requirements-host .req-runs a.req-run-row')];
     if (rows.length !== 1 || !rows[0].getAttribute('href').startsWith('#running/')) return false;
     const f = (await (await fetch('/api/requirements/${seqNo}')).json()).feature;
     return !!f.starts?.[0]?.runId && rows[0].getAttribute('href') === '#running/' + f.starts[0].runId; })()`), 15000));
-// A7 D12: the Project context panel left the feature page; the menu's Your notes for Worca opens the brief page.
+// A7 D12: the notes panel left the feature page; the menu's Your notes for Worca opens the brief page.
 check('the feature page has no context panel; Your notes for Worca (the menu) opens the brief page with the notes',
   await A.evalJs(`(() => { if (document.querySelector('#requirements-host .req-context')) return false;
     document.querySelector('#requirements-host [data-ui="menu-more"]').click();
