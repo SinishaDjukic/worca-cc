@@ -174,7 +174,7 @@ test('propose_pull_request refuses an archived run (mutation killer)', async () 
 test('the project ids the chat offers skip the user-only ones (a project override of them is always refused)', () => {
   const ids = defaultSettingsRegistryDeps().projectSettingIds(['planner']);
   assert.ok(ids.includes('models.claude.steps.planner') && ids.includes('askMaxTurns'));
-  for (const id of ['askEngine', 'models.claude.ask', 'models.codex.workspaceScan']) assert.ok(!ids.includes(id), id);
+  for (const id of ['askEngine', 'models.claude.ask', 'models.codex.workspaceScan', 'models.claude.utility.agentGen']) assert.ok(!ids.includes(id), id);
 });
 
 test('resumeBlocker: a run AT its cost limit is blocked, like resumeRun\'s own >= check (refine cycle 2 mutation killer)', () => {

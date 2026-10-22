@@ -626,7 +626,7 @@ const readyFor = (pause, onLoad) => (pause?.reason === 'usage_limit' && pause?.l
 // ---------------------------------------------------------------------------
 const el = {
   form: $('#run-form'),
-  keepAwakeSwitch: $('#keepAwakeSwitch'),
+  acctKeepAwake: $('#acct-keepawake'),
   projectSelect: $('#projectSelect'),
   projectHint: $('#projectHint'),
   addProject: $('#add-project'),
@@ -1562,8 +1562,8 @@ function repaintPeople() {
 // ── The account corner and its menu (account-menu.mjs) ─────────────────────────
 // The corner sits at the foot of the sidebar: the avatar (who is looking), a ring that fills
 // toward the total spend limit, a violet dot while away. Its menu opens upward: the spend card,
-// "Signed in as" (a shared identity only), Interface mode (a side menu), Settings, the away row,
-// and the appearance icons last. A level, an away or a theme change leaves it open; a route closes it.
+// "Signed in as" (a shared identity only), Interface mode (a side menu), Settings, the Away and Keep awake switches,
+// and the appearance icons last. A level, a switch or a theme change leaves it open; a route closes it.
 const acctState = { account: describeAccount(null), away: null };   // away: describeAwayRow's last answer
 const acctBtn = document.getElementById('side-acct');
 const acctMenu = document.getElementById('acct-menu');
@@ -2207,6 +2207,10 @@ function orderKeyFor(runId) {
   if (key === undefined) { key = ++runOrderSeq; runOrderKeys.set(runId, key); }
   return key;
 }
+// runId -> the start time the run last carried, the orderKey memo's twin: a re-materialized run keeps it. The Runs
+// list orders live rows by start time (runs-list.mjs byDispatch), so a dropped run stamped "now" when a trailing
+// frame brings it back would read as the newest and outrank the run that superseded it.
+const runStartedAts = new Map();
 
 function nowHMS() {
   const d = new Date();
@@ -2226,7 +2230,7 @@ function makeRun({
     projectDir: projectDir || '',
     projectNames,         // string[] for workspace runs (all member names); null otherwise
     status,
-    startedAt: startedAt || nowHMS(),
+    startedAt: startedAt || runStartedAts.get(runId) || nowHMS(),
     local,
     kind,                 // 'run' | 'workspace-run' | 'agentgen' (only first two get tabs)
     pipelineId,           // matches a History row id once persisted; used to hide lingerers from History
@@ -2292,6 +2296,7 @@ function upsertRun(partial) {
     }
     r.staleBoot = false;   // every caller relays the current server: it knows this runId
   }
+  runStartedAts.set(r.runId, r.startedAt);
   dropSupersededPaused(r);
   return r;
 }
@@ -2772,7 +2777,7 @@ function addNightDecisions(r, list) {
 function onState(r, msg) {
   if (msg.status) r.status = msg.status;
   if (msg.shaping && typeof msg.shaping === 'object') r.shaping = msg.shaping;
-  if (msg.startedAt) r.startedAt = msg.startedAt;
+  if (msg.startedAt) { r.startedAt = msg.startedAt; runStartedAts.set(r.runId, msg.startedAt); }
   // The harness mirrors startedBy onto its state (creation-immutable), so a live card
   // learns who started the run from the first state snapshot.
   if (typeof msg.startedBy === 'string' && msg.startedBy) r.startedBy = msg.startedBy;
@@ -18408,13 +18413,16 @@ const CODEX_HELPER_JOBS = ['title', 'classifier', 'overview', 'prDescription', '
 // src/core/model-env.mjs HELPER_ENGINES (the browser cannot load /src/core): the engines with helper slots of their own.
 const HELPER_ENGINES = ['claude', 'codex'];
 // Claude's helper slots at user level are their own settings keys (settings-cascade.mjs CLAUDE_USER): a model id for
-// titles, Auto and PR descriptions (no effort), and the Memory defragment pair. No user-level overview slot.
-const CLAUDE_USER_HELPER_JOBS = ['title', 'classifier', 'prDescription', 'memoryDefrag'];
+// titles, Auto and PR descriptions (no effort), and the Memory defragment and Agent generation pairs. No user-level
+// overview slot. Agent generation is Claude's alone (it always runs on Claude), so no other tab has its row.
+const CLAUDE_USER_HELPER_JOBS = ['title', 'classifier', 'prDescription', 'memoryDefrag', 'agentGen'];
+const helperPair = (p) => (p && p.model ? { model: p.model, ...(p.effort ? { effort: p.effort } : {}) } : undefined);
 const CLAUDE_USER_HELPER_OWN = (data) => ({
   title: data.titleModel ? { model: data.titleModel } : undefined,
   classifier: data.autoWorkflowModel ? { model: data.autoWorkflowModel } : undefined,
   prDescription: data.prDescriptionModel ? { model: data.prDescriptionModel } : undefined,
-  memoryDefrag: data.memoryDefrag && data.memoryDefrag.model ? { model: data.memoryDefrag.model, ...(data.memoryDefrag.effort ? { effort: data.memoryDefrag.effort } : {}) } : undefined,
+  memoryDefrag: helperPair(data.memoryDefrag),
+  agentGen: helperPair(data.agentGenModel),
 });
 async function paintEngineSettings(data) {
   const root = document.getElementById('engine-settings-root');
@@ -38340,11 +38348,20 @@ const offPresetsFlag = onFlagChange('runPresets', (on) => {
 // Test hook: flags.mjs's listener map outlives a jsdom boot, so a suite unsubscribes the previous app first.
 if (typeof window !== 'undefined') window.__np = Object.assign(window.__np || {}, { offPresetsFlag });
 
-// Settings › Runs › Keep awake (UI/UX review F): the keepAwake flag's own switch, one source with Settings › Labs.
-if (el.keepAwakeSwitch) {
+// The account menu's Keep awake row (UI/UX review F): the keepAwake flag, one source with Settings › Labs.
+// The whole row is the switch; a refused change shows in its tip and as a toast, a lock in its tip.
+const KEEP_AWAKE_TIP = 'Keeps the computer awake while runs are working. The display may still turn off.';
+if (el.acctKeepAwake) {
+  const row = el.acctKeepAwake;
   window.__np.offKeepAwakeSwitch?.();
-  window.__np.offKeepAwakeSwitch = bindFlagSwitch(el.keepAwakeSwitch, 'keepAwake', {
-    api: (method, body) => mcpApi(method, '/api/flags', body), msgEl: $('#keepAwakeMsg') });
+  window.__np.offKeepAwakeSwitch = bindFlagSwitch(row, 'keepAwake', {
+    api: (method, body) => mcpApi(method, '/api/flags', body),
+    onMsg: (text, { error }) => {
+      const tip = text ? `${KEEP_AWAKE_TIP} (${text})` : KEEP_AWAKE_TIP;
+      row.title = tip;
+      row.setAttribute('aria-description', tip);
+      if (error) notify({ tone: 'err', title: 'Could not change Keep awake', detail: text, key: 'keep-awake' });
+    } });
 }
 
 // ---- Away mode on the run page and New run --------------------------------
@@ -38405,11 +38422,12 @@ async function refreshAwayBodies() {
   const open = rdOpenRun();
   if (open && runDetailState.screen) paintRdAwayPill(runDetailState.screen, open);
 }
-// ---- The account menu's away row (last in the menu) ----
-// "Step away" while you count as here (posts "I'm away now"); "I'm back" while you count as away,
-// the away hours included (posts "I'm here", which skips the rest of them). With per-person Away
-// mode the server answers and stores the signed-in person's own switch, so this reads it the same
-// way. Pause stays in Settings. Unread settings leave the row disabled; a click opens Settings › Runs.
+// ---- The account menu's away row (the switches section) ----
+// An "Away" switch (a menuitemcheckbox, checked = away). Turning it on while you count as here posts
+// "I'm away now"; turning it off while you count as away, the away hours included, posts "I'm here"
+// (which skips the rest of them). With per-person Away mode the server answers and stores the
+// signed-in person's own switch, so this reads it the same way. Pause stays in Settings. Unread
+// settings leave the row disabled; a click opens Settings › Runs.
 let _awayRowSig = '';
 let _awayRowBusy = false;
 let _awayRowErr = '';             // the last failed click, kept in the tip until the next one

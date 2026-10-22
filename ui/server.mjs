@@ -80,6 +80,7 @@ import {
   autoWorkflowModel as storedAutoWorkflowModel, setAutoWorkflowModel, assertAutoWorkflowModelInput,
   prDescriptionModel as storedPrDescriptionModel, setPrDescriptionModel, assertPrDescriptionModelInput,
   memoryDefragModel, setMemoryDefragModel, assertMemoryDefragModelInput,
+  agentGenModel as storedAgentGenModel, setAgentGenModel, assertAgentGenModelInput,
   workspaceScanModels, setWorkspaceScanModels, assertWorkspaceScanInput,
   scheduleDefaults, setScheduleDefaults,
   userTagDimensions, setUserTagDimensions, userEnforceTags, setUserEnforceTags,
@@ -393,7 +394,7 @@ import { settingsErrorReply, asSettingsField } from '../src/core/settings-errors
 import { configuredClaudeBin, onboardingStatus } from '../src/core/onboarding.mjs';   // a THIRD settings import line (the two blocks above are unrelated readers)
 import { probeClaudeAuth, CLAUDE_SIGNED_OUT_CODE, CLAUDE_SIGNED_OUT_MESSAGE } from '../src/core/preflight.mjs';
 import { failedBecauseSignedOut } from '../src/core/claude-auth.mjs';
-import { createAgentGen } from '../src/core/agent-gen.mjs';
+import { createAgentGen, resolveAgentGenModel } from '../src/core/agent-gen.mjs';
 import { listAgents, readAgent, createAgent, updateAgent, deleteAgent, AGENT_KEY_RE } from '../src/core/agent-store.mjs';
 import {
   listScripts, readScript, createScript, updateScript, deleteScript, duplicateScript, writeCases,
@@ -10728,6 +10729,13 @@ async function prDescriptionModelState() {
   return { prDescriptionModel: stored, prDescriptionModelEffective: { model, source } };
 }
 
+/** Settings ▸ Agent generation model: the stored pair + what Generate will actually run on
+ *  (the stored catalog model, else the CLI default). Async because the catalog is. */
+async function agentGenModelState() {
+  const stored = storedAgentGenModel();
+  return { agentGenModel: stored, agentGenModelEffective: resolveAgentGenModel(stored, await listModels('')) };
+}
+
 // ---------------------------------------------------------------------------
 // Instance lifecycle (`worca ui status|stop|restart`, src/core/ui-instance.mjs)
 // ---------------------------------------------------------------------------
@@ -11136,7 +11144,7 @@ app.post('/api/shutdown', (req, res) => {
 
 app.get('/api/settings', async (req, res) => {
   const person = awayPersonOf(req);   // B4: a signed-in person sees their own Away switch
-  res.json({ ...settingsState(), ...(person ? { nightModeToggle: nightModeToggleFor(person), nightModePerPerson: person } : {}), ...(await autoModelState()), ...(await prDescriptionModelState()), chat: chatPrefs(), app: APP_INFO });
+  res.json({ ...settingsState(), ...(person ? { nightModeToggle: nightModeToggleFor(person), nightModePerPerson: person } : {}), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), chat: chatPrefs(), app: APP_INFO });
 });
 
 app.get('/api/budget', (_req, res) => {
@@ -11151,7 +11159,7 @@ app.get('/api/budget', (_req, res) => {
 
 /**
  * The Models page's utility pickers (title, Auto classifier, PR description, memory defragment,
- * workspace scan) are Claude's slots (cascading-settings-design.md D10/§3.1): a Codex or Cursor id there is
+ * agent generation, workspace scan) are Claude's slots (cascading-settings-design.md D10/§3.1): a Codex or Cursor id there is
  * a 400 that names it. A Codex run's utility jobs run on Codex's own default for now.
  * @throws {Error}
  */
@@ -11173,7 +11181,7 @@ app.post('/api/settings', async (req, res) => {
     has('projectsRoot') ? normalizeProjectPath(body.projectsRoot) : null]))) return;
   try {
     const { actionsWarnings } = await applySettingsPatch(body, { person: awayPersonOf(req) });
-    res.json({ ...settingsState(), ...(await autoModelState()), ...(await prDescriptionModelState()), chat: chatPrefs(),
+    res.json({ ...settingsState(), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), chat: chatPrefs(),
       ...(actionsWarnings ? { actionsWarnings } : {}) });
   } catch (err) {
     // 400 with the user's words and, when known, the body path of the bad field (#555).
@@ -11213,6 +11221,9 @@ async function applySettingsPatch(body, { person = null } = {}) {
   // project-less catalog the Settings pickers offer (a run re-checks it against its own).
   const hasMemoryDefragKey = has('memoryDefrag');
   const defragModels = hasMemoryDefragKey ? (autoModels || await listModels('')) : null;
+  // The agent wizard's Generate pair: agent generation has no project, so the project-less catalog.
+  const hasAgentGenKey = has('agentGenModel');
+  const agentGenModels = hasAgentGenKey ? (autoModels || defragModels || await listModels('')) : null;
   const hasWorkspaceScanKey = has('workspaceScan');
   const hasRunEngineKey = has('runEngine');
   const hasStepModelsKey = has('stepModels');
@@ -11244,7 +11255,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   if (has('askMaxTurns')) ask.askMaxTurns = body.askMaxTurns ?? '';
   if (has('askMaxBudgetUsd')) ask.askMaxBudgetUsd = body.askMaxBudgetUsd === undefined ? '' : body.askMaxBudgetUsd;
   {   // was the route's try: a refusal now reaches the caller (the route maps it to 400, the chat to a notice)
-    for (const key of ['titleModel', 'autoWorkflowModel', 'prDescriptionModel', 'memoryDefrag', 'workspaceScan']) {
+    for (const key of ['titleModel', 'autoWorkflowModel', 'prDescriptionModel', 'memoryDefrag', 'agentGenModel', 'workspaceScan']) {
       if (has(key)) asSettingsField(key, () => refuseNonClaudeUtilityModel(key, body[key]));
     }
     // Each validator / setter that can refuse a value runs tagged with the body key it checks,
@@ -11279,6 +11290,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasAutoKey) asSettingsField('autoWorkflowModel', () => assertAutoWorkflowModelInput(body.autoWorkflowModel ?? '', autoModels));
     if (hasPrDescKey) asSettingsField('prDescriptionModel', () => assertPrDescriptionModelInput(body.prDescriptionModel ?? '', prDescModels));
     if (hasMemoryDefragKey) asSettingsField('memoryDefrag', () => assertMemoryDefragModelInput(body.memoryDefrag, defragModels));
+    if (hasAgentGenKey) asSettingsField('agentGenModel', () => assertAgentGenModelInput(body.agentGenModel, agentGenModels));
     if (hasWorkspaceScanKey) asSettingsField('workspaceScan', () => assertWorkspaceScanInput(body.workspaceScan, wsScanModels));
     if (hasRunEngineKey) asSettingsField('runEngine', () => assertRunEngineInput(body.runEngine));
     if (hasAskEngineKey) asSettingsField('askEngine', () => assertAskEngineInput(body.askEngine));
@@ -11344,6 +11356,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasAutoKey) await setAutoWorkflowModel(body.autoWorkflowModel ?? '', { models: autoModels });
     if (hasPrDescKey) await setPrDescriptionModel(body.prDescriptionModel ?? '', { models: prDescModels });
     if (hasMemoryDefragKey) await setMemoryDefragModel(body.memoryDefrag, { models: defragModels });
+    if (hasAgentGenKey) await setAgentGenModel(body.agentGenModel, { models: agentGenModels });
     if (hasWorkspaceScanKey) await setWorkspaceScanModels(body.workspaceScan, { models: wsScanModels });
     if (hasRunEngineKey) await asSettingsField('runEngine', () => setRunEngineSetting(body.runEngine));
     if (hasStepModelsKey) await asSettingsField('stepModels', () => setStepModels(body.stepModels));
@@ -11363,7 +11376,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasBudgetKey) emitChanged('budget-changed');
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
-    if (hasAskKey || hasAskWeb || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasNetworkWaitKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasNetworkWaitKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;
@@ -15141,10 +15154,17 @@ function agentErrorBody(err) {
  * follow-up POST /api/agents.
  * @returns {string} genId
  */
-function startAgentGen(input) {
+async function startAgentGen(input) {
+  // The Models page's Claude tab › Agent generation, read per Generate. Unset, or a model the
+  // catalog no longer carries: no --model, the CLI's default (as before the setting existed).
+  const pick = resolveAgentGenModel(storedAgentGenModel(), await listModels(''));
+  if (pick.stale) console.warn(`[worca] agentGenModel ${JSON.stringify(pick.stale)} is no longer in the catalog — agent generation uses the CLI default`);
   const orch = createAgentGen({
     ...input,
-    claude: { permissionMode: 'acceptEdits', mock: serverMockMode() },
+    claude: {
+      permissionMode: 'acceptEdits', mock: serverMockMode(),
+      ...(pick.model ? { model: pick.model, ...(pick.effort ? { effort: pick.effort } : {}) } : {}),
+    },
   });
   // The engine mints its own genId (agen_<uuid>) and tags every emitted event
   // with it; use THAT as the runs-Map key + the returned id so the entry, its
@@ -15193,7 +15213,7 @@ app.post('/api/agents/generate', async (req, res) => {
     const byKey = Object.fromEntries(allAgents.map((m) => [m.key, m]));
     const pick = (keys) => (Array.isArray(keys) ? keys : []).map((k) => byKey[k]).filter(Boolean);
     if (await refuseSignedOutClaude(res)) return;
-    const genId = startAgentGen({
+    const genId = await startAgentGen({
       name, purpose: String(body.purpose || ''), details: String(body.details || ''),
       expectedBefore: pick(body.expectedBefore), expectedAfter: pick(body.expectedAfter),
       userMarkdown,

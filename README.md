@@ -564,7 +564,7 @@ level and has no **Diff**, **Changes** or **Actions**.
 
 ### Away mode
 
-- **Runs keep going while you're away** — during your away hours, or after you click **Step away**
+- **Runs keep going while you're away** — during your away hours, or after you turn on **Away**
   in the account menu (the corner at the foot of the sidebar), Worca answers what a run would wait on: clarifying
   questions, mid-step questions, input forms, review-loop gates, proposed workflows and failed-step
   retries. It trusts the agent's recommendation when the agent is sure enough. Otherwise a
@@ -587,7 +587,7 @@ level and has no **Diff**, **Changes** or **Actions**.
   and the deciding model), one group per ask, with the answers to check marked and listed first.
   A note above it reads like "5 answers while you were away — 2 to check". A
   short notice says when away hours start and end, and a violet dot sits on your avatar while you
-  are away; **I'm back** in the account menu ends it.
+  are away; turning **Away** off in the account menu ends it.
 
 ### Scheduled runs
 

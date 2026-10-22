@@ -8,7 +8,7 @@
 import {
   assertThemeInput, assertUiLevelInput, assertDebugSpawnInput, assertCostLimitInputs,
   assertHumanRateInput, assertAskLimitInputs, assertAskEngineInput, assertRunEngineInput, assertSyncSettingsInput,
-  assertScheduleDefaultsInput, assertWorkspaceScanInput, assertMemoryDefragModelInput, normalizeModelPair,
+  assertScheduleDefaultsInput, assertWorkspaceScanInput, assertMemoryDefragModelInput, assertAgentGenModelInput, normalizeModelPair,
   SETTINGS_POST_KEYS, DEFAULT_SYNC_SETTINGS, DEFAULT_SCHEDULE_GRACE_MIN, DEFAULT_SCHEDULE_IF_MISSED,
   DEFAULT_SCHEDULE_MAX_FAILURES, DEFAULT_COST_RESET_PERIOD, DEFAULT_HUMAN_RATE_USD, DEFAULT_ASK_MAX_TURNS,
 } from '../settings.mjs';
@@ -60,6 +60,7 @@ const JOBS = Object.freeze({ title: 'Title model', classifier: 'Auto workflow cl
 const CLAUDE_HELPER_KEYS = Object.freeze({ title: 'titleModel', classifier: 'autoWorkflowModel', prDescription: 'prDescriptionModel' });
 const CODEX_JOBS = Object.freeze(['title', 'classifier', 'overview', 'prDescription', 'memoryDefrag', 'workspaceScan']);
 const RUN_JOBS = new Set(['title', 'classifier', 'overview', 'prDescription']);
+const AGENT_GEN_ID = 'models.claude.utility.agentGen';
 const SCAN_FIELDS = Object.freeze({
   scanModel: { label: 'Workspace scan: scan agent model', allowed: 'a model id from list_models' },
   scanEffort: { label: 'Workspace scan: scan agent effort', allowed: EFFORTS.map((e) => JSON.stringify(e)).join(' | ') },
@@ -178,6 +179,18 @@ function buildUserDefs(roles, scanDefaults) {
         await ctx.slot([{ id: ctx.def.id, engine: 'claude', value }]);
         return value;
       } })),
+    // The agent wizard's Generate: always Claude and project-less, so user scope only (not a cascade id).
+    userDef({ id: AGENT_GEN_ID, label: 'Agent generation model', group: 'Models', fmt: pairText, allowed: pairAllowed('claude'),
+      read: (s) => (isObj(s.agentGenModel) && typeof s.agentGenModel.model === 'string' && s.agentGenModel.model.trim()
+        ? { model: s.agentGenModel.model.trim(), ...(typeof s.agentGenModel.effort === 'string' && s.agentGenModel.effort ? { effort: s.agentGenModel.effort } : {}) } : null),
+      body: (unit) => ({ agentGenModel: unit && unit.model ? { model: unit.model, effort: unit.effort || '' } : null }),
+      check: async (v, ctx) => {
+        const pair = assertAgentGenModelInput(v, await ctx.models());
+        if (!pair) return null;
+        const value = { model: pair.model, ...(pair.effort ? { effort: pair.effort } : {}) };
+        await ctx.slot([{ id: ctx.def.id, engine: 'claude', value }]);   // in the catalog is not enough: it must run on Claude
+        return value;
+      } }),
     ...CODEX_JOBS.map((job) => pairDef(RUN_JOBS.has(job) ? `models.codex.utility.${job}` : `models.codex.${job}`, `${JOBS[job]} (${engineLabel('codex')})`, 'Models', 'codex',
       (s) => (isObj(s.utilityModels) && isObj(s.utilityModels.codex) && isObj(s.utilityModels.codex[job]) ? s.utilityModels.codex[job] : null),
       (unit) => ({ utilityModels: { codex: { [job]: unit ?? null } } }))),
@@ -298,7 +311,7 @@ export function createSettingsRegistry(deps = {}) {
     const def = findDef(sid, scope);
     if (!def) {
       // A model slot id is never an exclusion (the 'models' entry is the catalog): a project-only slot or a typo.
-      const slot = MODEL_ID_RE.test(sid) || ASK_ENGINES.some((e) => sid === `models.${e}.ask`);
+      const slot = MODEL_ID_RE.test(sid) || ASK_ENGINES.some((e) => sid === `models.${e}.ask`) || sid === AGENT_GEN_ID;
       const ex = slot ? null : exclusionOf(sid);
       if (ex) return { ok: false, error: `${sid} is not changed from the chat: ${ex.why}` };
       const projectOnly = scope === 'user' && findDef(sid, 'project') ? ' (it is set per project: scope "project")' : '';

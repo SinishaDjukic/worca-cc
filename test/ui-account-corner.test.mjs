@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { minLevelFor } from '../ui/public/ui-level.mjs';
+import { applyFlags, flagOn } from '../ui/public/flags.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -27,8 +28,9 @@ const BUDGET = () => ({ totalLimitUsd: 50, resetPeriod: 'monthly', windowStartMs
 const FREE = { enabled: true, known: true, limit: 50, remaining: 4, resetAt: new Date(Date.now() + 3 * 3600000).toISOString(), models: [] };
 
 // width: a viewport (the nav tiers read `(max-width: …)` queries); hover: a mouse (`(hover: hover)` matches);
-// budget: false makes GET /api/budget fail (no snapshot ever arrives).
-async function boot({ whoami = { name: 'ada.lovelace@acme.dev', source: 'access', shared: true }, free = FREE, width = null, hover = false, budget = true, levelSave = 'ok' } = {}) {
+// budget: false makes GET /api/budget fail (no snapshot ever arrives). keepAwake: the flag GET /api/flags reports;
+// flagsPatch: 'ok', or the { status, error } the server answers a PATCH /api/flags with.
+async function boot({ whoami = { name: 'ada.lovelace@acme.dev', source: 'access', shared: true }, free = FREE, width = null, hover = false, budget = true, levelSave = 'ok', keepAwake = { on: true, locked: false }, flagsPatch = 'ok' } = {}) {
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/', pretendToBeVisual: true }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
@@ -42,10 +44,21 @@ async function boot({ whoami = { name: 'ada.lovelace@acme.dev', source: 'access'
   window.__budgetTickMs = DAY;
   window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
   const posts = [];
+  const patches = [];
   window.fetch = (u, opts = {}) => {
     const url = String(u);
     const ok = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
-    if ((opts.method || 'GET').toUpperCase() === 'POST') {
+    const method = (opts.method || 'GET').toUpperCase();
+    if (url.endsWith('/api/flags')) {
+      if (method === 'PATCH') {
+        const body = JSON.parse(opts.body);
+        patches.push(body);
+        return flagsPatch === 'ok' ? ok({ flags: [{ key: 'keepAwake', on: body.keepAwake, locked: false }] })
+          : Promise.resolve({ ok: false, status: flagsPatch.status, json: async () => ({ error: flagsPatch.error }) });
+      }
+      return ok({ flags: [{ key: 'keepAwake', ...keepAwake }] });
+    }
+    if (method === 'POST') {
       const body = JSON.parse(opts.body);
       posts.push({ url, body });
       // levelSave: 'ok', or the error the server answers a {uiLevel} save with.
@@ -70,7 +83,7 @@ async function boot({ whoami = { name: 'ada.lovelace@acme.dev', source: 'access'
   const click = (el, detail = 1) => el.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true, detail }));
   // Keys go where focus is, as in a browser (the menu reads its arrows on itself; Escape is the document's).
   const key = (k) => (doc.activeElement || doc.body).dispatchEvent(new window.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
-  return { window, doc, $, click, key, posts };
+  return { window, doc, $, click, key, posts, patches };
 }
 
 test('the account menu: the corner opens it upward; a click outside, Escape and a route close it', async () => {
@@ -155,11 +168,12 @@ test('the account menu: its order and roles (spend card · Signed in as · Inter
     { name: 'order and roles', run: () => {
       const menu = $('acct-menu');
       assert.deepEqual([...menu.children].map((el) => el.id || el.className),
-        ['acct-spend', 'acct-id', 'msect', 'msect', 'msect theme-sect']);
+        ['acct-spend', 'acct-id', 'msect', 'msect sw-sect', 'msect theme-sect']);
       assert.deepEqual([...menu.querySelectorAll('.msect')].map((s) => [s.getAttribute('role'), [...s.children].map((b) => b.id)]),
-        [['group', ['acct-lvl', 'acct-settings']], ['group', ['acct-away']], ['group', ['acct-theme-k', 'acct-theme']]], 'each run of rows is its own section; Appearance leads its icons');
+        [['group', ['acct-lvl', 'acct-settings']], ['group', ['acct-away', 'acct-keepawake']], ['group', ['acct-theme-k', 'acct-theme']]], 'each run of rows is its own section; the two switches share one');
       assert.deepEqual([...menu.querySelectorAll('[role^="menuitem"]')].map((b) => b.id || b.dataset.themeMode || b.className),
-        ['btn btn-sm mc-btn', 'mi menu-item mc-free', 'acct-lvl', 'acct-settings', 'acct-away', 'system', 'light', 'dark'], 'Details, the free row, the three rows, then the three icons');
+        ['btn btn-sm mc-btn', 'mi menu-item mc-free', 'acct-lvl', 'acct-settings', 'acct-away', 'acct-keepawake', 'system', 'light', 'dark'], 'Details, the free row, the four rows, then the three icons');
+      assert.equal($('acct-away').closest('.msect').getAttribute('aria-label'), 'Switches');
       assert.deepEqual([...$('acct-theme').querySelectorAll('button')].map((b) => [b.getAttribute('role'), b.getAttribute('aria-label'), b.textContent.trim()]),
         [['menuitemradio', 'System', ''], ['menuitemradio', 'Light', ''], ['menuitemradio', 'Dark', '']], 'icons only: the name is the aria-label');
       assert.deepEqual([$('acct-lvl').getAttribute('aria-haspopup'), $('acct-lvl').getAttribute('aria-controls'), $('acct-lvl').getAttribute('aria-expanded')],
@@ -174,8 +188,8 @@ test('the account menu: its order and roles (spend card · Signed in as · Inter
       assert.equal(doc.activeElement, $('acct-lvl'));
       key('End');
       assert.equal(doc.activeElement.dataset.themeMode, 'dark', 'the last icon ends the menu');
-      key('ArrowUp');
-      key('ArrowUp');
+      key('ArrowUp'); key('ArrowUp'); key('ArrowUp');
+      assert.equal(doc.activeElement, $('acct-keepawake'), 'the arrows walk the switch rows');
       key('ArrowUp');
       assert.equal(doc.activeElement, $('acct-away'));
       key('Escape');
@@ -223,7 +237,7 @@ test('Interface mode: the row opens its side menu; a choice applies and saves, b
   assert.equal($('acct-lvl').querySelector('.mi-val').textContent, 'Simple');
   assert.equal($('lvl-menu').hidden, false, 'the side menu stays open…');
   assert.equal($('acct-menu').hidden, false, '…and so does the menu: the page behind changes in place');
-  for (const id of ['side-acct', 'acct-menu', 'lvl-menu', 'acct-lvl', 'acct-settings', 'acct-away']) assert.equal(minLevelFor($(id)), 'simple', `#${id} shows at every mode`);
+  for (const id of ['side-acct', 'acct-menu', 'lvl-menu', 'acct-lvl', 'acct-settings', 'acct-away', 'acct-keepawake']) assert.equal(minLevelFor($(id)), 'simple', `#${id} shows at every mode`);
   key('Escape');
   assert.equal($('lvl-menu').hidden, true, 'Esc: the side menu first');
   assert.equal($('acct-lvl').getAttribute('aria-expanded'), 'false');
@@ -316,7 +330,7 @@ test('the identity card is named by its visible heading, not by a second copy of
 
 test('the mockup rows: Interface mode and Settings lead with their own icon; Appearance is a visible label beside its icons', async () => {
   const { $ } = await boot();
-  for (const id of ['acct-lvl', 'acct-settings', 'acct-away']) {
+  for (const id of ['acct-lvl', 'acct-settings', 'acct-away', 'acct-keepawake']) {
     const row = $(id);
     const icons = row.querySelectorAll('.mi-ic');
     assert.equal(icons.length, 1, `${id}: one icon`);
@@ -354,4 +368,65 @@ test('stylesheet: the account menu is the mockup\'s padded sheet: inset hairline
   assert.match(rule('.msect.theme-sect') || '', /flex-direction:row;align-items:center;justify-content:space-between;/, 'Appearance is one row');
   assert.match(rule('.theme-ic') || '', /width:30px;/, 'a compact segmented control, not a full-width track');
   assert.doesNotMatch(rule('.theme-ic') || '', /flex:1;/);
+});
+
+test('Keep awake in the account menu: a switch row, one source with Settings › Labs; a click PATCHes the flag and the menu stays open', async () => {
+  const { doc, $, click, patches } = await boot();
+  const row = $('acct-keepawake');
+  await checkRows([
+    { name: 'a menuitemcheckbox whose .switch is decoration, painted from GET /api/flags, with its tip', run: () => {
+      assert.deepEqual([row.getAttribute('role'), row.querySelector('.mi-lbl').textContent, row.getAttribute('aria-checked')], ['menuitemcheckbox', 'Keep awake', 'true']);
+      const sw = row.querySelector('.switch');
+      assert.deepEqual([sw.getAttribute('aria-hidden'), sw.hasAttribute('role'), sw.hasAttribute('tabindex')], ['true', false, false]);
+      assert.equal(row.title, 'Keeps the computer awake while runs are working. The display may still turn off.');
+      assert.equal(row.getAttribute('aria-description'), row.title);
+      assert.equal(row.querySelector('a'), null, 'no Beta chip link inside a menu row');
+    } },
+    { name: 'a click sends PATCH {keepAwake:false}, repaints off, and the menu stays open', run: async () => {
+      click($('side-acct'));
+      click(row);
+      await settle();
+      assert.deepEqual(patches, [{ keepAwake: false }]);
+      assert.equal(row.getAttribute('aria-checked'), 'false');
+      assert.equal(flagOn('keepAwake', doc), false, 'the page state follows, so the Labs row repaints too');
+      assert.equal($('acct-menu').hidden, false, 'a toggle leaves the menu open');
+    } },
+    { name: 'a keyboard click (Enter/Space on the button, detail 0) toggles it and keeps the menu open', run: async () => {
+      row.focus();
+      click(row, 0);
+      await settle();
+      assert.deepEqual(patches.at(-1), { keepAwake: true });
+      assert.equal(row.getAttribute('aria-checked'), 'true');
+      assert.equal($('acct-menu').hidden, false);
+      assert.equal(doc.activeElement, row);
+    } },
+    { name: 'a flags change from elsewhere (the Labs row, a flags frame) repaints the menu row', run: () => {
+      applyFlags({ keepAwake: false }, doc);
+      assert.equal(row.getAttribute('aria-checked'), 'false');
+    } },
+  ]);
+});
+
+test('Keep awake in the account menu: a refused change reverts, names the error in the tip and toasts; a lock disables the row', async () => {
+  const { doc, $, click } = await boot({ flagsPatch: { status: 500, error: 'disk full' } });
+  const row = $('acct-keepawake');
+  click(row);
+  await settle();
+  assert.equal(row.getAttribute('aria-checked'), 'true', 'reverted');
+  assert.match(row.title, / \(disk full\)$/);
+  assert.equal(row.getAttribute('aria-description'), row.title);
+  assert.equal(doc.querySelector('.toast.err[data-key="keep-awake"] .td')?.textContent, 'disk full');
+  const locked = await boot({ keepAwake: { on: true, locked: true } });
+  const r2 = locked.$('acct-keepawake');
+  assert.equal(r2.getAttribute('aria-disabled'), 'true');
+  assert.match(r2.title, /\(Locked by WORCA_FLAGS\)$/);
+  assert.equal(locked.doc.querySelector('.toast[data-key="keep-awake"]'), null, 'a lock found at load is no toast');
+});
+
+test('stylesheet: a switch row paints its inner .switch from the row\'s aria-checked and aria-disabled, and the switch takes no pointer', () => {
+  assert.match(css, /\.sw-item\[aria-checked="true"\] \.switch\)\{background:var\(--switch-on\);\}/);
+  assert.match(css, /\.sw-item\[aria-disabled="true"\] \.switch\)\{/);
+  assert.match(css, /\.sw-item \.switch\{pointer-events:none;\}/);
+  assert.doesNotMatch(css, /\.away-item\[data-state="away"\]\{background/, 'the switch shows the state; no row tint');
+  assert.doesNotMatch(css, /\.sw-item\[aria-disabled="true"\]\{cursor/, 'a disabled row keeps .mi\'s default cursor (the unread away row still opens Settings)');
 });

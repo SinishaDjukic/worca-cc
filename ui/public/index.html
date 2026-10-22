@@ -122,7 +122,7 @@
           </div>
           <!-- The account corner (account-menu.mjs): who is looking (GET /api/whoami), the spend ring
                (paintBudget) and the away dot. It opens #acct-menu: spend, interface mode, Settings,
-               away mode and appearance. -->
+               the Away and Keep awake switches and appearance. -->
           <button type="button" class="acct" id="side-acct" data-min-level="simple" aria-haspopup="menu" aria-expanded="false" aria-controls="acct-menu"
                   aria-label="Profile: spend, away mode, interface mode and settings" title="Profile: spend, away mode, interface mode and settings">
             <span class="acct-ring-wrap">
@@ -155,11 +155,23 @@
               <span class="mi-lbl">Settings</span>
             </button>
           </div>
-          <div class="msect" role="group">
-            <button type="button" class="mi menu-item away-item" id="acct-away" role="menuitem" data-state="here" data-min-level="simple">
+          <!-- The switches (Away, Keep awake): each whole row is the control, a menuitemcheckbox whose
+               aria-checked says on or off; the .switch at its right edge only shows it (aria-hidden).
+               Away: app.js#paintAwayMenuRow (on = away). Keep awake: the keepAwake flag, bound by
+               flags-view.mjs#bindFlagSwitch, one source with Settings › Labs. A toggle leaves the menu open. -->
+          <div class="msect sw-sect" role="group" aria-label="Switches">
+            <button type="button" class="mi menu-item away-item sw-item" id="acct-away" role="menuitemcheckbox" aria-checked="false" data-state="here" data-min-level="simple"
+                    title="worca answers waiting run questions for you while you're away." aria-description="worca answers waiting run questions for you while you're away.">
               <svg class="mi-ic" viewBox="0 0 24 24" aria-hidden="true"></svg>
-              <span class="mi-lbl">Step away</span>
+              <span class="mi-lbl">Away</span>
               <span class="mi-hint"></span>
+              <span class="switch" aria-hidden="true"></span>
+            </button>
+            <button type="button" class="mi menu-item sw-item" id="acct-keepawake" role="menuitemcheckbox" aria-checked="false" data-min-level="simple"
+                    title="Keeps the computer awake while runs are working. The display may still turn off." aria-description="Keeps the computer awake while runs are working. The display may still turn off.">
+              <svg class="mi-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 9h11v5a5 5 0 0 1-5 5h-1a5 5 0 0 1-5-5z"></path><path d="M16 10.5h1.5a2.5 2.5 0 0 1 0 5H16"></path><path d="M9 3.5v2.5M12.5 3.5v2.5"></path></svg>
+              <span class="mi-lbl">Keep awake</span>
+              <span class="switch" aria-hidden="true"></span>
             </button>
           </div>
           <!-- Appearance, one row: its visible label (it names the group) and three icon segments, the
@@ -1998,21 +2010,6 @@
                 <button type="button" id="nightModeReset" class="btn btn-sm">Use defaults</button>
                 <button type="button" id="nightModeSave" class="btn btn-primary btn-sm">Save</button>
               </div>
-            </section>
-
-            <!-- Keep awake (UI/UX review F): the keepAwake beta flag, the same value as its Settings › Labs row. -->
-            <section class="card settings-card" id="keepawake-settings-card" data-min-level="simple">
-              <div class="card-head">
-                <div class="label-row"><h2>Keep awake</h2></div>
-              </div>
-              <div class="drows">
-                <div class="drow switch-drow" id="keepAwakeRow">
-                  <span class="drow-label" id="keepAwakeTxt" data-flag-chip="keepAwake">Keep the computer awake while runs are working</span>
-                  <small class="hint drow-help">The display may still turn off. No effect on a container or hosted worca.</small>
-                  <div class="drow-control"><div class="switch on" role="switch" tabindex="0" id="keepAwakeSwitch" aria-checked="true" aria-labelledby="keepAwakeTxt"></div></div>
-                </div>
-              </div>
-              <p class="form-msg" id="keepAwakeMsg" role="status"></p>
             </section>
 
             <!-- Scheduled runs: the defaults a NEW schedule inherits. Each schedule keeps
