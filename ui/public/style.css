@@ -9885,7 +9885,7 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .req-row > .req-row-main{grid-area:main}
 .req-row > .badge,.req-row > .pill-run{grid-area:mark;justify-self:end}
 .req-row > .req-cost{grid-area:cost}
-.req-id,.req-item code{font-family:var(--mono);font-size:12px;color:var(--ink-3)}
+.req-id,.req-item code{font-family:var(--mono);font-size:12px;color:var(--ink-2)}
 .req-row-main{display:flex;flex-direction:column;gap:2px;min-width:0}
 .req-title{font-weight:500;overflow-wrap:anywhere}
 .req-row .req-row-meta{margin:0}
@@ -9921,7 +9921,7 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .req-head-title .req-id{font-size:14px}
 .req-head h2{margin:0;font-size:22px;font-weight:700;letter-spacing:-.015em;overflow-wrap:anywhere}
 .req-chips{display:flex;flex-wrap:wrap;gap:8px}
-.req-head-tools{display:flex;align-items:center;gap:8px}
+.req-head-tools{display:flex;align-items:center;gap:8px;margin-left:auto}
 /* A small borderless icon button: the pencils, add / remove, the header's ⋯. */
 .req-ico{display:inline-grid;place-items:center;flex:none;width:28px;height:28px;padding:0;border:0;border-radius:8px;background:transparent;color:var(--ink-3);cursor:pointer}
 .req-ico:hover:not(:disabled),.req-ico[aria-expanded="true"]{background:var(--hover);color:var(--ink)}
@@ -9947,7 +9947,7 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .req-round{display:flex;flex-direction:column;gap:6px}
 .req-round + .req-round{margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
 .req-round-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
-.req-round-n{font-size:12px;font-weight:600;color:var(--ink-3)}
+.req-round-n{font-size:12px;font-weight:600;color:var(--ink-2)}
 .req-round .req-round-note{margin:0}
 .req-round-qt{font-size:13px}
 .req-round-answer{margin:2px 0 0;font-size:12.5px;color:var(--ink-2)}
@@ -9964,6 +9964,7 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .req-check.ok > svg{color:var(--green-ink)}
 .req-check-label{flex:1;min-width:0}
 .req-check .req-check-hint{margin:0;text-align:right}
+@media (max-width:600px){.req-check{flex-wrap:wrap}.req-check .req-check-hint{flex-basis:100%;text-align:left;padding-left:26px}}
 .req-ready-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
 .req-ready-foot > .hint{margin:0}
 .req-ready-btns{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-left:auto}
@@ -10065,7 +10066,7 @@ a.req-run-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-changed-body p{margin:0;font-size:13px;color:var(--ink-2)}
 .req-change-line{font-size:13px;padding:8px 10px;background:var(--surface);border-radius:10px;overflow-wrap:anywhere}
 .req-change-line .req-id{margin-right:4px}
-.req-del{color:var(--ink-3);text-decoration:line-through}
+.req-del{color:var(--ink-2);text-decoration:line-through}
 .req-ins{background:var(--green-bg);border-radius:4px;padding:0 3px;text-decoration:none;-webkit-box-decoration-break:clone;box-decoration-break:clone}
 .req-changed .req-actions{margin:2px 0 0}
 .req-spec > .req-card-head{flex-wrap:wrap}
@@ -10100,7 +10101,7 @@ a.req-run-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 /* A7: the list's group header names the scope's Product brief; the brief page (board BriefEmpty.dc.html): the
    header, Give Worca a head start (the four parts left, the cost box with Create right), Your notes for Worca. */
 .req-group-head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 12px}
-.req-group-head .req-group-brief{margin:0;color:var(--ink-3)}
+.req-group-head .req-group-brief{margin:0;color:var(--ink-2)}
 .req-brief-link{color:var(--blue-ink-strong);font-weight:600;text-decoration:underline;text-underline-offset:2px}
 .req-brief-link:hover{color:var(--ink)}
 .req-brief-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:4px}
@@ -10126,7 +10127,10 @@ a.req-run-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-brief-notes{padding:18px 22px;display:flex;flex-direction:column;gap:10px}
 .req-brief-notes .req-card-head{margin:0}
 .req-brief-notes textarea{width:100%;box-sizing:border-box;min-height:84px}
-.req-brief-notes-look{display:flex;align-items:center;gap:8px;font-size:13px}
+.req-brief-notes-look{display:flex;align-items:flex-start;gap:8px;font-size:13px}
+/* Without git there is no Create on the empty brief page: this line says why (git-gate.mjs). */
+.req-brief-nogit-create{margin:0;max-width:300px}
+:root:not([data-git="off"]) .req-brief-nogit-create{display:none}
 .req-brief-notes-foot{display:flex;justify-content:flex-end;gap:8px}
 /* A7: the brief page once made (board Brief.dc.html): the chips and the two menus, the code-moved-on notice (the
    amber .req-changed box), the brief card left, How Worca uses it / Your notes / What Worca read right. */

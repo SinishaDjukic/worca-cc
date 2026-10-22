@@ -792,7 +792,7 @@ test('Ready panel: the six checks, n of 6, Start disabled until Ready, start-any
   assert.deepEqual(items.map((li) => li.querySelector('.hint')?.textContent ?? ''), ['add a success measure', '', '1 question waiting', '', '1 to decide', '']);
   assert.match(panel().textContent, /Nothing is built until you start it\./);
   const start = () => panel().querySelector('[data-ui="start"]');
-  assert.equal(start().textContent, 'Start in worca');
+  assert.equal(start().textContent, 'Start in Worca');
   assert.equal(start().disabled, true);
   assert.equal(panel().querySelector('[data-ui="start-anyway"]'), null);
   fakeApi({ ...BASE, 'GET /api/requirements/4': { feature: feature({ readiness: readiness({ overridable: true }) }), turns: [] } });
@@ -983,7 +983,7 @@ test('Ready to build: the sentence, the chips, Change reveals the workflow and b
   assert.deepEqual(chipsOf(card()), ['Workflow · Auto', 'Branch from · default']);
   const go = card().querySelector('[data-ui="start-go"]');
   assert.ok(go.classList.contains('btn-go'));
-  assert.equal(go.textContent, 'Start in worca');
+  assert.equal(go.textContent, 'Start in Worca');
   assert.equal(card().querySelector('select'), null, 'the selects open from Change');
   const change = card().querySelector('[data-ui="build-change"]');
   assert.equal(change.textContent, 'Change');
@@ -1679,7 +1679,6 @@ test('brief page: Your notes for Worca: the card, Save notes puts the body and t
   const card = host.querySelector('section.card[aria-label="Your notes for Worca"]');
   assert.ok(card);
   assert.equal(card.querySelector('h3').textContent, 'Your notes for Worca');
-  assert.equal(card.querySelector('.req-brief-was').textContent, 'was “Project context”');
   const area = card.querySelector('textarea[data-ui="notes-body"]');
   assert.equal(area.getAttribute('aria-label'), 'Your notes for Worca');
   assert.equal(area.value, 'Shoppers order things.');
@@ -1700,7 +1699,7 @@ test('brief page: Your notes for Worca: the card, Save notes puts the body and t
   assert.equal(host.querySelector('[data-ui="notes-body"]').value, 'New notes');
 });
 
-test('brief page: unsaved notes survive a live repaint; a workspace says it was Workspace context', async () => {
+test('brief page: unsaved notes survive a live repaint; a workspace has the same notes card', async () => {
   fakeApi(briefRoutes());
   const { host, view } = make();
   await view.show('brief/project/shop-1');
@@ -1717,7 +1716,7 @@ test('brief page: unsaved notes survive a live repaint; a workspace says it was 
   fakeApi({ ...BASE, [`GET ${W}`]: briefBody({ target: { name: 'Storefront', branch: null, leftOut: [], slow: [] } }) });
   const w = make();
   await w.view.show('brief/workspace/ws1');
-  assert.equal(w.host.querySelector('.req-brief-was').textContent, 'was “Workspace context”');
+  assert.equal(w.host.querySelector('.req-brief-notes h3').textContent, 'Your notes for Worca');
 });
 
 test('list: each group header names its brief: none yet with Create, being made, or its age; each links to the brief page', async () => {
@@ -2008,7 +2007,7 @@ test('brief page, made: a staleness that cannot be told says why, with the same 
     const { host } = await openBrief(madeBody({ staleness }));
     const n = notice(host);
     assert.ok(n, staleness.reason);
-    assert.equal(n.querySelector('b').textContent, 'The code moved on since this brief');
+    assert.equal(n.querySelector('b').textContent, 'Worca cannot check this brief against the code');
     assert.equal(text(n.querySelector('.req-brief-stale-text')), want);
     assert.equal(n.querySelector('[data-ui="brief-refresh"]').textContent, 'Refresh · about $1.50');
   }
@@ -2548,4 +2547,175 @@ test('git-only controls carry data-needs-git: the brief Create box and Refresh, 
   assert.ok(!gated(knows(after.host).querySelector('[data-ui="brief-add"]')), 'Add this to the brief stays (no git)');
   const skipped = await openKnows(feature({ brief: null, orientation: SKIPPED }), [{ id: 2, kind: 'orientation', costUsd: 0, payload: SKIPPED }]);
   assert.ok(gated(skipped.host.querySelector('[data-ui="orient-look-again"]')), "A2's box Look again");
+});
+
+// ---- the final review's fixes: UI levels, git missing, messages and focus ----
+
+const withGit = async (on, fn) => {
+  const el = document.documentElement;
+  const was = el.dataset.git;
+  el.dataset.git = on ? 'on' : 'off';
+  try { return await fn(); } finally { if (was === undefined) delete el.dataset.git; else el.dataset.git = was; }
+};
+
+test('UI levels (docs/ui-levels.md): Ready to build Change and the brief page What Worca read are Advanced; the chips and the rest stay', async () => {
+  fakeApi({ ...BASE, ...BUILD, 'GET /api/requirements/4': () => ({ feature: readyFeature(), turns: [] }) });
+  const { host, view } = make();
+  await view.show('feature/4');
+  const card = host.querySelector('.req-build');
+  assert.equal(card.querySelector('[data-ui="build-change"]').getAttribute('data-min-level'), 'advanced');
+  for (const el of [card, card.querySelector('.req-build-chips'), card.querySelector('[data-ui="start-go"]')]) {
+    assert.equal(el.closest('[data-min-level]'), null, 'the card, its chips and Start show at every level');
+  }
+  const made = await openBrief(madeBody());
+  assert.equal(made.host.querySelector('details.req-brief-read').getAttribute('data-min-level'), 'advanced');
+  assert.equal(made.host.querySelector('.req-brief-how').closest('[data-min-level]'), null);
+});
+
+test('Start in Worca is capitalised on both buttons', async () => {
+  fakeApi({ ...BASE, ...BUILD, 'GET /api/requirements/4': () => ({ feature: readyFeature(), turns: [] }) });
+  const { host, view } = make();
+  await view.show('feature/4');
+  assert.equal(text(host.querySelector('[data-ui="start-go"]')), 'Start in Worca');
+});
+
+test('the notes card has no former name, and its text area stops at 10000 characters', async () => {
+  const { host } = await openBrief(briefBody());
+  assert.equal(host.querySelector('.req-brief-was'), null);
+  assert.doesNotMatch(host.textContent, /Project context|Workspace context/);
+  assert.equal(host.querySelector('[data-ui="notes-body"]').getAttribute('maxlength'), '10000');
+});
+
+test('git missing: the made brief says it cannot check against the code, quietly', async () => {
+  await withGit(false, async () => {
+    const { host, view } = await openBrief(madeBody({ staleness: { known: false, reason: 'no-git' } }));
+    assert.equal(notice(host), null, 'no amber notice');
+    const note = host.querySelector('.req-brief-nogit');
+    assert.ok(note, 'a quiet note');
+    assert.equal(note.getAttribute('role'), 'note');
+    assert.equal(text(note), 'Worca cannot check this brief against the code: git is not installed on this machine.');
+    view.destroy();
+  });
+});
+
+test('git missing: the list header offers Create only with git; the empty brief page says why there is no Create', async () => {
+  fakeApi({ ...BASE, 'GET /api/requirements': listOf([row()]) });
+  const m = make();
+  await m.view.show('');
+  const head = m.host.querySelector('.req-group-brief');
+  assert.equal(text(head), 'Product brief: none yet · Create');
+  const create = head.querySelector('a');
+  assert.ok(create.closest('[data-needs-git]'), 'the " · Create" part hides while git is missing');
+  assert.equal(create.getAttribute('aria-label'), 'Create the product brief for shop');
+  const none = await openBrief(briefBody());
+  const why = none.host.querySelector('.req-brief-nogit-create');
+  assert.equal(text(why), 'A brief needs git to read the code, and git is not installed on this machine.');
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  assert.match(css, /:root:not\(\[data-git="off"\]\) \.req-brief-nogit-create\{display:none\}/);
+});
+
+test('git missing: New feature says there is no look and costs cents per round; the feature says why it did not look', async () => {
+  await withGit(false, async () => {
+    fakeApi({ ...BASE, 'GET /api/requirements': listOf([], { lookCostUsd: 0.25, interview: { model: 'claude-opus-5-5', label: 'Opus 5.5', effort: 'medium' } }) });
+    const { host, view } = make();
+    await view.show('new');
+    assert.equal(text(host.querySelector('.req-new-look')), 'Worca does not look at the code: git is not installed on this machine. It starts asking right away.');
+    assert.equal(text(host.querySelector('.req-new-cost')), 'Worca interviews with Opus 5.5 at medium effort · cents per round');
+    view.destroy();
+    const f = await openKnows(feature({ orientation: { summary: '', files: [], skipped: 'no-git' } }));
+    assert.equal(f.host.querySelector('details.req-orient p').textContent, 'Worca did not look at the code: git is not installed on this machine.');
+  });
+  // with git, a feature whose look was skipped for git says so too, after git came back
+  const back = await openKnows(feature({ orientation: { summary: '', files: [], skipped: 'no-git' } }));
+  assert.equal(back.host.querySelector('details.req-orient p').textContent, 'Worca did not look at the code: git is not installed on this machine.');
+});
+
+test('Add this to the brief: says so in the message line and keeps the focus on the card', async () => {
+  const LOOKED = { summary: 'The slip.', files: ['src/slip.mjs'], skipped: null, area: 'Orders', scopeType: 'project', scopeKey: 'shop-1', briefId: 3 };
+  const turns = [{ id: 7, kind: 'orientation', costUsd: 0.22, payload: { ...LOOKED } }];
+  const a = await openKnows(knowsFeature({ orientation: LOOKED }), turns, {
+    'POST /api/requirements/4/brief-addition': () => { a.set(knowsFeature({ orientation: { ...LOOKED, addedToBrief: '2026-10-22T10:00:00Z' } })); return {}; } });
+  document.body.append(a.host);
+  try {
+    a.host.querySelector('[data-ui="brief-add"]').click();
+    await tick(); await tick(); await tick();
+    assert.equal(a.msgEl.textContent, 'Added to the product brief as “Orders: Cancel order”.');
+    assert.ok(a.msgEl.classList.contains('ok'));
+    assert.equal(document.activeElement.getAttribute('data-ui'), 'look-again');
+  } finally { a.host.remove(); }
+  // the switch off: no Look again, so the focus stays on the card
+  const OFF = briefOf({ lookAtCode: false });
+  const off = await openKnows(knowsFeature({ brief: OFF, orientation: LOOKED }), turns, {
+    'POST /api/requirements/4/brief-addition': () => { off.set(knowsFeature({ brief: OFF, orientation: { ...LOOKED, addedToBrief: 'x' } })); return {}; } });
+  document.body.append(off.host);
+  try {
+    off.host.querySelector('[data-ui="brief-add"]').click();
+    await tick(); await tick(); await tick();
+    assert.equal(document.activeElement.getAttribute('data-ui'), 'knows');
+  } finally { off.host.remove(); }
+});
+
+test('Create the brief and Delete the brief say what happened; Delete leaves the focus on Create', async () => {
+  let body = briefBody();
+  const c = await openBrief(() => body, {
+    [`POST ${BRIEF_URL}`]: () => { body = briefBody({ brief: briefRow({ status: 'making' }) }); return body; } });
+  createBtn(c.host).click();
+  await tick(); await tick();
+  assert.equal(c.msgEl.textContent, 'Worca is making the brief. This takes a few minutes; you can leave this page.');
+  let made = madeBody();
+  const d = await openBrief(() => made, { [`DELETE ${BRIEF_URL}`]: () => { made = briefBody(); return made; } });
+  document.body.append(d.host);
+  try {
+    d.host.querySelector('[data-ui="brief-more"]').click();
+    await withConfirm(true, async () => { d.host.querySelector('[data-ui="mi-brief-delete"]').click(); await tick(); await tick(); });
+    assert.equal(d.msgEl.textContent, 'The brief is deleted.');
+    assert.equal(document.activeElement.getAttribute('data-ui'), 'brief-create');
+  } finally { d.host.remove(); }
+});
+
+test('a staleness that cannot be told heads the notice "Worca cannot check this brief against the code"', async () => {
+  const { host } = await openBrief(madeBody({ staleness: { known: false, reason: 'slow' } }));
+  assert.equal(notice(host).querySelector('b').textContent, 'Worca cannot check this brief against the code');
+});
+
+test('style: the phone menus open inside the screen, the faint ink is not used for text, the small-screen wraps', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  assert.match(css, /\.req-head-tools\{[^}]*margin-left:auto/);
+  for (const sel of ['.req-group-head .req-group-brief', '.req-id', '.req-round-n', '.req-del']) {
+    const esc = sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const rules = [...css.matchAll(new RegExp(`(?:^|[}\\s,])${esc}\\{([^}]*)\\}`, 'gm'))];
+    assert.ok(rules.length, sel);
+    for (const m of rules) assert.doesNotMatch(m[1], /--ink-3/, `${sel} text uses --ink-2`);
+  }
+  assert.match(css, /@media \(max-width:600px\)\{\.req-check\{flex-wrap:wrap\}/);
+  assert.match(css, /\.req-brief-notes-look\{[^}]*align-items:flex-start/);
+});
+
+test('git appears or goes missing: New feature says its look line again and keeps the typed title; the brief page refetches', async () => {
+  const { applyGit } = await import('../ui/public/git-gate.mjs');
+  await withGit(true, async () => {
+    fakeApi({ ...BASE, 'GET /api/requirements': listOf([], { lookCostUsd: 0.25 }) });
+    const { host, view } = make();
+    await view.show('new');
+    host.querySelector('#req-new-title').value = 'Typed';
+    applyGit({ available: false });
+    assert.match(text(host.querySelector('.req-new-look')), /^Worca does not look at the code/);
+    assert.equal(host.querySelector('#req-new-title').value, 'Typed', 'the form is not rebuilt');
+    applyGit({ available: true });
+    assert.match(text(host.querySelector('.req-new-look')), /^Worca looks at this project's code once/);
+    view.destroy();
+    // a scope of its own: views of earlier tests still show other pages
+    const URL = '/api/requirements/brief/project/flip-9';
+    const calls = fakeApi({ ...BASE, [`GET ${URL}`]: () => madeBody() });
+    const b = make();
+    await b.view.show('brief/project/flip-9');
+    const gets = () => calls.filter((c) => c.url === URL).length;
+    applyGit({ available: false });
+    await tick(); await tick();
+    assert.equal(gets(), 2, 'refetched on the flip');
+    b.view.destroy();
+    applyGit({ available: true });
+    await tick();
+    assert.equal(gets(), 2, 'destroy unsubscribes');
+  });
 });

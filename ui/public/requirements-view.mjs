@@ -10,6 +10,8 @@
 //                       refetch what is on screen when the frame concerns it
 //   view.destroy()
 
+import { gitOn, onGitChange, GIT_MISSING_TEXT } from './git-gate.mjs';
+
 // The displayed state (A2 §4), always the server's `f.state`: the page never derives it. `started` is
 // drawn as the latest run's pill (runPill), not as a badge.
 const STATE = Object.freeze({
@@ -85,6 +87,7 @@ const AUTO_WORKFLOW = 'wf_auto';
 // Workflows a feature never starts with: the memory defragment is a maintenance run, not a build.
 const NOT_FOR_BUILDS = ['wf_auto', 'wf_memory_defrag'];
 const REASON_MAX = 500;
+const NOTES_MAX = 10000;   // Your notes for Worca (store.mjs LIMITS.context)
 /** An inline SVG icon; decorative (aria-hidden) unless `label` names it (role=img). */
 function icon(shapes, { size = 16, label = null, width = 2, fill = 'none', stroke = 'currentColor' } = {}) {
   const set = (el, attrs) => { for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, String(v)); return el; };
@@ -212,7 +215,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   let briefFocusNext = null;
   const seqScope = new Map();
   let focusLater = null;     // a data-ui to focus once it is on screen, while the focus is lost (a round sent)
-  // Start in worca: the workflow / branch choices per feature seq ({ workflowId, sourceBranch, open }),
+  let relook = null;         // New feature's look line, said again when git appears or goes missing
+  // Start in Worca: the workflow / branch choices per feature seq ({ workflowId, sourceBranch, open }),
   // the workflow list and each project's branches (loaded once, when Change opens), a start in flight,
   // and the start-before-Ready dialog ({ wrap, trigger, triggerUi }).
   const choices = new Map();
@@ -380,15 +384,18 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   }
 
   // A group header's brief (board 11, A7 §6 "Elsewhere"): none yet (no row, or an `empty` one) with Create,
-  // being made, or its age; each a link to the brief page.
+  // being made, or its age; each a link to the brief page. Create needs git, so " · Create" hides while git is
+  // missing (git-gate.mjs); the brief page's notes stay reachable from a feature's ⋯.
   function groupBrief(g, b) {
     const to = briefPath(g.scopeType, g.scopeKey);
-    const link = (label) => h('a', { class: 'req-brief-link', href: `#requirements/${to}`, onclick: (e) => { e.preventDefault(); route(to); } }, label);
+    const link = (label, aria = null) => h('a', { class: 'req-brief-link', href: `#requirements/${to}`, 'aria-label': aria,
+      onclick: (e) => { e.preventDefault(); route(to); } }, label);
     if (b && b.madeAt) {
       return h('span', { class: 'hint req-group-brief' }, link(`Product brief · ${ageOld(b.madeAt)}`));
     }
     if (b && b.status === 'making') return h('span', { class: 'hint req-group-brief' }, link('Product brief: being made…'));
-    return h('span', { class: 'hint req-group-brief' }, 'Product brief: none yet · ', link('Create'));
+    return h('span', { class: 'hint req-group-brief' }, 'Product brief: none yet',
+      h('span', { 'data-needs-git': true }, ' · ', link('Create', `Create the product brief for ${g.name}`)));
   }
 
   function paintList(data) {
@@ -400,7 +407,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const groups = new Map();
     for (const f of shown) {
       const k = scopeId(f);
-      if (!groups.has(k)) groups.set(k, { label: targetLabel(f), scopeType: f.scopeType, scopeKey: f.scopeKey, items: [] });
+      if (!groups.has(k)) groups.set(k, { label: targetLabel(f), name: targetName(f), scopeType: f.scopeType, scopeKey: f.scopeKey, items: [] });
       groups.get(k).items.push(f);
     }
     const spend = data.spend;
@@ -463,17 +470,22 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       const [scopeType, ...rest] = select.value.split(':');
       const s = { scopeType, scopeKey: rest.join(':') };
       const b = select.value ? usable.get(scopeId(s)) : null;
+      // without git a new feature skips its look (interview.mjs orient), so nothing promises one
+      const git = gitOn();
       const next = b ? briefLine(s, select.options[select.selectedIndex]?.textContent || s.scopeKey, b)
-        : h('span', { class: 'hint req-new-look', text: scopeType === 'workspace'
-          ? "Worca looks at the code of this workspace's projects once, read-only, to learn what already exists. Change that in Your notes for Worca."
-          : "Worca looks at this project's code once, read-only, to learn what already exists. Change that in Your notes for Worca." });
+        : h('span', { class: 'hint req-new-look', text: !git
+          ? `Worca does not look at the code: ${GIT_MISSING_TEXT}. It starts asking right away.`
+          : scopeType === 'workspace'
+            ? "Worca looks at the code of this workspace's projects once, read-only, to learn what already exists. Change that in Your notes for Worca."
+            : "Worca looks at this project's code once, read-only, to learn what already exists. Change that in Your notes for Worca." });
       if (lookHint.parentNode) lookHint.replaceWith(next);
       lookHint = next;
-      // with a brief, the code look's cost is not said: only the words after the dot change (A7 §6 / §9)
-      cost.brief(!!b);
+      // with a brief, or without git, the code look's cost is not said: only the words after the dot change (A7 §6 / §9)
+      cost.brief(!!b || !git);
     };
     select.addEventListener('change', sayLook);
     sayLook();
+    relook = sayLook;
     const create = () => act(async () => {
       const [scopeType, ...rest] = select.value.split(':');
       const data = await api('POST', '/api/requirements', { scopeType, scopeKey: rest.join(':'), title: title.value, description: desc.value });
@@ -579,9 +591,12 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     say('');
     void (async () => {
       try {
+        const refresh = !!(briefData && briefData.brief && briefData.brief.madeAt);
         const data = await api('POST', briefApi(s), {});
         creating = false;
         paintAnswer(s, data);
+        // the pressed button is disabled now, so the focus is lost: the polite message line says the work started
+        say(`Worca is ${refresh ? 'refreshing' : 'making'} the brief. This takes a few minutes; you can leave this page.`, 'ok');
       } catch (err) {
         creating = false;
         // refused (budget, busy, the switch, no repository): said in the message line; the button stays
@@ -635,7 +650,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         failed ? h('p', { class: 'form-msg err req-brief-failed', role: 'status', text: failed }) : null,
         h('button', { type: 'button', class: 'btn-go req-brief-create', 'data-ui': 'brief-create', 'data-brief-go': true, disabled: creating || !!whyNot, onclick: createBrief },
           making || creating ? 'Creating…' : failed ? 'Try again' : 'Create the brief'),
-        whyNot ? h('span', { class: 'hint req-brief-why-not', text: whyNot }) : null));
+        whyNot ? h('span', { class: 'hint req-brief-why-not', text: whyNot }) : null),
+      // shown only while git is missing (style.css), in place of the box above
+      h('p', { class: 'hint req-brief-nogit-create', text: `A brief needs git to read the code, and ${GIT_MISSING_TEXT}.` }));
   }
 
   // Your notes for Worca (A2's Project / Workspace context, D12): the notes and the switch, saved together. On a
@@ -645,7 +662,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const n = data.notes || {};
     notesBase = { body: typeof n.body === 'string' ? n.body : '', look: n.lookAtCode !== false };
     const v = notesDraft || notesBase;
-    const area = h('textarea', { rows: '4', 'aria-label': 'Your notes for Worca', 'data-ui': 'notes-body',
+    const area = h('textarea', { rows: '4', 'aria-label': 'Your notes for Worca', 'data-ui': 'notes-body', maxlength: String(NOTES_MAX),
       placeholder: 'Actors, terms and standing rules every feature here should know' });
     area.value = v.body;
     const look = h('input', { type: 'checkbox', id: 'req-notes-look', 'data-ui': 'notes-look' });
@@ -658,8 +675,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       await paint();
     });
     return h('section', { class: 'card req-brief-notes', 'aria-label': 'Your notes for Worca' },
-      h('div', { class: 'req-card-head' }, h('h3', { text: 'Your notes for Worca' }),
-        h('span', { class: 'hint req-brief-was', text: s.scopeType === 'workspace' ? 'was “Workspace context”' : 'was “Project context”' })),
+      h('div', { class: 'req-card-head' }, h('h3', { text: 'Your notes for Worca' })),
       area,
       h('label', { for: 'req-notes-look', class: 'req-brief-notes-look' }, look,
         ' Let Worca look at the code (for the brief, and when you ask it to look closer at a feature)'),
@@ -748,7 +764,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           : `${joinAnd(ids)} use this brief; they go back to looking at the code when asked.`;
       if (!window.confirm(`Delete the brief? ${who}`)) return;
       briefEditing = null; briefEditVal = null; notesEditing = false;
-      paintAnswer(s, await api('DELETE', briefApi(s)));
+      const data = await api('DELETE', briefApi(s));
+      briefFocusNext = 'brief-create';
+      paintAnswer(s, data);
+      say('The brief is deleted.', 'ok');
     });
     return menu('brief-more', h('button', { type: 'button', class: 'req-ico', 'aria-label': 'More actions', title: 'More actions', 'data-ui': 'brief-more' },
       icon(ICONS.dots, { size: 18, fill: 'currentColor', stroke: 'none' })), [
@@ -789,6 +808,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     // Nothing moved on: a workspace still says which members the brief does not cover, as a small note.
     const small = () => (unknown.length || added.length ? h('div', { class: 'hint req-brief-members', role: 'note' }, ...members,
       added.length ? h('div', { class: 'req-actions' }, refreshButton(data, `Refresh${estimateText(data)}`, 'brief-refresh')) : null) : null);
+    // Without git nothing is known about the code (routes.mjs answers reason 'no-git'): a quiet note, not the amber box.
+    if (st.known === false && st.reason === 'no-git') {
+      return h('p', { class: 'hint req-brief-nogit', role: 'note', text: `Worca cannot check this brief against the code: ${GIT_MISSING_TEXT}.` });
+    }
     let says;
     if (st.known === true) {
       const n = Number(st.commits) || 0;
@@ -815,7 +838,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     return h('section', { class: 'req-changed req-brief-stale', 'aria-label': 'The brief is behind the code' },
       icon(ICONS.warn, { size: 18 }),
       h('div', { class: 'req-changed-body' },
-        h('b', { text: 'The code moved on since this brief' }),
+        h('b', { text: st.known === false ? 'Worca cannot check this brief against the code' : 'The code moved on since this brief' }),
         h('p', { class: 'req-brief-stale-text' }, ...says),
         ...members,
         h('div', { class: 'req-actions' }, refreshButton(data, `Refresh${estimateText(data)}`, 'brief-refresh'))));
@@ -899,7 +922,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           h('b', { text: 'Look closer' }), ' on a feature adds one when the brief is not enough.'),
         used.length ? h('p', { class: 'req-brief-used' }, 'Used by ', ...used.flatMap((u, i) => [i ? ', ' : null, featureLink(u)])) : null),
       notes,
-      h('details', { class: 'card req-brief-read', open: briefFolds.read },
+      h('details', { class: 'card req-brief-read', open: briefFolds.read, 'data-min-level': 'advanced' },   // as a look's files (docs/ui-levels.md)
         h('summary', {}, 'What Worca read', ' ', h('span', { class: 'hint req-brief-read-n', text: plural(files.length, 'file') })),
         files.length ? h('ul', { class: 'req-brief-files' }, ...files.map((p) => h('li', { text: p }))) : null));
   }
@@ -1162,11 +1185,11 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('div', { class: 'req-build-chips' },
           h('span', { class: 'chip', text: `Workflow · ${workflowName(c.workflowId)}` }), chipBranch,
           h('button', { type: 'button', class: 'hint req-link', 'data-ui': 'build-change', 'aria-expanded': c.open ? 'true' : 'false',
-            'aria-label': 'Change the workflow and branch',
+            'aria-label': 'Change the workflow and branch', 'data-min-level': 'advanced',   // docs/ui-levels.md: the chips show the values at every level
             onclick: () => { c.open = !c.open; focusNext = c.open ? 'build-workflow' : 'build-change'; redraw(); } }, 'Change')),
         c.open ? buildChoices(f, c, chipBranch) : null),
       h('button', { type: 'button', class: 'btn-go req-build-go', 'data-ui': 'start-go', 'data-start': '', disabled: starting,
-        onclick: (e) => startFlow(f, { trigger: e.currentTarget }) }, icon(ICONS.play, { size: 14, fill: 'currentColor', stroke: 'none' }), 'Start in worca'));
+        onclick: (e) => startFlow(f, { trigger: e.currentTarget }) }, icon(ICONS.play, { size: 14, fill: 'currentColor', stroke: 'none' }), 'Start in Worca'));
   }
 
   // ---- Started (board Started.dc.html, A2 D10/D11): the runs, the total, what changed since ----
@@ -1513,7 +1536,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           r.overridable ? h('button', { type: 'button', class: 'link-btn req-start-anyway', 'data-ui': 'start-anyway', 'data-start': '', disabled: locked,
             onclick: (e) => startFlow(f, { override: true, trigger: e.currentTarget }) }, "Start before it's Ready…") : null,
           cardStarts ? null : h('button', { type: 'button', class: r.ok ? 'btn-go btn-mini req-start' : 'btn btn-mini req-start', 'data-ui': 'start', 'data-start': '', disabled: !r.ok || locked,
-            onclick: (e) => startFlow(f, { override: false, trigger: e.currentTarget }) }, 'Start in worca'))));
+            onclick: (e) => startFlow(f, { override: false, trigger: e.currentTarget }) }, 'Start in Worca'))));
   }
 
   // The looks at the code this feature made (A2: the orientation turns not skipped), and what they cost.
@@ -1530,9 +1553,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const text = !o ? 'Not looked yet.'
       : o.skipped === 'brief' ? 'Worca has not looked at the code for this feature.'
         : o.skipped === 'off' ? 'Looking at the code is turned off for this one (Your notes for Worca).'
-          : o.skipped === 'no-repo' ? 'There is no repository to look at yet.'
-            : o.skipped === 'failed' ? 'Worca could not look at the code this time; the interview runs without it.'
-              : o.summary || 'Nothing relevant found.';
+          : o.skipped === 'no-git' ? `Worca did not look at the code: ${GIT_MISSING_TEXT}.`
+            : o.skipped === 'no-repo' ? 'There is no repository to look at yet.'
+              : o.skipped === 'failed' ? 'Worca could not look at the code this time; the interview runs without it.'
+                : o.summary || 'Nothing relevant found.';
     const { looks, cost } = looksOf(turns);
     const times = looks.length === 1 ? 'looked once' : looks.length === 2 ? 'looked twice' : `looked ${looks.length} times`;
     const nFiles = ((o && o.files) || []).length;
@@ -1576,7 +1600,13 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       const { cost } = looksOf(turns);
       const nFiles = (Array.isArray(o.files) ? o.files : []).length;
       meta = [['brief + a closer look', nFiles ? plural(nFiles, 'file') : null, usd(cost)].filter(Boolean).join(' · ')];
-      const add = () => act(async () => { await api('POST', `/api/requirements/${f.seq}/brief-addition`, {}); await paint(); });
+      // The link goes once added: the focus moves to Look again (else to this card) and the message line names the area.
+      const add = () => act(async () => {
+        await api('POST', `/api/requirements/${f.seq}/brief-addition`, {});
+        focusNext = lookOn ? 'look-again' : 'knows';
+        await paint();
+        say(`Added to the product brief as “${areaLabel({ belongsTo: o.area || null, name: f.title })}”.`, 'ok');
+      });
       // Only a look made for this scope against this brief can be added (the server refuses any other, A7 D11).
       const ofThisBrief = o.scopeType === f.scopeType && o.scopeKey === f.scopeKey && o.briefId != null && (b.id == null || o.briefId === b.id);
       body = [h('p', { class: 'req-knows-text', text: o.summary || 'Nothing relevant found.' }),
@@ -1584,7 +1614,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           h('button', { type: 'button', class: 'link-btn', 'data-ui': 'brief-add', disabled: locked, onclick: add }, 'Add this to the brief')) : null];
       if (lookOn) foot = [h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'look-again', 'data-needs-git': true, disabled: locked, onclick: () => postLook(f) }, 'Look again')];
     }
-    return h('section', { class: `card req-knows${looked ? ' req-knows-looked' : ''}`, 'aria-label': 'What Worca knows' },
+    return h('section', { class: `card req-knows${looked ? ' req-knows-looked' : ''}`, 'aria-label': 'What Worca knows', 'data-ui': 'knows', tabindex: '-1' },
       h('div', { class: 'req-card-head' }, h('h3', { text: 'What Worca knows' }), h('span', { class: 'hint req-knows-meta' }, ...meta)),
       ...body,
       foot ? h('div', { class: 'req-knows-foot' }, ...foot) : null);
@@ -1709,6 +1739,11 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     setMenu(null);
   };
   document.addEventListener('click', onDocClick, true);
+  // git appears or goes missing (git-gate.mjs): New feature says its look line again (the form keeps what was typed)
+  // and the brief page repaints its notice; the rest follows the CSS gate on [data-needs-git].
+  const offGit = onGitChange(() => {
+    if (paintedKey === 'new') { if (relook) relook(); } else if (paintedKey && paintedKey.startsWith('brief/')) void paint();
+  });
 
-  return { show, changed, destroy: () => { paintNo += 1; closeDialog(false); document.removeEventListener('click', onDocClick, true); host.replaceChildren(); } };
+  return { show, changed, destroy: () => { paintNo += 1; closeDialog(false); offGit(); document.removeEventListener('click', onDocClick, true); host.replaceChildren(); } };
 }
