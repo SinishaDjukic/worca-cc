@@ -195,7 +195,7 @@ test('every intent: a chip label, an icon, a placeholder and one plain sentence 
 test('Shaper (Shape it first): refused while the gate is off; with it on it arms and the send leads with its sentence', () => {
   assert.equal(INTENTS.shape.label, 'Shaper');
   assert.equal(INTENTS.shape.help, undefined);
-  assert.equal(INTENTS.shape.badge, 'Labs');
+  assert.equal(INTENTS.shape.badge, 'Beta');
   const s = setup();
   try {
     setShapeFirst(false);

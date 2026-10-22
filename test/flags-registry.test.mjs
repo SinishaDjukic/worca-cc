@@ -26,6 +26,9 @@ test('the real registry has no problems today, is frozen and every docs page exi
   // UI/UX review F: Keep awake is beta and on by default (a switch in Settings › Runs too).
   const ka = flagByKey('keepAwake');
   assert.deepEqual([ka.stage, ka.default], ['beta', true]);
+  // Shaper graduated from Labs to beta, on by default (opt-out in Settings › Labs).
+  const sf = flagByKey('shapeFirst');
+  assert.deepEqual([sf.stage, sf.default, sf.extendedOn], ['beta', true, '2026-10-22']);
 });
 
 test('registryProblems flags every rule', async () => {

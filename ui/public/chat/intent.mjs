@@ -24,7 +24,7 @@ export const EXAMPLE_MS = 3500;
 export const INTENTS = Object.freeze({
   run: Object.freeze({ label: 'New run', icon: 'run', placeholder: 'Describe the task…', lead: INTENT_LEADS.run }),
   shape: Object.freeze({ label: 'Shaper', icon: 'shape', placeholder: 'Describe the problem…',
-    lead: INTENT_LEADS.shape, badge: 'Labs' }),
+    lead: INTENT_LEADS.shape, badge: 'Beta' }),
   workflow: Object.freeze({ label: 'Build workflow', icon: 'workflow', placeholder: 'Describe the workflow…', lead: INTENT_LEADS.workflow }),
   schedule: Object.freeze({ label: 'Schedule a run', icon: 'schedule', placeholder: 'What should run, and when?', lead: INTENT_LEADS.schedule }),
   track: Object.freeze({ label: 'Track a run', icon: 'track', placeholder: 'Which run? Pick one or type its name', lead: INTENT_LEADS.track }),
