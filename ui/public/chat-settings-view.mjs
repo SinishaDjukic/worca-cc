@@ -90,7 +90,7 @@ export function renderChatSettings({ prefs, channels } = {}, { doc = globalThis.
     const cmd = c.capabilities?.inbound !== false && c.commands ? c.commands : null;
     if (cmd && cmd.allowed === 0) {
       const off = h(doc, 'small', 'hint warn chat-commands-off',
-        `Commands are off: no chat is in Allowed chat IDs, so replies like /approve are ignored. Add the chat ID on the Marketplace page: ${c.plugin} › Settings.`);
+        `Commands are off: no chat is in Allowed chat IDs, so replies like /approve are ignored. Add the chat ID on the Marketplace page: Installed › ${c.plugin} › Settings.`);
       off.dataset.channelKey = key;
       chBox.appendChild(off);
     }

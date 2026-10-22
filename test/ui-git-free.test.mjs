@@ -7,7 +7,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { renderEnableDialogBody } from '../ui/public/team-metrics-surfaces.mjs';
 import { renderPolicyEnableDialogBody, renderProjectTpCell, projectTpSummary } from '../ui/public/team-policy-view.mjs';
-import { renderMarketplaceList, renderInstallConsent } from '../ui/public/plugins-view.mjs';
+import { renderInstallConsent } from '../ui/public/plugins-view.mjs';
+import { renderMarketplaceCard } from '../ui/public/marketplace/marketplaces-view.mjs';
 import { openSkillImport } from '../ui/public/skill-import.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 
@@ -34,14 +35,11 @@ test('Set up team metrics / team policy: a GitHub repository field when the repo
   }
 });
 
-test('Marketplaces list: Needs git in place of Refresh; the consent dialog names it on the source line', () => {
-  const list = renderMarketplaceList([
-    { id: 'gl', url: 'https://gitlab.com/a/m', name: 'GL', plugins: [], lastSync: null, needsGit: true },
-    { id: 'gh', url: 'https://github.com/a/m', name: 'GH', plugins: [], lastSync: null },
-  ], { doc });
-  const [gl, hub] = list.querySelectorAll('.pl-mkt-row');
-  assert.deepEqual([gl.querySelector('.pl-mkt-refresh'), gl.querySelector('.pl-needs-git').textContent], [null, 'Needs git']);
-  assert.deepEqual([!!hub.querySelector('.pl-mkt-refresh'), hub.querySelector('.pl-needs-git')], [true, null]);
+test('Marketplace card: Needs git in place of Refresh; the consent dialog names it on the source line', () => {
+  const gl = renderMarketplaceCard(doc, { id: 'gl', url: 'https://gitlab.com/a/m', name: 'GL', plugins: [], lastSync: null, needsGit: true });
+  const hub = renderMarketplaceCard(doc, { id: 'gh', url: 'https://github.com/a/m', name: 'GH', plugins: [], lastSync: null });
+  assert.deepEqual([gl.querySelector('.mk-mkt-refresh'), gl.querySelector('.pl-needs-git').textContent], [null, 'Needs git']);
+  assert.deepEqual([!!hub.querySelector('.mk-mkt-refresh'), hub.querySelector('.pl-needs-git')], [true, null]);
   const consent = renderInstallConsent({ repoUrl: 'https://gitlab.com/a/m', sha: 'a'.repeat(40) }, {}, { doc, needsGit: true });
   assert.equal(consent.querySelector('.pl-consent-src .pl-needs-git').textContent, 'Needs git');
   // The source line is .mono (an ancestor rule sets the monospace font): the chip keeps the UI font every badge has.
@@ -70,7 +68,7 @@ test('Import skill: a 409 GIT_MISSING preview says Needs git inside the dialog; 
 
 test('index.html: Marketplace, Team metrics and Team policy carry no data-needs-git (U2a)', () => {
   const page = new JSDOM(readFileSync(htmlPath, 'utf8')).window.document;
-  for (const sel of ['[data-view="marketplace"]', '#mk-root', '#marketplace-add-row', '[data-view="team-metrics"]', '[data-view="team-policy"]']) {
+  for (const sel of ['[data-view="marketplace"]', '#mk-root', '[data-view="team-metrics"]', '[data-view="team-policy"]']) {
     const node = page.querySelector(sel);
     assert.ok(node, sel);
     assert.equal(node.closest('[data-needs-git]'), null, sel);
@@ -100,7 +98,7 @@ async function boot(handlers, { level = null } = {}) {
 const actions = (d) => [...d.querySelectorAll('#plugin-modal-actions button')].map((b) => b.textContent);
 const GIT_MISSING = { error: 'git is not installed on this machine', code: 'GIT_MISSING' };
 
-test('app: Add marketplace 409 → the chip inside the add row; Update 409 → the review card says Needs git; consent → Cancel only', async () => {
+test('app: Add marketplace 409 → the chip inside the Add dialog; Update 409 → the review card says Needs git; consent → Cancel only', async () => {
   const MKT = { id: 'gl', url: 'https://gitlab.com/a/m', name: 'GL', builtin: false, needsGit: true, warnings: [],
     lastSync: { sha: 'a'.repeat(40), at: '2026-10-01T00:00:00.000Z' }, plugins: [{ name: 'gl-plugin', subdir: 'p', inventory: {} }] };
   const d = await boot({
@@ -113,10 +111,17 @@ test('app: Add marketplace 409 → the chip inside the add row; Update 409 → t
   });
   d.defaultView.location.hash = '#marketplace';
   await settle();
-  d.getElementById('marketplace-url').value = 'https://gitlab.com/a/m';
-  d.getElementById('marketplace-add').click();
+  d.querySelector('#mk-root .mk-head-actions .mk-add-mkt').click();
   await settle();
-  assert.equal(d.querySelector('#marketplace-add-row .pl-needs-git').textContent, 'Needs git');
+  const url = d.getElementById('mk-add-url');
+  url.value = 'https://gitlab.com/a/m';
+  url.dispatchEvent(new d.defaultView.Event('input', { bubbles: true }));
+  d.querySelector('#mk-dialog .mk-add-primary').click();
+  await settle();
+  assert.equal(d.querySelector('#mk-dialog .pl-needs-git').textContent, 'Needs git');
+  assert.equal(d.getElementById('mk-dialog').closest('[data-needs-git]'), null);
+  d.querySelector('#mk-dialog .mk-dlg-close').click();
+  await settle();
   assert.equal(d.getElementById('plugins-msg').textContent, '');
   d.defaultView.location.hash = '#marketplace/installed';
   await settle();
@@ -163,12 +168,13 @@ test('app: Set up team metrics posts the typed repo; Needs git disables Create b
 // ---- Killers (refiner lane D): rules the six tests above leave unpinned ----
 import { createMcpView } from '../ui/public/mcp-view.mjs';
 
-test('Marketplaces list: the chip stands first in the actions (before Remove), as span.badge.waiting', () => {
-  const list = renderMarketplaceList([{ id: 'gl', url: 'https://gitlab.com/a/m', name: 'GL', plugins: [], lastSync: null, needsGit: true }], { doc });
-  assert.deepEqual([...list.querySelector('.pl-mkt-actions').children].map((c) => c.className), ['badge waiting pl-needs-git', 'btn btn-sm btn-danger pl-remove pl-mkt-remove']);
+test('Marketplace card: the chip takes the refresh slot (after Browse, before ⋯), as span.badge.waiting', () => {
+  const card = renderMarketplaceCard(doc, { id: 'gl', url: 'https://gitlab.com/a/m', name: 'GL', plugins: [], lastSync: null, needsGit: true });
+  assert.deepEqual([...card.querySelector('.mk-mkt-actions').children].map((c) => c.className),
+    ['btn btn-sm mk-mkt-browse', 'badge waiting pl-needs-git', 'btn btn-sm btn-quiet btn-icon mk-mkt-more']);
 });
 
-test('app: consent names Needs git on the source line; the add-row chip is one, and typing removes it; a 409 without GIT_MISSING stays a message', async () => {
+test('app: consent names Needs git on the source line; the Add dialog\'s chip is one, and typing removes it; a 409 without GIT_MISSING stays a message', async () => {
   const MKT = { id: 'gl', url: 'https://gitlab.com/a/m', name: 'GL', builtin: false, needsGit: true, warnings: [],
     lastSync: { sha: 'a'.repeat(40), at: '2026-10-01T00:00:00.000Z' }, plugins: [{ name: 'gl-plugin', subdir: 'p', inventory: {} }] };
   const d = await boot({
@@ -185,15 +191,20 @@ test('app: consent names Needs git on the source line; the add-row chip is one, 
   await settle();
   assert.equal(d.querySelector('#mk-sheet .mk-src .pl-needs-git').textContent, 'Needs git');
   d.querySelector('#mk-sheet .mk-close').click();
-  const url = d.getElementById('marketplace-url');
+  d.querySelector('#mk-root .mk-head-actions .mk-add-mkt').click();
+  await settle();
+  const url = d.getElementById('mk-add-url');
   url.value = 'https://gitlab.com/a/m';
-  d.getElementById('marketplace-add').click();
-  await settle();
-  d.getElementById('marketplace-add').click();
-  await settle();
-  assert.equal(d.querySelectorAll('#marketplace-add-row .pl-needs-git').length, 1);
   url.dispatchEvent(new d.defaultView.Event('input', { bubbles: true }));
-  assert.equal(d.querySelector('#marketplace-add-row .pl-needs-git'), null);
+  d.querySelector('#mk-dialog .mk-add-primary').click();
+  await settle();
+  d.querySelector('#mk-dialog .mk-add-primary').click();
+  await settle();
+  assert.equal(d.querySelectorAll('#mk-dialog .pl-needs-git').length, 1);
+  url.dispatchEvent(new d.defaultView.Event('input', { bubbles: true }));
+  assert.equal(d.querySelector('#mk-dialog .pl-needs-git'), null);
+  d.querySelector('#mk-dialog .mk-dlg-close').click();
+  await settle();
   d.defaultView.location.hash = '#marketplace/installed';
   await settle();
   d.querySelector('section.mk-attention li.mk-row[data-name="beta"] [data-act="update"]').click();
@@ -375,7 +386,7 @@ test('app: a typed repository off GitHub answers 409 GIT_MISSING: both setup dia
   }
 });
 
-test('app: an Add marketplace that succeeds after a 409 takes the add-row chip away', async () => {
+test('app: an Add marketplace that succeeds after a 409 takes the Add dialog\'s chip away', async () => {
   let posts = 0;
   const added = { id: 'gh', url: 'https://github.com/a/m', name: 'GH', builtin: false, warnings: [], lastSync: null, plugins: [] };
   const d = await boot({
@@ -387,15 +398,18 @@ test('app: an Add marketplace that succeeds after a 409 takes the add-row chip a
   });
   d.defaultView.location.hash = '#marketplace';
   await settle();
-  const url = d.getElementById('marketplace-url');
-  url.value = 'https://gitlab.com/a/m';
-  d.getElementById('marketplace-add').click();
+  const form = d.querySelector('.mk-panel[data-tab="browse"] form.mk-empty-add');   // no marketplaces: Browse's header is empty
+  form.querySelector('input').value = 'https://gitlab.com/a/m';
+  form.dispatchEvent(new d.defaultView.Event('submit', { bubbles: true, cancelable: true }));
   await settle();
-  assert.equal(d.querySelectorAll('#marketplace-add-row .pl-needs-git').length, 1);
+  assert.equal(d.querySelectorAll('#mk-dialog .pl-needs-git').length, 1);
+  const url = d.getElementById('mk-add-url');
   url.value = 'https://github.com/a/m';   // no input event: the success itself clears the chip
-  d.getElementById('marketplace-add').click();
+  d.querySelector('#mk-dialog .mk-add-primary').click();
   await settle();
-  assert.deepEqual([posts, d.querySelector('#marketplace-add-row .pl-needs-git')], [2, null]);
+  assert.deepEqual([posts, d.querySelector('#mk-dialog .pl-needs-git'), d.getElementById('mk-dialog').dataset.state], [2, null, 'result']);
+  d.querySelector('#mk-dialog .mk-dlg-close').click();
+  await settle();
 });
 
 test('Team policy cell: a GitHub team repository never read (unread) says not read yet, never Off with Set up', () => {

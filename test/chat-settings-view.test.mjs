@@ -83,6 +83,12 @@ test('chat settings render and round-trip, including the Chat script toggle', as
       assert.deepEqual(collectSuggestionsToggle(off), { suggestions: true });
       assert.deepEqual(collectSuggestionsToggle(doc.createElement('div')), { suggestions: true }, 'a host with no control means ON');
     } },
+    { name: 'commands off: the hint names the Installed tab and the plugin\'s Settings', run: () => {
+      const el = renderChatSettings({ prefs: { notify: {}, channels: {} },
+        channels: [{ ...CHANNELS[0], capabilities: { inbound: true, outbound: true }, commands: { allowed: 0, lastRefused: null } }] }, { doc });
+      assert.equal(el.querySelector('.chat-commands-off').textContent,
+        'Commands are off: no chat is in Allowed chat IDs, so replies like /approve are ignored. Add the chat ID on the Marketplace page: Installed › telegram-chat › Settings.');
+    } },
   ]);
 });
 

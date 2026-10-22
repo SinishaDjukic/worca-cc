@@ -873,10 +873,6 @@ const el = {
 
   // Plugins view
   pluginsMsg: $('#plugins-msg'),
-  marketplacesList: $('#marketplaces-list'),
-  marketplaceAddRow: $('#marketplace-add-row'),
-  marketplaceUrl: $('#marketplace-url'),
-  marketplaceAdd: $('#marketplace-add'),
   pluginModal: $('#plugin-modal'),
   pluginModalTitle: $('#plugin-modal-title'),
   pluginModalBody: $('#plugin-modal-body'),
@@ -1795,6 +1791,7 @@ function handleServerMessage(msg) {
     if (currentView() === 'marketplace') void marketplacePage.load({ background: true });
     return;
   }
+  if (msg.type === 'marketplace-add-changed') { marketplacePage?.act('marketplaceAddChanged', msg.job); return; }
   // Team policy (team-policy design §11): discovery, an enable, a publish or a home change
   // elsewhere — refetch the scopes and repaint every open policy surface.
   if (msg.type === 'team-policy-changed') {
@@ -16386,9 +16383,20 @@ marketplacePage = mountMarketplace({ doc: document, win: window, deps: {
   api: pluginApi, notify, confirmModal, promptModal, openMenu, gitOn, invalidateAgentCaches, openSetupChecklist, setMsg: setPluginsMsg,
   loadPolicy: () => loadTpScopes({ force: true }),   // SM35: state.policy (P5's Team policy card)
   navigate: (hash) => { const t = String(hash).replace(/^#/, ''); if (location.hash.slice(1) !== t) location.hash = t; },
-  fallbacks: { openInstallConsent, addMarketplace: openLegacyAddRow },
+  fallbacks: { openInstallConsent },
 } });
-marketplacePage.onChange((s) => { pluginsViewMarketplaces = s.marketplaces; });
+// A trusted home's installs re-run when the synced marketplaces change under the open page (a card refresh, Retry,
+// Refresh all, a finished Add, another tab): a required plugin may be listed now. Never on every read — a failing
+// install would repeat on each background re-read.
+let marketplaceSyncSig = null;
+const marketplacesSyncSig = (ms) => (ms || []).filter((m) => m && m.lastSync).map((m) => `${m.id}@${m.lastSync.sha}`).sort().join('|');
+marketplacePage.onChange((s) => {
+  pluginsViewMarketplaces = s.marketplaces;
+  const sig = marketplacesSyncSig(s.marketplaces);
+  const prev = marketplaceSyncSig;
+  marketplaceSyncSig = sig;
+  if (prev !== null && sig !== prev && currentView() === 'marketplace') void paintPluginsPolicy(false);
+});
 // Every caller (Team policy, the action flows) reloads the page here; only a route entry passes refresh.
 async function loadPluginsView({ refresh = false } = {}) {
   await marketplacePage.load({ refresh });
@@ -16398,52 +16406,6 @@ async function loadPluginsView({ refresh = false } = {}) {
 function enterMarketplace(param, prevView) {
   marketplacePage.setTab(tabFromParam(param));
   if (prevView !== 'marketplace') void loadPluginsView({ refresh: true });
-}
-// Add marketplace until P7's dialog: today's add row, inside the Marketplaces tab (the page selects the tab first).
-function openLegacyAddRow() {
-  // Before the first good read the row still sits in the hidden #mk-legacy store: move it into its tab first.
-  const panel = document.querySelector('#mk-root .mk-panel[data-tab="marketplaces"]');
-  const host = document.getElementById('mk-legacy-marketplaces');
-  if (panel && host && host.parentNode !== panel) panel.replaceChildren(host);
-  el.marketplaceAddRow.classList.remove('hidden');
-  el.marketplaceUrl.focus();
-}
-
-async function addMarketplaceFromInput() {
-  const url = (el.marketplaceUrl.value || '').trim();
-  if (!url) return setPluginsMsg('Enter a marketplace repo (https://github.com/owner/repo, owner/repo, or a local path).', 'err');
-  el.marketplaceAdd.disabled = true;
-  setPluginsMsg('Adding marketplace…');
-  let res;
-  try {
-    res = await pluginApi('POST', '/api/marketplaces', { url });
-  } catch (e) {
-    return setPluginsMsg(e.message || 'add failed', 'err'); // fetch-level failure must not strand the button
-  } finally {
-    el.marketplaceAdd.disabled = false;
-  }
-  if (isGitMissing(res)) {   // a source off GitHub, no git here: one chip in the add row, the message line stays empty
-    setPluginsMsg('');
-    const row = el.marketplaceAddRow.querySelector('.path-row');
-    if (row && !row.querySelector('.pl-needs-git')) row.appendChild(renderNeedsGit(document));
-    return;
-  }
-  const { ok, data } = res;
-  if (!ok) return setPluginsMsg(data.error || 'add failed', 'err');
-  el.marketplaceUrl.value = '';
-  el.marketplaceAddRow.querySelector('.pl-needs-git')?.remove();
-  el.marketplaceAddRow.classList.add('hidden');
-  // Reload FIRST: loadPluginsView() clears the message line as it starts, so a
-  // message set before it never survived.
-  await loadPluginsView();
-  if (data.linked) {
-    // The path was a single plugin folder (an Export… → Worca plugin result):
-    // the server linked it instead of registering a marketplace.
-    const n = (data.plugin.workflows?.imported || []).length;
-    setPluginsMsg(`Linked plugin "${data.plugin.name}" from ${data.plugin.dir} — ${n} pipeline template${n === 1 ? '' : 's'} added to your saved pipelines.`, 'ok');
-  } else {
-    setPluginsMsg(`Added ${data.marketplace.name} (${data.marketplace.plugins.length} plugins).`, 'ok');
-  }
 }
 
 // #555 D5: the consent dialog closes before the request, so its result is a keyed toast that
@@ -16744,32 +16706,6 @@ async function openPluginSettings(name, profile, { seeds = null } = {}) {
   ]);
 }
 
-// Marketplaces section: Refresh / Remove.
-if (el.marketplacesList) el.marketplacesList.addEventListener('click', async (e) => {
-  const t = e.target instanceof Element ? e.target.closest('.pl-mkt-refresh,.pl-mkt-remove') : null;
-  const id = t && t.dataset ? t.dataset.id : '';
-  if (!id) return;
-  if (t.classList.contains('pl-mkt-refresh')) {
-    setPluginsMsg('Refreshing marketplace…');
-    const { ok, data } = await pluginApi('POST', `/api/marketplaces/${encodeURIComponent(id)}/refresh`, {});
-    setPluginsMsg(ok ? '' : (data.error || 'refresh failed'), ok ? undefined : 'err');
-    if (ok) loadPluginsView();
-  } else if (t.classList.contains('pl-mkt-remove')) {
-    const sure = await confirmModal({
-      title: 'Remove marketplace',
-      message: 'Removes plugin discovery from this marketplace. Installed plugins are not affected.',
-      confirmLabel: 'Remove',
-    });
-    if (!sure) return;
-    const { ok, data } = await pluginApi('DELETE', `/api/marketplaces/${encodeURIComponent(id)}`);
-    if (!ok) return setPluginsMsg(data.error || 'remove failed', 'err');
-    setPluginsMsg('Marketplace removed. Installed plugins remain.', 'ok');
-    loadPluginsView();
-  }
-});
-
-if (el.marketplaceAdd) el.marketplaceAdd.addEventListener('click', addMarketplaceFromInput);
-if (el.marketplaceUrl) el.marketplaceUrl.addEventListener('input', () => el.marketplaceAddRow.querySelector('.pl-needs-git')?.remove());
 if (el.pluginModalClose) el.pluginModalClose.addEventListener('click', () => pluginGuard?.cancel());
 
 // ---- Guardrails view (named sets: list + two-step wizard popup) ----

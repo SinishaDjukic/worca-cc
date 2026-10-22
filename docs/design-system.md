@@ -140,7 +140,8 @@ buttons stay 28px; the card keeps the shared 24px padding (checked by the theme 
 The Marketplace page (`ui/public/marketplace/`, design `docs/superpowers/specs/2026-10-19-marketplace-redesign/`) keeps the
 catalogue structure that was approved, drawn with this system's tokens:
 - Browse is a tile grid: one bordered `.mk-tile` button per plugin, 270px minimum, 16px padding, no shadow at rest or on
-  hover. Every other list on the page stays divided rows.
+  hover. Every other list on the page stays divided rows, except the Marketplaces tab: one `.card.mk-mkt` per
+  marketplace (board 4.1), with 16px 20px padding.
 - A page-scoped "Search plugins" field and a facet rail sit beside the grid. Rail rows (`.mk-facet`) are 32px rows with a
   count and `aria-pressed`, the selected one on the `--panel` fill; they are not filter chips.
 - No page intro: the tabs (Browse · Installed · Marketplaces, each with a count) are the header.

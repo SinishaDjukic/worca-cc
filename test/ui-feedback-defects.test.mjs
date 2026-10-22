@@ -71,9 +71,12 @@ test('#555 D1: a delete success (marketplace / guardrail set / model) survives t
         'GET /api/plugins': { status: 200, body: { plugins: [], orphans: [] } },
         'GET /api/chat/status': { status: 200, body: { channels: [] } },
       } });
-      await go('marketplace');
-      window.document.querySelector('.pl-mkt-remove[data-id="acme"]').click();
-      await confirmDialog(window);
+      await go('marketplace/marketplaces');
+      const doc = window.document;
+      doc.querySelector('.mk-mkt-more[data-id="acme"]').click();
+      [...doc.querySelectorAll('.wfv-menu [role^="menuitem"]')].find((b) => b.querySelector('.wfv-menu-l').textContent === 'Remove…').click();
+      for (let i = 0; i < 4; i++) await tick();
+      doc.querySelector('#mk-dialog[data-kind="remove-marketplace"] .mk-confirm').click();
       for (let i = 0; i < 10; i++) await tick();
       assert.deepEqual(lastToast(window.document), { tone: 'ok', title: 'Marketplace removed. Installed plugins remain.', detail: '', action: '' });
       assert.equal(window.document.getElementById('plugins-msg').textContent, '');

@@ -2364,19 +2364,6 @@
         <section class="view hidden" data-view="marketplace">
             <p id="plugins-msg" class="form-msg" aria-live="polite"></p>
             <div id="mk-root"></div>
-            <!-- Today's Installed and Marketplaces lists, moved into their tabs on the first paint until the new tabs replace
-                 them (marketplace P5, P7). They stay in the page: app.js binds their listeners at boot. -->
-            <div id="mk-legacy" hidden>
-              <div id="mk-legacy-marketplaces">
-                <div class="card hidden" id="marketplace-add-row" style="padding:16px 20px;margin-bottom:14px">
-                  <div class="path-row">
-                    <input id="marketplace-url" class="input" type="text" placeholder="https://github.com/owner/repo · owner/repo · /abs/path/to/repo · /path/to/a/plugin-folder" spellcheck="false" />
-                    <button type="button" id="marketplace-add" class="btn btn-primary btn-sm">Add</button>
-                  </div>
-                </div>
-                <div class="run-list" id="marketplaces-list"></div>
-              </div>
-            </div>
         </section>
         <!-- /view marketplace -->
 

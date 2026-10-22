@@ -763,12 +763,13 @@ const quietChip = (what, sel) => async () => {
 };
 const SLICE3_CHECKS = {
   'settings-plugins': async () => {
-    // The proof server always has the built-in marketplace, so the Marketplaces list has at least 1 row (once /api/marketplaces answers).
-    await until(`document.querySelector('#marketplaces-list .pl-mkt-row')`, 'the marketplace rows');
-    await dividedRows('Marketplace', '#marketplaces-list .pl-mkt-row')();
-    const gb = await ev(`(() => { const b = document.querySelector('#marketplaces-list .pl-mkt-builtin'); const p = document.createElement('span'); p.className = 'badge grey';
-      document.body.append(p); const grey = getComputedStyle(p).backgroundColor; p.remove(); return b && { bg: getComputedStyle(b).backgroundColor, grey }; })()`);
-    designChecks.push({ what: 'grey badge: the built-in marketplace badge is grey, not amber', ok: !!gb && gb.bg === gb.grey, got: gb });
+    // The proof server always has the built-in marketplace, so the Marketplaces tab has at least 1 card once /api/marketplaces
+    // answers (every panel renders on every render). Marketplaces are cards, not divided rows.
+    await until(`document.querySelector('#mk-root section.mk-mkt')`, 'the marketplace cards');
+    const gb = await ev(`(() => { const b = document.querySelector('#mk-root .mk-mkt .mk-chip-built'); const probe = (cls) => { const p = document.createElement('span'); p.className = cls;
+      document.body.append(p); const bg = getComputedStyle(p).backgroundColor; p.remove(); return bg; };
+      return b && { bg: getComputedStyle(b).backgroundColor, built: probe('badge mk-chip mk-chip-built'), warn: probe('badge mk-chip mk-chip-warn') }; })()`);
+    designChecks.push({ what: 'grey badge: the built-in marketplace chip is the built tone, not amber', ok: !!gb && gb.bg === gb.built && gb.bg !== gb.warn, got: gb });
   },
   'settings-providers': dividedRows('Providers', '#providers-list .mv-pv-card', 4),
   'settings-models': quietChip('Models', '.mv-filters .filter-chip[aria-pressed="true"]'),

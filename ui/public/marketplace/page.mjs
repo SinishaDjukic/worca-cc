@@ -35,9 +35,9 @@ async function quiet(fn) {
 
 /**
  * The Marketplace page on `host` (CONTRACT §3.5): the tab strip, the state, one coalesced loader, the tab and action registries.
- * deps  = { api(method, url, body) -> Promise<{ ok, status, data }>, notify, confirmModal, openMenu, navigate(hash), gitOn(),
- *           setMsg(text, kind?), loadPolicy?() -> Promise<scopes>,
- *           fallbacks: { openInstallConsent, openPluginSettings, updatePlugin, uninstallPlugin, addMarketplace, waitModalClosed } }
+ * deps  = { api(method, url, body) -> Promise<{ ok, status, data }>, notify, confirmModal, promptModal, openMenu, navigate(hash), gitOn(),
+ *           setMsg(text, kind?), loadPolicy?() -> Promise<scopes>, invalidateAgentCaches?(), openSetupChecklist?(),
+ *           fallbacks: { openInstallConsent(entry) } }
  * Page  = { state, load({ refresh = false, background = false } = {}) -> Promise<void>, setTab(tab), registerTab(key, spec),
  *           provide(action, fn), act(action, ...args) -> provider's return, onChange(fn) -> unsubscribe, setFilters(patch),
  *           render({ background = false } = {}), destroy() }
@@ -92,15 +92,25 @@ export function createMarketplacePage({ doc, win, host, deps }) {
     return tabFromParam(i === -1 ? '' : raw.slice(i + 1));
   }
 
-  // Run a repaint; if it took the focused control away, focus its rebuilt twin (same data-focus-key).
+  // Run a repaint; if it took the focused control away, focus its rebuilt twin (same data-focus-key). With no twin
+  // (the first marketplace replaced the empty state's form, a card left with a reload), focus the header's Add
+  // marketplace, else the selected tab: never <body> (marketplace P7). Focus the paint moved elsewhere stays there.
+  // A control left in a panel the paint hid (a tab switch) is lost too: a browser drops that focus to <body>.
   function keepFocus(paint) {
     const before = doc.activeElement;
-    const key = before && host.contains(before) ? before.dataset?.focusKey : undefined;
+    const inside = !!before && host.contains(before);
+    const key = inside ? before.dataset?.focusKey : undefined;
     paint();
-    if (key === undefined || host.contains(doc.activeElement)) return;
-    for (const n of host.querySelectorAll('[data-focus-key]')) {
-      if (n.dataset.focusKey === key) { n.focus(); return; }
+    const shown = (n) => !!n && host.contains(n) && !n.closest('[hidden]');
+    if (!inside || shown(doc.activeElement)) return;
+    if (key !== undefined) {
+      for (const n of host.querySelectorAll('[data-focus-key]')) {
+        if (n.dataset.focusKey === key && shown(n)) { n.focus(); if (doc.activeElement === n) return; }   // a disabled twin takes no focus
+      }
     }
+    const a = doc.activeElement;
+    if (a && a !== doc.body && !host.contains(a)) return;
+    (host.querySelector('.mk-head-actions .mk-add-mkt') || host.querySelector('a.mk-tab[aria-current="page"]'))?.focus();
   }
 
   function paintSelection() {

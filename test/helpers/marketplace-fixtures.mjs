@@ -33,11 +33,6 @@ export function fakeDeps(routes = {}) {
   };
   const fallbacks = {
     openInstallConsent: (e) => { seen.push(['consent', e.name, e.marketplace, e.sha]); },
-    openPluginSettings: (name, profile, o = {}) => { seen.push(['settings', name, o.seeds ?? null]); },
-    updatePlugin: async (name) => { seen.push(['update', name]); return true; },
-    waitModalClosed: async () => { seen.push(['wait']); },
-    uninstallPlugin: async (name, sets) => { seen.push(['remove', name, sets]); return true; },
-    addMarketplace: () => { seen.push(['add-row']); },
   };
   const deps = { api, notify: () => {}, confirmModal: async () => false, openMenu: () => null, gitOn: () => true,
     navigate: (h) => navs.push(h), setMsg: (t, k) => msgs.push([t, k ?? null]), loadPolicy: async () => ({ requirements: [] }), fallbacks };

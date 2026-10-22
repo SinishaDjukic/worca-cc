@@ -17,7 +17,7 @@ const MARKUP = ['#branch-fields', '#proj-add-tab-clone', '#sync-settings-card', 
   '.hd-publish', '.hd-pr-link', '.hd-push', '.hd-published', '.hd-base-check', '.hd-pr-repos', '.hd-base', '.hd-branch-copy',
   '.wiz-import', '[data-pdest="marketplace"]', '#export-marketplace-field'];   // dev's git-spawning workspace import and #717 export
 const KEPT = ['[data-nav="workspaces"]', '[data-nav="marketplace"]', '[data-nav="team-metrics"]', '[data-nav="team-policy"]',
-  '#mk-root', '#marketplace-add-row', '#proj-add-tab-folder', '#projectSelect'];
+  '#mk-root', '#proj-add-tab-folder', '#projectSelect'];
 const doc = (git) => trackDom(new JSDOM(renderIndexHtml(html, 'system', 'expert', undefined, { git }))).window.document;
 const gated = (el, d = el.ownerDocument) => d.documentElement.dataset.git === 'off' && !!el.closest('[data-needs-git]');
 // The run and History pages are <template>s (#run-detail-tpl, #hist-detail-tpl): querySelectorAll never enters a

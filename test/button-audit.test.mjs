@@ -75,10 +75,10 @@ test('a .tab button is a control, not a stray button (D4)', () => {
   assert.deepEqual(run('<div class="tabs"><button class="tab on">General</button></div>'), []);
 });
 
-test('long-label: more than 3 words of visible text fail; "Approve with N open issue(s)" and long aria-labels pass (A14)', () => {
+test('long-label: more than 3 words of visible text fail; "Approve with N open issue(s)", "Browse these N plugins", "N notes from the manifest" and long aria-labels pass (A14)', () => {
   assert.deepEqual(run('<button class="btn">Continue with what you have</button>').map((v) => [v.rule, v.got]),
     [['long-label', 'Continue with what you have']]);
-  assert.deepEqual(run('<button class="btn">Approve with 1 open issue</button><button class="btn">Approve with 3 open issues</button>'), []);
+  assert.deepEqual(run('<button class="btn">Approve with 1 open issue</button><button class="btn">Approve with 3 open issues</button><button class="btn">Browse these 3 plugins</button><button class="btn btn-sm btn-quiet" data-h="28">1 note from the manifest</button><button class="btn btn-sm btn-quiet" data-h="28">2 notes from the manifest</button>'), []);
   assert.deepEqual(run('<button class="btn btn-icon" aria-label="Open the run in a new window right now"></button>'), []);
 });
 

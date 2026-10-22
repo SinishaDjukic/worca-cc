@@ -2789,12 +2789,6 @@ button.pd-ov-card:hover{border-color:var(--ink-3);}
 .results-trunc{font-size:11px;color:var(--trunc-ink);margin-top:6px;}
 
 /* ---- Plugins view ---- */
-/* Marketplaces render as one wrapper div inside the .run-list, so the
-   list's gap doesn't reach the cards — the wrappers repeat it. */
-.pl-mkts{display:flex;flex-direction:column;}
-/* Card actions live top-right of the head row. */
-.pl-mkt-actions{margin-left:auto;display:flex;align-items:center;gap:8px;}
-.pl-mkt-actions .btn svg{display:block;}
 .pl-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 .pl-head .pl-name{font-size:var(--fs-body);font-weight:600;}
 .pl-enable{margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-3);cursor:pointer;}
@@ -2817,10 +2811,6 @@ button.pd-ov-card:hover{border-color:var(--ink-3);}
 .pl-delta{font-size:12.5px;}
 .pl-delta-secret{font-size:12.5px;font-weight:700;color:var(--red-ink);background:var(--red-bg);border-radius:var(--r-sm);padding:3px 8px;margin:2px 0;display:inline-block;}
 #plugin-modal .card{max-width:640px;width:min(92vw,640px);max-height:80vh;overflow:auto;}
-.pl-mkt-url{display:block;margin-top:2px;overflow-wrap:anywhere;}
-.pl-mkt-sync{display:block;margin-top:2px;}
-.pl-mkt-warning{margin-top:4px;}
-.pl-mkt-row .mono{font-family:var(--mono);}
 
 /* ---- Pluggable source pane (New Pipeline) ---- */
 .sp-pane{margin-top:11px;}
@@ -10159,3 +10149,63 @@ button.mk-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;bor
    P4's and P3's. */
 #mk-sheet[data-mode="manage"] .mk-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
 #mk-sheet[data-mode="manage"]>.mk-sheet-body{scroll-padding-block:8px;}
+
+/* ── marketplace P7 ── */
+/* Marketplaces tab (board 4.1): one card per marketplace; Remove lives in its ⋯ menu. Tokens and scale sizes only. */
+.mk-mkts{display:flex;flex-direction:column;gap:12px;max-width:980px;}
+.mk-mkt{display:flex;align-items:flex-start;gap:12px;padding:16px 20px;}
+.mk-mkt:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.mk-mkt-main{flex:1;min-width:0;display:flex;flex-direction:column;}
+.mk-mkt-head{display:flex;align-items:center;flex-wrap:wrap;gap:8px;min-height:40px;}
+/* Scoped (0,2,0): `.card h2` (0,1,1) would add its 18px bottom margin and lift the name off the actions row. */
+.mk-mkt .mk-mkt-name{margin:0;overflow-wrap:anywhere;}
+/* At 290px Browse · Needs git · ⋯ is wider than the card's column: ⋯ (the only way to Remove…) wraps inside the card. */
+.mk-mkt-actions{margin-left:auto;display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:4px;}
+.mk-mkt-url{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:4px;min-width:0;overflow-wrap:anywhere;}
+.mk-mkt-url > .mk-mono{color:var(--ink-2);min-width:0;}
+.mk-mkt-health{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;margin-top:8px;font-size:var(--fs-meta);color:var(--ink-2);}
+.mk-mkt-synced{display:inline-flex;align-items:center;gap:8px;color:var(--ink);font-weight:500;}
+/* .badge is nowrap, never shrinks and is one 18px line: a long "Can't reach · …" or branch chip wraps inside the card,
+   and its box grows with its lines (one line stays 18px). Its icon keeps to the first line. */
+.mk-mkt-health > .mk-chip, .mk-mkt-url > .mk-chip{flex:0 1 auto;min-width:0;height:auto;min-height:18px;padding-block:2px;line-height:14px;align-items:flex-start;text-wrap-mode:wrap;overflow-wrap:anywhere;}
+.mk-mkt-health > .mk-chip > .ic, .mk-mkt-url > .mk-chip > .ic{flex:none;margin-top:1px;}
+.mk-mkt .mk-disc{margin-top:4px;}
+.mk-notes{display:flex;flex-direction:column;gap:4px;margin-top:4px;padding:12px 16px;border-radius:var(--r-sm);background:var(--field);}
+.mk-note{font-size:var(--fs-meta);color:var(--ink-2);overflow-wrap:anywhere;}
+.mk-note b{color:var(--ink);font-weight:500;}
+/* Add marketplace dialog (boards 2.1–2.3): field, real progress lines, result list, errors inside. */
+.mk-add-field{margin:0;}   /* .field's 18px bottom margin would add to the body's 16px gap under the field */
+.mk-add-field .input{font-family:var(--mono);}
+.mk-add-field .fe-text{min-width:0;overflow-wrap:anywhere;}   /* a 400 names a path: it wraps, never widening the dialog */
+.mk-add-git:empty{display:none;}
+#mk-dialog[data-kind="add-marketplace"] > .mk-dialog-head{align-items:center;}
+#mk-dialog[data-kind="add-marketplace"] > .mk-dialog-head > .section-title{min-width:0;overflow-wrap:anywhere;}
+/* Under ~390px the result's foot ("Add another" + "Browse these N plugins") and its plugin rows are wider than the
+   screen; one-line, they widened the dialog's grid track past it (Close and Install off-screen). Both wrap instead. */
+#mk-dialog[data-kind="add-marketplace"] > .mk-dialog-foot{flex-wrap:wrap;}
+.mk-progress{list-style:none;margin:0;padding:12px 16px;display:flex;flex-direction:column;gap:8px;border-radius:var(--r-sm);background:var(--field);}
+/* Pending lines keep --ink-2 (--ink-3 on --field is 2.58:1 in light); the dot and the check tell them from done ones.
+   Only the value wraps: overflow-wrap on the row would let the label (an anonymous flex item) break per letter. */
+.mk-phase{display:flex;align-items:center;gap:8px;min-width:0;color:var(--ink-2);}
+.mk-phase[data-state="current"]{color:var(--ink);font-weight:500;}
+.mk-phase .mk-mono{min-width:0;font-size:var(--fs-meta);color:var(--ink);overflow-wrap:anywhere;}
+.mk-phase-spin{width:12px;height:12px;flex:none;border-radius:50%;border:2px solid currentColor;border-right-color:transparent;animation:ws-spin .8s linear infinite;}
+.mk-phase-dot{width:12px;height:12px;flex:none;border-radius:50%;border:2px solid var(--line-2);}
+@media (prefers-reduced-motion:reduce){.mk-phase-spin{animation:none;}}
+/* Forced colours paint a transparent border in CanvasText: the spinner would close into the pending dot's full ring. */
+@media (forced-colors:active){.mk-phase-spin{border-right-color:Canvas;}}
+.mk-add-msg{align-items:flex-start;}
+.mk-add-msg-body{display:flex;flex-direction:column;gap:4px;min-width:0;overflow-wrap:anywhere;}
+.mk-add-msg-detail{font-size:var(--fs-meta);}
+/* One line: only the path or URL wraps, so its icon never sits alone above it. */
+.mk-add-meta{display:flex;align-items:center;gap:8px;color:var(--ink-2);font-size:var(--fs-meta);}
+.mk-add-meta > .mk-add-path{min-width:0;overflow-wrap:anywhere;}
+.mk-add-meta > :not(.mk-add-path){flex:none;}
+.mk-prow-main{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;}
+.mk-plist > .mk-prow{flex-wrap:wrap;}   /* Install / Installed drops under the name, right-aligned, on a narrow screen */
+.mk-plist > .mk-prow > .mk-prow-main{flex:1 1 120px;}
+.mk-plist > .mk-prow > :last-child:not(.mk-prow-main){margin-left:auto;}
+.mk-t-ok{background:var(--green-bg);color:var(--green-ink-strong);}
+/* Remove marketplace dialog: P5's dialog skin (.mk-dlg-body, .mk-dlg-err); its head centres like P5's remove dialog. */
+#mk-dialog[data-kind="remove-marketplace"] > .mk-dialog-head{align-items:center;}
+#mk-dialog[data-kind="remove-marketplace"] > .mk-dialog-head > .section-title{min-width:0;overflow-wrap:anywhere;}

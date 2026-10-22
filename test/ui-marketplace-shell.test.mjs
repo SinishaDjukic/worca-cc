@@ -1,5 +1,5 @@
 // test/ui-marketplace-shell.test.mjs — the Marketplace page in the app (marketplace P3): tabs and sub-routes, one load per
-// entry, plugins-changed, today's lists inside their tabs and today's dialogs behind the tiles.
+// entry, plugins-changed, the three tabs and the sheets and dialogs behind them.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -44,7 +44,7 @@ async function boot({ marketplaces = [OFF, BD], plugins = ROWS, routes = {} } = 
 }
 const lit = (doc) => doc.querySelector('.mk-tab[aria-current="page"]').dataset.tab;
 
-test('#marketplace: three tabs with counts, Browse lit; today\'s lists sit inside their tabs; no intro, nothing needs git', async () => {
+test('#marketplace: three tabs with counts, Browse lit; the Marketplaces tab is P7\'s cards; no intro, nothing needs git', async () => {
   const { doc, go } = await boot();
   await go('marketplace');
   assert.deepEqual([...doc.querySelectorAll('#mk-root nav.mk-tabs > a.tab.mk-tab')].map((t) => [t.dataset.tab, t.firstChild.textContent, t.querySelector('.mk-count').textContent]),
@@ -52,11 +52,9 @@ test('#marketplace: three tabs with counts, Browse lit; today\'s lists sit insid
   assert.equal(lit(doc), 'browse');
   assert.equal(doc.querySelector('.mk-tab[data-tab="installed"] .mk-upd-chip').textContent, '1 update');
   assert.equal(doc.querySelectorAll('.mk-panel[data-tab="browse"] button.mk-tile').length, 4);
-  for (const [tab, sel] of [['marketplaces', '#marketplace-add-row'], ['marketplaces', '#marketplaces-list .pl-mkt-row']]) {
-    assert.ok(doc.querySelector(`.mk-panel[data-tab="${tab}"] ${sel}`), `${sel} in ${tab}`);
-  }
+  assert.ok(doc.querySelector('.mk-panel[data-tab="marketplaces"] section.mk-mkt'), 'the Marketplaces tab is P7\u2019s');
   assert.equal(doc.getElementById('plugins-list'), null);
-  assert.equal(doc.getElementById('mk-legacy').children.length, 0, 'the legacy Marketplaces host moved into its tab');
+  assert.equal(doc.getElementById('mk-legacy'), null, 'no temporary host is left');
   assert.equal(doc.querySelector('[data-view="marketplace"] [data-needs-git], [data-view="marketplace"] .page-intro'), null);
   assert.deepEqual([...doc.querySelectorAll('[data-view="marketplace"] [data-min-level]')].map((n) => n.className), [],
     'U5: nothing on the page is gated');
@@ -101,15 +99,14 @@ test('a Browse tile opens the install sheet for a new plugin (P4) and the plugin
     doc.getElementById('plugin-modal').classList.contains('hidden')], ['manage', 'github-source', true]);
 });
 
-test('Add marketplace opens the Marketplaces tab with today\'s add row, focused (until P7\'s dialog)', async () => {
+test('Add marketplace opens the Add dialog over Browse, focused on its field', async () => {
   const { window, doc, go } = await boot();
   await go('marketplace');
   doc.querySelector('.mk-head-actions .mk-add-mkt').click(); await settle();
-  assert.deepEqual([window.location.hash, lit(doc), doc.getElementById('marketplace-add-row').classList.contains('hidden'), doc.activeElement.id],
-    ['#marketplace/marketplaces', 'marketplaces', false, 'marketplace-url']);
+  assert.deepEqual([window.location.hash, lit(doc), doc.getElementById('mk-dialog').dataset.kind, doc.activeElement.id], ['#marketplace', 'browse', 'add-marketplace', 'mk-add-url']);
 });
 
-test('no marketplaces: the inline add posts once per submit, keeps Needs git in the form, reloads on success', async () => {
+test('no marketplaces: the inline add opens the Add dialog and adds at once (LC-P3-23); Needs git shows in the dialog', async () => {
   const routes = { 'POST /api/marketplaces': [409, { error: 'git is not installed on this machine', code: 'GIT_MISSING' }] };
   const { window, doc, calls, go } = await boot({ marketplaces: [], plugins: [], routes });
   await go('marketplace');
@@ -117,12 +114,9 @@ test('no marketplaces: the inline add posts once per submit, keeps Needs git in 
   const form = doc.querySelector('.mk-empty-add'); const input = form.querySelector('input');
   input.value = 'https://gitlab.com/a/m';
   form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })); await settle();
-  assert.deepEqual([form.querySelectorAll('.pl-needs-git').length, doc.getElementById('plugins-msg').textContent], [1, '']);
-  routes['POST /api/marketplaces'] = [200, { ok: true, marketplace: { ...OFF } }];
-  const n = count(calls, 'GET /api/plugins');
-  input.value = 'SinishaDjukic/worca-cc';
-  form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })); await settle();
-  assert.deepEqual([count(calls, 'POST /api/marketplaces'), count(calls, 'GET /api/plugins') - n], [2, 1]);
+  assert.deepEqual([count(calls, 'POST /api/marketplaces'), doc.getElementById('mk-add-url').value,
+    doc.querySelectorAll('#mk-dialog .pl-needs-git').length, form.querySelector('.pl-needs-git, .field-error'), doc.getElementById('plugins-msg').textContent],
+    [1, 'https://gitlab.com/a/m', 1, null, '']);
 });
 
 test('Configure… (Team policy) opens Settings over the Installed tab and keeps it', async () => {
@@ -160,10 +154,9 @@ test('Configure… from the Team policy page opens the Installed tab (LC-P3-19)'
   assert.deepEqual([window.location.hash, lit(doc)], ['#marketplace/installed', 'installed']);
 });
 
-test('the first read failed: Add marketplace shows today\'s add row inside the Marketplaces tab, focused', async () => {
+test('the first read failed: Add marketplace still opens the Add dialog, focused on its field', async () => {
   const { doc, go } = await boot({ routes: { 'GET /api/plugins': [500, { error: 'db locked' }] } });
   await go('marketplace/marketplaces');
   doc.querySelector('.mk-head-actions .mk-add-mkt').click(); await settle();
-  const url = doc.getElementById('marketplace-url');
-  assert.deepEqual([!!url.closest('#mk-legacy'), !!url.closest('.mk-panel[data-tab="marketplaces"]'), doc.activeElement === url], [false, true, true]);
+  assert.deepEqual([doc.getElementById('mk-dialog').dataset.kind, doc.activeElement.id], ['add-marketplace', 'mk-add-url']);
 });

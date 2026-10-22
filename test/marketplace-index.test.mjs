@@ -7,27 +7,6 @@ import { mountMarketplace } from '../ui/public/marketplace/index.mjs';
 
 const trackDom = useDomRelease(afterEach);
 
-test('every page action reaches today\'s flow until P7 replaces it', async () => {
-  const { page, seen, navs, calls, msgs } = pageHarness({ trackDom, mount: mountMarketplace,
-    routes: { 'POST /api/marketplaces': () => ({ ok: true, status: 200, data: { ok: true, marketplace: { name: 'Acme', plugins: [{}, {}] } } }) } });
-  await page.load();
-  page.act('openAddMarketplace', {});
-  const r = await page.act('openAddMarketplace', { url: 'acme/m', opener: null });
-  assert.doesNotThrow(() => page.act('marketplaceAddChanged', { id: 'j1', state: 'running' }), 'the action exists before P7');
-  assert.deepEqual(seen, [['add-row']]);
-  assert.deepEqual([page.state.tab, navs.at(-1), r.ok, msgs.at(-1)], ['marketplaces', '#marketplace/marketplaces', true, ['Added Acme (2 plugins).', 'ok']]);
-  assert.equal(calls.filter((c) => c === 'GET /api/plugins').length, 2, 'a successful add reloads the page');
-});
-test('a refused add neither reloads nor says Added; a linked folder says Linked', async () => {
-  let answer = { ok: false, status: 400, data: { error: 'not a marketplace repo' } };
-  const { page, calls, msgs } = pageHarness({ trackDom, mount: mountMarketplace, routes: { 'POST /api/marketplaces': () => answer } });
-  await page.load(); const g = calls.filter((c) => c === 'GET /api/plugins').length;
-  const r = await page.act('openAddMarketplace', { url: 'acme/m' });
-  assert.deepEqual([r.ok, calls.filter((c) => c === 'GET /api/plugins').length - g, msgs.filter(([, k]) => k === 'ok')], [false, 0, []]);
-  answer = { ok: true, status: 200, data: { ok: true, linked: true, plugin: { name: 'p', dir: '/x', workflows: { imported: ['a'] } } } };
-  await page.act('openAddMarketplace', { url: '/x' });
-  assert.deepEqual(msgs.at(-1), ['Linked plugin "p" from /x — 1 pipeline template added to your saved pipelines.', 'ok']);
-});
 test('the Installed tab chip counts only plugins with an update', async () => {
   const { doc, page } = pageHarness({ trackDom, mount: mountMarketplace,
     routes: { 'GET /api/plugins': () => ({ ok: true, status: 200, data: { plugins: [...ROWS, { name: 'x', version: '1.0.0', latest: null, contributions: {} }], orphans: [] } }) } });
@@ -57,4 +36,16 @@ test('P6 providers: openManage and checkHealth open the plugin sheet, openUpdate
   await page.act('openUpdateReview', [name]);
   assert.deepEqual([doc.getElementById('mk-sheet').dataset.mode, doc.getElementById('mk-sheet-title').textContent,
     doc.querySelector('#mk-sheet .mk-upd-meta').textContent], ['update', `Update ${name}`, '1 of 1 ready']);
+});
+
+test('P7 providers: openAddMarketplace opens the Add dialog and answers undefined; marketplaceAddChanged reaches it', async () => {
+  const { page, doc, calls } = pageHarness({ trackDom, mount: mountMarketplace,
+    routes: { 'POST /api/marketplaces': () => ({ ok: true, status: 202, data: { jobId: 'mkt_0a1b2c3d', job: { id: 'mkt_0a1b2c3d', url: 'acme/m', state: 'running', phase: 'resolving', resolvedUrl: 'https://github.com/acme/m', sha: null } } }) } });
+  await page.load();
+  assert.equal(page.act('openAddMarketplace', { url: 'acme/m', opener: null }), undefined);
+  for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual([doc.getElementById('mk-dialog').dataset.kind, calls.filter((c) => c === 'POST /api/marketplaces').length], ['add-marketplace', 1]);
+  page.act('marketplaceAddChanged', { id: 'mkt_0a1b2c3d', url: 'acme/m', state: 'running', phase: 'reading', resolvedUrl: 'https://github.com/acme/m', sha: 'c'.repeat(40) });
+  assert.equal(doc.querySelector('#mk-dialog li[aria-current="step"]').textContent, 'Reading plugins…');
+  doc.querySelector('#mk-dialog .mk-dlg-close').click();
 });

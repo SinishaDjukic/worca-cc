@@ -5,7 +5,6 @@
 // endpoint calls, the modal shell, and mounting; node:test drives these via jsdom.
 
 import { engineLabel } from '../../src/shared/engine-switch.mjs';
-import { iconSvg } from './icons.mjs';
 function h(doc, tag, cls, text) {
   const n = doc.createElement(tag);
   if (cls) n.className = cls;
@@ -18,22 +17,6 @@ const sha7 = (sha) => (typeof sha === 'string' ? sha.slice(0, 7) : '');
 /** The `Needs git` chip (U17: a chip inside the action's own dialog, never a wash): a source off GitHub, no git here. */
 export function renderNeedsGit(doc = globalThis.document) {
   return h(doc, 'span', 'badge waiting pl-needs-git', 'Needs git');
-}
-
-// Icons for row action buttons (stroke follows currentColor): the shared refresh, and a local bin icons.mjs lacks.
-const ICONS = {
-  bin: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>',
-  refresh: iconSvg('refresh', 14),
-};
-
-// icon button: <button class=cls>[svg] label</button>. innerHTML is a fixed
-// ICONS constant (never caller data), so no injection surface.
-function iconBtn(doc, cls, icon, label) {
-  const b = h(doc, 'button', cls);
-  b.type = 'button';
-  b.innerHTML = ICONS[icon];
-  b.appendChild(doc.createTextNode(label));
-  return b;
 }
 
 // The live channel chip (board 3.1; also the install sheet's Done chip): onChannelStatus replaces it by
@@ -398,42 +381,4 @@ export function relTime(iso, now = Date.now()) {
   const h = Math.round(m / 60); if (h < 24) return `${h}h ago`;
   const d = Math.round(h / 24); if (d < 30) return `${d}d ago`;
   return String(iso).slice(0, 10);
-}
-
-// renderMarketplaceList(marketplaces) -> <div.pl-mkts> of registry rows with
-// Refresh/Remove buttons (data-id). Sync failures surface as .pl-mkt-warning
-// lines; the snapshot stays usable (stale) per spec §4.6.
-export function renderMarketplaceList(marketplaces, { doc = globalThis.document, now = Date.now() } = {}) {
-  const root = h(doc, 'div', 'pl-mkts drows');
-  for (const m of marketplaces || []) {
-    const row = h(doc, 'div', 'drow drow-stack pl-mkt-row');
-    row.dataset.id = m.id;
-    const head = h(doc, 'div', 'pl-head');
-    head.appendChild(h(doc, 'b', 'pl-name', m.name || m.id));
-    if (m.builtin) head.appendChild(h(doc, 'span', 'badge grey pl-mkt-builtin', 'built-in'));
-    const actions = h(doc, 'div', 'pl-mkt-actions');
-    // A source off GitHub on a machine without git cannot refresh: the chip stands where Refresh would.
-    if (m.needsGit) actions.appendChild(renderNeedsGit(doc));
-    for (const [cls, icon, label] of [
-      ...(m.needsGit ? [] : [['btn btn-sm pl-mkt-refresh', 'refresh', 'Refresh']]),
-      ['btn btn-sm btn-danger pl-remove pl-mkt-remove', 'bin', 'Remove'],
-    ]) {
-      const b = iconBtn(doc, cls, icon, label);
-      b.dataset.id = m.id;
-      actions.appendChild(b);
-    }
-    head.appendChild(actions);
-    row.appendChild(head);
-    row.appendChild(h(doc, 'small', 'pl-mkt-url hint mono', m.ref ? `${m.url} · ${m.ref}` : m.url));
-    const n = (m.plugins || []).length;
-    row.appendChild(h(doc, 'small', 'pl-mkt-sync hint', m.lastSync
-      ? `${sha7(m.lastSync.sha)} · synced ${relTime(m.lastSync.at, now)} · ${n} plugin${n === 1 ? '' : 's'}`
-      : 'never synced — refresh to discover plugins'));
-    for (const w of m.warnings || []) row.appendChild(h(doc, 'div', 'pl-mkt-warning hint err', w));
-    root.appendChild(row);
-  }
-  if (!(marketplaces || []).length) {
-    root.appendChild(h(doc, 'div', 'hist-empty', 'No marketplaces registered.'));
-  }
-  return root;
 }

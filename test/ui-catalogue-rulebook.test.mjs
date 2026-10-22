@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
-import { renderMarketplaceList } from '../ui/public/plugins-view.mjs';
+import { renderMarketplaceCard } from '../ui/public/marketplace/marketplaces-view.mjs';
 import { renderAllInstalled } from '../ui/public/marketplace/installed-view.mjs';
 import { renderRemoveDialog } from '../ui/public/marketplace/remove-view.mjs';
 import { renderProvidersCard } from '../ui/public/bridge-view.mjs';
@@ -49,20 +49,16 @@ test('Workflows Library: shared filter chips, divided rows, shared icons', () =>
 
 const PLUGIN = { name: 'acme', version: '1.0.0', enabled: true };
 const MKT = { id: 'worca-cc', name: 'Worca CC Official', url: 'https://x/y.git', builtin: true, lastSync: { sha: 'abcdef0123', at: '2026-10-20T10:00:00Z' }, plugins: [{ name: 'acme', installed: false }] };
-test('Marketplace: divided rows, Remove on .btn-danger, no amber name badge, no page intro (L18)', () => {
-  for (const [root, item] of [[renderMarketplaceList([MKT], { doc }), '.pl-mkt-row']]) {
-    assert.ok(root.classList.contains('drows'), `${item} host is .drows`);
-    const row = root.querySelector(item);
-    assert.ok(row.classList.contains('drow') && row.classList.contains('drow-stack') && !row.classList.contains('card'), item);
-  }
+test('Marketplace: Installed is one card of divided rows, a marketplace is one card, Remove only in its ⋯ menu and dialog, no amber name badge, no page intro (L18)', () => {
   const all = renderAllInstalled(doc, [PLUGIN]);
   assert.ok(all.querySelector('ul.mk-rows.card > li.mk-row') && !all.querySelector('li.mk-row.card'), 'one card of divided rows, never a card per row');
   assert.equal(all.querySelector('.btn-danger'), null, 'Remove lives in the ⋯ menu and its dialog');
   assert.deepEqual(renderRemoveDialog(doc, { name: 'acme', iconKind: 'none', goesAway: [], changes: [] }).foot.map((b) => b.className),
     ['btn btn-quiet', 'btn btn-danger mk-confirm']);
-  const mrm = renderMarketplaceList([MKT], { doc }).querySelector('.pl-mkt-remove');
-  assert.ok(mrm.classList.contains('btn') && mrm.classList.contains('btn-danger'));
-  assert.ok(renderMarketplaceList([MKT], { doc }).querySelector('.pl-mkt-builtin').classList.contains('grey'));
+  const card = renderMarketplaceCard(doc, MKT);
+  assert.ok(card.classList.contains('card') && card.classList.contains('mk-mkt'), 'a card frames the marketplace you act on');
+  assert.equal(card.querySelector('.btn-danger'), null, 'Remove lives in the ⋯ menu and its dialog');
+  assert.equal(card.querySelector('.badge.mk-chip-built').textContent, 'Built-in');
   assert.deepEqual(rules('.pl-remove'), [], 'the solid red skin is gone');
   assert.equal(page.querySelector('[data-view="marketplace"] .page-intro'), null, 'the tabs are the header (docs/design-system.md › Marketplace exceptions)');
 });
@@ -228,7 +224,7 @@ test('the typed-plus ratchet lost the four slice-3 files', () => {
 test('sideways scroll: the Marketplace header wraps and a long marketplace URL breaks at 290 and 375px', () => {
   assert.match(CSS, /\.mk-head\{[^}]*flex-wrap:wrap;/);
   assert.match(CSS, /\.mk-grid\{display:grid;grid-template-columns:repeat\(auto-fill,minmax\(min\(270px,100%\),1fr\)\);/);
-  assert.match(CSS, /\.pl-mkt-url\{display:block;margin-top:2px;overflow-wrap:anywhere;\}/);
+  assert.match(CSS, /\.mk-mkt-url\{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:4px;min-width:0;overflow-wrap:anywhere;\}/);
 });
 
 test('docs/design-system.md names the Marketplace exceptions once (L18)', () => {

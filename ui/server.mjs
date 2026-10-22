@@ -11869,8 +11869,8 @@ app.post('/api/models/export-plugin', async (req, res) => {
     '',
     '## Install (teammates)',
     '',
-    'Worca CC → Marketplace → Add marketplace → paste the repo URL → Install.',
-    'Model secrets are prompted in the plugin\'s configuration panel.',
+    'worca → Marketplace → Add marketplace → paste the repo URL → Add → Install.',
+    'Model secrets are asked for in the install\'s Set up step.',
     '',
   ].join('\n');
 

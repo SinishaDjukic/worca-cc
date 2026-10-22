@@ -333,3 +333,20 @@ test('coalescing does not depend on call order', async () => {
   assert.equal(log.length, n + 1, 'an explicit caller in the middle makes the trailing load render at once');
   sheet.close();
 });
+
+test('a re-render whose twin of the focused control comes back disabled moves the focus to Add marketplace, never <body> (fix cycle 1, m2)', async () => {
+  const { doc, page } = pageHarness({ trackDom });
+  let off = false;
+  page.registerTab('browse', { count: () => 0, render: () => {} });
+  page.registerTab('installed', { count: () => 0, render: () => {} });
+  page.registerTab('marketplaces', { count: () => 0,
+    render: (s, el) => { const b = doc.createElement('button'); b.className = 'mk-mkt-browse'; b.dataset.focusKey = 'browse:x'; b.disabled = off; el.replaceChildren(b); },
+    header: (s, el) => { const a = doc.createElement('button'); a.className = 'mk-add-mkt'; el.replaceChildren(a); } });
+  page.setTab('marketplaces');
+  await page.load();
+  doc.querySelector('.mk-mkt-browse').focus();
+  assert.equal(doc.activeElement, doc.querySelector('.mk-mkt-browse'));
+  off = true;
+  await page.load({ background: true });
+  assert.equal(doc.activeElement, doc.querySelector('#mk-root .mk-head-actions .mk-add-mkt'));
+});

@@ -7,7 +7,7 @@ import { JSDOM } from 'jsdom';
 import {
   renderInstallConsent, renderUpdatePreview,
   renderConfigForm, collectConfigForm, renderConnectResult,
-  renderMarketplaceList, relTime,
+  relTime,
 } from '../ui/public/plugins-view.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -292,17 +292,6 @@ test('update preview: chat-channel delta — a new channel secret is red, a new 
 
 // ── marketplaces: registry rows, installed provenance ───────
 
-const MKT = {
-  id: 'm-1', url: '/tmp/m1', name: 'Fixture Market', description: 'x', builtin: true,
-  addedAt: '2026-08-17T00:00:00Z',
-  lastSync: { sha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678', at: '2026-08-17T10:00:00Z' },
-  warnings: ['worca-cc-marketplace.json: bad/entry — skipped'],
-  plugins: [
-    { name: 'aa', subdir: 'plugins/aa', description: 'first', version: '1.0.0', installed: false, inventory: {} },
-    { name: 'bb', subdir: 'plugins/bb', description: 'second', version: null, installed: true, inventory: {} },
-  ],
-};
-
 test('the Available list is gone: Browse tiles replace it (marketplace P3)', async () => {
   const mod = await import('../ui/public/plugins-view.mjs');
   assert.equal('renderAvailableList' in mod, false);
@@ -310,26 +299,10 @@ test('the Available list is gone: Browse tiles replace it (marketplace P3)', asy
   assert.doesNotMatch(readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8'), /\.pl-avail|\.pl-available/);
 });
 
-test('renderMarketplaceList: builtin badge, sync line, warnings, action buttons, branch named after the url', async () => {
-  await checkRows([
-    { name: 'renderMarketplaceList: builtin badge, sync line (relTime), warnings, action buttons', run: () => {
-      const el = renderMarketplaceList([MKT], { doc, now: Date.parse('2026-08-17T13:00:00Z') }); // C4: inject now
-      const row = el.querySelector('.pl-mkt-row');
-      assert.equal(row.dataset.id, 'm-1');
-      assert.match(row.querySelector('.pl-mkt-builtin').textContent, /built-in/);
-      assert.match(row.querySelector('.pl-mkt-sync').textContent, /a1b2c3d.*synced .*(ago|\d{4}-).*2 plugins/);
-      assert.match(row.querySelector('.pl-mkt-warning').textContent, /bad\/entry/);
-      assert.equal(row.querySelector('.pl-mkt-refresh').dataset.id, 'm-1');
-      assert.equal(row.querySelector('.pl-mkt-remove').dataset.id, 'm-1');
-      const never = renderMarketplaceList([{ ...MKT, id: 'm-3', lastSync: null, warnings: [] }], { doc });
-      assert.match(never.querySelector('.pl-mkt-sync').textContent, /never synced/);
-    } },
-    { name: 'renderMarketplaceList: a marketplace that tracks a branch names it after the url', run: () => {
-      const el = renderMarketplaceList([{ ...MKT, url: 'https://github.com/o/worca', ref: 'dev' }, { ...MKT, id: 'm-2' }], { doc });
-      const urls = [...el.querySelectorAll('.pl-mkt-url')].map((u) => u.textContent);
-      assert.deepEqual(urls, ['https://github.com/o/worca · dev', '/tmp/m1']);
-    } },
-  ]);
+test('the old Marketplaces list is gone: marketplace cards replace it (marketplace P7)', async () => {
+  const mod = await import('../ui/public/plugins-view.mjs');
+  assert.equal('renderMarketplaceList' in mod, false);
+  assert.doesNotMatch(readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8'), /\.pl-mkt/);
 });
 
 test('relTime: fixed-now buckets (pure, jsdom-safe) (C4)', () => {
