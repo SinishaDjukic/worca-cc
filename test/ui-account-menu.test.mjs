@@ -165,7 +165,7 @@ const SHELL = `<button type="button" class="acct" id="side-acct"><span class="ac
 <span class="acct-ava" aria-hidden="true">P</span><i class="acct-dot" aria-hidden="true"></i></span>
 <span class="acct-name">Profile</span></button>
 <div class="mcard id-card" id="acct-id" hidden><span class="mc-k">Signed in as</span><b class="id-name"></b><small class="id-via"></small></div>
-<button type="button" class="mi away-item" id="acct-away" role="menuitem"><svg class="mi-ic" viewBox="0 0 24 24" aria-hidden="true"></svg><span class="mi-lbl">Step away</span><span class="mi-hint"></span></button>`;
+<button type="button" class="mi menu-item away-item sw-item" id="acct-away" role="menuitemcheckbox" aria-checked="false" data-state="here"><svg class="mi-ic" viewBox="0 0 24 24" aria-hidden="true"></svg><span class="mi-lbl">Away</span><span class="mi-hint"></span><span class="switch" aria-hidden="true"></span></button>`;
 const shell = () => new JSDOM(`<!doctype html><body>${SHELL}</body>`).window.document;
 // The walking person's path data, from the one icon set; the corner's badge and the away row both draw it.
 const STEPPED_OUT = [...ICONS['stepped-out'].matchAll(/\bd="([^"]+)"/g)].map((m) => m[1]);
@@ -322,29 +322,30 @@ test('style.css: the away badge is the same 11px dot, slate with a panel-coloure
 const C = { window: '22:00-07:00', timeZone: 'UTC', graceMinutes: 30, enabled: false, neverDecide: [] };
 const rowAt = (iso, o = {}) => describeAwayRow({ config: C, toggle: 'auto', localZone: 'UTC', now: Date.parse(iso), ...o });
 
-test('paintAwayRow: icon, label, hint and tip from describeAwayRow; busy or unread settings disable it', () => {
+test('paintAwayRow: aria-checked follows the state under a steady "Away"; one icon; hint and tip (title and description); busy or unread settings disable it', () => {
   const doc = shell();
   const btn = doc.getElementById('acct-away');
   const icon = () => [...btn.querySelectorAll('.mi-ic path')].map((p) => p.getAttribute('d')).join(' ');
+  const view = () => [btn.dataset.state, btn.getAttribute('aria-checked'), btn.querySelector('.mi-lbl').textContent, btn.querySelector('.mi-hint').textContent];
   paintAwayRow(btn, rowAt('2026-09-28T15:00:00Z'));
-  assert.deepEqual([btn.dataset.state, btn.dataset.status, btn.querySelector('.mi-lbl').textContent, btn.querySelector('.mi-hint').textContent],
-    ['here', 'here', 'Step away', 'away at 22:00']);
-  assert.match(icon(), /^M14 2\.2a1\.8/, 'here: a person walking out, never a sign-out arrow, never the moon (that is Dark in the appearance switcher)');
-  assert.equal(icon(), STEPPED_OUT.join(' '), 'here: the icon set\'s stepped-out, the same person as the corner\'s badge');
+  assert.deepEqual(view(), ['here', 'false', 'Away', 'away at 22:00']);
+  assert.equal(btn.dataset.status, 'here');
+  assert.equal(icon(), STEPPED_OUT.join(' '), 'the icon set\'s stepped-out, the same person as the corner\'s badge');
   assert.equal(btn.getAttribute('aria-disabled'), null);
-  assert.match(btn.title, /Step away to have worca answer on every run now\.$/);
+  assert.match(btn.title, /Turn Away on to have worca answer waiting run questions for you now\.$/);
+  assert.equal(btn.getAttribute('aria-description'), btn.title, 'the tip is the accessible description too');
   paintAwayRow(btn, rowAt('2026-09-28T23:00:00Z'));
-  assert.deepEqual([btn.dataset.state, btn.querySelector('.mi-lbl').textContent, btn.querySelector('.mi-hint').textContent],
-    ['away', "I'm back", 'until 07:00']);
-  assert.match(icon(), /^M3\.5 10\.5L12 3\.5/, 'away: the home');
-  assert.equal(btn.querySelectorAll('.mi-ic path').length, 3, 'the icon is replaced, not stacked');
+  assert.deepEqual(view(), ['away', 'true', 'Away', 'until 07:00'], 'the switch says away; the label never swaps');
+  assert.equal(icon(), STEPPED_OUT.join(' '), 'away: the same icon');
+  assert.equal(btn.querySelectorAll('.mi-ic path').length, STEPPED_OUT.length, 'drawn once, not stacked');
   paintAwayRow(btn, rowAt('2026-09-28T23:00:00Z'), { busy: true });
   assert.equal(btn.getAttribute('aria-disabled'), 'true', 'a click in flight');
   paintAwayRow(btn, rowAt('2026-09-28T23:00:00Z'), { err: 'HTTP 500' });
   assert.equal(btn.getAttribute('aria-disabled'), null);
   assert.match(btn.title, / \(Could not change it: HTTP 500\)$/);
+  assert.equal(btn.getAttribute('aria-description'), btn.title);
   paintAwayRow(btn, describeAwayRow({ config: null, now: 0 }));
-  assert.deepEqual([btn.getAttribute('aria-disabled'), btn.title], ['true', 'Away mode settings could not be read.']);
+  assert.deepEqual([btn.getAttribute('aria-disabled'), btn.title, btn.getAttribute('aria-checked')], ['true', 'Away mode settings could not be read.', 'false']);
 });
 
 // ── the Interface mode row and its side menu ───────────────────────────────────

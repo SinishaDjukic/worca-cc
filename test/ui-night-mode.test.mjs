@@ -237,26 +237,32 @@ test('settings card: Save posts {nightMode} and never the status; each status bu
   ]);
 });
 
-// The account menu's away row (last in the menu): "Step away" while you count as here, "I'm back"
-// while you count as away (the away hours included); a violet dot on the avatar while away.
+// The account menu's away row: an "Away" switch (a menuitemcheckbox, checked while you count as away,
+// the away hours included); a violet dot on the avatar while away.
 const awayRow = (doc) => doc.getElementById('acct-away');
-const rowState = (doc) => { const r = awayRow(doc); return [r.dataset.state, r.querySelector('.mi-lbl').textContent, r.querySelector('.mi-hint').textContent]; };
+const rowState = (doc) => { const r = awayRow(doc); return [r.dataset.state, r.getAttribute('aria-checked'), r.querySelector('.mi-hint').textContent]; };
 const presence = (doc) => doc.getElementById('side-acct').dataset.presence;
 const menuOpen = (doc) => !doc.getElementById('acct-menu').hidden;
 const settingsPosts = (ctx) => ctx.posts.filter((p) => p.path.endsWith('/api/settings'));
 const SIDE_USER = { window: '22:00-07:00', timeZone: 'UTC' };
 const sideBody = (o = {}) => ({ config: resolveNightConfig({ user: SIDE_USER }).config, sources: {}, inherited: resolveNightConfig({ user: SIDE_USER }), toggle: 'auto', hereSince: null, user: {}, project: {}, ...o });
 
-test('away row: the clock and hereSince decide "Step away" or "I\'m back"; a click posts its toggle and the menu stays open', async () => {
+test('away row: the clock and hereSince decide off (here) or on (away); a click posts its toggle and the menu stays open', async () => {
   await checkRows([
-    { name: 'away row: by day "Step away" with the start of the hours; it posts "I\'m away now"',
-      now: '2026-09-28T15:00:00Z', body: sideBody(), want: ['here', 'Step away', 'away at 22:00'], dot: 'here',
-      first: (ctx, doc) => assert.match(awayRow(doc).title, /You count as here\. Next away hours start at 22:00\. Step away to have worca answer on every run now\.$/),
+    { name: 'away row: by day off (here) with the start of the hours; it posts "I\'m away now"',
+      now: '2026-09-28T15:00:00Z', body: sideBody(), want: ['here', 'false', 'away at 22:00'], dot: 'here',
+      first: (ctx, doc) => {
+        const r = awayRow(doc);
+        assert.match(r.title, /You count as here\. Next away hours start at 22:00\. Turn Away on to have worca answer waiting run questions for you now\.$/);
+        assert.deepEqual([r.getAttribute('role'), r.querySelector('.mi-lbl').textContent, r.querySelector('.switch').getAttribute('aria-hidden')],
+          ['menuitemcheckbox', 'Away', 'true'], 'the whole row is the switch; the .switch only shows it');
+        assert.equal(r.getAttribute('aria-description'), r.title);
+      },
       post: 'on' },
-    { name: 'away row: inside the away hours "I\'m back" until they end, the violet dot on the avatar; it posts "here"',
-      now: '2026-09-28T23:00:00Z', body: sideBody(), want: ['away', "I'm back", 'until 07:00'], dot: 'away', post: 'here' },
-    { name: 'away row: "I\'m here" said tonight keeps "Step away", and the project tab says why',
-      now: '2026-09-28T23:30:00Z', body: sideBody({ hereSince: Date.parse('2026-09-28T23:00:00Z') }), want: ['here', 'Step away', 'away at 22:00'], dot: 'here',
+    { name: 'away row: inside the away hours on (away) until they end, the violet dot on the avatar; it posts "here"',
+      now: '2026-09-28T23:00:00Z', body: sideBody(), want: ['away', 'true', 'until 07:00'], dot: 'away', post: 'here' },
+    { name: 'away row: "I\'m here" said tonight keeps it off (here), and the project tab says why',
+      now: '2026-09-28T23:30:00Z', body: sideBody({ hereSince: Date.parse('2026-09-28T23:00:00Z') }), want: ['here', 'false', 'away at 22:00'], dot: 'here',
       then: async (ctx, doc) => {
         ctx.window.location.hash = 'projects/proj-1/away';
         await settle(12);
@@ -281,14 +287,14 @@ test('away row: the clock and hereSince decide "Step away" or "I\'m back"; a cli
   } })));
 });
 
-test('away row: "I\'m away now" reads "I\'m back" with no end; paused reads "Step away" (Away mode paused) and still steps away', async () => {
+test('away row: "I\'m away now" reads on (away) with no end; paused reads off (here) (Away mode paused) and still turns Away on', async () => {
   let ctx = await boot({ away: () => sideBody({ toggle: 'on' }) });
-  assert.deepEqual(rowState(ctx.window.document), ['away', "I'm back", '']);
+  assert.deepEqual(rowState(ctx.window.document), ['away', 'true', '']);
   click(ctx, awayRow(ctx.window.document));
   await settle();
   assert.deepEqual(settingsPosts(ctx).at(-1).body, { nightModeToggle: 'here' });
   ctx = await boot({ away: () => sideBody({ toggle: 'off' }) });
-  assert.deepEqual(rowState(ctx.window.document), ['here', 'Step away', 'Away mode paused']);
+  assert.deepEqual(rowState(ctx.window.document), ['here', 'false', 'Away mode paused']);
   assert.match(awayRow(ctx.window.document).title, /^Away mode is paused\./);
   click(ctx, awayRow(ctx.window.document));
   await settle();
@@ -299,13 +305,13 @@ test('away row: per-person Away mode reads the signed-in person\'s own switch, n
   Date.now = () => Date.parse('2026-09-28T15:00:00Z');
   // The server scopes GET /api/away-mode to the person (awayPersonOf): `toggle` is theirs, `instanceToggle` the install's.
   let ctx = await boot({ away: () => sideBody({ perPerson: 'ada@example.com', toggle: 'auto', instanceToggle: 'on', instanceHereSince: null }) });
-  assert.deepEqual(rowState(ctx.window.document), ['here', 'Step away', 'away at 22:00'], 'the install is away; this person is not');
+  assert.deepEqual(rowState(ctx.window.document), ['here', 'false', 'away at 22:00'], 'the install is away; this person is not');
   assert.equal(presence(ctx.window.document), 'here');
   click(ctx, awayRow(ctx.window.document));
   await settle();
   assert.deepEqual(settingsPosts(ctx).at(-1).body, { nightModeToggle: 'on' }, 'the same post: the server stores it for the person');
   ctx = await boot({ away: () => sideBody({ perPerson: 'ada@example.com', toggle: 'on', instanceToggle: 'auto' }) });
-  assert.deepEqual(rowState(ctx.window.document), ['away', "I'm back", '']);
+  assert.deepEqual(rowState(ctx.window.document), ['away', 'true', '']);
   assert.equal(presence(ctx.window.document), 'away');
 });
 
@@ -354,7 +360,7 @@ test('away row: before GET /api/away-mode answers, it is neither disabled nor "c
   const ctx = await boot({ away: 'pending' });
   await new Promise((r) => setTimeout(r, 1100));      // past the 1 s tick that repaints the row
   const doc = ctx.window.document;
-  assert.deepEqual(rowState(doc), ['here', 'Step away', '']);
+  assert.deepEqual(rowState(doc), ['here', 'false', '']);
   assert.equal(awayRow(doc).getAttribute('aria-disabled'), null);
   assert.doesNotMatch(awayRow(doc).title, /could not be read/);
 });

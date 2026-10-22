@@ -207,33 +207,33 @@ export function paintIdentityCard(card, acct) {
 
 // ── The away row ─────────────────────────────────────────────────────────────
 
-/** Here: a person walking out (a step-out arrow read as Sign out; a moon read as
- *  dark mode, the appearance switcher's own icon). Away: a home, to come back to. */
-const AWAY_ICON_PATHS = Object.freeze({
-  here: [...ICONS['stepped-out'].matchAll(/\bd="([^"]+)"/g)].map((m) => m[1]),   // the corner's away badge draws it too
-  away: ['M3.5 10.5L12 3.5l8.5 7', 'M5.5 9v11h13V9', 'M10 20v-5.5h4V20'],
-});
+/** The away row's icon: a person walking out (a step-out arrow read as Sign out; a moon read as dark
+ *  mode, the appearance switcher's own icon), the same person as the corner's away badge. One icon in
+ *  both states: the switch at the row's right edge shows whether you are away. */
+const AWAY_ICON_PATHS = Object.freeze([...ICONS['stepped-out'].matchAll(/\bd="([^"]+)"/g)].map((m) => m[1]));
 
-/** Paint the away row (#acct-away) from describeAwayRow's answer. `busy`: a click is in flight;
- *  `err`: the last click's failure, kept in the tip until the next one. */
+/** Paint the away row (#acct-away, a menuitemcheckbox: checked = away) from describeAwayRow's answer.
+ *  The label stays "Away"; aria-checked carries the state. `busy`: a click is in flight; `err`: the last
+ *  click's failure, kept in the tip (title and aria-description) until the next one. */
 export function paintAwayRow(btn, row, { busy = false, err = '' } = {}) {
   if (!btn || !row) return;
   btn.dataset.state = row.state;
   btn.dataset.status = row.status;
+  btn.setAttribute('aria-checked', String(row.state === 'away'));
   const ic = btn.querySelector('.mi-ic');
-  if (ic) {
+  if (ic && !ic.firstChild) {
     const doc = btn.ownerDocument;
-    ic.replaceChildren(...AWAY_ICON_PATHS[row.state === 'away' ? 'away' : 'here'].map((d) => {
+    ic.replaceChildren(...AWAY_ICON_PATHS.map((d) => {
       const p = doc.createElementNS(SVG_NS, 'path');
       p.setAttribute('d', d);
       return p;
     }));
   }
-  const label = btn.querySelector('.mi-lbl');
-  if (label) label.textContent = row.label;
   const hint = btn.querySelector('.mi-hint');
   if (hint) hint.textContent = row.hint;
-  btn.title = err ? `${row.tip} (Could not change it: ${err})` : row.tip;
+  const tip = err ? `${row.tip} (Could not change it: ${err})` : row.tip;
+  btn.title = tip;
+  btn.setAttribute('aria-description', tip);
   if (row.disabled || busy) btn.setAttribute('aria-disabled', 'true');
   else btn.removeAttribute('aria-disabled');
 }
