@@ -29,6 +29,7 @@ before(async () => {
   process.env.WORCA_PROJECTS_ROOT = projectsRoot;
   process.env.WORCA_MOCK = '1';
   process.env.WORCA_IDENTITY_HEADER = H;   // a request without the header is the local install (sees every preset)
+  process.env.WORCA_IDENTITY_TRUSTED_PROXIES = '127.0.0.1,::1';   // X1: the in-process server's callers are loopback
   const mod = await import('../ui/server.mjs');
   srv = mod.server;
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));

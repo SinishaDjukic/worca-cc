@@ -14,7 +14,7 @@ const SCAN_DIRS = ['src', 'ui', 'bin', 'agents', 'tools', 'test', 'templates', '
 const SKIP_DIRS = new Set(['node_modules', '.git', '.worca-cc-test', 'fixtures', 'snapshots']);
 const CODE = /\.(mjs|cjs|js)$/;
 // The runner, its config and the dependency set: a change here can affect any test.
-export const FULL_SUITE = [/^package(-lock)?\.json$/, /^tools\/test(-run|-related)?\.mjs$/, /^test\/tiers\.json$/,
+export const FULL_SUITE = [/^package\.json$/, /^npm-shrinkwrap\.json$/, /^tools\/test(-run|-related)?\.mjs$/, /^test\/tiers\.json$/,
   /^test\/helpers\/no-real-claude\//, /^\.nvmrc$/];
 const TEST_FILE = /^test\/[^/]+\.test\.mjs$/;
 

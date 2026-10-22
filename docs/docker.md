@@ -195,10 +195,13 @@ Needs git credentials (above). `gh repo clone` reads `GH_TOKEN`; with a read/wri
 ## Network
 
 **Inbound:** only the UI port, published on `127.0.0.1`. The server accepts
-`localhost` Host headers only, so a LAN address answers 403; that is the
-single-user contract the npm install has too. Reach it from another machine
-with `ssh -L 4317:127.0.0.1:4317 box` or Tailscale, both of which look like
-loopback. A dev server an agent starts inside the box is not published; add a
+`localhost` Host headers only, and only from a loopback peer or the container's
+gateway, which is where Docker's published port arrives from. A LAN address
+answers 403, and so does any other container on the compose network (the
+egress proxy, the broker, cloudflared) even when it sends `Host: localhost`;
+that is the single-user contract the npm install has too. Reach it from another
+machine with `ssh -L 4317:127.0.0.1:4317 box` or Tailscale, both of which
+arrive through the published port. A dev server an agent starts inside the box is not published; add a
 `ports:` line in a `compose.override.yml` if you need to see one.
 
 **Outbound**, open by default (agents run `npm install`):
@@ -318,7 +321,8 @@ URL from `docker compose logs teams-tunnel`.
 | `CLOUDFLARE_TUNNEL_TOKEN` | | teams overlay |
 
 Inside the image: `WORCA_HOST=0.0.0.0` (port publishing needs it; the Host
-guard keeps the effect loopback-only), `WORCA_HOME=/worca`,
+guard and the peer check keep the effect to the published port, see Network),
+`WORCA_HOME=/worca`,
 `WORCA_NO_NATIVE_DIALOG=1`, `DISABLE_AUTOUPDATER=1`,
 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`. The container runs as uid 1000
 with all capabilities dropped, `no-new-privileges`, a 2 GB tmpfs `/tmp` and no
@@ -358,11 +362,32 @@ read worca's settings, database, `HOME` or environment. Give Claude Code a token
 as a variable (`CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`); a login stored in
 worca's `HOME` is not visible to agents. `WORCA_AGENT_ISOLATION=0` turns it off. A
 bind-mount setup keeps one user, so files agents write on your disk keep your uid.
-While isolation is on, the [actions](actions.md) API and the `actions` settings key refuse
-callers on the box itself (`403 ACTIONS_AGENT_BLOCKED`), so an agent cannot start a command, or
-plant one, that runs as the `worca` user. In local mode there is no identity, so a request an agent
+While isolation is on, a caller on the box itself (loopback, or one of the container's own
+addresses) may be an agent, so worca's API and WebSocket refuse it (`403 AGENT_CALLER_BLOCKED`)
+unless it sends the server's per-boot token in `X-Worca-UI-Token`. The token is in
+`$WORCA_HOME/.worca-cc/ui.json` (mode 0600, readable by `worca`, not by `worca-agent`) and in no
+environment, and the `worca` CLI sends it, so `docker compose exec worca worca run --preset …`
+keeps working. Without it a caller reaches only `GET /api/health` and the per-turn Ask relay
+routes, which check their own token. So an agent cannot link or run a plugin, start a command,
+or change guardrails, settings, schedules or `.mcp.json` approvals as the `worca` user, and it
+cannot read other people's chats. A configured `WORCA_IDENTITY_HEADER` is ignored from the box
+itself, so put the identity proxy in front, not inside. To drain from inside the container, send
+the token: `curl -X POST -H "Host: localhost" -H "X-Worca-UI-Token: $(jq -r .token "$WORCA_HOME/.worca-cc/ui.json")"
+http://127.0.0.1:4317/api/drain`. In local mode there is no identity, so a request an agent
 loops back through a published port cannot be told apart from a person: run an isolated box in
 remote mode.
+
+Plugin task-source connectors and chat-channel workers run as a third user, `worca-plugin`. It
+reads plugin code through the `worca-share` group and has its own `HOME` (`/data/plugin-home`),
+but cannot open `plugins/<name>/data` (where each plugin's `secrets.json` lives) or anything else
+in worca's home, nor the agents' `HOME`. A connector gets its own configuration and secrets on
+stdin for each call; a plugin cannot read another plugin's secrets from disk. What still holds
+between plugins: they share that one user, so a connector that runs alongside a chat worker can
+read its process, and anything a connector writes under its `HOME` is readable by the others. A
+connector cannot write into its own install folder there; keep caches under `HOME`. Without
+single-volume isolation (a bind-mount compose setup, or `WORCA_AGENT_ISOLATION=0`), and on a
+native install, every plugin runs as worca's own user and can read every plugin's secrets and
+worca's settings: install only plugins you trust.
 
 **Reaching the host** (a database on your laptop): `host.docker.internal` on
 Docker Desktop, `--add-host=host.docker.internal:host-gateway` on Engine. Off
@@ -379,4 +404,14 @@ npm run docker:smoke                      # offline proof: CLI mock run, UI heal
 The build packs the package with `npm pack` and installs that tarball, the same
 path CI and the release take, so what runs in the box is what npm ships. The
 Claude Code pin is [`docker/CLAUDE_CODE_VERSION`](../docker/CLAUDE_CODE_VERSION).
+
+What the build pulls in is locked. The package ships `npm-shrinkwrap.json`, and the
+image installs exactly that tree with `npm ci` in the unpacked tarball (a global
+install of a local tarball would ignore the shrinkwrap; an `npm install -g @worca/app`
+from the registry honours it). The `node:22-bookworm-slim` base is pinned by digest
+and the workflows' third-party actions by commit SHA; Dependabot
+([`.github/dependabot.yml`](../.github/dependabot.yml)) proposes the bumps. Two optional
+dependencies run install scripts: `node-pty` builds its native module (or is skipped
+where there is no compiler) and `ffmpeg-static` downloads its ffmpeg binary.
+
 Hacking on Worca inside the box: [CONTRIBUTING.md](../CONTRIBUTING.md#in-a-container).

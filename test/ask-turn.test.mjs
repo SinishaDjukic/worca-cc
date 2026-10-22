@@ -1599,11 +1599,15 @@ test('relay: the turn hands its web access to the relay, marks the spawn relayed
       const modes = [];
       const fs = { mkdir: async () => {}, writeFile: async (p, _d, o) => { if (/mcp-.*\.json$/.test(p)) modes.push(o.mode); }, unlink: async () => {} };
       const fail = async () => { throw Object.assign(new Error('claude exited with code 1: boom'), { errorClass: 'api' }); };
-      const relayedTurn = makeTurn(seed(), {}, { fs, agentRelay: () => ({ url: 'http://127.0.0.1:1/api/ask/relay', token: 't', dispose: () => {} }), runClaudeImpl: fail }).turn;
+      const claimed = [];
+      const relayedTurn = makeTurn(seed(), {}, { fs, claimAgentFile: (p) => claimed.push(p), agentRelay: () => ({ url: 'http://127.0.0.1:1/api/ask/relay', token: 't', dispose: () => {} }), runClaudeImpl: fail }).turn;
       await relayedTurn.run();
-      const plainTurn = makeTurn(seed(), {}, { fs, runClaudeImpl: fail }).turn;
+      const plainTurn = makeTurn(seed(), {}, { fs, claimAgentFile: (p) => claimed.push(p), runClaudeImpl: fail }).turn;
       await plainTurn.run();
       assert.deepEqual(modes, [0o640, 0o600]);
+      // V10: the relayed file goes to the turn's agent user's own group, never left to all of worca-share.
+      assert.equal(claimed.length, 1);
+      assert.match(claimed[0], /mcp-.*\.json$/);
     } },
   ]);
 });

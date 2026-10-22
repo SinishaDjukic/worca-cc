@@ -162,7 +162,7 @@ test('worker: identity via /users/@me; bot/self/off-list messages filtered; empt
     { id: 'm5', channel_id: 'C1', content: '', author: { id: 'U1' } },
   ]) s.frame({ op: 0, t: 'MESSAGE_CREATE', s: 2, d: m });
   assert.deepEqual(events.inbound.map((m) => m.text), ['/status', '']);
-  assert.deepEqual(events.inbound[0].meta, { platform: 'discord', messageId: 'm1', guildId: 'G1', username: 'sam' });
+  assert.deepEqual(events.inbound[0].meta, { platform: 'discord', messageId: 'm1', guildId: 'G1', username: 'sam', isGroup: true });
   assert.ok(events.logs.some((l) => /MESSAGE CONTENT INTENT/.test(l)), 'empty-content hint logged once');
   await w.stop();
 });

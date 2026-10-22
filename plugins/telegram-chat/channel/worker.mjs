@@ -150,6 +150,7 @@ export function createTelegramWorker(ctx, {
                 chatType: m.chat.type,
                 chatTitle: m.chat.title ?? null,
                 username: m.from?.username ?? null,
+                isGroup: m.chat.type !== 'private',
               },
             });
           }

@@ -52,6 +52,7 @@ import { sideSuggestions } from './ask-side-suggest.mjs';
 import { makeSwitch } from './switch.mjs';
 import { shapeCardExtras, shapeWhatHappens, shapeAdvancedSummary } from './shape/proposal.mjs';
 import { createAskComposerCards, ASK_COMPOSER_CARD_TYPES } from './ask-composer-cards.mjs';
+import { cardKit, scriptApprovalCardView } from './workflows/card-views.mjs';
 import { applyPresetStart } from '../../src/shared/run-presets.mjs';
 import {
   fmtTokens, CTX_COMPACT_BUFFER, CTX_WARN, CTX_HIGH, CTX_COST_HINT, kTok,
@@ -147,6 +148,7 @@ function toolArgs(input) {
 }
 
 const SCRIPT_TOOL_NAMES = new Set(['list_scripts', 'get_script', 'save_script', 'test_script']);
+const SCRIPT_APPROVAL_TYPE = 'script-approval';   // G6: src/core/ask/script-approval.mjs
 
 /**
  * The script tools' thread line (scripts-workbench-design.md §9.3): the key instead of a JSON
@@ -5938,7 +5940,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (card.type === PROGRESS_CARD_TYPE) return true;
     if (card.type && chatCardBuilder(card.type)) return false;      // an extension type is never a run card, whatever its state
     if (ASK_COMPOSER_CARD_TYPES.includes(card.type)) return false;   // Ask's draft / graph cards are never run cards
-    if (card.type === COMMAND_CARD_TYPE || card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'project' || card.type === 'proxy') return false;
+    if (card.type === COMMAND_CARD_TYPE || card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'project' || card.type === 'proxy' || card.type === SCRIPT_APPROVAL_TYPE) return false;
     return block.state === 'started' || (block.state === 'failed' && !!block.runId);
   }
   // #958: one build per card per reconcile. renderTranscript asks for a card twice (is it away? then the tail paint);
@@ -5989,13 +5991,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const isProxy = !!(block.card && block.card.type === 'proxy');
     const isCommand = !!(block.card && block.card.type === COMMAND_CARD_TYPE);
     const isComposer = !!(block.card && ASK_COMPOSER_CARD_TYPES.includes(block.card.type));
+    const isScriptApproval = !!(block.card && block.card.type === SCRIPT_APPROVAL_TYPE);
     const isProgress = isProgressBlock(block);
     // #911: a command card is built in the mode the gate gives; a changed mode rebuilds it (the dispose below clears its ticker).
     const sumStale = isCommand && cached && cached.sum !== summariesOn();
     // Ask's draft cards also change with the cards AROUND them (a newer draft of the key replaces one): rebuilt when
     // what they show changes, not only their state.
     const view = isComposer ? composerCards().view(block) : '';
-    if (cached && !sumStale && cached.state === block.state && (cached.view || '') === view && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isProject || isWeb || isWorkspace || isActions || isAway || isProxy || isCommand || isComposer || isProgress || block.state === 'proposed')) return cached.el;
+    if (cached && !sumStale && cached.state === block.state && (cached.view || '') === view && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isProject || isWeb || isWorkspace || isActions || isAway || isProxy || isCommand || isComposer || isScriptApproval || isProgress || block.state === 'proposed')) return cached.el;
     if (cached) disposeCardEntry(cached);
     const built = isWorkflow ? buildWorkflowCard(block, cached)
       : isMetrics ? buildMetricsCard(block)
@@ -6010,6 +6013,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       : isProxy ? buildProxyCard(block)
       : isCommand ? buildCommandCard(block)
       : isComposer ? composerCards().render(block)
+      : isScriptApproval ? buildScriptApprovalCard(block)
       : isProgress ? buildProgressCard(block)
         : custom ? { el: make('div', 'ask-card-stub', (block.card && (block.card.summary || block.card.title)) || 'Card unavailable') }
         : { el: block.state === 'proposed' ? buildCardForm(block) : buildCardTerminal(block) };
@@ -6059,6 +6063,19 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (!st.cardEls) return false;
     for (const c of st.cardEls.values()) if (c.handle && typeof c.handle.setDescriptions === 'function' && c.el.isConnected) return true;
     return false;
+  }
+
+  /** G6: the card that asks before a draft script runs or a saved one is replaced (workflows/card-views.mjs, shared with
+   *  the Workflows chat). Its click runs or saves on the server and starts the event turn. */
+  function buildScriptApprovalCard(block) {
+    const { h, button } = cardKit(doc, { onChange: () => scheduleFlush() });
+    const wrap = make('div', 'ask-ccard');
+    wrap.dataset.cardId = block.id;
+    wrap.appendChild(scriptApprovalCardView(block, { h, button, onAnswer: async (body) => {
+      try { await postCardJson(block, body); return ''; }
+      catch (err) { return err && err.message === 'turn in flight' ? 'Chat is still replying. Try again once the answer lands.' : (err && err.message) || 'failed'; }
+    } }));
+    return { el: wrap };
   }
 
   // ---- command cards (ui/public/ask-command-card.mjs; Ask agent mode, #574) ------------------------------------------

@@ -144,7 +144,7 @@ test('broker: registered over /internal, kept across a restart, a saved key neve
   const gw2 = await startGateway();
   const { config, errors } = readBrokerConfig({
     WORCA_BROKER_MODE: 'multi', WORCA_BROKER_SECRET: SECRET, WORCA_BROKER_VAULT_KEY: VK,
-    WORCA_BROKER_PUBLIC_URL: 'https://keys.example.com', WORCA_IDENTITY_HEADER: 'x-email',
+    WORCA_BROKER_PUBLIC_URL: 'https://keys.example.com', WORCA_IDENTITY_HEADER: 'x-email', WORCA_IDENTITY_TRUSTED_PROXIES: '127.0.0.1',
   });
   assert.deepEqual(errors, []);
   const store = openStore();
@@ -202,6 +202,52 @@ test('broker: registered over /internal, kept across a restart, a saved key neve
   }
 });
 
+test('broker: single mode sends an operator plugin key only to the origin the operator approved', async () => {
+  const gw = await startGateway();
+  const gw2 = await startGateway();
+  const origin = new URL(gw.url).origin;
+  const slot = (upstream) => ({ id: 'p-acme-k', label: 'Acme key (acme)', plugin: 'acme', protocol: 'anthropic', upstream, auth: 'bearer', paths: [['POST', '/gw/v1/messages']] });
+  const run = async (extraEnv, steps) => {
+    const { config, errors } = readBrokerConfig({ WORCA_BROKER_MODE: 'single', WORCA_BROKER_SECRET: SECRET, WORCA_BROKER_KEY_P_ACME_K: KEY, ...extraEnv });
+    assert.deepEqual(errors, []);
+    const store = openStore();
+    const service = createBrokerService({ config, slots: builtinSlots(), store });
+    const server = http.createServer((req, res) => service.handlePrivate(req, res));
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const internal = async (method, path, body) => (await fetch(`${base}${path}`, { method, headers: { authorization: `Bearer ${SECRET}`, 'content-type': 'application/json' }, body: JSON.stringify(body) })).json();
+    const call = async () => {
+      const { token } = await internal('POST', '/internal/tokens', { billTo: 'local', slots: ['p-acme-k'], spawnId: `sp-${Math.random()}`, kind: 'phase', issuer: 'srv-t' });
+      return fetch(`${base}/p/p-acme-k/gw/v1/messages`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: '{"model":"acme-1","messages":[]}' });
+    };
+    try { await steps({ service, internal, call }); } finally { server.close(); server.closeAllConnections?.(); store.close(); }
+  };
+  try {
+    // No approved origin: whoever registers the slot (worca, or anyone holding the shared secret) cannot aim the key.
+    await run({}, async ({ service, internal, call }) => {
+      await internal('PUT', '/internal/plugin-slots', { slots: [slot(gw.url)] });
+      const r = await call();
+      assert.equal(r.status, 403);
+      assert.match((await r.json()).error.message, /set WORCA_BROKER_KEY_P_ACME_K_ORIGIN=http:\/\/127\.0\.0\.1:\d+ on the broker/);
+      assert.equal(gw.requests.length, 0);
+      assert.equal(service.slotStatus('local').find((s) => s.id === 'p-acme-k').state, 'invalid');
+    });
+    // Approved: the key goes there, and never follows the slot to another host.
+    await run({ WORCA_BROKER_KEY_P_ACME_K_ORIGIN: `${origin}/` }, async ({ service, internal, call }) => {
+      await internal('PUT', '/internal/plugin-slots', { slots: [slot(gw.url)] });
+      assert.equal((await call()).status, 200);
+      assert.equal(gw.requests.at(-1).headers.authorization, `Bearer ${KEY}`);
+      assert.equal(service.slotStatus('local').find((s) => s.id === 'p-acme-k').state, 'set');
+      await internal('PUT', '/internal/plugin-slots', { slots: [slot(gw2.url)] });
+      const moved = await call();
+      assert.equal(moved.status, 403);
+      assert.match((await moved.json()).error.message, /approved for 127\.0\.0\.1:\d+, and Acme key \(acme\) now points at 127\.0\.0\.1:\d+/);
+      assert.equal(gw2.requests.length, 0);
+    });
+    assert.match(readBrokerConfig({ WORCA_BROKER_MODE: 'single', WORCA_BROKER_SECRET: SECRET, WORCA_BROKER_KEY_P_ACME_K_ORIGIN: 'https://llm.acme.dev/v1' }).errors.join(' '), /WORCA_BROKER_KEY_P_ACME_K_ORIGIN: upstream must be an origin only/);
+  } finally { await gw.close(); await gw2.close(); }
+});
+
 // ── boot guard ───────────────────────────────────────────────────────────────
 
 test('guard: a brokered plugin model\'s base URL is fine; a plugin secret saved in worca is not', () => {
@@ -239,7 +285,7 @@ describe('end to end', () => {
 
     const { config, errors } = readBrokerConfig({
       WORCA_BROKER_MODE: 'multi', WORCA_BROKER_SECRET: SECRET, WORCA_BROKER_HOST: '127.0.0.1', WORCA_BROKER_PORT: '0', WORCA_BROKER_UI_PORT: '0',
-      WORCA_BROKER_VAULT_KEY: VK, WORCA_BROKER_PUBLIC_URL: 'https://keys.example.com', WORCA_IDENTITY_HEADER: 'x-email',
+      WORCA_BROKER_VAULT_KEY: VK, WORCA_BROKER_PUBLIC_URL: 'https://keys.example.com', WORCA_IDENTITY_HEADER: 'x-email', WORCA_IDENTITY_TRUSTED_PROXIES: '127.0.0.1',
     });
     assert.deepEqual(errors, []);
     broker = await startBroker({ config: { ...config, uiPort: 0 }, slots: builtinSlots(), log: () => {} });

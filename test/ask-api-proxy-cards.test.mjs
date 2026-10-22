@@ -103,7 +103,7 @@ test('proxy card: Apply with the proxy off saves with no test, an agent cannot a
   const { threadId, cardId } = await seedCard(SETTINGS_CARD);
   await withAgent(async () => {
     const r = await post(`/api/ask/threads/${threadId}/cards/${cardId}`, { state: 'applied' });
-    assert.deepEqual([r.status, (await r.json()).code], [403, 'PROXY_AGENT_BLOCKED']);
+    assert.deepEqual([r.status, (await r.json()).code], [403, 'AGENT_CALLER_BLOCKED']);   // G1: the global gate answers first
   });
   const res = await post(`/api/ask/threads/${threadId}/cards/${cardId}`, { state: 'applied' });
   assert.equal(res.status, 200, await res.clone().text());

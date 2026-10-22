@@ -135,8 +135,10 @@ test('fetchUpstream: timeout fires after `timeout` ms without bytes, and destroy
   }
 });
 
-test('an agent that hangs up mid-stream frees its concurrency slot (more aborts than the per-token limit, then a 200)', { timeout: 20000 }, async () => {
-  const stall = http.createServer((req, res) => { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.write('data: {}\n\n'); });
+// The broker keeps reading a reply the agent hung up on, so its usage is booked in full (service.mjs `clientGone`); the
+// slot is free again once the upstream ends, not held until the idle timeout.
+test('an agent that hangs up mid-stream frees its concurrency slot once the reply ends (more aborts than the per-token limit, then a 200)', { timeout: 20000 }, async () => {
+  const stall = http.createServer((req, res) => { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.write('data: {}\n\n'); setTimeout(() => res.end('data: [DONE]\n\n'), 20); });
   await new Promise((r) => stall.listen(0, '127.0.0.1', r));
   const { config } = readBrokerConfig({
     WORCA_BROKER_MODE: 'single', WORCA_BROKER_SECRET: SECRET, WORCA_BROKER_HOST: '127.0.0.1',

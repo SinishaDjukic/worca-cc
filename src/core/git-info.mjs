@@ -20,10 +20,17 @@ import * as bitbucketPr from './pr/bitbucket.mjs';
 import { readBitbucketCredentials } from './bitbucket-credentials.mjs';
 import { parseBitbucketPrUrl } from '../shared/bitbucket-remote.mjs';
 import { gitAvailable, gitMissingResult } from './git-available.mjs';
+import { guardedGitEnv } from './git-guard.mjs';
 export { parseRemoteUrl, remoteRepoSlug, sameRepo } from './forge.mjs';
 
-/** Default runner: spawn `cmd args` in `cwd`, resolve { ok, stdout, stderr, code }. */
-function defaultRun(cmd, args, { cwd, timeout = 0, env = null } = {}) {
+/** Default runner: spawn `cmd args` in `cwd`, resolve { ok, stdout, stderr, code }.
+ *  git, and gh in a checkout (it runs `git status`, `git push` there), get git-guard's env: no
+ *  repository-local hook or config command runs (security G2). */
+async function defaultRun(cmd, args, { cwd, timeout = 0, env = null } = {}) {
+  if (cwd && (cmd === 'git' || cmd === 'gh')) {
+    try { env = await guardedGitEnv(cwd, { env: env || process.env }); }
+    catch (err) { return { ok: false, stdout: '', stderr: err.message, code: -1 }; }
+  }
   return new Promise((resolve) => {
     let child;
     try {

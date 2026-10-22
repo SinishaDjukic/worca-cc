@@ -53,7 +53,10 @@ if [ -n "${WORCA_DATA_DIR:-}" ]; then
       chown worca:worca-share "$wh/store" "$wh/runs" "$data/projects"
       chown worca-agent:worca-share "$ah"
       chmod 0711 "$data" "$data/worca" "$wh"
-      chmod 2770 "$wh/store" "$wh/runs" "$data/projects"
+      # store/ and runs/ are sticky too: an agent cannot rename or delete another run's folder.
+      # Each run's own folder gets its owner's pool group (agent-pool.mjs claimRunDir).
+      chmod 2770 "$data/projects"
+      chmod 3770 "$wh/store" "$wh/runs"
       chmod 0700 "$ah"
       # Once per volume: existing files join the boundary (new ones get it from umask + setgid).
       if [ ! -e "$wh/.agent-isolation" ]; then
@@ -84,6 +87,15 @@ if [ -n "${WORCA_DATA_DIR:-}" ]; then
       printf '[safe]\n\tdirectory = *\n[core]\n\tsharedRepository = group\n' > "$ah/.gitconfig"
       chown worca-agent:worca-share "$ah/.gitconfig"
       export WORCA_AGENT_USER=worca-agent WORCA_AGENT_HOME="$ah"
+      # Plugin connectors and chat workers run as worca-plugin (plugin-shim.mjs pluginChildSpawn):
+      # plugin code through the shared group, its own HOME, and never plugins/<p>/data or worca's home.
+      if id worca-plugin >/dev/null 2>&1; then
+        ph="$data/plugin-home"
+        mkdir -p "$ph"
+        chown worca-plugin:worca-share "$ph"
+        chmod 0700 "$ph"
+        export WORCA_PLUGIN_USER=worca-plugin WORCA_PLUGIN_HOME="$ph"
+      fi
       # One agent user per signed-in person (the pool, worca-agent-01..): their agents
       # can't read each other's processes. Each gets its own HOME (Claude Code's sessions).
       # Ask Worca runs as the person's agent user too, so its folders join the shared group.
@@ -93,7 +105,7 @@ if [ -n "${WORCA_DATA_DIR:-}" ]; then
         mkdir -p "$homes" "$wh/ask" "$wh/tmp/ask"
         chown worca:worca-share "$homes"
         chmod 0711 "$homes"
-        pool=""
+        pool=""; rungids=""
         for u in $(getent passwd | cut -d: -f1 | grep -E '^worca-agent-[0-9]{2}$' | sort); do
           mkdir -p "$homes/$u"
           chown "$u:worca-share" "$homes/$u"
@@ -101,9 +113,15 @@ if [ -n "${WORCA_DATA_DIR:-}" ]; then
           printf '[safe]\n\tdirectory = *\n[core]\n\tsharedRepository = group\n' > "$homes/$u/.gitconfig"
           chown "$u:worca-share" "$homes/$u/.gitconfig"
           pool="$pool${pool:+,}$u"
+          # The user's own group (Dockerfile): a run's folders get it, worca and $u only.
+          g="$(getent group "$u" | cut -d: -f3 || true)"
+          if [ -n "$g" ]; then rungids="$rungids${rungids:+,}$u:$g"; fi
         done
         chown worca:worca-share "$wh/ask" "$wh/tmp" "$wh/tmp/ask"
-        chmod 2770 "$wh/ask" "$wh/tmp/ask"
+        chmod 2770 "$wh/ask"
+        # Sticky: an agent user (or worca-plugin) in worca-share may add files here but never
+        # remove or replace one it does not own, such as another turn's relay MCP config (V10).
+        chmod 3770 "$wh/tmp/ask"
         chmod 0751 "$wh/tmp"
         if [ ! -e "$wh/.agent-pool" ]; then
           chgrp -R worca-share "$wh/ask" "$wh/tmp/ask"
@@ -112,7 +130,7 @@ if [ -n "${WORCA_DATA_DIR:-}" ]; then
           touch "$wh/.agent-pool"
           chown worca:worca "$wh/.agent-pool"
         fi
-        if [ -n "$pool" ]; then export WORCA_AGENT_POOL="$pool" WORCA_AGENT_HOMES="$homes"; else unset WORCA_AGENT_POOL; fi
+        if [ -n "$pool" ]; then export WORCA_AGENT_POOL="$pool" WORCA_AGENT_HOMES="$homes" WORCA_AGENT_RUN_GIDS="$rungids"; else unset WORCA_AGENT_POOL; fi
         # Without CAP_FSETID the kernel drops the setgid bit silently: new files then get worca's
         # own group and agent users can't read them (Ask's tool config, run checkouts).
         if [ ! -g "$wh/tmp/ask" ] || [ ! -g "$wh/runs" ]; then
@@ -140,6 +158,14 @@ if [ -n "${WORCA_DATA_DIR:-}" ]; then
     git config --global core.sharedRepository group
     if sudo -n -u "$WORCA_AGENT_USER" -- true 2>/dev/null; then
       log "agents run as $WORCA_AGENT_USER; they cannot read worca's settings, database or environment"
+      if [ -n "${WORCA_PLUGIN_USER:-}" ]; then
+        if sudo -n -u "$WORCA_PLUGIN_USER" -- true 2>/dev/null; then
+          log "plugin connectors and chat workers run as $WORCA_PLUGIN_USER; they cannot read plugin secrets on disk"
+        else
+          log "cannot start commands as $WORCA_PLUGIN_USER (sudo refused); plugin connectors run as worca"
+          unset WORCA_PLUGIN_USER WORCA_PLUGIN_HOME
+        fi
+      fi
       if [ -n "${WORCA_AGENT_POOL:-}" ]; then
         first="${WORCA_AGENT_POOL%%,*}"
         if sudo -n -u "$first" -- true 2>/dev/null; then
@@ -155,7 +181,7 @@ if [ -n "${WORCA_DATA_DIR:-}" ]; then
       exit 78   # EX_CONFIG
     else
       log "cannot start commands as $WORCA_AGENT_USER (sudo refused); agents run as worca instead"
-      unset WORCA_AGENT_USER WORCA_AGENT_HOME WORCA_AGENT_GID WORCA_AGENT_POOL WORCA_AGENT_HOMES
+      unset WORCA_AGENT_USER WORCA_AGENT_HOME WORCA_AGENT_GID WORCA_AGENT_POOL WORCA_AGENT_HOMES WORCA_PLUGIN_USER WORCA_PLUGIN_HOME
     fi
   fi
 fi

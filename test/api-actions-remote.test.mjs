@@ -154,31 +154,30 @@ test('WORCA_ACTIONS_REMOTE=1 enables actions for an identified request', async (
   } finally { delete process.env.WORCA_ACTIONS_REMOTE; }
 });
 
-test('WORCA_ACTIONS_REMOTE=1 + agent isolation: in-container callers are refused; people and Stop are not', async () => {
+test('WORCA_ACTIONS_REMOTE=1 + agent isolation: in-container callers are refused, Stop included; people are not', async () => {
   process.env.WORCA_ACTIONS_REMOTE = '1';
   process.env.WORCA_AGENT_USER = 'worca-agent';
   process.env.WORCA_AGENT_HOME = join(homeDir, 'agent');
   try {
     const inStart = await local('POST', startPath(), {});
     assert.equal(inStart.status, 403);
-    assert.equal(inStart.body.code, 'ACTIONS_AGENT_BLOCKED');
+    assert.equal(inStart.body.code, 'AGENT_CALLER_BLOCKED');
     const inPut = await local('PUT', `/api/projects/${key}/actions`, { setup: 'true', actions: [] });
     assert.equal(inPut.status, 403);
-    assert.equal(inPut.body.code, 'ACTIONS_AGENT_BLOCKED');
+    assert.equal(inPut.body.code, 'AGENT_CALLER_BLOCKED');
     const inSettings = await local('POST', '/api/settings', { actions: { editor: '/tmp/x.sh' } });
     assert.equal(inSettings.status, 403);
-    assert.equal(inSettings.body.code, 'ACTIONS_AGENT_BLOCKED');
-    assert.equal((await local('GET', '/api/settings')).body.actions.editor, '');
+    assert.equal(inSettings.body.code, 'AGENT_CALLER_BLOCKED');
+    assert.equal((await remote('GET', '/api/settings')).body.actions.editor, '');
     // the config was not replaced by the refused PUT
-    assert.equal((await local('GET', `/api/projects/${key}/actions`)).body.config.actions[0].id, 'run');
+    assert.equal((await remote('GET', `/api/projects/${key}/actions`)).body.config.actions[0].id, 'run');
 
     const person = await remote('POST', startPath(), {});
     assert.equal(person.status, 200);
-    // Stop stays open to an in-container caller: scoped, then by instance id.
-    assert.equal((await local('POST', `/api/runs/${id}/actions/run/stop?projectKey=${key}`, {})).status, 200);
-    const again = await remote('POST', startPath(), {});
-    assert.equal(again.status, 200);
-    assert.equal((await local('POST', `/api/actions/instances/${encodeURIComponent(again.body.instanceId)}/stop`, {})).status, 200);
+    // G1: a possible agent gets no API at all, so it cannot stop a person's service either.
+    const inStop = await local('POST', `/api/runs/${id}/actions/run/stop?projectKey=${key}`, {});
+    assert.deepEqual([inStop.status, inStop.body.code], [403, 'AGENT_CALLER_BLOCKED']);
+    assert.equal((await remote('POST', `/api/runs/${id}/actions/run/stop?projectKey=${key}`, {})).status, 200);
   } finally {
     delete process.env.WORCA_ACTIONS_REMOTE; delete process.env.WORCA_AGENT_USER; delete process.env.WORCA_AGENT_HOME;
   }

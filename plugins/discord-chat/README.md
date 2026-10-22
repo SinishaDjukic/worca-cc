@@ -44,6 +44,11 @@ server channel — the bot has no DM intent.
 token travels only over stdin to the sandboxed worker child; host-side
 redaction scrubs it from logs.
 
+`allowedUserIds` (optional) narrows an allowed chat to named senders; everyone
+else in it is ignored. `/direct` and the answer commands (`/answer`, `/approve`, `/retry`, `/abort`,
+`/cancel`) steer a live run, so in a group chat they are accepted only from those senders unless `directInGroups` is `anyone`; a direct
+message to the bot always works.
+
 ## Behavior notes
 
 - Full Gateway lifecycle: identify with intents 33281

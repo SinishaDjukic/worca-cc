@@ -681,7 +681,7 @@ export function updateCardBlock(threadId, cardId, patch = {}) {
         || b.card.type === 'receipt' || b.card.type === 'run-stop' || b.card.type === 'pull-request' || b.card.type === 'ship'
         || b.card.type === 'changes' || b.card.type === 'route'
         || b.card.type === 'canvas-edit' || b.card.type === 'workflow-build' || b.card.type === 'agent-draft' || b.card.type === 'script-draft'
-        || b.card.type === 'scope-switch' || b.card.type === 'project' || b.card.type === 'command'
+        || b.card.type === 'scope-switch' || b.card.type === 'project' || b.card.type === 'command' || b.card.type === 'script-approval'
         || (b.card.type === 'progress' && !!b.card.fix)));
       return { ...b, ...allowed, ...(sub && subPatchable ? { card: { ...(b.card || {}), ...sub } } : {}) };
     });

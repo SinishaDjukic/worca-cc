@@ -52,6 +52,7 @@
     "tools/install.mjs",
     "docker/compose*.yml",
     "docker/.env.example",
+    "npm-shrinkwrap.json",
     "README.md"
   ],
   "scripts": {

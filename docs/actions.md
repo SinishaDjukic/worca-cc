@@ -334,7 +334,7 @@ Chat reads Actions and drafts their config, but it never runs anything.
   tail. Usually the app listens on another port than the `PORT` Worca gave it.
 - **No start, stop, check out or discard.** There is no tool for them: Chat names the button
   instead. Under agent isolation the card's Save is refused like the config routes
-  (`ACTIONS_AGENT_BLOCKED`).
+  (`AGENT_CALLER_BLOCKED`).
 - **Redaction.** Commands and log lines are redacted like every other text Chat reads. An action
   that comes back with a redacted value is kept as stored when it is sent back unchanged. A changed
   one is refused, so a redaction marker is never saved.
@@ -363,9 +363,10 @@ ones, and up to 40 log lines per instance.
   runs until then.
 - **Agent isolation.** While isolation is on (the Docker image's default, see
   [docker.md](docker.md)), a caller on the box itself, over loopback or through one of the
-  machine's own addresses, could be an agent. It is refused with `403 ACTIONS_AGENT_BLOCKED` on
-  every route that runs a command, on both config writes, and on an `actions` key in
-  `POST /api/settings` (the editor and terminal settings are commands too). Stop stays open.
+  machine's own addresses, could be an agent. Without the server's per-boot token it gets no API at
+  all, Stop included (`403 AGENT_CALLER_BLOCKED`, see [docker.md](docker.md)): it cannot run a
+  command, change one in the config or set an `actions` key in `POST /api/settings`. A caller with
+  the token (the `worca` CLI) is the operator.
   One gap remains: in **local** mode there is no identity, so a request an agent loops back through
   a published port arrives from the gateway and cannot be told apart from a person. Run an isolated
   box in remote mode.

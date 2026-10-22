@@ -88,6 +88,8 @@ export function createDiscordWorker(ctx, {
               messageId: m.id ?? null,
               guildId: m.guild_id ?? null,
               username: m.author?.username ?? null,
+              // A DM has no guild; every guild channel is a group (the router gates /direct on it).
+              isGroup: m.guild_id != null,
             },
           });
         },
