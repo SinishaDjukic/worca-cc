@@ -620,7 +620,16 @@ test('Show in folder: GET /api/ask/reveal says whether a folder opens here; the 
       const c = store.addAttachment(t.id, null, { name: 'gone.png', kind: 'image', mime: 'image/png', data: Buffer.from('x'), sourcePath: join(tmpdir(), 'worca-no-such-dir-zz', 'gone.png') });
       const r = await post(t.id, c.id);
       assert.equal(r.status, 409);
-      assert.equal((await r.json()).code, 'SOURCE_GONE');
+      assert.deepEqual(await r.json(), { error: 'The original file is gone: it was moved or deleted after it was shown.', code: 'SOURCE_GONE' },
+        'an older row (no origin) keeps today\'s text');
+    } },
+    { name: 'a run copy whose worktree is gone and whose project has no copy: 409 SOURCE_GONE says the run folder was cleaned up', run: async () => {
+      const t = store.createThread();
+      const c = store.addAttachment(t.id, null, { name: 'gone.png', kind: 'image', mime: 'image/png', data: Buffer.from('x'),
+        sourcePath: join(tmpdir(), 'worca-no-such-dir-zz', 'gone.png'), sourceOrigin: { runId: 'deadbeef', projectKey: 'no-such-project', rel: 'out/gone.png' } });
+      const r = await post(t.id, c.id);
+      assert.equal(r.status, 409);
+      assert.deepEqual(await r.json(), { error: "The run's folder was cleaned up after the run, so the original file is gone. Download still has the copy.", code: 'SOURCE_GONE' });
     } },
     { name: 'an unknown attachment or thread: 404; a malformed id: 400', run: async () => {
       const t = store.createThread();
