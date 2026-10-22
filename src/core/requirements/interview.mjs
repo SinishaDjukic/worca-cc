@@ -49,8 +49,8 @@ const isSignInEnvKey = (k) => SIGN_IN_ENV_KEYS.has(k) || /^https?_proxy$/i.test(
  * CLAUDE_CODE_CLIENT_CERT / _KEY, ANTHROPIC_*, HTTP(S)_PROXY (either case) or NODE_EXTRA_CA_CERTS. Then an interview keeps all setting sources, since
  * `--setting-sources project` would drop that file and the call would not be signed in. The file is the
  * one the CLI reads: `settings.json` in CLAUDE_CONFIG_DIR, else in `<home>/.claude` (as
- * skills-registry/host.mjs). Only a MISSING file (ENOENT / ENOTDIR) or valid JSON that is not an object means false (hermetic); a
- * file that exists but cannot be read or parsed means true (keep user settings, A2's behaviour). Never throws.
+ * skills-registry/host.mjs). A MISSING file (ENOENT / ENOTDIR), a blank one, or valid JSON that is not an object means false
+ * (hermetic); a file that exists but cannot be read or parsed means true (keep user settings, A2's behaviour). Never throws.
  * Not seen: a model profile's modelEnv can set CLAUDE_CONFIG_DIR / HOME for the child, which moves the file the CLI
  * reads; this guard looks at the server's own environment only.
  */
@@ -62,8 +62,10 @@ export function userClaudeSignIn({ env = process.env, home, read = (p) => readFi
     try { raw = String(read(join(dir, 'settings.json'))); } catch (err) {
       return !(err && (err.code === 'ENOENT' || err.code === 'ENOTDIR'));   // missing: hermetic; unreadable: keep
     }
+    const text = raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw;   // a leading BOM is tolerated
+    if (!text.trim()) return false;   // a blank file holds no sign-in: hermetic
     let s;
-    try { s = JSON.parse(raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw); } catch { return true; }   // a leading BOM is tolerated
+    try { s = JSON.parse(text); } catch { return true; }
     if (!s || typeof s !== 'object' || Array.isArray(s)) return false;
     for (const key of ['apiKeyHelper', 'awsAuthRefresh', 'awsCredentialExport']) if (typeof s[key] === 'string' && s[key] !== '') return true;
     const e = s.env;
@@ -77,7 +79,7 @@ function userSignInLogged() {
   const keep = userClaudeSignIn();
   if (keep && !signInLogged) {
     signInLogged = true;
-    console.warn('[worca] requirements: user Claude settings carry sign-in; keeping them for interviews');
+    console.warn('[worca] requirements: user Claude settings carry or may carry sign-in; keeping them for interviews');
   }
   return keep;
 }

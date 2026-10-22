@@ -59,7 +59,7 @@ test('WORCA_MOCK set: exit 2 before anything, even the dry run text', async () =
 test('dry run: one line per call, never spawns, exit 0', async () => {
   const { lines, log } = logger();
   const f = fakeSpawn();
-  const code = await main(['--rounds', '3', '--model', MODEL], { spawn: f.spawn, log, env: noMock });
+  const code = await main(['--rounds', '3', '--model', MODEL], { spawn: f.spawn, log, env: noMock, userSignIn: () => false });
   assert.equal(code, 0);
   assert.equal(f.calls.length, 0);
   assert.equal(lines.filter((l) => /^round \d/.test(l)).length, 3);
@@ -313,7 +313,7 @@ test('--variant system-stable and the kept user settings are recorded in the rep
 test('no --model / --effort: the replay uses interviewModel()\'s pair', async () => {
   const { log } = logger();
   const f = fakeSpawn();
-  await main(['--rounds', '1', '--yes'], { spawn: f.spawn, log, env: noMock, resolveModel: async () => ({ model: 'claude-sonnet-5', effort: 'high', source: 'settings' }) });
+  await main(['--rounds', '1', '--yes'], { spawn: f.spawn, log, env: noMock, resolveModel: async () => ({ model: 'claude-sonnet-5', effort: 'high', source: 'settings' }), userSignIn: () => false });
   assert.equal(f.calls[0].model, 'claude-sonnet-5');
   assert.equal(f.calls[0].effort, 'high');
 });
@@ -321,11 +321,11 @@ test('no --model / --effort: the replay uses interviewModel()\'s pair', async ()
 test('a resolved pair without effort sends none; --effort and --model override', async () => {
   const { log } = logger();
   const noEffort = fakeSpawn();
-  await main(['--rounds', '1', '--yes'], { spawn: noEffort.spawn, log, env: noMock, resolveModel: async () => ({ model: 'claude-sonnet-5', effort: null, source: 'settings' }) });
+  await main(['--rounds', '1', '--yes'], { spawn: noEffort.spawn, log, env: noMock, resolveModel: async () => ({ model: 'claude-sonnet-5', effort: null, source: 'settings' }), userSignIn: () => false });
   assert.equal('effort' in noEffort.calls[0], false);
   const over = fakeSpawn();
   await main(['--rounds', '1', '--yes', '--model', 'm-x', '--effort', 'low'], { spawn: over.spawn, log, env: noMock,
-    resolveModel: async () => { throw new Error('not asked'); } });
+    resolveModel: async () => { throw new Error('not asked'); }, userSignIn: () => false });
   assert.equal(over.calls[0].model, 'm-x');
   assert.equal(over.calls[0].effort, 'low');
 });
@@ -333,7 +333,7 @@ test('a resolved pair without effort sends none; --effort and --model override',
 test('--model alone sends the default effort (medium) and does not ask the resolver', async () => {
   const { log } = logger();
   const f = fakeSpawn();
-  await main(['--rounds', '1', '--yes', '--model', 'm-y'], { spawn: f.spawn, log, env: noMock, resolveModel: async () => { throw new Error('not needed'); } });
+  await main(['--rounds', '1', '--yes', '--model', 'm-y'], { spawn: f.spawn, log, env: noMock, resolveModel: async () => { throw new Error('not needed'); }, userSignIn: () => false });
   assert.equal(f.calls[0].model, 'm-y');
   assert.equal(f.calls[0].effort, 'medium');
 });

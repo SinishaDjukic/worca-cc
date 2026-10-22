@@ -50,9 +50,9 @@ keeps working. That means an `apiKeyHelper`, `awsAuthRefresh` or `awsCredentialE
 with `CLAUDE_CODE_OAUTH_TOKEN`, any `CLAUDE_CODE_USE_*` (Vertex, Bedrock, Foundry), `AWS_*`,
 `CLOUD_ML_REGION`, `GOOGLE_APPLICATION_CREDENTIALS`, `CLAUDE_CODE_CLIENT_CERT` / `CLAUDE_CODE_CLIENT_KEY`,
 your own `ANTHROPIC_*` endpoint, `HTTP_PROXY` / `HTTPS_PROXY` or `NODE_EXTRA_CA_CERTS` (Docker's
-compose-secret setup is one). A settings file that exists but cannot be read or parsed is kept too; only a
-missing one means the hermetic call. Worca says so once in its log ("user Claude settings carry sign-in; keeping them for
-interviews"). Your plugins and hooks then load as they did before; slash commands still do not.
+compose-secret setup is one). A settings file that exists but cannot be read or parsed is kept too; a missing or blank
+one, or one that is not a JSON object, means the hermetic call. Worca says so once in its log ("user Claude
+settings carry or may carry sign-in; keeping them for interviews"). Your plugins and hooks then load as they did before; slash commands still do not.
 
 ## Ready
 

@@ -809,7 +809,7 @@ test('userClaudeSignIn: nothing to keep for other keys, an empty helper, no file
   for (const [body, why] of cases) assert.equal(userClaudeSignIn({ env: {}, home: signInHome(body) }), false, why);
 });
 
-test('userClaudeSignIn: a file that exists but cannot be read or parsed means keep the user settings; only a missing one is hermetic', () => {
+test('userClaudeSignIn: a file that exists but cannot be read or parsed means keep the user settings; a missing or blank one is hermetic', () => {
   const err = (code) => () => { throw Object.assign(new Error(code), { code }); };
   assert.equal(userClaudeSignIn({ env: {}, home: signInHome({}), read: err('EACCES') }), true, 'unreadable');
   assert.equal(userClaudeSignIn({ env: {}, home: signInHome({}), read: err('EISDIR') }), true, 'not a file');
@@ -817,7 +817,9 @@ test('userClaudeSignIn: a file that exists but cannot be read or parsed means ke
   assert.equal(userClaudeSignIn({ env: {}, home: signInHome({}), read: err('ENOTDIR') }), false, 'parent is not a directory');
   assert.equal(userClaudeSignIn({ env: {}, home: signInHome('{ not json') }), true, 'invalid JSON');
   assert.equal(userClaudeSignIn({ env: {}, home: signInHome('// comment\n{"a":1}') }), true, 'comments');
-  assert.equal(userClaudeSignIn({ env: {}, home: signInHome('') }), true, 'empty file');
+  assert.equal(userClaudeSignIn({ env: {}, home: signInHome('') }), false, 'empty file: nothing to keep');
+  assert.equal(userClaudeSignIn({ env: {}, home: signInHome(' ' + String.fromCharCode(10, 9) + ' ') }), false, 'whitespace only: nothing to keep');
+  assert.equal(userClaudeSignIn({ env: {}, home: signInHome(`${String.fromCharCode(0xFEFF)}  `) }), false, 'BOM and blanks: nothing to keep');
 });
 
 test('userClaudeSignIn: CLAUDE_CONFIG_DIR (trimmed) moves the file off <home>/.claude', () => {
@@ -842,7 +844,7 @@ test('the default userSignIn reads the user settings per call and logs the keep 
     assert.equal(r.calls.length, 2);
     for (const c of r.calls) assert.equal('settingSources' in c, false);
     const lines = warn.mock.calls.map((c) => c.arguments[0]).filter((a) => /requirements: user Claude settings/.test(a));
-    assert.deepEqual(lines, ['[worca] requirements: user Claude settings carry sign-in; keeping them for interviews']);
+    assert.deepEqual(lines, ['[worca] requirements: user Claude settings carry or may carry sign-in; keeping them for interviews']);
   } finally {
     warn.mock.restore();
     if (prev === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = prev;
