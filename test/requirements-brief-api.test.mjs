@@ -141,6 +141,9 @@ test('create, read, edit, release, export and delete, with brief frames', async 
     assert.equal(e.status, 200);
     assert.deepEqual(e.json.brief.sections.users, [{ name: 'Buyer', can: 'places orders' }, { name: 'Admin', can: 'refunds them' }]);
     assert.equal(e.json.brief.edited.users, true);
+    const dup = await call('PUT', B(shop, '/sections/users'), { value: 'Buyer: places orders\nbuyer: again' });
+    assert.deepEqual({ status: dup.status, error: dup.json.error }, { status: 400, error: 'Two users are called “Buyer”; give each its own name.' });
+    assert.deepEqual(store.getBrief('project', shop.key).sections.users, e.json.brief.sections.users, 'a refused edit writes nothing');
     assert.equal((await call('PUT', B(shop, '/sections/actors'), { value: 'x' })).status, 400);
     assert.equal((await call('PUT', B(shop, '/sections/product'), { value: ['not', 'text'] })).status, 400);
     const rel = await call('DELETE', B(shop, '/sections/users/edited'));

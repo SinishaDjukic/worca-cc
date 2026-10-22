@@ -37,6 +37,9 @@ export const STALENESS_TIMEOUT_MS = 10_000;
 // Each git call of a page load gets a little longer than the page's race, so a git timeout never reads as an
 // answer ("the branch is gone") before the race has said "slow"; it only reaps the process.
 const GIT_TIMEOUT_MS = STALENESS_TIMEOUT_MS + 2_000;
+/** Bounds the default-branch probes of a Create / Refresh press: longer than a page load's, as a member read too
+ *  late there is refused by name (a brief is never made from the rest without saying so). */
+export const BRIEF_PRESS_PROBE_MS = 30_000;
 const MEMO_MS = 30_000;
 const FILES_MAX = 2000;   // commitFilesSince's default page
 
@@ -58,6 +61,7 @@ export const briefSettled = (scopeType, scopeKey) => jobs.get(jobKey(scopeType, 
 
 const message = (err) => (err && err.message ? err.message : String(err));
 const coded = (code, msg) => Object.assign(new Error(msg), { code });
+const joinAnd = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
 const byKey = (a, b) => (a.projectKey < b.projectKey ? -1 : a.projectKey > b.projectKey ? 1 : 0);
 const hasGit = (dir) => { try { return !!dir && existsSync(join(dir, '.git')); } catch { return false; } };
 const scratchDir = () => { const d = join(worcaHome(), 'tmp', 'requirements'); mkdirSync(d, { recursive: true }); return d; };
@@ -95,12 +99,13 @@ function briefCall(d, { cwd, prompt, model, effort, timeoutMs }) {
 const SLOW_BASE = Symbol('slow');
 
 /** Each dir with the default branch the look reads (D8) → `{ dirs, slow }`. A dir without a default branch is left
- *  out; one whose git did not answer within STALENESS_TIMEOUT_MS is left out too and named in `slow` (cannot tell,
- *  which is not "no repository"). An abandoned defaultBranchRef may keep running its git calls in the background
- *  until their own GIT_TIMEOUT_MS reaps them; nothing reads their answer. */
-async function withBase(list, d) {
+ *  out; one whose git did not answer within `probeMs` is left out too and named in `slow` (cannot tell, which is not
+ *  "no repository"). An abandoned defaultBranchRef may keep running its git calls in the background until their own
+ *  timeout (a little longer than `probeMs`) reaps them; nothing reads their answer. */
+async function withBase(list, d, probeMs) {
+  const gitMs = probeMs + (GIT_TIMEOUT_MS - STALENESS_TIMEOUT_MS);
   const out = await Promise.all(list.map(async (x) => ({
-    ...x, base: await within(Promise.resolve(d.defaultBranchRef(x.dir, { timeout: GIT_TIMEOUT_MS })).catch(() => null), STALENESS_TIMEOUT_MS, SLOW_BASE),
+    ...x, base: await within(Promise.resolve(d.defaultBranchRef(x.dir, { timeout: gitMs })).catch(() => null), probeMs, SLOW_BASE),
   })));
   return {
     dirs: out.filter((x) => x.base && x.base !== SLOW_BASE),
@@ -110,14 +115,15 @@ async function withBase(list, d) {
 
 /** What a brief of the scope looks at. Project: `{ name, dirs, slow }`; workspace: `{ name, description, seed, dirs,
  *  leftOut, slow }` (D13: members in key order, the first REPO_LOOK_MAX_MEMBERS repositories; `leftOut` names the ones
- *  past them, `slow` the ones whose default branch could not be read in time). A project folder needs its own `.git`
- *  (a folder inside another repository is not looked at, as the checkout requires). */
-export async function briefTarget(scopeType, scopeKey, deps = {}) {
+ *  past them, `slow` the ones whose default branch could not be read within `probeMs`: STALENESS_TIMEOUT_MS for a
+ *  page load, BRIEF_PRESS_PROBE_MS for a press). A project folder needs its own `.git` (a folder inside another
+ *  repository is not looked at, as the checkout requires). */
+export async function briefTarget(scopeType, scopeKey, deps = {}, { probeMs = STALENESS_TIMEOUT_MS } = {}) {
   const d = { ...DEFAULTS, ...deps };
   if (scopeType === 'project') {
     const p = (await d.listProjects()).find((x) => x && x.key === scopeKey);
     const name = (p && p.name) || scopeKey;
-    const { dirs, slow } = p && p.exists && hasGit(p.path) ? await withBase([{ project: scopeKey, name, dir: p.path }], d) : { dirs: [], slow: [] };
+    const { dirs, slow } = p && p.exists && hasGit(p.path) ? await withBase([{ project: scopeKey, name, dir: p.path }], d, probeMs) : { dirs: [], slow: [] };
     return { name, dirs, slow };
   }
   const ws = await d.workspaceTarget(scopeKey);
@@ -133,7 +139,7 @@ export async function briefTarget(scopeType, scopeKey, deps = {}) {
     seed = scannedAt ? { kind: 'workspace-map', scannedAt } : { kind: 'workspace-description' };
   }
   const { dirs, slow } = await withBase(repos.slice(0, REPO_LOOK_MAX_MEMBERS)
-    .map((m) => ({ project: m.projectKey, name: m.projectName || m.projectKey, dir: m.projectDir })), d);
+    .map((m) => ({ project: m.projectKey, name: m.projectName || m.projectKey, dir: m.projectDir })), d, probeMs);
   return { name: ws.name || scopeKey, description, seed, dirs, leftOut, slow };
 }
 
@@ -265,11 +271,15 @@ export async function makeBrief(scopeType, scopeKey, { by = null } = {}, deps = 
     }
   };
   assertSwitchOn();   // before the git probes: no git runs with the switch off
-  const target = await briefTarget(scopeType, scopeKey, d);
+  const target = await briefTarget(scopeType, scopeKey, d, { probeMs: BRIEF_PRESS_PROBE_MS });
   // From here to the job's start nothing awaits: two presses cannot both pass the checks below.
   assertSwitchOn();   // again: it may have been turned off while the target was read
+  const slow = target.slow || [];
+  // A workspace member still unread after the press's probe budget is refused by name: a brief made from the rest
+  // would later say that member "joined after this brief".
+  if (scopeType === 'workspace' && slow.length) throw new RequirementsError('CONFLICT', `Worca could not read ${joinAnd(slow)} in time. Try again.`);
   if (!target.dirs.length) {
-    if (target.slow && target.slow.length) throw new RequirementsError('CONFLICT', 'Worca could not read the repository in time. Try again.');
+    if (slow.length) throw new RequirementsError('CONFLICT', 'Worca could not read the repository in time. Try again.');
     throw new RequirementsError('CONFLICT', 'There is no repository to look at.');
   }
   if (isBriefBusy(scopeType, scopeKey)) throw new RequirementsError('BUSY', 'Worca is already making this brief.');

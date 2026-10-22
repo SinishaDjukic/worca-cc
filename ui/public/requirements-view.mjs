@@ -628,6 +628,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('span', { class: 'req-brief-look', text: 'One look, read-only' }),
         h('span', { class: 'req-brief-facts' }, ...facts),
         est.model && est.model.label ? h('span', { class: 'hint req-brief-model', text: `${est.model.label} · counts toward your limit` }) : null,
+        slow ? h('span', { class: 'hint req-brief-slow', text: `Worca could not read ${joinAnd(t.slow)} in time; Create tries again.` }) : null,
         leftOut ? h('span', { class: 'hint req-brief-left-out',
           text: `Worca reads at most 8 projects of a workspace: ${joinAnd(leftOut)} ${leftOut.length === 1 ? 'is' : 'are'} left out.` }) : null,
         failed ? h('p', { class: 'form-msg err req-brief-failed', role: 'status', text: failed }) : null,

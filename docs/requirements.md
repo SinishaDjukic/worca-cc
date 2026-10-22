@@ -54,11 +54,12 @@ the median of recent brief looks, failed ones included, project and workspace br
 brief look there is none). A brief look is a model call like any other here: it counts toward your spending
 limit and takes a few minutes, and you can leave the page while it works; the page says when the brief is ready
 or could not be made. Worca refuses it, and spends nothing, when looking at the code is switched off, when there
-is no repository or main branch, when this brief is already being made, when two other briefs are being made,
-or when the limit is reached.
+is no repository or main branch, when a repository could not be read in time (Worca names it; try again), when
+this brief is already being made, when two other briefs are being made, or when the limit is reached.
 
 **Your edits win.** Edit any part with the pencil; Worca keeps your text and a refresh never overwrites it
-(**Let Worca rewrite this** hands a part back). Editing **What exists today** makes the areas yours: a refresh
+(**Let Worca rewrite this** hands a part back). Each user, word and area needs its own name: a name given twice
+is refused, and your text stays in the editor to fix. Editing **What exists today** makes the areas yours: a refresh
 no longer updates them, and "the code moved on" no longer checks them. Areas added from a closer look (below)
 survive a refresh too.
 

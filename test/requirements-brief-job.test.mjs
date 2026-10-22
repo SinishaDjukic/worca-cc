@@ -15,7 +15,7 @@ import { commitOf, defaultBranchRef } from '../src/core/worktree.mjs';
 import { BRIEF_SYSTEM_PROMPT, mockBrief } from '../src/core/requirements/brief.mjs';
 import {
   makeBrief, briefSettled, isBriefBusy, recoverBriefs, briefStaleness, briefEstimate, briefTarget,
-  MAX_BRIEF_JOBS, BRIEF_MAX_TURNS, BRIEF_TIMEOUT_MS, STALENESS_TIMEOUT_MS,
+  MAX_BRIEF_JOBS, BRIEF_MAX_TURNS, BRIEF_TIMEOUT_MS, STALENESS_TIMEOUT_MS, BRIEF_PRESS_PROBE_MS,
 } from '../src/core/requirements/brief-job.mjs';
 
 useTempHome(after);
@@ -131,6 +131,7 @@ test('constants', () => {
   assert.equal(BRIEF_MAX_TURNS, 40);
   assert.equal(BRIEF_TIMEOUT_MS, 600_000);
   assert.equal(STALENESS_TIMEOUT_MS, 10_000);
+  assert.equal(BRIEF_PRESS_PROBE_MS, 30_000, 'Create / Refresh probe the default branches longer than a page load');
 });
 
 test('refusals write nothing and call nothing: switch off, no repository, no default branch, the budget', async () => {
@@ -459,7 +460,9 @@ test('briefTarget: a workspace in key order, the first 8 repositories, the names
   const members = workspace(11, { plain: ['m03'] });
   const ws = { id: 'ws-t', name: 'Shop WS', description: 'How it fits.', members: [...members].reverse() };
   const scannedAt = '2026-10-01T10:00:00.000Z';
-  const t = await briefTarget('workspace', 'ws-t', deps({ ws, wsRow: { descriptionOrigin: 'generated', mapSummary: { scannedAt } } }));
+  // a generous probe budget: eleven real git probes on a loaded machine must not land in `slow` (that case has its own test)
+  const t = await briefTarget('workspace', 'ws-t', deps({ ws, wsRow: { descriptionOrigin: 'generated', mapSummary: { scannedAt } } }), { probeMs: 600_000 });
+  assert.deepEqual(t.slow, []);
   assert.equal(t.name, 'Shop WS');
   assert.equal(t.description, 'How it fits.');
   assert.deepEqual(t.seed, { kind: 'workspace-map', scannedAt });
@@ -759,17 +762,38 @@ test('a default branch too slow to read is not "no repository": its own refusal,
   const r = repo();
   const k = key();
   const hang = () => new Promise(() => {});
+  const flush = async () => { for (let i = 0; i < 5; i += 1) await new Promise(setImmediate); };
   mock.timers.enable({ apis: ['setTimeout'] });
   try {
+    // the press has its own, longer probe budget (BRIEF_PRESS_PROBE_MS), not the page's 10 s
     const p = makeBrief('project', k, {}, deps({ projects: [project(k, r.dir)], defaultBranchRef: hang }));
-    const settled = p.then(() => null, (e) => e);
-    await new Promise(setImmediate);
+    let e = null;
+    const settled = p.then(() => null, (x) => { e = x; return x; });
+    await flush();
     mock.timers.tick(STALENESS_TIMEOUT_MS);
-    const e = await settled;
+    await flush();
+    assert.equal(e, null, 'still probing after the page\'s 10 s');
+    mock.timers.tick(BRIEF_PRESS_PROBE_MS - STALENESS_TIMEOUT_MS);
+    await settled;
     assert.deepEqual({ code: e && e.code, message: e && e.message }, { code: 'CONFLICT', message: 'Worca could not read the repository in time. Try again.' });
     assert.equal(getBrief('project', k), null);
 
     const members = [{ projectKey: 'a', projectName: 'Alpha', projectDir: r.dir }, { projectKey: 'b', projectName: 'Beta', projectDir: repo().dir }];
+    // a workspace with one member too slow at the press: refused, naming it, rather than a brief made from the rest
+    const slowFirst = async (dir) => (dir === r.dir ? hang() : { branch: 'main', ref: 'refs/heads/main' });
+    const runner = fakeRunner([]);
+    const wk = 'ws-press-slow';
+    const wp = makeBrief('workspace', wk, {}, deps({ runner, ws: { id: wk, name: 'WS', description: '', members }, defaultBranchRef: slowFirst }));
+    let we = null;
+    const wsettled = wp.then(() => null, (x) => { we = x; return x; });
+    await flush();
+    mock.timers.tick(BRIEF_PRESS_PROBE_MS);
+    await wsettled;
+    assert.deepEqual({ code: we && we.code, message: we && we.message }, { code: 'CONFLICT', message: 'Worca could not read Alpha in time. Try again.' });
+    assert.equal(getBrief('workspace', wk), null, 'nothing written');
+    assert.equal(runner.calls.length, 0, 'nothing spent');
+    assert.equal(isBriefBusy('workspace', wk), false);
+
     // b answers at once (the mocked clock would also run out a real git call still under way)
     const slowA = async (dir) => (dir === r.dir ? hang() : { branch: 'main', ref: 'refs/heads/main' });
     const tp = briefTarget('workspace', 'ws-slow', deps({ ws: { id: 'ws-slow', name: 'WS', description: '', members }, defaultBranchRef: slowA }));

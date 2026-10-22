@@ -88,6 +88,20 @@ test('normalizeBrief: caps per field and per list', () => {
   assert.equal(files.length, 300);
 });
 
+test('normalizeBrief: a name the model gives twice (ignoring case) keeps its first item; the caps count distinct names', () => {
+  const { sections } = nb({
+    product: 'p',
+    users: [{ name: 'Shopper', can: 'buys' }, { name: 'shopper ', can: 'again' }, { name: 'Admin', can: 'manages' }],
+    terms: [{ term: 'Order', meaning: 'one' }, { term: 'ORDER', meaning: 'two' }],
+    areas: [...Array.from({ length: 5 }, () => ({ name: 'Orders', text: 'dup' })), ...Array.from({ length: 20 }, (_, i) => ({ name: `Area ${i}`, text: 't' }))],
+  });
+  assert.deepEqual(sections.users, [{ name: 'Shopper', can: 'buys' }, { name: 'Admin', can: 'manages' }]);
+  assert.deepEqual(sections.terms, [{ term: 'Order', meaning: 'one' }]);
+  assert.equal(sections.areas.length, 20);
+  assert.deepEqual(sections.areas.slice(0, 2).map((a) => a.name), ['Orders', 'Area 0']);
+  assert.equal(sections.areas.filter((a) => a.name === 'Orders').length, 1);
+});
+
 test('normalizeBrief: drops nameless items, status, added/belongsTo never from the model, files', () => {
   const raw = {
     product: ' A shop. ',
@@ -241,15 +255,17 @@ test('parseSectionValue: names holding ": " survive a save when they are current
   assert.deepEqual(parseSectionValue('terms', 'Status: packed', terms), [{ term: 'Status: packed', meaning: '' }], 'the name alone');
 });
 
-test('parseSectionValue: a name given twice keeps the first item only (text and lists)', () => {
+test('parseSectionValue: a name the owner gives twice is refused (BAD_REQUEST naming it), so the text is kept to fix', () => {
+  const refused = (fn, message) => assert.throws(fn, (e) => e instanceof RequirementsError && e.code === 'BAD_REQUEST' && e.message === message);
   const current = [area('Orders', { files: ['o.mjs'], added: { feature: 'FEAT-2', at: 't' } })];
-  const out = parseSectionValue('areas', 'Orders: first\nother: x\norders (partly): second', current);
-  assert.deepEqual(out.map((a) => [a.name, a.text]), [['Orders', 'first'], ['other', 'x']]);
-  assert.equal(out.filter((a) => a.added).length, 1, 'one area carries the added marker');
-  assert.deepEqual(parseSectionValue('users', [{ name: 'A', can: '1' }, { name: 'a ', can: '2' }], []), [{ name: 'A', can: '1' }]);
-  assert.deepEqual(parseSectionValue('terms', 'Order: one\nORDER: two', []), [{ term: 'Order', meaning: 'one' }]);
-  // duplicates do not count toward the cap
-  assert.equal(parseSectionValue('areas', Array.from({ length: 25 }, (_, i) => `A${i % 20}: x`).join('\n'), []).length, 20);
+  refused(() => parseSectionValue('areas', 'Orders: first\nother: x\norders (partly): second', current), 'Two areas are called “Orders”; give each its own name.');
+  refused(() => parseSectionValue('areas', [{ name: 'Gift', text: 'a' }, { name: ' gift', text: 'b' }], current), 'Two areas are called “Gift”; give each its own name.');
+  refused(() => parseSectionValue('users', [{ name: 'A', can: '1' }, { name: 'a ', can: '2' }], []), 'Two users are called “A”; give each its own name.');
+  refused(() => parseSectionValue('users', 'Admin: billing: x\nADMIN: BILLING: y', [{ name: 'Admin: billing', can: 'x' }]), 'Two users are called “Admin: billing”; give each its own name.');
+  refused(() => parseSectionValue('terms', 'Order: one\nORDER: two', []), 'Two terms are called “Order”; give each its own name.');
+  // distinct names pass; a name repeated past the cap is the duplicate the owner is told about, not the cap
+  assert.equal(parseSectionValue('areas', 'Orders: a\nOrder: b', current).length, 2);
+  refused(() => parseSectionValue('areas', Array.from({ length: 25 }, (_, i) => `A${i % 20}: x`).join('\n'), []), 'Two areas are called “A0”; give each its own name.');
 });
 
 test('parseSectionValue: structured arrays, current may be the whole sections', () => {

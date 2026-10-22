@@ -1660,6 +1660,14 @@ test('brief page, none yet: making, a failed first make, the switch off, no repo
   const w = make();
   await w.view.show('brief/workspace/ws1');
   assert.equal(text(w.host.querySelector('.req-brief-left-out')), 'Worca reads at most 8 projects of a workspace: cart, mail and pay are left out.');
+  assert.equal(w.host.querySelector('.req-brief-slow'), null);
+  // repositories too slow to read on this load are named, as the ones left out are; Create stays (it probes longer)
+  fakeApi({ ...BASE, [`GET ${W}`]: briefBody({ target: { name: 'Storefront', branch: null, repositories: 1, leftOut: [], slow: ['cart', 'mail'] } }) });
+  const sw = make();
+  await sw.view.show('brief/workspace/ws1');
+  assert.equal(text(sw.host.querySelector('.req-brief-slow')), 'Worca could not read cart and mail in time; Create tries again.');
+  assert.equal(createBtn(sw.host).disabled, false);
+  assert.equal(text(s.host.querySelector('.req-brief-slow')), 'Worca could not read shop in time; Create tries again.');
 });
 
 test('brief page: Your notes for Worca: the card, Save notes puts the body and the switch, then repaints', async () => {

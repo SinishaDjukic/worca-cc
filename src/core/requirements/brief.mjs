@@ -110,6 +110,19 @@ function normArea(x, opts, keep = null, fallbackFiles = []) {
 }
 
 const list = (v, fn, max) => (Array.isArray(v) ? v : []).map((x) => fn(x)).filter(Boolean).slice(0, max);
+const nameOf = (section, x) => (section === 'terms' ? x.term : x.name);
+const nameKey = (s) => String(s || '').trim().toLowerCase();
+
+/** The model's items: each name (ignoring case and spaces at the ends) once, its first item, then the cap. */
+function distinctList(section, v, fn, max) {
+  const seen = new Set();
+  return list(v, fn, Infinity).filter((x) => {
+    const k = nameKey(nameOf(section, x));
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  }).slice(0, max);
+}
 
 /** An empty reply: how a look that hit its turn limit ends (D4). */
 export const BRIEF_OUT_OF_STEPS = 'Worca ran out of steps before writing the brief.';
@@ -129,9 +142,9 @@ export function normalizeBrief(text, { cwds = [], members = null } = {}) {
   const opts = { cwds, members };
   const sections = {
     product: clip(data.product, BRIEF_LIMITS.product),
-    users: list(data.users, normUser, BRIEF_LIMITS.users),
-    terms: list(data.terms, normTerm, BRIEF_LIMITS.terms),
-    areas: list(data.areas, (a) => normArea(a, opts), BRIEF_LIMITS.areas),
+    users: distinctList('users', data.users, normUser, BRIEF_LIMITS.users),
+    terms: distinctList('terms', data.terms, normTerm, BRIEF_LIMITS.terms),
+    areas: distinctList('areas', data.areas, (a) => normArea(a, opts), BRIEF_LIMITS.areas),
   };
   if (!sections.product && !sections.areas.length) throw new RoundError('the reply has no product description and no area');
   const files = relFiles(data.files, opts, Infinity);
@@ -194,15 +207,16 @@ function readLine(line, names, areas) {
   return { name: m ? m[1] : head, text, status: m ? m[2] : null };
 }
 
-/** The first item of each name (ignoring case and spaces at the ends): a name given twice keeps its first item. */
-function firstOfEachName(items, nameOf) {
-  const seen = new Set();
-  return items.filter((x) => {
-    const k = String(nameOf(x) || '').trim().toLowerCase();
-    if (seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  });
+/** BAD_REQUEST when the owner gives one name twice (ignoring case and spaces at the ends): their text is kept to
+ *  fix rather than an item silently dropped, and two areas never both carry one area's markers (added, files). */
+function assertNamesDistinct(section, items) {
+  const seen = new Map();
+  for (const x of items) {
+    const name = String(nameOf(section, x) || '').trim();
+    const k = name.toLowerCase();
+    if (seen.has(k)) throw badRequest(`Two ${section} are called “${seen.get(k)}”; give each its own name.`);
+    seen.set(k, name);
+  }
 }
 
 const currentList = (section, current) => {
@@ -233,8 +247,8 @@ export function parseSectionValue(section, value, current) {
     else items = list(value, (a) => { const k = find(isObj(a) ? a.name : ''); return normArea(a, {}, k, k ? k.files || [] : []); }, Infinity);
   } else {
     items = [];
-    const nameKey = section === 'terms' ? 'term' : 'name';
-    const names = cur.map((x) => (x && typeof x[nameKey] === 'string' ? x[nameKey].trim() : '')).filter(Boolean)
+    const nameField = section === 'terms' ? 'term' : 'name';
+    const names = cur.map((x) => (x && typeof x[nameField] === 'string' ? x[nameField].trim() : '')).filter(Boolean)
       .sort((a, b) => b.length - a.length);
     for (const line of value.split(/\r?\n/)) {
       const t = line.trim();
@@ -249,8 +263,7 @@ export function parseSectionValue(section, value, current) {
     }
     items = items.filter(Boolean);
   }
-  // A name given twice keeps its first item only, so two areas never both carry one area's markers (added, files).
-  items = firstOfEachName(items, (x) => (section === 'terms' ? x.term : x.name));
+  assertNamesDistinct(section, items);
   if (items.length > BRIEF_LIMITS[section]) throw badRequest(`at most ${BRIEF_LIMITS[section]} ${section} fit in the brief`);
   return items;
 }
