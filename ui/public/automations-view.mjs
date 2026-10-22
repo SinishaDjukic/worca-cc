@@ -1,6 +1,7 @@
 // ui/public/automations-view.mjs — Settings › Automations (docs/git-automations.md, flag gitAutomations): per project,
 // the three Auto-handle switches, the event rules and what they did lately. app.js owns the fetches and the dialogs;
 // this module only renders and calls back. Every GitHub-sourced string (titles, logins) goes through textContent.
+import { makeSwitch } from './switch.mjs';
 
 export const AUTOMATIONS_EMPTY_RULES = 'No rules yet. Turn on an Auto-handle switch above, or add a rule.';
 export const AUTOMATIONS_EMPTY_EVENTS = 'Nothing happened yet. New issues and pull requests show here with what Worca did.';
@@ -76,14 +77,9 @@ export function renderAutomations(doc, data, { workflowNames = {}, ...cb } = {})
   const ah = h(doc, 'div', 'automations-switches drows');
   ah.append(h(doc, 'h3', '', 'Auto-handle'));
   for (const s of data.switches || []) {
-    const row = h(doc, 'label', 'drow automations-switch');
-    const box = doc.createElement('input');
-    box.type = 'checkbox';
-    box.dataset.switch = s.key;
-    box.checked = !!data.autoHandle?.[s.key];
-    box.addEventListener('change', () => cb.onSwitch?.(s.key, box.checked));
-    row.append(box, ' ', h(doc, 'span', '', s.label));
-    ah.append(row);
+    const sw = makeSwitch(doc, { label: s.label, checked: !!data.autoHandle?.[s.key], rowClass: 'automations-switch', data: { switch: s.key } });
+    sw.input.addEventListener('change', () => cb.onSwitch?.(s.key, sw.input.checked));
+    ah.append(sw.row);
   }
   ah.append(h(doc, 'p', 'hint', 'Only collaborators\' issues and PRs start a run. Runs use the Strict guardrails, and Worca never approves or merges.'));
   root.append(ah);
