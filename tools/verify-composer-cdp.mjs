@@ -18,7 +18,7 @@
 //     (7)       measured post-fit containment of every node box
 //     (10)      the 380px Library card right of the stage, open on Agents: the selector's
 //               three tabs, the section's folders collapsed
-//     (11)      the top bar's rendered controls; the app chrome computes display:none
+//     (11)      the top bar's rendered controls; the app chrome (sidebar, top bar) stays in place around the view
 //     (12)      frosted cards: a backdrop blur and a 0.4–0.6 alpha in both themes
 //     (13)      the PAINTED wires are orthogonal lane routes; a loop's pill sits under its cards
 //     (14)      the zoom menu's items and a real Zoom in (100% -> 120%); the zoom and
@@ -420,9 +420,9 @@ try {
     const disp=(s)=>{const e=q(s);return e?getComputedStyle(e).display:'absent';};
     return {ctl,sidebar:disp('.sidebar'),topnav:disp('#topnav'),dock:disp('body > .ask-dock'),errorsShown:shown(q('#wfv-errors'))};})()`);
   const expectBar = ['wfv-back', 'wfv-wf-menu', 'wfv-name', ...(bar.errorsShown ? ['wfv-errors'] : []), 'wfv-lib-toggle', 'wfv-save'];
-  check(11, 'the top bar holds exactly Back, the workflow menu, the name, (errors), the Library toggle and Save; the app chrome is hidden',
+  check(11, 'the top bar holds exactly Back, the workflow menu, the name, (errors), the Library toggle and Save; the app chrome stays around the view',
     JSON.stringify([...bar.ctl].sort()) === JSON.stringify([...expectBar].sort())
-    && bar.sidebar === 'none' && bar.topnav === 'none' && (bar.dock === 'none' || bar.dock === 'absent'), { ...bar, expectBar });
+    && bar.sidebar !== 'none' && bar.topnav !== 'none' && bar.dock !== 'block', { ...bar, expectBar });
   const frost = async () => ev(`(()=>{const n=document.querySelector('#wfv-canvas .gv-world .node');if(!n)return null;const cs=getComputedStyle(n);
     const m=cs.backgroundColor.match(/rgba?\\(([^)]+)\\)/);const parts=m?m[1].split(/[ ,/]+/).filter(Boolean).map(Number):[];
     return {blur:cs.backdropFilter||cs.webkitBackdropFilter||'',bg:cs.backgroundColor,alpha:parts.length>=4?parts[3]:1,theme:document.documentElement.dataset.theme||''};})()`);
@@ -555,6 +555,8 @@ try {
   await load();
   await ev(`(()=>{const {c}=window.__gv();c.select({kind:'node',id:'n_agent'});c.view.centerOn('n_agent');return 1;})()`);
   await settle('pop-select');
+  // The narrower stage (the app sidebar stays) can scroll the toolbar's More out of view: bring it in, as a user would.
+  await ev(`(()=>{const m=document.querySelector('.wfv-tb [data-tb="more"]');if(m)m.scrollIntoView({block:'nearest',inline:'nearest'});return 1;})()`); await settle('pop-more-visible');
   const more = await rect('.wfv-tb [data-tb="more"]');
   if (more) { await press(more.l + more.w / 2, more.t + more.h / 2); await mup(more.l + more.w / 2, more.t + more.h / 2); await settle('pop-open'); }
   const p17 = { more, pop: await rect('.wfv-pop'), stage: await rect('#wfv-stage'), dock: await rect('#wfv-dock'), tb: await rect('.wfv-tb') };
@@ -580,12 +582,12 @@ try {
       }
       await settle(`room-${width}`);
       room.push({ width, lib: await rect('#wfv-library'), stage: await rect('#wfv-stage'), tl: await rect('#wfv-stage .wfv-tl .wfv-bar'),
-        tr: await rect('#wfv-stage .wfv-tr .wfv-bar'), name: await ev(`document.getElementById('wfv-name').value`) });
+        tr: await rect('#wfv-stage .wfv-tr .wfv-bar'), main: await rect('main.main'), name: await ev(`document.getElementById('wfv-name').value`) });
     }
     await cdp('Emulation.clearDeviceMetricsOverride');
-    check(18, 'beside the 380px Library the stage keeps its room: ≥ 1030px at 1440 and ≥ 610px at 1024, and with Default open the top-left bar ends left of the top-right bar',
+    check(18, 'beside the 380px Library the stage keeps its room: the content area less the Library and the 8px padding and gap at 1440 and 1024, and with Default open the top-left bar ends left of the top-right bar',
       room.length === 2 && room.every((m) => !!m.lib && !!m.stage && !!m.tl && !!m.tr && Math.abs(m.lib.w - 380) < 0.6 && m.name === 'Default' && m.tl.r < m.tr.l)
-      && room[0].stage.w >= 1030 && room[1].stage.w >= 610, room);
+      && room.every((m) => !!m.main && m.stage.w >= m.main.w - 380 - 24 - 0.6), room);
   }
 
   // ---- (19) the Workflows tour walks the Library's selector and folders at 1440, 760 and 390 px ------------
