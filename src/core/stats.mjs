@@ -613,6 +613,12 @@ export function getStats({ range = 'month', now = new Date(), from = null, to = 
         prevSpentUsd: prev ? prev.ask.spendUsd : null,
         series: seriesWindows.map((b) => roundUsd(askWindowedSpendUsd(b.startMs, b.endMs))),
       },
+      // Requirements spend (plans/requirements-design.md D9): in Spent, so in the report too; dropped by a filter like Chat's.
+      requirements: filtered ? null : {
+        spentUsd: totals.requirements.spendUsd,
+        prevSpentUsd: prev ? prev.requirements.spendUsd : null,
+        series: seriesWindows.map((b) => roundUsd(requirementsWindowedSpendUsd(b.startMs, b.endMs))),
+      },
     };
   }
   return out;

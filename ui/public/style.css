@@ -3042,7 +3042,7 @@ table.sr-only{display:block;}
 .cr-share-in{display:flex;align-items:center;gap:8px;}
 .cr-share-bar{flex:1;height:6px;background:var(--line);border-radius:var(--r-xs);overflow:hidden;}
 .cr-share-fill{display:block;height:100%;background:var(--ink-3);transition:width .25s ease-out;}
-.cr-table tr.cr-kind-none td,.cr-table tr.cr-kind-ask td{color:var(--ink-2);}
+.cr-table tr.cr-kind-none td,.cr-table tr.cr-kind-ask td,.cr-table tr.cr-kind-requirements td{color:var(--ink-2);}
 .cr-table tr td.is-neg{color:var(--red-ink);}
 .cr-table tr.cr-enter{animation:cr-slide .18s ease-out;}
 @keyframes cr-slide{from{opacity:0;transform:translateY(-4px);}to{opacity:1;transform:none;}}

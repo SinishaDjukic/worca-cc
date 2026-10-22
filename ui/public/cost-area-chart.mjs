@@ -8,7 +8,7 @@ import { niceScale, bucketLabel, tipDate, compactUsd, DEFAULT_FMT } from './stat
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const CW = 560, CH = 260, L = 44, R = 12, T = 18, B = 26;
 export const SERIES_FILLS = Object.freeze(['var(--blue)', 'var(--green)', 'var(--teal)', 'var(--amber)', 'var(--pink)']);
-const KIND_FILLS = { other: 'var(--slate)', ask: 'var(--indigo)' };
+const KIND_FILLS = { other: 'var(--slate)', ask: 'var(--indigo)', requirements: 'var(--violet)' };
 let chartSeq = 0;
 const r1 = (v) => Math.round(v * 10) / 10;
 

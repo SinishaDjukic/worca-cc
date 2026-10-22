@@ -6,6 +6,7 @@ import {
   allocate, allocationSeries, matchesFilters, dimensionOptions, valueOptions, valueLabel, formatShare, reportCsv,
 } from '../../src/shared/cost/allocation.mjs';
 import { statTile, statDeltaChip, STAT_ICONS, signedUsd, SAVED_NOTE, DEFAULT_FMT } from './stats-view.mjs';
+import { flagOn } from './flags.mjs';
 import { createAreaChart } from './cost-area-chart.mjs';
 import { openDimensionPicker } from './cost-dimension-picker.mjs';
 import { icon } from './icons.mjs';
@@ -81,7 +82,7 @@ export function defaultBy(options) {
  */
 export function createCostReport({ doc = globalThis.document, fmt = DEFAULT_FMT, storage = null, reducedMotion = false,
   onOpenRuns = () => {}, onDownload = () => {}, stateKey = COST_STATE_KEY, viewsKey = COST_VIEWS_KEY,
-  csvName = (s, key) => `statistics-${s.range}-cost-${key}.csv`, extras = null } = {}) {
+  csvName = (s, key) => `statistics-${s.range}-cost-${key}.csv`, extras = null, requirementsEnabled = undefined } = {}) {
   const canOpen = typeof onOpenRuns === 'function';
   const st = { ...cleanState(readJson(storage, stateKey, {})), view: '', expanded: new Set(),
     data: null, dims: [], rangeLabel: '', range: 'month' };
@@ -106,6 +107,9 @@ export function createCostReport({ doc = globalThis.document, fmt = DEFAULT_FMT,
   const persist = () => writeJson(storage, stateKey, cleanState(st));
   const dimLabel = (dim) => options.find((o) => o.id === dim)?.label || (dim.startsWith('tag:') ? dim.slice(4) : dim);
   const askOn = () => !st.filters.length && !!st.data?.report?.ask;
+  // Requirements spend: like Chat's, but only while the requirements flag is on (as the Statistics tile).
+  const reqOn = () => !st.filters.length && !!st.data?.report?.requirements
+    && (requirementsEnabled ?? flagOn('requirements', doc));
 
   function paintKpis(prev) {
     const t = model.total;
@@ -213,7 +217,7 @@ export function createCostReport({ doc = globalThis.document, fmt = DEFAULT_FMT,
     else runsTd.textContent = '—';
     tr.append(nameTd, shareCell(row),
       h(doc, 'td', 'num', fmt.usd(row.spentUsd)),
-      h(doc, 'td', 'num', row.kind === 'ask' ? '—' : fmt.hours(row.humanHours)),
+      h(doc, 'td', 'num', row.kind === 'ask' || row.kind === 'requirements' ? '—' : fmt.hours(row.humanHours)),
       savedTd,
       h(doc, 'td', 'num', row.usdPerHour == null ? '—' : `${fmt.usd(row.usdPerHour)}/h`),
       runsTd);
@@ -277,8 +281,10 @@ export function createCostReport({ doc = globalThis.document, fmt = DEFAULT_FMT,
     runs = rep.runs.filter((r) => matchesFilters(r, st.filters));
     const prevRuns = rep.prevRuns ? rep.prevRuns.filter((r) => matchesFilters(r, st.filters)) : null;
     const rate = st.data.humanRateUsd;
-    model = allocate(runs, { by: st.by, thenBy: st.thenBy || null, rate, askUsd: askOn() ? rep.ask.spentUsd : 0 });
-    const prev = prevRuns ? allocate(prevRuns, { by: st.by, rate, askUsd: askOn() ? rep.ask.prevSpentUsd || 0 : 0 }).total : null;
+    model = allocate(runs, { by: st.by, thenBy: st.thenBy || null, rate, askUsd: askOn() ? rep.ask.spentUsd : 0,
+      requirementsUsd: reqOn() ? rep.requirements.spentUsd : 0 });
+    const prev = prevRuns ? allocate(prevRuns, { by: st.by, rate, askUsd: askOn() ? rep.ask.prevSpentUsd || 0 : 0,
+      requirementsUsd: reqOn() ? rep.requirements.prevSpentUsd || 0 : 0 }).total : null;
     paintKpis(prev);
     paintBar();
     paintControls();
@@ -296,7 +302,8 @@ export function createCostReport({ doc = globalThis.document, fmt = DEFAULT_FMT,
     chartHead.replaceChildren(h(doc, 'h2', null, 'Cost and value'), h(doc, 'small', 'hint', st.rangeLabel));
     const none = model.rows.find((r) => r.kind === 'none');
     chart.update({
-      series: allocationSeries(model, runs, { buckets: rep.buckets, metric: st.metric, askSeries: askOn() ? rep.ask.series : null }),
+      series: allocationSeries(model, runs, { buckets: rep.buckets, metric: st.metric, askSeries: askOn() ? rep.ask.series : null,
+        requirementsSeries: reqOn() ? rep.requirements.series : null }),
       buckets: rep.buckets, bucket: st.data.bucket, metric: st.metric,
       unallocated: none && canOpen && st.by.startsWith('tag:') ? { ids: none.runIds } : null,
     });
