@@ -171,9 +171,7 @@ export function roundPromptParts({ feature, context = '', turns = [], final = fa
  *  with a usable brief, the same plus the <product_brief> block (A7). */
 export function buildRoundPrompt(args) {
   const { stable, changing } = roundPromptParts(args);
-  return `${stable}
-
-${changing}`;
+  return `${stable}\n\n${changing}`;
 }
 
 /** The look's user prompt. `cwd`, the look's directory, is named here and not in the system prompt, which

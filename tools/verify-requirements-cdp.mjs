@@ -9,7 +9,8 @@
 // dialog (focus on the reason, Escape returns it; its button is disabled until a reason is typed), Confirm the N
 // left leading to the Ready to build card; Start in worca on that card gives one run row linking to #running/<id>
 // and the API's starts[0].runId (the mock run is then stopped); the feature page has no context panel and its
-// menu's Your notes for Worca opens the project's brief page with the notes (A7 D12); no page errors.
+// menu's Your notes for Worca opens the project's brief page with the notes (A7 D12); the product brief flow
+// (Create, the code moved on, New feature knows the brief, Look closer, Add this to the brief); no page errors.
 // NOT part of `npm test`.
 // Run: npm run verify:requirements   (set CHROME_BIN to a Chrome/Chromium binary if it is not auto-found,
 // e.g. CHROME_BIN="C:/Program Files/Google/Chrome/Application/chrome.exe" on Windows)
@@ -23,7 +24,7 @@
 // the jsdom tests test/requirements-view.test.mjs and test/requirements-app.test.mjs.
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -238,6 +239,57 @@ check('the feature page has no context panel; Your notes for Worca (the menu) op
     item.click(); return true; })()`)
   && await until(() => A.evalJs(`location.hash.startsWith('#requirements/brief/project/')
     && !!document.querySelector('#requirements-host [data-req-brief] [data-ui="notes-body"]')`)));
+// ---- A7: the product brief, end to end in mock mode (no model; the brief is canned).
+const briefHash = await A.evalJs(`location.hash.startsWith('#requirements/brief/project/') ? location.hash : null`);
+await A.evalJs(`location.hash = '#requirements'`);
+check('the list header says "Product brief: none yet · Create" for the project',
+  await until(() => A.evalJs(`(() => { const g = [...document.querySelectorAll('#requirements-host .req-group')].find((x) => x.querySelector('h2')?.textContent === 'Project · shop');
+    const h = g?.querySelector('.req-group-brief'); return !!h && h.textContent === 'Product brief: none yet · Create' && !!h.querySelector('a'); })()`)));
+await A.evalJs(`document.querySelector('#requirements-host .req-group-brief a').click()`);
+check('the brief page (none yet) shows Give Worca a head start and Create the brief',
+  await until(() => A.evalJs(`(() => { const c = document.querySelector('#requirements-host .req-brief-start');
+    return location.hash.startsWith('#requirements/brief/project/') && !!c
+      && c.querySelector('h3')?.textContent === 'Give Worca a head start'
+      && c.querySelector('[data-ui="brief-create"]')?.textContent === 'Create the brief'; })()`)));
+await A.evalJs(`document.querySelector('#requirements-host [data-ui="brief-create"]').click()`);
+check('Create in mock mode: the made brief page shows its four sections and "Made from"',
+  await until(() => A.evalJs(`(() => { const h = document.querySelector('#requirements-host');
+    const keys = [...h.querySelectorAll('.req-brief-card [data-section]')].map((x) => x.getAttribute('data-section'));
+    return keys.length === 4 && /Made from/.test(h.textContent); })()`), 15000));
+// A commit to the test repo: the brief page then says the code moved on. The server remembers a repository
+// check for 30 s (MEMO_MS in brief-job.mjs), so wait that out, then reopen the page so it is read again.
+await sleep(31000);
+writeFileSync(path.join(projDir, 'README.md'), 'orders\n');
+git('add', 'README.md'); git('commit', '-m', 'moved on');
+await A.evalJs(`location.hash = '#requirements'`);
+await sleep(300);
+await A.evalJs(`location.hash = ${JSON.stringify(briefHash)}`);
+check('after a commit: "The code moved on since this brief" shows with a Refresh',
+  await until(() => A.evalJs(`(() => { const n = document.querySelector('#requirements-host .req-brief-stale');
+    return !!n && /The code moved on since this brief/.test(n.textContent) && !!n.querySelector('[data-brief-go]'); })()`), 15000));
+await A.evalJs(`location.hash = '#requirements/new'`);
+const picked = await until(() => A.evalJs(`(() => { const sel = document.getElementById('req-new-target'); if (!sel) return false;
+  const opt = [...sel.options].find((o) => o.text === 'shop'); if (!opt) return false; sel.value = opt.value;
+  sel.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`));
+check('New feature for that project shows "Worca knows shop from its product brief" and cents per round',
+  picked && await until(() => A.evalJs(`(() => { const l = document.querySelector('.req-new .req-brief-line');
+    return !!l && /^Worca knows shop from its product brief/.test(l.textContent)
+      && /cents per round/.test(document.querySelector('.req-new .req-new-cost')?.textContent || ''); })()`)));
+await A.evalJs(`(() => { document.getElementById('req-new-title').value = 'Orders report';
+  document.getElementById('req-new-desc').value = 'A report of orders per day';
+  [...document.querySelectorAll('.req-new .btn-go')].at(-1).click(); })()`);
+check('a feature created there shows "What Worca knows" with Look closer',
+  await until(() => A.evalJs(`(() => { const c = document.querySelector('#requirements-host .req-knows');
+    return !!c && c.querySelector('h3')?.textContent === 'What Worca knows' && !!c.querySelector('[data-ui="look-closer"]'); })()`), 15000));
+await A.evalJs(`document.querySelector('#requirements-host [data-ui="look-closer"]').click()`);
+check('Look closer (mock) shows the look with Add this to the brief',
+  await until(() => A.evalJs(`!!document.querySelector('#requirements-host .req-knows [data-ui="brief-add"]')`), 15000));
+await A.evalJs(`document.querySelector('#requirements-host [data-ui="brief-add"]').click()`);
+await until(() => A.evalJs(`!document.querySelector('#requirements-host [data-ui="brief-add"]')`));
+await A.evalJs(`location.hash = ${JSON.stringify(briefHash)}`);
+check('Add this to the brief: the brief page lists the added area and "Used by 1 feature"',
+  await until(() => A.evalJs(`(() => { const t = document.querySelector('#requirements-host').textContent;
+    return /Orders: Orders report/.test(t) && /Orders · checkout and order history/.test(t) && /Used by 1 feature/.test(t); })()`), 15000));
 // The mock Auto run parks on its workflow question: stop it so the server closes and the temp dir can go.
 for (const r of runs.values()) { try { r.orch?.stop?.(); } catch {} }
 const settled = new Set(['done', 'stopped', 'error', 'paused', 'interrupted']);

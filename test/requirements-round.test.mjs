@@ -356,7 +356,7 @@ const A2_ORIENTATION_SYSTEM_LINES = [
   'Reply with ONLY this JSON object, no prose, no code fence: { "summary": "...", "files": ["each path you read"], "area": "only when asked: the product area" }',
 ];
 
-test('system prompts: Worca\'s own header lines on top; every A2 line follows, unchanged and in order', () => {
+test('system prompts: Worca\'s own header lines on top; every line of A2 as amended by A7 follows, in order', () => {
   const round = ROUND_SYSTEM_PROMPT.split('\n');
   assert.deepEqual(round.slice(0, 2), [
     'You are Worca\'s requirements interviewer. You talk with a product owner through Worca\'s Requirements page, never through a terminal, and you have no tools: everything you know is in the message.',

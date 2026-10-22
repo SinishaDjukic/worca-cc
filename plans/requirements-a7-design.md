@@ -328,7 +328,7 @@ plan Task 10) and resolves:
   overrides are `systemPrompt`, `tools`, `maxTurns` and `effort`. The brief job calls
   `callModel(d, { kind: 'look', cwd, prompt, model, timeoutMs, systemPrompt: BRIEF_SYSTEM_PROMPT,
   maxTurns: BRIEF_MAX_TURNS })`: it gets replace mode, the hermetic flags, the look's tools (`REPO_LOOK_TOOLS`)
-  and the interview model's effort (no `effort` override). There is no `'brief'` kind. Before the merge the
+  and the effort from `interviewModel(d)`, passed explicitly (`callModel` does not fill it). There is no `'brief'` kind. Before the merge the
   same call is A1's `callModel(d, { cwd, systemPrompt: BRIEF_SYSTEM_PROMPT, prompt, model, tools:
   REPO_LOOK_TOOLS, maxTurns: BRIEF_MAX_TURNS, timeoutMs })`, written in one helper (`briefCall`) so the merge
   changes one call. `BRIEF_SYSTEM_PROMPT` already carries the look lines replace mode needs (§4).
