@@ -175,8 +175,8 @@ export function workflowNoticeText({ state, name = '', matched = false, thenRun 
  */
 export function defaultWorkflowDeps({ threadId = null, signal = null, classify = classifyTask, env = process.env } = {}) {   // eslint-disable-line no-unused-vars
   const bundleSignal = signal;
-  // A Codex chat's classifier runs on Codex too: a Codex chat makes no Claude call (D8).
-  const chatEngine = env && env.WORCA_ASK_ENGINE === 'codex' ? 'codex' : null;
+  // A Codex or Copilot chat's classifier runs on its own engine too: such a chat makes no Claude call (D8).
+  const chatEngine = env && ['codex', 'copilot'].includes(env.WORCA_ASK_ENGINE) ? env.WORCA_ASK_ENGINE : null;
   return {
     workflow: {
       /**
@@ -214,9 +214,9 @@ export function defaultWorkflowDeps({ threadId = null, signal = null, classify =
           // D6 amendment: the classifier may Read/Grep/Glob a throwaway detached checkout of the
           // project's HEAD to SIZE the change. Mock never spawns, so it never borrows one; a project
           // without git (or a failed `git worktree add`) classifies text-only, exactly as before.
-          // A Codex chat's classifier runs on codex with its shell off (classify.mjs): no look to borrow.
+          // A Codex or Copilot chat's classifier runs read-only with no shell (classify.mjs): no look to borrow.
           // A workspace gets one checkout per member under repos/<projectKey> (the run root's shape).
-          const look = mockEnabled({}) || chatEngine === 'codex' ? null : ws
+          const look = mockEnabled({}) || chatEngine ? null : ws
             ? await openWorkspaceRepoLook(ws.members, cwd, { signal: signal || bundleSignal })
             : await openRepoLook(project.path, cwd, { signal: signal || bundleSignal });
           const input = {

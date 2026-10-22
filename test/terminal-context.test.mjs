@@ -1,11 +1,14 @@
 // test/terminal-context.test.mjs — where a run's terminal opens, and what env it starts with (#573).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, delimiter } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { terminalTargets, terminalEnv, LIVE_WARNING } from '../src/core/terminal/context.mjs';
+import { NO_PROJECT_KEY, noProjectWorkDir } from '../src/core/store.mjs';
+import { createPipeline, newPipelineId, findPipelineRowById } from '../src/core/artifacts.mjs';
+import { membersOfRow } from '../src/core/checkout.mjs';
 
 useTempHome(after);
 const dir = mkdtempSync(join(tmpdir(), 'term-ctx-'));
@@ -31,6 +34,26 @@ test('a finished run opens its checkout, or asks for one', () => {
   assert.deepEqual(terminalTargets(kept).members.map((m) => [m.state, m.cwd]), [['checkout', dir]]);
   const none = projectRow({ status: 'done', branch: JSON.stringify({ feature: 'f' }) });
   assert.deepEqual(terminalTargets(none).members.map((m) => [m.state, m.cwd]), [['needs-checkout', null]]);
+});
+
+test('P3: a run without a project opens its live work/ and never asks for a checkout', () => {
+  const work = noProjectWorkDir('abcd1234');
+  mkdirSync(work, { recursive: true });
+  const np = (extra) => ({ id: 'abcd1234', target: 'project', project_key: NO_PROJECT_KEY, status: 'running',
+    branch: JSON.stringify({ workMode: 'none', runRootMode: 'detached' }), workspace_meta: null, ...extra });
+  const row = (r) => r.members.map((m) => [m.state, m.cwd, m.projectName, m.warning]);
+  assert.deepEqual(row(terminalTargets(np(), { isLive: () => true })), [['worktree', work, 'No project', undefined]], 'live: nothing is committed, so no warning');
+  assert.deepEqual(row(terminalTargets(np({ status: 'paused' }))), [['worktree', work, 'No project', undefined]]);
+  assert.deepEqual(row(terminalTargets(np({ status: 'done' }))), [['unavailable', null, 'No project', undefined]], 'finished: its files are in Artifacts, never needs-checkout');
+  rmSync(work, { recursive: true, force: true });
+  assert.equal(terminalTargets(np({ status: 'paused' })).members[0].state, 'unavailable');
+});
+
+test('P3: a no-project row\'s member never names the store\'s path (<worcaHome>/runs) as its project folder', async () => {
+  const id = newPipelineId();
+  await createPipeline(noProjectWorkDir(id), { prompt: 'x', id, projectKey: NO_PROJECT_KEY, workMode: 'none' });
+  const [m] = membersOfRow(findPipelineRowById(id));
+  assert.deepEqual([m.projectKey, m.projectName, m.projectDir], [NO_PROJECT_KEY, 'No project', null]);
 });
 
 test('a workspace run lists one target per member', () => {
@@ -73,4 +96,15 @@ test('terminalEnv agent: no pager, no git prompt, no user rc, even under a pty',
   assert.equal(env.GIT_TERMINAL_PROMPT, '0'); assert.equal(env.WORCA_TERMINAL_NORC, '1');
   const person = terminalEnv({ base: { PATH: '/bin' }, sessionId: 't-2', mode: 'pty', cwd: '/w' });
   assert.equal(person.PAGER, undefined); assert.equal(person.WORCA_TERMINAL_NORC, undefined);
+});
+
+test('P3: a no-project run\'s terminal git never walks up from work/ into a repository that holds worcaHome', () => {
+  const cwd = noProjectWorkDir('abcd1234');
+  for (const [mode, agent] of [['pty', false], ['pipes', false], ['pipes', true]]) {
+    const env = terminalEnv({ base: { PATH: '/bin' }, sessionId: 't-1', mode, agent, runId: 'abcd1234', member: NO_PROJECT_KEY, projectKey: NO_PROJECT_KEY, cwd });
+    assert.equal(env.GIT_CEILING_DIRECTORIES, join(cwd, '..'), `${mode}${agent ? ' (Ask)' : ''}`);
+  }
+  assert.equal(terminalEnv({ base: { PATH: '/bin', GIT_CEILING_DIRECTORIES: '/mnt/slow' }, sessionId: 't-1', mode: 'pty', projectKey: NO_PROJECT_KEY, cwd }).GIT_CEILING_DIRECTORIES,
+    [join(cwd, '..'), '/mnt/slow'].join(delimiter), 'the host\'s own ceiling is kept');
+  assert.equal('GIT_CEILING_DIRECTORIES' in terminalEnv({ base: { PATH: '/bin' }, sessionId: 't-2', mode: 'pty', projectKey: 'app-0000aaaa', cwd: dir }), false, 'a project\'s terminal is unchanged');
 });

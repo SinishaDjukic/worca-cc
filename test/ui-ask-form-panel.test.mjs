@@ -44,7 +44,7 @@ test('a form ask mounts on the run page (title, field count) and a valid answer 
       assert.ok(panel.querySelector('.af-form'), 'the form renderer is mounted');
       assert.ok(panel.__askForm, 'the handle rides on the panel, per mount');
       assert.equal(panel.querySelector('.qanswered').textContent, '0 of 1 answered');
-      assert.ok(panel.querySelector('.btn-go'), 'the panel keeps the house Submit button');
+      assert.ok(panel.querySelector('.btn-primary'), 'the panel keeps the house Submit button');
       assert.equal(panel.querySelector('.qopen'), null, 'no Open run: you are on the run page');
       assert.ok(ctx.window.document.querySelector(`#runs-list .runs-row[data-run-id="${RUN_ID}"]`), 'the run is listed beside the page');
       assert.equal(cardPanel(ctx.window), null, 'and the list mounts no panel');
@@ -56,7 +56,7 @@ test('a form ask mounts on the run page (title, field count) and a valid answer 
       ta.value = 'tighten the spacing';
       ta.dispatchEvent(new ctx.window.Event('input'));
       assert.equal(panel.querySelector('.qanswered').textContent, '1 of 1 answered');
-      click(ctx.window, panel.querySelector('.btn-go'));
+      click(ctx.window, panel.querySelector('.btn-primary'));
       await new Promise((r) => setTimeout(r, 0));
       const post = ctx.calls.find((c) => c.url === '/api/answer');
       assert.deepEqual(JSON.parse(post.opts.body), {
@@ -82,13 +82,13 @@ test('a preview file URL is built from askId, never from the question id', async
 test('an invalid answer never leaves the browser: the field is marked, nothing is posted', async () => {
   const ctx = await boot();
   const panel = await seed(ctx);
-  click(ctx.window, panel.querySelector('.btn-go'));
+  click(ctx.window, panel.querySelector('.btn-primary'));
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(ctx.calls.some((c) => c.url === '/api/answer'), false);
   const slot = panel.querySelector('.af-err');
   assert.equal(slot.hidden, false);
   assert.ok(slot.closest('.af-fld').classList.contains('af-bad'));
-  assert.equal(panel.querySelector('.btn-go').disabled, false, 'the panel is still usable');
+  assert.equal(panel.querySelector('.btn-primary').disabled, false, 'the panel is still usable');
 });
 
 test('a 422 un-busies, marks the field and keeps the typed value; a resubmit clears the stale marks and posts again', async () => {
@@ -103,11 +103,11 @@ test('a 422 un-busies, marks the field and keeps the typed value; a resubmit cle
       click(ctx.window, panel.querySelectorAll('.af-choice')[1]);
       panel.querySelector('textarea').value = 'x';
       panel.querySelector('textarea').dispatchEvent(new ctx.window.Event('input'));
-      click(ctx.window, panel.querySelector('.btn-go'));
+      click(ctx.window, panel.querySelector('.btn-primary'));
       await new Promise((r) => setTimeout(r, 0));
       await new Promise((r) => setTimeout(r, 0));
-      assert.equal(panel.querySelector('.btn-go').disabled, false, 'un-busied');
-      assert.equal(panel.querySelector('.btn-go').textContent.includes('Resuming'), false);
+      assert.equal(panel.querySelector('.btn-primary').disabled, false, 'un-busied');
+      assert.equal(panel.querySelector('.btn-primary').textContent.includes('Resuming'), false);
       const slot = [...panel.querySelectorAll('.af-err')].find((s) => !s.hidden);
       assert.equal(slot.textContent, 'At most 4000 characters.');
       assert.ok(panel.querySelector('.af-form'), 'the panel was NOT rebuilt');
@@ -116,11 +116,11 @@ test('a 422 un-busies, marks the field and keeps the typed value; a resubmit cle
     { name: 'a resubmit that passes locally clears the previous 422 marks before it posts', run: async () => {
       const shown = () => [...panel.querySelectorAll('.af-err')].filter((s) => !s.hidden).length;
       assert.equal(shown(), 1, 'the 422 marked notes');
-      click(ctx.window, panel.querySelector('.btn-go'));            // unchanged, resubmitted as is
+      click(ctx.window, panel.querySelector('.btn-primary'));            // unchanged, resubmitted as is
       assert.equal(shown(), 0, 'the stale mark went with the resubmit, not only with the next edit');
       assert.equal(n, 2, 'and the answer was posted again');
       await new Promise((r) => setTimeout(r, 0));
-      assert.equal(panel.querySelector('.btn-go').disabled, true, 'busy until the run resumes');
+      assert.equal(panel.querySelector('.btn-primary').disabled, true, 'busy until the run resumes');
     } },
   ]);
 });

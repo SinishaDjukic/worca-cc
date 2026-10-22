@@ -1,49 +1,43 @@
-// test/db-migrate-v57.test.mjs — the requirements tables (plans/requirements-design.md §3).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { migrate, SCHEMA_VERSION } from '../src/core/db.mjs';
 
-const cols = (db, t) => db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
-const TABLES = ['req_features', 'req_turns', 'req_contexts', 'req_cost_ledger'];
+const cols = (db, table) => db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
 
-test('fresh DB has the requirements tables', () => {
+test('fresh DB is at v57 or later and has the sliced-feature tables', () => {
   const db = new DatabaseSync(':memory:');
   migrate(db);
   assert.ok(SCHEMA_VERSION >= 57);
-  assert.deepEqual(cols(db, 'req_features'), [
-    'seq', 'scope_type', 'scope_key', 'epic_seq', 'title', 'description', 'status', 'spec_json',
-    'orientation_json', 'criteria_seq', 'assumption_seq', 'rounds', 'cost_usd', 'saved_path',
-    'created_by', 'created_at', 'updated_by', 'updated_at',
-  ]);
-  assert.deepEqual(cols(db, 'req_turns'), ['id', 'feature_seq', 'kind', 'payload_json', 'model', 'cost_usd', 'created_by', 'created_at']);
-  assert.deepEqual(cols(db, 'req_contexts'), ['scope_type', 'scope_key', 'body', 'look_at_code', 'updated_by', 'updated_at']);
-  assert.deepEqual(cols(db, 'req_cost_ledger'), ['id', 'feature_seq', 'turn_id', 'amount_usd', 'model', 'ts']);
+  for (const c of ['origin_pipeline_id', 'source_branch', 'replan_ticket_id']) {
+    assert.ok(cols(db, 'shape_features').includes(c), `shape_features.${c}`);
+  }
+  // The v57 columns, in order; later versions append (v58: draft_pr_url).
+  assert.deepEqual(cols(db, 'shape_feature_slices').slice(0, 6),
+    ['feature_id', 'idx', 'slice_id', 'title', 'ticket_id', 'pipeline_id']);
+  assert.deepEqual(cols(db, 'shape_plans'), ['thread_id', 'card_id', 'title', 'created_at']);
 });
 
-test('a v56 DB gets them at v57', () => {
+test('v57 migration creates the tables on a v56 DB', () => {
   const db = new DatabaseSync(':memory:');
   migrate(db);
-  db.exec(`${TABLES.map((t) => `DROP TABLE ${t};`).join(' ')} PRAGMA user_version = 56`);
+  db.exec('DROP TABLE shape_plans; DROP TABLE shape_feature_slices; DROP TABLE shape_features; PRAGMA user_version = 56');
   migrate(db);
-  for (const t of TABLES) assert.ok(cols(db, t).length, `${t} exists`);
   assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
+  assert.ok(cols(db, 'shape_features').includes('origin_pipeline_id'));
+  const idx = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'shape_features'").all().map((r) => r.name);
+  assert.ok(idx.includes('idx_shape_features_origin'));
 });
 
-test('a DB stamped past this version by another branch, without the tables, is repaired', () => {
+test('deleting a feature cascades its slices', () => {
   const db = new DatabaseSync(':memory:');
+  // the pragma is set only on the getDb() connection (db.mjs), so a bare connection must turn it on
+  db.exec('PRAGMA foreign_keys = ON');
   migrate(db);
-  db.exec(`${TABLES.map((t) => `DROP TABLE ${t};`).join(' ')} PRAGMA user_version = ${SCHEMA_VERSION + 1}`);
-  migrate(db);
-  for (const t of TABLES) assert.ok(cols(db, t).length, `${t} repaired`);
-});
-
-test('FEAT numbers are never handed out again after a delete (AUTOINCREMENT)', () => {
-  const db = new DatabaseSync(':memory:');
-  migrate(db);
-  const ins = db.prepare(`INSERT INTO req_features (scope_type, scope_key, title, description, status, spec_json, created_at, updated_at)
-    VALUES ('project', 'p', 't', 'd', 'looking', '{}', 'now', 'now')`);
-  const a = Number(ins.run().lastInsertRowid);
-  db.prepare('DELETE FROM req_features WHERE seq = ?').run(a);
-  assert.equal(Number(ins.run().lastInsertRowid), a + 1);
+  db.prepare(`INSERT INTO shape_features (id, title, project_dir, origin_pipeline_id, outline, workflow_id, created_at, updated_at)
+    VALUES ('f1', 'T', '/p', 'pipe', '{}', 'wf_shape', 'now', 'now')`).run();
+  db.prepare("INSERT INTO shape_feature_slices (feature_id, idx, title) VALUES ('f1', 1, 'one'), ('f1', 2, 'two')").run();
+  assert.equal(db.prepare('SELECT count(*) n FROM shape_feature_slices').get().n, 2);
+  db.prepare("DELETE FROM shape_features WHERE id = 'f1'").run();
+  assert.equal(db.prepare('SELECT count(*) n FROM shape_feature_slices').get().n, 0);
 });

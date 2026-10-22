@@ -1,10 +1,13 @@
 // test/ask-panel-card.test.mjs — the Start-run card (spec §9, §10.5, D1-D3).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import { makePanel } from './helpers/ask-panel-harness.mjs';
 import { stampFrames } from './helpers/ask-frames.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { applyFlags } from '../ui/public/flags.mjs';
+import { setShapeFirst } from './helpers/shape-gate.mjs';
 
 const TID = 'ask_00000001';
 const MID = 'askm_00000001';
@@ -81,10 +84,10 @@ function apiHandler(recorder = {}) {
       return { ok: true, status: 200, json: async () => ({ config: configBody().config }) };
     }
     if (path === '/api/run-defaults') return { ok: true, status: 200, json: async () => ({ engine: { value: recorder.runEngine || 'claude', source: 'default' } }) };
-    if (url === '/api/projects') return { ok: true, status: 200, json: async () => ({ projects: [{ name: 'proj', path: '/repos/proj', exists: true }, { name: 'other', path: '/repos/other', exists: false }] }) };
-    if (url === '/api/workflows') return { ok: true, status: 200, json: async () => ({ workflows: [{ id: 'wf_default', name: 'Default' }, { id: 'wf_review', name: 'Review only' }] }) };
+    if (url === '/api/projects') return { ok: true, status: 200, json: async () => ({ projects: recorder.projects || [{ name: 'proj', path: '/repos/proj', exists: true }, { name: 'other', path: '/repos/other', exists: false }] }) };
+    if (url === '/api/workflows') return { ok: true, status: 200, json: async () => ({ workflows: recorder.workflows || [{ id: 'wf_default', name: 'Default' }, { id: 'wf_review', name: 'Review only' }] }) };
     if (url === '/api/guardrails') return { ok: true, status: 200, json: async () => ({ guardrails: [{ id: 'permissive', name: 'Permissive' }, { id: 'normal', name: 'Normal' }, { id: 'strict', name: 'Strict' }] }) };
-    if (url === '/api/workspaces') return { ok: true, status: 200, json: async () => ({ workspaces: [{ id: 'wks-team-00000001', name: 'team', projectPaths: ['/repos/proj', '/repos/lib'], projectKeys: ['proj-00000001', 'lib-00000002'] }] }) };
+    if (url === '/api/workspaces') return { ok: true, status: 200, json: async () => ({ workspaces: recorder.workspaces || [{ id: 'wks-team-00000001', name: 'team', projectPaths: ['/repos/proj', '/repos/lib'], projectKeys: ['proj-00000001', 'lib-00000002'] }] }) };
     if (url.startsWith('/api/branches')) {
       recorder.branchCalls = [...(recorder.branchCalls || []), url];
       return { ok: true, status: 200, json: async () => ({ branches: ['main', 'dev'] }) };
@@ -94,6 +97,13 @@ function apiHandler(recorder = {}) {
       recorder.runBodies = [...(recorder.runBodies || []), JSON.parse(opts.body)];
       if (recorder.runResponse) return recorder.runResponse;
       return { ok: true, status: 200, json: async () => ({ runId: 'run-uuid-1' }) };
+    }
+    if (path === '/api/tag-dimensions') {
+      const q = url.split('?')[1] || '';
+      recorder.tagRuleQueries = [...(recorder.tagRuleQueries || []), q];
+      const body = recorder.tagRules === undefined ? {}
+        : typeof recorder.tagRules === 'function' ? recorder.tagRules(new URLSearchParams(q)) : recorder.tagRules;
+      return { ok: true, status: 200, json: async () => body };
     }
     if (url === `/api/ask/threads/${TID}/cards/${CARD_ID}` && method === 'POST') {
       recorder.dismissBodies = [...(recorder.dismissBodies || []), JSON.parse(opts.body)];
@@ -109,6 +119,7 @@ function apiHandler(recorder = {}) {
 
 async function openWithCard(card, recorder = {}, overrides = {}) {
   const ctx = makePanel({ fetchHandler: apiHandler(recorder), ...overrides });
+  if (overrides.git) ctx.doc.documentElement.dataset.git = overrides.git;
   ctx.storage.setItem('worca-cc.ask.thread', TID);
   ctx.panel.open();
   await ctx.tick(); await ctx.tick(); await ctx.tick();
@@ -405,7 +416,8 @@ test('ask-panel-card v2: the lane renders one tile per agent with effective valu
       assert.equal(impl.querySelector('.ask-rp-tile-l2 [data-ctl="questions"]').checked, false);
       assert.equal(tiles[2].querySelector('[data-ctl="questions"]'), null, 'no questions capability → no switch');
       assert.ok(tiles[0].querySelector('.ask-rp-eff').classList.contains('unset'), 'no model → inherits workflow');
-      assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · inherit ×2 · Opus 5.5 ×1 · 1 fan-out');
+      assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · 2 on the workflow’s model · 1 on Opus 5.5 · 1 fan-out');
+      assert.doesNotMatch(ctx.doc.querySelector('.ask-rp-summary').textContent, /inherit|×\d/);
       assert.equal(ctx.doc.querySelector('.ask-rp-wfdesc[data-for="workflow"]').textContent, '3 agents · 1 loop · Review → Implement, max 3 cycles');
     } },
     { name: 'ask-panel-card v2: editing tints the tile, updates the sub-line and summary; Reset returns to the proposal', run: async () => {
@@ -423,7 +435,7 @@ test('ask-panel-card v2: the lane renders one tile per agent with effective valu
       assert.match(lane.querySelector('.ask-rp-agents-foot').textContent, /Changes apply to this run only/, 'a card edit rides this run; nothing is saved');
       saveAsDefaults(ctx);
       assert.match(lane.querySelector('.ask-rp-agents-foot').textContent, /Edits become this project's defaults for Default/);
-      assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · Haiku 4.5 ×1 · Opus 5.5 ×1 · inherit ×1 · 1 fan-out');
+      assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · 1 on Haiku 4.5 · 1 on Opus 5.5 · 1 on the workflow’s model · 1 fan-out');
       lane.querySelector('.ask-rp-mini').click();
       assert.ok(!lane.querySelector('.ask-rp-tile[data-node-id="n_plan"]').classList.contains('mod'));
       assert.equal(lane.querySelector('.ask-rp-mini').hidden, true);
@@ -440,7 +452,7 @@ test('ask-panel-card v2: workspace target → the lane edits THIS run (built-in 
   assert.equal(sel.disabled, false, 'a per-run pick needs no project');
   const save = lane.querySelector('[data-ctl="saveDefaults"]');
   assert.deepEqual([save.disabled, save.checked], [true, false]);
-  assert.match(lane.querySelector('.ask-rp-agents-foot').textContent, /apply to this run only — agent defaults are per project/);
+  assert.match(lane.querySelector('.ask-rp-agents-foot').textContent, /apply to this run only\. Agent defaults are per project/);
   sel.value = 'claude-haiku-4-5';
   sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
   ctx.doc.querySelector('[data-ask-card-start]').click();
@@ -553,7 +565,7 @@ test('ask-panel-card v2: nothing starts when the config write fails or the extra
       sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
       ctx.doc.querySelector('[data-ask-card-start]').click();
       for (let i = 0; i < 6; i++) await ctx.tick();
-      assert.equal(ctx.doc.querySelector('.ask-card-err').textContent, 'attachments exceed 100 MB — remove one');
+      assert.equal(ctx.doc.querySelector('.ask-card-err').textContent, 'attachments exceed 100 MB: remove one');
       assert.equal(rec.runBodies, undefined);
       assert.equal(rec.configWrites, undefined, 'the extras check runs first, so a refusal persists nothing');
       const rec2 = {};
@@ -761,7 +773,7 @@ test('workflow card: a width change during the build animation lands nothing ear
   assert.equal(hidden(), before, 'the build keeps its hidden cards and wires');
 });
 
-// ---- Scheduled runs (docs/scheduled-runs.md "Ask Worca") ----
+// ---- Scheduled runs (docs/scheduled-runs.md "Chat") ----
 const ONCE = { kind: 'once', runAt: '2026-09-19T00:00:00.000Z', when: 'Sat Sep 19, 02:00', timeZone: 'Europe/Berlin' };
 const REPEAT = {
   kind: 'repeat', rule: { freq: 'weekly', interval: 1, time: '02:00', tz: 'Europe/Berlin', weekdays: ['mo', 'tu', 'we', 'th', 'fr'], anchor: '2026-09-18', end: { type: 'never' } },
@@ -770,7 +782,7 @@ const REPEAT = {
 
 test('ask-panel-card: a scheduled proposal makes Schedule primary (Start now the alternative); a repeating one posts repeat; a plain card keeps Advanced "Schedule…"', async () => {
   await checkRows([
-    { name: 'ask-panel-card: a proposal Ask Worca scheduled makes Schedule the primary action; Start now is the alternative', run: async () => {
+    { name: 'ask-panel-card: a proposal Chat scheduled makes Schedule the primary action; Start now is the alternative', run: async () => {
       const rec = {};
       const ctx = await openWithCard({ ...PROJECT_CARD, schedule: ONCE }, rec);
       const cardEl = ctx.doc.querySelector('.ask-card');
@@ -819,7 +831,7 @@ test('ask-panel-card: a card that became a repeating schedule follows the series
   const el = ctx.doc.querySelector('[data-ask-card-scheduled]');
   assert.ok(el);
   assert.equal(el.querySelector('.badge').textContent, 'Repeats');
-  assert.match(el.querySelector('.ask-card-sched-text').textContent, /^Fix login — Every weekday at 02:00 · next /);
+  assert.match(el.querySelector('.ask-card-sched-text').textContent, /^Fix login: Every weekday at 02:00 · next /);
   const [runNow, del] = [...el.querySelectorAll('button')];
   assert.equal(del.textContent, 'Delete schedule');
   runNow.click();
@@ -860,7 +872,7 @@ test('schedule card: before / after, Decline and the action\'s own Apply post th
   ctx.flush();
   const apply = ctx.doc.querySelector('[data-ask-scard="proposed"] [data-ask-sc-apply]');
   assert.equal(apply.textContent, 'Delete');
-  assert.ok(apply.classList.contains('is-danger'), 'a removal reads as one');
+  assert.ok(apply.classList.contains('btn-danger'), 'a removal reads as one');
 });
 
 const AFTER_S = { kind: 'after', after: { kind: 'pipeline', id: 'p1', title: 'Refactor', status: 'running' }, policy: 'any', sourceFromPrevious: true, text: 'After ‘Refactor’ finishes' };
@@ -901,7 +913,7 @@ test('ask-panel-card: run chains — a proposal after ANOTHER run says so, Sched
       const el = ctx.doc.querySelector('[data-ask-card-scheduled]');
       assert.ok(el);
       assert.equal(el.querySelector('.badge').textContent, 'After run');
-      assert.equal(el.querySelector('.ask-card-sched-text').textContent, 'Fix login — after ‘Refactor’ finishes');
+      assert.equal(el.querySelector('.ask-card-sched-text').textContent, 'Fix login: after ‘Refactor’ finishes');
     } },
   ]);
 });
@@ -951,11 +963,11 @@ test('typed cards (model, clone, web, workspace, actions): fields render as text
       assert.equal(rmEl.querySelector('.ask-mcard-arrow'), null, 'a removal lists what goes, no arrows');
       const apply = rmEl.querySelector('[data-ask-mod-apply]');
       assert.equal(apply.textContent, 'Remove');
-      assert.ok(apply.classList.contains('is-danger'));
+      assert.ok(apply.classList.contains('btn-danger'));
       const prov = { type: 'model', kind: 'provider', target: 'openai', summary: 'Change the OpenAI-compatible provider', rows: [{ field: 'Base URL', before: 'a', after: 'b' }], warnings: [] };
       ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_0000000c', state: 'declined', card: prov }, threadId: TID, messageId: MID, seq: 6 });
       ctx.flush();
-      assert.ok([...ctx.doc.querySelectorAll('.ask-card-stub')].some((x) => x.textContent === 'Declined — Change the OpenAI-compatible provider'));
+      assert.ok([...ctx.doc.querySelectorAll('.ask-card-stub')].some((x) => x.textContent === 'Declined: Change the OpenAI-compatible provider'));
     } },
     { name: 'clone card: repository, branch, folder and GitHub rows; Clone / Decline post the verbs; cloning, applied and failed read as such', run: async () => {
       const rec = { cardPosts: [] };
@@ -1016,7 +1028,7 @@ test('typed cards (model, clone, web, workspace, actions): fields render as text
       assert.deepEqual([...el.querySelectorAll('.ask-mcard-change-label')].map((x) => x.textContent), ['Repository', 'Branch', 'Folder', 'Azure DevOps']);
       assert.equal([...el.querySelectorAll('.ask-mcard-after')].at(-1).textContent, 'the Azure DevOps token (WORCA_ADO_TOKEN)');
     } },
-    { name: 'web card: host, reason and exact URL as text; Deny / Always allow / Allow for this chat post the verbs; applied and failed read as such', run: async () => {
+    { name: 'web card: host, reason and exact URL as text; Deny / Always allow / Allow in chat post the verbs; applied and failed read as such', run: async () => {
       const rec = { cardPosts: [] };
       const base = apiHandler(rec);
       const ctx = await openWithCard(PROJECT_CARD, rec, { fetchHandler: (url, opts) => {
@@ -1029,7 +1041,7 @@ test('typed cards (model, clone, web, workspace, actions): fields render as text
       push('card_00000010', 'proposed');
       const el = ctx.doc.querySelector('[data-ask-webcard="proposed"]');
       assert.ok(el);
-      assert.equal(el.querySelector('.ask-mcard-title').textContent, 'Ask Worca wants to read a new site');
+      assert.equal(el.querySelector('.ask-mcard-title').textContent, 'Chat wants to read a new site');
       assert.equal(el.querySelector('.ask-mcard-after').textContent, 'https://jev.example.dev/docs?v=2');
       assert.equal(el.querySelector('.ask-mcard-note').textContent, '<i>docs</i>'); assert.equal(el.querySelector('.ask-mcard-note i'), null);
       el.querySelector('[data-ask-web-chat]').click(); await ctx.tick();
@@ -1095,10 +1107,19 @@ test('typed cards (model, clone, web, workspace, actions): fields render as text
       ctx.flush();
       const rmEl = ctx.doc.querySelector('[data-ask-wscard="proposed"]');
       assert.equal(rmEl.querySelector('.ask-mcard-kind').textContent, 'Remove member');
-      assert.ok(rmEl.querySelector('[data-ask-ws-apply]').classList.contains('is-danger'), 'a removal reads as one');
+      assert.ok(rmEl.querySelector('[data-ask-ws-apply]').classList.contains('btn-danger'), 'a removal reads as one');
       rmEl.querySelector('[data-ask-ws-decline]').click();
       await ctx.tick();
       assert.deepEqual(rec.cardPosts.at(-1), ['card_00000012', { state: 'declined' }]);
+      // P5: a Folder member of a create card carries its kind chip; a Git member carries none.
+      const mk = { type: 'workspace', kind: 'create', summary: 'Create workspace Docs with api and notes', name: 'Docs', workspaceId: null, workspaceName: null,
+        members: [{ key: 'ka', name: 'api', path: '/r/api' }, { key: 'kn', name: 'notes', path: '/r/notes', vcs: 'none' }], effects: [], warnings: [], followUps: [] };
+      ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_00000013', state: 'proposed', card: mk }, threadId: TID, messageId: MID, seq: 7 });
+      ctx.flush();
+      const mkEl = [...ctx.doc.querySelectorAll('[data-ask-wscard="proposed"]')].at(-1);
+      const memberRows = [...mkEl.querySelectorAll('.ask-mcard-changes li')].filter((li) => li.querySelector('.ask-mcard-change-label').textContent === 'Member');
+      assert.deepEqual(memberRows.map((li) => li.querySelector('.ask-mcard-after').textContent), ['api · /r/api', 'notes · /r/notes']);
+      assert.deepEqual(memberRows.map((li) => li.querySelector('.kind-chip')?.textContent ?? null), [null, 'Folder']);
     } },
     { name: 'actions card: each command whole, Now / New on a change, warnings and effects as text; Save / Decline post the verbs', run: async () => {
       const rec = { cardPosts: [] };
@@ -1226,6 +1247,252 @@ test('ask-panel-card: the Engine field — Default sends none, a proposed engine
   ]);
 });
 
+// Shape it first on the run card (spec §3.2): a shaped card (card.shape) starts its shaped run; a nudged card
+// (card.nudge, client gate on) offers "Shape it first" next to "Run anyway".
+const NUDGE = { reason: 'decisions', size: 'large', openDecisions: ['Storage engine'], perspectives: ['architect'],
+  estimates: { asIs: null, shaped: null }, asIsAuto: false };
+const NUDGED_CARD = { ...PROJECT_CARD, nudge: NUDGE };
+const SHAPED_CARD = { ...PROJECT_CARD, workflowId: 'wf_shape', workflowName: 'Shaper', shape: { perspectives: ['architect'] } };
+const gateOn = () => setShapeFirst(true);
+const gateOff = () => setShapeFirst(false);
+// GET /api/workflows while the gate is on: wf_shape is listed, wf_shape_ux never is.
+const shapeListed = (rec) => { const base = apiHandler(rec); return (url, opts) => (url === '/api/workflows'
+  ? { ok: true, status: 200, json: async () => ({ workflows: [{ id: 'wf_default', name: 'Default' }, { id: 'wf_shape', name: 'Shaper' }] }) }
+  : base(url, opts)); };
+const startLabel = (el) => [...el.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join('');
+// A thread whose snapshot already holds the card: a hello's resync re-renders the chat from it.
+const settleCard = async (ctx) => { for (let i = 0; i < 8; i++) await ctx.tick(); ctx.flush(); };
+async function openFromSnapshot(block, rec = {}) {
+  const base = apiHandler(rec);
+  const snap = { thread: { id: TID, title: 'T', createdAt: 't', updatedAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {} },
+    messages: [{ id: 'askm_u0000001', threadId: TID, seq: 1, role: 'user', text: 'hi', blocks: [], status: null, createdAt: 't' },
+      { id: MID, threadId: TID, seq: 2, role: 'assistant', text: 'ok', blocks: [block], status: 'done', createdAt: 't' }],
+    attachments: [], runLinks: [], inFlight: null };
+  const ctx = makePanel({ fetchHandler: (url, opts) => (url === `/api/ask/threads/${TID}` && (opts.method || 'GET').toUpperCase() === 'GET'
+    ? { ok: true, status: 200, json: async () => snap } : base(url, opts)) });
+  ctx.storage.setItem('worca-cc.ask.thread', TID);
+  ctx.panel.open();
+  await settleCard(ctx);
+  return ctx;
+}
+const shapeRow = (name, run) => ({ name, run: async () => { try { await run(); } finally { gateOff(); } } });
+
+test('ask-panel-card: Shape it first on the run proposal card', async () => {
+  await checkRows([
+    shapeRow('gate on + card.nudge: "Shape it first" posts shape and wf_shape; "Run as is" posts neither', async () => {
+      gateOn();
+      const rec = {};
+      const ctx = await openWithCard(NUDGED_CARD, rec);
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      assert.ok(cardEl.querySelector('.shape-card'), 'the nudge renders');
+      assert.equal(cardEl.querySelector('.shape-card').nextElementSibling.querySelector('.ask-rp-sec-title').textContent, 'Where it runs');
+      const shapeBtn = cardEl.querySelector('[data-ask-card-shape]');
+      assert.equal(shapeBtn.textContent, 'Shaper');
+      const startBtn = cardEl.querySelector('[data-ask-card-start]');
+      assert.equal(shapeBtn.nextElementSibling, startBtn, 'Shape it first sits before Start');
+      assert.equal(startLabel(startBtn), 'Run as is');
+      shapeBtn.click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.equal(rec.runBodies[0].workflowId, 'wf_shape');
+      assert.deepEqual(rec.runBodies[0].shape, { perspectives: ['product', 'architect'], size: 'large' });
+      startBtn.click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.equal(rec.runBodies[1].workflowId, 'wf_default');
+      assert.equal('shape' in rec.runBodies[1], false);
+    }),
+    shapeRow('card.shape: the workflow select is disabled and Start, labelled "Start planning" with its icon, posts shape', async () => {
+      gateOn();
+      const rec = {};
+      const ctx = await openWithCard(SHAPED_CARD, rec, { fetchHandler: shapeListed(rec) });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      assert.ok(cardEl.querySelector('.shape-chips'), 'chips render');
+      const sel = cardEl.querySelector('.ask-card-workflow');
+      assert.equal(sel.disabled, true);
+      assert.equal(sel.value, 'wf_shape');
+      assert.equal(cardEl.querySelector('[data-ask-card-shape]'), null, 'no second button on a shaped card');
+      const startBtn = cardEl.querySelector('[data-ask-card-start]');
+      assert.equal(startLabel(startBtn), 'Start planning');
+      assert.ok(startBtn.querySelector('svg'), 'the relabel keeps the icon');
+      startBtn.click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.equal(rec.runBodies[0].workflowId, 'wf_shape');
+      assert.deepEqual(rec.runBodies[0].shape, { perspectives: ['product', 'architect'] });
+      assert.equal(sel.disabled, true, 'a finished start leaves the fixed workflow disabled');
+    }),
+    shapeRow('card.shape with wf_shape_ux (never listed): Start stays enabled, no "not available" error', async () => {
+      gateOn();
+      const rec = {};
+      const ctx = await openWithCard({ ...SHAPED_CARD, workflowId: 'wf_shape_ux', shape: { perspectives: ['ux'] } }, rec, { fetchHandler: shapeListed(rec) });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      assert.equal(cardEl.querySelector('[data-ask-card-start]').disabled, false);
+      assert.doesNotMatch(cardEl.querySelector('.ask-card-err').textContent, /not available/);
+      assert.equal(cardEl.querySelector('.ask-card-workflow').value, 'wf_shape_ux');
+    }),
+    shapeRow('a card.shape card built before any hello (client gate off) still shows its chips and posts shape', async () => {
+      const rec = {};
+      const ctx = await openWithCard(SHAPED_CARD, rec);
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      assert.ok(cardEl.querySelector('.shape-chips'));
+      cardEl.querySelector('[data-ask-card-start]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.deepEqual(rec.runBodies[0].shape, { perspectives: ['product', 'architect'] });
+    }),
+    shapeRow('a nudged card built gate-off gains the nudge when a gate-on hello re-renders the chat', async () => {
+      const ctx = await openFromSnapshot({ kind: 'card', id: CARD_ID, state: 'proposed', card: NUDGED_CARD });
+      assert.ok(ctx.doc.querySelector('.ask-card [data-ask-card-start]'), 'the card loaded from the thread');
+      assert.equal(ctx.doc.querySelector('.shape-card'), null, 'gate off: no nudge');
+      assert.equal(startLabel(ctx.doc.querySelector('[data-ask-card-start]')), 'Start run');
+      gateOn();
+      ctx.panel.onHello([]);                       // the hello's resync re-renders the open chat
+      await settleCard(ctx);
+      assert.ok(ctx.doc.querySelector('.shape-card'), 'the nudge appears');
+      assert.ok(ctx.doc.querySelector('[data-ask-card-shape]'));
+    }),
+    shapeRow('a STARTED card whose block still carries card.nudge is not remounted when the gate changes', async () => {
+      const ctx = await openFromSnapshot({ kind: 'card', id: CARD_ID, state: 'started', runId: 'run-uuid-1', card: NUDGED_CARD });
+      const before = ctx.doc.querySelector('.ask-card a[href="#running/run-uuid-1"]');
+      assert.ok(before);
+      gateOn();
+      ctx.panel.onHello([]);
+      await settleCard(ctx);
+      assert.equal(ctx.doc.querySelector('.ask-card a[href="#running/run-uuid-1"]'), before, 'same element');
+    }),
+    shapeRow('while a start is in flight "Shape it first" is disabled (a second click posts nothing)', async () => {
+      gateOn();
+      const rec = { runResponse: new Promise(() => {}) };
+      const ctx = await openWithCard(NUDGED_CARD, rec);
+      const shapeBtn = ctx.doc.querySelector('[data-ask-card-shape]');
+      shapeBtn.click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.equal(shapeBtn.disabled, true);
+      shapeBtn.click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.equal(rec.runBodies.length, 1);
+    }),
+    shapeRow('after a failed start a shaped card\'s workflow select is still disabled', async () => {
+      gateOn();
+      const rec = { runResponse: { ok: false, status: 400, json: async () => ({ error: 'shape it first is off' }) } };
+      const ctx = await openWithCard(SHAPED_CARD, rec, { fetchHandler: shapeListed(rec) });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      cardEl.querySelector('[data-ask-card-start]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.equal(cardEl.querySelector('.ask-card-err').textContent, 'shape it first is off');
+      assert.equal(cardEl.querySelector('.ask-card-workflow').disabled, true);
+      assert.equal(cardEl.querySelector('[data-ask-card-start]').disabled, false);
+    }),
+    shapeRow('gate on, no shape/nudge on the card: the card is unchanged', async () => {
+      gateOn();
+      const rec = {};
+      const ctx = await openWithCard(PROJECT_CARD, rec);
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      assert.equal(cardEl.querySelector('.shape-card'), null);
+      assert.equal(cardEl.querySelector('[data-ask-card-shape]'), null);
+      assert.equal(startLabel(cardEl.querySelector('[data-ask-card-start]')), 'Start run');
+      assert.equal(cardEl.querySelector('.ask-card-workflow').disabled, false);
+    }),
+    shapeRow('card.shape: Start sends exactly today\'s body', async () => {
+      gateOn();
+      const rec = {};
+      const ctx = await openWithCard(SHAPED_CARD, rec, { fetchHandler: shapeListed(rec) });
+      ctx.doc.querySelector('.ask-card [data-ask-card-start]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.deepEqual(rec.runBodies[0], {
+        projectDir: '/repos/proj', prompt: 'Fix the login bug', workflowId: 'wf_shape', guardrailsId: 'normal',
+        title: 'Fix login', featureBranch: 'worca/fix-login', mock: false, askThreadId: TID, askCardId: CARD_ID,
+        shape: { perspectives: ['product', 'architect'] },
+      });
+    }),
+    shapeRow('card.shape: the small card — title + label, clamped brief, Project, Base branch, Perspectives, What happens; the rest in a closed Advanced', async () => {
+      gateOn();
+      const rec = {};
+      const ctx = await openWithCard(SHAPED_CARD, rec, { fetchHandler: shapeListed(rec) });
+      for (let i = 0; i < 4; i++) await ctx.tick();
+      ctx.flush();
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      assert.equal(cardEl.querySelector('.ask-rp-kicker').textContent, 'Shaper');
+      const main = cardEl.querySelector('.ask-rp-shape-main');
+      assert.equal(main.querySelector('.ask-rp-brief-preview').textContent, 'Fix the login bug');
+      assert.equal(main.querySelector('[data-ask-card-brief-more]').textContent, 'Show brief');
+      assert.equal(cardEl.querySelector('.ask-rp-brief-host').hidden, true, 'the full brief waits behind its link');
+      const labels = [...main.querySelectorAll('.ask-rp-field > .ask-rp-label')].map((l) => l.firstChild.textContent);
+      assert.deepEqual(labels, ['Project', 'Base branch', 'Perspectives']);
+      assert.ok(main.querySelector('.ask-card-project-select') && main.querySelector('.ask-card-source') && main.querySelector('.shape-chips'));
+      assert.equal(main.querySelector('.ask-rp-shape-what').textContent, 'What happensUp to 3 questions, then a plan you approve.');
+      const adv = cardEl.querySelector('details[data-ask-card-advanced]');
+      assert.equal(adv.open, false, 'Advanced starts collapsed');
+      assert.match(adv.querySelector('summary').textContent, /^Advanced · Claude · Normal guardrails/);
+      for (const sel of ['.ask-card-feature', '.ask-card-same-source', '.ask-card-workflow', '.ask-card-engine',
+        '.ask-card-guardrails', '.ask-rp-lane', '[data-ask-card-schedule]', '[data-ask-card-seg]']) {
+        assert.ok(adv.querySelector(sel), `${sel} is inside Advanced`);
+        assert.equal(main.querySelector(sel), null, `${sel} is not on the small card`);
+      }
+      const foot = cardEl.querySelector('.ask-rp-foot');
+      assert.deepEqual([...foot.children].map((b) => b.matches('[data-ask-card-start]') ? startLabel(b) : b.textContent),
+        ['↗ Open in New run', 'Not now', 'Start planning']);
+      assert.equal(foot.querySelector('[data-ask-card-open-np]').dataset.minLevel, undefined, 'the link shows at every level');
+      main.querySelector('[data-ask-card-brief-more]').click();
+      assert.equal(cardEl.querySelector('.ask-rp-brief-host').hidden, false);
+      assert.equal(main.querySelector('.ask-rp-brief-preview').hidden, true);
+    }),
+    shapeRow('a card without shape keeps today\'s layout', async () => {
+      gateOn();
+      const ctx = await openWithCard(PROJECT_CARD);
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      assert.equal(cardEl.querySelector('.ask-rp-shape-main'), null);
+      assert.equal(cardEl.querySelector('details[data-ask-card-advanced]'), null);
+      assert.equal(startLabel(cardEl.querySelector('[data-ask-card-start]')), 'Start run');
+    }),
+  ]);
+});
+
+// Shaper (D21): the intent lead goes to the model; the person's bubble shows the chip and their own text.
+const LEAD = 'Shape this task first: propose a run with `shape`.';
+async function openThread(messages) {
+  const base = apiHandler({});
+  const snap = { thread: { id: TID, title: 'T', createdAt: 't', updatedAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {} },
+    messages, attachments: [], runLinks: [], inFlight: null };
+  const ctx = makePanel({ fetchHandler: (url, opts) => (url === `/api/ask/threads/${TID}` && (opts.method || 'GET').toUpperCase() === 'GET'
+    ? { ok: true, status: 200, json: async () => snap } : base(url, opts)) });
+  ctx.storage.setItem('worca-cc.ask.thread', TID);
+  ctx.panel.open();
+  await settleCard(ctx);
+  return ctx;
+}
+const userMsg = (seq, text) => ({ id: `askm_u000000${seq}`, threadId: TID, seq, role: 'user', text, blocks: [], status: null, createdAt: 't' });
+
+test('a stored Shaper message shows the chip and the person\'s text, never the lead (gate off too)', async () => {
+  const ctx = await openThread([userMsg(1, `${LEAD}\n\nUploads fail on large files`), userMsg(2, LEAD), userMsg(3, 'plain')]);
+  const rows = [...ctx.doc.querySelectorAll('.ask-msg-user')];
+  assert.equal(rows[0].querySelector('.ask-user-intent').textContent, 'Shaper');
+  assert.equal(rows[0].querySelector('.ask-user-bubble').textContent, 'Uploads fail on large files');
+  assert.equal(rows[1].querySelector('.ask-user-bubble'), null, 'a lead-only message has no empty bubble');
+  assert.equal(rows[2].querySelector('.ask-user-intent'), null);
+  assert.equal(rows[2].querySelector('.ask-user-bubble').textContent, 'plain');
+  assert.doesNotMatch(ctx.doc.querySelector('.ask-transcript').textContent, /Shape this task first/);
+});
+
+test('a live send that carries the lead renders without it', async () => {
+  const bodies = [];
+  const base = apiHandler({});
+  const ctx = makePanel({ fetchHandler: (url, opts) => {
+    if (url === `/api/ask/threads/${TID}/messages` && (opts.method || '').toUpperCase() === 'POST') {
+      bodies.push(JSON.parse(opts.body));
+      return { ok: true, status: 202, json: async () => ({ userMessageId: 'askm_u0000001', assistantMessageId: MID }) };
+    }
+    return base(url, opts);
+  } });
+  ctx.storage.setItem('worca-cc.ask.thread', TID);
+  ctx.panel.open();
+  await settleCard(ctx);
+  ctx.doc.querySelector('.ask-input').value = `${LEAD}\n\nUploads fail`;   // what transformSend produces
+  ctx.doc.querySelector('[data-ask-send]').click();
+  for (let i = 0; i < 4; i++) await ctx.tick();
+  ctx.flush();
+  assert.equal(bodies[0].text, `${LEAD}\n\nUploads fail`, 'the model still gets the lead');
+  assert.equal(ctx.doc.querySelector('.ask-msg-user .ask-user-bubble').textContent, 'Uploads fail');
+  assert.ok(ctx.doc.querySelector('.ask-msg-user .ask-user-intent'));
+});
+
 // ── Ask Worca's per-agent picks (card.nodes) ride the lane as THIS run's overlay — never a config write ──
 const NODES_CARD = { ...PROJECT_CARD, workflowId: 'wf_review', workflowName: 'Review only',
   nodes: {
@@ -1247,23 +1514,23 @@ test('ask-panel-card: card.nodes pre-fills the lane — marker with the reason, 
   assert.equal(plan.querySelector('.ask-rp-model').value, 'claude-opus-5-5');
   assert.equal(plan.querySelector('.ask-rp-eff button.on').textContent, 'high');
   const mark = plan.querySelector('.ask-rp-prop');
-  assert.equal(mark.textContent, 'Ask Worca');
-  assert.equal(mark.title, 'Proposed by Ask Worca for this run — Plans the auth change: a judgement step — anthropic · top tier · $4/$20 per Mtok');
+  assert.equal(mark.textContent, 'Chat');
+  assert.equal(mark.title, 'Proposed by Chat for this run\nPlans the auth change: a judgement step\nanthropic · top tier · $4/$20 per Mtok');
   assert.deepEqual([mark.tabIndex, mark.getAttribute('aria-label')], [0, mark.title], 'the reason reaches keyboard and screen-reader users too');
-  assert.equal(plan.querySelector('.ask-rp-name small').textContent, 'Ask Worca · step 1 · project: inherit');
+  assert.equal(plan.querySelector('.ask-rp-name small').textContent, 'Chat · step 1 · project: inherit');
   assert.ok(!plan.classList.contains('mod'), 'a proposed pick is not the user\'s edit');
   assert.equal(tileOf(lane, 'n_rev').querySelector('.ask-rp-eff button.on').textContent, 'medium');
   assert.equal(tileOf(lane, 'n_impl').querySelector('.ask-rp-prop'), null, 'a node the proposal does not name');
   assert.equal(tileOf(lane, 'n_impl').querySelector('.ask-rp-row-reset'), null, 'nothing to reset');
-  assert.match(lane.querySelector('.ask-rp-sec-sub').textContent, /^Ask Worca picked 2 agents for this run · 2 overrides of the workflow defaults$/);
+  assert.match(lane.querySelector('.ask-rp-sec-sub').textContent, /^Chat picked 2 agents for this run · 2 overrides of the workflow defaults$/);
   assert.equal(lane.querySelector('.ask-rp-mini').hidden, true, 'nothing to reset to the proposal yet');
-  assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · Opus 5.5 ×2 · Haiku 4.5 ×1 · 1 fan-out · 2 picked by Ask Worca');
+  assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · 2 on Opus 5.5 · 1 on Haiku 4.5 · 1 fan-out · 2 picked by Chat');
   plan.querySelector('.ask-rp-row-reset').click();
   const plan2 = tileOf(lane, 'n_plan');
   assert.equal(plan2.querySelector('.ask-rp-model').value, '', 'back to the project\'s own setting');
   assert.ok(plan2.classList.contains('mod'), 'moved off the proposal');
   assert.equal(plan2.querySelector('.ask-rp-m').textContent, 'project default');
-  assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · inherit ×1 · Opus 5.5 ×1 · Haiku 4.5 ×1 · 1 fan-out · 1 picked by Ask Worca');
+  assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · 1 on the workflow’s model · 1 on Opus 5.5 · 1 on Haiku 4.5 · 1 fan-out · 1 picked by Chat');
   assert.equal(lane.querySelector('.ask-rp-mini').hidden, false);
   lane.querySelector('.ask-rp-mini').click();
   assert.equal(tileOf(lane, 'n_plan').querySelector('.ask-rp-model').value, 'claude-opus-5-5', 'Reset to proposal brings the pick back');
@@ -1385,7 +1652,7 @@ test('ask-panel-card: on a workspace card a standing pick is sent outright, even
   assert.deepEqual(rec.runBodies[0].overlay, { nodes: { n_impl: { model: 'claude-opus-5-5', effort: 'high' } } });
 });
 
-test('ask-panel-card: a Start whose lane never loaded still sends Ask Worca\'s picks as proposed — the run API checks them', async () => {
+test('ask-panel-card: a Start whose lane never loaded still sends Chat\'s picks as proposed — the run API checks them', async () => {
   const rec = { laneFail: true };
   const ctx = await openWithCard(NODES_CARD, rec);
   await laneOf(ctx);
@@ -1420,7 +1687,7 @@ test('ask-panel-card: on a workspace card an agent the workspace run always fans
   assert.equal(tileOf(lane2, 'n_impl').querySelector('[data-ctl="fanOut"]').disabled, false, 'a project run fans out as the lane says');
 });
 
-test('ask-panel-card: on a workspace card another edit on a picked agent keeps Ask Worca\'s model in the overlay', async () => {
+test('ask-panel-card: on a workspace card another edit on a picked agent keeps Chat\'s model in the overlay', async () => {
   const rec = {};
   const ctx = await openWithCard({ ...WS_CARD, nodes: { n_impl: { model: 'claude-opus-5-5', effort: 'high', reason: 'A wide change' } } }, rec);
   const lane = await laneOf(ctx);
@@ -1463,6 +1730,43 @@ test('ask-panel-card: Open in New run asks before leaving picks behind that are 
       ctx.doc.querySelector('[data-ask-card-open-np]').click();
       for (let i = 0; i < 6; i++) await ctx.tick();
       assert.equal(asked.length, 1);
+    } },
+  ]);
+});
+
+// ── Run tags (#718): the card's tag field, behind the experimental `runTags` flag ──
+test('ask-panel-card: run tags show as chips and ride Start and Open in New run while the flag is on; none while it is off', async () => {
+  await checkRows([
+    { name: 'flag on: 1 chip, Start posts tags, New run gets them', run: async () => {
+      const rec = {};
+      const handed = [];
+      const ctx = makePanel({ fetchHandler: apiHandler(rec), openNewPipeline: (p) => handed.push(p) });
+      applyFlags({ runTags: true }, ctx.doc);
+      ctx.storage.setItem('worca-cc.ask.thread', TID);
+      ctx.panel.open();
+      await ctx.tick(); await ctx.tick(); await ctx.tick();
+      for (const f of stampFrames([
+        { type: 'ask-start', userMessageId: 'askm_u0000001', model: 'm', effort: 'high', startedAt: 't' },
+        { type: 'ask-card', block: { kind: 'card', id: CARD_ID, state: 'proposed', card: { ...PROJECT_CARD, tags: ['client:acme'] } } },
+      ], { threadId: TID, messageId: MID })) ctx.panel.pushServerFrame(f);
+      ctx.flush(); await ctx.tick(); await ctx.tick(); ctx.flush();
+      const card = ctx.doc.querySelector('.ask-card');
+      assert.deepEqual([...card.querySelectorAll('.tag-chip')].map((c) => c.firstChild.textContent), ['client:acme']);
+      card.querySelector('[data-ask-card-open-np]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.deepEqual(handed[0].tags, ['client:acme']);
+      card.querySelector('[data-ask-card-start]').click();
+      await ctx.tick(); await ctx.tick();
+      assert.deepEqual(rec.runBodies[0].tags, ['client:acme']);
+    } },
+    { name: 'flag off: no tag field, no tags in the body', run: async () => {
+      const rec = {};
+      const ctx = await openWithCard({ ...PROJECT_CARD, tags: ['client:acme'] }, rec);
+      const card = ctx.doc.querySelector('.ask-card');
+      assert.equal(card.querySelectorAll('.tag-chip').length, 0);
+      card.querySelector('[data-ask-card-start]').click();
+      await ctx.tick(); await ctx.tick();
+      assert.equal(Object.hasOwn(rec.runBodies[0], 'tags'), false);
     } },
   ]);
 });
@@ -1586,7 +1890,7 @@ test('Ask graph card: a declined draft refuses Save (nothing posted); Open in Wo
   await ticks(ctx, 3);
   assert.equal(r.cardPosts, undefined, 'nothing posted');
   assert.match(cards[0].querySelector('.wfc-err:not([hidden])').textContent, /needs "releaseNotes", which was declined/);
-  assert.ok([...cards[1].querySelectorAll('button')].some((b) => b.textContent === 'Save & propose run'));
+  assert.ok([...cards[1].querySelectorAll('button')].some((b) => b.textContent === 'Save & propose'));
   clickText(cards[1], 'Open in Workflows');
   await ticks(ctx, 3);
   assert.deepEqual(opened, [{ name: 'Fix and review', domain: 'coding', nodes: WF_DEFAULT_TPL.nodes, wires: WF_DEFAULT_TPL.wires }]);
@@ -1688,7 +1992,7 @@ test('Ask graph card: Open in Workflows saves its drafts first; a failed or miss
   clickText(cardEl('card_0000c019'), 'Save as workflow');
   await ticks(ctx, 6);
   assert.equal(errOf('card_0000c019').hidden, false);
-  assert.equal(errOf('card_0000c019').textContent, 'Not saved — down');
+  assert.equal(errOf('card_0000c019').textContent, 'Not saved: down');
 });
 
 test('Ask graph card: the Workflows rendering — build_workflow\'s x/y verbatim, description footers once the library loads, and its Expand is Open in Workflows (a saved card opens its row)', async () => {
@@ -1757,7 +2061,7 @@ test('Ask graph card (D10): a 409 naming commands the card did not show lists th
   assert.equal(el.querySelector('.gv-import-script-h').textContent, 'My script (n_sh, shell) · command');
   assert.equal(el.querySelector('pre.gv-import-script-v').textContent, 'make lint');
   assert.ok(el.querySelector('.gv-import-scripts').compareDocumentPosition(el.querySelector('.wfc-actions')) & 4, 'above the buttons');
-  assert.match(el.querySelector('p.wfc-err[role="status"]').textContent, /check the commands this workflow runs/);
+  assert.match(el.querySelector('p.wfc-err[role="status"]').textContent, /Check the commands this workflow runs/);
   clickText(el, 'Save as workflow');
   await ticks(ctx, 6);
   assert.deepEqual(r.cardPosts, [['card_0000c022', { state: 'saved' }], ['card_0000c022', { state: 'saved', acceptScripts: [{ nodeId: 'n_sh', params: { command: 'make lint' } }] }]]);
@@ -1901,7 +2205,7 @@ test('Ask draft card: a Save whose record failed shows the card unsaved (Save re
   });
   clickText(ctx.doc.querySelector('.ask-ccard [aria-label="New agent"]'), 'Save agent');
   await ticks(ctx);
-  assert.match(ctx.doc.querySelector('.ask-ccard[data-card-id="card_0000c041"] p.wfc-err[role="status"]').textContent, /Saved, but the card was not updated — down/);
+  assert.match(ctx.doc.querySelector('.ask-ccard[data-card-id="card_0000c041"] p.wfc-err[role="status"]').textContent, /Saved, but the card was not updated: down/);
   for (const f of stampFrames([{ type: 'ask-card', block: { kind: 'card', id: 'card_0000c042', state: 'proposed', card: BUILD } }],
     { threadId: TID, messageId: MID, seqStart: 3 })) ctx.panel.pushServerFrame(f);
   ctx.flush(); await ticks(ctx);
@@ -1911,4 +2215,277 @@ test('Ask draft card: a Save whose record failed shows the card unsaved (Save re
   clock.t += 16_000;
   ctx.flush(); await ticks(ctx); ctx.flush(); await ticks(ctx);
   assert.deepEqual(r.cardPosts.map((p) => p[0]), ['card_0000c041', 'card_0000c041'], 'the sweep records it once the TTL passed');
+});
+
+// ── Enforced run tags (slice 4A): the card fetches its target's tag rules, pre-fills, and gates Start ──
+async function openFlagged(card, rec) {
+  const ctx = makePanel({ fetchHandler: apiHandler(rec) });
+  applyFlags({ runTags: true }, ctx.doc);
+  ctx.storage.setItem('worca-cc.ask.thread', TID);
+  ctx.panel.open();
+  await ctx.tick(); await ctx.tick(); await ctx.tick();
+  for (const f of stampFrames([
+    { type: 'ask-start', userMessageId: 'askm_u0000001', model: 'm', effort: 'high', startedAt: 't' },
+    { type: 'ask-card', block: { kind: 'card', id: CARD_ID, state: 'proposed', card } },
+  ], { threadId: TID, messageId: MID })) ctx.panel.pushServerFrame(f);
+  ctx.flush(); await ctx.tick(); await ctx.tick(); ctx.flush();
+  return { ctx, card: ctx.doc.querySelector('.ask-card') };
+}
+const rpChips = (card) => [...card.querySelectorAll('.ask-rp-tags .tag-chip:not(.tag-missing)')].map((c) => c.firstChild.textContent);
+const CC_DIM = { key: 'cc', label: 'Cost centre', values: ['4410', '4420'], required: true };
+
+test('run card, enforced: pre-filled chips on one line; a missing mandatory tag shows its picker inline and gates Start', async () => {
+  const rec = { runBodies: [], tagRuleQueries: [], tagRules: { source: 'settings', home: null, enforce: true, prefill: ['client:acme'],
+    dims: [{ key: 'client', label: 'Client', values: [], required: false, default: 'acme' }, CC_DIM] } };
+  const { ctx, card } = await openFlagged({ ...PROJECT_CARD, tags: ['spike'] }, rec);
+  await ctx.tick();
+  assert.deepEqual(rec.tagRuleQueries, [`projectDir=${encodeURIComponent('/repos/proj')}`]);
+  assert.deepEqual(rpChips(card), ['client:acme', 'spike']);
+  const start = card.querySelector('[data-ask-card-start]');
+  assert.equal(start.disabled, true);
+  assert.equal(start.title, 'Add Cost centre to start');
+  const pick = card.querySelector('.ask-rp-tags .tag-rule-pickers select');
+  pick.value = '4420'; pick.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  assert.equal(card.querySelector('.tag-rule-pickers').childElementCount, 0);
+  assert.equal(start.disabled, false);
+  assert.equal(start.title, '');
+  start.click(); await ctx.tick(); await ctx.tick();
+  assert.deepEqual(rec.runBodies[0].tags, ['cc:4420', 'client:acme', 'spike']);
+});
+
+test('run card, enforced: a refused start keeps Start disabled after the request ends (startCard finally)', async () => {
+  const reason = 'Add Cost centre to start';
+  const rec = { runBodies: [], tagRules: { source: 'settings', home: null, enforce: false, prefill: [], dims: [CC_DIM] },
+    runResponse: { ok: false, status: 422, json: async () => ({ error: reason, fields: { tags: reason } }) } };
+  const { ctx, card } = await openFlagged({ ...PROJECT_CARD }, rec);
+  await ctx.tick();
+  const start = card.querySelector('[data-ask-card-start]');
+  assert.equal(start.disabled, false);
+  start.click();
+  // The rules turn enforced while the request is out (a stale rule set the server then refuses).
+  card.__rp.tagRules.update({ dims: [CC_DIM], enforce: true, prefill: [] });
+  for (let i = 0; i < 6; i++) await ctx.tick();
+  assert.equal(rec.runBodies.length, 1);
+  assert.equal(card.querySelector('.ask-card-err').textContent, reason);
+  assert.equal(start.disabled, true, 'still blocked: the tag is missing');
+});
+
+test('run card: changing the project re-fetches the rules and swaps the pre-fill chips it added', async () => {
+  const rec = { runBodies: [], tagRuleQueries: [], tagRules: (sp) => ({ source: 'settings', home: null, enforce: false, dims: [CC_DIM],
+    prefill: sp.get('projectDir') === '/repos/proj' ? ['cc:4410'] : ['cc:4420'] }) };
+  const { ctx, card } = await openFlagged({ ...PROJECT_CARD, tags: ['spike'] }, rec);
+  await ctx.tick();
+  assert.deepEqual(rpChips(card), ['cc:4410', 'spike']);
+  const n = rec.tagRuleQueries.length;
+  const sel = card.querySelector('.ask-card-project-select');
+  sel.value = '/repos/other'; sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  for (let i = 0; i < 4; i++) await ctx.tick();
+  assert.equal(rec.tagRuleQueries.length, n + 1);
+  assert.equal(rec.tagRuleQueries.at(-1), `projectDir=${encodeURIComponent('/repos/other')}`);
+  assert.deepEqual(rpChips(card), ['cc:4420', 'spike'], 'the typed chip stays; the pre-fill chip is swapped');
+});
+
+test('run card, enforcement off: no pickers, Start enabled, chips pre-filled', async () => {
+  const rec = { runBodies: [], tagRules: { source: 'settings', home: null, enforce: false, prefill: ['cc:4410'], dims: [CC_DIM] } };
+  const { ctx, card } = await openFlagged({ ...PROJECT_CARD }, rec);
+  await ctx.tick();
+  assert.deepEqual(rpChips(card), ['cc:4410']);
+  assert.equal(card.querySelector('.tag-rule-pickers').childElementCount, 0);
+  assert.equal(card.querySelector('[data-ask-card-start]').disabled, false);
+});
+
+const NONE_CARD = { ...PROJECT_CARD, target: 'none', projectKey: null, projectName: null, projectDir: null, featureBranch: null, sourceBranch: null };
+
+test('ask-panel-card: a No project card opens on No project; Start posts { noProject: true } and no project or branch keys', async () => {
+  const rec = {};
+  const ctx = await openWithCard(NONE_CARD, rec);
+  const cardEl = ctx.doc.querySelector('.ask-card');
+  assert.deepEqual([...cardEl.querySelectorAll('[data-ask-card-seg]')].map((b) => b.textContent), ['No project', 'Project', 'Workspace']);
+  assert.equal(cardEl.querySelector('[data-ask-card-seg="none"]').getAttribute('aria-selected'), 'true');
+  assert.equal(cardEl.querySelector('.ask-card-project-select'), null);
+  assert.equal(cardEl.querySelector('[data-ask-card-schedule]').hidden, true);
+  cardEl.querySelector('[data-ask-card-start]').click();
+  await ctx.tick(); await ctx.tick();
+  assert.deepEqual(rec.runBodies[0], { noProject: true, prompt: 'Fix the login bug', workflowId: 'wf_default', guardrailsId: 'normal',
+    title: 'Fix login', mock: false, askThreadId: TID, askCardId: CARD_ID });
+});
+
+test('ask-panel-card: switching a project card to No project drops the project; the needs-repo note never blocks', async () => {
+  const rec = { workflows: [{ id: 'wf_default', name: 'Default', needsRepo: true }, { id: 'wf_review', name: 'Review only' }] };
+  const ctx = await openWithCard(PROJECT_CARD, rec);
+  const cardEl = ctx.doc.querySelector('.ask-card');
+  cardEl.querySelector('[data-ask-card-seg="none"]').click();
+  await ctx.tick();
+  assert.equal(cardEl.querySelector('.ask-card-needs-repo').textContent, 'Some steps expect a code repository.');
+  assert.ok(readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8').includes('.ask-card-needs-repo{margin:0;color:var(--ink-2);font-size:12px;line-height:1.45;}'),
+    'one quiet line, as New run\'s .hint (no browser-default paragraph margins)');
+  assert.equal(cardEl.querySelector('[data-ask-card-start]').disabled, false);
+  const wf = cardEl.querySelector('.ask-card-workflow'); wf.value = 'wf_review'; wf.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  assert.equal(cardEl.querySelector('.ask-card-needs-repo'), null);
+  cardEl.querySelector('[data-ask-card-start]').click();
+  await ctx.tick(); await ctx.tick();
+  assert.equal(rec.runBodies[0].noProject, true);
+  assert.equal('projectDir' in rec.runBodies[0], false);
+});
+
+test('ask-panel-card: Open in New run from a No project card hands over target none and no project', async () => {
+  const handed = [];
+  const ctx = await openWithCard(NONE_CARD, {}, { openNewPipeline: (p) => handed.push(p) });
+  const cardEl = ctx.doc.querySelector('.ask-card');
+  cardEl.querySelector('[data-ask-card-open-np]').click();
+  await ctx.tick(); await ctx.tick();
+  assert.equal(handed.length, 1);
+  assert.equal(handed[0].target, 'none');
+  assert.equal('projectDir' in handed[0], false);
+});
+
+test('P4 (SEAMS S12): a Folder project, or no git, has no branch rows on the run card — no GET /api/branches, the sub-line is the name alone', async () => {
+  const subEl = (cardEl) => [...cardEl.querySelectorAll('.ask-rp-sec-head')].find((h) => h.textContent.startsWith('Where it runs')).querySelector('.ask-rp-sec-sub');
+  // B10 (canvas Switched): the name, then the kind chip, then the branch words (git) — [name, chip class, the rest]
+  const subOf = (cardEl) => { const s = subEl(cardEl); const c = s.querySelector('.kind-chip'); return [s.firstChild.textContent, c ? c.className : null, c ? (c.nextSibling ? c.nextSibling.textContent : '') : null]; };
+  const branchRows = (cardEl) => ['.ask-card-source', '.ask-card-feature', '.ask-card-same-source'].map((s) => cardEl.querySelector(s).closest('.ask-rp-field').hidden);
+  await checkRows([
+    { name: 'a Folder project, then a Git one', run: async () => {
+      const rec = { projects: [{ key: 'proj-00000001', name: 'proj', path: '/repos/proj', exists: true, vcs: 'none' }, { key: 'lib-00000002', name: 'lib', path: '/repos/lib', exists: true, vcs: 'git' }] };
+      const ctx = await openWithCard(PROJECT_CARD, rec);
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      assert.deepEqual(branchRows(cardEl), [true, true, true]);
+      assert.equal(rec.branchCalls, undefined, 'no branches are asked for a folder');
+      assert.deepEqual(subOf(cardEl), ['proj', 'kind-chip kind-folder', ''], 'a Folder project: <name> · Folder');
+      const sel = cardEl.querySelector('.ask-card-project-select');
+      sel.value = '/repos/lib';
+      sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+      await ctx.tick(); await ctx.tick();
+      assert.deepEqual(branchRows(cardEl), [false, false, false], 'a Git project gets them back');
+      assert.equal(rec.branchCalls.length, 1);
+      const [libName, libChip, libRest] = subOf(cardEl);
+      assert.deepEqual([libName, libChip], ['lib', 'kind-chip kind-git']);
+      assert.match(libRest, /^ · branch current · feature /, 'today\'s branch words follow the chip');
+      ctx.panel.destroy();
+    } },
+    { name: 'git missing on this machine (data-git="off"): a Git project shows none either', run: async () => {
+      const rec = { projects: [{ key: 'proj-00000001', name: 'proj', path: '/repos/proj', exists: true, vcs: 'git' }] };
+      const ctx = await openWithCard(PROJECT_CARD, rec, { git: 'off' });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      assert.deepEqual(branchRows(cardEl), [true, true, true]);
+      assert.equal(rec.branchCalls, undefined);
+      assert.deepEqual(subOf(cardEl), ['proj', 'kind-chip kind-git', ''], 'the stored kind still shows (CONTRACT §1); no branch words');
+      ctx.panel.destroy();
+    } },
+    { name: 'a project of no known kind: the name and the branch words, no chip', run: async () => {
+      const ctx = await openWithCard(PROJECT_CARD, {});
+      const s = subEl(ctx.doc.querySelector('.ask-card'));
+      assert.equal(s.querySelector('.kind-chip'), null);
+      assert.match(s.textContent, /^proj · branch /);
+      ctx.panel.destroy();
+    } },
+  ]);
+});
+
+test('project card (ChatCreate board): Name / Folder / Kind rows; Create / Decline post the verbs; created, failed and declined read as such', async () => {
+  const rec = { cardPosts: [] };
+  const base = apiHandler(rec);
+  const ctx = await openWithCard(PROJECT_CARD, rec, { fetchHandler: (url, opts) => {
+    const m = /^\/api\/ask\/threads\/[^/]+\/cards\/(card_[0-9a-f]{8})$/.exec(url);
+    if (m && (opts.method || '').toUpperCase() === 'POST' && m[1] !== CARD_ID) { rec.cardPosts.push([m[1], JSON.parse(opts.body)]); return { ok: true, status: 200, json: async () => ({}) }; }
+    return base(url, opts);
+  } });
+  const card = { type: 'project', kind: 'create', summary: 'Create landing-page', name: 'landing-page', path: '/Users/me/.worca-cc/projects/landing-page',
+    displayPath: '~/.worca-cc/projects/landing-page', vcs: 'none', note: '<b>why</b>', change: { kind: 'create', name: 'landing-page', useGit: false } };
+  const push = (id, state, extra = {}, seq = 3) => { ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id, state, card, ...extra }, threadId: TID, messageId: MID, seq }); ctx.flush(); };
+  push('card_00000020', 'proposed');
+  const el = ctx.doc.querySelector('[data-ask-projectcard="proposed"]');
+  assert.equal(el.querySelector('.ask-mcard-title').textContent, 'Proposed project');
+  assert.equal(el.querySelector('.ask-mcard-kind').textContent, 'New');
+  assert.equal(el.querySelector('.ask-mcard-summary').textContent, 'Create landing-page');
+  assert.deepEqual([...el.querySelectorAll('.ask-mcard-change-label')].map((x) => x.textContent), ['Name', 'Folder', 'Kind']);
+  assert.deepEqual([...el.querySelectorAll('.ask-mcard-change-val')].map((x) => x.textContent), ['landing-page', '~/.worca-cc/projects/landing-page', 'Folder']);
+  assert.equal(el.querySelectorAll('.ask-mcard-change-val')[1].title, '/Users/me/.worca-cc/projects/landing-page');
+  assert.ok(el.querySelector('.ask-mcard-change-val .kind-chip.kind-folder'));
+  assert.equal(el.querySelector('.ask-mcard-note').textContent, '<b>why</b>'); assert.equal(el.querySelector('.ask-mcard-note b'), null);
+  assert.equal(el.querySelector('[data-ask-project-apply]').textContent, 'Create');
+  el.querySelector('[data-ask-project-apply]').click(); await ctx.tick(); await ctx.tick();
+  assert.deepEqual(rec.cardPosts.at(-1), ['card_00000020', { state: 'applied' }]);
+  const result = { ok: true, project: { key: 'landing-page-0000abcd', name: 'landing-page', path: '/Users/me/.worca-cc/projects/landing-page',
+    displayPath: '~/.worca-cc/projects/landing-page', vcs: 'none' }, scope: { pinned: true, projectKey: 'landing-page-0000abcd' } };
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_00000020', state: 'applied', card: { ...card, result } }, threadId: TID, messageId: MID, seq: 4 }); ctx.flush();
+  const done = ctx.doc.querySelector('[data-ask-projectcard="applied"]');
+  assert.equal(done.querySelector('.ask-mcard-title').textContent, 'Project created');
+  assert.equal(done.querySelector('.ask-mcard-summary').textContent, 'Create landing-page', 'the board: the summary stays, after a check');
+  assert.ok(done.querySelector('.ask-mcard-summary svg'), 'the applied check (WF_ICO.check)');
+  assert.equal(done.querySelector('.ask-mcard-detail').textContent, 'Registered as landing-page at ~/.worca-cc/projects/landing-page');
+  assert.equal(done.querySelector('[data-ask-project-apply]'), null);
+  const addCard = { type: 'project', kind: 'add', summary: 'Add docs', name: 'docs', path: '/x/docs', displayPath: '/x/docs', vcs: 'git', change: { kind: 'add', name: 'docs', path: '/x/docs', useGit: true } };
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_00000021', state: 'proposed', card: addCard }, threadId: TID, messageId: MID, seq: 5 }); ctx.flush();
+  const addEl = ctx.doc.querySelector('[data-ask-projectcard="proposed"]');
+  assert.equal(addEl.querySelector('.ask-mcard-kind').textContent, 'Folder');
+  assert.equal(addEl.querySelector('[data-ask-project-apply]').textContent, 'Add');
+  assert.equal(addEl.querySelector('.ask-mcard-change-val .kind-chip').textContent, 'Git');
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_00000021', state: 'failed', error: 'Part of mono', card: addCard }, threadId: TID, messageId: MID, seq: 6 }); ctx.flush();
+  const failed = ctx.doc.querySelector('[data-ask-projectcard="failed"]');
+  assert.equal(failed.querySelector('.ask-mcard-title').textContent, 'Add failed');
+  assert.equal(failed.querySelector('.ask-mcard-failed').textContent, 'Could not add: Part of mono');
+  push('card_00000022', 'proposed', {}, 7);
+  ctx.doc.querySelector('[data-ask-projectcard="proposed"] [data-ask-project-decline]').click(); await ctx.tick();
+  assert.deepEqual(rec.cardPosts.at(-1), ['card_00000022', { state: 'declined' }]);
+  push('card_00000022', 'declined', {}, 8);
+  assert.ok([...ctx.doc.querySelectorAll('.ask-card-stub')].some((x) => x.textContent === 'Declined — Create landing-page'));
+});
+
+// P5: lib is a Folder member — the card's members carry workMode 'folder', the live list carries vcs.
+const WS_FOLDER_CARD = { ...WS_CARD, members: [WS_CARD.members[0], { ...WS_CARD.members[1], workMode: 'folder' }] };
+const WS_FOLDER_ROW = { id: 'wks-team-00000001', name: 'team', projectPaths: ['/repos/proj', '/repos/lib'], projectKeys: ['proj-00000001', 'lib-00000002'], vcs: ['git', 'none'] };
+// The workspace segment's git-only fields, [label, hidden] (an attribute: jsdom loads no CSS).
+const WS_GIT_LABELS = ['Source branch', 'Feature branch', 'Run on the source branch'];
+const wsGitFields = (cardEl) => [...cardEl.querySelectorAll('.ask-rp-label')].map((l) => [l.firstChild.textContent.trim(), !!l.closest('[hidden]')])   // the label, without its ' · hint'
+  .filter(([t]) => WS_GIT_LABELS.includes(t));
+
+test('ask-panel-card: a Folder member is listed but gets no per-member source input', async () => {
+  await checkRows([
+    { name: 'the live workspace row says lib is a Folder member: listed, no source input, never in sourceBranchByKey', run: async () => {
+      const rec = { workspaces: [WS_FOLDER_ROW] };
+      const ctx = await openWithCard(WS_CARD, rec);
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      assert.match(cardEl.querySelector('.ask-card-members').textContent, /lib/);
+      const inputs = [...cardEl.querySelectorAll('.ask-card-member-src')];
+      assert.deepEqual(inputs.map((i) => i.dataset.projectKey), ['proj-00000001']);
+      assert.deepEqual(wsGitFields(cardEl), WS_GIT_LABELS.map((l) => [l, false]), 'a Git member keeps the branch fields');
+      inputs[0].value = 'release';
+      cardEl.querySelector('[data-ask-card-start]').click();
+      await ctx.tick(); await ctx.tick();
+      assert.deepEqual(rec.runBodies[0].sourceBranchByKey, { 'proj-00000001': 'release' });
+    } },
+    { name: 'no live row: the card\'s members say lib is a Folder member', run: async () => {
+      const ctx = await openWithCard(WS_FOLDER_CARD, { workspaces: [] });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      assert.match(cardEl.querySelector('.ask-card-members').textContent, /lib/);
+      assert.deepEqual([...cardEl.querySelectorAll('.ask-card-member-src')].map((i) => i.dataset.projectKey), ['proj-00000001']);
+    } },
+    { name: 'every member a Folder project: no per-member source branches disclosure, and no Source branch / Feature branch / Run on the source branch field', run: async () => {
+      const ctx = await openWithCard(WS_CARD, { workspaces: [{ ...WS_FOLDER_ROW, vcs: ['none', 'none'] }] });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      assert.equal(cardEl.querySelectorAll('.ask-card-member-src').length, 0);
+      assert.equal(cardEl.querySelector('.ask-card-members-src').hidden, true);
+      assert.deepEqual(wsGitFields(cardEl), WS_GIT_LABELS.map((l) => [l, true]));
+    } },
+  ]);
+});
+
+test('s2: a proposal for project acme lists the person\'s last-run cost tags plus required keys', async () => {
+  const rec = { tagRules: { dims: [{ key: 'client', label: 'Client', values: [], required: true }], enforce: false, prefill: [],
+    autofill: { tags: ['team:web'], from: 'last-run' } } };
+  const { ctx, card } = await openFlagged({ ...PROJECT_CARD, projectName: 'acme', tags: ['spike'] }, rec);
+  await ctx.tick();
+  assert.deepEqual(rec.tagRuleQueries, ['projectDir=%2Frepos%2Fproj']);
+  assert.deepEqual(rpChips(card), ['spike', 'team:web']);
+  assert.deepEqual([...card.querySelectorAll('.ask-rp-tags .tag-missing')].map((s) => s.textContent), ['client · missing']);
+  card.querySelector('[data-ask-card-start]').click(); await ctx.tick(); await ctx.tick();
+  assert.deepEqual(rec.runBodies[0].tags, ['spike', 'team:web']);
+});
+
+test('s2: a workspace answer (no autofill) paints no missing slot', async () => {
+  const rec = { tagRules: { dims: [{ key: 'client', label: 'Client', values: [], required: true }], enforce: false, prefill: [] } };
+  const { ctx, card } = await openFlagged({ ...PROJECT_CARD }, rec);
+  await ctx.tick();
+  assert.equal(card.querySelectorAll('.ask-rp-tags .tag-missing').length, 0);
 });

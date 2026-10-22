@@ -1,5 +1,5 @@
 // test/ui-ask-policy-card.test.mjs
-// The team-policy card in the Ask panel (docs/team-policy.md "Ask Worca"): the metrics card's
+// The team-policy card in the Ask panel (docs/team-policy.md "Chat"): the metrics card's
 // component with the policy words — title, kind chip — plus an edit's before → after list;
 // Publish posts {state:'applied'}. The terminal states are the metrics card's
 // (test/ui-ask-metrics-card.test.mjs).

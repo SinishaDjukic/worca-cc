@@ -7,6 +7,8 @@
 //   provider  a provider worca knows (`upstream`: copilot / openai / anthropic over a wire protocol). Claude Code
 //             reaches every one through worca's bridge; Codex reaches an OpenAI-compatible Responses endpoint
 //             itself (engines/codex-endpoint.mjs). Copilot and Cursor take no endpoint.
+// The `copilot` PROVIDER (GitHub Copilot's API, reached through the bridge) is not the Copilot harness: a Copilot
+// sign-in row (`engine:'copilot'`) runs on the Copilot CLI only.
 // ONE source for the server and the browser (served as-is under /src/shared). Import-free but for engine-switch.
 import { ENGINES, MODEL_ENGINE_NAMES, engineLabel } from './engine-switch.mjs';
 
@@ -74,11 +76,12 @@ export function harnessesLabel(m) {
   return l.length < 2 ? (l[0] || '') : `${l.slice(0, -1).join(', ')} and ${l.at(-1)}`;
 }
 
-// Effort vocabularies per harness (model-env.mjs EFFORTS / CODEX_EFFORTS / CURSOR_EFFORTS; kept equal by a test).
+// Effort vocabularies per harness (model-env.mjs EFFORTS / CODEX_EFFORTS / CURSOR_EFFORTS / COPILOT_EFFORTS; kept equal by a test).
 export const HARNESS_EFFORTS = Object.freeze({
   claude: Object.freeze(['medium', 'high', 'xhigh', 'max']),
   codex: Object.freeze(['minimal', 'low', 'medium', 'high']),
   cursor: Object.freeze([]),
+  copilot: Object.freeze(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']),
 });
 
 /** An effort picked in one harness's vocabulary, as the closest one `engine` takes, or null when it takes none.
@@ -88,7 +91,7 @@ export function effortOn(effort, engine) {
   if (!effort || !list) return effort || null;
   if (!list.length) return null;
   if (list.includes(effort)) return effort;
-  const rank = { minimal: 0, low: 1, medium: 2, high: 3, xhigh: 4, max: 5 };
+  const rank = { none: -1, minimal: 0, low: 1, medium: 2, high: 3, xhigh: 4, max: 5 };
   if (!(effort in rank)) return null;
   return list.reduce((best, e) => (Math.abs(rank[e] - rank[effort]) < Math.abs(rank[best] - rank[effort]) ? e : best), list[0]);
 }

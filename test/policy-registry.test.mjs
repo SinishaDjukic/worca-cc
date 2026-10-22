@@ -202,3 +202,35 @@ test('catalog models: a Cursor entry keeps its engine with no efforts; env or an
   assert.ok(warnings.some((w) => w.includes('acme-cursor-env') && w.includes('a cursor model takes no env')), warnings.join('\n'));
   assert.ok(warnings.some((w) => w.includes('acme-cursor-up') && w.includes('a cursor model takes no upstream')), warnings.join('\n'));
 });
+
+test('runs.tagDimensions: soft only, bad entries dropped one warning each, field kept', () => {
+  const { doc, warnings } = normalizePolicyDoc({ schema: 1, fields: { 'runs.tagDimensions': { kind: 'soft', value: [
+    { key: 'cc', label: 'Cost centre', required: true }, { key: '', label: 'nope' },
+  ] } } });
+  assert.deepEqual(doc.fields['runs.tagDimensions'].value, [{ key: 'cc', label: 'Cost centre', values: [], required: true }]);
+  assert.ok(warnings.some((w) => /^runs\.tagDimensions: .*entry dropped$/.test(w)));
+  assert.equal(validateValue(fieldMeta('runs.tagDimensions'), 'x'), 'must be a list of { key, label, values?, required? }');
+});
+
+test('runs.tagDimensions: an 11th dimension is dropped with a warning', () => {
+  const value = Array.from({ length: 11 }, (_, i) => ({ key: `k${i}`, label: `K${i}` }));
+  const { doc, warnings } = normalizePolicyDoc({ schema: 1, fields: { 'runs.tagDimensions': { kind: 'soft', value } } });
+  assert.equal(doc.fields['runs.tagDimensions'].value.length, 10);
+  assert.ok(warnings.some((w) => /k10: at most 10 tag dimensions/.test(w)));
+});
+
+test('runs.enforceTags: a soft bool in the runs group; a non-boolean is dropped with a warning', () => {
+  const meta = fieldMeta('runs.enforceTags');
+  assert.deepEqual({ type: meta.type, kinds: meta.kinds, group: meta.group }, { type: 'bool', kinds: ['soft'], group: 'runs' });
+  assert.equal(normalizePolicyDoc({ schema: 1, fields: { 'runs.enforceTags': { kind: 'soft', value: true } } }).doc.fields['runs.enforceTags'].value, true);
+  const { doc, warnings } = normalizePolicyDoc({ schema: 1, fields: { 'runs.enforceTags': { kind: 'soft', value: 'yes' } } });
+  assert.equal('runs.enforceTags' in doc.fields, false);
+  assert.ok(warnings.some((w) => /^runs\.enforceTags: /.test(w)), warnings.join('\n'));
+});
+
+test('runs.tagDimensions: an entry with a default keeps it', () => {
+  const { doc } = normalizePolicyDoc({ schema: 1, fields: { 'runs.tagDimensions': { kind: 'soft', value: [
+    { key: 'cc', label: 'Cost centre', values: ['4410', '4420'], required: true, default: '4420' },
+  ] } } });
+  assert.deepEqual(doc.fields['runs.tagDimensions'].value, [{ key: 'cc', label: 'Cost centre', values: ['4410', '4420'], required: true, default: '4420' }]);
+});

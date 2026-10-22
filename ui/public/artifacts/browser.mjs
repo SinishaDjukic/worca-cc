@@ -60,10 +60,16 @@ function fill(f, files, threshold) {
  * appearance, then "Run" (no node). A step with more than one cycle holds "Cycle N" subfolders (the latest open).
  * @returns {Array<{key, label, kind:'step'|'cycle'|'bulk', nodeId, cycle, count, files, folders, defaultOpen, inCycle}>}
  */
+// P3: a run without a project lists its work/ files flat in one Files folder; each row names its sub-folder.
+const WORK_FOLDER_KEY = 'n:__work__';
+const workWhere = (a) => { const p = relOf(a).replace(/^work\//, ''); const i = p.lastIndexOf('/'); return i > 0 ? p.slice(0, i + 1) : null; };
+
 export function artifactTree(list, { order = [], nodeLabel = (id) => String(id), threshold = BULK_KIND_THRESHOLD } = {}) {
   const byNode = new Map();
+  const work = [];
   for (const a of Array.isArray(list) ? list : []) {
     if (!relOf(a)) continue;
+    if (a.kind === 'work') { work.push(a); continue; }
     const nid = a.nodeId == null || a.nodeId === '' ? RUN : String(a.nodeId);
     const cyc = Number.isInteger(a.cycle) ? a.cycle : 0;
     if (!byNode.has(nid)) byNode.set(nid, new Map());
@@ -78,7 +84,8 @@ export function artifactTree(list, { order = [], nodeLabel = (id) => String(id),
   }
   for (const k of byNode.keys()) if (k !== RUN && !ids.includes(k)) ids.push(k);
   if (byNode.has(RUN)) ids.push(RUN);
-  return ids.map((nid) => {
+  const filesFolder = work.length ? (() => { const f = folder(WORK_FOLDER_KEY, 'Files', 'step', { count: work.length }); f.files.push(...work); return [f]; })() : [];
+  return [...filesFolder, ...ids.map((nid) => {
     const byCyc = byNode.get(nid);
     const cycles = [...byCyc.keys()].sort((x, y) => x - y);
     const count = cycles.reduce((n, c) => n + byCyc.get(c).length, 0);
@@ -99,7 +106,7 @@ export function artifactTree(list, { order = [], nodeLabel = (id) => String(id),
       step.folders.push(sub);
     }
     return step;
-  });
+  })];
 }
 
 /** Extra trailing folders ({id, label, artifacts}) — files from somewhere other than a step. */
@@ -171,7 +178,7 @@ export function createArtifactBrowser({
   const head = h('div', 'afb-head');
   const title = h('span', 'afb-title');
   const sbox = h('div', 'afb-sbox');
-  const searchBtn = h('button', 'afb-ib afb-sbtn');
+  const searchBtn = h('button', 'btn btn-sm btn-quiet btn-icon afb-ib afb-sbtn');
   searchBtn.type = 'button';
   searchBtn.title = 'Search';
   searchBtn.setAttribute('aria-label', 'Search artifacts');
@@ -270,7 +277,7 @@ export function createArtifactBrowser({
     main.addEventListener('click', () => { navAt = Date.now(); onOpen(a, st.flat.slice()); });
     item.appendChild(main);
     if (typeof onDownload === 'function') {
-      const dl = h('button', 'afb-dl');
+      const dl = h('button', 'btn btn-sm btn-quiet btn-icon afb-dl');
       dl.type = 'button';
       dl.title = 'Download';
       dl.setAttribute('aria-label', `Download ${name}`);
@@ -291,7 +298,7 @@ export function createArtifactBrowser({
       fold.dataset.fold = f.key;
       fold.setAttribute('role', 'group');
       fold.setAttribute('aria-label', f.label);
-      for (const a of f.files) fold.appendChild(fileRow(a, f, null));
+      for (const a of f.files) fold.appendChild(fileRow(a, f, f.key === WORK_FOLDER_KEY ? workWhere(a) : null));
       f.folders.forEach((sub) => walk(sub, fold));
       parent.appendChild(fold);
     };

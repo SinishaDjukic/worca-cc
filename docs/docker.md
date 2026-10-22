@@ -167,8 +167,8 @@ Two rules:
 - **One home per install.** The container's `/worca` volume and a host
   `~/.worca-cc` are two Worcas with two histories. Never mount the host home into
   the container.
-- The native folder dialog does not exist in the box; **Add project** uses the
-  in-app folder browser, which starts at your projects root.
+- The native folder dialog does not exist in the box. **Add project** opens on **New** (a project by name in your projects root); its **Folder**
+  tab's **Choose folder…** uses the in-app folder browser, which starts at your projects root.
 
 ### Clone-in mode
 
@@ -211,7 +211,13 @@ image relays only to allowed hosts (`WORCA_EGRESS_ALLOW` in `.env`, default:
 Tools that honour `HTTPS_PROXY` reach allowed hosts; a raw socket from
 `node -e` or `python -c` reaches nothing. Combine with the **Strict** guardrail
 set for an untrusted task. Known needs: add your package registry; Playwright's
-browser download needs its CDN or a pre-fetched browser.
+browser download needs its CDN or a pre-fetched browser; plugin task sources and
+chat channels go through the proxy too, so add their hosts: `dev.azure.com` for
+Azure Boards, `api.telegram.org`, `slack.com,.slack.com` (Socket Mode dials a
+`wss-*.slack.com` host), `discord.com,.discord.gg`, and for Teams
+`login.microsoftonline.com,login.botframework.com` plus your bot's service URL host.
+A Jira source drives its own command-line tool: allow `<your-org>.atlassian.net`,
+and it goes through the proxy only if that tool reads the proxy variables.
 
 An entry with a leading dot (`.github.com`) allows every subdomain and the name
 itself. A refused host gets `403 egress denied: <host>`; `docker compose logs
@@ -275,9 +281,15 @@ grace period longer than the drain (`compose.yml` sets `stop_grace_period: 30s`;
 container (or, behind a hosted platform, with `WORCA_HEARTBEAT_TOKEN` as a Bearer token), so a
 platform can drain first and then stop quickly.
 
-Set `WORCA_AUTO_RESUME=1` to have the next start resume those runs by itself, and runs it finds
-interrupted by a crash, each as the person who last started or resumed it. Runs paused by a person,
-by a cost cap or by a usage limit always wait for a person. It is off by default.
+The next start resumes those runs by itself, each as the person who last started or resumed it.
+Set `WORCA_AUTO_RESUME=0` to turn that off, or `WORCA_AUTO_RESUME=1` to also resume runs it finds
+interrupted by a crash. Runs paused by a person, by a cost cap or by a usage limit always wait for a person.
+
+A headless CLI run (`worca --yes`, `worca resume`) handles a stop the same way. On SIGTERM it pauses the
+run with the reason "worca was stopped", waits for the resume point to be saved, and exits 143. A second
+SIGTERM changes nothing. A task source hears `needs-human`, because nothing resumes a CLI run by
+itself: continue it with `worca resume <id>`. If the pause has not landed after
+`WORCA_SIGTERM_GRACE_MS` (20 s), the CLI exits anyway, before the platform's SIGKILL.
 
 **Single-volume hosts** (Railway and other platforms that give a service one volume,
 mounted root-owned): set `WORCA_DATA_DIR=/data`, mount the volume there and start

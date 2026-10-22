@@ -34,7 +34,8 @@ test('efforts are per engine', () => {
   assert.deepEqual(effortsForEngine('codex'), CODEX_EFFORTS);
   assert.deepEqual(effortsForEngine('claude'), EFFORTS);
   assert.deepEqual(effortsForEngine(undefined), EFFORTS, 'no engine = Claude');
-  assert.deepEqual(ALL_EFFORTS, ['medium', 'high', 'xhigh', 'max', 'minimal', 'low']);
+  assert.deepEqual(effortsForEngine('copilot'), ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+  assert.deepEqual(ALL_EFFORTS, ['medium', 'high', 'xhigh', 'max', 'minimal', 'low', 'none']);
 });
 
 test('the Codex built-ins are the CODEX_PRICES rows, in that order, with Codex efforts', () => {

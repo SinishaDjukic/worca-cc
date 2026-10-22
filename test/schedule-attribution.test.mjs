@@ -91,7 +91,7 @@ test('v39: a DB stamped 38 gains the columns and backfills created_by from inter
   db.close();
 });
 
-test('Ask Worca: list/get_schedule carry createdBy / updatedBy (never "local"); its pause names the turn\'s person', async () => {
+test('Chat: list/get_schedule carry createdBy / updatedBy (never "local"); its pause names the turn\'s person', async () => {
   const { createAskTools } = await import('../src/core/ask/tools.mjs');
   const { defaultToolDeps } = await import('../src/core/ask/tool-deps.mjs');
   const { defaultScheduleDeps } = await import('../src/core/ask/schedule-deps.mjs');

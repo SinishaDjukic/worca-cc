@@ -1,10 +1,13 @@
+import { icon } from './icons.mjs';
 import { renderInheritField, readDirtyFields } from './inherit-field.mjs';
 import { engineLabel, engineChoiceLabel, isBetaEngine, ENGINE_NAMES, MODEL_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
 import { applyEngineLocks, engineLock } from './engine-locks.mjs';
-export const ENGINE_EFFORTS = Object.freeze({ claude: Object.freeze(['medium', 'high', 'xhigh', 'max']), codex: Object.freeze(['minimal', 'low', 'medium', 'high']), cursor: Object.freeze([]) });
+export const ENGINE_EFFORTS = Object.freeze({ claude: Object.freeze(['medium', 'high', 'xhigh', 'max']), codex: Object.freeze(['minimal', 'low', 'medium', 'high']), cursor: Object.freeze([]),
+  copilot: Object.freeze(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']) });
 // An inherited value's label; an unset one stays null, so the field shows its bare heading.
 const engineName = (v) => (v == null ? null : engineLabel(v));
-const CURSOR_HELPERS_NOTE = "Cursor runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on Claude — see the Claude tab.";
+const CURSOR_HELPERS_NOTE = "Cursor runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on Claude. See the Claude tab.";
+const COPILOT_HELPERS_NOTE = "Copilot runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on its own default model.";
 export const JOB_LABELS = Object.freeze({ title: 'Titles', classifier: 'Auto workflow classifier', overview: 'Run overview', prDescription: 'PR description', memoryDefrag: 'Memory defragment', workspaceScan: 'Workspace scan' });
 // The setting id of an engine's helper slot, as settings-cascade.mjs names it: memory defragment
 // and workspace scan are runs of their own (spec §3.1 "own-run models"), the rest are utility jobs.
@@ -38,7 +41,7 @@ function slotTable(doc, cls, title, rows, { what, from, onTest = null, always = 
     const actions = doc.createElement('div'); actions.className = 'engine-slot-actions';
     const model = r.el.querySelector('.inherit-model');
     if (onTest && model) {
-      const test = doc.createElement('button'); test.type = 'button'; test.className = 'btn btn-ghost btn-mini engine-slot-test'; test.textContent = 'Test';
+      const test = doc.createElement('button'); test.type = 'button'; test.className = 'btn btn-sm engine-slot-test'; test.textContent = 'Test';
       test.title = 'Send one tiny prompt to this model';
       const paintTest = () => { test.hidden = !model.value; };
       model.addEventListener('change', paintTest); paintTest();
@@ -46,13 +49,13 @@ function slotTable(doc, cls, title, rows, { what, from, onTest = null, always = 
       actions.append(test);
     }
     const clear = r.el.querySelector('.inherit-clear');
-    if (clear) { clear.textContent = '×'; clear.setAttribute('aria-label', `Clear ${r.label}`); clear.title = 'Clear: follow ' + from; clear.classList.add('engine-slot-clear'); actions.append(clear); }
+    if (clear) { clear.replaceChildren(icon(doc, 'x', 14)); clear.setAttribute('aria-label', `Clear ${r.label}`); clear.title = 'Clear: follow ' + from; clear.classList.add('engine-slot-clear'); actions.append(clear); }
     r.el.append(actions);
     box.append(r.el);
   }
   const rest = doc.createElement('small'); rest.className = 'hint engine-slot-rest';
   const add = doc.createElement('select'); add.className = 'select engine-slot-add'; add.setAttribute('aria-label', `Override a ${what}`);
-  const all = doc.createElement('button'); all.type = 'button'; all.className = 'btn btn-ghost btn-mini engine-slot-all'; all.dataset.minLevel = 'expert';
+  const all = doc.createElement('button'); all.type = 'button'; all.className = 'btn btn-sm engine-slot-all'; all.dataset.minLevel = 'expert';
   let showAll = false;
   const paint = () => {
     const hidden = rows.filter((r) => r.el.hidden);
@@ -62,7 +65,7 @@ function slotTable(doc, cls, title, rows, { what, from, onTest = null, always = 
       ? `Every ${what} follows ${from}.`
       : `${hidden.length} other ${what}${hidden.length === 1 ? '' : 's'} follow${hidden.length === 1 ? 's' : ''} ${from}.`;
     rest.hidden = !rest.textContent;
-    add.replaceChildren(Object.assign(doc.createElement('option'), { value: '', textContent: `+ Override a ${what}…` }));
+    add.replaceChildren(Object.assign(doc.createElement('option'), { value: '', textContent: `Override a ${what}…` }));
     for (const r of hidden) add.append(Object.assign(doc.createElement('option'), { value: r.id, textContent: r.label }));
     add.value = ''; add.hidden = !hidden.length;
     all.textContent = showAll ? 'Show only changes' : `Show all ${rows.length}`;
@@ -95,7 +98,7 @@ export function renderEngineSection(host, options) {
   applyEngineLocks(host);
   const from = options.level === 'project' ? 'your settings' : "Worca's defaults";
   const noEffort = new Set(options.noEffort || []);
-  // The tab shown first: the default engine's (Copilot owns no models, so Claude's).
+  // The tab shown first: the default engine's.
   const runEngine = run.own ?? run.inherited?.value;
   const first = MODEL_ENGINE_NAMES.includes(runEngine) ? runEngine : 'claude';
   const sw = doc.createElement('div'); sw.className = 'seg engine-switch'; sw.setAttribute('role', 'group'); sw.setAttribute('aria-label', 'Engine'); sw.dataset.minLevel = 'expert';
@@ -110,11 +113,11 @@ export function renderEngineSection(host, options) {
   };
   for (const engine of MODEL_ENGINE_NAMES) {
     const btn = doc.createElement('button'); btn.type = 'button'; btn.dataset.engine = engine; btn.textContent = engineLabel(engine);
-    if (isBetaEngine(engine)) { const beta = doc.createElement('span'); beta.className = 'badge violet beta-badge'; beta.textContent = 'Beta'; btn.append(beta); }
+    if (isBetaEngine(engine)) { const beta = doc.createElement('span'); beta.className = 'flag-chip flag-chip-beta beta-badge'; beta.textContent = 'Beta'; btn.append(beta); }
     btn.addEventListener('click', () => pick(engine)); sw.append(btn);
     const card = doc.createElement('section'); card.className = 'engine-card'; card.dataset.engine = engine; card.dataset.minLevel = 'advanced';
     // Advanced has no switch: the tab names its engine. Expert's switch already does (style.css hides this there).
-    const heading = doc.createElement('h3'); heading.className = 'engine-card-name'; heading.textContent = engineLabel(engine); if (isBetaEngine(engine)) { const beta = doc.createElement('span'); beta.className = 'badge violet beta-badge'; beta.textContent = 'Beta'; heading.append(beta); } card.append(heading);
+    const heading = doc.createElement('h3'); heading.className = 'engine-card-name'; heading.textContent = engineLabel(engine); if (isBetaEngine(engine)) { const beta = doc.createElement('span'); beta.className = 'flag-chip flag-chip-beta beta-badge'; beta.textContent = 'Beta'; heading.append(beta); } card.append(heading);
     // A non-Claude tab's readiness line (GET /api/engines), filled by app.js on the Models page.
     if (engine !== 'claude') { const status = doc.createElement('small'); status.className = 'engine-card-status'; card.append(status); }
     if (options.notes?.[engine]) { const note = doc.createElement('small'); note.className = 'hint engine-card-note'; note.textContent = options.notes[engine]; card.append(note); }
@@ -125,10 +128,10 @@ export function renderEngineSection(host, options) {
     if (jobs.length) {
       const helpers = jobs.map((job) => row(utilityId(engine, job), JOB_LABELS[job] || job, options.defaultLabels?.[engine] || (engine === 'codex' ? "Codex's default model (GPT-5.6 Sol)" : 'the default model'), JOB_HINTS[job]));
       card.append(slotTable(doc, 'engine-helpers', 'Helper jobs', helpers, { what: 'helper job', from, onTest: options.onTest }));
-    } else if (engine === 'cursor') {
+    } else if (engine === 'cursor' || engine === 'copilot') {
       const sec = doc.createElement('section'); sec.className = 'engine-slots engine-helpers';
       const bar = doc.createElement('div'); bar.className = 'engine-slot-bar'; bar.append(Object.assign(doc.createElement('h4'), { textContent: 'Helper jobs' }));
-      sec.append(bar, Object.assign(doc.createElement('small'), { className: 'hint engine-slot-rest', textContent: CURSOR_HELPERS_NOTE }));
+      sec.append(bar, Object.assign(doc.createElement('small'), { className: 'hint engine-slot-rest', textContent: engine === 'cursor' ? CURSOR_HELPERS_NOTE : COPILOT_HELPERS_NOTE }));
       card.append(sec);
     }
     host.append(card); cards[engine] = card;
@@ -164,21 +167,25 @@ export function renderAskEngineSection(host, { catalog = [], askEngine, askModel
   const doc = host.ownerDocument; host.replaceChildren();
   // The catalog lists no Codex model while this codex cannot be locked down for a chat (docs/models.md#codex): a saved
   // Codex choice then starts new chats on Claude, and the card says so instead of offering an empty model row.
-  const codexOffered = catalog.some((m) => m && m.engine === 'codex');
-  const unavailable = engineLock('codex') !== null ? 'Ask on Codex is off while the credential broker is on, so new chats start on Claude.'
-    : 'Ask on Codex is unavailable on this codex version, so new chats start on Claude.';
+  // Copilot: its rows are listed while the credential broker is off (the Copilot CLI is never probed here).
+  const others = ['codex', 'copilot'];
+  const offered = Object.fromEntries(others.map((e) => [e, catalog.some((m) => m && m.engine === e)]));
+  const unavailable = (e) => (engineLock(e) !== null ? `Chat on ${engineLabel(e)} is off while the credential broker is on, so new chats start on Claude.`
+    : `Chat on ${engineLabel(e)} is unavailable on this ${e} version, so new chats start on Claude.`);
+  const notes = others.filter((e) => !offered[e]).map(unavailable).join(' ');
   host.append(renderInheritField(doc, { id: 'askEngine', label: 'Engine for new chats', kind: 'select', level: 'user',
-    hint: `A chat keeps the engine it started on; to switch, start a new chat.${codexOffered ? '' : ` ${unavailable}`}`,
-    options: [{ value: 'claude', label: 'Claude' }, { value: 'codex', label: codexOffered ? engineChoiceLabel('codex') : 'Codex (unavailable)' }],
+    hint: `A chat keeps the engine it started on; to switch, start a new chat.${notes ? ` ${notes}` : ''}`,
+    options: [{ value: 'claude', label: 'Claude' }, ...others.map((e) => ({ value: e, label: offered[e] ? engineChoiceLabel(e) : `${engineLabel(e)} (unavailable)` }))],
     own: askEngine ?? undefined, inherited: { value: 'claude', source: 'default' }, format: engineName }));
   applyEngineLocks(host);
   // The chat models: the Engines card's table, one row per engine and always listed (no switch, nothing folded).
   const rows = [];
-  for (const engine of ['claude', 'codex']) {
-    if (engine === 'codex' && !codexOffered) continue;
+  for (const engine of ['claude', ...others]) {
+    if (engine !== 'claude' && !offered[engine]) continue;
     const id = `models.${engine}.ask`; const label = engineChoiceLabel(engine);
     rows.push({ id, label, set: askModels[engine] != null,
-      hint: engine === 'codex' ? 'On Codex the per-turn cost cap is checked when a reply ends, and needs a model worca can price.' : null,
+      hint: engine === 'codex' ? 'On Codex the per-turn cost cap is checked when a reply ends, and needs a model worca can price.'
+        : engine === 'copilot' ? 'Copilot reports no cost: its chats run only while the per-turn cost cap is off.' : null,
       el: renderInheritField(doc, { id, label, kind: 'model', level: 'user', engine, catalog, efforts: ENGINE_EFFORTS[engine], own: askModels[engine], inherited: { value: defaults[engine] || undefined, source: 'default' } }) });
   }
   host.append(slotTable(doc, 'ask-chat-models', 'Chat models', rows, { what: 'engine', from: "Worca's defaults", onTest, always: true }));
@@ -192,7 +199,7 @@ export function askPatchToSettingsBody(patch) {
   const body = {};
   for (const [id, value] of Object.entries(patch || {})) {
     if (id === 'askEngine') { body.askEngine = value; continue; }
-    const match = /^models\.(claude|codex)\.ask$/.exec(id);
+    const match = /^models\.(claude|codex|copilot)\.ask$/.exec(id);
     if (match) (body.askModels ||= {})[match[1]] = value;
   }
   return body;

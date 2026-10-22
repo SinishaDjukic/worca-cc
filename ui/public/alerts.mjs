@@ -24,12 +24,12 @@ export const KIND_TITLES = Object.freeze({
 export const GENERIC_TITLE = 'Waiting for you';
 /** Ask Worca card → notification title (a run proposal carries no `type`, only its workflow). */
 export const ASK_CARD_TITLES = Object.freeze({
-  run: 'Ask Worca: run to approve',
-  web: 'Ask Worca: web access to approve',
-  workflow: 'Ask Worca: workflow to review',
-  schedule: 'Ask Worca: schedule to approve',
+  run: 'Chat: run to approve',
+  web: 'Chat: web access to approve',
+  workflow: 'Chat: workflow to review',
+  schedule: 'Chat: schedule to approve',
 });
-export const ASK_GENERIC_TITLE = 'Ask Worca proposal to review';
+export const ASK_GENERIC_TITLE = 'Chat proposal to review';
 export const ASK_BODY = 'Open the chat to review it.';
 /** Pause reason (failure-policy REASON) → notification title. A reason not listed — no reason
  * (Pause pressed) or 'drain' (the server stopping) — waits on nobody, so it never notifies. */
@@ -42,6 +42,7 @@ export const PAUSE_TITLES = Object.freeze({
   cost_pipeline_policy: 'Cost cap reached',
   cost_total_policy: 'Cost cap reached',
   night_guardrail: 'Night guardrail reached',
+  terminated: 'Run paused when worca was stopped',
 });
 export const SCHEDULE_TITLE = 'Scheduled run needs attention';
 export const BLOCKED_HINT = 'Notifications are blocked for this site in your browser settings.';
@@ -52,6 +53,14 @@ const DOT_COLOR = '#e5484d';
 export function kindTitle(kind) {
   return TITLE_PREFIX + (Object.hasOwn(KIND_TITLES, kind) ? KIND_TITLES[kind] : GENERIC_TITLE);
 }
+/** §5a.5: with the list row's status line, the title names the run and the body is that line; without one (older
+ *  callers), the kind title and the run's name, as before. Never the question's text (askWhat is generic). */
+function runCopy(run, kindTitleText) {
+  if (!run.line) return { title: kindTitleText, body: run.title || run.runId };
+  return { title: run.title ? `${TITLE_PREFIX}${run.title}` : kindTitleText, body: run.line };
+}
+const runTarget = (run) => (run.href ? { runId: run.runId, href: run.href } : { runId: run.runId });
+
 export function questionTag(runId, questionId) { return `worca:${runId}:${questionId}`; }
 /** The title for a pause that waits on a person, or null. */
 export function pauseTitle(reason) {
@@ -71,9 +80,9 @@ export function askCardsIn(frame) {
 }
 /** A resume starts a new runId, so one pause tag per run is enough. */
 export function pauseTag(runId) { return questionTag(runId, 'pause'); }
-/** `title` with its `(N) ` prefix set to n, or removed at 0. */
+/** `title` with its "(N) " prefix set to n, or removed at 0. QA 6: no "?" in text; an old "(N) ? " prefix is stripped. */
 export function titleWithCount(title, n) {
-  const base = String(title == null ? '' : title).replace(/^\(\d+\) /, '');
+  const base = String(title == null ? '' : title).replace(/^\(\d+\) (\? )?/, '');
   return n > 0 ? `(${n}) ${base}` : base;
 }
 export function badgeCount({ waitingRuns = 0, unreadProblems = 0 } = {}) {
@@ -187,7 +196,9 @@ export function createAlerts({ Notification: N = null, doc, nav = {}, storage = 
   const shown = () => (settings().badge ? badgeCount(counts) : 0);
   function applyBadge() {
     const n = shown();
-    const title = titleWithCount(doc.title, n);
+    // D25: the title counts the runs that need you (the sidebar's number); unread schedule problems only dot the favicon.
+    const runsN = settings().badge && Number.isFinite(counts.waitingRuns) && counts.waitingRuns > 0 ? Math.floor(counts.waitingRuns) : 0;
+    const title = titleWithCount(doc.title, runsN);
     if (title !== doc.title) doc.title = title;
     const link = doc.querySelector('link[rel~="icon"]');
     if (link) {
@@ -229,13 +240,15 @@ export function createAlerts({ Notification: N = null, doc, nav = {}, storage = 
     onQuestion(run, msg, { backfill = false } = {}) {
       if (!run || !run.runId || !msg) return;
       const tag = questionTag(run.runId, msg.id != null ? msg.id : msg.kind);
-      notifyOnce(tag, kindTitle(msg.kind), run.title || run.runId, { runId: run.runId }, backfill && looking());
+      const { title, body } = runCopy(run, kindTitle(msg.kind));
+      notifyOnce(tag, title, body, runTarget(run), backfill && looking());
     },
     /** A run paused for `reason`. `backfill`: as for onQuestion. */
     onPaused(run, reason, { backfill = false } = {}) {
-      const title = pauseTitle(reason);
-      if (!run || !run.runId || !title) return;
-      notifyOnce(pauseTag(run.runId), title, run.title || run.runId, { runId: run.runId }, backfill && looking());
+      const kind = pauseTitle(reason);
+      if (!run || !run.runId || !kind) return;
+      const { title, body } = runCopy(run, kind);
+      notifyOnce(pauseTag(run.runId), title, body, runTarget(run), backfill && looking());
     },
     /** Any Ask Worca frame: a card that is `proposed` waits for an OK; any other state settles it. */
     onAskFrame(frame) {

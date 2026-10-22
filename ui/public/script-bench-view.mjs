@@ -11,6 +11,8 @@ import {
 } from './script-forms.mjs';
 import { openArtifactPicker, readInputFile } from './artifact-picker.mjs';
 import { escapeHtml } from './code-editor.mjs';
+import { icon } from './icons.mjs';
+import { makeSwitch } from './switch.mjs';
 import {
   CASE_ID_RE, EXPECT_VERDICTS, MAX_CASES, MAX_CASE_NAME, evaluateExpect,
 } from '../../src/shared/graph/script-cases.mjs';
@@ -39,8 +41,8 @@ export function caseListFor(data) {
   };
 }
 
-const miniBtn = (doc, cls, label, kind = 'btn-ghost') => {
-  const b = h(doc, 'button', `btn ${kind} btn-mini ${cls}`, label);
+const miniBtn = (doc, cls, label, kind = 'btn') => {
+  const b = h(doc, 'button', `btn ${kind} btn-sm ${cls}`, label);
   b.type = 'button';
   return b;
 };
@@ -85,7 +87,9 @@ function casesStrip(doc, data, caseState, { unsaved = false } = {}) {
   // `.bench-case-actions` is the slot Update is added to and removed from, so the
   // other buttons never move as the selection changes.
   const actions = h(doc, 'div', 'bench-case-actions');
-  actions.append(miniBtn(doc, 'bench-save-case', 'Save as case'), miniBtn(doc, 'bench-add-case', '+ Case'));
+  const addCase = miniBtn(doc, 'bench-add-case', 'Add case');
+  addCase.prepend(icon(doc, 'plus', 14));
+  actions.append(miniBtn(doc, 'bench-save-case', 'Save as case'), addCase);
   col.appendChild(actions);
   const all = miniBtn(doc, 'bench-run-all', 'Run all');
   all.disabled = unsaved || caseListFor(data).cases.length === 0;
@@ -103,10 +107,8 @@ function inputRows(doc, ports) {
     const row = h(doc, 'div', 'bench-port');
     row.dataset.port = p.id;
     row.dataset.type = p.type;
-    const bind = h(doc, 'label', 'bench-bind');
-    const box2 = doc.createElement('input');
-    box2.type = 'checkbox'; box2.dataset.field = `in:${p.id}:bound`;
-    bind.append(box2, h(doc, 'span', 'bench-port-id mono', p.id), h(doc, 'span', 'chip bench-port-type', p.type));
+    const bind = makeSwitch(doc, { rowClass: 'bench-bind', data: { field: `in:${p.id}:bound` } }).row;
+    bind.append(h(doc, 'span', 'bench-port-id mono', p.id), h(doc, 'span', 'chip bench-port-type', p.type));
     row.appendChild(bind);
     if (p.type === 'void') {
       row.appendChild(h(doc, 'span', 'bench-void-fired', 'fired'));
@@ -211,7 +213,7 @@ function benchBar(doc, projects) {
   sel.appendChild(scratch);
   for (const p of projects || []) {
     const o = doc.createElement('option');
-    o.value = `project:${p.key}`; o.textContent = `${p.name} — ${p.path}`;
+    o.value = `project:${p.key}`; o.textContent = `${p.name} (${p.path})`;
     o.disabled = p.exists === false;
     sel.appendChild(o);
   }
@@ -253,8 +255,8 @@ function resultColumn(doc) {
   dot.dataset.status = 'idle';
   line.append(dot, h(doc, 'span', 'bench-status-text', 'idle'));
   body.appendChild(line);
-  const tabs = h(doc, 'div', 'seg bench-tabs');
-  const b = h(doc, 'button', 'on', 'Log');
+  const tabs = h(doc, 'div', 'tabs bench-tabs');
+  const b = h(doc, 'button', 'tab on', 'Log');
   b.type = 'button'; b.dataset.rtab = 'log'; b.setAttribute('aria-pressed', 'true');
   tabs.appendChild(b);
   body.appendChild(tabs);
@@ -298,7 +300,7 @@ function outputPane(doc, port, out, { highlight, renderMarkdown, outputHref }) {
   pane.hidden = true;
   const body = h(doc, 'div', 'bench-out-body');
   if (out.type === 'md') {
-    const raw = h(doc, 'button', 'btn btn-ghost btn-mini bench-raw', 'Raw');
+    const raw = h(doc, 'button', 'btn btn-sm bench-raw', 'Raw');
     raw.type = 'button';
     pane.appendChild(raw);
     let showing = 'md';
@@ -383,10 +385,10 @@ export function renderBenchResult(result, { doc = globalThis.document, highlight
     if (tail.childNodes.length) frag.appendChild(tail);
   }
   for (const w of result.warnings || []) frag.appendChild(h(doc, 'div', 'bench-warn', w));
-  const tabs = h(doc, 'div', 'seg bench-tabs');
+  const tabs = h(doc, 'div', 'tabs bench-tabs');
   const panes = [];
   const addTab = (rtab, label) => {
-    const b = h(doc, 'button', panes.length === 0 ? 'on' : '', label);
+    const b = h(doc, 'button', panes.length === 0 ? 'tab on' : 'tab', label);
     b.type = 'button'; b.dataset.rtab = rtab;
     b.setAttribute('aria-pressed', panes.length === 0 ? 'true' : 'false');
     tabs.appendChild(b);
@@ -562,8 +564,8 @@ export function createBenchController({
     dot.dataset.status = 'running';
     line.append(dot, h(doc, 'span', 'bench-status-text', 'running'));
     body.appendChild(line);
-    const tabs = h(doc, 'div', 'seg bench-tabs');
-    const b = h(doc, 'button', 'on', 'Log');
+    const tabs = h(doc, 'div', 'tabs bench-tabs');
+    const b = h(doc, 'button', 'tab on', 'Log');
     b.type = 'button'; b.dataset.rtab = 'log'; b.setAttribute('aria-pressed', 'true');
     tabs.appendChild(b);
     const pane = h(doc, 'div', 'bench-pane');

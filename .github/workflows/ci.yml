@@ -80,6 +80,10 @@ jobs:
               - 'test/run-harness-*.test.mjs'
               - 'test/run-root-*.test.mjs'
               - 'test/stop-paused-harness.test.mjs'
+              - 'test/folder-run.test.mjs'
+              - 'test/folder-apply.test.mjs'
+              - 'test/api-run-folder.test.mjs'
+              - 'test/api-run-no-project.test.mjs'
               - 'test/seed-traces.test.mjs'
               - 'test/auto-recipes-offline.test.mjs'
               - 'test/presentation-golden-run.test.mjs'
@@ -102,6 +106,7 @@ jobs:
               - 'test/policy-sync.test.mjs'
               - 'test/sync-api.test.mjs'
               - 'test/branches-api-fresh.test.mjs'
+              - 'test/marketplace-publish-flow.test.mjs'
               - 'test/cli-interactive.test.mjs'
               - 'test/cli-schedule-wait.test.mjs'
               - 'test/cli-auto.test.mjs'
@@ -194,7 +199,7 @@ jobs:
       matrix:
         include:
           - group: composer + run-monitor
-            proofs: "verify:composer verify:run-monitor"
+            proofs: "verify:composer verify:run-monitor verify:feature-page"
           - group: theme + memory + scripts
             proofs: "verify:theme verify:memory verify:scripts"
           - group: ask-forms + workspace-map + flags + requirements

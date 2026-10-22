@@ -221,7 +221,7 @@ test('choices: held before a thread exists and sent with the first message, PATC
   ]);
 });
 
-test('refresh: an ask-worktrees change, the page (Auto), the scope; a join notice\'s "MCP" opens the picker', async () => {
+test('refresh: an ask-worktrees change, the page (No project), the scope; a join notice\'s "MCP" opens the picker', async () => {
   const notice = { kind: 'notice', text: "shop's MCP servers (sentry_shop, postgres-ro_shop) join from the next message", mcp: true };
   const snap = { thread: { id: TID, title: 'T', createdAt: 't', updatedAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {} },
     messages: [{ id: 'askm_00000001', threadId: TID, seq: 1, role: 'assistant', text: 'done', blocks: [notice], status: 'done', createdAt: 't' }],
@@ -237,11 +237,11 @@ test('refresh: an ask-worktrees change, the page (Auto), the scope; a join notic
   n = state.previews.length;
   ctx.window.dispatchEvent(new ctx.window.Event('hashchange'));
   await settle(ctx);
-  assert.equal(state.previews.length, n + 1, 'in Auto, a page change re-previews');
+  assert.equal(state.previews.length, n + 1, 'with No project, a page change still re-previews');
   n = state.previews.length;
   ctx.doc.querySelector('[data-ask-scope-btn]').click();
   await settle(ctx);
-  [...ctx.doc.querySelectorAll('.ask-scope-item')].find((i) => /Auto/.test(i.textContent)).click();
+  [...ctx.doc.querySelectorAll('.ask-scope-item')].find((i) => i.querySelector('.ask-model-name').textContent === 'No project').click();
   await settle(ctx);
   assert.equal(state.previews.length, n + 1, 'a scope choice re-previews');
   const link = ctx.doc.querySelector('.ask-notice .ask-notice-mcp');
@@ -362,7 +362,7 @@ test('a failed preview says so in the open picker and keeps the chip so it can b
       state.preview = null;                                                      // the next preview answers no body
       ctx.window.dispatchEvent(new ctx.window.Event('hashchange'));
       await settle(ctx);
-      assert.match(pop(ctx).textContent, /Could not load the sets — reopen to retry\./);
+      assert.match(pop(ctx).textContent, /Could not load the sets\. Reopen to retry\./);
       ctx.panel.destroy();
     } },
     { name: 'a failed preview keeps the chip, so the picker can be reopened to retry', run: async () => {
@@ -374,7 +374,7 @@ test('a failed preview says so in the open picker and keeps the chip so it can b
       state.preview = null;                                                      // the next preview fails
       ctx.window.dispatchEvent(new ctx.window.Event('hashchange'));
       await settle(ctx);
-      assert.match(pop(ctx).textContent, /reopen to retry/);
+      assert.match(pop(ctx).textContent, /Reopen to retry/);
       assert.equal(btn(ctx).hidden, false, 'the chip the message tells the user to reopen is still there');
       assert.equal(btn(ctx).textContent.trim(), 'Sets · ?');
       state.preview = PREVIEW;

@@ -99,7 +99,7 @@ test('set list: General first, user sets, Team sets; the warning dot; Used by li
   const rows = [...host.querySelectorAll('.mcp-setrow')];
   assert.deepEqual(rows.map((r) => r.dataset.set), SETS.map((s) => s.id));
   assert.deepEqual(rows.map((r) => !!r.querySelector('.mcp-dot')), [false, true, false, false, false]);
-  assert.match(rows[0].textContent, /Built in.*2 servers · Ask Worca · 1 project/);
+  assert.match(rows[0].textContent, /Built in.*2 servers · Chat · 1 project/);
   assert.match(rows[1].textContent, /2 servers · billing/);
   assert.match(rows[4].textContent, /no project here follows old\/home/);
   assert.ok(rows[4].classList.contains('greyed'));
@@ -184,6 +184,22 @@ test('Team sets are read-only (no rename/delete/add/remove, disabled never-conse
       assert.deepEqual(nav, ['connectors']);
     } },
   ]);
+});
+
+test('New set: dismissing the shell itself (header Close, Escape) settles the name prompt — nothing is created, nothing waits forever', async () => {
+  const { host, ctl, modal, writes } = mount();
+  let dismiss = null;
+  modal.onClose = (fn) => { dismiss = fn; return () => { dismiss = null; }; };
+  await ctl.show('');
+  click(host.querySelector('[data-act="new-set"]'));
+  await settle();
+  assert.equal(modal.opened.title, 'New set');
+  assert.equal(typeof dismiss, 'function', 'the prompt registered a dismiss hook');
+  dismiss();
+  await settle();
+  assert.equal(modal.opened, null, 'closed');
+  assert.equal(dismiss, null, 'the hook is released');
+  assert.deepEqual(writes(), [], 'nothing created');
 });
 
 test('Delete: the confirm lists the projects using the set and flags those left with no sets (a Team set counts)', async () => {
@@ -360,10 +376,10 @@ test('Add MCP server posts the name with the definition, then offers Add to set;
   const type = (sel, v) => { const i = m.modal.opened.body.querySelector(sel); i.value = v; i.dispatchEvent(new doc.defaultView.Event('input', { bubbles: true })); };
   type('[data-def="name"]', 'pg');
   type('[data-def="command"]', 'npx');
-  await m.modal.opened.actions.find(([label]) => label === 'Save and add to set')[2]();
+  await m.modal.opened.actions.find(([label]) => label === 'Save to set')[2]();
   await settle();
   assert.deepEqual(sent(), [['POST', '/api/mcp/servers', { name: 'pg', type: 'stdio', fields: [], description: '', command: 'npx', args: [], env: {} }]]);
-  assert.equal(m.modal.opened.title, 'Add server to a set', 'Save and add to set opens the set picker');
+  assert.equal(m.modal.opened.title, 'Add server to a set', 'Save to set opens the set picker');
   click(m.host.querySelector('[data-edit="manual:postgres-ro"]'));
   await m.modal.opened.actions.find(([label]) => label === 'Save')[2]();
   await settle();

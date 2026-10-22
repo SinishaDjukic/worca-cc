@@ -12,6 +12,7 @@ import {
 } from '../ui/public/branch-sync.mjs';
 import { isSafeBranchName } from '../src/core/git-sync.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { backdropClick } from './helpers/popups.mjs';
 
 const block = (over = {}) => ({
   base: 'dev', remote: 'origin', state: 'up-to-date', ahead: 0, behind: 0,
@@ -174,7 +175,7 @@ test('sync copy helpers: sourceRefNote, syncStageLabel, ffRefusalCopy and fetchF
       assert.equal(sourceRefNote({ ref: 'dev' }), '');
       assert.equal(sourceRefNote({ ref: 'origin/feat', remoteOnly: true }), 'from origin/feat (remote only)');
       assert.equal(sourceRefNote({ ref: 'dev', behind: 2 }), 'from dev (2 behind)');
-      assert.equal(sourceRefNote({ ref: 'dev', behind: 2, stale: true }), 'from dev (2 behind, could not fetch — last known refs)');
+      assert.equal(sourceRefNote({ ref: 'dev', behind: 2, stale: true }), 'from dev (2 behind, could not fetch: last known refs)');
     } },
     { name: 'syncStageLabel for all five results', run: () => {
       assert.equal(syncStageLabel(null), 'Sync');
@@ -245,7 +246,7 @@ async function dom(body = '') {
 }
 const ROW = `<div class="sync-row" id="sync-row" hidden>
   <button type="button" class="sync-pill grey" id="sync-pill"><span class="sdot"></span><span class="sync-pill-txt">Checking…</span></button>
-  <button type="button" class="btn btn-mini sync-btn" id="sync-btn"><span>Sync</span></button>
+  <button type="button" class="btn btn-sm sync-btn" id="sync-btn"><span>Sync</span></button>
   <label class="switch-row sync-auto"><input id="syncAuto" class="sw-input" type="checkbox" checked></label>
 </div><button id="opener">open</button>`;
 
@@ -318,7 +319,9 @@ test('openSyncDialog: rows, commits as text, Escape/scrim close with focus retur
 
       done = openSyncDialog({ sync: b, opener });
       const m2 = w.document.querySelector('.sync-modal');
-      m2.dispatchEvent(new w.Event('click', { bubbles: true }));
+      m2.dispatchEvent(new w.Event('click', { bubbles: true }));            // a release with no press: not an outside click
+      assert.ok(m2.isConnected, 'a selection dragged out of the card does not close it');
+      backdropClick(w, m2);                                                   // press + release on the scrim
       assert.equal(await done, null);
 
       // onSync returns nothing → the current block stays; returns a refused ff → the note explains.
@@ -379,7 +382,7 @@ test('chooseSyncRefusal: diverged → origin; forbidden → Cancel only; fetch-f
   m = w.document.querySelector('.sync-modal');
   assert.match(m.textContent, /A: Sign-in to origin failed/);
   assert.match(m.textContent, /B: origin could not be reached/);
-  [...m.querySelectorAll('button')].find((b) => b.textContent === 'Start anyway from last fetch').click();
+  [...m.querySelectorAll('button')].find((b) => b.textContent === 'Start anyway').click();
   assert.equal(await p, 'last-fetch');
 
   p = chooseSyncRefusal({ code: 'sync-diverged', options: ['origin', 'cancel'], members });

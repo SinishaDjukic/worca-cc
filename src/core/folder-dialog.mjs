@@ -8,6 +8,9 @@
 //             the dialog frontmost; on first use macOS may show a one-time
 //             Automation consent prompt — a denial surfaces as a non-cancel
 //             error and degrades to `unsupported`, i.e. the in-app fallback)
+//   darwin, purpose 'repos' -> ONE NSOpenPanel through JXA (osascript -l JavaScript) that takes
+//             folders AND .code-workspace files (the workspace wizard's Add…); a non-cancel failure
+//             falls back to the folders-only `choose folder`
 //   win32  -> PowerShell System.Windows.Forms.FolderBrowserDialog (-STA), owned
 //             by a shown, transparent TopMost form so it opens above the browser
 //   linux  -> zenity --file-selection --directory, falling back to kdialog;
@@ -29,6 +32,7 @@ const PROMPTS = Object.freeze({
   project: 'Select a project folder',
   export: 'Select the project folder to export into',
   plugin: 'Select the plugin folder',
+  repos: 'Select repositories or a folder of repositories',
 });
 const promptFor = (purpose) => PROMPTS[purpose] || PROMPTS.project;
 // A dialog waits on a human; give it a long leash, then kill the process so a
@@ -90,7 +94,7 @@ export const _testing = {
  * Windows' FolderBrowserDialog and kdialog stay single-select. With `multiple`
  * a pick answers { status:'picked', path: <first>, paths: [...] }; without it the
  * reply keeps its historical { status:'picked', path } shape.
- * @param {{purpose?: 'project'|'export'|'plugin', multiple?: boolean}} [opts]
+ * @param {{purpose?: 'project'|'export'|'plugin'|'repos', multiple?: boolean}} [opts]
  * @returns {Promise<{status:'picked', path:string, paths?:string[]} | {status:'canceled'}
  *   | {status:'unsupported'} | {status:'busy'}>}
  */
@@ -105,7 +109,7 @@ export async function pickFolderNative({ purpose, multiple = false } = {}) {
     const multi = multiple === true;
     if ((env.WORCA_NO_NATIVE_DIALOG || '') === '1') return { status: 'unsupported' };
     let r = { status: 'unsupported' };
-    if (platform === 'darwin') r = await pickMac(run, prompt, multi);
+    if (platform === 'darwin') r = purpose === 'repos' ? await pickMacRepos(run, prompt) : await pickMac(run, prompt, multi);
     else if (platform === 'win32') r = await pickWindows(run, prompt);
     else if (platform === 'linux') r = await pickLinux(run, env, prompt, multi);
     if (r.status !== 'picked') return r;
@@ -146,6 +150,38 @@ async function pickMac(run, prompt, multiple) {
   // `choose folder` cancel: exit 1 + "execution error: User canceled. (-128)"
   if (/-128|User cancell?ed/i.test(r.stderr || '')) return { status: 'canceled' };
   return { status: 'unsupported' }; // no GUI session, automation denied, ...
+}
+
+// The workspace wizard's Add… (purpose 'repos') on macOS: ONE panel that takes folders AND
+// .code-workspace files. AppleScript's `choose folder` takes only folders and `choose file` only
+// files, so this drives the same NSOpenPanel they show through JXA, inside osascript as they are:
+// the System Events activation keeps it frontmost as for `choose folder`, and the accessory
+// activation policy lets a process with no app bundle bring a window forward. A closed constant:
+// no caller text reaches the script. A cancel answers '' (parsePicked: canceled).
+// The last line keeps a LOOSE `==`: the bridge hands NSInteger constants over as strings
+// (osascript: `typeof $.NSModalResponseOK` is 'string', `== 1` is true, `=== 1` is false).
+const MAC_REPOS_JXA = [
+  "ObjC.import('AppKit');",
+  "Application('System Events').activate();",
+  'const app = $.NSApplication.sharedApplication;',
+  'app.setActivationPolicy($.NSApplicationActivationPolicyAccessory);',
+  'app.activateIgnoringOtherApps(true);',
+  'const panel = $.NSOpenPanel.openPanel;',
+  'panel.setCanChooseFiles(true);',
+  'panel.setCanChooseDirectories(true);',
+  'panel.setAllowsMultipleSelection(true);',
+  'panel.setCanCreateDirectories(false);',
+  "panel.setAllowedFileTypes($(['code-workspace']));",
+  "panel.setMessage($('Select repositories, folders of repositories or a .code-workspace file'));",
+  "panel.runModal == $.NSModalResponseOK ? ObjC.unwrap(panel.URLs).map((u) => u.path.js).join('\\n') : '';",
+].join('\n');
+
+async function pickMacRepos(run, prompt) {
+  const r = await run('osascript', ['-l', 'JavaScript', '-e', MAC_REPOS_JXA]);
+  if (r.ok) return parsePicked(r.stdout);
+  if (/-128|User cancell?ed/i.test(r.stderr || '')) return { status: 'canceled' };
+  if (r.timedOut) return { status: 'unsupported' };   // a forgotten panel: never open a second dialog
+  return pickMac(run, prompt, true);                  // no AppKit bridge: the folders-only dialog
 }
 
 async function pickWindows(run, prompt) {

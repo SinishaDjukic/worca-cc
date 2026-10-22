@@ -1,5 +1,5 @@
 // test/ask-policy-tools.test.mjs
-// The team-policy side of the Ask Worca tools (docs/team-policy.md "Ask Worca") over a fake
+// The team-policy side of the Ask Worca tools (docs/team-policy.md "Chat") over a fake
 // deps.policy bundle: list_projects' `policy` field, get_team_policy's shape (rows, the
 // workspaceRuns block, catalogs, plugins, deviations, the pinned default, the no-policy answer),
 // propose_policy_change's pin fill, get_run's policy block and a team-cap pause, and the policy
@@ -14,6 +14,7 @@ import { FIELDS } from '../src/core/policy/registry.mjs';
 import { aggregate } from '../src/shared/team-metrics/aggregate.mjs';
 import { makeRecord } from './fixtures/team-metrics/records.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { scopeRefusalText } from '../src/core/ask/scope.mjs';
 
 const SECRET = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789';
 const DOC = {
@@ -153,6 +154,8 @@ test('get_team_policy: project rows, pinned-workspace rows, no-policy reason and
 
 test('propose_policy_change: validates only; the pin fills a target of a fitting kind', async () => {
   calls.length = 0; pin = null;
+  assert.deepEqual(await tools.call('propose_policy_change', { kind: 'edit', projectKey: 'gw-00000001', set: [{ key: 'cost.pipelineLimitUsd', value: 30 }] }), { ok: false, errors: [scopeRefusalText(null, { projectKey: 'gw-00000001' })] });
+  pin = { projectKey: 'gw-00000001' };
   const r = await tools.call('propose_policy_change', { kind: 'edit', projectKey: 'gw-00000001', set: [{ key: 'cost.pipelineLimitUsd', value: 30 }] });
   assert.equal(r.ok, true); assert.equal(r.card.type, 'policy');
   pin = { projectKey: 'gw-00000001' }; calls.length = 0;
@@ -167,8 +170,10 @@ test('propose_policy_change: validates only; the pin fills a target of a fitting
   await tools.call('propose_policy_change', { kind: 'enable' });
   assert.equal(calls[0][1].workspaceId, 'wks-iot-0000abcd', 'a pinned workspace fills edit');
   assert.equal(calls[1][1].workspaceId, undefined, 'a pinned workspace is no target for enable');
-  await tools.call('propose_policy_change', { kind: 'edit', projectKey: 'bl-00000002' });
-  assert.equal(calls[2][1].projectKey, 'bl-00000002'); assert.equal(calls[2][1].workspaceId, undefined, 'an explicit target wins');
+  await tools.call('propose_policy_change', { kind: 'edit', projectKey: 'ed-00000003' });
+  assert.equal(calls[2][1].projectKey, 'ed-00000003', 'an explicit member project of the pinned workspace is in scope'); assert.equal(calls[2][1].workspaceId, undefined, 'an explicit target wins');
+  assert.deepEqual(await tools.call('propose_policy_change', { kind: 'edit', projectKey: 'bl-00000002' }), { ok: false, errors: [scopeRefusalText({ workspaceId: 'wks-iot-0000abcd' }, { projectKey: 'bl-00000002' })] });
+  assert.equal(calls.length, 3);
   pin = null;
 });
 

@@ -3,13 +3,14 @@
 // every function takes an aggregate() result (src/shared/team-metrics/aggregate.mjs) and
 // returns detached elements. app.js owns fetch, mounting and delegated events.
 import { niceScale, roundedTopBar, savedMultChip } from './stats-view.mjs';
-import { safeHttpUrl } from '../../src/shared/team-metrics/aggregate.mjs';
+import { safeHttpUrl, recordTags } from '../../src/shared/team-metrics/aggregate.mjs';
+import { dimensionLabel } from '../../src/shared/tag-dimensions.mjs';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const MONTH_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 /** Series palette (mockup legend order): blue-ink, amber-ink, violet-ink, green-ink, red-ink, ink-3. */
-export const SERIES_COLORS = ['var(--blue-ink)', 'var(--amber-ink)', 'var(--violet-ink)', 'var(--green-ink)', 'var(--red-ink)', 'var(--ink-3)'];
+export const SERIES_COLORS = ['var(--blue-ink)', 'var(--amber-ink)', 'var(--pink-ink)', 'var(--green-ink)', 'var(--red-ink)', 'var(--ink-3)'];
 const RESULT_STACKS = [
   { key: 'done', label: 'Done', color: 'var(--green-ink)' },
   { key: 'failed', label: 'Failed', color: 'var(--red-ink)' },
@@ -106,14 +107,14 @@ export function renderSyncChip({ sync = [], stats = {}, refresh = null, fetchErr
   // regular 60 s fetch serves fresh data, and "refresh again in N s" would be a lie.
   if (refresh?.limited && !refresh.fetched) txt.append(` | refresh again in ${Math.ceil(refresh.retryInMs / 1000)} s`);
   chip.append(txt);
-  const refreshBtn = h(doc, 'button', `btn-ghost btn-mini tm-refresh${checking ? ' busy' : ''}`, 'Refresh'); refreshBtn.type = 'button';
+  const refreshBtn = h(doc, 'button', `btn btn-sm tm-refresh${checking ? ' busy' : ''}`, 'Refresh'); refreshBtn.type = 'button';
   if (checking) refreshBtn.disabled = true;
   chip.append(refreshBtn);
   // "Push now" exists only while there is something to push: with an empty outbox
   // the flush is a no-op, and a permanently visible (disabled) button read as an
   // action that was somehow unavailable rather than one that was not needed.
   if (pending > 0) {
-    const pushBtn = h(doc, 'button', 'btn-ghost btn-mini tm-push-now', 'Push now'); pushBtn.type = 'button';
+    const pushBtn = h(doc, 'button', 'btn btn-sm tm-push-now', 'Push now'); pushBtn.type = 'button';
     chip.append(pushBtn);
   }
   const err = lastError || fetchError;
@@ -163,7 +164,7 @@ function tile(doc, { label, chip, value, sub, meterPct = null, icon = null }) {
   if (icon) lab.append(tileIcon(doc, icon));
   lab.append(h(doc, 'span', null, label));
   if (chip) lab.append(chip);
-  card.append(lab, h(doc, 'div', 'stat-value mono', value));
+  card.append(lab, h(doc, 'div', 'stat-value', value));
   if (meterPct != null) {
     const m = h(doc, 'span', 'stat-meter');
     const f = h(doc, 'span', 'stat-meter-fill'); f.style.width = `${Math.max(0, Math.min(100, meterPct))}%`;
@@ -278,7 +279,7 @@ export function renderStackedWeekChart({ title, weeks, stacks, valueOf, yFmt, ti
   for (const st of stacks) {
     const item = h(doc, 'span', 'lg-item');
     const sw = h(doc, 'span', 'lg-swatch'); sw.style.background = st.color;
-    item.append(sw, `${st.label} `, h(doc, 'b', 'mono', legendValue(st)));
+    item.append(sw, `${st.label} `, h(doc, 'b', null, legendValue(st)));
     legend.append(item);
   }
   card.append(legend);
@@ -289,7 +290,7 @@ export function renderStackedWeekChart({ title, weeks, stacks, valueOf, yFmt, ti
   const svg = s(doc, 'svg', { class: 'chart-svg', viewBox: `0 0 ${CW} ${CH}`, 'aria-label': title });
   for (let v = 0; v <= top + 1e-9; v += step) {
     svg.append(s(doc, 'line', { x1: L, y1: yOf(v), x2: CW - R, y2: yOf(v), stroke: v === 0 ? 'var(--line-2)' : 'var(--line)', 'stroke-width': 1 }));
-    const t = s(doc, 'text', { x: L - 6, y: yOf(v) + 3.5, 'text-anchor': 'end', 'font-size': 10.5, fill: 'var(--ink-3)' });
+    const t = s(doc, 'text', { x: L - 6, y: yOf(v) + 3.5, 'text-anchor': 'end', 'font-size': 11, fill: 'var(--ink-3)' });
     // class="ch-ytick" as in stats-view.mjs chartScaffold (:415-455) — the Stats stylesheet already
     // styles that class, and without it the new charts render their ticks unstyled.
     t.setAttribute('class', 'ch-ytick');
@@ -314,7 +315,7 @@ export function renderStackedWeekChart({ title, weeks, stacks, valueOf, yFmt, ti
       tipLines.push(`${st.label}: ${tipFmt(v)}`);
     }
     if (i % every === 0 || i === weeks.length - 1) {
-      const t = s(doc, 'text', { x: bx + band / 2, y: CH - 8, 'text-anchor': 'middle', 'font-size': 10.5, fill: 'var(--ink-3)' });
+      const t = s(doc, 'text', { x: bx + band / 2, y: CH - 8, 'text-anchor': 'middle', 'font-size': 11, fill: 'var(--ink-3)' });
       t.textContent = TM_FMT.day(new Date(pt.weekStartMs).toISOString()); svg.append(t);
     }
     const hit = s(doc, 'rect', { class: 'ch-hit', x: bx, y: T, width: band, height: PH, tabindex: 0, role: 'img', 'aria-label': `Week of ${TM_FMT.day(new Date(pt.weekStartMs).toISOString())}: ${tipLines.join(', ') || 'none'}` });
@@ -368,7 +369,7 @@ export function renderBreakdownTable(dim, rows, { doc = globalThis.document, sor
   const head = h(doc, 'div', 'card-head');
   head.append(h(doc, 'h2', null, spec.title), h(doc, 'small', 'hint', spec.sub));
   card.append(head);
-  const table = h(doc, 'table', 'tm-tbl');
+  const table = h(doc, 'table', 'table tm-tbl');
   table.dataset.dim = dim;
   const thr = h(doc, 'tr');
   for (const [key, label] of spec.cols) {
@@ -392,8 +393,9 @@ export function renderBreakdownTable(dim, rows, { doc = globalThis.document, sor
     tr.dataset.filterDim = dim;
     tr.dataset.filterKey = r.key;
     tr.tabIndex = 0;
-    for (const [key] of spec.cols) {
-      const td = h(doc, 'td', key === 'label' ? null : 'num mono');
+    for (const [key, colLabel] of spec.cols) {
+      const td = h(doc, 'td', key === 'label' ? 'table-main' : 'num mono');
+      if (key !== 'label' && colLabel) td.dataset.label = colLabel;
       if (key === 'label') {
         // An actor may be a full email now (attribution: the person who started the run on a
         // shared deployment): clipped to the column, the whole name in the tooltip.
@@ -401,7 +403,7 @@ export function renderBreakdownTable(dim, rows, { doc = globalThis.document, sor
         if (dim === 'actor' && r.label) lab.title = String(r.label);
         td.append(lab);
         if (r.sub) td.append(' ', h(doc, 'small', 'hint', r.sub));
-        if (dim === 'project' && homeSlug && r.key === homeSlug) td.append(' ', h(doc, 'span', 'badge violet', 'metrics home'));
+        if (dim === 'project' && homeSlug && r.key === homeSlug) td.append(' ', h(doc, 'span', 'badge slate', 'metrics home'));
       } else if (key === 'share' || key === 'runShare') {
         const bar = h(doc, 'span', 'tm-share'); const fill = h(doc, 'span', 'tm-share-fill');
         fill.style.width = `${Math.round((r[key] || 0) * 100)}%`; bar.append(fill); td.append(bar);
@@ -420,7 +422,9 @@ export function renderBreakdownTable(dim, rows, { doc = globalThis.document, sor
     td.append(h(doc, 'small', 'hint', 'No runs in this range')); tr.append(td); tbody.append(tr);
   }
   table.append(tbody);
-  card.append(table);
+  const wrap = h(doc, 'div', 'table-wrap');
+  wrap.append(table);
+  card.append(wrap);
   return card;
 }
 
@@ -429,13 +433,14 @@ export function renderRunsTable(runs, { doc = globalThis.document, total = runs.
   const head = h(doc, 'div', 'card-head tm-runs-head');
   const title = h(doc, 'h2', null, 'Runs ');
   title.append(h(doc, 'small', 'hint', `${total} in range`));
-  const exp = h(doc, 'button', 'btn-ghost btn-mini tm-export', 'Export CSV'); exp.type = 'button'; exp.disabled = total === 0;
+  const exp = h(doc, 'button', 'btn btn-sm tm-export', 'Export CSV'); exp.type = 'button'; exp.disabled = total === 0;
   head.append(title, exp);
   card.append(head);
   if (!runs.length) { card.append(h(doc, 'div', 'chart-empty hint', 'No runs recorded in this range')); return card; }
-  const table = h(doc, 'table', 'tm-tbl tm-run-tbl');
+  const table = h(doc, 'table', 'table tm-tbl tm-run-tbl');
   const thead = h(doc, 'thead'); const thr = h(doc, 'tr');
-  for (const c of ['Title', 'Workflow', 'Result', 'Cost', 'Saved', 'Duration', 'Cycles', 'PR', 'Actor', 'Started']) thr.append(h(doc, 'th', null, c));
+  const cols = ['Title', 'Workflow', 'Result', 'Cost', 'Saved', 'Duration', 'Cycles', 'PR', 'Actor', 'Started'];
+  for (const c of cols) thr.append(h(doc, 'th', null, c));
   thead.append(thr); table.append(thead);
   const tbody = h(doc, 'tbody');
   for (const r of runs.slice(0, limit)) {
@@ -468,16 +473,21 @@ export function renderRunsTable(runs, { doc = globalThis.document, total = runs.
     who.append(whoText);
     tr.append(who);
     tr.append(h(doc, 'td', 'mono', TM_FMT.day(r.startedAt)));
+    tr.cells[0].classList.add('table-main');
+    for (let i = 1; i < tr.cells.length; i += 1) tr.cells[i].dataset.label = cols[i];
     tbody.append(tr);
   }
-  table.append(tbody); card.append(table);
+  table.append(tbody);
+  const wrap = h(doc, 'div', 'table-wrap');
+  wrap.append(table);
+  card.append(wrap);
   const shown = Math.min(limit, runs.length);
   const foot = h(doc, 'div', 'tm-runs-foot');
   foot.append(h(doc, 'small', 'hint', `Showing ${shown} of ${total} · newest first`));
   // §4.9 asks for "every record in range". The mockup's first paint is capped for layout, so the
   // remaining rows must stay REACHABLE on screen, not only through Export CSV.
   if (shown < runs.length) {
-    const more = h(doc, 'button', 'btn-ghost btn-mini tm-show-all', `Show all ${runs.length} runs`);
+    const more = h(doc, 'button', 'btn btn-sm tm-show-all', `Show all ${runs.length} runs`);
     more.type = 'button';
     foot.append(more);
   }
@@ -492,7 +502,7 @@ export function renderRunsTable(runs, { doc = globalThis.document, total = runs.
  * it is not. `project` is offered for workspace scopes only — on a single project it is
  * always one bar.
  */
-export function renderGroupBySelect(groupBy, scopeKind, { doc = globalThis.document } = {}) {
+export function renderGroupBySelect(groupBy, scopeKind, { doc = globalThis.document, tagKeys = [], dims = [] } = {}) {
   const label = h(doc, 'label', 'tm-group');
   label.append('Group by ');
   const wrap = h(doc, 'span', 'select-wrap');
@@ -500,23 +510,139 @@ export function renderGroupBySelect(groupBy, scopeKind, { doc = globalThis.docum
   sel.id = 'tm-group';
   sel.setAttribute('aria-label', 'Stack Spend per week by');
   // The same three for both scope kinds: spend is never split across the projects a run touched.
-  const opts = ['workflow', 'result', 'actor'];
-  for (const v of opts) { const o = h(doc, 'option', null, v); o.value = v; o.selected = v === groupBy; sel.append(o); }
+  // Tag keys stack too: a run carries one value per key.
+  const opts = ['workflow', 'result', 'actor'].map((v) => [v, v])
+    .concat(tagKeys.map((k) => [`tag:${k}`, dimensionLabel(dims, k) || `cost tag: ${k}`]));
+  for (const [v, text] of opts) { const o = h(doc, 'option', null, text); o.value = v; o.selected = v === groupBy; sel.append(o); }
   wrap.append(sel);
   label.append(wrap);
   return label;
 }
 
-export function renderTeamMetricsBody(agg, { doc = globalThis.document, now = Date.now(), scopeKind = 'project', sort = {}, filter = {}, homeHint = null, runLimit = 50 } = {}) {
+/** The #tm-tag filter: every distinct tag on the loaded records; hidden when none carries tags. */
+export function renderTagFilterSelect(records, current, { doc = globalThis.document } = {}) {
+  const tags = [...new Set(records.flatMap(recordTags))].sort();
+  const sel = h(doc, 'select', 'select select-sm');
+  sel.id = 'tm-tag'; sel.setAttribute('aria-label', 'Filter by cost tag'); sel.hidden = !tags.length;
+  for (const [v, text] of [['', 'All cost tags'], ...tags.map((t) => [t, t])]) { const o = h(doc, 'option', null, text); o.value = v; o.selected = v === current; sel.append(o); }
+  return sel;
+}
+
+/** A heat cell's shade step: 0 for no spend, else 1–4 by its share of the largest cell. */
+export const heatLevel = (usd, max) => (!(usd > 0) || !(max > 0) ? 0 : Math.max(1, Math.min(4, Math.ceil((usd / max) * 4))));
+
+/** Team metrics › Cost: person × value for the Allocate by dimension (cost-facts.mjs heatGrid). null grid = Allocate by Person. */
+export function renderHeatGrid(grid, { doc = globalThis.document, fmt = TM_FMT, byLabel = '' } = {}) {
+  const card = h(doc, 'section', 'card tm-heat');
+  const head = h(doc, 'div', 'card-head');
+  head.append(h(doc, 'h2', null, `Person × ${byLabel}`), h(doc, 'small', 'hint', 'AI spend per person and value'));
+  card.append(head);
+  if (!grid) {
+    card.append(h(doc, 'p', 'chart-empty hint', 'Allocate by a dimension other than Person to see who spends on what.'));
+    return card;
+  }
+  const cellOf = new Map(grid.cells.map((c) => [`${c.person}\u0000${c.col}`, c]));
+  const table = h(doc, 'table', 'people-table tm-heat-table');
+  const thr = h(doc, 'tr');
+  thr.append(h(doc, 'th', null, 'Person'), ...grid.columns.map((c) => h(doc, 'th', 'num', c.label)), h(doc, 'th', 'num', 'Total'));
+  const thead = h(doc, 'thead');
+  thead.append(thr);
+  const tbody = h(doc, 'tbody');
+  for (const p of grid.people) {
+    const tr = h(doc, 'tr');
+    const name = h(doc, 'td');
+    const lab = h(doc, 'span', 'tm-person', p.label);
+    lab.title = p.label;
+    name.append(lab);
+    tr.append(name);
+    for (const col of grid.columns) {
+      const c = cellOf.get(`${p.key}\u0000${col.key}`);
+      const td = h(doc, 'td', `num mono tm-heat-cell tm-heat-l${heatLevel(c.spentUsd, grid.maxUsd)}`, c.spentUsd > 0 ? fmt.usd(c.spentUsd) : '—');
+      td.title = `${p.label} · ${col.label}: ${fmt.usd(c.spentUsd)} · ${c.runs} ${c.runs === 1 ? 'run' : 'runs'}`;
+      tr.append(td);
+    }
+    tr.append(h(doc, 'td', 'num mono', fmt.usd(p.spentUsd)));
+    tbody.append(tr);
+  }
+  table.append(thead, tbody);
+  const scroll = h(doc, 'div', 'people-scroll');
+  scroll.append(table);
+  const legend = h(doc, 'div', 'tm-heat-legend hint');
+  legend.setAttribute('aria-hidden', 'true');             // the amounts in the cells carry the same information
+  legend.append('Less ', ...[1, 2, 3, 4].map((l) => h(doc, 'span', `tm-heat-swatch tm-heat-l${l}`)), ' More');
+  card.append(scroll, legend);
+  return card;
+}
+
+/** Team metrics › Cost: runs missing a required cost tag key, per person (cost-facts.mjs missingKeyTodos). null without required keys. */
+export function renderMissingTagsStrip(todo, { doc = globalThis.document, fmt = TM_FMT, dims = [] } = {}) {
+  if (!todo || !todo.keys.length) return null;
+  const name = (k) => dimensionLabel(dims, k) || k;
+  const card = h(doc, 'section', 'card tm-todo');
+  const head = h(doc, 'div', 'card-head');
+  head.append(h(doc, 'h2', null, 'Missing cost tags'), h(doc, 'small', 'hint', `Required: ${todo.keys.map(name).join(', ')}`));
+  card.append(head);
+  if (!todo.rows.length) {
+    card.append(h(doc, 'p', 'hint tm-todo-done', 'Every run in this view carries the required cost tags.'));
+    return card;
+  }
+  const list = h(doc, 'ul', 'tm-todo-list');
+  for (const r of todo.rows) {
+    const li = h(doc, 'li', 'tm-todo-row');
+    const who = h(doc, 'span', 'tm-person', r.label);
+    who.title = r.label;
+    li.append(who, h(doc, 'span', 'mono num', `${r.runs} ${r.runs === 1 ? 'run' : 'runs'}`),
+      h(doc, 'span', 'mono num', fmt.usd(r.spentUsd)), h(doc, 'small', 'hint', `missing ${r.keys.map(name).join(', ')}`));
+    list.append(li);
+  }
+  card.append(list);
+  return card;
+}
+
+/** #tm-view: Overview · By person · Cost, inside the Overview tab (flag on). Cost replaced By cost tag (labels-cost-tags s4). */
+export function renderTmViewChips(view, { doc = globalThis.document } = {}) {
+  const seg = h(doc, 'div', 'seg seg-sm tm-view');
+  seg.id = 'tm-view';
+  seg.setAttribute('role', 'group');
+  seg.setAttribute('aria-label', 'View');
+  for (const [v, text] of [['overview', 'Overview'], ['person', 'By person'], ['cost', 'Cost']]) {
+    const b = h(doc, 'button', v === view ? 'on' : null, text);
+    b.type = 'button';
+    b.dataset.tmView = v;
+    b.setAttribute('aria-pressed', String(v === view));
+    seg.appendChild(b);
+  }
+  return seg;
+}
+
+export function renderTeamMetricsBody(agg, { doc = globalThis.document, now = Date.now(), scopeKind = 'project', sort = {}, filter = {}, homeHint = null, runLimit = 50, tagKeys = [], tagDims = [], view = null, costEl = null } = {}) {
   const wrap = h(doc, 'div', 'tm-body');
   if (homeHint) wrap.append(homeHint);
+  if (view) wrap.append(renderTmViewChips(view, { doc }));
+  if (view === 'person') {
+    const g = h(doc, 'div', 'charts-grid people-grid tm-breakdowns');
+    if (agg.breakdowns.actor) {
+      g.append(renderBreakdownTable('actor', agg.breakdowns.actor, { doc, sort: sort.actor || null, activeKey: filter.actor ?? null, homeSlug: agg.homeSlug ?? null }));
+    } else {
+      const card = h(doc, 'section', 'card chart-card tm-breakdown');
+      const head = h(doc, 'div', 'card-head'); head.append(h(doc, 'h2', null, 'By actor'));
+      card.append(head, h(doc, 'p', 'chart-empty hint', 'No runs with a named person in this range.'));
+      g.append(card);
+    }
+    wrap.append(g);
+    return wrap;
+  }
+  if (view === 'cost') {
+    if (costEl) wrap.append(costEl);
+    return wrap;
+  }
   wrap.append(renderTmKpiRow(agg, { doc, now, scopeKind }));
   const charts = h(doc, 'div', 'charts-grid');
   const stacks = agg.series.stackKeys.map((st, i) => ({ ...st, color: SERIES_COLORS[Math.min(i, SERIES_COLORS.length - 1)] }));
   charts.append(renderStackedWeekChart({
     title: 'Spend per week', weeks: agg.series.spend, stacks, valueOf: (pt, key) => pt.stacks[key],
     yFmt: (v) => (v >= 1000 ? `$${(v / 1000).toFixed(1)}k` : `$${Math.round(v)}`), tipFmt: TM_FMT.usd, legendValue: (st) => TM_FMT.usd(st.totalUsd),
-    headExtra: renderGroupBySelect(agg.groupBy, scopeKind, { doc }),
+    headExtra: renderGroupBySelect(agg.groupBy, scopeKind, { doc, tagKeys, dims: tagDims }),
   }, { doc }));
   const runTotals = Object.fromEntries(RESULT_STACKS.map((r) => [r.key, agg.series.runs.reduce((a, p) => a + (p[r.key] || 0), 0)]));
   charts.append(renderStackedWeekChart({
@@ -585,7 +711,7 @@ export function renderTmEmptyState({ doc = globalThis.document } = {}) {
     c.append(h(doc, 'div', 'tm-step', step), h(doc, 'h3', null, title));
     const p = h(doc, 'p', 'hint');
     for (const part of body) p.append(typeof part === 'string' ? part : h(doc, 'code', 'mono', part.code));
-    const a = h(doc, 'a', primary ? 'btn btn-primary btn-mini' : 'btn btn-ghost btn-mini', label); a.href = href;
+    const a = h(doc, 'a', primary ? 'btn btn-primary btn-sm' : 'btn btn-sm', label); a.href = href;
     c.append(p, a);
     return c;
   };

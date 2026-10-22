@@ -20,6 +20,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { _resetForTests as closeDbForTests } from '../src/core/db.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { holdMockTurn, isToolResult } from './helpers/ask-hold.mjs';
+import { withNoGit } from './helpers/git-off.mjs';
 
 useTempHome(after);
 
@@ -353,7 +354,7 @@ test('an event turn that cannot start (queued behind a spent cost window, or fai
         release();
         await waitFor(() => frames(w.msgs, t.id, 'ask-done').length >= 1, 15_000);   // the slow turn ends → settleJob → drainAskDeferred → 403 at START
         const notice = await waitFor(() => frames(w.msgs, t.id, 'ask-message').find((f) => f.message.role === 'system' && /could not reply to an event/.test(f.message.text)));
-        assert.equal(notice.message.text, 'Ask Worca could not reply to an event: total cost limit reached');
+        assert.equal(notice.message.text, 'Chat could not reply to an event: total cost limit reached');
         assert.equal(notice.message.blocks[0].kind, 'notice');
         const snap = await snapshot(t.id);
         assert.equal(snap.messages.filter((m) => m.status === 'streaming').length, 0, 'no assistant row was opened');
@@ -381,7 +382,7 @@ test('an event turn that cannot start (queued behind a spent cost window, or fai
         assert.equal(body.turn.status, 403);
         assert.equal(body.turn.error, 'total cost limit reached', 'the API client still gets the machine-readable error');
         const notice = await waitFor(() => frames(w.msgs, thread.id, 'ask-message').find((f) => f.message.role === 'system' && /could not reply to an event/.test(f.message.text)));
-        assert.equal(notice.message.text, 'Ask Worca could not reply to an event: total cost limit reached');
+        assert.equal(notice.message.text, 'Chat could not reply to an event: total cost limit reached');
         assert.equal(notice.message.blocks[0].kind, 'notice');
         assert.equal(frames(w.msgs, thread.id, 'ask-start').length, 0, 'no turn ever started');
       } finally {
@@ -511,4 +512,16 @@ test('askSystemPromptFor with "Create and run scripts" off: draft_script keeps i
     assert.match(p, /call draft_script with the meta's fields as named above/);
     assert.equal(p.includes('save_script'), false, 'no save_script with the switch off');
   } finally { assert.equal((await post('/api/settings', { chat: { scriptTools: true } })).status, 200); }
+});
+
+// P0 Task 10: the server's prompt builder hands the git state to buildSystemPrompt.
+test('askSystemPromptFor follows the git state: without git it names no worktree tool and carries the no-git rule 7', async () => {
+  const cat = { projects: [], workspaces: [], workflows: [], agents: [] };
+  assert.ok((await mod._testing.askSystemPromptFor(cat)).includes('open_worktree'), 'git on: the prompt of today');
+  const restore = withNoGit();
+  try {
+    const p = await mod._testing.askSystemPromptFor(cat);
+    assert.equal(p.includes('open_worktree'), false);
+    assert.match(p, /^7\. This machine has no git: /m);
+  } finally { restore(); }
 });

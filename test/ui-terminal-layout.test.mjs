@@ -14,7 +14,7 @@ test('opening the pane moves the toasts left of it, and the page content with th
 
 test('the openers live in the run bars and the project title row, never in a corner of every page', () => {
   const html = readFileSync(new URL('../ui/public/index.html', import.meta.url), 'utf8');
-  assert.equal(html.match(/class="term-opener btn-ghost"/g)?.length, 3);
+  assert.equal(html.match(/class="term-opener btn"/g)?.length, 3);
   for (const anchor of ['<span class="rd-btn-label">Stop</span>', '<span class="hd-btn-label">Stop</span>', '<h1 class="pd-title"></h1>']) {
     const at = html.indexOf(anchor);
     assert.ok(at > 0 && html.indexOf('class="term-opener', at) - at < 400, anchor);

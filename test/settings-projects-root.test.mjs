@@ -23,9 +23,10 @@ import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  defaultRoot, settingsFile, readSettings,
+  settingsFile, readSettings,
   getWorcaRoot, setWorcaRoot,
   getProjectsRoot, setProjectsRoot, rawProjectsRoot, defaultProjectsRoot,
+  worcaProjectsFolder, projectsRootSource,
   contextMaxBytesPerFile, setContextMaxBytesPerFile,
   contextMaxBytesTotal, setContextMaxBytesTotal,
   skillMount, setSkillMount,
@@ -33,11 +34,14 @@ import {
   DEFAULT_CONTEXT_MAX_BYTES_PER_FILE, DEFAULT_CONTEXT_MAX_BYTES_TOTAL, DEFAULT_SKILL_MOUNT,
 } from '../src/core/settings.mjs';
 import { _resetForTests } from '../src/core/db.mjs';
+import { worcaHome } from '../src/core/projects.mjs';
+import { existsSync } from 'node:fs';
 import { checkRows } from './helpers/rows.mjs';
 
 let home, srv, apiBase;
 const prev = {};
 const scratch = [];
+const projectsHome = () => join(home, '.worca-cc', 'projects');
 
 /** A throwaway directory (registered for cleanup). */
 async function tmp(prefix = 'worca-cc-pr-') {
@@ -106,14 +110,14 @@ after(async () => {
 // ── getProjectsRoot: precedence env → settings → default ─────────────────────
 
 // Each row starts from an empty settings.json, as each tier's own test did (the beforeEach).
-test('getProjectsRoot precedence: env → settings → defaultRoot() (absolute, never ""); blank env ignored; env not dir-validated', async () => {
+test('getProjectsRoot precedence: env → settings → <worcaHome>/projects (absolute, never ""); blank env ignored; env not dir-validated', async () => {
   await checkRows([
-    { name: 'getProjectsRoot: no env, no settings -> defaultRoot(), always absolute, never ""', run: async () => {
+    { name: 'getProjectsRoot: no env, no settings -> <worcaHome>/projects (U6), always absolute, never ""', run: async () => {
       await writeSettingsFile({});
       await withEnv(undefined, () => {
         const r = getProjectsRoot();
-        assert.equal(r, defaultRoot());
-        assert.equal(r, home);
+        assert.equal(r, projectsHome());
+        assert.equal(r, worcaProjectsFolder());
         assert.ok(isAbsolute(r), `must be absolute: ${r}`);
         assert.notEqual(r, '', 'unlike getWorcaRoot(), this reader never returns ""');
       });
@@ -171,7 +175,7 @@ test('getProjectsRoot: a blank / non-string / corrupt settings value falls back 
       await withEnv(undefined, async () => {
         for (const bad of ['', '   ', 42, null, {}, []]) {
           await writeSettingsFile({ projectsRoot: bad });
-          assert.equal(getProjectsRoot(), defaultRoot(), `bad value ${JSON.stringify(bad)} -> default`);
+          assert.equal(getProjectsRoot(), projectsHome(), `bad value ${JSON.stringify(bad)} -> default`);
         }
       });
     } },
@@ -179,7 +183,7 @@ test('getProjectsRoot: a blank / non-string / corrupt settings value falls back 
       await mkdir(join(home, '.worca-cc'), { recursive: true });
       await writeFile(settingsFile(), '{ not json', 'utf8');
       await withEnv(undefined, () => {
-        assert.equal(getProjectsRoot(), defaultRoot());
+        assert.equal(getProjectsRoot(), projectsHome());
       });
     } },
   ]);
@@ -196,7 +200,7 @@ test('rawProjectsRoot: "" when unset, the persisted value when set, and BLIND to
 
   await withEnv(undefined, () => {
     assert.equal(rawProjectsRoot(), '', 'unset reads as "" — exactly like getWorcaRoot()');
-    assert.notEqual(rawProjectsRoot(), getProjectsRoot(), 'raw "" vs effective defaultRoot()');
+    assert.notEqual(rawProjectsRoot(), getProjectsRoot(), 'raw "" vs the effective default');
   });
   // The env override must NOT show up as a stored value: were it echoed into the
   // settings field, the next Save would persist it and outlive the env var.
@@ -222,17 +226,17 @@ test('rawProjectsRoot: "" when unset, the persisted value when set, and BLIND to
   await withEnv(undefined, () => assert.equal(rawProjectsRoot(), join(home, 'code'), '`~` expanded like getProjectsRoot()'));
 });
 
-test('defaultProjectsRoot: the blank-field fallback — env tier when exported, else defaultRoot()', async () => {
+test('defaultProjectsRoot: the blank-field fallback — env tier when exported, else <worcaHome>/projects', async () => {
   const envTarget = await tmp('worca-cc-pr-def-e-');
   const settingsTarget = await tmp('worca-cc-pr-def-s-');
-  await withEnv(undefined, () => assert.equal(defaultProjectsRoot(), defaultRoot()));
+  await withEnv(undefined, () => assert.equal(defaultProjectsRoot(), projectsHome()));
   await withEnv(envTarget, () => assert.equal(defaultProjectsRoot(), envTarget,
     'with the env exported, clearing the field yields the env path — not the home folder'));
   await withEnv('~/code', () => assert.equal(defaultProjectsRoot(), join(home, 'code'), '`~` expanded'));
-  await withEnv('   ', () => assert.equal(defaultProjectsRoot(), defaultRoot(), 'a blank env value is ignored'));
+  await withEnv('   ', () => assert.equal(defaultProjectsRoot(), projectsHome(), 'a blank env value is ignored'));
   // A persisted value never changes what "blank" would fall back to.
   await setProjectsRoot(settingsTarget);
-  await withEnv(undefined, () => assert.equal(defaultProjectsRoot(), defaultRoot()));
+  await withEnv(undefined, () => assert.equal(defaultProjectsRoot(), projectsHome()));
 });
 
 // ── setProjectsRoot: validation + reset ──────────────────────────────────────
@@ -244,8 +248,8 @@ test('setProjectsRoot: "" (and null / non-string) deletes the key -> back to the
     assert.equal(getProjectsRoot(), target);
     const res = await setProjectsRoot('');
     assert.equal(res.projectsRoot, '', 'the setter reports the RAW state, so a reset round-trips as blank');
-    assert.equal(res.default, defaultRoot(), 'and names what now applies');
-    assert.equal(getProjectsRoot(), defaultRoot());
+    assert.equal(res.default, projectsHome(), 'and names what now applies');
+    assert.equal(getProjectsRoot(), projectsHome());
     assert.equal('projectsRoot' in (await readSettingsFile()), false, 'the key is DELETED, not blanked');
 
     await setProjectsRoot(target);
@@ -322,8 +326,8 @@ test('GET /api/settings returns {root, projectsRoot, projectsRootDefault, defaul
     // `app` = static identity for the Settings ▸ About card (version, repo URL,
     // release-tag URL — read from package.json). GET-only: POST still echoes settingsState() + chat.
     assert.deepEqual(Object.keys(j).sort(), ['actions', 'actionsDetected', 'actionsGate', 'app', 'askEngine', 'askMaxBudgetUsd', 'askMaxTurns', 'askModels', 'askWeb', 'autoWorkflowModel', 'autoWorkflowModelEffective', 'chat', 'costLimitResetPeriod',
-      'debugSpawnEffective', 'debugSpawnEnabled', 'default', 'flags', 'hideBuiltinModels', 'humanRateUsdPerHour', 'memoryDefrag', 'memoryDefragDefault', 'nightMode', 'nightModeEffective', 'nightModeToggle', 'pipelineCostLimitUsd', 'prDescriptionModel', 'prDescriptionModelEffective', 'projectsRoot', 'projectsRootDefault', 'resumeAfterUsageLimit', 'root', 'runEngine',
-      'schedule', 'stepModels', 'sync', 'theme', 'titleModel', 'titleModelEffective', 'totalCostLimitUsd', 'uiLevel', 'utilityModels', 'workspaceScan', 'workspaceScanDefault']);
+      'debugSpawnEffective', 'debugSpawnEnabled', 'default', 'enforceTags', 'flags', 'git', 'hideBuiltinModels', 'humanRateUsdPerHour', 'memoryDefrag', 'memoryDefragDefault', 'networkWait', 'nightMode', 'nightModeEffective', 'nightModeToggle', 'pipelineCostLimitUsd', 'prDescriptionModel', 'prDescriptionModelEffective', 'projectsRoot', 'projectsRootDefault', 'resumeAfterUsageLimit', 'root', 'runEngine',
+      'schedule', 'stepModels', 'sync', 'tagDimensions', 'theme', 'titleModel', 'titleModelEffective', 'totalCostLimitUsd', 'uiLevel', 'utilityModels', 'workspaceScan', 'workspaceScanDefault']);
     assert.deepEqual(Object.keys(j.actionsDetected).sort(), ['editor', 'terminal'], 'what blank Editor / Terminal fall back to');
     assert.equal(j.autoWorkflowModel, '', 'no classifier model stored -> the catalog default applies');
     assert.equal(j.titleModel, null, 'no title model stored -> the run\'s model');
@@ -335,7 +339,7 @@ test('GET /api/settings returns {root, projectsRoot, projectsRootDefault, defaul
     assert.deepEqual(j.workspaceScanDefault, { scanModel: 'claude-sonnet-5', scanEffort: 'medium', agentModel: 'sonnet', agentEffort: 'medium' });
     assert.equal(j.root, '', 'nothing set yet');
     assert.equal(j.projectsRoot, '', 'the RAW setting — "" when unset, exactly like root');
-    assert.equal(j.projectsRootDefault, defaultRoot(), 'what applies while it is blank');
+    assert.equal(j.projectsRootDefault, projectsHome(), 'what applies while it is blank');
     assert.equal(j.default, home);
     assert.equal(j.pipelineCostLimitUsd, null, 'no cap set -> unlimited');
     assert.equal(j.totalCostLimitUsd, null, 'no cap set -> unlimited');
@@ -343,7 +347,7 @@ test('GET /api/settings returns {root, projectsRoot, projectsRootDefault, defaul
   });
 });
 
-test('REGRESSION (Ask Worca): an ask-only POST must not clear the root or the budget keys', async () => {
+test('REGRESSION (Chat): an ask-only POST must not clear the root or the budget keys', async () => {
   await withEnv(undefined, async () => {
     await postApi({ root: home });                         // set a custom root first
     await postApi({ totalCostLimitUsd: 5 });
@@ -406,7 +410,7 @@ test('POST /api/settings: projectsRoot round-trips; projectsRoot-only and root-o
         // An explicit empty value resets it; root still untouched.
         const reset = await (await postApi({ projectsRoot: '' })).json();
         assert.equal(reset.projectsRoot, '', 'a reset reports blank, not the default it fell back to');
-        assert.equal(reset.projectsRootDefault, defaultRoot(), 'the fallback is named separately');
+        assert.equal(reset.projectsRootDefault, join(rootTarget, '.worca-cc', 'projects'), 'the fallback is named separately — the default follows the Worca root');
         assert.equal(reset.root, rootTarget, 'the reset did not touch root either');
       });
     } },
@@ -521,4 +525,23 @@ test('runRootMode: the settings key round-trips through settings.json and feeds 
     if (prevMode === undefined) delete process.env.WORCA_RUN_ROOT;
     else process.env.WORCA_RUN_ROOT = prevMode;
   }
+});
+
+test('the default projects root follows the Worca home — WORCA_HOME, then the Settings root — and reading it creates nothing', async () => {
+  const alt = await tmp('worca-cc-pr-home-');
+  await withEnv(undefined, async () => {
+    assert.equal(projectsRootSource(), 'default');
+    process.env.WORCA_HOME = alt;
+    try {
+      assert.equal(getProjectsRoot(), join(alt, '.worca-cc', 'projects'));
+      assert.equal(worcaProjectsFolder(), join(worcaHome(), 'projects'), 'the same base rule as worcaHome()');
+    } finally { delete process.env.WORCA_HOME; }
+    await setWorcaRoot(alt);
+    assert.equal(getProjectsRoot(), join(alt, '.worca-cc', 'projects'), 'the Settings root moves the default too');
+    await setWorcaRoot('');
+    assert.equal(existsSync(projectsHome()), false, 'reading the default never creates it');
+  });
+  await withEnv(alt, () => assert.equal(projectsRootSource(), 'env'));
+  await setProjectsRoot(alt);
+  await withEnv(undefined, () => assert.equal(projectsRootSource(), 'settings'));
 });

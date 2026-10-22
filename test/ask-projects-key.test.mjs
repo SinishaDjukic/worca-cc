@@ -17,7 +17,7 @@ test('every row carries key = projectKey(path) and exactly {exists, key, name, p
   const dir = mkdtempSync(join(tmpdir(), 'worca-ask-proj-'));
   const list = await addProject({ name: 'demo', path: dir });
   assert.equal(list.length, 1);
-  assert.deepEqual(Object.keys(list[0]).sort(), ['exists', 'key', 'name', 'path']);
+  assert.deepEqual(Object.keys(list[0]).sort(), ['exists', 'key', 'name', 'path', 'vcs']);
   assert.equal(list[0].key, projectKey(dir));
   assert.match(list[0].key, /^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}$/);
   _resetForTests();                                    // reopen the DB: the key must come from the row, not from memory

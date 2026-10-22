@@ -103,10 +103,9 @@ test('the CLI --workflow gate: an archived row exits 2, a graph row RUNS', async
   await writeGraphWorkflow({ id: 'wf_cliarch', name: 'CA', ...MINIMAL });
   getDb();
   prepare('UPDATE workflows SET archived_at = ? WHERE id = ?').run('2026-08-27T00:00:00Z', 'wf_cliarch');
-  // NOTE: there is NO `run` SUBCOMMAND — `SUBCOMMANDS` (`worca-cc.mjs:1459`) is
-  // add/list/remove/resume/doctor/plugin/marketplace/config, and a bare
-  // invocation IS the run path (a stray 'run' token would be parsed as the
-  // prompt). Recipe copied from test/cli-branch-flags.test.mjs:52-56.
+  // NOTE: the `run` SUBCOMMAND is the preset start (`worca run --preset`, src/cli/run-preset.mjs),
+  // which goes through the server; a bare invocation IS the in-process run path.
+  // Recipe copied from test/cli-branch-flags.test.mjs:52-56.
   const project = await runDir();
   const run = (id) => spawnSync(process.execPath,
     [CLI, '--project', project, '--prompt', 'x', '--mock', '--yes', '--workflow', id],

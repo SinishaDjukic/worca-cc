@@ -323,6 +323,9 @@ export function assembleShape(rawShape, { registry = {}, portsFn = null, humanIn
         pick = joined || outs.find((o) => o.port === p.id) || outs[0] || null;
         if (pick) break;
       }
+      // An optional input never takes an output that already feeds this node (the refiner's `findings` beside its
+      // `plan`): only an explicit wire binds it.
+      if (pick && !required && inbound(node.id).some((w) => w.from.node === pick.node && w.from.port === pick.port)) pick = null;
       if (pick) addWire(pick, { node: node.id, port: p.id });
       else if (required) issues.push({ code: 'NO_PRODUCER', message: `stage "${st.id}" (${st.agent}): no upstream output of type ${p.type} for its required input "${p.id}"`, stageId: st.id });
     }

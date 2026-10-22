@@ -71,6 +71,7 @@ alongside `RECORD_VERSION`, `TEXT_MAX`, `RECORD_FIELDS`, `redactPaths` and `clea
 | `git` | object | `{branch,head,base,filesChanged,insertions,deletions}` | see "Git" below |
 | `actor` | string\|null | git user, `null` under `attribution:'none'` | `git config user.name` |
 | `actorKey` | string | optional, right after `actor`: the person key, `sha256("worca:" + lower-cased git email)` first 16 hex. Only when the actor is the checkout's git user; never under `attribution:'none'`; absent on older records | `git config user.email` → `personKey()` |
+| `tags` | string[] | optional, right after `actorKey`: the run's normalised tags (`client:acme`, `spike`). Written under every attribution; absent when the run has none and on older records | `run_tags` → `readRunTags(pipelineId)` |
 | `human` | object | `{hours, byPhase}` — optional trailing key, only when hours > 0 | `state.humanHours`, `pipeline_steps.human_hours` |
 
 ## v1 notes

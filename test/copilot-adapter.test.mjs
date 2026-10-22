@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import {
   buildCopilotArgs, copilotRulePlan, copilotToolPlan, copilotMcpServers, copilotUnattachableMcp, mcpEnvRefNames,
   createCopilotNormalizer, classifyCopilotError, copilotSessionOf, COPILOT_SESSION_PREFIX, copilotCapabilities,
-  readCopilotUsage, runCopilotProcess, copilotPreflight, copilotAgentFile, copilotInvestigatorAgent, copilotResumeNotFound,
+  readCopilotUsage, runCopilotProcess, copilotPreflight, copilotAskSupport, COPILOT_ASK_FLAGS, copilotAgentFile, copilotInvestigatorAgent, copilotResumeNotFound,
   COPILOT_NO_TOOLS, COPILOT_NODE_AGENT, projectCopilotMcpNames,
 } from '../src/core/engines/copilot.mjs';
 import { getEngine, selectRunEngine } from '../src/core/engines/index.mjs';
@@ -82,6 +82,8 @@ test('resume, model, effort, MCP, tool filters and deny rules', () => {
 
 test('an effort copilot does not offer is dropped', () => {
   assert.ok(!buildCopilotArgs({ sessionId: 'S', effort: 'turbo' }).includes('--reasoning-effort'));
+  const wire = buildCopilotArgs({ sessionId: 'S', model: 'copilot/claude-sonnet-5.5' });
+  assert.equal(wire[wire.indexOf('--model') + 1], 'claude-sonnet-5.5', 'a copilot/<id> catalog id reaches copilot as its own id');
 });
 
 test('read-only: no temp dir, and an empty tool list names nothing (an empty --available-tools keeps every tool)', () => {
@@ -388,8 +390,41 @@ test('runCopilotProcess refuses a writable folder inside Worca\'s home before it
   assert.ok(f.record().argv.includes(plans));
 });
 
-test('Ask Worca does not run on copilot', async () => {
-  await assert.rejects(runCopilotProcess({ askLockdown: true, bin: '/nonexistent/copilot' }), /Ask Worca does not run on Copilot/);
+test('Ask Worca on copilot: only worca\'s MCP server, no custom instructions, no folder, a scrubbed env that carries the command token', POSIX, async () => {
+  const dir = tmp();
+  const mcpPath = join(dir, 'mcp.json');
+  writeFileSync(mcpPath, JSON.stringify({ mcpServers: { worca: { type: 'stdio', command: 'node', args: ['mcp-stdio.mjs'], env: { WORCA_ASK_ENGINE: 'copilot' } } } }));
+  const f = fakeCopilot(dir, { fixture: fixturePath('tools.jsonl'), envNames: ['ASK_COMMAND_TOKEN', 'WORCA_TEST_SECRET_X', 'SSH_AUTH_SOCK'] });
+  process.env.WORCA_TEST_SECRET_X = 'leak-me';
+  try {
+    await runCopilotProcess({ bin: f.bin, cwd: dir, prompt: 'hi', askLockdown: true, sandbox: 'read-only', mcpConfigPath: mcpPath, envScrub: true,
+      envAllowlist: ['SSH_AUTH_SOCK'], spawnEnv: { ASK_COMMAND_TOKEN: 'tok-1' }, model: 'copilot/gpt-5.4', usageDir: join(dir, 'u'), scratchBase: join(dir, 's') });
+  } finally { delete process.env.WORCA_TEST_SECRET_X; }
+  const rec = f.record();
+  assert.ok(rec.argv.includes('--available-tools=worca'), 'worca\'s server is the only tool source');
+  assert.ok(rec.argv.includes('--no-custom-instructions') && rec.argv.includes('--disallow-temp-dir') && rec.argv.includes('--disable-builtin-mcps'));
+  assert.equal(rec.argv.filter((a) => a === '--add-dir').length, 1, 'only the scratch folder that holds the agent');
+  assert.equal(rec.argv[rec.argv.indexOf('--model') + 1], 'gpt-5.4');
+  assert.equal(rec.env.ASK_COMMAND_TOKEN, 'tok-1', 'the MCP child inherits copilot\'s env: the token rides it');
+  assert.equal(rec.env.WORCA_TEST_SECRET_X, null, 'the rest of worca\'s env is scrubbed');
+  // Without askLockdown the token never reaches copilot's env (a pipeline node keeps it to ${VAR} references).
+  const node = fakeCopilot(dir, { fixture: fixturePath('tools.jsonl'), envNames: ['ASK_COMMAND_TOKEN'] });
+  await runCopilotProcess({ bin: node.bin, cwd: dir, prompt: 'hi', sandbox: 'read-only', mcpConfigPath: mcpPath, spawnEnv: { ASK_COMMAND_TOKEN: 'tok-1' },
+    usageDir: join(dir, 'u'), scratchBase: join(dir, 's') });
+  assert.equal(node.record().env.ASK_COMMAND_TOKEN, null);
+  assert.ok(!node.record().argv.includes('--no-custom-instructions'));
+});
+
+test('copilotAskSupport: every lockdown flag must be in --help', POSIX, async () => {
+  assert.match((await copilotAskSupport({ bin: '/nonexistent/copilot' })).refusal, /cannot run \/nonexistent\/copilot \(ENOENT\)/);
+  const dir = tmp();
+  const bin = join(dir, 'copilot');
+  const all = COPILOT_ASK_FLAGS.map((f) => `      ${f} <x>`).join('\n');
+  writeFileSync(bin, `#!/bin/sh\ncat <<'EOF'\nUsage: copilot [options]\n${all}\nEOF\n`, { mode: 0o755 });
+  assert.deepEqual(await copilotAskSupport({ bin }), {});
+  const old = join(dir, 'copilot-old');
+  writeFileSync(old, `#!/bin/sh\ncat <<'EOF'\nUsage: copilot [options]\n      --disable-builtin-mcps\n      --available-tools-x\nEOF\n`, { mode: 0o755 });
+  assert.match((await copilotAskSupport({ bin: old })).refusal, /this copilot has no --available-tools, --disallow-temp-dir, --no-custom-instructions, --additional-mcp-config to lock a chat down — update the GitHub Copilot CLI to 1\.0\.100 or newer/);
 });
 
 test('preflight: a missing binary refuses the run; a working one passes', POSIX, async () => {

@@ -175,7 +175,7 @@ export function mountProposalGraph(hostEl, template, {
     for (const [key, label, glyph] of buttons) {
       const b = doc.createElement('button');
       b.type = 'button';
-      b.className = 'gv-nav-btn';
+      b.className = 'btn btn-icon gv-nav-btn';
       b.dataset.nav = key;
       b.setAttribute('aria-label', label);
       b.title = label;

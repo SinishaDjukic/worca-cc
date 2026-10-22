@@ -15,6 +15,9 @@ import { setPipelineCostLimitUsd, setTotalCostLimitUsd } from '../src/core/setti
 import { recordCostDelta, setCostCapOverride, costWindowStart } from '../src/core/cost-budget.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { readPolicyState, writePolicyState, setTotalAck } from '../src/core/policy/state.mjs';
+import { writeTeamPolicyPrefs } from '../src/core/config.mjs';
+import { insertRunTags } from '../src/core/run-tags-store.mjs';
+import { setUserTagDimensions } from '../src/core/settings.mjs';
 
 useTempHome(after);
 let sandboxHome; const prevEnv = {};
@@ -130,4 +133,64 @@ test('no policy on the run: byte-identical local behaviour, no policy state writ
   assert.equal(orch.pauseReason, 'cost_pipeline');
   assert.deepEqual(readPolicyState(id), {});
   await setPipelineCostLimitUsd('');
+});
+
+// Tag dimensions (slice 3): a required key the run does not carry is a policy finding, read from the
+// start options at start and from the stored tags on resume (D5); a Settings-only list warns in the log (D8).
+const CC_DIMS = [{ key: 'cc', label: 'Cost centre', values: [], required: true }];
+function seedTagPolicy() {
+  writeTeamPolicyPrefs(projectKey(PROJ), { slug: 'acme/gateway', hasOrigin: true, present: true, docKnown: true, headSha: 'abc1234def', checkedAt: new Date().toISOString(),
+    doc: { schema: 1, fields: { 'runs.tagDimensions': { kind: 'soft', value: CC_DIMS } }, workspaceRuns: {} } });
+}
+function captureLogs(orch) {
+  const logs = [];
+  const origLog = orch._log.bind(orch);
+  orch._log = (where, level, text, meta) => { logs.push({ where, level, text }); return origLog(where, level, text, meta); };
+  return logs;
+}
+async function tagRun({ tags, resume = false, stored = null } = {}) {
+  const orch = createOrchestrator({ projectDir: PROJ, ...(tags !== undefined ? { tags } : {}) });
+  const logs = captureLogs(orch);
+  const { id, dir } = await seedPipeline(PROJ, { status: 'running' });
+  if (stored) insertRunTags(id, stored);
+  if (resume) { orch.resumeOpts = { row: { id } }; orch.pipeline = { id, dir }; }
+  await orch._resolvePolicy();
+  orch._noteLocalTagDimensions();
+  orch.pipeline = { id, dir };
+  orch._persistPolicyState();
+  return { id, logs };
+}
+
+test('tag dimensions: a run started without the required key records tag-missing:cc and logs it', async () => {
+  seedTagPolicy();
+  const { id, logs } = await tagRun({ tags: [] });
+  assert.ok(readPolicyState(id).deviations.includes('tag-missing:cc'));
+  assert.ok(logs.some((l) => l.where === 'policy' && l.level === 'warn' && l.text.includes('off-policy: Cost centre (cc)')));
+});
+
+test('tag dimensions: a run started with cc:4410 records no finding', async () => {
+  seedTagPolicy();
+  const { id } = await tagRun({ tags: ['cc:4410'] });
+  assert.equal((readPolicyState(id)?.deviations || []).includes('tag-missing:cc'), false);
+});
+
+test('tag dimensions: a resume reads the stored tags (no opts.tags) and records no finding', async () => {
+  seedTagPolicy();
+  const { id } = await tagRun({ resume: true, stored: ['cc:4410'] });
+  assert.equal((readPolicyState(id)?.deviations || []).includes('tag-missing:cc'), false);
+});
+
+test('tag dimensions: no policy, a Settings list requiring cc → a run-log warning only', async () => {
+  writeTeamPolicyPrefs(projectKey(PROJ), { slug: 'acme/gateway', hasOrigin: true, present: false, docKnown: false, checkedAt: new Date().toISOString() });
+  const prev = process.env.WORCA_TEST_ALLOW_HOME_FALLBACK;
+  process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
+  try {
+    await setUserTagDimensions(CC_DIMS);
+    const { id, logs } = await tagRun({ tags: [] });
+    assert.ok(logs.some((l) => l.where === 'policy' && l.level === 'warn' && l.text.includes('required tag in your Settings')));
+    assert.deepEqual(readPolicyState(id)?.deviations || [], []);
+    await setUserTagDimensions([]);
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_TEST_ALLOW_HOME_FALLBACK; else process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = prev;
+  }
 });

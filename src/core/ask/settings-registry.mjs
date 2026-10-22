@@ -20,7 +20,7 @@ import { receiptCard } from './receipt.mjs';
 export const SETTING_EXCLUSIONS = Object.freeze([
   { match: ['root', 'projectsRoot'], what: 'Worca and projects root folders', why: 'folders widen what can be browsed' },
   { match: ['actions'], what: 'Actions (editor, terminal, ports, checkouts)', why: 'they hold commands run as the server user — the actions card changes them' },
-  { match: ['askWeb', 'chat.scriptTools'], what: "Ask Worca web access and the chat's script tools", why: "the chat's own powers are only the user's to grant" },
+  { match: ['askWeb', 'chat.scriptTools'], what: "Chat web access and the chat's script tools", why: "the chat's own powers are only the user's to grant" },
   { match: ['chat.channels'], what: 'Chat channels', why: 'they send messages to another service' },
   { match: ['nightMode', 'nightModeToggle'], what: 'Away mode settings', why: 'Away mode keeps its own card (propose_away_mode_change) and switch (set_away_now)' },
   { match: ['providers', 'models', 'speech', 'credentials', 'mcp', 'plugins', 'marketplaces'], what: 'Providers, model catalog entries, speech, credentials, MCP servers and plugins', why: 'they hold keys and tokens, or run outside code' },
@@ -140,16 +140,16 @@ function buildUserDefs(roles, scanDefaults) {
       read: (s) => !(isObj(s.chat) && isObj(s.chat.notify) && s.chat.notify[ev] === false),
       body: (unit) => ({ chat: { notify: { [ev]: unit !== false } } }),
       check: (v) => (v == null ? true : typeof v === 'boolean' ? v : fail(`chat.notify.${ev} must be true or false`)) })),
-    userDef({ id: 'askEngine', label: 'Engine for new chats', group: 'Ask Worca', read: (s) => ownKey(s, 'askEngine'), body: (unit) => ({ askEngine: unit ?? null }),
+    userDef({ id: 'askEngine', label: 'Engine for new chats', group: 'Chat', read: (s) => ownKey(s, 'askEngine'), body: (unit) => ({ askEngine: unit ?? null }),
       dflt: 'claude', fmt: CHAT_ENGINE.fmt, allowed: CHAT_ENGINE.allowed, check: (v) => assertAskEngineInput(v) }),
-    ...ASK_ENGINES.map((e) => pairDef(`models.${e}.ask`, `Chat model (${engineLabel(e)})`, 'Ask Worca', e,
+    ...ASK_ENGINES.map((e) => pairDef(`models.${e}.ask`, `Chat model (${engineLabel(e)})`, 'Chat', e,
       (s) => (isObj(s.askModels) && isObj(s.askModels[e]) ? s.askModels[e] : null), (unit) => ({ askModels: { [e]: unit ?? null } }))),
-    userDef({ id: 'askMaxTurns', label: 'Turn limit', group: 'Ask Worca', ...topKey('askMaxTurns'), dflt: DEFAULT_ASK_MAX_TURNS, fmt: String, allowed: 'a whole number 1–500',
+    userDef({ id: 'askMaxTurns', label: 'Turn limit', group: 'Chat', ...topKey('askMaxTurns'), dflt: DEFAULT_ASK_MAX_TURNS, fmt: String, allowed: 'a whole number 1–500',
       check: (v) => { assertAskLimitInputs({ askMaxTurns: v ?? '' }); return v ?? null; } }),
     // A STORED null is the Settings page's "No cap" tick: a value that outranks a team default (limits.mjs askLimits),
     // never unset — unit 'none', so a Revert writes the null back instead of clearing the key. The marker never leaves
     // unit / put / get / body: check() returns the model's own value (null), which the child hands the parent.
-    userDef({ id: 'askMaxBudgetUsd', label: 'Per-turn cost cap', group: 'Ask Worca', fmt: usd('No cap'), allowed: 'USD 0.1–100',
+    userDef({ id: 'askMaxBudgetUsd', label: 'Per-turn cost cap', group: 'Chat', fmt: usd('No cap'), allowed: 'USD 0.1–100',
       read: (s) => (Object.prototype.hasOwnProperty.call(s, 'askMaxBudgetUsd') && s.askMaxBudgetUsd === null ? 'none' : ownKey(s, 'askMaxBudgetUsd')),
       get: (unit) => (unit === 'none' ? null : unit),
       put: (unit, v) => (v == null && unit === 'none' ? 'none' : v),
@@ -185,7 +185,7 @@ function buildUserDefs(roles, scanDefaults) {
   return defs;
 }
 
-const MODEL_ID_RE = /^models\.(claude|codex|cursor)\.(?:steps\.(.+)|utility\.(title|classifier|overview|prDescription)|(memoryDefrag|workspaceScan))$/;
+const MODEL_ID_RE = new RegExp(`^models\\.(${MODEL_ENGINES.join('|')})\\.(?:steps\\.(.+)|utility\\.(title|classifier|overview|prDescription)|(memoryDefrag|workspaceScan))$`);
 function buildProjectDefs(ids, userDefs, roles) {
   const twins = new Map(userDefs.map((d) => [d.id, d]));
   return ids.filter((id) => id !== 'askWeb' && !id.startsWith('nightMode.')).map((id) => {
@@ -298,7 +298,7 @@ export function createSettingsRegistry(deps = {}) {
     const def = findDef(sid, scope);
     if (!def) {
       // A model slot id is never an exclusion (the 'models' entry is the catalog): a project-only slot or a typo.
-      const slot = MODEL_ID_RE.test(sid) || /^models\.(claude|codex|cursor)\.ask$/.test(sid);
+      const slot = MODEL_ID_RE.test(sid) || ASK_ENGINES.some((e) => sid === `models.${e}.ask`);
       const ex = slot ? null : exclusionOf(sid);
       if (ex) return { ok: false, error: `${sid} is not changed from the chat: ${ex.why}` };
       const projectOnly = scope === 'user' && findDef(sid, 'project') ? ' (it is set per project: scope "project")' : '';

@@ -1,14 +1,14 @@
 {
   "slow": [
     "test/orchestrator-*.test.mjs", "test/run-harness-*.test.mjs", "test/run-root-*.test.mjs",
-    "test/stop-paused-harness.test.mjs", "test/seed-traces.test.mjs", "test/auto-recipes-offline.test.mjs",
+    "test/stop-paused-harness.test.mjs", "test/folder-run.test.mjs", "test/folder-apply.test.mjs", "test/api-run-folder.test.mjs", "test/api-run-no-project.test.mjs", "test/seed-traces.test.mjs", "test/auto-recipes-offline.test.mjs",
     "test/presentation-golden-run.test.mjs", "test/graph-script-runner.test.mjs",
     "test/workspaces-api.test.mjs", "test/workspaces.test.mjs", "test/scan-api.test.mjs",
     "test/api-stop-paused.test.mjs", "test/api-schedules.test.mjs", "test/mcp-pipeline-run.test.mjs",
     "test/wsmap-order-overrides.test.mjs", "test/ask-workspace-card.test.mjs", "test/ask-worktrees.test.mjs",
     "test/workspace-map-api.test.mjs", "test/workspace-size.test.mjs", "test/workspace-scan-finalize-map.test.mjs",
     "test/git-sync.test.mjs", "test/metrics-sync.test.mjs", "test/metrics-prune.test.mjs", "test/policy-sync.test.mjs",
-    "test/sync-api.test.mjs", "test/branches-api-fresh.test.mjs",
+    "test/sync-api.test.mjs", "test/branches-api-fresh.test.mjs", "test/marketplace-publish-flow.test.mjs",
     "test/cli-interactive.test.mjs", "test/cli-schedule-wait.test.mjs", "test/cli-auto.test.mjs", "test/cli-resume.test.mjs",
     "test/wsmap-detectors-p3-registry.test.mjs", "test/wsmap-detectors-p4-registry.test.mjs",
     "test/wsmap-http-client-shapes-slow.test.mjs", "test/wsmap-graphql-client-copy-slow.test.mjs"

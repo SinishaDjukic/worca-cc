@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+await (await import('../src/core/git-available.mjs')).gitState();   // P0: a process that never probes reads git as missing
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURE = resolve(__dirname, '..', 'test', 'fixtures', 'plugins', 'mock-source');

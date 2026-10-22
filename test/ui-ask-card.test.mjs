@@ -413,7 +413,7 @@ test('ui-ask-card: a proposed workflowId no list serves fails loudly — inline 
   const card = ctx.window.document.querySelector('.ask-card.ask-rp');
   const sel = card.querySelector('.ask-card-workflow');
   const start = card.querySelector('[data-ask-card-start]');
-  assert.equal(card.querySelector('.ask-card-err').textContent, 'Workflow wf_ghost is not available — pick one');
+  assert.equal(card.querySelector('.ask-card-err').textContent, 'Workflow wf_ghost is not available: pick one');
   assert.equal(sel.value, '', 'no other option is silently selected');
   assert.deepEqual([...sel.options].map((o) => o.value), ['wf_default', 'wf_review'], 'the served list is still offered');
   assert.equal(start.disabled, true);
@@ -566,4 +566,20 @@ test('ui-ask-card: a script draft saves through POST /api/scripts and its cases;
   await settle(w, 20);
   assert.equal(w.location.hash, '#workflows/scripts/new/node');
   assert.deepEqual(w.__scripts.ctl().pendingCases(), SCRIPT_CARD.draft.cases);
+});
+
+test('ui-ask-card: a card from a preset says so, and Start posts presetId with the preset\'s hidden picks', async () => {
+  const preset = { id: 'rp_aaaaaaaaaaaa', name: 'Quick fix', workflowId: 'wf_review',
+    setup: { humanInLoop: false, nightMode: true, overlay: { wires: { w_review: { maxCycles: 2 } } } } };
+  const ctx = await boot();
+  await openCard(ctx, { ...CARD, preset });
+  const doc = ctx.window.document;
+  assert.match(doc.querySelector('.ask-card-preset').textContent, /From preset Quick fix/);
+  doc.querySelector('[data-ask-card-start]').click();
+  await settle(ctx.window, 6);
+  const body = ctx.runBodies.at(-1);
+  assert.equal(body.presetId, 'rp_aaaaaaaaaaaa');
+  assert.equal(body.nightMode, true);
+  assert.equal(body.humanInLoop, false);
+  assert.deepEqual(body.overlay, { wires: { w_review: { maxCycles: 2 } } });
 });

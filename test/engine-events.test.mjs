@@ -128,7 +128,7 @@ test('stream_event -> usage start/delta and text deltas on the main stream only'
 test('result -> result with every field worca reads', () => {
   const raw = { type: 'result', subtype: 'error_max_turns', is_error: true, result: 'r', total_cost_usd: 0.5, usage: { input_tokens: 1 },
     terminal_reason: 'max_turns', num_turns: 3, duration_ms: 99, session_id: 's', errors: ['e'], modelUsage: { m: {} } };
-  assert.deepEqual(norm()(env(raw, { text: 'r', costUsd: 0.5 })), [{ type: 'result', text: 'r', costUsd: 0.5, usage: { input_tokens: 1 },
+  assert.deepEqual(norm()(env(raw, { text: 'r', costUsd: 0.5 })), [{ type: 'result', text: 'r', costUsd: 0.5, cumulativeCost: true, usage: { input_tokens: 1 },
     subtype: 'error_max_turns', isError: true, terminalReason: 'max_turns', numTurns: 3, durationMs: 99, sessionId: 's', errors: ['e'], modelUsage: { m: {} } }]);
 });
 

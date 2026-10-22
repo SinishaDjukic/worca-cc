@@ -125,13 +125,13 @@ test('consent dialog: name, home @ sha, type, what it runs, env/headers, what ea
   const gh = renderMcpConsent(ROWS[0], 'install', { doc });
   const facts = Object.fromEntries([...gh.querySelectorAll('dl.tp-facts dt')].map((dt) => [dt.textContent, dt.nextElementSibling.textContent]));
   assert.deepEqual(facts, {
-    NAME: 'github', FROM: 'acme/platform · worca-policy @ 8c1d2e0', TYPE: 'stdio', RUNS: 'npx -y @modelcontextprotocol/server-github',
-    ENVIRONMENT: 'GITHUB_HOST github.acme.io · GITHUB_PERSONAL_ACCESS_TOKEN secret · you set it next',
-    'EACH TEAMMATE FILLS': 'Host (team value github.acme.io) · Token (secret)', JOINS: 'Team · acme/platform set',
+    Name: 'github', From: 'acme/platform · worca-policy @ 8c1d2e0', Type: 'stdio', Runs: 'npx -y @modelcontextprotocol/server-github',
+    Environment: 'GITHUB_HOST github.acme.io · GITHUB_PERSONAL_ACCESS_TOKEN secret · you set it next',
+    'Each teammate fills': 'Host (team value github.acme.io) · Token (secret)', Joins: 'Team · acme/platform set',
   });
   const lin = renderMcpConsent(ROWS[3], 'install', { doc });
   assert.equal(lin.querySelector('.tp-mcp-base').textContent, 'Runs as platform-linear on this machine: the name linear is taken.');
-  assert.match(renderMcpConsent(ROWS[1], 'turn-on', { doc }).textContent, /PLUGINacme-tools/);
+  assert.match(renderMcpConsent(ROWS[1], 'turn-on', { doc }).textContent, /Pluginacme-tools/);
   const up = renderMcpConsent(ROWS[2], 'update', { doc });
   assert.deepEqual([...up.querySelectorAll('h3')].map((x) => x.textContent), ['Now (the definition you consented to)', 'The team definition']);
   assert.deepEqual([...up.querySelectorAll('dl.tp-facts')].map((dl) => [...dl.querySelectorAll('dt')].find((dt) => dt.textContent === 'URL').nextElementSibling.textContent),
@@ -143,11 +143,11 @@ test('consent facts: "Runs as" only when the name is taken; field defaults; a pl
   const factsOf = (el) => Object.fromEntries([...el.querySelectorAll('dl.tp-facts dt')].map((dt) => [dt.textContent, dt.nextElementSibling.textContent]));
   const withDefault = { ...ROWS[5], values: {}, def: { type: 'stdio', command: 'pg', env: { PG_HOST: { field: 'host' } }, fields: [{ key: 'host', label: 'Host', secret: false, oauth: false, required: false, default: 'db.local' }], description: '' } };
   const facts = factsOf(renderMcpConsent(withDefault, 'turn-on', { doc }));
-  assert.equal(facts.ENVIRONMENT, 'PG_HOST db.local');
-  assert.equal(facts['EACH TEAMMATE FILLS'], 'Host (default db.local)');
+  assert.equal(facts.Environment, 'PG_HOST db.local');
+  assert.equal(facts['Each teammate fills'], 'Host (default db.local)');
   // MCP registry spec §4.1: consent screens show a plugin server's ./ paths as <plugin-dir>/….
   const plugin = { ...ROWS[1], def: { type: 'stdio', command: './bin/sentry-mcp', args: ['./mcp/sentry.mjs', '--stdio'], fields: [], description: '' } };
-  assert.equal(factsOf(renderMcpConsent(plugin, 'turn-on', { doc })).RUNS, '<plugin-dir>/bin/sentry-mcp <plugin-dir>/mcp/sentry.mjs --stdio');
+  assert.equal(factsOf(renderMcpConsent(plugin, 'turn-on', { doc })).Runs, '<plugin-dir>/bin/sentry-mcp <plugin-dir>/mcp/sentry.mjs --stdio');
   const list = renderSetupChecklist({ home: 'acme/platform', mcp: [{ ...ROWS[0], field: null, problem: 'url is not https' }] }, { doc });
   assert.equal(list.querySelector('.tp-mcp-act').textContent, 'Open card');
   // The URL and the command line read the values the team seeds, as ENVIRONMENT does; no value: the field's placeholder.
@@ -156,5 +156,5 @@ test('consent facts: "Runs as" only when the name is taken; field defaults; a pl
   assert.equal(factsOf(renderMcpConsent({ ...site, values: {} }, 'install', { doc })).URL, 'https://mcp.{site}/mcp');
   const args = { ...ROWS[5], values: { host: 'db.acme.io', token: 'never-shown' }, def: { type: 'stdio', command: 'pg-mcp', args: ['--host', { field: 'host' }, { field: 'token', prefix: '--token=' }],
     fields: [{ key: 'host', label: 'Host', secret: false, oauth: false, required: true }, { key: 'token', label: 'Token', secret: true, oauth: false, required: true }], description: '' } };
-  assert.equal(factsOf(renderMcpConsent(args, 'turn-on', { doc })).RUNS, 'pg-mcp --host db.acme.io --token={token}', 'a secret never shows a value');
+  assert.equal(factsOf(renderMcpConsent(args, 'turn-on', { doc })).Runs, 'pg-mcp --host db.acme.io --token={token}', 'a secret never shows a value');
 });

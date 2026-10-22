@@ -140,11 +140,11 @@ test('generateTitle reports a failed call ONCE through onError (with the model),
   }
 });
 
-test('generateTitle: a throwing onError sink never breaks the caller; no report in mock mode success', async () => {
+test('generateTitle: a throwing onError sink never breaks the caller (the mock marker is reported)', async () => {
   const t = await generateTitle('Add a settings page with dark mode', {
     cwd: process.cwd(), mock: true, runModel: 'm1', onError: () => { throw new Error('sink boom'); },
   });
-  assert.ok(t.length > 0, 'mock title produced');
+  assert.equal(t, '', 'a mock marker is never a title');
 });
 
 // The `run` seam stands in for runClaude: it records each attempt's model and

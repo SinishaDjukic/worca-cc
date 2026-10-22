@@ -172,3 +172,68 @@ test('a decided Auto run draws its graph; a pausing run is "paused before decidi
   tile.setBusy(true);
   assert.equal(tile.el.querySelector('.chat-run-tile-open').getAttribute('aria-disabled'), 'true');
 });
+
+test('D16: a slice snapshot titles the tile "Slice 2 of 3 · Run tags"; without `slice` the title is unchanged', () => {
+  const { tile } = mount(snap({ slice: { index: 2, total: 3, title: 'Run tags' } }));
+  assert.equal(tile.el.querySelector('button.chat-run-tile-open').textContent, 'Slice 2 of 3 · Run tags');
+  tile.update(snap());
+  assert.equal(tile.el.querySelector('button.chat-run-tile-open').textContent, 'Fix the upload test');
+});
+
+const PR = (o = {}) => ({ url: 'https://github.com/o/r/pull/781', number: 781, state: 'OPEN', ...o });
+const FAILING = { state: 'failing', total: 12, failed: 3, pending: 0 };
+// A History row's stand-in as app.js chatHomeHistTile builds it: done, not live, no graph.
+const histSnap = (over = {}) => snap({ source: 'history', key: 'hist:k1/aaaa0001', runId: null, status: 'done', live: false,
+  terminal: false, stepper: null, decor: null, progress: null, ...over });
+
+test('bundle QA 2: a run in Needs you through its PR shows a plain amber dot and the reason word, never Done', () => {
+  for (const [pr, word] of [[PR({ checks: FAILING }), 'Checks failing'], [PR({ mergeable: 'CONFLICTING' }), 'Conflicts']]) {
+    const { tile } = mount(histSnap({ pr }));
+    const pill = tile.el.querySelector('.chat-run-tile-pill');
+    assert.ok(pill.classList.contains('st-amber'), word);
+    assert.equal(pill.querySelector('.chat-run-tile-pt').textContent, word);
+    assert.doesNotMatch(pill.textContent, /Done/);
+    const dot = pill.querySelector('.status-dot');
+    assert.equal(dot.dataset.state, 'needs-you');
+    assert.ok(dot.classList.contains('is-amber'));
+    assert.equal(dot.querySelector('svg.status-sym'), null, 'QA 6: "?" only while Worca asks');
+    assert.equal(dot.getAttribute('aria-label'), 'Needs you');
+    assert.equal(pill.querySelector('.chat-run-tile-dot'), null, 'one dot in the pill');
+  }
+});
+
+test('bundle QA 2: a workspace run names its most urgent member PR with the count', () => {
+  const { tile } = mount(histSnap({ kind: 'workspace-run', memberPrs: [PR({ mergeable: 'CONFLICTING' }), PR({ number: 782, url: 'https://github.com/o/r/pull/782' })] }));
+  assert.equal(tile.el.querySelector('.chat-run-tile-pt').textContent, 'Conflicts · 2 PRs');
+});
+
+test('bundle QA 2: a stopped Watch PR on an open PR says "Watch stopped", not the Runs list\'s whole line', () => {
+  const { tile } = mount(histSnap({ pr: PR(), watch: { status: 'needs-person', reason: 'fix-failed', fixRuns: 1 } }));
+  const pill = tile.el.querySelector('.chat-run-tile-pill');
+  assert.equal(pill.querySelector('.chat-run-tile-pt').textContent, 'Watch stopped');
+  assert.ok(pill.classList.contains('st-amber'));
+  assert.equal(pill.querySelector('.status-dot[data-state="needs-you"] svg.status-sym'), null);
+});
+
+test('bundle QA 2: a run waiting on an answer shows the amber "?" in its pill', () => {
+  const { tile } = mount(snap({ pendingQuestion: { kind: 'clarify', questions: [{ id: 'q1' }] } }));
+  const dot = tile.el.querySelector('.chat-run-tile-pill .status-dot');
+  assert.ok(dot.classList.contains('has-sym'));
+  assert.ok(dot.querySelector('svg.status-sym'));
+  assert.equal(dot.getAttribute('aria-label'), 'Needs you');
+  assert.equal(tile.el.querySelector('.chat-run-tile-pt').textContent, 'Waiting for your answer');
+});
+
+test('bundle QA 2: outside Needs you the pill is unchanged: a working run keeps its plain dot, a merged-ready PR keeps Done', () => {
+  const live = mount(snap());
+  assert.ok(live.tile.el.querySelector('.chat-run-tile-pill > .chat-run-tile-dot'));
+  assert.equal(live.tile.el.querySelector('.chat-run-tile-pill .status-dot'), null);
+  const ready = mount(histSnap({ pr: PR() }));
+  assert.equal(ready.tile.el.querySelector('.chat-run-tile-pt').textContent, 'Done');
+  assert.ok(ready.tile.el.querySelector('.chat-run-tile-pill').classList.contains('st-green'));
+  // update() swaps the dot back and forth in place
+  ready.tile.update(histSnap({ pr: PR({ mergeable: 'CONFLICTING' }) }));
+  assert.ok(ready.tile.el.querySelector('.chat-run-tile-pill .status-dot[data-state="needs-you"]'));
+  ready.tile.update(histSnap({ pr: PR() }));
+  assert.ok(ready.tile.el.querySelector('.chat-run-tile-pill > .chat-run-tile-dot'));
+});

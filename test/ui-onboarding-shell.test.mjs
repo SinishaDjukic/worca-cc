@@ -12,6 +12,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { backdropClick, dragOut } from './helpers/popups.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs). That
 // also clears the poll of a guide a failed assertion left mid-tour, so it cannot cascade.
@@ -37,12 +38,15 @@ const status = (done = [], flags = {}) => ({
   done: done.length, total: 9, claude: { bin: 'claude', hint: null }, hidden: false, welcomeSeen: false, ...flags,
 });
 
-async function boot({ onboarding = status(['claude']), projects = [], level = null, settingsError = null } = {}) {
+async function boot({ onboarding = status(['claude']), projects = [], level = null, settingsError = null, width = null, holdOnboarding = null } = {}) {
   // `level`: the server-rendered interface mode (docs/ui-levels.md); null = no attribute (gates nothing).
   const shellHtml = level ? html.replace('<html lang="en" data-theme="system">', `<html lang="en" data-theme="system" data-level="${level}">`) : html;
   const dom = trackDom(new JSDOM(shellHtml, { url: 'http://localhost:4317/', pretendToBeVisual: true }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
+  if (width) {
+    window.matchMedia = (q) => { const m = /max-width:\s*(\d+)px/.exec(q); return { media: q, matches: !!m && width <= Number(m[1]), addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }; };
+  }
   window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
   const posts = [];
   let current = onboarding;
@@ -51,7 +55,8 @@ async function boot({ onboarding = status(['claude']), projects = [], level = nu
     const json = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
     if (url.includes('/api/onboarding')) {
       if (init.method === 'POST') { const b = JSON.parse(init.body); posts.push(b); current = { ...current, ...b }; }
-      return json(current);
+      // holdOnboarding: a promise the GET waits on (the async onboarding load lands after the user acted).
+      return init.method !== 'POST' && holdOnboarding ? holdOnboarding.then(() => json(current)) : json(current);
     }
     // settingsError: the error POST /api/settings answers with (a mode switch the server refuses).
     if (settingsError && url.includes('/api/settings') && init.method === 'POST') return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: settingsError }) });
@@ -131,6 +136,21 @@ test('welcome: shows once; Skip or a door posts {welcomeSeen:true}; never shown 
   ]);
 });
 
+test('welcome at 375px: the nav drawer is closed behind it (F-21)', async () => {
+  let release;
+  const holdOnboarding = new Promise((r) => { release = r; });
+  const { doc, window } = await boot({ width: 375, holdOnboarding });
+  doc.getElementById('mbar-menu').click();
+  assert.ok(doc.body.classList.contains('nav-open'), 'precondition: the drawer is open');
+  release();
+  await settle();
+  assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), false);
+  assert.equal(doc.body.classList.contains('nav-open'), false);
+  assert.equal(doc.querySelector('.main').hasAttribute('inert'), false);
+  const css = readFileSync(join(root, 'style.css'), 'utf8');
+  assert.match(css, /@media \(max-width:760px\)\{\s*\.ob-welcome\{max-height:calc\(100dvh - 24px\)/);
+});
+
 test('Hide posts {hidden:true} and removes the pill (the page stays); Settings › Show again posts {hidden:false} and opens the page', async () => {
   const { doc, window, posts } = await boot({ onboarding: status(['claude'], { welcomeSeen: true }) });
   click(window, doc.querySelector('.gs-pill'));
@@ -170,7 +190,7 @@ test('Connect Claude Code re-checks on open: a page that loaded while signed out
   assert.match(line.className, /\bok\b/);
 });
 
-test('a tile guide: "Connect Claude Code" opens the setup dialog; "Ask Worca" rings the sidebar Chat row, then the composer; nav hops survive navigation', async () => {
+test('a tile guide: "Connect Claude Code" opens the setup dialog; "Chat" rings the sidebar Chat row, then the composer; nav hops survive navigation', async () => {
   const { doc, window } = await boot({ onboarding: status([], { welcomeSeen: true }) });
   click(window, doc.querySelector('.gs-pill'));
   await settle();
@@ -180,6 +200,11 @@ test('a tile guide: "Connect Claude Code" opens the setup dialog; "Ask Worca" ri
   assert.match(doc.getElementById('claude-setup-status').textContent, /not on the PATH/);
   click(window, doc.getElementById('claude-setup-close'));
   assert.equal(setup.classList.contains('hidden'), true);
+  click(window, doc.querySelector('.gs-tile[data-step="claude"]'));       // open it again
+  dragOut(window, doc.getElementById('claude-setup-status'), setup);
+  assert.equal(setup.classList.contains('hidden'), false, 'a selection dragged out of the status does not close it');
+  backdropClick(window, setup);
+  assert.equal(setup.classList.contains('hidden'), true, 'read-only: a backdrop click closes it');
 
   click(window, doc.querySelector('.gs-tile[data-step="ask"]'));
   await settle();
@@ -376,4 +401,20 @@ test('a switch the server refuses when a tour starts: the dialog says why, once 
   assert.equal(doc.getElementById('mode-msg').textContent, 'Could not save the mode: disk full');
   assert.equal(doc.querySelector('.toast[data-key="ui-level-save"]'), null, 'and no toast says it a second time');
   assert.equal(doc.querySelector('.guide-layer'), null, 'no tour starts');
+});
+
+test('the project tour: the dialog opens on New (canvas AddNew), the guide rings Name then Create project — never the hidden folder field', async () => {
+  const { doc, window } = await boot();
+  click(window, doc.querySelector('#welcome-modal [data-door="project"]')); await settle();
+  click(window, doc.querySelector('.nav button[data-nav="projects"]')); await settle();
+  assert.equal(doc.querySelector('.guide-layer').dataset.target, '#project-add-btn');
+  click(window, doc.querySelector('#project-add-btn')); await settle();
+  assert.equal(await until(() => doc.querySelector('.guide-layer')?.dataset.target === '#proj-add-name'), true);
+  assert.match(doc.querySelector('.guide-text').textContent, /worca creates a folder with this name/);
+  const name = doc.querySelector('#proj-add-name');
+  name.value = 'site'; name.dispatchEvent(new window.Event('input', { bubbles: true }));
+  assert.equal(await until(() => doc.querySelector('.guide-layer')?.dataset.target === '#proj-add-save'), true);
+  assert.equal(doc.querySelector('.guide-text').textContent, 'Create it. The dialog closes and the project joins the list.');
+  assert.doesNotMatch(readFileSync(appPath, 'utf8'), /Files on disk are never touched/);
+  assert.doesNotMatch(readFileSync(appPath, 'utf8'), /give the dialog that opens its folder/);
 });

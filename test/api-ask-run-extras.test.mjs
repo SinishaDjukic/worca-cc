@@ -3,7 +3,7 @@
 // GET /api/ask/runs/:id carries it as `extras` with the last (newest) artifacts and the PR — null while a run is not over.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
@@ -11,6 +11,7 @@ import { seedPipeline } from './helpers/db-seed.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { _resetForTests as closeDbForTests } from '../src/core/db.mjs';
 import { recordArtifact, persistPrState } from '../src/core/artifacts.mjs';
+import { noProjectWorkDir } from '../src/core/store.mjs';
 import { runCardResults, lastArtifactsWindow, RUN_CARD_ARTIFACTS } from '../src/core/ask/run-card-extras.mjs';
 
 useTempHome(after);                       // WORCA_HOME is a temp dir from here on; db.mjs opens lazily
@@ -121,4 +122,26 @@ test('runCardResults: checks add up across projects; churn counts removals; exac
   const six = await (await fetch(`${base}/api/ask/runs/${id}`)).json();
   assert.equal(six.extras.artifacts.length, RUN_CARD_ARTIFACTS);
   assert.equal(six.extras.moreArtifacts, false, 'every artifact is already a chip');
+});
+
+test('runCardResults passes a single-project checklist tally through as numbers, and never a workspace one (spec D7)', () => {
+  const summary = { filesNew: 0, filesChanged: 0 };
+  const cl = { met: '1', unmet: 1, na: 0, missing: 2, total: 4, cycle: 2 };
+  assert.deepEqual(runCardResults({ summary, checklist: cl }).checklist, { met: 1, unmet: 1, na: 0, missing: 2, total: 4 });
+  assert.equal(Object.hasOwn(runCardResults({ summary }), 'checklist'), false);
+  assert.equal(Object.hasOwn(runCardResults({ summary, perProject: { 'a-00000001': {} }, checklist: cl }), 'checklist'), false);
+});
+
+test('GET /api/ask/runs/:id, a run without a project: its work/ files first (with sizes), then its newest other rows, and the browsable total', async () => {
+  const { id, dir } = await seedPipeline(noProjectWorkDir('abcd1234'), { title: 'NP', status: 'done' });
+  await mkdir(join(dir, 'work'), { recursive: true });
+  await writeFile(join(dir, 'work', 'deck.html'), 'hello');
+  recordArtifact(id, 'work', 'work/deck.html');
+  await writeFile(join(dir, 'summary.md'), 'done\n');
+  recordArtifact(id, 'summary', 'summary.md');
+  const { extras } = await (await fetch(`${base}/api/ask/runs/${id}`)).json();
+  assert.deepEqual(extras.artifacts[0], { kind: 'work', relPath: 'work/deck.html', bytes: 5, nodeId: null, cycle: null });
+  assert.ok(extras.artifacts.some((a) => a.relPath === 'summary.md'), 'room left: the newest other rows follow');
+  assert.equal(extras.artifactsTotal, extras.artifacts.length);
+  assert.equal(extras.moreArtifacts, false);
 });

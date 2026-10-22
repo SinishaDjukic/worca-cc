@@ -12,6 +12,7 @@ import { fakeHarness } from './helpers/metrics-git.mjs';
 import { buildRunRecord, snapshotFromHarness, RECORD_FIELDS } from '../src/core/metrics/record.mjs';
 import { writePolicyState } from '../src/core/policy/state.mjs';
 import { parseRecordLine } from '../src/shared/team-metrics/aggregate.mjs';
+import { insertRunTags } from '../src/core/run-tags-store.mjs';
 
 useTempHome(after);
 const proj = mkdtempSync(join(tmpdir(), 'worca-policy-record-'));
@@ -36,6 +37,7 @@ test('a policy object is clipped, de-duplicated, sha shortened; reason follows a
   assert.equal(buildRunRecord(snap(p), { attribution: 'none' }).policy.reason, null);
   assert.equal(buildRunRecord(snap({ ...p, sha: 'nope', unattended: true })).policy.sha, null);
   assert.equal(buildRunRecord(snap({ ...p, unattended: true })).policy.unattended, true);
+  assert.deepEqual(buildRunRecord(snap({ ...p, deviations: ['tag-missing:cc'] })).policy.deviations, ['tag-missing:cc']);
   // Readers of a v1 record keep working with the extra key.
   const parsed = parseRecordLine(JSON.stringify(rec));
   assert.equal(parsed.record.id, 'r1'); assert.equal(parsed.record.policy.home, 'acme/gateway');
@@ -66,4 +68,22 @@ test('night mode counters ride the policy object; a harness that decided at nigh
   const s = await snapshotFromHarness(h, { status: 'done' });
   assert.equal(s.policy.unattended, true);
   assert.deepEqual(buildRunRecord(s).policy.night, { decisions: 2, flagged: 0 });
+});
+
+const NOW = new Date(Date.parse('2026-09-16T12:00:00Z'));
+test('tags: written when the run has any, also under attribution none; absent → no key', () => {
+  const withTags = buildRunRecord({ ...snap(null), tags: ['client:acme', 'spike'] }, { now: NOW });
+  assert.deepEqual(withTags.tags, ['client:acme', 'spike']);
+  const keys = Object.keys(withTags);
+  assert.equal(keys.indexOf('tags'), keys.indexOf('actorKey') >= 0 ? keys.indexOf('actorKey') + 1 : keys.indexOf('actor') + 1);
+  assert.deepEqual(buildRunRecord({ ...snap(null), tags: ['client:acme'] }, { attribution: 'none', now: NOW }).tags, ['client:acme']);
+  assert.equal('tags' in buildRunRecord({ ...snap(null), tags: [] }, { now: NOW }), false);
+  assert.equal('tags' in buildRunRecord({ ...snap(null), tags: [42, 'Bad Key!:x'] }, { now: NOW }), false);
+});
+
+test('snapshotFromHarness reads the run\'s tags from run_tags', async () => {
+  const { id } = await seedPipeline(proj, { title: 't', status: 'done' });
+  insertRunTags(id, ['client:acme']);
+  const s = await snapshotFromHarness(fakeHarness({ projectDir: proj, runId: id }), { status: 'done' });
+  assert.deepEqual(s.tags, ['client:acme']);
 });

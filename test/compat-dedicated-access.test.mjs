@@ -2,8 +2,9 @@
 // A dedicated deployment behind Cloudflare Access (worca-01 style, docs/deploy-railway.md) keeps
 // working exactly as before the hosted-platform changes (W1–W7, B1–B4): it sets only the
 // variables below, and none of the platform's opt-ins (WORCA_IDENTITY_ISSUER, WORCA_HEARTBEAT_*,
-// WORCA_AUTO_RESUME, WORCA_AWAY_PER_PERSON) switch on by themselves. Any change that alters this
-// deployment's behaviour must fail here.
+// WORCA_AWAY_PER_PERSON) switch on by themselves. Resuming the runs a restart's drain paused is a
+// default (runs redesign Known bug 11) that a dedicated deployment also gets; WORCA_AUTO_RESUME=0
+// turns it off. Any other change that alters this deployment's behaviour must fail here.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';

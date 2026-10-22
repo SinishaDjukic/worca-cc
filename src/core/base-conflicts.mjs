@@ -8,6 +8,7 @@ import { checkBaseMerge, mergeBaseInto, scrubGitText, INTERACTIVE_TTL_MS } from 
 import { branchPushedTo, branchTips, pushBranch, leftoverMarkers } from './git-info.mjs';
 import { conflictBrief } from './pr-watch.mjs';
 import { effectiveSyncSettings } from './project-sync.mjs';
+import { gitAvailable } from './git-available.mjs';
 
 const FINISHED = new Set(['done', 'stopped', 'error']);
 const SETTLED = new Set(['up-to-date', 'clean']);
@@ -63,9 +64,16 @@ export async function checkRunBase(rowId, { members = null, by = null, maxAgeMs 
   // Sequential: members may share one repository (and its fetch).
   for (const m of baseMembersOfRow(row).filter((x) => !members || members.includes(x.projectKey))) {
     const c = await checkBaseMerge(m.projectDir, { base: m.br.source, feature: m.br.feature, remote: m.remote, maxAgeMs });
-    const rec = toRecord(c, by);
-    updateBranchRecords(row.id, [m.projectKey], (br) => { br.baseCheck = rec; });
-    out.push({ projectKey: m.projectKey, name: m.projectName || null, branch: m.br.feature, baseCheck: rec, tree: c.tree || null });
+    const fresh = toRecord(c, by);
+    // This check runs outside the run lock: a record written after it started (Update branch, a settled
+    // resolution) describes a newer branch and stays. `at` is when a check started.
+    let rec = fresh;
+    updateBranchRecords(row.id, [m.projectKey], (br) => {
+      if (Date.parse(br.baseCheck?.at || '') > Date.parse(fresh.at || '')) rec = br.baseCheck;
+      else br.baseCheck = fresh;
+    });
+    out.push({ projectKey: m.projectKey, name: m.projectName || null, branch: m.br.feature, baseCheck: rec,
+      tree: rec === fresh ? c.tree || null : null });
   }
   return { row, members: out };
 }
@@ -188,6 +196,7 @@ export function resolveTaskText({ check, feature, title, prompt }) {
  * (D13) and the fast-forward push live in settleResolutions. Never throws.
  */
 export async function afterRunBaseCheck(rowId, { log = () => {} } = {}) {
+  if (!gitAvailable()) return;   // a check without git finds no branch tip and would store "no-branch" on a branch that exists
   try {
     const { row, members } = await checkRunBase(rowId);
     for (const m of members) log(`base check \`${m.branch}\`: ${m.baseCheck.status}${m.baseCheck.fileCount ? ` (${m.baseCheck.fileCount} file(s))` : ''}`);

@@ -59,7 +59,7 @@ test('ask-panel-composer: attach → chip; send posts base64 attachments and the
   assert.equal(bodies[0].text, 'summarize the notes');
   assert.equal(bodies[0].model, 'claude-opus-5-5');
   assert.equal(bodies[0].effort, 'high');
-  // #397: Auto declares itself; the browser's zone rides along for scheduled runs
+  // P4: No project declares itself (no page target); the browser's zone rides along for scheduled runs
   assert.deepEqual(bodies[0].context, { view: 'new', pinned: false, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone });
   assert.equal(bodies[0].attachments.length, 1);
   assert.equal(bodies[0].attachments[0].name, 'notes.md');
@@ -534,7 +534,7 @@ test('ask-panel-composer: queue — a repaint keeps the cards it already shows (
 
 test('ask-panel-composer: queue — the input keeps a fixed accessible name while a suggestion fills the placeholder', async () => {
   const { input } = await streamingPanel();
-  assert.equal(input.getAttribute('aria-label'), 'Message Ask Worca');
+  assert.equal(input.getAttribute('aria-label'), 'Message Chat');
 });
 
 test('ask-panel-composer: queue — an item drained while the reply already finished before the POST answered still drains the next', async () => {

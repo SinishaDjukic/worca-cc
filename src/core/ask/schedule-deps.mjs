@@ -62,7 +62,7 @@ export function defaultScheduleDeps({ threadId = null, reader = null } = {}) {
       get: (id) => {
         const found = getScheduleItem(id);
         if (!found) return null;
-        const history = found.kind === 'recurring' ? listTickets({ scheduleId: found.item.id, all: true, limit: 50 }).reverse() : [];
+        const history = found.kind === 'recurring' ? listTickets({ scheduleId: found.item.id, all: true, limit: 50, newestFirst: true }) : [];
         const notifications = listNotifications({ scheduleId: found.kind === 'recurring' ? found.item.id : null, limit: 50, ...r })
           .filter((n) => found.kind === 'recurring' || n.ticketId === found.item.id);
         return { ...found, history, notifications };

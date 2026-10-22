@@ -20,6 +20,7 @@ import {
 import { SCRIPT_COLORS, SCRIPT_KEY_RE, RESERVED_SCRIPT_KEYS } from '../../src/shared/graph/script-meta.mjs';
 import { iconSvgOf } from '../../src/shared/graph/script-icons.mjs';
 import { splitMessage } from './feedback.mjs';
+import { dialogOpen } from './modal-guard.mjs';
 import {
   SCRIPT_TEMPLATES, SCRIPT_WIN32_TEMPLATE, SHELL_COMMAND_TEMPLATE, SCRIPT_EXAMPLES, RUNTIME_DEFAULTS, blankScriptMeta,
 } from '../../src/shared/graph/script-templates.mjs';
@@ -105,8 +106,8 @@ export function buildScriptCard(s, { doc = globalThis.document, runtimes = {}, c
   main.appendChild(meta);
   card.appendChild(main);
   const actions = h(doc, 'div', 'script-actions');
-  const btn = (cls, label, kind) => { const b = h(doc, 'button', `btn ${kind} btn-mini ${cls}`, label); b.type = 'button'; return b; };
-  actions.append(btn('script-open', 'Open', 'btn-ghost'), btn('script-duplicate', 'Duplicate', 'btn-ghost'));
+  const btn = (cls, label, kind) => { const b = h(doc, 'button', `btn ${kind} btn-sm ${cls}`, label); b.type = 'button'; return b; };
+  actions.append(btn('script-open', 'Open', 'btn'), btn('script-duplicate', 'Duplicate', 'btn'));
   if (s.origin === 'user') actions.appendChild(btn('script-delete', 'Delete', 'btn-danger'));
   card.appendChild(actions);
   return card;
@@ -121,7 +122,7 @@ export function renderScriptsList(list, { doc = globalThis.document, query = '',
   const filter = doc.createElement('input');
   filter.type = 'search'; filter.className = 'input script-filter'; filter.value = query;
   filter.placeholder = 'Filter scripts'; filter.setAttribute('aria-label', 'Filter scripts');
-  const add = h(doc, 'button', 'btn btn-primary btn-mini script-new', 'New script');
+  const add = h(doc, 'button', 'btn btn-primary btn-sm script-new', 'New script');
   add.type = 'button';
   tools.append(filter, add);
   bar.append(tools);
@@ -750,7 +751,7 @@ export function createScriptsController({
     const path = st.root.querySelector('.script-path');
     if (!path || !path.textContent) return;
     const clip = doc.defaultView.navigator && doc.defaultView.navigator.clipboard;
-    if (!clip) { say('Clipboard unavailable — select the path and copy it.', 'err'); return; }
+    if (!clip) { say('Clipboard unavailable. Select the path and copy it.', 'err'); return; }
     try {
       await clip.writeText(path.textContent);
       btn.textContent = 'Copied';
@@ -876,6 +877,9 @@ export function createScriptsController({
 
   function onKeyDown(e) {
     if (e.key !== 'Escape' || st.mode === 'list') return;
+    // A pop-up on screen owns Escape (modal-guard.mjs hands it to the one on top) — e.g. the bench's
+    // run-artifact picker in #plugin-modal, opened from a button that keeps the focus on this page.
+    if (dialogOpen(doc)) return;
     const t = e.target;
     if (t && t.closest && t.closest('textarea, input, select, [contenteditable="true"]')) return;
     e.preventDefault();

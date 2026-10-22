@@ -12,7 +12,6 @@ import { mountDirs, withStoreLock, refreshMount } from '../memory-sync.mjs';
 import { memoryCaps } from '../settings.mjs';
 import { listProjects, worcaHome } from '../projects.mjs';
 import { PROJECT_KEY_RE } from '../store.mjs';
-import { getThread } from './store.mjs';
 
 /** {key, name, path} for a registered project key, or null. */
 async function projectByKey(key) {
@@ -26,24 +25,6 @@ export function defaultMemoryDeps({ threadId }) {
   return {
     memory: {
       projectByKey,
-      /** The page-following (unpinned) project of this thread, or null — tool-deps' pinnedScope
-       *  covers the pinned case. B30: the context the panel sends carries `projectDir` on the New,
-       *  Running and Projects pages and `projectKey` only on History detail, so this mirrors
-       *  resolveAskContext (ui/server.mjs) and resolves either through the registry. */
-      contextProjectKey: async () => {
-        if (!threadId) return null;
-        let c = null;
-        try { c = getThread(threadId)?.context ?? null; } catch { return null; }
-        if (!c || c.pinned === true) return null;
-        if (typeof c.projectKey === 'string' && c.projectKey) return c.projectKey;
-        if (typeof c.projectDir === 'string' && c.projectDir && c.projectSource !== 'fallback') {   // MCP registry §9.1
-          try {
-            const p = (await listProjects()).find((x) => x && x.path === c.projectDir);   // the match resolveAskContext uses
-            return p ? p.key : null;
-          } catch { return null; }
-        }
-        return null;
-      },
       list: (scope) => listMemory(memoryRoot(), scope),
       read: (scope, name) => readMemory(memoryRoot(), scope, name),
       /** Compose + write one file. Omitted description/paths keep the existing file's values (an

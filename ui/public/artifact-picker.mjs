@@ -77,7 +77,7 @@ export function renderRunList(pipelines, { doc = globalThis.document } = {}) {
 
 export function renderArtifactList(artifacts, { doc = globalThis.document, types = ['md'] } = {}) {
   const wrap = h(doc, 'div', 'apick');
-  const back = h(doc, 'button', 'btn btn-ghost btn-mini apick-back', 'Runs');
+  const back = h(doc, 'button', 'btn btn-sm apick-back', 'Runs');
   back.type = 'button';
   wrap.appendChild(back);
   const hits = (Array.isArray(artifacts) ? artifacts : []).filter((a) => a && artifactMatches(a.relPath, types));
@@ -166,7 +166,7 @@ export function openArtifactPicker({ doc = globalThis.document, api, types = ['m
     // EVERY way out settles the promise once — the shell's own header Close and Escape
     // included, or the caller awaits for ever and the next open stacks a second body.
     if (typeof modal.onClose === 'function') unhook = modal.onClose(() => done(null));
-    modal.open('Pick an artifact', body, [['Cancel', 'btn btn-ghost btn-mini', () => done(null)]]);
+    modal.open('Pick an artifact', body, [['Cancel', 'btn btn-sm', () => done(null)]]);
     void showRuns();
   });
 }

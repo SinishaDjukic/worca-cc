@@ -199,7 +199,7 @@ test('Ship it already open (History\'s own): the card says so and offers Create 
   const el = await prCard(ctx.window, B, []);
   click(ctx.window, el.querySelector('[data-chat-pr-create]'));
   await settle(10);
-  assert.equal(el.querySelector('.ask-card-err').textContent, 'The Ship it dialog is already open.');
+  assert.equal(el.querySelector('.ask-card-err').textContent, 'The Create PR dialog is already open.');
   assert.equal(el.querySelector('[data-chat-pr-create]').disabled, false);
 });
 
@@ -269,7 +269,7 @@ test('a lookup still out when the wait ends: the card says "still checking" and 
     assert.equal(modalOf(ctx.window).classList.contains('hidden'), true);
     Date.now = () => realNow() + 20000;                    // past HISTORY_PR_TIMEOUT_MS + 1 s; History's own watchdog (a real timer) has not fired
     await until(() => el.querySelector('.ask-card-err').textContent);
-    assert.equal(el.querySelector('.ask-card-err').textContent, "Still checking this run's pull requests — try again in a moment.");
+    assert.equal(el.querySelector('.ask-card-err').textContent, "Still checking this run's pull requests. Try again in a moment.");
     assert.equal(modalOf(ctx.window).classList.contains('hidden'), true);
     assert.equal(prPosts(ctx).length, 0);
   } finally { Date.now = realNow; }

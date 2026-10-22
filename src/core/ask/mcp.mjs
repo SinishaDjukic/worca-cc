@@ -3,6 +3,7 @@
 // the per-chat picker's choices (`mcpOff`), the targets in play, one resolve per turn or preview, the
 // prompt section's input and the turn-end worktree notice. The resolver itself is src/core/mcp/registry.mjs.
 import { codexSkillNames } from './prompt.mjs';
+import { chatScopeOf } from './scope.mjs';
 import { SET_ID_RE, MEMBERSHIP_KEY_RE } from '../mcp/definitions.mjs';
 import { listProjects } from '../projects.mjs';
 import { readWorkspace } from '../workspaces.mjs';
@@ -43,8 +44,8 @@ export function validateMcpOff(raw) {
 }
 
 /**
- * §9.1 — the targets in play for one turn or preview: the pin, else the page (never the fallback-tagged dropdown
- * projectDir), then every open worktree of the thread (rank 1 + creation index). A project already in play keeps its
+ * §9.1 — the targets in play for one turn or preview: the chat scope (P4: No project brings none), then every open
+ * worktree of the thread (rank 1 + creation index). A project already in play keeps its
  * first route and rank — and every member of a workspace in play is in play (D13 "a workspace ⇒ all members"), so a
  * worktree on a member adds no target and never brings that member's own Team set (§5.1). An unregistered project or
  * a missing workspace is no target.
@@ -69,15 +70,8 @@ export async function askTargetsInPlay({ ctx = {}, threadId = null } = {}, deps 
     targets.push({ kind: 'workspace', id: ws.id, name: ws.name, route, rank: 0,
       members: keys.map((key) => ({ key, name: byKey.get(key)?.name ?? key })) });
   };
-  if (ctx.pinned === true) {
-    if (ctx.projectKey) project(byKey.get(ctx.projectKey), 'pinned', 0);
-    else if (ctx.workspaceId) await workspace(ctx.workspaceId, 'pinned');
-  } else {
-    // The fallback tag names only the dropdown's projectDir (§9.1) — like resolveAskContext and contextProjectKey.
-    const byDir = ctx.projectSource === 'fallback' ? null : projects.find((p) => ctx.projectDir && p.path === ctx.projectDir);
-    project(ctx.projectKey ? byKey.get(ctx.projectKey) : byDir, 'page', 0);
-    if (ctx.workspaceId) await workspace(ctx.workspaceId, 'page');
-  }
+  const scope = chatScopeOf(ctx);
+  if (scope?.projectKey) project(byKey.get(scope.projectKey), 'pinned', 0); else if (scope?.workspaceId) await workspace(scope.workspaceId, 'pinned');
   if (threadId) (await d.listWorktrees(threadId)).forEach((w, i) => project(byKey.get(w.projectKey), 'worktree', 1 + i));
   return targets;
 }
@@ -180,7 +174,7 @@ function pickerSets(mcpSets, skillSets, blocked) {
 function skillsPreview(r, engine = 'claude') {
   // A Codex chat (#635): the names it loads them by (codexSkillNames) replace `<plugin>:<skill>`, and Claude Code's
   // --plugin-dir block does not apply — codex reads the skills through read_file.
-  const codex = engine === 'codex';
+  const codex = engine === 'codex' || engine === 'copilot';   // a Copilot chat too: it reads its skills through read_file
   const names = codex ? codexSkillNames(r.mounted) : null;
   const blocked = codex ? null : r.blocked ?? null;
   return {
@@ -204,10 +198,11 @@ export async function askMcpPreview({ ctx, threadId = null, off = null, model = 
   const { result: sk } = await resolveAskSkills({ ctx, threadId, off }, d);
   // §4.6: a Codex chat starts no registry copy, only the set skills (#635). Its set rows count skills only, and
   // `codexServers` says how many servers wait for a Claude chat, so the picker can say so.
-  if (engine === 'codex') {
+  // A Copilot chat is the same (its lockdown attaches worca's own server only); `codexServers` keeps its name.
+  if (engine === 'codex' || engine === 'copilot') {
     const sets = pickerSets(result.sets, sk.sets, false).map((x) => ({ ...x, members: 0, started: 0 }));
     return { sets, copies: [], started: 0, skipped: [], skippedTools: [], newer: result.newer === true,
-      codexServers: result.copies.length + result.skipped.length, skills: skillsPreview(sk, 'codex') };
+      codexServers: result.copies.length + result.skipped.length, skills: skillsPreview(sk, engine) };
   }
   const { catalog } = result.skipped.length ? await storeAndCatalog(d) : { catalog: [] };
   return {
@@ -223,7 +218,7 @@ export async function askMcpPreview({ ctx, threadId = null, off = null, model = 
  *  that join from the next message. null when no worktree target joined or it brings no copy. Skills registry §4.4:
  *  with `before.skills` (the turn's skills result) the skills that join are named too. */
 export async function askMcpJoinNotice({ before, ctx, threadId, off = null, model = null, engine = 'claude' }, deps = {}) {
-  const codex = engine === 'codex';   // #635: a Codex chat gains skills only, named as it loads them (codexSkillNames)
+  const codex = engine === 'codex' || engine === 'copilot';   // #635: a Codex (or Copilot) chat gains skills only, named as it loads them (codexSkillNames)
   const next = await resolveAskMcp({ ctx, threadId, off, model }, deps);
   const nextSkills = before.skills ? (await resolveAskSkills({ ctx, threadId, off }, deps)).result : null;
   const had = new Set(before.targets.filter((t) => t.kind === 'project').map((t) => t.key));

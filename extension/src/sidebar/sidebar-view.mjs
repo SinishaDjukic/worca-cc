@@ -7,6 +7,7 @@ import { ATTACH_ACCEPT } from '../../../ui/public/attach-files.mjs';
 import { ctxPercent, ctxLevel, fmtCtx, fmtUsd, fmtWindow, ctxBreakdown, fmtShare, kTok, CTX_COST_HINT } from '../../../ui/public/ask-meter.mjs';
 import { pickerGroups } from '../../../ui/public/ask-engine.mjs';
 import { modelGroups } from '../../../src/shared/connections.mjs';
+import { icon } from '../../../ui/public/icons.mjs';
 
 /** ask-panel.mjs ICONS (module-private there; the markup test reads the strings from that file and pins them). */
 export const ICON = Object.freeze({
@@ -30,13 +31,13 @@ export const SIDEBAR_CLASSES = Object.freeze([
   'ask-input', 'ask-composer-msg', 'ask-composer-row', 'ask-composer-spacer', 'ask-send', 'ask-stop',
   'wx-app', 'wx-select', 'wx-page-chip', 'wx-sends', 'wx-card', 'wx-card-t', 'wx-card-k', 'wx-state', 'wx-state-t', 'wx-state-k', 'wx-code',
   'wx-state-actions', 'wx-state-body', 'wx-settings', 'wf-disc', 'wf-disc-body', 'field', 'hint', 'wx-settings-body', 'wx-settings-row',
-  'btn-mini', 'ask-icon-btn', 'chat-head-btn', 'chat-new-btn',
+  'btn', 'btn-sm', 'btn-primary', 'btn-quiet', 'btn-icon', 'ic', 'chat-head-btn', 'chat-new-btn',
   // Ask's composer controls and popovers (the sidebar's own composer, D-composer). Emitted but unlisted because no rule
   // targets them on their own (they are styled through their parent): ask-model-btn-label, ask-scope-item,
   // ask-effort-row, ask-effort-item, ask-pane-back.
   'ask-scope-btn', 'ask-scope-label', 'ask-meter', 'ask-meter-cost', 'ask-ctx-ring', 'ask-ctx-ring-track', 'ask-ctx-ring-arc',
   'ask-model-btn', 'ask-model-btn-effort', 'ask-chip-name', 'ask-chip-thumb', 'ask-drop', 'ask-drop-label',
-  'ask-pop', 'ask-pop-scope', 'ask-pop-model', 'ask-pop-ctx', 'ask-pop-item', 'ask-pop-caption', 'ask-pop-caption-row', 'ask-pop-caption-meter',
+  'menu', 'menu-item', 'ask-pop', 'ask-pop-scope', 'ask-pop-model', 'ask-pop-ctx', 'ask-pop-item', 'ask-pop-caption', 'ask-pop-caption-row', 'ask-pop-caption-meter',
   'ask-pop-empty', 'ask-pop-divider', 'ask-pop-group', 'ask-pop-subgroup', 'ask-model-item', 'ask-model-name', 'ask-model-check', 'ask-model-tag',
   'ask-pop-row-value', 'ask-pop-row-chev',
   'ask-ctx-bar', 'ask-ctx-bar-used', 'ask-ctx-bar-buffer', 'ask-ctx-stat', 'ask-ctx-swatch', 'ask-ctx-stat-name', 'ask-ctx-stat-tokens',
@@ -86,7 +87,8 @@ export function buildQuoteChip(doc, q, onRemove) {
   chip.setAttribute('aria-label', 'Quoted text');
   const m = make(doc, 'div', 'ask-chip-quote-m');
   m.append(make(doc, 'div', 'ask-chip-quote-k', q.src ? `From ${q.src}` : 'Quoting'), make(doc, 'div', `ask-chip-quote-t${q.code ? ' mono' : ''}`, q.text));
-  const x = make(doc, 'button', 'ask-chip-x', '×');
+  const x = make(doc, 'button', 'ask-chip-x');
+  x.append(icon(doc, 'x', 12));
   x.type = 'button';
   x.setAttribute('aria-label', 'Remove quote');
   x.addEventListener('click', onRemove);
@@ -172,10 +174,17 @@ export function threadOptions(list, openId) {
  *  file and to the button the Ask panel renders). */
 export const NEW_CHAT_ICON_PATH = ICON.plus;
 
-/** ask-panel.mjs newChatButton: "+ New chat", a labelled ghost button (style.css .ask-icon-btn.chat-new-btn) with a
+/** ask-panel.mjs checkMark: the ✓ beside the current pick, a stroke icon. */
+function checkMark(doc) {
+  const n = make(doc, 'span', 'ask-model-check');
+  n.append(icon(doc, 'check', 12));
+  return n;
+}
+
+/** ask-panel.mjs newChatButton: "+ New chat", a labelled small quiet button (.btn .btn-sm .btn-quiet) with a
  *  decorative plus; the visible label is its name. The markup test pins it to the button the Ask panel renders. */
 export function buildNewChatButton(doc, className, onClick) {
-  const b = make(doc, 'button', `ask-icon-btn chat-new-btn ${className}`);
+  const b = make(doc, 'button', `btn btn-sm btn-quiet chat-new-btn ${className}`);
   b.type = 'button';
   b.setAttribute('data-ask-new-btn', '');
   b.appendChild(svgIcon(doc, NEW_CHAT_ICON_PATH, 14, 2));
@@ -196,7 +205,7 @@ export function buildIconButton(doc, className, title, d, onClick) {
 }
 
 // ---- the chat scope (Ask's pill + popover) ---------------------------------------------------------------------
-export const ANY_PROJECT_TITLE = 'Worca picks the project from your message';
+export const NO_PROJECT_TITLE = 'Chat scope: No project';
 
 /**
  * What the picker shows, from the lists' load state and the chat's scope. Pure.
@@ -217,16 +226,16 @@ export function scopeModel({ status, projects = [], workspaces = [], scope = nul
   return { kind: 'select', value: pin || 'auto', pinned: !!pin, label: hit ? hit.label : null, projects: P, workspaces: W };
 }
 
-/** The pill: "Any project" unless pinned (then the pinned label, .is-pinned, data-pinned). m = scopeModel(…). */
+/** The pill: "No project" unless pinned (then the pinned label, .is-pinned, data-pinned). m = scopeModel(…). */
 export function patchScopePill(btn, label, m) {
   const pinned = !!m.pinned;
-  label.textContent = pinned ? (m.label || 'Pinned') : 'Any project';
+  label.textContent = pinned ? (m.label || 'Pinned') : 'No project';
   btn.classList.toggle('is-pinned', pinned);
   btn.toggleAttribute('data-pinned', pinned);
-  btn.title = pinned ? `This chat is pinned to ${m.label}` : ANY_PROJECT_TITLE;
+  btn.title = pinned ? `This chat is pinned to ${m.label}` : NO_PROJECT_TITLE;
 }
 
-/** Ask's openScopePopover body (ask-panel.mjs openScopePopover), sidebar wording: caption "Chat scope", "Any project",
+/** Ask's openScopePopover body (ask-panel.mjs openScopePopover), sidebar wording: caption "Chat scope", "No project",
  *  Projects, Workspaces — or the loading / error (+ Retry) / empty (+ Open Worca) lines. */
 export function fillScopePopover(doc, panel, m, { onPick, onRetry, onOpen }) {
   panel.appendChild(make(doc, 'div', 'ask-pop-caption', 'Chat scope'));
@@ -235,8 +244,8 @@ export function fillScopePopover(doc, panel, m, { onPick, onRetry, onOpen }) {
     panel.append(make(doc, 'div', 'ask-pop-empty', 'Couldn\'t load projects'), menuItem(doc, 'ask-scope-item', 'Retry', onRetry));
     return;
   }
-  const any = menuItem(doc, 'ask-scope-item', 'Any project', () => onPick('auto'), { checked: m.kind !== 'select' || !m.pinned });
-  any.title = ANY_PROJECT_TITLE;
+  const any = menuItem(doc, 'ask-scope-item', 'No project', () => onPick('auto'), { checked: m.kind !== 'select' || !m.pinned });
+  any.title = NO_PROJECT_TITLE;
   panel.appendChild(any);
   if (m.kind === 'empty') {
     panel.append(make(doc, 'div', 'ask-pop-divider'), make(doc, 'div', 'ask-pop-empty', 'No projects in this Worca yet'), menuItem(doc, 'ask-scope-item', 'Open Worca', onOpen));
@@ -285,7 +294,7 @@ export function createPopovers(doc, host) {
     open(trigger, panelClass, build) {
       if (cur && cur.trigger === trigger) { close({ focusTrigger: false }); return null; }
       close({ focusTrigger: false });
-      const panel = make(doc, 'div', `ask-pop ${panelClass}`);
+      const panel = make(doc, 'div', `menu ask-pop ${panelClass}`);
       panel.setAttribute('role', 'menu');
       panel.addEventListener('keydown', onKey);
       build(panel);
@@ -308,13 +317,13 @@ export function createPopovers(doc, host) {
 
 /** ask-panel.mjs menuItem + its label/✓ children. labelClass null: a bare <span> (Ask's Effort row and pane back). */
 export function menuItem(doc, className, label, onPick, { checked = false, disabled = false, labelClass = 'ask-model-name' } = {}) {
-  const b = make(doc, 'button', `ask-pop-item ${className}`.trim());
+  const b = make(doc, 'button', `menu-item ask-pop-item ${className}`.trim());
   b.type = 'button';
   b.setAttribute('role', 'menuitem');
   b.tabIndex = -1;
   b.disabled = disabled;
   b.appendChild(make(doc, 'span', labelClass, label));
-  if (checked) b.appendChild(make(doc, 'span', 'ask-model-check', '✓'));
+  if (checked) b.appendChild(checkMark(doc));
   if (onPick && !disabled) b.addEventListener('click', onPick);
   return b;
 }
@@ -347,7 +356,7 @@ export function fillModelPopover(doc, panel, { catalog, pick, lock, pane = 'main
           it.appendChild(tag(doc, 'secret not set', 'is-err', `${m.secretsMissing.join(', ')} is not set — configure it in the ${m.plugin ? `“${m.plugin}” ` : ''}plugin's Model secrets, or this model will fail.`));
         }
         if (m.needsSignIn) it.appendChild(tag(doc, 'needs sign-in', 'is-err', m.signInMessage || 'The provider behind this model is not usable yet — the Providers page.'));
-        if (pick && m.id === pick.model) it.appendChild(make(doc, 'span', 'ask-model-check', '✓'));
+        if (pick && m.id === pick.model) it.appendChild(checkMark(doc));
         panel.appendChild(it);
       }
     }
@@ -468,23 +477,23 @@ export function buildComposer(doc, o) {
   file.accept = ATTACH_ACCEPT;
   file.hidden = true;
   file.addEventListener('change', () => { const fs = [...(file.files || [])]; file.value = ''; if (fs.length) call(o.onFiles, fs); });
-  const attach = buildIconButton(doc, 'ask-icon-btn', 'Attach files', ICON.plus, () => file.click());
+  const attach = buildIconButton(doc, 'btn btn-quiet btn-icon', 'Attach files', ICON.plus, () => file.click());
   attach.setAttribute('data-ask-attach-btn', '');
-  const capture = buildIconButton(doc, 'ask-icon-btn', 'Capture an area of the page', ICON.camera, () => call(o.onCapture));
+  const capture = buildIconButton(doc, 'btn btn-quiet btn-icon', 'Capture an area of the page', ICON.camera, () => call(o.onCapture));
   capture.setAttribute('data-wx-capture-btn', '');
-  const scope = make(doc, 'button', 'ask-scope-btn');
+  const scope = make(doc, 'button', 'btn btn-sm btn-quiet ask-scope-btn');
   scope.type = 'button';
   scope.setAttribute('data-ask-scope-btn', '');
   scope.setAttribute('aria-haspopup', 'menu');
-  scope.title = ANY_PROJECT_TITLE;
-  const scopeLabel = make(doc, 'span', 'ask-scope-label', 'Any project');
+  scope.title = NO_PROJECT_TITLE;
+  const scopeLabel = make(doc, 'span', 'ask-scope-label', 'No project');
   scope.append(scopeLabel, svgIcon(doc, ICON.chevronDown, 11, 2));
   scope.addEventListener('click', () => call(o.onScope, scope));
   const spacer = make(doc, 'span', 'ask-composer-spacer');
   const meter = make(doc, 'span', 'ask-meter');
   meter.setAttribute('data-ask-meter', '');
   const meterCost = make(doc, 'span', 'ask-meter-cost', '');
-  const ctxBtn = make(doc, 'button', 'ask-ctx-ring');
+  const ctxBtn = make(doc, 'button', 'btn btn-sm btn-quiet btn-icon ask-ctx-ring');
   ctxBtn.type = 'button';
   ctxBtn.setAttribute('data-ask-ctx-btn', '');
   ctxBtn.setAttribute('aria-haspopup', 'menu');
@@ -494,7 +503,7 @@ export function buildComposer(doc, o) {
   ctxBtn.appendChild(ring.svg);
   ctxBtn.addEventListener('click', () => call(o.onCtx, ctxBtn));
   meter.append(meterCost, ctxBtn);
-  const model = make(doc, 'button', 'ask-model-btn');
+  const model = make(doc, 'button', 'btn btn-sm btn-quiet ask-model-btn');
   model.type = 'button';
   model.setAttribute('data-ask-model-btn', '');
   model.setAttribute('aria-haspopup', 'menu');
@@ -502,13 +511,13 @@ export function buildComposer(doc, o) {
   const modelEffort = make(doc, 'span', 'ask-model-btn-effort', '');
   model.append(modelLabel, modelEffort, svgIcon(doc, ICON.chevronDown, 12, 2));
   model.addEventListener('click', () => call(o.onModel, model));
-  const send = make(doc, 'button', 'ask-send');
+  const send = make(doc, 'button', 'btn btn-primary btn-icon ask-send');
   send.type = 'button';
   send.setAttribute('data-ask-send', '');
   send.setAttribute('aria-label', 'Send');
   send.appendChild(svgIcon(doc, ICON.send, 15, 2.2));
   send.addEventListener('click', o.onSend);
-  const stop = make(doc, 'button', 'ask-stop');
+  const stop = make(doc, 'button', 'btn btn-icon ask-stop');
   stop.type = 'button';
   stop.setAttribute('data-ask-stop', '');
   stop.setAttribute('aria-label', 'Stop');
@@ -550,7 +559,8 @@ export function buildFileChip(doc, f, onRemove) {
   }
   chip.appendChild(make(doc, 'span', 'ask-chip-name', f.name));
   if (f.capture) chip.title = `Screenshot of ${f.capture.url}`;
-  const x = make(doc, 'button', 'ask-chip-x', '×');
+  const x = make(doc, 'button', 'ask-chip-x');
+  x.append(icon(doc, 'x', 12));
   x.type = 'button';
   x.setAttribute('aria-label', `Remove ${f.name}`);
   x.addEventListener('click', onRemove);
@@ -620,7 +630,7 @@ export function buildRow(doc, row, { text, live, renderer, sentQuote = null, ope
     else if (b.kind === 'card') {
       const card = make(doc, 'div', 'wx-card');
       card.append(make(doc, 'div', 'wx-card-t', (b.card && (b.card.title || b.card.brief)) || 'Card'), make(doc, 'div', 'wx-card-k', 'Act on this card in Worca.'));
-      const open = make(doc, 'button', 'btn-ghost', 'Open in Worca');
+      const open = make(doc, 'button', 'btn', 'Open in Worca');
       open.type = 'button';
       open.addEventListener('click', openInWorca);
       card.append(open);
@@ -695,7 +705,7 @@ export function buildSettings(doc, { value, onSave, pinpointOnSelect = false, on
   input.value = value;
   input.addEventListener('input', () => input.setCustomValidity(''));
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); onSave(input.value); } });
-  const save = make(doc, 'button', 'btn-ghost btn-mini', 'Save');
+  const save = make(doc, 'button', 'btn btn-sm', 'Save');
   save.type = 'button';
   save.addEventListener('click', () => onSave(input.value));
   row.append(input, save);

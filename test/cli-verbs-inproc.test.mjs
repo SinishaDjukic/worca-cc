@@ -7,13 +7,15 @@
 // with exit 2, and the guards that live in worca-cc.mjs's main().
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { rmSync } from 'node:fs';
+import { rmSync, mkdirSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { createTicket, getTicket, listTickets, listSchedules, requestRunNow, cancelTicket, releaseTicket, createSchedule } from '../src/core/scheduler.mjs';
 import { listNotifications } from '../src/core/notifications.mjs';
+import { settingsFile } from '../src/core/settings.mjs';
 import { readScheduleFlags, wantsSchedule, waitAndRun } from '../src/cli/schedule.mjs';
 import { cmdLogs } from '../src/cli/logs.mjs';
 import { cmdRuns } from '../src/cli/runs.mjs';
@@ -54,7 +56,9 @@ test('readScheduleFlags refuses every bad timed flag with its own message, throu
   await checkRows([
     { name: 'an unreadable --at', run: () => flagsRefused({ at: 'yesterday' }, /cannot read "yesterday"/) },
     { name: 'an --at in the past', run: () => flagsRefused({ at: '2020-01-01 02:00' }, /^--at: .* is in the past$/) },
-    { name: 'a --cron step the subset cannot express', run: () => flagsRefused({ cron: '*/5 * * * *' }, /use --every/) },
+    { name: 'a --cron step under 15 minutes', run: () => flagsRefused({ cron: '*/5 * * * *' }, /at least 15 minutes apart: every 5 minutes is too often/) },
+    { name: 'a --cron month field the subset cannot express', run: () => flagsRefused({ cron: '0 2 * 6 *' }, /use --every/) },
+    { name: 'an --every under 15 minutes', run: () => flagsRefused({ every: '10m' }, /at least 15 minutes apart/) },
     { name: 'an --every with no pattern and time', run: () => flagsRefused({ every: 'fortnightly' }, /--every/) },
     { name: '--wait on a repeating schedule', run: () => flagsRefused({ every: 'day 02:00', wait: true }, /^--wait needs --at: a repeating schedule is started by the Worca server/) },
     { name: 'two timing flags', run: () => flagsRefused({ at: '02:00', every: 'day 02:00' }, /^use one of --at, --every, --cron, --after \(got: --at, --every\)$/) },
@@ -95,8 +99,8 @@ test('readScheduleFlags refuses a bad --after chain with its own message; the pr
 // ── waitAndRun ────────────────────────────────────────────────────────────────────
 
 /** A ticket this process owns, due in an hour, and a waitAndRun whose sleep acts on it. */
-async function waitOn(title, onSleep) {
-  const t = createTicket({ title, projectDir: proj, runAtMs: Date.now() + 3_600_000, request: {}, ownerPid: process.pid });
+async function waitOn(title, onSleep, { request = {}, ...opts } = {}) {
+  const t = createTicket({ title, projectDir: proj, runAtMs: Date.now() + 3_600_000, request, ownerPid: process.pid });
   const lines = [];
   const sleeps = [];
   let driven = 0;
@@ -110,6 +114,7 @@ async function waitOn(title, onSleep) {
       onSleep(t.id);
     },
     drive: async (onPipelineId) => { driven++; onPipelineId('abcd1234'); return { code: 0, status: 'done' }; },
+    ...opts,
   });
   assert.equal(process.listenerCount('SIGINT'), sigint, 'the Ctrl+C handler is released on every path');
   return { id: t.id, code, lines, sleeps, driven };
@@ -143,6 +148,40 @@ test('waitAndRun: a canceled ticket or a lost ownership ends the wait with exit 
       assert.equal(w.lines.at(-1), 'This terminal no longer owns the run — the Worca server will start it.');
       const t = getTicket(w.id);
       assert.deepEqual([t.status, t.ownerPid], ['scheduled', null], 'it stays scheduled, for the server');
+    } },
+  ]);
+});
+
+test('waitAndRun: enforced tags re-check after the claim — a refusal skips the ticket (exit 2), a pass retags and drives', async () => {
+  await checkRows([
+    { name: 'refused: skipped with the reason, never driven', run: async () => {
+      const w = await waitOn('Wait then refuse', (id) => requestRunNow(id), { checkTags: async () => ({ tags: [], error: 'Add Cost centre to start', enforced: true }) });
+      assert.deepEqual([w.code, w.driven], [2, 0]);
+      const t = getTicket(w.id);
+      assert.deepEqual([t.status, t.failReason], ['skipped', 'Add Cost centre to start']);
+      assert.equal(w.lines.at(-1), 'worca: Add Cost centre to start');
+    } },
+    { name: 'passed: retag gets the filled list, drive runs', run: async () => {
+      const retagged = [];
+      const w = await waitOn('Wait then retag', (id) => requestRunNow(id), {
+        checkTags: async () => ({ tags: ['cc:4410'], error: null, enforced: true }), retag: (tags) => retagged.push(tags),
+      });
+      assert.deepEqual([w.code, w.driven], [0, 1]);
+      assert.deepEqual(retagged, [['cc:4410']]);
+    } },
+    { name: 'default check reads the stored request\'s tags (withRequest)', run: async () => {
+      const prev = process.env.WORCA_TEST_ALLOW_HOME_FALLBACK;
+      process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
+      mkdirSync(dirname(settingsFile()), { recursive: true });
+      writeFileSync(settingsFile(), JSON.stringify({ tagDimensions: [{ key: 'cc', label: 'Cost centre', values: ['4410'], required: true }], enforceTags: true }));
+      try {
+        const w = await waitOn('Wait with stored tags', (id) => requestRunNow(id), { request: { tags: ['cc:4410'] } });
+        assert.deepEqual([w.code, w.driven], [0, 1]);
+        assert.notEqual(getTicket(w.id).status, 'skipped');
+      } finally {
+        writeFileSync(settingsFile(), '{}');
+        if (prev === undefined) delete process.env.WORCA_TEST_ALLOW_HOME_FALLBACK; else process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = prev;
+      }
     } },
   ]);
 });

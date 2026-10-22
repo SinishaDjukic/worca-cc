@@ -105,6 +105,8 @@ const ROWS = [
   // The top bar's Activity popover and its badge (side-flyout.mjs and activity-menu.mjs toggle `hidden`).
   ...['.activity-pop', '.topnav-badge'].map((sel) => [sel, 'ui-activity-topnav: a closed popover, a zero badge']),
   ['.tsearch-pop', 'ui-topnav-search: the top bar search\'s closed listbox'],
+  // The Perspective checklists' folded met items and earlier cycles (shape/checklist-view.mjs toggles `hidden`).
+  ...['.shape-cl-list', '.shape-cl-earlier'].map((sel) => [sel, 'Shaper checklists: folded items stay folded']),
   // (.log-filters .log-f-exec and the checkbox/radio inputs are type/descendant selectors: the
   //  Step 3 row "every element index.html ships with `hidden` stays hidden" covers them.)
 ];
@@ -129,10 +131,56 @@ test('[hidden] beats the author display rule on every element app.js hides by at
       }
       assert.deepEqual(shown, []);
     } },
-    { name: 'ui-running-detail: the Live two-column layout never outranks [hidden]', run: () => {
+    { name: 'ui-running-detail: the Live view sits beside the card when the pane has room, under it otherwise; the two-column layout never outranks [hidden]', run: () => {
       const live = displays('.rd-glance').filter(({ s }) => subject(s).includes('.rd-glance[data-live="on"]'));
       assert.ok(live.length, 'the wide layout sets display somewhere');
       assert.deepEqual(live.filter(({ s }) => !subject(s).includes(':not([hidden])')).map(({ s }) => s), []);
+      assert.deepEqual(live.filter(({ r }) => !(r.parentRule?.conditionText === 'rd (min-width: 960px)')).map(({ s }) => s), [],
+        'only a wide pane (the rd container) lays the glance out in two columns');
+      const graph = flat.find((r) => r.parentRule?.conditionText === 'rd (min-width: 960px)'
+        && sels(r).some((s) => /^\.rd-glance\[data-live="on"\]\S*\s*>\s*\.rd-live$/.test(s)));
+      assert.equal(graph?.style.getPropertyValue('grid-column'), '2', 'the graph takes the column beside the card');
     } },
   ]);
+});
+
+// The tag field sits on the grey field ground, where the house placeholder grey (ink-3) is 2.58:1 in light — under 4.5:1
+// (CI theme proof). Like the search fields, its "Tags" placeholder uses ink-2.
+test('the tag input placeholder is readable on the grey field (ink-2)', () => {
+  const r = flat.find((x) => sels(x).includes('.tag-input-text::placeholder'));
+  assert.ok(r, 'a .tag-input-text::placeholder rule exists');
+  assert.equal(r.style.getPropertyValue('color').replace(/\s+/g, ''), 'var(--ink-2)');
+});
+
+// Run 3 (D8): the Group row is the facts block's first row. Each fact row is a grid that [hidden] really hides, and an
+// empty facts block takes no room.
+test('the facts block\'s rows (the Group row among them) are grids that [hidden] really hides', () => {
+  const row = flat.find((x) => sels(x).includes('.rd-kv-row'));
+  assert.ok(row, 'a .rd-kv-row rule exists');
+  assert.equal(row.style.getPropertyValue('display'), 'grid');
+  const hid = flat.find((x) => sels(x).includes('.rd-kv-row[hidden]'));
+  assert.ok(hid, 'a .rd-kv-row[hidden] rule exists');
+  assert.equal(hid.style.getPropertyValue('display'), 'none');
+  assert.match(css, /\.rd-kv\{container:rd-kv \/ inline-size;/);
+});
+
+// The chat card's footer buttons sit in .chat-rc-actions (runs redesign slice 4); without a gap of its own they touch.
+test('the chat card footer actions are a wrapping row with a gap between the buttons', () => {
+  const r = flat.find((x) => sels(x).includes('.chat-rc-actions'));
+  assert.ok(r, 'a .chat-rc-actions rule exists');
+  assert.equal(r.style.getPropertyValue('display'), 'flex');
+  assert.equal(r.style.getPropertyValue('gap'), '8px');
+});
+
+test('run 4 D21, D14: the Chat run card is divided sections, the group page Ship card sits under one divider, and the in-card override stays last', () => {
+  const body = (sel) => (flat.find((r) => r.selectorText === sel) || {}).style;
+  const section = body('.ask-card.chat-rc > :is(.ask-rc-stats,.chat-rc-well,.chat-rc-q,.chat-rc-result,.chat-rc-foot)');
+  assert.ok(section, 'the section rule exists');
+  assert.equal(section.getPropertyValue('border-top'), '1px solid var(--line)');
+  assert.equal(section.getPropertyValue('padding-top'), '12px');
+  const ship = body('.feature-page .shape-feature > .ask-shipcard');
+  assert.ok(ship, 'the group page Ship card rule exists');
+  assert.equal(ship.getPropertyValue('border-top'), '1px solid var(--line)');
+  assert.equal(ship.getPropertyValue('border-radius'), '0px');
+  assert.match(flat.at(-1).selectorText, /^:is\(\.ask-card,\.chat-rc,\.shape-feature\) :is\(\.qpanel,/, 'the in-card override is the last rule');
 });

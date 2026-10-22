@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { listModels, CODEX_BUILTIN_MODELS, PREDEFINED_MODELS, engineOfModel, enginesOfModel, catalogHasModel, resolveModelEnv } from '../src/core/config.mjs';
+import { listModels, CODEX_BUILTIN_MODELS, COPILOT_BUILTIN_MODELS, PREDEFINED_MODELS, engineOfModel, enginesOfModel, catalogHasModel, resolveModelEnv } from '../src/core/config.mjs';
 import { findBridgedEntry } from '../src/core/bridge/registry.mjs';
 import { addGlobalModel, updateGlobalModel, listGlobalModels, setHideBuiltinModels } from '../src/core/settings.mjs';
 import { CODEX_EFFORTS } from '../src/core/model-env.mjs';
@@ -33,7 +33,8 @@ after(async () => {
 
 test('every catalog row names its engine; the Codex built-ins follow the Claude ones', async () => {
   const cat = await listModels('');
-  assert.ok(cat.every((m) => m.engine === 'claude' || m.engine === 'codex'), 'engine on every row');
+  assert.ok(cat.every((m) => ['claude', 'codex', 'copilot'].includes(m.engine)), 'engine on every row');
+  assert.deepEqual(cat.filter((m) => m.engine === 'copilot').map((m) => m.id), COPILOT_BUILTIN_MODELS.map((m) => m.id), 'the Copilot built-ins follow the Codex ones');
   assert.deepEqual(cat.filter((m) => m.engine === 'claude').map((m) => m.id), PREDEFINED_MODELS.map((m) => m.id));
   const codex = cat.filter((m) => m.engine === 'codex');
   assert.deepEqual(codex.map((m) => m.id), CODEX_BUILTIN_MODELS.map((m) => m.id));
@@ -94,7 +95,7 @@ test('a Codex custom model takes Codex efforts and refuses env, a non-Responses 
   await assert.rejects(() => addGlobalModel({ id: 'cx-4', engine: 'codex', upstream: { provider: 'openai', api: 'openai-responses', model: 'x', openrouter: { models: ['a/b'] } } }), /openrouter is not available on a codex model/);
   await assert.rejects(() => addGlobalModel({ id: 'claude-opus-5-5', engine: 'codex' }), /is a Claude model id/);
   await assert.rejects(() => addGlobalModel({ id: 'gpt-5.5', label: 'Claude-side' }), /"gpt-5.5" is the id of Codex's built-in gpt-5.5 \(ChatGPT sign-in\) — give this entry its own id, such as "my-gpt-5.5"/);
-  await assert.rejects(() => addGlobalModel({ id: 'cx-5', engine: 'gemini' }), /engine must be one of claude \| codex \| cursor/);
+  await assert.rejects(() => addGlobalModel({ id: 'cx-5', engine: 'gemini' }), /engine must be one of claude \| codex \| copilot \| cursor/);
   await assert.rejects(() => updateGlobalModel('cx-tune', { engine: 'claude' }), /engine cannot change/);
   await assert.rejects(() => updateGlobalModel('cx-tune', { env: { X: '1' } }), /a codex model takes no env/);
   assert.deepEqual((await updateGlobalModel('cx-tune', { efforts: ['minimal'] })).efforts, ['minimal']);

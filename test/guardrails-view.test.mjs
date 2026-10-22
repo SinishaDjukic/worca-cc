@@ -62,6 +62,16 @@ test('guardrail editor modes: create, edit and read-only view', async () => {
   ]);
 });
 
+test('the editor\'s action row: an editable set has Cancel before Discard; a read-only view has no Cancel', () => {
+  const edit = renderGuardrailEditor(USER_SET, { doc, mode: 'edit' });
+  assert.deepEqual([...edit.querySelectorAll('.grv-editor-actions button')].map((b) => b.className.split(' ').pop()),
+    ['grv-cancel', 'grv-discard', 'grv-save']);
+  assert.equal(edit.querySelector('.grv-cancel').textContent, 'Cancel');
+  assert.equal(edit.querySelector('.grv-cancel').disabled, false, 'Cancel is always live');
+  const view = renderGuardrailEditor(BUILTIN, { doc, mode: 'view' });
+  assert.equal(view.querySelector('.grv-cancel'), null);
+});
+
 test('collectGuardrailEditor round-trips the rendered editor', () => {
   const el = renderGuardrailEditor(USER_SET, { doc });
   assert.deepEqual(collectGuardrailEditor(el), { name: 'Org Policy', settings: USER_SET.settings });
@@ -89,6 +99,18 @@ test('guardrail list cards, start step and 409 reference rows render', async () 
       assert.equal(cards[1].querySelector('.grv-edit').dataset.id, 'gr_org');
       assert.equal(cards[1].querySelector('.grv-delete').dataset.id, 'gr_org');
       assert.match(cards[1].querySelector('.grv-summary').textContent, /2 deny · 1 paths · scrub on/);
+      for (const c of cards) assert.ok(c.classList.contains('drow') && !c.classList.contains('card') && c.closest('.drows'), 'a divided row, not a card');
+    } },
+    { name: 'editor fields are divided rows: every .field is a .drow inside .drows, its control in .drow-control', run: () => {
+      for (const mode of ['edit', 'view']) {
+        const el = renderGuardrailEditor(USER_SET, { doc, mode });
+        const fields = [...el.querySelectorAll('.field')];
+        assert.equal(fields.length, 3, mode);
+        for (const f of fields) {
+          assert.ok(f.classList.contains('drow') && f.closest('.drows'), `${mode}: ${f.querySelector('label').textContent}`);
+          assert.ok(f.querySelector(':scope > .drow-control .gr-list'), `${mode}: the list sits in .drow-control`);
+        }
+      }
     } },
     { name: 'start step renders Blank + sources and collectStartStep returns the checked one', run: async () => {
       await checkRows([

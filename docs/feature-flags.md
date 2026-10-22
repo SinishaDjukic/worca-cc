@@ -23,6 +23,12 @@ remote flags.
 
 | Key | Stage | What it gates |
 |---|---|---|
+| `flagsDemo` | experimental, default off | A note in Settings › Labs that proves the system end to end. |
+| `keepAwake` | beta, default on | Stops the OS sleeping on its idle timer while a run has agents working; the display may still turn off. Also a switch in the account menu (the profile corner); no effect on a container or hosted worca. A run waiting on a question, paused or ended does not count, and nothing is held on a container or hosted worca. The UI server holds one child tied to its pid: `caffeinate -i -w <pid>` on macOS, `systemd-inhibit --what=idle` wrapping `tail --pid <pid>` on Linux, a PowerShell child holding `SetThreadExecutionState(ES_CONTINUOUS \| ES_SYSTEM_REQUIRED)` on Windows. A missing tool logs one warning and never affects a run. |
+| `shapeFirst` | experimental, default off | Shaper: a run can stop after its plan is refined and wait for a person to approve, revise or stop it; the `wf_shape` workflows, the plan answer route and the Chat surfaces exist only while it is on. Off, those routes answer 404 and the CLI refuses the workflows. |
+| `runTags` | experimental, default off | Cost tags: the cost tag field on the New run form, tag chips and the tag filter on the Runs list, a Cost tags row under the run page's time, cost and changes tiles (editing on finished runs), the tag field on Chat run cards, the tag filter and tag Group by options on Statistics. Tag dimensions (team policy `runs.tagDimensions`, or Settings › Runs › Tag dimensions): the New run slots and their required-key warning, the dimension labels in the Statistics Group by and the Runs list filter's optgroups. Team metrics: the tag Group by options and the tag filter. Tags set through the API or CLI are stored whatever the flag. |
+| `runLabels` | experimental, default off | Free-word labels on runs (`hotfix`, `needs demo`): chips after the title on the Runs list (2, then +N), under the status on run pages, read-only on chat run cards; the Runs list label filter (any of the chosen labels), chosen from the top search ("Runs labelled hotfix", or type `label:hotfix`); the selection bar's Label action. Labels never reach Statistics, Team metrics, CSV or policy. Off, `/api/labels`, `PUT /api/runs/:id/labels` and `POST /api/runs/bulk/labels` answer 404. |
+| `runPresets` | beta, default on | [Run presets](run-presets.md): the Preset ▾ button on the New run form, the Settings › Presets tab, schedules that follow a preset, `worca run --preset` and Chat's `list_presets` / `propose_run` `presetId`. Off, every `/api/presets` route answers 404 and `POST /api/run` refuses a `presetId` with 400. |
 | `flagsDemo` | experimental, default off | A note in Settings › Experimental that proves the system end to end. |
 | `keepAwake` | experimental, default off | Stops the OS sleeping on its idle timer while a run has agents working; the display may still turn off. A run waiting on a question, paused or ended does not count, and nothing is held on a container or hosted worca. The UI server holds one child tied to its pid: `caffeinate -i -w <pid>` on macOS, `systemd-inhibit --what=idle` wrapping `tail --pid <pid>` on Linux, a PowerShell child holding `SetThreadExecutionState(ES_CONTINUOUS \| ES_SYSTEM_REQUIRED)` on Windows. A missing tool logs one warning and never affects a run. |
 | `requirements` | experimental, default off | The Requirements page: a product owner turns an idea into a testable feature spec through a short interview, then starts a run from it ([docs](requirements.md)). |
@@ -34,7 +40,7 @@ remote flags.
 ```js
 entry({
   key: 'customDashboard',            // camelCase, 3 to 41 letters and digits
-  title: 'Custom dashboard',         // shown in Settings › Experimental
+  title: 'Custom dashboard',         // shown in Settings › Labs
   description: 'Build your own dashboard from charts.',   // one line
   stage: 'experimental',             // experimental | beta | retiring
   default: false,                    // experimental: always false; beta: may be true
@@ -49,7 +55,7 @@ entry({
 
 | Field | Meaning |
 |---|---|
-| `stage` | `experimental`: may change or break, always off by default. `beta`: nearly done, may default **on** (opt-out). `retiring`: about to be removed; forced to its `default`, hidden from Settings, refused by the API. |
+| `stage` | `experimental` (shown as **Labs**): may change or break, always off by default. `beta`: nearly done, may default **on** (opt-out). `retiring`: about to be removed; forced to its `default`, hidden from Settings, refused by the API. |
 | `added` / `reviewBy` | The review window. `reviewBy` is at most 90 days after `added`. Past it, CI fails until the owner decides (see [Lifecycle](#lifecycle)). |
 | `requires` | Flags this one depends on. Turning it on turns them on; turning one of them off turns it off. A flag whose prerequisite is off is reported off, whatever is stored. No cycles. |
 
@@ -62,8 +68,10 @@ off, and shown or hidden live when the flag changes:
 <section class="card" data-flag="customDashboard" data-flag-chip>…</section>
 ```
 
-`data-flag-chip` adds the **Experimental** / **Beta** chip, which links to the flag's row in
-Settings › Experimental.
+`data-flag-chip` adds the **Labs** / **Beta** chip, which links to the flag's row in
+Settings › Labs. A tab (`[role="tab"]`, `.tab`, or a button in `.tabs` / `.seg`) gets the chip
+inside its label instead, as plain text, never a link. `data-flag-chip="KEY"` names the flag without
+gating the host, so its host shows the chip while the flag is off.
 
 In JS (`ui/public/flags.mjs`):
 
@@ -84,7 +92,7 @@ import { requireFlag, flagEnabled } from '../src/core/flags.mjs';
 
 app.get('/api/dashboard/charts', requireFlag('customDashboard'), handler);   // 404 while off
 if (flagEnabled('customDashboard')) broadcast(frame);                         // WS frames
-if (flagEnabled('customDashboard')) defs.push(tool);                          // Ask Worca tools, in createAskTools
+if (flagEnabled('customDashboard')) defs.push(tool);                          // Chat tools, in createAskTools
 ```
 
 `requireFlag` answers `404 { error: 'not found' }` while the flag is off: a disabled feature
@@ -94,7 +102,7 @@ looks exactly like an absent one. Always write the key as a literal, so the usag
 
 Three ways:
 
-- **Settings › Experimental**, at every interface mode. A switch applies at once, in every open
+- **Settings › Labs**, at every interface mode. A switch applies at once, in every open
   tab. **Reset all** puts every unlocked flag back to its default.
 - **`worca flags`** on the command line:
 

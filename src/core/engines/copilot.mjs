@@ -28,6 +28,10 @@
 //   `--disable-builtin-mcps` drops the built-in GitHub MCP server (it would act with the
 //   signed-in GitHub identity, which worca otherwise keeps from its agents).
 // - A failed session ends with `session.error` {errorType, message, statusCode} and exit 1.
+// - Ask Worca (checked on 1.0.100 in BYOK mode against a stand-in endpoint that logs the request's tool list): with
+//   `--available-tools=<server>` the model is offered that server's tools and nothing else (no shell, no file tools,
+//   no task); a local MCP server inherits copilot's whole process env, so the env copilot gets is the env the server
+//   gets. `--no-custom-instructions` keeps AGENTS.md and ~/.copilot instructions out; the --agent body still loads.
 import { mkdirSync, readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
@@ -40,6 +44,7 @@ import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit, writableRootsIn
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 import { mcpResultText } from './codex.mjs';
+import { copilotWireModel, COPILOT_EFFORTS as MODEL_ENV_COPILOT_EFFORTS } from '../model-env.mjs';
 
 export const COPILOT_DEFAULT_BIN = process.env.WORCA_COPILOT_BIN || 'copilot';
 
@@ -66,7 +71,7 @@ const COPILOT_FALSE = new Set(['cost', 'hookTelemetry', 'turnBudget']);
 export const copilotCapabilities = Object.freeze(Object.fromEntries(CAPABILITY_KEYS.map((k) => [k, !COPILOT_FALSE.has(k)])));
 
 /** Copilot's reasoning-effort values (`--reasoning-effort`). */
-export const COPILOT_EFFORTS = Object.freeze(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+export const COPILOT_EFFORTS = Object.freeze([...MODEL_ENV_COPILOT_EFFORTS]);
 
 /** The custom agent every spawn runs as (its body is the system prompt), and the investigator
  *  a fan-out node dispatches through the `task` tool. */
@@ -292,13 +297,15 @@ export function copilotInvestigatorAgent({ agents, subagentSystemPrompt } = {}) 
  *     [--excluded-tools=…] [--deny-tool=R]… [--usage-output-file F]
  * @param {{sessionId:string, resume?:boolean, model?:string, effort?:string, agent?:string, addDirs?:string[],
  *   mcpConfigFile?:string, disableMcp?:string[], availableTools?:string[], excludedTools?:string[], deny?:string[],
- *   usageFile?:string, readOnly?:boolean}} o
+ *   usageFile?:string, readOnly?:boolean, ask?:boolean}} o
  */
-export function buildCopilotArgs({ sessionId, resume = false, model, effort, agent, addDirs, mcpConfigFile, disableMcp, availableTools, excludedTools, deny, usageFile, readOnly = false } = {}) {
+export function buildCopilotArgs({ sessionId, resume = false, model, effort, agent, addDirs, mcpConfigFile, disableMcp, availableTools, excludedTools, deny, usageFile, readOnly = false, ask = false } = {}) {
   const args = ['--output-format', 'json', '--allow-all-tools', '--no-ask-user', '--no-auto-update', '--no-color', '--disable-builtin-mcps'];
   if (readOnly) args.push('--disallow-temp-dir');
+  if (ask) args.push('--no-custom-instructions');
   if (sessionId) args.push(resume ? `--resume=${sessionId}` : `--session-id=${sessionId}`);
-  if (model) args.push('--model', String(model));
+  // A catalog id names a Copilot built-in as copilot/<id>: copilot is given its own id (model-env.mjs).
+  if (model) args.push('--model', copilotWireModel(String(model)));
   if (effort && COPILOT_EFFORTS.includes(effort)) args.push('--reasoning-effort', effort);
   if (agent) args.push('--agent', agent);
   for (const d of [...new Set((Array.isArray(addDirs) ? addDirs : []).filter((x) => typeof x === 'string' && x))]) args.push('--add-dir', d);
@@ -476,6 +483,8 @@ export function createCopilotNormalizer({ model = null, sessionId: qualifiedId =
 /** Copilot's `session.error` errorType values, as worca's recovery classes. */
 const ERROR_TYPES = Object.freeze({ authentication: 'auth', authorization: 'auth', quota: 'usage_limit', rate_limit: 'rate_limit' });
 
+/** What to do about a signed-out (or refused) Copilot CLI. */
+export const COPILOT_SIGNED_OUT_HINT = 'run `copilot login`, or set COPILOT_GITHUB_TOKEN in worca\'s environment — and check that your Copilot plan allows the CLI (github.com/settings/copilot)';
 /** @returns {'auth'|'usage_limit'|'rate_limit'|'quota'|'network'|null} */
 export function classifyCopilotError(err) {
   if (err && typeof err === 'object' && 'errorClass' in err && err.errorClass !== undefined) return err.errorClass;
@@ -525,6 +534,36 @@ function storeUsage(dir, session, usage) {
   try { mkdirSync(dir, { recursive: true }); writeFileSync(usageFileFor(dir, session), JSON.stringify(usage)); } catch { /* best effort: a lost file only over-counts one resume */ }
 }
 
+/** The flags an Ask chat's lockdown needs (COPILOT_ASK_LOCKDOWN): every one must be in the installed copilot's --help. */
+export const COPILOT_ASK_FLAGS = Object.freeze(['--available-tools', '--disable-builtin-mcps', '--disallow-temp-dir', '--no-custom-instructions', '--additional-mcp-config']);
+/** The oldest copilot the Ask lockdown was verified on. */
+export const COPILOT_ASK_MIN_VERSION = '1.0.100';
+/** Ask Worca on Copilot: the lockdown is the read-only spawn (only the MCP servers it is handed — worca's own — and a
+ *  scrubbed env) plus no custom instructions. A flag, not a list: the adapter builds it (runCopilotProcess askLockdown). */
+export const COPILOT_ASK_LOCKDOWN = true;
+
+/**
+ * Can this copilot be locked down for an Ask chat? Every flag in COPILOT_ASK_FLAGS must exist: an older copilot
+ * without `--available-tools` would leave the chat its shell. Never rejects: `{refusal}` or `{}`.
+ */
+export function copilotAskSupport({ bin = COPILOT_DEFAULT_BIN, timeoutMs = 15000 } = {}) {
+  return new Promise((resolve) => {
+    execFile(bin, ['--help'], { timeout: timeoutMs, env: { ...process.env, COPILOT_AUTO_UPDATE: 'false' }, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
+      if (err && typeof err.code !== 'number') {
+        resolve({ refusal: /^(ENOENT|EACCES|EINVAL)$/.test(String(err.code))
+          ? `cannot run ${bin} (${err.code}) — install the GitHub Copilot CLI (npm i -g @github/copilot), or point WORCA_COPILOT_BIN at it`
+          : `could not ask ${bin} which flags it has (${err.message})` });
+        return;
+      }
+      const help = String(stdout || '');
+      const missing = COPILOT_ASK_FLAGS.filter((f) => !new RegExp(`(^|\\s)${f.replace(/-/g, '\\-')}(\\s|=|$)`, 'm').test(help));
+      resolve(missing.length
+        ? { refusal: `this copilot has no ${missing.join(', ')} to lock a chat down — update the GitHub Copilot CLI to ${COPILOT_ASK_MIN_VERSION} or newer` }
+        : {});
+    });
+  });
+}
+
 /**
  * Run one Copilot turn. Same resolved value and rejection contract as the Claude adapter:
  * {text, exitCode}; an Error with `errorClass` on failure. The system prompt rides a scratch
@@ -539,7 +578,6 @@ export async function runCopilotProcess({
   permissionRules, allowedTools, agents, appendSubagentSystemPrompt, scratchBase = join(worcaHome(), 'tmp', 'copilot'),
 } = {}) {
   if (signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
-  if (askLockdown) throw new Error(`${bin}: Ask Worca does not run on Copilot`);
   const secrets = Array.isArray(redactValues) ? redactValues : [];
   const redactor = secrets.length ? createRedactor(secrets) : null;
   if (redactor) { const emit = onEvent; onEvent = (e) => emit(redactor.deep(e)); }
@@ -555,7 +593,9 @@ export async function runCopilotProcess({
   const resume = !!session;
   if (!session) session = randomUUID();
   const sessionId = COPILOT_SESSION_PREFIX + session;
-  const readOnly = sandbox === 'read-only';
+  // An Ask chat (askLockdown) is a read-only spawn: no built-in tool, only worca's own MCP server.
+  const ask = !!askLockdown;
+  const readOnly = sandbox === 'read-only' || ask;
   // Copilot writes the cwd and every --add-dir: none may reach Worca's own state, whose path rules it cannot hold.
   // A read-only spawn has no built-in tool and no added folder, so nothing is checked.
   if (!readOnly) {
@@ -582,7 +622,14 @@ export async function runCopilotProcess({
     const from = composeSpawnEnv({ ...envOpts, runEnv: cleanRunEnv(runSpawnEnv) }).env;
     for (const n of mcpEnvRefNames(mcpServers)) if (typeof from[n] === 'string') refEnv[n] = from[n];
   }
-  const { env } = composeSpawnEnv({ ...envOpts, ...(Object.keys(refEnv).length ? { runEnv: refEnv } : {}) });
+  // An Ask chat hands its spawn env to its MCP servers the way a Claude chat does (the agent-mode command token,
+  // ask/spawn.mjs): a local server inherits copilot's env, and the chat has no shell to read it there.
+  const askEnv = ask ? cleanRunEnv(runSpawnEnv) : null;
+  const runEnv = { ...refEnv, ...(askEnv ?? {}) };
+  const { env } = composeSpawnEnv({ ...envOpts, ...(Object.keys(runEnv).length ? { runEnv } : {}) });
+  // P3-D20: the run env stays out of this child's env (its shell would read the registry secrets), but the git ceiling
+  // of a run without a project is no secret and must reach the agent's own git.
+  if (typeof runSpawnEnv?.GIT_CEILING_DIRECTORIES === 'string') env.GIT_CEILING_DIRECTORIES = runSpawnEnv.GIT_CEILING_DIRECTORIES;
   env.COPILOT_AUTO_UPDATE = 'false';
 
   // Scratch folder: the node agent (system prompt), the investigator, the MCP config and the usage file.
@@ -618,7 +665,7 @@ export async function runCopilotProcess({
     // Read-only: no built-in tool at all (the shell and file tools would read the whole checkout's secrets);
     // only the MCP servers it was handed (worca's own read_file/grep/glob behind the secret-path denies).
     availableTools: readOnly ? Object.keys(mcpServers || {}) : undefined,
-    excludedTools: [...rules.excluded, ...tools.excluded], deny: [...rules.deny, ...tools.deny], usageFile, readOnly,
+    excludedTools: [...rules.excluded, ...tools.excluded], deny: [...rules.deny, ...tools.deny], usageFile, readOnly, ask,
   });
   const normalizer = createCopilotNormalizer({ model: model || null, sessionId });
   const priorUsage = resume ? loadUsage(usageDir, session) : null;

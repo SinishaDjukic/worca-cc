@@ -24,9 +24,13 @@ import { execFileSync } from 'node:child_process';
 import { basename, isAbsolute, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 
-import { worcaHome, normalizeProjectPath } from './projects.mjs';
-import { canonicalProjectRoot, projectKey, workspaceStorePath } from './store.mjs';
-import { slugify, retainedWorkFor, checkoutRecordsFor } from './artifacts.mjs';
+import { worcaHome, normalizeProjectPath, getProjectByPath, enclosingRepoOf, nestedInRepoMessage } from './projects.mjs';
+import { workModeForStart, normalizeVcs, effectiveWorkMode } from './project-kind.mjs';
+import { canonicalProjectRoot, projectKey, workspaceStorePath, isNoProjectWorkDir } from './store.mjs';
+import { NO_PROJECT_ERRORS } from '../shared/no-project.mjs';
+import { gitAvailable } from './git-available.mjs';
+import { teamOverHttps, teamRepoState } from './git-free/team-repo.mjs';
+import { slugify, retainedWorkFor, checkoutRecordsFor, folderApplyRetainFor } from './artifacts.mjs';
 import { getDb, prepare, tx } from './db.mjs';
 import { WORKSPACE_MAX_PROJECTS, scanDescriptionBudget } from '../shared/workspace-size.mjs';
 import { KINDS, checkOverrides, checkSynthesis } from '../shared/workspace-map/schema.mjs';
@@ -73,7 +77,7 @@ export const WORKSPACE_KEY_RE = /^wks-[a-z0-9][a-z0-9-]*-[0-9a-f]{8}$/;
 
 /** Every workspaces column a read needs (readEntry + listWorkspaces share it). */
 const WORKSPACE_COLUMNS =
-  'id, name, description, metrics_project, policy_project, map_json, map_overrides_json, description_origin, actions_json, created_at, updated_at';
+  'id, name, description, metrics_project, policy_project, map_json, map_overrides_json, description_origin, actions_json, scan_models_json, created_at, updated_at';
 
 /** description_origin values; anything else (NULL = before v40) reads as null. */
 const DESCRIPTION_ORIGINS = new Set(['generated', 'edited']);
@@ -94,7 +98,7 @@ function isDir(p) {
  * no longer a git repo (§2.6 step 3) using the SAME check createWorkspace applies.
  */
 export function isGitRepo(p) {
-  if (!isDir(p)) return false;
+  if (!isDir(p) || !gitAvailable()) return false;
   try {
     execFileSync('git', ['rev-parse', '--is-inside-work-tree'],
       { cwd: p, stdio: ['ignore', 'pipe', 'ignore'] });
@@ -103,16 +107,47 @@ export function isGitRepo(p) {
 }
 
 /**
+ * A member's run mode (P1a's start rule): a registered project → effectiveWorkMode(its stored kind, git); an
+ * unregistered path → 'git' while git is installed, else 'folder'. Never throws; no git spawn.
+ * @param {string} path
+ * @returns {'git'|'folder'}
+ */
+export function memberWorkMode(path, { rowOf = getProjectByPath, gitOn = gitAvailable } = {}) {
+  return workModeForStart({ projectDir: path }, { getProjectByPath: rowOf, gitAvailable: gitOn });
+}
+
+/**
+ * P6 (S75): a member whose team branches can be discovered — a Git member, or one whose team repository is known
+ * over HTTPS (a .git/config origin without git, or a typed repo). Without git every member is a Folder (U3); with
+ * git this adds only a Folder whose team repo was typed (OS-1). Never throws; no git spawn.
+ * @param {string} path
+ * @returns {boolean}
+ */
+export function memberHasTeamRepo(path) {
+  return memberWorkMode(path) === 'git' || (teamOverHttps(path) && ['origin', 'typed'].includes(teamRepoState(path).kind));
+}
+
+/**
+ * A member's stored kind: a registered project's `vcs`; an unregistered path reads as 'git' (an orphan Git member).
+ * @param {string} path
+ * @returns {'git'|'none'}
+ */
+export function memberKind(path, { rowOf = getProjectByPath } = {}) {
+  return normalizeVcs(rowOf(path)?.vcs);
+}
+
+/**
  * Why a READ-ONLY Workspace scan cannot run over each member: a scan never `git init`s or commits
- * a member (run-harness `_ensureGitCheckpointFor` refuses), so each member must BE the top folder of
+ * a member (run-harness `_ensureGitCheckpointFor` refuses), so each GIT member must BE the top folder of
  * its own git repository — the harness's test: `git rev-parse --show-toplevel` is the folder itself,
  * both realpath'd (a folder inside a monorepo is not; neither is a bare repository) — and have a
- * commit. Both scan routes check it before a run starts; plain create keeps its own contract
- * (isGitRepo). Never throws.
+ * commit. A Folder member (`modeOf(p) !== 'git'`; with git missing every member is one) is copied,
+ * never inited, so it only has to exist. Both scan routes check it before a run starts; plain create
+ * keeps its own contract (checkNewMembers). Never throws.
  * @param {string[]} projectPaths
  * @returns {string[]} one `<path> <why>` per member a scan cannot run over ([] = every member can)
  */
-export function scanMemberProblems(projectPaths) {
+export function scanMemberProblems(projectPaths, { modeOf = memberWorkMode } = {}) {
   const git = (cwd, args) => {
     try { return execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); } catch { return null; }
   };
@@ -120,6 +155,7 @@ export function scanMemberProblems(projectPaths) {
   const out = [];
   for (const p of Array.isArray(projectPaths) ? projectPaths : []) {
     if (!isDir(p)) { out.push(`${p} does not exist`); continue; }
+    if (modeOf(p) !== 'git') continue;
     const top = git(p, ['rev-parse', '--show-toplevel']);
     if (!top || real(top) !== real(p)) out.push(`${p} is not its own git repository`);
     else if (git(p, ['rev-parse', '--verify', '-q', 'HEAD']) === null) out.push(`${p} has no commit`);
@@ -170,8 +206,10 @@ function annotate(entry) {
     projectPaths: pairs.map((x) => x.path),
     projectKeys: pairs.map((x) => x.key),
     exists: pairs.map((x) => isDir(x.path)),
+    vcs: pairs.map((x) => memberKind(x.path)),
     metricsProject: entry.metricsProject ?? null,
     policyProject: entry.policyProject ?? null,
+    scanModels: entry.scanModels ?? null,
     // The list carries the map's counts only; the map itself is GET /api/workspaces/:id/map.
     mapSummary: mapSummary(entry.mapDoc ? entry.mapDoc.map : null, entry.overrides || emptyOverrides()),
     descriptionOrigin: entry.descriptionOrigin ?? null,
@@ -276,6 +314,7 @@ function rowToEntry(r) {
     overrides: parseOverrides(r.map_overrides_json),
     descriptionOrigin: DESCRIPTION_ORIGINS.has(r.description_origin) ? r.description_origin : null,
     stacks: parseStacks(r.actions_json),
+    scanModels: parseJsonColumn(r.scan_models_json),
     createdAt: typeof r.created_at === 'string' ? r.created_at : '',
     updatedAt: typeof r.updated_at === 'string' ? r.updated_at : '',
   };
@@ -357,6 +396,8 @@ function normalizeMembers(projectPaths, rootOf = canonicalProjectRoot) {
   for (const raw of Array.isArray(projectPaths) ? projectPaths : []) {
     const norm = normalizeProjectPath(raw);
     if (!norm) continue;
+    // P3-D11: a run's work folder is never a member — refused before rootOf, which would run git inside it.
+    if (isNoProjectWorkDir(norm)) throw err(NO_PROJECT_ERRORS.register, 'BAD_REQUEST');
     const root = rootOf(norm);
     if (seenRoots.has(root)) continue;
     seenRoots.add(root);
@@ -372,15 +413,30 @@ function normalizeMembers(projectPaths, rootOf = canonicalProjectRoot) {
  */
 function memoGitProbe() {
   const memo = (fn) => { const m = new Map(); return (p) => { if (!m.has(p)) m.set(p, fn(p)); return m.get(p); }; };
-  return { rootOf: memo(canonicalProjectRoot), isRepo: memo(isGitRepo) };
+  return { rootOf: memo(canonicalProjectRoot), isRepo: memo(isGitRepo), rowOf: memo(getProjectByPath), gitOn: gitAvailable, nestedOf: memo(enclosingRepoOf) };
 }
-const LIVE_GIT = { rootOf: canonicalProjectRoot, isRepo: isGitRepo };
+const LIVE_GIT = { rootOf: canonicalProjectRoot, isRepo: isGitRepo, rowOf: getProjectByPath, gitOn: gitAvailable, nestedOf: enclosingRepoOf };
 
-/** Each NEW member must be an existing directory inside a git work tree. */
-function checkNewMembers(paths, isRepo = isGitRepo) {
+/**
+ * Each NEW member must be an existing directory and either a registered project (a Git one must still be a
+ * repo while git is installed; a Folder one, or any one while git is missing, is copied — no git spawn) or,
+ * with git installed, an unregistered git work tree. A refusal never blames the folder for a missing git.
+ */
+function checkNewMembers(paths, git = LIVE_GIT) {
+  const nested = (p) => { const enc = git.nestedOf?.(p); if (enc) throw err(`member ${nestedInRepoMessage(p, enc)}`, 'BAD_REQUEST'); };
   for (const p of paths) {
     if (!isDir(p)) throw err(`member path does not exist or is not a directory: ${p}`, 'BAD_REQUEST');
-    if (!isRepo(p)) throw err(`member path is not a git repository: ${p}`, 'BAD_REQUEST');
+    const row = git.rowOf(p);
+    if (row) {
+      if (effectiveWorkMode(row.vcs ?? 'git', git.gitOn()) === 'git') {
+        if (!git.isRepo(p)) throw err(`member path is not a git repository: ${p}`, 'BAD_REQUEST');
+        nested(p);                                                       // #693
+      }
+      continue;
+    }
+    if (!git.gitOn()) throw err(`member path is not a registered project: ${p}`, 'BAD_REQUEST');
+    if (!git.isRepo(p)) throw err(`member path is not a git repository or a registered project: ${p}`, 'BAD_REQUEST');
+    nested(p);                                                           // #693
   }
 }
 
@@ -396,7 +452,7 @@ function prepareCreate(input) {
   if (members.length > WORKSPACE_MAX_PROJECTS) {
     throw err(`a workspace holds at most ${WORKSPACE_MAX_PROJECTS} member projects (${members.length} given)`, 'BAD_REQUEST');
   }
-  checkNewMembers(members);
+  checkNewMembers(members, LIVE_GIT);
   return { name, members };
 }
 
@@ -458,6 +514,24 @@ export function checkNewWorkspace(input = {}) {
 }
 
 /**
+ * The stored form of a scan-model pick: the four fields only, stripped of the resolution
+ * metadata (source/warning) that resolveScanModels adds at launch. null for nothing to store.
+ * Shared by createWorkspace, the scan finalize's create branch and its existing-workspace
+ * effective snapshot (v58) — one serialization. Behavior-identical to the inline 4-field copy
+ * in createWorkspace / the finalize create branch it replaces (object check + `?? null` on
+ * scanEffort), so callers keep their own gating (e.g. the create branch persists explicit
+ * picks only).
+ * @param {object|null} input
+ * @returns {object|null}
+ */
+export function scanModelsPick(input) {
+  const raw = input && typeof input === 'object' ? input : null;
+  return raw
+    ? { scanModel: raw.scanModel, scanEffort: raw.scanEffort ?? null, agentModel: raw.agentModel, agentEffort: raw.agentEffort }
+    : null;
+}
+
+/**
  * Create a workspace (rules: checkNewWorkspace, re-checked inside the write). Persists the
  * workspaces row + ordered workspace_projects member rows (member PATH stored in the
  * project_key column) in ONE tx(). id is the frozen workspaceKey, computed once. Returns the
@@ -468,6 +542,10 @@ export function checkNewWorkspace(input = {}) {
 export async function createWorkspace(input = {}) {
   const { name, members } = prepareCreate(input);
   const description = typeof input.description === 'string' ? input.description : '';
+  // A pick validated by assertWorkspaceScanInput upstream (createWorkspaceWithHomes) — copy the
+  // four fields only; null stays NULL (a workspace without a deliberate pick follows Settings).
+  const scanModels = scanModelsPick(input.scanModels);
+  const scanModelsJson = scanModels ? JSON.stringify(scanModels) : null;
 
   const metricsProject = memberPathFor(members, input.metricsProject ?? null);
   const policyProject = memberPathFor(members, input.policyProject ?? null, 'policyProject');
@@ -477,8 +555,8 @@ export async function createWorkspace(input = {}) {
   tx(() => {
     assertNoDuplicate(name, members);
     prepare(
-      'INSERT INTO workspaces (id, name, description, metrics_project, policy_project, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    ).run(id, name, description, metricsProject, policyProject, now, now);
+      'INSERT INTO workspaces (id, name, description, metrics_project, policy_project, scan_models_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(id, name, description, metricsProject, policyProject, scanModelsJson, now, now);
     const insMember = prepare(
       'INSERT INTO workspace_projects (workspace_id, project_key, ordinal) VALUES (?, ?, ?)'
     );
@@ -488,7 +566,7 @@ export async function createWorkspace(input = {}) {
 
   // Return the annotated entry (derived fields recomputed from the persisted paths).
   return annotate({
-    id, name, description, projectPaths: members, metricsProject, policyProject, createdAt: now, updatedAt: now,
+    id, name, description, projectPaths: members, metricsProject, policyProject, scanModels, createdAt: now, updatedAt: now,
   });
 }
 
@@ -582,7 +660,7 @@ export function planMembersAdd(id, projectPaths, git = LIVE_GIT) {
     if (current.has(git.rootOf(p))) throw err(`already a member of this workspace: ${p}`, 'BAD_REQUEST');
   }
   const next = [...entry.projectPaths, ...added];
-  checkNewMembers(added, git.isRepo);
+  checkNewMembers(added, git);
   assertUniqueSet(next, id, git.rootOf);
   return { entry, added, next };
 }
@@ -723,11 +801,11 @@ export async function readWorkspaceMap(id) {
  * redacts every string it keeps (D21 — the synthesizer is an LLM that may quote a credential it
  * read in a checkout), so every writer, finalize or a direct caller, stores the same safe shape.
  * @param {string} id
- * @param {{description?:string, map?:object|null, synthesis?:object|null}} result
+ * @param {{description?:string, map?:object|null, synthesis?:object|null, scanModels?:object|null}} result
  * @returns {Promise<object>} the annotated workspace
  * @throws err(code: NOT_FOUND)
  */
-export async function saveWorkspaceScanResult(id, { description = '', map = null, synthesis = null } = {}) {
+export async function saveWorkspaceScanResult(id, { description = '', map = null, synthesis = null, scanModels = null } = {}) {
   getDb();
   // Member keys are computed before the write lock is taken (projectKey may spawn git). A member
   // change blocks while a scan owns the workspace (the server's live-run guard), so they hold for
@@ -736,6 +814,7 @@ export async function saveWorkspaceScanResult(id, { description = '', map = null
   const checked = synthesis === null ? null : checkSynthesis(synthesis, { memberKeys }).value;
   const mapDoc = isWorkspaceMap(map) ? { map, synthesis: checked } : null;
   const now = new Date().toISOString();
+  const pick = scanModelsPick(scanModels);   // store the four fields only, never resolution metadata
   const entry = tx(() => {
     const cur = readEntry(id);
     if (!cur) throw err(`workspace not found: ${id}`, 'NOT_FOUND');
@@ -745,7 +824,43 @@ export async function saveWorkspaceScanResult(id, { description = '', map = null
     prepare('UPDATE workspaces SET description = ?, map_json = ?, description_origin = ?, updated_at = ? WHERE id = ?')
       .run(text, mapDoc ? JSON.stringify(mapDoc) : null, 'generated', now, id);
     if (overrides !== cur.overrides) prepare('UPDATE workspaces SET map_overrides_json = ? WHERE id = ?').run(JSON.stringify(overrides), id);
-    return { ...cur, overrides, description: text, mapDoc, descriptionOrigin: 'generated', updatedAt: now };
+    // Lazily establish the pick of an EXISTING workspace that has none — finalize feeds this ONLY
+    // an explicitly-chosen pick (scan source 'explicit': the create wizard or the pick-a-model
+    // window), never a settings/default resolved snapshot, so a legacy (pre-v57) workspace never
+    // silently locks the deployment default in. A stored pick is never overwritten; the CREATE path
+    // keeps its own write (createWorkspace) — this param is simply not passed there. cur is re-read
+    // inside this write lock, so a pick landing mid-finalize is respected, never clobbered.
+    let savedScanModels = cur.scanModels;
+    if (!cur.scanModels && pick) {
+      prepare('UPDATE workspaces SET scan_models_json = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(pick), now, id);
+      savedScanModels = pick;
+    }
+    return { ...cur, scanModels: savedScanModels, overrides, description: text, mapDoc, descriptionOrigin: 'generated', updatedAt: now };
+  });
+  return annotate(entry);
+}
+
+/**
+ * Store (or, on a null/empty input, clear) a workspace's OWN scan-model pick ("Scan model" on the
+ * page, the pick-a-model window). The value is already validated by assertWorkspaceScanInput at the
+ * route (mirrors how settings.mjs setWorkspaceScanModels works); only the four fields are stored
+ * (scanModelsPick), never resolution metadata. Re-reads under the write lock so a pick a scan's
+ * finalize saved mid-write is respected, never clobbered. Stamps updated_at.
+ * @param {string} id
+ * @param {object|null} pick { scanModel, scanEffort, agentModel, agentEffort }
+ * @returns {Promise<object>} the annotated workspace
+ * @throws err(code: NOT_FOUND)
+ */
+export async function setWorkspaceScanPick(id, pick) {
+  getDb();
+  const stored = scanModelsPick(pick);   // null clears
+  const now = new Date().toISOString();
+  const entry = tx(() => {
+    const cur = readEntry(id);
+    if (!cur) throw err(`workspace not found: ${id}`, 'NOT_FOUND');
+    prepare('UPDATE workspaces SET scan_models_json = ?, updated_at = ? WHERE id = ?')
+      .run(stored ? JSON.stringify(stored) : null, now, id);
+    return { ...cur, scanModels: stored, updatedAt: now };
   });
   return annotate(entry);
 }
@@ -974,6 +1089,13 @@ export async function deleteWorkspace(id) {
     if (checkoutRecordsFor(memberRow)) {
       throw err(
         `workspace has a checked-out run (pipeline ${memberRow.id}); discard its checkout first`,
+        'RETAINED_WORKTREE',
+      );
+    }
+    // P5: a pending Folder member keeps its changes and copy until Apply or Discard; deleting the store strands the copy
+    if (folderApplyRetainFor(memberRow)) {
+      throw err(
+        `workspace has a run whose Folder changes are not applied yet (pipeline ${memberRow.id}); apply or discard them first`,
         'RETAINED_WORKTREE',
       );
     }

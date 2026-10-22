@@ -5,6 +5,7 @@
 // Ask Worca's terminals (agent mode, #574) are shared: their tabs show on every page. A command Ask starts never
 // opens or switches the pane; its tab waits here, and a click on the command card's folder shows it (showSession).
 // Built in JS and appended to <body>, like the Ask dock: index.html is untouched.
+import { icon } from './icons.mjs';
 import { createLineEditor } from './terminal-line.mjs';
 
 const OPEN_KEY = 'worca-cc.terminal.open';
@@ -73,7 +74,8 @@ export function createTerminalPane({ doc, win, fetch, sendWs, getPageContext, co
   root.setAttribute('aria-label', 'Terminal');
   const resizer = make('div', 'term-resize');
   const head = make('div', 'term-head');
-  const hideBtn = button('×', 'btn-ghost term-icon term-hide', () => close());
+  const hideBtn = button(null, 'btn btn-sm btn-quiet btn-icon term-icon term-hide', () => close(), '');
+  hideBtn.append(icon(doc, 'x', 14));
   hideBtn.setAttribute('aria-label', 'Hide the terminal pane');
   hideBtn.title = 'Hide (the shell keeps running)';
   head.append(make('span', 'term-title', 'Terminal'), hideBtn);
@@ -257,7 +259,7 @@ export function createTerminalPane({ doc, win, fetch, sendWs, getPageContext, co
     st.why = null;
     if (st.restartKey === key) return;
     st.restartKey = key;
-    const text = why ? `[${why} — press Enter for a new one]` : '[no shell here — press Enter to start one]';
+    const text = why ? `[${why}. Press Enter for a new one]` : '[no shell here. Press Enter to start one]';
     ensureTerm().then((t) => { if (st.restartKey === key) t.write(`\r\n\x1b[2m${text}\x1b[0m\r\n`); }).catch(() => {});
   }
 
@@ -561,9 +563,10 @@ export function createTerminalPane({ doc, win, fetch, sendWs, getPageContext, co
       const t = button(text, 'term-tab', () => { if (x.id !== st.current) { st.focusNext = true; attach(x.id); } else focusTerm(); }, '');
       t.setAttribute('role', 'tab');
       t.setAttribute('aria-selected', String(x.id === st.current));
-      t.title = x.status === 'running' ? text : `${text} — ${x.status}`;
+      t.title = x.status === 'running' ? text : `${text} (${x.status})`;
       if (x.status !== 'running') item.classList.add('term-tab-ended');
-      const shut = button('×', 'term-tab-close', () => closeTab(x.id, text), '');
+      const shut = button(null, 'term-tab-close', () => closeTab(x.id, text), '');
+      shut.append(icon(doc, 'x', 12));
       shut.setAttribute('aria-label', `Close ${text}`);
       shut.title = x.status === 'running' ? 'Close this terminal' : 'Remove this tab';
       item.append(t, shut);

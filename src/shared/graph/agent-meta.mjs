@@ -20,6 +20,9 @@ const RUNNER_TYPES = new Set(['producer', 'verifier', 'clarifier']);
 /** What an agent may write outside its output ports: 'code' (the worktree — implementer tool
  *  set) or 'memory' (worca's memory mount only — Read/Write/Edit/Glob/Grep, no Bash). */
 const SIDE_EFFECTS = new Set(['code', 'memory']);
+/** Run progress: the stage an agent moves the run bar into. Optional; scripts never carry it. */
+export const PROGRESS_STAGES = Object.freeze(['plan', 'build', 'review']);
+const PROGRESS_STAGE_SET = new Set(PROGRESS_STAGES);
 const INPUT_AS = new Set(['file', 'answers', 'fix-review', 'worktree']);
 /** The port type each non-default `as` renderer requires. `file` is the default
  *  and is materialized on NON-VOID inputs only, which makes `worktree` the only
@@ -138,6 +141,9 @@ export function normalizeAgentMeta(raw, opts = {}) {
   // marker is a normal project agent, so a typo fails safe to a VISIBLE agent.
   const scope = raw.scope === 'workspace-only' ? 'workspace-only' : 'project';
   if (raw.sideEffect !== undefined && !SIDE_EFFECTS.has(raw.sideEffect)) err(`sideEffect must be one of ${[...SIDE_EFFECTS].join(', ')}`);
+  if (raw.progressStage !== undefined && !PROGRESS_STAGE_SET.has(raw.progressStage)) {
+    err(`progressStage must be one of ${PROGRESS_STAGES.join(', ')}`);
+  }
   if (raw.workspaceStrategy !== undefined && !WORKSPACE_STRATEGIES.has(raw.workspaceStrategy)) {
     err(`workspaceStrategy must be one of ${[...WORKSPACE_STRATEGIES].join(', ')}`);
   }
@@ -213,10 +219,13 @@ export function normalizeAgentMeta(raw, opts = {}) {
   // makes {...existing, ...raw} safe).
   if (askBlock && Object.keys(askBlock.forms).length) meta.ask = { forms: askBlock.forms };
   if (SIDE_EFFECTS.has(raw.sideEffect)) meta.sideEffect = raw.sideEffect;
+  if (PROGRESS_STAGE_SET.has(raw.progressStage)) meta.progressStage = raw.progressStage;
   const humanEffort = readHumanEffort(raw.humanEffort, (m) => warn(`[agent-meta] "${key || '<unkeyed>'}": ${m}`));
   if (humanEffort) meta.humanEffort = humanEffort;
   if (mockRole) meta.mockRole = mockRole;
   if (raw.wantsRequest) meta.wantsRequest = true;
+  // P3 (U13): the agent expects a code repository in its cwd — a non-blocking hint for runs without a project.
+  if (raw.needsRepo === true) meta.needsRepo = true;
   if (raw.workspaceFanOut) meta.workspaceFanOut = true;
   if (WORKSPACE_STRATEGIES.has(raw.workspaceStrategy)) meta.workspaceStrategy = raw.workspaceStrategy;
   if (workspaceVariantOf) meta.workspaceVariantOf = workspaceVariantOf;

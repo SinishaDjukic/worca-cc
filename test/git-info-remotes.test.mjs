@@ -4,12 +4,16 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  parseRemoteUrl, remoteRepoSlug, sameRepo, listRemotes, listRemoteBranches, prHeadRef,
-  pushBranch, createPr, prMergeable, findPrForBranch, prLifecycleState, prProviderFor, prHostsAvailable, anyPrHost,
-  _testing as gitInfo,
+  parseRemoteUrl, remoteRepoSlug, sameRepo, listRemotes, listRemoteBranches, prBaseBranch, prHeadRef,
+  pushBranch, createPr, ghRepoAccess, ghForkRepo, prMergeable, findPrForBranch, prLifecycleState, prProviderFor, prHostsAvailable, anyPrHost,
+  markPrReady, closePr, _testing as gitInfo,
 } from '../src/core/git-info.mjs';
 import { forgeOf, forgeOfPrUrl, prNumberFromUrl } from '../src/core/forge.mjs';
 import * as azurePr from '../src/core/pr/azure.mjs';
+import { execFileSync } from 'node:child_process';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { checkRows } from './helpers/rows.mjs';
 import { withEnv } from './helpers/with-env.mjs';
 
@@ -177,6 +181,39 @@ test('listRemoteBranches: groups local refs by remote (longest prefix), drops HE
   ]);
 });
 
+test('prBaseBranch: a remote-tracking source names its branch on the remote; local branches stay (real git)', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'worca-cc-prbase-'));
+  try {
+    const git = (...a) => execFileSync('git', a, { cwd: dir, stdio: 'pipe' });
+    git('init', '-q', '-b', 'main');
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init');
+    for (const ref of ['origin/dev', 'origin/feat/x', 'origin/origin/kept', 'origin/kept', 'team/fork/main']) git('update-ref', `refs/remotes/${ref}`, 'HEAD');
+    git('branch', 'origin/kept');                     // a real local branch that only LOOKS like a remote ref
+    const names = ['origin', 'team', 'team/fork'];
+    await checkRows([
+      { name: 'origin/dev (no local branch, refs/remotes/origin/dev) -> dev', run: async () => assert.equal(await prBaseBranch(dir, 'origin/dev', names), 'dev') },
+      { name: 'a nested branch keeps its slashes', run: async () => assert.equal(await prBaseBranch(dir, 'origin/feat/x', names), 'feat/x') },
+      { name: 'a remote whose name holds a slash: the longest prefix wins', run: async () => assert.equal(await prBaseBranch(dir, 'team/fork/main', names), 'main') },
+      { name: 'a local branch named origin/kept stays', run: async () => assert.equal(await prBaseBranch(dir, 'origin/kept', names), 'origin/kept') },
+      { name: 'a bare branch, an unknown remote, a missing ref and a bare remote stay', run: async () => {
+        assert.equal(await prBaseBranch(dir, 'main', names), 'main');
+        assert.equal(await prBaseBranch(dir, 'upstream/dev', names), 'upstream/dev');
+        assert.equal(await prBaseBranch(dir, 'origin/gone', names), 'origin/gone');
+        assert.equal(await prBaseBranch(dir, 'origin/', names), 'origin/');
+      } },
+      { name: 'no git call unless the name starts with a remote; a git failure keeps the name', run: async () => {
+        const seen = [];
+        gitInfo.setRunner((cmd, args) => { seen.push([cmd, ...args]); return fail('fatal: not a git repository', 128); });
+        assert.equal(await prBaseBranch('/nope', 'dev', names), 'dev');
+        assert.deepEqual(seen, []);
+        assert.equal(await prBaseBranch('/nope', 'origin/dev', names), 'origin/dev');
+        assert.deepEqual(seen, [['git', 'for-each-ref', '--format=%(refname)', 'refs/heads/origin/dev', 'refs/remotes/origin/dev']]);
+        gitInfo.reset();
+      } },
+    ]);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
 test('fork argv: pushBranch remote (default origin); createPr no repo / same-repo / cross-repo', async () => {
   await checkRows([
     { name: 'pushBranch pushes to the chosen remote (origin by default)', run: async () => {
@@ -299,11 +336,11 @@ test('findPrForBranch with a persisted url: view wins; unreadable/empty/CLOSED f
       const seen = [];
       gitInfo.setRunner((cmd, args) => {
         seen.push([cmd, ...args]);
-        return okOut(JSON.stringify({ number: 9, state: 'MERGED', url: 'https://github.com/up/repo/pull/9' }));
+        return okOut(JSON.stringify({ number: 9, state: 'MERGED', url: 'https://github.com/up/repo/pull/9', isDraft: false, mergeable: 'UNKNOWN' }));
       });
       const pr = await findPrForBranch({ projectDir: '/repo', head: 'feat/x', prUrl: 'https://github.com/up/repo/pull/9' });
-      assert.deepEqual(pr, { state: 'MERGED', url: 'https://github.com/up/repo/pull/9', number: 9 });
-      assert.deepEqual(seen, [['gh', 'pr', 'view', 'https://github.com/up/repo/pull/9', '--json', 'number,state,url']]);
+      assert.deepEqual(pr, { state: 'MERGED', url: 'https://github.com/up/repo/pull/9', number: 9, isDraft: false, mergeable: 'UNKNOWN' });
+      assert.deepEqual(seen, [['gh', 'pr', 'view', 'https://github.com/up/repo/pull/9', '--json', 'number,state,url,isDraft,mergeable']]);
     } },
     { name: 'findPrForBranch falls back to the branch search when the url cannot be read or is empty', run: async () => {
       const seen = [];
@@ -314,11 +351,11 @@ test('findPrForBranch with a persisted url: view wins; unreadable/empty/CLOSED f
         return okOut(JSON.stringify([{ number: 3, state: 'OPEN', url: 'https://github.com/o/r/pull/3' }]));
       });
       const pr = await findPrForBranch({ projectDir: '/repo', head: 'feat/x', prUrl: 'https://github.com/o/r/pull/999' });
-      assert.deepEqual(pr, { state: 'OPEN', url: 'https://github.com/o/r/pull/3', number: 3 });
+      assert.deepEqual(pr, { state: 'OPEN', url: 'https://github.com/o/r/pull/3', number: 3, isDraft: false, mergeable: 'UNKNOWN' });
       assert.deepEqual(seen[1].slice(0, 5), ['gh', 'pr', 'list', '--head', 'feat/x'], 'the list keeps the BARE branch (owner:branch returns nothing from gh pr list)');
       viewOut = '';                              // ok exit, empty stdout (what a catch-all stub answers)
       assert.deepEqual(await findPrForBranch({ projectDir: '/repo', head: 'feat/x', prUrl: 'https://github.com/o/r/pull/999' }),
-        { state: 'OPEN', url: 'https://github.com/o/r/pull/3', number: 3 });
+        { state: 'OPEN', url: 'https://github.com/o/r/pull/3', number: 3, isDraft: false, mergeable: 'UNKNOWN' });
     } },
     { name: 'findPrForBranch: a CLOSED PR behind the url falls through to the branch search', run: async () => {
       const seen = [];
@@ -334,7 +371,19 @@ test('findPrForBranch with a persisted url: view wins; unreadable/empty/CLOSED f
       // A newer OPEN PR for the same branch wins over the stale closed url.
       listRows = [{ number: 12, state: 'OPEN', url: 'https://github.com/up/repo/pull/12' }];
       assert.deepEqual(await findPrForBranch({ projectDir: '/repo', head: 'feat/x', prUrl: 'https://github.com/up/repo/pull/9' }),
-        { state: 'OPEN', url: 'https://github.com/up/repo/pull/12', number: 12 });
+        { state: 'OPEN', url: 'https://github.com/up/repo/pull/12', number: 12, isDraft: false, mergeable: 'UNKNOWN' });
+    } },
+    { name: 'findPrForBranch includeClosed: the closed PR behind the url when the branch search finds nothing live', run: async () => {
+      let listRows = [];
+      gitInfo.setRunner((cmd, args) => (args[1] === 'view'
+        ? okOut(JSON.stringify({ number: 9, state: 'CLOSED', url: 'https://github.com/up/repo/pull/9' }))
+        : okOut(JSON.stringify(listRows))));
+      const opts = { projectDir: '/repo', head: 'feat/x', prUrl: 'https://github.com/up/repo/pull/9', includeClosed: true };
+      // A fork PR lives in the upstream repo: the cwd's branch search cannot see it.
+      assert.deepEqual(await findPrForBranch(opts),
+        { state: 'CLOSED', url: 'https://github.com/up/repo/pull/9', number: 9, isDraft: false, mergeable: 'UNKNOWN' });
+      listRows = [{ number: 12, state: 'OPEN', url: 'https://github.com/up/repo/pull/12' }];
+      assert.equal((await findPrForBranch(opts)).number, 12, 'a newer open PR still wins');
     } },
   ]);
 });
@@ -417,11 +466,39 @@ test('PR functions dispatch Azure URLs/remotes to the Azure provider; everything
       const url = 'https://dev.azure.com/acme/Shop/_git/api/pullrequest/9';
       assert.equal(await prLifecycleState({ projectDir: '/r', prUrl: url }), 'MERGED');
       assert.equal(await prMergeable({ projectDir: '/r', head: 'feat', prUrl: url }), 'MERGEABLE');
-      assert.deepEqual(await findPrForBranch({ projectDir: '/r', head: 'feat', prUrl: url }), { state: 'MERGED', url, number: 9 });
+      assert.deepEqual(await findPrForBranch({ projectDir: '/r', head: 'feat', prUrl: url }),
+        { state: 'MERGED', url, number: 9, isDraft: false, mergeable: 'MERGEABLE' });
       assert.equal((await findPrForBranch({ projectDir: '/r', head: 'feat' })).number, 4);   // forge learned from the remotes
       assert.equal(await prMergeable({ projectDir: '/r', head: 'feat' }), 'CONFLICTING');
     });
     assert.ok(calls.every((c) => c.startsWith('git ')), calls.join('\n'));
+  } finally { azurePr._testing.reset(); }
+});
+
+test('Azure includeClosed: the abandoned PR behind the url is the last resort, after the branch search', async () => {
+  gitInfo.setRunner((cmd, args) => (cmd === 'git' && args[0] === 'remote'
+    ? okOut('origin\thttps://dev.azure.com/acme/Shop/_git/api (fetch)\norigin\thttps://dev.azure.com/acme/Shop/_git/api (push)\n')
+    : fail('gh must not run', 1)));
+  let branchPrs = [];
+  azurePr._testing.setFetch(async (url) => ({ status: 200, ok: true, json: async () => (String(url).includes('/pullrequests/9')
+    ? { pullRequestId: 9, status: 'abandoned', isDraft: true }
+    : { value: branchPrs }) }));
+  try {
+    await withEnv({ ...NO_ADO, WORCA_ADO_TOKEN: 'pat' }, async () => {
+      const url = 'https://dev.azure.com/acme/Shop/_git/api/pullrequest/9';
+      const opts = { projectDir: '/r', head: 'feat', prUrl: url, includeClosed: true };
+      assert.deepEqual(await findPrForBranch(opts), { state: 'CLOSED', url, number: 9, isDraft: true, mergeable: 'UNKNOWN' });
+      assert.equal(await findPrForBranch({ ...opts, includeClosed: false }), null, 'every other caller reads no PR');
+      branchPrs = [{ pullRequestId: 7, status: 'abandoned' }];
+      const byRemote = { projectDir: '/r', head: 'feat', includeClosed: true };   // no stored url: the base remote's repo
+      assert.deepEqual(await findPrForBranch(byRemote),
+        { state: 'CLOSED', url: 'https://dev.azure.com/acme/Shop/_git/api/pullrequest/7', number: 7, isDraft: false, mergeable: 'UNKNOWN' });
+      assert.equal(await findPrForBranch({ ...byRemote, includeClosed: false }), null);
+      branchPrs = [{ pullRequestId: 11, status: 'abandoned' }, { pullRequestId: 10, status: 'active', isDraft: true }];
+      assert.deepEqual(await findPrForBranch(opts),
+        { state: 'OPEN', url: 'https://dev.azure.com/acme/Shop/_git/api/pullrequest/10', number: 10, isDraft: true, mergeable: 'UNKNOWN' },
+        'a live PR on the branch wins');
+    });
   } finally { azurePr._testing.reset(); }
 });
 
@@ -459,3 +536,74 @@ test('prProviderFor / prHostsAvailable / anyPrHost', async () => {
     assert.equal(await anyPrHost(), false);
   });
 });
+
+test('ghRepoAccess: .permissions.push → canPush; no permissions block (App token) → null; gh failure → ok:false', async () => {
+  await withEnv(CLOSED_GATES, () => checkRows([
+    { name: 'push:true, exact argv', run: async () => {
+      const seen = [];
+      gitInfo.setRunner((cmd, args) => { seen.push([cmd, ...args]); return okOut('{"admin":false,"push":true,"pull":true}\n'); });
+      assert.deepEqual(await ghRepoAccess({ repo: 'acme/market' }), { ok: true, canPush: true });
+      assert.deepEqual(seen, [['gh', 'api', 'repos/acme/market', '--jq', '.permissions']]);
+    } },
+    { name: 'push:false', run: async () => {
+      gitInfo.setRunner(() => okOut('{"push":false,"pull":true}\n'));
+      assert.deepEqual(await ghRepoAccess({ repo: 'acme/market' }), { ok: true, canPush: false });
+    } },
+    { name: 'no permissions block → unknown', run: async () => {
+      gitInfo.setRunner(() => okOut('null\n'));
+      assert.deepEqual(await ghRepoAccess({ repo: 'acme/market' }), { ok: true, canPush: null });
+    } },
+    { name: 'gh fails', run: async () => {
+      gitInfo.setRunner(() => fail('HTTP 404: Not Found (https://api.github.com/repos/acme/market)'));
+      const r = await ghRepoAccess({ repo: 'acme/market' });
+      assert.equal(r.ok, false);
+      assert.match(r.error, /404/);
+    } },
+  ]));
+});
+
+test('ghForkRepo: POST /forks, then waits until the fork answers; times out with a reason', async () => {
+  await withEnv(CLOSED_GATES, () => checkRows([
+    { name: 'forks, polls once, returns the fork', run: async () => {
+      const seen = []; let views = 0;
+      gitInfo.setRunner((cmd, args) => {
+        seen.push([cmd, ...args]);
+        if (args.includes('POST')) return okOut('me/market\n');
+        views += 1;
+        return views === 1 ? fail('HTTP 404: Not Found') : okOut('me/market\n');
+      });
+      const r = await ghForkRepo({ repo: 'acme/market', sleep: async () => {} });
+      assert.deepEqual(r, { ok: true, owner: 'me', repo: 'market', slug: 'me/market' });
+      assert.deepEqual(seen[0], ['gh', 'api', '-X', 'POST', 'repos/acme/market/forks', '-F', 'default_branch_only=true', '--jq', '.full_name']);
+      assert.deepEqual(seen[1], ['gh', 'api', 'repos/me/market', '--jq', '.full_name']);
+      assert.equal(seen.length, 3);
+    } },
+    { name: 'fork refused (App installation token)', run: async () => {
+      gitInfo.setRunner(() => fail('HTTP 403: Resource not accessible by integration'));
+      const r = await ghForkRepo({ repo: 'acme/market', sleep: async () => {} });
+      assert.equal(r.ok, false);
+      assert.match(r.error, /403/);
+    } },
+    { name: 'never ready → timeout', run: async () => {
+      gitInfo.setRunner((cmd, args) => (args.includes('POST') ? okOut('me/market\n') : fail('HTTP 404')));
+      const r = await ghForkRepo({ repo: 'acme/market', waitMs: 0, sleep: async () => {} });
+      assert.equal(r.ok, false);
+      assert.match(r.error, /me\/market was not ready/);
+    } },
+  ]));
+});
+
+test('markPrReady and closePr: gh argv; an already-ready PR counts as ready; a missing URL is refused', () => withEnv(CLOSED_GATES, async () => {
+  const seen = [];
+  gitInfo.setRunner((cmd, args) => { seen.push([cmd, ...args]); return okOut(''); });
+  assert.deepEqual(await markPrReady({ prUrl: 'https://github.com/o/r/pull/5' }), { ok: true });
+  assert.deepEqual(await closePr({ prUrl: 'https://github.com/o/r/pull/5', comment: 'Shipped as one pull request: https://github.com/o/r/pull/9' }), { ok: true });
+  assert.deepEqual(seen[0], ['gh', 'pr', 'ready', 'https://github.com/o/r/pull/5']);
+  assert.deepEqual(seen[1], ['gh', 'pr', 'close', 'https://github.com/o/r/pull/5', '--comment', 'Shipped as one pull request: https://github.com/o/r/pull/9']);
+  gitInfo.setRunner(() => fail('pull request #5 is not a draft'));
+  assert.deepEqual(await markPrReady({ prUrl: 'https://github.com/o/r/pull/5' }), { ok: true });
+  gitInfo.setRunner(() => fail('could not close'));
+  assert.deepEqual(await closePr({ prUrl: 'https://github.com/o/r/pull/5' }), { ok: false, error: 'could not close' });
+  assert.equal((await markPrReady({})).ok, false);
+  assert.equal((await closePr({})).ok, false);
+}));

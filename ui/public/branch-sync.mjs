@@ -1,8 +1,10 @@
 // ui/public/branch-sync.mjs
 // Sync-before-run UI (#527): the status pill + Sync button + Auto-sync switch under the Source
 // branch dropdown, the details dialog, the diverged/offline chooser, and the Projects chips.
-// Models are pure (unit-tested without a DOM); the DOM helpers follow schedule-sheet.mjs
-// (Escape in the capture phase, outside click, focus returns to the opener).
+// Models are pure (unit-tested without a DOM); the dialogs follow modal-guard.mjs
+// (Escape and a real outside click close them; focus returns to the opener).
+import { icon } from './icons.mjs';
+import { guardModal } from './modal-guard.mjs';
 
 const WORD = { diverged: 'diverged', dirty: 'dirty', behind: 'behind', offline: 'offline', local: 'not on the remote', ok: 'up to date' };
 const TONE = { diverged: 'amber', dirty: 'amber', behind: 'blue', offline: 'grey', local: 'grey', ok: 'green' };
@@ -196,7 +198,7 @@ export function sourceRefNote(ref) {
   const bits = [];
   if (ref.remoteOnly) bits.push('remote only');
   if (ref.behind > 0) bits.push(`${ref.behind} behind`);
-  if (ref.stale) bits.push('could not fetch — last known refs');
+  if (ref.stale) bits.push('could not fetch: last known refs');
   return bits.length ? `from ${ref.ref} (${bits.join(', ')})` : '';
 }
 
@@ -299,24 +301,19 @@ export function paintSyncRow(host, sync, { autoSync = true, busy = false } = {})
   return model;
 }
 
-/** Shared modal lifecycle: Escape (capture phase, never reaches the page), scrim click, focus return. */
-function openModal(modal, { opener, fallbackFocus, focusEl, onClose }) {
+/** Shared modal lifecycle: modal-guard's Escape and backdrop rules (`kind`), focus return to the opener. */
+function openModal(modal, { opener, fallbackFocus, focusEl, onClose, kind = 'decision' }) {
   let closed = false;
   function close(result) {
     if (closed) return;
     closed = true;
-    document.removeEventListener('keydown', onKey, true);
     modal.remove();
     const target = opener && opener.isConnected ? opener : (typeof fallbackFocus === 'function' ? fallbackFocus() : null);
     if (target && typeof target.focus === 'function') { try { target.focus(); } catch { /* gone */ } }
     onClose(result);
   }
-  function onKey(e) {
-    if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); close(null); }
-  }
-  document.addEventListener('keydown', onKey, true);
-  modal.addEventListener('click', (e) => { if (e.target === modal) close(null); });
   document.body.append(modal);
+  guardModal(modal, { kind, close: () => close(null) }).opened();
   if (focusEl) focusEl.focus();
   return close;
 }
@@ -398,14 +395,14 @@ export function openSyncDialog({ title = 'Sync status', subtitle = '', sync, aut
     let refusal = '';
     let busy = false;
 
-    const xBtn = h('button', { type: 'button', class: 'btn btn-mini sync-x', 'aria-label': 'Close', text: '×' });
+    const xBtn = h('button', { type: 'button', class: 'btn btn-quiet btn-icon sync-x', 'aria-label': 'Close' }, icon(document, 'x', 16));
     const pill = h('span', { class: 'sync-pill grey' }, h('span', { class: 'sdot', 'aria-hidden': 'true' }), h('span', { class: 'sync-pill-txt' }));
     const kv = h('dl', { class: 'sync-kv' });
     const commitsHead = h('h3', { class: 'sync-commits-head', text: 'Incoming commits' });
     const commits = h('ol', { class: 'sync-commits' });
     const note = h('div', { class: 'sync-note', hidden: true });
-    const closeBtn = h('button', { type: 'button', class: 'btn btn-mini', text: 'Close' });
-    const syncBtn = h('button', { type: 'button', class: 'btn btn-primary btn-mini sync-go', text: 'Sync' });
+    const closeBtn = h('button', { type: 'button', class: 'btn', text: 'Close' });
+    const syncBtn = h('button', { type: 'button', class: 'btn btn-primary sync-go', text: 'Sync' });
     const prefsSection = prefs ? buildPrefsSection(prefs) : null;
     const card = h('div', { class: 'card sync-card' },
       h('div', { class: 'card-head' }, h('h2', { id: 'sync-dlg-title', text: title }), xBtn),
@@ -444,7 +441,8 @@ export function openSyncDialog({ title = 'Sync status', subtitle = '', sync, aut
       syncBtn.classList.toggle('busy', busy); syncBtn.disabled = busy;
     }
 
-    const close = openModal(modal, { opener, fallbackFocus, focusEl: xBtn, onClose: resolve });
+    // Read-only status: its two selects save on change, so nothing is ever pending.
+    const close = openModal(modal, { opener, fallbackFocus, focusEl: xBtn, onClose: resolve, kind: 'viewer' });
     xBtn.addEventListener('click', () => close(null));
     closeBtn.addEventListener('click', () => close(null));
     syncBtn.addEventListener('click', async () => {
@@ -500,7 +498,7 @@ export function chooseSyncRefusal(data = {}) {
         body.append(h('p', { class: 'qtext', text: many ? `${m.projectName || m.projectKey}: ${line}` : line }));
       }
       if (options.includes('last-fetch')) {
-        goBtn = h('button', { type: 'button', class: 'btn btn-primary', text: 'Start anyway from last fetch' });
+        goBtn = h('button', { type: 'button', class: 'btn btn-primary', text: 'Start anyway' });
         choice = 'last-fetch';
       }
     }

@@ -189,6 +189,40 @@ test('the ledger is one row per execution, and every loop closes at ordinal 2', 
   }
 });
 
+test('progressFacts records the decomposition size and the latest review pass', { timeout: 120000 }, async () => {
+  await seedGraphs();
+  const orch = createOrchestrator({
+    projectDir: gitDir('pfacts'), workflowId: 'wf_full', prompt: 'demo', claude: { mock: true }, auto: true,
+  });
+  await orch.run();
+  const st = orch.getState();
+  const facts = st.progressFacts;
+  assert.ok(facts, 'state.progressFacts exists');
+  // tasks: {[expanding node]: whole decomposition size} — the slices of one parent run all share it.
+  const parents = new Map();
+  for (const s of st.steps.filter((x) => x.kind === 'task')) {
+    parents.set(s.parentExecutionId, (parents.get(s.parentExecutionId) || 0) + 1);
+  }
+  const totals = Object.values(facts.tasks);
+  assert.ok(totals.length >= 1 && totals.every((n) => Number.isInteger(n) && n >= 2), JSON.stringify(facts.tasks));
+  assert.equal(Math.max(...totals), Math.max(...parents.values()), 'the fact is the decomposition size');
+  // reviews: {[reviewing node]: {pass, blocking}} — the mock verifier blocks at pass 1, is clean at pass 2.
+  const reviews = Object.values(facts.reviews);
+  assert.ok(reviews.length >= 1, JSON.stringify(facts.reviews));
+  for (const r of reviews) {
+    assert.ok(Number.isInteger(r.pass) && r.pass >= 1);
+    assert.ok(Number.isInteger(r.blocking) && r.blocking >= 0);
+  }
+  assert.ok(reviews.some((r) => r.pass >= 2 && r.blocking === 0), `latest pass is clean: ${JSON.stringify(facts.reviews)}`);
+  // The count is the stored verdict's critical + major issues, not its issue total.
+  const stored = readPipelineExtras(orch.pipeline.id).reviews;
+  const blockingOf = (v) => (v.issues || []).filter((i) => ['critical', 'major'].includes(String(i.severity).toLowerCase())).length;
+  for (const r of reviews) {
+    assert.ok(stored.some((v) => v.cycle === r.pass && blockingOf(v) === r.blocking),
+      `fact ${JSON.stringify(r)} matches a stored verdict: ${JSON.stringify(stored.map((v) => [v.kind, v.cycle, blockingOf(v)]))}`);
+  }
+});
+
 test('a loop gate asks with the POST /api/answer shape and "another" buys one more cycle', { timeout: 120000 }, async () => {
   await seedGraphs();
   const dir = gitDir('gate');

@@ -15,6 +15,7 @@ The engine binds every port to an absolute path in the task prompt — never har
 - **in `revise`** (md, optional, loop) — your own previous output coming back for another cycle.
 - **out `plan`** (md, on a clean verdict) — the refined plan, when nothing blocks any more.
 - **out `revise`** (md, on a blocking verdict) — the refined plan when issues remain; it re-enters your `revise` input for the next cycle. Both arms write the SAME plan file.
+- **in `findings`** (md, optional) — the merged findings of independent role reviewers (see Role reviews).
 - **verdict** (json) — the review JSON the orchestrator gates on; its shape is contracted below.
 
 The cycle number, the original task/prompt context, and the plan's own `## Clarifications (Q&A)` section (preserve and respect the user's answers) come with the task prompt.
@@ -59,6 +60,10 @@ Severity definitions (use them honestly):
 - **suggestion** — optional improvement / nice-to-have.
 
 The orchestrator treats `critical` and `major` as blocking. Only when none remain does the refine loop stop. Report `[]` issues with a positive summary only when the plan is genuinely solid. As successive cycles fix problems, your reported blocking count should genuinely decrease — because the plan really is getting better, not because you softened your judgment.
+
+## Role reviews
+
+When your `findings` input is bound, independent role reviewers (one per picked perspective) have already checked the plan bound to your `plan` input, and the findings file lists what each role found, each finding with an id such as `ux-1-1`. Write the next plan version from that plan, fixing every critical and major finding and every unmet checklist item; take minor findings and suggestions where they help. In your review JSON add `"addressed": ["ux-1-1", …]` listing the finding ids you fixed. Report only problems you could not fix as issues. The loop then runs on the reviewers' findings, not on your own: when a blocking finding was raised, the reviewers read your new version in the next round.
 
 After writing both files, emit a short assistant note with the absolute paths of the refined plan and the review JSON, and the count of critical/major issues.
 

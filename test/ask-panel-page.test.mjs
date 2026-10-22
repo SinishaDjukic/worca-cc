@@ -223,8 +223,8 @@ test('a pinned transcript stays at the bottom when its column grows with no fram
   ctx.panel.open({ threadId: TID });
   await ticks(ctx);
   ctx.flush();
-  const [ro] = ctx.resizeObservers;
   const col = ctx.doc.querySelector('.ask-transcript-col');
+  const ro = ctx.resizeObservers.find((o) => o.targets.includes(col)) || ctx.resizeObservers[0];   // the composer's scope button observes its row too
   assert.ok(ro.targets.includes(col), 'the panel observes the transcript column');
   const t = ctx.doc.querySelector('.ask-transcript');
   let sh = 1000;
@@ -412,8 +412,8 @@ test('the conversation column is observed too (the rail, the history column and 
   ctx.panel.open({ threadId: TID });
   await ticks(ctx);
   ctx.flush();
-  const [ro] = ctx.resizeObservers;
   const convo = ctx.doc.querySelector('.chat-convo');
+  const ro = ctx.resizeObservers.find((o) => o.targets.includes(convo)) || ctx.resizeObservers[0];
   assert.ok(ro.targets.includes(convo), 'the panel observes the conversation column');
   const t = ctx.doc.querySelector('.ask-transcript');
   let sh = 1000;
@@ -848,4 +848,25 @@ test('"Delete all chat history" puts out a Chat row dot lit by a chat it removed
   assert.deepEqual(calls, [true, false]);
   ctx.panel.pushServerFrame(done('ask_0000000a'));
   assert.deepEqual(calls, [true, false], 'a removed chat\'s late reply lights nothing');
+});
+
+test('unread: a PR fix-run card (an unread ask-message) lights the dot while Chat is hidden or another chat is open, never for the chat on screen', async () => {
+  const calls = [];
+  const a = makePanel({ fetchHandler: api({}), deps: { onUnread: (on) => calls.push(on) } });
+  a.panel.open({ threadId: TID });
+  await ticks(a); a.flush();
+  const msg = (threadId) => ({ type: 'ask-message', threadId, unread: true,
+    message: { id: 'askm_0000f00f', threadId, seq: 9, role: 'system', text: 'PR watch started a fix run', blocks: [], status: null, createdAt: 't' } });
+  a.panel.pushServerFrame(msg(TID));
+  assert.deepEqual(calls, [], 'the chat on screen: read as it landed');
+  a.panel.pushServerFrame(msg('ask_0000beef'));
+  assert.deepEqual(calls, [true], 'another chat: the dot');
+  assert.equal(a.panel.unreadThreadId(), 'ask_0000beef');
+  a.panel.close(); a.panel.open();
+  assert.deepEqual(calls, [true, false]);
+  a.panel.close();
+  a.panel.pushServerFrame(msg(TID));
+  assert.deepEqual(calls, [true, false, true], 'Chat hidden: the dot, even for the last open chat');
+  a.panel.pushServerFrame({ ...msg(TID), unread: undefined });
+  assert.deepEqual(calls, [true, false, true], 'a plain ask-message lights nothing new');
 });

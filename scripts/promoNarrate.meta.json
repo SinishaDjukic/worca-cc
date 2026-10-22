@@ -1,0 +1,51 @@
+{
+  "key": "promoNarrate",
+  "metaVersion": 2,
+  "displayName": "Promo: narrate",
+  "description": "Turns the approved narration script into the film's timeline. Narrated runs speak every line with ElevenLabs (word timing from the voice itself) and, with music on, add a music bed and the kit's sound effects; silent runs time the lines from the chosen pace. Any narration failure falls back to the silent timeline with the reason in the report. Also prepares the film folder. The key is read from the environment only and never written to disk. Runs with worca's privileges.",
+  "domain": "video",
+  "color": "pink",
+  "icon": "<path d=\"M4 12h1.5M7.5 8.5v7M11 5v14M14.5 9v6M18 7v10M20.5 12H20\" stroke-linecap=\"round\"/>",
+  "order": 71,
+  "runtime": "node",
+  "file": "promo-narrate.mjs",
+  "timeoutMs": 1800000,
+  "inputs": [
+    {
+      "id": "script",
+      "type": "json"
+    },
+    {
+      "id": "answers",
+      "type": "json",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "id": "timeline",
+      "type": "json",
+      "when": "always",
+      "filename": "promo-timeline.json",
+      "artifactKind": "promo-timeline"
+    },
+    {
+      "id": "report",
+      "type": "md",
+      "when": "always",
+      "filename": "promo-narrate-cycle{cycle}.md",
+      "artifactKind": "promo-narration"
+    }
+  ],
+  "mock": {
+    "summary": "silent timeline (mock).",
+    "outputs": {
+      "timeline": {
+        "text": "{\n  \"version\": 1,\n  \"duration\": 12,\n  \"fps\": 60,\n  \"narrated\": false,\n  \"music\": false,\n  \"sfx\": false,\n  \"vo\": {},\n  \"scenes\": [\n    { \"id\": \"main\", \"start\": 0, \"end\": 12 }\n  ]\n}\n"
+      },
+      "report": {
+        "text": "# Narration — mock\n\nSilent timeline: mock run.\n"
+      }
+    }
+  }
+}

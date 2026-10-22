@@ -63,7 +63,7 @@ test('the panel: the Pinpoint option, a labelled "Worca address" row, a compact 
   assert.ok(row, 'input and Save share one row');
   const save = row.querySelector('button');
   assert.equal(save.textContent, 'Save');
-  assert.ok(save.classList.contains('btn-mini'), 'worca\'s compact button size');
+  assert.ok(save.classList.contains('btn-sm'), 'worca\'s compact button size');
   assert.equal(details.querySelector('.hint:not(.wx-pin-hint)').textContent, 'Only 127.0.0.1 or localhost. Saving forgets the pairing.');
   assert.equal(details.querySelector('select'), null, 'no theme select');
   assert.equal(h.$('[aria-label="Theme"]'), null);

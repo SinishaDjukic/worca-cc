@@ -78,9 +78,10 @@ const DENY = (() => {
   return [...out];
 })();
 
-let chrome = null; let srv = null; let sandbox = null; let profile = null;
+let chrome = null; let srv = null; let terms = null; let sandbox = null; let profile = null;
 async function shutdown(code) {
   try { if (chrome) chrome.kill('SIGKILL'); } catch {}
+  try { if (terms) await Promise.allSettled(terms.list().map((t) => terms.close(t.id))); } catch {}
   try { if (srv) { srv.closeAllConnections?.(); await new Promise((r) => srv.close(r)); } } catch {}
   try { if (profile) await rm(profile, { recursive: true, force: true, maxRetries: 3 }); } catch {}
   if (sandbox && KEEP) log(`sandbox kept: ${sandbox}`);
@@ -114,7 +115,16 @@ process.env.WORCA_HOME = sandbox;
 process.env.WORCA_PROJECTS_ROOT = CODE;
 process.env.GIT_CONFIG_NOSYSTEM = '1';
 for (const k of ['WORCA_HOST_PID', 'CLAUDE_CONFIG_DIR', 'WORCA_IDENTITY_HEADER', 'WORCA_IDENTITY_NAME', 'WORCA_MOCK', 'ORCH_MOCK',
-  'XDG_CONFIG_HOME', 'GIT_CONFIG_GLOBAL', 'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL']) delete process.env[k];
+  'XDG_CONFIG_HOME', 'GIT_CONFIG_GLOBAL', 'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL',
+  'GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GH_HOST']) delete process.env[k];
+// A stand-in `gh`: it answers `--version` (so Create PR shows, hasGh in src/core/git-info.mjs) and fails everything
+// else, so a PR lookup never reaches GitHub or the real gh login, whether or not gh is installed.
+if (process.platform !== 'win32') {
+  const bin = path.join(sandbox, 'bin');
+  await mkdir(bin, { recursive: true });
+  await writeFile(path.join(bin, 'gh'), '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "gh version 2.62.0 (2024-11-14)"; exit 0; fi\nexit 1\n', { mode: 0o755 });
+  process.env.PATH = `${bin}${path.delimiter}${process.env.PATH}`;
+}
 // The fallback identity for any commit the app makes itself (run branches, checkpoints).
 await writeFile(path.join(sandbox, '.gitconfig'), '[user]\n\tname = Maya Chen\n\temail = maya@nimbus.dev\n[init]\n\tdefaultBranch = main\n');
 
@@ -326,8 +336,8 @@ const REPOS = {
 };
 
 // ---- the server, in-process on SERVER_PORT (the exported `server`: the UI's WebSocket rides it) ----
-const { server, runs } = await import(new URL('../ui/server.mjs', import.meta.url).href);
-srv = server;
+const { server, runs, _testing: { terminals } } = await import(new URL('../ui/server.mjs', import.meta.url).href);
+srv = server; terms = terminals;
 await new Promise((r, j) => { srv.once('error', j); srv.listen(SERVER_PORT, '127.0.0.1', r); });
 const base = `http://127.0.0.1:${SERVER_PORT}`;
 const api = async (p, body, method = body === undefined ? 'GET' : 'POST') => {
@@ -519,6 +529,38 @@ test('an empty list still has the header row', () => {
 `,
   'README.md': `${CRM_FILES['README.md']}\n## Export\n\n\`GET /contacts/export.csv\` downloads the contacts as CSV. It takes the same \`q\` and \`owner\` filters as \`GET /contacts\`.\n`,
 };
+// The Ask Worca card and the Runs summary show this run's files: a real cursor pagination, not src/feature.mjs.
+const PAGE_CHANGE = {
+  'src/db.js': `${CRM_FILES['src/db.js']}
+// One page of list(), ordered by id: rows after \`cursor\`, at most \`limit\` of them.
+export function listPage({ q, owner, limit = 50, cursor = 0 } = {}) {
+  const rows = list({ q, owner }).filter((c) => c.id > Number(cursor || 0));
+  const items = rows.slice(0, limit);
+  return { items, nextCursor: rows.length > limit ? items[items.length - 1].id : null };
+}
+`,
+  'src/routes/contacts.js': CRM_FILES['src/routes/contacts.js']
+    .replace("import { insert, list, get } from '../db.js';", "import { insert, list, listPage, get } from '../db.js';")
+    .replace("  res.json(list({ q: req.query.q, owner: req.query.owner }));", `  const filters = { q: req.query.q, owner: req.query.owner };
+  // ?all=1 keeps the old unpaged array for scripts that rely on it.
+  if (req.query.all === '1') return res.json(list(filters));
+  const limit = Math.min(Number(req.query.limit) || 50, 200);
+  res.json(listPage({ ...filters, limit, cursor: req.query.cursor }));`),
+  'test/pagination.test.js': `import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { insert, listPage } from '../src/db.js';
+
+test('pages follow the cursor until nextCursor is null', () => {
+  for (let i = 0; i < 5; i += 1) insert({ name: \`Lead \${i}\`, email: \`lead\${i}@acme.io\` });
+  const first = listPage({ limit: 3 });
+  assert.equal(first.items.length, 3);
+  const second = listPage({ limit: 3, cursor: first.nextCursor });
+  assert.equal(second.items.length, 2);
+  assert.equal(second.nextCursor, null);
+});
+`,
+  'README.md': `${CRM_FILES['README.md']}\n## Pagination\n\n\`GET /contacts\` answers \`{ items, nextCursor }\`, 50 rows by default (\`limit\`, at most 200). Pass \`nextCursor\` back as \`cursor\` for the next page. \`?all=1\` returns the old unpaged array.\n`,
+};
 async function replaceRunChange(entry, title, files) {
   const repo = entry.projectDir;
   const row = db.prepare('SELECT branch FROM pipelines WHERE id = ?').get(entry.pipelineId);
@@ -544,6 +586,7 @@ await inBatches(FINISHED, 4, async ([proj, title, prompt, daysAgo, usd, activeMi
   const entry = await finishRun(runId, { stop: !!stopped });
   await entry.orch._titlePromise;
   if (title === 'CSV export for contacts') await replaceRunChange(entry, title, CSV_CHANGE);
+  if (title === 'Paginate the search endpoint') await replaceRunChange(entry, title, PAGE_CHANGE);
   restage(entry.pipelineId, { title, startedMs: Date.now() - daysAgo * DAY, usd, activeMin, humanHours });
   DONE[title] = { runId, pipelineId: entry.pipelineId, projectKey: PROJECTS[proj].key, projectDir: REPOS[proj] };
   // History reads the DB; a finished entry left in the live map would keep its mock title there.
@@ -571,6 +614,9 @@ await until(async () => {
 const askStore = await import(new URL('../src/core/ask/store.mjs', import.meta.url).href);
 const { validateProposal } = await import(new URL('../src/core/ask/proposal.mjs', import.meta.url).href);
 const askThread = askStore.createThread({ title: 'Contacts search is slow' });
+// One Ask turn's spend in the ledger, `hoursAgo` back.
+const turn = (threadId, usd, hoursAgo) => db.prepare('INSERT INTO ask_cost_ledger (thread_id, message_id, amount_usd, tokens, model, ts) VALUES (?, ?, ?, ?, ?, ?)')
+  .run(threadId, null, usd, Math.round(usd * 210_000), 'claude-sonnet-5-5', Date.now() - hoursAgo * 3_600_000);
 {
   const pageRun = DONE['Paginate the search endpoint'];
   askStore.appendMessage(askThread.id, { role: 'user', text: 'The contacts search in nimbus-crm gets slow once we pass 10k rows. Can you page it?' });
@@ -589,8 +635,6 @@ const askThread = askStore.createThread({ title: 'Contacts search is slow' });
   askStore.appendMessage(askThread.id, { role: 'assistant', status: 'done',
     text: 'Yes. `docs/api.md` in lumen-docs still documents `GET /contacts` as returning every row. It needs the `limit` and `cursor` parameters, the `nextCursor` field and `?all=1`. Want me to propose a docs run for it?' });
   // Ask spend this week (Statistics' Ask Worca tile): this chat and three shorter ones.
-  const turn = (threadId, usd, hoursAgo) => db.prepare('INSERT INTO ask_cost_ledger (thread_id, message_id, amount_usd, tokens, model, ts) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(threadId, null, usd, Math.round(usd * 210_000), 'claude-sonnet-5-5', Date.now() - hoursAgo * 3_600_000);
   turn(askThread.id, 0.18, 0.5); turn(askThread.id, 0.07, 0.4);
   askStore.addThreadTotals(askThread.id, { costUsd: 0.25, usage: { input: 41_200, output: 2_900 } });
   for (const [title, q, a, usd, hoursAgo] of [
@@ -603,6 +647,49 @@ const askThread = askStore.createThread({ title: 'Contacts search is slow' });
     askStore.appendMessage(t.id, { role: 'assistant', status: 'done', text: a });
     turn(t.id, usd, hoursAgo);
     askStore.addThreadTotals(t.id, { costUsd: usd, usage: { input: Math.round(usd * 190_000), output: Math.round(usd * 12_000) } });
+  }
+}
+
+// ---- Ask Worca agent mode: a real shell in nimbus-crm ran `npm test`; the chat holds its command card ----
+// The session is opened here, not through Ask's own command runner: a block that runner started wakes a Claude turn
+// when it ends. bash, since a login zsh prompt shows the user and host names. bash's own prompt (`bash-3.2$` on
+// macOS) names neither, but a system bashrc may set one that does (Debian and Ubuntu: `user@host:~$`): the shell
+// is then closed and the shot skipped, so the other shots still work. Seeded only when the shot is wanted.
+const BARE_BASH_PROMPT = /^bash-\d+(\.\d+)*[$#]$/;
+let termThread = null;
+if (!ONLY.length || ONLY.includes('ask-terminal')) {
+  const { askCommandEnv } = await import(new URL('../src/core/ask/command-policy.mjs', import.meta.url).href);
+  const { getBlock } = await import(new URL('../src/core/terminal/store.mjs', import.meta.url).href);
+  const thread = askStore.createThread({ title: 'Run the CRM tests' });
+  const shell = process.env.SHELL;
+  process.env.SHELL = '/bin/bash';
+  let s;
+  try {
+    s = await terminals.open({ cwd: REPOS['nimbus-crm'], scope: 'project', label: 'Ask · Run the CRM tests · nimbus-crm · main',
+      projectKey: PROJECTS['nimbus-crm'].key, branch: 'main', by: `ask:${thread.id}`, agent: true, baseEnv: askCommandEnv(process.env), cols: 90, rows: 30 });
+  } finally { if (shell === undefined) delete process.env.SHELL; else process.env.SHELL = shell; }
+  // The prompt line as drawn: the replay's last line without escape sequences (the shell's OSC 133 marks included).
+  const promptLine = () => (terminals.replay(s.id)?.data || '')
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;?]*[ -/]*[@-~]|\r/g, '').split('\n').at(-1).trim();
+  // Type only once the prompt is drawn: a line sent while bash still starts is echoed twice.
+  const drawn = await until(() => terminals.sessions.get(s.id)?.atPrompt && promptLine(), 'the terminal prompt', 30_000).catch(() => '');
+  await sleep(300);
+  if (!drawn || !BARE_BASH_PROMPT.test(promptLine())) {
+    log(`ask-terminal skipped: ${drawn ? 'the shell prompt is not bash\'s own' : 'the shell never reached its prompt'}`);
+    await terminals.close(s.id);
+    askStore.deleteThread(thread.id);
+  } else {
+    termThread = thread;
+    const { seq } = await terminals.runCommand(s.id, 'npm test', { by: 'local', source: 'ask' });
+    await until(() => !terminals.liveBlock(s.id) && getBlock(s.id, seq)?.status === 'done', 'npm test in the terminal', 60_000);
+    askStore.appendMessage(termThread.id, { role: 'user', text: 'Run the nimbus-crm tests on main before I merge anything.' });
+    const lead = 'Running `npm test` in nimbus-crm on main:';
+    askStore.appendMessage(termThread.id, { role: 'assistant', status: 'done',
+      text: `${lead}\n\nAll green: the one test in \`test/contacts.test.js\` passes. It only covers the search filter so far, so the routes themselves are untested. Want me to propose a run that adds route tests?`,
+      blocks: [{ kind: 'card', id: askStore.newAskId('card'), state: 'command', textAt: lead.length,
+        card: { type: 'command', blockId: `${s.id}:${seq}`, sessionId: s.id, seq, command: 'npm test', folder: 'nimbus-crm · main', cwd: REPOS['nimbus-crm'], warning: null } }] });
+    turn(termThread.id, 0.06, 0.2);
+    askStore.addThreadTotals(termThread.id, { costUsd: 0.06, usage: { input: 12_400, output: 700 } });
   }
 }
 
@@ -840,6 +927,12 @@ async function capture(name) {
 }
 
 // ---- the shot list (the lowest interface mode that shows each view; docs/ui-levels.md) -------
+const LIVE_ENGINE_PROMPT = 'Add an Idempotency-Key header to POST /contacts: a repeated key within 24 h returns the first response instead of creating a duplicate contact.';
+const SHIP_IT_DESCRIPTION = '## What\n\n`GET /contacts/export.csv` downloads the filtered contact list as CSV (name, email, company, owner, created date). It takes the same `q` and `owner` filters as `GET /contacts`.\n\n## How to test\n\n- `npm test` runs two new cases in `test/csv.test.js`\n- `curl "localhost:3000/contacts/export.csv?owner=maya"`';
+// A checked-out run's summary leads with a worktree notice and its folder; the Actions shot needs the checkout, the
+// shots after it do not.
+let checkoutHeld = true;
+const releaseCheckout = async () => { if (checkoutHeld) { checkoutHeld = false; await api(`/api/runs/${csvRun.pipelineId}/checkout${runQ}`, {}, 'DELETE'); } };
 const statsRange = () => { const d = new Date(); const wd = (d.getDay() + 6) % 7; return wd >= 2 ? 'week' : d.getDate() >= 8 ? 'month' : 'all'; };
 const SHOTS = [
   { name: 'history', level: 'simple', hash: () => `history/${DONE['Paginate the search endpoint'].projectKey}/${DONE['Paginate the search endpoint'].pipelineId}`,
@@ -854,6 +947,20 @@ const SHOTS = [
     } },
   { name: 'actions', level: 'advanced', hash: () => `history/${csvRun.projectKey}/${csvRun.pipelineId}/details/actions`,
     prep: () => until2("document.querySelector('.act-card .act-log, .act-card pre')", 'action log') },
+  // The Create PR dialog for the CSV run. Only the push URL names GitHub, and only for this shot: fetches keep reading the local
+  // bare origin, so opening the dialog stays offline. It is closed with Cancel, never "Create pull request".
+  { name: 'ship-it', level: 'advanced', hash: () => `history/${csvRun.projectKey}/${csvRun.pipelineId}`,
+    stage: async () => { await releaseCheckout(); git(REPOS['nimbus-crm'], ['remote', 'set-url', '--push', 'origin', 'https://github.com/nimbus/nimbus-crm.git']); },
+    cleanup: async () => { await click('#shipit-modal .shipit-cancel'); git(REPOS['nimbus-crm'], ['config', '--unset', 'remote.origin.pushurl']); },
+    prep: async () => {
+      await until2("document.querySelector('#hist-detail .hd-pr:not([hidden])')", 'Create PR button'); await click('#hist-detail .hd-pr');
+      await until2("!document.getElementById('shipit-modal').classList.contains('hidden') && !document.querySelector('#shipit-modal .shipit-remotes').hidden && !document.querySelector('#shipit-modal .shipit-base-wrap').hidden && document.querySelector('#shipit-modal .shipit-files').textContent.includes('4 file')", 'the Create PR dialog');
+      await ev(`(()=>{const t=document.getElementById('shipit-desc-input');t.value=${JSON.stringify(SHIP_IT_DESCRIPTION)};t.dispatchEvent(new Event('input',{bubbles:true}));
+        const w=document.getElementById('shipit-watch-input');if(!w.checked)w.click();return 1;})()`);
+      await click('#shipit-modal .shipit-desc-tab[data-mode="preview"]');
+      await until2("document.querySelector('#shipit-modal .shipit-try button')", 'the Try it first buttons');
+      await ev('document.activeElement?.blur?.();0'); await sleep(500);
+    } },
   { name: 'composer', level: 'advanced', hash: () => 'workflows',
     prep: async () => { await until2('document.querySelector(\'#wfv-library #wfl-tab-workflows\')', 'the Library selector'); await click('#wfv-library #wfl-tab-workflows');
       await until2('document.querySelector(\'#wfv-library .wfl-folder[data-folder^="workflows/"], #wfv-library .wfl-wf[data-id="wf_default"]\')', 'the Workflows section');
@@ -872,27 +979,59 @@ const SHOTS = [
     prep: () => until2("document.querySelector('#ws-detail .pd-sec[data-sec=\"map\"] svg.wm-graph')", 'map graph') },
   { name: 'scripts', level: 'expert', hash: () => 'workflows/scripts',
     prep: async () => { await until2("document.querySelector('#wfv-library .wfl-folder[data-folder=\"scripts/general\"]')", 'script folders');
-      await ev("(()=>{const e=document.querySelector('#wfv-library .wfl-folder[data-folder=\"scripts/general\"]');if(e.getAttribute('aria-expanded')!=='true')e.click();return 1;})()");
-      await until2("document.querySelectorAll('#wfv-library .wfl-fold[data-fold=\"scripts/general\"] .wfl-item[data-item^=\"script:\"]').length >= 5", 'script rows'); } },
+      // Built-in scripts sit in one folder per domain (coding, presentation, architecture, video, general): open them all.
+      // A click repaints the list, so each pass re-queries and opens the first folder still closed.
+      for (let i = 0; i < 10; i += 1) {
+        if (!await ev("(()=>{const e=[...document.querySelectorAll('#wfv-library .wfl-folder[data-folder^=\"scripts/\"]')].find((f)=>f.getAttribute('aria-expanded')!=='true');if(!e)return 0;e.click();return 1;})()")) break;
+        await sleep(150);
+      }
+      await until2("document.querySelectorAll('#wfv-library .wfl-fold[data-fold^=\"scripts/\"] .wfl-item[data-item^=\"script:\"]').length >= 10", 'script rows'); } },
+  // New pipeline with Engine set to Codex (beta): a native select shows only its value, so it is chosen, not opened.
+  { name: 'engine-picker', level: 'advanced', hash: () => 'new', before: "localStorage.setItem('worca-cc.lastProject','nimbus-crm')",
+    prep: async () => {
+      await until2("document.getElementById('projectSelect')?.selectedOptions[0]?.dataset.name === 'nimbus-crm'", 'project selected');
+      await ev(`(()=>{const p=document.getElementById('prompt');p.value=${JSON.stringify(LIVE_ENGINE_PROMPT)};p.dispatchEvent(new Event('input',{bubbles:true}));
+        const s=document.getElementById('engineSelect');s.value='codex';s.dispatchEvent(new Event('change',{bubbles:true}));return 1;})()`);
+      await until2("!document.getElementById('engine-hint').hidden", 'engine hint');
+      await sleep(600);
+    } },
   // worca Chat: the chat is a page; its address opens the seeded chat.
   { name: 'ask-worca', level: 'simple', hash: () => `chat/${askThread.id}`,
     prep: async () => { await until2('document.querySelector(\'[data-chat-page] .ask-card.ask-rc\')', 'ask run card'); await sleep(800); } },
+  // Agent mode: the chat's command card with its output open, beside the terminal pane showing that shell.
+  { name: 'ask-terminal', level: 'simple', hash: () => `chat/${termThread.id}`,
+    before: "localStorage.setItem('worca-cc.terminal.width','640')",
+    cleanup: () => ev("localStorage.removeItem('worca-cc.terminal.open');localStorage.removeItem('worca-cc.terminal.width');0"),
+    prep: async () => {
+      await until2("[...document.querySelectorAll('[data-chat-page] .ask-cmd .ask-cmd-pill')].some((p)=>p.textContent==='exit 0')", 'command card exit 0');
+      await until2("document.querySelector('[data-chat-page] .ask-cmd .ask-cmd-toggle:not([hidden])')", 'command output toggle');
+      await click('[data-chat-page] .ask-cmd .ask-cmd-toggle');
+      await until2("document.querySelector('[data-chat-page] .ask-cmd .ask-cmd-out:not([hidden])')", 'command output');
+      await ev("document.querySelector('[data-chat-page] .ask-cmd .ask-cmd-out').scrollTop=0;0");   // it opens at its end, mid-line
+      await click('[data-chat-page] .ask-cmd .ask-cmd-folder');   // shows that shell's tab in the terminal pane
+      await until2("document.querySelector('.term-pane:not([hidden]) .xterm-rows')?.textContent.includes('pass 1')", 'terminal output');
+      await ev('document.activeElement?.blur?.();0'); await sleep(600);
+    } },
   // The Runs page reopens the last run it showed; name it, so the shot never depends on the order.
-  { name: 'running', level: 'simple', live: true, hash: () => `history/${csvRun.projectKey}/${csvRun.pipelineId}`, before: "localStorage.removeItem('worca-cc.lingerRuns')",
-    prep: () => until2("document.querySelectorAll('.runs-row-body').length >= 10", 'runs rows') },
+  { name: 'running', level: 'simple', live: true, hash: () => `history/${csvRun.projectKey}/${csvRun.pipelineId}`,
+    before: "localStorage.removeItem('worca-cc.lingerRuns');localStorage.removeItem('worca-cc.history.cache.v1')",
+    stage: releaseCheckout,
+    prep: () => until2("document.querySelectorAll('.runs-row-body').length >= 10 && [...document.querySelectorAll('.retained-banner')].every((e)=>e.hidden)", 'runs rows, no worktree notice') },
   { name: 'clarify', level: 'simple', live: true, hash: () => `running/${liveIds[0]}`,
     prep: () => until2("document.querySelector('.qpanel-head')", 'clarify panel') },
 ];
-const wanted = SHOTS.filter((s) => !ONLY.length || ONLY.includes(s.name));
+const wanted = SHOTS.filter((s) => (!ONLY.length || ONLY.includes(s.name)) && (s.name !== 'ask-terminal' || termThread));
 const unknown = ONLY.filter((n) => !SHOTS.some((s) => s.name === n));
 if (unknown.length) { console.error(`unknown shot(s): ${unknown.join(', ')} — known: ${SHOTS.map((s) => s.name).join(', ')}`); await shutdown(2); }
 
 let liveIds = [];
 for (const s of wanted) {
   if (s.live && !liveIds.length) { liveIds = await startLiveRuns(); log(`live runs held at clarify: ${liveIds.length}`); }
+  if (s.stage) await s.stage();
   await go(s.hash(), { level: s.level, before: s.before });
   await s.prep();
   await capture(s.name);
+  if (s.cleanup) await s.cleanup();
 }
 if (pageErrors.length) { console.error(`page errors:\n${pageErrors.slice(0, 10).join('\n')}`); await shutdown(1); }
 log(`done: ${wanted.length} screenshot(s) in ${OUT}`);

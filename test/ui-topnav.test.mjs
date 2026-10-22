@@ -12,6 +12,8 @@ const read = (p) => readFileSync(new URL(`../ui/public/${p}`, import.meta.url), 
 test('pageTitle: New run, the three Runs routes, and the pages the sidebar does not list', () => {
   assert.equal(pageTitle('new'), 'New run');
   for (const v of ['runs', 'running', 'history']) assert.equal(pageTitle(v), 'Runs', v);
+  // Run 3 (D17): the group page sits inside Runs now.
+  for (const v of ['feature', 'group']) assert.equal(pageTitle(v), 'Runs', v);
   assert.equal(pageTitle('getting-started'), 'Getting started');
   assert.equal(pageTitle('workspace-create'), 'New workspace');
   assert.equal(pageTitle('workflows'), 'Workflows');

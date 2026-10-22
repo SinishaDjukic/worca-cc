@@ -34,6 +34,13 @@ export function attachmentsDir(threadId) {
   return join(askRoot(), threadId, 'att');
 }
 
+/** Ask's output folder for one chat — $WORCA_ASK_OUT in its run_command shells (commands.mjs). What Ask saves there,
+ *  show_files may show. Under the thread folder, so deleteThread's rm -r of ask/<id> removes it. */
+export function askOutDir(threadId) {
+  if (typeof threadId !== 'string' || !ASK_ID_RE.test(threadId)) throw new Error('askOutDir: refusing a thread id the store never minted');
+  return join(askRoot(), threadId, 'out');
+}
+
 const now = () => new Date().toISOString();
 const parse = (v, fallback) => { if (v == null) return fallback; try { return JSON.parse(v); } catch { return fallback; } };
 const str = (v) => (v === undefined || v === null ? null : JSON.stringify(v));
@@ -77,6 +84,9 @@ function rowToAttachment(r) {
   return {
     id: r.id, threadId: r.thread_id, messageId: r.message_id ?? null, name: r.name, bytes: r.bytes,
     kind: r.kind ?? 'text', mime: r.mime ?? null, // pre-v27 rows carry neither column value: they are text
+    // v64: a show_files copy remembers where it came from. Only the flag leaves the store: the path itself is read by
+    // attachmentSourcePath for Show in folder and never reaches the browser.
+    hasSource: r.source_path != null,
     createdAt: r.created_at,
   };
 }
@@ -355,12 +365,48 @@ export function findCard(threadId, cardId) {
   return null;
 }
 
+/** Every card block whose message's JSON holds `needle` (a PR url, a run id), in thread then seq order: a cheap instr()
+ *  prefilter in SQL, the exact match by the caller on the parsed block. → [{ threadId, block }] */
+function cardsMentioning(needle) {
+  getDb();
+  if (typeof needle !== 'string' || !needle) return [];
+  const out = [];
+  const rows = prepare('SELECT thread_id, blocks FROM ask_messages WHERE blocks IS NOT NULL AND instr(blocks, ?) > 0 ORDER BY thread_id, seq').all(needle);
+  for (const r of rows) {
+    const blocks = parse(r.blocks, null);
+    if (!Array.isArray(blocks)) continue;
+    for (const b of blocks) if (b && b.kind === 'card' && b.card && typeof b.card === 'object') out.push({ threadId: r.thread_id, block: b });
+  }
+  return out;
+}
+
+/** The applied pull-request cards that opened this PR — its url, or one workspace member's (receipt.mjs prCardResult):
+ *  how PR watch reaches their chats without a turn. → [{ threadId, cardId, pipelineId, projectKey, workspaceId, memberKey }] */
+export function findPullRequestCards(prUrl) {
+  const out = [];
+  for (const { threadId, block } of cardsMentioning(prUrl)) {
+    const c = block.card;
+    if (c.type !== 'pull-request' || block.state !== 'applied' || !c.result || typeof c.result !== 'object') continue;
+    const member = Array.isArray(c.result.members) ? c.result.members.find((m) => m && m.url === prUrl) || null : null;
+    if (!member && c.result.url !== prUrl) continue;
+    out.push({ threadId, cardId: block.id, pipelineId: c.pipelineId || null, projectKey: c.projectKey || null,
+      workspaceId: c.workspaceId || null, memberKey: (member && member.memberKey) || null });
+  }
+  return out;
+}
+
+/** The PR fix-run cards (a `progress` card with `fix`, ui/server.mjs askPrFixRun) posted for this fix run. → [{ threadId, block }] */
+export function findFixRunCards(runId) {
+  return cardsMentioning(runId).filter(({ block }) => block.card.type === 'progress' && !!block.card.fix && block.card.runId === runId);
+}
+
 // scheduledFor: a run card the user scheduled (state 'scheduled'); scheduleId + sentence: one that became a
-// repeating schedule (docs/scheduled-runs.md "Ask Worca").
+// repeating schedule (docs/scheduled-runs.md "Chat").
 const CARD_PATCH_KEYS = ['state', 'runId', 'error', 'workflowId', 'scheduledFor', 'scheduleId', 'sentence', 'after'];
 
 /** Patch ⊆ {state, runId, error, workflowId} on one card block. A WORKFLOW card (card.type === 'workflow') and a
- *  METRICS, POLICY, SCHEDULE or MODEL card (card.type 'metrics' | 'policy' | 'schedule' | 'model', whose `result` lands at Apply) also take a SHALLOW `card` sub-patch; a run
+ *  METRICS, POLICY, SCHEDULE or MODEL card (card.type 'metrics' | 'policy' | 'schedule' | 'model', whose `result` lands at Apply),
+ *  and a PR fix-run `progress` card, whose outcome lands later, also take a SHALLOW `card` sub-patch; a run
  *  card's `card` is never touched (its key set is pinned). The 'proposed' precondition is the caller's (route) business. */
 export function updateCardBlock(threadId, cardId, patch = {}) {
   return tx(() => {
@@ -374,8 +420,11 @@ export function updateCardBlock(threadId, cardId, patch = {}) {
       const subPatchable = !!(b.card && (b.card.type === 'workflow' || b.card.type === 'metrics'
         || b.card.type === 'policy' || b.card.type === 'schedule' || b.card.type === 'model' || b.card.type === 'clone' || b.card.type === 'web'
         || b.card.type === 'workspace' || b.card.type === 'actions' || b.card.type === 'away'
-        || b.card.type === 'receipt' || b.card.type === 'run-stop' || b.card.type === 'pull-request'
-        || b.card.type === 'canvas-edit' || b.card.type === 'workflow-build' || b.card.type === 'agent-draft' || b.card.type === 'script-draft'));
+        || b.card.type === 'receipt' || b.card.type === 'run-stop' || b.card.type === 'pull-request' || b.card.type === 'ship'
+        || b.card.type === 'changes' || b.card.type === 'route'
+        || b.card.type === 'canvas-edit' || b.card.type === 'workflow-build' || b.card.type === 'agent-draft' || b.card.type === 'script-draft'
+        || b.card.type === 'scope-switch' || b.card.type === 'project'
+        || (b.card.type === 'progress' && !!b.card.fix)));
       return { ...b, ...allowed, ...(sub && subPatchable ? { card: { ...(b.card || {}), ...sub } } : {}) };
     });
     prepare('UPDATE ask_messages SET blocks = ? WHERE id = ?').run(JSON.stringify(blocks), found.message.id);
@@ -434,7 +483,7 @@ export function sweepStreamingMessages({ text = 'interrupted by restart' } = {})
  * redactAskText guard that runs over text attachment content structurally
  * cannot apply to them; the model reads them via its Read tool as-is.
  */
-export function addAttachment(threadId, messageId, { name, text, kind = 'text', mime = null, data = null } = {}) {
+export function addAttachment(threadId, messageId, { name, text, kind = 'text', mime = null, data = null, sourcePath = null, sourceOrigin = null } = {}) {
   getDb();
   if (!prepare('SELECT 1 FROM ask_threads WHERE id = ?').get(threadId)) {
     throw new Error(`addAttachment: unknown thread ${threadId}`);
@@ -453,8 +502,12 @@ export function addAttachment(threadId, messageId, { name, text, kind = 'text', 
     bytes = data.length;
     writeFileSync(join(dir, `${id}${extensionForAttachment(kind, mime)}`), data); // no encoding: raw bytes
   }
-  prepare('INSERT INTO ask_attachments (id, thread_id, message_id, name, bytes, kind, mime, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(id, threadId, messageId ?? null, safeName, bytes, kind, mime, now());
+  const src = typeof sourcePath === 'string' && sourcePath ? sourcePath : null;
+  const str = (v) => (typeof v === 'string' && v ? v : null);
+  // v70: an origin is kept only with its project and relative path: that pair is all Show in folder's fallback reads.
+  const o = src && str(sourceOrigin?.projectKey) && str(sourceOrigin?.rel) ? sourceOrigin : null;
+  prepare('INSERT INTO ask_attachments (id, thread_id, message_id, name, bytes, kind, mime, source_path, source_run_id, source_project_key, source_rel, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(id, threadId, messageId ?? null, safeName, bytes, kind, mime, src, o ? str(o.runId) : null, o ? o.projectKey : null, o ? o.rel : null, now());
   return getAttachment(threadId, id);
 }
 
@@ -501,6 +554,25 @@ export function attachmentPath(threadId, id) {
   if (!a || !ASK_ID_RE.test(a.id)) return null;
   const path = join(attachmentsDir(threadId), `${a.id}${extensionForAttachment(a.kind, a.mime)}`);
   return existsSync(path) ? path : null;
+}
+
+/** The real path a show_files copy was made from (v64), or null: an upload, or no such attachment in this thread.
+ *  Server-only: Show in folder opens it, and nothing else reads it. */
+export function attachmentSourcePath(threadId, id) {
+  getDb();
+  const r = prepare('SELECT source_path FROM ask_attachments WHERE thread_id = ? AND id = ?').get(threadId, id);
+  return r && typeof r.source_path === 'string' && r.source_path ? r.source_path : null;
+}
+
+/** Where a show_files copy found under a run's or project's folder came from (v70): { runId, projectKey, rel } with
+ *  `rel` the POSIX path below that folder, or null (an upload, a copy from the out folder, an older row, another thread).
+ *  Server-only, like attachmentSourcePath: Show in folder falls back to `rel` inside the project once the run's
+ *  worktree is gone. */
+export function attachmentSourceOrigin(threadId, id) {
+  getDb();
+  const r = prepare('SELECT source_run_id, source_project_key, source_rel FROM ask_attachments WHERE thread_id = ? AND id = ?').get(threadId, id);
+  if (!r || !r.source_project_key || !r.source_rel) return null;
+  return { runId: r.source_run_id ?? null, projectKey: r.source_project_key, rel: r.source_rel };
 }
 
 /** Raw thread-scoped read for the download route: any kind, body as a Buffer. */
@@ -556,6 +628,20 @@ export function findRunLinksByPipeline(pipelineId) {
   getDb();
   if (typeof pipelineId !== 'string' || !pipelineId) return [];
   return prepare('SELECT * FROM ask_run_links WHERE pipeline_id = ? ORDER BY created_at DESC, run_id').all(pipelineId).map(rowToRunLink);
+}
+
+/** An old `#running/<runId>` link (chat history) → its saved run: `{ pipelineId, historyKey }` (the `#history/` key,
+ *  as listAllPipelines builds it), or null when no chat ever linked that id or the run was deleted. A resumed run's
+ *  link row carries the new runId (updateRunLink), so a link from before the resume cannot resolve. */
+export function runLinkTarget(runId) {
+  getDb();
+  if (typeof runId !== 'string' || !runId) return null;
+  const r = prepare(`SELECT p.id, p.target, p.project_key, p.workspace_key FROM ask_run_links l
+    JOIN pipelines p ON p.id = l.pipeline_id
+    WHERE l.run_id = ? AND p.deleted_at IS NULL ORDER BY l.created_at DESC LIMIT 1`).get(runId);
+  if (!r) return null;
+  const historyKey = r.target === 'workspace' && r.workspace_key ? `workspaces/${r.workspace_key}` : r.project_key || null;
+  return historyKey ? { pipelineId: r.id, historyKey } : null;
 }
 
 export function listRunLinks(threadId) {

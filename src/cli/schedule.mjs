@@ -15,8 +15,9 @@ import {
   heartbeatTicket, releaseTicket, markTicketFired, setTicketPipeline, recordOutcome,
   createSchedule, listSchedules, pauseSchedule, resumeSchedule, skipNext, runScheduleNow,
   deleteSchedule, scheduleStageDir,
-  resolveAfterRef, afterRefOf, predecessorState, previousBranchesOf,
+  resolveAfterRef, afterRefOf, predecessorState, previousBranchesOf, skipTicket,
 } from '../core/scheduler.mjs';
+import { applyTagRules } from '../core/tag-dimensions.mjs';
 import { getDb } from '../core/db.mjs';
 import { listNotifications, markAllRead, unreadCount, addNotification } from '../core/notifications.mjs';
 import { scheduleDefaults } from '../core/settings.mjs';
@@ -39,13 +40,17 @@ Create one by adding a time to any run command:
   worca --prompt "<task>" --at "tomorrow 02:00"          Run once, later
   worca --prompt "<task>" --at 02:00 --wait               …and hold this terminal until then
   worca --prompt "<task>" --every "weekdays 02:00"        Repeat
-  worca --prompt "<task>" --cron "0 2 * * 1-5"            Repeat (cron subset)
+  worca --prompt "<task>" --every "15m 09:00-18:00 weekdays"   Repeat during the day
+  worca --prompt "<task>" --cron "*/30 9-17 * * 1-5"      Repeat (cron subset)
   worca --prompt "<task>" --after <id> --source-from-previous   Start when another run ends, on its branch
 
   --at <when>          "02:00" (next), "today 22:00", "tomorrow 02:00", "+90m", "+2h",
                        "2026-09-19 02:00", or ISO 8601 with an offset. Local time unless an offset is given.
   --every <pattern>    "day 03:30", "3 days 02:00", "weekdays 02:00", "weekends 09:00",
-                       "mon,thu 02:00", "2 weeks mon 02:00", "month 1 02:00", "month last 02:00"
+                       "mon,thu 02:00", "2 weeks mon 02:00", "month 1 02:00", "month last 02:00";
+                       several a day: "day 09:00,13:00,17:00", "15m", "2h 08:00-20:00", "30m 09:00-18:00 weekdays".
+                       Runs must be at least 15 minutes apart.
+  --cron "<m h dom mon dow>"   minute/hour: numbers, lists, ranges, */N; days: a day-of-week set or one day-of-month
   --until <date>       Last day a repeating schedule may run (YYYY-MM-DD)
   --count <n>          Stop a repeating schedule after n runs
   --overlap <p>        If the previous run is still going: skip (default) | start | queue
@@ -215,6 +220,7 @@ async function requestFromFlags(flags, { projectDir, extras, promptText, stageId
     ...(flags.memoryScope ? { memoryScope: flags.memoryScope } : {}),
     ...(flags.humanInLoop === false ? { humanInLoop: false } : {}),
     ...(flags.nightMode ? { nightMode: true } : {}),   // --night: POST /api/run's own opt-in field
+    ...(flags.tags?.length ? { tags: flags.tags } : {}),
   };
   // Text the user authored is frozen on the ticket — including a --file's content.
   if (flags.file) request.promptMarkdown = promptText;
@@ -296,7 +302,15 @@ export async function createFromFlags(flags, { projectDir, extras, promptText, s
  * @param {(onPipelineId:(id:string)=>void) => Promise<{code:number, status:string}>} o.drive
  * @returns {Promise<number>} exit code
  */
-export async function waitAndRun({ ticketId, tz, out, c, drive, pollMs = 5000, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
+export async function waitAndRun({
+  ticketId, tz, out, c, drive, pollMs = 5000, sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+  // Enforced tags (D14): re-checked after the claim, like a server firing. getTicket(id) omits `request`.
+  checkTags = (t) => {
+    const full = getTicket(t.id, { withRequest: true });
+    return applyTagRules({ projectDir: t.projectDir, tags: Array.isArray(full?.request?.tags) ? full.request.tags : [], person: null });
+  },
+  retag = () => {},
+}) {
   let released = false;
   const onSigint = () => {
     if (released) return;
@@ -336,6 +350,9 @@ export async function waitAndRun({ ticketId, tz, out, c, drive, pollMs = 5000, s
   }
   released = true; // from here the run's own Ctrl+C ladder (pause/stop) is in charge
   const t = getTicket(ticketId);
+  const tagGate = await checkTags(t);
+  if (tagGate.error) { skipTicket(t, tagGate.error); out(c('red', `worca: ${tagGate.error}`)); return 2; }
+  if (tagGate.enforced) retag(tagGate.tags);
   const late = Date.now() - Date.parse(t.runAt);
   markTicketFired(ticketId);
   if (!t.forced && late > 5 * 60_000) {

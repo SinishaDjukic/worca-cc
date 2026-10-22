@@ -25,6 +25,9 @@ import {
 import { canonicalMetricsSlug, sameMetricsSlug } from '../../shared/team-metrics/slug.mjs';
 import { normalizePolicyDoc, emptyPolicyDoc, serializePolicyDoc, POLICY_SCHEMA, fieldMeta } from './registry.mjs';
 import { capSummary, fieldCount, effectiveRows } from './effective.mjs';
+import { GIT_MISSING, onGitChange } from '../git-available.mjs';
+import { teamOverHttps } from '../git-free/team-repo.mjs';
+import { repoOfSlug, lsRemoteHttps, readBranchFile, createOrphanBranch, commitFiles } from '../git-free/team-branch.mjs';
 
 export const POLICY_BRANCH = 'worca-policy';
 export const POLICY_DIR = '.worca-policy';
@@ -47,6 +50,8 @@ function lockFile(slug) { return join(policyRoot(), 'locks', `${slugDirName(slug
 
 function policyError(code, message, extra = {}) { return Object.assign(new Error(message), { code, ...extra }); }
 const firstLine = (s) => String(s || '').trim().split('\n').find(Boolean) || '';
+// P6: an HTTPS failure is already one line; its stderr would only repeat the message.
+const httpsStderr = (stderr) => (String(stderr || '').trim() === firstLine(stderr) ? {} : { stderr });
 const iso = (ms) => new Date(ms).toISOString();
 
 // In-process serialization per slug, then the cross-process lock file (metrics/lock.mjs).
@@ -77,9 +82,14 @@ export async function fetchPolicyBranch(dir, { timeoutMs = 120_000 } = {}) {
 /** `git show origin/worca-policy:.worca-policy/policy.json`, normalised. Never throws. */
 async function readRemotePolicy(dir) {
   const r = await runGit(dir, ['show', `${REMOTE_REF}:${POLICY_FILE}`], { timeoutMs: 10_000 });
-  if (!r.ok) return { doc: null, warnings: [`${POLICY_FILE} is missing on the branch`], unknownSchema: false, delegateTo: null };
+  return parseRemotePolicy(r.ok ? r.stdout : null);
+}
+
+/** The branch's policy.json text (null = missing) → the normalised read. Never throws. */
+export function parseRemotePolicy(text) {
+  if (text == null) return { doc: null, warnings: [`${POLICY_FILE} is missing on the branch`], unknownSchema: false, delegateTo: null };
   let raw;
-  try { raw = JSON.parse(r.stdout); } catch { return { doc: null, warnings: [`${POLICY_FILE} is not valid JSON`], unknownSchema: false, delegateTo: null }; }
+  try { raw = JSON.parse(text); } catch { return { doc: null, warnings: [`${POLICY_FILE} is not valid JSON`], unknownSchema: false, delegateTo: null }; }
   return normalizePolicyDoc(raw);
 }
 
@@ -87,6 +97,9 @@ async function readRemotePolicy(dir) {
 export function pushHint(stderr) {
   return /protected|hook declined|pre-receive|GH006|GH013|rule violation|push declined|GL-HOOK|denied|permission/i.test(String(stderr || '')) ? PROTECTION_HINT : null;
 }
+// P6: over the GitHub API a credential without write rights is refused with an HTTP 403 ("Resource not accessible by …")
+// or, on a repository it may read, a 404 on the write: the same rights hint.
+const httpsPushHint = (stderr) => pushHint(stderr) || (/\(HTTP 403\)|Resource not accessible|not found on GitHub/i.test(String(stderr || '')) ? PROTECTION_HINT : null);
 
 // ---- discovery (§9) ---------------------------------------------------------------
 /**
@@ -98,8 +111,10 @@ export async function discoverPolicy(projectDir, { force = false, now = Date.now
   const key = projectKey(projectDir);
   const prev = readTeamPolicyPrefs(key) || {};
   if (!force && prev.checkedAt && now - Date.parse(prev.checkedAt) < DISCOVERY_TTL_MS) return prev;
+  // P6: over HTTPS a failed attempt waits DISCOVERY_RETRY_MS before an unforced trigger asks GitHub again.
+  if (!force && prev.lastDiscoveryError && now - Date.parse(prev.lastDiscoveryAt) < DISCOVERY_RETRY_MS && teamOverHttps(projectDir)) return prev;
   if (!existsSync(projectDir)) return readTeamPolicyPrefs(key);
-  const { slug, hasOrigin, remotesOk, originUrl } = await projectSlug(projectDir);
+  const { slug, hasOrigin, remotesOk, originUrl, needsGit } = await projectSlug(projectDir);
   const originDisplay = originUrl ? String(originUrl).replace(/^[a-z+]+:\/\//i, '').replace(/^[^@/]*@/, '').replace(/:(?!\d)/, '/').replace(/\.git$/, '') : null;
   if (!remotesOk) return prev.checkedAt ? prev : null;
   const write = (patch) => {
@@ -110,7 +125,9 @@ export async function discoverPolicy(projectDir, { force = false, now = Date.now
   if (!hasOrigin) {
     return write({ present: false, hasOrigin: false, slug, originDisplay: null, doc: null, docKnown: false, delegateTo: null, headSha: null, checkedAt: iso(now) });
   }
-  const ls = await runGit(projectDir, ['ls-remote', '--heads', 'origin', `refs/heads/${POLICY_BRANCH}`], { timeoutMs: lsTimeoutMs });
+  const https = teamOverHttps(projectDir);
+  // A repository the slug misnames (projectSlugHttps's needsGit: `acme/.github`) is asked nothing — a host slug's answer.
+  const ls = https ? (needsGit ? { ok: false, stdout: '', stderr: GIT_MISSING.message } : await lsRemoteHttps(slug, POLICY_BRANCH, { timeoutMs: lsTimeoutMs })) : await runGit(projectDir, ['ls-remote', '--heads', 'origin', `refs/heads/${POLICY_BRANCH}`], { timeoutMs: lsTimeoutMs });
   if (!ls.ok) return write({ hasOrigin: true, slug, originDisplay, lastDiscoveryError: firstLine(ls.stderr), lastDiscoveryAt: iso(now) });
   const sha = ls.stdout.trim().split(/\s+/)[0] || null;
   if (!sha) {
@@ -126,13 +143,13 @@ export async function discoverPolicy(projectDir, { force = false, now = Date.now
     return !!(m && fieldMeta(m[1]));
   });
   if (sha !== prev.headSha || !prev.docKnown || staleRead) {
-    const f = await fetchPolicyBranch(projectDir, { timeoutMs: fetchTimeoutMs });
+    const f = https ? await readBranchFile(slug, sha, POLICY_FILE, { timeoutMs: fetchTimeoutMs }) : await fetchPolicyBranch(projectDir, { timeoutMs: fetchTimeoutMs });
     if (!f.ok) {
       const next = write({ present: true, hasOrigin: true, slug, originDisplay, docKnown: !!prev.docKnown, lastDiscoveryError: firstLine(f.stderr), lastDiscoveryAt: iso(now) });
       if (!prev.present) emit(slug, 'discovered');
       return next;
     }
-    const read = await readRemotePolicy(projectDir);
+    const read = https ? parseRemotePolicy(f.text) : await readRemotePolicy(projectDir);
     doc = read.doc; warnings = read.warnings; unknownSchema = read.unknownSchema; delegateTo = read.delegateTo; docKnown = true; headSha = sha;
   }
   const next = write({ present: true, hasOrigin: true, slug, originDisplay, headSha, doc, docKnown, warnings, unknownSchema, delegateTo, checkedAt: iso(now), lastDiscoveryError: null });
@@ -175,6 +192,11 @@ async function prefsFor(projectDir, { discover = true } = {}) {
 
 /** A project carries a policy (present, read, not a marker). */
 export const carriesPolicy = (prefs) => !!prefs?.present && !!prefs.docKnown && !prefs.delegateTo && !prefs.unknownSchema;
+// P6: a GitHub team repository never read over HTTPS (a private one without a token, GitHub unreachable) is not read
+// yet — never "off"; with git a failed first discovery reads as before. One that needs git (a repository the slug misnames
+// answers GIT_MISSING) is off, as a host slug.
+const unreadOverHttps = (prefs, dir) => !prefs?.present && !!prefs?.lastDiscoveryError && prefs.lastDiscoveryError !== GIT_MISSING.message
+  && !prefs.checkedAt && !!repoOfSlug(prefs.slug) && teamOverHttps(dir);
 
 // ---- resolver (§6) ----------------------------------------------------------------
 function invalid(code, detail) { return { ok: false, reason: 'delegate-invalid', code, detail }; }
@@ -187,6 +209,7 @@ function invalid(code, detail) { return { ok: false, reason: 'delegate-invalid',
 export async function resolveProjectPolicy(projectDir, { discover = true } = {}) {
   const own = await prefsFor(projectDir, { discover });
   if (own?.hasOrigin === false) return { ok: false, reason: 'no-origin' };
+  if (unreadOverHttps(own, projectDir)) return { ok: false, reason: 'not-enabled', code: 'DOC_UNKNOWN', detail: own.lastDiscoveryError };
   if (!own?.present) return { ok: false, reason: 'not-enabled' };
   if (!own.docKnown) return { ok: false, reason: 'not-enabled', code: 'DOC_UNKNOWN', detail: `the ${POLICY_BRANCH} branch exists but could not be fetched yet` };
   if (own.unknownSchema) return { ok: false, reason: 'unsupported', code: 'SCHEMA_UNKNOWN', detail: own.warnings?.[0] || 'the policy needs a newer Worca' };
@@ -197,6 +220,8 @@ export async function resolveProjectPolicy(projectDir, { discover = true } = {})
   const target = await findLocalRepoBySlug(own.delegateTo);
   if (!target) return invalid('DELEGATE_UNKNOWN', `follows ${own.delegateTo}, which is not a project in Worca on this machine`);
   const t = await prefsFor(target.path, { discover });
+  // P6: a home never read over HTTPS (private without a token, GitHub down at its first read) is not read yet, never gone.
+  if (unreadOverHttps(t, target.path)) return { ok: false, reason: 'not-enabled', code: 'DOC_UNKNOWN', detail: `follows ${own.delegateTo}: ${t.lastDiscoveryError}` };
   if (!t?.present) return invalid('DELEGATE_DANGLING', `follows ${own.delegateTo}, which no longer carries a policy`);
   if (!t.docKnown) return invalid('DELEGATE_UNKNOWN_CONFIG', `follows ${own.delegateTo}, whose branch could not be fetched yet`);
   if (t.delegateTo) return invalid('DELEGATE_CHAIN', `follows ${own.delegateTo}, which itself follows ${t.delegateTo} (no chains)`);
@@ -264,6 +289,7 @@ async function validateFollowTarget(delegateTo, ownSlug) {
   const target = await findLocalRepoBySlug(want);
   if (!target) throw policyError('DELEGATE_INVALID', `${want} is not a project in Worca on this machine`);
   const t = (await discoverPolicy(target.path, { force: true }).catch(() => null)) || {};
+  if (!t.present && unreadOverHttps(t, target.path)) throw policyError('FETCH_FAILED', `could not read the ${POLICY_BRANCH} branch of ${want}: ${t.lastDiscoveryError}`);
   if (!t.present) throw policyError('DELEGATE_INVALID', `${want} carries no team policy`);
   if (!t.docKnown) throw policyError('FETCH_FAILED', `could not read the ${POLICY_BRANCH} branch of ${want}; try again`);
   if (t.delegateTo) throw policyError('DELEGATE_INVALID', `${want} follows ${t.delegateTo}; pick a project that carries a policy`);
@@ -285,7 +311,9 @@ function sameContent(a, b) {
  */
 export async function enableTeamPolicy(projectDir, { mode = 'here', delegateTo = null, change = false, title = '', now = new Date(), by = null } = {}) {
   if (mode !== 'here' && mode !== 'follow') throw policyError('BAD_REQUEST', 'mode must be "here" or "follow"');
-  const { slug, hasOrigin } = await projectSlug(projectDir);
+  const { slug, hasOrigin, needsGit, repoInput } = await projectSlug(projectDir);
+  if (needsGit) throw policyError('GIT_MISSING', GIT_MISSING.message);
+  if (repoInput) throw policyError('REPO_REQUIRED', 'type the GitHub repository (owner/name)');
   if (!hasOrigin) throw policyError('NO_ORIGIN', 'this project has no origin remote — a team policy lives on origin, so there is nowhere to put it');
   const target = mode === 'follow' ? (await validateFollowTarget(delegateTo, slug)).slug : null;
   // The person who asked (identity.mjs) when known; else, as before, the checkout's git user.
@@ -294,13 +322,21 @@ export async function enableTeamPolicy(projectDir, { mode = 'here', delegateTo =
     ? { schema: POLICY_SCHEMA, enabledAt: stampNow(now), enabledBy: user, delegateTo: target }
     : emptyPolicyDoc({ updatedBy: user, title: title || `${slug} team policy`, now });
   const body = mode === 'follow' ? JSON.stringify(doc, null, 2) + '\n' : serializePolicyDoc(doc);
+  const https = teamOverHttps(projectDir);
   const result = await withSlugLock(slug, async () => {
-    const ls = await runGit(projectDir, ['ls-remote', '--heads', 'origin', `refs/heads/${POLICY_BRANCH}`], { timeoutMs: 20_000 });
-    if (!ls.ok) throw policyError('REMOTE_UNREACHABLE', firstLine(ls.stderr), { stderr: ls.stderr });
+    const ls = https ? await lsRemoteHttps(slug, POLICY_BRANCH) : await runGit(projectDir, ['ls-remote', '--heads', 'origin', `refs/heads/${POLICY_BRANCH}`], { timeoutMs: 20_000 });
+    if (!ls.ok) throw policyError('REMOTE_UNREACHABLE', firstLine(ls.stderr), https ? httpsStderr(ls.stderr) : { stderr: ls.stderr });
     if (ls.stdout.trim()) {
-      if (change && mode === 'follow') return rewriteMarker(slug, projectDir, doc);
-      await ensureWorktree(slug, projectDir);
+      if (change && mode === 'follow') return https ? rewriteMarkerHttps(slug, doc) : rewriteMarker(slug, projectDir, doc);
+      if (!https) await ensureWorktree(slug, projectDir);
       return { action: 'joined' };
+    }
+    if (https) {
+      const made = await createOrphanBranch(slug, POLICY_BRANCH, { files: { 'README.md': README_TEXT, [POLICY_FILE]: body },
+        message: mode === 'follow' ? `policy: follow ${target}` : 'policy: enable team policy' });
+      if (made.ok) return { action: 'created' };
+      if (made.exists) return { action: 'joined' };
+      throw policyError('PUSH_REJECTED', firstLine(made.stderr), { ...httpsStderr(made.stderr), hint: httpsPushHint(made.stderr) });
     }
     const commit = await orphanCommit(projectDir, { 'README.md': README_TEXT, [POLICY_FILE]: body },
       mode === 'follow' ? `policy: follow ${target}` : 'policy: enable team policy', 'git-user');
@@ -339,6 +375,52 @@ async function rewriteMarker(slug, projectDir, doc) {
   throw policyError('PUSH_RETRIES_EXHAUSTED', `the ${POLICY_BRANCH} branch kept moving; try again`);
 }
 
+/** P6: the branch head over HTTPS, or a coded error. */
+async function headHttps(slug) {
+  if (!repoOfSlug(slug)) throw policyError('GIT_MISSING', GIT_MISSING.message);
+  const ls = await lsRemoteHttps(slug, POLICY_BRANCH);
+  const head = ls.ok ? ls.stdout.split('\t')[0].trim() : '';
+  if (head) return head;
+  const stderr = ls.ok ? `couldn't find remote ref refs/heads/${POLICY_BRANCH}` : ls.stderr;
+  throw policyError('FETCH_FAILED', firstLine(stderr), httpsStderr(stderr));
+}
+
+/** P6: rewriteMarker over the GitHub API. */
+async function rewriteMarkerHttps(slug, doc) {
+  for (let attempt = 1; attempt <= MAX_PUSH_ATTEMPTS; attempt++) {
+    const head = await headHttps(slug);
+    const f = await readBranchFile(slug, head, POLICY_FILE);
+    if (!f.ok) throw policyError('FETCH_FAILED', firstLine(f.stderr), httpsStderr(f.stderr));
+    let cur = {};
+    try { cur = JSON.parse(f.text ?? '') || {}; } catch { cur = {}; }
+    if (!cur.delegateTo) throw policyError('DELEGATE_INVALID', 'this project carries its own policy; its branch is not a marker');
+    if (sameMetricsSlug(cur.delegateTo, doc.delegateTo)) return { action: 'changed' };
+    const body = JSON.stringify({ ...cur, enabledAt: doc.enabledAt, enabledBy: doc.enabledBy, delegateTo: doc.delegateTo }, null, 2) + '\n';
+    const r = await commitFiles(slug, POLICY_BRANCH, { parent: head, files: { [POLICY_FILE]: body }, message: `policy: follow ${doc.delegateTo}` });
+    if (r.ok) return { action: 'changed' };
+    if (!r.conflict) throw policyError('PUSH_REJECTED', firstLine(r.stderr), { ...httpsStderr(r.stderr), hint: httpsPushHint(r.stderr) });
+  }
+  throw policyError('PUSH_RETRIES_EXHAUSTED', `the ${POLICY_BRANCH} branch kept moving; try again`);
+}
+
+/** P6: publishPolicy's lock body over the GitHub API. */
+async function publishHttps(slug, doc, body, commitMsg) {
+  for (let attempt = 1; attempt <= MAX_PUSH_ATTEMPTS; attempt++) {
+    const head = await headHttps(slug);
+    const f = await readBranchFile(slug, head, POLICY_FILE);
+    if (!f.ok) throw policyError('FETCH_FAILED', firstLine(f.stderr), httpsStderr(f.stderr));
+    let current = null;
+    try { current = f.text == null ? null : normalizePolicyDoc(JSON.parse(f.text)).doc; } catch { current = null; }
+    if (current && sameContent(current, doc)) return { sha: head, unchanged: true };
+    const readme = await readBranchFile(slug, head, 'README.md');
+    if (!readme.ok) throw policyError('FETCH_FAILED', firstLine(readme.stderr), httpsStderr(readme.stderr));
+    const r = await commitFiles(slug, POLICY_BRANCH, { parent: head, files: { [POLICY_FILE]: body, ...(readme.text == null ? { 'README.md': README_TEXT } : {}) }, message: commitMsg });
+    if (r.ok) return { sha: r.sha, unchanged: !!r.unchanged };
+    if (!r.conflict) throw policyError('PUSH_REJECTED', firstLine(r.stderr), { ...httpsStderr(r.stderr), hint: httpsPushHint(r.stderr) });
+  }
+  throw policyError('PUSH_RETRIES_EXHAUSTED', `the ${POLICY_BRANCH} branch kept moving; try again`);
+}
+
 /**
  * Publish a document to a home's branch (the editor's "Publish to worca-policy", §11 board 5).
  * Validates strictly — the editor never sends a field the reader would drop, so any warning
@@ -360,6 +442,11 @@ export async function publishPolicy(projectDir, rawDoc, { message = null, now = 
   const body = serializePolicyDoc(doc);
   const commitMsg = message && String(message).trim() ? `policy: ${String(message).trim().slice(0, 120)}` : 'policy: update team policy';
   const out = await withSlugLock(slug, async () => {
+    if (teamOverHttps(projectDir)) {
+      // A repository the slug misnames (projectSlugHttps's needsGit: `acme/.github`) needs git, as a host slug (headHttps).
+      if ((await projectSlug(projectDir)).needsGit) throw policyError('GIT_MISSING', GIT_MISSING.message);
+      return publishHttps(slug, doc, body, commitMsg);
+    }
     const dir = await ensureWorktree(slug, projectDir);
     for (let attempt = 1; attempt <= MAX_PUSH_ATTEMPTS; attempt++) {
       const f = await fetchPolicyBranch(dir);
@@ -408,10 +495,17 @@ export async function projectPolicyStatus(p, { discover = false } = {}) {
     origin: prefs.originDisplay ?? null, checkedAt: prefs.checkedAt ?? null, lastDiscoveryError: prefs.lastDiscoveryError ?? null,
     carries: carriesPolicy(prefs),
   };
+  // P6: over HTTPS (no git, or a typed team repository) the answer comes from .git/config / the typed repo; a folder
+  // with neither stays unsettled (hasOrigin null) so "Set up…" — with its GitHub repository field — stays offered.
+  const s = p.exists && teamOverHttps(p.path) ? await projectSlug(p.path).catch(() => null) : null;
+  if (s?.needsGit) status.needsGit = true;
+  if (s?.repoInput) status.repoInput = true;
+  if (s && unreadOverHttps(prefs, p.path)) status.unread = true;
   if (status.hasOrigin == null && p.exists) {
-    try { const { hasOrigin, slug } = await projectSlug(p.path); status.hasOrigin = hasOrigin; if (status.slug == null) status.slug = slug; } catch { /* leave null */ }
+    if (s) { status.hasOrigin = s.remotesOk ? s.hasOrigin : null; if (status.slug == null) status.slug = s.slug; }
+    else try { const { hasOrigin, slug } = await projectSlug(p.path); status.hasOrigin = hasOrigin; if (status.slug == null) status.slug = slug; } catch { /* leave null */ }
   }
-  if (!status.present || !p.exists) return status;
+  if ((!status.present && !status.unread) || !p.exists) return status;
   const r = await resolveProjectPolicy(p.path, { discover });
   if (!r.ok) {
     status.delegateState = r.reason === 'delegate-invalid' ? 'invalid' : null;
@@ -515,7 +609,9 @@ export function startTeamPolicyBackground({ log = (m) => console.warn(m), onTick
   tick(true);
   const timer = setInterval(() => tick(false), DISCOVERY_TTL_MS / 2);
   timer.unref?.();
-  return () => clearInterval(timer);
+  // git arriving runs discovery at once instead of waiting up to half the TTL.
+  const offGit = onGitChange((s) => { if (s.available) void tick(true); });
+  return () => { offGit(); clearInterval(timer); };
 }
 
 export const _testing = { reset() { _queues.clear(); } };

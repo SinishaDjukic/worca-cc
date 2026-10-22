@@ -1,7 +1,7 @@
 // Base conflicts (#620): the pure models behind the History detail block, the runs list note and Ship it.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { baseCheckModel, baseRowNote } from '../ui/public/base-check.mjs';
+import { baseCheckModel, baseRowNote, newerBaseCheck } from '../ui/public/base-check.mjs';
 
 const NOW = Date.parse('2026-10-07T12:00:00Z');
 const at = '2026-10-07T11:57:00Z';
@@ -29,4 +29,16 @@ test('row note: only what needs attention', () => {
   assert.equal(baseRowNote({ status: 'clean', base: 'dev' }), 'dev moved');
   assert.equal(baseRowNote({ status: 'up-to-date', base: 'dev' }), '');
   assert.equal(baseRowNote(null), '');
+});
+
+test('newerBaseCheck: the later `at` wins; a tie or an unreadable time keeps the first', () => {
+  const a = { status: 'clean', at: '2026-10-18T10:00:00Z' };
+  const b = { status: 'up-to-date', at: '2026-10-18T10:05:00Z' };
+  assert.equal(newerBaseCheck(a, b), b);
+  assert.equal(newerBaseCheck(b, a), b);
+  assert.equal(newerBaseCheck(a, { ...a, status: 'conflicts' }), a);
+  assert.equal(newerBaseCheck(a, { status: 'clean' }), a);
+  assert.equal(newerBaseCheck(null, a), a);
+  assert.equal(newerBaseCheck(a, null), a);
+  assert.equal(newerBaseCheck(null, undefined), null);
 });

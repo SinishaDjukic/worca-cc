@@ -23,7 +23,7 @@ const catalog = { version: 1, workspace: { name: 'Shop' }, members: { a: member(
     source: 'static', test: false, evidence: [{ file: 'src/client.ts', line: 3, match: 'x' }], entry: ENTRY, toMember: 'b' }], b: [] },
   candidates: { a: [], b: [] }, aliasIndex: {}, ambiguousAliases: {}, rejected: [], errors: [] };
 
-async function runScript(pipelineDir, workspaceMembers) {
+async function runScript(pipelineDir, workspaceMembers, folder = []) {
   await mkdir(pipelineDir, { recursive: true });
   const catalogPath = join(pipelineDir, 'catalog.json');
   const usagePath = join(pipelineDir, 'usage.json');
@@ -35,7 +35,8 @@ async function runScript(pipelineDir, workspaceMembers) {
     params: {},
     ctx: { cwd: pipelineDir, pipelineDir, projectDir: dir.a, runRoot: null, repos: null, checkpointRef: null, baseName: null, runId: 'run-7',
       platform: process.platform, mock: true, bench: false,
-      workspace: { id: 'ws_1', name: 'Shop', members: workspaceMembers.map((k) => ({ key: k, name: k, dir: dir[k], projectDir: dir[k] })) } },
+      workspace: { id: 'ws_1', name: 'Shop', members: workspaceMembers.map((k) => ({ key: k, name: k, dir: dir[k], projectDir: dir[k],
+        ...(folder.includes(k) ? { workMode: 'folder' } : {}) })) } },
     verdictPath: null, node: { id: 'n_join', key: 'workspaceMapJoin', displayName: 'Workspace map join' }, execution: { id: 'e1', ordinal: 1 },
     log: () => {},
   };
@@ -57,4 +58,12 @@ test('join script: no graphs (a mock run) → graph mode none and no file', asyn
   const map = await runScript(pipelineDir, ['c']);
   assert.deepEqual(map.graph, { mode: 'none', file: null, nodes: 0, bridges: 0 });
   await assert.rejects(stat(join(pipelineDir, 'workspace-graph.json')));
+});
+
+test('join script: a Folder member\'s graph is never loaded, even a fresh-looking one (P5)', async () => {
+  const map = await runScript(join(fx.ws.root, 'pipe-folder'), ['a', 'b'], ['b']);
+  assert.equal(map.edges[0].context.from.symbol, 'getInvoice()', 'the Git member still enriches its end');
+  assert.equal(map.edges[0].context.to, undefined, 'the Folder member end gets no symbol');
+  assert.equal(map.members.find((m) => m.key === 'b').coverage.graph, null);
+  assert.deepEqual(map.graph, { mode: 'full', file: 'workspace-graph.json', nodes: 16, bridges: 1 }, 'B is one stub node, never its graph');
 });

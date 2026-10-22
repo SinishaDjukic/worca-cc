@@ -20,7 +20,7 @@ import { join, isAbsolute } from 'node:path';
 import { projectKey, projectStorePath } from './store.mjs';
 import {
   listArtifacts, readPipelineByKey, persistPrState, retainedWorkFor, checkoutRecordsFor, branchRecordsOf,
-  recordArtifact, appendAudit, appendAuditById, findRunDir, readMemberPrStates, persistMemberPrState,
+  recordArtifact, appendAudit, appendAuditById, findRunDir, readMemberPrStates, persistMemberPrState, folderApplyRetainFor,
 } from './artifacts.mjs';
 import { workspaceMembers } from './workspace-prs.mjs';
 import { worcaHome } from './projects.mjs';
@@ -29,7 +29,7 @@ import { removeWorktree, snapshotWorktreePatch, commitStagedWork, commitOf, inde
 import { fastForwardTo } from './git-sync.mjs';
 import { updateBranchRecords, withRunLock } from './checkout.mjs';
 import { MEMORY_RULES_REL } from './memory-sync.mjs';
-import { staleIndexLockNote } from './git-lock.mjs';
+import { staleGitLockNote } from './git-lock.mjs';
 import {
   rmGuarded, readRunManifest, updateRunManifest, rescueModifiedMounts, scanStrayEntries, copyRunManifestTo, RETAIN_REASONS,
 } from './run-manifest.mjs';
@@ -37,6 +37,8 @@ import { branchExists, anyPrHost, findPrForBranch } from './git-info.mjs';
 import { retainedWorkPatchName } from './results.mjs';
 import { deleteCommentsForRun } from './diff-comments.mjs';
 import { byActor } from './identity.mjs';
+import { workModeOfRow } from './project-kind.mjs';
+import { writeChangesRecordInTx } from './folder-apply.mjs';
 
 /**
  * Final PR observation while the branches still exist (spec §6.8.3). A workspace run
@@ -115,6 +117,17 @@ function artifactAbsPath(relPath, pipelineDir, storeRootDir) {
   return join(pipelineDir, rel);
 }
 
+/** P5: archivePipeline refuses this row for retained work — the DB records, or run.json's retain block (written before
+ *  teardown's last-chance DB stamp). The DELETE route closes a run's terminals only when the archive will go ahead. */
+export async function archiveKeepsWork(row) {
+  if (!row) return false;
+  if (retainedWorkFor(row) || checkoutRecordsFor(row)) return true;
+  const runRoot = join(worcaHome(), 'runs', row.id);
+  if (!existsSync(runRoot)) return false;
+  const members = (await readRunManifest(runRoot))?.retain?.members;
+  return Array.isArray(members) && members.some((m) => m?.worktreeDir && existsSync(m.worktreeDir));
+}
+
 /**
  * @param {{ projectDir?:string, key?:string, workspaceKey?:string, id:string }} args
  * @returns {Promise<null | { ok, id, archived, pipelineDir, planFiles, reviewFiles, branch, worktree, warnings }
@@ -130,7 +143,7 @@ function artifactAbsPath(relPath, pipelineDir, storeRootDir) {
  * single scalar `state.branch`. The state is reconstructed from the DB row by the
  * same reader history uses. Result warnings[] aggregates per-project failures.
  */
-export async function archivePipeline({ projectDir = null, key = null, workspaceKey = null, id } = {}) {
+export async function archivePipeline({ projectDir = null, key = null, workspaceKey = null, id, by = null } = {}) {
   if (!id || typeof id !== 'string') throw err('id is required', 'BAD_REQUEST');
 
   // Resolve the store key ONCE so the run dir and the shared plan/review files are
@@ -303,7 +316,29 @@ export async function archivePipeline({ projectDir = null, key = null, workspace
   //    INDEX rows are deleted explicitly — their files were just unlinked, and
   //    the CASCADE that used to clear them no longer fires (no row DELETE).
   //    pipeline_steps and the other children stay: stats fallback sums need them.
+  // P1 (P1b S17, P5 S8): archiving a PENDING Folder run is Discard + archive — its copy went with the run root above,
+  // the folder is never touched. The audit lands after the tx: appendAuditById opens its own tx(), and a nested one
+  // throws (swallowed), so inside this tx it would silently never land.
+  const folderDiscarded = [];
   tx(() => {
+    if (row.target === 'workspace') {
+      // P5: every pending Folder member (workspace_meta.projects[i].workMode), whatever the run's own mode
+      const wm = parseJson(getDb().prepare('SELECT workspace_meta FROM pipelines WHERE id = ?').get(row.id)?.workspace_meta);
+      const discardedAt = new Date().toISOString();
+      for (const p of Array.isArray(wm?.projects) ? wm.projects : []) {
+        const rec = p?.workMode === 'folder' ? wm.branches?.[p.projectKey] : null;
+        if (rec?.changes?.state !== 'pending') continue;
+        writeChangesRecordInTx(row.id, { state: 'discarded', discardedAt }, { memberKey: p.projectKey });
+        folderDiscarded.push(rec.realDir || p.projectDir || '');
+      }
+    } else if (workModeOfRow(row) === 'folder') {
+      const cur = parseJson(getDb().prepare('SELECT branch FROM pipelines WHERE id = ?').get(row.id)?.branch);
+      if (cur?.changes?.state === 'pending') {
+        getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?')
+          .run(JSON.stringify({ ...cur, changes: { ...cur.changes, state: 'discarded', discardedAt: new Date().toISOString() } }), row.id);
+        folderDiscarded.push(cur.realDir || state?.projectDir || '');
+      }
+    }
     getDb().prepare('DELETE FROM artifacts WHERE pipeline_id = ?').run(row.id);
     // The run dir (and with it diff-patch.patch) was just removed, so nothing could
     // re-anchor these comments and creation is refused from here on. They die with
@@ -314,6 +349,7 @@ export async function archivePipeline({ projectDir = null, key = null, workspace
     getDb().prepare('UPDATE pipelines SET archived_at = ? WHERE id = ?')
       .run(new Date().toISOString(), row.id);
   });
+  for (const dir of folderDiscarded) appendAuditById(row.id, `Discarded the run's changes (archived)${byActor(by)}; \`${dir}\` was not touched.`, { actor: by });
 
   return report;
 }
@@ -347,6 +383,7 @@ export async function restorePipeline({ projectDir = null, key = null, workspace
   if (ACTIVE.has(String(row.status || '').toLowerCase())) {
     throw err('cannot restore a running pipeline', 'RUNNING');
   }
+  if (row.deleted_at) throw err('pipeline was deleted', 'DELETED');
   if (!row.archived_at) {
     return { ok: true, id: row.id, alreadyActive: true, warnings: [] };
   }
@@ -456,11 +493,13 @@ async function releaseRetainedTargets({ row, state, targets, runDir, report, sta
   }
   // The run root goes only once nothing is retained AND the rescue above ran. Discard refuses a missing
   // pipeline directory before getting here; Apply tolerates one, so it keeps the run root and says why.
-  if (existsSync(runRoot) && report.remaining === 0 && runDir) {
+  // P5: a mixed workspace's pending Folder member lives in the same run root: keep it until that member is applied or discarded
+  const folderPending = !!folderApplyRetainFor(row);
+  if (existsSync(runRoot) && report.remaining === 0 && runDir && !folderPending) {
     const removal = await rmGuarded(runRoot, { worcaHome: worcaHome(), pipelineId: row.id });
     if (removal.removed) report.runRoot = runRoot;
     else report.warnings.push(`run-root: ${removal.reason || 'removal refused'}`);
-  } else if (existsSync(runRoot) && report.remaining === 0) {
+  } else if (existsSync(runRoot) && report.remaining === 0 && !folderPending) {
     report.warnings.push('run-root kept: the pipeline directory to rescue it into is missing');
   }
 }
@@ -521,7 +560,7 @@ export async function discardRetainedWorktrees({ projectDir = null, key = null, 
   for (const target of targets) {
     const name = retainedWorkPatchName(state.target === 'workspace' ? (target.projectKey || 'member') : null);
     const snap = await snapshotWorktreePatch(target.worktreeDir, join(runDir, name));
-    if (snap.clearedLock) lockNotes.push(staleIndexLockNote(snap.clearedLock));
+    for (const lock of snap.clearedLocks || []) lockNotes.push(staleGitLockNote(lock));
     if (!snap.ok) {
       throw err(
         `cannot save recovery patch for ${target.projectKey || target.worktreeDir}: git ${snap.step} failed: ${snap.message}`,
@@ -692,4 +731,26 @@ async function applyRetainedUnderLock({ storeKey, id, projectDir, by }) {
 // kept for the pre-existing suites (test/pipeline-delete.test.mjs,
 // test/persist-roundtrip.test.mjs) that assert the FS/branch reclamation half
 // under the old name — which archive still performs in full.
+/** Delete (runs redesign §3.2): permanent. archivePipeline removes the run's files, worktree and local branch (remote
+ *  branches and PRs are never touched); then the row is anonymised in place and stamped deleted_at. The row itself
+ *  stays so its cost stays in Statistics, which sums every pipelines row. */
+export async function purgePipeline({ projectDir = null, key = null, workspaceKey = null, id } = {}) {
+  const db = getDb();
+  const row = db.prepare('SELECT archived_at, deleted_at FROM pipelines WHERE id = ?').get(String(id));
+  if (!row) throw Object.assign(new Error('pipeline not found'), { code: 'NOT_FOUND' });
+  if (row.deleted_at) return { ok: true, id, alreadyDeleted: true, deleted: true, warnings: [] };
+  const report = row.archived_at ? { ok: true, id, warnings: [] } : await archivePipeline({ projectDir, key, workspaceKey, id });
+  if (!report) return null;            // archivePipeline found no row for this scope: the bulk wrapper reports "run not found"
+  const ts = new Date().toISOString();
+  tx(() => {
+    db.prepare(`UPDATE pipelines SET title = 'deleted run', prompt = NULL, started_by = NULL,
+      archived_at = COALESCE(archived_at, ?), deleted_at = ? WHERE id = ?`).run(ts, ts, String(id));
+    db.prepare('DELETE FROM run_tags WHERE pipeline_id = ?').run(String(id));
+    db.prepare('DELETE FROM run_labels WHERE pipeline_id = ?').run(String(id));
+    db.prepare('DELETE FROM run_tag_events WHERE pipeline_id = ?').run(String(id));   // tag history is part of the record
+    db.prepare('DELETE FROM run_group_members WHERE pipeline_id = ?').run(String(id));
+  });
+  return { ...report, deleted: true };
+}
+
 export { archivePipeline as deletePipeline };

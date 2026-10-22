@@ -62,33 +62,37 @@ async function boot({ local, fetchHandler } = {}) {
 }
 
 test('a workspace run forms its own group keyed by the literal path segment, named by workspaceName, holding exactly its own runs', async () => {
-  const { window, show } = await boot();
+  // Group by Project (the View menu): one section per project or workspace.
+  const { window, show } = await boot({ local: { 'worca-cc.runs.view': JSON.stringify({ show: 'all', groupBy: 'project', person: '' }) } });
   show();
   await new Promise((r) => setTimeout(r, 0));
   const doc = window.document;
   await checkRows([
     { name: 'a workspace run forms its own group keyed by the literal path segment, named by workspaceName', run: () => {
-      // The project pills (and their WS badge) are gone (D4): the workspace is a group of the Runs list.
-      assert.equal(doc.querySelectorAll('#historyFilter .hist-pill').length, 0, 'no project pills');
-      const ws = doc.querySelector(`#runs-list .runs-group[data-group-key="${WKS_KEY}"]`);
-      assert.ok(ws, 'workspace group keyed by the literal projectKey path segment');
-      assert.equal(ws.querySelector('.runs-group-name').textContent, 'IoT Platform', 'named by workspaceName, not the member projectName');
-      assert.equal(ws.querySelector('.runs-count').textContent, '2');
-      // The plain project row is NOT in the workspace group.
-      const alpha = doc.querySelector('#runs-list .runs-group[data-group-key="alpha-00000001"]');
+      // The project pills (and their WS badge) are gone (D4): the workspace is a section of the Runs list, and a
+      // solo deployment's View menu has no "Started by" (D6).
+      doc.getElementById('runs-view-btn').dispatchEvent(new window.Event('click', { bubbles: true }));
+      assert.deepEqual([...doc.querySelectorAll('.wfv-menu .wfv-menu-h')].map((h) => h.textContent), ['Show', 'Group by'], 'no Started by');
+      doc.body.dispatchEvent(new window.Event('pointerdown', { bubbles: true }));
+      const ws = doc.querySelector(`#runs-list .runs-sec[data-section="project:${WKS_KEY}"]`);
+      assert.ok(ws, 'workspace section keyed by the literal projectKey path segment');
+      assert.equal(ws.querySelector('.runs-sec-title').textContent, 'IoT Platform', 'named by workspaceName, not the member projectName');
+      assert.equal(ws.querySelector('.runs-sec-head .runs-count').textContent, '2');
+      // The plain project row is NOT in the workspace section.
+      const alpha = doc.querySelector('#runs-list .runs-sec[data-section="project:alpha-00000001"]');
       assert.ok(alpha);
       assert.equal(ws.querySelector('.runs-row[data-pipeline-id="p1"]'), null);
     } },
     { name: 'the Runs list groups the workspace runs under a workspaceName header', run: () => {
-      const groups = [...doc.querySelectorAll('#runs-list .runs-group')];
-      assert.equal(groups.length, 2, 'one project group + one workspace group');
+      const groups = [...doc.querySelectorAll('#runs-list .runs-sec')];
+      assert.equal(groups.length, 2, 'one project section + one workspace section');
       // Read name and count apart: the head's textContent runs them together ("IoT Platform2").
-      const heads = groups.map((g) => `${g.querySelector('.runs-group-name').textContent} ${g.querySelector('.runs-count').textContent}`);
+      const heads = groups.map((g) => `${g.querySelector('.runs-sec-title').textContent} ${g.querySelector('.runs-sec-head .runs-count').textContent}`);
       assert.ok(heads.includes('IoT Platform 2'), 'workspace group header uses workspaceName');
       assert.ok(heads.includes('Alpha 1'), 'project group unchanged');
     } },
     { name: 'the workspace group holds exactly its own runs (literal path-segment key)', run: () => {
-      const rows = [...doc.querySelectorAll(`#runs-list .runs-group[data-group-key="${WKS_KEY}"] .runs-row`)];
+      const rows = [...doc.querySelectorAll(`#runs-list .runs-sec[data-section="project:${WKS_KEY}"] .runs-row`)];
       assert.deepEqual(rows.map((r) => r.dataset.pipelineId), ['w2', 'w1'], 'two workspace runs, newest first');
       assert.ok(rows.every((r) => r.dataset.projectKey === WKS_KEY), 'each row carries the literal key');
       assert.equal(doc.querySelectorAll(`#runs-list .runs-row[data-project-key="${WKS_KEY}"]`).length, 2,
@@ -188,7 +192,7 @@ test('detail: a workspace run whose primary branch was dropped (no changes) show
   assert.equal(doc.querySelector('#hist-detail .hd-branch-copy').hidden, true, 'no copy button for a deleted branch');
   const base = doc.querySelector('#hist-detail .hd-base');
   assert.equal(base.hidden, false);
-  assert.match(base.textContent, /No branch — no changes/);
+  assert.match(base.textContent, /No branch: no changes/);
 });
 
 test('detail: a kept workspace branch still paints source → feature with a copy button', async () => {

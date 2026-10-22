@@ -33,6 +33,13 @@ const TPL = { id: 'wf_t', name: 'T', version: 2, domain: 'coding',
     { id: 'w7', from: { node: 'n_rev', port: 'pass' }, to: { node: 'n_end', port: 'result' } }] };
 const build = (over) => buildGraphManifest(TPL, AGENTS, over);
 
+test('agent progressStage stamps onto the manifest cell; other cells never carry it', () => {
+  const m = buildGraphManifest(TPL, { ...AGENTS, planner: { ...AGENTS.planner, progressStage: 'plan' } });
+  assert.equal(m.graph.nodes.find((n) => n.id === 'n_plan').progressStage, 'plan');
+  assert.equal('progressStage' in m.graph.nodes.find((n) => n.id === 'n_rev'), false, 'an agent without it stays bare');
+  assert.equal('progressStage' in m.graph.nodes.find((n) => n.id === 'n_task'), false);
+});
+
 test('manifest head and node cells', () => {
   const m = build();
   assert.equal(m.version, 2);
@@ -251,4 +258,14 @@ test('codeGraph:false is frozen into the manifest (resume decides the same); abs
   assert.equal(buildGraphManifest({ ...TPL, codeGraph: false }, AGENTS).codeGraph, false);
   assert.equal('codeGraph' in build(), false);
   assert.equal('codeGraph' in GRAPH_DEFAULT_WORKFLOW, false);
+});
+
+test('role reviews: a loop wire\'s onExhausted rides the manifest and the rebuilt template (a resumed run keeps it)', () => {
+  const tpl = { ...TPL, wires: TPL.wires.map((w) => (w.id === 'w3' ? { ...w, config: { maxCycles: 2, onExhausted: 'clean' } } : w)) };
+  const m = buildGraphManifest(tpl, AGENTS);
+  assert.equal(m.graph.wires.find((w) => w.id === 'w3').onExhausted, 'clean');
+  assert.equal('onExhausted' in m.graph.wires.find((w) => w.id === 'w5'), false, 'only where authored');
+  const back = manifestTemplate(m).wires;
+  assert.deepEqual(back.find((w) => w.id === 'w3').config, { maxCycles: 2, onExhausted: 'clean' });
+  assert.deepEqual(back.find((w) => w.id === 'w5').config, { maxCycles: 3 });
 });

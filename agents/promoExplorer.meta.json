@@ -1,0 +1,45 @@
+{
+  "key": "promoExplorer",
+  "metaVersion": 2,
+  "needsRepo": true,
+  "mockRole": "generic-producer",
+  "promptHints": "Write product.md (the product in its own words, the features worth showing and where each lives in the UI) and runbook.json (a sandboxed start with demo data, or {\"ui\": false}). Copy both under promo/ in the pipeline directory. Pipeline directory: {pipelineDir}",
+  "inputs": [
+    {
+      "id": "task",
+      "type": "md"
+    },
+    {
+      "id": "answers",
+      "type": "json",
+      "required": false,
+      "as": "answers"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "product",
+      "type": "md",
+      "filename": "promo-product.md",
+      "artifactKind": "promo-product"
+    },
+    {
+      "id": "runbook",
+      "type": "json",
+      "filename": "promo-runbook.json",
+      "artifactKind": "promo-runbook"
+    }
+  ],
+  "domain": "video",
+  "displayName": "Promo: explore",
+  "description": "Reads the project (README, docs, routes, UI code, theme) and writes what the product is and does in its own words, the features worth showing and where each lives in the UI, plus a runbook to start the UI in a sandbox with demo data.",
+  "color": "violet",
+  "icon": "<rect x=\"3\" y=\"4\" width=\"18\" height=\"14\" rx=\"1.5\"/><path d=\"M3 8h18\"/><circle cx=\"11\" cy=\"13\" r=\"2.6\"/><path d=\"M13 15l2.5 2.5\" stroke-linecap=\"round\"/>",
+  "agentFile": "worca-cc-promo-explorer.md",
+  "runnerType": "producer",
+  "fanOut": true,
+  "asksQuestions": false,
+  "questionsLocked": false,
+  "questionsDefault": false,
+  "order": 72
+}

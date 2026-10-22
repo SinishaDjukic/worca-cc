@@ -30,7 +30,8 @@ const PROJECT = '/tmp/proj';
 const ID = 'auth-fix';
 const OTHER = 'seo-pSEO';
 
-async function boot({ url = 'http://localhost:4317/', storage = {} } = {}) {
+// `route(url)` may answer a request first (a Response-like object or a Promise); undefined falls through.
+async function boot({ url = 'http://localhost:4317/', storage = {}, route = null } = {}) {
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
@@ -46,6 +47,8 @@ async function boot({ url = 'http://localhost:4317/', storage = {} } = {}) {
   const calls = [];
   window.fetch = (u, opts) => {
     calls.push({ url: String(u), opts: opts || {} });
+    const own = route ? route(String(u)) : undefined;
+    if (own !== undefined) return own;
     if (String(u).includes('/api/projects')) {
       return Promise.resolve({
         ok: true, status: 200,
@@ -112,7 +115,8 @@ async function bootWithRuns() {
 // ---------- open / close ----------
 
 test('#running/<id> opens the detail screen and paints its header', async () => {
-  const { window } = await bootWithRuns();
+  const ctx = await bootWithRuns();
+  const { window } = ctx;
   go(window, `running/${ID}`);
   await settle(window);
   const doc = window.document;
@@ -133,8 +137,14 @@ test('#running/<id> opens the detail screen and paints its header', async () => 
   assert.equal(status.querySelector('.rd-status-word').textContent, 'Running');
   assert.match(doc.querySelector('#run-detail .rd-meta').textContent, /proj/);
   // startedLabel passes a bare time string through unchanged (app.js:10912-10917).
-  assert.match(doc.querySelector('#run-detail .rd-meta').textContent, /10:00:00/);
-  assert.equal(doc.querySelector('#run-detail .rd-pause').hidden, false, 'a live run offers Pause');
+  assert.match(doc.querySelector('#run-detail .rd-meta').textContent, /started 10:00/);
+  // A run with no step yet reads Starting in the one run model (runs redesign slice 4): Stop, and Pause once a step runs.
+  assert.equal(doc.querySelector('#run-detail .rd-pause').hidden, true, 'a starting run offers no Pause yet');
+  assert.equal(doc.querySelector('#run-detail .rd-stop').hidden, false);
+  ctx.recv({ type: 'state', runId: ID, status: 'running', steps: [{ executionId: 'x:n:1', nodeId: 'n', ordinal: 1, cycle: 1, kind: 'cycle',
+    status: 'start', startedAt: '2026-01-01T00:00:00Z' }], active: [{ nodeId: 'n', executionId: 'x:n:1' }] });
+  await settle(window);
+  assert.equal(doc.querySelector('#run-detail .rd-pause').hidden, false, 'a live run with a step offers Pause');
   assert.equal(doc.querySelector('#run-detail .rd-stop').hidden, false);
 });
 
@@ -162,8 +172,8 @@ test('slide layout: Back returns to #runs, the closing detail stays mounted + in
       // inRunsView()), so visit it before reading the row the focus comes home to.
       go(window, 'runs');
       await settle(window);
-      const row = window.document.querySelector(`#runs-list .runs-row[data-slot="group"][data-run-id="${ID}"]`);
-      assert.ok(row, 'the run has a row in its project group');
+      const row = window.document.querySelector(`#runs-list .runs-row[data-run-id="${ID}"]`);
+      assert.ok(row, 'the run has a row in the list');
       assert.equal(row.tagName, 'A', 'rows are links, focusable without a tabindex');
 
       go(window, `running/${ID}`);
@@ -179,7 +189,6 @@ test('slide layout: Back returns to #runs, the closing detail stays mounted + in
       assert.ok(active && active.classList.contains('runs-row'), 'focus returned to a row, not <body>');
       assert.equal(active.dataset.runId, ID,
         'and to the row the detail was opened from (re-queried by data-run-id)');
-      assert.equal(active.dataset.slot, 'group', 'the group copy, where the run lives');
       assert.equal(window.document.querySelector('#runs-list-pane').hasAttribute('inert'), false);
     } },
     { name: 'slide layout: the closing detail stays mounted + inert until the pane\'s guarded transitionend', run: async () => {
@@ -369,6 +378,44 @@ test('a deep link to a run hello does not know lands on its saved page when the 
     'the remembered run ended: its saved page, not the list (D6)');
   assert.equal(window.document.querySelector('#run-shell').classList.contains('detail-open'), false);
   assert.ok(window.document.querySelector('#hist-shell').classList.contains('detail-open'));
+});
+
+test('a #running/ link from chat history for a finished run opens its saved page (§5a.1)', async () => {
+  const answer = (status, body) => Promise.resolve({ ok: status === 200, status, json: async () => body });
+  await checkRows([
+    { name: 'the server names the saved run: #history/KEY/PID', run: async () => {
+      const route = (u) => (u.includes('/api/run-links/') ? answer(200, { pipelineId: 'p-chat', historyKey: 'k' }) : undefined);
+      const { window, recv, calls } = await boot({ url: 'http://localhost:4317/#running/run-old-1', route });
+      await settle(window);
+      recv({ type: 'hello', runs: [] });
+      await settle(window, 6);
+      assert.ok(calls.some((c) => c.url === '/api/run-links/run-old-1'), 'the server was asked');
+      assert.equal(window.location.hash, '#history/k/p-chat');
+    } },
+    { name: 'the server does not know it either: #runs and one info toast', run: async () => {
+      const route = (u) => (u.includes('/api/run-links/') ? answer(404, { error: 'No saved run for that link' }) : undefined);
+      const { window, recv } = await boot({ url: 'http://localhost:4317/#running/run-old-1', route });
+      await settle(window);
+      recv({ type: 'hello', runs: [] });
+      await settle(window, 6);
+      assert.equal(window.location.hash, '#runs');
+      const toasts = [...window.document.querySelectorAll('.toast.info')].filter((t) => t.textContent.includes('no longer open'));
+      assert.equal(toasts.length, 1);
+    } },
+    { name: 'the person moved on before the answer: no navigation', run: async () => {
+      let release;
+      const route = (u) => (u.includes('/api/run-links/') ? new Promise((r) => { release = () => r({ ok: true, status: 200, json: async () => ({ pipelineId: 'p-chat', historyKey: 'k' }) }); }) : undefined);
+      const { window, recv } = await boot({ url: 'http://localhost:4317/#running/run-old-1', route });
+      await settle(window);
+      recv({ type: 'hello', runs: [] });
+      await settle(window);
+      go(window, 'schedules');
+      await settle(window);
+      release();
+      await settle(window, 6);
+      assert.equal(window.location.hash, '#schedules');
+    } },
+  ]);
 });
 
 // ---------- leave-guard ----------

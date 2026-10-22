@@ -31,17 +31,18 @@ const RUNTIME = new Map([
   ['#wfv-library .wfl-folder[data-folder]', ['workflows/library.mjs', 'row.dataset.folder = key']],   // a folder row (the one holding Default)
   ['#wfv-library .wfl-head.is-searching #wfl-close', ['workflows/library.mjs', /closeBtn\.id = 'wfl-close';[\s\S]*head\.classList\.toggle\('is-searching'/]],   // ✕ on an open search
   ['.ask-input', ['ask-panel.mjs', "el.input.className = 'ask-input'"]],
-  ['.ask-send', ['ask-panel.mjs', "make('button', 'ask-send')"]],
+  ['.ask-send', ['ask-panel.mjs', "make('button', 'btn btn-primary btn-icon ask-send')"]],
   ['.ask-transcript', ['ask-panel.mjs', "make('div', 'ask-transcript')"]],
   ['#pd-tab-team', ['app.js', /btn\.id = `\$\{idPrefix\}-tab-\$\{t\.key\}`/]],                  // initDetailTabs, idPrefix 'pd' + PD_TABS key 'team'
   ['#proj-detail .pd-team-metrics', ['app.js', 'card.className = `card pd-team-card pd-team-${which}`']],  // buildPdTeam, which = metrics | policy
   ['#proj-detail .pd-team-policy', ['app.js', 'card.className = `card pd-team-card pd-team-${which}`']],
   ['#proj-detail .tm-enable', ['team-metrics-surfaces.mjs', "btn(doc, 'tm-enable',"]],
-  ['#plugin-modal .tm-enable-submit', ['app.js', "'btn btn-primary btn-mini tm-enable-submit'"]],
+  ['#plugin-modal .tm-enable-submit', ['app.js', "'btn btn-primary btn-sm tm-enable-submit'"]],
   ['#proj-detail .tp-cell', ['team-policy-view.mjs', "'tm-cell tp-cell'"]],
   ['#proj-detail .tp-enable', ['team-policy-view.mjs', "btn(doc, 'tp-enable',"]],
-  ['#plugin-modal .tp-enable-submit', ['app.js', "'btn btn-primary btn-mini tp-enable-submit'"]],
-  ['#tp-body .tp-edit', ['team-policy-view.mjs', "'btn btn-ghost btn-mini tp-edit'"]],
+  ['#plugin-modal .tp-enable-submit', ['app.js', "'btn btn-primary btn-sm tp-enable-submit'"]],
+  ['#plugin-modal .pl-needs-git', ['team-metrics-surfaces.mjs', "sub.append(' · ', h(doc, 'span', 'badge waiting pl-needs-git', 'Needs git'))"]],   // the setup dialogs' origin line (P6; team-policy-view.mjs paints the same)
+  ['#tp-body .tp-edit', ['team-policy-view.mjs', "'btn btn-sm tp-edit'"]],
   ['#mode-cards [data-level-choice]', ['ui-level.mjs', 'data-level-choice="${id}"']],            // the mode dialog's cards
   ['#lvl-menu [data-level-choice]', ['ui-level.mjs', "if (!side.querySelector('[data-level-choice]')) side.innerHTML = levelMenuHtml(lvl);"]],   // the account menu's Interface mode side menu
 ]);

@@ -17,13 +17,13 @@
 export const ENGINES = Object.freeze({
   claude: Object.freeze({ label: 'Claude', models: true, cost: true, helpers: true, beta: false }),
   codex: Object.freeze({ label: 'Codex', models: true, cost: true, helpers: true, beta: true }),
-  copilot: Object.freeze({ label: 'Copilot', models: false, cost: false, helpers: true, beta: true }),
+  copilot: Object.freeze({ label: 'Copilot', models: true, cost: false, helpers: true, beta: true }),
   cursor: Object.freeze({ label: 'Cursor', models: true, cost: false, helpers: false, beta: true }),
 });
 
 /** The run engines. */
 export const ENGINE_NAMES = Object.freeze(Object.keys(ENGINES));
-/** The engines that own catalog models. Copilot owns none. */
+/** The engines that own catalog models. */
 export const MODEL_ENGINE_NAMES = Object.freeze(ENGINE_NAMES.filter((e) => ENGINES[e].models));
 /** The engines a run can switch between: the model engines (a switch falls back to the target's catalog default). */
 export const SWITCH_ENGINES = MODEL_ENGINE_NAMES;

@@ -10,6 +10,7 @@ import { formatInstant, describeRule } from '../../src/shared/schedule/recurrenc
 import { createThreadModel } from './ask-model.mjs';
 import { credentialBadge } from './credential-badges.mjs';
 import { createMarkdownRenderer } from './ask-markdown.mjs';
+import { createRefChips } from './ask-ref-chips.mjs';
 import { createDotOrbs, turnPhase } from './dot-orb.mjs';
 import { workflowPickerLabel } from './results-view.mjs';
 import { renderAutoProposal, AUTO_PROPOSAL_ORDER_CARD } from './auto-proposal.mjs';
@@ -26,13 +27,25 @@ import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { parseMcpToolName } from '../../src/shared/mcp-tool-name.mjs';
 import { mcpSkipView, mcpCopyNote, skillSkipView } from './mcp-run-picker.mjs';
-import { engineOfEntry, chatEngineOf, pickerGroups } from './ask-engine.mjs';
+import { engineOfEntry, chatEngineOf, pickerGroups, ASK_CHAT_ENGINES } from './ask-engine.mjs';
 import { formatQuotedMessage, parseQuotedMessage } from './pinpoint-model.mjs';
 import { ATTACH_ACCEPT, ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 as attachBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from './attach-files.mjs';
 import { notify } from './feedback.mjs';
 import { currentLevel, levelShows } from './ui-level.mjs';
 import { chatCardBuilder, composerAddons } from './chat/extensions.mjs';
+import { flagOn } from './flags.mjs';
+import { gitOn } from './git-gate.mjs';
+import { NO_PROJECT_KEY, NO_PROJECT_NAME, NEEDS_REPO_NOTE } from '../../src/shared/no-project.mjs';
+import { createTagInput, fetchTagVocabulary, createTagRulesLine } from './tag-input.mjs';
+import { shapeFirstOn } from './chat/shape-gate.mjs';
+import { INTENTS, splitIntentLead } from './chat/intent.mjs';
+import { homeIcon } from './chat/home-icons.mjs';
+import { NO_PROJECT_LABEL, scopeFromContext, scopeKind, scopeIcon, kindChip, projectKind } from './chat/scope-ui.mjs';
+import { icon } from './icons.mjs';
+import { makeSwitch } from './switch.mjs';
+import { shapeCardExtras, shapeWhatHappens, shapeAdvancedSummary } from './shape/proposal.mjs';
 import { createAskComposerCards, ASK_COMPOSER_CARD_TYPES } from './ask-composer-cards.mjs';
+import { applyPresetStart } from '../../src/shared/run-presets.mjs';
 import {
   fmtTokens, CTX_COMPACT_BUFFER, CTX_WARN, CTX_HIGH, CTX_COST_HINT, kTok,
   fmtWindow, ctxTrigger, ctxLevel, ctxPercent, fmtCtx, ctxTitle, fmtShare, ctxBreakdown, fmtUsd,
@@ -201,10 +214,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // that a stored pick yields to. Cleared whenever the picker is re-seeded from the browser or a thread.
     pickerExplicit: false,
     catalog: null,
-    // #397: the thread's project/workspace scope. pinned:false = Auto (follow the
-    // page — today's behaviour). label caches the display name once resolved.
+    // #397: the thread's project/workspace scope. pinned:false = No project: no page target rides along (CONTRACT §4).
+    // label caches the display name once resolved.
     scope: { pinned: false, projectKey: null, workspaceId: null, label: null },
-    popover: null,            // {panel, trigger, onClose, build, refreshOn, refresh}
+    scopeHeld: null,          // S39: the thread id whose scope PATCH a running reply refused; the next send carries it
+    popover: null,           // {panel, trigger, onClose, build, refreshOn, refresh}
     contexts: [],             // the open chat's topics (thread.contexts), shown in the context popover
     threadsRefresh: null,     // the debounce timer behind the History popover's ask-run-status refetch
     expandedAgents: new Set(),
@@ -267,6 +281,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   };
   const el = {}; // element refs, filled by the builders
   const renderer = createMarkdownRenderer({ doc, load: loadMarkdown, hljsLoader });
+  // Answer chips (ask-ref-chips.mjs): the PRs, issues, work items, runs and chats an answer names. The run chips follow
+  // the run store like the run cards; lookups go out once an answer is done (renderAnswerPiece).
+  const refChips = createRefChips({ doc, fetch, runStore, now, root: () => el.transcript || null, visible: () => st.open });
   const orbs = createDotOrbs({ doc, win });   // the live turn's orb (ensureThinking), the Workflows chat's dot sphere
 
   // ---- storage --------------------------------------------------------------
@@ -331,6 +348,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
 
   // ---- tiny DOM helpers -----------------------------------------------------
+  /** The ✓ beside the current pick in a menu: a stroke icon, not a character (spec §1.3). */
+  function checkMark() {
+    const n = make('span', 'ask-model-check');
+    n.append(icon(doc, 'check', 12));
+    return n;
+  }
   function make(tag, className, text) {
     const n = doc.createElement(tag);
     if (className) n.className = className;
@@ -394,7 +417,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
    *  chat/intent.mjs drops the intent). Below 1100px the overlay closes first, as after a pick, so the new chat has its
    *  room and newThread() can focus its composer. */
   function newChatButton(className) {
-    const b = make('button', `ask-icon-btn chat-new-btn ${className}`);
+    const b = make('button', `btn btn-sm btn-quiet chat-new-btn ${className}`);
     b.type = 'button';
     b.setAttribute('data-ask-new-btn', '');
     b.appendChild(svgIcon(ICONS.plus, 14, 2));
@@ -437,7 +460,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
     const convo = make('div', 'chat-convo');
     const head = make('header', 'chat-head');
-    const threadsBtn = iconButton('ask-icon-btn chat-head-btn chat-history-toggle', 'History', historyIcon(), () => toggleHistory());
+    const threadsBtn = iconButton('btn btn-quiet btn-icon chat-head-btn chat-history-toggle', 'History', historyIcon(), () => toggleHistory());
     threadsBtn.setAttribute('data-ask-threads-btn', '');
     threadsBtn.setAttribute('aria-controls', 'chat-history');
     el.historyBtn = threadsBtn;
@@ -520,7 +543,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         chip.appendChild(img);
       }
       chip.appendChild(make('span', 'ask-chip-name', f.name));
-      const x = make('button', 'ask-chip-x', '×');
+      const x = make('button', 'ask-chip-x');
+      x.append(icon(doc, 'x', 12));
       x.type = 'button';
       x.setAttribute('aria-label', `Remove ${f.name}`);
       x.addEventListener('click', () => {
@@ -539,7 +563,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     chip.setAttribute('aria-label', 'Quoted text');
     const m = make('div', 'ask-chip-quote-m');
     m.append(make('div', 'ask-chip-quote-k', q.src ? `From ${q.src}` : 'Quoting'), make('div', `ask-chip-quote-t${q.code ? ' mono' : ''}`, q.text));
-    const x = make('button', 'ask-chip-x', '×');
+    const x = make('button', 'ask-chip-x');
+    x.append(icon(doc, 'x', 12));
     x.type = 'button';
     x.setAttribute('aria-label', 'Remove quote');
     x.addEventListener('click', () => { setQuote(null); focusComposer(); });
@@ -721,7 +746,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.voiceStatus.setAttribute('role', 'status');
     wrap.appendChild(el.voiceStatus);
 
-    el.mic = make('button', 'ask-voice-mic');
+    el.mic = make('button', 'btn btn-icon ask-voice-mic');
     el.mic.type = 'button';
     el.mic.setAttribute('data-ask-mic', '');
     el.mic.setAttribute('aria-pressed', 'false');
@@ -748,7 +773,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     paintMicMode(lastVoiceMode());
     wrap.appendChild(el.mic);
 
-    const caret = make('button', 'ask-voice-caret');
+    const caret = make('button', 'btn btn-quiet btn-icon ask-voice-caret');
     caret.type = 'button';
     caret.setAttribute('data-ask-voice-caret', '');
     caret.setAttribute('aria-label', 'Voice options');
@@ -770,7 +795,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         it.dataset.mode = mode;
         if (VOICE_MODE_ICONS[mode]) it.appendChild(svgIcon(VOICE_MODE_ICONS[mode], 16, 1.9));
         it.appendChild(make('span', 'ask-model-name', label));
-        if (mode === current) it.appendChild(make('span', 'ask-model-check', '✓'));
+        if (mode === current) it.appendChild(checkMark());
         return it;
       };
       p.appendChild(item('Dictate once', 'dictate', () => startVoice('dictate')));
@@ -931,7 +956,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         text,
         model: st.picker.model,
         effort: st.picker.effort,
-        // The browser's zone rides along: "tomorrow 02:00" is read in it (docs/scheduled-runs.md "Ask Worca").
+        // The browser's zone rides along: "tomorrow 02:00" is read in it (docs/scheduled-runs.md "Chat").
         context: { ...scopedContext(getPageContext() || {}), timeZone: browserTimeZone() },
         // MCP registry §9.4: every message carries the picker's choices, so each turn runs what the picker shows —
         // a refused first message (429/403/400, network) or a PATCH still in flight would leave the stored ones behind.
@@ -942,7 +967,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       let res = null;
       try {
         res = await fetch(`/api/ask/threads/${id}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      } catch { setComposerMsg('network error — the message was not sent'); return false; }
+      } catch { setComposerMsg('network error: the message was not sent'); return false; }
       const accepted = !!res && res.status === 202;
       // The user may have clicked New chat or switched threads during the POST: the
       // message is on the server and arrives with its thread; touching the composer
@@ -958,6 +983,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         setComposerMsg(msg);
         return false;
       }
+      st.scopeHeld = null;                           // S39: this message carried the held pick (its pinned is authoritative)
       // A toggle made while this POST was out PATCHed a value the route then overwrote with sentOff: re-send the latest.
       if (st.mcp.off !== sentOff) patchMcpOff(id, st.mcp.off);
       const { userMessageId, attachments: stored, contexts } = await res.json();
@@ -999,7 +1025,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     let q = st.queues.get(id);
     if (!q) { q = { items: [], paused: false, draining: false }; st.queues.set(id, q); }
     if (q.items.length >= QUEUE_MAX) {
-      announce(`Queue full — ${QUEUE_MAX} messages wait for this reply`);
+      announce(`Queue full: ${QUEUE_MAX} messages wait for this reply`);
       renderQueue();
       return false;
     }
@@ -1012,7 +1038,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     renderChips();
     st.hist = { idx: -1, draft: '' };
     renderQueue();
-    announce(`Queued — ${q.items.length} of ${QUEUE_MAX}, sends when the reply finishes`);
+    announce(`Queued: ${q.items.length} of ${QUEUE_MAX}, sends when the reply finishes`);
     return 'queued';
   }
 
@@ -1166,8 +1192,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     pen.addEventListener('mousedown', (e) => { if (li.classList.contains('is-editing')) e.preventDefault(); });   // keep the field's focus: no blur-save first
     pen.addEventListener('click', () => { if (st.queueEdit && st.queueEdit.item === item) endQueueEdit(true); else startQueueEdit(item); });
     li.appendChild(pen);
-    const x = make('button', 'ask-queue-x', '×');
+    const x = make('button', 'btn btn-sm btn-quiet btn-icon ask-queue-x');
     x.type = 'button';
+    x.setAttribute('aria-label', 'Remove from the queue');
+    x.append(icon(doc, 'x', 14));
     x.addEventListener('click', () => removeQueuedByUser(item));
     li.appendChild(x);
     return li;
@@ -1240,7 +1268,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const paused = !!q && q.paused;
     el.queueResume.hidden = !paused;
     el.queueNote.textContent = paused ? 'Queue paused'
-      : items.length >= QUEUE_MAX ? 'Queue full — sends when the reply finishes'
+      : items.length >= QUEUE_MAX ? 'Queue full: sends when the reply finishes'
         : 'Sends when the reply finishes';
     if (before) {
       for (const li of el.queueList.children) {
@@ -1425,7 +1453,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.input.className = 'ask-input';
     el.input.rows = 1;
     el.input.placeholder = INPUT_PLACEHOLDER;
-    el.input.setAttribute('aria-label', 'Message Ask Worca');   // fixed: the placeholder may hold a suggestion
+    el.input.setAttribute('aria-label', 'Message Chat');   // fixed: the placeholder may hold a suggestion
     el.input.addEventListener('keydown', onComposerKeydown);
     el.input.addEventListener('input', onComposerInput);
     el.input.addEventListener('paste', onComposerPaste);
@@ -1450,7 +1478,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.fileInput.hidden = true;
     el.fileInput.addEventListener('change', () => { addFiles(el.fileInput.files); el.fileInput.value = ''; });
     row.appendChild(el.fileInput);
-    const attach = iconButton('ask-icon-btn', 'Attach files', ICONS.plus, () => el.fileInput.click());
+    const attach = iconButton('btn btn-quiet btn-icon', 'Attach files', ICONS.plus, () => el.fileInput.click());
     attach.setAttribute('data-ask-attach-btn', '');
     row.appendChild(attach);
 
@@ -1459,22 +1487,37 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // (attach → scope → spacer → meter …): the pill keeps its width (style.css
     // .ask-scope-btn flex:none), the spacer absorbs the slack. Its popover
     // (.ask-pop-scope) opens above the composer box, flush with its left edge.
-    const scopeBtn = make('button', 'ask-scope-btn');
+    const scopeBtn = make('button', 'btn btn-sm btn-quiet ask-scope-btn');
     scopeBtn.type = 'button';
     scopeBtn.setAttribute('data-ask-scope-btn', '');
-    scopeBtn.title = 'Project scope for this chat';
-    el.scopeLabel = make('span', 'ask-scope-label', 'Auto');
+    scopeBtn.title = `Chat scope: ${NO_PROJECT_LABEL}`;
+    scopeBtn.setAttribute('aria-haspopup', 'menu');
+    scopeBtn.setAttribute('aria-expanded', 'false');
+    scopeBtn.setAttribute('aria-label', `Chat scope: ${NO_PROJECT_LABEL}`);   // updateScopeButton() runs on the first scope change
+    el.scopeIco = scopeIcon(doc, 'none', 13);
+    el.scopeIcoKind = 'none';
+    el.scopeLabel = make('span', 'ask-scope-label', NO_PROJECT_LABEL);
+    scopeBtn.appendChild(el.scopeIco);
     scopeBtn.appendChild(el.scopeLabel);
     scopeBtn.appendChild(svgIcon(ICONS.chevronDown, 11, 2));
     scopeBtn.addEventListener('click', () => openScopePopover(scopeBtn));
     el.scopeBtn = scopeBtn;
-    scopeBtn.dataset.minLevel = 'advanced';      // interface mode (docs/ui-levels.md): Auto scope is the simple path
     row.appendChild(scopeBtn);
+    // Never a two-letter stub (run 1): when the label would be cut below 56px, show the icon alone; the label stays in
+    // the tooltip and the accessible name. The row's width changes with the level, the engine and the window.
+    const fitScope = () => {
+      scopeBtn.classList.remove('is-compact');
+      const l = el.scopeLabel;
+      if (l.scrollWidth > l.clientWidth + 1 && l.clientWidth < 56) scopeBtn.classList.add('is-compact');
+    };
+    el.fitScope = fitScope;
+    const RO = doc.defaultView && doc.defaultView.ResizeObserver;
+    if (typeof RO === 'function') { el.scopeRo = new RO(() => fitScope()); el.scopeRo.observe(row); }
 
     // MCP registry §9.4 + skills registry §6.8: the per-chat Sets picker — `Sets · N` (N = copies and skills that start
     // next turn), hidden while no set in play has a member or a skill. Styled as the scope pill; opens like the model
     // button's Effort sub-picker.
-    const mcpBtn = make('button', 'ask-scope-btn ask-mcp-btn ask-sets-btn');
+    const mcpBtn = make('button', 'btn btn-sm btn-quiet ask-scope-btn ask-mcp-btn ask-sets-btn');
     mcpBtn.type = 'button';
     mcpBtn.setAttribute('data-ask-mcp-btn', '');
     mcpBtn.title = 'Sets for this chat';
@@ -1495,7 +1538,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.meterCost = make('span', 'ask-meter-cost', '');
     el.meterCost.dataset.minLevel = 'advanced';
     meter.appendChild(el.meterCost);
-    const ctxBtn = make('button', 'ask-ctx-ring');
+    const ctxBtn = make('button', 'btn btn-sm btn-quiet btn-icon ask-ctx-ring');
     ctxBtn.type = 'button';
     ctxBtn.setAttribute('data-ask-ctx-btn', '');
     ctxBtn.setAttribute('aria-haspopup', 'menu');
@@ -1507,7 +1550,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     meter.appendChild(ctxBtn);
     row.appendChild(meter);
 
-    const modelBtn = make('button', 'ask-model-btn');
+    const modelBtn = make('button', 'btn btn-sm btn-quiet ask-model-btn');
     modelBtn.type = 'button';
     modelBtn.setAttribute('data-ask-model-btn', '');
     modelBtn.dataset.minLevel = 'advanced';
@@ -1519,7 +1562,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     modelBtn.addEventListener('click', () => openModelPopover(modelBtn));
     row.appendChild(modelBtn);
 
-    el.send = make('button', 'ask-send');
+    el.send = make('button', 'btn btn-primary btn-icon ask-send');
     el.send.type = 'button';
     el.send.setAttribute('data-ask-send', '');
     el.send.setAttribute('aria-label', 'Send');
@@ -1528,7 +1571,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (createVoice) row.appendChild(buildVoiceControls());
     row.appendChild(el.send);
 
-    el.stop = make('button', 'ask-stop');
+    el.stop = make('button', 'btn btn-icon ask-stop');
     el.stop.type = 'button';
     el.stop.setAttribute('data-ask-stop', '');
     el.stop.setAttribute('aria-label', 'Stop');
@@ -1590,6 +1633,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       composerCards().stale();   // the chat was hidden: a wizard may have saved a draft meanwhile
       scheduleFlush();
       repaintProgressCards({ hydrate: true });
+      refChips.show();                               // run chips skipped the store events while hidden
       scheduleMcpRefresh();                          // the page may have changed while Chat was hidden
       if (st.historyStale) loadHistory();            // the first show, or a refresh frame landed while hidden
       if (createVoice && voiceUsedBefore()) voice().preload();   // the mic is ready by the time it is clicked
@@ -1727,7 +1771,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (focusTrigger) { try { p.trigger.focus(); } catch { /* ignore */ } }
   }
 
-  function menuItems(panel) { return [...panel.querySelectorAll('[role="menuitem"]:not([disabled]),[role="menuitemcheckbox"]:not([disabled])')]; }
+  function menuItems(panel) { return [...panel.querySelectorAll('[role="menuitem"]:not([disabled]),[role="menuitemcheckbox"]:not([disabled]),[role="menuitemradio"]:not([disabled])')]; }
 
   function onPopKeydown(e) {
     const p = st.popover;
@@ -1746,7 +1790,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function openPopover({ panelClass, trigger, build, onClose, refreshOn, refresh }) {
     if (st.popover && st.popover.trigger === trigger) { closePopover({ focusTrigger: false }); return null; }
     closePopover({ focusTrigger: false });
-    const panel = make('div', `ask-pop ${panelClass}`);
+    const panel = make('div', `menu ask-pop ${panelClass}`);
     panel.setAttribute('role', 'menu');
     panel.addEventListener('keydown', onPopKeydown);
     build(panel);
@@ -1776,7 +1820,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
 
   function menuItem(className, onPick) {
-    const b = make('button', `ask-pop-item ${className}`.trim());
+    const b = make('button', `menu-item ask-pop-item ${className}`.trim());
     b.type = 'button';
     b.setAttribute('role', 'menuitem');
     b.tabIndex = -1;
@@ -2025,7 +2069,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const rowEl = make('div', 'ask-thread-row');
     rowEl.setAttribute('role', 'listitem');
     rowEl.dataset.threadId = t.id;
-    const pick = make('button', 'ask-pop-item ask-thread-pick');
+    const pick = make('button', 'menu-item ask-pop-item ask-thread-pick');
     pick.type = 'button';
     pick.appendChild(make('span', `ask-dot ask-thread-dot${t.inFlight ? ' ask-dot-live' : ''}`));
     pick.appendChild(make('span', `ask-dot ask-thread-dot${t.waiting ? ' ask-dot-wait' : t.tracking ? ' ask-dot-track' : ''}`));
@@ -2154,7 +2198,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // (effortFromStore ⊇ pickerFromStore — a stored model always carries its effort.)
     // A thread's pick claims both slots.
     // D12/D17: a new chat starts on the user's Ask engine; a stored pick of the OTHER engine does not override it.
-    const askEngine = st.catalog && st.catalog.askEngine === 'codex' ? 'codex' : 'claude';
+    const askEngine = st.catalog && ASK_CHAT_ENGINES.includes(st.catalog.askEngine) ? st.catalog.askEngine : 'claude';
     const storeFits = st.pickerFromStore && (st.pickerExplicit || !catalogEntry(st.picker.model) || engineOfEntry(catalogEntry(st.picker.model)) === askEngine);
     if (st.pickerFromStore && !storeFits && !st.pickerFromThread) {
       // The stored pick is the other engine's: this chat claims neither its model nor its effort (the Ask slot's pair
@@ -2249,10 +2293,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
    * Primary-list grouping key. Claude ids group by family; a PLUGIN model groups by
    * its plugin, so a plugin shipping ten ids contributes one primary row and the rest
    * land under "More models" — instead of each foreign id becoming its own "family"
-   * (the old `|| m.id` fallback) and flooding the list. Anything else shares one
-   * 'other' bucket.
+   * (the old `|| m.id` fallback) and flooding the list. A Copilot built-in (copilot/<id>) groups by its model family
+   * (claude-sonnet, gpt, gemini, …), so the newest of each is up front. Anything else shares one 'other' bucket.
    */
   function familyKey(m) {
+    if ((m.engine || 'claude') === 'copilot' && m.id.startsWith('copilot/')) {
+      return `copilot:${(m.id.slice('copilot/'.length).match(/^[a-z]+(?:-[a-z]+)*/) || ['other'])[0]}`;
+    }
     const fam = (m.id.match(/^claude-(opus|fable|sonnet|haiku)-/) || [])[1];
     if (fam) return `claude:${fam}`;
     if (m.custom === 'plugin' && m.plugin) return `plugin:${m.plugin}`;
@@ -2319,19 +2366,19 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // The two STATUS badges stay (models-view.mjs:116,120-123) — they are warnings, not provenance.
       if (m.costUnreliable) {
         item.appendChild(tag('⚠cost', 'is-warn',
-          'This model reported no cost while consuming tokens — chat spend may not count toward the budget.'));
+          'This model reported no cost while consuming tokens. Chat spend may not count toward the budget.'));
       }
       if (Array.isArray(m.secretsMissing) && m.secretsMissing.length) {
         item.appendChild(tag('secret not set', 'is-err',
-          `${m.secretsMissing.join(', ')} is not set — configure it in the ${m.plugin ? `“${m.plugin}” ` : ''}plugin's Model secrets, or this model will fail.`));
+          `${m.secretsMissing.join(', ')} is not set. Configure it in the ${m.plugin ? `“${m.plugin}” ` : ''}plugin's Model secrets, or this model will fail.`));
       }
       if (m.needsSignIn) {
-        item.appendChild(tag('needs sign-in', 'is-err', m.signInMessage || 'The provider behind this model is not usable yet — the Providers page.'));
+        item.appendChild(tag('needs sign-in', 'is-err', m.signInMessage || 'The provider behind this model is not usable yet. See the Providers page.'));
       }
       // Credential broker: whether the signed-in person has the key this model spends from.
       const cb = credentialBadge(m.id);
       if (cb) item.appendChild(tag(cb.text, cb.missing ? 'is-err' : 'is-key', cb.title));
-      if (m.id === st.picker.model) item.appendChild(make('span', 'ask-model-check', '✓'));
+      if (m.id === st.picker.model) item.appendChild(checkMark());
       return item;
     };
     // Inside an engine's section the models group by connection, like every model picker (modelGroups); a sub-heading
@@ -2360,7 +2407,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         for (const eff of entry && Array.isArray(entry.efforts) ? entry.efforts : ['medium', 'high', 'xhigh', 'max']) {
           const item = menuItem('ask-effort-item', () => setPickerEffort(eff));
           item.appendChild(make('span', 'ask-model-name', eff));
-          if (eff === st.picker.effort) item.appendChild(make('span', 'ask-model-check', '✓'));
+          if (eff === st.picker.effort) item.appendChild(checkMark());
           panel.appendChild(item);
         }
       } else if (pane === 'more') {
@@ -2369,7 +2416,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         back.appendChild(make('span', null, '‹ Models'));
         panel.appendChild(back);
         panel.appendChild(make('div', 'ask-pop-divider'));
-        for (const g of pickerGroups(st.catalog ? st.catalog.models : [], { lock: lockedEngine() })) appendByConnection(splitCatalog(g.models).rest, g.engine);
+        // Each engine's more models under its name, as in the main pane, when more than one engine has some.
+        const more = pickerGroups(st.catalog ? st.catalog.models : [], { lock: lockedEngine() })
+          .map((g) => ({ ...g, rest: splitCatalog(g.models).rest })).filter((g) => g.rest.length);
+        for (const g of more) {
+          if (more.length > 1) panel.appendChild(make('div', 'ask-pop-group', g.label));
+          appendByConnection(g.rest, g.engine);
+        }
       } else {
         // D12: a new chat shows each engine under its name; inside a chat only the chat's engine is offered.
         const sections = pickerGroups(st.catalog ? st.catalog.models : [], { lock: lockedEngine() });
@@ -2594,7 +2647,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           panel.appendChild(row);
         }
         // Before the first preview lands, or when it failed: say so rather than show an empty menu.
-        if (!p.sets.length) panel.appendChild(make('div', 'ask-pop-empty', st.mcp.failed ? 'Could not load the sets — reopen to retry.' : !st.mcp.preview ? 'Loading…' : 'No sets in play.'));
+        if (!p.sets.length) panel.appendChild(make('div', 'ask-pop-empty', st.mcp.failed ? 'Could not load the sets. Reopen to retry.' : !st.mcp.preview ? 'Loading…' : 'No sets in play.'));
         // Skills registry §4.1: a host whose Claude Code refuses --plugin-dir mounts no skill — one muted line.
         if (sk.layer && sk.layer.blocked) panel.appendChild(make('div', 'ask-pop-empty', layerLine(sk)));
         // §4.6 (#635): a Codex chat starts the sets' skills but none of their MCP servers — said, never just left out.
@@ -2615,16 +2668,16 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
 
   // ---- scope selector (#397) ------------------------------------------------
-  /** Per-field merge: the pinned scope replaces the page context's TARGET keys;
-   *  view/run/diff-file context still follow the page. Auto sends pinned:false so
-   *  the server never resurrects a stale thread pin over an explicit choice. */
+  /** Per-field merge: the page context's TARGET keys never ride (CONTRACT §4); view/run/diff-file context still
+   *  follow the page. A pin adds its one key. No project sends pinned:false and no page target, so the server never
+   *  resurrects a stale thread pin over an explicit choice. */
   function scopedContext(page) {
     const ctx = { ...page };
-    if (!st.scope.pinned) return { ...ctx, pinned: false };
     delete ctx.projectDir;
     delete ctx.projectKey;
     delete ctx.workspaceId;
     delete ctx.projectSource;                     // the fallback tag goes with the target keys (MCP registry §9.1)
+    if (!st.scope.pinned) return { ...ctx, pinned: false };
     ctx.pinned = true;
     if (st.scope.projectKey) ctx.projectKey = st.scope.projectKey;
     else if (st.scope.workspaceId) ctx.workspaceId = st.scope.workspaceId;
@@ -2633,13 +2686,26 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   function updateScopeButton() {
     if (!el.scopeLabel) return;
-    el.scopeLabel.textContent = st.scope.pinned
-      ? (st.scope.label || st.scope.projectKey || st.scope.workspaceId || 'Pinned')
-      : 'Auto';
+    const label = st.scope.pinned
+      ? (st.scope.label || st.scope.projectKey || st.scope.workspaceId)
+      : NO_PROJECT_LABEL;
+    el.scopeLabel.textContent = label;
+    el.scopeBtn.setAttribute('aria-label', `Chat scope: ${label}`);
+    el.scopeBtn.title = `Chat scope: ${label}`;
+    const kind = scopeKind(st.scope);
+    if (kind !== el.scopeIcoKind) {
+      const ico = scopeIcon(doc, kind, 13);
+      el.scopeIco.replaceWith(ico);
+      el.scopeIco = ico;
+      el.scopeIcoKind = kind;
+    }
     el.scopeBtn.classList.toggle('is-pinned', st.scope.pinned);
+    if (el.fitScope) el.fitScope();
   }
 
-  function setScope(next) {
+  /** `persist:false` sends no PATCH (the server stored it already); `focus:false` neither closes popovers nor focuses
+   *  the composer (the panel API and server switches never move the focus). */
+  function setScope(next, { persist = true, focus = true } = {}) {
     st.scope = {
       pinned: !!next.pinned,
       projectKey: next.projectKey || null,
@@ -2648,30 +2714,46 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     };
     updateScopeButton();
     scheduleMcpRefresh();
-    closePopover({ focusTrigger: false });
-    focusComposer();
+    if (focus) {
+      closePopover({ focusTrigger: false });
+      focusComposer();
+    }
     // Persist on the thread so the pin survives reload with no message sent. A
     // brand-new chat has no row yet — the first message's context (pinned:true)
     // persists it then instead.
-    if (!st.threadId) return;
+    if (!persist || !st.threadId) return;
+    const id = st.threadId;
     const scope = st.scope.pinned
       ? (st.scope.projectKey ? { pinned: true, projectKey: st.scope.projectKey } : { pinned: true, workspaceId: st.scope.workspaceId })
       : { pinned: false };
+    // SEAMS S39: a PATCH refused while a reply runs (409 TURN_IN_FLIGHT) keeps the pick: a resync of this chat does not
+    // undo it, and the next send carries it (a message's explicit pinned is authoritative, P4a S4).
     Promise.resolve()
-      .then(() => fetch(`/api/ask/threads/${st.threadId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scope }) }))
+      .then(() => fetch(`/api/ask/threads/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scope }) }))
+      .then((r) => {
+        if (r && r.ok) { if (st.scopeHeld === id) st.scopeHeld = null; return; }
+        if (r && r.status === 409) return r.json().then((b) => { if (b && b.code === 'TURN_IN_FLIGHT' && st.threadId === id) st.scopeHeld = id; }, () => {});
+      })
       .catch(() => { /* the next message carries the scope in its context anyway */ });
+  }
+
+  /** The panel API's and the card ctx's setScope (CONTRACT §4): `{ pinned:false }` | `{ pinned:true, projectKey,
+   *  label? }` | `{ pinned:true, workspaceId, label? }`. PATCHes an existing chat and never moves the focus; false (and
+   *  nothing changes) for any other shape, or after destroy(). */
+  function setScopeFromApi(scope) {
+    if (st.destroyed || !scope || typeof scope !== 'object' || typeof scope.pinned !== 'boolean') return false;
+    const next = scopeFromContext(scope);
+    if (scope.pinned === true && !next.pinned) return false;
+    const label = typeof scope.label === 'string' && scope.label ? scope.label : null;
+    setScope({ ...next, label }, { focus: false });
+    if (next.pinned && !label) resolveScopeLabel();
+    return true;
   }
 
   /** Restore the selector from a stored thread context (loadThread / reopen). */
   function applyThreadScope(context) {
-    const c = context && typeof context === 'object' ? context : null;
-    const key = c && c.pinned === true && typeof c.projectKey === 'string' && c.projectKey ? c.projectKey : null;
-    const ws = c && c.pinned === true && typeof c.workspaceId === 'string' && c.workspaceId ? c.workspaceId : null;
-    st.scope = key
-      ? { pinned: true, projectKey: key, workspaceId: null, label: null }
-      : ws
-        ? { pinned: true, projectKey: null, workspaceId: ws, label: null }
-        : { pinned: false, projectKey: null, workspaceId: null, label: null };
+    // S41: the stored context reads as the server reads it (a row without pinned names its scope by key).
+    st.scope = { ...scopeFromContext(context), label: null };
     updateScopeButton();          // the raw key shows until the name resolves
     if (st.scope.pinned) resolveScopeLabel();
   }
@@ -2689,42 +2771,87 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
 
   function openScopePopover(trigger) {
-    const panel = openPopover({ panelClass: 'ask-pop-scope', trigger, build: (p) => {
-      p.appendChild(make('div', 'ask-pop-caption', 'Chat scope'));
-    } });
+    const caption = (text) => {
+      const c = make('div', 'ask-pop-caption', text);
+      c.setAttribute('role', 'presentation');
+      return c;
+    };
+    const divider = () => {
+      const d = make('div', 'ask-pop-divider');
+      d.setAttribute('role', 'separator');
+      return d;
+    };
+    const panel = openPopover({
+      panelClass: 'ask-pop-scope',
+      trigger,
+      onClose: () => trigger.setAttribute('aria-expanded', 'false'),
+      build: (p) => { p.appendChild(caption('Chat scope')); },
+    });
     if (!panel) return;
+    panel.setAttribute('aria-label', 'Chat scope');
+    trigger.setAttribute('aria-expanded', 'true');
     loadCardOptions().then((opts) => {
       if (!st.popover || st.popover.panel !== panel) return;
-      const item = (label, on, onPick) => {
-        const it = menuItem('ask-scope-item', onPick);
-        it.appendChild(make('span', 'ask-model-name', label));
-        if (on) it.appendChild(make('span', 'ask-model-check', '✓'));
+      // A radio row: the line icon, the text, then ✓ on the pick (aria-checked carries it for screen readers).
+      const radio = (cls, on, kids, onPick) => {
+        const it = menuItem(`ask-scope-item ${cls}`, onPick);
+        it.setAttribute('role', 'menuitemradio');
+        it.setAttribute('aria-checked', on ? 'true' : 'false');
+        for (const k of kids) it.appendChild(k);
+        if (on) {
+          const check = checkMark();
+          check.setAttribute('aria-hidden', 'true');
+          it.appendChild(check);
+        }
         return it;
       };
-      panel.appendChild(item('Auto (follow current page)', !st.scope.pinned, () => setScope({ pinned: false })));
+      // The name (and its kind chip, when it has one) on one line, an optional sub-line under it.
+      const col = (name, chip, sub) => {
+        const c = make('span', 'ask-scope-col');
+        const line = make('span', 'ask-scope-line');
+        line.appendChild(make('span', 'ask-model-name', name));
+        if (chip) line.appendChild(chip);
+        c.appendChild(line);
+        if (sub) c.appendChild(make('span', 'ask-scope-sub', sub));
+        return c;
+      };
+      panel.appendChild(radio('ask-scope-none', !st.scope.pinned,
+        [scopeIcon(doc, 'none', 14), make('span', 'ask-model-name', NO_PROJECT_LABEL)],
+        () => setScope({ pinned: false })));
       const projects = opts.projects.filter((p) => p && p.key);
       if (projects.length) {
-        panel.appendChild(make('div', 'ask-pop-divider'));
-        panel.appendChild(make('div', 'ask-pop-caption', 'Projects'));
+        panel.appendChild(divider());
+        panel.appendChild(caption('Projects'));
         for (const p of projects) {
-          panel.appendChild(item(
-            p.exists === false ? `${p.name} (missing)` : p.name,
-            st.scope.pinned && st.scope.projectKey === p.key,
-            () => setScope({ pinned: true, projectKey: p.key, label: p.name }),
-          ));
+          const it = radio('ask-scope-proj', st.scope.pinned && st.scope.projectKey === p.key, [
+            scopeIcon(doc, 'project', 14),
+            col(p.exists === false ? `${p.name} (missing)` : p.name, kindChip(doc, projectKind(p)), p.displayPath || p.path),
+          ], () => setScope({ pinned: true, projectKey: p.key, label: p.name }));
+          if (p.path) it.title = p.path;          // the absolute path; the sub-line shows displayPath (S22), as text only
+          panel.appendChild(it);
         }
       }
       const workspaces = opts.workspaces.filter((w) => w && w.id);
       if (workspaces.length) {
-        panel.appendChild(make('div', 'ask-pop-divider'));
-        panel.appendChild(make('div', 'ask-pop-caption', 'Workspaces'));
+        panel.appendChild(divider());
+        panel.appendChild(caption('Workspaces'));
         for (const w of workspaces) {
-          panel.appendChild(item(
-            w.name || w.id,
-            st.scope.pinned && st.scope.workspaceId === w.id,
-            () => setScope({ pinned: true, workspaceId: w.id, label: w.name || w.id }),
-          ));
+          panel.appendChild(radio('ask-scope-ws', st.scope.pinned && st.scope.workspaceId === w.id, [
+            scopeIcon(doc, 'workspace', 14),
+            col(w.name || w.id, kindChip(doc, 'ws'), null),
+          ], () => setScope({ pinned: true, workspaceId: w.id, label: w.name || w.id })));
         }
+      }
+      // Add project… opens the app's Add project dialog (chatDeps.openAddProject, read at call time; SEAMS S19).
+      if (chatDeps && typeof chatDeps.openAddProject === 'function') {
+        panel.appendChild(divider());
+        const add = menuItem('ask-scope-item ask-scope-add', () => {
+          closePopover({ focusTrigger: false });
+          chatDep('openAddProject');
+        });
+        add.appendChild(scopeIcon(doc, 'add', 14));
+        add.appendChild(make('span', 'ask-model-name', 'Add project…'));
+        panel.appendChild(add);
       }
       const first = menuItems(panel)[0];
       if (first) { first.tabIndex = 0; try { first.focus(); } catch { /* ignore */ } }
@@ -2856,7 +2983,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   /** The chat's open worktrees, or null while it has none. Synchronous: st.worktrees is the DOM mirror,
    *  fed by the snapshot or the last frame, and flushExtra refreshes it BEFORE rebuilding the popover. */
   function worktreesSection() {
-    if (!st.worktrees.length) return null;
+    if (!st.worktrees.length || !gitOn(doc)) return null;
     const box = popSection('ask-ctx-worktrees', 'Worktrees', String(st.worktrees.length), 'expert');
     renderWorktreeRows(box, st.worktrees);
     return box;
@@ -3002,7 +3129,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     stopElapsed();
     storeThread(null);
     el.title.textContent = 'New chat';
-    applyThreadScope(null);             // #397: a brand-new chat starts on Auto
+    st.scopeHeld = null;                // S39: a held pick belongs to the chat it was made in
+    applyThreadScope(null);             // U5: a brand-new chat starts in No project
     setContexts([]);
     restoreBrowserPick();               // …and on the browser-level pick, not the last chat's
     st.mcp.off = { sets: [], members: [] };   // …and with every MCP server on
@@ -3087,7 +3215,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (b.href) {
       n.appendChild(doc.createTextNode(' '));
       const a = make('a', 'ask-notice-link', b.hrefLabel || 'open');
-      if (b.codexSetup) { a.target = '_blank'; a.rel = 'noopener'; }   // §4.6: the Codex setup docs
+      if (b.codexSetup || b.copilotSetup) { a.target = '_blank'; a.rel = 'noopener'; }   // §4.6: the Codex / Copilot setup docs
       a.setAttribute('href', b.href);
       n.appendChild(a);
     }
@@ -3110,6 +3238,29 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       n.appendChild(det);
     }
     return n;
+  }
+
+  // P4 (canvas Switched): a scope switch's divider row — the new scope's icon, `Switched to <name>` and its kind chip,
+  // centered between two hairlines. A project's Git/Folder chip comes from the cached /api/projects; No project and an
+  // unknown project get none.
+  function buildDivider(b) {
+    const s = scopeFromContext(b.scope);
+    const text = String(b.text || '');
+    const d = make('div', 'ask-divider');
+    d.setAttribute('role', 'separator');
+    d.setAttribute('aria-label', text);
+    const inner = make('span', 'ask-divider-in');
+    inner.append(scopeIcon(doc, scopeKind(s), 13), make('span', 'ask-divider-t', text));
+    if (s.workspaceId) inner.appendChild(kindChip(doc, 'ws'));
+    else if (s.projectKey) {
+      loadCardOptions().then((o) => {
+        const p = o.projects.find((x) => x && x.key === s.projectKey);
+        const c = p ? kindChip(doc, projectKind(p)) : null;
+        if (c && !st.destroyed) inner.appendChild(c);
+      });
+    }
+    d.appendChild(inner);
+    return d;
   }
 
   // ---- Start-run card (spec §9, §10.5; D1-D3) -------------------------------
@@ -3257,12 +3408,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     let fan = 0;
     for (const r of lane.rows) {
       const c = laneEffective(lane, r);
-      const k = c.model ? modelLabel(lane, c.model) : 'inherit';
+      const k = c.model ? `on ${modelLabel(lane, c.model)}` : 'on the workflow’s model';
       counts.set(k, (counts.get(k) || 0) + 1);
       if (c.fanOut || fanForced(lane, r)) fan++;
     }
     const picked = laneProposedCount(lane);
-    return `${lane.rows.length} agents · ${[...counts].map(([k, v]) => `${k} ×${v}`).join(' · ')}${fan ? ` · ${fan} fan-out` : ''}${picked ? ` · ${picked} picked by Ask Worca` : ''}`;
+    return `${lane.rows.length} agents · ${[...counts].map(([k, v]) => `${v} ${k}`).join(' · ')}${fan ? ` · ${fan} fan-out` : ''}${picked ? ` · ${picked} picked by Chat` : ''}`;
   }
   function laneSet(lane, row, patch) {
     const next = { ...(lane.edits[row.nodeId] || {}), ...patch };
@@ -3333,7 +3484,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const e = {};
       if (named || (c.model || '') !== (row.model || '') || (c.effort || '') !== (row.effort || '')) {
         const pair = c.model ? { model: c.model, effort: c.effort || '' } : (row.def.model ? { model: row.def.model, effort: row.def.effort || '' } : null);
-        if (!pair && !lane.explicit) return { error: `${row.label}: "inherit" over this project's own model only works as a project default — turn on "Save as project defaults", or pick a model` };
+        if (!pair && !lane.explicit) return { error: `${row.label}: "inherit" over this project's own model only works as a project default. Turn on "Save as project defaults", or pick a model` };
         if (pair) Object.assign(e, pair);
       }
       if (!!c.fanOut !== !!row.fanOut) e.fanOut = !!c.fanOut;
@@ -3394,7 +3545,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   async function collectCardExtras(local) {
     const pills = local.pills || [];
     if (!pills.length) return { extras: [] };
-    if (pills.reduce((n, p) => n + (p.bytes || 0), 0) > RP_EXTRAS_MAX_BYTES) return { error: `attachments exceed ${RP_EXTRAS_MAX_BYTES / (1024 * 1024)} MB — remove one` };
+    if (pills.reduce((n, p) => n + (p.bytes || 0), 0) > RP_EXTRAS_MAX_BYTES) return { error: `attachments exceed ${RP_EXTRAS_MAX_BYTES / (1024 * 1024)} MB: remove one` };
     const extras = [];
     for (const p of pills) {
       let res = null;
@@ -3407,21 +3558,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return { extras };
   }
   const cardPending = (local) => lanePending(local) || !!(local.pills && local.pills.length);
-  function rpSwitch(ctl, label, on, locked, onChange, editable) {
-    const wrap = make('label', 'ask-rp-ctl');
-    wrap.appendChild(make('span', null, label));
-    const sw = make('span', 'ask-rp-sw');
-    const cb = doc.createElement('input');
-    cb.type = 'checkbox';
-    cb.checked = !!on;
-    cb.disabled = !!locked || !editable;
-    cb.setAttribute('data-ctl', ctl);
-    cb.setAttribute('aria-label', label);
-    cb.addEventListener('change', () => onChange(cb.checked));
-    sw.append(cb, make('span', 'ask-rp-knob'));
-    if (locked) wrap.title = 'Fixed for this agent';
-    wrap.appendChild(sw);
-    return wrap;
+  function rpSwitch(ctl, label, on, locked, onChange, editable, why = 'Fixed for this agent') {
+    const { row, input } = makeSwitch(doc, { label, ariaLabel: label, checked: on, rowClass: 'ask-rp-ctl', data: { ctl },
+      locked: locked ? why : null });
+    if (!editable) input.disabled = true;      // a read-only card: off-limits, not locked (no reason line)
+    input.addEventListener('change', () => onChange(input.checked));
+    return row;
   }
   /** Paint the lane section: header (sub-line + Reset), tiles, footer. Re-run on every edit.
    *  `lc` = { summary: <span>, workflowId(): string }. lane === null → the unusable state. */
@@ -3438,6 +3580,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       reset.hidden = true;
       laneSec.appendChild(make('div', 'ask-rp-lane-msg', loadingText || 'Could not load agent settings.'));
       lc.summary.textContent = '';
+      if (lc.onPaint) lc.onPaint(null);
       return;
     }
     // "changed" = rows the user moved off the proposal (Ask Worca's picks are the baseline, not the user's edits).
@@ -3447,7 +3590,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const overText = `${over} override${over === 1 ? '' : 's'} of the workflow defaults`;
     sub.textContent = edited
       ? `you changed ${edited} agent${edited > 1 ? 's' : ''} · ${overText}`
-      : picked ? `Ask Worca picked ${picked} agent${picked > 1 ? 's' : ''} for this run · ${overText}`
+      : picked ? `Chat picked ${picked} agent${picked > 1 ? 's' : ''} for this run · ${overText}`
         : `proposed by Worca · ${overText}`;
     reset.hidden = !edited;
     reset.addEventListener('click', () => { lane.edits = cloneEdits(lane.proposal); if (lane.dropped) lane.dropped.clear(); renderLane(laneSec, lane, lc); });
@@ -3484,8 +3627,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         // Ask Worca's pick: its reason (and the model's facts) on hover and to assistive tech, the project's own setting
         // beside it (a workspace card shows the workflow default: agent settings are per project). `role="note"`: a
         // generic span may not carry aria-label (ARIA 1.2), so a screen reader would skip the reason.
-        const mark = make('span', 'ask-rp-prop', 'Ask Worca');
-        mark.title = ['Proposed by Ask Worca for this run', pick.reason, pick.facts].filter(Boolean).join(' — ');
+        const mark = make('span', 'ask-rp-prop', 'Chat');
+        mark.title = ['Proposed by Chat for this run', pick.reason, pick.facts].filter(Boolean).join('\n');
         mark.tabIndex = 0;
         mark.setAttribute('role', 'note');
         mark.setAttribute('aria-label', mark.title);
@@ -3542,11 +3685,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // A workspace run fans this agent out over its projects whatever the switch says (workflows.mjs workspaceFanOut):
       // it shows on and locked, as on Auto's proposal panel.
       const forced = fanForced(lane, row);
-      const fan = rpSwitch('fanOut', 'fan-out', forced || c.fanOut, forced, (v) => { laneSet(lane, row, { fanOut: v }); renderLane(laneSec, lane, lc); }, lane.editable);
-      if (forced) fan.title = 'A workspace run fans this agent out over its projects';
+      const fan = rpSwitch('fanOut', 'Fan-out', forced || c.fanOut, forced, (v) => { laneSet(lane, row, { fanOut: v }); renderLane(laneSec, lane, lc); }, lane.editable,
+        'A workspace run fans this agent out over its projects');
       l2.appendChild(fan);
       const subWrap = make('label', 'ask-rp-ctl');
-      subWrap.appendChild(make('span', null, 'sub-agents'));
+      subWrap.appendChild(make('span', null, 'Sub-agents'));
       const subSel = rpSelect('ask-rp-subagent', `Sub-agent model for ${row.label}`);
       subSel.appendChild(opt('', 'subs: default (agent picks)'));
       for (const v of lane.subagentModels) subSel.appendChild(opt(v, v === 'auto' ? 'subs: agent picks' : `subs: ${v}`));
@@ -3557,7 +3700,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       subWrap.appendChild(subSel);
       if (lane.engine === 'claude') l2.appendChild(subWrap);   // §6: sub-agents are Claude only; a Codex or Cursor run has none
       if (row.askQuestions !== null) {
-        l2.appendChild(rpSwitch('questions', 'questions', c.askQuestions, row.questionsLocked, (v) => { laneSet(lane, row, { askQuestions: v }); renderLane(laneSec, lane, lc); }, lane.editable));
+        l2.appendChild(rpSwitch('questions', 'Questions', c.askQuestions, row.questionsLocked, (v) => { laneSet(lane, row, { askQuestions: v }); renderLane(laneSec, lane, lc); }, lane.editable));
       }
       // Back to the project's own setting for this agent (the proposal's pick or the user's edit dropped).
       // A workspace pick equal to the built-in row is no edit but still rides (laneOverlay names it): it can be dropped too.
@@ -3582,15 +3725,16 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const saving = !!projectDir && lc.saveDefaults();
     const pending = laneEditedRows(lane).length > 0;
     foot.appendChild(make('span', 'ask-rp-foot-text', !projectDir
-      ? 'Changes apply to this run only — agent defaults are per project.'
+      ? 'Changes apply to this run only. Agent defaults are per project.'
       : saving ? `Edits become this project's defaults for ${lane.wf.name || lc.workflowId()}`
         : pending ? 'Changes apply to this run only' : "Runs on this project's agent settings"));
-    const save = rpSwitch('saveDefaults', 'save as project defaults', saving, false, (v) => { lc.setSaveDefaults(v); renderLane(laneSec, lane, lc); }, !!projectDir);
-    if (!projectDir) save.title = 'Agent defaults are per project — pick a project target to save them';
+    const save = rpSwitch('saveDefaults', 'Save as project defaults', saving, false, (v) => { lc.setSaveDefaults(v); renderLane(laneSec, lane, lc); }, !!projectDir);
+    if (!projectDir) save.title = 'Agent defaults are per project. Pick a project target to save them';
     foot.appendChild(save);
     box.appendChild(foot);
     laneSec.appendChild(box);
     lc.summary.textContent = laneSummary(lane);
+    if (lc.onPaint) lc.onPaint(lane);
   }
 
   /** The stub states. A `started` run — and a `failed` one that HAS a runId — renders the live progress
@@ -3598,13 +3742,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function buildCardTerminal(block) {
     const card = block.card || {};
     if (block.state === 'failed') {
-      return make('div', 'ask-card-stub ask-card-failed', `Run failed${block.error ? `: ${block.error}` : ''} — ${card.title || card.brief || ''}`);
+      return make('div', 'ask-card-stub ask-card-failed', `Run failed (${card.title || card.brief || 'run proposal'})${block.error ? `: ${block.error}` : ''}`);
     }
     if (block.state === 'scheduled') return buildCardScheduled(block);
-    return make('div', 'ask-card-stub', `Not now — ${card.title || card.brief || 'run proposal'}`);
+    return make('div', 'ask-card-stub', `Not now: ${card.title || card.brief || 'run proposal'}`);
   }
 
-  // ---- scheduled proposals (docs/scheduled-runs.md "Ask Worca") ----
+  // ---- scheduled proposals (docs/scheduled-runs.md "Chat") ----
   const CLOCK_ICO = 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM12 7.5V12l3 2';
   const localWhen = (iso) => { const ms = Date.parse(iso || ''); return Number.isFinite(ms) ? formatInstant(ms, browserTimeZone()) : 'later'; };
   /** The POST /api/run fields of a proposal's schedule (schedule-spec.mjs scheduleRequestFields). */
@@ -3641,8 +3785,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const series = !!block.scheduleId;
     const title = card.title || card.brief || 'Run';
     rootEl.append(make('span', 'badge grey', series ? 'Repeats' : block.after ? 'After run' : 'Scheduled'), make('span', 'ask-card-sched-text',
-      series ? `${title} — ${block.sentence || 'repeating schedule'}${block.scheduledFor ? ` · next ${localWhen(block.scheduledFor)}` : ''}`
-        : block.after ? `${title} — after ‘${block.after.title || block.after.id}’ finishes` : `${title} — starts ${localWhen(block.scheduledFor)}`));
+      series ? `${title}: ${block.sentence || 'repeating schedule'}${block.scheduledFor ? ` · next ${localWhen(block.scheduledFor)}` : ''}`
+        : block.after ? `${title}: after ‘${block.after.title || block.after.id}’ finishes` : `${title}: starts ${localWhen(block.scheduledFor)}`));
     const err = make('span', 'ask-card-err');
     const call = async (method, path, btn) => {
       err.textContent = ''; btn.disabled = true;
@@ -3655,10 +3799,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       btn.disabled = false;   // the flip frame re-renders the card on success
     };
     const target = series ? block.scheduleId : block.runId;
-    const runNow = make('button', 'ask-card-not-now', 'Run now');
+    const runNow = make('button', 'btn btn-sm btn-quiet ask-card-not-now', 'Run now');
     runNow.type = 'button';
     runNow.addEventListener('click', () => call('POST', `/api/schedules/${target}/run-now`, runNow));
-    const cancel = make('button', 'ask-card-not-now', series ? 'Delete schedule' : 'Cancel schedule');
+    const cancel = make('button', 'btn btn-sm btn-quiet ask-card-not-now', series ? 'Delete schedule' : 'Cancel schedule');
     cancel.type = 'button';
     cancel.addEventListener('click', async () => {
       if (series && typeof confirm === 'function' && !(await confirm(`Delete the schedule "${title}"? Runs it already started are kept.`))) return;
@@ -3739,7 +3883,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       wrap.append(el, wfTargetEl(target));
       return { el: wrap };
     };
-    if (block.state === 'declined') return stub(make('div', 'ask-card-stub', `Declined — ${name || 'workflow proposal'}`));
+    if (block.state === 'declined') return stub(make('div', 'ask-card-stub', `Declined: ${name || 'workflow proposal'}`));
     if (block.state === 'failed') return stub(make('div', 'ask-card-stub ask-card-failed', `Proposal failed: ${block.error || 'unknown error'}`));
     // State modifier = `is-<state>` (v6): `ask-wfcard-${state}` would make the SAVED root carry the same class as the check line below.
     const rootEl = make('div', `ask-card ask-wfcard is-${block.state}`);
@@ -3775,7 +3919,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       handle.parts.name.replaceWith(saved);
       saved.after(line);
     } else if (matched) {
-      const hint = make('div', 'ask-wfcard-hint', 'Model and effort come from that saved workflow — edit them in the Workflows view.');
+      const hint = make('div', 'ask-wfcard-hint', 'Model and effort come from that saved workflow. Edit them in the Workflows view.');
       handle.parts.match.after(hint);
     }
     rootEl.appendChild(handle.el);
@@ -3787,15 +3931,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       return b;
     };
     if (proposed) {
-      const decline = btn('ask-card-not-now', 'Decline', 'data-ask-wf-decline');
+      const decline = btn('btn btn-sm btn-quiet ask-card-not-now', 'Decline', 'data-ask-wf-decline');
       decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
-      const save = btn('ask-card-start', card.thenRun ? 'Save & propose run' : 'Save as workflow', 'data-ask-wf-save', WF_ICO.save);
+      const save = btn('btn btn-sm btn-primary', card.thenRun ? 'Save & propose' : 'Save as workflow', 'data-ask-wf-save', WF_ICO.save);
       // A 200 means the row exists now: drop the cached option lists so every later consumer sees it.
       save.addEventListener('click', () => postCard(block, rootEl, { state: 'saved', name: handle.getName(), nodes: diffNodes(card.nodes, wf.nodes) }, save)
         .then((out) => { if (out) st.cardOptions = null; }));
       actions.append(make('span', 'ask-card-actions-spacer'), decline, save);
     } else {
-      const open = btn('ask-card-open-np', 'Open in Workflows', 'data-ask-wf-open');
+      const open = btn('link-btn ask-card-open-np', 'Open in Workflows', 'data-ask-wf-open');
       open.disabled = !(typeof openComposer === 'function' && block.workflowId);   // v7: an inert button beats a dead click
       open.addEventListener('click', () => { if (typeof openComposer === 'function' && block.workflowId) openComposer(block.workflowId); });
       // No "Run with this": the save already fired the event turn, which proposes the run
@@ -3818,10 +3962,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return { el: rootEl, handle, dispose: () => handle.destroy(), animate: proposed && !!prev && prev.state === 'building' };
   }
 
-  // ---- Metrics card (docs/team-metrics.md "Ask Worca"): a proposed team-metrics configuration change --------------
+  // ---- Metrics card (docs/team-metrics.md "Chat"): a proposed team-metrics configuration change --------------
   const MC_KIND_LABEL = { enable: 'Enable team metrics', record: 'Include my runs', workspace_home: 'Metrics home', route_members: 'Route members' };
   const MC_APPLY_LABEL = { enable: 'Enable', record: 'Apply', workspace_home: 'Set home', route_members: 'Route members' };
-  // A team-policy card (docs/team-policy.md "Ask Worca") is the same component: other words, plus the
+  // A team-policy card (docs/team-policy.md "Chat") is the same component: other words, plus the
   // before → after list of an edit.
   const PC_KIND_LABEL = { enable: 'Set up team policy', edit: 'Edit team policy', workspace_home: 'Policy home', route_members: 'Route members' };
   const pcApplyLabel = (card) => (card.kind === 'enable' ? (card.mode === 'follow' ? 'Follow' : 'Set up') : card.kind === 'edit' ? 'Publish'
@@ -3832,7 +3976,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const noun = isPolicy ? 'policy change' : 'metrics change';
     const Noun = isPolicy ? 'Policy change' : 'Metrics change';
     const summary = card.summary || noun;
-    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined — ${summary}`) };
+    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined: ${summary}`) };
     const rootEl = make('div', `ask-card ask-mcard${isPolicy ? ' ask-pcard' : ''} is-${block.state}`);
     rootEl.setAttribute(isPolicy ? 'data-ask-pcard' : 'data-ask-mcard', block.state);
     const head = make('div', 'ask-mcard-head');
@@ -3893,9 +4037,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (icon) b.prepend(svgIcon(icon, 12, 2.2));
         return b;
       };
-      const decline = btn('ask-card-not-now', 'Decline', 'data-ask-mc-decline');
+      const decline = btn('btn btn-sm btn-quiet ask-card-not-now', 'Decline', 'data-ask-mc-decline');
       decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
-      const apply = btn('ask-card-start', isPolicy ? pcApplyLabel(card) : (MC_APPLY_LABEL[card.kind] || 'Apply'), 'data-ask-mc-apply', WF_ICO.save);
+      const apply = btn('btn btn-sm btn-primary', isPolicy ? pcApplyLabel(card) : (MC_APPLY_LABEL[card.kind] || 'Apply'), 'data-ask-mc-apply', WF_ICO.save);
       apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
       actions.append(make('span', 'ask-card-actions-spacer'), decline, apply);
       rootEl.appendChild(actions);
@@ -3920,7 +4064,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function buildAwayCard(block) {
     const card = block.card || {};
     const summary = card.summary || 'Away mode change';
-    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined — ${summary}`) };
+    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined: ${summary}`) };
     const rootEl = make('div', `ask-card ask-mcard ask-awcard is-${block.state}`);
     rootEl.setAttribute('data-ask-awcard', block.state);
     const head = make('div', 'ask-mcard-head');
@@ -3958,9 +4102,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (icon) b.prepend(svgIcon(icon, 12, 2.2));
         return b;
       };
-      const keep = btn('ask-card-not-now', 'Keep as is', 'data-ask-ac-decline');
+      const keep = btn('btn btn-sm btn-quiet ask-card-not-now', 'Keep as is', 'data-ask-ac-decline');
       keep.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, keep));
-      const apply = btn('ask-card-start', 'Apply', 'data-ask-ac-apply', WF_ICO.save);
+      const apply = btn('btn btn-sm btn-primary', 'Apply', 'data-ask-ac-apply', WF_ICO.save);
       apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
       actions.append(make('span', 'ask-card-actions-spacer'), keep, apply);
       rootEl.appendChild(actions);
@@ -3968,13 +4112,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return { el: rootEl };
   }
 
-  // ---- Schedule card (docs/scheduled-runs.md "Ask Worca"): a proposed change to an existing schedule ------------
+  // ---- Schedule card (docs/scheduled-runs.md "Chat"): a proposed change to an existing schedule ------------
   const SC_ACTION_LABEL = { run_now: 'Run now', move: 'Change time', edit: 'Edit schedule', cancel: 'Cancel run', delete: 'Delete schedule' };
   const SC_APPLY_LABEL = { run_now: 'Run now', move: 'Move', edit: 'Apply', cancel: 'Cancel run', delete: 'Delete' };
   function buildScheduleCard(block) {
     const card = block.card || {};
     const summary = card.summary || 'schedule change';
-    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined — ${summary}`) };
+    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined: ${summary}`) };
     const rootEl = make('div', `ask-card ask-mcard ask-scard is-${block.state}`);
     rootEl.setAttribute('data-ask-scard', block.state);
     const head = make('div', 'ask-mcard-head');
@@ -4021,10 +4165,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (icon) b.prepend(svgIcon(icon, 12, 2.2));
         return b;
       };
-      const decline = btn('ask-card-not-now', 'Decline', 'data-ask-sc-decline');
+      const decline = btn('btn btn-sm btn-quiet ask-card-not-now', 'Decline', 'data-ask-sc-decline');
       decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
       const destructive = card.action === 'cancel' || card.action === 'delete';
-      const apply = btn(destructive ? 'ask-card-start is-danger' : 'ask-card-start', SC_APPLY_LABEL[card.action] || 'Apply', 'data-ask-sc-apply',
+      const apply = btn(destructive ? 'btn btn-sm btn-danger' : 'btn btn-sm btn-primary', SC_APPLY_LABEL[card.action] || 'Apply', 'data-ask-sc-apply',
         card.action === 'run_now' ? null : WF_ICO.save);
       apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
       actions.append(make('span', 'ask-card-actions-spacer'), decline, apply);
@@ -4033,13 +4177,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return { el: rootEl };
   }
 
-  // ---- Model card (docs/models.md "Ask Worca"): a proposed catalog or provider change ------------------------------
+  // ---- Model card (docs/models.md "Chat"): a proposed catalog or provider change ------------------------------
   const MOD_KIND_LABEL = { add_model: 'Add model', edit_model: 'Edit model', remove_model: 'Remove model', provider: 'Provider', import_copilot: 'From Copilot' };
   const MOD_APPLY_LABEL = { add_model: 'Add', edit_model: 'Apply', remove_model: 'Remove', provider: 'Apply', import_copilot: 'Import' };
   function buildModelCard(block) {
     const card = block.card || {};
     const summary = card.summary || 'model change';
-    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined — ${summary}`) };
+    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined: ${summary}`) };
     const rootEl = make('div', `ask-card ask-mcard ask-modcard is-${block.state}`);
     rootEl.setAttribute('data-ask-modcard', block.state);
     const noun = card.kind === 'provider' ? 'provider change' : 'model change';
@@ -4093,10 +4237,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (icon) b.prepend(svgIcon(icon, 12, 2.2));
         return b;
       };
-      const decline = btn('ask-card-not-now', 'Decline', 'data-ask-mod-decline');
+      const decline = btn('btn btn-sm btn-quiet ask-card-not-now', 'Decline', 'data-ask-mod-decline');
       decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
       const destructive = card.kind === 'remove_model';
-      const apply = btn(destructive ? 'ask-card-start is-danger' : 'ask-card-start', MOD_APPLY_LABEL[card.kind] || 'Apply', 'data-ask-mod-apply', destructive ? null : WF_ICO.save);
+      const apply = btn(destructive ? 'btn btn-sm btn-danger' : 'btn btn-sm btn-primary', MOD_APPLY_LABEL[card.kind] || 'Apply', 'data-ask-mod-apply', destructive ? null : WF_ICO.save);
       apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
       actions.append(make('span', 'ask-card-actions-spacer'), decline, apply);
       rootEl.appendChild(actions);
@@ -4109,14 +4253,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function buildWebCard(block) {
     const card = block.card || {};
     const host = card.host || 'a website';
-    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined — ${card.summary || `Read ${host}`}`) };
+    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined: ${card.summary || `Read ${host}`}`) };
     const rootEl = make('div', `ask-card ask-mcard ask-webcard is-${block.state}`);
     rootEl.setAttribute('data-ask-webcard', block.state);
     const result = card.result || null;
     const head = make('div', 'ask-mcard-head');
     const title = block.state === 'failed' ? 'Web access not granted'
       : block.state === 'applied' ? (result && result.scope === 'always' ? 'Always allowed' : 'Allowed for this chat')
-        : 'Ask Worca wants to read a new site';
+        : 'Chat wants to read a new site';
     head.appendChild(make('span', 'ask-mcard-title', title));
     head.appendChild(make('span', 'ask-mcard-kind', 'Web'));
     rootEl.appendChild(head);
@@ -4140,12 +4284,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (block.state === 'proposed') {
       const actions = make('div', 'ask-mcard-actions');
       const btn = (cls, text, attr) => { const b = make('button', cls, text); b.type = 'button'; b.setAttribute(attr, ''); return b; };
-      const decline = btn('ask-card-not-now', 'Deny', 'data-ask-web-decline');
+      const decline = btn('btn btn-sm btn-quiet ask-card-not-now', 'Deny', 'data-ask-web-decline');
       decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
-      const always = btn('ask-card-not-now', 'Always allow', 'data-ask-web-always');
-      always.title = `Adds ${host} to Settings → Ask Worca → Web access`;
+      const always = btn('btn btn-sm btn-quiet ask-card-not-now', 'Always allow', 'data-ask-web-always');
+      always.title = `Adds ${host} to Settings → Chat → Web access`;
       always.addEventListener('click', () => postCard(block, rootEl, { state: 'applied', scope: 'always' }, always));
-      const chat = btn('ask-card-start', 'Allow for this chat', 'data-ask-web-chat');
+      const chat = btn('btn btn-sm btn-primary', 'Allow in chat', 'data-ask-web-chat');
       chat.addEventListener('click', () => postCard(block, rootEl, { state: 'applied', scope: 'chat' }, chat));
       actions.append(make('span', 'ask-card-actions-spacer'), decline, always, chat);
       rootEl.appendChild(actions);
@@ -4157,7 +4301,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function buildCloneCard(block) {
     const card = block.card || {};
     const summary = card.summary || 'clone a repository';
-    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined — ${summary}`) };
+    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined: ${summary}`) };
     const rootEl = make('div', `ask-card ask-mcard ask-clonecard is-${block.state}`);
     rootEl.setAttribute('data-ask-clonecard', block.state);
     const head = make('div', 'ask-mcard-head');
@@ -4200,9 +4344,72 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (icon) b.prepend(svgIcon(icon, 12, 2.2));
         return b;
       };
-      const decline = btn('ask-card-not-now', 'Decline', 'data-ask-clone-decline');
+      const decline = btn('btn btn-sm btn-quiet ask-card-not-now', 'Decline', 'data-ask-clone-decline');
       decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
-      const apply = btn('ask-card-start', 'Clone', 'data-ask-clone-apply', WF_ICO.save);
+      const apply = btn('btn btn-sm btn-primary', 'Clone', 'data-ask-clone-apply', WF_ICO.save);
+      apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
+      actions.append(make('span', 'ask-card-actions-spacer'), decline, apply);
+      rootEl.appendChild(actions);
+    }
+    return { el: rootEl };
+  }
+
+  /** The project card (propose_project_change, ChatCreate board): proposed → applied | failed, or declined. New makes a
+   *  folder by name, Folder adds one that exists. Every value is text; paths are shown as sent, never parsed (S22). */
+  function buildProjectCard(block) {
+    const card = block.card || {};
+    const add = card.kind === 'add';
+    const summary = card.summary || (add ? 'add a project' : 'create a project');
+    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined — ${summary}`) };
+    const rootEl = make('div', `ask-card ask-mcard ask-projectcard is-${block.state}`);
+    rootEl.setAttribute('data-ask-projectcard', block.state);
+    const head = make('div', 'ask-mcard-head');
+    const title = block.state === 'applied' ? (add ? 'Project added' : 'Project created')
+      : block.state === 'failed' ? (add ? 'Add failed' : 'Create failed') : 'Proposed project';
+    head.appendChild(make('span', 'ask-mcard-title', title));
+    head.appendChild(make('span', 'ask-mcard-kind', add ? 'Folder' : 'New'));
+    rootEl.appendChild(head);
+    const body = make('div', 'ask-mcard-body');
+    const sum = make('div', 'ask-mcard-summary');
+    if (block.state === 'applied') sum.appendChild(svgIcon(WF_ICO.check, 15, 2.4));
+    sum.appendChild(make('span', null, summary));
+    body.appendChild(sum);
+    if (card.note) body.appendChild(make('div', 'ask-mcard-note', card.note));
+    const ul = make('ul', 'ask-mcard-changes');
+    const row = (label, fill) => {
+      const li = make('li');
+      li.appendChild(make('span', 'ask-mcard-change-label', label));
+      const val = make('span', 'ask-mcard-change-val');
+      fill(val);
+      li.appendChild(val);
+      ul.appendChild(li);
+    };
+    row('Name', (val) => val.appendChild(make('span', 'ask-mcard-after', String(card.name || ''))));
+    row('Folder', (val) => {
+      if (card.path) val.title = String(card.path);
+      val.appendChild(make('span', 'ask-mcard-after', String(card.displayPath || card.path || '')));
+    });
+    row('Kind', (val) => { const chip = kindChip(doc, card.vcs === 'git' ? 'git' : 'folder'); if (chip) val.appendChild(chip); });
+    body.appendChild(ul);
+    const result = card.result || null;
+    if (block.state === 'failed') {
+      body.appendChild(make('div', 'ask-mcard-failed', `Could not ${add ? 'add' : 'create'}: ${block.error || (result && result.error) || 'unknown error'}`));
+    } else if (block.state === 'applied' && result && result.project) {
+      const p = result.project;
+      body.appendChild(make('div', 'ask-mcard-detail', `Registered as ${p.name || card.name} at ${p.displayPath || p.path}`));
+    }
+    rootEl.appendChild(body);
+    rootEl.appendChild(make('div', 'ask-card-err'));
+    if (block.state === 'proposed') {
+      const actions = make('div', 'ask-mcard-actions');
+      const btn = (cls, text, attr, icon) => {
+        const b = make('button', cls, text); b.type = 'button'; b.setAttribute(attr, '');
+        if (icon) b.prepend(svgIcon(icon, 12, 2.2));
+        return b;
+      };
+      const decline = btn('btn btn-sm btn-quiet ask-card-not-now', 'Decline', 'data-ask-project-decline');
+      decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
+      const apply = btn('btn btn-sm btn-primary', add ? 'Add' : 'Create', 'data-ask-project-apply', WF_ICO.save);
       apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
       actions.append(make('span', 'ask-card-actions-spacer'), decline, apply);
       rootEl.appendChild(actions);
@@ -4217,7 +4424,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function buildWorkspaceCard(block) {
     const card = block.card || {};
     const summary = card.summary || 'workspace change';
-    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined — ${summary}`) };
+    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined: ${summary}`) };
     const rootEl = make('div', `ask-card ask-mcard ask-wscard is-${block.state}`);
     rootEl.setAttribute('data-ask-wscard', block.state);
     const head = make('div', 'ask-mcard-head');
@@ -4233,18 +4440,19 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const member = (m) => (m && m.path ? `${m.name || ''} · ${m.path}` : (m && m.name) || '');
     const rows = [
       ['Workspace', card.kind === 'create' ? card.name : card.workspaceName],
-      ...(card.kind === 'create' ? (card.members || []).map((m) => ['Member', member(m)]) : []),
-      ...(card.kind === 'add_members' ? (card.added || []).map((m) => ['Add', member(m)]) : []),
-      ...(card.kind === 'remove_member' && card.removed ? [['Remove', member(card.removed)]] : []),
+      ...(card.kind === 'create' ? (card.members || []).map((m) => ['Member', member(m), m]) : []),
+      ...(card.kind === 'add_members' ? (card.added || []).map((m) => ['Add', member(m), m]) : []),
+      ...(card.kind === 'remove_member' && card.removed ? [['Remove', member(card.removed), card.removed]] : []),
       ...(card.kind === 'rename' ? [['New name', card.name]] : []),
     ];
     const ul = make('ul', 'ask-mcard-changes');
-    for (const [label, value] of rows) {
+    for (const [label, value, m] of rows) {
       if (!value) continue;
       const li = make('li');
       li.appendChild(make('span', 'ask-mcard-change-label', label));
       const val = make('span', 'ask-mcard-change-val');
       val.appendChild(make('span', label === 'Remove' ? 'ask-mcard-before' : 'ask-mcard-after', String(value)));
+      if (m && m.vcs === 'none') val.appendChild(kindChip(doc, 'folder'));   // P5: a Folder member (P4b's kindChip binding, S59)
       li.appendChild(val);
       ul.appendChild(li);
     }
@@ -4275,10 +4483,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (icon) b.prepend(svgIcon(icon, 12, 2.2));
         return b;
       };
-      const decline = btn('ask-card-not-now', 'Decline', 'data-ask-ws-decline');
+      const decline = btn('btn btn-sm btn-quiet ask-card-not-now', 'Decline', 'data-ask-ws-decline');
       decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
       const destructive = card.kind === 'remove_member';
-      const apply = btn(destructive ? 'ask-card-start is-danger' : 'ask-card-start', WS_APPLY_LABEL[card.kind] || 'Apply', 'data-ask-ws-apply', destructive ? null : WF_ICO.save);
+      const apply = btn(destructive ? 'btn btn-sm btn-danger' : 'btn btn-sm btn-primary', WS_APPLY_LABEL[card.kind] || 'Apply', 'data-ask-ws-apply', destructive ? null : WF_ICO.save);
       apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
       actions.append(make('span', 'ask-card-actions-spacer'), decline, apply);
       rootEl.appendChild(actions);
@@ -4287,7 +4495,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
 
   // ---- Actions card (propose_actions_change): a project's setup + actions, or a workspace's stacks ----------------
-  // Every command the card would store is shown word for word (docs/actions.md "Ask Worca"): applying stores config,
+  // Every command the card would store is shown word for word (docs/actions.md "Chat"): applying stores config,
   // and a person's Start is what later runs it. Every value is text.
   const ACT_KIND_LABEL = { project: 'Project actions', stacks: 'Workspace stacks' };
   const ACT_OP_LABEL = { add: 'Add', change: 'Change', remove: 'Remove' };
@@ -4295,7 +4503,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function buildActionsCard(block) {
     const card = block.card || {};
     const summary = card.summary || 'actions change';
-    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined — ${summary}`) };
+    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined: ${summary}`) };
     const rootEl = make('div', `ask-card ask-mcard ask-acard is-${block.state}`);
     rootEl.setAttribute('data-ask-acard', block.state);
     const head = make('div', 'ask-mcard-head');
@@ -4356,9 +4564,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (icon) b.prepend(svgIcon(icon, 12, 2.2));
         return b;
       };
-      const decline = btn('ask-card-not-now', 'Decline', 'data-ask-act-decline');
+      const decline = btn('btn btn-sm btn-quiet ask-card-not-now', 'Decline', 'data-ask-act-decline');
       decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
-      const apply = btn('ask-card-start', 'Save', 'data-ask-act-apply', WF_ICO.save);
+      const apply = btn('btn btn-sm btn-primary', 'Save', 'data-ask-act-apply', WF_ICO.save);
       apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
       actions.append(make('span', 'ask-card-actions-spacer'), decline, apply);
       rootEl.appendChild(actions);
@@ -4393,7 +4601,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
             t.title = cb.title;
             item.appendChild(t);
           }
-          if (m.id === cur().model) item.appendChild(make('span', 'ask-model-check', '✓'));
+          if (m.id === cur().model) item.appendChild(checkMark());
           p.appendChild(item);
         }
         p.appendChild(make('div', 'ask-pop-divider'));
@@ -4474,7 +4682,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function buildCardForm(block) {
     const card = block.card || {};
     const rootEl = make('div', 'ask-card ask-rp');
-    const local = { target: card.target === 'workspace' ? 'workspace' : 'project', options: null, lane: null, pills: [], projectDir: () => '', workflowId: () => '' };
+    const local = { target: card.target === 'workspace' ? 'workspace' : card.target === 'none' ? 'none' : 'project', options: null, lane: null, pills: [], projectDir: () => '', workflowId: () => '' };
     const summary = make('span', 'ask-rp-summary');   // footer; renderLane paints it from the loaded lane
 
     // head
@@ -4490,24 +4698,35 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     titleInput.placeholder = 'Run title';
     titleRow.append(titleInput, make('span', 'ask-rp-edit', '✎ click to rename'));
     head.appendChild(titleRow);
-    if (typeof card.note === 'string' && card.note) head.appendChild(make('p', 'ask-rp-why', card.note));
-    rootEl.appendChild(head);
-
-    // #397 guardrail: the model proposed a different target than the chat's pin.
-    if (block.scopeMismatch) {
-      rootEl.appendChild(make('div', 'ask-card-scope-warn',
-        'This proposal targets a different project or workspace than the one pinned for this chat — check the target before starting.'));
+    // Run presets (#712 slice 3): a card proposed from a preset names it; Start adds what the card has no control for.
+    const presetLine = card.preset ? make('div', 'ask-card-preset muted', `From preset ${card.preset.name}`) : null;
+    if (presetLine) head.appendChild(presetLine);
+    // Run tags (#718), behind the experimental flag: prefilled from the proposal, sent on Start.
+    // s2: suggestions follow the card's project and its target's policy dimensions (getters: both exist only later).
+    const tagInput = flagOn('runTags', doc) ? createTagInput(doc, { value: card.tags || [],
+      suggest: () => fetchTagVocabulary(local.projectDir() || null), dims: () => rootEl.__rp?.tagRules?.dims() || [] }) : null;
+    const tagRow = tagInput ? make('div', 'ask-rp-tags') : null;
+    if (tagInput) {
+      tagRow.appendChild(tagInput.el);
+      head.appendChild(tagRow);
     }
+    if (typeof card.note === 'string' && card.note) head.appendChild(make('p', 'ask-rp-why', card.note));
+    // A shaped card follows card.shape: the server puts it there only while the gate is on, and a card built before the
+    // first hello (a boot on Chat) must still start its shaped run. The nudge is advisory and needs the client gate.
+    const shapeUi = card.shape ? shapeCardExtras(doc, card)
+      : card.nudge && shapeFirstOn() ? shapeCardExtras(doc, card) : null;
+    local.shapeUi = shapeUi;
+    rootEl.appendChild(head);
 
     // target section
     const targetSec = make('div', 'ask-rp-sec');
     const targetHead = make('div', 'ask-rp-sec-head');
     const targetSub = make('span', 'ask-rp-sec-sub');
     targetHead.append(make('span', 'ask-rp-sec-title', 'Where it runs'), targetSub);
-    const seg = make('div', 'ask-card-seg');
+    const seg = make('div', 'seg seg-sm ask-card-seg');
     seg.setAttribute('role', 'tablist');
     const segBtns = {};
-    for (const [t, label] of [['project', 'Project'], ['workspace', 'Workspace']]) {
+    for (const [t, label] of [['none', 'No project'], ['project', 'Project'], ['workspace', 'Workspace']]) {
       const b = make('button', 'ask-card-seg-btn', label);
       b.type = 'button';
       b.setAttribute('role', 'tab');
@@ -4518,6 +4737,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         paintSeg();
         renderTarget();
         reloadLane();
+        if (!card.schedule) laterBtn.hidden = local.target === 'none';   // with a proposed time this button is Start now
       });
       segBtns[t] = b;
       seg.appendChild(b);
@@ -4553,15 +4773,21 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // any mode: a run must never start under a policy or on a branch the card did not show.
     const lvTag = (node, min, keep) => { node.dataset.minLevel = min; if (keep) node.dataset.levelKeep = '1'; return node; };
     lvTag(guardField, 'advanced', !!card.guardrailsId && card.guardrailsId !== 'permissive');
-    lvTag(seg, 'advanced', card.target === 'workspace');
+    lvTag(seg, 'advanced', card.target === 'workspace' || card.target === 'none');
     lvTag(engineField, 'advanced', !!card.engine && card.engine !== 'claude');
     wfRow.append(wfField, engineField, guardField);
     targetSec.appendChild(wfRow);
+    if (shapeUi) rootEl.appendChild(shapeUi.el);
     rootEl.appendChild(targetSec);
     engineSel.addEventListener('change', () => reloadLane());   // the agent rows offer the engine's models
     workflowSel.addEventListener('change', () => {
       if (local.workflowUnavailable) { local.workflowUnavailable = false; err.textContent = ''; startBtn.disabled = false; }
+      paintNeedsRepo();
       reloadLane();
+    });
+    if (presetLine) workflowSel.addEventListener('change', () => {
+      presetLine.textContent = workflowSel.value === card.preset.workflowId ? `From preset ${card.preset.name}`
+        : `From preset ${card.preset.name}: agent picks dropped (another workflow)`;
     });
 
     // agents lane (reloadLane → renderLane fills laneSec)
@@ -4612,9 +4838,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       pillRow.replaceChildren();
       for (const p of local.pills) {
         const pill = make('span', 'ask-rp-pill', `@${p.name} `);
-        const x = make('button', null, '×');
+        const x = make('button', 'ask-rp-pill-x');
         x.type = 'button';
         x.setAttribute('aria-label', `Remove ${p.name}`);
+        x.append(icon(doc, 'x', 12));
         x.addEventListener('click', () => { local.pills = local.pills.filter((q) => q.id !== p.id); renderPills(); });   // the text stays (D9)
         pill.appendChild(x);
         pillRow.appendChild(pill);
@@ -4652,11 +4879,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     feature.setAttribute('aria-label', 'Feature branch');
 
     // Run on the source branch (branch.sameAsSource): ONE checkbox for both targets, like `feature`.
-    const sameSrc = doc.createElement('input');
-    sameSrc.type = 'checkbox';
-    sameSrc.className = 'ask-card-same-source';
-    sameSrc.checked = card.sameAsSource === true;
-    sameSrc.setAttribute('aria-label', 'Run on the source branch');
+    const sameSw = makeSwitch(doc, { ariaLabel: 'Run on the source branch', checked: card.sameAsSource === true, inputClass: 'ask-card-same-source' });
+    const sameSrc = sameSw.input;
     feature.disabled = sameSrc.checked;
     // updateTargetSub is a function declaration further down in this same scope (hoisted).
     sameSrc.addEventListener('change', () => { feature.disabled = sameSrc.checked; updateTargetSub(); });
@@ -4668,18 +4892,18 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
     // footer
     const foot = make('footer', 'ask-rp-foot');
-    const openNp = make('button', 'ask-card-open-np', '↗ Open in New run');
+    const openNp = make('button', 'link-btn ask-card-open-np', '↗ Open in New run');
     openNp.type = 'button';
     openNp.setAttribute('data-ask-card-open-np', '');
     openNp.dataset.minLevel = 'advanced';
     // New pipeline's task-source pane cannot be pre-filled from here yet; a tracker task runs from the card.
     if (card.source) openNp.hidden = true;
     openNp.addEventListener('click', () => prefillFromCard(block, rootEl, local));
-    const dismissBtn = make('button', 'ask-card-not-now', 'Not now');
+    const dismissBtn = make('button', 'btn btn-sm btn-quiet ask-card-not-now', 'Not now');
     dismissBtn.type = 'button';
     dismissBtn.setAttribute('data-ask-card-dismiss', '');
     dismissBtn.addEventListener('click', () => dismissCard(block, rootEl));
-    const startBtn = make('button', 'ask-card-start');
+    const startBtn = make('button', 'btn btn-sm btn-primary');
     startBtn.type = 'button';
     startBtn.setAttribute('data-ask-card-start', '');
     const play = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');   // filled, unlike svgIcon's stroked glyphs
@@ -4692,14 +4916,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // Schedule…: the same request, started later — once, or on a repeat (the card then follows the schedule).
     const sheetOpts = (initial = {}) => ({
       mode: 'create', allowRepeat: true, initial, runTitle: (block.card && (block.card.title || block.card.brief)) || '',
-      warning: 'A scheduled run is unattended. If this workflow asks questions, the run waits for your answer — chat notifications can reach you.',
+      warning: 'A scheduled run is unattended. If this workflow asks questions, the run waits for your answer. Chat notifications can reach you.',
       // Keyed off the card's LIVE target segment (local.target), not the proposal's frozen card.workspaceId —
       // the user can switch the card between project and workspace before opening the sheet.
       candidates: () => fetch(`/api/schedules/after-candidates?${local.target === 'workspace'
         ? `workspaceId=${encodeURIComponent((rootEl.querySelector('.ask-card-workspace-select') || {}).value || card.workspaceId || '')}`
         : `projectDir=${encodeURIComponent(local.projectDir())}`}`).then((r) => r.json()),
     });
-    const laterBtn = make('button', 'ask-card-not-now ask-card-later', 'Schedule…');
+    const laterBtn = make('button', 'btn btn-sm btn-quiet ask-card-not-now ask-card-later', 'Schedule…');
     laterBtn.type = 'button';
     if (card.schedule) {
       // Ask Worca proposed WHEN (propose_run when / every): scheduling is the answer, so it is the primary
@@ -4731,6 +4955,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       laterBtn.addEventListener('click', () => startCard(block, rootEl, local));
     } else {
       laterBtn.setAttribute('data-ask-card-schedule', '');
+      laterBtn.hidden = local.target === 'none';
       laterBtn.title = 'Start this run later';
       laterBtn.dataset.minLevel = 'advanced';
       laterBtn.addEventListener('click', async () => {
@@ -4738,42 +4963,128 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (picked) startCard(block, rootEl, local, picked);
       });
     }
-    foot.append(openNp, summary, dismissBtn, laterBtn, startBtn);
+    // Shape it first: Start holds an icon and a text node, so only the text node is relabelled.
+    let shapeBtn = null;
+    if (shapeUi) {
+      const setLabel = (b, t) => { const n = [...b.childNodes].find((x) => x.nodeType === 3); if (n) n.textContent = t; else b.append(t); };
+      if (card.shape) {
+        setLabel(startBtn, 'Start planning');            // a shaped card is never scheduled
+      } else {
+        shapeBtn = make('button', 'btn btn-sm', 'Shaper');
+        shapeBtn.type = 'button';
+        shapeBtn.dataset.askCardShape = '';
+        shapeBtn.addEventListener('click', () => startCard(block, rootEl, local, null, { shaped: true }));
+        setLabel(startBtn, 'Run as is');                 // D32: the choice card's own words, never "anyway"
+      }
+    }
+    foot.append(openNp, summary, dismissBtn, laterBtn, ...(shapeBtn ? [shapeBtn] : []), startBtn);
     rootEl.appendChild(foot);
+
+    // Shaper (D20, mock board 13): a shaped card shows the title, the brief clamped, Project, Base branch,
+    // Perspectives and what happens; every other field MOVES, unchanged, into a collapsed Advanced. Moves only: each
+    // control keeps its class, so collectCardBody / startCard read the same values and the request is unchanged.
+    let paintAdvanced = () => {};
+    if (card.shape && shapeUi) {
+      const kicker = eyebrow.querySelector('.ask-rp-kicker');
+      kicker.textContent = 'Shaper';
+      kicker.classList.add('ask-rp-kicker-shape');
+      const main = make('div', 'ask-rp-sec ask-rp-shape-main');
+      const preview = make('div', 'ask-rp-brief-preview',
+        card.source ? (card.source.title || card.source.taskId || '') : brief.value);
+      const more = make('button', 'link-btn ask-rp-brief-more', 'Show brief');
+      more.type = 'button';
+      more.setAttribute('data-ask-card-brief-more', '');
+      briefSec.hidden = true;
+      more.addEventListener('click', () => { preview.hidden = true; more.hidden = true; briefSec.hidden = false; grow(); });
+      const what = make('div', 'ask-rp-shape-what');
+      what.append(make('span', 'ask-rp-label', 'What happens'), make('span', null, shapeWhatHappens(card.shape)));
+      main.append(preview, more, briefSec, targetHost, rpField('Perspectives', shapeUi.el), what);
+      const adv = doc.createElement('details');
+      adv.className = 'ask-rp-adv disclosure';
+      adv.setAttribute('data-ask-card-advanced', '');
+      const advSum = make('summary', 'ask-rp-adv-sum', 'Advanced');
+      adv.appendChild(advSum);
+      const why = head.querySelector('.ask-rp-why');
+      if (why) adv.appendChild(why);
+      // renderTarget fills this with Feature branch + Run on the source branch on a project target (it rebuilds on every call).
+      local.shapeBranchHost = make('div', 'ask-rp-grid two ask-rp-adv-branch');
+      targetSec.insertBefore(local.shapeBranchHost, wfRow);
+      const sched = make('div', 'ask-rp-adv-sched');
+      sched.appendChild(laterBtn);
+      adv.append(targetSec, laneSec, sched);
+      rootEl.insertBefore(main, err);
+      rootEl.insertBefore(adv, err);
+      openNp.classList.add('link-btn');
+      delete openNp.dataset.minLevel;                       // one of the small card's own controls (D20)
+      foot.replaceChildren(openNp, dismissBtn, startBtn);   // the Advanced summary stands in for the lane summary
+      let advLane = null;
+      paintAdvanced = (lane = advLane) => {
+        advLane = lane;
+        const g = guardSel.selectedOptions[0];
+        advSum.textContent = shapeAdvancedSummary({
+          engine: engineLabel(engineSel.value || (lane && lane.defaultEngine) || ''),
+          guardrails: g ? g.textContent : '',
+          agents: lane ? lane.rows.length : 0,
+          overrides: lane ? laneOverrideCount(lane) : 0,
+        });
+      };
+      guardSel.addEventListener('change', () => paintAdvanced());
+      engineSel.addEventListener('change', () => paintAdvanced());   // the lane reload repaints again once loaded
+      paintAdvanced(null);
+    }
 
     local.projectDir = () => (local.target === 'project' ? ((rootEl.querySelector('.ask-card-project-select') || {}).value || '') : '');
     local.workflowId = () => workflowSel.value || card.workflowId || 'wf_default';
 
+    /** The loaded /api/projects row behind a project select value (SEAMS S12), else null. */
+    function projectRowOf(value) {
+      const opts = local.options;
+      return (opts && value && opts.projects.find((p) => p && p.path === value)) || null;
+    }
+    /** S12: a Folder project has no branches, and a Git project runs as Folder while git is missing (U3). */
+    function noBranches(value) { return projectKind(projectRowOf(value)) === 'folder' || !gitOn(doc); }
     function updateTargetSub() {
       const opts = local.options;
-      if (local.target === 'project') {
+      if (local.target === 'none') targetSub.textContent = NO_PROJECT_NAME;
+      else if (local.target === 'project') {
         const projSel = rootEl.querySelector('.ask-card-project-select');
         const srcSel = rootEl.querySelector('.ask-card-source');
         const name = projSel && projSel.selectedOptions[0] ? projSel.selectedOptions[0].textContent : (card.projectName || '');
-        targetSub.textContent = `${name} · branch ${(srcSel && srcSel.value) || 'current'} · feature ${featureWord()}`;
+        // B10 (canvas Switched): the name, the kind chip, then the branch words (none for a Folder project or without git).
+        const chip = kindChip(doc, projectKind(projectRowOf(projSel ? projSel.value : '')));
+        const parts = [doc.createTextNode(name)];
+        if (chip) parts.push(chip);
+        if (!noBranches(projSel ? projSel.value : '')) parts.push(doc.createTextNode(` · branch ${(srcSel && srcSel.value) || 'current'} · feature ${featureWord()}`));
+        targetSub.replaceChildren(...parts);
       } else {
         const wsSel = rootEl.querySelector('.ask-card-workspace-select');
         const row = opts && wsSel && opts.workspaces.find((w) => w && w.id === wsSel.value);
         const n = row && Array.isArray(row.projectKeys) ? row.projectKeys.length : (Array.isArray(card.members) ? card.members.length : 0);
         targetSub.textContent = `${(row && row.name) || card.workspaceName || 'workspace'} · ${n} member${n === 1 ? '' : 's'} · feature ${featureWord()}`;
       }
+      // Every target change lands here (renderTarget rebuilds the selects, so outside listeners are lost).
+      rootEl.__rp?.refreshTagRules?.();
     }
     feature.addEventListener('input', updateTargetSub);
 
+    function paintNeedsRepo() {
+      targetHost.querySelector('.ask-card-needs-repo')?.remove();
+      const row = local.options && local.options.workflows.find((w) => w && w.id === workflowSel.value);
+      if (local.target === 'none' && row && row.needsRepo) targetHost.appendChild(make('p', 'ask-card-needs-repo', NEEDS_REPO_NOTE));
+    }
     function renderTarget() {
       targetHost.replaceChildren();
       const opts = local.options;
       const grid = make('div', 'ask-rp-grid');
+      if (local.target === 'none') {
+        if (local.shapeBranchHost) local.shapeBranchHost.replaceChildren();
+        paintNeedsRepo();
+        updateTargetSub();
+        return;
+      }
       if (local.target === 'project') {
         const projSel = rpSelect('ask-card-project-select', 'Project');
         const srcSel = rpSelect('ask-card-source', 'Source branch');
-        if (opts) {
-          fillSelect(projSel, opts.projects.map((p) => ({ value: p.path, label: p.exists === false ? `${p.name} (missing)` : p.name })), card.projectDir || (opts.projects[0] && opts.projects[0].path) || '');
-          // The fill is async: the sub-line reads the select again when the branches land,
-          // or a proposed sourceBranch would read "branch current" until the user touches it.
-          loadBranchesInto(srcSel, projSel.value, card.sourceBranch || '').then(updateTargetSub);
-        }
-        projSel.addEventListener('change', () => { loadBranchesInto(srcSel, projSel.value, '').then(updateTargetSub); updateTargetSub(); reloadLane(); });
         // #527: "from origin/x (remote only, 2 behind)" describes the PROPOSED branch only.
         const srcField = rpField('Source branch', srcSel, sourceRefNote(card.sourceRef));
         const srcHint = srcField.querySelector('.ask-rp-hint');
@@ -4781,13 +5092,35 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           if (srcHint && srcSel.value !== card.sourceBranch) srcHint.textContent = '';
           updateTargetSub();
         });
-        grid.append(rpField('Project', projSel), lvTag(srcField, 'advanced', !!card.sourceBranch),
-          lvTag(rpField('Feature branch', feature, 'created for the run'), 'advanced', !!card.featureBranch),
-          lvTag(rpField('Run on the source branch', sameSrc, 'commits onto the source branch'), 'advanced', !!card.sameAsSource));
+        const featureField = lvTag(rpField('Feature branch', feature, 'created for the run'), 'advanced', !!card.featureBranch);
+        const sameField = lvTag(rpField('Run on the source branch', sameSw.row, 'commits onto the source branch'), 'advanced', !!card.sameAsSource);
+        for (const f of [srcField, featureField, sameField]) f.dataset.needsGit = '';
+        // S12: a Folder project, or no git, shows no branch rows and asks for no branches. The fill is async: the
+        // sub-line reads the select again when the branches land, or a proposed sourceBranch would read "branch current".
+        const paintBranches = (want) => {
+          const off = noBranches(projSel.value);
+          for (const f of [srcField, featureField, sameField]) f.hidden = off;
+          if (!off) loadBranchesInto(srcSel, projSel.value, want).then(updateTargetSub); else updateTargetSub();
+        };
+        if (opts) {
+          fillSelect(projSel, opts.projects.map((p) => ({ value: p.path, label: p.exists === false ? `${p.name} (missing)` : p.name })), card.projectDir || (opts.projects[0] && opts.projects[0].path) || '');
+          paintBranches(card.sourceBranch || '');
+        }
+        projSel.addEventListener('change', () => { paintBranches(''); updateTargetSub(); reloadLane(); });
+        if (local.shapeBranchHost) {
+          // Shaper (D20): Project and Base branch on the small card, at every level; the rest in Advanced.
+          srcField.querySelector('.ask-rp-label').firstChild.textContent = 'Base branch';
+          grid.classList.add('two');
+          grid.append(rpField('Project', projSel), srcField);
+          local.shapeBranchHost.replaceChildren(featureField, sameField);
+        } else {
+          grid.append(rpField('Project', projSel), lvTag(srcField, 'advanced', !!card.sourceBranch), featureField, sameField);
+        }
         targetHost.appendChild(grid);
         updateTargetSub();
         return;
       }
+      if (local.shapeBranchHost) local.shapeBranchHost.replaceChildren();
       const wsSel = rpSelect('ask-card-workspace-select', 'Workspace');
       const members = make('div', 'ask-card-members');
       const srcInput = doc.createElement('input');
@@ -4805,11 +5138,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         members.replaceChildren();
         memberHost.replaceChildren();
         const row = opts && opts.workspaces.find((w) => w && w.id === wsSel.value);
+        // P5: a Folder member (live list vcs 'none', else the card's workMode 'folder') has no branch to pick.
         const list = row && Array.isArray(row.projectKeys)
-          ? row.projectKeys.map((k, i) => ({ projectKey: k, name: wsBasename(row.projectPaths && row.projectPaths[i]) }))
-          : Array.isArray(card.members) ? card.members.map((m) => ({ projectKey: m.projectKey, name: m.projectName })) : [];
+          ? row.projectKeys.map((k, i) => ({ projectKey: k, name: wsBasename(row.projectPaths && row.projectPaths[i]), folder: Array.isArray(row.vcs) && row.vcs[i] === 'none' }))
+          : Array.isArray(card.members) ? card.members.map((m) => ({ projectKey: m.projectKey, name: m.projectName, folder: m.workMode === 'folder' })) : [];
         members.textContent = list.map((m) => m.name).join(', ');
         for (const m of list) {
+          if (m.folder) continue;   // listed above, but no per-member source input: never in sourceBranchByKey
           const inp = doc.createElement('input');
           inp.type = 'text';
           inp.className = 'ask-card-member-src';
@@ -4818,14 +5153,18 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           if (card.sourceBranchByKey && card.sourceBranchByKey[m.projectKey]) inp.value = card.sourceBranchByKey[m.projectKey];
           memberHost.appendChild(rpField(m.name, inp));
         }
+        details.hidden = list.length > 0 && !memberHost.childElementCount;   // every member a Folder project: nothing to pick
+        for (const f of wsGitFields) f.hidden = list.length > 0 && list.every((m) => m.folder);   // ...and no branch to start from, name or commit onto
         updateTargetSub();
       };
       wsSel.addEventListener('change', renderMembers);
       const wsField = rpField('Workspace', wsSel);
       wsField.appendChild(members);
-      grid.append(wsField, lvTag(rpField('Source branch', srcInput, 'default for members'), 'advanced', !!card.sourceBranch),
+      const wsGitFields = [lvTag(rpField('Source branch', srcInput, 'default for members'), 'advanced', !!card.sourceBranch),
         lvTag(rpField('Feature branch', feature), 'advanced', !!card.featureBranch),
-        lvTag(rpField('Run on the source branch', sameSrc, 'commits onto the source branch'), 'advanced', !!card.sameAsSource));
+        lvTag(rpField('Run on the source branch', sameSw.row, 'commits onto the source branch'), 'advanced', !!card.sameAsSource)];
+      for (const f of [...wsGitFields, details]) f.dataset.needsGit = '';
+      grid.append(wsField, ...wsGitFields);
       targetHost.appendChild(grid);      // attach BEFORE filling: renderMembers → updateTargetSub finds the select through rootEl
       targetHost.appendChild(details);
       if (opts) {
@@ -4839,7 +5178,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // `edits` are per workflow-and-project and are DISCARDED, silently.
     // `saveDefaults`: the card's "Save as project defaults" switch (off by default), kept across lane reloads.
     const laneCtx = { summary, workflowId: () => local.workflowId(), projectDir: () => local.projectDir(),
-      saveDefaults: () => !!local.saveDefaults, setSaveDefaults: (v) => { local.saveDefaults = !!v; } };
+      saveDefaults: () => !!local.saveDefaults, setSaveDefaults: (v) => { local.saveDefaults = !!v; },
+      onPaint: (lane) => paintAdvanced(lane) };
     let laneSeq = 0;
     function reloadLane() {
       const seq = ++laneSeq;
@@ -4880,7 +5220,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (unseen) {
           laneSec.dataset.levelKeep = '1';
           const list = Object.entries(unseen.nodes).map(([id, p]) => `${id} → ${p.model}${p.effort ? ` · ${p.effort}` : ''}${p.subagentModel ? ` · sub-agents ${p.subagentModel}` : ''}`);
-          laneSec.appendChild(make('div', 'ask-rp-lane-msg', `Start runs Ask Worca's picks as proposed (checked again at Start): ${list.join(', ')}`));
+          laneSec.appendChild(make('div', 'ask-rp-lane-msg', `Start runs Chat's picks as proposed (checked again at Start): ${list.join(', ')}`));
         } else if (!lane) delete laneSec.dataset.levelKeep;
       });
     }
@@ -4894,7 +5234,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // of another workflow's agents.
     function markWorkflowUnavailable() {
       workflowSel.selectedIndex = -1;
-      err.textContent = `Workflow ${card.workflowId} is not available — pick one`;
+      err.textContent = `Workflow ${card.workflowId} is not available: pick one`;
       startBtn.disabled = true;
       local.workflowUnavailable = true;
     }
@@ -4903,15 +5243,46 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     loadCardOptions({ fresh: true }).then((opts) => {
       if (st.destroyed) return;
       local.options = opts;
-      // Auto is not a saved workflow: listed only when Ask Worca proposed it (a plain card keeps its list).
-      const autoOpt = card.workflowId === 'wf_auto' ? [{ value: 'wf_auto', label: 'Auto — picks the workflow when the run starts' }] : [];
-      fillSelect(workflowSel, [...autoOpt, ...opts.workflows.map((w) => ({ value: w.id, label: workflowPickerLabel(w, null) || w.name || w.id }))], card.workflowId || 'wf_default');
-      if (card.workflowId && workflowSel.value !== card.workflowId) markWorkflowUnavailable();
+      if (card.shape && local.shapeUi) {
+        // Shape it first (D9): the workflow is fixed; the server re-derives wf_shape / wf_shape_ux from the chips at start.
+        fillSelect(workflowSel, [{ value: card.workflowId, label: card.workflowName || 'Shaper' }], card.workflowId);
+        workflowSel.disabled = true;
+      } else {
+        // Auto is not a saved workflow: listed only when Ask Worca proposed it (a plain card keeps its list).
+        const autoOpt = card.workflowId === 'wf_auto' ? [{ value: 'wf_auto', label: 'Auto: picks the workflow when the run starts' }] : [];
+        fillSelect(workflowSel, [...autoOpt, ...opts.workflows.map((w) => ({ value: w.id, label: workflowPickerLabel(w, null) || w.name || w.id }))], card.workflowId || 'wf_default');
+        if (card.workflowId && workflowSel.value !== card.workflowId) markWorkflowUnavailable();
+      }
       fillSelect(guardSel, opts.guardrails.map((g) => ({ value: g.id, label: g.id === 'permissive' ? 'Permissive' : (g.name || g.id) })), card.guardrailsId || 'normal');
       renderTarget();
       reloadLane();
     });
-    rootEl.__rp = { local, wfDesc, summary, laneSec, briefSec, brief, titleInput, lane: () => local.lane };   // consumed by later tasks + tests
+    rootEl.__rp = { local, wfDesc, summary, laneSec, briefSec, brief, titleInput, tagInput, lane: () => local.lane };   // consumed by later tasks + tests
+    // Enforced run tags (slice 4A): the target's rules pre-fill the chips and, when enforced, gate Start
+    // with an inline picker per missing mandatory tag. The server gate still answers a stale rule set (422).
+    if (tagInput) {
+      const line = createTagRulesLine(doc, tagInput);
+      tagRow.appendChild(line.el);
+      rootEl.__rp.tagRules = line;
+      const sync = () => { const why = line.blocked(); startBtn.disabled = !!why; startBtn.title = why || ''; };
+      line.onChange(sync);
+      let gen = 0;
+      let lastQ = null;
+      const refreshTagRules = () => {
+        const wsId = local.target === 'workspace' ? ((rootEl.querySelector('.ask-card-workspace-select') || {}).value || card.workspaceId || '') : '';
+        const dir = wsId ? '' : local.projectDir();
+        const q = wsId ? `workspaceId=${encodeURIComponent(wsId)}` : dir ? `projectDir=${encodeURIComponent(dir)}` : '';
+        if (q === lastQ) return;            // updateTargetSub also runs on branch/feature edits: same target, no fetch
+        lastQ = q;
+        const mine = ++gen;
+        if (!q) { line.update(null); return; }
+        fetch(`/api/tag-dimensions?${q}`).then((r) => (r.ok ? r.json() : null))
+          .then((info) => { if (mine === gen && !st.destroyed) line.update(info && Array.isArray(info.dims) ? info : null); })
+          .catch(() => {});
+      };
+      rootEl.__rp.refreshTagRules = refreshTagRules;
+      refreshTagRules();
+    }
     return rootEl;
   }
 
@@ -4926,6 +5297,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // Agent memory (§7.3 / B17): the card's scope rides along only while its workflow is still the
     // defragment one — a user who switched the picker to another workflow gets a legacy body.
     if (card.memoryScope && body.workflowId === 'wf_memory_defrag') body.memoryScope = card.memoryScope;
+    const tags = rootEl.__rp?.tagInput ? rootEl.__rp.tagInput.get() : [];
+    if (tags.length) body.tags = tags;                      // none: a legacy body, byte for byte
     const engine = (rootEl.querySelector('.ask-card-engine') || {}).value;
     if (engine) body.engine = engine;                       // none: /api/run's default engine
     // A tracker task: the reference, never a prompt (POST /api/run takes source OR prompt).
@@ -4936,6 +5309,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         ...(card.source.profile ? { profile: card.source.profile } : {}), ...(card.source.inputs ? { inputs: card.source.inputs } : {}),
       };
     }
+    if (local.target === 'none') { body.noProject = true; return body; }
     const feature = rootEl.querySelector('.ask-card-feature').value.trim();
     const same = rootEl.querySelector('.ask-card-same-source');
     if (same && same.checked) body.sameAsSource = true;   // the run auto-names its hidden branch
@@ -4968,11 +5342,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
   }
 
-  async function startCard(block, rootEl, local, schedule = null) {
+  async function startCard(block, rootEl, local, schedule = null, { shaped = false } = {}) {
     const err = rootEl.querySelector('.ask-card-err');
     const startBtn = rootEl.querySelector('[data-ask-card-start]');
     err.textContent = '';
     startBtn.disabled = true;
+    const shapeBtn = rootEl.querySelector('[data-ask-card-shape]');
+    if (shapeBtn) shapeBtn.disabled = true;               // a double click must not post /api/run twice
     freezeTargetInputs(rootEl, true);
     try {
       // D3: read-only, so it runs BEFORE saveLaneEdits — a refusal here must not leave the config already written.
@@ -4998,11 +5374,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (Object.keys(ov.nodes).length) overlay = { nodes: ov.nodes };
       }
       const body = { ...collectCardBody(rootEl, local, block.card || {}), askThreadId: st.threadId, askCardId: block.id, ...(schedule || {}) };
+      if (local.shapeUi && (shaped || (block.card || {}).shape)) Object.assign(body, local.shapeUi.body());
       if (overlay) body.overlay = overlay;
       // Run chains: "the branch of the run before it" is a flag, and the wire refuses it next to a branch name.
       // Keyed off the schedule being POSTED — a Start now on an after-proposal carries none and keeps the picked branch.
       if (body.sourceFromPrevious) { delete body.sourceBranch; delete body.sourceBranchByKey; }
       if (ex.extras.length) body.extras = ex.extras;
+      if (block.card && block.card.preset) applyPresetStart(body, block.card.preset);
       let res = null;
       try {
         res = await fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -5030,8 +5408,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // the flip frame renders the terminal state. The browser never navigates
       // (beginRun is NEVER called — spec §10.5).
     } finally {
-      startBtn.disabled = false;
+      const tagBlocked = !!rootEl.__rp?.tagRules?.blocked();   // an enforced tag still missing keeps Start off
+      startBtn.disabled = tagBlocked;
+      if (shapeBtn) shapeBtn.disabled = tagBlocked;            // Shaper starts a run too: the same tag rule
       freezeTargetInputs(rootEl, false);
+      // freezeTargetInputs re-enabled the select; a shaped card's workflow is fixed.
+      if ((block.card || {}).shape && local.shapeUi) rootEl.querySelector('.ask-card-workflow').disabled = true;
     }
   }
 
@@ -5051,7 +5433,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       try { const b = await res.json(); if (b && b.error) msg = b.error; } catch { /* keep */ }
       // One turn per thread: the route refuses every card verb that starts one while a
       // reply streams. Say what to do instead of echoing the wire's `turn in flight`.
-      if (res.status === 409 && msg === 'turn in flight') msg = 'Ask Worca is still replying — try again once the answer lands.';
+      if (res.status === 409 && msg === 'turn in flight') msg = 'Chat is still replying. Try again once the answer lands.';
       if (err) err.textContent = msg;
       release();
       return null;
@@ -5064,7 +5446,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // A failed event turn ALSO posts a system notice row (the server's failedEventTurn):
     // for save/decline the flip has already rebuilt this element, so the row is the only
     // message that survives. This line is what the run verb — which never flips — shows.
-    if (out && out.turn && out.turn.error && err) err.textContent = `Ask Worca could not reply: ${out.turn.error}`;
+    if (out && out.turn && out.turn.error && err) err.textContent = `Chat could not reply: ${out.turn.error}`;
     return out;
   }
   function dismissCard(block, rootEl) { return postCard(block, rootEl, { state: 'dismissed' }); }
@@ -5077,13 +5459,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       guardrailsId: rootEl.querySelector('.ask-card-guardrails').value,
       prompt: rootEl.querySelector('.ask-card-brief').value,
       title: ((rootEl.querySelector('.ask-rp-title input') || {}).value || '').trim() || card.title || '',
-      featureBranch: rootEl.querySelector('.ask-card-feature').value.trim(),
+      featureBranch: local.target === 'none' ? '' : rootEl.querySelector('.ask-card-feature').value.trim(),
       // The picker has no way to re-derive this: a `project` proposal opened in New Pipeline would
       // otherwise start with the row's default `global` and restructure the wrong scope (B17).
       memoryScope: card.memoryScope || null,
       engine: (rootEl.querySelector('.ask-card-engine') || {}).value || null,
     };
     if ((rootEl.querySelector('.ask-card-same-source') || {}).checked) p.sameAsSource = true;
+    const tags = rootEl.__rp?.tagInput ? rootEl.__rp.tagInput.get() : (card.tags || []);
+    if (tags.length) p.tags = tags;
     if (local.target === 'workspace') {
       p.workspaceId = rootEl.querySelector('.ask-card-workspace-select').value;
       const src = rootEl.querySelector('.ask-card-source-input');
@@ -5095,7 +5479,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (k && v) byKey[k] = v;
       }
       if (Object.keys(byKey).length) p.sourceBranchByKey = byKey;
-    } else {
+    } else if (local.target === 'project') {
       p.projectDir = rootEl.querySelector('.ask-card-project-select').value;
       const src = rootEl.querySelector('.ask-card-source');
       p.sourceBranch = src ? src.value : '';
@@ -5187,6 +5571,21 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
     return out;
   }
+  /** Shaper s5: ctx.postChanges — "Ask for changes" from a finished card (`ref` = {pipelineId} or {featureId}). The
+   *  server mints the changes card; it arrives through the thread's ask-message frame. Throws {status, body} when refused. */
+  async function postChangesJson(ref, text) {
+    const id = st.threadId;
+    const fail = (status, body, msg) => { const e = new Error(msg); e.status = status; e.body = body; return e; };
+    if (!id) throw fail(0, null, 'no chat to post to');
+    let res = null;
+    try {
+      res = await fetch(`/api/ask/threads/${id}/changes`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...(ref || {}), text }) });
+    } catch { throw fail(0, null, 'network error'); }
+    let out = null;
+    try { out = await res.json(); } catch { out = null; }
+    if (!res.ok) throw fail(res.status, out, (out && out.error) || `request failed (${res.status})`);
+    return out;
+  }
   /** The open chat's run link for a card / pipeline / run — pipeline id first, then the card id, then the run id
    *  (the order refreshProgressIdent always used; it calls this now) — as { runId, pipelineId }, or null. */
   function runLinkFor({ cardId = null, pipelineId = null, runId = null } = {}) {
@@ -5200,14 +5599,24 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     doc, win, fetch,
     threadId: () => st.threadId,
     postCard: (block, body) => postCardJson(block, body),
+    postChanges: (ref, text) => postChangesJson(ref, text),                               // Shaper s5
     confirm,
     runStore,
     openRunPanel: (ref, opts) => chatDep('openRunPanel', ref, opts),
+    shaperCard: (pipelineId, onChange) => chatDep('shaperCard', pipelineId, onChange),   // Shaper s2 (D12)
     openArtifact: (ref, artifact) => chatDep('openArtifact', ref, artifact),
+    downloadArtifact: (ref, artifact) => chatDep('downloadArtifact', ref, artifact),
+    checklists: (ref) => chatDep('checklists', ref),                                     // Shaper s3 (D18)
+    openPlan: (ref) => chatDep('openPlan', ref),                                         // Shaper s3 (D7)
+    openFiles: (o) => chatDep('openFiles', o),
+    revealInfo: () => chatDep('revealInfo'),
+    revealFile: (o) => chatDep('revealFile', o),
     openShipIt: (ref, link) => chatDep('openShipIt', ref, link),
     runLinkFor: (ref) => runLinkFor(ref || {}),
     appendToComposer: (text) => appendToComposer(text),
     announce: (text) => announce(text),
+    setScope: (scope) => setScopeFromApi(scope),
+    focusComposer: () => focusComposer(),
   };
   /** Ask Worca's drafted agent / script cards and its graph card (ask-composer-cards.mjs): the Workflows chat's cards
    *  without a canvas, their actions app.js's (composerActions). Made on first use (never during construction). */
@@ -5246,7 +5655,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (card.type === PROGRESS_CARD_TYPE) return true;
     if (card.type && chatCardBuilder(card.type)) return false;      // an extension type is never a run card, whatever its state
     if (ASK_COMPOSER_CARD_TYPES.includes(card.type)) return false;   // Ask's draft / graph cards are never run cards
-    if (card.type === COMMAND_CARD_TYPE || card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away') return false;
+    if (card.type === COMMAND_CARD_TYPE || card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'project') return false;
     return block.state === 'started' || (block.state === 'failed' && !!block.runId);
   }
   function buildCard(block) {
@@ -5272,7 +5681,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       try { made = custom(block, cardCtx); } catch (err) { console.warn('[worca] a chat card builder failed', err); }
       if (made && made.el) {
         if (cached) disposeCardEntry(cached);
-        st.cardEls.set(block.id, { el: made.el, state: block.state, rev, custom, handle: made.handle || null, dispose: made.dispose || null, animate: !!made.animate, cancelAnim: null, lastW: -1 });
+        st.cardEls.set(block.id, { el: made.el, state: block.state, rev, custom, handle: made.handle || null, dispose: made.dispose || null, animate: !!made.animate, cancelAnim: null, lastW: -1, shapeOn: shapeFirstOn() });
         return made.el;
       }
     }
@@ -5282,6 +5691,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const isSchedule = !!(block.card && block.card.type === 'schedule');
     const isModel = !!(block.card && block.card.type === 'model');
     const isClone = !!(block.card && block.card.type === 'clone');
+    const isProject = !!(block.card && block.card.type === 'project');
     const isWorkspace = !!(block.card && block.card.type === 'workspace');
     const isWeb = !!(block.card && block.card.type === 'web');
     const isActions = !!(block.card && block.card.type === 'actions');
@@ -5289,16 +5699,20 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const isCommand = !!(block.card && block.card.type === COMMAND_CARD_TYPE);
     const isComposer = !!(block.card && ASK_COMPOSER_CARD_TYPES.includes(block.card.type));
     const isProgress = isProgressBlock(block);
+    // Proposed cards only: `card.nudge` stays on the block after it flips to 'started', and a live run card must never
+    // be disposed and remounted because the gate changed.
+    const nudgeStale = block.state === 'proposed' && !!(block.card && block.card.nudge) && cached && cached.shapeOn !== shapeFirstOn();
     // Ask's draft cards also change with the cards AROUND them (a newer draft of the key replaces one): rebuilt when
     // what they show changes, not only their state.
     const view = isComposer ? composerCards().view(block) : '';
-    if (cached && cached.state === block.state && (cached.view || '') === view && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isWeb || isWorkspace || isActions || isAway || isCommand || isComposer || isProgress || block.state === 'proposed')) return cached.el;
+    if (cached && !nudgeStale && cached.state === block.state && (cached.view || '') === view && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isProject || isWeb || isWorkspace || isActions || isAway || isCommand || isComposer || isProgress || block.state === 'proposed')) return cached.el;
     if (cached) disposeCardEntry(cached);
     const built = isWorkflow ? buildWorkflowCard(block, cached)
       : isMetrics ? buildMetricsCard(block)
       : isSchedule ? buildScheduleCard(block)
       : isModel ? buildModelCard(block)
       : isClone ? buildCloneCard(block)
+      : isProject ? buildProjectCard(block)
       : isWeb ? buildWebCard(block)
       : isWorkspace ? buildWorkspaceCard(block)
       : isActions ? buildActionsCard(block)
@@ -5308,7 +5722,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       : isProgress ? buildProgressCard(block)
         : custom ? { el: make('div', 'ask-card-stub', (block.card && (block.card.summary || block.card.title)) || 'Card unavailable') }
         : { el: block.state === 'proposed' ? buildCardForm(block) : buildCardTerminal(block) };
-    st.cardEls.set(block.id, { el: built.el, state: block.state, view, rev, custom: custom || null, handle: built.handle || null, dispose: built.dispose || null, animate: !!built.animate, cancelAnim: null, lastW: -1 });
+    st.cardEls.set(block.id, { el: built.el, state: block.state, view, rev, custom: custom || null, handle: built.handle || null, dispose: built.dispose || null, animate: !!built.animate, cancelAnim: null, lastW: -1, shapeOn: shapeFirstOn() });
     return built.el;
   }
   function disposeCardEntry(c) {
@@ -5405,8 +5819,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       return { cardId: block.id, pipelineId: card.pipelineId || null, runId: card.runId || null, projectKey: card.projectKey || null,
         workspaceId: card.workspaceId || null, title: card.title || '', label: card.label || '' };
     }
-    return { cardId: block.id, pipelineId: null, runId: block.runId || null, projectKey: card.projectKey || null, workspaceId: card.workspaceId || null,
-      title: card.title || card.brief || 'run', label: card.workspaceName || card.projectName || '' };
+    const none = card.target === 'none';   // P3: a No project proposal — the reserved key and its name until the first frame
+    return { cardId: block.id, pipelineId: null, runId: block.runId || null, projectKey: none ? NO_PROJECT_KEY : (card.projectKey || null), workspaceId: card.workspaceId || null,
+      title: card.title || card.brief || 'run', label: none ? NO_PROJECT_NAME : (card.workspaceName || card.projectName || '') };
   }
   /** Fold the thread's run links into the identity: the first `state` reveals the pipeline id; a resume moves the runId. */
   function refreshProgressIdent(ident) {
@@ -5618,8 +6033,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     let agentsCount = null;
 
     function renderHead(r, canOpen) {
-      const isLive = isLiveRow(r);
       const stopped = r.status === 'stopped' || r.status === 'error';
+      // A turn still running that no frame has made live yet (a chat loaded mid-turn, before the subscribe replay
+      // adopts it) is in progress too: its unfinished row has no duration or cost, and "Done" would be a lie.
+      const inFlight = st.model && st.model.inFlight();
+      const isLive = isLiveRow(r) || (!stopped && (r.status === 'streaming' || !!(inFlight && inFlight.messageId === r.id)));
       const parts = [];
       // The head names its state in one word — Thinking, Done, or Stopped after —
       // and nothing more while the turn is live: the orb row at the bottom of the
@@ -5787,6 +6205,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       div.classList.add('ask-md');
       div.classList.remove('ask-answer-plain');
       div.replaceChildren(out.frag);
+      refChips.decorate(div, { live: isLive });
       if (!isLive) renderer.highlight(div); // fire-and-forget; §10.5: highlight on done
     } else {
       div.classList.add('ask-answer-plain');
@@ -5831,16 +6250,26 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // PD6: a synthetic row (a workflow-card event) is a notice, never a bubble — its text is the model-facing event line.
       const synthetic = (row.blocks || []).filter((b) => b && b.kind === 'notice' && b.synthetic);
       if (synthetic.length) {
-        for (const b of synthetic) wrap.appendChild(buildNotice(b));
+        // S39: a quiet notice (a scope switch's event turn) shows nothing — the divider and the answered card say it.
+        for (const b of synthetic) if (!b.quiet) wrap.appendChild(buildNotice(b));
+        if (synthetic.every((b) => b.quiet)) wrap.hidden = true;
       } else {
+        // Shaper (D21): the lead went to the model; the bubble shows the intent chip and the person's own text.
+        const own = splitIntentLead(row.text || '');
+        if (own.intent) {
+          const chip = make('div', 'ask-user-intent');
+          chip.append(homeIcon(doc, INTENTS[own.intent].icon, 14), make('span', null, INTENTS[own.intent].label));
+          wrap.appendChild(chip);
+        }
         // Pinpoint (#669): a message that opens with a blockquote shows it as a quote card above the bubble.
-        const { quote, rest } = parseQuotedMessage(row.text || '');
+        const { quote, rest } = parseQuotedMessage(own.text);
         if (quote) {
           const card = make('div', 'ask-user-quote');
           card.append(make('div', 'ask-user-quote-h', quote.src ? `From ${quote.src}` : 'Quoted'), make('div', 'ask-user-quote-t', quote.text));
           wrap.appendChild(card);
         }
-        if (!quote || rest) wrap.appendChild(make('div', 'ask-user-bubble', quote ? rest : (row.text || '')));
+        const bubbleText = quote ? rest : own.text;
+        if (bubbleText || (!quote && !own.intent)) wrap.appendChild(make('div', 'ask-user-bubble', bubbleText));
         const atts = (row.blocks || []).filter((b) => b && b.kind === 'attachment');
         if (atts.length) {
           const pills = make('div', 'extras-pills ask-user-pills');
@@ -5849,8 +6278,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         }
       }
     } else if (row.role === 'system') {
-      const notices = (row.blocks || []).filter((b) => b && b.kind === 'notice');
-      if (notices.length) for (const b of notices) wrap.appendChild(buildNotice(b));
+      // Notices and dividers — and a card worca posted out of turn (a PR fix run's progress card, ui/server.mjs askPrFixRun).
+      const shown = (row.blocks || []).filter((b) => b && (b.kind === 'notice' || b.kind === 'divider' || b.kind === 'card'));
+      if (shown.length) for (const b of shown) wrap.appendChild(b.kind === 'card' ? buildCard(b) : b.kind === 'divider' ? buildDivider(b) : buildNotice(b));
       else wrap.appendChild(buildNotice({ text: row.text }));
     } else {
       const activity = buildActivity(row);
@@ -5906,7 +6336,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
             // A classified notice (errorClass on the block) IS the explanation —
             // it renders the human line and, at expert, the raw detail in its
             // own expander. The raw line here is only for the unclassified case.
-            const classified = (cur.blocks || []).some((b) => b && b.kind === 'notice' && (b.errorClass || b.codexSetup));
+            const classified = (cur.blocks || []).some((b) => b && b.kind === 'notice' && (b.errorClass || b.codexSetup || b.copilotSetup));
             if (!classified) {
               const explained = (cur.blocks || []).some((b) => b && b.kind === 'notice');
               if (cur.errorMessage) wrap.appendChild(make('div', 'ask-error-line', cur.errorMessage));
@@ -6000,6 +6430,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (switched) stopVoice();
     if (switched) st.seenRows = new Set();
     st.threadId = id;
+    if (st.open && st.unread && st.unreadThread === id) setUnread(false);   // the dot's chat is on screen now
     st.model = createThreadModel({ threadId: id });
     st.model.load(snap);
     if (switched) { st.hist = { idx: -1, draft: '' }; st.suggestDismissed = null; }
@@ -6008,7 +6439,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (q && q.items.length && !snap.inFlight && !q.draining) q.paused = true;
     renderQueue();
     el.title.textContent = (snap.thread && snap.thread.title) || 'New chat';
-    applyThreadScope(snap.thread && snap.thread.context);   // #397: restore the pin
+    if (switched) st.scopeHeld = null;    // S39: a held pick belongs to the chat it was made in
+    // #397: restore the pin — S39: a resync of the same chat does not undo a held pick (the stored row is older).
+    if (switched || st.scopeHeld !== id) applyThreadScope(snap.thread && snap.thread.context);
     setContexts(snap.thread && snap.thread.contexts);
     // The picker follows the chat — on a SWITCH only: a resync of the same thread
     // would otherwise clobber a pick the user just made (its PATCH may not have landed).
@@ -6025,7 +6458,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     scheduleFlush();
     stopElapsed();      // a mid-stream thread switch must not leave the old
     updateSendStop();   // turn's timer or stop button behind (V3/D2 reset)
-    if (snap.inFlight) { subscribe(id); startElapsed(); }
+    // Forced: the model above is fresh (no live turn), so the server must replay the running job into it — also when
+    // this socket subscribed to the chat before (a switch A → B → A, a resync), or the row never goes live again.
+    if (snap.inFlight) { subscribe(id, { force: true }); startElapsed(); }
     repaintProgressCards({ hydrate: true });   // thread load + reconnect (onHello → resync → loadThread): re-resolve + re-hydrate every card
     return snap;
   }
@@ -6178,7 +6613,21 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       applyCommandFrame(frame.command);
       return;
     }
+    if (frame.type === 'ask-scope') {                           // Projects, any way P4 (CONTRACT §4): a server-side switch
+      // The open chat's pill follows it with no PATCH (the server stored it), so the next send keeps the new scope.
+      if (frame.threadId === st.threadId && frame.scope && typeof frame.scope === 'object') {
+        const label = typeof frame.label === 'string' && frame.label ? frame.label : null;
+        st.scopeHeld = null;                                    // S39: the server's switch wins over a held pick
+        setScope({ ...scopeFromContext(frame.scope), label }, { persist: false, focus: false });
+        if (st.scope.pinned && !label) resolveScopeLabel();
+      }
+      return;
+    }
     if (THREADS_REFRESH_FRAMES.has(frame.type)) scheduleThreadsRefresh();
+    // A PR fix run's card landed, or its outcome did (ui/server.mjs askPrFixRun marks the frame unread), in a chat that
+    // is not on screen: the Chat row's dot, as a finished reply lights it. Any chat of this person — worca posted it.
+    if (frame.type === 'ask-message' && frame.unread === true && typeof frame.threadId === 'string'
+      && (!st.open || frame.threadId !== st.threadId)) setUnread(true, frame.threadId);
     // The Chat row's dot (worca Chat): a reply in ANOTHER chat this tab asked in (the user switched chats before it
     // landed) ended while Chat was hidden. The open chat's own reply is afterFrame's.
     if ((frame.type === 'ask-done' || frame.type === 'ask-error') && !st.open && typeof frame.threadId === 'string'
@@ -6210,7 +6659,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   // Re-fetch + resubscribe (spec §10.8: a seq gap or a reconnect re-syncs over
   // REST — the ring buffer replay then re-plays from seq 1 and the model's seq
-  // dedupe/adoption absorb it). Latched: one resync at a time.
+  // dedupe/adoption absorb it). loadThread itself re-subscribes (forced) when the
+  // snapshot still shows a turn in flight. Latched: one resync at a time.
   function resync() {
     if (st.resyncing || !st.threadId || st.destroyed) return;
     // A switch is loading: its own load brings fresh state, and re-loading the chat being left would bump loadGen and
@@ -6220,7 +6670,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const id = st.threadId;
     Promise.resolve()
       .then(() => loadThread(id))
-      .then((snap) => { if (snap && snap.inFlight) subscribe(id, { force: true }); })
       .catch(() => { /* the thread may be gone; loadThread handled storage */ })
       .then(() => {
         st.resyncing = false;
@@ -6476,8 +6925,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     win.removeEventListener('hashchange', onHashChange);
     if (dockRo) { dockRo.disconnect(); dockRo = null; }
     if (clearRo) { clearRo.disconnect(); clearRo = null; }
+    if (el.scopeRo) { el.scopeRo.disconnect(); el.scopeRo = null; }
     if (st.runTick) { clearInterval(st.runTick); st.runTick = null; }
     if (st.runUnsub) { try { st.runUnsub(); } catch { /* ignore */ } st.runUnsub = null; }
+    refChips.destroy();
     pruneCardEls();                                  // every card graph mount and its ResizeObserver goes with the sheet
     destroyAddons();
     st.queues.clear();
@@ -6501,6 +6952,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     pushServerFrame,
     onHello,
     ownsKey,
+    setScope: (scope) => setScopeFromApi(scope),
+    optionsChanged: () => { st.cardOptions = null; },   // projects-changed / workspaces-changed: the next read refetches
     destroy,
   });
 }

@@ -9,6 +9,8 @@ import { resolve } from 'node:path';
 
 import { useTempHome } from './helpers/temp-home.mjs';
 import { RunHarness } from '../src/core/run-harness.mjs';
+import { folderMemberFiles } from '../src/core/folder-members.mjs';
+import { WORKSPACE_SCAN_WORKFLOW_ID } from '../src/core/graph/builtin-workflows.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 useTempHome(after);
@@ -45,4 +47,56 @@ test('_workspaceChannel names the workspace and each member\'s live project dir;
       assert.equal(ch.workspaceName, 'Shop');
     } },
   ]);
+});
+
+// P5: a Folder member rides the channel and the node roster with its changes file — except on a read-only Workspace
+// scan, which writes no Changes (S51), so its agents are never pointed at a changes file.
+const withFolder = (workflowId) => {
+  const members = [
+    { projectKey: 'api-1111', projectName: 'api', projectDir: '/live/api' },
+    { projectKey: 'notes-9c8d7e6f', projectName: 'notes', projectDir: '/live/notes', workMode: 'folder' },
+  ];
+  const { _memberWorkMode, _folderFilesFor, _isWorkspaceScan } = RunHarness.prototype;
+  return {
+    ...self(), members, memberByKey: new Map(members.map((m) => [m.projectKey, m])),
+    isWorkspace: true, workflowId, runRootMode: 'detached', pipeline: { dir: '/store/pipelines/p-1' },
+    workDirs: new Map([['api-1111', '/rr/repos/api-1111'], ['notes-9c8d7e6f', '/rr/repos/notes-9c8d7e6f']]),
+    checkpointRefs: { 'api-1111': 'a1' },
+    _memberWorkMode, _folderFilesFor, _isWorkspaceScan,
+  };
+};
+
+test('a Folder member carries its changes file on the channel and the node roster, but not on a read-only Workspace scan', async () => {
+  const PATCH = folderMemberFiles('/store/pipelines/p-1', 'notes-9c8d7e6f').patch;
+  await checkRows([
+    { name: '_workspaceChannel: a run names the Folder member\'s changes file; a scan names none', run: () => {
+      const notes = { projectKey: 'notes-9c8d7e6f', projectName: 'notes', projectDir: resolve('/live/notes'), worktreeDir: '/rr/repos/notes-9c8d7e6f',
+        checkpointRef: undefined, graphInstruction: '', workMode: 'folder' };
+      const run = RunHarness.prototype._workspaceChannel.call(withFolder('wf_default'));
+      assert.deepEqual(run.projects[1], { ...notes, changesPatch: PATCH });
+      const scan = RunHarness.prototype._workspaceChannel.call(withFolder(WORKSPACE_SCAN_WORKFLOW_ID));
+      assert.deepEqual(scan.projects[1], notes);
+      assert.deepEqual(scan.projects[0], run.projects[0], 'the Git member is the same either way');
+    } },
+    { name: '_reposCtx: a run names the Folder member\'s changes file; a scan names none', run: () => {
+      const notes = { projectKey: 'notes-9c8d7e6f', projectName: 'notes', dir: '/rr/repos/notes-9c8d7e6f', relDir: 'repos/notes-9c8d7e6f',
+        checkpointRef: null, graphInstruction: '', workMode: 'folder' };
+      const run = RunHarness.prototype._reposCtx.call(withFolder('wf_default'));
+      assert.deepEqual(run[1], { ...notes, changesPatch: PATCH });
+      const scan = RunHarness.prototype._reposCtx.call(withFolder(WORKSPACE_SCAN_WORKFLOW_ID));
+      assert.deepEqual(scan[1], notes);
+      assert.deepEqual(scan[0], run[0], 'the Git member is the same either way');
+    } },
+  ]);
+});
+
+// #411: relDir names the checkout dir on disk (a shortened projectKey can differ from the key).
+test('_reposCtx: relDir is the checkout dir name, not the projectKey; null before the checkout exists and on legacy', () => {
+  const self = (runRootMode, workDirs) => ({ members: [{ projectKey: 'identity-access-management-1a2b3c4d', projectName: 'iam' }],
+    runRootMode, workDirs: new Map(workDirs), checkpointRefs: {}, toolInstructions: new Map(), isWorkspace: false });
+  const [m] = RunHarness.prototype._reposCtx.call(self('detached', [['identity-access-management-1a2b3c4d', '/rr/repos/ident-1a2b3c4d']]));
+  assert.equal(m.relDir, 'repos/ident-1a2b3c4d');
+  assert.equal(m.dir, '/rr/repos/ident-1a2b3c4d');
+  assert.equal(RunHarness.prototype._reposCtx.call(self('detached', []))[0].relDir, 'repos/identity-access-management-1a2b3c4d');
+  assert.equal(RunHarness.prototype._reposCtx.call(self('legacy', [['identity-access-management-1a2b3c4d', '/p/.worca-cc/worktrees/x']]))[0].relDir, null);
 });

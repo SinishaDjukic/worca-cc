@@ -29,12 +29,12 @@ export function createActivityMenu({
     return n;
   };
 
-  const tablist = make('div', 'activity-tabs');
+  const tablist = make('div', 'activity-tabs tabs');
   tablist.setAttribute('role', 'tablist');
   tablist.setAttribute('aria-label', 'Activity');
   const tabs = {};
   for (const id of ACTIVITY_TABS) {
-    const b = make('button', 'activity-tab');
+    const b = make('button', 'activity-tab tab');
     b.type = 'button';
     b.id = `activity-tab-${id}`;
     b.dataset.tab = id;
@@ -49,7 +49,7 @@ export function createActivityMenu({
   panel.setAttribute('role', 'tabpanel');
   const all = make('a', 'activity-foot-link', 'Open Schedules');
   all.setAttribute('href', '#schedules');
-  const plan = make('button', 'btn btn-mini activity-foot-new', 'Schedule…');
+  const plan = make('button', 'btn btn-sm activity-foot-new', 'Schedule…');
   plan.type = 'button';
   plan.dataset.href = '#new/schedule';
   const foot = make('div', 'activity-foot');

@@ -47,13 +47,14 @@ function cleanMembers(members) {
   return (Array.isArray(members) ? members : [])
     .filter((m) => m && typeof m.key === 'string' && m.key && typeof m.dir === 'string' && m.dir && !seen.has(m.key) && seen.add(m.key))
     .map((m) => ({ key: m.key, name: typeof m.name === 'string' && m.name ? m.name : m.key, dir: m.dir,
-      projectDir: typeof m.projectDir === 'string' && m.projectDir ? m.projectDir : m.dir }))
+      projectDir: typeof m.projectDir === 'string' && m.projectDir ? m.projectDir : m.dir,
+      ...(m.workMode === 'folder' ? { workMode: 'folder' } : {}) }))   // P5: a Folder member is never asked of git
     .sort((a, b) => byStr(a.key, b.key));
 }
 
 function failedMember(m, error) {
   return {
-    key: m.key, name: m.name, dir: m.dir, stack: [], stackKnown: false, role: null, roleSource: null,
+    key: m.key, name: m.name, dir: m.dir, ...(m.workMode === 'folder' ? { workMode: 'folder' } : {}), stack: [], stackKnown: false, role: null, roleSource: null,
     aliases: [], provides: [], consumes: [], unresolved: [],
     coverage: { level: 'none', files: 0, scannedFiles: 0, truncated: false, detectors: {} },
     needs: ['role', 'aliases', 'provides', 'consumes'], graph: null, errors: [error],
@@ -122,7 +123,8 @@ async function extractMember(m, members, detectors, limits) {
   const errors = [];
   const exists = await stat(m.dir).then((s) => s.isDirectory(), () => false);
   if (!exists) return { ...failedMember(m, 'checkout unreadable'), foreign: [] };
-  const listing = await listMemberFiles(m.dir, { maxFiles: limits.MAX_FILES_PER_MEMBER });
+  const folder = m.workMode === 'folder';
+  const listing = await listMemberFiles(m.dir, { maxFiles: limits.MAX_FILES_PER_MEMBER, git: !folder });
   // The member's real root, resolved once: readText's containment check needs it for every file.
   const realRoot = await realpath(m.dir).catch(() => null);
   const acc = { facts: [], factIds: new Set(), aliases: [], unresolved: [], stack: new Set(), readmeRole: null, manifestRole: null, capped: false,
@@ -160,7 +162,8 @@ async function extractMember(m, members, detectors, limits) {
   }
   for (const d of detectors) if (typeof d.finish === 'function') run(d, () => d.finish(ctxs.get(d.id)));
   if (acc.capped) { truncated = true; errors.push(`fact cap of ${limits.MAX_FACTS_PER_MEMBER} reached`); }
-  const slug = remoteSlug(redactSecrets((await gitOutput(m.dir, ['remote', 'get-url', 'origin'])) ?? ''));
+  // P5: a Folder member has no origin — git there would answer with an enclosing repository's.
+  const slug = folder ? null : remoteSlug(redactSecrets((await gitOutput(m.dir, ['remote', 'get-url', 'origin'])) ?? ''));
   if (slug) {
     acc.aliases.push({ value: slug, source: 'git-remote', member: m.key });
     acc.aliases.push({ value: slug.split('/').pop(), source: 'git-remote', member: m.key });
@@ -170,7 +173,7 @@ async function extractMember(m, members, detectors, limits) {
   const detectorsOut = {};
   for (const [id, s] of stats) detectorsOut[id] = { facts: s.facts, ms: Math.round(s.ms), error: s.error };
   return {
-    key: m.key, name: m.name, dir: m.dir, stack, stackKnown: stack.length > 0,
+    key: m.key, name: m.name, dir: m.dir, ...(folder ? { workMode: 'folder' } : {}), stack, stackKnown: stack.length > 0,
     role, roleSource: acc.readmeRole ? 'readme' : acc.manifestRole ? 'manifest' : null,
     aliases: acc.aliases.filter((a) => a.member === m.key).map(({ value, source }) => ({ value, source })),
     foreign: acc.aliases.filter((a) => a.member !== m.key),
@@ -262,7 +265,8 @@ export async function extractWorkspace({ name, members, detectors = DETECTORS, l
       const { level, needs } = classify(x);
       x.coverage.level = level;
       x.needs = needs;
-      const head = (await gitOutput(x.dir, ['rev-parse', 'HEAD']))?.trim() || null;
+      // P5: a Folder member has no HEAD (its graph, if the copy holds one, is never fresh).
+      const head = x.workMode === 'folder' ? null : (await gitOutput(x.dir, ['rev-parse', 'HEAD']))?.trim() || null;
       x.graph = await probeGraph(x.dir, head);
       delete x.foreign;
       delete x.failed;

@@ -205,7 +205,11 @@ export async function seedPolicyMarketplaces(homes, { add = addMarketplace } = {
   for (const c of marketplaceSeedCandidates(homes)) {
     let entry = null; let error = null;
     try { entry = await add(c.url); }
-    catch (err) { if (err?.code === 'EXISTS') entry = readMarketplaces().marketplaces[marketplaceId(c.url)] || null; else error = String(err?.message || err); }
+    catch (err) {
+      // No git yet is not a decision: leave it unremembered so the first seed after git arrives adds it.
+      if (err?.code === 'GIT_MISSING') { results.push({ url: c.url, homes: c.homes, added: false, error: err.message }); continue; }
+      if (err?.code === 'EXISTS') entry = readMarketplaces().marketplaces[marketplaceId(c.url)] || null; else error = String(err?.message || err);
+    }
     const state = readMarketplaces();
     const seeded = new Set(Array.isArray(state.policySeeded) ? state.policySeeded : []);
     seeded.add(c.url);

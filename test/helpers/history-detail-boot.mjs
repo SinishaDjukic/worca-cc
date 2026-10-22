@@ -29,7 +29,8 @@ export const PROJECT = '/tmp/proj';
 // helpers/jsdom-release.mjs); the suites are also split in three files, so no one process holds them all.
 const trackDom = useDomRelease(afterEach);
 
-export async function boot({ fetchHandler, url = 'http://localhost:4317/', hljsLoader = null, hooks = null } = {}) {
+// `local`: localStorage items set before app.js loads (it reads some once at import, e.g. the Runs View menu).
+export async function boot({ fetchHandler, url = 'http://localhost:4317/', hljsLoader = null, hooks = null, local = null } = {}) {
   const dom = new JSDOM(readFileSync(htmlPath, 'utf8'), { url });
   trackDom(dom);
   const { window } = dom;
@@ -85,6 +86,7 @@ export async function boot({ fetchHandler, url = 'http://localhost:4317/', hljsL
   globalThis.window = window;
   globalThis.document = window.document;
   if (hljsLoader || hooks) window.__worcaTestHooks = { ...(hljsLoader ? { hljsLoader } : {}), ...hooks };
+  for (const [k, v] of Object.entries(local || {})) window.localStorage.setItem(k, v);
 
   await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
   await new Promise((r) => setTimeout(r, 0)); // let loadProjects/loadConfig settle
@@ -190,7 +192,7 @@ export function historyArms(box) {
 // case) and deliver it later through a `pipelines-changed` broadcast.
 export async function bootDetail({
   rows = [ROW], detail = DETAIL, budget = okBudget(), arms = null,
-  deepLink = false, hljsLoader = null, hooks = null,
+  deepLink = false, hljsLoader = null, hooks = null, local = null,
 } = {}) {
   const box = { rows, detail, budget };
   const base = historyArms(box);
@@ -199,6 +201,7 @@ export async function bootDetail({
     url: deepLink ? `http://localhost:4317/#${detailHash}` : 'http://localhost:4317/',
     hljsLoader,
     hooks,
+    local,
   });
   ctx.box = box;
   return ctx;

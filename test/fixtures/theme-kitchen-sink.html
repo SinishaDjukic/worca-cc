@@ -38,10 +38,10 @@
       <div class="qopts"><label class="qopt sel">Postgres</label><label class="qopt">SQLite</label></div>
       <input class="qfree input" placeholder="Or type your own" /></div>
     <div class="qblock qanswered"><div class="qtext"><span class="qn">2</span>Answered</div></div>
-    <div class="qpanel-foot"><button type="button" class="btn btn-go">Answer</button></div></div>
+    <div class="qpanel-foot"><button type="button" class="btn btn-primary">Answer</button></div></div>
 
-  <section class="runs-needs" aria-label="Needs you"><div class="runs-needs-head"><span>Needs you</span><span class="runs-count">1</span></div>
-    <a class="runs-row" href="#"><span class="runs-ic runs-ic-ask" aria-hidden="true"><svg class="runs-glyph" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M9.3 9.4a2.8 2.8 0 1 1 4.1 2.5c-.9.5-1.4 1.1-1.4 2v.4"/><path d="M12 17.4h.01"/></svg></span><span class="runs-row-body"><span class="runs-row-title">A pipeline needs your input</span><span class="runs-row-sub">Plan review · worca-cc</span></span></a></section>
+  <section aria-label="Needs you"><div class="runs-sec-head"><span>Needs you</span><span class="runs-count">1</span></div>
+    <div class="runs-item is-needs"><span class="runs-pick"><span class="status-dot is-amber has-sym" role="img" aria-label="Needs you"><svg class="status-sym" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="12" fill="currentColor" stroke="none"></circle><g fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.3 9.4a2.8 2.8 0 1 1 4.1 2.5c-.9.5-1.4 1.1-1.4 2v.4"></path><path d="M12 17.4h.01"></path></g></svg></span><input type="checkbox" class="runs-check" aria-label="Select A pipeline needs your input"></span><a class="runs-row" href="#"><span class="runs-row-title">A pipeline needs your input</span><span class="runs-row-right"></span><span class="runs-row-sub">Plan</span></a><span class="runs-row-tail"><button type="button" class="btn btn-sm btn-quiet btn-icon" aria-label="More for A pipeline needs your input"><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="1.5" fill="currentColor"></circle><circle cx="12" cy="12" r="1.5" fill="currentColor"></circle><circle cx="18" cy="12" r="1.5" fill="currentColor"></circle></svg></button></span></div></section>
   <p class="run-warn">Warning banner text</p>
   <div class="retained-banner"><p>Retained</p><code>git worktree remove …</code></div>
 
@@ -69,8 +69,37 @@
 - item</pre>
 
   <div class="switch-row"><span class="switch on"></span><span class="txt">on</span><span class="switch"></span><span class="txt">off</span></div>
+  <!-- Shared controls (run 1): every switch, checkbox, radio, menu and chip state the proof measures. Fake names only. -->
+  <section data-kit="controls" aria-label="Shared controls">
+    <div class="switch-row"><input class="sw-input" type="checkbox" role="switch" aria-label="Off"><span class="switch" aria-hidden="true"></span><span class="switch-label">Off</span></div>
+    <div class="switch-row"><input class="sw-input" type="checkbox" role="switch" aria-label="On" checked><span class="switch" aria-hidden="true"></span><span class="switch-label">On</span></div>
+    <div class="switch-row"><input class="sw-input" type="checkbox" role="switch" aria-label="Disabled off" disabled><span class="switch" aria-hidden="true"></span><span class="switch-label">Disabled off</span></div>
+    <div class="switch-row"><input class="sw-input" type="checkbox" role="switch" aria-label="Disabled on" checked disabled><span class="switch" aria-hidden="true"></span><span class="switch-label">Disabled on</span></div>
+    <label class="switch-row" title="Fixed for this agent"><input class="sw-input" type="checkbox" role="switch" aria-label="Questions" checked disabled data-locked="1"><span class="switch" aria-hidden="true"></span><span class="switch-label">Questions</span><span class="switch-why">Fixed for this agent</span></label>
+    <div class="switch-row"><span class="switch on" role="switch" aria-checked="true" tabindex="0"></span><span class="txt">A role switch, on</span>
+      <input type="checkbox" checked aria-label="A checked box"><span class="txt">A checked box</span></div>
+    <p><input type="checkbox" checked aria-label="Checked"> <input type="checkbox" id="kit-indeterminate" aria-label="Some"> <input type="checkbox" checked disabled aria-label="Disabled checked">
+       <input type="radio" name="kit-radio" checked aria-label="Chosen"> <input type="radio" name="kit-radio" aria-label="Other"></p>
+    <div class="menu" role="menu" aria-label="Kitchen menu" style="width:200px">
+      <button type="button" class="menu-item" role="menuitem">Open run</button>
+      <button type="button" class="menu-item" role="menuitem" disabled>Report</button>
+      <div class="menu-sep" role="separator"></div>
+      <button type="button" class="menu-item is-danger" role="menuitem">Archive</button>
+    </div>
+    <div class="menu btn-split-menu" role="menu" aria-label="Kitchen split menu" style="position:static;margin-top:8px">
+      <button type="button" class="menu-item" role="menuitem"><b>Start run now</b><small>Begins immediately</small></button>
+      <button type="button" class="menu-item" role="menuitem"><b>Schedule…</b><small>Run once later, or on a repeat</small></button>
+    </div>
+    <p><span class="tag-chip">client:acme <button type="button" class="tag-x" aria-label="Remove client:acme"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></span>
+       <span class="tag-chip">project:redesign</span>
+       <span class="tag-chip tag-missing">client · missing</span>
+       <span class="badge slate">Worca CC Official</span>
+       <span class="ps-pill">Synced</span>
+       <span class="ask-cmd-pill st-green">exit 0</span> <span class="ask-cmd-pill st-red">exit 1</span> <span class="ask-cmd-pill st-peach">running</span>
+       <span class="tp-tab-badge">3</span></p>
+  </section>
   <div class="seg"><button type="button" class="on">On</button><button type="button">Off</button></div>
-  <p><button type="button" class="btn">Ghost</button> <button type="button" class="btn btn-primary">Primary</button> <button type="button" class="btn btn-danger">Danger</button> <button type="button" class="btn-go">Go</button> <button type="button" class="btn btn-mini" disabled>Disabled</button> <button type="button" class="icon-btn" aria-label="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h16"/></svg></button></p>
+  <p><button type="button" class="btn">Ghost</button> <button type="button" class="btn btn-primary">Primary</button> <button type="button" class="btn btn-danger">Danger</button> <button type="button" class="btn btn-quiet">Go</button> <button type="button" class="btn btn-sm" disabled>Disabled</button> <button type="button" class="btn btn-quiet btn-icon" aria-label="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h16"/></svg></button></p>
   <div class="field"><label>Field</label><input class="input" placeholder="Placeholder text" /><small class="hint">Hint text</small><small class="hint err">Error hint</small></div>
 
   <div class="info-bubble" style="position:static">Tooltip body <code>code</code></div>
@@ -82,5 +111,16 @@
     <div class="node" style="position:static;margin:8px 0"><div class="nlabel"><span class="ltile h-green"><svg viewBox="0 0 24 24"></svg></span><span class="tt">Green head</span></div></div>
     <div class="node" style="position:static;margin:8px 0"><div class="nlabel"><span class="ltile h-peach"><svg viewBox="0 0 24 24"></svg></span><span class="tt">Peach head</span></div></div>
     <div class="node" style="position:static;margin:8px 0"><div class="nlabel"><span class="ltile h-flow"><svg viewBox="0 0 24 24"></svg></span><span class="tt">Flow head</span></div><div class="nrun" style="position:static">$0.12</div></div>
+  </div>
+
+  <div id="ds-proof" style="width:480px">
+    <p><button type="button" class="filter-chip" aria-pressed="true">Running <span class="n">3</span></button>
+       <button type="button" class="filter-chip" aria-pressed="false">Done</button></p>
+    <div class="drows"><div class="drow"><div class="drow-label">Default model</div><div class="drow-help">Used when a run names none.</div>
+      <div class="drow-control"><select class="select"><option>Northwind default</option></select></div></div></div>
+    <div class="table-wrap"><table class="table"><thead><tr><th>Project</th><th>Branch</th><th class="num">Runs</th></tr></thead>
+      <tbody><tr><td class="table-main" data-label="Project">Northwind docs</td><td data-label="Branch">main</td><td class="num" data-label="Runs">12</td></tr></tbody></table></div>
+    <p class="empty-line">No schedules yet <button type="button" class="btn btn-sm btn-quiet">New schedule</button></p>
+    <div class="drows" aria-busy="true"><div class="drow"><div class="drow-label">Loading models</div></div></div>
   </div>
 </section>

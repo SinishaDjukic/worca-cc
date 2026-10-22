@@ -1,5 +1,5 @@
 // src/core/ask/schedule-spec.mjs
-// Scheduled runs in Ask Worca (docs/scheduled-runs.md "Ask Worca"). Pure: the clock, the
+// Scheduled runs in Ask Worca (docs/scheduled-runs.md "Chat"). Pure: the clock, the
 // user's timezone and every reader are injected, so the MCP child validates for the model's
 // self-correction and the parent re-validates authoritatively — the split proposal.mjs and
 // metrics-proposal.mjs make. Nothing here writes.

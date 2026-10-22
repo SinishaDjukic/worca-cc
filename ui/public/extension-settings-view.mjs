@@ -28,7 +28,7 @@ export function renderExtensionPairings(data, { doc = document } = {}) {
     main.append(make('div', 'xp-name', `${e.name} · ${browserLabel(e.browser)}`));
     const used = day(e.lastUsedAt);
     main.append(make('div', 'xp-meta', `Paired ${day(e.createdAt) || '—'} · ${used ? `last used ${used}` : 'not used yet'} · id ${shortOrigin(e.origin)}`));
-    const btn = make('button', 'btn-ghost xp-revoke', 'Revoke');
+    const btn = make('button', 'btn xp-revoke', 'Revoke');
     btn.type = 'button';
     btn.dataset.revoke = e.id;
     btn.dataset.name = e.name;
@@ -54,15 +54,15 @@ const validInstall = (d) => d && typeof d === 'object' && Array.isArray(d.builds
 export function renderExtensionInstall(data, { doc = document, browser = 'chrome' } = {}) {
   const make = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
   const root = make('div', 'xi');
-  root.append(make('h3', 'xi-head', 'Install'));
+  root.append(make('h3', 'subsection-title xi-head', 'Install'));
   if (!validInstall(data)) { root.append(make('p', 'xp-empty', 'Could not load the packaged browser extension.')); return root; }
-  const tabs = make('div', 'seg seg-sm xi-tabs');
+  const tabs = make('div', 'tabs xi-tabs');
   tabs.setAttribute('role', 'tablist');
   tabs.setAttribute('aria-label', 'Browser');
   root.append(tabs);
   const pick = data.builds.some((b) => b.browser === browser) ? browser : data.builds[0].browser;
   for (const b of data.builds) {
-    const tab = make('button', null, browserLabel(b.browser));
+    const tab = make('button', 'tab', browserLabel(b.browser));
     tab.type = 'button';
     tab.id = `xi-tab-${b.browser}`;
     tab.dataset.xiBrowser = b.browser;
@@ -82,7 +82,7 @@ export function renderExtensionInstall(data, { doc = document, browser = 'chrome
     } else {
       const row = make('div', 'xi-path-row');
       row.append(make('code', 'xi-path', b.path));
-      const copy = make('button', 'btn-ghost xi-copy', 'Copy path');
+      const copy = make('button', 'btn xi-copy', 'Copy path');
       copy.type = 'button';
       copy.dataset.copyPath = b.path;
       row.append(copy);

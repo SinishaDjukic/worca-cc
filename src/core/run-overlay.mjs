@@ -14,13 +14,16 @@ import { subagentModelIssue } from './model-env.mjs';
 export const OVERLAY_KEYS = Object.freeze(['model', 'effort', 'fanOut', 'askQuestions', 'subagentModel']);
 /** More nodes than any workflow has: a bound on what one body may make the checks walk. */
 export const OVERLAY_MAX_NODES = 64;
+// No server path caps maxCycles today (setWireCycles in src/core/config.mjs only floors at 1, resolveGraph does
+// not clamp, the New run input has no max); 100 bounds a hand-written body without refusing any real config.
+export const OVERLAY_MAX_CYCLES = 100;
 
 const idText = (id) => JSON.stringify(String(id).slice(0, 64));
 const idPath = (id) => String(id).slice(0, 64);
 
 export const OVERLAY_ERRORS = Object.freeze({
   shape: 'overlay must be an object: { nodes: { <nodeId>: { model, effort, … } } }',
-  extra: (keys) => `overlay takes nodes only (got ${keys.map(idText).join(', ')})`,
+  extra: (keys) => `overlay takes nodes and wires only (got ${keys.map(idText).join(', ')})`,
   nodes: (what) => `${what} must be an object keyed by node id`,
   tooMany: (what) => `${what} names more than ${OVERLAY_MAX_NODES} nodes`,
   entry: (what, id) => `${what}.${idPath(id)} must be an object`,
@@ -35,6 +38,11 @@ export const OVERLAY_ERRORS = Object.freeze({
   foreign: (id, m, engine) => `node ${idText(id)}: ${m.id} runs on ${harnessesLabel(m)}, not on ${engineLabel(engine)} — pick a model this run's engine runs`,
   auto: 'overlay needs a saved workflow — Auto picks its agents and their models when the run starts',
   scan: 'the workspace scan picks its own models — it takes no overlay',
+  wires: 'overlay.wires must be an object keyed by wire id',
+  wireEntry: (id) => `overlay.wires.${idPath(id)} must be an object`,
+  wireKey: (id, k) => `overlay.wires.${idPath(id)}: unknown key ${idText(k)}`,
+  cycles: (id) => `overlay.wires.${idPath(id)}: maxCycles must be a whole number from 1 to ${OVERLAY_MAX_CYCLES}`,
+  notWire: (id, wfId) => `wire ${idText(id)} is not a wire of workflow ${wfId}`,
 });
 
 function fail(errors) { return { error: errors.join('; '), errors }; }
@@ -82,14 +90,37 @@ export function parseOverlayNodes(raw, { what = 'overlay.nodes', keys = OVERLAY_
   return { nodes: out.size ? Object.fromEntries(out) : null };
 }
 
-/** POST /api/run's `overlay`: { overlay: { nodes } | null } or { error }. Shape only — checkRunOverlay checks it. */
+/** overlay.wires (loop budgets): { wires } (null = empty) or { error, errors }. Same Map + fromEntries guard as parseOverlayNodes. */
+export function parseOverlayWires(raw) {
+  if (raw === undefined || raw === null) return { wires: null };
+  if (typeof raw !== 'object' || Array.isArray(raw)) return fail([OVERLAY_ERRORS.wires]);
+  const ids = Object.keys(raw);
+  if (ids.length > OVERLAY_MAX_NODES) return fail([OVERLAY_ERRORS.tooMany('overlay.wires')]);
+  const errors = [];
+  const out = new Map();
+  for (const id of ids) {
+    const e = raw[id];
+    if (!e || typeof e !== 'object' || Array.isArray(e)) { errors.push(OVERLAY_ERRORS.wireEntry(id)); continue; }
+    const extra = Object.keys(e).filter((k) => k !== 'maxCycles');
+    if (extra.length) { errors.push(OVERLAY_ERRORS.wireKey(id, extra[0])); continue; }
+    if (!Number.isInteger(e.maxCycles) || e.maxCycles < 1 || e.maxCycles > OVERLAY_MAX_CYCLES) { errors.push(OVERLAY_ERRORS.cycles(id)); continue; }
+    out.set(id, { maxCycles: e.maxCycles });
+  }
+  if (errors.length) return fail(errors);
+  return { wires: out.size ? Object.fromEntries(out) : null };
+}
+
+/** POST /api/run's `overlay`: { overlay: { nodes?, wires? } | null } or { error }. Shape only — checkRunOverlay checks it. */
 export function parseRunOverlay(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { error: OVERLAY_ERRORS.shape };
-  const extra = Object.keys(raw).filter((k) => k !== 'nodes');
+  const extra = Object.keys(raw).filter((k) => k !== 'nodes' && k !== 'wires');
   if (extra.length) return { error: OVERLAY_ERRORS.extra(extra) };
-  const r = parseOverlayNodes(raw.nodes, { what: 'overlay.nodes' });
-  if (r.error) return { error: r.error };
-  return { overlay: r.nodes ? { nodes: r.nodes } : null };
+  const n = parseOverlayNodes(raw.nodes, { what: 'overlay.nodes' });
+  if (n.error) return { error: n.error };
+  const w = parseOverlayWires(raw.wires);
+  if (w.error) return { error: w.error };
+  const overlay = { ...(n.nodes ? { nodes: n.nodes } : {}), ...(w.wires ? { wires: w.wires } : {}) };
+  return { overlay: Object.keys(overlay).length ? overlay : null };
 }
 
 /** Why a workflow takes no per-run overlay, or null: Auto decides its agents at start; the workspace scan pins its own. */
@@ -115,11 +146,11 @@ export function overlayStepModels(manifest) {
 }
 
 /**
- * Check parsed overlay nodes against the workflow and the catalog the run's engine runs.
- * @returns {{nodes: object, errors: string[]}} canonical nodes (catalog casing; a model always carries `effort`,
+ * Check parsed overlay nodes (and loop wires) against the workflow and the catalog the run's engine runs.
+ * @returns {{nodes: object, wires: object, errors: string[]}} canonical nodes (catalog casing; a model always carries `effort`,
  *   '' = the model's default, so a stored effort never rides under it — resolveGraph merges per key) + errors.
  */
-export function checkRunOverlay(nodes, { workflow = null, models = [], engine = 'claude', requireModel = false } = {}) {
+export function checkRunOverlay(nodes, { workflow = null, models = [], engine = 'claude', requireModel = false, wires = null } = {}) {
   const errors = [];
   const wfId = workflow && typeof workflow.id === 'string' ? workflow.id : '(unknown)';
   const agentIds = new Set((Array.isArray(workflow?.nodes) ? workflow.nodes : [])
@@ -147,5 +178,11 @@ export function checkRunOverlay(nodes, { workflow = null, models = [], engine = 
     if (m && !runsOn(m, run)) errors.push(OVERLAY_ERRORS.foreign(id, m, run));
     if (t.effort === undefined) t.effort = '';
   }
-  return { nodes: Object.fromEntries(out), errors };
+  const wireIds = new Set((Array.isArray(workflow?.wires) ? workflow.wires : []).map((w) => w && w.id).filter(Boolean));
+  const outWires = {};
+  for (const [id, w] of Object.entries(wires && typeof wires === 'object' ? wires : {})) {
+    if (!wireIds.has(id)) { errors.push(OVERLAY_ERRORS.notWire(id, wfId)); continue; }
+    outWires[id] = { maxCycles: w.maxCycles };
+  }
+  return { nodes: Object.fromEntries(out), wires: outWires, errors };
 }

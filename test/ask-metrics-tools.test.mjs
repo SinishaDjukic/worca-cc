@@ -1,5 +1,5 @@
 // test/ask-metrics-tools.test.mjs
-// The four team-metrics tools (docs/team-metrics.md "Ask Worca") and list_projects' metrics field,
+// The four team-metrics tools (docs/team-metrics.md "Chat") and list_projects' metrics field,
 // over a fake deps.metrics bundle: shapes, the pinned-scope default, paging, the coded-error mapping,
 // and the graceful "unavailable" without the bundle.
 import { test } from 'node:test';
@@ -10,6 +10,7 @@ import { redactAskText } from '../src/core/ask/redact.mjs';
 import { aggregate } from '../src/shared/team-metrics/aggregate.mjs';
 import { makeRecord } from './fixtures/team-metrics/records.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { scopeRefusalText } from '../src/core/ask/scope.mjs';
 
 const NOW = Date.parse('2026-09-16T12:00:00Z');
 const RECORDS = [
@@ -146,6 +147,8 @@ test('list_team_metrics_runs paging and push_team_metrics scopes, both redacted'
 
 test('propose_metrics_change: validates only, the pinned scope fills the matching target kind, {ok:false} passes through', async () => {
   calls.length = 0; pin = null;
+  assert.deepEqual(await tools.call('propose_metrics_change', { kind: 'record', projectKey: 'gw-00000001', record: false }), { ok: false, errors: [scopeRefusalText(null, { projectKey: 'gw-00000001' })] });
+  pin = { projectKey: 'gw-00000001' };
   const r = await tools.call('propose_metrics_change', { kind: 'record', projectKey: 'gw-00000001', record: false });
   assert.deepEqual(r, { ok: true, card: { type: 'metrics', kind: 'record', projectKey: 'gw-00000001', record: false } });
   assert.deepEqual(await tools.call('propose_metrics_change', { kind: 'enable', projectKey: 'gw-00000001' }), { ok: false, errors: ['nope'] });
@@ -160,4 +163,25 @@ test('propose_metrics_change: validates only, the pinned scope fills the matchin
   assert.deepEqual(calls[0][1], { kind: 'workspace_home', homeProjectKey: '', workspaceId: 'wks-team-0000abcd' });
   pin = null;
   await assert.rejects(tools.call('propose_metrics_change', 'x'), (e) => e instanceof AskToolError);
+});
+
+// Run tags (slice 3): a tag:KEY group-by and filter.tags, over a second fake whose read() runs the real aggregate.
+const TAGGED = [
+  { ...makeRecord({ id: 'tagd0001', startedAt: '2026-09-10T10:00:00Z', usd: 2 }), tags: ['client:acme'] },
+  { ...makeRecord({ id: 'tagd0002', startedAt: '2026-09-11T10:00:00Z', usd: 1 }), tags: ['client:acme', 'spike'] },
+  { ...makeRecord({ id: 'tagd0003', startedAt: '2026-09-12T10:00:00Z', usd: 3 }), tags: ['client:globex'] },
+];
+const taggedTools = createAskTools({ ...base, metrics: { ...fakeMetrics,
+  async read(_scope, opts) { return { read: READ, agg: aggregate(TAGGED, { ...opts, now: NOW }) }; } } });
+
+test('get_team_metrics / list_team_metrics_runs: tag:client group-by and filter.tags', async () => {
+  const out = await taggedTools.call('get_team_metrics', { projectKey: 'gw-00000001', groupBy: 'tag:client', filter: { tags: ['client:acme'] } });
+  assert.equal(out.groupBy, 'tag:client');
+  assert.deepEqual(out.filter.tags, ['client:acme']);
+  assert.deepEqual(out.breakdowns.tag.map((b) => b.label), ['acme']);
+  assert.equal(out.runsInRange, 2);
+  await assert.rejects(taggedTools.call('get_team_metrics', { projectKey: 'gw-00000001', groupBy: 'tag:' }), (e) => e instanceof AskToolError);
+  const runs = await taggedTools.call('list_team_metrics_runs', { projectKey: 'gw-00000001', filter: { tags: ['client:acme'] } });
+  assert.equal(runs.rows.length, 2);
+  assert.ok(runs.rows.every((r) => Array.isArray(r.tags) && r.tags.includes('client:acme')));
 });

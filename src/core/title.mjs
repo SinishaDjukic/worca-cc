@@ -25,7 +25,17 @@ export function modelReady(id) {
     return !bridged || providerReadiness(bridged.upstream).ok;
   } catch { return false; }
 }
-const MAX_LEN = 70;
+const MAX_LEN = 60;
+
+/** Cap `text` at `max` chars: cut at the last space at or after max/2, else hard; drop trailing punctuation. The
+ *  window is max+1 so a word ending exactly at the cap survives. */
+export function clipTitle(text, max) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max + 1);
+  const sp = cut.lastIndexOf(' ');
+  return (sp >= Math.floor(max / 2) ? cut.slice(0, sp) : t.slice(0, max)).replace(/[\s,;:–—-]+$/, '').trim();
+}
 
 /**
  * Which model writes a title, decided PER CALL (#422) — nothing is captured at
@@ -93,14 +103,8 @@ export function sanitizeTitle(raw) {
   t = t.replace(/^(?:title|task)\s*[:\-]\s*/i, '');                      // strip "Title:"/"Task:" label
   t = t.replace(/^["'“”`]+|["'“”`]+$/g, '').trim();                      // strip wrapping quotes/backticks
   t = t.replace(/\s+/g, ' ').replace(/\.+$/, '').trim();                 // collapse ws, drop trailing dots
-  if (t.length > MAX_LEN) {
-    // Cut at a word boundary instead of mid-word ("…you'd li"). The window is
-    // MAX_LEN+1 so a word ending exactly at the cap survives; a boundary too
-    // close to the start (or none at all — one unbroken run) hard-slices.
-    const cut = t.slice(0, MAX_LEN + 1);
-    const sp = cut.lastIndexOf(' ');
-    t = (sp >= 30 ? cut.slice(0, sp) : t.slice(0, MAX_LEN)).replace(/[\s,;:–—-]+$/, '');
-  }
+  // Cut at a word boundary instead of mid-word ("…you'd li"); one unbroken run hard-slices.
+  t = clipTitle(t, MAX_LEN);
   return t.trim();
 }
 
@@ -258,6 +262,8 @@ async function titleAttempt(text, model, opts, engine = null) {
     // An empty reply or a refusal is the model answering, not the model missing: not `thrown`, never retried.
     if (!title) return { error: new Error('the model returned an empty reply') };
     if (isRefusalTitle(title)) return { error: new Error(`the model did not write a title: ${title.slice(0, 120)}`) };
+    // D35: a mock engine's marker ("[mock] planner-plan: no MOCK_OUT given") is never a title; '' keeps the one the run has.
+    if (/^\[mock\]/i.test(title)) return { error: new Error(`the engine returned a mock marker, not a title: ${title.slice(0, 120)}`) };
     return { title };
   } catch (err) {
     if (err && err.name === 'AbortError') return { aborted: true }; // run was stopped — caller keeps provisional

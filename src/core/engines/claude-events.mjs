@@ -89,12 +89,18 @@ export function createClaudeNormalizer() {
     return [];
   }
 
+  // total_cost_usd is the SESSION's running total: a process re-woken by a background task or
+  // Monitor notification reports the earlier turns again, and `--resume` restores the session's cost
+  // from the transcript into its first result. `cumulativeCost` tells the consumer to book the
+  // difference. `usage` stays the turn's own.
   function result(raw, e) {
     const costUsd = e.costUsd != null ? Number(e.costUsd) : extractResultCost(raw);
+    const priced = costUsd != null && Number.isFinite(costUsd);
     return [defined({
       type: 'result',
       text: typeof raw.result === 'string' ? raw.result : (e.text || ''),
-      costUsd: costUsd != null && Number.isFinite(costUsd) ? costUsd : undefined,
+      costUsd: priced ? costUsd : undefined,
+      cumulativeCost: priced ? true : undefined,
       usage: raw.usage && typeof raw.usage === 'object' ? raw.usage : undefined,
       subtype: str(raw.subtype),
       isError: !!raw.is_error,

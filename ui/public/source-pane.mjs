@@ -160,7 +160,7 @@ export function renderSourcePane(source, { call, doc = globalThis.document, time
             s.appendChild(opt);
           }
         })().catch(() => {
-          s.replaceChildren(h(doc, 'option', '', 'failed to load — refocus to retry'));
+          s.replaceChildren(h(doc, 'option', '', 'failed to load. Refocus to retry'));
           s._load = null;                          // allow retry
         });
       });
@@ -335,7 +335,7 @@ export function renderProfileGate(info, { doc = globalThis.document, onPick } = 
   const sel = profileOptions(doc, h(doc, 'select', 'select sp-profile-sel'), profiles);
   root.appendChild(sel);
 
-  const use = h(doc, 'button', 'btn btn-primary btn-mini sp-profile-use', 'Use this profile');
+  const use = h(doc, 'button', 'btn btn-primary btn-sm sp-profile-use', 'Use this profile');
   use.type = 'button';
   use.addEventListener('click', () => { if (typeof onPick === 'function') onPick(sel.value); });
   root.appendChild(use);

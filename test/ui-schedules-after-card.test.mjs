@@ -154,6 +154,38 @@ test('Run page: the after button appears once the pipeline id is known, deep-lin
   assert.equal(window.location.hash, '#new/after/p1a2b3c4');
 });
 
+// Run after is a quick button on both run pages' bars, beside the Resume split and Stop: no rule folds it into ⋯ on
+// an unshaped bar (a shaped run's bar still does, D31), and ⋯ does not repeat it there.
+test('Run after sits on the bar, not in ⋯: no rule hides it on an unshaped bar, and the run page\'s ⋯ leaves it out', async () => {
+  const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
+  const { document: cssDoc } = new JSDOM(`<style>${css}</style>`).window;
+  const folds = [];
+  (function walk(list) {
+    for (const rule of list) {
+      if (typeof rule.selectorText === 'string' && rule.style.display === 'none' && /\.(rd|hd)-after\b/.test(rule.selectorText)
+        && !/\[hidden\]|\[data-shaped\]/.test(rule.selectorText)) folds.push(rule.selectorText);
+      if (rule.cssRules?.length) walk(rule.cssRules);
+    }
+  })(cssDoc.styleSheets[0].cssRules);
+  assert.deepEqual(folds, [], 'Run after is never folded off an unshaped bar');
+
+  const { window } = await bootLive();
+  window.document.documentElement.dataset.level = 'advanced';
+  const { upsertRun, onState, repaintRunDetail } = window.__np;
+  const r = upsertRun({ runId: 'ra2', title: 't', projectDir: '/tmp/proj', status: 'running' });
+  window.location.hash = 'running/ra2';
+  window.dispatchEvent(new window.Event('hashchange'));
+  await tick(); await tick();
+  onState(r, { id: 'p2a2b3c4', status: 'running' });
+  repaintRunDetail(r);
+  const bar = window.document.querySelector('#run-detail .rd-bar');
+  assert.equal(bar.querySelector('.rd-after').hidden, false);
+  bar.querySelector('.rd-bar-more').click();
+  const labels = [...window.document.querySelectorAll('.wfv-menu .wfv-menu-item .wfv-menu-l')].map((n) => n.textContent);
+  assert.ok(labels.includes('Terminal'), `⋯ opened: ${labels}`);
+  assert.ok(!labels.includes('Run after'), 'Run after is the bar\'s own button, not a ⋯ item');
+});
+
 test('History detail: paintHdAfter shows the button for a record and deep-links; afterDependentsNote builds the pinned sentence', async () => {
   const { window, calls } = await bootLive([{ id: 'x', kind: 'once', title: 'Tests' }, { id: 'y', kind: 'once', title: 'Docs' }]);
   const { paintHdAfter, afterDependentsNote } = window.__np;

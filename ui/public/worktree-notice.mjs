@@ -15,7 +15,7 @@ const h = (doc, tag, cls, text) => {
 };
 /** A notice button. `onClick(button)` receives the node, so a flow can show its busy state on it. */
 const button = (doc, label, cls, onClick, tip) => {
-  const b = h(doc, 'button', `btn btn-mini ${cls}`, label);
+  const b = h(doc, 'button', `btn btn-sm ${cls}`, label);
   b.type = 'button';
   if (tip) b.title = tip;
   b.addEventListener('click', (e) => { e.stopPropagation(); onClick(b); });
@@ -25,7 +25,7 @@ const button = (doc, label, cls, onClick, tip) => {
 const sq = (v) => `'${String(v == null ? '' : v).replaceAll("'", "'\"'\"'")}'`;
 
 export const NOTICE_TITLES = Object.freeze({
-  retained: 'Commit failed — uncommitted work retained',
+  retained: 'Commit failed: uncommitted work retained',
   checkout: 'Checked out in a worktree',
   linked: 'Linked to your folder',
 });
@@ -78,6 +78,18 @@ export function worktreeNoticeModel({ retained = null, checkout = null, workspac
   };
 }
 
+/** The Overview WORKTREE row, from the same model the notice card paints (audit F-2).
+ *  word: 'retained' | 'checked out' | 'active' | 'released'; dir: the path to show. */
+export function worktreeRowState(model, { live = false, dir = '', removed = true } = {}) {
+  if (model && model.kind === 'retained') return { word: 'retained', dir: dir || model.members[0]?.dir || '' };
+  if (model && model.kind === 'checkout') {
+    const m = model.members[0] || {};
+    return { word: 'checked out', dir: m.dir || dir };
+  }
+  if (live && dir && removed !== true) return { word: 'active', dir };
+  return { word: 'released', dir: '' };
+}
+
 /** The Apply to branch confirm. */
 export function applyConfirmMessage(model) {
   const branches = [...new Set((model?.members || []).map((m) => m.branch).filter(Boolean))];
@@ -128,7 +140,7 @@ function renderRetained(doc, frag, model, { handlers, recovery, when }) {
   const list = h(doc, 'ul', 'wt-members');
   for (const m of model.members) {
     const li = h(doc, 'li');
-    if (m.label) li.append(h(doc, 'strong', null, m.label), doc.createTextNode(' — '));
+    if (m.label) li.append(h(doc, 'strong', null, m.label), doc.createTextNode(' · '));
     li.append(h(doc, 'span', 'wt-git', `git ${m.step}: ${m.message || 'failed'}`));
     li.append(h(doc, 'div', 'wt-path', `Worktree: ${m.dir || '(unknown)'}`));
     if (m.branch) li.append(h(doc, 'div', null, `Branch: ${m.branch} (the uncommitted work is not on it yet)`));
@@ -152,7 +164,7 @@ function renderRetained(doc, frag, model, { handlers, recovery, when }) {
     row.append(span);
   }
   if (!model.provisional && handlers.onDiscardRetained) {
-    row.append(button(doc, 'Discard worktree', 'btn-ghost hist-discard', handlers.onDiscardRetained,
+    row.append(button(doc, 'Discard worktree', 'btn hist-discard', handlers.onDiscardRetained,
       'Save a patch of anything uncommitted, then remove the worktree. The branch is kept.'));
   }
   if (row.childNodes.length) frag.append(row);
@@ -176,18 +188,18 @@ function renderCheckout(doc, frag, model, { handlers, when }) {
   for (const m of model.members) {
     const li = h(doc, 'li');
     if (m.label) li.append(h(doc, 'strong', null, m.label));
-    if (!one) li.append(doc.createTextNode(`${m.label ? ' — ' : ''}${m.branch || ''}${m.at ? ` since ${when(m.at)}` : ''}`));
+    if (!one) li.append(doc.createTextNode(`${m.label ? ' · ' : ''}${m.branch || ''}${m.at ? ` since ${when(m.at)}` : ''}`));
     li.append(h(doc, 'div', 'wt-path', `${m.external ? 'Your folder' : 'Worktree'}: ${m.dir || '(unknown)'}`));
     const acts = h(doc, 'div', 'wt-member-actions');
     if (!model.provisional && handlers.onReleaseCheckout) {
       acts.append(m.external
-        ? button(doc, 'Unlink', 'btn-ghost wt-release', (b) => handlers.onReleaseCheckout(m, b),
+        ? button(doc, 'Unlink', 'btn wt-release', (b) => handlers.onReleaseCheckout(m, b),
           'Stop using your folder for this run. Running services stop; the folder and its changes stay as they are.')
-        : button(doc, 'Discard', 'btn-ghost wt-release', (b) => handlers.onReleaseCheckout(m, b),
+        : button(doc, 'Discard', 'btn wt-release', (b) => handlers.onReleaseCheckout(m, b),
           'Delete the checkout folder. Running services stop, and uncommitted changes are saved as a patch first.'));
     }
     if (!model.provisional && handlers.onDiff) {
-      acts.append(button(doc, 'Get the diff', 'btn-ghost wt-diff', (b) => handlers.onDiff(m, b),
+      acts.append(button(doc, 'Get the diff', 'btn wt-diff', (b) => handlers.onDiff(m, b),
         'Download a patch of the folder\'s uncommitted changes. Read-only: nothing in the folder is staged or changed.'));
     }
     if (acts.childNodes.length) li.append(acts);
@@ -198,7 +210,7 @@ function renderCheckout(doc, frag, model, { handlers, when }) {
     // The Actions tab itself is Advanced (docs/ui-levels.md): only this link is gated, never the notice.
     const row = h(doc, 'div', 'wt-actions wt-actions-row');
     row.dataset.minLevel = 'advanced';
-    row.append(button(doc, 'Actions tab ›', 'btn-ghost wt-actions-tab', () => handlers.onOpenActions(),
+    row.append(button(doc, 'Actions tab ›', 'btn wt-actions-tab', () => handlers.onOpenActions(),
       'Open the run\'s Actions tab: services, setup, editor and terminal'));
     frag.append(row);
   }

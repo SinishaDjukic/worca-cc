@@ -44,7 +44,7 @@ test('renderEngineSection: a row per role and job, each engine\'s models only', 
     'run.engine': { own: 'codex', inherited: { value: 'claude', source: 'default' } },
   }, jobs: { claude: [], codex: ['title', 'workspaceScan'] } });
   assert.equal(host.querySelector('[data-setting="run.engine"] .inherit-input').value, 'codex');
-  assert.deepEqual([...host.querySelectorAll('.engine-card')].map((c) => c.dataset.engine), ['claude', 'codex', 'cursor']);
+  assert.deepEqual([...host.querySelectorAll('.engine-card')].map((c) => c.dataset.engine), ['claude', 'codex', 'copilot', 'cursor']);
   const codexPlan = host.querySelector('.engine-card[data-engine="codex"] [data-setting="models.codex.steps.planner"] .inherit-model');
   assert.deepEqual([...codexPlan.options].map((o) => o.value), ['', 'gpt-5.5']);
   assert.ok(host.querySelector('[data-setting="models.codex.workspaceScan"]'));
@@ -58,7 +58,10 @@ test('renderEngineSection: the Cursor card has step rows, no helper rows, its ow
   renderEngineSection(host, { level: 'user', roles: STEPS, catalog: [...CATALOG, { id: 'my-cursor-m', label: 'my-cursor-m', engine: 'cursor', efforts: [], custom: 'global' }],
     fields: {}, jobs: { claude: [], codex: ['title'], cursor: [] } });
   assert.deepEqual([...host.querySelectorAll('[data-setting="run.engine"] option')].map((o) => o.value).filter(Boolean), ['claude', 'codex', 'copilot', 'cursor']);
-  assert.deepEqual([...host.querySelectorAll('.engine-card')].map((c) => c.dataset.engine), ['claude', 'codex', 'cursor'], 'Copilot owns no models: no card');
+  assert.deepEqual([...host.querySelectorAll('.engine-card')].map((c) => c.dataset.engine), ['claude', 'codex', 'copilot', 'cursor']);
+  const copilot = host.querySelector('.engine-card[data-engine="copilot"]');
+  assert.ok(copilot.querySelector('[data-setting="models.copilot.steps.planner"]'), 'Copilot has step rows');
+  assert.match(copilot.querySelector('.engine-helpers .engine-slot-rest').textContent, /^Copilot runs its helper jobs .* on its own default model\.$/);
   const card = host.querySelector('.engine-card[data-engine="cursor"]');
   assert.equal(card.querySelector('h3').firstChild.textContent, 'Cursor');
   assert.equal(card.querySelector('h3 .beta-badge')?.textContent, 'Beta');
@@ -67,7 +70,7 @@ test('renderEngineSection: the Cursor card has step rows, no helper rows, its ow
   assert.match(plan.options[0].textContent, /Cursor's default model/);
   assert.equal(card.querySelector('.engine-helpers .engine-slot'), null, 'no helper rows');
   assert.equal(card.querySelector('.engine-helpers h4').textContent, 'Helper jobs');
-  assert.match(card.querySelector('.engine-helpers .engine-slot-rest').textContent, /^Cursor runs its helper jobs \(titles, overview, PR description, Auto classifier, Away mode's decider\) on Claude — see the Claude tab\.$/);
+  assert.match(card.querySelector('.engine-helpers .engine-slot-rest').textContent, /^Cursor runs its helper jobs \(titles, overview, PR description, Auto classifier, Away mode's decider\) on Claude\. See the Claude tab\.$/);
   assert.ok(card.querySelector('.engine-card-status'), 'a status line app.js fills');
   assert.equal(host.querySelector('.engine-card[data-engine="claude"] .engine-card-status'), null);
   assert.deepEqual(enginePatchToSettingsBody({ 'models.cursor.steps.planner': { model: 'my-cursor-m' } }), { stepModels: { cursor: { planner: { model: 'my-cursor-m' } } } });
@@ -77,7 +80,7 @@ test('renderAskEngineSection offers no Cursor engine', () => {
   const doc = new JSDOM('<!doctype html><div id="h"></div>').window.document;
   const host = doc.getElementById('h');
   renderAskEngineSection(host, { catalog: CATALOG });
-  assert.deepEqual([...host.querySelectorAll('[data-setting="askEngine"] option')].map((o) => o.value).filter(Boolean), ['codex'], 'Claude is the default option, listed once');
+  assert.deepEqual([...host.querySelectorAll('[data-setting="askEngine"] option')].map((o) => o.value).filter(Boolean), ['codex', 'copilot'], 'Claude is the default option, listed once');
 });
 
 async function boot(settings = {}, { hash = 'settings', engines = null } = {}) {
@@ -192,7 +195,7 @@ test('renderEngineSection: one card at a time, only the changed steps, one-line 
   assert.deepEqual(visible(), ['models.codex.steps.reviewer']);
   assert.equal(codex.querySelector('.engine-slot-rest').textContent, '2 other steps follow your settings.');
   const add = codex.querySelector('.engine-slot-add');
-  assert.deepEqual([...add.options].map((o) => o.textContent), ['+ Override a step…', 'Plan', 'Implement']);
+  assert.deepEqual([...add.options].map((o) => o.textContent), ['Override a step…', 'Plan', 'Implement']);
   add.value = 'models.codex.steps.planner';
   add.dispatchEvent(new doc.defaultView.Event('change', { bubbles: true }));
   assert.deepEqual(visible(), ['models.codex.steps.planner', 'models.codex.steps.reviewer']);

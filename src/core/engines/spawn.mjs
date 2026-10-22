@@ -15,6 +15,7 @@ import { currentOwner } from '../billing.mjs';
 import { isReservedModelEnvKey } from '../model-env.mjs';
 import { worcaHome } from '../projects.mjs';
 import { isWithin } from '../fs-scope.mjs';
+import { withNoGitPath } from '../nogit-stub.mjs';
 
 // Grace between the abort SIGTERM and the SIGKILL escalation. Claude Code shuts
 // down synchronously (fsync'd ~/.claude.json saves); a SIGKILL that lands inside
@@ -103,6 +104,7 @@ export function composeSpawnEnv({ envScrub, envAllowlist, prefixes, runEnv, over
   env = stripHostCredentials(env ?? process.env);
   delete env.WORCA_BROKER_SECRET;
   delete env.WORCA_BROKER_SECRET_FILE;
+  env = withNoGitPath(env);
   return { env, scrubbed: !!scrubbedEnv };
 }
 

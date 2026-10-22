@@ -193,7 +193,7 @@ test('project card: propose → Start via /api/run → started flip, notice, fol
   const flipped = snap1.messages.flatMap((m) => m.blocks || []).find((b) => b.kind === 'card' && b.id === card.id);
   assert.equal(flipped.state, 'started', 'flip landed synchronously with the 200');
   assert.equal(flipped.runId, runId);
-  assert.ok(snap1.messages.some((m) => m.role === 'system' && m.text === `Run started — "${card.card.title}"`));
+  assert.ok(snap1.messages.some((m) => m.role === 'system' && m.text === `Run started: "${card.card.title}"`));
   assert.equal(snap1.runLinks.length, 1);
   assert.equal(snap1.runLinks[0].runId, runId);
   assert.equal(snap1.runLinks[0].cardId, card.id);

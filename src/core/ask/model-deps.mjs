@@ -1,5 +1,5 @@
 // src/core/ask/model-deps.mjs
-// The models + providers dependency bundle of the Ask Worca tools (docs/models.md "Ask Worca"):
+// The models + providers dependency bundle of the Ask Worca tools (docs/models.md "Chat"):
 // the ONE module that touches the catalog and the bridge on the tools' behalf (tools.mjs may not
 // import anything). Two callers:
 //   • the MCP child (mcp-stdio.mjs): deps.models.* behind list_models, get_providers,

@@ -3,7 +3,7 @@
 // The server renders the state into the shell (src/core/index-html.mjs): <html data-flags="…"> lists
 // the flags that are on, and <style id="flag-gates"> hides [data-flag~="<key>"] for every flag that is
 // off, so flagged-off markup never paints. This module keeps both live (the `flags` WS frame, hello):
-//   markup    data-flag=<key> [data-flag-chip]     hidden while off; the chip says Experimental / Beta
+//   markup    data-flag=<key> [data-flag-chip]     hidden while off; the chip says Labs / Beta
 //   logic     flagOn(key)                         read at the point of use
 //   reactive  onFlagChange(key, fn)               mount / unmount a JS-built feature
 //   anything  document 'worca:flags'              detail { flags, changed }
@@ -12,16 +12,15 @@
 import { FLAGS, flagByKey } from '../../src/shared/flags/registry.mjs';
 import { flagsAttr, flagGateCss } from '../../src/shared/flags/resolve.mjs';
 
-export const STAGE_LABEL = Object.freeze({ experimental: 'Experimental', beta: 'Beta', retiring: 'Retiring' });
-// A sidebar row has room for a short chip only (the full word would ellipsize the row's label).
-const STAGE_SHORT = Object.freeze({ experimental: 'Exp' });
+export const STAGE_LABEL = Object.freeze({ experimental: 'Labs', beta: 'Beta', retiring: 'Retiring' });
 
 const docOf = (doc) => doc || globalThis.document;
 const listeners = new Map();   // key -> Set<(on:boolean)=>void>
 
 /** { key: bool } for every registry flag, read from <html data-flags>. */
 export function currentFlags(doc) {
-  const on = new Set(String(docOf(doc).documentElement.dataset.flags || '').split(/\s+/).filter(Boolean));
+  // A closed window's document has no <html>: every flag reads off.
+  const on = new Set(String(docOf(doc).documentElement?.dataset.flags || '').split(/\s+/).filter(Boolean));
   return Object.fromEntries(FLAGS.map((f) => [f.key, on.has(f.key)]));
 }
 
@@ -61,41 +60,39 @@ export function applyFlags(patch, doc) {
 }
 
 const INTERACTIVE = 'a, button, input, select, textarea, label, summary';
+const TAB_HOST = '[role="tab"], .tab, .tabs > button, .seg > button';
 
-/** D9: give a [data-flag] element its stage chip, linking to its row in Settings › Experimental.
- *  Inside the host, or right after it when the host is interactive (no link inside a button). A row
- *  of the sidebar (a button in .nav) wears it inside, after its label, as plain text: a sibling would
- *  be a row of its own in the column-flex rail, and the row's own click opens the page. The chip
- *  carries the host's data-flag, so it is gated exactly like the host. Idempotent. */
+/** D9: give a [data-flag] element its stage chip, linking to its row in Settings › Labs.
+ *  Inside the host, or right after it when the host is interactive (no link inside a button). The
+ *  chip carries the host's data-flag, so it is gated exactly like the host. A tab gets a plain span
+ *  inside its label instead (review A4), and so does a row of the sidebar (a button in .nav), after
+ *  its label: a sibling would be a row of its own in the column-flex rail, and the row's own click
+ *  opens the page. A non-empty data-flag-chip value names the flag without gating the host, so its
+ *  chip is never hidden by the flag gate. Idempotent. */
 export function chip(el, doc) {
   const d = docOf(doc || (el && el.ownerDocument));
-  const key = String((el && el.dataset && el.dataset.flag) || '').split(/\s+/).find((k) => flagByKey(k));
+  const named = el && el.dataset && el.dataset.flagChip;
+  const key = String(named || (el && el.dataset && el.dataset.flag) || '').split(/\s+/).find((k) => flagByKey(k));
   if (!key || el.dataset.flagChipped) return el;
   el.dataset.flagChipped = '1';
   const f = flagByKey(key);
   const label = STAGE_LABEL[f.stage] || f.stage;
-  const title = `${f.title} is ${f.stage === 'beta' ? 'in beta' : 'experimental'}.`;
-  if (el.matches('.nav button')) {
+  const title = `${f.title} is ${f.stage === 'beta' ? 'in beta' : 'in Labs'}.`;
+  if (el.matches(TAB_HOST) || el.matches('.nav button')) {
     const s = d.createElement('span');
     s.className = `flag-chip flag-chip-${f.stage}`;
-    s.dataset.flag = el.dataset.flag;
+    if (el.dataset.flag) s.dataset.flag = el.dataset.flag;
+    s.textContent = label;
     s.title = title;
-    const shown = d.createElement('span');
-    shown.setAttribute('aria-hidden', 'true');
-    shown.textContent = STAGE_SHORT[f.stage] || label;
-    const spoken = d.createElement('span');
-    spoken.className = 'sr-only';
-    spoken.textContent = label;
-    s.append(shown, spoken);
     el.appendChild(s);
     return el;
   }
   const a = d.createElement('a');
   a.className = `flag-chip flag-chip-${f.stage}`;
   a.href = `#settings/experimental/${key}`;
-  a.dataset.flag = el.dataset.flag;
+  if (el.dataset.flag) a.dataset.flag = el.dataset.flag;
   a.textContent = label;
-  a.title = `${title} Open its switch in Settings › Experimental.`;
+  a.title = `${title} Open its switch in Settings › Labs.`;
   if (el.matches(INTERACTIVE)) el.after(a); else el.appendChild(a);
   return el;
 }

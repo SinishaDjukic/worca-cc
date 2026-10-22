@@ -1,6 +1,7 @@
 // pinpoint-surfaces.mjs — Pinpoint (#669) on the run artifact viewer and the Diff tab: the providers pinpoint.mjs calls,
 // the artifact's pending-changes tray (Disagree / Note / Use this, numbered, highlighted, with margin markers) and the
 // diff's quoted-comment highlights and fix-run tray. app.js hands in what only it knows (the run, the routes, the chat).
+import { iconSvg } from './icons.mjs';
 import { paintHighlight } from './pinpoint.mjs';
 import {
   PENDING_KINDS, readTray, addTrayItem, removeTrayItem, trayDirection, findQuote, shortText, normText,
@@ -129,17 +130,17 @@ export function decorateArtifact({ pinpoint, doc, win, stage, body, root, file, 
       return `<div class="pp-row" data-n="${p.n}"><span class="pp-n">${p.n}</span><span class="pp-kind" data-k="${p.kind}">${esc(PENDING_KINDS[p.kind])}</span>
         <span class="pp-rq${gone ? ' pp-gone' : ''}" title="${esc(normText(p.quote))}">${gone ? 'no longer in the file' : `“${esc(shortText(p.quote, 60))}”`}</span>
         <span class="pp-rt" title="${esc(p.text)}">${esc(p.text)}</span>
-        <button type="button" class="pp-x" data-rm="${p.n}" aria-label="Remove change ${p.n}">×</button></div>`;
+        <button type="button" class="btn btn-sm btn-quiet btn-icon pp-x" data-rm="${p.n}" aria-label="Remove change ${p.n}">${iconSvg('x', 14)}</button></div>`;
     }).join('');
     const sendLabel = plan ? 'Send back to planner' : 'Send to run';
     const foot = items.length
-      ? `<button type="button" class="pp-btn pp-ghost" data-a="clear">Clear</button><span class="pp-sp"></span>${canSend
-        ? `<button type="button" class="pp-btn" data-a="chat">Send to chat</button><button type="button" class="pp-btn pp-pri" data-a="send"${sending ? ' disabled' : ''}>${esc(sendLabel)}</button>`
-        : '<button type="button" class="pp-btn pp-pri" data-a="chat">Send to chat</button>'}`
-      : `<span class="pp-hintl">Select text to disagree, add a note or pick an alternative — your changes collect here${plan ? ' and go back to the planner together' : ''}.</span>`;
+      ? `<button type="button" class="btn btn-sm btn-quiet" data-a="clear">Clear</button><span class="pp-sp"></span>${canSend
+        ? `<button type="button" class="btn btn-sm" data-a="chat">Send to chat</button><button type="button" class="btn btn-sm btn-primary" data-a="send"${sending ? ' disabled' : ''}>${esc(sendLabel)}</button>`
+        : '<button type="button" class="btn btn-sm btn-primary" data-a="chat">Send to chat</button>'}`
+      : `<span class="pp-hintl">Select text to disagree, add a note or pick an alternative. Your changes collect here${plan ? ' and go back to the planner together' : ''}.</span>`;
     trayEl.classList.toggle('is-folded', folded && !!items.length);
     trayEl.innerHTML = `<div class="pp-tray-h"><b>${items.length ? plural(items.length, 'pending change') : 'No pending changes'}</b><span>${esc(where)}</span>${items.length
-      ? `<button type="button" class="pp-x pp-fold" data-fold aria-label="${folded ? 'Show changes' : 'Hide changes'}" aria-expanded="${!folded}">⌄</button>` : ''}</div>
+      ? `<button type="button" class="btn btn-sm btn-quiet btn-icon pp-x pp-fold" data-fold aria-label="${folded ? 'Show changes' : 'Hide changes'}" aria-expanded="${!folded}">${iconSvg('chevron-down', 14)}</button>` : ''}</div>
       ${items.length ? `<div class="pp-rows">${rows}</div>` : ''}
       ${note ? `<p class="pp-tray-note" role="status">${esc(note)}</p>` : ''}
       <div class="pp-tray-f">${foot}</div>`;
@@ -159,7 +160,7 @@ export function decorateArtifact({ pinpoint, doc, win, stage, body, root, file, 
       const n = tray.items.length;
       tray = { items: [], seq: tray.seq };
       save(tray);
-      note = `${plural(n, 'change')} sent to the run — the next step reads ${n === 1 ? 'it' : 'them'}.`;
+      note = `${plural(n, 'change')} sent to the run. The next step reads ${n === 1 ? 'it' : 'them'}.`;
       repaint();
     }
   }
@@ -317,7 +318,7 @@ export function decorateDiff({ pinpoint, doc, win, pane, trayHost, ctx, runId, f
     trayEl.innerHTML = `<div class="pp-tray-h"><b>${plural(open.length, 'open comment')}</b><span>on this diff</span></div>
       <div class="pp-rows">${list}</div>${more}
       <div class="pp-tray-f"><span class="pp-hintl">${finished ? 'Open, unresolved comments not yet sent to a run.' : 'The run is still going; a fix run can follow once it is done.'}</span>
-      <button type="button" class="pp-btn" data-a="chat">Send to chat</button>${finished ? '<button type="button" class="pp-btn pp-pri" data-a="fix">Propose fix run</button>' : ''}</div>`;
+      <button type="button" class="btn btn-sm" data-a="chat">Send to chat</button>${finished ? '<button type="button" class="btn btn-sm btn-primary" data-a="fix">Propose fix run</button>' : ''}</div>`;
   }
 
   trayEl.addEventListener('click', (e) => {

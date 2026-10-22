@@ -70,7 +70,7 @@ test('enable dialog body (board 3): here / follow, preselected metrics delegate,
   assert.match(follow.textContent, /Preselected to match where this project's metrics go/);
   const change = renderPolicyEnableDialogBody({ project: { name: 'x' }, origin: 'x', candidates: [{ slug: 'acme/gateway', label: 'acme/gateway' }], mode: 'follow', change: true }, { doc });
   assert.equal(change.querySelector('input[name="tp-where"][value="here"]').disabled, true);
-  assert.match(change.textContent, /pick a new home/);
+  assert.match(change.textContent, /Pick a new home/);
   const none = renderPolicyEnableDialogBody({ project: { name: 'x' }, origin: 'x', candidates: [], mode: 'here' }, { doc });
   assert.equal(none.querySelector('input[name="tp-where"][value="follow"]').disabled, true);
 });
@@ -185,7 +185,7 @@ test('team-cap pause banner (board 9) and the stats-view delegation', () => {
   const rec = { pauseReason: 'cost_pipeline_policy', pauseDetail: 'team cost cap reached ($10.00 >= $10.00, acme/gateway)', pipelineId: 'p1', totalCostUsd: 10 };
   const b = renderTeamCapPauseBanner(rec, { doc, budget: { pipelineLimitUsd: 25 } });
   assert.equal(b.className, 'cost-banner cb-policy cb-policy-pipeline');
-  assert.equal(b.querySelector('b').textContent, 'Paused — team cost cap reached');
+  assert.equal(b.querySelector('b').textContent, 'Paused: team cost cap reached');
   // Board 9: the figures and the home from the harness detail, and the developer's own limit.
   assert.equal(b.querySelector('.cb-text').textContent,
     "This pipeline's estimated cost hit $10.00, the per-pipeline cap of $10.00 set by acme/gateway's team policy. Your own limit is $25.00. You can continue past the team cap for this pipeline; the overshoot is recorded to team metrics.");
@@ -197,7 +197,7 @@ test('team-cap pause banner (board 9) and the stats-view delegation', () => {
   assert.ok(b.querySelector('.cb-policy-open'));
   assert.equal(b.querySelector('.cb-override'), null, 'never the local-cap action');
   const t = renderTeamCapPauseBanner({ pauseReason: 'cost_total_policy', pauseDetail: '' }, { doc });
-  assert.equal(t.querySelector('b').textContent, 'Paused — team total cap reached');
+  assert.equal(t.querySelector('b').textContent, 'Paused: team total cap reached');
   assert.equal(t.querySelector('.cb-past-team-cap').textContent, 'Continue past team cap (this period)');
   for (const reason of POLICY_PAUSE_REASONS) {
     const via = renderCostPauseBanner({ pauseReason: reason, pipelineId: 'p1', totalCostUsd: 1 }, { doc, budget: {} });
@@ -289,11 +289,11 @@ const PAYLOAD = {
 test('header panel: the published document — title, source, version, notes, and the Edit action', () => {
   const card = renderPolicyHeader(PAYLOAD, { doc });
   assert.equal(card.className, 'card tp-head');
-  assert.equal(card.querySelector('.tp-head-kicker').textContent, 'SHARED WITH THE TEAM');
+  assert.equal(card.querySelector('.tp-head-kicker').textContent, 'Shared with the team');
   assert.equal(card.querySelector('.tp-head-title').textContent, 'Gateway team policy');
   const facts = [...card.querySelectorAll('.tp-facts dt')].map((dt, i) => [dt.textContent, card.querySelectorAll('.tp-facts dd')[i].textContent]);
-  assert.deepEqual(facts.map((f) => f[0]), ['SOURCE', 'APPLIES TO', 'VERSION', 'NOTES']);
-  assert.equal(facts[0][1], 'Follows gateway — the document lives there');
+  assert.deepEqual(facts.map((f) => f[0]), ['Source', 'Applies to', 'Version', 'Notes']);
+  assert.equal(facts[0][1], 'Follows gateway (the document lives there)');
   assert.equal(facts[1][1], 'Runs on billing-api');
   assert.match(facts[2][1], /^3fc3cee · updated 11 min ago by Mara Lindqvist$/);
   assert.match(card.querySelectorAll('.tp-facts dd')[2].querySelector('code').title, /commit 3fc3cee on gateway's worca-policy branch/);
@@ -331,4 +331,30 @@ test('Catalog tab and editor show a Codex model\'s engine', () => {
   assert.equal(root.querySelector('.tp-catalog-models .tp-engine').textContent, 'Codex');
   const plain = renderPolicyCatalogPanel(PAYLOAD, { doc });
   assert.equal(plain.querySelector('.tp-catalog-models .tp-engine'), null);
+});
+
+test('editor: runs.tagDimensions chips, add row adds a dimension, docFromEditor reads them back', () => {
+  const registry = [...REGISTRY, { key: 'runs.tagDimensions', group: 'runs', type: 'tagDimensions', kinds: ['soft'], label: 'Tag dimensions' },
+    { key: 'runs.enforceTags', group: 'runs', type: 'bool', kinds: ['soft'], label: 'Require mandatory tags' }];
+  const policy = { schema: 1, fields: { 'runs.tagDimensions': { kind: 'soft', value: [{ key: 'cc', label: 'Cost centre', values: ['4410', '4420'], required: true }] } }, workspaceRuns: {}, catalogs: { guardrailSets: [], models: [] } };
+  const root = renderPolicyEditor(policy, { registry, doc });
+  doc.body.append(root);
+  const row = root.querySelector('.tp-edit-row[data-key="runs.tagDimensions"][data-scope="fields"]');
+  assert.deepEqual([...row.querySelectorAll('.tp-chip')].map((c) => c.firstChild.textContent), ['Cost centre (cc) · 4410, 4420 · required']);
+  row.querySelector('.tp-dim-key').value = 'client';
+  row.querySelector('.tp-dim-label').value = 'Client';
+  row.querySelector('.tp-dim-default').value = 'Acme';
+  row.querySelector('.tp-add-btn').dispatchEvent(new dom.window.Event('click', { bubbles: true }));
+  assert.equal(row.querySelectorAll('.tp-chip').length, 2);
+  assert.equal(row.querySelector('.tp-dim-key').value, '');
+  assert.equal(row.querySelector('.tp-dim-default').value, '');
+  assert.equal(row.querySelectorAll('.tp-chip')[1].firstChild.textContent, 'Client (client) · default acme');
+  assert.deepEqual(docFromEditor(root, { registry }).fields['runs.tagDimensions'].value, [
+    { key: 'cc', label: 'Cost centre', values: ['4410', '4420'], required: true },
+    { key: 'client', label: 'Client', values: [], required: false, default: 'acme' },
+  ]);
+  const enforceRow = root.querySelector('.tp-edit-row[data-key="runs.enforceTags"][data-scope="fields"]');
+  assert.ok(enforceRow, 'runs.enforceTags renders through the generic bool control');
+  assert.equal(enforceRow.closest('[data-group]')?.dataset.group, 'runs');
+  root.remove();
 });

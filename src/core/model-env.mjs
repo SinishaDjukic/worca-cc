@@ -21,9 +21,19 @@ export const EFFORTS = ['medium', 'high', 'xhigh', 'max'];
 export const CODEX_EFFORTS = ['minimal', 'low', 'medium', 'high'];
 /** Cursor has no effort flag (engines/cursor.mjs capability `effort: false`). */
 export const CURSOR_EFFORTS = [];
+/** Copilot's `--reasoning-effort` values (engines/copilot.mjs COPILOT_EFFORTS; kept equal by a test). */
+export const COPILOT_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+/** A Copilot built-in's catalog id is `copilot/<the id copilot --model takes>`: the bare ids clash with Codex's built-ins
+ *  (gpt-5.5) and look like Claude's, and the catalog holds one row per id. A bridge import of the Copilot API uses
+ *  `copilot-<id>` (connections.mjs suggestModelHandle), so the two never meet. */
+export const COPILOT_MODEL_PREFIX = 'copilot/';
+/** The model id copilot's `--model` is given for a catalog id: the prefix off, any other id as it is. */
+export function copilotWireModel(id) {
+  const s = typeof id === 'string' ? id.trim() : '';
+  return s.toLowerCase().startsWith(COPILOT_MODEL_PREFIX) ? s.slice(COPILOT_MODEL_PREFIX.length) : s;
+}
 export const MODEL_ENGINES = [...MODEL_ENGINE_NAMES];
-/** The engines a run's agent nodes can run on (engines/index.mjs). Copilot runs pipelines but owns no catalog
- *  model, so it is not a MODEL_ENGINES member (no step or helper slots, no Ask chats). */
+/** The engines a run's agent nodes can run on (engines/index.mjs). */
 export const RUN_ENGINES = [...ENGINE_NAMES];
 /** Engines with helper-model slots of their own (title, overview, PR description, Auto classifier, night decider). */
 export const HELPER_ENGINES = ['claude', 'codex'];
@@ -32,10 +42,13 @@ export const HELPER_ENGINES = ['claude', 'codex'];
  *  the workspace scan are agent nodes of the run, not helper jobs. */
 export function helperEngineFor(engine) { return RUN_ENGINES.includes(engine) && ENGINES[engine].helpers ? engine : 'claude'; }
 /** Engines an Ask Worca chat may run on: those whose shell and disk tools can be switched off (Codex: CODEX_ASK_LOCKDOWN,
- *  and a codex that has every flag in it, ask/turn.mjs). Cursor: no such switch is known (CURSOR_ASK_LOCKDOWN = null). */
-export const ASK_ENGINES = ['claude', 'codex'];
-export function effortsForEngine(engine) { return engine === 'codex' ? CODEX_EFFORTS : engine === 'cursor' ? CURSOR_EFFORTS : EFFORTS; }
-export const ALL_EFFORTS = [...new Set([...EFFORTS, ...CODEX_EFFORTS])];
+ *  and a codex that has every flag in it, ask/turn.mjs; Copilot: only worca's MCP server through --available-tools,
+ *  COPILOT_ASK_FLAGS). Cursor: no such switch is known (CURSOR_ASK_LOCKDOWN = null). */
+export const ASK_ENGINES = ['claude', 'codex', 'copilot'];
+export function effortsForEngine(engine) {
+  return engine === 'codex' ? CODEX_EFFORTS : engine === 'cursor' ? CURSOR_EFFORTS : engine === 'copilot' ? COPILOT_EFFORTS : EFFORTS;
+}
+export const ALL_EFFORTS = [...new Set([...EFFORTS, ...CODEX_EFFORTS, ...COPILOT_EFFORTS])];
 
 // The effort worca's own auxiliary calls run at (title generation, the Models
 // view Test button). Deliberately BELOW the pipeline list: the CLI accepts
@@ -155,11 +168,13 @@ export function withStreamTimeouts(env) {
 // CLAUDE_CODE_SUBAGENT_MODEL is reserved too: the per-node `subagentModel`
 // prompt policy is the only sanctioned wire for a child's model, and a catalog
 // entry silently flooring every fan-out child would contradict the per-node
-// control the UI shows.
+// control the UI shows. CLAUDE_CODE_FORK_SUBAGENT is worca's own: the Claude adapter sets it to 0 on
+// every spawn (engines/claude.mjs CLAUDE_SPAWN_ENV), and an entry that turned forks back on would
+// bypass the pinned investigator and that same per-node policy.
 export const RESERVED_MODEL_ENV_KEYS = [
   'PATH', 'HOME', 'TMPDIR', 'SHELL', 'USER', 'LOGNAME', 'TERM',
   'NODE_OPTIONS', 'NODE_EXTRA_CA_CERTS',
-  'CLAUDECODE', 'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB', 'CLAUDE_CODE_SUBAGENT_MODEL',
+  'CLAUDECODE', 'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB', 'CLAUDE_CODE_SUBAGENT_MODEL', 'CLAUDE_CODE_FORK_SUBAGENT',
 ];
 export const RESERVED_MODEL_ENV_PREFIXES = ['WORCA_'];
 

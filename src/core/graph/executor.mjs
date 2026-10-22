@@ -51,6 +51,10 @@ import {
 } from '../phases.mjs';
 import { SUBAGENT_MODELS } from '../model-env.mjs';
 import { AWAIT_PORT } from '../../shared/graph/constants.mjs';
+import { perspectivesBlock } from '../../shared/shape/perspectives.mjs';
+import { roleBriefBlock, roleItems, houseBriefBlock } from '../../shared/shape/role-review.mjs';
+import { reviewChecklistBlock } from '../../shared/shape/review-checklist.mjs';
+import { slicingBlock, outlineFeedbackBlock, FLAT_NOTE, sliceScopeBlock } from '../../shared/shape/slices.mjs';
 import { runScriptExecution } from './script-runner.mjs';
 // Skills registry §4.1: the CLI's refusal of `--plugin-dir` under managed `disableSideloadFlags` (P3's one regex).
 import { SIDELOAD_REFUSAL_RE as SIDELOAD_REFUSED_RE } from '../skills-registry/host.mjs';
@@ -106,14 +110,14 @@ function resolveTemplate(port, { ordinal, runCtx, prefix }) {
   if ((port.artifactKind || port.id) === 'plan') {
     const v = tpl.includes('{vsuffix}') ? nextVersion() : 1;
     return {
-      path: planPath(runCtx.projectDir, prefix + String(runCtx.baseName || ''), v, runCtx.datePrefix, runCtx.workspaceKey),
+      path: planPath(runCtx.projectDir, prefix + String(runCtx.baseName || ''), v, runCtx.datePrefix, runCtx.workspaceKey, { projectKey: runCtx.storeKey }),
       store,
     };
   }
   const m = /^\{base\}-(.+)\.md$/.exec(tpl);
   const kind = m ? m[1] : (port.artifactKind || port.id);
   return {
-    path: reviewPath(runCtx.projectDir, runCtx.baseName, runCtx.datePrefix, prefix + kind, runCtx.workspaceKey),
+    path: reviewPath(runCtx.projectDir, runCtx.baseName, runCtx.datePrefix, prefix + kind, runCtx.workspaceKey, { projectKey: runCtx.storeKey }),
     store,
   };
 }
@@ -200,6 +204,12 @@ function detachedWorkspace(ctx) {
  * Pure + exported (the parity suite pins both arms).
  */
 export function changesInstruction(ctx) {
+  // P5: the single-run folder arm only — a workspace (an all-Folder one included) takes the per-member arm below,
+  // whose workspaceDiffInstruction lines name each Folder member's own changes file.
+  if (ctx?.workMode === 'folder' && !(ctx?.workspace?.projects || []).length) {
+    return `in \`${join(ctx.pipelineDir, 'changes.patch')}\`, a unified diff of everything the run changed — there is no git in this run`;
+  }
+  if (ctx?.workMode === 'none') return 'by reading the files in your cwd (there is no repository: every file there was made by this run)';
   const perMember = detachedWorkspace(ctx) ? workspaceDiffInstruction(ctx) : '';
   return perMember
     ? 'in EVERY member checkout — your cwd is the worca-cc run root, not a repository, so ' +
@@ -436,6 +446,28 @@ function substituteHints(raw, ctx) {
     .replace(/\{diffInstruction\}/g, () => changesInstruction(ctx));
 }
 
+/** The sidecar hints, then the node's own `config.promptHints` (spec D3). A node without its own hints gets
+ *  exactly the sidecar string (substituteHints trims), so every existing prompt is byte-identical. */
+const joinHints = (a, b) => [a, b].map((s) => String(s || '').trim()).filter(Boolean).join('\n\n');
+
+/** The agents whose prompt carries the Perspectives block (spec D5: the planner writes for them, Refine checks them). */
+const PERSPECTIVE_AGENT_KEYS = new Set(['planner', 'refiner']);
+/** Spec §3.8: the agent that may write the slice outline, and the agents that get the slice scope (F15). */
+export const SLICE_PLANNER_KEY = 'planner';
+export const SLICE_SCOPE_AGENT_KEYS = PERSPECTIVE_AGENT_KEYS;
+
+/** The Planner's slicing text: the rules plus a revise note while the outline is open, the flat note after
+ *  Don't slice, '' otherwise. Driven by ctx fields the orchestrator sets, never by ctx.shape alone. */
+function slicingPromptBlock(ctx) {
+  if (ctx.shapeOutlineNote?.decision === 'flat') return FLAT_NOTE;
+  if (!ctx.shapeSlicing) return '';
+  return slicingBlock({ file: ctx.shapeSlicing.file, size: ctx.shapeSlicing.size || null })
+    + (ctx.shapeOutlineNote?.decision === 'revise' ? outlineFeedbackBlock(ctx.shapeOutlineNote.feedback) : '')
+    + mockMarkers({ MOCK_SLICES: ctx.shapeSlicing.file }) + '\n\n';
+}
+/** The node key whose verdict carries the plan's checklist (spec D7). Workspace runs swap it out. */
+export const CHECKLIST_REVIEWER_KEY = 'reviewer';
+
 /**
  * The decomposition contract, rendered for ANY node whose output is wired into an
  * `expands` input (graph-derived — no key is named): where the task files go and what
@@ -454,7 +486,7 @@ function decompositionContractBlock(expandsPort, runCtx) {
 /** The MOCK marker set for this execution, per the resolution chain. Only markers
  *  `runMock` reads are emitted (MOCK_ROLE, MOCK_CYCLE, MOCK_BASE, MOCK_OUT, MOCK_JSON,
  *  MOCK_IN, MOCK_PRIOR, MOCK_TASKS_DIR). */
-function markersFor({ role, ordinal, runCtx, outputs, verdict, bindings, ports, expandsPort, priorCount }) {
+function markersFor({ role, ordinal, runCtx, outputs, verdict, bindings, ports, expandsPort, priorCount, perspective, planText }) {
   const markers = { MOCK_ROLE: role, MOCK_CYCLE: ordinal, MOCK_BASE: runCtx.baseName };
   if (role === MOCK_ROLE_CLARIFY) {
     markers.MOCK_OUT = outputs[answersPortOf(ports)?.id]?.path;
@@ -471,6 +503,11 @@ function markersFor({ role, ordinal, runCtx, outputs, verdict, bindings, ports, 
     .map((p) => bindings[p.id]?.path)
     .find(Boolean);
   if (primaryIn) markers.MOCK_IN = primaryIn;
+  // Role reviews (spec §3): the reviewer's role and its plan items; the refiner's merged findings. Empty values are
+  // skipped by mockMarkers, so every other prompt is unchanged.
+  markers.MOCK_PERSPECTIVE = perspective || '';
+  markers.MOCK_CHECKLIST = perspective ? roleItems(perspective, planText || '').map((i) => i.id).join(',') : '';
+  markers.MOCK_FINDINGS = bindings.findings?.path || '';
   return markers;
 }
 
@@ -503,18 +540,39 @@ export function buildAgentPrompt(ctx) {
 
   const relative = detachedWorkspace(ctx);
   const routed = ctxEndpointRouted(ctx);
-  const hints = substituteHints(meta.promptHints, ctx);
+  const hints = substituteHints(joinHints(meta.promptHints, node?.config?.promptHints), ctx);
+  const perspectives = PERSPECTIVE_AGENT_KEYS.has(node?.key) && Array.isArray(ctx.shape?.perspectives)
+    ? perspectivesBlock(ctx.shape.perspectives, { refiner: node.key === 'refiner' })
+    : '';
+  const slicing = node?.key === SLICE_PLANNER_KEY ? slicingPromptBlock(ctx) : '';
+  const sliceScope = SLICE_SCOPE_AGENT_KEYS.has(node?.key) && ctx.shapeSliceScope
+    ? sliceScopeBlock({ ...ctx.shapeSliceScope, refiner: node.key !== SLICE_PLANNER_KEY })
+    : '';
+  // Spec D7: the approved plan's R-… items, set by the orchestrator for a shaped run's reviewer only. Driven by the
+  // list, never by ctx.shape, so every unshaped and shaped-without-items prompt stays byte-identical.
+  const checklist = reviewChecklistBlock(ctx.checklistItems);
   const title = meta.displayName || node?.key || node?.id || 'agent';
-  const siblings = ctx.slice ? siblingsBlock(ctx.slice.siblings) : '';
+  // Spec §3: a role reviewer's prompt carries ITS role brief only (ctx.role is set per composite slice).
+  const roleBrief = ctx.role ? roleBriefBlock(ctx.role, ctx.rolePlanText || '') : '';
+  // Slice 3: the house brief rides on the Project fit reviewer only (houseBriefBlock is '' for any other role).
+  const houseBrief = ctx.role ? houseBriefBlock(ctx.role, ctx.houseBrief) : '';
+  // The siblings block is for implementer tasks sharing a tree; other reviewers are not shown (spec §3).
+  const siblings = ctx.slice && !ctx.role ? siblingsBlock(ctx.slice.siblings) : '';
   const answersBlock = (ports.inputs || []).some((p) => p?.as === 'answers')
     ? '## Clarifications already answered\n\n' + renderAnswers(ctx.priorAnswers || []) + '\n'
     : '';
 
   return (
     taskHeader(headerCtx, title) +
+    (checklist ? '\n' + checklist : '') +
     '\n## What to do\n\n' +
     baseInstruction(meta.runnerType, meta) + '\n\n' +
     (hints ? hints + '\n\n' : '') +
+    perspectives +
+    roleBrief +
+    houseBrief +
+    sliceScope +
+    slicing +
     modeBlock(selectMode({ ports, bindings, freshPorts: trigger.freshPorts })) +
     fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: relative, subagentModel: ctxSubagentModel(ctx), endpointRouted: routed, investigator: !!ctxSubagentEffort(ctx), engine: node?.engine }) +
     workspaceFanOutDirective(meta.workspaceStrategy, ctx.workspace, { relative, endpointRouted: routed, serial: node?.noSubagents === true }) +
@@ -528,6 +586,7 @@ export function buildAgentPrompt(ctx) {
       ordinal, runCtx, outputs, verdict, bindings, ports,
       expandsPort,
       priorCount: (ctx.priorAnswers || []).length,
+      perspective: ctx.role || null, planText: ctx.rolePlanText,
     }))
   );
 }
@@ -753,6 +812,7 @@ export async function runClarifierExecution(ctx) {
   const answersPort = answersPortOf(ports);
   const answersPath = outputs[answersPort?.id]?.path;
   if (!answersPath) throw new Error(`clarifier node "${node?.id}": no json output port to write the questions to`);
+  if (ctx.carriedClarify) return carryClarify(ctx, { node, ports, outputs, answersPath, prompt, meta });
 
   let sessionId;
   ({ sessionId } = await spawnAgent(full, { role, prompt, systemPrompt, allowedTools }));
@@ -822,6 +882,15 @@ export async function runClarifierExecution(ctx) {
     sessionId = gate.sessionId ?? sessionId;
   }
 
+  // Shape it first (spec D3): a node may cap its questions below the protocol's 8. normalizeClarify already
+  // dropped the invalid ones, so this keeps the FIRST N valid questions, in the agent's order. Placed after the
+  // form arm so a form downgraded to questions is capped too.
+  const cap = Number(node?.config?.maxQuestions);
+  if (Number.isInteger(cap) && cap >= 1 && questions.length > cap) {
+    warnings.push(`${node.id}: Clarify asked ${questions.length} questions; keeping the first ${cap}`);
+    questions = questions.slice(0, cap);
+  }
+
   let answers = [];
   if (questions.length) {
     if (ctx.pipelineId) {
@@ -853,6 +922,22 @@ export async function runClarifierExecution(ctx) {
   await mkdir(dirname(answersPath), { recursive: true }).catch(() => {});
   await writeFile(answersPath, JSON.stringify({ questions, answers }, null, 2) + '\n', 'utf8');
   return { outputs: publishable(ports, outputs), questions, answers, sessionId, prompt, warnings };
+}
+
+/** D19: a later slice publishes the feature's Clarify answers (slice 1's) without spawning or asking. */
+async function carryClarify(ctx, { node, ports, outputs, answersPath, prompt, meta }) {
+  const { questions: q = null, answers: a = null } = ctx.carriedClarify || {};
+  const form = a && a.kind === 'form';
+  const questions = !form && Array.isArray(q?.questions) ? q.questions : [];
+  const answers = !form && Array.isArray(a?.answers) ? a.answers : [];
+  if (ctx.pipelineId) {
+    if (q || a) await writeClarify(ctx.pipelineId, { ...(q ? { questions: q } : {}), ...(a ? { answers: a } : {}) });
+    appendAuditById(ctx.pipelineId, `${meta?.displayName || node?.key || 'Clarify'}: skipped, this slice uses the feature's answers.`);
+  }
+  const file = form ? { form: a.form, version: a.version, values: a.values || {} } : { questions, answers };
+  await mkdir(dirname(answersPath), { recursive: true }).catch(() => {});
+  await writeFile(answersPath, JSON.stringify(file, null, 2) + '\n', 'utf8');
+  return { outputs: publishable(ports, outputs), questions, answers, sessionId: null, prompt, warnings: [] };
 }
 
 /** The night mode decision record behind a clarifier ask (the orchestrator's nightDecision
@@ -914,7 +999,7 @@ export function runTaskExecution({ node, taskArtifact, runCtx = {} }) {
 
   if (text === null) throw missing();
   const version = typeof runCtx.planVersion === 'function' ? Number(runCtx.planVersion()) || 1 : 1;
-  const seeded = planPath(runCtx.projectDir, runCtx.baseName, version, runCtx.datePrefix, runCtx.workspaceKey);
+  const seeded = planPath(runCtx.projectDir, runCtx.baseName, version, runCtx.datePrefix, runCtx.workspaceKey, { projectKey: runCtx.storeKey });
   writeOut(seeded, text);
   return { outputs: { task: { path: seeded } } };
 }

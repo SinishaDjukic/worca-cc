@@ -3,6 +3,10 @@
 // no real dialog ever opens; platform/env are forced per test.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { pickFolderNative, pickAppNative, _testing } from '../src/core/folder-dialog.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -211,6 +215,72 @@ test('linux multiple: zenity --multiple, kdialog fallback single-select as a one
       assert.ok(!calls[1].args.includes('--multiple'));
     } },
   ]);
+});
+
+test('purpose repos: macOS opens one NSOpenPanel (folders and .code-workspace files) through JXA; a broken bridge falls back to choose folder; Linux opens its folder dialog', async () => {
+  // afterEach resets only between tests: each row starts from a reset, as its own test did.
+  await checkRows([
+    { name: 'darwin: one JXA panel; every picked path comes back', run: async () => {
+      _testing.set({ platform: 'darwin', env: {} });
+      const calls = runner({ ok: true, stdout: '/Users/me/dev/api\n/Users/me/dev/acme.code-workspace\n', stderr: '', code: 0, timedOut: false });
+      assert.deepEqual(await pickFolderNative({ purpose: 'repos', multiple: true }), {
+        status: 'picked', path: '/Users/me/dev/api', paths: ['/Users/me/dev/api', '/Users/me/dev/acme.code-workspace'],
+      });
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].cmd, 'osascript');
+      assert.deepEqual(calls[0].args.slice(0, 3), ['-l', 'JavaScript', '-e']);
+      for (const bit of ['NSOpenPanel', 'setCanChooseFiles(true)', 'setCanChooseDirectories(true)',
+        'setAllowsMultipleSelection(true)', "setAllowedFileTypes($(['code-workspace']))"]) {
+        assert.ok(calls[0].args[3].includes(bit), `the panel script has ${bit}`);
+      }
+    } },
+    { name: 'darwin: an empty answer is a cancel', run: async () => {
+      _testing.reset();
+      _testing.set({ platform: 'darwin', env: {} });
+      runner({ ok: true, stdout: '\n', stderr: '', code: 0, timedOut: false });
+      assert.deepEqual(await pickFolderNative({ purpose: 'repos', multiple: true }), { status: 'canceled' });
+    } },
+    { name: 'darwin: a non-cancel failure falls back to the folders-only choose folder dialog', run: async () => {
+      _testing.reset();
+      const calls = [];
+      _testing.set({ platform: 'darwin', env: {}, runner: async (cmd, args) => {
+        calls.push({ cmd, args });
+        return calls.length === 1
+          ? { ok: false, stdout: '', stderr: 'execution error: Error: TypeError: undefined is not an object (-2700)', code: 1, timedOut: false }
+          : { ok: true, stdout: '/Users/me/dev/api\n', stderr: '', code: 0, timedOut: false };
+      } });
+      assert.deepEqual(await pickFolderNative({ purpose: 'repos', multiple: true }), { status: 'picked', path: '/Users/me/dev/api', paths: ['/Users/me/dev/api'] });
+      assert.equal(calls.length, 2);
+      assert.ok(calls[1].args.includes('set picked to (choose folder with prompt "Select repositories or a folder of repositories" with multiple selections allowed)'));
+    } },
+    { name: 'darwin: a timed-out panel is unsupported, and no second dialog opens', run: async () => {
+      _testing.reset();
+      _testing.set({ platform: 'darwin', env: {} });
+      const calls = runner({ ok: false, stdout: '', stderr: 'dialog timed out', code: -1, timedOut: true });
+      assert.deepEqual(await pickFolderNative({ purpose: 'repos', multiple: true }), { status: 'unsupported' });
+      assert.equal(calls.length, 1);
+    } },
+    { name: 'linux: zenity folder multi-select titled for the wizard', run: async () => {
+      _testing.reset();
+      _testing.set({ platform: 'linux', env: { DISPLAY: ':0' } });
+      const calls = runner({ ok: true, stdout: '/home/me/api\n/home/me/web\n', stderr: '', code: 0, timedOut: false });
+      assert.deepEqual(await pickFolderNative({ purpose: 'repos', multiple: true }), { status: 'picked', path: '/home/me/api', paths: ['/home/me/api', '/home/me/web'] });
+      assert.deepEqual(calls[0].args, ['--file-selection', '--directory', '--title=Select repositories or a folder of repositories', '--multiple', '--separator=\n']);
+    } },
+  ]);
+});
+
+test('the macOS repositories panel script compiles (osacompile only: nothing is shown)', { skip: process.platform !== 'darwin' && 'macOS only' }, async () => {
+  _testing.set({ platform: 'darwin', env: {} });
+  const calls = runner({ ok: true, stdout: '\n', stderr: '', code: 0, timedOut: false });
+  await pickFolderNative({ purpose: 'repos', multiple: true });
+  const dir = mkdtempSync(join(tmpdir(), 'worca-cc-jxa-'));
+  try {
+    const r = spawnSync('osacompile', ['-l', 'JavaScript', '-o', join(dir, 'pick.scpt'), '-e', calls[0].args[3]], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // ── Browse… for Settings › Runs › Actions › Editor / Terminal: pickAppNative ──

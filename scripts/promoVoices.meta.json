@@ -1,0 +1,36 @@
+{
+  "key": "promoVoices",
+  "metaVersion": 2,
+  "displayName": "Promo: voices",
+  "description": "Lists ElevenLabs voices that suit a promo narrator (your account's voices first, then the shared library, filtered by the setup's voice choice) and downloads their preview clips for the voice picker. Skipped for a silent video or when no API key is available; a failed call leaves an empty list and the video goes silent. The key is read from the environment only and never written to disk. Runs with worca's privileges.",
+  "domain": "video",
+  "color": "pink",
+  "icon": "<rect x=\"9\" y=\"3.5\" width=\"6\" height=\"11\" rx=\"3\"/><path d=\"M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5\" stroke-linecap=\"round\"/>",
+  "order": 70,
+  "runtime": "node",
+  "file": "promo-voices.mjs",
+  "timeoutMs": 600000,
+  "inputs": [
+    {
+      "id": "answers",
+      "type": "json"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "voices",
+      "type": "json",
+      "when": "always",
+      "filename": "promo-voice-list.json",
+      "artifactKind": "promo-voices"
+    }
+  ],
+  "mock": {
+    "summary": "voices skipped (mock).",
+    "outputs": {
+      "voices": {
+        "text": "{\n  \"version\": 1,\n  \"voices\": [],\n  \"skipped\": \"mock\"\n}\n"
+      }
+    }
+  }
+}

@@ -20,9 +20,11 @@ const SYSTEM = [
 ].join(' ');
 
 /** The fixed cheap model per engine: Haiku on Claude while it is in the catalog and ready (else null: no
- *  suggestion — never the chat's own, possibly expensive, model), the small model on Codex. */
+ *  suggestion — never the chat's own, possibly expensive, model), the small model on Codex. Copilot: none — every
+ *  copilot call spends a premium request, and a Copilot chat makes no Claude call. */
 export function suggestionModel(engine, { inCatalog = (id) => catalogHasModel(id, { engine: 'claude' }), ready = modelReady } = {}) {
   if (engine === 'codex') return CODEX_SUGGESTION_MODEL;
+  if (engine === 'copilot') return null;
   try { return inCatalog(DEFAULT_TITLE_MODEL) && ready(DEFAULT_TITLE_MODEL) ? DEFAULT_TITLE_MODEL : null; } catch { return null; }
 }
 

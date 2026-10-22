@@ -72,16 +72,25 @@ export function renderCsv(text, relPath, mount) {
   return table;
 }
 
+/** A pinned view's extension for the chain (artifact-view-c4 → -media → base), which picks its renderer from the
+ *  name. No 'html' entry. */
+const PIN_EXT = Object.freeze({ markdown: '.md', json: '.json', diff: '.diff', text: '.txt', image: '.png', pdf: '.pdf', audio: '.mp3', video: '.mp4' });
+/** The views a caller may pin: PIN_EXT's plus the two this layer renders itself. Anything else (html, c4, junk) pins
+ *  'text', so a pinned file can never be framed, whatever its name. */
+export const PINNABLE_PREVIEW_KINDS = Object.freeze(new Set([...Object.keys(PIN_EXT), 'csv', 'code']));
+
 /**
  * Render one artifact into `mount`.
- * @param {{kind?:string|null, relPath:string, text?:string, url?:string}} artifact  `text` for the text kinds, `url`
- *   (the raw route) for image/pdf/html/audio/video
+ * @param {{kind?:string|null, relPath:string, text?:string, url?:string, previewKind?:string|null}} artifact  `text` for the
+ *   text kinds, `url` (the raw route) for image/pdf/html/audio/video; `previewKind` pins the view (PINNABLE_PREVIEW_KINDS)
  * @param {Element} mount
  * @param {{loadMarkdown?:Function, hljsLoader?:{forLanguage:Function}}} [deps]
  */
 export async function renderPreview(artifact, mount, deps = {}) {
-  const { kind = null, relPath = '', text = '' } = artifact || {};
-  const view = previewKindFor(kind, relPath);
+  const { kind = null, relPath = '', text = '', previewKind = null } = artifact || {};
+  const natural = previewKindFor(kind, relPath);
+  const pinned = previewKind ? (PINNABLE_PREVIEW_KINDS.has(previewKind) ? previewKind : 'text') : null;
+  const view = pinned || natural;
   if (view === 'csv') { stamp(mount, 'csv'); return renderCsv(text, relPath, mount); }
   if (view === 'code') {
     stamp(mount, 'code');
@@ -90,7 +99,15 @@ export async function renderPreview(artifact, mount, deps = {}) {
     await highlightPre(pre, text, langForPath(relPath), deps.hljsLoader);
     return pre;
   }
-  const out = await renderChain(artifact, mount, deps);
+  // The chat files card pins the kind the server sniffed; when the name disagrees (a JSON body in out.txt) the chain
+  // gets a path whose extension names the pinned view, so it cannot pick another renderer. The chain never fetches by
+  // relPath (the viewer fetched text already; raw bytes use artifact.url), so the suffix changes nothing else.
+  let chainArtifact = artifact;
+  if (pinned && view !== natural) {
+    if (!PIN_EXT[view]) { stamp(mount, 'text'); return renderText(text, mount); }
+    chainArtifact = { ...artifact, relPath: `${relPath}${PIN_EXT[view]}` };
+  }
+  const out = await renderChain(chainArtifact, mount, deps);
   if (view === 'json' && out && out.tagName === 'PRE') {
     out.classList.add('apv-code');
     await highlightPre(out, out.textContent, 'json', deps.hljsLoader);

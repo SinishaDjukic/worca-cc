@@ -16,9 +16,10 @@ import { getDb, prepare, tx } from './db.mjs';
 import { projectKey } from './store.mjs';
 import { AUTO_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
 import { loadAgentRegistry, registryToSteps } from './agent-registry.mjs';
-import { EFFORTS, CODEX_EFFORTS, ALL_EFFORTS, MODEL_ENGINES, prepareModelEnv, withTierModelEnv, withProviderModesOff, PROVIDER_MODE_ENV_KEYS, isSubagentModelValue, subagentModelIssue, BRIDGE_ROUTING_KEYS, bridgeExcludedTools, isTranslatedApi } from './model-env.mjs';
+import { EFFORTS, CODEX_EFFORTS, ALL_EFFORTS, MODEL_ENGINES, COPILOT_MODEL_PREFIX, prepareModelEnv, withTierModelEnv, withProviderModesOff, PROVIDER_MODE_ENV_KEYS, isSubagentModelValue, subagentModelIssue, BRIDGE_ROUTING_KEYS, bridgeExcludedTools, isTranslatedApi } from './model-env.mjs';
 import { findBridgedEntry, providerReadiness } from './bridge/registry.mjs';
 import { engineLabel } from '../shared/engine-switch.mjs';
+import { normaliseTags } from '../shared/run-tags.mjs';
 import { connectionOf, harnessesOf, runsOn, harnessesLabel, effortsOn } from '../shared/connections.mjs';
 import { bridgeBaseUrl, bridgeSecret } from './bridge/server.mjs';
 import { listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels, readSettings, memoryDefragModel, setMemoryDefragModel } from './settings.mjs';
@@ -28,7 +29,7 @@ import { listPluginModels, allPluginModels, flattenPluginModelEnv } from './plug
 import { brokerEnabled } from './broker-client.mjs';
 // Team policy defaults (team-policy design §6, §8): read from the discovery CACHE only (a leaf module).
 import { policyCatalogModels, teamDefault } from './policy/cache.mjs';
-import { PREDEFINED_LIST_PRICES, CODEX_PRICES } from './list-prices.mjs';
+import { PREDEFINED_LIST_PRICES, CODEX_PRICES, codexCachedRate } from './list-prices.mjs';
 import { validateNightPatch } from './night/config.mjs';
 import { normalizeProjectActions, EMPTY_PROJECT_ACTIONS } from './actions/model.mjs';
 import { setCascadeModelOwnerReader, resolveSetting } from './settings-cascade.mjs';
@@ -114,6 +115,22 @@ export function codexModelLabel(id) {
 }
 export const CODEX_BUILTIN_MODELS = Object.freeze(Object.keys(CODEX_PRICES).map((id) => Object.freeze({
   id, label: codexModelLabel(id), efforts: Object.freeze([...CODEX_EFFORTS]),
+})));
+// The models `copilot --model` takes (`copilot help config`, GitHub Copilot CLI 1.0.100), as Copilot sign-in rows.
+// Their efforts are the ones every Copilot model was seen to take; a model that refuses one says so in its turn.
+const COPILOT_MODEL_LABELS = [
+  ['claude-sonnet-5.5', 'Claude Sonnet 5.5'], ['claude-sonnet-5', 'Claude Sonnet 5'], ['claude-fable-5.1', 'Claude Fable 5.1'],
+  ['claude-fable-5', 'Claude Fable 5'], ['claude-opus-5.5', 'Claude Opus 5.5'], ['claude-opus-5', 'Claude Opus 5'],
+  ['claude-opus-4.8', 'Claude Opus 4.8'], ['claude-opus-4.8-fast', 'Claude Opus 4.8 Fast'], ['claude-sonnet-4.6', 'Claude Sonnet 4.6'],
+  ['claude-haiku-5.5', 'Claude Haiku 5.5'], ['claude-haiku-4.5', 'Claude Haiku 4.5'],
+  ['gpt-6.1-sol', 'GPT-6.1 Sol'], ['gpt-6-sol', 'GPT-6 Sol'], ['gpt-6-luna', 'GPT-6 Luna'], ['gpt-6-astra', 'GPT-6 Astra'],
+  ['gpt-5.6-sol', 'GPT-5.6 Sol'], ['gpt-5.6-terra', 'GPT-5.6 Terra'], ['gpt-5.6-luna', 'GPT-5.6 Luna'], ['gpt-5.5', 'GPT-5.5'],
+  ['gpt-5.4', 'GPT-5.4'], ['gpt-5.4-mini', 'GPT-5.4 Mini'], ['gpt-5.3-codex', 'GPT-5.3 Codex'], ['gpt-5-mini', 'GPT-5 Mini'],
+  ['mai-code-1.1-flash', 'MAI Code 1.1 Flash'], ['gemini-4-argon', 'Gemini 4 Argon'], ['gemini-3.8-flash', 'Gemini 3.8 Flash'],
+  ['gemini-3.7-flash', 'Gemini 3.7 Flash'], ['grok-4.7', 'Grok 4.7'], ['grok-4.6', 'Grok 4.6'], ['grok-4.5', 'Grok 4.5'], ['kimi-k3', 'Kimi K3'],
+];
+export const COPILOT_BUILTIN_MODELS = Object.freeze(COPILOT_MODEL_LABELS.map(([id, label]) => Object.freeze({
+  id: `${COPILOT_MODEL_PREFIX}${id}`, label, efforts: Object.freeze(['low', 'medium', 'high']),
 })));
 const engineTag = (m) => (m && MODEL_ENGINES.includes(m.engine) ? m.engine : 'claude');
 const CLAUDE_ID_RE = /^(claude-|opus|sonnet|haiku|fable)/i;
@@ -281,6 +298,17 @@ function composeCatalog(projectCustom = [], { projectDir = null } = {}) {
       ? { id: m.id, label: shadow.label, efforts: [...shadow.efforts], engine: engineTag(shadow), custom: 'global', hasEnv: !!shadow.env, routed: routedOrBridged(shadow), ...unreliable(lc), ...bridgeShape(shadow) }
       : pshadow ? pluginShape(m.id, pshadow, lc)
         : { id: m.id, label: m.label, efforts: [...m.efforts], engine: 'codex', builtin: true, custom: false, hasEnv: false, routed: false });
+    seen.add(lc);
+  }
+  for (const m of COPILOT_BUILTIN_MODELS) {
+    const lc = m.id.toLowerCase();
+    if (seen.has(lc) || policyByIdLc.has(lc)) continue;
+    const shadow = globalByIdLc.get(lc);
+    const pshadow = pluginByIdLc.get(lc);
+    out.push(shadow
+      ? { id: m.id, label: shadow.label, efforts: [...shadow.efforts], engine: engineTag(shadow), custom: 'global', hasEnv: !!shadow.env, routed: routedOrBridged(shadow), ...unreliable(lc), ...bridgeShape(shadow) }
+      : pshadow ? pluginShape(m.id, pshadow, lc)
+        : { id: m.id, label: m.label, efforts: [...m.efforts], engine: 'copilot', builtin: true, custom: false, hasEnv: false, routed: false });
     seen.add(lc);
   }
   for (const m of globals) {
@@ -572,7 +600,7 @@ export function liveCostRates(modelId) {
   const base = id.toLowerCase().replace(/\[1m\]$/, '').replace(/-\d{8}$/, '');
   if (PREDEFINED_LIST_PRICES[base]) return PREDEFINED_LIST_PRICES[base];
   const cx = CODEX_PRICES[id.toLowerCase()];
-  return cx ? { input: cx[0], output: cx[1], cacheRead: cx[0] / 10, cacheWrite: cx[0], cacheWrite1h: cx[0] } : null;
+  return cx ? { input: cx[0], output: cx[1], cacheRead: codexCachedRate(cx), cacheWrite: cx[0], cacheWrite1h: cx[0] } : null;
 }
 
 /**
@@ -702,8 +730,8 @@ export function resolveModelEnv(modelId, { tag } = {}) {
 }
 
 /** Every catalog id with its engine, in composeCatalog's precedence (first hit wins): global,
- *  plugin, Claude built-ins, team policy, then Codex built-ins — a user layer of any kind owns an
- *  id a Codex built-in also has. Synchronous; never throws. */
+ *  plugin, Claude built-ins, team policy, then Codex and Copilot built-ins — a user layer of any kind owns an
+ *  id a Codex or Copilot built-in also has. Synchronous; never throws. */
 function catalogEngineRows(projectDir = null) {
   // `harnesses`: every harness the entry's connection reaches (src/shared/connections.mjs); `engine` the first.
   const row = (m, engine = engineTag(m)) => { const connection = connectionOf({ ...m, engine }); return { id: m.id, engine, connection, harnesses: harnessesOf({ connection }) }; };
@@ -713,6 +741,7 @@ function catalogEngineRows(projectDir = null) {
     ...PREDEFINED_MODELS.map((m) => row(m, 'claude')),
     ...policyCatalogModels().map((m) => row(m)),
     ...CODEX_BUILTIN_MODELS.map((m) => row(m, 'codex')),
+    ...COPILOT_BUILTIN_MODELS.map((m) => row(m, 'copilot')),
     ...(projectDir ? readRaw(projectDir).customModels.map((m) => row(m, 'claude')) : []),
   ];
 }
@@ -814,8 +843,6 @@ export function stepSlotDefaults(engine = 'claude', { projectDir = null, workspa
   return out;
 }
 export async function resolveStepModels(projectDir, fallbackModel, engine = 'claude') {
-  // Copilot has no step slots (it owns no catalog model): every step runs the run's own model, else copilot's default.
-  if (engine === 'copilot') return Object.fromEntries(agentSteps().map(({ key }) => [key, { model: fallbackModel || undefined, effort: undefined }]));
   const eng = MODEL_ENGINES.includes(engine) ? engine : 'claude'; const cfg = readRaw(projectDir);
   const slots = stepSlotDefaults(eng, { projectDir });
   const fallback = modelForEngine(fallbackModel || undefined, eng, { projectDir });
@@ -1407,6 +1434,35 @@ export function writeTeamMetricsPrefs(key, patch) {
   return next;
 }
 
+// ── Typed team repository (project_config.extra.teamRepo, P6) ─────
+// The GitHub 'Owner/Name' a Folder without git keeps its team branches on (typed once in the setup dialog).
+const TEAM_REPO_KEY = 'teamRepo';
+
+/** @returns {string|null} the typed team repository of a project key */
+export function readTeamRepo(key) {
+  assertProjectKey(key);
+  const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
+  const extra = row ? parseJson(row.extra, {}) : {};
+  const v = extra[TEAM_REPO_KEY];
+  return typeof v === 'string' && v ? v : null;
+}
+
+/** Store (string) or forget (null) the typed team repository of a project key. */
+export function writeTeamRepo(key, repo) {
+  assertProjectKey(key);
+  tx(() => {
+    const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
+    const extra = row ? parseJson(row.extra, {}) : {};
+    if (repo == null) delete extra[TEAM_REPO_KEY];
+    else extra[TEAM_REPO_KEY] = String(repo);
+    prepare(`
+      INSERT INTO project_config (project_key, steps, custom_models, active_workflow_id, extra)
+      VALUES (?, '{}', '[]', NULL, ?)
+      ON CONFLICT(project_key) DO UPDATE SET extra = excluded.extra
+    `).run(key, JSON.stringify(extra));
+  });
+}
+
 // ── Project actions (project_config.extra.actions / extra.actionsMeta) ─────
 // A project's setup command + actions (issue #529), and the last setup duration
 // used for the checkout estimate. Same KEY-taking contract as the team-metrics pair.
@@ -1555,6 +1611,33 @@ export function writeSyncPrefs(key, patch) {
     `).run(key, JSON.stringify(extra));
   });
   return next;
+}
+
+// ── Run tags (#718): per-project default tags ────────────────────────────────
+export const RUN_TAGS_KEY = 'runTags';
+
+/** The project's default run tags (#718): a New run form prefill — applied by the server only as an enforced-tags pre-fill source. */
+export function readProjectDefaultTags(key) {
+  assertProjectKey(key);
+  const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
+  const list = (row ? parseJson(row.extra, {}) : {})[RUN_TAGS_KEY]?.defaults;
+  return Array.isArray(list) ? normaliseTags(list).tags : [];
+}
+
+/** Replace the defaults with an already-normalised list; [] removes the key. */
+export function writeProjectDefaultTags(key, tags) {
+  assertProjectKey(key);
+  tx(() => {
+    const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
+    const extra = row ? parseJson(row.extra, {}) : {};
+    if (tags.length) extra[RUN_TAGS_KEY] = { defaults: tags }; else delete extra[RUN_TAGS_KEY];
+    prepare(`
+      INSERT INTO project_config (project_key, steps, custom_models, active_workflow_id, extra)
+      VALUES (?, '{}', '[]', NULL, ?)
+      ON CONFLICT(project_key) DO UPDATE SET extra = excluded.extra
+    `).run(key, JSON.stringify(extra));
+  });
+  return tags;
 }
 
 /**

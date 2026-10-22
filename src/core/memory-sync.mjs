@@ -9,6 +9,7 @@ import {
   repairMemoryFile, parseMemoryFile, writeMemory, removeMemory, snapshotScope, MemoryError,
 } from './memory-store.mjs';
 import { MEMORY_DEFRAG_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
+import { isNoProjectKey } from '../shared/no-project.mjs';
 
 /**
  * Two copies of the store per run (memory-write-split design, 2026-09-17):
@@ -53,7 +54,7 @@ export function mountDirs({ members = [], isWorkspace = false, memoryScope = nul
     for (const m of [...members].sort(byKey)) {
       out.push({ scope: projectScope(m.projectKey), rel: `projects/${m.projectKey}`, label: `Project ${m.projectName || m.projectKey}` });
     }
-  } else if (members[0]) {
+  } else if (members[0] && !isNoProjectKey(members[0].projectKey)) {
     const m = members[0];
     out.push({ scope: projectScope(m.projectKey), rel: 'project', label: `Project ${m.projectName || m.projectKey}` });
   }

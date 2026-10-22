@@ -29,13 +29,13 @@ const WORKFLOWS = [
 const ARCH = [{ id: 'wf_gone', name: 'Gone flow', version: 2, domain: 'coding' }];
 const FLOW_ROWS = ['flow:task', 'flow:end', 'flow:and', 'flow:or', 'flow:combine'];
 
-async function boot(data = {}) {
+async function boot(data = {}, extra = {}) {
   const dom = new JSDOM('<!doctype html><body><aside id="lib"></aside></body>', { url: 'http://localhost:4317/' });
   const doc = dom.window.document;
   const { createLibrary } = await import(LIB_URL);
   const calls = [];
   const rec = (name) => (...a) => { calls.push([name, ...a]); };
-  const actions = new Proxy({ portsFn: () => ({ inputs: [], outputs: [] }) }, { get: (t, k) => (k in t ? t[k] : rec(String(k))) });
+  const actions = new Proxy({ portsFn: () => ({ inputs: [], outputs: [] }), ...extra }, { get: (t, k) => (k in t ? t[k] : rec(String(k))) });
   const lib = createLibrary({ doc, host: doc.getElementById('lib'), actions });
   lib.setData({ agents: AGENTS, scripts: SCRIPTS, workflows: WORKFLOWS, archived: [], placedKinds: ['task', 'end'], openId: 'wf_default', newIds: new Set(['wf_mine']), ...data });
   lib.setOpen(true);
@@ -220,7 +220,7 @@ test('detail actions by origin: built-in View · Duplicate; user Edit · Delete'
   s.lib.openFolder(['agents', 'coding']);
   click(s.host.querySelector('.wfl-item[data-item="agent:planner"] .wfl-main'));
   const d = s.host.querySelector('.wfl-item[data-item="agent:planner"] .wfl-detail');
-  assert.match(d.textContent, /planner · producer — Writes the plan\./);
+  assert.match(d.textContent, /planner · producer: Writes the plan\./);
   assert.deepEqual([...d.querySelectorAll('.wfl-actions button')].map((b) => b.textContent), ['Add to canvas', 'View', 'Duplicate']);
   s.lib.openFolder(['agents', 'general']);
   click(s.host.querySelector('.wfl-item[data-item="agent:docsWriter"] .wfl-main'));
@@ -234,7 +234,7 @@ test('the "+" sits at the selector\'s right in Agents (New agent) and Scripts (N
   const s = await boot();
   const na = s.doc.getElementById('wfl-new-agent');
   assert.ok(na.closest('.wfl-bar'), 'in the selector bar');
-  assert.equal(na.previousElementSibling.className, 'wfl-seg');
+  assert.equal(na.previousElementSibling.className, 'wfl-seg tabs');
   assert.equal(na.getAttribute('aria-label'), 'New agent');
   click(na);
   assert.deepEqual(s.calls.at(-1), ['newAgent']);
@@ -518,19 +518,20 @@ test('the Library card is 380px wide, a min(380px, 100% − 16px) overlay at <= 
   assert.match(app, /insetRight: \(\) => \{\n\s+if \(!\(window\.innerWidth <= 760 && wfvLibrary && wfvLibrary\.isOpen\(\)\)\) return 0;\n[^\n]*\n\s+return stageW - 396 >= 200 \? 396 : 0;\n/);
 });
 
-test('roomy rows: 14px names, 12px second lines, 26px tiles, 14.5px folder rows with a 20px glyph; detail, port chips and actions a notch up', async () => {
+test('roomy rows: 14px names, 12px second lines, 26px tiles, 32px folder rows (review A5) with a 24px glyph; detail, port chips and actions a notch up', async () => {
   const { readFileSync } = await import('node:fs');
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
   const rule = (sel) => { const i = css.indexOf(`\n${sel}{`); assert.ok(i >= 0, `${sel} has a rule`); return css.slice(i + sel.length + 2, css.indexOf('}', i)); };
-  assert.match(rule('.wfl-name'), /font-size:14px;/);
+  assert.match(rule('.wfl-name'), /font-size:13px;/);
   assert.match(rule('.wfl-l2'), /font-size:12px;/);
   assert.match(rule('.wfl-ic'), /width:26px;height:26px;/);
   assert.match(rule('.wfl-main'), /padding:9px /);
-  assert.match(rule('.wfl-folder'), /min-height:44px;.*font:500 14\.5px/);
-  assert.match(rule('.wfl-folder svg'), /width:20px;height:20px;/);
+  assert.match(rule('.wfl-folder'), /min-height:32px;.*font:500 13px/);
+  assert.match(rule('.wfl-folder svg'), /width:24px;height:24px;/);
   assert.match(rule('.wfl-detail'), /font-size:13px;/);
-  assert.match(rule('.wfl-pchip'), /font:500 11\.5px/);
-  assert.match(rule('.wfl-actions .wfv-btn'), /height:28px;.*font-size:12\.5px;/);
+  assert.match(rule('.wfl-pchip'), /font:500 11px/);
+  assert.equal(css.indexOf('.wfl-actions .wfv-btn'), -1, 'the actions are .btn .btn-sm (28px, 12px): no skin of their own');
+  assert.match(rule('.btn-sm'), /height:28px;.*font-size:var\(--fs-meta\);/);
 });
 
 test('the search box slides over the title (reduced motion: at once); folders and tabs show the house focus ring; the breadcrumb and back-row rules are gone', async () => {
@@ -538,11 +539,32 @@ test('the search box slides over the title (reduced motion: at once); folders an
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
   assert.match(css, /\n\.wfl-sbox\{position:absolute;[^}]*transition:left \.24s /);
   assert.match(css, /\n\.wfl-head\.is-searching \.wfl-sbox\{left:7px;\}/);
+  assert.match(css, /\n\.wfl-filter-btn svg\{width:16px;height:16px;\}/, 'the search glyph matches the ✕ beside it');
   assert.match(css, /\n\.wfl-head\.is-searching \.wfl-title\{opacity:0;visibility:hidden;\}/);
   assert.match(css, /@media \(prefers-reduced-motion:reduce\)\{\.wfl-sbox,\.wfl-title,\.wfl-filter-input\{transition:none;\}\}/);
-  assert.match(css, /:is\(\.wfl-folder,\.wfl-tab\):focus-visible\{outline:2px solid var\(--ink\);outline-offset:-2px;\}/);
-  assert.match(css, /\.wfl-chip:focus-visible\{outline:2px solid var\(--ink\);outline-offset:2px;\}/);
+  assert.match(css, /\.wfl-tab:focus-visible\{outline:2px solid var\(--ink\);outline-offset:-2px;\}/);
+  const lib = readFileSync(new URL('../ui/public/workflows/library.mjs', import.meta.url), 'utf8');
+  assert.match(lib, /h\('button', 'filter-chip', t\)/, 'the All / Built-in / Yours chips are the shared .filter-chip');
   assert.doesNotMatch(css, /\.wfl-(crumbs?|trail|csep|up|search|gh|gn|group|archived)\b/);
   const src = readFileSync(new URL('../ui/public/workflows/library.mjs', import.meta.url), 'utf8');
   assert.doesNotMatch(src, /wfl-(crumbs?|crumb-home|trail|csep|up|search|gh|gn|group|archived)\b/);
+});
+
+test('workflow row ⋯: Pin to Chat home / Unpin from Chat home calls togglePin with the row', async () => {
+  const pinned = new Set(['wf_mine']);
+  const s = await boot({}, { isPinned: (id) => pinned.has(id) });
+  s.lib.openFolder(['workflows', 'general']);
+  const more = s.host.querySelector('.wfl-wf[data-id="wf_mine"] .wfl-more');
+  assert.ok(more.classList.contains('btn') && more.classList.contains('btn-icon'));
+  assert.equal(more.getAttribute('aria-label'), 'More for "Mine"');
+  click(more);
+  const items = [...s.doc.querySelectorAll('.wfv-menu-item')];
+  assert.deepEqual(items.map((b) => b.textContent), ['Unpin from Chat home']);
+  click(items[0]);
+  assert.equal(s.calls.at(-1)[0], 'togglePin');
+  assert.equal(s.calls.at(-1)[1].id, 'wf_mine');
+  assert.equal(s.doc.querySelector('.wfv-menu'), null, 'picking an item closes the menu');
+  pinned.clear();
+  click(more);   // reopen: the label follows the state at open time
+  assert.deepEqual([...s.doc.querySelectorAll('.wfv-menu-item')].map((b) => b.textContent), ['Pin to Chat home']);
 });

@@ -12,7 +12,7 @@
 
 import { createInterface } from 'node:readline';
 import { spawn } from 'node:child_process';
-import { fstatSync } from 'node:fs';
+import { fstatSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join, basename } from 'node:path';
@@ -26,8 +26,13 @@ import {
   listProjects,
   removeProject,
   normalizeProjectPath,
+  getProjectByPath,
+  enclosingRepoOf,
+  nestedInRepoMessage,
 } from '../core/projects.mjs';
-import { projectKey } from '../core/store.mjs';
+import { projectKey, isNoProjectKey, noProjectWorkDir, isNoProjectWorkDir } from '../core/store.mjs';
+import { NO_PROJECT_ERRORS } from '../shared/no-project.mjs';
+import { normaliseTags } from '../shared/run-tags.mjs';
 import { formatExecLine, formatGateHeader, formatRunSummary, formatWorkflowProposal, formatResumeHints } from './render.mjs';
 // Ask forms (spec §8): the prompt FORMATTING lives in render.mjs too (a second import
 // statement, not a longer first one); the field-by-field asker lives in forms.mjs.
@@ -36,19 +41,25 @@ import { projectForm } from '../shared/forms/project.mjs';
 import { createFormAsker } from './forms.mjs';
 import { kindLabel } from '../shared/away-mode/labels.mjs';
 import { pauseExitCode, describePauseReason, promptOptions, REASON } from '../core/failure-policy.mjs';
+import { sigtermGraceMs } from '../core/drain.mjs';
 import { effectiveDebugSpawn } from '../core/settings.mjs';
-import { SCHEDULE_VALUE_FLAGS, wantsSchedule, readScheduleFlags, createFromFlags, waitAndRun, cmdSchedule } from './schedule.mjs';
+import { SCHEDULE_VALUE_FLAGS, wantsSchedule, readScheduleFlags, createFromFlags, waitAndRun, cmdSchedule, resolveAfterId } from './schedule.mjs';
+import { applyTagRules } from '../core/tag-dimensions.mjs';
+import { inheritedTagsAtCreation } from '../core/scheduler.mjs';
 import { cmdRuns } from './runs.mjs';
 import { cmdLogs } from './logs.mjs';
 import { cmdControl } from './control.mjs';
 import { cmdModels } from './models.mjs';
 import { cmdContainer } from './container.mjs';
 import { cmdExtension } from './extension.mjs';
+import { cmdRun } from './run-preset.mjs';
 import {
   DEFAULT_UI_HOST, DEFAULT_UI_PORT, probeUi, stopUi, readUiInstance, uiUrl, waitForUiState,
 } from '../core/ui-instance.mjs';
 import { useEnvProxy, proxyNotice } from '../core/env-proxy.mjs';
 import { startEgressPolicy, egressNotice } from '../core/egress-policy.mjs';
+import { gitState, GIT_MISSING } from '../core/git-available.mjs';
+import { workModeOfRow, workModeForStart, effectiveWorkMode } from '../core/project-kind.mjs';
 
 // ── node:sqlite runtime guard + warning filter ──────────────────────────────────
 // Drop ONLY the one-time ExperimentalWarning emitted by node:sqlite (the module is
@@ -111,6 +122,7 @@ function parseArgs(argv) {
     file: null,
     title: null,
     extras: [],
+    tags: [],
     ui: false,
     model: undefined,
     permissionMode: undefined,
@@ -137,6 +149,7 @@ function parseArgs(argv) {
     '--file',
     '--title',
     '--extras',
+    '--tag',
     '--model',
     '--engine',
     '--permission-mode',
@@ -155,6 +168,7 @@ function parseArgs(argv) {
     '--file': 'file',
     '--title': 'title',
     '--extras': 'extras',
+    '--tag': 'tags',
     '--model': 'model',
     '--engine': 'engine',
     '--permission-mode': 'permissionMode',
@@ -227,6 +241,9 @@ function parseArgs(argv) {
           const p = part.trim();
           if (p) out.extras.push(p);
         }
+      } else if (key === 'tags') {
+        // Repeatable, never comma-split: a value may hold commas ("client:müller & söhne, gmbh").
+        out.tags.push(String(value));
       } else if (key === 'permissionMode' && !PERMISSION_MODES.includes(String(value))) {
         // A pipeline run's mode reaches claude-runner as-is. `dontAsk` is a legitimate
         // headless mode for a REAL run (allowedTools decide what runs); only the
@@ -289,6 +306,9 @@ Subcommands:
   resume <pipelineId>         Continue a paused pipeline (re-attaches Claude sessions).
     [--ignore-cost-cap]       Resume past this pipeline's cost cap (persists on the run).
     [--past-team-cap]         Continue past a TEAM cap (soft; recorded to team metrics). Add --reason "<why>".
+  run --preset <name> --prompt "…"
+                              Start a run from a run preset, through the running server
+                              (needs: worca ui). See: worca run help
   runs [list|show|<id>]       List pipeline runs across projects, or show one in detail
                               (any unique prefix; --json for machines). See: worca runs help
   logs <id> [-f]              Tail a run's live log (--tail N, --component, --level,
@@ -301,7 +321,7 @@ Subcommands:
   marketplace <cmd> [...]     Manage plugin marketplaces: add|list|refresh|remove. See: worca marketplace help
   script <cmd> [...]          Manage and test scripts: list|show|new|rm|test. See: worca script help
   config [get|set|unset]      Budget & cost-limit settings
-  flags [list|on|off|reset]   Experimental features: on/off <key>, reset [<key>]
+  flags [list|on|off|reset]   Labs features: on/off <key>, reset [<key>]
   ui [start|stop|restart|status]
                               Run the web UI (default http://localhost:4317). See: worca ui help
   workflow <cmd> [...]        Export a workflow (Claude Code skill, JSON, or plugin) / import JSON: list|export|import. See: worca workflow help
@@ -328,6 +348,7 @@ Options:
   --prompt <text>          Task prompt text
   --file <md>              Markdown file used as the prompt (alternative to --prompt)
   --title <text>           Human-readable run title
+  --tag <tag>              tag the run for cost allocation, e.g. --tag client:acme (repeatable)
   --extras <paths>         Extra files copied into the pipeline's extras/ folder
                            (comma-separated; repeatable)
   --model <m>              Claude model id
@@ -348,8 +369,8 @@ Options:
   --at <when>              Run ONCE, later: "02:00", "tomorrow 02:00", "+90m", "2026-09-19 02:00",
                            or ISO 8601 with an offset. Needs a Worca server up at that time — or --wait
   --wait                   With --at: hold this terminal and start the run here when it is due
-  --every <pattern>        Repeat: "day 03:30", "weekdays 02:00", "mon,thu 02:00", "month 1 02:00"
-  --cron "<m h dom mon dow>"   Repeat (cron subset: fixed time + days of week or one day of month)
+  --every <pattern>        Repeat: "day 03:30", "weekdays 02:00", "day 09:00,17:00", "15m 09:00-18:00 weekdays"
+  --cron "<m h dom mon dow>"   Repeat (cron subset: */N, ranges, lists + days of week or one day of month)
                            More schedule options (--until, --count, --overlap, --max-failures,
                            --if-missed, --grace, --tz): worca schedule help
   --after <id>             Start when another run ends: a run id or a scheduled run id (any unique prefix)
@@ -499,6 +520,10 @@ async function askRecovery(rl, recovery) {
   out('');
   out(c('yellow', c('bold', `Recoverable ${String(rec.cls || 'error').replace('_', ' ')} error — the pipeline could not reach the model.`)));
   if (rec.message) out(c('gray', `  ${rec.message}`));
+  if (rec.network) {
+    const until = new Date(rec.network.until).toTimeString().slice(0, 5);
+    out(c('gray', `  Waiting for network… ${rec.network.host} is unreachable. worca answers Retry by itself when it answers again (until ${until}).`));
+  }
   if (rec.cls === 'auth') out(c('gray', '  Fix: re-authenticate (claude setup-token or /login) in another terminal, then retry.'));
   else out(c('gray', '  Fix: wait out the limit / restore connectivity / top up credit, then retry.'));
   options.forEach((o, i) => out(`  ${i + 1}) ${o.label}`));
@@ -561,9 +586,9 @@ function stdinCanAnswer() {
 }
 
 /**
- * Wire readline Q&A, log/phase rendering, and SIGINT pause/stop onto an
- * orchestrator, then drive it. `start` launches run() or resume(). Returns the
- * process exit code (pauseExitCode, failure-policy.mjs):
+ * Wire readline Q&A, log/phase rendering, SIGINT pause/stop and the SIGTERM pause
+ * onto an orchestrator, then drive it. `start` launches run() or resume(). Returns
+ * the process exit code (pauseExitCode, failure-policy.mjs):
  *   0  done — and an INTERACTIVE pause the user chose or a limit/cap forced (they
  *      witnessed it and can resume);
  *   1  a terminal error (a launch failure, an unrecoverable resume, a stop) and an
@@ -573,6 +598,8 @@ function stdinCanAnswer() {
  *      exhausted retries, an error) with nobody attached to resume it, so a
  *      wrapper must not read success. Under --yes a parked run's cause prints
  *      on STDOUT with the pause block; only a terminal error reaches stderr.
+ *   143 a SIGTERM (docker stop, a pod eviction, a CI cancel) — the run was paused
+ *      for `worca resume`, or the pause did not land within WORCA_SIGTERM_GRACE_MS.
  */
 async function attachAndDrive(orch, flags, start) {
   // Refuse an unanswerable interactive run BEFORE start(). The orchestrator
@@ -677,6 +704,17 @@ async function attachAndDrive(orch, flags, start) {
   // which the header formatter resolves against the manifest.
   orch.on('question', async (payload) => {
     const { id, kind, questions, issues, recovery, agent } = payload;
+    if (kind === 'plan') {
+      // A plan approval needs a person and is answered in the worca app (shape-it-first D2). Pause, so the hold
+      // stays in the resume point. Deferred one microtask, like abandonAnswer (:608): _ask emits `question`
+      // before it parks pendingQuestion.
+      out(c('yellow', `The plan ${payload.plan?.file || ''} is waiting for approval in the worca app; pausing the run.`));
+      queueMicrotask(() => {
+        if (orch.pauseRequested || !orch.state || orch.state.status !== 'running') return;
+        orch.pause();
+      });
+      return;
+    }
     if (flags.auto || !rl) return; // auto mode resolves internally
     answering = true;
     const ctrl = new AbortController();
@@ -762,6 +800,12 @@ async function attachAndDrive(orch, flags, start) {
     out(c('magenta', `Away mode ${what}${record?.flagged && !record?.guardrail ? ' (please check)' : ''}`));
   });
 
+  orch.on('recovery-auto', ({ id }) => {
+    // The network came back and the harness answered Retry: close the readline prompt it made moot.
+    if (promptAbort && promptAbort.questionId === id) promptAbort.abort();
+    out(c('green', 'Network back — retrying.'));
+  });
+
   // Ctrl+C: 1st -> graceful pause (falls back to stop when not pausable);
   // 2nd -> stop; 3rd -> hard exit.
   let sigints = 0;
@@ -785,12 +829,33 @@ async function attachAndDrive(orch, flags, start) {
   };
   process.on('SIGINT', onSigint);
 
+  // SIGTERM: a supervisor winding the run up. Pause it like the first Ctrl+C, so it
+  // stays resumable and the task source hears needs-human (reason 'terminated'),
+  // let start() settle while that pause persists, then exit 143. A second SIGTERM
+  // changes nothing. The grace bounds a wedged pause: an exit before the
+  // supervisor's SIGKILL still runs the exit hooks that end the agent children.
+  let terminated = false;
+  const onSigterm = () => {
+    if (terminated) return;
+    terminated = true;
+    const graceMs = sigtermGraceMs();
+    setTimeout(() => {
+      process.stderr.write(`worca: the run did not pause within ${Math.round(graceMs / 1000)} s of SIGTERM; exiting\n`);
+      process.exit(143);
+    }, graceMs).unref();
+    out(c('yellow', '\nSIGTERM received — pausing the run…'));
+    orch.pauseForSignal('SIGTERM');
+  };
+  process.on('SIGTERM', onSigterm);
+
   let result;
   try {
     result = await start();
   } finally {
     if (rl) rl.close();
     process.removeListener('SIGINT', onSigint);
+    // Once terminated, the handler stays: a later SIGTERM must not kill the exit it waits for.
+    if (!terminated) process.removeListener('SIGTERM', onSigterm);
   }
 
   out('');
@@ -829,6 +894,7 @@ async function attachAndDrive(orch, flags, start) {
   if (result?.pipelineDir) {
     out(`Pipeline directory: ${c('bold', result.pipelineDir)}`);
   }
+  if (terminated) return 143;
   // An unanswered question is a failure even if the run somehow settled `done`.
   if (answerFailure) return 1;
   if (result?.status === 'done') return 0;
@@ -1330,6 +1396,28 @@ async function cmdFlags(argv) {
   return 0;
 }
 
+/** P1 (CONTRACT §2, U3, L4, A-m5, R6): a headless run's work mode, decided as the server decides it. A registered
+ *  project whose effective mode is Folder and whose folder is gone, or a folder over the copy limits, fails here.
+ *  `projectKey` only for a non-git mode (S52, S68). folder-copy.mjs (npm `diff`) loads lazily: a node_modules without
+ *  it must not break `--version` or preflightDeps' message. */
+async function cliWorkMode(projectDir) {
+  const gitOn = (await gitState()).available;
+  const row = getProjectByPath(projectDir);
+  const workMode = workModeForStart({ projectDir }, { getProjectByPath: () => row, gitAvailable: gitOn });
+  if (row && !existsSync(projectDir) && effectiveWorkMode(row.vcs, gitOn) === 'folder') fail(`The folder is missing: ${projectDir}`);
+  // #693: never a git run in a folder inside a repository it is not the top of (it would `git init` there).
+  if (workMode === 'git') {
+    const enc = enclosingRepoOf(projectDir, { gitOn });
+    if (enc) fail(nestedInRepoMessage(projectDir, enc));
+  }
+  if (workMode === 'folder') {
+    const { checkFolderSize } = await import('../core/folder-copy.mjs');
+    const big = await checkFolderSize(projectDir, { name: row?.name });
+    if (big) fail(big.error);
+  }
+  return { workMode, projectKey: workMode !== 'git' ? getProjectByPath(projectDir)?.key : undefined };
+}
+
 /** `worca resume <pipelineId>` — continue a paused pipeline from its resume point. */
 async function cmdResume(argv) {
   const id = (argv.find((a, i) => !a.startsWith('--') && !['--reason', '--engine', '--model', '--effort'].includes(argv[i - 1])) || '').trim();
@@ -1364,6 +1452,7 @@ async function cmdResume(argv) {
     process.stderr.write(`pipeline ${id} not found\n`);
     return 1;
   }
+  if (workModeOfRow(saved.row) === 'git' && !(await gitState()).available) { process.stderr.write(`worca: ${GIT_MISSING.message}\n`); return 1; }
   if (saved.row.status !== 'paused' && saved.row.status !== 'interrupted') {
     process.stderr.write(`pipeline ${id} is "${saved.row.status}", not resumable (paused/interrupted only)\n`);
     return 1;
@@ -1434,13 +1523,12 @@ async function cmdResume(argv) {
           projects: meta.projects || [],
         }
       : undefined;
+  } else if (isNoProjectKey(saved.row.project_key)) {
+    projectDir = noProjectWorkDir(saved.row.id);   // P3: the run's own work folder, never the registry or the cwd
   } else {
-    for (const p of await listProjects()) {
-      if (projectKey(p.path) === saved.row.project_key) {
-        projectDir = p.path;
-        break;
-      }
-    }
+    const list = await listProjects();
+    for (const p of list) if (p.key === saved.row.project_key) { projectDir = p.path; break; }   // the stored key first (A-m7)
+    if (!projectDir) for (const p of list) if (projectKey(p.path) === saved.row.project_key) { projectDir = p.path; break; }
     if (!projectDir && projectKey(resolve(process.cwd())) === saved.row.project_key) {
       projectDir = process.cwd();
     }
@@ -1454,8 +1542,9 @@ async function cmdResume(argv) {
   // window for the total cap, per run for the pipeline cap); under --yes the harness warns instead.
   {
     const { checkTeamTotalGate, checkTeamPipelineGate } = await import('../core/policy/gate.mjs');
+    const { teamRunDiscover } = await import('../core/git-free/team-repo.mjs');
     const target = workspace ? { workspaceId: workspace.id } : { projectDir };
-    const totalGate = await checkTeamTotalGate(target, { pastTeamCap, reason: policyReason, unattended: auto });
+    const totalGate = await checkTeamTotalGate(target, { pastTeamCap, reason: policyReason, unattended: auto, discover: teamRunDiscover(workModeOfRow(saved.row), projectDir) });
     if (totalGate.blocked) {
       process.stderr.write(`worca: ${totalGate.error}. ${totalGate.code === 'reason_required' ? 'Add --reason "<why>".' : `Continue: worca resume ${id} --past-team-cap [--reason "<why>"]`}\n`);
       return 1;
@@ -1550,9 +1639,15 @@ Options (json):
   --out <file>             Write to <file> instead of stdout
 Options (plugin):
   --target <dir>           The plugin folder (created, or updated in place)
+  --marketplace <id>       Instead of a folder: open a pull request that adds (or updates) the plugin
+                           in a registered GitHub / Azure DevOps marketplace (see: worca marketplace list).
+                           One branch per plugin (worca/plugin/<name>), one commit; forks when you
+                           cannot push. A changed re-export bumps the patch version.
+  --draft                  With --marketplace: open the pull request as a draft
   --name <plugin>          Plugin name (default: an existing manifest's name, else the folder name)
   --keep-version           Do not patch-bump the manifest version on an update
-  --dry-run                Show the classification; write nothing
+  --dry-run                Show the classification; write nothing (with --marketplace: also the
+                           index change and the PR body; nothing is pushed)
 
 Import: the id is minted from the name; a name already in use gets a " (2)" suffix —
 nothing is ever overwritten. A workflow that needs agents you do not have is refused;
@@ -2340,7 +2435,7 @@ async function cmdMarketplace(argv) {
         }
         for (const m of entries) {
           const sync = m.lastSync ? `${m.lastSync.sha.slice(0, 7)} (${m.plugins.length} plugins)` : 'never synced';
-          out(`${m.name}\t${m.id}\t${m.url}\t${sync}${m.builtin ? '\tbuilt-in' : ''}`);
+          out(`${m.name}\t${m.id}\t${m.url}\t${sync}${m.builtin ? '\tbuilt-in' : ''}${mkt.marketplaceNeedsGit(m.url) ? '\tneeds git' : ''}`);
           for (const w of m.warnings || []) out(c('yellow', `  warning: ${w}`));
         }
         return 0;
@@ -2350,7 +2445,7 @@ async function cmdMarketplace(argv) {
         const entries = a._[0] ? [await mkt.syncMarketplace(a._[0])] : await mkt.refreshAllMarketplaces();
         for (const m of entries) {
           const sync = m.lastSync ? `${m.lastSync.sha.slice(0, 7)} (${m.plugins.length} plugins)` : 'never synced';
-          out(`${m.name}\t${sync}`);
+          out(`${m.name}\t${sync}${mkt.marketplaceNeedsGit(m.url) ? '\tneeds git' : ''}`);   // kept as stored until git is back
           for (const w of m.warnings || []) out(c('yellow', `  warning: ${w}`));
         }
         return 0;
@@ -2380,6 +2475,30 @@ async function cmdMarketplace(argv) {
   }
 }
 
+/** `worca workflow export --marketplace`: the file rows (repo-relative), the index change, then the
+ *  PR — or why there is none. Dry run prints the PR title + body instead of a link. */
+function printMarketplaceExport(r) {
+  for (const p of r.files.created) out(`${c('green', 'create')}\t${p}`);
+  for (const p of r.files.updated) out(`${c('cyan', 'update')}\t${p}`);
+  for (const p of r.files.noop) out(`${c('gray', 'no-op')}\t${p}`);
+  for (const s of r.files.skipped) out(`${c('gray', 'skip')}\t${s.path}\t(${s.reason})`);
+  if (r.index.added) out(`${c('cyan', 'index')}\tworca-cc-marketplace.json\t+ "${r.subdir}"`);
+  for (const w of r.warnings) out(`${c('yellow', 'warn')}\t${w}`);
+  if (r.status === 'unchanged') {
+    out(`\nNo changes — ${r.marketplace.name} (${r.base}) already has plugin "${r.name}" (${r.versionText}); no pull request opened`);
+    return;
+  }
+  const via = r.pushTo === 'fork' ? (r.fork ? ` from ${r.fork.repo}` : ' from your fork') : '';
+  out(`\nplugin "${r.name}" (${r.versionText}) → ${r.marketplace.repo}: ${r.branch} → ${r.base}${via}`);
+  if (r.status === 'dry-run') {
+    out(`validation: lint ${r.validation.lint}; script cases: ${r.validation.cases}; discovery ${r.validation.discovery}`);
+    out(`\n--- pull request: ${r.title}${r.draft ? ' (draft)' : ''}\n${r.body}\n---\ndry run: nothing pushed`);
+    return;
+  }
+  const verb = { opened: 'opened', updated: 'updated (pushed to its branch)', 'up-to-date': 'already up to date' }[r.status];
+  out(`pull request ${verb}${r.draft ? ' (draft)' : ''}: ${r.prUrl}`);
+}
+
 async function cmdWorkflow(argv) {
   const verb = argv[0];
   const rest = argv.slice(1);
@@ -2393,7 +2512,8 @@ async function cmdWorkflow(argv) {
       case 'list': {
         // The built-ins (Default, Memory defragment) are not in the user store, so
         // prepend them — mirrors the server/UI, which always show them first.
-        const items = [wf.GRAPH_DEFAULT_WORKFLOW, wf.GRAPH_MEMORY_DEFRAG_WORKFLOW, ...(await wf.listWorkflows())];
+        const { shapeFirstEnabled } = await import('../core/shape/gate.mjs');
+        const items = [wf.GRAPH_DEFAULT_WORKFLOW, wf.GRAPH_MEMORY_DEFRAG_WORKFLOW, ...(shapeFirstEnabled() ? [wf.GRAPH_SHAPE_WORKFLOW] : []), ...(await wf.listWorkflows())];
         for (const w of items) out(`${w.id}\t${w.name}\t${(w.domain || 'general')}`);
         return 0;
       }
@@ -2435,11 +2555,12 @@ async function cmdWorkflow(argv) {
         }
       }
       case 'export': {
-        const a = pluginArgs(rest, ['--target', '--slug', '--on-conflict', '--format', '--out', '--name'], ['--global', '--dry-run', '--keep-version']);
+        const a = pluginArgs(rest, ['--target', '--slug', '--on-conflict', '--format', '--out', '--name', '--marketplace'], ['--global', '--dry-run', '--keep-version', '--draft']);
         const id = a._[0];
-        if (!id) fail('Usage: worca workflow export <id> [--format claude|json|plugin] [--global | --target <dir>] [--slug <name>] [--out <file>] [--name <plugin>] [--keep-version] [--dry-run] [--on-conflict=skip|overwrite|namespace]');
+        if (!id) fail('Usage: worca workflow export <id> [--format claude|json|plugin] [--global | --target <dir> | --marketplace <id>] [--slug <name>] [--out <file>] [--name <plugin>] [--keep-version] [--draft] [--dry-run] [--on-conflict=skip|overwrite|namespace]');
         const format = a.format || 'claude';
         if (!['claude', 'json', 'plugin'].includes(format)) fail(`--format must be claude|json|plugin (got ${format})`);
+        if ((a.marketplace || a.draft) && format !== 'plugin') fail('--marketplace and --draft apply only to --format plugin');
 
         if (format === 'json') {
           const payload = await share.exportGraphJson(id);
@@ -2456,7 +2577,22 @@ async function cmdWorkflow(argv) {
         }
 
         if (format === 'plugin') {
-          if (!a.target) fail('--format plugin requires --target <dir> (the plugin folder)');
+          if (a.marketplace) {
+            if (a.target) fail('--target and --marketplace are mutually exclusive');
+            if (a.global) fail('--global does not apply to --format plugin');
+            if (a['keep-version']) fail('--keep-version does not apply to --marketplace (a changed export always bumps the patch version)');
+            const mkt = await import('../core/marketplaces.mjs');
+            try { mkt.seedBuiltinMarketplace(); } catch { /* registry unwritable: go on without the builtin */ }
+            const mp = await import('../core/marketplace-publish.mjs');
+            const r = await mp.exportWorkflowToMarketplace({
+              workflowId: id, marketplaceId: a.marketplace, pluginName: a.name,
+              draft: !!a.draft, dryRun: !!a['dry-run'],
+            });
+            printMarketplaceExport(r);
+            return 0;
+          }
+          if (a.draft) fail('--draft applies only to --marketplace');
+          if (!a.target) fail('--format plugin requires --target <dir> (the plugin folder) or --marketplace <id>');
           if (a.global) fail('--global does not apply to --format plugin');
           const r = await xp.exportWorkflowPlugin({
             workflowId: id, targetDir: resolve(process.cwd(), a.target), pluginName: a.name,
@@ -3151,7 +3287,7 @@ async function drainMetricsFlushes() {
 
 // ── main ──────────────────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'extension']);
+const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'run', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'extension']);
 
 /** Levenshtein distance, two-row. Only ever called on short argv tokens. */
 function editDistance(a, b) {
@@ -3211,6 +3347,7 @@ async function main() {
   // Only problems are printed: stdout belongs to the subcommand (some emit JSON).
   const proxyLine = proxyNotice(useEnvProxy());
   if (proxyLine?.level === 'warn') process.stderr.write(`worca: ${proxyLine.text}\n`);
+  const argv2 = process.argv.slice(2); if (argv2[0] !== 'ui' && argv2[0] !== 'help' && !argv2.includes('--ui')) await gitState();
   const sub = process.argv[2];
   // `worca help` is what every CLI user types first; it is not a subcommand and
   // not a near-miss of one, so without this line it became a PROMPT and ran a
@@ -3222,6 +3359,7 @@ async function main() {
     if (sub === 'list') return cmdList();
     if (sub === 'remove') return cmdRemove(rest);
     if (sub === 'resume') return cmdResume(rest);
+    if (sub === 'run') return cmdRun(rest, { out, c, fail });
     if (sub === 'runs') return cmdRuns(rest, { out, c, fail });
     if (sub === 'logs') return cmdLogs(rest, { out, c, fail });
     if (sub === 'stop' || sub === 'pause') return cmdControl(sub, rest, { out, c, fail });
@@ -3252,6 +3390,9 @@ async function main() {
   }
 
   const flags = parseArgs(process.argv.slice(2));
+  const tagCheck = normaliseTags(flags.tags, { strict: true });
+  if (tagCheck.errors.length) fail(`--tag: ${tagCheck.errors[0]}`);
+  flags.tags = tagCheck.tags;
 
   if (flags.help) {
     process.stdout.write(HELP);
@@ -3272,7 +3413,7 @@ async function main() {
   // runMock), which writes no pipeline artifact — a mock pipeline under dontAsk dies
   // at its first artifact read with no hint why. Refuse the PAIR, not the mode.
   if (flags.permissionMode === 'dontAsk' && /^(1|true|yes|on)$/i.test(String(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK ?? ''))) {
-    fail('--permission-mode dontAsk cannot be combined with --mock: the mock runner reserves it for the Ask Worca assistant.');
+    fail('--permission-mode dontAsk cannot be combined with --mock: the mock runner reserves it for the Chat assistant.');
   }
 
   // A defragment run needs no task text: synthesise the same brief the UI wrapper sends.
@@ -3296,6 +3437,11 @@ async function main() {
   }
 
   const projectDir = resolve(flags.project);
+  // P3-D11: a run's work folder (named by --project, or the cwd) is never a project — refused before a row or git.
+  if (isNoProjectWorkDir(projectDir)) fail(NO_PROJECT_ERRORS.register);
+  // P1: decided once, here — also for a schedule made without --wait (it never calls buildOrch).
+  const cliMode = await cliWorkMode(projectDir);
+  if (cliMode.workMode === 'folder' && flags.sourceFromPrevious) fail("a Folder project run cannot start from the previous run's branch");
   // A NAMED --file must be readable BEFORE anything starts. The readers used to
   // swallow the failure and run the whole pipeline on an empty prompt with exit 0
   // — in real mode that spends tokens and cuts a worktree + feature branch for
@@ -3335,7 +3481,8 @@ async function main() {
   // window; under --yes nobody can click, so the harness warns instead and nothing is refused here.
   {
     const { checkTeamTotalGate } = await import('../core/policy/gate.mjs');
-    const gate = await checkTeamTotalGate({ projectDir }, { pastTeamCap: flags.pastTeamCap, reason: flags.reason, unattended: flags.auto });
+    const { teamRunDiscover } = await import('../core/git-free/team-repo.mjs');
+    const gate = await checkTeamTotalGate({ projectDir }, { pastTeamCap: flags.pastTeamCap, reason: flags.reason, unattended: flags.auto, discover: teamRunDiscover(cliMode.workMode, projectDir) });
     if (gate.blocked) {
       process.stderr.write(`worca: ${gate.error}. `
         + (gate.code === 'reason_required' ? 'Add --reason "<why>" with --past-team-cap.\n' : 'Continue: add --past-team-cap [--reason "<why>"]; the team sees it in Team metrics.\n'));
@@ -3357,11 +3504,24 @@ async function main() {
     try { row = await assertRunnableWorkflow(flags.workflow); }
     catch (err) { fail(`${err && err.message ? err.message : String(err)}`); }
   }
+  if (flags.workflow) {
+    const { isShapeWorkflowId } = await import('../core/shape/run.mjs');
+    if (isShapeWorkflowId(flags.workflow)) {
+      fail(`workflow "${flags.workflow}" is started from the worca app (POST /api/run with shape), not the CLI`);
+    }
+  }
   {
     const { validateMemoryScope } = await import('../core/memory-sync.mjs');
     const reason = validateMemoryScope({ workflowId: flags.workflow || 'wf_default', memoryScope: flags.memoryScope, isWorkspace: false });
     if (reason) fail(reason);
   }
+  // Enforced tags (D14): project-only, no identity (no last-used source); the server's message, exit 2.
+  // A Run after with no --tag checks the tags the chain will inherit and stores none (D9a, like tagGate).
+  const inherits = !!flags.after && !flags.tags.length;
+  const tagBase = inherits ? inheritedTagsAtCreation(resolveAfterId(flags.after, fail)) : flags.tags;
+  const tagGate = await applyTagRules({ projectDir, tags: tagBase, person: null });
+  if (tagGate.error) fail(tagGate.error);
+  if (tagGate.enforced && !inherits) flags.tags = tagGate.tags;      // requestFromFlags and buildOrch both read flags.tags
 
   // Scheduled runs: write the ticket (or the repeating schedule) and exit — unless --wait
   // holds this terminal, in which case the run starts HERE, through the path below.
@@ -3379,6 +3539,8 @@ async function main() {
   const runEngine = resolveRunEngine({ explicit: flags.engine || null, projectDir }).engine;
   const buildOrch = async () => (await import('../core/engine-select.mjs')).createOrchestratorFor({
     projectDir,
+    workMode: cliMode.workMode,
+    ...(cliMode.projectKey ? { projectKey: cliMode.projectKey } : {}),
     prompt: flags.prompt || undefined,
     promptFile: flags.file || undefined,
     title: flags.title || undefined,
@@ -3397,11 +3559,13 @@ async function main() {
     auto: flags.auto,
     humanInLoop: flags.humanInLoop === false ? false : undefined,
     ...(flags.nightMode ? { nightMode: true } : {}),
+    ...(flags.tags.length ? { tags: flags.tags } : {}),
   });
 
   if (waitTicketId) {
     const code = await waitAndRun({
       ticketId: waitTicketId, tz: spec.tz, out, c,
+      retag: (tags) => { flags.tags = tags; },
       drive: async (onPipelineId) => {
         const o = await buildOrch();
         o.on('state', (st) => { if (st && typeof st.id === 'string' && st.id) onPipelineId(st.id); });

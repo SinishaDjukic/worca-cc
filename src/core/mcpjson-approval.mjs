@@ -13,6 +13,7 @@ import { join, resolve } from 'node:path';
 
 import { readMcpFile, mcpjsonApproval } from './run-context.mjs';
 import { writeJsonAtomic } from './json-atomic.mjs';
+import { gitAvailable, gitMissingError } from './git-available.mjs';
 
 const LOCAL = join('.claude', 'settings.local.json');
 
@@ -21,12 +22,15 @@ function cerr(message, code) {
 }
 
 function git(projectDir, args) {
+  if (!gitAvailable()) throw gitMissingError();
   return execFileSync('git', args, { cwd: projectDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
 }
 
-/** Whether git tracks the project's `.claude/settings.local.json`. Not a repository or not tracked: false; any
- *  other failure counts as tracked, so Approve never writes a file a repository might ship. */
+/** Whether git tracks the project's `.claude/settings.local.json`. Not a repository, not tracked, or git missing (the
+ *  decided flip: Approve may then write it): false; any other failure counts as tracked, so Approve never writes a
+ *  file a repository might ship. */
 export function localSettingsTracked(projectDir) {
+  if (!gitAvailable()) return false;
   try {
     git(projectDir, ['ls-files', '--error-unmatch', '--', LOCAL]);
     return true;
@@ -38,6 +42,7 @@ export function localSettingsTracked(projectDir) {
 /** Keep `.claude/settings.local.json` out of git through the repository's own `info/exclude`, unless git already
  *  ignores it. Best-effort: outside a repository there is nothing to do. */
 function keepOutOfGit(projectDir) {
+  if (!gitAvailable()) return;
   try {
     git(projectDir, ['check-ignore', '-q', '--', LOCAL]);
     return;                                                  // already ignored
@@ -74,11 +79,11 @@ export async function committedMcpStatus(projectDir, { homeDir = homedir() } = {
  * runner names these in `disabledMcpjsonServers`, which Claude Code honors over any approval. Read at each spawn:
  * an agent may have edited the file since the run started. No file, or one Claude Code cannot parse either: none.
  */
-export async function unapprovedMcpjsonNames(cwd, projectDir = cwd, { homeDir = homedir() } = {}) {
+export async function unapprovedMcpjsonNames(cwd, projectDir = cwd, { homeDir = homedir(), git = true } = {}) {
   if (!cwd) return [];
   const { servers } = await readMcpFile(join(cwd, '.mcp.json'));
   if (!servers || !Object.keys(servers).length) return [];
-  const verdict = await mcpjsonApproval(projectDir || cwd, homeDir, () => {});
+  const verdict = await mcpjsonApproval(projectDir || cwd, homeDir, () => {}, { git });
   return Object.keys(servers).filter((n) => verdict(n) !== 'approved').sort();
 }
 

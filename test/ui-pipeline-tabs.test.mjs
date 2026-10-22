@@ -42,8 +42,8 @@ async function boot() {
 }
 // Rows repaint on a microtask and a changed row is REPLACED: settle, then re-query.
 const settle = async (n = 3) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
-// A run's row in its project group (a Needs-you run is repeated above it: rule 6).
-const groupRow = (doc, runId) => doc.querySelector(`#runs-list .runs-row[data-slot="group"][data-run-id="${runId}"]`);
+// A run's row: each run is listed once (runs redesign §3.1).
+const groupRow = (doc, runId) => doc.querySelector(`#runs-list a.runs-row[data-run-id="${runId}"]`);
 const showRuns = async (window) => {
   window.location.hash = 'runs';
   window.dispatchEvent(new window.Event('hashchange'));
@@ -79,7 +79,7 @@ test('#running/<id> opens the run in the pane beside the intact list, and finish
     { name: '#running/<id> opens the run in the pane and leaves the list intact', run: async () => {
       // The single-card focus view is gone (spec §7): #running/<id> opens the run in
       // the pane BESIDE the list, so the list still holds every run.
-      const rows = window.document.querySelectorAll('#runs-list .runs-row[data-slot="group"]');
+      const rows = window.document.querySelectorAll('#runs-list a.runs-row[data-run-id]');
       assert.deepEqual([...rows].map((a) => a.dataset.runId).sort(), ['auth-fix', 'seo-pSEO']);
       assert.ok(window.document.querySelector('#run-shell').classList.contains('detail-open'));
       assert.equal(window.document.querySelector('#run-detail .rd-title').textContent, 'auth-fix');
@@ -102,7 +102,7 @@ test('a run finishing live lingers in the Runs list, then drops once opened', as
   await showRuns(window);
   const row = groupRow(window.document, 'auth-fix');
   assert.ok(row, 'lingerer still present');
-  assert.equal(row.dataset.icon, 'done');
+  assert.equal(row.dataset.state, 'ready', 'a finished run with no PR reads Ready');
   await openRun(window, 'auth-fix');                                // open → acknowledge
   await showRuns(window);
   assert.equal(groupRow(window.document, 'auth-fix'), null, 'acknowledged run drops from the live rows');
@@ -120,29 +120,29 @@ test('opening a run while LIVE does not suppress its later linger', async () => 
   await settle();
   const row = groupRow(window.document, 'auth-fix');
   assert.ok(row, 'finished run still lingers (not acknowledged by live-open)');
-  assert.equal(row.dataset.icon, 'done');
+  assert.equal(row.dataset.state, 'ready', 'a finished run with no PR reads Ready');
 });
 
 // A PAUSED run is parked in Running (resumable), not a finished result: it stays
 // in the list with a static amber dot + no green/red end marker, and opening it
 // (to Resume) must NOT drop it into History.
-test('a run ending live shows its icon: failed shows fail; paused shows paused and stays a live row even once opened', async () => {
+test('a run ending live shows its state: failed reads failed; paused reads paused and stays a live row even once opened', async () => {
   // Two runs in one hello: auth-fix pauses, seo-pSEO fails.
   const { window, recv } = await boot();
   recv({ type: 'hello', runs: [live('auth-fix'), live('seo-pSEO')] });
   recv({ type: 'done', runId: 'auth-fix', status: 'paused' });      // pause routes through finishRun
   recv({ type: 'done', runId: 'seo-pSEO', status: 'error' });
   await checkRows([
-    { name: 'a paused run stays a live row with the paused icon, even once opened', run: async () => {
+    { name: 'a paused run stays a live row with the paused state, even once opened', run: async () => {
       await showRuns(window);
-      assert.equal(groupRow(window.document, 'auth-fix').dataset.icon, 'paused');
+      assert.equal(groupRow(window.document, 'auth-fix').dataset.state, 'paused');
       await openRun(window, 'auth-fix');                                // open to Resume
       await showRuns(window);
       assert.ok(groupRow(window.document, 'auth-fix'), 'opening a paused run does NOT drop it');
     } },
-    { name: 'a run failing live shows the failed icon', run: async () => {
+    { name: 'a run failing live shows the failed state', run: async () => {
       await showRuns(window);
-      assert.equal(groupRow(window.document, 'seo-pSEO').dataset.icon, 'fail');
+      assert.equal(groupRow(window.document, 'seo-pSEO').dataset.state, 'failed');
     } },
   ]);
 });
@@ -259,6 +259,6 @@ test('run-created broadcast lists the run under its project without a reload', a
   await showRuns(window);
   const row = groupRow(window.document, 'fresh');
   assert.ok(row, 'row present without a reload');
-  assert.equal(row.closest('.runs-group').querySelector('.runs-group-name').textContent, 'proj');
+  assert.equal(row.closest('.runs-sec').dataset.section, 'running', 'listed under Running without a reload');
   assert.equal(window.document.querySelector('#nav-running-count').textContent, '1');
 });

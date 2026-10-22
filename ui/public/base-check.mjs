@@ -24,6 +24,11 @@ export function baseCheckModel(c, { now = Date.now() } = {}) {
   }
 }
 
+/** The later of two stored checks by `at` (when the check started); a tie keeps `a`, the caller's preferred copy. */
+export function newerBaseCheck(a, b) {
+  return b && (!a || Date.parse(b.at || '') > Date.parse(a.at || '')) ? b : a || null;
+}
+
 /** The History list's short note: only states that need attention. */
 export function baseRowNote(c) {
   if (!c || !c.status) return '';

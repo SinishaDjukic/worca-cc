@@ -13,11 +13,12 @@
 //            failed clone removes its folder
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { rm } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import { githubEnv } from './github-credentials.mjs';
 import { gitEnvFor } from './host-credentials.mjs';
 import { isAzureHost, parseAzurePath } from '../shared/azure-remote.mjs';
+import { gitAvailable, GIT_MISSING } from './git-available.mjs';
 
 export const CLONE_TIMEOUT_MS = 10 * 60_000;
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
@@ -119,6 +120,7 @@ function classify(stderr, host = 'github.com') {
 
 /** Run `git clone` for a plan. Resolves the plan; rejects with CloneError after removing the folder. */
 export async function runClone(plan, { timeoutMs = CLONE_TIMEOUT_MS, credential = githubEnv, spawnImpl = spawn } = {}) {
+  if (!gitAvailable()) throw new CloneError('git-missing', GIT_MISSING.message);
   // Each host gets ITS read credential for this one command (gitEnvFor); GitHub keeps the injectable seam.
   const cred = await gitEnvFor('read', plan.url, { githubEnvImpl: credential });
   if (cred.error) throw new CloneError('auth-failed', cred.error);
@@ -151,6 +153,8 @@ export async function cloneProject(req, { projectsRoot, env = process.env, listP
   if (existing.some((p) => p && typeof p.name === 'string' && p.name.toLowerCase() === plan.name.toLowerCase())) {
     throw new CloneError('exists', `a project named "${plan.name}" already exists; pick another folder name`);
   }
+  if (!gitAvailable()) throw new CloneError('git-missing', GIT_MISSING.message);   // as runClone, before the root is made
+  await mkdir(resolve(projectsRoot), { recursive: true });   // U6: the projects root is made on first use
   await run(plan);
   try {
     const projects = await addProject({ name: plan.name, path: plan.dir });

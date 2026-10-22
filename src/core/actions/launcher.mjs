@@ -260,9 +260,11 @@ export function launcherExamples(platform = process.platform) {
 /**
  * Start the command and watch it for a moment: a launcher that fails at once (not found, bad
  * arguments) is reported with its own error text; one still running after `watchMs` is left alone.
+ * `cmd.okExitCodes` lists the exit codes that mean it opened (default [0]): Explorer exits 1 even on success.
  * @returns {Promise<{ ok: true } | { ok: false, code: number|null, error: string }>}
  */
 export function launchAndWatch(cmd, { spawn, watchMs = 2000 } = {}) {
+  const okCodes = cmd.okExitCodes || [0];
   return new Promise((resolve) => {
     let child;
     try {
@@ -288,7 +290,7 @@ export function launchAndWatch(cmd, { spawn, watchMs = 2000 } = {}) {
     const timer = setTimeout(() => done({ ok: true }), watchMs);   // kept referenced: a few seconds at most
     child.once('error', (e) => done({ ok: false, code: null, error: e?.message || String(e) }));
     child.once('exit', (code) => {
-      if (code === 0) return done({ ok: true });
+      if (okCodes.includes(code)) return done({ ok: true });
       const tail = err.trim().split(/\r?\n/).filter(Boolean).slice(-3).join(' ');
       done({ ok: false, code, error: tail || `the command exited with code ${code}` });
     });

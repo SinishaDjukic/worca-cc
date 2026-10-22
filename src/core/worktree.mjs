@@ -6,7 +6,7 @@
 // Layout (legacy, the retained default):
 //         <projectDir>/.worca-cc/worktrees/<pipelineId>/   <- checkout
 // Layout (detached, caller passes baseDir + checkoutName):
-//         <worcaHome>/runs/<pipelineId>/repos/<projectKey>/
+//         <worcaHome>/runs/<pipelineId>/repos/<projectKey>/   (shortened by boundCheckoutName)
 // Either way the shared .git store stays in <projectDir>/.git <- no duplication.
 //
 // Branch naming: callers pass a fully-formed feature branch (e.g. "worca-cc/foo-abc12345")
@@ -19,13 +19,16 @@ import { mkdir, rm, realpath, readdir, rename, stat } from 'node:fs/promises';
 import { basename, join, resolve, sep } from 'node:path';
 
 import { slugify } from './artifacts.mjs';
-import { clearStaleIndexLock } from './git-lock.mjs';
+import { clearStaleGitLocks } from './git-lock.mjs';
 // settings.mjs is a leaf (node builtins only), so importing the §10 flag reader here
 // adds no dependency on the DB layer — worktree.mjs stays DB-free.
 import { runRootMode } from './settings.mjs';
 import {
-  readRunManifest, rmGuarded, rescueModifiedMounts, scanStrayEntries, copyRunManifestTo,
+  readRunManifest, rmGuarded, rescueModifiedMounts, scanStrayEntries, copyRunManifestTo, liveRetainMembers,
+  removeInjectedPaths,
 } from './run-manifest.mjs';
+import { gitAvailable, gitMissingResult } from './git-available.mjs';
+import { ownWorkDir } from './no-project-work.mjs';
 
 const WORKTREES_DIRNAME = join('.worca-cc', 'worktrees');
 const BRANCH_PREFIX = 'worca-cc/';
@@ -54,6 +57,7 @@ const SLOW_GIT_TIMEOUT_MS = 120_000;
  *  `env` is MERGED OVER process.env (never a replacement): the git binary and the
  *  credential helper need PATH/HOME. Only the Ask Worca callers pass it. */
 function git(cwd, args, { signal, timeout = 30_000, env, maxBytes = 0 } = {}) {
+  if (!gitAvailable()) return Promise.resolve(gitMissingResult());
   return new Promise((res) => {
     let child;
     try {
@@ -219,6 +223,43 @@ export async function worktreePathForBranch(projectDir, branch) {
   return null;
 }
 
+// git's fsmonitor daemon binds `<git common dir>/worktrees/<checkout name>/fsmonitor--daemon.ipc`
+// and its client connects by that ABSOLUTE path. Past AF_UNIX's sun_path the daemon still binds (it
+// chdirs first) but no client ever connects, so with core.fsmonitor on every index refresh in the
+// checkout hangs and leaks one daemon (#411). Usable bytes: 103 on macOS/BSD, 107 on Linux; Windows
+// uses named pipes. git appends a counter to an admin dir name that is taken (another run of the same
+// project), so 2 bytes are kept for it.
+const FSMONITOR_IPC_TAIL = '/fsmonitor--daemon.ipc';
+const ADMIN_COUNTER_RESERVE = 2;
+const KEY_HASH_RE = /^(.*)-([0-9a-f]{8})$/;
+
+/**
+ * The checkout dir name to use for `name` in the repo whose git common dir is `gitCommonDir`: `name`
+ * itself when the fsmonitor socket path fits, else a projectKey-shaped name (`<slug>-<8 hex>`) with
+ * only its slug cut, so the hash that makes it unique stays. Never throws: a long path only hurts
+ * with core.fsmonitor on, so a name it cannot shorten safely (no hash), or one no shortening would
+ * make fit, is returned unchanged.
+ */
+export function boundCheckoutName(name, gitCommonDir, platform = process.platform) {
+  if (platform === 'win32' || !gitCommonDir) return name;
+  const usable = platform === 'linux' ? 107 : 103;
+  const budget = usable - ADMIN_COUNTER_RESERVE
+    - Buffer.byteLength(`${gitCommonDir}/worktrees/${FSMONITOR_IPC_TAIL}`);
+  if (Buffer.byteLength(name) <= budget) return name;
+  const m = KEY_HASH_RE.exec(name);
+  // No hash to keep, or a common dir so deep that even the hash alone overflows: no name can help.
+  if (!m || budget < m[2].length) return name;
+  const slug = m[1].slice(0, Math.max(0, budget - 9)).replace(/[-._]+$/, '');
+  return slug ? `${slug}-${m[2]}` : m[2];
+}
+
+/** The realpath'd git common dir of `projectDir` (what git builds the fsmonitor socket path from), or null. */
+async function gitCommonDir(projectDir) {
+  const r = await git(projectDir, ['rev-parse', '--git-common-dir']);
+  const out = r.ok ? r.stdout.trim() : '';
+  return out ? realpath(resolve(projectDir, out)).catch(() => null) : null;
+}
+
 /**
  * Create a worktree checking out a new branch <featureBranch> off <sourceBranch>.
  * When the branch already exists locally we attach to it instead of forking (resume
@@ -260,10 +301,12 @@ export async function createWorktree({
   // reports (git emits realpaths). Without this the M2 self-equality check below
   // mis-fires on symlinked roots (e.g. macOS /tmp -> /private/tmp).
   const baseReal = await realpath(base).catch(() => resolve(base));
-  const name = checkoutName || pipelineId;
-  if (!/^[A-Za-z0-9._-]+$/.test(name) || name === '.' || name === '..') {
-    throw new Error(`invalid checkout name: ${JSON.stringify(name)}`);
+  if (checkoutName && (!/^[A-Za-z0-9._-]+$/.test(checkoutName) || checkoutName === '.' || checkoutName === '..')) {
+    throw new Error(`invalid checkout name: ${JSON.stringify(checkoutName)}`);
   }
+  // A caller-named checkout (a detached run's projectKey) is bounded so git's fsmonitor socket fits
+  // (#411); the returned worktreeDir is the name on disk, so callers render basename(worktreeDir).
+  const name = checkoutName ? boundCheckoutName(checkoutName, await gitCommonDir(projectDir)) : pipelineId;
   const worktreeDir = join(baseReal, name);
   // Belt-and-braces: the sanitized name can't traverse, but assert containment
   // so a future caller can't turn this into a delete-anything primitive.
@@ -487,7 +530,7 @@ export function runGitCapture(cwd, args, { signal, timeoutMs = SLOW_GIT_TIMEOUT_
  * dropped from the index first (`git add -A` with an exclude never unstages) and excluded from `add -A`
  * while it still exists on disk — and the same attempts: the repo's identity, then a local fallback
  * identity, then, only when `bypassHooks` (a detached run, exactly as at teardown), once more with hooks
- * off. Never overrides signing. A stale index.lock is cleared once. Never throws. With `branch`, it refuses
+ * off. Never overrides signing. Stale git locks are cleared once. Never throws. With `branch`, it refuses
  * (step 'branch') unless HEAD is that branch: a person may have detached or switched the retained worktree
  * while recovering by hand, and Apply deletes the worktree after a good commit. For the same reason it refuses
  * (step 'add') a worktree with unresolved conflicts, which `add -A` would mark resolved.
@@ -499,7 +542,7 @@ export async function commitStagedWork(worktreeDir, { message, exclude = [], byp
   const msgOf = (r) => r.stderr.trim() || r.stdout.trim() || `exit ${r.code}`;
   const indexWrite = async (args) => {
     let r = await run(args);
-    if (!r.ok && await clearStaleIndexLock(worktreeDir)) r = await run(args);
+    if (!r.ok && (await clearStaleGitLocks(worktreeDir)).length) r = await run(args);
     return r;
   };
   const status = await run(['status', '--porcelain']);
@@ -560,21 +603,21 @@ export async function indexTracks(dir, rel) {
  * name. A clean tree is SUCCESS with `file: null` (nothing to save is not a
  * failure — discard after a manual commit relies on it). A git failure returns
  * without removing anything so the checkout stays authoritative.
- * When a stale index lock had to be removed first, every result after that carries
- * `clearedLock: { path, ageMs }` so the caller can leave a trace of it.
+ * When stale git locks had to be removed first, every result after that carries
+ * `clearedLocks: [{ kind, path, ageMs }]` so the caller can leave a trace of each.
  */
 export async function snapshotWorktreePatch(worktreeDir, outFile) {
   if (!worktreeDir || !outFile) {
     return { ok: false, step: 'path', message: 'worktreeDir and outFile are required' };
   }
   let add = await git(worktreeDir, ['add', '-A'], { timeout: SLOW_GIT_TIMEOUT_MS });
-  // A leftover lock from a killed git is the usual reason a retained run's commit failed;
-  // without this, discard and delete could never save the work once it is stale.
-  const clearedLock = add.ok ? null : await clearStaleIndexLock(worktreeDir);
-  if (clearedLock) {
+  // Leftover locks from a killed git are the usual reason a retained run's commit failed;
+  // without this, discard and delete could never save the work once they are stale.
+  const clearedLocks = add.ok ? [] : await clearStaleGitLocks(worktreeDir);
+  if (clearedLocks.length) {
     add = await git(worktreeDir, ['add', '-A'], { timeout: SLOW_GIT_TIMEOUT_MS });
   }
-  const done = (res) => (clearedLock ? { ...res, clearedLock } : res);
+  const done = (res) => (clearedLocks.length ? { ...res, clearedLocks } : res);
   if (!add.ok) {
     return done({ ok: false, step: 'add', message: add.stderr.trim() || `exit ${add.code}`, fromStderr: !!add.stderr.trim() });
   }
@@ -661,7 +704,7 @@ export const RUN_ROOT_REMOVE = new Set(['done', 'stopped', 'error']);
  *                    failed:string[], warnings:string[]}>}
  */
 export async function sweepRunRoots({
-  worcaHome, statusOf, membersOf, pipelineDirOf, retainOf, log,
+  worcaHome, statusOf, membersOf, pipelineDirOf, retainOf, harvestWorkOf, log,
 } = {}) {
   const out = { keep: [], removed: [], quarantined: [], failed: [], warnings: [] };
   const say = typeof log === 'function'
@@ -705,10 +748,8 @@ export async function sweepRunRoots({
     // still exists. This makes manual recovery/removal self-clearing instead of
     // leaking the run root forever. The DB callback is an independent fallback.
     const manifestRetain = manifest?.retain;
-    const manifestMembers = Array.isArray(manifestRetain?.members) ? manifestRetain.members : [];
-    let retained = manifestMembers.some((m) => m?.worktreeDir && existsSync(m.worktreeDir))
-      ? manifestRetain
-      : null;
+    // P1 (P1b S17): a Folder run's pending copy (`copyDir`) keeps its root the same way.
+    let retained = liveRetainMembers(manifestRetain).length ? manifestRetain : null;
     // Same three-state doctrine as statusOf/membersOf: "retention unknown" must
     // never collapse into "remove", so a lookup throw skips this root untouched
     // and is reported in `failed` + logged loudly (it must NOT abort the sweep —
@@ -743,15 +784,42 @@ export async function sweepRunRoots({
       let pipelineDir = null;
       try { pipelineDir = pipelineDirOf ? await pipelineDirOf(id) : null; } catch { pipelineDir = null; }
       const injected = manifest?.injectedPaths || {};
+      // P3-D19: a no-project run's mounts are rescued and removed only inside its own work/, never through one an agent
+      // swapped for a link (the harvest refuses that one and keeps the root).
+      const ownWork = manifest?.workMode === 'none' ? await ownWorkDir(join(dir, 'work')) : true;
       for (const [scope, list] of Object.entries(injected)) {
+        if (manifest?.workMode === 'none' && scope !== 'runRoot' && !ownWork) continue;
         const baseDir = scope === 'runRoot'
           ? dir
+          : manifest?.workMode === 'none' ? join(dir, 'work')       // P3 (S71): a no-project run's mounts live in work/
           : (manifest?.members || []).find((m) => m?.projectKey === scope)?.worktreeDir || join(dir, 'repos', scope);
         const w = await rescueModifiedMounts({
-          baseDir, entries: list, pipelineDir, scope, pipelineId: id,
+          baseDir, entries: list, pipelineDir, scope, pipelineId: id, strict: manifest?.workMode === 'none',
         });
         out.warnings.push(...w);
         for (const line of w) say('warn', `${id}: ${line}`);
+        // P3: work/ outlives the root (it moves into the pipeline dir), so worca's mounts leave it first — rescued above.
+        if (manifest?.workMode === 'none' && scope !== 'runRoot') await removeInjectedPaths(baseDir, list, { strict: true });
+      }
+      // P3: a no-project run's work/ is its deliverable — moved into the pipeline dir before anything is reclaimed.
+      // A throw is a lookup failure (skip; only worca's own mounts, rescued above, have left work/); a failed copy keeps
+      // the root (its files stay in work/).
+      if (manifest?.workMode === 'none' && !manifest.workHarvested && typeof harvestWorkOf === 'function') {
+        let h;
+        try {
+          h = await harvestWorkOf(id, dir, pipelineDir);
+        } catch (err) {
+          const reason = `skip ${dir}: work/ harvest FAILED (${err?.message || err}) — leaving it untouched`;
+          out.failed.push(dir);
+          out.warnings.push(reason);
+          say('warn', reason);
+          continue;
+        }
+        if (!h?.ok) {
+          out.keep.push(dir);
+          say('info', `keep ${dir} (work/ not copied${h?.error ? `: ${h.error}` : ''})`);
+          continue;
+        }
       }
       const strays = await scanStrayEntries({ runRoot: dir, pipelineDir });
       out.warnings.push(...strays);
@@ -789,7 +857,7 @@ export async function sweepRunRoots({
     }
     members = members ?? [];
     for (const m of members) {
-      if (!m?.projectDir || !m?.worktreeDir) continue;
+      if (!m?.projectDir || !m?.worktreeDir || m.workMode === 'folder') continue;   // a copy is no git worktree (P5 S-P5-a)
       await removeWorktree({ projectDir: m.projectDir, worktreeDir: m.worktreeDir, branch: null, force: true });
     }
     const res = await rmGuarded(dir, { worcaHome, pipelineId: basename(dir) });

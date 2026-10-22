@@ -101,6 +101,7 @@ test('askWorktreeAllowRules names the thread\'s worktree subtree, shape-checks t
   assert.deepEqual(askWorktreeAllowRules('ask_00000001'), [
     'Read(//**/.worca-cc/ask/ask_00000001/wt/**)',
     'Read(//**/.worca-cc/ask/ask_00000001/att/**)', // #398: the image/PDF bodies read_attachment points at
+    'Read(//**/.worca-cc/ask/ask_00000001/out/**)', // show_files: what Ask saved in $WORCA_ASK_OUT
   ], 'the chat may read its own worktrees and its own attachment bodies');
   assert.deepEqual(askWorktreeAllowRules('../etc'), [], 'unminted id ⇒ NO allow rule (never interpolated)');
   assert.deepEqual(askWorktreeAllowRules(undefined), []);
@@ -143,7 +144,7 @@ test('buildClaudeArgs over the recipe carries every flag, the deny list + worktr
   assert.ok(!args.includes('--resume'));
   const settings = JSON.parse(args[args.indexOf('--settings') + 1]);
   assert.deepEqual(settings.permissions.deny, [...ASK_DENY_RULES]);
-  assert.deepEqual(settings.permissions.allow, ['Read(//**/.worca-cc/ask/ask_00000001/wt/**)', 'Read(//**/.worca-cc/ask/ask_00000001/att/**)']);
+  assert.deepEqual(settings.permissions.allow, ['Read(//**/.worca-cc/ask/ask_00000001/wt/**)', 'Read(//**/.worca-cc/ask/ask_00000001/att/**)', 'Read(//**/.worca-cc/ask/ask_00000001/out/**)']);
   const noCap = buildClaudeArgs(buildAskSpawnOptions({ ...base(), limits: { maxTurns: 40, maxBudgetUsd: null } }));
   assert.ok(!noCap.includes('--max-budget-usd'));
   const withMem = buildClaudeArgs(buildAskSpawnOptions({ ...base(), memoryDir: '/m/x' }));
@@ -227,7 +228,7 @@ test('buildMcpConfig: resolved base, argv twins of the env, execPath default', (
   // v7: the chat's claude is env-scrubbed (envScrub:true above), so the nested classifier's knobs must ride mcpServers.env — only when set.
   const fwd = buildMcpConfig({ homeBase: '/b', threadId: 't', serverPath: '/s.mjs', env: { WORCA_CLAUDE_BIN: '/x/claude.exe', WORCA_AUTO_MODEL: 'claude-sonnet-5', HOME: '/h', WORCA_MOCK: '1' } });
   assert.deepEqual(fwd.mcpServers.worca.env, { WORCA_HOME: resolve('/b'), WORCA_ASK_THREAD_ID: 't', WORCA_CLAUDE_BIN: '/x/claude.exe', WORCA_AUTO_MODEL: 'claude-sonnet-5' }, 'HOME / WORCA_MOCK are not forwarded');
-  assert.deepEqual(MCP_FORWARD_ENV, ['WORCA_CLAUDE_BIN', 'ORCH_CLAUDE_BIN', 'WORCA_AUTO_MODEL', 'WORCA_PROJECTS_ROOT', 'WORCA_CLONE_ALLOW']);
+  assert.deepEqual(MCP_FORWARD_ENV, ['WORCA_CLAUDE_BIN', 'ORCH_CLAUDE_BIN', 'WORCA_AUTO_MODEL', 'WORCA_PROJECTS_ROOT', 'WORCA_CLONE_ALLOW', 'WORCA_FLAGS']);
   assert.ok(!MCP_FORWARD_ENV.some((k) => /TOKEN|KEY|SECRET|GH_/.test(k)), 'no credential is ever forwarded to the MCP child');
   assert.throws(() => buildAskSpawnOptions({ ...base(), scratchDir: '' }), /scratchDir/);
   assert.throws(() => buildAskSpawnOptions({ ...base(), mcpConfigPath: undefined }), /mcpConfigPath/);
@@ -317,8 +318,8 @@ const REG = () => ({
 const EMPTY = () => ({ servers: {}, env: {}, secretValues: [], grants: [], disallowedTools: [], copies: [], skipped: [], skippedTools: [], sets: [] });
 
 test('§9.3 sandboxNote: today\'s two notes byte for byte without copies; with copies the network sentence names them', () => {
-  assert.equal(sha(sandboxNote()), '28a815086c21a419427a8ead81c3f79badd494f5bbe6a1a1d116df5cb0edd4f7', 'SANDBOX_NOTE (+ the draft/graph sentence)');
-  assert.equal(sha(sandboxNote({ web: true })), '7783dc037cc92451e0f184e32dfd8b7a4f0689d9b4ff192e9adb160b59f22a74', 'SANDBOX_NOTE_WEB (+ the draft/graph sentence)');
+  assert.equal(sha(sandboxNote()), '655b1ddb591fcc66fb4b25af1e58c78d1e0968bb10653e0fb6bd0c4f24c3d66d', 'SANDBOX_NOTE (+ the draft/graph sentence)');
+  assert.equal(sha(sandboxNote({ web: true })), '08d6d0d1183dd2af282d176d6cfe60ffe53aa60e43fa3281541da3fa6362a6dc', 'SANDBOX_NOTE_WEB (+ the draft/graph sentence)');
   assert.equal(sandboxNote({ web: false, copies: [] }), SANDBOX_NOTE);
   assert.equal(sandboxNote({ web: true, copies: [] }), SANDBOX_NOTE_WEB);
   const off = sandboxNote({ copies: ['jira', 'sentry_billing'] });

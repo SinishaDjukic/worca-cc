@@ -6,6 +6,7 @@
 // Interactive elements carry data-id / data-value / data-list + a routing class
 // (grv-edit, grv-delete, grv-back, grv-save, grv-discard, gr-rm, gr-add-btn) so
 // app.js wires ONE delegated listener on the list container.
+import { icon } from './icons.mjs';
 
 function h(doc, tag, cls, text) {
   const n = doc.createElement(tag);
@@ -22,11 +23,11 @@ export function guardrailSummary(s) {
 
 function originBadge(doc, origin) {
   if (origin === 'builtin') return h(doc, 'span', 'badge waiting grv-origin', 'built-in');
-  if (typeof origin === 'string' && origin.startsWith('plugin:')) return h(doc, 'span', 'badge violet grv-origin', origin);
+  if (typeof origin === 'string' && origin.startsWith('plugin:')) return h(doc, 'span', 'badge slate grv-origin', origin);
   // Team policy sets (gp:<id>): blue, like every policy origin; the title names the home.
   if (typeof origin === 'string' && origin.startsWith('policy:')) {
-    const b = h(doc, 'span', 'badge blue grv-origin', 'policy');
-    b.title = `Shipped by the team policy on ${origin.slice(7)} — edit it on the Team policy page`;
+    const b = h(doc, 'span', 'badge slate grv-origin', 'policy');
+    b.title = `Shipped by the team policy on ${origin.slice(7)}. Edit it on the Team policy page`;
     return b;
   }
   return h(doc, 'span', 'badge green grv-origin', 'user');
@@ -37,11 +38,11 @@ export function isReadOnlyGuardrailSet(s) {
   return !!s && (s.origin === 'builtin' || (typeof s.origin === 'string' && s.origin.startsWith('policy:')));
 }
 
-// renderGuardrailList(sets) -> <div.grv-list> of cards; built-ins get View + no Delete.
+// renderGuardrailList(sets) -> <div.card.grv-list.drows> of divided rows; built-ins get View + no Delete.
 export function renderGuardrailList(sets, { doc = globalThis.document } = {}) {
-  const root = h(doc, 'div', 'grv-list');
+  const root = h(doc, 'div', 'card grv-list drows');
   for (const s of sets || []) {
-    const card = h(doc, 'section', 'card grv-card');
+    const card = h(doc, 'div', 'drow drow-stack grv-card');
     card.dataset.id = s.id;
     const body = h(doc, 'div', 'grv-body');
     const head = h(doc, 'div', 'grv-head');
@@ -51,7 +52,7 @@ export function renderGuardrailList(sets, { doc = globalThis.document } = {}) {
     body.appendChild(h(doc, 'small', 'grv-summary hint', guardrailSummary(s.settings)));
     card.appendChild(body);
     if (!isReadOnlyGuardrailSet(s)) {
-      const del = h(doc, 'button', 'btn-ghost grv-delete', 'Delete');
+      const del = h(doc, 'button', 'btn grv-delete', 'Delete');
       del.dataset.minLevel = 'expert';                    // authoring sets is expert (docs/ui-levels.md)
       del.type = 'button';
       del.dataset.id = s.id;
@@ -61,7 +62,7 @@ export function renderGuardrailList(sets, { doc = globalThis.document } = {}) {
     // .grv-edit routing class so app.js's one delegated listener still opens
     // the editor. Built-ins open a read-only view; user sets open for editing
     // (the title reflects that; the visible label is the accessible name).
-    const open = h(doc, 'button', 'btn-ghost grv-edit grv-details', 'Details');
+    const open = h(doc, 'button', 'btn grv-edit grv-details', 'Details');
     open.type = 'button';
     open.dataset.id = s.id;
     open.title = isReadOnlyGuardrailSet(s) ? 'View' : 'Edit';
@@ -100,9 +101,9 @@ export function renderStartStep(sources, { doc = globalThis.document, selectedId
   for (const s of sources || []) addRow(s.id, s.name, s.origin === 'builtin');
   root.appendChild(list);
   const actions = h(doc, 'div', 'actions grv-wizard-actions');
-  const cancel = h(doc, 'button', 'btn btn-ghost btn-mini grv-cancel', 'Cancel');
+  const cancel = h(doc, 'button', 'btn btn-sm grv-cancel', 'Cancel');
   cancel.type = 'button';
-  const next = h(doc, 'button', 'btn btn-primary btn-mini grv-next', 'Next →');
+  const next = h(doc, 'button', 'btn btn-primary btn-sm grv-next', 'Next →');
   next.type = 'button';
   actions.appendChild(cancel);
   actions.appendChild(next);
@@ -122,11 +123,12 @@ function listEditor(doc, cls, entries, placeholder, readOnly = false) {
     const row = h(doc, 'div', 'gr-row');
     row.appendChild(h(doc, 'span', 'mono', v));
     if (!readOnly) {
-      const rm = h(doc, 'button', 'gr-rm', '✕');
+      const rm = h(doc, 'button', 'btn btn-sm btn-quiet btn-icon gr-rm');
       rm.type = 'button';
       rm.dataset.value = v;
       rm.title = 'Remove';
-      rm.setAttribute('aria-label', 'Remove');
+      rm.setAttribute('aria-label', `Remove ${v}`);
+      rm.append(icon(doc, 'x', 14));
       row.appendChild(rm);
     }
     list.appendChild(row);
@@ -141,7 +143,7 @@ function listEditor(doc, cls, entries, placeholder, readOnly = false) {
   input.placeholder = placeholder;
   input.spellcheck = false;
   add.appendChild(input);
-  const btn = h(doc, 'button', 'btn btn-ghost btn-mini gr-add-btn', '+ add');
+  const btn = h(doc, 'button', 'btn btn-sm gr-add-btn', '+ add');
   btn.type = 'button';
   add.appendChild(btn);
   wrap.appendChild(add);
@@ -161,9 +163,11 @@ function switchRow(doc, cls, on, label, readOnly = false) {
 }
 
 function field(doc, label, child) {
-  const f = h(doc, 'div', 'field');
-  f.appendChild(h(doc, 'label', null, label));
-  f.appendChild(child);
+  const f = h(doc, 'div', 'field drow');
+  f.appendChild(h(doc, 'label', 'drow-label', label));
+  const ctl = h(doc, 'div', 'drow-control');
+  ctl.appendChild(child);
+  f.appendChild(ctl);
   return f;
 }
 
@@ -178,7 +182,7 @@ export function renderGuardrailEditor(set, { doc = globalThis.document, mode = '
   root.dataset.mode = mode;
   const head = h(doc, 'div', 'grv-head');
   if (mode === 'create') {
-    const back = h(doc, 'button', 'btn btn-mini grv-back', '← Back');
+    const back = h(doc, 'button', 'btn btn-sm grv-back', '← Back');
     back.type = 'button';
     head.appendChild(back);
   }
@@ -196,24 +200,31 @@ export function renderGuardrailEditor(set, { doc = globalThis.document, mode = '
   root.appendChild(head);
   root.appendChild(switchRow(doc, 'gr-honor', s.honorProjectSettings, 'Honor project .claude/settings.json', readOnly));
   root.appendChild(switchRow(doc, 'gr-scrub', s.envScrub, 'Scrub environment on agent spawn', readOnly));
-  root.appendChild(field(doc, 'Env allowlist (passed through when scrub is on)',
+  const fields = h(doc, 'div', 'drows');
+  fields.appendChild(field(doc, 'Env allowlist (passed through when scrub is on)',
     listEditor(doc, 'gr-allow', s.envAllowlist, 'NPM_TOKEN', readOnly)));
-  root.appendChild(field(doc, 'Protected paths (denies Read/Edit)',
+  fields.appendChild(field(doc, 'Protected paths (denies Read/Edit)',
     listEditor(doc, 'gr-paths', s.protectedPaths, '.env*   |   **/secrets/**', readOnly)));
-  root.appendChild(field(doc, 'Deny rules (pairs: Bash(git push) + Bash(git push:*))',
+  fields.appendChild(field(doc, 'Deny rules (pairs: Bash(git push) + Bash(git push:*))',
     listEditor(doc, 'gr-deny', s.deny, 'Bash(curl:*)', readOnly)));
+  root.appendChild(fields);
   const msgEl = h(doc, 'p', `hint grv-msg${msgErr ? ' err' : ''}`, msg || '');
   msgEl.setAttribute('role', 'status');
   msgEl.setAttribute('aria-live', 'polite');
   root.appendChild(msgEl);
   const actions = h(doc, 'div', 'actions grv-editor-actions');
   if (!readOnly) {
-    const discard = h(doc, 'button', 'btn btn-ghost btn-mini grv-discard', 'Discard');
+    // The way out next to the primary action: leaves the wizard at once, edits and all (app.js
+    // `.grv-cancel` → grvExitWizard). Discard only reverts the editor in place.
+    const cancel = h(doc, 'button', 'btn btn-sm grv-cancel', 'Cancel');
+    cancel.type = 'button';
+    actions.appendChild(cancel);
+    const discard = h(doc, 'button', 'btn btn-sm grv-discard', 'Discard');
     discard.type = 'button';
     discard.disabled = !dirty;
     actions.appendChild(discard);
   }
-  const save = h(doc, 'button', 'btn btn-primary btn-mini grv-save',
+  const save = h(doc, 'button', 'btn btn-primary btn-sm grv-save',
     mode === 'create' ? 'Create set' : (mode === 'view' ? 'Save as new set' : 'Save'));
   save.type = 'button';
   save.disabled = readOnly ? false : !dirty;
