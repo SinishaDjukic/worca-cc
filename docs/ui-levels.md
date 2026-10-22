@@ -139,7 +139,7 @@ be skipped by forgetting it.
 | Runs counts: the amber Needs-you number (no symbol), else the live count as a grey number | S — each hidden at zero |
 | Chat (the first sidebar row; the app's home) | S |
 | Chat home: Start from a preset chips; "N more…" opens New run below Advanced and Settings › Presets from Advanced | S |
-| The account corner and its menu: Interface mode, Settings, the away row, "Signed in as" (a shared identity) | S |
+| The account corner and its menu: Interface mode, Settings, the Away and Keep awake switches, "Signed in as" (a shared identity) | S |
 | The spend ring on the avatar and the menu's spend card (with the free-request row) | S — never hidden: a blocked limit turns the ring red and full, and the card and the New pipeline note say until when |
 | Statistics, Workspaces | A |
 | Add-ons: the group label, Marketplace, Connectors | A |

@@ -117,15 +117,21 @@ export function createFlagsView({ host, msgEl = null, resetBtn = null, api, conf
 }
 
 /**
- * A single flag's switch outside the Labs page (Settings › Runs, review F): the same value, one source.
- * `el` is a `.switch[role=switch]`; `api(method, body)` is the /api/flags binding ({ok, status, data}, never throws).
- * Returns an unbind function.
+ * A single flag's switch outside the Labs page (the account menu's Keep awake row, review F): the same
+ * value, one source. `el` is a `.switch[role=switch]`, or a whole `<button>` row (a menuitemcheckbox
+ * whose .switch only shows aria-checked). A button turns Enter and Space into a click by itself, so it
+ * gets no key handler (one flip per key). The message (a refusal, "Locked by WORCA_FLAGS", '' to clear)
+ * goes to `msgEl` (a status line) and to `onMsg(text, { error })`.
+ * `api(method, body)` is the /api/flags binding ({ok, status, data}, never throws). Returns an unbind function.
  */
-export function bindFlagSwitch(el, key, { api, msgEl = null }) {
+export function bindFlagSwitch(el, key, { api, msgEl = null, onMsg = null }) {
   const doc = el.ownerDocument;
   const paint = (on) => { el.classList.toggle('on', on); el.setAttribute('aria-checked', String(on)); };
   const lock = () => { el.classList.add('disabled'); el.setAttribute('aria-disabled', 'true'); el.tabIndex = -1; };
-  const say = (text, cls = 'form-msg err') => { if (msgEl) { msgEl.textContent = text; msgEl.className = text ? cls : 'form-msg'; } };
+  const say = (text, cls = 'form-msg err') => {
+    if (msgEl) { msgEl.textContent = text; msgEl.className = text ? cls : 'form-msg'; }
+    if (onMsg) onMsg(text, { error: !!text && cls === 'form-msg err' });
+  };
   paint(currentFlags(doc)[key] === true);
   const off = onFlagChange(key, paint);
   api('GET').then((r) => {
@@ -149,7 +155,8 @@ export function bindFlagSwitch(el, key, { api, msgEl = null }) {
     applyFlags(Object.fromEntries((r.data.flags || []).map((f) => [f.key, f.on])), doc);
   }
   const onKey = (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); flip(); } };
+  const native = el.tagName === 'BUTTON';
   el.addEventListener('click', flip);
-  el.addEventListener('keydown', onKey);
+  if (!native) el.addEventListener('keydown', onKey);
   return () => { off(); el.removeEventListener('click', flip); el.removeEventListener('keydown', onKey); };
 }

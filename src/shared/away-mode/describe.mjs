@@ -141,24 +141,24 @@ export function describeChange(before, after, { toggle = 'auto', now, localZone 
   return { before: pick(before), after: pick(after) };
 }
 
-// The account menu's away row: one row, just above the appearance icons. "Step away" while you count as here
-// (posts "I'm away now"), "I'm back" while you count as away (posts "I'm here", which also skips the
-// rest of the current away hours). The hint is the next edge: when the away hours start, when they end.
-const STEP_AWAY = 'Step away to have worca answer on every run now.';
+// The account menu's away row: an "Away" switch (on = away). Turning it on while you count as here posts
+// "I'm away now"; turning it off while you count as away (the away hours included) posts "I'm here", which
+// also skips the rest of the current away hours. The hint is the next edge: when the away hours start, when they end.
+const TURN_ON = 'Turn Away on to have worca answer waiting run questions for you now.';
 
-/** @returns {{state:'here'|'away', status:string, label:string, hint:string, tip:string, disabled:boolean}} */
+/** @returns {{state:'here'|'away', status:string, hint:string, tip:string, disabled:boolean}} */
 export function describeAwayRow({ config, toggle = 'auto', now, localZone = null, hereSince = null } = {}) {
   const d = describeAwayMode({ config, toggle, now, localZone, hereSince });
   const hours = d.status === 'unknown' ? null : hoursOf(config);
-  const here = { state: 'here', status: d.status, label: 'Step away', disabled: false };
-  const away = { state: 'away', status: d.status, label: "I'm back", disabled: false };
+  const here = { state: 'here', status: d.status, disabled: false };
+  const away = { state: 'away', status: d.status, disabled: false };
   switch (d.status) {
     case 'here':
-    case 'here-now': return { ...here, hint: `away at ${hours[0]}`, tip: `${d.lines[0]} ${STEP_AWAY}` };
-    case 'no-hours': return { ...here, hint: '', tip: `No away hours are set. ${STEP_AWAY}` };
-    case 'paused': return { ...here, hint: 'Away mode paused', tip: 'Away mode is paused. worca answers nothing. Step away to have worca answer on every run, or turn it back on in Settings › Away mode.' };
-    case 'away-now': return { ...away, hint: '', tip: 'You said you are away. worca answers on every run until you click "I\'m back".' };
-    case 'away-hours': return { ...away, hint: `until ${hours[1]}`, tip: `${d.lines[0]} Click "I'm back" to count as here until they end.` };
+    case 'here-now': return { ...here, hint: `away at ${hours[0]}`, tip: `${d.lines[0]} ${TURN_ON}` };
+    case 'no-hours': return { ...here, hint: '', tip: `No away hours are set. ${TURN_ON}` };
+    case 'paused': return { ...here, hint: 'Away mode paused', tip: 'Away mode is paused. worca answers nothing. Turn Away on to have worca answer for you, or turn Away mode back on in Settings › Away mode.' };
+    case 'away-now': return { ...away, hint: '', tip: 'You said you are away. worca answers waiting run questions for you until you turn Away off.' };
+    case 'away-hours': return { ...away, hint: `until ${hours[1]}`, tip: `${d.lines[0]} Turn Away off to count as here until they end.` };
     default: return { ...here, status: 'unknown', hint: '', tip: d.lines[0], disabled: true };
   }
 }
