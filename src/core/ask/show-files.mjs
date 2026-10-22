@@ -170,6 +170,11 @@ function itemOf(att, entry, buf, mime) {
     ...(att.hasSource ? { source: true } : {}) };   // Show in folder: the path stays on the server (attachmentSourcePath)
 }
 
+/** The realpath of a folder, or null when it is not there. */
+async function realDir(d) {
+  try { return d ? await realpath(d) : null; } catch { return null; }
+}
+
 async function realRoots(dirs) {
   const out = [];
   for (const d of dirs) {
@@ -216,7 +221,7 @@ export async function showFiles(req, deps) {
   const overBudget = (n) => (cardBytes + n > L.cardBytes ? `the card would pass ${mib(L.cardBytes)}`
     : threadBytes + n > L.threadBytes ? `this chat's files would pass ${mib(L.threadBytes)}` : null);
 
-  async function admit(source, real, root) {
+  async function admit(source, real, root, origin = null) {
     if (seen.has(real)) return;
     seen.add(real);
     const name = basename(real);
@@ -239,13 +244,15 @@ export async function showFiles(req, deps) {
     if (k.error) return refuse(source, k.error);
     const over = overBudget(buf.length);                      // again on the bytes read: the file may have grown
     if (over) return refuse(source, over);
+    // Found under a run's or project's folder: remember which, and the path below it, for Show in folder's fallback.
+    const sourceOrigin = origin ? { ...origin, rel: toPosix(relative(root, real)) } : null;
     let att;
     if (k.entry.store === 'text') {
       const text = decodePlainText(buf);
       if (text == null) return refuse(source, 'this file type cannot be shown');
-      att = deps.addAttachment({ name, kind: 'text', mime: k.entry.label, text: deps.redact(text), sourcePath: real });
+      att = deps.addAttachment({ name, kind: 'text', mime: k.entry.label, text: deps.redact(text), sourcePath: real, sourceOrigin });
     } else {
-      att = deps.addAttachment({ name, kind: k.entry.store, mime: k.mime, data: buf, sourcePath: real });
+      att = deps.addAttachment({ name, kind: k.entry.store, mime: k.mime, data: buf, sourcePath: real, sourceOrigin });
     }
     cardBytes += att.bytes;
     threadBytes += att.bytes;
@@ -256,19 +263,24 @@ export async function showFiles(req, deps) {
     const source = typeof f?.path === 'string' ? f.path : '';
     const parsed = parseShownPath(f?.path, deps.platform);
     if (parsed.error) { refuse(source, parsed.error); continue; }
-    let scope = [];
+    let scope = [];                                                          // [{ dir, origin }]
     try {
-      if (f.runId) scope = await deps.runDirsOf(await req.rowFor(String(f.runId)));
-      else if (f.projectKey) {
+      if (f.runId) {
+        const row = await req.rowFor(String(f.runId));
+        // A member's checkout maps onto its project; the run's store folder has no project copy.
+        scope = (await deps.runDirsOf(row)).map((d) => ({ dir: d.dir, origin: d.projectKey ? { runId: row.id, projectKey: d.projectKey } : null }));
+      } else if (f.projectKey) {
         const dir = await deps.projectDir(String(f.projectKey));
         if (!dir) throw new Error('project not found');
-        scope = [dir];
+        scope = [{ dir, origin: { runId: null, projectKey: String(f.projectKey) } }];
       }
     } catch (e) { refuse(source, String(e?.message || e).replace(/^show_files: /, '')); continue; }
-    const roots = parsed.outOnly ? await realRoots([outDir]) : [...await realRoots(scope), ...threadRoots];
+    const scoped = [];                                                        // [{ root, origin }], realpath'd
+    for (const s of scope) { const root = await realDir(s.dir); if (root && !scoped.some((x) => x.root === root)) scoped.push({ root, origin: s.origin }); }
+    const roots = parsed.outOnly ? await realRoots([outDir]) : [...scoped.map((s) => s.root), ...threadRoots];
     const hit = await locate(parsed, roots, fold);
     if (!hit) { refuse(source, "not found inside this chat's output folder, its worktrees, the run or the project"); continue; }
-    await admit(source, hit.real, hit.root);
+    await admit(source, hit.real, hit.root, scoped.find((s) => s.root === hit.root)?.origin ?? null);
   }
 
   for (const a of req.runArtifacts || []) {
@@ -302,4 +314,42 @@ export async function showFiles(req, deps) {
 
   if (!items.length) return { ok: false, errors: refused.map((r) => `${r.source}: ${r.reason}`), refused };
   return { ok: true, caption: clip(req.caption, 300), items, refused };
+}
+
+// ── Show in folder ────────────────────────────────────────────────────────────
+/** The reveal route's SOURCE_GONE texts: `run` when the copy came from a run's checkout, `moved` otherwise. */
+export const REVEAL_GONE = Object.freeze({
+  moved: 'The original file is gone: it was moved or deleted after it was shown.',
+  run: "The run's folder was cleaned up after the run, so the original file is gone. Download still has the copy.",
+});
+
+const isFileAt = async (p) => { try { return (await stat(p)).isFile(); } catch { return false; } };
+
+/** `rel` inside the registered project's folder when it is a file there, else null. Realpath + containment: never
+ *  through `..` or a symlink out of the project. */
+async function projectCopyOf({ projectKey, rel }, projectDir, fold) {
+  if (typeof rel !== 'string' || !rel) return null;
+  let dir = null;
+  try { dir = await projectDir(projectKey); } catch { dir = null; }
+  const root = await realDir(dir);
+  if (!root) return null;
+  const real = await realDir(join(root, ...rel.split('/')));
+  return real && isInside(root, real, { fold }) && await isFileAt(real) ? real : null;
+}
+
+/**
+ * Where Show in folder opens (docs/show-files.md). The original while it is a file; else, for a copy found under a
+ * run's or project's folder, the same relative path inside the registered project (a run's worktree is removed or
+ * cleaned once the run ends). → { file } | { error } (the route's SOURCE_GONE text). An older row has no origin: the
+ * original or today's text.
+ * @param {{ path:string, origin:{ runId:string|null, projectKey:string, rel:string }|null }} src
+ * @param {{ projectDir:(key:string)=>Promise<string|null>, platform?:string }} deps
+ */
+export async function revealTargetOf(src, { projectDir, platform = process.platform }) {
+  if (await isFileAt(src.path)) return { file: src.path };
+  const o = src.origin;
+  if (!o) return { error: REVEAL_GONE.moved };
+  const copy = await projectCopyOf(o, projectDir, platform === 'win32' || platform === 'darwin');
+  if (copy) return { file: copy };
+  return { error: o.runId ? REVEAL_GONE.run : REVEAL_GONE.moved };
 }

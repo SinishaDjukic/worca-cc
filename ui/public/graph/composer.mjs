@@ -215,6 +215,10 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
       hostEls.saveBtn.title = tip;
     }
     if (hostEls.saveWrap) hostEls.saveWrap.title = tip;
+    if (hostEls.saveReason) {
+      hostEls.saveReason.textContent = tip;
+      hostEls.saveReason.hidden = !tip;
+    }
     if (hostEls.errors) {
       const pristine = isPristine();
       const quiet = !real && todo > 0 && !pristine;

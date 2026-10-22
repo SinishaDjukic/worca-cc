@@ -122,6 +122,7 @@ test('Settings › Tags: rows, Values chips, Default picker, Mandatory, Save pos
   doc.getElementById('tagsEnforce').click();
   doc.getElementById('tagDimsSave').click();
   for (let i = 0; i < 6 && !posts.length; i++) await tick();
+  for (let i = 0; i < 6; i++) await tick();   // let the save settle (it raises the Saved toast) before the DOM is released
   assert.deepEqual(posts.at(-1), { enforceTags: true, tagDimensions: [{ key: 'cost-centre', label: 'Cost centre', values: ['4410', '4420'], required: true, default: '4420' }] });
 });
 
@@ -148,6 +149,7 @@ test('Settings › Tags: a values-only edit makes the card dirty and saves the n
   assert.equal(save.disabled, false);
   save.click();
   for (let i = 0; i < 6 && !posts.length; i++) await tick();
+  for (let i = 0; i < 6; i++) await tick();   // let the save settle before the DOM is released
   assert.deepEqual(posts.at(-1).tagDimensions[0].values, ['4410', '4420']);
 });
 
@@ -240,4 +242,24 @@ test('Settings › Labels & cost tags: with runLabels off the Labels section is 
   assert.equal(card.querySelectorAll('.lbl-set-row').length, 0);
   assert.equal(sent.length, 0);
   assert.ok(doc.getElementById('tag-dims-settings-card'), 'the Cost tags section is still there');
+});
+
+test('F-23: every successful Settings card save raises one "Saved" toast (deduped by key)', async () => {
+  const { doc } = await openTags();
+  const saved = () => [...doc.querySelectorAll('#toasts .toast.ok')].filter((t) => t.querySelector('.tt').textContent === 'Saved');
+  assert.equal(saved().length, 0);
+  for (let n = 0; n < 2; n++) {
+    doc.getElementById('tagsEnforce').click();
+    doc.getElementById('tagDimsSave').click();
+    for (let i = 0; i < 8; i++) await tick();
+  }
+  assert.equal(saved().length, 1, 'two saves in a row leave one toast');
+});
+
+test('F-19: the Settings tab row is as wide and as centred as the content column', () => {
+  const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
+  const tabs = css.match(/^\.settings-tabs\{([^}]*)\}/m)[1];
+  assert.match(tabs, /max-width:760px/);
+  assert.match(tabs, /margin:0 auto/);
+  assert.match(css.match(/^\.settings-card\{([^}]*)\}/m)[1], /max-width:760px/);
 });

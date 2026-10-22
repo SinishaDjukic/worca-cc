@@ -635,7 +635,7 @@ test('chat run card CSS: the Runs page ask card in one column (the run side pane
     '.chat-rc-res-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;}',
     '.chat-rc-res-text{flex:1 1 200px;min-width:0;}',
     '.chat-rc-res-sub{margin-top:2px;font-size:12px;color:var(--ink-2);}',
-    '.chat-rc-res-churn{flex:0 0 auto;margin-left:auto;font-family:var(--mono);font-size:11.5px;color:var(--ink-2);}',
+    '.chat-rc-res-churn{flex:0 0 auto;margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--ink-2);}',
   ]) assert.ok(p3.includes(rule), rule);
   // The card's own copies of Runs page rules are gone: the `:is(.rd-questions,.chat-rc-q)` rules draw both mounts.
   for (const gone of ['.chat-rc-q .issue{border-color', '.chat-rc-q .issue-loc{', '.chat-rc-q .qanswered{', '.chat-rc-q .qtune .select-wrap select{', '.chat-rc-q .qpanel :is(.qfree,.af-inp){']) {
@@ -649,7 +649,7 @@ test('chat run card CSS: the Runs page ask card in one column (the run side pane
   // Run 4 (D21): the run card's question is a divided section with no tint (the status line's "?" says Needs you).
   assert.deepEqual(chatRules.filter((m) => /^background:var\(--amber-bg\);$/.test(m[2].trim())).map((m) => m[1].trim()), []);
   // P2's ask-card field metrics stand down inside the question, so its fields keep the Runs page's own.
-  assert.ok(css.includes('.ask-card :is(select,input[type="text"],textarea):where(:not(.chat-rc-q *)){font-size:12.5px;padding:8px 11px;border-radius:var(--r-sm);}'));
+  assert.ok(css.includes('.ask-card :is(select,input[type="text"],textarea):where(:not(.chat-rc-q *)){font-size:12px;padding:8px 11px;border-radius:var(--r-sm);}'));
 });
 
 // ---- The question's styles, replayed over style.css. jsdom computes no cascade, so (as test/ui-functional-css.test.mjs
@@ -964,8 +964,8 @@ test('chat run card CSS: the result counts and error, a hovered file row or Stop
     `.chat-rc-add{color:${mixed('--green-ink')};}`,
     '.chat-rc-del{color:var(--red-ink-soft);}',
     '.chat-rc-res-err{margin-right:auto;font-size:12px;color:var(--red-ink-soft);}',
-    '.chat-rc-agent-model{min-width:0;flex:0 100000 auto;overflow:hidden;text-overflow:ellipsis;color:var(--ink-2);font-family:var(--mono);font-size:10.5px;font-weight:500;}',
-    '.chat-rc-deciding{padding:28px 16px;text-align:center;color:var(--ink-2);font-size:12.5px;}',
+    '.chat-rc-agent-model{min-width:0;flex:0 100000 auto;overflow:hidden;text-overflow:ellipsis;color:var(--ink-2);font-family:var(--mono);font-size:11px;font-weight:500;}',
+    '.chat-rc-deciding{padding:28px 16px;text-align:center;color:var(--ink-2);font-size:12px;}',
   ]) assert.ok(p3.includes(rule), rule);
   assert.ok(!p3.includes('.chat-rc-stop:hover'), 'Stop takes the .btn-danger hover, no rule of its own');
   assert.ok(css.includes(':is(.rd-questions,.chat-rc-q) .qanswered{font:600 var(--fs-body) var(--sans);color:var(--ink);}'));

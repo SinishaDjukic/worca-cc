@@ -30,7 +30,7 @@ export const TL_STATUS = Object.freeze({
   attention: { label: 'Needs attention', tone: 'red' },
   stopped: { label: 'Stopped', tone: 'slate' },
   closed: { label: 'Closed, not merged', tone: 'slate' },
-  done: { label: 'Done', tone: 'violet' },
+  done: { label: 'Done', tone: 'slate' },
 });
 
 // ---- calendar ------------------------------------------------------------------------------

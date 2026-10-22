@@ -325,19 +325,19 @@ async function bootNew(runReply) {
 }
 const settle = async (doc) => { for (let i = 0; i < 200 && doc.getElementById('start-btn').dataset.fbState === 'busy'; i++) await tick(5); };
 
-test('a started run toasts "Run started" with Open run, and repeated Starts each post and never leave the form stuck', async () => {
+test('a started run opens its page without a "Run started" toast (F-24), and repeated Starts each post and never leave the form stuck', async () => {
   const { window, runBodies } = await bootNew((body, n) => ({ data: { runId: `r-${n}` }, status: 200 }));
   const doc = window.document;
   const btn = doc.getElementById('start-btn');
   await checkRows([
-    { name: 'D6: a started run raises a "Run started" toast with Open run, and leaves no line on #form-msg', run: async () => {
+    { name: 'F-24: a started run lands on its own page, so no "Run started" toast, and no line on #form-msg', run: async () => {
       doc.getElementById('prompt').value = 'Add tests';
       doc.getElementById('start-btn').click();
       await settle(doc);
       assert.equal(runBodies.length, 1);
       assert.match(window.location.hash, /^#running\/r-1/);   // the first call's runId
       assert.equal(doc.getElementById('form-msg').textContent, '');
-      assert.deepEqual(lastToast(doc), { tone: 'ok', title: 'Run started', detail: '', action: 'Open run' });
+      assert.equal(lastToast(doc), null, 'the run page is the confirmation');
       assert.equal(doc.getElementById('start-btn').dataset.fbState, 'done');
       assert.equal(doc.getElementById('start-btn').textContent.trim(), 'Started');
     } },

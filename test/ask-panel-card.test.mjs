@@ -416,7 +416,8 @@ test('ask-panel-card v2: the lane renders one tile per agent with effective valu
       assert.equal(impl.querySelector('.ask-rp-tile-l2 [data-ctl="questions"]').checked, false);
       assert.equal(tiles[2].querySelector('[data-ctl="questions"]'), null, 'no questions capability → no switch');
       assert.ok(tiles[0].querySelector('.ask-rp-eff').classList.contains('unset'), 'no model → inherits workflow');
-      assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · inherit ×2 · Opus 5.5 ×1 · 1 fan-out');
+      assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · 2 on the workflow’s model · 1 on Opus 5.5 · 1 fan-out');
+      assert.doesNotMatch(ctx.doc.querySelector('.ask-rp-summary').textContent, /inherit|×\d/);
       assert.equal(ctx.doc.querySelector('.ask-rp-wfdesc[data-for="workflow"]').textContent, '3 agents · 1 loop · Review → Implement, max 3 cycles');
     } },
     { name: 'ask-panel-card v2: editing tints the tile, updates the sub-line and summary; Reset returns to the proposal', run: async () => {
@@ -434,7 +435,7 @@ test('ask-panel-card v2: the lane renders one tile per agent with effective valu
       assert.match(lane.querySelector('.ask-rp-agents-foot').textContent, /Changes apply to this run only/, 'a card edit rides this run; nothing is saved');
       saveAsDefaults(ctx);
       assert.match(lane.querySelector('.ask-rp-agents-foot').textContent, /Edits become this project's defaults for Default/);
-      assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · Haiku 4.5 ×1 · Opus 5.5 ×1 · inherit ×1 · 1 fan-out');
+      assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · 1 on Haiku 4.5 · 1 on Opus 5.5 · 1 on the workflow’s model · 1 fan-out');
       lane.querySelector('.ask-rp-mini').click();
       assert.ok(!lane.querySelector('.ask-rp-tile[data-node-id="n_plan"]').classList.contains('mod'));
       assert.equal(lane.querySelector('.ask-rp-mini').hidden, true);
@@ -1523,13 +1524,13 @@ test('ask-panel-card: card.nodes pre-fills the lane — marker with the reason, 
   assert.equal(tileOf(lane, 'n_impl').querySelector('.ask-rp-row-reset'), null, 'nothing to reset');
   assert.match(lane.querySelector('.ask-rp-sec-sub').textContent, /^Chat picked 2 agents for this run · 2 overrides of the workflow defaults$/);
   assert.equal(lane.querySelector('.ask-rp-mini').hidden, true, 'nothing to reset to the proposal yet');
-  assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · Opus 5.5 ×2 · Haiku 4.5 ×1 · 1 fan-out · 2 picked by Chat');
+  assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · 2 on Opus 5.5 · 1 on Haiku 4.5 · 1 fan-out · 2 picked by Chat');
   plan.querySelector('.ask-rp-row-reset').click();
   const plan2 = tileOf(lane, 'n_plan');
   assert.equal(plan2.querySelector('.ask-rp-model').value, '', 'back to the project\'s own setting');
   assert.ok(plan2.classList.contains('mod'), 'moved off the proposal');
   assert.equal(plan2.querySelector('.ask-rp-m').textContent, 'project default');
-  assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · inherit ×1 · Opus 5.5 ×1 · Haiku 4.5 ×1 · 1 fan-out · 1 picked by Chat');
+  assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · 1 on the workflow’s model · 1 on Opus 5.5 · 1 on Haiku 4.5 · 1 fan-out · 1 picked by Chat');
   assert.equal(lane.querySelector('.ask-rp-mini').hidden, false);
   lane.querySelector('.ask-rp-mini').click();
   assert.equal(tileOf(lane, 'n_plan').querySelector('.ask-rp-model').value, 'claude-opus-5-5', 'Reset to proposal brings the pick back');

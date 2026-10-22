@@ -1123,6 +1123,9 @@ test('a finished run: its headline, the facts, what to check, Create pull reques
   assert.equal(facts.children.length, 3);
   assert.deepEqual([...facts.querySelectorAll('div > span')].map((s) => s.textContent), ['time', 'cost', '2 files changed']);
   assert.match(facts.textContent, /\+12/);
+  const filesLink = facts.querySelector('a.rd-stat-link');
+  assert.match(filesLink.getAttribute('href'), /\/details\/diff$/, 'F-22: the files tile opens the diff');
+  assert.match(rd.querySelector('.rd-clock') ? rd.querySelector('.rd-clock').textContent : 'started 00:00', /^started (\d{2}:\d{2}|[A-Z][a-z]{2}(, \d{2}:\d{2}| \d+, \d{2}:\d{2}))/, 'F-9: the Runs list time style');
   const result = rd.querySelector('.rd-result');
   assert.equal(result.hidden, false);
   assert.equal(result.querySelector('.issues'), null, 'the things to check live in Overview only');
@@ -1130,7 +1133,7 @@ test('a finished run: its headline, the facts, what to check, Create pull reques
   assert.equal(result.querySelector('[data-rd-tab="diff"] .rd-srow-v').classList.contains('mono'), false, 'run 3 (D14): sans values');
   const pr = rd.querySelector('.rd-pr-slot .rd-create-pr');
   assert.ok(pr, 'an eligible run offers Create pull request');
-  assert.equal(pr.textContent, 'Create pull request');
+  assert.equal(pr.textContent, 'Ship it');
   // The card's one button is the pull request, behind its glyph; following up is the bar's Run after.
   assert.deepEqual([...rd.querySelectorAll('.rd-pr-slot > *')].map((b) => b.firstElementChild.dataset.icon),
     ['pr-create']);

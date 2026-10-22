@@ -20,7 +20,7 @@ import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
-import { PluginOpError, scrubbedEnv } from '../plugin-shim.mjs';
+import { PluginOpError, scrubbedEnv, warnWithheldProxy } from '../plugin-shim.mjs';
 import { normalizeManifest, negotiatedApi } from '../plugin-manifest.mjs';
 import { WORCA_PLUGIN_API } from '../plugin-api.mjs';
 import { readPluginsLock, pluginCurrentDir } from '../plugins-lock.mjs';
@@ -240,6 +240,7 @@ export function createChannelHost({ logger, onInbound, onStatus, _spawn = spawn,
   const spawnWorker = (w) => {
     if (stopping) return;
     setStatus(w, 'connecting', null);
+    warnWithheldProxy();
     const proc = _spawn(process.execPath,
       [...(process.env.WORCA_PLUGIN_INSPECT ? ['--inspect'] : []), CHILD_PATH],
       { env: scrubbedEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
@@ -522,6 +523,7 @@ export function createChannelHost({ logger, onInbound, onStatus, _spawn = spawn,
       const entry = discoverChannels().find((e) => e.plugin === plugin && e.channelId === channelId);
       if (!entry) throw new PluginOpError('plugin', `no such chat channel "${plugin}/${channelId}"`);
       if (mockMode()) return { ok: true, mock: true };
+      warnWithheldProxy();
       return new Promise((resolveCheck, rejectCheck) => {
         const proc = _spawn(process.execPath, [CHILD_PATH, '--check'], { env: scrubbedEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
         let stdout = '';

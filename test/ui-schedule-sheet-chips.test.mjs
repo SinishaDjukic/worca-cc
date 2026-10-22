@@ -55,3 +55,20 @@ test('quick chips stay chronological and in the future at 09:30, 21:30 and 22:30
     } },
   ]);
 });
+
+test('the sheet renders exactly one dismiss control: Cancel, no Close (F-17)', async () => {
+  const dom = new JSDOM('<!doctype html><body></body>', { url: 'http://localhost/' });
+  const { window } = dom;
+  for (const k of ['window', 'document', 'Node', 'HTMLElement', 'Event', 'KeyboardEvent']) {
+    try { Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true }); } catch {}
+  }
+  const mod = await import(pathToFileURL(sheetPath).href + `?f17_${Math.random()}`);
+  const done = mod.openScheduleSheet({ mode: 'create' });
+  const modal = window.document.getElementById('schedule-modal');
+  const dismiss = [...modal.querySelectorAll('button')].filter((b) => /^(close|cancel)$/i.test(b.textContent.trim()));
+  mod.closeScheduleSheet();
+  await done;
+  assert.equal(dismiss.length, 1);
+  assert.equal(dismiss[0].textContent.trim(), 'Cancel');
+  assert.ok(dismiss[0].classList.contains('sched-cancel'));
+});

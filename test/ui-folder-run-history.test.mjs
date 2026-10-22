@@ -179,7 +179,7 @@ test('a folder run shows no git chrome and asks git or a forge nothing', async (
       assert.equal(sec.querySelector('.act-strip'), null);
       assert.equal(sec.querySelector('.hd-ov-wt'), null);
       const box = sec.querySelector('.hd-ov-files');
-      assert.equal(box.querySelector('.hd-ov-label').textContent, 'FILES CHANGED · 3');
+      assert.equal(box.querySelector('.hd-ov-label').textContent, 'Files changed · 3');
       assert.equal(box.querySelector('.link-btn'), null);
     } },
     { name: 'a deep link: the saved state names the mode before any row lands', run: async () => {

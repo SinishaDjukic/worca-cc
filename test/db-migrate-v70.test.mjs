@@ -1,31 +1,29 @@
-// test/db-migrate-v70.test.mjs — v70: utility_cost_ledger (Smart run naming spend, no run behind it).
-import { test, after } from 'node:test';
+// test/db-migrate-v70.test.mjs — v70: ask_attachments.source_run_id / source_project_key / source_rel, where a show_files
+// copy found under a run or project came from (Show in folder's fallback, docs/show-files.md). INCREMENTAL_COLUMNS
+// entries added by the hoisted repairSchemaGaps (a comment rung only).
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { migrate, SCHEMA_VERSION, getDb } from '../src/core/db.mjs';
-import { recordUtilityCost, utilityTotals } from '../src/core/cost-budget.mjs';
-import { useTempHome } from './helpers/temp-home.mjs';
+import { migrate, SCHEMA_VERSION } from '../src/core/db.mjs';
 
-useTempHome(after);
+const cols = (db, table) => db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+const NEW = ['source_run_id', 'source_project_key', 'source_rel'];
 
-test('v70 adds utility_cost_ledger to a v69 DB', () => {
+test('fresh DB is at v70 or later with the three source origin columns', () => {
   const db = new DatabaseSync(':memory:');
   migrate(db);
-  db.exec('DROP TABLE utility_cost_ledger; PRAGMA user_version = 69');
-  migrate(db);
   assert.ok(SCHEMA_VERSION >= 70);
-  assert.deepEqual(db.prepare('PRAGMA table_info(utility_cost_ledger)').all().map((c) => c.name),
-    ['id', 'kind', 'amount_usd', 'tokens_in', 'tokens_out', 'model', 'ts']);
+  for (const c of NEW) assert.ok(cols(db, 'ask_attachments').includes(c), c);
 });
 
-test('a naming call writes one utility row and zero cost_ledger rows; $0 leaves none; totals sum the window', () => {
-  const db = getDb();
-  const before = db.prepare('SELECT COUNT(*) AS n FROM cost_ledger').get().n;
-  recordUtilityCost('naming', { costUsd: 0.0002, usage: { input_tokens: 300, output_tokens: 30 }, model: 'claude-haiku-5-5', tsMs: 1000 });
-  recordUtilityCost('naming', { costUsd: 0, tsMs: 1000 });
-  recordUtilityCost('naming', { costUsd: NaN, tsMs: 1000 });
-  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM utility_cost_ledger').get().n, 1);
-  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM cost_ledger').get().n, before);
-  assert.deepEqual(utilityTotals(0, 2000), { naming: { usd: 0.0002, count: 1 } });
-  assert.deepEqual(utilityTotals(2000, 3000), { naming: { usd: 0, count: 0 } });
+test('a v69 DB gains the columns, its rows keep NULL (today\'s Show in folder), and it reaches the current version', () => {
+  const db = new DatabaseSync(':memory:');
+  migrate(db);
+  db.exec(`${NEW.map((c) => `ALTER TABLE ask_attachments DROP COLUMN ${c};`).join(' ')} PRAGMA user_version = 69`);
+  db.exec(`INSERT INTO ask_threads (id, created_at, updated_at) VALUES ('ask_00000001', 'x', 'x')`);
+  db.exec(`INSERT INTO ask_attachments (id, thread_id, message_id, name, bytes, created_at, source_path) VALUES ('att_00000001', 'ask_00000001', NULL, 'a.png', 1, 'x', '/r/a.png')`);
+  migrate(db);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
+  const row = db.prepare("SELECT source_path, source_run_id, source_project_key, source_rel FROM ask_attachments WHERE id = 'att_00000001'").get();
+  assert.deepEqual({ ...row }, { source_path: '/r/a.png', source_run_id: null, source_project_key: null, source_rel: null });
 });

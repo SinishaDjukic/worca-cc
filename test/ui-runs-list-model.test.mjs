@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
 import {
-  rowTime, liveRowState, histRowState, schedRowState, countNeedsYou, needsYouItems,
+  rowTime, whenLabel, liveRowState, histRowState, schedRowState, countNeedsYou, needsYouItems,
   buildRunsModel, isRowSelected, isMemberOpen, renderRunsList, dateBucket, DATE_BUCKETS, listLine, groupRow, groupCostUsd, costTitle, memberCostUsd,
 } from '../ui/public/runs-list.mjs';
 import { RUN_STATES } from '../src/shared/run-model.mjs';
@@ -498,7 +498,7 @@ test('Needs you: a workspace run with a conflicting member PR is listed and coun
 
 test('style.css: the chip colours #784’s states from tokens; the glyph rules are gone', () => {
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
-  const colours = { 'is-draft': '--ink-2', 'is-ready': '--green-ink', 'is-merged': '--violet-ink', 'is-closed': '--red-ink' };
+  const colours = { 'is-draft': '--ink-2', 'is-ready': '--green-ink', 'is-merged': '--slate-ink', 'is-closed': '--red-ink' };
   for (const [cls, token] of Object.entries(colours)) assert.ok(css.includes(`.runs-pr.${cls}{color:var(${token});}`), cls);
   assert.match(css, /\.runs-pr\.is-conflicts,\.runs-pr\.is-failing\{color:var\(--red-ink\);\}/);
   for (const gone of ['.runs-pr-open{', '.runs-pr-cut{', '.runs-pr-count{', '.runs-pr{flex:none']) assert.equal(css.includes(gone), false, gone);
@@ -590,4 +590,16 @@ test('D12: groups in Recent sort by their first member\'s start, newest first', 
   const m = buildRunsModel({ groups: [mk('g-old', at(28, 9, 0)), mk('g-new', at(29, 9, 0))],
     history: ['g-old-1', 'g-old-2', 'g-new-1', 'g-new-2'].map((id) => histIt(id)), now: NOW });
   assert.deepEqual(m.sections.find((s) => s.id === 'recent').rows.map((r) => r.key), ['chain:g-new', 'chain:g-old']);
+});
+
+test('whenLabel: rowTime style with the clock after a non-today day (F-9)', () => {
+  const now = new Date(2026, 8, 14, 18, 0).getTime();       // Mon 14 Sep 2026
+  assert.equal(whenLabel(new Date(2026, 8, 14, 17, 45).getTime(), now), '17:45');
+  assert.equal(whenLabel(new Date(2026, 8, 16, 2, 0).getTime(), now), 'Wed, 02:00');
+  assert.equal(whenLabel(new Date(2026, 7, 12, 14, 5).getTime(), now), 'Aug 12, 14:05');
+  assert.equal(whenLabel(new Date(2025, 11, 3, 14, 5).getTime(), now), 'Dec 3, 2025, 14:05');
+  assert.equal(whenLabel(0, now), '');
+  assert.equal(whenLabel('garbage', now), '');
+  const inst = Date.UTC(2026, 8, 14, 3, 30);                // 12:30 in Tokyo
+  assert.equal(whenLabel(inst, inst, 'Asia/Tokyo'), '12:30');
 });

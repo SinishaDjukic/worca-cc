@@ -113,7 +113,8 @@ const REMOVED = ['btn-go', 'btn-ghost', 'btn-mini', 'btn-clear', 'btn-expand', '
   'wfv-btn', 'wfv-btn-primary', 'wfv-icon-btn', 'apv-btn', 'apv-btn-primary', 'pp-btn', 'chat-rc-btn', 'ask-icon-btn'];
 // D5: single-element hooks that stay for JS and tests, with layout only.
 const HOOKS = ['stop-confirm', 'stop-cancel', 'shipit-ok', 'guide-next', 'mc-btn', 'pp-send', 'gv-nav-btn', 'ask-cmd-stop',
-  'sync-check-now', 'hd-stop', 'rd-stop', 'rd-pause', 'topnav-new', 'hd-more', 'ask-card-not-now', 'btn-split-more'];
+  'sync-check-now', 'hd-stop', 'rd-stop', 'rd-pause', 'topnav-new', 'hd-more', 'ask-card-not-now', 'btn-split-more',
+  'chat-home-act', 'chat-run-tile-open'];
 // A whole class token: not part of a longer class or of a data- attribute (data-ask-card-start stays).
 const classRe = (c) => new RegExp(`(?<![\\w-])${c}(?![\\w-])`);
 
@@ -347,7 +348,7 @@ test('the tab-emitter scan flags a bare per-view tab (self-test)', () => {
 
 // Size scale (review A5, C): controls at 28/32/40, tiles 56-64, an info tip's hit target at least 24.
 const CONTROL_HEIGHTS = { '.tab': 32, '.seg button': 28, '.chat-home-preset': 28, '.filter-chip': 28,
-  '.wfl-folder': 32, '.info-tip': 28, '.chat-home-act': 40 };
+  '.wfl-folder': 32, '.info-tip': 28 };
 const OFF_SCALE = [26, 31, 34, 36, 43, 44, 55, 78];
 const CONTROL_WORD = /^(?:tab|tabs|seg|btn|chip|preset|act|folder|switch|button)$/;
 // Rows, not controls (spec §1.2): allowed at their own height. Each entry names its reason.
@@ -801,4 +802,55 @@ test('charts: the guide sets their heights and text steps; off-scale SVG text si
   assert.match(charts, /Axis labels are 11px/);
   assert.match(charts, /legends 12px/);
   ratchet([...new Set(scan(SVG_TYPE).map((h) => h.split(':')[0]))].sort(), DEBT.svgTypeScale, 'off-scale SVG font size');
+});
+
+// F-8: a typed uppercase kicker is a string literal of capitals set as visible text.
+const STATE_CODES = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPEN', 'MERGED', 'CLOSED', 'UNKNOWN', 'UNAVAILABLE', 'FAILED', 'DRAFT',
+  'BUTTON', 'SELECT', 'SPAN', 'MERGEABLE', 'CONFLICTING', 'PENDING', 'NONE'];
+const KICKER = new RegExp(`(['"\`])(?!(?:${STATE_CODES.join('|')})\\1)[A-Z][A-Z0-9 ·&/-]{2,}[A-Z0-9]\\1`);
+const KICKER_FILES = ['ui/public/app.js', 'ui/public/team-metrics-view.mjs'].map((f) => join(ROOT, f));
+test('no typed uppercase kicker in app.js or team-metrics-view.mjs (F-8, spec §1.3)', () => {
+  assert.equal(KICKER.test("l.textContent = 'FILES CHANGED';"), true);
+  assert.equal(KICKER.test("method: 'GET'"), false);
+  // Raw lines, not code(): app.js holds a string with `/*` that code() reads as a block comment, hiding ~1300 lines.
+  const hits = KICKER_FILES.flatMap((f) => readFileSync(f, 'utf8').split('\n')
+    .flatMap((l, i) => (KICKER.test(l) && !/^\s*(?:\/\/|\*|\/\*)/.test(l) ? [`${rel(f)}:${i + 1}: ${l.trim().slice(0, 120)}`] : [])));
+  assert.deepEqual(hits, []);
+});
+
+// F-12: a visible string that starts or ends with a glyph. `// glyph-ok` on the line keeps one (tool output, ANSI).
+const EDGE_GLYPH = /['"`]\s*[✓✕✗▾▸⋯↻]\s|\s[✓✕✗▾▸⋯↻]\s*['"`]/;
+test('no glyph at the edge of a visible string; use icon(doc, …) (F-12)', () => {
+  assert.equal(EDGE_GLYPH.test("'✓ Saved'"), true);
+  assert.equal(EDGE_GLYPH.test("'in catalog ✓'"), true);
+  assert.equal(EDGE_GLYPH.test("'a ✓ b'"), false);
+  const raw = FILES.filter((f) => /\.m?js$/.test(f)).flatMap((f) => readFileSync(f, 'utf8').split('\n')
+    .map((l, i) => [`${rel(f)}:${i + 1}: ${l.trim().slice(0, 120)}`, l]).filter(([, l]) => EDGE_GLYPH.test(l) && !/\/\/ glyph-ok/.test(l) && !/^\s*(?:\/\/|\*|\/\*)/.test(l)));
+  assert.deepEqual(raw.map(([h]) => h), []);
+});
+
+// F-13: violet is Labs-only (docs/design-system.md colour table). The merged status dot and the merged run orb are the
+// two named exceptions (slice 1 shipped them as the shipped-state colour), plus the Smart run naming Labs chip and shimmer. Exact selectors, no substring match.
+const VIOLET_OK = new Set(['.badge.flag-stage-experimental', '.status-dot.is-violet', '.rg-orb-merged .rg-orb-bg', '.rg-orb-merged .rg-orb-line',
+  '.sn-chip', '.sn-adorn.sn-loading .input']);
+test('violet only inside Labs selectors and the merged dot and orb (F-13)', () => {
+  const bad = ALL.filter((r) => r.sel !== ':root' && /var\(--violet/.test(r.body) && !splitTop(r.sel).every((s) => VIOLET_OK.has(s.trim())))
+    .map((r) => where(r, 'violet'));
+  assert.deepEqual(bad, []);
+  assert.equal(VIOLET_OK.has('.rg-orb-merged-foo'), false);
+  const js = scan(/\b(?:badge|pill-run) violet\b|\bn-violet\b|tone: 'violet'|var\(--violet/, FILES.filter((f) => /\.m?js$/.test(f)));
+  assert.deepEqual(js, []);
+});
+
+test('type: no px size outside 11/12/13/15/18/22 in style.css or the chart SVG text (F-14)', () => {
+  assert.deepEqual(offScale(), []);
+  assert.deepEqual(DEBT.typeScale, []);
+  assert.deepEqual(DEBT.svgTypeScale, []);
+  assert.deepEqual(DEBT.typedPlus, []);
+});
+
+test('a project card sync bar is not a bordered block (F-16)', () => {
+  const r = ALL.filter((x) => splitTop(x.sel).includes('.proj-sync'));
+  assert.ok(r.length);
+  for (const x of r) assert.deepEqual(decls(x.body, 'border|border-radius|border-style|background'), [], where(x, 'box'));
 });

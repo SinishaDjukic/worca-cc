@@ -65,7 +65,7 @@ function slotTable(doc, cls, title, rows, { what, from, onTest = null, always = 
       ? `Every ${what} follows ${from}.`
       : `${hidden.length} other ${what}${hidden.length === 1 ? '' : 's'} follow${hidden.length === 1 ? 's' : ''} ${from}.`;
     rest.hidden = !rest.textContent;
-    add.replaceChildren(Object.assign(doc.createElement('option'), { value: '', textContent: `+ Override a ${what}…` }));
+    add.replaceChildren(Object.assign(doc.createElement('option'), { value: '', textContent: `Override a ${what}…` }));
     for (const r of hidden) add.append(Object.assign(doc.createElement('option'), { value: r.id, textContent: r.label }));
     add.value = ''; add.hidden = !hidden.length;
     all.textContent = showAll ? 'Show only changes' : `Show all ${rows.length}`;
@@ -113,11 +113,11 @@ export function renderEngineSection(host, options) {
   };
   for (const engine of MODEL_ENGINE_NAMES) {
     const btn = doc.createElement('button'); btn.type = 'button'; btn.dataset.engine = engine; btn.textContent = engineLabel(engine);
-    if (isBetaEngine(engine)) { const beta = doc.createElement('span'); beta.className = 'badge violet beta-badge'; beta.textContent = 'Beta'; btn.append(beta); }
+    if (isBetaEngine(engine)) { const beta = doc.createElement('span'); beta.className = 'flag-chip flag-chip-beta beta-badge'; beta.textContent = 'Beta'; btn.append(beta); }
     btn.addEventListener('click', () => pick(engine)); sw.append(btn);
     const card = doc.createElement('section'); card.className = 'engine-card'; card.dataset.engine = engine; card.dataset.minLevel = 'advanced';
     // Advanced has no switch: the tab names its engine. Expert's switch already does (style.css hides this there).
-    const heading = doc.createElement('h3'); heading.className = 'engine-card-name'; heading.textContent = engineLabel(engine); if (isBetaEngine(engine)) { const beta = doc.createElement('span'); beta.className = 'badge violet beta-badge'; beta.textContent = 'Beta'; heading.append(beta); } card.append(heading);
+    const heading = doc.createElement('h3'); heading.className = 'engine-card-name'; heading.textContent = engineLabel(engine); if (isBetaEngine(engine)) { const beta = doc.createElement('span'); beta.className = 'flag-chip flag-chip-beta beta-badge'; beta.textContent = 'Beta'; heading.append(beta); } card.append(heading);
     // A non-Claude tab's readiness line (GET /api/engines), filled by app.js on the Models page.
     if (engine !== 'claude') { const status = doc.createElement('small'); status.className = 'engine-card-status'; card.append(status); }
     if (options.notes?.[engine]) { const note = doc.createElement('small'); note.className = 'hint engine-card-note'; note.textContent = options.notes[engine]; card.append(note); }

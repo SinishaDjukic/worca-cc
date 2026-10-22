@@ -604,7 +604,7 @@ export function renderImportSheet(models, { doc = globalThis.document } = {}) {
       tr.appendChild(yesNoCell(doc, m.reasoning));
       tr.appendChild(h(doc, 'td', 'mvi-api', API_SHORT[m.api] || '—'));
       const status = [];
-      if (m.inCatalog) status.push('in catalog ✓');
+      if (m.inCatalog) status.push('in catalog');
       if (m.preview) status.push('preview');
       if (disabled) status.push('disabled: enable it in your GitHub Copilot settings');
       tr.appendChild(h(doc, 'td', 'mvi-status', status.join(' · ') || '—'));
@@ -710,7 +710,7 @@ export function renderEndpointSheet(payload, { doc = globalThis.document } = {})
       tr.appendChild(m.toolCalls === null || m.toolCalls === undefined ? h(doc, 'td', null, '?') : yesNoCell(doc, m.toolCalls));
       tr.appendChild(m.vision === null || m.vision === undefined ? h(doc, 'td', null, '?') : yesNoCell(doc, m.vision));
       const status = [];
-      if (m.inCatalog) status.push('in catalog ✓');
+      if (m.inCatalog) status.push('in catalog');
       if (m.loaded === true) status.push('loaded');
       else if (m.loaded === false) status.push('not loaded');
       if (blocked) status.push(m.blocked || 'not importable');

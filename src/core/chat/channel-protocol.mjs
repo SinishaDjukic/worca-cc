@@ -4,8 +4,8 @@
 // `\n`-terminated JSON object per frame, stdout protocol-reserved.
 //
 // Deliberately dependency-free (no core imports): channel-worker-child.mjs
-// runs under a scrubbed env and imports THIS module only; plugins vendor their
-// own minimal copies (lib/message.mjs) and never import the host.
+// runs under a scrubbed env and imports THIS module and env-proxy.mjs only;
+// plugins vendor their own minimal copies (lib/message.mjs) and never import the host.
 //
 // Message contracts are ported from the pre-1.0 integrations adapter.js:
 //   NormalizedMessage = { title: string|null, body: MessageSegment[], severity }

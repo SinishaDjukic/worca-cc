@@ -120,12 +120,12 @@ import {
   findCard as askFindCard, updateCardBlock as askUpdateCardBlock,
   addAttachment as askAddAttachment, listAttachments as askListAttachments,
   getAttachment as askGetAttachment, attachmentPath as askAttachmentPath, readAttachmentText as askReadAttachmentText,
-  attachmentSourcePath as askAttachmentSourcePath,
   linkRun as askLinkRun, updateRunLink as askUpdateRunLink, listRunLinks as askListRunLinks,
   findRunLinksByPipeline as askFindRunLinksByPipeline, runLinkTarget,
   finishMessage as askFinishMessage, newAskId,
   newAskId as askNewId, findPullRequestCards as askFindPullRequestCards, findFixRunCards as askFindFixRunCards,
 } from '../src/core/ask/store.mjs';
+import { revealTargetFor as askRevealTargetFor } from '../src/core/ask/show-files-deps.mjs';
 import { sanitizeTitle as askSanitizeTitle } from '../src/core/title.mjs';
 import { stripIntentLead } from '../src/shared/intent-leads.mjs';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
@@ -451,7 +451,7 @@ import {
   isValidTimeZone, formatInstant, occurrenceStamp, OVERLAP_POLICIES, MISSED_POLICIES,
 } from '../src/shared/schedule/recurrence.mjs';
 import { REASON } from '../src/core/failure-policy.mjs';
-import { callSource, PluginOpError } from '../src/core/plugin-shim.mjs';
+import { callSource, PluginOpError, withheldProxyNotice } from '../src/core/plugin-shim.mjs';
 import { resolveAutoModel, AUTO_MODEL_ENV } from '../src/core/auto/model.mjs';
 import { sweepRepoLooks } from '../src/core/auto/repo-look.mjs';
 import {
@@ -8027,6 +8027,7 @@ app.post('/api/runs/:id/checkout', async (req, res) => {
         .then(({ evicted }) => { if (evicted.length) emitChanged('pipelines-changed', 'updated'); }).catch(() => {});
     }
     emitChanged('pipelines-changed', 'updated');
+    emitChanged('actions-changed', 'checkout');   // the Actions strips read their own cache (audit F-2)
     res.json(r);
   } catch (e) { sendCheckoutError(res, e); }
 });
@@ -8038,6 +8039,7 @@ app.delete('/api/runs/:id/checkout', async (req, res) => {
     const r = await discardCheckout({ id: row.id, members, force: req.body?.force === true, by: actorOf(req),
       stopServices: stopCheckoutServices });
     emitChanged('pipelines-changed', 'updated');
+    emitChanged('actions-changed', 'checkout');   // the Actions strips read their own cache (audit F-2)
     res.json(r);
   } catch (e) { sendCheckoutError(res, e); }
 });
@@ -13329,11 +13331,13 @@ app.post('/api/ask/threads/:id/attachments/:attId/reveal', async (req, res) => {
   if (REMOTE_MODE) return res.status(403).json({ error: 'Folders open on the machine worca runs on, so Show in folder is off on a hosted worca.', code: 'REVEAL_REMOTE' });
   if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
   if (!askGetAttachment(id, attId)) return res.status(404).json({ error: 'attachment not found' });
-  const source = askAttachmentSourcePath(id, attId);
-  if (!source) return res.status(409).json({ error: 'This file was not shown from a folder.', code: 'NO_SOURCE' });
-  let st = null;
-  try { st = fs.statSync(source); } catch { st = null; }
-  if (!st || !st.isFile()) return res.status(409).json({ error: 'The original file is gone: it was moved or deleted after it was shown.', code: 'SOURCE_GONE' });
+  // The original, or (a run's worktree is gone once the run ended) the same file in the project's own folder.
+  let target;
+  try { target = await askRevealTargetFor(id, attId); }
+  catch (e) { return res.status(500).json({ error: e?.message || String(e) }); }
+  if (!target) return res.status(409).json({ error: 'This file was not shown from a folder.', code: 'NO_SOURCE' });
+  if (target.error) return res.status(409).json({ error: target.error, code: 'SOURCE_GONE' });
+  const source = target.file;
   const dir = path.dirname(source);
   let l;
   try { l = revealLaunch(source, dir, builtins()); }
@@ -17374,6 +17378,11 @@ if (isMain) {
   // broker check below is already one.
   const proxyLine = proxyNotice(useEnvProxy());
   if (proxyLine) console[proxyLine.level === 'warn' ? 'warn' : 'log'](`[worca-ui] ${proxyLine.text}`);
+  // A proxy URL with credentials never reaches plugin code (scrubbedEnv). Said here, before
+  // any plugin spawns, so the once-per-process warning is never spent unseen by a caller
+  // that logs nowhere (Ask's task lookups); later spawns stay quiet.
+  const withheldLine = withheldProxyNotice();
+  if (withheldLine) console.warn(`[worca-ui] ${withheldLine}`);
 
   // Remote access fails closed: an unsafe or broken config never starts serving.
   if (REMOTE_ACCESS_CHECK.errors.length) {

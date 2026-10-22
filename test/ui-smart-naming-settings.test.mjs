@@ -115,7 +115,7 @@ test('types: the last one cannot be switched off; a custom type is added once an
   chipOf('fix').click();
   assert.equal(ctx.doc.querySelectorAll('#smartNamingTypes [aria-pressed="true"]').length, 1, 'fix stays on');
   assert.match($(ctx, 'smartNamingMsg').textContent, /At least one type/);
-  chipOf('+ Add type').click();
+  chipOf('Add type').click();
   const add = ctx.doc.querySelector('#smartNamingTypes input');
   add.value = 'Bad Type'; add.dispatchEvent(new ctx.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
   assert.match($(ctx, 'smartNamingMsg').textContent, /short lowercase word/);

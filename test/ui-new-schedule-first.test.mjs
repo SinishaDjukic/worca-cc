@@ -71,7 +71,7 @@ test('#new/schedule opens the sheet first; the pick waits on the form and the ha
   const line = doc.getElementById('new-sched');
   assert.equal(line.hidden, false);
   assert.equal(doc.getElementById('new-sched-badge').textContent, 'Scheduled');
-  assert.match(doc.getElementById('new-sched-text').textContent, /^Starts [A-Z][a-z]{2} [A-Z][a-z]{2} \d{1,2}, 02:00$/);
+  assert.match(doc.getElementById('new-sched-text').textContent, /^Starts ([A-Z][a-z]{2}|[A-Z][a-z]{2} \d{1,2}), 02:00$/);
   assert.equal(doc.getElementById('start-btn-label').textContent, 'Schedule');
   assert.equal(doc.getElementById('start-btn-clock').hasAttribute('hidden'), false);
   assert.equal(doc.getElementById('start-btn-play').hasAttribute('hidden'), true, 'the attribute, not the property — an <svg> has no .hidden');
@@ -154,4 +154,34 @@ test('a plain #new never opens the sheet; the split menu\'s Schedule… opens it
   assert.equal(runBodies.length, 0);
   assert.match(fieldErrorText(doc.querySelector('#prompt')), /prompt/i);
   assert.equal(doc.getElementById('new-sched').hidden, false, 'the pick survives a validation error');
+});
+
+test('Schedule a run from Schedules: no empty form behind the sheet, and a cancel reveals the form (F-28)', async () => {
+  const { window } = await boot();
+  const view = window.document.querySelector('[data-view="new"]');
+  assert.ok(view.classList.contains('sched-first'), 'the form is hidden while the sheet is up');
+  assert.equal(window.document.querySelector('#schedule-modal .sched-ok').textContent, 'Set time');
+  window.document.querySelector('#schedule-modal .sched-cancel').click();
+  await tick();
+  assert.equal(view.classList.contains('sched-first'), false, 'cancel leaves a plain, visible form');
+});
+
+test('scheduling a run toasts what was scheduled and lands on the Once tab (F-25)', async () => {
+  const { window } = await boot();
+  const doc = window.document;
+  pickTomorrow(window);
+  await tick();
+  const psel = doc.querySelector('#projectSelect');
+  psel.value = '/a/svc-iam';
+  psel.dispatchEvent(new window.Event('change', { bubbles: true }));
+  doc.querySelector('#title').value = 'Upgrade deps';
+  doc.querySelector('#prompt').value = 'upgrade deps';
+  doc.querySelector('#run-form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  await tick(30);
+  const toast = [...doc.querySelectorAll('.toasts .toast')].at(-1);
+  assert.match(toast.textContent, /Scheduled/);
+  assert.match(toast.textContent, /Upgrade deps · Starts /);
+  assert.equal(window.location.hash, '#schedules/once');
+  assert.ok(doc.querySelector('#schedules-tabs [data-tab="once"]').classList.contains('on'));
+  assert.equal(doc.querySelector('#schedules-tabs [data-tab="activity"]').classList.contains('on'), false);
 });

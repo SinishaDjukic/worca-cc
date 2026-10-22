@@ -30,7 +30,7 @@ const GLYPHS = {
 const PROVIDER = { gh: 'GitHub', adopr: 'Azure DevOps', adowi: 'Azure DevOps' };
 /** The short ref a chip shows: `owner/repo#7`, `api!7`, `AB#123`, `#<run id>`; a chat shows its title only. */
 const labelOf = (ref) => ref.label || (ref.kind === 'run' ? `#${ref.id.slice(0, 8)}` : '');
-const ITEM_PILL = { open: ['green', 'Open'], draft: ['slate', 'Draft'], merged: ['violet', 'Merged'], closed: ['red', 'Closed'] };
+const ITEM_PILL = { open: ['green', 'Open'], draft: ['slate', 'Draft'], merged: ['slate', 'Merged'], closed: ['red', 'Closed'] };
 const RESULT_KINDS = { gh: ['pr', 'issue'], adopr: ['pr'], adowi: ['workitem'], run: ['run'], chat: ['chat'] };
 
 /** A work item's state (any process: Agile, Scrum, Basic, CMMI, custom) → a pill tone; unknown states stay neutral. */
