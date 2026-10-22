@@ -98,7 +98,7 @@ export const FLAGS = Object.freeze([
     stage: 'experimental',
     default: false,
     owner: 'TomicaB',
-    since: '1.12.0',
+    since: '1.13.0',
     added: '2026-10-19',
     reviewBy: '2027-01-16',
     docs: 'docs/requirements.md',

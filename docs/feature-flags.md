@@ -69,8 +69,8 @@ off, and shown or hidden live when the flag changes:
 ```
 
 `data-flag-chip` adds the **Labs** / **Beta** chip, which links to the flag's row in
-Settings › Labs. A tab (`[role="tab"]`, `.tab`, or a button in `.tabs` / `.seg`) gets the chip
-inside its label instead, as plain text, never a link. `data-flag-chip="KEY"` names the flag without
+Settings › Labs. A tab (`[role="tab"]`, `.tab`, or a button in `.tabs` / `.seg`) and a sidebar row (a
+button in `.nav`) get the chip inside, after the label, as plain text, never a link. `data-flag-chip="KEY"` names the flag without
 gating the host, so its host shows the chip while the flag is off.
 
 In JS (`ui/public/flags.mjs`):

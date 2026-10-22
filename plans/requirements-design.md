@@ -43,9 +43,11 @@ days before a developer is involved. Requirements never start a run in this PR.
 
 ## 3. Data
 
-One migration, registered in `INCREMENTAL_TABLES` so it is reconcile-safe: `dev`'s next free version is
-57, which Shaper also takes; whichever merges second takes the next number, and `repairSchemaGaps`
-creates the tables on a database stamped past it by the other branch.
+One migration, registered in `INCREMENTAL_TABLES` so it is reconcile-safe. It was v57 on this branch, which
+Shaper also took; Shaper merged first, so on the merge with `dev` (at v70) it became **v71** (A2's `req_starts`
+is v72). `repairSchemaGaps` creates the tables on a database stamped past it by another branch, and a
+database stamped 57/58 by the old local numbering still reaches 72 with both sets of tables
+(`test/db-migrate-v71.test.mjs`, `test/db-migrate-v72.test.mjs`).
 
 ```sql
 CREATE TABLE IF NOT EXISTS req_features (
@@ -229,7 +231,8 @@ archived features too. **New feature**: title, description, project or workspace
   and round runners, jobs, mock), `edits.mjs` (the product owner's edits), `markdown.mjs`, `save.mjs`, `routes.mjs` (`registerRequirementsRoutes(app, deps)`: one call in `ui/server.mjs` instead of
   ~300 more lines in that file).
 - `src/core/db.mjs`: the four tables, `INCREMENTAL_TABLES`, the ladder rung, `SCHEMA_VERSION`;
-  `test/db-migrate-v57.test.mjs`, and `test/db-migrate-v56.test.mjs` stops pinning the exact version.
+  `test/db-migrate-v71.test.mjs` (was v57 before the merge with `dev`), and `test/db-migrate-v56.test.mjs`
+  stops pinning the exact version.
 - `src/core/cost-budget.mjs`: `recordRequirementsCostDelta`, `requirementsWindowedSpendUsd`, and
   requirements spend in `totalWindowSpendUsd` and `budgetStatus().allTimeSpendUsd`.
 - `src/core/stats.mjs`: requirements spend in Statistics (totals, prev, all time, series; `totals.requirements`).

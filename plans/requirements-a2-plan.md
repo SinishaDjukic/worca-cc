@@ -38,6 +38,9 @@
 
 ### Task 1: Schema v58 and the starts store
 
+> Renumbered on the merge with `dev`: `req_starts` is **v72** and its test `test/db-migrate-v72.test.mjs`
+> (Shaper took 57/58 upstream; see the A2 design §3). The steps below are the original record.
+
 **Files:**
 - Modify: `src/core/db.mjs` (`SCHEMA_VERSION` 57 → 58; a `REQUIREMENTS_STARTS_DDL` next to `REQUIREMENTS_DDL` ~line 1039; `INCREMENTAL_TABLES` entry `req_starts`; ladder rung `if (current < 58) db.exec(REQUIREMENTS_STARTS_DDL);` after the v57 rung ~line 2200)
 - Modify: `src/core/requirements/store.mjs`
