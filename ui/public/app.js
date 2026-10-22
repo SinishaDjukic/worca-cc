@@ -277,6 +277,8 @@ import { createTagInput, tagChip, fetchTagVocabulary, createDimensionSlots, crea
 import { normaliseTags, formatTag, parseTag } from '../../src/shared/run-tags.mjs';
 import { splitByDimensions, tagGroupOptions, tagsProblemText } from '../../src/shared/tag-dimensions.mjs';
 import { createFlagsView, bindFlagSwitch } from './flags-view.mjs';
+import { createSmartNaming } from './smart-naming.mjs';
+import { renderPattern, patternProblem, PRESET_TYPES, TYPE_RE } from '../../src/shared/naming/pattern.mjs';
 import { createFlyout } from './side-flyout.mjs';
 import * as runPanel from './chat/run-panel.mjs';
 import { createTopnavSearch } from './topnav-search.mjs';
@@ -626,9 +628,13 @@ const readyFor = (pause, onLoad) => (pause?.reason === 'usage_limit' && pause?.l
 // ---------------------------------------------------------------------------
 // Elements
 // ---------------------------------------------------------------------------
+// Smart run naming (flag smartRunNaming): the New run form's title / branch suggestion controller, built at boot.
+// Declared above everything that reads it, so an early paint finds null instead of a TDZ.
+let smartNaming = null;
 const el = {
   form: $('#run-form'),
   acctKeepAwake: $('#acct-keepawake'),
+  smartNamingSwitch: $('#smartNamingSwitch'),
   projectSelect: $('#projectSelect'),
   projectHint: $('#projectHint'),
   addProject: $('#add-project'),
@@ -652,8 +658,10 @@ const el = {
   folderMsg: $('#folderMsg'),
   folderScope: $('#folderScope'),
   title: $('#title'),
+  titleRetry: $('#titleSnRetry'), titleClear: $('#titleSnClear'),
   sourceBranch: $('#sourceBranch'),
   featureBranch: $('#featureBranch'),
+  branchType: $('#branchType'), branchTypeWrap: $('#branchTypeWrap'), branchRetry: $('#branchSnRetry'), branchClear: $('#branchSnClear'),
   sameAsSource: $('#sameAsSource'),
   presetSelect: $('#presetSelect'),
   presetChip: $('#preset-chip'),
@@ -7287,6 +7295,7 @@ function setTask(t) {
   if (el.sameAsSource && el.sameAsSource.checked !== !!t.sameAsSource) { el.sameAsSource.checked = !!t.sameAsSource; paintSameAsSource(); }
   scheduleMentionHighlight(el.prompt);
   scheduleMentionHighlight(el.promptMarkdown);
+  smartNaming?.reset({ keep: !!(t.title || '').trim() });   // a restored or cleared task drops our suggestions, keeps typed names
 }
 /** After a start: clear the submitted task — unless something new was typed while it started. */
 function clearTask(submitted) {
@@ -8144,6 +8153,7 @@ function projectOutcome() {
 /** New branch hint: the real names the run creates — one per project in a workspace, suffixed. */
 function paintFeatureHint() {
   if (!el.featureBranchHint) return;
+  if (smartNaming?.ownsBranchHint()) return;   // Smart run naming shows its own reason / warning there
   if (el.sameAsSource && el.sameAsSource.checked) { el.featureBranchHint.textContent = ''; return; }   // #sameAsSourceHint says what happens
   const f = el.featureBranch ? el.featureBranch.value.trim() : '';
   const ws = state.runTarget === 'workspace' ? state.workspaces.find((w) => w && w.id === state.selectedWorkspaceId) : null;
@@ -14828,6 +14838,7 @@ function buildRunBody() {
   };
   // Run on the source branch: a flag on the wire, never a feature name (the run auto-names its hidden branch).
   if (el.sameAsSource && el.sameAsSource.checked) { body.sameAsSource = true; delete body.featureBranch; }
+  else if (smartNaming) Object.assign(body, smartNaming.bodyExtras());   // Smart run naming: a still-suggested branch is marked
   if (target === 'workspace') {
     body.workspaceId = workspaceId;
     // Per-project source branches: { [projectKey]: branch }. Omit empties (the
@@ -14941,9 +14952,9 @@ el.form.addEventListener('submit', async (e) => {
     if (schedSync && typeof schedSync.beforeRun === 'boolean') body.syncBeforeStart = schedSync.beforeRun;
     if (schedSync && (schedSync.onDiverged === 'origin' || schedSync.onDiverged === 'fail')) body.syncOnDiverged = schedSync.onDiverged;
   }
-  if (!gitOn()) for (const k of ['sourceBranch', 'sourceBranchByKey', 'featureBranch', 'sameAsSource', 'sourceFromPrevious', 'syncBeforeStart', 'syncOnDiverged']) delete body[k];
-  if (target === 'none') for (const k of ['sourceBranch', 'sourceBranchByKey', 'featureBranch', 'sameAsSource', 'sourceFromPrevious', 'syncBeforeStart', 'syncOnDiverged']) delete body[k];   // schedule fields stay: the server's 400 shows in the card
-  if ((target === 'project' || target === 'workspace') && el.form.dataset.workMode === 'folder') for (const k of ['sourceBranch', 'sourceBranchByKey', 'featureBranch', 'sameAsSource', 'sourceFromPrevious', 'syncBeforeStart', 'syncOnDiverged']) delete body[k];
+  if (!gitOn()) for (const k of ['sourceBranch', 'sourceBranchByKey', 'featureBranch', 'featureBranchSuggested', 'featureBranchFallback', 'sameAsSource', 'sourceFromPrevious', 'syncBeforeStart', 'syncOnDiverged']) delete body[k];
+  if (target === 'none') for (const k of ['sourceBranch', 'sourceBranchByKey', 'featureBranch', 'featureBranchSuggested', 'featureBranchFallback', 'sameAsSource', 'sourceFromPrevious', 'syncBeforeStart', 'syncOnDiverged']) delete body[k];   // schedule fields stay: the server's 400 shows in the card
+  if ((target === 'project' || target === 'workspace') && el.form.dataset.workMode === 'folder') for (const k of ['sourceBranch', 'sourceBranchByKey', 'featureBranch', 'featureBranchSuggested', 'featureBranchFallback', 'sameAsSource', 'sourceFromPrevious', 'syncBeforeStart', 'syncOnDiverged']) delete body[k];
   // Run presets (#712): the run-only lane. Agent picks and loop budgets ride the per-run overlay and
   // human-in-the-loop its body key, so the project config never changes; every other key came from the form.
   if (state.preset) {
@@ -15432,6 +15443,7 @@ async function loadSettings() {
     paintNightSettings(data);
     paintSyncSettings(data);
     paintNetworkWaitSettings(data);
+    paintSmartNamingSettings(data);
     paintActionsSettings(data);
     paintDebugSpawnSettings(data);
     await paintEngineSettings(data);
@@ -16323,6 +16335,118 @@ document.getElementById('networkWaitSave')?.addEventListener('click', (e) => pos
 document.getElementById('networkWaitReset')?.addEventListener('click', (e) => postNetworkWait(
   { networkWait: null }, { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
 settingsCardDirty('networkWaitSave');
+
+// Settings › Runs › Smart run naming (Labs, flag smartRunNaming). The rows stay editable while the flag is off (muted), so a
+// team can prepare them. The master switch is the flag itself (bindFlagSwitch, below the Keep awake one).
+const snCard = () => document.getElementById('smart-naming-settings-card');
+const SN_PREVIEW = { type: 'fix', slug: 'safari-sso-redirect-loop', ticket: 'proj-123' };
+let snTypesOn = [];            // the enabled types, in order
+let snTypesAll = [];           // the toggles shown: the presets, then any custom type
+function snPaintMuted() {
+  const card = snCard();
+  if (!card) return;
+  const off = !flagOn('smartRunNaming');
+  for (const row of card.querySelectorAll('.drows > :not(#smartNamingMasterRow)')) row.setAttribute('aria-disabled', off ? 'true' : 'false');
+}
+function snPaintPreview() {
+  const input = document.getElementById('smartNamingPattern');
+  const out = document.getElementById('smartNamingPreview');
+  if (!input || !out) return;
+  const problem = patternProblem(input.value.trim());
+  out.textContent = problem ? `Not usable: ${problem}.` : `Preview: ${renderPattern(input.value.trim(), SN_PREVIEW)}`;
+  out.classList.toggle('warn', !!problem);
+}
+function snPaintTypes() {
+  const host = document.getElementById('smartNamingTypes');
+  const value = document.getElementById('smartNamingTypesValue');
+  if (!host || !value) return;
+  value.value = snTypesOn.join(',');
+  host.replaceChildren(...snTypesAll.map((t) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'filter-chip'; b.textContent = t;
+    b.setAttribute('aria-pressed', String(snTypesOn.includes(t)));
+    b.addEventListener('click', () => {
+      const msg = document.getElementById('smartNamingMsg');
+      if (snTypesOn.includes(t) && snTypesOn.length === 1) { if (msg) msg.textContent = 'At least one type stays on.'; return; }
+      if (msg) msg.textContent = '';
+      snTypesOn = snTypesAll.filter((x) => (x === t ? !snTypesOn.includes(t) : snTypesOn.includes(x)));
+      snPaintTypes();
+      value.dispatchEvent(new window.Event('change', { bubbles: true }));
+    });
+    return b;
+  }), (() => {
+    const add = document.createElement('button');
+    add.type = 'button'; add.className = 'filter-chip'; add.textContent = 'Add type';
+    add.addEventListener('click', () => {
+      const input = document.createElement('input');
+      input.type = 'text'; input.className = 'input mono'; input.maxLength = 16; input.setAttribute('aria-label', 'New type'); input.size = 10;
+      const take = () => {
+        const t = input.value.trim().toLowerCase();
+        const msg = document.getElementById('smartNamingMsg');
+        if (!t) { snPaintTypes(); return; }
+        if (!TYPE_RE.test(t)) { if (msg) msg.textContent = 'A type is a short lowercase word, such as perf.'; input.focus(); return; }
+        if (msg) msg.textContent = '';
+        if (!snTypesAll.includes(t)) snTypesAll = [...snTypesAll, t];
+        if (!snTypesOn.includes(t)) snTypesOn = [...snTypesOn, t];
+        snPaintTypes();
+        value.dispatchEvent(new window.Event('change', { bubbles: true }));
+      };
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); take(); } else if (e.key === 'Escape') snPaintTypes(); });
+      input.addEventListener('blur', take);
+      add.replaceWith(input);
+      input.focus();
+    });
+    return add;
+  })());
+}
+// The model is a helper job (Models › Engines › Helper jobs › Run naming); the card only says which one runs and
+// what a suggestion costs. /api/naming/config answers 404 while the flag is off, so the cost line waits for it.
+async function snPaintCost(naming) {
+  const out = document.getElementById('smartNamingCost');
+  if (!out) return;
+  const base = 'Shown in Statistics as Naming, never billed to the run.';
+  out.textContent = base;
+  if (flagOn('smartRunNaming')) {
+    const c = naming || await safeJson(await fetch('/api/naming/config').catch(() => null));
+    const model = c?.picked?.model ? `${c.picked.model}${c.picked.source === 'auto' ? ' (cheapest ready)' : ''}. ` : '';
+    if (c && typeof c.estimatedUsd === 'number') out.textContent = `${model}About 300 tokens in, 30 out: ≈ $${c.estimatedUsd.toFixed(5)} per suggestion. ${base}`;
+    else if (model) out.textContent = `${model}${base}`;
+  }
+  settingsCardPainted('smartNamingSave');
+}
+function paintSmartNamingSettings(data) {
+  const d = data && data.smartNaming;
+  const card = snCard();
+  if (!d || !card) return;
+  const set = (id, v) => { const n = document.getElementById(id); if (n) n.checked = !!v; };
+  set('smartNamingTitle', d.suggestTitle); set('smartNamingBranch', d.suggestBranch); set('smartNamingRunId', d.addRunId);
+  const trig = document.getElementById('smartNamingTrigger'); if (trig) trig.value = d.trigger;
+  const pat = document.getElementById('smartNamingPattern'); if (pat) pat.value = d.pattern;
+  snTypesOn = [...d.types];
+  snTypesAll = [...new Set([...PRESET_TYPES, ...d.types])];
+  snPaintPreview(); snPaintTypes(); snPaintMuted();
+  settingsCardPainted('smartNamingSave');
+  void snPaintCost(null);
+}
+function readSmartNamingForm() {
+  return {
+    suggestTitle: document.getElementById('smartNamingTitle').checked,
+    suggestBranch: document.getElementById('smartNamingBranch').checked,
+    addRunId: document.getElementById('smartNamingRunId').checked,
+    trigger: document.getElementById('smartNamingTrigger').value,
+    pattern: document.getElementById('smartNamingPattern').value.trim(),
+    types: [...snTypesOn],
+  };
+}
+function postSmartNaming(body, opts = {}) {
+  return postSettingsCard(body, { card: snCard(), paint: paintSmartNamingSettings, dirty: settingsCardDirty('smartNamingSave'), ...opts });
+}
+document.getElementById('smartNamingPattern')?.addEventListener('input', snPaintPreview);
+document.getElementById('smartNamingSave')?.addEventListener('click', (e) => postSmartNaming({ smartNaming: readSmartNamingForm() }, { button: e.currentTarget }));
+document.getElementById('smartNamingReset')?.addEventListener('click', (e) => postSmartNaming(
+  { smartNaming: null }, { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
+settingsCardDirty('smartNamingSave');
+onFlagChange('smartRunNaming', () => { snPaintMuted(); void snPaintCost(null); void paintHelperModelCards(); });
 
 function paintAskSettings(data) {
   const turns = document.getElementById('askMaxTurns');
@@ -18366,9 +18490,10 @@ const CODEX_HELPER_JOBS = ['title', 'classifier', 'overview', 'prDescription', '
 // src/core/model-env.mjs HELPER_ENGINES (the browser cannot load /src/core): the engines with helper slots of their own.
 const HELPER_ENGINES = ['claude', 'codex'];
 // Claude's helper slots at user level are their own settings keys (settings-cascade.mjs CLAUDE_USER): a model id for
-// titles, Auto and PR descriptions (no effort), and the Memory defragment and Agent generation pairs. No user-level
-// overview slot. Agent generation is Claude's alone (it always runs on Claude), so no other tab has its row.
-const CLAUDE_USER_HELPER_JOBS = ['title', 'classifier', 'prDescription', 'memoryDefrag', 'agentGen'];
+// titles, Auto and PR descriptions (no effort), and the Memory defragment, Agent generation and Run naming pairs. No
+// user-level overview slot. Agent generation and Run naming are Claude's alone (they always run on Claude), so no other
+// tab has their rows; Run naming shows only while smartRunNaming is on.
+const CLAUDE_USER_HELPER_JOBS = ['title', 'classifier', 'prDescription', 'memoryDefrag', 'agentGen', 'naming'];
 const helperPair = (p) => (p && p.model ? { model: p.model, ...(p.effort ? { effort: p.effort } : {}) } : undefined);
 const CLAUDE_USER_HELPER_OWN = (data) => ({
   title: data.titleModel ? { model: data.titleModel } : undefined,
@@ -18376,7 +18501,9 @@ const CLAUDE_USER_HELPER_OWN = (data) => ({
   prDescription: data.prDescriptionModel ? { model: data.prDescriptionModel } : undefined,
   memoryDefrag: helperPair(data.memoryDefrag),
   agentGen: helperPair(data.agentGenModel),
+  naming: helperPair(data.namingModel),
 });
+const claudeHelperJobs = () => CLAUDE_USER_HELPER_JOBS.filter((job) => job !== 'naming' || flagOn('smartRunNaming'));
 async function paintEngineSettings(data) {
   const root = document.getElementById('engine-settings-root');
   if (!root) return;
@@ -18390,11 +18517,12 @@ async function paintEngineSettings(data) {
     for (const job of CODEX_HELPER_JOBS) fields[utilityId(engine, job)] = { own: data.utilityModels?.[engine]?.[job], inherited: { value: undefined, source: 'default' } };
   }
   const claudeOwn = CLAUDE_USER_HELPER_OWN(data || {});
-  for (const job of CLAUDE_USER_HELPER_JOBS) fields[utilityId('claude', job)] = { own: claudeOwn[job], inherited: { value: undefined, source: 'default' } };
+  const claudeJobs = claudeHelperJobs();
+  for (const job of claudeJobs) fields[utilityId('claude', job)] = { own: claudeOwn[job], inherited: { value: undefined, source: 'default' } };
   renderEngineSection(root, { level: 'user', roles, catalog, fields, status: document.getElementById('engineSettingsMsg'), onTest: testModelRow,
     noEffort: ['title', 'classifier', 'prDescription'].map((job) => utilityId('claude', job)),
     defaultLabels: { claude: 'the default model' },
-    jobs: { claude: CLAUDE_USER_HELPER_JOBS, codex: CODEX_HELPER_JOBS, cursor: [] } });
+    jobs: { claude: claudeJobs, codex: CODEX_HELPER_JOBS, cursor: [] } });
   // Each non-Claude card's readiness line (GET /api/engines). Only on the Models page, where the cards live: a
   // settings-changed broadcast repaints this from any view, and that must not spawn a preflight.
   if (currentView() === 'models') void paintEngineCardStatus(root);
@@ -37825,6 +37953,7 @@ async function applyAskPrefill() {
   if (el.advancedConfig) el.advancedConfig.open = true;
   if (el.sameAsSource && el.sameAsSource.checked) { el.sameAsSource.checked = false; paintSameAsSource(); }
   if (el.featureBranch) el.featureBranch.value = p.featureBranch || '';
+  smartNaming?.reset({ keep: true });   // a prefilled name counts as typed: a later suggestion never overwrites it
   if (p.target === 'workspace') {
     // the per-member selects are rebuilt asynchronously on the change above
     // populateBranchSelect rebuilds each member select's options when its fetch
@@ -38296,6 +38425,30 @@ const offPresetsFlag = onFlagChange('runPresets', (on) => {
 });
 // Test hook: flags.mjs's listener map outlives a jsdom boot, so a suite unsubscribes the previous app first.
 if (typeof window !== 'undefined') window.__np = Object.assign(window.__np || {}, { offPresetsFlag });
+
+// Smart run naming (Labs): built once; every handler checks flagOn('smartRunNaming') itself, so it is inert while off.
+if (el.title && el.featureBranch && el.prompt && el.branchType && el.titleRetry) {
+  window.__np.offSmartNaming?.();
+  smartNaming = createSmartNaming({
+    doc: document, el, flagOn, icon,
+    getProjectDir: () => (state.runTarget === 'project' ? selectedProjectPath() || undefined : undefined),
+    api: async (method, path, body, signal) => {
+      try {
+        const res = await fetch(path, body === undefined ? { method, signal }
+          : { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal });
+        return res.ok ? await safeJson(res) : null;
+      } catch (err) { return err?.name === 'AbortError' ? { aborted: true } : null; }
+    },
+  });
+  window.__np.offSmartNaming = () => smartNaming?.dispose();
+}
+
+// Settings › Runs › Smart run naming: the master switch is the flag itself, one source with Settings › Labs.
+if (el.smartNamingSwitch) {
+  window.__np.offSmartNamingSwitch?.();
+  window.__np.offSmartNamingSwitch = bindFlagSwitch(el.smartNamingSwitch, 'smartRunNaming', {
+    api: (method, body) => mcpApi(method, '/api/flags', body), msgEl: $('#smartNamingMsg') });
+}
 
 // The account menu's Keep awake row (UI/UX review F): the keepAwake flag, one source with Settings › Labs.
 // The whole row is the switch; a refused change shows in its tip and as a toast, a lock in its tip.

@@ -70,6 +70,7 @@ import {
   humanRateUsdPerHour, setHumanRateUsdPerHour, assertHumanRateInput,
   askMaxTurns, askMaxBudgetUsd, setAskMaxTurns, setAskMaxBudgetUsd, assertAskLimitInputs,
   askWeb, assertAskWebInput, setAskWeb, addAskWebHost,
+  smartNaming, assertSmartNamingInput, setSmartNaming,
   chatPrefs, setChatPrefs,
   debugSpawnEnabled as storedDebugSpawnEnabled, effectiveDebugSpawn, setDebugSpawnEnabled, assertDebugSpawnInput, SETTINGS_POST_KEYS,
   resumeAfterUsageLimit, assertResumeAfterUsageLimitInput, setResumeAfterUsageLimit,
@@ -81,6 +82,7 @@ import {
   prDescriptionModel as storedPrDescriptionModel, setPrDescriptionModel, assertPrDescriptionModelInput,
   memoryDefragModel, setMemoryDefragModel, assertMemoryDefragModelInput,
   agentGenModel as storedAgentGenModel, setAgentGenModel, assertAgentGenModelInput,
+  namingModel as storedNamingModel, setNamingModel, assertNamingModelInput,
   workspaceScanModels, setWorkspaceScanModels, assertWorkspaceScanInput,
   scheduleDefaults, setScheduleDefaults,
   userTagDimensions, setUserTagDimensions, userEnforceTags, setUserEnforceTags,
@@ -155,7 +157,8 @@ import { cancelSuggestion } from '../src/core/ask/suggest.mjs';
 import { validateMcpOff, resolveAskMcp, askMcpPromptInput, askMcpPreview, askMcpJoinNotice, resolveAskSkills } from '../src/core/ask/mcp.mjs';
 import { attachRunFollower } from '../src/core/ask/follow.mjs';
 import { mockEnabled, MOCK_WRITER_ROLES } from '../src/core/claude-runner.mjs';
-import { budgetStatus, readCostCapOverride, setCostCapOverride } from '../src/core/cost-budget.mjs';
+import { budgetStatus, readCostCapOverride, setCostCapOverride, recordUtilityCost } from '../src/core/cost-budget.mjs';
+import { resolveNamingModel, suggestNames, mockSuggestion, estimateNamingUsd, legacyBranchHint } from '../src/core/naming.mjs';
 import { getStats, budgetWindowSavings, shapingGroups } from '../src/core/stats.mjs';
 import {
   enableTeamMetrics, setRecordMyRuns, flushSlug, flushAll, flushProject, scheduleFlush, discoverProject,
@@ -236,7 +239,7 @@ import { listFolders } from '../src/core/fs-browse.mjs';
 import { realRoots, realOrNull, checkInside, insideRoots, outsideAllowedMessage, FS_OUTSIDE_ALLOWED } from '../src/core/fs-scope.mjs';
 import { importCandidates, parsePathList, IMPORT_MAX_INPUTS } from '../src/core/workspace-import.mjs';
 import {
-  readConfig, setStep, addCustomModel, removeCustomModel, listModels,
+  readConfig, setStep, addCustomModel, removeCustomModel, listModels, modelCostConfig,
   PREDEFINED_MODELS, CODEX_BUILTIN_MODELS, COPILOT_BUILTIN_MODELS, agentSteps, EFFORTS, catalogHasModel, engineOfModel, enginesOfModel, modelRunsOn, foreignRunModel, assertSlotModels, stepSlotDefaults,
   readRunConfig, setNodeModel, setFeedbackCycles, setWireCycles, setActiveWorkflow, setHumanInLoop, resetWorkflowConfig,
   globalModelRefs, removeGlobalModelAndRefs, promoteCustomModel, costUnreliableModelIds,
@@ -2459,6 +2462,12 @@ const startRunHandler = async (req, res) => {
     if (body.sameAsSource !== undefined && body.sameAsSource !== null && typeof body.sameAsSource !== 'boolean') {
       return badRequest(res, 'sameAsSource must be true or false');
     }
+    // Smart run naming markers (flag smartRunNaming): explicit booleans, validated before a schedule stores the body.
+    for (const k of ['featureBranchSuggested', 'featureBranchFallback']) {
+      if (body[k] !== undefined && body[k] !== null && typeof body[k] !== 'boolean') return badRequest(res, `${k} must be true or false`);
+    }
+    // The form's untouched fallback name: today's name is derived by the harness (with the run id), not sent.
+    if (flagEnabled('smartRunNaming') && body.featureBranchFallback === true) delete body.featureBranch;
     // The same name for both, without the flag: refuse now with the way out, instead of accepting the run
     // and failing it at setup ("they must differ") — or, on a repeating schedule, silently running on a
     // date-suffixed copy. Never inferred: chains, schedules and Ask carry the mode as data.
@@ -2695,6 +2704,9 @@ const startRunHandler = async (req, res) => {
     // auto-names its hidden branch, so a typed feature name is ignored (and never date-suffixed).
     // A Workspace scan or a memory defragment lands no work: the flag does not apply there.
     const sameAsSource = body.sameAsSource === true && !scanTarget && !memoryScope;
+    // Smart run naming: a title that was given is kept (typed, or suggested on the form); read at start and at fire time.
+    const smartNamingOn = flagEnabled('smartRunNaming');
+    const titleLocked = smartNamingOn && typeof body.title === 'string' && !!body.title.trim();
     const branch = {
       source: typeof body.sourceBranch === 'string' && body.sourceBranch.trim()
         ? body.sourceBranch.trim() : null,
@@ -2703,6 +2715,8 @@ const startRunHandler = async (req, res) => {
       ...(resolveOf ? { resolves: { runId: resolveOf.runId, member: resolveOf.member || null } } : {}),
       ...(roundOf ? { roundOf } : {}),
       ...(sameAsSource ? { sameAsSource: true } : {}),
+      ...(smartNamingOn && !sameAsSource && body.featureBranchSuggested === true ? { suggested: true } : {}),
+      ...(smartNamingOn && !sameAsSource && body.featureBranchFallback === true ? { legacy: true } : {}),
     };
     const syncBody = {
       before: typeof body.syncBeforeStart === 'boolean' ? body.syncBeforeStart : null,         // null = project default
@@ -2887,6 +2901,7 @@ const startRunHandler = async (req, res) => {
         startedBy,
         ...(req._prWatchRunId ? { prWatchRunId: req._prWatchRunId } : {}),
         branch,
+        ...(titleLocked ? { titleLocked: true } : {}),
         sync,
         // Human in the loop is per run on a workspace (D-W1): the body wins, else on.
         humanInLoop: bodyHumanInLoop ?? true,
@@ -3053,6 +3068,7 @@ const startRunHandler = async (req, res) => {
         startedBy,
         ...(req._prWatchRunId ? { prWatchRunId: req._prWatchRunId } : {}),
         branch,
+        ...(titleLocked ? { titleLocked: true } : {}),
         sync,
         humanInLoop,
         ...(memoryScope ? { memoryScope } : {}),
@@ -10708,6 +10724,7 @@ const settingsState = () => ({
   askMaxTurns: askMaxTurns(),
   askMaxBudgetUsd: askMaxBudgetUsd(),
   askWeb: askWeb(),                                       // Chat web access (off by default)
+  smartNaming: smartNaming(),                             // Smart run naming (flag smartRunNaming)
   debugSpawnEnabled: storedDebugSpawnEnabled(),          // what is STORED (the checkbox)
   debugSpawnEffective: effectiveDebugSpawn(),             // what the next spawn will DO, and why
   resumeAfterUsageLimit: resumeAfterUsageLimit(),
@@ -10765,6 +10782,12 @@ async function prDescriptionModelState() {
 async function agentGenModelState() {
   const stored = storedAgentGenModel();
   return { agentGenModel: stored, agentGenModelEffective: resolveAgentGenModel(stored, await listModels('')) };
+}
+
+/** Models › Helper jobs › Run naming: the stored pair + what a suggestion will actually run on. */
+async function namingModelState() {
+  const stored = storedNamingModel();
+  return { namingModel: stored, namingModelEffective: resolveNamingModel(stored, await listModels(''), modelCostConfig) };
 }
 
 // ---------------------------------------------------------------------------
@@ -11175,7 +11198,7 @@ app.post('/api/shutdown', (req, res) => {
 
 app.get('/api/settings', async (req, res) => {
   const person = awayPersonOf(req);   // B4: a signed-in person sees their own Away switch
-  res.json({ ...settingsState(), ...(person ? { nightModeToggle: nightModeToggleFor(person), nightModePerPerson: person } : {}), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), chat: chatPrefs(), app: APP_INFO });
+  res.json({ ...settingsState(), ...(person ? { nightModeToggle: nightModeToggleFor(person), nightModePerPerson: person } : {}), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), ...(await namingModelState()), chat: chatPrefs(), app: APP_INFO });
 });
 
 app.get('/api/budget', (_req, res) => {
@@ -11190,7 +11213,7 @@ app.get('/api/budget', (_req, res) => {
 
 /**
  * The Models page's utility pickers (title, Auto classifier, PR description, memory defragment,
- * agent generation, workspace scan) are Claude's slots (cascading-settings-design.md D10/§3.1): a Codex or Cursor id there is
+ * agent generation, run naming, workspace scan) are Claude's slots (cascading-settings-design.md D10/§3.1): a Codex or Cursor id there is
  * a 400 that names it. A Codex run's utility jobs run on Codex's own default for now.
  * @throws {Error}
  */
@@ -11212,7 +11235,7 @@ app.post('/api/settings', async (req, res) => {
     has('projectsRoot') ? normalizeProjectPath(body.projectsRoot) : null]))) return;
   try {
     const { actionsWarnings } = await applySettingsPatch(body, { person: awayPersonOf(req) });
-    res.json({ ...settingsState(), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), chat: chatPrefs(),
+    res.json({ ...settingsState(), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), ...(await namingModelState()), chat: chatPrefs(),
       ...(actionsWarnings ? { actionsWarnings } : {}) });
   } catch (err) {
     // 400 with the user's words and, when known, the body path of the bad field (#555).
@@ -11236,6 +11259,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const hasHumanRateKey = has('humanRateUsdPerHour');
   const hasAskKey = has('askMaxTurns') || has('askMaxBudgetUsd');
   const hasAskWeb = has('askWeb');                // null clears back to unset (a team default applies)
+  const hasSmartNaming = has('smartNaming');      // null clears the stored block
   const hasDebugSpawnKey = has('debugSpawnEnabled');
   const hasLimitResumeKey = has('resumeAfterUsageLimit');
   const hasTitleModelKey = has('titleModel');
@@ -11255,6 +11279,8 @@ async function applySettingsPatch(body, { person = null } = {}) {
   // The agent wizard's Generate pair: agent generation has no project, so the project-less catalog.
   const hasAgentGenKey = has('agentGenModel');
   const agentGenModels = hasAgentGenKey ? (autoModels || defragModels || await listModels('')) : null;
+  const hasNamingModelKey = has('namingModel');
+  const namingModels = hasNamingModelKey ? (autoModels || defragModels || agentGenModels || await listModels('')) : null;
   const hasWorkspaceScanKey = has('workspaceScan');
   const hasRunEngineKey = has('runEngine');
   const hasStepModelsKey = has('stepModels');
@@ -11286,7 +11312,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   if (has('askMaxTurns')) ask.askMaxTurns = body.askMaxTurns ?? '';
   if (has('askMaxBudgetUsd')) ask.askMaxBudgetUsd = body.askMaxBudgetUsd === undefined ? '' : body.askMaxBudgetUsd;
   {   // was the route's try: a refusal now reaches the caller (the route maps it to 400, the chat to a notice)
-    for (const key of ['titleModel', 'autoWorkflowModel', 'prDescriptionModel', 'memoryDefrag', 'agentGenModel', 'workspaceScan']) {
+    for (const key of ['titleModel', 'autoWorkflowModel', 'prDescriptionModel', 'memoryDefrag', 'agentGenModel', 'namingModel', 'workspaceScan']) {
       if (has(key)) asSettingsField(key, () => refuseNonClaudeUtilityModel(key, body[key]));
     }
     // Each validator / setter that can refuse a value runs tagged with the body key it checks,
@@ -11307,6 +11333,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
       }
     }
     if (hasAskWeb && body.askWeb !== null) asSettingsField('askWeb', () => assertAskWebInput(body.askWeb));
+    if (hasSmartNaming && body.smartNaming !== null) asSettingsField('smartNaming', () => assertSmartNamingInput(body.smartNaming));
     if (hasDebugSpawnKey) asSettingsField('debugSpawnEnabled', () => assertDebugSpawnInput(body.debugSpawnEnabled));
     if (hasLimitResumeKey) asSettingsField('resumeAfterUsageLimit', () => assertResumeAfterUsageLimitInput(body.resumeAfterUsageLimit));
     if (hasTitleModelKey) asSettingsField('titleModel', () => {
@@ -11322,6 +11349,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasPrDescKey) asSettingsField('prDescriptionModel', () => assertPrDescriptionModelInput(body.prDescriptionModel ?? '', prDescModels));
     if (hasMemoryDefragKey) asSettingsField('memoryDefrag', () => assertMemoryDefragModelInput(body.memoryDefrag, defragModels));
     if (hasAgentGenKey) asSettingsField('agentGenModel', () => assertAgentGenModelInput(body.agentGenModel, agentGenModels));
+    if (hasNamingModelKey) asSettingsField('namingModel', () => assertNamingModelInput(body.namingModel, namingModels));
     if (hasWorkspaceScanKey) asSettingsField('workspaceScan', () => assertWorkspaceScanInput(body.workspaceScan, wsScanModels));
     if (hasRunEngineKey) asSettingsField('runEngine', () => assertRunEngineInput(body.runEngine));
     if (hasAskEngineKey) asSettingsField('askEngine', () => assertAskEngineInput(body.askEngine));
@@ -11377,6 +11405,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (has('askMaxTurns')) await setAskMaxTurns(ask.askMaxTurns);
     if (has('askMaxBudgetUsd')) await setAskMaxBudgetUsd(ask.askMaxBudgetUsd);
     if (hasAskWeb) await setAskWeb(body.askWeb);
+    if (hasSmartNaming) await setSmartNaming(body.smartNaming);
     if (hasDebugSpawnKey) await setDebugSpawnEnabled(body.debugSpawnEnabled);
     if (hasLimitResumeKey) await setResumeAfterUsageLimit(body.resumeAfterUsageLimit);
     if (hasTitleModelKey) await setTitleModel(titleModelInput);
@@ -11388,6 +11417,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasPrDescKey) await setPrDescriptionModel(body.prDescriptionModel ?? '', { models: prDescModels });
     if (hasMemoryDefragKey) await setMemoryDefragModel(body.memoryDefrag, { models: defragModels });
     if (hasAgentGenKey) await setAgentGenModel(body.agentGenModel, { models: agentGenModels });
+    if (hasNamingModelKey) await setNamingModel(body.namingModel, { models: namingModels });
     if (hasWorkspaceScanKey) await setWorkspaceScanModels(body.workspaceScan, { models: wsScanModels });
     if (hasRunEngineKey) await asSettingsField('runEngine', () => setRunEngineSetting(body.runEngine));
     if (hasStepModelsKey) await asSettingsField('stepModels', () => setStepModels(body.stepModels));
@@ -11407,7 +11437,8 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasBudgetKey) emitChanged('budget-changed');
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
-    if (hasAskKey || hasAskWeb || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasNetworkWaitKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey) emitChanged('settings-changed');
+    if (hasSmartNaming || hasNamingModelKey) cachedPick = undefined;
+    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasNetworkWaitKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;
@@ -14194,6 +14225,63 @@ app.delete('/api/extension/pairings/:id', (req, res) => {
 app.get('/api/extension/status', (req, res) => {
   if (!req.worcaExtension) return res.status(403).json({ error: 'extension token required', code: 'extension-route' });
   res.json({ paired: true, id: req.worcaExtension.id, name: req.worcaExtension.name, serverMock: serverMockMode(), version: PKG_VERSION });
+});
+
+// ---------------------------------------------------------------------------
+// Smart run naming (flag smartRunNaming, docs/feature-flags.md): the New run form asks for a title, a branch type and
+// a slug. Both routes answer 404 while the flag is off. Naming never blocks a start: a refusal, a budget stop and a
+// model failure all answer { source: 'fallback' } with today's name as a hint.
+// ---------------------------------------------------------------------------
+const namingOn = requireFlag('smartRunNaming');
+const namingBucket = new TokenBucket(30);
+let cachedPick;
+let cachedPickAt = 0;
+const NAMING_PICK_TTL_MS = 60_000;
+const warnedStaleNaming = new Set();
+async function namingCatalog() {
+  const rows = await listModels('');
+  const picked = resolveNamingModel(storedNamingModel(), rows, modelCostConfig);
+  if (picked.stale && !warnedStaleNaming.has(picked.stale)) {
+    warnedStaleNaming.add(picked.stale);
+    console.warn(`[worca] namingModel ${JSON.stringify(picked.stale)} is no longer in the catalog — run naming uses the cheapest ready Claude model`);
+  }
+  return { rows, picked };
+}
+async function namingPick() {
+  if (cachedPick === undefined || Date.now() - cachedPickAt > NAMING_PICK_TTL_MS) { cachedPick = (await namingCatalog()).picked; cachedPickAt = Date.now(); }
+  return cachedPick;
+}
+
+app.get('/api/naming/config', namingOn, async (req, res) => {
+  try {
+    const cfg = smartNaming(req.query.projectDir ? { projectDir: String(req.query.projectDir) } : undefined);
+    const { rows, picked } = await namingCatalog();
+    res.json({ ...cfg, picked, estimatedUsd: estimateNamingUsd(picked, rows, modelCostConfig) });
+  } catch (err) { if (!res.headersSent) res.status(500).json({ error: 'naming config failed' }); }
+});
+
+app.post('/api/naming/suggest', namingOn, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const prompt = typeof b.prompt === 'string' ? b.prompt : '';
+    if (!prompt.trim()) return badRequest(res, 'prompt is required');
+    if (!namingBucket.tryConsume()) return res.status(429).json({ error: 'too many suggestions, try again in a moment' });
+    const projectDir = typeof b.projectDir === 'string' && b.projectDir ? b.projectDir : undefined;
+    const title = typeof b.title === 'string' ? b.title : '';
+    const cfg = smartNaming(projectDir ? { projectDir } : undefined);
+    if (!cfg.suggestTitle && !cfg.suggestBranch) return res.json({ source: 'off' });
+    const fallback = (error) => res.json({ source: 'fallback', error, branchHint: legacyBranchHint(prompt, title) });
+    if (budgetStatus().blocked) return fallback('total cost limit reached');
+    const ac = new AbortController();
+    res.on('close', () => { if (!res.writableEnded) ac.abort(); });
+    const pick = mockEnabled({}) ? null : await namingPick();
+    const r = mockEnabled({})
+      ? mockSuggestion(prompt, cfg)       // deterministic, spawns nothing (tests, CDP proofs)
+      : await suggestNames({ prompt, title, projectDir, signal: ac.signal },
+        { pickModel: () => pick, onCost: (c) => { try { recordUtilityCost('naming', c); } catch { /* a ledger write never fails a suggestion */ } } });
+    if (r.source !== 'model') return fallback(r.error);
+    res.json({ ...r, title: cfg.suggestTitle ? r.title : undefined, branch: cfg.suggestBranch ? r.branch : undefined });
+  } catch (err) { if (!res.headersSent) res.status(500).json({ error: 'suggestion failed' }); }   // Express 4 swallows async throws
 });
 
 // ---------------------------------------------------------------------------

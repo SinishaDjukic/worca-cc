@@ -281,3 +281,15 @@ test('renderStatsBody: the Shaper card only when the model carries shaping', () 
   const all = renderStatsBody({ ...model, range: 'all', shaping }, { doc }).querySelector('.shaping-card');
   assert.equal(all.querySelector('.card-head small.hint').textContent, 'all time');
 });
+
+test('renderKpiRow: the Naming line shows under Chat only when there is naming spend', () => {
+  const none = renderKpiRow(MODEL, { doc }).querySelectorAll('.stat-tile')[3];
+  assert.match(none.querySelector('.stat-label').textContent, /Chat/);
+  assert.equal(none.querySelectorAll('.stat-sub').length, 1);
+  const zero = renderKpiRow({ ...MODEL, utility: { naming: { usd: 0, count: 0 } } }, { doc }).querySelectorAll('.stat-tile')[3];
+  assert.equal(zero.querySelectorAll('.stat-sub').length, 1);
+  const some = renderKpiRow({ ...MODEL, utility: { naming: { usd: 0.0005, count: 2 } } }, { doc }).querySelectorAll('.stat-tile')[3];
+  const subs = some.querySelectorAll('.stat-sub');
+  assert.equal(subs.length, 2);
+  assert.equal(subs[1].textContent, 'Naming $0.0005 · 2 suggestions');
+});

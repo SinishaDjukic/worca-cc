@@ -695,7 +695,8 @@ const states = [
   // D16: every index.html dialog, opened alone at 1440px: 24px card padding, 32px footer and head actions.
   ['dialog-sizes', async () => {
     await go('new');
-    const ids = await ev(`[...document.querySelectorAll('.viewer-modal[id]')].map((m) => m.id)`);
+    // .mk-layer: the Marketplace's sheet and dialog hosts are built by marketplace/layers.mjs, not index.html, and carry no .card.
+    const ids = await ev(`[...document.querySelectorAll('.viewer-modal[id]:not(.mk-layer)')].map((m) => m.id)`);
     for (const id of ids) {
       if (id === 'model-editor-modal') { await go('models'); await clickSel('#model-create-btn'); await until(`document.querySelector('#model-editor-modal:not(.hidden) .mv-editor')`, 'the editor dialog'); }
       else await unhide(`#${id}`);
