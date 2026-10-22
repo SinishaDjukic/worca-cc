@@ -4675,11 +4675,10 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 /* The sidebar nav item's corner (decided); the row's own divider would bend at it, so it turns transparent. */
 .runs-item.is-needs{background:color-mix(in srgb,var(--amber) 8%,transparent);border-radius:var(--r-sm);border-bottom-color:transparent;}
 .runs-item:has(> a.runs-row.selected){background:var(--field);border-radius:var(--r-sm);border-bottom-color:transparent;}
-/* Run 3 (D4): a group whose run is open — its own row's cells take the lighter fill; its member list keeps the panel. */
-.runs-item:has(> a.runs-row.member-open) > :is(.runs-pick,a.runs-row,.runs-row-tail){background:var(--row-open);align-self:stretch;}
-.runs-item:has(> a.runs-row.member-open) > .runs-pick{border-radius:var(--r-sm) 0 0 var(--r-sm);}
-.runs-item:has(> a.runs-row.member-open) > .runs-row-tail{border-radius:0 var(--r-sm) var(--r-sm) 0;}
-.runs-item:has(> a.runs-row.member-open){border-bottom-color:transparent;}
+/* One highlight at a time: a group whose run is open takes the lighter fill as one block over its whole row only while
+   collapsed (no .runs-members); expanded, the open member row is the highlight (it is .selected) and the group keeps
+   its divider. The item is painted, not its cells: .runs-pick/.runs-row-tail have fixed heights and would notch it. */
+.runs-item:has(> a.runs-row.member-open):not(:has(> .runs-members)){background:var(--row-open);border-radius:var(--r-sm);border-bottom-color:transparent;}
 .runs-pick{display:grid;place-items:center;height:36px;}
 .runs-pick .runs-check{display:none;margin:0;}
 /* Only the row itself flips its dot: hovering or focusing an expanded member must not flip its group's dot too. */
@@ -4694,8 +4693,9 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .runs-row-sub{flex:1 0 100%;color:var(--ink-2);font-size:12px;}
 .runs-row > .runs-stage,.runs-row > .runs-row-prog{flex:1 0 100%;margin-top:6px;}
 .runs-row-tail{display:inline-flex;justify-content:flex-end;align-items:center;height:36px;}
-.runs-members{grid-column:1 / -1;list-style:none;margin:0;padding:0;border-top:1px solid var(--line);}
-.runs-members > .runs-item:last-child{border-bottom:0;}
+.runs-members{grid-column:1 / -1;list-style:none;margin:0;padding:0;}
+/* Rows inside a group draw no dividers; the group item's own bottom border separates it from the next top-level row. */
+.runs-members > .runs-item{border-bottom:0;}
 .runs-members .runs-pick,.runs-members .runs-row-title,.runs-members .runs-row-sub{padding-left:16px;}
 .runs-pr{display:inline-flex;gap:4px;align-items:center;font-size:12px;}
 .runs-pr.is-draft{color:var(--ink-2);}
