@@ -677,6 +677,22 @@ test('Runs list: selected and Needs-you rows take the sidebar nav item\'s corner
   }
 });
 
+test('Runs list: one highlight at a time — a group whose run is open is filled only while collapsed; members have no dividers', () => {
+  const bodyOf = (sel) => ALL.filter((r) => splitTop(r.sel).includes(sel)).map((r) => r.body).join(';');
+  const collapsed = bodyOf('.runs-item:has(> a.runs-row.member-open):not(:has(> .runs-members))');
+  assert.match(collapsed, /background:var\(--row-open\)/, 'one fill on the whole item');
+  assert.match(collapsed, /border-radius:var\(--r-sm\)/);
+  assert.match(collapsed, /border-bottom-color:transparent/);
+  // No per-cell fill (the 36px cells notched it) and no ungated member-open rule (expanded keeps its divider, no fill).
+  const memberOpen = ALL.filter((r) => r.sel.includes('.runs-item') && r.sel.includes('member-open'));
+  assert.deepEqual(memberOpen.map((r) => r.sel), ['.runs-item:has(> a.runs-row.member-open):not(:has(> .runs-members))']);
+  // Rows inside a group draw no dividers; top-level rows keep theirs.
+  assert.doesNotMatch(bodyOf('.runs-members'), /border-top/);
+  assert.match(bodyOf('.runs-members > .runs-item'), /border-bottom:0/);
+  assert.equal(ALL.some((r) => splitTop(r.sel).includes('.runs-members > .runs-item:last-child')), false);
+  assert.match(ALL.find((r) => r.sel === '.runs-item').body, /border-bottom:1px solid var\(--line\)/);
+});
+
 test('a script-focused control shows no ring for a pointer user; fields keep their focus border', () => {
   const r = ALL.find((x) => x.sel.startsWith(':root[data-input="pointer"] :is(button,'));
   assert.ok(r, 'the pointer suppressor covers every button, link, summary, tab, switch and [tabindex]');
