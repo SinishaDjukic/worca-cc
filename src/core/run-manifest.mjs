@@ -28,6 +28,14 @@ export const RETAIN_REASONS = Object.freeze({ COMMIT_FAILED: 'commit_failed', CH
  *  run-harness _registerEngineConfig). */
 export const RUN_ROOT_KNOWN_SET = new Set(['CLAUDE.md', 'mcp.json', RUN_MANIFEST_FILE, '.claude', '.cursor', '.gemini', 'repos', 'work']);
 
+/** The merged MCP config a run passes via --mcp-config (run-context.mjs §5.5). */
+export const RUN_MCP_FILE = 'mcp.json';
+/** G22: the config can hold literal secrets (WORCA_MCP_SECRETS=warn), so it goes when the run is over, even from a
+ *  run root that is kept (a retained checkout). A resume never reads it: the re-assembly writes it again. */
+export async function removeRunMcpConfig(runRoot) {
+  await rm(join(runRoot, RUN_MCP_FILE), { force: true });
+}
+
 // The V3 CLAUDE.md fallback's delimiter-fenced section (§4.1). The begin marker
 // carries the pipelineId so two concurrent runs over the same real dir can never
 // strip each other's block.

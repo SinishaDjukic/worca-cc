@@ -1,6 +1,21 @@
 /* Workflow (60%) and the engine that runs it (40%) share a row; the engine hints span it below. */
 .wf-engine-row{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);column-gap:18px;align-items:start;}
 .wf-engine-row > *{min-width:0;}
+.wf-engine-row #exec-env-row{grid-column:1/-1;}
+/* The execution environment's live status (exec-env-status.mjs): beside New run's "Runs in" and on Settings › Runs. */
+.exec-env-pick{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;}
+.exec-env-pick .select-wrap{flex:1 1 180px;min-width:0;}
+.exec-env-status{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;font-size:var(--fs-meta);font-weight:600;
+  padding:4px 10px;border-radius:var(--r-xs);background:var(--field);color:var(--ink-2);}
+.exec-env-status::before{content:'';width:7px;height:7px;border-radius:var(--r-xs);background:var(--ink-3);flex:none;}
+.exec-env-status[hidden]{display:none;}
+.exec-env-status[data-tone="ok"]{background:var(--green-bg);color:var(--green-ink);}
+.exec-env-status[data-tone="ok"]::before{background:var(--green);}
+.exec-env-status[data-tone="warn"]{background:var(--amber-bg);color:var(--amber-ink);}
+.exec-env-status[data-tone="warn"]::before{background:var(--amber);}
+.exec-env-status[data-tone="bad"]{background:var(--red-bg);color:var(--red-ink);}
+.exec-env-status[data-tone="bad"]::before{background:var(--red);}
+.exec-env-status-server{overflow-wrap:anywhere;}
 .wf-engine-hints{grid-column:1 / -1;margin:-7px 0 12px;}
 .wf-engine-hints:not(:has(.hint:not([hidden]))){display:none;}
 .wf-engine-hints .hint{margin-top:0;font-size:var(--fs-meta);}

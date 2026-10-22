@@ -468,6 +468,7 @@ app.post('/api/runs/:id/resolve-pipeline', async (req, res) => {
       sourceBranch: m.br.source,
       featureBranch: m.br.feature,
       syncBeforeStart: false,
+      execEnv: 'local',   // the agent merges the base: a sandbox cannot bring a merge back (docs/e2b.md)
       ...(row.guardrails_id ? { guardrailsId: row.guardrails_id } : {}),
       engine: runEngineOfRow(row),
       // #617: a mock run is resolved by a mock run. Best effort: the resume point records `mock: true` while it

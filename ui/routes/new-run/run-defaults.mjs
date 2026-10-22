@@ -2,7 +2,7 @@
 // the body of register() was moved verbatim from ui/server.mjs. Edit it here from now on.
 import { readProjectDefaultTags, stepSlotDefaults } from '../../../src/core/config.mjs';
 import { MODEL_ENGINES } from '../../../src/core/model-env.mjs';
-import { resolveSetting } from '../../../src/core/settings-cascade.mjs';
+import { resolveRunExecEnv, resolveSetting } from '../../../src/core/settings-cascade.mjs';
 import { scopePrSetting } from '../../../src/core/pr-auto.mjs';
 import { WORKSPACE_KEY_RE, readWorkspace } from '../../../src/core/workspaces.mjs';
 import { projectKey } from '../../../src/core/store.mjs';
@@ -21,8 +21,10 @@ app.get('/api/run-defaults', async (req, res) => {
     // Run tags (#718): the project's default tags (a New run prefill) and its store key, which the
     // form needs to save new defaults.
     const key = projectDir ? projectKey(projectDir) : null;
+    const exec = resolveRunExecEnv(projectDir ? { projectDir } : {});
     res.json({ engine: { value: result.value, source: result.source },
       steps: Object.fromEntries(MODEL_ENGINES.map((e) => [e, stepSlotDefaults(e, { projectDir })])),
+      execEnv: { value: exec.execEnv, source: exec.source },
       projectKey: key,
       tags: key ? readProjectDefaultTags(key) : [],
       pr: await scopePrSetting({ projectDir, workspaceId }) });

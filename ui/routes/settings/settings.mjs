@@ -23,7 +23,7 @@ import { resolvePrDescriptionModel } from '../../../src/core/pr-description.mjs'
 import { listProjects, normalizeProjectPath } from '../../../src/core/projects.mjs';
 import { DEFAULT_INTERVIEW_EFFORT, requirementsModel } from '../../../src/core/requirements/interview.mjs';
 import { settingsErrorReply } from '../../../src/core/settings-errors.mjs';
-import { actionsSettings, agentGenModel as storedAgentGenModel, askEngineSetting, askMaxBudgetUsd, askMaxTurns, askModelsSetting, askWeb, autoGeneratePrDescription, autoTestWorkers, autoWorkflowModel as storedAutoWorkflowModel, chatPrefs, commandSummaryModel as storedCommandSummaryModel, costLimitResetPeriod, debugSpawnEnabled as storedDebugSpawnEnabled, defaultProjectsRoot, defaultRoot, effectiveDebugSpawn, getWorcaRoot, hideBuiltinModels, humanRateUsdPerHour, keepAwakeEnabled, memoryCaps, memoryDefragModel, modelRolesSetting, namingModel as storedNamingModel, networkWaitSettings, nightModeSettings, nightModeToggle, nightModeToggleFor, pipelineCostLimitUsd, prDescriptionModel as storedPrDescriptionModel, rawProjectsRoot, requirementsInterviewSetting, resumeAfterUsageLimit, runEngineSetting, runLimits, scheduleDefaults, secondOpinionModelSetting, smartNaming, stepModelsSetting, syncDefaults, theme as storedTheme, titleModel as storedTitleModel, totalCostLimitUsd, updateCheckEnabled, userEnforceTags, userTagDimensions, utilityModelsSetting, workspaceScanModels } from '../../../src/core/settings.mjs';
+import { actionsSettings, agentGenModel as storedAgentGenModel, askEngineSetting, askMaxBudgetUsd, askMaxTurns, askModelsSetting, askWeb, autoGeneratePrDescription, autoTestWorkers, autoWorkflowModel as storedAutoWorkflowModel, chatPrefs, commandSummaryModel as storedCommandSummaryModel, costLimitResetPeriod, debugSpawnEnabled as storedDebugSpawnEnabled, defaultProjectsRoot, defaultRoot, e2bIntSettingRaw, effectiveDebugSpawn, execEnvSetting, getWorcaRoot, hideBuiltinModels, humanRateUsdPerHour, keepAwakeEnabled, memoryCaps, memoryDefragModel, modelRolesSetting, namingModel as storedNamingModel, networkWaitSettings, nightModeSettings, nightModeToggle, nightModeToggleFor, pipelineCostLimitUsd, prDescriptionModel as storedPrDescriptionModel, rawProjectsRoot, requirementsInterviewSetting, resumeAfterUsageLimit, runEngineSetting, runLimits, scheduleDefaults, secondOpinionModelSetting, smartNaming, stepModelsSetting, syncDefaults, theme as storedTheme, titleModel as storedTitleModel, totalCostLimitUsd, updateCheckEnabled, userEnforceTags, userTagDimensions, utilityModelsSetting, workspaceScanModels } from '../../../src/core/settings.mjs';
 import { describeTitleModel } from '../../../src/core/title.mjs';
 import process from 'node:process';
 import { APP_INFO, REMOTE_MODE, actionsEnabledHere, agentMayBeCaller, applySettingsPatch, autoDetectedBuiltins, awayPersonOf, effectiveUiLevel, emitMemoryChanged, liveDefragRun, memoryError, refuseAgentCaller, requireFsAllowed, teamOriginOk, teamWarn } from '../../server.mjs';
@@ -139,6 +139,10 @@ const settingsState = () => ({
   workspaceScanDefault: withScanRole(null, WORKSPACE_SCAN_DEFAULT_MODELS) || WORKSPACE_SCAN_DEFAULT_MODELS,
   workspaceScanFromRole: !!withScanRole(null, WORKSPACE_SCAN_DEFAULT_MODELS),   // the wizard stores no pick of its own then (re-scans follow the role)
   runEngine: runEngineSetting() ?? null,
+  // Raw values (unlike askMaxTurns): an unset field stays empty and Save never persists a default nobody typed.
+  execEnv: execEnvSetting() ?? null,
+  e2bMaxSandboxes: e2bIntSettingRaw('e2bMaxSandboxes'),
+  e2bMaxWaitMin: e2bIntSettingRaw('e2bMaxWaitMin'),
   stepModels: stepModelsSetting(),
   modelRoles: modelRolesSetting(),                         // Models › Roles (D1): { <engine>: { deep|everyday|quick: { model, effort } } }
   utilityModels: utilityModelsSetting(),

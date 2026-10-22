@@ -242,6 +242,7 @@ test('POST resolve-pipeline starts a mock run on the existing branch and marks t
   assert.equal(entry.orch.opts.branch.feature, 'feat');
   assert.deepEqual(entry.orch.opts.branch.resolves, { runId: conflict.id, member: conflict.key });
   assert.equal(entry.orch.workflowId, 'wf_pr_fix', 'the conflict fix workflow Watch PR uses');
+  assert.equal(entry.orch.execEnvKind, 'local', 'the agent merges the base: never in an E2B sandbox');
   assert.match(String(entry.orch.opts.prompt), /^The branch `feat` has merge conflicts/);
   assert.match(String(entry.orch.opts.prompt), /f\.txt/);
   // Wait for its setup, then stop it before the mock implementer is done.

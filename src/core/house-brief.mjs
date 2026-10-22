@@ -187,7 +187,7 @@ export async function collectHouseBriefSources({ projectKey, projectDir, root = 
 
   if (projectKey) {
     const scope = projectScope(projectKey);
-    for (const entry of await listMemory(root, scope)) {
+    for (const entry of await listMemory(root, scope, { forAgents: true })) {
       const file = await readMemory(root, scope, entry.name);
       const line = flat(entry.description ? `${entry.name} — ${entry.description}` : entry.name);
       lines[isKnownBugMemory({ ...entry, extra: file?.meta?.extra }) ? 'known-bugs' : 'memory'].push(line);
