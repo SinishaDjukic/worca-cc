@@ -505,7 +505,8 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     // `aria-modal`, not `role="dialog"`: the Ask Worca sheet (ask-panel.mjs:206) is a
     // role="dialog" DOCKED panel that stays open while the canvas is used — it must
     // never own the canvas keyboard. Every app overlay declares aria-modal="true".
-    return Boolean(doc.querySelector('[aria-modal="true"]:not(.hidden):not([hidden])'));
+    // A hidden ANCESTOR counts too: the Marketplace sheet hides its host, not the aria-modal panel inside it.
+    return [...doc.querySelectorAll('[aria-modal="true"]')].some((m) => !m.closest('.hidden, [hidden]'));
   }
 
   function onKeyDown(ev) {
