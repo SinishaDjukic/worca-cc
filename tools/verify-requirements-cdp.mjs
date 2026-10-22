@@ -8,7 +8,8 @@
 // the feature is Ready; the Export menu opens and Escape closes it; the Decide card, the start-before-Ready
 // dialog (focus on the reason, Escape returns it; its button is disabled until a reason is typed), Confirm the N
 // left leading to the Ready to build card; Start in worca on that card gives one run row linking to #running/<id>
-// and the API's starts[0].runId (the mock run is then stopped); no page errors.
+// and the API's starts[0].runId (the mock run is then stopped); the feature page has no context panel and its
+// menu's Your notes for Worca opens the project's brief page with the notes (A7 D12); no page errors.
 // NOT part of `npm test`.
 // Run: npm run verify:requirements   (set CHROME_BIN to a Chrome/Chromium binary if it is not auto-found,
 // e.g. CHROME_BIN="C:/Program Files/Google/Chrome/Application/chrome.exe" on Windows)
@@ -226,6 +227,15 @@ check('Start in worca: one run row links to #running/<id> and the API has starts
     if (rows.length !== 1 || !rows[0].getAttribute('href').startsWith('#running/')) return false;
     const f = (await (await fetch('/api/requirements/${seqNo}')).json()).feature;
     return !!f.starts?.[0]?.runId && rows[0].getAttribute('href') === '#running/' + f.starts[0].runId; })()`), 15000));
+// A7 D12: the Project context panel left the feature page; the menu's Your notes for Worca opens the brief page.
+check('the feature page has no context panel; Your notes for Worca (the menu) opens the brief page with the notes',
+  await A.evalJs(`(() => { if (document.querySelector('#requirements-host .req-context')) return false;
+    document.querySelector('#requirements-host [data-ui="menu-more"]').click();
+    const item = document.querySelector('#requirements-host [data-ui="mi-notes"]');
+    if (!item || item.textContent !== 'Your notes for Worca') return false;
+    item.click(); return true; })()`)
+  && await until(() => A.evalJs(`location.hash.startsWith('#requirements/brief/project/')
+    && !!document.querySelector('#requirements-host [data-req-brief] [data-ui="notes-body"]')`)));
 // The mock Auto run parks on its workflow question: stop it so the server closes and the temp dir can go.
 for (const r of runs.values()) { try { r.orch?.stop?.(); } catch {} }
 const settled = new Set(['done', 'stopped', 'error', 'paused', 'interrupted']);

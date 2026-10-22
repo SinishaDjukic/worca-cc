@@ -9339,6 +9339,7 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .req-sub{margin:0;color:var(--ink-2)}
 .req-new .actions{flex-wrap:wrap;margin-top:6px}
 .req-new .req-new-cost{margin:0}
+.req-new .req-new-cost[hidden]{display:none}
 .req-new-btns{display:flex;gap:10px;margin-left:auto}
 /* The feature page (board Interview.dc.html): the back link, the header with its two menus, then the
    conversation left and Ready + the spec right. */
@@ -9366,7 +9367,7 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 @media (max-width:900px){.req-cols{grid-template-columns:1fr}}
 .req-left,.req-right{display:flex;flex-direction:column;gap:14px;min-width:0}
 .req-left > .qpanel,.req-left > .hint,.req-left > .req-error{margin:0}
-.req-rounds,.req-ready,.req-spec,.req-context{padding:16px 18px}
+.req-rounds,.req-ready,.req-spec{padding:16px 18px}
 .req-card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 10px}
 .req-card-head h3,.req-rounds h3{margin:0;font-size:13px;font-weight:600}
 .req-card-head .hint{margin:0}
@@ -9421,11 +9422,9 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .req-assume > .req-toggle,.req-assume > .badge{flex:none}
 @media (max-width:600px){.req-assume{flex-wrap:wrap}.req-assume .req-item-text{flex:1 1 calc(100% - 64px)}.req-assume > .req-toggle{margin-left:auto}}
 .req-more{align-self:flex-start;font-size:12.5px}
-.req-new select,.req-new input,.req-new textarea,.req-edit input,.req-edit textarea,.req-context textarea{width:100%;box-sizing:border-box}
+.req-new select,.req-new input,.req-new textarea,.req-edit input,.req-edit textarea{width:100%;box-sizing:border-box}
 .req-edit{display:flex;flex-direction:column;gap:8px;margin-top:6px}
 .req-edit .req-actions{margin:0}
-.req-context{display:flex;flex-direction:column;gap:10px}
-.req-context .req-card-head,.req-context .req-actions{margin:0}
 .req-ctx-look{display:flex;align-items:center;gap:8px;font-size:13px}
 .req-why{margin:2px 0 6px 28px}
 .req-q .req-q-note{margin:8px 0 0}
@@ -9565,7 +9564,7 @@ a.req-run-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-brief-chips code{font-family:var(--mono);font-size:11.5px}
 .req-brief-head .req-brief-refresh-failed{margin:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
 .req-brief-stale-text b{font-size:inherit;font-weight:600;color:var(--ink)}
-.req-brief-stale-text code{font-family:var(--mono);font-size:12px;padding:1px 6px;border-radius:6px;background:var(--surface)}
+.req-brief-stale-text code{font-family:var(--mono);font-size:12px;padding:0;background:none;color:var(--ink)}
 .req-brief-cols{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:22px;align-items:start}
 .req-brief-card{padding:18px 22px;display:flex;flex-direction:column;gap:18px;min-width:0}
 .req-brief-card .req-rewrite{font-size:12px}
@@ -9590,6 +9589,26 @@ a.req-run-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-brief-notes-read p{margin:8px 0 0;font-size:13px;color:var(--ink-2);white-space:pre-wrap;overflow-wrap:anywhere}
 .req-brief-notes-read .btn{margin-top:10px}
 .req-brief-files{margin:10px 0 0;padding-left:18px;max-height:320px;overflow:auto;font-family:var(--mono);font-size:12px;color:var(--ink-2);overflow-wrap:anywhere}
+/* A7 Task 9: the green line under New feature's For (board 13); What Worca knows, the card that replaces A2's
+   folded box on a feature page when the scope has a brief (board 14); the brief page's small note on the members
+   of a workspace the brief does not cover. */
+.req-brief-line{display:flex;gap:10px;align-items:flex-start;margin:8px 0 0;padding:10px 12px;border-radius:10px;background:var(--green-bg);color:var(--ink);font-size:12.5px;line-height:1.45}
+.req-brief-line > svg{flex:none;margin-top:1px;color:var(--green-ink)}
+.req-knows{padding:16px 18px;display:flex;flex-direction:column;gap:10px}
+.req-knows .req-card-head{flex-wrap:wrap;gap:4px 10px;margin:0}
+.req-knows .hint{margin:0}
+.req-knows .req-knows-text{margin:0;font-size:13px;overflow-wrap:anywhere;white-space:pre-wrap}
+.req-knows:not(.req-knows-looked) .req-knows-text{color:var(--ink-2)}
+.req-knows .link-btn{font-size:inherit}
+.req-knows .link-btn:disabled{opacity:.45;cursor:not-allowed}
+.req-knows-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 12px;padding-top:10px;border-top:1px solid var(--line)}
+.req-knows-looked .req-knows-foot{justify-content:flex-end}
+.req-knows-foot .hint{flex:1 1 200px;min-width:0}
+.req-knows-foot .btn{flex:none}
+.req-knows-foot .btn:disabled{opacity:.45;cursor:not-allowed}
+.req-brief-members{margin:0;padding:10px 14px;border-radius:10px;background:var(--field)}
+.req-brief-members p{margin:0}
+.req-brief-members .req-actions{margin:8px 0 0}
 @media (max-width:900px){.req-brief-cols{grid-template-columns:1fr}}
 @media (max-width:600px){
   .req-brief-start{grid-template-columns:1fr;padding:18px 16px}

@@ -311,7 +311,8 @@ const BASE = {
 };
 const critInput = (host) => host.querySelector('[aria-label="New acceptance criterion"]');
 const openCrit = async (host) => { host.querySelector('[aria-label="Add a criterion"]').click(); await tick(); await tick(); };
-const openCtx = async (host) => { btn(host, 'Project context').click(); await tick(); await tick(); };
+// A7 D12: the feature page's Project context panel moved to the brief page as Your notes for Worca; ⋯ routes there.
+const openNotes = async (host) => { host.querySelector('[data-ui="menu-more"]').click(); host.querySelector('[data-ui="mi-notes"]').click(); await tick(); };
 const btn = (host, text) => [...host.querySelectorAll('button')].find((b) => b.textContent === text);
 
 test('new form: a live update neither repaints nor fetches; create posts and routes to the feature', async () => {
@@ -365,25 +366,29 @@ test('feature page: an own repaint (Confirm) keeps the typed criterion; focus re
   host.remove();
 });
 
-test('feature page: the context panel keeps its text and open state across a live update', async () => {
-  const calls = fakeApi({ ...BASE, 'GET /api/requirements/context/project/shop-1': { body: 'Standing rules', lookAtCode: true },
-    'PUT /api/requirements/context/project/shop-1': { ok: true } });
-  const { host, view } = make();
+test('feature page: Your notes for Worca (was the context panel) opens the brief page; there the notes keep their text and switch across a live update and save together', async () => {
+  const notesUrl = '/api/requirements/context/project/shop-1';
+  const calls = fakeApi({ ...BASE, 'GET /api/requirements/brief/project/shop-1': () => ({ brief: null, target: { name: 'shop', branch: 'main', leftOut: [], slow: [] },
+    notes: { scopeType: 'project', scopeKey: 'shop-1', body: 'Standing rules', lookAtCode: true }, estimate: { costUsd: null, model: null }, usedBy: [], staleness: null }),
+  [`PUT ${notesUrl}`]: { body: 'New rules', lookAtCode: true } });
+  const { host, view, routed } = make();
   await view.show('feature/4');
-  assert.equal(host.querySelector('.req-context'), null, 'closed until asked for');
-  assert.equal(calls.filter((c) => c.url.includes('/context/')).length, 0, 'loaded lazily');
-  await openCtx(host);
-  assert.equal(host.querySelector('.req-context textarea').value, 'Standing rules');
-  host.querySelector('.req-context textarea').value = 'New rules';
-  await view.changed(4);
-  await tick(); await tick();
-  assert.ok(host.querySelector('.req-context'), 'still open');
-  assert.equal(host.querySelector('.req-context textarea').value, 'New rules');
-  assert.equal(host.querySelector('.req-context input[type=checkbox]').checked, true);
-  assert.equal(calls.filter((c) => c.method === 'GET' && c.url.includes('/context/')).length, 1);
-  btn(host, 'Save context').click();
+  assert.equal(host.querySelector('.req-context'), null, 'no context panel on the feature page');
+  assert.equal(host.querySelector('[data-ui="notes-body"]'), null);
+  assert.equal(calls.filter((c) => c.url.includes('/context/')).length, 0, 'the feature page loads no notes');
+  await openNotes(host);
+  assert.deepEqual(routed, ['brief/project/shop-1'], 'the brief page, where the notes live');
+  await view.show(routed[0]);
+  const area = () => host.querySelector('[data-ui="notes-body"]');
+  assert.equal(area().value, 'Standing rules');
+  area().value = 'New rules';
+  await view.changed(undefined, 'project:shop-1');
+  assert.equal(area().value, 'New rules', 'kept across a live update');
+  assert.equal(host.querySelector('[data-ui="notes-look"]').checked, true);
+  btn(host, 'Save notes').click();
   await tick();
   assert.deepEqual(calls.find((c) => c.method === 'PUT').body, { body: 'New rules', lookAtCode: true });
+  assert.equal(calls.find((c) => c.method === 'PUT').url, notesUrl);
 });
 
 test('new feature: back link, heading, field blocks, the For select with its groups, the code-look hint', async () => {
@@ -406,7 +411,11 @@ test('new feature: back link, heading, field blocks, the For select with its gro
   assert.ok(select);
   assert.deepEqual([...select.querySelectorAll('optgroup')].map((g) => g.label), ['Projects', 'Workspaces']);
   assert.deepEqual([...select.options].map((o) => o.value), ['project:shop-1', 'workspace:ws1']);
-  assert.match(fields[2].querySelector('.hint').textContent, /looks at this project's code once, read-only/);
+  assert.equal(fields[2].querySelector('.hint').textContent, "Worca looks at this project's code once, read-only, to learn what already exists. Change that in Your notes for Worca.");
+  select.value = 'workspace:ws1';
+  select.dispatchEvent(new window.Event('change'));
+  assert.equal(fields[2].querySelector('.hint').textContent, "Worca looks at the code of this workspace's projects once, read-only, to learn what already exists. Change that in Your notes for Worca.");
+  assert.equal(fields[2].querySelector('.req-brief-line'), null, 'no brief, no green line');
   assert.deepEqual([...form.querySelectorAll('.btn, .btn-go')].map((b) => b.textContent), ['Cancel', 'Start the interview']);
   assert.ok([...form.querySelectorAll('.btn-go')].at(-1).textContent === 'Start the interview', 'the CDP proof clicks the last .req-new .btn-go');
   assert.doesNotMatch(host.textContent, /null|false|undefined/);
@@ -520,15 +529,15 @@ test('per-item accessible names on section and assumption buttons', async () => 
   assert.equal(host.querySelector('.req-reject').getAttribute('aria-label'), 'Reject A-1');
 });
 
-test('context: a failed load keeps Save context disabled and sends no PUT', async () => {
-  const calls = fakeApi({ ...BASE, 'GET /api/requirements/context/project/shop-1': { __status: 500, body: { error: 'ctx down' } } });
-  const { host, msgEl, view } = make();
+test('notes: a failed load of the brief page shows no notes editor and sends no PUT (was: context Save stays disabled)', async () => {
+  const calls = fakeApi({ ...BASE, 'GET /api/requirements/brief/project/shop-1': { __status: 500, body: { error: 'ctx down' } } });
+  const { host, msgEl, view, routed } = make();
   await view.show('feature/4');
-  await openCtx(host);
+  await openNotes(host);
+  await view.show(routed[0]);
   assert.match(msgEl.textContent, /ctx down/);
-  assert.equal(btn(host, 'Save context').disabled, true);
-  btn(host, 'Save context').click();
-  await tick();
+  assert.equal(host.querySelector('[data-ui="notes-body"]'), null);
+  assert.equal(btn(host, 'Save notes'), undefined);
   assert.equal(calls.some((c) => c.method === 'PUT'), false);
 });
 
@@ -721,7 +730,7 @@ test('Export menu: its entries, Save only for a project feature; a choice, Escap
   assert.deepEqual([...list().querySelectorAll('[role="menuitem"]')].map((x) => x.textContent), ['Copy Markdown', 'Download .md']);
 });
 
-test('⋯ menu: Project context, Look again, Archive; kept open across a live update; the lock rules', async () => {
+test('⋯ menu: Your notes for Worca, Look again, Archive; kept open across a live update; the lock rules', async () => {
   fakeApi(BASE);
   const { host, view } = make();
   await view.show('feature/4');
@@ -732,15 +741,16 @@ test('⋯ menu: Project context, Look again, Archive; kept open across a live up
   assert.equal(more().getAttribute('aria-haspopup'), 'menu');
   assert.ok(more().querySelector('svg'));
   more().click();
-  assert.deepEqual(items().map((x) => x.textContent), ['Project context', 'Look again', 'Archive']);
+  assert.deepEqual(items().map((x) => x.textContent), ['Your notes for Worca', 'Look again', 'Archive']);
   assert.ok(items().every((x) => !x.disabled));
   fakeApi({ ...BASE, 'GET /api/requirements/4': { feature: feature({ busy: true, status: 'thinking', state: 'thinking', pending: null }), turns: [] } });
   await view.changed(4);
   assert.equal(more().parentElement.querySelector('[role="menu"]').hidden, false, 'still open');
-  assert.deepEqual(items().map((x) => [x.textContent, x.disabled]), [['Project context', false], ['Look again', true], ['Archive', true]]);
+  assert.deepEqual(items().map((x) => [x.textContent, x.disabled]), [['Your notes for Worca', false], ['Look again', true], ['Archive', true]]);
   fakeApi({ ...BASE, 'GET /api/requirements/4': { feature: feature({ scopeType: 'workspace', scopeKey: 'ws1' }), turns: [] } });
   await view.changed(4);
-  assert.equal(items()[0].textContent, 'Workspace context');
+  assert.equal(items()[0].textContent, 'Your notes for Worca');
+  assert.equal(items()[0].getAttribute('data-ui'), 'mi-notes');
 });
 
 test('Ready panel: the six checks, n of 6, Start disabled until Ready, start-anyway only when overridable', async () => {
@@ -1755,9 +1765,15 @@ test('changed: the brief key splits on its first ":"; who repaints on a brief fr
 
 test('style.css: the req-brief rules use tokens only', () => {
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
-  const rules = css.split('\n').filter((l) => /\.req-brief|\.req-group-/.test(l));
+  const rules = css.split('\n').filter((l) => /\.req-brief|\.req-group-|\.req-knows/.test(l));
   assert.ok(rules.length > 0, 'the brief page has its rules');
   assert.ok(rules.every((l) => !/#[0-9a-fA-F]{3,8}\b|rgba?\(/.test(l)), 'no literal colour');
+  // the notice's branch and commit read inline: no padded box leaves a gap before ";", " since " or "."
+  const code = css.split('\n').find((l) => l.startsWith('.req-brief-stale-text code{'));
+  assert.ok(code, 'the rule');
+  assert.ok(!/padding:(?!0[;}])/.test(code), `no padding: ${code}`);
+  assert.ok(!/background:(?!none)/.test(code), `no box: ${code}`);
+  assert.equal(css.includes('.req-context'), false, 'the removed panel left no rules');
 });
 
 // ---- A7 Task 8: the brief page with a made brief (board 12): chips, the code-moved-on notice, the brief card and
@@ -1930,6 +1946,10 @@ test('brief page, made: the code-moved-on notice, with the changed areas or none
   const three = await openBrief(madeBody({ staleness: { ...STALE, touching: 1, areas: ['Orders', 'Catalog', 'Orders: Gift message on an order'] } }));
   assert.equal(text(notice(three.host).querySelector('.req-brief-stale-text')),
     '38 commits on main since 3f9c2a1; 1 of them changes areas the brief describes: Orders, Catalog and Orders: Gift message on an order. Interviews still use the brief as it is.');
+  // partial: the file scan saw only the newest 2000 commits
+  const part = await openBrief(madeBody({ staleness: { ...STALE, commits: 2400, partial: true } }));
+  assert.equal(text(notice(part.host).querySelector('.req-brief-stale-text')),
+    'More than 2000 commits on main since 3f9c2a1; 6 of them change areas the brief describes: Orders and Payments. Interviews still use the brief as it is.');
   // no notice: 0 commits, the areas section edited (not checked), no staleness
   for (const staleness of [{ ...STALE, commits: 0, touching: 0, areas: [] }, { ...STALE, touching: 0, areas: [], checked: false }, null]) {
     const x = await openBrief(madeBody({ staleness }));
@@ -1968,11 +1988,28 @@ test('brief page, made: a workspace notice names the members not checked and tho
   assert.equal(text(n.querySelector('.req-brief-stale-text')), '5 commits in its projects since this brief; 2 of them change areas the brief describes: Orders. Interviews still use the brief as it is.');
   assert.equal(text(n.querySelector('.req-brief-stale-unknown')), 'Not checked: mail.');
   assert.equal(text(n.querySelector('.req-brief-stale-added')), 'cart and pay joined after this brief; refresh to include them.');
-  // nothing moved on: no notice (0 commits)
+  // nothing moved on: no notice (0 commits), but the members it does not cover are still said, in a small note
   fakeApi({ ...BASE, [`GET ${W1}`]: wsBody({ staleness: { ...st, commits: 0, touching: 0, areas: [], unknown: [] } }) });
   const q = make();
   await q.view.show('brief/workspace/ws1');
   assert.equal(notice(q.host), null);
+  const small = q.host.querySelector('.req-brief-members');
+  assert.ok(small, 'the small notice');
+  assert.equal(small.querySelector('.req-brief-stale-unknown'), null);
+  assert.equal(text(small.querySelector('.req-brief-stale-added')), 'cart and pay joined after this brief; refresh to include them.');
+  assert.equal(small.querySelector('[data-ui="brief-refresh"]').textContent, 'Refresh · about $1.50');
+  fakeApi({ ...BASE, [`GET ${W1}`]: wsBody({ staleness: { ...st, commits: 0, touching: 0, areas: [], unknown: ['mail'], added: [] } }) });
+  const k = make();
+  await k.view.show('brief/workspace/ws1');
+  assert.equal(text(k.host.querySelector('.req-brief-members .req-brief-stale-unknown')), 'Not checked: mail.');
+  assert.equal(k.host.querySelector('.req-brief-members .req-brief-stale-added'), null);
+  // the full notice carries the lines itself: no second, small one
+  assert.equal(w.host.querySelector('.req-brief-members'), null);
+  // nothing uncovered: nothing at all
+  fakeApi({ ...BASE, [`GET ${W1}`]: wsBody({ staleness: { ...st, commits: 0, touching: 0, areas: [], unknown: [], added: [] } }) });
+  const none = make();
+  await none.view.show('brief/workspace/ws1');
+  assert.equal(none.host.querySelector('.req-brief-members'), null);
   // every member unknown: the reason, and who was not checked
   fakeApi({ ...BASE, [`GET ${W1}`]: wsBody({ staleness: { known: false, reason: 'missing', unknown: ['cart', 'mail'], added: [], sources: [] } }) });
   const u = make();
@@ -2006,8 +2043,11 @@ test('brief page, made: the brief card, its four sections, the edited mark and t
   assert.ok(areas[0].querySelector('.badge').classList.contains('amber'));
   assert.ok(areas[1].querySelector('.badge').classList.contains('green'));
   assert.equal(areas[2].querySelector('.badge'), null, 'no status, no badge');
-  // Let Worca rewrite this only on the edited section
+  // Let Worca rewrite this only on the edited section; its name holds its visible text (WCAG label in name)
   assert.deepEqual([...card.querySelectorAll('.req-rewrite')].map((b) => b.closest('[data-section]').getAttribute('data-section')), ['users']);
+  const rw = card.querySelector('.req-rewrite');
+  assert.equal(rw.textContent, 'Let Worca rewrite this');
+  assert.equal(rw.getAttribute('aria-label'), 'Let Worca rewrite this — Who uses it');
   // empty sections
   const e = await openBrief(madeBody({ brief: madeRow({ sections: { product: '', users: [], terms: [], areas: [] }, edited: {} }) }));
   assert.deepEqual([...e.host.querySelectorAll('section[aria-label="The brief"] .req-sect')].map((s) => text(s.querySelector('.hint'))), ['Not yet.', 'Not yet.', 'Not yet.', 'Not yet.']);
@@ -2140,4 +2180,203 @@ test('brief page, made: an open notes editor and the folds survive a live repain
   assert.equal(text(host.querySelector('details.req-brief-notes-read p')), 'Shoppers order things.');
   btn(host, 'Edit notes').click();
   assert.equal(host.querySelector('[data-ui="notes-body"]').value, 'Shoppers order things.');
+});
+
+test('brief page, made: Copy Markdown that fails says so and copies nothing', async () => {
+  const { host, msgEl } = await openBrief(madeBody(), { [`GET ${BRIEF_URL}/markdown`]: { __status: 500, body: { error: 'down' } } });
+  clip.length = 0;
+  btn(host, 'Export ▾').click();
+  btn(host, 'Copy Markdown').click();
+  await tick(); await tick();
+  assert.deepEqual(clip, []);
+  assert.equal(msgEl.textContent, 'Could not copy the Markdown (HTTP 500).');
+  assert.ok(msgEl.className.includes('err'));
+});
+
+// ---- A7 Task 9: New feature with a brief (board 13); What Worca knows on the feature page (board 14); ⋯ ----
+
+const usableBrief = (over = {}) => ({ scopeType: 'project', scopeKey: 'shop-1', status: 'ready', madeAt: new Date(Date.now() - 2 * DAY).toISOString(), lookAtCode: true, ...over });
+const NEW_TARGETS = { 'GET /api/projects': { projects: [{ key: 'shop-1', name: 'shop' }, { key: 'blog', name: 'blog' }] }, 'GET /api/workspaces': { workspaces: [{ id: 'ws1', name: 'Storefront' }] } };
+const forField = (host) => [...host.querySelectorAll('.req-new .field')][2];
+
+test('new feature: with a brief, the green line names it and links to it; the code-look cost is not shown; it follows the select', async () => {
+  fakeApi({ ...NEW_TARGETS, 'GET /api/requirements': listOf([], { lookCostUsd: 0.25,
+    briefs: [usableBrief(), usableBrief({ scopeType: 'workspace', scopeKey: 'ws1', lookAtCode: false, madeAt: new Date().toISOString() }),
+      { scopeType: 'project', scopeKey: 'blog', status: 'making', madeAt: null }] }) });
+  const { host, view, routed } = make();
+  await view.show('new');
+  const field = forField(host);
+  const select = field.querySelector('select');
+  const line = () => field.querySelector('.req-brief-line');
+  const cost = () => host.querySelector('.req-new-cost');
+  assert.equal(select.value, 'project:shop-1');
+  assert.ok(line(), 'the green line');
+  assert.equal(text(line()), 'Worca knows shop from its product brief (2 days old), so it starts asking right away. It looks closer at the code only if you ask.');
+  assert.equal(line().querySelector('svg').getAttribute('aria-hidden'), 'true', 'the check is decorative');
+  assert.equal(field.querySelector('.req-new-look'), null, "A2's look hint is gone");
+  assert.ok(!cost() || cost().hidden, 'no code-look cost');
+  const link = line().querySelector('a');
+  assert.equal(link.textContent, 'product brief');
+  assert.equal(link.getAttribute('href'), '#requirements/brief/project/shop-1');
+  link.click();
+  assert.deepEqual(routed, ['brief/project/shop-1']);
+  // a project being briefed for the first time has no usable brief: A2's hint and the cost
+  select.value = 'project:blog';
+  select.dispatchEvent(new window.Event('change'));
+  assert.equal(line(), null);
+  assert.match(text(field.querySelector('.req-new-look')), /looks at this project's code once/);
+  assert.equal(cost().hidden, false);
+  assert.equal(cost().textContent, 'About $0.25 for the code look, then cents per round.');
+  // the workspace's brief, made today, with the switch off: no "looks closer" sentence
+  select.value = 'workspace:ws1';
+  select.dispatchEvent(new window.Event('change'));
+  assert.equal(text(line()), 'Worca knows Storefront from its product brief (made today), so it starts asking right away.');
+  assert.equal(line().querySelector('a').getAttribute('href'), '#requirements/brief/workspace/ws1');
+  assert.ok(cost().hidden);
+  assert.doesNotMatch(host.textContent, /null|undefined/);
+});
+
+test('new feature: without a lookCost and with a brief nothing about the cost shows; a brief without madeAt is not usable', async () => {
+  fakeApi({ ...NEW_TARGETS, 'GET /api/requirements': listOf([], { briefs: [{ scopeType: 'project', scopeKey: 'shop-1', status: 'empty', madeAt: null, lookAtCode: true }] }) });
+  const { host, view } = make();
+  await view.show('new');
+  assert.equal(forField(host).querySelector('.req-brief-line'), null);
+  assert.ok(forField(host).querySelector('.req-new-look'));
+  assert.equal(host.querySelector('.req-new-cost'), null);
+});
+
+const briefOf = (over = {}) => ({ status: 'ready', madeAt: new Date(Date.now() - 2 * DAY).toISOString(), sources: [], matches: ['orders', 'packing', 'the packing slip'], lookAtCode: true, ...over });
+const SKIPPED = { summary: '', files: [], skipped: 'brief', briefMadeAt: '2026-10-20T10:00:00Z' };
+const knowsFeature = (over = {}) => feature({ brief: briefOf(), lookCostUsd: 0.25, orientation: SKIPPED, ...over });
+const knows = (host) => host.querySelector('.req-left > section.req-knows');
+const openKnows = async (f, turns = [], extra = {}) => {
+  let cur = { feature: f, turns };
+  const calls = fakeApi({ ...BASE, 'GET /api/requirements/4': () => cur, ...extra });
+  const m = make();
+  await m.view.show('feature/4');
+  return { ...m, calls, set: (nf, nt = turns) => { cur = { feature: nf, turns: nt }; } };
+};
+
+test('What Worca knows, before a closer look: from the brief, the matches, the hint and Look closer with its price', async () => {
+  const { host, calls, routed } = await openKnows(knowsFeature(), [], { 'POST /api/requirements/4/look': { feature: knowsFeature(), turns: [] } });
+  const card = knows(host);
+  assert.ok(card, 'the card');
+  assert.ok(card.classList.contains('card'));
+  assert.equal(card.getAttribute('aria-label'), 'What Worca knows');
+  assert.equal(host.querySelector('details.req-orient'), null, "A2's folded box is replaced");
+  assert.equal(card.querySelector('h3').textContent, 'What Worca knows');
+  const meta = card.querySelector('.req-knows-meta');
+  assert.equal(text(meta), 'from the product brief · 2 days old');
+  assert.equal(meta.querySelector('a').getAttribute('href'), '#requirements/brief/project/shop-1');
+  meta.querySelector('a').click();
+  assert.deepEqual(routed, ['brief/project/shop-1']);
+  assert.equal(text(card.querySelector('.req-knows-text')), 'Worca works from the shop brief: orders, packing and the packing slip are described there. It has not looked at the code for this feature.');
+  assert.equal(text(card.querySelector('.req-knows-foot .hint')), 'Worth it when the feature touches something the brief only skims.');
+  const go = card.querySelector('[data-ui="look-closer"]');
+  assert.equal(go.textContent, 'Look closer · about $0.25');
+  assert.ok(go.classList.contains('btn') && go.classList.contains('btn-mini'));
+  assert.equal(go.disabled, false);
+  assert.equal(card.querySelector('.req-knows-failed'), null);
+  go.click();
+  await tick(); await tick();
+  assert.equal(calls.filter((c) => c.method === 'POST' && c.url === '/api/requirements/4/look').length, 1);
+  assert.doesNotMatch(host.textContent, /null|undefined/);
+});
+
+test('What Worca knows, before: one match, no match, no price, made today, a failed closer look, the switch off, locked', async () => {
+  const say = async (over) => text(knows((await openKnows(knowsFeature(over))).host).querySelector('.req-knows-text'));
+  assert.equal(await say({ brief: briefOf({ matches: ['orders'] }) }), 'Worca works from the shop brief: orders is described there. It has not looked at the code for this feature.');
+  assert.equal(await say({ brief: briefOf({ matches: [] }) }), 'Worca works from the shop brief. It has not looked at the code for this feature.');
+  const today = await openKnows(knowsFeature({ brief: briefOf({ madeAt: new Date().toISOString() }), lookCostUsd: null }));
+  assert.equal(text(knows(today.host).querySelector('.req-knows-meta')), 'from the product brief · made today');
+  assert.equal(knows(today.host).querySelector('[data-ui="look-closer"]').textContent, 'Look closer', 'no price without an estimate');
+  // a closer look that failed: the card stays as before and says so
+  const failed = await openKnows(knowsFeature({ orientation: { summary: '', files: [], skipped: 'failed' } }));
+  assert.equal(text(knows(failed.host).querySelector('.req-knows-failed')), 'Worca could not look at the code this time.');
+  assert.ok(knows(failed.host).querySelector('[data-ui="look-closer"]'));
+  // the switch off: no Look closer, no hint about it
+  const off = await openKnows(knowsFeature({ brief: briefOf({ lookAtCode: false }) }));
+  assert.equal(knows(off.host).querySelector('[data-ui="look-closer"]'), null);
+  assert.equal(knows(off.host).querySelector('.req-knows-foot'), null);
+  // busy and archived: disabled
+  for (const over of [{ busy: true, status: 'thinking', state: 'thinking', pending: null }, { status: 'archived', state: 'archived', pending: null }]) {
+    const l = await openKnows(knowsFeature(over));
+    assert.equal(knows(l.host).querySelector('[data-ui="look-closer"]').disabled, true, over.status);
+  }
+});
+
+test('What Worca knows, after a closer look: brief + a closer look, the summary, Add this to the brief until added, Look again', async () => {
+  const LOOKED = { summary: 'The packing slip is printed from the order with its prices.', files: ['src/slip.mjs', 'src/order.mjs'], skipped: null, area: 'Orders' };
+  const turns = [{ id: 2, kind: 'orientation', costUsd: 0, payload: SKIPPED }, { id: 7, kind: 'orientation', costUsd: 0.22, payload: { ...LOOKED } }];
+  const { host, calls, set, view } = await openKnows(knowsFeature({ orientation: LOOKED }), turns, {
+    'POST /api/requirements/4/brief-addition': () => { set(knowsFeature({ orientation: { ...LOOKED, addedToBrief: '2026-10-22T10:00:00Z' } })); return { feature: knowsFeature(), turns }; },
+    'POST /api/requirements/4/look': { feature: knowsFeature(), turns } });
+  const card = knows(host);
+  assert.equal(text(card.querySelector('.req-knows-meta')), 'brief + a closer look · 2 files · $0.22');
+  assert.equal(text(card.querySelector('.req-knows-text')), LOOKED.summary);
+  const add = card.querySelector('[data-ui="brief-add"]');
+  assert.equal(text(add.parentElement), 'Not in the brief yet. Add this to the brief');
+  assert.ok(add.classList.contains('link-btn'));
+  assert.equal(card.querySelector('[data-ui="look-closer"]'), null);
+  const again = card.querySelector('[data-ui="look-again"]');
+  assert.equal(again.textContent, 'Look again');
+  add.click();
+  await tick(); await tick();
+  assert.equal(calls.filter((c) => c.method === 'POST' && c.url === '/api/requirements/4/brief-addition').length, 1);
+  assert.equal(knows(host).querySelector('[data-ui="brief-add"]'), null, 'gone once added');
+  assert.doesNotMatch(text(knows(host)), /Not in the brief yet/);
+  knows(host).querySelector('[data-ui="look-again"]').click();
+  await tick(); await tick();
+  assert.equal(calls.filter((c) => c.method === 'POST' && c.url === '/api/requirements/4/look').length, 1);
+  // the switch off hides Look again; a look that found nothing offers nothing to add
+  set(knowsFeature({ brief: briefOf({ lookAtCode: false }), orientation: { summary: '', files: [], skipped: null } }));
+  await view.changed(4);
+  assert.equal(knows(host).querySelector('[data-ui="look-again"]'), null);
+  assert.equal(knows(host).querySelector('[data-ui="brief-add"]'), null);
+  assert.equal(text(knows(host).querySelector('.req-knows-meta')), 'brief + a closer look · $0.22', 'no files, no file count');
+  // locked: both disabled
+  const l = await openKnows(knowsFeature({ orientation: LOOKED, busy: true, status: 'thinking', state: 'thinking', pending: null }), turns);
+  assert.equal(knows(l.host).querySelector('[data-ui="brief-add"]').disabled, true);
+  assert.equal(knows(l.host).querySelector('[data-ui="look-again"]').disabled, true);
+});
+
+test("A2's box without a brief: skipped for a brief reads it has not looked, with Look again; the switch-off text names Your notes for Worca", async () => {
+  const s = await openKnows(feature({ brief: null, orientation: SKIPPED }), [{ id: 2, kind: 'orientation', costUsd: 0, payload: SKIPPED }],
+    { 'POST /api/requirements/4/look': { feature: feature(), turns: [] } });
+  const box = s.host.querySelector('.req-left > details.req-orient');
+  assert.ok(box, "A2's box");
+  assert.equal(knows(s.host), null);
+  assert.equal(box.querySelector('p').textContent, 'Worca has not looked at the code for this feature.');
+  assert.equal(box.querySelector('.req-orient-meta'), null);
+  const again = box.querySelector('[data-ui="orient-look-again"]');
+  assert.equal(again.textContent, 'Look again');
+  again.click();
+  await tick(); await tick();
+  assert.equal(s.calls.filter((c) => c.method === 'POST' && c.url === '/api/requirements/4/look').length, 1);
+  const off = await openKnows(feature({ orientation: { summary: '', files: [], skipped: 'off' } }));
+  assert.equal(off.host.querySelector('details.req-orient p').textContent, 'Looking at the code is turned off for this one (Your notes for Worca).');
+  assert.equal(off.host.querySelector('[data-ui="orient-look-again"]'), null, 'only for the brief-skipped look');
+  const plain = await openKnows(feature());
+  assert.equal(plain.host.querySelector('details.req-orient p').textContent, 'Orders have a status.', 'unchanged otherwise');
+  assert.doesNotMatch(plain.host.textContent, /Project context|Workspace context/);
+});
+
+test('⋯ with a brief: Look closer while the look was skipped for the brief, Look again after; hidden with the switch off; Your notes for Worca routes', async () => {
+  const labels = (host) => { host.querySelector('[data-ui="menu-more"]').click(); return [...host.querySelectorAll('[data-menu="more"] [role="menuitem"]')].map((x) => x.textContent); };
+  const a = await openKnows(knowsFeature(), [], { 'POST /api/requirements/4/look': { feature: knowsFeature(), turns: [] } });
+  assert.deepEqual(labels(a.host), ['Your notes for Worca', 'Look closer', 'Archive']);
+  a.host.querySelector('[data-ui="mi-look"]').click();
+  await tick(); await tick();
+  assert.equal(a.calls.filter((c) => c.method === 'POST' && c.url === '/api/requirements/4/look').length, 1);
+  const b = await openKnows(knowsFeature({ orientation: { summary: 'x', files: [], skipped: null } }));
+  assert.deepEqual(labels(b.host), ['Your notes for Worca', 'Look again', 'Archive']);
+  const c = await openKnows(knowsFeature({ brief: briefOf({ lookAtCode: false }) }));
+  assert.deepEqual(labels(c.host), ['Your notes for Worca', 'Archive']);
+  // without a brief, a look skipped for a (since deleted) brief is looked at again
+  const d = await openKnows(feature({ orientation: SKIPPED }));
+  assert.deepEqual(labels(d.host), ['Your notes for Worca', 'Look again', 'Archive']);
+  const w = await openKnows(knowsFeature({ scopeType: 'workspace', scopeKey: 'ws:1' }));
+  w.host.querySelector('[data-ui="menu-more"]').click();
+  w.host.querySelector('[data-ui="mi-notes"]').click();
+  assert.deepEqual(w.routed, ['brief/workspace/ws%3A1']);
 });

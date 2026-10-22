@@ -117,6 +117,11 @@ export function age(iso, now = Date.now()) {
   if (days < 61) return `${Math.floor(days / 7)} weeks`;
   return `${Math.max(2, Math.floor(days / 30.44))} months`;
 }
+/** A brief's age as the pages say it (A7 §6): "made today", "made yesterday", "<age> old". */
+function ageOld(iso) {
+  const a = age(iso);
+  return a === 'today' || a === 'yesterday' ? `made ${a}` : a ? `${a} old` : 'made';
+}
 /** "a", "a and b", "a, b and c". */
 const joinAnd = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
 /** A brief frame's key, split on its FIRST ':' (a workspace id may hold ':' itself); null when it is not one. */
@@ -219,10 +224,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   const assumePosting = new Set(); // assumption ids whose Confirm / Reject POST is in flight
   // Unsaved input of the feature page, kept across repaints (read from the DOM before a rebuild, put back after).
   let ui = freshUi();
-  let ctxEls = null;
   function freshUi() {
-    return { editVals: null, crit: '', critOpen: false, orientOpen: false, moreOpen: false, menu: null, decideMore: false, specTab: 'draft',
-      ctx: { open: false, loaded: false, loading: false, failed: false, body: '', look: false } };
+    return { editVals: null, crit: '', critOpen: false, orientOpen: false, moreOpen: false, menu: null, decideMore: false, specTab: 'draft' };
   }
 
   if (subEl) subEl.textContent = 'Define a feature with Worca before anything is built. Nothing runs until you start it.';
@@ -301,9 +304,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         return;
       }
       if (key === 'new') {
-        // The list call carries the code-look cost for the hint; the form renders without it.
-        const look = await api('GET', '/api/requirements').then((d) => d.lookCostUsd, () => null);
-        if (mine === paintNo) { paintNew(typeof look === 'number' ? look : null); paintedKey = key; }
+        // The list call carries the code-look cost for the hint and the briefs (A7 board 13); the form renders without it.
+        const d = await api('GET', '/api/requirements').catch(() => ({}));
+        const look = d && typeof d.lookCostUsd === 'number' ? d.lookCostUsd : null;
+        if (mine === paintNo) { paintNew(look, Array.isArray(d && d.briefs) ? d.briefs : []); paintedKey = key; }
         return;
       }
       if (seqShown != null) {
@@ -334,7 +338,6 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     }
     const crit = q('new-criterion');
     if (crit) ui.crit = crit.value;
-    if (ui.ctx.loaded && q('ctx-body')) { ui.ctx.body = q('ctx-body').value; ui.ctx.look = q('ctx-look').checked; }
     const orient = host.querySelector('.req-orient');
     if (orient) ui.orientOpen = orient.open;
     return focus;
@@ -379,8 +382,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const to = briefPath(g.scopeType, g.scopeKey);
     const link = (label) => h('a', { class: 'req-brief-link', href: `#requirements/${to}`, onclick: (e) => { e.preventDefault(); route(to); } }, label);
     if (b && b.madeAt) {
-      const a = age(b.madeAt);
-      return h('span', { class: 'hint req-group-brief' }, link(a === 'today' || a === 'yesterday' ? `Product brief · made ${a}` : `Product brief · ${a} old`));
+      return h('span', { class: 'hint req-group-brief' }, link(`Product brief · ${ageOld(b.madeAt)}`));
     }
     if (b && b.status === 'making') return h('span', { class: 'hint req-group-brief' }, link('Product brief: being made…'));
     return h('span', { class: 'hint req-group-brief' }, 'Product brief: none yet · ', link('Create'));
@@ -419,17 +421,37 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     if (tabFocused) host.querySelector('[role="tab"][aria-selected="true"]')?.focus();
   }
 
-  function paintNew(lookCost) {
+  // The green line under For when the chosen target has a usable brief (A7 board 13, D10): no look before round 1.
+  function briefLine(s, name, b) {
+    const to = briefPath(s.scopeType, s.scopeKey);
+    return h('p', { class: 'req-brief-line' }, icon(ICONS.check, { size: 16, width: 2.4 }),
+      h('span', {}, `Worca knows ${name} from its `, briefLink(to), ` (${ageOld(b.madeAt)}), so it starts asking right away.`,
+        b.lookAtCode !== false ? ' It looks closer at the code only if you ask.' : ''));
+  }
+  const briefLink = (to) => h('a', { class: 'req-brief-link', href: `#requirements/${to}`, onclick: (e) => { e.preventDefault(); route(to); } }, 'product brief');
+
+  function paintNew(lookCost, briefs = []) {
     const select = h('select', { id: 'req-new-target' },
       targets.projects.length ? h('optgroup', { label: 'Projects' }, targets.projects.map((p) => h('option', { value: `project:${p.key}`, text: p.name }))) : null,
       targets.workspaces.length ? h('optgroup', { label: 'Workspaces' }, targets.workspaces.map((w) => h('option', { value: `workspace:${w.id}`, text: w.name }))) : null);
     const title = h('input', { id: 'req-new-title', type: 'text', maxlength: '200', placeholder: 'Cancel an order before it ships' });
     const desc = h('textarea', { id: 'req-new-desc', rows: '5', placeholder: 'A few sentences, the way you would tell a colleague.' });
-    const lookHint = h('span', { class: 'hint req-new-look' });
+    // A brief is usable once made (D10), also while it is being refreshed.
+    const usable = new Map(briefs.filter((b) => b && b.scopeType && b.scopeKey && b.madeAt).map((b) => [scopeId(b), b]));
+    const costHint = lookCost != null ? h('span', { class: 'hint req-new-cost', text: `About ${usd(lookCost)} for the code look, then cents per round.` }) : null;
+    let lookHint = h('span', { class: 'hint req-new-look' });
     const sayLook = () => {
-      lookHint.textContent = select.value.startsWith('workspace:')
-        ? "Worca looks at the code of this workspace's projects once, read-only, to learn what already exists. Change that in Workspace context."
-        : "Worca looks at this project's code once, read-only, to learn what already exists. Change that in Project context.";
+      const [scopeType, ...rest] = select.value.split(':');
+      const s = { scopeType, scopeKey: rest.join(':') };
+      const b = select.value ? usable.get(scopeId(s)) : null;
+      const next = b ? briefLine(s, select.options[select.selectedIndex]?.textContent || s.scopeKey, b)
+        : h('span', { class: 'hint req-new-look', text: scopeType === 'workspace'
+          ? "Worca looks at the code of this workspace's projects once, read-only, to learn what already exists. Change that in Your notes for Worca."
+          : "Worca looks at this project's code once, read-only, to learn what already exists. Change that in Your notes for Worca." });
+      if (lookHint.parentNode) lookHint.replaceWith(next);
+      lookHint = next;
+      // with a brief, the code look's cost is not said (before the A1.1 merge: A2's hint is hidden, A7 §6 / §9)
+      if (costHint) costHint.hidden = !!b;
     };
     select.addEventListener('change', sayLook);
     sayLook();
@@ -449,7 +471,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         field('req-new-desc', ['Describe it ', h('span', { class: 'opt', text: 'who needs it, what they want to do, and why' })], desc),
         field('req-new-target', ['For'], h('div', { class: 'select-wrap' }, select), lookHint),
         h('div', { class: 'actions req-new-actions' },
-          lookCost != null ? h('span', { class: 'hint req-new-cost', text: `About ${usd(lookCost)} for the code look, then cents per round.` }) : null,
+          costHint,
           h('div', { class: 'req-new-btns' },
             h('button', { type: 'button', class: 'btn', onclick: () => route('') }, 'Cancel'),
             h('button', { type: 'button', class: 'btn-go', onclick: create }, 'Start the interview'))))));
@@ -703,6 +725,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     ]);
   }
 
+  // The newest commits the staleness check reads files of (D9: `commitFilesSince … -n 2000`).
+  const STALE_SCAN = 2000;
   /** "A", "A and B", "A, B and C", each bold. */
   const boldList = (xs) => xs.flatMap((x, i) => [i === 0 ? null : i === xs.length - 1 ? ' and ' : ', ', h('b', { text: x })]).filter(Boolean);
   const STALE_REASON = Object.freeze({
@@ -723,10 +747,19 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const st = data.staleness;
     if (!st || typeof st !== 'object' || (b.edited && b.edited.areas)) return null;
     const ws = briefShown.scopeType === 'workspace';
+    const unknown = ws && Array.isArray(st.unknown) ? st.unknown.filter(Boolean) : [];
+    const added = ws && Array.isArray(st.added) ? st.added.filter(Boolean) : [];
+    const members = [
+      unknown.length ? h('p', { class: 'req-brief-stale-unknown', text: `Not checked: ${joinAnd(unknown)}.` }) : null,
+      added.length ? h('p', { class: 'req-brief-stale-added', text: `${joinAnd(added)} joined after this brief; refresh to include them.` }) : null,
+    ];
+    // Nothing moved on: a workspace still says which members the brief does not cover, as a small note.
+    const small = () => (unknown.length || added.length ? h('div', { class: 'hint req-brief-members', role: 'note' }, ...members,
+      added.length ? h('div', { class: 'req-actions' }, refreshButton(data, `Refresh${estimateText(data)}`, 'brief-refresh')) : null) : null);
     let says;
     if (st.known === true) {
       const n = Number(st.commits) || 0;
-      if (n <= 0 || st.checked === false) return null;
+      if (n <= 0 || st.checked === false) return small();
       const m = Number(st.touching) || 0;
       const areas = Array.isArray(st.areas) ? st.areas.filter((x) => typeof x === 'string' && x) : [];
       const src = (Array.isArray(st.sources) && st.sources[0]) || (b.sources || [])[0] || {};
@@ -736,21 +769,20 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       const what = m <= 0 ? ['; none of them change areas the brief describes.']
         : areas.length ? [`; ${m} of them ${m === 1 ? 'changes' : 'change'} areas the brief describes: `, ...boldList(areas), '.']
           : [`; ${m} of them ${m === 1 ? 'changes' : 'change'} areas the brief describes.`];
-      says = [plural(n, 'commit'), ...where, ...what, ' Interviews still use the brief as it is.'];
+      // partial (D9): the file scan read only the newest STALE_SCAN commits, so the areas are those commits'
+      const count = st.partial && n > STALE_SCAN ? `More than ${STALE_SCAN} commits` : plural(n, 'commit');
+      says = [count, ...where, ...what, ' Interviews still use the brief as it is.'];
     } else if (st.known === false) {
       const branch = st.branch || ((Array.isArray(st.sources) ? st.sources : []).find((x) => x && x.known === false && x.branch) || {}).branch || null;
       const why = STALE_REASON[st.reason];
       says = why ? ['Worca cannot tell how far the code moved on: ', ...why(branch)] : ['Worca cannot tell how far the code moved on.'];
-    } else return null;
-    const unknown = ws && Array.isArray(st.unknown) ? st.unknown.filter(Boolean) : [];
-    const added = ws && Array.isArray(st.added) ? st.added.filter(Boolean) : [];
+    } else return small();
     return h('section', { class: 'req-changed req-brief-stale', 'aria-label': 'The brief is behind the code' },
       icon(ICONS.warn, { size: 18 }),
       h('div', { class: 'req-changed-body' },
         h('b', { text: 'The code moved on since this brief' }),
         h('p', { class: 'req-brief-stale-text' }, ...says),
-        unknown.length ? h('p', { class: 'req-brief-stale-unknown', text: `Not checked: ${joinAnd(unknown)}.` }) : null,
-        added.length ? h('p', { class: 'req-brief-stale-added', text: `${joinAnd(added)} joined after this brief; refresh to include them.` }) : null,
+        ...members,
         h('div', { class: 'req-actions' }, refreshButton(data, `Refresh${estimateText(data)}`, 'brief-refresh'))));
   }
 
@@ -802,7 +834,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     return h('section', { class: 'req-sect', 'data-section': key },
       h('div', { class: 'req-sect-head' },
         h('h4', {}, title, edited ? h('span', { class: 'req-edited', text: ' · edited by you' }) : null),
-        edited ? h('button', { type: 'button', class: 'link-btn req-rewrite', 'aria-label': `Let Worca rewrite ${title}`, onclick: rewrite }, 'Let Worca rewrite this') : null,
+        edited ? h('button', { type: 'button', class: 'link-btn req-rewrite', 'aria-label': `Let Worca rewrite this — ${title}`, onclick: rewrite }, 'Let Worca rewrite this') : null,
         icoBtn('pencil', `Edit ${title}`, () => { briefEditing = key; briefEditVal = null; briefFocusNext = 'brief-edit-text'; redrawBrief(); },
           { cls: null, 'data-ui': `brief-edit-${key}` })),
       body);
@@ -958,7 +990,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('button', { type: 'button', class: 'btn btn-mini req-retry', onclick: () => act(async () => { await api('POST', `/api/requirements/${f.seq}/retry`, {}); await paint(); }) }, 'Try again')) : null,
       card,
       earlierRounds(f, rounds),
-      orientationBox(f, turns));
+      f.brief ? knowsCard(f, turns) : orientationBox(f, turns));
   }
 
   // ---- Decide (board Decisions.dc.html, A2 D3/D4): Confirm / Reject per assumption, Confirm the N left,
@@ -1449,55 +1481,73 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
             onclick: (e) => startFlow(f, { override: false, trigger: e.currentTarget }) }, 'Start in worca'))));
   }
 
-  function loadContext(f) {
-    ui.ctx.loading = true;
-    void act(async () => {
-      try {
-        const c = await api('GET', `/api/requirements/context/${f.scopeType}/${encodeURIComponent(f.scopeKey)}`);
-        ui.ctx.body = c.body; ui.ctx.look = !!c.lookAtCode; ui.ctx.loaded = true;
-        // the page may have been rebuilt while loading: write into the panel that is on screen now
-        if (ctxEls) { ctxEls.saveBtn.disabled = false; ctxEls.area.value = c.body; ctxEls.look.checked = !!c.lookAtCode; }
-      } catch (err) { ui.ctx.failed = true; throw err; } finally { ui.ctx.loading = false; }
-    });
+  // The looks at the code this feature made (A2: the orientation turns not skipped), and what they cost.
+  function looksOf(turns) {
+    const looks = turns.filter((t) => t.kind === 'orientation' && !(t.payload && t.payload.skipped));
+    return { looks, cost: looks.reduce((sum, t) => sum + (Number(t.costUsd) || 0), 0) };
   }
+  const postLook = (f) => act(async () => { await api('POST', `/api/requirements/${f.seq}/look`, {}); await paint(); });
 
-  // Project / Workspace context, opened from the ⋯ menu; loaded the first time it opens.
-  function contextPanel(f) {
-    ctxEls = null;
-    if (!ui.ctx.open) return null;
-    const name = f.scopeType === 'workspace' ? 'Workspace context' : 'Project context';
-    const area = h('textarea', { rows: '4', 'aria-label': 'Shared context', 'data-ui': 'ctx-body', placeholder: 'Actors, terms and standing rules every feature here should know' });
-    const look = h('input', { type: 'checkbox', id: 'req-ctx-look', 'data-ui': 'ctx-look' });
-    const saveBtn = h('button', { type: 'button', class: 'btn btn-mini', disabled: !ui.ctx.loaded, onclick: () => act(async () => {
-      await api('PUT', `/api/requirements/context/${f.scopeType}/${encodeURIComponent(f.scopeKey)}`, { body: area.value, lookAtCode: look.checked });
-      say('Context saved.', 'ok');
-    }) }, 'Save context');
-    ctxEls = { area, look, saveBtn };
-    if (ui.ctx.loaded) { area.value = ui.ctx.body; look.checked = ui.ctx.look; }
-    else if (!ui.ctx.loading && !ui.ctx.failed) loadContext(f);
-    return h('section', { class: 'card req-context', 'aria-label': name },
-      h('div', { class: 'req-card-head' }, h('h3', { text: name }),
-        h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'ctx-close', onclick: () => { ui.ctx.open = false; focusNext = 'menu-more'; redraw(); } }, 'Close')),
-      area, h('label', { for: 'req-ctx-look', class: 'req-ctx-look' }, look, ' Let Worca look at the code when a feature starts'),
-      h('div', { class: 'req-actions' }, saveBtn));
-  }
-
+  // A2's folded box, for a feature whose scope has no usable brief. An orientation skipped for a brief that is
+  // gone now (deleted, or the feature moved) says so and offers Look again (D10).
   function orientationBox(f, turns) {
     const o = f.orientation;
     const text = !o ? 'Not looked yet.'
-      : o.skipped === 'off' ? 'Looking at the code is turned off for this one (Project context).'
-        : o.skipped === 'no-repo' ? 'There is no repository to look at yet.'
-          : o.skipped === 'failed' ? 'Worca could not look at the code this time; the interview runs without it.'
-            : o.summary || 'Nothing relevant found.';
-    const looks = turns.filter((t) => t.kind === 'orientation' && !(t.payload && t.payload.skipped));
-    const cost = looks.reduce((sum, t) => sum + (Number(t.costUsd) || 0), 0);
+      : o.skipped === 'brief' ? 'Worca has not looked at the code for this feature.'
+        : o.skipped === 'off' ? 'Looking at the code is turned off for this one (Your notes for Worca).'
+          : o.skipped === 'no-repo' ? 'There is no repository to look at yet.'
+            : o.skipped === 'failed' ? 'Worca could not look at the code this time; the interview runs without it.'
+              : o.summary || 'Nothing relevant found.';
+    const { looks, cost } = looksOf(turns);
     const times = looks.length === 1 ? 'looked once' : looks.length === 2 ? 'looked twice' : `looked ${looks.length} times`;
     const nFiles = ((o && o.files) || []).length;
     const meta = looks.length ? [times, nFiles ? plural(nFiles, 'file') : null, cost > 0 ? usd(cost) : null].filter(Boolean).join(' · ') : null;
     return h('details', { class: 'card req-orient', open: ui.orientOpen }, // `open: false` is skipped by h()
       h('summary', {}, 'What Worca found in the code', meta ? h('span', { class: 'hint req-orient-meta', text: meta }) : null),
       h('p', { text }),
+      o && o.skipped === 'brief' ? h('div', { class: 'req-actions' },
+        h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'orient-look-again', disabled: isLocked(f), onclick: () => postLook(f) }, 'Look again')) : null,
       o && o.files && o.files.length ? h('ul', { class: 'hint', 'data-min-level': 'advanced' }, ...o.files.map((p) => h('li', { text: p }))) : null);
+  }
+
+  // What Worca knows (board 14, A7 D10/D11): the card that replaces A2's box when the scope has a usable brief.
+  // Before a closer look Worca works from the brief (Look closer offers one); after it, the look's summary, Add
+  // this to the brief (until added) and Look again. The switch off hides both looks; the A1 lock disables them.
+  function knowsCard(f, turns) {
+    const b = f.brief;
+    const o = f.orientation || null;
+    const locked = isLocked(f);
+    const lookOn = b.lookAtCode !== false;
+    const looked = !!(o && !o.skipped);
+    const to = briefPath(f.scopeType, f.scopeKey);
+    let meta;
+    let body;
+    let foot = null;
+    if (!looked) {
+      const matches = (Array.isArray(b.matches) ? b.matches : []).filter((m) => typeof m === 'string' && m);
+      const what = matches.length ? `: ${joinAnd(matches)} ${matches.length === 1 ? 'is' : 'are'} described there.` : '.';
+      meta = ['from the ', briefLink(to), ` · ${ageOld(b.madeAt)}`];
+      body = [h('p', { class: 'req-knows-text', text: `Worca works from the ${targetName(f)} brief${what} It has not looked at the code for this feature.` }),
+        o && o.skipped === 'failed' ? h('p', { class: 'hint req-knows-failed', text: 'Worca could not look at the code this time.' }) : null];
+      if (lookOn) {
+        foot = [h('span', { class: 'hint', text: 'Worth it when the feature touches something the brief only skims.' }),
+          h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'look-closer', disabled: locked, onclick: () => postLook(f) },
+            `Look closer${typeof f.lookCostUsd === 'number' ? ` · about ${usd(f.lookCostUsd)}` : ''}`)];
+      }
+    } else {
+      const { cost } = looksOf(turns);
+      const nFiles = (Array.isArray(o.files) ? o.files : []).length;
+      meta = [['brief + a closer look', nFiles ? plural(nFiles, 'file') : null, usd(cost)].filter(Boolean).join(' · ')];
+      const add = () => act(async () => { await api('POST', `/api/requirements/${f.seq}/brief-addition`, {}); await paint(); });
+      body = [h('p', { class: 'req-knows-text', text: o.summary || 'Nothing relevant found.' }),
+        o.summary && !o.addedToBrief ? h('p', { class: 'hint req-knows-add' }, 'Not in the brief yet. ',
+          h('button', { type: 'button', class: 'link-btn', 'data-ui': 'brief-add', disabled: locked, onclick: add }, 'Add this to the brief')) : null];
+      if (lookOn) foot = [h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'look-again', disabled: locked, onclick: () => postLook(f) }, 'Look again')];
+    }
+    return h('section', { class: `card req-knows${looked ? ' req-knows-looked' : ''}`, 'aria-label': 'What Worca knows' },
+      h('div', { class: 'req-card-head' }, h('h3', { text: 'What Worca knows' }), h('span', { class: 'hint req-knows-meta' }, ...meta)),
+      ...body,
+      foot ? h('div', { class: 'req-knows-foot' }, ...foot) : null);
   }
 
   // A menu button (the ⋯ header menu's pattern, .hd-more-wrap / .hd-menu): the trigger toggles a role=menu
@@ -1567,11 +1617,12 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         ]),
         menu('more', h('button', { type: 'button', class: 'req-ico', 'aria-label': 'More actions', title: 'More actions', 'data-ui': 'menu-more' },
           icon(ICONS.dots, { size: 18, fill: 'currentColor', stroke: 'none' })), [
-          menuItem(f.scopeType === 'workspace' ? 'Workspace context' : 'Project context', () => {
-            ui.ctx.open = true; ui.ctx.failed = false; focusNext = 'ctx-body'; redraw();
-            host.querySelector('.req-context')?.scrollIntoView?.({ block: 'nearest' });
-          }, { ui: 'mi-context' }),
-          menuItem('Look again', () => act(async () => { await api('POST', `/api/requirements/${f.seq}/look`, {}); await paint(); }), { disabled: isLocked(f), ui: 'mi-look' }),
+          // the notes moved to the brief page (A7 D12)
+          menuItem('Your notes for Worca', () => route(briefPath(f.scopeType, f.scopeKey)), { ui: 'mi-notes' }),
+          // with a brief: Look closer while Worca works from it alone; none with the switch off (D11)
+          f.brief && f.brief.lookAtCode === false ? null
+            : menuItem(f.brief && f.orientation && f.orientation.skipped === 'brief' ? 'Look closer' : 'Look again', () => postLook(f),
+              { disabled: isLocked(f), ui: 'mi-look' }),
           menuItem(archived ? 'Restore' : 'Archive', () => act(async () => {
             await api('POST', `/api/requirements/${f.seq}/archive`, archived ? { restore: true } : {});
             await paint();
@@ -1590,7 +1641,6 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     paintHost(h('div', { class: 'req-page' },
       h('a', { href: '#requirements', class: 'hint req-back', onclick: (e) => { e.preventDefault(); route(''); } }, '← All features'),
       header(f),
-      contextPanel(f),
       h('div', { class: 'req-cols' },
         conversation(f, turns, rounds),
         h('div', { class: 'req-right' }, readyPanel(f), specCard(f)))));
