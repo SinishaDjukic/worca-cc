@@ -431,19 +431,25 @@ export function memoryDefragModel() {
  *   the model does not offer
  */
 export function assertMemoryDefragModelInput(input, models = null) {
+  return assertModelPairInput('memoryDefrag', input, models);
+}
+
+/** The `{ model, effort }` pair check shared by memoryDefrag and agentGenModel; `key` names the setting in
+ *  every message. */
+function assertModelPairInput(key, input, models) {
   if (input === '' || input === null || input === undefined) return null;
-  if (typeof input !== 'object' || Array.isArray(input)) throw new Error('memoryDefrag must be { model, effort } or null');
+  if (typeof input !== 'object' || Array.isArray(input)) throw new Error(`${key} must be { model, effort } or null`);
   const blank = (v) => v === null || v === undefined || (typeof v === 'string' && !v.trim());
   if (blank(input.model)) {
-    if (!blank(input.effort)) throw new Error('memoryDefrag.effort needs a model — an effort without a model means nothing');
+    if (!blank(input.effort)) throw new Error(`${key}.effort needs a model — an effort without a model means nothing`);
     return null;
   }
   if (typeof input.model !== 'string' || !input.model.trim() || input.model.length > DEFRAG_MODEL_MAX_LEN) {
-    throw new Error('memoryDefrag.model must be a catalog model id');
+    throw new Error(`${key}.model must be a catalog model id`);
   }
   const effortIn = typeof input.effort === 'string' ? input.effort.trim() : input.effort;   // trimmed like setNodeModel / checkStartPair
   if (!blank(effortIn) && !EFFORTS.includes(effortIn)) {
-    throw new Error(`memoryDefrag.effort must be one of ${EFFORTS.join(' | ')}`);
+    throw new Error(`${key}.effort must be one of ${EFFORTS.join(' | ')}`);
   }
   let model = input.model.trim();
   const effort = blank(effortIn) ? null : effortIn;
@@ -1162,6 +1168,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'autoWorkflowModel',                       // auto-workflow spec D14
   'prDescriptionModel',                      // the "Ship it?" modal's Generate with AI
   'memoryDefrag',                            // Settings › Memory: the defragment model + effort
+  'agentGenModel',                           // the agent wizard's Generate: model + effort (Claude, user-level)
   'workspaceScan',                           // Settings › Runs › Workspaces: the scan's models
   'schedule',                                // scheduled-run defaults { graceMin, ifMissed, maxFailures }
   'nightMode',                               // night mode user layer (night/config.mjs fields)
@@ -1492,6 +1499,57 @@ export async function setPrDescriptionModel(input, { models = null } = {}) {
   if (id === null) delete settings.prDescriptionModel; else settings.prDescriptionModel = id;
   await persistSettings(settings);
   return { prDescriptionModel: prDescriptionModel() };
+}
+
+// ── Agent generation model (Workflows › Agents › + › Generate) ───────────────
+// `agentGenModel`: the { model, effort } pair of the agent wizard's one claude call
+// (agent-gen.mjs). User-level and Claude-only: agent generation always runs on Claude and has
+// no project, so there is no project override and no other engine's slot. Unset = the CLI's
+// default model. Read when Generate is clicked (server.mjs startAgentGen).
+const warnedAgentGenModel = new Set();
+
+/** The STORED pair: `{ model, effort }`, both null when unset. Sync and never throws: a bad hand
+ *  edit warns once and reads as unset (a bad effort alone reads as the model's default effort).
+ *  The memoryDefragModel node:test guard: settings.json lives under HOME, not WORCA_HOME. */
+export function agentGenModel() {
+  if (homeGuarded()) return { model: null, effort: null };
+  const v = readSettings().agentGenModel;
+  if (v === undefined || v === null) return { model: null, effort: null };
+  const warnOnce = (what, tail) => {
+    const id = JSON.stringify(what);
+    if (warnedAgentGenModel.has(id)) return;
+    warnedAgentGenModel.add(id);
+    console.warn(`[worca] invalid agentGenModel ${id} — ${tail}`);
+  };
+  const m = isObj(v) ? v.model : undefined;
+  if (typeof m !== 'string' || !m.trim() || m.length > DEFRAG_MODEL_MAX_LEN) {
+    warnOnce(v, 'agent generation uses the CLI default');
+    return { model: null, effort: null };
+  }
+  const effort = typeof v.effort === 'string' && EFFORTS.includes(v.effort) ? v.effort : null;
+  if (v.effort !== undefined && v.effort !== null && effort === null) warnOnce(v, 'agent generation uses the model\'s default effort');
+  return { model: m.trim(), effort };
+}
+
+/**
+ * Validate a POST value exactly like assertMemoryDefragModelInput: `{ model, effort }`, or null /
+ * '' / a blank model to clear. With `models` (the effective catalog) the model must name an entry —
+ * it comes back in the catalog's casing — and the effort must be one that entry offers.
+ * @returns {{model:string, effort:(string|null)}|null} the pair to store, null to clear
+ * @throws {Error} on a malformed value, an effort without a model, an unknown model or an effort
+ *   the model does not offer
+ */
+export function assertAgentGenModelInput(input, models = null) {
+  return assertModelPairInput('agentGenModel', input, models);
+}
+
+export async function setAgentGenModel(input, { models = null } = {}) {
+  const pair = assertAgentGenModelInput(input, models);
+  const settings = readSettings();
+  if (pair === null) delete settings.agentGenModel;
+  else settings.agentGenModel = pair.effort ? pair : { model: pair.model };
+  await persistSettings(settings);
+  return { agentGenModel: agentGenModel() };
 }
 
 // ── Spawn-debug diagnostics toggle (the stored side of WORCA_DEBUG_SPAWN) ────
