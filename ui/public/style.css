@@ -5232,14 +5232,16 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
 
 /* ---------- Running detail: Live view ---------- */
 /* The glance's running step(s), centred in a fogged graph (app.js paintRdLive, the
-   `focus` host in graph/run-hosts.mjs). Under the card at every pane width, as wide as the
-   pane's content (run 3, D16); the panel's own entrance is here. Opacity is the LAST
-   transition to end on the way out: app.js drops the graph on its transitionend. */
+   `focus` host in graph/run-hosts.mjs). Beside the card when the PANE is wide — a container
+   query, so the Runs list's width and a collapsed sidebar count — and under it otherwise, as
+   wide as the pane's content (run 3, D16). app.js slides the card into place (flipGlance);
+   the panel's own entrance is here. Opacity is the LAST transition to end on the way out in
+   both layouts: app.js drops the graph on its transitionend. */
 .rd{container:rd / inline-size;}
 .switch-row.rd-live-row{gap:10px;}
 .rd-live-row[hidden]{display:none;}   /* .switch-row's display:flex beats the UA [hidden] rule */
 .rd-live-row .txt{font-size:13px;color:var(--ink-2);}
-/* The panel opens its height under the card (0fr → 1fr), eating the column gap
+/* Narrow: the panel opens its height under the card (0fr → 1fr), eating the column gap
    it would otherwise add at once, and rises into place. */
 .rd-live{display:grid;grid-template-rows:0fr;margin-top:-22px;opacity:0;transform:translateY(10px);
   cursor:pointer;border-radius:var(--r-card);
@@ -5265,6 +5267,28 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
   mask-image:radial-gradient(closest-side, transparent 66%, var(--ink) 100%);}
 /* The camera glides when the work moves on (focusNodeIds). */
 .rd-live .gv-world{transition:transform .7s cubic-bezier(.4,0,.2,1);}
+/* Wide: the card keeps its 544px column and the graph takes the rest of the row. A shaped run waiting on the person
+   stays one column (D30: its card and graph hide), so every rule here skips [data-shaper-wait]. */
+@container rd (min-width: 960px){
+  /* :not([hidden]) — this weighs the same as `.rd-glance[hidden]{display:none}` and comes
+     later, so without it Details would open UNDER a glance that never went away. */
+  .rd-glance[data-live="on"]:not([data-shaper-wait]):not([hidden]){max-width:1216px;display:grid;grid-template-columns:544px minmax(0,1fr);
+    column-gap:28px;row-gap:22px;align-items:start;}
+  /* align-self is the block axis in a grid: the column's items sit at the top of their rows, not centred in them. */
+  .rd-glance[data-live="on"]:not([data-shaper-wait]) > :is(.rd-now,.rd-sheet,.rd-night-sec){grid-column:1;align-self:start;}
+  .rd-glance[data-live="on"]:not([data-shaper-wait]) > .rd-now{grid-row:1;}
+  .rd-glance[data-live="on"]:not([data-shaper-wait]) > .rd-sheet{grid-row:2;}
+  /* A waiting question spans both columns under the card; Away mode's answers stay under it, in the card's column. */
+  .rd-glance[data-live="on"]:not([data-shaper-wait]) > .rd-questions{grid-column:1 / -1;}
+  /* As tall as the card (320px at least), its top level with the card's; it slides in from
+     the right out of a blur once the card has made room. */
+  .rd-glance[data-live="on"]:not([data-shaper-wait]) > .rd-live{grid-column:2;grid-row:2;align-self:stretch;min-height:320px;
+    grid-template-rows:1fr;margin-top:0;transform:translateX(28px);filter:blur(6px);
+    transition:opacity .22s ease,transform .22s ease,filter .22s ease;}
+  .rd-glance[data-live="on"]:not([data-shaper-wait]) > .rd-live.is-in{transform:none;filter:none;
+    transition:opacity .38s ease .12s,transform .5s cubic-bezier(.2,.7,.3,1) .12s,filter .38s ease .12s;}
+  .rd-glance[data-live="on"]:not([data-shaper-wait]) > .rd-live .run-flow-wrap{height:100%;}
+}
 @media (prefers-reduced-motion: reduce){
   .rd-live,.rd-live.is-in,.rd-live .gv-world{transition:none !important;}
 }

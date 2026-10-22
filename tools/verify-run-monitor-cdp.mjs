@@ -357,9 +357,12 @@ try {
     && Math.abs(g2.stage.l - g2.pad.l) < 0.6 && Math.abs(g2.stage.w - g2.pad.w) < 0.6
     && g2.hostPos === 'absolute' && g2.hostPad === '0px' && g2.hostDisplay === 'block', g2);
 
-  // (1d) run 3 (D16): the Live view graph sits under the run details at every list and pane width, as wide as the pane's
-  // content (the glance's content box), while the card keeps its 544px measure. Windows 1440 and 1920, the list at its
-  // 280px floor and at its max (maxListWidth: 640 at both). The key is worca-cc.runs.listWidth (runs-resize LIST_W_KEY).
+  // (1d) the Live view graph sits beside the card when the run pane is wide (the `rd` container at 960px or more: the
+  // card keeps its 544px column, the graph's top is level with the card's and it is 320px tall at least), and under the
+  // run details otherwise, as wide as the pane's content (the glance's content box) (run 3, D16). Windows 1440 and 1920,
+  // the list at its 280px floor and at its max (maxListWidth: 640 at both); the matrix must see both layouts. The key is
+  // worca-cc.runs.listWidth (runs-resize LIST_W_KEY).
+  const liveLayouts = new Set();
   for (const w of [1440, 1920]) {
     for (const lw of ['280', String(maxListWidth(w))]) {
       await ev(`localStorage.setItem(${JSON.stringify(LIST_W_KEY)},${JSON.stringify(lw)});0`);
@@ -371,17 +374,33 @@ try {
         if(row&&!row.hidden&&sw&&sw.getAttribute('aria-checked')!=='true')sw.click();return 0;})()`);
       const shown = await until(`document.querySelector('#run-detail .rd-live.is-in')`, `the Live view at ${w}px, list ${lw}px`).then(() => true, () => false);
       await settle(`live ${w}/${lw}`);
+      // Measure at rest: the card's slide (flipGlance) and the panel's entrance run on their own elements only (the
+      // graph inside keeps its infinite wire animations, so no subtree).
+      for (let i = 0; i < 40; i += 1) {
+        if (await ev(`['.rd-now','.rd-sheet','.rd-live'].every((s)=>{const n=document.querySelector('#run-detail .rd-glance > '+s);
+          return !n||n.getAnimations().every((a)=>a.playState!=='running');})`)) break;
+        await kick(); await sleep(50);
+      }
       const geo = await ev(`(()=>{const q=(s)=>document.querySelector('#run-detail '+s);const glance=q('.rd-glance');const live=q('.rd-glance > .rd-live');
         const sheet=q('.rd-glance > .rd-sheet');const now=q('.rd-glance > .rd-now');if(!glance||!live||!sheet||!now)return {missing:true};
+        const rd=glance.closest('.rd');const rcs=getComputedStyle(rd);
         const cs=getComputedStyle(glance);const g=glance.getBoundingClientRect();const pl=parseFloat(cs.paddingLeft),pr=parseFloat(cs.paddingRight);
         const s=sheet.getBoundingClientRect();const l=live.getBoundingClientRect();
-        return {pane:{left:g.left+pl,width:g.width-pl-pr},sheet:{bottom:s.bottom,width:s.width},live:{top:l.top,left:l.left,width:l.width},
+        return {rd:rd.clientWidth-parseFloat(rcs.paddingLeft)-parseFloat(rcs.paddingRight),pane:{left:g.left+pl,width:g.width-pl-pr},
+          sheet:{top:s.top,right:s.right,bottom:s.bottom,width:s.width},live:{top:l.top,left:l.left,width:l.width,height:l.height},
           now:now.getBoundingClientRect().width,list:document.querySelector('#runs-list-pane').getBoundingClientRect().width};})()`);
-      check('1d', `1d graph under the details at ${w}px, list ${lw}px: .rd-live under .rd-sheet at the pane's content width; the card and .rd-now stay at or under 545px`,
-        shown && !geo.missing && geo.live.top >= geo.sheet.bottom - 1 && Math.abs(geo.live.left - geo.pane.left) <= 1
-        && Math.abs(geo.live.width - geo.pane.width) <= 1 && geo.sheet.width <= 545 && geo.now <= 545, { shown, ...geo });
+      const wide = !geo.missing && geo.rd >= 960;
+      liveLayouts.add(wide ? 'beside' : 'under');
+      check('1d', wide
+        ? `1d graph beside the card at ${w}px, list ${lw}px (pane ${Math.round(geo.rd)}px): .rd-live right of .rd-sheet, tops level, 320px tall at least; the card and .rd-now stay at or under 545px`
+        : `1d graph under the details at ${w}px, list ${lw}px (pane ${Math.round(geo.rd)}px): .rd-live under .rd-sheet at the pane's content width; the card and .rd-now stay at or under 545px`,
+        shown && !geo.missing && geo.sheet.width <= 545 && geo.now <= 545 && (wide
+          ? geo.live.left >= geo.sheet.right + 27 && Math.abs(geo.live.top - geo.sheet.top) <= 1 && geo.live.height >= 319
+          : geo.live.top >= geo.sheet.bottom - 1 && Math.abs(geo.live.left - geo.pane.left) <= 1 && Math.abs(geo.live.width - geo.pane.width) <= 1),
+        { shown, ...geo });
     }
   }
+  check('1d', '1d the matrix saw the graph both beside the card and under it', liveLayouts.size === 2, [...liveLayouts]);
   // Back to the width and window the run started with: the checks below were measured there.
   await ev(`localStorage.setItem(${JSON.stringify(LIST_W_KEY)},'280');0`);
   await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
