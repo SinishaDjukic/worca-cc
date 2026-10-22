@@ -19,6 +19,7 @@ export const ENGINES = Object.freeze({
   codex: Object.freeze({ label: 'Codex', models: true, cost: true, helpers: true, beta: true }),
   copilot: Object.freeze({ label: 'Copilot', models: true, cost: false, helpers: true, beta: true }),
   cursor: Object.freeze({ label: 'Cursor', models: true, cost: false, helpers: false, beta: true }),
+  goose: Object.freeze({ label: 'Goose', models: true, cost: true, helpers: false, beta: true }),
   opencode: Object.freeze({ label: 'OpenCode', models: true, cost: true, helpers: false, beta: true }),
 });
 

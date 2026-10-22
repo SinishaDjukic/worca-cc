@@ -203,6 +203,20 @@ test('catalog models: a Cursor entry keeps its engine with no efforts; env or an
   assert.ok(warnings.some((w) => w.includes('acme-cursor-up') && w.includes('a cursor model takes no upstream')), warnings.join('\n'));
 });
 
+test('catalog models: a Goose entry keeps its engine and efforts; env, an upstream or a bare id drops it', () => {
+  const { doc, warnings } = normalizePolicyDoc({
+    schema: 1,
+    catalogs: { models: [
+      { id: 'google/gemini-2.5-flash', engine: 'goose', efforts: ['high', 'xhigh'] },
+      { id: 'acme/goose-env', engine: 'goose', env: { X: 'y' } },
+      { id: 'acme-goose-bare', engine: 'goose' },
+    ] },
+  });
+  assert.deepEqual(doc.catalogs.models, [{ id: 'google/gemini-2.5-flash', label: 'google/gemini-2.5-flash', efforts: ['high'], engine: 'goose' }]);
+  assert.ok(warnings.some((w) => w.includes('acme/goose-env') && w.includes('a goose model takes no env')), warnings.join('\n'));
+  assert.ok(warnings.some((w) => w.includes('acme-goose-bare') && w.includes('provider/model')), warnings.join('\n'));
+});
+
 test('runs.tagDimensions: soft only, bad entries dropped one warning each, field kept', () => {
   const { doc, warnings } = normalizePolicyDoc({ schema: 1, fields: { 'runs.tagDimensions': { kind: 'soft', value: [
     { key: 'cc', label: 'Cost centre', required: true }, { key: '', label: 'nope' },

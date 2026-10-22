@@ -32,7 +32,7 @@ test('an id the list no longer holds reads "Workflow removed", never the id; an 
 });
 
 test('each catalog engine reads its label; an unknown engine never shows its id', () => {
-  assert.deepEqual(Object.keys(ENGINES).map(presetEngineName), ['Claude', 'Codex', 'Copilot', 'Cursor', 'OpenCode']);
+  assert.deepEqual(Object.keys(ENGINES).map(presetEngineName), ['Claude', 'Codex', 'Copilot', 'Cursor', 'Goose', 'OpenCode']);
   assert.equal(presetEngineName(undefined), 'Claude');
   assert.equal(presetEngineName('gemini-x'), UNKNOWN_ENGINE_LABEL);
   assert.equal(UNKNOWN_ENGINE_LABEL, 'Unknown engine');

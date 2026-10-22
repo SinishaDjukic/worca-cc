@@ -466,7 +466,7 @@ test('list: a Codex built-in shadowed by a same-id model of any engine says over
 
 test('editor: Cursor takes no env, no endpoint, no effort and no pricing; the fields come back off Cursor', () => {
   const el = renderModelEditor(null, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS, cursorEfforts: [] });
-  assert.deepEqual([...el.querySelectorAll('.mv-engine option')].map((o) => o.value), ['claude', 'codex', 'copilot', 'cursor', 'opencode']);
+  assert.deepEqual([...el.querySelectorAll('.mv-engine option')].map((o) => o.value), ['claude', 'codex', 'copilot', 'cursor', 'goose', 'opencode']);
   setModelEngine(el, 'cursor');
   assert.equal(el.querySelector('.mv-engine').value, 'cursor');
   assert.equal(el.querySelectorAll('.mv-effort-cb').length, 0, 'no effort chips');
@@ -492,6 +492,22 @@ test('editor: Cursor takes no env, no endpoint, no effort and no pricing; the fi
   assert.deepEqual([...el.querySelectorAll('.mv-effort-cb')].map((c) => c.value), CODEX_EFFORTS);
 });
 
+test('editor: Goose takes no env and no endpoint; its efforts are GOOSE_THINKING_EFFORT values and Pricing stays', () => {
+  const el = renderModelEditor(null, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS, cursorEfforts: [], gooseEfforts: ['low', 'medium', 'high', 'max'] });
+  setModelEngine(el, 'goose');
+  assert.deepEqual([...el.querySelectorAll('.mv-effort-cb')].map((c) => c.value), ['low', 'medium', 'high', 'max']);
+  assert.equal(el.querySelector('.mv-env').closest('.mv-field').hidden, true);
+  assert.equal(el.querySelector('.mv-cost-edit').closest('.mv-field').hidden, false, 'Goose prices its own runs; an override still applies');
+  const conn = el.querySelector('.mv-conn');
+  assert.match(conn.querySelector('.mv-conn-runs').textContent, /^Runs on Goose only/);
+  assert.equal(conn.querySelector('.mv-conn-body').hidden, true);
+  el.querySelector('.mv-id').value = 'google/gemini-2.5-flash';
+  const { body } = collectModelEditor(el);
+  assert.equal(body.engine, 'goose');
+  assert.deepEqual(body.env, {});
+  assert.equal('upstream' in body, false);
+});
+
 test('editor: OpenCode takes no env and no endpoint; its efforts are the variants and Pricing stays', () => {
   const el = renderModelEditor(null, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS, cursorEfforts: [], opencodeEfforts: ['minimal', 'low', 'medium', 'high', 'max'] });
   setModelEngine(el, 'opencode');
@@ -510,6 +526,13 @@ test('editor: OpenCode takes no env and no endpoint; its efforts are the variant
   assert.equal(body.engine, 'opencode');
   assert.deepEqual(body.env, {});
   assert.equal('upstream' in body, false);
+});
+
+test('editor: editing a Goose model offers only its own providers', () => {
+  const el = renderModelEditor({ id: 'google/gemini-2.5-flash', label: 'Flash', engine: 'goose', efforts: ['high'] }, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS, gooseEfforts: ['low', 'medium', 'high', 'max'] });
+  const shown = [...el.querySelectorAll('.mv-conn .mv-conn-mode')].filter((l) => !l.hidden);
+  assert.deepEqual(shown.map((l) => l.querySelector('.mv-conn-mode-title').textContent), ['Goose providers']);
+  assert.equal(el.querySelector('.mv-conn-body').hidden, true);
 });
 
 test('editor: editing an OpenCode model offers only its own providers', () => {

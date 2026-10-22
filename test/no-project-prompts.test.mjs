@@ -16,6 +16,8 @@ import { runCodexProcess } from '../src/core/engines/codex.mjs';
 import { runCopilotProcess } from '../src/core/engines/copilot.mjs';
 import { fakeCodex } from './helpers/fake-codex.mjs';
 import { fakeCopilot } from './helpers/fake-copilot.mjs';
+import { runGooseProcess } from '../src/core/engines/goose.mjs';
+import { fakeGoose } from './helpers/fake-goose.mjs';
 
 const P = join(tmpdir(), 'pipe');
 const NOTE = 'This run has no project and no git repository: your cwd is the run\'s own working folder. Never run git here (no `git init`, `git diff`, `git status`, `git add` or `git commit`), even where your role instructions say so. Every file you make in this folder is kept as this run\'s result.\n\n';
@@ -60,7 +62,7 @@ test('an agent\'s own git never walks up from work/ into a repository that holds
   assert.equal(opts({ workMode: 'folder', projectDir: '/copy' }).spawnEnv, undefined);
 });
 
-test('the git ceiling reaches the agent on every engine: codex and copilot children get GIT_CEILING_DIRECTORIES (P3-D20)', { skip: process.platform === 'win32' }, async () => {
+test('the git ceiling reaches the agent on every engine: codex, copilot and goose children get GIT_CEILING_DIRECTORIES (P3-D20)', { skip: process.platform === 'win32' }, async () => {
   const host = gitDir('np-engine-ceiling');
   try {
     const work = join(host, 'runs', 'abcd1234', 'work');
@@ -74,6 +76,9 @@ test('the git ceiling reaches the agent on every engine: codex and copilot child
     const copilot = fakeCopilot(mkdtempSync(join(host, 'copilot-')), { fixture: fix, envNames: ['GIT_CEILING_DIRECTORIES'] });
     await runCopilotProcess({ cwd: work, bin: copilot.bin, prompt: 'P', usageDir: host, scratchBase: join(host, 'scratch'), spawnEnv }).catch(() => {});
     assert.equal(copilot.record().env.GIT_CEILING_DIRECTORIES, join(host, 'runs', 'abcd1234'), 'copilot: its shell\'s git stops at runs/<id>');
+    const goose = fakeGoose(mkdtempSync(join(host, 'goose-')), 'ok');
+    await runGooseProcess({ cwd: work, bin: goose.bin, prompt: 'P', scratchBase: join(host, 'scratch'), spawnEnv });
+    assert.equal(goose.env().GIT_CEILING_DIRECTORIES, join(host, 'runs', 'abcd1234'), 'goose: its shell\'s git stops at runs/<id>');
     // A spawn env without a ceiling (every git or folder run) adds none.
     const plain = fakeCodex(mkdtempSync(join(host, 'codex-plain-')), 'ok');
     await runCodexProcess({ cwd: work, bin: plain.bin, prompt: 'P', usageDir: host, spawnEnv: { MCPSECRET_X: 'v' } });

@@ -95,7 +95,7 @@ export function groupLabel(id) { return GROUPS[id] || id; }
 export const GROUP_ORDER = Object.freeze(Object.keys(GROUPS));
 
 const SEMVER_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
-const MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:/\-[\]]{0,199}$/;   // `/`: an OpenCode id is provider/model
+const MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:/\-[\]]{0,199}$/;   // `/`: a Goose or OpenCode id is provider/model
 const PLUGIN_NAME_RE = /^[a-z][a-z0-9-]{0,63}$/;
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 // Zero-import leaves only: model-env for the bridged-model `upstream` validator every
@@ -395,7 +395,7 @@ function normalizeModels(raw, warnings) {
     const efforts = Array.isArray(m.efforts) ? m.efforts.filter((e) => allowed.includes(e)) : [];
     entry.efforts = efforts.length ? efforts : (engine === 'claude' ? ['medium', 'high'] : [...allowed]);
     if (OWN_SIGNIN_ENGINES.includes(engine)) {
-      // A Cursor or OpenCode model runs through the engine's own sign-in: no routing env, no upstream.
+      // A Cursor, Goose or OpenCode model runs through the engine's own sign-in: no routing env, no upstream.
       if (m.env != null) { warnings.push(`catalogs.models: ${m.id}: ${aModelOf(engine)} takes no env — entry dropped`); continue; }
       if (m.upstream != null) { warnings.push(`catalogs.models: ${m.id}: ${aModelOf(engine)} takes no upstream — entry dropped`); continue; }
       const idWhy = modelIdProblem(engine, m.id);

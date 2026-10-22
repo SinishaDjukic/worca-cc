@@ -9,6 +9,7 @@ test('runs each preflight once per TTL; claude is always ready; a refusal is not
   resetEngineReadiness();
   let calls = 0;
   const preflights = { codex: async () => { calls++; return {}; }, copilot: async () => { calls++; return { refusal: 'cannot run copilot' }; }, cursor: async () => { calls++; return { refusal: 'cursor-agent is not signed in' }; },
+    goose: async () => { calls++; return { warning: 'could not check goose' }; },
     opencode: async () => { calls++; return { warning: 'no provider credentials' }; } };
   const a = await engineReadiness({ preflights, now: 1000, mock: false });
   assert.deepEqual(a, [
@@ -16,13 +17,14 @@ test('runs each preflight once per TTL; claude is always ready; a refusal is not
     { name: 'codex', label: 'Codex', ready: true, reason: null },
     { name: 'copilot', label: 'Copilot', ready: false, reason: 'cannot run copilot' },
     { name: 'cursor', label: 'Cursor', ready: false, reason: 'cursor-agent is not signed in' },
+    { name: 'goose', label: 'Goose', ready: true, reason: 'could not check goose' },
     { name: 'opencode', label: 'OpenCode', ready: true, reason: 'no provider credentials' },
   ]);
   await engineReadiness({ preflights, now: 2000, mock: false });
-  assert.equal(calls, 4, 'cached');
-  assert.deepEqual(readyEnginesCached(2000), ['claude', 'codex', 'opencode']);
+  assert.equal(calls, 5, 'cached');
+  assert.deepEqual(readyEnginesCached(2000), ['claude', 'codex', 'goose', 'opencode']);
   await engineReadiness({ preflights, now: 2000, force: true, mock: false });
-  assert.equal(calls, 8);
+  assert.equal(calls, 10);
 });
 
 test('mock: every engine ready, nothing spawned', async () => {

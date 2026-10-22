@@ -43,7 +43,7 @@ const CMD_RULES = { deny: ['Bash(curl:*)', 'Bash(git push)', 'WebSearch'] };
 test('an unknown engine fails at construction', () => {
   assert.throws(() => orch({ engine: 'codx' }), /unknown engine "codx"/);
   // The mock stands in for Claude under --mock only; it is not a run engine.
-  assert.throws(() => orch({ engine: 'mock' }), /"mock" is not a run engine \(choose one of: claude, codex, copilot, cursor, opencode\); the offline mock runs under --mock/);
+  assert.throws(() => orch({ engine: 'mock' }), /"mock" is not a run engine \(choose one of: claude, codex, copilot, cursor, goose, opencode\); the offline mock runs under --mock/);
 });
 
 test('claude (the default) passes the gate with nothing to say', () => {
@@ -775,6 +775,33 @@ test('engineStartRefusal: a signed-out cursor-agent is not liftable', POSIX, asy
   } finally {
     if (prevKey !== undefined) process.env.CURSOR_API_KEY = prevKey;
   }
+});
+
+// ── Goose (engines/goose.mjs) ────────────────────────────────────────────────
+
+test('goose: Permissive passes, one audit line per missing capability; cost is reported', () => {
+  const lines = withNodes(orch({ engine: 'goose' }), {})._engineGate();
+  const caps = lines.filter((l) => /^engine goose: no \w+ — /.test(l));
+  assert.deepEqual(caps.map((l) => l.split(':')[1].trim().split(' ')[1]).sort(),
+    ['allowedTools', 'hookTelemetry', 'permissionRules', 'skills', 'subagentSystemPrompt', 'subagents', 'turnBudget']);
+});
+
+test('goose holds no rule: the Normal set needs --allow-unguarded-engine, then says none is enforced', async () => {
+  const rules = await NORMAL_RULES();
+  const o = withNodes(orch({ engine: 'goose' }), {});
+  o.guardrailPermissionRules = rules;
+  o.guardrailsId = 'normal';
+  assert.throws(() => o._engineGate(), /cannot enforce/);
+  const allowed = withNodes(orch({ engine: 'goose', allowUnguardedEngine: true }), {});
+  allowed.guardrailPermissionRules = rules;
+  allowed.guardrailsId = 'normal';
+  assert.ok(allowed._engineGate().includes('engine goose: guardrail set "normal": permission rules NOT enforced on goose (--allow-unguarded-engine)'));
+});
+
+test('engineStartRefusal: a missing goose binary is not liftable', POSIX, async () => {
+  const r = await createOrchestrator({ projectDir: tmp(), claude: { engine: 'goose', bin: join(tmp(), 'no-goose') } }).engineStartRefusal();
+  assert.equal(r.overridable, false);
+  assert.match(r.error, /WORCA_GOOSE_BIN/);
 });
 
 test('a result with no cost warns on a reporting engine, not on cursor; a per-Mtok model warns on any engine', async () => {
