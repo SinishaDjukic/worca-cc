@@ -489,6 +489,9 @@ export function createPrWatcher(deps = {}) {
       ...(origin.sourceBranch ? { sourceBranch: origin.sourceBranch } : {}),
       featureBranch: origin.branch,
       syncBeforeStart: false,
+      // Both merge briefs (conflict, behind) make the agent commit a merge, which an E2B sandbox cannot bring
+      // back (docs/e2b.md): those runs always execute locally. Other fix runs follow the user's default.
+      ...(triggers.conflict ? { execEnv: 'local' } : {}),
     };
     let r;
     // Shaper s5 (D20): the fix run is a round of the PR's run; the server numbers it (roundsOf).

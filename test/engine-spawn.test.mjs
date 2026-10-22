@@ -5,6 +5,7 @@ import { mkdtempSync, writeFileSync, chmodSync, rmSync, existsSync, mkdirSync } 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { superviseSpawn, buildSpawnEnv, composeSpawnEnv } from '../src/core/engines/spawn.mjs';
+import { withEnv } from './helpers/with-env.mjs';
 
 const POSIX = process.platform === 'win32' ? { skip: 'POSIX shell fixtures' } : {};
 const dirs = [];
@@ -101,6 +102,16 @@ test('composeSpawnEnv: overlay wins, host pid added last, GitHub credentials str
     assert.equal(env.WORCA_HOST_PID, '42');
     assert.equal(env.GH_TOKEN, undefined);
   } finally { delete process.env.GH_TOKEN; }
+});
+
+test('composeSpawnEnv: no E2B credential reaches a local agent, scrub on or off, allowlisted or in the overlay', async () => {
+  const E2B = { E2B_API_KEY: 'e2b_secret', E2B_API_URL: 'http://localhost:3000', E2B_SANDBOX_URL: 'http://localhost:3002', WORCA_E2B_TEMPLATE: 't' };
+  await withEnv(E2B, () => {
+    for (const o of [{ envScrub: false }, { envScrub: true, envAllowlist: Object.keys(E2B) }, { envScrub: false, overlay: { E2B_API_KEY: 'x' } }]) {
+      const { env } = composeSpawnEnv(o);
+      for (const k of Object.keys(E2B)) assert.equal(k in env, false, `${k} (${JSON.stringify(o)})`);
+    }
+  });
 });
 
 // ── the Claude adapter on top of the supervisor ───────────────────────────────

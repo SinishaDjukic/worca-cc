@@ -99,7 +99,7 @@ export function validateMemoryScope({ workflowId, memoryScope, isWorkspace = fal
  * neither syncs it nor reads it as a deletion. The §8.8 `:(exclude)` pathspec stays as defence
  * in depth (a hand-deleted sentinel, an older git).
  */
-export async function mountMemory({ root, mount, dirs, onError, gitIgnore = false }) {
+export async function mountMemory({ root, mount, dirs, onError, gitIgnore = false, ownSource = null }) {
   // (Windows: an indexer/AV may hold a handle for a moment.)
   await rm(mount, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   await mkdir(mount, { recursive: true });
@@ -109,7 +109,7 @@ export async function mountMemory({ root, mount, dirs, onError, gitIgnore = fals
   for (const d of dirs) {
     const dest = join(mount, d.rel);
     await mkdir(dest, { recursive: true });
-    for (const e of await listMemory(root, d.scope, { onError })) {
+    for (const e of await listMemory(root, d.scope, { onError, forAgents: true, ownSource })) {   // never another run's held files
       await cp(join(scopeDir(root, d.scope), `${e.name}.md`), join(dest, `${e.name}.md`));
       baseline[baselineKey(d.rel, e.name)] = e.hash;
       files++;
@@ -129,13 +129,13 @@ export async function mountMemory({ root, mount, dirs, onError, gitIgnore = fals
  * reported. Returns `{ files, failed }` where `files` is what the mount SHOULD hold (the store
  * entries of the scope set) and `failed` the names that could not be refreshed this call.
  */
-export async function refreshMount({ root, mount, dirs, onError }) {
+export async function refreshMount({ root, mount, dirs, onError, ownSource = null }) {
   let files = 0;
   const failed = [];
   for (const d of dirs) {
     const dest = join(mount, d.rel);
     await mkdir(dest, { recursive: true });
-    const entries = await listMemory(root, d.scope, { onError });
+    const entries = await listMemory(root, d.scope, { onError, forAgents: true, ownSource });   // a held file is swept like a gone one
     // `keep` is built from what we actually WROTE or deliberately kept — an entry that vanished
     // between the listing and the read is not in it, so its stale mount copy is swept THIS call.
     const keep = new Set();
