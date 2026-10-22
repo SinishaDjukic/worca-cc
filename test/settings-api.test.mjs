@@ -157,6 +157,7 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
       autoWorkflowModel: '',
       prDescriptionModel: '',
       memoryDefrag: null,
+      agentGenModel: null,
       workspaceScan: null,
       schedule: {},
       nightMode: {}, nightModeToggle: 'auto',

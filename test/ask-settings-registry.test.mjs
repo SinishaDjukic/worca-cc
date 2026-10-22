@@ -26,12 +26,13 @@ function applyBody(s, body) {
 function setup({ settings = {}, own = {}, writable = true } = {}) {
   const s = { ...settings };
   const layer = { ...own };
-  const bodies = []; const patches = [];
+  const bodies = []; const patches = []; const slots = [];
   const reg = createSettingsRegistry({
     readSettings: () => s,
     roles: () => [{ key: 'planner', label: 'Planner' }],
     listModels: async () => MODELS,
     assertSlotModels: async (items) => {
+      slots.push(...items);
       for (const it of items) if (!MODELS.some((m) => m.id === it.value.model)) throw new Error(`${it.id}: unknown model "${it.value.model}" — add it to the catalog first`);
     },
     projectSettingIds: (roles) => ['run.engine', 'pipelineCostLimitUsd', 'askMaxTurns', 'askWeb', 'nightMode.enabled', 'skillMount', ...roles.map((r) => `models.claude.steps.${r}`)],
@@ -50,7 +51,7 @@ function setup({ settings = {}, own = {}, writable = true } = {}) {
       applyProject: async (p, patch) => { patches.push([p.key, patch]); for (const [k, v] of Object.entries(patch)) { if (v === null) delete layer[k]; else layer[k] = v; } },
     } : {}),
   });
-  return { reg, s, layer, bodies, patches };
+  return { reg, s, layer, bodies, patches, slots };
 }
 
 test('list_settings rows: user scope lists the Settings page, never a secret, a folder, a command or the chat\'s own powers', async () => {
@@ -374,4 +375,30 @@ test('check: a project override set to null previews what the cascade resolves �
   const r = await reg.check({ id: 'askMaxBudgetUsd', scope: 'project', projectKey: PROJECT.key, value: null });
   assert.equal(r.ok, true, r.error);
   assert.deepEqual(r.after, { unit: null, text: 'No cap (inherited)' });
+});
+
+test('models.claude.utility.agentGen: a user-scope Claude pair on agentGenModel, never a project setting', async () => {
+  const { reg, s, bodies, slots } = setup();
+  const row = (await reg.list({ scope: 'user', query: 'agentGen' })).settings;
+  assert.deepEqual(row.map((r) => [r.id, r.label, r.group, r.value, r.stored]),
+    [['models.claude.utility.agentGen', 'Agent generation model', 'Models', 'Default', null]]);
+  assert.match(row[0].allowed, /a model from list_models that runs on Claude, "effort": "medium" \| "high" \| "xhigh" \| "max"/);
+  let r = await reg.apply({ id: 'models.claude.utility.agentGen', scope: 'user', value: { model: 'CLAUDE-OPUS-5-5', effort: 'high' } });
+  assert.equal(r.ok, true, r.error);
+  assert.deepEqual(bodies.at(-1), { agentGenModel: { model: 'claude-opus-5-5', effort: 'high' } }, 'the catalog casing, on the Settings page\'s own key');
+  assert.equal(r.card.after, 'claude-opus-5-5 · high');
+  assert.deepEqual(slots.at(-1), { id: 'models.claude.utility.agentGen', engine: 'claude', value: { model: 'claude-opus-5-5', effort: 'high' } },
+    'the catalog check runs on Claude: a Codex id is refused here, not "applied" and then refused by the server');
+  r = await reg.check({ id: 'models.claude.utility.agentGen', value: { model: 'claude-sonnet-5', effort: 'max' } });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /claude-sonnet-5 does not offer effort "max"/);
+  r = await reg.check({ id: 'models.claude.utility.agentGen', value: { model: 'gpt-x' } });
+  assert.match(r.error, /unknown model "gpt-x"/);
+  r = await reg.apply({ id: 'models.claude.utility.agentGen', scope: 'user', value: null });
+  assert.equal(r.ok, true, r.error);
+  assert.deepEqual(bodies.at(-1), { agentGenModel: null });
+  assert.equal('agentGenModel' in s, false);
+  const p = await reg.check({ id: 'models.claude.utility.agentGen', scope: 'project', projectKey: PROJECT.key, value: { model: 'claude-sonnet-5' } });
+  assert.equal(p.ok, false);
+  assert.match(p.error, /^unknown setting "models\.claude\.utility\.agentGen"/, 'user-only: unknown per project, not "keys and tokens"');
 });

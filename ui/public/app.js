@@ -18413,13 +18413,16 @@ const CODEX_HELPER_JOBS = ['title', 'classifier', 'overview', 'prDescription', '
 // src/core/model-env.mjs HELPER_ENGINES (the browser cannot load /src/core): the engines with helper slots of their own.
 const HELPER_ENGINES = ['claude', 'codex'];
 // Claude's helper slots at user level are their own settings keys (settings-cascade.mjs CLAUDE_USER): a model id for
-// titles, Auto and PR descriptions (no effort), and the Memory defragment pair. No user-level overview slot.
-const CLAUDE_USER_HELPER_JOBS = ['title', 'classifier', 'prDescription', 'memoryDefrag'];
+// titles, Auto and PR descriptions (no effort), and the Memory defragment and Agent generation pairs. No user-level
+// overview slot. Agent generation is Claude's alone (it always runs on Claude), so no other tab has its row.
+const CLAUDE_USER_HELPER_JOBS = ['title', 'classifier', 'prDescription', 'memoryDefrag', 'agentGen'];
+const helperPair = (p) => (p && p.model ? { model: p.model, ...(p.effort ? { effort: p.effort } : {}) } : undefined);
 const CLAUDE_USER_HELPER_OWN = (data) => ({
   title: data.titleModel ? { model: data.titleModel } : undefined,
   classifier: data.autoWorkflowModel ? { model: data.autoWorkflowModel } : undefined,
   prDescription: data.prDescriptionModel ? { model: data.prDescriptionModel } : undefined,
-  memoryDefrag: data.memoryDefrag && data.memoryDefrag.model ? { model: data.memoryDefrag.model, ...(data.memoryDefrag.effort ? { effort: data.memoryDefrag.effort } : {}) } : undefined,
+  memoryDefrag: helperPair(data.memoryDefrag),
+  agentGen: helperPair(data.agentGenModel),
 });
 async function paintEngineSettings(data) {
   const root = document.getElementById('engine-settings-root');
