@@ -142,11 +142,11 @@ test('the Ship card: the waiting line until every run is done, no buttons; the r
   assert.deepEqual(d.acts.at(-1), { action: 'ship', body: { mode: 'one' }, opts: { focus: 'ship-one' } });
 });
 
-test('the Ship card once shipped: Shipped as stacked PRs with View pull request on the last run\'s PR', () => {
+test('the Ship card once shipped: Shipped as stacked PRs with View PR on the last run\'s PR', () => {
   const done = { ...PAGE(), status: 'done', done: 3, slices: PAGE().slices.map((s) => ({ ...s, state: 'done', pr: s.pr && { ...s.pr, draft: false } })) };
   const shipped = mount({ ...done, ship: { ready: false, mode: 'stacked', prUrl: null, lastPrUrl: 'https://github.com/o/r/pull/2',
     result: { mode: 'stacked', prUrl: 'https://github.com/o/r/pull/2', closed: 0, release: null } } }, PLANS()).el;
-  assert.match(shipped.querySelector('.ask-shipcard-done').textContent, /^Shipped as stacked PRs · View pull request$/);
+  assert.match(shipped.querySelector('.ask-shipcard-done').textContent, /^Shipped as stacked PRs · View PR$/);
   assert.equal(shipped.querySelector('.ask-shipcard-pr').getAttribute('href'), 'https://github.com/o/r/pull/2');
   assert.equal(shipped.querySelectorAll('button[data-act^="ship-"]').length, 0);
 });

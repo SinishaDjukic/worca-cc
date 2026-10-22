@@ -12,7 +12,7 @@ import { planApprovedLine } from '../log-line.mjs';
 import { mountRunGraph } from '../graph/run-hosts.mjs';
 import { fmtDur, fmtUsd, isGraphManifest, manifestNodes } from '../graph/run-decor.mjs';
 import { askKindOf } from '../ask/registry.mjs';
-import { SHIP_LABEL } from '../ship-words.mjs';
+import { CREATE_PR_LABEL } from '../ship-words.mjs';
 import { shapeFirstOn } from './shape-gate.mjs';
 import { checklistScore } from '../../../src/shared/shape/review-checklist.mjs';
 import { NO_PROJECT_KEY, NO_PROJECT_NAME } from '../../../src/shared/no-project.mjs';
@@ -712,13 +712,13 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       const rfoot = h('div', 'chat-rc-res-foot');
       rfoot.dataset.minLevel = 'advanced';              // Create PR / View PR: the run page's level (docs/ui-levels.md)
       if (prUrl) {
-        const a = h('a', 'chat-rc-view-pr', 'View pull request');
+        const a = h('a', 'chat-rc-view-pr', 'View PR');
         a.setAttribute('href', prUrl);
         a.target = '_blank';
         a.rel = 'noopener';
         rfoot.appendChild(a);
       } else {
-        const b = button('chat-rc-create-pr', SHIP_LABEL);
+        const b = button('chat-rc-create-pr', CREATE_PR_LABEL);
         createPrBtn = b;
         const why = h('span', 'chat-rc-res-err');
         why.hidden = true;
@@ -727,7 +727,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
           if (b.disabled) return;
           b.disabled = true;
           why.hidden = true;
-          // P2 openShipItFor: settles when the Ship it dialog closes ({opened, url?}), or at once with
+          // P2 openShipItFor: settles when the Create PR dialog closes ({opened, url?}), or at once with
           // {opened:false, error} when it cannot open — the reason stays in this card. Either way re-read the PR.
           Promise.resolve(call(controls.openShipIt, ref()))
             .then((res) => { if (!dead && res && res.opened === false && res.error) { why.textContent = String(res.error); why.hidden = false; } })
@@ -780,7 +780,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     if (watchEl.dataset.sig === sig) return;                 // the 1 s tick must not steal a link's focus
     watchEl.dataset.sig = sig;
     const extras = [];
-    if (withPr) extras.push(link('chat-rc-watch-pr', w.prUrl, 'Open PR'));
+    if (withPr) extras.push(link('chat-rc-watch-pr', w.prUrl, 'View PR'));
     if (withAsk) {
       const ask = button('btn btn-sm btn-quiet chat-rc-watch-ask', 'Ask for changes');
       ask.addEventListener('click', askForChanges);
@@ -830,7 +830,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     stopBtn.hidden = true;
     // contains(), not isConnected: a card that is not in the document yet still has it. Never on a group card (its
     // ship is the group's, D6), and only at Advanced and above: the button's row (.chat-rc-res-foot) is
-    // data-min-level="advanced", so below that the footer makes its own Ship it.
+    // data-min-level="advanced", so below that the footer makes its own Create PR.
     if (!curRow && createPrBtn && resultSec.contains(createPrBtn) && levelAtLeast('advanced', doc)) own.ship = createPrBtn;
     else if (createPrBtn) delete createPrBtn.dataset.modelAction;
     const changesWhy = changesView && !changesSlot.hidden ? ''
@@ -845,7 +845,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     if (fc) paintFeatureActions(doc, fActions, fc, featureDeps, { omit: m.actions });
     // Clear the sig too: else the next feature paint's sig matches and returns early, leaving an empty host.
     else { fActions.replaceChildren(); fActions.hidden = true; delete fActions.dataset.sig; }
-    // A footer with nothing visible stays hidden (a Ready run whose Ship it is the result's Create pull request).
+    // A footer with nothing visible stays hidden (a Ready run whose Create PR is the result's own button).
     foot.hidden = ![...footActions.children, ...fActions.children].some((b) => !b.hidden) && footErr.hidden;
   }
 

@@ -244,7 +244,7 @@ test('detail Create PR opens the ship-it modal with the summary + branch → bas
   const ctx = await bootShip({ detail: { ...DETAIL, results: RESULTS } });
   const modal = await openModal(ctx);
   assert.equal(modal.classList.contains('hidden'), false);
-  assert.match(modal.textContent, /Ship it\?/);
+  assert.match(modal.textContent, /Create pull request/);
   assert.match(modal.textContent, /14 files/);        // filesNew + filesChanged, 'D' rows not double-counted
   assert.match(modal.textContent, /\+412/);
   assert.match(modal.textContent, /−188/);            // U+2212 — this is a COUNT

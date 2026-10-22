@@ -947,14 +947,14 @@ const SHOTS = [
     } },
   { name: 'actions', level: 'advanced', hash: () => `history/${csvRun.projectKey}/${csvRun.pipelineId}/details/actions`,
     prep: () => until2("document.querySelector('.act-card .act-log, .act-card pre')", 'action log') },
-  // Ship it? for the CSV run. Only the push URL names GitHub, and only for this shot: fetches keep reading the local
-  // bare origin, so opening the dialog stays offline. It is closed with Cancel, never "Open pull request".
+  // The Create PR dialog for the CSV run. Only the push URL names GitHub, and only for this shot: fetches keep reading the local
+  // bare origin, so opening the dialog stays offline. It is closed with Cancel, never "Create pull request".
   { name: 'ship-it', level: 'advanced', hash: () => `history/${csvRun.projectKey}/${csvRun.pipelineId}`,
     stage: async () => { await releaseCheckout(); git(REPOS['nimbus-crm'], ['remote', 'set-url', '--push', 'origin', 'https://github.com/nimbus/nimbus-crm.git']); },
     cleanup: async () => { await click('#shipit-modal .shipit-cancel'); git(REPOS['nimbus-crm'], ['config', '--unset', 'remote.origin.pushurl']); },
     prep: async () => {
       await until2("document.querySelector('#hist-detail .hd-pr:not([hidden])')", 'Create PR button'); await click('#hist-detail .hd-pr');
-      await until2("!document.getElementById('shipit-modal').classList.contains('hidden') && !document.querySelector('#shipit-modal .shipit-remotes').hidden && !document.querySelector('#shipit-modal .shipit-base-wrap').hidden && document.querySelector('#shipit-modal .shipit-files').textContent.includes('4 file')", 'the Ship it dialog');
+      await until2("!document.getElementById('shipit-modal').classList.contains('hidden') && !document.querySelector('#shipit-modal .shipit-remotes').hidden && !document.querySelector('#shipit-modal .shipit-base-wrap').hidden && document.querySelector('#shipit-modal .shipit-files').textContent.includes('4 file')", 'the Create PR dialog');
       await ev(`(()=>{const t=document.getElementById('shipit-desc-input');t.value=${JSON.stringify(SHIP_IT_DESCRIPTION)};t.dispatchEvent(new Event('input',{bubbles:true}));
         const w=document.getElementById('shipit-watch-input');if(!w.checked)w.click();return 1;})()`);
       await click('#shipit-modal .shipit-desc-tab[data-mode="preview"]');

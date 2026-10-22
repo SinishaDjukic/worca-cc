@@ -31,7 +31,7 @@ export const RUN_STATES = Object.freeze({
 
 export const ACTION_LABEL = Object.freeze({
   stop: 'Stop', pause: 'Pause', answer: 'Answer', resume: 'Resume', 'start-now': 'Start now', cancel: 'Cancel',
-  retry: 'Retry', report: 'Report', archive: 'Archive', ship: 'Ship it', 'open-pr': 'View PR', 'ask-changes': 'Ask for changes',
+  retry: 'Retry', report: 'Report', archive: 'Archive', ship: 'Create PR', 'open-pr': 'View PR', 'ask-changes': 'Ask for changes',
 });
 
 const ACTIONS = Object.freeze({
@@ -288,7 +288,7 @@ export function runModel(run, opts = {}) {
   const fin = state === 'ready' ? finishedWords(r, mode) : null;
   const prog = r.status ? runProgress(r, opts.memo || null) : null;
   const meta = RUN_STATES[state];
-  // A PR-driven Needs you has no question to answer; its line is the chip's reason (QA 3) and its action Open PR (D31).
+  // A PR-driven Needs you has no question to answer; its line is the chip's reason (QA 3) and its action View PR (D31).
   const prNeeds = state === 'needs-you' && r.pendingQuestion == null && (watchNeeds || !!(pr && pr.needsYou));
   const actions = fin ? [] : watchNeeds ? ['open-pr', 'ask-changes'] : prNeeds ? ['open-pr']
     : state === 'stopped' && r.resumable === true ? ['resume', 'archive'] : ACTIONS[state];

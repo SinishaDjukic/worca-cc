@@ -3738,7 +3738,7 @@ function afterRunSettled(orch) {
   try {
     const st = orch.getState?.();
     if (orch.runShape?.slice && st?.status === 'done' && st.id) {
-      // s4: the draft first, then the Ship card (it needs the last slice's PR for "View pull request").
+      // s4: the draft first, then the Ship card (it needs the last slice's PR for "View PR").
       draft = openSliceDraft(st.id).catch((err) => console.error(`[worca-ui] slice draft PR failed: ${err?.message || err}`))
         .then(() => offerShipCard(st.id))
         .catch((err) => console.error(`[worca-ui] ship card failed: ${err?.message || err}`));
@@ -14786,7 +14786,7 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
     if (found.block.card && found.block.card.type === 'pull-request') {
       // worca Chat P2 (R9): "Not now" only — the pull request is opened from the Ship it dialog, and POST /api/pr flips
       // the card to applied through its ask link.
-      if (body.state !== 'declined') return badRequest(res, 'state must be "declined". A pull request is opened from the Ship it dialog');
+      if (body.state !== 'declined') return badRequest(res, 'state must be "declined". A pull request is opened from the Create PR dialog');
       if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
       const block = flipCard(id, cardId, { state: 'declined' });
       if (!block) return res.status(409).json({ error: 'card vanished' });
