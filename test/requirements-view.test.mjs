@@ -2518,3 +2518,34 @@ test('⋯ with a brief: Look closer while the look was skipped for the brief, Lo
   w.host.querySelector('[data-ui="mi-notes"]').click();
   assert.deepEqual(w.routed, ['brief/workspace/ws%3A1']);
 });
+// Upstream's first-paint git gate (ui/public/git-gate.mjs, test/ui-git-hide-set.test.mjs): every control that checks out
+// the code carries data-needs-git, which style.css hides while <html data-git="off">; the rest of the page stays.
+test('git-only controls carry data-needs-git: the brief Create box and Refresh, Look closer and Look again; nothing else', async () => {
+  const gated = (el) => !!el && !!el.closest('[data-needs-git]');
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  assert.match(css, /:root\[data-git="off"\] \[data-needs-git\]\{display:none !important;\}/, 'the gate rule exists');
+  const none = await openBrief(briefBody());
+  assert.ok(gated(createBtn(none.host)), 'Create the brief');
+  assert.ok(none.host.querySelector('.req-brief-cost').hasAttribute('data-needs-git'), "the look's box (facts, estimate, Create)");
+  assert.ok(!gated(none.host.querySelector('.req-brief-why')), 'the explanation stays');
+  const made = await openBrief(madeBody());
+  assert.ok(gated(made.host.querySelector('[data-ui="brief-refresh"]')), 'the notice Refresh');
+  made.host.querySelector('[data-ui="brief-more"]').click();
+  assert.ok(gated(made.host.querySelector('[data-ui="mi-brief-refresh"]')), 'the ⋯ Refresh the brief');
+  for (const k of ['mi-brief-delete', 'brief-export', 'mi-brief-copy']) assert.ok(!gated(made.host.querySelector(`[data-ui="${k}"]`)), `${k} stays`);
+  const failed = await openBrief(madeBody({ brief: madeRow({ error: { message: 'no time' } }) }));
+  assert.ok(gated(failed.host.querySelector('[data-ui="brief-refresh-again"]')), 'the failed refresh line Refresh');
+  const before = await openKnows(knowsFeature());
+  assert.ok(gated(knows(before.host).querySelector('[data-ui="look-closer"]')), 'Look closer');
+  assert.ok(gated(knows(before.host).querySelector('.req-knows-foot .hint')), 'and its hint');
+  assert.ok(!gated(knows(before.host).querySelector('.req-knows-text')), 'what Worca knows stays');
+  before.host.querySelector('[data-ui="menu-more"]').click();
+  assert.ok(gated(before.host.querySelector('[data-ui="mi-look"]')), 'the ⋯ Look closer');
+  for (const k of ['mi-notes', 'mi-archive']) assert.ok(!gated(before.host.querySelector(`[data-ui="${k}"]`)), `${k} stays`);
+  const LOOKED = { summary: 'The slip.', files: ['src/slip.mjs'], skipped: null, area: 'Orders', scopeType: 'project', scopeKey: 'shop-1', briefId: 3 };
+  const after = await openKnows(knowsFeature({ orientation: LOOKED }), [{ id: 7, kind: 'orientation', costUsd: 0.22, payload: { ...LOOKED } }]);
+  assert.ok(gated(knows(after.host).querySelector('[data-ui="look-again"]')), 'Look again');
+  assert.ok(!gated(knows(after.host).querySelector('[data-ui="brief-add"]')), 'Add this to the brief stays (no git)');
+  const skipped = await openKnows(feature({ brief: null, orientation: SKIPPED }), [{ id: 2, kind: 'orientation', costUsd: 0, payload: SKIPPED }]);
+  assert.ok(gated(skipped.host.querySelector('[data-ui="orient-look-again"]')), "A2's box Look again");
+});

@@ -624,7 +624,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           part('The words the product uses', ': its concepts and what they mean'),
           part('What exists today', ', area by area, and what only partly exists')),
         h('p', { class: 'hint req-brief-plain', text: 'Plain product language, no code. You can edit every part; your text is kept.' })),
-      h('div', { class: 'req-brief-cost' },
+      // The look's box (facts, estimate, Create) checks out the code: hidden while git is missing (git-gate.mjs).
+      h('div', { class: 'req-brief-cost', 'data-needs-git': true },
         h('span', { class: 'req-brief-look', text: 'One look, read-only' }),
         h('span', { class: 'req-brief-facts' }, ...facts),
         est.model && est.model.label ? h('span', { class: 'hint req-brief-model', text: `${est.model.label} · counts toward your limit` }) : null,
@@ -715,7 +716,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   /** A Refresh button (the notice's, the failed refresh's): the same POST as Create, disabled while the brief is made. */
   function refreshButton(data, label, key) {
     const making = !!(data.brief && data.brief.status === 'making');
-    return h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': key, 'data-brief-go': true, disabled: creating || making, onclick: createBrief }, label);
+    // a refresh checks out the code again: hidden while git is missing (git-gate.mjs)
+    return h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': key, 'data-brief-go': true, 'data-needs-git': true, disabled: creating || making, onclick: createBrief }, label);
   }
 
   function exportMenu() {
@@ -738,6 +740,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const making = data.brief.status === 'making';
     const refresh = menuItem(`Refresh the brief${estimateText(data)}`, createBrief, { disabled: creating || making, ui: 'mi-brief-refresh' });
     refresh.setAttribute('data-brief-go', '');
+    refresh.dataset.needsGit = '';   // a refresh checks out the code again: hidden while git is missing (git-gate.mjs)
     const del = () => act(async () => {
       const ids = ((briefData && briefData.usedBy) || []).map((u) => u && (u.id || (u.seq != null ? `FEAT-${u.seq}` : null))).filter(Boolean);
       const who = !ids.length ? 'No feature uses this brief yet.'
@@ -1538,7 +1541,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       h('summary', {}, 'What Worca found in the code', meta ? h('span', { class: 'hint req-orient-meta', text: meta }) : null),
       h('p', { text }),
       o && o.skipped === 'brief' ? h('div', { class: 'req-actions' },
-        h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'orient-look-again', disabled: isLocked(f), onclick: () => postLook(f) }, 'Look again')) : null,
+        h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'orient-look-again', 'data-needs-git': true, disabled: isLocked(f), onclick: () => postLook(f) }, 'Look again')) : null,
       o && o.files && o.files.length ? h('ul', { class: 'hint', 'data-min-level': 'advanced' }, ...o.files.map((p) => h('li', { text: p }))) : null);
   }
 
@@ -1564,8 +1567,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       body = [h('p', { class: 'req-knows-text', text: `Worca works from the ${targetName(f)} brief${what} It has not looked at the code for this feature.` }),
         o && o.skipped === 'failed' ? h('p', { class: 'hint req-knows-failed', text: 'Worca could not look at the code this time.' }) : null];
       if (lookOn) {
-        foot = [h('span', { class: 'hint', text: 'Worth it when the feature touches something the brief only skims.' }),
-          h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'look-closer', disabled: locked, onclick: () => postLook(f) },
+        // a look checks out the code: the hint and Look closer hide while git is missing (git-gate.mjs)
+        foot = [h('span', { class: 'hint', 'data-needs-git': true, text: 'Worth it when the feature touches something the brief only skims.' }),
+          h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'look-closer', 'data-needs-git': true, disabled: locked, onclick: () => postLook(f) },
             `Look closer${typeof f.lookCostUsd === 'number' ? ` · about ${usd(f.lookCostUsd)}` : ''}`)];
       }
     } else {
@@ -1578,7 +1582,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       body = [h('p', { class: 'req-knows-text', text: o.summary || 'Nothing relevant found.' }),
         o.summary && !o.addedToBrief && ofThisBrief ? h('p', { class: 'hint req-knows-add' }, 'Not in the brief yet. ',
           h('button', { type: 'button', class: 'link-btn', 'data-ui': 'brief-add', disabled: locked, onclick: add }, 'Add this to the brief')) : null];
-      if (lookOn) foot = [h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'look-again', disabled: locked, onclick: () => postLook(f) }, 'Look again')];
+      if (lookOn) foot = [h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'look-again', 'data-needs-git': true, disabled: locked, onclick: () => postLook(f) }, 'Look again')];
     }
     return h('section', { class: `card req-knows${looked ? ' req-knows-looked' : ''}`, 'aria-label': 'What Worca knows' },
       h('div', { class: 'req-card-head' }, h('h3', { text: 'What Worca knows' }), h('span', { class: 'hint req-knows-meta' }, ...meta)),
@@ -1614,7 +1618,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     }
   }
   // Each item has a data-ui, so a live repaint keeps the focus on it inside the open menu.
-  const menuItem = (label, onclick, { disabled = false, ui: key = null } = {}) => h('button', { type: 'button', role: 'menuitem', class: 'req-menu-item', 'data-ui': key, disabled, onclick }, label);
+  const menuItem = (label, onclick, { disabled = false, ui: key = null, needsGit = false } = {}) => h('button', { type: 'button', role: 'menuitem', class: 'req-menu-item', 'data-ui': key, 'data-needs-git': needsGit, disabled, onclick }, label);
 
   function header(f) {
     const save = () => act(async () => {
@@ -1658,7 +1662,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           // with a brief: Look closer while Worca works from it alone; none with the switch off (D11)
           f.brief && f.brief.lookAtCode === false ? null
             : menuItem(f.brief && !(f.orientation && !f.orientation.skipped) ? 'Look closer' : 'Look again', () => postLook(f),
-              { disabled: isLocked(f), ui: 'mi-look' }),
+              { disabled: isLocked(f), ui: 'mi-look', needsGit: true }),   // a look checks out the code (git-gate.mjs)
           menuItem(archived ? 'Restore' : 'Archive', () => act(async () => {
             await api('POST', `/api/requirements/${f.seq}/archive`, archived ? { restore: true } : {});
             await paint();
