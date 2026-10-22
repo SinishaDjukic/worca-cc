@@ -451,12 +451,13 @@ level and has no **Diff**, **Changes** or **Actions**.
   Installing from the UI is an explicit consent ceremony pinned to the commit
   you saw: what's installed, which ask forms an agent can show and which file
   types they may display, which secrets each part requests, where models
-  route, which setup commands run. **Update** previews the plugin folder's
-  commits and a diffstat, flags new secrets (task sources, chat channels,
-  models), new chat channels, changed setup and changed model env, and applies
-  only the commit you reviewed (`worca plugin update --diff` adds the full
-  diff; `worca plugin purge <name>` deletes a removed plugin's leftover
-  settings and secrets). Package your
+  route, which setup commands run. **Update all** reviews every update in one
+  sheet — the plugin folder's commits, a diffstat and what changes; an update
+  that asks for new access (a new secret, changed setup or model env, a new
+  source, channel, agent or model, an MCP server or skill change) waits until
+  you tick it as reviewed, and each applies exactly the commit you reviewed
+  (`worca plugin update --diff` adds the full diff; `worca plugin purge <name>`
+  deletes a removed plugin's leftover settings and secrets). Package your
   own with **Export…** on a saved workflow or **Share as plugin…** on the
   Models page; see the [authoring guide](.claude/skills/creating-worca-cc-plugins/SKILL.md).
 - **Built-in marketplace** — **Worca CC Official**, Worca's GitHub repository on

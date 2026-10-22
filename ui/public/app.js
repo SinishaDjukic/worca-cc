@@ -157,7 +157,7 @@ import { projectForm } from '../../src/shared/forms/project.mjs';
 import { installSessionGuard } from './session-guard.mjs';
 import {
   renderInstallConsent, renderUpdatePreview,
-  renderConfigForm, collectConfigForm, renderConnectResult, renderDoctorReport,
+  renderConfigForm, collectConfigForm, renderConnectResult,
   channelBadge, renderNeedsGit,
 } from './plugins-view.mjs';
 import { mountMarketplace, tabFromParam } from './marketplace/index.mjs';
@@ -16383,11 +16383,10 @@ function needsGitModal(title) { pluginModal(title, renderNeedsGit(document)); }
 let pluginsViewMarketplaces = [];
 let marketplacePage = null;   // SM15: P5–P7 read it (e.g. the marketplace-add-changed forward)
 marketplacePage = mountMarketplace({ doc: document, win: window, deps: {
-  api: pluginApi, notify, confirmModal, openMenu, gitOn, invalidateAgentCaches, openSetupChecklist, setMsg: setPluginsMsg,
+  api: pluginApi, notify, confirmModal, promptModal, openMenu, gitOn, invalidateAgentCaches, openSetupChecklist, setMsg: setPluginsMsg,
   loadPolicy: () => loadTpScopes({ force: true }),   // SM35: state.policy (P5's Team policy card)
   navigate: (hash) => { const t = String(hash).replace(/^#/, ''); if (location.hash.slice(1) !== t) location.hash = t; },
-  fallbacks: { openInstallConsent, openPluginSettings, updatePlugin: updateRequiredPlugin, checkHealth: openDoctorModal,
-    addMarketplace: openLegacyAddRow, waitModalClosed: pluginModalClosed },
+  fallbacks: { openInstallConsent, addMarketplace: openLegacyAddRow },
 } });
 marketplacePage.onChange((s) => { pluginsViewMarketplaces = s.marketplaces; });
 // Every caller (Team policy, the action flows) reloads the page here; only a route entry passes refresh.
@@ -16743,15 +16742,6 @@ async function openPluginSettings(name, profile, { seeds = null } = {}) {
       setPluginsMsg('Settings saved.', 'ok');
     }],
   ]);
-}
-
-async function openDoctorModal(name) {
-  // The Installed ⋯ "Check health" until P6's manage sheet takes it (page action checkHealth): the Doctor checks in the shared modal.
-  setPluginsMsg(`Running doctor on ${name}…`);
-  const { ok, data } = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/doctor`);
-  setPluginsMsg('');
-  pluginModal(`Health: ${name}`,
-    renderDoctorReport(ok ? data : { ok: false, checks: [{ id: 'request', ok: false, detail: data.error || 'doctor failed' }] }));
 }
 
 // Marketplaces section: Refresh / Remove.

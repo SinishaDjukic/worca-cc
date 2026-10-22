@@ -52,9 +52,11 @@ async function boot(over = {}) {
     const key = `${opts.method || 'GET'} ${u}`;
     calls.push({ key, body: opts.body ? JSON.parse(opts.body) : undefined });
     const hit = routes[key];
-    const { status, body } = (typeof hit === 'function' ? hit() : hit)
-      || ok({ config: { steps: {}, customModels: [] }, models: [], efforts: [], branches: [], projects: [], workspaces: [], agents: [] });
-    return Promise.resolve({ ok: status < 400, status, json: async () => body });
+    return Promise.resolve(typeof hit === 'function' ? hit() : hit).then((r) => {   // a route may answer later (a promise)
+      const { status, body } = r
+        || ok({ config: { steps: {}, customModels: [] }, models: [], efforts: [], branches: [], projects: [], workspaces: [], agents: [] });
+      return { ok: status < 400, status, json: async () => body };
+    });
   };
   for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator', 'requestAnimationFrame']) {
     try { Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true }); } catch { /* keep */ }
@@ -95,11 +97,12 @@ test('a channel-status frame patches the live chip in Needs attention in place (
   assert.equal(chip().textContent, 'Slack · connected', 'the page state followed the frame');
 });
 
-test('⋯ → Check health opens the interim Health dialog; ⋯ → Remove… opens the Remove dialog over the page', async () => {
+test('⋯ → Check health opens the plugin sheet at Health; ⋯ → Remove… opens the Remove dialog over the page', async () => {
   const { doc, go } = await boot({
     'POST /api/plugins/atlassian-mcp/doctor': ok({ ok: true, checks: [{ id: 'installed', ok: true, detail: 'lockfile entry present' }] }),
     'GET /api/plugins/atlassian-mcp': ok({ plugin: {}, inventory: { mcpServers: [{ name: 'atlassian' }] }, repo: null, subdir: '', sha: 'a'.repeat(40), installedAt: null, updatedAt: null, webUrl: null }),
     'GET /api/plugins/atlassian-mcp/references': ok({ references: [] }),
+    'GET /api/plugins/atlassian-mcp/config': ok({ sources: [], channels: [] }),
   });
   await go('marketplace/installed');
   const menuItem = async (label) => {
@@ -108,9 +111,9 @@ test('⋯ → Check health opens the interim Health dialog; ⋯ → Remove… op
     await settle();
   };
   await menuItem('Check health');
-  assert.equal(doc.getElementById('plugin-modal-title').textContent, 'Health: atlassian-mcp');
-  assert.ok(doc.querySelector('#plugin-modal-body .pl-doctor-report'));
-  doc.getElementById('plugin-modal-close').click();
+  assert.deepEqual([doc.getElementById('mk-sheet').dataset.mode, doc.getElementById('mk-sheet-title').textContent,
+    doc.querySelector('#mk-sheet [data-sec="health"] .mk-chip').textContent.trim()], ['manage', 'atlassian-mcp', '1 of 1 checks passed']);
+  doc.querySelector('#mk-sheet-host .mk-close').click(); await settle();
   await menuItem('Remove…');
   assert.equal(doc.getElementById('mk-dialog').dataset.kind, 'remove');
   assert.equal(doc.getElementById('mk-dialog-title').textContent, 'Remove atlassian-mcp?');
@@ -193,4 +196,247 @@ test('a team-policy-changed frame runs the trusted-home install too: a plugin th
   recv({ type: 'team-policy-changed', action: 'updated' });
   await settle(20);
   assert.equal(installs(), 1);
+});
+
+const DETAIL = (name, inventory) => ok({ plugin: {}, inventory, repo: 'https://github.com/SinishaDjukic/worca-cc',
+  subdir: `plugins/${name}`, sha: 'a'.repeat(40), installedAt: null, updatedAt: null, webUrl: null });
+const PREVIEW = (from, to, access = []) => ({ pinnedSha: 'a'.repeat(40), candidateSha: 'b'.repeat(40), pinnedVersion: from,
+  candidateVersion: to, previewedAt: '2026-10-20T10:00:00.000Z', access, commits: [{ sha: 'c'.repeat(40), subject: 'Fix' }],
+  diffstat: ' 1 file changed, 1 insertion(+)', manifestDelta: {} });
+
+test('P6: a plugin name opens its installed plugin sheet; Escape closes it and focus returns to the name', async () => {
+  const { doc, go } = await boot({
+    'GET /api/plugins/github-source': DETAIL('github-source', { taskSources: [{ id: 'github', displayName: 'GitHub Issues' }] }),
+    'GET /api/plugins/github-source/config': ok({ sources: [], channels: [] }),
+  });
+  await go('marketplace/installed');
+  const nameBtn = () => doc.querySelector('section.mk-all button.mk-name[data-name="github-source"]');
+  nameBtn().focus(); nameBtn().click(); await settle();
+  assert.deepEqual([doc.getElementById('mk-sheet').dataset.mode, doc.getElementById('mk-sheet-title').textContent,
+    doc.querySelector('#mk-sheet .mk-add-row .mk-add-name').textContent, doc.getElementById('plugin-modal').classList.contains('hidden')],
+  ['manage', 'github-source', 'GitHub Issues', true]);
+  doc.dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await settle();
+  assert.deepEqual([doc.getElementById('mk-sheet-host').classList.contains('hidden'), doc.activeElement === nameBtn()], [true, true]);
+});
+
+test('P6: "Update all · 2" opens the review sheet with both updates, previewed one after the other', async () => {
+  const { doc, go, calls } = await boot({
+    'POST /api/plugins/atlassian-mcp/update': ok({ preview: PREVIEW('0.1.0', '0.1.1') }),
+    'POST /api/plugins/github-source/update': ok({ preview: PREVIEW('0.2.0', '0.3.0', [{ kind: 'secret', id: 'github.webhookSecret', red: true }]) }),
+  });
+  await go('marketplace/installed');
+  doc.querySelector('.mk-head-actions .mk-update-all').click(); await settle(20);
+  assert.deepEqual([doc.getElementById('mk-sheet').dataset.mode, doc.getElementById('mk-sheet-title').textContent,
+    [...doc.querySelectorAll('#mk-sheet .mk-upd')].map((c) => c.dataset.name), doc.querySelector('#mk-sheet .mk-upd-meta').textContent],
+  ['update', 'Update 2 plugins', ['atlassian-mcp', 'github-source'], '1 of 2 ready']);
+  assert.deepEqual(calls.filter((c) => c.key.endsWith('/update')).map((c) => [c.key, c.body]),
+    [['POST /api/plugins/atlassian-mcp/update', {}], ['POST /api/plugins/github-source/update', {}]]);
+});
+
+test('P6: a stale catalog ("already installed") hands the install sheet to the plugin sheet once the page has re-read', async () => {
+  let installed = false;
+  const JIRA = row('acme-jira', { version: '1.2.0', contributions: { ...ZERO, taskSources: 1 } });
+  const { doc, go } = await boot({
+    'GET /api/plugins': () => ok({ plugins: installed ? [...PLUGINS, JIRA] : PLUGINS, orphans: [] }),
+    'POST /api/plugins/install': () => { installed = true; return { status: 500, body: { error: 'plugin "acme-jira" is already installed' } }; },
+    'GET /api/plugins/acme-jira': DETAIL('acme-jira', { taskSources: [{ id: 'jira', displayName: 'Jira' }] }),
+    'GET /api/plugins/acme-jira/config': ok({ sources: [], channels: [] }),
+  });
+  await go('marketplace');
+  doc.querySelector('button.mk-tile[data-key="worca-cc/acme-jira"]').click(); await settle();
+  doc.querySelector('#mk-sheet [data-act="install"]').click(); await settle(30);
+  assert.deepEqual([doc.getElementById('mk-sheet-host').classList.contains('hidden'), doc.getElementById('mk-sheet').dataset.mode,
+    doc.getElementById('mk-sheet-title').textContent], [false, 'manage', 'acme-jira']);
+});
+
+test('P6: Done after "Update all" (the button leaves with the reload) puts focus on the Installed tab, never <body>', async () => {
+  const done = new Set();
+  const plugins = () => PLUGINS.map((p) => (done.has(p.name) ? { ...p, latest: null } : p));
+  const seen = {};   // this file's boot calls a route with no body: the first POST is the preview, the second the confirm
+  const apply = (name) => () => ((seen[name] = (seen[name] || 0) + 1) > 1 ? (done.add(name), ok({ ok: true, updated: true }))
+    : ok({ preview: PREVIEW('0.1.0', '0.2.0', name === 'github-source' ? [{ kind: 'secret', id: 'github.webhookSecret', red: true }] : []) }));
+  const { window, doc, go } = await boot({
+    'GET /api/plugins': () => ok({ plugins: plugins(), orphans: [] }),
+    'POST /api/plugins/atlassian-mcp/update': apply('atlassian-mcp'),
+    'POST /api/plugins/github-source/update': apply('github-source'),
+  });
+  await go('marketplace/installed');
+  const all = doc.querySelector('.mk-head-actions .mk-update-all');
+  all.focus(); all.click(); await settle(20);
+  const tickBox = doc.querySelector('#mk-sheet .mk-reviewed');
+  tickBox.checked = true; tickBox.dispatchEvent(new window.Event('change', { bubbles: true }));
+  doc.querySelector('#mk-sheet .mk-sheet-foot [data-act="go"]').click(); await settle(30);
+  assert.equal(doc.querySelector('#mk-sheet .mk-upd-meta').textContent, '2 of 2 updated');
+  assert.equal(doc.querySelector('.mk-head-actions .mk-update-all'), null, 'the opener left with the reload');
+  doc.querySelector('#mk-sheet .mk-sheet-foot [data-act="go"]').click(); await settle();
+  assert.equal(doc.getElementById('mk-sheet-host').classList.contains('hidden'), true);
+  assert.equal(doc.activeElement, doc.querySelector('.mk-tab[data-tab="installed"]'));
+});
+
+test('P6: a row Update that hands over to the review sheet (GIT_MISSING) gives focus back to that Update on Done', async () => {
+  const { window, doc, go } = await boot({
+    'POST /api/plugins/atlassian-mcp/update': { status: 409, body: { error: 'git is not installed on this machine', code: 'GIT_MISSING' } },
+  });
+  // Chromium's focus fixup: the focused Update turns disabled (busy) and focus drops to <body>
+  const P = window.HTMLButtonElement.prototype;
+  const d = Object.getOwnPropertyDescriptor(P, 'disabled');
+  Object.defineProperty(P, 'disabled', { configurable: true, get() { return d.get.call(this); },
+    set(v) { if (v && this.ownerDocument.activeElement === this) this.blur(); d.set.call(this, v); } });
+  await go('marketplace/installed');
+  const upd = doc.querySelector('section.mk-attention button[data-act="update"][data-name="atlassian-mcp"]');
+  upd.focus(); upd.click(); await settle(20);
+  assert.deepEqual([doc.getElementById('mk-sheet').dataset.mode, doc.querySelector('#mk-sheet .mk-upd').dataset.state], ['update', 'failed']);
+  doc.querySelector('#mk-sheet .mk-sheet-foot [data-act="go"]').click(); await settle();
+  assert.equal(doc.activeElement, doc.querySelector('section.mk-attention button[data-act="update"][data-name="atlassian-mcp"]'));
+});
+
+test('P6: a profile prompt or confirm the user cancels gives focus back to the control in the sheet that asked', async () => {
+  const cfg = { sources: [{ id: 'jira', multiProfile: true, profile: 'default', profiles: [{ id: 'default', label: '' }, { id: 'work', label: '' }],
+    schema: [{ key: 'baseUrl', label: 'Base URL', required: true }], values: { baseUrl: 'https://a' } }], channels: [] };
+  const JIRA = row('jira-source', { contributions: { ...ZERO, taskSources: 1 } });
+  const { window, doc, go } = await boot({
+    'GET /api/plugins': ok({ plugins: [...PLUGINS, JIRA], orphans: [] }),
+    'GET /api/plugins/jira-source': DETAIL('jira-source', { taskSources: [{ id: 'jira', displayName: 'Jira' }] }),
+    'GET /api/plugins/jira-source/config': ok(cfg),
+    'DELETE /api/plugins/jira-source/profiles/default?sourceId=jira': { status: 500, body: { error: 'profile is bound to a project' } },
+  });
+  await go('marketplace/installed');
+  doc.querySelector('section.mk-all button.mk-name[data-name="jira-source"]').click(); await settle();
+  const $ = (s) => doc.querySelector(`#mk-sheet ${s}`);
+  for (const sel of ['.mk-profile-add', '.mk-profile-del']) {
+    $(sel).focus(); $(sel).click(); await settle();
+    assert.equal(doc.getElementById('confirm-modal').classList.contains('hidden'), false, sel);
+    doc.getElementById('confirm-cancel').click(); await settle();
+    assert.equal(doc.activeElement, $(sel), `${sel}: focus is back on the button`);
+  }
+  const base = $('[data-key="baseUrl"]');
+  base.value = 'https://b'; base.dispatchEvent(new window.Event('input', { bubbles: true }));
+  const pick = $('.mk-profile-sel');
+  pick.focus(); pick.value = 'work'; pick.dispatchEvent(new window.Event('change', { bubbles: true })); await settle();
+  doc.getElementById('confirm-cancel').click(); await settle();
+  assert.deepEqual([pick.value, doc.activeElement === pick], ['default', true]);
+  $('.mk-profile-del').focus(); $('.mk-profile-del').click(); await settle();
+  doc.getElementById('confirm-ok').click(); await settle();
+  assert.deepEqual([$('.mk-group-err')?.textContent, doc.activeElement === $('.mk-profile-del')], ['profile is bound to a project', true],
+    'a refused delete: the error and the focus stay in the sheet');
+});
+
+test('P6: install → Done → "Manage <name>" opens the plugin sheet; closing it (the Browse tile is hidden now) focuses the Installed tab', async () => {
+  let installed = false;
+  const JIRA = row('acme-jira', { version: '1.2.0', contributions: { ...ZERO, taskSources: 1 } });
+  const { window, doc, go } = await boot({
+    'GET /api/plugins': () => ok({ plugins: installed ? [...PLUGINS, JIRA] : PLUGINS, orphans: [] }),
+    'POST /api/plugins/install': () => { installed = true; return ok({ ok: true, inventory: {}, warnings: [], ignored: [] }); },
+    'GET /api/plugins/acme-jira': DETAIL('acme-jira', { taskSources: [{ id: 'jira', displayName: 'Jira' }] }),
+    'GET /api/plugins/acme-jira/config': ok({ sources: [], channels: [] }),
+  });
+  // Chromium: an element in a hidden subtree (the Browse panel once the Installed tab shows) cannot take focus
+  const focus = window.HTMLElement.prototype.focus;
+  window.HTMLElement.prototype.focus = function (o) { if (!this.closest('[hidden]')) focus.call(this, o); };
+  await go('marketplace');
+  const tile = doc.querySelector('button.mk-tile[data-key="worca-cc/acme-jira"]');
+  tile.focus(); tile.click(); await settle();
+  doc.querySelector('#mk-sheet [data-act="install"]').click(); await settle(30);
+  doc.querySelector('#mk-sheet [data-link="manage"]').click(); await settle(20);
+  assert.deepEqual([doc.getElementById('mk-sheet').dataset.mode, doc.getElementById('mk-sheet-title').textContent], ['manage', 'acme-jira']);
+  doc.activeElement.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await settle();
+  assert.equal(doc.activeElement, doc.querySelector('.mk-tab[data-tab="installed"]'));
+});
+
+test('P6: a ⋯ Check for update that answers after the plugin sheet opened (typed settings) takes nothing over', async () => {
+  let release;
+  const held = new Promise((r) => { release = r; });
+  const cfg = { sources: [{ id: 'jira', multiProfile: false, profile: 'default', profiles: [{ id: 'default', label: '' }],
+    schema: [{ key: 'baseUrl', label: 'Base URL', required: true }], values: { baseUrl: 'https://a' } }], channels: [] };
+  const JIRA = row('jira-source', { contributions: { ...ZERO, taskSources: 1 } });
+  const { window, doc, go } = await boot({
+    'GET /api/plugins': ok({ plugins: [...PLUGINS, JIRA], orphans: [] }),
+    'GET /api/plugins/jira-source': DETAIL('jira-source', { taskSources: [{ id: 'jira', displayName: 'Jira' }] }),
+    'GET /api/plugins/jira-source/config': ok(cfg),
+    'POST /api/plugins/atlassian-mcp/update': () => held.then(() => ok({ preview: PREVIEW('0.1.0', '0.1.1') })),   // a git fetch takes seconds
+  });
+  await go('marketplace/installed');
+  doc.querySelector('section.mk-all .mk-more[data-name="atlassian-mcp"]').click();
+  [...doc.querySelectorAll('.wfv-menu [role="menuitem"]')].find((b) => b.textContent === 'Check for update').click();
+  await settle(4);
+  doc.querySelector('section.mk-all button.mk-name[data-name="jira-source"]').click(); await settle();
+  const base = doc.querySelector('#mk-sheet [data-key="baseUrl"]');
+  base.value = 'https://typed'; base.dispatchEvent(new window.Event('input', { bubbles: true }));
+  release(); await settle(20);
+  assert.deepEqual([doc.getElementById('mk-sheet').dataset.mode, doc.getElementById('mk-sheet-title').textContent,
+    doc.querySelector('#mk-sheet [data-key="baseUrl"]')?.value], ['manage', 'jira-source', 'https://typed'], 'the typed value is still on screen');
+});
+
+test('P6: "Set up" → Save: the reload takes the Set up row away and focus lands on the Installed tab, never <body>', async () => {
+  let saved = false;
+  const cfg = { sources: [], channels: [{ id: 'slack', displayName: 'Slack', platform: 'slack',
+    schema: [{ key: 'botToken', type: 'text', label: 'Bot token', secret: true, required: true }], values: { botToken: { set: false } } }] };
+  const { window, doc, go } = await boot({
+    'GET /api/plugins': () => ok({ plugins: PLUGINS.map((p) => (p.name === 'slack-chat' && saved ? { ...p, setup: { ok: true, missing: [], noProfiles: [] } } : p)), orphans: [] }),
+    'GET /api/plugins/slack-chat': DETAIL('slack-chat', { chatChannels: [{ id: 'slack', displayName: 'Slack' }] }),
+    'GET /api/plugins/slack-chat/config': ok(cfg),
+    'PUT /api/plugins/slack-chat/config': () => { saved = true; return ok({ ok: true }); },
+  });
+  await go('marketplace/installed');
+  const setup = doc.querySelector('section.mk-attention button[data-act="setup"][data-name="slack-chat"]');
+  setup.focus(); setup.click(); await settle();
+  const tok = doc.querySelector('#mk-sheet [data-key="botToken"]');
+  assert.equal(doc.activeElement, tok, 'opened at Settings');
+  tok.value = 'xoxb-1'; tok.dispatchEvent(new window.Event('input', { bubbles: true }));
+  doc.querySelector('#mk-sheet [data-act="save"]').click(); await settle(30);
+  assert.deepEqual([doc.getElementById('mk-sheet-host').classList.contains('hidden'),
+    doc.querySelector('section.mk-attention button[data-act="setup"][data-name="slack-chat"]')], [true, null], 'saved, closed, the row left');
+  assert.equal(doc.activeElement, doc.querySelector('.mk-tab[data-tab="installed"]'));
+});
+
+test('P6: a row Update or ⋯ Check for update whose preview lands after the person left #marketplace opens no sheet over that page (SM70)', async () => {
+  for (const via of ['row', 'menu']) {
+    let release;
+    const held = new Promise((r) => { release = r; });
+    const { window, doc, go } = await boot({
+      'POST /api/plugins/atlassian-mcp/update': () => held.then(() => ok({ preview: PREVIEW('0.1.0', '0.1.1', [{ kind: 'secret', id: 'atlassian.token', red: true }]) })),
+    });
+    await go('marketplace/installed');
+    if (via === 'row') doc.querySelector('section.mk-attention button[data-act="update"][data-name="atlassian-mcp"]').click();
+    else {
+      doc.querySelector('section.mk-all .mk-more[data-name="atlassian-mcp"]').click();
+      [...doc.querySelectorAll('.wfv-menu [role="menuitem"]')].find((b) => b.textContent === 'Check for update').click();
+    }
+    await settle(4);
+    await go('runs');
+    release(); await settle(20);
+    assert.deepEqual([window.location.hash, doc.getElementById('mk-sheet-host')?.classList.contains('hidden') ?? true], ['#runs', true], via);
+  }
+});
+
+test('P6: the entry refresh landing while "Review update" in the plugin sheet has focus keeps it on that button', async () => {
+  let release;
+  const held = new Promise((r) => { release = r; });
+  const { doc, go } = await boot({
+    'POST /api/marketplaces/refresh': () => held.then(() => ok({ ok: true, marketplaces: [MKT] })),   // a git fetch per marketplace: seconds
+    'GET /api/plugins/github-source': DETAIL('github-source', { taskSources: [{ id: 'github', displayName: 'GitHub Issues' }] }),
+    'GET /api/plugins/github-source/config': ok({ sources: [], channels: [] }),
+  });
+  await go('marketplace/installed');
+  doc.querySelector('section.mk-all button.mk-name[data-name="github-source"]').click(); await settle();
+  doc.querySelector('#mk-sheet .mk-review-update').focus();
+  release(); await settle(20);
+  assert.equal(doc.activeElement, doc.querySelector('#mk-sheet .mk-review-update'));
+});
+
+test('P6: a plugin removed elsewhere closes its open sheet; focus lands on the Installed tab, never <body>', async () => {
+  let gone = false;
+  const JIRA = row('jira-source', { contributions: { ...ZERO, taskSources: 1 } });
+  const { doc, go, recv } = await boot({
+    'GET /api/plugins': () => ok({ plugins: gone ? PLUGINS : [...PLUGINS, JIRA], orphans: [] }),
+    'GET /api/plugins/jira-source': DETAIL('jira-source', { taskSources: [{ id: 'jira', displayName: 'Jira' }] }),
+    'GET /api/plugins/jira-source/config': ok({ sources: [], channels: [] }),
+  });
+  await go('marketplace/installed');
+  const nameBtn = doc.querySelector('section.mk-all button.mk-name[data-name="jira-source"]');
+  nameBtn.focus(); nameBtn.click(); await settle();
+  gone = true;
+  recv({ type: 'plugins-changed', action: 'remove' });   // the CLI or another tab removed it
+  await settle(20);
+  assert.deepEqual([doc.getElementById('mk-sheet-host').classList.contains('hidden'), doc.activeElement === doc.querySelector('.mk-tab[data-tab="installed"]')], [true, true]);
 });

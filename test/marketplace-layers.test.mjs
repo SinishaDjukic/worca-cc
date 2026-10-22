@@ -257,3 +257,36 @@ test('focus goes back to the opener after onClose ran', () => {
   const s = createSheet({ doc, win, onClose: () => other.focus() }); s.open(op); s.close();
   assert.equal(doc.activeElement, op);
 });
+
+test('setKind(form, { isDirty }): a control applied at once is no unsaved change; Escape asks only while isDirty() (P6, SM48)', async () => {
+  const { doc, win } = setup();
+  let dirty = false;
+  const sheet = createSheet({ doc, win });
+  const sw = Object.assign(doc.createElement('input'), { type: 'checkbox' });
+  sheet.replace({ body: [sw] });
+  sheet.setKind('form', { isDirty: () => dirty });
+  sheet.open(doc.getElementById('opener'));
+  sw.checked = true;
+  sw.dispatchEvent(new win.Event('change', { bubbles: true }));
+  esc(doc);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(sheet.isOpen(), false, 'the switch applied at once: Escape just closes');
+  dirty = true;
+  sheet.open(doc.getElementById('opener'));
+  esc(doc);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual([!!doc.querySelector('dialog.discard-modal'), sheet.isOpen()], [true, true], '"Discard changes?" while isDirty()');
+  press(win, sheet.root);
+  assert.equal(sheet.isOpen(), true, 'a form sheet never closes on the scrim');
+  doc.querySelector('dialog.discard-modal .discard-keep').click();
+  const s2 = createSheet({ doc, win });
+  const box = Object.assign(doc.createElement('input'), { type: 'checkbox' });
+  s2.replace({ body: [box] });
+  s2.open(doc.getElementById('opener'));
+  s2.setKind('form', { isDirty: () => false });                      // the re-arm of an open layer (SM64) carries it too
+  box.checked = true;
+  box.dispatchEvent(new win.Event('change', { bubbles: true }));
+  esc(doc);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual([s2.isOpen(), doc.querySelector('dialog.discard-modal')], [false, null]);
+});

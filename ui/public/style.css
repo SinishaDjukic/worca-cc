@@ -10092,3 +10092,70 @@ button.mk-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;bor
 .mk-purge-opt{display:flex;flex-direction:column;gap:4px;padding-top:12px;border-top:1px solid var(--line);}
 .mk-check{display:flex;align-items:center;gap:8px;cursor:pointer;}
 .mk-purge-opt .mk-consequence{padding-left:26px;}
+
+/* ── marketplace P6 ── */
+/* The installed plugin sheet (board 3.3) and the Update review sheet (board 3.2). The sheet head, sections, washes,
+   links and source row are P4's shared classes; chips and tiles are P3's. Tokens and scale sizes only. */
+.mk-manage-head{display:flex;flex-direction:column;gap:12px;}
+.mk-manage-meta{display:flex;align-items:center;flex-wrap:wrap;gap:4px;}
+.mk-manage-switch{flex:none;gap:8px;min-height:32px;font-weight:500;}
+.mk-manage-upd{display:flex;align-items:center;flex-wrap:wrap;gap:8px;}
+.mk-manage-body>.mk-sec{gap:12px;padding:16px 0;}
+.mk-manage-body>.mk-sec+.mk-sec{border-top:1px solid var(--line);}
+.mk-manage-body>.mk-sec:first-child{padding-top:0;}
+.mk-manage-body>.mk-sec:last-child{padding-bottom:0;}
+.mk-manage-body>.mk-sec>.mk-chip{align-self:flex-start;}
+.mk-manage-body .mk-sec-head{align-items:baseline;margin:0;}
+.mk-sec-head .mk-health-run{margin-left:auto;}
+.mk-setup-group{display:flex;flex-direction:column;gap:12px;}
+.mk-setup-group+.mk-setup-group{padding-top:12px;border-top:1px solid var(--line);}
+.mk-profile-actions,.mk-test-row,.mk-test-out,.mk-chan-row,.mk-broker{display:flex;align-items:center;flex-wrap:wrap;gap:8px;}
+.mk-profile-actions{margin-top:8px;}
+.mk-test-err{color:var(--red-ink-strong);font-size:var(--fs-meta);}
+.mk-checks{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;}
+.mk-checks>.mk-check{display:flex;align-items:center;gap:8px;min-height:28px;cursor:default;}
+.mk-checks>.mk-check+.mk-check{border-top:1px solid var(--line);}
+.mk-check-ic{display:inline-flex;flex:none;color:var(--green-ink-strong);}
+.mk-check-fail .mk-check-ic,.mk-check-fail .mk-meta{color:var(--red-ink-strong);}
+/* 108px for the board's ids; a longer one (channel-module:slack, model-secret:<KEY>) grows the column and wraps, never an ellipsis. */
+.mk-check-id{flex:0 0 auto;min-width:108px;max-width:50%;overflow-wrap:anywhere;}
+.mk-add-row{gap:12px;}
+.mk-add-row>div{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;}
+.mk-add-name{font-weight:500;}
+.mk-remove-row{flex-direction:row;}
+.mk-upd-list{display:flex;flex-direction:column;gap:12px;}
+.mk-upd{display:flex;flex-direction:column;border:1px solid var(--line-2);border-radius:var(--r-md);overflow:hidden;}
+.mk-upd-top{display:flex;align-items:center;flex-wrap:wrap;gap:8px;min-height:64px;padding:12px 16px;}
+.mk-upd-name{min-width:0;font-weight:600;overflow-wrap:anywhere;}
+.mk-upd-ver{color:var(--ink-2);white-space:nowrap;}
+.mk-incl{display:inline-flex;align-items:center;gap:8px;margin-left:auto;font-weight:500;cursor:pointer;}
+.mk-upd>.mk-upd-err{margin:0 16px 12px;}
+.mk-upd>.mk-disc{display:flex;align-items:center;align-self:stretch;gap:8px;width:100%;min-height:40px;margin:0;padding:0 16px;border:0;
+  border-top:1px solid var(--line);border-radius:0;background:none;color:var(--ink);font:inherit;font-weight:500;text-align:left;cursor:pointer;}
+.mk-upd>.mk-disc:hover{background:var(--hover);}
+.mk-upd>.mk-disc:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.mk-upd>.mk-disc .mk-mono{color:var(--ink-2);font-weight:400;}
+.mk-upd-panel{display:flex;flex-direction:column;gap:16px;padding:4px 16px 16px;}
+.mk-upd-panel[hidden]{display:none;}
+.mk-commits{margin:8px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:4px;}
+.mk-commits .mk-sha{color:var(--ink-2);}
+.mk-diffstat{margin:0;color:var(--ink-2);}
+.mk-ins{color:var(--green-ink-strong);}
+.mk-del{color:var(--red-ink-strong);}
+.mk-deltas{display:flex;flex-direction:column;gap:8px;}
+.mk-delta{display:flex;align-items:center;gap:8px;min-height:40px;padding:8px 12px;border-radius:var(--r-sm);background:var(--field);color:var(--ink);}
+.mk-delta.is-red{background:var(--red-bg);color:var(--red-ink-strong);}
+.mk-review{display:flex;align-items:center;gap:8px;min-height:40px;padding:0 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);font-weight:500;cursor:pointer;}
+/* The review's foot wraps (board 3.2), and a label with a long plugin name wraps inside its button: "k of n ready" and
+   "Update <x> only" never run off the sheet on a narrow screen. Remove <x>… in the manage sheet likewise. */
+#mk-sheet[data-mode="update"]>.mk-sheet-foot{flex-wrap:wrap;}
+.mk-upd-only,.mk-upd-go,.mk-remove{max-width:100%;white-space:normal;overflow-wrap:anywhere;}
+/* Needs git on an update card: the -ink-strong shade, as in P4's source row (--amber-ink on --amber-bg is 3.9:1). */
+.mk-upd-top .pl-needs-git{color:var(--amber-ink-strong);}
+/* "Model secrets" sits as close to its row as a source group's name does (P4's 16px margin + the 12px gap was 28px). */
+.mk-setup-group>.mk-setup-h{margin-bottom:4px;}
+/* The plugin sheet's links (Adds landings, Key page, View on GitHub) take the worca ring, not the browser's, and a control
+   Tab scrolls to the edge of the sheet body keeps its whole ring in view. Scoped to P6's mode: .mk-link and .mk-sheet-body are
+   P4's and P3's. */
+#mk-sheet[data-mode="manage"] .mk-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
+#mk-sheet[data-mode="manage"]>.mk-sheet-body{scroll-padding-block:8px;}

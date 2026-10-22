@@ -202,3 +202,10 @@ test('the Marketplace tile and facet rows are controls, not §1.2 buttons (marke
   assert.deepEqual([...doc.querySelectorAll('button')].filter((b) => !b.closest(controls)).map((b) => b.className), []);
   assert.deepEqual(auditStray(doc.getElementById('v'), STRAY_SPEC, { rect: () => ({ width: 10, height: 10 }) }), []);
 });
+
+test('the Update review card\'s commits row is a disclosure control, not a §1.2 button (marketplace P6)', () => {
+  assert.ok(BUTTON_SPEC.controls.includes('.mk-upd > button.mk-disc') && STRAY_SPEC.allow.includes('.mk-upd > button.mk-disc'));
+  const doc = new JSDOM('<section class="mk-upd"><button type="button" class="mk-disc" aria-expanded="false">2 commits 2441b36 → 735b354</button></section>').window.document;
+  const controls = BUTTON_SPEC.controls.join(',');
+  assert.deepEqual([...doc.querySelectorAll('button')].filter((b) => !b.classList.contains('btn') && !b.closest(controls)).map((b) => b.className), []);
+});

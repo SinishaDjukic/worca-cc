@@ -100,7 +100,7 @@ async function boot(handlers, { level = null } = {}) {
 const actions = (d) => [...d.querySelectorAll('#plugin-modal-actions button')].map((b) => b.textContent);
 const GIT_MISSING = { error: 'git is not installed on this machine', code: 'GIT_MISSING' };
 
-test('app: Add marketplace 409 → the chip inside the add row; Update 409 → the Update dialog says Needs git; consent → Cancel only', async () => {
+test('app: Add marketplace 409 → the chip inside the add row; Update 409 → the review card says Needs git; consent → Cancel only', async () => {
   const MKT = { id: 'gl', url: 'https://gitlab.com/a/m', name: 'GL', builtin: false, needsGit: true, warnings: [],
     lastSync: { sha: 'a'.repeat(40), at: '2026-10-01T00:00:00.000Z' }, plugins: [{ name: 'gl-plugin', subdir: 'p', inventory: {} }] };
   const d = await boot({
@@ -123,8 +123,10 @@ test('app: Add marketplace 409 → the chip inside the add row; Update 409 → t
   d.querySelector('section.mk-attention li.mk-row[data-name="alpha"] [data-act="update"]').click();
   await settle();
   await settle();
-  assert.deepEqual([d.getElementById('plugin-modal-title').textContent, d.querySelector('#plugin-modal-body .pl-needs-git').textContent], ['Update alpha', 'Needs git']);
-  d.getElementById('plugin-modal-close').click();
+  assert.deepEqual([d.getElementById('mk-sheet').dataset.mode, d.querySelector('#mk-sheet .mk-upd[data-name="alpha"] .pl-needs-git').textContent,
+    d.getElementById('plugin-modal').classList.contains('hidden')], ['update', 'Needs git', true]);
+  d.querySelector('#mk-sheet-host .mk-close').click();
+  await settle();
   d.querySelector('button.mk-tile[data-key="gl/gl-plugin"]').click();
   await settle();
   assert.deepEqual([...d.querySelectorAll('#mk-sheet .mk-sheet-foot [data-act]')].map((b) => b.textContent), ['Cancel']);

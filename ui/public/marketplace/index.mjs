@@ -4,9 +4,11 @@
 import { createMarketplacePage } from './page.mjs';
 import { browseTab, browseAction } from './browse.mjs';
 import { legacyMarketplacesTab } from './legacy.mjs';
-import { fallbackUpdateAll, fallbackAddMarketplace } from './fallbacks.mjs';
+import { fallbackAddMarketplace } from './fallbacks.mjs';
 import { createInstallSheet } from './install-sheet.mjs';
 import { createInstalledTab } from './installed.mjs';
+import { createManageSheet } from './manage-sheet.mjs';
+import { createUpdateReview } from './update-sheet.mjs';
 
 export { tabFromParam, tabHash } from './page.mjs';
 
@@ -19,8 +21,11 @@ export function mountMarketplace({ doc, win, deps }) {
   page.registerTab('marketplaces', legacyMarketplacesTab({ doc }));                   // P7 replaces
   page.provide('browse', browseAction(page, deps));
   page.provide('openPlugin', createInstallSheet({ doc, win, page, deps }).open);
-  page.provide('openManage', (name, o = {}) => deps.fallbacks.openPluginSettings(name, undefined, { seeds: o.seeds ?? null }));   // P6 replaces
-  page.provide('openUpdateReview', (names) => fallbackUpdateAll(page, deps, names));  // P6 replaces
+  const manage = createManageSheet({ doc, win, page, deps });
+  page.provide('openManage', (name, opts) => manage.open(name, opts));
+  page.provide('checkHealth', (name) => manage.open(name, { section: 'health' }));
+  const review = createUpdateReview({ doc, win, page, deps });
+  page.provide('openUpdateReview', (names, opts) => review.open(names, opts));
   page.provide('openAddMarketplace', (o) => fallbackAddMarketplace(page, deps, o));   // P7 replaces
   page.provide('marketplaceAddChanged', () => {});                                    // P7 replaces (SM16)
   return page;

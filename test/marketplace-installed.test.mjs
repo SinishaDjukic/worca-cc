@@ -49,7 +49,6 @@ function world({ plugins = CANVAS, orphans = [], policy = null, catalog = [], ch
     gitOn: () => true,
     invalidateAgentCaches: () => log.acts.push(['invalidateAgentCaches']),
     openSetupChecklist: () => log.acts.push(['openSetupChecklist']),
-    fallbacks: { checkHealth: (name) => log.acts.push(['fallbacks.checkHealth', name]) },
   };
   createInstalledTab({ doc, win: window, page, deps });
   tabs.installed.render(page.state, doc.getElementById('host'), page);
@@ -85,8 +84,8 @@ test('row actions: name → manage, Review → review sheet, Set up → manage S
   const s = click('section.mk-attention li[data-name="slack-chat"] [data-act="setup"]');
   click('section.mk-attention li[data-name="old"] [data-act="health"]');
   assert.deepEqual(log.acts, [['openManage', 'atlassian-mcp', { opener: n }], ['openUpdateReview', ['github-source'], { opener: r }],
-    ['openManage', 'slack-chat', { section: 'settings', opener: s }], ['checkHealth', 'old'], ['fallbacks.checkHealth', 'old']]);
-  assert.deepEqual(Object.keys(provided).sort(), ['checkHealth', 'openRemove', 'updateOne']);
+    ['openManage', 'slack-chat', { section: 'settings', opener: s }], ['checkHealth', 'old']]);
+  assert.deepEqual(Object.keys(provided).sort(), ['openRemove', 'updateOne']);
 });
 
 test('Nothing installed yet: "Browse {n} plugins" switches tabs through page.setTab (SM63); a modified click stays the browser’s', () => {
@@ -141,7 +140,7 @@ test('⋯ menu: Open in Connectors only with MCP servers, no Check for update on
   assert.deepEqual(log.menus[0].items.map((i) => i.icon || null), ['plug', 'pulse', 'refresh', null, 'trash']);
   log.menus[0].items[0].onSelect();
   log.menus[0].items[1].onSelect();
-  assert.deepEqual(log.acts.slice(-3), [['navigate', '#connectors/servers'], ['checkHealth', 'atlassian-mcp'], ['fallbacks.checkHealth', 'atlassian-mcp']]);
+  assert.deepEqual(log.acts.slice(-2), [['navigate', '#connectors/servers'], ['checkHealth', 'atlassian-mcp']]);
 });
 
 test('Update with no new access: preview, then a confirm bound to the previewed candidateSha', async () => {
@@ -165,7 +164,7 @@ test('Update hands over to the review sheet when the preview asks for access, ne
   ]) {
     const { log, provided } = world({ api: { 'POST /api/plugins/atlassian-mcp/update': (b) => (b.confirm ? confirm : answer) } });
     await provided.updateOne('atlassian-mcp');
-    assert.deepEqual(log.acts.at(-1), ['openUpdateReview', ['atlassian-mcp']]);
+    assert.deepEqual(log.acts.at(-1), ['openUpdateReview', ['atlassian-mcp'], { opener: null }]);
     assert.deepEqual([log.toasts, log.calls.length], [[], confirm ? 2 : 1], 'only the stale case reaches the confirm');
   }
   const same = world({ api: { 'POST /api/plugins/atlassian-mcp/update': () => ok({ preview: { pinnedSha: 'a'.repeat(40), candidateSha: 'a'.repeat(40), access: [] } }) } });
@@ -182,7 +181,7 @@ test('a diff without commits (a rollback, or a history the preview could not lis
     commits: [], diffstat: ' 1 file changed, 1 insertion(+), 1 deletion(-)', access: [] } });
   const { log, provided } = world({ api: { 'POST /api/plugins/atlassian-mcp/update': (b) => (b.confirm ? ok({ ok: true, updated: true }) : back) } });
   await provided.updateOne('atlassian-mcp');
-  assert.deepEqual([log.calls.map((c) => c[2]), log.acts, log.toasts, log.loads], [[{}], [['openUpdateReview', ['atlassian-mcp']]], [], []], 'no confirm POST');
+  assert.deepEqual([log.calls.map((c) => c[2]), log.acts, log.toasts, log.loads], [[{}], [['openUpdateReview', ['atlassian-mcp'], { opener: null }]], [], []], 'no confirm POST');
 });
 
 test('Check for update: up to date is a toast; anything newer (or needing git) opens the review sheet', async () => {
@@ -512,4 +511,33 @@ test('Team policy card: Turn on sends one request per click while it is out', as
   release(ok({ ok: true, enabled: true }));
   await settle();
   assert.deepEqual([log.calls.filter((c) => c[1] === '/api/plugins/teams-chat/enable').length, log.loads], [1, [{}]]);
+});
+
+test('a preview that lands after a sheet or dialog opened meanwhile hands nothing over (Check for update; Update: access, git, STALE)', async () => {
+  let release;
+  const held = new Promise((r) => { release = r; });
+  const pre = (access) => ok({ preview: { pinnedSha: 'a'.repeat(40), candidateSha: 'b'.repeat(40), access,
+    commits: [{ sha: 'b'.repeat(40), subject: 'fix: retry' }], diffstat: ' 1 file changed, 2 insertions(+)' } });
+  const { doc, log, click, provided } = world({ api: {
+    'POST /api/plugins/github-source/update': () => held.then(() => pre([SECRET])),
+    'POST /api/plugins/atlassian-mcp/update': (b) => (b.confirm ? held.then(() => no(409, { error: 'moved', code: 'STALE_PREVIEW', candidateSha: 'c'.repeat(40) })) : pre([])),
+    'POST /api/plugins/slack-chat/update': () => held.then(() => no(409, { error: 'git is not installed on this machine', code: 'GIT_MISSING' })),
+  } });
+  click('button.mk-more[data-name="github-source"]');
+  const checking = log.menus[0].items.find((i) => i.label === 'Check for update').onSelect();
+  const updating = provided.updateOne('github-source');
+  const stale = provided.updateOne('atlassian-mcp');
+  const noGit = provided.updateOne('slack-chat');
+  await settle();
+  const sheet = doc.createElement('div');
+  sheet.className = 'viewer-modal mk-sheet-host';      // the person opened a sheet meanwhile (a git fetch can take seconds)
+  doc.body.append(sheet);
+  release();
+  await Promise.all([checking, updating, stale, noGit]);
+  assert.deepEqual(log.acts.filter((a) => a[0] === 'openUpdateReview'), [], 'nothing takes over the sheet on screen');
+  sheet.classList.add('hidden');
+  await provided.updateOne('github-source');
+  await provided.updateOne('atlassian-mcp');
+  await provided.updateOne('slack-chat');
+  assert.deepEqual(log.acts.filter((a) => a[0] === 'openUpdateReview').map((a) => a[1][0]), ['github-source', 'atlassian-mcp', 'slack-chat'], 'with nothing open, each hands over');
 });

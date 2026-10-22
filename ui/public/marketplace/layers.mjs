@@ -120,6 +120,7 @@ export function createSheet({ doc, win, onClose = () => {}, kind = 'viewer' }) {
   let busyOn = false;
   let mark = null;
   let guard = null;
+  let isDirty = null;     // SM48: setKind(kind, { isDirty }) — a form whose controls apply at once says when it is dirty
   const busy = () => busyOn;
   const own = { busy, layer: null };
   const isOpen = () => s.owner === own && root.isConnected && !root.classList.contains('hidden');
@@ -158,7 +159,7 @@ export function createSheet({ doc, win, onClose = () => {}, kind = 'viewer' }) {
       s.owner = own;
       paintBusy();
       root.classList.remove('hidden');
-      guard = guardModal(root, { kind, close, busy }).opened();
+      guard = guardModal(root, { kind, close, busy, ...(isDirty ? { isDirty } : {}) }).opened();
       focusIn(panel, closeButton);
     },
     close,
@@ -173,9 +174,10 @@ export function createSheet({ doc, win, onClose = () => {}, kind = 'viewer' }) {
       fill(s.body, parts.body);
       fill(s.foot, parts.foot);
     },
-    setKind(next) {
+    setKind(next, { isDirty: dirty } = {}) {
       if (KINDS.includes(next)) kind = next;
-      if (isOpen()) guard.opened({ kind, close, busy });
+      isDirty = typeof dirty === 'function' ? dirty : null;
+      if (isOpen()) guard.opened({ kind, close, busy, ...(isDirty ? { isDirty } : {}) });
     },
   };
   own.layer = layer;

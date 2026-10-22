@@ -3,6 +3,7 @@
 import { withButton } from '../feedback.mjs';
 import { kindCounts, pluginIconKind } from './kinds.mjs';
 import { createDialog, LAYER_CLOSED } from './layers.mjs';
+import { dialogOpen } from '../modal-guard.mjs';
 import { updatesChip } from './page.mjs';
 import { needsReview } from '../../../src/shared/plugin-access.mjs';
 import { updatable, goesAway, removeChanges, usedByRow, usedByNote, leftoverIconKind, policyItems } from './installed-model.mjs';
@@ -17,6 +18,9 @@ export function createInstalledTab({ doc, win, page, deps }) {
   const changed = async () => { deps.invalidateAgentCaches?.(); await page.load(); };
   const preview = (name) => deps.api('POST', `/api/plugins/${enc(name)}/update`, {});
   const gitMissing = (r) => !r.ok && r.data?.code === 'GIT_MISSING';
+  // A preview can take seconds (a git fetch): a sheet or dialog opened meanwhile is never taken over (typed settings, a
+  // review that is applying) — the person moved on, and the row still offers the update.
+  const review = (name, ...o) => { if (!dialogOpen(doc)) page.act('openUpdateReview', [name], ...o); };
   // A monorepo marketplace moves candidateSha to the repository tip while the plugin folder has no commits: no commits
   // and no diffstat is up to date too.
   const upToDate = (p) => !!p.candidateSha && (p.candidateSha === p.pinnedSha || (Array.isArray(p.commits) && !p.commits.length && !String(p.diffstat ?? '').trim()));
@@ -127,15 +131,15 @@ export function createInstalledTab({ doc, win, page, deps }) {
   async function updateOne(name, { opener = null } = {}) {
     return withButton(opener, async () => {
       const pre = await preview(name);
-      if (gitMissing(pre)) { page.act('openUpdateReview', [name]); return { ok: false }; }
+      if (gitMissing(pre)) { review(name, { opener }); return { ok: false }; }
       if (!pre.ok) { fail(pre.data?.error || 'Update failed'); return { ok: false }; }
       const p = pre.data.preview || pre.data;
       if (upToDate(p)) { deps.notify({ tone: 'ok', title: `${name} is up to date.` }); return { ok: false }; }
       // A diff with no commits to list is a rollback (the pin is ahead of the tip) or a history the preview could not
       // read: never applied at once, the review sheet decides. So does new access (L7).
-      if (!(Array.isArray(p.commits) && p.commits.length) || needsReview(p.access || [])) { page.act('openUpdateReview', [name]); return { ok: false }; }
+      if (!(Array.isArray(p.commits) && p.commits.length) || needsReview(p.access || [])) { review(name, { opener }); return { ok: false }; }
       const r = await deps.api('POST', `/api/plugins/${enc(name)}/update`, { confirm: true, candidateSha: p.candidateSha });
-      if (!r.ok && r.data?.code === 'STALE_PREVIEW') { page.act('openUpdateReview', [name]); return { ok: false }; }
+      if (!r.ok && r.data?.code === 'STALE_PREVIEW') { review(name, { opener }); return { ok: false }; }
       if (!r.ok) { fail(r.data?.error || 'Update failed'); return { ok: false }; }
       deps.notify({ tone: 'ok', title: `Updated ${name}.` });
       await changed();
@@ -148,7 +152,7 @@ export function createInstalledTab({ doc, win, page, deps }) {
     if (!pre.ok && !gitMissing(pre)) return fail(pre.data?.error || 'Update check failed');
     const p = pre.ok ? (pre.data.preview || pre.data) : null;
     if (p && upToDate(p)) return deps.notify({ tone: 'ok', title: `${name} is up to date.` });
-    return page.act('openUpdateReview', [name]);
+    return review(name);
   }
 
   async function setEnabled(input) {
@@ -239,7 +243,6 @@ export function createInstalledTab({ doc, win, page, deps }) {
     chip: (s) => updatesChip(doc, updatable(s.plugins).length),
   });
   page.provide('updateOne', updateOne);
-  page.provide('checkHealth', (name) => deps.fallbacks.checkHealth(name));
   page.provide('openRemove', (name, o) => openRemove(name, o));
   return { updateOne, checkForUpdate, openRemove: (name, o) => openRemove(name, o) };
 }
