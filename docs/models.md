@@ -286,9 +286,12 @@ returned error", a rate-limited step backs off and retries before it pauses, and
 Worca's small helper calls — the title and the Auto workflow classifier — retry
 too; a classifier that still fails falls back to the default workflow instead of
 failing the run. The Models page picks the model for each helper call — *Title model*,
-*Auto workflow model* (`WORCA_AUTO_MODEL` overrides it) and *PR description model*
-(the Create PR dialog's Generate with AI; Sonnet-class by default) — so pointing them at
-a steadier model leaves a flaky free model touching only the pipeline steps.
+*Auto workflow model* (`WORCA_AUTO_MODEL` overrides it), *PR description model*
+(the Create PR dialog's Generate with AI; Sonnet-class by default) and *Agent generation*
+(Workflows › Agents › + › Generate; a model and an effort, the Claude tab only, since agent
+generation always runs on Claude; unset, or a model since removed from the catalog, uses
+the Claude CLI's default model) — so pointing them at a steadier model leaves a flaky
+free model touching only the pipeline steps.
 
 The *Requirements interview* helper (the Requirements page's looks and rounds) runs on Claude only and is
 set per user. Unlike Memory defragment, it takes an effort without a model: the default model then runs at

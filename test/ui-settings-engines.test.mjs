@@ -35,6 +35,10 @@ test('enginePatchToSettingsBody maps setting ids onto the settings keys', () => 
     stepModels: { codex: { planner: { model: 'gpt-5.5' } }, claude: { reviewer: null } },
     utilityModels: { codex: { title: { model: 'gpt-5.5', effort: 'low' }, memoryDefrag: null } },
   });
+  // Agent generation is Claude's alone, a pair on its own settings key.
+  assert.deepEqual(enginePatchToSettingsBody({ 'models.claude.utility.agentGen': { model: 'claude-opus-5-5', effort: 'high' } }),
+    { agentGenModel: { model: 'claude-opus-5-5', effort: 'high' } });
+  assert.deepEqual(enginePatchToSettingsBody({ 'models.claude.utility.agentGen': null }), { agentGenModel: null });
 });
 
 test('renderEngineSection: a row per role and job, each engine\'s models only', () => {
@@ -124,9 +128,11 @@ test('the Models page: stored picks paint, Claude\'s helper jobs are rows of its
   assert.equal(root.querySelector('[data-setting="run.engine"] .inherit-input').value, 'codex');
   assert.equal(root.querySelector('[data-setting="models.codex.steps.planner"] .inherit-model').value, 'gpt-5.5');
   const claude = doc.querySelector('.engine-card[data-engine="claude"]');
-  for (const job of ['utility.title', 'utility.classifier', 'utility.prDescription', 'memoryDefrag']) {
+  for (const job of ['utility.title', 'utility.classifier', 'utility.prDescription', 'memoryDefrag', 'utility.agentGen']) {
     assert.ok(claude.querySelector(`.engine-helpers [data-setting="models.claude.${job}"]`), `${job} is a Helper jobs row`);
   }
+  assert.match(claude.querySelector('[data-setting="models.claude.utility.agentGen"]').textContent, /Agent generation/);
+  assert.equal(root.querySelector('[data-setting*=".agentGen"]:not([data-setting="models.claude.utility.agentGen"])'), null, 'agent generation runs on Claude only: no other engine has the row');
   const eng = root.querySelector('[data-setting="run.engine"] .inherit-input');
   eng.value = '';
   eng.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -208,6 +214,24 @@ test('the Models page: the interview row saves its pair, clears with x, and repa
   assert.deepEqual(posts.at(-1), { requirementsInterview: null });
   assert.equal(row().hidden, true, 'cleared: back to the folded default');
   assert.equal(row().querySelector('.inherit-model').options[0].textContent, 'Opus 5.5 (default)');
+});
+
+test('the Models page: the Agent generation row paints the stored pair and saves onto agentGenModel', async () => {
+  const { doc, window, posts, tick } = await boot({ agentGenModel: { model: 'claude-opus-5-5', effort: 'high' } }, { hash: 'models' });
+  const row = doc.querySelector('[data-setting="models.claude.utility.agentGen"]');
+  assert.equal(row.querySelector('.inherit-model').value, 'claude-opus-5-5');
+  assert.equal(row.querySelector('.inherit-effort').value, 'high');
+  assert.equal(row.querySelector('.inherit-effort').disabled, false, 'the row takes an effort, unlike Titles');
+  const effort = row.querySelector('.inherit-effort');
+  effort.value = 'max'; effort.dispatchEvent(new window.Event('change', { bubbles: true }));
+  doc.getElementById('engineSettingsSave').click();
+  for (let i = 0; i < 6; i++) await tick();
+  assert.deepEqual(posts.at(-1), { agentGenModel: { model: 'claude-opus-5-5', effort: 'max' } });
+  const model = row.isConnected ? row.querySelector('.inherit-model') : doc.querySelector('[data-setting="models.claude.utility.agentGen"] .inherit-model');
+  model.value = ''; model.dispatchEvent(new window.Event('change', { bubbles: true }));
+  doc.getElementById('engineSettingsSave').click();
+  for (let i = 0; i < 6; i++) await tick();
+  assert.deepEqual(posts.at(-1), { agentGenModel: null }, 'a cleared row clears the setting');
 });
 
 test('opening the Models page directly paints the Engines card (a link or a reload lands there)', async () => {

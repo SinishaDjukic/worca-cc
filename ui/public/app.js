@@ -2214,6 +2214,10 @@ function orderKeyFor(runId) {
   if (key === undefined) { key = ++runOrderSeq; runOrderKeys.set(runId, key); }
   return key;
 }
+// runId -> the start time the run last carried, the orderKey memo's twin: a re-materialized run keeps it. The Runs
+// list orders live rows by start time (runs-list.mjs byDispatch), so a dropped run stamped "now" when a trailing
+// frame brings it back would read as the newest and outrank the run that superseded it.
+const runStartedAts = new Map();
 
 function nowHMS() {
   const d = new Date();
@@ -2233,7 +2237,7 @@ function makeRun({
     projectDir: projectDir || '',
     projectNames,         // string[] for workspace runs (all member names); null otherwise
     status,
-    startedAt: startedAt || nowHMS(),
+    startedAt: startedAt || runStartedAts.get(runId) || nowHMS(),
     local,
     kind,                 // 'run' | 'workspace-run' | 'agentgen' (only first two get tabs)
     pipelineId,           // matches a History row id once persisted; used to hide lingerers from History
@@ -2299,6 +2303,7 @@ function upsertRun(partial) {
     }
     r.staleBoot = false;   // every caller relays the current server: it knows this runId
   }
+  runStartedAts.set(r.runId, r.startedAt);
   dropSupersededPaused(r);
   return r;
 }
@@ -2779,7 +2784,7 @@ function addNightDecisions(r, list) {
 function onState(r, msg) {
   if (msg.status) r.status = msg.status;
   if (msg.shaping && typeof msg.shaping === 'object') r.shaping = msg.shaping;
-  if (msg.startedAt) r.startedAt = msg.startedAt;
+  if (msg.startedAt) { r.startedAt = msg.startedAt; runStartedAts.set(r.runId, msg.startedAt); }
   // The harness mirrors startedBy onto its state (creation-immutable), so a live card
   // learns who started the run from the first state snapshot.
   if (typeof msg.startedBy === 'string' && msg.startedBy) r.startedBy = msg.startedBy;
@@ -18415,8 +18420,10 @@ const CODEX_HELPER_JOBS = ['title', 'classifier', 'overview', 'prDescription', '
 // src/core/model-env.mjs HELPER_ENGINES (the browser cannot load /src/core): the engines with helper slots of their own.
 const HELPER_ENGINES = ['claude', 'codex'];
 // Claude's helper slots at user level are their own settings keys (settings-cascade.mjs CLAUDE_USER): a model id for
-// titles, Auto and PR descriptions (no effort), and the Memory defragment pair. No user-level overview slot.
-const CLAUDE_USER_HELPER_JOBS = ['title', 'classifier', 'prDescription', 'memoryDefrag'];
+// titles, Auto and PR descriptions (no effort), and the Memory defragment and Agent generation pairs. No user-level
+// overview slot. Agent generation is Claude's alone (it always runs on Claude), so no other tab has its row.
+const CLAUDE_USER_HELPER_JOBS = ['title', 'classifier', 'prDescription', 'memoryDefrag', 'agentGen'];
+const helperPair = (p) => (p && p.model ? { model: p.model, ...(p.effort ? { effort: p.effort } : {}) } : undefined);
 // The Requirements interview is a user-only slot (settings key requirementsInterview), listed only while its flag is on:
 // asked at paint time, never a module constant.
 const claudeUserHelperJobs = () => (flagOn('requirements') ? [...CLAUDE_USER_HELPER_JOBS, 'requirementsInterview'] : CLAUDE_USER_HELPER_JOBS);
@@ -18424,7 +18431,8 @@ const CLAUDE_USER_HELPER_OWN = (data) => ({
   title: data.titleModel ? { model: data.titleModel } : undefined,
   classifier: data.autoWorkflowModel ? { model: data.autoWorkflowModel } : undefined,
   prDescription: data.prDescriptionModel ? { model: data.prDescriptionModel } : undefined,
-  memoryDefrag: data.memoryDefrag && data.memoryDefrag.model ? { model: data.memoryDefrag.model, ...(data.memoryDefrag.effort ? { effort: data.memoryDefrag.effort } : {}) } : undefined,
+  memoryDefrag: helperPair(data.memoryDefrag),
+  agentGen: helperPair(data.agentGenModel),
   requirementsInterview: data.requirementsInterview && (data.requirementsInterview.model || data.requirementsInterview.effort)
     ? { ...(data.requirementsInterview.model ? { model: data.requirementsInterview.model } : {}), ...(data.requirementsInterview.effort ? { effort: data.requirementsInterview.effort } : {}) } : undefined,
 });
