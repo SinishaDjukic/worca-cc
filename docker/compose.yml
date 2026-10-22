@@ -47,6 +47,8 @@ services:
       HTTP_PROXY: ${HTTP_PROXY:-}
       NO_PROXY: ${NO_PROXY:-127.0.0.1,localhost}
       WORCA_MOCK: ${WORCA_MOCK:-}
+      WORCA_UPDATE_CHECK: ${WORCA_UPDATE_CHECK:-}
+      WORCA_UPDATE_REGISTRY: ${WORCA_UPDATE_REGISTRY:-}
     security_opt:
       - no-new-privileges:true
     cap_drop:

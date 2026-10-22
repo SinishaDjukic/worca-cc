@@ -47,7 +47,9 @@ Open `http://localhost:4317`, add a project by typing its path (it is mounted at
 the same path inside the container), and run a pipeline. Mock mode works before
 you log in.
 
-Upgrade: `docker compose pull && docker compose up -d`. The database migration
+Upgrade: `docker compose pull && docker compose up -d`. Settings ▸ About tells you when a
+newer image is out, with its release notes; the container never updates itself
+([updates.md](updates.md)). The database migration
 runs at boot, as with npm. Stop: `docker compose stop`. Everything you would
 change lives in `.env` ([`docker/.env.example`](../docker/.env.example) lists it
 all); the compose file itself is never edited.

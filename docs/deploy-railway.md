@@ -259,7 +259,9 @@ redacts tokens from anything it prints. In Claude Code, the `/worca-railway` ski
 
 ### Upgrade or roll back
 
-Releases publish `ghcr.io/sinishadjukic/worca:<version>`. Pin an exact version, never `latest`:
+Releases publish `ghcr.io/sinishadjukic/worca:<version>`. Settings ▸ About tells everyone on the
+instance when a newer one is out, with its release notes, but the instance never updates itself
+and offers no update button ([updates.md](updates.md)). Pin an exact version, never `latest`:
 
 ```bash
 node tools/railway/worca-railway.mjs upgrade mydeploy 1.5.0 --yes    # set the tag, deploy, wait, show the log

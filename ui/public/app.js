@@ -249,6 +249,7 @@ import {
   renderProjectTmCell, renderProjectTmChip, projectTmSummary, renderEnableDialogBody, renderMetricsHomePicker, renderWsMetricsRow, renderWsSummary, renderRouteResults, renderWsMetricsPending } from './team-metrics-surfaces.mjs';
 import { renderMapTab, emptyMapFilters } from './workspace-map-view.mjs';
 import { paintAboutInto } from './about-links.mjs';
+import { mountAboutUpdate, paintUpdateBadge } from './about-update.mjs';
 import { renderReasonOptions, renderOptIns, previewText, reportBlobParts, REPORT_PREVIEW_DEBOUNCE_MS } from './report-run.mjs';
 import { openScheduleSheet, closeScheduleSheet, browserTimeZone } from './schedule-sheet.mjs';
 import {
@@ -15412,6 +15413,10 @@ function paintAbout(info) {
   paintAboutInto(document, info);
 }
 
+// Settings ▸ About ▸ Updates (#841) and the account menu's "Update" chip. Boot paints the
+// chip once; opening Settings repaints both (about-update.mjs).
+void fetch('/api/app/update').then((r) => (r.ok ? r.json() : null)).then((s) => paintUpdateBadge(document, s)).catch(() => {});
+
 // #555 D8: a failed Settings GET is shown above the tabs, at every UI level.
 function setSettingsLoadMsg(text) {
   const n = document.getElementById('settingsLoadMsg');
@@ -15436,6 +15441,7 @@ async function loadSettings() {
     paintTheme(data.theme);
     levelCtl.confirm(data.uiLevel);
     paintAbout(data.app);
+    void mountAboutUpdate(document);
     paintBudgetSettings(data);
     paintAskSettings(data);
     paintScheduleSettings(data);

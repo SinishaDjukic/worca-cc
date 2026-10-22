@@ -74,6 +74,7 @@ import {
   chatPrefs, setChatPrefs,
   debugSpawnEnabled as storedDebugSpawnEnabled, effectiveDebugSpawn, setDebugSpawnEnabled, assertDebugSpawnInput, SETTINGS_POST_KEYS,
   resumeAfterUsageLimit, assertResumeAfterUsageLimitInput, setResumeAfterUsageLimit,
+  updateSettings, assertUpdateSettingsInput, setUpdateSettings,
   titleModel as storedTitleModel, setTitleModel, assertTitleModelInput,
   hideBuiltinModels, setHideBuiltinModels, assertHideBuiltinModelsInput,
   theme as storedTheme, setTheme, assertThemeInput,
@@ -199,6 +200,7 @@ import {
 import { extensionInstallInfo } from '../src/core/extension-package.mjs';
 import { pageOrigin, matchRunningAction } from '../src/core/extension-actions.mjs';
 import { detectDeployment, deploymentFacts } from '../src/core/deployment.mjs';
+import { createUpdateChecker, detectInstallKind, updatePolicy, CHECK_TTL_MS as UPDATE_CHECK_TTL_MS } from '../src/core/app-update.mjs';
 import { resolveIdentity, startedByOf, prAttributionFooter, actorOf, isSharedIdentity, byActor } from '../src/core/identity.mjs';
 import { withBillTo, currentBillTo, currentOwner } from '../src/core/billing.mjs';
 import { agentIdentity } from '../src/core/agent-user.mjs';
@@ -10728,6 +10730,7 @@ const settingsState = () => ({
   debugSpawnEnabled: storedDebugSpawnEnabled(),          // what is STORED (the checkbox)
   debugSpawnEffective: effectiveDebugSpawn(),             // what the next spawn will DO, and why
   resumeAfterUsageLimit: resumeAfterUsageLimit(),
+  updates: updateSettings(),                              // Settings ▸ About: { check, auto } as STORED (GET /api/app/update says what applies)
   titleModel: storedTitleModel(),                         // the STORED id (the select), null = run's model
   titleModelEffective: describeTitleModel(),              // env override / stale id, for the hint line (#422)
   hideBuiltinModels: hideBuiltinModels(),
@@ -10796,7 +10799,7 @@ async function namingModelState() {
 // `uiControl` is set by the boot block below when the server owns a port. Under
 // test (app imported, no bind) it stays empty: /api/health still answers, and
 // /api/shutdown refuses with 503 rather than exiting the test runner.
-const uiControl = { token: null, onShutdown: null, startedAt: null };
+const uiControl = { token: null, onShutdown: null, startedAt: null, port: null };
 const startedAtIso = () => uiControl.startedAt || null;
 
 app.get('/api/health', (req, res) => {
@@ -10819,6 +10822,123 @@ app.get('/api/health', (req, res) => {
 app.get('/api/git', async (_req, res) => {
   const s = await gitState({ maxAgeMs: 60_000 });
   res.json({ available: s.available, version: s.version, reason: s.reason, checkedAt: s.checkedAt });
+});
+
+// ---------------------------------------------------------------------------
+// App updates (Settings ▸ About, #841; src/core/app-update.mjs has the why)
+// ---------------------------------------------------------------------------
+// GET  /api/app/update           -> the status: current, latest, release notes, who updates
+// POST /api/app/update/check     -> re-ask the registry now, then the status
+// POST /api/app/update/apply     -> { version } install it (desktop npm -g installs only)
+// POST /api/app/update/restart   -> restart onto the installed version (only when idle)
+// A hosted or container instance answers apply/restart with 403: its code is its image,
+// and its operator ships a new tag. The status still says a newer version exists, so
+// whoever reads it can tell the operator.
+const APP_INSTALL_KIND = detectInstallKind(PROJECT_ROOT);
+const appUpdates = createUpdateChecker({ current: PKG_VERSION, repoUrl: APP_REPO_URL });
+const currentUpdatePolicy = () => updatePolicy({ deployment: DEPLOYMENT, installKind: APP_INSTALL_KIND, settings: updateSettings() });
+const appUpdateStatus = () => ({
+  ...appUpdates.status({ policy: currentUpdatePolicy(), deployment: DEPLOYMENT, installKind: APP_INSTALL_KIND }),
+  deployment: DEPLOYMENT,
+  installKind: APP_INSTALL_KIND,
+  restart: { available: !!uiControl.token, busy: updateBusyReason() },
+});
+
+/** What would be interrupted by a restart right now, or null when idle: a live run or a chat turn. */
+const LIVE_RUN_STATUSES = new Set(['created', 'starting', 'running', 'resuming', 'queued', 'pending']);
+function updateBusyReason() {
+  let live = 0;
+  for (const r of runs.values()) if (LIVE_RUN_STATUSES.has(r.status)) live += 1;
+  const turns = askRunningCount();
+  if (!live && !turns) return null;
+  return [live && `${live} run${live === 1 ? '' : 's'}`, turns && `${turns} chat turn${turns === 1 ? '' : 's'}`].filter(Boolean).join(' and ') + ' in progress';
+}
+
+/** Restart onto the new code: a detached `worca ui restart` from the (now replaced) package root,
+ *  so it outlives this process. It finds this server through the instance file, which every
+ *  bound server writes (uiControl.token). */
+function restartOntoInstalledVersion() {
+  const cli = path.join(PROJECT_ROOT, 'src', 'cli', 'worca-cc.mjs');
+  const port = uiControl.port || PORT;
+  const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', cli, 'ui', 'restart', '--port', String(port)], {
+    detached: true, stdio: 'ignore', windowsHide: true, env: process.env,
+  });
+  child.unref();
+}
+
+let updateTimer = null;
+/** The background check, and the opt-in automatic install. Re-armed after every Settings change. */
+function scheduleUpdateCheck({ delayMs = 30_000 } = {}) {
+  if (updateTimer) clearTimeout(updateTimer);
+  updateTimer = null;
+  if (!uiControl.token || !currentUpdatePolicy().check) return;   // a server that never bound (the tests) never polls
+  updateTimer = setTimeout(async () => {
+    updateTimer = null;
+    try {
+      await appUpdates.check();
+      await autoUpdateTick();
+    } catch (err) {
+      console.warn(`[worca-ui] update check: ${err?.message || err}`);
+    }
+    scheduleUpdateCheck({ delayMs: appUpdates.pendingRestart ? 5 * 60_000 : UPDATE_CHECK_TTL_MS });
+  }, delayMs);
+  updateTimer.unref?.();
+}
+
+/** Automatic updates: stable releases only, only while idle, install then restart when still idle. */
+async function autoUpdateTick() {
+  const policy = currentUpdatePolicy();
+  if (!policy.auto) return;
+  const st = appUpdateStatus();
+  if (appUpdates.pendingRestart) {
+    if (!updateBusyReason() && st.restart.available) {
+      console.log(`[worca-ui] automatic update: restarting onto ${appUpdates.pendingRestart.version}`);
+      restartOntoInstalledVersion();
+    }
+    return;
+  }
+  if (!st.updateAvailable || /-/.test(st.target) || updateBusyReason()) return;
+  console.log(`[worca-ui] automatic update: installing ${st.target}`);
+  try {
+    await appUpdates.apply({ version: st.target, policy, root: PROJECT_ROOT });
+    console.log(`[worca-ui] automatic update: installed ${st.target}; restarting once idle`);
+  } catch (err) {
+    console.warn(`[worca-ui] automatic update to ${st.target} failed: ${err?.message || err}`);
+  }
+}
+
+app.get('/api/app/update', (_req, res) => {
+  res.json(appUpdateStatus());
+});
+
+app.post('/api/app/update/check', async (_req, res) => {
+  if (!currentUpdatePolicy().check) return res.status(409).json({ code: 'CHECK_OFF', error: 'Update checks are off on this instance', ...appUpdateStatus() });
+  await appUpdates.check({ force: true });
+  res.json(appUpdateStatus());
+});
+
+const UPDATE_APPLY_STATUS = { MANAGED: 403, BUSY: 409, NO_UPDATE: 409, STALE: 409, NOT_GLOBAL: 409, INSTALL_FAILED: 500 };
+app.post('/api/app/update/apply', async (req, res) => {
+  const policy = currentUpdatePolicy();
+  if (policy.apply !== 'self') return res.status(403).json({ code: 'MANAGED', error: 'Updates on this instance are managed outside Worca' });
+  const version = req.body && typeof req.body.version === 'string' ? req.body.version.trim() : '';
+  try {
+    const out = await appUpdates.apply({ version: version || null, policy, root: PROJECT_ROOT });
+    console.log(`[worca-ui] update: installed ${out.version} (restart pending)`);
+    res.json({ ok: true, installed: out.version, output: out.output, ...appUpdateStatus() });
+  } catch (err) {
+    res.status(UPDATE_APPLY_STATUS[err.code] || 500).json({ code: err.code || 'INSTALL_FAILED', error: err.message });
+  }
+});
+
+app.post('/api/app/update/restart', (_req, res) => {
+  if (currentUpdatePolicy().apply !== 'self') return res.status(403).json({ code: 'MANAGED', error: 'Updates on this instance are managed outside Worca' });
+  if (!appUpdates.pendingRestart) return res.status(409).json({ code: 'NOTHING_INSTALLED', error: 'No update is waiting for a restart' });
+  if (!uiControl.token) return res.status(409).json({ code: 'NO_CONTROL', error: 'This server cannot restart itself — run `worca ui restart`' });
+  const busy = updateBusyReason();
+  if (busy) return res.status(409).json({ code: 'BUSY', error: `Not restarting: ${busy}. Try again when it finishes.` });
+  res.status(202).json({ ok: true, version: appUpdates.pendingRestart.version });
+  setImmediate(restartOntoInstalledVersion);
 });
 
 // Who this request is, for the header's "Signed in as" (identity.mjs). Attribution only.
@@ -11262,6 +11382,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const hasSmartNaming = has('smartNaming');      // null clears the stored block
   const hasDebugSpawnKey = has('debugSpawnEnabled');
   const hasLimitResumeKey = has('resumeAfterUsageLimit');
+  const hasUpdatesKey = has('updates');
   const hasTitleModelKey = has('titleModel');
   const hasHideBuiltinKey = has('hideBuiltinModels');
   const hasThemeKey = has('theme');
@@ -11336,6 +11457,11 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasSmartNaming && body.smartNaming !== null) asSettingsField('smartNaming', () => assertSmartNamingInput(body.smartNaming));
     if (hasDebugSpawnKey) asSettingsField('debugSpawnEnabled', () => assertDebugSpawnInput(body.debugSpawnEnabled));
     if (hasLimitResumeKey) asSettingsField('resumeAfterUsageLimit', () => assertResumeAfterUsageLimitInput(body.resumeAfterUsageLimit));
+    if (hasUpdatesKey) asSettingsField('updates', () => {
+      // A hosted instance's update behavior is its operator's (env), never a visitor's toggle.
+      if (DEPLOYMENT === 'hosted') throw new Error('updates on this instance are managed by its administrator');
+      assertUpdateSettingsInput(body.updates);
+    });
     if (hasTitleModelKey) asSettingsField('titleModel', () => {
       assertTitleModelInput(titleModelInput);
       if (titleModelInput !== '' && titleModelInput !== null && !catalogHasModel(titleModelInput)) {
@@ -11408,6 +11534,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasSmartNaming) await setSmartNaming(body.smartNaming);
     if (hasDebugSpawnKey) await setDebugSpawnEnabled(body.debugSpawnEnabled);
     if (hasLimitResumeKey) await setResumeAfterUsageLimit(body.resumeAfterUsageLimit);
+    if (hasUpdatesKey) { await setUpdateSettings(body.updates); scheduleUpdateCheck(); }
     if (hasTitleModelKey) await setTitleModel(titleModelInput);
     if (hasHideBuiltinKey) await setHideBuiltinModels(body.hideBuiltinModels);
     if (hasThemeKey) await setTheme(body.theme);
@@ -17665,6 +17792,8 @@ if (isMain) {
     uiControl.token = newUiToken();
     uiControl.onShutdown = shutdown;
     uiControl.startedAt = new Date().toISOString();
+    uiControl.port = port;
+    scheduleUpdateCheck();   // Settings ▸ About's "a newer Worca is out" (src/core/app-update.mjs), off with WORCA_UPDATE_CHECK=0
     writeUiInstance({
       pid: process.pid, host: HOST, port, token: uiControl.token,
       version: PKG_VERSION, startedAt: uiControl.startedAt,

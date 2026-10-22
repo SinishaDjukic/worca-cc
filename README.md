@@ -1049,6 +1049,7 @@ The skill starts the same deterministic orchestrator as the CLI;
 - [Team metrics](docs/team-metrics.md) — git-backed, team-wide records of finished runs on a `worca-metrics` branch
 - [Team policy](docs/team-policy.md) — team-set cost caps, allowed models, required plugins, guardrail defaults and MCP servers from a `worca-policy` branch
 - [Storage](docs/storage.md) — where state lives, project keys, migration
+- [Updates](docs/updates.md) — the version you run, what changed since, and who installs the update: you on a desktop, the operator on a container or hosted instance
 - [Worca in a container](docs/docker.md) — Worca and every `claude` it spawns in a disposable Linux container: the published image, compose, `worca container`
 - [Remote access](docs/remote-access.md) — opt-in, behind Cloudflare Access, with Worca checking the token
 - [Browser extension](docs/browser-extension.md) — sidebar chat, page context and Pinpoint on web pages; pairing and security model

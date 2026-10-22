@@ -19,6 +19,10 @@
 //                            override); this module never writes process.env.
 //   resumeAfterUsageLimit  — opt-in boolean (default false): schedule a usage-limit pause's
 //                            resume for just after the limit resets, unattended.
+//   updates                — Settings ▸ About (#841): { check?, auto? }. check (default
+//                            true) asks the registry for a newer Worca; auto (default
+//                            false) installs it while idle. WORCA_UPDATE_CHECK=0 and the
+//                            deployment kind override both (src/core/app-update.mjs).
 //   pipelineCostLimitUsd   — per-pipeline lifetime USD spend cap; unset = no limit.
 //   totalCostLimitUsd      — windowed all-pipelines USD spend cap; unset = no limit.
 //   costLimitResetPeriod   — total-budget window, 'weekly' | 'monthly' (default).
@@ -1215,6 +1219,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'smartNaming',                             // Smart run naming { suggestTitle, suggestBranch, pattern, types, trigger, addRunId }
   'debugSpawnEnabled',
   'resumeAfterUsageLimit',
+  'updates',                                 // Settings ▸ About: { check, auto } (src/core/app-update.mjs)
   'titleModel', 'hideBuiltinModels',
   'theme',
   'uiLevel',                                 // interface mode (docs/ui-levels.md)
@@ -1703,6 +1708,45 @@ export async function setDebugSpawnEnabled(input) {
   else settings.debugSpawnEnabled = input;
   await persistSettings(settings);
   return { debugSpawnEnabled: debugSpawnEnabled() };
+}
+
+// ── App updates (Settings ▸ About, #841) ─────────────────────────────────────
+// What the person chose. Whether it applies is app-update.mjs#updatePolicy's call
+// (an operator's env and the deployment kind win), so these stay plain booleans.
+export const DEFAULT_UPDATE_SETTINGS = Object.freeze({ check: true, auto: false });
+
+/** @throws {Error} unless `input` is { check?: boolean, auto?: boolean } with at least one key. */
+export function assertUpdateSettingsInput(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('updates must be an object { check?, auto? }');
+  const keys = Object.keys(input);
+  if (!keys.length) throw new Error('updates must set check or auto');
+  for (const k of keys) {
+    if (k !== 'check' && k !== 'auto') throw new Error(`updates.${k} is not a setting (check, auto)`);
+    if (!isBool(input[k])) throw new Error(`updates.${k} must be true or false`);
+  }
+}
+
+/** The stored choice, defaults filled; a malformed stored value falls back per key. */
+export function updateSettings() {
+  const v = readSettings().updates;
+  const o = v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+  return {
+    check: isBool(o.check) ? o.check : DEFAULT_UPDATE_SETTINGS.check,
+    auto: isBool(o.auto) ? o.auto : DEFAULT_UPDATE_SETTINGS.auto,
+  };
+}
+
+/** Merge `input` into the stored choice; a key back at its default is dropped. */
+export async function setUpdateSettings(input) {
+  assertUpdateSettingsInput(input);
+  const settings = readSettings();
+  const next = { ...updateSettings(), ...input };
+  const stored = {};
+  for (const k of Object.keys(DEFAULT_UPDATE_SETTINGS)) if (next[k] !== DEFAULT_UPDATE_SETTINGS[k]) stored[k] = next[k];
+  if (Object.keys(stored).length) settings.updates = stored;
+  else delete settings.updates;
+  await persistSettings(settings);
+  return { updates: updateSettings() };
 }
 
 // ── Resume after a usage limit (opt-in) ──────────────────────────────────────

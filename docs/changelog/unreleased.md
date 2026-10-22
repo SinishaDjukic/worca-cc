@@ -3,6 +3,18 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Know when a newer Worca is out
+
+Settings ▸ About now says whether you run the newest version, lists every release since yours with links to their notes and the compare view, and shows the new version next to Settings in the account menu. On a desktop npm install, **Update to x.y.z** installs exactly that version and **Restart now** restarts onto it once nothing is running. Automatic updates are opt-in, stable releases only. Containers and hosted instances never update themselves: they show the notice and the steps for whoever runs them. Operators can turn the check off (`WORCA_UPDATE_CHECK=0`), keep managed laptops from installing (`WORCA_SELF_UPDATE=0`), or check an internal mirror (`WORCA_UPDATE_REGISTRY`).
+
+Chips: Settings · updates · release notes
+
+Read it: [Updates](../updates.md)
+
+Pull requests (add each number when it opens):
+
+- Know when a newer Worca is out
+
 ## Plugins work behind a proxy
 
 Plugin task sources (GitHub, Azure Boards) and chat channels (Telegram, Slack, Discord, Teams) now follow `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` like worca itself, so they work on a network whose only way out is a proxy; loopback and `NO_PROXY` hosts go direct. They get `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE` and `SSL_CERT_DIR` too, for a proxy that re-signs TLS. A proxy the plugin can't use is a warning in its log instead of a bare `fetch failed`. A proxy URL that carries a user name and password is never handed to plugin code. Plugins then go direct, and worca says why: the UI server when it starts, the CLI at its first plugin call. A plugin that drives its own command-line tool goes through the proxy only if that tool reads the variables.

@@ -3502,6 +3502,15 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .about-version[href]{color:var(--green-ink);text-decoration:none;}
 .about-version[href]:hover{text-decoration:underline;}
 .about-link{color:var(--green-ink);font-weight:600;text-decoration:none;overflow-wrap:anywhere;}
+.about-update{display:flex;flex-direction:column;gap:6px;}
+.about-update[data-state="available"] .about-update-state,.about-update[data-state="installed"] .about-update-state{font-weight:600;}
+.about-update-notes{margin:0;padding:0;list-style:none;display:flex;flex-wrap:wrap;gap:2px 14px;font-family:var(--mono);}
+.about-update-links{display:flex;flex-wrap:wrap;gap:4px 14px;}
+.about-update-managed{margin:0;color:var(--ink-2);}
+.about-update-steps{margin:0;padding:6px 8px;border-radius:6px;background:var(--line);font-family:var(--mono);font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere;}
+.about-update-actions{display:flex;flex-wrap:wrap;gap:6px;}
+.about-update-switches{display:flex;flex-direction:column;gap:4px;color:var(--ink-2);}
+.about-update-msg:empty{display:none;}
 .about-link:hover{text-decoration:underline;}
 
 /* ---------- Budget readout (Settings) ---------- */
