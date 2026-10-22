@@ -166,6 +166,14 @@ export async function currentBranch(projectDir) {
   return name && name !== 'HEAD' ? name : null;
 }
 
+/** An unborn HEAD (git init, no commit yet): the branch the first commit lands on; null once HEAD has a commit or outside a repo. */
+export async function unbornBranch(projectDir) {
+  if ((await git(projectDir, ['rev-parse', '--verify', '-q', 'HEAD'])).ok) return null;
+  const r = await git(projectDir, ['symbolic-ref', '--short', '-q', 'HEAD']);
+  const name = r.ok ? r.stdout.trim() : '';
+  return name || null;
+}
+
 /**
  * Best-effort default-branch resolution. HEAD branch, then init.defaultBranch,
  * then origin/HEAD, then first local branch. On a detached HEAD with no local

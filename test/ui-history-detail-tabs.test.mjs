@@ -12,6 +12,7 @@ import { lastToast } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { setShapeFirst } from './helpers/shape-gate.mjs';
 import { useAppTimers } from './helpers/app-timers.mjs';
+import { ICONS } from '../ui/public/icons.mjs';
 
 // Click the action button of the newest toast (Retry | Details).
 const clickToastAction = (window) => {
@@ -1642,13 +1643,15 @@ test('History glance: one Create pull request when eligible; the PR bar for an o
       const slot = glance.querySelector('.rd-pr-slot');
       const box = glance.querySelector('.rd-pr-box');
       assert.equal(slot.closest('.hd-result'), null, 'outside the result host paintHdGlance rebuilds');
-      assert.equal(box.previousElementSibling, glance.querySelector('.rd-sheet > .rd-kv'), 'the PR place sits right under the facts');
+      assert.equal(slot.parentElement, glance.querySelector('.rd-sheet > .rd-sheet-head'), 'the button sits beside the status');
+      assert.equal(box.previousElementSibling, glance.querySelector('.rd-sheet > .rd-kv'), 'the PR bar sits right under the facts');
       if (!pr) {
         assert.equal(slot.hidden, false);
         const ctas = [...slot.children];
         assert.equal(ctas.length, 1, 'one button, the pull request');
         assert.ok(ctas[0].hasAttribute('data-rd-cta') && ctas[0].classList.contains('hd-g-pr'), ctas[0].className);
-        assert.equal(ctas[0].firstElementChild.dataset.icon, 'pr-create');
+        assert.equal(ctas[0].querySelector(':scope > .ic svg').innerHTML, ICONS['pr-create']);
+        assert.equal(ctas[0].classList.contains('btn-block'), false, 'at its natural width');
         assert.equal(ctas[0].textContent, 'Create PR');
         return;
       }
@@ -1696,7 +1699,10 @@ test('History glance PR lookup pending: a busy placeholder morphs in place into 
       assert.ok(slot.classList.contains('is-pending'), slot.className);
       assert.equal(slot.getAttribute('aria-busy'), 'true');
       assert.ok(slot.querySelector('.rd-pr-spin'), 'a spinner');
-      assert.match(slot.textContent, /Checking the pull request…/);
+      const wait = slot.querySelector('.rd-pr-wait');
+      assert.equal(wait.textContent, 'Create PR', 'the placeholder holds the button\'s own words, so it is the button\'s width');
+      assert.equal(wait.getAttribute('aria-hidden'), 'true');
+      assert.equal(slot.getAttribute('aria-label'), 'Checking the pull request…');
       assert.equal(slot.querySelector('button, a, [data-rd-cta]'), null, 'not clickable');
       const url = 'https://github.com/o/r/pull/7';
       const timers = useAppTimers(t);
@@ -1706,6 +1712,7 @@ test('History glance PR lookup pending: a busy placeholder morphs in place into 
         await timers.advance(MORPH_MS);
         assert.equal(ctx.window.document.querySelector('#hist-detail .hd-glance .rd-pr-slot'), slot, 'the slot is never replaced');
         assert.equal(slot.getAttribute('aria-busy'), null);
+        assert.equal(slot.getAttribute('aria-label'), null);
         assert.equal(slot.querySelector('[data-rd-cta]'), null, 'the run\'s own PR is no slot button');
         const chip = ctx.window.document.querySelector('#hist-detail .hd-glance .rd-pr-status .rd-prs-sum a.runs-pr.is-merged');
         assert.ok(chip, 'the PR bar shows the merged chip');

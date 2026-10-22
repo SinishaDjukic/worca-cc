@@ -8,7 +8,7 @@ import {
   ago, syncPillModel, chipState, projectChipModel, worstChip, sourceRefNote,
   fetchFailureCopy, ffRefusalCopy, syncStageLabel, cssEscape,
   mountSyncRow, paintSyncRow, isSyncableBranchName, fetchedAgo, syncPrefsModel, syncPrefsPatch,
-  runOutcomeModel, listRowModel, projectBarModel, wsRollupModel,
+  runOutcomeModel, listRowModel, projectBarModel, wsRollupModel, NO_COMMITS_HINT,
 } from '../ui/public/branch-sync.mjs';
 import { isSafeBranchName } from '../src/core/git-sync.mjs';
 import { checkRows } from './helpers/rows.mjs';
@@ -467,4 +467,15 @@ test('openSyncDialog prefs: "This project" loads, saves each select on change, r
   assert.equal(w.document.querySelector('.sync-modal .sync-prefs'), null);
   w.document.querySelector('.sync-modal .sync-x').click();
   await d2;
+});
+
+test('noCommits: "No commits yet" with a remote, the no-remote bar keeps its label and swaps its hint', () => {
+  const withRemote = { base: 'trunk', remote: 'origin', state: 'missing', noCommits: true };
+  assert.deepEqual(listRowModel(withRemote), { icon: 'local', tone: 'ink', label: 'No commits yet', hint: 'The first run commits these files', action: null, state: 'local' });
+  assert.equal(projectBarModel(withRemote).label, 'No commits yet');
+  assert.equal(projectBarModel(withRemote).vs, '');
+  const bare = projectBarModel({ base: 'trunk', remote: null, state: 'unknown', noCommits: true });
+  assert.equal(bare.label, 'No git remote');
+  assert.equal(bare.hint, NO_COMMITS_HINT);
+  assert.equal(projectBarModel({ base: null, remote: null, state: 'unknown' }).hint, 'Local folder · nothing to sync', 'unchanged without the flag');
 });

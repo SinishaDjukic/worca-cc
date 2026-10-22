@@ -12,8 +12,9 @@ import { checkRows } from './helpers/rows.mjs';
 import { _testing as gitTesting } from '../src/core/git-available.mjs';
 import { listProjects, addProject, displayPath } from '../src/core/projects.mjs';
 import { onboardingStatus } from '../src/core/onboarding.mjs';
-import { noProjectWorkDir } from '../src/core/store.mjs';
-import { checkFolderName, folderNameFor, createProject, addProjectFolder, probeFolder, countFiles, ProjectAddError, runGitInit } from '../src/core/project-create.mjs';
+import { noProjectWorkDir, canonicalProjectRoot, _resetCanonicalRootCache } from '../src/core/store.mjs';
+import { checkFolderName, folderNameFor, createProject, addProjectFolder, probeFolder, countFiles, ProjectAddError, runGitInit, checkRemoteUrl, makeGitProject } from '../src/core/project-create.mjs';
+import { planClone } from '../src/core/clone-project.mjs';
 
 useTempHome(after, 'worca-cc-pcreate-');
 const made = [];                                                  // every temp folder this file makes; removed in after()
@@ -282,4 +283,128 @@ test('probeFolder / countFiles: kind, file count, the R8 chips; .git never count
 
 test('a created project ticks the onboarding "project" step', async () => {
   assert.equal((await onboardingStatus()).steps.project, true);
+});
+
+test('checkRemoteUrl: https, ssh and scp forms pass; credentials, queries and options are refused', async () => {
+  const ok = (u) => { try { return checkRemoteUrl(u); } catch (e) { return `${e.code}: ${e.message}`; } };
+  await checkRows([
+    { name: 'https, ssh://, scp and Azure https with a user name pass, trimmed', run: () => {
+      assert.equal(ok(' https://github.com/me/notes '), 'https://github.com/me/notes');
+      assert.equal(ok('ssh://git@github.com:22/me/notes.git'), 'ssh://git@github.com:22/me/notes.git');
+      assert.equal(ok('git@github.com:me/notes.git'), 'git@github.com:me/notes.git');
+      assert.equal(ok('https://org@dev.azure.com/org/p/_git/r'), 'https://org@dev.azure.com/org/p/_git/r');
+    } },
+    { name: 'refusals', run: () => {
+      assert.equal(ok(''), 'INVALID: a remote URL is required');
+      assert.match(ok('https://me:tok@github.com/me/notes'), /^INVALID: the URL contains credentials/);
+      assert.match(ok('https://me@github.com/me/notes'), /^INVALID: the URL contains credentials/);
+      assert.equal(ok('https://github.com/me/notes?x=1'), 'INVALID: the URL must not have a query or fragment');
+      assert.equal(ok('http://github.com/me/notes'), 'INVALID: only https:// and ssh remote URLs are supported');
+      assert.equal(ok('file:///tmp/x'), 'INVALID: only https:// and ssh remote URLs are supported');
+      assert.match(ok('--upload-pack=touch /tmp/x'), /^INVALID: not a valid git remote URL/);
+      assert.match(ok('https://github.com/me/no tes'), /^INVALID: not a valid git remote URL/);
+      assert.equal(ok('https://github.com/'), 'INVALID: the URL must name a repository path');
+    } },
+    // One credential rule with Clone (fit): planClone (src/core/clone-project.mjs) answers the same for every https case.
+    { name: 'parity with planClone on https credentials and the Azure user exception', run: () => {
+      const clone = (u) => { try { planClone({ url: u }, { projectsRoot: ROOT }); return 'ok'; } catch (e) { return /credentials/.test(e.message) ? 'creds' : 'ok'; } };
+      const mine = (u) => (/credentials/.test(ok(u)) ? 'creds' : 'ok');
+      for (const u of ['https://me:tok@github.com/me/notes', 'https://me@github.com/me/notes', 'https://org@dev.azure.com/org/p/_git/r', 'https://u:p@dev.azure.com/org/p/_git/r', 'https://github.com/me/notes']) {
+        assert.equal(mine(u), clone(u), u);
+      }
+    } },
+  ]);
+});
+
+const samePathReal = (a, b) => realpathSync(a) === realpathSync(b);
+const folderProject = async (tag) => {
+  const dir = tmp(tag); writeFileSync(join(dir, 'a.txt'), 'x');
+  await addProject({ name: tag, path: dir });
+  const p = (await listProjects()).find((x) => existsSync(x.path) && samePathReal(x.path, dir));   // an earlier test leaves a project whose folder is gone
+  assert.equal(p.vcs, 'none');
+  return p;
+};
+const git = (dir, ...args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
+
+test('makeGitProject: Folder → Git in place, Link remote on a Git project, and every refusal leaves nothing', async () => {
+  await checkRows([
+    { name: 'converts: .git with no commit, vcs git, same key, files untouched', run: async () => {
+      const p = await folderProject('mg-ok');
+      _resetCanonicalRootCache();
+      const rootBefore = canonicalProjectRoot(p.path);
+      assert.equal(rootBefore, realpathSync(p.path), 'a plain folder: the root is its realpath');
+      const out = await makeGitProject({ key: p.key });
+      assert.deepEqual(out, { project: { key: p.key, name: 'mg-ok', path: p.path, vcs: 'git' }, initialized: true, remote: null });
+      assert.equal(existsSync(join(p.path, '.git', 'HEAD')), true);
+      assert.notEqual(git(p.path, 'rev-parse', '--verify', '-q', 'HEAD').status, 0, 'no commit was made');
+      assert.equal((await listProjects()).find((x) => x.key === p.key).vcs, 'git');
+      _resetCanonicalRootCache();   // recompute from the new .git, not from the cached folder answer
+      assert.equal(canonicalProjectRoot(p.path), rootBefore, 'the root (so slug-sha1[:8], the key) survives git init');
+      assert.equal(readFileSync(join(p.path, 'a.txt'), 'utf8'), 'x');
+    } },
+    { name: 'with a remote: origin is exactly the URL', run: async () => {
+      const p = await folderProject('mg-remote');
+      const out = await makeGitProject({ key: p.key, remoteUrl: 'git@github.com:me/notes.git' });
+      assert.equal(out.remote, 'git@github.com:me/notes.git');
+      assert.equal(git(p.path, 'remote', 'get-url', 'origin').stdout.trim(), 'git@github.com:me/notes.git');
+    } },
+    { name: 'a failed remote add rolls back the .git and keeps vcs none', run: async () => {
+      const p = await folderProject('mg-rfail');
+      const gitRemote = async () => ({ ok: false, stdout: '', stderr: 'fatal: boom\n' });
+      assert.equal(await outcome(makeGitProject({ key: p.key, remoteUrl: 'https://github.com/me/x' }, { gitRemote })), 'FAILED: git remote add failed: fatal: boom');
+      assert.equal(existsSync(join(p.path, '.git')), false);
+      assert.equal((await listProjects()).find((x) => x.key === p.key).vcs, 'none');
+    } },
+    { name: 'a failed git init removes the half-made .git', run: async () => {
+      const p = await folderProject('mg-ifail');
+      const gitInit = async (d) => { mkdirSync(join(d, '.git')); return { ok: false, stderr: 'fatal: nope\n' }; };
+      assert.equal(await outcome(makeGitProject({ key: p.key }, { gitInit })), 'FAILED: git init failed: fatal: nope');
+      assert.equal(existsSync(join(p.path, '.git')), false);
+    } },
+    { name: 'a failed vcs write rolls back too', run: async () => {
+      const p = await folderProject('mg-wfail');
+      assert.match(await outcome(makeGitProject({ key: p.key }, { markProjectGit: () => false })), /^FAILED: the project changed meanwhile/);
+      assert.equal(existsSync(join(p.path, '.git')), false);
+      const boom = () => { throw new Error('database is locked'); };
+      assert.equal(await outcome(makeGitProject({ key: p.key }, { markProjectGit: boom })), 'FAILED: could not record the change: database is locked');
+      assert.equal(existsSync(join(p.path, '.git')), false, 'a throwing write rolls back the same way');
+      assert.equal((await listProjects()).find((x) => x.key === p.key).vcs, 'none');
+    } },
+    { name: 'refusals: unknown key, bad URL, git missing, already a repo, nested, holds worca, folder gone; none touches the disk', run: async () => {
+      assert.equal(await outcome(makeGitProject({ key: 'nope-00000000' })), 'NOT_FOUND: project not found');
+      const a = await folderProject('mg-url');
+      assert.match(await outcome(makeGitProject({ key: a.key, remoteUrl: 'https://u:p@github.com/me/x' })), /^INVALID: the URL contains credentials/);
+      assert.equal(existsSync(join(a.path, '.git')), false, 'the URL is checked before git init');
+      assert.equal(await outcome(makeGitProject({ key: a.key, remoteUrl: 42 })), 'INVALID: remoteUrl must be a string');
+      assert.equal(await outcome(makeGitProject({ key: a.key }, { gitAvailable: () => false })), 'GIT_MISSING: git is not installed on this machine');
+      // Precedence: the URL is checked before git's presence, so a bad URL on a git-less machine answers INVALID.
+      // (Through the API the GIT_ONLY_ROUTES gate answers 409 GIT_MISSING first.)
+      assert.match(await outcome(makeGitProject({ key: a.key, remoteUrl: 'https://u:p@github.com/me/x' }, { gitAvailable: () => false })), /^INVALID: the URL contains credentials/);
+      assert.equal(existsSync(join(a.path, '.git')), false, 'git missing: nothing made');
+      const b = await folderProject('mg-has');
+      mkdirSync(join(b.path, '.git'));
+      assert.match(await outcome(makeGitProject({ key: b.key })), /^INVALID: this folder already has a \.git; remove the project \(the folder stays\)/);
+      assert.equal(existsSync(join(b.path, '.git')), true, 'a .git it did not make is never removed');
+      const c = await folderProject('mg-nest');
+      const enclosingRepo = async () => ({ repoRoot: '/r', partOf: 'r' });
+      assert.equal(await outcome(makeGitProject({ key: c.key }, { enclosingRepo })), 'NESTED_IN_REPO: Part of r');
+      assert.equal(existsSync(join(c.path, '.git')), false, 'nested: nothing made');
+      const h = await folderProject('mg-holds');
+      mkdirSync(join(h.path, 'projects'));   // worca's projects root inside this folder (the projectsRoot seam)
+      assert.match(await outcome(makeGitProject({ key: h.key }, { projectsRoot: join(h.path, 'projects') })), /^INVALID: this folder holds worca's data or projects folder/);
+      assert.equal(existsSync(join(h.path, '.git')), false, 'holds worca: nothing made');
+      for (const x of [a, c, h]) assert.equal((await listProjects()).find((y) => y.key === x.key).vcs, 'none');
+      const d = await folderProject('mg-gone');
+      rmSync(d.path, { recursive: true, force: true });
+      assert.equal(await outcome(makeGitProject({ key: d.key })), 'INVALID: folder does not exist');
+    } },
+    { name: 'Link remote on a Git project: adds origin, refuses a second one and an empty URL', run: async () => {
+      const p = await folderProject('mg-link');
+      await makeGitProject({ key: p.key });
+      assert.equal(await outcome(makeGitProject({ key: p.key })), 'INVALID: a remote URL is required');
+      const out = await makeGitProject({ key: p.key, remoteUrl: 'https://github.com/me/link' });
+      assert.deepEqual(out, { project: { key: p.key, name: 'mg-link', path: p.path, vcs: 'git' }, initialized: false, remote: 'https://github.com/me/link' });
+      assert.equal(await outcome(makeGitProject({ key: p.key, remoteUrl: 'https://github.com/me/other' })), 'EXISTS: this project already has an origin remote');
+    } },
+  ]);
 });

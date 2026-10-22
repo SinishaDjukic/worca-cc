@@ -253,8 +253,9 @@ import { renderReasonOptions, renderOptIns, previewText, reportBlobParts, REPORT
 import { openScheduleSheet, closeScheduleSheet, browserTimeZone } from './schedule-sheet.mjs';
 import {
   freshSyncState, ago, listRowModel, projectBarModel, wsRollupModel, ffRefusalCopy, syncStageLabel, fetchedAgo, isSyncableBranchName,
-  runOutcomeModel, openSyncDialog, chooseSyncRefusal,
+  runOutcomeModel, openSyncDialog, chooseSyncRefusal, NO_COMMITS_HINT,
 } from './branch-sync.mjs';
+import { gitActionFor, GIT_DIALOG, gitDoneMessage } from './project-git.mjs';
 import { baseCheckModel, baseRowNote, newerBaseCheck } from './base-check.mjs';
 import { describeRule } from '../../src/shared/schedule/recurrence.mjs';
 import { statusActions, RUN_SWITCH_OPTIONS, RUN_SWITCH_TIP, kindShort, awayAnswerRows, awayAnswerCounts, checksFirst, awayAnswersSummary, decidedByText, awayAskCaption } from '../../src/shared/away-mode/labels.mjs';
@@ -837,6 +838,16 @@ const el = {
   scanModelOk: $('#scan-model-ok'),
   scanModelCancel: $('#scan-model-cancel'),
   scanModelClear: $('#scan-model-clear'),
+
+  // Use git / Link remote modal
+  projectGitModal: $('#project-git-modal'),
+  projGitTitle: $('#proj-git-title'),
+  projGitLead: $('#proj-git-lead'),
+  projGitUrl: $('#proj-git-url'),
+  projGitUrlOpt: $('#proj-git-url-opt'),
+  projGitMsg: $('#proj-git-msg'),
+  projGitSave: $('#proj-git-save'),
+  projGitCancel: $('#proj-git-cancel'),
 
   // Add-project modal
   projectAddModal: $('#project-add-modal'),
@@ -12281,6 +12292,20 @@ function buildProjectRow(p) {
     const nogit = document.createElement('div');
     nogit.className = 'proj-nogit';
     nogit.append(wsIcon('folder', 15), Object.assign(document.createElement('span'), { className: 'proj-nogit-txt', textContent: 'No git' }));
+    if (p.key && p.exists) {
+      const use = document.createElement('button');
+      use.type = 'button';
+      use.className = 'btn btn-sm proj-nogit-act';
+      use.textContent = GIT_DIALOG.init.button;
+      use.setAttribute('aria-label', `Use git for ${p.name}`);
+      const key = p.key;
+      use.addEventListener('click', (e) => {
+        e.stopPropagation();   // the row opens its page on click
+        openProjectGitModal(key, 'init', () => document.querySelector(`#projects-list .pl-item[data-key="${cssEscape(key)}"] .proj-nogit-act`));
+      });
+      use.addEventListener('keydown', (e) => e.stopPropagation());   // Enter / Space press this button, not the row
+      nogit.append(use);
+    }
     sync.appendChild(nogit);
   } else if (p.key) {
     const syncSlot = document.createElement('div');
@@ -12344,6 +12369,7 @@ function paintSyncChips() {
   paintSyncChecked();
   for (const item of document.querySelectorAll('.ws-item[data-workspace-id]')) paintWsSyncItem(item);
   paintPdBranchCards();
+  if (projDetail) paintProjGitButton(projDetail.screen, projectByKey(projDetail.key));   // Link remote follows the chips
 }
 /** A short name for the strip: "ACME Web" in workspace "ACME" reads "Web". */
 function wsShortName(full, wsName) {
@@ -12682,6 +12708,7 @@ setInterval(() => { if (document.querySelector('.sync-checked:not([hidden])')) p
 const SYNC_CHIPS_MS = 300;
 let syncChipsTimer = null;
 let syncChipsLoaded = false;   // the Branch cards say "checking…" until the first status read lands
+const syncChipsAwait = new Set();   // keys converted by Use git whose new block has not landed yet
 let syncChipsBusy = false;
 let syncChipsQueued = false;
 function refreshSyncChips() {
@@ -12697,6 +12724,7 @@ function refreshSyncChips() {
       // The server's status read reports a standing fetch failure (background or Sync) as stale.
       state.syncChips = data && data.projects && typeof data.projects === 'object' ? data.projects : {};
       syncChipsLoaded = true;
+      syncChipsAwait.clear();
       paintSyncChips();
     } catch { /* the chips keep their last state */ }
     finally {
@@ -12786,6 +12814,8 @@ if (el.projectsSyncAll) {
 function renderProjectsList() {
   const host = el.projectsList;
   if (!host) return;
+  // A rebuild (a projects-changed broadcast after Use git, say) must not drop a focused row to <body>.
+  const focusKey = host.contains(document.activeElement) ? document.activeElement.closest('.pl-item')?.dataset.key : null;
   host.innerHTML = '';
   if (!state.projects.length) {
     const zero = document.createElement('section');
@@ -12841,6 +12871,7 @@ function renderProjectsList() {
 
   card.append(head, cols, list, empty);
   host.appendChild(card);
+  if (focusKey) host.querySelector(`.pl-item[data-key="${cssEscape(focusKey)}"] .pl-row`)?.focus({ preventScroll: true });
   paintProjectTmCells();
   paintProjectPolicyCells();
   paintSyncChips();
@@ -12948,6 +12979,10 @@ function openProjDetail(p, parsed, { instant = false } = {}) {
   screen.querySelector('.pd-new').addEventListener('click', () => { newPipelineForProject(p.key); });
   screen.querySelector('.pd-history').addEventListener('click', () => { openRunsForProject(p.key); });
   screen.querySelector('.pd-remove').addEventListener('click', () => { void removeProjectFromPage(p.key); });
+  screen.querySelector('.pd-git').addEventListener('click', (e) => {
+    const action = e.currentTarget.dataset.action;
+    if (action) openProjectGitModal(p.key, action, () => projDetail && projDetail.screen.querySelector('.pd-git'));
+  });
   paintProjHeader(screen, p);
   terminalPane?.syncOpeners();             // the cloned header's terminal button says whether the pane is open
   initPdTabs(screen, p);
@@ -13004,6 +13039,17 @@ function paintProjHeader(screen, p) {
   fresh.disabled = !p.exists;
   fresh.title = p.exists ? 'Start a pipeline in this project' : 'The folder is missing on disk';
   syncProjHistoryButton(screen, p.key);
+  paintProjGitButton(screen, p);
+}
+
+/** The header's Use git / Link remote (project-git.mjs#gitActionFor); hidden when neither applies. */
+function paintProjGitButton(screen, p) {
+  const btn = screen && screen.querySelector('.pd-git');
+  if (!btn) return;
+  const action = gitActionFor(p, p ? state.syncChips[p.key] : undefined, syncChipsLoaded);
+  btn.hidden = !action;
+  btn.dataset.action = action || '';
+  if (action) btn.querySelector('.pd-git-label').textContent = GIT_DIALOG[action].button;
 }
 
 // "Show in Runs" is live only while History has rows for this project: without rows the
@@ -13278,11 +13324,11 @@ function paintPdBranchCards() {
     const status = pcard.querySelector('.pd-ov-status');
     const sub = pcard.querySelector('.pd-ov-sub');
     const act = pcard.querySelector('.pd-ov-actrow');
-    if (!syncChipsLoaded) {
+    if (!syncChipsLoaded || syncChipsAwait.has(key)) {
       value.textContent = '…'; status.replaceChildren(); sub.textContent = 'checking…'; act.replaceChildren();
     } else if (!b || !b.remote) {
       value.textContent = (b && b.base) || '—';
-      status.replaceChildren(); sub.textContent = 'No remote · runs use your local copy'; act.replaceChildren();
+      status.replaceChildren(); sub.textContent = b && b.noCommits ? NO_COMMITS_HINT : 'No remote · runs use your local copy'; act.replaceChildren();
     } else {
       const m = listRowModel(b);
       const c = syncRowCells(key, m, '', projDetail.name);
@@ -13701,6 +13747,87 @@ function setProjAddMsg(text, kind) {
 let projAddBusy = false;
 // The "Cloning in the background" note a Hide raised; the clone's own result closes it.
 let cloneHideToast = null;
+
+// ---- Use git / Link remote (POST /api/projects/:key/git-init) ----
+let projGitTarget = null;   // { key, action, opener } while the dialog is open; opener re-queries the button
+let projGitBusy = false;
+const projGitGuard = el.projectGitModal ? guardModal(el.projectGitModal, {
+  kind: 'form',
+  close: () => closeProjectGitModal(),
+  busy: () => projGitBusy,
+}) : null;
+
+function setProjGitMsg(text, kind) {
+  el.projGitMsg.textContent = text || '';
+  el.projGitMsg.className = 'hint' + (kind ? ' ' + kind : '');
+}
+
+function openProjectGitModal(key, action, opener) {
+  const copy = GIT_DIALOG[action];
+  if (!copy || !el.projectGitModal || !projectByKey(key)) return;
+  projGitTarget = { key, action, opener };
+  el.projGitTitle.textContent = copy.title;
+  el.projGitLead.textContent = copy.lead;
+  el.projGitUrlOpt.hidden = !copy.optional;
+  el.projGitUrl.value = '';
+  el.projGitSave.textContent = copy.save;
+  setProjGitMsg('');
+  el.projectGitModal.classList.remove('hidden');
+  projGitGuard?.opened();
+  el.projGitUrl.focus();
+}
+
+function closeProjectGitModal({ refocus = true } = {}) {
+  el.projectGitModal.classList.add('hidden');
+  const t = projGitTarget;
+  projGitTarget = null;
+  const back = refocus && t && typeof t.opener === 'function' ? t.opener() : null;
+  if (back) back.focus({ preventScroll: true });
+}
+
+async function saveProjectGit() {
+  const t = projGitTarget;
+  if (!t || projGitBusy) return;
+  const copy = GIT_DIALOG[t.action];
+  const url = el.projGitUrl.value.trim();
+  if (!url && !copy.optional) { setProjGitMsg('Remote URL is required.', 'err'); el.projGitUrl.focus(); return; }
+  projGitBusy = true;
+  el.projGitSave.disabled = true;   // focus is in the URL field or on Save; either way it goes back to the field below
+  setProjGitMsg(copy.busy);
+  let data = null;
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(t.key)}/git-init`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(url ? { remoteUrl: url } : {}),
+    });
+    data = await safeJson(res);
+    if (!res.ok) { setProjGitMsg((data && data.error) || `HTTP ${res.status}`, 'err'); data = null; }
+  } catch (e) {
+    setProjGitMsg(e.message, 'err');
+  } finally {
+    projGitBusy = false;
+    el.projGitSave.disabled = false;
+  }
+  if (!data) { el.projGitUrl.focus(); return; }
+  closeProjectGitModal({ refocus: false });
+  afterProjectGit(t, data);
+}
+
+/** Repaint after Use git / Link remote: the list, the New-run select and an open page, then focus a control that stays. */
+function afterProjectGit(t, data) {
+  if (Array.isArray(data.projects)) state.projects = data.projects;
+  delete state.syncChips[t.key];   // the old block (no remote, folder) must not drive Link remote; the refresh brings the new one
+  syncChipsAwait.add(t.key);        // the Branch card reads "checking…" until that refresh lands (not the folder's "No remote")
+  renderProjectsList();             // rebuilds the row
+  refreshSyncChips();               // coalesced by its own timer when renderProjectsList already asked
+  renderProjectOptions(localStorage.getItem(LAST_PROJECT_KEY) || '');
+  const p = projectByKey(t.key);
+  setProjectsMsg(gitDoneMessage(t.action, p ? p.name : '', data.remote), 'ok');
+  const page = projDetail && projDetail.key === t.key ? projDetail.screen : null;
+  if (page && p) { paintProjHeader(page, p); refreshProjOverview(); }
+  const next = page ? page.querySelector('.pd-new')
+    : document.querySelector(`#projects-list .pl-item[data-key="${cssEscape(t.key)}"] .pl-row`);
+  next?.focus({ preventScroll: true });
+}
 
 // A form: a backdrop click never closes it. Escape asks first once something was typed or picked here —
 // except over a running clone: its fields are locked and its work goes on, so Hide loses nothing.
@@ -14344,6 +14471,9 @@ if (el.projDetail) {
   });
 }
 if (el.projectAddBtn) el.projectAddBtn.addEventListener('click', () => { void addProjectFlow(); });
+el.projGitSave?.addEventListener('click', () => { void saveProjectGit(); });
+el.projGitCancel?.addEventListener('click', () => projGitGuard?.cancel());
+el.projGitUrl?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); void saveProjectGit(); } });
 if (el.projAddSave) {
   el.projAddSave.addEventListener('click', saveProjectAdd);
   el.projAddCancel.addEventListener('click', () => projAddGuard.cancel());   // Cancel / Hide: at once, never asks
@@ -14417,7 +14547,7 @@ if (el.projectBulkModal) {
 if (typeof window !== 'undefined') {
   window.__projects = {
     loadProjectsView, renderProjectsList, buildProjectRow, deleteProject,
-    confirmModal, promptModal, addProjectFlow, openProjectAddModal, saveProjectAdd,
+    confirmModal, promptModal, addProjectFlow, openProjectAddModal, saveProjectAdd, openProjectGitModal, saveProjectGit,
     openProjectBulkModal, saveProjectBulk, closeProjectBulkModal, openFolderBrowser,
     openAddProject: () => chatDeps.openAddProject(),
   };
@@ -23549,12 +23679,18 @@ function setShipItRowOpened(row, pr) {
   row.statusEl.replaceChildren();
   row.statusEl.classList.remove('err');
   const merged = prStateOf(pr) === 'MERGED';
+  row.statusEl.append(merged ? 'PR merged: ' : 'PR open: ', prRepoLink(pr));
+  row.statusEl.hidden = false;
+}
+
+// One repository's PR as a text link (design system, PR controls): "View PR", led by the merge glyph once merged.
+function prRepoLink(pr) {
+  const merged = prStateOf(pr) === 'MERGED';
   const a = document.createElement('a');
   a.className = merged ? 'hd-pr-repo-link merged' : 'hd-pr-repo-link';
   a.href = pr.url; a.target = '_blank'; a.rel = 'noopener';
-  a.textContent = merged ? 'Merged' : 'View PR';
-  row.statusEl.append(merged ? 'PR merged: ' : 'PR open: ', a);
-  row.statusEl.hidden = false;
+  a.append(icon(document, merged ? 'merge' : 'pull-request', 14), 'View PR');
+  return a;
 }
 
 function setShipItRowDisabled(row, on) {
@@ -23899,7 +24035,7 @@ function paintHdPush(screen, record) {
   if (!btn || record.target === 'workspace' || !record.sourceBranch || !record.mergeBack || record.mergeBack.merged !== true) return true;
   btn.hidden = false;
   btn.disabled = false;
-  btn.textContent = `Push ${record.sourceBranch}`;
+  setCtaContent(btn, 'arrow-up', `Push ${record.sourceBranch}`);
   // The run summary's CTA (.hd-g-push) clicks this button: keep its label and state in step with it.
   const mirror = (label, disabled) => {
     const g = screen.querySelector('.hd-g-push');
@@ -23909,7 +24045,7 @@ function paintHdPush(screen, record) {
   };
   btn.onclick = async () => {               // property, not addEventListener: paintHdPr re-runs (as its own btn.onclick, :18315)
     btn.disabled = true;
-    btn.textContent = 'Pushing…';
+    setCtaContent(btn, 'arrow-up', 'Pushing…');
     mirror('Pushing…', true);
     try {
       const res = await fetch('/api/push', {
@@ -23920,11 +24056,11 @@ function paintHdPush(screen, record) {
       });
       const dd = await safeJson(res);
       if (!res.ok) throw new Error((dd && dd.error) || `HTTP ${res.status}`);
-      btn.textContent = `Pushed to ${dd.remote || 'the remote'}`;
+      setCtaContent(btn, 'arrow-up', `Pushed to ${dd.remote || 'the remote'}`);
       mirror(btn.textContent, true);
     } catch (err) {
       btn.disabled = false;
-      btn.textContent = `Push ${record.sourceBranch}`;
+      setCtaContent(btn, 'arrow-up', `Push ${record.sourceBranch}`);
       btn.title = err && err.message ? err.message : String(err);
       mirror(`Push failed: ${btn.title}`, false);
     }
@@ -24038,7 +24174,8 @@ function paintHdGlance(screen, record, data) {
     // The one wiring: the header's button opens the ship-it modal (re-read at click time).
     paintPrCta(slot, { state: 'create', cls: 'hd-g-pr', onClick: () => { const b = screen.querySelector('.hd-pr'); if (b) b.click(); } });
   } else if (shown(pushBtn) && !pushBtn.hidden) {
-    paintPrCta(slot, { state: 'push', cls: 'hd-g-push', onClick: () => { const b = screen.querySelector('.hd-push'); if (b) b.click(); } });
+    paintPrCta(slot, { state: 'push', cls: 'hd-g-push', label: `Push ${record.sourceBranch}`,
+      onClick: () => { const b = screen.querySelector('.hd-push'); if (b) b.click(); } });
   } else if (pr === 'PENDING' && shown(createBtn)) {
     paintPrCta(slot, { state: 'pending' });
   } else {
@@ -24346,6 +24483,7 @@ function paintHdPr(screen, record, data) {
   if (!btn || !link) return;
   btn.hidden = true;
   link.hidden = true;
+  if (!btn.querySelector('.ic')) setCtaContent(btn, 'pr-create', CREATE_PR_LABEL);
   const repos = screen.querySelector('.hd-pr-repos');
   if (repos) { repos.hidden = true; repos.replaceChildren(); }
   if (!(gitOn() && isGitRun(hdRunOf(record, data)))) { paintHdPush(screen, null); return; }
@@ -24357,7 +24495,7 @@ function paintHdPr(screen, record, data) {
   if (pr && (prState === 'OPEN' || prState === 'MERGED') && pr.url) {
     link.hidden = false;
     link.href = pr.url;
-    link.textContent = prState === 'MERGED' ? 'Merged' : 'View PR';
+    setCtaContent(link, prState === 'MERGED' ? 'merge' : 'pull-request', 'View PR');
     link.classList.toggle('merged', prState === 'MERGED');
     return;
   }
@@ -24416,12 +24554,7 @@ function hdWsRepoItem(m) {
   // textContent (screen readers' fallback, copy/paste, the tests) would read "apiMerged".
   li.append(name, ' ');
   if (prLive(m.pr)) {
-    const merged = prStateOf(m.pr) === 'MERGED';
-    const a = document.createElement('a');
-    a.className = merged ? 'hd-pr-repo-link merged' : 'hd-pr-repo-link';
-    a.href = m.pr.url; a.target = '_blank'; a.rel = 'noopener';
-    a.textContent = merged ? 'Merged' : 'View PR';
-    li.appendChild(a);
+    li.appendChild(prRepoLink(m.pr));
     const pill = document.createElement('span');     // post-ship mergeability, like the single header pill
     pill.className = 'hist-merge';
     pill.dataset.minLevel = 'expert';
@@ -34741,29 +34874,21 @@ function glancePrInput(record) {
   return histPrEligible(record) ? 'NONE' : 'UNAVAILABLE';
 }
 
-// The glance's action buttons lead with a glyph: 24-unit, stroked like HD_TAB_ICONS.
-const CTA_ICONS = {
-  // A pull request with a plus where its head will be.
-  'pr-create': '<circle cx="6" cy="6" r="2.5"/><path d="M6 8.5V21M13 6h3a2 2 0 0 1 2 2v3M18 15v6M15 18h6"/>',
-  // An open pull request is on the code host: a box with an arrow leaving it (a new tab).
-  external: '<path d="M18 13.5V18a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4.5"/><path d="M14 4h6v6M20 4l-9 9"/>',
-  // Merged: two lines joining into one.
-  merged: '<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 8.5V21M6 9a9 9 0 0 0 9 9h.5"/>',
-};
-function setCtaContent(node, icon, label) {
-  node.innerHTML = `<svg class="rd-cta-ico" data-icon="${icon}" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${CTA_ICONS[icon]}</svg>`;
+// A page's PR button (design system, PR controls): its icons.mjs glyph at 16px, then its label.
+function setCtaContent(node, name, label) {
   const tx = document.createElement('span');
   tx.textContent = label;
-  node.appendChild(tx);
+  node.replaceChildren(icon(document, name, 16), tx);
 }
 
 // The glance's pull request button, in its slot: one node per screen (the templates'
 // .rd-pr-slot, outside the result hosts their painters rebuild), because a recreated node
 // cannot morph. `state`: 'pending' (the lookup runs: a white placeholder with a spinner at
 // the button's height, nothing to click), 'create' | 'view' | 'merged' (the button in its
-// colour; View and Merged link to `href`, Create calls `onClick`), 'none' (no slot).
+// colour; View and Merged link to `href`, Create calls `onClick`), 'push' (Create's look, its
+// `label` the header's "Push <branch>"), 'none' (no slot).
 // Pending -> a button morphs: the colour grows as a circle from the spinner (.rd-pr-fill),
-// the spinner fades, the icon and label come in. Pending -> none fades out and collapses.
+// the spinner fades, the icon and label come in. Pending -> none fades out in place.
 // Any other change paints the end state at once, so a known state (a cached row) never
 // animates and a repaint never replays. Every animation is CSS; these timers only end them
 // (the slowest CSS animation is shorter) and remove the spinner and the colour layer.
@@ -34771,52 +34896,52 @@ const PR_CTA_MORPH_MS = 420;
 const PR_CTA_OUT_MS = 380;
 const PR_CTA_LOOK = {
   create: { look: '', icon: 'pr-create', label: CREATE_PR_LABEL },
-  push: { look: '', icon: 'pr-create', label: 'Push the source branch' },   // a run on its source branch (paintHdPush)
-  view: { look: 'pr-view', icon: 'external', label: 'View PR' },
-  merged: { look: 'pr-merged', icon: 'merged', label: 'View PR' },
+  push: { look: '', icon: 'arrow-up', label: '' },   // a run on its source branch: the caller's label (paintHdPush)
+  view: { look: 'pr-view', icon: 'pull-request', label: 'View PR' },
+  merged: { look: 'pr-merged', icon: 'merge', label: 'View PR' },
 };
-function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '' } = {}) {
+function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '', label: own = '' } = {}) {
   if (!slot) return;
   slot._prClick = onClick;                         // read at click time: a repaint re-binds it
-  const sig = `${state}|${href}|${cls}`;
+  const sig = `${state}|${href}|${cls}|${own}`;
   if (slot.dataset.sig === sig) return;
   const from = slot.dataset.state || 'none';
   slot.dataset.sig = sig;
   slot.dataset.state = state;
   clearTimeout(slot._prTimer);
   slot.classList.remove('is-pending', 'is-morph', 'is-out');
-  slot.style.removeProperty('--h');
   slot.removeAttribute('aria-busy');
+  slot.removeAttribute('aria-label');
   const done = (fn) => { slot._prTimer = setTimeout(fn, state === 'none' ? PR_CTA_OUT_MS : PR_CTA_MORPH_MS); };
 
   if (state === 'pending') {
     const spin = document.createElement('span');
     spin.className = 'rd-pr-spin';
-    // The button's own glyph and line, invisible, hold its final height.
+    // The button's own glyph and label, invisible, hold its final size; the sentence is for assistive tech.
     const wait = document.createElement('div');
     wait.className = 'rd-pr-wait';
-    setCtaContent(wait, 'pr-create', 'Checking the pull request…');
+    wait.setAttribute('aria-hidden', 'true');
+    setCtaContent(wait, 'pr-create', CREATE_PR_LABEL);
     slot.replaceChildren(spin, wait);
     slot.classList.add('is-pending');
     slot.setAttribute('aria-busy', 'true');
+    slot.setAttribute('aria-label', 'Checking the pull request…');
     slot.hidden = false;
     return;
   }
 
   if (state === 'none') {
     if (from !== 'pending') { slot.replaceChildren(); slot.hidden = true; return; }
-    slot.style.setProperty('--h', `${slot.offsetHeight}px`);
     slot.classList.add('is-out');
     done(() => {
       slot.classList.remove('is-out');
-      slot.style.removeProperty('--h');
       slot.replaceChildren();
       slot.hidden = true;
     });
     return;
   }
 
-  const { look, icon, label } = PR_CTA_LOOK[state];
+  const { look, icon: glyph, label } = PR_CTA_LOOK[state];
   let ctl;
   if (state === 'create' || state === 'push') {
     ctl = document.createElement('button');
@@ -34828,9 +34953,9 @@ function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '' 
     ctl.target = '_blank';
     ctl.rel = 'noopener';
   }
-  ctl.className = ['btn', 'btn-block', look ? '' : 'btn-primary', look, cls].filter(Boolean).join(' ');
+  ctl.className = ['btn', look ? '' : 'btn-primary', look, cls].filter(Boolean).join(' ');
   ctl.setAttribute('data-rd-cta', '');
-  setCtaContent(ctl, icon, label);
+  setCtaContent(ctl, glyph, own || label);
   slot.hidden = false;
   const wait = from === 'pending' && slot.querySelector('.rd-pr-wait');
   if (!wait) { slot.replaceChildren(ctl); return; }

@@ -6,6 +6,7 @@ import { JSDOM } from 'jsdom';
 import { buildReceiptCard, buildRunStopCard, buildPullRequestCard, registerChatActionCards, refreshChatPrWatch } from '../ui/public/chat/action-cards.mjs';
 import { chatCardBuilder, _resetChatExtensions } from '../ui/public/chat/extensions.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { ICONS } from '../ui/public/icons.mjs';
 
 const doms = [];
 afterEach(() => { for (const d of doms.splice(0)) d.window.close(); _resetChatExtensions(); });
@@ -159,6 +160,12 @@ test('pull-request: branch → base and files ±; Create opens Ship it with the 
       assert.equal(el.querySelector('.ask-prcard-branch').textContent, 'worca/fix-login→main');
       assert.equal(el.querySelector('.ask-prcard-stat').textContent, '14 files · +412 −188');
       const create = el.querySelector('[data-chat-pr-create]');
+      // PR controls (design system): a small primary button led by the pr-create glyph at 14px.
+      assert.equal(create.className, 'btn btn-sm btn-primary');
+      assert.equal(create.firstElementChild.className, 'ic');
+      assert.equal(create.firstElementChild.style.width, '14px');
+      assert.equal(create.querySelector('.ic svg').innerHTML, ICONS['pr-create']);
+      assert.equal(create.textContent, 'Create PR');
       click(create); await tick();
       assert.deepEqual(opened, [[{ pipelineId: 'aaaa0005', projectKey: 'shop-1a2b3c4d' }, { askThreadId: 'ask_aaaaaaaa', askCardId: 'card_00000004' }]]);
       assert.equal(create.disabled, true, 'one dialog per card');

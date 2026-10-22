@@ -138,11 +138,11 @@ test('Team policy: sentence-case labels, a sans sync chip, grey "not installed",
   assert.match(rules('.tp-chip').join(), /padding-block:0;/, 'the 28px × sets the chip height');
 });
 
-// The 16 dialogs in index.html. The model editor's card and the plugin modal's actions are JS-built, so their static
+// The 18 dialogs in index.html. The model editor's card and the plugin modal's actions are JS-built, so their static
 // markup has no footer button; the proof's dialog-sizes state and the source pins below cover them.
 const DIALOGS = ['#model-editor-modal', '#model-import-modal', '#viewer-card', '#folder-browser', '#mode-modal', '#confirm-modal',
   '#report-modal', '#export-modal', '#shipit-modal', '#publish-modal', '#welcome-modal', '#claude-setup-modal', '#stop-modal',
-  '#project-add-modal', '#project-bulk-modal', '#plugin-modal', '#scan-model-modal'];
+  '#project-add-modal', '#project-git-modal', '#project-bulk-modal', '#plugin-modal', '#scan-model-modal'];
 // D12: the action rows, and the head Close / Full screen buttons.
 const FOOT = ['.confirm-actions', '.stop-actions', '.add-project-actions', '.mode-foot', '.report-head-actions', '.publish-actions',
   '.shipit-actions', '.mv-editor-btns', '.viewer-actions', '[data-card-actions]'].map((s) => `${s} .btn`).concat('#plugin-modal-close', '#claude-setup-close').join(', ');
@@ -155,7 +155,7 @@ test('dialogs: footer actions are 32px .btn, cards keep the shared 24px padding,
     for (const b of m.querySelectorAll(FOOT)) if (b.classList.contains('btn-sm')) small.push(`${id} ${b.textContent.trim()}`);
   }
   assert.deepEqual(small, []);
-  for (const id of ['#confirm-modal', '#folder-browser', '#mode-modal', '#publish-modal', '#project-add-modal', '#stop-modal'])
+  for (const id of ['#confirm-modal', '#folder-browser', '#mode-modal', '#publish-modal', '#project-add-modal', '#project-git-modal', '#stop-modal'])
     assert.ok(page.querySelector(id).querySelector(FOOT), `${id} has a footer the selector sees`);
   for (const sel of ['.ob-welcome', '.mode-modal .card', '.shipit-card', '.gs-card', '.mv-editor'])
     assert.deepEqual(rules(sel).filter((b) => /(?:^|;)\s*padding\s*:/.test(b)), [], `${sel} keeps the shared .card padding (phone rules too)`);

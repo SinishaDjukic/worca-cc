@@ -231,7 +231,7 @@ import { checkBrokerAtBoot } from '../src/core/broker-boot.mjs';
 import { modelSlot, missingCredentials, describeMissing, workflowNeedsModel } from '../src/core/broker-routing.mjs';
 import { syncPluginSlots } from '../src/core/plugin-broker-slots.mjs';
 import { planClone, cloneProject, CloneError } from '../src/core/clone-project.mjs';
-import { createProject, addProjectFolder, probeFolder, ProjectAddError, PROJECT_ADD_STATUS } from '../src/core/project-create.mjs';
+import { createProject, addProjectFolder, probeFolder, makeGitProject, ProjectAddError, PROJECT_ADD_STATUS } from '../src/core/project-create.mjs';
 import { listFolders } from '../src/core/fs-browse.mjs';
 import { realRoots, realOrNull, checkInside, insideRoots, outsideAllowedMessage, FS_OUTSIDE_ALLOWED } from '../src/core/fs-scope.mjs';
 import { importCandidates, parsePathList, IMPORT_MAX_INPUTS } from '../src/core/workspace-import.mjs';
@@ -1665,6 +1665,7 @@ app.use((req, _res, next) => withBillTo(resolveIdentity(req).name, next));
 const gitMissing = (res) => res.status(409).json({ error: GIT_MISSING.message, code: GIT_MISSING.code });
 const GIT_ONLY_ROUTES = Object.freeze([
   ['post', '/api/projects/clone'], ['delete', '/api/projects/:key/terminal/worktrees'],
+  ['post', '/api/projects/:key/git-init'],   // Use git / Link remote: git init and git remote add
   ['post', '/api/runs/:id/checkout'], ['delete', '/api/runs/:id/checkout'], ['get', '/api/runs/:id/checkout/diff'],
   ['post', '/api/projects/:key/actions/:actionId/try'],
   ['get', '/api/pr/remotes'], ['post', '/api/pr'], ['post', '/api/pr/resolve'], ['post', '/api/runs/:id/publish'],
@@ -9552,9 +9553,9 @@ function projectAddFail(res, err, extra = {}) {
   return res.status(PROJECT_ADD_STATUS[code] || 500).json(body);
 }
 
-/** After New / Use git registered a project: the list broadcast, then discovery for a Git project only. */
-function afterProjectRegistered(project) {
-  emitChanged('projects-changed', 'created');
+/** After New / Use git registered (or converted) a project: the list broadcast, then discovery for a Git project only. */
+function afterProjectRegistered(project, action = 'created') {
+  emitChanged('projects-changed', action);
   if (!project || project.vcs !== 'git') return;   // a Folder project has no origin to discover
   discoverProject(project.path, { force: true })
     .then(() => emitChanged('team-metrics-changed', 'discovered'))
@@ -9734,6 +9735,31 @@ app.delete('/api/projects', async (req, res) => {
     res.json(out);
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// Use git (a Folder project → Git in place) or Link remote (a Git project without origin): makeGitProject picks by the
+// stored vcs. A live Folder run works IN the folder, so the init path waits for it.
+app.post('/api/projects/:key/git-init', async (req, res) => {
+  try {
+    const p = await tmProject(req, res); if (!p) return;
+    if (!(await requireFsAllowed(req, res, [p.path]))) return;
+    if (p.vcs === 'none') {
+      const busy = runHoldingProject(p);
+      if (busy) {
+        const how = busy.status === 'paused' ? 'is paused' : 'is still running';
+        return res.status(409).json({
+          error: `“${p.name}” has a run that ${how}${busy.title ? ` (“${busy.title}”)` : ''}. Stop it first, then use git here.`,
+          code: 'PROJECT_BUSY', pipelineId: busy.id,
+        });
+      }
+    }
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const out = await makeGitProject({ key: p.key, remoteUrl: body.remoteUrl });
+    afterProjectRegistered(out.project, 'updated');
+    res.json({ ...out, projects: await projectsForApi(await listProjects()) });
+  } catch (err) {
+    if (!res.headersSent) projectAddFail(res, err);
   }
 });
 

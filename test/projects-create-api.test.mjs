@@ -21,6 +21,8 @@ const gitDir = (tag) => { const d = makeGitDir(tag); made.push(d); return d; };
 const prev = {};
 const post = (p, body) => fetch(`${base}${p}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 const plainDir = async (t) => { const d = await mkdtemp(join(tmpdir(), `worca-cc-pcapi-${t}-`)); made.push(d); return d; };
+const projectRow = async (dir) => (await (await fetch(`${base}/api/projects`)).json()).projects.find((p) => realpathSync(p.path) === realpathSync(dir));
+const gitInit = (key, body = {}) => post(`/api/projects/${encodeURIComponent(key)}/git-init`, body);
 async function noGit(fn) {
   process.env.WORCA_GIT = '0'; gitTesting.reset();
   try { return await fn(); } finally { process.env.WORCA_GIT = '1'; gitTesting.reset(); }
@@ -109,6 +111,7 @@ test('no git on this machine: useGit answers 409 GIT_MISSING and creates nothing
     assert.equal(add.status, 409);
     assert.equal((await add.json()).code, 'GIT_MISSING');
     assert.equal(existsSync(join(dir, '.git')), false);
+    assert.equal((await gitInit('p0proj-00000001')).status, 409);
   });
 });
 
@@ -262,6 +265,81 @@ test('DELETE /api/projects: a New Folder project goes with its folder only on de
       assert.equal(listTickets({ projectDir: p.path }).length, 1);
       assert.equal((await del('RM-SCHED', true)).status, 200);
       assert.equal(listTickets({ projectDir: p.path }).length, 0);
+    } },
+  ]);
+});
+
+test('POST /api/projects/:key/git-init: Folder → Git, link, refusals, and Remove keeps the folder after', async () => {
+  await checkRows([
+    { name: 'converts and links in one call; the answer carries the new list', run: async () => {
+      const dir = await plainDir('gi-ok');
+      assert.equal((await post('/api/projects', { name: 'gi-ok', path: dir })).status, 200);
+      const p = await projectRow(dir);
+      assert.equal(p.vcs, 'none');
+      const r = await gitInit(p.key, { remoteUrl: 'https://github.com/me/gi-ok' });
+      assert.equal(r.status, 200);
+      const out = await r.json();
+      assert.deepEqual(out.project, { key: p.key, name: 'gi-ok', path: p.path, vcs: 'git' });
+      assert.equal(out.initialized, true);
+      assert.equal(out.remote, 'https://github.com/me/gi-ok');
+      const row = out.projects.find((x) => x.key === p.key);
+      assert.equal(row.vcs, 'git'); assert.equal(row.workMode, 'git'); assert.equal(row.ownedFolder, false);
+      assert.equal(spawnSync('git', ['remote', 'get-url', 'origin'], { cwd: dir, encoding: 'utf8' }).stdout.trim(), 'https://github.com/me/gi-ok');
+    } },
+    { name: 'link remote on a Git project with no origin; a second link is 400 EXISTS', run: async () => {
+      const dir = await plainDir('gi-link');
+      await post('/api/projects', { name: 'gi-link', path: dir });
+      const p = await projectRow(dir);
+      assert.equal((await gitInit(p.key)).status, 200);
+      const r = await gitInit(p.key, { remoteUrl: 'git@github.com:me/gi-link.git' });
+      assert.equal(r.status, 200);
+      assert.equal((await r.json()).initialized, false);
+      const again = await gitInit(p.key, { remoteUrl: 'git@github.com:me/other.git' });
+      assert.equal(again.status, 400);
+      assert.deepEqual(await again.json(), { error: 'this project already has an origin remote', code: 'EXISTS' });
+    } },
+    { name: '400 INVALID for a URL with credentials: no .git, still a Folder project', run: async () => {
+      const dir = await plainDir('gi-bad');
+      await post('/api/projects', { name: 'gi-bad', path: dir });
+      const p = await projectRow(dir);
+      const r = await gitInit(p.key, { remoteUrl: 'https://me:tok@github.com/me/x' });
+      assert.equal(r.status, 400);
+      assert.equal((await r.json()).code, 'INVALID');
+      assert.equal(existsSync(join(dir, '.git')), false);
+      assert.equal((await projectRow(dir)).vcs, 'none');
+    } },
+    { name: '404 for an unknown key', run: async () => {
+      const r = await gitInit('nope-00000000');
+      assert.equal(r.status, 404);
+      assert.deepEqual(await r.json(), { error: 'project not found', code: 'NOT_FOUND' });
+    } },
+    { name: '409 PROJECT_BUSY while a run of the project is live', run: async () => {
+      const dir = await plainDir('gi-busy');
+      await post('/api/projects', { name: 'gi-busy', path: dir });
+      const p = await projectRow(dir);
+      seedPipelineRow({ id: 'gibusy01', projectKey: p.key, target: 'project', status: 'paused', startedAt: new Date().toISOString() });
+      try {
+        const r = await gitInit(p.key);
+        assert.equal(r.status, 409);
+        const body = await r.json();
+        assert.equal(body.code, 'PROJECT_BUSY'); assert.equal(body.pipelineId, 'gibusy01');
+        assert.match(body.error, /^“gi-busy” has a run that is paused\. Stop it first, then use git here\.$/);
+        assert.equal(existsSync(join(dir, '.git')), false);
+      } finally { getDb().prepare("UPDATE pipelines SET status = 'done' WHERE id = ?").run('gibusy01'); }
+    } },
+    { name: 'a converted worca-made folder: Remove keeps the folder, even when deleteFolder=1 is sent', run: async () => {
+      const made = await (await post('/api/projects/create', { name: 'gi-own' })).json();
+      assert.equal(made.project.vcs, 'none');
+      assert.equal((await projectRow(made.project.path)).ownedFolder, true);
+      assert.equal((await gitInit(made.project.key)).status, 200);
+      assert.equal((await projectRow(made.project.path)).ownedFolder, false);
+      // An old tab could still send the flag: the server decides, and a non-owned folder is never deleted.
+      const del = await fetch(`${base}/api/projects?name=gi-own&deleteFolder=1`, { method: 'DELETE' });
+      assert.equal(del.status, 200);
+      const body = await del.json();
+      assert.equal(body.folder, undefined, 'no folder removal was attempted');
+      assert.match(body.notice, /^Removed "gi-own"\. Its folder was kept: /);
+      assert.equal(existsSync(join(made.project.path, '.git')), true, 'the folder (now with git history) stays');
     } },
   ]);
 });

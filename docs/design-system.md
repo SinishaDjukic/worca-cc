@@ -87,6 +87,25 @@ square. One primary per group. Labels of 1–3 words, verb first. Icons come fro
 button outside `.btn` must be a shared control or a row a person opens (checked by the stray audit). The composer's
 disabled Save keeps its ink fill at 70% opacity, not the 45% grey of other disabled buttons, so it still reads as the
 primary.
+### PR controls (checked)
+Every pull request button and link looks the same everywhere (`test/ui-pr-controls.test.mjs`).
+1. Variant. Create PR and Push are the ship actions: `.btn.btn-primary`. View PR is navigation: a plain secondary
+   `.btn`, for an open PR and a merged one alike. Nothing is a custom pill.
+2. Size by context. On a page (the run page's card head, the History Details header, the Ship it dialog) `.btn`, 32px.
+   Inside a card or bar (the Chat run card, the Chat pull request card, the run and group page bar buttons that
+   `syncActions` makes) `.btn.btn-sm`, 28px. Never full width (`.btn-block`).
+3. Icon. Every PR button leads with one glyph from `icon(doc, name, size)` (`ui/public/icons.mjs`): 16px on `.btn`,
+   14px on `.btn-sm`. Create PR `pr-create`; View PR `pull-request` while the PR is open, `merge` once merged; Push
+   `arrow-up`.
+4. Labels. "Create PR" (`CREATE_PR_LABEL`, `ui/public/ship-words.mjs`); "View PR" for an open and a merged PR; Push says
+   the header's `Push main` (the source branch). The Ship it dialog keeps its title "Create pull request", and its "Try
+   it first" Check out is a secondary `.btn-sm`, so the dialog has one primary.
+5. Links. A PR text link (`.rd-prs-link`, `.chat-rc-watch-pr`, `.ask-prcard-link`, `.ask-shipcard-pr`,
+   `.hd-pr-repo-link`) is `--blue-ink-strong`, weight 600.
+Placement: on the run page the button sits at the right of the status block in the card's head (`.rd-sheet-head >
+.rd-pr-slot`), centred on the status line; under 420px of head width it wraps onto its own row below the status, on the
+left edge. The PR bar (the run's own PR, its checks and Watch) sits under the facts. Runs list PR chips (`.runs-pr`) are
+chips, not PR controls.
 ### Field
 `.input` / `.select` / text, number and select elements: 32px, 13px, `--field` fill, 6px corner, ink border on focus.
 `.input-sm` / `.select-sm`: 28px, 12px. A textarea grows; it keeps the same fill, corner and padding sides. Search, url, email,
@@ -176,8 +195,10 @@ buttons stay 28px; the card keeps the shared 24px padding (checked by the theme 
   the Cost tags row in the run page's facts block, never stacked inside a tile. The value is sans with tabular figures.
 - Run and group pages share one head: the bar (the breadcrumb `Runs › Run tags › Run 2` beside the list, Back on
   phones; on the right the one primary action, Stop, ⋯), the title with its kind chip (`Run 2 of 3`, `Run`, or
-  `Feature` / `Chain` / `Group`), then the card: the status block, the facts block (`.rd-kv`: 12px `--ink-2` labels,
-  13px values, one row per fact and one place to edit it), the PR bar (only for the run's own PR), the tiles.
+  `Feature` / `Chain` / `Group`), then the card: the status block with the PR button at its right (Create PR, View PR or
+  Push; see PR controls), the facts block (`.rd-kv`: 12px `--ink-2` labels, 13px values, one row per fact and one place
+  to edit it; a quiet button that leads a value pulls back by its padding so its text sits on the value column), the PR
+  bar under the facts (only for the run's own PR), the tiles.
 - Runs navigation: every row opens its own page in the right pane and the list stays. A group row opens the group
   page; the ⌄ only expands. A group whose run is open shows the lighter `--row-open` fill.
 - Search is the top bar's "Search or ask" only. A list filter is chosen there ("Runs labelled hotfix", `label:hotfix`),
