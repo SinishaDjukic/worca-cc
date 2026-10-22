@@ -4198,9 +4198,10 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .hd-dl-code{position:relative;}
 .hd-cmt-add{position:absolute;left:0;top:50%;transform:translateY(-50%);
   width:16px;height:16px;display:grid;place-items:center;padding:0;
-  border:none;border-radius:var(--r-sm);background:var(--blue);color:var(--on-status);
+  border:none;border-radius:var(--r-sm);background:var(--blue-ink-strong);color:var(--on-status);
   font:600 12px var(--sans);line-height:1;cursor:pointer;z-index:1;}
 .hd-cmt-add:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+.hd-dl-code:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .hd-cmt-badge{flex:0 0 auto;min-width:17px;padding:1px 6px;border-radius:var(--r-xs);
   background:var(--amber-bg);color:var(--amber-ink);font:600 var(--fs-caption) var(--sans);text-align:center;}
 /* The pane head says a file is refused BEFORE the user writes anything. Not hidden
@@ -8269,6 +8270,7 @@ body.view-workflows .main{padding:0;overflow:hidden;display:flex;flex-direction:
 .wfv-bar .btn:not(.btn-icon) svg{width:15px;height:15px;}
 .wfv-bar .wfv-chev{width:12px;height:12px;color:var(--ink-2);}
 .wfv-savewrap{display:inline-flex;margin-left:4px;}
+.wfv-save-reason{margin-right:8px;font-size:12px;align-self:center;}
 .wfv-savewrap > .btn-primary:disabled{opacity:.7;}
 input.wfv-name{width:auto;height:32px;min-width:56px;max-width:280px;field-sizing:content;padding:0 9px;border:0;border-radius:var(--r-sm);background:transparent;color:var(--ink);font:500 var(--fs-body)/1 var(--sans);}
 input.wfv-name:hover{background:var(--hover);}
