@@ -16,15 +16,15 @@ import { memoryRoot, GLOBAL_SCOPE, projectScope, readMemory, listSnapshots, Memo
 import { addProject, worcaHome } from '../src/core/projects.mjs';
 import { createThread, updateThread } from '../src/core/ask/store.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { scopeRefusalText } from '../src/core/ask/scope.mjs';
 
 useTempHome(after);
 
-function fakeTools({ pin = { projectKey: 'demo-00000001' }, context = null, store = new Map() } = {}) {
+function fakeTools({ pin = { projectKey: 'demo-00000001' }, store = new Map() } = {}) {
   const calls = [];
   const key = (scope, name) => `${scope.kind === 'global' ? 'global' : `projects/${scope.projectKey}`}/${name}`;
   const memory = {
     projectByKey: async (k) => (k === 'demo-00000001' || k === 'other-00000002' ? { key: k, name: k.split('-')[0], path: `/p/${k}` } : null),
-    contextProjectKey: async () => context,
     list: async (scope) => [...store.entries()].filter(([k]) => k.startsWith(`${scope.kind === 'global' ? 'global' : `projects/${scope.projectKey}`}/`)).map(([k, v]) => ({ name: k.split('/').pop(), description: v.description, paths: v.paths, source: 'ask:t', updated: 'U', bytes: v.body.length, hasFrontmatter: true, hash: 'h' })),
     read: async (scope, name) => { const v = store.get(key(scope, name)); return v ? { text: `---\nname: ${name}\n---\n${v.body}`, meta: { name, description: v.description, paths: v.paths, source: 'ask:t', updated: 'U', extra: {} }, body: v.body } : null; },
     remember: async (scope, { name, body, description, paths, mode }) => {
@@ -46,27 +46,26 @@ function fakeTools({ pin = { projectKey: 'demo-00000001' }, context = null, stor
   return { tools, calls, store };
 }
 
-test('scope resolution: explicit projectKey → pinned project → page project → a pointed error; every key goes through the registry; a pinned workspace is not a project', async () => {
+test('P4 scope resolution: a write\'s explicit projectKey must be the chat\'s project, reads stay open; the chat\'s project fills a missing key; No project has no project memory to default to; a pinned workspace is not a project', async () => {
   const explicit = fakeTools({ pin: null });
-  await explicit.tools.call('remember', { scope: 'project', projectKey: 'other-00000002', name: 'a', body: 'A' });
-  assert.equal(explicit.calls[0][1], 'projects/other-00000002/a');
-  await assert.rejects(() => explicit.tools.call('remember', { scope: 'project', projectKey: 'ghost-00000009', name: 'a', body: 'A' }), { name: 'AskToolError', message: 'remember: unknown projectKey "ghost-00000009" — use list_projects' });
+  await assert.rejects(() => explicit.tools.call('remember', { scope: 'project', projectKey: 'other-00000002', name: 'a', body: 'A' }),
+    { name: 'AskToolError', message: `remember: ${scopeRefusalText(null, { projectKey: 'other-00000002' })}` });
+  assert.deepEqual(await explicit.tools.call('list_memory', { scope: 'project', projectKey: 'other-00000002' }), { project: { projectKey: 'other-00000002', files: [] } });
+  await assert.rejects(() => fakeTools({ pin: { projectKey: 'ghost-00000009' } }).tools.call('remember', { scope: 'project', projectKey: 'ghost-00000009', name: 'a', body: 'A' }), { name: 'AskToolError', message: 'remember: unknown projectKey "ghost-00000009" — use list_projects' });
   const pinned = fakeTools();
   await pinned.tools.call('remember', { scope: 'project', name: 'a', body: 'A' });
   assert.equal(pinned.calls[0][1], 'projects/demo-00000001/a');
-  const page = fakeTools({ pin: null, context: 'other-00000002' });
-  await page.tools.call('remember', { scope: 'project', name: 'a', body: 'A' });
-  assert.equal(page.calls[0][1], 'projects/other-00000002/a', 'the page-following project is the last fallback');
+  const page = fakeTools({ pin: null });
+  await assert.rejects(() => page.tools.call('remember', { scope: 'project', name: 'a', body: 'A' }), { name: 'AskToolError', message: `remember: ${scopeRefusalText(null)}` });
   // I2-#6: a project removed from the registry after it was pinned (or after the page moved on)
   // must not create a scope for a project that no longer exists — the explicit path already checked.
   const stale = fakeTools({ pin: { projectKey: 'ghost-00000009' } });
   await assert.rejects(() => stale.tools.call('remember', { scope: 'project', name: 'a', body: 'A' }),
     { name: 'AskToolError', message: 'remember: project "ghost-00000009" is no longer registered — use list_projects' });
-  const stalePage = fakeTools({ pin: null, context: 'ghost-00000009' });
-  await assert.rejects(() => stalePage.tools.call('read_memory', { scope: 'project', name: 'a' }),
-    { name: 'AskToolError', message: 'read_memory: project "ghost-00000009" is no longer registered — use list_projects' });
+  const stalePage = fakeTools({ pin: null });
+  await assert.rejects(() => stalePage.tools.call('read_memory', { scope: 'project', name: 'a' }), /read_memory: which project\? pass projectKey/, 'a page context is never read');
   const none = fakeTools({ pin: null });
-  await assert.rejects(() => none.tools.call('remember', { scope: 'project', name: 'a', body: 'A' }), /remember: which project\? pass projectKey \(see list_projects\) or pin a project for this chat/);
+  await assert.rejects(() => none.tools.call('remember', { scope: 'project', name: 'a', body: 'A' }), { name: 'AskToolError', message: `remember: ${scopeRefusalText(null)}` });
   const ws = fakeTools({ pin: { workspaceId: 'wks-team-0000abcd' } });
   await assert.rejects(() => ws.tools.call('read_memory', { scope: 'project', name: 'a' }), /read_memory: the pinned scope is a workspace — pass projectKey for the member project this belongs to/);
   await assert.rejects(() => ws.tools.call('forget', { scope: 'both', name: 'a' }), /forget: scope must be "global" or "project"/);
@@ -99,7 +98,7 @@ test('remember: replace vs append, description/paths kept when omitted, paths as
 });
 
 test('list_memory / read_memory / forget over the fake store: B24 shapes, every string the model sees redacted', async () => {
-  const { tools, store } = fakeTools({ pin: null, context: 'demo-00000001' });
+  const { tools, store } = fakeTools({ pin: { projectKey: 'demo-00000001' } });
   store.set('global/testing', { description: 'How tests run', paths: ['test/**'], body: 'npm ci.\n' });
   store.set('projects/demo-00000001/conv', { description: 'Naming', paths: [], body: 'kebab.\n' });
   const both = await tools.call('list_memory', {});
@@ -131,7 +130,9 @@ test('the REAL memory bundle: remember/forget through the store (ask: source, sn
   await checkRows([
     { name: 'the REAL bundle on a temp home: remember writes through the store with an ask: source and a snapshot; forget removes; the mount refreshes by scope', run: async () => {
       const p = (await addProject({ name: 'realmem', path: process.cwd() })).find((x) => x.name === 'realmem');
-      const threadId = 'ask_0000abcd';
+      const th = createThread();
+      updateThread(th.id, { context: { pinned: true, projectKey: p.key } });
+      const threadId = th.id;
       const tools = createAskTools({ ...defaultToolDeps({ threadId }), ...defaultMemoryDeps({ threadId }) });
       assert.equal(await refreshAskMemoryMount({}), null, 'B33: an empty store mounts NOTHING (the spawn stays byte-identical)');
       const r = await tools.call('remember', { scope: 'project', projectKey: p.key, name: 'conventions', body: 'kebab-case files.\n', description: 'Naming rules' });
@@ -157,19 +158,20 @@ test('the REAL memory bundle: remember/forget through the store (ask: source, sn
       assert.deepEqual(await tools.call('forget', { scope: 'global', name: 'style' }), { scope: 'global', projectKey: null, scopeKey: 'global', name: 'style', removed: true });
       assert.equal(await readMemory(memoryRoot(), GLOBAL_SCOPE, 'style'), null);
     } },
-    { name: 'the REAL bundle follows the PAGE project through the thread context: projectDir resolves like resolveAskContext, a pinned workspace does not', run: async () => {
+    { name: 'the REAL bundle: No project (even with a stale page projectDir) has no project memory to default to; contextProjectKey is gone; a pinned workspace still needs a member key', run: async () => {
       const p = (await addProject({ name: 'pagemem', path: gitDir('pagemem') })).find((x) => x.name === 'pagemem');
       // What ask-panel.mjs sends on the New / Running / Projects pages: a projectDir, no projectKey.
       const page = createThread();
       updateThread(page.id, { context: { view: 'new', projectDir: p.path, pinned: false } });
       const tools = createAskTools({ ...defaultToolDeps({ threadId: page.id }), ...defaultMemoryDeps({ threadId: page.id }) });
-      const r = await tools.call('remember', { scope: 'project', name: 'pagefollow', body: 'From the page.\n' });
-      assert.equal(r.projectKey, p.key, 'B30: the page project is resolved from projectDir');
+      await assert.rejects(() => tools.call('remember', { scope: 'project', name: 'pagefollow', body: 'From the page.\n' }), { message: `remember: ${scopeRefusalText(null)}` });
+      assert.equal('contextProjectKey' in defaultMemoryDeps({ threadId: page.id }).memory, false);
       // MCP registry §9.1: the generic dropdown fallback is not the page's project — memory never defaults to it.
       const fallback = createThread();
       updateThread(fallback.id, { context: { view: 'settings', projectDir: p.path, projectSource: 'fallback', pinned: false } });
-      assert.equal(await defaultMemoryDeps({ threadId: fallback.id }).memory.contextProjectKey(), null);
-      assert.ok(await readMemory(memoryRoot(), projectScope(p.key), 'pagefollow'));
+      const fbTools = createAskTools({ ...defaultToolDeps({ threadId: fallback.id }), ...defaultMemoryDeps({ threadId: fallback.id }) });
+      await assert.rejects(() => fbTools.call('remember', { scope: 'project', name: 'pagefollow', body: 'From the page.\n' }), { message: `remember: ${scopeRefusalText(null)}` });
+      assert.equal(await readMemory(memoryRoot(), projectScope(p.key), 'pagefollow'), null);
       const pinnedWs = createThread();
       updateThread(pinnedWs.id, { context: { view: 'new', workspaceId: 'wks-team-0000abcd', pinned: true } });
       const wsTools = createAskTools({ ...defaultToolDeps({ threadId: pinnedWs.id }), ...defaultMemoryDeps({ threadId: pinnedWs.id }) });

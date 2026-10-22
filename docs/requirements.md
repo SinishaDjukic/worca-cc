@@ -1,7 +1,7 @@
 # Requirements
 
 Turn an idea into a clear, testable feature spec with Worca **before** anything is built. Experimental:
-turn on **Requirements** in Settings › Experimental (the `requirements` flag), or start Worca with
+turn on **Requirements** in Settings › Labs (the `requirements` flag), or start Worca with
 `WORCA_FLAGS=requirements`. With the flag off the page, its routes and its live updates are all gone.
 
 ## How it works

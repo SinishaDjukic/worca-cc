@@ -66,6 +66,8 @@ import { CODEX_PRICES, listPriceFor } from './list-prices.mjs';
 import { engineLabel } from '../shared/engine-switch.mjs';
 import { validateNightPatch, NIGHT_TOGGLES } from './night/config.mjs';
 import { normalizeDomainList, normalizeDomainPattern, domainError, DOMAIN_LIST_MAX, RESERVED_KEY_VAR } from './web-allowlist.mjs';
+import { normaliseDimensions } from '../shared/tag-dimensions.mjs';
+import { normalizePins, storedPins } from '../shared/home-pins.mjs';
 
 /**
  * The real OS home base, honoring HOME/USERPROFILE so tests can sandbox it.
@@ -169,12 +171,15 @@ export async function setWorcaRoot(input) {
 //
 // DELIBERATELY NOT derived from `root`: `root` means "where worca-cc's data
 // lives", so relocating the data dir to an external volume must not silently
-// relocate the user's instruction root.
+// relocate the user's instruction root — that holds for an explicit value. The
+// DEFAULT (nothing set) is `<worcaHome>/projects` (U6): New and Clone from URL
+// create projects there, so it follows WORCA_HOME and the Settings root. Existing
+// projects stay where they are.
 // ---------------------------------------------------------------------------
 
 /**
  * The effective projects root. Precedence: WORCA_PROJECTS_ROOT env →
- * settings.projectsRoot → defaultRoot(). ALWAYS an absolute path (never '',
+ * settings.projectsRoot → <worcaHome>/projects (worcaProjectsFolder()). ALWAYS an absolute path (never '',
  * unlike getWorcaRoot()) — the root context layer must always have a base.
  *
  * Only the SETTER validates dir-ness. The env tier passes through unchecked, so a
@@ -186,15 +191,15 @@ export function getProjectsRoot() {
   const env = process.env.WORCA_PROJECTS_ROOT;
   if (env && env.trim()) return resolve(expandTilde(env.trim()));
   const r = readSettings().projectsRoot;
-  return typeof r === 'string' && r.trim() ? resolve(expandTilde(r.trim())) : defaultRoot();
+  return typeof r === 'string' && r.trim() ? resolve(expandTilde(r.trim())) : worcaProjectsFolder();
 }
 
 /**
  * The RAW persisted projectsRoot — '' when the key is absent, blank, or not a
  * string. The exact mirror of getWorcaRoot(), and what the settings UI puts in
  * its field: "unset" must stay distinguishable from "explicitly set", so a blank
- * field can round-trip as blank and the "leave blank to use your home folder"
- * affordance is real.
+ * field can round-trip as blank and the "leave blank to use worca's projects
+ * folder" affordance is real.
  *
  * DELIBERATELY ignores the WORCA_PROJECTS_ROOT env tier: the env is an
  * override, not a setting, and surfacing it as the field value would let a plain
@@ -209,7 +214,7 @@ export function rawProjectsRoot() {
 
 /**
  * What applies when projectsRoot is left blank — the env tier if it is exported,
- * else defaultRoot(). This is the settings-UI placeholder, i.e. the honest answer
+ * else <worcaHome>/projects (worcaProjectsFolder()). This is the settings-UI placeholder, i.e. the honest answer
  * to "what do I get if I clear this field?", and it is why the API cannot just
  * reuse `default` (which is defaultRoot(), the worca-cc root default, and would
  * lie whenever WORCA_PROJECTS_ROOT is set).
@@ -221,14 +226,34 @@ export function rawProjectsRoot() {
 export function defaultProjectsRoot() {
   const env = process.env.WORCA_PROJECTS_ROOT;
   if (env && env.trim()) return resolve(expandTilde(env.trim()));
-  return defaultRoot();
+  return worcaProjectsFolder();
+}
+
+/**
+ * The DEFAULT projects root, <worcaHome>/projects (U6): New and Clone from URL create projects there. Mirrors
+ * projects.mjs#worcaHome()'s base rule (this module may not import projects.mjs); no node:test guard — it only
+ * computes a path. Never creates it.
+ */
+export function worcaProjectsFolder() {
+  const env = process.env.WORCA_HOME;
+  const base = env && env.trim() ? env : (getWorcaRoot() || defaultRoot());
+  return join(resolve(base), '.worca-cc', 'projects');
+}
+
+/** Which tier getProjectsRoot() used: 'env' | 'settings' | 'default'. Read fresh on every call. */
+export function projectsRootSource() {
+  const env = process.env.WORCA_PROJECTS_ROOT;
+  if (env && env.trim()) return 'env';
+  const r = readSettings().projectsRoot;
+  return typeof r === 'string' && r.trim() ? 'settings' : 'default';
 }
 
 /**
  * Persist the projects root. Pass '' / null / non-string to CLEAR it (reset to
- * defaultRoot()). A non-empty value is `~`-expanded, resolved absolute, and must
- * be an EXISTING directory — worca-cc never writes anything under projectsRoot
- * (this is the one divergence from setWorcaRoot, which pre-creates
+ * <worcaHome>/projects). A non-empty value is `~`-expanded, resolved absolute, and must
+ * be an EXISTING directory — worca writes under projectsRoot only to create a
+ * project folder (New, Clone from URL) and the root itself on first use; a typed
+ * path must still exist, so a typo is rejected, not created (this is the one divergence from setWorcaRoot, which pre-creates
  * <base>/.worca-cc to prove writability; there is nothing to pre-create here, and
  * silently mkdir-ing a mistyped path would be worse than rejecting it).
  * Atomic temp+rename over the same read-modify-write object, so `root` and every
@@ -1127,7 +1152,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'root', 'projectsRoot', 'chat',
   'pipelineCostLimitUsd', 'totalCostLimitUsd', 'costLimitResetPeriod', 'humanRateUsdPerHour',
   'askMaxTurns', 'askMaxBudgetUsd',
-  'askWeb',                                  // Ask Worca web access { enabled, allowedDomains, search }
+  'askWeb',                                  // Chat web access { enabled, allowedDomains, search }
   'debugSpawnEnabled',
   'resumeAfterUsageLimit',
   'titleModel', 'hideBuiltinModels',
@@ -1142,10 +1167,13 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'nightMode',                               // night mode user layer (night/config.mjs fields)
   'nightModeToggle',                         // night mode live switch: auto | on | off
   'sync',                                    // sync before run (#527) { beforeRun, remote, refreshMinutes, onDiverged }
+  'networkWait',                             // Settings › Runs › Wait for the network {enabled, maxWaitMin}
   'actions',                                 // Settings › Runs › Actions { keep, portLow, portHigh, editor, terminal, maxCheckouts }
   'runEngine', 'stepModels', 'utilityModels',
   'requirementsInterview',                   // Models › Engines › Claude: the requirements interview { model, effort }
-  'askEngine', 'askModels',                  // Ask Worca's engine for new chats and its model per engine (user-only, D17)
+  'askEngine', 'askModels',                  // Chat's engine for new chats and its model per engine (user-only, D17)
+  'tagDimensions',                           // Settings › Tags › Tag dimensions [{ key, label, values, required, default? }]
+  'enforceTags',                             // Settings › Tags › Require mandatory tags to start a run
 ]);
 
 let projectLayerReader = null;
@@ -1618,6 +1646,10 @@ function sanitizeGlobalModel(raw) {
     for (const k of Object.keys(env)) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping env key ${JSON.stringify(k)} — a cursor model takes no routing env`); delete env[k]; }
     if (upstream) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping upstream — a cursor model runs through cursor-agent's own sign-in`); upstream = undefined; }
   }
+  if (engine === 'copilot') {
+    for (const k of Object.keys(env)) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping env key ${JSON.stringify(k)} — a copilot model takes no routing env`); delete env[k]; }
+    if (upstream) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping upstream — a copilot model runs through the Copilot CLI's own sign-in`); upstream = undefined; }
+  }
   if (upstream) {
     // The bridge owns the routing keys (model-env.mjs BRIDGE_ROUTING_KEYS); a
     // hand-edited file carrying both is degraded, not rejected: the bridge wins.
@@ -1731,6 +1763,12 @@ function assertCursorFields(engine, env, upstream) {
   if (Object.keys(env || {}).length) throw new Error('a cursor model takes no env');
   if (upstream) throw new Error('a cursor model takes no upstream — cursor-agent connects with its own sign-in');
 }
+/** A Copilot model takes no routing env and no upstream: the Copilot CLI connects with its own sign-in. */
+function assertCopilotFields(engine, env, upstream) {
+  if (engine !== 'copilot') return;
+  if (Object.keys(env || {}).length) throw new Error('a copilot model takes no env');
+  if (upstream) throw new Error('a copilot model takes no upstream — the Copilot CLI connects with its own sign-in');
+}
 /** A Codex model takes no routing env, and only an OpenAI-compatible Responses endpoint as its upstream (codexUpstreamProblem). */
 function assertCodexFields(engine, env, upstream) {
   if (engine !== 'codex') return;
@@ -1752,7 +1790,9 @@ function assertIdForEngine(id, engine, conn = {}) {
   if (engine === 'claude' && CODEX_PRICES[id.toLowerCase()]) throw new Error(`"${id}" is the id of Codex's built-in ${id} (ChatGPT sign-in) — ${handleHint(id, conn)}`);
   // Cursor's own ids may look like Claude's (sonnet-4.5): the catalog row decides the owner. Only a built-in id is taken
   // (a Claude built-in has a list price; settings.mjs cannot import config.mjs's PREDEFINED_MODELS).
-  if (engine === 'cursor' && (CODEX_PRICES[id.toLowerCase()] || listPriceFor(id))) throw new Error(`"${id}" is a built-in model id`);
+  if ((engine === 'cursor' || engine === 'copilot') && (CODEX_PRICES[id.toLowerCase()] || listPriceFor(id))) throw new Error(`"${id}" is a built-in model id${engine === 'copilot' ? ` — Copilot's own models are copilot/<id>, such as "copilot/${id}"` : ''}`);
+  // copilot/<id> names a Copilot built-in (model-env.mjs COPILOT_MODEL_PREFIX): only a Copilot row may take one.
+  if (engine !== 'copilot' && id.toLowerCase().startsWith('copilot/')) throw new Error(`"${id}" names a Copilot model — a copilot/ id is for the Copilot engine`);
 }
 
 /** @throws {Error} on a reserved key or a non-string value. `allowNull` admits
@@ -1833,6 +1873,7 @@ export async function addGlobalModel({ id, label, efforts, env, cost, upstream, 
   const vupstream = assertModelUpstream(upstream);
   assertCodexFields(vengine, venv, vupstream);
   assertCursorFields(vengine, venv, vupstream);
+  assertCopilotFields(vengine, venv, vupstream);
   assertUpstreamEnvCompatible(venv, vupstream);
   const settings = readSettings();
   const models = rawModels(settings);
@@ -1895,6 +1936,7 @@ export async function updateGlobalModel(id, { label, efforts, env, cost, upstrea
   assertUpstreamEnvCompatible(nextEnv, nextUpstream);
   assertCodexFields(curEngine, nextEnv, nextUpstream);
   assertCursorFields(curEngine, nextEnv, nextUpstream);
+  assertCopilotFields(curEngine, nextEnv, nextUpstream);
 
   if (dryRun) return sanitizeGlobalModel(storedModelShape(current.id, nextLabel, nextEfforts, nextEnv, nextCost, nextUpstream, curEngine));
   settings.models = models.slice();
@@ -2356,6 +2398,63 @@ export async function setScheduleDefaults(patch = {}) {
   return scheduleDefaults();
 }
 
+/** The person a Chat home pin list belongs to: the signed-in name lowercased, '' for a local or operator install. */
+const pinsPersonKey = (person) => String(person ?? '').trim().toLowerCase();
+function pinsMap(settings) {
+  const m = settings.chatHomePins;
+  // A null-prototype copy: a person named "__proto__" stays an ordinary key.
+  return Object.assign(Object.create(null), m && typeof m === 'object' && !Array.isArray(m) ? m : {});
+}
+
+/** The person's pinned workflow ids (Chat home quick actions), in pin order. Never set = ['wf_shape']. Never throws. */
+export function chatHomePinsFor(person) {
+  if (homeGuarded()) return storedPins(undefined);
+  return storedPins(pinsMap(readSettings())[pinsPersonKey(person)]);
+}
+
+/** Replace the person's list ([] = nothing pinned, kept as such). Throws { code: 'BAD_HOME_PINS' } before any write. */
+export async function setChatHomePinsFor(person, list) {
+  const { pins, errors } = normalizePins(list);
+  if (errors.length) throw Object.assign(new Error(errors[0]), { code: 'BAD_HOME_PINS' });
+  const settings = readSettings();
+  const map = pinsMap(settings);
+  map[pinsPersonKey(person)] = pins;
+  settings.chatHomePins = map;
+  await persistSettings(settings);
+  return chatHomePinsFor(person);
+}
+
+/** Local tag dimensions (Settings › Tags): used when the run target's team policy sets none. Never throws. */
+export function userTagDimensions() {
+  if (homeGuarded()) return [];
+  return normaliseDimensions(readSettings().tagDimensions).dims;
+}
+
+/** Replace the local list; [] or null clears it. Throws { code: 'BAD_TAG_DIMENSIONS' } before any write. */
+export async function setUserTagDimensions(list) {
+  const { dims, errors } = normaliseDimensions(list ?? []);
+  if (errors.length) throw Object.assign(new Error(errors[0]), { code: 'BAD_TAG_DIMENSIONS' });
+  const settings = readSettings();
+  if (dims.length) settings.tagDimensions = dims; else delete settings.tagDimensions;
+  await persistSettings(settings);
+  return userTagDimensions();
+}
+
+/** Settings › Tags › "Require mandatory tags to start a run" (local; a team policy's runs.enforceTags wins). */
+export function userEnforceTags() {
+  if (homeGuarded()) return false;
+  return readSettings().enforceTags === true;
+}
+
+/** true/false; false removes the key. Throws { code: 'BAD_ENFORCE_TAGS' } before any write. */
+export async function setUserEnforceTags(v) {
+  if (typeof v !== 'boolean') throw Object.assign(new Error('enforceTags must be true or false'), { code: 'BAD_ENFORCE_TAGS' });
+  const settings = readSettings();
+  if (v) settings.enforceTags = true; else delete settings.enforceTags;
+  await persistSettings(settings);
+  return userEnforceTags();
+}
+
 // ── Sync before run (#527) ─────────────────────────────────────────────────
 export const SYNC_ON_DIVERGED = Object.freeze(['ask', 'origin', 'fail']);
 export const DEFAULT_SYNC_SETTINGS = Object.freeze({ beforeRun: true, remote: 'origin', refreshMinutes: 10, onDiverged: 'ask' });
@@ -2398,4 +2497,59 @@ export async function setSyncDefaults(patch) {
   }
   await persistSettings(settings);
   return syncDefaults();
+}
+
+// ── Wait for the network (auto-resume on network errors) ─────────────────────
+// A network-class step failure waits for the step's endpoint to answer again, then retries,
+// up to maxWaitMin from the FIRST network failure; past it a run behaves as before.
+// Env pins (tests, CI) win when non-empty: WORCA_NETWORK_WAIT (0/false = off) and
+// WORCA_NETWORK_WAIT_MAX_MS (the cap in ms).
+export const DEFAULT_NETWORK_WAIT = Object.freeze({ enabled: true, maxWaitMin: 240 });
+const isNetworkMaxWaitMin = (v) => Number.isInteger(v) && v >= 1 && v <= 1440;
+
+/** Merge `v` over the defaults, keeping only valid keys. Pure. */
+export function normalizeNetworkWait(v, base = DEFAULT_NETWORK_WAIT) {
+  const o = v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+  return {
+    enabled: typeof o.enabled === 'boolean' ? o.enabled : base.enabled,
+    maxWaitMin: isNetworkMaxWaitMin(o.maxWaitMin) ? o.maxWaitMin : base.maxWaitMin,
+  };
+}
+export function networkWaitSettings() { return normalizeNetworkWait(readSettings().networkWait); }
+
+/** @throws {Error} on anything but a partial, valid networkWait object (null / '' resets; a null key resets that key). */
+export function assertNetworkWaitInput(patch) {
+  if (patch === null || patch === '') return;
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('networkWait must be an object');
+  for (const k of Object.keys(patch)) if (!Object.hasOwn(DEFAULT_NETWORK_WAIT, k)) throw new Error(`unknown networkWait setting: ${k}`);
+  const set = (k) => k in patch && patch[k] !== null;
+  if (set('enabled') && typeof patch.enabled !== 'boolean') throw new Error('networkWait.enabled must be true or false');
+  if (set('maxWaitMin') && !isNetworkMaxWaitMin(patch.maxWaitMin)) throw new Error('networkWait.maxWaitMin must be a whole number of minutes from 1 to 1440');
+}
+
+export async function setNetworkWait(patch) {
+  assertNetworkWaitInput(patch);
+  const settings = readSettings();
+  if (patch === null || patch === '') delete settings.networkWait;
+  else {
+    // Store only the keys someone set: a key left out follows the built-in default as it changes.
+    const prev = settings.networkWait && typeof settings.networkWait === 'object' && !Array.isArray(settings.networkWait) ? settings.networkWait : {};
+    const next = {};
+    for (const k of Object.keys(DEFAULT_NETWORK_WAIT)) if (Object.hasOwn(prev, k)) next[k] = normalizeNetworkWait(prev)[k];
+    for (const [k, v] of Object.entries(patch)) { if (v === null) delete next[k]; else next[k] = v; }
+    if (Object.keys(next).length) settings.networkWait = next; else delete settings.networkWait;
+  }
+  await persistSettings(settings);
+  return networkWaitSettings();
+}
+
+/** What a run does right now: the stored setting, with a non-empty env pin winning. */
+export function effectiveNetworkWait(env = process.env) {
+  const s = networkWaitSettings();
+  const flag = env?.WORCA_NETWORK_WAIT;
+  const enabled = flag !== undefined && flag !== '' ? !/^(0|false|off|no)$/i.test(String(flag).trim()) : s.enabled;
+  const raw = env?.WORCA_NETWORK_WAIT_MAX_MS;
+  const n = Number(raw);
+  const maxWaitMs = raw != null && raw !== '' && Number.isFinite(n) && n >= 0 ? n : s.maxWaitMin * 60_000;
+  return { enabled, maxWaitMs };
 }

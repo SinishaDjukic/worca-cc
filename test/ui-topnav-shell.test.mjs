@@ -141,11 +141,13 @@ test('the top bar box: a 48px white grid with a hairline; .main-col is a flex co
   // left track fell to 0 and the search covered the collapse toggle (1280 + terminal).
   assert.match(bar, /grid-template-columns:[^;]* minmax\(max-content,1fr\);/, 'the right track never goes below its content');
   assert.match(bar, /grid-template-columns:minmax\(32px,1fr\) /, 'the left track keeps the 32px collapse toggle');
-  assert.match(ruleBody('.side-toggle'), /flex:none;width:32px;/, 'the floor is the toggle\'s width');
+  assert.match(ruleBody('.side-toggle'), /flex:none;/);
+  assert.ok(new JSDOM(html).window.document.getElementById('side-toggle').classList.contains('btn-icon'), 'the toggle is a square .btn-icon');
+  assert.match(ruleBody('.btn-icon'), /width:32px;/, 'the floor is the toggle\'s width');
   const all = [...css.matchAll(/(?:^|[\s,}])\.topnav\s*\{([^}]*)\}/g)].map((m) => m[1]);
   assert.ok(all.length >= 1);
   for (const body of all.slice(1)) assert.doesNotMatch(body, /height/, 'no tier changes the bar\'s height');
-  assert.match(ruleBody('.topnav-title'), /font-size:14px;font-weight:600;/);
+  assert.match(ruleBody('.topnav-title'), /font-size:var\(--fs-body\);font-weight:600;/);
   assert.match(ruleBody('.topnav-title'), /overflow:hidden;text-overflow:ellipsis;/);
   // One contiguous block right after the .main group (P2 and P3 append after it).
   const at = (s) => css.indexOf(s);
@@ -225,7 +227,7 @@ test('resizing across 1080px and 760px: the tiers never touch the stored prefere
 
 // ---- New run ----
 
-test('New run: an ink pill in the bar\'s right slot, shown at every level, never a nav row', () => {
+test('New run: the one primary button in the bar\'s right slot, shown at every level, never a nav row', () => {
   const doc = new JSDOM(html).window.document;
   const btn = doc.getElementById('topnav-new');
   assert.equal(btn.tagName, 'BUTTON');
@@ -236,9 +238,9 @@ test('New run: an ink pill in the bar\'s right slot, shown at every level, never
   assert.equal(btn.hasAttribute('data-nav'), false, 'the router never lights it as the open page');
   assert.equal(btn.querySelector('.topnav-new-label').textContent, 'New run');
   assert.equal(btn.querySelector('svg path').getAttribute('d'), 'M6 4.5v15a1 1 0 0 0 1.5.9l12-7.5a1 1 0 0 0 0-1.8l-12-7.5A1 1 0 0 0 6 4.5Z', 'the play icon');
-  const pill = ruleBody('.topnav-new');
-  for (const d of ['height:32px;', 'border-radius:999px;', 'background:var(--ink);', 'color:var(--on-ink);']) assert.ok(pill.includes(d), `.topnav-new has ${d}`);
-  assert.match(ruleBody('.topnav-new:focus-visible'), /outline:2px solid var\(--ink\);/);
+  assert.deepEqual([...btn.classList], ['btn', 'btn-primary', 'topnav-new'], 'the skin is the one button, medium primary');
+  assert.equal(ruleBody('.topnav-new'), 'flex:none;white-space:nowrap;', 'the hook keeps layout only');
+  assert.equal(ruleBody('.topnav-new:focus-visible'), null, '.btn draws the focus ring');
 });
 
 test('New run opens #new from any page, a started run\'s page included, and is never marked current', async () => {
@@ -283,7 +285,7 @@ test('phones: no #mbar; the hamburger (with its needs-you dot) is the top bar\'s
   const block = phone.slice(phone.indexOf('@media (max-width:760px){'), phone.indexOf('\n}\n', phone.indexOf('@media (max-width:760px){')));
   assert.match(block, /\n {2}\.mbar-menu\{position:relative;display:flex;/);
   assert.match(block, /\n {2}\.topnav\{grid-template-columns:minmax\(0,1fr\) auto auto;gap:8px;\}/);
-  assert.match(block, /\n {2}\.topnav-new\{width:32px;padding:0;justify-content:center;\}/);
+  assert.match(block, /\n {2}#topnav-new\{width:32px;padding:0;\}/);
   assert.match(block, /\n {2}\.topnav-new-label\{display:none;\}/);
   assert.doesNotMatch(block, /\n {2}\.(app|main)\{/, 'the column, not a phone override, stacks the bar over the page');
 });

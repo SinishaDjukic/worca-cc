@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "no-film-blocks",
+      "name": "No film folder: a blocking finding, nothing rendered",
+      "cwd": { "kind": "scratch" },
+      "inputs": {
+        "film": { "text": "# Film\n" },
+        "timeline": { "text": "{\"version\":1,\"duration\":12,\"fps\":60,\"narrated\":false,\"music\":false,\"sfx\":false,\"vo\":{},\"scenes\":[{\"id\":\"main\",\"start\":0,\"end\":12}]}" }
+      },
+      "expect": { "verdict": "blocking", "fired": ["video", "findings"], "summaryIncludes": "not rendered: No film to render" }
+    },
+    {
+      "id": "no-timeline-blocks",
+      "name": "A timeline with no duration: a blocking finding",
+      "cwd": { "kind": "scratch" },
+      "inputs": {
+        "film": { "text": "# Film\n" },
+        "timeline": { "text": "{}" }
+      },
+      "expect": { "verdict": "blocking", "fired": ["video", "findings"], "summaryIncludes": "not rendered: No timeline to render" }
+    }
+  ]
+}

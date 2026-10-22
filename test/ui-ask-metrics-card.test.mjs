@@ -1,5 +1,5 @@
 // test/ui-ask-metrics-card.test.mjs
-// The metrics card in the Ask panel (docs/team-metrics.md "Ask Worca"): the proposed card renders
+// The metrics card in the Ask panel (docs/team-metrics.md "Chat"): the proposed card renders
 // the summary, target, note and effects with Decline / Apply; Apply posts {state:'applied'} and
 // Decline {state:'declined'} to the cards route; the applied flip renders the result (and a
 // per-member result list for route_members); declined and failed states render their stubs.
@@ -122,7 +122,7 @@ test('metrics card terminal states: applied receipt with per-member results, fai
       assert.ok(!el.querySelector('[data-ask-mc-apply]'));
       const declined = await openWith({ kind: 'card', id: CARD_ID, state: 'declined', card: RECORD_CARD });
       const stub = declined.doc.querySelector('.ask-card-stub');
-      assert.equal(stub.textContent, 'Declined — Turn "Include my runs" off for proj');
+      assert.equal(stub.textContent, 'Declined: Turn "Include my runs" off for proj');
       assert.ok(!declined.doc.querySelector('.ask-mcard'));
     } },
   ]);

@@ -8,6 +8,8 @@ import { decorFromState, applyDecor, manifestTemplate, manifestPortsFn, manifest
 import { mountStaticGraph } from './graph/view.mjs';
 import { FLOW_SCALE } from './graph/model.mjs';
 import { engineReportsCost } from '../../src/shared/engine-switch.mjs';
+import { runProgress } from '../../src/shared/run-progress.mjs';
+import { workModeOf } from './run-kind.mjs';
 
 export const PROGRESS_CARD_TYPE = 'progress';
 /** app.js isTerminalStatus's set, verbatim (app.js:4304-4306). */
@@ -47,6 +49,7 @@ export function snapshotFromState(state, { now = Date.now(), extras = null } = {
   const decor = graph ? decorFromState(state, { live, now }) : null;
   const ws = state.target === 'workspace';
   const x = extras && typeof extras === 'object' ? extras : null;
+  const pr = x && x.pr && typeof x.pr.url === 'string' && x.pr.url ? x.pr : null;
   return {
     source: 'rest',
     runId: null,
@@ -60,12 +63,14 @@ export function snapshotFromState(state, { now = Date.now(), extras = null } = {
     status,
     pauseReason: state.pauseReason || null,
     pendingQuestion: null,
+    labels: Array.isArray(state.labels) ? state.labels : [],
     live,
     terminal: TERMINAL_RUN_STATUS.has(status),
     startedAt: state.startedAt || null,
     elapsedMs: Number(state.totalActiveMs) || 0,
     costUsd: engineReportsCost(state.runEngine) ? (Number(state.totalCostUsd) || 0) : null,   // null: cost unknown (Cursor), never $0.00
     progress: decor ? decor.progress : null,
+    stageProgress: graph ? runProgress(state) : null,   // a frozen state is final: no memo
     active: decor ? activeAgents(decor, state.stepper) : [],   // a v1 row names no agent even when state.active is set
     stepper: graph ? state.stepper : null,
     decor,
@@ -74,8 +79,22 @@ export function snapshotFromState(state, { now = Date.now(), extras = null } = {
     results: x && x.results && typeof x.results === 'object' ? x.results : null,
     artifacts: x && Array.isArray(x.artifacts) ? x.artifacts : null,
     moreArtifacts: !!(x && x.moreArtifacts),
-    pr: x && x.pr && typeof x.pr.url === 'string' && x.pr.url ? x.pr : null,
+    artifactsTotal: x && Number.isInteger(x.artifactsTotal) ? x.artifactsTotal : null,   // P3: the run card's Artifacts · <n>
+    pr,
+    rounds: x && Array.isArray(x.rounds) ? x.rounds : [],          // Shaper s5: the run's rounds (askRunCardExtras)
+    watch: x && x.watch && typeof x.watch === 'object' ? x.watch : null,   // Shaper s5: a watch that gave up on its PR
     archived: !!state.archivedAt,                    // archived: the run folder and its History row are gone
+    ...(workModeOf(state) !== 'git' ? { workMode: workModeOf(state), changes: x && x.changes && typeof x.changes === 'object' ? x.changes : null } : {}),
+    ...(state && state.shaping ? { shaping: state.shaping } : {}),
+    // Runs redesign slice 4 (D9): the raw state runModel reads, so the card draws the same model as the list and the page.
+    run: { stepper: state.stepper || null, status, steps: state.steps || [], active: state.active || [],
+      endReached: !!state.endReached, tokens: state.tokens || {}, progressFacts: state.progressFacts || null,
+      pendingQuestion: null, pauseReason: state.pauseReason || '', pr, resumable: state.resumable === true,
+      // D24: the round marker (branch.roundOf) and the Watch PR fact (extras.watch) pass through; the model words them.
+      branch: state.branch && typeof state.branch === 'object' ? state.branch : null, round: state.round || null,
+      watch: (x && x.watch) || null,
+      // Review A12: the live role rows read the picked perspectives and the role-review rounds.
+      shaping: state.shaping || null, roleReviews: state.roleReviews || null },
   };
 }
 
@@ -197,7 +216,7 @@ export function createRunProgressCard({ doc, ident, onOpen = null }) {
     banner.hidden = !q;
     if (!q) return;
     const n = Array.isArray(q.questions) && q.questions.length ? q.questions.length : (Array.isArray(q.issues) && q.issues.length ? q.issues.length : 1);
-    banner.textContent = q.kind === 'workflow' ? 'Waiting for your decision on the proposed workflow' : `Waiting for your answer — ${n} question${n === 1 ? '' : 's'}`;
+    banner.textContent = q.kind === 'workflow' ? 'Waiting for your decision on the proposed workflow' : `Waiting for your answer (${n} question${n === 1 ? '' : 's'})`;
   }
   function update(snap, now = Date.now()) {
     lastSnap = snap || null;
@@ -210,7 +229,8 @@ export function createRunProgressCard({ doc, ident, onOpen = null }) {
     pillText.textContent = p.text;
     if (snap && snap.title) title.textContent = snap.title;
     const pid = (snap && snap.pipelineId) || ident.pipelineId;
-    sub.textContent = [projectLabel(ident, snap), pid ? `#${pid}` : ''].filter(Boolean).join(' · ');
+    sub.textContent = projectLabel(ident, snap);
+    sub.title = pid ? `Run ${pid}` : '';
     timeEl.textContent = fmtDur(snap ? snap.elapsedMs : 0);
     costEl.textContent = snap && snap.costUsd == null ? 'cost unknown' : fmtUsd(snap ? snap.costUsd : 0);
     const prog = snap && snap.progress;

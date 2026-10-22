@@ -19,6 +19,8 @@ import { resolveSourceRef, fetchRemote, INTERACTIVE_TTL_MS } from '../git-sync.m
 import { effectiveSyncSettings } from '../project-sync.mjs';
 import { ASK_ID_RE, askRoot } from './store.mjs';
 import { ASK_LIMITS } from './limits.mjs';
+import { isNoProjectKey } from '../store.mjs';
+import { noProjectRunText } from './scope.mjs';
 
 export const WT_ID_RE = /^wt_[0-9a-f]{8}$/;
 // The shared ASK_ID_RE (store.mjs) is the loose /^[a-z]+_[0-9a-f]{8}$/; a thread
@@ -85,6 +87,7 @@ async function resolveTarget({ projectKey, ref, runId }) {
   if (runId) {
     const row = findPipelineRowById(runId);
     if (!row) throw new AskWorktreeError(`run not found: ${runId}`);
+    if (isNoProjectKey(row.project_key)) throw new AskWorktreeError(noProjectRunText(row.id));   // SEAMS S35: no branch to check out
     const isWs = row.target === 'workspace' || !!row.workspace_key;
     if (isWs) {
       const meta = parse(row.workspace_meta, {}) || {};

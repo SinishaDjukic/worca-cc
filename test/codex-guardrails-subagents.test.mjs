@@ -24,13 +24,13 @@ const dirs = [];
 after(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
 const tmp = () => { const d = realpathSync(mkdtempSync(join(tmpdir(), 'codex-g-'))); dirs.push(d); return d; };
 
-test('codexRulePlan: a bare Bash and WebSearch are held, command prefixes only in part; paths, MCP tools and globs are not', () => {
+test('codexRulePlan: a bare Bash and WebSearch are held, command prefixes only in part; paths and globs are not', () => {
   // WebFetch is held here only because the same rules turn off both ways codex fetches a page (its shell, its web search).
-  const p = codexRulePlan({ deny: ['Bash(git push)', 'Bash(git push:*)', 'Bash(npm run *)', 'Bash', 'WebSearch', 'WebFetch', 'Read(.env*)', 'Edit(*.pem)', 'mcp__pg__drop', 'Bash(rm *foo*)', 'Bash(echo "x")'], allow: ['Bash(ls:*)'] });
+  const p = codexRulePlan({ deny: ['Bash(git push)', 'Bash(git push:*)', 'Bash(npm run *)', 'Bash', 'WebSearch', 'WebFetch', 'Read(.env*)', 'Edit(*.pem)', 'Bash(rm *foo*)', 'Bash(echo "x")'], allow: ['Bash(ls:*)'] });
   assert.deepEqual(p.prefixes, [['git', 'push'], ['npm', 'run']]);
   assert.equal(p.shellOff, true);
   assert.equal(p.webSearchOff, true);
-  assert.deepEqual(p.unenforced, ['Read(.env*)', 'Edit(*.pem)', 'mcp__pg__drop', 'Bash(rm *foo*)', 'Bash(echo "x")']);
+  assert.deepEqual(p.unenforced, ['Read(.env*)', 'Edit(*.pem)', 'Bash(rm *foo*)', 'Bash(echo "x")']);
   assert.deepEqual(p.enforced, ['Bash', 'WebSearch', 'WebFetch']);
   assert.deepEqual(p.partial, ['Bash(git push)', 'Bash(git push:*)', 'Bash(npm run *)']);
   assert.deepEqual(unenforcedRules({ deny: ['Bash(curl:*)'] }), []);
@@ -41,7 +41,32 @@ test('codexRulePlan: a bare Bash and WebSearch are held, command prefixes only i
   assert.deepEqual(unenforcedRules({ deny: ['WebFetch', 'Bash'] }), ['WebFetch'], 'web search still fetches');
   assert.deepEqual(codexRulePlan({ deny: ['WebFetch', 'Bash', 'WebSearch'] }).enforced, ['WebFetch', 'Bash', 'WebSearch'], 'in any order');
   assert.deepEqual(partialRules({ deny: ['WebFetch'] }), []);
-  assert.deepEqual(codexRulePlan(null), { prefixes: [], shellOff: false, webSearchOff: false, enforced: [], partial: [], unenforced: [] });
+  assert.deepEqual(codexRulePlan(null), { prefixes: [], shellOff: false, webSearchOff: false, mcpServersOff: [], mcpToolsOff: {}, enforced: [], partial: [], unenforced: [] });
+});
+
+test('codexRulePlan: MCP rules are held — a tool becomes disabled_tools, a whole server stays unattached; other globs are not held', () => {
+  const p = codexRulePlan({ deny: ['mcp__pg__drop', 'mcp__pg__truncate', 'mcp__pg__drop', 'mcp__secrets', 'mcp__web__*', 'mcp__pg__drop*', 'mcp__plugin_x_y__click'] });
+  assert.deepEqual(p.mcpToolsOff, { pg: ['drop', 'truncate'], plugin_x_y: ['click'] });
+  assert.deepEqual(p.mcpServersOff, ['secrets', 'web']);
+  assert.deepEqual(p.enforced, ['mcp__pg__drop', 'mcp__pg__truncate', 'mcp__pg__drop', 'mcp__secrets', 'mcp__web__*', 'mcp__plugin_x_y__click']);
+  assert.deepEqual(p.unenforced, ['mcp__pg__drop*']);
+  assert.deepEqual(unenforcedRules({ deny: ['mcp__pg__drop'] }), []);
+});
+
+test('runCodexProcess: an MCP tool rule writes disabled_tools for its server; a server rule leaves the server unattached', POSIX, async () => {
+  const dir = tmp();
+  const fake = fakeCodex(dir, 'ok');
+  const cfg = join(dir, 'mcp.json');
+  writeFileSync(cfg, JSON.stringify({ mcpServers: { pg: { command: '/bin/pg-mcp', args: [] }, secrets: { command: '/bin/s-mcp', args: [] } } }));
+  await runCodexProcess({ cwd: dir, bin: fake.bin, prompt: 'P', usageDir: dir, mcpConfigPath: cfg,
+    permissionRules: { deny: ['mcp__pg__drop', 'mcp__pg__truncate', 'mcp__secrets'] } });
+  const args = fake.args();
+  assert.ok(args.includes('mcp_servers.pg.disabled_tools=["drop","truncate"]'), JSON.stringify(args));
+  assert.ok(args.includes('mcp_servers.pg.command="/bin/pg-mcp"'));
+  assert.ok(!args.some((a) => a.startsWith('mcp_servers.secrets.')), 'the denied server is not attached');
+  await runCodexProcess({ cwd: dir, bin: fake.bin, prompt: 'P', usageDir: dir, mcpConfigPath: cfg });
+  assert.ok(!fake.args().some((a) => a.includes('disabled_tools')), 'no rules, no disabled_tools');
+  assert.ok(fake.args().includes('mcp_servers.secrets.command="/bin/s-mcp"'));
 });
 
 test('codexRulesFile: one forbidden prefix rule per command, quoted as Starlark strings', () => {

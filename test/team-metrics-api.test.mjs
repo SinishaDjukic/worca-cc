@@ -10,6 +10,10 @@ import { makeOrigin, cloneAs, useGitSandbox } from './helpers/metrics-git.mjs';
 import { makeRecord } from './fixtures/team-metrics/records.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 import { writeRunLedger } from '../src/core/metrics/ledger.mjs';
+import { defaultMetricsDeps } from '../src/core/ask/metrics-deps.mjs';
+import { createAskTools } from '../src/core/ask/tools.mjs';
+import { redactAskText } from '../src/core/ask/redact.mjs';
+import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
 
 const skip = process.platform === 'win32';
 useTempHome(after);
@@ -42,6 +46,8 @@ test('validation: bad scope/range/groupBy → 400; unknown project → 404; not 
   assert.equal((await get('/api/team-metrics?scope=project:bogus')).status, 400);
   assert.equal((await get('/api/team-metrics?scope=project:abc-0123abcd&range=week')).status, 400);
   assert.equal((await get('/api/team-metrics?scope=project:abc-0123abcd&groupBy=model')).status, 400);
+  assert.equal((await get('/api/team-metrics?scope=project:abc-0123abcd&groupBy=tag:')).status, 400);
+  assert.equal((await get('/api/team-metrics?scope=project:abc-0123abcd&tag=Bad%20Key!:x')).status, 400);
   const r = await get('/api/team-metrics?scope=project:abc-0123abcd');
   assert.equal(r.status, 404);
 });
@@ -177,4 +183,30 @@ test('flush route returns per-slug results; metrics files are not statically ser
   const r = await get('/metrics/repos/gateway/README.md');
   assert.match(r.headers.get('content-type') || '', /text\/html/);
   assert.ok(!(await r.text()).includes('This branch is written by Worca team metrics'));
+});
+
+test('groupBy=tag:client: per-tag rows summing to the total; tag= narrows; the Ask deps and get_team_metrics agree', { skip }, async () => {
+  const now = new Date().toISOString();
+  for (const [id, usd, tags] of [['tg1', 2.5, ['client:acme']], ['tg2', 1, ['client:globex']], ['tg3', 0.5, null]]) {
+    await sync.writeOutbox('gateway', { ...makeRecord({ id, project: 'gateway', startedAt: now, usd }), ...(tags ? { tags } : {}) });
+  }
+  await sync.flushSlug('gateway');
+  const r = await get(`/api/team-metrics?scope=project:${gwKey}&range=this-month&groupBy=tag:client`);
+  assert.equal(r.status, 200);
+  const agg = (await r.json()).aggregate;
+  assert.deepEqual(agg.breakdowns.tag.map((b) => b.label), ['acme', 'globex', '(no client)']);
+  assert.equal(Math.round(agg.breakdowns.tag.reduce((a, b) => a + b.usd, 0) * 100) / 100, agg.kpis.spendUsd);
+  const narrowed = (await (await get(`/api/team-metrics?scope=project:${gwKey}&range=this-month&groupBy=tag:client&tag=client:acme`)).json()).aggregate;
+  assert.equal(narrowed.kpis.runs, 1);
+  // Parity: the Ask deps' read and get_team_metrics see the same numbers as the endpoint.
+  const deps = defaultMetricsDeps();
+  const ask = (await deps.metrics.read({ kind: 'project', id: gwKey }, { range: 'this-month', groupBy: 'tag:client', filter: { tags: ['client:acme'] } })).agg;
+  const pick = (b) => ({ label: b.label, usd: b.usd, runs: b.runs });
+  assert.deepEqual(ask.breakdowns.tag.map(pick), narrowed.breakdowns.tag.map(pick));
+  assert.deepEqual(ask.series.stackKeys, narrowed.series.stackKeys);
+  assert.equal(ask.kpis.runs, narrowed.kpis.runs);
+  assert.equal(ask.kpis.spendUsd, narrowed.kpis.spendUsd);
+  const tools = createAskTools({ buildCatalog: async () => ({ projects: [], workspaces: [], workflows: [] }), pinnedScope: () => null, redact: redactAskText, limits: ASK_LIMITS, metrics: deps.metrics });
+  const out = await tools.call('get_team_metrics', { projectKey: gwKey, range: 'this-month', groupBy: 'tag:client', filter: { tags: ['client:acme'] } });
+  assert.deepEqual(out.breakdowns.tag.map((b) => [b.label, b.usd]), narrowed.breakdowns.tag.map((b) => [b.label, b.usd]));
 });

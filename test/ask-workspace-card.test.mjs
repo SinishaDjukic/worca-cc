@@ -250,6 +250,12 @@ before(async () => {
   const r = await post('/api/workspaces', { name: 'Card WS', projectPaths: [projects[0].path, projects[1].path] });
   assert.equal(r.status, 201, await r.clone().text());
   ws = (await r.json()).workspace;
+  // A pick-less workspace's members-change auto-rescan answers needsModel by design (the page
+  // asks the user). The card tests the auto-re-scan itself, so save a pick the way the page does.
+  const pick = await fetch(`${base}/api/workspaces/${ws.id}/scan-models`, {
+    method: 'PUT', headers: JSONH, body: JSON.stringify({ workspaceScan: { scanModel: 'claude-opus-5-5', scanEffort: 'high', agentModel: 'opus', agentEffort: 'xhigh' } }),
+  });
+  assert.equal(pick.status, 200, `PUT /scan-models: ${(await pick.json()).error || pick.status}`);
 });
 
 after(async () => {
@@ -459,4 +465,19 @@ test('the parent validator reads live runs from pipeline rows: a running or PAUS
       }
     } },
   ]);
+});
+
+test('a Folder project joins a create card; its member row carries vcs none (Git rows unchanged)', async () => {
+  const { v } = validator({ listProjects: async () => [...PROJECTS, { key: 'kn', name: 'notes', path: '/r/notes', vcs: 'none' }] });
+  const r = await v({ kind: 'create', name: 'Mixed', projectKeys: ['ka', 'kn'] });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.card.members, [{ key: 'ka', name: 'api', path: '/r/api' }, { key: 'kn', name: 'notes', path: '/r/notes', vcs: 'none' }]);
+});
+
+test('a remove_member card for a Folder member carries vcs none (its Remove row shows the Folder chip); a Git member\'s does not', async () => {
+  const { v } = validator({ listProjects: async () => PROJECTS.map((p) => (p.key === 'kb' ? { ...p, vcs: 'none' } : p)) });
+  const r = await v({ kind: 'remove_member', workspaceId: WS.id, projectKey: 'kb' });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.card.removed, { key: 'kb', name: 'web', path: '/r/web', vcs: 'none' });
+  assert.deepEqual((await v({ kind: 'remove_member', workspaceId: WS.id, projectKey: 'ka' })).card.removed, { key: 'ka', name: 'api', path: '/r/api' });
 });

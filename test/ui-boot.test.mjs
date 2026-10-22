@@ -50,5 +50,5 @@ test('app.js boots without throwing and finds 14 views', async () => {
     threw = e;
   }
   assert.equal(threw, null, threw && threw.stack);
-  assert.equal(window.document.querySelectorAll('section.view[data-view]').length, 18);   // + requirements (behind its flag) + getting-started + schedules + team-policy (team-policy design §11); Running + History merged into Runs; + the four Add-ons pages; Workflows replaced Composer, Agents, Scripts and Create agent; + chat (worca Chat — its page root's data-view="home|thread" is no routed view)
+  assert.equal(window.document.querySelectorAll('section.view[data-view]').length, 18);   // the feature page renders in the Runs pane now (run 3, D1); + requirements (behind its flag) + getting-started + schedules + team-policy (team-policy design §11); Running + History merged into Runs; + the four Add-ons pages; Workflows replaced Composer, Agents, Scripts and Create agent; + chat (worca Chat — its page root's data-view="home|thread" is no routed view)
 });

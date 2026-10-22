@@ -8,8 +8,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { confirmDialog } from './helpers/confirm-modal.mjs';
-import { lastToast } from './helpers/feedback.mjs';
+import { lastToast, edit } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { backdropClick, pressEscape, discardPrompt, keepEditing, discardChanges } from './helpers/popups.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -175,6 +176,165 @@ test('#555: the model editor Save — a missing id is a field error, a refusal a
   assert.equal(doc.getElementById('model-editor-modal').classList.contains('hidden'), true);
 });
 
+test('model editor: never on a backdrop click; Escape over a change asks ("This model has unsaved changes."); Cancel closes at once', async () => {
+  const { window, go } = await boot({ routes: {
+    'GET /api/models': { status: 200, body: { models: [{ id: 'acme-fast', label: 'ACME Fast' }], predefined: [], efforts: [] } },
+  } });
+  await go('settings/models');
+  const doc = window.document;
+  doc.getElementById('model-create-btn').click();
+  for (let i = 0; i < 4; i++) await tick();
+  const modal = doc.getElementById('model-editor-modal');
+  const idField = doc.querySelector('#mv-editor-host .mv-id');
+  idField.value = 'acme-new';
+  idField.dispatchEvent(new window.Event('input', { bubbles: true }));
+  backdropClick(window, modal);
+  assert.equal(modal.classList.contains('hidden'), false);
+  pressEscape(window);
+  assert.equal(discardPrompt(doc).querySelector('.confirm-message').textContent, 'This model has unsaved changes.');
+  keepEditing(doc);
+  for (let i = 0; i < 2; i++) await tick();
+  doc.querySelector('#mv-editor-host .mv-cancel').click();
+  assert.equal(modal.classList.contains('hidden'), true, 'Cancel never asks');
+  assert.equal(discardPrompt(doc), null);
+});
+
+test('model editor: an env row added or removed is a change, so Escape asks with nothing typed (D12)', async () => {
+  const { window, go } = await boot({ routes: {
+    'GET /api/models': { status: 200, body: { models: [{ id: 'acme-env', label: 'ACME Env', env: { ANTHROPIC_BASE_URL: '••••••e/v1' } }], predefined: [], efforts: [] } },
+  } });
+  await go('settings/models');
+  const doc = window.document;
+  const modal = doc.getElementById('model-editor-modal');
+  const envRows = () => doc.querySelectorAll('#mv-editor-host .mv-env-row').length;
+  await checkRows([
+    { name: '"+ env var" on a new model: Escape asks; Keep editing keeps the row', run: async () => {
+      doc.getElementById('model-create-btn').click();
+      for (let i = 0; i < 4; i++) await tick();
+      doc.querySelector('#mv-editor-host .mv-env-add').click();
+      assert.equal(envRows(), 1);
+      pressEscape(window);
+      assert.equal(discardPrompt(doc).querySelector('.confirm-message').textContent, 'This model has unsaved changes.');
+      keepEditing(doc);
+      await tick();
+      assert.equal(envRows(), 1, 'the row is still there');
+      doc.querySelector('#mv-editor-host .mv-cancel').click();
+      assert.equal(modal.classList.contains('hidden'), true);
+    } },
+    { name: 'a model\'s env row removed: Escape asks; Discard closes', run: async () => {
+      doc.querySelector('.mv-edit[data-id="acme-env"]').click();
+      for (let i = 0; i < 4; i++) await tick();
+      assert.equal(envRows(), 1);
+      doc.querySelector('#mv-editor-host .mv-env-row .mv-env-rm').click();
+      assert.equal(envRows(), 0);
+      pressEscape(window);
+      assert.ok(discardPrompt(doc), 'asks first');
+      discardChanges(doc);
+      await tick();
+      assert.equal(modal.classList.contains('hidden'), true);
+    } },
+  ]);
+});
+
+test('model import: never on a backdrop click; a typed base URL makes Escape ask; the list filter is a view, not a change', async () => {
+  const { window, go } = await boot({ routes: {
+    'GET /api/models': { status: 200, body: { models: [], predefined: [], efforts: [] } },
+    'GET /api/providers/openai/models': { status: 200, body: { server: 'openrouter', serverLabel: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', warnings: [],
+      models: [{ id: 'acme/m1', catalogId: 'or-acme-m1', name: 'M1', importable: true, free: true, toolCalls: true, servedContext: 131072 }] } },
+  } });
+  await go('settings/models');
+  const doc = window.document;
+  const modal = doc.getElementById('model-import-modal');
+  await checkRows([
+    { name: 'a typed base URL: no backdrop close, Escape asks, Discard closes', run: async () => {
+      doc.getElementById('model-import-btn').click();
+      for (let i = 0; i < 2; i++) await tick();
+      assert.equal(modal.classList.contains('hidden'), false);
+      const base = doc.getElementById('mimp-base');
+      base.value = 'http://127.0.0.1:11434/v1';
+      base.dispatchEvent(new window.Event('input', { bubbles: true }));
+      backdropClick(window, modal);
+      assert.equal(modal.classList.contains('hidden'), false, 'never on a backdrop click');
+      pressEscape(window);
+      assert.ok(discardPrompt(doc), 'asks first');
+      discardChanges(doc);
+      for (let i = 0; i < 2; i++) await tick();
+      assert.equal(modal.classList.contains('hidden'), true);
+    } },
+    { name: 'typing in the list filter alone: Escape closes with no question', run: async () => {
+      doc.getElementById('model-import-btn').click();
+      for (let i = 0; i < 2; i++) await tick();
+      const filter = doc.getElementById('mimp-filter');
+      filter.value = 'llama';
+      filter.dispatchEvent(new window.Event('input', { bubbles: true }));
+      pressEscape(window);
+      assert.equal(discardPrompt(doc), null);
+      assert.equal(modal.classList.contains('hidden'), true);
+    } },
+    { name: 'OpenRouter\'s Free / Tools / Window filters only narrow the view too: one toggled, then Escape, closes with no question', run: async () => {
+      doc.getElementById('model-import-btn').click();
+      for (let i = 0; i < 2; i++) await tick();
+      const base = doc.getElementById('mimp-base');
+      base.value = 'https://openrouter.ai/api/v1';
+      base.dispatchEvent(new window.Event('input', { bubbles: true }));
+      doc.getElementById('mimp-list').click();
+      for (let i = 0; i < 4; i++) await tick();
+      edit(window, doc.querySelector('#mimp-body .mvi-or-filters .mvi-f-free'), true);
+      pressEscape(window);
+      assert.equal(discardPrompt(doc), null);
+      assert.equal(modal.classList.contains('hidden'), true);
+    } },
+  ]);
+});
+
+test('model import: while "Import selected" is out, Cancel is disabled and Escape does nothing; the answer gives both back', async () => {
+  const open = async () => {
+    const { window, go } = await boot({ routes: {
+      'GET /api/providers/copilot/models': { status: 200, body: { models: [{ id: 'gpt-5', name: 'GPT-5', vendor: 'OpenAI' }] } },
+      'GET /api/providers': { status: 200, body: { copilot: { connected: true } } },
+      'GET /api/models': { status: 200, body: { models: [], predefined: [], efforts: [] } },
+    } });
+    await go('settings/models');
+    const doc = window.document;
+    let answer;
+    const gate = new Promise((r) => { answer = r; });
+    const realFetch = globalThis.fetch;                          // app.js calls the global fetch
+    globalThis.fetch = (url, opts) => (String(url) === '/api/providers/copilot/import-models' ? gate : realFetch(url, opts));
+    doc.getElementById('model-import-btn').click();
+    for (let i = 0; i < 4; i++) await tick();                    // the Copilot list loads by itself
+    edit(window, doc.querySelector('#mimp-body .mvi-cb'), true); // a model ticked: a change
+    doc.getElementById('mimp-go').click();
+    await tick();
+    const modal = doc.getElementById('model-import-modal');
+    const cancel = doc.getElementById('mimp-cancel');
+    assert.equal(cancel.disabled, true, 'no way out while the request is out');
+    cancel.dispatchEvent(new window.Event('click', { bubbles: true }));   // a synthetic click reaches a disabled button: cancel() must hold too
+    pressEscape(window);
+    assert.equal(discardPrompt(doc), null, 'not even the question');
+    assert.equal(modal.classList.contains('hidden'), false);
+    return { window, doc, modal, cancel, answer };
+  };
+  await checkRows([
+    { name: 'refused: the error shows in the dialog that stayed open, Cancel is back and Escape asks again', run: async () => {
+      const { window, doc, modal, cancel, answer } = await open();
+      answer({ ok: false, status: 502, json: async () => ({ error: 'Copilot refused the import' }) });
+      await waitFor(() => !cancel.disabled);
+      assert.equal(doc.getElementById('mimp-msg').textContent, 'Copilot refused the import');
+      pressEscape(window);
+      assert.ok(discardPrompt(doc), 'the ticked model is a change');
+      discardChanges(doc);
+      await tick();
+      assert.equal(modal.classList.contains('hidden'), true);
+    } },
+    { name: 'accepted: the dialog closes itself, and Cancel is armed for the next open', run: async () => {
+      const { modal, cancel, answer } = await open();
+      answer({ ok: true, status: 200, json: async () => ({ created: ['copilot-gpt-5'], updated: [], skipped: [] }) });
+      await waitFor(() => !cancel.disabled);
+      assert.equal(modal.classList.contains('hidden'), true);
+    } },
+  ]);
+});
+
 // D3: Sync all, Push now and the "Include my runs" switch used to swallow a refusal.
 async function waitFor(pred, ms = 3000) {
   const end = Date.now() + ms;
@@ -210,7 +370,7 @@ test('#555 D3: Sync all (500) and Push now (502) refusals are error toasts (Retr
       } });
       await go('team-metrics');
       const section = window.document.querySelector('section[data-view="team-metrics"]');
-      const b = Object.assign(window.document.createElement('button'), { type: 'button', className: 'btn-ghost btn-mini tm-push-now', textContent: 'Push now' });
+      const b = Object.assign(window.document.createElement('button'), { type: 'button', className: 'btn btn-sm tm-push-now', textContent: 'Push now' });
       section.append(b);
       b.click();
       await waitFor(() => lastToast(window.document));

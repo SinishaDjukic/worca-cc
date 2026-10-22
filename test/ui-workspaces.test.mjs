@@ -12,6 +12,7 @@ import { confirmDialog } from './helpers/confirm-modal.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { lastToast } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { pressEscape } from './helpers/popups.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -302,6 +303,35 @@ test('delete 409 (live run) keeps the page open + surfaces the error on its head
   assert.equal(doc.querySelector('#ws-detail .ws-delete').disabled, false, 'the button is live again');
 });
 
+test('a double-click on Delete stacks two confirms on the one shell: Escape answers both No, and a later, unrelated OK deletes nothing', async () => {
+  const deletes = [];
+  const { window, show } = await boot({
+    fetchHandler: (u, opts) => {
+      if (!/\/api\/workspaces\/wks-beta-00000002$/.test(u) || opts.method !== 'DELETE') return null;
+      deletes.push(u);
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true, warnings: [] }) });
+    },
+  });
+  show('workspaces/wks-beta-00000002');
+  await settle();
+  const doc = window.document;
+  const del = doc.querySelector('#ws-detail .ws-delete');
+  click(window, del);
+  click(window, del);                    // live until the confirm: each click awaits the dependents note first
+  await settle();
+  const modal = doc.getElementById('confirm-modal');
+  assert.equal(modal.classList.contains('hidden'), false);
+  pressEscape(window);
+  await settle();
+  assert.equal(modal.classList.contains('hidden'), true, 'Escape answered No');
+  const other = window.__projects.confirmModal({ title: 'Something else?' });
+  doc.getElementById('confirm-ok').click();
+  assert.equal(await other, true);
+  await settle();
+  assert.deepEqual(deletes, [], 'the delete the user cancelled never runs');
+  assert.equal(window.location.hash, '#workspaces/wks-beta-00000002');
+});
+
 test('an unknown id shows the list with the not-registered message; a workspaces-changed frame that dropped the open one closes it', async () => {
   let list = WS;
   const { window, show, ws } = await boot({
@@ -464,7 +494,7 @@ test('Add projects lists registered non-members; Save posts {add} and the page s
   assert.deepEqual(boxes.map((b) => b.value), [THIRD.path], 'only projects that are not members yet');
   const addBtn = () => [...doc.querySelectorAll('#plugin-modal button')].find((b) => b.textContent === 'Add');
   assert.equal(addBtn().disabled, true, 'Add waits for a pick');
-  assert.deepEqual([...doc.querySelectorAll('#plugin-modal-actions button')].map((b) => b.textContent), ['Add'], 'the header\'s Close is the way out');
+  assert.deepEqual([...doc.querySelectorAll('#plugin-modal-actions button')].map((b) => b.textContent), ['Cancel', 'Add'], 'Cancel sits next to Add');
   boxes[0].checked = true;
   boxes[0].dispatchEvent(new window.Event('change', { bubbles: true }));
   assert.equal(addBtn().disabled, false);
@@ -617,4 +647,54 @@ test('#555 D10: two failed metrics-home saves leave exactly one .tm-home-err', a
   const errs = doc.querySelectorAll('#plugin-modal .tm-home-err');
   assert.equal(errs.length, 1, 'one error line, reused');
   assert.equal(errs[0].textContent, 'disk full');
+});
+
+// P5: a workspace may hold registered Folder projects (annotated vcs 'none' aligned with projectPaths).
+test('a workspace with a Folder member: kind chips on the Projects card and in Add projects; the Branches card counts Git members only and hides with none', async () => {
+  const blk = (base, over = {}) => ({ base, remote: 'origin', state: 'up-to-date', ahead: 0, behind: 0, dirty: false, checkedOutHere: true,
+    fetchedAt: new Date().toISOString(), stale: false, settings: { beforeRun: true, onDiverged: 'ask' }, ...over });
+  const projs = [{ ...PROJECTS[0], vcs: 'git' }, { ...PROJECTS[1], vcs: 'none' }, { ...THIRD, vcs: 'none' }];
+  // The server may answer for a Folder project (a folder inside a repo answers for that repo): never counted.
+  const handler = (u) => (u.includes('/api/sync/projects') ? Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: { k1: blk('dev'), k2: blk('main', { state: 'behind', behind: 2 }) } }) })
+    : u.includes('/api/projects') ? Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: projs }) }) : null);
+  const waitSync = () => new Promise((r) => setTimeout(r, 350));   // SYNC_CHIPS_MS (300) + the read
+  await checkRows([
+    { name: 'the Projects card: each member name carries its kind chip', run: async () => {
+      const { window, show } = await boot({ fetchHandler: handler, workspaces: [{ ...WS[0], vcs: ['git', 'none'] }, WS[1]] });
+      show('workspaces/wks-alpha-00000001');
+      await settle(8);
+      const members = [...window.document.querySelectorAll('#ws-detail .wd-member')];
+      assert.deepEqual(members.map((m) => [m.querySelector('.wd-member-name').firstChild.textContent, m.querySelector('.wd-member-name .kind-chip').textContent]),
+        [['svc-iam', 'Git'], ['svc-ui', 'Folder']]);
+    } },
+    { name: 'the Branches card counts the Git member only', run: async () => {
+      const { window, show } = await boot({ fetchHandler: handler, workspaces: [{ ...WS[0], vcs: ['git', 'none'] }, WS[1]] });
+      show('workspaces/wks-alpha-00000001');
+      await settle(8);
+      await waitSync();
+      await settle();
+      const card = window.document.querySelector('#ws-detail .pd-ov-card-branches');
+      assert.equal(card.hidden, false);
+      assert.equal(card.querySelector('.pd-ov-value').textContent, 'All 1 up to date');
+      assert.equal(card.querySelector('.pd-ov-act'), null, 'nothing to sync');
+    } },
+    { name: 'the Branches card hides when every member is a Folder project', run: async () => {
+      const { window, show } = await boot({ fetchHandler: handler, workspaces: [{ ...WS[0], vcs: ['none', 'none'] }, WS[1]] });
+      show('workspaces/wks-alpha-00000001');
+      await settle(8);
+      await waitSync();
+      await settle();
+      assert.equal(window.document.querySelector('#ws-detail .pd-ov-card-branches').hidden, true);
+    } },
+    { name: 'Add projects: each candidate shows its kind chip after its name', run: async () => {
+      const { window, show } = await boot({ fetchHandler: handler, workspaces: [{ ...WS[0], vcs: ['git', 'none'] }, WS[1]] });
+      show('workspaces/wks-alpha-00000001');
+      await settle(8);
+      const doc = window.document;
+      click(window, doc.querySelector('#ws-detail .wd-members-add'));
+      await settle();
+      const rows = [...doc.querySelectorAll('#plugin-modal .wd-add-row')];
+      assert.deepEqual(rows.map((r) => [r.querySelector('.wd-member-name').textContent, r.querySelector('.wd-member-name + .kind-chip').textContent]), [['svc-api', 'Folder']]);
+    } },
+  ]);
 });

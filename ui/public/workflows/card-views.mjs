@@ -2,8 +2,16 @@
 // The DOM of a drafted agent / script card and of a proposed whole workflow, shared by the Workflows chat
 // (chat-cards.mjs: canvas buttons) and Ask Worca (ask-composer-cards.mjs: no canvas). Pure DOM: the host passes the
 // state to show, the callbacks and any extra buttons; nothing here posts, saves or touches a canvas.
+import { icon } from '../icons.mjs';
+
+/** The green saved/applied chip: a check icon, then the words. */
+export function okChip(h, text) {
+  const s = h('span', 'wfc-chip-ok');
+  s.append(icon(s.ownerDocument, 'check', 12), ` ${text}`);
+  return s;
+}
 export const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
-const RUNNER_SIDE = { code: 'code — edits the worktree (implementer tool set)', memory: 'memory — edits worca memory only (no Bash)' };
+const RUNNER_SIDE = { code: 'code: edits the worktree (implementer tool set)', memory: 'memory: edits worca memory only (no Bash)' };
 
 /** `h` builds an element. `button` runs its click handler once at a time — in flight: aria-disabled + a flag, never
  *  `disabled`: Chrome moves the focus of a button that turns disabled to <body>, where the canvas owns the keys (the next
@@ -11,7 +19,7 @@ const RUNNER_SIDE = { code: 'code — edits the worktree (implementer tool set)'
 export function cardKit(doc, { onChange = () => {} } = {}) {
   const h = (tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   const button = (text, cls, onClick) => {
-    const b = h('button', cls || 'wfv-btn', text);
+    const b = h('button', cls || 'btn btn-sm', text);
     b.type = 'button';
     let busy = false;
     b.addEventListener('click', async () => {
@@ -60,7 +68,7 @@ export function draftCardView(b, { h, button, state = b.state, notAdded = '', on
     chips.appendChild(h('span', 'wfc-chip mono', m.runnerType || 'producer'));
     if (m.fanOut) chips.appendChild(h('span', 'wfc-chip', 'Research fan-out'));
     if (m.asksQuestions) chips.appendChild(h('span', 'wfc-chip', 'Asks questions'));
-    chips.appendChild(h('span', 'wfc-chip', RUNNER_SIDE[m.sideEffect] || 'none — writes only its output ports'));
+    chips.appendChild(h('span', 'wfc-chip', RUNNER_SIDE[m.sideEffect] || 'none: writes only its output ports'));
     el.appendChild(chips);
   }
   const io = h('div', 'wfc-iogrid');
@@ -73,20 +81,20 @@ export function draftCardView(b, { h, button, state = b.state, notAdded = '', on
   el.appendChild(det);
   const row = h('div', 'wfc-actions');
   const name = m.displayName || d.key;
-  if (state === 'declined') row.appendChild(h('span', 'wfc-muted', `Declined — ${name}`));
+  if (state === 'declined') row.appendChild(h('span', 'wfc-muted', `Declined: ${name}`));
   else if (state === 'failed') row.appendChild(h('span', 'wfc-err', b.error || 'failed'));
-  else if (state === 'added') row.appendChild(h('span', 'wfc-chip-ok', '✓ Saved and added'));
-  else if (state === 'superseded') row.append(h('span', 'wfc-muted', 'Replaced by a newer draft'), h('span', 'wfc-spacer'), button('Decline', 'wfv-btn', () => onDecline()));
+  else if (state === 'added') row.appendChild(okChip(h, 'Saved and added'));
+  else if (state === 'superseded') row.append(h('span', 'wfc-muted', 'Replaced by a newer draft'), h('span', 'wfc-spacer'), button('Decline', 'btn btn-sm', () => onDecline()));
   else if (state === 'saved') {
-    if (notAdded) el.appendChild(h('p', 'wfc-err', `Not added to the canvas — ${notAdded}`));   // above the actions row
-    row.appendChild(h('span', 'wfc-chip-ok', `✓ Saved to your ${isAgent ? 'agents' : 'scripts'}`));
+    if (notAdded) el.appendChild(h('p', 'wfc-err', `Not added to the canvas: ${notAdded}`));   // above the actions row
+    row.appendChild(okChip(h, `Saved to your ${isAgent ? 'agents' : 'scripts'}`));
     if (savedExtra) savedExtra(row);
   } else {
     row.append(
-      button('Edit…', 'wfv-btn', () => onEdit(d)),
-      button('Decline', 'wfv-btn', () => onDecline()),
+      button('Edit…', 'btn btn-sm', () => onEdit(d)),
+      button('Decline', 'btn btn-sm', () => onDecline()),
       h('span', 'wfc-spacer'),
-      button(isAgent ? 'Save agent' : 'Save script', 'wfv-btn', () => onSave()),
+      button(isAgent ? 'Save agent' : 'Save script', 'btn btn-sm', () => onSave()),
     );
     if (proposedExtra) proposedExtra(row);
   }
@@ -101,7 +109,7 @@ export function buildCardView(b, { h, graph = null, title = 'Proposed workflow',
   const el = h('div', `wfc-card wfc-plan is-${b.state}`);
   el.setAttribute('role', 'group');
   el.setAttribute('aria-label', 'Proposed workflow');
-  if (b.state === 'declined') { el.appendChild(h('p', 'wfc-muted', `Declined — ${c.name}`)); return el; }
+  if (b.state === 'declined') { el.appendChild(h('p', 'wfc-muted', `Declined: ${c.name}`)); return el; }
   if (b.state === 'failed') { el.appendChild(h('p', 'wfc-err', `Proposal failed: ${b.error || 'failed'}`)); return el; }
   el.appendChild(h('div', 'wfc-card-t', title));
   el.appendChild(h('div', 'wfc-name', c.name || 'Untitled pipeline'));

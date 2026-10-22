@@ -15,7 +15,7 @@ import {
   dependentsOfWorkflow, dueTickets, runDueTickets, recordOutcome, recoverScheduler, purgeScheduler,
   scheduleCounts, summarizeRequest, RETRY_BACKOFF_MIN, AFTER_RUN_AT,
   afterRefOf, predecessorState, previousBranchesOf, dependentsOfRun, resolveAfterRef,
-  chainBaseBranchesOf, markTicketFired, cancelResumeTicketsFor,
+  chainBaseBranchesOf, stackedPrBaseOf, markTicketFired, cancelResumeTicketsFor, runChains,
 } from '../src/core/scheduler.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { listNotifications, unreadCount } from '../src/core/notifications.mjs';
@@ -700,6 +700,185 @@ test('chainBaseBranchesOf: walks a from-its-branch chain root first, stops at a 
   ]);
 });
 
+// ── stackedPrBaseOf: the PR dialog's default base for a run started from the previous run's branch ──
+const prOf = (id, state) =>
+  getDb().prepare('UPDATE pipelines SET pr_url = ?, pr_state = ? WHERE id = ?').run(`https://github.com/o/r/pull/${id}`, state, id);
+
+test('stackedPrBaseOf: a from-its-branch run stacks on its source until the previous run\'s PR merges; no previous run or a workspace row never stacks', async () => {
+  await checkRows([
+    { name: 'a plain chain stacks while the previous run has no PR, an open PR or a closed PR, and falls back once it merged', run: () => {
+      clearTables();
+      chainRun('s0000001', 'dev', 'nb1');
+      chainRun('s0000002', 'nb1', 'nb2');
+      chainFire('s0000002', { kind: 'pipeline', id: 's0000001' });
+      const chain = chainBaseBranchesOf('s0000002');
+      assert.deepEqual(chain, ['dev', 'nb1']);
+      assert.equal(stackedPrBaseOf('s0000002', chain), 'nb1', 'no PR yet');
+      prOf('s0000001', 'OPEN');
+      assert.equal(stackedPrBaseOf('s0000002', chain), 'nb1', 'open');
+      prOf('s0000001', 'CLOSED');
+      assert.equal(stackedPrBaseOf('s0000002', chain), 'nb1', 'closed is not merged');
+      prOf('s0000001', 'MERGED');
+      assert.equal(stackedPrBaseOf('s0000002', chain), null, 'merged: the chain root again');
+    } },
+    { name: 'the previous run is the direct one, also when chained on the ticket that became it', run: () => {
+      clearTables();
+      chainRun('s0000011', 'dev', 'nb1');
+      chainRun('s0000012', 'nb1', 'nb2');
+      chainRun('s0000013', 'nb2', 'nb3');
+      const t2 = chainFire('s0000012', { kind: 'pipeline', id: 's0000011' });
+      chainFire('s0000013', { kind: 'ticket', id: t2.id });
+      const chain = chainBaseBranchesOf('s0000013');
+      assert.deepEqual(chain, ['dev', 'nb1', 'nb2']);
+      prOf('s0000011', 'OPEN');
+      prOf('s0000012', 'MERGED');
+      assert.equal(stackedPrBaseOf('s0000013', chain), null, 'only the direct previous run\'s PR counts');
+      prOf('s0000011', 'MERGED');
+      prOf('s0000012', 'OPEN');
+      assert.equal(stackedPrBaseOf('s0000013', chain), 'nb2');
+    } },
+    { name: 'no previous run: a lone run, a run not started from its branch, an unknown run, no chain', run: () => {
+      clearTables();
+      chainRun('s0000021', 'dev', 'nb1');
+      assert.equal(stackedPrBaseOf('s0000021', chainBaseBranchesOf('s0000021')), null, 'a chain of 1');
+      chainRun('s0000022', 'nb1', 'nb2');
+      chainFire('s0000022', { kind: 'pipeline', id: 's0000021' }, false);
+      assert.deepEqual(chainBaseBranchesOf('s0000022'), ['nb1']);
+      assert.equal(stackedPrBaseOf('s0000022', ['dev', 'nb1']), null, 'not "from its branch": no previous run even with a chain of 2');
+      assert.equal(stackedPrBaseOf('nope', ['dev', 'nb1']), null);
+      assert.equal(stackedPrBaseOf('s0000022', null), null);
+    } },
+    { name: 'a workspace row never stacks: a member keeps its own source', run: () => {
+      clearTables();
+      chainRun('s0000031', 'dev', 'nb1');
+      seedPipelineRow({ id: 's0000032', title: 's0000032', status: 'done', target: 'workspace', workspaceKey: 'wks-00000001',
+        startedAt: new Date(T0).toISOString(), branch: { source: 'nb1', feature: 'nb2' } });
+      chainFire('s0000032', { kind: 'pipeline', id: 's0000031' });
+      prOf('s0000031', 'OPEN');
+      assert.deepEqual(chainBaseBranchesOf('s0000032'), [], 'a workspace row has no chain');
+      assert.equal(stackedPrBaseOf('s0000032', []), null);
+      assert.equal(stackedPrBaseOf('s0000032', ['dev', 'nb1']), null, 'not even with a chain of 2');
+    } },
+  ]);
+});
+
+// ── runChains: the open "Run after" chains, root first (run progress P8) ───────
+test('runChains: lists each open chain in pre-order with member states, links only https PRs, and survives forks, cycles and purged links', async () => {
+  const setPr = (id, url) => getDb().prepare('UPDATE pipelines SET pr_url = ? WHERE id = ?').run(url, id);
+  const setStatus = (id, status) => getDb().prepare('UPDATE pipelines SET status = ? WHERE id = ?').run(status, id);
+  // A ticket after `after` created at `now`; fired into `pipelineId` when given, else left waiting.
+  const chainTicket = (title, after, now, pipelineId = null) => {
+    const t = createTicket({ projectDir: DIR, title, request: REQ, after, now });
+    if (pipelineId) markTicketFired(t.id, { pipelineId, now });
+    return t;
+  };
+  await checkRows([
+    { name: 'a line of three reads [p1 done (PR), p2 current, t3 waiting] as one chain rooted at p1', run: () => {
+      clearTables();
+      chainRun('p0000001', 'dev', 'nb1');
+      setPr('p0000001', 'https://github.com/acme/app/pull/7');
+      chainRun('p0000002', 'nb1', 'nb2');
+      setStatus('p0000002', 'running');
+      const t2 = chainFire('p0000002', { kind: 'pipeline', id: 'p0000001' });
+      const t3 = createTicket({ projectDir: DIR, title: 'third', request: REQ, after: { kind: 'ticket', id: t2.id }, now: T0 });
+      const chains = runChains();
+      assert.equal(chains.length, 1);
+      assert.equal(chains[0].id, 'p:p0000001');
+      assert.equal(chains[0].title, 'p0000001');
+      assert.deepEqual(chains[0].members.map((m) => [m.pipelineId, m.state]), [['p0000001', 'done'], ['p0000002', 'current'], [null, 'waiting']]);
+      assert.equal(chains[0].members[0].prUrl, 'https://github.com/acme/app/pull/7');
+      assert.equal(chains[0].members[1].prUrl, null);
+      assert.equal(chains[0].members[2].ticketId, t3.id);
+      assert.deepEqual(chains[0].members.map((m) => m.after), [null, 1, 2], 'D29: each member names the position it runs after');
+    } },
+    { name: 'a javascript: pr_url yields prUrl null', run: () => {
+      clearTables();
+      chainRun('p0000011', 'dev', 'nb1');
+      setPr('p0000011', 'javascript:alert(1)');
+      createTicket({ projectDir: DIR, title: 'next', request: REQ, after: { kind: 'pipeline', id: 'p0000011' }, now: T0 });
+      assert.equal(runChains()[0].members[0].prUrl, null);
+    } },
+    { name: 'every member done or failed yields no chain', run: () => {
+      clearTables();
+      chainRun('p0000021', 'dev', 'nb1');
+      chainRun('p0000022', 'nb1', 'nb2');
+      setStatus('p0000022', 'error');
+      chainFire('p0000022', { kind: 'pipeline', id: 'p0000021' });
+      assert.deepEqual(runChains(), []);
+    } },
+    { name: 'a single run with no after link yields no chain; a waiting ticket after a done run yields a chain of 2', run: () => {
+      clearTables();
+      chainRun('p0000031', 'dev', 'nb1');
+      assert.deepEqual(runChains(), []);
+      createTicket({ projectDir: DIR, title: 'next', request: REQ, after: { kind: 'pipeline', id: 'p0000031' }, now: T0 });
+      const chains = runChains();
+      assert.equal(chains.length, 1);
+      assert.deepEqual(chains[0].members.map((m) => m.state), ['done', 'waiting']);
+    } },
+    { name: 'a fork lists the older branch before the newer one, each whole', run: () => {
+      clearTables();
+      chainRun('p0000041', 'dev', 'nb1');
+      chainRun('p0000042', 'nb1', 'nb2');
+      chainRun('p0000043', 'nb1', 'nb3');
+      // The newer ticket is created first in code order but later in time.
+      chainTicket('newer', { kind: 'pipeline', id: 'p0000041' }, T0 + MIN, 'p0000043');
+      chainTicket('older', { kind: 'pipeline', id: 'p0000041' }, T0, 'p0000042');
+      createTicket({ projectDir: DIR, title: 'tail', request: REQ, after: { kind: 'pipeline', id: 'p0000041' }, now: T0 + 2 * MIN });
+      setStatus('p0000043', 'running');
+      const chains = runChains();
+      assert.equal(chains.length, 1);
+      assert.deepEqual(chains[0].members.slice(0, 3).map((m) => m.pipelineId), ['p0000041', 'p0000042', 'p0000043']);
+      assert.equal(chains[0].members.length, 4);
+      assert.deepEqual(chains[0].members.map((m) => m.after), [null, 1, 1, 1], 'forked children all run after the root');
+    } },
+    { name: 'a hand-made cycle has no root and is not listed', run: () => {
+      clearTables();
+      const x = createTicket({ projectDir: DIR, title: 'x', request: REQ, after: { kind: 'pipeline', id: 'zzzzzzzz' }, now: T0 });
+      const y = createTicket({ projectDir: DIR, title: 'y', request: REQ, after: { kind: 'ticket', id: x.id }, now: T0 });
+      getDb().prepare("UPDATE scheduled_runs SET after_kind = 'ticket', after_id = ? WHERE id = ?").run(y.id, x.id);
+      assert.deepEqual(runChains(), []);
+    } },
+    { name: 'isLive turns a bad-status row current; without it the same row is failed', run: () => {
+      clearTables();
+      chainRun('p0000051', 'dev', 'nb1');
+      setStatus('p0000051', 'interrupted');
+      createTicket({ projectDir: DIR, title: 'next', request: REQ, after: { kind: 'pipeline', id: 'p0000051' }, now: T0 });
+      assert.equal(runChains({ isLive: (q) => q.pipelineId === 'p0000051' })[0].members[0].state, 'current');
+      assert.equal(runChains()[0].members[0].state, 'failed');
+    } },
+    { name: 'a purged predecessor ticket makes the dependent its own root', run: () => {
+      clearTables();
+      chainRun('p0000061', 'dev', 'nb1');
+      chainRun('p0000062', 'nb1', 'nb2');
+      setStatus('p0000062', 'running');
+      chainFire('p0000062', { kind: 'ticket', id: 'purged-ticket' });
+      createTicket({ projectDir: DIR, title: 'after-62', request: REQ, after: { kind: 'pipeline', id: 'p0000062' }, now: T0 });
+      const chains = runChains();
+      assert.equal(chains.length, 1);
+      assert.equal(chains[0].id, 'p:p0000062');
+      assert.deepEqual(chains[0].members.map((m) => m.state), ['current', 'waiting']);
+    } },
+    { name: 'a fired ticket with pipeline_id NULL is current, with its ticketId', run: () => {
+      clearTables();
+      chainRun('p0000071', 'dev', 'nb1');
+      const t = createTicket({ projectDir: DIR, title: 'fired', request: REQ, after: { kind: 'pipeline', id: 'p0000071' }, now: T0 });
+      getDb().prepare("UPDATE scheduled_runs SET status = 'fired' WHERE id = ?").run(t.id);
+      const m = runChains()[0].members[1];
+      assert.equal(m.state, 'current');
+      assert.equal(m.pipelineId, null);
+      assert.equal(m.ticketId, t.id);
+    } },
+    { name: 'a workspace pipeline member has historyKey workspaces/<key>', run: () => {
+      clearTables();
+      seedPipelineRow({ id: 'p0000081', title: 'ws', status: 'running', target: 'workspace', workspaceKey: 'wk1', projectKey: 'workspaces-wk1', startedAt: new Date(T0).toISOString() });
+      createTicket({ projectDir: DIR, title: 'next', request: REQ, after: { kind: 'pipeline', id: 'p0000081' }, now: T0 });
+      const m = runChains()[0].members[0];
+      assert.equal(m.historyKey, 'workspaces/wk1');
+      assert.equal(m.workspaceId, 'wk1');
+    } },
+  ]);
+});
+
 // ── scheduled resume (v44) ──────────────────────────────────────────────────
 
 test('a resume ticket stores its target on the column and in the request marker, and cannot be chained after another run', () => {
@@ -732,6 +911,17 @@ test('runDueTickets: start() answering skip marks the ticket skipped with a feed
   assert.equal(n.severity, 'info');
 });
 
+test('a skipped series occurrence records Last: skipped, plans the next one and does not count as a failure', async () => {
+  const { schedule, ticket } = createSchedule({ title: 'S', projectDir: DIR, request: REQ, rule: nightly, now: T0 });
+  const out = await runDueTickets({ now: Date.parse(ticket.runAt), start: async () => ({ ok: false, skip: true, error: 'Add Cost centre to start' }) });
+  assert.deepEqual(out.skipped, [ticket.id]);
+  assert.equal(getTicket(ticket.id).failReason, 'Add Cost centre to start');
+  const after = getSchedule(schedule.id);
+  assert.equal(after.lastResult, 'skipped');
+  assert.equal(after.failureStreak, 0);
+  assert.equal(listTickets({ scheduleId: schedule.id }).filter((t) => t.status === 'scheduled').length, 1);
+});
+
 test('cancelResumeTicketsFor cancels only that pipeline’s open tickets and audits the reason', () => {
   const a = createTicket({ projectDir: DIR, title: 'A', runAtMs: T0 + HOUR, request: { internal: { resumePipelineId: 'pl_1' } }, resumePipelineId: 'pl_1', now: T0 });
   const b = createTicket({ projectDir: DIR, title: 'B', runAtMs: T0 + HOUR, request: { internal: { resumePipelineId: 'pl_2' } }, resumePipelineId: 'pl_2', now: T0 });
@@ -752,7 +942,7 @@ test('a paused usage limit an engine hit says it can continue now on the other e
   recordOutcome(await fire('20'), { status: 'paused', reason: 'usage_limit', detail: 'free requests used up' });
   const msgs = listNotifications().filter((n) => n.kind === 'run_paused' && n.scheduleId === schedule.id).map((n) => n.message).reverse();
   assert.deepEqual(msgs, [
-    "paused (usage limit): You've hit your usage limit — resume on Claude or Cursor to continue now.",
+    "paused (usage limit): You've hit your usage limit — resume on Claude, Copilot or Cursor to continue now.",
     'paused (usage limit): free requests used up',
   ]);
 });

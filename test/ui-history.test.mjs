@@ -124,15 +124,15 @@ const armsFor = (rows, detailById) => (url) => {
 const row = (over) => ({ projectKey: KEY, projectName: 'Proj', projectDir: '/x/proj', ...over });
 
 // ---------------------------------------------------------------------------
-// Row anatomy (a compact Runs row: status icon + title + "<word> · <time>" subline)
+// Row anatomy (a compact Runs row: the status dot + title + its one status line)
 // ---------------------------------------------------------------------------
 
 const histRows = (doc) => doc.querySelectorAll('#runs-list .runs-row[data-kind="hist"]');
-const word = (r) => r.querySelector('.runs-row-sub').textContent.split(' · ')[0];
+const dotOf = (r) => r.closest('.runs-item').querySelector(':scope > .runs-pick .status-dot');
 
-test('Runs list rows: status icon + word + title per finished run; interrupted is amber \'Interrupted\' and not Needs you', async () => {
+test('Runs list rows: status dot + line + title per finished run; interrupted reads Paused and is not Needs you', async () => {
   await checkRows([
-    { name: 'the Runs list renders one row per finished run (no <li>): status icon + word + title', run: async () => {
+    { name: 'the Runs list renders one row per finished run (no <li>): status dot + line + title', run: async () => {
       const ctx = await boot({
         fetchHandler: armsFor([
           row({ id: 'p-done', title: 'Done run', status: 'done', startedAt: '2026-01-01T00:00:00Z' }),
@@ -143,27 +143,24 @@ test('Runs list rows: status icon + word + title per finished run; interrupted i
       await new Promise((r) => setTimeout(r, 0));
 
       const doc = ctx.window.document;
-      const rows = histRows(doc);
-      assert.equal(rows.length, 2, 'two finished rows rendered');
+      assert.equal(histRows(doc).length, 2, 'two finished rows rendered');
+      // Recent lists newest first (the stopped run started later); read each row by its id.
+      const rows = ['p-done', 'p-stop'].map((id) => doc.querySelector(`#runs-list .runs-row[data-pipeline-id="${id}"]`));
       assert.equal(doc.querySelectorAll('#runs-list li').length, 0, 'no <li> emitted');
 
-      // No status .badge pill: the icon carries the family, the subline's word the label.
+      // No status .badge pill: the one status dot (run model) carries the state, the line says it.
       assert.equal(doc.querySelectorAll('#runs-list .badge').length, 0, 'no status badge pill on a row');
-      assert.ok(rows[0].querySelector('.runs-ic').classList.contains('runs-ic-done'), 'done -> green check family');
-      // The word is the glance headline (D12): a done run with no PR and no review counts is "Finished".
-      assert.equal(word(rows[0]), 'Finished');
-      assert.ok(rows[1].querySelector('.runs-ic').classList.contains('runs-ic-stop'), 'stopped -> red square family');
-      assert.equal(word(rows[1]), 'Stopped');
-      // Exactly one glyph per row, the family's own.
-      const glyphs = [...rows[0].querySelectorAll('.runs-ic svg')];
-      assert.equal(glyphs.length, 1);
-      assert.ok(glyphs[0].classList.contains('runs-glyph-done'));
+      assert.equal(dotOf(rows[0]).dataset.state, 'ready', 'a done run with no PR is Ready');
+      assert.match(rows[0].querySelector('.runs-row-sub').textContent, /^Ready to ship · /);
+      assert.equal(dotOf(rows[1]).dataset.state, 'stopped');
+      assert.match(rows[1].querySelector('.runs-row-sub').textContent, /^Stopped · /);
+      assert.equal(rows[0].closest('.runs-item').querySelectorAll('.status-dot').length, 1, 'exactly one dot per row');
 
       // Titles surface in .runs-row-title.
       assert.equal(rows[0].querySelector('.runs-row-title').textContent, 'Done run');
       assert.equal(rows[1].querySelector('.runs-row-title').textContent, 'Stopped run');
     } },
-    { name: 'interrupted lands in the amber paused family with the word "Interrupted"', run: async () => {
+    { name: 'interrupted reads "paused: interrupted" with the grey paused dot', run: async () => {
       const ctx = await boot({
         fetchHandler: armsFor([row({ id: 'pi', title: 'Stuck', status: 'interrupted', startedAt: '2026-06-02T00:00:00Z' })]),
       });
@@ -171,13 +168,12 @@ test('Runs list rows: status icon + word + title per finished run; interrupted i
       await new Promise((r) => setTimeout(r, 0));
       const doc = ctx.window.document;
       const r = doc.querySelector('#runs-list .runs-row[data-kind="hist"]');
-      // The icon column answers "can this be resumed?", so interrupted is amber, not red.
-      assert.ok(r.querySelector('.runs-ic').classList.contains('runs-ic-paused'));
-      assert.equal(word(r), 'Interrupted');
-      // The glyph is decorative: the word is in the row link's own text, which names it.
-      assert.equal(r.querySelector('.runs-ic').getAttribute('aria-hidden'), 'true');
-      assert.match(r.textContent, /Interrupted/);
-      assert.equal(doc.querySelector('#runs-list .runs-needs'), null, 'an interrupted run is not Needs you (D5)');
+      // An interrupted run can be resumed, so it reads Paused (run-model.mjs), never Failed.
+      assert.equal(dotOf(r).dataset.state, 'paused');
+      // The dot is decorative: the line is in the row link's own text, which names it.
+      assert.equal(dotOf(r).getAttribute('aria-hidden'), 'true');
+      assert.match(r.textContent, /interrupted/);
+      assert.equal(doc.querySelector('#runs-list .runs-sec[data-section="needs"]'), null, 'an interrupted run is not Needs you (D5)');
     } },
   ]);
 });

@@ -7,6 +7,8 @@
 // and the delegated listeners. Interactive elements carry a routing class
 // (mv-cp-*, mv-pv-*, mvi-*, mv-conn-*) plus data-provider / data-id.
 
+import { icon } from './icons.mjs';
+import { makeSwitch } from './switch.mjs';
 import { codexReaches, runsOnText } from '../../src/shared/connections.mjs';
 
 function h(doc, tag, cls, text) {
@@ -78,11 +80,11 @@ export function degradationLine(m) {
   const caps = m.upstream.capabilities || {};
   const limit = caps.maxPromptTokens ? `, prompt limit ~${Math.round(caps.maxPromptTokens / 1000)}k tokens` : '';
   const lead = m.upstream.api === 'openai-responses'
-    ? 'translated — reasoning summaries only, no WebSearch/WebFetch'
+    ? 'translated: reasoning summaries only, no WebSearch/WebFetch'
     : caps.reasoning
       // A reasoning model's streamed reasoning arrives as thinking; chat completions takes none back.
-      ? 'translated — reasoning shown but not carried across turns, no WebSearch/WebFetch'
-      : 'translated — no thinking blocks, no WebSearch/WebFetch';
+      ? 'translated: reasoning shown but not carried across turns, no WebSearch/WebFetch'
+      : 'translated: no thinking blocks, no WebSearch/WebFetch';
   return `${lead}${limit}`;
 }
 
@@ -106,7 +108,7 @@ export function needsSignInPill(m, { doc = globalThis.document } = {}) {
   const b = h(doc, 'span', 'badge red mv-needs-signin-badge', m.signInReason === 'terms' ? 'needs acknowledgement' : m.signInReason === 'no_key' ? 'needs API key' : 'needs sign-in');
   b.title = m.signInMessage || 'The provider behind this model is not usable yet.';
   wrap.appendChild(b);
-  const btn = h(doc, 'button', 'btn-ghost mv-signin', m.signInReason === 'no_key' ? 'Set key' : 'Sign in');
+  const btn = h(doc, 'button', 'btn mv-signin', m.signInReason === 'no_key' ? 'Set key' : 'Sign in');
   btn.type = 'button';
   btn.dataset.provider = m.bridged || '';
   wrap.appendChild(btn);
@@ -118,7 +120,7 @@ export function needsSignInPill(m, { doc = globalThis.document } = {}) {
 function providerStatePill(doc, c) {
   if (!c.termsCurrent) {
     // What unblocks sign-in, in the "Read notice" button's own words — and it opens that notice.
-    const pill = h(doc, 'button', 'badge grey mv-cp-terms mv-cp-terms-pill',
+    const pill = h(doc, 'button', 'btn btn-sm btn-quiet mv-cp-terms mv-cp-terms-pill',
       c.acknowledgedTerms ? 'please re-read the updated notice' : 'please read the notice first');
     pill.type = 'button';
     pill.title = 'Sign-in is blocked until you acknowledge the GitHub Copilot notice. Click to read it.';
@@ -141,7 +143,7 @@ function brokerPill(doc, b, name) {
     x.title = p.error || 'The credential broker has no slot for this base URL.';
     return x;
   }
-  if (p.state === 'keyless') return h(doc, 'span', 'badge green', 'local — no key needed');
+  if (p.state === 'keyless') return h(doc, 'span', 'badge green', 'local, no key needed');
   if (b.error) {
     const x = h(doc, 'span', 'badge grey', 'key page unreachable');
     x.title = b.error;
@@ -193,15 +195,15 @@ const SPEECH_FIELDS = {
 
 const SPEECH_ENGINE_OPTIONS = {
   stt: [['browser', 'In the browser (built-in)'], ['server', 'Your server']],
-  tts: [['browser', 'In the browser (built-in)'], ['server', 'Your server'], ['off', 'Off — replies stay text only']],
+  tts: [['browser', 'In the browser (built-in)'], ['server', 'Your server'], ['off', 'Off (replies stay text only)']],
 };
 
 function speechBadge(doc, s, kind) {
   if (s.engine === 'browser') return h(doc, 'span', 'badge green', 'in the browser');
-  if (s.engine === 'off') return h(doc, 'span', 'badge grey', 'off — replies stay text only');
+  if (s.engine === 'off') return h(doc, 'span', 'badge grey', 'off (replies stay text only)');
   if (s.keyMissing) return h(doc, 'span', 'badge red', 'key ${VAR} not set');
   if (s.configured) return h(doc, 'span', 'badge green', 'configured');
-  return h(doc, 'span', 'badge grey', kind === 'tts' ? 'off — replies stay text only' : 'not configured');
+  return h(doc, 'span', 'badge grey', kind === 'tts' ? 'off (replies stay text only)' : 'not configured');
 }
 
 export function formatSpeechBytes(n) {
@@ -230,15 +232,15 @@ function renderSpeechRow(doc, sp) {
   row.dataset.provider = 'speech';
   const main = h(doc, 'div', 'mv-pv-main');
   const spHead = h(doc, 'div', 'mv-head');
-  spHead.appendChild(h(doc, 'b', 'mv-name', 'Speech (Ask Worca voice)'));
+  spHead.appendChild(h(doc, 'b', 'mv-name', 'Speech (Chat voice)'));
   main.appendChild(spHead);
   main.appendChild(h(doc, 'small', 'hint',
-    'Voice mode for Ask Worca. Built in: Whisper and Kokoro run inside your browser — the first use downloads the speech models once (up to about 500 MB), and audio never leaves this computer. Or point Worca at speech servers you run (whisper.cpp, Kokoro-FastAPI, …) through their OpenAI-compatible audio API.'));
+    'Voice mode for Chat. Built in: Whisper and Kokoro run inside your browser. The first use downloads the speech models once (up to about 500 MB), and audio never leaves this computer. Or point Worca at speech servers you run (whisper.cpp, Kokoro-FastAPI, …) through their OpenAI-compatible audio API.'));
   if (sp.cacheBytes) {
     // The built-in engines' downloads (~/.worca-cc/speech-cache); the next mic use fetches them again.
     const cache = h(doc, 'div', 'mv-pv-btns mv-sp-cache');
     cache.appendChild(h(doc, 'small', 'hint', `Downloaded speech models: ${formatSpeechBytes(sp.cacheBytes)}`));
-    const clear = h(doc, 'button', 'btn-ghost mv-sp-clear', 'Remove speech models');
+    const clear = h(doc, 'button', 'btn mv-sp-clear', 'Remove speech models');
     clear.type = 'button';
     cache.appendChild(clear);
     main.appendChild(cache);
@@ -280,11 +282,11 @@ function renderSpeechRow(doc, sp) {
     if (kind === 'stt') {
       box.appendChild(speechInput(doc, kind, 'language', 'Language', 'auto, or an ISO code such as bg', s));
       // How long a silence ends what you are saying — raise it if you get cut off mid-sentence.
-      box.appendChild(speechInput(doc, kind, 'pause', 'Pause before sending (seconds)', '1.2 — raise it if you get cut off', s));
+      box.appendChild(speechInput(doc, kind, 'pause', 'Pause before sending (seconds)', '1.2 (raise it if you get cut off)', s));
     }
     for (const [field, label, placeholder] of SPEECH_FIELDS[kind]) server.appendChild(speechInput(doc, kind, field, label, placeholder, s));
     const btns = h(doc, 'div', 'mv-pv-btns');
-    const test = h(doc, 'button', 'btn-ghost mv-sp-test', kind === 'stt' ? 'Test speech-to-text' : 'Test text-to-speech');
+    const test = h(doc, 'button', 'btn mv-sp-test', kind === 'stt' ? 'Test speech-to-text' : 'Test text-to-speech');
     test.type = 'button';
     test.dataset.kind = kind;
     btns.appendChild(test);
@@ -295,7 +297,7 @@ function renderSpeechRow(doc, sp) {
   row.appendChild(ctl);
   const save = h(doc, 'div', 'mv-pv-btns');
   save.dataset.cardActions = '';
-  const b = h(doc, 'button', 'btn-go mv-sp-save', 'Save');
+  const b = h(doc, 'button', 'btn btn-primary mv-sp-save', 'Save');
   b.type = 'button';
   save.appendChild(b);
   row.appendChild(save);
@@ -310,18 +312,17 @@ function renderSpeechRow(doc, sp) {
 export function renderProvidersCard(providers, { doc = globalThis.document, signIn = null, split = false } = {}) {
   const p = providers || {};
   const c = p.copilot || { connected: false, termsCurrent: false, accountType: 'individual', maxConcurrent: 4 };
-  // On the Providers TAB each provider is its own card: three unrelated accounts stacked in one
-  // card read as one long form, and the page has room for them now. Inside the Models view (the
-  // old home) it stays a single card. Either way the rows keep their shape, so every flow that
-  // finds .mv-pv-row[data-provider] is unaffected.
-  const root = h(doc, split ? 'div' : 'section', split ? 'mv-providers mv-providers-split' : 'card mv-providers');
+  // On the Providers page the card holds one divided row per provider (docs/design-system.md ›
+  // Cards versus divided rows); inside the Models view (the old home) it is the headed card. Either
+  // way the rows keep their shape, so every flow that finds .mv-pv-row[data-provider] is unaffected.
+  const root = h(doc, split ? 'div' : 'section', split ? 'card mv-providers mv-providers-split drows' : 'card mv-providers');
   if (!split) {
     const head = h(doc, 'div', 'mv-head');
-    head.appendChild(h(doc, 'h3', 'mv-section-title', 'Providers'));
+    head.appendChild(h(doc, 'h3', 'section-title mv-section-title', 'Providers'));
     root.appendChild(head);
+    root.appendChild(h(doc, 'small', 'hint mv-providers-hint',
+      "Providers let Worca run models that don't speak the Anthropic API. Worca runs them through its own in-process bridge. Sign in or set a key once; then import or add models on the Models page and pick them anywhere a model is picked."));
   }
-  root.appendChild(h(doc, 'small', 'hint mv-providers-hint',
-    "Providers let Worca run models that don't speak the Anthropic API — through its own in-process bridge. Sign in or set a key once; then import or add models on the Models page and pick them anywhere a model is picked."));
   // Credential broker: keys and the Copilot sign-in are per person, on the broker's key page.
   // This card keeps the shared settings (base URLs, concurrency, the Copilot notice, imports);
   // its key fields, sign-in and key test are hidden (style.css .mv-providers--broker).
@@ -335,12 +336,12 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
     }
     root.appendChild(note);
   }
-  /** One provider's row, in its own card when the tab hosts it. The row's name and state badge title the card. */
+  /** One provider's row, a divided row when the tab hosts it. The row's name and state badge title it. */
   const place = (row) => {
     if (!split) { root.appendChild(row); return; }
-    const card = h(doc, 'section', 'card mv-pv-card');
-    card.appendChild(row);
-    root.appendChild(card);
+    const item = h(doc, 'section', 'drow drow-stack mv-pv-card');
+    item.appendChild(row);
+    root.appendChild(item);
   };
 
   // ── GitHub Copilot ──
@@ -355,7 +356,7 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
   cpMain.appendChild(cpHead);
   cpMain.appendChild(h(doc, 'small', 'hint',
     c.acknowledgedTerms
-      ? `Notice acknowledged on ${String(c.acknowledgedTerms).slice(0, 10)}${c.termsCurrent ? '' : ' — the wording changed, please re-read'}. Claude models run through Copilot's native Anthropic endpoint (thinking intact); other vendors run through a translation layer.`
+      ? `Notice acknowledged on ${String(c.acknowledgedTerms).slice(0, 10)}${c.termsCurrent ? '' : ' (the wording changed, please re-read)'}. Claude models run through Copilot's native Anthropic endpoint (thinking intact); other vendors run through a translation layer.`
       : 'Uses your Copilot subscription for GPT, Gemini, Grok and Claude models. Sign in reads the GitHub notice first.'));
   if (c.tokenSource === 'env') cpMain.appendChild(h(doc, 'small', 'hint', `Token read from your shell env (${c.tokenRef}).`));
   const flow = h(doc, 'div', 'mv-cp-flow');
@@ -378,30 +379,30 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
   cpCtl.appendChild(acct);
   cpCtl.appendChild(numberField(doc, 'mv-pv-conc', 'Max concurrent requests', c.maxConcurrent, {
     provider: 'copilot',
-    hint: "Fan-out children beyond this wait their turn. The one knob that lowers GitHub's abuse-detection risk — keep it low.",
+    hint: "Fan-out children beyond this wait their turn. The one knob that lowers GitHub's abuse-detection risk. Keep it low.",
   }));
   cp.appendChild(cpCtl);
 
   const cpBtns = h(doc, 'div', 'mv-pv-btns');
   cpBtns.dataset.cardActions = '';
-  const imp = h(doc, 'button', 'btn-ghost mv-cp-fetch-models', 'Import models…');
+  const imp = h(doc, 'button', 'btn mv-cp-fetch-models', 'Import models…');
   // With the broker, the import runs with the viewer's own Copilot sign-in (on the key page).
   imp.type = 'button'; imp.disabled = !c.connected && !brokered;
   if (imp.disabled) imp.title = 'Sign in first';
   cpBtns.appendChild(imp);
-  const quotaBtn = h(doc, 'button', 'btn-ghost mv-cp-quota-refresh', 'Refresh usage');
+  const quotaBtn = h(doc, 'button', 'btn mv-cp-quota-refresh', 'Refresh usage');
   quotaBtn.type = 'button'; quotaBtn.disabled = !c.connected;
   cpBtns.appendChild(quotaBtn);
   if (c.connected) {
-    const outBtn = h(doc, 'button', 'btn-ghost mv-cp-signout', 'Sign out');
+    const outBtn = h(doc, 'button', 'btn mv-cp-signout', 'Sign out');
     outBtn.type = 'button';
     cpBtns.appendChild(outBtn);
   } else if (!signIn) {
-    const inBtn = h(doc, 'button', 'btn-go mv-cp-signin', 'Sign in…');
+    const inBtn = h(doc, 'button', 'btn btn-primary mv-cp-signin', 'Sign in…');
     inBtn.type = 'button';
     cpBtns.appendChild(inBtn);
   }
-  const terms = h(doc, 'button', 'btn-ghost mv-cp-terms', c.acknowledgedTerms ? 'Re-read notice' : 'Read notice');
+  const terms = h(doc, 'button', 'btn mv-cp-terms', c.acknowledgedTerms ? 'Re-read notice' : 'Read notice');
   terms.type = 'button';
   cpBtns.appendChild(terms);
   cp.appendChild(cpBtns);
@@ -417,10 +418,10 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
     rh.appendChild(h(doc, 'b', 'mv-name', PROVIDER_LABELS[name]));
     rh.appendChild(p.broker && p.broker.enabled ? brokerPill(doc, p.broker, name) : k.configured ? h(doc, 'span', 'badge green', 'key set')
       : k.keySet ? h(doc, 'span', 'badge red', 'key ${VAR} not set')
-        : k.keyOptional ? h(doc, 'span', 'badge green', 'local — no key needed') : h(doc, 'span', 'badge grey', 'no key'));
+        : k.keyOptional ? h(doc, 'span', 'badge green', 'local, no key needed') : h(doc, 'span', 'badge grey', 'no key'));
     main.appendChild(rh);
     main.appendChild(h(doc, 'small', 'hint', name === 'openai'
-      ? 'OpenAI, Azure, Ollama, vLLM, Groq, an in-house gateway — anything with a /chat/completions or /responses endpoint. Models run through the translation layer (no web tools).'
+      ? 'Anything with a /chat/completions or /responses endpoint: OpenAI, Azure, Ollama, vLLM, Groq, an in-house gateway. Models run through the translation layer (no web tools).'
       : 'A gateway that already speaks the Anthropic Messages API but needs a key Worca holds for it. Calls pass through untouched.'));
     if (k.keySource === 'env') main.appendChild(h(doc, 'small', 'hint', `Key read from your shell env (${k.keyRef}).`));
     main.appendChild(h(doc, 'small', 'hint mv-pv-msg'));
@@ -437,7 +438,7 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
       // One click to a hosted catalog: fills the URL (and a ${VAR} key when none is set), then the
       // user Tests and Saves as for any endpoint. Nothing is stored until Save.
       const pre = h(doc, 'small', 'hint mv-pv-presets', 'Preset: ');
-      const or = h(doc, 'button', 'link-btn mv-pv-preset', 'OpenRouter');
+      const or = h(doc, 'button', 'btn btn-sm btn-quiet mv-pv-preset', 'OpenRouter');
       or.type = 'button'; or.dataset.provider = name; or.dataset.preset = 'openrouter';
       or.title = `Point this provider at OpenRouter (${OPENROUTER_PRESET.baseUrl})`;
       pre.appendChild(or);
@@ -462,15 +463,15 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
     btns.dataset.cardActions = '';
     if (name === 'openai') {
       // §8.4 for a server you run: ask the endpoint what it serves instead of typing model ids.
-      const browse = h(doc, 'button', 'btn-ghost mv-pv-browse', 'Import models…');
+      const browse = h(doc, 'button', 'btn mv-pv-browse', 'Import models…');
       browse.type = 'button'; browse.dataset.provider = name;
       browse.title = 'List what this endpoint serves (llama.cpp, Ollama, LM Studio, vLLM…) and import the ones you want';
       btns.appendChild(browse);
     }
-    const test = h(doc, 'button', 'btn-ghost mv-pv-test', 'Test connection');
+    const test = h(doc, 'button', 'btn mv-pv-test', 'Test connection');
     test.type = 'button'; test.dataset.provider = name;
     btns.appendChild(test);
-    const save = h(doc, 'button', 'btn-go mv-pv-save', 'Save');
+    const save = h(doc, 'button', 'btn btn-primary mv-pv-save', 'Save');
     save.type = 'button'; save.dataset.provider = name;
     btns.appendChild(save);
     row.appendChild(btns);
@@ -536,17 +537,17 @@ export function renderCopilotSignIn(flow, { doc = globalThis.document } = {}) {
   box.appendChild(h(doc, 'small', 'hint', 'Enter this code on github.com to connect your Copilot account:'));
   const codeRow = h(doc, 'div', 'mv-cp-code-row');
   codeRow.appendChild(h(doc, 'code', 'mv-cp-code', flow.userCode || ''));
-  const copy = h(doc, 'button', 'btn-ghost mv-cp-copy', 'Copy code');
+  const copy = h(doc, 'button', 'btn mv-cp-copy', 'Copy code');
   copy.type = 'button'; copy.dataset.code = flow.userCode || '';
   codeRow.appendChild(copy);
-  const link = h(doc, 'a', 'btn-ghost mv-cp-open', 'Open github.com/login/device');
+  const link = h(doc, 'a', 'btn mv-cp-open', 'Open github.com/login/device');
   link.href = flow.verificationUri || 'https://github.com/login/device';
   link.target = '_blank'; link.rel = 'noopener';
   codeRow.appendChild(link);
   box.appendChild(codeRow);
   const status = h(doc, 'small', `hint mv-cp-status${flow.error ? ' err' : ''}`, flow.error || flow.status || 'Waiting for approval…');
   box.appendChild(status);
-  const cancel = h(doc, 'button', 'btn-ghost mv-cp-cancel', flow.error ? 'Dismiss' : 'Cancel');
+  const cancel = h(doc, 'button', 'btn mv-cp-cancel', flow.error ? 'Dismiss' : 'Cancel');
   cancel.type = 'button';
   box.appendChild(cancel);
   return box;
@@ -554,7 +555,12 @@ export function renderCopilotSignIn(flow, { doc = globalThis.document } = {}) {
 
 // ── Import from Copilot (§8.4) ───────────────────────────────────────────────
 
-const yesNo = (v) => (v ? '✓' : '—');
+/** A yes/no table cell: a check icon (named "yes" for screen readers) or a dash. */
+const yesNoCell = (doc, v) => {
+  const td = h(doc, 'td', null, v ? null : '—');
+  if (v) { td.setAttribute('aria-label', 'yes'); td.append(icon(doc, 'check', 12)); }
+  return td;
+};
 const fmtK = (n) => (n ? `${Math.round(n / 1000)}k` : '—');
 
 /** The import sheet over GET /api/providers/copilot/models' list. */
@@ -562,7 +568,7 @@ export function renderImportSheet(models, { doc = globalThis.document } = {}) {
   const root = h(doc, 'section', 'card mv-editor mvi');
   root.appendChild(h(doc, 'h3', 'mv-editor-title', 'Import from GitHub Copilot'));
   root.appendChild(h(doc, 'small', 'hint',
-    'These run through your Copilot subscription. Claude models keep extended thinking; other vendors run through a translation layer (no web tools; reasoning arrives as summaries on the Responses API). Imported entries are priced free — Copilot bills premium requests, not tokens — and Worca counts requests per run.'));
+    'These run through your Copilot subscription. Claude models keep extended thinking; other vendors run through a translation layer (no web tools; reasoning arrives as summaries on the Responses API). Imported entries are priced free (Copilot bills premium requests, not tokens), and Worca counts requests per run.'));
   const list = Array.isArray(models) ? models : [];
   if (!list.length) {
     root.appendChild(h(doc, 'div', 'hist-empty', 'Copilot returned no chat models for this account.'));
@@ -593,14 +599,14 @@ export function renderImportSheet(models, { doc = globalThis.document } = {}) {
       tr.appendChild(nameTd);
       tr.appendChild(h(doc, 'td', null, m.vendor || '—'));
       tr.appendChild(h(doc, 'td', 'num', fmtK(m.contextWindow || m.maxPromptTokens)));
-      tr.appendChild(h(doc, 'td', null, yesNo(m.toolCalls)));
-      tr.appendChild(h(doc, 'td', null, yesNo(m.vision)));
-      tr.appendChild(h(doc, 'td', null, yesNo(m.reasoning)));
+      tr.appendChild(yesNoCell(doc, m.toolCalls));
+      tr.appendChild(yesNoCell(doc, m.vision));
+      tr.appendChild(yesNoCell(doc, m.reasoning));
       tr.appendChild(h(doc, 'td', 'mvi-api', API_SHORT[m.api] || '—'));
       const status = [];
-      if (m.inCatalog) status.push('in catalog ✓');
+      if (m.inCatalog) status.push('in catalog');
       if (m.preview) status.push('preview');
-      if (disabled) status.push('disabled — enable it in your GitHub Copilot settings');
+      if (disabled) status.push('disabled: enable it in your GitHub Copilot settings');
       tr.appendChild(h(doc, 'td', 'mvi-status', status.join(' · ') || '—'));
       tbody.appendChild(tr);
     }
@@ -611,9 +617,9 @@ export function renderImportSheet(models, { doc = globalThis.document } = {}) {
   msg.setAttribute('aria-live', 'polite');
   root.appendChild(msg);
   const btns = h(doc, 'div', 'mv-editor-btns');
-  const go = h(doc, 'button', 'btn-go mvi-go', 'Import selected');
+  const go = h(doc, 'button', 'btn btn-primary mvi-go', 'Import selected');
   go.type = 'button'; go.disabled = !list.length;
-  const cancel = h(doc, 'button', 'btn-ghost mvi-cancel', 'Cancel');
+  const cancel = h(doc, 'button', 'btn mvi-cancel', 'Cancel');
   cancel.type = 'button';
   btns.appendChild(go); btns.appendChild(cancel);
   root.appendChild(btns);
@@ -636,13 +642,15 @@ export function renderEndpointSheet(payload, { doc = globalThis.document } = {})
   if (p.server) root.dataset.server = p.server;
   root.appendChild(h(doc, 'h3', 'mv-editor-title', `Import from ${p.serverLabel || 'this endpoint'}`));
   root.appendChild(h(doc, 'small', 'hint', hosted
-    ? `${p.baseUrl || ''} — these run through the translation layer (no web tools). Worca reads each model's window, output cap, tool and reasoning support and its listed price, and pins them on the entry.`
-    : `${p.baseUrl || ''} — these run through the translation layer (no thinking blocks, no web tools) and are priced free: a model on your own machine bills nothing. Worca pins the prompt limit only when the server reports the window it really serves.`));
+    ? `${p.baseUrl || ''}: these run through the translation layer (no web tools). Worca reads each model's window, output cap, tool and reasoning support and its listed price, and pins them on the entry.`
+    : `${p.baseUrl || ''}: these run through the translation layer (no thinking blocks, no web tools) and are priced free: a model on your own machine bills nothing. Worca pins the prompt limit only when the server reports the window it really serves.`));
   for (const w of Array.isArray(p.warnings) ? p.warnings : []) root.appendChild(h(doc, 'small', 'hint mvi-warn', w));
   // A hosted catalog lists hundreds of models: beside the dialog's text filter, narrow by what a
-  // pipeline decides on. The controls only mark the view — endpointRowMatches reads them.
+  // pipeline decides on. The controls only mark the view — endpointRowMatches reads them — so, like
+  // that text filter, they are no change the dialog could lose (data-dirty-ignore).
   if (hosted && list.length) {
     const bar = h(doc, 'div', 'chip-select mvi-or-filters');
+    bar.dataset.dirtyIgnore = '';
     const chip = (cls, text) => {
       const l = h(doc, 'label', 'mvi-chip');
       const cb = h(doc, 'input', cls); cb.type = 'checkbox';
@@ -699,10 +707,10 @@ export function renderEndpointSheet(payload, { doc = globalThis.document } = {})
         ctxTd.appendChild(h(doc, 'span', 'mvi-ctx-unknown', `? · supports ${fmtK(m.trainedContext)}`));
       }
       tr.appendChild(ctxTd);
-      tr.appendChild(h(doc, 'td', null, m.toolCalls === null || m.toolCalls === undefined ? '?' : yesNo(m.toolCalls)));
-      tr.appendChild(h(doc, 'td', null, m.vision === null || m.vision === undefined ? '?' : yesNo(m.vision)));
+      tr.appendChild(m.toolCalls === null || m.toolCalls === undefined ? h(doc, 'td', null, '?') : yesNoCell(doc, m.toolCalls));
+      tr.appendChild(m.vision === null || m.vision === undefined ? h(doc, 'td', null, '?') : yesNoCell(doc, m.vision));
       const status = [];
-      if (m.inCatalog) status.push('in catalog ✓');
+      if (m.inCatalog) status.push('in catalog');
       if (m.loaded === true) status.push('loaded');
       else if (m.loaded === false) status.push('not loaded');
       if (blocked) status.push(m.blocked || 'not importable');
@@ -716,9 +724,9 @@ export function renderEndpointSheet(payload, { doc = globalThis.document } = {})
   msg.setAttribute('aria-live', 'polite');
   root.appendChild(msg);
   const btns = h(doc, 'div', 'mv-editor-btns');
-  const go = h(doc, 'button', 'btn-go mvi-go', 'Import selected');
+  const go = h(doc, 'button', 'btn btn-primary mvi-go', 'Import selected');
   go.type = 'button'; go.disabled = !list.some((m) => m.importable !== false);
-  const cancel = h(doc, 'button', 'btn-ghost mvi-cancel', 'Cancel');
+  const cancel = h(doc, 'button', 'btn mvi-cancel', 'Cancel');
   cancel.type = 'button';
   btns.appendChild(go); btns.appendChild(cancel);
   root.appendChild(btns);
@@ -801,16 +809,19 @@ function collectOpenRouter(conn) {
  *  sign-in (no env, no endpoint). A mode with no text is hidden. */
 const MODE_TEXT = {
   claude: {
-    direct: ["A harness's own sign-in", "The subscription you are signed in with — Claude Code's login, Codex's ChatGPT sign-in or Cursor's. It runs only in that harness."],
-    env: ['Custom endpoint via env (Claude Code)', 'For endpoints that already speak the Anthropic API — LiteLLM, Bedrock, Vertex, a gateway. Set the routing env below.'],
+    direct: ["A harness's own sign-in", "The subscription you are signed in with: Claude Code's login, Codex's ChatGPT sign-in, Cursor's or the Copilot CLI's. It runs only in that harness."],
+    env: ['Custom endpoint via env (Claude Code)', 'For endpoints that already speak the Anthropic API (LiteLLM, Bedrock, Vertex, a gateway). Set the routing env below.'],
     provider: ['Through a provider', "GitHub Copilot, an OpenAI-compatible or an Anthropic-compatible endpoint. Claude Code reaches each through worca's bridge; Codex reaches an OpenAI Responses endpoint itself."],
   },
   codex: {
     direct: ['Codex default', "codex's own sign-in (`codex login`) reaches OpenAI."],
-    provider: ['OpenAI-compatible endpoint', 'An endpoint that serves the Responses API — vLLM, LM Studio, Ollama, a gateway. Codex connects to it itself; no codex sign-in needed.'],
+    provider: ['OpenAI-compatible endpoint', 'An endpoint that serves the Responses API (vLLM, LM Studio, Ollama, a gateway). Codex connects to it itself; no codex sign-in needed.'],
   },
   cursor: {
     direct: ['Cursor default', "cursor-agent's own sign-in (`cursor-agent login`, or CURSOR_API_KEY) reaches Cursor."],
+  },
+  copilot: {
+    direct: ['Copilot default', "the Copilot CLI's own sign-in (`copilot login`, or COPILOT_GITHUB_TOKEN) reaches GitHub Copilot."],
   },
 };
 
@@ -894,7 +905,7 @@ export function renderConnectionSection(model, { doc = globalThis.document, prov
   const chev = h(doc, 'span', 'adv-chev');
   chev.setAttribute('aria-hidden', 'true');
   sum.appendChild(chev);
-  sum.appendChild(h(doc, 'span', null, 'Advanced — base URL, API key, extra headers'));
+  sum.appendChild(h(doc, 'span', null, 'Advanced: base URL, API key, extra headers'));
   adv.appendChild(sum);
   const advBody = h(doc, 'div', 'advanced-body mv-conn-adv-body');
   const bu = h(doc, 'input', 'input mv-conn-baseurl');
@@ -911,24 +922,19 @@ export function renderConnectionSection(model, { doc = globalThis.document, prov
   advBody.appendChild(field('Extra headers', hdr));
   // OpenRouter routing: shown only while the entry resolves to OpenRouter (applyConnectionMode).
   const orBox = h(doc, 'div', 'mv-conn-or');
-  orBox.appendChild(h(doc, 'small', 'hint', 'OpenRouter routing — fallback models are tried in order when this one is rate-limited or down (a :free model’s shared pool often is); provider order and sort pick who serves it.'));
+  orBox.appendChild(h(doc, 'small', 'hint', 'OpenRouter routing: fallback models are tried in order when this one is rate-limited or down (a :free model’s shared pool often is); provider order and sort pick who serves it.'));
   const orModels = h(doc, 'input', 'input mv-conn-or-models');
   orModels.type = 'text'; orModels.placeholder = 'e.g. qwen/qwen3.8-27b (comma-separated)';
   orBox.appendChild(field('Fallback models', orModels));
   const orOrder = h(doc, 'input', 'input mv-conn-or-order');
-  orOrder.type = 'text'; orOrder.placeholder = 'provider names, comma-separated — empty lets OpenRouter choose';
+  orOrder.type = 'text'; orOrder.placeholder = 'provider names, comma-separated (empty lets OpenRouter choose)';
   orBox.appendChild(field('Provider order', orOrder));
   const orSort = h(doc, 'select', 'select mv-conn-or-sort');
   for (const [value, text] of [['', 'OpenRouter default'], ['price', 'Price'], ['throughput', 'Throughput'], ['latency', 'Latency']]) {
     const o = h(doc, 'option', null, text); o.value = value; orSort.appendChild(o);
   }
   orBox.appendChild(field('Sort providers by', orSort));
-  const orFbLab = h(doc, 'label', 'mv-conn-cap');
-  const orFb = h(doc, 'input', 'mv-conn-or-fallbacks');
-  orFb.type = 'checkbox';
-  orFbLab.appendChild(orFb);
-  orFbLab.appendChild(h(doc, 'span', null, 'Allow other providers when these are unavailable'));
-  orBox.appendChild(orFbLab);
+  orBox.appendChild(makeSwitch(doc, { label: 'Allow other providers when these are unavailable', inputClass: 'mv-conn-or-fallbacks', rowClass: 'mv-conn-cap' }).row);
   advBody.appendChild(orBox);
   fillOpenRouter(orBox, upstream && upstream.openrouter);
   adv.appendChild(advBody);
@@ -1000,7 +1006,7 @@ export function applyConnectionMode(connEl) {
   const eng = conn.dataset.engine || 'claude';
   const held = conn.dataset.editing === '1' ? eng : 'claude';
   const codex = held === 'codex';
-  const cursor = held === 'cursor';
+  const cursor = held === 'cursor' || held === 'copilot';   // a sign-in only: no endpoint fields
   for (const lab of conn.querySelectorAll('.mv-conn-mode')) {
     const rb = lab.querySelector('.mv-conn-mode-rb');
     const text = (MODE_TEXT[held] || MODE_TEXT.claude)[rb.value];
@@ -1043,15 +1049,15 @@ export function applyConnectionMode(connEl) {
   const p = conn._providers;
   if (hint) {
     if (!p) hint.textContent = '';
-    else if (provider === 'copilot') hint.textContent = p.copilot?.connected ? `Connected${p.copilot.login ? ` as @${p.copilot.login}` : ''}.` : 'Not connected — sign in on the Providers page, or Save is refused.';
-    else hint.textContent = p[provider]?.configured ? 'Provider key set.' : (p[provider]?.keySet ? 'The provider key’s ${VAR} is not set in Worca’s environment.' : p[provider]?.keyOptional ? 'Local endpoint — no key needed.' : 'No provider key — set one on the Providers page, or override it under Advanced.');
+    else if (provider === 'copilot') hint.textContent = p.copilot?.connected ? `Connected${p.copilot.login ? ` as @${p.copilot.login}` : ''}.` : 'Not connected. Sign in on the Providers page, or Save is refused.';
+    else hint.textContent = p[provider]?.configured ? 'Provider key set.' : (p[provider]?.keySet ? 'The provider key’s ${VAR} is not set in Worca’s environment.' : p[provider]?.keyOptional ? 'Local endpoint, no key needed.' : 'No provider key. Set one on the Providers page, or override it under Advanced.');
     hint.className = `hint mv-conn-provider-hint${(provider === 'copilot' ? !p?.copilot?.connected : !(p?.[provider]?.configured || p?.[provider]?.keyOptional)) && p ? ' warn' : ''}`;
   }
   const note = conn.querySelector('.mv-conn-note');
   if (note) {
     const copilotPricing = provider === 'copilot' ? ' Copilot bills premium requests, so Pricing defaults to Free.' : '';
     note.textContent = mode !== 'provider' ? '' : codex
-      ? 'Codex calls the endpoint’s Responses API itself — no translation, every Codex tool kept. The key reaches codex through its environment, never its command line. Cost stays unknown unless Pricing sets one.'
+      ? 'Codex calls the endpoint’s Responses API itself: no translation, every Codex tool kept. The key reaches codex through its environment, never its command line. Cost stays unknown unless Pricing sets one.'
       : api === 'openai-chat'
       ? `Translated: reasoning the endpoint streams (OpenRouter, vLLM) is shown as thinking but not carried across turns, WebSearch/WebFetch withheld, prompt limit per the capabilities above.${copilotPricing}`
       : api === 'openai-responses'
@@ -1084,9 +1090,9 @@ export function applyConnectionMode(connEl) {
   if (allowed && !effCbs.some((cb) => cb.checked)) for (const cb of effCbs) if (allowed.includes(cb.value)) cb.checked = true;
   if (effHint) {
     effHint.textContent = translatedNoReasoning
-      ? 'This model has no reasoning control; effort would be ignored — only medium is offered.'
+      ? 'This model has no reasoning control; effort would be ignored, so only medium is offered.'
       : levels ? `Maps to this model's effort levels: ${levels.join(', ')}.`
-        : translated ? 'Maps to reasoning_effort low / medium / high — xhigh and max are not distinct.'
+        : translated ? 'Maps to reasoning_effort low / medium / high (xhigh and max are not distinct).'
           : 'All checked = every effort (the default).';
   }
 }

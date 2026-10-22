@@ -2,6 +2,8 @@
 // Team metrics aggregation (team-metrics-design.md §4.9). PURE: no I/O, no node: imports —
 // shared by the server (read.mjs) and the browser (the page re-aggregates per range/group/filter).
 import { canonicalMetricsSlug } from './slug.mjs';
+import { csvCell } from '../csv.mjs';
+import { hasTag, parseTag, parseTagGroupBy, MAX_TAGS, TAG_KEY_RE } from '../run-tags.mjs';
 
 export const SUPPORTED_RECORD_VERSION = 1;
 export const RANGES = Object.freeze(['this-month', 'last-month', 'quarter', 'year', 'all', 'custom']);
@@ -133,10 +135,34 @@ export const DIMENSIONS = {
   },
 };
 
+/** A record's tags (records come from a branch anyone with push access can write: strings only, valid only). */
+export const recordTags = (r) => (Array.isArray(r?.tags) ? r.tags.filter((t) => typeof t === 'string' && !parseTag(t).error) : []);
+
+/** A fixed GROUP_BYS dimension or 'tag:client' (one value per key per run, so a run lands in exactly one stack). */
+export const isGroupBy = (g) => GROUP_BYS.includes(g) || parseTagGroupBy(g) != null;
+
+function tagDimension(key) {
+  return (r) => {
+    for (const t of recordTags(r)) {
+      const { tag } = parseTag(t);
+      if (tag.key === key) return [{ key: tag.value, label: tag.value || key }];   // '' = a plain tag
+    }
+    return [{ key: NONE, label: `(no ${key})` }];
+  };
+}
+const dimFn = (dim) => DIMENSIONS[dim] || (parseTagGroupBy(dim) ? tagDimension(parseTagGroupBy(dim)) : null);
+
+/** filter.tags → valid tag queries ('client' or 'client:acme'), at most MAX_TAGS. */
+export function tagFilterOf(filter) {
+  return [].concat(filter?.tags ?? []).filter((t) => typeof t === 'string' && t && !parseTag(t).error).slice(0, MAX_TAGS);
+}
+
 export function applyFilter(records, filter = {}) {
   const active = Object.entries(filter || {}).filter(([dim, key]) => FILTER_DIMS.includes(dim) && key != null && key !== '');
-  if (!active.length) return records;
-  return records.filter((r) => active.every(([dim, key]) => DIMENSIONS[dim](r).some((k) => k.key === key)));
+  const tags = tagFilterOf(filter);
+  if (!active.length && !tags.length) return records;
+  return records.filter((r) => active.every(([dim, key]) => DIMENSIONS[dim](r).some((k) => k.key === key))
+    && tags.every((q) => hasTag(recordTags(r), q)));
 }
 
 function computeKpis(rs, now, humanRateUsd = 0) {
@@ -206,7 +232,7 @@ function deltas(k, p) {
 function breakdown(rs, dim) {
   const rows = new Map();
   for (const r of rs) {
-    for (const k of DIMENSIONS[dim](r)) {
+    for (const k of dimFn(dim)(r)) {
       const row = rows.get(k.key) || { key: k.key, label: k.label, sub: k.sub ?? null, runs: 0, usd: 0, done: 0, reviews: [], filesChanged: 0, filesUnknown: 0, overrides: 0, offPolicy: 0 };
       row.runs += 1;
       row.usd += usdOf(r);                       // "a run touching two projects counts in both"
@@ -283,7 +309,7 @@ function series(rs, win, groupBy, now) {
     if (i == null) continue;
     if (r.result === 'done' || r.result === 'failed' || r.result === 'stopped') runs[i][r.result] += 1;
     spend[i].totalUsd += usdOf(r);
-    for (const k of DIMENSIONS[groupBy](r)) {
+    for (const k of dimFn(groupBy)(r)) {
       const v = usdOf(r);                          // one key per run for every GROUP_BYS dimension
       spend[i].stacks[k.key] = (spend[i].stacks[k.key] || 0) + v;
       totals[k.key] = (totals[k.key] || 0) + v;
@@ -325,6 +351,8 @@ function toRunRow(r, humanRateUsd = 0) {
     projects: r.target?.kind === 'workspace'
       ? [...new Set((Array.isArray(r.target.touched) ? r.target.touched.filter((p) => typeof p === 'string') : []).map(canonicalMetricsSlug))]
       : [r.target?.project].filter((p) => typeof p === 'string' && p).map(canonicalMetricsSlug),
+    // Run tags: only on a record that carries any, so tag-less rows keep their shape.
+    ...((t) => (t.length ? { tags: t } : {}))(recordTags(r)),
     // Team policy (§10): only on a run recorded under a policy, so policy-less rows keep their shape.
     ...(r.policy && r.policy.home ? { policy: {
       home: r.policy.home,
@@ -338,17 +366,37 @@ function toRunRow(r, humanRateUsd = 0) {
   };
 }
 
+/** The records a view counts: parseable start, the filter applied, started inside the range window. */
+function scopedRecords(records, { range, from, to, filter, now }) {
+  const win = resolveRange(range, { now, from, to });
+  const usable = (records || []).filter((r) => r && Number.isFinite(startOf(r)));
+  const filtered = applyFilter(usable, filter);
+  const inWin = (s, e) => (r) => (s == null || startOf(r) >= s) && (e == null || startOf(r) < e);
+  return { win, usable, filtered, inWin, inRange: filtered.filter(inWin(win.startMs, win.endMs)) };
+}
+
+/**
+ * By tag (#718 slice 4): one breakdown per key. Every key in `keys` (configured dimensions, in order) comes
+ * first, then every other key a record in range carries, by value spend. Same window and filter as aggregate().
+ */
+export function tagBreakdowns(records, { range = 'this-month', from = null, to = null, filter = {}, now = Date.now(), keys = [] } = {}) {
+  const { inRange } = scopedRecords(records, { range, from, to, filter, now });
+  const configured = [...new Set((keys || []).filter((k) => typeof k === 'string' && TAG_KEY_RE.test(k)))];
+  const carried = [...new Set(inRange.flatMap((r) => recordTags(r).map((t) => parseTag(t).tag.key)))]
+    .filter((k) => !configured.includes(k));
+  const valueUsd = (rows) => rows.reduce((a, r) => a + (r.isNone ? 0 : r.usd), 0);
+  const table = (key) => ({ key, rows: breakdown(inRange, `tag:${key}`) });
+  return configured.map(table).concat(carried.map(table)
+    .sort((a, b) => valueUsd(b.rows) - valueUsd(a.rows) || (a.key < b.key ? -1 : 1)));
+}
+
 /**
  * @param {object[]} records  v1 records (already parsed; unknown v / malformed already dropped)
  * @param {{range?:string, from?:string|null, to?:string|null, groupBy?:string, filter?:object, now?:number}} [opts]
  */
 export function aggregate(records, { range = 'this-month', from = null, to = null, groupBy = 'workflow', filter = {}, now = Date.now(), humanRateUsd = 0 } = {}) {
-  if (!GROUP_BYS.includes(groupBy)) throw new RangeError(`unknown groupBy "${groupBy}" (expected ${GROUP_BYS.join(' | ')})`);
-  const win = resolveRange(range, { now, from, to });
-  const usable = (records || []).filter((r) => r && Number.isFinite(startOf(r)));
-  const filtered = applyFilter(usable, filter);
-  const inWin = (s, e) => (r) => (s == null || startOf(r) >= s) && (e == null || startOf(r) < e);
-  const inRange = filtered.filter(inWin(win.startMs, win.endMs));
+  if (!isGroupBy(groupBy)) throw new RangeError(`unknown groupBy "${groupBy}" (expected ${GROUP_BYS.join(' | ')} | tag:KEY)`);
+  const { win, usable, filtered, inWin, inRange } = scopedRecords(records, { range, from, to, filter, now });
   const kpis = computeKpis(inRange, now, humanRateUsd);
   const prevKpis = win.prevStartMs == null ? null : computeKpis(filtered.filter(inWin(win.prevStartMs, win.prevEndMs)), now, humanRateUsd);
   const hasActor = inRange.some((r) => r.actor);
@@ -363,20 +411,14 @@ export function aggregate(records, { range = 'this-month', from = null, to = nul
       actor: hasActor ? breakdown(inRange, 'actor') : null,
       project: hasWorkspace ? breakdown(inRange, 'project') : null,
       models: breakdown(inRange, 'models'),
+      tag: parseTagGroupBy(groupBy) ? breakdown(inRange, groupBy) : null,
     },
     runs: [...inRange].sort((a, b) => startOf(b) - startOf(a)).map((r) => toRunRow(r, humanRateUsd)),
     totalRecords: usable.length,
   };
 }
 
-export const CSV_COLUMNS = Object.freeze(['startedAt', 'title', 'workflow', 'result', 'costUsd', 'humanHours', 'savedUsd', 'wallMs', 'activeMs', 'pausedMs', 'reviewCycles', 'prNumber', 'prUrl', 'actor', 'source', 'projects', 'id']);
-
-function csvCell(v) {
-  if (v == null) return '';
-  let s = String(v);
-  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;            // spreadsheet formula injection guard
-  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
+export const CSV_COLUMNS = Object.freeze(['startedAt', 'title', 'workflow', 'result', 'costUsd', 'humanHours', 'savedUsd', 'wallMs', 'activeMs', 'pausedMs', 'reviewCycles', 'prNumber', 'prUrl', 'actor', 'source', 'projects', 'id', 'tags']);
 
 /** CSV of aggregate().runs rows (the filtered run table). */
 export function toCsv(runRows) {
@@ -384,7 +426,7 @@ export function toCsv(runRows) {
   for (const r of runRows) {
     lines.push([
       r.startedAt, r.title, r.workflow, r.result, r.usd, r.humanHours, r.savedUsd, r.wallMs, r.activeMs, r.pausedMs, r.reviewCycles,
-      r.pr?.number, r.pr?.url, r.actor, r.source, (r.projects || []).join(' '), r.id,
+      r.pr?.number, r.pr?.url, r.actor, r.source, (r.projects || []).join(' '), r.id, (r.tags || []).join(' '),
     ].map(csvCell).join(','));
   }
   // BOM: Excel otherwise reads the file as the local code page and mangles every non-ASCII

@@ -162,10 +162,13 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
       schedule: {},
       nightMode: {}, nightModeToggle: 'auto',
       sync: null,
+      networkWait: null,
       actions: {},
       runEngine: null, stepModels: {}, utilityModels: {},   // cascading settings (Plan 2a): null / {} change nothing
-      askEngine: null, askModels: {},                        // Ask Worca's engine (Plan 2b, D17): null / {} change nothing
+      askEngine: null, askModels: {},                        // Chat's engine (Plan 2b, D17): null / {} change nothing
       flags: {},                                             // feature flags (docs/feature-flags.md): {} is a no-op
+      tagDimensions: [],                                     // Settings › Tags › Tag dimensions: [] clears (already clear)
+      enforceTags: false,                                    // Settings › Tags › Require mandatory tags: false clears (already clear)
     };
     for (const k of SETTINGS_POST_KEYS) {
       if (k === 'root') continue;
@@ -272,4 +275,26 @@ test('POST /api/settings validation failures → 400 { error, field } with the b
       assert.doesNotMatch(j.error, NO_KEY);
     },
   })));
+});
+
+test('POST tagDimensions: a bad entry is 400 with field tagDimensions; a valid list round-trips through GET', async () => {
+  const bad = await postJson({ tagDimensions: [{ key: '', label: 'x' }] });
+  assert.equal(bad.status, 400);
+  assert.equal((await bad.json()).field, 'tagDimensions');
+  const ok = await postJson({ tagDimensions: [{ key: 'cc', label: 'Cost centre', values: ['4410'], required: true }] });
+  assert.equal(ok.status, 200);
+  assert.deepEqual((await (await fetch(`${base}/api/settings`)).json()).tagDimensions, [{ key: 'cc', label: 'Cost centre', values: ['4410'], required: true }]);
+  await postJson({ tagDimensions: [] });
+  assert.deepEqual((await (await fetch(`${base}/api/settings`)).json()).tagDimensions, []);
+});
+
+test('POST enforceTags: a non-boolean is 400 with field enforceTags; true round-trips through GET', async () => {
+  const bad = await postJson({ enforceTags: 'yes' });
+  assert.equal(bad.status, 400);
+  assert.equal((await bad.json()).field, 'enforceTags');
+  const ok = await postJson({ enforceTags: true });
+  assert.equal(ok.status, 200);
+  assert.equal((await (await fetch(`${base}/api/settings`)).json()).enforceTags, true);
+  await postJson({ enforceTags: false });
+  assert.equal((await (await fetch(`${base}/api/settings`)).json()).enforceTags, false);
 });

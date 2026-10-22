@@ -5,7 +5,7 @@
 // a command param. Offline by construction.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { execSync, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -44,8 +44,8 @@ function ctxFor(key, { params = {}, ports: configPorts, cwd = tmp('worca-bi-cwd-
   };
 }
 
-test('the built-in layer is exactly shell, js, py, gitDiff, deckPdf, deckAudio, deckBundle, the three C4 cards and the four workspace-map cards — normalized, ordered, and disjoint from the agent keys', () => {
-  assert.deepEqual(Object.keys(REG), ['shell', 'js', 'py', 'gitDiff', 'deckPdf', 'deckAudio', 'deckBundle', 'c4Discover', 'c4Check', 'c4Render', 'workspaceMapExtract', 'workspaceMapCatalog', 'workspaceMapJoin', 'workspaceMapRender']);
+test('the built-in layer is exactly shell, js, py, gitDiff, deckPdf, deckAudio, deckBundle, the three C4 cards, the three promo video cards and the four workspace-map cards — normalized, ordered, and disjoint from the agent keys', () => {
+  assert.deepEqual(Object.keys(REG), ['shell', 'js', 'py', 'gitDiff', 'deckPdf', 'deckAudio', 'deckBundle', 'c4Discover', 'c4Check', 'c4Render', 'promoVoices', 'promoNarrate', 'promoRender', 'workspaceMapExtract', 'workspaceMapCatalog', 'workspaceMapJoin', 'workspaceMapRender']);
   assert.equal(REG.shell.runtime, 'shell');
   assert.equal(REG.shell.ports, 'config');
   assert.deepEqual(REG.shell.params.map((p) => [p.id, p.type, p.required]), [['command', 'command', true]]);
@@ -267,4 +267,32 @@ test('gitDiff: a json wire on the params port picks the ref at run time, and the
   ctx.bindings = { params: { seq: 2, type: 'json', value: { ref: `--output=${leak}` } } };
   await assert.rejects(runScriptExecution(ctx), /must not start with "-"/);
   assert.equal(existsSync(leak), false, 'git never saw the option');
+});
+
+test('gitDiff on a workspace run: a Folder member gets its changes file, never a git diff (P5)', async () => {
+  const repo = gitDir('bi-diff-wsf-a');
+  scratch.push(repo);
+  const base = execSync('git rev-parse HEAD', { cwd: repo, encoding: 'utf8' }).trim();
+  // A Folder member's copy inside some other repository (a worca home inside a dotfiles repo): git there would diff THAT one.
+  const outer = gitDir('bi-diff-wsf-outer');
+  scratch.push(outer);
+  writeFileSync(join(outer, 'tracked.txt'), 'outer\n');
+  execSync('git add -N tracked.txt', { cwd: outer });
+  const copy = join(outer, 'copy');
+  mkdirSync(copy);
+  writeFileSync(join(copy, 'n.txt'), 'n\n');
+  const patch = join(tmp('worca-bi-members-'), 'changes.patch');
+  const repos = [{ projectKey: 'api', dir: repo, checkpointRef: base },
+    { projectKey: 'notes', dir: copy, checkpointRef: null, workMode: 'folder', changesPatch: patch }];
+  const events = [];
+  const extra = { runRoot: tmp('worca-bi-root-'), workspace: { kind: 'metadata', projects: [{ projectKey: 'api' }, { projectKey: 'notes', workMode: 'folder' }] },
+    repos, onEvent: (e) => events.push(e) };
+  const ctx = ctxFor('gitDiff', { cwd: repo, checkpointRef: base, extra });
+  await runScriptExecution(ctx);
+  const md = readFileSync(ctx.outputs.diff.path, 'utf8');
+  const sectionOf = (key) => (md.split(/^## /m).find((s) => s.startsWith(`${key}\n`)) || '');
+  assert.equal(sectionOf('notes'), `notes\n\nFolder project (no git): its changes are in \`${patch}\`.\n`);
+  assert.ok(!md.includes('tracked.txt'), 'the enclosing repository is never diffed');
+  assert.match(sectionOf('api'), new RegExp(`^api\\n\\nBase: \`${base}\`\\n`));
+  assert.deepEqual(events.map((e) => String(e?.text ?? '')).filter((t) => t.startsWith('[warn]')), []);
 });

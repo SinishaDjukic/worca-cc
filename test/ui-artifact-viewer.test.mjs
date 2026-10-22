@@ -164,6 +164,8 @@ function page(respond = () => null) {
 const tick = async (win, n = 8) => { for (let i = 0; i < n; i += 1) await new Promise((r) => win.setTimeout(r, 0)); };
 const press = (win, el, key, extra = {}) => el.dispatchEvent(new win.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...extra }));
 const tap = (win, el, detail = 1) => el.dispatchEvent(new win.MouseEvent('click', { bubbles: true, cancelable: true, detail }));
+// A press and its release on the same node (a click on the backdrop has to start there too).
+const pressTap = (win, el, detail = 1) => { el.dispatchEvent(new win.MouseEvent('mousedown', { bubbles: true, cancelable: true, detail })); tap(win, el, detail); };
 
 test('the viewer opens as a modal: the file, its step · cycle · size, focus inside, the text preview', async () => {
   const p = page((url) => (url.startsWith('/t?') ? { status: 200, body: { rel: 'plans/notes.txt', text: 'hello' } } : null));
@@ -204,9 +206,12 @@ test('Esc, the backdrop and Close dismiss it, unload the preview and hand focus 
   const root = p.doc.querySelector('.apv');
   tap(p.win, root.querySelector('.apv-card'));
   assert.ok(p.doc.querySelector('.apv'), 'a click inside the card keeps it');
-  tap(p.win, root, 2);
+  pressTap(p.win, root, 2);
   assert.ok(p.doc.querySelector('.apv'), 'the second press of a double click does not close it');
+  root.querySelector('.apv-card').dispatchEvent(new p.win.MouseEvent('mousedown', { bubbles: true, cancelable: true }));
   tap(p.win, root);
+  assert.ok(p.doc.querySelector('.apv'), 'a selection dragged out of the card (pressed inside, released on the overlay) keeps it');
+  pressTap(p.win, root);
   assert.equal(p.doc.querySelector('.apv'), null, 'the backdrop closes it');
 
   await p.open({ artifact: html }).ready;
@@ -502,10 +507,10 @@ test('a slow answer for the file left behind never changes the file shown now: a
   assert.equal(root.querySelector('.apv-note').hidden, true, 'and so did the stale download failure');
 });
 
-test('the popup sits in the --hd-syntax-* token scope (the tokens are not on :root), so highlighted code is coloured', async () => {
+test('the --hd-syntax-* tokens are in the :root token block, so highlighted code is coloured wherever it sits', async () => {
   const { readFileSync } = await import('node:fs');
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
-  assert.match(css, /\.hd-diff-pane,\.ask-md,\.code-editor,\.apv\{\s*--hd-syntax-comment:/);
+  assert.match(css.slice(css.indexOf(':root{'), css.indexOf('/* ---------- base reset')), /--hd-syntax-comment:/);
 });
 
 // ── refine cycle 2: behaviours the popup claims that the rows above did not pin ──
@@ -1327,4 +1332,41 @@ test('closing a viewer that replaced another, after a repaint: still the identic
   pane.innerHTML = html;
   v2.close();
   assert.equal([...pane.children].indexOf(p.doc.activeElement), 2);
+});
+
+test('a pinned previewKind (the chat files card): html source as highlighted code, never a frame; a JSON body in out.txt as json', async () => {
+  const p = page((url) => (url.startsWith('/t?rel=att_1') ? { status: 200, body: { text: '<script>x</script>' } }
+    : url.startsWith('/t?rel=att_2') ? { status: 200, body: { text: '{"a":1}' } } : null));
+  await p.open({ artifact: { relPath: 'att_1/page.html', bytes: 18, previewKind: 'code' }, deps: { hljsLoader: fakeLoader() } }).ready;
+  const pre = p.doc.querySelector('.apv-stage pre.apv-code');
+  assert.ok(pre, 'code view');
+  assert.equal(pre.textContent, '<script>x</script>');
+  assert.equal(p.doc.querySelector('.apv iframe, .apv script'), null, 'nothing framed, nothing run');
+  assert.ok(p.calls.includes('GET /t?rel=att_1%2Fpage.html'), 'text route, not raw');
+  await p.open({ artifact: { relPath: 'att_2/out.txt', bytes: 7, previewKind: 'json' } }).ready;
+  assert.equal(p.doc.querySelector('.apv-stage pre.artifact-json').textContent, '{\n  "a": 1\n}');
+});
+
+test('a pinned image is drawn through <img> from the raw route, even under a name that would frame (svg saved as .html)', async () => {
+  const p = page();
+  await p.open({ artifact: { relPath: 'att_3/logo.svg', bytes: 300, previewKind: 'image' } }).ready;
+  assert.equal(p.doc.querySelector('.apv-stage img').getAttribute('src'), '/raw/att_3/logo.svg');
+  await p.open({ artifact: { relPath: 'att_4/page.html', bytes: 300, previewKind: 'image' } }).ready;
+  assert.equal(p.doc.querySelector('.apv iframe'), null);
+  assert.equal(p.doc.querySelector('.apv-stage img').getAttribute('src'), '/raw/att_4/page.html');
+  const m = mountIn();
+  await renderPreview({ relPath: 'att_5/page.html', text: '<b>x</b>', previewKind: 'text' }, m, {});
+  assert.equal(m.querySelector('iframe'), null);
+  assert.equal(m.querySelector('pre.artifact-text').textContent, '<b>x</b>');
+});
+
+test('a pinned html (or c4, or junk) view is never framed: the renderer reads it as text, the viewer as no preview', async () => {
+  const m = mountIn();
+  await renderPreview({ relPath: 'att_6/page.html', text: '<b>x</b>', url: '/raw/att_6/page.html', previewKind: 'html' }, m, {});
+  assert.equal(m.querySelector('iframe'), null);
+  assert.equal(m.querySelector('pre.artifact-text').textContent, '<b>x</b>');
+  const p = page();
+  await p.open({ artifact: { relPath: 'att_6/page.html', bytes: 8, previewKind: 'html' } }).ready;
+  assert.equal(p.doc.querySelector('.apv iframe'), null);
+  assert.ok(!p.calls.some((c) => c.includes('/raw/att_6')), 'never fetched as raw bytes');
 });

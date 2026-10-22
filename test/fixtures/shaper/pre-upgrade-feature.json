@@ -1,0 +1,89 @@
+{
+  "pipelines": [
+    {
+      "id": "bbbb0001",
+      "status": "done",
+      "title": "Charts"
+    },
+    {
+      "id": "bbbb0002",
+      "status": "running",
+      "title": "Charts · 2/3: Chart in Chat"
+    }
+  ],
+  "shape_features": [
+    {
+      "id": "feat-pre",
+      "title": "Charts",
+      "project_dir": "/tmp/worca-pre-upgrade",
+      "origin_pipeline_id": "bbbb0001",
+      "source_branch": "main",
+      "outline": "{\"why\":\"Three steps.\",\"slices\":[{\"id\":\"s1\",\"title\":\"Store charts\",\"goal\":\"Goal 1\",\"inScope\":[\"do 1\"],\"outOfScope\":[],\"acceptance\":[\"ok 1\"],\"dependsOn\":[],\"estimate\":\"medium\"},{\"id\":\"s2\",\"title\":\"Chart in Chat\",\"goal\":\"Goal 2\",\"inScope\":[\"do 2\"],\"outOfScope\":[],\"acceptance\":[\"ok 2\"],\"dependsOn\":[\"s1\"],\"estimate\":\"medium\"},{\"id\":\"s3\",\"title\":\"Charts on the run page\",\"goal\":\"Goal 3\",\"inScope\":[\"do 3\"],\"outOfScope\":[],\"acceptance\":[\"ok 3\"],\"dependsOn\":[\"s2\"],\"estimate\":\"medium\"}]}",
+      "request_base": "{}",
+      "perspectives": "[\"product\"]",
+      "workflow_id": "wf_shape",
+      "approve_each": 1,
+      "status": "active",
+      "proposed": 3,
+      "merges": 0,
+      "removals": 0,
+      "replaces": null,
+      "replaced_by": null,
+      "replan_ticket_id": null,
+      "created_by": "ann",
+      "created_at": "2026-10-01T10:00:00.000Z",
+      "updated_at": "2026-10-01T10:00:00.000Z",
+      "ship_mode": null,
+      "ship_pr_url": null,
+      "shipped_at": null
+    }
+  ],
+  "shape_feature_slices": [
+    {
+      "feature_id": "feat-pre",
+      "idx": 1,
+      "slice_id": "s1",
+      "title": "Store charts",
+      "ticket_id": null,
+      "pipeline_id": "bbbb0001",
+      "draft_pr_url": null
+    },
+    {
+      "feature_id": "feat-pre",
+      "idx": 2,
+      "slice_id": "s2",
+      "title": "Chart in Chat",
+      "ticket_id": null,
+      "pipeline_id": "bbbb0002",
+      "draft_pr_url": null
+    },
+    {
+      "feature_id": "feat-pre",
+      "idx": 3,
+      "slice_id": "s3",
+      "title": "Charts on the run page",
+      "ticket_id": null,
+      "pipeline_id": null,
+      "draft_pr_url": null
+    }
+  ],
+  "clarify": [
+    {
+      "pipeline_id": "bbbb0001",
+      "questions": "{\"questions\":[{\"id\":\"q1\",\"question\":\"Where are charts stored?\"},{\"id\":\"q2\",\"question\":\"Which chart kinds?\"}]}",
+      "answers": "{\"answers\":[{\"id\":\"q1\",\"question\":\"Where are charts stored?\",\"choice\":\"SQLite\"},{\"id\":\"q2\",\"question\":\"Which chart kinds?\",\"choice\":\"Bar and line\"}]}"
+    }
+  ],
+  "pipeline_events": [
+    {
+      "pipeline_id": "bbbb0001",
+      "ts": "2026-10-01T10:00:00.000Z",
+      "text": "Slice outline **approve** (round 1)."
+    },
+    {
+      "pipeline_id": "bbbb0001",
+      "ts": "2026-10-01T10:00:00.000Z",
+      "text": "Plan approval **approve**."
+    }
+  ]
+}

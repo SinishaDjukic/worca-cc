@@ -13,6 +13,8 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { checkRows } from './helpers/rows.mjs';
+import { paintRunStatus } from '../ui/public/run-status-card.mjs';
+import { backdropClick, dragOut } from './helpers/popups.mjs';
 
 import {
   UI_LEVELS, LEVEL_INFO, normalizeLevel, levelShows, levelAtLeast, currentLevel, tagLevel, keepVisible,
@@ -56,11 +58,24 @@ test('every nav item, Settings tab and card, and detail tab declares an explicit
       const tabs = [...doc.querySelectorAll('#settings-tabs button[data-tab]')];
       assert.ok(tabs.length >= 5);
       for (const b of tabs) assert.match(b.dataset.minLevel || '', LEVEL_RE, `Settings tab "${b.dataset.tab}"`);
-      const cards = [...doc.querySelectorAll('.settings-pane .settings-card, [data-view="models"] .settings-card')];
+      const cards = [...doc.querySelectorAll('.settings-pane .settings-card, #engine-settings-card')];
       assert.ok(cards.length >= 10);
       for (const c of cards) {
         const name = c.id || (c.querySelector('h2') || {}).textContent;
         assert.match(c.dataset.minLevel || '', LEVEL_RE, `Settings card "${name}" has no data-min-level`);
+      }
+    } },
+    { name: 'presets: the Settings tab and card are Advanced; New run\'s Preset button and its ✕ stay ungated', run: () => {
+      const doc = shell();
+      assert.equal(doc.querySelector('#settings-tabs [data-tab="presets"]').dataset.minLevel, 'advanced');
+      assert.equal(doc.getElementById('presets-settings-card').dataset.minLevel, 'advanced');
+      for (const id of ['preset-row', 'preset-btn', 'preset-clear']) {
+        assert.equal(doc.getElementById(id).closest('[data-min-level="advanced"], [data-min-level="expert"]'), null, `#${id} is Simple`);
+      }
+      // The History page's Save as preset lives in #hist-detail-tpl: check inside the template and the template's own ancestors.
+      const tpl = doc.getElementById('hist-detail-tpl');
+      for (const n of [tpl.content.querySelector('.hd-save-preset'), tpl]) {
+        assert.equal(n.closest('[data-min-level="advanced"], [data-min-level="expert"]'), null, 'Save as preset is Simple');
       }
     } },
     { name: 'every detail tab (Running, History, project page, workspace page) declares a level', run: () => {
@@ -133,6 +148,23 @@ test('level helpers: ordered/cumulative with unknown -> expert, levelAtLeast rea
   ]);
 });
 
+// ── run progress ──────────────────────────────────────────────────────────────
+
+test('run progress bars are Simple (no data-min-level); only the hover breakdown is Advanced', () => {
+  const doc = new JSDOM(html).window.document;
+  // Runs redesign slice 4 (D19): the run page's bar lives in the shared status block (run-status-card.mjs).
+  const tpl = [...doc.querySelectorAll('template')].find((t) => t.content.querySelector('.rd-now-top.run-status'));
+  assert.ok(tpl, 'the run page template carries the status block host');
+  const host = tpl.content.querySelector('.rd-now-top.run-status');
+  assert.equal(host.hasAttribute('data-min-level'), false, 'the status block carries no data-min-level');
+  const prog = { mode: 'stages', fraction: 0.4, tone: 'blue', stages: [], passes: 0, text: 'Build', label: 'Build' };
+  paintRunStatus(host, { state: 'working', word: 'Working', line: 'Build', dot: 'peach', pulse: true, symbol: null, actions: [], progress: prog });
+  const bar = host.querySelector('.run-status-bar');
+  assert.equal(bar.hidden, false);
+  for (const el of [host, bar, host.querySelector('.run-status-group')]) assert.equal(el.hasAttribute('data-min-level'), false, 'painting does not gate the bar');
+  assert.equal(bar.querySelector('.run-prog-detail').dataset.minLevel, 'advanced', 'the hover breakdown is Advanced');
+});
+
 // ── the CSS gate ──────────────────────────────────────────────────────────────
 
 test('the stylesheet gates exactly the three cumulative cases, and honours data-level-keep', () => {
@@ -183,6 +215,11 @@ test('mode dialog: three radio cards, a click applies and saves, a failed save r
       assert.ok(modal.classList.contains('hidden'), 'Done closes');
       // jsdom lays nothing out (offsetParent is null), so the opener reads as gone: the fallback is the account corner.
       assert.equal(doc.activeElement, doc.getElementById('side-acct'), 'focus falls back to the account corner');
+      doc.getElementById('modeSettingsChange').click();
+      dragOut(dom.window, doc.querySelector('#mode-cards [data-level-choice]'), modal);
+      assert.ok(!modal.classList.contains('hidden'), 'a press on a card released on the backdrop is not an outside click');
+      backdropClick(dom.window, modal);
+      assert.ok(modal.classList.contains('hidden'), 'a backdrop click closes it: each card applied at once, nothing is pending');
     } },
     { name: 'a [data-mode-set] control (banner, hidden-settings note) sets the mode without opening the dialog', run: async () => {
       const doc = new JSDOM(html).window.document;

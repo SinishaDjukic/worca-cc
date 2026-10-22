@@ -239,3 +239,27 @@ for (const [name, thread, label] of [
     assert.match(modelBtn(ctx).textContent, label);
   });
 }
+
+// ---- "More models": each engine's extra models under its name; Copilot families up front ----
+const CATALOG_MORE = {
+  ...CATALOG,
+  models: [
+    { id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false },
+    { id: 'claude-opus-5', label: 'Opus 5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false },
+    { id: 'gpt-5.5', label: 'GPT-5.5', efforts: ['minimal', 'low', 'medium', 'high'], custom: false, engine: 'codex' },
+    ...[['claude-sonnet-5.5', 'Claude Sonnet 5.5'], ['claude-sonnet-5', 'Claude Sonnet 5'], ['gpt-6.1-sol', 'GPT-6.1 Sol'], ['gpt-5.4-mini', 'GPT-5.4 Mini'], ['gemini-4-argon', 'Gemini 4 Argon']]
+      .map(([id, label]) => ({ id: `copilot/${id}`, label, efforts: ['low', 'medium', 'high'], custom: false, engine: 'copilot', builtin: true })),
+  ],
+  defaults: { ...CATALOG.defaults, copilot: { model: 'copilot/claude-sonnet-5.5', effort: 'medium' } },
+};
+
+test('the main list holds the newest of each Copilot family; More models names each engine it lists', async () => {
+  const ctx = makePanel({ fetchHandler: handler({ catalog: CATALOG_MORE }) });
+  ctx.panel.open(); await ctx.tick(); await ctx.tick();
+  ctx.doc.querySelector('[data-ask-model-btn]').click(); await ctx.tick();
+  assert.deepEqual(groups(ctx), ['Claude', 'Codex (beta)', 'Copilot (beta)']);
+  assert.deepEqual(names(ctx), ['Opus 5.5', 'GPT-5.5', 'Claude Sonnet 5.5', 'GPT-6.1 Sol', 'Gemini 4 Argon']);
+  ctx.doc.querySelector('[data-ask-more-models]').click(); await ctx.tick();
+  assert.deepEqual(groups(ctx), ['Claude', 'Copilot (beta)'], 'Codex has no more models: no heading for it');
+  assert.deepEqual(names(ctx), ['Opus 5', 'Claude Sonnet 5', 'GPT-5.4 Mini']);
+});

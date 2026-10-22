@@ -14,9 +14,9 @@ test('a FRESH DB lands on V24 unseeded, with no backup file', () => {
   assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
   // V24 seeds nothing on a fresh install; the only rows are the later V30
   // Presentation seed (seeded on every DB, D7 deviation, see db.mjs applySchemaV30)
-  // and the V54 Architecture (C4) seed beside it.
+  // and the V54 Architecture (C4) and V57 Promo video seeds beside it.
   const ids = db.prepare('SELECT id FROM workflows ORDER BY id').all().map((r) => r.id);
-  assert.deepEqual(ids, ['wf_architecture_c4', 'wf_presentation'], 'only the V30 presentation and V54 architecture seeds, no V24 SEED_TEMPLATES');
+  assert.deepEqual(ids, ['wf_architecture_c4', 'wf_presentation', 'wf_promo_video'], 'only the V30 presentation, V54 architecture and V57 promo video seeds, no V24 SEED_TEMPLATES');
   assert.equal(existsSync(`${dbPath()}.pre-v24.bak`), false, 'nothing to back up');
   const meta = db.prepare("SELECT data FROM store_meta WHERE key = 'migration:v24'").get();
   assert.deepEqual(JSON.parse(meta.data).seeded, [], 'the report records an unseeded install');

@@ -280,3 +280,38 @@ test('rowToHistoryEntry: a same-branch run carries sameAsSource + mergeBack; oth
   assert.equal('sameAsSource' in p, false);
   assert.equal('mergeBack' in p, false);
 });
+
+test('rowToHistoryEntry: a "not merged back" member whose work has landed (or whose branch is gone) no longer warns', async () => {
+  const { listPipelines } = await import('../src/core/artifacts.mjs');
+  // worca-cc/landed points at main's own tip: someone merged it by hand (or the source caught up).
+  spawnSync('git', ['branch', '-f', 'worca-cc/landed', 'main'], { cwd: repo });
+  const notMb = { merged: false, kind: 'diverged', reason: 'main has new commits since the run started', at: 't' };
+  const landed = await seedPipeline(repo, { title: 'Landed', status: 'done', startedAt: '2026-06-02T00:00:00Z',
+    branch: { source: 'main', feature: 'worca-cc/landed', sameAsSource: true, mergeBack: notMb } });
+  const gone = await seedPipeline(repo, { title: 'Gone', status: 'done', startedAt: '2026-06-02T00:00:00Z',
+    branch: { source: 'main', feature: 'worca-cc/deleted-after-merge', sameAsSource: true, mergeBack: notMb } });
+  const open = await seedPipeline(repo, { title: 'Open', status: 'done', startedAt: '2026-06-02T00:00:00Z',
+    branch: { source: 'main', feature: 'worca-cc/feat-1', sameAsSource: true, mergeBack: notMb } });
+  const rows = await listPipelines(repo);
+  const at = (id) => rows.find((r) => r.id === id).mergeBack;
+  assert.equal(at(landed.id).merged, true, 'the branch is already in main');
+  assert.equal(at(gone.id).merged, true, 'the branch the card points at no longer exists');
+  assert.equal(at(open.id).merged, false, 'a branch still ahead of main keeps the card');
+  assert.equal(at(open.id).members[0].kind, 'diverged');
+});
+
+test('rowToHistoryEntry: a run whose branch reached main through another branch carries inBase (D7)', async () => {
+  const { listPipelines } = await import('../src/core/artifacts.mjs');
+  const g = (...a) => spawnSync('git', a, { cwd: repo, encoding: 'utf8' }).stdout.trim();
+  const start = g('rev-parse', 'main');
+  g('checkout', '-q', '-b', 'worca-cc/bundled', start);
+  await writeFile(join(repo, 'h.txt'), 'x\n'); g('add', '-A'); g('commit', '-qm', 'bundled work');
+  g('checkout', '-q', 'main'); g('merge', '-q', '--no-ff', '-m', 'bundle PR', 'worca-cc/bundled');
+  const inDev = await seedPipeline(repo, { title: 'Bundled', status: 'done', startedAt: '2026-06-03T00:00:00Z',
+    branch: { source: 'main', feature: 'worca-cc/bundled', baseSha: start } });
+  const ahead = await seedPipeline(repo, { title: 'Ahead', status: 'done', startedAt: '2026-06-03T00:00:00Z',
+    branch: { source: 'main', feature: 'worca-cc/feat-1', baseSha: start } });
+  const rows = await listPipelines(repo);
+  assert.deepEqual(rows.find((r) => r.id === inDev.id).inBase, { base: 'main' });
+  assert.equal('inBase' in rows.find((r) => r.id === ahead.id), false, 'a branch still ahead: no key');
+});

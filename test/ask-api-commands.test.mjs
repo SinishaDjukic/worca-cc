@@ -37,7 +37,11 @@ async function waitFor(pred, ms = 15000) {
 }
 async function newThread() {
   const r = await fetch(`${base}/api/ask/threads`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
-  return (await r.json()).thread;
+  const { thread } = await r.json();
+  // P4: run_command acts only in the chat's project
+  const p = await fetch(`${base}/api/ask/threads/${thread.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ scope: { pinned: true, projectKey: key } }) });
+  assert.equal(p.status, 200, await p.text());
+  return thread;
 }
 const userRows = async (tid) => (await getJson(`/api/ask/threads/${tid}`)).messages.filter((m) => m.role === 'user');
 

@@ -13,7 +13,7 @@
 import { execFile } from 'node:child_process';
 import { lstat, readdir, readFile, realpath, mkdir, writeFile, rename } from 'node:fs/promises';
 import { join, sep } from 'node:path';
-import { METRICS_DIR, metricsRoot, worktreePath, azureMetricsSlug, canonicalMetricsSlug, azureCoordsForSlug } from './sync.mjs';
+import { METRICS_DIR, metricsRoot, worktreePath, readableBranchDir, azureMetricsSlug, canonicalMetricsSlug, azureCoordsForSlug } from './sync.mjs';
 import { prepare } from '../db.mjs';
 import { listPullRequests } from '../pr/azure.mjs';
 import { readAzureCredentials } from '../azure-credentials.mjs';
@@ -288,10 +288,14 @@ function sanitizeLookup(x) {
   return { id: x.id, repos, branch, pr, endedMs: Number.isFinite(endedMs) ? endedMs : null };
 }
 
+/** A sink: a metrics slug (its git worktree), or { slug, projectDir } — read where that project's branch copy lives
+ *  (without git: the HTTPS snapshot, P6; the worktree a git session left until the snapshot exists). */
+const sinkDir = (sink) => (typeof sink === 'string' ? worktreePath(sink) : readableBranchDir(sink.slug, sink.projectDir ?? null));
+
 /**
  * @param {object} p
  * @param {object[]} p.runs      [{ id, repos, branch, pr, endedAt }] from prLookupFor() (shared/timeline).
- * @param {string[]} p.sinks     metrics slugs whose worktrees may hold PR events.
+ * @param {Array<string|{slug: string, projectDir: string|null}>} p.sinks  metrics slugs (or sinks) whose branch copies may hold PR events.
  * @param {boolean} [p.useGh]
  * @param {boolean} [p.useAzure]
  * @param {(slug: string) => Promise<{org,project,repo}|null>} [p.coordsFor]  Azure coordinates of a metrics slug.
@@ -308,9 +312,9 @@ export async function resolveRunPrs({ runs = [], sinks = [], useGh = true, useAz
   const byBranch = new Map();
   const byNumber = new Map();
   const actionRepos = new Set();
-  for (const slug of sinks) {
+  for (const sink of sinks) {
     let dir;
-    try { dir = worktreePath(slug); } catch { continue; }
+    try { dir = sinkDir(sink); } catch { continue; }
     for (const ev of await readPrEventsFromDir(dir)) {
       const repo = lower(ev.repo);
       actionRepos.add(repo);
@@ -412,7 +416,7 @@ export const MAX_LISTED_EVENTS = 5000;
  * Timeline shows the ones no recorded run points at as work done outside Worca. Only the
  * Action's files can answer this — gh is asked per branch, never "list everything".
  * @param {object} p
- * @param {string[]} p.sinks  metrics slugs whose worktrees hold the events.
+ * @param {Array<string|{slug: string, projectDir: string|null}>} p.sinks  metrics slugs (or sinks) whose branch copies hold the events.
  * @param {string[]} p.repos  the scope's repositories (slugs); events of other repos are dropped.
  * @returns {Promise<{ prs: object[], truncated: boolean, actionRepos: string[] }>}
  */
@@ -424,9 +428,9 @@ export async function listPrEvents({ sinks = [], repos = [], from = null, to = n
   const seen = new Set();
   const out = [];
   const actionRepos = new Set();
-  for (const slug of sinks) {
+  for (const sink of sinks) {
     let dir;
-    try { dir = worktreePath(slug); } catch { continue; }
+    try { dir = sinkDir(sink); } catch { continue; }
     for (const ev of await readPrEventsFromDir(dir)) {
       const repo = lower(ev.repo);
       if (want.size && !want.has(repo)) continue;

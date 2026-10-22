@@ -4,7 +4,7 @@
 
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { _testing as gitInfo, rollupChecks, ghPrChecks } from '../src/core/git-info.mjs';
+import { _testing as gitInfo, rollupChecks, ghPrChecks, prVerdictOf, findPrForBranch } from '../src/core/git-info.mjs';
 
 const ok = (stdout = '') => ({ ok: true, code: 0, stdout, stderr: '' });
 const run = (status, conclusion = '') => ({ __typename: 'CheckRun', name: 'ci', status, conclusion });
@@ -127,4 +127,43 @@ test('ghPrChecks reads the base head\'s failing checks with the watch snapshot\'
     : ok(JSON.stringify({ mergeable: 'MERGEABLE', statusCheckRollup: [{ __typename: 'CheckRun', name: 'ui proofs', status: 'COMPLETED', conclusion: 'FAILURE' }] }))));
   const r2 = await ghPrChecks({ projectDir: '/p', prUrl: PR });
   assert.deepEqual([r2.base, r2.checks.failed, r2.checks.inherited], [null, 1, 0]);
+});
+
+test('prVerdictOf: gh pr view JSON → draft, review decision, mergeable and the checks rollup (D31)', () => {
+  const failed = (n) => ({ __typename: 'CheckRun', name: `c${n}`, status: 'COMPLETED', conclusion: 'FAILURE' });
+  const ok = (n) => ({ __typename: 'CheckRun', name: `k${n}`, status: 'COMPLETED', conclusion: 'SUCCESS' });
+  const v = prVerdictOf({ isDraft: false, reviewDecision: 'APPROVED', mergeable: 'CONFLICTING',
+    statusCheckRollup: [failed(1), failed(2), failed(3), ...Array.from({ length: 9 }, (_, i) => ok(i))] });
+  assert.deepEqual(v, { draft: false, reviewDecision: 'APPROVED', mergeable: 'CONFLICTING',
+    checks: { state: 'failing', total: 12, failed: 3, pending: 0 } });
+  assert.equal(prVerdictOf(null), null);
+  assert.equal(prVerdictOf([{ number: 1 }]), null, 'list JSON is not a verdict');
+  assert.equal(prVerdictOf({ isDraft: true }).checks.state, 'none');
+});
+
+test('findPrForBranch: the verdict is opt-in (withVerdict), read only for an OPEN PR', async () => {
+  const URL = 'https://github.com/acme/app/pull/781';
+  let state = 'OPEN';
+  const calls = [];
+  gitInfo.setRunner(async (cmd, args) => {
+    calls.push([cmd, ...args]);
+    if (cmd === 'gh' && args[0] === '--version') return ok('gh 2.x');
+    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view' && args[4] === 'number,state,url,isDraft,mergeable') return ok(JSON.stringify({ number: 781, state, url: URL }));
+    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view' && args[4] === 'isDraft,reviewDecision,mergeable,statusCheckRollup') {
+      return ok(JSON.stringify({ isDraft: false, reviewDecision: null, mergeable: 'MERGEABLE',
+        statusCheckRollup: [run('COMPLETED', 'FAILURE'), run('COMPLETED', 'FAILURE'), run('COMPLETED', 'FAILURE'), run('COMPLETED', 'SUCCESS')] }));
+    }
+    return ok('');
+  });
+  const views = () => calls.filter((c) => c[0] === 'gh' && c[2] === 'view').length;
+  const withV = await findPrForBranch({ projectDir: '/p', head: 'feat/x', prUrl: URL, withVerdict: true });
+  assert.equal(withV.verdict.checks.failed, 3);
+  calls.length = 0;
+  assert.deepEqual(await findPrForBranch({ projectDir: '/p', head: 'feat/x', prUrl: URL }), { state: 'OPEN', url: URL, number: 781, isDraft: false, mergeable: 'UNKNOWN' });
+  assert.equal(views(), 1, 'no verdict call without withVerdict');
+  calls.length = 0;
+  state = 'MERGED';
+  const merged = await findPrForBranch({ projectDir: '/p', head: 'feat/x', prUrl: URL, withVerdict: true });
+  assert.equal(merged.verdict, undefined);
+  assert.equal(views(), 1, 'a merged PR needs no verdict call');
 });

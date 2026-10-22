@@ -40,8 +40,10 @@ test('copilot refuses a set with rules it cannot hold, and asks consent for thos
   assert.ok(lines.includes(`engine copilot: deny rules held on copilot only in part, as command and write rules — ${COPILOT_COMMAND_RULE_REACH} (--allow-unguarded-engine): Bash(git push:*), Edit(secrets.txt)`), lines.join('\n'));
 });
 
-test('copilot names its models its own way: a catalog model of another engine is dropped, any other id runs as named', () => {
+test('copilot names its models its own way: its catalog models run, another engine\'s are dropped, any other id runs as named', () => {
   const o = orch({ engine: 'copilot' });
+  assert.equal(o._engineModel('copilot/gpt-5.5'), 'copilot/gpt-5.5', 'a Copilot built-in runs (the adapter hands copilot its own id)');
+  assert.equal(o._engineModel('gpt-5.5'), undefined, 'the Codex built-in of the same model is Codex\'s');
   assert.equal(o._engineModel('gpt-5.4'), 'gpt-5.4');
   assert.equal(o._engineModel('claude-sonnet-4.6'), 'claude-sonnet-4.6');
   assert.equal(o._engineModel('auto'), 'auto');
@@ -53,10 +55,14 @@ test('copilot names its models its own way: a catalog model of another engine is
   assert.ok(!lines.some((l) => l.includes('claude-sonnet-4.6')));
 });
 
-test('copilot has no step or helper slots: steps run the run\'s model, helpers copilot\'s default', async () => {
+test('copilot has step slots but no helper slots: an unset step runs the run\'s model, helpers copilot\'s default', async () => {
   const steps = await resolveStepModels('/tmp/gate-proj', 'gpt-5.4', 'copilot');
   assert.ok(Object.values(steps).length > 0);
   assert.ok(Object.values(steps).every((s) => s.model === 'gpt-5.4' && s.effort === undefined));
+  const own = await resolveStepModels('/tmp/gate-proj', 'copilot/gpt-5.4', 'copilot');
+  assert.ok(Object.values(own).every((s) => s.model === 'copilot/gpt-5.4'), 'a Copilot built-in as the run model');
+  const foreign = await resolveStepModels('/tmp/gate-proj', 'claude-opus-4-8', 'copilot');
+  assert.ok(Object.values(foreign).every((s) => s.model === undefined), 'a Claude built-in is not run on Copilot');
   assert.deepEqual(utilityModelFor('copilot', 'title'), { model: null, effort: null, source: 'default' });
 });
 

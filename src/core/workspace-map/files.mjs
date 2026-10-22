@@ -9,6 +9,7 @@ import { lstat, readdir, readFile, realpath } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import { LIMITS } from '../../shared/workspace-map/limits.mjs';
+import { gitAvailable } from '../git-available.mjs';
 
 export const SKIP_DIRS = Object.freeze(['.git', 'node_modules', 'vendor', 'dist', 'build', 'target', 'out',
   '.next', '.nuxt', 'coverage', 'graphify-out', '.venv', 'venv', '__pycache__', '.gradle', '.idea', '.vscode',
@@ -68,7 +69,7 @@ const inside = (root, abs) => {
  *  (untrimmed: callers trim), or null on any failure — and for a missing / non-string `dir`
  *  (never the process cwd). */
 export function gitOutput(dir, args, { timeoutMs = 30000, maxBuffer = 256 * 1024 * 1024 } = {}) {
-  if (typeof dir !== 'string' || !dir || !Array.isArray(args)) return Promise.resolve(null);
+  if (typeof dir !== 'string' || !dir || !Array.isArray(args) || !gitAvailable()) return Promise.resolve(null);
   const env = { ...process.env };
   for (const k of GIT_ENV_DROP) delete env[k];
   return new Promise((done) => {
@@ -109,11 +110,12 @@ async function walk(dir, maxFiles) {
 }
 
 /** git ls-files -z (cwd dir; falls back to a bounded fs walk when git fails); drops SKIP_DIRS
- *  paths; sorted posix rel paths. A missing / non-string dir lists nothing.
+ *  paths; sorted posix rel paths. A missing / non-string dir lists nothing. `git: false` (a Folder member's
+ *  copy, P5) walks without asking git: an enclosing repository's index or ignore rules never apply to it.
  *  → { files, truncated, via: 'git'|'walk' } */
-export async function listMemberFiles(dir, { maxFiles = LIMITS.MAX_FILES_PER_MEMBER } = {}) {
+export async function listMemberFiles(dir, { maxFiles = LIMITS.MAX_FILES_PER_MEMBER, git = true } = {}) {
   if (typeof dir !== 'string' || !dir) return { files: [], truncated: false, via: 'walk' };
-  const out = await gitOutput(dir, ['ls-files', '-z', '--cached', '--others', '--exclude-standard']);
+  const out = git === false ? null : await gitOutput(dir, ['ls-files', '-z', '--cached', '--others', '--exclude-standard']);
   if (out !== null) {
     const all = [...new Set(out.split('\0').filter((p) => p && !skipped(p)))].sort();
     // Over the cap the shallowest files win, as in the walk: a monorepo keeps its root manifests, not only `apps/**`.

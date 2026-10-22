@@ -65,6 +65,7 @@ async function boot({ settings = {}, decisions = [], away, models = [], runData 
     if (path.endsWith('/api/workflows')) return ok({ workflows: [{ id: 'wf_default', name: 'Default' }] });
     if (path.endsWith('/api/guardrails')) return ok({ guardrails: [{ id: 'permissive', name: 'Permissive' }] });
     if (path.endsWith('/api/branches')) return ok({ branches: ['main'], current: 'main' });
+    if (path.endsWith('/house-brief')) return ok(HOUSE_BRIEF);   // Settings → Project → House brief (slice 2)
     if (url2.includes('/api/projects')) return ok({ projects: [{ name: 'proj', path: '/repos/proj', exists: true, key: 'proj-1' }] });
     return ok({ pipelines: 0, projects: 0, workspaces: 0 });
   };
@@ -87,6 +88,11 @@ async function boot({ settings = {}, decisions = [], away, models = [], runData 
 async function settle(n = 4) { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); }
 
 const RUN = { runId: 'run-n1', title: 'Night run', projectDir: '/repos/proj', status: 'running', startedAt: '2026-01-01T00:00:00Z', kind: 'run', pipelineId: 'p-1', night: { optIn: true, override: 'auto', decisions: 0, flagged: 0 } };
+const HOUSE_BRIEF = {
+  brief: '# House brief\n\n## Memory\n- a — b\n', words: 9, budget: 2000, builtAt: '2026-10-18T12:02:00.000Z',
+  trimmed: { lines: 0, bySection: {} }, pinned: [], rebuilt: false,
+  sources: [{ kind: 'memory', label: 'Memory', files: 1, readAt: '2026-10-18T12:02:00.000Z' }],
+};
 
 async function openDetail(ctx) {
   ctx.dispatch({ type: 'hello', runs: [RUN] });
@@ -231,26 +237,32 @@ test('settings card: Save posts {nightMode} and never the status; each status bu
   ]);
 });
 
-// The account menu's away row (last in the menu): "Step away" while you count as here, "I'm back"
-// while you count as away (the away hours included); a violet dot on the avatar while away.
+// The account menu's away row: an "Away" switch (a menuitemcheckbox, checked while you count as away,
+// the away hours included); a violet dot on the avatar while away.
 const awayRow = (doc) => doc.getElementById('acct-away');
-const rowState = (doc) => { const r = awayRow(doc); return [r.dataset.state, r.querySelector('.mi-lbl').textContent, r.querySelector('.mi-hint').textContent]; };
+const rowState = (doc) => { const r = awayRow(doc); return [r.dataset.state, r.getAttribute('aria-checked'), r.querySelector('.mi-hint').textContent]; };
 const presence = (doc) => doc.getElementById('side-acct').dataset.presence;
 const menuOpen = (doc) => !doc.getElementById('acct-menu').hidden;
 const settingsPosts = (ctx) => ctx.posts.filter((p) => p.path.endsWith('/api/settings'));
 const SIDE_USER = { window: '22:00-07:00', timeZone: 'UTC' };
 const sideBody = (o = {}) => ({ config: resolveNightConfig({ user: SIDE_USER }).config, sources: {}, inherited: resolveNightConfig({ user: SIDE_USER }), toggle: 'auto', hereSince: null, user: {}, project: {}, ...o });
 
-test('away row: the clock and hereSince decide "Step away" or "I\'m back"; a click posts its toggle and the menu stays open', async () => {
+test('away row: the clock and hereSince decide off (here) or on (away); a click posts its toggle and the menu stays open', async () => {
   await checkRows([
-    { name: 'away row: by day "Step away" with the start of the hours; it posts "I\'m away now"',
-      now: '2026-09-28T15:00:00Z', body: sideBody(), want: ['here', 'Step away', 'away at 22:00'], dot: 'here',
-      first: (ctx, doc) => assert.match(awayRow(doc).title, /You count as here\. Next away hours start at 22:00\. Step away to have worca answer on every run now\.$/),
+    { name: 'away row: by day off (here) with the start of the hours; it posts "I\'m away now"',
+      now: '2026-09-28T15:00:00Z', body: sideBody(), want: ['here', 'false', 'away at 22:00'], dot: 'here',
+      first: (ctx, doc) => {
+        const r = awayRow(doc);
+        assert.match(r.title, /You count as here\. Next away hours start at 22:00\. Turn Away on to have worca answer waiting run questions for you now\.$/);
+        assert.deepEqual([r.getAttribute('role'), r.querySelector('.mi-lbl').textContent, r.querySelector('.switch').getAttribute('aria-hidden')],
+          ['menuitemcheckbox', 'Away', 'true'], 'the whole row is the switch; the .switch only shows it');
+        assert.equal(r.getAttribute('aria-description'), r.title);
+      },
       post: 'on' },
-    { name: 'away row: inside the away hours "I\'m back" until they end, the violet dot on the avatar; it posts "here"',
-      now: '2026-09-28T23:00:00Z', body: sideBody(), want: ['away', "I'm back", 'until 07:00'], dot: 'away', post: 'here' },
-    { name: 'away row: "I\'m here" said tonight keeps "Step away", and the project tab says why',
-      now: '2026-09-28T23:30:00Z', body: sideBody({ hereSince: Date.parse('2026-09-28T23:00:00Z') }), want: ['here', 'Step away', 'away at 22:00'], dot: 'here',
+    { name: 'away row: inside the away hours on (away) until they end, the violet dot on the avatar; it posts "here"',
+      now: '2026-09-28T23:00:00Z', body: sideBody(), want: ['away', 'true', 'until 07:00'], dot: 'away', post: 'here' },
+    { name: 'away row: "I\'m here" said tonight keeps it off (here), and the project tab says why',
+      now: '2026-09-28T23:30:00Z', body: sideBody({ hereSince: Date.parse('2026-09-28T23:00:00Z') }), want: ['here', 'false', 'away at 22:00'], dot: 'here',
       then: async (ctx, doc) => {
         ctx.window.location.hash = 'projects/proj-1/away';
         await settle(12);
@@ -275,14 +287,14 @@ test('away row: the clock and hereSince decide "Step away" or "I\'m back"; a cli
   } })));
 });
 
-test('away row: "I\'m away now" reads "I\'m back" with no end; paused reads "Step away" (Away mode paused) and still steps away', async () => {
+test('away row: "I\'m away now" reads on (away) with no end; paused reads off (here) (Away mode paused) and still turns Away on', async () => {
   let ctx = await boot({ away: () => sideBody({ toggle: 'on' }) });
-  assert.deepEqual(rowState(ctx.window.document), ['away', "I'm back", '']);
+  assert.deepEqual(rowState(ctx.window.document), ['away', 'true', '']);
   click(ctx, awayRow(ctx.window.document));
   await settle();
   assert.deepEqual(settingsPosts(ctx).at(-1).body, { nightModeToggle: 'here' });
   ctx = await boot({ away: () => sideBody({ toggle: 'off' }) });
-  assert.deepEqual(rowState(ctx.window.document), ['here', 'Step away', 'Away mode paused']);
+  assert.deepEqual(rowState(ctx.window.document), ['here', 'false', 'Away mode paused']);
   assert.match(awayRow(ctx.window.document).title, /^Away mode is paused\./);
   click(ctx, awayRow(ctx.window.document));
   await settle();
@@ -293,13 +305,13 @@ test('away row: per-person Away mode reads the signed-in person\'s own switch, n
   Date.now = () => Date.parse('2026-09-28T15:00:00Z');
   // The server scopes GET /api/away-mode to the person (awayPersonOf): `toggle` is theirs, `instanceToggle` the install's.
   let ctx = await boot({ away: () => sideBody({ perPerson: 'ada@example.com', toggle: 'auto', instanceToggle: 'on', instanceHereSince: null }) });
-  assert.deepEqual(rowState(ctx.window.document), ['here', 'Step away', 'away at 22:00'], 'the install is away; this person is not');
+  assert.deepEqual(rowState(ctx.window.document), ['here', 'false', 'away at 22:00'], 'the install is away; this person is not');
   assert.equal(presence(ctx.window.document), 'here');
   click(ctx, awayRow(ctx.window.document));
   await settle();
   assert.deepEqual(settingsPosts(ctx).at(-1).body, { nightModeToggle: 'on' }, 'the same post: the server stores it for the person');
   ctx = await boot({ away: () => sideBody({ perPerson: 'ada@example.com', toggle: 'on', instanceToggle: 'auto' }) });
-  assert.deepEqual(rowState(ctx.window.document), ['away', "I'm back", '']);
+  assert.deepEqual(rowState(ctx.window.document), ['away', 'true', '']);
   assert.equal(presence(ctx.window.document), 'away');
 });
 
@@ -348,7 +360,7 @@ test('away row: before GET /api/away-mode answers, it is neither disabled nor "c
   const ctx = await boot({ away: 'pending' });
   await new Promise((r) => setTimeout(r, 1100));      // past the 1 s tick that repaints the row
   const doc = ctx.window.document;
-  assert.deepEqual(rowState(doc), ['here', 'Step away', '']);
+  assert.deepEqual(rowState(doc), ['here', 'false', '']);
   assert.equal(awayRow(doc).getAttribute('aria-disabled'), null);
   assert.doesNotMatch(awayRow(doc).title, /could not be read/);
 });
@@ -366,7 +378,7 @@ test('away row: unread settings: disabled, a click opens Settings › Runs and c
   assert.equal(menuOpen(doc), false, 'the route closes the menu');
 });
 
-test('away row: settings-changed (Settings, another tab, Ask Worca) repaints it and an open project tab', async () => {
+test('away row: settings-changed (Settings, another tab, Chat) repaints it and an open project tab', async () => {
   let body = sideBody();
   Date.now = () => Date.parse('2026-09-28T15:00:00Z');
   const ctx = await boot({ away: () => body });
@@ -459,6 +471,17 @@ test('night form patch: empty = __unset (inherit; team cap/window stay in force)
   ]);
 });
 
+test('night form fields are divided rows: every .night-field is a .drow, no input-mini input', () => {
+  const dom = new JSDOM('<!doctype html><body><div id="f"></div></body>');
+  const root = dom.window.document.getElementById('f');
+  renderNightForm(root, { level: 'user', values: {} });
+  const fields = [...root.querySelectorAll('.night-field')];
+  assert.ok(fields.length >= 8);
+  for (const f of fields) assert.ok(f.classList.contains('drow'), f.querySelector('label')?.textContent);
+  assert.equal(root.querySelectorAll('input.input-mini').length, 0);
+  assert.ok(root.querySelector('.drow-control .night-strategy'), 'a select sits in .drow-control');
+});
+
 const formRoot = () => new JSDOM('<div id="r"></div>').window.document.getElementById('r');
 const fire = (node, type) => node.dispatchEvent(new node.ownerDocument.defaultView.Event(type, { bubbles: true }));
 
@@ -546,6 +569,26 @@ test('project card: Away mode for this project, its summary, and Save re-reads G
   assert.equal(patch.body.projectDir, '/repos/proj');
   assert.ok(patch.body.nightMode && Array.isArray(patch.body.nightMode.__unset));
   assert.ok(ctx.awayCalls.slice(before).some((u) => u.includes(`projectDir=${encodeURIComponent('/repos/proj')}`)), 'a fresh GET after the save');
+});
+
+test('project Settings tab: the House brief card mounts between the settings cards and the Away card', async () => {
+  const ctx = await boot();
+  ctx.window.location.hash = 'projects/proj-1/settings';
+  await settle(12);
+  const sec = ctx.window.document.querySelector('.pd-sec[data-sec="settings"]');
+  assert.ok(sec, 'the project Settings tab is open');
+  // buildPdSettings: the settings host, then the brief's own host, then the Away card, as direct children.
+  const order = [...sec.children].map((c) => ['pd-settings', 'pd-house-brief', 'pd-night-card'].find((k) => c.classList.contains(k)) || null).filter(Boolean);
+  assert.deepEqual(order, ['pd-settings', 'pd-house-brief', 'pd-night-card']);
+  const card = sec.querySelector('.pd-house-brief > .card.house-brief');
+  assert.ok(card, 'the card is in its own host, not inside .pd-settings (whose replaceChildren() would wipe it)');
+  assert.equal(sec.querySelector('.pd-settings .house-brief'), null);
+  assert.equal(card.querySelector('h3').textContent, 'House brief');
+  assert.match(card.querySelector('.hb-summary').textContent, /^9 of 2,000 words · built /, 'the GET for proj-1 was answered and rendered');
+  const actions = card.querySelectorAll('.hb-actions');
+  assert.equal(actions.length, 1);
+  assert.deepEqual([...actions[0].querySelectorAll('button')].map((b) => b.textContent), ['Refresh now']);
+  assert.equal(card.querySelectorAll('.btn-primary').length, 0);
 });
 
 // Task 7: the run page pill ticks on the 1 s timer even while the run waits on a question.
@@ -731,7 +774,7 @@ test('form: a stored hidden, signed-out or stale model stays visible and saving 
   }
   renderNightForm(root, { level: 'user', values: { deciderModel: 'gone-model', deciderEffort: 'max' }, inherited: resolveNightConfig({}), now: 0, models: DM_MODELS });
   const sel = root.querySelector('.night-decider-model');
-  assert.deepEqual(optionsOf(sel).at(-1), ['gone-model', 'gone-model — not installed', true]);
+  assert.deepEqual(optionsOf(sel).at(-1), ['gone-model', 'gone-model (not installed)', true]);
   assert.equal(sel.value, 'gone-model');
   const p = readNightForm(root, { level: 'user' });
   assert.deepEqual([p.deciderModel, p.deciderEffort], ['gone-model', 'max']);

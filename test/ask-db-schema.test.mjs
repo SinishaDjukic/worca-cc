@@ -32,7 +32,7 @@ test('fresh DB: user_version = SCHEMA_VERSION, the five ask tables, indexes, the
   assert.deepEqual(cols(db, 'ask_messages'),
     ['id', 'thread_id', 'seq', 'role', 'text', 'blocks', 'status', 'reason', 'model', 'effort', 'usage', 'cost_usd', 'duration_ms', 'created_at']);
   // ALTER TABLE ADD COLUMN appends, so the v27 columns (#398) are LAST.
-  assert.deepEqual(cols(db, 'ask_attachments'), ['id', 'thread_id', 'message_id', 'name', 'bytes', 'created_at', 'kind', 'mime']);
+  assert.deepEqual(cols(db, 'ask_attachments'), ['id', 'thread_id', 'message_id', 'name', 'bytes', 'created_at', 'kind', 'mime', 'source_path', 'source_run_id', 'source_project_key', 'source_rel']);
   // ALTER TABLE ADD COLUMN appends, so the v22 column is LAST.
   assert.deepEqual(cols(db, 'ask_run_links'),
     ['thread_id', 'run_id', 'pipeline_id', 'card_id', 'status', 'phase', 'created_at', 'comment_ids']);
@@ -88,7 +88,7 @@ test('ladder: data-carrying column adds — v26→v27 ask_attachments gains kind
       migrate(db);
       assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
       assert.deepEqual(cols(db, 'ask_attachments'),
-        ['id', 'thread_id', 'message_id', 'name', 'bytes', 'created_at', 'kind', 'mime']);
+        ['id', 'thread_id', 'message_id', 'name', 'bytes', 'created_at', 'kind', 'mime', 'source_path', 'source_run_id', 'source_project_key', 'source_rel']);
       const row = db.prepare('SELECT kind, mime FROM ask_attachments WHERE id = ?').get('att_00000001');
       assert.equal(row.kind, 'text', "the column DEFAULT backfills every pre-v27 row as 'text'");
       assert.equal(row.mime, null);

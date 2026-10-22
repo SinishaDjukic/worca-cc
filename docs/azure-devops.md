@@ -7,12 +7,12 @@ at a time; agents never get it, in any guardrail set.
 
 ## What works
 
-- **Ship it.** A finished run's **Create pull request** pushes the branch and opens the pull request
-  over the Azure DevOps REST API (7.1). The run page then links to it (**View pull request**) and
+- **Create PR.** A finished run's **Create PR** pushes the branch and opens the pull request
+  over the Azure DevOps REST API (7.1). The run page then links to it (**View PR**) and
   shows whether it can merge. History shows it, and the `until-pr` stop works as on GitHub. A
   description longer than Azure's 4,000 characters is cut, with a note saying so. **Open as draft**
   opens it as a draft. A run that came from a GitHub issue adds no `Closes` line here.
-- **Clone.** **Add project → Clone** takes an Azure repository URL (shapes below).
+- **Clone.** **Add project → Clone from URL** takes an Azure repository URL (shapes below).
 - **Fetch and sync**, including the `worca-metrics` and `worca-policy` branches on an Azure
   `origin`.
 - **Team metrics merge dates.** Runs whose branch became an Azure pull request get its creation
@@ -22,6 +22,8 @@ at a time; agents never get it, in any guardrail set.
   organisation links the work item.
 - **Watch PR**, Resolve and the pull request row on the run page and the Overview tab, as on
   GitHub ([below](#watch-pr)).
+- **Chat chips.** A pull request or work item link in a Chat answer shows as a chip with its title
+  and state ([below](#chat-chips)).
 
 ## What does not work (yet)
 
@@ -35,7 +37,7 @@ at a time; agents never get it, in any guardrail set.
 - **"Outside Worca" pull requests and PR authors** in team metrics. They come from the GitHub
   Action's event files; Azure repositories show only the pull requests of recorded runs, without
   their git author.
-- **An Azure DevOps MCP server** as a stopgap for Ask Worca and agents. Not shipped: future work.
+- **An Azure DevOps MCP server** as a stopgap for Chat and agents. Not shipped: future work.
 
 ### "Create PR" with only an Azure token
 
@@ -90,7 +92,7 @@ Names are percent-decoded (`My%20Project` is `My Project`) and compared case-ins
 https URL without `_git` is not a repository URL. Worca's own git calls are https; an ssh remote
 pushes with your ssh agent, as for GitHub.
 
-**Clone** takes https only (no port, query or password; a password is refused with a pointer to
+**Clone from URL** takes https only (no port, query or password; a password is refused with a pointer to
 `WORCA_ADO_TOKEN`), and clones from `https://dev.azure.com/org/project/_git/repo`.
 
 **`WORCA_CLONE_ALLOW`** matches `dev.azure.com/<org>/<project>/<repo>` for every spelling, any
@@ -146,14 +148,15 @@ failed build and links to it, but has no log, and every failure counts as the PR
 ## Azure Boards
 
 The `azure-boards-source` plugin has **its own token field**. It never falls back to
-`WORCA_ADO_TOKEN`, so a Code token is never used for work items, and a Boards token is never used
-for code. Set the PAT (scopes *Work Items (Read & Write)* and *Project and Team (Read)*, which the
+`WORCA_ADO_TOKEN`, so the plugin never uses a Code token, and a Boards token is never used for
+code. Set the PAT (scopes *Work Items (Read & Write)* and *Project and Team (Read)*, which the
 Project picker needs) as `WORCA_ADO_BOARDS_TOKEN` and put
 `{"$env":"WORCA_ADO_BOARDS_TOKEN"}` in the plugin's **Personal access token** field. You may
 reference `WORCA_ADO_TOKEN` there deliberately, if that PAT also carries those two scopes.
 
-Worca never reads `WORCA_ADO_BOARDS_TOKEN` as its own credential. It strips it from every agent,
-script and action it starts, and from the environment of its own `git push` and `git fetch`. Other
+Worca reads `WORCA_ADO_BOARDS_TOKEN` itself for one thing only: the Chat's work item chips
+([below](#chat-chips)) read a work item's title, state and type with it. It never uses it for code.
+It strips it from every agent, script and action it starts, and from the environment of its own `git push` and `git fetch`. Other
 local git calls the Worca server makes, such as creating a run's worktree, inherit the server's
 environment, as they already do for `GH_TOKEN`. A project's git hooks (for example
 `post-checkout`) can therefore see it, so only enable hooks you trust on a server that holds
@@ -167,6 +170,25 @@ Basic processes call the finished state `Done`, so those teams should set the fi
 ```
 
 The plugin's [README](../plugins/azure-boards-source/README.md) has the other fields.
+
+## Chat chips
+
+A Chat answer that links an Azure DevOps pull request
+(`https://dev.azure.com/<org>/<project>/_git/<repo>/pullrequest/<id>`, or the
+`<org>.visualstudio.com` spelling) or a work item (`…/_workitems/edit/<id>`) shows it as a chip:
+the short ref (`<repo>!<id>`, `AB#<id>`), the title, and the state. A pull request reads Open,
+Draft, Merged or Closed; a work item shows its own state, such as New, Active, Resolved or Closed.
+Only links become chips. A bare `AB#123` names no organization, so it stays text.
+
+- **Pull requests** are read with the Code token's read role (`WORCA_ADO_READ_TOKEN`, else
+  `WORCA_ADO_TOKEN` or `AZURE_DEVOPS_EXT_PAT`). *Code (Read)* is enough.
+- **Work items** are read with `WORCA_ADO_BOARDS_TOKEN` when it is set, else with the Code token's
+  read role. That token needs *Work Items (Read)*. Azure refuses a Code-only PAT, and the chip then
+  shows its ref only.
+
+A lookup that fails (no token, a refused token, a deleted item, no network) leaves the chip with its
+ref and its link. The chat shows no error. Answers are kept for about a minute, so a chip reads the
+item again when the chat is opened after that.
 
 ## Upgrading
 

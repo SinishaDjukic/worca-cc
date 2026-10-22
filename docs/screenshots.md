@@ -60,14 +60,21 @@ cropping. Each shot uses the lowest interface mode that shows its view (see
 - **Believable diff.** The mock implementer writes a generic file. For "CSV export for
   contacts" the run branch gets a real change instead (a CSV module, a route and a test), and
   `results.json` and the stored patch are rebuilt from it with the app's own diff helpers.
+  "Paginate the search endpoint" gets a real cursor pagination the same way, since the Ask
+  Worca card and the Runs summary list its files.
 - **Actions.** `nimbus-crm` gets Run and Test actions; the CSV run is checked out and its
-  Test action really runs `npm test` once.
+  Test action really runs `npm test` once. The checkout is released again before
+  `running.png`, whose summary would otherwise lead with a worktree notice.
 - **Live runs.** Three mock runs are held at their clarify question. Their questions are
   rewritten in place to read as real decisions, their titles replace the mock ones, and the
   Task and Clarify steps get plausible time and cost.
-- **Ask Worca.** A stored conversation built with the real proposal validator: a run card for
+- **Chat.** A stored conversation built with the real proposal validator: a run card for
   the "Paginate the search endpoint" run, linked to it, plus three shorter chats and their
   Ask spend.
+- **Chat agent mode.** A real bash session opened in `nimbus-crm` through the server's
+  terminal manager, with `npm test` typed into it, and a chat holding that command's card. It
+  is not run through Ask's own command runner, whose finished commands wake a Claude turn.
+  bash, not zsh: a login zsh prompt shows the user and host names.
 - **Schedules.** Three repeating series and one one-off ticket, created through
   `POST /api/run` with `repeat` / `scheduledFor`. The scheduler does not tick in-process, so
   nothing fires.
@@ -77,6 +84,10 @@ cropping. Each shot uses the lowest interface mode that shows its view (see
   stored interconnection map: REST, queue and shared-DB edges with file evidence.
 - Not seeded: pull requests. The sandbox has no GitHub remote, so Statistics shows
   "PRs merged 0 / 0".
+- **A stand-in `gh`.** The sandbox `PATH` starts with a `gh` script that answers only
+  `--version`, so Create PR shows, and every other call fails, so a PR lookup never reaches
+  GitHub or your own `gh` login. `GH_TOKEN`, `GITHUB_TOKEN` and the enterprise variants are
+  removed from the environment.
 
 ## Leak guard
 
@@ -96,13 +107,16 @@ is held in memory and never written anywhere.
 | `run-detail.png` | A finished run's Diff tab (`src/routes/contacts.js`) | Advanced | mock run with a real change on its branch |
 | `history.png` | Runs with finished runs, one run's summary open | Simple | 24 mock runs, restaged |
 | `composer.png` | Workflows (`#workflows`), the Default workflow on the canvas beside the Library | Advanced | built-in workflow, opened from the Library's Workflows section with its coding folder expanded |
-| `stats.png` | Statistics, "This week" | Advanced | restaged costs, time and Ask spend |
+| `stats.png` | Statistics on a range with several days of data (This week, This month or All time, by date) | Advanced | restaged costs, time and Ask spend |
 | `ask-worca.png` | The Chat page (`#chat/<id>`) with a run card | Simple | stored conversation |
+| `ask-terminal.png` | Agent mode: a chat's `npm test` command card with its output open, beside the terminal pane showing that shell | Simple | real terminal session, stored chat, pane opened from the card's folder button; needs bash's own `bash-<version>$` prompt (macOS), so it is skipped with a log line where a system bashrc sets one with the user and host (Debian, Ubuntu) |
 | `schedules.png` | Schedules, Repeating tab | Advanced | three series and a ticket via `POST /api/run` |
 | `team-metrics.png` | Team metrics for `nimbus-crm`, "Last month" | Expert | records on the `worca-metrics` branch |
 | `workspace-map.png` | The `Nimbus` workspace's Map tab | Advanced | stored scan result |
 | `actions.png` | A finished run's Actions tab after a Test run | Advanced | project actions, checkout, real `npm test` |
-| `scripts.png` | Workflows (`#workflows/scripts`), the Library's Scripts section with its general folder expanded, showing the built-in script rows | Expert | built-in scripts |
+| `ship-it.png` | The CSV run's *Create pull request* dialog: files and lines, push and base remotes, a previewed description, Watch PR ticked, Try it first | Advanced | the CSV run's Create PR button; a GitHub push URL set for this shot only, closed with Cancel |
+| `engine-picker.png` | New pipeline (`#new`) for `nimbus-crm` with a task typed and Engine set to Codex (Beta) | Advanced | the form filled in place; nothing is started |
+| `scripts.png` | Workflows (`#workflows/scripts`), the Library's Scripts section with every domain folder expanded, showing the built-in script rows | Expert | built-in scripts |
 
 Statistics uses "This week" from Wednesday on, "This month" early in a week from the 8th, and
 "All time" otherwise, so the charts always have several days of data.

@@ -38,7 +38,7 @@ function fakeNotification({ permission = 'granted', answer = 'granted' } = {}) {
 }
 
 /** A document whose visibility and focus the test sets. */
-function fakeDoc({ visible = false, focused = false, html = '<!DOCTYPE html><html><head><title>Worca CC</title><link rel="icon" type="image/png" href="/assets/worca-favicon.png"></head><body></body></html>' } = {}) {
+function fakeDoc({ visible = false, focused = false, html = '<!DOCTYPE html><html><head><title>Worca</title><link rel="icon" type="image/png" href="/assets/worca-favicon.png"></head><body></body></html>' } = {}) {
   const dom = new JSDOM(html, { url: 'http://localhost:4317/' });
   const doc = dom.window.document;
   const look = { visible, focused };
@@ -95,10 +95,12 @@ test('tag format is worca:<runId>:<questionId>', () => {
 });
 
 test('title prefix: (N) is added, replaced and removed at 0', () => {
-  assert.equal(titleWithCount('Worca CC', 2), '(2) Worca CC');
-  assert.equal(titleWithCount('(2) Worca CC', 3), '(3) Worca CC');
-  assert.equal(titleWithCount('(3) Worca CC', 0), 'Worca CC');
-  assert.equal(titleWithCount('Worca CC', 0), 'Worca CC');
+  assert.equal(titleWithCount('Worca', 2), '(2) Worca');
+  assert.equal(titleWithCount('(2) Worca', 3), '(3) Worca');
+  assert.equal(titleWithCount('(3) Worca', 0), 'Worca');
+  assert.equal(titleWithCount('Worca', 0), 'Worca');
+  assert.equal(titleWithCount('(1) Worca', 3), '(3) Worca', 'an existing prefix is replaced');
+  assert.equal(titleWithCount('(3) ? Worca', 2), '(2) Worca', 'QA 6: an old prefix with the ? is stripped');
 });
 
 test('badge count: runs waiting plus unread problems; junk counts as 0', () => {
@@ -210,6 +212,7 @@ test('pause table: a usage limit, an error and a cost cap each have a title; a m
   assert.equal(pauseTitle('recoverable'), 'Worca: Run paused on an error');
   for (const r of ['cost_pipeline', 'cost_total', 'cost_pipeline_policy', 'cost_total_policy']) assert.equal(pauseTitle(r), 'Worca: Cost cap reached', r);
   assert.equal(pauseTitle('night_guardrail'), 'Worca: Night guardrail reached');
+  assert.equal(pauseTitle('terminated'), 'Worca: Run paused when worca was stopped');
   for (const r of [null, undefined, '', 'drain', 'toString']) assert.equal(pauseTitle(r), null, String(r));
   assert.ok(Object.isFrozen(PAUSE_TITLES));
   assert.equal(pauseTag('r1'), 'worca:r1:pause');
@@ -251,12 +254,12 @@ test('a pause notification clicks through to the run and closes when the run is 
 });
 
 test('ask cards: a proposed card notifies once with a title by card type; leaving "proposed" closes it; a re-proposed card notifies again', () => {
-  assert.equal(askCardTitle({}), 'Worca: Ask Worca proposal to review');
-  assert.equal(askCardTitle({ workflowId: 'wf_x' }), 'Worca: Ask Worca: run to approve');
-  assert.equal(askCardTitle({ type: 'web' }), 'Worca: Ask Worca: web access to approve');
-  assert.equal(askCardTitle({ type: 'workflow' }), 'Worca: Ask Worca: workflow to review');
-  assert.equal(askCardTitle({ type: 'schedule' }), 'Worca: Ask Worca: schedule to approve');
-  assert.equal(askCardTitle({ type: 'model' }), 'Worca: Ask Worca proposal to review');
+  assert.equal(askCardTitle({}), 'Worca: Chat proposal to review');
+  assert.equal(askCardTitle({ workflowId: 'wf_x' }), 'Worca: Chat: run to approve');
+  assert.equal(askCardTitle({ type: 'web' }), 'Worca: Chat: web access to approve');
+  assert.equal(askCardTitle({ type: 'workflow' }), 'Worca: Chat: workflow to review');
+  assert.equal(askCardTitle({ type: 'schedule' }), 'Worca: Chat: schedule to approve');
+  assert.equal(askCardTitle({ type: 'model' }), 'Worca: Chat proposal to review');
   const a = setup();
   const card = (state, extra = {}) => ({ type: 'ask-card', threadId: 't1', block: { kind: 'card', id: 'c1', state, card: { type: 'web', host: 'secret.example', ...extra } } });
   a.alerts.onAskFrame({ type: 'ask-card', threadId: 't1', block: { kind: 'card', id: 'c1', state: 'building', card: { type: 'workflow' } } });
@@ -264,7 +267,7 @@ test('ask cards: a proposed card notifies once with a title by card type; leavin
   a.alerts.onAskFrame(card('proposed'));
   a.alerts.onAskFrame(card('proposed'));
   assert.equal(a.N.shown.length, 1);
-  assert.equal(a.N.shown[0].title, 'Worca: Ask Worca: web access to approve');
+  assert.equal(a.N.shown[0].title, 'Worca: Chat: web access to approve');
   assert.equal(a.N.shown[0].body, 'Open the chat to review it.', 'never the card content');
   assert.equal(a.N.shown[0].tag, 'worca:ask:t1:c1');
   a.alerts.onAskFrame({ type: 'ask-message', threadId: 't1', message: { id: 'm1', blocks: [{ kind: 'text' }, { kind: 'card', id: 'c1', state: 'applied', card: { type: 'web' } }] } });
@@ -334,14 +337,24 @@ test('test notification: shown only while notifications are on and granted, with
 
 // ── badge ─────────────────────────────────────────────────────────────────────
 
-test('badge: the title shows (2) with two waiting runs and goes back at 0', () => {
-  const a = setup({ badge: true });
+test('badge: the title shows (2) with two waiting runs and goes back at 0; problems stay out of the title', () => {
+  const calls = [];
+  const a = setup({ badge: true, nav: { setAppBadge: (n) => { calls.push(n); } } });
   a.alerts.updateBadge({ waitingRuns: 2 });
-  assert.equal(a.doc.title, '(2) Worca CC');
+  assert.equal(a.doc.title, '(2) Worca');
   a.alerts.updateBadge({ unreadProblems: 1 });
-  assert.equal(a.doc.title, '(3) Worca CC');
+  assert.equal(a.doc.title, '(2) Worca', 'unread schedule problems are not runs that need you');
+  assert.equal(calls.at(-1), 3, 'the app badge still counts them');
   a.alerts.updateBadge({ waitingRuns: 0, unreadProblems: 0 });
-  assert.equal(a.doc.title, 'Worca CC');
+  assert.equal(a.doc.title, 'Worca');
+});
+
+test('unread schedule problems dot the favicon but never put a number in the title', async () => {
+  const a = setup({ badge: true });
+  a.alerts.updateBadge({ unreadProblems: 1 });
+  assert.equal(a.doc.title, 'Worca');
+  await tick();   // applyBadge draws the dot in a microtask (ui/public/alerts.mjs), like the file's other favicon tests
+  assert.deepEqual(a.drawn, ['/assets/worca-favicon.png'], 'the favicon still gets its dot');
 });
 
 test('badge: the favicon is swapped for the dotted one and restored at 0', async () => {
@@ -377,21 +390,21 @@ test('badge switch off: no title, favicon or app-badge change; turning it off cl
   const a = setup({ badge: false, nav });
   a.alerts.updateBadge({ waitingRuns: 2 });
   await tick();
-  assert.equal(a.doc.title, 'Worca CC');
+  assert.equal(a.doc.title, 'Worca');
   assert.equal(a.doc.querySelector('link[rel~="icon"]').getAttribute('href'), '/assets/worca-favicon.png');
   assert.deepEqual(calls, []);
   assert.deepEqual(a.drawn, []);
   a.alerts.setBadge(true);
-  assert.equal(a.doc.title, '(2) Worca CC');
+  assert.equal(a.doc.title, '(2) Worca');
   a.alerts.setBadge(false);
-  assert.equal(a.doc.title, 'Worca CC');
+  assert.equal(a.doc.title, 'Worca');
   assert.equal(a.store.getItem(ALERT_KEYS.badge), '0');
 });
 
 test('badge works with notifications off once the badge switch is on, and needs no permission', () => {
   const a = setup({ notify: false, badge: true, N: null });
   a.alerts.updateBadge({ waitingRuns: 1 });
-  assert.equal(a.doc.title, '(1) Worca CC');
+  assert.equal(a.doc.title, '(1) Worca');
 });
 
 test('a developer who never turns Alerts on sees no change', async () => {
@@ -400,7 +413,7 @@ test('a developer who never turns Alerts on sees no change', async () => {
   a.alerts.updateBadge({ waitingRuns: 3, unreadProblems: 1 });
   await tick();
   assert.equal(a.N.shown.length, 0);
-  assert.equal(a.doc.title, 'Worca CC');
+  assert.equal(a.doc.title, 'Worca');
   assert.deepEqual(a.drawn, []);
 });
 
@@ -510,4 +523,22 @@ test('card: a throwing localStorage does not break the card', async () => {
   assert.equal(a.$('#alertsNotify').checked, false);
   await assert.doesNotReject(() => a.flip('#alertsNotify'));
   await assert.doesNotReject(() => a.flip('#alertsBadge'));
+});
+
+// ── §5a.5: an alert says what the list says ───────────────────────────────────
+
+test('a run with a status line: title names the run, body is the line, click opens its href (§5a.5)', () => {
+  const a = setup();
+  a.alerts.onQuestion({ ...RUN, line: 'Plan · needs you · answer 2 questions', href: '#feature/feat_1' }, Q('q1', 'questions'));
+  assert.equal(a.N.shown[0].title, 'Worca: Fix the login bug');
+  assert.equal(a.N.shown[0].body, 'Plan · needs you · answer 2 questions');
+  a.N.shown[0].onclick({ preventDefault() {} });
+  assert.deepEqual(a.opened, [{ runId: 'r1', href: '#feature/feat_1' }]);
+});
+
+test('a paused run with a status line uses it too; an untitled one keeps the kind title', () => {
+  const a = setup();
+  a.alerts.onPaused({ runId: 'r2', title: '', line: 'Paused · usage limit' }, 'usage_limit');
+  assert.equal(a.N.shown[0].title, 'Worca: Usage limit reached');
+  assert.equal(a.N.shown[0].body, 'Paused · usage limit');
 });

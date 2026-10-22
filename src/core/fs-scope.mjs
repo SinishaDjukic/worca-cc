@@ -74,11 +74,13 @@ export async function realRoots(candidates, { onSkip = null } = {}) {
   return out;
 }
 
-/** True when `target` (real) lies inside a root and no folder below that root is hidden. */
+/**
+ * True when `target` (real) lies inside a root with no hidden folder below THAT root. Roots may nest (while no
+ * projects root is configured the server adds worca's projects folder, inside a hidden folder of the OS home): any
+ * one containing root suffices.
+ */
 export function insideRoots(target, roots) {
-  const root = roots.find((r) => isWithin(target, r));
-  if (!root) return false;
-  return !segments(target.slice(root.length)).some((s) => s.startsWith('.'));
+  return roots.some((r) => isWithin(target, r) && !segments(target.slice(r.length)).some((s) => s.startsWith('.')));
 }
 
 /**

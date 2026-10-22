@@ -184,7 +184,7 @@ each run. This is attribution, not permissions: everyone keeps the same rights.
   `WORCA_IDENTITY_NAME`, records the name but shows none of it: there is only one person.
 - A pull request opened from a run ends with *Started by ada@example.com via worca*, so a PR
   authored by a shared bot or GitHub App still names the person.
-- Ask Worca sees the signed-in person in its context and answers "who started this", "what did ada
+- Chat sees the signed-in person in its context and answers "who started this", "what did ada
   run", "who paused it" and "who scheduled this" from the recorded names (`list_runs` with a
   `startedBy` filter, `list_people`, and the actions `get_run` lists). "My runs" works only with a
   per-person sign-in.
@@ -193,7 +193,7 @@ each run. This is attribution, not permissions: everyone keeps the same rights.
 - *Run now* on a schedule credits whoever clicked it. Team metrics, team policy edits and cap
   overrides record the person instead of the server's git user (`attribution: none` still records
   nobody).
-- With a per-person sign-in (Access or a trusted header), each person's Ask Worca chats are their
+- With a per-person sign-in (Access or a trusted header), each person's chats are their
   own: others can't open them, and *Delete all* removes only yours. Notifications are marked read
   per person.
 - Each run's audit timeline (History → the saved `pipeline.md`) names who answered its questions,
@@ -340,16 +340,16 @@ meaning (the leading dot also matches the name itself) as long as `WORCA_EGRESS_
 In `block` and `allow` mode worca starts the egress proxy (`src/core/egress-proxy.mjs`, the one the
 [Docker overlay](docker.md#egress-allowlist) runs as a sidecar) on a loopback port inside its own
 process at boot, before anything else, and sets `HTTPS_PROXY`, `HTTP_PROXY` and their lower-case
-forms to it for every process it starts: agents, tools, the terminal, actions, MCP servers and a
-`worca` CLI started under it. `NO_PROXY` is replaced with loopback only, so no other host goes
-around the proxy. worca's own outbound calls (`fetch`) go through it too. The overlay's default
-allowlist never applies under a mode. If the proxy can't start, worca does not start (exit 78).
-`open` or no mode: no proxy, nothing changes.
+forms to it for every process it starts: agents, tools, the terminal, actions, MCP servers, plugin
+task sources and chat channels, and a `worca` CLI started under it. `NO_PROXY` is replaced with
+loopback only, so no other host goes around the proxy. worca's own outbound calls (`fetch`) go
+through it too. The overlay's default allowlist never applies under a mode. If the proxy can't
+start, worca does not start (exit 78). `open` or no mode: no proxy, nothing changes.
 
 A refused host gets a `403` whose body names the host and says the organization's outbound
 network policy blocked it, so an agent's tool error says why (`curl`, `git` and `npm` show it as
 a failed `CONNECT`). worca's log has one `egress: … DENY CONNECT host:443` line per refusal, and
-a boot line with the mode and list sizes. Ask Worca's context shows the mode (`egress=allow`).
+a boot line with the mode and list sizes. Chat's context shows the mode (`egress=allow`).
 
 The proxy runs inside worca, so nothing a client or a remote host does may take it down: a
 malformed request or `CONNECT` target gets a `400`, a request head over 16 KB a `431`, an
@@ -385,7 +385,9 @@ network has no route out, so nothing but the proxy reaches the internet.
 - Desktop features act on the server: the folder picker becomes a text field
   (`WORCA_NO_NATIVE_DIALOG=1`).
 - The in-app folder browser, adding a project by path and installing agents into a folder stay inside
-  Worca's own folders (the Worca home and the projects root, hidden folders below them excluded); any
+  Worca's own folders (the Worca home and the projects root, hidden folders below them excluded; while no
+  projects root is set, your home folder too — the Worca home inside it then stays hidden, except worca's projects
+  folder `~/.worca-cc/projects`); any
   other path is refused with `403 FS_OUTSIDE_ALLOWED`, symlinks and `..` included. A projects root of `/`
   or a one-segment folder such as `/home` is ignored (logged), so point `WORCA_PROJECTS_ROOT` at a deeper
   folder. Starting the server with

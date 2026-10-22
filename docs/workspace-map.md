@@ -14,7 +14,7 @@ extracts facts and does all the matching; agents fill the gaps code leaves and c
 
 | Stage | Runs as | What it does |
 |---|---|---|
-| extract | script | Lists each member's files (`git ls-files`; `graphify-out/`, build folders and vendored code skipped — `vendor/`, `node_modules/`, `bower_components/`, `jspm_packages/` and `Pods/` anywhere, third-party folders such as `third_party/` or `external/` at the member root, whose `.proto` files, most gRPC code generated from them and a Pants, Bazel or Buck dependency list — a requirements file, a `pyproject.toml` or a `Cargo.toml` — are still read) and runs the detectors — package manifests (outside sample apps under folders such as `docs/` and `examples/`), deploy files, configuration, API specs, and code (HTTP routes and clients, messaging, databases). Each fact records its file, line and the literal text found there. |
+| extract | script | Lists each member's files (`git ls-files`, or a walk of the folder for a Folder member or when git is not installed; `graphify-out/`, build folders and vendored code skipped — `vendor/`, `node_modules/`, `bower_components/`, `jspm_packages/` and `Pods/` anywhere, third-party folders such as `third_party/` or `external/` at the member root, whose `.proto` files, most gRPC code generated from them and a Pants, Bazel or Buck dependency list — a requirements file, a `pyproject.toml` or a `Cargo.toml` — are still read) and runs the detectors — package manifests (outside sample apps under folders such as `docs/` and `examples/`), deploy files, configuration, API specs, and code (HTTP routes and clients, messaging, databases). Each fact records its file, line and the literal text found there. |
 | survey | agent `workspaceScanner` | One investigator per member whose coverage is `partial` or `none` reports what code could not find: role, aliases, what the member provides and consumes. |
 | catalog | script | Checks every reported fact against its file, builds a catalog of everything the members provide, and searches every member for literal mentions of it (candidates), skipping test files and the files Normal protects (`.env*`, key and certificate files). |
 | usage | agent `workspaceUsageMapper` | One investigator per member confirms or rejects its candidates and reports further uses: dynamic URLs, generated clients, configuration. |
@@ -40,10 +40,20 @@ extracts facts and does all the matching; agents fill the gaps code leaves and c
   the overview is generated.
 - The scan agent model runs survey, usage and synth; the project agent model runs their
   investigators (Settings › Runs › Workspaces, or the scan's own Models pick).
-- A scan changes no member: it never creates a repository and never commits. Each member must be
+- A scan runs on the workspace's **saved scan model** — captured at creation, or set any time
+  (and cleared) with the **Scan model** control on the workspace header. A re-scan uses that
+  saved pick silently. A workspace without one (a legacy workspace, or a saved pick whose model
+  left the catalog) does not fall back to a default: the re-scan opens the pick-a-model window,
+  pre-filled from Settings › Runs › Workspaces — save your choice and the scan runs on it and
+  keeps it for later; close the window and the re-scan is skipped. A pick you never chose
+  (Settings or the built-in default) is never stored on the workspace.
+- A scan changes no member: it never creates a repository and never commits. A Git member must be
   the top folder of its own git repository and have a commit; a scan or re-scan with any other
-  member (a folder inside a monorepo, a repository with no commit) is refused and names it: add
-  the repository root instead, or make that folder its own repository with a commit.
+  Git member (a folder inside a monorepo, a repository with no commit) is refused and names it: add
+  the repository root instead, or make that folder its own repository with a commit. A Folder
+  member (a registered Folder project, or any member when git is not installed) is scanned on a
+  copy that the scan drops when it ends; it gets no graph and no origin alias. Members are
+  registered projects, or git repositories while git is installed.
 
 ## Coverage and confidence
 
@@ -127,11 +137,46 @@ The same actions over HTTP:
 | `DELETE /api/workspaces/:id/map/edges/:edgeId` | — manual edges (`m_…`) only |
 | `POST /api/workspaces/:id/map/render` | — Regenerate description |
 
+## Creating a workspace
+
+**Workspaces › Create workspace** opens the wizard: a name, the member projects (2–40) and the
+scan's models. The project list shows every registered project. Repositories that are not projects
+yet come in through **Add…** or the box under it — paste paths, one per line, then press
+**Add paths** (or Ctrl/Cmd+Enter). Worca works out what each path is:
+
+| You give it | It adds |
+|---|---|
+| a repository folder | that repository. A folder inside a repository (a monorepo package) adds the repository's top folder instead: a scan takes whole repositories. A folder inside a repository that holds repositories of its own counts as a folder of repositories. |
+| a folder of repositories | every git repository directly inside it (hidden folders and `node_modules` skipped). Tick **Look two levels deep** to search one level further down, for layouts such as `org/repo`. |
+| a VS Code `.code-workspace` file | every folder it lists (`path` relative to the file or absolute; comments and trailing commas are fine). Its file name becomes the workspace name while the name is still empty. |
+
+- **Add…** opens the system dialog. On macOS it takes folders and `.code-workspace` files in one go;
+  on Windows and Linux it takes folders — paste a `.code-workspace` file's path into the box. Where
+  no system dialog can open (remote access), Worca's own folder browser opens instead.
+- In the box, a path starting with `~/` is in your home folder. Quotes, `file://` and the
+  backslash escapes Terminal adds when you drag a folder in are undone, and blank lines and lines
+  starting with `#` are skipped. Use full paths.
+- What it finds lands in a review list: **new** (registered as a project when you scan),
+  **already a project** (that project is used), or why it cannot join — it does not exist, is not
+  in a git repository, has no commit yet, or is a git submodule (not supported yet). New and
+  existing rows start ticked, up to the 40-project limit; untick what you do not want.
+- **Scan interconnections** registers the ticked new rows as projects first — named after the
+  `.code-workspace` entry or the folder; a name already taken gets its parent folder's name in
+  front — then starts the scan.
+- Importing only reads: it lists folders, reads the `.code-workspace` file and runs
+  `git rev-parse`. It never writes into a repository. The projects Scan registers are ordinary
+  projects from then on, with the same background fetches as a project added under **Projects**.
+- On a hosted Worca with the terminal and actions off, importing reads only inside Worca's data and
+  projects folders, like the folder browser: a path outside them (or a `.code-workspace` entry
+  pointing outside) is listed with that reason, and a symlink leading out is not followed.
+  The wizard calls `POST /api/workspaces/import-candidates` with
+  `{ "paths": [...], "text": "...", "depth": 1 | 2 }`.
+
 ## Changing members
 
 A workspace's members can change after it is created: **Add projects** and **Remove** on the
 workspace page's Projects card, `POST /api/workspaces/:id/members` with `{ "add": [paths] }` or
-`{ "remove": path }`, or Ask Worca's workspace card. The workspace keeps its id, so its runs,
+`{ "remove": path }`, or Chat's workspace card. The workspace keeps its id, so its runs,
 schedules, homes and map reviews stay attached; runs already started keep the members they
 started with.
 

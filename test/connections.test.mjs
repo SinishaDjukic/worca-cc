@@ -113,7 +113,7 @@ test('R6: a gateway twin of a Codex built-in id gets an id of its own; the endpo
 
 // Ask Worca: list_models names every engine a model runs on, and the system prompt says to leave the engine to the
 // user's default and never pick a beta one unasked.
-test('Ask Worca knows the engines: list_models carries harnesses; the prompt keeps beta engines for when the user asks', async () => {
+test('Chat knows the engines: list_models carries harnesses; the prompt keeps beta engines for when the user asks', async () => {
   const { listModelsForAsk } = await import('../src/core/ask/model-deps.mjs');
   const { buildSystemPrompt } = await import('../src/core/ask/prompt.mjs');
   await addGlobalModel({ id: 'openai-gpt-5.5', upstream: RESPONSES });

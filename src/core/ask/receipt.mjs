@@ -19,7 +19,22 @@ export function receiptCard({ kind, label, target = {}, before = '', after = '',
   };
 }
 
-/** The [worca context] line of a receipt, a stop warning or a pull-request offer (ui/server.mjs resolveAskContext). */
+/** The [worca context] line of a receipt, a stop warning, a pull-request offer or a Ship card (ui/server.mjs resolveAskContext). */
+/** Shaper s5: an applied changes card's outcome. A round's number is the one taken at Start (result.round). */
+function changesDone(c) {
+  const r = c.result || {};
+  const kind = c.landing && c.landing.kind;
+  if (kind === 'round') return `Round ${r.round} started`;
+  if (kind === 'next-plan') return `Added to Run ${r.index}'s plan`;
+  return r.index ? `Run ${r.index} added` : 'Follow-up started';
+}
+/** Shaper s5: an applied Route card's outcome. */
+function routeDone(r) {
+  if (r.verb === 'save') return 'Saved for the next checkpoint';
+  if (r.verb === 'own') return 'Started its own run';
+  return r.where === 'next' ? `Added to Run ${r.index}'s plan` : `Run ${r.index} added`;
+}
+
 export function chatActionSummary(card) {
   const c = card && typeof card === 'object' ? card : {};
   const t = c.target && typeof c.target === 'object' ? c.target : {};
@@ -27,6 +42,9 @@ export function chatActionSummary(card) {
   if (c.type === 'receipt') return c.kind === 'direction' ? `Direction${where}: ${c.after}` : `${c.label}${where}: ${c.before} → ${c.after}`;
   if (c.type === 'run-stop') return `Stop ${c.title || c.pipelineId || 'run'}`;
   if (c.type === 'pull-request') return `Pull request for ${c.title || c.pipelineId || 'run'}${c.result && c.result.url ? `: ${c.result.url}` : ''}`;
+  if (c.type === 'ship') return `Ship ${c.title || c.featureId || 'feature'}${c.result && c.result.mode ? `: shipped as ${c.result.mode === 'one' ? 'one PR' : 'stacked PRs'}` : ''}`;
+  if (c.type === 'changes') return `${(c.landing && c.landing.title) || 'Changes'}${c.result ? `: ${changesDone(c)}` : ''}`;
+  if (c.type === 'route') return `Where does this go: ${c.text || ''}${c.result ? `: ${routeDone(c.result)}` : ''}`;
   return '';
 }
 

@@ -14,7 +14,7 @@ import { addProject } from '../src/core/projects.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 import { graphResumePoint } from './helpers/graph-templates.mjs';
 import {
-  drainTimeoutMs, autoResumeEnabled, autoResumeCandidates, DRAIN_TIMEOUT_DEFAULT_MS,
+  drainTimeoutMs, sigtermGraceMs, autoResumeMode, autoResumeCandidates, DRAIN_TIMEOUT_DEFAULT_MS,
 } from '../src/core/drain.mjs';
 import { pauseConsequences, REASON } from '../src/core/failure-policy.mjs';
 
@@ -51,6 +51,8 @@ async function resumable(name, { status = 'paused', pauseReason = null, resumeAs
   if (startedBy) getDb().prepare('UPDATE pipelines SET started_by = ? WHERE id = ?').run(startedBy, id);
   return id;
 }
+
+const status = (id) => getDb().prepare('SELECT status FROM pipelines WHERE id = ?').get(id).status;
 
 before(async () => {
   homeDir = await mkdtemp(join(tmpdir(), 'worca-cc-drain-home-'));
@@ -109,11 +111,22 @@ test('drainTimeoutMs: 20 s by default, the env overrides it, junk falls back, ca
   assert.equal(drainTimeoutMs({ WORCA_DRAIN_TIMEOUT_MS: '99999999' }), 600_000);
 });
 
-test('autoResumeEnabled: off unless WORCA_AUTO_RESUME says so', () => {
-  assert.equal(autoResumeEnabled({}), false);
-  assert.equal(autoResumeEnabled({ WORCA_AUTO_RESUME: '0' }), false);
-  assert.equal(autoResumeEnabled({ WORCA_AUTO_RESUME: '1' }), true);
-  assert.equal(autoResumeEnabled({ WORCA_AUTO_RESUME: 'true' }), true);
+test('sigtermGraceMs: 20 s by default, WORCA_SIGTERM_GRACE_MS overrides it, junk falls back, capped at 10 min', () => {
+  assert.equal(sigtermGraceMs({}), 20_000);
+  assert.equal(sigtermGraceMs({ WORCA_SIGTERM_GRACE_MS: '1500' }), 1500);
+  assert.equal(sigtermGraceMs({ WORCA_SIGTERM_GRACE_MS: '0' }), 0);
+  assert.equal(sigtermGraceMs({ WORCA_SIGTERM_GRACE_MS: 'soon' }), 20_000);
+  assert.equal(sigtermGraceMs({ WORCA_SIGTERM_GRACE_MS: '99999999' }), 600_000);
+  assert.equal(sigtermGraceMs({ WORCA_DRAIN_TIMEOUT_MS: '5000' }), 20_000, 'the server drain bound is a separate knob');
+});
+
+test('autoResumeMode: drained runs by default, everything with =1, nothing with =0', () => {
+  assert.equal(autoResumeMode({}), 'drain');
+  assert.equal(autoResumeMode({ WORCA_AUTO_RESUME: '' }), 'drain');
+  assert.equal(autoResumeMode({ WORCA_AUTO_RESUME: '0' }), 'off');
+  assert.equal(autoResumeMode({ WORCA_AUTO_RESUME: 'false' }), 'off');
+  assert.equal(autoResumeMode({ WORCA_AUTO_RESUME: '1' }), 'all');
+  assert.equal(autoResumeMode({ WORCA_AUTO_RESUME: 'true' }), 'all');
 });
 
 test('a drain pause is resumable, reported to nobody and labelled', () => {
@@ -151,11 +164,9 @@ test('autoResumeCandidates: drained and freshly interrupted runs only, as whoeve
 
 // ── B3: auto-resume on boot ──────────────────────────────────────────────────
 
-test('auto-resume does nothing unless WORCA_AUTO_RESUME is set', async () => {
-  const out = await _testing.autoResumeOnBoot({ interruptedIds: [seeded.crashedNow], env: {} });
-  assert.deepEqual(out, { enabled: false, resumed: [], failed: [] });
-  const statuses = getDb().prepare('SELECT id, status FROM pipelines').all();
-  assert.ok(statuses.every((r) => r.status === 'paused' || r.status === 'interrupted'), 'nothing was resumed');
+test('WORCA_AUTO_RESUME=0 resumes nothing', async () => {
+  assert.deepEqual(await _testing.autoResumeOnBoot({ interruptedIds: [seeded.crashedNow], env: { WORCA_AUTO_RESUME: '0' } }),
+    { enabled: false, resumed: [], failed: [] });
 });
 
 test('WORCA_AUTO_RESUME=1 resumes the drained run and the run this start found interrupted, nothing else', async () => {
@@ -169,10 +180,19 @@ test('WORCA_AUTO_RESUME=1 resumes the drained run and the run this start found i
   assert.equal(byId[seeded.crashedNow].by, 'cy@example.com');
   assert.equal(runs.get(byId[seeded.drained].runId).lastAction.by, 'ada@example.com');
   assert.equal(runs.get(byId[seeded.crashedNow].runId).lastAction.by, 'cy@example.com');
-  const status = (id) => getDb().prepare('SELECT status FROM pipelines WHERE id = ?').get(id).status;
   assert.equal(status(seeded.userPaused), 'paused');
   assert.equal(status(seeded.costPaused), 'paused');
   assert.equal(status(seeded.crashedLongAgo), 'interrupted');
+});
+
+test('with no WORCA_AUTO_RESUME a start resumes the drained run only, never the interrupted one', async () => {
+  const drained2 = await resumable('drained2', { pauseReason: 'drain' });
+  const crashed2 = await resumable('crashed2', { status: 'interrupted' });
+  const out = await _testing.autoResumeOnBoot({ interruptedIds: [crashed2], env: {}, mock: true });
+  assert.deepEqual(out.resumed.map((r) => [r.pipelineId, r.why]), [[drained2, 'drain']]);
+  assert.equal(status(crashed2), 'interrupted');
+  assert.equal(status(seeded.userPaused), 'paused');
+  assert.equal(status(seeded.costPaused), 'paused');
 });
 
 // ── B2: /api/drain is not for anyone on the network ─────────────────────────

@@ -1,5 +1,5 @@
 // test/ask-schedules.test.mjs
-// Scheduled runs in Ask Worca (docs/scheduled-runs.md "Ask Worca"), end to end over WORCA_MOCK:
+// Scheduled runs in Ask Worca (docs/scheduled-runs.md "Chat"), end to end over WORCA_MOCK:
 // a "schedule …" message proposes a run card carrying its schedule (read in the browser's zone);
 // the card schedules once or becomes a repeating schedule it then follows; a schedule-change card
 // is applied or declined behind the click through the same verbs the Schedules page uses; and the

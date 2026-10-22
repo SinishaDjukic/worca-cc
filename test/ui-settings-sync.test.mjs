@@ -16,7 +16,8 @@ const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.ur
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 const BUILT_IN = { beforeRun: true, remote: 'origin', refreshMinutes: 10, onDiverged: 'ask' };
-const SETTINGS = { sync: BUILT_IN, schedule: { ifMissed: 'run', graceMin: 60, maxFailures: 3 }, app: {}, theme: {}, chat: {} };
+const NET_DEFAULT = { enabled: true, maxWaitMin: 240 };
+const SETTINGS = { sync: BUILT_IN, networkWait: NET_DEFAULT, schedule: { ifMissed: 'run', graceMin: 60, maxFailures: 3 }, app: {}, theme: {}, chat: {} };
 
 async function boot({ settings = SETTINGS, postStatus = 200 } = {}) {
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
@@ -37,6 +38,7 @@ async function boot({ settings = SETTINGS, postStatus = 200 } = {}) {
           const next = body.sync === null ? {} : Object.fromEntries(Object.entries(body.sync).filter(([, v]) => v !== null));
           box.settings = { ...box.settings, sync: { ...BUILT_IN, ...next } };
         }
+        if ('networkWait' in body) box.settings = { ...box.settings, networkWait: { ...NET_DEFAULT, ...(body.networkWait || {}) } };
         return Promise.resolve({ ok: true, status: 200, json: async () => ({ ...box.settings }) });
       }
       return Promise.resolve({ ok: true, status: 200, json: async () => ({ ...box.settings }) });
@@ -123,4 +125,28 @@ test('a refused save shows the server error and leaves the fields as typed', asy
   assert.equal(fieldErrorText(doc.getElementById('syncDefRemote')), '“Remote” must be a remote name (for example origin), never a URL.');
   assert.equal(doc.getElementById('syncDefRemote').getAttribute('aria-invalid'), 'true');
   assert.equal(doc.getElementById('syncDefRemote').value, 'https://example.com/x.git');
+});
+
+test('Wait for the network (Runs tab, Advanced): paints the stored value; Save posts both fields; Use defaults posts networkWait:null', async () => {
+  const { window, openSettings, posts, tick } = await boot({ settings: { ...SETTINGS, networkWait: { enabled: true, maxWaitMin: 90 } } });
+  await openSettings();
+  const doc = window.document;
+  const card = doc.getElementById('network-wait-settings-card');
+  assert.ok(card.closest('.settings-pane[data-tab="runs"]'), 'on the Runs tab');
+  assert.equal(card.dataset.minLevel, 'advanced');
+  assert.equal(card.querySelector('h2').textContent.trim(), 'Wait for the network');
+  assert.equal(doc.getElementById('networkWaitEnabled').checked, true);
+  assert.equal(doc.getElementById('networkWaitMaxMin').value, '90', 'an off-list value is added as an option');
+
+  edit(window, doc.getElementById('networkWaitEnabled'), false);
+  edit(window, doc.getElementById('networkWaitMaxMin'), '60');
+  doc.getElementById('networkWaitSave').click();
+  await tick(); await tick();
+  assert.deepEqual(posts.at(-1), { networkWait: { enabled: false, maxWaitMin: 60 } });
+
+  doc.getElementById('networkWaitReset').click();
+  await tick(); await tick();
+  assert.deepEqual(posts.at(-1), { networkWait: null });
+  assert.equal(doc.getElementById('networkWaitEnabled').checked, true);
+  assert.equal(doc.getElementById('networkWaitMaxMin').value, '240');
 });

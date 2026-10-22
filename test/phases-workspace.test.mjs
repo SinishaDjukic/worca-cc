@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   workspaceContextBlock, workspaceFanOutDirective, buildSystemPrompt, taskHeader,
-  fanOutDirective, workspaceDiffInstruction, genericIoBlock,
+  fanOutDirective, workspaceDiffInstruction, genericIoBlock, folderRunNote, diffInstruction,
 } from '../src/core/phases.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -388,4 +388,96 @@ test('taskHeader on cursor: the skills hint names the .agents/skills mount and s
   const h = taskHeader({ ...baseCtx, node: { key: 'planner', engine: 'cursor' }, inputs: { userPrompt: {} } }, 'Plan');
   assert.match(h, /mounted at \.agents\/skills for this run — each folder's SKILL\.md describes one skill; read any that fit/);
   assert.doesNotMatch(h, /are listed for you/);
+});
+
+// test/phases-workspace.test.mjs — append (its import from '../src/core/phases.mjs' gains `folderRunNote` and `diffInstruction`)
+import { changesInstruction } from '../src/core/graph/executor.mjs';
+
+test('Folder members: the workspace block, the diff hints and the run-root handle name a copy and its changes file, never a git command', () => {
+  const PATCH = '/mh/store/workspaces/wks-x/pipelines/p/members/notes-9c8d7e6f/changes.patch';
+  const NOTE = 'Folder members of this run are copies of plain folders, not git repositories. Never run git in a Folder member, even where your role instructions say so; read the changes file named on its line under Workspace projects.\n\n';
+  const WS_F = { ...WS_D, projects: [WS_D.projects[0], { projectKey: 'notes-9c8d7e6f', projectName: 'notes',
+    worktreeDir: `${RUN_ROOT}/repos/notes-9c8d7e6f`, graphInstruction: '', workMode: 'folder', changesPatch: PATCH }] };
+  withMode('detached', () => {
+    // A mixed workspace is a git run (orchestrator._nodeCtx passes workMode: 'git'); its Folder member rides the channel.
+    const ctx = wsCtx({ projectDir: RUN_ROOT, runRoot: RUN_ROOT, workMode: 'git', workspace: WS_F });
+    const h = taskHeader(ctx, 'Review');
+    assert.ok(h.includes(`- **notes** (\`notes-9c8d7e6f\`): copy \`repos/notes-9c8d7e6f\` (Folder, no git), changes so far \`${PATCH}\``));
+    assert.match(h, /- \*\*iam\*\* \(`iam-1a2b3c4d`\): worktree `repos\/iam-1a2b3c4d`, diff base `sha-iam`/);
+    assert.ok(h.includes('each checked out INSIDE your cwd. A Folder member is a plain copy with no git: read the changes file named on its line. Work in a member in place'));
+    assert.ok(h.includes(NOTE), 'a mixed workspace header carries the workspace no-git note');
+    assert.deepEqual(workspaceDiffInstruction(ctx).split('\n'), [
+      '- **iam**: `git -C repos/iam-1a2b3c4d diff sha-iam`',
+      `- **notes**: Folder, no git — read \`${PATCH}\``,
+    ]);
+    assert.ok(changesInstruction(ctx).includes(`\n\n- **iam**: \`git -C repos/iam-1a2b3c4d diff sha-iam\`\n- **notes**: Folder, no git — read \`${PATCH}\`\n\n`),
+      'the {diffInstruction} hint lists every member, the Folder one by its changes file');
+    assert.match(genericIoBlock({ code: { kind: 'runroot', dir: RUN_ROOT, repos: [
+      { projectKey: 'iam-1a2b3c4d', relDir: 'repos/iam-1a2b3c4d', checkpointRef: 'sha-iam' },
+      { projectKey: 'notes-9c8d7e6f', relDir: 'repos/notes-9c8d7e6f', workMode: 'folder', changesPatch: PATCH }] } }, {}),
+    /repos\/iam-1a2b3c4d \(diff base sha-iam\), repos\/notes-9c8d7e6f \(Folder: read \/mh\/store\/workspaces\/wks-x\/pipelines\/p\/members\/notes-9c8d7e6f\/changes\.patch\)/);
+    // An all-git workspace keeps today's bytes.
+    assert.ok(!taskHeader(wsCtx({ projectDir: RUN_ROOT, runRoot: RUN_ROOT, workMode: 'git' }), 'Review').includes('Folder'));
+    // P1a's single-run folder arms never name one pipeline-dir patch for a workspace, even an all-Folder one.
+    const allFolder = wsCtx({ projectDir: RUN_ROOT, runRoot: RUN_ROOT, workMode: 'folder', pipelineDir: '/mh/p',
+      workspace: { ...WS_F, projects: [WS_F.projects[1]] } });
+    assert.equal(folderRunNote(allFolder), NOTE);
+    assert.ok(!taskHeader(allFolder, 'Review').includes('/mh/p/changes.patch'));
+    assert.ok(changesInstruction(allFolder).includes(PATCH) && !changesInstruction(allFolder).includes('/mh/p/'));
+    assert.ok(!diffInstruction(allFolder).includes('/mh/p/'));
+  });
+});
+
+test('Folder members: every workspace fan-out and serial directive keeps git (and the sub-agents it dispatches) out of a Folder member', () => {
+  // The task header's Folder note reaches the lead only; the per-member sub-agents see this directive's routing.
+  const RULE = 'A Folder member (`Folder, no git` under `## Workspace projects`) has no git and no checkpoint: never run git ' +
+    'there, and never let a sub-agent run it there — read that member\'s files and its changes file (named on its line; ' +
+    'missing or empty means no changes yet). Pass this rule on to every sub-agent you dispatch for a Folder member.\n\n';
+  const WS_F = { ...WS_D, projects: [WS_D.projects[0], { projectKey: 'notes-9c8d7e6f', projectName: 'notes',
+    worktreeDir: `${RUN_ROOT}/repos/notes-9c8d7e6f`, graphInstruction: '', workMode: 'folder',
+    changesPatch: '/mh/p/members/notes-9c8d7e6f/changes.patch' }] };
+  const allFolder = { ...WS_F, projects: [WS_F.projects[1]] };
+  for (const strategy of ['explore', 'task', 'review']) {
+    for (const opts of [{}, { relative: true }, { relative: true, endpointRouted: true }, { serial: true }, { relative: true, serial: true }]) {
+      const label = `${strategy} ${JSON.stringify(opts)}`;
+      const gitOnly = workspaceFanOutDirective(strategy, WS_D, opts);
+      assert.ok(gitOnly && !gitOnly.includes('Folder'), `${label}: an all-Git workspace never names a Folder member`);
+      assert.equal(workspaceFanOutDirective(strategy, WS_F, opts), gitOnly + RULE, `${label}: a mixed workspace appends the rule`);
+      assert.equal(workspaceFanOutDirective(strategy, allFolder, opts), gitOnly + RULE, `${label}: an all-Folder workspace too`);
+    }
+  }
+  assert.equal(workspaceFanOutDirective('ponder', WS_F), '', 'an unknown strategy still renders nothing');
+  assert.equal(workspaceFanOutDirective('ponder', WS_F, { serial: true }), '');
+});
+
+test('Folder members on a read-only scan (no changes file on the channel): the prompts never point at a changes file', () => {
+  // S51: a scan writes no Changes, so its channel carries no changesPatch for a Folder member.
+  const WS_S = { ...WS_D, projects: [WS_D.projects[0], { projectKey: 'notes-9c8d7e6f', projectName: 'notes',
+    worktreeDir: `${RUN_ROOT}/repos/notes-9c8d7e6f`, graphInstruction: '', workMode: 'folder' }] };
+  withMode('detached', () => {
+    const ctx = wsCtx({ projectDir: RUN_ROOT, runRoot: RUN_ROOT, workMode: 'git', workspace: WS_S });
+    const h = taskHeader(ctx, 'Workspace Survey');
+    assert.ok(h.includes('\n- **notes** (`notes-9c8d7e6f`): copy `repos/notes-9c8d7e6f` (Folder, no git)\n'), 'the Folder line ends at its copy');
+    assert.ok(h.includes('each checked out INSIDE your cwd. A Folder member is a plain copy with no git. Work in a member in place'));
+    assert.equal(folderRunNote(ctx), 'Folder members of this run are copies of plain folders, not git repositories. Never run git ' +
+      'in a Folder member, even where your role instructions say so.\n\n');
+    assert.ok(h.includes(folderRunNote(ctx)), 'the header carries the short note');
+    assert.doesNotMatch(h, /changes so far|changes file|undefined/);
+  });
+});
+
+// #411: a member's checkout dir can be a shortened projectKey (worktree.mjs boundCheckoutName), so the
+// relative render names the dir on disk — basename(worktreeDir) — never the projectKey.
+test('detached workspace renders: a shortened checkout is named by its dir, not its projectKey', () => {
+  const ws = { ...WS_D, projects: [{ ...WS_D.projects[0], projectKey: 'identity-access-management-1a2b3c4d',
+    worktreeDir: `${RUN_ROOT}/repos/ident-1a2b3c4d` }] };
+  withMode('detached', () => {
+    const ctx = wsCtx({ projectDir: RUN_ROOT, runRoot: RUN_ROOT, workspace: ws });
+    const h = taskHeader(ctx, 'Plan');
+    assert.match(h, /Member projects: \.\/repos\/ident-1a2b3c4d \(iam\)/);
+    assert.match(h, /worktree `repos\/ident-1a2b3c4d`/);
+    assert.match(h, /graph `repos\/ident-1a2b3c4d\/graphify-out\/`/);
+    assert.match(workspaceDiffInstruction(ctx), /git -C repos\/ident-1a2b3c4d diff sha-iam/);
+    assert.ok(!`${h}${workspaceDiffInstruction(ctx)}`.includes('repos/identity-access-management'), 'no projectKey path');
+  });
 });

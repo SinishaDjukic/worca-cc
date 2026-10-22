@@ -18,7 +18,7 @@
 //   - collectRequiredAssets() pure: union of requiresAssets across the plan's agents
 //   - stageAssets()           side-effect: copy assets/<name>/ into the run folder
 import { existsSync } from 'node:fs';
-import { cp } from 'node:fs/promises';
+import { cp, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 /** The asset name is used as a PATH SEGMENT on both the source and the target
@@ -63,6 +63,9 @@ export function collectRequiredAssets(registry, agentKeys) {
  * @param {{root:string, target:string, pluginDirs?:Array<{plugin:string, dir:string}>}} opts
  * @returns {Promise<string[]>} the staged names, in the order given
  */
+/** File written into every staged asset folder: worca's package root (one line). */
+export const APP_ROOT_MARKER = '.worca-app-root';
+
 export async function stageAssets(names, { root, target, pluginDirs = [] }) {
   const staged = [];
   for (const name of names || []) {
@@ -73,6 +76,9 @@ export async function stageAssets(names, { root, target, pluginDirs = [] }) {
       throw new Error(`requiresAssets: asset "${name}" not found at ${candidates.join(' or ')}`);
     }
     await cp(src, join(target, name), { recursive: true, force: true });
+    // A staged copy has no node_modules beside it: record worca's package root so the kit's own tools can
+    // resolve worca's dependencies (promo-kit's capture lib needs playwright-core) from the run folder.
+    await writeFile(join(target, name, APP_ROOT_MARKER), String(root) + '\n');
     staged.push(name);
   }
   return staged;

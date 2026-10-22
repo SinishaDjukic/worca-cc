@@ -148,7 +148,7 @@ test('the import sheet: a blocked row cannot be ticked, an unknown window says w
   assert.deepEqual(rows.map((r) => r.dataset.id), ['qwen3-coder:30b', 'glm-4.7-flash:latest', 'nomic-embed-text:latest']);
   assert.equal(rows[0].querySelector('td.num').textContent, '66k');
   assert.equal(rows[1].querySelector('.mvi-ctx-unknown').textContent, '? · supports 203k');
-  assert.equal(rows[1].querySelector('.mvi-status').textContent, 'in catalog ✓ · not loaded');
+  assert.equal(rows[1].querySelector('.mvi-status').textContent, 'in catalog · not loaded');
   assert.ok(rows[2].classList.contains('mvi-disabled'));
   assert.equal(rows[2].querySelector('.mvi-cb').disabled, true);
   assert.match(rows[2].querySelector('.mvi-status').textContent, /an embedding model/);

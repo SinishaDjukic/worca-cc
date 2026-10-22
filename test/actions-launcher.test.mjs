@@ -148,6 +148,22 @@ test('launchAndWatch: exit 0 is ok; a quick failure reports its stderr; still ru
   assert.deepEqual(await launchAndWatch(CMD, { spawn: err.spawn, watchMs: 500 }), { ok: false, code: null, error: 'spawn /bin/sh ENOENT' });
 });
 
+test('launchAndWatch: okExitCodes on the spec widens success (Explorer exits 1); a spawn error still fails', async () => {
+  const EXPLORER = { file: 'explorer.exe', args: ['C:\\w'], opts: { detached: true }, okExitCodes: [0, 1] };
+  const one = fakeSpawn((c) => c.emit('exit', 1));
+  assert.deepEqual(await launchAndWatch(EXPLORER, { spawn: one.spawn, watchMs: 500 }), { ok: true });
+  assert.equal('okExitCodes' in one.calls[0].opts, false, 'not passed on to spawn');
+
+  const two = fakeSpawn((c) => c.emit('exit', 2));
+  assert.deepEqual(await launchAndWatch(EXPLORER, { spawn: two.spawn, watchMs: 500 }), { ok: false, code: 2, error: 'the command exited with code 2' });
+
+  const plain = fakeSpawn((c) => c.emit('exit', 1));
+  assert.deepEqual(await launchAndWatch(CMD, { spawn: plain.spawn, watchMs: 500 }), { ok: false, code: 1, error: 'the command exited with code 1' });
+
+  const err = fakeSpawn((c) => c.emit('error', new Error('spawn explorer.exe ENOENT')));
+  assert.deepEqual(await launchAndWatch(EXPLORER, { spawn: err.spawn, watchMs: 500 }), { ok: false, code: null, error: 'spawn explorer.exe ENOENT' });
+});
+
 test('launchAndWatch runs a real shell line (POSIX): a missing program fails with the shell\'s message', { skip: process.platform === 'win32' }, async () => {
   const { spawn } = await import('node:child_process');
   const good = buildLauncherCommand(`"${process.execPath}" -e 0`, { folder: '/tmp' });

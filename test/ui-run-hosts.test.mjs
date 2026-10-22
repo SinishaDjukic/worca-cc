@@ -583,7 +583,7 @@ test('label helpers (incl. nodeLabelLookup/agentNodeIdSet) read the v2 graph; a 
       assert.match(np.rdStateCopy({ ...r, status: 'paused', pauseReason: 'error', pauseDetail: 'claude exited with code 1: disk full' }, 'Planner'),
         /^Paused after an error: claude exited with code 1: disk full\. Fix the cause, then Resume/);
       assert.match(np.rdStateCopy({ ...r, status: 'paused', pauseReason: "You've hit your session limit · resets 6pm" }, 'Planner'),
-        /^Paused — You've hit your session limit · resets 6pm\./);
+        /^Paused: You've hit your session limit · resets 6pm\./);
       assert.match(np.rdStateCopy({ ...r, status: 'paused', pauseReason: null }, 'Planner'), /^Paused\. /);
       assert.match(np.rdStateCopy({ ...r, status: 'paused', pauseReason: null, lastAction: { kind: 'pause', by: 'ada@example.com' } }, 'Planner'), /^Paused\. /, 'no viewer yet: nobody named');
       // A run whose manifest has not arrived yet: no active agent to name, and the
@@ -932,10 +932,10 @@ test('a v2 run page: progress reads numerically, .rd-step names what runs (no st
       assert.equal(banners.querySelector('.run-warn').hidden, false);
       np.paintQuiescenceBanner(banners, { quiescent: false });
       assert.equal(banners.querySelector('.run-warn').hidden, true);
-      assert.equal(np.progressText(r), '1/1 done');
+      assert.equal(np.progressText(r), 'Finished', 'the P5 line supersedes the "n/m done" counter (spec 2026-10-14 P12)');
       assert.equal(np.histCountsLine({ ...r, stepper: MANIFEST }), '1 execution · 2 loop deliveries');
       const v1 = np.makeRun({ runId: 'r2', title: 't', projectDir: '/p', status: 'running' });
-      assert.equal(np.progressText(v1), '', 'v1 runs have no numeric progress');
+      assert.equal(np.progressText(v1), '', 'v1 runs have no progress line');
     } },
     { name: 'the detail header .rd-step names what runs on a v2 run, with no step count', run: async () => {
       const window = await bootApp();
@@ -991,7 +991,7 @@ test('History: the header meta carries the End chip and the Overview the counts 
   assert.deepEqual(urls, ['/api/history/proj-alpha-00000001/p1/artifact-raw/tmp/p/plan.md?download=1',
     '/api/history/proj-alpha-00000001/p1/artifact?rel=%2Ftmp%2Fp%2Fplan.md'], 'the keyed routes, through historyRunUrl (a HEAD sizes the file first)');
   np.paintHdHeaderMeta(screen, record, { state: { ...base, endReached: true, result: { type: 'void' } } });
-  assert.equal(screen.querySelector('.hd-meta .hd-result').textContent, '— completed');
+  assert.equal(screen.querySelector('.hd-meta .hd-result').textContent, 'completed');
   np.paintHdHeaderMeta(screen, record, { state: { ...base, endReached: false, result: { type: 'md', path: '/tmp/p/plan.md' } } });
   assert.equal(screen.querySelector('.hd-meta .hd-result'), null, 'no chip until End binds — a recorded result on a quiescent run is not one');
   assert.equal(screen.querySelector('.hd-meta .hd-model'), null, 'D5: History never shows model/effort');

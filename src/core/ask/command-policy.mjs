@@ -1,7 +1,7 @@
 // src/core/ask/command-policy.mjs
 // Ask agent mode (#574): the rails every command Ask runs passes BEFORE a key is typed. A rail
 // against mistakes and naive prompt injection, not a sandbox: obfuscated text can pass it
-// (docs/terminal.md "Ask Worca"). Pure: the caller gives the folder, homes, host PID and port.
+// (docs/terminal.md "Chat"). Pure: the caller gives the folder, homes, host PID and port.
 import { isAbsolute, relative, resolve } from 'node:path';
 import { evaluateKillCommand } from '../host-guard.mjs';
 import { SPAWN_ENV_BASE } from '../claude-runner.mjs';

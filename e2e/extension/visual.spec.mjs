@@ -60,6 +60,8 @@ for (const scheme of ['light', 'dark']) {
 
   test(`computed styles of Ask elements and the Pinpoint bar match the real Worca Chat page (${scheme})`, async ({ context, sw, extensionId, worca, site }) => {
     const { page, sidebar, ui } = await chatted({ context, sw, extensionId, worca, site }, scheme);
+    // The Send click left the pointer on the sidebar's Send, and a primary button tints on hover: move it off first.
+    await sidebar.mouse.move(0, 0);
     await ui.evaluate(atRest); await sidebar.evaluate(atRest);
     const want = await ui.evaluate(styleOf, [STYLE_TARGETS, PROPS]);
     const got = await sidebar.evaluate(styleOf, [STYLE_TARGETS, PROPS]);

@@ -47,8 +47,8 @@ const personOf = (by) => (typeof by === 'string' && by.trim() && by !== 'local' 
  * (design §7) and lets the run through; a cap with `requireReason` refuses an empty reason.
  * @returns {Promise<{blocked:false, caps:object, ack?:object} | {blocked:true, caps:object, error:string, code:'team_total'|'reason_required', policy:object}>}
  */
-export async function checkTeamTotalGate(target, { pastTeamCap = false, reason = null, unattended = false, now = new Date(), by = null } = {}) {
-  const caps = await teamCapsForTarget(target);
+export async function checkTeamTotalGate(target, { pastTeamCap = false, reason = null, unattended = false, now = new Date(), by = null, discover = 'if-missing' } = {}) {
+  const caps = await teamCapsForTarget(target, { discover });
   const { total, policy, period } = caps;
   if (!policy || total.binding !== 'team' || total.cap == null) return { blocked: false, caps };
   const windowStartMs = costWindowStart(now, period).getTime();

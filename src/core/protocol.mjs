@@ -15,6 +15,7 @@ export {
   SEVERITIES, BLOCKING, normalizeSeverity, hasBlocking, blockingIssues,
 } from '../shared/graph/verdict.mjs';
 import { normalizeSeverity } from '../shared/graph/verdict.mjs';
+import { normalizeReviewChecklist } from '../shared/shape/review-checklist.mjs';
 
 /** Coerce any value to a trimmed string (empty string for null/undefined). */
 function asString(value) {
@@ -279,7 +280,7 @@ export async function readAskFile(absPath) {
 
 /**
  * Coerce arbitrary parsed data into the canonical review shape:
- *   { issues: [ { severity, title, detail, location } ], summary }
+ *   { issues: [ { severity, title, detail, location } ], summary, checklist? }
  * Always returns { issues: [], summary: '' } on bad input.
  */
 export function normalizeReview(data) {
@@ -295,7 +296,8 @@ export function normalizeReview(data) {
       location: asString(it.location).trim(),
     });
   }
-  return { issues, summary: asString(data.summary).trim() };
+  const checklist = normalizeReviewChecklist(data.checklist);
+  return { issues, summary: asString(data.summary).trim(), ...(checklist ? { checklist } : {}) };
 }
 
 /**

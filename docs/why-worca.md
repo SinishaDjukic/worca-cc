@@ -88,9 +88,9 @@ without stepping on each other or on you. Isolation by default is what lets
 you trust the "autonomous" part — the worst case is a thrown-away clone,
 never a corrupted repo.
 
-## 8. Ask Worca
+## 8. Chat
 
-Ask Worca is a conversational layer over everything Worca knows: your runs,
+Chat is a conversational layer over everything Worca knows: your runs,
 their logs, their costs, their diffs and the pipeline definitions
 themselves. Instead of digging through artifacts you ask "why did the review
 step reject the plan?" or "what did last night's run cost and what changed?"

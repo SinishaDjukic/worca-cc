@@ -17,7 +17,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createScheduler } from '../src/core/graph/scheduler.mjs';
-import { flowPorts } from '../src/shared/graph/ports.mjs';
+import { flowPorts, ROLE_REVIEW_PORTS } from '../src/shared/graph/ports.mjs';
 import { AWAIT_PORT } from '../src/shared/graph/constants.mjs';
 
 const BLOCKING = (title = 'boom') => ({ issues: [{ severity: 'critical', title }] });
@@ -52,6 +52,12 @@ const AGENTS = {
     ],
     outputs: [{ id: 'done', type: 'void', when: 'always' }],
   },
+  // The refiner of a role-review shape: the reviewed plan and the merged findings arrive together (awaitAll).
+  tightener: {
+    inputs: [{ id: 'plan', type: 'md', required: true }, { id: 'findings', type: 'md', required: false }],
+    outputs: [{ id: 'plan', type: 'md', when: 'clean' }, { id: 'revise', type: 'md', when: 'blocking' }],
+    verdict: { filename: 'tight-cycle{cycle}.json' },
+  },
   polisher: {
     inputs: [{ id: 'plan', type: 'md', required: true }, { id: 'revise', type: 'md', required: false, loop: true }],
     outputs: [{ id: 'plan', type: 'md', when: 'clean' }, { id: 'revise', type: 'md', when: 'blocking' }],
@@ -74,10 +80,12 @@ const AGENTS = {
   },
 };
 
+/** A `config.roleReview` node takes the role-review port set, as the real ports module does. */
+const ownPorts = (node) => (node.config?.roleReview === true ? ROLE_REVIEW_PORTS : AGENTS[node.key]);
 const portsFn = (node) => (node.kind === 'agent'
   ? {
-    inputs: [...(AGENTS[node.key]?.inputs || []).map((p) => ({ ...p })), { ...AWAIT_PORT }],
-    outputs: (AGENTS[node.key]?.outputs || []).map((p) => ({ ...p })),
+    inputs: [...(ownPorts(node)?.inputs || []).map((p) => ({ ...p })), { ...AWAIT_PORT }],
+    outputs: (ownPorts(node)?.outputs || []).map((p) => ({ ...p })),
     verdict: AGENTS[node.key]?.verdict,
   }
   : flowPorts(node));
@@ -785,7 +793,7 @@ test('23 composite: expand → phases → parallel slices with siblings → fini
   );
   const slice = c.find((x) => x.slice?.id === 'p1t1');
   assert.deepEqual(slice.slice, {
-    id: 'p1t1', title: 'One', phase: 1, path: '/p/tasks/p1-t1.md', index: 0,
+    id: 'p1t1', title: 'One', phase: 1, path: '/p/tasks/p1-t1.md', role: null, index: 0,
     siblings: [{ id: 'p1t2', title: 'Two', file: 'tasks/p1-t2.md' }],
   });
   assert.equal(slice.executionId, 'x:n_work:1:p1t1');
@@ -1334,4 +1342,118 @@ test('a node held back by an unrefreshed await gate says so in the run log', asy
   const held = h.logs.filter((l) => /n_sink/.test(l) && /await/.test(l));
   assert.equal(held.length, 1, `said once, not per pass: ${JSON.stringify(h.logs)}`);
   assert.match(held[0], /gate/i, held[0]);
+});
+
+// ── role reviews (spec §3): a roleReview node fans out per role on EVERY firing ──
+
+/** maker -> roles(roleReview) -> tightener(awaitAll); tightener.revise loops into roles.revise (2 rounds, clean). */
+const ROLE_TPL = TPL(
+  [N('n_task', 'task'), N('n_make', 'agent', 'maker'), N('n_roles', 'agent', 'checker', { roleReview: true }),
+    N('n_ref', 'agent', 'tightener', { awaitAll: true }), N('n_end', 'end')],
+  [W('w1', 'n_task.task', 'n_make.task'), W('w4', 'n_make.out', 'n_roles.plan'),
+    W('w17', 'n_roles.plan', 'n_ref.plan'), W('w18', 'n_roles.findings', 'n_ref.findings'),
+    W('w5', 'n_ref.revise', 'n_roles.revise', { maxCycles: 2, onExhausted: 'clean' }), W('w6', 'n_ref.plan', 'n_end.result')],
+);
+
+const ROLE_PHASE = [{ ordinal: 1, tasks: [
+  { id: 'role-ux', role: 'ux', title: 'UX', file: null, path: null },
+  { id: 'role-qa', role: 'qa', title: 'QA', file: null, path: null },
+] }];
+
+const roleNode = ({ phases = () => ROLE_PHASE, onSlice = () => ({}) } = {}) => (args) => {
+  if (args.composite === 'expand') return { phases: phases(args) };
+  if (args.composite === 'phase') return {};
+  if (args.composite === 'finish') {
+    return { outputs: { findings: { path: `/p/f${args.ordinal}.md` }, plan: { path: (args.bindings.revise || args.bindings.plan).path } } };
+  }
+  if (args.kind === 'task') return onSlice(args);
+  return {};
+};
+const refAt = (...blocking) => (a) => (blocking.includes(a.ordinal)
+  ? { verdict: BLOCKING(), outputs: { revise: { path: `/p/v${a.ordinal + 1}.md` } } }
+  : { verdict: CLEAN, outputs: { plan: { path: `/p/v${a.ordinal + 1}.md` } } });
+const shape = (c) => c.map((x) => (x.composite ? `${x.ordinal}:${x.composite}${x.phase ? `:${x.phaseStatus}` : ''}` : `${x.ordinal}:slice:${x.slice?.id}`));
+
+test('R1 a roleReview node is composite on its first firing AND on the fresh revise re-fire; slices carry the role', async () => {
+  const h = harness({
+    template: ROLE_TPL,
+    script: { n_make: () => md('/p/plan.md'), n_roles: roleNode(), n_ref: refAt(1) },
+  });
+  assert.equal(await h.scheduler.run(), 'done');
+  assert.deepEqual(shape(h.callsFor('n_roles')), [
+    '1:expand', '1:phase:running', '1:slice:role-ux', '1:slice:role-qa', '1:phase:done', '1:finish',
+    '2:expand', '2:phase:running', '2:slice:role-ux', '2:slice:role-qa', '2:phase:done', '2:finish',
+  ]);
+  const slices = h.callsFor('n_roles').filter((x) => x.kind === 'task');
+  for (const s of slices) {
+    assert.ok(!('undefined' in s.bindings) && !('null' in s.bindings), `no stray binding key: ${Object.keys(s.bindings)}`);
+    assert.equal(s.bindings.plan.path, '/p/plan.md');
+    assert.deepEqual(s.slice.siblings.length, 1);
+  }
+  assert.deepEqual(slices.map((s) => s.slice.role), ['ux', 'qa', 'ux', 'qa']);
+  assert.equal(slices[2].bindings.revise.path, '/p/v2.md', 'round 2 slices see the refiner rewrite');
+  const ref = h.callsFor('n_ref');
+  assert.equal(ref.length, 2, 'the refiner fires once per round on the pair');
+  assert.deepEqual(ref.map((r) => [r.bindings.plan.path, r.bindings.findings.path]), [['/p/plan.md', '/p/f1.md'], ['/p/v2.md', '/p/f2.md']]);
+});
+
+test('R2 a role round with every role skipped goes straight to finish — never a plain execution', async () => {
+  const h = harness({
+    template: ROLE_TPL,
+    script: { n_make: () => md('/p/plan.md'), n_roles: roleNode({ phases: (a) => (a.ordinal === 1 ? ROLE_PHASE : []) }), n_ref: refAt(1) },
+  });
+  assert.equal(await h.scheduler.run(), 'done');
+  const second = h.callsFor('n_roles').filter((x) => x.ordinal === 2);
+  assert.deepEqual(shape(second), ['2:expand', '2:finish']);
+  assert.equal(second[1].composite, 'finish');
+  assert.equal(h.callsFor('n_ref').length, 2);
+});
+
+test('R3 a spent onExhausted:\'clean\' wire force-fires the clean side with the open issues — no gate ask, no hold', async () => {
+  const h = harness({
+    template: ROLE_TPL,
+    script: { n_make: () => md('/p/plan.md'), n_roles: roleNode(), n_ref: refAt(1, 2, 3) },
+  });
+  assert.equal(await h.scheduler.run(), 'done');
+  assert.equal(h.callsFor('n_roles').filter((x) => x.composite === 'expand').length, 2, 'two rounds, never three');
+  assert.equal(h.callsFor('n_ref').length, 2);
+  assert.deepEqual(h.asks.filter((a) => a.kind === 'gate'), []);
+  const forced = h.tokenEvents().find((e) => e.forced === true);
+  assert.deepEqual(forced.from, { node: 'n_ref', port: 'plan' });
+  assert.equal(forced.path, '/p/v3.md');
+  const end = h.callsFor('n_end')[0];
+  assert.equal(end.bindings.result.forced, true);
+  assert.deepEqual(end.bindings.result.meta, { issues: [{ severity: 'critical', title: 'boom' }] });
+  const g = h.events.filter((e) => e.name === 'gate');
+  assert.deepEqual(g.map((e) => e.status), ['exhausted']);
+  assert.equal(g[0].wireId, 'w5');
+  assert.equal(h.scheduler.getState().gate, null);
+});
+
+test('R4 reattach re-runs a paused role-review shell as a composite fan-out, holding no agent slot', async () => {
+  const hold = deferred();
+  const first = harness({
+    template: ROLE_TPL,
+    maxParallel: 1,
+    script: { n_make: () => md('/p/plan.md'), n_roles: roleNode({ onSlice: () => hold.promise.then(() => ({ paused: true })) }) },
+  });
+  const run = first.scheduler.run();
+  await tick(); await tick();
+  first.scheduler.pause();
+  hold.resolve();
+  assert.equal(await run, 'paused');
+  const snap = first.last();
+  assert.equal(snap.execs.find((e) => e.executionId === 'x:n_roles:1').status, 'paused');
+
+  const second = harness({
+    template: ROLE_TPL,
+    maxParallel: 1,           // a shell that took the only slot would starve its own slices
+    script: { n_make: () => md('/p/plan.md'), n_roles: roleNode(), n_ref: refAt() },
+  });
+  second.scheduler.reattach(snap);
+  assert.equal(await second.scheduler.run(), 'done');
+  const again = second.callsFor('n_roles');
+  assert.equal(again[0].composite, 'expand', 'the resumed shell re-expands');
+  assert.equal(again[0].executionId, 'x:n_roles:1');
+  assert.deepEqual(shape(again), ['1:expand', '1:phase:running', '1:slice:role-ux', '1:slice:role-qa', '1:phase:done', '1:finish']);
 });

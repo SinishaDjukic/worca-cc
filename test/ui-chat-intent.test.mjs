@@ -8,9 +8,10 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import {
-  createIntentAddon, installIntentAddon, intentText, INTENTS, EXAMPLES, EXAMPLE_MS, INTENT_ADDON_ID,
+  createIntentAddon, installIntentAddon, intentText, splitIntentLead, INTENTS, EXAMPLES, EXAMPLE_MS, INTENT_ADDON_ID,
 } from '../ui/public/chat/intent.mjs';
 import { composerAddons, _resetChatExtensions } from '../ui/public/chat/extensions.mjs';
+import { setShapeFirst } from './helpers/shape-gate.mjs';
 
 const trackDom = useDomRelease(afterEach);
 const DEFAULT_PH = 'Ask about any run, agent, or project…';   // P1's resting placeholder (setPlaceholder(null))
@@ -75,7 +76,7 @@ test('mounting adds nothing to the lead row (P1 hides it while empty); set() add
 
 test('✕ removes the chip from the lead row and gives the placeholder back to the Chat default', () => {
   const s = setup();
-  s.ctl.set('clone');
+  s.ctl.set('script');
   s.chip().querySelector('.chat-intent-x').click();
   assert.equal(s.ctl.current(), null);
   assert.equal(s.chip(), null);
@@ -137,9 +138,9 @@ test('a send from a chat that already has messages waits for THAT chat to grow',
 
 test('leaving the home without sending drops the intent: a later message in another chat is not prefixed', () => {
   const s = setup();
-  s.ctl.set('clone');
+  s.ctl.set('script');
   s.handle.update(null);
-  assert.equal(s.ctl.current(), 'clone', 'still on the home: kept');
+  assert.equal(s.ctl.current(), 'script', 'still on the home: kept');
   s.page.dataset.view = 'thread';                                   // a History pick opened another chat
   s.handle.update({ id: 'ask_00000003', messages: [{}, {}] });
   assert.equal(s.ctl.current(), null);
@@ -147,16 +148,28 @@ test('leaving the home without sending drops the intent: a later message in anot
   assert.equal(s.handle.transformSend('hi'), 'hi');
 });
 
+test('leave() (the Chat page was left) drops a set intent, but keeps one riding a send for the retry', () => {
+  const s = setup();
+  s.ctl.set('script');
+  s.ctl.leave();
+  assert.equal(s.ctl.current(), null);
+  assert.equal(s.chip(), null);
+  s.ctl.set('track');
+  s.handle.transformSend('x');
+  s.ctl.leave();
+  assert.equal(s.ctl.current(), 'track', 'a send in flight or refused keeps it');
+});
+
 test('placeholder ownership: clearing gives back only a placeholder this add-on put there', () => {
   const s = setup();
   s.ctl.set('run');
   assert.equal(s.input.placeholder, 'Describe the task…');
   // P3's direction chip set its own placeholder in the same flush (it registered first, so it painted first).
-  s.input.placeholder = 'Tell the run what to change — the next step reads it';
+  s.input.placeholder = 'Tell the run what to change. The next step reads it';
   const n = s.ph.length;
   s.ctl.clear();
   assert.equal(s.ph.length, n, 'not ours any more: no setPlaceholder(null)');
-  assert.equal(s.input.placeholder, 'Tell the run what to change — the next step reads it');
+  assert.equal(s.input.placeholder, 'Tell the run what to change. The next step reads it');
   s.input.placeholder = DEFAULT_PH;
   s.ctl.set('run');
   s.ctl.clear();
@@ -172,11 +185,34 @@ test('every intent: a chip label, an icon, a placeholder and one plain sentence 
     assert.equal(intentText(id, 'x'), `${it.lead}\n\nx`);
   }
   assert.equal(intentText('nope', ' x '), 'x');
-  assert.deepEqual(Object.keys(INTENTS), ['run', 'workflow', 'schedule', 'track', 'diff', 'script', 'clone',
+  assert.deepEqual(Object.keys(INTENTS), ['run', 'shape', 'workflow', 'schedule', 'track', 'diff', 'script',
     'away', 'metrics', 'model', 'workspace', 'remember', 'tasks']);
   assert.equal(INTENTS.away.prefill, "I'm away now", 'an empty composer never sends: Step away arrives with its text (P2\'s receipt words, straight apostrophe)');
   assert.equal(INTENTS.metrics.placeholder, 'Which project or workspace?', 'get_team_metrics needs a scope; the range defaults to this month');
   assert.deepEqual(Object.keys(INTENTS).filter((id) => INTENTS[id].prefill), ['away']);
+});
+
+test('Shaper (Shape it first): refused while the gate is off; with it on it arms and the send leads with its sentence', () => {
+  assert.equal(INTENTS.shape.label, 'Shaper');
+  assert.equal(INTENTS.shape.help, undefined);
+  assert.equal(INTENTS.shape.badge, 'Labs');
+  const s = setup();
+  try {
+    setShapeFirst(false);
+    assert.equal(s.ctl.set('shape'), false, 'gate off (the default): no intent');
+    assert.equal(s.ctl.current(), null);
+    assert.equal(s.chip(), null);
+    setShapeFirst(true);
+    assert.equal(s.ctl.set('shape'), true);
+    assert.equal(s.ctl.current(), 'shape');
+    assert.equal(s.chip().querySelector('.chat-intent-l').textContent, 'Shaper');
+    assert.equal(s.input.placeholder, 'Describe the problem…');
+    const sent = s.handle.transformSend('Uploads fail on large files');
+    assert.ok(sent.startsWith(INTENTS.shape.lead), sent);
+    assert.equal(sent, `${INTENTS.shape.lead}\n\nUploads fail on large files`);
+  } finally {
+    setShapeFirst(false);
+  }
 });
 
 test('examples rotate on the home while idle; they stop when typing, with an intent, or on a thread — never over an intent', () => {
@@ -219,11 +255,11 @@ test('destroy stops the timer, the Backspace and address listeners and removes t
   assert.equal(s.lead.querySelector('.chat-intent'), null);
   const e = key(s.doc, s.input, 'Backspace');
   assert.equal(e.defaultPrevented, false);
-  assert.equal(s.ctl.set('clone'), true, 'the controller outlives its mounts');
+  assert.equal(s.ctl.set('script'), true, 'the controller outlives its mounts');
   s.handle.transformSend('x');                                      // rides a send; the mount's listeners are gone
   const win = s.doc.defaultView;
   win.dispatchEvent(new win.HashChangeEvent('hashchange', { oldURL: 'http://localhost:4317/#chat/ask_0000000a' }));
-  assert.equal(s.ctl.current(), 'clone', 'the hashchange listener left with its mount');
+  assert.equal(s.ctl.current(), 'script', 'the hashchange listener left with its mount');
 });
 
 test('a composer mounted while an intent is set shows it at once', () => {
@@ -304,4 +340,44 @@ test('the examples rotate through every one of them, then start over', () => {
     assert.equal(s.ph.at(-1), ex);
   }
   assert.equal(EXAMPLES.length, 4);
+});
+
+test('splitIntentLead: the Shaper lead is for the model only (D21)', () => {
+  const lead = INTENTS.shape.lead;
+  assert.equal(lead, 'Shape this task first: propose a run with `shape`.', 'the model-facing lead is unchanged');
+  assert.deepEqual(splitIntentLead(`${lead}\n\nUploads fail on large files`), { intent: 'shape', text: 'Uploads fail on large files' });
+  assert.deepEqual(splitIntentLead(lead), { intent: 'shape', text: '' });
+  assert.deepEqual(splitIntentLead(`${lead}\n\n> From plan.md:\n> x\n\nWhy?`), { intent: 'shape', text: '> From plan.md:\n> x\n\nWhy?' });
+  assert.deepEqual(splitIntentLead('Shape this task first please'), { intent: null, text: 'Shape this task first please' });
+  assert.deepEqual(splitIntentLead(`${lead} and more`), { intent: null, text: `${lead} and more` }, 'exact lead only');
+  assert.deepEqual(splitIntentLead(undefined), { intent: null, text: '' });
+  assert.deepEqual(splitIntentLead(`${INTENTS.run.lead}\n\nx`), { intent: null, text: `${INTENTS.run.lead}\n\nx` }, 'other intents unchanged');
+});
+
+test('pinned workflow: run intent with the workflow names the chip, keeps the run placeholder and leads with its id', () => {
+  const s = setup();
+  s.ctl.set('run', { workflow: { id: 'wf_pay', name: 'Payroll close' } });
+  assert.equal(s.doc.querySelector('.chat-intent-l').textContent, 'Payroll close');
+  assert.equal(s.doc.querySelector('.chat-intent-x').getAttribute('aria-label'), 'Remove Payroll close');
+  assert.equal(s.input.placeholder, INTENTS.run.placeholder);
+  assert.equal(s.handle.transformSend('close October'),
+    'Propose a pipeline run of workflow wf_pay ("Payroll close") for this task.\n\nclose October');
+});
+
+test('re-arming run with another workflow repaints; plain run keeps its lead byte for byte', () => {
+  const s = setup();
+  s.ctl.set('run', { workflow: { id: 'wf_pay', name: 'Payroll close' } });
+  s.ctl.set('run', { workflow: { id: 'wf_post', name: 'Social post' } });
+  assert.equal(s.doc.querySelector('.chat-intent-l').textContent, 'Social post');
+  s.ctl.set('run');
+  assert.equal(s.doc.querySelector('.chat-intent-l').textContent, 'New run');
+  assert.equal(intentText('run', 'x'), 'Propose a pipeline run for this task.\n\nx');
+  assert.equal(s.ctl.workflow(), null);
+});
+
+test('a workflow on any intent but run is ignored', () => {
+  const s = setup();
+  s.ctl.set('script', { workflow: { id: 'wf_pay', name: 'Payroll close' } });
+  assert.equal(s.doc.querySelector('.chat-intent-l').textContent, 'Write a script');
+  assert.equal(s.ctl.workflow(), null);
 });

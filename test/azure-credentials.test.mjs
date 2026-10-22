@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { AZURE_DEVOPS_CREDENTIAL_KEYS, AZURE_DEVOPS_STRIP_ONLY_KEYS, readAzureCredentials, stripAzureCredentials, azureEnv,
-  azureAuthHeader, ADO_HELPER_KEYS } from '../src/core/azure-credentials.mjs';
+  azureAuthHeader, azureWorkItemsAuthHeader, ADO_HELPER_KEYS } from '../src/core/azure-credentials.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 test('readAzureCredentials / azureEnv / azureAuthHeader', async () => {
@@ -63,4 +63,13 @@ test('git answers an Azure credential prompt from the helper, for dev.azure.com 
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /^password=pat123$/m, host);
   }
+});
+
+test('azureWorkItemsAuthHeader: the Chat work item chips read with the Boards token, else the Code PAT', () => {
+  const basic = (t) => ({ authorization: `Basic ${Buffer.from(`:${t}`).toString('base64')}` });
+  assert.deepEqual(azureWorkItemsAuthHeader({ WORCA_ADO_BOARDS_TOKEN: ' b ', WORCA_ADO_TOKEN: 'pat' }), basic('b'));
+  assert.deepEqual(azureWorkItemsAuthHeader({ WORCA_ADO_TOKEN: 'pat' }), basic('pat'));
+  assert.deepEqual(azureWorkItemsAuthHeader({ WORCA_ADO_READ_TOKEN: 'r', WORCA_ADO_WRITE_TOKEN: 'w' }), basic('r'), 'the read role, never the write token');
+  assert.equal(azureWorkItemsAuthHeader({}), null);
+  assert.equal(azureAuthHeader('read', { WORCA_ADO_BOARDS_TOKEN: 'b' }), null, 'code calls still never read the Boards token (M1)');
 });

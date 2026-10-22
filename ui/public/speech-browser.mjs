@@ -29,7 +29,7 @@ export function createBrowserSpeech(win, kind) {
     };
     worker.onerror = (ev) => {
       ev.preventDefault?.();
-      rejectAll(new Error(`the in-browser speech engine could not start${ev.message ? ` — ${ev.message}` : ''}`));
+      rejectAll(new Error(`the in-browser speech engine could not start${ev.message ? `: ${ev.message}` : ''}`));
       worker.terminate();
       worker = null;
     };

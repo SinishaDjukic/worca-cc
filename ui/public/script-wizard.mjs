@@ -7,6 +7,7 @@
 // Interface panel in place on every debounce. Every string is textContent;
 // the ONE innerHTML sink is svgIcon, fed by the fixed set, the ƒ glyph, or a
 // saved fragment that passed sanitizeIcon.
+import { icon } from './icons.mjs';
 import { h, text, textarea, number } from './script-forms.mjs';
 import { createCodeEditor, escapeHtml } from './code-editor.mjs';
 import { sanitizeIcon } from '../../src/shared/graph/manifest.mjs';
@@ -58,7 +59,7 @@ const csv = (list) => (Array.isArray(list) ? list.join(', ') : '');
 // A BLANK entry is no exit code (`Number('')` is 0, which would list 0 as both clean and blocking).
 const ints = (s) => String(s || '').split(',').map((x) => x.trim()).filter((x) => x !== '').map(Number).filter((n) => Number.isInteger(n));
 
-const btn = (doc, cls, label, kind = 'btn-ghost') => { const b = h(doc, 'button', `btn ${kind} btn-mini ${cls}`, label); b.type = 'button'; return b; };
+const btn = (doc, cls, label, kind = 'btn') => { const b = h(doc, 'button', `btn ${kind} btn-sm ${cls}`, label); b.type = 'button'; return b; };
 const chip = (doc, cls, label) => h(doc, 'span', `chip ${cls}`, label);
 const hidden = (doc, field, value) => { const i = doc.createElement('input'); i.type = 'hidden'; i.dataset.field = field; i.value = value == null ? '' : String(value); return i; };
 
@@ -104,7 +105,9 @@ function stepTrack(doc, { step, runtime = '' }) {
   const track = h(doc, 'div', 'wz-track');
   const one = h(doc, 'button', `wz-step-pill ${step === 1 ? 'on' : 'done'}`);
   one.type = 'button'; one.dataset.step = '1'; one.disabled = step === 1;
-  one.append(h(doc, 'span', 'wz-step-n', step === 1 ? '1' : '✓'), doc.createTextNode('Runtime'));
+  const n = h(doc, 'span', 'wz-step-n', step === 1 ? '1' : null);
+  if (step !== 1) n.append(icon(doc, 'check', 12));
+  one.append(n, doc.createTextNode('Runtime'));
   if (step === 2 && runtime) one.appendChild(chip(doc, `chip-rt chip-${runtime}`, RUNTIME_LABEL[runtime] || runtime));
   track.appendChild(one);
   track.appendChild(h(doc, 'span', 'wz-step-sep', '›'));
@@ -136,7 +139,7 @@ export function renderRuntimeStep({ doc = globalThis.document, runtimes = {}, pi
     const tile = h(doc, 'span', `tile tile-${RUNTIME_DEFAULTS[rt].color}`);
     tile.appendChild(svgIcon(doc, iconSvgOf(RUNTIME_DEFAULTS[rt].icon), 24, RUNTIME_DEFAULTS[rt].icon));
     head.appendChild(tile);
-    if (on) head.appendChild(h(doc, 'span', 'rt-check', '✓'));
+    if (on) { const mark = h(doc, 'span', 'rt-check'); mark.setAttribute('aria-label', 'selected'); mark.append(icon(doc, 'check', 12)); head.appendChild(mark); }
     card.append(head, h(doc, 'span', 'rt-name', RUNTIME_LABEL[rt]), h(doc, 'small', 'rt-line', RUNTIME_LINE[rt]),
       h(doc, 'code', 'rt-sig mono', RUNTIME_SIG[rt]), probeChip(doc, rt, probe));
     cards.appendChild(card);
@@ -249,7 +252,7 @@ export function renderInterfacePanel({
     el.appendChild(h(doc, 'span', 'sp'));
     if (row.inCode === false) {
       el.appendChild(chip(doc, 'chip-warn chip-tiny', 'not in code'));
-      if (!inert) { const x = h(doc, 'button', 'wz-prm', '×'); x.type = 'button'; x.dataset.remove = `${side}:${row.id}`; x.title = 'Remove'; el.appendChild(x); }
+      if (!inert) { const x = h(doc, 'button', 'btn btn-sm btn-quiet btn-icon wz-prm'); x.type = 'button'; x.dataset.remove = `${side}:${row.id}`; x.title = 'Remove'; x.setAttribute('aria-label', 'Remove'); x.append(icon(doc, 'x', 14)); el.appendChild(x); }
     }
     el.appendChild(hidden(doc, `iface:${side3(side)}:${row.id}:inCode`, row.inCode === false ? '' : '1'));
   };
@@ -282,7 +285,7 @@ export function renderInterfacePanel({
   }
   if (runtime === 'shell' && !configPorts) {
     const tog = h(doc, 'div', 'wz-routing');
-    const b = h(doc, 'button', `tog${routing ? ' on' : ''}`);
+    const b = h(doc, 'button', `switch${routing ? ' on' : ''}`);
     b.type = 'button'; b.dataset.routing = ''; b.setAttribute('role', 'switch');
     b.setAttribute('aria-checked', routing ? 'true' : 'false'); b.setAttribute('aria-label', 'Route by exit code'); b.disabled = readOnly;
     tog.append(b, h(doc, 'span', 'wz-routing-line', 'exit 0 → pass · exit 1 → fail'));

@@ -93,7 +93,7 @@ function onMenuClick(info, tab) {
 }
 
 api.runtime.onInstalled.addListener(() => {
-  api.contextMenus.create({ id: MENU_ID, title: 'Ask Worca about selection', contexts: ['selection'] }, () => void api.runtime.lastError);
+  api.contextMenus.create({ id: MENU_ID, title: 'Worca Chat: ask about selection', contexts: ['selection'] }, () => void api.runtime.lastError);
 });
 api.contextMenus.onClicked.addListener(onMenuClick);
 

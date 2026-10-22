@@ -5,6 +5,8 @@
 // state — so test/ui-getting-started.test.mjs drives it in jsdom without booting
 // app.js. Completion is never decided here: `status.steps` is the server's word
 // (GET /api/onboarding, src/core/onboarding.mjs), this module only paints it.
+import { icon } from './icons.mjs';
+import { guardModal } from './modal-guard.mjs';
 
 /** Shelf order = the arc: prerequisite → first object → see the loop → talk to
  *  it → know the workflows → real work → scale. Labels are outcomes, never settings. */
@@ -12,7 +14,7 @@ export const GETTING_STARTED_STEPS = Object.freeze([
   { id: 'claude',      label: 'Connect Claude Code',             vig: 'claude' },
   { id: 'project',     label: 'Add your first project',          vig: 'project' },
   { id: 'run',         label: 'Watch a run end to end',          vig: 'run' },
-  { id: 'ask',         label: 'Ask Worca about a run',           vig: 'ask' },
+  { id: 'ask',         label: 'Ask about a run in Chat',         vig: 'ask' },
   { id: 'realRun',     label: 'Run a real pipeline',             vig: 'realRun' },
   { id: 'workflows',   label: 'Explore the built-in workflows',  vig: 'workflow' },
   { id: 'workspace',   label: 'Group projects into a workspace', vig: 'workspace',   level: 'advanced' },
@@ -176,13 +178,14 @@ export function renderGettingStarted(host, status, { onStep, onHide, animate = t
   const head = doc.createElement('div');
   head.className = 'gs-head';
   const h2 = doc.createElement('h2');
+  h2.className = 'section-title';
   h2.textContent = done === total ? 'All set' : 'Your progress';   // the page's topbar already says Getting started
   const progress = doc.createElement('span');
   progress.className = 'gs-progress';
   progress.textContent = `${done} of ${total}`;
   const hide = doc.createElement('button');
   hide.type = 'button';
-  hide.className = 'gs-hide';
+  hide.className = 'btn btn-sm btn-quiet gs-hide';
   hide.textContent = hideLabel;
   hide.title = 'The sidebar entry; Settings › General › Getting started also opens this page';
   hide.addEventListener('click', () => onHide && onHide());
@@ -204,11 +207,11 @@ export function renderGettingStarted(host, status, { onStep, onHide, animate = t
     tile.className = `gs-tile${animate ? ' reveal' : ''}${isDone ? ' done' : ''}`;
     tile.dataset.step = s.id;
     tile.style.setProperty('--tile-delay', `${animate ? delay : 0}s`);
-    tile.setAttribute('aria-label', `${s.label} — ${isDone ? 'done' : 'not done yet'}`);
+    tile.setAttribute('aria-label', `${s.label}: ${isDone ? 'done' : 'not done yet'}`);
     const mark = doc.createElement('span');
     mark.className = 'gs-mark';
     mark.setAttribute('aria-hidden', 'true');
-    mark.textContent = '✓';
+    mark.append(icon(doc, 'check', 12));
     const vig = doc.createElement('span');
     vig.className = 'gs-vig';
     vig.appendChild(vignette(doc, s.vig, { animate: animate && !isDone, delay }));
@@ -222,7 +225,7 @@ export function renderGettingStarted(host, status, { onStep, onHide, animate = t
       lv.dataset.lv = s.level;
       lv.textContent = LEVEL_LABEL[s.level];
       tile.appendChild(lv);
-      tile.setAttribute('aria-label', `${tile.getAttribute('aria-label')} — part of ${LEVEL_LABEL[s.level]} mode`);
+      tile.setAttribute('aria-label', `${tile.getAttribute('aria-label')}, part of ${LEVEL_LABEL[s.level]} mode`);
     }
     tile.addEventListener('click', () => onStep && onStep(s.id));
     tiles.appendChild(tile);
@@ -252,7 +255,7 @@ export function renderGettingStartedPill(host, status, onOpen) {
   const btn = doc.createElement('button');
   btn.type = 'button';
   btn.className = 'gs-pill';
-  btn.setAttribute('aria-label', `Getting started — ${done} of ${total} done`);
+  btn.setAttribute('aria-label', `Getting started: ${done} of ${total} done`);
   btn.title = 'Getting started';
   btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12.5l4.5 4.5L20 6"></path></svg>';
   const text = doc.createElement('span');
@@ -268,21 +271,18 @@ export function renderGettingStartedPill(host, status, onOpen) {
 /* ---------------------------------------------------------------- welcome */
 
 /**
- * Wire the static welcome dialog (#welcome-modal in index.html): each door
- * hands its step id to `onDoor`, Skip / the backdrop / Esc call `onSkip`.
- * Returns a function that unbinds the Esc listener (the modal itself is reused).
+ * Wire the static welcome dialog (#welcome-modal in index.html): each door hands its step id to `onDoor`;
+ * Skip, a backdrop click and Esc call `onSkip` (modal-guard: a decision, Skip is its safe answer).
+ * Returns a function that takes the dialog off those rules (the modal itself is reused).
  * @param {Element} modal
  * @param {{onDoor:(step:string)=>void, onSkip:()=>void, win?:Window}} h
  */
-export function bindWelcome(modal, { onDoor, onSkip, win }) {
+export function bindWelcome(modal, { onDoor, onSkip }) {
   if (!modal) return () => {};
-  const w = win || modal.ownerDocument.defaultView;
   for (const door of modal.querySelectorAll('[data-door]')) {
     door.addEventListener('click', () => onDoor(door.dataset.door));
   }
   modal.querySelector('.ob-skip')?.addEventListener('click', () => onSkip());
-  modal.addEventListener('click', (e) => { if (e.target === modal) onSkip(); });
-  const onKey = (e) => { if (e.key === 'Escape' && !modal.classList.contains('hidden')) onSkip(); };
-  w.document.addEventListener('keydown', onKey);
-  return () => w.document.removeEventListener('keydown', onKey);
+  const guard = guardModal(modal, { kind: 'decision', close: () => onSkip() }).opened();
+  return () => guard.release();
 }

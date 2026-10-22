@@ -2,10 +2,13 @@
 // No app.js boot: every renderer takes `doc` explicitly and returns detached DOM.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import {
   BUDGET_WARN_AT, renderKpiRow,
   renderCostPauseBanner, renderStatsBody,
+  renderGroupsCard, groupsToCsv, statsQuery, renderStatsView,
+  renderSpendChart, renderPeopleCard, renderShapingCard,
 } from '../ui/public/stats-view.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -148,4 +151,160 @@ test('renderKpiRow: Requirements tile needs the flag AND data; links to #require
   assert.equal(renderKpiRow(MODEL, { doc, requirementsEnabled: true }).querySelectorAll('.stat-tile').length, 7);
   const one = { ...withReq, totals: { ...withReq.totals, requirements: { spendUsd: 0, features: 1 } } };
   assert.match(renderKpiRow(one, { doc, requirementsEnabled: true }).textContent, /1 feature(?!s)/);
+});
+
+test('F-20: the two chart cards read "Spend per day" and "Runs per day", and the docs name the same bucket words', () => {
+  const body = renderStatsBody({ ...MODEL, bucket: 'day', windowStartMs: 1, windowEndMs: 5,
+    series: RUNS.series.map((r, i) => ({ ...r, spentUsd: SPEND.series[i].spentUsd })) }, { doc });
+  const titles = [...body.querySelectorAll('.chart-card h2')].map((e) => e.textContent);
+  assert.deepEqual(titles, ['Spend per day', 'Runs per day']);
+  const labels = [...body.querySelectorAll('.chart-card svg.chart-svg')].map((e) => e.getAttribute('aria-label'));
+  assert.match(labels[0], /^Spend per day, /);
+  assert.match(labels[1], /^Runs per day by outcome, /);
+  const docs = readFileSync(new URL('../docs/statistics.md', import.meta.url), 'utf8');
+  for (const w of ['per hour', 'per day', 'per month']) assert.ok(docs.includes(w), w);
+});
+
+test('renderSpendChart: the chart has a legend like the Runs chart', () => {
+  const card = renderSpendChart(SPEND, { doc });
+  const items = [...card.querySelectorAll('.chart-legend .lg-item')];
+  assert.equal(items.length, 1);
+  assert.match(items[0].textContent, /^Spend \$/);
+});
+
+test('renderStatsBody: every card that draws a chart has a legend, with sans values (D16)', () => {
+  const model = { ...MODEL, bucket: 'day', windowStartMs: 1, windowEndMs: 5,
+    series: RUNS.series.map((r, i) => ({ ...r, spentUsd: SPEND.series[i].spentUsd })) };
+  const body = renderStatsBody(model, { doc });
+  const charts = [...body.querySelectorAll('.card')].filter((c) => c.querySelector('svg.chart-svg'));
+  assert.equal(charts.length, 2);
+  for (const c of charts) assert.ok(c.querySelector('.chart-legend'), c.querySelector('h2')?.textContent);
+  assert.equal(body.querySelectorAll('.chart-legend b.mono').length, 0);
+  assert.equal(body.querySelectorAll('.stat-value.mono').length, 0, 'tile values are sans');
+});
+
+const GROUPS = { by: 'tag:client', label: 'client', rows: [
+  { kind: 'value', key: 'Müller & Söhne, GmbH', label: 'Müller & Söhne, GmbH', spentUsd: 3, runs: 2, finished: 2, stopped: 0, failed: 0, paused: 0, running: 0, prsOpened: 1, prsMerged: 1 },
+  { kind: 'none', key: null, label: '(no client)', spentUsd: 0.5, runs: 1, finished: 0, stopped: 1, failed: 0, paused: 0, running: 0, prsOpened: 0, prsMerged: 0 },
+  { kind: 'ask', key: null, label: 'Chat', spentUsd: 0.75, sessions: 1, runs: 0, finished: 0, stopped: 0, failed: 0, paused: 0, running: 0, prsOpened: 0, prsMerged: 0 },
+] };
+
+test('renderGroupsCard: one row per group, muted none/ask rows, a total, export enabled', () => {
+  const card = renderGroupsCard(GROUPS, 'Aug 1 – Aug 31', { doc, totalUsd: 4.25, totalRuns: 3 });
+  assert.equal(card.querySelector('.card-head h2').textContent, 'By client');
+  const rows = card.querySelectorAll('tbody tr');
+  assert.equal(rows.length, 3);
+  assert.ok(rows[1].classList.contains('groups-row-none'));
+  assert.ok(rows[2].classList.contains('groups-row-ask'));
+  // cells: 0 label · 1 spend · 2 share · 3 runs · 4 finished · 5 stopped · 6 failed · 7 PRs merged
+  assert.equal(rows[2].cells[2].textContent, '18%');      // 0.75 / 4.25
+  assert.equal(rows[2].cells[3].textContent, '—');
+  assert.equal(rows[0].cells[3].textContent, '2');
+  const foot = card.querySelector('tfoot tr');
+  assert.equal(foot.cells.length, 8);
+  assert.match(foot.textContent, /\$4\.25/);
+  assert.equal(card.querySelector('button.stats-export').disabled, false);
+});
+
+test('people, groups and Shaper tables are the shared table inside a table-wrap', () => {
+  const people = renderPeopleCard({ people: [{ person: 'ada@example.com', usd: 2, requests: 3, inputTokens: 10, outputTokens: 5, slots: [{ slot: 'anthropic', plan: 'api' }] }] }, 'x', { doc });
+  const groups = renderGroupsCard(GROUPS, 'x', { doc, totalUsd: 4.25, totalRuns: 3 });
+  const shaping = renderShapingCard({ groups: [{ size: 'small', shaped: { runs: 1, avgCostUsd: 1, avgActiveMs: 1, avgReviewCycles: 1 },
+    unshaped: { runs: 0, avgCostUsd: null, avgActiveMs: null, avgReviewCycles: null } }] }, 'x', { doc });
+  for (const card of [people, groups, shaping]) {
+    const table = card.querySelector('table');
+    assert.ok(table.classList.contains('table'), card.querySelector('h2').textContent);
+    assert.ok(table.parentElement.classList.contains('table-wrap'));
+    // Stacked on phones the thead is clipped: each value cell names its column, the row's name leads.
+    for (const td of table.querySelectorAll('td')) {
+      if (!td.textContent.trim()) continue;
+      assert.ok(td.classList.contains('table-main') || td.dataset.label, `${card.querySelector('h2').textContent}: "${td.textContent}" is labelled`);
+    }
+  }
+});
+
+test('renderGroupsCard: no rows → empty hint and a disabled export', () => {
+  const card = renderGroupsCard({ ...GROUPS, rows: [] }, 'x', { doc, totalUsd: 0, totalRuns: 0 });
+  assert.match(card.textContent, /Nothing spent and no runs in this period/);
+  assert.equal(card.querySelector('button.stats-export').disabled, true);
+});
+
+test('groupsToCsv: BOM, header from the group label, the label cell round-trips', () => {
+  const csv = groupsToCsv(GROUPS);
+  assert.deepEqual([...Buffer.from(csv, 'utf8').subarray(0, 3)], [0xef, 0xbb, 0xbf]);
+  const lines = csv.slice(1).split('\r\n');
+  assert.equal(lines[0], 'client,spendUsd,runs,finished,stopped,failed,running,paused,prsOpened,prsMerged');
+  assert.equal(lines[1], '"Müller & Söhne, GmbH",3,2,2,0,0,0,0,1,1');
+  assert.equal(lines[3].startsWith('Chat,0.75,'), true);
+});
+
+test('statsQuery: repeated tag params, custom dates only for custom', () => {
+  assert.equal(statsQuery({ range: 'month' }), 'range=month');
+  assert.equal(statsQuery({ range: 'custom', from: '2026-08-01', to: '2026-08-31', tags: ['client:acme', 'spike'], person: 'bob', groupBy: 'tag:client' }),
+    'range=custom&from=2026-08-01&to=2026-08-31&tag=client%3Aacme&tag=spike&person=bob&groupBy=tag%3Aclient');
+});
+
+test('renderKpiRow: a filtered model drops the budget meter and says Filtered', () => {
+  assert.ok(renderKpiRow({ ...MODEL, budget: { ...BUDGET } }, { doc }).querySelector('.stat-meter'), 'control: unfiltered week draws the meter');
+  const el = renderKpiRow({ ...MODEL, budget: { ...BUDGET }, filtered: true }, { doc });
+  assert.equal(el.querySelector('.stat-meter'), null);
+  assert.match(el.querySelector('.stat-tile .stat-sub').textContent, /Filtered/);
+});
+
+const VIEW_MODEL = {
+  range: 'month', bucket: 'day', windowStartMs: Date.UTC(2026, 7, 1), windowEndMs: Date.UTC(2026, 8, 1),
+  totals: { spentUsd: 4.25, runs: 3 }, series: [], filtered: false,
+  groups: { label: 'person', rows: [{ kind: 'value', key: 'ana', label: 'ana', spentUsd: 4.25, runs: 3, finished: 3, stopped: 0, failed: 0, running: 0, paused: 0, prsOpened: 0, prsMerged: 0 }] },
+  tagGroups: [
+    { key: 'cc', configured: true, rows: [{ kind: 'none', key: null, label: '(no cc)', spentUsd: 3.5, runs: 3 }, { kind: 'ask', key: null, label: 'Chat', spentUsd: 0.75, runs: 0 }] },
+    { key: 'client', configured: false, rows: [{ kind: 'value', key: 'acme', label: 'acme', spentUsd: 3.5, runs: 3 }, { kind: 'ask', key: null, label: 'Chat', spentUsd: 0.75, runs: 0 }] },
+  ],
+};
+
+test('statsQuery: byTag adds byTag=1 and one tagKey per configured key', () => {
+  assert.equal(statsQuery({ range: 'month', byTag: true, tagKeys: ['cc', 'team'] }), 'range=month&byTag=1&tagKey=cc&tagKey=team');
+  assert.equal(statsQuery({ range: 'month', byTag: false, tagKeys: ['cc'] }), 'range=month');
+});
+
+test('statsQuery: report adds report=1 (Statistics › Cost)', () => {
+  assert.equal(statsQuery({ range: 'month', report: true }), 'range=month&report=1');
+});
+
+test('renderStatsView: By person = the person table alone', () => {
+  const person = renderStatsView(VIEW_MODEL, 'person', { doc });
+  assert.equal(person.querySelector('.groups-card h2').textContent, 'By person');
+  assert.equal(person.querySelectorAll('.groups-card').length, 1);
+  assert.equal(person.querySelector('.alloc-card'), null);
+});
+
+test('renderStatsBody: the Shaper card only when the model carries shaping', () => {
+  const model = { ...MODEL, bucket: 'day', windowStartMs: 1, windowEndMs: 5,
+    series: RUNS.series.map((r, i) => ({ ...r, spentUsd: SPEND.series[i].spentUsd })) };
+  assert.equal(renderStatsBody(model, { doc }).querySelector('.shaping-card'), null);
+  const shaping = { groups: [{ size: 'small',
+    shaped: { runs: 2, avgCostUsd: 12.5, avgActiveMs: 600000, avgReviewCycles: 1 },
+    unshaped: { runs: 0, avgCostUsd: null, avgActiveMs: null, avgReviewCycles: null } }] };
+  const card = renderStatsBody({ ...model, shaping }, { doc }).querySelector('.shaping-card');
+  assert.equal(card.querySelector('h2').textContent, 'Shaper');
+  const rows = [...card.querySelectorAll('tbody tr')].map((tr) => [...tr.querySelectorAll('td')].map((td) => td.textContent));
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0][0], 'Small');
+  assert.equal(rows[0][1], 'With Shaper');
+  assert.equal(rows[1][0], 'Without');
+  assert.equal(rows[1][rows[1].length - 1], '–');
+  const empty = renderStatsBody({ ...model, shaping: { groups: [] } }, { doc }).querySelector('.shaping-card');
+  assert.ok(empty.querySelector('.chart-empty'));
+  const all = renderStatsBody({ ...model, range: 'all', shaping }, { doc }).querySelector('.shaping-card');
+  assert.equal(all.querySelector('.card-head small.hint').textContent, 'all time');
+});
+
+test('renderGroupsCard: the Requirements row is muted like the Chat row and has no run counts', () => {
+  const rows = [...GROUPS.rows, { kind: 'requirements', key: null, label: 'Requirements', spentUsd: 0.5, features: 2,
+    runs: 0, finished: 0, stopped: 0, failed: 0, paused: 0, running: 0, prsOpened: 0, prsMerged: 0 }];
+  const card = renderGroupsCard({ ...GROUPS, rows }, 'x', { doc, totalUsd: 4.75, totalRuns: 3 });
+  const tr = card.querySelectorAll('tbody tr')[3];
+  assert.ok(tr.classList.contains('groups-row-requirements'));
+  assert.equal(tr.cells[0].textContent, 'Requirements');
+  for (const i of [3, 4, 5, 6, 7]) assert.equal(tr.cells[i].textContent, '—');
+  assert.match(readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8'), /\.groups-table tr\.groups-row-requirements td/);
 });

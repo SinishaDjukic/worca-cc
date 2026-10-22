@@ -140,7 +140,7 @@ test('a row healed for the run says which pick of the other engine it keeps (rev
   assert.equal(kept(), null, 'on its own engine the pick is simply shown');
   pick(doc, 'codex');
   await waitFor(() => kept());
-  assert.equal(kept().textContent, 'Your Claude pick Haiku 4.5 is kept for Claude runs — choose a model here to replace it.');
+  assert.equal(kept().textContent, 'Your Claude pick Haiku 4.5 is kept for Claude runs. Choose a model here to replace it.');
 });
 
 test('"+ Add model…" in an agent row opens the Models page with the model editor', async () => {

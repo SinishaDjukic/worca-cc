@@ -23,7 +23,7 @@ import {
   pluginsRoot, pluginDir, pluginCurrentDir, pluginDataDir, readPluginsLock, writePluginsLock,
   DIR_NAME_RE,
 } from './plugins-lock.mjs';
-import { addPluginRepo, fetchCandidate, exportVersion, repoCacheDir } from './plugin-repo.mjs';
+import { addPluginRepo, fetchCandidate, exportVersion, repoCacheDir, removeSnapshotRoot } from './plugin-repo.mjs';
 import {
   importPluginWorkflows, readPluginWorkflows, removePluginWorkflows,
   referencedPluginAgents, referencedPluginScripts,
@@ -40,6 +40,8 @@ import { clearBindingsForPlugin } from './source-bindings.mjs';
 import { assignPluginBases, checkMcpStoreWritable, removePluginServers, applyMcpUpdate, mcpServerDelta, removePluginSkills } from './mcp/plugin-lifecycle.mjs';
 import { parseFrontmatter } from './frontmatter.mjs';
 import { agentIdentity } from './agent-user.mjs';
+import { gitAvailable } from './git-available.mjs';
+import { withNoGitPath } from './nogit-stub.mjs';
 
 const execFileP = promisify(execFile);
 const defaultExec = (cmd, args, opts = {}) =>
@@ -259,6 +261,10 @@ export function ignoredContributions(name, dir, opts = {}) {
   return out.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
 }
 
+// Without git, setup runs with worca's git stub first on PATH on macOS (SEAMS S6): a lockfile with a git dependency
+// makes npm run `git`, and the /usr/bin/git shim opens the install-developer-tools dialog. With git: unchanged.
+const setupEnv = () => (gitAvailable() ? {} : { env: withNoGitPath(process.env) });
+
 /** Declared setup FACTS only (spec §4.1): setup.node -> npm ci (lockfile
  *  required, scripts ignored); setup.python 'pyproject' -> uv sync. */
 export async function runSetup(versionDir, manifest, { exec = defaultExec } = {}) {
@@ -273,11 +279,11 @@ export async function runSetup(versionDir, manifest, { exec = defaultExec } = {}
     // quote args — a `--prefix C:\…` path would be mangled. With the dir as cwd
     // the only args left are flag literals, safe through the shell.
     await exec('npm', ['ci', '--ignore-scripts', '--omit=dev'],
-      { cwd: versionDir, shell: IS_WINDOWS });
+      { cwd: versionDir, shell: IS_WINDOWS, ...setupEnv() });
     commands.push('npm ci');
   }
   if (manifest?.setup?.python === 'pyproject') {
-    await exec('uv', ['sync'], { cwd: versionDir });
+    await exec('uv', ['sync'], { cwd: versionDir, ...setupEnv() });
     commands.push('uv sync');
   }
   return { commands };
@@ -645,6 +651,7 @@ export async function uninstallPlugin(name, { purge = false } = {}) {
   // Drop the bare fetch cache only when no other installed plugin shares the repo.
   if (entry.repo && !Object.values(lock).some((e) => e && e.repo === entry.repo)) {
     rmSync(repoCacheDir(entry.repo), { recursive: true, force: true });
+    removeSnapshotRoot(entry.repo); // the snapshots read without git (P6): renamed aside, then removed
   }
   const dataDir = pluginDataDir(name);
   const dataKept = !purge && existsSync(dataDir);

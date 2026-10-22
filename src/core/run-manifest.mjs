@@ -14,17 +14,18 @@
 // `retain` record — every read here is deliberately shape-tolerant so a manifest
 // from either phase parses.
 
-import { mkdir, readFile, writeFile, rm, rename, readdir, stat, cp, lstat } from 'node:fs/promises';
-import { join, resolve, sep, basename, dirname } from 'node:path';
+import { mkdir, readFile, writeFile, rm, rename, readdir, stat, cp, lstat, realpath } from 'node:fs/promises';
+import { join, resolve, sep, basename, dirname, relative, isAbsolute } from 'node:path';
+import { existsSync } from 'node:fs';
 
 export const RUN_MANIFEST_FILE = 'run.json';
 
 /** Stable machine-readable reasons why a terminal run root must be retained. */
-export const RETAIN_REASONS = Object.freeze({ COMMIT_FAILED: 'commit_failed', CHECKOUT: 'checkout' });
+export const RETAIN_REASONS = Object.freeze({ COMMIT_FAILED: 'commit_failed', CHECKOUT: 'checkout', FOLDER_APPLY: 'folder-apply', WORK_COPY_FAILED: 'work_copy_failed' });
 
 /** Entries worca-cc itself owns at a run root. Anything else there is a STRAY (§8.11).
  *  `.cursor`: a Cursor run's engine config at a workspace run root (engines/cursor.mjs, run-harness _registerEngineConfig). */
-export const RUN_ROOT_KNOWN_SET = new Set(['CLAUDE.md', 'mcp.json', RUN_MANIFEST_FILE, '.claude', '.cursor', 'repos']);
+export const RUN_ROOT_KNOWN_SET = new Set(['CLAUDE.md', 'mcp.json', RUN_MANIFEST_FILE, '.claude', '.cursor', 'repos', 'work']);
 
 // The V3 CLAUDE.md fallback's delimiter-fenced section (§4.1). The begin marker
 // carries the pipelineId so two concurrent runs over the same real dir can never
@@ -58,6 +59,13 @@ export async function writeRunManifest(runRoot, data) {
   } catch {
     return false;
   }
+}
+
+/** P1 (P1b S17, P5 S8): the retain members whose checkout (`worktreeDir`) or copy (`copyDir`) still exists. A retain
+ *  record is live only while one does; P3's work_copy_failed members (a `copyDir`) are honoured the same way. */
+export function liveRetainMembers(retain) {
+  const members = Array.isArray(retain?.members) ? retain.members : [];
+  return members.filter((m) => (m?.worktreeDir && existsSync(m.worktreeDir)) || (m?.copyDir && existsSync(m.copyDir)));
 }
 
 /**
@@ -191,6 +199,29 @@ export function stripClaudeMdFence(text, pipelineId) {
   return after ? `${before}${before && !before.endsWith('\n') ? '\n' : ''}${after}` : before;
 }
 
+/** `target` lies strictly inside `root` — lexically, so no `..` or absolute path escapes it. */
+function pathInside(root, target) {
+  const rel = relative(resolve(root), resolve(target));
+  return !!rel && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+}
+
+/**
+ * run.json is agent-writable (P3-D13), so an `injectedPaths` entry may name anything. A path is the checkout's own
+ * only when it lies inside `root` lexically, so a `..` or an absolute path never reaches past the checkout. `strict`
+ * (a run without a project: worca made every folder of its work/) also follows links: the parent (with `leaf`, the
+ * path itself) must stay inside root's real path, so a parent swapped for a link is never followed — false when root
+ * or that parent is missing. A git or folder checkout is never strict: a `.claude` the project itself links elsewhere
+ * holds worca's mounts too, and they must still leave at teardown.
+ */
+export async function insideCheckout(root, target, { leaf = false, strict = false } = {}) {
+  if (!pathInside(root, target)) return false;
+  if (!strict) return true;
+  try {
+    const [r, t] = await Promise.all([realpath(root), realpath(leaf ? target : dirname(target))]);
+    return t === r || pathInside(r, t);
+  } catch { return false; }
+}
+
 /**
  * §8.20 modified-mount rescue. Every injected entry of kind `skill` / `claudeMd` /
  * `claudeMdSection` is byte-compared against its recorded `source`; a changed or
@@ -206,16 +237,20 @@ export function stripClaudeMdFence(text, pipelineId) {
  *   entries     injectedPaths[<scope>] — [{ path, source, kind, mount? }]
  *   pipelineDir the durable artifact dir; null skips the copy (warning still emitted)
  *   scope       projectKey, or 'runRoot'
+ *   strict      a run without a project: never read through a link (insideCheckout)
  * @returns {Promise<string[]>} warnings (one per rescued entry)
  */
-export async function rescueModifiedMounts({ baseDir, entries, pipelineDir, scope, pipelineId } = {}) {
+export async function rescueModifiedMounts({ baseDir, entries, pipelineDir, scope, pipelineId, strict = false } = {}) {
   const warnings = [];
   if (!baseDir || !Array.isArray(entries) || !entries.length) return warnings;
+  // The scope is a run.json key too: a rescue copy never lands outside <pipelineDir>/stray.
+  if (pipelineDir && !pathInside(join(pipelineDir, 'stray'), join(pipelineDir, 'stray', scope || 'runRoot'))) return warnings;
   for (const e of entries) {
     const kind = e?.kind;
     if (!e?.path || kind === 'link' || e?.mount === 'symlink') continue;
     if (kind !== 'skill' && kind !== 'claudeMd' && kind !== 'claudeMdSection') continue;
     const mounted = join(baseDir, e.path);
+    if (!(await insideCheckout(baseDir, mounted, { leaf: true, strict }))) continue;   // never read past the checkout
     try {
       if (kind === 'claudeMdSection') {
         const live = extractClaudeMdFence(await readFile(mounted, 'utf8').catch(() => ''), pipelineId);
@@ -260,8 +295,10 @@ export async function scanStrayEntries({ runRoot, pipelineDir } = {}) {
   if (!runRoot) return warnings;
   let entries;
   try { entries = await readdir(runRoot, { withFileTypes: true }); } catch { return warnings; }
+  // P3: `work` is worca's own only at a no-project run's root; at any other (a workspace run's cwd) it is a stray.
+  const noProject = entries.some((e) => e.name === 'work') && (await readRunManifest(runRoot))?.workMode === 'none';
   for (const e of entries.sort((a, b) => (a.name < b.name ? -1 : 1))) {
-    if (RUN_ROOT_KNOWN_SET.has(e.name)) continue;
+    if (RUN_ROOT_KNOWN_SET.has(e.name) && (e.name !== 'work' || noProject)) continue;
     const src = join(runRoot, e.name);
     const dest = pipelineDir ? join(pipelineDir, 'stray', e.name) : null;
     try {
@@ -300,13 +337,15 @@ export async function copyRunManifestTo(runRoot, pipelineDir) {
  * nothing worca-cc created can be committed dangling or outlive the run. Prunes an
  * emptied `.claude` tree too. `claudeMdSection` entries are skipped — their file is
  * the user's tracked CLAUDE.md (the fence strip of step 2 is what cleans those).
+ * An entry that reaches past the checkout (insideCheckout; `strict` for a run without a project) is never removed.
  * Never throws.
  */
-export async function removeInjectedPaths(baseDir, entries) {
+export async function removeInjectedPaths(baseDir, entries, { strict = false } = {}) {
   if (!baseDir || !Array.isArray(entries)) return;
   const parents = new Set();
   for (const e of entries) {
     if (!e?.path || e.kind === 'claudeMdSection') continue;
+    if (!(await insideCheckout(baseDir, join(baseDir, e.path), { strict }))) continue;
     try { await rm(join(baseDir, e.path), { recursive: true, force: true }); } catch { /* best-effort */ }
     let rel = dirname(e.path);
     while (rel && rel !== '.' && rel !== sep) { parents.add(rel); rel = dirname(rel); }

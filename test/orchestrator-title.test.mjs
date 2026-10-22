@@ -29,15 +29,16 @@ after(async () => {
   await Promise.all(tmpDirs.map((d) => rm(d, { recursive: true, force: true })));
 });
 
-test('a mock run emits the stepper before the first exec, exactly one title event, and books its $0 title call', async () => {
-  // One run serves four former tests. WORCA_MOCK stays UNSET and the bin cannot spawn, so
-  // claude.mock alone must carry the title kickoff (a missed mock shows as zero title events).
+test('a mock run emits the stepper before the first exec, keeps its started title, and books its $0 title call', async () => {
+  // One run serves several former tests. WORCA_MOCK stays UNSET and the bin cannot spawn, so claude.mock alone must
+  // carry the title kickoff. Zero title events is the expected result (D35: a mock marker is never a title); the $0
+  // booking row (calls: 1) is what catches a missed mock.
   const prevMock = process.env.WORCA_MOCK;
   delete process.env.WORCA_MOCK;
   const projectDir = await makeTmpDir();
   try {
     const orch = createOrchestrator({
-      projectDir, workflowId: 'wf_default', prompt: 'Add a settings page with dark mode', auto: true,
+      projectDir, workflowId: 'wf_default', prompt: 'Add a settings page with dark mode', auto: true, title: 'Dark mode settings',
       claude: { mock: true, bin: '/nonexistent/claude-must-not-spawn' },
     });
     const seen = [];
@@ -76,15 +77,10 @@ test('a mock run emits the stepper before the first exec, exactly one title even
           assert.ok(firstStepperAt < firstClarifyExecAt, 'stepper precedes the clarify execution');
         }
       } },
-      { name: 'emits a title event with the LLM title after createPipeline', run: () => {
-        assert.equal(seen.length, 1, 'exactly one title event');
-        assert.equal(seen[0].provisional, false);
-        assert.ok(seen[0].pipelineId, 'payload carries the pipeline id');
-        assert.ok(seen[0].title && seen[0].title.length <= 70);
-      } },
-      { name: 'title kickoff inherits claude.mock — no WORCA_MOCK env, no real claude spawn', run: () => {
-        assert.equal(seen.length, 1, 'exactly one title event');
-        assert.equal(seen[0].title, '[mock] role unknown complete');
+      { name: 'a mock run keeps the title it was started with: no title event, no marker (D35)', run: () => {
+        assert.equal(seen.length, 0, 'the mock marker never replaces the title');
+        assert.equal(orch.state.title, 'Dark mode settings');
+        assert.doesNotMatch(String(orch.state.title), /^\[mock\]/);
       } },
       { name: 'a mock run books its $0 title call too (the call count is never hidden as "no cost")', run: () => {
         assert.deepEqual(orch.state.steps.find((s) => s.key === 'x:preflight:1').auxCosts?.title, { usd: 0, calls: 1 });
@@ -183,6 +179,60 @@ test('_titleGenOpts mirrors the run\'s claude policy: bin + mock travel with the
   assert.equal(o.mock, true);
   assert.equal(o.signal, orch.abort.signal);
   assert.equal(o.cwd, orch.projectDir, 'before _setupRunRoot the cwd falls back to projectDir');
+});
+
+// ── D18: a slice started from its ticket keeps the title the ticket set ──────────────────────
+const SLICE_OUTLINE = { why: '', slices: [
+  { id: 's1', title: 'Store tags', goal: '', inScope: [], outOfScope: [], acceptance: ['a'], dependsOn: [], estimate: 'small' },
+  { id: 's2', title: 'Run tags', goal: '', inScope: [], outOfScope: [], acceptance: ['b'], dependsOn: ['s1'], estimate: 'small' } ] };
+
+test('a slice run keeps its title: no title generation, not provisional', async () => {
+  const projectDir = await makeTmpDir();
+  const orch = createOrchestrator({
+    projectDir, prompt: 'slice brief', title: 'Tags · 2/2: Run tags', auto: true, claude: { mock: true },
+    shape: { perspectives: ['product'], slices: 'off', slice: { feature: 'feat_x', index: 2, total: 2, outline: SLICE_OUTLINE } },
+    titleRunClaude: async () => { throw new Error('generateTitle must not run for a slice'); },
+  });
+  orch.pipeline = { id: 'p-slice', promptText: 'slice brief' };
+  orch.state.titleProvisional = true;
+  const seen = [];
+  orch.on('title', (p) => seen.push(p));
+  orch._kickoffTitleGeneration();
+  await orch._titlePromise;
+  assert.equal(seen.length, 0);
+  assert.equal(orch.state.titleProvisional, false, 'the provisional re-kick never fires');
+});
+
+test('a "[mock]" title result never replaces the started title (D35)', async () => {
+  const projectDir = await makeTmpDir();
+  const orch = createOrchestrator({
+    projectDir, prompt: 'plan this in slices', title: 'Chart definitions', claude: { mock: true },
+    titleRunClaude: async () => ({ text: '[mock] planner-plan: no MOCK_OUT given' }),
+  });
+  const seen = [];
+  orch.on('title', (p) => seen.push(p));
+  orch.pipeline = { id: 'p-mock-title', promptText: 'plan this in slices' };
+  orch.state.title = 'Chart definitions';
+  orch.state.titleProvisional = true;
+  orch._kickoffTitleGeneration();
+  await orch._titlePromise;
+  assert.equal(seen.length, 0);
+  assert.equal(orch.state.title, 'Chart definitions');
+});
+
+test('slice 1 started without shape.slice but resumed with runShape.slice index 1 still generates its title', async () => {
+  const projectDir = await makeTmpDir();
+  let calls = 0;
+  const orch = createOrchestrator({
+    projectDir, prompt: 'shape brief', auto: true, claude: { mock: true },
+    shape: { perspectives: ['product'], slices: 'on' },
+    titleRunClaude: async () => { calls++; return { text: 'Tags' }; },
+  });
+  orch.runShape = { ...orch.runShape, slice: { feature: 'feat_x', index: 1, total: 2, outline: SLICE_OUTLINE } };
+  orch.pipeline = { id: 'p-slice1', promptText: 'shape brief' };
+  orch._kickoffTitleGeneration();
+  await orch._titlePromise;
+  assert.equal(calls, 1);
 });
 
 // ── Away mode cost visibility (T4): the run-title call is worca's own AI spend during the run ──

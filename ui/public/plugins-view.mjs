@@ -5,6 +5,7 @@
 // endpoint calls, the modal shell, and mounting; node:test drives these via jsdom.
 
 import { engineLabel } from '../../src/shared/engine-switch.mjs';
+import { iconSvg } from './icons.mjs';
 function h(doc, tag, cls, text) {
   const n = doc.createElement(tag);
   if (cls) n.className = cls;
@@ -14,10 +15,15 @@ function h(doc, tag, cls, text) {
 
 const sha7 = (sha) => (typeof sha === 'string' ? sha.slice(0, 7) : '');
 
-// Inline feather-style icons for card action buttons (stroke follows currentColor).
+/** The `Needs git` chip (U17: a chip inside the action's own dialog, never a wash): a source off GitHub, no git here. */
+export function renderNeedsGit(doc = globalThis.document) {
+  return h(doc, 'span', 'badge waiting pl-needs-git', 'Needs git');
+}
+
+// Icons for row action buttons (stroke follows currentColor): the shared refresh, and a local bin icons.mjs lacks.
 const ICONS = {
-  bin: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>',
-  refresh: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>',
+  bin: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>',
+  refresh: iconSvg('refresh', 14),
 };
 
 // icon button: <button class=cls>[svg] label</button>. innerHTML is a fixed
@@ -49,15 +55,15 @@ function contribSummary(c) {
 // data-channel-key="<plugin>/<id>" so a channel-status WS event can patch it
 // in place.
 export function renderPluginList(plugins, { doc = globalThis.document, channelStatus = [] } = {}) {
-  const root = h(doc, 'div', 'pl-list');
+  const root = h(doc, 'div', 'card pl-list drows');
   for (const p of plugins || []) {
-    const card = h(doc, 'section', 'card plugin-card');
+    const card = h(doc, 'section', 'drow drow-stack plugin-card');
     card.dataset.name = p.name;
     if (p.enabled === false) card.classList.add('pl-disabled');
     const head = h(doc, 'div', 'pl-head');
     head.appendChild(h(doc, 'b', 'pl-name', p.name));
     head.appendChild(h(doc, 'span', 'pl-version mono', p.version || sha7(p.pinnedSha)));
-    if (p.linked) head.appendChild(h(doc, 'span', 'badge waiting pl-linked', 'linked'));
+    if (p.linked) head.appendChild(h(doc, 'span', 'badge grey pl-linked', 'linked'));
     if (p.apiMismatch) head.appendChild(h(doc, 'span', 'badge amber pl-api-mismatch', 'needs update'));
     else if (p.broken) head.appendChild(h(doc, 'span', 'badge red pl-broken', 'broken'));
     // A shipped python script on a host without python: a chip, never a block.
@@ -72,7 +78,7 @@ export function renderPluginList(plugins, { doc = globalThis.document, channelSt
     cb.dataset.name = p.name;
     cb.setAttribute('aria-label', `Enable ${p.name}`);
     toggle.appendChild(cb);
-    toggle.appendChild(h(doc, 'span', 'switch switch-sm'));
+    toggle.appendChild(h(doc, 'span', 'switch'));
     toggle.appendChild(h(doc, 'span', '', p.enabled !== false ? 'enabled' : 'disabled'));
     head.appendChild(toggle);
     card.appendChild(head);
@@ -95,7 +101,7 @@ export function renderPluginList(plugins, { doc = globalThis.document, channelSt
       const n = p.ignored.length;
       card.appendChild(h(doc, 'small', 'pl-ignored-note hint err',
         `${n} contribution${n > 1 ? 's' : ''} ignored: `
-        + p.ignored.map((i) => `${i.file} — ${i.reason}`).join('; ')));
+        + p.ignored.map((i) => `${i.file}: ${i.reason}`).join('; ')));
     }
     if (p.repo || p.marketplaceName) {
       const prov = [p.marketplaceName, p.repo].filter(Boolean).join(' · ');
@@ -110,7 +116,7 @@ export function renderPluginList(plugins, { doc = globalThis.document, channelSt
     }
     const actions = h(doc, 'div', 'pl-actions');
     for (const [cls, label] of [['pl-settings', 'Settings'], ['pl-doctor', 'Doctor'], ['pl-update', 'Update'], ['pl-remove', 'Remove']]) {
-      const b = h(doc, 'button', `btn-ghost ${cls}`, label);
+      const b = h(doc, 'button', `btn btn-sm${cls === 'pl-remove' ? ' btn-danger' : ''} ${cls}`, label);
       b.type = 'button';
       b.dataset.name = p.name;
       if (cls === 'pl-doctor') b.dataset.minLevel = 'expert';   // diagnostics (docs/ui-levels.md)
@@ -142,16 +148,16 @@ export function channelBadge(doc, c) {
 // Purge buttons carry data-name + .pl-purge-orphan for app.js's delegated
 // listener. Empty/nullish input -> childless container (app.js skips mounting).
 export function renderOrphanList(orphans, { doc = globalThis.document } = {}) {
-  const root = h(doc, 'div', 'pl-orphans');
+  const root = h(doc, 'div', 'card pl-orphans drows');
   root.dataset.minLevel = 'expert';                       // purge of leftover data (docs/ui-levels.md)
   if (!orphans || !orphans.length) return root;
   root.appendChild(h(doc, 'h3', 'pl-orphans-title', 'Leftover data'));
   for (const o of orphans) {
-    const row = h(doc, 'div', 'card pl-orphan-row');
+    const row = h(doc, 'div', 'drow drow-stack pl-orphan-row');
     row.dataset.name = o.name;
     row.appendChild(h(doc, 'b', 'pl-name', o.name));
-    row.appendChild(h(doc, 'small', 'hint', 'uninstalled — config/secrets remain'));
-    const btn = h(doc, 'button', 'btn-ghost pl-purge-orphan', 'Purge');
+    row.appendChild(h(doc, 'small', 'hint', 'uninstalled (config/secrets remain)'));
+    const btn = h(doc, 'button', 'btn pl-purge-orphan', 'Purge');
     btn.type = 'button';
     btn.dataset.name = o.name;
     row.appendChild(btn);
@@ -163,10 +169,11 @@ export function renderOrphanList(orphans, { doc = globalThis.document } = {}) {
 // renderInstallConsent(entry, inventory) — spec §6.1 "Will install" ceremony.
 // entry: { name, repoUrl, sha } (a marketplace snapshot plugin + the marketplace's url/lastSync.sha);
 // inventory: buildInstallInventory shape. Secrets render red; setup commands verbatim.
-export function renderInstallConsent(entry, inventory, { doc = globalThis.document } = {}) {
+export function renderInstallConsent(entry, inventory, { doc = globalThis.document, needsGit = false } = {}) {
   const inv = inventory || {};
   const root = h(doc, 'div', 'pl-consent');
-  root.appendChild(h(doc, 'div', 'pl-consent-src mono', `${entry.repoUrl} @ ${sha7(entry.sha)}`));
+  const src = root.appendChild(h(doc, 'div', 'pl-consent-src mono', `${entry.repoUrl} @ ${sha7(entry.sha)}`));
+  if (needsGit) src.append(' ', renderNeedsGit(doc));
   const section = (label) => {
     const s = h(doc, 'div', 'pl-consent-sec');
     s.appendChild(h(doc, 'div', 'pl-consent-h', label));
@@ -176,7 +183,7 @@ export function renderInstallConsent(entry, inventory, { doc = globalThis.docume
   const agents = section(`Agents (${(inv.agents || []).length})`);
   for (const a of inv.agents || []) {
     agents.appendChild(h(doc, 'div', 'pl-consent-row mono',
-      `${a.key} — tools: ${(a.tools || []).join(', ') || 'none declared'}`));
+      `${a.key} (tools: ${(a.tools || []).join(', ') || 'none declared'})`));
     // Ask forms (spec §10): how many question forms this agent can put on
     // screen, and which file types they may display from the run folder. An
     // older snapshot has neither key, so both are read defensively.
@@ -192,7 +199,7 @@ export function renderInstallConsent(entry, inventory, { doc = globalThis.docume
     const scripts = section(`Scripts (${inv.scripts.length})`);
     for (const s of inv.scripts) {
       scripts.appendChild(h(doc, 'div', 'pl-consent-row mono',
-        `${s.key} — ${s.runtime}${s.command ? ` · ${s.command}` : s.file ? ` · ${s.file}` : ''}`
+        `${s.key}: ${s.runtime}${s.command ? ` · ${s.command}` : s.file ? ` · ${s.file}` : ''}`
         + `${s.cases ? ` · ${s.cases} case${s.cases === 1 ? '' : 's'}` : ''}`));
     }
   }
@@ -207,7 +214,7 @@ export function renderInstallConsent(entry, inventory, { doc = globalThis.docume
     for (const ch of inv.chatChannels) {
       const dirs = [ch.inbound && 'inbound', ch.outbound && 'outbound'].filter(Boolean).join(' + ');
       const row = h(doc, 'div', 'pl-consent-row',
-        `${ch.displayName || ch.id} (${ch.platform}, ${dirs}) — runs a persistent worker`);
+        `${ch.displayName || ch.id} (${ch.platform}, ${dirs}): runs a persistent worker`);
       for (const key of ch.secrets || []) row.appendChild(h(doc, 'span', 'pl-secret', `requests secret: ${key}`));
       channels.appendChild(row);
     }
@@ -233,11 +240,11 @@ export function renderInstallConsent(entry, inventory, { doc = globalThis.docume
   }
   // MCP servers (MCP registry §4.1): a snapshot persisted before API 5 has no
   // key at all — that is "unknown", never "none".
-  if (!Array.isArray(inv.mcpServers)) section('MCP servers: unknown — refresh the marketplace');
+  if (!Array.isArray(inv.mcpServers)) section('MCP servers: unknown. Refresh the marketplace');
   else if (inv.mcpServers.length) {
     const mcp = section(`MCP servers (${inv.mcpServers.length})`);
     for (const s of inv.mcpServers) {
-      mcp.appendChild(h(doc, 'div', 'pl-consent-row mono', `${s.name} (${s.type}) — ${s.command || s.url}`));
+      mcp.appendChild(h(doc, 'div', 'pl-consent-row mono', `${s.name} (${s.type}): ${s.command || s.url}`));
     }
   }
   const skills = section(`Skills (${(inv.skills || []).length})`);
@@ -295,7 +302,7 @@ export function renderUpdatePreview(preview, { doc = globalThis.document } = {})
     for (const [cls, text] of flags) box.appendChild(h(doc, 'div', cls, text));
     root.appendChild(box);
   }
-  const btn = h(doc, 'button', 'btn btn-primary btn-mini pl-confirm-update', 'Apply update');
+  const btn = h(doc, 'button', 'btn btn-primary btn-sm pl-confirm-update', 'Apply update');
   btn.type = 'button';
   root.appendChild(btn);
   return root;
@@ -320,11 +327,11 @@ function profileBar(doc, src) {
   if (src.profile) sel.value = src.profile;
   if (!(src.profiles || []).length) sel.disabled = true;
   bar.appendChild(sel);
-  const add = h(doc, 'button', 'btn btn-ghost btn-mini pl-profile-add', 'Add');
+  const add = h(doc, 'button', 'btn btn-sm pl-profile-add', 'Add');
   add.type = 'button';
   add.dataset.sourceId = src.id || '';
   bar.appendChild(add);
-  const del = h(doc, 'button', 'btn btn-ghost btn-mini pl-profile-del', 'Remove');
+  const del = h(doc, 'button', 'btn btn-sm pl-profile-del', 'Remove');
   del.type = 'button';
   del.dataset.sourceId = src.id || '';
   if (!src.profile) del.disabled = true;
@@ -356,7 +363,7 @@ export function renderConfigForm(sections, { doc = globalThis.document } = {}) {
       // Nothing to write into: creating the profile is a separate call, and the
       // server rejects a save without one. Offer the add button, not a form.
       if (!src.profile) {
-        root.appendChild(h(doc, 'p', 'hint', 'No profiles yet — add one to configure this source.'));
+        root.appendChild(h(doc, 'p', 'hint', 'No profiles yet. Add one to configure this source.'));
         continue;
       }
     }
@@ -513,23 +520,23 @@ export function relTime(iso, now = Date.now()) {
 // plugins render a badge instead; a never-synced marketplace renders no button
 // (there is no sha to pin yet — Refresh first).
 export function renderAvailableList(marketplaces, { doc = globalThis.document } = {}) {
-  const root = h(doc, 'div', 'pl-available');
+  const root = h(doc, 'div', 'card pl-available drows');
   const mkts = marketplaces || [];
   let cards = 0;
   for (const m of mkts) {
     for (const p of m.plugins || []) {
       cards++;
-      const card = h(doc, 'section', 'card pl-avail-card');
+      const card = h(doc, 'section', 'drow drow-stack pl-avail-card');
       card.dataset.name = p.name;
       card.dataset.marketplace = m.id;
       const head = h(doc, 'div', 'pl-head');
       head.appendChild(h(doc, 'b', 'pl-name', p.name));
       head.appendChild(h(doc, 'span', 'pl-version mono', p.version || sha7(m.lastSync && m.lastSync.sha)));
-      head.appendChild(h(doc, 'span', 'badge waiting pl-mkt-badge', m.name || m.id));
+      head.appendChild(h(doc, 'span', 'badge slate pl-mkt-badge', m.name || m.id));
       if (p.installed) {
         head.appendChild(h(doc, 'span', 'badge green pl-installed', 'Installed'));
       } else if (m.lastSync) {
-        const b = h(doc, 'button', 'btn btn-primary btn-mini pl-install-avail', 'Install…');
+        const b = h(doc, 'button', 'btn btn-primary btn-sm pl-install-avail', 'Install…');
         b.type = 'button';
         b.dataset.name = p.name;
         b.dataset.marketplace = m.id;
@@ -541,7 +548,7 @@ export function renderAvailableList(marketplaces, { doc = globalThis.document } 
       root.appendChild(card);
     }
   }
-  if (!mkts.length) root.appendChild(h(doc, 'div', 'hist-empty', 'No marketplaces yet — add one below.'));
+  if (!mkts.length) root.appendChild(h(doc, 'div', 'hist-empty', 'No marketplaces yet. Add one below.'));
   else if (!cards) root.appendChild(h(doc, 'div', 'hist-empty', 'No plugins discovered in your marketplaces.'));
   return root;
 }
@@ -550,17 +557,19 @@ export function renderAvailableList(marketplaces, { doc = globalThis.document } 
 // Refresh/Remove buttons (data-id). Sync failures surface as .pl-mkt-warning
 // lines; the snapshot stays usable (stale) per spec §4.6.
 export function renderMarketplaceList(marketplaces, { doc = globalThis.document, now = Date.now() } = {}) {
-  const root = h(doc, 'div', 'pl-mkts');
+  const root = h(doc, 'div', 'card pl-mkts drows');
   for (const m of marketplaces || []) {
-    const row = h(doc, 'div', 'card pl-mkt-row');
+    const row = h(doc, 'div', 'drow drow-stack pl-mkt-row');
     row.dataset.id = m.id;
     const head = h(doc, 'div', 'pl-head');
     head.appendChild(h(doc, 'b', 'pl-name', m.name || m.id));
-    if (m.builtin) head.appendChild(h(doc, 'span', 'badge waiting pl-mkt-builtin', 'built-in'));
+    if (m.builtin) head.appendChild(h(doc, 'span', 'badge grey pl-mkt-builtin', 'built-in'));
     const actions = h(doc, 'div', 'pl-mkt-actions');
+    // A source off GitHub on a machine without git cannot refresh: the chip stands where Refresh would.
+    if (m.needsGit) actions.appendChild(renderNeedsGit(doc));
     for (const [cls, icon, label] of [
-      ['btn-ghost pl-mkt-refresh', 'refresh', 'Refresh'],
-      ['pl-remove pl-mkt-remove', 'bin', 'Remove'],
+      ...(m.needsGit ? [] : [['btn btn-sm pl-mkt-refresh', 'refresh', 'Refresh']]),
+      ['btn btn-sm btn-danger pl-remove pl-mkt-remove', 'bin', 'Remove'],
     ]) {
       const b = iconBtn(doc, cls, icon, label);
       b.dataset.id = m.id;
@@ -572,7 +581,7 @@ export function renderMarketplaceList(marketplaces, { doc = globalThis.document,
     const n = (m.plugins || []).length;
     row.appendChild(h(doc, 'small', 'pl-mkt-sync hint', m.lastSync
       ? `${sha7(m.lastSync.sha)} · synced ${relTime(m.lastSync.at, now)} · ${n} plugin${n === 1 ? '' : 's'}`
-      : 'never synced — refresh to discover plugins'));
+      : 'never synced. Refresh to discover plugins'));
     for (const w of m.warnings || []) row.appendChild(h(doc, 'div', 'pl-mkt-warning hint err', w));
     root.appendChild(row);
   }

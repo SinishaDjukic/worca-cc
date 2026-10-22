@@ -24,6 +24,7 @@ import { createAskTools } from './tools.mjs';
 import { createRpcServer } from './rpc-server.mjs';
 import { defaultToolDeps } from './tool-deps.mjs';
 import { defaultWorktreeDeps } from './worktree-deps.mjs';
+import { defaultShowFilesDeps } from './show-files-deps.mjs';
 import { defaultMemoryDeps } from './memory-deps.mjs';
 import { defaultScriptDeps } from './script-deps.mjs';
 import { defaultCommentDeps } from './comment-deps.mjs';
@@ -35,6 +36,7 @@ import { defaultScheduleDeps } from './schedule-deps.mjs';
 import { defaultSourceDeps } from './source-deps.mjs';
 import { defaultModelDeps } from './model-deps.mjs';
 import { defaultCloneDeps } from './clone-deps.mjs';
+import { defaultProjectDeps } from './project-deps.mjs';
 import { defaultWorkspaceDeps } from './workspace-deps.mjs';
 import { defaultActionsDeps } from './actions-deps.mjs';
 import { defaultWebDeps } from './web-deps.mjs';
@@ -43,6 +45,8 @@ import { defaultCommandDeps } from './command-deps.mjs';
 import { defaultBranchDeps } from './branch-deps.mjs';
 import { defaultComposerDeps } from './composer-deps.mjs';
 import { defaultChatActionDeps } from './chat-action-deps.mjs';
+import { gitAvailable, gitState } from '../git-available.mjs';
+import { defaultShapeToolDeps } from './shape-tool-deps.mjs';
 
 // The JSON-RPC server itself lives in rpc-server.mjs (re-exported: tests and the Codex file tools use it).
 export { createRpcServer } from './rpc-server.mjs';
@@ -67,8 +71,12 @@ export function parseArgv(argv) {
 export function createAskToolServer({ threadId, reader = null, signal, write, log, env = process.env, extraDeps = {} }) {
   return createRpcServer({
     tools: createAskTools({
+      // git missing (P0): the git-only tools are neither listed nor callable. The classic child reads the WORCA_GIT the
+      // parent forwards (spawn.mjs buildMcpConfig), the relay the server's own probed state.
+      gitAvailable,
       ...defaultToolDeps({ threadId, viewer: reader }),
       ...defaultWorktreeDeps({ threadId }),
+      ...defaultShowFilesDeps({ threadId }),
       ...defaultMemoryDeps({ threadId }),
       // The life signal (already built for propose_workflow's nested classifier): the turn
       // ending or being stopped also stops a bench run still going.
@@ -82,15 +90,16 @@ export function createAskToolServer({ threadId, reader = null, signal, write, lo
       ...defaultSourceDeps(),
       ...defaultModelDeps({ threadId }),
       ...defaultCloneDeps(),
+      ...defaultProjectDeps(),
       ...defaultWorkspaceDeps(),
-      // Actions (docs/actions.md "Ask Worca"): read the config, checkouts and running services; propose config.
+      // Actions (docs/actions.md "Chat"): read the config, checkouts and running services; propose config.
       ...defaultActionsDeps(),
       // Branch reads + fetch-only (#527): list_branches, list_projects.sync, get_run.baseMoved.
       ...defaultBranchDeps(),
       // Web access: present only when this turn's env carries WORCA_ASK_WEB (web-deps.mjs) — the
       // child's env (classic), or the relay's own copy built from the turn's web access (ui/server.mjs).
       ...defaultWebDeps({ threadId, signal, env }),
-      // Codex chats only (WORCA_ASK_ENGINE=codex): read_file / grep / glob under the shared deny rules (D13).
+      // Codex and Copilot chats only (WORCA_ASK_ENGINE=codex|copilot): read_file / grep / glob under the shared deny rules (D13).
       ...defaultFileDeps({ threadId, env, signal }),
       // Agent mode (#574): present only when this turn's env names the command bridge (command-deps.mjs).
       ...defaultCommandDeps({ env }),
@@ -99,6 +108,8 @@ export function createAskToolServer({ threadId, reader = null, signal, write, lo
       ...defaultComposerDeps({ threadId }),
       // worca Chat P2: settings and run controls — validate here, applied by the parent (chat-action-deps.mjs).
       ...defaultChatActionDeps(),
+      // Shaper: propose_changes / route_message — only with the gate and a thread (shape-tool-deps.mjs); relay overrides it.
+      ...defaultShapeToolDeps({ threadId }),
       // Readers only the host process can supply (relay mode: ui/server.mjs passes
       // readLiveDiff, which needs the live runs). Absent in the classic child.
       ...extraDeps,
@@ -140,6 +151,10 @@ async function relayMain({ url, token, stdin, stdout, fetchImpl = globalThis.fet
   await new Promise((resolve) => stdout.write('', resolve));
 }
 
+/** S67: a classic child started without the forwarded WORCA_GIT (a person's own `claude mcp add worca …`) probes once,
+ *  so an installed git is not read as missing; worca's own spawns always forward it, so they never probe. */
+export async function resolveChildGit(env = process.env) { if (env.WORCA_GIT === undefined) await gitState(); }
+
 export async function main({ argv = process.argv.slice(2), env = process.env, stdin = process.stdin, stdout = process.stdout } = {}) {
   // MCP registry §5.5.2: the CLI hands this child every registry copy's secret (MCPSECRET_*); worca's own tools,
   // the scripts test_script runs in-process and their nested spawns get none of them.
@@ -150,6 +165,7 @@ export async function main({ argv = process.argv.slice(2), env = process.env, st
   }
   if (home) env.WORCA_HOME = home;                               // argv wins; worcaHome() reads the env at call time
   const threadId = thread || env.WORCA_ASK_THREAD_ID || null;
+  await resolveChildGit(env);                                    // before the tool server decides its tool list
   // P3 (v7): stdin closing == the chat turn ended or was stopped — abort whatever propose_workflow is still classifying
   // (its result could never be delivered), so the drain below returns promptly instead of after the classifier's timeout.
   const life = new AbortController();

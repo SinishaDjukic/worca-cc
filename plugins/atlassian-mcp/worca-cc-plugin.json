@@ -1,7 +1,7 @@
 {
   "name": "atlassian-mcp",
   "version": "0.1.0",
-  "description": "Atlassian Rovo MCP server: Jira, Confluence and Compass for pipeline agents and Ask Worca",
+  "description": "Atlassian Rovo MCP server: Jira, Confluence and Compass for pipeline agents and Chat",
   "license": "MIT",
   "engines": { "worca-cc-api": ">=5 <6" },
   "mcpServers": {

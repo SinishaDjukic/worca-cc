@@ -178,6 +178,8 @@ export async function runClaude(o = {}) {
     // (mcpjson-approval.mjs). A pipeline node's cwd is a run checkout, which holds neither the untracked
     // settings.local.json nor Claude Code's answers for the project. Default: the cwd. Never a spawn flag.
     mcpjsonProjectDir,
+    // P1 (S31): a non-git run (runOpts) — approvals are judged and Cursor's files written without git.
+    noGit = false,
     // A pipeline agent (phases.mjs): runs as WORCA_AGENT_USER when the container set one
     // up (agent-user.mjs). Server-side helpers and Ask Worca leave it unset.
     asAgent,
@@ -218,7 +220,7 @@ export async function runClaude(o = {}) {
   if (engine.name === 'claude' && strictMcpConfig !== true) {
     // Loaded here, not at the top: mcpjson-approval reads run-context, whose imports lead back to this runner.
     const { unapprovedMcpjsonNames } = await import('./mcpjson-approval.mjs');
-    const off = await unapprovedMcpjsonNames(cwd, mcpjsonProjectDir || cwd);
+    const off = await unapprovedMcpjsonNames(cwd, mcpjsonProjectDir || cwd, { git: !noGit });
     if (off.length) {
       const prev = Array.isArray(extraSettings?.disabledMcpjsonServers) ? extraSettings.disabledMcpjsonServers : [];
       settings = { ...(extraSettings || {}), disabledMcpjsonServers: [...new Set([...prev, ...off])] };
@@ -231,6 +233,7 @@ export async function runClaude(o = {}) {
     systemPromptMode,
     prompt,
     allowedTools,
+    noGit,
     permissionMode,
     model,
     effort,

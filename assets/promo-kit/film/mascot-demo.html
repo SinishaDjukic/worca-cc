@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mascot crew demo</title>
+<link rel="stylesheet" href="film.css">
+<link rel="stylesheet" href="mascot.css">
+<style>
+  [data-scene="demo"] .d-tag { position: absolute; left: 0; top: 0; white-space: nowrap; font: 500 17px/1 var(--mono);
+    color: var(--ink-2); background: #fff; border: 1.5px solid var(--line); padding: 6px 10px; border-radius: 999px; }
+  [data-scene="demo"] .d-sec { position: absolute; left: 48px; top: 40px; font: 700 30px/1 var(--sans); letter-spacing: -0.02em; color: var(--ink); }
+  [data-scene="demo"] .d-sec small { display: block; margin-top: 8px; font: 500 16px/1 var(--mono); color: var(--ink-3); letter-spacing: 0; }
+  [data-scene="demo"] .d-wire { position: absolute; left: 0; top: 0; overflow: visible; }
+  [data-scene="demo"] .d-ground { position: absolute; height: 2px; background: rgba(25, 25, 27, .12); border-radius: 2px; }
+</style>
+</head>
+<body>
+<!-- Demo of film/mascot.js: every variant, prop, hat and action on one timeline. Same player as the film:
+     ?t=12.5&pause to scrub, ?export=1 for capture (window.__film.seek). -->
+<div id="viewport"><div id="stage"></div></div>
+<script src="vendor/gsap.min.js"></script>
+<script>
+  window.FILM_DATA = { layout: { duration: 64, fps: 60, vo: {}, scenes: [{ id: 'demo', start: 0, end: 64 }] }, vo: {}, plates: {} };
+</script>
+<script src="kit.js"></script>
+<script src="mascot.js"></script>
+<script>
+F.scene({ id: 'demo', build(S) {
+  const tl = S.tl;
+  { const cam = new URLSearchParams(location.search).get('cam');   // debug: ?cam=x,y,zoom pins the camera
+    if (cam) { const [x, y, zoom] = cam.split(',').map(Number); S.camera.set(0, { x, y, zoom }); } }
+  /* helpers: a section title, a small tag that shows for a window, a ground line */
+  const sec = (t0, t1, title, sub) => {
+    const e = S.el('div', { cls: 'd-sec', parent: S.overlay, html: `${title}<small>${sub || ''}</small>` });
+    tl.set(e, { autoAlpha: 0 }, 0).set(e, { autoAlpha: 1 }, t0).set(e, { autoAlpha: 0 }, t1);
+  };
+  const tag = (x, y, text, t0, t1) => {
+    const e = S.el('div', { cls: 'd-tag', text });
+    gsap.set(e, { x, y, xPercent: -50 });
+    tl.set(e, { autoAlpha: 0 }, 0).set(e, { autoAlpha: 1 }, t0).set(e, { autoAlpha: 0 }, t1);
+    return e;
+  };
+  const ground = (x, y, w, t0, t1) => {
+    const e = S.el('div', { cls: 'd-ground', style: { left: x + 'px', top: y + 'px', width: w + 'px' } });
+    tl.set(e, { autoAlpha: 0 }, 0).set(e, { autoAlpha: 1 }, t0).set(e, { autoAlpha: 0 }, t1);
+  };
+  const VARS = ['clarifier', 'planner', 'refiner', 'builder', 'reviewer', 'boss', 'plain'];
+
+  /* 1 · lineup 0–6.3 */
+  sec(0, 6.3, 'The crew', 'variants · idle life · look · signature moves · turn');
+  ground(60, 781, 1800, 0, 6.3);
+  const line = VARS.map((v, i) => {
+    const x = 150 + i * 266, m = S.mascot(v, { x, y: 780, size: 200, hidden: true });
+    m.enter(0.2 + i * 0.12, { from: 'pop' });
+    tag(x, 806, v, 0.2 + i * 0.12, 6.2);
+    m.look(1.3, 'viewer').look(2.0, 'forward');
+    return m;
+  });
+  line[0].say(2.2, 'Which one?', { kind: 'think', dur: 1.6 });
+  line[1].nod(2.2).expr(2.2, 'happy');
+  line[2].use(2.2, 'write');
+  line[3].use(2.2, 'push');
+  line[4].use(2.2, 'magnify');
+  line[5].use(2.2, 'whistle');
+  line[6].wave(2.2, 1.4);
+  line.forEach((m, i) => { m.expr(3.9, 'neutral'); m.face(4.1 + i * 0.06, -1).face(5.0 + i * 0.06, 1); m.exit(5.8 + i * 0.05, { to: 'pop' }); });
+
+  /* 2 · close-ups + expressions 6.4–13.5 */
+  sec(6.4, 13.5, 'Close-up · expressions', 'builder 520 px · reviewer 520 px facing left');
+  const bigA = S.mascot('builder', { x: 470, y: 1010, size: 520, hidden: true }).enter(6.4, { from: 'pop' });
+  const bigB = S.mascot('reviewer', { x: 1500, y: 1010, size: 520, facing: -1, hidden: true }).enter(6.55, { from: 'pop' });
+  const EX = ['neutral', 'happy', 'worried', 'surprised', 'sleepy', 'dizzy', 'proud', 'angry'];
+  EX.forEach((e, i) => { const t = 7.1 + i * 0.75; bigA.expr(t, e); bigB.expr(t + 0.1, e); S.caption(t, e, { dur: 0.62, sfx: null }); });
+  bigA.look(7.1, 'viewer').look(9.0, 'up').look(10.0, 'forward');
+  bigB.look(8.0, { x: 470, y: 700 });
+  bigA.expr(13.0, 'neutral').exit(13.1, { to: 'pop' }); bigB.expr(13.0, 'neutral').exit(13.15, { to: 'pop' });
+
+  /* 3 · locomotion 13.6–27.4 */
+  sec(13.6, 27.4, 'Getting around', 'walk · run · hop · jump · turn · march · enter/exit any side · ride a wire · sneak');
+  ground(0, 861, 1920, 13.6, 27.4);
+  const bo = S.mascot('builder', { x: -200, y: 860, size: 190, hidden: true });
+  bo.enter(13.7, { from: 'left', to: [560, 860], dur: 1.4 });           S.caption(13.7, 'enter left + walk', { dur: 1.3, sfx: null });
+  bo.run(15.3, { to: [1240, 860], dur: 0.9 });                            S.caption(15.3, 'run', { dur: 0.9, sfx: null });
+  bo.hop(16.35, { to: [1460, 860] });                                     S.caption(16.35, 'hop', { dur: 0.7, sfx: null });
+  bo.jump(17.15);                                                         S.caption(17.15, 'jump', { dur: 0.6, sfx: null });
+  bo.walk(17.95, { to: [980, 860], dur: 1.3 });                           S.caption(17.95, 'turn + walk', { dur: 1.2, sfx: null });
+  bo.march(19.4, { to: [1300, 860], dur: 1.3 });                          S.caption(19.4, 'march', { dur: 1.2, sfx: null });
+  bo.exit(20.8, { to: 'right', run: true });                              S.caption(20.8, 'exit right (run)', { dur: 0.7, sfx: null });
+  const cl = S.mascot('clarifier', { x: 460, y: 860, size: 170, hidden: true }).enter(21.5, { from: 'top' });   S.caption(21.5, 'enter top', { dur: 0.8, sfx: null });
+  const pi = S.mascot('planner', { x: 820, y: 860, size: 170, hidden: true }).enter(22.4, { from: 'bottom' });  S.caption(22.4, 'enter bottom', { dur: 0.8, sfx: null });
+  // a wire with a loop to ride
+  const wire = [];
+  for (let i = 0; i <= 12; i++) wire.push([1010 + i * 25, 860]);
+  for (let i = 1; i <= 40; i++) { const a = Math.PI / 2 - (i / 40) * Math.PI * 2; wire.push([1310 + 95 * Math.cos(a), 765 + 95 * Math.sin(a)]); }
+  for (let i = 1; i <= 16; i++) wire.push([1310 + i * 30, 860]);
+  { const sv = S.el('svg', { cls: 'd-wire', attrs: { width: 1920, height: 1080 } });
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', 'M' + wire.map((q) => q.join(' ')).join('L')); p.setAttribute('fill', 'none'); p.setAttribute('stroke', '#19191B'); p.setAttribute('stroke-width', '4'); p.setAttribute('stroke-linecap', 'round');
+    sv.appendChild(p); tl.set(sv, { autoAlpha: 0 }, 0).set(sv, { autoAlpha: 1 }, 23.0).set(sv, { autoAlpha: 0 }, 27.4); }
+  const rf = S.mascot('refiner', { x: 1010, y: 860, size: 120, hidden: true }).enter(23.1, { from: 'pop' });
+  rf.ride(23.6, { path: wire, dur: 2.2 });                                S.caption(23.6, 'ride a wire (tilt follows it)', { dur: 2.0, sfx: null });
+  const rx = S.mascot('reviewer', { x: 1980, y: 860, size: 170, hidden: true, facing: -1 });
+  rx.enter(25.0, { from: 'right', to: [1700, 860], style: 'sneak', dur: 1.2 }); S.caption(25.9, 'sneak', { dur: 0.6, sfx: null });
+  cl.exit(26.5, { to: 'top' }); pi.exit(26.5, { to: 'bottom' }); rx.exit(26.6, { to: 'pop' }); rf.exit(26.6, { to: 'pop' });
+  S.caption(26.5, 'exit top · bottom · pop', { dur: 0.85, sfx: null });
+
+  /* 4 · actions 27.5–50.4 (four lanes, a tag under each says what it does) */
+  sec(27.5, 50.4, 'Actions', 'every API action, four at a time');
+  ground(60, 861, 1800, 27.5, 50.4);
+  const LX = [270, 740, 1210, 1650];
+  const A = S.mascot('plain', { x: LX[0], y: 860, size: 180, hidden: true }).enter(27.6, { from: 'pop' });
+  const B = S.mascot('boss', { x: LX[1], y: 860, size: 180, hidden: true }).enter(27.7, { from: 'pop' });
+  const C = S.mascot('reviewer', { x: LX[2], y: 860, size: 180, hidden: true }).enter(27.8, { from: 'pop' });
+  const D = S.mascot('planner', { x: LX[3], y: 860, size: 180, hidden: true, facing: -1 }).enter(27.9, { from: 'pop' });
+  const lane = (m, i, list) => { list.forEach(([t, name, fn, d]) => { fn(m, t); tag(LX[i], 890, name, t, t + (d || 1.4)); }); };
+  lane(A, 0, [
+    [28.3, 'wave', (m, t) => m.wave(t, 1.3)], [29.8, 'point', (m, t) => m.point(t, { x: 900, y: 500 }, 1.3)], [31.3, 'cheer', (m, t) => m.cheer(t, 1.2)],
+    [32.8, 'nod', (m, t) => m.nod(t)], [34.0, 'shake', (m, t) => m.shake(t)], [35.2, 'squash', (m, t) => m.squash(t, { amount: 0.45, hold: 0.4 })],
+    [36.7, 'dizzy', (m, t) => m.dizzy(t, 1.6), 1.6], [38.6, 'sleep', (m, t) => m.sleep(t, 2.0), 2.0], [40.9, 'trip', (m, t) => m.trip(t)],
+    [42.5, 'bonk', (m, t) => m.bonk(t)], [43.8, 'attention', (m, t) => m.attention(t)], [45.3, 'bounce', (m, t) => m.bounce(t), 1.4],
+    [47.0, 'scale', (m, t) => m.scale(t, 1.45, 0.35).scale(t + 0.9, 1, 0.3)], [48.6, 'hide / show', (m, t) => m.hide(t, { pop: true }).show(t + 0.55, { pop: true })],
+  ]);
+  lane(B, 1, [
+    [28.3, 'use whistle', (m, t) => m.use(t, 'whistle')], [29.8, 'use write (clipboard)', (m, t) => m.use(t, 'write', { dur: 1.2 })],
+    [31.3, 'say', (m, t) => m.say(t, 'Next!', { dur: 1.3 })], [32.8, 'use stamp', (m, t) => m.use(t, 'stamp')],
+    [34.2, 'use hammer', (m, t) => m.use(t, 'hammer')], [35.7, 'use push', (m, t) => m.use(t, 'push')],
+    [37.0, 'say think', (m, t) => m.say(t, 'Budget? 💸', { kind: 'think', dur: 1.6 }).expr(t, 'worried').expr(t + 1.6, 'neutral')],
+    [38.9, 'hat crown', (m, t) => m.hat(t, 'crown').expr(t + 0.2, 'proud')], [40.4, 'idle', (m, t) => m.idle(t, 1.6)],
+    [42.2, 'hat party', (m, t) => m.hat(t, 'party').cheer(t + 0.3)], [43.9, 'hat flatcap', (m, t) => m.hat(t, 'flatcap').expr(t, 'neutral')],
+    [45.3, 'blink · look', (m, t) => m.blink(t).look(t + 0.4, 'up').look(t + 0.9, 'viewer').look(t + 1.4, 'forward')],
+    [47.0, 'face left / right', (m, t) => m.face(t, -1).face(t + 0.8, 1)], [48.5, 'expr angry', (m, t) => m.expr(t, 'angry').expr(t + 1.3, 'neutral')],
+  ]);
+  lane(C, 2, [
+    [28.3, 'use magnify', (m, t) => m.use(t, 'magnify')], [29.9, 'use stamp', (m, t) => m.use(t, 'stamp')],
+    [31.3, 'say', (m, t) => m.say(t, 'major', { dur: 1.2 })], [32.8, 'look up · down', (m, t) => m.look(t, 'up').look(t + 0.6, 'down').look(t + 1.2, 'forward')],
+    [34.3, 'prop clipboard', (m, t) => m.prop(t, 'clipboard')], [35.6, 'use write', (m, t) => m.use(t, 'write')],
+    [37.0, 'prop sign-q + wave', (m, t) => m.prop(t, 'sign-q').wave(t + 0.3, 1.1)], [38.6, 'hat beret', (m, t) => m.hat(t, 'beret')],
+    [40.0, 'hop forward', (m, t) => m.hop(t, { to: [LX[2] + 120, 860] })], [41.2, 'walk back', (m, t) => m.walk(t, { to: [LX[2], 860] })],
+    [42.8, 'hat hardhat + hammer', (m, t) => m.hat(t, 'hardhat').use(t + 0.3, 'hammer', { times: 3 })], [44.8, 'prop magnifier', (m, t) => m.prop(t, 'magnifier').hat(t, 'detective')],
+    [46.2, 'jump', (m, t) => m.jump(t)], [47.4, 'cheer', (m, t) => m.cheer(t)], [48.8, 'nod', (m, t) => m.nod(t, 3)],
+  ]);
+  lane(D, 3, [
+    [28.3, 'use sip', (m, t) => m.use(t, 'sip')], [29.8, 'use write (pencil)', (m, t) => m.use(t, 'write')],
+    [31.3, 'say', (m, t) => m.say(t, 'plan-v2', { dur: 1.3 })], [32.8, 'prop flag', (m, t) => m.prop(t, 'flag').wave(t + 0.3, 1.0)],
+    [34.3, 'prop wrench + use', (m, t) => m.prop(t, 'wrench').use(t + 0.25, 'hammer')], [35.8, 'prop coffee', (m, t) => m.prop(t, 'coffee')],
+    [37.2, 'prop stamp + use', (m, t) => m.prop(t, 'stamp').use(t + 0.3, 'stamp')], [38.7, 'prop null', (m, t) => m.prop(t, null)],
+    [40.0, 'point (behind → turns)', (m, t) => m.point(t, { x: 1900, y: 700 }, 1.2)], [41.6, 'hat glasses off', (m, t) => m.hat(t, 'none')],
+    [43.0, 'hat tie + grad', (m, t) => m.hat(t, 'tie').hat(t + 0.2, 'grad')], [44.6, 'prop blueprint', (m, t) => m.prop(t, 'blueprint').hat(t, 'glasses').hat(t, null)],
+    [46.0, 'sleep', (m, t) => m.sleep(t, 1.6), 1.6], [47.9, 'expr surprised', (m, t) => m.expr(t, 'surprised').expr(t + 1.2, 'happy')],
+  ]);
+  [A, B, C, D].forEach((m, i) => m.exit(50.0 + i * 0.05, { to: 'pop' }));
+
+  /* 5 · wardrobe 50.5–57.2 */
+  sec(50.5, 57.2, 'Wardrobe', 'hat(at, name) · prop(at, name)');
+  ground(40, 521, 1840, 50.5, 57.2); ground(40, 931, 1840, 50.5, 57.2);
+  const HAT = ['cap', 'hardhat', 'beret', 'detective', 'glasses', 'tie', 'crown', 'party', 'beanie', 'grad', 'flatcap'];
+  HAT.forEach((h, i) => {
+    const x = 105 + i * 171, m = S.mascot('plain', { x, y: 520, size: 120, hidden: true });
+    m.hat(0, h).enter(50.6 + i * 0.05, { from: 'pop' }).look(52.5, 'viewer').look(53.5, 'forward').exit(56.9, { to: 'pop' });
+    tag(x, 538, h, 50.6, 57.1);
+  });
+  const PR = ['sign-q', 'magnifier', 'clipboard', 'blueprint', 'hammer', 'pencil', 'whistle', 'stamp', 'coffee', 'flag', 'wrench', 'cart'];
+  PR.forEach((p, i) => {
+    const x = 80 + i * 150, m = S.mascot('plain', { x, y: 930, size: 120, hidden: true });
+    m.prop(0, p).enter(50.9 + i * 0.05, { from: 'pop' }).exit(56.95, { to: 'pop' });
+    tag(x, 948, p, 50.9, 57.1);
+  });
+
+  /* 6 · sizes 57.3–64 */
+  sec(57.3, 64, 'Sizes', '90 px · 280 px · 600 px — vector, crisp at any zoom');
+  ground(0, 1001, 1920, 57.3, 64);
+  const s1 = S.mascot('builder', { x: 170, y: 1000, size: 90, hidden: true }).enter(57.4, { from: 'pop' });
+  const s2 = S.mascot('boss', { x: 560, y: 1000, size: 280, hidden: true }).enter(57.5, { from: 'pop' });
+  const s3 = S.mascot('refiner', { x: 1330, y: 1000, size: 600, hidden: true, facing: -1 }).enter(57.6, { from: 'pop' });
+  s1.walk(58.4, { to: [330, 1000], dur: 1.2 }).cheer(60.0);
+  s2.use(58.6, 'whistle').say(60.2, 'Ship it', { dur: 1.6 });
+  s3.idle(58.5, 2).use(60.6, 'write', { dur: 1.2 }).expr(62.2, 'happy').wave(62.3, 1.4);
+}});
+</script>
+<script src="main.js"></script>
+</body>
+</html>

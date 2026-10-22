@@ -4,6 +4,8 @@
 // work items built by src/shared/team-metrics/timeline.mjs and returns detached elements; app.js
 // owns fetching, state and the delegated events (every control carries a data-tl-* attribute).
 // Calendar windows are in the viewer's LOCAL time — a PM reads "Thursday", not a UTC day.
+import { icon } from './icons.mjs';
+import { makeSwitch } from './switch.mjs';
 import { summarizeWindow, groupByPerson } from '../../src/shared/team-metrics/timeline.mjs';
 import { safeHttpUrl } from '../../src/shared/team-metrics/aggregate.mjs';
 import { TM_FMT } from './team-metrics-view.mjs';
@@ -28,7 +30,7 @@ export const TL_STATUS = Object.freeze({
   attention: { label: 'Needs attention', tone: 'red' },
   stopped: { label: 'Stopped', tone: 'slate' },
   closed: { label: 'Closed, not merged', tone: 'slate' },
-  done: { label: 'Done', tone: 'violet' },
+  done: { label: 'Done', tone: 'slate' },
 });
 
 // ---- calendar ------------------------------------------------------------------------------
@@ -188,15 +190,13 @@ function crumbs(doc, zoom, anchor) {
 function controls(doc, { zoom, anchor, mode, outside, hasOutside }) {
   const bar = h(doc, 'div', 'tl-controls');
   const left = h(doc, 'div', 'tl-nav');
-  const prev = btn(doc, 'btn-ghost btn-mini tl-step', '‹', { tlShift: -1 }); prev.setAttribute('aria-label', `Previous ${zoom}`);
-  const next = btn(doc, 'btn-ghost btn-mini tl-step', '›', { tlShift: 1 }); next.setAttribute('aria-label', `Next ${zoom}`);
-  left.append(prev, next, btn(doc, 'btn-ghost btn-mini tl-today', 'Today', { tlToday: 1 }), crumbs(doc, zoom, anchor));
+  const prev = btn(doc, 'btn btn-sm tl-step', '‹', { tlShift: -1 }); prev.setAttribute('aria-label', `Previous ${zoom}`);
+  const next = btn(doc, 'btn btn-sm tl-step', '›', { tlShift: 1 }); next.setAttribute('aria-label', `Next ${zoom}`);
+  left.append(prev, next, btn(doc, 'btn btn-sm tl-today', 'Today', { tlToday: 1 }), crumbs(doc, zoom, anchor));
   const right = h(doc, 'div', 'tl-opts');
   if (hasOutside) {
-    const lbl = h(doc, 'label', 'tl-toggle');
-    const cb = h(doc, 'input');
-    cb.type = 'checkbox'; cb.id = 'tl-outside'; cb.checked = !!outside; cb.dataset.tlOutside = '1';
-    lbl.append(cb, 'PRs outside Worca');
+    const { row: lbl, input: cb } = makeSwitch(doc, { label: 'PRs outside Worca', checked: !!outside, rowClass: 'tl-toggle', data: { tlOutside: '1' } });
+    cb.id = 'tl-outside';
     lbl.title = 'Show pull requests that have no Worca run behind them';
     right.append(lbl);
   }
@@ -437,7 +437,7 @@ export function renderTimelinePopover(it, { doc = globalThis.document, now = Dat
   pop.setAttribute('role', 'dialog');
   pop.setAttribute('aria-label', it.title);
   const top = h(doc, 'div', 'tl-pop-top');
-  const close = btn(doc, 'tl-pop-x', '×', { tlClose: 1 }); close.setAttribute('aria-label', 'Close');
+  const close = btn(doc, 'btn btn-sm btn-quiet btn-icon tl-pop-x', null, { tlClose: 1 }); close.setAttribute('aria-label', 'Close'); close.append(icon(doc, 'x', 14));
   top.append(h(doc, 'span', 'tl-pill', it.status === 'done' && it.prKnown && !it.prs.length ? 'Done, no PR' : st.label), close);
   pop.append(top);
   const outside = it.kind === 'pr';

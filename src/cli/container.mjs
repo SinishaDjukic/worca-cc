@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 import process from 'node:process';
 
 import { worcaHome, listProjects } from '../core/projects.mjs';
+import { gitAvailable } from '../core/git-available.mjs';
 
 /** The compose files shipped in the package (package.json `files`). */
 export const COMPOSE_SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'docker');
@@ -148,7 +149,7 @@ export async function initDir(dir, { projects, exec, srcDir = COMPOSE_SRC_DIR, e
       try { root = commonParent((await listProjects()).map((p) => p.path)); } catch { root = null; }
     }
     if (!root) root = join(env.HOME || env.USERPROFILE || homedir(), 'dev');
-    const git = (k) => { const r = exec('git', ['config', '--get', k], { capture: true }); return r.status === 0 ? r.stdout.trim() : ''; };
+    const git = (k) => { if (!gitAvailable()) return ''; const r = exec('git', ['config', '--get', k], { capture: true }); return r.status === 0 ? r.stdout.trim() : ''; };
     const body = seedEnv(readFileSync(join(srcDir, '.env.example'), 'utf8'), {
       projects: root,
       tz: Intl.DateTimeFormat().resolvedOptions().timeZone,

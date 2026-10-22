@@ -126,6 +126,46 @@ test('--status and --project filter the list; bad/missing --status values exit 2
   ]);
 });
 
+test('--tag filters the list (repeatable, ANDed; a key alone matches any value); a bare --tag exits 2 (#718)', async () => {
+  insertPipeline({ id: 'eee50001', projectKey: 'proj-e-55555555', title: 'Tagged', status: 'done', minutesAgo: 3 });
+  insertPipeline({ id: 'eee50002', projectKey: 'proj-e-55555555', title: 'Untagged', status: 'done', minutesAgo: 4 });
+  getDb().prepare("INSERT INTO run_tags (pipeline_id, key, value) VALUES ('eee50001', 'client', 'acme'), ('eee50001', 'spike', '')").run();
+  await checkRows([
+    { name: 'exact key:value, as --json', run: async () => {
+      const r = await run(['runs', '--tag', 'Client:Acme', '--json']);
+      assert.equal(r.code, 0, r.stderr);
+      const runs = JSON.parse(r.stdout);
+      assert.deepEqual(runs.map((x) => x.id), ['eee50001']);
+      assert.deepEqual(runs[0].tags, ['client:acme', 'spike']);
+    } },
+    { name: 'a key alone, and two ANDed terms (--tag=…)', run: async () => {
+      const r = await run(['runs', '--tag', 'client', '--tag=spike', '--json']);
+      assert.equal(r.code, 0, r.stderr);
+      assert.deepEqual(JSON.parse(r.stdout).map((x) => x.id), ['eee50001']);
+    } },
+    { name: 'the detail --json carries tags too ([] when untagged)', run: async () => {
+      const r = await run(['runs', 'eee50001', '--json']);
+      assert.equal(r.code, 0, r.stderr);
+      assert.deepEqual(JSON.parse(r.stdout).tags, ['client:acme', 'spike']);
+      const u = await run(['runs', 'eee50002', '--json']);
+      assert.deepEqual(JSON.parse(u.stdout).tags, []);
+    } },
+    { name: 'no match', run: async () => {
+      const r = await run(['runs', '--tag', 'client:globex']);
+      assert.equal(r.code, 0, r.stderr);
+      assert.match(r.stdout, /No runs match/);
+    } },
+    { name: 'bare --tag and an invalid tag exit 2', run: async () => {
+      const bare = await run(['runs', '--tag']);
+      assert.equal(bare.code, 2);
+      assert.match(bare.stderr, /--tag needs a value/);
+      const bad = await run(['runs', '--tag', 'client:']);
+      assert.equal(bad.code, 2);
+      assert.match(bad.stderr, /--tag: "client:" needs a value/);
+    } },
+  ]);
+});
+
 test('detail by full id and by unique prefix', async () => {
   seedResults('proj-a', 'aaa10001', { linesAdded: 8, linesRemoved: 0 });
   seedExecutions('aaa10001', 1, { loopWires: 1, loopDeliveries: 2 });
@@ -211,4 +251,28 @@ test('a paused run: the detail says how to resume; after a usage limit its engin
   assert.match(e.stdout, /Resume with: worca resume ddd40002/);
   assert.doesNotMatch(e.stdout, /continue now/, 'another pause offers no switch');
   assert.doesNotMatch((await run(['runs', 'aaa10001'])).stdout, /Resume with/, 'a finished run has nothing to resume');
+});
+
+test('the detail prints the run model status line as `state`, and --json carries it as statusLine (§5a.7)', async () => {
+  insertPipeline({ id: 'ggg60001', projectKey: 'proj-g', title: 'paused at build', status: 'paused', minutesAgo: 1 });
+  getDb().prepare("INSERT INTO pipeline_steps (pipeline_id, key, node_id, status, execution_id) VALUES (?, '0:impl', 'impl', 'paused', 'x:impl:1')")
+    .run('ggg60001');
+  getDb().prepare('UPDATE pipelines SET stepper = ? WHERE id = ?').run(JSON.stringify({ version: 2,
+    graph: { nodes: [{ id: 'impl', kind: 'agent', key: 'implementer', label: 'Implementation', progressStage: 'build' }], wires: [] } }), 'ggg60001');
+  const r = await run(['runs', 'ggg60001']);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /^\s+state\s+Build · paused$/m);
+  assert.equal(JSON.parse((await run(['runs', 'ggg60001', '--json'])).stdout).statusLine, 'Build · paused');
+});
+
+test('--json carries shapeStats for a shaped run (Shaper D28) and no shapeStats key otherwise', async () => {
+  const STATS = { questions: { asked: 2, skipped: 1 }, revises: [{ round: 1, by: 'person' }], shapeScore: 0.875,
+    reviewCycles: 2, checklist: null, cost: { shaping: 12.5, building: 30 } };
+  insertPipeline({ id: 'fff50001', projectKey: 'proj-f', title: 'shaped run', status: 'done', minutesAgo: 1 });
+  insertPipeline({ id: 'fff50002', projectKey: 'proj-f', title: 'plain run', status: 'done', minutesAgo: 1 });
+  getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify(STATS), 'fff50001');
+  const shaped = JSON.parse((await run(['runs', 'show', 'fff50001', '--json'])).stdout);
+  assert.deepEqual(shaped.shapeStats, STATS);
+  const plain = JSON.parse((await run(['runs', 'show', 'fff50002', '--json'])).stdout);
+  assert.equal('shapeStats' in plain, false);
 });

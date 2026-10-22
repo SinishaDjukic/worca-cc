@@ -221,7 +221,7 @@ test('GET /api/runs?projectDir still returns inline pr (per-project withPr uncha
   });
   const j = await (await fetch(`${base}/api/runs?projectDir=${encodeURIComponent(repoDir)}`)).json();
   const row = j.pipelines.find((p) => p.id === rpId);
-  assert.deepEqual(row.pr, { state: 'OPEN', url: 'https://gh/r/pull/9', number: 9 });
+  assert.deepEqual(row.pr, { state: 'OPEN', url: 'https://gh/r/pull/9', number: 9, isDraft: false, mergeable: 'UNKNOWN' });
 });
 
 test('POST /api/pr/mergeable error paths: 400 without id; 200 UNKNOWN when gh is missing or the key is malformed', async () => {
@@ -440,7 +440,7 @@ test('POST /api/pr refuses a bad baseBranch with 400 before anything is pushed',
   assert.deepEqual(seen.find((c) => c[2] === 'create').slice(5, 7), ['--base', 'main']);
 });
 
-test('a chained run: GET offers the chain root first as the default; POST without baseBranch still targets its source', async () => {
+test('a chained run: GET stacks the default on the previous run\'s branch until its PR merges, then the chain root; POST without baseBranch still targets its source', async () => {
   // dev -> nb1 -> nb2 -> nb3, each started from the previous run's feature branch.
   const run = async (title, source, feature) => (await seedPipeline(betaRepo, { title, status: 'done',
     startedAt: '2026-06-02T00:00:00Z', branch: { source, feature, branchKept: true } })).id;
@@ -460,7 +460,7 @@ test('a chained run: GET offers the chain root first as the default; POST withou
   stubForkRepo(seen, { refs: `${REFS}refs/remotes/origin/worca-cc/nb2\nrefs/remotes/origin/worca-cc/nb3\n` });
   const j = await (await getRemotes({ projectKey: betaKey, id: nb3 })).json();
   assert.deepEqual(j.chain, ['dev', 'worca-cc/nb1', 'worca-cc/nb2']);
-  assert.equal(j.defaultBase, 'dev', 'the chain ROOT, not the direct source');
+  assert.equal(j.defaultBase, 'worca-cc/nb2', 'stacked on the previous run\'s branch: nb2 has no PR yet');
   assert.deepEqual(j.branches.origin, ['main', 'release', FEATURE, 'worca-cc/nb2'], 'nb3\'s own branch is dropped');
 
   // The chain survives a remote list that cannot be read, so the dialog can still offer it.
@@ -468,7 +468,7 @@ test('a chained run: GET offers the chain root first as the default; POST withou
   const bad = await getRemotes({ projectKey: betaKey, id: nb3 });
   assert.equal(bad.status, 500);
   const b = await bad.json();
-  assert.deepEqual([b.chain, b.defaultBase], [['dev', 'worca-cc/nb1', 'worca-cc/nb2'], 'dev']);
+  assert.deepEqual([b.chain, b.defaultBase], [['dev', 'worca-cc/nb1', 'worca-cc/nb2'], 'worca-cc/nb2']);
 
   const s1 = [];
   stubForkRepo(s1);
@@ -478,6 +478,54 @@ test('a chained run: GET offers the chain root first as the default; POST withou
   stubForkRepo(s2);
   assert.equal((await post({ projectKey: betaKey, id: nb3, baseBranch: 'dev' })).status, 200);
   assert.deepEqual(s2.find((c) => c[2] === 'create').slice(5, 7), ['--base', 'dev']);
+
+  // The previous run's PR: open or closed keeps the stack; merged falls back to the chain root.
+  for (const [state, want] of [['OPEN', 'worca-cc/nb2'], ['CLOSED', 'worca-cc/nb2'], ['MERGED', 'dev']]) {
+    persistPrState(nb2, { url: 'https://github.com/up/repo/pull/12', number: 12, state });
+    stubForkRepo([], { refs: `${REFS}refs/remotes/origin/worca-cc/nb2\n` });
+    const k = await (await getRemotes({ projectKey: betaKey, id: nb3 })).json();
+    assert.equal(k.defaultBase, want, state);
+  }
+});
+
+// A run started from a remote-tracking ref (the Ask agent's start_run with sourceBranch "origin/dev") records it
+// verbatim; on the remote that branch is `dev`.
+test('a run whose source is origin/dev: GET defaults to dev on origin; POST opens against dev', async () => {
+  await setPrRemotePrefs(betaRepo, { pushRemote: 'origin', baseRemote: 'origin' });
+  try {
+    const feature = 'worca-cc/from-remote-ref';
+    const seeded = await seedPipeline(betaRepo, { title: 'From origin/dev', status: 'stopped', startedAt: '2026-06-03T00:00:00Z',
+      branch: { source: 'origin/dev', feature, branchKept: true, commit: 'abc', baseSha: 'a'.repeat(40),
+        sync: { remote: 'origin', remoteSha: 'b'.repeat(40) } } });
+    const refs = `${REFS}refs/remotes/origin/dev\n`;
+    const seen = [];
+    const synced = [];
+    stubForkRepo(seen, { refs });
+    stubSyncRepo(synced, { moved: '2' });
+    const j = await (await getRemotes({ projectKey: betaKey, id: seeded.id })).json();
+    assert.deepEqual([j.chain, j.defaultBase], [['dev'], 'dev']);
+    assert.ok(j.branches.origin.includes('dev'), 'the default is offered on the base remote: no "not on origin" warning');
+    assert.equal(j.baseStatus.base, 'dev');
+    assert.equal(j.baseStatus.movedSinceRun, 2);
+    assert.ok(synced.some((a) => a[0] === 'rev-list' && a[2] === `${'b'.repeat(40)}..refs/remotes/origin/dev`),
+      'the recorded origin tip is the same ref as the mapped base: measured from it');
+
+    for (const extra of [{}, { baseBranch: 'origin/dev' }]) {
+      const s = [];
+      stubForkRepo(s, { refs });
+      const r = await post({ projectKey: betaKey, id: seeded.id, ...extra });
+      assert.equal(r.status, 200, JSON.stringify(extra));
+      assert.deepEqual(s.find((c) => c[2] === 'create').slice(3, 9), ['--repo', 'me/repo', '--base', 'dev', '--head', feature], JSON.stringify(extra));
+    }
+
+    // A real local branch named origin/dev stays the base, as before.
+    const local = `${refs}refs/heads/origin/dev\n`;
+    stubForkRepo([], { refs: local });
+    const k = await (await getRemotes({ projectKey: betaKey, id: seeded.id })).json();
+    assert.deepEqual([k.chain, k.defaultBase], [['origin/dev'], 'origin/dev']);
+  } finally {
+    await setPrRemotePrefs(betaRepo, {});
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -932,4 +980,81 @@ test('POST /api/push: 409 when not merged back, and 409 for a normal run (open a
   const plain = await seedPipeline(betaRepo, { title: 'Plain', status: 'done', branch: { source: 'main', feature: 'worca-cc/plain-pp' } });
   r = await postTo('/api/push', { projectKey: plain.key, id: plain.id });
   assert.equal(r.status, 409);
+});
+
+// ---------------------------------------------------------------------------
+// Spec D7 (slice 3): a shaped run's PR ends with its perspective checklist, before the attribution footer.
+// ---------------------------------------------------------------------------
+test('POST /api/pr appends the latest perspective checklist after the Closes line and before the footer (gated)', async () => {
+  const { writeReview } = await import('../src/core/artifacts.mjs');
+  const id = await seedIssueRun({ feature: 'worca-cc/checklist-run' });
+  const item = (over) => ({ id: 'R-qa-1', perspective: 'qa', text: 'Rejects empty input.', status: 'met', evidence: 'test passes', ...over });
+  await writeReview(id, 'impl', 1, { issues: [], summary: '', checklist: [item({ status: 'unmet', evidence: 'old' })] });
+  await writeReview(id, 'impl', 2, { issues: [], summary: '', checklist: [item(), item({ id: 'R-ux-1', perspective: 'ux', text: 'Empty state.', status: 'na', evidence: 'no UI' })] });
+  const section = '<!-- worca:perspective-checklist -->\n## Perspective checklist\n\n' +
+    '- [x] **R-qa-1** Rejects empty input. — test passes\n' +
+    '- [ ] ~~**R-ux-1** Empty state.~~ — Not applicable: no UI';
+  const footer = '\n\n---\nStarted by grace@example.com via worca';
+
+  let seen = [];
+  stubForkRepo(seen);
+  await withEnv({ WORCA_FLAGS: 'shapeFirst' }, async () => {
+    assert.equal((await post({ projectKey: betaKey, id, body: 'Did it.', ...FORK })).status, 200);
+  });
+  assert.equal(bodyArg(seen), `Did it.\n\nCloses #42\n\n${section}${footer}`, 'only cycle 2 is used');
+
+  seen = [];
+  stubForkRepo(seen);
+  await withEnv({ WORCA_FLAGS: '-shapeFirst' }, async () => {
+    assert.equal((await post({ projectKey: betaKey, id, body: 'Did it.', ...FORK })).status, 200);
+  });
+  assert.equal(bodyArg(seen), `Did it.\n\nCloses #42${footer}`, 'gate off: today\'s body');
+
+  seen = [];
+  stubForkRepo(seen);
+  const own = 'Mine.\n\n<!-- worca:perspective-checklist -->\n## Perspective checklist\n\n- [x] done';
+  await withEnv({ WORCA_FLAGS: 'shapeFirst' }, async () => {
+    assert.equal((await post({ projectKey: betaKey, id, body: own, ...FORK })).status, 200);
+  });
+  assert.equal(bodyArg(seen), `${own}\n\nCloses #42${footer}`, 'a description that carries the marker is left alone');
+});
+
+test('POST /api/pr: a gated run without checklist rows is unchanged; a footer-less run ends with the section', async () => {
+  const { writeReview } = await import('../src/core/artifacts.mjs');
+  let seen = [];
+  stubForkRepo(seen);
+  await withEnv({ WORCA_FLAGS: 'shapeFirst' }, async () => {
+    assert.equal((await post({ projectKey: betaKey, id: betaId, body: 'Did it.', ...FORK })).status, 200);
+  });
+  assert.equal(bodyArg(seen), 'Did it.', 'no rows: byte-identical');
+
+  await writeReview(betaId, 'impl', 1, { issues: [], summary: '', checklist: [{ id: 'R-qa-1', perspective: 'qa', text: 'T.', status: 'met', evidence: 'e' }] });
+  seen = [];
+  stubForkRepo(seen);
+  await withEnv({ WORCA_FLAGS: 'shapeFirst' }, async () => {
+    assert.equal((await post({ projectKey: betaKey, id: betaId, body: 'Did it.', ...FORK })).status, 200);
+  });
+  assert.equal(bodyArg(seen), 'Did it.\n\n<!-- worca:perspective-checklist -->\n## Perspective checklist\n\n- [x] **R-qa-1** T. — e');
+});
+
+// D22: a slice's PR body starts with its place in the feature, only while the flag is on.
+test('a slice pipeline\'s PR body starts with "Part of FEATURE: slice 1 of 2" (flag on), and not with the flag off', async () => {
+  const { createSliceFeature } = await import('../src/core/shape/features.mjs');
+  const sl = (n) => ({ id: `s${n}`, title: `Slice ${n}`, goal: '', inScope: [], outOfScope: [], acceptance: [`ok ${n}`], dependsOn: [], estimate: 'M' });
+  const seeded = await seedPipeline(betaRepo, { title: 'Charts · 1/2: Slice 1', status: 'done', startedAt: '2026-06-02T00:00:00Z',
+    branch: { source: 'main', feature: 'worca-cc/charts-s1', branchKept: true, commit: 'abc' } });
+  createSliceFeature({ pipelineId: seeded.id, projectDir: betaRepo, title: 'Charts', outline: { why: '', slices: [sl(1), sl(2)] },
+    perspectives: ['product'], workflowId: 'wf_shape' });
+  const bodyOf = (seen) => { const c = seen.find((a) => a[0] === 'gh' && a[1] === 'pr' && a[2] === 'create'); return c[c.indexOf('--body') + 1]; };
+  for (const [flags, starts] of [['shapeFirst', true], ['-shapeFirst', false]]) {
+    await withEnv({ ...NO_ADO, WORCA_FLAGS: flags }, async () => {
+      const seen = [];
+      stubForkRepo(seen);
+      getDb().prepare('UPDATE pipelines SET pr_url = NULL, pr_state = NULL WHERE id = ?').run(seeded.id);
+      const r = await post({ id: seeded.id, projectKey: seeded.key });
+      assert.equal(r.status, 200, await r.clone().text());
+      const body = bodyOf(seen);
+      assert.equal(body.startsWith('Part of Charts: slice 1 of 2\n\n- Slice 2, Slice 2: not opened yet\n\n'), starts, `${flags}: ${body}`);
+    });
+  }
 });

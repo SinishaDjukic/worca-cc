@@ -3,6 +3,8 @@
 // form itself — Name (read-only in Edit), Type, Command + Arguments or URL + one Bearer token tick,
 // Environment / Headers rows (key · value · per set · secret), `{name}` placeholders, the "Each set
 // fills in" list and live checks through POST /api/mcp/servers/validate.
+import { icon } from './icons.mjs';
+import { makeSwitch } from './switch.mjs';
 
 function h(doc, tag, cls, text) {
   const n = doc.createElement(tag);
@@ -16,6 +18,8 @@ function button(doc, cls, label, data = {}) {
   Object.assign(b.dataset, data);
   return b;
 }
+// One "Add …" button: the shared plus icon, never a typed "+" (docs/design-system.md › Button).
+const addBtn = (doc, label, data) => { const b = button(doc, 'btn btn-sm', label, data); b.prepend(icon(doc, 'plus', 14)); return b; };
 
 const PLACEHOLDER_RE = /\{([A-Za-z][A-Za-z0-9_]{0,31})\}/g;
 // Mirrors QUERY_SECRET_RE in src/core/mcp-secrets.mjs (test/ui-mcp-definition-form.test.mjs pins the two).
@@ -52,7 +56,7 @@ export function compileDefinition(form) {
       const fk = r.fieldKey || fieldKeyFor(key);
       // Two refs share a field only when the stored definition says so (its own key, same secret flag).
       const clash = fields.find((x) => x.key.toLowerCase() === fk.toLowerCase());
-      if (clash && !(r.fieldKey && clash.key === fk && !!clash.secret === !!r.secret)) errors.push(`${key}: its field "${fk}" is already declared — rename the row`);
+      if (clash && !(r.fieldKey && clash.key === fk && !!clash.secret === !!r.secret)) errors.push(`${key}: its field "${fk}" is already declared. Rename the row`);
       out[key] = { field: fk, ...(r.prefix ? { prefix: r.prefix } : {}), ...(r.suffix ? { suffix: r.suffix } : {}) };
       if (r.secret) add({ key: fk, label: key, secret: true, required: true });
       else {
@@ -106,8 +110,8 @@ export function compileDefinition(form) {
     def.headers = map();
     if (form.bearer) {
       // The tick owns the token field and the Authorization header: a row or placeholder holding either is an error.
-      if (fields.some((x) => x.key.toLowerCase() === 'token')) errors.push('Bearer token: its field "token" is already declared — rename the row or the placeholder');
-      if (Object.keys(def.headers).some((k) => k.toLowerCase() === 'authorization')) errors.push('Authorization: the Bearer token tick sets this header — remove the row');
+      if (fields.some((x) => x.key.toLowerCase() === 'token')) errors.push('Bearer token: its field "token" is already declared. Rename the row or the placeholder');
+      if (Object.keys(def.headers).some((k) => k.toLowerCase() === 'authorization')) errors.push('Authorization: the Bearer token tick sets this header. Remove the row');
       def.headers.Authorization = { field: 'token', prefix: 'Bearer ' };
       add({ key: 'token', label: 'Bearer token', secret: true, oauth: true, required: true });
     }
@@ -157,7 +161,7 @@ export function createDefinitionForm(doc, api, form, { edit }) {
   function fills() {
     const { def } = compileDefinition(form);
     derived.replaceChildren(h(doc, 'span', 'label', 'Each set fills in'));
-    if (!def.fields.length) derived.appendChild(h(doc, 'small', 'hint', 'nothing — every set runs it as is'));
+    if (!def.fields.length) derived.appendChild(h(doc, 'small', 'hint', 'nothing. Every set runs it as is'));
     const fromArgs = new Set((def.args || []).filter((a) => typeof a === 'object').map((a) => a.field));
     const inUrl = new Set([].concat(def.url || []).filter((p) => p && typeof p === 'object').map((p) => p.field));
     for (const f of def.fields) {
@@ -168,13 +172,7 @@ export function createDefinitionForm(doc, api, form, { edit }) {
       else if (f.default !== undefined) bits.push(`default ${f.default}`);
       row.appendChild(doc.createTextNode(bits.join(' · ')));
       if (inUrl.has(f.key)) {
-        const lab = h(doc, 'label', 'check-row');
-        const cb = h(doc, 'input');
-        cb.type = 'checkbox';
-        cb.checked = !!f.secret;
-        cb.dataset.placeholder = f.key;
-        lab.append(cb, doc.createTextNode(' Secret'));
-        row.appendChild(lab);
+        row.appendChild(makeSwitch(doc, { label: 'Secret', checked: !!f.secret, data: { placeholder: f.key } }).row);
       }
       derived.appendChild(row);
     }
@@ -221,13 +219,7 @@ export function createDefinitionForm(doc, api, form, { edit }) {
       parts.push(input('Command', 'command'), input('Arguments', 'args', { area: true, hint: 'one per line · {name} declares a field each set fills in' }));
     } else {
       parts.push(input('URL', 'url', { hint: '{name} in the path or query declares a field each set fills in' }));
-      const lab = h(doc, 'label', 'check-row');
-      const cb = h(doc, 'input');
-      cb.type = 'checkbox';
-      cb.checked = form.bearer;
-      cb.dataset.bearer = '1';
-      lab.append(cb, doc.createTextNode(' Bearer token'));
-      parts.push(lab);
+      parts.push(makeSwitch(doc, { label: 'Bearer token', checked: form.bearer, data: { bearer: '1' } }).row);
     }
     const rows = h(doc, 'div', 'field mcp-def-rows');
     rows.appendChild(h(doc, 'span', 'label', form.type === 'stdio' ? 'Environment' : 'Headers'));
@@ -243,19 +235,17 @@ export function createDefinitionForm(doc, api, form, { edit }) {
       v.setAttribute('aria-label', 'Value');
       row.append(k, v);
       for (const [col, label] of [['perSet', 'Per set'], ['secret', 'Secret']]) {
-        const lab = h(doc, 'label', 'check-row');
-        const cb = h(doc, 'input');
-        cb.type = 'checkbox';
-        cb.checked = col === 'perSet' ? (r.perSet || r.secret) : r.secret;
-        cb.disabled = col === 'perSet' && r.secret;
-        cb.dataset.row = i; cb.dataset.col = col;
-        lab.append(cb, doc.createTextNode(` ${label}`));
-        row.appendChild(lab);
+        const sw = makeSwitch(doc, { label, checked: col === 'perSet' ? (r.perSet || r.secret) : r.secret, data: { row: String(i), col } });
+        sw.input.disabled = col === 'perSet' && r.secret;
+        row.appendChild(sw.row);
       }
-      row.appendChild(button(doc, 'btn-ghost btn-mini', '×', { removeRow: String(i) }));
+      const rm = button(doc, 'btn btn-sm btn-quiet btn-icon', null, { removeRow: String(i) });
+      rm.setAttribute('aria-label', 'Remove this row');
+      rm.append(icon(doc, 'x', 14));
+      row.appendChild(rm);
       rows.appendChild(row);
     });
-    rows.appendChild(button(doc, 'btn-ghost btn-mini', form.type === 'stdio' ? '+ Add variable' : '+ Add header', { addRow: '1' }));
+    rows.appendChild(addBtn(doc, form.type === 'stdio' ? 'Add variable' : 'Add header', { addRow: '1' }));
     parts.push(rows, derived, input('Description', 'description', { mono: false }), errorsEl);
     root.replaceChildren(...parts);
     changed();

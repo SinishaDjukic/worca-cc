@@ -69,7 +69,7 @@ test('the Map tab lists a stale review greyed and dashed, with Clear as its only
   assert.ok(badge.classList.contains('amber'));
   assert.equal(row.querySelector('.wm-conf'), null, 'no confidence badge');
   const actions = [...row.querySelectorAll('td.wm-actions button')];
-  assert.deepEqual(actions.map((b) => b.className), ['btn-ghost btn-mini wm-clear']);
+  assert.deepEqual(actions.map((b) => b.className), ['btn btn-sm wm-clear']);
   assert.equal(actions[0].textContent, 'Clear');
   assert.equal(actions[0].dataset.edge, GONE.id);
   assert.equal(actions[0].getAttribute('aria-label'), 'Clear web → users shared S3 bucket');

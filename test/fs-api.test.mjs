@@ -133,3 +133,18 @@ test('GET /api/fs/pick-folder says whether a native dialog can open here, and ne
   ]);
   assert.equal(opened, 0, 'asking never opens the dialog');
 });
+
+test('POST /api/fs/pick-folder {purpose:"repos", multiple:true}: on macOS one JXA panel; its folders and .code-workspace files come back', async () => {
+  const calls = [];
+  const ws = join(fixture, 'acme.code-workspace');
+  dialogTesting.set({
+    platform: 'darwin', env: {},
+    runner: async (cmd, args) => { calls.push({ cmd, args }); return { ok: true, stdout: `${join(fixture, 'sub-a')}\n${ws}\n`, stderr: '', code: 0, timedOut: false }; },
+  });
+  const r = await fetch(`${base}/api/fs/pick-folder`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ purpose: 'repos', multiple: true }),
+  });
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), { status: 'picked', path: join(fixture, 'sub-a'), paths: [join(fixture, 'sub-a'), ws] });
+  assert.deepEqual(calls[0].args.slice(0, 2), ['-l', 'JavaScript']);
+});

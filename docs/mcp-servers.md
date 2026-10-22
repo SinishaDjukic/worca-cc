@@ -1,7 +1,7 @@
 # MCP servers
 
 Worca has its own MCP registry: servers installed **for worca only** — never written into your Claude
-Code config (`~/.claude.json`, `.mcp.json`) — that pipeline agents and Ask Worca can call. It lives
+Code config (`~/.claude.json`, `.mcp.json`) — that pipeline agents and Chat can call. It lives
 on the **Connectors** page (Advanced; its **Sets**, **Servers** and **Skills** views) and in four files
 under `~/.worca-cc/mcp/` ([storage.md](storage.md)). A set holds skills as well as servers: see
 [skills.md](skills.md).
@@ -16,9 +16,9 @@ under `~/.worca-cc/mcp/` ([storage.md](storage.md)). A set holds skills as well 
 - A **set** (the **Sets** view) holds servers **and their configuration**: each (set, server)
   membership has its own values and secrets. The same server can sit in several sets with different
   credentials. There is no per-server and no per-project configuration.
-- **General** is built in. Ask Worca always uses it, and so do a project's runs until the project turns it off (below).
+- **General** is built in. Chat always uses it, and so do a project's runs until the project turns it off (below).
 - A project picks any number of sets on its **Sets** tab (Projects → a project → Sets). **Include
-  General in runs** (on by default) adds General to its pipeline runs; Ask Worca always includes
+  General in runs** (on by default) adds General to its pipeline runs; Chat always includes
   General, and a workspace run includes it when any member does. A project with no sets, General
   off and no team policy requiring MCP servers gets no registry servers ("No MCP servers in runs on
   this project").
@@ -123,7 +123,7 @@ other set's copy carries the set (`sentry_billing`, `sentry_shop`), even when it
 a run. Names never change once given. When a pipeline's project, committed, local or user-scope
 config already has a server of that name, the copy runs as `<copy>_w` and the run warns (if that is
 taken too it is skipped). In a pipeline, a deny rule on `mcp__linear__…` reaches every copy of
-`linear`; Ask Worca has no guardrails, so no deny rule binds a chat's copies
+`linear`; Chat has no guardrails, so no deny rule binds a chat's copies
 ([guardrails.md](guardrails.md)).
 
 ## What each surface gets
@@ -134,7 +134,7 @@ taken too it is skipped). In a pipeline, a deny rule on `mcp__linear__…` reach
   lets you switch memberships off for one run (schedules keep the choice); skipped memberships show
   their reason. Workspace scans and memory defragment runs get none. A workspace attaches no sets of its
   own: its Overview lists what its runs get, each row with the member project that brings it.
-- **Ask Worca:** General plus the sets of every project in play — the pinned or page project (a
+- **Chat:** General plus the sets of every project in play — the chat's project or workspace (a
   workspace brings its members) and **every project the chat has a worktree on** — and the Team set of
   each one's policy (a workspace's own policy, not its members'). The chat's model
   can open a worktree on any registered project without asking, and that project's servers and skills join

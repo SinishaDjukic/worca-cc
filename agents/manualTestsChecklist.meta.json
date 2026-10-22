@@ -1,6 +1,8 @@
 {
   "key": "manualTestsChecklist",
   "metaVersion": 2,
+  "needsRepo": true,
+  "progressStage": "review",
   "mockRole": "manual-tests-checklist",
   "promptHints": "Read the implementation plan and the implemented changes ({diffInstruction}), then write a markdown checklist of concrete manual test cases a human can run against the app. Each case: a `- [ ]` line with steps and the expected result.",
   "inputs": [{ "id": "plan", "type": "md" }],

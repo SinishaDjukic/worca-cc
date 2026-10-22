@@ -86,7 +86,7 @@ test('Skills in runs on X: qualified names, set links, statuses and skip reasons
         ['billing:pdf-tools', 'Billing', 'ok'],
         ['billing:release-notes', 'Billing', 'ok'],
         ['general:release-notes', 'General', 'ok'],
-        ['team-platfor:deploy-checklist', 'Team · acme/platform', 'off — turn it on in the team checklist'],
+        ['team-platfor:deploy-checklist', 'Team · acme/platform', 'off: turn it on in the team checklist'],
       ]);
       assert.deepEqual([...card.querySelectorAll('.mcp-res-row a')].map((a) => a.getAttribute('href')).slice(3),
         ['#connectors/sets/billing', '#connectors', '#connectors/sets/team-acme-platform-9333']);
@@ -98,7 +98,7 @@ test('Skills in runs on X: qualified names, set links, statuses and skip reasons
       assert.equal(blocked.querySelector('p.hint.warn').textContent,
         'skills from sets not loaded: this machine’s managed Claude Code settings turn off --plugin-dir');
       assert.deepEqual(cells(blocked).map((c) => c[2]), ['off', 'plugin disabled', 'not loaded', 'not loaded',
-        'not loaded', 'off — turn it on in the team checklist'], 'no row reads ok on a machine that loads no set skill');
+        'not loaded', 'off: turn it on in the team checklist'], 'no row reads ok on a machine that loads no set skill');
       const cli = renderSkillResolution(doc, 'x', { ...PREVIEW, skills: { ...SKILLS, layer: { blocked: 'cli-no-plugin-dir' } } });
       assert.equal(cli.querySelector('p.hint.warn').textContent, 'skills from sets not loaded: this Claude Code has no --plugin-dir');
       const said = renderSkillResolution(doc, 'x', { ...PREVIEW, skills: { ...SKILLS,
@@ -181,7 +181,7 @@ test('workspace Overview: "Sets from member projects" — member chips with set 
   assert.deepEqual([...servers.querySelector('.sk-res-head').children].map((c) => c.textContent), ['Server', 'From set', 'From', 'Status']);
   assert.deepEqual(cells(servers), [
     ['github', 'General', 'billing, shop', 'ok'],
-    ['github_team-platfor', 'Team · acme/platform', 'Team', 'off — turn it on in the team checklist'],
+    ['github_team-platfor', 'Team · acme/platform', 'Team', 'off: turn it on in the team checklist'],
     ['sentry_billing', 'Billing', 'billing', 'ok'],
   ]);
   assert.equal(skills.querySelector('.label').textContent, 'Skills in runs on checkout · 6');
@@ -192,7 +192,7 @@ test('workspace Overview: "Sets from member projects" — member chips with set 
     ['billing:pdf-tools', 'Billing', 'billing', 'ok'],
     ['billing:release-notes', 'Billing', 'billing', 'ok'],
     ['general:release-notes', 'General', 'billing, shop', 'ok'],
-    ['team-platfor:deploy-checklist', 'Team · acme/platform', 'Team', 'off — turn it on in the team checklist'],
+    ['team-platfor:deploy-checklist', 'Team · acme/platform', 'Team', 'off: turn it on in the team checklist'],
   ]);
   assert.deepEqual([...skills.querySelectorAll('.mcp-res-row')].at(-2).children[2].querySelectorAll('a').length, 2, 'each member links to its Sets tab');
   assert.equal(skills.querySelector('.mcp-res-row .hint a').getAttribute('href'), `#projects/${BILLING}/mcp`);
@@ -209,7 +209,7 @@ test('workspace Overview: "Sets from member projects" — member chips with set 
   assert.match(js, /paintMcpResolution\(mcp, \{ target: \{ workspaceId: id \}, title: w\.name \|\| w\.id, members: memberProjects, api: mcpApi \}\)/, 'buildWdOverview paints it');
 });
 
-test('Settings › Ask Worca: General\'s servers and skills as chips, the edit link, the Skill-tool line', async () => {
+test('Settings › Chat: General\'s servers and skills as chips, the edit link, the Skill-tool line', async () => {
   const host = doc.createElement('div');
   const generalView = { set: { id: 'general', name: 'General', group: 'general', greyed: false, home: null, usedBy: [], pluginName: 'general' }, members: [],
     skills: [{ skillId: 'skill:library:worca', name: 'worca', qualifiedName: 'general:worca', description: 'Drive worca', enabled: true },

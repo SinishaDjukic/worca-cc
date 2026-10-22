@@ -5,7 +5,7 @@ import { mkdtemp, writeFile, mkdir, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { worcaHome } from '../src/core/projects.mjs';
-import { getWorcaRoot, setWorcaRoot, settingsFile, defaultRoot, pythonPath, setPythonPath, assertPythonPathInput } from '../src/core/settings.mjs';
+import { getWorcaRoot, setWorcaRoot, settingsFile, defaultRoot, pythonPath, setPythonPath, assertPythonPathInput, userTagDimensions, setUserTagDimensions, userEnforceTags, setUserEnforceTags } from '../src/core/settings.mjs';
 import { _resetForTests } from '../src/core/db.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -112,3 +112,25 @@ test('pythonPath: stored, trimmed, cleared, and loud about junk (scripts-workben
     assert.doesNotThrow(() => assertPythonPathInput(''));
   });
 });
+
+test('tag dimensions: set round-trips, [] clears the key, a bad entry throws BAD_TAG_DIMENSIONS before any write', () => withSandbox(async () => {
+  assert.deepEqual(userTagDimensions(), []);
+  assert.deepEqual(await setUserTagDimensions([{ key: 'cc', label: 'Cost centre' }]), [{ key: 'cc', label: 'Cost centre', values: [], required: false }]);
+  assert.deepEqual(userTagDimensions(), [{ key: 'cc', label: 'Cost centre', values: [], required: false }]);
+  const before = await readFile(settingsFile(), 'utf8');
+  await assert.rejects(setUserTagDimensions([{ key: '', label: 'x' }]), (e) => e.code === 'BAD_TAG_DIMENSIONS');
+  assert.equal(await readFile(settingsFile(), 'utf8'), before);
+  await setUserTagDimensions([]);
+  assert.equal('tagDimensions' in JSON.parse(await readFile(settingsFile(), 'utf8')), false);
+  assert.deepEqual(userTagDimensions(), []);
+}));
+
+test('enforce tags: false by default, true round-trips, false removes the key, a non-boolean throws BAD_ENFORCE_TAGS', () => withSandbox(async () => {
+  assert.equal(userEnforceTags(), false);
+  assert.equal(await setUserEnforceTags(true), true);
+  assert.equal(userEnforceTags(), true);
+  await assert.rejects(setUserEnforceTags('yes'), (e) => e.code === 'BAD_ENFORCE_TAGS');
+  assert.equal(userEnforceTags(), true);
+  assert.equal(await setUserEnforceTags(false), false);
+  assert.equal('enforceTags' in JSON.parse(await readFile(settingsFile(), 'utf8')), false);
+}));

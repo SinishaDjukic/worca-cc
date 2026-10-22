@@ -260,6 +260,32 @@ test('Escape is swallowed while a modal owns it', async () => {
   assert.ok(shell.classList.contains('detail-open'), 'the detail screen stays open');
 });
 
+test('Escape is swallowed while ANY pop-up is up, not only the ones a list named (interface mode, a schedule sheet)', async () => {
+  await checkRows([
+    { name: 'the interface-mode dialog over the detail screen', run: async () => {
+      const ctx = await boot({ fetchHandler: handler });
+      slide(ctx.window);
+      const shell = await openDetail(ctx);
+      ctx.window.document.querySelector('#mode-modal').classList.remove('hidden');
+      ctx.window.document.dispatchEvent(new ctx.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await settle(ctx.window);
+      assert.equal(ctx.window.location.hash.replace(/^#/, ''), detailHash);
+      assert.ok(shell.classList.contains('detail-open'));
+    } },
+    { name: 'a pop-up built by a module (the schedule sheet\'s .viewer-modal)', run: async () => {
+      const ctx = await boot({ fetchHandler: handler });
+      slide(ctx.window);
+      const shell = await openDetail(ctx);
+      const doc = ctx.window.document;
+      doc.body.append(Object.assign(doc.createElement('div'), { className: 'viewer-modal sched-modal' }));
+      doc.dispatchEvent(new ctx.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await settle(ctx.window);
+      assert.equal(ctx.window.location.hash.replace(/^#/, ''), detailHash);
+      assert.ok(shell.classList.contains('detail-open'));
+    } },
+  ]);
+});
+
 test('unknown id renders the detail error state with a working Back', async () => {
   const missing = (url) => {
     if (url.endsWith('/api/history/pr')) return ok({ ok: true });
@@ -300,7 +326,7 @@ test('deep-link boot opens the detail directly and upgrades the stub record when
       assert.ok(window.document.querySelector('#hist-shell').classList.contains('detail-open'));
       assert.ok(calls.some((c) => c.url.includes(`/api/history/${KEY}/${ROW.id}`)));
       assert.ok(calls.some((c) => c.url === '/api/history'), 'the list loads behind the detail');
-      assert.ok(window.document.querySelector(`#runs-list .runs-row[data-slot="group"][data-pipeline-id="${ROW.id}"]`),
+      assert.ok(window.document.querySelector(`#runs-list .runs-row[data-pipeline-id="${ROW.id}"]`),
         'and its row is in the list beside the pane');
     } },
     { name: 'deep-link boot with BOTH endpoints live still upgrades the record from the stub', run: async () => {

@@ -277,7 +277,7 @@ test('Marketplace is a page of its own: its loader and background refresh, its t
       assert.equal(doc.getElementById('topnav-title').textContent, 'Marketplace');
       assert.equal(doc.querySelector('#settings-tabs button[data-tab="plugins"]'), null);
       assert.equal(doc.querySelector('[data-view="settings"] #plugins-list'), null);
-      assert.deepEqual([...doc.querySelectorAll('#settings-tabs button[data-tab]')].map((b) => b.dataset.tab), ['general', 'runs', 'experimental', 'ask', 'guardrails', 'memory']);
+      assert.deepEqual([...doc.querySelectorAll('#settings-tabs button[data-tab]')].map((b) => b.dataset.tab), ['general', 'tags', 'presets', 'runs', 'experimental', 'ask', 'guardrails', 'memory']);
     } },
     { name: 'at Simple, #marketplace still opens under a banner naming Advanced', run: async () => {
       const { window, doc } = await boot({ level: 'simple' });

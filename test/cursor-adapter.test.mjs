@@ -153,7 +153,7 @@ test('spawn: no rules and no MCP write nothing into the checkout', POSIX, async 
 
 test('read-only and Ask spawns refuse: Cursor cannot switch its shell or file tools off', async () => {
   await assert.rejects(runCursorProcess({ cwd: tmp(), bin: '/nonexistent', prompt: 'x', sandbox: 'read-only' }), /read-only/);
-  await assert.rejects(runCursorProcess({ cwd: tmp(), bin: '/nonexistent', prompt: 'x', askLockdown: true }), /Ask on Cursor is unavailable/);
+  await assert.rejects(runCursorProcess({ cwd: tmp(), bin: '/nonexistent', prompt: 'x', askLockdown: true }), /Chat on Cursor is unavailable/);
 });
 
 test('a foreign stored session starts a fresh chat and says so', POSIX, async () => {

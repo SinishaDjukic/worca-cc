@@ -5,7 +5,8 @@
 // opens as a NEW unsaved workflow (after the discard prompt). A drafted agent/script waits for Save. The
 // proposal card draws no mini graph: the canvas is the preview.
 // The card DOM is workflows/card-views.mjs, shared with Ask Worca.
-import { cardKit, plural, draftCardView, buildCardView } from './card-views.mjs';
+import { icon } from '../icons.mjs';
+import { cardKit, plural, draftCardView, buildCardView, okChip } from './card-views.mjs';
 
 export function createCardController({ doc, composer, sessionId, client, actions = {}, blocks = () => [],
   reducedMotion = () => false, onChange = () => {}, occluder = () => null }) {
@@ -48,11 +49,11 @@ export function createCardController({ doc, composer, sessionId, client, actions
       }
       handled.add(b.id);
       if (!onDoc(b.card)) {
-        await flip(b.id, { state: 'failed', error: 'Another workflow was opened before this change arrived — nothing was changed.' });
+        await flip(b.id, { state: 'failed', error: 'Another workflow was opened before this change arrived. Nothing was changed.' });
         continue;
       }
       const r = composer.applyOps(b.card.ops, `chat: ${b.card.summary || 'edit'}`);
-      if (!r.ok) { await flip(b.id, { state: 'failed', error: `The canvas changed — ${r.error}` }); continue; }
+      if (!r.ok) { await flip(b.id, { state: 'failed', error: `The canvas changed: ${r.error}` }); continue; }
       lastEdit = { cardId: b.id, depth: r.depth, docToken: composer.docToken(), after: snap() };
       reveal(r.added);
       // The edit IS on the canvas: a failed POST must not leave the card "Applying…" with no Undo. Retry once.
@@ -102,12 +103,14 @@ export function createCardController({ doc, composer, sessionId, client, actions
     const c = b.card;
     const state = stateOf(b);
     const el = h('div', `wfc-edit is-${state}`);
-    if (state === 'failed') { el.append(h('span', 'wfc-x', '!'), h('span', 'wfc-sum', `Not applied — ${b.error || 'the canvas changed'}`)); return el; }
+    if (state === 'failed') { el.append(h('span', 'wfc-x', '!'), h('span', 'wfc-sum', `Not applied: ${b.error || 'the canvas changed'}`)); return el; }
     if (state === 'proposed') {
-      el.appendChild(h('span', 'wfc-sum', mine(c) ? `Applying: ${c.summary || 'a change'}` : `Not applied — made for an earlier visit: ${c.summary || 'a change'}`));
+      el.appendChild(h('span', 'wfc-sum', mine(c) ? `Applying: ${c.summary || 'a change'}` : `Not applied. Made for an earlier visit: ${c.summary || 'a change'}`));
       return el;
     }
-    el.append(h('span', 'wfc-ok', '✓'), h('span', 'wfc-sum', c.summary || 'Canvas changed'));
+    const ok = h('span', 'wfc-ok');
+    ok.append(icon(doc, 'check', 12));
+    el.append(ok, h('span', 'wfc-sum', c.summary || 'Canvas changed'));
     if (state === 'undone') { el.appendChild(h('span', 'wfc-muted', 'Undone')); return el; }
     if (c.todo) el.appendChild(h('span', 'wfc-muted', `${plural(c.todo, 'port')} to wire`));
     const undo = button('Undo', 'wfc-link', async () => {
@@ -117,7 +120,7 @@ export function createCardController({ doc, composer, sessionId, client, actions
       await flip(b.id, { state: 'undone' });
     });
     // ⌘Z reaches only an edit THIS page applied: another tab's or an earlier visit's edit lives on that canvas.
-    if (!undoLive(lastEdit, b.id)) { undo.disabled = true; undo.title = mine(c) ? `Use ${undoChord} on the canvas` : 'Applied in another tab or visit — undo it there'; }
+    if (!undoLive(lastEdit, b.id)) { undo.disabled = true; undo.title = mine(c) ? `Use ${undoChord} on the canvas` : 'Applied in another tab or visit. Undo it there'; }
     el.appendChild(undo);
     return el;
   }
@@ -164,7 +167,7 @@ export function createCardController({ doc, composer, sessionId, client, actions
     for (const key of c.drafts || []) {
       const d = findDraft(key);
       if (!d || d.state === 'proposed' || d.state === 'saved' || d.state === 'added' || inLibrary(d.card)) continue;
-      act('notify', { tone: 'err', title: `Not applied — this workflow needs "${key}", which was ${d.state === 'declined' ? 'declined' : 'not saved'}.` });
+      act('notify', { tone: 'err', title: `Not applied: this workflow needs "${key}", which was ${d.state === 'declined' ? 'declined' : 'not saved'}.` });
       return;
     }
     if (!(await composer.guardDiscard())) return;                 // clarification "build-target": discard prompt first
@@ -184,10 +187,10 @@ export function createCardController({ doc, composer, sessionId, client, actions
   function renderBuild(b) {
     return buildCardView(b, { h, actions: (row) => {
       if (b.state === 'proposed') {
-        row.append(button('Decline', 'wfv-btn', () => flip(b.id, { state: 'declined' })), h('span', 'wfc-spacer'),
-          button('Apply to canvas', 'wfv-btn wfv-btn-primary', () => applyBuild(b)));
+        row.append(button('Decline', 'btn btn-sm', () => flip(b.id, { state: 'declined' })), h('span', 'wfc-spacer'),
+          button('Apply to canvas', 'btn btn-sm btn-primary', () => applyBuild(b)));
       } else if (b.state === 'applied') {
-        row.appendChild(h('span', 'wfc-chip-ok', '✓ Applied to canvas'));
+        row.appendChild(okChip(h, 'Applied to canvas'));
         const undo = button('Undo', 'wfc-link', async () => {
           if (!lastBuild || !undoLive(lastBuild, b.id)) return;
           const p = lastBuild.prev;
@@ -198,12 +201,12 @@ export function createCardController({ doc, composer, sessionId, client, actions
           await flip(b.id, { state: 'undone' });
         });
         // loadDraft cleared the undo ring, so ⌘Z cannot bring the previous workflow back once this Undo stands down.
-        if (!undoLive(lastBuild, b.id)) { undo.disabled = true; undo.title = 'The canvas changed since — the previous workflow can’t be restored'; }
+        if (!undoLive(lastBuild, b.id)) { undo.disabled = true; undo.title = 'The canvas changed since, so the previous workflow can’t be restored'; }
         row.append(undo);
         // Save only the workflow THIS card opened (an applied card from an earlier visit or another document would
         // open the save dialog for whatever canvas is showing now).
         if (lastBuild && lastBuild.cardId === b.id && composer.docToken() === lastBuild.docToken) {
-          row.append(h('span', 'wfc-spacer'), button('Save as workflow', 'wfv-btn', () => { composer.openSaveDialog(); }));
+          row.append(h('span', 'wfc-spacer'), button('Save as workflow', 'btn btn-sm', () => { composer.openSaveDialog(); }));
         }
       } else {
         row.appendChild(h('span', 'wfc-muted', 'Undone'));
@@ -222,15 +225,15 @@ export function createCardController({ doc, composer, sessionId, client, actions
       onEdit: (draft) => act(isAgent ? 'openAgentDraft' : 'openScriptDraft', draft),
       onDecline: () => flip(b.id, { state: 'declined' }),
       onSave: () => saveDraft(b),
-      savedExtra: placeable ? (row) => row.append(h('span', 'wfc-spacer'), button('Add to canvas', 'wfv-btn', async () => {
+      savedExtra: placeable ? (row) => row.append(h('span', 'wfc-spacer'), button('Add to canvas', 'btn btn-sm', async () => {
         await act('reloadRegistry');
-        if (!onDoc(c)) { act('notify', { tone: 'err', title: 'Not added — another workflow was opened meanwhile.' }); return; }
+        if (!onDoc(c)) { act('notify', { tone: 'err', title: 'Not added: another workflow was opened meanwhile.' }); return; }
         const a = composer.applyOps(c.then.ops, `chat: add ${name}`);
         if (!a.ok) { act('notify', { tone: 'err', title: 'Not added', detail: a.error }); return; }
         lastEdit = { cardId: b.id, depth: a.depth, docToken: composer.docToken(), after: snap() };
         await flip(b.id, { state: 'added', card: { added: true } });
       })) : null,
-      proposedExtra: placeable ? (row) => row.appendChild(button('Save & add to canvas', 'wfv-btn wfv-btn-primary', () => saveDraft(b, { add: true }))) : null });
+      proposedExtra: placeable ? (row) => row.appendChild(button('Add to canvas', 'btn btn-sm btn-primary', () => saveDraft(b, { add: true }))) : null });
   }
 
   return {

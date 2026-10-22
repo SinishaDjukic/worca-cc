@@ -48,7 +48,7 @@ test('New Pipeline Sets picker: skills beside servers — label, rows, keys, ski
       const rows = [...pop.querySelectorAll('.mcp-runs-row')].map((r) => [r.querySelector('.mono').textContent, r.querySelector('input') ? r.querySelector('input').checked : r.querySelector('.hint').textContent]);
       assert.deepEqual(rows, [
         ['pg_billing', true], ['billing:deploy-checklist', true], ['billing:release-notes', false], ['billing:gone', 'no longer installed'], ['billing:quiet', 'off'],
-        ['team-platfor:triage', 'off — turn it on in the team checklist'],
+        ['team-platfor:triage', 'off: turn it on in the team checklist'],
         ['docs:style-guide', true],
       ]);
       assert.deepEqual([...pop.querySelectorAll('.mcp-runs-row.is-skill')].length, 6, 'skill rows are marked');

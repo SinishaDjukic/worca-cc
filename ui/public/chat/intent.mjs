@@ -11,27 +11,31 @@
 // the send), which is where the home arms its hero → dock glide (onSend).
 import { registerComposerAddon } from './extensions.mjs';
 import { homeIcon } from './home-icons.mjs';
+import { shapeFirstOn } from './shape-gate.mjs';
+import { INTENT_LEADS } from '../../../src/shared/intent-leads.mjs';
 
 export const INTENT_ADDON_ID = 'intent';
 export const EXAMPLE_MS = 3500;
 
 /** Each intent: chip label + icon, the placeholder while it is set, the sentence the sent text starts with, and —
- *  where the composer could not be sent empty otherwise — the text a quick action leaves in it (`prefill`).
+ *  where the composer could not be sent empty otherwise — the text a quick action leaves in it (`prefill`). A tile's
+ *  `badge` shows under its label on the home. Shaper (`shape`) is Shape it first's, gated.
  *  Every one is a real Ask Worca capability (src/core/ask/tools.mjs — the map is in home-actions.mjs). */
 export const INTENTS = Object.freeze({
-  run: Object.freeze({ label: 'New run', icon: 'run', placeholder: 'Describe the task…', lead: 'Propose a pipeline run for this task.' }),
-  workflow: Object.freeze({ label: 'Build workflow', icon: 'workflow', placeholder: 'Describe the workflow…', lead: 'Build a workflow from this description.' }),
-  schedule: Object.freeze({ label: 'Schedule a run', icon: 'schedule', placeholder: 'What should run, and when?', lead: 'Propose a scheduled run for this.' }),
-  track: Object.freeze({ label: 'Track a run', icon: 'track', placeholder: 'Which run? Pick one or type its name', lead: 'Track this run here.' }),
-  diff: Object.freeze({ label: 'Explain a diff', icon: 'diff', placeholder: 'Which run’s changes?', lead: 'Explain what this run changed.' }),
-  script: Object.freeze({ label: 'Write a script', icon: 'script', placeholder: 'What should the script check?', lead: 'Write a script for this.' }),
-  clone: Object.freeze({ label: 'Clone a repo', icon: 'clone', placeholder: 'Paste an https:// repository URL', lead: 'Clone this repository as a new project.' }),
-  away: Object.freeze({ label: 'Step away', icon: 'away', placeholder: "I'm away now", lead: 'Turn Away mode on now.', prefill: "I'm away now" }),
-  metrics: Object.freeze({ label: 'Team metrics', icon: 'metrics', placeholder: 'Which project or workspace?', lead: 'Show my team metrics.' }),
-  model: Object.freeze({ label: 'Add a model', icon: 'model', placeholder: 'Which model or endpoint?', lead: 'Help me add this model.' }),
-  workspace: Object.freeze({ label: 'New workspace', icon: 'workspace', placeholder: 'Name it and list its projects', lead: 'Create a new workspace.' }),
-  remember: Object.freeze({ label: 'Remember something', icon: 'remember', placeholder: 'What should worca remember?', lead: 'Remember this.' }),
-  tasks: Object.freeze({ label: 'Find tasks', icon: 'tasks', placeholder: 'Which tracker, and what to look for?', lead: 'Find tasks in my trackers.' }),
+  run: Object.freeze({ label: 'New run', icon: 'run', placeholder: 'Describe the task…', lead: INTENT_LEADS.run }),
+  shape: Object.freeze({ label: 'Shaper', icon: 'shape', placeholder: 'Describe the problem…',
+    lead: INTENT_LEADS.shape, badge: 'Labs' }),
+  workflow: Object.freeze({ label: 'Build workflow', icon: 'workflow', placeholder: 'Describe the workflow…', lead: INTENT_LEADS.workflow }),
+  schedule: Object.freeze({ label: 'Schedule a run', icon: 'schedule', placeholder: 'What should run, and when?', lead: INTENT_LEADS.schedule }),
+  track: Object.freeze({ label: 'Track a run', icon: 'track', placeholder: 'Which run? Pick one or type its name', lead: INTENT_LEADS.track }),
+  diff: Object.freeze({ label: 'Explain a diff', icon: 'diff', placeholder: 'Which run’s changes?', lead: INTENT_LEADS.diff }),
+  script: Object.freeze({ label: 'Write a script', icon: 'script', placeholder: 'What should the script check?', lead: INTENT_LEADS.script }),
+  away: Object.freeze({ label: 'Step away', icon: 'away', placeholder: "I'm away now", lead: INTENT_LEADS.away, prefill: "I'm away now" }),
+  metrics: Object.freeze({ label: 'Team metrics', icon: 'metrics', placeholder: 'Which project or workspace?', lead: INTENT_LEADS.metrics }),
+  model: Object.freeze({ label: 'Add a model', icon: 'model', placeholder: 'Which model or endpoint?', lead: INTENT_LEADS.model }),
+  workspace: Object.freeze({ label: 'New workspace', icon: 'workspace', placeholder: 'Name it and list its projects', lead: INTENT_LEADS.workspace }),
+  remember: Object.freeze({ label: 'Remember something', icon: 'remember', placeholder: 'What should worca remember?', lead: INTENT_LEADS.remember }),
+  tasks: Object.freeze({ label: 'Find tasks', icon: 'tasks', placeholder: 'Which tracker, and what to look for?', lead: INTENT_LEADS.tasks }),
 });
 
 /** The rotating home placeholders: each is something worca really does (a run, a workflow, a schedule of the
@@ -46,26 +50,51 @@ export const EXAMPLES = Object.freeze([
 const known = (id) => typeof id === 'string' && Object.prototype.hasOwnProperty.call(INTENTS, id);
 const messageCount = (thread) => (thread && Array.isArray(thread.messages) ? thread.messages.length : 0);
 
-/** The text a send carries for intent `id`: its sentence, a blank line, then what was typed (trimmed). */
-export function intentText(id, text) {
+/** The lead a run of one pinned workflow carries (Chat home pins, src/shared/home-pins.mjs): the id, so Ask
+ *  Worca proposes that workflow; the name, for the person reading their message back. */
+export function workflowLead(workflow) {
+  return `Propose a pipeline run of workflow ${workflow.id} ("${workflow.name}") for this task.`;
+}
+
+/** The text a send carries for intent `id`: its sentence, a blank line, then what was typed (trimmed). A run
+ *  armed from a pinned workflow leads with that workflow instead. */
+export function intentText(id, text, workflow = null) {
   const body = String(text ?? '').trim();
   if (!known(id)) return body;
-  const lead = INTENTS[id].lead;
+  const lead = id === 'run' && workflow ? workflowLead(workflow) : INTENTS[id].lead;
   return body ? `${lead}\n\n${body}` : lead;
+}
+
+const asWorkflow = (w) => (w && typeof w.id === 'string' && w.id
+  ? Object.freeze({ id: w.id, name: String(w.name || w.id) }) : null);
+
+/** The person's sent text split for their bubble (D21): the Shaper lead is for the model only, so a message
+ *  that opens with it — alone, or then a blank line — shows the intent chip and the rest. Exact match, ungated: only a
+ *  send made with the gate on can carry it, and a reload renders before the flags arrive. */
+export function splitIntentLead(text) {
+  const s = String(text ?? '');
+  const lead = INTENTS.shape.lead;
+  if (s === lead) return { intent: 'shape', text: '' };
+  if (s.startsWith(`${lead}\n\n`)) return { intent: 'shape', text: s.slice(lead.length + 2) };
+  return { intent: null, text: s };
 }
 
 /**
  * @param {{ win?: { setInterval, clearInterval }, onSend?: () => void, examples?: string[], intervalMs?: number }} o
- * @returns {{ addon: { id: string, mount(leadEl, ctx) }, set(id, { focus }?): boolean, clear({ focus }?): void, current(): string|null }}
+ * @returns {{ addon: { id: string, mount(leadEl, ctx) }, set(id, { focus, workflow }?): boolean, clear({ focus }?): void, leave(): void, current(): string|null, workflow(): { id, name }|null }}
  */
 export function createIntentAddon({ win = globalThis, onSend = null, examples = EXAMPLES, intervalMs = EXAMPLE_MS } = {}) {
   let current = null;
+  let workflow = null;       // { id, name }: the pinned workflow a run intent was armed with, null = none
+  const key = () => (current == null ? null : `${current}|${workflow ? workflow.id : ''}`);
   let pending = null;        // { count }: a send carried the intent; it is spent once the chat holds more than `count` messages
   const mounts = new Set();
 
-  function set(id, { focus = true } = {}) {
+  function set(id, { focus = true, workflow: wf = null } = {}) {
     if (!known(id)) return false;
+    if (id === 'shape' && !shapeFirstOn()) return false;
     current = id;
+    workflow = id === 'run' ? asWorkflow(wf) : null;
     pending = null;
     for (const m of mounts) m.paint(focus);
     return true;
@@ -74,7 +103,12 @@ export function createIntentAddon({ win = globalThis, onSend = null, examples = 
     pending = null;
     if (current == null) return;
     current = null;
+    workflow = null;
     for (const m of mounts) m.paint(focus);
+  }
+  /** The Chat page was left (app.js showView): an intent no send carries never outlives the visit. */
+  function leave() {
+    if (!pending) clear();
   }
 
   function mount(leadEl, ctx = {}) {
@@ -99,7 +133,7 @@ export function createIntentAddon({ win = globalThis, onSend = null, examples = 
     const input = (composer && composer.querySelector('.ask-input')) || doc.querySelector('[data-chat-page] .ask-input');
     const page = (typeof leadEl.closest === 'function' && leadEl.closest('[data-chat-page]')) || doc.querySelector('[data-chat-page]');
     const onHome = () => !page || page.dataset.view === 'home';
-    let shown = null;      // the intent this chip paints
+    let shown = null;      // the intent (and pinned workflow) this chip paints
     let example = -1;      // the example on screen, -1 = none
     let mine = null;       // the placeholder this add-on put on screen (an intent's or an example), null = none
 
@@ -120,19 +154,20 @@ export function createIntentAddon({ win = globalThis, onSend = null, examples = 
       release();
     }
     function paint(focus) {
-      if (current !== shown) {
-        shown = current;
+      if (key() !== shown) {
+        shown = key();
         example = -1;
         if (current) {
           const it = INTENTS[current];
+          const name = workflow ? workflow.name : it.label;
           chip.dataset.intent = current;
-          ic.replaceChildren(homeIcon(doc, it.icon, 14));
-          label.textContent = it.label;
-          x.setAttribute('aria-label', `Remove ${it.label}`);
-          x.title = `Remove ${it.label}`;
+          ic.replaceChildren(homeIcon(doc, workflow ? 'workflow' : it.icon, 14));
+          label.textContent = name;
+          x.setAttribute('aria-label', `Remove ${name}`);
+          x.title = `Remove ${name}`;
           if (chip.parentNode !== leadEl) leadEl.appendChild(chip);
           own(it.placeholder);
-          call('announce', it.label);
+          call('announce', name);
         } else {
           chip.remove();
           delete chip.dataset.intent;
@@ -195,7 +230,7 @@ export function createIntentAddon({ win = globalThis, onSend = null, examples = 
         }
         if (current == null) return text;
         if (!pending) pending = { count: messageCount(call('thread')) };
-        return intentText(current, text);
+        return intentText(current, text, workflow);
       },
       destroy() {
         if (timer != null && typeof win.clearInterval === 'function') win.clearInterval(timer);
@@ -211,7 +246,8 @@ export function createIntentAddon({ win = globalThis, onSend = null, examples = 
     return handle;
   }
 
-  return { addon: Object.freeze({ id: INTENT_ADDON_ID, mount }), set, clear, current: () => current };
+  return { addon: Object.freeze({ id: INTENT_ADDON_ID, mount }), set, clear, leave,
+    current: () => current, workflow: () => workflow };
 }
 
 /** Create the controller and register its add-on (CONTRACT §2). app.js calls this BEFORE createAskPanel. */

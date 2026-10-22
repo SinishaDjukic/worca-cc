@@ -23,6 +23,21 @@ export function flowPorts(node) {
   return undefined;
 }
 
+/** Spec §3: the port set of a role-review node (config.roleReview). Code, not a sidecar block: the agent meta
+ *  normalizer and the registry merge keep only known fields. `plan` re-emits the plan the round reviewed, so the
+ *  refiner always reads the CURRENT version (a latched first plan never reaches it). */
+export const ROLE_REVIEW_PORTS = Object.freeze({
+  inputs: Object.freeze([
+    Object.freeze({ id: 'plan', type: 'md' }),
+    Object.freeze({ id: 'revise', type: 'md', required: false, loop: true,
+      directive: 'Review the REVISED plan below (it replaces the first plan). Judge it as your role only.' }),
+  ]),
+  outputs: Object.freeze([
+    Object.freeze({ id: 'findings', type: 'md', when: 'always', filename: '{base}-role-findings-r{cycle}.md', store: 'run' }),
+    Object.freeze({ id: 'plan', type: 'md', when: 'always' }),
+  ]),
+});
+
 const toIndex = (v) => (v instanceof Map ? v : new Map(Object.entries(v && typeof v === 'object' ? v : {})));
 
 /**
@@ -41,18 +56,19 @@ export function portsFnFor(agentsByKey, scriptsByKey = {}) {
   const scripts = toIndex(scriptsByKey);
   return (node) => {
     if (!node || typeof node !== 'object') return undefined;
-    if (node.kind === 'agent') return sidecarPorts(agents.get(node.key));
+    if (node.kind === 'agent') return sidecarPorts(agents.get(node.key), node);
     if (node.kind === 'script') return scriptPorts(scripts.get(node.key), node);
     return flowPorts(node);
   };
 }
 
-function sidecarPorts(meta) {
+function sidecarPorts(meta, node = null) {
   if (!meta) return undefined;
-  if (!Array.isArray(meta.inputs) || !Array.isArray(meta.outputs)) {
+  const own = node?.config?.roleReview === true ? ROLE_REVIEW_PORTS : meta;
+  if (!Array.isArray(own.inputs) || !Array.isArray(own.outputs)) {
     return { ...meta, known: true, ported: false, inputs: [], outputs: [] };
   }
-  return { ...meta, known: true, ported: true, inputs: [...meta.inputs, AWAIT_PORT], outputs: [...meta.outputs] };
+  return { ...meta, known: true, ported: true, inputs: [...own.inputs, AWAIT_PORT], outputs: [...own.outputs] };
 }
 
 /** A script card's engine inputs, after its own: the opt-in `params` port, then `await` LAST. */

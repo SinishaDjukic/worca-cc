@@ -196,3 +196,15 @@ test('isSearchCombo: ⌘K and Ctrl+K (any case, Shift allowed); never with Alt, 
   assert.equal(isSearchCombo({ key: 'j', metaKey: true }), false);
   assert.equal(isSearchCombo(null), false);
 });
+
+test('labels: "hotfix", "label:hot" and "label:hotfix" offer "Runs labelled hotfix"; "label:" lists every label; no source, no row', () => {
+  const src = { labels: ['hotfix', 'needs demo'] };
+  for (const q of ['hotfix', 'label:hot', 'label:hotfix', 'HOTFIX']) {
+    assert.deepEqual(run(src, q).other, [{ kind: 'label', id: 'hotfix', title: 'Runs labelled hotfix', meta: 'Runs filter', label: 'hotfix' }], q);
+  }
+  assert.deepEqual(run(src, 'label:').other.map((r) => r.label), ['hotfix', 'needs demo']);
+  assert.deepEqual(run(src, 'label:needs demo').other.map((r) => r.label), ['needs demo']);
+  assert.deepEqual(run(src, 'runs').other, [], 'the row title is not searched: "runs" does not list every label');
+  assert.deepEqual(run({}, 'hotfix').other, []);
+  assert.deepEqual(run(src, '').other, [], 'an empty query lists runs only');
+});

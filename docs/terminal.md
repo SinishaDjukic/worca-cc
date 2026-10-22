@@ -17,12 +17,13 @@ any page. On a run or a project page it shows a live shell right away: it reatta
 | A running run | its live worktree. The pane warns that the pipeline is still changing those files. |
 | A finished run | its checkout (see [Actions](actions.md)). With none yet, Worca makes the checkout first. |
 | A workspace run | one terminal per member; the select next to the folder picks the member. |
+| A run with No project | its own `work/` folder while it runs or is paused; once it ends there is none (its files are its Artifacts). |
 | A project page | your own checkout of the project (the folder you registered), on whatever is checked out there. |
 | Any other page | no new terminal: the pane shows the most recent one that is still running. |
 
 The header holds the title and **×**, which hides the pane: the shell keeps running, and opening the
 pane again on the same page reattaches it. Below it is a tab for each open terminal of the page (and each
-of Ask Worca's, on every page: see [below](#ask-worca-agent-mode)), then a
+of Chat's, on every page: see [below](#chat-agent-mode)), then a
 small **+** tab that starts another shell in the same folder (a second shell of a folder is numbered,
 like `demo · main 2`). Click a tab to switch. The **×** on a tab closes that terminal, or type `exit` in
 it. A terminal that has run a command asks first; one that has not closes at once. In a shell without
@@ -131,12 +132,12 @@ time. Blocks and audit rows are kept. `GET /api/terminal/audit?runId=<id>` lists
   server, or a service an Action started) is refused with `403 TERMINAL_CROSS_ORIGIN` and sees no terminal
   traffic.
 
-## Ask Worca (agent mode)
+## Chat (agent mode)
 
-Every Ask Worca chat is in agent mode wherever the host allows it (there is no per-chat switch): Ask Worca
+Every chat is in agent mode wherever the host allows it (there is no per-chat switch): Chat
 can run shell commands in Worca terminals to check and finish work: tests, builds, linters, `git status`,
-and file changes through commands when you ask for them. It runs in a run's folder, a project's own folder,
-or the chat's pinned project.
+and file changes through commands when you ask for them. It runs in a run's folder (a run with no project has none), or in the folder of the chat's project (the chat's
+scope, or a member of its workspace); another project's folder is refused until you change the chat's scope.
 
 - **A shared terminal.** Ask opens its own terminals, labeled `Ask · <chat title> · <folder>`, at most 3
   per chat. Their tabs show in this pane on every page, next to the page's own terminal, with the same
@@ -181,7 +182,7 @@ or the chat's pinned project.
   (`stopped_by: ask:cap`). `wait_for` waits at most 240 seconds; longer work ends the reply and waits for
   the event.
 - **Audit.** Ask's commands are recorded like yours, with `actor: ask:<chat id>` in the audit log and
-  `source: ask` on the block. Opening an Ask terminal on a run adds "Terminal opened by Ask Worca" to the
+  `source: ask` on the block. Opening an Ask terminal on a run adds "Terminal opened by Chat" to the
   run's audit.
 - **Where it is off.** On a hosted Worca, agent mode follows the terminal: off unless
   `WORCA_TERMINAL_REMOTE=1`. With agent isolation on, agent mode is off: the

@@ -272,7 +272,7 @@ or was last checked more than 5 minutes ago. That automatic check reuses a fetch
 and pushes nothing: a resolution done in a terminal is finished by **Re-check**. It does not run on a
 timer.
 
-After Update branch or a resolution, a branch that was already published (Publish branch, Ship it, a
+After Update branch or a resolution, a branch that was already published (Publish branch, Create PR, a
 PR) is pushed again with a plain `git push`. Worca never force-pushes: if someone pushed to the branch
 in the meantime, the push is refused and the merge stays local. The header then shows **Push changes**;
 pull their work into the branch first, or that push is refused too. A resolution that still has conflict
@@ -312,9 +312,9 @@ A workspace's Actions tab defines **stacks**: one start for actions across membe
 - **Stop** stops exactly what the stack started, newest first.
 - A `task` stack may contain only task actions.
 
-## Ask Worca
+## Chat
 
-Ask Worca reads Actions and drafts their config, but it never runs anything.
+Chat reads Actions and drafts their config, but it never runs anything.
 
 | Tool | What it returns |
 | --- | --- |
@@ -324,22 +324,22 @@ Ask Worca reads Actions and drafts their config, but it never runs anything.
 | `list_running_actions` | Every action still starting or running, on any run |
 | `propose_actions_change` | A card with a project's new setup and actions, or a workspace's new stacks |
 
-- **Configure from the chat.** Ask "set up actions for this project": Ask Worca reads the project's
+- **Configure from the chat.** Ask "set up actions for this project": Chat reads the project's
   files in a worktree (`package.json` scripts, a `Makefile`, the README) and proposes a card. The
   card shows every command word for word, next to what it replaces, and nothing is stored until you
   click **Save**. Saving goes through the same validation as the Project and Workspace Actions tabs.
 - **Debug from the chat.** "Why is Run stuck on starting?" reads the instance's ready error and log
   tail. Usually the app listens on another port than the `PORT` Worca gave it.
-- **No start, stop, check out or discard.** There is no tool for them: Ask Worca names the button
+- **No start, stop, check out or discard.** There is no tool for them: Chat names the button
   instead. Under agent isolation the card's Save is refused like the config routes
   (`ACTIONS_AGENT_BLOCKED`).
-- **Redaction.** Commands and log lines are redacted like every other text Ask Worca reads. An action
+- **Redaction.** Commands and log lines are redacted like every other text Chat reads. An action
   that comes back with a redacted value is kept as stored when it is sent back unchanged. A changed
   one is refused, so a redaction marker is never saved.
 - **Hosted.** The context's `deployment:` line says `actions=off` while `WORCA_ACTIONS_REMOTE` is
-  unset, so Ask Worca says why nothing can run.
+  unset, so Chat says why nothing can run.
 
-Running services reach Ask Worca through `<worca home>/actions/state.json`, which the server's
+Running services reach Chat through `<worca home>/actions/state.json`, which the server's
 registry rewrites on every status change. It holds each active instance, the 20 newest finished
 ones, and up to 40 log lines per instance.
 

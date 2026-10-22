@@ -2,13 +2,14 @@
 // popover and the ⌘K / Ctrl+K chord. Pure DOM over the markup in index.html (.tsearch); the rows
 // come from global-search.mjs over the sources app.js hands in, so this module holds no app state.
 //
-//   const search = createTopnavSearch({ doc, win, root, getSources, loadLazy, onAsk, navigate, openWorkflow });
+//   const search = createTopnavSearch({ doc, win, root, getSources, loadLazy, onAsk, navigate, openWorkflow, onLabel });
 //   getSources()      the current sources (global-search.mjs shape), read on every render
 //   loadLazy()        fetch what is not kept in memory (workflows, schedules); called once per open,
 //                     the popover re-renders when it settles
 //   onAsk(query)      the Ask Worca row ('' when nothing is typed)
 //   navigate(href)    a row with a route ('#running/…', '#projects/…', …)
 //   openWorkflow(id)  a workflow row
+//   onLabel(label)    a "Runs labelled hotfix" row: apply the Runs list label filter
 //
 // Focus stays in the input while the popover is open: the rows are options it points at with
 // aria-activedescendant. ⌘K / Ctrl+K and a consumed Escape are read in the capture phase on the
@@ -26,6 +27,7 @@ const ICONS = Object.freeze({
     'M15 13h4a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2Z'],
   schedule: ['m17 2 4 4-4 4', 'M3 11v-1a4 4 0 0 1 4-4h14', 'm7 22-4-4 4-4', 'M21 13v1a4 4 0 0 1-4 4H3'],
   ticket: ['M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Z', 'M12 6v6l4 2'],
+  label: ['M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z', 'M7.5 7.5h.01'],
   ask: ['M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z', 'M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z'],
 });
 
@@ -55,7 +57,7 @@ function imeKey(e) {
   return !!(e.isComposing || e.keyCode === 229);
 }
 
-export function createTopnavSearch({ doc, win, root, getSources, loadLazy, onAsk, navigate, openWorkflow }) {
+export function createTopnavSearch({ doc, win, root, getSources, loadLazy, onAsk, navigate, openWorkflow, onLabel = () => {} }) {
   const input = root.querySelector('#tsearch-input');
   const pop = root.querySelector('#tsearch-pop');
   const kbd = root.querySelector('.tsearch-kbd');
@@ -119,7 +121,7 @@ export function createTopnavSearch({ doc, win, root, getSources, loadLazy, onAsk
       sep.setAttribute('aria-hidden', 'true');
       parts.push(sep);
     }
-    const ask = option(`tsearch-opt-${st.items.length}`, 'ask', { title: 'Ask Worca', meta: 'opens a chat' }, 'Ask Worca, opens a chat');
+    const ask = option(`tsearch-opt-${st.items.length}`, 'ask', { title: 'Ask in Chat', meta: 'opens a chat' }, 'Ask in Chat, opens a chat');
     st.items.push({ key: 'ask', row: null, el: ask });
     parts.push(ask);
     pop.replaceChildren(...parts);
@@ -188,6 +190,7 @@ export function createTopnavSearch({ doc, win, root, getSources, loadLazy, onAsk
     input.blur();
     if (!it.row) onAsk(query);
     else if (it.row.kind === 'workflow') openWorkflow(it.row.workflowId);
+    else if (it.row.kind === 'label') onLabel(it.row.label);
     else navigate(it.row.href);
   }
 

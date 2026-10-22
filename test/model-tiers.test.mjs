@@ -14,7 +14,7 @@ const codex = (id) => row(id, { engine: 'codex', connection: CODEX, harnesses: [
 test('built-ins: vendor from the id, the price tier from the output list price, the known 1M windows', () => {
   const [opus, fable, sonnet, haiku55, haiku45, twin, gpt, spark, astra] = modelFacts([
     row('claude-opus-5-5'), row('claude-fable-5-1'), row('claude-sonnet-5-5'), row('claude-haiku-5-5'), row('claude-haiku-4-5'),
-    row('claude-opus-4-8[1m]'), codex('gpt-5.5'), codex('gpt-5.3-codex-spark'), codex('gpt-6-astra'),
+    row('claude-opus-4-8[1m]'), codex('gpt-5.6-terra'), codex('gpt-5.3-codex-spark'), codex('gpt-6-astra'),
   ]);
   assert.deepEqual(opus, {
     id: 'claude-opus-5-5', label: 'claude-opus-5-5', vendor: 'anthropic', tier: 'top', tierRank: 2,
@@ -26,9 +26,9 @@ test('built-ins: vendor from the id, the price tier from the output list price, 
   assert.deepEqual([haiku55.tier, haiku55.price, haiku55.longPrompt], ['economy', { input: 0.1, output: 0.5 }, { aboveTokens: 100_000, multiplier: 5 }]);
   assert.deepEqual([haiku45.tier, haiku45.context, haiku45.contextFrom], ['mid', DEFAULT_CONTEXT_TOKENS, 'default']);
   assert.deepEqual([twin.price, twin.tier, twin.context], [{ input: 5, output: 25 }, 'top', 1_000_000], 'a [1m] twin shares its base row');
-  assert.deepEqual([gpt.vendor, gpt.tier, gpt.price, gpt.engines, gpt.efforts], ['openai', 'strong', { input: 1.25, output: 10 }, ['codex'], ['minimal', 'low', 'medium', 'high']]);
+  assert.deepEqual([gpt.vendor, gpt.tier, gpt.price, gpt.engines, gpt.efforts], ['openai', 'strong', { input: 2, output: 12 }, ['codex'], ['minimal', 'low', 'medium', 'high']]);
   assert.equal(spark.tier, 'mid');
-  assert.deepEqual([astra.tier, astra.price], ['top', { input: 6, output: 36 }], 'GPT-6 Astra at $36 output stays top');
+  assert.deepEqual([astra.tier, astra.price], ['premium', { input: 10, output: 50 }], 'GPT-6 Astra at $50 output is premium');
   assert.deepEqual(TIERS.map((t) => [t.id, t.rank, t.min]), [['premium', 1, 40], ['top', 2, 20], ['strong', 3, 8], ['mid', 4, 2], ['economy', 5, 0]]);
   assert.deepEqual(VENDORS, ['anthropic', 'openai', 'other']);
 });
@@ -54,15 +54,15 @@ test('user, plugin and bridged entries: the entry\'s own cost wins over the list
 });
 
 test('compareFacts: Anthropic, OpenAI, then others; then tier; then the cheaper output price; factsBrief/factsLine read on one line', () => {
-  const facts = modelFacts([codex('gpt-5.5'), row('local-coder', { connection: { kind: 'env' } }), row('claude-haiku-4-5'), row('claude-fable-5-1'), row('claude-opus-5-5')]);
-  assert.deepEqual([...facts].sort(compareFacts).map((f) => f.id), ['claude-fable-5-1', 'claude-opus-5-5', 'claude-haiku-4-5', 'gpt-5.5', 'local-coder'],
+  const facts = modelFacts([codex('gpt-5.6-terra'), row('local-coder', { connection: { kind: 'env' } }), row('claude-haiku-4-5'), row('claude-fable-5-1'), row('claude-opus-5-5')]);
+  assert.deepEqual([...facts].sort(compareFacts).map((f) => f.id), ['claude-fable-5-1', 'claude-opus-5-5', 'claude-haiku-4-5', 'gpt-5.6-terra', 'local-coder'],
     'tiers strongest first: premium before top');
   const by = Object.fromEntries(facts.map((f) => [f.id, f]));
   assert.equal(factsBrief(by['claude-fable-5-1']), 'anthropic · premium tier · $10/$50 per Mtok');
   assert.equal(factsBrief(by['claude-opus-5-5']), 'anthropic · top tier · $4/$20 per Mtok');
   assert.equal(factsLine(by['claude-opus-5-5']), 'anthropic · top tier · $4/$20 per Mtok · 1M context · runs on claude · efforts medium/high');
   assert.equal(factsBrief(by['local-coder']), 'other · no list price');
-  assert.equal(factsLine(by['gpt-5.5']), 'openai · strong tier · $1.25/$10 per Mtok · 200k context · runs on codex · efforts minimal/low/medium/high');
+  assert.equal(factsLine(by['gpt-5.6-terra']), 'openai · strong tier · $2/$12 per Mtok · 200k context · runs on codex · efforts minimal/low/medium/high');
   const [haiku55] = modelFacts([row('claude-haiku-5-5')]);
   assert.match(factsLine(haiku55), / · prompts over 100k cost 5×$/);
   const [free] = modelFacts([row('gw-free', { connection: { kind: 'env' }, needsSignIn: true })], { costOf: () => ({ free: true }) });

@@ -95,10 +95,11 @@ test('Azure PR provider', async () => {
       const rows = [['active', 'succeeded', 'OPEN', 'MERGEABLE'], ['completed', 'succeeded', 'MERGED', 'MERGEABLE'],
         ['abandoned', 'notSet', 'CLOSED', 'UNKNOWN'], ['active', 'conflicts', 'OPEN', 'CONFLICTING'], ['active', 'queued', 'OPEN', 'UNKNOWN']];
       for (const [status, mergeStatus, state, mergeable] of rows) {
-        const f = fakeFetch([{ match: /\/_apis\/git\/pullrequests\/9\?/, reply: res(200, { pullRequestId: 9, status, mergeStatus }) }]);
+        const isDraft = status === 'active' && mergeStatus === 'queued';
+        const f = fakeFetch([{ match: /\/_apis\/git\/pullrequests\/9\?/, reply: res(200, { pullRequestId: 9, status, mergeStatus, isDraft }) }]);
         az._testing.setFetch(f);
         const v = await az.viewPr({ prUrl: 'https://dev.azure.com/acme/My%20Project/_git/api/pullrequest/9', env: ENV });
-        assert.deepEqual({ state: v.state, mergeable: v.mergeable }, { state, mergeable }, `${status}/${mergeStatus}`);
+        assert.deepEqual({ state: v.state, mergeable: v.mergeable, isDraft: v.isDraft }, { state, mergeable, isDraft }, `${status}/${mergeStatus}`);
         assert.equal(f.calls[0].url, 'https://dev.azure.com/acme/My%20Project/_apis/git/pullrequests/9?api-version=7.1');
       }
     } },
@@ -108,6 +109,25 @@ test('Azure PR provider', async () => {
       assert.equal((await az.findPrForBranch({ head: 'feat/x', baseRepo: REPO, env: ENV })).number, 3);
       az._testing.setFetch(fakeFetch([{ match: /./, reply: res(200, { value: [{ pullRequestId: 2, status: 'abandoned' }] }) }]));
       assert.equal(await az.findPrForBranch({ head: 'feat/x', baseRepo: REPO, env: ENV }), null);
+    } },
+    { name: 'findPrForBranch: isDraft from the payload, in the gh lookup\'s shape', run: async () => {
+      az._testing.setFetch(fakeFetch([{ match: /./, reply: res(200, { value: [{ pullRequestId: 5, status: 'active', isDraft: true, mergeStatus: 'conflicts' }] }) }]));
+      assert.deepEqual(await az.findPrForBranch({ head: 'feat/x', baseRepo: REPO, env: ENV }),
+        { state: 'OPEN', url: 'https://dev.azure.com/acme/My%20Project/_git/api/pullrequest/5', number: 5, isDraft: true, mergeable: 'CONFLICTING' });
+      az._testing.setFetch(fakeFetch([{ match: /./, reply: res(200, { value: [{ pullRequestId: 6, status: 'active' }] }) }]));
+      assert.equal((await az.findPrForBranch({ head: 'feat/x', baseRepo: REPO, env: ENV })).isDraft, false, 'no flag: not a draft');
+    } },
+    { name: 'findPrForBranch includeClosed: an abandoned PR only as the last resort', run: async () => {
+      const reply = (value) => az._testing.setFetch(fakeFetch([{ match: /./, reply: res(200, { value }) }]));
+      const opts = { head: 'feat/x', baseRepo: REPO, env: ENV, includeClosed: true };
+      reply([{ pullRequestId: 4, status: 'abandoned' }, { pullRequestId: 2, status: 'abandoned' }]);
+      const closed = await az.findPrForBranch(opts);
+      assert.deepEqual([closed.state, closed.number], ['CLOSED', 4], 'the newest abandoned PR');
+      assert.equal(await az.findPrForBranch({ ...opts, includeClosed: false }), null, 'off by default');
+      reply([{ pullRequestId: 4, status: 'abandoned' }, { pullRequestId: 1, status: 'completed' }]);
+      assert.equal((await az.findPrForBranch(opts)).state, 'MERGED', 'a completed PR beats a newer abandoned one');
+      reply([{ pullRequestId: 4, status: 'abandoned' }, { pullRequestId: 1, status: 'completed' }, { pullRequestId: 3, status: 'active' }]);
+      assert.equal((await az.findPrForBranch(opts)).number, 3, 'an active PR first');
     } },
     { name: 'listPullRequests: pages by $skip until a short page (complete); filters by minTime locally', run: async () => {
       const page = (n, from) => Array.from({ length: n }, (_, i) => ({ pullRequestId: from + i, status: 'active', creationDate: '2026-09-10T00:00:00Z' }));
@@ -177,6 +197,55 @@ test('Azure PR provider', async () => {
       assert.equal(az.workItemIdFromSourceRef(ref, { ...REPO, org: 'other' }), null);
       assert.equal(az.workItemIdFromSourceRef(JSON.stringify({ plugin: 'github-source', taskId: 'o/r#1' }), REPO), null);
       assert.equal(az.workItemIdFromSourceRef('not json', REPO), null);
+    } },
+  ]);
+});
+
+// No AZ_PR_URL_7 exists in test/: the URL form test/pr-watch-azure.test.mjs uses.
+const AZ_PR_URL_7 = 'https://dev.azure.com/org/proj/_git/repo/pullrequest/7';
+test('markReady and closePr: PATCH isDraft false; comment then PATCH abandoned', async () => {
+  const f = fakeFetch([{ match: /pullRequests\/7\/threads/, method: 'POST', reply: res(200, {}) },
+    { match: /pullRequests\/7/, method: 'PATCH', reply: res(200, { pullRequestId: 7 }) }]);
+  az._testing.setFetch(f);
+  assert.deepEqual(await az.markReady({ prUrl: AZ_PR_URL_7, env: ENV }), { ok: true });
+  assert.deepEqual(await az.closePr({ prUrl: AZ_PR_URL_7, comment: 'see #9', env: ENV }), { ok: true });
+  assert.deepEqual(f.calls.map((c) => [c.method, c.body]), [['PATCH', { isDraft: false }], ['POST', f.calls[1].body], ['PATCH', { status: 'abandoned' }]]);
+  assert.equal(f.calls[1].body.comments[0].content, 'see #9');
+  assert.equal((await az.markReady({ prUrl: 'https://github.com/o/r/pull/1', env: ENV })).ok, false);
+});
+
+test('chat chips: prSummary and workItemSummaries read a title and a lifecycle, never throw', async () => {
+  await checkRows([
+    { name: 'prSummary: project-level GET, draft only while active, the Code PAT, a 10 s bound', run: async () => {
+      const f = fakeFetch([
+        { match: /pullrequests\/5\?/, reply: res(200, { pullRequestId: 5, status: 'active', isDraft: true, title: 'Draft it' }) },
+        { match: /pullrequests\/6\?/, reply: res(200, { pullRequestId: 6, status: 'completed', isDraft: true, title: 'Done' }) },
+        { match: /pullrequests\/7\?/, reply: res(404, { message: 'TF401180: not found' }) },
+      ]);
+      az._testing.setFetch(f);
+      assert.deepEqual(await az.prSummary({ org: 'acme', project: 'My Project', number: 5, env: ENV }), { kind: 'pr', title: 'Draft it', state: 'draft' });
+      assert.deepEqual(await az.prSummary({ org: 'acme', project: 'My Project', number: 6, env: ENV }), { kind: 'pr', title: 'Done', state: 'merged' });
+      assert.equal(await az.prSummary({ org: 'acme', project: 'My Project', number: 7, env: ENV }), null);
+      assert.equal(await az.prSummary({ org: 'acme', project: 'My Project', number: 5, env: {} }), null, 'no credential: no call');
+      assert.equal(f.calls.length, 3);
+      assert.equal(f.calls[0].url, 'https://dev.azure.com/acme/My%20Project/_apis/git/pullrequests/5?api-version=7.1');
+      assert.equal(f.calls[0].headers.authorization, `Basic ${Buffer.from(':pat').toString('base64')}`);
+    } },
+    { name: 'workItemSummaries: one org-level GET with the Boards token first, else the Code PAT; omitted ids left out', run: async () => {
+      const f = fakeFetch([{ match: /_apis\/wit\/workitems\?/, reply: res(200, { value: [
+        { id: 123, fields: { 'System.Title': 'Login loops', 'System.State': 'Active', 'System.WorkItemType': 'Bug' } }, null, { id: 9 },
+      ] }) }]);
+      az._testing.setFetch(f);
+      const m = await az.workItemSummaries({ org: 'acme', ids: [123, 124, 123], env: { WORCA_ADO_TOKEN: 'pat', WORCA_ADO_BOARDS_TOKEN: 'boards' } });
+      assert.deepEqual([...m], [[123, { kind: 'workitem', title: 'Login loops', state: 'Active', type: 'Bug' }]]);
+      assert.equal(f.calls[0].url, 'https://dev.azure.com/acme/_apis/wit/workitems?ids=123,124&fields=System.Title,System.State,System.WorkItemType&errorPolicy=omit&api-version=7.1');
+      assert.equal(f.calls[0].headers.authorization, `Basic ${Buffer.from(':boards').toString('base64')}`);
+      await az.workItemSummaries({ org: 'acme', ids: [1], env: ENV });
+      assert.equal(f.calls[1].headers.authorization, `Basic ${Buffer.from(':pat').toString('base64')}`, 'no Boards token: the Code PAT');
+      assert.equal((await az.workItemSummaries({ org: 'acme', ids: [1], env: {} })).size, 0);
+      assert.equal(f.calls.length, 2, 'no token at all: no call');
+      az._testing.setFetch(fakeFetch([{ match: /workitems/, reply: res(401, {}) }]));
+      assert.equal((await az.workItemSummaries({ org: 'acme', ids: [1], env: ENV })).size, 0, 'a refused token is an empty answer');
     } },
   ]);
 });

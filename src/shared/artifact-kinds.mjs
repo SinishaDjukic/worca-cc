@@ -101,10 +101,18 @@ export function classifyExtension(ext) {
   return null;
 }
 
+/** On-disk extensions for show_files snapshots whose mime is not an upload type (never offered by classifyExtension:
+ *  uploads keep refusing SVG and media). Without them an SVG or a clip would be stored as `.bin`. */
+const SNAPSHOT_TYPES = Object.freeze({
+  'image/svg+xml': '.svg', 'image/avif': '.avif', 'video/mp4': '.mp4', 'video/webm': '.webm',
+  'audio/mpeg': '.mp3', 'audio/wav': '.wav', 'audio/ogg': '.ogg',
+});
+
 /** The on-disk extension for a stored Ask body (unchanged behaviour). */
 export function extensionForAttachment(kind, mime) {
   if (kind === 'text' || kind == null) return '.txt';
   for (const [ext, m] of Object.entries(BINARY_TYPES)) if (m === mime) return ext;
+  if (has(SNAPSHOT_TYPES, mime)) return SNAPSHOT_TYPES[mime];
   return '.bin';
 }
 

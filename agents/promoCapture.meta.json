@@ -1,0 +1,50 @@
+{
+  "key": "promoCapture",
+  "metaVersion": 2,
+  "needsRepo": true,
+  "mockRole": "generic-producer",
+  "promptHints": "Start the app per the runbook in a sandbox (temporary HOME, its own port, demo data), capture every plate in the storyboard shot list with promo-kit/capture/lib.mjs, run the leak guard, stop everything you started. runbook.ui === false: an empty manifest and the reason. Pipeline directory: {pipelineDir}",
+  "inputs": [
+    {
+      "id": "runbook",
+      "type": "json"
+    },
+    {
+      "id": "storyboard",
+      "type": "md"
+    },
+    {
+      "id": "product",
+      "type": "md",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "id": "plates",
+      "type": "json",
+      "filename": "promo-plates.json",
+      "artifactKind": "promo-plates",
+      "extraFiles": [
+        {
+          "kind": "promo-sheet",
+          "glob": "promo/plates-sheet.jpg"
+        }
+      ]
+    }
+  ],
+  "domain": "video",
+  "displayName": "Promo: capture",
+  "description": "Starts the app in a sandbox with believable demo data (never your real data) and captures each component the storyboard names as a transparent plate, one component at a time, no app chrome. Stops everything it started.",
+  "color": "blue",
+  "icon": "<path d=\"M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3\" stroke-linecap=\"round\"/><rect x=\"8\" y=\"8\" width=\"8\" height=\"8\" rx=\"1.2\"/>",
+  "agentFile": "worca-cc-promo-capture.md",
+  "requiresAssets": [
+    "promo-kit"
+  ],
+  "runnerType": "producer",
+  "asksQuestions": false,
+  "questionsLocked": false,
+  "questionsDefault": false,
+  "order": 74
+}

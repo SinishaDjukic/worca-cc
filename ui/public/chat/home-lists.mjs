@@ -1,15 +1,16 @@
 // ui/public/chat/home-lists.mjs — the Chat home's tabs and the lists that are not run tiles (worca Chat P6): the tab
-// strip (Needs you · Running · Recent chats · Workflows; one sliding underline; roving focus), the default-tab rule,
+// strip (Needs you · Running · Recent chats · Plans (gated) · Workflows; one sliding underline; roving focus), the default-tab rule,
 // Recent chats rows (GET /api/ask/threads rows) and the Workflows grid (the Library's thumbnails, thumbnail.mjs).
 import { thumbnailFor } from '../graph/view.mjs';
 import { fmtUsd } from '../graph/run-decor.mjs';
 import { fmtStarted } from '../ask-panel.mjs';
 import { classifyLoops } from '../../../src/shared/graph/loops.mjs';
 import { homeIcon } from './home-icons.mjs';
+import { featureHeadline } from '../shape/feature-view.mjs';
 
-export const HOME_TABS = Object.freeze(['needs', 'running', 'chats', 'workflows']);
-export const HOME_TAB_LABELS = Object.freeze({ needs: 'Needs you', running: 'Running', chats: 'Recent chats', workflows: 'Workflows' });
-export const HOME_TAB_EMPTY = Object.freeze({ needs: 'Nothing needs you', running: 'Nothing running', chats: 'No saved chats.', workflows: 'No workflows' });
+export const HOME_TABS = Object.freeze(['needs', 'running', 'chats', 'plans', 'workflows']);
+export const HOME_TAB_LABELS = Object.freeze({ needs: 'Needs you', running: 'Running', chats: 'Recent chats', plans: 'Plans', workflows: 'Workflows' });
+export const HOME_TAB_EMPTY = Object.freeze({ needs: 'Nothing needs you', running: 'Nothing running', chats: 'No saved chats.', plans: 'No plans yet', workflows: 'No workflows' });
 /** sessionStorage: the tab the user picked this session (it wins over the default on every later visit). */
 export const HOME_TAB_KEY = 'worca-cc.chat.homeTab';
 export const RECENT_CHATS_MAX = 6;
@@ -37,9 +38,8 @@ export function defaultTab({ needs = 0, running = 0, chats = null } = {}) {
 }
 
 export function createHomeTabs({ doc, onSelect }) {
-  const win = doc.defaultView || globalThis;
   const el = make(doc, 'div', 'chat-home-tabs');
-  const list = make(doc, 'div', 'chat-home-tablist');
+  const list = make(doc, 'div', 'chat-home-tablist tabs');
   list.setAttribute('role', 'tablist');
   list.setAttribute('aria-label', 'Runs and chats');
   const panel = make(doc, 'div', 'chat-home-panel');
@@ -48,7 +48,7 @@ export function createHomeTabs({ doc, onSelect }) {
   panel.tabIndex = 0;
   const btns = new Map();
   for (const t of HOME_TABS) {
-    const b = make(doc, 'button', 'chat-home-tab');
+    const b = make(doc, 'button', 'chat-home-tab tab');
     b.type = 'button';
     b.id = `chat-home-tab-${t}`;
     b.dataset.tab = t;
@@ -56,6 +56,7 @@ export function createHomeTabs({ doc, onSelect }) {
     b.setAttribute('aria-selected', 'false');
     b.setAttribute('aria-controls', PANEL_ID);
     b.tabIndex = t === HOME_TABS[0] ? 0 : -1;
+    if (t === 'plans') b.hidden = true;           // Shape it first: home.mjs shows it while the gate is on
     b.appendChild(make(doc, 'span', 'chat-home-tab-l', HOME_TAB_LABELS[t]));
     if (t === 'needs') {
       const n = make(doc, 'span', 'chat-home-tab-n');
@@ -66,33 +67,26 @@ export function createHomeTabs({ doc, onSelect }) {
     btns.set(t, b);
     list.appendChild(b);
   }
-  const ink = make(doc, 'span', 'chat-home-ink');
-  ink.setAttribute('aria-hidden', 'true');
-  list.appendChild(ink);
   list.addEventListener('keydown', (e) => {
-    const i = HOME_TABS.indexOf(e.target && e.target.dataset ? e.target.dataset.tab : '');
+    const shown = visibleTabs();
+    const i = shown.indexOf(e.target && e.target.dataset ? e.target.dataset.tab : '');
     if (i < 0) return;
-    const last = HOME_TABS.length - 1;
+    const last = shown.length - 1;
     const j = e.key === 'ArrowRight' ? (i === last ? 0 : i + 1)
       : e.key === 'ArrowLeft' ? (i === 0 ? last : i - 1)
         : e.key === 'Home' ? 0 : e.key === 'End' ? last : -1;
     if (j < 0) return;
     e.preventDefault();
-    onSelect(HOME_TABS[j], { user: true });
-    btns.get(HOME_TABS[j]).focus();
+    onSelect(shown[j], { user: true });
+    btns.get(shown[j]).focus();
   });
   el.append(list, panel);
 
+  /** The tabs whose button shows (Plans is hidden while the Shape it first gate is off). */
+  function visibleTabs() { return HOME_TABS.filter((t) => !btns.get(t).hidden); }
   let sel = null;
-  function moveInk() {
-    const b = sel ? btns.get(sel) : null;
-    ink.style.opacity = b ? '1' : '0';
-    if (!b) return;
-    ink.style.width = `${b.offsetWidth || 0}px`;
-    ink.style.transform = `translateX(${b.offsetLeft || 0}px)`;
-  }
   /** A phone-width strip scrolls sideways: bring the selected tab into it when the SELECTION changes — never from
-   *  moveInk, which the 1 s re-read (setNeeds) and every resize call: that would snap back a strip the user is
+   *  the 1 s re-read (setNeeds) or a resize: that would snap back a strip the user is
    *  swiping. Never scrollIntoView — it scrolls the home too. */
   function revealSelected() {
     const b = sel ? btns.get(sel) : null;
@@ -108,23 +102,24 @@ export function createHomeTabs({ doc, onSelect }) {
     for (const [k, b] of btns) {
       const on = k === sel;
       b.setAttribute('aria-selected', on ? 'true' : 'false');
-      b.tabIndex = on || (!sel && k === HOME_TABS[0]) ? 0 : -1;
+      b.tabIndex = on || (!sel && k === visibleTabs()[0]) ? 0 : -1;
     }
     if (sel) { panel.setAttribute('aria-labelledby', `chat-home-tab-${sel}`); panel.dataset.tab = sel; }
     else { panel.removeAttribute('aria-labelledby'); delete panel.dataset.tab; }
-    moveInk();
     revealSelected();
+  }
+  function setVisible(t, on) {
+    const b = btns.get(t);
+    if (!b) return;
+    b.hidden = !on;
   }
   function setNeeds(n) {
     const c = btns.get('needs').querySelector('.chat-home-tab-n');
     const v = Number(n) > 0 ? String(n) : '';
     if (c.textContent !== v) c.textContent = v;
     c.hidden = !v;
-    moveInk();
   }
-  const ro = typeof win.ResizeObserver === 'function' ? new win.ResizeObserver(() => moveInk()) : null;
-  if (ro) ro.observe(list);
-  return { el, panel, select, selected: () => sel, setNeeds, moveInk, destroy() { if (ro) ro.disconnect(); } };
+  return { el, panel, select, selected: () => sel, setNeeds, setVisible, visibleTabs, destroy() {} };
 }
 
 /** A chat row's dot: green while its reply streams, amber while a run it follows waits on you, violet while a run it
@@ -167,6 +162,41 @@ export function buildChatsList(doc, threads, { onOpen, now = Date.now() }) {
     b.appendChild(chev);
     b.addEventListener('click', () => onOpen(t.id));
     li.appendChild(b);
+    ul.appendChild(li);
+  }
+  return ul;
+}
+
+const PLAN_STATE_TEXT = Object.freeze({ shaping: 'shaping', waiting: 'waiting for approval', running: 'running', done: 'done', stopped: 'stopped', paused: 'paused' });
+
+/** The Plans tab: one row per shaped plan (GET /api/shape/plans). The row button opens its chat; a sliced plan adds a
+ *  sibling <details> (never nested in the button) whose feature card mounts on the first open. `open` (a Set of feature
+ *  ids, kept by home.mjs) survives a rebuild: a row whose feature is in it is built open and mounted at once. */
+export function buildPlansList(doc, rows, { onOpen, mountFeature, open = null }) {
+  const ul = make(doc, 'ul', 'chat-home-plans');
+  for (const row of rows) {
+    const li = make(doc, 'li', 'chat-home-plan');
+    const b = make(doc, 'button', 'chat-home-plan-open');
+    b.type = 'button';
+    b.dataset.threadId = row.threadId;
+    const col = make(doc, 'span', 'chat-home-plan-col');
+    col.append(make(doc, 'span', 'chat-home-plan-t', row.title || 'Plan'), make(doc, 'span', 'chat-home-plan-m', row.threadTitle || ''));
+    const chip = make(doc, 'span', `chat-home-plan-state is-${row.state}`, PLAN_STATE_TEXT[row.state] || row.state || '');
+    b.append(col, chip);
+    b.addEventListener('click', () => onOpen(row.threadId));
+    li.appendChild(b);
+    if (row.feature) {
+      const details = make(doc, 'details', 'chat-home-plan-feature');
+      details.appendChild(make(doc, 'summary', null, featureHeadline(row.feature)));
+      const host = make(doc, 'div', 'chat-home-plan-feature-body');
+      details.appendChild(host);
+      const mount = () => { if (!host.dataset.mounted) { host.dataset.mounted = '1'; mountFeature(host, row.feature.id); } };
+      details.addEventListener('toggle', () => {
+        if (details.open) { open?.add(row.feature.id); mount(); } else open?.delete(row.feature.id);
+      });
+      if (open?.has(row.feature.id)) { details.open = true; mount(); }
+      li.appendChild(details);
+    }
     ul.appendChild(li);
   }
   return ul;

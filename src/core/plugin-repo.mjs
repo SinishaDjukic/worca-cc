@@ -9,8 +9,8 @@
 
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { createHash } from 'node:crypto';
-import { mkdirSync, existsSync, rmSync, unlinkSync } from 'node:fs';
+import { createHash, randomBytes } from 'node:crypto';
+import { mkdirSync, existsSync, renameSync, rmSync, unlinkSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -19,6 +19,11 @@ import { normalizeManifest, findEscapingSymlinks } from './plugin-manifest.mjs';
 import { githubEnv } from './github-credentials.mjs';
 import { withAzureToken, readAzureCredentials } from './azure-credentials.mjs';
 import { mcpUpdatePreview } from './mcp/plugin-lifecycle.mjs';
+import { gitAvailable } from './git-available.mjs';
+
+// Without git a GitHub repository is read over HTTPS (P6). Lazy: plugin-store.mjs imports this module statically and
+// git-free/plugin-repo.mjs imports both, so the git path never loads git-free/ (and no import cycle forms at load).
+const httpsRepo = () => import('./git-free/plugin-repo.mjs');
 
 const execFileP = promisify(execFile);
 
@@ -56,6 +61,22 @@ export function repoSlug(repoUrl) {
 /** Bare-cache path for a repo URL: <pluginsRoot>/.cache/<slug>.git. */
 export function repoCacheDir(repoUrl) {
   return join(pluginsRoot(), '.cache', `${repoSlug(repoUrl)}.git`);
+}
+
+/** Snapshot root for a repo URL read without git (P6): <pluginsRoot>/.cache/<slug>.tree/<sha>. */
+export function repoSnapshotRoot(repoUrl) {
+  return join(pluginsRoot(), '.cache', `${repoSlug(repoUrl)}.tree`);
+}
+
+/** Remove a repo URL's snapshots (P6). The root is renamed aside first: a removal cut short (a killed process, a file in
+ *  use) leaves `<root>.trash-<hex>`, which nothing reads — never a half-removed `<sha>` folder beside its meta file.
+ *  Best effort: a root that cannot be renamed (EPERM, EBUSY) stays whole, and the uninstall or removal that asked,
+ *  past its lock or registry write, never fails on it. */
+export function removeSnapshotRoot(repoUrl) {
+  const root = repoSnapshotRoot(repoUrl);
+  const trash = `${root}.trash-${randomBytes(4).toString('hex')}`;
+  try { renameSync(root, trash); } catch { return; }
+  try { rmSync(trash, { recursive: true, force: true }); } catch { /* left aside: nothing reads it */ }
 }
 
 /** Validate a raw worca-cc-marketplace.json (spec §4.1). Paths are repo-relative
@@ -121,31 +142,33 @@ async function tipSha(cache, ref, exec) {
 }
 
 /**
- * `worca plugin add`: clone/refresh the bare cache, then discover plugins in the
- * HEAD tree (or branch `ref`'s). A root worca-cc-marketplace.json (spec §4.1), when present and
- * structurally valid, is AUTHORITATIVE — its listed dirs (any depth) are the only
- * candidates, even when the list is empty. Without one, the depth 0/1 scan of
- * spec §4.3 applies unchanged.
- * @returns {{repoUrl:string, sha:string, discovered:Array<{name,subdir,manifest}>,
- *   warnings:string[], marketplace:{name:string, description:string}|null}}
+ * Discovery at one commit of any git dir — worca's bare cache (addPluginRepo) or a checkout's
+ * real git dir (marketplace-publish.mjs checks the commit it is about to push, #717). The rules a
+ * marketplace sync applies, unchanged: a root worca-cc-marketplace.json, when present and
+ * structurally valid, is AUTHORITATIVE; else the depth 0-1 scan; committed files only; the
+ * engines gate (normalizeManifest); first name wins.
+ * @returns {Promise<{sha:string, discovered:Array<{name,subdir,manifest}>, warnings:string[],
+ *   marketplace:{name:string, description:string}|null}>}
  */
-export async function addPluginRepo(repoUrl, { exec = defaultExec, ref = null } = {}) {
-  // `owner/repo` shorthand -> GitHub URL (spec §4.3) — only when it is not a
-  // real local path (local fixture repos in tests stay untouched).
-  if (/^[\w.-]+\/[\w.-]+$/.test(repoUrl) && !existsSync(repoUrl)) {
-    repoUrl = `https://github.com/${repoUrl}`;
-  }
-  const cache = await ensureCache(repoUrl, exec);
-  const sha = await tipSha(cache, ref, exec);
-  const allPaths = (await gitDir(cache, ['ls-tree', '-r', '--name-only', sha], exec))
+export async function discoverAtCommit(gitDirPath, sha, { exec = defaultExec } = {}) {
+  const allPaths = (await gitDir(gitDirPath, ['ls-tree', '-r', '--name-only', sha], exec))
     .split('\n').map((s) => s.trim()).filter(Boolean);
+  return { sha, ...(await discoverPlugins(allPaths, (p) => gitDir(gitDirPath, ['show', `${sha}:${p}`], exec))) };
+}
+
+/**
+ * Discovery over a commit's file list (spec §4.1, §4.3): `allPaths` = every file path of the commit, `readText(path)`
+ * = that file's text (git's `show`; a snapshot read without git, P6). Pure apart from readText.
+ * @returns {Promise<{discovered:Array<{name,subdir,manifest}>, warnings:string[], marketplace:{name:string, description:string}|null}>}
+ */
+export async function discoverPlugins(allPaths, readText) {
   const warnings = [];
   let marketplace = null;
   let manifestPaths = null; // null -> fall back to the depth 0-1 scan
   if (allPaths.includes('worca-cc-marketplace.json')) {
     let mp = null;
     try {
-      mp = parseMarketplaceManifest(JSON.parse(await gitDir(cache, ['show', `${sha}:worca-cc-marketplace.json`], exec)));
+      mp = parseMarketplaceManifest(JSON.parse(await readText('worca-cc-marketplace.json')));
     } catch {
       mp = { ok: false, errors: ['invalid JSON'] };
     }
@@ -175,7 +198,7 @@ export async function addPluginRepo(repoUrl, { exec = defaultExec, ref = null } 
     const subdir = p === 'worca-cc-plugin.json' ? '' : p.slice(0, -'/worca-cc-plugin.json'.length);
     let raw;
     try {
-      raw = JSON.parse(await gitDir(cache, ['show', `${sha}:${p}`], exec));
+      raw = JSON.parse(await readText(p));
     } catch {
       warnings.push(`${p}: invalid JSON — skipped`);
       continue;
@@ -192,7 +215,26 @@ export async function addPluginRepo(repoUrl, { exec = defaultExec, ref = null } 
     seenNames.add(res.manifest.name);
     discovered.push({ name: res.manifest.name, subdir, manifest: res.manifest });
   }
-  return { repoUrl, sha, discovered, warnings, marketplace };
+  return { discovered, warnings, marketplace };
+}
+
+/**
+ * `worca plugin add`: clone/refresh the bare cache, then discover plugins in the
+ * HEAD tree (or branch `ref`'s) — see discoverAtCommit for the rules. Without git (P6) the
+ * repo is read over HTTPS instead (git-free/plugin-repo.mjs).
+ * @returns {{repoUrl:string, sha:string, discovered:Array<{name,subdir,manifest}>,
+ *   warnings:string[], marketplace:{name:string, description:string}|null}}
+ */
+export async function addPluginRepo(repoUrl, { exec = defaultExec, ref = null } = {}) {
+  // `owner/repo` shorthand -> GitHub URL (spec §4.3) — only when it is not a
+  // real local path (local fixture repos in tests stay untouched).
+  if (/^[\w.-]+\/[\w.-]+$/.test(repoUrl) && !existsSync(repoUrl)) {
+    repoUrl = `https://github.com/${repoUrl}`;
+  }
+  if (!gitAvailable()) return (await httpsRepo()).addPluginRepoHttps(repoUrl, { ref });
+  const cache = await ensureCache(repoUrl, exec);
+  const sha = await tipSha(cache, ref, exec);
+  return { repoUrl, ...(await discoverAtCommit(cache, sha, { exec })) };
 }
 
 /** `<sourceId>.<key>` for every secret configSchema field of a manifest. */
@@ -211,7 +253,7 @@ function manifestModels(raw) {
 
 /** Honoured MCP servers of a RAW manifest under its own negotiated API ({} on
  *  any failure, and below API 5 — normalizeManifest strips the block). */
-function manifestMcp(raw) {
+export function manifestMcp(raw) {
   const r = raw ? normalizeManifest(raw) : null;
   return r && r.ok ? r.manifest.mcpServers : {};
 }
@@ -258,10 +300,8 @@ async function showManifest(cache, sha, subdir, exec) {
 async function computeManifestDelta(name, cache, entry, pinnedSha, candidateSha, exec) {
   const pin = await showManifest(cache, pinnedSha, entry.subdir, exec);
   const cand = await showManifest(cache, candidateSha, entry.subdir, exec);
-  const pinSecrets = manifestSecretKeys(pin);
-  const candSecrets = manifestSecretKeys(cand);
-  const pinIds = (pin?.taskSources || []).map((s) => s.id);
-  const candIds = (cand?.taskSources || []).map((s) => s.id);
+  // A malformed manifest throws here, before any further git command, as the derivations did inline.
+  assembleManifestDelta({ pin, cand, newAgents: [], lifecycle: {} });
   const scope = entry.subdir ? `${entry.subdir}/agents` : 'agents';
   let newAgents = [];
   try {
@@ -270,14 +310,6 @@ async function computeManifestDelta(name, cache, entry, pinnedSha, candidateSha,
       .filter((l) => l.startsWith('A') && l.endsWith('.meta.json'))
       .map((l) => l.split('\t').pop().split('/').pop().replace(/\.meta\.json$/, ''));
   } catch { newAgents = []; }
-  // Model delta (design §9.4): env changes — a base-URL swap redirects ALL API
-  // traffic for that model — are the red-highlight review inputs.
-  const pinM = manifestModels(pin);
-  const candM = manifestModels(cand);
-  const byLc = (list) => new Map(list.map((m) => [m.id.toLowerCase(), m]));
-  const pinModels = byLc(pinM.models);
-  const candModels = byLc(candM.models);
-  const envOf = (m) => JSON.stringify(m.env ?? {});
   // Skills (skills registry §5): both sides' skills/ exported to a scratch dir, compared, then removed.
   const scratch = await mkdtemp(join(tmpdir(), 'worca-cc-skills-'));
   let lifecycle;
@@ -292,6 +324,24 @@ async function computeManifestDelta(name, cache, entry, pinnedSha, candidateSha,
       .catch(() => (process.platform === 'win32' ? null : exec('rm', ['-rf', scratch])))
       .catch(() => {});
   }
+  return assembleManifestDelta({ pin, cand, newAgents, lifecycle });
+}
+
+/** The update-review manifest delta from both sides' RAW manifests, the added agents and the MCP/skills preview
+ *  (pure; shared with the HTTPS preview, P6). */
+export function assembleManifestDelta({ pin, cand, newAgents, lifecycle }) {
+  const pinSecrets = manifestSecretKeys(pin);
+  const candSecrets = manifestSecretKeys(cand);
+  const pinIds = (pin?.taskSources || []).map((s) => s.id);
+  const candIds = (cand?.taskSources || []).map((s) => s.id);
+  // Model delta (design §9.4): env changes — a base-URL swap redirects ALL API
+  // traffic for that model — are the red-highlight review inputs.
+  const pinM = manifestModels(pin);
+  const candM = manifestModels(cand);
+  const byLc = (list) => new Map(list.map((m) => [m.id.toLowerCase(), m]));
+  const pinModels = byLc(pinM.models);
+  const candModels = byLc(candM.models);
+  const envOf = (m) => JSON.stringify(m.env ?? {});
   return {
     newSecrets: candSecrets.filter((k) => !pinSecrets.includes(k)),
     newTaskSources: candIds.filter((id) => !pinIds.includes(id)),
@@ -318,6 +368,7 @@ async function computeManifestDelta(name, cache, entry, pinnedSha, candidateSha,
 export async function fetchCandidate(name, { exec = defaultExec, fullDiff = false } = {}) {
   const entry = readPluginsLock()[name];
   if (!entry || !entry.repo) throw new Error(`plugin "${name}" is not installed from a repo`);
+  if (!gitAvailable()) return (await httpsRepo()).fetchCandidateHttps(name, { fullDiff });
   const cache = await ensureCache(entry.repo, exec);
   const candidateSha = await tipSha(cache, entry.ref, exec);
   const pinnedSha = entry.pinnedSha;
@@ -357,6 +408,7 @@ export async function exportVersion(name, sha, { exec = defaultExec, repoUrl, su
   const repo = repoUrl ?? entry.repo;
   const sub = subdir ?? entry.subdir ?? '';
   if (!repo) throw new Error(`plugin "${name}": no repo known (pass { repoUrl } on first install)`);
+  if (!gitAvailable()) return (await httpsRepo()).exportVersionHttps(name, sha, { repoUrl: repo, subdir: sub });
   const cache = existsSync(repoCacheDir(repo)) ? repoCacheDir(repo) : await ensureCache(repo, exec);
   const versionDir = join(pluginDir(name), 'versions', sha.slice(0, 7));
   rmSync(versionDir, { recursive: true, force: true }); // re-export = fresh dir

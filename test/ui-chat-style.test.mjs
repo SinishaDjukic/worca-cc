@@ -45,15 +45,16 @@ test('home vs thread: home hides the transcript and the dock (and New chat), a t
   assert.equal(ruleBody('.chat-page[data-view="thread"] .chat-home'), 'display:none;');
   assert.match(bare, /\.chat-page\[data-view="home"\] \.ask-transcript,\.chat-page\[data-view="home"\] \.chat-dock\{display:none;\}/);
   assert.equal(ruleBody('.chat-page[data-view="home"] .chat-head [data-ask-new-btn]'), 'visibility:hidden;');
-  // #731: half the old 16vh/160px top gap, so the tiles and tabs fit on the first screen at 1440×900.
-  assert.match(ruleBody('.chat-home'), /;padding:clamp\(24px,8vh,80px\) 16px 32px;$/);
+  // #731 halved the old 16vh/160px top gap and the redesign halved it again (4vh/40px); that sat the heading too tight
+  // under the top bar, so it is back to 10vh, capped at 96px.
+  assert.match(ruleBody('.chat-home'), /;padding:clamp\(32px,10vh,96px\) 16px 32px;$/);
 });
 
 test('composer popovers ride the composer: upward in the dock, downward on home, never 70% of the composer\'s height', () => {
   assert.equal(ruleBody('.chat-page .ask-composer'), '--ask-box-top:calc(100% - 10px);');
   assert.equal(ruleBody('.chat-page .ask-composer > .ask-pop'), 'max-height:min(420px,calc(100vh - 240px));');
-  // The home popover opens downward: its room is the window minus the .chat-home top padding (8vh) and the chrome above.
-  assert.equal(ruleBody('.chat-page[data-view="home"] .ask-composer > .ask-pop'), 'bottom:auto;top:calc(100% + 6px);max-height:min(420px,calc(92vh - 230px));');
+  // The home popover opens downward: its room is the window minus the .chat-home top padding (10vh) and the chrome above.
+  assert.equal(ruleBody('.chat-page[data-view="home"] .ask-composer > .ask-pop'), 'bottom:auto;top:calc(100% + 6px);max-height:min(420px,calc(90vh - 230px));');
   assert.equal(ruleBody('.chat-hero-slot .ask-composer'), 'padding:0;--ask-col-inset:0px;', 'home popovers are flush with the box, like the dock\'s');
 });
 
@@ -82,12 +83,12 @@ test('the P1 section uses tokens only: no colour literal, no coloured left-edge 
 });
 
 test('the Chat row dot rides the rail corner; the logo links show a focus ring', () => {
-  assert.equal(ruleBody('.nav-count.nav-dot'), 'width:8px;height:8px;padding:0;border-radius:50%;background:var(--violet);');
+  assert.equal(ruleBody('.nav-count.nav-dot'), 'width:8px;height:8px;padding:0;border-radius:50%;background:var(--slate);');
   assert.match(ruleBody('.brand a.logo-mark:focus-visible'), /outline:2px solid var\(--ink\)/);
 });
 
 test('the composer buttons keep their size, the run panel slot hides, cards measure the transcript, the empty lead row takes no room, the rail dot', () => {
-  assert.equal(ruleBody('.chat-page .ask-composer-row > :is(.ask-icon-btn,.ask-meter,.ask-model-btn,.ask-voice)'), 'flex:none;', 'Send never shrinks out of the box (v2)');
+  assert.equal(ruleBody('.chat-page .ask-composer-row > :is(.btn,.ask-meter,.ask-model-btn,.ask-voice):not(.ask-scope-btn)'), 'flex:none;', 'Send never shrinks out of the box (v2); the scope button is a .btn too and must stay shrinkable');
   assert.equal(ruleBody('.chat-panel[hidden]'), 'display:none;', '.chat-panel{display:flex} would beat [hidden]: an empty bordered slot');
   assert.equal(ruleBody('.chat-convo .ask-transcript'), 'container-type:inline-size;isolation:isolate;padding-bottom:calc(var(--chat-dock-h,120px) + 8px);', '100cqi = the transcript width; the floating dock\'s height is its bottom clearance');
   assert.match(ruleBody('.chat-convo .ask-msg > :is(.ask-card,.ask-card-stub)'), /^width:min\(var\(--chat-card-max\),100cqi\);/);
@@ -95,18 +96,19 @@ test('the composer buttons keep their size, the run panel slot hides, cards meas
   assert.equal(ruleBody('.sidebar.collapsed .nav-count.nav-dot'), 'top:6px;right:8px;');
 });
 
-test('the mockup look (2026-10-10): the composer is frosted glass the transcript scrolls under, the run card a white card with a soft shadow, History toggles like the menu', () => {
-  assert.equal(ruleBody('.chat-page .ask-composer-box'), 'border-color:var(--glass-line);border-radius:22px;background:var(--glass);-webkit-backdrop-filter:blur(18px) saturate(1.5);backdrop-filter:blur(18px) saturate(1.5);box-shadow:var(--shadow-glass);');
-  assert.equal(ruleBody('.chat-hero-slot .ask-composer-box'), 'border-radius:24px;');
+test('the mockup look (2026-10-10, corners and shadows per the runs redesign): the composer is frosted glass the transcript scrolls under, the run card a white bordered card with no resting shadow, History toggles like the menu', () => {
+  // Review C (decided 2026-10-19): the composer shell is the one 12px (--r-lg) corner; the run card a card (--r-card, 8px).
+  assert.equal(ruleBody('.chat-page .ask-composer-box'), 'border-color:var(--glass-line);border-radius:var(--r-lg);background:var(--glass);-webkit-backdrop-filter:blur(18px) saturate(1.5);backdrop-filter:blur(18px) saturate(1.5);');
+  assert.equal(ruleBody('.chat-hero-slot .ask-composer-box'), 'border-radius:var(--r-lg);');
   assert.equal(ruleBody('.chat-page .ask-composer-box:has(.guide-target)'), '-webkit-backdrop-filter:none;backdrop-filter:none;', 'a Getting started ring escapes the blur\'s stacking context');
   assert.equal(ruleBody('.chat-dock > .ask-composer'), 'pointer-events:none;');
   assert.equal(ruleBody('.chat-dock > .ask-jump,.chat-dock > .ask-composer > *'), 'pointer-events:auto;', 'only the composer\'s own parts take the pointer');
   assert.match(ruleBody('.chat-dock::before'), /^content:"";position:absolute;left:0;right:0;bottom:0;height:56px;/);
-  assert.equal(ruleBody('.ask-card.chat-rc'), 'gap:0;border-radius:16px;box-shadow:var(--shadow-card);');
-  assert.match(ruleBody(':root'), /--shadow-card:0 1px 2px light-dark\(/);
-  assert.match(ruleBody(':root'), /--shadow-glass:0 2px 6px light-dark\(/);
-  assert.equal(ruleBody('.chat-head-btn.chat-history-toggle'), 'width:32px;height:32px;border-radius:8px;', 'the menu toggle\'s square (.side-toggle)');
-  assert.equal(ruleBody('.chat-history-toggle:hover,.chat-history-toggle[aria-pressed="true"]'), 'background:var(--field);color:var(--ink);', 'open: the wash marks the state');
+  assert.equal(ruleBody('.ask-card.chat-rc'), 'gap:0;border-radius:var(--r-card);');
+  assert.doesNotMatch(css, /--shadow-card\b/, 'the resting card shadow token is gone');
+  assert.doesNotMatch(css, /--shadow-glass\b/, 'and so is the composer\'s');
+  assert.equal(ruleBody('.chat-head-btn.chat-history-toggle'), 'width:32px;height:32px;border-radius:var(--r-sm);', 'the menu toggle\'s square (.side-toggle)');
+  assert.equal(ruleBody('.chat-history-toggle[aria-pressed="true"]'), 'background:var(--field);color:var(--ink);', 'open: the wash marks the state');
   assert.doesNotMatch(bare, /chat-history-toggle-(line|fill)/, 'the panel glyph\'s open/closed parts are gone');
 });
 
@@ -120,10 +122,9 @@ test('History: a 264px push column that turns into an overlay with a scrim below
   assert.equal(ruleBody('.ask-threads-list'), 'display:flex;flex-direction:column;gap:1px;');
 });
 
-test('New chat is a labelled ghost button (.ask-icon-btn widened): in the head, and leading the History column at the rows\' inset and radius', () => {
-  assert.equal(ruleBody('.ask-icon-btn.chat-new-btn'), 'width:auto;gap:6px;padding:0 10px 0 8px;font:500 12.5px/1 var(--sans);white-space:nowrap;');
-  assert.equal(ruleBody('.chat-history-new.chat-new-btn'), 'flex:none;justify-content:flex-start;height:34px;margin:6px 6px 0;padding:0 10px;border-radius:10px;');
-  assert.ok(css.indexOf('\n.chat-history-new.chat-new-btn{') > css.indexOf('\n.ask-icon-btn.chat-new-btn{'), 'the column\'s padding wins: same weight, later');
+test('New chat is a labelled small quiet button (.btn.btn-sm): in the head, and leading the History column at the rows\' inset', () => {
+  assert.equal(ruleBody('.ask-icon-btn.chat-new-btn'), null, 'no skin of its own');
+  assert.equal(ruleBody('.chat-history-new.chat-new-btn'), 'flex:none;justify-content:flex-start;margin:6px 6px 0;', 'layout only: .btn .btn-sm sizes it');
 });
 
 test('the History list scrolls, the open chat\'s row is marked, the trash waits for hover', () => {
@@ -135,4 +136,12 @@ test('the History list scrolls, the open chat\'s row is marked, the trash waits 
 
 test('a focused trash shows without :focus-visible too (a mouse Cancel puts the focus back on it)', () => {
   assert.match(css, /,\.chat-history \.ask-thread-trash:focus\{opacity:1;\}/);
+});
+
+test('the run proposal card fits the 760px text column and its kicker is not monospace (F-27)', () => {
+  assert.match(ruleBody('.chat-page'), /--chat-text-max:760px;/);
+  const width = ruleBody('.chat-convo .ask-msg > .ask-card.ask-rp');
+  assert.match(width, /^width:min\(var\(--chat-text-max\),100cqi\);margin-left:calc\(\(100% - min\(var\(--chat-text-max\),100cqi\)\) \/ 2\);/);
+  assert.doesNotMatch(width, /chat-card-max/);
+  for (const sel of ['.ask-rp-kicker', '.ask-rp-from', '.ask-rp-summary']) assert.doesNotMatch(ruleBody(sel), /var\(--mono\)/, sel);
 });

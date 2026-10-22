@@ -178,3 +178,39 @@ test('the switch row is a flex row: the branch field\'s block labels must not co
   assert.match(css, /\.branches-new > label\{display:block;/, 'the rule this guards against is still there');
   assert.match(css, /\.branches-new > label\.same-src-row\{display:flex;/);
 });
+
+// ── Shaper s5: what "Ask for changes" starts, per landing row (pure: no app boot) ──────────────────────────────────
+const { changesCard } = await import('../src/core/shape/changes.mjs');
+const { landingFor } = await import('../src/shared/shape/landing.mjs');
+const S5_RUN = { pipelineId: 'aaaa0002', title: 'Add a chart', label: 'Run 2', projectDir: '/p', finished: true,
+  branch: { source: 'dev', feature: 'worca/charts-2' }, pr: { number: 41, url: 'https://x/pull/41', state: 'OPEN' }, rounds: 1 };
+const s5Slice = (index, state, over = {}) => ({ index, state, pipelineId: `p${index}`, title: `Part ${index}`,
+  branch: { source: 'dev', feature: `worca/c-${index}` }, pr: null, rounds: 1, ...over });
+const s5Feature = (slices, over = {}) => ({ feature: { id: 'f1', title: 'Charts', base: 'dev', projectDir: '/p', shipPr: null, slices, ...over } });
+
+test('s5: a round of a run goes on its own branch with sameAsSource and shows the same PR', () => {
+  const c = changesCard({ text: 'make it blue', facts: { run: S5_RUN } });
+  assert.deepEqual([c.run.sourceBranch, c.run.sameAsSource, c.landing.target.pr.number], ['worca/charts-2', true, 41]);
+});
+
+test('s5: a round of a done feature goes on the last run\'s branch with sameAsSource and its PR', () => {
+  const pr = { number: 52, url: 'https://x/pull/52', state: 'OPEN' };
+  const c = changesCard({ text: 'x', facts: s5Feature([s5Slice(1, 'done'), s5Slice(2, 'done'), s5Slice(3, 'done', { pr })]) });
+  assert.deepEqual([c.run.sourceBranch, c.run.sameAsSource, c.landing.target.pr.number], ['worca/c-3', true, 52]);
+});
+
+test('s5: into the next run\'s plan sends no run body', () => {
+  const c = changesCard({ text: 'x', facts: s5Feature([s5Slice(1, 'done'), s5Slice(2, 'running'), s5Slice(3, 'planned')]) });
+  assert.equal(c.landing.kind, 'next-plan');
+  assert.equal('run' in c, false);
+});
+
+test('s5: a merged feature gets Run N+1 from dev in the same feature: no sameAsSource, no round marker', () => {
+  const merged = { number: 52, url: 'https://x/pull/52', state: 'MERGED' };
+  const facts = s5Feature([s5Slice(1, 'done'), s5Slice(2, 'done', { pr: merged })], { shipPr: merged });
+  const c = changesCard({ text: 'x', facts });
+  assert.deepEqual(c.landing.target, landingFor(facts).target);
+  assert.deepEqual([c.landing.kind, c.landing.target.sourceBranch, c.landing.target.featureId, c.landing.target.index], ['follow-up', 'dev', 'f1', 3]);
+  assert.equal('roundOf' in c.landing.target, false);
+  assert.equal('run' in c, false, 'appended to the feature as a ticket, never a sameAsSource start');
+});

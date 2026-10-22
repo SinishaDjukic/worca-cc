@@ -1,5 +1,5 @@
 // test/ask-sources.test.mjs
-// Plugin task sources in Ask Worca (docs/scheduled-runs.md "Ask Worca", source-spec.mjs): the
+// Plugin task sources in Ask Worca (docs/scheduled-runs.md "Chat", source-spec.mjs): the
 // propose_run `source` is validated against what is installed (inputs, profiles, bindings), the
 // parent looks the task up once, and list_task_sources / find_tasks / get_task read through the
 // plugin shim with the same two ops the New pipeline pane may drive.

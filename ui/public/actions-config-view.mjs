@@ -24,7 +24,7 @@ function h(doc, tag, cls, text) {
   if (text != null) n.textContent = text;
   return n;
 }
-function btn(doc, cls, text, primary = false) { const b = h(doc, 'button', `${primary ? 'btn btn-primary btn-mini' : 'btn-ghost btn-mini'} ${cls}`, text); b.type = 'button'; return b; }
+function btn(doc, cls, text, primary = false) { const b = h(doc, 'button', `${primary ? 'btn btn-primary btn-sm' : 'btn btn-sm'} ${cls}`, text); b.type = 'button'; return b; }
 function input(doc, cls, value, placeholder = '') {
   const i = h(doc, 'input', `input ${cls}`);
   i.type = 'text';

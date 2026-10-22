@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
-import { _resetForTests as closeDbForTests } from '../src/core/db.mjs';
+import { _resetForTests as closeDbForTests, getDb } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
 
 useTempHome(after);                       // WORCA_HOME is a temp dir from here on; db.mjs opens lazily
@@ -46,6 +46,13 @@ test('GET /api/ask/runs/:id: a finished pipeline by id alone, 404 for an unknown
   assert.equal(body.live, null);
   assert.equal((await fetch(`${base}/api/ask/runs/00000000`)).status, 404);
   assert.equal((await fetch(`${base}/api/ask/runs/x`)).status, 400, 'neither 8 hex nor a run-id shape');
+});
+
+test('GET /api/ask/runs/:id: a soft-deleted pipeline answers 404, so the chat card reads "This run was deleted"', async () => {
+  const dir = await makeProjectDir();
+  const { id } = await seedPipeline(dir, { title: 'Gone', status: 'done', steps: [] });
+  getDb().prepare('UPDATE pipelines SET deleted_at = ? WHERE id = ?').run(new Date().toISOString(), id);
+  assert.equal((await fetch(`${base}/api/ask/runs/${id}`)).status, 404);
 });
 
 test('GET /api/ask/runs/:id: a live runId or pipeline id resolves through the runs Map and reports the live entry', async () => {

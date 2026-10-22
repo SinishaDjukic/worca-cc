@@ -17,6 +17,9 @@ import { githubEnv } from '../github-credentials.mjs';
 import { hasTokenShape } from '../mcp-secrets.mjs';
 import { SKILL_LIMITS, SKILL_LINKS_AND_FOLDERS_MAX, inspectSkillDir, isValidSkillFolderName, readSkillMd, skillFileDigests, skillNameProblem } from './inspect.mjs';
 import { SkillLibraryError, stagesDir, stageDirOf, skillsDir, readSkillLibrary } from './library.mjs';
+import { gitAvailable } from '../git-available.mjs';
+import { isRepoFolder, pickSkillFolder, skillTreeProblems } from './git-tree.mjs';
+import { fetchGitHttps } from '../git-free/skills.mjs';
 
 const fail = (status, message, extra) => { throw new SkillLibraryError(status, message, extra); };
 
@@ -150,10 +153,6 @@ function copyTree(src, dest) {
 // a credential sits (its user, query or fragment). Fetches are shallow, with the plugin installs' posture.
 const GIT_URL_RE = /^(?:(?:https?|ssh|git|file):\/\/|(?!-)[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:)/;
 const GIT_REF_RE = /^(?!-)(?!.*\.\.)[A-Za-z0-9._/-]{1,200}$/;
-// A repository folder: '/'-joined segments, none empty, `.` or `..`, none starting with `-` (an option) or `:`
-// (pathspec magic), none holding a glob character, a backslash or a control character. Spaces and letters are fine.
-const PATH_SEGMENT_RE = /^(?![-:])[^\x00-\x1f\x7f*?[\]\\]+$/;
-const isRepoFolder = (p) => p.split('/').every((seg) => PATH_SEGMENT_RE.test(seg) && seg !== '.' && seg !== '..');
 const CREDENTIAL_IN_URL = 'git URL: a user name, query, password or token in the URL would be stored with the skill — use a credential helper or the GitHub App';
 const GIT_URL_SHAPE = 'git URL: use https://…, ssh://…, git@host:path or file://…';
 const GIT_URL_ESCAPED = 'git URL: no %-escape in the user name or host — git decodes it, so the URL would reach another host or carry a password';
@@ -239,18 +238,10 @@ async function gitFetch({ url, ref, subdir, dest, scratch }) {
   writeFileSync(join(scratch, 'info', 'attributes'), '* -export-subst -export-ignore -ident -text -eol -filter -working-tree-encoding\n');
   await git(['--git-dir', scratch, 'fetch', '--quiet', '--depth', '1', '--no-tags', '--', url, ref || 'HEAD']);
   const sha = (await git(['--git-dir', scratch, 'rev-parse', '--verify', 'FETCH_HEAD^{commit}'])).stdout.trim();
-  const candidates = (await git(['--git-dir', scratch, 'ls-tree', '-r', '-z', '--name-only', sha])).stdout.split('\0')
-    .filter((p) => p === 'SKILL.md' || p.endsWith('/SKILL.md'))
-    .map((p) => p.slice(0, -'SKILL.md'.length).replace(/\/$/, ''))
-    .sort();
-  const offered = candidates.filter((p) => p === '' || isRepoFolder(p));
-  const pick = subdir ?? (offered.includes('') ? '' : candidates.length === 1 && offered.length === 1 ? offered[0] : null);
-  if (pick === null || !candidates.includes(pick)) return { sha, subdir: null, candidates: offered };
-  // The limits before anything is extracted, from `<mode> <type> <object> <size>\t<path>` per entry of the folder: its
-  // blobs (links included) are its files; its links, its submodules (archived as empty folders) and the folders above
-  // every entry count toward SKILL_LINKS_AND_FOLDERS_MAX, as the walk counts them — 300 files can each sit 400 folders
-  // deep, and one shared tree object keeps such a repository tiny. ls-tree lists a folder's entries together, so a
-  // folder is new where an entry's folder path leaves the previous entry's. Paths are compared as bytes (latin1, one
+  const { offered, pick } = pickSkillFolder((await git(['--git-dir', scratch, 'ls-tree', '-r', '-z', '--name-only', sha])).stdout.split('\0'), subdir);
+  if (pick === null) return { sha, subdir: null, candidates: offered };
+  // The limits before anything is extracted (git-tree.mjs skillTreeProblems), from `<mode> <type> <object> <size>\t<path>`
+  // per entry of the folder. Paths are compared as bytes (latin1, one
   // character per byte): decoded as UTF-8, distinct names that are not UTF-8 would all read U+FFFD and count once.
   // Every entry must lie under the pick's own bytes, whatever folder git matched the path to, or nothing is extracted.
   const prefix = pick ? `${Buffer.from(pick).toString('latin1')}/` : '';
@@ -261,23 +252,7 @@ async function gitFetch({ url, ref, subdir, dest, scratch }) {
       const [mode, type, , size] = row.slice(0, tab).trim().split(/\s+/);
       return { mode, type, size: Number(size), path: row.slice(tab + 1 + prefix.length) };
     });
-  const blobs = rows.filter((r) => r.type === 'blob');
-  const bytes = blobs.reduce((n, r) => n + r.size, 0);
-  let others = 0;
-  let prev = '';
-  for (const r of rows) {
-    if (r.mode === '120000') others++;
-    const dir = r.type === 'commit' ? `${r.path}/` : r.path.slice(0, r.path.lastIndexOf('/') + 1);
-    let same = 0;
-    for (let i = 0; i < dir.length && dir[i] === prev[i]; i++) if (dir[i] === '/') same = i + 1;
-    for (let i = same; i < dir.length; i++) if (dir[i] === '/') others++;
-    prev = dir;
-  }
-  const problems = [
-    ...(blobs.length > SKILL_LIMITS.files ? [`more than ${SKILL_LIMITS.files} files`] : []),
-    ...(others > SKILL_LINKS_AND_FOLDERS_MAX ? [`more than ${SKILL_LINKS_AND_FOLDERS_MAX} links and folders`] : []),
-    ...(bytes > SKILL_LIMITS.totalBytes ? ['larger than 8 MB in total'] : []),
-  ];
+  const problems = skillTreeProblems(rows);
   if (problems.length) {
     fail(400, `too large for a skill (at most ${SKILL_LIMITS.files} files, ${SKILL_LINKS_AND_FOLDERS_MAX} links and folders and 8 MB): ${problems.join('; ')}`, { problems });
   }
@@ -287,6 +262,9 @@ async function gitFetch({ url, ref, subdir, dest, scratch }) {
   await execFileP('tar', ['-xf', 'export.tar', '-C', dest.replace(/\\/g, '/'), ...strip], { cwd: scratch, timeout: 120_000, killSignal: 'SIGKILL' });
   return { sha, subdir: pick, candidates: offered };
 }
+
+/** The fetchGit seam's default: git when it is installed, else GitHub over HTTPS (git-free/skills.mjs; other hosts 409). */
+const defaultFetchGit = (a) => (gitAvailable() ? gitFetch(a) : fetchGitHttps(a));
 
 const lastLine = (e) => String(e?.stderr || e?.message || e).trim().split('\n').filter(Boolean).pop()?.slice(0, 300) ?? '';
 
@@ -377,9 +355,9 @@ async function stage(source, { fetchGit, update = null }) {
  * frontmatter name when valid, else the folder's); the caller commits with commitImport(dir, name) or discards.
  * source: { kind:'dir', path } (absolute) | { kind:'paste', name, content } | { kind:'home', name } (a folder of
  * ~/.claude/skills) | { kind:'git', url, ref?, subdir? }. 400 bad source / too large, 404 not found.
- * `fetchGit({ url, ref, subdir, dest, scratch }) → { sha, subdir, candidates }` is the git seam (default: git).
+ * `fetchGit({ url, ref, subdir, dest, scratch }) → { sha, subdir, candidates }` is the git seam (default: git, or GitHub over HTTPS without it).
  */
-export async function stageImport(source, { fetchGit = gitFetch } = {}) {
+export async function stageImport(source, { fetchGit = defaultFetchGit } = {}) {
   return stage(source, { fetchGit });
 }
 
@@ -404,7 +382,7 @@ export function listHomeSkills() {
  * against the library copy → { stage, added, removed, changed, inspection } (paths, sorted). Nothing changes until
  * applyUpdate(name, stageDirOf(stage)). 400 pasted (no origin) / bad name, 404 unknown, 409 a newer or damaged library.
  */
-export async function updatePreview(name, { fetchGit = gitFetch } = {}) {
+export async function updatePreview(name, { fetchGit = defaultFetchGit } = {}) {
   const nameProblem = skillNameProblem(name);
   if (nameProblem) fail(400, nameProblem);
   const lib = readSkillLibrary();

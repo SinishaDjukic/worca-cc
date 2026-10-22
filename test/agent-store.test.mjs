@@ -166,9 +166,10 @@ test('a complete v2 PUT CLEARS the optional capability surface', async () => {
   // it is off, and the omitted key would keep its stored value forever.
   await updateAgent('docsWriter', { meta: { ...META,
     sideEffect: 'code', placeable: false, scope: 'workspace-only',
-    promptHints: 'be terse', requiresSkills: ['mock-skill'], domain: 'coding' } });
+    promptHints: 'be terse', requiresSkills: ['mock-skill'], domain: 'coding', progressStage: 'review' } });
   const on = await readAgent('docsWriter');
   assert.equal(on.meta.sideEffect, 'code');
+  assert.equal(on.meta.progressStage, 'review');
   assert.equal(on.meta.placeable, false);
   assert.equal(on.meta.scope, 'workspace-only');
   // Now save the SAME agent with all of them off (i.e. absent) — exactly what
@@ -176,6 +177,7 @@ test('a complete v2 PUT CLEARS the optional capability surface', async () => {
   const off = await updateAgent('docsWriter', { meta: { ...META } });
   assert.equal(off.meta.sideEffect, undefined, 'sideEffect can be turned OFF');
   assert.equal(off.meta.placeable, undefined, 'placeable:false can be undone');
+  assert.equal(off.meta.progressStage, undefined, 'progressStage can be cleared');
   assert.equal(off.meta.scope, 'project', 'scope falls back to its default');
   assert.equal(off.meta.promptHints, '');
   assert.deepEqual(off.meta.requiresSkills, []);

@@ -1,0 +1,73 @@
+{
+  "key": "promoRender",
+  "metaVersion": 2,
+  "displayName": "Promo: render",
+  "description": "Renders the reviewed film to video/promo-1080p60.mp4 with a headless Chrome or Edge and ffmpeg, mixing the narration, music and sound effects first (the mix's voice check must pass), then writes English captions and the YouTube title, description and chapters. A missing Chrome or ffmpeg is a blocking finding with the install hint. No network; runs with worca's privileges.",
+  "domain": "video",
+  "color": "red",
+  "icon": "<rect x=\"3.5\" y=\"5.5\" width=\"17\" height=\"13\" rx=\"2.5\"/><path d=\"M10.5 9.5v5l4.5-2.5z\" stroke-linejoin=\"round\"/>",
+  "order": 72,
+  "runtime": "node",
+  "file": "promo-render.mjs",
+  "timeoutMs": 7200000,
+  "inputs": [
+    {
+      "id": "film",
+      "type": "md"
+    },
+    {
+      "id": "timeline",
+      "type": "json",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "id": "video",
+      "type": "md",
+      "when": "always",
+      "filename": "promo-render-cycle{cycle}.md",
+      "artifactKind": "promo-video",
+      "extraFiles": [
+        {
+          "kind": "video",
+          "glob": "video/*.mp4"
+        },
+        {
+          "kind": "video",
+          "glob": "video/*.srt"
+        },
+        {
+          "kind": "video",
+          "glob": "video/youtube.md"
+        }
+      ]
+    },
+    {
+      "id": "findings",
+      "type": "md",
+      "when": "blocking",
+      "filename": "promo-render-cycle{cycle}.md",
+      "artifactKind": "promo-video"
+    },
+    {
+      "id": "pass",
+      "type": "void",
+      "when": "clean"
+    }
+  ],
+  "verdict": {
+    "filename": "promo-render-cycle{cycle}.json"
+  },
+  "mock": {
+    "summary": "video rendered (mock).",
+    "verdict": {
+      "issues": []
+    },
+    "outputs": {
+      "video": {
+        "text": "# Promo video \u2014 mock\n\nNo blocking findings.\n"
+      }
+    }
+  }
+}

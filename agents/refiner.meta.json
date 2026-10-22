@@ -1,6 +1,7 @@
 {
   "key": "refiner",
   "metaVersion": 2,
+  "progressStage": "plan",
   "mockRole": "refiner",
   "promptHints": "Read the current plan, critically review it INCLUDING its code snippets, then write an improved version and a machine-readable review.\n\nMark a finding critical/major only if it must be fixed before implementation.",
   "wantsRequest": true,
@@ -9,7 +10,9 @@
   "verdict": { "filename": "refine-review-cycle{cycle}.json" },
   "inputs": [
     { "id": "plan", "type": "md" },
-    { "id": "revise", "type": "md", "required": false, "loop": true }
+    { "id": "revise", "type": "md", "required": false, "loop": true },
+    { "id": "findings", "type": "md", "required": false,
+      "directive": "## Role reviews\n\nIndependent role reviewers checked the plan bound to your `plan` input; the findings file below lists what each role found. Write the next plan version from that plan, fixing every critical and major finding and every unmet checklist item; take minor findings and suggestions where they help. In your review JSON add `\"addressed\": [\"ux-1-1\", …]` listing the finding ids you fixed. Report only problems you could not fix as issues." }
   ],
   "outputs": [
     { "id": "plan", "type": "md", "when": "clean", "filename": "{base}{vsuffix}.md", "store": "project" },

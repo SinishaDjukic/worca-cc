@@ -1,6 +1,6 @@
 // test/ui-running-card.test.mjs — a live run's ROW in the Runs list: a link built by
-// ui/public/runs-list.mjs holding a status icon, the title and a one-line subline
-// ("<word> · <step or start time>"), and a click that opens the run in the pane
+// ui/public/runs-list.mjs beside the one status dot (status-dot.mjs, from the run model), the title and its one
+// status line, and a click that opens the run in the pane
 // (#running/<id>). The run card it replaced (header avatar, meta line, branch chip,
 // Pause/Resume/Stop cluster, waiting strip) is gone (D14): Pause/Stop/Resume live in
 // the pane's bar (test/ui-running-detail.test.mjs, test/ui-running-stop-modal.test.mjs,
@@ -108,13 +108,12 @@ function helloRunning(ctx, extra = {}, more = []) {
   });
 }
 
-// The run's row in its project group (a Needs-you run is repeated above it: rule 6).
+// The run's row: each run is listed once (runs redesign §3.1).
 const rowOf = (ctx, runId = RUN_ID) =>
-  ctx.window.document.querySelector(`#runs-list .runs-row[data-slot="group"][data-run-id="${runId}"]`);
-const subOf = (row) => row.querySelector('.runs-row-sub').textContent;
-const wordOf = (row) => subOf(row).split(' · ')[0];
+  ctx.window.document.querySelector(`#runs-list a.runs-row[data-run-id="${runId}"]`);
+const dotOf = (row) => row.closest('.runs-item').querySelector(':scope > .runs-pick .status-dot');
 
-test('status icon + word per run state', async () => {
+test('the status dot per run state, and Needs you holds the question, the pause and the unread failure', async () => {
   const ctx = await boot();
   const run = (runId, extra) => ({ runId, title: runId, projectDir: '/tmp/p', kind: 'run', startedAt: '09:30:15', ...extra });
   helloRunning(ctx, {}, [
@@ -136,28 +135,27 @@ test('status icon + word per run state', async () => {
   ctx.showRunning();
   await ctx.settle();
 
+  // A running run with no manifest yet reads Starting (run-model.mjs: no step rows, nothing active).
   const cases = [
-    [RUN_ID,          'run',    'Running'],
-    ['s-starting',    'start',  'Starting'],
-    ['s-ask',         'ask',    'Question'],
-    ['s-paused',      'paused', 'Paused'],
-    ['s-pausing',     'paused', 'Pausing'],
-    ['s-interrupted', 'paused', 'Interrupted'],
-    ['s-done',        'done',   'Finished'],
-    ['s-stopped',     'stop',   'Stopped'],
-    ['s-error',       'fail',   'Failed'],
+    [RUN_ID,          'starting'],
+    ['s-starting',    'starting'],
+    ['s-ask',         'needs-you'],
+    ['s-paused',      'paused'],
+    ['s-pausing',     'paused'],
+    ['s-interrupted', 'paused'],
+    ['s-done',        'ready'],
+    ['s-stopped',     'stopped'],
+    ['s-error',       'failed'],
   ];
-  for (const [id, icon, word] of cases) {
+  for (const [id, state] of cases) {
     const row = rowOf(ctx, id);
     assert.ok(row, `${id}: listed`);
-    const ics = [...row.querySelectorAll('.runs-ic')];
-    assert.equal(ics.length, 1, `${id}: exactly one icon`);
-    assert.ok(ics[0].classList.contains(`runs-ic-${icon}`), `${id}: icon is ${icon}`);
-    assert.equal(row.dataset.icon, icon);
-    assert.equal(wordOf(row), word, `${id}: word`);
+    assert.equal(row.closest('.runs-item').querySelectorAll(':scope > .runs-pick .status-dot').length, 1, `${id}: exactly one dot`);
+    assert.equal(dotOf(row).dataset.state, state, `${id}: ${state}`);
+    assert.equal(row.dataset.state, state);
   }
   // Needs you (D5): the question, the pause and the unread failure; not pausing/interrupted.
-  const needs = [...ctx.window.document.querySelectorAll('#runs-list .runs-needs .runs-row')].map((a) => a.dataset.runId);
+  const needs = [...ctx.window.document.querySelectorAll('#runs-list .runs-sec[data-section="needs"] a.runs-row')].map((a) => a.dataset.runId);
   assert.deepEqual(needs, ['s-ask', 's-paused', 's-error']);
 });
 

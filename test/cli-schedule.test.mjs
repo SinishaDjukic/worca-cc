@@ -3,7 +3,7 @@
 // tier); readScheduleFlags' refusals and waitAndRun are pinned in test/cli-verbs-inproc.test.mjs.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,10 +34,10 @@ function seedFiredTicket(title) {
   return getTicket(t.id);
 }
 
-function run(args) {
+function run(args, extraEnv = {}) {
   return new Promise((res) => {
     // HOME too: settings.json (the schedule defaults) resolves under HOME, not WORCA_HOME.
-    const env = { ...process.env, WORCA_MOCK: '1', WORCA_HOME: home, HOME: home, USERPROFILE: home, TZ: 'Europe/Berlin' };
+    const env = { ...process.env, WORCA_MOCK: '1', WORCA_HOME: home, HOME: home, USERPROFILE: home, TZ: 'Europe/Berlin', ...extraEnv };
     const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', CLI, ...args], { env, cwd: proj, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = ''; let stderr = '';
     child.stdout.on('data', (b) => (stdout += b.toString()));
@@ -70,6 +70,14 @@ test('--night is stored on the ticket, so the scheduled run opts into night mode
   assert.equal(req.nightMode, true);
 });
 
+test('--tag is stored normalised on the ticket, so the scheduled run carries it (#718)', async () => {
+  const r = await run(['--project', proj, '--prompt', 'Tagged later', '--at', 'tomorrow 03:00', '--tag', 'Client: Acme']);
+  assert.equal(r.code, 0, r.stderr);
+  const t = listTickets().find((x) => x.title === 'Tagged later');
+  const req = JSON.parse(getDb().prepare('SELECT request FROM scheduled_runs WHERE id = ?').get(t.id).request);
+  assert.deepEqual(req.tags, ['client:acme']);
+});
+
 test('--every freezes a --file prompt and creates a repeating schedule', async () => {
   const r = await run(['--project', proj, '--file', 'task.md', '--every', 'weekdays 02:00', '--overlap', 'queue', '--max-failures', '2', '--until', '2030-01-01']);
   assert.equal(r.code, 0, r.stderr);
@@ -82,6 +90,14 @@ test('--every freezes a --file prompt and creates a repeating schedule', async (
   assert.match(req.promptMarkdown, /Make it friendlier/, 'the file CONTENT is stored, not its path');
   const c = await run(['--project', proj, '--prompt', 'x', '--cron', '30 3 * * 1,4']);
   assert.match(c.stdout, /Every Monday and Thursday at 03:30/);
+});
+
+test('--every with a step and a time range prints the sub-daily sentence', async () => {
+  const r = await run(['--project', proj, '--prompt', 'Poll', '--every', '15m 09:00-18:00 weekdays']);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /Scheduled sch_[0-9a-f]{8} — Every 15 minutes, 09:00–18:00, weekdays \(Europe\/Berlin\)/);
+  const c = await run(['--project', proj, '--prompt', 'x', '--cron', '*/30 9-17 * * 1-5']);
+  assert.match(c.stdout, /Every 30 minutes, 09:00–17:30, weekdays/);
 });
 
 test('bad schedule flags fail with exit 2 and a usable message, before anything is written', async () => {
@@ -208,4 +224,47 @@ test('the management verbs find an after-ticket on a busy home: it sits at the 9
   const cancel = await run(['schedule', 'cancel', t.id.slice(0, 8)]);
   assert.equal(cancel.code, 0, cancel.stderr);
   assert.equal(listTickets({ all: true, limit: 2000 }).some((x) => x.id === t.id), false, 'the premise: the cap really hides it');
+});
+
+// The child inherits NODE_TEST_CONTEXT, so it reads settings.json only with the home-fallback opt-in.
+const writeHomeSettings = (obj) => {
+  mkdirSync(join(home, '.worca-cc'), { recursive: true });
+  writeFileSync(join(home, '.worca-cc', 'settings.json'), JSON.stringify(obj));
+};
+const SEE_SETTINGS = { WORCA_TEST_ALLOW_HOME_FALLBACK: '1' };
+
+test('enforced tags: worca run refuses with the server message and exit 2; a default fills it (D14)', async () => {
+  const cc = { key: 'cc', label: 'Cost centre', values: ['4410'], required: true };
+  writeHomeSettings({ tagDimensions: [cc], enforceTags: true, flags: { runTags: true } });
+  try {
+    const bad = await run(['--project', proj, '--prompt', 'Enforced', '--at', 'tomorrow 03:00', '--yes'], SEE_SETTINGS);
+    assert.equal(bad.code, 2);
+    assert.match(bad.stderr, /^worca: Add Cost centre to start$/m);
+    assert.equal(listTickets({ all: true }).some((x) => x.title === 'Enforced'), false, 'no ticket is created');
+    writeHomeSettings({ tagDimensions: [{ ...cc, default: '4410' }], enforceTags: true, flags: { runTags: true } });
+    const ok = await run(['--project', proj, '--prompt', 'Enforced ok', '--at', 'tomorrow 03:00', '--yes'], SEE_SETTINGS);
+    assert.equal(ok.code, 0, ok.stderr);
+    const t = listTickets().find((x) => x.title === 'Enforced ok');
+    assert.deepEqual(JSON.parse(getDb().prepare('SELECT request FROM scheduled_runs WHERE id = ?').get(t.id).request).tags, ['cc:4410']);
+  } finally { writeHomeSettings({}); }
+});
+
+test('enforced tags: --after with no --tag checks the tags the chain inherits and stores none (D9a)', async () => {
+  const cc = { key: 'cc', label: 'Cost centre', values: ['4410', '5520'], required: true };
+  const tagged = createTicket({ title: 'Tagged parent', projectDir: proj, runAtMs: Date.now() + 3_600_000, request: { prompt: 'p', tags: ['cc:5520'] } });
+  const bare = createTicket({ title: 'Bare parent', projectDir: proj, runAtMs: Date.now() + 3_600_000, request: { prompt: 'p' } });
+  const storedTags = (title) => JSON.parse(getDb().prepare('SELECT request FROM scheduled_runs WHERE id = ?').get(listTickets().find((x) => x.title === title).id).request).tags;
+  try {
+    writeHomeSettings({ tagDimensions: [cc], enforceTags: true, flags: { runTags: true } });
+    const ok = await run(['--project', proj, '--prompt', 'Chain inherits', '--after', tagged.id.slice(0, 8), '--yes'], SEE_SETTINGS);
+    assert.equal(ok.code, 0, ok.stderr);
+    assert.equal(storedTags('Chain inherits'), undefined, 'no tags stored: the chain inherits at fire time');
+    const bad = await run(['--project', proj, '--prompt', 'Chain refused', '--after', bare.id.slice(0, 8), '--yes'], SEE_SETTINGS);
+    assert.equal(bad.code, 2);
+    assert.match(bad.stderr, /^worca: Add Cost centre to start$/m);
+    writeHomeSettings({ tagDimensions: [{ ...cc, default: '4410' }], enforceTags: true, flags: { runTags: true } });
+    const dflt = await run(['--project', proj, '--prompt', 'Chain keeps parent', '--after', tagged.id.slice(0, 8), '--yes'], SEE_SETTINGS);
+    assert.equal(dflt.code, 0, dflt.stderr);
+    assert.equal(storedTags('Chain keeps parent'), undefined, 'a default never replaces the inherited tags');
+  } finally { writeHomeSettings({}); }
 });

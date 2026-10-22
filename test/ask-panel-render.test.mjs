@@ -7,6 +7,9 @@ import { checkRows } from './helpers/rows.mjs';
 
 import { makePanel } from './helpers/ask-panel-harness.mjs';
 import { applyLevel } from '../ui/public/ui-level.mjs';
+import { registerFilesCard } from '../ui/public/chat/files-card.mjs';
+import { _resetChatExtensions } from '../ui/public/chat/extensions.mjs';
+import { _resetFileRenderers } from '../ui/public/chat/file-renderers.mjs';
 
 const TID = 'ask_00000001';
 
@@ -89,7 +92,7 @@ test('ask-panel-render: user bubble + attachment pills, plain-fallback answer, a
     { name: 'ask-panel-render: activity head — one dot-separated line, the meter beside it; stopped keeps its label', run: async () => {
       const snap = snapBody([
         asstRow('askm_00000001', 1),
-        asstRow('askm_00000002', 2, { status: 'stopped', reason: 'max_turns', durationMs: 72000, blocks: [{ kind: 'notice', text: 'Stopped: reached the 40-turn limit (Settings → Ask Worca)' }] }),
+        asstRow('askm_00000002', 2, { status: 'stopped', reason: 'max_turns', durationMs: 72000, blocks: [{ kind: 'notice', text: 'Stopped: reached the 40-turn limit (Settings → Chat)' }] }),
       ]);
       const ctx = makePanel({ fetchHandler: handlerFor(snap) });
       await openThread(ctx);
@@ -325,6 +328,58 @@ test('ask-panel-render: markdown answers render once the real pins load; code hi
   assert.ok(answer.querySelector('code .hljs-keyword'), 'terminal answers get highlighted');
 });
 
+test('ask-panel-render: a finished answer turns its refs into chips with one POST; code stays code; a run chip follows the run store', async () => {
+  const realLoad = async () => ({ marked: (await import('marked')).marked, createDOMPurify: (await import('dompurify')).default });
+  const listeners = new Set();
+  let live = null;
+  const runStore = { get: () => null, byPipeline: (pid) => (pid === '1a2b3c4d' ? live : null), subscribe: (fn) => { listeners.add(fn); return () => listeners.delete(fn); } };
+  const text = 'Merged https://github.com/SinishaDjukic/worca-cc/pull/777 in [the run](#history/worca-cc-ace1a602/1a2b3c4d); `owner/repo#5` stays code.';
+  const snap = snapBody([userRow('askm_00000001', 1, 'see owner/repo#6'), asstRow('askm_00000002', 2, { text })]);
+  const answers = {
+    'gh:SinishaDjukic/worca-cc#777': { ok: true, kind: 'pr', title: 'fix(promo-kit): startApp.stop()', state: 'merged' },
+    'run:1a2b3c4d': { ok: true, kind: 'run', id: '1a2b3c4d', runId: null, title: 'Chips plan', status: 'running', home: 'worca-cc-ace1a602' },
+  };
+  const posts = [];
+  const thread = handlerFor(snap);
+  const ctx = makePanel({ loadMarkdown: realLoad, deps: { runStore }, fetchHandler: (url, opts) => {
+    if (url !== '/api/ask/refs/resolve') return thread(url, opts);
+    const refs = JSON.parse(opts.body).refs;
+    posts.push(refs);
+    return { ok: true, status: 200, json: async () => ({ refs: Object.fromEntries(refs.map((k) => [k, answers[k] || { ok: false }])) }) };
+  } });
+  await openThread(ctx);
+  await ctx.tick();                       // renderer.ensure() resolves: the answers re-render as markdown
+  ctx.flush();
+  await ctx.tick();                       // the batched POSTs answer
+  const answer = ctx.doc.querySelector('.ask-msg-assistant .ask-answer');
+  const [pr, run] = answer.querySelectorAll('a.ask-ref-chip');
+  assert.deepEqual(posts.map((p) => p.sort()), [['run:1a2b3c4d'], ['gh:SinishaDjukic/worca-cc#777']], 'worca refs and forge refs: one request each');
+  assert.equal(pr.getAttribute('href'), 'https://github.com/SinishaDjukic/worca-cc/pull/777');
+  assert.deepEqual([...pr.querySelectorAll('.ask-ref-label, .ask-ref-title, .ask-ref-pill')].map((n) => n.textContent),
+    ['SinishaDjukic/worca-cc#777', 'fix(promo-kit): startApp.stop()', 'Merged']);
+  assert.equal(run.getAttribute('href'), '#history/worca-cc-ace1a602/1a2b3c4d');
+  assert.equal(run.querySelector('.ask-ref-pill').textContent, 'Running');
+  assert.equal(answer.querySelector('code').textContent, 'owner/repo#5', 'inline code is never a chip');
+  assert.equal(ctx.doc.querySelector('.ask-msg-user').querySelectorAll('.ask-ref-chip').length, 0, 'user messages stay plain text');
+  live = { source: 'live', runId: 'run-uuid', pipelineId: '1a2b3c4d', status: 'done', title: 'Chips plan', active: [], terminal: true };
+  for (const fn of listeners) fn('run-uuid', 'done');
+  await ctx.tick();
+  assert.equal(answer.querySelector('a.ask-ref-chip-run .ask-ref-pill').textContent, 'Done', 'the run store repaints the pill');
+  ctx.flush();
+  await ctx.tick();
+  assert.equal(posts.length, 2, 'a structural repaint inside the TTL asks nothing again');
+  ctx.panel.close();
+  live = { ...live, status: 'failed' };
+  for (const fn of listeners) fn('run-uuid', 'state');
+  await ctx.tick();
+  assert.equal(answer.querySelector('a.ask-ref-chip-run .ask-ref-pill').textContent, 'Done', 'a hidden Chat page repaints no chip');
+  ctx.panel.open();
+  await ctx.tick();
+  assert.equal(answer.querySelector('a.ask-ref-chip-run .ask-ref-pill').textContent, 'Failed', 'the next show catches up');
+  ctx.panel.destroy();
+  assert.equal(listeners.size, 0, 'destroy drops the run store subscription');
+});
+
 test('ask-panel-render: error rows show the red line (fallback text); a ~0 s error turn says Stopped, not "Stopped after"', async () => {
   await checkRows([
     { name: 'ask-panel-render: error rows show the red line with a fallback text', run: async () => {
@@ -480,4 +535,32 @@ test('ask-panel-render: a 404 thread clears the stored id and renders nothing', 
   await openThread(ctx);
   assert.equal(ctx.doc.querySelector('.ask-msg-user'), null);
   assert.equal(ctx.storage.getItem('worca-cc.ask.thread'), null, 'stored id dropped on 404');
+});
+
+test('ask-panel-render: a stored files card replays on thread open, inline, and a tile click calls chatDeps.openFiles', async () => {
+  registerFilesCard();
+  try {
+    const item = { attId: 'att_00000001', name: 'home.png', kind: 'image', mime: 'image/png', bytes: 2048 };
+    const snap = snapBody([
+      userRow('askm_u0000001', 1, 'screenshot it'),
+      asstRow('askm_00000001', 2, { text: 'Here it is.\n\nLooks right.', blocks: [{ kind: 'card', id: 'card_00000001', state: 'shown', textAt: 'Here it is.'.length, card: { type: 'files', title: 'home.png', items: [item] } }] }),
+    ]);
+    const opened = [];
+    const ctx = makePanel({ fetchHandler: handlerFor(snap), deps: { chatDeps: { openFiles: (o) => opened.push(o) } } });
+    await openThread(ctx);
+    const card = ctx.doc.querySelector('.ask-msg-assistant .ask-filescard');
+    assert.ok(card, 'the files card replays');
+    const msg = ctx.doc.querySelector('.ask-msg-assistant');
+    const order = [...msg.children].filter((c) => !c.hidden && (c.classList.contains('ask-answer') || c.classList.contains('ask-filescard')))
+      .map((c) => (c.classList.contains('ask-filescard') ? 'card' : c.textContent.trim()));
+    assert.deepEqual(order, ['Here it is.', 'card', 'Looks right.'], 'inside the answer where it was shown (textAt)');
+    assert.equal(card.querySelectorAll('img').length, 1);
+    card.querySelector('.ask-filescard-thumb').click();
+    assert.equal(opened.length, 1);
+    assert.equal(opened[0].threadId, TID);
+    assert.equal(opened[0].index, 0);
+  } finally {
+    _resetChatExtensions();
+    _resetFileRenderers();
+  }
 });

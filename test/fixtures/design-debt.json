@@ -1,0 +1,22 @@
+{
+  "_why": "Drift that slices 2 and 3 remove. A new offender fails; an entry the code no longer has fails too, so the list only shrinks.",
+  "fieldSizeOverrides": [
+    ".ask-rp .ask-rp-tile select",
+    ".ins-port-editor .ins-prow input[type=\"text\"]",
+    ".qtune .select-wrap select",
+    ".shipit-repo-branch .select",
+    ".shipit-summary .select",
+    ".tp-onbreach .select"
+  ],
+  "solidPressed": [
+    ".ask-rp-eff button.on",
+    ".pp-chip[aria-pressed=\"true\"]",
+    ".sched-day.on",
+    ".shape-chip.on",
+    ".wd-rescan-phases [data-phase].active",
+    ".wz-step-pill.on"
+  ],
+  "typedPlus": [],
+  "typeScale": [],
+  "svgTypeScale": []
+}

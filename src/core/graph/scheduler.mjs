@@ -103,6 +103,8 @@ function raceAbort(promise, signal) {
  * @param {number} [opts.maxParallel]
  * @param {number} [opts.maxParallelScripts]
  * @param {(line:string, attrs?:object) => void} [opts.log]
+ * @param {boolean} [opts.approvalStops] arm `config.approve` node stops (spec D2) — the orchestrator passes
+ *   true only for a run that carries `shape` (D12). Off: an `approve` config is inert and the port routes as usual.
  */
 export function createScheduler(opts) {
   const {
@@ -117,6 +119,7 @@ export function createScheduler(opts) {
     maxParallel = defaultMaxParallel(),
     maxParallelScripts = defaultMaxParallelScripts(),
     log = () => {},
+    approvalStops = false,
   } = opts || {};
 
   const nodes = Array.isArray(template?.nodes) ? template.nodes : [];
@@ -152,6 +155,9 @@ export function createScheduler(opts) {
   const execs = new Map();        // executionId -> ledger entry
   const held = new Map();         // wireId -> { wireId, nodeId, executionId, token, issues, askId }
   const outstanding = new Set();  // wireIds with an un-withdrawn ask in flight
+  const approvals = new Map();      // nodeId -> { nodeId, executionId, port, token, askId, round, reviseTo }
+  const approvalAsked = new Set();  // nodeIds with an un-withdrawn approval ask in flight
+  const approvalRounds = new Map(); // nodeId -> approval stops raised so far (monotonic; rides the snapshot)
   const running = new Map();      // nodeId -> executionId
   const completions = [];
   const warnings = [];
@@ -163,10 +169,14 @@ export function createScheduler(opts) {
   let abortRequested = false;
   let settled = false;
 
-  for (const id of loopWireIds) {
+  function initialAllowance(id) {
     const raw = Number(wireById.get(id)?.config?.maxCycles ?? DEFAULT_MAX_CYCLES);
     const maxCycles = Number.isFinite(raw) && raw >= 1 ? raw : DEFAULT_MAX_CYCLES;
-    wireState.set(id, { deliveries: 0, allowance: maxCycles - 1 });     // A1: allowance = maxCycles − 1
+    return maxCycles - 1;                                              // A1: allowance = maxCycles − 1
+  }
+
+  for (const id of loopWireIds) {
+    wireState.set(id, { deliveries: 0, allowance: initialAllowance(id) });
   }
 
   // --- wake plumbing -------------------------------------------------------
@@ -210,6 +220,8 @@ export function createScheduler(opts) {
   /** This scheduler's 1-arg ports lookup (the shared `portsOf(portsFn, node)` is 2-arg). */
   const portsOfNode = (node) => (typeof portsFn === 'function' ? portsFn(node) : null) || {};
   const isFlow = (node) => FLOW_KINDS.includes(node.kind);   // FLOW_KINDS is a frozen ARRAY (P1)
+  /** Spec §3: a role-review node is composite on EVERY firing, the round-2 loop re-fire included. */
+  const isRoleReview = (node) => !isFlow(node) && node?.config?.roleReview === true;
   const spentOf = (nodeId) => consumed.get(nodeId) || new Map();
 
   /** A port is a loop input when the classification says so OR its meta declares it.
@@ -341,7 +353,7 @@ export function createScheduler(opts) {
     execs.set(executionId, entry);
     running.set(node.id, executionId);
     emitExec(node, entry, 'start');
-    return { node, entry, args: argsFor(node, entry), composite: !!expandsPort };
+    return { node, entry, args: argsFor(node, entry), composite: !!expandsPort || isRoleReview(node) };
   }
 
   function argsFor(node, entry) {
@@ -405,7 +417,7 @@ export function createScheduler(opts) {
    * per task. Pause/abort is checked at every phase boundary.
    */
   async function runComposite(h) {
-    const portId = h.entry.expandsPort;
+    const portId = h.entry.expandsPort ?? null;       // null: a role-review fan-out (no expands input)
     const expanded = await execute({ ...h.args, composite: 'expand', expandsPort: portId });
     // A pause raised INSIDE the expansion (the adapter converted a throw) settles the
     // shell row here, with its expands binding intact. Falling through to
@@ -414,7 +426,10 @@ export function createScheduler(opts) {
     // decomposition would never be re-read.
     if (expanded?.paused === true) return { paused: true };
     const phases = Array.isArray(expanded?.phases) ? expanded.phases : [];
-    if (!phases.length) return runUnexpanded(h, portId);
+    // A role review with every role skipped still publishes its findings: never a plain execution.
+    if (!phases.length) {
+      return portId ? runUnexpanded(h, portId) : await execute({ ...h.args, composite: 'finish', expandsPort: null, phases });
+    }
 
     // A halted run returns WITHOUT `finish`: nothing is staged and no phase is falsely
     // marked done. A PAUSE answers `{ paused: true }` so the shell row stays
@@ -520,10 +535,9 @@ export function createScheduler(opts) {
       parentExecutionId: entry.executionId,
       taskIndex: index + 1,                                   // 1-based within its phase (the CLI's "task 3/7")
       taskTotal: (Array.isArray(ph.tasks) ? ph.tasks : []).length,
-      bindings: {
-        ...entry.bindings,
-        [portId]: { seq: entry.bindings[portId]?.seq, type: 'md', path: task.path ?? null },
-      },
+      bindings: portId
+        ? { ...entry.bindings, [portId]: { seq: entry.bindings[portId]?.seq, type: 'md', path: task.path ?? null } }
+        : { ...entry.bindings },
       trigger: entry.trigger,
     };
     execs.set(sub.executionId, sub);
@@ -541,6 +555,7 @@ export function createScheduler(opts) {
         title: task.title ?? null,
         phase: ph.ordinal,
         path: task.path ?? null,
+        role: task.role ?? null,
         index,
         siblings: (Array.isArray(ph.tasks) ? ph.tasks : [])
           .filter((t) => t.id !== task.id)
@@ -697,8 +712,17 @@ export function createScheduler(opts) {
    * bind. During the End drain nothing is routed at all: the token is recorded
    * (latched + evented) and accounting/gates are skipped.
    */
-  function route(node, port, token, verdict, executionId) {
+  const approveOf = (node) => {
+    if (!approvalStops) return null;
+    const a = node?.config?.approve;
+    return a && a.kind === 'plan' && typeof a.port === 'string' ? a : null;
+  };
+
+  function route(node, port, token, verdict, executionId, { approved = false } = {}) {
     if (ended) return;
+    // The node approval stop: the approved port's token goes NOWHERE until a person answers — before any
+    // wire (and before loop accounting), so no downstream node can start (spec D2).
+    if (!approved && approveOf(node)?.port === port.id) { holdForApproval(node, port, token, executionId); return; }
     const outs = outWires.get(`${node.id}.${port.id}`) || [];
     // An output that fires with no wire is a DEAD END: its token has nowhere to go.
     // Legal (a conditional branch may be deliberately unwired — wf_no-clarify's
@@ -708,7 +732,11 @@ export function createScheduler(opts) {
     for (const w of outs) {
       const st = wireState.get(w.id);
       if (st) {
-        if (st.deliveries >= st.allowance) { holdAt(w, token, verdict, node, executionId); continue; }
+        if (st.deliveries >= st.allowance) {
+          if (w.config?.onExhausted === 'clean') { exhaustClean(w, token, verdict, node, executionId); continue; }
+          holdAt(w, token, verdict, node, executionId);
+          continue;
+        }
         st.deliveries += 1;
       }
       tokens.set(`${w.to.node}.${w.to.port}`, token);
@@ -781,6 +809,14 @@ export function createScheduler(opts) {
     askGate(entry);
   }
 
+  /** Spec §3 "at most 2 rounds, then the person decides": a spent wire set to onExhausted:'clean' fires the source's
+   *  clean outputs (forceClean, the gate's "continue" path) carrying the open issues — no ask, no hold. */
+  function exhaustClean(wire, token, verdict, node, executionId) {
+    const issues = blockingIssues(verdict);
+    onEvent('gate', { wireId: wire.id, nodeId: node.id, executionId, issues, status: 'exhausted' });
+    forceClean({ wireId: wire.id, nodeId: node.id, executionId, token, issues });
+  }
+
   function resolveGate(wireId, answer) {
     if (settled) return;                      // the run already resolved: the resume re-asks this hold (P3-36)
     if (!outstanding.has(wireId)) return;     // withdrawn by End (or already answered) — a no-op
@@ -837,10 +873,116 @@ export function createScheduler(opts) {
     }
   }
 
+  // --- node approval stops -------------------------------------------------
+
+  function reviseTargetOf(node) {
+    for (const inp of portsOfNode(node).inputs || []) {
+      if (inp.id === AWAIT_ID || isLoopPort(node.id, inp)) continue;
+      const w = wireById.get(wiredIn.get(node.id)?.get(inp.id));
+      let src = w ? nodeById.get(w.from.node) : null;
+      // Spec §3: role reviews sit between the Planner and Refine; "Ask for changes" still goes to the Planner.
+      if (src && isRoleReview(src)) {
+        const up = wireById.get(wiredIn.get(src.id)?.get('plan'));
+        src = up ? nodeById.get(up.from.node) : null;
+      }
+      if (!src || src.kind !== 'agent') continue;
+      const rev = (portsOfNode(src).inputs || []).find((p) => p.id === 'revise' && p.type === 'md');
+      if (rev) return { node: src.id, port: rev.id };
+    }
+    return null;
+  }
+
+  function holdForApproval(node, port, token, executionId) {
+    if (approvals.has(node.id)) {                 // one open stop per node
+      log(`${node.id}: a newer ${port.id} arrived while its approval is open — kept the first`);
+      return;
+    }
+    const round = (approvalRounds.get(node.id) || 0) + 1;
+    approvalRounds.set(node.id, round);
+    const entry = {
+      nodeId: node.id, executionId, port: port.id, token, askId: `plan-${node.id}-${round}`, round,
+      reviseTo: reviseTargetOf(node),
+    };
+    approvals.set(node.id, entry);
+    // No snap(): completeExecution and resolveGate snapshot synchronously right after route() returns.
+    askApproval(entry);
+  }
+
+  function askApproval(entry) {
+    approvalAsked.add(entry.nodeId);
+    Promise.resolve(onAsk({
+      id: entry.askId,
+      kind: 'plan',
+      nodeId: entry.nodeId,
+      executionId: entry.executionId,
+      plan: { port: entry.port, file: entry.token.path ?? null, round: entry.round, revisable: Boolean(entry.reviseTo) },
+    })).then(
+      (answer) => resolveApproval(entry.nodeId, answer),
+      // Never a silent approve: a failed ask fails the run (mirrors failExecution); wake() since outside run loop.
+      (err) => {
+        if (settled) return;
+        failure = err instanceof Error ? err : new Error(String(err));
+        log(`${entry.nodeId}: approval ask ${entry.askId} failed: ${failure.message}`);
+        controller.abort();
+        wake();
+      },
+    );
+  }
+
+  /** answer: 'approve' | {decision:'approve'} | {decision:'revise', path} | {decision:'withdrawn'} (End) |
+   *  anything else ends the run. */
+  function resolveApproval(nodeId, answer) {
+    if (settled) return;                           // the run already resolved: the resume re-asks this hold
+    if (!approvalAsked.has(nodeId)) return;        // withdrawn by End — a no-op
+    approvalAsked.delete(nodeId);
+    const entry = approvals.get(nodeId);
+    approvals.delete(nodeId);
+    if (!entry) return;
+    const decision = answer === 'approve' ? 'approve' : answer?.decision;
+    if (decision === 'approve') {
+      const node = nodeById.get(nodeId);
+      const port = node && (portsOfNode(node).outputs || []).find((o) => o.id === entry.port);
+      if (port) route(node, port, entry.token, null, entry.executionId, { approved: true });
+    } else if (decision === 'revise' && entry.reviseTo && typeof answer.path === 'string') {
+      // Drop this node's latched loop-input tokens (Refine's own round-1 `revise` rewrite) so the re-run does not
+      // see a stale rewrite beside the Planner's new plan (R16). Latched tokens stay bound on every later execution.
+      // The person's revise starts a new shaping round: each loop into this node gets its full budget back. `holds`
+      // stays, so later gate ask ids remain unique.
+      // A role node feeding this one (spec §3) gets the same reset: the revise opens a new pass of role reviews.
+      const resetLoops = (id) => {
+        const n = nodeById.get(id);
+        for (const inp of (n && portsOfNode(n).inputs) || []) {
+          if (!isLoopPort(id, inp)) continue;
+          tokens.delete(`${id}.${inp.id}`);
+          const wireId = wiredIn.get(id)?.get(inp.id);
+          const st = wireId ? wireState.get(wireId) : null;
+          if (st) { st.deliveries = 0; st.allowance = initialAllowance(wireId); }
+        }
+      };
+      resetLoops(nodeId);
+      for (const wireId of wiredIn.get(nodeId)?.values() || []) {
+        const src = nodeById.get(wireById.get(wireId)?.from.node);
+        if (src && isRoleReview(src)) resetLoops(src.id);
+      }
+      // Re-queue the producer with the feedback on its loop input; it re-fires (any-fresh), its new plan re-fires
+      // this node via the non-loop wire and the stop is raised again as round N+1.
+      tokens.set(`${entry.reviseTo.node}.${entry.reviseTo.port}`,
+        makeToken({ type: 'md', path: answer.path, sourceExecutionId: entry.executionId }));
+    } else {
+      log(`${nodeId}: approval ${entry.askId} ended the run (${decision ?? 'no answer'})`);
+      abortRequested = true;
+      controller.abort();
+    }
+    snap();
+    wake();
+  }
+
   /** End reached: stop awaiting every outstanding ask and drop the held state. */
   function withdrawGates() {
     held.clear();
     outstanding.clear();
+    approvals.clear();
+    approvalAsked.clear();
     syncGate();
   }
 
@@ -879,6 +1021,8 @@ export function createScheduler(opts) {
       execs: [...execs.values()].map((e) => ({ ...e })),
       gates,
       asks,
+      ...(approvals.size ? { approvals: [...approvals.values()].map((a) => ({ ...a })) } : {}),
+      ...(approvalRounds.size ? { approvalRounds: Object.fromEntries(approvalRounds) } : {}),
       gate: gates[0] || null,
       ask: asks[0] || null,
     };
@@ -901,6 +1045,8 @@ export function createScheduler(opts) {
     // carries only the singular `gate`; read it as a one-element list.
     const gates = Array.isArray(s.gates) ? s.gates : (s.gate ? [s.gate] : []);
     if (!ended) for (const g of gates) held.set(g.wireId, { ...g });
+    for (const [id, n] of Object.entries(s.approvalRounds || {})) approvalRounds.set(id, n);
+    if (!ended) for (const a of s.approvals || []) approvals.set(a.nodeId, { ...a });
   }
 
   /**
@@ -920,7 +1066,8 @@ export function createScheduler(opts) {
       const node = nodeById.get(entry.nodeId);
       if (!node) continue;
       running.set(node.id, entry.executionId);
-      const h = { node, entry, args: argsFor(node, entry), composite: !!entry.expandsPort };
+      // A resumed role-review shell re-runs its fan-out, not a plain execution (it never sets entry.expandsPort).
+      const h = { node, entry, args: argsFor(node, entry), composite: !!entry.expandsPort || isRoleReview(node) };
       if (!isFlow(node) && !h.composite) pools[poolOf(node)].active += 1;
       let p;
       try { p = invoke(h); } catch (err) { p = Promise.reject(err); }
@@ -935,6 +1082,10 @@ export function createScheduler(opts) {
       if (outstanding.has(entry.wireId)) continue;
       outstanding.add(entry.wireId);
       askGate(entry);
+    }
+    for (const entry of [...approvals.values()]) {
+      if (approvalAsked.has(entry.nodeId)) continue;
+      askApproval(entry);
     }
     syncGate();
   }
@@ -1097,7 +1248,7 @@ export function createScheduler(opts) {
       if (running.size === 0) {
         if (ended) return finish('done');
         if (pauseRequested) return finish('paused');
-        if (held.size === 0 && outstanding.size === 0) return finish('done');   // quiescence
+        if (held.size === 0 && outstanding.size === 0 && approvals.size === 0) return finish('done');   // quiescence
       }
       await waitForChange();
     }

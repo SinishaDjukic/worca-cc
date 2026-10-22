@@ -132,7 +132,7 @@ test('rail derivation per tier: desktop follows the stored preference (hamburger
       recv({ type: 'hello', runs: [live('auth-fix'), live('seo', { pendingQuestion: { id: 'q1', kind: 'clarify', questions: [{ question: 'x?', options: ['a'] }] } })] });
       assert.equal($('#nav-running-count').textContent, '2', 'counts');
       assert.equal($('#mbar-rollup').hidden, false, 'the menu button carries the needs-input dot');
-      assert.equal($('#mbar-menu').getAttribute('aria-label'), 'Menu — a pipeline needs your input');
+      assert.equal($('#mbar-menu').getAttribute('aria-label'), 'Menu: a pipeline needs your input');
     } },
   ]);
 });

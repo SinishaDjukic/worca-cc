@@ -58,14 +58,14 @@ const MEMORY_WRITE_TOOLS = new Set(['mcp__worca__remember', 'mcp__worca__forget'
 // `scripts-changed` broadcast the REST routes emit — a script the chat saved shows up in an
 // open Scripts tab. There is no delete tool, and test_script writes nothing outside the bench.
 const SCRIPT_WRITE_TOOLS = new Set(['mcp__worca__save_script']);
-// The direct schedule writes (docs/scheduled-runs.md "Ask Worca"): reversible, never a run start.
+// The direct schedule writes (docs/scheduled-runs.md "Chat"): reversible, never a run start.
 const SCHEDULE_WRITE_TOOLS = new Set(['mcp__worca__pause_schedule', 'mcp__worca__resume_schedule',
   'mcp__worca__skip_next_run', 'mcp__worca__mark_schedule_activity_read']);
 // worca Chat P2 (act, then undo): the tools whose RESULT the PARENT acts on — it applies what the child validated (or,
 // for the two schedule verbs the child already ran, posts their receipt) and adds the receipt or card to the reply.
 const CHAT_ACTION_TOOLS = new Set(['mcp__worca__change_setting', 'mcp__worca__pause_run', 'mcp__worca__resume_run',
   'mcp__worca__propose_stop_run', 'mcp__worca__send_direction', 'mcp__worca__propose_pull_request',
-  'mcp__worca__pause_schedule', 'mcp__worca__resume_schedule']);
+  'mcp__worca__pause_schedule', 'mcp__worca__resume_schedule', 'mcp__worca__propose_changes', 'mcp__worca__route_message']);
 // The Workflows chat's card tools (D13): their RESULT becomes a composer card in the parent (turn.mjs).
 const COMPOSER_CARD_TOOLS = new Set(['mcp__worca__edit_canvas', 'mcp__worca__build_workflow', 'mcp__worca__draft_agent', 'mcp__worca__draft_script']);
 /** True when a SUCCESSFUL call of `name` with `input` changed this thread's worktree rows. */
@@ -169,6 +169,7 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'propose_away_mode_change': return 'Proposing an Away mode change';
     case 'track_run': return 'Tracking a run';
     case 'read_attachment': return `Reading ${(attachmentNames && attachmentNames[id]) || 'attachment'}`;
+    case 'show_files': return 'Showing files';
     case 'list_diff_comments': return id ? `Reading comments on ${id.slice(0, 12)}` : 'Reading diff comments';
     case 'add_diff_comment': return 'Writing a diff comment';
     case 'reply_to_diff_comment': return 'Replying to a diff comment';
@@ -193,6 +194,7 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'mark_schedule_activity_read': return 'Marking activity read';
     case 'list_task_sources': return 'Looking at task sources';
     case 'find_tasks': return input?.search ? `Searching tasks: ${String(input.search).slice(0, 40)}` : 'Searching tasks';
+    case 'list_presets': return 'Looking at run presets';
     case 'get_task': return input?.id ? `Reading task ${String(input.id).slice(0, 40)}` : 'Reading a task';
     case 'list_models': return 'Looking at models';
     case 'get_providers': return 'Looking at providers';
@@ -200,6 +202,7 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'list_copilot_models': return 'Listing Copilot models';
     case 'propose_model_change': return 'Proposing a model change';
     case 'propose_clone_project': return 'Proposing a project clone';
+    case 'propose_project_change': return 'Proposing a project';
     case 'propose_workspace_change': return 'Proposing a workspace change';
     case 'get_project_actions': return 'Looking at project actions';
     case 'get_workspace_stacks': return 'Looking at workspace stacks';
@@ -213,9 +216,12 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'propose_stop_run': return 'Preparing a stop';
     case 'send_direction': return 'Sending a direction';
     case 'propose_pull_request': return 'Preparing a pull request';
+    case 'propose_changes': return 'Preparing a Changes card';
+    case 'route_message': return 'Asking where this goes';
     case 'web_fetch': { let host = ''; try { host = new URL(String(input?.url ?? '')).hostname; } catch { /* label only */ } return host ? `Reading ${host}` : 'Reading a web page'; }
     case 'web_search': return 'Searching the web';
     case 'propose_web_access': return 'Asking to read a new site';
+    case 'propose_scope_switch': return 'Asking which project';
     case 'Skill': return typeof input?.skill === 'string' && input.skill ? `Using ${input.skill.slice(0, 80)}` : 'Using a skill';   // skills registry §4.4
     default: return `Using ${n}`;
   }
@@ -289,12 +295,15 @@ export function createTurnReducer({
   onScheduleProposal = null,     // propose_schedule_change RESULT (schedule card; the parent re-validates the input)
   onModelProposal = null,        // propose_model_change RESULT (model card; same split)
   onCloneProposal = null,        // propose_clone_project RESULT (clone card; same split)
+  onProjectProposal = null,      // propose_project_change RESULT (project card; same split)
   onWorkspaceProposal = null,    // propose_workspace_change RESULT (workspace card; same split)
   onActionsProposal = null,      // propose_actions_change RESULT (actions card; same split)
   onWebProposal = null,          // propose_web_access RESULT (web card; same split)
+  onScopeSwitch = null,          // propose_scope_switch RESULT (P4: the scope ask card; same split)
   onScheduleMutation = null,     // a direct schedule write succeeded in the MCP child
   onTrackRun = null,
   onRunCommand = null,           // run_command RESULT (#574): the command card
+  onShowFiles = null,            // show_files RESULT: the files card
   onAwaySwitch = null,           // set_away_now / set_run_away_mode RESULT (the parent applies the switch)
   onChatAction = null,           // worca Chat P2: a CHAT_ACTION_TOOLS RESULT (the parent applies it and posts its card)
   onAwayProposal = null,         // propose_away_mode_change RESULT (Away mode card; the parent re-validates the input)
@@ -732,10 +741,24 @@ export function createTurnReducer({
           if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
         } catch { reducerErrors += 1; }
       }
+      if (b.name === 'mcp__worca__propose_scope_switch' && typeof onScopeSwitch === 'function') {
+        // Same split as the web card: the parent re-checks the INPUT against this turn's scope and the thread's scope cards (scope.mjs).
+        try {
+          const ret = onScopeSwitch({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
       if (b.name === 'mcp__worca__propose_clone_project' && typeof onCloneProposal === 'function') {
         // Same split as the model card: the parent re-validates the INPUT and adds how GitHub is reached (clone-proposal.mjs).
         try {
           const ret = onCloneProposal({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
+      if (b.name === 'mcp__worca__propose_project_change' && typeof onProjectProposal === 'function') {
+        // Same split as the clone card: the parent re-validates the INPUT with dry runs (project-proposal.mjs).
+        try {
+          const ret = onProjectProposal({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
           if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
         } catch { reducerErrors += 1; }
       }
@@ -764,6 +787,13 @@ export function createTurnReducer({
         // Agent mode (#574): the result names the block; the card's live state comes from ask-command frames.
         try {
           const ret = onRunCommand({ toolUseId: b.id, text, isError: !!c.is_error });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
+      if (b.name === 'mcp__worca__show_files' && typeof onShowFiles === 'function') {
+        // The parent re-reads every item from THIS thread's attachment rows (turn.mjs _onShowFiles).
+        try {
+          const ret = onShowFiles({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
           if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
         } catch { reducerErrors += 1; }
       }

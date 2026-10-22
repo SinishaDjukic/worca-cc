@@ -17,7 +17,7 @@ test('the head keeps the chat list and adds worca\'s labelled "+ New chat" butto
   assert.ok(chats, 'the chat list stays');
   const btn = h.$('.chat-head button[data-ask-new-btn]');
   assert.ok(btn, 'a New chat button');
-  assert.equal(btn.className, 'ask-icon-btn chat-new-btn chat-head-btn');
+  assert.equal(btn.className, 'btn btn-sm btn-quiet chat-new-btn chat-head-btn');
   assert.equal(btn.textContent, 'New chat', 'a labelled button, not an icon');
   assert.equal(btn.getAttribute('aria-label'), null, 'the visible label is its name');
   assert.equal(btn.querySelector('svg').getAttribute('aria-hidden'), 'true');
@@ -45,16 +45,16 @@ const pill = (h) => h.$('.ask-scope-btn');
 const scopeItems = (h) => [...h.$$('.ask-pop-scope .ask-pop-item')];
 const scopeLabels = (h) => scopeItems(h).map((i) => [i.querySelector('.ask-model-name').textContent, !!i.querySelector('.ask-model-check')]);
 
-test('chat scope: "Any project" with its tooltip, then projects and workspaces under their own captions', async () => {
+test('chat scope: "No project" with its title, then projects and workspaces under their own captions', async () => {
   const h = await bootSidebar({ storage: STORE, route: pairedRoutes(null, { projects: PROJECTS, workspaces: WORKSPACES }) });
   assert.equal(h.$('.wx-scope'), null, 'no head picker any more');
-  assert.equal(h.$('.ask-scope-label').textContent, 'Any project');
-  assert.equal(pill(h).title, 'Worca picks the project from your message');
+  assert.equal(h.$('.ask-scope-label').textContent, 'No project');
+  assert.equal(pill(h).title, 'Chat scope: No project');
   assert.ok(!pill(h).hasAttribute('data-pinned'));
   await h.click(pill(h));
   assert.deepEqual([...h.$$('.ask-pop-scope .ask-pop-caption')].map((c) => c.textContent), ['Chat scope', 'Projects', 'Workspaces']);
-  assert.deepEqual(scopeLabels(h), [['Any project', true], ['ACME API', false], ['ACME Web', false], ['ACME platform', false]]);
-  assert.equal(scopeItems(h)[0].title, 'Worca picks the project from your message');
+  assert.deepEqual(scopeLabels(h), [['No project', true], ['ACME API', false], ['ACME Web', false], ['ACME platform', false]]);
+  assert.equal(scopeItems(h)[0].title, 'Chat scope: No project');
   await h.click(pill(h));
   assert.equal(h.$('.ask-pop-scope'), null, 'a second click closes it');
 });
@@ -106,9 +106,9 @@ test('chat scope: a pinned chat shows its project on load; a pin the list lacks 
   await h.change(h.$('.chat-head select[aria-label="Chat"]'), 'askt_00000002');
   assert.equal(h.$('.ask-scope-label').textContent, 'ws_gone', 'an unknown pin is still shown');
   await h.click(pill(h));
-  await h.click(scopeItems(h).find((b) => b.textContent.startsWith('Any project')));
+  await h.click(scopeItems(h).find((b) => b.textContent.startsWith('No project')));
   assert.ok(!pill(h).hasAttribute('data-pinned'));
-  assert.equal(h.$('.ask-scope-label').textContent, 'Any project');
+  assert.equal(h.$('.ask-scope-label').textContent, 'No project');
 });
 
 test('chat scope: a pinned chat on a Worca with no projects still shows its pin', async () => {

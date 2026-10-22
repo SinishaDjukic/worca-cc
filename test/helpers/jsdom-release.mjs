@@ -23,6 +23,11 @@
 // Timeouts end on their own and some free app.js state when they fire (clearing
 // them measured 40% more heap), so they still run; an error one throws after
 // its window was released is swallowed, since only the teardown caused it.
+// Except while a later test's window is open: app.js's bare `document`, `fetch`
+// and `localStorage` are globals that now name that window, so a released
+// instance's timeout would paint its own stale state into it. History's 15 s PR
+// watchdog did that under load: it reset a later test's nav count and hid its
+// selection bar. Such a timeout is dropped.
 
 import { promisify } from 'node:util';
 
@@ -66,6 +71,7 @@ function wrapTimers() {
     const born = generation;
     return startTimeout.call(this, function (...args) {
       if (born === generation) return fn.apply(this, args);
+      if (openCount) return undefined;
       try {
         const out = fn.apply(this, args);
         if (typeof out?.then === 'function') out.then(undefined, () => { /* its window was released */ });

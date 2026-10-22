@@ -71,7 +71,7 @@ test('chips, fingerprint, loops (through the OR valve), match line, meta; name e
   assert.ok(loops.length >= 2);
   assert.ok(loops.every((l) => p.manifest.graph.nodes.find((n) => n.id === l.to).kind === 'agent'), 'loop targets resolve through the valve to an agent');
   assert.equal(h.parts.loops.children.length, loops.length);
-  assert.match(h.parts.match.textContent, /No saved workflow has this shape — will be saved as "/);
+  assert.match(h.parts.match.textContent, /No saved workflow has this shape\. It will be saved as "/);
   assert.match(h.parts.meta.textContent, /^classifier ≈ \$0\.04 · \d+ agents · \d+ loops · 2 rounds$/);
   h.parts.name.querySelector('.ask-wfcard-edit').click();
   const field = h.parts.name.querySelector('.ask-wfcard-field');

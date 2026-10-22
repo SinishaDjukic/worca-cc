@@ -4,18 +4,21 @@ import { execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { existsSync, realpathSync } from 'node:fs';
 import { mkdir, mkdtemp, readdir, readFile, writeFile, rename, rm, copyFile, stat } from 'node:fs/promises';
-import { join, dirname, basename, resolve } from 'node:path';
+import { join, dirname, basename, resolve, sep } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { worcaHome, listProjects } from '../projects.mjs';
 import { projectKey, canonicalProjectRoot } from '../store.mjs';
 import { listRemotes, parseRemoteUrl } from '../git-info.mjs';
 import { gitEnvFor, githubOnlyEnv, hostLookupNeeded, stripHostCredentials } from '../host-credentials.mjs';
+import { gitAvailable, gitMissingResult, GIT_MISSING, onGitChange } from '../git-available.mjs';
+import { teamOverHttps, projectSlugHttps } from '../git-free/team-repo.mjs';
+import { repoOfSlug, lsRemoteHttps, readBranchFile, createOrphanBranch, commitFiles, syncSnapshot, TEAM_FLUSH_BATCH } from '../git-free/team-branch.mjs';
 
 const NETWORK_GIT = new Set(['fetch', 'push', 'ls-remote', 'clone', 'pull']);
 
 /** The URL of origin in `cwd`, or '' (no cwd, no origin, not a repo). */
 async function originUrl(cwd) {
-  if (!cwd) return '';
+  if (!cwd || !gitAvailable()) return '';
   try {
     return await new Promise((ok) => execFile('git', ['remote', 'get-url', 'origin'], { cwd, timeout: 10_000 }, (e, out) => ok(e ? '' : String(out).trim())));
   } catch { return ''; }
@@ -69,6 +72,17 @@ export function slugDirName(slug) {
 export function slugFromDirName(name) { return String(name).split(SLUG_SEP).join('/'); }
 export function worktreePath(slug) { return join(metricsRoot(), 'repos', slugDirName(slug)); }
 export function outboxDir(slug) { return join(metricsRoot(), 'outbox', slugDirName(slug)); }
+/** P6: the HTTPS twin of the worktree — a plain folder mirroring the branch's kept files (no git). */
+export function snapshotPath(slug) { return join(metricsRoot(), 'snapshots', slugDirName(slug)); }
+/** P6: the local copy of a sink's branch — its git worktree, or (team repository over HTTPS) its snapshot. */
+export function branchDirOf(slug, projectDir) { return teamOverHttps(projectDir) ? snapshotPath(slug) : worktreePath(slug); }
+/** P6: where a sink's records are READ — its branch copy; over HTTPS before the snapshot exists, the worktree a git session
+ *  left (a read-only cache: nothing runs git there; the snapshot supersedes it once built). Git (no typed repo): the worktree. */
+export function readableBranchDir(slug, projectDir) {
+  const dir = branchDirOf(slug, projectDir);
+  if (dir === worktreePath(slug) || existsSync(dir)) return dir;
+  return existsSync(worktreePath(slug)) ? worktreePath(slug) : dir;
+}
 /** Empty hooks directory: metrics git commands must never run the project's hooks (decision 26). */
 export function noHooksDir() { return join(metricsRoot(), 'no-hooks'); }
 
@@ -124,13 +138,15 @@ async function defaultGit(cwd, args, { timeoutMs = 60_000, env = null } = {}) {
     }));
   });
 }
-let _git = defaultGit;
+let _gitImpl = defaultGit; const _git = (cwd, args, o) => (gitAvailable() ? _gitImpl(cwd, args, o) : Promise.resolve(gitMissingResult()));
 export function runGit(cwd, args, opts) { return _git(cwd, args, opts); }
 
 function metricsError(code, message, extra = {}) {
   return Object.assign(new Error(message), { code, ...extra });
 }
 const firstLine = (s) => String(s || '').trim().split('\n').find(Boolean) || '';
+/** P6: an HTTPS error is one line, already the message: its stderr only when it says more (the dialog prints both). */
+const moreStderr = (stderr) => (String(stderr || '').trim() === firstLine(stderr) ? {} : { stderr });
 
 // ---- identity -----------------------------------------------------------------
 /** One slug segment → the slug alphabet. Percent-escapes are decoded first ("My%20Repo" → "my-repo"). */
@@ -178,6 +194,7 @@ export function keepProjectRecord(ownSlug) {
 
 /** "owner/repo" (github) or "host/…/repo" from origin, else basename of the canonical root (§4.3). */
 export async function projectSlug(projectDir) {
+  if (teamOverHttps(projectDir)) return projectSlugHttps(projectDir, { slugFromUrl: metricsSlugFromUrl, fallbackSlug: () => slugSegment(basename(canonicalProjectRoot(projectDir))) || 'project' });
   const r = await listRemotes(projectDir);
   const origin = r.ok ? r.remotes.find((x) => x.name === 'origin') : null;
   const url = origin?.pushUrl || origin?.fetchUrl || null;
@@ -187,6 +204,12 @@ export async function projectSlug(projectDir) {
   // make slugDirName throw BAD_REQUEST, and every record for that project would be dropped.
   const slug = (url && metricsSlugFromUrl(url)) || fallback;
   return { slug, hasOrigin: !!origin, originUrl: origin?.fetchUrl ?? null, remotesOk: r.ok };
+}
+
+/** P5: a Folder project's slug — its folder's name, never from git (inside a repository, `git remote -v` and the
+ *  canonical root answer for that repository). The same slug projectSlug falls back to for a folder outside one. */
+export function folderProjectSlug(projectDir) {
+  return slugSegment(basename(resolve(projectDir))) || 'project';
 }
 
 export async function gitUserName(dir) {
@@ -237,9 +260,14 @@ export async function fetchMetricsBranch(dir, { timeoutMs = 120_000 } = {}) {
 
 async function readRemoteConfig(dir) {
   const r = await _git(dir, ['show', `${REMOTE_REF}:${METRICS_DIR}/config.json`], { timeoutMs: 10_000 });
-  if (!r.ok) return null;
+  return r.ok ? parseRemoteConfig(r.stdout) : null;
+}
+
+/** The branch's config.json text → the checked config object, or null (missing, not JSON, not an object). */
+export function parseRemoteConfig(text) {
+  if (text == null) return null;
   try {
-    const c = JSON.parse(r.stdout);
+    const c = JSON.parse(text);
     if (!c || typeof c !== 'object' || Array.isArray(c)) return null;
     // Anyone with push access can hand-edit this file. A non-string delegateTo threw
     // ("prefs.config.delegateTo.toLowerCase is not a function") out of workspaceMetricsStatus
@@ -258,10 +286,13 @@ export async function discoverProject(projectDir, { force = false, now = Date.no
   const key = projectKey(projectDir);
   const prev = readTeamMetricsPrefs(key) || {};
   if (!force && prev.checkedAt && now - Date.parse(prev.checkedAt) < DISCOVERY_TTL_MS) return prev;
+  // P6: over HTTPS a failed attempt (a private repository, the rate limit, no network) waits DISCOVERY_RETRY_MS
+  // before an unforced trigger asks GitHub again — each tick and page open would otherwise spend requests on it.
+  if (!force && prev.lastDiscoveryError && now - Date.parse(prev.lastDiscoveryAt) < DISCOVERY_RETRY_MS && teamOverHttps(projectDir)) return prev;
   // A missing directory (unmounted drive, moved checkout) is "unknown", not "no origin":
   // never overwrite a cached enabled=true with it, and never create a junk config row.
   if (!existsSync(projectDir)) return readTeamMetricsPrefs(key);
-  const { slug, hasOrigin, remotesOk, originUrl } = await projectSlug(projectDir);
+  const { slug, hasOrigin, remotesOk, originUrl, needsGit } = await projectSlug(projectDir);
   // "github.com/acme/billing-api" for the Enable dialog (board 5); never includes credentials.
   const originDisplay = originUrl ? String(originUrl).replace(/^[a-z+]+:\/\//i, '').replace(/^[^@/]*@/, '').replace(/:(?!\d)/, '/').replace(/\.git$/, '') : null;
   if (!remotesOk) return prev.checkedAt ? prev : null;
@@ -280,7 +311,9 @@ export async function discoverProject(projectDir, { force = false, now = Date.no
       configKnown: false, headSha: null, checkedAt: iso(now), disabledAt: prev.disabledAt ?? iso(now),
     });
   }
-  const ls = await _git(projectDir, ['ls-remote', '--heads', 'origin', `refs/heads/${METRICS_BRANCH}`], { timeoutMs: lsTimeoutMs });
+  const https = teamOverHttps(projectDir);
+  // P6: a repository the slug misnames (projectSlugHttps's needsGit: `acme/.github`) is asked nothing — a host slug's answer.
+  const ls = https ? (needsGit ? { ok: false, stdout: '', stderr: GIT_MISSING.message } : await lsRemoteHttps(slug, METRICS_BRANCH, { timeoutMs: lsTimeoutMs })) : await _git(projectDir, ['ls-remote', '--heads', 'origin', `refs/heads/${METRICS_BRANCH}`], { timeoutMs: lsTimeoutMs });
   if (!ls.ok) {
     // Offline ≠ disabled: keep the previous verdict. checkedAt is NOT advanced, so the next
     // trigger (flush, page open, hourly tick) retries instead of waiting an hour.
@@ -299,7 +332,7 @@ export async function discoverProject(projectDir, { force = false, now = Date.no
   let config = prev.config ?? null;
   let headSha = prev.headSha ?? null;
   if (sha !== prev.headSha || !prev.configKnown) {
-    const f = await fetchMetricsBranch(projectDir, { timeoutMs: fetchTimeoutMs });
+    const f = https ? await readBranchFile(slug, sha, `${METRICS_DIR}/config.json`, { timeoutMs: fetchTimeoutMs }) : await fetchMetricsBranch(projectDir, { timeoutMs: fetchTimeoutMs });
     if (!f.ok) {
       // Decision 32: the branch exists but its config.json could not be read. Keep the old
       // headSha + checkedAt (the next trigger refetches, so a stale config is never pinned) and
@@ -314,7 +347,7 @@ export async function discoverProject(projectDir, { force = false, now = Date.no
       if (!prev.enabled) emit(slug, 'discovered');
       return next;
     }
-    config = await readRemoteConfig(projectDir);
+    config = https ? parseRemoteConfig(f.text) : await readRemoteConfig(projectDir);
     headSha = sha;
   }
   const next = write({
@@ -366,16 +399,23 @@ async function prefsFor(projectDir, { discover = true } = {}) {
   return prefs;
 }
 
-/** First registered, existing project whose (cached or computed) slug matches. */
+/** P6 (OS-1): with git installed, a Folder whose team repository was typed — its branch copy goes over HTTPS. */
+const typedWithGit = (dir) => gitAvailable() && teamOverHttps(dir);
+
+/** First registered, existing project whose (cached or computed) slug matches. P6: with git installed, a typed Folder only
+ *  when no other project matches — a git clone of that repository flushes with git push and reads its worktree. */
 export async function findLocalProjectBySlug(slug) {
   const want = String(slug || '').toLowerCase();
+  let typed = null;
   for (const p of await listProjects()) {
     if (!p.exists) continue;
     const cached = readTeamMetricsPrefs(p.key)?.slug;
     const s = cached || (await projectSlug(p.path)).slug;
-    if (sameMetricsSlug(s, want)) return p;
+    if (!sameMetricsSlug(s, want)) continue;
+    if (!typedWithGit(p.path)) return p;
+    typed ??= p;
   }
-  return null;
+  return typed;
 }
 
 /**
@@ -386,19 +426,22 @@ export async function findLocalProjectBySlug(slug) {
  */
 export async function findLocalRepoBySlug(slug) {
   const p = await findLocalProjectBySlug(slug);
-  if (p) return p;
+  if (p && !typedWithGit(p.path)) return p;
   const want = String(slug || '').toLowerCase();
   const seen = new Set();
+  let typed = p;   // a typed Folder (registered first) only when no workspace member is a git clone of it either
   for (const w of await listWorkspaces()) {
     for (const path of [w.metricsProject, ...(w.projectPaths || [])]) {
       if (!path || seen.has(path) || !existsSync(path)) continue;
       seen.add(path);
       const key = projectKey(path);
       const s = readTeamMetricsPrefs(key)?.slug || (await projectSlug(path)).slug;
-      if (sameMetricsSlug(s, want)) return { key, path, name: basename(path) };
+      if (!sameMetricsSlug(s, want)) continue;
+      if (!typedWithGit(path)) return { key, path, name: basename(path) };
+      typed ??= { key, path, name: basename(path) };
     }
   }
-  return null;
+  return typed;
 }
 
 /** The real Azure org/project/repo behind a (lossy) metrics slug: the local repo with that slug, else the slug's own segments. */
@@ -483,6 +526,7 @@ export async function resolveWorkspaceSink(workspaceId, { discover = true } = {}
 export async function ensureWorktree(slug, projectDir) {
   const dir = worktreePath(slug);
   if (existsSync(dir)) {
+    if (!gitAvailable()) return dir;   // no git: a health check that cannot run finds no broken checkout — keep the cache
     const top = await _git(dir, ['rev-parse', '--show-toplevel'], { timeoutMs: 10_000 });
     let healthy = false;
     // .native on both sides: JS realpathSync keeps the caller's case, git reports the on-disk case
@@ -583,7 +627,9 @@ async function validateDelegateTarget(delegateTo, ownSlug) {
  */
 export async function enableTeamMetrics(projectDir, { mode = 'here', attribution = 'git-user', delegateTo = null, change = false, now = new Date(), by = null } = {}) {
   if (mode !== 'here' && mode !== 'delegate') throw metricsError('BAD_REQUEST', `mode must be "here" or "delegate"`);
-  const { slug, hasOrigin } = await projectSlug(projectDir);
+  const { slug, hasOrigin, needsGit, repoInput } = await projectSlug(projectDir);
+  if (needsGit) throw metricsError('GIT_MISSING', GIT_MISSING.message);
+  if (repoInput) throw metricsError('REPO_REQUIRED', 'type the GitHub repository (owner/name)');
   if (!hasOrigin) throw metricsError('NO_ORIGIN', 'this project has no origin remote — team metrics push to origin, so there is nowhere to record');
   const delegate = mode === 'delegate' ? await validateDelegateTarget(delegateTo, slug) : null;
   const target = delegate?.slug ?? null;
@@ -600,13 +646,23 @@ export async function enableTeamMetrics(projectDir, { mode = 'here', attribution
     ? { schema: 1, enabledAt: now.toISOString().replace(/\.\d{3}Z$/, 'Z'), enabledBy: attr === 'none' ? null : user, delegateTo: target }
     : { schema: 1, enabledAt: now.toISOString().replace(/\.\d{3}Z$/, 'Z'), enabledBy: attr === 'none' ? null : user, attribution: attr, notes: '' };
 
+  const https = teamOverHttps(projectDir);
   const result = await withSlugLock(slug, async () => {
-    const ls = await _git(projectDir, ['ls-remote', '--heads', 'origin', `refs/heads/${METRICS_BRANCH}`], { timeoutMs: 20_000 });
-    if (!ls.ok) throw metricsError('REMOTE_UNREACHABLE', firstLine(ls.stderr), { stderr: ls.stderr });
+    const ls = https ? await lsRemoteHttps(slug, METRICS_BRANCH) : await _git(projectDir, ['ls-remote', '--heads', 'origin', `refs/heads/${METRICS_BRANCH}`], { timeoutMs: 20_000 });
+    if (!ls.ok) throw metricsError('REMOTE_UNREACHABLE', firstLine(ls.stderr), https ? moreStderr(ls.stderr) : { stderr: ls.stderr });
     if (ls.stdout.trim()) {
-      if (change && mode === 'delegate') return rewriteDelegation(slug, projectDir, config, attr);
-      await ensureWorktree(slug, projectDir);
+      if (change && mode === 'delegate') return https ? rewriteDelegationHttps(slug, config) : rewriteDelegation(slug, projectDir, config, attr);
+      if (!https) await ensureWorktree(slug, projectDir);
       return { action: 'joined' };
+    }
+    if (https) {
+      const made = await createOrphanBranch(slug, METRICS_BRANCH, {
+        files: { 'README.md': README_TEXT, [`${METRICS_DIR}/config.json`]: JSON.stringify(config, null, 2) + '\n' },
+        message: mode === 'delegate' ? `metrics: delegate to ${target}` : 'metrics: enable team metrics',
+      });
+      if (made.ok) return { action: 'created' };
+      if (made.exists) return { action: 'joined' };   // a teammate won the race
+      throw metricsError('PUSH_REJECTED', firstLine(made.stderr), { ...moreStderr(made.stderr), hint: pushHint(made.stderr) });
     }
     const commit = await orphanCommit(projectDir, {
       'README.md': README_TEXT,
@@ -645,6 +701,29 @@ async function rewriteDelegation(slug, projectDir, config, attr = 'git-user') {
     const push = await _git(dir, ['push', '--no-verify', 'origin', `HEAD:refs/heads/${METRICS_BRANCH}`], { timeoutMs: 120_000 });
     if (push.ok) return { action: 'changed' };
     if (!isNonFastForward(push.stderr)) throw metricsError('PUSH_REJECTED', firstLine(push.stderr), { stderr: push.stderr, hint: pushHint(push.stderr) });
+  }
+  throw metricsError('PUSH_RETRIES_EXHAUSTED', 'the worca-metrics branch kept moving; try again');
+}
+
+/** P6: rewriteDelegation over the GitHub API — one commit on top of the head, retried past a teammate. */
+async function rewriteDelegationHttps(slug, config) {
+  for (let attempt = 1; attempt <= MAX_PUSH_ATTEMPTS; attempt++) {
+    const ls = await lsRemoteHttps(slug, METRICS_BRANCH);
+    const head = ls.ok ? ls.stdout.split('\t')[0].trim() : '';
+    if (!head) {
+      const stderr = ls.ok ? `couldn't find remote ref refs/heads/${METRICS_BRANCH}` : ls.stderr;
+      throw metricsError('FETCH_FAILED', firstLine(stderr), moreStderr(stderr));
+    }
+    const f = await readBranchFile(slug, head, `${METRICS_DIR}/config.json`);
+    if (!f.ok) throw metricsError('FETCH_FAILED', firstLine(f.stderr), moreStderr(f.stderr));
+    let cur = {};
+    try { cur = JSON.parse(f.text ?? '') || {}; } catch { cur = {}; }
+    if (!cur.delegateTo) throw metricsError('DELEGATE_INVALID', 'this project records locally; its branch is not a delegation marker');
+    if (sameMetricsSlug(cur.delegateTo, config.delegateTo)) return { action: 'changed' }; // already points there: nothing to commit
+    const body = JSON.stringify({ ...cur, enabledAt: config.enabledAt, enabledBy: config.enabledBy, delegateTo: config.delegateTo }, null, 2) + '\n';
+    const r = await commitFiles(slug, METRICS_BRANCH, { parent: head, files: { [`${METRICS_DIR}/config.json`]: body }, message: `metrics: delegate to ${config.delegateTo}` });
+    if (r.ok) return { action: 'changed' };
+    if (!r.conflict) throw metricsError('PUSH_REJECTED', firstLine(r.stderr), { ...moreStderr(r.stderr), hint: pushHint(r.stderr) });
   }
   throw metricsError('PUSH_RETRIES_EXHAUSTED', 'the worca-metrics branch kept moving; try again');
 }
@@ -789,6 +868,7 @@ export async function flushSlug(slug, { hooks: testHooks = {}, sleep = (ms) => n
       if (prefs && prefs.enabled && !prefs.configKnown) {
         return recordFailure(ownerKey, slug, 'FETCH_FAILED', prefs.lastDiscoveryError || `could not read the ${METRICS_BRANCH} config of ${slug}`, files.length);
       }
+      if (teamOverHttps(owner.path)) return await flushHttps(slug, files, owner, ownerKey, { sleep, random, now });
       let dir;
       try { dir = await ensureWorktree(slug, owner.path); }
       catch (err) { return recordFailure(ownerKey, slug, err.code || 'WORKTREE_FAILED', err.stderr || err.message, files.length); }
@@ -856,6 +936,81 @@ export async function flushSlug(slug, { hooks: testHooks = {}, sleep = (ms) => n
   } catch (err) {
     return { ok: false, slug, code: err?.code || 'FLUSH_FAILED', stderr: String(err?.message || err), hint: null, pending: (await listOutbox(slug)).length, pushed: 0 };
   }
+}
+
+/** P6: flushSlug over the GitHub API (inside the slug lock): one commit per batch, the outbox emptied after the ref moved. */
+async function flushHttps(slug, files, owner, ownerKey, { sleep, random, now }) {
+  let pushed = 0;
+  let attempts = 0;
+  // Batches that landed before a failure are pushed: the result says how many.
+  const failure = (code, stderr, pending) => ({ ...recordFailure(ownerKey, slug, code, stderr, pending), pushed });
+  // A host slug, or a repository the slug misnames (projectSlugHttps's needsGit: `acme/.github`), needs git.
+  if (!repoOfSlug(slug) || (await projectSlug(owner.path)).needsGit) return failure('GIT_MISSING', GIT_MISSING.message, files.length);
+  for (let i = 0; i < files.length; i += TEAM_FLUSH_BATCH) {
+    const batch = files.slice(i, i + TEAM_FLUSH_BATCH);
+    const remaining = files.length - i;
+    const contents = {};
+    for (const name of batch) contents[runFilePath(name).split(sep).join('/')] = await readFile(join(outboxDir(slug), name), 'utf8');
+    for (let attempt = 1; attempt <= MAX_PUSH_ATTEMPTS; attempt++) {
+      attempts = attempt;
+      const ls = await lsRemoteHttps(slug, METRICS_BRANCH);
+      if (!ls.ok) return failure('FETCH_FAILED', ls.stderr, remaining);
+      const head = ls.stdout.split('\t')[0].trim();
+      if (!head) {
+        const fresh = (await discoverProject(owner.path, { force: true }).catch(() => null)) || {};
+        if (fresh.enabled === false) {
+          const kept = await dropExpired(slug, files.slice(i), now, fresh);
+          return failure('BRANCH_MISSING', `origin has no ${METRICS_BRANCH} branch any more`, kept.length);
+        }
+        return failure('FETCH_FAILED', `couldn't find remote ref refs/heads/${METRICS_BRANCH}`, remaining);
+      }
+      const r = await commitFiles(slug, METRICS_BRANCH, { parent: head, files: contents, message: `metrics: ${batch.length} run(s)` });
+      if (r.ok) {
+        await copyIntoSnapshot(slug, contents, { parent: head, sha: r.sha, unchanged: r.unchanged });
+        await finishFlushed(slug, batch, ownerKey);
+        if (!r.unchanged) pushed += batch.length;
+        break;
+      }
+      if (!r.conflict) return failure('PUSH_REJECTED', r.stderr, remaining);
+      if (attempt === MAX_PUSH_ATTEMPTS) return failure('PUSH_RETRIES_EXHAUSTED', r.stderr, remaining);
+      await sleep(backoffMs(attempt, random));
+    }
+  }
+  return { ok: true, slug, pushed, pending: 0, attempts };
+}
+
+/** P6: the records just committed, readable at once (git commits inside its worktree). A snapshot that held the commit's
+ *  parent now holds the commit itself: its commit record (`<dir>@sha`, team-branch.mjs) moves there, so the next refresh
+ *  reads only what came after — a record removed later goes too. A snapshot behind the parent keeps its record (the next
+ *  refresh reads the files between, ours again — the same bytes). Best-effort: they are on the branch. */
+async function copyIntoSnapshot(slug, contents, { parent, sha, unchanged }) {
+  const dir = snapshotPath(slug);
+  if (!existsSync(dir)) return;
+  try {
+    const at = (await readFile(`${dir}@sha`, 'utf8').catch(() => '')).trim();
+    for (const [rel, text] of Object.entries(contents)) {
+      const p = join(dir, ...rel.split('/'));
+      await mkdir(dirname(p), { recursive: true });
+      await writeFile(p, text);
+    }
+    if (at === parent && !unchanged) await writeFile(`${dir}@sha`, `${sha}\n`);
+  } catch { /* the next refresh brings them */ }
+}
+
+/** P6: refresh the slug's snapshot (incremental when it can be). `projectDir` (the sink's project): a repository its slug
+ *  misnames (projectSlugHttps's needsGit: `acme/.github`) is asked nothing — a host slug's answer. */
+export async function refreshSnapshot(slug, projectDir = null) {
+  if (projectDir && teamOverHttps(projectDir) && (await projectSlug(projectDir)).needsGit) return { ok: false, sha: null, changed: false, stderr: GIT_MISSING.message };
+  return syncSnapshot(slug, METRICS_BRANCH, snapshotPath(slug), { keep: (p) => p === 'README.md' || p.startsWith(`${METRICS_DIR}/`) });
+}
+
+/** P6: the snapshot folder, downloaded on first use (ensureWorktree's HTTPS twin). */
+export async function ensureSnapshot(slug, projectDir = null) {
+  const dir = snapshotPath(slug);
+  if (existsSync(dir)) return dir;
+  const r = await refreshSnapshot(slug, projectDir);
+  if (!r.ok) throw metricsError('FETCH_FAILED', firstLine(r.stderr) || 'fetch failed', moreStderr(r.stderr));
+  return dir;
 }
 
 async function finishFlushed(slug, files, ownerKey) {
@@ -983,10 +1138,10 @@ function safeReal(p) {
 }
 
 // ---- scan, route, status, background, test seam (§5.9) ------------------------
-async function countRuns(slug) {
+async function countRuns(slug, projectDir) {
   // Local worktree only (no fetch): cheap status counts for cards. read.mjs owns parsing.
   const { readRecordsFromDir } = await import('./read.mjs');
-  const dir = worktreePath(slug);
+  const dir = readableBranchDir(slug, projectDir);
   if (!existsSync(dir)) return null;
   return (await readRecordsFromDir(dir)).records;
 }
@@ -1012,8 +1167,13 @@ export async function projectMetricsStatus(p, { discover = false, recordsBySink 
   // refuses it) or a git repo without an origin remote (setup would fail NO_ORIGIN).
   // Only undiscovered projects pay for these git spawns; discovered ones carry the
   // answer in prefs.
+  // P6: over HTTPS (no git, or a typed team repository) the answer comes from .git/config / the typed repo.
+  const s = p.exists && teamOverHttps(p.path) ? await projectSlug(p.path) : null;
+  if (s?.needsGit) status.needsGit = true;
+  if (s?.repoInput) status.repoInput = true;
   if (status.hasOrigin == null && p.exists) {
-    if (!isGitRepo(p.path)) { status.hasOrigin = false; status.noGit = true; }
+    if (s) { status.hasOrigin = s.remotesOk ? s.hasOrigin : null; if (status.slug == null) status.slug = s.slug; }
+    else if (!isGitRepo(p.path)) { status.hasOrigin = false; status.noGit = true; }
     else {
       const { hasOrigin, slug } = await projectSlug(p.path);
       status.hasOrigin = hasOrigin;
@@ -1037,9 +1197,11 @@ export async function projectMetricsStatus(p, { discover = false, recordsBySink 
   status.sinkSlug = sink.slug;
   status.pending = (await listOutbox(sink.slug)).length;
   // A promise in the memo: statuses are built a few at a time (listScopes), and two projects on
-  // one sink must share a single read of its worktree.
-  if (!recordsBySink.has(sink.slug)) recordsBySink.set(sink.slug, countRuns(sink.slug));
-  const recs = await recordsBySink.get(sink.slug);
+  // one sink must share a single read of its worktree. P6: keyed by the local copy — a typed Folder's
+  // snapshot and a git clone's worktree of one repository hold different runs.
+  const copy = branchDirOf(sink.slug, sink.projectDir);
+  if (!recordsBySink.has(copy)) recordsBySink.set(copy, countRuns(sink.slug, sink.projectDir));
+  const recs = await recordsBySink.get(copy);
   status.runs = recs ? recs.filter(keepProjectRecord(status.slug)).length : null;
   if (sink.delegated) {
     const t = readTeamMetricsPrefs(projectKey(sink.projectDir));
@@ -1054,7 +1216,7 @@ export async function scanMembers(projectPaths) {
   for (const path of projectPaths) {
     const prefs = (await discoverProject(path, { force: true }).catch((err) => ({ hasOrigin: null, lastDiscoveryError: String(err?.message || err) })))
       || { hasOrigin: null, lastDiscoveryError: 'could not read this repository' };
-    const recs = recordsLocally(prefs) ? await countRuns(prefs.slug) : null;
+    const recs = recordsLocally(prefs) ? await countRuns(prefs.slug, path) : null;
     members.push({
       // hasOrigin is strictly true only when discovery saw an origin (an error is not "has origin").
       path, key: projectKey(path), slug: prefs.slug ?? basename(path), hasOrigin: prefs.hasOrigin === true,
@@ -1107,7 +1269,7 @@ export async function workspaceMetricsStatus(ws, { discover = false } = {}) {
     home = { path: ws.metricsProject, slug: homeSlug ?? basename(ws.metricsProject), runs: null, detail: sink.ok ? null : sink.detail, state: sink.ok ? 'ok' : 'stale', code: sink.ok ? null : sink.code,
       record: readTeamMetricsPrefs(projectKey(ws.metricsProject))?.record !== false };
     if (sink.ok) {
-      const recs = await countRuns(sink.slug);
+      const recs = await countRuns(sink.slug, sink.projectDir);
       home.runs = recs ? recs.filter((r) => matchesWorkspace(r.target, ws)).length : null;
       home.pending = (await listOutbox(sink.slug)).length;
     }
@@ -1157,13 +1319,15 @@ export function startTeamMetricsBackground({ log = (m) => console.warn(m) } = {}
   // and skips, which would make "hourly" discovery run every two hours.
   const timer = setInterval(() => tick(false), DISCOVERY_TTL_MS / 2);
   timer.unref?.();
-  return () => clearInterval(timer);
+  // git arriving runs discovery at once instead of waiting up to half the TTL.
+  const offGit = onGitChange((s) => { if (s.available) void tick(true); });
+  return () => { offGit(); clearInterval(timer); };
 }
 
 export { readRunLedger };
 
 export const _testing = {
-  setGit(fn) { _git = fn; },
-  reset() { _git = defaultGit; _queues.clear(); _scheduled.clear(); _lastFailedAt.clear(); },
+  setGit(fn) { _gitImpl = fn; },
+  reset() { _gitImpl = defaultGit; _queues.clear(); _scheduled.clear(); _lastFailedAt.clear(); },
   defaultGit,
 };

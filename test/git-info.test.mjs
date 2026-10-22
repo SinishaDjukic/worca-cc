@@ -56,17 +56,33 @@ test('findPrForBranch branch search: argv, normalization, OPEN > MERGED > CLOSED
         seen.push([cmd, ...args]);
         return Promise.resolve({
           ok: true,
-          stdout: JSON.stringify([{ number: 9, state: 'MERGED', url: 'https://gh/x/pull/9' }]),
+          stdout: JSON.stringify([{ number: 9, state: 'MERGED', url: 'https://gh/x/pull/9', isDraft: false, mergeable: 'UNKNOWN' }]),
           stderr: '', code: 0,
         });
       });
       const pr = await findPrForBranch({ projectDir: '/repo', head: 'worca-cc/feat-1' });
-      assert.deepEqual(pr, { state: 'MERGED', url: 'https://gh/x/pull/9', number: 9 });
-      // Queries by head, includes merged/closed, scans up to 30 matches.
-      assert.deepEqual(seen[0], [
+      assert.deepEqual(pr, { state: 'MERGED', url: 'https://gh/x/pull/9', number: 9, isDraft: false, mergeable: 'UNKNOWN' });
+      // Queries by head, includes merged/closed, scans up to 30 matches; the same call reads
+      // whether each PR is a draft and merges cleanly (the Runs list's PR glyph).
+      assert.deepEqual(seen, [[
         'gh', 'pr', 'list', '--head', 'worca-cc/feat-1',
-        '--state', 'all', '--json', 'number,state,url', '--limit', '30',
-      ]);
+        '--state', 'all', '--json', 'number,state,url,isDraft,mergeable', '--limit', '30',
+      ]]);
+      gitInfo.reset();
+    } },
+    { name: 'findPrForBranch reports a draft and a conflicting PR, normalized, from the same call', run: async () => {
+      let rows = [];
+      gitInfo.setRunner(() => Promise.resolve({ ok: true, stdout: JSON.stringify(rows), stderr: '', code: 0 }));
+      rows = [{ number: 4, state: 'OPEN', url: 'https://gh/x/pull/4', isDraft: true, mergeable: 'CONFLICTING' }];
+      assert.deepEqual(await findPrForBranch({ projectDir: '/r', head: 'b' }),
+        { state: 'OPEN', url: 'https://gh/x/pull/4', number: 4, isDraft: true, mergeable: 'CONFLICTING' });
+      rows = [{ number: 5, state: 'OPEN', url: 'https://gh/x/pull/5', isDraft: false, mergeable: 'MERGEABLE' }];
+      assert.deepEqual(await findPrForBranch({ projectDir: '/r', head: 'b' }),
+        { state: 'OPEN', url: 'https://gh/x/pull/5', number: 5, isDraft: false, mergeable: 'MERGEABLE' });
+      // An older gh (or a stub) that answers without the fields: not a draft, mergeability unknown.
+      rows = [{ number: 6, state: 'OPEN', url: 'https://gh/x/pull/6' }];
+      assert.deepEqual(await findPrForBranch({ projectDir: '/r', head: 'b' }),
+        { state: 'OPEN', url: 'https://gh/x/pull/6', number: 6, isDraft: false, mergeable: 'UNKNOWN' });
       gitInfo.reset();
     } },
     { name: 'findPrForBranch normalizes lowercase state to uppercase', run: async () => {
@@ -87,7 +103,9 @@ test('findPrForBranch branch search: argv, normalization, OPEN > MERGED > CLOSED
         stderr: '', code: 0,
       }));
       assert.deepEqual(await findPrForBranch({ projectDir: '/r', head: 'b' }),
-        { state: 'MERGED', url: 'https://gh/x/pull/12', number: 12 });
+        { state: 'MERGED', url: 'https://gh/x/pull/12', number: 12, isDraft: false, mergeable: 'UNKNOWN' });
+      assert.equal((await findPrForBranch({ projectDir: '/r', head: 'b', includeClosed: true })).state, 'MERGED',
+        'a closed PR is only ever the last resort');
 
       gitInfo.setRunner(() => Promise.resolve({
         ok: true,
@@ -108,6 +126,23 @@ test('findPrForBranch branch search: argv, normalization, OPEN > MERGED > CLOSED
         stderr: '', code: 0,
       }));
       assert.equal(await findPrForBranch({ projectDir: '/r', head: 'b' }), null);
+      gitInfo.reset();
+    } },
+    { name: 'findPrForBranch includeClosed: the newest closed PR when no open or merged one exists', run: async () => {
+      // The Runs list draws a PR dropped without merging; every other caller keeps null.
+      gitInfo.setRunner(() => Promise.resolve({
+        ok: true,
+        stdout: JSON.stringify([
+          { number: 3, state: 'CLOSED', url: 'https://gh/x/pull/3', isDraft: true },   // newest
+          { number: 1, state: 'CLOSED', url: 'https://gh/x/pull/1' },
+        ]),
+        stderr: '', code: 0,
+      }));
+      assert.deepEqual(await findPrForBranch({ projectDir: '/r', head: 'b', includeClosed: true }),
+        { state: 'CLOSED', url: 'https://gh/x/pull/3', number: 3, isDraft: true, mergeable: 'UNKNOWN' });
+      assert.equal(await findPrForBranch({ projectDir: '/r', head: 'b' }), null, 'off by default');
+      gitInfo.setRunner(() => Promise.resolve({ ok: false, stdout: '', stderr: 'no remote', code: 1 }));
+      assert.equal(await findPrForBranch({ projectDir: '/r', head: 'b', includeClosed: true }), null, 'a failed search finds nothing');
       gitInfo.reset();
     } },
     { name: 'findPrForBranch returns null on no match, gh failure, bad JSON, or missing args', run: async () => {

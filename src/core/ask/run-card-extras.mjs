@@ -12,7 +12,7 @@ export const RUN_CARD_FINISHED = Object.freeze(new Set(['done', 'stopped', 'erro
 
 /**
  * results.json → { filesChanged, additions, deletions, checks, topFiles:[{path, additions, deletions, status,
- * binary?, projectKey?}] }, or null without a summary object. filesChanged = filesNew + filesChanged ('D' rows
+ * binary?, projectKey?}], checklist? }, or null without a summary object. filesChanged = filesNew + filesChanged ('D' rows
  * already count inside filesChanged — the Diff tab badge rule). checks = keyThingsToCheck (the Overview's "things
  * to check"). A workspace run reads every perProject entry and tags its files with the project key. Equal churn
  * sorts by path by code point (never localeCompare), so every OS lists the same four files.
@@ -42,12 +42,16 @@ export function runCardResults(raw, { top = RUN_CARD_TOP_FILES } = {}) {
       path: f.path, additions: Number(f.added) || 0, deletions: Number(f.removed) || 0, status: String(f.status || ''),
       ...(f.binary ? { binary: true } : {}), ...(projectKey ? { projectKey } : {}),
     }));
+  // Spec D7: a shaped single-project run's checklist tally; workspace results have none.
+  const cl = !raw.perProject && raw.checklist && typeof raw.checklist === 'object' ? raw.checklist : null;
+  const num = (k) => Number(cl[k]) || 0;
   return {
     filesChanged: (Number(s.filesNew) || 0) + (Number(s.filesChanged) || 0),
     additions: Number(s.linesAdded) || 0,
     deletions: Number(s.linesRemoved) || 0,
     checks,
     topFiles,
+    ...(cl ? { checklist: { met: num('met'), unmet: num('unmet'), na: num('na'), missing: num('missing'), total: num('total') } } : {}),
   };
 }
 

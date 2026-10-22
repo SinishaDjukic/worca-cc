@@ -123,7 +123,8 @@ export async function openRaster({ timeoutMs = 20000 } = {}) {
   if (!exe) return { reason: noBrowserReason() };
   const profile = mkdtempSync(join(tmpdir(), 'worca-c4-'));
   const args = ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
-    '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--hide-scrollbars', '--mute-audio', 'about:blank'];
+    '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--hide-scrollbars', '--mute-audio',
+    '--use-mock-keychain', '--password-store=basic', 'about:blank'];   // never the macOS login keychain (a temp HOME raises a dialog)
   if (process.platform === 'linux' && (process.getuid?.() === 0 || process.env.CHROME_NO_SANDBOX === '1')) args.unshift('--no-sandbox', '--disable-dev-shm-usage');
   const child = spawn(exe, args, { stdio: 'ignore', windowsHide: true });
   const cleanup = async () => {

@@ -25,7 +25,7 @@ function withRef(doc, text, name) {
   parts.forEach((part, i) => { if (i) frag.append(ref(doc, name)); if (part) frag.append(part); });
   return frag;
 }
-function btn(doc, cls, text) { const b = h(doc, 'button', `btn-ghost btn-mini ${cls}`, text); b.type = 'button'; return b; }
+function btn(doc, cls, text) { const b = h(doc, 'button', `btn btn-sm ${cls}`, text); b.type = 'button'; return b; }
 
 /** Classify a project status (from /api/team-metrics/scopes → projects[]) into a cell variant. */
 export function projectTmState(s) {
@@ -50,7 +50,7 @@ function recordSwitch(doc, s) {
   // Personal, per-machine opt-out — worded as a share choice so it reads as
   // distinct from the team-level setup button of the Off state.
   cb.setAttribute('aria-label', `Include my runs for ${s.name}`);
-  label.append(cb, h(doc, 'span', 'switch switch-sm'), h(doc, 'span', 'txt', 'Include my runs'));
+  label.append(cb, h(doc, 'span', 'switch'), h(doc, 'span', 'txt', 'Include my runs'));
   return label;
 }
 
@@ -121,7 +121,7 @@ export function renderProjectTmCell(s, { doc = globalThis.document, heading = tr
       // Team-level setup (creates the shared branch on origin): a button that names
       // the feature, never a switch — turning it off again is not a one-click action.
       status.classList.add('muted'); status.textContent = 'Off · runs stay on this machine';
-      actions.append(btn(doc, 'tm-enable', 'Set up team metrics…'));
+      actions.append(btn(doc, 'tm-enable', 'Set up metrics…'));
       break;
     case 'delegate-invalid':
       line.append(dot(doc, 'red'));
@@ -210,12 +210,29 @@ function radioCard(doc, { name, value, checked, title, body, disabled = false })
   return card;
 }
 
+/** The GitHub repository field (no git, no repository named in .git/config): a real <label for>, no hint text. */
+function repoField(doc, repo = '') {
+  const f = h(doc, 'div', 'field');
+  const label = h(doc, 'label', null, 'GitHub repository');
+  label.htmlFor = 'tm-repo-input';
+  const input = h(doc, 'input', 'input mono tm-repo');
+  Object.assign(input, { id: 'tm-repo-input', type: 'text', placeholder: 'owner/name', value: repo || '' });
+  input.setAttribute('spellcheck', 'false');
+  input.setAttribute('autocomplete', 'off');
+  f.append(label, input);
+  return f;
+}
+
 /** Enable dialog body (boards 5 + 6). mode: 'here' | 'delegate'. */
-export function renderEnableDialogBody({ project, origin, candidates = [], mode = 'here', attribution = 'git-user', change = false }, { doc = globalThis.document } = {}) {
+export function renderEnableDialogBody({ project, origin, candidates = [], mode = 'here', attribution = 'git-user', change = false, repoInput = false, repo = '', needsGit = false }, { doc = globalThis.document } = {}) {
   const root = h(doc, 'div', 'tm-enable-body');
   const sub = h(doc, 'div', 'sub');
-  sub.append('for ', h(doc, 'b', null, project.name), ' · origin ', code(doc, origin || '—'));
+  sub.append('for ', h(doc, 'b', null, project.name));
+  if (!repoInput) sub.append(' · origin ', code(doc, origin || '—'));
+  if (needsGit) sub.append(' · ', h(doc, 'span', 'badge waiting pl-needs-git', 'Needs git'));
   root.append(sub);
+  // No git and no repository named in .git/config: the GitHub repository is typed once (P6).
+  if (repoInput) root.append(repoField(doc, repo));
 
   const where = h(doc, 'div', 'field');
   where.append(h(doc, 'label', null, 'Where to record'));
@@ -223,7 +240,7 @@ export function renderEnableDialogBody({ project, origin, candidates = [], mode 
   // {mode:'here'} against a branch that already exists, which enable answers with 'joined' — the
   // dialog would close as if it had worked while the delegation stayed broken.
   where.append(radioCard(doc, { name: 'tm-where', value: 'here', checked: mode === 'here' && !change, disabled: change, title: 'Here, on this repository',
-    body: ['Creates an orphan branch ', { code: 'worca-metrics' }, ' on origin holding only ', { code: '.worca-metrics/' }, '. Every finished run — done, failed or stopped — is pushed there as one file, by every teammate whose Worca sees the branch.'] }));
+    body: ['Creates an orphan branch ', { code: 'worca-metrics' }, ' on origin holding only ', { code: '.worca-metrics/' }, '. Every finished run (done, failed or stopped) is pushed there as one file, by every teammate whose Worca sees the branch.'] }));
   const delegateCard = radioCard(doc, { name: 'tm-where', value: 'delegate', checked: mode === 'delegate', disabled: candidates.length === 0,
     title: 'In another project that already records',
     body: ["A tiny marker branch on this origin points teammates at the target. This project's single-project runs land on the target's branch, still labelled with this project."] });
@@ -237,8 +254,8 @@ export function renderEnableDialogBody({ project, origin, candidates = [], mode 
     delegateCard.append(wrap);
     delegateCard.append(h(doc, 'small', 'hint', "Only projects that record locally are listed. Attribution follows the target's policy (git user name)."));
   }
-  if (change) where.append(h(doc, 'small', 'hint', 'This project already has a marker branch — pick a new target.'));
-  if (!candidates.length) where.append(h(doc, 'small', 'hint', 'No project records locally yet — record here first, then point other projects at it.'));
+  if (change) where.append(h(doc, 'small', 'hint', 'This project already has a marker branch. Pick a new target.'));
+  if (!candidates.length) where.append(h(doc, 'small', 'hint', 'No project records locally yet. Record here first, then point other projects at it.'));
   root.append(where);
 
   if (mode === 'here') {
@@ -252,7 +269,7 @@ export function renderEnableDialogBody({ project, origin, candidates = [], mode 
     root.append(attr);
   }
   const warn = h(doc, 'div', 'hint tm-warn');
-  warn.append('If your repository protects branches by wildcard, exempt ', code(doc, 'worca-metrics'), ' first — Worca pushes to it directly, without a pull request.');
+  warn.append('If your repository protects branches by wildcard, exempt ', code(doc, 'worca-metrics'), ' first. Worca pushes to it directly, without a pull request.');
   root.append(warn);
   return root;
 }
@@ -446,7 +463,7 @@ export function renderWsMetricsRow(ws, { doc = globalThis.document } = {}) {
     head.append(h(doc, 'span', 'ws-members-summary', `${routed} routed · ${members.filter(needsAttention).length} not routed`));
   }
   const actions = h(doc, 'span', 'ws-tbl-actions');
-  if (home.state !== 'unset' && members.some(routable)) actions.append(btn(doc, 'ws-route', 'Route all to metrics home'));
+  if (home.state !== 'unset' && members.some(routable)) actions.append(btn(doc, 'ws-route', 'Route all'));
   actions.append(btn(doc, 'ws-home-change', home.state === 'unset' ? 'Choose metrics home…' : 'Change metrics home…'));
   head.append(actions);
   root.append(head);

@@ -1,0 +1,31 @@
+{
+  "id": "plan-n_refine-1", "kind": "plan", "nodeId": "n_refine",
+  "plan": {
+    "port": "plan", "file": "/x/plans/feature-v3.md", "round": 1, "revisable": true, "nodeId": "n_refine",
+    "perspectives": ["product", "architect", "qa", "ux", "fit"],
+    "check": { "ok": true, "passed": 8, "total": 8, "items": [], "grounding": [] },
+    "roleReviews": { "rounds": [
+      { "pass": 1, "round": 1, "plan": "/x/plans/feature.md", "roles": [
+        { "key": "product", "label": "Product", "skipped": false, "findings": [], "checklist": [] },
+        { "key": "architect", "label": "Architect", "skipped": false, "checklist": [{ "id": "R-arch-1", "status": "unmet", "evidence": "two row renderers" }],
+          "findings": [{ "id": "architect-1-1", "severity": "major", "title": "Two row renderers", "section": "Decisions", "fix": "Draw role rows with buildCheckRows", "status": "fixed", "fixedIn": 2 }] },
+        { "key": "qa", "label": "QA", "skipped": false, "checklist": [{ "id": "R-qa-1", "status": "unmet", "evidence": "no failing test" }],
+          "findings": [{ "id": "qa-1-1", "severity": "critical", "title": "No test for 0 open", "section": "Testing", "fix": "Assert Approve and build with 0 open findings", "status": "fixed", "fixedIn": 2 }] },
+        { "key": "ux", "label": "UX", "skipped": false, "checklist": [{ "id": "R-ux-1", "status": "met", "evidence": "states table" }],
+          "findings": [{ "id": "ux-1-1", "severity": "minor", "title": "375px wrap unstated", "section": "Screens and states", "fix": "Say how the finding line wraps at 375px", "status": "fixed", "fixedIn": 2 }] },
+        { "key": "fit", "label": "Project fit", "skipped": false, "checklist": [{ "id": "R-fit-1", "status": "unmet", "evidence": "second renderer" }],
+          "findings": [{ "id": "fit-1-1", "severity": "major", "title": "A second row renderer", "section": "Fit", "fix": "Reuse ui/public/shape/check-row.mjs", "status": "open" }] }
+      ] },
+      { "pass": 1, "round": 2, "plan": "/x/plans/feature-v2.md", "roles": [
+        { "key": "product", "label": "Product", "skipped": true, "findings": [], "checklist": [] },
+        { "key": "architect", "label": "Architect", "skipped": false, "findings": [], "checklist": [{ "id": "R-arch-1", "status": "met", "evidence": "one renderer" }] },
+        { "key": "qa", "label": "QA", "skipped": false, "checklist": [{ "id": "R-qa-1", "status": "met", "evidence": "test named" }],
+          "findings": [{ "id": "qa-2-1", "severity": "suggestion", "title": "Name the fixture", "section": "Testing", "fix": "Name recorded-run.json in Testing", "status": "fixed", "fixedIn": 3 }] },
+        { "key": "ux", "label": "UX", "skipped": true, "checklist": [{ "id": "R-ux-1", "status": "met", "evidence": "states table" }],
+          "findings": [{ "id": "ux-1-1", "severity": "minor", "title": "375px wrap unstated", "section": "Screens and states", "fix": "Say how the finding line wraps at 375px", "status": "fixed", "fixedIn": 2 }] },
+        { "key": "fit", "label": "Project fit", "skipped": false, "checklist": [{ "id": "R-fit-1", "status": "unmet", "evidence": "still two" }],
+          "findings": [{ "id": "fit-2-1", "severity": "major", "title": "Role rows bypass ui/public/shape/check-row.mjs", "section": "Code layout", "fix": "Render role rows through buildCheckRows in check-row.mjs", "status": "open" }] }
+      ] }
+    ] }
+  }
+}

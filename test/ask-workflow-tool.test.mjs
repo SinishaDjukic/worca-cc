@@ -5,11 +5,12 @@ import { createAskTools, AskToolError } from '../src/core/ask/tools.mjs';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
 import { redactAskText } from '../src/core/ask/redact.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { scopeRefusalText } from '../src/core/ask/scope.mjs';
 
 function fakeTools({ pin = { projectKey: 'demo-00000001' }, propose = null } = {}) {
   const calls = [];
   const tools = createAskTools({
-    buildCatalog: async () => ({ projects: [], workspaces: [], workflows: [] }),
+    buildCatalog: async () => ({ projects: [], workspaces: [{ id: 'wks-team-0000abcd', name: 'Team', projectKeys: ['other-00000002'] }], workflows: [] }),
     validateProposal: async () => ({ ok: true, card: {} }),
     pinnedScope: () => pin,
     redact: redactAskText, limits: ASK_LIMITS,
@@ -37,22 +38,24 @@ test('propose_workflow inputs: task|shape, pinned-scope default (project or work
       assert.equal(calls.length, 1);
       assert.equal(calls[0].mode, 'task'); assert.equal(calls[0].task, 'fix the login bug'); assert.equal(calls[0].projectKey, 'demo-00000001'); assert.equal(calls[0].workspaceId, '');
       assert.equal(calls[0].name.length, 60); assert.equal(calls[0].note.length, ASK_LIMITS.workflowNoteMaxChars); assert.equal(calls[0].thenRun, false);
-      await tools.call('propose_workflow', { shape: { name: 'S', stages: [{ agent: 'a' }] }, projectKey: 'other-00000002', thenRun: true });
-      assert.equal(calls[1].mode, 'shape'); assert.equal(calls[1].projectKey, 'other-00000002'); assert.equal(calls[1].thenRun, true);
+      await tools.call('propose_workflow', { shape: { name: 'S', stages: [{ agent: 'a' }] }, projectKey: 'demo-00000001', thenRun: true });
+      assert.equal(calls[1].mode, 'shape'); assert.equal(calls[1].projectKey, 'demo-00000001'); assert.equal(calls[1].thenRun, true);
       assert.deepEqual(calls[1].shape, { name: 'S', stages: [{ agent: 'a' }] });
+      await assert.rejects(() => tools.call('propose_workflow', { task: 't', projectKey: 'other-00000002' }), { message: `propose_workflow: ${scopeRefusalText({ projectKey: 'demo-00000001' }, { projectKey: 'other-00000002' })}` });
     } },
-    { name: 'propose_workflow: a pinned workspace is the default target (D-W5); an explicit id wins over the pin; both ids or nothing pinned is refused; an over-long task is refused', run: async () => {
+    { name: 'propose_workflow: a pinned workspace is the default target (D-W5); an explicit MEMBER project of the pinned workspace is in scope; any other target is refused; both ids, or No project with nothing named, are refused; an over-long task is refused', run: async () => {
       const ws = fakeTools({ pin: { workspaceId: 'wks-team-0000abcd' } });
       await ws.tools.call('propose_workflow', { task: 't' });
       assert.equal(ws.calls[0].workspaceId, 'wks-team-0000abcd'); assert.equal(ws.calls[0].projectKey, '');
       await ws.tools.call('propose_workflow', { task: 't', projectKey: 'other-00000002' });
       assert.equal(ws.calls[1].projectKey, 'other-00000002'); assert.equal(ws.calls[1].workspaceId, '', 'an explicit project is never mixed with the pinned workspace');
       const pinnedProject = fakeTools();
-      await pinnedProject.tools.call('propose_workflow', { task: 't', workspaceId: 'wks-iot-0000abcd' });
-      assert.equal(pinnedProject.calls[0].workspaceId, 'wks-iot-0000abcd'); assert.equal(pinnedProject.calls[0].projectKey, '');
+      await assert.rejects(() => pinnedProject.tools.call('propose_workflow', { task: 't', workspaceId: 'wks-iot-0000abcd' }),
+        { message: `propose_workflow: ${scopeRefusalText({ projectKey: 'demo-00000001' }, { workspaceId: 'wks-iot-0000abcd' })}` });
       await assert.rejects(() => fakeTools().tools.call('propose_workflow', { task: 't', projectKey: 'p-00000001', workspaceId: 'wks-iot-0000abcd' }), { name: 'AskToolError', message: 'propose_workflow: give projectKey or workspaceId, not both' });
       const none = fakeTools({ pin: null });
-      await assert.rejects(() => none.tools.call('propose_workflow', { task: 't' }), /projectKey or workspaceId is required — nothing is pinned/);
+      await assert.rejects(() => none.tools.call('propose_workflow', { task: 't' }),
+        { message: `propose_workflow: ${scopeRefusalText(null)}. For work that belongs to no project, call propose_run with noProject: true and a saved workflow instead` });
       await assert.rejects(() => fakeTools().tools.call('propose_workflow', { task: 'x'.repeat(ASK_LIMITS.workflowTaskMaxChars + 1) }), /task is longer than 32000 chars/);
     } },
   ]);

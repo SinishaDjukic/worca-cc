@@ -195,6 +195,16 @@ test('receipt helpers: the card shape, its context line, the actor, the same-val
   assert.equal(chatActionSummary(card), 'Run (Fix login): Running → Paused');
   assert.equal(chatActionSummary({ type: 'run-stop', title: 'Fix login' }), 'Stop Fix login');
   assert.equal(chatActionSummary({ type: 'pull-request', title: 'Fix login', result: { url: 'https://x/pull/1' } }), 'Pull request for Fix login: https://x/pull/1');
+  assert.equal(chatActionSummary({ type: 'ship', title: 'Charts' }), 'Ship Charts');
+  assert.equal(chatActionSummary({ type: 'ship', title: 'Charts', result: { mode: 'one' } }), 'Ship Charts: shipped as one PR');
+  // Shaper s5: the round number is the one taken at Start (result.round), never landing.target.round
+  const round = { type: 'changes', landing: { kind: 'round', title: 'Changes to Run 2 · same branch, same PR', target: { round: 2 } } };
+  assert.equal(chatActionSummary(round), 'Changes to Run 2 · same branch, same PR');
+  assert.equal(chatActionSummary({ ...round, result: { round: 3, pr: 41 } }), 'Changes to Run 2 · same branch, same PR: Round 3 started');
+  assert.equal(chatActionSummary({ type: 'changes', landing: { kind: 'next-plan', title: "Changes to Charts · into Run 3's plan" }, result: { index: 3 } }),
+    "Changes to Charts · into Run 3's plan: Added to Run 3's plan");
+  assert.equal(chatActionSummary({ type: 'route', text: 'make the legend smaller' }), 'Where does this go: make the legend smaller');
+  assert.equal(chatActionSummary({ type: 'route', text: 'x', result: { verb: 'save' } }), 'Where does this go: x: Saved for the next checkpoint');
   assert.throws(() => receiptCard({ kind: 'nope' }), /unknown receipt kind/);
   assert.equal(askActorFor('ada@example.com'), 'ada@example.com via worca chat');
   assert.equal(askActorFor('local'), 'worca chat');

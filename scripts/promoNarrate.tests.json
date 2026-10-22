@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "silent-timeline",
+      "name": "Silent video: the timeline from the pace, no network",
+      "cwd": { "kind": "scratch" },
+      "inputs": {
+        "script": { "text": "{\"version\":1,\"title\":\"Meet Acme\",\"lines\":[{\"id\":\"v01\",\"scene\":\"hook\",\"text\":\"Here is a task: ship the dark mode toggle.\"},{\"id\":\"v02\",\"scene\":\"demo\",\"text\":\"Pick a board, drag a card, and watch it move.\"}],\"scenes\":[{\"id\":\"hook\",\"beats\":\"a task lands\"},{\"id\":\"demo\",\"chapter\":{\"num\":\"01\",\"title\":\"The board\"},\"beats\":\"drag a card\"}]}" }
+      },
+      "expect": { "verdict": "clean", "fired": ["timeline", "report"], "summaryIncludes": "silent timeline: 2 lines" }
+    },
+    {
+      "id": "empty-script",
+      "name": "An empty script still yields a one-scene timeline",
+      "cwd": { "kind": "scratch" },
+      "inputs": {
+        "script": { "text": "{}" }
+      },
+      "expect": { "verdict": "clean", "fired": ["timeline", "report"], "summaryIncludes": "silent timeline: 0 lines" }
+    }
+  ]
+}
