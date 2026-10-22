@@ -156,7 +156,7 @@ test('hide set: JS-built surfaces and requests', async () => {
         /if \(!box \|\| !list\) return;\n  if \(!gitOn\(\)\) \{ box\.hidden = true; return; \}/,
         /const pre = gitOn\(\) \? null : await pluginApi\('POST', '\/api\/plugins\/install', req\);\n\s+if \(pre && !pre\.ok && pre\.data && pre\.data\.code === 'GIT_MISSING'\) \{ err\.textContent = pre\.data\.error \|\| GIT_MISSING_TEXT; err\.hidden = false; if \(btn\) btn\.disabled = false; return; \}\n\s+closePluginModal\(\);/,
         /import \{[^}]*\bGIT_MISSING_TEXT\b[^}]*\} from '\.\/git-gate\.mjs';/,
-        /if \(!gitOn\(\)\) for \(const k of \['sourceBranch', 'sourceBranchByKey', 'featureBranch', 'sameAsSource', 'sourceFromPrevious', 'syncBeforeStart', 'syncOnDiverged'\]\) delete body\[k\];/,
+        /if \(!gitOn\(\)\) for \(const k of \['sourceBranch', 'sourceBranchByKey', 'featureBranch', 'featureBranchSuggested', 'featureBranchFallback', 'sameAsSource', 'sourceFromPrevious', 'syncBeforeStart', 'syncOnDiverged'\]\) delete body\[k\];/,
         /gitOn: \(\) => gitOn\(\),/,
         /const row = rdSheetRow\(\{ label: cell\.tab\.label, value, tab: key, icon: icon \? icon\.cloneNode\(true\) : null \}\);\n\s+if \(cell\.tab\.needsGit\) row\.dataset\.needsGit = '';/,
         /open\.textContent = 'Open the diff';\n\s+open\.dataset\.needsGit = '';/, /row\.className = 'hd-ov-wt';\n\s+row\.dataset\.needsGit = '';/]) assert.match(appSrc, re);

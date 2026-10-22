@@ -180,7 +180,7 @@ const GRADIENT_OK = new Set(['.wf-pop-canvas', '.run-flow-wrap', '.ask-wfcard-gr
   '.chat-home-wf-tb', '.skel', '.ws-sum-pending', '.shipit-desc-field.is-generating .shipit-desc-busy::before',
   '.shipit-desc-busy-label', '.ask-thinking-label', '.ask-wfcard-step.is-live .st-label', '.wfc-act-l', '.pp-shimmer',
   '.ask-ctx-bar-buffer', '.ask-ctx-stat[data-stat="buffer"] .ask-ctx-swatch', '.chat-dock::before',
-  '.plan-md.collapsed::after']);
+  '.plan-md.collapsed::after', '.sn-adorn.sn-loading .input']);
 test('gradients only as functional textures (D15)', () => {
   const bad = ALL.flatMap((r) => decls(r.body, 'background(?:-image)?')
     .filter(([, v]) => /gradient\(/.test(v) && !GRADIENT_OK.has(r.sel)).map(([, v]) => where(r, v.slice(0, 40))));
@@ -847,10 +847,10 @@ test('no glyph at the edge of a visible string; use icon(doc, …) (F-12)', () =
 });
 
 // F-13: violet is Labs-only (docs/design-system.md colour table). The merged status dot and the merged run orb are the
-// two named exceptions (slice 1 shipped them as the shipped-state colour), and the Marketplace kind colours give the chat
-// kind its violet tile and facet dot (docs/design-system.md › Marketplace exceptions). Exact selectors, no substring match.
+// two named exceptions (slice 1 shipped them as the shipped-state colour), plus the Smart run naming Labs chip and shimmer, and the
+// Marketplace kind colours give the chat kind its violet tile and facet dot (docs/design-system.md › Marketplace exceptions). Exact selectors, no substring match.
 const VIOLET_OK = new Set(['.badge.flag-stage-experimental', '.status-dot.is-violet', '.rg-orb-merged .rg-orb-bg', '.rg-orb-merged .rg-orb-line',
-  '.mk-t-chat', '.mk-dot-chat']);
+  '.sn-chip', '.sn-adorn.sn-loading .input', '.mk-t-chat', '.mk-dot-chat']);
 test('violet only inside Labs selectors and the merged dot and orb (F-13)', () => {
   const bad = ALL.filter((r) => r.sel !== ':root' && /var\(--violet/.test(r.body) && !splitTop(r.sel).every((s) => VIOLET_OK.has(s.trim())))
     .map((r) => where(r, 'violet'));

@@ -134,7 +134,7 @@ border, ink text. Never a solid ink fill. A count sits in `.n`. It is the only f
 `proj-fchip` and `mcp-chip` are gone (checked).
 ### Chips and badges
 One chip: 18px, 11px / 500 sans, 4px corner, filled, no border (checked). The Labs (violet) and Beta (blue) flag chips are
-the reference size. Colour carries meaning only. Cost-tag chips (`.tag-chip`), the Projects sync pill (`.ps-pill`), the
+the reference size. Colour carries meaning only. The "Suggested" chip on the New run form's title and branch (`.sn-chip`, Smart run naming) is a permitted Labs-violet use: the whole feature is a Labs feature. Cost-tag chips (`.tag-chip`), the Projects sync pill (`.ps-pill`), the
 Chat command card's state (`.ask-cmd-pill`) and the Team policy tab count (`.tp-tab-badge`) are the same chip; on the
 active tab the count turns neutral (`--line-2` fill, ink text). The missing-key slot is the one outlined chip: a 1px dashed
 `--amber` outline on a transparent fill. A removable chip's × is a 14px quiet button inside the chip. A source, "Official"

@@ -271,3 +271,71 @@ test('source branch defaults to actual HEAD when not "main"', async () => {
   assert.equal((await stopAt(orch, afterStarts(1))).status, 'stopped');
   assert.equal(orch.getState().branch.source, 'master');
 });
+
+// ── Smart run naming (flag smartRunNaming): derived names go through the pattern ──
+async function withFlag(on, fn) {
+  const prev = process.env.WORCA_FLAGS;
+  process.env.WORCA_FLAGS = on ? 'smartRunNaming' : '-smartRunNaming';
+  try { return await fn(); } finally { if (prev === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = prev; }
+}
+const branchOf = async (repo, extra) => {
+  const orch = createOrchestrator({ projectDir: repo, prompt: 'Rate limiter for the api', auto: true, claude: { mock: true }, ...extra });
+  assert.equal((await stopAt(orch, afterStarts(1))).status, 'stopped');
+  return { orch, feature: orch.getState().branch.feature };
+};
+
+test('smart naming off: the derived name is today\'s worca-cc/words-id', async () => {
+  await withFlag(false, async () => {
+    const { feature } = await branchOf(await freshRepo(), { branch: { source: 'main' } });
+    assert.match(feature, /^worca-cc\/.+-[0-9a-f]{8}$/);
+  });
+});
+
+test('smart naming on: a derived name uses the pattern and the first type (the ticket part is pinned in naming-derive)', async () => {
+  await withFlag(true, async () => {
+    const { feature } = await branchOf(await freshRepo(), { branch: { source: 'main' } });
+    assert.match(feature, /^feat\/rate-limiter/);
+  });
+});
+
+test('smart naming on: a derived name that already exists gets the short run id; a suggested one too', async () => {
+  await withFlag(true, async () => {
+    const repo = await freshRepo();
+    const first = await branchOf(repo, { branch: { source: 'main' } });
+    assert.ok(branchList(repo).includes(first.feature));
+    const second = await branchOf(repo, { branch: { source: 'main' } });
+    assert.notEqual(second.feature, first.feature);
+    assert.match(second.feature, new RegExp(`^${first.feature}-[0-9a-f]{8}$`));
+    const marked = await branchOf(repo, { branch: { source: 'main', feature: first.feature, suggested: true } });
+    assert.match(marked.feature, new RegExp(`^${first.feature}-`));
+  });
+});
+
+test('smart naming on: a typed branch stays verbatim even when it exists', async () => {
+  await withFlag(true, async () => {
+    const repo = await freshRepo();
+    spawnSync('git', ['-C', repo, 'branch', 'fix/typed', 'main']);
+    const { feature } = await branchOf(repo, { branch: { source: 'main', feature: 'fix/typed' } });
+    assert.equal(feature, 'fix/typed');
+  });
+});
+
+test('smart naming on: branch.legacy gives today\'s exact name, no pattern', async () => {
+  await withFlag(true, async () => {
+    const { feature } = await branchOf(await freshRepo(), { branch: { source: 'main', legacy: true } });
+    assert.match(feature, /^worca-cc\/.+-[0-9a-f]{8}$/);
+  });
+});
+
+test('smart naming on: a replay keeps the derived name and never asks git for the branch list', async () => {
+  await withFlag(true, async () => {
+    const repo = await freshRepo();
+    spawnSync('git', ['-C', repo, 'branch', 'feat/rate-limiter-api', 'main']);
+    const orch = createOrchestrator({ projectDir: repo, prompt: 'Rate limiter for the api', auto: true, claude: { mock: true }, branch: { source: 'main' } });
+    orch.pipeline = { id: 'a1b2c3d4e5f6', promptText: 'Rate limiter for the api' };
+    const first = await orch._resolveSingleBranches();
+    assert.equal(first.featureRaw, 'feat/rate-limiter-api-a1b2c3d4', 'a first attempt makes the collision unique');
+    const replay = await orch._resolveSingleBranches({ replay: true });
+    assert.equal(replay.featureRaw, 'feat/rate-limiter-api', 'a replay re-derives without touching the branch list');
+  });
+});

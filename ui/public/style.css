@@ -10206,6 +10206,26 @@ button.mk-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;bor
 .ask-card.chat-rc > .chat-rc-q :is(.qpanel,.qblock){padding-left:0;padding-right:0;border-radius:0;background:none;}
 .ask-card.chat-rc .chat-rc-art-rows{border:0;border-radius:0;}
 
+/* Smart run naming (Labs, flag smartRunNaming): the Suggested chip, the ↻ / × buttons inside the title and branch
+   inputs, the branch type select. The violet chip is the permitted Labs use (docs/design-system.md). */
+.sn-adorn{position:relative}
+.sn-adorn .input{padding-right:64px}
+.sn-actions{position:absolute;right:6px;top:50%;transform:translateY(-50%);display:inline-flex;gap:4px}
+.sn-btn{width:24px;height:24px;border:0;background:var(--line-2);color:var(--ink-2);border-radius:var(--r-xs);display:inline-grid;place-items:center;cursor:pointer;padding:0}
+.sn-btn:hover{color:var(--ink)}
+.sn-chip{margin-left:8px;background:var(--violet-bg);color:var(--violet-ink)}
+.sn-adorn.sn-loading .input{background:linear-gradient(90deg,var(--field),var(--violet-wash),var(--field));background-size:200% 100%;animation:ask-shimmer 1.4s linear infinite}
+.sn-branch-row{display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:start}
+.sn-branch-row .sn-type[hidden]{display:none}
+.sn-branch-row .sn-type .select,.sn-branch-row .input{font-family:var(--mono)}
+.sn-branch-row:has(.sn-type[hidden]){grid-template-columns:1fr}
+.hint.warn{color:var(--amber-ink-strong)}
+#smart-naming-settings-card [aria-disabled="true"]{opacity:.55}
+.sn-types{display:flex;flex-wrap:wrap;gap:6px}
+@media (max-width:480px){.sn-branch-row{grid-template-columns:1fr}}
+@media (prefers-reduced-motion:reduce){.sn-adorn.sn-loading .input{animation:none}}
+
+
 /* One border level per card (review B2): inside a chat card the nested boxes drop their border and take a tint. It stays LAST in the file: at (0,2,0) it only beats earlier rules of the same weight, and a
    later state rule resetting the border shorthand would draw the box again. Outside cards the base rules keep theirs. */
 :is(.ask-card,.chat-rc,.shape-feature) :is(.qpanel,.qblock,.af-choice,.af-form,.issue-detail,.opt-row,.shape-plan-notes,
