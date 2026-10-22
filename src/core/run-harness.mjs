@@ -1483,7 +1483,7 @@ export class RunHarness extends EventEmitter {
       this._noteLocalTagDimensions();
       // The engine's own run-start check (binary, sign-in) and the project deny rules
       // it could not enforce, then the gate's refusals and audit lines.
-      this._engineProjectRules = await this._engineChecks((m) => this.guardrailHonorByKey?.get(m.projectKey) !== false);
+      this._engineProjectRules = await this._engineChecks((m) => this.guardrailHonorByKey?.get(m.projectKey) !== false, { guardrails: this.guardrails });
       await this._engineMcpGate();
       this._pendingAudits.push(...this._engineGate());
       this._log(
@@ -3318,7 +3318,7 @@ export class RunHarness extends EventEmitter {
     const set = (await readGuardrailSet(id)) || (await readGuardrailSet('permissive'));
     const rules = guardrailsToPermissionRules(unionGuardrails([set.settings]));
     const honor = set.settings.honorProjectSettings !== false;
-    this._engineProjectRules = await this._engineChecks(() => honor, { quiet });
+    this._engineProjectRules = await this._engineChecks(() => honor, { quiet, guardrails: unionGuardrails([set.settings]) });
     return { id, rules, projectRules: this._engineProjectRules };
   }
 
@@ -3444,20 +3444,38 @@ export class RunHarness extends EventEmitter {
   async _codexNeedsSignIn() {
     try {
       if (this.workflowId === AUTO_WORKFLOW_ID) return true;
-      const own = (m) => modelForEngine(m || undefined, 'codex', { projectDir: this.projectDir }) || null;
-      const runModel = own(this.claude.model) || CODEX_DEFAULT_MODEL;
-      const steps = this.stepModels || await resolveStepModels(this.projectDir, this.claude.model, 'codex');
-      const named = [
-        ...Object.values(steps || {}).map((s) => s?.model),
-        ...manifestModels(this.state?.stepper || []),
-        ...['title', 'overview', 'prDescription', 'memoryDefrag'].map((job) => this._utilitySlot(job).model || CODEX_DEFAULT_MODEL),
-        effectiveNightConfig(this.projectDir).config?.deciderModel,
-      ];
-      const models = new Set([runModel, ...named.filter(Boolean).map((m) => own(m) || runModel)]);
-      return ![...models].every((m) => hasCodexEndpoint(m));
+      return ![...await this._engineSpawnModels('codex', CODEX_DEFAULT_MODEL)].every((m) => hasCodexEndpoint(m));
     } catch {
       return true;
     }
+  }
+
+  /**
+   * Whether some spawn of this OpenCode run names no model (opencodePreflight `defaultModel`), so OpenCode would pick
+   * its own default, possibly a free OpenCode Zen model. Never throws: anything unreadable counts as "some spawn does".
+   */
+  async _opencodeOnDefaultModel() {
+    try {
+      return (await this._engineSpawnModels('opencode', null)).has(null);
+    } catch {
+      return true;
+    }
+  }
+
+  /** The models this run's spawns on `engine` name, each in the engine's own id: the run's model, each step's and
+   *  workflow node's (one not on the engine runs the run's), the helper jobs' when they run on this engine, and the
+   *  Away-mode decider's. `fallback` stands for a spawn that names none. */
+  async _engineSpawnModels(engine, fallback) {
+    const own = (m) => modelForEngine(m || undefined, engine, { projectDir: this.projectDir }) || null;
+    const runModel = own(this.claude.model) || fallback;
+    const steps = this.stepModels || await resolveStepModels(this.projectDir, this.claude.model, engine);
+    const named = [
+      ...Object.values(steps || {}).map((s) => s?.model),
+      ...manifestModels(this.state?.stepper || []),
+      ...(this._helperEngine() === engine ? ['title', 'overview', 'prDescription', 'memoryDefrag'].map((job) => this._utilitySlot(job).model || fallback) : []),
+      effectiveNightConfig(this.projectDir).config?.deciderModel,
+    ];
+    return new Set([runModel, ...named.filter(Boolean).map((m) => own(m) || runModel)]);
   }
 
   /**
@@ -3467,16 +3485,20 @@ export class RunHarness extends EventEmitter {
    * `.claude/settings.json` (run-context.mjs#discoverProjectSettings, the file Claude
    * Code reads itself). A preflight refusal throws. Returns the merged deny rules, or null.
    * @param {(member:object)=>boolean} honors whether a member's project settings are honored
-   * @param {{quiet?:boolean}} [opts] quiet: skip the preflight's warning line (a
-   *   check made before the run exists; run() checks again and warns then)
+   * @param {{quiet?:boolean, guardrails?:object}} [opts] quiet: skip the preflight's warning line (a
+   *   check made before the run exists; run() checks again and warns then); guardrails: the run's set, whose env
+   *   scrub the OpenCode check reads its credentials through
    * @returns {Promise<{deny:string[]}|null>}
    */
-  async _engineChecks(honors, { quiet = false } = {}) {
+  async _engineChecks(honors, { quiet = false, guardrails = null } = {}) {
     const name = this.claude.engine || 'claude';
     if (name === 'claude') return null;
     const adapter = getEngine(name);
     if (!this.claude.mock && typeof adapter.preflight === 'function') {
-      const r = await adapter.preflight({ ...(this.claude.bin ? { bin: this.claude.bin } : {}), ...(name === 'codex' ? { signIn: await this._codexNeedsSignIn() } : {}) });
+      const r = await adapter.preflight({ ...(this.claude.bin ? { bin: this.claude.bin } : {}),
+        ...(name === 'codex' ? { signIn: await this._codexNeedsSignIn() } : {}),
+        ...(name === 'opencode' ? { defaultModel: await this._opencodeOnDefaultModel(), envScrub: !!guardrails?.envScrub,
+          envAllowlist: guardrails?.envScrub ? guardrails.envAllowlist : undefined } : {}) });
       if (r?.refusal) throw engineRefusal(name, r.refusal);
       if (r?.warning && !quiet) this._log('orchestrator', 'warn', `engine ${name}: ${r.warning}`);
     }
