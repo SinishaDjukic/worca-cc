@@ -687,7 +687,9 @@ export function renderGroupsCard(groups, rangeLabel, { doc = globalThis.document
   const thead = h(doc, 'thead', null); thead.appendChild(head); table.appendChild(thead);
   const tbody = h(doc, 'tbody', null);
   for (const r of groups.rows) {
-    const tr = h(doc, 'tr', r.kind === 'none' ? 'groups-row-none' : r.kind === 'ask' ? 'groups-row-ask' : null);
+    // Chat and Requirements spend rows carry no runs (their spend is not per run)
+    const noRuns = r.kind === 'ask' || r.kind === 'requirements';
+    const tr = h(doc, 'tr', r.kind === 'none' ? 'groups-row-none' : noRuns ? `groups-row-${r.kind}` : null);
     tr.appendChild(h(doc, 'td', 'people-name', r.label));
     const spend = h(doc, 'td', 'people-spend');
     const bar = h(doc, 'span', 'people-bar');
@@ -699,7 +701,7 @@ export function renderGroupsCard(groups, rangeLabel, { doc = globalThis.document
     tr.appendChild(spend);
     tr.appendChild(h(doc, 'td', 'num', totalUsd > 0 ? `${Math.round((r.spentUsd / totalUsd) * 100)}%` : '—'));
     for (const c of ['runs', 'finished', 'stopped', 'failed', 'prsMerged']) {
-      tr.appendChild(h(doc, 'td', 'num', r.kind === 'ask' ? '—' : String(r[c])));
+      tr.appendChild(h(doc, 'td', 'num', noRuns ? '—' : String(r[c])));
     }
     labelCells(tr, heads);
     tbody.appendChild(tr);

@@ -212,7 +212,7 @@ function peopleInUse() {
 }
 
 const COUNT_KEYS = ['runs', 'finished', 'stopped', 'failed', 'paused', 'running', 'prsOpened', 'prsMerged'];
-const NONE_ORDER = { value: 0, none: 1, ask: 2 };
+const NONE_ORDER = { value: 0, none: 1, ask: 2, requirements: 3 };
 
 /** 'person' | 'tag:<key>' | null → { kind, key } | null. @throws {RangeError} */
 export function parseGroupBy(groupBy) {
@@ -242,10 +242,10 @@ function rowIdentity(g, raw) {
 
 /**
  * Grouped rows over one window: cohort/active counts per group and money per group — ledger by
- * timestamp for a bounded range, the fallback-aware pipelines sums for 'all'. The Ask Worca row is
- * added unless a filter is active. Rows reconcile to totalUsd exactly (residual on the top row).
+ * timestamp for a bounded range, the fallback-aware pipelines sums for 'all'. The Ask Worca row and
+ * the Requirements row are added unless a filter is active. Rows reconcile to totalUsd exactly (residual on the top row).
  */
-function groupedRows(g, { win, fromMs, toMs, filter, allTime, ask, totalUsd }) {
+function groupedRows(g, { win, fromMs, toMs, filter, allTime, ask, requirements, totalUsd }) {
   const { join, col, params: jp } = groupSql(g);
   const f = filterSql(filter);
   const rows = new Map();
@@ -271,6 +271,8 @@ function groupedRows(g, { win, fromMs, toMs, filter, allTime, ask, totalUsd }) {
   const out = [...rows.values()].map((r) => ({ ...r, spentUsd: roundUsd(r.spentUsd) }));
   if (ask) out.push({ kind: 'ask', key: null, label: 'Chat', spentUsd: ask.spendUsd,
     sessions: ask.sessions, ...Object.fromEntries(COUNT_KEYS.map((c) => [c, 0])) });
+  if (requirements) out.push({ kind: 'requirements', key: null, label: 'Requirements', spentUsd: requirements.spendUsd,
+    features: requirements.features, ...Object.fromEntries(COUNT_KEYS.map((c) => [c, 0])) });
   const kept = out.filter((r) => r.spentUsd !== 0 || r.runs !== 0)
     .sort((a, b) => NONE_ORDER[a.kind] - NONE_ORDER[b.kind] || b.spentUsd - a.spentUsd
       || (a.label < b.label ? -1 : a.label > b.label ? 1 : 0));
@@ -582,7 +584,8 @@ export function getStats({ range = 'month', now = new Date(), from = null, to = 
     win: range === 'all' ? WINDOWS.cohort(0, windowEnd.getTime())
       : (range === 'today' ? WINDOWS.active : WINDOWS.cohort)(windowStart.getTime(), windowEnd.getTime()),
     fromMs: windowStart.getTime(), toMs: windowEnd.getTime(), filter,
-    allTime: range === 'all', ask: filtered ? null : totals.ask, totalUsd: totals.spentUsd,
+    allTime: range === 'all', ask: filtered ? null : totals.ask,
+    requirements: filtered ? null : totals.requirements, totalUsd: totals.spentUsd,
   };
   const groups = group ? {
     by: groupBy,
