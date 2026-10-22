@@ -5,6 +5,7 @@
 // fetch, no listeners. app.js fetches, mounts and routes; every figure and name is painted as text.
 import { BUDGET_WARN_AT, DEFAULT_FMT, fmtResetAt, periodWord, windowSaved, signedUsd, SAVED_NOTE } from './stats-view.mjs';
 import { freeDailyRow } from './openrouter-free-view.mjs';
+import { ICONS, iconSvg } from './icons.mjs';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -173,13 +174,15 @@ export function accountLabel(acct, { away = false, budget = null, fmt = DEFAULT_
 }
 
 /** Paint the corner button (#side-acct): the avatar's initials, the short name, the spend ring
- *  (data-spend none | ok | warn | over), the away dot (data-presence) and the label. */
+ *  (data-spend none | ok | warn | over), the away badge with its walking person (data-presence) and the label. */
 export function paintAccountCorner(btn, acct, { budget = null, away = false, fmt = DEFAULT_FMT } = {}) {
   if (!btn) return;
   const ring = spendRing(budget);
   btn.dataset.account = acct.kind;
   btn.dataset.spend = ring ? (ring.tone || 'ok') : 'none';
   btn.dataset.presence = away ? 'away' : 'here';
+  const dot = btn.querySelector('.acct-dot');
+  if (dot && !dot.firstChild) dot.innerHTML = iconSvg('stepped-out', 8);   // the icon set's own literal, never data
   const arc = btn.querySelector('.acct-ring .arc');
   if (arc) arc.setAttribute('stroke-dasharray', ringDash(ring ? ring.ratio : 0, RING_R));
   const ava = btn.querySelector('.acct-ava');
@@ -207,8 +210,7 @@ export function paintIdentityCard(card, acct) {
 /** Here: a person walking out (a step-out arrow read as Sign out; a moon read as
  *  dark mode, the appearance switcher's own icon). Away: a home, to come back to. */
 const AWAY_ICON_PATHS = Object.freeze({
-  here: ['M14 2.2a1.8 1.8 0 1 1 0 3.6 1.8 1.8 0 0 1 0-3.6z', 'M13 8l-1.5 5.5', 'M8.5 12l2-3.2 2.5-.8 2.5 2.5 2.5 1',
-    'M11.5 13.5l2.5 3 1 4.5', 'M11.5 13.5l-1.5 3.5-3 3.5'],
+  here: [...ICONS['stepped-out'].matchAll(/\bd="([^"]+)"/g)].map((m) => m[1]),   // the corner's away badge draws it too
   away: ['M3.5 10.5L12 3.5l8.5 7', 'M5.5 9v11h13V9', 'M10 20v-5.5h4V20'],
 });
 

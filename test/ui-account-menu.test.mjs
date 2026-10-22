@@ -4,6 +4,7 @@
 // detached DOM; painters write into a copy of the shell's markup.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { BUDGET_WARN_AT } from '../ui/public/stats-view.mjs';
 import {
@@ -13,6 +14,7 @@ import {
 import { describeAwayRow } from '../src/shared/away-mode/describe.mjs';
 import { createLevelController, levelMenuHtml, LEVEL_SHORT, LEVEL_INFO, UI_LEVELS } from '../ui/public/ui-level.mjs';
 import { freeDailyRow } from '../ui/public/openrouter-free-view.mjs';
+import { ICONS } from '../ui/public/icons.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
@@ -165,6 +167,9 @@ const SHELL = `<button type="button" class="acct" id="side-acct"><span class="ac
 <div class="mcard id-card" id="acct-id" hidden><span class="mc-k">Signed in as</span><b class="id-name"></b><small class="id-via"></small></div>
 <button type="button" class="mi away-item" id="acct-away" role="menuitem"><svg class="mi-ic" viewBox="0 0 24 24" aria-hidden="true"></svg><span class="mi-lbl">Step away</span><span class="mi-hint"></span></button>`;
 const shell = () => new JSDOM(`<!doctype html><body>${SHELL}</body>`).window.document;
+// The walking person's path data, from the one icon set; the corner's badge and the away row both draw it.
+const STEPPED_OUT = [...ICONS['stepped-out'].matchAll(/\bd="([^"]+)"/g)].map((m) => m[1]);
+const dsOf = (el) => [...el.querySelectorAll('path')].map((p) => p.getAttribute('d'));
 
 test('describeAccount: shared = initials + the name up to "@" + the card; operator = initials + name, no card; anything else = Profile', async () => {
   await checkRows([
@@ -246,6 +251,22 @@ test('paintAccountCorner: initials, the short name, the ring and the away dot; n
       assert.equal(btn.querySelector('.acct-name').textContent, 'Solo Operator');
       assert.match(btn.getAttribute('aria-label'), /^Solo Operator · away: /);
     } },
+    { name: 'the dot carries the walking person from the icon set, aria-hidden, drawn once however often it is painted', run: () => {
+      const doc = shell();
+      const btn = doc.getElementById('side-acct');
+      const dot = btn.querySelector('.acct-dot');
+      paintAccountCorner(btn, describeAccount(SOLO), { away: true });
+      const svg = dot.querySelector('svg');
+      assert.ok(svg, 'the glyph is in the dot');
+      assert.deepEqual([svg.getAttribute('width'), svg.getAttribute('height'), svg.getAttribute('viewBox')], ['8', '8', '0 0 24 24']);
+      assert.equal(svg.getAttribute('aria-hidden'), 'true');
+      assert.equal(dot.getAttribute('aria-hidden'), 'true', 'the label says away; the badge stays silent');
+      assert.deepEqual(dsOf(svg), STEPPED_OUT);
+      paintAccountCorner(btn, describeAccount(SOLO), { away: false });
+      paintAccountCorner(btn, describeAccount(SOLO), { away: true });
+      assert.equal(dot.querySelectorAll('svg').length, 1, 'repaints never stack the glyph');
+      assert.equal(btn.dataset.presence, 'away');
+    } },
     { name: 'a name is painted as text, never markup', run: () => {
       const doc = shell();
       const btn = doc.getElementById('side-acct');
@@ -277,6 +298,25 @@ test('paintIdentityCard: only a shared identity gets "Signed in as"', () => {
   }
 });
 
+test('style.css: the away badge is the same 11px dot, slate with a panel-coloured walking person, shown only when away', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const rule = (sel) => {
+    const m = css.match(new RegExp(`(?:^|\\n)${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\{([^}]*)\\}`));
+    assert.ok(m, `${sel} has a rule`);
+    return m[1].replace(/\s+/g, '');
+  };
+  const dot = rule('.acct-dot');
+  for (const decl of ['position:absolute', 'right:1px', 'bottom:1px', 'width:11px', 'height:11px', 'border-radius:50%',
+    'background:var(--slate)', 'color:var(--panel)', 'box-shadow:0002pxvar(--panel)', 'display:none']) {
+    assert.ok(dot.includes(`${decl};`) || dot.endsWith(decl), `.acct-dot keeps ${decl}`);
+  }
+  assert.doesNotMatch(dot, /violet|#[0-9a-f]{3,8}\b/i, 'tokens only, never violet (Labs / merged)');
+  assert.match(rule('.acct[data-presence="away"] .acct-dot'), /^display:grid;place-items:center;?$/, 'shown, glyph centred, only when away');
+  const glyph = rule('.acct-dot svg');
+  assert.match(glyph, /stroke-width:[\d.]+/, 'the glyph stroke is tuned for 8px');
+  assert.doesNotMatch(css, /\.sidebar\.collapsed[^{]*\.acct-dot/, 'the rail keeps the badge');
+});
+
 // ── the away row ────────────────────────────────────────────────────────────────
 
 const C = { window: '22:00-07:00', timeZone: 'UTC', graceMinutes: 30, enabled: false, neverDecide: [] };
@@ -290,6 +330,7 @@ test('paintAwayRow: icon, label, hint and tip from describeAwayRow; busy or unre
   assert.deepEqual([btn.dataset.state, btn.dataset.status, btn.querySelector('.mi-lbl').textContent, btn.querySelector('.mi-hint').textContent],
     ['here', 'here', 'Step away', 'away at 22:00']);
   assert.match(icon(), /^M14 2\.2a1\.8/, 'here: a person walking out, never a sign-out arrow, never the moon (that is Dark in the appearance switcher)');
+  assert.equal(icon(), STEPPED_OUT.join(' '), 'here: the icon set\'s stepped-out, the same person as the corner\'s badge');
   assert.equal(btn.getAttribute('aria-disabled'), null);
   assert.match(btn.title, /Step away to have worca answer on every run now\.$/);
   paintAwayRow(btn, rowAt('2026-09-28T23:00:00Z'));
