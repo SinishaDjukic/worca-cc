@@ -2207,6 +2207,10 @@ function orderKeyFor(runId) {
   if (key === undefined) { key = ++runOrderSeq; runOrderKeys.set(runId, key); }
   return key;
 }
+// runId -> the start time the run last carried, the orderKey memo's twin: a re-materialized run keeps it. The Runs
+// list orders live rows by start time (runs-list.mjs byDispatch), so a dropped run stamped "now" when a trailing
+// frame brings it back would read as the newest and outrank the run that superseded it.
+const runStartedAts = new Map();
 
 function nowHMS() {
   const d = new Date();
@@ -2226,7 +2230,7 @@ function makeRun({
     projectDir: projectDir || '',
     projectNames,         // string[] for workspace runs (all member names); null otherwise
     status,
-    startedAt: startedAt || nowHMS(),
+    startedAt: startedAt || runStartedAts.get(runId) || nowHMS(),
     local,
     kind,                 // 'run' | 'workspace-run' | 'agentgen' (only first two get tabs)
     pipelineId,           // matches a History row id once persisted; used to hide lingerers from History
@@ -2292,6 +2296,7 @@ function upsertRun(partial) {
     }
     r.staleBoot = false;   // every caller relays the current server: it knows this runId
   }
+  runStartedAts.set(r.runId, r.startedAt);
   dropSupersededPaused(r);
   return r;
 }
@@ -2772,7 +2777,7 @@ function addNightDecisions(r, list) {
 function onState(r, msg) {
   if (msg.status) r.status = msg.status;
   if (msg.shaping && typeof msg.shaping === 'object') r.shaping = msg.shaping;
-  if (msg.startedAt) r.startedAt = msg.startedAt;
+  if (msg.startedAt) { r.startedAt = msg.startedAt; runStartedAts.set(r.runId, msg.startedAt); }
   // The harness mirrors startedBy onto its state (creation-immutable), so a live card
   // learns who started the run from the first state snapshot.
   if (typeof msg.startedBy === 'string' && msg.startedBy) r.startedBy = msg.startedBy;
