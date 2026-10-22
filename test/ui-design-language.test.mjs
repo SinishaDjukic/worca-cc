@@ -180,7 +180,7 @@ const GRADIENT_OK = new Set(['.wf-pop-canvas', '.run-flow-wrap', '.ask-wfcard-gr
   '.chat-home-wf-tb', '.skel', '.ws-sum-pending', '.shipit-desc-field.is-generating .shipit-desc-busy::before',
   '.shipit-desc-busy-label', '.ask-thinking-label', '.ask-wfcard-step.is-live .st-label', '.wfc-act-l', '.pp-shimmer',
   '.ask-ctx-bar-buffer', '.ask-ctx-stat[data-stat="buffer"] .ask-ctx-swatch', '.chat-dock::before',
-  '.plan-md.collapsed::after']);
+  '.plan-md.collapsed::after', '.sn-adorn.sn-loading .input']);
 test('gradients only as functional textures (D15)', () => {
   const bad = ALL.flatMap((r) => decls(r.body, 'background(?:-image)?')
     .filter(([, v]) => /gradient\(/.test(v) && !GRADIENT_OK.has(r.sel)).map(([, v]) => where(r, v.slice(0, 40))));
@@ -677,6 +677,22 @@ test('Runs list: selected and Needs-you rows take the sidebar nav item\'s corner
   }
 });
 
+test('Runs list: one highlight at a time — a group whose run is open is filled only while collapsed; members have no dividers', () => {
+  const bodyOf = (sel) => ALL.filter((r) => splitTop(r.sel).includes(sel)).map((r) => r.body).join(';');
+  const collapsed = bodyOf('.runs-item:has(> a.runs-row.member-open):not(:has(> .runs-members))');
+  assert.match(collapsed, /background:var\(--row-open\)/, 'one fill on the whole item');
+  assert.match(collapsed, /border-radius:var\(--r-sm\)/);
+  assert.match(collapsed, /border-bottom-color:transparent/);
+  // No per-cell fill (the 36px cells notched it) and no ungated member-open rule (expanded keeps its divider, no fill).
+  const memberOpen = ALL.filter((r) => r.sel.includes('.runs-item') && r.sel.includes('member-open'));
+  assert.deepEqual(memberOpen.map((r) => r.sel), ['.runs-item:has(> a.runs-row.member-open):not(:has(> .runs-members))']);
+  // Rows inside a group draw no dividers; top-level rows keep theirs.
+  assert.doesNotMatch(bodyOf('.runs-members'), /border-top/);
+  assert.match(bodyOf('.runs-members > .runs-item'), /border-bottom:0/);
+  assert.equal(ALL.some((r) => splitTop(r.sel).includes('.runs-members > .runs-item:last-child')), false);
+  assert.match(ALL.find((r) => r.sel === '.runs-item').body, /border-bottom:1px solid var\(--line\)/);
+});
+
 test('a script-focused control shows no ring for a pointer user; fields keep their focus border', () => {
   const r = ALL.find((x) => x.sel.startsWith(':root[data-input="pointer"] :is(button,'));
   assert.ok(r, 'the pointer suppressor covers every button, link, summary, tab, switch and [tabindex]');
@@ -831,10 +847,10 @@ test('no glyph at the edge of a visible string; use icon(doc, …) (F-12)', () =
 });
 
 // F-13: violet is Labs-only (docs/design-system.md colour table). The merged status dot and the merged run orb are the
-// two named exceptions (slice 1 shipped them as the shipped-state colour), and the Marketplace kind colours give the chat
-// kind its violet tile and facet dot (docs/design-system.md › Marketplace exceptions). Exact selectors, no substring match.
+// two named exceptions (slice 1 shipped them as the shipped-state colour), plus the Smart run naming Labs chip and shimmer, and the
+// Marketplace kind colours give the chat kind its violet tile and facet dot (docs/design-system.md › Marketplace exceptions). Exact selectors, no substring match.
 const VIOLET_OK = new Set(['.badge.flag-stage-experimental', '.status-dot.is-violet', '.rg-orb-merged .rg-orb-bg', '.rg-orb-merged .rg-orb-line',
-  '.mk-t-chat', '.mk-dot-chat']);
+  '.sn-chip', '.sn-adorn.sn-loading .input', '.mk-t-chat', '.mk-dot-chat']);
 test('violet only inside Labs selectors and the merged dot and orb (F-13)', () => {
   const bad = ALL.filter((r) => r.sel !== ':root' && /var\(--violet/.test(r.body) && !splitTop(r.sel).every((s) => VIOLET_OK.has(s.trim())))
     .map((r) => where(r, 'violet'));

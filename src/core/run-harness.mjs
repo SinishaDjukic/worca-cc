@@ -84,6 +84,8 @@ import {
   isValidSourceRef, snapshotWorktreePatch, listLocalBranches, worktreeHead, deleteBranchIfAt,
   reusedBranchBase, isAncestor,
 } from './worktree.mjs';
+import { deriveBranchName, uniqueBranch } from './naming.mjs';
+import { flagEnabled } from './flags.mjs';
 import { syncBaseForRun, ensureLocalBranch, fetchRemote, fastForwardTo, isSafeBranchName, runSyncOptions, INTERACTIVE_TIMEOUT_MS, mergeBaseBeforeRun, baseMovedAudit } from './git-sync.mjs';
 import { featureBase } from './shape/features.mjs';
 import { cleanOutcome } from './shape/rounds.mjs';
@@ -930,6 +932,10 @@ export class RunHarness extends EventEmitter {
       resolves: validResolves(this.opts.branch && this.opts.branch.resolves),
       // Shaper s5 (D4): a round of an earlier run (Ask for changes, a Watch PR fix run). Server-only, never from HTTP.
       roundOf: validRoundOf(this.opts.branch && this.opts.branch.roundOf),
+      // Smart run naming (flag smartRunNaming): `suggested` = the name came from the form's suggestion, so it is made
+      // unique like a derived one; `legacy` = the model was unavailable, so today's exact name applies. Server-set only.
+      suggested: !!(this.opts.branch && this.opts.branch.suggested === true),
+      legacy: !!(this.opts.branch && this.opts.branch.legacy === true),
     };
     // Run on the source branch (branch.sameAsSource, explicit — never inferred from feature === source):
     // the run still works on a hidden, auto-named branch (a typed feature name is ignored) and
@@ -1578,7 +1584,7 @@ export class RunHarness extends EventEmitter {
       // resume signal; resume() never reaches this run() site anyway (belt-and-suspenders).
       // The kickoff itself fires AFTER _setupRunRoot() below, so generateTitle's cwd
       // can be this.runCwd (§2.1 row 3) — at this point runCwd is still null.
-      this.state.titleProvisional = true;
+      this.state.titleProvisional = !this.opts.titleLocked;
       this.baseName = this._deriveBaseName(this.pipeline.promptText, this.state.title);
       // Capture the date prefix ONCE so every plan -vN and the review file share
       // the v1 date even if the run crosses midnight.
@@ -2464,13 +2470,19 @@ export class RunHarness extends EventEmitter {
    *  would come from the project name instead of the prompt), and (c) silently swap
    *  an invalid --source for the default branch, where createWorktree's M1 gate must
    *  keep failing loudly. */
-  async _resolveSingleBranches() {
+  async _resolveSingleBranches({ replay = false } = {}) {
     const source = this.branchOpts.source || (await resolveDefaultBranch(this.projectDir));
-    const featureRaw = this.branchOpts.feature
-      ? sanitizeBranchName(this.branchOpts.feature)
-      : suggestBranchName({ prompt: this.pipeline.promptText,
-                            title: this.opts.title || null,
-                            pipelineId: this.pipeline.id });
+    const legacy = this.branchOpts.legacy === true;
+    const derived = !this.branchOpts.feature || this.branchOpts.suggested === true;
+    const args = { prompt: this.pipeline.promptText, title: this.opts.title || null, pipelineId: this.pipeline.id };
+    let featureRaw = legacy ? suggestBranchName(args)
+      : this.branchOpts.feature
+        ? sanitizeBranchName(this.branchOpts.feature)
+        : deriveBranchName({ ...args, ticket: this.opts.source?.taskId || '', projectDir: this.projectDir });
+    // replay: the branch already exists because WE made it; re-checking would rename it.
+    if (derived && !legacy && !replay && flagEnabled('smartRunNaming')) {
+      featureRaw = await uniqueBranch(this.projectDir, featureRaw, this.pipeline.id);
+    }
     return { source, featureRaw };
   }
 
@@ -2551,7 +2563,7 @@ export class RunHarness extends EventEmitter {
           const pending = replay ? this._pendingStart(m.projectKey) : null;
           const resolved = this.isWorkspace
             ? await this._resolveMemberBranches(m, { replay })   // member-suffixed names; creates a remote-only source itself
-            : await this._resolveSingleBranches();                // single: today's exact semantics
+            : await this._resolveSingleBranches({ replay });   // single: today's exact semantics
           const source = (pending && pending.source) || resolved.source;
           // Resume also passes no `title`, so a replay re-derives ANOTHER feature name. Take the
           // first attempt's planned name, so `pending.reuse` below describes the branch this
@@ -4564,13 +4576,19 @@ export class RunHarness extends EventEmitter {
     const fellBack = !!named && !namedOk;          // _syncMemberBase never syncs a fallback (D9)
     const feature = this.branchOpts.sameAsSource ? null
       : ((m.branch && m.branch.feature) || this.branchOpts.feature || null);
-    const featureRaw = feature
+    const nameArgs = {
+      prompt: this.pipeline.promptText,
+      title: `${this.opts.title || ''} ${m.projectName}`.trim() || null,
+      pipelineId: this.pipeline.id,
+    };
+    const legacy = this.branchOpts.legacy === true;
+    let featureRaw = feature
       ? sanitizeBranchName(`${feature}-${slugify(m.projectName)}`)
-      : suggestBranchName({
-          prompt: this.pipeline.promptText,
-          title: `${this.opts.title || ''} ${m.projectName}`.trim() || null,
-          pipelineId: this.pipeline.id,
-        });
+      : legacy ? suggestBranchName(nameArgs)
+        : deriveBranchName({ ...nameArgs, ticket: this.opts.source?.taskId || '', projectDir: m.projectDir });
+    if (!feature && !legacy && !replay && flagEnabled('smartRunNaming')) {
+      featureRaw = await uniqueBranch(dir, featureRaw, this.pipeline.id);
+    }
     return { source, featureRaw, fellBack };
   }
 
@@ -8011,6 +8029,8 @@ export class RunHarness extends EventEmitter {
     if (sl && (sl.index > 1 || this.opts.shape?.slice)) {
       this.state.titleProvisional = false; this._titlePromise = Promise.resolve(); return;
     }
+    // Smart run naming: a given title (typed, or suggested on the form) is kept; only an empty one is generated.
+    if (this.opts.titleLocked) { this.state.titleProvisional = false; this._titlePromise = Promise.resolve(); return; }
     if (!prompt || !id) { this._titlePromise = Promise.resolve(); return; }
     this._titlePromise = Promise.resolve()
       .then(() => generateTitle(prompt, this._titleGenOpts()))

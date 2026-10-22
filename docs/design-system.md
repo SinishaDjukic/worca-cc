@@ -20,7 +20,7 @@ a `color-mix()` recipe used twice is a named token (`--btn-hover`, `--red-tint`,
 | slate | `--slate*` | neutral metadata: a source, "Official", policy (`.badge.slate`) | a state |
 Status-dot exceptions: peach = working (it pulses), violet = merged. They are the dots only, never a badge.
 Surfaces: `--panel` page, `--surface` raised, `--field` field and tint fill; `--line` dividers, `--line-2` control borders.
-`--row-open` is 50% of `--field` (no new hue): the lighter row highlight of a Runs group whose run is open.
+`--row-open` is 50% of `--field` (no new hue): the lighter row highlight of a collapsed Runs group whose run is open.
 
 Known drift (left for a later run): amber `badge waiting` on Guardrails' "built-in"
 and Models' "endpoint-routed", "project (legacy)" and "plugin:" labels; blue engine and credential badges. The interface
@@ -134,7 +134,7 @@ border, ink text. Never a solid ink fill. A count sits in `.n`. It is the only f
 `proj-fchip` and `mcp-chip` are gone (checked).
 ### Chips and badges
 One chip: 18px, 11px / 500 sans, 4px corner, filled, no border (checked). The Labs (violet) and Beta (blue) flag chips are
-the reference size. Colour carries meaning only. Cost-tag chips (`.tag-chip`), the Projects sync pill (`.ps-pill`), the
+the reference size. Colour carries meaning only. The "Suggested" chip on the New run form's title and branch (`.sn-chip`, Smart run naming) is a permitted Labs-violet use: the whole feature is a Labs feature. Cost-tag chips (`.tag-chip`), the Projects sync pill (`.ps-pill`), the
 Chat command card's state (`.ask-cmd-pill`) and the Team policy tab count (`.tp-tab-badge`) are the same chip; on the
 active tab the count turns neutral (`--line-2` fill, ink text). The missing-key slot is the one outlined chip: a 1px dashed
 `--amber` outline on a transparent fill. A removable chip's × is a 14px quiet button inside the chip. A source, "Official"
@@ -205,7 +205,9 @@ buttons stay 28px; the card keeps the shared 24px padding (checked by the theme 
   "Archive this run?" and is disabled, with the reason as its tooltip, while a local copy is open or kept work waits.
   The bar never makes an Archive or Report button: a failed run's Report this run is in ⋯ only.
 - Runs navigation: every row opens its own page in the right pane and the list stays. A group row opens the group
-  page; the ⌄ only expands. A group whose run is open shows the lighter `--row-open` fill.
+  page; the ⌄ only expands. One row is highlighted at a time, the one whose page is open: a collapsed group whose run
+  is open shows the lighter `--row-open` fill over its whole row; expanded, only the open run's row is highlighted.
+  Rows inside a group draw no dividers; the group keeps its own divider before the next row.
 - Search is the top bar's "Search or ask" only. A list filter is chosen there ("Runs labelled hotfix", `label:hotfix`),
   not from a filter button in the list's header. The Marketplace's Browse search is the one exception
   (Marketplace exceptions).

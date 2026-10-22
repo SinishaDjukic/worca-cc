@@ -43,7 +43,7 @@ const field = (host, id) => host.querySelector(`[data-setting="${id}"]`);
 test('every field says what it inherits and from where; an override shows Project', async () => {
   const { host } = harness();
   for (let i = 0; i < 4; i++) await tick();
-  assert.deepEqual([...host.querySelectorAll('.pd-settings-card')].map((c) => c.dataset.card), ['models', 'cost', 'ask', 'context']);
+  assert.deepEqual([...host.querySelectorAll('.pd-settings-card')].map((c) => c.dataset.card), ['models', 'cost', 'ask', 'context', 'smartNaming']);
   const turns = field(host, 'askMaxTurns');
   assert.equal(turns.querySelector('.inherit-input').value, '9');
   assert.equal(turns.querySelector('.inherit-input').placeholder, '30 (your setting)');
@@ -100,4 +100,27 @@ test('the Claude card says its step models apply to the Default workflow only (r
   const note = host.querySelector('.engine-card[data-engine="claude"] > small.hint');
   assert.equal(note?.textContent, 'Claude step models set here apply to the Default workflow; other workflows keep their own node picks.');
   assert.equal(host.querySelector('.engine-card[data-engine="codex"] > small.hint'), null);
+});
+
+test('Smart run naming: pattern and types show what they inherit; Save sends one smartNaming block; Clear returns to inherit', async () => {
+  const view = { ...VIEW, own: { ...VIEW.own, smartNaming: { types: ['docs', 'fix'] } },
+    layers: { ...VIEW.layers, smartNaming: { project: { types: ['docs', 'fix'] }, user: { pattern: '{type}/{ticket}-{slug}' }, default: { pattern: '{type}/{slug}', types: ['feat', 'fix'] } } } };
+  const { host, calls, window } = harness({ settings: () => ({ status: 200, body: view }), patch: () => ({ status: 200, body: view }) });
+  for (let i = 0; i < 4; i++) await tick();
+  const pattern = field(host, 'smartNaming.pattern'); const types = field(host, 'smartNaming.types');
+  assert.equal(pattern.querySelector('.inherit-input').value, '');
+  assert.equal(pattern.querySelector('.inherit-input').placeholder, '{type}/{ticket}-{slug} (your setting)');
+  assert.equal(types.querySelector('.inherit-input').value, 'docs, fix');
+  assert.equal(types.querySelector('.inherit-badge').hidden, false);
+  const input = pattern.querySelector('.inherit-input');
+  input.value = '{type}/x-{slug}'; input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  host.querySelector('[data-card="smartNaming"] .pd-settings-save').click();
+  await tick(); await tick();
+  const sent = calls.filter((c) => c.method === 'PATCH').pop();
+  assert.deepEqual(sent.body, { smartNaming: { types: ['docs', 'fix'], pattern: '{type}/x-{slug}' } });
+  const again = field(host, 'smartNaming.types');   // the card repainted from the PATCH answer
+  again.querySelector('.inherit-clear').click();
+  host.querySelector('[data-card="smartNaming"] .pd-settings-save').click();
+  await tick(); await tick();
+  assert.deepEqual(calls.filter((c) => c.method === 'PATCH').pop().body, { smartNaming: null });
 });
