@@ -255,7 +255,7 @@ export function renderPlanBody(panel, pq, deps) {
       const t = code.textContent.trim();
       const g = marks.find((m) => t === m.path || t.startsWith(`${m.path}:`));
       if (!g) continue;
-      code.after(h('span', `plan-ground ${g.found ? 'found' : g.isNew ? 'new' : 'missing'}`, g.found ? '✓ exists' : g.isNew ? 'new' : 'not found'));
+      code.after(h('span', `plan-ground ${g.found ? 'found' : g.isNew ? 'new' : 'missing'}`, g.found ? 'exists' : g.isNew ? 'new' : 'not found'));
     }
   }
 

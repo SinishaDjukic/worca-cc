@@ -16,15 +16,13 @@ a `color-mix()` recipe used twice is a named token (`--btn-hover`, `--red-tint`,
 | amber | `--amber*` | needs you, attention, waiting; a PR problem | a brand mark, "not installed", "built-in" |
 | red | `--red*` | failed, destructive | a warning that needs no action |
 | blue | `--blue*` | information (the Beta chip), in-progress text, links | a status dot, a bar, team policy |
-| violet | `--violet*` | Labs only | sources, "Official", policy |
+| violet | `--violet*` | Labs only (the merged status dot and merged run orb are the two named exceptions) | sources, "Official", policy, a badge, a chart series |
 | slate | `--slate*` | neutral metadata: a source, "Official", policy (`.badge.slate`) | a state |
 Status-dot exceptions: peach = working (it pulses), violet = merged. They are the dots only, never a badge.
 Surfaces: `--panel` page, `--surface` raised, `--field` field and tint fill; `--line` dividers, `--line-2` control borders.
 `--row-open` is 50% of `--field` (no new hue): the lighter row highlight of a Runs group whose run is open.
 
-Known drift (left for a later run): violet badges on `mcp-view.mjs` plugin sources, `guardrails-view.mjs` plugin origins,
-the `tp-engine` and "metrics home" badges, the engine "Beta" badge in `engine-settings-view.mjs`, the Models override,
-pinned-cost and shadowed badges, and the workspace map's "manual" tone; amber `badge waiting` on Guardrails' "built-in"
+Known drift (left for a later run): amber `badge waiting` on Guardrails' "built-in"
 and Models' "endpoint-routed", "project (legacy)" and "plugin:" labels; blue engine and credential badges. The interface
 mode cards (`.lv-card-icon`) tint their icon per level (an illustration, not a state).
 

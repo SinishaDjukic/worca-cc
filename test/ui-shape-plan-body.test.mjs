@@ -370,7 +370,7 @@ test('the rendered plan carries perspective tags on ## headings and grounding ma
   assert.deepEqual(tags, [['Product'], ['Architect']]);
   const marks = $$('.plan-ground').map((m) => [m.previousSibling.textContent, m.className, m.textContent]);
   assert.deepEqual(marks, [
-    ['src/a.mjs:12', 'plan-ground found', '✓ exists'],
+    ['src/a.mjs:12', 'plan-ground found', 'exists'],
     ['src/new.mjs', 'plan-ground new', 'new'],
     ['src/gone.mjs', 'plan-ground missing', 'not found'],
   ]);

@@ -255,3 +255,11 @@ test('F-23: every successful Settings card save raises one "Saved" toast (dedupe
   }
   assert.equal(saved().length, 1, 'two saves in a row leave one toast');
 });
+
+test('F-19: the Settings tab row is as wide and as centred as the content column', () => {
+  const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
+  const tabs = css.match(/^\.settings-tabs\{([^}]*)\}/m)[1];
+  assert.match(tabs, /max-width:760px/);
+  assert.match(tabs, /margin:0 auto/);
+  assert.match(css.match(/^\.settings-card\{([^}]*)\}/m)[1], /max-width:760px/);
+});

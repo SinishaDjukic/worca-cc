@@ -42,7 +42,7 @@ test('results-view helpers: chips/badges and memory-change rows', async () => {
         { node: 'implementer', chips: [
           { kind: 'add', text: '+ project/lesson.md', scope: 'project', name: 'lesson' },
           { kind: 'mod', text: '~ global/testing.md', scope: 'global', name: 'testing' },
-          { kind: 'rej', text: '✕ global/huge.md', title: 'over the 32768-byte cap', scope: 'global', name: 'huge' },
+          { kind: 'rej', text: 'global/huge.md', title: 'over the 32768-byte cap', scope: 'global', name: 'huge' },
           { kind: 'fail', text: '⊘ project/trap.md', title: 'written into the read-only rules copy — Claude requested permissions to edit /x which is a sensitive file.', scope: 'project', name: 'trap' },
         ] },
         { node: 'resume', chips: [{ kind: 'del', text: '− project/old.md', scope: 'project', name: 'old' }] },

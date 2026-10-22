@@ -215,8 +215,8 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
     head.appendChild(h(doc, 'b', 'mv-name', m.label || m.id));
     keyBadge(head, m, doc);
     const eb = engineBadge(m); if (eb) head.appendChild(eb);
-    if (predefLc.has(m.id.toLowerCase()) || (m.engine === 'codex' && codexLc.has(m.id.toLowerCase()))) head.appendChild(h(doc, 'span', 'badge violet mv-shadow', 'overrides built-in'));
-    else if (pluginLc.has(m.id.toLowerCase())) head.appendChild(h(doc, 'span', 'badge violet mv-shadow', 'overrides plugin'));
+    if (predefLc.has(m.id.toLowerCase()) || (m.engine === 'codex' && codexLc.has(m.id.toLowerCase()))) head.appendChild(h(doc, 'span', 'badge slate mv-shadow', 'overrides built-in'));
+    else if (pluginLc.has(m.id.toLowerCase())) head.appendChild(h(doc, 'span', 'badge slate mv-shadow', 'overrides plugin'));
     const rb = routedBadge(m);
     if (rb) head.appendChild(rb);
     // Model bridge (model-bridge-design.md §8.5): the provider badge, and the
@@ -229,7 +229,7 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
     // model's spend — and the backend only lifts the stored flag on the model's
     // next result event, so suppress it here the moment pricing is pinned.
     if (m.costUnreliable && !m.cost) head.appendChild(h(doc, 'span', 'badge waiting mv-cost', 'cost not verified'));
-    if (m.cost) head.appendChild(h(doc, 'span', 'badge violet mv-cost-pinned', m.cost.free ? 'free' : 'priced'));
+    if (m.cost) head.appendChild(h(doc, 'span', 'badge slate mv-cost-pinned', m.cost.free ? 'free' : 'priced'));
     body.appendChild(head);
     const bits = [m.id, effortsOf(m), m.upstream ? `→ ${m.upstream.model}` : '', envSummary(m.env), costSummary(m.cost)].filter(Boolean);
     body.appendChild(h(doc, 'small', 'mv-summary hint', bits.join('; ')));
@@ -296,7 +296,7 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
     keyBadge(head, m, doc);
       const peb = engineBadge(m); if (peb) head.appendChild(peb);
       head.appendChild(h(doc, 'span', 'badge waiting mv-origin', `plugin: ${m.plugin}`));
-      if (globalLc.has(m.id.toLowerCase())) head.appendChild(h(doc, 'span', 'badge violet mv-shadowed', 'overridden by your copy'));
+      if (globalLc.has(m.id.toLowerCase())) head.appendChild(h(doc, 'span', 'badge slate mv-shadowed', 'overridden by your copy'));
       const prb = routedBadge(m);
       if (prb) head.appendChild(prb);
       const pbb = bridgedBadge(m, { doc });
@@ -306,7 +306,7 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
       // Same rule as a global card: a manifest-pinned price governs the spend,
       // so the §4.6 "unreliable" flag says nothing about it.
       if (m.costUnreliable && !m.cost) head.appendChild(h(doc, 'span', 'badge waiting mv-cost', 'cost not verified'));
-      if (m.cost) head.appendChild(h(doc, 'span', 'badge violet mv-cost-pinned', m.cost.free ? 'free' : 'priced'));
+      if (m.cost) head.appendChild(h(doc, 'span', 'badge slate mv-cost-pinned', m.cost.free ? 'free' : 'priced'));
       body.appendChild(head);
       const bits = [m.id, effortsOf(m), m.upstream ? `→ ${m.upstream.model}` : '', envSummary(m.env), costSummary(m.cost)].filter(Boolean);
       body.appendChild(h(doc, 'small', 'mv-summary hint', bits.join('; ')));
@@ -349,7 +349,7 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
       const badge = h(doc, 'span', 'badge slate mv-origin', 'policy');
       badge.title = `Team policy on ${m.home}`;
       head.appendChild(badge);
-      if (globalLc.has(m.id.toLowerCase())) head.appendChild(h(doc, 'span', 'badge violet mv-shadowed', 'overridden by your copy'));
+      if (globalLc.has(m.id.toLowerCase())) head.appendChild(h(doc, 'span', 'badge slate mv-shadowed', 'overridden by your copy'));
       const rb = routedBadge(m);
       if (rb) head.appendChild(rb);
       body.appendChild(head);
@@ -376,7 +376,7 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
     row.appendChild(h(doc, 'b', 'mv-name', m.label));
     keyBadge(row, m, doc);
     if (globalLc.has(m.id.toLowerCase()) || pluginLc.has(m.id.toLowerCase())) {
-      row.appendChild(h(doc, 'span', 'badge violet mv-shadowed', 'overridden'));
+      row.appendChild(h(doc, 'span', 'badge slate mv-shadowed', 'overridden'));
     }
     row.appendChild(h(doc, 'small', 'mv-summary hint', `${m.id}: ${effortsSummary(m.efforts, efforts)}`));
     builtins.appendChild(row);
@@ -394,7 +394,7 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
       const row = h(doc, 'div', `mv-builtin mv-${engine}`);
       row.dataset.id = m.id;
       row.appendChild(h(doc, 'b', 'mv-name', m.label));
-      if (ownedLc.has(m.id.toLowerCase())) row.appendChild(h(doc, 'span', 'badge violet mv-shadowed', 'overridden'));
+      if (ownedLc.has(m.id.toLowerCase())) row.appendChild(h(doc, 'span', 'badge slate mv-shadowed', 'overridden'));
       row.appendChild(h(doc, 'small', 'mv-summary hint', `${m.id}: ${effortsSummary(m.efforts, engineEfforts)}`));
       sec.appendChild(row);
     }

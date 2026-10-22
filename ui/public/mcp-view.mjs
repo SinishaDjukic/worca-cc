@@ -423,7 +423,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
   // ── skills: source badge, origin, the read-only SKILL.md drawer, the Skills view's rows (spec §6.2, §6.3) ──
   function sourceBadge(x) {
     const plugin = x.source === 'plugin';
-    return h(doc, 'span', plugin ? 'badge violet' : 'badge', x.sourceLabel || (plugin ? x.plugin : 'Imported'));
+    return h(doc, 'span', plugin ? 'badge slate' : 'badge', x.sourceLabel || (plugin ? x.plugin : 'Imported'));
   }
   function originText(e) {
     if (e.source === 'plugin') return e.code === 'linked' ? 'linked' : e.code ? `@ ${e.code}` : '';

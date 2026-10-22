@@ -522,14 +522,14 @@ test('roomy rows: 14px names, 12px second lines, 26px tiles, 32px folder rows (r
   const { readFileSync } = await import('node:fs');
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
   const rule = (sel) => { const i = css.indexOf(`\n${sel}{`); assert.ok(i >= 0, `${sel} has a rule`); return css.slice(i + sel.length + 2, css.indexOf('}', i)); };
-  assert.match(rule('.wfl-name'), /font-size:14px;/);
+  assert.match(rule('.wfl-name'), /font-size:13px;/);
   assert.match(rule('.wfl-l2'), /font-size:12px;/);
   assert.match(rule('.wfl-ic'), /width:26px;height:26px;/);
   assert.match(rule('.wfl-main'), /padding:9px /);
   assert.match(rule('.wfl-folder'), /min-height:32px;.*font:500 13px/);
   assert.match(rule('.wfl-folder svg'), /width:24px;height:24px;/);
   assert.match(rule('.wfl-detail'), /font-size:13px;/);
-  assert.match(rule('.wfl-pchip'), /font:500 11\.5px/);
+  assert.match(rule('.wfl-pchip'), /font:500 11px/);
   assert.equal(css.indexOf('.wfl-actions .wfv-btn'), -1, 'the actions are .btn .btn-sm (28px, 12px): no skin of their own');
   assert.match(rule('.btn-sm'), /height:28px;.*font-size:var\(--fs-meta\);/);
 });

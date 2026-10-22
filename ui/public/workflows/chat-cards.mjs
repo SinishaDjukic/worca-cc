@@ -6,7 +6,7 @@
 // proposal card draws no mini graph: the canvas is the preview.
 // The card DOM is workflows/card-views.mjs, shared with Ask Worca.
 import { icon } from '../icons.mjs';
-import { cardKit, plural, draftCardView, buildCardView } from './card-views.mjs';
+import { cardKit, plural, draftCardView, buildCardView, okChip } from './card-views.mjs';
 
 export function createCardController({ doc, composer, sessionId, client, actions = {}, blocks = () => [],
   reducedMotion = () => false, onChange = () => {}, occluder = () => null }) {
@@ -190,7 +190,7 @@ export function createCardController({ doc, composer, sessionId, client, actions
         row.append(button('Decline', 'btn btn-sm', () => flip(b.id, { state: 'declined' })), h('span', 'wfc-spacer'),
           button('Apply to canvas', 'btn btn-sm btn-primary', () => applyBuild(b)));
       } else if (b.state === 'applied') {
-        row.appendChild(h('span', 'wfc-chip-ok', '✓ Applied to canvas'));
+        row.appendChild(okChip(h, 'Applied to canvas'));
         const undo = button('Undo', 'wfc-link', async () => {
           if (!lastBuild || !undoLive(lastBuild, b.id)) return;
           const p = lastBuild.prev;

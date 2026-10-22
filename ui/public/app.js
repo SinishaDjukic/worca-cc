@@ -2169,7 +2169,7 @@ async function ensureAgentMeta(onReady) {
 }
 
 // The palette the graph cards and the frozen-v1 chip strip read for --c.
-const COMPOSER_COLORS = { green: 'var(--green)', peach: 'var(--peach)', red: 'var(--red)', blue: 'var(--blue)', violet: 'var(--violet)', amber: 'var(--amber)' };
+const COMPOSER_COLORS = { green: 'var(--green)', peach: 'var(--peach)', red: 'var(--red)', blue: 'var(--blue)', violet: 'var(--slate)', amber: 'var(--amber)' };
 
 // Pick the manifest to render. A v2 run always carries one; a run with no
 // manifest at all (pre-stepper history) renders NOTHING rather than the v1
@@ -4001,7 +4001,7 @@ function renderModelEffortPair(modelSel, effortSel, caption, sel = {}) {
   // it is THIS selection, which still resolves and must stay visible.
   appendModelGroups(modelSel, state.models.filter((m) => usable(m) && (m.custom || !m.hidden || m.id === sel.model)), {
     engine, text: (m) => modelOptionText(m) + (m.costUnreliable ? ' ⚠cost' : '') + (m.needsSignIn ? ' (needs sign-in)' : '') + credentialSuffix(m.id) });
-  modelSel.appendChild(option('__add__', '+ Add model…'));
+  modelSel.appendChild(option('__add__', 'Add model…'));
   modelSel.value = sel.model || '';
 
   // Effort dropdown: filtered to the selected model's supported efforts. With no
@@ -7846,7 +7846,7 @@ function renderProjectOptions(selectName, { quiet = false } = {}) {
 
   const add = document.createElement('option');
   add.value = '__add__';
-  add.textContent = '+ Add project…';
+  add.textContent = 'Add project…';
   el.projectSelect.appendChild(add);
 
   // Restore by index (not value) so duplicate paths can't pick the wrong name.
@@ -11363,7 +11363,7 @@ function buildPortRow(side, port) {
       fmCheck('pf-required', 'required', p.required !== false && !p.loop),
       fmCheck('pf-loop', 'loop', p.loop === true),
       fmCheck('pf-expands', 'expands', p.expands === true),
-      fmMini('pf-directive-toggle', p.directive ? 'directive ✓' : 'directive', 'Prompt text injected when this port fires'),
+      fmMini('pf-directive-toggle', p.directive ? 'directive on' : 'directive', 'Prompt text injected when this port fires'),
     );
     row.appendChild(flags);
     const dirWrap = document.createElement('div');
@@ -11595,7 +11595,7 @@ function buildPortsSection(side, ports) {
   const head = document.createElement('div');
   head.className = 'agent-ports-head';
   const title = document.createElement('b');
-  title.textContent = side === 'in' ? 'INPUTS' : 'OUTPUTS';
+  title.textContent = side === 'in' ? 'Inputs' : 'Outputs';
   const count = document.createElement('span');
   count.className = 'pf-count hint';
   const add = fmMini(`pf-add-${side}`, side === 'in' ? '+ input' : '+ output');
@@ -19108,11 +19108,11 @@ async function testModelFlow(btn) {
   try {
     const res = await fetch(`/api/models/${encodeURIComponent(id)}/test`, { method: 'POST' });
     const data = await safeJson(res);
-    if (!res.ok) return paint(`✗ ${data.error || `HTTP ${res.status}`}`, true);
-    if (data.ok) return paint(`✓ replied: ${data.text}`);
-    paint(`✗ ${data.hint || data.message}`, true);
+    if (!res.ok) return paint(`${data.error || `HTTP ${res.status}`}`, true);
+    if (data.ok) return paint(`Replied: ${data.text}`);
+    paint(`${data.hint || data.message}`, true);
   } catch (e) {
-    paint(`✗ ${e.message}`, true);
+    paint(`${e.message}`, true);
   } finally {
     btn.disabled = false;
   }
@@ -24973,7 +24973,7 @@ function paintHdHeaderMeta(screen, record, data) {
   const terminal = ['done', 'error', 'stopped'].includes(st.status);
   if (terminal) {
     const TM_TEXT = {
-      recorded: ['recorded to team metrics ✓', 'st-ok'],
+      recorded: ['recorded to team metrics', 'st-ok'],
       pending: ['team metrics · pending push', 'st-warn'],
       skipped: [`team metrics · not recorded${tm.reason ? ` (${tm.reason.replace(/-/g, ' ')})` : ''}`, 'st-err'],
       'not-enabled': ['team metrics · not enabled', 'st-muted'],
@@ -27724,7 +27724,7 @@ function hdWorktreeRow(word, dir) {
   row.className = 'hd-ov-wt';
   row.dataset.needsGit = '';
   row.dataset.sig = `${word}|${dir}`;
-  const l =document.createElement('span'); l.className = 'hd-ov-label'; l.textContent = 'WORKTREE';
+  const l =document.createElement('span'); l.className = 'hd-ov-label'; l.textContent = 'Worktree';
   const w = document.createElement('span'); w.className = 'hd-ov-wt-state'; w.textContent = word;
   row.append(l, w);
   if (word === 'released' || !dir) {
@@ -27785,7 +27785,7 @@ function hdFilesChangedBox(sec, results, { diffLink = true } = {}) {
   box.className = 'hd-ov-files';
   const head = document.createElement('div'); head.className = 'hd-ov-files-head';
   const l = document.createElement('div'); l.className = 'hd-ov-label';
-  l.textContent = rows.length === 1 ? 'FILES CHANGED · 1' : `FILES CHANGED · ${rows.length}`;
+  l.textContent = rows.length === 1 ? 'Files changed · 1' : `Files changed · ${rows.length}`;
   const open = tagLevel(document.createElement('button'), 'advanced');
   open.type = 'button'; open.className = 'link-btn'; open.textContent = 'Open the diff';
   open.dataset.needsGit = '';
@@ -27874,13 +27874,13 @@ function buildHdOverview(sec, record, data) {
   grid.className = 'hd-ov-grid';
   const steps = Array.isArray(st.steps) ? st.steps : [];
   const maxCycle = steps.reduce((m, s) => Math.max(m, Number(s && s.cycle) || 0), 0) || 1;
-  grid.appendChild(hdStatCard('duration', 'DURATION',
+  grid.appendChild(hdStatCard('duration', 'Duration',
     typeof st.totalActiveMs === 'number' ? fmtDuration(st.totalActiveMs) : '—',
     isGraphManifest(st.stepper)
       ? histCountsLine(st)
       : `${steps.length} step${steps.length === 1 ? '' : 's'} · ${maxCycle} cycle${maxCycle === 1 ? '' : 's'}`));
   const histCost = runCostText(st, st.totalCostUsd, '—');
-  const costCard = hdStatCard('cost', 'COST',
+  const costCard = hdStatCard('cost', 'Cost',
     histCost.text,
     [`across ${steps.length} step${steps.length === 1 ? '' : 's'}`,
       costSummaryText(runCostBreakdown(steps, st.totalCostUsd), fmtUsd)].filter(Boolean).join(' · '));
@@ -27923,7 +27923,7 @@ function buildHdOverview(sec, record, data) {
   if (memRows.length) {
     const box = tagLevel(document.createElement('div'), 'expert');
     box.className = 'hd-ov-mem';
-    const l = document.createElement('div'); l.className = 'hd-ov-label'; l.textContent = 'MEMORY CHANGES';
+    const l = document.createElement('div'); l.className = 'hd-ov-label'; l.textContent = 'Memory changes';
     box.appendChild(l);
     for (const row of memRows) {
       const line = document.createElement('div'); line.className = 'hd-mem-row';
@@ -29277,7 +29277,7 @@ function rdOvStats(host, r) {
   const { n, m, name } = runStepLabel(r);
   const stepSub = `step ${n}/${m}${name ? ` · ${name}` : ''}`;
 
-  const elapsed = hdStatCard('elapsed', 'ELAPSED',
+  const elapsed = hdStatCard('elapsed', 'Elapsed',
     fmtDuration(liveTotalMs(r.steps, Date.now())) || '0s', stepSub);
   // `.run-time` is the class the 1 s interval writes, so tagging the value node
   // makes this card tick with the header and the graph — one timer, no second
@@ -29297,7 +29297,7 @@ function rdOvStats(host, r) {
     : `across ${steps.length} step${steps.length === 1 ? '' : 's'}`,
   costSummaryText(runCostBreakdown(steps, r.totalCostUsd), fmtUsd)].filter(Boolean).join(' · ');
   const soFar = runCostText(r, r.totalCostUsd);
-  const cost = hdStatCard('cost', 'COST SO FAR', soFar.text, costSub);
+  const cost = hdStatCard('cost', 'Cost so far', soFar.text, costSub);
   cost.querySelector('.hd-ov-value').title = soFar.title || estTitle(r.totalCostUsd || 0);
   host.appendChild(cost);
 
@@ -37955,7 +37955,7 @@ function paintPresetChip() {
   }
   if (el.presetUpdate) el.presetUpdate.hidden = !(p && p.modified);
   if (el.presetBtn) {
-    el.presetBtn.textContent = p ? `${p.name} ▾` : 'Preset ▾';
+    el.presetBtn.replaceChildren(p ? p.name : 'Preset', icon(document, 'chevron-down', 12));
     el.presetBtn.classList.toggle('is-on', !!p);
     el.presetBtn.title = p ? `Preset: ${p.name}` : 'Start from a preset';
   }

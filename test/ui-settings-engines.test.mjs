@@ -195,7 +195,7 @@ test('renderEngineSection: one card at a time, only the changed steps, one-line 
   assert.deepEqual(visible(), ['models.codex.steps.reviewer']);
   assert.equal(codex.querySelector('.engine-slot-rest').textContent, '2 other steps follow your settings.');
   const add = codex.querySelector('.engine-slot-add');
-  assert.deepEqual([...add.options].map((o) => o.textContent), ['+ Override a step…', 'Plan', 'Implement']);
+  assert.deepEqual([...add.options].map((o) => o.textContent), ['Override a step…', 'Plan', 'Implement']);
   add.value = 'models.codex.steps.planner';
   add.dispatchEvent(new doc.defaultView.Event('change', { bubbles: true }));
   assert.deepEqual(visible(), ['models.codex.steps.planner', 'models.codex.steps.reviewer']);

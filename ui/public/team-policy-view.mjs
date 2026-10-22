@@ -530,7 +530,7 @@ export function renderPolicyCatalogPanel(payload, { doc = globalThis.document } 
       const row = h(doc, 'div', 'tp-cat-row');
       const main = h(doc, 'div', 'tp-cat-main');
       main.append(h(doc, 'b', null, m.label || m.id), ' ', code(doc, m.id));
-      if (m.engine && m.engine !== 'claude') main.append(' ', h(doc, 'span', 'badge violet tp-engine', engineLabel(m.engine)));
+      if (m.engine && m.engine !== 'claude') main.append(' ', h(doc, 'span', 'badge slate tp-engine', engineLabel(m.engine)));
       const envKeys = Object.keys(m.env || {});
       main.append(h(doc, 'small', 'hint', [(m.efforts || []).join(' · ') || 'default efforts', envKeys.length ? `${envKeys.length} env var${envKeys.length === 1 ? '' : 's'}` : null, m.env?.ANTHROPIC_BASE_URL ? 'routes via base URL' : null].filter(Boolean).join(' · ')));
       row.append(main, h(doc, 'span', 'badge slate', 'policy'));
@@ -636,7 +636,7 @@ function catalogItem(doc, cat, item) {
       chipField(doc, 'Deny rules', 'deny', item?.deny, 'Bash(git push)'),
       chipField(doc, 'Env allowlist', 'envAllowlist', item?.envAllowlist, 'HOME'));
   } else {
-    head.append(h(doc, 'b', null, item?.label || item?.id || 'New model'), ...(item?.engine && item.engine !== 'claude' ? [h(doc, 'span', 'badge violet tp-engine', engineLabel(item.engine))] : []), rm);
+    head.append(h(doc, 'b', null, item?.label || item?.id || 'New model'), ...(item?.engine && item.engine !== 'claude' ? [h(doc, 'span', 'badge slate tp-engine', engineLabel(item.engine))] : []), rm);
     grid.append(
       textField(doc, 'Id', 'tp-cat-id', item?.id, 'acme-proxy-opus', true),
       textField(doc, 'Label', 'tp-cat-label', item?.label, 'Opus via Acme gateway'),
