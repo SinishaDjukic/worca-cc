@@ -6,7 +6,7 @@
 // so the MCP path and the REST path share one writer. Also the chat's --add-dir memory mount.
 import { join } from 'node:path';
 import {
-  memoryRoot, listMemory, readMemory, writeMemory, removeMemory, renderMemoryFile, MEMORY_NAME_HELP,
+  memoryRoot, listMemory, readMemory, writeMemory, removeMemory, renderMemoryFile, MEMORY_NAME_HELP, isHeldSource,
 } from '../memory-store.mjs';
 import { mountDirs, withStoreLock, refreshMount } from '../memory-sync.mjs';
 import { memoryCaps } from '../settings.mjs';
@@ -20,20 +20,27 @@ async function projectByKey(key) {
   return p ? { key: p.key, name: p.name || '', path: p.path } : null;
 }
 
+/** A store file Chat may see: a held one (a sandbox run's, memory-store isHeldSource) is not there for it. */
+async function readForAgents(scope, name) {
+  const f = await readMemory(memoryRoot(), scope, name);
+  return f && !isHeldSource(f.meta.source) ? f : null;
+}
+
 export function defaultMemoryDeps({ threadId }) {
   const source = `ask:${threadId || 'unknown'}`;
   return {
     memory: {
       projectByKey,
-      list: (scope) => listMemory(memoryRoot(), scope),
-      read: (scope, name) => readMemory(memoryRoot(), scope, name),
+      list: (scope) => listMemory(memoryRoot(), scope, { forAgents: true }),
+      read: readForAgents,
       /** Compose + write one file. Omitted description/paths keep the existing file's values (an
        *  omission never erases); `append` joins the bodies with one blank line (replace on a new
        *  file). Read-compose-write under the store lock (I2-#13) so two turns of THIS process
        *  cannot lose an append; a concurrent MCP child or a run's sync-back is not covered — that
        *  race is a Non-goal, and the pre-write snapshot keeps the losing version. */
       remember: (scope, { name, body, description, paths, mode = 'replace' }) => withStoreLock(memoryRoot(), async () => {
-        const existing = await readMemory(memoryRoot(), scope, name);
+        // A held file is not Chat's to build on: its text never rides into a file Chat writes (replaced, not appended).
+        const existing = await readForAgents(scope, name);
         const meta = {
           name,
           description: description == null ? (existing?.meta.description || '') : String(description),

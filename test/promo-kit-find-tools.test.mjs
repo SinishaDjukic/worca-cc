@@ -76,6 +76,13 @@ test('toolHints name the install command for the host OS', () => {
   assert.match(toolHints('win32').chrome, /Edge/);
 });
 
+test('toolHints in a remote sandbox point at the project environment build, not the host OS', () => {
+  const h = toolHints('linux', { env: { WORCA_EXEC_ENV: 'e2b' } });
+  assert.match(h.chrome, /remote sandbox \(e2b\).*no browser.*apt packages chromium and ffmpeg.*Build environment/);
+  assert.match(h.ffmpeg, /no ffmpeg.*apt packages chromium and ffmpeg/);
+  assert.match(toolHints('linux', { env: {} }).chrome, /sudo apt install chromium/);
+});
+
 test('loadDep: a staged copy of the kit (no node_modules beside it) finds worca deps through WORCA_APP_ROOT', async () => {
   const { mkdtempSync, mkdirSync, copyFileSync, rmSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');

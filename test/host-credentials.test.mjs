@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { gitEnvFor, stripHostCredentials, hostLookupNeeded, githubOnlyEnv } from '../src/core/host-credentials.mjs';
+import { gitEnvFor, stripHostCredentials, hostLookupNeeded, githubOnlyEnv, pickBackendSecrets } from '../src/core/host-credentials.mjs';
+import '../src/core/exec-env/index.mjs';   // loads the registry, which registers each backend's secretEnv
 import { checkRows } from './helpers/rows.mjs';
 import { withEnv } from './helpers/with-env.mjs';
 
@@ -37,6 +38,17 @@ test('gitEnvFor passes base to the GitHub env only when the caller gave one (run
 
 test('stripHostCredentials removes GitHub and Azure keys, including the strip-only Boards token (M1)', () => {
   assert.deepEqual(stripHostCredentials({ ...base, WORCA_ADO_GIT_TOKEN: 'x', WORCA_GIT_TOKEN: 'y', WORCA_ADO_BOARDS_TOKEN: 'b' }), { PATH: '/bin' });
+});
+
+test('stripHostCredentials removes execution-backend keys; pickBackendSecrets returns only them', () => {
+  assert.deepEqual(stripHostCredentials({ E2B_API_KEY: 'k', WORCA_E2B_TEMPLATE: 't', PATH: '/bin' }), { PATH: '/bin' });
+  assert.deepEqual(pickBackendSecrets({ E2B_API_KEY: 'k', PATH: '/bin' }), { E2B_API_KEY: 'k' });
+});
+
+test('stripHostCredentials removes the E2B client vars and WORCA_E2B_*: only the worca server reads them', () => {
+  const e2b = { E2B_API_KEY: 'e2b_k', E2B_API_URL: 'http://localhost:3000', E2B_SANDBOX_URL: 'http://localhost:3002',
+    E2B_ACCESS_TOKEN: 't', E2B_DOMAIN: 'd', E2B_DEBUG: 'false', WORCA_E2B_TEMPLATE: 'worca-agent' };
+  assert.deepEqual(stripHostCredentials({ PATH: '/bin', WORCA_RUN_ID: 'r', ...e2b }), { PATH: '/bin', WORCA_RUN_ID: 'r' });
 });
 
 test('hostLookupNeeded: only App mode, an Azure credential, or (for pushes) push-as-person', async () => {

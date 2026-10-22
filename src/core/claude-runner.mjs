@@ -179,6 +179,9 @@ export async function runClaude(o = {}) {
     // A pipeline agent (phases.mjs): runs as WORCA_AGENT_USER when the container set one
     // up (agent-user.mjs). Server-side helpers and Ask Worca leave it unset.
     asAgent,
+    // The run's remote execution environment (src/core/exec-env/; e2b mode only): the spawn runs in its
+    // sandbox. Absent on local runs.
+    execEnv,
     // Which engine adapter runs this spawn (engines/index.mjs). Default claude.
     engine: engineName,
     // Credential broker (broker-client.mjs): who pays for this spawn, what kind it is (sets
@@ -197,14 +200,20 @@ export async function runClaude(o = {}) {
     throw err;
   }
 
+  // BEFORE getEngine: it returns the mock adapter for any name when mock is on.
+  if (execEnv?.remote && (engineName || 'claude') !== 'claude') {
+    throw new Error(`${execEnv.title || 'Remote'} execution supports the claude engine only (this run uses ${engineName}).`);
+  }
   const engine = getEngine(engineName || 'claude', { mock: mockEnabled(o) });
   if (engine.name === 'mock') {
-    recordMockSpawnImpl({ engine: engineName || 'claude', sandbox, model });
+    recordMockSpawnImpl({ engine: engineName || 'claude', sandbox, model,
+      ...(execEnv?.remote ? { execEnv: execEnv.sandboxId, ...(resumeSessionId ? { resume: resumeSessionId } : {}) } : {}) });
     // runMock spawns nothing, so the MCP fields are meaningless to it —
     // workspaceWriteTargets is the one option that is mock-ONLY (§8.10) and it must be
     // named HERE too, or the mock implementer never sees it (this call is a gate, not
     // a pass-through; test/spawn-args.test.mjs asserts the forwarding end to end).
-    return engine.run({ cwd, systemPrompt, prompt, onEvent, signal, resumeSessionId, workspaceWriteTargets, permissionMode });
+    const mockOpts = { cwd, systemPrompt, prompt, onEvent, signal, resumeSessionId, workspaceWriteTargets, permissionMode };
+    return execEnv?.remote ? execEnv.runInProcess((opts) => engine.run(opts), mockOpts) : engine.run(mockOpts);
   }
 
   // Claude Code starts every server of the cwd's committed `.mcp.json` in -p, approved or not (probed on 2.1.293):
@@ -263,6 +272,7 @@ export async function runClaude(o = {}) {
     extraSettings: settings,
     argvInlineLimit,
     asAgent,
+    execEnv,
     billTo,
     spawnKind,
     runId,

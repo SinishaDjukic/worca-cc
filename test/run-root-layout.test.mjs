@@ -479,6 +479,19 @@ test('sweep: retention — a live manifest retain record or a retainOf answer ke
   ]);
 });
 
+test('sweep: a root it keeps loses its mcp.json once the run is over, never while the run can still resume (G22)', async () => {
+  const home = await tmp('worca-cc-rr-mcp-');
+  const repo = await freshRepo();
+  const done = await seedRunRoot(home, 'mcpdone1', repo);
+  await updateRunManifest(done.runRoot, { retain: { reason: 'commit_failed', members: [{ worktreeDir: done.worktreeDir }] } });
+  const paused = await seedRunRoot(home, 'mcppaus1', repo);
+  for (const e of [done, paused]) await writeFile(join(e.runRoot, 'mcp.json'), '{"mcpServers":{"db":{"command":"x","env":{"DB_TOKEN":"s"}}}}\n');
+  const res = await sweepRunRoots({ worcaHome: home, statusOf: (id) => (id === 'mcpdone1' ? 'done' : 'paused'), log: () => {} });
+  assert.deepEqual(res.keep.sort(), [done.runRoot, paused.runRoot].sort());
+  assert.ok(!existsSync(join(done.runRoot, 'mcp.json')), 'a retained terminal root keeps no MCP secrets');
+  assert.ok(existsSync(join(paused.runRoot, 'mcp.json')), 'a paused run keeps its config (its resume re-assembles it anyway)');
+});
+
 test('sweep: an unknown status is quarantine-logged, never removed', async () => {
   const home = await tmp('worca-cc-rr-unk-');
   const repo = await freshRepo();

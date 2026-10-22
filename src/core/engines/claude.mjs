@@ -23,6 +23,9 @@ import { pluginModelRoute, syncPluginSlots } from '../plugin-broker-slots.mjs';
 import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit } from './spawn.mjs';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
 
+// What a remote spawn's model route carries on worca's side; never kept into the sandbox env.
+const RELAY_OWNED_ENV_KEYS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS'];
+
 export const DEFAULT_BIN = process.env.WORCA_CLAUDE_BIN || process.env.ORCH_CLAUDE_BIN || 'claude';
 
 // Env every Claude spawn carries, over the ambient, run and model env (#810). Claude Code 2.1.302 offers
@@ -448,18 +451,20 @@ export function stageClaudeInvocation(opts, { bin = DEFAULT_BIN, limit = ARGV_IN
   return { ...plan, dir };
 }
 
-export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, spawnEnv: runSpawnEnv, redactValues, disallowedTools, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, agents, pluginDirs, extraSettings, argvInlineLimit, asAgent }) { // billTo/spawnKind/runId/threadId are consumed by runViaBroker
+export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, spawnEnv: runSpawnEnv, redactValues, disallowedTools, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, agents, pluginDirs, extraSettings, argvInlineLimit, asAgent, execEnv }) { // billTo/spawnKind/runId/threadId are consumed by runViaBroker
   // MCP registry §5.5.3: with registry secrets in this spawn's env, every emit, the result text and the error
   // message leave redacted — wrapped once here, so the broker path (which calls runClaudeProcess) is covered too.
-  const redactor = Array.isArray(redactValues) && redactValues.length ? createRedactor(redactValues) : null;
-  if (redactor) { const emit = onEvent; onEvent = (e) => emit(redactor.deep(e)); }
+  // A remote spawn's model route adds its upstream credential to the list below (once it is open).
+  const baseRedactValues = Array.isArray(redactValues) ? redactValues : [];
+  let redactor = baseRedactValues.length ? createRedactor(baseRedactValues) : null;
+  if (redactor || execEnv?.remote) { const emit = onEvent; onEvent = (e) => emit(redactor ? redactor.deep(e) : e); }
   return new Promise((resolveRaw, rejectRaw) => {
-    const resolveP = redactor ? (r) => resolveRaw({ ...r, text: redactor.text(r.text) }) : resolveRaw;
-    const rejectP = redactor ? (err) => {
-      if (err && typeof err.message === 'string') err.message = redactor.text(err.message);
-      if (err && typeof err.stack === 'string') err.stack = redactor.text(err.stack);
+    const resolveP = (r) => resolveRaw(redactor ? { ...r, text: redactor.text(r.text) } : r);
+    const rejectP = (err) => {
+      if (redactor && err && typeof err.message === 'string') err.message = redactor.text(err.message);
+      if (redactor && err && typeof err.stack === 'string') err.stack = redactor.text(err.stack);
       rejectRaw(err);
-    } : rejectRaw;
+    };
     // Per-model routing env (design §4.4), prepared BEFORE argv: reserved keys
     // are re-dropped here defensively — the write path already rejects them, so
     // a drop means a hand-edited settings file — and the surviving map is also
@@ -526,7 +531,9 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
     // preamble, the PreToolUse hook (hostGuard -> the --settings payload), and
     // WORCA_HOST_PID (below). One kill-switch: WORCA_HOST_GUARD=0. Mock spawns
     // nothing, so runMock stays untouched.
-    const guardOn = hostGuardEnabled();
+    // In an E2B sandbox (exec-env) no worca server runs to protect: no guard there.
+    const remote = !!execEnv?.remote;
+    const guardOn = hostGuardEnabled() && !remote;
     const guardedSystemPrompt = guardOn
       ? [hostGuardSystemPrompt(process.pid), systemPrompt].filter(Boolean).join('\n\n')
       : systemPrompt;
@@ -620,10 +627,38 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
     };
     if (bridgeKey) bridgeEvents.on('failure', onBridgeFailure);
 
+    // argv (`args`) is unchanged in both modes: paths are mirrored into the sandbox.
+    const exe = remote ? 'claude' : resolved.bin;          // the template's pinned CLI on PATH
+    // MCP registry secrets (MCPSECRET_*) only for the servers the sandbox keeps; model-env keys always, except
+    // the relay-owned ones: the model's base URL and credential stay in worca, behind a model route
+    // (plans/model-relay-design.md §4). The route is built from the FINAL env, what a local spawn would use
+    // (with the broker on, runViaBroker's slot URL and spawn token), and refused when a relay cannot carry it.
+    let childEnv = spawnEnv;
+    let modelRoute = null;
+    if (remote) {
+      try {
+        modelRoute = execEnv.openModelRoute({ spawnEnv, modelEnv: safeModelEnv });
+        const keep = Object.keys(safeModelEnv || {}).filter((k) => !RELAY_OWNED_ENV_KEYS.includes(k));
+        childEnv = execEnv.envFor(spawnEnv, { keep: [...keep, ...execEnv.mcpEnvRefs], route: modelRoute });
+      } catch (err) {
+        if (modelRoute) execEnv.closeModelRoute(modelRoute.id);
+        if (bridgeKey) bridgeEvents.off('failure', onBridgeFailure);
+        cleanupStaged();
+        rejectP(err);
+        return;
+      }
+      if (modelRoute.secrets?.length) redactor = createRedactor([...baseRedactValues, ...modelRoute.secrets]);
+    }
     superviseSpawn({
-      file: resolved.bin, args, displayBin: bin, cwd, env: spawnEnv, stdin: plan.stdin ?? null,
-      signal, asAgent, stagedDir: plan.dir || null, onEvent,
+      file: exe, args, displayBin: bin, cwd, env: childEnv, stdin: plan.stdin ?? null,
+      signal, asAgent: remote ? false : asAgent, stagedDir: plan.dir || null, onEvent, execEnv: remote ? execEnv : null,
       cleanup: () => {
+        if (modelRoute) {
+          // Calls no `result` frame covered (a spawn stopped mid-turn, or one whose sandbox printed none): worca saw
+          // them at its relay, so they are booked all the same.
+          const rest = execEnv.closeModelRoute(modelRoute.id);
+          if (rest?.messages) safeEmit(onEvent, { type: 'relayCost', messages: rest.messages, byModel: rest.byModel });
+        }
         if (bridgeKey) bridgeEvents.off('failure', onBridgeFailure);
         cleanupStaged();
       },
@@ -669,11 +704,15 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
           return;
         }
         const cost = extractResultCost(evt);
+        // A remote result frame is the sandbox's word (security evaluation E4): it carries what the relay itself
+        // measured since the previous one, and the harness books that.
+        const relay = modelRoute && evt?.type === 'result' ? execEnv.routeUsage(modelRoute.id) : null;
         safeEmit(onEvent, {
           type: evt?.type || 'event',
           raw: evt,
           text: text || undefined,
           ...(cost != null ? { costUsd: cost } : {}),
+          ...(relay ? { relay } : {}),
         });
       },
     }).then(resolveP, rejectP);
@@ -798,9 +837,12 @@ async function runViaBroker(opts) {
   // when agents run under their own users (they can't read the server's processes). The
   // broker uses a personal Claude subscription only for such spawns.
   const owner = normalizeBillTo(currentOwner()) || billTo;
-  const isolated = opts.asAgent
-    ? owner === billTo && !!agentIdentityFor(owner)?.dedicated
-    : !!agentIdentity();
+  // A remote spawn runs in its run's own sandbox, which holds no token (the relay keeps it in worca): isolated
+  // when the paying person owns the run, not when a teammate resumes or answers it (model-relay-design §7).
+  const isolated = opts.execEnv?.remote ? owner === billTo
+    : opts.asAgent
+      ? owner === billTo && !!agentIdentityFor(owner)?.dedicated
+      : !!agentIdentity();
   let minted;
   try {
     minted = await mintSpawnToken({
@@ -834,9 +876,10 @@ async function runViaBroker(opts) {
 /** Claude Code declares every capability worca uses. */
 export const claudeCapabilities = Object.freeze(Object.fromEntries(CAPABILITY_KEYS.map((k) => [k, true])));
 
-/** The adapter's run(): every spawn goes through the credential broker when it is
- *  on (WORCA_BROKER_URL, runViaBroker), else straight to runClaudeProcess. Raw
- *  stream-json envelopes; engines/index.mjs normalizes them. */
+/** The adapter's run(): every spawn, local or remote, goes through the credential broker
+ *  when it is on (WORCA_BROKER_URL, runViaBroker), else straight to runClaudeProcess. A
+ *  remote spawn reaches the broker through its sandbox's model relay. Raw stream-json
+ *  envelopes; engines/index.mjs normalizes them. */
 export function runClaudeAdapter(opts) {
   return (brokerEnabled() ? runViaBroker : runClaudeProcess)(opts);
 }

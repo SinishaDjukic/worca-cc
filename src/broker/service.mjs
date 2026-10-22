@@ -16,7 +16,7 @@ import { createCopilotExchange, parseGithubSecret, refreshGithubToken } from './
 export const MAX_REQUEST_BYTES = 32 << 20;
 const MAX_ERROR_BODY = 64 << 10;
 const CRED_CACHE_MS = 30_000;
-const UPSTREAM_IDLE_MS = 10 * 60_000;
+export const UPSTREAM_IDLE_MS = 10 * 60_000;
 
 const REQUEST_HEADER_ALLOW = new Set([
   'content-type', 'accept', 'anthropic-version', 'anthropic-beta', 'user-agent', 'openai-beta',

@@ -20,7 +20,8 @@ import process from 'node:process';
 
 import { preflightNode } from '../core/preflight-node.mjs';
 import { preflightDeps } from '../core/preflight-deps.mjs';
-import { resolveRunEngine } from '../core/settings-cascade.mjs';
+import { resolveRunEngine, resolveRunExecEnv } from '../core/settings-cascade.mjs';
+import { selectExecEnv } from '../core/exec-env/index.mjs';
 import {
   addProject,
   listProjects,
@@ -52,6 +53,8 @@ import { cmdControl } from './control.mjs';
 import { cmdModels } from './models.mjs';
 import { cmdContainer } from './container.mjs';
 import { cmdExtension } from './extension.mjs';
+import { cmdE2b } from './e2b.mjs';
+import { cmdExecEnv } from './exec-env.mjs';
 import { cmdRun } from './run-preset.mjs';
 import {
   DEFAULT_UI_HOST, DEFAULT_UI_PORT, probeUi, stopUi, readUiInstance, uiUrl, waitForUiState,
@@ -152,6 +155,7 @@ function parseArgs(argv) {
     '--tag',
     '--model',
     '--engine',
+    '--exec-env',
     '--permission-mode',
     '--workflow',
     '--install',
@@ -171,6 +175,7 @@ function parseArgs(argv) {
     '--tag': 'tags',
     '--model': 'model',
     '--engine': 'engine',
+    '--exec-env': 'execEnv',
     '--permission-mode': 'permissionMode',
     '--workflow': 'workflow',
     '--install': 'install',
@@ -340,6 +345,10 @@ Subcommands:
   broker [serve|secrets|revoke --person <email>]
                               The credential broker: holds model keys outside worca's container
                               (docs/credential-broker.md)
+  e2b sweep [--dry-run] [--all]
+                              Remove this instance's orphan E2B sandboxes (docs/e2b.md)
+  exec-env list|status|spec|build
+                              Execution environments; a project's sandbox spec and its builds (docs/e2b.md)
   help                       Print this help (same as --help).
   version                     Print the version (same as --version).
 
@@ -353,6 +362,8 @@ Options:
                            (comma-separated; repeatable)
   --model <m>              Claude model id
   --engine <name>          Agent harness for the pipeline's agent nodes: claude (default) | codex (beta) | copilot (beta) | cursor (beta)
+  --exec-env <name>        Where agent and script steps execute: local (default) or a registered backend —
+                           e2b (one E2B sandbox per run; docs/e2b.md). List them: worca exec-env list
   --allow-unguarded-engine Run on an engine that cannot fully enforce the guardrail set's permission rules
   --permission-mode <m>    Claude permission mode: default | acceptEdits | plan |
                            bypassPermissions (default acceptEdits)
@@ -3287,7 +3298,7 @@ async function drainMetricsFlushes() {
 
 // ── main ──────────────────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'run', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'extension']);
+const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'run', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'extension', 'e2b', 'exec-env']);
 
 /** Levenshtein distance, two-row. Only ever called on short argv tokens. */
 function editDistance(a, b) {
@@ -3377,6 +3388,8 @@ async function main() {
     if (sub === 'models') return cmdModels(rest, { out, c, fail });
     if (sub === 'container') return cmdContainer(rest, { out, c, fail });
     if (sub === 'extension') return cmdExtension(rest, { out, c, fail });
+    if (sub === 'e2b') return cmdE2b(rest, { out, c, fail });
+    if (sub === 'exec-env') return cmdExecEnv(rest, { out, c, fail });
     if (sub === 'broker') {
       // Loaded lazily: the broker is its own process and needs none of the core graph.
       const { runBrokerCli } = await import('../broker/main.mjs');
@@ -3537,6 +3550,10 @@ async function main() {
     waitTicketId = made.ticket.id;
   }
   const runEngine = resolveRunEngine({ explicit: flags.engine || null, projectDir }).engine;
+  // Where agent and script steps execute (docs/e2b.md); local adds nothing to the orchestrator options.
+  const execResolved = resolveRunExecEnv({ explicit: flags.execEnv || null, projectDir, engine: runEngine, workMode: cliMode.workMode });
+  if (execResolved.fallback) process.stderr.write(`worca: ${execResolved.fallback}.\n`);
+  const execEnv = selectExecEnv(execResolved.execEnv);
   const buildOrch = async () => (await import('../core/engine-select.mjs')).createOrchestratorFor({
     projectDir,
     workMode: cliMode.workMode,
@@ -3556,6 +3573,8 @@ async function main() {
       ...(runEngine !== 'claude' ? { engine: runEngine } : {}),
       ...(flags.allowUnguardedEngine ? { allowUnguardedEngine: true } : {}),
     },
+    ...(execEnv !== 'local' ? { execEnv } : {}),
+    ...(execResolved.fallback ? { execEnvFallback: execResolved.fallback } : {}),   // the run log says why it runs locally
     auto: flags.auto,
     humanInLoop: flags.humanInLoop === false ? false : undefined,
     ...(flags.nightMode ? { nightMode: true } : {}),
