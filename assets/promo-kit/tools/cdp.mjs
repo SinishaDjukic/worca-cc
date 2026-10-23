@@ -21,15 +21,37 @@ export function chromeEnv(env = process.env) {
  *  a Chrome started under a temp HOME raises a macOS "Keychain Not Found" dialog on the user's screen per launch. */
 export const CHROME_SAFE_ARGS = ['--use-mock-keychain', '--password-store=basic'];
 
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
+
+/** Worca's local corporate proxy for a browser launch, or null. WORCA_CORPORATE_PROXY_URL is set only while
+ *  Worca's corporateProxy flag runs the proxy (a credential-free http://127.0.0.1 URL). Chrome ignores
+ *  HTTPS_PROXY on macOS and Windows, so launches pass it explicitly. Loopback goes direct anyway (Chrome's
+ *  implicit bypass); other NO_PROXY hosts are passed on as the bypass list. */
+export function chromeProxy(env = process.env) {
+  let u;
+  try { u = new URL(String(env.WORCA_CORPORATE_PROXY_URL || '')); } catch { return null; }
+  if (u.protocol !== 'http:' || u.username || u.password || !u.port || !LOOPBACK_HOSTS.has(u.hostname)) return null;
+  const np = String(env.NO_PROXY ?? env.no_proxy ?? '').split(',').map((h) => h.trim()).filter(Boolean);
+  if (np.includes('*')) return null;
+  const bypass = np.filter((h) => !LOOPBACK_HOSTS.has(h));
+  return { server: `http://${u.host}`, ...(bypass.length ? { bypass: bypass.join(',') } : {}) };
+}
+
+/** chromeProxy() as Chrome flags, for a raw spawn (launch()). */
+export function chromeProxyArgs(env = process.env) {
+  const p = chromeProxy(env);
+  return p ? [`--proxy-server=${p.server}`, ...(p.bypass ? [`--proxy-bypass-list=${p.bypass.split(',').join(';')}`] : [])] : [];
+}
+
 /** The argv launch() starts Chrome with (minus the about:blank URL and the Linux no-sandbox retry). */
-export function chromeArgs({ dir, width = 1920, height = 1080, platform = process.platform } = {}) {
+export function chromeArgs({ dir, width = 1920, height = 1080, platform = process.platform, env = process.env } = {}) {
   const args = [
     '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${dir}`,
     '--no-first-run', '--no-default-browser-check', '--hide-scrollbars', '--mute-audio',
     '--force-color-profile=srgb', '--disable-background-timer-throttling',
     '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', '--disable-extensions',
     '--allow-file-access-from-files', '--autoplay-policy=no-user-gesture-required', `--window-size=${width},${height}`,
-    ...CHROME_SAFE_ARGS,
+    ...chromeProxyArgs(env), ...CHROME_SAFE_ARGS,
   ];
   if (platform === 'linux') args.push('--disable-dev-shm-usage');
   return args;

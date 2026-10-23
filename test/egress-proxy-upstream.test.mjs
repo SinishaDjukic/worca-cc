@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import net from 'node:net';
 import { createProxy } from '../src/core/egress-proxy.mjs';
-import { resolveUpstream, createUpstreamConnector } from '../src/core/upstream-proxy.mjs';
+import { resolveUpstream, createUpstreamConnector, ProxyCredentials } from '../src/core/upstream-proxy.mjs';
 import { startFakeUpstream } from './helpers/fake-upstream-proxy.mjs';
 
 const OPEN = { mode: 'open', allow: [], deny: [] };
@@ -32,6 +32,15 @@ function headerOrigin() {
     const s = http.createServer((req, res) => { seen.push(req.headers); res.end('origin ok'); });
     s.listen(0, '127.0.0.1', () => resolve({ server: s, port: s.address().port, seen }));
   });
+}
+
+/** Poll until `cond()` holds (no fixed sleeps on a loaded runner); throws after `ms`. */
+async function untilTrue(cond, ms = 3000, step = 10) {
+  const t0 = Date.now();
+  while (!cond()) {
+    if (Date.now() - t0 > ms) throw new Error('timed out');
+    await new Promise((r) => setTimeout(r, step));
+  }
 }
 
 /** A port nothing listens on: bind port 0, read it, close the server. */
@@ -109,7 +118,7 @@ test('NTLM CONNECT: Type 1 and Type 3 on ONE upstream socket, then bytes tunnel 
 });
 
 for (const headNoBody407 of [true, false]) {
-  test(`Plain HTTP over NTLM: HEAD probe then GET on ONE socket, response delivered (407 to HEAD ${headNoBody407 ? 'without' : 'with'} a body)`, async () => {
+  test(`Plain HTTP over NTLM: HEAD probe, HEAD with the Type 3, then GET on ONE socket, response delivered (407 to HEAD ${headNoBody407 ? 'without' : 'with'} a body)`, async () => {
     const o = await echoOrigin();
     const fake = await startFakeUpstream({ scheme: 'ntlm', originPort: o.port, headNoBody407 });
     const c = await chain(fake);
@@ -119,7 +128,8 @@ for (const headNoBody407 of [true, false]) {
       seen.push(r.body);
       assert.equal(r.status, 200, 'the paused upstream socket is resumed, so the response arrives');
       assert.equal(r.body, 'upstream relayed GET http://example.test/x');
-      assert.deepEqual(fake.stats.heads.map((h) => [h.socket, h.line.split(' ')[0]]), [[1, 'HEAD'], [1, 'GET']]);
+      // The pool logs the socket in on the HEAD probe (Type 3 on the second HEAD); the GET carries none.
+      assert.deepEqual(fake.stats.heads.map((h) => [h.socket, h.line.split(' ')[0]]), [[1, 'HEAD'], [1, 'HEAD'], [1, 'GET']]);
       assert.equal(fake.stats.type3, 1);
       assert.ok(!fake.stats.authHeaders.includes(CLIENT_AUTHZ), 'plain HTTP drops the client Proxy-Authorization too');
     } finally { assertNoSecrets([...c.logs, ...seen]); c.close(); await fake.close(); o.server.close(); }
@@ -510,4 +520,217 @@ test('plain HTTP: hop-by-hop headers are not forwarded, and a 101 from the upstr
     assert.equal(next.status, 502, 'the next request is answered too: no gate slot leaked');
     assert.notEqual(c.connector.status().state, 'tripped', 'a 101 is no verdict on the login');
   } finally { assertNoSecrets([...c.logs, ...seen]); c.close(); await fake.close(); o.server.close(); }
+});
+
+const isType3 = (h, scheme) => h.startsWith(`${scheme} `) && Buffer.from(h.slice(scheme.length + 1), 'base64').subarray(0, 8).toString('latin1') === 'NTLMSSP\0'
+  && Buffer.from(h.slice(scheme.length + 1), 'base64').readUInt32LE(8) === 3;
+
+test('Negotiate-only upstream: CONNECT completes with Proxy-Authorization: Negotiate carrying a raw NTLM Type 3', async () => {
+  const o = await echoOrigin();
+  const fake = await startFakeUpstream({ scheme: 'negotiate', originPort: o.port });
+  const c = await chain(fake);
+  const seen = [];
+  try {
+    const out = await connectVia(c.port, 'github.com:443');
+    seen.push(out);
+    assert.match(out, /^HTTP\/1\.1 200/);
+    assert.match(out, /echo:ping/);
+    assert.equal(fake.stats.type3, 1);
+    assert.equal(fake.stats.authHeaders.filter((h) => isType3(h, 'Negotiate')).length, 1);
+    assert.equal(fake.stats.authHeaders.filter((h) => isType3(h, 'NTLM')).length, 0, 'no Type 3 under the NTLM scheme');
+    assert.ok(fake.stats.heads.every((h) => h.socket === 1), 'the whole login runs on ONE socket');
+    const again = await connectVia(c.port, 'github.com:443');
+    seen.push(again);
+    assert.match(again, /^HTTP\/1\.1 200/);
+    assert.equal(fake.stats.heads.filter((h) => h.socket === 2).length, 2, 'the second login starts with Negotiate (learned): 2 heads, not 3');
+  } finally { assertNoSecrets([...c.logs, ...seen]); c.close(); await fake.close(); o.server.close(); }
+});
+
+for (const algorithm of ['SHA-256', 'MD5']) {
+  test(`Digest (${algorithm}, auth digest): CONNECT and plain GET are accepted with the computed response`, async () => {
+    const o = await echoOrigin();
+    const fake = await startFakeUpstream({ scheme: 'digest', algorithm, originPort: o.port });
+    const c = await chain(fake, { settings: { auth: 'digest' } });
+    const seen = [];
+    try {
+      const out = await connectVia(c.port, 'github.com:443');
+      seen.push(out);
+      assert.match(out, /^HTTP\/1\.1 200/);
+      const r = await httpVia(c.port, 'http://example.test/d');
+      seen.push(r.body);
+      assert.equal(r.status, 200);
+      assert.equal(r.body, 'upstream relayed GET http://example.test/d');
+      assert.equal(fake.stats.digest, 2);
+      assert.ok(fake.stats.authHeaders.filter((h) => h.startsWith('Digest ')).every((h) => h.includes(`algorithm=${algorithm}`)));
+      assert.equal(c.connector.status().state, 'verified');
+    } finally { assertNoSecrets([...c.logs, ...seen]); c.close(); await fake.close(); o.server.close(); }
+  });
+}
+
+test('Digest with a wrong password: one Digest header, then 407 needs-login without upstream contact', async () => {
+  const o = await echoOrigin();
+  const fake = await startFakeUpstream({ scheme: 'digest', originPort: o.port, password: 'Different' });
+  const c = await chain(fake, { settings: { auth: 'digest' } });
+  try {
+    assert.match(await connectVia(c.port, 'github.com:443'), /^HTTP\/1\.1 407/);
+    assert.match(await connectVia(c.port, 'github.com:443'), /x-worca-proxy: needs-login/i);
+    assert.equal(fake.stats.digest, 1);
+    assert.equal(c.connector.status().state, 'tripped');
+  } finally { assertNoSecrets(c.logs); c.close(); await fake.close(); o.server.close(); }
+});
+
+test('Digest stale nonce (D10): a 502 to send again, no trip, and the next CONNECT is accepted', async () => {
+  const o = await echoOrigin();
+  const fake = await startFakeUpstream({ scheme: 'digest', originPort: o.port, staleOnce: true });
+  const c = await chain(fake, { settings: { auth: 'digest' } });
+  try {
+    const first = await connectVia(c.port, 'github.com:443');
+    assert.match(first, /^HTTP\/1\.1 502/);
+    assert.match(first, /Digest nonce went stale/);
+    assert.notEqual(c.connector.status().state, 'tripped', 'one stale nonce is never a trip');
+    assert.match(await connectVia(c.port, 'github.com:443'), /^HTTP\/1\.1 200/);
+    assert.equal(fake.stats.stale, 1);
+    assert.equal(fake.stats.digest, 2);
+    assert.equal(c.connector.status().state, 'verified');
+  } finally { assertNoSecrets(c.logs); c.close(); await fake.close(); o.server.close(); }
+});
+
+test('auto never falls back to Digest: a Digest-only upstream gets no credentials and the client a 502 naming the setting', async () => {
+  const o = await echoOrigin();
+  const fake = await startFakeUpstream({ scheme: 'digest', originPort: o.port });
+  const c = await chain(fake);
+  try {
+    const out = await connectVia(c.port, 'github.com:443');
+    assert.match(out, /^HTTP\/1\.1 502/);
+    assert.match(out, /networkProxy\.auth is "digest"/);
+    assert.equal(fake.stats.digest, 0);
+  } finally { c.close(); await fake.close(); o.server.close(); }
+});
+
+test('keep-alive pool: five sequential plain-HTTP GETs over NTLM run ONE handshake on ONE upstream socket', async () => {
+  const o = await echoOrigin();
+  const fake = await startFakeUpstream({ scheme: 'ntlm', originPort: o.port });
+  const c = await chain(fake);
+  const seen = [];
+  try {
+    for (let i = 0; i < 5; i += 1) {
+      const r = await httpVia(c.port, `http://example.test/p${i}`);
+      seen.push(r.body);
+      assert.equal(r.status, 200, `GET ${i}`);
+      assert.equal(r.body, `upstream relayed GET http://example.test/p${i}`);
+    }
+    assert.equal(fake.stats.type1, 1);
+    assert.equal(fake.stats.type3, 1, 'one handshake for five GETs');
+    assert.equal(fake.stats.sockets, 1, 'the pooled socket is reused');
+    const gets = fake.stats.heads.filter((h) => h.line.startsWith('GET '));
+    assert.equal(gets.length, 5);
+    assert.ok(gets.every((h) => h.socket === 1 && h.headers['proxy-authorization'] === undefined), 'pooled GETs carry no credentials');
+    assert.equal(c.connector.status().state, 'verified');
+  } finally { assertNoSecrets([...c.logs, ...seen]); c.close(); await fake.close(); o.server.close(); }
+});
+
+test('keep-alive pool: four parallel GETs each get 200, one login per socket, and a later GET reuses a pooled socket', async () => {
+  const o = await echoOrigin();
+  const fake = await startFakeUpstream({ scheme: 'ntlm', originPort: o.port });
+  const c = await chain(fake);
+  try {
+    const rs = await Promise.all([0, 1, 2, 3].map((i) => httpVia(c.port, `http://example.test/par${i}`)));
+    rs.forEach((r, i) => { assert.equal(r.status, 200, `GET ${i}`); assert.equal(r.body, `upstream relayed GET http://example.test/par${i}`); });
+    assert.ok(fake.stats.type3 >= 1 && fake.stats.type3 <= 4, `type3 ${fake.stats.type3}`);
+    assert.equal(fake.stats.type3, fake.stats.sockets, 'exactly one Type 3 per upstream socket, never a second on a logged-in one');
+    assert.equal(c.connector.status().state, 'verified');
+    const before = fake.stats.type3;
+    assert.equal((await httpVia(c.port, 'http://example.test/after')).status, 200);
+    assert.equal(fake.stats.type3, before, 'the sequential GET rides a free pooled socket');
+  } finally { assertNoSecrets(c.logs); c.close(); await fake.close(); o.server.close(); }
+});
+
+test('keep-alive pool: a socket idle past idleMs is closed and the next GET logs in again', async () => {
+  const o = await echoOrigin();
+  const fake = await startFakeUpstream({ scheme: 'ntlm', originPort: o.port });
+  const c = await chain(fake, { settings: { timeouts: { idleMs: 500 } } });
+  try {
+    assert.equal((await httpVia(c.port, 'http://example.test/a')).status, 200);
+    // Poll, not a fixed sleep: eviction fires at idleMs (500 ms), a loaded runner may be late.
+    await untilTrue(() => fake.stats.closed === 1, 5000);
+    assert.equal(fake.stats.closed, 1, 'the idle pooled socket was evicted');
+    assert.equal((await httpVia(c.port, 'http://example.test/b')).status, 200);
+    assert.equal(fake.stats.sockets, 2);
+    assert.equal(fake.stats.type3, 2);
+  } finally { assertNoSecrets(c.logs); c.close(); await fake.close(); o.server.close(); }
+});
+
+test('keep-alive pool: a 407 on a pooled socket is no strike; a bodiless GET is retried once on a fresh login', async () => {
+  const o = await echoOrigin();
+  const fake = await startFakeUpstream({ scheme: 'ntlm', originPort: o.port, forgetAuthAfter: 1 });
+  const c = await chain(fake);
+  try {
+    assert.equal((await httpVia(c.port, 'http://example.test/1')).status, 200);
+    const r = await httpVia(c.port, 'http://example.test/2');
+    assert.equal(r.status, 200, 'retried on a new login');
+    assert.equal(fake.stats.type3, 2);
+    assert.equal(c.connector.status().state, 'verified', 'the forgotten login is not a refusal');
+  } finally { assertNoSecrets(c.logs); c.close(); await fake.close(); o.server.close(); }
+});
+
+test('keep-alive pool: a POST whose pooled socket was forgotten gets a 502, never a second Type 3 for it', async () => {
+  const o = await echoOrigin();
+  const fake = await startFakeUpstream({ scheme: 'ntlm', originPort: o.port, forgetAuthAfter: 1 });
+  const c = await chain(fake);
+  try {
+    assert.equal((await httpVia(c.port, 'http://example.test/1')).status, 200);
+    const r = await httpVia(c.port, 'http://example.test/post', { method: 'POST', body: 'x=1' });
+    assert.equal(r.status, 502);
+    assert.match(r.body, /asked for a login again on a kept-alive connection/);
+    assert.equal(fake.stats.type3, 1);
+  } finally { assertNoSecrets(c.logs); c.close(); await fake.close(); o.server.close(); }
+});
+
+test('keep-alive pool: a login swap retires the pooled sockets (no request rides the old login)', async () => {
+  const o = await echoOrigin();
+  const fake = await startFakeUpstream({ scheme: 'ntlm', originPort: o.port });
+  const c = await chain(fake);
+  try {
+    assert.equal((await httpVia(c.port, 'http://example.test/1')).status, 200);
+    c.connector.useLogin(new ProxyCredentials({ domain: 'Domain', user: 'User', password: 'Password' }, 'auto'), { id: 'L2' });
+    await untilTrue(() => fake.stats.closed === 1, 3000);
+    assert.equal(fake.stats.closed, 1, 'the free socket of the old login is destroyed');
+    assert.equal((await httpVia(c.port, 'http://example.test/2')).status, 200);
+    assert.equal(fake.stats.type3, 2);
+  } finally { assertNoSecrets(c.logs); c.close(); await fake.close(); o.server.close(); }
+});
+
+test('keep-alive pool: a login swap while a pooled 407 is on its way sends no Type 3 for the old login', async () => {
+  const o = await echoOrigin();
+  const fake = await startFakeUpstream({ scheme: 'ntlm', originPort: o.port, forgetAuthAfter: 1, forgetDelayMs: 300 });
+  const c = await chain(fake);
+  try {
+    assert.equal((await httpVia(c.port, 'http://example.test/1')).status, 200);
+    const pending = httpVia(c.port, 'http://example.test/2');   // forgotten: its 407 comes after 300 ms
+    // Poll until GET /2 reached the fake (its forgetting 407 is then 300 ms away), not a fixed sleep.
+    await untilTrue(() => fake.stats.heads.filter((h) => h.line.startsWith('GET ')).length === 2, 3000);
+    c.connector.useLogin(new ProxyCredentials({ domain: 'Domain', user: 'User', password: 'Password' }, 'auto'), { id: 'L2' });
+    const r = await pending;
+    assert.equal(r.status, 502);
+    assert.match(r.body, /login changed while this request was on its way/);
+    assert.equal(fake.stats.type3, 1, 'the retired login never logged in again');
+    assert.equal((await httpVia(c.port, 'http://example.test/3')).status, 200, 'the new login works');
+    assert.equal(fake.stats.type3, 2);
+  } finally { assertNoSecrets(c.logs); c.close(); await fake.close(); o.server.close(); }
+});
+
+test('keep-alive pool: a proxy that forgets every connection login switches to per-request logins', async () => {
+  const o = await echoOrigin();
+  const fake = await startFakeUpstream({ scheme: 'ntlm', originPort: o.port, forgetAuthAfter: 0 });
+  const c = await chain(fake);
+  try {
+    const first = await httpVia(c.port, 'http://example.test/1');
+    assert.equal(first.status, 502, 'pooled 407, retry, 407 again: no third attempt');
+    assert.equal(fake.stats.type3, 2);
+    assert.ok(c.logs.some((l) => /logs in per request from now on/.test(l)), c.logs.join('\n'));
+    const second = await httpVia(c.port, 'http://example.test/2');
+    assert.equal(second.status, 200, 'the slice-1 path: the GET itself carries the Type 3');
+    assert.equal(fake.stats.type3, 3);
+    assert.equal(c.connector.status().state, 'verified');
+  } finally { assertNoSecrets(c.logs); c.close(); await fake.close(); o.server.close(); }
 });

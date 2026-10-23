@@ -2,12 +2,13 @@
 // carries several heads (http.createServer detaches a CONNECT socket). It speaks NTLM (verifying
 // the Type 3 against the known password) or Basic, counts sockets and credential headers, tunnels
 // every accepted CONNECT to `origin` (whatever host was asked) and answers plain requests itself.
+// Like a real NTLM proxy, it logs in a CONNECTION: later requests on a logged-in socket need no header.
 import net from 'node:net';
-import { createHmac, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { ntHash, ntowfv2, parseType3 } from '../../src/core/ntlm.mjs';
 
 /**
- * @param {{scheme?: 'ntlm'|'basic'|'none', offer?: string[]|null, user?: string, domain?: string, password?: string,
+ * @param {{scheme?: 'ntlm'|'negotiate'|'digest'|'basic'|'none', offer?: string[]|null, user?: string, domain?: string, password?: string,
  *   originPort: number, closeOn407?: boolean, silent?: boolean, headNoBody407?: boolean,
  *   afterType3?: null|'close'|'silent', status?: number, statusChallenge?: boolean}} opts
  *   headNoBody407 (default true): a 407 to HEAD declares Content-Length but sends no body, as
@@ -19,21 +20,50 @@ import { ntHash, ntowfv2, parseType3 } from '../../src/core/ntlm.mjs';
  *   rejectDelayMs: delay before the 407 that refuses wrong credentials (a slow proxy, for the client-abort tests).
  *   holdType3: count each Type 3 in stats.type3 on arrival, then park its answer until release()
  *   (the stale-handshake and single-flight tests); release() sends what would have been sent.
+ *   scheme 'negotiate': NTLM tokens inside Negotiate; an `NTLM ` Type 1 gets a 407 offering only Negotiate.
+ *   scheme 'digest': RFC 7616 with qop=auth, verified with its own maths. algorithm: Digest algorithm
+ *   (default 'SHA-256'). realm: Digest realm (default 'ACME').
+ *   forgetAuthAfter: null (default) = a logged-in NTLM/Negotiate socket stays logged in; n >= 0 = after n
+ *   credential-free requests on it, the next one gets a 407 and the socket must log in again ("the proxy
+ *   forgot the login"). The login handshake itself (the requests that carry a Type 1 or Type 3) is never
+ *   counted, so forgetAuthAfter: 1 serves exactly one pooled request per login.
+ *   forgetDelayMs: delay before that forgetting 407 (the login-swap race test).
+ *   staleOnce: the first CORRECT Digest answer gets a 407 with a fresh nonce and stale=true (RFC 7616 §3.3);
+ *   later ones pass.
  */
 export async function startFakeUpstream({ scheme = 'ntlm', offer = null, user = 'User', domain = 'Domain',
   password = 'Password', originPort, closeOn407 = false, silent = false, headNoBody407 = true,
-  afterType3 = null, status = 200, statusChallenge = false, rejectDelayMs = 0, holdType3 = false } = {}) {
-  const stats = { sockets: 0, type1: 0, type3: 0, basic: 0, heads: [], authHeaders: [] };
+  afterType3 = null, status = 200, statusChallenge = false, rejectDelayMs = 0, holdType3 = false,
+  algorithm = 'SHA-256', realm = 'ACME', forgetAuthAfter = null, forgetDelayMs = 0, staleOnce = false } = {}) {
+  const stats = { sockets: 0, closed: 0, type1: 0, type3: 0, basic: 0, digest: 0, stale: 0, heads: [], authHeaders: [] };
   const sockets = new Set();
   const held = [];
   const want = Buffer.from(`${domain}\\${user}:${password}`).toString('base64');
+  let nonce = randomBytes(12).toString('hex');   // `let`: staleOnce rotates it
+  const ntlmish = scheme === 'ntlm' || scheme === 'negotiate';
+  const prefix = scheme === 'negotiate' ? 'Negotiate ' : 'NTLM ';
+  const digestChallenge = () => `Digest realm="${realm}", qop="auth", algorithm=${algorithm}, nonce="${nonce}", opaque="op"`;
+  /** Built per request: the Digest challenge carries the current nonce. */
+  const defaultOffers = () => ({ ntlm: ['NTLM'], negotiate: ['Negotiate'], digest: [digestChallenge()] })[scheme];
+  /** Independent Digest check (not the module's code), including the uri against the request-target. */
+  function digestOk(authz, method, target) {
+    const p = Object.fromEntries([...authz.slice(7).matchAll(/(\w+)=(?:"((?:[^"\\]|\\.)*)"|([^,\s]+))/g)]
+      .map((m) => [m[1], (m[2] ?? m[3]).replace(/\\(.)/g, '$1')]));
+    const h = algorithm.startsWith('SHA-256') ? 'sha256' : 'md5';
+    const H = (s) => createHash(h).update(s).digest('hex');
+    const ha1 = H(`${domain}\\${user}:${realm}:${password}`);
+    const wantResp = H(`${ha1}:${nonce}:${p.nc}:${p.cnonce}:auth:${H(`${method}:${p.uri}`)}`);
+    return p.username === `${domain}\\${user}` && p.nonce === nonce && p.uri === target && p.response === wantResp;
+  }
   const server = net.createServer((sock) => {
     const id = ++stats.sockets;
     sockets.add(sock);
-    sock.on('close', () => sockets.delete(sock));
+    sock.on('close', () => { sockets.delete(sock); stats.closed += 1; });
     sock.on('error', () => {});   // ECONNRESET (Windows) or EPIPE (Linux) when a test drops a socket
     let buf = Buffer.alloc(0);
     let challenge = null;
+    let authed = false;   // this connection is logged in (NTLM/Negotiate)
+    let served = 0;       // credential-free requests served since the login
     const onData = (chunk) => {
       buf = Buffer.concat([buf, chunk]);
       for (;;) {
@@ -57,16 +87,39 @@ export async function startFakeUpstream({ scheme = 'ntlm', offer = null, user = 
           if (closeOn407) sock.end();
         };
         const refuse = (h) => setTimeout(() => { reply407(h); sock.end(); }, rejectDelayMs);
-        const offers = offer || (scheme === 'ntlm' ? ['NTLM'] : ['Basic realm="ACME"']);
+        const offers = offer || defaultOffers() || ['Basic realm="ACME"'];
+        // A logged-in connection needs no header, until the fake "forgets" the login.
+        if (ntlmish && authed && !authz) {
+          if (forgetAuthAfter !== null && served >= forgetAuthAfter) {
+            authed = false; served = 0;
+            const forget = () => reply407(offers.map((o) => `Proxy-Authenticate: ${o}\r\n`).join(''));
+            if (forgetDelayMs) { sock.off('data', onData); setTimeout(() => { forget(); sock.on('data', onData); onData(Buffer.alloc(0)); }, forgetDelayMs); return; }
+            forget();
+            continue;
+          }
+          served += 1;
+          if (answer(method, target) === 'continue') continue;
+          return;
+        }
         let ok = false;
         if (scheme === 'none') ok = true;
         else if (scheme === 'basic' && authz.startsWith('Basic ')) { stats.basic += 1; ok = authz.slice(6) === want; if (!ok) { refuse('Proxy-Authenticate: Basic realm="ACME"\r\n'); return; } }
-        else if (scheme === 'ntlm' && authz.startsWith('NTLM ')) {
-          const msg = Buffer.from(authz.slice(5), 'base64');
+        else if (scheme === 'digest' && authz.startsWith('Digest ')) {
+          stats.digest += 1;
+          ok = digestOk(authz, method, target);
+          if (!ok) { refuse(`Proxy-Authenticate: ${digestChallenge()}\r\n`); return; }
+          if (staleOnce && stats.stale === 0) {   // a correct answer to a nonce the fake now calls stale
+            stats.stale += 1;
+            nonce = randomBytes(12).toString('hex');
+            reply407(`Proxy-Authenticate: ${digestChallenge()}, stale=true\r\n`);
+            continue;
+          }
+        } else if (ntlmish && authz.startsWith(prefix)) {
+          const msg = Buffer.from(authz.slice(prefix.length), 'base64');
           if (msg.readUInt32LE(8) === 1) {
             stats.type1 += 1;
             challenge = randomBytes(8);
-            reply407(`Proxy-Authenticate: NTLM ${type2For(challenge).toString('base64')}\r\n`);
+            reply407(`Proxy-Authenticate: ${prefix}${type2For(challenge).toString('base64')}\r\n`);
             continue;
           }
           stats.type3 += 1;
@@ -80,12 +133,14 @@ export async function startFakeUpstream({ scheme = 'ntlm', offer = null, user = 
             sock.off('data', onData);
             const verdict = ok;
             held.push(() => {
-              if (!verdict) { refuse('Proxy-Authenticate: NTLM\r\n'); return; }
+              if (!verdict) { refuse(`Proxy-Authenticate: ${prefix.trim()}\r\n`); return; }
+              authed = true; served = 0;
               if (answer(method, target) === 'continue') { sock.on('data', onData); onData(Buffer.alloc(0)); }
             });
             return;
           }
-          if (!ok) { refuse('Proxy-Authenticate: NTLM\r\n'); return; }
+          if (!ok) { refuse(`Proxy-Authenticate: ${prefix.trim()}\r\n`); return; }
+          authed = true; served = 0;   // the login request itself is not counted
         }
         if (!ok) { reply407(offers.map((o) => `Proxy-Authenticate: ${o}\r\n`).join('')); continue; }
         if (answer(method, target) === 'continue') continue;
@@ -97,7 +152,7 @@ export async function startFakeUpstream({ scheme = 'ntlm', offer = null, user = 
       if (status !== 200) {
         const body = `upstream says ${status}`;
         if (status === 101) { sock.write('HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n'); return 'continue'; }
-        sock.write(`HTTP/1.1 ${status} Upstream Error\r\n${statusChallenge ? 'Proxy-Authenticate: NTLM\r\n' : ''}Content-Length: ${body.length}\r\n\r\n${body}`);
+        sock.write(`HTTP/1.1 ${status} Upstream Error\r\n${statusChallenge ? 'Proxy-Authenticate: NTLM\r\n' : ''}Content-Length: ${body.length}\r\n\r\n${method === 'HEAD' ? '' : body}`);
         return 'continue';
       }
       if (method === 'CONNECT') {

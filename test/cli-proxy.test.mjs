@@ -178,3 +178,22 @@ test('spawned: `worca proxy help` is wired, and `worca proxy status` starts no l
   assert.ok(status.stdout.includes('State: '), status.stdout + status.stderr);
   assert.doesNotMatch(status.stderr, /worca: Corporate proxy: via/);
 });
+
+test('status: prints the fixed local proxy URL, or says a free port is picked', async (t) => {
+  const r = await rig(t);
+  await r.run(['status'], { settings: () => ({ networkProxy: { upstream: r.fake.url(), fixedPort: 3128 } }) });
+  assert.ok(r.lines.includes('Local proxy: http://127.0.0.1:3128'), r.lines.join('\n'));
+  r.lines.length = 0;
+  await r.run(['status']);
+  assert.ok(r.lines.includes('Local proxy: a free port picked when Worca starts (set networkProxy.fixedPort to pin one)'), r.lines.join('\n'));
+  assertNoSecrets(r.seen());
+});
+
+test('login with auth digest exits 1: a saved login keeps only the NT hash', async (t) => {
+  const r = await rig(t);
+  assert.equal(await r.run(['login'], { input: stdin('ACME\\jdoe\nS3cret!\n'),
+    settings: () => ({ networkProxy: { upstream: r.fake.url(), auth: 'digest' } }) }), 1);
+  assert.match(r.errs.join('\n'), /networkProxy\.auth is digest/);
+  assert.equal(existsSync(join(r.home, PROXY_LOGIN_FILE)), false, 'nothing was saved');
+  assertNoSecrets(r.seen());
+});

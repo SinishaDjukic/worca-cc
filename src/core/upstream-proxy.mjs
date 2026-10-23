@@ -14,10 +14,13 @@ import { inspect } from 'node:util';
 import { Buffer } from 'node:buffer';
 import { parseHostList, hostMatches, normalizeHost } from './egress-proxy.mjs';
 import { ntHash, type1Message, parseType2, type3Message, NtlmError } from './ntlm.mjs';
+import { parseChallenges, pickDigest, digestHa1, digestAuthorization, isStaleDigest, DigestError } from './http-digest.mjs';
 
 export const UPSTREAM_TIMEOUTS = Object.freeze({ connectMs: 30_000, authMs: 15_000, idleMs: 10 * 60_000 });
-export const AUTH_MODES = Object.freeze(['auto', 'none', 'basic', 'ntlm']);
-export const AUTH_LABELS = Object.freeze({ auto: 'NTLMv2', none: 'no login', basic: 'Basic, cleartext', ntlm: 'NTLMv2' });
+export const AUTH_MODES = Object.freeze(['auto', 'none', 'basic', 'ntlm', 'digest']);
+export const AUTH_LABELS = Object.freeze({ auto: 'NTLMv2', none: 'no login', basic: 'Basic, cleartext', ntlm: 'NTLMv2', digest: 'Digest' });
+/** Modes that need the password itself; a saved login keeps only the NT hash, so they never use one (D8). */
+export const PASSWORD_MODES = Object.freeze(['basic', 'digest']);
 /** Verified logins in flight at once: a password change mid-flight spends at most this many attempts. */
 export const MAX_PARALLEL_HANDSHAKES = 2;
 /** Strikes that trip an unverified gate: a 5xx WITH a Proxy-Authenticate challenge after credentials
@@ -39,17 +42,27 @@ export class ProxyError extends Error {
 
 /** The login, kept for the life of the process. Exactly one secret is kept: the NT hash for
  *  auto/ntlm, the Basic token only for an explicit auth 'basic' (a reversible copy of the
- *  password, so never built otherwise). The password string goes out of scope after
- *  construction. Never printable. */
+ *  password, so never built otherwise), the password only for an explicit auth 'digest' (never
+ *  handed out). Otherwise the password string goes out of scope after construction. Never printable. */
 export class ProxyCredentials {
-  #ntHash; #basic;
+  #ntHash; #basic; #digest;
   /** `ntHash` (a 16-byte Buffer) is a saved login (src/core/proxy-credentials.mjs): NTLMv2 only. */
   constructor({ domain = '', user, password, raw, ntHash: hash = null }, auth) {
     this.domain = String(domain);
     this.user = String(user);
     this.saved = hash !== null;
-    this.#ntHash = auth === 'basic' ? null : (hash ? Buffer.from(hash) : ntHash(password));
+    this.#ntHash = PASSWORD_MODES.includes(auth) ? null : (hash ? Buffer.from(hash) : ntHash(password));
     this.#basic = auth === 'basic' && !hash ? Buffer.from(`${raw ?? user}:${password}`, 'utf8').toString('base64') : null;
+    // Digest needs the password per challenge (HA1 = H(user:realm:password)); kept only in this explicit mode,
+    // and never handed out: callers get the user name and HA1 only (D8a).
+    this.#digest = auth === 'digest' && !hash ? Object.freeze({ user: String(raw ?? user), password: String(password) }) : null;
+  }
+  /** The Digest user name as the URL gave it (DOMAIN\user), or null outside auth digest. */
+  get digestUser() { return this.#digest ? this.#digest.user : null; }
+  /** The base HA1 for `realm` (D8a); throws outside auth digest. */
+  digestHa1(realm, algorithm) {
+    if (!this.#digest) throw new Error('no Digest login');
+    return digestHa1({ username: this.#digest.user, realm, password: this.#digest.password, algorithm });
   }
   get ntHash() { return this.#ntHash; }
   get basicToken() { return this.#basic; }
@@ -128,15 +141,15 @@ export function resolveUpstream({ env = process.env, settings, login = null } = 
   const requestedAuth = AUTH_MODES.includes(s.auth) ? s.auth : null;
   if (saved && requestedAuth === 'none') {
     warnings.push('networkProxy.auth is none, so the saved login (worca proxy login) is not used');
-  } else if (saved && s.auth !== 'basic') {
+  } else if (saved && !PASSWORD_MODES.includes(s.auth)) {
     if (creds) warnings.push('a login is saved (worca proxy login), so the user name and password in the proxy URL are not used');
     creds = { domain: saved.domain, user: saved.user, ntHash: saved.ntHash };
     usedLogin = { id: saved.id, label: saved.domain ? `${saved.domain}\\${saved.user}` : saved.user, savedAt: saved.savedAt, rejected: saved.rejected || null };
   } else if (saved && !creds) {
-    warnings.push('networkProxy.auth is basic, but the saved login keeps only an NT hash, which Basic cannot use; put the login in the HTTP(S)_PROXY URL or set auth to auto');
+    warnings.push(`networkProxy.auth is ${s.auth}, but the saved login keeps only an NT hash, which ${s.auth === 'digest' ? 'Digest' : 'Basic'} cannot use; put the login in the HTTP(S)_PROXY URL or set auth to auto`);
   }
   if (login && login.error) warnings.push(`the saved login cannot be used (${login.error})`);
-  // The URL login stays the fallback a logout returns to (D6); Basic never swaps logins.
+  // The URL login stays the fallback a logout returns to (D6); Basic and Digest never swap logins.
   const urlCreds = !configured && p.credentials ? p.credentials : null;
   let auth = requestedAuth || (creds ? 'auto' : 'none');
   if (auth !== 'none' && !creds) {
@@ -147,7 +160,7 @@ export function resolveUpstream({ env = process.env, settings, login = null } = 
   const timeouts = Object.fromEntries(Object.entries(UPSTREAM_TIMEOUTS).map(([k, d]) => [k, clampMs(t[k], d)]));
   const noProxy = parseNoProxy(s.noProxy !== undefined ? s.noProxy : (env.no_proxy || env.NO_PROXY || ''));
   return { source, host: p.host, port: p.port, auth, requestedAuth, credentials: creds ? new ProxyCredentials(creds, auth) : null,
-    urlCredentials: urlCreds && auth !== 'basic' ? new ProxyCredentials(urlCreds, 'auto') : null,
+    urlCredentials: urlCreds && !PASSWORD_MODES.includes(auth) ? new ProxyCredentials(urlCreds, 'auto') : null,
     login: usedLogin, noProxy, timeouts, warnings };
 }
 
@@ -224,15 +237,9 @@ export function parseResponseHead(text) {
   return { status: Number(m[2]), headers, persistent };
 }
 
-/** The schemes a 407 offers: [{ scheme: 'ntlm'|'basic'|'negotiate'|'digest', token }]. */
+/** The schemes a 407 offers: [{ scheme, token, params }] (http-digest.mjs parser). */
 export function authChallenges(head) {
-  const out = [];
-  for (const v of head.headers.get('proxy-authenticate') || []) {
-    for (const m of v.matchAll(/(?:^|,\s*)(NTLM|Negotiate|Basic|Digest)\b\s*([A-Za-z0-9+/=]*)/gi)) {
-      out.push({ scheme: m[1].toLowerCase(), token: m[1].toLowerCase() === 'ntlm' ? m[2] : '' });
-    }
-  }
-  return out;
+  return parseChallenges(head.headers.get('proxy-authenticate') || []);
 }
 
 /** Read one response head from `socket`; resolves { status, headers, persistent, rest } and leaves the socket paused. */
@@ -338,6 +345,32 @@ function connectTcp(host, port, timeoutMs) {
   });
 }
 
+const NO_REUSE = Symbol('worca.noReuse');
+
+/**
+ * The keep-alive pool of ONE login generation (D1-D3). Node reuses free sockets; a new one is logged in
+ * here, with a HEAD probe whose Type 3 answer is judged by sendCredentials before the socket is handed over.
+ */
+class AuthPool extends http.Agent {
+  #handshake; #retired = false;
+  constructor(handshake, idleMs) {
+    super({ keepAlive: true, maxFreeSockets: 8, timeout: idleMs, scheduling: 'lifo' });
+    this.#handshake = handshake;
+  }
+  createConnection(options, cb) {
+    this.#handshake(options).then((s) => cb(null, s), (err) => cb(err));
+  }
+  keepSocketAlive(socket) {
+    if (this.#retired || socket[NO_REUSE]) return false;
+    return super.keepSocketAlive(socket);
+  }
+  /** No new reuse; free sockets closed now, busy ones when their response ends. */
+  retire() {
+    this.#retired = true;
+    for (const list of Object.values(this.freeSockets)) for (const s of [...list]) s.destroy();
+  }
+}
+
 /**
  * @param {ReturnType<typeof resolveUpstream>} upstream  a resolved upstream without `error`
  * @param {{log?: (line: string) => void, now?: () => number, startTripped?: boolean,
@@ -361,11 +394,32 @@ export function createUpstreamConnector(upstream, { log = () => {}, now = Date.n
   const asProxyError = (err) => (err instanceof ProxyError ? err
     : new ProxyError(502, `the corporate proxy ${label} failed (${err && err.code ? err.code : 'error'})`));
   const loginError = () => new ProxyError(407, needsLogin, { needsLogin: true });
+  /** D3: the login was swapped while a request was on its way; never answer for the old one. */
+  const loginChanged = () => new ProxyError(502, `the corporate proxy login changed while this request was on its way; send the request again`);
+  /** The scheme that carries NTLM tokens on this upstream: 'NTLM' until a proxy offers only Negotiate (D7). */
+  let ntlmScheme = 'NTLM';
+  /** False once an authenticated answer came with Connection: close (D5): plain HTTP then logs in per request. */
+  let pooling = true;
+  /** The pool of a LIVE generation (D3): a retired ctx never gets a new pool, so it never logs in again. */
+  function poolOf(ctx) {
+    if (!live(ctx)) throw loginChanged();
+    return (ctx.pool ||= new AuthPool((options) => handshakeSocket(ctx, options), T.idleMs));
+  }
+  const retirePool = (ctx) => { ctx.pool?.retire(); ctx.pool = null; };
+  /** D4/D5: the upstream does not keep connection logins; plain HTTP goes back to the slice-1 path. */
+  function stopPooling(why) {
+    if (!pooling) return;
+    pooling = false;
+    retirePool(cur);
+    say(`${label} ${why}, so plain HTTP logs in per request from now on.`);
+  }
 
   /** The one log line that names the user, written once, when this call tripped the gate. */
   function tripped(ctx, scheme) {
-    say(`${label} did not accept the ${scheme} login for ${ctx.creds.label}; no credentials are sent until a new login is saved (proxy needs login).`);
+    const kerberos = scheme === 'Negotiate' ? ' If the corporate proxy accepts only Kerberos, Worca cannot log in to it (Kerberos is not supported).' : '';
+    say(`${label} did not accept the ${scheme} login for ${ctx.creds.label}; no credentials are sent until a new login is saved (proxy needs login).${kerberos}`);
     try { onTrip({ upstream: label, loginId: ctx.loginId }); } catch { /* marking the file must not take the proxy down */ }
+    retirePool(ctx);
     return loginError();
   }
   // A stale ctx (an older login) never touches the gate: its outcome says nothing about the new login.
@@ -377,9 +431,16 @@ export function createUpstreamConnector(upstream, { log = () => {}, now = Date.n
    * Judge the status that answered credentials; returns the refusal to send, or null to go on
    * (the caller relays the answer, a 5xx included). A 5xx proves the login: the proxy went on to
    * the origin, so dead hosts never trip the breaker. Only a 5xx that ALSO carries a
-   * Proxy-Authenticate challenge is ambiguous, a weight-1 strike (D11).
+   * Proxy-Authenticate challenge is ambiguous, a weight-1 strike (D11). `challenges`: the
+   * Proxy-Authenticate values of the answer. A Digest 407 that says stale=true says nothing about the
+   * password (RFC 7616 §3.3): a weight-1 strike, never a trip from a fresh or verified gate (D10).
    */
-  function judge(ctx, status, scheme, challenged) {
+  function judge(ctx, status, scheme, challenges) {
+    const challenged = challenges !== undefined && [].concat(challenges).length > 0;
+    if (status === 407 && scheme === 'Digest' && isStaleDigest(challenges)) {
+      return live(ctx) && gate.unconfirmed(needsLogin, 1) ? tripped(ctx, scheme)
+        : new ProxyError(502, `the corporate proxy ${label} says the Digest nonce went stale; send the request again`);
+    }
     if (status === 407) return trip(ctx, scheme);
     if (status >= 500 && challenged) return live(ctx) && gate.unconfirmed(needsLogin, 1) ? tripped(ctx, scheme) : null;
     if (live(ctx)) gate.accepted();
@@ -395,7 +456,7 @@ export function createUpstreamConnector(upstream, { log = () => {}, now = Date.n
   async function sendCredentials(ctx, socket, lines, deadline, scheme) {
     let h;
     try { h = await roundTrip(socket, lines, deadline); } catch (err) { throw strike(ctx, scheme, err); }
-    const refusal = judge(ctx, h.status, scheme, h.headers.has('proxy-authenticate'));
+    const refusal = judge(ctx, h.status, scheme, h.headers.get('proxy-authenticate'));
     if (refusal) throw refusal;
     return h;
   }
@@ -410,34 +471,87 @@ export function createUpstreamConnector(upstream, { log = () => {}, now = Date.n
    * Log in on ONE socket. `buildHead(authz|null)` returns the request head lines. With
    * finalByCaller (plain HTTP, whose probe is a HEAD) it stops before the last step and returns
    * the Proxy-Authorization the caller sends with the real request; otherwise it returns the
-   * final response head. auto and ntlm both mean NTLMv2 only: never a Basic fallback (D8).
+   * final response head. auto and ntlm both mean NTLMv2 only: never a Basic or Digest fallback
+   * (D8). NTLM tokens go inside Negotiate when the proxy offers only that (D7). `headProbe`: the
+   * probe is a HEAD, so a 407 to it has no body. `final`: { method, uri } of the request the
+   * credentials are for (Digest hashes them).
    */
-  async function authenticate(ctx, socket, buildHead, deadline, { finalByCaller }) {
+  async function authenticate(ctx, socket, buildHead, deadline, { finalByCaller, headProbe = finalByCaller, final }) {
     if (ctx.auth === 'none') return { socket, head: await roundTrip(socket, buildHead(null), deadline) };
     if (ctx.auth === 'basic') return basicStep(ctx, socket, buildHead, deadline, finalByCaller);
-    const h1 = await roundTrip(socket, buildHead(`NTLM ${type1Message().toString('base64')}`), deadline);
+    if (ctx.auth === 'digest') return digestStep(ctx, socket, buildHead, deadline, { finalByCaller, headProbe, final });
+    const t1 = type1Message().toString('base64');
+    let scheme = ntlmScheme;
+    let h1 = await roundTrip(socket, buildHead(`${scheme} ${t1}`), deadline);
     if (h1.status !== 407) return { socket, head: h1, unchallenged: true };
-    const offered = authChallenges(h1);
-    const ntlm = offered.find((c) => c.scheme === 'ntlm' && c.token);
-    if (!ntlm) {
+    let offered = authChallenges(h1);
+    let tok = offered.find((c) => c.scheme === scheme.toLowerCase() && c.token);
+    const alt = scheme === 'NTLM' ? 'Negotiate' : 'NTLM';
+    if (!tok && offered.some((c) => c.scheme === alt.toLowerCase())) {
+      // Only the other wrapper is offered: the same Type 1 again under it, on the same socket.
+      if (!h1.persistent) throw new ProxyError(502, `the corporate proxy ${label} closed the connection during NTLM authentication`);
+      const left0 = await drainBody(socket, h1, deadline - now(), { noBody: headProbe });
+      if (left0.length) socket.unshift(left0);
+      scheme = alt;
+      h1 = await roundTrip(socket, buildHead(`${scheme} ${t1}`), deadline);
+      if (h1.status !== 407) return { socket, head: h1, unchallenged: true };
+      offered = authChallenges(h1);
+      tok = offered.find((c) => c.scheme === scheme.toLowerCase() && c.token);
+    }
+    if (!tok) {
       if (offered.some((c) => c.scheme === 'basic')) {
         throw new ProxyError(502, `the corporate proxy ${label} offers only Basic. Worca sends Basic only when networkProxy.auth is "basic", because the password then crosses the network in cleartext`);
       }
-      throw new ProxyError(502, `the corporate proxy ${label} does not offer NTLM (it offers ${offered.map((c) => c.scheme).join(', ') || 'no scheme'})`);
+      if (offered.some((c) => c.scheme === 'digest')) {
+        throw new ProxyError(502, `the corporate proxy ${label} offers only Digest. Worca sends Digest only when networkProxy.auth is "digest" (the password from HTTPS_PROXY is then kept in memory; a saved login cannot be used)`);
+      }
+      throw new ProxyError(502, `the corporate proxy ${label} does not offer NTLM or Negotiate (it offers ${offered.map((c) => c.scheme).join(', ') || 'no scheme'})`);
     }
+    ntlmScheme = scheme;
     if (!h1.persistent) throw new ProxyError(502, `the corporate proxy ${label} closed the connection during NTLM authentication`);
-    const left = await drainBody(socket, h1, deadline - now(), { noBody: finalByCaller });
+    const left = await drainBody(socket, h1, deadline - now(), { noBody: headProbe });
     if (left.length) socket.unshift(left);
+    if (!live(ctx)) throw loginChanged();   // D3: swapped during the Type 1 round trip; never send the old login's Type 3
     let t3;
     try {
-      t3 = type3Message({ ntHash: ctx.creds.ntHash, user: ctx.creds.user, domain: ctx.creds.domain, type2: parseType2(ntlm.token), now: now() });
+      t3 = type3Message({ ntHash: ctx.creds.ntHash, user: ctx.creds.user, domain: ctx.creds.domain, type2: parseType2(tok.token), now: now() });
     } catch (err) {
       if (err instanceof NtlmError) throw new ProxyError(502, `the corporate proxy ${label} sent a malformed NTLM challenge`);
       throw err;
     }
-    const authz = `NTLM ${t3.toString('base64')}`;
-    if (finalByCaller) return { socket, proxyAuthorization: authz, scheme: 'NTLM' };
-    return { socket, head: await sendCredentials(ctx, socket, buildHead(authz), deadline, 'NTLM') };
+    const authz = `${scheme} ${t3.toString('base64')}`;
+    if (finalByCaller) return { socket, proxyAuthorization: authz, scheme };
+    return { socket, head: await sendCredentials(ctx, socket, buildHead(authz), deadline, scheme) };
+  }
+
+  /** Digest (D8/D9): challenge on the probe, answer computed for the request the credentials go with. */
+  async function digestStep(ctx, socket, buildHead, deadline, { finalByCaller, headProbe, final }) {
+    let s = socket;
+    const h1 = await roundTrip(s, buildHead(null), deadline);
+    if (h1.status !== 407) return { socket: s, head: h1, unchallenged: true };
+    const offered = authChallenges(h1);
+    const ch = pickDigest(offered);
+    if (!ch) throw new ProxyError(502, `the corporate proxy ${label} offers no Digest login Worca supports (SHA-256 or MD5 with qop auth); it offers ${offered.map((c) => c.scheme).join(', ') || 'no scheme'}`);
+    if (h1.persistent) {
+      const left = await drainBody(s, h1, deadline - now(), { noBody: headProbe });
+      if (left.length) s.unshift(left);
+    } else {
+      // Digest logs in a request, not a connection: a closed 407 just means a new socket.
+      s.destroy();
+      s = await connectTcp(upstream.host, upstream.port, T.connectMs);
+    }
+    if (!live(ctx)) throw loginChanged();   // D3, as in authenticate()
+    const creds = ctx.creds;
+    let authz;
+    try {
+      authz = digestAuthorization({ challenge: ch, username: creds.digestUser, ha1: (realm, alg) => creds.digestHa1(realm, alg),
+        method: final.method, uri: final.uri });
+    } catch (err) {
+      if (err instanceof DigestError) throw new ProxyError(502, `the corporate proxy ${label} sent a Digest challenge Worca cannot answer (${err.message})`);
+      throw err;
+    }
+    if (finalByCaller) return { socket: s, proxyAuthorization: authz, scheme: 'Digest' };
+    return { socket: s, head: await sendCredentials(ctx, s, buildHead(authz), deadline, 'Digest') };
   }
 
   /** Capture the login for one request (D7); the gate is skipped for auth none. */
@@ -456,7 +570,7 @@ export function createUpstreamConnector(upstream, { log = () => {}, now = Date.n
       const target = hostPort(host, port);
       const buildHead = (authz) => [`CONNECT ${target} HTTP/1.1`, `Host: ${target}`, 'Proxy-Connection: Keep-Alive',
         ...(authz ? [`Proxy-Authorization: ${authz}`] : [])];
-      const r = await authenticate(ctx, socket, buildHead, now() + T.authMs, { finalByCaller: false });
+      const r = await authenticate(ctx, socket, buildHead, now() + T.authMs, { finalByCaller: false, final: { method: 'CONNECT', uri: target } });
       socket = r.socket;
       const { status } = r.head;
       if (status === 407) throw new ProxyError(407, `proxy needs login: the corporate proxy ${label} asks for a login and none is configured.`, { needsLogin: true });
@@ -467,6 +581,42 @@ export function createUpstreamConnector(upstream, { log = () => {}, now = Date.n
       throw asProxyError(err);
     } finally {
       release();   // after every judge()/strike(): a waiter never runs on a stale gate state
+    }
+  }
+
+  /**
+   * A socket logged in as `ctx` for the pool: HEAD probe, Type 3 on the second HEAD, judged here (D1).
+   * Node passes the request options through to createConnection (but sets `path` to null, it means a
+   * socket path there), so `probeUrl` is the URL of the request that made the pool open a socket. The
+   * probe is a real HEAD to that URL (as in slice 1), and the socket may then carry a different queued
+   * request of the same pool.
+   */
+  async function handshakeSocket(ctx, { probeUrl }) {
+    const release = await gate.acquire();   // rejects 407 "proxy needs login" once tripped
+    let socket = null;
+    try {
+      if (!live(ctx)) throw loginChanged();   // D3: the login was swapped while this waited for the gate
+      socket = await connectTcp(upstream.host, upstream.port, T.connectMs);
+      const target = new URL(probeUrl);
+      const buildHead = (authz) => [`HEAD ${target.href} HTTP/1.1`, `Host: ${target.host}`, 'Proxy-Connection: Keep-Alive',
+        ...(authz ? [`Proxy-Authorization: ${authz}`] : [])];
+      const r = await authenticate(ctx, socket, buildHead, now() + T.authMs, { finalByCaller: false, headProbe: true });
+      socket = r.socket;
+      const h = r.head;
+      if (h.status === 407) throw new ProxyError(407, `proxy needs login: the corporate proxy ${label} asks for a login and none is configured.`, { needsLogin: true });
+      if (!h.persistent) {
+        stopPooling('closes the connection after a login');
+        throw new ProxyError(502, `the corporate proxy ${label} does not keep logged-in connections open; Worca logs in per request from now on. Send the request again.`);
+      }
+      if (!live(ctx)) throw loginChanged();   // D3: swapped during the handshake; never hand this socket over
+      // An ambiguous verdict (5xx with a challenge) or stray HEAD body bytes: use the socket once, never pool it.
+      if (h.rest.length || (h.status >= 500 && h.headers.has('proxy-authenticate'))) socket[NO_REUSE] = true;
+      return socket;
+    } catch (err) {
+      socket?.destroy();
+      throw asProxyError(err);
+    } finally {
+      release();
     }
   }
 
@@ -483,8 +633,10 @@ export function createUpstreamConnector(upstream, { log = () => {}, now = Date.n
    * Once the head with the credentials went out, the outcome is judged even when the client
    * leaves: a 407 nobody waits for still trips the gate, or the next waiter would send the same
    * credentials again (D11). Every way `up` can end (response, upgrade, error, close) settles.
+   * `onReauth` (pooled requests): a 407 is a forgotten connection login, handed to it instead of
+   * judged; it returns true when it answered the client itself. `body`: pipe the client body.
    */
-  function relay(req, res, up, { ctx, scheme, release }) {
+  function relay(req, res, up, { ctx, scheme, release, onReauth = null, body = true }) {
     let settled = false;
     let clientGone = false;
     let credentialsOut = false;   // the head carrying `scheme` was written before the client left
@@ -498,8 +650,16 @@ export function createUpstreamConnector(upstream, { log = () => {}, now = Date.n
       reply(e);
     });
     up.on('response', (ur) => {
+      if (onReauth && ur.statusCode === 407) {
+        ur.resume();
+        up.destroy();   // the forgotten socket never goes back to the pool
+        settle();
+        if (clientGone) return;
+        if (!onReauth()) replyError(res, reauthAgain());
+        return;
+      }
       let refusal = null;
-      settle(() => { if (scheme) refusal = judge(ctx, ur.statusCode, scheme, ur.headers['proxy-authenticate'] !== undefined); });
+      settle(() => { if (scheme) refusal = judge(ctx, ur.statusCode, scheme, ur.headers['proxy-authenticate']); });
       if (clientGone) { ur.resume(); up.destroy(); return; }
       if (refusal) { ur.resume(); replyError(res, refusal); return; }
       up.setTimeout(T.idleMs);
@@ -511,7 +671,7 @@ export function createUpstreamConnector(upstream, { log = () => {}, now = Date.n
     // credentials with something other than a 407, which proves them.
     up.on('upgrade', (ur, socket) => {
       socket.destroy();
-      settle(() => { if (scheme) judge(ctx, ur.statusCode, scheme, false); });
+      settle(() => { if (scheme) judge(ctx, ur.statusCode, scheme); });
       reply(new ProxyError(502, `the corporate proxy ${label} answered ${ur.statusCode} Switching Protocols, which Worca does not relay`));
     });
     up.on('close', () => {
@@ -529,7 +689,7 @@ export function createUpstreamConnector(upstream, { log = () => {}, now = Date.n
       req.unpipe(up);
       up.setTimeout(T.authMs);
     });
-    req.pipe(up);
+    if (body) req.pipe(up); else up.end();
   }
 
   /** Request headers that belong to this hop only (RFC 9110 §7.6.1), plus any named in Connection. */
@@ -542,9 +702,44 @@ export function createUpstreamConnector(upstream, { log = () => {}, now = Date.n
     return headers;
   }
 
-  /** A plain (absolute-form) HTTP request through the upstream. */
+  const bodiless = (req) => !req.headers['transfer-encoding'] && Number(req.headers['content-length'] || 0) === 0;
+
+  const reauthAgain = () => new ProxyError(502, `the corporate proxy ${label} asked for a login again on a kept-alive connection; send the request again`);
+
+  /**
+   * A plain request on the pool (NTLM/Negotiate). No credentials ride it, so its answer is never judged.
+   * `retry`: a bodiless request may be sent once more after a forgotten login. `retried`: this IS that retry.
+   */
+  function sendPooled(req, res, { url, headers, ctx, retry, retried = false }) {
+    let pool;
+    try { pool = poolOf(ctx); } catch (err) { replyError(res, err); return; }
+    const up = http.request({ host: upstream.host, port: upstream.port, method: req.method, path: url.href,
+      probeUrl: url.href, timeout: T.connectMs, agent: pool, headers: { ...headers, 'proxy-connection': 'keep-alive' } });
+    up.once('socket', (s) => s.resume());   // a logged-in socket comes back paused (readResponseHead)
+    relay(req, res, up, { ctx, scheme: null, release: () => {}, body: !bodiless(req),
+      onReauth: () => {
+        // D4: the upstream forgot this connection's login. Nothing was refused, so no strike.
+        if (ctx.pool === pool) retirePool(ctx);
+        if (!live(ctx)) { replyError(res, loginChanged()); return true; }   // D3: never retry as the old login
+        // D4 cap: the retry's socket was logged in a moment ago and was forgotten at once.
+        if (retried) { stopPooling('asks for a login again on every kept-alive connection'); return false; }
+        if (!retry) return false;
+        sendPooled(req, res, { url, headers, ctx, retry: false, retried: true });
+        return true;
+      } });
+  }
+
+  /** A plain (absolute-form) HTTP request through the upstream (D1, D6). */
   function forward(req, res, { url }) {
     const headers = endToEndHeaders(req.headers);
+    const ctx = cur;
+    if (!pooling || ctx.auth === 'none' || PASSWORD_MODES.includes(ctx.auth)) { forwardOnce(req, res, { url, headers }); return; }
+    if (gate.state() === 'tripped') { replyError(res, loginError()); return; }
+    sendPooled(req, res, { url, headers, ctx, retry: bodiless(req) });
+  }
+
+  /** A plain request with its own login (the slice-1 path): Basic, Digest, auth none, or pooling off. */
+  function forwardOnce(req, res, { url, headers }) {
     const path = url.href;
     const base = { host: upstream.host, port: upstream.port, method: req.method, path, timeout: T.connectMs };
     (async () => {
@@ -567,7 +762,7 @@ export function createUpstreamConnector(upstream, { log = () => {}, now = Date.n
         } else {
           const buildHead = (authz) => [`HEAD ${path} HTTP/1.1`, `Host: ${url.host}`, 'Proxy-Connection: Keep-Alive', 'Content-Length: 0',
             ...(authz ? [`Proxy-Authorization: ${authz}`] : [])];
-          r = await authenticate(ctx, socket, buildHead, now() + T.authMs, { finalByCaller: true });
+          r = await authenticate(ctx, socket, buildHead, now() + T.authMs, { finalByCaller: true, final: { method: req.method, uri: path } });
           socket = r.socket;
           if (r.unchallenged) { socket.destroy(); socket = null; }
         }
@@ -605,20 +800,28 @@ export function createUpstreamConnector(upstream, { log = () => {}, now = Date.n
      * keeps the URL's password and never swaps. @returns {boolean} true when the login changed
      */
     useLogin(next, { id = null, rejected = false } = {}) {
-      // Basic keeps the URL's password; an explicit `auth: none` sends nothing, ever (D23).
-      if (upstream.auth === 'basic' || upstream.requestedAuth === 'basic' || upstream.requestedAuth === 'none') return false;
+      // Basic and Digest keep the URL's password; an explicit `auth: none` sends nothing, ever (D23).
+      if (PASSWORD_MODES.includes(upstream.auth) || PASSWORD_MODES.includes(upstream.requestedAuth) || upstream.requestedAuth === 'none') return false;
       const creds = next || urlCreds;
       // The mode to restore: what the user set (ntlm stays ntlm), else auto. Never the boot's
       // derived 'none' (that only meant "no login yet").
       const auth = creds ? (upstream.requestedAuth || 'auto') : 'none';
+      retirePool(cur);   // D3: no request rides a socket logged in as the previous login
       cur = { gen: cur.gen + 1, creds, auth, loginId: next ? id : null };
       gate.reset();
       if (creds && rejected) gate.rejected(needsLogin);
       return true;
     },
-    close: () => directAgent.destroy(),
+    close: () => { cur.pool?.destroy(); directAgent.destroy(); },
   };
 }
+
+/** networkProxy.fixedPort when valid (1024-65535), else 0 (a free port). */
+export function fixedPortOf(networkProxy) {
+  const p = networkProxy && typeof networkProxy === 'object' ? networkProxy.fixedPort : undefined;
+  return Number.isInteger(p) && p >= 1024 && p <= 65535 ? p : 0;
+}
+export const localProxyUrl = (port) => `http://127.0.0.1:${port}`;
 
 /** The hosts the Test button and `worca proxy test` CONNECT to. */
 export const TEST_HOSTS = Object.freeze(['github.com', 'api.anthropic.com']);

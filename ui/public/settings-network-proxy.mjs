@@ -4,7 +4,12 @@ import { flagOn, onFlagChange } from './flags.mjs';
 import { withButton, fieldError, clearFieldErrors } from './feedback.mjs';
 
 export const NETWORK_PROXY_FLAG = 'corporateProxy';
-const AUTH_OPTIONS = [['auto', 'NTLMv2 (recommended)'], ['basic', 'Basic (password in cleartext)'], ['none', 'No login']];
+const AUTH_OPTIONS = [['auto', 'NTLMv2 (recommended)'], ['basic', 'Basic (password in cleartext)'], ['digest', 'Digest (password from HTTPS_PROXY)'], ['none', 'No login']];
+/** Login modes that need the password itself, so Log in (a saved NT hash) is off, with this hint (D16). */
+const PASSWORD_NOTES = {
+  basic: 'Basic sends the password in cleartext and cannot use a saved login: put DOMAIN%5Cuser:password@ in HTTPS_PROXY, or choose NTLMv2.',
+  digest: 'Digest cannot use a saved login (it needs the password): put DOMAIN%5Cuser:password@ in HTTPS_PROXY, or choose NTLMv2.',
+};
 
 async function defaultFetchJson(url, { method = 'GET', body } = {}) {
   const r = await fetch(url, { method, headers: body ? { 'content-type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
@@ -57,6 +62,7 @@ function build(doc, body) {
   const port = input(doc, 'number', { min: '1', max: '65535', placeholder: '8080' });
   const { wrap: authWrap, sel: auth } = select(doc, AUTH_OPTIONS);
   const noProxy = input(doc, 'text', { placeholder: 'intranet.acme.example, .corp.acme.example', spellcheck: 'false' });
+  const fixedPort = input(doc, 'number', { min: '1024', max: '65535', placeholder: 'any free port' });
   const connectS = input(doc, 'number', { min: '1', max: '3600', placeholder: '30' });
   const authS = input(doc, 'number', { min: '1', max: '3600', placeholder: '15' });
   const idleS = input(doc, 'number', { min: '1', max: '3600', placeholder: '600' });
@@ -66,7 +72,7 @@ function build(doc, body) {
   const drows = make(doc, 'div', 'drows');
   drows.append(
     field(doc, 'npHost', 'Proxy host', host), field(doc, 'npPort', 'Port', port), field(doc, 'npAuth', 'Login', auth, authWrap),
-    field(doc, 'npNoProxy', 'Hosts that go direct', noProxy),
+    field(doc, 'npNoProxy', 'Hosts that go direct', noProxy), field(doc, 'npFixedPort', 'Local proxy port', fixedPort),
     field(doc, 'npConnectS', 'Connect timeout (s)', connectS), field(doc, 'npAuthS', 'Login timeout (s)', authS), field(doc, 'npIdleS', 'Idle timeout (s)', idleS),
     field(doc, 'npDomain', 'Domain', domain), field(doc, 'npUser', 'User name', user), field(doc, 'npPassword', 'Password', password),
   );
@@ -75,6 +81,7 @@ function build(doc, body) {
   const save = btn('npSave', 'Save'); const login = btn('npLogin', 'Log in', true); const logout = btn('npLogout', 'Log out'); const test = btn('npTest', 'Test');
   actions.append(save, logout, test, login);
   // Empty small.hint lines filled by JS: the Settings tooltip contract allows no static .hint text.
+  // #npBasicNote keeps its slice-2 name on purpose: it now carries the Digest note too (tests pin the id).
   const basicNote = make(doc, 'small', 'hint', '');
   basicNote.id = 'npBasicNote';
   basicNote.hidden = true;
@@ -84,7 +91,7 @@ function build(doc, body) {
   const results = make(doc, 'ul', 'np-results');
   results.id = 'npTestResults';
   body.append(drows, actions, basicNote, status, results);
-  return { host, port, auth, noProxy, connectS, authS, idleS, domain, user, password, save, login, logout, test, basicNote, status, results };
+  return { host, port, auth, noProxy, fixedPort, connectS, authS, idleS, domain, user, password, save, login, logout, test, basicNote, status, results };
 }
 
 function fill(f, st) {
@@ -92,6 +99,7 @@ function fill(f, st) {
   if (s.upstream) { try { const u = new URL(s.upstream); f.host.value = u.hostname; f.port.value = u.port || '80'; } catch { /* left empty */ } }
   f.auth.value = s.auth || 'auto';
   f.noProxy.value = Array.isArray(s.noProxy) ? s.noProxy.join(', ') : (s.noProxy || '');
+  f.fixedPort.value = s.fixedPort ? String(s.fixedPort) : '';
   const t = s.timeouts || {};
   f.connectS.value = t.connectMs ? String(t.connectMs / 1000) : '';
   f.authS.value = t.authMs ? String(t.authMs / 1000) : '';
@@ -102,12 +110,12 @@ function fill(f, st) {
   basicMode(f);
 }
 
-/** D5: Basic keeps the login in the HTTPS_PROXY URL, so Log in is off and a hint says why. */
+/** D5/D16: Basic and Digest keep the login in the HTTPS_PROXY URL, so Log in is off and a hint says why. */
 function basicMode(f) {
-  const basic = f.auth.value === 'basic';
-  f.login.disabled = basic;
-  f.basicNote.hidden = !basic;
-  f.basicNote.textContent = basic ? 'Basic sends the password in cleartext and cannot use a saved login: put DOMAIN%5Cuser:password@ in HTTPS_PROXY, or choose NTLMv2.' : '';
+  const note = PASSWORD_NOTES[f.auth.value];
+  f.login.disabled = !!note;
+  f.basicNote.hidden = !note;
+  f.basicNote.textContent = note || '';
 }
 
 /** Render one Test result row per host. */
@@ -144,6 +152,7 @@ export function mountNetworkProxyCard({ doc = globalThis.document, fetchJson = d
       const upstream = cur.host.value.trim() ? `http://${cur.host.value.trim()}:${cur.port.value.trim() || '8080'}` : null;
       const r = await fetchJson('/api/proxy/settings', { method: 'PUT', body: { networkProxy: {
         upstream, auth: cur.auth.value, noProxy: cur.noProxy.value.trim() || null,
+        fixedPort: cur.fixedPort.value.trim() ? Number(cur.fixedPort.value) : null,
         timeouts: { connectMs: ms(cur.connectS), authMs: ms(cur.authS), idleMs: ms(cur.idleS) } } } });
       if (!r.ok) { fieldError(cur.host, r.data.error || 'Could not save'); return { ok: false }; }
       cur.status.textContent = 'Saved. Restart Worca to use the new proxy settings.';
@@ -156,7 +165,7 @@ export function mountNetworkProxyCard({ doc = globalThis.document, fetchJson = d
       if (!r.ok) { fieldError(({ user: cur.user, domain: cur.domain, password: cur.password, auth: cur.auth })[r.data.field] || cur.user, r.data.error || 'Could not log in'); return { ok: false }; }
       fill(cur, r.data);
       return { ok: true };
-    }, { busy: 'Logging in…', done: 'Logged in', idleDisabled: () => cur.auth.value === 'basic' }));   // stays off in Basic after "Logged in"
+    }, { busy: 'Logging in…', done: 'Logged in', idleDisabled: () => !!PASSWORD_NOTES[cur.auth.value] }));   // stays off in Basic/Digest after "Logged in"
     cur.logout.addEventListener('click', () => withButton(cur.logout, async () => {
       const r = await fetchJson('/api/proxy/logout', { method: 'POST', body: {} });
       if (r.ok) fill(cur, r.data);

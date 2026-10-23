@@ -108,7 +108,7 @@ export const FLAGS = Object.freeze([
   entry({
     key: 'corporateProxy',
     title: 'Corporate proxy',
-    description: 'Send every outbound connection (agents, git, MCP servers, plugins, chat channels and Worca itself) through one corporate proxy that asks for a login (NTLMv2 or Basic). Worca runs a local proxy on 127.0.0.1 that logs in for them. Upstream from settings.json networkProxy or HTTP(S)_PROXY. Restart Worca after turning it on or off.',
+    description: 'Send every outbound connection (agents, git, MCP servers, plugins, chat channels and Worca itself) through one corporate proxy that asks for a login (NTLMv2, also inside Negotiate, Digest or Basic). Worca runs a local proxy on 127.0.0.1 that logs in for them. Upstream from settings.json networkProxy or HTTP(S)_PROXY. Pin the local port with networkProxy.fixedPort for an IDE or shell. Restart Worca after turning it on or off.',
     stage: 'experimental',
     default: false,
     owner: 'e-angelov',

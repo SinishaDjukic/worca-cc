@@ -9,6 +9,7 @@
 - `worca proxy status|test|logout`; the Test button and `worca proxy test` check github.com and api.anthropic.com.
 - A rejected login is remembered across restarts, and a new login clears "proxy needs login" without a restart.
 - Boot line `Corporate proxy: via host:port (NTLMv2)`.
+- Kept-alive logins, Negotiate, Digest and a fixed port: plain-HTTP requests reuse one NTLM-logged-in connection until it idles out (`networkProxy.timeouts.idleMs`); a proxy that offers only `Negotiate` gets NTLMv2 inside it; `networkProxy.auth: "digest"` answers RFC 7616 Digest with the password from `HTTPS_PROXY`; `networkProxy.fixedPort` (or Local proxy port on the card) pins the local proxy to `127.0.0.1:<port>`, shown by `worca proxy status`; Playwright and Chrome launches in runs get the local proxy explicitly.
 
 ### Projects: New never overrides; Remove deletes worca's own folders
 

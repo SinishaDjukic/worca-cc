@@ -39,6 +39,8 @@ export function sigkillGraceMs() {
 export const SPAWN_ENV_BASE = [
   'PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'SHELL', 'USER', 'LOGNAME', 'TERM',
   'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy',
+  // Worca's corporate-proxy marker (proxy-credentials.mjs CORPORATE_PROXY_VAR; a test pins the value).
+  'WORCA_CORPORATE_PROXY_URL',
   'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR',
 ];
 
