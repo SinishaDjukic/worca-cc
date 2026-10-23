@@ -136,6 +136,18 @@ function workspaceHead(f) {
     after: f.canCreatePr ? [btn('ship', CREATE_PR_LABEL, { primary: true, icon: 'pr-create' })] : [] };
 }
 
+/** One ship flow (slice 2): a feature's or a chain's head, in workspaceHead's shape. `state`: groupModel's; `prs`:
+ *  groupPrList(row). Create PR while no run has a PR; View PR ▾ for one PR, View PRs ▾ for several; while the group
+ *  is still ready (a partly shipped chain) Create PR stays as a head button beside them. */
+export function groupHead({ state, prs }) {
+  const ready = state === 'ready';
+  if (!prs.length) return { ...NONE, key: 'group', cta: ready ? { state: 'create' } : null };
+  const cta = prs.length === 1
+    ? { state: prs[0].merged ? 'merged' : 'view', href: prs[0].url, menu: true }
+    : { state: 'view', label: VIEW_PRS_LABEL, menu: true, ws: true };
+  return { ...NONE, key: 'group', cta, after: ready ? [btn('ship', CREATE_PR_LABEL, { primary: true, icon: 'pr-create' })] : [] };
+}
+
 const N = (node, label, second) => ({ node, label, ...(second && second.length ? { second } : {}) });
 /** The tracker's Watch words (D16): status only; the ▾ menu edits Watch. */
 export function trackerWatchWords(w, { idle = true } = {}) {
@@ -334,9 +346,10 @@ export function renderHeadButtons(host, head, slot, h = {}) {
 /**
  * The View PR ▾ items (openMenu's shape). `prs`: [{ key, name, number, url, open, conflicts, watch, watchFailed }]
  * (watch: the PR's /api/pr/checks `watch`, or null; watchFailed: the read gave no answer at all); one PR has no name
- * and no Open item (the split's main half opens it).
+ * and no Open item (the split's main half opens it). `onWatchAll(openPrs)` / `onCopyAll(prs)`: a group's Watch PRs and
+ * Copy PR links after several PRs.
  */
-export function prMenuItems(prs, { level, onWatch, onCopy, onOpen, onResolve }) {
+export function prMenuItems(prs, { level, onWatch, onCopy, onOpen, onResolve, onWatchAll = null, onCopyAll = null }) {
   const adv = level === 'advanced' || level === 'expert';
   const many = prs.length > 1;
   const items = [];
@@ -350,6 +363,14 @@ export function prMenuItems(prs, { level, onWatch, onCopy, onOpen, onResolve }) 
     else if (adv && p.open && p.watchFailed) items.push({ label: 'Watch unavailable', icon: 'eye', disabled: true, title: "Could not read this pull request's status" });
     items.push({ label: 'Copy PR link', icon: 'link', onSelect: () => onCopy(p) });
     if (p.conflicts) items.push({ label: 'Fix conflicts', icon: 'git', onSelect: () => onResolve(p) });
+  }
+  // A group's several PRs (D12): Watch every open one (Advanced and up) and copy every link. The workspace menu passes
+  // neither, so it is unchanged.
+  if (many && (onWatchAll || onCopyAll)) {
+    items.push({ sep: true });
+    const open = prs.filter((p) => p.open);
+    if (adv && onWatchAll && open.length) items.push({ label: 'Watch PRs', icon: 'eye', onSelect: () => onWatchAll(open) });
+    if (onCopyAll) items.push({ label: 'Copy PR links', icon: 'link', onSelect: () => onCopyAll(prs) });
   }
   return items;
 }

@@ -106,7 +106,8 @@ Every pull request button and link looks the same everywhere (`test/ui-pr-contro
    a button. Push says the header's `Push main` (the source branch). Buttons, menu items, aria-labels and dialog titles
    say "PR"; "pull request" only in headings and sentences; "open" is not a PR verb. The Create PR dialog's title equals
    its confirm ("Create PR", "Create 2 PRs"). Its zones, in order: Into (remote and branch on one row, the branch alone
-   with one remote), Title and description (with Draft), After it opens (Watch PR, Release). Its footer: a divider,
+   with one remote), Pull requests (a feature or a chain only: One / N stacked radios, the suggestion under them),
+   Title and description (with Draft), After it opens (Watch PR, Release). Its footer: a divider,
    then Cancel and the primary on the right; "Try it first" is a secondary `.btn` on the left; one primary. Field
    labels in it are nouns ("Into", "Push remote", "Draft").
 5. Links. A PR text link (`.rd-prs-link`, `.rd-track-pr`, `.chat-rc-watch-pr`, `.ask-prcard-link`, `.ask-shipcard-pr`,
@@ -117,6 +118,8 @@ merge, Report), centred on the status line, with at most one primary; under 420p
 their own row below the status, on the left edge. View PR is a split button `View PR │ ▾`
 (`.btn-split.mini.rd-pr-split`): the main half opens the PR, the ▾ (PR scope) holds Watch (Advanced and above), Copy PR
 link and Fix conflicts (while the PR conflicts). A workspace run has one `View PRs ▾` button that lists each member's PR.
+The group page has the same head: Create PR, View PR ▾ or View PRs ▾ on the status line; View PRs ▾ holds each PR, then
+Watch PRs and Copy PR links.
 Nothing PR-related sits in the bar or in a PR bar; the PR's checks and Watch words are the tracker's PR step. Runs list PR
 chips (`.runs-pr`) are chips, not PR controls.
 ### Field
