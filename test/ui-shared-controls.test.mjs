@@ -150,6 +150,7 @@ const JS_CHECKBOX_OK = [
   ['app.js', 'wiz-proj-cb', 'picks projects'], ['app.js', 'wiz-import-cb', 'picks imports'], ['app.js', 'wd-add-row', 'picks rows'],
   ['app.js', 'pb-include', 'picks items'], ['app.js', 'shipit-repo-pick', 'picks repos'], ['app.js', 'publish-pick', 'picks items'],
   ['app.js', 'cb.value = opt', 'picks chips'],
+  ['memory-view.mjs', 'mem-seed-all', 'picks: select every note to share'], ['memory-view.mjs', 'mem-seed-check', 'picks notes to share'],
   ['marketplace/browse.mjs', 'mk-hide-installed', 'Hide installed: an opt-in filter next to the list'],
   ['marketplace/remove-view.mjs', 'mk-purge-box', 'opt-in consent in the Remove dialog'],
   ['marketplace/update-view.mjs', 'mk-reviewed', 'acknowledges the reviewed changes'], ['marketplace/update-view.mjs', 'mk-include', 'picks updates'],

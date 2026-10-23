@@ -330,6 +330,7 @@ export const DEFAULT_MEMORY_SOFT_BYTES_PER_FILE = 8192;    // flagged in health 
 export const DEFAULT_MEMORY_HARD_BYTES_PER_FILE = 32768;   // rejected at sync-back / write above this
 export const DEFAULT_MEMORY_MAX_FILES_PER_SCOPE = 50;
 export const DEFAULT_MEMORY_HOOK_MAX_CHARS = 160;
+export const DEFAULT_MEMORY_TEAM_MAX_FILES = 50;   // team notes a run or chat LOADS per project, newest first (team memory 1a)
 
 export const DEFAULT_MEMORY_DEFRAG_WRITES = 10;     // writesSinceDefrag at which a scope is "due"
 export const DEFAULT_MEMORY_DEFRAG_FILES = 30;      // file count at which a scope is "due"
@@ -377,6 +378,7 @@ export function memoryCaps(scope) {
     hardBytesPerFile: projectOverride('memory.maxBytesPerFile', scope) ?? readMemoryCap('maxBytesPerFile', DEFAULT_MEMORY_HARD_BYTES_PER_FILE),
     maxFilesPerScope: projectOverride('memory.maxFilesPerScope', scope) ?? readMemoryCap('maxFilesPerScope', DEFAULT_MEMORY_MAX_FILES_PER_SCOPE),
     hookMaxChars: projectOverride('memory.hookMaxChars', scope) ?? readMemoryCap('hookMaxChars', DEFAULT_MEMORY_HOOK_MAX_CHARS),
+    teamMaxFiles: projectOverride('memory.teamMaxFiles', scope) ?? readMemoryCap('teamMaxFiles', DEFAULT_MEMORY_TEAM_MAX_FILES),
     defrag: {
       writes: projectOverride('memory.defrag.writes', scope) ?? readDefragThreshold('writes', DEFAULT_MEMORY_DEFRAG_WRITES),
       files: projectOverride('memory.defrag.files', scope) ?? readDefragThreshold('files', DEFAULT_MEMORY_DEFRAG_FILES),
@@ -385,6 +387,10 @@ export function memoryCaps(scope) {
     },
   };
 }
+
+/** Team memory (phase 1a) is on for this project. The PROJECT layer only — no settings.json default, no team-policy
+ *  field: sharing is opted into one project at a time. No scope (a global note, a workspace run) is always off. */
+export function teamMemoryEnabled(scope) { return projectOverride('memory.team', scope) === true; }
 
 // ── Memory defragment model (Settings › Memory) ─────────────────────────────
 // `memory.defrag.model` / `memory.defrag.effort`: the pair EVERY Memory defragment run uses
@@ -1390,6 +1396,7 @@ export function normalizeModelPair(engine, input, label = 'model') {
 }
 export const SETTING_CHECKS = Object.freeze({
   usdCap: (value) => isUsdCap(value), byteCap: (value) => isByteCap(value),
+  bool: (value) => typeof value === 'boolean',
   pct: (value) => isByteCap(value) && value <= 100,
   askMaxTurns: (value) => isAskMaxTurns(value), askMaxBudgetUsd: (value) => value === null || isAskMaxBudget(value),
   skillMount: (value) => SKILL_MOUNTS.includes(value), engine: (value) => MODEL_ENGINES.includes(value), runEngine: (value) => RUN_ENGINES.includes(value),

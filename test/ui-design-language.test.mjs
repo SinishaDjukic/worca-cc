@@ -827,7 +827,7 @@ test('charts: the guide sets their heights and text steps; off-scale SVG text si
 
 // F-8: a typed uppercase kicker is a string literal of capitals set as visible text.
 const STATE_CODES = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPEN', 'MERGED', 'CLOSED', 'UNKNOWN', 'UNAVAILABLE', 'FAILED', 'DRAFT',
-  'BUTTON', 'SELECT', 'SPAN', 'MERGEABLE', 'CONFLICTING', 'PENDING', 'NONE'];
+  'BUTTON', 'SELECT', 'SPAN', 'MERGEABLE', 'CONFLICTING', 'PENDING', 'NONE', 'STALE'];
 const KICKER = new RegExp(`(['"\`])(?!(?:${STATE_CODES.join('|')})\\1)[A-Z][A-Z0-9 ·&/-]{2,}[A-Z0-9]\\1`);
 const KICKER_FILES = ['ui/public/app.js', 'ui/public/team-metrics-view.mjs'].map((f) => join(ROOT, f));
 test('no typed uppercase kicker in app.js or team-metrics-view.mjs (F-8, spec §1.3)', () => {

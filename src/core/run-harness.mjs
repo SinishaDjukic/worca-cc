@@ -55,7 +55,9 @@ import {
 } from './settings.mjs';
 import { hasProjectSetting, utilityModelFor } from './settings-cascade.mjs';
 import { mountDirs, mountMemory, refreshMount, syncBack, memoryTotals, validateMemoryScope, withStoreLock, memoryRulesPath, memoryWorkPath, MEMORY_RULES_REL, MEMORY_INJECTED_ENTRY } from './memory-sync.mjs';
+import { createUsageTally, drainMemoryLoads, memoryLoadLogPath, noteOfMemoryRel, recordMemoryUsage, rulesHaveScopedNote } from './memory-usage.mjs';
 import { memoryRoot, renderMemoryBlock, bumpScopeState, readScopeState, memoryScopeReport, renderDefragBrief } from './memory-store.mjs';
+import { isTeamMemoryOn, refreshTeamLayerWithin, mountTeamLayer, queueTeamChanges, teamChangesFromSync, teamClientText } from './memory-team.mjs';
 import { readCostCapOverride, totalWindowSpendUsd, costWindowStart, recordCostDelta } from './cost-budget.mjs';
 import {
   writeRunManifest, readRunManifest, updateRunManifest, rmGuarded, rescueModifiedMounts,
@@ -444,6 +446,8 @@ function describeApiRetry(e) {
 
 /** The tools whose `file_path` can be a memory write. */
 const MEMORY_WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+// Memory usage (memory-usage.mjs): a Read of a note file is a `read`. Cursor and Copilot reads normalise to `Read` too.
+const MEMORY_READ_TOOLS = new Set(['Read']);
 
 /** The human text of a tool result: a string, or the FIRST text block; `<tool_use_error>`
  *  tags stripped (the CLI wraps some errors in them). '' when there is none. */
@@ -1037,6 +1041,9 @@ export class RunHarness extends EventEmitter {
     // last: Map<key.id, { ...key, ok, reason }> }. Filled by _trackMemoryCalls/_trackMemoryResults from every tool event,
     // drained by _takeFailedMemoryWrites at sync time.
     this._memoryWrites = new Map();
+    // Memory usage (memory-usage.mjs): Map<executionId, tally> of the note reads seen in tool events — a Set.add per
+    // event, no I/O; merged into <worcaHome>/memory-usage at that execution's sync-back.
+    this._memoryUsage = new Map();
     this._ledgerSeq = 0;         // monotonic: two ledger writes must never share a temp name
     this._pendingAudits = [];    // audit lines an engine hook queued before the pipeline dir existed (_resolveTopology runs first); run() appends them right after "Pipeline created"
     this.toolInstruction = '';
@@ -4190,6 +4197,9 @@ export class RunHarness extends EventEmitter {
     // EBUSY past the retries) leaves files under the cwd, and only the §8.8 entry keeps them out
     // of the commit and gets them removed at teardown. Idempotent, harmless on failure.
     await this._registerMemoryMount(scope);
+    // Team memory (phase 1a): bring each opted-in project's team layer up to date FIRST — following the team rewrites
+    // this machine's unedited tracked copies, and the two copies below must already carry that. Bounded; never throws.
+    await this._refreshTeamMemory(dirs);
     // The WRITABLE copy: a full copy of the mounted scopes (agents edit existing files in place;
     // syncBack diffs it against this baseline). Outside git — no sentinel.
     const m = await mountMemory({ root, mount, dirs, onError });
@@ -4198,7 +4208,10 @@ export class RunHarness extends EventEmitter {
     // own `git add -A`, a staging pre-commit hook, snapshotWorktreePatch's bare `git add -A` and the
     // reviewer's `git status`; the §8.8 `:(exclude)` pathspec stays as defence in depth.
     await mountMemory({ root, mount: rules, dirs, onError, gitIgnore: true });
-    this.memory = { root, mount, rules, dirs, baseline: m.baseline };
+    // …then the team folder(s) of the READ-ONLY copy only (decision D2): an agent changes a team note by writing a
+    // same-named local note, which shadows it here and is shared on sync. A defragment run works on local notes only.
+    const team = this.memoryScope ? [] : (await this._mountTeamDirs(rules, dirs)) ?? [];
+    this.memory = { root, mount, rules, dirs, baseline: m.baseline, team, scoped: await this._memoryScoped(rules) };
     this.state.memoryMount = mount;
     this.state.memoryRules = rules;
     this._refreshMemoryBlock();
@@ -4309,7 +4322,8 @@ export class RunHarness extends EventEmitter {
    *  mounted scope. Depends on dirs + mount only (never on file contents), so one render per mount. */
   _refreshMemoryBlock() {
     if (!this.memory) { this.memoryBlock = ''; return; }
-    this.memoryBlock = renderMemoryBlock(this.memory.dirs.map((d) => ({ label: d.label, dir: join(this.memory.mount, d.rel) })), { engine: this.claude.engine });
+    const teamDir = this.memory.rules && (this.memory.team || []).some((t) => t.count > 0) ? join(this.memory.rules, 'team') : null;
+    this.memoryBlock = renderMemoryBlock(this.memory.dirs.map((d) => ({ label: d.label, dir: join(this.memory.mount, d.rel) })), { engine: this.claude.engine, teamDir });
   }
 
   /** The `onError` every memory listing gets. A junk NAME is not an I/O failure — phrasing it
@@ -4348,12 +4362,64 @@ export class RunHarness extends EventEmitter {
     return this._memoryTail;
   }
 
+  /** Team memory (phase 1a): fetch + follow for every opted-in project of this run, bounded (TEAM_MOUNT_WAIT_MS) — a
+   *  slow or offline remote never holds the run start; the mount then loads the last fetched team notes. Never throws. */
+  async _refreshTeamMemory(dirs) {
+    if (this.memoryScope) return;
+    const on = dirs.filter((d) => d.scope?.kind === 'project' && isTeamMemoryOn(d.scope.projectKey));
+    // In parallel: a workspace run waits TEAM_MOUNT_WAIT_MS at most in all, never once per member.
+    await Promise.all(on.map(async (d) => {
+      const key = d.scope.projectKey;
+      try {
+        const r = await refreshTeamLayerWithin(key, { projectDir: this.memberByKey.get(key)?.projectDir || null });
+        if (r?.timedOut) this._log('memory', 'warn', `team memory: ${d.label} is still fetching — this run loads the last fetched team notes`);
+        else if (r?.error) this._log('memory', 'warn', `team memory: ${d.label} could not be fetched (${r.error}) — this run loads the last fetched team notes`);
+        if (r?.followed?.length) this._log('memory', 'info', `team memory: ${d.label} followed the team for ${r.followed.map((n) => `${n}.md`).join(', ')}`);
+        // A follow that DELETED a local note says so: the user finds the note gone from the Memory page.
+        if (r?.removed?.length) this._log('memory', 'info', `team memory: ${d.label} — removed ${r.removed.map((n) => `${n}.md`).join(', ')} here too: a teammate deleted ${r.removed.length === 1 ? 'it' : 'them'} from the team`);
+        if (r?.untracked?.length) this._log('memory', 'info', `team memory: ${d.label} — ${r.untracked.map((n) => `${n}.md`).join(', ')} no longer on the team branch (it was started again): kept as local notes`);
+      } catch (err) {
+        this._log('memory', 'warn', `team memory: ${d.label} could not be refreshed: ${err?.message || err}`);
+      }
+    }));
+  }
+
+  /** The rules copy's team folder(s) — [] when nothing is opted in; null when the write failed (warned, never thrown):
+   *  the caller keeps what it had, so one failed re-mount does not stop every later one. */
+  async _mountTeamDirs(rules, dirs) {
+    try { return await mountTeamLayer({ rules, dirs }); }
+    catch (err) { this._log('memory', 'warn', `team memory: team notes not mounted: ${err?.message || err}`); return null; }
+  }
+
+  /** Queue what one sync changed in an opted-in project's scope (decision D1: never a global note); a blocked note is
+   *  a warn line naming the reason, so the run log says why it stayed local. */
+  async _queueTeamMemory(res, dirs) {
+    for (const [key, names] of teamChangesFromSync(res, dirs)) {
+      try {
+        const q = await queueTeamChanges(key, names, { source: `run:${this.pipeline.id}` });
+        if (q.skipped) continue;
+        // A note this sync DELETED is queued as a removal from the team — every teammate's unedited copy follows it (D3):
+        // the run log must never call that "sharing".
+        const gone = new Set(teamChangesFromSync({ deleted: res?.deleted }, dirs).get(key) || []);
+        const shared = q.queued.filter((n) => !gone.has(n));
+        const removing = q.queued.filter((n) => gone.has(n));
+        if (shared.length) this._log('memory', 'info', `team memory: sharing ${shared.map((n) => `${n}.md`).join(', ')}`);
+        if (removing.length) this._log('memory', 'info', `team memory: removing ${removing.map((n) => `${n}.md`).join(', ')} from the team`);
+        for (const b of q.blocked) this._log('memory', 'warn', `team memory: ${b.name}.md stays on this machine — ${b.reason}; edit it to share it`);
+      } catch (err) {
+        this._log('memory', 'warn', `team memory: could not queue ${names.join(', ')}: ${err?.message || err}`);
+      }
+    }
+  }
+
   async _syncMemoryWith({ mount, dirs, baseline, nodeId, executionId, agentKey, label, failed = [] }) {
     const now = new Date().toISOString();
     const res = await syncBack({
       root: memoryRoot(), mount, dirs, baseline, source: `${this.memoryScope ? 'defrag' : 'run'}:${this.pipeline.id}`, now,
       caps: memoryCaps(this._settingsScope()), onWarn: (w) => this._log('memory', 'warn', w),
       onError: (p, err) => this._memoryReadWarn(p, err),
+      // Team memory (phase 1a): a note's `team:` marker is worca's, never the writable copy's line from mount time (D10).
+      prepare: teamClientText,
     });
     // `mount` equals this.memory.mount for every in-run sync and for a same-process resume;
     // an OLD instance can never race a resumed one because the scheduler drains in-flight
@@ -4392,8 +4458,49 @@ export class RunHarness extends EventEmitter {
         this._log('memory', 'warn', `memory: the rules copy could not be refreshed: ${err?.message || err}`);
       }
     }
+    // Never a defragment run's result (D15). A note stored now may shadow a team note (or a deletion un-shadow one).
+    if (res.total && !this.memoryScope) {
+      await this._queueTeamMemory(res, dirs);
+      if (this.memory && this.memory.mount === mount && this.memory.rules && this.memory.team?.length) {
+        const team = await this._mountTeamDirs(this.memory.rules, dirs);
+        if (team) { this.memory.team = team; this._refreshMemoryBlock(); }   // the team sentence follows the new counts
+      }
+    }
+    if (res.total && this.memory && this.memory.mount === mount && this.memory.rules) this.memory.scoped = await this._memoryScoped(this.memory.rules);
+    await this._recordMemoryUsage({ res, dirs, executionId });
     if (this.memory && this.memory.mount === mount) await this._writeMemoryLedger();
     return res;
+  }
+
+  /** Whether this run's spawns carry the InstructionsLoaded counting hook (U3): a rules copy with a note that has
+   *  `paths:`, never on a defragment run. Read at mount and after a sync that changed notes — never per spawn. */
+  async _memoryScoped(rules) {
+    if (this.memoryScope || !rules) return false;
+    try { return await rulesHaveScopedNote(rules); } catch { return false; }
+  }
+
+  /** The InstructionsLoaded hook file of one execution, or null (no scoped note mounted, or a defragment run). */
+  _memoryLoadLogFor(executionId) {
+    return this.memory?.scoped && !this.memoryScope && executionId && this.pipeline?.dir ? memoryLoadLogPath(this.pipeline.dir, executionId) : null;
+  }
+
+  /** Memory usage (memory-usage.mjs, U6): ONE merge per sync-back of what this execution did — its hook file's
+   *  `path_glob_match` loads (hit), the note Reads seen in its tool events (read) and the notes this sync stored (edit),
+   *  each at most once per note. `executionId` null drains every execution (the run-end and resume syncs). A defragment
+   *  run records nothing, and its bookkeeping is dropped. Best-effort: a failure is one debug line, the tally is lost. */
+  async _recordMemoryUsage({ res, dirs, executionId }) {
+    const pending = executionId == null ? [...this._memoryUsage.values()] : [this._memoryUsage.get(executionId)].filter(Boolean);
+    if (executionId == null) this._memoryUsage.clear(); else this._memoryUsage.delete(executionId);
+    const tally = createUsageTally();
+    try {
+      await drainMemoryLoads(this.pipeline?.dir, executionId, dirs, tally);   // always: the file goes either way
+      if (this.memoryScope) return;
+      for (const t of pending) for (const e of t.events()) tally.add(e, e.signal);
+      for (const r of [...(res?.added || []), ...(res?.modified || [])]) tally.add(noteOfMemoryRel(`${r.scope}/${r.name}.md`, dirs), 'edit');
+      if (tally.size) await recordMemoryUsage(tally.events());
+    } catch (err) {
+      this._log('memory', 'debug', `memory usage not recorded: ${err?.message || err}`);
+    }
   }
 
   /** Bump the `.state` counters of every scope a failed write named (memory-write-split design D9).
@@ -4430,7 +4537,7 @@ export class RunHarness extends EventEmitter {
       const rel = relative(base, abs).split(sep).join('/');
       const d = this.memory.dirs.find((x) => rel === x.rel || rel.startsWith(`${x.rel}/`));
       const dn = dirname(rel);
-      return { id: `${where}:${rel}`, where, scope: d ? d.rel : (dn === '.' ? '' : dn), name: basename(rel).replace(/\.md$/i, '') };
+      return { id: `${where}:${rel}`, where, rel, scope: d ? d.rel : (dn === '.' ? '' : dn), name: basename(rel).replace(/\.md$/i, '') };
     }
     return null;
   }
@@ -4439,6 +4546,15 @@ export class RunHarness extends EventEmitter {
     if (!this.memory) return;
     const exec = attr?.executionId ?? '(no execution)';
     for (const c of calls) {
+      if (MEMORY_READ_TOOLS.has(c.name) && !this.memoryScope) {
+        const key = this._memoryWriteKey(c.input?.file_path || c.input?.path);
+        const ref = key && noteOfMemoryRel(key.rel, this.memory.dirs);
+        if (ref) {
+          if (!this._memoryUsage.has(exec)) this._memoryUsage.set(exec, createUsageTally());
+          this._memoryUsage.get(exec).add(ref, 'read');
+        }
+        continue;
+      }
       if (!MEMORY_WRITE_TOOLS.has(c.name) || typeof c.toolUseId !== 'string') continue;
       const key = this._memoryWriteKey(c.input?.file_path || c.input?.path || c.input?.notebook_path);
       if (!key) continue;

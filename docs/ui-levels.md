@@ -301,6 +301,8 @@ inside the view.
 |---|---|
 | Projects list, add, project page Overview, remove, Use git (Folder projects) and Link remote (Git projects without origin) | S |
 | Project Memory tab (view and edit files) | A |
+| Project Memory tab › Team view (switch, note states, share existing notes, Compare, Undo seeding); project Settings › Team memory | A |
+| Project page Overview › "Your team shares memory for this repository" (Turn on, Not now); the "team memory available" mark in the Projects list and the workspace wizard's import list | A |
 | Project page Actions tab | A |
 | Workspaces list, create wizard (with its Add… / paste-box import), workspace page Overview (projects, description, re-scan, delete) | A |
 | Workspace header "Scan model" control (view / change / clear the saved re-scan model); the choose-a-model window a re-scan opens when the workspace has no usable pick — it unblocks the re-scan, so it shows at any level | A |

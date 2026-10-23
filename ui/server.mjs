@@ -397,8 +397,14 @@ import { ensureHouseBrief, writeHouseBriefPins } from '../src/core/house-brief.m
 import { validateMemoryScope, withStoreLock } from '../src/core/memory-sync.mjs';
 import {
   memoryRoot, GLOBAL_SCOPE, projectScope, scopeKey, isValidMemoryName, MEMORY_NAME_HELP, memoryScopeReport,
-  readMemory, writeMemory, removeMemory, listSnapshots, restoreSnapshot,
+  readMemory, writeMemory, removeMemory, listSnapshots, restoreSnapshot, listMemory,
 } from '../src/core/memory-store.mjs';
+import {
+  queueTeamChanges, changedNoteNames, teamMemoryStatus, flushTeamMemory, refreshTeamLayer, deleteTeamNote, isTeamMemoryOn,
+  switchTeamMemoryOn, teamMemorySettingChanged, startTeamMemoryBackground, teamMemoryEvents, teamClientText,
+  previewTeamSeed, seedTeamMemory, resolveTeamClash, undoTeamSeed, dismissSeedOffer,
+  detectTeamMemory, teamMemoryAvailability, dismissTeamMemoryOffer,
+} from '../src/core/memory-team.mjs';
 import { memoryCaps } from '../src/core/settings.mjs';
 import { onboardingPrefs, setOnboardingPrefs } from '../src/core/settings.mjs';
 import { settingsErrorReply, asSettingsField } from '../src/core/settings-errors.mjs';
@@ -7042,7 +7048,8 @@ app.get('/api/projects/:key/settings', async (req, res) => {
 });
 app.patch('/api/projects/:key/settings', async (req, res) => {
   const project = await tmProject(req, res); if (!project) return;
-  try { res.json(await applyProjectSettingsPatch(project, req.body)); } catch (error) { badRequest(res, error?.message || String(error)); }
+  // A refused team-memory switch keeps its code (NO_GIT, FOLDER_PROJECT, NO_ORIGIN) so the client can say why.
+  try { res.json(await applyProjectSettingsPatch(project, req.body)); } catch (error) { res.status(400).json({ error: error?.message || String(error), ...(error?.status === 400 && typeof error.code === 'string' ? { code: error.code } : {}) }); }
 });
 
 /** PATCH /api/projects/:key/settings' body for one registered project ({key, path}): validate, write in one
@@ -7052,7 +7059,11 @@ async function applyProjectSettingsPatch(project, patch) {
   const roles = agentSteps().map(({ key }) => key);
   const items = assertProjectSettingsPatch(patch, { roles });
   await assertSlotModels(items.filter(({ entry, value }) => entry.family && value).map(({ entry, value }) => ({ id: entry.id, engine: entry.engine, value })), { projectDir: project.path });
-  writeProjectSettings({ projectDir: project.path }, patch, { roles });
+  const teamSwitch = items.find(({ entry }) => entry.id === 'memory.team');
+  const write = () => writeProjectSettings({ projectDir: project.path }, patch, { roles });
+  if (teamSwitch?.value === true) await switchTeamMemoryOn(project.key, project.path, write);   // 400 NO_GIT / FOLDER_PROJECT / NO_ORIGIN first; baseline + switch under the team lock (D1)
+  else write();
+  if (teamSwitch) void teamMemorySettingChanged(project.key, project.path).catch(teamWarn);   // on: fetch now · off: drop the queue
   emitChanged('settings-changed');
   return projectSettingsState(project.path);
 }
@@ -9895,7 +9906,9 @@ async function projectsForApi(list) {
   return list.map((p) => {
     const made = p.exists ? worcaNestedRepoOf(p.path) : null;
     return { ...p, workMode: effectiveWorkMode(p.vcs, available), displayPath: displayPath(p.path), ownedFolder: ownsProjectFolder(p),
-      ...(made ? { nestedRepo: { repoRoot: made.repoRoot, hint: worcaNestedRepoHint(p.path, made) } } : {}) };
+      ...(made ? { nestedRepo: { repoRoot: made.repoRoot, hint: worcaNestedRepoHint(p.path, made) } } : {}),
+      // E10: origin has a worca-memory branch and the project is off — the Overview's line, the import list's mark.
+      ...(teamMemoryAvailability(p.key).offer ? { teamMemoryOffer: true } : {}) };
   });
 }
 
@@ -9930,6 +9943,7 @@ app.post('/api/projects', async (req, res) => {
     // Its team policy at once too (MCP registry spec §11.2): removing a project drops its policy cache, so a re-added or
     // re-cloned project's home must not read "no project here follows" (a greyed Team set) until the background discovery.
     discoverPolicy(normalizeProjectPath(body.path), { force: true }).catch(() => { /* offline: the background discovery retries */ });
+    detectTeamMemorySoon(normalizeProjectPath(body.path));
     res.json({ projects: await projectsForApi(projects) });
   } catch (err) {
     if (err?.code === 'NESTED_IN_REPO') return res.status(400).json({ error: err.message, code: err.code, partOf: err.partOf, repoRoot: err.repoRoot });
@@ -9966,6 +9980,8 @@ app.post('/api/projects/bulk', async (req, res) => {
           await discoverPolicy(p, { force: true }).catch(() => { /* offline: the background discovery retries */ });
         }
       })();
+      // Team memory's check (E10) on its own queue, one remote at a time too: a slow origin never holds the discovery.
+      void (async () => { for (const p of addedPaths) await detectTeamMemory(p); })();
     }
     res.json({ projects: await projectsForApi(projects), results });
   } catch (err) {
@@ -9988,7 +10004,11 @@ function afterProjectRegistered(project, action = 'created') {
     .then(() => emitChanged('team-metrics-changed', 'discovered'))
     .catch(() => { /* offline or no origin: discovery retries hourly */ });
   discoverPolicy(project.path, { force: true }).catch(() => { /* offline: the background discovery retries */ });
+  detectTeamMemorySoon(project.path);
 }
+/** E10: whether origin already has a worca-memory branch, in the background (it never throws, never blocks the add,
+ *  and is skipped without git, for a Folder project or without origin). Its answer reaches the page as projects-changed. */
+function detectTeamMemorySoon(dir) { void detectTeamMemory(dir); }
 
 // POST /api/projects/create — New: a project by name under the projects root (U6). No requireFsAllowed: the only
 // path is <projects root>/<one checked folder name>.
@@ -10052,6 +10072,7 @@ async function startCloneJob(req) {
         .then(() => emitChanged('team-metrics-changed', 'discovered'))
         .catch(() => { /* offline or not a git repo: discovery retries hourly */ });
       discoverPolicy(project.path, { force: true }).catch(() => { /* offline: the background discovery retries */ });
+      detectTeamMemorySoon(project.path);
     } catch (err) {
       Object.assign(job, { state: 'error', code: err instanceof CloneError ? err.code : 'failed', error: err && err.message ? err.message : String(err) });
     }
@@ -10212,6 +10233,19 @@ function memoryError(res, err) {
   return res.status(status).json({ error: status === 500 ? 'memory store error' : message });
 }
 
+const teamWarn = (err) => console.warn(`[worca-ui] team memory: ${err && err.message ? err.message : err}`);
+
+/** Ask's remember/forget (MCP child or relay) is the same scope change a REST write makes: broadcast it, and — team
+ *  memory 1a — queue it for an opted-in project. The scope key and name come from worca's OWN tool result; both are
+ *  shape-checked here (and queueTeamChanges re-validates the name). Exported through _testing. */
+function askMemoryMutation({ scope, name = null, threadId = null } = {}) {
+  const projectKeyOf = typeof scope === 'string' && scope.startsWith('projects/') && PROJECT_KEY_RE.test(scope.slice('projects/'.length)) ? scope.slice('projects/'.length) : null;
+  if (scope === 'global' || projectKeyOf) emitMemoryChanged(scope);
+  if (projectKeyOf && typeof name === 'string' && name) {
+    queueTeamChanges(projectKeyOf, [name], { source: `ask:${threadId || 'unknown'}` }).catch(teamWarn);
+  }
+}
+
 /** Thread-less, seq-less frame (B5): an Ask tool, a REST write or a run that mounted memory
  *  changed a scope; open Memory views refetch. Best effort. Exported through _testing. */
 function emitMemoryChanged(scopeKeyStr) {
@@ -10306,25 +10340,47 @@ function registerMemoryRoutes(prefix, { family }) {
     const text = req.body && typeof req.body.text === 'string' ? req.body.text : null;
     if (text === null) return badRequest(res, 'text (string) is required');
     if (defragLocked(res, key)) return;
-    const r = await withStoreLock(memoryRoot(), () => writeMemory(memoryRoot(), scope, name, text, { source: 'user', caps: memoryCaps(project ? { projectDir: project.path } : null) }));
+    // Team memory: the tracked-copy marker (`team:`) is this machine's state, never the editor's (teamClientText). The
+    // page reloads a note right after its Save, before the push marks it, and a follow in another process sends it no
+    // frame: a Save without an edit must never read as a change pushed over a teammate's version (D13), and an old
+    // `team:` line saved after a team delete must never re-mark the copy for the next refresh to delete (D12).
+    const r = await withStoreLock(memoryRoot(), async () => writeMemory(memoryRoot(), scope, name, await teamClientText(scope, name, text),
+      { source: 'user', caps: memoryCaps(project ? { projectDir: project.path } : null) }));
     emitMemoryChanged(key);
+    if (project) await queueTeamChanges(project.key, [name], { source: 'user' }).catch(teamWarn);
     res.json({ ok: true, name, created: r.created, bytes: r.bytes });
   }));
-  app.delete(`${prefix}/files/:name`, scoped(async (req, res, { scope, key }) => {
+  app.delete(`${prefix}/files/:name`, scoped(async (req, res, { scope, key, project }) => {
     const name = named(req, res); if (name === null) return;
     if (defragLocked(res, key)) return;
     const removed = await withStoreLock(memoryRoot(), () => removeMemory(memoryRoot(), scope, name, { source: 'user' }));
     if (!removed) return res.status(404).json({ error: 'memory file not found' });
     emitMemoryChanged(key);
+    if (project) await queueTeamChanges(project.key, [name], { source: 'user' }).catch(teamWarn);
     res.json({ ok: true });
   }));
   app.get(`${prefix}/history`, scoped(async (_req, res, { scope }) => {
     const snapshots = (await listSnapshots(memoryRoot(), scope)).map((s) => ({ id: s.id, files: s.files }));
     res.json({ snapshots });
   }));
-  app.post(`${prefix}/history/:id/restore`, scoped(async (req, res, { scope, key }) => {
+  app.post(`${prefix}/history/:id/restore`, scoped(async (req, res, { scope, key, project }) => {
+    // Opted in, a restore pushes to the team (D13): the same caller check as every team route (E8).
+    if (project && isTeamMemoryOn(project.key) && !teamOriginOk(req, res)) return;
     if (defragLocked(res, key)) return;
-    await withStoreLock(memoryRoot(), () => restoreSnapshot(memoryRoot(), scope, String(req.params.id || ''), { source: 'user' }));   // ENAME -> 400, ENOSCOPE -> 404
+    // ONE store lock for the restore, its diff and its team queue: a concurrent write is never mistaken for the
+    // restore's, and a team follow (it takes this lock) can never slip in between the restore and its queue and undo it.
+    await withStoreLock(memoryRoot(), async () => {
+      const team = project && isTeamMemoryOn(project.key);   // off: exactly the restore of before (D1)
+      const before = team ? await listMemory(memoryRoot(), scope) : [];
+      await restoreSnapshot(memoryRoot(), scope, String(req.params.id || ''), { source: 'user' });   // ENAME -> 400, ENOSCOPE -> 404
+      if (!team) return;
+      const changed = changedNoteNames(before, await listMemory(memoryRoot(), scope));
+      // A restore is whole-scope (decisions D12, D13): on the team it undoes only this machine's own shared writes — a
+      // teammate's version followed here since the snapshot is never reverted or removed — and a note it only took back
+      // to its baseline (an edit that never reached the team, undone) stays local (D1).
+      // queueTeamChanges takes no store lock (no nesting); its flush runs later, outside this one.
+      if (changed.length) await queueTeamChanges(project.key, changed, { restore: true, source: 'user' }).catch(teamWarn);
+    });
     emitMemoryChanged(key);
     res.json({ ok: true });
   }));
@@ -10354,6 +10410,137 @@ app.get('/api/memory/health', async (_req, res) => {
 });
 registerMemoryRoutes('/api/memory/global', { family: 'global' });
 registerMemoryRoutes('/api/memory/projects/:key', { family: 'projects' });
+
+// /api/memory/team/:key — the team layer of one registered project (team memory 1a; phase 1b's Team tab reads it).
+// The switch itself is the project setting `memory.team` (PATCH /api/projects/:key/settings).
+async function teamProject(req, res) {
+  const key = String(req.params.key || '');
+  const p = PROJECT_KEY_RE.test(key) ? (await listProjects()).find((x) => x.key === key) : null;
+  if (!p) res.status(404).json({ error: 'project not found' });
+  return p || null;
+}
+const teamOff = (res) => res.status(409).json({ error: 'team memory is off for this project', code: 'DISABLED' });
+app.get('/api/memory/team/:key', async (req, res) => {
+  try { const p = await teamProject(req, res); if (!p) return; res.json(await teamMemoryStatus(p.key)); }
+  catch (err) { return memoryError(res, err); }
+});
+app.post('/api/memory/team/:key/sync', async (req, res) => {
+  try {
+    if (!teamOriginOk(req, res)) return;
+    const p = await teamProject(req, res); if (!p) return;
+    if (!isTeamMemoryOn(p.key)) return teamOff(res);
+    const flush = await flushTeamMemory(p.key, { projectDir: p.path });
+    const refresh = await refreshTeamLayer(p.key, { projectDir: p.path, maxAgeMs: 0 });
+    if (refresh?.followed?.length || refresh?.removed?.length) emitMemoryChanged(`projects/${p.key}`);
+    res.json({ flush, status: await teamMemoryStatus(p.key) });
+  } catch (err) { return memoryError(res, err); }
+});
+app.delete('/api/memory/team/:key/notes/:name', async (req, res) => {
+  try {
+    if (!teamOriginOk(req, res)) return;
+    const p = await teamProject(req, res); if (!p) return;
+    const name = String(req.params.name || '');
+    if (!isValidMemoryName(name)) return badRequest(res, `invalid memory name — ${MEMORY_NAME_HELP}`);
+    if (!isTeamMemoryOn(p.key)) return teamOff(res);
+    // B23, like every memory write: a live defragment run's final sync wins over a store write to a note it changed.
+    const live = liveDefragRun(`projects/${p.key}`);
+    if (live) return res.status(409).json({ error: 'a defragment run is live on this memory scope — wait for it to finish', runId: live.id });
+    await deleteTeamNote(p.key, name);
+    res.json({ ok: true, status: await teamMemoryStatus(p.key) });
+  } catch (err) { return err?.code === 'DISABLED' ? teamOff(res) : memoryError(res, err); }   // switched off meanwhile
+});
+// Team memory 1b: share existing notes (seeding), Compare on one clash, Undo of the last seeding, the one-time offer.
+function teamRouteError(res, err) {
+  const code = err && err.code;
+  if (code === 'DISABLED') return teamOff(res);
+  if (code === 'EBADREQ') return badRequest(res, err.message);
+  if (code === 'STALE') return res.status(409).json({ error: err.message, code, names: Array.isArray(err.names) ? err.names : [] });
+  if (code === 'ENOSEED') return res.status(404).json({ error: err.message, code });
+  if (code === 'FETCH_FAILED') return res.status(502).json({ error: err.message, code });   // a share needs the branch as it is now (502, as team metrics and policy)
+  return memoryError(res, err);   // MemoryError codes (ETOOBIG → 413, …), else 500
+}
+/** These routes push notes off the machine or rewrite them: a browser page must be served by THIS Worca —
+ *  isLocalRequest checks the hostname, never the port, and a body-less POST needs no CORS preflight (decision E8).
+ *  A possible agent is refused too, as on the Update routes: seeding is the person's consent (E3). */
+function teamOriginOk(req, res) {
+  // An <img> or a link from another page sends no Origin, but a browser marks it with Sec-Fetch-Site (another localhost
+  // port is `same-site`): the seed preview GET fetches and follows, so it must not be triggered that way either.
+  const site = req.headers['sec-fetch-site'];
+  if (!terminalSameOrigin(req) || (site && site !== 'same-origin' && site !== 'none')) {
+    res.status(403).json({ error: 'Team memory only answers pages served by this Worca.', code: 'CROSS_ORIGIN' });
+    return false;
+  }
+  if (!agentMayBeCaller(req)) return true;
+  res.status(403).json({ error: 'Team memory cannot be changed from inside the container while agent isolation is on. Open Worca through its published address.', code: 'TEAM_AGENT_BLOCKED' });
+  return false;
+}
+/** B23, like every memory write: a live defragment run's final sync wins over a store write to a note it changed. */
+function teamDefragLocked(res, key) {
+  const live = liveDefragRun(`projects/${key}`);
+  if (!live) return false;
+  res.status(409).json({ error: 'a defragment run is live on this memory scope — wait for it to finish', runId: live.id });
+  return true;
+}
+app.get('/api/memory/team/:key/seed', async (req, res) => {
+  try {
+    if (!teamOriginOk(req, res)) return;   // it fetches and follows (previewTeamSeed), and its hashes feed a share
+    const p = await teamProject(req, res); if (!p) return;
+    const name = typeof req.query.name === 'string' && req.query.name !== '' ? req.query.name : null;
+    if (name !== null && !isValidMemoryName(name)) return badRequest(res, `invalid memory name — ${MEMORY_NAME_HELP}`);
+    res.json(await previewTeamSeed(p.key, { projectDir: p.path, name }));
+  } catch (err) { return teamRouteError(res, err); }
+});
+app.post('/api/memory/team/:key/seed', async (req, res) => {
+  try {
+    if (!teamOriginOk(req, res)) return;
+    const p = await teamProject(req, res); if (!p) return;
+    if (!isTeamMemoryOn(p.key)) return teamOff(res);
+    if (teamDefragLocked(res, p.key)) return;
+    const r = await seedTeamMemory(p.key, req.body?.decisions, { projectDir: p.path });
+    if (r.tookTeam.length) emitMemoryChanged(`projects/${p.key}`);
+    res.json({ ok: true, ...r, status: await teamMemoryStatus(p.key) });
+  } catch (err) { return teamRouteError(res, err); }
+});
+app.post('/api/memory/team/:key/resolve', async (req, res) => {
+  try {
+    if (!teamOriginOk(req, res)) return;
+    const p = await teamProject(req, res); if (!p) return;
+    if (!isTeamMemoryOn(p.key)) return teamOff(res);
+    if (teamDefragLocked(res, p.key)) return;
+    const r = await resolveTeamClash(p.key, req.body || {}, { projectDir: p.path });
+    if (r.tookTeam.length) emitMemoryChanged(`projects/${p.key}`);
+    res.json({ ok: true, ...r, status: await teamMemoryStatus(p.key) });
+  } catch (err) { return teamRouteError(res, err); }
+});
+app.post('/api/memory/team/:key/seed/undo', async (req, res) => {
+  try {
+    if (!teamOriginOk(req, res)) return;
+    const p = await teamProject(req, res); if (!p) return;
+    if (!isTeamMemoryOn(p.key)) return teamOff(res);
+    if (teamDefragLocked(res, p.key)) return;
+    const r = await undoTeamSeed(p.key);
+    if (r.restored.length) emitMemoryChanged(`projects/${p.key}`);
+    res.json({ ok: true, ...r, status: await teamMemoryStatus(p.key) });
+  } catch (err) { return teamRouteError(res, err); }
+});
+app.post('/api/memory/team/:key/seed/dismiss', async (req, res) => {
+  try {
+    if (!teamOriginOk(req, res)) return;
+    const p = await teamProject(req, res); if (!p) return;
+    await dismissSeedOffer(p.key);
+    res.json({ ok: true, status: await teamMemoryStatus(p.key) });
+  } catch (err) { return teamRouteError(res, err); }
+});
+// E10: Not now on "Your team shares memory for this repository" — for good on this machine. Turn on is the switch itself
+// (PATCH /api/projects/:key/settings {"memory.team": true}).
+app.post('/api/memory/team/:key/available/dismiss', async (req, res) => {
+  try {
+    if (!teamOriginOk(req, res)) return;
+    const p = await teamProject(req, res); if (!p) return;
+    const available = dismissTeamMemoryOffer(p.key);
+    res.json({ ok: true, available });
+  } catch (err) { return teamRouteError(res, err); }
+});
 
 // ---------------------------------------------------------------------------
 // Filesystem browsing for the add-project folder selector. Hybrid picker:
@@ -14514,9 +14701,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
         // A remember/forget in the MCP child is the same scope change a REST write makes (B29).
         // The key is parsed out of worca's OWN tool result, never written by the model; shape-check
         // it anyway before it rides a broadcast (I2-#22).
-        onMemoryMutation: ({ scope }) => {
-          if (scope === 'global' || (typeof scope === 'string' && scope.startsWith('projects/') && PROJECT_KEY_RE.test(scope.slice('projects/'.length)))) emitMemoryChanged(scope);
-        },
+        onMemoryMutation: (e) => askMemoryMutation({ ...e, threadId: id }),
         // A save_script in the MCP child is the same change a REST write makes (spec §3.3):
         // the open Scripts tabs drop their list and the composer marks its script list dirty.
         onScriptMutation: () => { emitChanged('scripts-changed', 'updated'); },
@@ -18316,6 +18501,17 @@ if (isMain) {
     }
     try { startTeamMetricsBackground({ log: (m) => console.warn(m) }); }
     catch (err) { console.warn(`[worca-ui] team metrics background: ${err?.message || err}`); }
+    try {
+      startTeamMemoryBackground({ log: (m) => console.warn(m) });
+      teamMemoryEvents.on('changed', ({ projectKey: key, action }) => {
+        try {
+          broadcast({ type: 'memory-team-changed', projectKey: key, action });
+          // E10: the project list carries the offer (teamMemoryOffer), so its pages repaint.
+          if (action === 'available' || action === 'available-dismissed') emitChanged('projects-changed', 'updated');
+          if (action === 'followed' && PROJECT_KEY_RE.test(key)) emitMemoryChanged(`projects/${key}`);
+        } catch { /* best effort */ }
+      });
+    } catch (err) { console.warn(`[worca-ui] team memory background: ${err?.message || err}`); }
     try { startProjectSyncBackground({ log: (m) => console.warn(m) }); }
     catch (err) { console.warn(`[worca-ui] project sync background: ${err?.message || err}`); }
     // Watch PR (#619): its stop is awaited by shutdown's settleShutdownSteps.
@@ -18379,7 +18575,7 @@ export const _testing = {
   chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor, switchThreadScope,
   startCloneJob, followCloneCard, CLONE_JOBS, GIT_ONLY_ROUTES, MARKET_JOBS, pruneMarketJobs, marketJobFailure,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
-  askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor,
+  askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor, askMemoryMutation,
   uiControl, bearerMatches,
   broadcast, sockets, askFilesRunDir,
   validateResumeTarget, resumeTargetDirs, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,

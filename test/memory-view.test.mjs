@@ -6,6 +6,8 @@ import { JSDOM } from 'jsdom';
 import {
   formatWhen, renderHealthCard, renderFileList, renderEditor, collectEditor,
   renderMemoryHistory, MEMORY_NAME_HELP, parseSnapshotId, memorySource, patchRunRefs,
+  MEMORY_TEAM_SUB, teamStateBadge, renderMemoryViews, renderTeamCard, renderTeamNotes, renderSeedReview,
+  renderClashCompare, collectSeedDecisions, seedSummary, seedableCount, renderTeamAvailableLine, TEAM_AVAILABLE_TEXT,
 } from '../ui/public/memory-view.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
@@ -184,4 +186,156 @@ test('locked (a defragment run is live on this scope): Save, Delete and Restore 
   assert.match(ed.querySelector('.mem-msg').textContent, /defragment run is live/);
   const hist = renderMemoryHistory([{ id: '20260909-100000-user', files: ['a.md'] }], { doc, locked: true });
   assert.equal(hist.querySelector('.mem-restore').disabled, true);
+});
+
+const TEAM = {
+  enabled: true, branch: 'worca-memory', counts: { local: 2, shared: 1, blocked: 1 }, notes: [], seed: { offer: 'pending', last: null },
+  remote: { exists: true, headSha: 'abcdef1234', fetchedAt: '2026-10-17T10:00:00.000Z', lastSyncAt: null, lastError: 'remote: error: GH006: Protected branch update failed for refs/heads/worca-memory.',
+    lastErrorAt: '2026-10-17T10:05:00.000Z', hint: 'exempt `worca-memory` from branch protection in the repository rules — Worca pushes to it directly, without a pull request', lastFetchError: null },
+};
+
+test('Team view basics: the hash segment is never a note name; the badge table; the Notes | Team control', () => {
+  assert.equal(MEMORY_TEAM_SUB, '~team');
+  assert.equal(encodeURIComponent(MEMORY_TEAM_SUB), MEMORY_TEAM_SUB);
+  assert.deepEqual(['shared', 'held', 'blocked', 'nope'].map((s) => teamStateBadge(s).text), ['Shared', 'Held', 'Blocked', 'Local only']);
+  const seg = renderMemoryViews('team', { doc });
+  assert.deepEqual([...seg.querySelectorAll('.mem-view')].map((b) => [b.dataset.view, b.getAttribute('aria-selected')]), [['notes', 'false'], ['team', 'true']]);
+});
+
+test('renderTeamCard: the switch, the branch line, a push error with 1a\'s hint, the counts, the one-time offer — then the plain button and Undo', () => {
+  const off = renderTeamCard({ enabled: false, branch: 'worca-memory', seed: { offer: 'pending', last: null } }, { doc });
+  assert.equal(off.querySelector('.mem-team-switch').checked, false);
+  assert.equal(off.querySelector('.mem-team-sync'), null, 'off: nothing else');
+  const on = renderTeamCard(TEAM, { doc });
+  assert.equal(on.querySelector('.mem-team-switch').checked, true);
+  assert.match(on.querySelector('.mem-team-sync-text').textContent, /^Branch worca-memory at abcdef1 · fetched \d{4}-\d\d-\d\d \d\d:\d\d$/);
+  assert.match(on.querySelector('.mem-team-error').textContent, /Last push failed \(.+\): remote: error: GH006/);
+  assert.match(on.querySelector('.mem-team-hint').textContent, /^To fix: exempt `worca-memory` from branch protection/);
+  assert.equal(on.querySelector('.mem-team-counts').textContent, '1 shared · 2 local only · 1 blocked');
+  assert.ok(on.querySelector('.mem-team-offer .mem-team-seed') && on.querySelector('.mem-team-offer .mem-team-dismiss'));
+  assert.equal(seedableCount(TEAM), 2);
+  const done = renderTeamCard({ ...TEAM, seed: { offer: 'done', last: { at: '2026-10-17T10:01:00.000Z', snapshotId: 'x', shared: 2, tookTeam: 1, held: 1 } } }, { doc });
+  assert.equal(done.querySelector('.mem-team-offer'), null);
+  assert.equal(done.querySelector('.mem-team-seed').textContent, 'Share existing notes…');
+  assert.ok(done.querySelector('.mem-team-undo'));
+  // busy: a request of the view is on its way — every control waits for it (a second Undo would answer "Not undone").
+  const controls = (card) => [...card.querySelectorAll('button, input')].map((c) => [[...c.classList].find((k) => k.startsWith('mem-team-')), c.disabled]);
+  assert.deepEqual(controls(renderTeamCard(TEAM, { doc, busy: true })), [['mem-team-switch', true], ['mem-team-sync', true], ['mem-team-seed', true], ['mem-team-dismiss', true]]);
+  assert.deepEqual(controls(renderTeamCard({ ...TEAM, seed: { offer: 'done', last: { at: '2026-10-17T10:01:00.000Z', snapshotId: 'x', shared: 2, tookTeam: 1, held: 1 } } }, { doc, busy: true })),
+    [['mem-team-switch', true], ['mem-team-sync', true], ['mem-team-seed', true], ['mem-team-undo', true]]);
+});
+
+test('renderTeamNotes: one label per state (a tracked copy reads Shared), why a note is blocked, a push error, Compare and Remove from team where they apply', () => {
+  const list = renderTeamNotes({ notes: [
+    { name: 'a', state: 'shared', local: true, team: true, behind: false, author: 'Ana', updated: null },
+    { name: 'b', state: 'blocked', local: true, team: false, reason: 'line 4: an email address', findings: [{ rule: 'email', label: 'an email address', field: 'body', line: 4 }] },
+    { name: 'c', state: 'pending', local: true, team: false, error: 'PUSH_REJECTED' },
+    { name: 'd', state: 'held', local: true, team: true },
+    { name: 'e', state: 'local', local: true, team: false, shadows: true },
+    { name: 'f', state: 'team', local: false, team: true, mounted: false, author: 'Ana' },
+  ] }, { doc });
+  const row = (n) => list.querySelector(`.mem-team-row[data-name="${n}"]`);
+  assert.deepEqual(['a', 'b', 'c', 'd', 'e', 'f'].map((n) => row(n).querySelector('.badge').textContent), ['Shared', 'Blocked', 'Pending push', 'Held', 'Local only', 'Team only']);
+  assert.match(row('b').querySelector('.mem-team-detail').textContent, /line 4: an email address/);
+  assert.equal(row('b').querySelector('.mem-team-findings li').textContent, 'an email address — line 4');
+  assert.match(row('c').querySelector('.mem-team-detail').textContent, /PUSH_REJECTED/);
+  assert.deepEqual(['d', 'e', 'a'].map((n) => !!row(n).querySelector('.mem-team-compare')), [true, true, false]);
+  assert.deepEqual(['a', 'f', 'b'].map((n) => !!row(n).querySelector('.mem-team-remove')), [true, true, false]);
+  assert.match(row('f').querySelector('.mem-team-detail').textContent, /not loaded into runs/);
+  const busy = renderTeamNotes({ notes: [{ name: 'd', state: 'held', local: true, team: true }, { name: 'f', state: 'team', local: false, team: true, mounted: true }] }, { doc, busy: true });
+  assert.deepEqual([...busy.querySelectorAll('button')].map((b) => [[...b.classList].find((k) => k.startsWith('mem-team-')), b.disabled]),
+    [['mem-team-compare', true], ['mem-team-remove', true]], 'busy: every action waits');
+});
+
+test('renderTeamNotes copy: a team-only delete promises no local copy; a copy the team no longer holds says so; a push error is one line (m10)', () => {
+  const list = renderTeamNotes({ notes: [
+    { name: 'mine', state: 'deleting', local: true, team: true },
+    { name: 'theirs', state: 'deleting', local: false, team: true, error: 'remote: refused\nremote: more detail' },
+    { name: 'gone', state: 'shared', local: true, team: false, behind: true },
+    { name: 'newer', state: 'shared', local: true, team: true, behind: true },
+    { name: 'wait', state: 'pending', local: true, team: false, error: 'fatal: first\nsecond' },
+  ] }, { doc });
+  const detail = (n) => list.querySelector(`.mem-team-row[data-name="${n}"] .mem-team-detail`).textContent;
+  assert.match(detail('mine'), /Your local copy stays here\.$/);
+  assert.equal(detail('theirs'), 'Being removed from the team — the last push failed (remote: refused).');
+  assert.match(detail('gone'), /^No longer on the team/);
+  assert.match(detail('newer'), /^The team has a newer version/);
+  assert.equal(detail('wait'), 'Waiting to be pushed — the last push failed (fatal: first).');
+});
+
+test('renderTeamCard off: a switch that cannot turn on is disabled with one line saying why — no repository copy for a Folder project (m11)', () => {
+  const card = (startError) => renderTeamCard({ enabled: false, branch: 'worca-memory', seed: { offer: 'pending', last: null }, canStart: !startError, startError }, { doc });
+  const ok = card(null);
+  assert.equal(ok.querySelector('.mem-team-switch').disabled, false);
+  assert.match(ok.querySelector('.hint').textContent, /worca-memory branch of its repository/);
+  const folder = card({ code: 'FOLDER_PROJECT', message: 'team memory needs a git project: …' });
+  assert.equal(folder.querySelector('.mem-team-switch').disabled, true);
+  assert.equal(folder.querySelector('.mem-team-cannot').textContent, 'Team memory needs a git project: this is a Folder project.');
+  assert.doesNotMatch(folder.textContent, /repository/);
+  assert.match(card({ code: 'NO_ORIGIN', message: 'x' }).querySelector('.mem-team-cannot').textContent, /needs an origin remote/);
+  assert.equal(renderTeamCard({ enabled: false, branch: 'worca-memory', seed: {}, canStart: null, startError: null }, { doc }).querySelector('.mem-team-switch').disabled, false,
+    'no checkout known here (canStart null): the switch says why when it is tried');
+});
+
+test('renderSeedReview + collectSeedDecisions: nothing ticked; clashes default to Skip; Keep mine off for a blocked version, Take team off when too big; blocked notes listed', () => {
+  const pv = { fetchedAt: '2026-10-17T10:00:00.000Z', fetchError: null, notes: [
+    { name: 'alpha', state: 'local', hash: 'a'.repeat(40), description: 'Read first', blocked: null, team: null },
+    { name: 'leaky', state: 'local', hash: 'b'.repeat(40), description: 'On-call', blocked: { reason: 'line 4: an email address', findings: [] }, team: null },
+    { name: 'build', state: 'held', hash: 'c'.repeat(40), description: 'Build', blocked: null, text: '---\nname: build\n---\nMine.\n',
+      team: { name: 'build', hash: 'd'.repeat(40), text: '---\nname: build\n---\nTheirs.\n', author: 'Ana', updated: null, same: false, tooBig: false } },
+    { name: 'oncall', state: 'local', hash: 'e'.repeat(40), description: 'Paging', blocked: { reason: 'line 2: an email address', findings: [] }, text: 'x\n',
+      team: { name: 'Oncall', hash: 'f'.repeat(40), text: 'y\n', same: false, tooBig: true } },
+  ] };
+  const box = renderSeedReview(pv, { doc });
+  assert.equal(box.querySelector('.mem-seed-check[data-name="alpha"]').checked, false, 'nothing leaves the machine unless picked');
+  assert.equal(box.querySelector('.mem-seed-check[data-name="leaky"]'), null);
+  assert.match(box.querySelector('.mem-seed-blocked').textContent, /leaky\.md[\s\S]*line 4: an email address/);
+  const build = box.querySelector('.mem-seed-clash[data-name="build"]');
+  assert.equal(build.querySelector('input[value="skip"]').checked, true, 'never overwrite silently');
+  assert.ok(build.querySelector('.mem-cmp-mine .mem-cmp-diff'), 'the differing line is marked');
+  const oncall = box.querySelector('.mem-seed-clash[data-name="oncall"]');
+  assert.deepEqual(['share', 'take-team'].map((v) => oncall.querySelector(`input[value="${v}"]`).disabled), [true, true]);
+  assert.deepEqual(collectSeedDecisions(box), [
+    { name: 'build', action: 'skip', hash: 'c'.repeat(40), teamHash: 'd'.repeat(40) },
+    { name: 'oncall', action: 'skip', hash: 'e'.repeat(40), teamHash: 'f'.repeat(40) },
+  ]);
+  doc.body.appendChild(box);   // jsdom fires a checkbox's change on click() only when it is connected — as the dialog body is
+  box.querySelector('.mem-seed-all').click();
+  build.querySelector('input[value="take-team"]').click();
+  assert.deepEqual(collectSeedDecisions(box).map((d) => [d.name, d.action]), [['alpha', 'share'], ['build', 'take-team'], ['oncall', 'skip']]);
+  box.remove();
+  const rows = (o) => ({ notes: Object.entries(o).map(([name, state]) => ({ name, state })) });
+  assert.equal(seedSummary({ shared: ['a', 'b'], tookTeam: ['c'], held: [], blocked: [{ name: 'd' }], status: rows({ a: 'shared', b: 'shared' }) }),
+    '2 notes shared · 1 replaced by the team\'s version · 1 blocked by the secret check');
+  // What the push did, as the returned status shows it: on the team, still waiting (the push failed, or another push
+  // carries it), or refused by the remote's secret scanning.
+  assert.equal(seedSummary({ shared: ['a', 'e', 'f'], tookTeam: [], held: ['b'], blocked: [], status: rows({ a: 'pending', e: 'shared', f: 'blocked' }) }),
+    '1 note shared · 1 note waiting to be pushed · 1 held · 1 blocked by the secret check');
+});
+
+test('renderSeedReview: a note recorded BLOCKED is listed as blocked even when the team holds its name — never a clash, never in the checklist, never a decision', () => {
+  const pv = { fetchedAt: '2026-10-17T10:00:00.000Z', fetchError: null, notes: [
+    { name: 'oncall', state: 'blocked', hash: 'e'.repeat(40), description: 'Paging', blocked: { reason: 'the remote refused it', findings: [] }, text: 'x\n',
+      team: { name: 'oncall', hash: 'f'.repeat(40), text: 'y\n', same: false, tooBig: false } },
+    { name: 'odd', state: 'blocked', hash: '1'.repeat(40), description: 'A verdict with no findings', blocked: null, team: null },
+  ] };
+  const box = renderSeedReview(pv, { doc });
+  assert.deepEqual([box.querySelector('.mem-seed-clash'), box.querySelector('.mem-seed-check')], [null, null]);
+  assert.match(box.querySelector('.mem-seed-blocked').textContent, /oncall\.md[\s\S]*the remote refused it[\s\S]*odd\.md/);
+  assert.deepEqual(collectSeedDecisions(box), []);
+});
+
+test('E10: the Overview line — one sentence, Turn on (primary) and Not now (quiet), no dialog; the Team view says the branch is there', () => {
+  const line = renderTeamAvailableLine({ doc });
+  assert.ok(line.classList.contains('mem-team-offer') && line.classList.contains('mem-team-available'));
+  assert.equal(line.querySelector('span').textContent, 'Your team shares memory for this repository');
+  const [on, later] = line.querySelectorAll('button');
+  assert.deepEqual([on.textContent, on.className], ['Turn on', 'btn btn-primary btn-sm mem-team-turn-on']);
+  assert.deepEqual([later.textContent, later.className], ['Not now', 'btn btn-sm btn-quiet mem-team-not-now']);
+  assert.ok([on, later].every((b) => b.type === 'button' && !b.disabled));
+  assert.ok([...renderTeamAvailableLine({ doc, busy: true }).querySelectorAll('button')].every((b) => b.disabled));
+  const off = renderTeamCard({ enabled: false, branch: 'worca-memory', seed: { offer: 'pending', last: null }, available: { branchOnOrigin: true, state: 'pending', offer: true } }, { doc });
+  assert.ok(off.querySelector('.hint').textContent.startsWith(`${TEAM_AVAILABLE_TEXT}: its worca-memory branch is on origin.`));
+  const plain = renderTeamCard({ enabled: false, branch: 'worca-memory', seed: { offer: 'pending', last: null }, available: { branchOnOrigin: false } }, { doc });
+  assert.ok(!plain.querySelector('.hint').textContent.includes(TEAM_AVAILABLE_TEXT));
 });

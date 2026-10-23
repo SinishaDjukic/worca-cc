@@ -6,12 +6,13 @@
 // so the MCP path and the REST path share one writer. Also the chat's --add-dir memory mount.
 import { join } from 'node:path';
 import {
-  memoryRoot, listMemory, readMemory, writeMemory, removeMemory, renderMemoryFile, MEMORY_NAME_HELP,
+  memoryRoot, listMemory, readMemory, writeMemory, removeMemory, renderMemoryFile, MEMORY_NAME_HELP, flattenLine,
 } from '../memory-store.mjs';
 import { mountDirs, withStoreLock, refreshMount } from '../memory-sync.mjs';
 import { memoryCaps } from '../settings.mjs';
 import { listProjects, worcaHome } from '../projects.mjs';
 import { PROJECT_KEY_RE } from '../store.mjs';
+import { mountTeamLayer, refreshTeamLayerSoon, teamListing, readTeamNote } from '../memory-team.mjs';
 
 /** {key, name, path} for a registered project key, or null. */
 async function projectByKey(key) {
@@ -32,8 +33,16 @@ export function defaultMemoryDeps({ threadId }) {
        *  file). Read-compose-write under the store lock (I2-#13) so two turns of THIS process
        *  cannot lose an append; a concurrent MCP child or a run's sync-back is not covered — that
        *  race is a Non-goal, and the pre-write snapshot keeps the losing version. */
-      remember: (scope, { name, body, description, paths, mode = 'replace' }) => withStoreLock(memoryRoot(), async () => {
-        const existing = await readMemory(memoryRoot(), scope, name);
+      remember: (scope, { name: asked, body, description, paths, mode = 'replace' }) => withStoreLock(memoryRoot(), async () => {
+        const local = await readMemory(memoryRoot(), scope, asked);
+        // Team memory (phase 1a, D2): with no local copy, a teammate's note of that name IS the note this write changes
+        // (read_memory shows it) — an omitted hook or paths keep the team's values and `append` adds under the team's
+        // body; the write is then shared and replaces the team version for everyone. Never the team's extras (`author`).
+        // Off, or no such team note: null — the behaviour before team memory. A case variant of the team's name writes
+        // under the team's spelling: a new spelling would replace the team's note with this fragment (D4, D9).
+        const team = !local && scope?.kind === 'project' ? await readTeamNote(scope.projectKey, asked).catch(() => null) : null;
+        const name = team ? team.name : asked;
+        const existing = local || (team ? { meta: { ...team.meta, extra: {} }, body: team.body } : null);
         const meta = {
           name,
           description: description == null ? (existing?.meta.description || '') : String(description),
@@ -41,10 +50,19 @@ export function defaultMemoryDeps({ threadId }) {
           extra: existing?.meta.extra || {},
         };
         const nextBody = mode === 'append' && existing ? `${existing.body.trimEnd()}\n\n${String(body).trim()}\n` : String(body);
-        const r = await writeMemory(memoryRoot(), scope, name, renderMemoryFile(meta, nextBody), { source, caps: memoryCaps(scope && scope.kind === 'project' ? { projectKey: scope.projectKey } : null) });
-        return { created: r.created, bytes: r.bytes };
+        const caps = memoryCaps(scope && scope.kind === 'project' ? { projectKey: scope.projectKey } : null);
+        // D4: an omitted hook keeps the TEAM's whole, as a follow keeps it — clipped to this machine's cap, the write would
+        // push the cut hook to everyone (refine cycle 8).
+        const teamHook = team && description == null ? flattenLine(team.meta.description || '').trim().length : 0;
+        const r = await writeMemory(memoryRoot(), scope, name, renderMemoryFile(meta, nextBody), { source, caps: teamHook > (caps?.hookMaxChars ?? 0) ? { ...caps, hookMaxChars: teamHook } : caps });
+        return { name, created: r.created, bytes: r.bytes };
       }),
-      forget: (scope, name) => removeMemory(memoryRoot(), scope, name, { source }),
+      // Under the store lock like remember: in relay mode this runs in the server, beside team memory's marker writes
+      // (a marker write that read the note before this removal would put it back).
+      forget: (scope, name) => withStoreLock(memoryRoot(), () => removeMemory(memoryRoot(), scope, name, { source })),
+      /** Team memory (phase 1a): the opted-in project's teammates' notes — read-only views of the last fetch. */
+      listTeam: (projectKey) => teamListing(projectKey),
+      readTeam: (projectKey, name) => readTeamNote(projectKey, name),
     },
   };
 }
@@ -82,7 +100,15 @@ export async function refreshAskMemoryMount({ projectKey = null, projectName = n
     const onError = (p, err) => console.warn(err?.code === 'ENAME'
       ? `[worca-ask] memory: ignoring ${JSON.stringify(p)} — ${MEMORY_NAME_HELP}`
       : `[worca-ask] memory mount: ${p} could not be refreshed (${err?.message || err}); the previous copy (if any) is served this turn`);
-    const { files } = await refreshMount({ root: memoryRoot(), mount: join(base, '.claude', 'rules', 'worca'), dirs, onError });
-    return files ? base : null;
+    const rules = join(base, '.claude', 'rules', 'worca');
+    const { files } = await refreshMount({ root: memoryRoot(), mount: rules, dirs, onError });
+    // Team memory (phase 1a): the project's team folder (rules/team/), shadowed by same-named local notes; an opted-out
+    // project's folder is emptied. The fetch runs in the background — a turn never waits on the network. A team-layer
+    // failure never costs the turn its local memory: thrown from here, the turn's catch would drop the whole mount.
+    if (projectKey) refreshTeamLayerSoon(projectKey);
+    let team = 0;
+    try { team = (await mountTeamLayer({ rules, dirs })).reduce((n, t) => n + t.count, 0); }
+    catch (err) { console.warn(`[worca-ask] team memory: team notes not mounted (${err?.message || err}); local memory is served this turn`); }
+    return files + team ? base : null;
   });
 }

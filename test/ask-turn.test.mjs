@@ -1160,7 +1160,33 @@ test('mutation sinks: worktree and memory writes in the stream reach their injec
         },
       });
       await turn.run();
-      assert.deepEqual(pokes, [{ scope: 'global', tool: 'remember' }]);
+      assert.deepEqual(pokes, [{ scope: 'global', tool: 'remember', name: 'style' }]);
+    } },
+    { name: 'recordMemoryUsage dep: read_memory calls are merged ONCE at turn end, one read per note; a failing sink never breaks the turn', run: async () => {
+      const s = seed(); const calls = [];
+      const { turn, frames } = makeTurn(s, {}, {
+        recordMemoryUsage: async (events) => { calls.push(events); throw new Error('disk full'); },
+        runClaudeImpl: async ({ onEvent }) => {
+          const body = (o) => JSON.stringify({ description: 'SECRET', body: 'SECRET BODY', ...o });
+          toolUse(onEvent, 'm1', 'toolu_1', 'mcp__worca__read_memory', { scope: 'global', name: 'style' });
+          toolResult(onEvent, 'toolu_1', body({ scope: 'global', projectKey: null, name: 'style' }));
+          toolUse(onEvent, 'm2', 'toolu_2', 'mcp__worca__read_memory', { scope: 'global', name: 'style' });
+          toolResult(onEvent, 'toolu_2', body({ scope: 'global', projectKey: null, name: 'style' }));
+          toolUse(onEvent, 'm3', 'toolu_3', 'mcp__worca__read_memory', { scope: 'project', name: 'shared' });
+          toolResult(onEvent, 'toolu_3', body({ scope: 'project', projectKey: 'demo-00000001', name: 'shared', layer: 'team' }));
+          say(onEvent, 'm4', 'read');
+          push(onEvent, RESULT());
+          return { text: '', exitCode: 0 };
+        },
+      });
+      await turn.run();
+      assert.equal(calls.length, 1, 'one merge per turn');
+      assert.deepEqual(calls[0], [
+        { file: 'global', note: 'global:style', signal: 'read' },
+        { file: 'demo-00000001', note: 'team:shared', signal: 'read' },
+      ]);
+      assert.ok(!JSON.stringify(calls).includes('SECRET'), 'never the description or body');
+      assert.equal(frames.at(-1).status, 'done');
     } },
   ]);
 });

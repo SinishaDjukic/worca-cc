@@ -677,10 +677,10 @@ export function createAskTools(deps) {
       description: 'Propose a change to the stored Away mode settings — away hours, time zone, which runs, marked-runs-by-day minutes, method, the model and effort that weigh the options, thresholds, limits, always-wait kinds — at user level or for one project (level "project" + projectKey, or the pinned project; the spend cap is user-only). set: {field: value} with the stored field names (enabled, window "HH:MM-HH:MM" or null, timeZone, graceMinutes or null, strategy, minConfidence, minMargin, criteria, neverDecide, spendCapUsd, maxDecisions, maxExtraCycles, allowCostCapOverride, deciderModel (a model id from the catalog), deciderEffort (medium | high | xhigh | max)); unset: [field] returns a field to inherited. It never changes anything itself: the user sees a card with the effect before and after and applies or declines it. Returns {ok:true, card} or {ok:false, errors} to fix and retry. Never claim a change was applied — the card says so when it happens. For the two live switches use set_away_now / set_run_away_mode instead.',
       inputSchema: SCHEMA.obj({ level: SCHEMA.s('user | project'), projectKey: SCHEMA.s('project key (level project; defaults to the pinned project)'), set: { type: 'object' }, unset: { type: 'array', items: { type: 'string' } }, note: SCHEMA.s('one-line reason shown on the card') }, ['level']) },
     { name: 'list_memory',
-      description: 'List worca\'s memory files — the durable rules and preferences agents and this chat keep — for scope "global" and/or the resolved project: name, hook (description), paths, source, updated, bytes. Omit scope for both.',
+      description: 'List worca\'s memory files — the durable rules and preferences agents and this chat keep — for scope "global" and/or the resolved project: name, hook (description), paths, source, updated, bytes. Omit scope for both. On a project whose team memory is on, `team` lists the notes teammates share (read-only).',
       inputSchema: SCHEMA.obj({ scope: SCHEMA.s('"global" | "project" (default: both)'), projectKey: SCHEMA.s('the project for scope "project" (default: the chat\'s project)') }) },
     { name: 'read_memory',
-      description: 'Read one memory file: its hook, paths, provenance and markdown body. scope is "global" or "project".',
+      description: 'Read one memory file: its hook, paths, provenance and markdown body. scope is "global" or "project". A project name with no local file reads the teammates\' shared note of that name.',
       inputSchema: SCHEMA.obj({ scope: SCHEMA.s('"global" | "project"'), name: SCHEMA.s('file name without .md'), projectKey: SCHEMA.s('the project for scope "project"') }, ['scope', 'name']) },
     { name: 'remember',
       description: 'Save a durable rule or preference into worca\'s memory — one topic per file; global for how the user works, project for facts about one repository. mode "replace" (default) writes the body, "append" adds it under the existing body. description is the one-line hook shown in every index and paths a comma-separated glob list; both keep their current values when omitted. Never store secrets, credentials or run-specific progress.',
@@ -1270,6 +1270,15 @@ export function createAskTools(deps) {
   }
   // B24: every string the model sees is redacted, here as everywhere else in this module.
   const shapeMemoryFile = (e) => ({ name: e.name, description: deps.redact(e.description), paths: e.paths, source: e.source, updated: e.updated, bytes: e.bytes });
+  // Team memory (phase 1a): an opted-in project's teammates' notes, read-only here. deps.memory.listTeam / readTeam are
+  // optional; absent — or null, the project is off — the results keep exactly their earlier shape.
+  const teamRowsOf = async (projectKey) => {
+    // A broken team snapshot never costs list_memory its local half: no team rows, as when the project is off.
+    let rows = null;
+    try { rows = typeof memoryOf().listTeam === 'function' ? await memoryOf().listTeam(projectKey) : null; } catch { rows = null; }
+    return Array.isArray(rows) ? { team: rows.map((e) => ({ name: e.name, description: deps.redact(e.description), paths: e.paths, updated: e.updated, author: e.author, shadowed: e.shadowed })) } : {};
+  };
+  const teamNoteOf = async (r, name) => (r.scope === 'project' && typeof memoryOf().readTeam === 'function' ? memoryOf().readTeam(r.projectKey, name) : null);
   const normalizePaths = (v) => (Array.isArray(v) ? v.map((x) => String(x ?? '')) : String(v ?? '').split(',')).map((s2) => s2.trim()).filter(Boolean);
   // ---- team metrics (docs/team-metrics.md "Chat") ------------------------------------------
   // Domain-level by design: the model sees scopes, ranges, homes and routing, never slug
@@ -2476,7 +2485,7 @@ export function createAskTools(deps) {
         let r = null;
         try { r = await memoryScopeOf('list_memory', { ...input, scope: 'project' }); }
         catch (err) { if (which === 'project') throw err; }                 // "both" with no project: project is null, never an error
-        out.project = r ? { projectKey: r.projectKey, files: (await memoryOf().list(r.scopeObj)).map(shapeMemoryFile) } : null;
+        out.project = r ? { projectKey: r.projectKey, files: (await memoryOf().list(r.scopeObj)).map(shapeMemoryFile), ...(await teamRowsOf(r.projectKey)) } : null;
       }
       return out;
     },
@@ -2486,7 +2495,11 @@ export function createAskTools(deps) {
       if (!name) throw new AskToolError('read_memory: name is required');
       let f;
       try { f = await memoryOf().read(r.scopeObj, name); } catch (err) { throw memoryError('read_memory', err); }
-      if (!f) throw new AskToolError(`read_memory: no memory file "${name}" in ${r.scope}`);
+      if (!f) {
+        const t = await teamNoteOf(r, name);
+        if (t) return { scope: r.scope, projectKey: r.projectKey, name: t.name || name, layer: 'team', readOnly: true, description: deps.redact(t.meta.description), paths: t.meta.paths, author: t.author ?? null, updated: t.meta.updated, body: deps.redact(t.body) };
+        throw new AskToolError(`read_memory: no memory file "${name}" in ${r.scope}`);
+      }
       // B24: the parsed meta + the body, redacted — no `text`: the fence would be a second copy
       // of what the meta already spells out (the REST route keeps it for the editor).
       return { scope: r.scope, projectKey: r.projectKey, name, description: deps.redact(f.meta.description), paths: f.meta.paths, source: f.meta.source, updated: f.meta.updated, body: deps.redact(f.body) };
@@ -2507,7 +2520,8 @@ export function createAskTools(deps) {
       };
       let w;
       try { w = await memoryOf().remember(r.scopeObj, fields); } catch (err) { throw memoryError('remember', err); }
-      return { scope: r.scope, projectKey: r.projectKey, scopeKey: r.key, name, bytes: w.bytes, created: w.created, mode };
+      // w.name: the team's spelling when this changed a teammate's note under a case variant of its name.
+      return { scope: r.scope, projectKey: r.projectKey, scopeKey: r.key, name: w.name || name, bytes: w.bytes, created: w.created, mode };
     },
     async forget(input) {
       const r = await memoryScopeOf('forget', input);
@@ -2515,7 +2529,10 @@ export function createAskTools(deps) {
       if (!name) throw new AskToolError('forget: name is required');
       let removed;
       try { removed = await memoryOf().forget(r.scopeObj, name); } catch (err) { throw memoryError('forget', err); }
-      if (!removed) throw new AskToolError(`forget: no memory file "${name}" in ${r.scope}`);
+      if (!removed) {
+        const t = await teamNoteOf(r, name).catch(() => null);
+        throw new AskToolError(t ? `forget: "${t.name || name}" is a teammate's shared note with no copy on this machine — it is read-only here` : `forget: no memory file "${name}" in ${r.scope}`);
+      }
       return { scope: r.scope, projectKey: r.projectKey, scopeKey: r.key, name, removed: true };
     },
     // ---- scheduled runs

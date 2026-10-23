@@ -29,6 +29,7 @@ import { redactAskText } from './redact.mjs';
 import { createTurnReducer } from './events.mjs';
 import { buildAskSpawnOptions, buildMcpConfig, ASK_MCP_SERVER_PATH } from './spawn.mjs';
 import { refreshAskMemoryMount } from './memory-deps.mjs';
+import { createUsageTally, noteOfReadMemory, recordMemoryUsage } from '../memory-usage.mjs';
 import { materializeSkillMount } from '../skills-registry/mount.mjs';
 import { SIDELOAD_REFUSAL_RE as SIDELOAD_REFUSED_RE } from '../skills-registry/host.mjs';
 import { renderSkillsSection, renderCodexSkillsSection, codexSkillNames } from './prompt.mjs';
@@ -212,6 +213,7 @@ class AskTurn extends EventEmitter {
     // Native-rules revision (D16): {key, name}|null — the scope set this turn mounts through --add-dir.
     this.memoryProject = memoryProject && typeof memoryProject === 'object' ? memoryProject : null;
     this.memoryDir = null;
+    this._memoryReads = createUsageTally();   // memory usage: this turn's read_memory calls, one per note, merged at turn end
     this._wfCards = new Map();        // tool_use id → card id (START → RESULT of one propose_workflow call)
     this._tracked = new Set();        // pipeline ids minted as progress cards in THIS reply (one card per pipeline)
     this.extraCostUsd = 0;            // PD2: money the MCP child spent on the workflow classifier, booked by this turn
@@ -310,6 +312,7 @@ class AskTurn extends EventEmitter {
       mcpJoinNotice: deps.mcpJoinNotice ?? null,
       mcpJoinNoticeMs: deps.mcpJoinNoticeMs ?? 5000,   // its bound: a hung resolve never wedges the terminal write
       onMemoryMutation: deps.onMemoryMutation ?? (() => {}),
+      recordMemoryUsage: deps.recordMemoryUsage ?? recordMemoryUsage,
       onScriptMutation: deps.onScriptMutation ?? (() => {}),
       onScheduleMutation: deps.onScheduleMutation ?? (() => {}),
       // DISPLAY-ONLY rates for the footer's live "≈" estimate (config.mjs
@@ -967,6 +970,7 @@ class AskTurn extends EventEmitter {
       onWorktreeMutation: (e) => { this._worktreeMutated = true; try { this.deps.onWorktreeMutation(e); } catch { /* a broken sink never breaks the turn */ } },
       // ...and for memory: a remember/forget in the child becomes the server's memory-changed frame.
       onMemoryMutation: (e) => { try { this.deps.onMemoryMutation(e); } catch { /* a broken sink never breaks the turn */ } },
+      onMemoryRead: (r) => { this._memoryReads.add(noteOfReadMemory(r), 'read'); },
       // ...and for scripts: a save_script in the child becomes the server's scripts-changed frame.
       onScriptMutation: (e) => { try { this.deps.onScriptMutation(e); } catch { /* a broken sink never breaks the turn */ } },
       // DISPLAY ONLY — never a sink input: prices the running usage sum (main +
@@ -1413,6 +1417,11 @@ class AskTurn extends EventEmitter {
       if (this.relay) { try { this.relay.dispose(); } catch { /* already gone */ } this.relay = null; }
       if (this.commands) { try { this.commands.dispose(); } catch { /* already gone */ } this.commands = null; }
       if (this.proxyBridge) { try { this.proxyBridge.dispose(); } catch { /* already gone */ } this.proxyBridge = null; }
+      // Memory usage: ONE merge per turn (an Ask turn is one execution). Best-effort: a failure costs the counts only.
+      if (this._memoryReads.size) {
+        try { await d.recordMemoryUsage(this._memoryReads.events()); }
+        catch (err) { console.warn(`[worca-ask] thread ${this.threadId}: memory usage not recorded (${err?.message || err})`); }
+      }
     }
     this._kickoffTitle();
     this._kickoffSuggestion();
