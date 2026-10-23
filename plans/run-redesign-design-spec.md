@@ -104,7 +104,7 @@ A **run** is either a **single run** or a **group** (members are runs). Every su
 | Paused | grey | no | Build · paused: usage limit | Run 2 of 3 · paused | Resume, Stop |
 | Waiting (scheduled / after another run) | grey ring | no | Waiting · starts 21:00 | Run 2 of 3 · waiting for run 1 | Start now, Cancel |
 | Failed | red **!** icon | no | Review · failed: Review Implementation | Run 2 of 3 · failed | Retry, Report |
-| Stopped | dark grey | no | Stopped at Build | Stopped at run 2 of 3 | Resume (if resumable), Archive |
+| Stopped | dark grey | no | Stopped at Build | Stopped at run 2 of 3 | Archive (the server refuses Resume on a stopped run; slice 2 D11) |
 | Ready (done, no PR yet) | green | no | Ready to ship | 3 of 3 done · ready to ship | Ship it |
 | In review (PR open) | green | no | In review · PR #759 | In review · 3 PRs / 1 PR | Open PR |
 | Merged | violet | no | Merged | Merged | Archive |
@@ -446,7 +446,7 @@ run states), not only on hand-made objects. The UX perspective's manual web chec
 
 In the bundle:
 - Chat card member rows use the group page's table row (one renderer): title in ink over the status line, PR chip, cost, › on hover; cost drops under 480px card width.
-- One wording per state, always "State · detail" ("Paused · interrupted", "Plan · needs you · approve the plan", "Build · step · Implementation"). No colon forms. The group page head keeps "Run 5 of 5 · paused".
+- One wording per state, always "State · detail" ("Paused · interrupted", "Plan · needs you · approve the plan", "Build · Implementation" (beside the stage bar: Implementation)). No colon forms. The group page head keeps "Run 5 of 5 · paused".
 - Run page head: "Save as preset" (was "Save setup as preset"); "Add tags" is a quiet button like "Add to group…".
 - Keep awake: beta flag, on by default locally, its own section in Settings › Runs right after Away mode, Beta chip in the label.
 

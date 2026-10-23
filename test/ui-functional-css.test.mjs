@@ -91,7 +91,7 @@ const ROWS = [
   ...['.sync-row', '.sync-pill', '.sync-note', '.sync-commits', '.sync-go', '.rd-sync', '#shipit-base-warn', '.proj-sync', '.sync-checked']
     .map((sel) => [sel, 'ui-branch-sync-model: §6.3 explicit [hidden]']),
   ['.rd-glance', 'ui-running-detail: Details must replace the glance'],
-  ['.hd-report', 'latent: .hd-menu .hd-report outranks .hd-report[hidden] (fixed by the global rule)'],
+  ['.hd-report', 'the ⋯ carrier keeps its [hidden] rule'],
   // More dropped tests that asserted a [hidden] rule:
   ['.rd-night-sec', 'ui-night-mode: the answers sit under the run card'],
   ['.chat-panel', 'worca Chat: the run panel slot keeps its hidden twin'],
@@ -183,4 +183,80 @@ test('run 4 D21, D14: the Chat run card is divided sections, the group page Ship
   assert.equal(ship.getPropertyValue('border-top'), '1px solid var(--line)');
   assert.equal(ship.getPropertyValue('border-radius'), '0px');
   assert.match(flat.at(-1).selectorText, /^:is\(\.ask-card,\.chat-rc,\.shape-feature\) :is\(\.qpanel,/, 'the in-card override is the last rule');
+});
+
+test('slice 2: at split layout every Back keeps a display (no rule hides .rd-back, .hd-back or .gpage-back)', () => {
+  document.body.innerHTML = `<div class="runs-shell" data-layout="split"><div class="runs-pane">
+    <div class="run-shell detail-open"><div class="rd"><div class="rd-bar"><button class="btn btn-sm btn-quiet btn-icon rd-back"></button></div></div></div>
+    <div class="hist-shell detail-open"><div class="hd"><div class="hd-bar"><button class="btn btn-sm btn-quiet btn-icon hd-back"></button></div></div></div>
+    <div class="group-shell detail-open"><div class="gpage"><div class="gpage-bar rd-bar"><a class="btn btn-sm btn-quiet btn-icon gpage-back"></a></div></div></div>
+  </div></div>`;
+  for (const cls of ['rd-back', 'hd-back', 'gpage-back']) {
+    const el = document.querySelector(`.${cls}`);
+    // Every top-level rule (no @media / @container arm) that sets display on this element; the cascade's winner.
+    const hits = flat.map((r, i) => ({ r, i })).filter(({ r }) => topLevel(r) && r.style.getPropertyValue('display'))
+      .flatMap(({ r, i }) => sels(r).filter((s) => { try { return el.matches(s); } catch { return false; } })
+        .map((s) => ({ r, i, imp: important(r), spec: specificity(s) })));
+    hits.sort((x, y) => (x.imp - y.imp) || cmp(x.spec, y.spec) || (x.i - y.i));
+    const win = hits.at(-1);
+    assert.ok(win, `${cls}: some rule gives it a display`);
+    assert.notEqual(win.r.style.getPropertyValue('display'), 'none', `${cls} is hidden at split by "${win.r.selectorText}"`);
+  }
+  document.body.innerHTML = '';
+});
+
+test('slice 2: a disabled danger ⋯ item (the gated Archive) reads disabled, not red', () => {
+  document.body.innerHTML = '<div class="menu wfv-menu"><button class="menu-item wfv-menu-item is-danger" disabled></button></div>';
+  const el = document.querySelector('.is-danger');
+  const hits = flat.map((r, i) => ({ r, i })).filter(({ r }) => topLevel(r) && r.style.getPropertyValue('color'))
+    .flatMap(({ r, i }) => sels(r).filter((s) => { try { return el.matches(s); } catch { return false; } })
+      .map((s) => ({ r, i, imp: important(r), spec: specificity(s) })));
+  hits.sort((x, y) => (x.imp - y.imp) || cmp(x.spec, y.spec) || (x.i - y.i));
+  assert.equal(hits.at(-1)?.r.style.getPropertyValue('color'), 'var(--ink-3)', `won by "${hits.at(-1)?.r.selectorText}"`);
+  document.body.innerHTML = '';
+});
+
+// The top-level rule that wins `prop` on `el` (importance, specificity, order), and its value.
+function winning(el, prop) {
+  const hits = flat.map((r, i) => ({ r, i })).filter(({ r }) => topLevel(r) && r.style.getPropertyValue(prop))
+    .flatMap(({ r, i }) => sels(r).filter((s) => { try { return el.matches(s); } catch { return false; } })
+      .map((s) => ({ r, i, imp: r.style.getPropertyPriority(prop) === 'important', spec: specificity(s) })));
+  hits.sort((x, y) => (x.imp - y.imp) || cmp(x.spec, y.spec) || (x.i - y.i));
+  return { value: hits.at(-1)?.r.style.getPropertyValue(prop), by: hits.at(-1)?.r.selectorText };
+}
+
+test('run page bar: every .rd-bar-end button is one height, font size and padding on both bars (weight: the primary 600, the rest 500); ⋯ is a bordered square', () => {
+  const end = (bar) => `<div class="${bar}"><span class="rd-bar-end">
+    <button class="btn ${bar === 'rd-bar' ? 'rd' : 'hd'}-after"></button>
+    <span class="rd-actions"><button class="btn btn-sm btn-primary" data-k="primary"></button><button class="btn btn-sm" data-k="made"></button></span>
+    <div class="btn-split mini"><button class="btn" data-k="split"></button><button class="btn btn-icon btn-split-more"></button></div>
+    <button class="btn btn-danger" data-k="stop"></button>
+    <button class="btn btn-quiet btn-icon ${bar === 'rd-bar' ? 'rd' : 'hd'}-bar-more"></button>
+    <span class="crp-bar-btns"><button class="btn crp-full"></button></span>
+  </span></div>`;
+  document.body.innerHTML = `<div class="crp">${end('rd-bar')}${end('hd-bar')}</div>`;
+  for (const bar of ['rd-bar', 'hd-bar']) {
+    const q = (s) => document.querySelector(`.${bar} ${s}`);
+    const labelled = ['.rd-after,.hd-after', '[data-k="primary"]', '[data-k="made"]', '[data-k="split"]', '[data-k="stop"]'].map(q);
+    const icons = ['.btn-split-more', '.rd-bar-more,.hd-bar-more'].map(q);
+    for (const el of [...labelled, ...icons]) {
+      const tag = `${bar} ${el.className}`;
+      assert.equal(winning(el, 'height').value, '32px', `${tag}: height (by "${winning(el, 'height').by}")`);
+      assert.equal(winning(el, 'font-size').value, 'var(--fs-body)', `${tag}: font-size (by "${winning(el, 'font-size').by}")`);
+      assert.equal(winning(el, 'font-weight').value, el.classList.contains('btn-primary') ? '600' : '500',`${tag}: font-weight (by "${winning(el, 'font-weight').by}")`);
+      // The Resume split's halves join (square inner corners); every standalone button has the .btn radius.
+      if (!el.closest('.btn-split')) assert.equal(winning(el, 'border-radius').value, 'var(--r-sm)', `${tag}: radius`);
+    }
+    for (const el of labelled) assert.equal(winning(el, 'padding-left').value, '12px', `${bar} ${el.className}: padding (by "${winning(el, 'padding-left').by}")`);
+    for (const el of icons) {
+      assert.equal(winning(el, 'width').value, '32px', `${bar} ${el.className}: width`);
+      assert.equal(winning(el, 'padding-left').value, '0px', `${bar} ${el.className}: icon padding (by "${winning(el, 'padding-left').by}")`);
+    }
+    const more = icons[1];
+    assert.equal(winning(more, 'border-color').value, 'var(--line-2)', `${bar} ⋯ border (by "${winning(more, 'border-color').by}")`);
+    assert.equal(winning(more, 'background').value, 'var(--panel)', `${bar} ⋯ background (by "${winning(more, 'background').by}")`);
+    // The chat panel's Open full page / Close keep their own square (padding 0), not the bar's labelled padding.
+    assert.equal(winning(q('.crp-full'), 'padding-left').value, '0px', `${bar} .crp-full padding (by "${winning(q('.crp-full'), 'padding-left').by}")`);
+  }
+  document.body.innerHTML = '';
 });

@@ -120,6 +120,10 @@
               <div class="act-fly-rows" id="side-actions-fly-rows"></div>
             </div>
           </div>
+          <!-- Update available (issue #841): shown only while GET /api/app/version says outdated.
+               Opens Settings › General › About; no toast, no modal, nothing installs from here. -->
+          <a class="side-update" id="side-update" href="#settings" hidden
+             aria-label="Update available" title="Update available"><span class="side-update-dot" aria-hidden="true"></span><span class="side-update-label">Update available</span></a>
           <!-- The account corner (account-menu.mjs): who is looking (GET /api/whoami), the spend ring
                (paintBudget) and the away dot. It opens #acct-menu: spend, interface mode, Settings,
                the Away and Keep awake switches and appearance. -->
@@ -769,9 +773,8 @@
                  The route picks the mode: #running/<id> vs #running/<id>/details[/<tab>]. -->
             <div class="rd" data-mode="glance">
               <div class="rd-bar">
-                <button type="button" class="rd-back btn" aria-label="Back to the runs list">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
-                  Runs
+                <button type="button" class="rd-back btn btn-sm btn-quiet btn-icon" aria-label="Back to Runs" title="Back to Runs">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 6l-6 6 6 6"></path></svg>
                 </button>
                 <button type="button" class="rd-to-run btn" hidden aria-label="Back to the run">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
@@ -829,6 +832,12 @@
                   <button type="button" class="btn btn-quiet btn-icon rd-bar-more" aria-haspopup="menu" aria-expanded="false" title="More for this run" aria-label="More for this run" hidden>
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg>
                   </button>
+                  <!-- Slice 2: the live ⋯'s run-scope actions, hidden carriers as on the saved bar (paintRdMenuCarriers offers them). -->
+                  <span class="run-menu-carriers" hidden>
+                    <button type="button" class="btn rd-save-preset" data-flag="runPresets" title="Save this run's setup as a run preset" hidden><span class="hd-btn-label">Save as preset</span></button>
+                    <button type="button" class="btn rd-report" hidden><span class="hd-btn-label">Report this run</span></button>
+                    <button type="button" class="btn rd-archive" hidden><span class="hd-btn-label">Archive</span></button>
+                  </span>
                 </span>
               </div>
               <!-- Inline error slot for failed actions, under the bar so the graph or a tab
@@ -856,10 +865,13 @@
                       <span class="txt">Live view</span>
                       <div class="switch rd-live-switch" role="switch" tabindex="0" aria-checked="false" aria-label="Live view"></div>
                     </div>
-                    <!-- The pull request button beside the status (Create PR, View PR, Push): one node for the screen's
-                         life, outside the result (rebuilt), so its loading placeholder can morph (paintPrCta). -->
-                    <div class="rd-pr-slot" data-needs-git hidden></div>
+                    <!-- Slice 3: the head buttons (run-head.mjs renderHeadButtons) around the PR control (paintPrCta keeps its one
+                         node), at every level; the hidden feed is the PR status read (paintRdPrStatus) that repaints them. -->
+                    <div class="rd-head-acts" hidden><div class="rd-pr-slot" data-needs-git hidden></div></div>
+                    <span class="rd-pr-feed" hidden></span>
                   </div>
+                  <!-- Slice 3: the read-only tracker (run-head.mjs renderTracker), under the status line at every level. -->
+                  <div class="rd-track" role="group" aria-label="Where the work is" hidden></div>
                   <!-- Run 3 (D8): the facts block, one row per fact and one place to edit it. The Project row's value is the
                        old meta line (paintPageHead owns its first text node); the branch chip copies the name (paintPageBranch). -->
                   <dl class="rd-kv" aria-label="Run facts">
@@ -869,19 +881,9 @@
                     <div class="rd-kv-row" data-fact="labels" hidden><dt class="rd-kv-k">Labels</dt><dd class="rd-kv-v"></dd></div>
                     <div class="rd-kv-row" data-fact="tags" hidden><dt class="rd-kv-k">Cost tags</dt><dd class="rd-kv-v"></dd></div>
                   </dl>
-                  <!-- The PR bar (run 3 D11): the run's own PR, its checks and Watch. Its button is in the head (.rd-pr-slot). -->
-                  <div class="rd-pr-box" data-needs-git>
-                    <!-- The open PR's chip, checks, conflicts and Watch PR (paintRdPrStatus). -->
-                    <div class="rd-pr-status" hidden></div>
-                  </div>
-                  <div class="rd-banners">
-                    <!-- The worktree notice (worktree-notice.mjs): retained work, or a live checkout. -->
-                    <div class="retained-banner" data-needs-git role="alert" hidden></div>
-                  </div>
+                  <div class="rd-banners"></div>
                   <!-- Time · Cost · Changes, in every state (the time ticks while live). -->
                   <div class="rd-facts"></div>
-                  <!-- A Folder run's changes on its copy: Discard · Apply to folder (paintFolderBars). -->
-                  <div class="rd-apply-slot" hidden></div>
                   <!-- Away mode's answers on this run, at the top where they are seen: how many, how many to
                        check, and a jump to the first one to check (paintAwayAnswers). -->
                   <div class="rd-away-note" hidden><span class="rd-away-note-text"></span><button type="button" class="btn btn-sm rd-away-jump">See the answers</button></div>
@@ -928,7 +930,7 @@
                          off copyBranchToClipboard's own 1200ms `.copied` window. -->
                     <span class="rd-copied">Copied</span>
                     <!-- Sync before run (#527): shown only when the run has a Sync row; opens its log. -->
-                    <button type="button" class="btn rd-sync" hidden data-min-level="advanced" data-needs-git title="Show the Sync log"></button>
+                    <button type="button" class="btn btn-sm rd-sync" hidden data-min-level="advanced" data-needs-git title="Show the Sync log"></button>
                     <span class="rd-spacer"></span>
                   </div>
                 </header>
@@ -948,9 +950,8 @@
               <!-- Two modes on one screen, as on the Running page: the glance (#history/<key>/<id>)
                    and Details (#history/<key>/<id>/details[/<tab>]). The bar is shared. -->
               <div class="hd-bar">
-                <button type="button" class="hd-back btn" aria-label="Back to the runs list">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
-                  Runs
+                <button type="button" class="hd-back btn btn-sm btn-quiet btn-icon" aria-label="Back to Runs" title="Back to Runs">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 6l-6 6 6 6"></path></svg>
                 </button>
                 <button type="button" class="hd-to-run btn" hidden aria-label="Back to the run">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
@@ -1003,10 +1004,17 @@
                   <button type="button" class="term-opener btn" aria-label="Open the terminal" aria-expanded="false" title="Terminal (Ctrl+`)">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2.5"></rect><path d="M7.5 9.5l3 2.5-3 2.5"></path><path d="M13 15h3.5"></path></svg>
                   </button>
-                  <!-- Run 3 (D13): Save as preset and the terminal in one menu (openHistDetail binds it). -->
+                  <!-- Run 3 (D13), slice 2: the run page's one menu (openHistDetail binds it, runMoreItems lists it). -->
                   <button type="button" class="btn btn-quiet btn-icon hd-bar-more" aria-haspopup="menu" aria-expanded="false" title="More for this run" aria-label="More for this run">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg>
                   </button>
+                  <!-- Slice 2: the ⋯'s run-scope actions. Never shown; runMoreItems lists the offered ones (their own `hidden` is the
+                       offer) and clicks them, so every gate, the busy label and hdSetArchiveGate keep addressing these buttons. -->
+                  <span class="run-menu-carriers" hidden>
+                    <button type="button" class="btn hd-report" hidden><span class="hd-btn-label">Report this run</span></button>
+                    <button type="button" class="btn hd-archive" hidden><span class="hd-btn-label">Archive</span></button>
+                    <button type="button" class="btn hd-restore" hidden><span class="hd-btn-label">Restore</span></button>
+                  </span>
                 </span>
               </div>
               <!-- The inline error sits under the shared bar so both modes show it (a load
@@ -1021,9 +1029,13 @@
                 <div class="rd-sheet">
                   <div class="rd-sheet-head">
                     <div class="rd-now-top run-status"></div>
-                    <!-- The pull request button beside the status: one node for the screen's life (paintPrCta). -->
-                    <div class="rd-pr-slot" data-needs-git hidden></div>
+                    <!-- Slice 3: the head buttons (run-head.mjs renderHeadButtons) around the PR control (paintPrCta keeps its one
+                         node), at every level; the hidden feed is the PR status read (paintRdPrStatus) that repaints them. -->
+                    <div class="rd-head-acts" hidden><div class="rd-pr-slot" data-needs-git hidden></div></div>
+                    <span class="rd-pr-feed" hidden></span>
                   </div>
+                  <!-- Slice 3: the read-only tracker (run-head.mjs renderTracker), under the status line at every level. -->
+                  <div class="rd-track" role="group" aria-label="Where the work is" hidden></div>
                   <!-- Run 3 (D8): the facts block, one row per fact and one place to edit it. The Project row's value is the
                        old meta line (paintPageHead owns its first text node); the branch chip copies the name (paintPageBranch). -->
                   <dl class="rd-kv" aria-label="Run facts">
@@ -1033,20 +1045,9 @@
                     <div class="rd-kv-row" data-fact="labels" hidden><dt class="rd-kv-k">Labels</dt><dd class="rd-kv-v"></dd></div>
                     <div class="rd-kv-row" data-fact="tags" hidden><dt class="rd-kv-k">Cost tags</dt><dd class="rd-kv-v"></dd></div>
                   </dl>
-                  <!-- The PR bar (run 3 D11): the run's own PR, its checks and Watch. Its button is in the head (.rd-pr-slot). -->
-                  <div class="rd-pr-box" data-needs-git>
-                    <!-- The open PR's chip, checks, conflicts and Watch PR (paintRdPrStatus). -->
-                    <div class="rd-pr-status" hidden></div>
-                  </div>
                   <div class="hd-limit-notice rd-ov-state" hidden><span class="rd-ov-copy"></span></div>
-                  <div class="hd-banners">
-                    <span class="badge hist-retained-badge" hidden>Work retained</span>
-                    <div class="retained-banner" data-needs-git role="alert" hidden></div>
-                    <div class="merge-back-banner" data-needs-git role="status" hidden></div>
-                  </div>
+                  <div class="hd-banners"></div>
                   <div class="rd-facts"></div>
-                  <!-- A Folder run's changes on its copy: Discard · Apply to folder (paintFolderBars). -->
-                  <div class="rd-apply-slot" hidden></div>
                   <!-- Away mode's answers on this run, at the top where they are seen: how many, how many to
                        check, and a jump to the first one to check (paintAwayAnswers). -->
                   <div class="rd-away-note" hidden><span class="rd-away-note-text"></span><button type="button" class="btn btn-sm rd-away-jump">See the answers</button></div>
@@ -1104,35 +1105,6 @@
                        outranks the UA [hidden] rule either way. -->
                   <span class="hd-copied">Copied</span>
                   <span class="hd-spacer"></span>
-                  <!-- The label lives in its own span: the busy state ("Archiving…") swaps
-                       ONLY that node, so the inline SVG survives and the error path can
-                       restore the word. -->
-                  <!-- Archive and Report live behind one ⋯ trigger, but keep their own
-                       classes: every gate, the busy-label swap and hdSetArchiveGate all
-                       address them directly, and only their PLACEMENT moved here.
-                       Report this run: a History row is finished by definition, but a
-                       still-live row also appears here, so setupHdActions unhides both
-                       only for a deletable entry, and hides the trigger when neither is
-                       offered rather than opening onto an empty menu. -->
-                  <span class="hd-more-wrap" data-min-level="advanced">
-                    <button type="button" class="btn btn-quiet btn-icon hd-more" hidden aria-haspopup="menu" aria-expanded="false" title="More actions" aria-label="More actions">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg>
-                    </button>
-                    <div class="menu hd-menu" role="menu" hidden>
-                      <button type="button" class="menu-item hd-archive is-danger" role="menuitem" hidden>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
-                        <span class="hd-btn-label">Archive</span>
-                      </button>
-                      <button type="button" class="menu-item hd-restore" role="menuitem" hidden>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v4h4"></path><path d="M12 8v4l3 2"></path></svg>
-                        <span class="hd-btn-label">Restore</span>
-                      </button>
-                      <button type="button" class="menu-item hd-report" role="menuitem" hidden>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path><path d="M12 9v4.5"></path><path d="M12 17h.01"></path></svg>
-                        <span class="hd-btn-label">Report this run</span>
-                      </button>
-                    </div>
-                  </span>
                 </div>
               </header>
               <div class="hd-body">
@@ -1867,7 +1839,7 @@
               <small class="hint" id="gsSettingsMsg"></small>
             </section>
 
-            <!-- About: intentionally no info-tip and no .hint (no longer tested; keep both out by hand). -->
+            <!-- About: no info-tip and no .hint. Links are anchors (target=_blank rel=noopener noreferrer); the only controls are the update-check switch and Check now (ui-settings-about.test.mjs pins this). -->
             <section class="card settings-card" id="about-card" data-min-level="simple">
               <div class="label-row">
                 <h2>About</h2>
@@ -1878,6 +1850,28 @@
                      without one the anchor is plain text, so the placeholder never links. -->
                 <a class="about-val about-version" id="aboutVersion"
                    target="_blank" rel="noopener noreferrer">&mdash;</a>
+                <!-- GET /api/app/version (#841): "Latest" | "Update available: X.Y.Z" | "Source build" (a git checkout);
+                     hidden when unknown or ahead. -->
+                <span class="about-update" id="aboutUpdateState" hidden></span>
+              </div>
+              <!-- Only while outdated: the new release's changelog page and the GitHub compare view. -->
+              <div class="about-row" id="aboutUpdateLinks" hidden>
+                <span class="about-key"></span>
+                <a class="about-val about-link" id="aboutWhatsNew" hidden
+                   target="_blank" rel="noopener noreferrer">What's new</a>
+                <a class="about-val about-link" id="aboutCompare" hidden
+                   target="_blank" rel="noopener noreferrer">Changes since this version</a>
+              </div>
+              <div class="about-row">
+                <span class="about-key">Release notes</span>
+                <a class="about-val about-link" id="aboutReleaseNotes"
+                   href="https://docs.worca.dev/changelog/"
+                   target="_blank" rel="noopener noreferrer">docs.worca.dev/changelog</a>
+              </div>
+              <div class="about-row about-row-center">
+                <span class="about-key">Updates</span>
+                <label class="about-val switch-row about-switch" for="aboutUpdateCheck"><input id="aboutUpdateCheck" data-setting="updateCheck" class="sw-input" type="checkbox" role="switch" checked><span class="switch" aria-hidden="true"></span><span class="switch-label">Check for new Worca versions</span></label>
+                <button type="button" class="btn btn-sm about-check" id="aboutCheckNow">Check now</button>
               </div>
               <div class="about-row">
                 <span class="about-key">Repository</span>
@@ -1889,8 +1883,7 @@
                 <span class="about-key">Feedback</span>
                 <!-- hrefs are repainted from app.bugsUrl (package.json bugs.url); the
                      static fallback keeps the links usable before /api/settings lands.
-                     Anchors only: ui-settings-about.test.mjs forbids a control here,
-                     and neither the label nor the href carries a version string. -->
+                     Anchors only, and neither the label nor the href carries a version string. -->
                 <a class="about-val about-link" id="aboutBugLink"
                    href="https://github.com/SinishaDjukic/worca-cc/issues/new?labels=bug"
                    target="_blank" rel="noopener noreferrer">Report a bug</a>
@@ -2274,6 +2267,21 @@
               </div>
               <div class="add-project-actions"><button type="button" class="btn btn-sm" id="act-reset">Reset</button>
                 <button type="button" class="btn btn-primary btn-sm" id="act-save">Save</button></div>
+            </section>
+
+            <section class="card settings-card" id="pr-settings-card" data-min-level="simple" data-needs-git>
+              <div class="card-head"><div class="label-row"><h2>Pull requests</h2></div></div>
+              <div class="drows">
+              <label class="field drow switch-drow" for="prAutoDescribe">
+                <span class="drow-label">Draft the PR description with AI automatically
+                  <button type="button" class="info-tip" aria-label="About drafting the PR description automatically">i<span class="tip-content hidden">Each time the Create PR dialog opens, Worca runs the PR description model to draft the description, as if you had pressed Generate with AI. You can stop it, edit the draft or generate again.</span></button>
+                </span>
+                <span class="drow-control"><input id="prAutoDescribe" data-setting="autoGeneratePrDescription" class="sw-input" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></span>
+              </label>
+              </div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="prSettingsSave" class="btn btn-primary btn-sm">Save</button>
+              </div>
             </section>
 
             <section class="card settings-card" id="ws-scan-models-card" data-min-level="advanced">
@@ -2915,12 +2923,14 @@
           </div>
           <div class="shipit-desc-err hint err" hidden></div>
         </div>
-        <!-- Draft is opt-in per ship (unchecked on every open). No data-min-level: the
+        <!-- Draft is opt-in per ship (unchecked on every open); Watch PR starts from the project's Watch new
+             pull requests setting (s4). No data-min-level: the
              controls show wherever the modal does (docs/ui-levels.md, History). The
              "Will close" line names the run's GitHub issue source (GET /api/pr/remotes `issue`). -->
         <div class="shipit-draft">
           <label class="switch-row" for="shipit-draft-input"><input id="shipit-draft-input" class="sw-input shipit-draft-input" type="checkbox" role="switch" /><span class="switch" aria-hidden="true"></span><span class="switch-label">Open as draft</span></label>
-          <label class="switch-row" for="shipit-watch-input"><input id="shipit-watch-input" class="sw-input shipit-watch-input" type="checkbox" role="switch" /><span class="switch" aria-hidden="true"></span><span class="switch-label">Watch PR</span></label>
+          <label class="switch-row" for="shipit-watch-input"><input id="shipit-watch-input" class="sw-input shipit-watch-input" type="checkbox" role="switch" aria-describedby="shipit-watch-help" /><span class="switch" aria-hidden="true"></span><span class="switch-label">Watch PR</span></label>
+          <small id="shipit-watch-help" class="hint shipit-watch-help">Start a fix run when checks fail or a reviewer asks for changes</small>
           <small class="shipit-closes hint" hidden></small>
         </div>
         <!-- Shaper s4: the release row (shape/release-row.mjs), collapsed on every open like the draft box; the

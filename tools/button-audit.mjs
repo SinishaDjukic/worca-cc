@@ -8,13 +8,16 @@ export const BUTTON_SPEC = Object.freeze({
   heights: { 'btn-sm': 28, '': 32, 'btn-lg': 40 },
   fontSizes: { 'btn-sm': '12px', '': '13px', 'btn-lg': '13px' },
   corners: ['6px', '0px'],                              // 0 for the joined halves of a split button
+  // One control size on the run page bar: its made .btn-sm actions (syncActions, shared with the chat run card) are
+  // medium there (style.css `:is(.rd-bar,.hd-bar) .rd-bar-end > …`).
+  mediumIn: ['.rd-bar-end'],
   // D10: controls, not §1.2 buttons. They still obey the radius tokens (test/ui-design-language.test.mjs).
   controls: ['.nav button', '.seg button', '.tab', '[role="tab"]', '[role="menuitem"]', '[role="menuitemradio"]',
     '[role="menuitemcheckbox"]', '[role="option"]', '[role="radio"]', '[role="switch"]', '.switch', '.link-btn',
     '.info-tip', '.act-tile', '.ob-door', '.seg-btn', '.btn-split-menu button', '.rd-tab', '.hd-tab', '.pd-tab', '.tp-tab', '.md-tab', '.af-tab',
     '.wfl-tab', '.chat-home-tab', '.hd-cmt-tab', 'button.rd-srow', 'button.tl-tile', 'button.af-gal-card',
     'button.pd-ov-card', 'button.wd-member', 'button.ask-activity-head', 'button.act-srow-name', 'button.runs-sec-head',
-    'button.gp-row', 'button.agent-row-head', 'button.hd-tree-file', 'button.hd-tree-dir', 'button.ask-filescard-thumb', 'button.ask-filescard-name', 'button.chat-home-act',
+    'button.gp-row', 'button.rd-track-act', 'button.agent-row-head', 'button.hd-tree-file', 'button.hd-tree-dir', 'button.ask-filescard-thumb', 'button.ask-filescard-name', 'button.chat-home-act',
     'button.chat-home-wf', 'button.chat-home-chat', 'button.chat-home-plan-open', 'button.release-row-edit',
     '.row-btn', 'button.mcp-setrow', 'button.xtoggle', 'button.gs-tile', 'button.mk-tile', 'button.mk-facet', 'button.mk-name',
     '.mk-upd > button.mk-disc',
@@ -49,7 +52,7 @@ export function auditButtons(root, spec, env) {
     const variants = spec.variants.filter((c) => cl.contains(c));
     if (sizes.length > 1) bad('two-sizes', sizes.join(' '));
     if (variants.length > 1) bad('two-variants', variants.join(' '));
-    const size = sizes[0] || '';
+    const size = el.closest(spec.mediumIn.join(',')) ? '' : (sizes[0] || '');
     const cs = style(el);
     const h = Math.round(rect(el).height);
     if (coarse ? h < 40 : h !== spec.heights[size]) bad('height', `${h}px`);
@@ -224,7 +227,8 @@ export function auditType(root, spec, env) {
 export const STRAY_SPEC = Object.freeze({
   allow: ['.tab', '[role="tab"]', '.seg button', '.seg-btn', '.filter-chip', '.switch', '[role="switch"]', '[role^="menuitem"]',
     '[role="option"]', '[role="radio"]', '.info-tip', '.row-btn', 'div.wfl-main', 'button.mcp-setrow', 'button.gs-tile',
-    'button.ob-door', 'button.wfc-chip-btn', 'button.mk-tile', 'button.mk-facet', 'button.mk-name', '.mk-upd > button.mk-disc'],
+    'button.ob-door', 'button.wfc-chip-btn', 'button.mk-tile', 'button.mk-facet', 'button.mk-name', '.mk-upd > button.mk-disc',
+    'button.rd-track-act'],
   skip: '#wfv-canvas',
 });
 export function auditStray(root, spec, env) {

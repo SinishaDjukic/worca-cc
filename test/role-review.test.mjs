@@ -146,7 +146,10 @@ test('liveRoleRows: the landed record\'s states, the Refine line, and null outsi
   assert.deepEqual(rows(liveRoleRows(landed, { stage: 'plan' })),
     [['ux', '1 critical', false], ['architect', '1 major', false], ['product', 'no findings', false], ['qa', 'skipped: nothing open', false]]);
   const refining = liveRun({ rounds: [rec], active: [{ nodeId: 'refine', executionId: 'refine:1' }] });
-  assert.deepEqual(liveRoleRows(refining, { stage: 'plan' }), { rows: [], refine: 'Refine · fixing 3 findings from UX and Architect' });
+  assert.deepEqual(liveRoleRows(refining, { stage: 'plan' }), { rows: [], refine: 'Fixing 3 findings from UX and Architect' });
+  const one = { pass: 1, round: 1, roles: [roleRecord('qa', 1, { issues: [{ severity: 'major', title: 'a', fix: 'f' }] }, [])] };
+  assert.equal(liveRoleRows(liveRun({ rounds: [one], active: [{ nodeId: 'refine', executionId: 'refine:1' }] }), { stage: 'plan' }).refine,
+    'Fixing 1 finding from QA');
   assert.equal(liveRoleRows({ ...landed, status: 'done' }, { stage: 'plan' }), null, 'a finished run');
   assert.equal(liveRoleRows(landed, { stage: 'build' }), null, 'the Plan step card owns the rows after Plan');
   assert.equal(liveRoleRows(landed, { stage: null }), null, 'nodes progress mode');

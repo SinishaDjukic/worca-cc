@@ -2792,17 +2792,21 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     trigger.setAttribute('aria-expanded', 'true');
     loadCardOptions().then((opts) => {
       if (!st.popover || st.popover.panel !== panel) return;
-      // A radio row: the line icon, the text, then ✓ on the pick (aria-checked carries it for screen readers).
+      // A radio row: the line icon, the text, then the fixed check slot, ✓ on the pick only, so the chips line up on
+      // every row (aria-checked carries the pick for screen readers).
       const radio = (cls, on, kids, onPick) => {
         const it = menuItem(`ask-scope-item ${cls}`, onPick);
         it.setAttribute('role', 'menuitemradio');
         it.setAttribute('aria-checked', on ? 'true' : 'false');
         for (const k of kids) it.appendChild(k);
+        const slot = make('span', 'ask-scope-check');
+        slot.setAttribute('aria-hidden', 'true');
         if (on) {
           const check = checkMark();
           check.setAttribute('aria-hidden', 'true');
-          it.appendChild(check);
+          slot.appendChild(check);
         }
+        it.appendChild(slot);
         return it;
       };
       // The name (and its kind chip, when it has one) on one line, an optional sub-line under it.
@@ -2838,7 +2842,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         for (const w of workspaces) {
           panel.appendChild(radio('ask-scope-ws', st.scope.pinned && st.scope.workspaceId === w.id, [
             scopeIcon(doc, 'workspace', 14),
-            col(w.name || w.id, kindChip(doc, 'ws'), null),
+            col(w.name || w.id, null, null),
           ], () => setScope({ pinned: true, workspaceId: w.id, label: w.name || w.id })));
         }
       }

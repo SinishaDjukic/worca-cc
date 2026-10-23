@@ -121,7 +121,10 @@ test('grandfathered bare keys: the run page edit, project defaults and an after-
   const r = await post('/api/run', { projectDir: repo, prompt: 'next', mock: true, after: { kind: 'pipeline', id: a.pipelineId } });
   assert.equal(r.status, 202);
   const made = await r.json();
-  assert.equal((await post(`/api/schedules/${made.runId}/run-now`)).status, 200);
+  // The predecessor's post-finish step nudges the scheduler (server.mjs, after the merge-back), so on a busy runner
+  // the chain can already be firing on its own when Run now arrives: that 409 is the chain working, not a refusal.
+  const now = await post(`/api/schedules/${made.runId}/run-now`);
+  if (now.status !== 200) assert.match(`${now.status} ${(await now.json()).error}`, /^409 this run is firing and cannot be started$/);
   assert.deepEqual(readRunTags((await untilSettled(made.runId)).pipelineId), ['client:globex', 'urgent']);
   // Project defaults saved before the rule: re-saving and starting a run with them passes; a new bare key does not.
   writeProjectDefaultTags(key, ['urgent']);

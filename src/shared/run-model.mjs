@@ -34,6 +34,14 @@ export const ACTION_LABEL = Object.freeze({
   retry: 'Retry', report: 'Report', archive: 'Archive', ship: 'Create PR', 'open-pr': 'View PR', 'ask-changes': 'Ask for changes',
 });
 
+/** Run-scope actions that live in the run page's ⋯ menu, never in its bar (slice 2). The group header and the Chat
+ *  card still make them from the model. */
+export const MENU_ACTIONS = Object.freeze(['archive', 'report']);
+
+/** Finished-run actions the run page draws in its card head (slice 3), never in its bar. The group header and the Chat
+ *  card still make them from the model. */
+export const HEAD_ACTIONS = Object.freeze(['ship', 'open-pr', 'retry', 'ask-changes']);
+
 const ACTIONS = Object.freeze({
   starting: ['stop'], working: ['pause', 'stop'], 'needs-you': ['answer', 'stop'], paused: ['resume', 'stop'],
   waiting: ['start-now', 'cancel'], failed: ['retry', 'report'], stopped: ['archive'], ready: ['ship'],
@@ -159,7 +167,7 @@ function singleLine(state, run, prog, pr, opts) {
   const where = prog && prog.mode === 'stages' ? prog.label : '';
   switch (state) {
     case 'starting': return 'Starting';
-    case 'working': return (prog && prog.step ? join(where, 'step', prog.step) : join(where, prog ? prog.what : '')) || 'Working';
+    case 'working': return join(where, prog ? prog.step || prog.what : '') || 'Working';
     case 'needs-you': return join(where, 'needs you', askWhat(run.pendingQuestion).replace(/^answer /, ''));
     case 'paused': {
       const s = String(run.status);
@@ -272,7 +280,8 @@ function finishedWords(r, mode) {
 }
 
 /**
- * One run's model.
+ * One run's model. Besides `line` (the canonical status line, with the stage), `barLine` is the working line beside
+ * a stage bar: the step alone ('' when the step is the stage), or null when no bar names the stage or a round owns the line.
  * @param {object} run   see the header
  * @param {{memo?:object, now?:number, timeZone?:string}} [opts]  `memo` is runProgress's monotonic memo (MUTATED)
  */
@@ -291,14 +300,18 @@ export function runModel(run, opts = {}) {
   // A PR-driven Needs you has no question to answer; its line is the chip's reason (QA 3) and its action View PR (D31).
   const prNeeds = state === 'needs-you' && r.pendingQuestion == null && (watchNeeds || !!(pr && pr.needsYou));
   const actions = fin ? [] : watchNeeds ? ['open-pr', 'ask-changes'] : prNeeds ? ['open-pr']
-    : state === 'stopped' && r.resumable === true ? ['resume', 'archive'] : ACTIONS[state];
+    // An interrupted run is never stopped: it archives, and resumes too unless it never can (no resume point, its project gone).
+    : r.status === 'interrupted' ? (r.resumable === false ? ['archive'] : ['resume', 'archive']) : ACTIONS[state];
   const base = fin ? fin.line : state === 'starting' && mode === 'folder' ? 'Copying the folder'
     : watchNeeds ? watch.line : prNeeds ? prReasonLine(pr) : singleLine(state, r, prog, pr, opts);
   const round = roundOf(r);
   const { line, lineSaysState } = roundLine(state, round, base, prog, prNeeds);
+  // Beside a bar that names the stages (paintRunStatus), the line names only the step: "Working · Refine Plan".
+  // '' when the step is the stage itself; null where the bar names no stage or the line is a round's own.
+  const barLine = state === 'working' && !round && prog && prog.mode === 'stages' ? cap(prog.step || prog.what || '') : null;
   // Review A12: the live role-review rows (or the Refine line) under the status line; null when there are none.
   // QA 6: "?" means Worca is asking. A run in Needs you through its PR (or a stopped Watch PR) is a plain amber dot.
-  return { state, ...meta, ...(fin ? { word: fin.word } : {}), symbol: prNeeds ? null : meta.symbol, line, lineSaysState, actions: [...actions], pr, prNeeds,
+  return { state, ...meta, ...(fin ? { word: fin.word } : {}), symbol: prNeeds ? null : meta.symbol, line, lineSaysState, barLine, actions: [...actions], pr, prNeeds,
     round, progress: prog, roles: liveRoleRows(r, { stage: prog ? prog.stage : null }) };
 }
 

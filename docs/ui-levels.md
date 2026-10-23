@@ -25,7 +25,7 @@ anything.
 ## Rules
 
 1. **A blocking prompt is never hidden.** The cycle gate, the recovery prompt,
-   the cost-pause banner, the worktree notice and any clarifying question
+   the cost-pause banner, the worktree notice (work retained after a failed commit) and any clarifying question
    show at every level. A run that waits on a hidden control is a dead run. A
    blocking prompt may be *reworded* for Simple (the cycle gate is), never
    removed. Recovery instructions (the retained-work git commands) count as part
@@ -174,7 +174,11 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Card (History-level): status, title, elapsed, cost, Stop, Pause/Resume, open; a strip on a waiting or parked run that opens the run page at its question | S |
 | "Scheduled" group (runs due within 24 h) | S — it only exists when something is scheduled |
 | Needs-input pill and banner; clarify questions; Auto proposal ("Review the workflow": preview that opens a pan/zoom popup, Accept) — all answered on the run page | S |
-| Recovery prompt, cycle gate, cost-pause banner, worktree notice (retained work or a live checkout; only its Actions tab › link is Advanced), merge-back banner (a run on its source branch that could not be fast-forwarded) | all |
+| Recovery prompt, cycle gate, cost-pause banner | all |
+| Run page card head: the status line, the head buttons (Try it, Create PR, Push, View PR │ ▾, Fix conflicts, Ask for changes, Discard / Apply to branch, How to merge, Discard / Apply to folder, Report) and the tracker | S |
+| View PR ▾ › Watch | A |
+| Summary card › a live checkout: the Results row with Discard / Unlink | S |
+| Summary card › the Actions row value (`Local copy open · since 18:12`, `Try it on this machine`) and the Actions tab's Download patch | A |
 | Plan approval (Shaper): one step card — head (title + Plan chip), summary, folded shape check, Ask for changes / Full plan / Approve and build / ⋯ (Fix all, Save to plans/, Stop); the same card with the gate off (Full plan opens the artifact viewer) | all (rule 1) |
 | Plan approval extras: perspectives "edit" (chips + Update plan), Fix all, Save to plans/ | S |
 | Plan approval: Open in New run | A |
@@ -215,12 +219,13 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Header cost and its breakdown (agents, Away mode, Auto workflow, run title; stopped reviews and stopped agent turns apart); the glance and Overview cost's Away mode share | S |
 | "Answered for you", as on the run page | S |
 | Save as preset (a run with a stored setup) | S |
+| Run page bar: Back (every layout) and ⋯ (Away mode while live, Save as preset, Terminal, Report this run, Archive / Restore) | S |
 | History: usage-limit notice | S |
 | "Files changed" list on the Overview | S — the stand-in for the Diff tab |
 | Folder run: Changes tab, the Folder chip, the Apply bar and dialog, Discard; the Git / Folder chip on a project's group in the Runs list | S |
 | Run without a project: the Artifacts tab, opened first; the No project group and its chip in the Runs list | S |
 | Overview: Perspective checklists, as on the run page (shaped runs) | S |
-| Diff tab, diff pill, inline comments; Create PR / View PR; "Push <source>" (a run on its source branch, instead of a PR); branch line; ⋯ menu (Archive, Restore, Report); Artifacts tab | A |
+| Diff tab, diff pill, inline comments; Create PR / View PR; "Push <source>" (a run on its source branch, instead of a PR); branch line; Artifacts tab | A |
 | Actions tab, Overview actions strip, Ship It 'Try it first' strip | A |
 | Ship It modal: Open as draft checkbox, "Will close owner/repo#N" line | A — ungated inside the modal (no `data-min-level`), so they show wherever the modal opens |
 | Running-action pill in the header, sidebar Running actions rows (one tile on the rail) | all — shown only while a service runs |
@@ -229,12 +234,15 @@ The **Auto** workflow option is available for both targets — a project and a w
 
 An open github.com or Azure DevOps pull request shows its state as GitHub's merge box would
 (Draft, Merge conflicts, Changes requested, checks failed or running, Review
-required, Out of date, Blocked, Ready to merge) in two places: the run page's PR bar
-under the facts, and a "Pull request" row under the review verdict
+required, Out of date, Blocked, Ready to merge) in two places: the run page tracker's
+PR step, and a "Pull request" row under the review verdict
 on the Overview tab (one row per repository for a workspace run). Both show at
-every level; the Watch switch in them is advanced.
+every level. Watch is changed from the View PR ▾ menu (Advanced) and from the
+Overview row's switch (Advanced).
 
-Watch PR is opt-in, also in Ship It. It supports github.com and Azure DevOps
+Watch PR is opt-in. In Ship It its switch starts from the project's **Watch new pull requests** setting (Project
+page › Settings › Pull requests; off by default), and a workspace's Ship It starts it on only when every repository
+it lists has that setting on. Watch PR supports github.com and Azure DevOps
 ([how Azure maps](azure-devops.md#watch-pr)) and batches
 failed checks, merge conflicts and trusted author, owner, member or collaborator
 feedback into at most three automatic fix runs. Checks that also fail on the base
@@ -308,6 +316,7 @@ inside the view.
 |---|---|
 | General: Appearance, Alerts, Interface mode, Getting started, About | S |
 | Runs tab: Budget & cost limits (incl. Resume runs automatically when a usage limit resets) | S |
+| Runs tab: Pull requests (Draft the PR description with AI automatically) | S |
 | Labs tab (feature flags) | S — flags are independent of levels (docs/feature-flags.md) |
 | General: root folders; Runs tab: Scheduled runs defaults, Workspaces (scan models), chat notifications; Chat tab (limits, tools, web access, chat history) | A |
 | Runs tab: Actions (keep policy, port range, editor/terminal, cap) | A |

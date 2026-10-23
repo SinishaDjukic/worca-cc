@@ -8,9 +8,11 @@ export const BULK_ACTIONS = Object.freeze(['stop', 'archive', 'delete', 'restore
 
 /** The state the bulk table reads: a PR-raised Needs you run is a finished, in-review run (nothing to stop). */
 const bulkState = (t) => (t && t.prNeeds ? 'in-review' : t && t.state);
-/** An interrupted run with no resume point: it can never resume (and is never stopped), so Archive and Delete take it.
- *  Only an explicit `resumable: false` counts — a live run in memory carries no flag and stays resumable. */
-const deadInterrupted = (t) => !!t && t.status === 'interrupted' && t.resumable === false;
+/** An interrupted run is never stopped, but Archive and Delete take it, resumable or not. */
+const interrupted = (t) => !!t && t.status === 'interrupted';
+/** An interrupted run that could still resume: Archive / Delete ask first. Only an explicit `resumable: false` says it
+ *  never can — a live run in memory carries no flag and stays resumable. */
+const resumableInterrupted = (t) => interrupted(t) && t.resumable !== false;
 
 /** 'apply' | 'cancel' (a waiting run's ticket is cancelled) | 'skip'. */
 export function bulkVerdict(action, t, { inGroup = false } = {}) {
@@ -24,19 +26,17 @@ export function bulkVerdict(action, t, { inGroup = false } = {}) {
   const neverRan = !!(t && t.ticketId && !t.pipelineId);
   // Restore applies to any archived record: an archived paused row reads Paused and restorePipeline makes it interrupted.
   if (action === 'restore') return neverRan ? 'skip' : 'apply';
-  const over = ENDED.has(s) || deadInterrupted(t);
+  const over = ENDED.has(s) || interrupted(t);
   if (action === 'archive') return over && !neverRan ? 'apply' : 'skip';
   if (action === 'delete') return s === 'waiting' ? 'cancel' : over && !neverRan ? 'apply' : 'skip';
   return 'skip';
 }
 
 export function skipReason(action, t) {
-  // An interrupted run reads Paused (run-model.mjs), so Archive skips it too unless it can never resume: only Resume moves it on.
   if (action === 'stop') return t.status === 'interrupted' ? 'interrupted — resume it first' : t.state === 'waiting' ? 'not started yet' : 'already finished';
   // A waiting member carries its ticketId too (rowTarget): say "not started yet" before "never started".
   if (t.state === 'waiting') return 'not started yet';
   if (t.ticketId && !t.pipelineId) return 'never started';
-  if (t.status === 'interrupted') return 'interrupted — resume it first';
   if (action === 'delete') return 'still running — stop it first';
   return t.state === 'waiting' ? 'not started yet' : 'still running';
 }
@@ -68,9 +68,15 @@ export function skipText(plan) {
   return [...by].map(([reason, list]) => `Skipped ${list.length} ${reason}: ${names(list)}.`).join(' ');
 }
 
-/** The one confirm for Stop and Delete (§3.2, §5a.3). Archive has none: it shows Undo. */
+/** The one confirm for Stop and Delete (§3.2, §5a.3). Archive has none (it shows Undo, null here) unless it takes an
+ *  interrupted run that could still resume: Undo brings back the record, never the resume point. */
 export function bulkConfirm(action, plan) {
   const skipped = skipText(plan);
+  const parked = plan.apply.filter(resumableInterrupted);
+  const lost = parked.length ? `${parked.length} interrupted run${parked.length === 1 ? '' : 's'} can't be resumed afterwards: ${names(parked)}.` : '';
+  if (action === 'archive') {
+    return lost ? { title: `Archive ${runs(plan.apply.length)}?`, confirmLabel: 'Archive', danger: true, message: [lost, skipped].filter(Boolean).join(' ') } : null;
+  }
   if (action === 'stop') {
     const c = plan.cancel.length;
     // The headline counts what the bar and the result toast count: the stopped runs and the cancelled waiting ones.
@@ -79,5 +85,5 @@ export function bulkConfirm(action, plan) {
   }
   return { title: `Delete ${runs(plan.apply.length + plan.cancel.length)} permanently?`, confirmLabel: 'Delete', danger: true,
     message: ['Deletes the run records, their files and local branches.',
-      'Keeps remote branches, pull requests and their cost in Statistics (as "deleted run").', skipped, 'There is no undo.'].filter(Boolean).join(' ') };
+      'Keeps remote branches, pull requests and their cost in Statistics (as "deleted run").', lost, skipped, 'There is no undo.'].filter(Boolean).join(' ') };
 }

@@ -53,6 +53,13 @@ test('controls (tabs, nav rows, chips, role=button rows) and hidden buttons are 
     <button class="filter-chip">All</button><div role="button" class="run-row">Row</div><button class="btn-go" data-hidden>x</button>`), []);
 });
 
+test('a made .btn-sm action on the run page bar (.rd-bar-end) is the bar\'s medium size; elsewhere .btn-sm stays 28px/12px', () => {
+  const sm13 = { m: { fontSize: '13px' }, p: { fontSize: '13px' } };
+  assert.deepEqual(run(`<span class="rd-bar-end"><button class="btn rd-after">Run after</button><span class="rd-actions">
+    <button id="p" class="btn btn-sm btn-primary">Answer</button><button id="m" class="btn btn-sm">Archive</button></span></span>`, sm13), []);
+  assert.deepEqual(run('<div class="chat-rc-factions"><button id="m" class="btn btn-sm">Archive</button></div>', sm13).map((v) => v.rule), ['height', 'font-size']);
+});
+
 test('under a coarse pointer every button must be at least 40px', () => {
   assert.deepEqual(run('<button class="btn">a</button>', {}, { coarse: true }).map((v) => v.rule), ['height']);
   assert.deepEqual(run('<button class="btn">a</button>', {}, { coarse: true, height: 40 }), []);
@@ -218,4 +225,12 @@ test('the Update review card\'s commits row is a disclosure control, not a §1.2
   const doc = new JSDOM('<section class="mk-upd"><button type="button" class="mk-disc" aria-expanded="false">2 commits 2441b36 → 735b354</button></section>').window.document;
   const controls = BUTTON_SPEC.controls.join(',');
   assert.deepEqual([...doc.querySelectorAll('button')].filter((b) => !b.classList.contains('btn') && !b.closest(controls)).map((b) => b.className), []);
+});
+
+test('slice 3: the tracker\'s Watching and Commit it yourself are controls; a plain button in the card is still a stray', () => {
+  assert.ok(BUTTON_SPEC.controls.includes('button.rd-track-act') && STRAY_SPEC.allow.includes('button.rd-track-act'));
+  const doc = new JSDOM(`<div id="v" class="rd-sheet"><div class="rd-track"><button type="button" class="rd-track-act rd-track-watch">Watching</button>
+    <button type="button" class="rd-track-act">Commit it yourself</button></div><button type="button" class="odd">x</button></div>`).window.document;
+  const got = auditStray(doc.getElementById('v'), STRAY_SPEC, { rect: () => ({ width: 10, height: 10 }) }).map((f) => f.sig);
+  assert.deepEqual(got, ['button.odd']);
 });

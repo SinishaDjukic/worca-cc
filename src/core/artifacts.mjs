@@ -20,7 +20,7 @@ import { workModeOfRow } from './project-kind.mjs';
 import { rollupChanges } from './folder-members.mjs';
 import { harvestWork, WORK_ARTIFACT_KIND } from './no-project-work.mjs';
 import { updateRunManifest } from './run-manifest.mjs';
-import { listProjects, worcaHome } from './projects.mjs';
+import { listProjects, worcaHome, runOnboarded } from './projects.mjs';
 import { branchExists, diffShortstat, anyPrHost, findPrForBranch, commitsAhead } from './git-info.mjs';
 import { getDb, tx } from './db.mjs';
 import { rollupMemberPrs, workspaceMembers, changedFileCount } from './workspace-prs.mjs';
@@ -2306,6 +2306,8 @@ export function resultsFilesCount(res) {
  *  - `checks` / `files` (additive): the review's things-to-check count and the files
  *    changed, from the same results.json — the finished headline's inputs (the Runs
  *    list word = the glance headline). null until results exist, and for `lite`.
+ *  - `push` (additive; a single-project run merged back onto its source, omitted in `lite`): the source
+ *    branch's push state from refs, { remote, state: 'pushed'|'ahead'|'diverged'|'unpushed' } (sourcePushStatus).
  * @param {object} row a pipelines row (incl. row.dir set by the caller)
  * @param {string|null} repoDir git repo root for live branch facts
  * @param {object} opts { withPr?, lite? }
@@ -2354,9 +2356,9 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     baseCheck: baseCheckSummaryFor(row),
     // Only a run on its source branch carries these two keys (history shape unchanged otherwise).
     ...(mergeBack ? { sameAsSource: true, mergeBack } : {}),
-    // Only an interrupted run carries `resumable`: without a resume point it can never resume, so the Runs list lets
-    // Archive / Delete take it (src/shared/run-bulk.mjs).
-    ...(row.status === 'interrupted' && row.has_resume_point != null ? { resumable: !!row.has_resume_point } : {}),
+    // Only an interrupted run carries `resumable`: without a resume point, or with its project (workspace, member) no
+    // longer onboarded, it can never resume, so the Runs list lets Archive / Delete take it (src/shared/run-bulk.mjs).
+    ...(row.status === 'interrupted' && row.has_resume_point != null ? { resumable: !!row.has_resume_point && runOnboarded(row) } : {}),
     ...folderFacts(row),
     survived,
     added,
@@ -2374,6 +2376,13 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
   // Computed BEFORE the PR lookup so a row WITH members skips the primary-only search.
   if (row.target === 'workspace' && !opts.lite) {
     entry.members = await workspaceMemberFacts(row, results, opts);
+  }
+  // Merged back onto its source: whether the source is on its remote (refs only), so a reload keeps
+  // "Pushed to <remote>" and a new local commit offers Push again. The recorded push's remote wins.
+  if (mergeBack?.merged === true && row.target !== 'workspace' && !opts.lite && repoDir && source) {
+    const { sourcePushStatus } = await import('./project-sync.mjs');   // lazy: project-sync -> worktree -> artifacts
+    const push = await sourcePushStatus(repoDir, branchObj, row.project_key ?? null);
+    if (push) entry.push = push;
   }
   const hasMembers = Array.isArray(entry.members) && entry.members.length > 0;
   // Honest status (D7): a single-project run with no PR of its own whose work already reached its base through
@@ -2442,7 +2451,7 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
   const pipelinesDir = artifactPaths(projectDir, workspaceKey).pipelines;
   const dirById = await runDirIndex(pipelinesDir);
   const rows = getDb().prepare(`
-    SELECT id, project_key, target, title, status, started_at, updated_at, total_cost_usd, total_active_ms,
+    SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at, total_cost_usd, total_active_ms,
            branch, workspace_meta, guardrails_id, started_by, pr_url,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail,
@@ -3058,6 +3067,8 @@ export async function readPipelineByKey(key, id) {
   // clears a reclaimed run's resume_point (pipeline-delete.mjs), but a dir wiped by hand
   // keeps one — gate it on the dir actually existing (no dir, no resume; archive or not).
   if (state.resumable && !(dir && existsSync(dir))) state.resumable = false;
+  // Nor without its project (workspace, member) onboarded on this machine: resumeRun refuses it, so the detail hides Resume.
+  if (state.resumable && !runOnboarded(row)) state.resumable = false;
   const results = await readJsonFile(join(dir, 'results.json'));
   const overview = await readJsonFile(join(dir, 'overview.json'));
   return {

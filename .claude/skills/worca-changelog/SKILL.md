@@ -77,10 +77,13 @@ landed without a PR.
 
 ```bash
 FROM=worca-app-v1.1.1; TO=HEAD
-SINCE=$(git log -1 --format=%cI "$FROM")
-gh pr list --state merged --base dev --search "merged:>=${SINCE%%T*}" --limit 200 \
+# Compare as epoch seconds: mergedAt is UTC ("…Z") and the tag time carries the
+# committer's offset, so a string comparison drops PRs merged in between.
+SINCE_TS=$(git log -1 --format=%ct "$FROM")
+SINCE_DAY=$(date -u -r "$SINCE_TS" +%F 2>/dev/null || date -u -d "@$SINCE_TS" +%F)   # macOS || GNU
+gh pr list --state merged --base dev --search "merged:>=$SINCE_DAY" --limit 200 \
   --json number,title,body,mergedAt,url,labels \
-  --jq "[.[] | select(.mergedAt > \"$SINCE\")] | sort_by(.mergedAt) | .[] | \"#\(.number)\t\(.mergedAt[:10])\t\(.title)\""
+  --jq "[.[] | select((.mergedAt | fromdate) > $SINCE_TS)] | sort_by(.mergedAt) | .[] | \"#\(.number)\t\(.mergedAt[:10])\t\(.title)\""
 git log "$FROM".."$TO" --first-parent --format='%h %s'
 ```
 
@@ -110,10 +113,10 @@ The closing section carries six numbers. Compute them; never estimate.
 ```bash
 git diff --shortstat "$FROM".."$TO"                      # files, +lines, -lines
 git rev-list --count --first-parent "$FROM".."$TO"      # commits on dev
-gh pr list --state merged --base dev --search "merged:>=${SINCE%%T*}" --json mergedAt \
-  --jq "[.[] | select(.mergedAt > \"$SINCE\")] | length"  # PRs merged
+gh pr list --state merged --base dev --search "merged:>=$SINCE_DAY" --limit 200 --json mergedAt \
+  --jq "[.[] | select((.mergedAt | fromdate) > $SINCE_TS)] | length"  # PRs merged
 git diff --stat "$FROM".."$TO" -- '*.test.mjs' 'test/' | tail -1   # test lines
-npm test 2>&1 | grep -E '^# (tests|pass|fail) '           # suite size, must be 0 fail
+npm test 2>&1 | grep -E '^ℹ (tests|pass|fail) '           # suite size, must be 0 fail
 ```
 
 Pick the six that tell the story (tests green, lines landed, PRs merged,

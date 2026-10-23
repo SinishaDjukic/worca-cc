@@ -96,7 +96,8 @@ level and has no **Diff**, **Changes** or **Actions**.
 - **Pause & resume, even across restarts** — **Pause** parks a run, and so does
   a cost cap or a failing step; only **Stop** ends one. **Resume** re-attaches
   the paused Claude sessions (`claude --resume`) in the same worktree,
-  uncommitted agent work included, or **Resume at…** schedules it. Paused runs
+  uncommitted agent work included, or **Resume at…** schedules it — at a time,
+  or after another run ends, so paused runs can resume one after another. Paused runs
   survive a server restart, and a run cut off mid-step comes back as
   *Interrupted*, resumable from its last clean point. A step that loses the
   network waits for it and retries by itself; a run parked by an outage resumes
@@ -124,7 +125,8 @@ level and has no **Diff**, **Changes** or **Actions**.
   (Advanced) lists deleted runs and restores them.
 - **One-click PRs** — a finished run's page offers **Create PR**:
   *Create pull request* shows the files and +/− lines, lets you write the description or
-  **Generate with AI**, open it as a draft and watch it, then pushes the branch
+  **Generate with AI** (Settings › Runs › **Pull requests** can draft it as soon as the
+  dialog opens), open it as a draft and watch it, then pushes the branch
   and opens the PR with the GitHub CLI (`gh`), or on
   [Azure DevOps](docs/azure-devops.md) with a personal access token. A run
   started from a GitHub issue closes it on merge, and a workspace run opens one
