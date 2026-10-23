@@ -1460,7 +1460,9 @@ test('Overview: an open PR row shows GitHub\'s verdict and the watch, words only
     await openDetail(ctx, ovHash); await settle(ctx.window);
     assert.equal(ovStatus(ctx.window).hidden, false);
     assert.match(ovPr(ctx.window).textContent, /^Pull request/);
-    assert.match(ovStatus(ctx.window).textContent, /Ready to merge·All 12 checks passed/);
+    // Two lines: the headline alone, then its notes with no separator in front.
+    assert.equal(ovStatus(ctx.window).querySelector('.rd-prs-sum > .rd-prs-lead').textContent, 'Ready to merge');
+    assert.equal(ovStatus(ctx.window).querySelector('.rd-prs-sum > .rd-prs-notes').firstElementChild.textContent, 'All 12 checks passed');
     if (label) assert.ok(ovStatus(ctx.window).textContent.includes(label), label);
     else assert.doesNotMatch(ovStatus(ctx.window).textContent, /Watching|Fixing|Needs a person|Disabled/);
     assert.equal(ovSwitch(ctx.window).querySelector('[role="switch"]').getAttribute('aria-checked'), pressed);

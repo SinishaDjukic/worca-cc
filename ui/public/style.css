@@ -5091,7 +5091,9 @@ button.rd-srow:hover{background:var(--hover-on-field);}
 .rd-pr-status[hidden]{display:none;}
 .rd-pr-status{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px;
   border-top:1px solid var(--blue-line);font-size:13px;color:var(--ink-2);}
-.rd-prs-sum{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-width:0;}
+.rd-prs-sum{display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:0;}
+.rd-prs-lead,.rd-prs-notes{display:flex;align-items:center;gap:6px;min-width:0;}
+.rd-prs-notes{flex-wrap:wrap;}
 .rd-prs-ico{flex:0 0 auto;}
 .rd-prs-sum .is-ok,.rd-prs-ico.is-ok{color:var(--green-ink);}
 .rd-prs-sum .is-run,.rd-prs-ico.is-run,.rd-prs-ico.is-wait{color:var(--amber-ink);}
