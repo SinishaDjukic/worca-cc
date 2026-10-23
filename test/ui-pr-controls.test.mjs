@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { ICONS } from '../ui/public/icons.mjs';
 import { syncActions } from '../ui/public/run-status-card.mjs';
+import { buildGroupPage } from '../ui/public/group-page.mjs';
 import { HEAD_ACTIONS, MENU_ACTIONS } from '../src/shared/run-model.mjs';
 
 const read = (p) => readFileSync(new URL(`../ui/public/${p}`, import.meta.url), 'utf8');
@@ -40,6 +41,14 @@ test('slice 3: the card head holds the head buttons with the one PR slot, then t
   }
   const live = page.getElementById('run-detail-tpl').content.querySelector('.rd-sheet-head > .rd-head-acts');
   assert.ok(live.previousElementSibling.matches('.rd-live-row'), 'the head buttons come after the Live view row');
+});
+
+test('one ship flow: the group page card has the run page head with exactly one PR slot', () => {
+  const root = buildGroupPage(doc());
+  assert.equal(root.querySelectorAll('.rd-pr-slot').length, 1);
+  const slot = root.querySelector('.gpage-card > .rd-sheet-head > .rd-head-acts > .rd-pr-slot');
+  assert.ok(slot, 'the slot is in the card head');
+  assert.ok(slot.hasAttribute('data-needs-git'), 'the slot hides with git off');
 });
 
 test('the head lays the buttons out after the live row, and under the status in a narrow card', () => {

@@ -202,6 +202,18 @@ test('kindLabel, member rows and ship lines for a feature group', () => {
   assert.equal(groupShipLine({ ...row, groupKind: 'user' }), '');
 });
 
+test('groupShipLine (one ship flow): a chain waits, then reads the merge order; stacked In review keeps it, One drops it', () => {
+  const done = { status: 'done', endReached: true };
+  const gh = (n) => ({ url: `https://github.com/o/r/pull/${n}`, number: n, state: 'OPEN' });
+  const mk = (members) => { const model = groupModel({ kind: 'chain', members });
+    return { groupKind: 'chain', model, members: model.members.map((m, i) => ({ position: i + 1, model: m })) }; };
+  assert.equal(groupShipLine(mk([done, { status: 'running' }])), 'Create PR comes when all 2 runs are done.');
+  assert.equal(groupShipLine(mk([done, done])), 'Merge in order 1 → 2, or ship as one PR');
+  assert.equal(groupShipLine(mk([{ ...done, pr: gh(1) }, done, done])), 'Merge in order 1 → 2 → 3', 'partly shipped: One is disabled, so not offered');
+  assert.equal(groupShipLine(mk([{ ...done, pr: gh(1) }, { ...done, pr: gh(2) }])), 'Merge in order 1 → 2');
+  assert.equal(groupShipLine(mk([{ ...done, pr: gh(3) }, { ...done, pr: gh(3) }])), '', 'shipped as One');
+});
+
 test('QA 3: the run page status text names the reason the chip gives', () => {
   const m = runModel({ status: 'done', pr: { url: 'https://github.com/o/r/pull/803', number: 803, state: 'OPEN', checks: { state: 'failing', total: 12, failed: 3, pending: 0 } } });
   assert.equal(statusText(m).text, 'Needs you · Checks failing · PR #803');

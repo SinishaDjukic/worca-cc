@@ -98,12 +98,14 @@ import { workModeOf, isGitRun, isFolderRun, isNoProjectRun, NO_PROJECT_KEY, proj
 import { changesCounts, filesWord, renderCountsNode, applyBarModel, paintApplyBar, runChangesUrl, openApplyDialog, discardChanges, CHANGE_SIGN, CHANGE_WORD } from './folder-changes.mjs';
 import { runProgress, progressWidth } from '../../src/shared/run-progress.mjs';
 import { DEFAULT_HOME_PINS, isPinned, pinWorkflow, unpinWorkflow } from '../../src/shared/home-pins.mjs';
-import { CREATE_PR_LABEL, CREATE_PR_FAILED, CREATING_PR, VIEW_PR_LABEL, VIEW_PRS_LABEL, createPrLabel, doneStatusWord } from './ship-words.mjs';
+import { CREATE_PR_LABEL, CREATE_PR_FAILED, CREATING_PR, PR_CREATED, VIEW_PR_LABEL, VIEW_PRS_LABEL, createPrLabel, doneStatusWord } from './ship-words.mjs';
 import { worktreeNoticeModel, worktreeRowState, retainedCommands, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome, checkoutRowValue, memberLabel } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
 import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, RECENT_PAGE, groupRow, memberPrsOf, prChip, memberCostUsd, whenLabel } from './runs-list.mjs';
 import { paintRunStatus, syncActions, pauseResumeOwn } from './run-status-card.mjs';
-import { buildGroupPage, paintGroupPage, runReceipts } from './group-page.mjs';
+import { buildGroupPage, paintGroupPage, runReceipts, groupPrList } from './group-page.mjs';
+import { paintGroupShip, resetGroupShip } from './ship-group-dialog.mjs';
+import { setShipDialogOpener, shipReason } from './shape/ship-card.mjs';
 import { runPositionLabel, groupKindWord, pageModel, runCrumbs, paintCrumbs, syncFacts } from './run-page-head.mjs';
 import { headModel, trackerModel, renderHeadButtons, renderTracker, prMenuItems, canResolvePr, showsFixConflicts, HD_PR_WATCH_ACTIVE,
   hdPrWatchLabel, WATCH_HELP, pushLabel, pushTip } from './run-head.mjs';
@@ -23538,6 +23540,7 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
   if (!modal) return false;
   if (!modal.classList.contains('hidden')) return false;  // double-open guard: a second open
                                                           // would stack a second onOk -> two POSTs
+  resetGroupShip(modal);                                  // one ship flow: a feature's or a chain's zone from the last open
   modal.dataset.pipelineId = String((record && record.id) || '');   // Chat P4: whose dialog this is (crpCloseShipItFor)
   // D22: a slice with a next slice says to merge this PR first. The first open usually finds the cache empty: the
   // answer fills the note, if the dialog still shows this run.
@@ -24044,9 +24047,190 @@ function paintWsMergePills(record, rows) {
 
 // The workspace Ship-it dialog. Its shell mirrors openShipItModal: the double-open
 // guard, shipItClose, the `closed` flag, backdrop/Escape.
+/** One ship flow (slice 2): Create PR for a Shaper feature or a Run-after chain. `view`: { kind, id, title, members,
+ *  suggested, hint, base, release, projectKey }. Posts to the feature or the chain ship route. It shares the
+ *  single-run dialog's helpers (setShipItLabel, guardModal, cardAlert, shipItWatchDefault); the per-open wiring
+ *  differs (no remotes, no Generate, no Try it first), so it is its own opener like openShipItWsModal. */
+function openShipItGroupModal(view, { opener = null, refocus = null } = {}) {
+  const modal = document.getElementById('shipit-modal');
+  if (!modal || !modal.classList.contains('hidden')) return false;
+  const q = (sel) => modal.querySelector(sel);
+  delete modal.dataset.pipelineId;                       // Chat P4's single-run owner check never matches a group
+  q('.shipit-into').hidden = false;
+  q('#shipit-into-label').textContent = 'Into';
+  q('.shipit-remotes').hidden = true;
+  q('.shipit-remotes-hint').textContent = '';
+  q('.shipit-base-wrap').hidden = true;
+  q('.shipit-basecheck').hidden = true;
+  modal._paintShipBase = null;
+  q('#shipit-repos').hidden = true;
+  q('.shipit-title-input').hidden = false;               // a workspace open hides it and relabels the zone
+  q('#shipit-pr-label').textContent = 'Title and description';
+  const closes = q('.shipit-closes'); closes.hidden = true; closes.textContent = '';
+  const baseWarn = q('#shipit-base-warn'); if (baseWarn) { baseWarn.hidden = true; baseWarn.textContent = ''; }
+  const tryBox = q('.shipit-try'); tryBox.hidden = true; tryBox.replaceChildren();
+  const tryBtn = q('.shipit-try-btn'); tryBtn.hidden = true; tryBtn.onclick = null;   // Try it first is single-run only
+  resetShipItDesc(modal);
+  q('.shipit-title-input').value = '';
+  q('.shipit-draft-input').checked = false;
+  const paintBase = (mode) => { q('.shipit-base').textContent = mode === 'one' ? view.base : `${view.base}, then each run's branch`; };
+  const ctl = paintGroupShip(modal, { ...view, onMode: paintBase }, { setLabel: (l) => setShipItLabel(modal, l) });
+  const relSlot = q('.shipit-release');
+  relSlot.replaceChildren();
+  modal._releaseRow = null;
+  if (view.kind === 'feature') { modal._releaseRow = renderReleaseRow(document, view.release || null); relSlot.append(modal._releaseRow.el); }
+  relSlot.hidden = view.kind !== 'feature';
+  const watchIn = q('.shipit-watch-input');
+  watchIn.checked = false;
+  let watchTouched = false;
+  watchIn.onchange = () => { watchTouched = true; };
+  const card = q('.shipit-actions').parentElement;
+  cardAlert(card, null);
+  const okBtn = q('.shipit-ok');
+  const cancelBtn = q('.shipit-cancel');
+  okBtn.disabled = false;
+  cancelBtn.disabled = false;                            // a previous open may have parked it mid-POST
+  modal.classList.remove('hidden');
+  ctl.first().focus();
+  let closed = false;
+  let posting = false;
+  // D20: `shipped` — focus goes to the repainted control (refocus, after the reload); otherwise back to the opener.
+  const done = (shipped = false) => {
+    if (closed) return;
+    closed = true;
+    modal.classList.add('hidden');
+    resetGroupShip(modal);
+    if (shipItClose === done) shipItClose = null;
+    okBtn.removeEventListener('click', onOk);
+    cancelBtn.removeEventListener('click', onCancel);
+    if (shipped !== true) {
+      const back = opener && opener.isConnected ? opener : null;
+      if (back) back.focus(); else if (refocus) refocus();
+    }
+  };
+  shipItClose = done;
+  const guard = guardModal(modal, { kind: 'form', close: () => done(false), busy: () => posting });
+  guard.opened();
+  shipItWatchDefault(view.projectKey).then((on) => { if (on && !closed && !watchTouched) { watchIn.checked = true; if (!guard.touched) guard.markClean(); } });
+  const onCancel = () => guard.cancel();
+  const onOk = async () => {
+    const rel = modal._releaseRow ? modal._releaseRow.check() : { ok: true, value: null };
+    if (!rel.ok) return;
+    const mode = ctl.mode();
+    const title = q('.shipit-title-input').value.trim();
+    const desc = q('.shipit-desc-input').value.trim();
+    const payload = { mode, ...(watchIn.checked ? { watch: true } : {}) };
+    if (view.kind === 'feature' && rel.value) payload.release = rel.value;
+    if (view.kind === 'chain' && mode === 'one') Object.assign(payload, title ? { title } : {}, desc ? { body: desc } : {},
+      q('.shipit-draft-input').checked ? { draft: true } : {});
+    const url = view.kind === 'feature' ? `/api/shape/features/${encodeURIComponent(view.id)}/ship` : `/api/chains/${encodeURIComponent(view.id)}/ship`;
+    posting = true;
+    okBtn.disabled = true;
+    setCtaContent(okBtn, 'pr-create', CREATING_PR);
+    cardAlert(card, null);
+    try {
+      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const out = await safeJson(res);
+      if (!res.ok) throw Object.assign(new Error((out && out.error) || `HTTP ${res.status}`), { prs: out && out.prs });
+      posting = false;
+      done(true);
+      notify({ tone: 'ok', title: PR_CREATED });
+      // D20: repaint first, then focus the control that replaced Create PR (never leave focus on <body>).
+      await Promise.all([loadRunGroups(), schedulesView.load()]).catch(() => {});
+      paintGroupPageNow();
+      if (refocus) refocus();
+    } catch (e) {
+      posting = false;
+      if (closed) return;
+      okBtn.disabled = false;
+      // D21: PRs the server made before failing count as made, so N, One and the labels match a retry.
+      if (Array.isArray(e.prs) && e.prs.length) ctl.markCreated(e.prs.length);
+      else setShipItLabel(modal, createPrLabel(ctl.count()));
+      cardAlert(card, { tone: 'err', title: CREATE_PR_FAILED, detail: e.message });
+      okBtn.focus();
+    }
+  };
+  okBtn.addEventListener('click', onOk);
+  cancelBtn.addEventListener('click', onCancel);
+  return true;
+}
+/** The chain root for a group's dialog (D19): GET /api/pr/remotes for its last member, as the single-run dialog reads it. */
+async function groupShipBase(pipelineId, projectKey) {
+  const res = await fetch(`/api/pr/remotes?${new URLSearchParams({ id: pipelineId, ...(projectKey ? { projectKey } : {}) })}`);
+  const rem = await safeJson(res);
+  const base = rem && ((Array.isArray(rem.chain) && rem.chain[0]) || rem.defaultBase);
+  if (!base) throw new Error((rem && rem.error) || `HTTP ${res.status}`);
+  return base;
+}
+/** D20: after a group page ship, focus the slot's control, else the status line. */
+function focusGroupHead() {
+  const card = document.querySelector('#group-detail .gpage-card');
+  if (!card) return;
+  const slot = card.querySelector('.rd-pr-slot');
+  const ctl = slot && !slot.hidden ? slot.querySelector('button, a') : null;
+  const target = ctl || card.querySelector('.run-status');
+  if (!target) return;
+  if (!ctl) target.setAttribute('tabindex', '-1');
+  target.focus({ preventScroll: true });
+}
+/** D20: after a Ship card ship, focus the card (it repaints as shipped), else its re-rendered copy. */
+const shipCardRefocus = (featureId, card) => () => {
+  const at = card && card.isConnected ? card
+    : [...document.querySelectorAll('[data-ship-feature]')].find((n) => n.dataset.shipFeature === featureId);
+  if (!at) return;
+  const ctl = at.querySelector('a, button:not([disabled])');
+  if (!ctl) at.setAttribute('tabindex', '-1');
+  (ctl || at).focus({ preventScroll: true });
+};
+/** The feature's dialog view, from GET /api/shape/features/:id (ship.suggested / linesAdded / hint). */
+async function openFeatureShip(featureId, { opener = null, card = null } = {}) {
+  const res = await fetch(`/api/shape/features/${encodeURIComponent(featureId)}`);
+  const f = await safeJson(res);
+  if (!res.ok || !f || !Array.isArray(f.slices) || !f.slices.length) throw new Error((f && f.error) || `HTTP ${res.status}`);
+  const base = await groupShipBase(f.slices[f.slices.length - 1].pipelineId, f.projectKey);
+  openShipItGroupModal({ kind: 'feature', id: f.id, title: f.title, projectKey: f.projectKey, base,
+    members: f.slices.map((s) => ({ position: s.index, pr: s.pr || null })), suggested: f.ship && f.ship.suggested,
+    hint: shipReason(f.ship && f.ship.suggested, f.ship && f.ship.linesAdded), release: (f.ship && f.ship.hint) || null },
+    { opener, refocus: card ? shipCardRefocus(f.id, card) : focusGroupHead });
+}
+async function openChainShip(row, { opener = null } = {}) {
+  const last = row.members[row.members.length - 1];
+  const projectKey = last.projectKey || row.members[0].projectKey || '';
+  const base = await groupShipBase(last.pipelineId, projectKey);
+  openShipItGroupModal({ kind: 'chain', id: row.groupId, title: row.title, projectKey, base,
+    members: row.members.map((mb) => { const pr = mb.model && mb.model.pr;
+      return { position: mb.position, stacks: mb.stacks, pr: pr && pr.url ? { url: pr.url, state: pr.id === 'closed' ? 'CLOSED' : 'OPEN' } : null }; }) },
+    { opener, refocus: focusGroupHead });
+}
+/** Create PR on a feature's or a chain's status line (D19, D20): the slot's Create PR shows `pending`, a head button
+ *  (a partly shipped group) goes disabled + aria-busy, until the dialog is open; an error notice on failure. */
+let groupShipLoading = false;                             // a double click while the dialog loads opens one dialog
+async function groupShip(row, slot, btn = null) {
+  if (groupShipLoading) return;
+  groupShipLoading = true;
+  const viaSlot = !btn && !!slot && slot.dataset.state === 'create';
+  if (viaSlot) paintPrCta(slot, { state: 'pending' });
+  if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); }
+  // Where Cancel returns focus: the head button, else the slot's Create PR as the repaint rebuilds it.
+  const opener = btn || { isConnected: true, focus: () => { const c = slot && slot.querySelector('button'); if (c) c.focus(); } };
+  try {
+    if (row.groupKind === 'feature') await openFeatureShip(row.groupId, { opener });
+    else await openChainShip(row, { opener });
+  } catch (e) {
+    notify({ tone: 'err', title: CREATE_PR_FAILED, detail: e.message });
+  } finally {
+    groupShipLoading = false;
+    if (btn) { btn.disabled = false; btn.removeAttribute('aria-busy'); }
+    if (viaSlot) paintGroupPageNow();                     // the next paint restores the control
+  }
+}
+// Every boot re-registers (the last boot wins). The Ship card passes its button and its card (D20).
+setShipDialogOpener((featureId, { opener = null, card = null } = {}) => openFeatureShip(featureId, { opener, card }));
+
 function openShipItWsModal(record, data, { link = null, onClose = null } = {}) {
   const modal = document.getElementById('shipit-modal');
   if (!modal || !modal.classList.contains('hidden')) return false;
+  resetGroupShip(modal);                                  // one ship flow: a feature's or a chain's zone from the last open
   const q = (sel) => modal.querySelector(sel);
   // s4: Watch PR starts unchecked and turns on when the project's setting answers true (below, after the guard).
   // A pick the user makes first wins.
@@ -32394,7 +32578,8 @@ function memberRun(m) {
   const h = histOf(m.pipelineId);
   // Runs redesign slice 4 (D24): a member's round / Watch PR facts pass through untouched; the run model words them.
   const facts = { round: m.round || (h && h.round) || null, watch: m.watch || (h && h.watch) || null };
-  if (h) return { status: h.status, pauseReason: h.pauseReason, pr: runPrFor(h, m.pr), ...(h.inBase ? { inBase: h.inBase } : {}), ...facts };
+  // A chain member carries its PR as `prUrl` (a shared One PR before History has it), a run-groups member as `pr`.
+  if (h) return { status: h.status, pauseReason: h.pauseReason, pr: runPrFor(h, m.pr || (m.prUrl ? { url: m.prUrl } : null)), ...(h.inBase ? { inBase: h.inBase } : {}), ...facts };
   if (m.status) return { status: m.status, pr: runPrFor(null, m.pr), ...facts };
   return { status: CHAIN_MEMBER_STATUS[m.state] || 'stopped', pr: runPrFor(null, m.prUrl ? { url: m.prUrl } : null), ...facts };
 }
@@ -32422,6 +32607,8 @@ function runsGroupItem({ id, groupKind, title, members, cost = null, planning = 
     const href = r ? `#running/${r.runId}` : m.pipelineId && pk ? `#history/${pk}/${m.pipelineId}`
       : groupKind === 'feature' ? `#feature/${encodeURIComponent(id)}` : m.ticketId ? '#schedules/once' : '#runs';
     return { position: m.position || i + 1, title: m.title, adhoc: !!m.adhoc, href, pipelineId: m.pipelineId || (r && r.pipelineId) || null,
+      projectKey: m.projectKey || pk || null,   // one ship flow: the chain dialog's GET /api/pr/remotes
+      stacks: m.stacks,                         // one ship flow: a chain run started from the previous run's branch
       ticketId: m.ticketId || null, runId: r ? r.runId : '', kind: r ? 'live' : m.pipelineId ? 'hist' : 'sched', run,
       memo: memoFor(m.pipelineId || m.ticketId || `${id}:${i}`),
       startedAt: (r && r.startedAt) || (h && h.startedAt) || null,       // D12: the group's dispatch time
@@ -32559,7 +32746,7 @@ function paintGroupPageNow() {
     // "Gone" only after every source has answered: a frame while the replaced-id lookup or the chains load is in
     // flight must not flash "no longer exists".
     if (GROUP_PAGE.gone || (state.runGroupsLoaded && !GROUP_PAGE.resolving)) {
-      // runChains lists a chain only while a member is current or waiting; its id is the root's key (p:… / t:…).
+      // runChains lists a chain while a member is current or waiting, or (D8) until its PRs end; its id is the root's key.
       const chain = route === 'group' && /^[pt]:/.test(id);
       const gone = groupMessage(host, 'feature-page-gone', route === 'feature' ? 'This feature no longer exists.'
         : chain ? 'This chain has finished. Its runs are in the Runs list.' : 'This group no longer exists.');
@@ -32585,6 +32772,16 @@ function paintGroupPageNow() {
   paintGroupPage(host.__gp, { row, project: row.groupName || '', tab, overview: row.groupKind === 'feature' && shapeFirstOn(), logs: levelAtLeast('expert'), labels }, {
     onAction: (aid, b) => groupAction(row, aid, b),
     onMore: (anchor) => openGroupMoreMenu(anchor, row),
+    // One ship flow (D11): Create PR / View PR ▾ / View PRs ▾ on the status line; a user group (slice 3) keeps its bar.
+    ...(row.groupKind === 'feature' || row.groupKind === 'chain' ? { paintHead: (acts, slot, head) => {
+      // D20: a late repaint (drafts closed, PRs readied) rebuilds the control under focus: keep focus on the head.
+      const inHead = (n) => !!n && (acts.contains(n) || slot.contains(n));
+      const had = inHead(document.activeElement);
+      paintPrCta(slot, { ...(head.cta || { state: 'none' }), onClick: () => groupAction(row, 'ship', null) });
+      slot._prMenu = (anchor) => openGroupPrMenu(row, anchor);
+      renderHeadButtons(acts, head, slot, { onHead: (id, b) => (id === 'ship' ? groupAction(row, 'ship', b) : undefined) });
+      if (had && !inHead(document.activeElement)) focusGroupHead();
+    } } : {}),
     labelChip: (d, l) => labelChip(d, l, {}),
     onTab: (t) => { location.hash = t === 'runs' ? base : `${base}/${t}`; },
     mountQuestion: (slot, mb) => paintGroupQuestion(slot, mb),
@@ -32644,15 +32841,14 @@ function groupAction(row, id, btn) {
   switch (id) {
     case 'stop': case 'archive': return runBulkAction(id, [rowTarget(row)]);
     case 'ship': {
-      if (row.groupKind === 'feature' && shapeFirstOn()) {
-        // The Shaper's "Ship as" lives on Overview. Already there: no hashchange would fire, so bring it into view.
-        const want = `${groupHref(row)}/overview`;
-        if (location.hash !== want) location.hash = want;
-        else { const o = document.querySelector('.gpage .gpage-overview'); if (o) o.scrollIntoView({ block: 'start' }); }
-        return undefined;
+      // One ship flow: a feature (Shaper on) and a chain ship through the group Create PR dialog.
+      if ((row.groupKind === 'feature' && shapeFirstOn()) || row.groupKind === 'chain') {
+        // The slot's own Create PR passes no button; a head button (a partly shipped group) passes itself.
+        const slot = document.querySelector('#group-detail .gpage-card .rd-pr-slot');
+        return groupShip(row, slot, btn && btn.dataset && btn.dataset.head === 'ship' ? btn : null);
       }
-      // A user group, a chain, or a feature with the Shaper flag off has no group ship flow: each run ships on its
-      // own, so Ship opens Ship it for the first ready member.
+      // A user group (slice 3) or a feature with the Shaper off: each run ships on its own, so Create PR opens the
+      // single-run dialog for the first ready member.
       const next = row.members.find((mb) => mb.model && mb.model.state === 'ready') || null;
       return next ? runAction({ runId: next.runId || null, pipelineId: next.pipelineId || null, title: next.title }, 'ship', btn, next.model) : undefined;
     }
@@ -35554,6 +35750,30 @@ async function resolvePrFlow(btn, scope, feed) {
   prStatusCache.set(k, next);
   if (btn && btn.isConnected) btn.disabled = false;
   if (feed && feed.dataset.key === k) renderPrHost(feed, scope, next);
+}
+/** One ship flow (D12): a group's View PR ▾ / View PRs ▾ menu, prMenuItems' words; several PRs add Watch PRs and
+ *  Copy PR links. */
+function openGroupPrMenu(row, anchor) {
+  const prs = groupPrList(row).map((p) => ({ ...p, watch: null,
+    scope: { id: p.pipelineId, projectKey: (row.members.find((mb) => mb.pipelineId === p.pipelineId) || {}).projectKey || '' } }));
+  const many = prs.length > 1;
+  toggleMenu({ doc: document, anchor, host: anchor.closest('.btn-split'), className: 'btn-split-menu rd-pr-menu', label: 'Pull request',
+    items: prMenuItems(prs, { level: currentLevel(),
+      onWatch: (p, b) => togglePrWatch(b, p.scope, null),
+      onCopy: (p) => copyPrLink(p.url),
+      onOpen: (p) => window.open(p.url, '_blank', 'noopener'),
+      onResolve: (p) => resolvePrFlow(anchor, p.scope, null),
+      ...(many ? {
+        onWatchAll: async (open) => {
+          const rs = await Promise.all(open.map((p) => fetch('/api/pr/watch', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...prScopeBody(p.scope), watch: true }) }).catch(() => null)));
+          notify(rs.every((r) => r && r.ok) ? { tone: 'ok', title: 'Watching every PR' } : { tone: 'err', title: 'Could not watch every PR' });
+        },
+        onCopyAll: async (all) => {
+          try { await navigator.clipboard.writeText(all.map((p) => p.url).join('\n')); notify({ tone: 'ok', title: 'PR links copied' }); }
+          catch { notify({ tone: 'err', title: 'Could not copy the links' }); }
+        },
+      } : {}) }) });
 }
 async function copyPrLink(url) {
   try { await navigator.clipboard.writeText(url); notify({ tone: 'ok', title: 'PR link copied' }); }

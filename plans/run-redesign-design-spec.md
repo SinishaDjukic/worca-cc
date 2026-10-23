@@ -287,6 +287,8 @@ Built on Shaper's existing Ship as (`featureView().ship`, `featureShipSuggestion
 - **Ready:** a **Ship** card in the group's thread and on the group page. Body: `N runs · files · +added −deleted`, then
   the existing reason ("This feature adds 1,186 lines: one PR is easier to review."). Actions: `Not now` · `Stacked
   PRs` · `Ship as one PR`; the suggested mode is the primary, one click ships (as today, no radios, no Cancel).
+  Superseded by the one ship flow (`docs/design-system.md`, "PR controls"): the card's buttons are replaced by one
+  Create PR that opens the Create PR dialog, where One / N stacked is picked.
 - **After:** the card turns applied: "Shipped as one PR", `View pull request`, and the closed drafts.
 - **Release (new, optional):** collapsed to `+ Add a release`. Expanded: `Release v1.12.0 · draft after merge · Edit`,
   with the source under it ("After tag v1.11.0 · minor · notes from the N runs"). Version from the last git tag, else

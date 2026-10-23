@@ -140,6 +140,16 @@ test('enrichPipelinesPr batches {projectKey,id,pr} with a final done; one empty 
       assert.equal(it.pr.url, 'https://gh/x/pull/8');
       assert.equal(readPrState(id), null, 'pr_url keeps naming an open or merged PR only');
     } },
+    { name: 'enrichPipelinesPr records the recorded PR itself closing, so it stops counting as open', run: async () => {
+      gitInfo.reset();
+      const { enrichPipelinesPr, readPrState, persistPrState } = await import('../src/core/artifacts.mjs');
+      const id = await seed();
+      persistPrState(id, { url: 'https://gh/x/pull/9', number: 9, state: 'OPEN' });
+      stubGh({ state: 'CLOSED', url: 'https://gh/x/pull/9', number: 9 });
+      await enrichPipelinesPr(() => {});
+      assert.equal(readPrState(id).state, 'CLOSED');
+      assert.equal(readPrState(id).url, 'https://gh/x/pull/9');
+    } },
     { name: 'enrichPipelinesPr with gh unavailable emits exactly one empty final batch', run: async () => {
       gitInfo.reset(); // the beforeEach this row had as its own test
       const { enrichPipelinesPr } = await import('../src/core/artifacts.mjs');

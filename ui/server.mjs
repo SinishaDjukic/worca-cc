@@ -1696,7 +1696,7 @@ const GIT_ONLY_ROUTES = Object.freeze([
   ['post', '/api/runs/:id/checkout'], ['delete', '/api/runs/:id/checkout'], ['get', '/api/runs/:id/checkout/diff'],
   ['post', '/api/projects/:key/actions/:actionId/try'],
   ['get', '/api/pr/remotes'], ['post', '/api/pr'], ['post', '/api/pr/resolve'], ['post', '/api/runs/:id/publish'],
-  ['post', '/api/push'], ['post', '/api/shape/features/:id/ship'],
+  ['post', '/api/push'], ['post', '/api/shape/features/:id/ship'], ['post', '/api/chains/:id/ship'],
   ['post', '/api/sync'], ['post', '/api/projects/:key/sync'], ['post', '/api/sync/all'], ['post', '/api/workspaces/:id/sync'],
   ['post', '/api/runs/:id/base-check'], ['post', '/api/runs/:id/update-branch'],
   ['post', '/api/runs/:id/resolve-pipeline'], ['post', '/api/runs/:id/resolve-terminal'],
@@ -3778,23 +3778,22 @@ function withChainFeatures(chains) {
 // fetched on `done` predates it, and a chained run waits on it (pipelineGate answers `waiting` until then).
 // orch.run()/orch.resume() settle only after teardown, so refresh both then. Best effort: never the run's outcome.
 const ranMergeBack = (st) => !!st && [st.branch, ...Object.values(st.branches || {})].some((b) => b && b.mergeBack);
-// D24: a slice that settled done opens its draft PR here, after teardown committed the run's work (`done` fires
-// before teardown). First, so it runs whether or not the run merged back. Returns the draft promise (the test awaits it).
+// One ship flow: a settled slice opens no PR of its own (the feature ships through Create PR); a done slice offers the
+// Ship card here, after teardown (`done` fires before teardown). Returns the card's promise (the test awaits it).
 function afterRunSettled(orch) {
-  let draft;
+  let card;
   try {
     const st = orch.getState?.();
+    // The Ship card is offered once the last slice is done (offerShipCard checks, and is gated on shapeFirst).
     if (orch.runShape?.slice && st?.status === 'done' && st.id) {
-      // s4: the draft first, then the Ship card (it needs the last slice's PR for "View PR").
-      draft = openSliceDraft(st.id).catch((err) => console.error(`[worca-ui] slice draft PR failed: ${err?.message || err}`))
-        .then(() => offerShipCard(st.id))
+      card = Promise.resolve().then(() => offerShipCard(st.id))
         .catch((err) => console.error(`[worca-ui] ship card failed: ${err?.message || err}`));
     }
-    if (!ranMergeBack(st)) return draft;
+    if (!ranMergeBack(st)) return card;
     emitChanged('pipelines-changed', 'updated');
     setTimeout(() => { void schedulerTick(); }, 0);
   } catch { /* a refresh hint only */ }
-  return draft;
+  return card;
 }
 
 let _schedulerBusy = false;
@@ -3954,7 +3953,7 @@ app.get('/api/schedules', (req, res) => {
       schedules: listSchedules({ projectDir, workspaceId }).map(schedulePresetName),
       tickets: listTickets({ projectDir, workspaceId, all }).map(withAfter).map(ticketPresetName),
       // Run progress (P8): every open "Run after" chain, unscoped (a chain may cross projects).
-      chains: withChainFeatures(runChains({ isLive: liveProbe })),
+      chains: withChainFeatures(runChains({ isLive: liveProbe, keepDone: true })),
       counts: { ...scheduleCounts(), unread: unreadCount('schedule', { reader: notifReader(req) }) },
       defaults: scheduleDefaults(),
     });
@@ -4913,9 +4912,17 @@ async function refreshSliceBody(prUrl, pid, repoDir) {
   return editPrBody({ projectDir: repoDir, prUrl, body: [fresh, ...lines.slice(end)].join('\n') });
 }
 const SHIPPING = new Set();     // feature ids with a Ship as in flight (ship_mode is written only at the end)
+/** One ship flow: a PR a ship opened or marked ready is stored as an open, ready PR at once, so the group page and its
+ *  Runs row stop reading Draft (or Ready to ship) before the next PR lookup. persistPrState keeps an old verdict
+ *  unless it is given one; a different PR (a closed draft's row taking the one PR) starts from a fresh verdict. */
+function storeReadyPr(pid, pr) {
+  const cur = readPrState(pid);
+  const { fixing, url, number, state, ...verdict } = cur && cur.url === pr.url ? cur : {};
+  persistPrState(pid, { url: pr.url, number: pr.number ?? number ?? null, state: 'OPEN', verdict: { ...verdict, draft: false } });
+}
 // Shaper s4: one ship path for the group page route and the Ship card. → { status, body }. `release` = { version } |
 // null (validated by the caller).
-async function shipFeatureNow(id, mode, { actor = null, release = null } = {}) {
+async function shipFeatureNow(id, mode, { actor = null, release = null, watch = false } = {}) {
   if (!SHIP_MODES.includes(mode)) return { status: 400, body: { error: 'mode must be stacked or one' } };
   if (SHIPPING.has(id)) return { status: 409, body: { error: 'this feature is already shipping' } };
   const view = featureView(id, { live: liveSliceOf });
@@ -4929,16 +4936,27 @@ async function shipFeatureNow(id, mode, { actor = null, release = null } = {}) {
   if (!view.ship.ready) return { status: 409, body: { error: 'every slice must be done before the feature ships' } };
   SHIPPING.add(id);
   try {
-    // A slice whose draft never opened (a CLI-started run, or the auto draft failed at the time) gets its PR now,
-    // the same way; a failure stays visible as shipFeature's "slice K has no pull request yet".
+    // One ship flow: stacked gives each slice without a PR its own, ready, on its stacked base, in merge order;
+    // One makes no slice PRs (shipFeature closes only those that exist, e.g. an in-flight feature's drafts).
     let shown = view;
-    if (shown.slices.some((s) => s.pipelineId && !s.pr)) {
-      for (const s of shown.slices) if (s.pipelineId && !s.pr) await openSliceDraft(s.pipelineId);
+    // D5: One closes slice drafts only; a ready slice PR (made by a partly finished stacked ship) is never closed.
+    if (mode === 'one' && shown.slices.some((s) => s.pr && s.pr.url && s.pr.state !== 'CLOSED' && !s.pr.draft)) {
+      return { status: 409, body: { error: 'a run in this feature already has a PR: create one PR per run' } };
+    }
+    if (mode === 'stacked' && shown.slices.some((s) => s.pipelineId && !s.pr)) {
+      const made = [];
+      for (const s of shown.slices) {
+        if (!s.pipelineId || s.pr) continue;
+        const r = await openMemberPr(s.pipelineId, { actor });
+        if (!r.ok) return { status: r.status || 500, body: { error: `could not create run ${s.index}'s PR: ${r.error}. Create PR again to continue.`, prs: made } };
+        made.push(r.pr.url);
+      }
       shown = featureView(id, { live: liveSliceOf }) || view;
     }
     const input = await featureShipInput(shown);
     const ctx = shipCtxOf(shown);
     if (ctx.error) return { status: 409, body: { error: ctx.error } };
+    let onePr = null;
     const out = await shipFeature({ feature: input, mode, maxBody: PR_BODY_MAX - 2000 }, {
       commitChangelog: (pid, update) => commitFileOnBranch(ctx.target.repoDir, {
         branch: ctx.target.feature, path: 'CHANGELOG.md', update, message: `Changelog: ${view.title}` }),
@@ -4951,6 +4969,7 @@ async function shipFeatureNow(id, mode, { actor = null, release = null } = {}) {
       openOnePr: async ({ pipelineId, title, body }) => {
         const r = await createRunPr({ id: pipelineId, state: ctx.state, target: ctx.target, base: ctx.base,
           description: body, title, actor, preamble: false });
+        if (r.ok) onePr = r.pr;
         return r.ok ? { ok: true, url: r.pr.url, existed: !!r.pr.existed } : { ok: false, error: r.error };
       },
       adoptOnePr: async ({ url, body }) => {
@@ -4959,7 +4978,12 @@ async function shipFeatureNow(id, mode, { actor = null, release = null } = {}) {
         if (forgeOfPrUrl(url) !== 'azure') await editPrBody({ projectDir: ctx.target.repoDir, prUrl: url, body }).catch(() => null);
         return { ok: true };
       },
-      markReady: (prUrl) => markPrReady({ prUrl }),
+      markReady: async (prUrl) => {
+        const r = await markPrReady({ prUrl });
+        const s = r.ok ? shown.slices.find((x) => x.pipelineId && x.pr && x.pr.url === prUrl) : null;
+        if (s) storeReadyPr(s.pipelineId, { url: prUrl });
+        return r;
+      },
       close: async (prUrl, comment, pid) => {
         const r = await closePr({ prUrl, comment });
         if (r.ok) { const pr = readPrState(pid); if (pr && pr.url === prUrl) persistPrState(pid, { ...pr, state: 'CLOSED' }); }
@@ -4968,22 +4992,115 @@ async function shipFeatureNow(id, mode, { actor = null, release = null } = {}) {
       refreshBody: (prUrl, pid) => refreshSliceBody(prUrl, pid, ctx.target.repoDir),
     });
     if (!out.ok) return { status: out.status, body: { error: out.error } };
+    // The one PR is every slice's PR, as a chain shipped as One records it on every run: the group reads In review.
+    if (out.mode === 'one' && out.prUrl) {
+      for (const s of shown.slices) if (s.pipelineId) storeReadyPr(s.pipelineId, { url: out.prUrl, number: onePr && onePr.url === out.prUrl ? onePr.number : null });
+    }
     recordShip(id, { mode: out.mode, prUrl: out.prUrl, closed: out.closed, release: release ? { version: release.version, target: ctx.base } : null });
     appendAuditById(ctx.state.id, `Feature shipped as ${out.mode === 'one' ? 'one PR' : 'stacked PRs'}${byActor(actor)}${out.prUrl ? `: ${out.prUrl}` : ''}`
       + `${release ? ` · draft release ${release.version} after merge` : ''}`, { actor });
     broadcastFeature(id);
     syncShipCard(id);
+    emitChanged('pipelines-changed', 'updated');      // the Runs list and the group page reload History and run groups
+    if (watch) {
+      const after = featureView(id, { live: liveSliceOf }) || shown;   // the slice PRs now marked ready
+      const pairs = out.prUrl ? [[out.prUrl, ctx.state.id]] : after.slices.filter((s) => s.pr && s.pr.url).map((s) => [s.pr.url, s.pipelineId]);
+      await watchShipped(pairs, ctx.target.repoDir, actor);
+    }
     return { status: 200, body: { ok: true, mode: out.mode, prUrl: out.prUrl, warnings: out.warnings } };
   } finally { SHIPPING.delete(id); }
+}
+/** Watch PR for each shipped PR (D18): the push remote the PR came from, as POST /api/pr does. Best effort. */
+async function watchShipped(pairs, repoDir, actor) {
+  const picked = await pickPrRemotes({}, repoDir).catch(() => ({}));
+  for (const [prUrl, pipelineId] of pairs) {
+    try { setWatch({ prUrl, pipelineId, memberKey: '', pushRemote: picked.pushRemote || 'origin', enabled: true, enabledBy: actor }); }
+    catch (err) { console.error(`[worca-ui] watch after ship failed: ${err?.message || err}`); }
+  }
 }
 app.post('/api/shape/features/:id/ship', async (req, res) => {
   if (!requireShapeFirst(req, res)) return;
   try {
-    const rel = parseReleaseChoice(req.body && req.body.release);
+    const b = req.body || {};
+    if (!(b.watch === undefined || typeof b.watch === 'boolean')) return badRequest(res, 'watch must be a boolean');
+    const rel = parseReleaseChoice(b.release);
     if (rel.error) return badRequest(res, rel.error);
-    const r = await shipFeatureNow(String(req.params.id), req.body && req.body.mode, { actor: actorOf(req), release: rel.value });
+    const r = await shipFeatureNow(String(req.params.id), b.mode, { actor: actorOf(req), release: rel.value, watch: b.watch === true });
     res.status(r.status).json(r.body);
   } catch (err) { if (!res.headersSent) shapeRouteError(res, err); }
+});
+
+// ── One ship flow (slice 2): a Run-after chain ships through Create PR ───────────────────────────────────────────
+const CHAIN_SHIPPING = new Set();   // chain ids with a ship in flight
+const NO_PR_HOST = 'No pull request host is available: install the GitHub CLI (gh), or set WORCA_ADO_TOKEN for Azure DevOps';
+const livePr = (pid) => { const pr = readPrState(pid); return !!(pr && pr.url && pr.state !== 'CLOSED'); };
+/** One ship flow (D6, D7): a Run-after chain ships as one PR per run (stacked) or one PR from its last run. → { status, body } */
+async function shipChainNow(chainId, mode, { actor = null, title = null, body = '', draft = false, watch = false } = {}) {
+  if (!SHIP_MODES.includes(mode)) return { status: 400, body: { error: 'mode must be stacked or one' } };
+  const chain = runChains({ keepDone: 'all' }).find((c) => c.id === chainId);
+  if (!chain) return { status: 404, body: { error: 'unknown chain' } };
+  if (!chain.members.every((m) => m.state === 'done' && m.pipelineId)) return { status: 409, body: { error: 'every run in the chain must be done before it ships' } };
+  const todo = chain.members.filter((m) => !livePr(m.pipelineId));
+  if (!todo.length) return { status: 409, body: { error: 'every run in the chain already has a PR' } };
+  // Before any PR: a run with no branch of its own (a workspace or Folder run) would stop the ship part-way.
+  const lost = todo.findIndex((m) => !m.canPr);
+  if (lost >= 0) return { status: 409, body: { error: `run ${chain.members.indexOf(todo[lost]) + 1} has no branch to ship: create its PR from its own page` } };
+  if (mode === 'one') {
+    if (todo.length !== chain.members.length) return { status: 409, body: { error: 'a run in this chain already has a PR: create one PR per run' } };
+    if (chain.members.some((m, i) => i > 0 && m.after !== i)) return { status: 409, body: { error: 'a chain that forks ships as one PR per run' } };
+    // One is the last run's branch: it holds every run's work only when each run started from the one before it.
+    if (chain.members.some((m, i) => i > 0 && (!m.stacks || m.projectKey !== chain.members[0].projectKey))) {
+      return { status: 409, body: { error: "a run in this chain does not start from the previous run's branch: create one PR per run" } };
+    }
+  }
+  if (!(await anyPrHost())) return { status: 409, body: { error: NO_PR_HOST } };
+  if (CHAIN_SHIPPING.has(chainId)) return { status: 409, body: { error: 'this chain is already shipping' } };
+  CHAIN_SHIPPING.add(chainId);
+  try {
+    const opened = [];
+    if (mode === 'stacked') {
+      for (const m of todo) {                           // chain order = merge order: each base is the run before it
+        const r = await openMemberPr(m.pipelineId, { actor });
+        if (!r.ok) return { status: r.status || 500, body: { error: `could not create run ${chain.members.indexOf(m) + 1}'s PR: ${r.error}. Create PR again to continue.`, prs: opened.map((p) => p.url) } };
+        opened.push({ url: r.pr.url, pipelineId: m.pipelineId, pushRemote: r.pushRemote || 'origin' });
+      }
+    } else {
+      const last = chain.members[chain.members.length - 1];
+      const state = readPipelineStateById(last.pipelineId);
+      const target = state ? prTargetFor(state) : { error: 'the last run has no state' };
+      if (target.error || !target.repoDir || !target.feature) return { status: 409, body: { error: target.error || 'the last run has no branch to ship' } };
+      const base = chainRootFor(last.pipelineId, target);
+      if (!base) return { status: 409, body: { error: 'the chain has no base branch' } };
+      const r = await createRunPr({ id: last.pipelineId, state, target, base, title, description: body, draft, actor, preamble: false });
+      if (!r.ok) return { status: r.status || 500, body: { error: r.error } };
+      // The one PR is every run's PR: the rows show its chip, prCount reads 1, and One stays disabled afterwards.
+      for (const m of chain.members) {
+        if (m === last) continue;
+        persistPrState(m.pipelineId, { url: r.pr.url, number: r.pr.number ?? null, state: r.pr.state || 'OPEN' });
+        appendAuditById(m.pipelineId, `Shipped with its chain as one PR${byActor(actor)}: ${r.pr.url}`, { actor });
+      }
+      opened.push({ url: r.pr.url, pipelineId: last.pipelineId, pushRemote: r.pushRemote || 'origin' });
+    }
+    if (watch) {
+      for (const p of opened) {
+        try { setWatch({ prUrl: p.url, pipelineId: p.pipelineId, memberKey: '', pushRemote: p.pushRemote, enabled: true, enabledBy: actor }); }
+        catch (err) { console.error(`[worca-ui] watch after chain ship failed: ${err?.message || err}`); }
+      }
+    }
+    emitChanged('pipelines-changed', 'updated');
+    return { status: 200, body: { ok: true, mode, prs: opened.map((p) => p.url) } };
+  } finally { CHAIN_SHIPPING.delete(chainId); }
+}
+app.post('/api/chains/:id/ship', async (req, res) => {
+  try {
+    const b = req.body || {};
+    for (const k of ['watch', 'draft']) if (!(b[k] === undefined || typeof b[k] === 'boolean')) return badRequest(res, `${k} must be a boolean`);
+    if (b.title != null && (typeof b.title !== 'string' || b.title.length > PR_TITLE_MAX)) return badRequest(res, `title must be a string of at most ${PR_TITLE_MAX} characters`);
+    if (b.body != null && (typeof b.body !== 'string' || b.body.length > PR_BODY_MAX)) return badRequest(res, `body must be a string of at most ${PR_BODY_MAX} characters`);
+    const r = await shipChainNow(String(req.params.id), b.mode, { actor: actorOf(req), title: (b.title || '').trim() || null,
+      body: (b.body || '').trimEnd(), draft: b.draft === true, watch: b.watch === true });
+    res.status(r.status).json(r.body);
+  } catch (err) { if (!res.headersSent) res.status(500).json({ error: err?.message || String(err) }); }
 });
 
 /** Shaper s4: the feature's Ship card in a thread ({ message, block }) or null. */
@@ -8681,27 +8798,31 @@ app.get('/api/pr/remotes', async (req, res) => {
     chain, defaultBase, branches, baseStatus, issue, release: await releaseVersionHint(repoDir) });   // s4: the release row's hint
 });
 
-/** D24: a finished slice opens a draft PR for early review (best effort: a failure is an audit line). */
-async function openSliceDraft(pipelineId) {
-  if (!shapeFirstEnabled() || !pipelineId || readPrState(pipelineId)) return null;
-  if (!(await anyPrHost())) return null;
-  const state = readPipelineStateById(pipelineId);
-  if (!state || !state.projectDir) return null;
-  const target = prTargetFor(state);
-  if (target.error || !target.repoDir) return null;
-  // The PR dialog's default base (GET /api/pr/remotes): the chain without the feature branch itself, stacked on the
-  // previous run's branch until that run's PR merges.
+/** A run's chain without its own branch (GET /api/pr/remotes' `chain`, unmapped): the walked chain, else its source. */
+function chainOf(pipelineId, target) {
   const walked = chainBaseBranchesOf(pipelineId);
-  const chain = (walked.length ? walked : (target.source ? [target.source] : [])).filter((b) => b !== target.feature);
-  let base = null;
-  try { base = stackedPrBaseOf(pipelineId, chain) || chain[0] || null; } catch { base = chain[0] || null; }
-  if (!base) return null;
-  let out = await createRunPr({ id: pipelineId, state, target, base, draft: true });
-  // A forge that refuses drafts (GitHub's free plan for private repositories): open it ready instead.
-  if (!out.ok && /draft/i.test(out.error || '')) out = await createRunPr({ id: pipelineId, state, target, base, draft: false });
-  if (!out.ok) { appendAuditById(pipelineId, `Could not open the slice's pull request: ${out.error}`); return out; }
-  if (out.newDraft) { try { recordSliceDraft(pipelineId, out.pr.url); } catch { /* the "draft" label only */ } }
-  broadcastFeaturesOf(() => { const at = featureOfPipeline(pipelineId); return at ? [at.featureId] : []; });
+  return (walked.length ? walked : (target.source ? [target.source] : [])).filter((b) => b !== target.feature);
+}
+/** The chain root: where a whole chain (One) or its first run merges. null = no base. */
+function chainRootFor(pipelineId, target) { return chainOf(pipelineId, target)[0] || null; }
+/** A chained run's own PR base: stacked on the previous run's branch until that run's PR merges; the root otherwise. */
+function stackedBaseFor(pipelineId, target) {
+  const chain = chainOf(pipelineId, target);
+  try { return stackedPrBaseOf(pipelineId, chain) || chain[0] || null; } catch { return chain[0] || null; }
+}
+/** One ship flow: a member's own PR, ready for review, on its stacked base (feature slices and chain runs). */
+async function openMemberPr(pipelineId, { actor = null } = {}) {
+  const had = readPrState(pipelineId);
+  if (had && had.url && had.state !== 'CLOSED') return { ok: true, existed: true, pr: had };   // once only
+  const state = readPipelineStateById(pipelineId);
+  if (!state || !state.projectDir) return { ok: false, status: 409, error: 'the run has no project' };
+  const target = prTargetFor(state);
+  if (target.error || !target.repoDir || !target.feature) return { ok: false, status: 409, error: target.error || 'the run has no branch to ship' };
+  const base = stackedBaseFor(pipelineId, target);
+  if (!base) return { ok: false, status: 409, error: 'the run has no base branch' };
+  const out = await createRunPr({ id: pipelineId, state, target, base, actor });
+  if (!out.ok) appendAuditById(pipelineId, `Could not create the run's PR: ${out.error}`);
+  else broadcastFeaturesOf(() => { const at = featureOfPipeline(pipelineId); return at ? [at.featureId] : []; });
   return out;
 }
 
@@ -8858,7 +8979,7 @@ app.post('/api/pr', async (req, res) => {
     askPrLink = { threadId: body.askThreadId, cardId: body.askCardId };   // the card itself is checked once the target is known
   }
   if (!(await anyPrHost())) {
-    return res.status(409).json({ error: 'No pull request host is available: install the GitHub CLI (gh), or set WORCA_ADO_TOKEN for Azure DevOps' });
+    return res.status(409).json({ error: NO_PR_HOST });
   }
   const resolved = await resolvePrPipeline(body, res);
   if (!resolved) return;
@@ -17838,7 +17959,7 @@ export const _testing = {
   askCommandBridge, askCommands, askCommandsEnabled, askCommandTarget, drainAskDeferred, startScopeEventTurn, startTerminalEventTurn, terminals, prWatcher, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
   prWatcherDeps, askPrFixRun, askLinkIsPrFix, prFixRoundOf,
   applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps, askShapeAction,
-  openSliceDraft, afterRunSettled, offerShipCard, syncShipCard, draftReleasesOnMerge,
+  openMemberPr, stackedBaseFor, chainRootFor, shipChainNow, afterRunSettled, offerShipCard, syncShipCard, draftReleasesOnMerge,
   networkWatchTick: () => networkWatch().tick(),
   setNetworkProbe(fn) { _networkProbe = fn; },
   setAutoRescan(on) { autoRescanOn = on !== false; },

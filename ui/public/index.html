@@ -2876,6 +2876,17 @@
           <!-- Base conflicts (#620): the stored local check while no PR exists. Painted by paintShipItBaseCheck. -->
           <small class="hint shipit-basecheck" hidden></small>
         </section>
+        <!-- One ship flow (slice 2): a feature's or a chain's PRs, One or N stacked, with the suggestion under it.
+             Painted by ship-group-dialog.mjs; hidden for a single run and a workspace run. -->
+        <section class="shipit-zone shipit-prs" aria-labelledby="shipit-prs-label" hidden>
+          <span class="shipit-zone-label" id="shipit-prs-label">Pull requests</span>
+          <div class="shipit-prs-opts" role="radiogroup" aria-labelledby="shipit-prs-label" aria-describedby="shipit-prs-hint">
+            <label class="opt-row"><input type="radio" name="shipit-prs" value="one" aria-describedby="shipit-prs-one-why" /><span>One</span></label>
+            <label class="opt-row"><input type="radio" name="shipit-prs" value="stacked" /><span class="shipit-prs-stacked-label">2 stacked</span></label>
+          </div>
+          <small class="hint shipit-prs-one-why" id="shipit-prs-one-why" hidden></small>
+          <small class="hint shipit-prs-hint" id="shipit-prs-hint" hidden></small>
+        </section>
         <!-- Workspace runs: one row per affected member repo (tick box, branch → base,
              push/base remotes, per-repo status). Built by openShipItWsModal. -->
         <div id="shipit-repos" class="shipit-repos" hidden></div>
@@ -2908,6 +2919,8 @@
             <small class="shipit-closes hint" hidden></small>
           </div>
         </section>
+        <!-- The per-run note stands in for the hidden Title and description zone (ship-group-dialog.mjs). -->
+        <p class="shipit-slice-note" hidden></p>
         <!-- Zone 4, After it opens: Watch PR (starts from the project's Watch new pull requests setting, s4), and
              the Shaper s4 release row (shape/release-row.mjs), collapsed on every open; the workspace dialog hides
              it. No data-min-level: the controls show wherever the modal does (docs/ui-levels.md, History). -->
@@ -2918,7 +2931,6 @@
           <div class="shipit-release" aria-label="Release"></div>
         </section>
         <div class="shipit-try" hidden data-min-level="advanced" aria-label="Try it first"></div>
-        <p class="shipit-slice-note" hidden></p>
         <div class="shipit-actions" data-card-actions>
           <button type="button" class="btn shipit-try-btn" hidden data-min-level="advanced">Try it first</button>
           <button type="button" class="shipit-cancel btn">Cancel</button>
