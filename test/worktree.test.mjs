@@ -7,7 +7,7 @@ import { basename, dirname, join } from 'node:path';
 import { execSync, spawnSync } from 'node:child_process';
 
 import { writeFile as fsWriteFile } from 'node:fs/promises';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { posix } from './helpers/posix-path.mjs';
 
 import {
@@ -615,8 +615,26 @@ test('commitOf / isAncestor / defaultBranchRef take an additive timeout (the bri
   assert.equal(await commitOf(dir, 'refs/heads/main', { timeout: 10_000 }), head);
   assert.equal(await isAncestor(dir, head, 'refs/heads/main', { timeout: 10_000 }), true);
   assert.deepEqual(await defaultBranchRef(dir, { timeout: 10_000 }), { branch: 'main', ref: 'refs/heads/main' });
-  // a 1 ms budget cannot spawn git: the call gives up instead of using the 30 s default
-  assert.equal(await commitOf(dir, 'refs/heads/main', { timeout: 1 }), null);
-  assert.equal(await isAncestor(dir, head, 'refs/heads/main', { timeout: 1 }), false);
-  assert.equal(await defaultBranchRef(dir, { timeout: 1 }), null);
+});
+
+// A slow git (a PATH shim that waits 3 s, then runs the real one) proves the budget is used: with 200 ms the calls give
+// up long before git answers, where git()'s 30 s default would wait and return the commit. Racing a real git against
+// a 1 ms budget flaked on fast CI runners. POSIX only: on Windows spawn('git') finds git.exe, not a script shim.
+test('commitOf / isAncestor / defaultBranchRef give up when git is slower than the timeout', { skip: process.platform === 'win32' }, async () => {
+  const { dir, g } = _dbrRepo('main');
+  const head = g('rev-parse', 'HEAD');
+  const realGit = execSync('command -v git', { encoding: 'utf8' }).trim();
+  const shimDir = _mk(join(_tmp(), 'worca-slow-git-')); _dbrDirs.push(shimDir);
+  writeFileSync(join(shimDir, 'git'), `#!/bin/sh\nsleep 3\nexec "${realGit}" "$@"\n`, { mode: 0o755 });
+  const PATH = process.env.PATH;
+  process.env.PATH = `${shimDir}:${PATH}`;
+  try {
+    const t0 = Date.now();
+    assert.equal(await commitOf(dir, 'refs/heads/main', { timeout: 200 }), null);
+    assert.equal(await isAncestor(dir, head, 'refs/heads/main', { timeout: 200 }), false);
+    assert.equal(await defaultBranchRef(dir, { timeout: 200 }), null);
+    assert.ok(Date.now() - t0 < 2_500, `the calls gave up within their budgets (${Date.now() - t0} ms)`);
+  } finally {
+    process.env.PATH = PATH;
+  }
 });
