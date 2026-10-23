@@ -3,6 +3,27 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## See when a newer Worca is out
+
+**Settings › About says whether you run the latest stable Worca.**
+
+The About card now marks the version **Latest** or **Update available: X.Y.Z**, and while an update
+is out it links to that release's **What's new** page and to the GitHub **Changes since** view; a
+**Release notes** link is always there. A small **Update available** marker in the sidebar foot
+opens the card. Worca checks the npm registry's `latest` tag at most every 12 hours, and an open
+tab asks again when it regains focus (a release candidate never counts as newer). Run from a git
+checkout, the card says **Source build** and npm is never asked. Offline, nothing shows. Turn it
+off with **Check for new Worca versions** in the same card; turning it back on checks afresh.
+Nothing is installed or restarted from the app.
+
+Chips: About · version · release notes
+
+Read it: [Getting started](../getting-started.md)
+
+Pull requests (add each number when it opens):
+
+- See when a newer Worca is out (#841)
+
 ## Plugins work behind a proxy
 
 Plugin task sources (GitHub, Azure Boards) and chat channels (Telegram, Slack, Discord, Teams) now follow `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` like worca itself, so they work on a network whose only way out is a proxy; loopback and `NO_PROXY` hosts go direct. They get `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE` and `SSL_CERT_DIR` too, for a proxy that re-signs TLS. A proxy the plugin can't use is a warning in its log instead of a bare `fetch failed`. A proxy URL that carries a user name and password is never handed to plugin code. Plugins then go direct, and worca says why: the UI server when it starts, the CLI at its first plugin call. A plugin that drives its own command-line tool goes through the proxy only if that tool reads the variables.

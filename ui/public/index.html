@@ -120,6 +120,10 @@
               <div class="act-fly-rows" id="side-actions-fly-rows"></div>
             </div>
           </div>
+          <!-- Update available (issue #841): shown only while GET /api/app/version says outdated.
+               Opens Settings › General › About; no toast, no modal, nothing installs from here. -->
+          <a class="side-update" id="side-update" href="#settings" hidden
+             aria-label="Update available" title="Update available"><span class="side-update-dot" aria-hidden="true"></span><span class="side-update-label">Update available</span></a>
           <!-- The account corner (account-menu.mjs): who is looking (GET /api/whoami), the spend ring
                (paintBudget) and the away dot. It opens #acct-menu: spend, interface mode, Settings,
                the Away and Keep awake switches and appearance. -->
@@ -1867,7 +1871,7 @@
               <small class="hint" id="gsSettingsMsg"></small>
             </section>
 
-            <!-- About: intentionally no info-tip and no .hint (no longer tested; keep both out by hand). -->
+            <!-- About: no info-tip and no .hint. Links are anchors (target=_blank rel=noopener noreferrer); the only controls are the update-check switch and Check now (ui-settings-about.test.mjs pins this). -->
             <section class="card settings-card" id="about-card" data-min-level="simple">
               <div class="label-row">
                 <h2>About</h2>
@@ -1878,6 +1882,28 @@
                      without one the anchor is plain text, so the placeholder never links. -->
                 <a class="about-val about-version" id="aboutVersion"
                    target="_blank" rel="noopener noreferrer">&mdash;</a>
+                <!-- GET /api/app/version (#841): "Latest" | "Update available: X.Y.Z" | "Source build" (a git checkout);
+                     hidden when unknown or ahead. -->
+                <span class="about-update" id="aboutUpdateState" hidden></span>
+              </div>
+              <!-- Only while outdated: the new release's changelog page and the GitHub compare view. -->
+              <div class="about-row" id="aboutUpdateLinks" hidden>
+                <span class="about-key"></span>
+                <a class="about-val about-link" id="aboutWhatsNew" hidden
+                   target="_blank" rel="noopener noreferrer">What's new</a>
+                <a class="about-val about-link" id="aboutCompare" hidden
+                   target="_blank" rel="noopener noreferrer">Changes since this version</a>
+              </div>
+              <div class="about-row">
+                <span class="about-key">Release notes</span>
+                <a class="about-val about-link" id="aboutReleaseNotes"
+                   href="https://docs.worca.dev/changelog/"
+                   target="_blank" rel="noopener noreferrer">docs.worca.dev/changelog</a>
+              </div>
+              <div class="about-row about-row-center">
+                <span class="about-key">Updates</span>
+                <label class="about-val switch-row about-switch" for="aboutUpdateCheck"><input id="aboutUpdateCheck" data-setting="updateCheck" class="sw-input" type="checkbox" role="switch" checked><span class="switch" aria-hidden="true"></span><span class="switch-label">Check for new Worca versions</span></label>
+                <button type="button" class="btn btn-sm about-check" id="aboutCheckNow">Check now</button>
               </div>
               <div class="about-row">
                 <span class="about-key">Repository</span>
@@ -1889,8 +1915,7 @@
                 <span class="about-key">Feedback</span>
                 <!-- hrefs are repainted from app.bugsUrl (package.json bugs.url); the
                      static fallback keeps the links usable before /api/settings lands.
-                     Anchors only: ui-settings-about.test.mjs forbids a control here,
-                     and neither the label nor the href carries a version string. -->
+                     Anchors only, and neither the label nor the href carries a version string. -->
                 <a class="about-val about-link" id="aboutBugLink"
                    href="https://github.com/SinishaDjukic/worca-cc/issues/new?labels=bug"
                    target="_blank" rel="noopener noreferrer">Report a bug</a>

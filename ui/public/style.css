@@ -3355,6 +3355,12 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .acct-updown{width:14px;height:14px;flex:none;fill:none;stroke:var(--ink-3);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
 .sidebar.collapsed .acct{width:auto;padding:0 2px;}
 .sidebar.collapsed .acct-name,.sidebar.collapsed .acct-updown{display:none;}
+/* #841: "Update available" in the sidebar foot, only while outdated (the [hidden] rule hides it otherwise). */
+.side-update{display:flex;align-items:center;gap:8px;padding:4px 8px;border-radius:var(--r-sm);font-size:12px;font-weight:600;color:var(--amber-ink-strong);text-decoration:none;}
+.side-update:hover{background:var(--field);}
+.side-update-dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--amber);}
+.sidebar.collapsed .side-update{justify-content:center;padding:6px 0;}
+.sidebar.collapsed .side-update-label{display:none;}
 
 /* The menu opens upward from the corner, Interface mode's side menu beside it: two .nav-fly
    popups (side-flyout.mjs keeps them inside the viewport). The menu is one white sheet (the
@@ -3508,6 +3514,15 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .about-version[href]:hover{text-decoration:underline;}
 .about-link{color:var(--green-ink);font-weight:600;text-decoration:none;overflow-wrap:anywhere;}
 .about-link:hover{text-decoration:underline;}
+/* #841: the version's update state, the Updates switch row and Check now. */
+.about-update{font-size:11px;font-weight:600;padding:1px 7px;border-radius:var(--r-xs);background:var(--green-bg);color:var(--green-ink-strong);}
+.about-update[data-state="outdated"]{background:var(--amber-bg);color:var(--amber-ink-strong);}
+.about-update[data-state="source"]{background:var(--field);color:var(--ink-2);}
+.about-row > .about-link + .about-link{margin-left:12px;}
+.about-switch{position:relative;}
+/* The Updates row: a baseline row would take label.switch-row's baseline from its text-less .switch pill
+   and lift the label above the key and Check now. Centre this row only. */
+.about-row.about-row-center{align-items:center;}
 
 /* ---------- Budget readout (Settings) ---------- */
 /* Section gap before the limit fields (the disclaimer hint that used to sit

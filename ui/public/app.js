@@ -248,7 +248,7 @@ import { renderTimeline, renderTimelinePopover, timelineWindow, shiftAnchor, TL_
 import {
   renderProjectTmCell, renderProjectTmChip, projectTmSummary, renderEnableDialogBody, renderMetricsHomePicker, renderWsMetricsRow, renderWsSummary, renderRouteResults, renderWsMetricsPending } from './team-metrics-surfaces.mjs';
 import { renderMapTab, emptyMapFilters } from './workspace-map-view.mjs';
-import { paintAboutInto } from './about-links.mjs';
+import { paintAboutInto, paintVersionStatusInto, paintUpdateMarkerInto } from './about-links.mjs';
 import { renderReasonOptions, renderOptIns, previewText, reportBlobParts, REPORT_PREVIEW_DEBOUNCE_MS } from './report-run.mjs';
 import { openScheduleSheet, closeScheduleSheet, browserTimeZone } from './schedule-sheet.mjs';
 import {
@@ -920,6 +920,7 @@ const el = {
 
   // About (Settings card): read-only app identity, painted from /api/settings
   aboutVersion: $('#aboutVersion'),
+  aboutUpdateCheck: $('#aboutUpdateCheck'), aboutCheckNow: $('#aboutCheckNow'), sideUpdate: $('#side-update'),
   aboutRepoLink: $('#aboutRepoLink'),
 
   // Guardrails view
@@ -15412,6 +15413,52 @@ function paintAbout(info) {
   paintAboutInto(document, info);
 }
 
+// "Is this the latest Worca?" (issue #841): GET /api/app/version paints the About badge and links
+// and the sidebar marker. The server owns the cache and the 24 h interval; a failed read paints
+// unknown (nothing), never an error — the check is a nicety, not a status anyone must act on.
+let versionStatusSeq = 0;
+function paintVersionStatus(vs) {
+  paintVersionStatusInto(document, vs);
+  paintUpdateMarkerInto(document, vs);
+}
+async function refreshVersionStatus({ force = false } = {}) {
+  const mine = ++versionStatusSeq;
+  let vs = null;
+  try {
+    const res = await fetch(force ? '/api/app/version/check' : '/api/app/version', force ? { method: 'POST' } : undefined);
+    if (res.ok) vs = await safeJson(res);
+  } catch { /* offline: unknown */ }
+  if (mine === versionStatusSeq) paintVersionStatus(vs);
+  return vs;
+}
+
+// The switch saves on change, like the Theme segment: one boolean, no Save button.
+el.aboutUpdateCheck?.addEventListener('change', async () => {
+  const on = el.aboutUpdateCheck.checked;
+  if (el.aboutCheckNow) el.aboutCheckNow.hidden = !on || document.getElementById('aboutUpdateState')?.dataset.state === 'source';
+  try {
+    const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ updateCheck: on }) });
+    const data = await safeJson(res);
+    if (!res.ok) throw new Error(data.error || `The server answered ${res.status}.`);
+    el.aboutUpdateCheck.checked = data.updateCheck !== false;
+  } catch (e) {
+    el.aboutUpdateCheck.checked = !on;
+    reportStatus(null, '', `Could not save the update check: ${e.message || 'network error'}`, 'err');
+  }
+  void refreshVersionStatus();
+});
+el.aboutCheckNow?.addEventListener('click', (e) => withButton(e.currentTarget, async () => {
+  const vs = await refreshVersionStatus({ force: true });
+  return vs ? { ok: true } : { ok: false };
+}, { busy: 'Checking…', done: 'Checked' }));
+
+// The sidebar marker opens Settings › General and brings the About card into view.
+el.sideUpdate?.addEventListener('click', (e) => {
+  e.preventDefault();
+  if (location.hash !== '#settings') location.hash = '#settings';
+  setTimeout(() => document.getElementById('about-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
+});
+
 // #555 D8: a failed Settings GET is shown above the tabs, at every UI level.
 function setSettingsLoadMsg(text) {
   const n = document.getElementById('settingsLoadMsg');
@@ -15436,6 +15483,8 @@ async function loadSettings() {
     paintTheme(data.theme);
     levelCtl.confirm(data.uiLevel);
     paintAbout(data.app);
+    if (el.aboutUpdateCheck) el.aboutUpdateCheck.checked = data.updateCheck !== false;
+    void refreshVersionStatus();
     paintBudgetSettings(data);
     paintAskSettings(data);
     paintScheduleSettings(data);
@@ -38908,6 +38957,10 @@ refreshAllCounts();
 refreshBudget();
 startBudgetTick();
 loadWhoami();
+void refreshVersionStatus();   // sidebar "Update available" marker (#841)
+// ...and again when the tab regains focus, so a tab left open for days still sees a new release. A GET
+// only: the server's cache decides whether npm is asked.
+window.addEventListener('focus', () => { void refreshVersionStatus(); });
 // Credential broker badges ("your key / no key" on model pickers): fetched at boot and
 // again when the tab regains focus — people add keys on the key page in another tab.
 // Pickers already on screen repaint once the answer changes what they show.
