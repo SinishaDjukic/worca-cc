@@ -38411,6 +38411,15 @@ async function approveAutomation(ev) {
   if (!(await confirmModal({ title: 'Approve', message: `Start the fix for #${ev.number} with the proposed plan? Worca opens a draft pull request when it is done.`, confirmLabel: 'Start the fix' }))) return;
   automationsFail(await mcpApi('POST', `/api/automations/events/${encodeURIComponent(ev.id)}/approve`, {}), 'The fix did not start');
 }
+/** A waiting event: start it now past its limits, or take it out of the queue. */
+async function startAutomationNow(ev) {
+  if (!(await confirmModal({ title: 'Start now', message: `Start #${ev.number} now? It skips the line and its rule's limits; it still counts toward today's runs.`, confirmLabel: 'Start now' }))) return;
+  automationsFail(await mcpApi('POST', `/api/automations/events/${encodeURIComponent(ev.id)}/start`, {}), 'It did not start');
+}
+async function removeAutomationQueued(ev) {
+  if (!(await confirmModal({ title: 'Remove from the queue', message: `Remove #${ev.number} from the queue? It will not start; open a run by hand if it still needs one.`, confirmLabel: 'Remove', danger: true }))) return;
+  automationsFail(await mcpApi('POST', `/api/automations/events/${encodeURIComponent(ev.id)}/remove`, {}), 'Could not remove it');
+}
 function openAutomationRun(ev, projectKey) {
   if (ev.runId && runs.has(ev.runId)) { location.hash = `running/${ev.runId}`; return; }
   location.hash = `history/${histDetailParam({ id: ev.pipelineId, projectKey })}`;
@@ -38461,7 +38470,7 @@ async function buildAutomationsTab(sec, { target, where, stale, reload, openRun 
     onEditLimits: async (rule) => {
       const l = rule.limits || lim;
       const v = await promptModal({ title: 'Edit limits', confirmLabel: 'Save limits', fields: [
-        { id: 'dailyRuns', label: 'Runs per day', value: String(l.dailyRuns), hint: '1 to 200. Past it, new events are skipped (not held for the next day; the count resets at midnight UTC).' },
+        { id: 'dailyRuns', label: 'Runs per day', value: String(l.dailyRuns), hint: '1 to 200. Past it, new events wait in the queue and start the next day (the count resets at midnight UTC).' },
         { id: 'maxCostUsd', label: 'Cost cap per run (USD)', value: String(l.maxCostUsd), hint: '0.1 to 1000. A run that passes it is stopped.' },
         { id: 'maxConcurrent', label: `Runs at a time in ${where}`, value: String(l.maxConcurrent), hint: '1 to 10. Past it, new events wait and start when a run ends.' }] });
       if (!v) return;
@@ -38470,6 +38479,8 @@ async function buildAutomationsTab(sec, { target, where, stale, reload, openRun 
       await reload();
     },
     onApprove: async (ev) => { await approveAutomation(ev); await reload(); },
+    onStartNow: async (ev) => { await startAutomationNow(ev); await reload(); },
+    onRemoveQueued: async (ev) => { await removeAutomationQueued(ev); await reload(); },
     onOpenRun: (ev) => openRun(ev, r.data),
     onAddRule: async () => {
       const v = await promptModal({ title: 'Add rule', confirmLabel: 'Add rule', fields: [
@@ -38519,6 +38530,8 @@ async function loadAutomationsView() {
       location.hash = key.startsWith('workspaces/') ? `workspaces/${wsParamFor(key.slice('workspaces/'.length), 'automations')}` : `projects/${projParamFor(key, 'automations')}`;
     },
     onApprove: async (ev) => { await approveAutomation(ev); await loadAutomationsView(); },
+    onStartNow: async (ev) => { await startAutomationNow(ev); await loadAutomationsView(); },
+    onRemoveQueued: async (ev) => { await removeAutomationQueued(ev); await loadAutomationsView(); },
     onOpenRun: (ev) => openAutomationRun(ev, ev.projectKey),
   }));
 }

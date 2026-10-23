@@ -8014,6 +8014,8 @@ app.get('/api/automations', syncRoute(async (req, res) => {
   res.json({
     rules: listAutomationRules({ projectKey: key }),
     events: listAutomationEvents({ projectKey: key, limit: Number(req.query.limit) || 50 }),
+    // Waiting over a limit, in the order they start (oldest first).
+    queue: listAutomationEvents({ projectKey: key, status: 'queued', oldestFirst: true, limit: 200 }),
     ...(scope ? { scope: scope.scope, autoHandle: autoHandleState(key) } : {}),
     ...(scope && !ws ? { repo: scope.repo, forge: scope.repo ? forgeOfRepo(scope.repo) : null, overriddenBy: await automationOverrides(scope.repo) } : {}),
     ...(ws ? { workspaceId: scope.workspaceId, name: scope.name,
@@ -8090,6 +8092,23 @@ app.post('/api/automations/events/:id/approve', syncRoute(async (req, res) => {
   if (!r.ok) return res.status(409).json({ error: { NOT_WAITING: 'this item is not waiting for approval', CLOSED: 'the issue is closed', READ_FAILED: 'GitHub could not be read; try again' }[r.code] || 'the fix did not start', event: r.event });
   res.json({ ok: true, event: r.event });
 }));
+// POST /api/automations/events/:id/start -> a waiting (queued) event starts now, past its limits.
+app.post('/api/automations/events/:id/start', syncRoute(async (req, res) => {
+  const r = await automations.startNow(req.params.id, { by: actorOf(req) });
+  if (r.code === 'NOT_FOUND') return res.status(404).json({ error: 'not found' });
+  if (!r.ok) {
+    return res.status(409).json({ error: { NOT_QUEUED: 'this item is not waiting', CLOSED: 'it was closed meanwhile', SUPERSEDED: 'the pull request moved on to a newer push',
+      READ_FAILED: 'GitHub could not be read; try again' }[r.code] || 'the run did not start', event: r.event });
+  }
+  res.json({ ok: true, event: r.event });
+}));
+// POST /api/automations/events/:id/remove -> a waiting (queued) event leaves the queue and never starts.
+app.post('/api/automations/events/:id/remove', (req, res) => {
+  const r = automations.removeQueued(req.params.id, { by: actorOf(req) });
+  if (r.code === 'NOT_FOUND') return res.status(404).json({ error: 'not found' });
+  if (!r.ok) return res.status(409).json({ error: 'this item is not waiting', event: r.event });
+  res.json({ ok: true, event: r.event });
+});
 // POST /api/automations/poll -> one poll now (the Check now button).
 app.post('/api/automations/poll', syncRoute(async (req, res) => {
   await automations.tick({ force: true });

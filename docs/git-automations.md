@@ -76,11 +76,20 @@ Each switch and each rule shows its limits on a line of their own. **Edit limits
 on a switch once it has been turned on (before that it shows the defaults it starts with). Runs per day accepts 1 to
 200, the cost cap $0.10 to $1000, runs at a time 1 to 10; anything else is refused. When a limit is reached:
 
-- **Runs at a time:** the event waits in a queue and starts when a run ends (Worca reads it again first, in case it
-  was closed meanwhile).
-- **Runs per day:** the event is skipped, not held for the next day; Recent shows it as "daily cap reached". The
-  count resets at midnight UTC.
+- **Runs at a time:** the event waits in the queue and starts when a run ends.
+- **Runs per day:** the event waits in the queue and starts the next day (the count resets at midnight UTC). A run
+  counts on the day it starts, so a backlog drains at the daily limit, not all at once.
 - **Cost cap:** a run that passes it is stopped and its event fails.
+
+### Waiting
+
+The **Waiting** section of each Automations tab (and of Settings › Automations, across projects and workspaces)
+lists what waits, in the order it starts: oldest first, each with why it waits and when it starts. Before an item
+starts, Worca reads it again: one closed meanwhile is dropped, and a review of a PR that has a newer push gives way to
+the newer one. **Start now** starts an item at once, past the line and the limits (it still counts toward the day's
+runs). **Remove** takes it out; it never starts. A rule holds at most 100 waiting items: past that a new one is
+skipped as "too many waiting". Waiting items are kept by the automation, not as scheduled runs: they become runs only
+when they start, with the issue or PR read fresh.
 
 A rule that is turned off and on again does not pick up what was opened while it was off.
 
@@ -220,7 +229,7 @@ All routes need the flag; they answer 404 while it is off.
 
 | Route | |
 |---|---|
-| `GET /api/automations?projectDir=` | `{ scope: 'project', rules, events, autoHandle, repo, forge, overriddenBy, switches, templates, defaultLimits, webhook, azureWebhook, polling }`; `overriddenBy` is `[{ workspaceId, name, events }]`, the workspaces whose rules take this repository's events over |
+| `GET /api/automations?projectDir=` | `{ scope: 'project', rules, events, queue, autoHandle, repo, forge, overriddenBy, switches, templates, defaultLimits, webhook, azureWebhook, polling }`; `overriddenBy` is `[{ workspaceId, name, events }]`, the workspaces whose rules take this repository's events over |
 | `GET /api/automations?workspaceId=` | `{ scope: 'workspace', workspaceId, name, repos: [{ name, projectKey, repo, forge }], rules, events, autoHandle, … }` |
 | `GET /api/automations` | Every rule and the latest events (the overview); a workspace's are keyed `workspaces/<id>` |
 | `POST /api/automations/rules` | `{ projectDir \| workspaceId, event, action, workflowId?, filter?, limits?, guardrailsId?, enabled? }` → 201 `{ rule }` (`rule.scope` is `project` or `workspace`) |
@@ -228,6 +237,8 @@ All routes need the flag; they answer 404 while it is off.
 | `DELETE /api/automations/rules/:id` | |
 | `PUT /api/automations/auto-handle` | `{ projectDir \| workspaceId, key: propose \| fix \| review, on }` → `{ autoHandle }` |
 | `POST /api/automations/events/:id/approve` | Start the fix of a proposed plan |
+| `POST /api/automations/events/:id/start` | Start a waiting item now, past its limits |
+| `POST /api/automations/events/:id/remove` | Take a waiting item out of the queue |
 | `POST /api/automations/poll` | Poll now |
 | `POST /api/ingress/github` | The signed GitHub webhook |
 | `POST /api/ingress/azure` | The Azure DevOps service hook (Basic authentication) |

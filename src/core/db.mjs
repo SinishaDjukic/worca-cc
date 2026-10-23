@@ -912,7 +912,8 @@ const INCREMENTAL_COLUMNS = {
   projects:               { vcs: 'TEXT' },   // v69: 'git' | 'none' (CONTRACT §1); NULL reads as 'git'
   automation_rules:       { scope: "TEXT NOT NULL DEFAULT 'project'",   // v73: project | workspace (a v72 rule is a project's)
                             workspace_id: 'TEXT' },                     // v73: the workspace a workspace rule watches; NULL = a project's
-  automation_events:      { prs: 'TEXT' },   // v73: JSON [{name, repo, url, closes}] a workspace fix opened, one per changed member; NULL = one PR (pr_url)
+  automation_events:      { prs: 'TEXT',         // v73: JSON [{name, repo, url, closes}] a workspace fix opened, one per changed member; NULL = one PR (pr_url)
+                            started_at: 'TEXT' },  // v73: when its run started (the daily cap counts by it); NULL = before v73 (created_at)
 };
 
 /** v23: per-loop-wire cycle budgets, the graph-engine twin of
@@ -1136,7 +1137,8 @@ CREATE TABLE IF NOT EXISTS automation_deliveries (
 `;
 
 /**
- * v72 -> v73 (workspace Git event automations): automation_rules.scope / workspace_id and automation_events.prs.
+ * v72 -> v73 (workspace Git event automations): automation_rules.scope / workspace_id and automation_events.prs /
+ * started_at.
  * A CONDITIONAL repair like v13: the columns live in INCREMENTAL_COLUMNS, so existing rules stay and read as
  * project rules (scope's default), and a DB the hoisted heal already patched is left alone.
  */

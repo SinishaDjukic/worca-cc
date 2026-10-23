@@ -158,3 +158,26 @@ test('an issue in a member repository starts one workspace run; the member proje
   assert.equal(row.guardrails_id, 'secure');
   await stopAndSettle(runs, (e) => e === entry);
 });
+
+test('over a limit an issue waits in the queue (listed oldest first) and Remove takes it out', async () => {
+  await call('POST', '/api/automations/rules', { workspaceId: ws.id, event: 'issue.opened', action: 'run', workflowId: 'wf_default', limits: { maxConcurrent: 1 } });
+  const at = new Date(Date.now() + 1000).toISOString();
+  const issue = (n) => ({ number: n, html_url: `https://github.com/o/a/issues/${n}`, title: `Bug ${n}`, body: 'x', state: 'open',
+    user: { login: 'alice' }, author_association: 'COLLABORATOR', labels: [], created_at: at, updated_at: at });
+  const { automations } = server._testing;
+  for (const n of [21, 22, 23]) await automations.handleWebhook('issues', { action: 'opened', repository: { full_name: 'o/a' }, issue: issue(n) });
+  const g = await (await call('GET', `/api/automations?workspaceId=${ws.id}`)).json();
+  assert.deepEqual(g.queue.map((e) => [e.number, e.reason]), [[22, 'concurrency'], [23, 'concurrency']]);
+  const all = await (await call('GET', '/api/automations')).json();
+  assert.deepEqual(all.queue.map((e) => e.number), [22, 23], 'the overview lists the queue too');
+  const rm1 = await call('POST', `/api/automations/events/${g.queue[1].id}/remove`, {});
+  assert.equal(rm1.status, 200);
+  assert.equal((await rm1.json()).event.reason, 'removed');
+  assert.equal((await call('POST', `/api/automations/events/${g.queue[1].id}/remove`, {})).status, 409);
+  assert.equal((await call('POST', `/api/automations/events/${g.queue[1].id}/start`, {})).status, 409);
+  assert.equal((await call('POST', '/api/automations/events/aev_nope/remove', {})).status, 404);
+  const after = await (await call('GET', `/api/automations?workspaceId=${ws.id}`)).json();
+  assert.deepEqual(after.queue.map((e) => e.number), [22]);
+  const live = g.events.find((e) => e.number === 21) || (await (await call('GET', `/api/automations?workspaceId=${ws.id}`)).json()).events.find((e) => e.number === 21);
+  await stopAndSettle(server.runs, (e) => e === server.runs.get(live.runId));
+});

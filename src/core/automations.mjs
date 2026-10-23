@@ -53,6 +53,8 @@ export const DEFAULT_GUARDRAILS = 'secure';
 /** An item first seen this long after it was opened was missed while Worca was off: skipped, never replayed
  *  (the scheduler's default grace for missed slots). */
 export const MISSED_GRACE_MS = 360 * 60_000;
+/** How many events one rule may hold waiting (over a limit); past it a new one is skipped as `queue-full`. */
+export const MAX_QUEUED_PER_RULE = 100;
 /** A skip that a later look may lift: a maintainer adds the trigger label, a draft is marked ready. */
 const RETRYABLE_SKIPS = new Set(['untrusted-author', 'draft', 'filtered', 'question', 'needs-info']);
 /** Triage skips, looked at again only once the issue carries a bug or feature signal (a label or type). */
@@ -271,7 +273,7 @@ function eventOf(r) {
     id: r.id, ruleId: r.rule_id, projectKey: r.project_key, repo: r.repo, subject: r.subject, kind: r.kind, number: r.number,
     url: r.url, title: r.title, author: r.author, headSha: r.head_sha || null, action: r.action, phase: r.phase || null,
     via: r.via, status: r.status, reason: r.reason || null, runId: r.run_id || null, pipelineId: r.pipeline_id || null,
-    prUrl: r.pr_url || null, prs: json(r.prs, null), posted: !!r.posted, approvedBy: r.approved_by || null, costUsd: r.cost_usd ?? null,
+    prUrl: r.pr_url || null, prs: json(r.prs, null), posted: !!r.posted, startedAt: r.started_at || null, approvedBy: r.approved_by || null, costUsd: r.cost_usd ?? null,
     createdAt: r.created_at, updatedAt: r.updated_at,
   };
 }
@@ -279,7 +281,8 @@ function eventOf(r) {
 export function getEvent(id) {
   return eventOf(getDb().prepare('SELECT * FROM automation_events WHERE id = ?').get(id));
 }
-export function listEvents({ projectKey = null, status = null, limit = 100 } = {}) {
+/** Events, newest first; `oldestFirst` for the queue (the order queued events start in). */
+export function listEvents({ projectKey = null, status = null, limit = 100, oldestFirst = false } = {}) {
   const where = []; const args = [];
   if (projectKey) { where.push('project_key = ?'); args.push(projectKey); }
   if (status) {
@@ -288,7 +291,7 @@ export function listEvents({ projectKey = null, status = null, limit = 100 } = {
   }
   const lim = Math.max(1, Math.min(500, Number(limit) || 100));
   return getDb().prepare(`SELECT * FROM automation_events ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-    ORDER BY created_at DESC, rowid DESC LIMIT ${lim}`).all(...args).map(eventOf);
+    ORDER BY ${oldestFirst ? 'created_at ASC, rowid ASC' : 'created_at DESC, rowid DESC'} LIMIT ${lim}`).all(...args).map(eventOf);
 }
 /** Has this rule decided about the item before: the subject itself, or (a review's) any earlier head of the PR? */
 function seenBefore(ruleId, subject) {
@@ -299,7 +302,7 @@ function seenBefore(ruleId, subject) {
 
 export function updateEvent(id, patch = {}, { now = Date.now() } = {}) {
   const cols = { status: 'status', reason: 'reason', runId: 'run_id', pipelineId: 'pipeline_id', phase: 'phase', prUrl: 'pr_url',
-    prs: 'prs', posted: 'posted', approvedBy: 'approved_by', costUsd: 'cost_usd', action: 'action' };
+    prs: 'prs', posted: 'posted', approvedBy: 'approved_by', costUsd: 'cost_usd', action: 'action', startedAt: 'started_at' };
   const sets = []; const args = [];
   for (const [k, col] of Object.entries(cols)) if (Object.hasOwn(patch, k)) {
     sets.push(`${col} = ?`);
@@ -336,10 +339,15 @@ export function claimEvent(rule, ev, { via, status, reason = null, now = Date.no
   });
 }
 
-/** Runs a rule started since `sinceMs` (the daily cap counts these). */
+/** Runs a rule started since `sinceMs` (the daily cap counts these): by when the run STARTED, so an event queued
+ *  yesterday counts on the day it runs. A row from before started_at existed counts by when it was seen. */
 export function runsStartedSince(ruleId, sinceMs) {
-  return getDb().prepare(`SELECT COUNT(*) AS n FROM automation_events WHERE rule_id = ? AND run_id IS NOT NULL AND created_at >= ?`)
+  return getDb().prepare(`SELECT COUNT(*) AS n FROM automation_events WHERE rule_id = ? AND run_id IS NOT NULL AND COALESCE(started_at, created_at) >= ?`)
     .get(ruleId, nowIso(sinceMs)).n;
+}
+/** Events one rule holds waiting. */
+export function queuedForRule(ruleId) {
+  return getDb().prepare("SELECT COUNT(*) AS n FROM automation_events WHERE rule_id = ? AND status = 'queued'").get(ruleId).n;
 }
 /** Event runs live in one project, or one workspace (its owner key), now (the concurrency cap counts these). */
 export function liveRunsInProject(projectKey) {
@@ -531,10 +539,11 @@ export function isTrusted(ev, filter = {}) {
   return !!trigger && ev.labels.some((l) => l.toLowerCase() === trigger);
 }
 
-/** The cap that stops this start, or null. `queue` caps wait for a free slot; the others skip. */
+/** The cap that stops this start, or null. Both wait in the queue: the daily cap until the next day (UTC), the
+ *  concurrency cap until a run ends. */
 export function limitDecision(rule, { startedToday = 0, liveInProject = 0 } = {}) {
   const l = rule.limits || DEFAULT_LIMITS;
-  if (startedToday >= l.dailyRuns) return { reason: 'daily-cap', queue: false };
+  if (startedToday >= l.dailyRuns) return { reason: 'daily-cap', queue: true };
   if (liveInProject >= l.maxConcurrent) return { reason: 'concurrency', queue: true };
   return null;
 }
@@ -543,7 +552,8 @@ const SKIP_WORDS = Object.freeze({
   closed: 'it is closed', own: 'Worca opened it', 'before-rule': 'it was opened before the rule was turned on',
   missed: 'it was opened while Worca was not running (missed items are not replayed)', filtered: 'its labels do not match the rule',
   draft: 'it is a draft', 'untrusted-author': 'its author is not a collaborator: a maintainer can add the trigger label to let it start',
-  'daily-cap': "the rule's daily run cap is reached", concurrency: 'the project already runs as many event runs as it allows',
+  'daily-cap': "the rule's daily run cap is reached: it starts the next day (UTC)", concurrency: 'as many event runs as allowed are running: it starts when one ends',
+  'queue-full': `the rule already has ${MAX_QUEUED_PER_RULE} events waiting`, removed: 'removed from the queue by hand',
   'cost-cap': "the run passed the rule's cost cap and was stopped", 'start-refused': 'the run could not start',
   superseded: 'a newer push replaced the head it was queued for',
   question: 'triage read it as a question: Worca commented and started no run',
@@ -810,7 +820,7 @@ export function createAutomationEngine(deps = {}) {
     catch (err) { out = { status: 500, body: { error: err?.message || String(err) } }; }
     if (out?.status !== 200 || !out.body?.runId) return fail(event, rule, 'start-refused', out?.body?.error || `HTTP ${out?.status}`);
     // A propose run's phase is its triage (bug | feature) until it is approved; the fix run's is `fix`.
-    const next = upd(event.id, { status: 'starting', reason: null, runId: out.body.runId, pipelineId: out.body.pipelineId || null, posted: false,
+    const next = upd(event.id, { status: 'starting', reason: null, runId: out.body.runId, pipelineId: out.body.pipelineId || null, posted: false, startedAt: nowIso(now()),
       ...(action === 'fix' && rule.action === 'propose' ? { phase: 'fix' } : rule.action === 'propose' ? { phase: triage?.kind || 'bug' } : {}) });
     notify('started', next, rule, `${titles[action]} started (${ev.kind === 'pr' ? 'PR' : 'issue'} #${ev.number}, opened by @${ev.author || 'unknown'}).`);
     changed();
@@ -894,9 +904,10 @@ export function createAutomationEngine(deps = {}) {
       return c?.event || null;
     }
     const cap = limitDecision(rule, { startedToday: runsStartedSince(rule.id, dayStart()), liveInProject: liveRunsInProject(rule.projectKey) });
-    if (cap && !cap.queue) {
-      const c = claimEvent(rule, ev, { via, status: 'skipped', reason: cap.reason, now: now() });
-      if (c && !c.same) { notify('skipped', c.event, rule, `Skipped ${ev.kind === 'pr' ? 'PR' : 'issue'} #${ev.number}: ${skipWords(cap.reason)}.`); changed(); }
+    // A limit queues the event; only a full queue (a flood) skips it.
+    if (cap && queuedForRule(rule.id) >= MAX_QUEUED_PER_RULE) {
+      const c = claimEvent(rule, ev, { via, status: 'skipped', reason: 'queue-full', now: now() });
+      if (c && !c.same) { notify('skipped', c.event, rule, `Skipped ${ev.kind === 'pr' ? 'PR' : 'issue'} #${ev.number}: ${skipWords('queue-full')}.`); changed(); }
       return c?.event || null;
     }
     const c = claimEvent(rule, ev, { via, status: cap ? 'queued' : 'starting', reason: cap ? cap.reason : null, now: now() });
@@ -905,22 +916,56 @@ export function createAutomationEngine(deps = {}) {
     return start(rule, c.event, ev);
   }
 
-  /** A queued event whose slot freed up. The event text is read again: it may have been closed meanwhile. */
+  /** Queued events whose limits now allow them, oldest first. Each is read again: it may have been closed meanwhile.
+   *  A rule at a limit holds the rest of its queue behind it (first in, first out). */
   async function startQueued() {
-    for (const event of listEvents({ status: 'queued', limit: 50 }).reverse()) {
+    const held = new Set();
+    for (const event of listEvents({ status: 'queued', limit: 500, oldestFirst: true })) {
+      if (held.has(event.ruleId)) continue;
       const stored = getRule(event.ruleId);
       if (!stored || !stored.enabled) { upd(event.id, { status: 'skipped', reason: 'rule-off' }); continue; }
       const rule = await scoped(stored, event.repo);
       const cap = limitDecision(rule, { startedToday: runsStartedSince(rule.id, dayStart()), liveInProject: liveRunsInProject(rule.projectKey) });
-      if (cap) { if (!cap.queue) { upd(event.id, { status: 'skipped', reason: cap.reason }); notify('skipped', event, rule, `Skipped #${event.number}: ${skipWords(cap.reason)}.`); } continue; }
-      const ev = await readSubject(rule, event);
-      if (!ev) continue;
-      if (ev.state !== 'open') { upd(event.id, { status: 'skipped', reason: 'closed' }); continue; }
-      // A queued review of a head the PR has moved past: the new head is its own subject, seen on its own.
-      if (event.headSha && ev.headSha && ev.headSha !== event.headSha) { upd(event.id, { status: 'skipped', reason: 'superseded' }); continue; }
-      upd(event.id, { status: 'starting', reason: null });
-      await start(rule, { ...event, status: 'starting' }, ev);
+      if (cap) { held.add(event.ruleId); if (event.reason !== cap.reason) upd(event.id, { reason: cap.reason }); continue; }
+      await startWaiting(rule, event);
     }
+  }
+
+  /** Start one queued event now: read it again, drop it if it closed or its head moved on, else start it. */
+  async function startWaiting(rule, event, { by = null } = {}) {
+    const ev = await readSubject(rule, event);
+    if (!ev) return { ok: false, code: 'READ_FAILED', event };
+    if (ev.state !== 'open') return { ok: false, code: 'CLOSED', event: upd(event.id, { status: 'skipped', reason: 'closed' }) };
+    // A queued review of a head the PR has moved past: the new head is its own subject, seen on its own.
+    if (event.headSha && ev.headSha && ev.headSha !== event.headSha) return { ok: false, code: 'SUPERSEDED', event: upd(event.id, { status: 'skipped', reason: 'superseded' }) };
+    const claimed = getDb().prepare("UPDATE automation_events SET status = 'starting', reason = NULL, updated_at = ? WHERE id = ? AND status = 'queued'")
+      .run(nowIso(now()), event.id);
+    if (claimed.changes !== 1) return { ok: false, code: 'NOT_QUEUED', event: getEvent(event.id) };
+    const next = await start(rule, { ...getEvent(event.id) }, ev, { by });
+    return { ok: next?.status === 'starting', event: next };
+  }
+
+  /** Start a waiting event now, past its limits (a person's choice in Worca). */
+  async function startNow(eventId, { by = null } = {}) {
+    const event = getEvent(eventId);
+    if (!event) return { ok: false, code: 'NOT_FOUND' };
+    if (event.status !== 'queued') return { ok: false, code: 'NOT_QUEUED', event };
+    const stored = getRule(event.ruleId);
+    if (!stored) return { ok: false, code: 'NOT_FOUND' };
+    return startWaiting(await scoped(stored, event.repo), event, { by });
+  }
+
+  /** Take a waiting event out of the queue: it never starts (logged as skipped, `removed`). */
+  function removeQueued(eventId, { by = null } = {}) {
+    const event = getEvent(eventId);
+    if (!event) return { ok: false, code: 'NOT_FOUND' };
+    const r = getDb().prepare("UPDATE automation_events SET status = 'skipped', reason = 'removed', updated_at = ? WHERE id = ? AND status = 'queued'")
+      .run(nowIso(now()), eventId);
+    if (r.changes !== 1) return { ok: false, code: 'NOT_QUEUED', event };
+    const rule = getRule(event.ruleId);
+    notify('skipped', getEvent(eventId), rule, `Removed #${event.number} from the queue${by ? ` (${by})` : ''}.`);
+    changed();
+    return { ok: true, event: getEvent(eventId) };
   }
 
   async function readSubject(rule, event) {
@@ -1139,5 +1184,5 @@ export function createAutomationEngine(deps = {}) {
     try { await startQueued(); } catch (err) { log(`automations: queue: ${err?.message || err}`); }
   }
 
-  return { tick, poll, targets, handleEvent, handleWebhook, handleItems, approve, observe, runner: createAutomationRunner({ tick, intervalMs: deps.intervalMs, env: deps.env, enabled: deps.enabled }) };
+  return { tick, poll, targets, startNow, removeQueued, handleEvent, handleWebhook, handleItems, approve, observe, runner: createAutomationRunner({ tick, intervalMs: deps.intervalMs, env: deps.env, enabled: deps.enabled }) };
 }

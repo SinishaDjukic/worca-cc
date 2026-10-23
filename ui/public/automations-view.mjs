@@ -8,6 +8,7 @@ import { makeSwitch } from './switch.mjs';
 
 export const AUTOMATIONS_EMPTY_RULES = 'No rules of your own yet. The switches above need none; add a rule for anything else.';
 export const AUTOMATIONS_EMPTY_EVENTS = 'Nothing yet. New issues and pull requests show here with what Worca did.';
+export const AUTOMATIONS_EMPTY_QUEUE = 'Nothing waiting. Issues and pull requests that arrive over a limit wait here and start on their own.';
 export const AUTOMATIONS_EMPTY_PROJECTS = 'No project or workspace automates anything yet. Open one and use its Automations tab.';
 /** A workspace's switches start workspace runs: what changes from a project's, in the words under each switch. */
 const WORKSPACE_HELP = Object.freeze({
@@ -27,8 +28,9 @@ const STATUS = Object.freeze({
 });
 const REASONS = Object.freeze({
   'untrusted-author': 'author is not a collaborator (add the trigger label to start it)', draft: 'a draft',
-  filtered: 'labels do not match', missed: 'opened while Worca was off', closed: 'closed', 'daily-cap': 'daily cap reached',
-  concurrency: 'waiting for a free slot', 'rule-off': 'rule turned off',
+  filtered: 'labels do not match', missed: 'opened while Worca was off', closed: 'closed', 'daily-cap': 'daily limit reached: starts the next day',
+  concurrency: 'waiting for a free slot', 'rule-off': 'rule turned off', 'queue-full': 'too many waiting (100)', removed: 'removed from the queue',
+  superseded: 'a newer push replaced it',
   question: 'a question: commented, no run', 'needs-info': 'unclear: asked for details, no run',
 });
 
@@ -111,6 +113,41 @@ function eventRow(doc, e, cb, { projectName = null } = {}) {
   return row;
 }
 
+/** Why a waiting event waits, and when it starts: the daily limit until 00:00 UTC (in about N hours), the
+ *  concurrency limit until a run ends. `now` for tests. */
+export function waitLine(e, now = Date.now()) {
+  if (e.reason === 'daily-cap') {
+    const next = new Date(now); next.setUTCHours(24, 0, 0, 0);
+    const h = Math.max(1, Math.round((next.getTime() - now) / 3_600_000));
+    return `Daily limit reached: starts after 00:00 UTC (in about ${h} hour${h === 1 ? '' : 's'}), if the next day's limit allows`;
+  }
+  return 'Starts when a running event run ends';
+}
+
+/** "Waiting": the queue, in the order it starts, with Start now (past the limits) and Remove. */
+function waitingSection(doc, queue = [], cb = {}, { names = null } = {}) {
+  const sec = h(doc, 'div', 'automations-queue drows');
+  sec.append(h(doc, 'h3', '', queue.length ? `Waiting (${queue.length})` : 'Waiting'));
+  if (!queue.length) { sec.append(h(doc, 'div', 'hist-empty', AUTOMATIONS_EMPTY_QUEUE)); return sec; }
+  queue.forEach((e, i) => {
+    const row = h(doc, 'div', 'drow drow-stack automations-waiting');
+    row.dataset.event = e.id;
+    const top = h(doc, 'div', 'pl-head');
+    top.append(h(doc, 'span', 'badge grey', `#${i + 1} in line`));
+    if (names) top.append(h(doc, 'span', 'badge', names.get(e.projectKey) || e.projectKey));
+    const link = h(doc, 'a', '', `${e.kind === 'pr' ? 'PR' : isAzure(e.repo) ? 'Work item' : 'Issue'} #${e.number}`);
+    if (/^https:\/\/(github\.com|dev\.azure\.com)\//.test(String(e.url || ''))) { link.href = e.url; link.target = '_blank'; link.rel = 'noopener noreferrer'; }
+    top.append(link, ' ', h(doc, 'span', '', e.title || ''));
+    row.append(top, h(doc, 'small', 'hint', [ACTION_WORDS[e.phase === 'fix' ? 'fix' : e.action] || '', waitLine(e)].filter(Boolean).join(' · ')));
+    const acts = h(doc, 'div', 'pl-actions');
+    if (cb.onStartNow) acts.append(btn(doc, 'Start now', 'btn btn-sm', () => cb.onStartNow(e)));
+    if (cb.onRemoveQueued) acts.append(btn(doc, 'Remove', 'btn btn-sm', () => cb.onRemoveQueued(e)));
+    if (acts.childNodes.length) row.append(acts);
+    sec.append(row);
+  });
+  return sec;
+}
+
 /** How events arrive, in one sentence. */
 function deliveryLine(data, azure) {
   const hooked = azure ? data.azureWebhook?.configured : data.webhook?.configured;
@@ -131,7 +168,7 @@ export function overrideLine(o) {
  * data: GET /api/automations?projectDir= ({ scope: 'project', rules, events, autoHandle, switches, repo, forge, overriddenBy,
  *   defaultLimits, webhook, azureWebhook, polling }) or ?workspaceId= ({ scope: 'workspace', repos: [{ name, repo, forge }], … })
  * cb: { onSwitch(key, on), onAddRule(), onToggleRule(rule, on), onDeleteRule(rule), onEditLimits(rule), onApprove(event),
- *   onOpenRun(event), onCheckNow() }
+ *   onOpenRun(event), onCheckNow(), onStartNow(event), onRemoveQueued(event) }
  */
 export function renderAutomations(doc, data, { workflowNames = {}, ...cb } = {}) {
   const root = h(doc, 'div', 'automations');
@@ -201,6 +238,8 @@ export function renderAutomations(doc, data, { workflowNames = {}, ...cb } = {})
   }
   root.append(rules);
 
+  root.append(waitingSection(doc, data.queue || [], cb));
+
   const evs = h(doc, 'div', 'automations-events drows');
   evs.append(h(doc, 'h3', '', 'Recent'));
   if (!(data.events || []).length) evs.append(h(doc, 'div', 'hist-empty', AUTOMATIONS_EMPTY_EVENTS));
@@ -213,7 +252,7 @@ export function renderAutomations(doc, data, { workflowNames = {}, ...cb } = {})
  * Settings › Automations: every project and workspace that automates something, how events arrive, and the latest activity.
  * data: GET /api/automations ({ rules, events, switches, webhook, azureWebhook, polling })
  * projects: [{ key, name }] (the registered projects; a workspace's key is `workspaces/<id>`, its rules' owner key).
- * cb: { onOpenProject(key), onApprove(event), onOpenRun(event) }
+ * cb: { onOpenProject(key), onApprove(event), onOpenRun(event), onStartNow(event), onRemoveQueued(event) }
  */
 export function renderAutomationsOverview(doc, data, projects = [], cb = {}) {
   const root = h(doc, 'div', 'automations automations-overview');
@@ -249,6 +288,8 @@ export function renderAutomationsOverview(doc, data, projects = [], cb = {}) {
     list.append(row);
   }
   root.append(list);
+
+  root.append(waitingSection(doc, data.queue || [], cb, { names }));
 
   const evs = h(doc, 'div', 'automations-events drows');
   evs.append(h(doc, 'h3', '', 'Recent'));
