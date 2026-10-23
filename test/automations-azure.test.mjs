@@ -50,8 +50,9 @@ after(() => azureApi.reset());
 test('shapes: a work item is an issue, a PR is a pull, HTML is text, every author a member', () => {
   const i = workItemIssue(C, workItem(5));
   assert.deepEqual(i, { number: 5, html_url: 'https://dev.azure.com/acme/Shop/_workitems/edit/5', title: 'Crash 5', body: 'It breaks & dies',
-    state: 'open', user: { login: 'jane@acme.com' }, author_association: 'MEMBER', labels: ['bug', 'urgent'],
+    state: 'open', user: { login: 'jane@acme.com' }, author_association: 'MEMBER', labels: ['bug', 'urgent'], type: null,
     created_at: iso(T0 + 60_000), updated_at: iso(T0 + 60_000) });
+  assert.deepEqual(workItemIssue(C, workItem(9, { 'System.WorkItemType': 'User Story' })).type, { name: 'User Story' });
   assert.equal(workItemIssue(C, workItem(6, { 'System.State': 'Done' })).state, 'closed');
   const p = azurePull(C, pull(7, { isDraft: true }));
   assert.equal(p.html_url, 'https://dev.azure.com/acme/Shop/_git/web/pullrequest/7');

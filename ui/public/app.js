@@ -38439,7 +38439,7 @@ async function loadAutomationsView(sub = '') {
     onAddRule: async () => {
       const v = await promptModal({ title: 'Add rule', confirmLabel: 'Add rule', fields: [
         { id: 'when', label: 'When', value: 'issue.opened:propose', options: [
-          { value: 'issue.opened:propose', text: 'An issue is opened → propose a fix (plan only)', group: 'Issues' },
+          { value: 'issue.opened:propose', text: 'An issue is opened → triage, then propose a fix or a plan', group: 'Issues' },
           { value: 'issue.opened:fix', text: 'An issue is opened → full fix, draft PR', group: 'Issues' },
           { value: 'issue.opened:run', text: 'An issue is opened → run a workflow', group: 'Issues' },
           { value: 'pr.opened:review', text: 'A PR is opened or ready → review it', group: 'Pull requests' },

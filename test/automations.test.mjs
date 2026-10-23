@@ -505,3 +505,98 @@ test('ghApi: status, ETag, a 304, a rate limit and the JSON body as a file', asy
     assert.ok(seen[3].args.includes('POST'));
   } finally { gi.reset(); }
 });
+
+test('triage: the issue type, then labels; the classifier\'s reply; mock mode', async () => {
+  const { triageFromSignals, parseTriage, mockTriage, triageComment, planComment: pc } = await import('../src/core/automations.mjs');
+  assert.deepEqual(triageFromSignals({ issueType: 'Bug', labels: ['enhancement'] }), { kind: 'bug', by: 'type' });
+  assert.deepEqual(triageFromSignals({ issueType: 'User Story', labels: [] }), { kind: 'feature', by: 'type' });
+  assert.deepEqual(triageFromSignals({ labels: ['type: enhancement'] }), { kind: 'feature', by: 'label' });
+  assert.deepEqual(triageFromSignals({ labels: ['enhancement', 'Bug'] }), { kind: 'bug', by: 'label' });
+  assert.deepEqual(triageFromSignals({ labels: ['question'] }), { kind: 'question', by: 'label' });
+  assert.equal(triageFromSignals({ issueType: 'Task', labels: ['ui'] }), null);
+  assert.deepEqual(parseTriage('sure: {"kind":"Feature","reason":"asks for export"}'), { kind: 'feature', reason: 'asks for export' });
+  assert.equal(parseTriage('{"kind":"spam"}'), null);
+  assert.equal(parseTriage('no json'), null);
+  assert.equal(mockTriage({ title: 'How do I export?' }).kind, 'question');
+  assert.equal(mockTriage({ title: 'Add CSV export' }).kind, 'feature');
+  assert.equal(mockTriage({ title: 'Checkout crashes' }).kind, 'bug');
+  assert.equal(mockTriage({ title: 'hmm' }).kind, 'unclear');
+  assert.match(triageComment('unclear'), /`bug` or `enhancement` label/);
+  assert.match(triageComment('question', { forge: 'azure' }), /work item reads as a question/);
+  assert.match(pc({ plan: 'x', triage: 'feature' }), /### Proposed plan[\s\S]*To start building it/);
+});
+
+/** A minimal engine for triage: records starts, comments and labels; `kind` is what the classifier answers. */
+function triageHarness({ kind = 'bug', classifyThrows = false } = {}) {
+  const io = { starts: [], comments: [], labels: [], templates: [], classified: 0, kind };
+  const engine = createAutomationEngine({
+    now: () => T0 + 120_000,
+    ownLogins: async () => [],
+    host: {
+      comment: async (a) => { io.comments.push(a); return { ok: true }; },
+      addLabels: async (a) => { io.labels.push(...a.labels); return { ok: true }; },
+    },
+    classify: async () => { io.classified++; if (classifyThrows) throw new Error('no model'); return { kind: io.kind, reason: 'because' }; },
+    ensureTemplate: async (action, { triage }) => { io.templates.push(`${action}:${triage}`); return `wf_${action}_${triage}`; },
+    startRun: async (body) => { io.starts.push(body); return { status: 200, body: { runId: `r${io.starts.length}` } }; },
+  });
+  return { engine, io };
+}
+
+test('engine triage: a feature label proposes a plan with no model call; a bug label a root-cause plan', async () => {
+  const { engine, io } = triageHarness();
+  rule({ action: 'propose', workflowId: null, limits: normalizeLimits({ maxConcurrent: 5 }) });
+  await engine.handleEvent(issueEvent(REPO, issue(1, { title: 'CSV export', labels: [{ name: 'enhancement' }] })));
+  await engine.handleEvent(issueEvent(REPO, issue(2, { labels: ['bug'] })));
+  assert.equal(io.classified, 0, 'labels decide: no model call');
+  assert.deepEqual(io.templates, ['propose:feature', 'propose:bug']);
+  assert.match(io.starts[0].title, /^Plan #1/);
+  assert.match(io.starts[0].source.prompt, /This is a feature request/);
+  assert.match(io.starts[1].title, /^Propose a fix for #2/);
+  assert.deepEqual(io.labels, [], 'the issue\'s own labels are not added to');
+  assert.deepEqual(listEvents().map((e) => e.phase).sort(), ['bug', 'feature']);
+});
+
+test('engine triage: an unlabelled issue is classified; the AI\'s answer becomes a label', async () => {
+  const { engine, io } = triageHarness({ kind: 'feature' });
+  rule({ action: 'propose', workflowId: null });
+  await engine.handleEvent(issueEvent(REPO, issue(3)));
+  assert.equal(io.classified, 1);
+  assert.deepEqual(io.templates, ['propose:feature']);
+  assert.deepEqual(io.labels, ['enhancement']);
+});
+
+test('engine triage: a question gets one comment and no run, until someone labels it a bug', async () => {
+  const { engine, io } = triageHarness({ kind: 'question' });
+  rule({ action: 'propose', workflowId: null });
+  const q = issue(4, { title: 'How do I log in?' });
+  await engine.handleEvent(issueEvent(REPO, q));
+  assert.equal(io.starts.length, 0);
+  assert.equal(io.comments.length, 1);
+  assert.match(io.comments[0].body, /reads as a question/);
+  assert.deepEqual(io.labels, ['question']);
+  assert.deepEqual([listEvents()[0].status, listEvents()[0].reason], ['skipped', 'question']);
+  // Seen again (a comment, an edit, the next poll): nothing, and no second model call.
+  await engine.handleEvent(issueEvent(REPO, q));
+  await engine.handleEvent(issueEvent(REPO, { ...q, labels: ['question'] }));
+  assert.deepEqual([io.starts.length, io.comments.length, io.classified], [0, 1, 1]);
+  // A maintainer says it is a bug: now it runs, on the label's word.
+  await engine.handleEvent(issueEvent(REPO, { ...q, labels: [{ name: 'bug' }] }));
+  assert.equal(io.starts.length, 1);
+  assert.deepEqual(io.templates, ['propose:bug']);
+  assert.equal(listEvents().length, 1);
+});
+
+test('engine triage: unclear asks for details; no classifier answer keeps the root-cause plan', async () => {
+  const a = triageHarness({ kind: 'unclear' });
+  rule({ action: 'propose', workflowId: null });
+  await a.engine.handleEvent(issueEvent(REPO, issue(5)));
+  assert.equal(a.io.starts.length, 0);
+  assert.match(a.io.comments[0].body, /could not tell whether this issue is a bug or a feature request/);
+  assert.equal(listEvents()[0].reason, 'needs-info');
+  getDb().exec('DELETE FROM automation_events');
+  const b = triageHarness({ classifyThrows: true });
+  await b.engine.handleEvent(issueEvent(REPO, issue(6)));
+  assert.deepEqual(b.io.templates, ['propose:bug']);
+  assert.deepEqual(b.io.labels, [], 'no AI answer: no label');
+});

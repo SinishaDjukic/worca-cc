@@ -17,7 +17,7 @@ const enc = encodeURIComponent;
 const COMMENTS_VERSION = '7.1-preview.4';
 const CLOSED_STATES = new Set(['Closed', 'Done', 'Removed', 'Resolved', 'Completed']);
 const FIELDS = ['System.Id', 'System.Title', 'System.State', 'System.Tags', 'System.CreatedDate', 'System.ChangedDate',
-  'System.CreatedBy', 'System.Description', 'Microsoft.VSTS.TCM.ReproSteps', 'System.TeamProject'];
+  'System.CreatedBy', 'System.Description', 'Microsoft.VSTS.TCM.ReproSteps', 'System.TeamProject', 'System.WorkItemType'];
 const WIQL_TOP = 200;
 
 /** `dev.azure.com/<org>/<project>/<repo>` → { org, project, repo } | null. */
@@ -54,6 +54,8 @@ export function workItemIssue(c, w) {
     user: { login: login(f['System.CreatedBy']) },
     author_association: 'MEMBER',
     labels: String(f['System.Tags'] || '').split(';').map((t) => t.trim()).filter(Boolean),
+    // The work item type in GitHub's issue-type shape: triage reads Bug, User Story, Feature… from it.
+    type: f['System.WorkItemType'] ? { name: String(f['System.WorkItemType']) } : null,
     created_at: f['System.CreatedDate'] || null,
     updated_at: f['System.ChangedDate'] || f['System.CreatedDate'] || null,
   };
@@ -149,6 +151,20 @@ export function createAzureAutomationHost({ env = () => process.env, fetchHead }
           }
         }
         return { ok: true, items };
+      } catch (e) { return failure(e); }
+    },
+    /** Add tags to a work item (triage's label): its tags are read first, as a patch replaces the field. */
+    async addLabels({ repo, number, labels }) {
+      try {
+        const c = coords(repo);
+        const url = `${projectBase(c)}/_apis/wit/workitems/${Number(number)}`;
+        const { json } = await wi('read', `${url}?fields=System.Tags`);
+        const have = String(json?.fields?.['System.Tags'] || '').split(';').map((t) => t.trim()).filter(Boolean);
+        const all = [...new Set([...have, ...labels])];
+        if (all.length === have.length) return { ok: true };
+        await adoFetch('write', url, { env: E(), method: 'PATCH', body: [{ op: 'add', path: '/fields/System.Tags', value: all.join('; ') }],
+          auth: { ...boards('write'), 'content-type': 'application/json-patch+json' } });
+        return { ok: true };
       } catch (e) { return failure(e); }
     },
     /** A work item comment, in markdown. */

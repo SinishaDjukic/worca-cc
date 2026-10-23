@@ -7,7 +7,8 @@ export const AUTOMATIONS_EMPTY_RULES = 'No rules of your own yet. The Auto-handl
 export const AUTOMATIONS_EMPTY_EVENTS = 'Nothing happened yet. New issues and pull requests show here with what Worca did.';
 
 const EVENT_WORDS = Object.freeze({ 'issue.opened': 'Issue opened', 'pr.opened': 'PR opened or ready' });
-const ACTION_WORDS = Object.freeze({ run: 'Run a workflow', propose: 'Propose a fix', fix: 'Full fix (draft PR)', review: 'Review the PR' });
+const ACTION_WORDS = Object.freeze({ run: 'Run a workflow', propose: 'Triage and propose', fix: 'Full fix (draft PR)', review: 'Review the PR' });
+const TRIAGE_WORDS = Object.freeze({ bug: 'bug', feature: 'feature request', question: 'question', unclear: 'unclear' });
 const STATUS = Object.freeze({
   skipped: ['Skipped', 'grey'], queued: ['Queued', 'grey'], starting: ['Starting', 'blue'], running: ['Running', 'blue'],
   'awaiting-approval': ['Waiting for approval', 'amber'], done: ['Done', 'green'], failed: ['Failed', 'red'],
@@ -16,6 +17,7 @@ const REASONS = Object.freeze({
   'untrusted-author': 'author is not a collaborator (add the trigger label to start it)', draft: 'a draft',
   filtered: 'labels do not match', missed: 'opened while Worca was off', closed: 'closed', 'daily-cap': 'daily cap reached',
   concurrency: 'waiting for a free slot', 'rule-off': 'rule turned off',
+  question: 'a question: commented, no run', 'needs-info': 'unclear: asked for details, no run',
 });
 
 function h(doc, tag, cls, text) {
@@ -124,7 +126,8 @@ export function renderAutomations(doc, data, { workflowNames = {}, ...cb } = {})
     if (/^https:\/\/(github\.com|dev\.azure\.com)\//.test(String(e.url || ''))) { link.href = e.url; link.target = '_blank'; link.rel = 'noopener noreferrer'; }
     top.append(link, ' ', h(doc, 'span', '', e.title || ''), h(doc, 'span', `badge ${st.family}`, st.word));
     row.append(top);
-    const meta = [e.author ? `by @${e.author}` : '', ACTION_WORDS[e.phase === 'fix' ? 'fix' : e.action] || '', st.reason,
+    const triage = e.action === 'propose' && TRIAGE_WORDS[e.phase] ? `triaged: ${TRIAGE_WORDS[e.phase]}` : '';
+    const meta = [e.author ? `by @${e.author}` : '', ACTION_WORDS[e.phase === 'fix' ? 'fix' : e.action] || '', triage, st.reason,
       e.costUsd ? `$${Number(e.costUsd).toFixed(2)}` : '', e.via === 'webhook' ? 'webhook' : ''].filter(Boolean).join(' · ');
     row.append(h(doc, 'small', 'hint', meta));
     const acts = h(doc, 'div', 'pl-actions');

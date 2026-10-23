@@ -23,9 +23,13 @@ that is. On Azure DevOps see [Azure DevOps](#azure-devops) for what each event m
 
 **Settings › Automations** (or **Automations** on a project page) has three switches per project:
 
-- **New issue → propose a fix.** Worca reproduces the issue where it can, finds the root cause and
-  writes a fix plan. It posts the plan as an issue comment and stops. No code is changed until a person
-  approves: **Approve the fix** in Worca, or a `/worca approve` comment on the issue from a collaborator
+- **New issue → triage and propose.** Worca first decides what kind of issue it is (see [Triage](#triage)):
+  - a **bug**: it reproduces the issue where it can, finds the root cause and writes a fix plan;
+  - a **feature request**: it writes a plan for the change;
+  - a **question**, or **unclear**: no run. One comment says so, or asks for the details that are missing.
+
+  It posts the plan as an issue comment and stops. No code is changed until a person approves:
+  **Approve the fix** in Worca, or a `/worca approve` comment on the issue from a collaborator
   (OWNER, MEMBER or COLLABORATOR). The fix then runs with the approved plan, as below.
 - **New issue → full fix.** Worca fixes the issue, opens a **draft** pull request whose description says
   `Closes #N`, turns on Watch PR for it, and links the PR in an issue comment.
@@ -33,7 +37,25 @@ that is. On Azure DevOps see [Azure DevOps](#azure-devops) for what each event m
   where a finding names a line in the diff (the rest go in the review's body). It never approves, never
   requests changes and never merges, and it skips drafts and Worca's own PRs. A new push gets a new review.
 
-"Propose a fix" and "full fix" both answer new issues, so turning one on turns the other off.
+"Triage and propose" and "full fix" both answer new issues, so turning one on turns the other off.
+
+### Triage
+
+1. **The issue's own signal first**, free and predictable: its type (GitHub's issue type; on Azure DevOps the
+   work item type: Bug is a bug, User Story, Feature, Product Backlog Item, Epic or Requirement a feature), then its
+   labels: `bug`, `defect`, `regression`, `crash` → bug; `enhancement`, `feature`, `feature request`,
+   `improvement`, `idea` → feature; `question`, `support` → question (`type: bug`, `kind/feature` and the like
+   count too).
+2. **Only when there is none**, one cheap model call reads the title, labels and body (as untrusted data) and
+   answers bug, feature, question or unclear. It runs on the Smart run naming model (Models › Helper jobs › Run
+   naming, else the cheapest ready Claude model at its lowest effort), is recorded as utility spend `triage`, and
+   is never billed to a run. Worca then adds the matching label (`bug`, `enhancement`, `question`,
+   `needs-info`; a tag on Azure DevOps) where its credential may. Without an answer (no model, the total budget
+   spent) it proposes a root-cause plan, as before triage existed.
+
+A question or an unclear issue is not looked at again until someone gives it a bug or feature label (or type):
+then it runs on that word, without another model call. In mock mode (`WORCA_MOCK=1`) a fixed reading of the title
+stands in for the model.
 
 ## Rules
 
@@ -55,8 +77,8 @@ needs it; open it in the Workflows view and edit it like any other. Worca never 
 
 | Workflow | Used by |
 |---|---|
-| Bug → reproduce and root-cause | Propose a fix |
-| Issue → plan only | Pick it in a "run a workflow" rule |
+| Bug → reproduce and root-cause | Triage and propose, for a bug |
+| Issue → plan only | Triage and propose, for a feature request; or pick it in a "run a workflow" rule |
 | Issue → fix and open a draft PR | Full fix, and the fix after an approval |
 | PR → review | Automatic review |
 
@@ -117,7 +139,7 @@ in the rule list). What changes:
   one's rules see it, so narrow them with a tag filter.
 - **Who can start a run:** every author counts as a member. Azure DevOps has no outside contributors: only
   people in your organization can open a work item or a PR, or comment.
-- **Propose a fix** posts the plan as a work item comment; `/worca approve` in a comment starts the fix.
+- **Triage and propose** reads the work item type first; it posts the plan as a work item comment; `/worca approve` in a comment starts the fix.
 - **Full fix** opens a draft PR that **links the work item** (Azure's form of `Closes #N`), and Watch PR follows it.
 - **Automatic review** posts one summary thread (closed, for information) and one active thread per finding on its
   line. It never votes and never completes a PR. PRs from a fork are not reviewed yet.

@@ -107,7 +107,7 @@ import { parseRunOverlay, checkRunOverlay, overlayWorkflowRefusal, OVERLAY_ERROR
 import { listPresets, readPreset, createPreset, updatePreset, duplicatePreset, deletePreset, readRunSetup, createPresetFromRun } from '../src/core/run-presets-store.mjs';
 import { presetRefusals, completeSnapshot } from '../src/core/run-presets-check.mjs';
 import { setupFromBody, bodyFollowingPreset, overriddenKeys, PRESET_LIMITS } from '../src/shared/run-presets.mjs';
-import { describeTitleModel } from '../src/core/title.mjs';
+import { describeTitleModel, auxTextCall, resolveTitleModel } from '../src/core/title.mjs';
 import { validatePinpointInput, runPinpoint, pinpointCwd } from '../src/core/pinpoint.mjs';
 import { demoChunks, demoPinpointReply } from '../src/core/demo-scenario.mjs';
 import { effectiveHumanRateUsd } from '../src/core/human-rate.mjs';
@@ -339,7 +339,7 @@ import {
   createAutomationEngine, listRules as listAutomationRules, getRule as getAutomationRule, createRule as createAutomationRule,
   updateRule as updateAutomationRule, deleteRule as deleteAutomationRule, validateRule as validateAutomationRule, listEvents as listAutomationEvents,
   autoHandleState, setAutoHandle, AUTO_HANDLE, verifyGithubSignature, recordDelivery, normalizeFilter as normalizeAutomationFilter,
-  normalizeLimits as normalizeAutomationLimits, forgeOfRepo,
+  normalizeLimits as normalizeAutomationLimits, forgeOfRepo, TRIAGE_SYSTEM, triagePrompt, parseTriage, mockTriage,
 } from '../src/core/automations.mjs';
 import { ensureAutomationTemplate, listAutomationTemplates, TEMPLATE_FOR_ACTION } from '../src/core/automation-templates.mjs';
 import { createAzureAutomationHost, azureWebhookItems } from '../src/core/automation-azure.mjs';
@@ -7820,7 +7820,19 @@ const automationHost = {
     return { ok: true, ref: r.ref, remote };
   },
   ownLogins: () => automationOwnLogins(),
+  addLabels: ({ repo, number, labels }) => ghApi({ role: 'write', repo, method: 'POST', path: `repos/${repo}/issues/${Number(number)}/labels`, body: { labels } }),
 };
+/** Triage's one cheap model call (the Smart run naming model: the Models page's Run naming pick, else the cheapest
+ *  ready Claude model at its lowest effort). Recorded as utility spend `triage`: never billed to a run. Null when the
+ *  total budget is spent or the model gives no usable answer; the engine then proposes a root-cause plan as before. */
+async function automationClassify(ev) {
+  if (mockEnabled({})) return mockTriage(ev);
+  if (budgetStatus().blocked) return null;
+  const pick = await namingPick();
+  const out = await auxTextCall({ systemPrompt: TRIAGE_SYSTEM, prompt: triagePrompt(ev), model: pick?.model || resolveTitleModel({}).model || undefined },
+    { effortOverride: pick?.effort || undefined, onCost: (c) => { try { recordUtilityCost('triage', c); } catch { /* the ledger never fails triage */ } } });
+  return parseTriage(out);
+}
 // Azure DevOps (automation-azure.mjs): the same contract in GitHub's shapes; a PR head is its source branch.
 const automationAzureHost = createAzureAutomationHost({
   fetchHead: async ({ projectDir, repo, number, branch }) => {
@@ -7840,7 +7852,9 @@ const automations = createAutomationEngine({
   hostFor: automationHostFor,
   ownLogins: (repo) => automationHostFor(repo).ownLogins(repo),
   isOwnPr: (url) => !!getDb().prepare('SELECT 1 FROM pipelines WHERE pr_url = ? UNION SELECT 1 FROM pipeline_member_prs WHERE pr_url = ? LIMIT 1').get(url, url),
-  ensureTemplate: (action) => ensureAutomationTemplate(TEMPLATE_FOR_ACTION[action] || 'fix'),
+  // A feature request's proposal is a plan for the change, a bug's a reproduction and root cause.
+  ensureTemplate: (action, { triage = null } = {}) => ensureAutomationTemplate(action === 'propose' && triage === 'feature' ? 'planOnly' : TEMPLATE_FOR_ACTION[action] || 'fix'),
+  classify: automationClassify,
   startRun: async (body, { startedBy, trigger }) => {
     const out = await invokeStartRun(body, null, { startedBy, automation: true });
     if (out.status === 200 && out.body?.runId) {
