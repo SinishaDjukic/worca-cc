@@ -10290,7 +10290,7 @@ button.mk-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;bor
 
 /* Settings › Network proxy (corporateProxy flag): a new surface, so placeholders use --ink-2. */
 #network-proxy-settings-card .input::placeholder{color:var(--ink-2);}
-#network-proxy-settings-card .np-results{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:4px;font-size:12px;}
+#network-proxy-settings-card .np-results{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:4px;font-size:var(--fs-meta);}
 #network-proxy-settings-card .np-results li[data-ok="false"]{color:var(--red-ink);}
 
 
