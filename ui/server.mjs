@@ -339,7 +339,7 @@ import {
   createAutomationEngine, listRules as listAutomationRules, getRule as getAutomationRule, createRule as createAutomationRule,
   updateRule as updateAutomationRule, deleteRule as deleteAutomationRule, validateRule as validateAutomationRule, listEvents as listAutomationEvents,
   autoHandleState, setAutoHandle, AUTO_HANDLE, verifyGithubSignature, recordDelivery, normalizeFilter as normalizeAutomationFilter,
-  normalizeLimits as normalizeAutomationLimits, forgeOfRepo, TRIAGE_SYSTEM, triagePrompt, parseTriage, mockTriage,
+  normalizeLimits as normalizeAutomationLimits, forgeOfRepo, DEFAULT_LIMITS as AUTOMATION_DEFAULT_LIMITS, TRIAGE_SYSTEM, triagePrompt, parseTriage, mockTriage,
 } from '../src/core/automations.mjs';
 import { ensureAutomationTemplate, listAutomationTemplates, TEMPLATE_FOR_ACTION } from '../src/core/automation-templates.mjs';
 import { createAzureAutomationHost, azureWebhookItems } from '../src/core/automation-azure.mjs';
@@ -7918,8 +7918,9 @@ app.get('/api/automations', syncRoute(async (req, res) => {
     rules: listAutomationRules({ projectKey: key }),
     events: listAutomationEvents({ projectKey: key, limit: Number(req.query.limit) || 50 }),
     ...(scope ? { autoHandle: autoHandleState(key), repo: scope.repo, forge: scope.repo ? forgeOfRepo(scope.repo) : null } : {}),
-    switches: Object.entries(AUTO_HANDLE).map(([k, v]) => ({ key: k, label: v.label })),
+    switches: Object.entries(AUTO_HANDLE).map(([k, v]) => ({ key: k, label: v.label, help: v.help })),
     templates: listAutomationTemplates(),
+    defaultLimits: AUTOMATION_DEFAULT_LIMITS,
     webhook: { configured: !!webhookSecret(), path: '/api/ingress/github' },
     azureWebhook: { configured: !!adoWebhookSecret(), path: '/api/ingress/azure' },
     polling: String(process.env.WORCA_AUTOMATIONS_POLL ?? '1') !== '0',

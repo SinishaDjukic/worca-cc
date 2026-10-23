@@ -27,10 +27,18 @@ export const ACTIONS_FOR_EVENT = Object.freeze({
   'pr.opened': Object.freeze(['run', 'review']),
 });
 /** The Auto-handle switches, each one rule the switch owns (origin 'auto-handle'). */
+/** Each switch's `help` says what it does, in the words Settings › Automations shows under it. */
 export const AUTO_HANDLE = Object.freeze({
-  propose: Object.freeze({ event: 'issue.opened', action: 'propose', label: 'New issue → triage and propose' }),
-  fix: Object.freeze({ event: 'issue.opened', action: 'fix', label: 'New issue → full fix' }),
-  review: Object.freeze({ event: 'pr.opened', action: 'review', label: 'New PR → automatic review' }),
+  propose: Object.freeze({ event: 'issue.opened', action: 'propose', label: 'New issue → triage and propose',
+    help: 'Works out whether the issue is a bug or a feature request, from its type or labels, else with one cheap model call. '
+      + 'A bug gets a reproduction, its root cause and a fix plan; a feature request gets a plan. The plan is posted as a comment, '
+      + 'and nothing changes until a person approves it here or replies /worca approve. A question or an unclear issue gets one comment and no run.' }),
+  fix: Object.freeze({ event: 'issue.opened', action: 'fix', label: 'New issue → full fix',
+    help: 'Fixes the issue straight away, with no approval step: plan, implement and review, then a draft pull request '
+      + 'that closes the issue, with Watch PR turned on. Nothing is merged.' }),
+  review: Object.freeze({ event: 'pr.opened', action: 'review', label: 'New PR → automatic review',
+    help: 'Reviews each new or ready pull request, and each new push to it, and posts one comment-only review with inline '
+      + 'comments. Never approves, requests changes or merges; skips drafts and Worca\'s own pull requests.' }),
 });
 export const TRUSTED_ASSOCIATIONS = Object.freeze(['OWNER', 'MEMBER', 'COLLABORATOR']);
 export const DEFAULT_TRIGGER_LABEL = 'worca';

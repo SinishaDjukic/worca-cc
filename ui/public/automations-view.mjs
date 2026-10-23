@@ -49,6 +49,14 @@ export function ruleSummary(rule, workflowNames = {}) {
   };
 }
 
+const AUTO_HANDLE_KEY = Object.freeze({ 'issue.opened:propose': 'propose', 'issue.opened:fix': 'fix', 'pr.opened:review': 'review' });
+const autoHandleKey = (r) => AUTO_HANDLE_KEY[`${r.event}:${r.action}`] || null;
+/** "Up to 10 runs a day, $5 per run, 1 at a time in this project." */
+export function limitsLine(l) {
+  if (!l) return '';
+  return `Up to ${l.dailyRuns} run${l.dailyRuns === 1 ? '' : 's'} a day, $${l.maxCostUsd} per run, ${l.maxConcurrent} at a time in this project.`;
+}
+
 /** One status badge word + colour, and the reason in words. */
 export function eventStatus(e) {
   const [word, family] = STATUS[e.status] || [e.status, 'grey'];
@@ -85,6 +93,11 @@ export function renderAutomations(doc, data, { workflowNames = {}, ...cb } = {})
     const sw = makeSwitch(doc, { label: s.label, checked: !!data.autoHandle?.[s.key], rowClass: 'automations-switch', data: { switch: s.key } });
     sw.input.addEventListener('change', () => cb.onSwitch?.(s.key, sw.input.checked));
     ah.append(sw.row);
+    // What the switch does, and the limits its rule runs under (the stored rule's once it exists, else the defaults).
+    const own = (data.rules || []).find((r) => r.origin === 'auto-handle' && autoHandleKey(r) === s.key);
+    const help = h(doc, 'p', 'hint automations-switch-help', s.help || '');
+    help.append(h(doc, 'span', 'automations-switch-limits', limitsLine(own?.limits || data.defaultLimits)));
+    ah.append(help);
   }
   ah.append(h(doc, 'p', 'hint', azure
     ? 'On Azure DevOps a new issue is a new work item in the project, and its tags are labels. Runs use the Strict guardrails, and Worca never votes on or completes a pull request.'
