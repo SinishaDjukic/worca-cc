@@ -24072,8 +24072,11 @@ function openShipItGroupModal(view, { opener = null, refocus = null } = {}) {
   const tryBtn = q('.shipit-try-btn'); tryBtn.hidden = true; tryBtn.onclick = null;   // Try it first is single-run only
   resetShipItDesc(modal);
   q('.shipit-title-input').value = '';
+  // Slice 3 (D8): a blank Title ships as the group title, so the placeholder says so; resetGroupShip restores it.
+  if (view.kind === 'user') { const t = q('.shipit-title-input'); t.dataset.ph = t.placeholder; t.placeholder = view.title; }
   q('.shipit-draft-input').checked = false;
-  const paintBase = (mode) => { q('.shipit-base').textContent = mode === 'one' ? view.base : `${view.base}, then each run's branch`; };
+  const paintBase = (mode) => { q('.shipit-base').textContent = mode === 'one' ? view.base
+    : view.kind === 'user' ? 'Each run\'s own base branch' : `${view.base}, then each run's branch`; };
   const ctl = paintGroupShip(modal, { ...view, onMode: paintBase }, { setLabel: (l) => setShipItLabel(modal, l) });
   const relSlot = q('.shipit-release');
   relSlot.replaceChildren();
@@ -24109,6 +24112,12 @@ function openShipItGroupModal(view, { opener = null, refocus = null } = {}) {
     }
   };
   shipItClose = done;
+  // Slice 3 (D13): the combine check answers after the dialog is open; One reads "Checking…" until then. It is fetched
+  // only while the answer is unknown, and its base is what Into reads for One.
+  if (view.loadCheck && ctl.checking()) {
+    view.loadCheck().then((c) => { if (closed) return; if (c.base) view.base = c.base; ctl.setCheck(c); },
+      (e) => { if (!closed) ctl.setCheck({ oneOff: `Could not check whether the runs combine: ${e.message}`, line: '' }); });
+  }
   const guard = guardModal(modal, { kind: 'form', close: () => done(false), busy: () => posting });
   guard.opened();
   shipItWatchDefault(view.projectKey).then((on) => { if (on && !closed && !watchTouched) { watchIn.checked = true; if (!guard.touched) guard.markClean(); } });
@@ -24121,9 +24130,11 @@ function openShipItGroupModal(view, { opener = null, refocus = null } = {}) {
     const desc = q('.shipit-desc-input').value.trim();
     const payload = { mode, ...(watchIn.checked ? { watch: true } : {}) };
     if (view.kind === 'feature' && rel.value) payload.release = rel.value;
-    if (view.kind === 'chain' && mode === 'one') Object.assign(payload, title ? { title } : {}, desc ? { body: desc } : {},
+    if ((view.kind === 'chain' || view.kind === 'user') && mode === 'one') Object.assign(payload, title ? { title } : {}, desc ? { body: desc } : {},
       q('.shipit-draft-input').checked ? { draft: true } : {});
-    const url = view.kind === 'feature' ? `/api/shape/features/${encodeURIComponent(view.id)}/ship` : `/api/chains/${encodeURIComponent(view.id)}/ship`;
+    const url = view.kind === 'feature' ? `/api/shape/features/${encodeURIComponent(view.id)}/ship`
+      : view.kind === 'user' ? `/api/run-groups/${encodeURIComponent(view.id)}/ship`
+      : `/api/chains/${encodeURIComponent(view.id)}/ship`;
     posting = true;
     okBtn.disabled = true;
     setCtaContent(okBtn, 'pr-create', CREATING_PR);
@@ -24193,14 +24204,28 @@ async function openFeatureShip(featureId, { opener = null, card = null } = {}) {
     hint: shipReason(f.ship && f.ship.suggested, f.ship && f.ship.linesAdded), release: (f.ship && f.ship.hint) || null },
     { opener, refocus: card ? shipCardRefocus(f.id, card) : focusGroupHead });
 }
+const shipMemberOf = (mb) => { const pr = mb.model && mb.model.pr;
+  return { position: mb.position, stacks: mb.stacks, pr: pr && pr.url ? { url: pr.url, state: pr.id === 'closed' ? 'CLOSED' : 'OPEN' } : null }; };
 async function openChainShip(row, { opener = null } = {}) {
   const last = row.members[row.members.length - 1];
   const projectKey = last.projectKey || row.members[0].projectKey || '';
   const base = await groupShipBase(last.pipelineId, projectKey);
   openShipItGroupModal({ kind: 'chain', id: row.groupId, title: row.title, projectKey, base,
-    members: row.members.map((mb) => { const pr = mb.model && mb.model.pr;
-      return { position: mb.position, stacks: mb.stacks, pr: pr && pr.url ? { url: pr.url, state: pr.id === 'closed' ? 'CLOSED' : 'OPEN' } : null }; }) },
+    members: row.members.map(shipMemberOf) },
     { opener, refocus: focusGroupHead });
+}
+/** Slice 3: a user group's dialog: N separate by default. One waits on GET /api/run-groups/:id/combine, which also names
+ *  the base One merges into (D5), so no /api/pr/remotes read is needed: separate PRs each go into their own base. */
+function openUserGroupShip(row, { opener = null } = {}) {
+  const projectKey = (row.members.find((mb) => mb.projectKey) || {}).projectKey || '';
+  const loadCheck = async () => {
+    const res = await fetch(`/api/run-groups/${encodeURIComponent(row.groupId)}/combine`);
+    const j = await safeJson(res);
+    if (!res.ok || !j || typeof j.oneOff !== 'string') throw new Error((j && j.error) || `HTTP ${res.status}`);
+    return j;
+  };
+  openShipItGroupModal({ kind: 'user', id: row.groupId, title: row.title, projectKey, base: null,
+    members: row.members.map(shipMemberOf), loadCheck }, { opener, refocus: focusGroupHead });
 }
 /** Create PR on a feature's or a chain's status line (D19, D20): the slot's Create PR shows `pending`, a head button
  *  (a partly shipped group) goes disabled + aria-busy, until the dialog is open; an error notice on failure. */
@@ -24215,6 +24240,7 @@ async function groupShip(row, slot, btn = null) {
   const opener = btn || { isConnected: true, focus: () => { const c = slot && slot.querySelector('button'); if (c) c.focus(); } };
   try {
     if (row.groupKind === 'feature') await openFeatureShip(row.groupId, { opener });
+    else if (row.groupKind === 'user') openUserGroupShip(row, { opener });
     else await openChainShip(row, { opener });
   } catch (e) {
     notify({ tone: 'err', title: CREATE_PR_FAILED, detail: e.message });
@@ -32772,8 +32798,8 @@ function paintGroupPageNow() {
   paintGroupPage(host.__gp, { row, project: row.groupName || '', tab, overview: row.groupKind === 'feature' && shapeFirstOn(), logs: levelAtLeast('expert'), labels }, {
     onAction: (aid, b) => groupAction(row, aid, b),
     onMore: (anchor) => openGroupMoreMenu(anchor, row),
-    // One ship flow (D11): Create PR / View PR ▾ / View PRs ▾ on the status line; a user group (slice 3) keeps its bar.
-    ...(row.groupKind === 'feature' || row.groupKind === 'chain' ? { paintHead: (acts, slot, head) => {
+    // One ship flow (D11): Create PR / View PR ▾ / View PRs ▾ on the status line, for every group kind.
+    paintHead: (acts, slot, head) => {
       // D20: a late repaint (drafts closed, PRs readied) rebuilds the control under focus: keep focus on the head.
       const inHead = (n) => !!n && (acts.contains(n) || slot.contains(n));
       const had = inHead(document.activeElement);
@@ -32781,7 +32807,7 @@ function paintGroupPageNow() {
       slot._prMenu = (anchor) => openGroupPrMenu(row, anchor);
       renderHeadButtons(acts, head, slot, { onHead: (id, b) => (id === 'ship' ? groupAction(row, 'ship', b) : undefined) });
       if (had && !inHead(document.activeElement)) focusGroupHead();
-    } } : {}),
+    },
     labelChip: (d, l) => labelChip(d, l, {}),
     onTab: (t) => { location.hash = t === 'runs' ? base : `${base}/${t}`; },
     mountQuestion: (slot, mb) => paintGroupQuestion(slot, mb),
@@ -32841,14 +32867,14 @@ function groupAction(row, id, btn) {
   switch (id) {
     case 'stop': case 'archive': return runBulkAction(id, [rowTarget(row)]);
     case 'ship': {
-      // One ship flow: a feature (Shaper on) and a chain ship through the group Create PR dialog.
-      if ((row.groupKind === 'feature' && shapeFirstOn()) || row.groupKind === 'chain') {
+      // One ship flow: a feature (Shaper on), a chain and a user group ship through the group Create PR dialog.
+      if ((row.groupKind === 'feature' && shapeFirstOn()) || row.groupKind === 'chain' || row.groupKind === 'user') {
         // The slot's own Create PR passes no button; a head button (a partly shipped group) passes itself.
         const slot = document.querySelector('#group-detail .gpage-card .rd-pr-slot');
         return groupShip(row, slot, btn && btn.dataset && btn.dataset.head === 'ship' ? btn : null);
       }
-      // A user group (slice 3) or a feature with the Shaper off: each run ships on its own, so Create PR opens the
-      // single-run dialog for the first ready member.
+      // A feature with the Shaper off: each run ships on its own, so Create PR opens the single-run dialog for the
+      // first ready member.
       const next = row.members.find((mb) => mb.model && mb.model.state === 'ready') || null;
       return next ? runAction({ runId: next.runId || null, pipelineId: next.pipelineId || null, title: next.title }, 'ship', btn, next.model) : undefined;
     }
