@@ -142,7 +142,8 @@ const STDERR_DETAIL_MAX = 2000;
  * @param {string|null} [o.stagedDir]              shared with the agent user before spawn
  * @param {() => void} o.cleanup                   called exactly once on every terminal path
  * @param {(e:object) => void} o.onEvent
- * @param {(line:string) => void} o.onStdoutLine   each non-empty trimmed stdout line
+ * @param {(line:string) => void|Error} o.onStdoutLine each non-empty trimmed stdout line; returning an Error
+ *   terminates the process and rejects with that error after the child closes
  * @param {() => string} o.stdoutErrorDetail       the error text the adapter saw on stdout
  * @param {(msg:string) => string|null} o.classify the engine's classifyError
  * @param {((text:string) => string)|null} [o.redactText] the adapter's secret redactor: applied to each
@@ -189,18 +190,24 @@ export function superviseSpawn(o) {
     // Strongest recovery class seen across ALL stderr lines — classified at
     // receive time, so it survives both the rolling trim and the tail cap.
     let stderrClass = null;
+    let stdoutFatalError = null;
     let settled = false;
+    let killTimer = null;
+    let terminationStarted = false;
 
-    const onAbort = () => {
+    const terminateChild = () => {
+      if (terminationStarted) return;
+      terminationStarted = true;
       try {
         child.kill('SIGTERM');
       } catch {
         /* ignore */
       }
       // Escalate if it ignores SIGTERM.
-      setTimeout(() => {
+      killTimer = setTimeout(() => {
         // Only a sudo still running holds the group: after it exits the pid may be reused.
         const stuck = child.exitCode === null && child.signalCode === null;
+        if (!stuck) return;
         try {
           child.kill('SIGKILL');
         } catch {
@@ -209,6 +216,7 @@ export function superviseSpawn(o) {
         if (agentId && stuck) killAgentGroup(child.pid, agentId);
       }, sigkillGraceMs()).unref?.();
     };
+    const onAbort = () => terminateChild();
     if (signal) {
       if (signal.aborted) onAbort();
       else signal.addEventListener('abort', onAbort, { once: true });
@@ -218,6 +226,7 @@ export function superviseSpawn(o) {
       if (settled) return;
       settled = true;
       if (signal) signal.removeEventListener?.('abort', onAbort);
+      if (killTimer) clearTimeout(killTimer);
       cleanup();
       fn(arg);
     };
@@ -225,7 +234,12 @@ export function superviseSpawn(o) {
     const rl = createInterface({ input: child.stdout });
     rl.on('line', (line) => {
       const trimmed = line.trim();
-      if (trimmed) onStdoutLine(trimmed);
+      if (!trimmed || stdoutFatalError) return;
+      const fatal = onStdoutLine(trimmed);
+      if (fatal instanceof Error) {
+        stdoutFatalError = fatal;
+        terminateChild();
+      }
     });
 
     // stderr is a FIRST-CLASS log stream, not just failure evidence. The CLI puts
@@ -254,7 +268,7 @@ export function superviseSpawn(o) {
       const text = line.trim();
       // A pause/stop SIGTERMs the child: whatever it writes while dying (and the
       // torn fragment readline flushes at stream end) is not run output.
-      if (text && !signal?.aborted) safeEmit(onEvent, { type: 'stderr', stream: 'err', text });
+      if (text && !signal?.aborted && !stdoutFatalError) safeEmit(onEvent, { type: 'stderr', stream: 'err', text });
     });
 
     child.on('error', (err) => {
@@ -268,6 +282,10 @@ export function superviseSpawn(o) {
         const err = new Error('aborted');
         err.name = 'AbortError';
         finish(rejectP, err);
+        return;
+      }
+      if (stdoutFatalError) {
+        finish(rejectP, stdoutFatalError);
         return;
       }
       if (code !== 0) {
