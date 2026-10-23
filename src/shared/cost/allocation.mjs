@@ -1,5 +1,6 @@
 // src/shared/cost/allocation.mjs — the Cost and value report's math (Statistics › Cost; Team metrics › Cost reuses it).
-// Allocates per-run facts by a primary then a secondary dimension: top 5 + Other (n) + Unallocated (+ Ask Worca),
+// Allocates per-run facts by a primary then a secondary dimension: top 5 + Other (n) + Unallocated (+ Ask Worca,
+// + Requirements),
 // hours / Saved / $ per hour, shares, chart series, the dimension picker's order and the CSV. PURE and browser-safe
 // (the browser imports /src/shared/**). Money is summed in integer units of $0.0001 (roundUsd's precision), so every
 // part adds up to its parent and the rows to the total, exactly.
@@ -125,10 +126,12 @@ function level(runs, dim, opts) {
 }
 
 /**
- * The report model. runs: facts as GET /api/stats?report=1 serves them (filtered by the caller).
+ * The report model. runs: facts as GET /api/stats?report=1 serves them (filtered by the caller). askUsd and
+ * requirementsUsd (plans/requirements-design.md D9) are spend that belongs to no run: each is a last row of its own,
+ * part of the total, never allocated.
  * @returns {{ by, thenBy, rows, total, allocatedShare: number|null }}
  */
-export function allocate(runs, { by, thenBy = null, rate = 0, askUsd = 0, top = TOP_N } = {}) {
+export function allocate(runs, { by, thenBy = null, rate = 0, askUsd = 0, requirementsUsd = 0, top = TOP_N } = {}) {
   const second = thenBy && thenBy !== by ? thenBy : null;
   const rows = level(runs, by, { thenBy: second, rate, top });
   const askUnits = toUnits(askUsd);
@@ -136,21 +139,27 @@ export function allocate(runs, { by, thenBy = null, rate = 0, askUsd = 0, top = 
     rows.push({ kind: 'ask', dim: by, value: null, key: 'ask', label: 'Chat', ...sum([], rate, askUnits),
       factIds: [], runIds: [], children: [], members: [] });
   }
-  const total = sum(runs, rate, askUnits);
+  const reqUnits = toUnits(requirementsUsd);
+  if (reqUnits > 0) {
+    rows.push({ kind: 'requirements', dim: by, value: null, key: 'requirements', label: 'Requirements', ...sum([], rate, reqUnits),
+      factIds: [], runIds: [], children: [], members: [] });
+  }
+  const total = sum(runs, rate, askUnits + reqUnits);
   const allocated = rows.filter((r) => r.kind === 'value' || r.kind === 'other').reduce((a, r) => a + r.units, 0);
   return { by, thenBy: second, rows, total, allocatedShare: total.units > 0 ? allocated / total.units : null };
 }
 
 /** Stacked chart series, one per top-level row (the rows' order, bottom first), one value per bucket. 'spend' reads
- *  each run's [bucketIndex, usd] pairs and the Ask Worca series; 'hours' each cohort run's hours at its hours bucket.
- *  Ask Worca has no hours, so the hours chart leaves it out. */
-export function allocationSeries(model, runs, { buckets, metric = 'spend', askSeries = null }) {
+ *  each run's [bucketIndex, usd] pairs and the Ask Worca and Requirements series; 'hours' each cohort run's hours at
+ *  its hours bucket. Ask Worca and Requirements have no hours, so the hours chart leaves them out. */
+export function allocationSeries(model, runs, { buckets, metric = 'spend', askSeries = null, requirementsSeries = null }) {
   const n = buckets.length;
   const byId = new Map(runs.filter((r) => r.id).map((r) => [r.id, r]));
   const scale = metric === 'hours' ? 100 : UNIT;
-  return model.rows.filter((row) => !(metric === 'hours' && row.kind === 'ask')).map((row) => {
+  return model.rows.filter((row) => !(metric === 'hours' && (row.kind === 'ask' || row.kind === 'requirements'))).map((row) => {
     const units = new Array(n).fill(0);
     if (row.kind === 'ask') (askSeries || []).forEach((usd, i) => { if (i < n) units[i] += toUnits(usd); });
+    if (row.kind === 'requirements') (requirementsSeries || []).forEach((usd, i) => { if (i < n) units[i] += toUnits(usd); });
     for (const id of row.factIds) {
       const r = byId.get(id);
       if (!r) continue;

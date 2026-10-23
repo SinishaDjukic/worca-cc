@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { WebSocket } from 'ws';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
 
@@ -89,4 +90,77 @@ test('GET /api/workflows/wf_memory_defrag pins the pair of the engine asked for'
   const claude = await get('/api/workflows/wf_memory_defrag');
   assert.equal(claude.body.pinnedAgentModel, undefined, 'no Claude pair stored: the template\'s own model');
   await post('/api/settings', { utilityModels: { codex: { memoryDefrag: null, title: null } } });
+});
+
+// The Requirements interview row is behind the `requirements` flag (docs/feature-flags.md): on for its own tests.
+const reqFlagOn = (t) => {
+  const was = process.env.WORCA_FLAGS;
+  process.env.WORCA_FLAGS = 'requirements';
+  t.after(() => { if (was === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = was; });
+};
+
+test('requirementsInterview with the requirements flag off: GET has neither key and POST ignores it', async () => {
+  const g = await get('/api/settings');
+  assert.equal('requirementsInterview' in g.body, false);
+  assert.equal('requirementsInterviewDefault' in g.body, false);
+  const r = await post('/api/settings', { requirementsInterview: { effort: 'high' } });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal('requirementsInterview' in r.body, false);
+  const { requirementsInterviewSetting } = await import('../src/core/settings.mjs');
+  assert.equal(requirementsInterviewSetting() ?? null, null, 'nothing stored');
+});
+
+test('POST /api/settings requirementsInterview: stored per user, echoed with its default, cleared by null', async (t) => {
+  reqFlagOn(t);
+  const g = await get('/api/settings');
+  assert.equal(g.body.requirementsInterview, null);
+  assert.match(g.body.requirementsInterviewDefault.model, /^claude-opus-/);
+  assert.equal(g.body.requirementsInterviewDefault.effort, 'medium');
+  const r = await post('/api/settings', { requirementsInterview: { model: g.body.requirementsInterviewDefault.model, effort: 'high' } });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual(r.body.requirementsInterview, { model: g.body.requirementsInterviewDefault.model, effort: 'high' });
+  assert.equal(r.body.requirementsInterviewDefault.effort, 'medium');
+  assert.deepEqual((await get('/api/settings')).body.requirementsInterview, r.body.requirementsInterview);
+  const c = await post('/api/settings', { requirementsInterview: null });
+  assert.equal(c.status, 200);
+  assert.equal(c.body.requirementsInterview, null);
+  assert.equal((await get('/api/settings')).body.requirementsInterview, null);
+});
+
+test('POST /api/settings requirementsInterview: unknown model, Codex model and a bad effort are 400s naming the field', async (t) => {
+  reqFlagOn(t);
+  for (const value of [{ model: 'no-such-model-xyz' }, { model: 'gpt-5.5' }, { effort: 'low' }]) {
+    const r = await post('/api/settings', { requirementsInterview: value });
+    assert.equal(r.status, 400, JSON.stringify(value));
+    assert.match(r.body.field, /^requirementsInterview(.effort)?$/, JSON.stringify(r.body));
+  }
+  assert.equal((await get('/api/settings')).body.requirementsInterview, null, 'nothing was written');
+});
+
+test('POST /api/settings requirementsInterview: an effort the model does not offer is refused', async (t) => {
+  reqFlagOn(t);
+  const { listModels } = await import('../src/core/config.mjs');
+  const m = (await listModels('')).find((x) => /^claude-/.test(x.id) && Array.isArray(x.efforts) && x.efforts.length && x.efforts.length < 4);
+  if (!m) { t.skip('every Claude catalog model offers every effort: no model to refuse an effort on'); return; }
+  const missing = ['medium', 'high', 'xhigh', 'max'].find((e) => !m.efforts.includes(e));
+  const r = await post('/api/settings', { requirementsInterview: { model: m.id, effort: missing } });
+  assert.equal(r.status, 400);
+  assert.equal(r.body.field, 'requirementsInterview');
+});
+
+test('POST /api/settings requirementsInterview: a change emits a settings-changed frame', async (t) => {
+  reqFlagOn(t);
+  const ws = new WebSocket(`${base.replace('http', 'ws')}/ws`);
+  const frames = [];
+  await new Promise((res, rej) => { ws.once('open', res); ws.once('error', rej); });
+  ws.on('message', (d) => { try { frames.push(JSON.parse(String(d))); } catch { /* not JSON */ } });
+  try {
+    const r = await post('/api/settings', { requirementsInterview: { effort: 'high' } });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    for (const t0 = Date.now(); !frames.some((f) => f.type === 'settings-changed') && Date.now() - t0 < 1500;) await new Promise((res) => setTimeout(res, 10));
+    assert.ok(frames.some((f) => f.type === 'settings-changed'), JSON.stringify(frames.map((f) => f.type)));
+  } finally {
+    ws.close();
+    await post('/api/settings', { requirementsInterview: null });
+  }
 });

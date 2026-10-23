@@ -137,6 +137,22 @@ test('renderStatsBody: KPI row + two chart cards; empty range -> chart-empty not
   assert.equal(empty.querySelector('svg.chart-svg'), null);
 });
 
+test('renderKpiRow: Requirements tile needs the flag AND data; links to #requirements', () => {
+  const withReq = { ...MODEL, totals: { ...MODEL.totals, requirements: { spendUsd: 1.5, features: 3 } },
+    prev: { ...MODEL.prev, requirements: { spendUsd: 1, features: 1 } } };
+  const on = renderKpiRow(withReq, { doc, requirementsEnabled: true }).querySelectorAll('.stat-tile');
+  assert.equal(on.length, 8);
+  const t = [...on].find((x) => /Requirements/.test(x.querySelector('.stat-label').textContent));
+  assert.ok(t);
+  assert.match(t.querySelector('.stat-value').textContent, /\$1\.50/);
+  assert.match(t.querySelector('.stat-sub').textContent, /3 features/);
+  assert.equal(t.querySelector('a').getAttribute('href'), '#requirements');
+  assert.equal(renderKpiRow(withReq, { doc, requirementsEnabled: false }).querySelectorAll('.stat-tile').length, 7);
+  assert.equal(renderKpiRow(MODEL, { doc, requirementsEnabled: true }).querySelectorAll('.stat-tile').length, 7);
+  const one = { ...withReq, totals: { ...withReq.totals, requirements: { spendUsd: 0, features: 1 } } };
+  assert.match(renderKpiRow(one, { doc, requirementsEnabled: true }).textContent, /1 feature(?!s)/);
+});
+
 test('F-20: the two chart cards read "Spend per day" and "Runs per day", and the docs name the same bucket words', () => {
   const body = renderStatsBody({ ...MODEL, bucket: 'day', windowStartMs: 1, windowEndMs: 5,
     series: RUNS.series.map((r, i) => ({ ...r, spentUsd: SPEND.series[i].spentUsd })) }, { doc });
@@ -280,6 +296,17 @@ test('renderStatsBody: the Shaper card only when the model carries shaping', () 
   assert.ok(empty.querySelector('.chart-empty'));
   const all = renderStatsBody({ ...model, range: 'all', shaping }, { doc }).querySelector('.shaping-card');
   assert.equal(all.querySelector('.card-head small.hint').textContent, 'all time');
+});
+
+test('renderGroupsCard: the Requirements row is muted like the Chat row and has no run counts', () => {
+  const rows = [...GROUPS.rows, { kind: 'requirements', key: null, label: 'Requirements', spentUsd: 0.5, features: 2,
+    runs: 0, finished: 0, stopped: 0, failed: 0, paused: 0, running: 0, prsOpened: 0, prsMerged: 0 }];
+  const card = renderGroupsCard({ ...GROUPS, rows }, 'x', { doc, totalUsd: 4.75, totalRuns: 3 });
+  const tr = card.querySelectorAll('tbody tr')[3];
+  assert.ok(tr.classList.contains('groups-row-requirements'));
+  assert.equal(tr.cells[0].textContent, 'Requirements');
+  for (const i of [3, 4, 5, 6, 7]) assert.equal(tr.cells[i].textContent, '—');
+  assert.match(readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8'), /\.groups-table tr\.groups-row-requirements td/);
 });
 
 test('renderKpiRow: the Naming line shows under Chat only when there is naming spend', () => {

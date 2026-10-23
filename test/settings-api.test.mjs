@@ -277,6 +277,7 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
       autoWorkflowModel: '',
       prDescriptionModel: '',
       memoryDefrag: null,
+      requirementsInterview: null,
       agentGenModel: null,
       namingModel: null,
       workspaceScan: null,

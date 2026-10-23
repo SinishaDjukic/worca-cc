@@ -105,6 +105,18 @@ export const FLAGS = Object.freeze([
     reviewBy: '2027-01-20',
     docs: 'docs/feature-flags.md',
   }),
+  entry({
+    key: 'requirements',
+    title: 'Requirements',
+    description: 'A Requirements page where a product owner turns an idea into a testable feature spec through a short interview with Worca, before any run starts.',
+    stage: 'experimental',
+    default: false,
+    owner: 'TomicaB',
+    since: '1.14.0',
+    added: '2026-10-19',
+    reviewBy: '2027-01-16',
+    docs: 'docs/requirements.md',
+  }),
 ]);
 
 const BY_KEY = new Map(FLAGS.map((f) => [f.key, f]));

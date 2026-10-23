@@ -266,6 +266,7 @@ import { runCostBreakdown, floorText, auxLabelForSubagent } from '../../src/shar
 import { costBreakdownEl, costSummaryText, awayTotalText } from './cost-breakdown.mjs';
 import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/away-mode/describe.mjs';
 import { createSchedulesView } from './schedules-view.mjs';
+import { createRequirementsView } from './requirements-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 import { applyFlags, decorateFlagChips, flagOn, onFlagChange } from './flags.mjs';
 import { gitOn, applyGit, onGitChange as onGitFlip, refreshGit, GIT_MISSING_TEXT } from './git-gate.mjs';
@@ -1727,6 +1728,12 @@ function handleServerMessage(msg) {
   // is global, so repaint it regardless of the open view.
   if (msg.type === 'budget-changed') {
     refreshBudget();
+    return;
+  }
+  // Requirements: a feature changed (a round finished, an edit, another tab), or a Product brief (`brief`:
+  // '<scopeType>:<scopeKey>', A7 §5). Only the open page repaints, and only when the frame concerns it.
+  if (msg.type === 'requirements-changed') {
+    if (currentView() === 'requirements') void requirementsView.changed(msg.seq, msg.brief);
     return;
   }
   // Scheduled runs: a ticket or a repeating schedule changed (here, in another tab, from the
@@ -18580,15 +18587,21 @@ const HELPER_ENGINES = ['claude', 'codex'];
 // tab has their rows; Run naming shows only while smartRunNaming is on.
 const CLAUDE_USER_HELPER_JOBS = ['title', 'classifier', 'prDescription', 'memoryDefrag', 'agentGen', 'naming'];
 const helperPair = (p) => (p && p.model ? { model: p.model, ...(p.effort ? { effort: p.effort } : {}) } : undefined);
+// Run naming shows only while smartRunNaming is on; the Requirements interview is a user-only slot (settings key
+// requirementsInterview), listed only while its flag is on. Both asked at paint time, never a module constant.
+const claudeUserHelperJobs = () => [...CLAUDE_USER_HELPER_JOBS.filter((job) => job !== 'naming' || flagOn('smartRunNaming')),
+  ...(flagOn('requirements') ? ['requirementsInterview'] : [])];
 const CLAUDE_USER_HELPER_OWN = (data) => ({
   title: data.titleModel ? { model: data.titleModel } : undefined,
   classifier: data.autoWorkflowModel ? { model: data.autoWorkflowModel } : undefined,
   prDescription: data.prDescriptionModel ? { model: data.prDescriptionModel } : undefined,
   memoryDefrag: helperPair(data.memoryDefrag),
   agentGen: helperPair(data.agentGenModel),
+  requirementsInterview: data.requirementsInterview && (data.requirementsInterview.model || data.requirementsInterview.effort)
+    ? { ...(data.requirementsInterview.model ? { model: data.requirementsInterview.model } : {}), ...(data.requirementsInterview.effort ? { effort: data.requirementsInterview.effort } : {}) } : undefined,
   naming: helperPair(data.namingModel),
 });
-const claudeHelperJobs = () => CLAUDE_USER_HELPER_JOBS.filter((job) => job !== 'naming' || flagOn('smartRunNaming'));
+let lastEngineSettingsData = null;
 async function paintEngineSettings(data) {
   const root = document.getElementById('engine-settings-root');
   if (!root) return;
@@ -18602,12 +18615,16 @@ async function paintEngineSettings(data) {
     for (const job of CODEX_HELPER_JOBS) fields[utilityId(engine, job)] = { own: data.utilityModels?.[engine]?.[job], inherited: { value: undefined, source: 'default' } };
   }
   const claudeOwn = CLAUDE_USER_HELPER_OWN(data || {});
-  const claudeJobs = claudeHelperJobs();
+  const claudeJobs = claudeUserHelperJobs();
   for (const job of claudeJobs) fields[utilityId('claude', job)] = { own: claudeOwn[job], inherited: { value: undefined, source: 'default' } };
+  // The interview's empty choices read "Opus 5.5 (default)" and "medium (default)" (the answer's requirementsInterviewDefault).
+  const interviewDefault = data?.requirementsInterviewDefault;
+  if (interviewDefault?.model && claudeJobs.includes('requirementsInterview')) fields[utilityId('claude', 'requirementsInterview')].inherited = { value: { model: interviewDefault.model, ...(interviewDefault.effort ? { effort: interviewDefault.effort } : {}) }, source: 'default' };
   renderEngineSection(root, { level: 'user', roles, catalog, fields, status: document.getElementById('engineSettingsMsg'), onTest: testModelRow,
     noEffort: ['title', 'classifier', 'prDescription'].map((job) => utilityId('claude', job)),
     defaultLabels: { claude: 'the default model' },
     jobs: { claude: claudeJobs, codex: CODEX_HELPER_JOBS, cursor: [] } });
+  lastEngineSettingsData = data;
   // Each non-Claude card's readiness line (GET /api/engines). Only on the Models page, where the cards live: a
   // settings-changed broadcast repaints this from any view, and that must not spawn a preflight.
   if (currentView() === 'models') void paintEngineCardStatus(root);
@@ -18624,6 +18641,9 @@ async function paintEngineCardStatus(root) {
       : `${e.label} can start runs: its CLI is installed and signed in.${e.reason ? ` Note: ${String(e.reason).replace(/\.$/, '')}.` : ''}`;
   }
 }
+// The flag flips while the Models page is open: the Engines card gains / loses the interview row. Refetched, since
+// GET /api/settings carries the row's stored pair and its default only while the flag is on.
+onFlagChange('requirements', () => { if (currentView() === 'models' && lastEngineSettingsData) void paintHelperModelCards(); });
 document.getElementById('engineSettingsSave')?.addEventListener('click', async () => {
   const root = document.getElementById('engine-settings-root');
   const body = enginePatchToSettingsBody(readEngineSection(root));
@@ -32221,6 +32241,17 @@ const schedulesView = createSchedulesView({
   },
 });
 
+// Requirements (plans/requirements-design.md section 6): the page module owns its host; app.js routes and relays frames.
+const requirementsView = createRequirementsView({
+  host: $('#requirements-host'),
+  subEl: $('#requirements-sub'),
+  msgEl: $('#requirements-msg'),
+  // who: the signed-in person on a shared deployment (the start-before-Ready dialog's "Recorded as"), else nobody
+  deps: { route: (p) => { location.hash = p ? `#requirements/${p}` : '#requirements'; }, who: () => viewer.name },
+});
+// Turning the flag off while the page is open leaves it for Chat (a hidden page must not stay up).
+onFlagChange('requirements', (on) => { if (!on && currentView() === 'requirements') showView('chat', ''); });
+
 /** The workspace read-model, loaded once: a scheduled run card names "Workspace · <name>", not an id. */
 function withWorkspaces() {
   return (state.workspaces || []).length ? Promise.resolve() : loadWorkspaces();
@@ -37417,7 +37448,7 @@ const navLinks = $$('.nav button[data-nav], #acct-settings');
 // guardrails LEFT this array: it is a Settings tab now, reached as #settings/guardrails
 // (old addresses redirect — see MOVED_ROUTES). The four Add-ons pages went the other way:
 // Settings tabs once, pages of their own now.
-const VIEW_NAMES = ['chat', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers', 'feature', 'group'];
+const VIEW_NAMES = ['chat', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'requirements', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers', 'feature', 'group'];
 // One Runs page, five route names: the bare list (#runs), the two run routes every deep link already uses
 // (#running/<id>…, #history/<projectKey>/<id>…) and the group page's two (#feature/<id>…, #group/<id>…, run 3 D1).
 // All five render the `data-view="runs"` section and light the one Runs nav button.
@@ -37456,6 +37487,7 @@ const VIEW_TITLES = Object.freeze({
   guardrails: 'Guardrails', memory: 'Memory', ask: 'Chat', tags: 'Labels & cost tags',
   marketplace: 'Marketplace', connectors: 'Connectors', models: 'Models', providers: 'Providers',
   schedules: 'Schedules', presets: 'Presets',
+  requirements: 'Requirements',
 });
 function pageMinLevel() {
   if (currentShownView === 'settings') return { key: currentSettingsTab, min: SETTINGS_TAB_MIN_LEVEL[currentSettingsTab] || 'simple' };
@@ -37586,6 +37618,8 @@ function showView(name, param = '') {
     const moved = redirectRoute(name, param);
     if (moved) return showView(moved[0], moved[1]);
   }
+  // Requirements is behind its flag (docs/feature-flags.md): a deep link while it is off lands on Chat.
+  if (name === 'requirements' && !flagOn('requirements')) return showView('chat', '');
   // A bare #running / #history is the Runs list now (both lists merged into it). Replace the
   // entry rather than letting the hash sync below PUSH #runs: Back would land on #history
   // again, normalize again, and never get past it.
@@ -37771,6 +37805,7 @@ function showView(name, param = '') {
     syncRunsPane();
   }
   if (name === 'stats') loadStatsView();
+  if (name === 'requirements') void requirementsView.show(param);
   if (name === 'schedules') { schedulesView.showTab(param); void withWorkspaces().then(() => schedulesView.load()); }
   if (name === 'team-metrics') {
     // #team-metrics/timeline opens the Timeline tab. Switching tabs inside the page only repaints:

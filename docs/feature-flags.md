@@ -30,6 +30,7 @@ remote flags.
 | `runLabels` | experimental, default off | Free-word labels on runs (`hotfix`, `needs demo`): chips after the title on the Runs list (2, then +N), under the status on run pages, read-only on chat run cards; the Runs list label filter (any of the chosen labels), chosen from the top search ("Runs labelled hotfix", or type `label:hotfix`); the selection bar's Label action. Labels never reach Statistics, Team metrics, CSV or policy. Off, `/api/labels`, `PUT /api/runs/:id/labels` and `POST /api/runs/bulk/labels` answer 404. |
 | `smartRunNaming` | experimental, default off | Smart run naming: one cheap model call reads the task and suggests the run title and a branch name (`feat/…`, `fix/…`) on the New run form, with a Suggested chip, a type select and Suggest again / clear buttons. Off, nothing changes: no model call, no chip, same `worca-cc/words-id` branches, and `/api/naming/*` answers 404. See [Smart run naming](#smart-run-naming). |
 | `runPresets` | beta, default on | [Run presets](run-presets.md): the Preset ▾ button on the New run form, the Settings › Presets tab, schedules that follow a preset, `worca run --preset` and Chat's `list_presets` / `propose_run` `presetId`. Off, every `/api/presets` route answers 404 and `POST /api/run` refuses a `presetId` with 400. |
+| `requirements` | experimental, default off | The Requirements page (feature specs through a short interview, Ready and Start in Worca, product briefs), the Requirements interview row on Models › Engines › Claude › Helper jobs, the Requirements tile on Statistics. Off, money already spent on the page stays in Spent and keeps its Requirements row in Group by and the Cost report; every `/api/requirements` route answers 404 and no `requirements-changed` frame is sent ([docs](requirements.md)). |
 
 ## Smart run naming
 
@@ -82,8 +83,8 @@ off, and shown or hidden live when the flag changes:
 ```
 
 `data-flag-chip` adds the **Labs** / **Beta** chip, which links to the flag's row in
-Settings › Labs. A tab (`[role="tab"]`, `.tab`, or a button in `.tabs` / `.seg`) gets the chip
-inside its label instead, as plain text, never a link. `data-flag-chip="KEY"` names the flag without
+Settings › Labs. A tab (`[role="tab"]`, `.tab`, or a button in `.tabs` / `.seg`) and a sidebar row (a
+button in `.nav`) get the chip inside, after the label, as plain text, never a link. `data-flag-chip="KEY"` names the flag without
 gating the host, so its host shows the chip while the flag is off.
 
 In JS (`ui/public/flags.mjs`):
