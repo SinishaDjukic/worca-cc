@@ -1,6 +1,7 @@
 // ui/public/shape/ship-card.mjs — Shaper s4: the Ship card. One renderer for the chat card (type 'ship') and the
 // group page / Plans tab (feature-view.mjs shipBlock). Chrome: .ask-card .ask-mcard (style.css "Chat P2: Action cards").
 import { renderReleaseRow } from './release-row.mjs';
+import { VIEW_PR_LABEL } from '../ship-words.mjs';
 import { renderAskChanges } from '../chat/ask-changes.mjs';
 import { shapeFirstOn } from '../chat/shape-gate.mjs';
 
@@ -50,7 +51,7 @@ export function renderShipCard(doc, m, handlers = {}) {
     const r = m.result || {};
     const done = h('div', 'ask-shipcard-done', r.mode === 'one' ? 'Shipped as one PR' : 'Shipped as stacked PRs');
     if (r.prUrl) {
-      const a = h('a', 'ask-shipcard-pr', 'View PR');
+      const a = h('a', 'ask-shipcard-pr', VIEW_PR_LABEL);
       a.href = r.prUrl; a.target = '_blank'; a.rel = 'noopener';
       done.append(' · ', a);
     }

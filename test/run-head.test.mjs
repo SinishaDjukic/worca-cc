@@ -298,7 +298,8 @@ test('prMenuItems: Watch switch at Advanced and Expert only, Fix conflicts when 
     { key: 'a', name: 'app', number: 866, url: OPEN.url, open: true, watch: null },
     { key: 'b', name: 'api', number: 867, url: OPEN.url, open: true, watch: null }], { level: 'expert', ...h });
   assert.deepEqual(two.filter((i) => i.header).map((i) => i.header), ['app · Pull request #866', 'api · Pull request #867']);
-  assert.deepEqual(two.filter((i) => /^Open PR/.test(i.label || '')).map((i) => i.label), ['Open PR #866', 'Open PR #867']);
+  assert.deepEqual(two.filter((i) => /^View PR #/.test(i.label || '')).map((i) => i.label), ['View PR #866', 'View PR #867']);
+  assert.equal(two.some((i) => /^Open PR/.test(i.label || '')), false);
   const failed = one({ watch: null, watchFailed: true }, 'advanced').find((i) => i.label === 'Watch unavailable');
   assert.ok(failed && failed.disabled);
   assert.equal(failed.title, "Could not read this pull request's status");

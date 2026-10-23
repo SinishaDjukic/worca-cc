@@ -171,7 +171,7 @@ test('pull-request: branch → base and files ±; Create opens Ship it with the 
       assert.equal(create.disabled, true, 'one dialog per card');
       close({ opened: true, url: 'https://x/pull/7' }); await tick();
       assert.equal(create.disabled, true, 'the server flips the card; it rebuilds as applied');
-      assert.deepEqual(said, ['Pull request opened']);
+      assert.deepEqual(said, ['PR created']);
     } },
     { name: 'closed without a PR: Create comes back; Not now declines', run: async () => {
       const { ctx, posts } = ctxOf({ openShipIt: async () => ({ opened: false }) });

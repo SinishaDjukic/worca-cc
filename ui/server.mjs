@@ -8676,7 +8676,7 @@ async function openSliceDraft(pipelineId) {
 async function createRunPr({ id, state, target, base, memberKey = null, remotes: chosen = {}, description = '',
   draft = false, actor = null, title = null, preamble = true }) {
   const { repoDir, feature, source } = target;
-  if (!repoDir || !feature || !source) return { ok: false, status: 400, error: 'pipeline has no branch info to open a PR' };
+  if (!repoDir || !feature || !source) return { ok: false, status: 400, error: 'pipeline has no branch info to create a PR' };
   const picked = await pickPrRemotes(chosen, repoDir);
   if (picked.error) return { ok: false, status: picked.status, error: picked.error };
   const { remotes, pushRemote, baseRemote, pushR, baseR } = picked;
@@ -8732,7 +8732,7 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
   // D22: a slice's PR starts with its place in the feature and links the other slices' PRs.
   let lead0 = '';
   if (preamble && shapeFirstEnabled() && !memberKey) { try { lead0 = slicePrPreamble(pipelineIdForPr); } catch { lead0 = ''; } }
-  const lead = description || state.title || feature;
+  const lead = description || title || state.title || feature;
   const prBody = lead0 || description || closing || checklistMd || footer
     ? `${lead0 ? `${lead0}\n\n` : ''}${lead}${closing ? `\n\n${closing}` : ''}${checklistMd ? `\n\n${checklistMd}` : ''}${footer}` : '';
   const pr = await createPr({
@@ -8755,7 +8755,7 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
     else persistPrState(pipelineIdForPr, facts);
     // Who shipped it (the footer names who STARTED the run). No actor: worca opened it (a slice's draft).
     const where = memberKey ? ` in \`${target.memberName}\`` : '';
-    appendAuditById(pipelineIdForPr, `Pull request ${pr.existed ? 'linked' : (newDraft ? 'opened (draft)' : 'opened')}${where}${byActor(actor)}: ${pr.url}`, { actor });
+    appendAuditById(pipelineIdForPr, `PR ${pr.existed ? 'linked' : (newDraft ? 'created (draft)' : 'created')}${where}${byActor(actor)}: ${pr.url}`, { actor });
   }
   return { ok: true, pr, newDraft, remotes, pushRemote, baseRemote, repo, headOwner, baseR, pipelineIdForPr };
 }
@@ -8766,7 +8766,7 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
 // forge: Azure DevOps over REST (no forks: 422 before the push), every other host
 // via the GitHub CLI. 409 { error, forge } when that forge is not usable here.
 // Mergeability is read back only here (never during list rendering).
-// body: { id, projectDir?, projectKey?, memberKey?, pushRemote?, baseRemote?, baseBranch?, body?, draft? } —
+// body: { id, projectDir?, projectKey?, memberKey?, pushRemote?, baseRemote?, baseBranch?, title?, body?, draft? } —
 // a workspace run (projectKey 'workspaces/<wks-…>') REQUIRES memberKey (the member repo
 // to ship; its PR is recorded per member and the response echoes memberKey) —
 // remote names are validated against the repo's real remote list (never trusted
@@ -8776,8 +8776,10 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
 // characters): it becomes the PR body, the attribution footer after it. Absent,
 // null or blank keeps the title-only body exactly as before. `draft` (boolean) opens a
 // new PR as a draft; the run's GitHub issue source adds a `Closes` line between the
-// description and the footer.
+// description and the footer. `title` (a string of at most 256 characters) replaces the run title as the PR title;
+// blank keeps the run title.
 // ---------------------------------------------------------------------------
+const PR_TITLE_MAX = 256;
 app.post('/api/pr', async (req, res) => {
   const body = req.body || {};
   if (!(typeof body.id === 'string' && body.id.trim())) return badRequest(res, 'id is required');
@@ -8786,6 +8788,12 @@ app.post('/api/pr', async (req, res) => {
     if (typeof body.body !== 'string') return badRequest(res, 'body must be a string');
     if (body.body.length > PR_BODY_MAX) return badRequest(res, `body must be at most ${PR_BODY_MAX} characters`);
     description = body.body.trim() ? body.body.trimEnd() : '';
+  }
+  let title = null;
+  if (body.title !== undefined && body.title !== null) {
+    if (typeof body.title !== 'string') return badRequest(res, 'title must be a string');
+    if (body.title.length > PR_TITLE_MAX) return badRequest(res, `title must be at most ${PR_TITLE_MAX} characters`);
+    title = body.title.trim() || null;
   }
   if (!(body.draft === undefined || body.draft === true || body.draft === false)) {
     return badRequest(res, 'draft must be a boolean');
@@ -8821,7 +8829,7 @@ app.post('/api/pr', async (req, res) => {
   const sameBr = (body.memberKey && state.branches && state.branches[body.memberKey]) || state.branch;
   if (sameBr && sameBr.sameAsSource === true && sameBr.mergeBack?.merged !== false) {
     return res.status(409).json({ error: sameBr.mergeBack?.merged === true
-      ? 'this run\'s work is already on its source branch. Push the source instead of opening a pull request'
+      ? 'this run\'s work is already on its source branch. Push the source instead of creating a PR'
       : 'this run is still merging its work back into the source branch. Try again in a moment' });
   }
 
@@ -8838,7 +8846,7 @@ app.post('/api/pr', async (req, res) => {
     if (refusal) return res.status(refusal.status).json({ error: refusal.error });
   }
   if (!repoDir || !feature || !source) {
-    return badRequest(res, 'pipeline has no branch info to open a PR');
+    return badRequest(res, 'pipeline has no branch info to create a PR');
   }
   // The base branch: the dialog's pick (a run chain defaults to its root there),
   // else the run's own source. Per run — never remembered with the remotes.
@@ -8850,7 +8858,7 @@ app.post('/api/pr', async (req, res) => {
     base = b;
   }
 
-  const out = await createRunPr({ id, state, target, base, memberKey,
+  const out = await createRunPr({ id, state, target, base, memberKey, title,
     remotes: { pushRemote: body.pushRemote, baseRemote: body.baseRemote }, description, draft, actor: actorOf(req) });
   if (!out.ok) {
     return res.status(out.status).json({ error: out.error, ...(out.kind ? { kind: out.kind } : {}), ...(out.forge ? { forge: out.forge } : {}) });
@@ -8942,7 +8950,7 @@ app.post('/api/pr/watch', async (req, res) => {
 const resolveRefusals = (host) => ({
   BUSY: [409, 'A fix run is already working on this pull request.'],
   RATE_LIMITED: [429, `${host} is rate limiting Worca; try again in a minute.`],
-  ORIGIN_GONE: [409, 'The run that opened this pull request, or its branch, is gone.'],
+  ORIGIN_GONE: [409, 'The run that created this PR, or its branch, is gone.'],
   READ_FAILED: [502, `Could not read the pull request from ${host}.`],
   PR_CLOSED: [409, 'The pull request is no longer open.'],
   NO_CONFLICT: [409, `${host} reports no merge conflicts on this pull request now.`],
@@ -9082,7 +9090,7 @@ app.post('/api/push', async (req, res) => {
   if (!resolved) return;
   const { id, state } = resolved;
   const b = state.branch || {};
-  if (b.sameAsSource !== true) return res.status(409).json({ error: 'only a run on its source branch is pushed here. Open a pull request instead' });
+  if (b.sameAsSource !== true) return res.status(409).json({ error: 'only a run on its source branch is pushed here. Create a PR instead' });
   if (state.target === 'workspace') return res.status(409).json({ error: 'a workspace run is pushed per project by hand (see its merge-back banner)' });
   // isSafeBranchName: setup already refused any other source; this keeps an edited record out of git's argv.
   if (!state.projectDir || !b.source || !isSafeBranchName(b.source)) return badRequest(res, 'pipeline has no branch info to push');
@@ -14967,7 +14975,7 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
     if (found.block.card && found.block.card.type === 'pull-request') {
       // worca Chat P2 (R9): "Not now" only — the pull request is opened from the Ship it dialog, and POST /api/pr flips
       // the card to applied through its ask link.
-      if (body.state !== 'declined') return badRequest(res, 'state must be "declined". A pull request is opened from the Create PR dialog');
+      if (body.state !== 'declined') return badRequest(res, 'state must be "declined". A PR is created from the Create PR dialog');
       if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
       const block = flipCard(id, cardId, { state: 'declined' });
       if (!block) return res.status(409).json({ error: 'card vanished' });
