@@ -8094,12 +8094,15 @@ export class RunHarness extends EventEmitter {
     if (this._handedOff) return true;
     let row = null;
     try { row = pipelineRowStamp(this.pipeline.id); } catch { return false; }
-    this._handedOff = !row || row.status !== 'paused' || row.pausedBy !== this._pauseToken;
+    if (row && row.status === 'paused' && row.pausedBy === this._pauseToken) return false;
     // A model-switch store edit re-tokens the row without resuming it: re-adopt (any process may have made it).
-    if (this._handedOff && row?.status === 'paused' && String(row.pausedBy || '').startsWith('switch:')) {
+    // A refused adoption never latches: it may be a moment's failure (a busy read) or another harness's
+    // lineage, and either way the NEXT write re-reads the row instead of every later write being dropped.
+    if (row?.status === 'paused' && String(row.pausedBy || '').startsWith('switch:')) {
       return !this.adoptPausedStoreEdit();
     }
-    return this._handedOff;
+    this._handedOff = true;   // resumed, stopped or re-paused under a resume's own token: a genuine hand-off
+    return true;
   }
 
   /** A model-switch store edit of this PAUSED run's row (model-switch.mjs: a `switch:` token) is not a

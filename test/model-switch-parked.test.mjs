@@ -71,3 +71,24 @@ test('two successive switches keep the lineage: the parked harness still re-adop
   assert.match(read().pausedBy, /^switch:/);
   assert.equal(read().pausedFrom, original);
 });
+
+test('a transient failure while re-adopting does not hand the row off for good: the next write lands', { timeout: 120000 }, async () => {
+  const run = heldRun('msw-parked-retry', { holdAt: (ctx) => ctx.executionId === 'x:n_plan:1' });
+  await run.held;
+  const id = run.orch.getState().id;
+  run.orch.pause();
+  assert.equal((await run.done).status, 'paused');
+  await switchPausedRunModels(id, { changes: { n_impl: { model: OPUS } }, projectDirFor: () => run.orch.projectDir });
+
+  // One adoption attempt fails as a busy DB read would; every later one is the real thing.
+  const real = run.orch.adoptPausedStoreEdit.bind(run.orch);
+  let failOnce = true;
+  run.orch.adoptPausedStoreEdit = () => { if (failOnce) { failOnce = false; return false; } return real(); };
+  run.orch.setNightOverride('on', 'tester');            // its persist meets the failure
+  assert.equal(failOnce, false, 'the failing attempt was consumed');
+  assert.equal(await run.orch._persist(), true, 'the next write re-reads the row and adopts');
+  const rp = readPipelineForResume(id).resumePoint;
+  assert.equal(rp.night?.override, 'on', 'the Away switch reached the row');
+  assert.match(rp.pausedBy, /^switch:/);
+  assert.equal(cellOf(rp.manifest, 'n_impl').model, OPUS, 'the switched manifest survived');
+});
