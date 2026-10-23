@@ -15,7 +15,7 @@ Read it: [Requirements](../requirements.md)
 
 Pull requests (add each number when it opens):
 
-- Requirements
+- Requirements (#882)
 
 ## Plugins work behind a proxy
 
