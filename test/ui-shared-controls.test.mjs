@@ -215,8 +215,8 @@ test('one menu: the .menu box and .menu-item rows', () => {
 });
 
 // The containers only: .ask-pop-divider, -caption and the other inner parts are not boxes.
-const MENU_BOX = /^(?:\.nav-fly(?:\.acct-menu|\.lvl-menu|\.act-fly)?|\.ask-pop(?:-(?:scope|model|mcp|ctx|chip|at|voice))?|\.btn-split-menu|\.hd-menu|\.wfv-menu)$/;
-const MENU_ROW = /^(?:\.wfv-menu-item|\.ask-pop-item|\.btn-split-menu button|\.hd-menu \.hd-(?:archive|report|restore)|\.nav \.nav-fly button)$/;
+const MENU_BOX = /^(?:\.nav-fly(?:\.acct-menu|\.lvl-menu|\.act-fly)?|\.ask-pop(?:-(?:scope|model|mcp|ctx|chip|at|voice))?|\.btn-split-menu|\.wfv-menu)$/;
+const MENU_ROW = /^(?:\.wfv-menu-item|\.ask-pop-item|\.btn-split-menu button|\.nav \.nav-fly button)$/;
 test('one menu: the five families keep position and size only, no skin of their own', () => {
   const bad = [];
   for (const r of ALL) for (const s of splitTop(r.sel)) {
@@ -227,11 +227,11 @@ test('one menu: the five families keep position and size only, no skin of their 
   assert.deepEqual(bad, []);
 });
 
-test('one menu: the 7 role="menu" boxes in index.html are .menu and their menu items are .menu-item', () => {
+test('one menu: the 6 role="menu" boxes in index.html are .menu and their menu items are .menu-item', () => {
   // The run, history and project pages live in <template>s, whose content querySelectorAll does not enter.
   const inTemplates = (root) => [root, ...[...root.querySelectorAll('template')].flatMap((t) => inTemplates(t.content))];
   const menus = inTemplates(index).flatMap((r) => [...r.querySelectorAll('[role="menu"]')]);
-  assert.equal(menus.length, 7);   // 3 .nav-fly, 3 .btn-split-menu, 1 .hd-menu
+  assert.equal(menus.length, 6);   // 3 .nav-fly, 3 .btn-split-menu
   assert.deepEqual(menus.filter((m) => !m.classList.contains('menu')).map((m) => m.id || m.className), []);
   // Segmented rows inside the account menu (the theme icons) are not menu rows.
   assert.deepEqual(menus.flatMap((m) => [...m.querySelectorAll('button[role^="menuitem"], [role="menu"] > button')])
@@ -241,7 +241,7 @@ test('one menu: the 7 role="menu" boxes in index.html are .menu and their menu i
 // An emitter is a class assignment (className =, classList.add, make(…), h(…)); the class string that names a menu
 // family names .menu (a box) or .menu-item (a row) too. Selector strings start with "." and never count.
 const EMIT = /className\s*=|classList\.add\(|\bmake\(|\bh\(|createElement\(/;
-const FAMILY = /['"`]([^'"`\n.]*(?<![\w-])(nav-fly|ask-pop|btn-split-menu|hd-menu|wfv-menu|wfv-menu-item|ask-pop-item)(?![\w-])[^'"`\n]*)['"`]/;
+const FAMILY = /['"`]([^'"`\n.]*(?<![\w-])(nav-fly|ask-pop|btn-split-menu|wfv-menu|wfv-menu-item|ask-pop-item)(?![\w-])[^'"`\n]*)['"`]/;
 test('one menu: every JS emitter of a menu family adds .menu / .menu-item', () => {
   const bad = [];
   for (const f of JS) code(readFileSync(f, 'utf8')).split('\n').forEach((l, i) => {
@@ -262,6 +262,86 @@ test('one menu: openMenu emits .menu / .menu-item and marks a danger item .is-da
   const [report, archive] = m.el.querySelectorAll('.menu-item.wfv-menu-item');
   assert.equal(report.classList.contains('is-danger'), false);
   assert.equal(archive.classList.contains('is-danger'), true);
+  closeMenus();
+});
+
+test('slice 3: openMenu inside a host, with a switch item that keeps the menu open', async () => {
+  const { openMenu, toggleMenu } = await import('../ui/public/workflows/menu.mjs');
+  const { window } = new JSDOM('<!doctype html><body><span class="btn-split mini"><button id="a">v</button></span></body>');
+  const doc = window.document;
+  const anchor = doc.getElementById('a');
+  const toggles = [];
+  const items = [
+    { header: 'Pull request #866' },
+    { switch: true, label: 'Watch', icon: 'eye', help: 'Start a fix run when checks fail or a reviewer asks for changes', checked: false, onToggle: (b) => toggles.push(b) },
+    { label: 'Copy PR link', icon: 'link', onSelect() {} },
+  ];
+  const m = openMenu({ doc, anchor, host: anchor.parentElement, className: 'btn-split-menu rd-pr-menu', items });
+  assert.equal(m.el.parentElement, anchor.parentElement, 'appended inside the split, not <body>');
+  assert.equal(m.el.style.position, '', 'the split CSS positions it');
+  assert.match(m.el.className, /\bmenu\b.*\bbtn-split-menu\b.*\brd-pr-menu\b/);
+  const sw = m.el.querySelector('[role="menuitemcheckbox"]');
+  assert.equal(sw.getAttribute('aria-checked'), 'false');
+  assert.equal(sw.querySelector('small').textContent, 'Start a fix run when checks fail or a reviewer asks for changes');
+  assert.equal(sw.querySelector('small').getAttribute('aria-live'), 'polite');
+  assert.ok(sw.querySelector('.switch[aria-hidden="true"]'));
+  sw.click();
+  assert.equal(toggles.length, 1);
+  assert.ok(m.el.isConnected, 'a toggle keeps the menu open');
+  sw.setAttribute('aria-disabled', 'true');
+  sw.click();
+  assert.equal(toggles.length, 1, 'no toggle while one is in flight');
+  m.el.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.equal(m.el.isConnected, false);
+  assert.equal(anchor.getAttribute('aria-expanded'), 'false');
+  assert.equal(doc.activeElement, anchor);
+  const again = toggleMenu({ doc, anchor, host: anchor.parentElement, items });
+  assert.ok(again.el.isConnected);
+  assert.equal(toggleMenu({ doc, anchor, host: anchor.parentElement, items }), null, 'the second click closes it');
+  assert.equal(anchor.parentElement.querySelectorAll('.menu').length, 0);
+  assert.equal(anchor.getAttribute('aria-expanded'), 'false');
+});
+
+// jsdom applies no stylesheet: resolve the cascade by hand (matching rules, then specificity, then source order).
+const specificity = (s) => {
+  const t = s.replace(/::?[\w-]+\(|\)/g, ' ').replace(/::[\w-]+/g, '');
+  return [(t.match(/#[\w-]+/g) || []).length, (t.match(/\.[\w-]+|\[[^\]]*\]|:[\w-]+/g) || []).length,
+    (t.replace(/\[[^\]]*\]/g, '').match(/(?:^|[\s>+~])[a-z][\w-]*/gi) || []).length];
+};
+function computed(el, prop) {
+  let best = null;
+  for (const r of ALL) {
+    const v = decls(r.body, prop).at(-1);
+    if (!v) continue;
+    for (const s of splitTop(r.sel)) {
+      let hit = false;
+      try { hit = el.matches(s); } catch { hit = false; }
+      if (!hit) continue;
+      const k = specificity(s);
+      const cmp = best ? k[0] - best.k[0] || k[1] - best.k[1] || k[2] - best.k[2] : 1;
+      if (cmp > 0 || (cmp === 0 && r.line >= best.line)) best = { k, line: r.line, v: v[1] };
+    }
+  }
+  return best && best.v;
+}
+
+test('slice 3: the View PR ▾ menu drops under its split, and the Watch row puts its switch on the right', async () => {
+  const { openMenu, closeMenus } = await import('../ui/public/workflows/menu.mjs');
+  const { window } = new JSDOM('<!doctype html><body><div class="rd-sheet-head"><div class="rd-head-acts"><span class="rd-pr-slot">'
+    + '<span class="btn-split mini"><button class="btn">View PR</button><button id="a" class="btn">v</button></span></span></div></div></body>');
+  const doc = window.document;
+  const anchor = doc.getElementById('a');
+  const m = openMenu({ doc, anchor, host: anchor.parentElement, className: 'btn-split-menu rd-pr-menu', items: [
+    { header: 'Pull request #866' },
+    { switch: true, label: 'Watch', icon: 'eye', help: 'Start a fix run when checks fail', checked: false, onToggle() {} },
+    { label: 'Copy PR link', icon: 'link', onSelect() {} },
+  ] });
+  assert.equal(computed(m.el, 'position'), 'absolute', 'not .wfv-menu\'s fixed: top:100% is the split, not the viewport');
+  assert.equal(computed(m.el, 'top'), 'calc(100% + 8px)');
+  const sw = m.el.querySelector('.sw-item');
+  assert.equal(computed(sw, 'flex-direction'), 'row', 'glyph, text, switch on one line');
+  assert.equal(computed(sw.querySelector('.wfv-menu-l'), 'flex'), '1', 'the text takes the room, the switch sits on the right');
+  assert.equal(computed(m.el.querySelector('.wfv-menu-item:not(.sw-item)'), 'flex-direction'), 'row');
   closeMenus();
 });
 
@@ -348,7 +428,7 @@ test('design debt: no shared-control entry is left in test/fixtures/design-debt.
   const debt = JSON.parse(read('test/fixtures/design-debt.json'));
   const all = Object.values(debt).filter(Array.isArray).flat();
   assert.deepEqual(SHARED_DEBT.filter((e) => all.includes(e)), []);
-  const CONTROL = /switch|\.tog\b|ask-rp-(?:sw|knob|ctl)|fanout-toggle|nav-fly|ask-pop|btn-split-menu|hd-menu|wfv-menu|tag-chip|ps-pill|ask-cmd-pill|tp-tab-badge|check-row|info-tip|row-btn/;
+  const CONTROL = /switch|\.tog\b|ask-rp-(?:sw|knob|ctl)|fanout-toggle|nav-fly|ask-pop|btn-split-menu|wfv-menu|tag-chip|ps-pill|ask-cmd-pill|tp-tab-badge|check-row|info-tip|row-btn/;
   assert.deepEqual(all.filter((e) => CONTROL.test(e)), []);
 });
 

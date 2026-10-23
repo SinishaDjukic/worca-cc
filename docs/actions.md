@@ -14,16 +14,18 @@ a ready check and a live log come with them.
 
 | Place | What it holds |
 | --- | --- |
-| Run page and History detail › **Actions** tab | Check out / Discard, setup state, each action's Start / Stop, ports, Open link and log; Open in editor, terminal, file manager; Copy command |
+| Run page and History detail › **Actions** tab | Check out / Discard, setup state, each action's Start / Stop, ports, Open link and log; Open in editor, terminal, file manager; Copy command; Download patch |
 | Run Overview › actions strip, Ship It › **Try it first** | The same actions, one click from the result |
-| Run page and History detail › summary card **worktree notice** | Shown whenever a live worktree holds the run's branch: a checkout (Discard or Unlink, Get the diff, Actions tab) or work kept after a failed end-of-run commit (Apply to branch, recovery patch, Discard worktree). Every level |
+| Run page and History detail › summary card **Results › Actions row** | `Local copy open · since 18:12` (or `Linked to your folder · since 18:12`, `2 local copies open · since 18:12`) once checked out, `Try it on this machine` before; opens the Actions tab. Advanced, like the tab. At Simple a plain row with the same words carries Discard / Unlink while a checkout exists |
+| Run page and History detail › summary card **worktree notice** | Work kept after a failed end-of-run commit (Apply to branch, recovery patch, Discard worktree). Every level |
 | Project page › **Actions** tab | The project's setup command, its actions and the built-in buttons |
 | Workspace page › **Actions** tab | Stacks: one click starts actions across several member projects |
 | Header pill, sidebar **Running actions** rows | Every service still running, each with a Stop button; on the collapsed rail one tile with the count opens them. Shown at every level, only while something runs |
 | Settings › Runs › **Actions** | Keep policy, port range, editor and terminal, checkout cap |
 
 The tabs, strips and the Settings card are Advanced (see [ui-levels.md](ui-levels.md)). The worktree
-notice is not: it shows at every level, because it explains refusals anyone can hit.
+notice is not: it shows at every level, because it explains refusals anyone can hit. Neither is the Simple
+checkout row: Archive is refused while a checkout exists, so its Discard / Unlink must stay in reach.
 
 A run can be checked out when it ended `done`, `stopped` or `error`, is not archived, has a feature
 branch, and kept no uncommitted work of its own. Paused and interrupted runs are refused: resume or
@@ -41,23 +43,23 @@ else (usually your own clone), Check out cannot make a copy, so the card shows t
 - Setup does not run there by itself. **Run setup** on the card runs it when you want.
 - **Unlink** stops using the folder. It stays exactly as it is.
 
-## The worktree notice on the summary card
+### Download patch
+
+Each checked-out member card has **Download patch** before Discard (or Unlink). It downloads a patch of
+the folder's uncommitted changes (edits, deletions, new files git does not ignore) against its last
+commit, which is the run's branch while the folder is on it, as `uncommitted-<branch>.patch`. It is
+read-only. The patch is built in a temporary git index, so nothing in the folder is staged or changed:
+not in your own folder, and not in a checkout left mid-merge, whose conflicts stay unresolved. A clean
+folder answers "Nothing uncommitted". After Discard or Unlink the card says what happened ("Checkout
+discarded. …", "Folder unlinked. …").
+
+## The worktree notice on the summary card: work kept after a failed commit
 
 Git keeps a branch in one folder at a time. While a live worktree holds a finished run's branch, Check out,
-Archive and a new run on that branch are refused. The run's summary card, on the run page and in History,
-says so with a notice under the status line, at every interface level. For a workspace run it lists the
-members concerned. There are two cases.
-
-**Checked out.** You pressed Check out, or linked your own folder ("Use that folder"). The notice shows the
-folder and since when, and offers:
-
-- **Discard** for Worca's own checkout, or **Unlink** for your folder. It is the same flow and confirm as
-  the Actions tab: running services stop first, and Discard saves uncommitted changes as a patch.
-- **Get the diff**: downloads a patch of the folder's uncommitted changes (edits, deletions, new files git
-  does not ignore) against its last commit, which is the run's branch while the folder is on it. It is read-only. The patch is built in a temporary git index,
-  so nothing in the folder is staged or changed: not in your own folder, and not in a checkout left
-  mid-merge, whose conflicts stay unresolved. A clean folder answers "Nothing uncommitted".
-- **Actions tab ›**: this link alone is Advanced, like the tab.
+Archive and a new run on that branch are refused. A checkout says so in the summary card's Results ›
+Actions row (see [Where it lives](#where-it-lives)) and is handled in the Actions tab. Work kept after a
+failed commit gets a notice under the status line, on the run page and in History, at every interface
+level. For a workspace run it lists the members concerned.
 
 **Work kept after a failed commit.** At the end of a run Worca commits the agents' work onto the run's
 branch. If that commit fails (a hook, signing, a stale `index.lock`, a full disk), the worktree is kept

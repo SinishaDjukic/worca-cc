@@ -815,7 +815,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .settings-load-msg{margin:0 0 14px;max-width:760px;}
 
 /* One menu (docs/design-system.md › Menu): openMenu's .wfv-menu, the sidebar flyouts (.nav-fly), the composer pickers
-   (.ask-pop), the split-button menus (.btn-split-menu) and the run header ⋯ (.hd-menu) all wear .menu for the box and
+   (.ask-pop) and the split-button menus (.btn-split-menu) all wear .menu for the box and
    .menu-item for a row. Each family keeps its own position, width and z-index only. */
 .menu{padding:4px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);box-shadow:var(--shadow-menu);font-size:var(--fs-body);}
 .menu-item{display:flex;align-items:center;gap:10px;width:100%;min-height:30px;padding:4px 9px;border:0;border-radius:var(--r-sm);
@@ -1638,37 +1638,12 @@ button.af-gal-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 /* An engine still in beta (src/shared/engine-switch.mjs BETA_ENGINES), beside its name. */
 .badge.beta-badge{margin-left:6px;vertical-align:middle;}
 .badge.paused{background:var(--amber-bg);color:var(--amber-ink);}
-.badge.hist-retained-badge{background:var(--amber-bg);color:var(--amber-ink);}
-.badge.hist-retained-badge[hidden]{display:none;}
 /* The server's mock mode, in the logo row after the wordmark: its margin-right:auto keeps it
    beside the wordmark (on the rail the row stacks and the pill sits under the mark). A solid chip: --amber-ink on --amber-bg is 3.9:1 in light,
    below the 4.5:1 text floor. */
 .brand .side-mock-pill{margin-right:auto;padding:3px 7px;cursor:default;background:var(--amber-ink);color:var(--on-status);}
 .brand .side-mock-pill[hidden]{display:none;}
 
-/* ---------- Retained-work banner (the saved run's page) ---------- */
-.retained-banner{margin:0 0 18px;padding:16px 18px;border:1.5px solid var(--amber);
-  border-radius:var(--r-card);background:var(--amber-bg);color:var(--amber-ink);font-size:var(--fs-body);line-height:1.55;}
-.merge-back-banner{margin:0 0 18px;padding:16px 18px;border:1.5px solid var(--amber);
-  border-radius:var(--r-card);background:var(--amber-bg);color:var(--amber-ink);font-size:var(--fs-body);line-height:1.55;}
-.retained-banner[hidden],.merge-back-banner[hidden]{display:none;}
-.retained-banner h4,.merge-back-banner h4{margin:0 0 6px;font-size:var(--fs-body);color:var(--amber-ink);}
-.retained-banner p,.merge-back-banner p{margin:5px 0;}
-.retained-banner ul,.merge-back-banner ul{margin:9px 0;padding-left:20px;}
-.retained-banner li+li,.merge-back-banner li+li{margin-top:8px;}
-.retained-banner code,.merge-back-banner code{display:block;margin-top:4px;padding:7px 9px;border-radius:var(--r-sm);
-  background:var(--panel-wash);color:var(--ink);font-family:var(--mono);font-size:var(--fs-meta);
-  white-space:pre-wrap;word-break:break-all;}
-.retained-banner a,.merge-back-banner a{color:var(--amber-ink);font-weight:700;}
-/* The worktree notice (worktree-notice.mjs) is this banner: amber for retained work, neutral for a live checkout. */
-.retained-banner[data-kind="checkout"]{border-color:var(--line);background:var(--panel-wash);color:var(--ink);}
-.retained-banner[data-kind="checkout"] h4{color:var(--ink);}
-.retained-banner .wt-actions,.retained-banner .wt-member-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
-.retained-banner .wt-actions{margin-top:10px;}
-.retained-banner .wt-member-actions{margin-top:6px;}
-.retained-banner .wt-since{font-size:var(--fs-meta);}
-.retained-banner .wt-manual{margin-top:10px;}
-.retained-banner .wt-manual summary{cursor:pointer;font-weight:600;}
 .hist-empty{color:var(--ink-2);font-size:13px;padding:22px 4px;text-align:center;}
 
 /* ---------- Saved-markdown viewer ---------- */
@@ -3355,6 +3330,12 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .acct-updown{width:14px;height:14px;flex:none;fill:none;stroke:var(--ink-3);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
 .sidebar.collapsed .acct{width:auto;padding:0 2px;}
 .sidebar.collapsed .acct-name,.sidebar.collapsed .acct-updown{display:none;}
+/* #841: "Update available" in the sidebar foot, only while outdated (the [hidden] rule hides it otherwise). */
+.side-update{display:flex;align-items:center;gap:8px;padding:4px 8px;border-radius:var(--r-sm);font-size:12px;font-weight:600;color:var(--amber-ink-strong);text-decoration:none;}
+.side-update:hover{background:var(--field);}
+.side-update-dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--amber);}
+.sidebar.collapsed .side-update{justify-content:center;padding:6px 0;}
+.sidebar.collapsed .side-update-label{display:none;}
 
 /* The menu opens upward from the corner, Interface mode's side menu beside it: two .nav-fly
    popups (side-flyout.mjs keeps them inside the viewport). The menu is one white sheet (the
@@ -3508,6 +3489,15 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .about-version[href]:hover{text-decoration:underline;}
 .about-link{color:var(--green-ink);font-weight:600;text-decoration:none;overflow-wrap:anywhere;}
 .about-link:hover{text-decoration:underline;}
+/* #841: the version's update state, the Updates switch row and Check now. */
+.about-update{font-size:11px;font-weight:600;padding:1px 7px;border-radius:var(--r-xs);background:var(--green-bg);color:var(--green-ink-strong);}
+.about-update[data-state="outdated"]{background:var(--amber-bg);color:var(--amber-ink-strong);}
+.about-update[data-state="source"]{background:var(--field);color:var(--ink-2);}
+.about-row > .about-link + .about-link{margin-left:12px;}
+.about-switch{position:relative;}
+/* The Updates row: a baseline row would take label.switch-row's baseline from its text-less .switch pill
+   and lift the label above the key and Check now. Centre this row only. */
+.about-row.about-row-center{align-items:center;}
 
 /* ---------- Budget readout (Settings) ---------- */
 /* Section gap before the limit fields (the disclaimer hint that used to sit
@@ -3532,7 +3522,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .hd-banners .pause-error-banner,.rd-banners .pause-error-banner{align-self:stretch;margin:0;}
 .net-wait-banner{border-radius:var(--r-card);padding:12px 14px;font-size:13px;background:var(--amber-bg);color:var(--amber-ink);align-self:stretch;}
 /* In a run card these banners are nested boxes (--r-ctrl); in the page-level banner
-   stacks they sit on .retained-banner, so they take its card radius. */
+   stacks they take the card radius. */
 .hd-banners .cost-banner,.hd-banners .pause-error-banner,.rd-banners .cost-banner,.rd-banners .pause-error-banner{border-radius:var(--r-card);}
 
 @media (max-width:1080px){
@@ -3812,7 +3802,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .fc-counts .fc-add,.fc-sign.fc-add{color:var(--green-ink-strong);}
 .fc-counts .fc-upd,.fc-sign.fc-upd{color:var(--amber-ink-strong);}
 .fc-counts .fc-del,.fc-sign.fc-del{color:var(--red-ink-strong);}
-.rd-stats b.fc-tile{font:500 18px var(--mono);letter-spacing:0;}
+.rd-stats b.fc-tile{font:700 var(--fs-stat)/1.2 var(--sans);font-variant-numeric:tabular-nums;letter-spacing:0;}
 .fc-bar{display:flex;align-items:center;flex-wrap:wrap;gap:10px;padding:10px 10px 10px 14px;border-radius:var(--r-card);
   background:color-mix(in srgb,var(--teal-bg) 60%,var(--panel));}
 .fc-bar-l{display:flex;align-items:center;gap:8px;min-width:0;font:500 12px var(--mono);color:var(--teal-ink-strong);overflow-wrap:anywhere;}
@@ -3896,27 +3886,14 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
    above beats the UA's `[hidden]{display:none}`, and this button ships hidden. */
 .hd-report[hidden]{display:none;}
 
-/* ---- the header's ⋯ overflow menu (Archive + Report this run) ---- */
-/* The wrapper is the positioning context; the menu hangs off its right edge so it
-   cannot push the row wider or escape the card on a narrow window. */
-.hd-more-wrap{position:relative;display:inline-flex;}
-.hd-more[hidden]{display:none;}
-/* open, not hover */
-.hd-menu{position:absolute;top:calc(100% + 6px);right:0;z-index:5;min-width:214px;display:flex;flex-direction:column;gap:2px;}
-.hd-menu[hidden]{display:none;}
-/* The menu drops over the sticky .hd-tabs (same z-index, later in the DOM): lift the
-   header above them only while it is open, so scrolled tabs still cover the header. */
-.hd-header:has(.hd-menu:not([hidden])){position:relative;z-index:6;}
-/* Likewise the bar (sticky, z-index 5, BEFORE the tabs in the DOM) while its Resume split menu is open. */
+/* The bar (sticky, z-index 5, BEFORE the tabs in the DOM) while its Resume split menu is open. */
 .rd-bar:has(.btn-split-menu:not([hidden])),.hd-bar:has(.btn-split-menu:not([hidden])){z-index:7;}
-/* The rows are the shared .menu-item (Archive adds .is-danger); a hidden row stays hidden. */
-/* Same guard as its siblings (.hd-archive[hidden], .hd-report[hidden]): the flex
-   display above beats the UA [hidden] rule, so a non-archived run's Restore
-   would otherwise stay visible inside the flex .hd-menu. */
+/* Slice 2: the ⋯'s hidden carriers (index.html .run-menu-carriers); same guard as its siblings
+   (.hd-archive[hidden], .hd-report[hidden]). */
 .hd-restore[hidden]{display:none;}
 /* The header cost's breakdown (app.js paintCostBreakdown): the meta line's cost becomes a
    trigger, its panel hangs off the header card. While it is open the card lifts above the
-   sticky tabs, exactly like the ⋯ menu above. Tokens only; the Away mode row is marked by a
+   sticky tabs. Tokens only; the Away mode row is marked by a
    small amber swatch, never by an accent edge. */
 .cost-bd-btn{all:unset;cursor:pointer;font:inherit;border-bottom:1px dotted var(--ink-3);}
 .cost-bd-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-sm);}
@@ -3942,7 +3919,6 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
    (measured in headless Chrome). The extra pixel per side matches .hd-pr, which
    is the same type size and already pays it. */
 .hd-archive[hidden]{display:none;}
-.hd-archive[disabled]{opacity:.55;cursor:not-allowed;}
 /* align-items:flex-start, NOT the default stretch: `.badge.hist-retained-badge`
    (696) is inline-flex with no width, so a stretching column blows it up to the
    full body width. Only the BANNERS want the full row (the Discard worktree button
@@ -3950,14 +3926,12 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
    ~738px inside a 1068px column and its own `.cb-actions{justify-content:flex-end}`
    then right-aligns short of the edge. */
 .hd-banners{display:flex;flex-direction:column;align-items:flex-start;gap:12px;}
-/* Both reused banners carry legacy margins from their old hosts —
-   `.retained-banner{margin:0 0 18px}` (714) and `.cost-banner{margin-top:12px}`
-   (1505) — which double up with this column's own `gap:12px`. Zero them here
-   rather than editing the shared rules. */
-.hd-banners .retained-banner,.hd-banners .cost-banner,.hd-banners .merge-back-banner{align-self:stretch;margin:0;}
-/* NOT `.hd-banners:empty` — the container always holds its template children
-   (badge, worktree notice, merge-back banner), just hidden, so :empty never matches
-   and the top margin would always apply. Key the margin off "has a visible child". */
+/* The reused cost banner carries a legacy margin from its old host
+   (`.cost-banner{margin-top:12px}`), which doubles up with this column's own
+   `gap:12px`. Zero it here rather than editing the shared rule. */
+.hd-banners .cost-banner{align-self:stretch;margin:0;}
+/* NOT `.hd-banners:empty` — the container can hold hidden banners, so :empty does
+   not say whether one shows. Key the margin off "has a visible child". */
 .hd-banners:has(> :not([hidden])){margin-top:18px;}
 /* .hist-discard's existing rules (1661-1665) still style the worktree notice's own
    Discard worktree button, which lives inside the notice. */
@@ -4544,6 +4518,7 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .shipit-desc-err{margin-top:8px;}
 .shipit-desc-err[hidden]{display:none;}
 .shipit-draft{margin-top:10px;}
+.shipit-watch-help{display:block;margin-top:4px;}
 .shipit-closes{margin-top:4px;}
 .shipit-closes[hidden]{display:none;}
 /* The Generate-with-AI veil over the editor (or its preview) while a draft is in
@@ -4756,9 +4731,8 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .runs-empty-sub{margin:0;font-size:13px;color:var(--ink-2);}
 /* The glance title is a programmatic focus landing (tabindex=-1), not a control. */
 .rd-page-title:focus{outline:none;}
-/* Side by side: only the open detail shows, and the glance's back-to-list button has nowhere to go. */
+/* Side by side: only the open detail shows. */
 .runs-shell[data-layout="split"] .runs-pane > :is(.run-shell,.hist-shell,.group-shell):not(.detail-open){display:none;}
-.runs-shell[data-layout="split"] :is(.rd-back,.hd-back,.gpage-back){display:none;}
 /* Run 3 (D6): the slide layout keeps the one Back button; the breadcrumb is for the split layout. */
 .runs-shell[data-layout="slide"] .rd-crumbs{display:none;}
 /* Narrow: the slide the two old screens used (D7). */
@@ -4828,8 +4802,7 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .rd-error{margin-top:24px;color:var(--red-ink);font-size:var(--fs-body);}
 .rd-error[hidden]{display:none;}
 /* .rd-back is focused programmatically by openRunDetail — same reasoning as the .hd-back arm. */
-.rd-back{display:inline-flex;align-items:center;gap:8px;}
-.gpage-back{display:inline-flex;align-items:center;gap:8px;}   /* run 4 (D13): the run page's Back, chevron included */
+.rd-back,.hd-back,.gpage-back{display:inline-flex;align-items:center;justify-content:center;}   /* slice 2: a 28px icon button (btn-sm btn-icon) */
 .rd-back:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 
 /* MUST sit after the rules above: @media contributes no specificity, so an
@@ -4946,17 +4919,70 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .rd-page-branch.copied .ico-copy{display:none;}
 .rd-page-branch.copied .ico-check{display:inline;color:var(--green-ink);}
 /* The card's head: the status line top left, the Live view switch (app.js paintRdLive)
-   top right, level with the state word; after it the pull request button (.rd-pr-slot, paintPrCta). The live row
-   shows only while the run has not ended and the button only once it has, so the two never meet; if they did, the
-   button takes its own column after the row. */
+   top right, level with the state word; after it the head buttons (.rd-head-acts: run-head.mjs, with the pull request
+   control .rd-pr-slot among them). The live row shows only while the run has not ended and the buttons only once it
+   has, so the two never meet; if they did, the buttons take their own column after the row. */
 .rd-sheet-head{container:rd-head / inline-size;display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:start;min-width:0;}
 .rd-sheet-head > .rd-now-top{grid-area:1 / 1;}
 .rd-sheet-head > .rd-live-row{grid-area:1 / 2;height:23px;margin-left:16px;}   /* the state word's line box (18px × 1.3) */
-/* Centred on the 13px × 1.5 status line: the 32px button overhangs it by 6.25px each way, so the head is the status
-   line's height with or without the button, and its fade-out moves nothing. */
-.rd-sheet-head > .rd-pr-slot{grid-area:1 / 3;margin:-6.25px 0 -6.25px 16px;}
-/* A narrow card: the button wraps onto its own row under the status, on the left edge. */
-@container rd-head (max-width:420px){.rd-sheet-head > .rd-pr-slot{grid-area:2 / 1 / 3 / -1;justify-self:start;margin:12px 0 0;max-width:100%;}}
+/* Slice 3: centred on the status line: the 32px buttons overhang it each way, so the head is the status line's height
+   with or without them, and the PR control's fade-out moves nothing. A narrow card wraps them under the status. */
+.rd-sheet-head > .rd-head-acts{grid-area:1 / 3;display:flex;align-items:center;gap:8px;margin:-7px 0 -7px 16px;}
+.rd-sheet-head > .rd-head-acts[hidden]{display:none;}
+/* The PR slot may shrink in the row (its own max-width caps the label; style below), never past the card. */
+.rd-head-acts > .rd-pr-slot{min-width:0;}
+@container rd-head (max-width:420px){.rd-sheet-head > .rd-head-acts{grid-area:2 / 1 / 3 / -1;justify-self:start;flex-wrap:wrap;margin:12px 0 0;max-width:100%;}
+  .rd-head-acts > .rd-pr-slot{max-width:100%;}
+  .rd-head-acts .btn-split-menu{right:auto;left:0;}}
+.rd-sheet-head:has(.btn-split-menu){position:relative;z-index:7;}
+/* Doubled classes: `.wfv-menu{position:fixed}` and `.btn-split-menu .menu-item{flex-direction:column}` come later in
+   this file at one class less, and would pin the menu to the viewport and stack the Watch row. */
+.rd-pr-menu.btn-split-menu{position:absolute;min-width:260px;}
+.rd-pr-menu.btn-split-menu .menu-item{flex-direction:row;align-items:center;gap:10px;}
+.rd-pr-menu.btn-split-menu .sw-item{align-items:flex-start;}
+.rd-pr-menu .wfv-menu-l{display:flex;flex-direction:column;gap:2px;flex:1;min-width:0;}
+.rd-pr-menu .sw-item[title] small{color:var(--amber-ink);}
+/* Slice 3: the read-only tracker under the head: three steps on one 3-column grid (two for a Folder run), a row per
+   workspace member with its name in a 44px column. Nodes reuse the status-dot colours. */
+.rd-track{display:flex;flex-direction:column;gap:8px;padding-top:12px;border-top:1px solid var(--line);}
+.rd-track[hidden]{display:none;}
+.rd-track-row{display:grid;grid-template-columns:minmax(0,1fr);}
+.rd-track-row.has-name{grid-template-columns:44px minmax(0,1fr);column-gap:8px;}
+.rd-track-name{font-size:var(--fs-meta);color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:16px;}
+.rd-track-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin:0;padding:0;list-style:none;}
+.rd-track-head{display:flex;align-items:center;gap:8px;min-width:0;}
+.rd-track-dot{flex:0 0 16px;width:16px;height:16px;box-sizing:border-box;border-radius:50%;display:grid;place-items:center;color:var(--panel);}
+.rd-track-dot.is-done{background:var(--green);}
+.rd-track-dot.is-current{border:2px solid currentColor;background:none;}
+.rd-track-dot.is-current::after{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;}
+.rd-track-dot.is-working{color:var(--peach);}
+.rd-track-dot.is-ready{color:var(--green);}
+.rd-track-dot.is-merged{background:var(--violet);border:0;color:var(--panel);}
+.rd-track-dot.is-merged::after{content:none;}
+.rd-track-dot.is-problem{background:var(--amber);}
+.rd-track-dot.is-failed{background:var(--red);}
+.rd-track-dot.is-closed{border:1.5px solid var(--ink-3);color:var(--ink-3);}
+.rd-track-dot.is-future{border:1.5px solid var(--line-2);}
+.rd-track-dot.is-pulse{animation:wr-pulse 1.6s ease-in-out infinite;}
+.rd-track-label{font-size:var(--fs-meta);color:var(--ink);white-space:nowrap;}
+.rd-track-step.is-current .rd-track-label{font-weight:600;}
+.rd-track-step.is-future .rd-track-label{color:var(--ink-2);}   /* --ink-3 is 2.8:1 on the panel in light */
+.rd-track-step.is-closed .rd-track-label{text-decoration:line-through;color:var(--ink-2);}
+.rd-track-line{flex:1;min-width:12px;height:1px;margin-right:8px;background:var(--line-2);}
+.rd-track-line.is-done{background:var(--green);}
+.rd-track-sub{display:flex;flex-wrap:wrap;gap:4px 8px;margin:4px 0 0 24px;font-size:var(--fs-meta);color:var(--ink-2);}
+.rd-track-pr,.rd-track-link{color:var(--blue-ink-strong);font-weight:600;text-decoration:none;}
+.rd-track-act{all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:4px;border-radius:var(--r-xs);}
+.rd-track-act:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.rd-track-watch:not(.is-bad):not(.is-run){text-decoration:underline dotted;text-underline-offset:3px;}
+:is(.rd-track-tx,.rd-track-act).is-run{color:var(--blue-ink);}
+:is(.rd-track-tx,.rd-track-act).is-bad{color:var(--amber-ink);}
+@media (prefers-reduced-motion: reduce){.rd-track-dot.is-pulse{animation:none;}.rd-track-dot.is-current::after{transition:none;}}
+@media (max-width:480px){
+  .rd-track-label{white-space:normal;}
+  .rd-track-line{min-width:8px;margin-right:4px;}
+  .rd-track-row.has-name{grid-template-columns:minmax(0,1fr);row-gap:4px;}
+}
 /* The status line (.rd-now-top) is the shared status block (run-status-card.mjs, .run-status below). */
 
 /* The status glyph (run-glance.mjs renderOrb): colour is the state. */
@@ -5021,6 +5047,10 @@ button.rd-srow:hover{background:var(--hover-on-field);}
 .rd-srow-ico{flex:none;color:var(--ink-2);}   /* the tab icon the row leads to */
 .rd-srow-tx small{display:block;color:var(--ink-2);font-size:var(--fs-meta);}
 .rd-srow-v{color:var(--ink-2);font:400 var(--fs-body)/var(--lh-body) var(--sans);font-variant-numeric:tabular-nums;white-space:nowrap;}
+/* the Simple checkout row: text, then its Discard / Unlink buttons, wrapping on a narrow card */
+.rd-srow-checkout{flex-wrap:wrap;}
+.rd-srow-checkout .rd-srow-tx{flex:1 1 14em;}   /* a basis, so the buttons wrap under the text instead of squeezing it */
+.rd-srow-acts{display:flex;flex-wrap:wrap;gap:8px;}
 .rd-srow.chv::after{content:"›";color:var(--ink-2);font-size:var(--fs-subpage);line-height:1;}
 .rd-slist .issues{margin:0;padding:10px 14px;}
 
@@ -5032,9 +5062,10 @@ button.rd-srow:hover{background:var(--hover-on-field);}
    a third spanning, so "+2716 −571" stays inside its box. */
 .rd-facts{container:rd-facts / inline-size;}
 @container rd-facts (max-width:420px){.rd-stats{grid-template-columns:repeat(2,minmax(0,1fr));}.rd-stats[data-n="3"] > div:last-child{grid-column:1 / -1;}}
-.rd-stats > div{background:var(--field);border-radius:var(--r-ctrl);padding:12px 6px;display:flex;flex-direction:column;gap:2px;min-width:0;}
-.rd-stats b{font:700 18px var(--sans);font-variant-numeric:tabular-nums;letter-spacing:-.01em;white-space:nowrap;overflow-wrap:normal;}
-.rd-stats b .hd-diff-counts{font-size:inherit;font-weight:700;}
+.rd-stats > div{background:var(--field);border-radius:var(--r-ctrl);padding:var(--pad-tile) 8px;display:flex;flex-direction:column;gap:2px;min-width:0;}
+.rd-stats b{font:700 var(--fs-stat)/1.2 var(--sans);font-variant-numeric:tabular-nums;letter-spacing:-.01em;white-space:nowrap;overflow-wrap:normal;}
+/* D18: the counts inside a tile are the stat face too, never mono. */
+.rd-stats b .hd-diff-counts,.rd-stats b .fc-counts{font-family:var(--sans);font-size:inherit;font-weight:700;}
 /* 18px bold is under the large-text line (18.66px), so the counts need 4.5:1 on --field: the
    diff pane's darker count tokens, not the 4.45:1 --red-ink. */
 .rd-stats .hd-diff-counts .diff-add{color:var(--hd-count-add);}
@@ -5057,10 +5088,6 @@ button.rd-srow:hover{background:var(--hover-on-field);}
 .rd-pr-slot{position:relative;width:fit-content;max-width:min(260px,50cqi);border-radius:var(--r-ctrl);}
 .rd-pr-slot[hidden]{display:none;}
 .rd-pr-status[hidden]{display:none;}
-/* The PR bar: the run's own PR, its checks and Watch, as one card; nothing (no gap) without them. */
-.rd-pr-box:has(> .rd-pr-status:not([hidden])){border-radius:var(--r-ctrl);overflow:hidden;background:var(--blue-wash);
-  box-shadow:inset 0 0 0 1px var(--blue-line);}
-.rd-pr-box:not(:has(> .rd-pr-status:not([hidden]))){display:none;}
 .rd-pr-status{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px;
   border-top:1px solid var(--blue-line);font-size:13px;color:var(--ink-2);}
 .rd-prs-sum{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-width:0;}
@@ -5153,15 +5180,12 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
 
 /* ---------- Running detail: banners ---------- */
 /* align-items:flex-start, NOT the default stretch, as .hd-banners: only the
-   BANNERS want the full row. The container holds the worktree notice only; its
-   Discard worktree button (`.hist-discard`) lives inside the notice. */
+   BANNERS want the full row. */
 .rd-banners{display:flex;flex-direction:column;align-items:flex-start;gap:12px;}
-/* Both reused banners carry legacy margins from their old hosts —
-   `.retained-banner{margin:0 0 18px}` and `.cost-banner{margin-top:12px}` —
-   which double up with this column's own gap. */
-.rd-banners .retained-banner,.rd-banners .cost-banner{align-self:stretch;margin:0;}
-/* NOT `:empty` — the container always holds its template child (the worktree
-   notice), just hidden. Key the margin off "has a visible child", as .hd-banners does. */
+/* The reused cost banner carries a legacy margin from its old host
+   (`.cost-banner{margin-top:12px}`), which doubles up with this column's own gap. */
+.rd-banners .cost-banner{align-self:stretch;margin:0;}
+/* NOT `:empty`: key the margin off "has a visible child", as .hd-banners does. */
 .rd-banners:has(> :not([hidden])){margin-top:18px;}
 
 /* ---------- Running detail: question panel ---------- */
@@ -9911,6 +9935,8 @@ body:has(> .mk-layer:not(.hidden)) > .wfv-menu{z-index:58;}
 .wfv-menu-ic{color:var(--ink-2);}
 .wfv-menu-item.is-danger{color:var(--red-ink-strong);}
 .wfv-menu-item.is-danger .wfv-menu-ic{color:inherit;}
+/* A gated danger item (Archive behind a local copy or kept work) reads disabled, as any other disabled item. */
+.menu-item.is-danger:is(:disabled,[aria-disabled="true"]){color:var(--ink-3);}
 @media (max-width:600px){.mk-sheet-head,.mk-sheet-body,.mk-sheet-foot{padding-left:16px;padding-right:16px;}}
 
 /* Page shell (CONTRACT §5): the tabs are the header (no page intro, L18); counts in tabs and section heads. */

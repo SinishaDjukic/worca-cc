@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
-import { runModel, groupModel } from '../src/shared/run-model.mjs';
+import { runModel, groupModel, MENU_ACTIONS, HEAD_ACTIONS } from '../src/shared/run-model.mjs';
 import { buildRunsModel, renderRunsList, memberPrsOf } from '../ui/public/runs-list.mjs';
 import { createChatRunCard } from '../ui/public/chat/run-card.mjs';
 import { paintRunStatus, syncActions, statusText, memberStatusText } from '../ui/public/run-status-card.mjs';
@@ -166,10 +166,14 @@ const asking = REPLAY_FRAMES.find((f) => f.pendingQuestion);
 const workingFrame = RUN_STATE_ROWS.find((r) => r.state === 'working').run;
 const frameOf = (f, over = {}) => ({ type: 'state', runId: 'r1', id: 'p1', status: f.status, stepper: f.stepper, steps: f.steps, active: f.active,
   endReached: f.endReached, tokens: f.tokens, progressFacts: f.progressFacts, subAgents: [], totalCostUsd: 1, ...over });
+/** Slice 3 (D5): the run page words a failed run "Failed · Build · Implementation"; the list and the card keep the model's
+ *  "Build · failed · Implementation". */
+const pageLine = (line) => line.replace(/^(.*?) · failed(?: · (.*))?$/, (_, a, b) => ['Failed', a, b].filter(Boolean).join(' · '));
 const shownActions = (root) => [...root.querySelectorAll('[data-model-action]')].filter((b) => !b.hidden && !b.closest('[hidden]')).map((b) => b.dataset.modelAction);
 
-async function runPage(frames) {
-  const ctx = await bootApp({});
+// `row`: the run's History row (the live page reads a finished run's PR and Watch from it, as app.js rdModelRun does).
+async function runPage(frames, { row = null } = {}) {
+  const ctx = await bootApp(row ? { fetchHandler: (u) => (u.endsWith('/api/history') ? hd.ok({ pipelines: [row], ghAvailable: true }) : null) } : {});
   helloRun(ctx, { runId: 'r1', pipelineId: 'p1' });
   for (const f of frames) ctx.dispatch(f);
   ctx.go('running/r1');
@@ -191,8 +195,10 @@ test('§5.3 boot: #running/r1 paints the one status block and the model actions 
     const { block, bar } = await runPage(c.frames);
     const m = runModel({ ...c.raw, pendingQuestion: c.raw.pendingQuestion || null, pr: null });
     assert.equal(block.dataset.state, m.state);
-    assert.equal(block.dataset.line, m.line);
-    assert.deepEqual(new Set(shownActions(bar)), new Set(m.actions), 'the bar shows the model actions');
+    assert.equal(block.dataset.line, m.state === 'failed' ? pageLine(m.line) : m.line);
+    // Slice 2: Archive and Report live in the run page's ⋯, never in its bar; slice 3: the head actions in the card head.
+    assert.deepEqual(new Set(shownActions(bar)), new Set(m.actions.filter((id) => !MENU_ACTIONS.includes(id) && !HEAD_ACTIONS.includes(id))), 'the bar shows the model actions');
+    assert.equal(bar.querySelector('[data-model-action="report"]'), null);
     const dot = block.querySelector('.status-dot');
     if (c.symbol) assert.equal(dot.dataset.symbol, c.symbol); else assert.equal(dot.querySelector('svg'), null);
   } })));
@@ -244,7 +250,7 @@ async function finishedPage({ row, detail, ghAvailable = false, more = () => nul
   return { ctx, end: ctx.window.document.querySelector('#hist-detail .hd-bar .rd-bar-end'), doc: ctx.window.document };
 }
 
-test('§5.3 boot: the finished page owns its Resume for a resumable paused row, and makes a disabled one for an archived row', async () => {
+test('§5.3 boot: the finished page owns its Resume for a resumable paused row, and makes none for an archived row', async () => {
   await checkRows([
     { name: 'paused, resumable', run: async () => {
       const { ctx, end } = await finishedPage({ row: { ...hd.ROW, status: 'paused' }, detail: { ...hd.DETAIL, state: { ...hd.DETAIL.state, status: 'paused', resumable: true } } });
@@ -261,9 +267,7 @@ test('§5.3 boot: the finished page owns its Resume for a resumable paused row, 
       const { end } = await finishedPage({ row: { ...hd.ROW, status: 'paused' },
         detail: { ...hd.DETAIL, state: { ...hd.DETAIL.state, status: 'paused', archivedAt: '2026-10-18T10:00:00Z' } } });
       assert.equal(end.querySelector('.hd-resume').hidden, true);
-      const made = end.querySelector('.rd-actions [data-model-action="resume"]');
-      assert.equal(made.disabled, true);
-      assert.equal(made.title, 'This run cannot be resumed');
+      assert.equal(end.querySelector('.rd-actions [data-model-action="resume"]'), null, 'slice 2: never a Resume that cannot work');
     } },
     { name: 'failed: the saved state\'s ledger gives the card\'s line (stage and failed step), not a bare "Failed"', run: async () => {
       const failed = RUN_STATE_ROWS.find((r) => r.state === 'failed').run;
@@ -274,7 +278,8 @@ test('§5.3 boot: the finished page owns its Resume for a resumable paused row, 
       const card = cardFacts(trackDom(new JSDOM('<!doctype html><body></body>')).window.document, failed);
       assert.equal(block.dataset.state, 'failed');
       assert.notEqual(block.dataset.line, 'Failed', 'the stage is known from the saved state');
-      assert.equal(block.dataset.line, card.line, 'page and card: the same status line');
+      assert.equal(block.dataset.line, pageLine(card.line), 'page and card: the same status line, the page in its own order (D5)');
+      assert.match(block.dataset.line, /^Failed · /);
     } },
     { name: 'workspace, a conflicting member PR: the page reads the same rollup as its Runs row (#784)', run: async () => {
       const gh = (n, more = {}) => ({ state: 'OPEN', url: `https://github.com/o/r/pull/${n}`, number: n, isDraft: false, mergeable: 'UNKNOWN', ...more });
@@ -292,12 +297,76 @@ test('§5.3 boot: the finished page owns its Resume for a resumable paused row, 
       assert.deepEqual([block.dataset.state, block.dataset.line], [a.dataset.state, a.dataset.line], 'page and row: one model');
       assert.equal(block.dataset.state, 'needs-you');
     } },
-    { name: 'done, the glance offers Create pull request', run: async () => {
+    { name: 'done, the card head offers Create pull request', run: async () => {
       const { doc, end } = await finishedPage({ row: { ...hd.ROW, status: 'done', pr: null }, detail: hd.DETAIL, ghAvailable: true });
-      const slot = doc.querySelector('#hist-detail .hd-glance .rd-pr-slot');
+      const slot = doc.querySelector('#hist-detail .hd-glance .rd-head-acts .rd-pr-slot');
       assert.equal(slot.dataset.state, 'create');
-      assert.equal(slot.dataset.modelAction, 'ship');
       assert.equal(end.querySelectorAll('.rd-actions [data-model-action="ship"]').length, 0, 'no second Ship it');
     } },
   ]);
+});
+
+test('slice 2: the run pages\' bars never make Archive or Report (stopped, merged, failed, stopped resumable) at any level', async () => {
+  const merged = { state: 'MERGED', url: 'https://github.com/acme/app/pull/759', number: 759 };
+  const CASES = [
+    { name: 'stopped', status: 'stopped' },
+    { name: 'merged', status: 'done', pr: merged },
+    { name: 'failed', status: 'error' },
+    { name: 'stopped, resumable', status: 'stopped', resumable: true },
+  ];
+  const none = (root, where) => {
+    assert.equal(root.querySelectorAll('.rd-actions [data-model-action="archive"]').length, 0, `${where}: no Archive`);
+    assert.equal(root.querySelectorAll('.rd-actions [data-model-action="report"]').length, 0, `${where}: no Report`);
+  };
+  await checkRows(CASES.flatMap((c) => ['simple', 'advanced', 'expert'].map((level) => ({ name: `${c.name} at ${level}`, run: async () => {
+    const live = await runPage([frameOf(workingFrame, { status: c.status, active: [], ...(c.pr ? { pr: c.pr } : {}), ...(c.resumable ? { resumable: true } : {}) })]);
+    live.doc.documentElement.dataset.level = level;
+    live.ctx.dispatch(frameOf(workingFrame, { status: c.status, active: [], ...(c.pr ? { pr: c.pr } : {}), ...(c.resumable ? { resumable: true } : {}) }));
+    await live.ctx.settle(4);
+    none(live.doc.querySelector('#run-detail'), 'live');
+    const saved = await finishedPage({ row: { ...hd.ROW, status: c.status, ...(c.pr ? { pr: c.pr } : {}) },
+      detail: { ...hd.DETAIL, state: { ...hd.DETAIL.state, status: c.status, ...(c.resumable ? { resumable: true } : {}) } } });
+    saved.doc.documentElement.dataset.level = level;
+    none(saved.doc.querySelector('#hist-detail'), 'saved');
+  } }))));
+});
+
+// Needle (a), slice 3: the bar keeps only Run after and the live run controls. No ship, View PR, archive, retry, report
+// or Ask for changes button in .rd-actions, for every finished state, on both pages, at Simple and Expert.
+test('needle (a): the run pages\' bars make no ship, PR, archive, retry, report or ask-for-changes button', async (t) => {
+  const url = 'https://github.com/acme/app/pull/866';
+  const open = { state: 'OPEN', url, number: 866, isDraft: false, mergeable: 'MERGEABLE' };
+  // `state`: the painted status block's state on both pages, so each case is proven to be the state it names.
+  const CASES = {
+    stopped: { status: 'stopped', state: 'stopped' },
+    merged: { status: 'done', pr: { ...open, state: 'MERGED' }, state: 'merged' },
+    failed: { status: 'error', state: 'failed' },
+    ready: { status: 'done', pr: null, state: 'ready' },
+    'in review': { status: 'done', pr: open, state: 'in-review' },
+    conflicts: { status: 'done', pr: { ...open, mergeable: 'CONFLICTING' }, state: 'needs-you' },
+    'watch stopped': { status: 'done', pr: open, watch: { watching: true, status: 'needs-person', fixRuns: 3, reason: 'cap' }, state: 'needs-you' },
+  };
+  const SEL = ['ship', 'open-pr', 'archive', 'retry', 'report', 'ask-changes'].map((id) => `.rd-actions [data-model-action="${id}"]`).join(', ');
+  for (const [name, c] of Object.entries(CASES)) {
+    const over = { status: c.status, active: [] };
+    const histRow = { ...hd.ROW, id: 'p1', live: true, status: c.status, pr: c.pr, ...(c.watch ? { watch: c.watch } : {}) };
+    for (const level of ['simple', 'expert']) {
+      await t.test(`needle (a) live · ${name} · ${level}`, async () => {
+        const live = await runPage([frameOf(workingFrame, over)], { row: histRow });
+        live.doc.documentElement.dataset.level = level;
+        live.ctx.dispatch(frameOf(workingFrame, over));
+        await live.ctx.settle(4);
+        assert.equal(live.doc.querySelector('#run-detail .rd-sheet .run-status').dataset.state, c.state);
+        assert.equal(live.doc.querySelector('#run-detail').querySelector(SEL), null);
+      });
+      await t.test(`needle (a) saved · ${name} · ${level}`, async () => {
+        const row = { ...hd.ROW, status: c.status, pr: c.pr, ...(c.watch ? { watch: c.watch } : {}) };
+        const saved = await finishedPage({ row, detail: { ...hd.DETAIL, state: { ...hd.DETAIL.state, status: c.status } }, ghAvailable: true });
+        saved.doc.documentElement.dataset.level = level;
+        await hd.settle(saved.ctx.window, 2);
+        assert.equal(saved.doc.querySelector('#hist-detail .hd-glance .rd-sheet .run-status').dataset.state, c.state);
+        assert.equal(saved.doc.querySelector('#hist-detail').querySelector(SEL), null);
+      });
+    }
+  }
 });

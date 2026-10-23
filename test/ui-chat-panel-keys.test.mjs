@@ -138,13 +138,13 @@ test('Escape with the ⋯ menu open closes the menu only', async () => {
   hello(ctx, []);
   await ctx.settle(6);
   const screen = await openPanel(ctx, ROW.id, 8);
-  const menu = screen.querySelector('.hd-menu');
-  click(ctx, screen.querySelector('.hd-more'));
-  assert.equal(menu.hidden, false);
-  esc(ctx, screen.querySelector('.hd-more'));
+  const doc = ctx.window.document;
+  click(ctx, screen.querySelector('.hd-bar-more'));
+  assert.ok(doc.querySelector('body > .wfv-menu'));
+  esc(ctx, doc.activeElement);                       // focus is on the menu's first item (openMenu)
   await ctx.settle();
-  assert.equal(menu.hidden, true);
-  assert.equal(panelOf(ctx).hidden, false);
+  assert.equal(doc.querySelector('body > .wfv-menu'), null);
+  assert.equal(panelOf(ctx).hidden, false, 'openMenu stops its Escape: the panel stays');
 });
 
 test('Escape on a button of a half-answered waiting question keeps the panel and the answer', async () => {
@@ -304,15 +304,15 @@ test('Escape that closes the ⋯ menu resets and focuses its trigger', async () 
   hello(ctx, []);
   await ctx.settle(6);
   const screen = await openPanel(ctx, ROW.id, 8);
-  const more = screen.querySelector('.hd-more');
+  const more = screen.querySelector('.hd-bar-more');
   click(ctx, more);
   assert.equal(more.getAttribute('aria-expanded'), 'true');
-  panelOf(ctx).focus();
-  esc(ctx, panelOf(ctx));
+  esc(ctx, ctx.window.document.activeElement);
   await ctx.settle();
-  assert.equal(screen.querySelector('.hd-menu').hidden, true);
+  assert.equal(ctx.window.document.querySelector('body > .wfv-menu'), null);
   assert.equal(more.getAttribute('aria-expanded'), 'false');
   assert.equal(ctx.window.document.activeElement, more);
+  assert.equal(panelOf(ctx).hidden, false);
 });
 
 test('Escape with the cost breakdown open closes it, not the panel', async () => {
