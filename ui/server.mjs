@@ -5035,17 +5035,34 @@ app.post('/api/shape/features/:id/ship', async (req, res) => {
 const CHAIN_SHIPPING = new Set();   // chain ids with a ship in flight
 const NO_PR_HOST = 'No pull request host is available: install the GitHub CLI (gh), or set WORCA_ADO_TOKEN for Azure DevOps';
 const livePr = (pid) => { const pr = readPrState(pid); return !!(pr && pr.url && pr.state !== 'CLOSED'); };
+/** After a chain or group ship, done or stopped part-way: Watch PR on each PR it made (when asked), then repaint. */
+function settleShipped(opened, watch, actor) {
+  if (watch) {
+    for (const p of opened) {
+      try { setWatch({ prUrl: p.url, pipelineId: p.pipelineId, memberKey: '', pushRemote: p.pushRemote, enabled: true, enabledBy: actor }); }
+      catch (err) { console.error(`[worca-ui] watch after ship failed: ${err?.message || err}`); }
+    }
+  }
+  if (opened.length) emitChanged('pipelines-changed', 'updated');
+}
 /** One ship flow (D6, D7): a Run-after chain ships as one PR per run (stacked) or one PR from its last run. → { status, body } */
 async function shipChainNow(chainId, mode, { actor = null, title = null, body = '', draft = false, watch = false } = {}) {
   if (!SHIP_MODES.includes(mode)) return { status: 400, body: { error: 'mode must be stacked or one' } };
-  const chain = runChains({ keepDone: true }).find((c) => c.id === chainId);
+  const chain = runChains({ keepDone: 'all' }).find((c) => c.id === chainId);
   if (!chain) return { status: 404, body: { error: 'unknown chain' } };
   if (!chain.members.every((m) => m.state === 'done' && m.pipelineId)) return { status: 409, body: { error: 'every run in the chain must be done before it ships' } };
   const todo = chain.members.filter((m) => !livePr(m.pipelineId));
   if (!todo.length) return { status: 409, body: { error: 'every run in the chain already has a PR' } };
+  // Before any PR: a run with no branch of its own (a workspace or Folder run) would stop the ship part-way.
+  const lost = todo.findIndex((m) => !m.canPr);
+  if (lost >= 0) return { status: 409, body: { error: `run ${chain.members.indexOf(todo[lost]) + 1} has no branch to ship: create its PR from its own page` } };
   if (mode === 'one') {
     if (todo.length !== chain.members.length) return { status: 409, body: { error: 'a run in this chain already has a PR: create one PR per run' } };
     if (chain.members.some((m, i) => i > 0 && m.after !== i)) return { status: 409, body: { error: 'a chain that forks ships as one PR per run' } };
+    // One is the last run's branch: it holds every run's work only when each run started from the one before it.
+    if (chain.members.some((m, i) => i > 0 && (!m.stacks || m.projectKey !== chain.members[0].projectKey))) {
+      return { status: 409, body: { error: "a run in this chain does not start from the previous run's branch: create one PR per run" } };
+    }
   }
   if (!(await anyPrHost())) return { status: 409, body: { error: NO_PR_HOST } };
   if (CHAIN_SHIPPING.has(chainId)) return { status: 409, body: { error: 'this chain is already shipping' } };
@@ -5055,7 +5072,10 @@ async function shipChainNow(chainId, mode, { actor = null, title = null, body = 
     if (mode === 'stacked') {
       for (const m of todo) {                           // chain order = merge order: each base is the run before it
         const r = await openMemberPr(m.pipelineId, { actor });
-        if (!r.ok) return { status: r.status || 500, body: { error: `could not create run ${chain.members.indexOf(m) + 1}'s PR: ${r.error}. Create PR again to continue.`, prs: opened.map((p) => p.url) } };
+        if (!r.ok) {
+          settleShipped(opened, watch, actor);           // the PRs made before the failure are watched and shown
+          return { status: r.status || 500, body: { error: `could not create run ${chain.members.indexOf(m) + 1}'s PR: ${r.error}. Create PR again to continue.`, prs: opened.map((p) => p.url) } };
+        }
         opened.push({ url: r.pr.url, pipelineId: m.pipelineId, pushRemote: r.pushRemote || 'origin' });
       }
     } else {
@@ -5075,13 +5095,7 @@ async function shipChainNow(chainId, mode, { actor = null, title = null, body = 
       }
       opened.push({ url: r.pr.url, pipelineId: last.pipelineId, pushRemote: r.pushRemote || 'origin' });
     }
-    if (watch) {
-      for (const p of opened) {
-        try { setWatch({ prUrl: p.url, pipelineId: p.pipelineId, memberKey: '', pushRemote: p.pushRemote, enabled: true, enabledBy: actor }); }
-        catch (err) { console.error(`[worca-ui] watch after chain ship failed: ${err?.message || err}`); }
-      }
-    }
-    emitChanged('pipelines-changed', 'updated');
+    settleShipped(opened, watch, actor);
     return { status: 200, body: { ok: true, mode, prs: opened.map((p) => p.url) } };
   } finally { CHAIN_SHIPPING.delete(chainId); }
 }
@@ -5151,6 +5165,11 @@ async function shipUserGroupNow(groupId, mode, { actor = null, title = null, bod
   }
   const todo = members.filter((x) => !livePr(x.m.pipelineId));
   if (!todo.length) return { status: 409, body: { error: 'every run in the group already has a PR' } };
+  if (mode === 'separate') {
+    // Before any PR: a workspace run or a run with no branch of its own would stop the ship part-way, every retry.
+    const lost = todo.find((x) => (x.state && x.state.target === 'workspace') || x.target.error || !x.target.repoDir || !x.target.feature);
+    if (lost) return { status: 409, body: { error: `${lost.m.title || 'A run'} has no branch to ship here: create its PR from its own page` } };
+  }
   if (!(await anyPrHost())) return { status: 409, body: { error: NO_PR_HOST } };
   if (GROUP_SHIPPING.has(groupId)) return { status: 409, body: { error: 'this group is already shipping' } };
   GROUP_SHIPPING.add(groupId);
@@ -5160,7 +5179,10 @@ async function shipUserGroupNow(groupId, mode, { actor = null, title = null, bod
     if (mode === 'separate') {
       for (const x of todo) {                           // D7: each into its own base, in position order
         const r = await openMemberPr(x.m.pipelineId, { actor });
-        if (!r.ok) return { status: r.status || 500, body: { error: `could not create the PR for ${x.m.title || 'a run'}: ${r.error}. Create PR again to continue.`, prs: opened.map((p) => p.url) } };
+        if (!r.ok) {
+          settleShipped(opened, watch, actor);           // the PRs made before the failure are watched and shown
+          return { status: r.status || 500, body: { error: `could not create the PR for ${x.m.title || 'a run'}: ${r.error}. Create PR again to continue.`, prs: opened.map((p) => p.url) } };
+        }
         opened.push({ url: r.pr.url, pipelineId: x.m.pipelineId, pushRemote: r.pushRemote || 'origin' });
       }
     } else {
@@ -5183,13 +5205,7 @@ async function shipUserGroupNow(groupId, mode, { actor = null, title = null, bod
       }
       opened.push({ url: r.pr.url, pipelineId: last.m.pipelineId, pushRemote: r.pushRemote || 'origin' });
     }
-    if (watch) {
-      for (const p of opened) {
-        try { setWatch({ prUrl: p.url, pipelineId: p.pipelineId, memberKey: '', pushRemote: p.pushRemote, enabled: true, enabledBy: actor }); }
-        catch (err) { console.error(`[worca-ui] watch after group ship failed: ${err?.message || err}`); }
-      }
-    }
-    emitChanged('pipelines-changed', 'updated');
+    settleShipped(opened, watch, actor);
     return { status: 200, body: { ok: true, mode, prs: opened.map((p) => p.url), ...(branch ? { branch } : {}) } };
   } finally { GROUP_SHIPPING.delete(groupId); }
 }

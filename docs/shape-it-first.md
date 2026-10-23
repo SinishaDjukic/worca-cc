@@ -233,8 +233,11 @@ slice's branch, so it ships with the feature.
 A Run-after chain ships the same way, without Shaper: once every run in it is done,
 its group page reads `Ready to ship · 2 of 2 done` with **Create PR** on the status
 line, and the dialog offers One (the last run's branch into the chain's root, with a
-title and description) or N stacked (the default). A finished chain stays in the
-Runs list until each of its PRs is merged or closed, or one of its runs is archived.
+title and description) or N stacked (the default). One needs each run to start from the
+previous run's branch, in one project; otherwise only N stacked is offered. A run with no
+branch of its own (a workspace or Folder run) ships from its own page. A finished chain
+stays in the Runs list while one of its PRs is open; with a run still without a PR, for
+14 days after its last run, when every run can have one. Archiving a run retires it.
 
 **Release.** A single run's and a feature's **Create PR** dialog carry an optional
 release row, under After it opens. **+ Add a release** suggests the next version: the last tag plus a

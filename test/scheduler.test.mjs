@@ -16,7 +16,7 @@ import {
   dependentsOfWorkflow, dueTickets, runDueTickets, recordOutcome, recoverScheduler, purgeScheduler,
   scheduleCounts, summarizeRequest, RETRY_BACKOFF_MIN, AFTER_RUN_AT,
   afterRefOf, predecessorState, previousBranchesOf, dependentsOfRun, resolveAfterRef,
-  chainBaseBranchesOf, stackedPrBaseOf, markTicketFired, cancelResumeTicketsFor, runChains, skipTicket,
+  chainBaseBranchesOf, stackedPrBaseOf, markTicketFired, cancelResumeTicketsFor, runChains, CHAIN_SHIP_WINDOW_MS, skipTicket,
 } from '../src/core/scheduler.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { listNotifications, unreadCount } from '../src/core/notifications.mjs';
@@ -887,12 +887,12 @@ test('runChains({ keepDone }): an all-done chain stays listed until its PRs end 
   chainFire('kd00000b', { kind: 'pipeline', id: 'kd00000a' });
   const id = 'p:kd00000a';
   assert.equal(runChains().some((c) => c.id === id), false, 'default: ended chains drop');
-  assert.deepEqual(runChains({ keepDone: true }).find((c) => c.id === id).members.map((m) => m.state), ['done', 'done']);
+  assert.deepEqual(runChains({ keepDone: true, now: T0 }).find((c) => c.id === id).members.map((m) => m.state), ['done', 'done']);
   persistPrState('kd00000a', { url: 'https://github.com/o/r/pull/1', number: 1, state: 'OPEN' });
   persistPrState('kd00000b', { url: 'https://github.com/o/r/pull/2', number: 2, state: 'MERGED' });
-  assert.ok(runChains({ keepDone: true }).some((c) => c.id === id), 'one PR still open: kept');
+  assert.ok(runChains({ keepDone: true, now: T0 }).some((c) => c.id === id), 'one PR still open: kept');
   persistPrState('kd00000a', { url: 'https://github.com/o/r/pull/1', number: 1, state: 'MERGED' });
-  assert.equal(runChains({ keepDone: true }).some((c) => c.id === id), false, 'every PR merged: retired');
+  assert.equal(runChains({ keepDone: true, now: T0 }).some((c) => c.id === id), false, 'every PR merged: retired');
 });
 
 test('runChains({ keepDone }): a shared One PR ends when any row carrying it reads MERGED (the others not refreshed yet)', () => {
@@ -902,21 +902,44 @@ test('runChains({ keepDone }): a shared One PR ends when any row carrying it rea
   const url = 'https://github.com/o/r/pull/5';
   persistPrState('ks00000a', { url, number: 5, state: 'OPEN' });     // a stale row: only the last run's refresh saw the merge
   persistPrState('ks00000b', { url, number: 5, state: 'MERGED' });
-  assert.equal(runChains({ keepDone: true }).some((c) => c.id === 'p:ks00000a'), false);
+  assert.equal(runChains({ keepDone: true, now: T0 }).some((c) => c.id === 'p:ks00000a'), false);
 });
 
 test('runChains({ keepDone }): an archived member retires the chain; a failed chain still drops', () => {
   chainRun('ka00000a', 'main', 'feat/ka-a');
   chainRun('ka00000b', 'feat/ka-a', 'feat/ka-b');
   chainFire('ka00000b', { kind: 'pipeline', id: 'ka00000a' });
-  assert.ok(runChains({ keepDone: true }).some((c) => c.id === 'p:ka00000a'));
+  assert.ok(runChains({ keepDone: true, now: T0 }).some((c) => c.id === 'p:ka00000a'));
   getDb().prepare('UPDATE pipelines SET archived_at = ? WHERE id = ?').run('2026-10-01T00:00:00Z', 'ka00000b');
-  assert.equal(runChains({ keepDone: true }).some((c) => c.id === 'p:ka00000a'), false);
+  assert.equal(runChains({ keepDone: true, now: T0 }).some((c) => c.id === 'p:ka00000a'), false);
   chainRun('kf00000a', 'main', 'feat/kf-a');
   chainRun('kf00000b', 'feat/kf-a', 'feat/kf-b');
   getDb().prepare("UPDATE pipelines SET status = 'error' WHERE id = ?").run('kf00000b');
   chainFire('kf00000b', { kind: 'pipeline', id: 'kf00000a' });
-  assert.equal(runChains({ keepDone: true }).some((c) => c.id === 'p:kf00000a'), false);
+  assert.equal(runChains({ keepDone: true, now: T0 }).some((c) => c.id === 'p:kf00000a'), false);
+});
+
+test('runChains({ keepDone }): a chain with a run still without a PR reads Ready to ship for the ship window only', () => {
+  chainRun('kw00000a', 'main', 'feat/kw-a');
+  chainRun('kw00000b', 'feat/kw-a', 'feat/kw-b');
+  chainFire('kw00000b', { kind: 'pipeline', id: 'kw00000a' });
+  const listed = (now) => runChains({ keepDone: true, now }).some((c) => c.id === 'p:kw00000a');
+  assert.ok(listed(T0 + CHAIN_SHIP_WINDOW_MS), 'inside the window');
+  assert.equal(listed(T0 + CHAIN_SHIP_WINDOW_MS + 1), false, 'an old chain nobody shipped stays out of the Runs list');
+  assert.ok(runChains({ keepDone: 'all', now: T0 + 10 * CHAIN_SHIP_WINDOW_MS }).some((c) => c.id === 'p:kw00000a'), 'the ship route still finds it');
+  persistPrState('kw00000a', { url: 'https://github.com/o/r/pull/7', number: 7, state: 'OPEN' });
+  assert.ok(listed(T0 + 10 * CHAIN_SHIP_WINDOW_MS), 'an open PR keeps it listed past the window');
+  persistPrState('kw00000a', { url: 'https://github.com/o/r/pull/7', number: 7, state: 'CLOSED' });
+  assert.equal(listed(T0 + 10 * CHAIN_SHIP_WINDOW_MS), false, 'a closed PR ends it');
+});
+
+test('runChains({ keepDone }): a finished chain with a run that can have no PR is not listed; members carry canPr and stacks', () => {
+  chainRun('kn00000a', 'main', 'feat/kn-a');
+  seedPipelineRow({ id: 'kn00000b', title: 'kn00000b', status: 'done', startedAt: new Date(T0).toISOString(), branch: { source: 'main' } });
+  chainFire('kn00000b', { kind: 'pipeline', id: 'kn00000a' }, false);
+  assert.equal(runChains({ keepDone: true, now: T0 }).some((c) => c.id === 'p:kn00000a'), false);
+  const c = runChains({ keepDone: 'all', now: T0 }).find((x) => x.id === 'p:kn00000a');
+  assert.deepEqual(c.members.map((m) => [m.canPr, m.stacks]), [[true, false], [false, false]]);
 });
 
 // ── scheduled resume (v44) ──────────────────────────────────────────────────

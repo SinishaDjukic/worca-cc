@@ -10,18 +10,23 @@ export const ONE_OFF_REASON = 'A run already has a PR';
 export const CHECKING_COMBINE = 'Checking whether the runs combine…';
 export const ONE_RUN_GROUP = 'A group of one run ships as its own PR';
 export const ONE_GROUP_NOTE = 'A new branch combines the runs\' branches';
+export const ONE_LOOSE_REASON = 'A run does not start from the previous run\'s branch';
 
 /** A member's own PR: open, and not an in-flight feature's slice draft (stacked marks those ready, One closes them). */
 const ownsPr = (kind, pr) => !!(pr && pr.url && pr.state !== 'CLOSED' && !(kind === 'feature' && pr.draft));
 
 /**
- * view: { kind: 'feature'|'chain'|'user', suggested?: 'one'|'stacked'|null, members: [{ position, pr: { url, state?, draft? } | null }] }
+ * view: { kind: 'feature'|'chain'|'user', suggested?: 'one'|'stacked'|null, members: [{ position, pr: { url, state?, draft? } | null,
+ *   stacks? }] }: a chain member with `stacks: false` did not start from the previous run's branch, so One would ship
+ *   only the last run's work.
  * check: a user group's combine check ({ oneOff, line }) or null while it has not answered (slice 3).
  * → { n: members that still need a PR, oneOff: '' or why One is disabled, mode: the default pick }
  */
 export function groupShipChoice({ kind, members, suggested = null, check = null }) {
   const owned = members.filter((m) => ownsPr(kind, m.pr));
+  const loose = kind === 'chain' && members.some((m, i) => i > 0 && m.stacks === false);
   const oneOff = owned.length ? ONE_OFF_REASON
+    : loose ? ONE_LOOSE_REASON
     : kind !== 'user' ? ''
     : members.length < 2 ? ONE_RUN_GROUP
     : !check ? CHECKING_COMBINE : check.oneOff || '';
