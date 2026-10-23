@@ -1016,7 +1016,7 @@ const SHOTS = [
   { name: 'running', level: 'simple', live: true, hash: () => `history/${csvRun.projectKey}/${csvRun.pipelineId}`,
     before: "localStorage.removeItem('worca-cc.lingerRuns');localStorage.removeItem('worca-cc.history.cache.v1')",
     stage: releaseCheckout,
-    prep: () => until2("document.querySelectorAll('.runs-row-body').length >= 10 && [...document.querySelectorAll('.retained-banner')].every((e)=>e.hidden)", 'runs rows, no worktree notice') },
+    prep: () => until2("document.querySelectorAll('.runs-row-body').length >= 10", 'runs rows') },
   { name: 'clarify', level: 'simple', live: true, hash: () => `running/${liveIds[0]}`,
     prep: () => until2("document.querySelector('.qpanel-head')", 'clarify panel') },
 ];

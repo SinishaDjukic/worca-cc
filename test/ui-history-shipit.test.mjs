@@ -1064,12 +1064,12 @@ test('Stop or closing the modal aborts an in-flight generation; a late response 
 });
 
 // The autoGeneratePrDescription setting: the dialog runs Generate with AI itself once the remotes load.
-const settingsArm = (settings) => (url) => (url.endsWith('/api/settings') ? ok(settings) : null);
+const appSettingsArm = (settings) => (url) => (url.endsWith('/api/settings') ? ok(settings) : null);
 const withArms = (...arms) => (url, opts, box) => arms.reduce((r, a) => r || a(url, opts, box), null);
 
 test('autoGeneratePrDescription on: opening drafts once with the chosen base, no confirm; the draft alone is not a change', async () => {
   const g = gatedDescribe();
-  const ctx = await bootShip({ arms: withArms(settingsArm({ autoGeneratePrDescription: true }), g.arm) });
+  const ctx = await bootShip({ arms: withArms(appSettingsArm({ autoGeneratePrDescription: true }), g.arm) });
   const { window } = ctx;
   const modal = await openModal(ctx);
   await settle(window, 6);
@@ -1093,7 +1093,7 @@ test('autoGeneratePrDescription on: opening drafts once with the chosen base, no
 test('autoGeneratePrDescription off or unset: opening sends no draft request', async () => {
   await checkRows([false, undefined].map((on) => ({ name: `setting ${on}`, run: async () => {
     const g = gatedDescribe();
-    const ctx = await bootShip({ arms: withArms(settingsArm(on === undefined ? {} : { autoGeneratePrDescription: on }), g.arm) });
+    const ctx = await bootShip({ arms: withArms(appSettingsArm(on === undefined ? {} : { autoGeneratePrDescription: on }), g.arm) });
     const modal = await openModal(ctx);
     await settle(ctx.window, 6);
     assert.equal(describeCalls(ctx).length, 0);
@@ -1105,7 +1105,7 @@ test('autoGeneratePrDescription: closing mid-draft aborts it cleanly; words type
   await checkRows([
     { name: 'Cancel while the automatic draft is in flight aborts the request', run: async () => {
       const g = gatedDescribe({ honorAbort: false });
-      const ctx = await bootShip({ arms: withArms(settingsArm({ autoGeneratePrDescription: true }), g.arm) });
+      const ctx = await bootShip({ arms: withArms(appSettingsArm({ autoGeneratePrDescription: true }), g.arm) });
       const { window } = ctx;
       const modal = await openModal(ctx);
       await settle(window, 6);
@@ -1123,7 +1123,7 @@ test('autoGeneratePrDescription: closing mid-draft aborts it cleanly; words type
       let releaseRemotes;
       const held = (url) => (/\/api\/pr\/remotes\?/.test(url)
         ? new Promise((r) => { releaseRemotes = () => r({ ok: true, status: 200, json: async () => REMOTES }); }) : null);
-      const ctx = await bootShip({ arms: withArms(held, settingsArm({ autoGeneratePrDescription: true }), g.arm) });
+      const ctx = await bootShip({ arms: withArms(held, appSettingsArm({ autoGeneratePrDescription: true }), g.arm) });
       const { window } = ctx;
       const modal = await openModal(ctx);
       typeInto(window, descOf(modal), 'my own words');
@@ -1454,6 +1454,59 @@ test('Watch PR: unchecked on every open; ticked sends watch:true, unticked sends
   modal = await openModal(ctx);
   click(ctx.window, modal.querySelector('.shipit-ok')); await settle(ctx.window, 6);
   assert.ok(!('watch' in JSON.parse(prPosts(ctx)[0].opts.body)));
+});
+
+const settingsArm = (value) => (url) => (url.endsWith(`/api/projects/${KEY}/settings`)
+  ? ok({ own: value === undefined ? {} : { watchNewPrs: value }, effective: value === undefined ? {} : { watchNewPrs: { value, source: 'project' } }, layers: {}, roles: [] })
+  : null);
+const anyArm = (...arms) => (url, opts, box) => { for (const a of arms) { const r = a(url, opts, box); if (r) return r; } return null; };
+
+test('s4 (c): with the project setting on, Ship it opens with Watch PR checked on every open; off or absent, unchecked', async () => {
+  let ctx = await bootShip({ arms: anyArm(settingsArm(true), prArm(PR_OK)) });
+  let modal = await openModal(ctx);
+  await settle(ctx.window, 4);          // the settings read lands after the remotes settle in openModal
+  assert.equal(watchBox(modal).checked, true, 'setting on');
+  watchBox(modal).checked = false;
+  watchBox(modal).dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  click(ctx.window, modal.querySelector('.shipit-cancel')); await settle(ctx.window);
+  modal = await openModal(ctx);
+  await settle(ctx.window, 4);
+  assert.equal(watchBox(modal).checked, true, 'a pick changed in one open does not carry to the next');
+  click(ctx.window, modal.querySelector('.shipit-ok')); await settle(ctx.window, 6);
+  assert.equal(JSON.parse(prPosts(ctx)[0].opts.body).watch, true);
+  for (const value of [false, undefined]) {
+    ctx = await bootShip({ arms: anyArm(settingsArm(value), prArm(PR_OK)) });
+    modal = await openModal(ctx);
+    await settle(ctx.window, 4);        // give a wrong 'on' the same chance to land before asserting off
+    assert.equal(watchBox(modal).checked, false, `setting ${value}`);
+    click(ctx.window, modal.querySelector('.shipit-ok')); await settle(ctx.window, 6);
+    assert.ok(!('watch' in JSON.parse(prPosts(ctx)[0].opts.body)), 'off sends no watch field');
+  }
+});
+
+test('s4: a Watch PR pick made before the project setting answers is kept', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const late = (url) => (url.endsWith(`/api/projects/${KEY}/settings`)
+    ? gate.then(() => ok({ effective: { watchNewPrs: { value: true, source: 'project' } } })) : null);
+  const ctx = await bootShip({ arms: late });
+  const modal = await openModal(ctx);
+  assert.equal(watchBox(modal).checked, false, 'off until the setting answers');
+  for (const v of [true, false]) {       // the user turns it on, then off again
+    watchBox(modal).checked = v;
+    watchBox(modal).dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  }
+  release(); await settle(ctx.window, 4);
+  assert.equal(watchBox(modal).checked, false, 'the user\'s pick wins');
+});
+
+test('s4: Ship it shows the Watch PR help line, named by the switch', async () => {
+  const ctx = await bootShip();
+  const modal = await openModal(ctx);
+  const help = modal.querySelector('#shipit-watch-help');
+  assert.equal(help.textContent, 'Start a fix run when checks fail or a reviewer asks for changes');
+  assert.equal(help.hidden, false);
+  assert.equal(watchBox(modal).getAttribute('aria-describedby'), 'shipit-watch-help');
 });
 
 // The Overview tab's PR row (paintHdOvPrs -> paintRdPrStatus): GitHub's verdict, what the watch is doing,

@@ -11,6 +11,10 @@ export const PROJECT_CARDS = Object.freeze([
   { key: 'cost', title: 'Cost', fields: [{ id: 'pipelineCostLimitUsd', label: 'Per-pipeline cap (USD)', kind: 'number', min: .01, step: .01, format: usd }, { id: 'humanRateUsdPerHour', label: 'Developer rate (USD/h)', kind: 'number', min: .01, step: .01, format: usd }] },
   { key: 'ask', title: 'Chat', fields: [{ id: 'askMaxTurns', label: 'Turn limit', kind: 'number', min: 1, step: 1 }, { id: 'askMaxBudgetUsd', label: 'Per-turn cost cap (USD)', kind: 'number', min: .1, step: .1, format: usd }] },
   { key: 'context', title: 'Context and memory', fields: [{ id: 'contextMaxBytesPerFile', label: 'Run context: bytes per file', kind: 'number', min: 1 }, { id: 'contextMaxBytesTotal', label: 'Run context: bytes in total', kind: 'number', min: 1 }, { id: 'skillMount', label: 'Skill delivery', kind: 'select', options: [{ value: 'copy', label: 'Copy' }, { value: 'symlink', label: 'Symlink' }] }] },
+  { key: 'pr', title: 'Pull requests', fields: [{ id: 'watchNewPrs', label: 'Watch new pull requests', kind: 'select',
+    options: [{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }],
+    toValue: (value) => value === 'on', fromValue: (value) => (value ? 'on' : 'off'), format: (value) => (value ? 'On' : 'Off'),
+    hint: 'Create PR opens with Watch PR on for this project. A workspace run needs it on in every repository.' }] },
 ]);
 const JOBS = ['title', 'classifier', 'overview', 'prDescription', 'memoryDefrag'];
 // src/core/model-env.mjs HELPER_ENGINES (the browser cannot load /src/core): Cursor's helper jobs run on Claude.

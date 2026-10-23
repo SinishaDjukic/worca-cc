@@ -471,8 +471,8 @@ const states = [
   // The run header's ⋯ menu, open (measured by CONTROL_CHECKS; the page behind it is audited as history-detail-details). (the shared .menu: 8px corner, the menu shadow, rows of 30px or more).
   // The ⋯ lives in the Details pane. Its trigger and rows stay hidden for a run that can be neither archived nor reported (app.js setupHdActions): the
   // proof un-hides them to measure the menu's CSS.
-  ['history-menu', async () => { await go(`history/${projectKey}/${pipelineId}/details`); await until(`document.querySelector('.hd-details:not([hidden]) .hd-tabs .hd-tab')`, 'history tabs'); await showHdMenuParts(); await clickSel('#hist-detail .hd-more'); await until(`document.querySelector('#hist-detail .hd-menu:not([hidden])')`, 'the ⋯ menu'); },
-    async () => { await ev(`document.querySelector('#hist-detail .hd-more').click()`); }],
+  ['history-menu', async () => { await go(`history/${projectKey}/${pipelineId}/details`); await until(`document.querySelector('.hd-details:not([hidden]) .hd-tabs .hd-tab')`, 'history tabs'); await clickSel('#hist-detail .hd-bar-more'); await until(`document.querySelector('body > .wfv-menu')`, 'the ⋯ menu'); },
+    async () => { await ev(`document.querySelector('#hist-detail .hd-bar-more').click()`); }],
   ['history-detail-cost-tags', async () => {
     const json = { 'content-type': 'application/json' };
     await api('/api/flags', { method: 'PATCH', headers: json, body: JSON.stringify({ runTags: true }) });
@@ -854,7 +854,7 @@ const scopeLabelCheck = async (what) => {
     return l && { hidden: cs.display === 'none', cut: l.scrollWidth > l.clientWidth + 1, w: l.clientWidth, title: l.closest('button').title, rowScroll: row ? row.scrollWidth <= row.clientWidth : true }; })()`);
   designChecks.push({ what: `scope label: ${what} shows the whole label or the icon only, never a stub`, ok: !!s && (s.hidden || !s.cut || s.w >= 56) && /^Chat scope: /.test(s.title) && s.rowScroll, got: s });
 };
-const showHdMenuParts = () => ev(`(() => { for (const s of ['.hd-more', '.hd-archive', '.hd-report']) { const e = document.querySelector('#hist-detail ' + s); if (e) e.hidden = false; } return 1; })()`);
+const showHdMenuParts = () => ev(`(() => { for (const s of ['.hd-archive', '.hd-report']) { const e = document.querySelector('#hist-detail ' + s); if (e) e.hidden = false; } return 1; })()`);
 const CONTROL_CHECKS = {
   // Run 4 (D6, D7): the Clarify card's free-text field shows its whole 24-character placeholder, and a long recommended
   // row stays inside the card, at 290, 375 and 1440px. The live mock run (phase A) is held at a Clarify question.
@@ -913,10 +913,10 @@ const CONTROL_CHECKS = {
   'settings-runs': switchCheck('Settings › Runs', '.settings-pane[data-tab="runs"]'),
   'ask-scope-picker': menuCheck('the Chat scope picker', '.ask-pop-scope'),
   'ask-model-picker': menuCheck('the Chat model picker', '.ask-pop-model'),
-  'history-menu': menuCheck('the run header ⋯ menu', '#hist-detail .hd-menu'),
+  'history-menu': menuCheck('the run bar ⋯ menu', 'body > .wfv-menu'),
   'projects-detail': noRingOnLoad('the project Back', '.pd-header .pd-back'),
-  'history-detail-details': async () => { await showHdMenuParts(); await noRingOnLoad('the run header ⋯', '#hist-detail .hd-more')();
-    await typingKeepsPointer('the run header ⋯', '#hist-detail .hd-more')(); },
+  'history-detail-details': async () => { await showHdMenuParts(); await noRingOnLoad('the run bar ⋯', '#hist-detail .hd-bar-more')();
+    await typingKeepsPointer('the run bar ⋯', '#hist-detail .hd-bar-more')(); },
   stats: async () => {
     const p = await ev(`[...document.querySelectorAll('.stat-tile, .chart-card')].filter((e) => e.offsetParent).map((e) => [e.classList.contains('stat-tile') ? 'stat-tile' : 'chart-card', getComputedStyle(e).paddingTop])`);
     designChecks.push({ what: 'card padding: stat tiles pad 16px, chart cards 24px', ok: p.length > 0 && p.every(([c, v]) => v === (c === 'stat-tile' ? '16px' : '24px')), got: p });

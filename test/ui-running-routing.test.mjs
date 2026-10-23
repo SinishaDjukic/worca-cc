@@ -148,6 +148,32 @@ test('#running/<id> opens the detail screen and paints its header', async () => 
   assert.equal(doc.querySelector('#run-detail .rd-stop').hidden, false);
 });
 
+test('slice 2: split layout: Back shows the list itself; a second settle does not reopen the run (D6 restore skipped)', async () => {
+  const { window } = await bootWithRuns();
+  window.document.getElementById('runs-shell').dataset.layout = 'split';
+  go(window, `running/${ID}`);
+  await settle(window);
+  const shell = window.document.querySelector('#run-shell');
+  assert.ok(shell.classList.contains('detail-open'));
+  window.document.querySelector('#run-detail .rd-back')
+    .dispatchEvent(new window.Event('click', { bubbles: true }));
+  window.dispatchEvent(new window.Event('hashchange'));
+  await settle(window);
+  assert.equal(window.location.hash.replace(/^#/, ''), 'runs');
+  assert.equal(shell.classList.contains('detail-open'), false);
+  window.dispatchEvent(new window.Event('hashchange'));     // a hashchange echo
+  await settle(window);
+  assert.equal(window.location.hash.replace(/^#/, ''), 'runs', 'the remembered run is not reopened');
+  assert.equal(shell.classList.contains('detail-open'), false);
+  assert.equal(window.localStorage.getItem('worca-cc.runs.last'), null, 'Back forgets the run: a later bare #runs shows the list');
+  go(window, 'chat/new');
+  await settle(window);
+  go(window, 'runs');
+  await settle(window);
+  assert.equal(window.location.hash.replace(/^#/, ''), 'runs');
+  assert.equal(shell.classList.contains('detail-open'), false, 'a return from Chat does not reopen the run');
+});
+
 test('slide layout: Back returns to #runs, the closing detail stays mounted + inert until the guarded transitionend, and focus returns to the originating row', async () => {
   await checkRows([
     { name: 'slide layout: the Back button returns to #runs and closes the screen', run: async () => {

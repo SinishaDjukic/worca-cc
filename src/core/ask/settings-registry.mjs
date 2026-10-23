@@ -72,6 +72,7 @@ const PROJECT_ONLY = Object.freeze({
   contextMaxBytesPerFile: { label: 'Context size per file', group: 'Runs', fmt: bytes, allowed: 'a whole number of bytes' },
   contextMaxBytesTotal: { label: 'Context size in all', group: 'Runs', fmt: bytes, allowed: 'a whole number of bytes' },
   skillMount: { label: 'Skill mount', group: 'Runs', fmt: MOUNT.fmt, allowed: MOUNT.allowed },
+  watchNewPrs: { label: 'Watch new pull requests', group: 'Runs', fmt: onOff, allowed: 'true | false' },
   'memory.softBytesPerFile': { label: 'Memory: flag files above', group: 'Memory', fmt: bytes, allowed: 'a whole number of bytes' },
   'memory.maxBytesPerFile': { label: 'Memory: largest file', group: 'Memory', fmt: bytes, allowed: 'a whole number of bytes' },
   'memory.maxFilesPerScope': { label: 'Memory: most files', group: 'Memory', fmt: String, allowed: 'a whole number' },

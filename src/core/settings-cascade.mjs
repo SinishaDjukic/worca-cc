@@ -56,6 +56,7 @@ const SCALARS = [
   scalar({ id: 'contextMaxBytesPerFile', check: SETTING_CHECKS.byteCap, def: DEFAULT_CONTEXT_MAX_BYTES_PER_FILE }),
   scalar({ id: 'contextMaxBytesTotal', check: SETTING_CHECKS.byteCap, def: DEFAULT_CONTEXT_MAX_BYTES_TOTAL }),
   scalar({ id: 'skillMount', check: SETTING_CHECKS.skillMount, def: DEFAULT_SKILL_MOUNT }),
+  scalar({ id: 'watchNewPrs', check: (value) => typeof value === 'boolean', def: false, hint: 'must be true or false' }),
   scalar({ id: 'memory.softBytesPerFile', path: ['memory', 'softBytesPerFile'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_SOFT_BYTES_PER_FILE }),
   scalar({ id: 'memory.maxBytesPerFile', path: ['memory', 'maxBytesPerFile'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_HARD_BYTES_PER_FILE }),
   scalar({ id: 'memory.maxFilesPerScope', path: ['memory', 'maxFilesPerScope'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_MAX_FILES_PER_SCOPE }),

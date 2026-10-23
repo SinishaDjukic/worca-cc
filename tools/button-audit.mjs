@@ -14,7 +14,7 @@ export const BUTTON_SPEC = Object.freeze({
     '.info-tip', '.act-tile', '.ob-door', '.seg-btn', '.btn-split-menu button', '.rd-tab', '.hd-tab', '.pd-tab', '.tp-tab', '.md-tab', '.af-tab',
     '.wfl-tab', '.chat-home-tab', '.hd-cmt-tab', 'button.rd-srow', 'button.tl-tile', 'button.af-gal-card',
     'button.pd-ov-card', 'button.wd-member', 'button.ask-activity-head', 'button.act-srow-name', 'button.runs-sec-head',
-    'button.gp-row', 'button.agent-row-head', 'button.hd-tree-file', 'button.hd-tree-dir', 'button.ask-filescard-thumb', 'button.ask-filescard-name', 'button.chat-home-act',
+    'button.gp-row', 'button.rd-track-act', 'button.agent-row-head', 'button.hd-tree-file', 'button.hd-tree-dir', 'button.ask-filescard-thumb', 'button.ask-filescard-name', 'button.chat-home-act',
     'button.chat-home-wf', 'button.chat-home-chat', 'button.chat-home-plan-open', 'button.release-row-edit',
     '.row-btn', 'button.mcp-setrow', 'button.xtoggle', 'button.gs-tile', 'button.mk-tile', 'button.mk-facet', 'button.mk-name',
     '.mk-upd > button.mk-disc',
@@ -224,7 +224,8 @@ export function auditType(root, spec, env) {
 export const STRAY_SPEC = Object.freeze({
   allow: ['.tab', '[role="tab"]', '.seg button', '.seg-btn', '.filter-chip', '.switch', '[role="switch"]', '[role^="menuitem"]',
     '[role="option"]', '[role="radio"]', '.info-tip', '.row-btn', 'div.wfl-main', 'button.mcp-setrow', 'button.gs-tile',
-    'button.ob-door', 'button.wfc-chip-btn', 'button.mk-tile', 'button.mk-facet', 'button.mk-name', '.mk-upd > button.mk-disc'],
+    'button.ob-door', 'button.wfc-chip-btn', 'button.mk-tile', 'button.mk-facet', 'button.mk-name', '.mk-upd > button.mk-disc',
+    'button.rd-track-act'],
   skip: '#wfv-canvas',
 });
 export function auditStray(root, spec, env) {
