@@ -25330,30 +25330,42 @@ const SCHEDULE_REFUSED_PAUSE = new Set(['cost_pipeline', 'cost_total', 'cost_pip
 /**
  * "Resume at…" — schedule a one-off resume of a paused run. Uses the schedule sheet
  * (one-off time; missed-slot policy pre-selected to Skip per the clarify answer — the
- * user may still pick "Start it late"), then POSTs the ticket.
+ * user may still pick "Start it late" — or "After a run": when another run of the same
+ * target ends), then POSTs the ticket. A resume continues on its own branch, so it never
+ * sends sourceFromPrevious (the sheet has no such control; the server refuses it).
  */
 async function scheduleResumeAt({ pipelineId, title, projectDir = null, workspaceId = null, runEngine = null, pause = null }, btn) {
   // After a usage limit the run's engine hit, the resume may go to another engine (each has its own allowance).
   const saved = runEngine || 'claude';
   const others = usageLimitSwitches(pause || {});
+  const q = workspaceId ? `workspaceId=${encodeURIComponent(workspaceId)}` : (projectDir ? `projectDir=${encodeURIComponent(projectDir)}` : '');
+  // The run being resumed is paused, so after-candidates lists it: it can never wait on itself.
+  const candidates = q ? async () => {
+    const r = await fetch(`/api/schedules/after-candidates?${q}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const c = await r.json();
+    return { runs: (c.runs || []).filter((x) => x.pipelineId !== pipelineId), tickets: c.tickets || [] };
+  } : null;
   const res = await openScheduleSheet({
     engine: others.length ? { choices: [saved, ...others].map((e) => [e, engineLabel(e)]), value: saved } : null,
     mode: 'ticket',
-    allowAfter: false,                    // a resume ticket can never chain (createTicket throws)
+    candidates,
     initial: { ifMissed: 'skip' },        // pre-selected, not locked — "Start it late" stays available
     runTitle: `Resume ‘${title || pipelineId}’`,
     heading: 'Schedule the resume',
     confirmLabel: 'Schedule resume',
   });
-  if (!res || !res.scheduledFor) return;
+  if (!res || !(res.scheduledFor || res.after)) return;
   if (btn) btn.disabled = true;
   try {
+    const when = res.after
+      ? { after: { kind: res.after.kind, id: res.after.id }, afterPolicy: res.afterPolicy || 'done' }
+      : { scheduledFor: res.scheduledFor, ifMissed: res.ifMissed, ...(res.ifMissed === 'run' && res.graceMin != null ? { graceMin: res.graceMin } : {}) };
     const r = await fetch('/api/schedules/resume', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        pipelineId, scheduledFor: res.scheduledFor, ifMissed: res.ifMissed,
-        ...(res.ifMissed === 'run' && res.graceMin != null ? { graceMin: res.graceMin } : {}),
+        pipelineId, ...when,
         ...(res.engine ? { engine: res.engine } : {}),
       }),
     });

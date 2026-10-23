@@ -447,7 +447,7 @@ import {
   createSchedule, getSchedule, listSchedules, updateSchedule, pauseSchedule, resumeSchedule, skipNext,
   runScheduleNow, deleteSchedule, cancelForTarget, dependentsOfWorkflow, runDueTickets, recordOutcome,
   recoverScheduler, purgeScheduler, scheduleCounts, scheduleStageDir, scheduleSignature,
-  resolveAfterRef, predecessorState, previousBranchesOf, dependentsOfRun, AFTER_POLICIES, afterRefOf,
+  resolveAfterRef, resumeWaitError, predecessorState, previousBranchesOf, dependentsOfRun, AFTER_POLICIES, afterRefOf,
   chainBaseBranchesOf, stackedPrBaseOf, resumeTicketsFor, cancelResumeTicketsFor, inheritedTagsAtCreation, runChains,
 } from '../src/core/scheduler.mjs';
 import {
@@ -3973,8 +3973,9 @@ app.post('/api/schedules/preview', (req, res) => {
   res.json({ rule: norm.rule, sentence: describeRule(norm.rule), next: previewOccurrences(norm.rule, Date.now(), n).map((t) => new Date(t).toISOString()) });
 });
 
-// POST /api/schedules/resume { pipelineId, scheduledFor, ifMissed?, graceMin?, engine?, afterUsageLimit? } — a one-off
-// "resume this paused run at <time>" ticket. ifMissed defaults to 'skip' (clarify default);
+// POST /api/schedules/resume { pipelineId, scheduledFor | after, afterPolicy?, ifMissed?, graceMin?, engine?, afterUsageLimit? } — a one-off
+// "resume this paused run at <time>" ticket, or "… when <another run> ends" with `after` ({ kind, id }, the
+// resolveAfterRef validator; afterPolicy 'done' | 'any'). Never both. ifMissed defaults to 'skip' (clarify default);
 // the sheet pre-selects 'skip' but lets the user pick 'run', so an HTTP caller may pass either.
 // `engine` resumes it on another engine; the engine gate is checked now and again when it fires.
 // `afterUsageLimit` (the notice's "Resume at") only adds the "(after usage limit)" title suffix.
@@ -3984,9 +3985,24 @@ app.post('/api/schedules/resume', async (req, res) => {
     const by = actorOf(req);
     const v = await validateResumeTarget(body.pipelineId);
     if (!v.ok) return res.status(v.status).json(v.body);
-    const at = parseScheduledFor(body.scheduledFor);
-    if (!at.ok) return badRequest(res, at.error);
-    if (at.ms < Date.now() - 5_000) return badRequest(res, 'scheduledFor is in the past');
+    let at = null, afterRef = null, afterPolicy = 'done';
+    if (body.after != null) {
+      if (body.scheduledFor != null) return badRequest(res, 'provide scheduledFor OR after, not both');
+      if (body.afterPolicy != null) {
+        if (!AFTER_POLICIES.includes(body.afterPolicy)) return badRequest(res, `afterPolicy must be one of ${AFTER_POLICIES.join(' | ')}`);
+        afterPolicy = body.afterPolicy;
+      }
+      const r = resolveAfterRef(body.after, { projectDir: v.projectDir, workspaceId: v.workspaceId, policy: afterPolicy, isLive: liveProbe });
+      if (!r.ok) return badRequest(res, r.error);
+      const why = resumeWaitError(r.after, v.row.id);
+      if (why) return badRequest(res, why);
+      afterRef = r.after;
+    } else {
+      if (body.afterPolicy != null) return badRequest(res, 'afterPolicy does not apply to a resume at a time');
+      at = parseScheduledFor(body.scheduledFor);
+      if (!at.ok) return badRequest(res, at.error);
+      if (at.ms < Date.now() - 5_000) return badRequest(res, 'scheduledFor is in the past');
+    }
     let ifMissed = 'skip';
     if (body.ifMissed != null) {
       if (!MISSED_POLICIES.includes(body.ifMissed)) return badRequest(res, `ifMissed must be one of ${MISSED_POLICIES.join(' | ')}`);
@@ -4012,16 +4028,23 @@ app.post('/api/schedules/resume', async (req, res) => {
       const refusal = (probe.claude?.engine || 'claude') !== 'claude' ? await probe.engineResumeRefusal() : null;
       if (refusal) return res.status(409).json({ error: engineRefusalFor(refusal.error, 'ui'), code: 'engine-refused', overridable: refusal.overridable, engine });
     }
-    const title = `Resume ‘${v.row.title || v.row.id}’${engine ? ` on ${engineLabel(engine)}` : ''}${body.afterUsageLimit === true ? ' (after usage limit)' : ''}`;
+    const afterName = afterRef ? `‘${afterRef.title || afterRef.id.slice(0, 8)}’` : '';
+    const title = `Resume ‘${v.row.title || v.row.id}’${engine ? ` on ${engineLabel(engine)}` : ''}${afterRef ? ` after ${afterName}` : ''}${body.afterUsageLimit === true ? ' (after usage limit)' : ''}`;
     const request = { prompt: '', title: v.row.title || null, internal: { resumePipelineId: v.row.id, startedBy: by, ...(engine ? { resumeEngine: engine } : {}) } };
     const ticket = createTicket({
       title, projectDir: v.projectDir, workspaceId: v.workspaceId,
-      runAtMs: at.ms, request, ifMissed, graceMin,
+      ...(afterRef ? { after: { kind: afterRef.kind, id: afterRef.id }, afterPolicy } : { runAtMs: at.ms }),
+      request, ifMissed, graceMin,
       resumePipelineId: v.row.id, createdBy: by,
     });
-    appendAuditById(v.row.id, `Resume scheduled for ${new Date(at.ms).toISOString().slice(0, 16).replace('T', ' ')} UTC${byActor(by)}.`, { actor: by });
+    appendAuditById(v.row.id, afterRef
+      ? `Resume scheduled after ${afterName}${byActor(by)}.`
+      : `Resume scheduled for ${new Date(at.ms).toISOString().slice(0, 16).replace('T', ' ')} UTC${byActor(by)}.`, { actor: by });
     emitChanged('schedules-changed', 'created');
-    res.status(202).json({ runId: ticket.id, status: 'scheduled', scheduledFor: ticket.runAt, resumePipelineId: v.row.id });
+    res.status(202).json({
+      runId: ticket.id, status: 'scheduled', scheduledFor: afterRef ? null : ticket.runAt, resumePipelineId: v.row.id,
+      ...(afterRef ? { after: { kind: afterRef.kind, id: afterRef.id, title: afterRef.title } } : {}),
+    });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -4163,6 +4186,8 @@ async function scheduleVerb(verb, id, body = {}, { by = null } = {}) {
           if (!AFTER_POLICIES.includes(policy)) return out(400, { error: `afterPolicy must be one of ${AFTER_POLICIES.join(' | ')}` });
           const r = resolveAfterRef(body.after, { projectDir: found.item.projectDir, workspaceId: found.item.workspaceId, policy, selfId: found.item.id, isLive: liveProbe });
           if (!r.ok) return out(400, { error: r.error });
+          const why = found.item.resumePipelineId ? resumeWaitError(r.after, found.item.resumePipelineId) : null;
+          if (why) return out(400, { error: why });
           patch.after = { kind: r.after.kind, id: r.after.id };
           patch.afterPolicy = policy;
         } else if (body.afterPolicy != null) {
@@ -4175,6 +4200,7 @@ async function scheduleVerb(verb, id, body = {}, { by = null } = {}) {
         }
         if (body.sourceFromPrevious != null) {
           if (typeof body.sourceFromPrevious !== 'boolean') return out(400, { error: 'sourceFromPrevious must be true or false' });
+          if (body.sourceFromPrevious && found.item.resumePipelineId) return out(400, { error: 'a resume continues on its own branch, never on the previous run’s' });
           // Needs a predecessor AFTER this patch: none on the row and none coming, or a move back to a time
           // (which clears after_* — `source_from_previous = 1` with `after_id = NULL` must never be written).
           if (body.sourceFromPrevious && (patch.runAtMs != null || (!patch.after && !found.item.after))) return out(400, { error: 'sourceFromPrevious needs after' });
