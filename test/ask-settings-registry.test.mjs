@@ -195,6 +195,19 @@ test('updateCheck is a default-on General boolean that writes exactly { updateCh
   assert.equal(def.read({ updateCheck: false }), false);
 });
 
+test('autoGeneratePrDescription is a default-off General boolean that writes exactly { autoGeneratePrDescription }', () => {
+  const { reg } = setup();
+  const def = reg.defsFor('user').find((d) => d.id === 'autoGeneratePrDescription');
+  assert.equal(def.group, 'General');
+  assert.equal(def.dflt, false);
+  assert.deepEqual(def.body(true), { autoGeneratePrDescription: true });
+  assert.deepEqual(def.body(null), { autoGeneratePrDescription: false }, 'unset writes the default back');
+  assert.equal(def.read({}), null);
+  assert.equal(def.read({ autoGeneratePrDescription: true }), true);
+  assert.throws(() => def.check('yes'), /must be true or false/);
+  assert.equal(def.check(false), null, 'the default stores as unset');
+});
+
 test('assertScheduleDefaultsInput is the setter\'s own check (setScheduleDefaults still refuses before any write)', async () => {
   assert.throws(() => assertScheduleDefaultsInput({ graceMin: -1 }), /scheduleGraceMin must be a whole number of minutes from 0 to 10080/);
   assert.throws(() => assertScheduleDefaultsInput({ ifMissed: 'later' }), /scheduleIfMissed must be one of run \| skip/);

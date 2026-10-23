@@ -1063,6 +1063,79 @@ test('Stop or closing the modal aborts an in-flight generation; a late response 
   ]);
 });
 
+// The autoGeneratePrDescription setting: the dialog runs Generate with AI itself once the remotes load.
+const appSettingsArm = (settings) => (url) => (url.endsWith('/api/settings') ? ok(settings) : null);
+const withArms = (...arms) => (url, opts, box) => arms.reduce((r, a) => r || a(url, opts, box), null);
+
+test('autoGeneratePrDescription on: opening drafts once with the chosen base, no confirm; the draft alone is not a change', async () => {
+  const g = gatedDescribe();
+  const ctx = await bootShip({ arms: withArms(appSettingsArm({ autoGeneratePrDescription: true }), g.arm) });
+  const { window } = ctx;
+  const modal = await openModal(ctx);
+  await settle(window, 6);
+  assert.equal(describeCalls(ctx).length, 1, 'one draft per open');
+  assert.deepEqual(JSON.parse(describeCalls(ctx)[0].opts.body),
+    { projectDir: '/tmp/proj', projectKey: KEY, id: ROW.id, baseBranch: 'feat/log-ux' });
+  assert.equal(confirmOpen(window), false, 'an empty description is never asked about');
+  assert.equal(genBtnOf(modal).textContent, 'Generating…');
+  assert.equal(stopBtnOf(modal).hidden, false, 'the automatic draft can be stopped');
+  g.release({ ok: true, body: '## Summary\nDrafted.' });
+  await settle(window, 6);
+  assert.equal(descOf(modal).value, '## Summary\nDrafted.');
+  assert.equal(genBtnOf(modal).disabled, false, 'Generate is offered again');
+  assert.equal(describeCalls(ctx).length, 1);
+  pressEscape(window);
+  await settle(window);
+  assert.equal(discardPrompt(window.document), null, 'the automatic draft is not a user edit');
+  assert.equal(isOpen(window), false);
+});
+
+test('autoGeneratePrDescription off or unset: opening sends no draft request', async () => {
+  await checkRows([false, undefined].map((on) => ({ name: `setting ${on}`, run: async () => {
+    const g = gatedDescribe();
+    const ctx = await bootShip({ arms: withArms(appSettingsArm(on === undefined ? {} : { autoGeneratePrDescription: on }), g.arm) });
+    const modal = await openModal(ctx);
+    await settle(ctx.window, 6);
+    assert.equal(describeCalls(ctx).length, 0);
+    assert.equal(genBtnOf(modal).textContent, 'Generate with AI');
+  } })));
+});
+
+test('autoGeneratePrDescription: closing mid-draft aborts it cleanly; words typed before the remotes load skip it', async () => {
+  await checkRows([
+    { name: 'Cancel while the automatic draft is in flight aborts the request', run: async () => {
+      const g = gatedDescribe({ honorAbort: false });
+      const ctx = await bootShip({ arms: withArms(appSettingsArm({ autoGeneratePrDescription: true }), g.arm) });
+      const { window } = ctx;
+      const modal = await openModal(ctx);
+      await settle(window, 6);
+      assert.equal(describeCalls(ctx).length, 1);
+      click(window, modal.querySelector('.shipit-cancel'));
+      assert.equal(isOpen(window), false);
+      assert.equal(g.signals[0].aborted, true, 'closing the dialog cancels the draft');
+      g.release({ ok: true, body: 'late text' });
+      await settle(window, 6);
+      assert.equal(descOf(modal).value, '', 'a late answer writes nothing');
+      assert.equal(descErrOf(modal).hidden, true);
+    } },
+    { name: 'a description typed before the remotes answer is kept: no draft, no confirm', run: async () => {
+      const g = gatedDescribe();
+      let releaseRemotes;
+      const held = (url) => (/\/api\/pr\/remotes\?/.test(url)
+        ? new Promise((r) => { releaseRemotes = () => r({ ok: true, status: 200, json: async () => REMOTES }); }) : null);
+      const ctx = await bootShip({ arms: withArms(held, appSettingsArm({ autoGeneratePrDescription: true }), g.arm) });
+      const { window } = ctx;
+      const modal = await openModal(ctx);
+      typeInto(window, descOf(modal), 'my own words');
+      releaseRemotes();
+      await settle(window, 8);
+      assert.equal(describeCalls(ctx).length, 0);
+      assert.equal(confirmOpen(window), false);
+      assert.equal(descOf(modal).value, 'my own words');
+    } },
+  ]);
+});
+
 test('Ship it: a written description is a change — Escape asks (Keep editing keeps the words, Discard closes); Cancel closes at once', async () => {
   const ctx = await bootShip({ arms: prArm(PR_OK) });
   const { window } = ctx;

@@ -15497,6 +15497,7 @@ async function loadSettings() {
     paintSmartNamingSettings(data);
     paintActionsSettings(data);
     paintDebugSpawnSettings(data);
+    paintPrSettings(data);
     await paintEngineSettings(data);
     await paintWorkspaceScanModelsSettings(data);
     paintBudgetReadout();
@@ -16692,6 +16693,18 @@ document.getElementById('debugSpawnSave')?.addEventListener('click', saveDebugSp
 document.getElementById('debugSpawnReset')?.addEventListener('click', (e) => postDebugSpawn({ debugSpawnEnabled: false },
   { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
 settingsCardDirty('debugSpawnSave');
+
+// ---- Pull requests card: the Create PR dialog drafts its description on open (autoGeneratePrDescription) ----
+function paintPrSettings(data) {
+  const cb = document.getElementById('prAutoDescribe');
+  if (!cb) return;
+  cb.checked = data.autoGeneratePrDescription === true;
+  settingsCardPainted('prSettingsSave');
+}
+document.getElementById('prSettingsSave')?.addEventListener('click', (e) => postSettingsCard(
+  { autoGeneratePrDescription: !!document.getElementById('prAutoDescribe')?.checked },
+  { card: document.getElementById('pr-settings-card'), paint: paintPrSettings, dirty: settingsCardDirty('prSettingsSave'), button: e.currentTarget }));
+settingsCardDirty('prSettingsSave');
 
 // ---- Helper models: Claude's title, Auto and PR description slots are rows of the Engines card's Helper jobs
 // (engine-settings-view.mjs). What stays here: the project-less catalog every model picker reads, the Claude-only
@@ -23443,6 +23456,14 @@ async function openShipItFor(ref = {}, link = null) {
   });
 }
 
+// The autoGeneratePrDescription setting, read fresh on each open (false when it cannot be read).
+async function shipItAutoDraftOn() {
+  try {
+    const res = await fetch('/api/settings');
+    return res.ok && (await safeJson(res))?.autoGeneratePrDescription === true;
+  } catch { return false; }
+}
+
 function openShipItModal(record, data, { link = null, onClose = null } = {}) {
   const modal = document.getElementById('shipit-modal');
   if (!modal) return false;
@@ -23563,9 +23584,12 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
     setShipItGenerating(modal, false);
     ctl.abort();
   };
-  const generate = async () => {
+  // auto: the autoGeneratePrDescription setting's draft on open. It never asks to replace (the caller only starts it
+  // over an empty description) and, while the user has done nothing, its text becomes the guard's baseline: a draft
+  // nobody touched is not a change for Escape to ask about.
+  const generate = async ({ auto = false } = {}) => {
     if (genCtl) return;
-    if (descInput.value.trim()) {
+    if (!auto && descInput.value.trim()) {
       const replace = await confirmModal({
         title: 'Replace the description?',
         message: 'Generate with AI replaces what you have written in the PR description.',
@@ -23594,6 +23618,7 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
       if (typeof dd.body !== 'string' || !dd.body.trim()) throw new Error('the model returned no description');
       descInput.value = dd.body;
       if (!q('.shipit-desc-preview').hidden) setMdEditMode(descBox, true);   // repaint an open Preview
+      if (auto && !guard.touched) guard.markClean();
     } catch (e2) {
       if (closed || genCtl !== ctl) return;
       descErr.hidden = false;
@@ -23686,7 +23711,15 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
   descBox.addEventListener('click', onDescClick);
   // The remote and base-branch picks this fetch fills in are the starting point, not a change. Not once
   // the user typed or pressed something meanwhile: re-baselining then would hide that edit.
-  loadShipItRemotes(modal, record, gen, () => closed).then(() => { if (!closed && !guard.touched) guard.markClean(); });
+  // Settings › Runs › Pull requests: draft the description once the base and forge picks are known. Not over words
+  // the user typed meanwhile, and not for a dialog closed or re-opened since.
+  const autoDraft = shipItAutoDraftOn();
+  loadShipItRemotes(modal, record, gen, () => closed).then(async () => {
+    if (closed) return;
+    if (!guard.touched) guard.markClean();
+    if (!(await autoDraft) || closed || gen !== shipItRemotesGen || genCtl || descInput.value.trim()) return;
+    void generate({ auto: true });
+  });
   shipItWatchDefault(record.projectKey).then((on) => {
     if (!on || closed || watchTouched || gen !== shipItRemotesGen) return;
     watchIn.checked = true;

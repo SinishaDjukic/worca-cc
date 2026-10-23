@@ -385,3 +385,23 @@ test('settings: #budgetLimitResume paints from GET, Save posts resumeAfterUsageL
   assert.ok(saved, 'Save posted');
   assert.equal(saved.settings.resumeAfterUsageLimit, false);
 });
+
+// The same opt-in boolean pattern, on Settings › Runs › Pull requests.
+test('settings: #prAutoDescribe paints from GET, Save posts autoGeneratePrDescription alone', async () => {
+  const server = makeServer();
+  server.settings = { autoGeneratePrDescription: false };
+  const ctx = await boot({ level: 'simple', server });
+  ctx.go('settings/runs');
+  await ctx.settle(10);
+  const box = ctx.doc.getElementById('prAutoDescribe');
+  assert.ok(box, 'the switch exists');
+  assert.equal(box.checked, false, 'off by default');
+  assert.equal(box.closest('[data-min-level]').id, 'pr-settings-card');
+  box.checked = true;
+  box.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  ctx.doc.getElementById('prSettingsSave').click();
+  await ctx.settle(8);
+  const saved = server.posts.find((p) => p.settings);
+  assert.ok(saved, 'Save posted');
+  assert.deepEqual(saved.settings, { autoGeneratePrDescription: true });
+});
