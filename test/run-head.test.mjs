@@ -67,7 +67,11 @@ test('head: Ready on its own branch is Try it, then Create PR as the one primary
 
 test('head: the PR control per state (pending, push, view ▾, merged ▾, create beside How to merge, workspace View PRs)', () => {
   assert.deepEqual(headModel(F({ prInput: 'PENDING' })).cta, { state: 'pending' });
-  assert.deepEqual(headModel(F({ push: true })).cta, { state: 'push', label: 'Push main' });
+  // A short label; the tooltip names the branch, and the record's push state (record.push) paints it.
+  assert.deepEqual(headModel(F({ push: true })).cta, { state: 'push', label: 'Push', title: 'Push to main', disabled: false });
+  assert.deepEqual(headModel(F({ push: true, pushState: { state: 'pushed', remote: 'origin' } })).cta,
+    { state: 'push', label: 'Pushed to origin', title: 'main is on origin', disabled: true });
+  assert.equal(headModel(F({ push: true, pushState: { state: 'diverged', remote: 'origin' } })).cta.disabled, true);
   assert.deepEqual(headModel(F({ m: M('in-review'), pr: OPEN })).cta, { state: 'view', href: OPEN.url, menu: true });
   assert.deepEqual(headModel(F({ m: M('merged'), pr: { ...OPEN, state: 'MERGED' } })).cta, { state: 'merged', href: OPEN.url, menu: true });
   assert.deepEqual(headModel(F({ notMergedBack: true })).cta, { state: 'create' });

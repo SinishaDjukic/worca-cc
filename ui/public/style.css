@@ -4873,7 +4873,8 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .run-prog-sec[data-stage="ready"]{--sec-ink:color-mix(in srgb,var(--ink) 100%,var(--line-2));}
 .run-prog-fill{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--sec-ink,var(--ink-2));transition:width .6s ease;}
 .run-prog[data-pulse="on"] .run-prog-sec.is-current > .run-prog-fill::after{content:"";position:absolute;top:0;right:0;bottom:0;width:2px;background:var(--surface);animation:wr-pulse 1.6s ease-in-out infinite;}
-.run-prog-marks{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin-top:5px;font-size:11px;color:var(--ink-3);}
+.run-prog-marks{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:2px;margin-top:5px;font-size:11px;color:var(--ink-3);}
+.run-prog-mark{min-width:0;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .run-prog-mark[data-state="done"]{color:var(--ink-2);}
 .run-prog-mark[data-state="current"]{color:var(--ink);font-weight:600;}
 .run-prog-mark[data-state="skipped"]{opacity:.5;}
@@ -4936,7 +4937,10 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
    with or without them, and the PR control's fade-out moves nothing. A narrow card wraps them under the status. */
 .rd-sheet-head > .rd-head-acts{grid-area:1 / 3;display:flex;align-items:center;gap:8px;margin:-7px 0 -7px 16px;}
 .rd-sheet-head > .rd-head-acts[hidden]{display:none;}
-@container rd-head (max-width:420px){.rd-sheet-head > .rd-head-acts{grid-area:2 / 1 / 3 / -1;justify-self:start;flex-wrap:wrap;margin:12px 0 0;}
+/* The PR slot may shrink in the row (its own max-width caps the label; style below), never past the card. */
+.rd-head-acts > .rd-pr-slot{min-width:0;}
+@container rd-head (max-width:420px){.rd-sheet-head > .rd-head-acts{grid-area:2 / 1 / 3 / -1;justify-self:start;flex-wrap:wrap;margin:12px 0 0;max-width:100%;}
+  .rd-head-acts > .rd-pr-slot{max-width:100%;}
   .rd-head-acts .btn-split-menu{right:auto;left:0;}}
 .rd-sheet-head:has(.btn-split-menu){position:relative;z-index:7;}
 /* Doubled classes: `.wfv-menu{position:fixed}` and `.btn-split-menu .menu-item{flex-direction:column}` come later in
@@ -5087,12 +5091,16 @@ button.rd-srow:hover{background:var(--hover-on-field);}
    opacity, will-change only on the nodes that animate; the slot's height never changes during
    the morph. With no button after all, the placeholder fades out in place (in a narrow head, where
    the slot is a row of its own, that row then closes at once: accepted, it is a rare case). */
-.rd-pr-slot{position:relative;width:fit-content;border-radius:var(--r-ctrl);}
+/* Capped at half the head (cqi: .rd-sheet-head is the container), so no label ("Pushed to <remote>", a long error)
+   can push the button past the card or squeeze the status column; the label ellipsizes, the icon stays. */
+.rd-pr-slot{position:relative;width:fit-content;max-width:min(260px,50cqi);border-radius:var(--r-ctrl);}
 .rd-pr-slot[hidden]{display:none;}
 .rd-pr-status[hidden]{display:none;}
 .rd-pr-status{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px;
   border-top:1px solid var(--blue-line);font-size:13px;color:var(--ink-2);}
-.rd-prs-sum{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-width:0;}
+.rd-prs-sum{display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:0;}
+.rd-prs-lead,.rd-prs-notes{display:flex;align-items:center;gap:6px;min-width:0;}
+.rd-prs-notes{flex-wrap:wrap;}
 .rd-prs-ico{flex:0 0 auto;}
 .rd-prs-sum .is-ok,.rd-prs-ico.is-ok{color:var(--green-ink);}
 .rd-prs-sum .is-run,.rd-prs-ico.is-run,.rd-prs-ico.is-wait{color:var(--amber-ink);}
@@ -5115,7 +5123,8 @@ button.rd-prs-link{background:none;border:0;padding:0;font:inherit;cursor:pointe
 button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
 .rd-prs-watch{display:flex;align-items:center;gap:8px;flex:0 0 auto;margin-left:auto;cursor:pointer;font-weight:500;}
 .rd-pr-slot:is(.is-pending,.is-morph,.is-out){overflow:hidden;background:var(--panel);box-shadow:inset 0 0 0 1px var(--line);}
-.rd-pr-slot > [data-rd-cta]{position:relative;}   /* above the colour layer */
+.rd-pr-slot > [data-rd-cta]{position:relative;max-width:100%;}   /* above the colour layer */
+.rd-pr-slot > [data-rd-cta] > span:not(.ic){min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .rd-pr-wait{display:flex;align-items:center;justify-content:center;gap:6px;box-sizing:border-box;height:32px;padding:0 12px;
   font:500 13px var(--sans);color:var(--ink-2);cursor:default;}
 .rd-pr-wait > *{opacity:0;}
@@ -8689,8 +8698,8 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 /* The column's New chat leads the list as a fixed first row: the rows' inset (the body's 6px), their 10px text start and radius. */
 .chat-history-new.chat-new-btn{flex:none;justify-content:flex-start;margin:6px 6px 0;}
 .chat-history-body{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:6px;}
-.chat-history-group + .chat-history-group{margin-top:6px;}
-.chat-history-group-label{padding:8px 10px 4px;font-weight:600;font-size:12px;color:var(--ink-2);}
+.chat-history-group + .chat-history-group{margin-top:10px;border-top:1px solid var(--line-2);}
+.chat-history-group-label{padding:12px 10px 6px;font-weight:600;font-size:12px;letter-spacing:.02em;color:var(--ink-2);}
 .chat-history-empty{padding:12px 10px;font-size:12px;color:var(--ink-3);}
 .ask-thread-row.is-current{background:var(--field);}
 .ask-thread-dot.ask-dot-wait{display:block;background:var(--amber);}

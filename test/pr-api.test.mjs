@@ -11,12 +11,13 @@ import http from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { app } from '../ui/server.mjs';
 import { _testing as gitInfo } from '../src/core/git-info.mjs';
 import { _testing as gitSync } from '../src/core/git-sync.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { _resetForTests, getDb } from '../src/core/db.mjs';
-import { writeStoreMeta, persistPrState, readPrState, createPipeline, writeState } from '../src/core/artifacts.mjs';
+import { writeStoreMeta, persistPrState, readPrState, createPipeline, writeState, listAllPipelines } from '../src/core/artifacts.mjs';
 import { _testing as prDesc, PR_BODY_MAX } from '../src/core/pr-description.mjs';
 import * as azurePr from '../src/core/pr/azure.mjs';
 import { setPrRemotePrefs, readPrRemotePrefs } from '../src/core/config.mjs';
@@ -970,6 +971,40 @@ test('POST /api/push: pushes the SOURCE branch of a merged-back same-branch run 
   assert.equal(r.status, 200);
   assert.deepEqual(await r.json(), { ok: true, remote: 'origin', branch: 'main' });
   assert.ok(seen.some((c) => c[0] === 'git' && c[1] === 'push' && c.includes('origin') && c.at(-1) === 'main'), JSON.stringify(seen));
+});
+
+// Real git: a repo on main with a bare origin. The push is recorded on the branch record, and the History
+// entry reads the source's push state from refs only, so a reload keeps "Pushed" until a new local commit.
+test('POST /api/push records the push; the history entry reads pushed, then ahead after a new local commit', async () => {
+  const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8',
+    env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@x', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@x' } }).trim();
+  const root = await mkdtemp(join(tmpdir(), 'worca-cc-push-'));
+  try {
+    const repo = join(root, 'repo'), bare = join(root, 'origin.git');
+    git(root, 'init', '-q', '--bare', bare);
+    git(root, 'init', '-q', '-b', 'main', repo);
+    git(repo, 'commit', '-q', '--allow-empty', '-m', 'one');
+    git(repo, 'remote', 'add', 'origin', bare);
+    const s = await seedPipeline(repo, { title: 'Same', status: 'done', branch: SAME(MERGED) });
+    writeStoreMeta(s.key, 'project', { key: s.key, name: 'Pushed', path: repo });
+    const entry = async () => ((await listAllPipelines()) || []).find((e) => e.id === s.id);
+    assert.deepEqual((await entry()).push, { remote: 'origin', state: 'unpushed' }, 'no remote branch yet');
+
+    const r = await postTo('/api/push', { projectKey: s.key, id: s.id });
+    assert.equal(r.status, 200);
+    const tip = git(repo, 'rev-parse', 'main');
+    const br = JSON.parse(getDb().prepare('SELECT branch FROM pipelines WHERE id = ?').get(s.id).branch);
+    assert.equal(br.pushed.remote, 'origin');
+    assert.equal(br.pushed.sha, tip);
+    assert.ok(br.pushed.at, 'the push time is recorded');
+    assert.equal(br.mergeBack.merged, true, 'the rest of the record is kept');
+    assert.deepEqual((await entry()).push, { remote: 'origin', state: 'pushed' }, 'a reload after the push');
+
+    git(repo, 'commit', '-q', '--allow-empty', '-m', 'two');
+    assert.deepEqual((await entry()).push, { remote: 'origin', state: 'ahead' }, 'a new local commit offers Push again');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('POST /api/push: 409 when not merged back, and 409 for a normal run (open a PR instead)', async () => {
