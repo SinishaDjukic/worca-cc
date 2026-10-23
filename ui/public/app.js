@@ -32578,6 +32578,8 @@ const histRun = (p, st = null) => ({ status: String((p && p.status) || (st && st
   ...(memberPrsOf(p).length ? { memberPrs: memberPrsOf(p) } : {}),
   // D24: passed through for the model; the saved state's branch carries a round marker on a frozen row.
   round: (p && p.round) || null, branch: (st && st.branch) || null, watch: (p && p.watch) || null,
+  // An interrupted run that can never resume (no resume point, its project gone): the model offers Archive instead.
+  ...((p && p.resumable === false) || (st && st.resumable === false) ? { resumable: false } : {}),
   // Projects, any way: a Folder run's changes and a run without a project word the finished line; no git here, no git chrome.
   ...(modelWorkMode(p, st) !== 'git' ? { workMode: modelWorkMode(p, st) } : {}),
   ...((p && p.changes) || (st && st.changes) ? { changes: (p && p.changes) || st.changes } : {}),
@@ -32594,6 +32596,7 @@ function runsHistItem(p) {
     startedAt: p.startedAt, mtime: p.mtime, groupName: histGroupName(p), groupKind: isNoProjectRun(p) ? 'none' : projectKindForKey(p.projectKey), by: runsPersonKey(p.startedBy),
     pr: glancePrInput(p),
     archived: !!p.archived,
+    ...(p.resumable === false ? { resumable: false } : {}),   // histRow / rowTarget: the bar's Archive / Delete take it
     checks: typeof p.checks === 'number' ? p.checks : null,
     changes: folder ? { state: (p.changes && p.changes.state) || 'pending' } : null,
     files: folder ? (fc ? fc.total : null) : (typeof p.files === 'number' ? p.files : null),

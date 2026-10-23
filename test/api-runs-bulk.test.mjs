@@ -8,9 +8,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { app, runs } from '../ui/server.mjs';
 import { _resetForTests, getDb } from '../src/core/db.mjs';
-import { seedPipeline, seedPipelineRow } from './helpers/db-seed.mjs';
+import { seedPipeline, seedPipelineRow, seedWorkspacePipeline } from './helpers/db-seed.mjs';
 import { createSliceFeature } from '../src/core/shape/features.mjs';
 import { getTicket } from '../src/core/scheduler.mjs';
+import { addProject, removeProject } from '../src/core/projects.mjs';
+import { projectKey } from '../src/core/store.mjs';
 
 let srv, base, home, prevHome, PROJECT;
 const OUTLINE = { why: 'w', slices: [1, 2, 3].map((i) => ({ id: `s${i}`, title: `Slice ${i}`, goal: 'g', inScope: [], outOfScope: [],
@@ -34,6 +36,7 @@ before(async () => {
   prevHome = process.env.WORCA_HOME; process.env.WORCA_HOME = home;
   _resetForTests();
   PROJECT = await mkdtemp(join(tmpdir(), 'worca-cc-bulk-proj-'));
+  await addProject({ name: 'bulk-proj', path: PROJECT });   // an interrupted run with a resume point resumes only while onboarded
   srv = http.createServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
@@ -95,4 +98,42 @@ test('API: an interrupted run with no resume point is listed as not resumable an
   assert.deepEqual(r.body.skipped.map((s) => [s.title, s.reason]), [['Parked run', 'interrupted — resume it first']]);
   assert.ok(getDb().prepare('SELECT archived_at FROM pipelines WHERE id = ?').get(dead).archived_at);
   assert.equal(getDb().prepare('SELECT archived_at FROM pipelines WHERE id = ?').get(parked).archived_at, null);
+});
+
+test('API: an interrupted run whose project was removed lists as not resumable, archives and deletes; Resume says why', async () => {
+  const gone = await mkdtemp(join(tmpdir(), 'worca-cc-bulk-gone-'));
+  try {
+    await addProject({ name: 'calculator', path: gone });
+    const rp = { version: 2, nodeId: 'n1' };
+    const a = (await seedPipeline(gone, { status: 'interrupted', title: 'Calc one', resumePoint: rp })).id;
+    const b = (await seedPipeline(gone, { status: 'interrupted', title: 'Calc two', resumePoint: rp })).id;
+    const c = (await seedPipeline(gone, { status: 'interrupted', title: 'Calc three', resumePoint: rp })).id;
+    await removeProject('calculator', { pruneWaitMs: 0 });
+    const h = await fetch(`${base}/api/history`).then((r) => r.json());
+    assert.deepEqual(h.pipelines.filter((p) => p.id === a).map((p) => p.resumable), [false]);
+    const res = await post('/api/resume', { pipelineId: a });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /not onboarded on this machine/);
+    const ar = await post('/api/runs/bulk', { action: 'archive', targets: [{ pipelineId: a }] });
+    assert.deepEqual([ar.body.done.map((d) => d.id), ar.body.skipped], [[a], []]);
+    assert.ok(getDb().prepare('SELECT archived_at FROM pipelines WHERE id = ?').get(a).archived_at);
+    const del = await post('/api/runs/bulk', { action: 'delete', targets: [{ pipelineId: b }] });
+    assert.deepEqual([del.body.done.map((d) => d.id), del.body.skipped], [[b], []]);
+    // The run's own "…" menu archives by key alone: the project cannot be resolved to a dir any more.
+    const one = await fetch(`${base}/api/runs/${c}?projectKey=${projectKey(gone)}`, { method: 'DELETE' });
+    assert.equal(one.status, 200, await one.text());
+    assert.ok(getDb().prepare('SELECT archived_at FROM pipelines WHERE id = ?').get(c).archived_at);
+  } finally { await rm(gone, { recursive: true, force: true }); }
+});
+
+test('API: an interrupted workspace run whose workspace is gone lists as not resumable, archives, and Resume says why', async () => {
+  const members = [{ projectKey: projectKey(PROJECT), projectDir: PROJECT, projectName: 'bulk-proj' }];
+  const { id } = await seedWorkspacePipeline(PROJECT, 'wks-gone-0000aaaa', { status: 'interrupted', title: 'WS run', resumePoint: { version: 2, nodeId: 'n1' }, projects: members }, members);
+  const h = await fetch(`${base}/api/history`).then((r) => r.json());
+  assert.deepEqual(h.pipelines.filter((p) => p.id === id).map((p) => p.resumable), [false]);
+  const res = await post('/api/resume', { pipelineId: id });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /workspace for this pipeline .* not onboarded on this machine/);
+  const ar = await post('/api/runs/bulk', { action: 'archive', targets: [{ pipelineId: id }] });
+  assert.deepEqual([ar.body.done.map((d) => d.id), ar.body.skipped], [[id], []]);
 });

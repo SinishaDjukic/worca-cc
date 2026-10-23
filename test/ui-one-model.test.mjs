@@ -265,6 +265,13 @@ test('§5.3 boot: the finished page owns its Resume for a resumable paused row, 
       assert.equal(made.disabled, true);
       assert.equal(made.title, 'This run cannot be resumed');
     } },
+    { name: 'interrupted, its project gone (not resumable): Archive, never Resume or Stop', run: async () => {
+      const { end } = await finishedPage({ row: { ...hd.ROW, status: 'interrupted', resumable: false },
+        detail: { ...hd.DETAIL, state: { ...hd.DETAIL.state, status: 'interrupted', resumable: false } } });
+      const shown = [...end.querySelectorAll('[data-model-action]')].filter((b) => !b.hidden).map((b) => b.dataset.modelAction);
+      assert.deepEqual(shown, ['archive']);
+      assert.equal(end.querySelector('.hd-resume').hidden, true);
+    } },
     { name: 'failed: the saved state\'s ledger gives the card\'s line (stage and failed step), not a bare "Failed"', run: async () => {
       const failed = RUN_STATE_ROWS.find((r) => r.state === 'failed').run;
       const { doc } = await finishedPage({ row: { ...hd.ROW, status: 'error' },

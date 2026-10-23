@@ -54,7 +54,7 @@ import {
   deleteDiffComment, unresolvedCounts, onDiffCommentsChanged, stampSentRunId,
   peekPendingCardComments, clearPendingCardComments, DiffCommentError, DC_ID_RE,
 } from '../src/core/diff-comments.mjs';
-import { listProjects, addProject, addProjects, removeProject, normalizeProjectPath, countProjects, worcaHome, getProjectByPath, displayPath,
+import { listProjects, runOnboarded, addProject, addProjects, removeProject, normalizeProjectPath, countProjects, worcaHome, getProjectByPath, displayPath,
   getProjectByName, ownsProjectFolder, removeProjectAndFolder, enclosingRepoOf, nestedInRepoMessage, worcaNestedRepoOf, worcaNestedRepoHint } from '../src/core/projects.mjs';
 import { effectiveWorkMode, workModeOfRow, workModeForStart, samePath } from '../src/core/project-kind.mjs';
 import { renderIndexHtml, INDEX_THEME_ANCHOR, FLAG_GATES_ANCHOR } from '../src/core/index-html.mjs';
@@ -5267,6 +5267,7 @@ async function resumeTargetDirs(saved) {
     const meta = JSON.parse(saved.row.workspace_meta);
     const projects = (meta.projects || []).map((p) => ({ ...p }));
     if (!projects.length) throw new ResumeError(400, { error: 'workspace metadata incomplete' });
+    if (!runOnboarded(saved.row)) throw new ResumeError(400, { error: 'workspace for this pipeline (or one of its members) is not onboarded on this machine' });
     return {
       projectDir: projects[0].projectDir,
       workspace: { id: meta.workspaceId, key: saved.row.workspace_key, name: meta.workspaceName, description: meta.workspaceDescription || '', projects },
@@ -7071,14 +7072,15 @@ function bulkResolve(t) {
     return { id: pid || entry.id, runId: entry.id, pipelineId: pid, title: entry.title || pid || entry.id, state: m.state, status: entry.status };
   }
   if (pid) {
-    const row = getDb().prepare(`SELECT title, status, project_key, workspace_key, resume_point IS NOT NULL AS resumable
-      FROM pipelines WHERE id = ? AND deleted_at IS NULL`).get(pid);
+    const row = getDb().prepare(`SELECT id, title, status, project_key, workspace_key, target, workspace_meta,
+      resume_point IS NOT NULL AS resumable FROM pipelines WHERE id = ? AND deleted_at IS NULL`).get(pid);
     if (!row) return null;
     const m = runModelFor(pid);
     // runModelFor reads readPrState, so a done run whose PR needs you arrives with prNeeds (D31) and the table treats it as finished.
-    // `resumable`: an interrupted row without a resume point can never resume, so the table lets Archive / Delete take it.
+    // `resumable`: an interrupted row without a resume point, or whose project (workspace, member) is no longer onboarded,
+    // can never resume, so the table lets Archive / Delete take it.
     return { id: pid, pipelineId: pid, runId: entry?.id || null, title: row.title || pid, state: m ? m.state : 'stopped', status: row.status,
-      prNeeds: !!(m && m.prNeeds), resumable: !!row.resumable, key: row.project_key, workspaceKey: row.workspace_key };
+      prNeeds: !!(m && m.prNeeds), resumable: !!row.resumable && runOnboarded(row), key: row.project_key, workspaceKey: row.workspace_key };
   }
   const tk = t.ticketId ? getTicket(t.ticketId) : null;
   if (!tk) return null;

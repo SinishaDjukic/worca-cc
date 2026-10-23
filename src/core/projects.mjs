@@ -14,10 +14,11 @@ import { join, resolve, dirname } from 'node:path';
 import { getWorcaRoot, defaultRoot, worcaProjectsFolder } from './settings.mjs';
 import { isWithin } from './fs-scope.mjs';
 import { getDb, prepare, tx } from './db.mjs';
-import { projectKey, canonicalProjectRoot, isNoProjectWorkDir } from './store.mjs';
+import { projectKey, canonicalProjectRoot, isNoProjectWorkDir, isNoProjectKey } from './store.mjs';
 import { gitAvailable, gitState } from './git-available.mjs';
 import { detectVcs, normalizeVcs, samePath } from './project-kind.mjs';
 import { NO_PROJECT_ERRORS } from '../shared/no-project.mjs';
+import { WORKSPACE_SCAN_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
 
 export { detectVcs, displayPath } from './project-kind.mjs';
 
@@ -103,6 +104,38 @@ function readRows() {
  */
 export async function listProjects() {
   return readRows().map((e) => ({ key: e.key, name: e.name, path: e.path, exists: isDir(e.path), vcs: normalizeVcs(e.vcs) }));
+}
+
+/**
+ * Whether a saved pipelines row still has what a resume needs onboarded here: its project (matched as the
+ * server's projectDirForKey does: the stored key, else the key of a registered path), or for a workspace run the
+ * workspace itself with every member it ran with still a member (a member is any repo, not necessarily a registered
+ * project). A first workspace scan runs before its workspace exists (its finalize creates it), so without the
+ * workspace row it only needs its member folders. A run without a project is its own work folder: always true.
+ * Sync (a by-row read for the history, detail and bulk paths); never throws.
+ * @param {{id?:string, project_key?:string, target?:string, workspace_key?:string|null, workspace_meta?:string|null}} row
+ * @returns {boolean}
+ */
+export function runOnboarded(row) {
+  if (!row || isNoProjectKey(row.project_key)) return true;
+  getDb();
+  if (row.target === 'workspace' && row.workspace_key) {
+    let members = null;
+    try { members = JSON.parse(row.workspace_meta || 'null')?.projects; } catch { /* unreadable: nothing to resume */ }
+    const dirs = Array.isArray(members) ? members.map((m) => (m && typeof m.projectDir === 'string' ? resolve(m.projectDir) : null)) : [];
+    if (!dirs.length || dirs.includes(null)) return false;
+    if (!prepare('SELECT 1 FROM workspaces WHERE id = ?').get(row.workspace_key)) {
+      const wf = row.id ? prepare(`SELECT json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.workflowId') AS wf
+        FROM pipelines WHERE id = ?`).get(row.id)?.wf : null;
+      return wf === WORKSPACE_SCAN_WORKFLOW_ID && dirs.every(isDir);
+    }
+    const inWs = new Set(prepare('SELECT project_key AS path FROM workspace_projects WHERE workspace_id = ?')
+      .all(row.workspace_key).map((r) => resolve(r.path)));
+    return dirs.every((d) => inWs.has(d));
+  }
+  const rows = readRows();
+  if (rows.some((r) => r.key === row.project_key)) return true;
+  return rows.some((r) => { try { return projectKey(r.path) === row.project_key; } catch { return false; } });
 }
 
 /**
