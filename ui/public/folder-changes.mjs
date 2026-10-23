@@ -151,7 +151,7 @@ export function openApplyDialog({ doc, fetch, pipelineId, memberKey = '', member
   const member = memberName ? el(doc, 'div', 'fc-member-line') : null;
   if (member) member.append(el(doc, 'span', 'fc-member-name', String(memberName)), kindChip(doc, 'folder'));
   dlg.append(...[title, member, target, loading, plan, skipped, err, foot].filter(Boolean));
-  layoutDialog(dlg, { head: [title, member], foot: [err, foot] });
+  layoutDialog(dlg, { head: [title, member, target], foot: [err, foot] });
   modal.append(dlg);
   doc.body.append(modal);
 
