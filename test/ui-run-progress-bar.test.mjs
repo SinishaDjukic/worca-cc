@@ -220,3 +220,14 @@ test('run progress layout CSS', async () => {
     } },
   ]);
 });
+
+test('stage labels line up with their segments: the marks row shares the track\'s columns and gap, each label left-aligned', () => {
+  const gap = (r) => (r.match(/(?:^|;)gap:([^;]+)/) || [])[1];
+  assert.match(rule('.run-prog-marks'), /grid-template-columns:repeat\(4,minmax\(0,1fr\)\)/);
+  assert.equal(gap(rule('.run-prog-marks')), gap(rule('.run-prog-track')));
+  const mark = rule('.run-prog-mark');
+  assert.match(mark, /text-align:left/);
+  assert.match(mark, /min-width:0/);
+  assert.match(mark, /text-overflow:ellipsis/);
+  assert.match(rule('.run-prog.is-compact .run-prog-marks'), /display:none/);
+});

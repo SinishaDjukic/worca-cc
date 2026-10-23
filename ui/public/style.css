@@ -4893,7 +4893,8 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .run-prog-sec[data-stage="ready"]{--sec-ink:color-mix(in srgb,var(--ink) 100%,var(--line-2));}
 .run-prog-fill{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--sec-ink,var(--ink-2));transition:width .6s ease;}
 .run-prog[data-pulse="on"] .run-prog-sec.is-current > .run-prog-fill::after{content:"";position:absolute;top:0;right:0;bottom:0;width:2px;background:var(--surface);animation:wr-pulse 1.6s ease-in-out infinite;}
-.run-prog-marks{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin-top:5px;font-size:11px;color:var(--ink-3);}
+.run-prog-marks{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:2px;margin-top:5px;font-size:11px;color:var(--ink-3);}
+.run-prog-mark{min-width:0;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .run-prog-mark[data-state="done"]{color:var(--ink-2);}
 .run-prog-mark[data-state="current"]{color:var(--ink);font-weight:600;}
 .run-prog-mark[data-state="skipped"]{opacity:.5;}
@@ -8659,8 +8660,8 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 /* The column's New chat leads the list as a fixed first row: the rows' inset (the body's 6px), their 10px text start and radius. */
 .chat-history-new.chat-new-btn{flex:none;justify-content:flex-start;margin:6px 6px 0;}
 .chat-history-body{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:6px;}
-.chat-history-group + .chat-history-group{margin-top:6px;}
-.chat-history-group-label{padding:8px 10px 4px;font-weight:600;font-size:12px;color:var(--ink-2);}
+.chat-history-group + .chat-history-group{margin-top:10px;border-top:1px solid var(--line-2);}
+.chat-history-group-label{padding:12px 10px 6px;font-weight:600;font-size:12px;letter-spacing:.02em;color:var(--ink-2);}
 .chat-history-empty{padding:12px 10px;font-size:12px;color:var(--ink-3);}
 .ask-thread-row.is-current{background:var(--field);}
 .ask-thread-dot.ask-dot-wait{display:block;background:var(--amber);}
