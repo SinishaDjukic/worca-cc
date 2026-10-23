@@ -1714,6 +1714,9 @@ function handleServerMessage(msg) {
     if (Array.isArray(msg.removedRunIds) && msg.removedRunIds.length) {
       const gone = new Set(msg.removedRunIds);
       dropParkedRuns((e) => gone.has(e.runId));
+      // The open run page of an evicted run leaves, as the page's own Archive does (archiveRunFlow onGone): its
+      // run is no longer live here, so it must not keep offering Models, Resume or Stop on a row the server refuses.
+      if (runDetailState.screen && gone.has(runDetailState.runId)) leaveLiveRun(runDetailState.screen);
     }
     // Chat P4: the run panel reads these rows too. The Archived feed, once loaded, goes stale on the same change:
     // reloadRunsHistory refetches it while the Runs page is open; elsewhere it is dropped so the next Archived paint
@@ -1947,8 +1950,8 @@ function handleServerMessage(msg) {
   // Neither a sub-agent delta, a skills update, nor a question resolution may
   // MATERIALIZE a run: each only attaches to one this tab already knows. (A
   // resolution for an unknown run is meaningless, and auto-creating a card would
-  // resurrect the phantom.) Nor may an archive mark.
-  if ((msg.type === 'subagent' || msg.type === 'stepskills' || msg.type === 'stepgraphify' || msg.type === 'question-resolved' || msg.type === 'night-decision' || msg.type === 'archived') && !runs.has(msg.runId)) return;
+  // resurrect the phantom.)
+  if ((msg.type === 'subagent' || msg.type === 'stepskills' || msg.type === 'stepgraphify' || msg.type === 'question-resolved' || msg.type === 'night-decision') && !runs.has(msg.runId)) return;
   const r = upsertRun({ runId: msg.runId });
   // A reconnect re-subscribes and the server replays the run's buffer: skip what this page
   // already applied, or every earlier log line shows twice (ws-seq.mjs).
@@ -1993,10 +1996,6 @@ function handleServerMessage(msg) {
       break;
     case 'error':
       onError(r, msg);
-      break;
-    case 'archived':
-      // Its pipeline was archived while this entry lingered paused (server markEntriesArchived).
-      r.archivedAt = msg.archivedAt || new Date().toISOString();
       break;
     default:
       break;
@@ -2101,7 +2100,6 @@ function onHello(msg) {
       labels: Array.isArray(r0.labels) ? r0.labels : undefined,
       shaping: r0.shaping || null,
       workMode: r0.workMode || undefined,
-      archivedAt: r0.archivedAt || undefined,
     });
     // Seed the run's stepper from the hello summary so the live card resolves
     // sub-agents to their real nodes BEFORE any subagent delta paints — closing
@@ -2263,7 +2261,6 @@ function makeRun({
   pauseDetail = null, limitEngine = null, limitResetAt = null, runEngine = undefined, startedBy = null, lastAction = null,
   workspaceId = undefined, workspaceName = undefined, projectNames = null, night = undefined, tags = [], labels = [],
   shaping = null, networkWait = null, workMode = undefined,
-  archivedAt = null,
 }) {
   return {
     runId,
@@ -2291,7 +2288,6 @@ function makeRun({
     labels: Array.isArray(labels) ? labels : [],   // run labels (slice 1): free words (hello / run-created)
     shaping,              // Shape it first: {perspectives, rounds, approved, savedTo} on a shaping run (hello / state), or null
     workMode, // 'git' | 'folder' | 'none' (hello / run-created / state); undefined = not said yet (a git run)
-    archivedAt,           // its pipeline was archived while it lingered paused (hello / 'archived' frame), or null
     // Stable ordering key: assigned once per runId, never bumped by activity
     // and never re-minted if the run is dropped and re-materialized.
     // hello seeds runs in server registration order, so this tracks true
@@ -24703,7 +24699,7 @@ function paintHdLive(screen, record, data) {
     const modelsBtn = screen.querySelector('.hd-models');
     if (modelsBtn) {
       const switchStatus = live ? live.status : (!over ? savedStatus : '');
-      modelsBtn.hidden = archived || !!(live && live.archivedAt) || !(switchStatus === 'paused' || switchStatus === 'running');
+      modelsBtn.hidden = archived || !(switchStatus === 'paused' || switchStatus === 'running');
       const mswHost = screen.querySelector('.hd-model-switch');
       if (mswHost && !mswHost.hidden && (modelsBtn.hidden || (mswHost.dataset.mode && mswHost.dataset.mode !== switchStatus))) {
         mswHost.hidden = true; mswHost.replaceChildren();
@@ -25947,7 +25943,6 @@ function setupHdActions(screen, record, data) {
   });
   screen.querySelector('.hd-models')?.addEventListener('click', () => {
     const r = hdCurrentRecord(record);
-    if (hdLiveRun(r)?.archivedAt) return;   // an archived entry is read-only (paintHdLive hides the button)
     openModelSwitch(screen.querySelector('.hd-model-switch'), r.id, {
       onResume: () => resumePipeline(hdCurrentRecord(record), r.projectDir || null, screen.querySelector('.hd-resume')),
     });
@@ -33777,7 +33772,7 @@ function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
   });
   screen.querySelector('.rd-models').addEventListener('click', () => {
     const r = runs.get(runDetailState.runId);
-    if (!r || !(isPaused(r) || r.status === 'running') || !r.pipelineId || r.archivedAt) return;
+    if (!r || !(isPaused(r) || r.status === 'running') || !r.pipelineId) return;
     openModelSwitch(screen.querySelector('.rd-model-switch'), r.pipelineId, {
       onSwitched: (out) => {
         if (!out?.stepper) return;
@@ -36611,10 +36606,10 @@ function paintRdHeader(screen, r) {
   const actionChanged = pauseBtn.dataset.action !== nextAction;
   pauseBtn.dataset.action = nextAction;
   // "Models" — running or paused (not pausing / interrupted): a running run switches the stages that
-  // have not started; a paused one edits its frozen manifest (model-switch.mjs). Never an archived
-  // one: archive keeps a paused run's entry, and the server refuses its switch (409 ARCHIVED).
+  // have not started; a paused one edits its frozen manifest (model-switch.mjs). An archived one never
+  // reaches here: archive evicts a paused run's entry (server dropParkedEntries) and its open page leaves.
   const modelsBtn = screen.querySelector('.rd-models');
-  if (modelsBtn) modelsBtn.hidden = !!r.archivedAt || !(r.pipelineId && (r.status === 'paused' || r.status === 'running'));
+  if (modelsBtn) modelsBtn.hidden = !(r.pipelineId && (r.status === 'paused' || r.status === 'running'));
   const mswHost = screen.querySelector('.rd-model-switch');
   // Close an open panel when the button hides (running -> pausing), or when the run crossed
   // running <-> paused (its copy and buttons differ).

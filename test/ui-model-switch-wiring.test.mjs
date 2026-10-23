@@ -122,9 +122,10 @@ test('a running run offers "Models" with Save only; pausing hides it and closes 
   assert.equal(btn.hidden, true); assert.equal(host.hidden, true, 'running → pausing closes the panel');
 });
 
-// Archive lets a paused pipeline through and the server keeps its entry, so the run page still draws a
-// paused bar from it. The server refuses the switch (409 ARCHIVED), so the page must not offer it.
-test('an archived paused run offers no "Models" on the run page: the archived frame hides it and closes the panel', async () => {
+// Archive lets a paused pipeline through and the server EVICTS its lingering entry (dropParkedEntries); the
+// pipelines-changed frame names it (removedRunIds). The tab drops its copy, and an open run page for it leaves
+// instead of offering a Models the server would answer 409 ARCHIVED to.
+test('an archived paused run offers no "Models": the eviction frame drops the entry and leaves its open run page', async () => {
   const { window, go, settle, recv } = await bootLive();
   const { upsertRun, onState } = window.__np;
   const r = upsertRun({ runId: 'r6', title: 't', projectDir: PROJECT, status: 'running' });
@@ -136,37 +137,11 @@ test('an archived paused run offers no "Models" on the run page: the archived fr
   btn.click(); await settle();
   const host = window.document.querySelector('#run-detail .rd-model-switch');
   assert.equal(host.hidden, false, 'the panel is open');
-  recv({ type: 'archived', runId: 'r6', archivedAt: '2026-10-07T10:00:00.000Z', seq: 1 }); await settle();
-  assert.equal(btn.hidden, true, 'archived → no Models');
-  assert.equal(host.hidden, true, 'the open panel closes');
-  btn.click(); await settle();
-  assert.equal(host.hidden, true, 'a click on the hidden button opens nothing');
-  recv({ type: 'archived', runId: 'r-gone', archivedAt: '2026-10-07T10:00:00.000Z', seq: 1 }); await settle();
-  assert.equal(window.__np.getRun('r-gone'), undefined, 'an archived frame never materializes a run');
-});
-
-test('a hello that lists an archived paused run offers no "Models" on its run page', async () => {
-  const { window, go, settle, recv } = await bootLive();
-  recv({ type: 'hello', runs: [{ runId: 'r7', title: 't', projectDir: PROJECT, status: 'paused', kind: 'run',
-    pipelineId: 'p1', archivedAt: '2026-10-07T10:00:00.000Z', startedAt: '2026-10-07T09:00:00.000Z' }] });
-  go('running/r7'); await settle();
-  assert.equal(window.document.querySelector('#run-detail .rd-models').hidden, true);
-});
-
-// Restore clears the row's archive mark (the row reads interrupted), but the server's lingering paused entry
-// keeps its one-way `archivedAt`. The saved screen must not take "paused" from that entry (409 on the GET).
-test('a restored archived paused run offers no "Models" on its saved screen: the lingering entry stays archived', async () => {
-  const row = { id: 'p1', title: 't', status: 'interrupted', projectKey: 'k' };
-  const { window, go, settle, recv, fetchCalls } = await bootLive({ historyRow: row });
-  recv({ type: 'hello', runs: [{ runId: 'r8', title: 't', projectDir: PROJECT, status: 'paused', kind: 'run',
-    pipelineId: 'p1', archivedAt: '2026-10-07T10:00:00.000Z', startedAt: '2026-10-07T09:00:00.000Z' }] });
-  go('history'); await settle();
-  go('history/k/p1'); await settle();
-  const btn = window.document.querySelector('#hist-detail .hd-models');
-  assert.equal(btn.hidden, true, 'the archived entry is no live paused run');
-  btn.click(); await settle();
-  assert.equal(window.document.querySelector('#hist-detail .hd-model-switch').hidden, true, 'a forced click opens nothing');
-  assert.ok(!fetchCalls.some((c) => c.url.includes('/api/pipelines/p1/models')), 'and sends no request');
+  recv({ type: 'pipelines-changed', action: 'deleted', removedRunIds: ['r6'] }); await settle();
+  assert.equal(window.__np.getRun('r6'), undefined, 'the tab dropped its copy');
+  assert.equal(window.document.querySelector('#run-shell').classList.contains('detail-open'), false, 'the run page for an evicted run is left');
+  recv({ type: 'pipelines-changed', action: 'deleted', removedRunIds: ['r-gone'] }); await settle();
+  assert.equal(window.__np.getRun('r-gone'), undefined, 'an eviction never materializes a run');
 });
 
 test('a 202 (the owner has not answered) closes the panel without an error', async () => {

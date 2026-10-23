@@ -1178,8 +1178,6 @@ function summarizeRuns() {
     limitEngine: r.limitEngine || null,
     limitResetAt: r.limitResetAt || null,
     runEngine: r.orch?.state?.runEngine || null,
-    // When the pipeline was archived while this entry lingered paused (markEntriesArchived), or null.
-    archivedAt: r.archivedAt || null,
     startedAt: r.startedAt,
     startedBy: r.startedBy || null,
     // Who last stopped / paused / resumed it ({ kind, by, at }), or null.
@@ -7343,7 +7341,6 @@ app.delete('/api/runs/:id', async (req, res) => {
     const removedRunIds = dropParkedEntries(id);
     if (report.archived) {
       appendAuditById(report.id, `Run archived${byActor(archBy)}.`, { actor: archBy });
-      markEntriesArchived(report.id);
     }
     broadcast({ type: 'pipelines-changed', action: 'deleted', removedRunIds });
     res.json({ ok: true, ...report });
@@ -7354,20 +7351,6 @@ app.delete('/api/runs/:id', async (req, res) => {
     res.status(500).json({ error: e && e.message ? e.message : String(e) });
   }
 });
-
-// The live guard above lets a paused (or interrupted) pipeline through, and its parked entry stays in
-// `runs`: the run page keeps drawing its bar from it. Mark each one, so the page stops offering a
-// model switch the server answers 409 ARCHIVED to. hello carries the mark (summarizeRuns), and a
-// buffered `archived` frame tells the open tabs. One-way: a restore brings a paused row back as an
-// interrupted read-only record (restorePipeline), never a switchable one.
-function markEntriesArchived(pipelineId) {
-  const archivedAt = new Date().toISOString();
-  for (const entry of runs.values()) {
-    if (entry.pipelineId !== pipelineId || entry.archivedAt || !Array.isArray(entry.events)) continue;
-    entry.archivedAt = archivedAt;
-    broadcast(bufferEvent(entry, { type: 'archived', archivedAt }));
-  }
-}
 
 // ---------------------------------------------------------------------------
 // POST /api/runs/:id/restore?projectKey=...  (or ?projectDir=... / ?workspaceId=...)
