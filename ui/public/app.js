@@ -34750,26 +34750,15 @@ function paintRdActions(screen, r, m = rdModel(r)) {
   });
   if (split) split.hidden = !!pause && pause.hidden;      // the split wrapper follows its button
 }
-/** D18, run 3 D8: the facts block's group row. `el` is its dd, repainted through a signature; the dt names the kind
- *  (Feature / Chain / Group), and the row hides with no group below Advanced. */
+/** D18, run 3 D8: the facts block's group row. A run in a group has none: its kind chip names its place and links the
+ *  group page (paintRunPlace). A run in no group offers "Add to group…" at Advanced; the row hides below it. */
 function paintGroupLine(el, pipelineId, title, home) {
   if (!el) return;
   const row = el.closest('.rd-kv-row') || el;
   const dt = row.querySelector('.rd-kv-k');
-  if (home) {
-    const sig = `in|${groupHref(home.row)}|${home.row.title}|${home.planning ? 'p' : home.position}|${home.total}|${home.row.groupKind}`;
-    row.hidden = false;
-    if (el.dataset.sig === sig) return;
-    el.dataset.sig = sig;
-    if (dt) dt.textContent = groupKindWord(home.row);
-    const a = Object.assign(document.createElement('a'), { className: 'rd-group-link', href: groupHref(home.row), textContent: home.row.title });
-    const pos = Object.assign(document.createElement('span'), { className: 'rd-group-pos',
-      textContent: ` · ${home.planning ? 'planning' : `run ${home.position} of ${home.total}`}` });
-    el.replaceChildren(a, pos);
-    return;
-  }
   if (dt) dt.textContent = 'Group';
-  if (!pipelineId || !levelAtLeast('advanced')) { row.hidden = true; el.dataset.sig = ''; el.replaceChildren(); return; }
+  // Empty, not only hidden: syncFacts re-derives each row's hidden from its dd's content.
+  if (home || !pipelineId || !levelAtLeast('advanced')) { row.hidden = true; el.dataset.sig = ''; el.replaceChildren(); return; }
   row.hidden = false;
   if (el.dataset.sig === 'add') return;
   el.dataset.sig = 'add';
@@ -34778,12 +34767,26 @@ function paintGroupLine(el, pipelineId, title, home) {
   b.addEventListener('click', () => openAddToGroup(b, { pipelineId, title }));
   el.replaceChildren(b);
 }
-/** Run 3 (D6, D7): the kind chip ("Run 2 of 3") and the breadcrumb, from the run's group. The breadcrumb is the
- *  split layout's alone: the Chat run panel keeps none (its "Runs" crumb would leave Chat). */
+/** Run 3 (D6, D7): the kind chip ("Run 2 of 3") and the breadcrumb, from the run's group. In a group the chip links
+ *  the group page ("›" is CSS). The breadcrumb is the split layout's alone: the Chat run panel keeps none (its "Runs"
+ *  crumb would leave Chat). */
 function paintRunPlace(screen, home) {
-  const chip = screen.querySelector('.rd-glance .rd-title-row .kind-chip');
+  const old = screen.querySelector('.rd-glance .rd-title-row .kind-chip');
   const word = runPositionLabel(home);
-  if (chip && chip.textContent !== word) chip.textContent = word;
+  const href = home ? groupHref(home.row) : '';
+  let chip = old;
+  if (chip && (chip.tagName === 'A') !== !!href) {
+    chip = document.createElement(href ? 'a' : 'span');
+    chip.className = 'kind-chip';
+    old.replaceWith(chip);
+  }
+  if (chip) {
+    if (chip.textContent !== word) chip.textContent = word;
+    if (href) {
+      if (chip.getAttribute('href') !== href) chip.setAttribute('href', href);
+      chip.setAttribute('aria-label', `${word}, open ${groupKindWord(home.row).toLowerCase()} ${home.row.title}`);
+    }
+  }
   paintCrumbs(screen.querySelector(':is(.rd-bar,.hd-bar) .rd-crumbs'), screen.dataset.presentation === 'panel' ? [] : runCrumbs(home));
   syncFacts(screen.querySelector('.rd-glance .rd-kv'));
 }
@@ -35324,7 +35327,7 @@ function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '',
  *  a live run has none), `m` the page model, `kept` screen._headKept, `repaint` the page's head painter.
  *  Side effect: it starts the PR status reads it needs (the feed's, and each open workspace member's through
  *  ensurePrStatus); a landed member read calls `repaint`, which then finds it cached, so it cannot loop. */
-function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, kept, repaint }) {
+function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, kept, repaint, liveSource = '' }) {
   const ws = !!rec && rec.target === 'workspace' && hasWsMembers(rec);
   const own = !ws && rec && rec.pr && typeof rec.pr === 'object' && rec.pr.url ? rec.pr : null;
   const open = !!own && String(own.state || '').toUpperCase() === 'OPEN';
@@ -35346,8 +35349,8 @@ function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, kept, re
       key: x.memberKey, name: (names && names[x.memberKey]) || String(x.projectKey || x.memberKey).replace(/-[0-9a-f]{8}$/, ''),
       pr: x.pr && typeof x.pr === 'object' ? x.pr : null,
       prStatus: prStatusCache.get(prStatusKey(memberScope(x))) || null })) } : null,
-    base: (prStatus && prStatus.base) || (rec && rec.sourceBranch) || '',
-    source: (rec && rec.sourceBranch) || '',
+    base: (prStatus && prStatus.base) || (rec && rec.sourceBranch) || liveSource || '',
+    source: (rec && rec.sourceBranch) || liveSource || '',
     pr: own, prInput: glancePrInput(rec), prStatus, watch: (rec && rec.watch) || null,
     canCreatePr: !!rec && histPrEligible(rec) && !(own && open),
     push: !!rec && !!rec.sameAsSource && rec.target !== 'workspace' && rec.mergeBack?.merged === true && !!rec.sourceBranch,
@@ -35899,6 +35902,8 @@ function paintRdHead(screen, r, m = rdModel(r)) {
   const repaint = () => { if (screen.isConnected) paintRdHead(screen, r); };
   const f = headFactsOf(screen, rec, {
     m: pageModel(m), mode, gitChrome: gitOn() && isGitRun(r), kept, repaint,
+    // A live run has no History row yet: the state frame keeps its branch record and the sticky source (onState).
+    liveSource: r.branchSource || (r.branch && typeof r.branch === 'object' && r.branch.source) || '',
     folder: bar ? { state: bar.state, total: changesCounts(changes).total } : null,
     canTry: !!(rec && rec.branch) && terminal && !kept && !!r.pipelineId && !hdCheckoutFor(rec),
   });

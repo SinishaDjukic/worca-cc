@@ -22,7 +22,7 @@ const PR = { url: 'https://github.com/acme/app/pull/759', number: 759, state: 'O
 
 const SINGLE = [
   ['starting', R({ status: 'starting' }), 'peach', true, 'Starting', ['stop'], null],
-  ['working', R(inBuild), 'peach', true, 'Build · step · Implementation', ['pause', 'stop'], null],
+  ['working', R(inBuild), 'peach', true, 'Build · Implementation', ['pause', 'stop'], null],
   ['needs-you', R({ steps: [row('n_clarify', 'start')], active: [live('n_clarify')],
     pendingQuestion: { kind: 'clarify', questions: [{}, {}] } }), 'amber', false, 'Plan · needs you · 2 questions', ['answer', 'stop'], 'question'],
   ['paused', R({ ...inBuild, status: 'paused', steps: [row('n_clarify'), row('n_plan'), row('n_impl', 'paused')], active: [],
@@ -137,7 +137,7 @@ test('edge rows: restart, interruption, step named like its stage, no-stage work
     { name: 'planner "Plan"', run: () => assert.equal(runModel(R({ steps: [row('n_plan', 'start')], active: [live('n_plan')] }), OPTS).line, 'Plan') },
     { name: 'no stage', run: () => {
       const stepper = { version: 2, graph: { wires: [], nodes: [{ id: 'n_defrag', kind: 'agent', key: 'memoryDefragmenter', label: 'Memory defragment', ports: { inputs: [], outputs: [] } }] } };
-      assert.equal(runModel(R({ stepper, steps: [row('n_defrag', 'start')], active: [live('n_defrag')] }), OPTS).line, 'Step · Memory defragment');
+      assert.equal(runModel(R({ stepper, steps: [row('n_defrag', 'start')], active: [live('n_defrag')] }), OPTS).line, 'Memory defragment');
     } },
     { name: 'closed PR', run: () => {
       const m = runModel(R({ status: 'done', endReached: true, pr: { ...PR, state: 'CLOSED' } }), OPTS);
@@ -283,7 +283,7 @@ test('D22 rounds: "Running · Round 2 · STAGE", the request for a Watch PR roun
   // The raw marker the Shaper feature writes (branch.roundOf) reads the same.
   const w = runModel(R({ ...inBuild, branch: { feature: 'feat/x', roundOf: { pipelineId: 'p1', round: 2, request: 'fix failing checks', by: 'watch' } } }), OPTS);
   assert.equal(w.line, 'Running · Round 2 · fix failing checks');
-  assert.equal(runModel(R({ ...inBuild, round: { n: 1, request: 'x' } }), OPTS).line, 'Build · step · Implementation', 'round 1 is the run itself');
+  assert.equal(runModel(R({ ...inBuild, round: { n: 1, request: 'x' } }), OPTS).line, 'Build · Implementation', 'round 1 is the run itself');
   const ask = runModel(R({ steps: [row('n_clarify', 'start')], active: [live('n_clarify')], round: { n: 3 },
     pendingQuestion: { kind: 'clarify', questions: [{}, {}] } }), OPTS);
   assert.equal(ask.line, 'Round 3 · Plan · needs you · 2 questions');
@@ -426,4 +426,19 @@ test('slice 3: ship, View PR, Retry and Ask for changes are head actions, disjoi
   assert.deepEqual([...HEAD_ACTIONS], ['ship', 'open-pr', 'retry', 'ask-changes']);
   assert.equal(HEAD_ACTIONS.some((a) => MENU_ACTIONS.includes(a)), false);
   assert.ok(Object.isFrozen(HEAD_ACTIONS));
+});
+
+test('barLine: beside a stage bar a working run names only its step; nodes mode, rounds and other states have none', () => {
+  const m = runModel(R(inBuild), OPTS);
+  assert.equal(m.line, 'Build · Implementation', 'the canonical line keeps the stage');
+  assert.equal(m.barLine, 'Implementation');
+  assert.doesNotMatch(m.line, /(^|· )step( ·|$)/i, 'never a bare "step"');
+  assert.equal(runModel(R({ steps: [row('n_plan', 'start')], active: [live('n_plan')] }), OPTS).barLine, '',
+    'the planner: its step is the stage, the bar says Plan');
+  assert.equal(runModel(R({ ...inBuild, round: { n: 2, request: 'x', by: 'person' } }), OPTS).barLine, null, 'a round line is its own');
+  assert.equal(runModel(R({ ...inBuild, status: 'paused', steps: [row('n_clarify'), row('n_plan'), row('n_impl', 'paused')], active: [],
+    pauseReason: 'usage_limit' }), OPTS).barLine, null, 'only working');
+  const stepper = { version: 2, graph: { wires: [], nodes: [{ id: 'n_defrag', kind: 'agent', key: 'memoryDefragmenter', label: 'Memory defragment', ports: { inputs: [], outputs: [] } }] } };
+  assert.equal(runModel(R({ stepper, steps: [row('n_defrag', 'start')], active: [live('n_defrag')] }), OPTS).barLine, null,
+    'nodes mode draws no stage names, so the line stays whole');
 });

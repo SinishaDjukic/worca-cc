@@ -77,7 +77,9 @@ test('§5.3 one model: list row, chat card and run page agree for every §2.1 st
     }
     assert.equal(card.line, page.line, 'card and page: the same status line');
     assert.equal(card.text, page.text, 'card and page: the same visible status text');
-    assert.equal(card.text, statusText(m).text);
+    assert.equal(card.text, statusText(m, { stageBar: row.bar }).text);
+    assert.doesNotMatch(card.text, /· step ·|^Step ·/, 'no bare "step" on any surface');
+    if (row.state === 'working') assert.equal(page.text, m.barLine ? `Working · ${m.barLine}` : 'Working', 'the bar names the stage');
     if (row.state !== 'waiting') assert.equal(list.line, m.line, 'list: the canonical line (data-line)');
     assert.deepEqual(card.actions, m.actions, 'card: the model actions, in order');
     assert.deepEqual(page.actions, m.actions, 'page: the model actions, in order');
