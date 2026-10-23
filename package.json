@@ -56,6 +56,7 @@
   ],
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning ui/server.mjs",
+    "stop": "node --disable-warning=ExperimentalWarning src/cli/worca-cc.mjs ui stop",
     "cli": "node --disable-warning=ExperimentalWarning src/cli/worca-cc.mjs",
     "install:agents": "node tools/install.mjs",
     "deck:sync": "node tools/deck-sync.mjs",

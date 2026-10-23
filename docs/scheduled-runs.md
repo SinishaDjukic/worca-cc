@@ -201,6 +201,10 @@ POST /api/run            + scheduledFor (ISO 8601 with offset or Z)      -> 202 
                          + ifMissed ("run"|"skip"), graceMin (0..10080)
 POST /api/run            + after { kind:"ticket"|"pipeline", id }, afterPolicy? ("done"|"any"), sourceFromPrevious?
                                                                           -> 202 { runId, status:"scheduled", after:{kind,id,title}, sourceFromPrevious }
+POST /api/schedules/resume  { pipelineId, scheduledFor | after, afterPolicy?, ifMissed?, graceMin?, engine? }
+                         resume a paused run at a time, or after another run ends (never both; a resume
+                         never waits on its own run or on a run that waits on it, and has no sourceFromPrevious)
+                                                                          -> 202 { runId, status:"scheduled", scheduledFor|after, resumePipelineId }
 GET    /api/schedules[?projectDir=|workspaceId=][&all=1]  -> { schedules, tickets, counts, defaults }
 GET    /api/schedules/:id                                 -> { kind, item, history, notifications }
 GET    /api/schedules/after-candidates?projectDir=|workspaceId=  -> { runs, tickets }

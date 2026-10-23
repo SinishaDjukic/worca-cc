@@ -30,6 +30,7 @@ export const SETTINGS_FIELD_LABELS = Object.freeze({
   titleModel: 'Title generation model',
   autoWorkflowModel: 'Auto workflow model',
   prDescriptionModel: 'PR description model',
+  autoGeneratePrDescription: 'Draft the PR description automatically',
   memoryDefrag: 'Defragment model',
   'memoryDefrag.model': 'Defragment model',
   'memoryDefrag.effort': 'Effort',

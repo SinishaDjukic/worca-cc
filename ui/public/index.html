@@ -934,7 +934,7 @@
                          off copyBranchToClipboard's own 1200ms `.copied` window. -->
                     <span class="rd-copied">Copied</span>
                     <!-- Sync before run (#527): shown only when the run has a Sync row; opens its log. -->
-                    <button type="button" class="btn rd-sync" hidden data-min-level="advanced" data-needs-git title="Show the Sync log"></button>
+                    <button type="button" class="btn btn-sm rd-sync" hidden data-min-level="advanced" data-needs-git title="Show the Sync log"></button>
                     <span class="rd-spacer"></span>
                   </div>
                 </header>
@@ -2281,6 +2281,21 @@
               </div>
               <div class="add-project-actions"><button type="button" class="btn btn-sm" id="act-reset">Reset</button>
                 <button type="button" class="btn btn-primary btn-sm" id="act-save">Save</button></div>
+            </section>
+
+            <section class="card settings-card" id="pr-settings-card" data-min-level="simple" data-needs-git>
+              <div class="card-head"><div class="label-row"><h2>Pull requests</h2></div></div>
+              <div class="drows">
+              <label class="field drow switch-drow" for="prAutoDescribe">
+                <span class="drow-label">Draft the PR description with AI automatically
+                  <button type="button" class="info-tip" aria-label="About drafting the PR description automatically">i<span class="tip-content hidden">Each time the Create PR dialog opens, Worca runs the PR description model to draft the description, as if you had pressed Generate with AI. You can stop it, edit the draft or generate again.</span></button>
+                </span>
+                <span class="drow-control"><input id="prAutoDescribe" data-setting="autoGeneratePrDescription" class="sw-input" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></span>
+              </label>
+              </div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="prSettingsSave" class="btn btn-primary btn-sm">Save</button>
+              </div>
             </section>
 
             <section class="card settings-card" id="ws-scan-models-card" data-min-level="advanced">
