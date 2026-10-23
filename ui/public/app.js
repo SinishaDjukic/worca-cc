@@ -23207,6 +23207,18 @@ function setShipItRemotesDisabled(modal, on) {
   for (const s of modal.querySelectorAll('.shipit-remotes select, .shipit-base-branch')) s.disabled = on;
 }
 
+// s4: Ship it's Watch PR starts from the project's 'Watch new pull requests' (cascade id watchNewPrs, default off).
+// Anything but a clear true is off: an unregistered project (404), a workspace key, a network error.
+async function shipItWatchDefault(projectKey) {
+  if (!projectKey || String(projectKey).startsWith('workspaces/')) return false;
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(projectKey)}/settings`);
+    if (!res.ok) return false;
+    const data = await safeJson(res);
+    return !!(data && data.effective && data.effective.watchNewPrs && data.effective.watchNewPrs.value === true);
+  } catch { return false; }
+}
+
 // Load the project's remotes into the two selects, and the base-branch choices into
 // the summary's pick. `isClosed` reports whether this generation's modal was already
 // torn down. On any failure (network, non-2xx, or a body without a `remotes` array —
@@ -23441,7 +23453,12 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
   cardAlert(card, null);
   resetShipItDesc(modal);
   q('.shipit-draft-input').checked = false;          // D1: draft is opt-in per ship, never remembered
-  q('.shipit-watch-input').checked = false;
+  // s4: Watch PR starts unchecked and turns on when the project's setting answers true (below, after the guard).
+  // A pick the user makes first wins.
+  const watchIn = q('.shipit-watch-input');
+  watchIn.checked = false;
+  let watchTouched = false;
+  watchIn.onchange = () => { watchTouched = true; };   // a property, not a listener: each open replaces the last
   // Shaper s4: the release row, opt-in per ship and never remembered (like draft); its hint comes with the remotes.
   const relSlot = q('.shipit-release');
   const relRow = relSlot ? renderReleaseRow(document, null) : null;
@@ -23621,6 +23638,11 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
   // The remote and base-branch picks this fetch fills in are the starting point, not a change. Not once
   // the user typed or pressed something meanwhile: re-baselining then would hide that edit.
   loadShipItRemotes(modal, record, gen, () => closed).then(() => { if (!closed && !guard.touched) guard.markClean(); });
+  shipItWatchDefault(record.projectKey).then((on) => {
+    if (!on || closed || watchTouched || gen !== shipItRemotesGen) return;
+    watchIn.checked = true;
+    if (!guard.touched) guard.markClean();             // the setting is the starting point, not a change
+  });
   paintShipItTry(modal, record, gen, () => closed);
   return true;
 }
@@ -23880,7 +23902,12 @@ function openShipItWsModal(record, data, { link = null, onClose = null } = {}) {
   const modal = document.getElementById('shipit-modal');
   if (!modal || !modal.classList.contains('hidden')) return false;
   const q = (sel) => modal.querySelector(sel);
-  q('.shipit-watch-input').checked = false;
+  // s4: Watch PR starts unchecked and turns on when the project's setting answers true (below, after the guard).
+  // A pick the user makes first wins.
+  const watchIn = q('.shipit-watch-input');
+  watchIn.checked = false;
+  let watchTouched = false;
+  watchIn.onchange = () => { watchTouched = true; };   // a property, not a listener: each open replaces the last
   // Shaper s4: a release is for a single-project run; a row left from an earlier single-run open is not posted.
   const ws = q('.shipit-release');
   if (ws) { ws.replaceChildren(); ws.hidden = true; }
@@ -23966,6 +23993,12 @@ function openShipItWsModal(record, data, { link = null, onClose = null } = {}) {
   // mid-batch it stops before the next repo, as before.
   const guard = guardModal(modal, { kind: 'form', close: done });
   guard.opened();
+  // s4 (D4): one switch for every PR in the batch: on only when every listed repository's project has the setting on.
+  Promise.all(rows.map((r) => shipItWatchDefault(r.member.memberKey))).then((ons) => {
+    if (!ons.length || !ons.every(Boolean) || closed || watchTouched || gen !== shipItRemotesGen) return;
+    watchIn.checked = true;
+    if (!guard.touched) guard.markClean();
+  });
   const onCancel = () => guard.cancel();
 
   // Sequential per repo. A failure never rolls back an opened PR; the failed rows stay

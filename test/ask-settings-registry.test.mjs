@@ -354,6 +354,22 @@ test('refine cycle 3: a project-only setting\'s refusal names what it takes, nev
   assert.equal(ok.ok, true, 'a good value still passes');
 });
 
+test('s4: watchNewPrs is listed as "Watch new pull requests" and refuses a non-boolean', async () => {
+  const { assertProjectSettingsPatch } = await import('../src/core/settings-cascade.mjs');
+  const reg = createSettingsRegistry({
+    projectSettingIds: () => ['watchNewPrs'],
+    resolveSetting: () => ({ value: false, source: 'default', layers: { project: undefined, user: undefined, team: undefined, default: false } }),
+    assertProjectSettingsPatch: (patch, o) => assertProjectSettingsPatch(patch, o),
+    projects: async () => [PROJECT],
+  });
+  const out = await reg.list({ scope: 'project', projectKey: PROJECT.key });
+  assert.deepEqual(out.settings.map((r) => [r.id, r.label, r.value]), [['watchNewPrs', 'Watch new pull requests', 'Off (inherited)']]);
+  const bad = await reg.check({ id: 'watchNewPrs', scope: 'project', projectKey: PROJECT.key, value: 'yes' });
+  assert.equal(bad.ok, false);
+  assert.equal(bad.error, 'watchNewPrs must be true or false');
+  assert.equal((await reg.check({ id: 'watchNewPrs', scope: 'project', projectKey: PROJECT.key, value: true })).ok, true);
+});
+
 test('refine cycle 3: one card applied twice (two tabs pressed Create at once) keeps one link per pull request', () => {
   const card = { type: 'pull-request', pipelineId: 'aaaa0001' };
   const first = prCardResult({ state: 'proposed', card }, { url: 'https://x/pull/7', draft: true, existed: false });

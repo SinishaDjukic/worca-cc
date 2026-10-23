@@ -2883,12 +2883,14 @@
           </div>
           <div class="shipit-desc-err hint err" hidden></div>
         </div>
-        <!-- Draft is opt-in per ship (unchecked on every open). No data-min-level: the
+        <!-- Draft is opt-in per ship (unchecked on every open); Watch PR starts from the project's Watch new
+             pull requests setting (s4). No data-min-level: the
              controls show wherever the modal does (docs/ui-levels.md, History). The
              "Will close" line names the run's GitHub issue source (GET /api/pr/remotes `issue`). -->
         <div class="shipit-draft">
           <label class="switch-row" for="shipit-draft-input"><input id="shipit-draft-input" class="sw-input shipit-draft-input" type="checkbox" role="switch" /><span class="switch" aria-hidden="true"></span><span class="switch-label">Open as draft</span></label>
-          <label class="switch-row" for="shipit-watch-input"><input id="shipit-watch-input" class="sw-input shipit-watch-input" type="checkbox" role="switch" /><span class="switch" aria-hidden="true"></span><span class="switch-label">Watch PR</span></label>
+          <label class="switch-row" for="shipit-watch-input"><input id="shipit-watch-input" class="sw-input shipit-watch-input" type="checkbox" role="switch" aria-describedby="shipit-watch-help" /><span class="switch" aria-hidden="true"></span><span class="switch-label">Watch PR</span></label>
+          <small id="shipit-watch-help" class="hint shipit-watch-help">Start a fix run when checks fail or a reviewer asks for changes</small>
           <small class="shipit-closes hint" hidden></small>
         </div>
         <!-- Shaper s4: the release row (shape/release-row.mjs), collapsed on every open like the draft box; the
