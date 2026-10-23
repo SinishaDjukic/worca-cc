@@ -231,9 +231,8 @@ test('chat run card controls: Pause / Resume / Stop through `controls`, disabled
       assert.deepEqual(resumed, [$('.chat-rc-pause')]);
       card.update(live({ status: 'interrupted', active: [] }));
       assert.equal($('.chat-rc-pause').textContent, 'Resume');
-      assert.equal($('.chat-rc-stop').hidden, false, 'the model lists Stop for a parked run');
-      assert.equal($('.chat-rc-stop').disabled, true, 'an interrupted run is never stoppable');
-      assert.equal($('.chat-rc-stop').title, 'An interrupted run cannot be stopped');
+      assert.equal($('.chat-rc-stop').hidden, true, 'an interrupted run is never stoppable: the model offers Archive instead');
+      assert.ok($('.chat-rc [data-model-action="archive"]'), 'Archive takes an interrupted run');
     } },
     { name: 'a run this tab holds no live model of (a REST snapshot) offers Stop only while paused: /api/stop {pipelineId} stops a paused row, never a run another process drives', run: async () => {
       const { card, $ } = mk();
@@ -1808,9 +1807,9 @@ test('slice 4: before the first snapshot the card reads Starting with no actions
 test('slice 4: paused, then stopped and resumable: a made Resume, the old button stays hidden; Stop re-enables', () => {
   const { card, $ } = mk({ controls: { memoFor: () => ({}), groupOf: () => null } });
   card.update(live({ status: 'interrupted' }));
-  assert.equal($('.chat-rc [data-model-action="stop"]').disabled, true);
+  assert.equal($('.chat-rc [data-model-action="stop"]:not([hidden])'), null, 'an interrupted run lists no Stop');
   card.update(live({ status: 'paused' }));
-  assert.equal($('.chat-rc [data-model-action="stop"]').disabled, false, 'the interrupted reason went');
+  assert.equal($('.chat-rc [data-model-action="stop"]').disabled, false, 'a paused run stops');
   card.update(live({ status: 'stopped', run: { status: 'stopped', resumable: true } }));
   assert.equal($('.chat-rc .chat-rc-pause').hidden, true, 'its paused-run action was cleared');
   assert.equal($('.chat-rc .chat-rc-actions > button[data-model-action="resume"]:not(.chat-rc-pause)').textContent, 'Resume');

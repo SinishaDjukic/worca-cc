@@ -272,6 +272,19 @@ test('§5.3 boot: the finished page owns its Resume for a resumable paused row, 
       assert.deepEqual(shown, ['archive']);
       assert.equal(end.querySelector('.hd-resume').hidden, true);
     } },
+    { name: 'interrupted, resumable: Resume and Archive, never Stop; Archive asks first and says it can\'t resume', run: async () => {
+      const { ctx, end, doc } = await finishedPage({ row: { ...hd.ROW, status: 'interrupted' },
+        detail: { ...hd.DETAIL, state: { ...hd.DETAIL.state, status: 'interrupted', resumable: true } } });
+      const shown = [...end.querySelectorAll('[data-model-action]')].filter((b) => !b.hidden).map((b) => b.dataset.modelAction);
+      assert.deepEqual(shown.sort(), ['archive', 'resume']);
+      end.querySelector('[data-model-action="archive"]').click();
+      await hd.settle(ctx.window, 6);
+      const modal = doc.getElementById('confirm-modal');
+      assert.equal(modal.classList.contains('hidden'), false, 'Archive asks first');
+      assert.match(modal.textContent, /interrupted run can't be resumed afterwards/);
+      doc.getElementById('confirm-cancel').click();
+      await hd.settle(ctx.window, 4);
+    } },
     { name: 'failed: the saved state\'s ledger gives the card\'s line (stage and failed step), not a bare "Failed"', run: async () => {
       const failed = RUN_STATE_ROWS.find((r) => r.state === 'failed').run;
       const { doc } = await finishedPage({ row: { ...hd.ROW, status: 'error' },
