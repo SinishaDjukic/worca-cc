@@ -51,19 +51,9 @@ test('routes while git is missing', async (t) => {
       for (const [m, p] of T.GIT_ONLY_ROUTES) assert.ok(layers.filter((l) => l.route.path === p && l.route.methods[m]).length >= 2, `${m} ${p}`);
     } },
     { name: 'every non-U2a table entry: 409 GIT_MISSING', run: async () => {
-      for (const [m, p] of T.GIT_ONLY_ROUTES.filter(([m, p]) => !U2A_TABLE.has(`${m} ${p}`) && !p.startsWith('/api/requirements/'))) {
+      for (const [m, p] of T.GIT_ONLY_ROUTES.filter(([m, p]) => !U2A_TABLE.has(`${m} ${p}`))) {
         const r = await send(m, fill(p));
         assert.equal(r.status, 409, `${m} ${p}`); assert.deepEqual(await r.json(), BODY, `${m} ${p}`);
-      }
-    } },
-    // Requirements entries sit behind the `requirements` flag (off here): the flag's 404 comes first, so a machine
-    // without git does not show that the routes exist (test/requirements-git-missing.test.mjs: 409 with the flag on).
-    { name: 'requirements entries with their flag off: 404, never GIT_MISSING', run: async () => {
-      const req = T.GIT_ONLY_ROUTES.filter(([, p]) => p.startsWith('/api/requirements/'));
-      assert.equal(req.length, 2);
-      for (const [m, p] of req) {
-        const r = await send(m, fill(p));
-        assert.equal(r.status, 404, `${m} ${p}`); assert.notEqual((await r.json()).code, 'GIT_MISSING', `${m} ${p}`);
       }
     } },
     { name: 'U2a routes: sources off GitHub still 409 without git', run: async () => {

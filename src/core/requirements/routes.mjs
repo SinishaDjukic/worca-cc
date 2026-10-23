@@ -2,7 +2,7 @@
 // /api/requirements/* (plans/requirements-design.md §5). One registration call from ui/server.mjs; every
 // route in REQUIREMENTS_ROUTES is behind the `requirements` flag (404 while off), and so is the change frame.
 import { requireFlag, flagEnabled } from '../flags.mjs';
-import { gitAvailable } from '../git-available.mjs';
+import { gitAvailable, GIT_MISSING } from '../git-available.mjs';
 import { actorOf } from '../identity.mjs';
 import { listProjects } from '../projects.mjs';
 import { workspaceTarget } from '../ask/workflow-deps.mjs';
@@ -47,6 +47,13 @@ export const REQUIREMENTS_ROUTES = Object.freeze([
   ['GET', `${P}/:seq/markdown`], ['POST', `${P}/:seq/save`],
   ['POST', `${P}/:seq/start`], ['POST', `${P}/:seq/revert`],
 ].map(([method, path]) => Object.freeze({ method, path })));
+
+/** The routes whose whole purpose is git (making or refreshing a product brief, Look closer / Look again check out
+ *  the code): while git is missing they answer like upstream's GIT_ONLY_ROUTES (ui/server.mjs), 409 GIT_MISSING, but
+ *  after the flag's gate, so with the flag off they answer its 404. Creating a feature is not here: without git its
+ *  automatic look is skipped (interview.mjs orient). */
+export const REQUIREMENTS_GIT_ROUTES = Object.freeze([`POST ${P}/brief/:scopeType/:scopeKey`, `POST ${P}/:seq/look`]);
+const needsGit = (_req, res, next) => (gitAvailable() ? next() : res.status(409).json({ error: GIT_MISSING.message, code: GIT_MISSING.code }));
 
 /** The change hook every requirements change goes through: a `requirements-changed` frame, only while the
  *  flag is on (read at send time, so turning the flag off silences jobs already running). */
@@ -438,5 +445,8 @@ export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
   const keys = REQUIREMENTS_ROUTES.map((r) => `${r.method} ${r.path}`);
   const odd = [...keys.filter((k) => !handlers[k]), ...Object.keys(handlers).filter((k) => !keys.includes(k))];
   if (odd.length) throw new Error(`requirements routes: the table and the handlers differ (${odd.join(', ')})`);
-  for (const { method, path } of REQUIREMENTS_ROUTES) app[method.toLowerCase()](path, gate, handle(handlers[`${method} ${path}`]));
+  for (const { method, path } of REQUIREMENTS_ROUTES) {
+    const key = `${method} ${path}`;
+    app[method.toLowerCase()](path, gate, ...(REQUIREMENTS_GIT_ROUTES.includes(key) ? [needsGit] : []), handle(handlers[key]));
+  }
 }

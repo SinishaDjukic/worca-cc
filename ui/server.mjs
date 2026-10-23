@@ -1681,13 +1681,8 @@ const GIT_ONLY_ROUTES = Object.freeze([
   ['post', '/api/runs/:id/resolve-pipeline'], ['post', '/api/runs/:id/resolve-terminal'],
   ['post', '/api/runs/:id/apply-retained'], ['post', '/api/runs/:id/discard-worktree'],
   ['post', '/api/workspaces/import-candidates'],   // the wizard's Add… / paste box: `git rev-parse` on every path
-  // Requirements (behind its flag): making or refreshing a product brief and Look closer / Look again check out the
-  // code with git. Creating a feature is not here: without git its automatic look is skipped (interview.mjs orient).
-  ['post', '/api/requirements/brief/:scopeType/:scopeKey'], ['post', '/api/requirements/:seq/look'],
 ]);
-// A requirements entry passes through while its flag is off, so requireFlag answers 404 first (the routes stay unseen).
-const behindOffFlag = (route) => route.startsWith('/api/requirements/') && !flagEnabled('requirements');
-for (const [method, route] of GIT_ONLY_ROUTES) app[method](route, (_req, res, next) => (gitAvailable() || behindOffFlag(route) ? next() : gitMissing(res)));
+for (const [method, route] of GIT_ONLY_ROUTES) app[method](route, (_req, res, next) => (gitAvailable() ? next() : gitMissing(res)));
 
 if (HLJS_ASSETS) {
   const sendHljsModule = (file) => (_req, res, next) => {

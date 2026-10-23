@@ -1,6 +1,7 @@
 // test/requirements-git-missing.test.mjs — Requirements with git missing (upstream's P0 contract, as
 // test/git-missing-routes.test.mjs checks it for its own routes): the product brief's Create / Refresh and Look closer /
-// Look again are GIT_ONLY_ROUTES entries and answer 409 GIT_MISSING; creating a feature still works and its automatic
+// Look again (REQUIREMENTS_GIT_ROUTES, gated in the router after the flag) answer 409 GIT_MISSING with upstream's body,
+// and the flag's 404 while it is off; creating a feature still works and its automatic
 // look is skipped as "no git" (no checkout, no call); with git back the routes reach their handlers again.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,7 +14,7 @@ import { _testing as cap } from '../src/core/git-available.mjs';
 import { withNoGit, gitArrives } from './helpers/git-off.mjs';
 
 const BODY = { error: 'git is not installed on this machine', code: 'GIT_MISSING' };
-const GIT_ONLY = [['post', '/api/requirements/brief/:scopeType/:scopeKey'], ['post', '/api/requirements/:seq/look']];
+const GIT_ONLY = ['POST /api/requirements/brief/:scopeType/:scopeKey', 'POST /api/requirements/:seq/look'];
 let home, app, srv, base, prev, T, projKey;
 before(async () => {
   home = await mkdtemp(join(tmpdir(), 'worca-req-nogit-'));
@@ -49,13 +50,20 @@ test('requirements while git is missing', async (t) => {
   withNoGit(t);
   let seq;
   await checkRows([
-    { name: 'the brief and the look are GIT_ONLY_ROUTES entries, each shadowing a real handler', run: () => {
-      const have = new Set(T.GIT_ONLY_ROUTES.map(([m, p]) => `${m} ${p}`));
-      const layers = app._router.stack.filter((l) => l.route);
-      for (const [m, p] of GIT_ONLY) {
-        assert.ok(have.has(`${m} ${p}`), `${m} ${p} in the table`);
-        assert.ok(layers.filter((l) => l.route.path === p && l.route.methods[m]).length >= 2, `${m} ${p} shadows a handler`);
-      }
+    { name: "the brief and the look are the router's git routes; upstream's GIT_ONLY_ROUTES has no requirements entry", run: async () => {
+      const { REQUIREMENTS_GIT_ROUTES } = await import('../src/core/requirements/routes.mjs');
+      assert.deepEqual([...REQUIREMENTS_GIT_ROUTES], GIT_ONLY);
+      assert.deepEqual(T.GIT_ONLY_ROUTES.filter(([, p]) => p.startsWith('/api/requirements')), []);
+    } },
+    { name: 'the flag off: both answer its 404, never GIT_MISSING', run: async () => {
+      const was = process.env.WORCA_FLAGS;
+      process.env.WORCA_FLAGS = '';
+      try {
+        for (const [method, path] of [['POST', `/api/requirements/brief/project/${projKey}`], ['POST', '/api/requirements/1/look']]) {
+          const r = await call(method, path, {});
+          assert.equal(r.status, 404, path); assert.notEqual(r.json && r.json.code, 'GIT_MISSING', path);
+        }
+      } finally { process.env.WORCA_FLAGS = was; }
     } },
     { name: 'creating a feature still works: the look is skipped for git and the interview goes on', run: async () => {
       const c = await call('POST', '/api/requirements', { scopeType: 'project', scopeKey: projKey, title: 'Cancel order', description: 'Before it ships' });
