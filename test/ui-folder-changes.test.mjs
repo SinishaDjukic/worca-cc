@@ -146,6 +146,7 @@ test('Apply to folder dialog (board 10): the folder, Add / Update / Delete, the 
   assert.equal(doc.getElementById(modal.getAttribute('aria-labelledby')).textContent, 'Apply to folder');
   const go = modal.querySelector('.fc-go');
   assert.deepEqual([go.textContent, go.disabled], ['Apply to folder', true], 'nothing to apply until the plan lands');
+  assert.ok(modal.querySelector('.fc-dlg.dlg > .dlg-head .fc-dlg-title') && modal.querySelector('.fc-dlg.dlg > .dlg-body .fc-plan') && modal.querySelector('.fc-dlg.dlg > .dlg-foot .fc-go'), 'the shared dialog anatomy');
   assert.equal(modal.querySelector('.fc-loading').textContent, 'Loading…');
   await tick(); await tick();
   assert.equal(modal.querySelector('.fc-loading'), null);

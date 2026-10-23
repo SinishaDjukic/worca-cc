@@ -317,6 +317,7 @@ test('openSyncDialog: rows, commits as text, Escape/scrim close with focus retur
       assert.ok(dlg.classList.contains('sync-modal'));
       assert.equal(dlg.getAttribute('aria-labelledby'), 'sync-dlg-title');
       assert.ok(dlg.querySelector('.card.sync-card'));
+      assert.ok(dlg.querySelector('.sync-card.dlg > .dlg-head #sync-dlg-title') && dlg.querySelector('.sync-card.dlg > .dlg-foot .sync-go'), 'the shared dialog anatomy');
       const dts = [...dlg.querySelectorAll('.sync-kv dt')].map((n) => n.textContent);
       assert.deepEqual(dts, ['Local base', 'origin/dev', 'Behind / ahead', 'Last fetched', 'Remote', 'Working tree', 'Auto-sync']);
       const li = dlg.querySelector('.sync-commits li');
@@ -373,6 +374,7 @@ test('chooseSyncRefusal: diverged → origin; forbidden → Cancel only; fetch-f
   let p = chooseSyncRefusal({ code: 'sync-diverged', options: ['origin', 'cancel'], members });
   let m = w.document.querySelector('.sync-modal');
   assert.ok(m.querySelector('.qpanel'));
+  assert.ok(m.querySelector('.qpanel.dlg > .dlg-head #sync-refusal-title') && m.querySelector('.qpanel.dlg > .dlg-body .qtext') && m.querySelector('.qpanel.dlg > .dlg-foot .btn'), 'the shared dialog anatomy, one level down');
   assert.equal(m.querySelector('.qopt'), null);
   assert.match(m.textContent, /dev has diverged from origin\/dev \(1 ahead, 2 behind\)\./);
   const go = [...m.querySelectorAll('button')].find((b) => b.textContent === 'Start from origin/dev');

@@ -1733,6 +1733,73 @@ dialog.discard-modal::backdrop{background:transparent;}
 #viewer-card.is-full .artifact-view.kind-c4 worca-c4{height:100%;}
 #viewer-card.is-full .artifact-view iframe{aspect-ratio:auto;height:100%;}
 #viewer-card.is-full .artifact-view embed{height:100%;}
+/* ---------- Dialog anatomy (dialog-layout.mjs; docs/design-system.md › Modals) ---------- */
+/* Opt-in: a .viewer-modal card with .dlg is a column that never scrolls. .dlg-head and .dlg-foot stay put;
+   .dlg-body is the ONE scroller. All three bleed over the card's 24px side padding (the body's scrollbar sits
+   on the card edge, content keeps the 24px inset); the card padding itself stays 24px (dialog-sizes check).
+   Regions are flex items, so margins no longer collapse across them: the edge margins are zeroed and each
+   seam is the body's padding, --dlg-gap-head / --dlg-gap-foot (the old collapsed margin; per-dialog below).
+   Head and foot paint no background, so the card's rounded corners stay clean. (0,3,0): beats
+   `.viewer-modal .card` and the class-only per-dialog rules; id rules must not set overflow. */
+.viewer-modal .card.dlg{display:flex;flex-direction:column;overflow:hidden;}
+.dlg{--dlg-gap-head:18px;--dlg-gap-foot:14px;}
+.dlg-head,.dlg-foot{flex:none;min-width:0;position:relative;z-index:1;margin-inline:calc(-1 * var(--pad-card));padding-inline:var(--pad-card);}
+.dlg-body{flex:1 1 auto;min-height:0;overflow:auto;margin-inline:calc(-1 * var(--pad-card));padding:var(--dlg-gap-head) var(--pad-card) var(--dlg-gap-foot);}
+.dlg-body:first-child{padding-top:0;}
+.dlg-body:last-child{padding-bottom:0;}
+.dlg-head > :nth-last-child(1 of :not(.hidden,[hidden],:empty)),.dlg-body > :nth-last-child(1 of :not(.hidden,[hidden],:empty)){margin-bottom:0;}
+.dlg-body > :nth-child(1 of :not(.hidden,[hidden],:empty)),.dlg-foot > :nth-child(1 of :not(.hidden,[hidden],:empty)){margin-top:0;}
+/* An empty status line in the foot (#proj-add-msg and kin) shows nothing, so its margin must open no gap either. */
+.dlg-foot > :empty{margin-top:0;}
+/* The edge dividers: shown only while content is scrolled under that edge (dialog-layout.mjs syncDialogEdges). */
+.dlg-head::after,.dlg-foot::before{content:"";position:absolute;left:0;right:0;height:1px;background:var(--line);opacity:0;transition:opacity .12s ease;pointer-events:none;}
+.dlg-head::after{bottom:-1px;}
+.dlg-foot::before{top:-1px;}
+.dlg[data-under-head] > .dlg-head::after,.dlg[data-under-foot] > .dlg-foot::before{opacity:1;}
+/* Per-dialog seams: the checkpoint's collapsed margin (the larger of the two that met), less any margin a nested
+   last/first child still carries inside the body (it no longer collapses through the body's edge). Measured
+   against 48961258: card heights match within 1px. */
+#confirm-modal .card.dlg,.discard-modal .card.dlg,#project-git-modal .card.dlg{--dlg-gap-foot:18px;}
+#scan-model-modal .card.dlg,#project-add-modal .card.dlg{--dlg-gap-foot:0px;}   /* the last .field keeps its 18px */
+#project-add-modal .card.dlg{--dlg-gap-head:12px;}
+#project-add-modal .dlg-body > .proj-add-git{margin-bottom:14px;}   /* New/Folder end on the Use git row, which has no margin of its own */
+#export-modal .card.dlg{--dlg-gap-head:6px;--dlg-gap-foot:0px;}   /* .export-field 12px and #export-msg 18px sit inside #export-form */
+.report-modal .card.dlg{--dlg-gap-head:31px;}   /* the old sticky head's 14px padding + 1px rule + 16px margin */
+.ob-claude.dlg{--dlg-gap-foot:22px;}
+.shipit-card.dlg{--dlg-gap-foot:22px;}
+.publish-card.dlg{--dlg-gap-head:16px;--dlg-gap-foot:22px;}
+.stop-card.dlg{--dlg-gap-head:12px;--dlg-gap-foot:22px;}
+#mode-modal .card.dlg{--dlg-gap-head:16px;--dlg-gap-foot:16px;}
+.ob-welcome.dlg{--dlg-gap-head:12px;--dlg-gap-foot:16px;}
+.mv-editor.dlg{--dlg-gap-head:14px;}
+.sched-card.dlg:has(> .dlg-head > .sched-run-title){--dlg-gap-head:16px;}
+.sync-card.dlg:has(> .dlg-head > .sync-sub){--dlg-gap-head:0px;}   /* the subtitle sat flush on the status pill */
+/* The apply dialog spaced its direct children with a 16px column gap; the card gap now separates the regions,
+   and each region keeps the same gap inside. */
+.confirm-modal .fc-dlg.dlg{--dlg-gap-head:0px;--dlg-gap-foot:0px;}   /* (0,3,0): the short-window 10px must not reach it */
+.fc-dlg > :is(.dlg-head,.dlg-body,.dlg-foot){display:flex;flex-direction:column;gap:16px;}
+/* The artifact viewer's full-screen card already fills the screen; its body hands the height on. */
+#viewer-card.is-full .card.dlg{--dlg-gap-head:0px;}
+#viewer-card.is-full .dlg-body{display:flex;flex-direction:column;overflow:hidden;}
+/* The sync refusal: the amber .qpanel is the column one level down; its own 16px side padding is the bleed. */
+.viewer-modal .card:has(> .qpanel.dlg){display:flex;flex-direction:column;overflow:hidden;}
+.qpanel.dlg{--pad-card:16px;--dlg-gap-head:12px;--dlg-gap-foot:14px;display:flex;flex-direction:column;min-height:0;}
+/* A nested .card inside a body (the plugin wizard's .grv-editor.card) never scrolls on its own. */
+.viewer-modal .dlg-body .card{max-height:none;overflow:visible;}
+/* Short windows: the head stays pinned but shrinks so the body keeps room (clarify: shrink the hero, tighten
+   spacing, keep icon + title + subtitle). After the per-dialog seams, so it wins by source order. */
+@media (max-height:640px){
+  .viewer-modal{padding:12px 24px;}
+  .viewer-modal .card.dlg{max-height:calc(100dvh - 24px);}
+  .viewer-modal .dlg{--dlg-gap-head:10px;}
+  .dlg .shipit-ico-wrap{width:48px;height:48px;}
+  .dlg .shipit-ico{width:40px;height:40px;}
+  .dlg .shipit-ico svg{width:20px;height:20px;}
+  .shipit-card.dlg h2{margin-top:10px;}
+  .dlg .shipit-sub{margin-top:4px;}
+  .dlg .ob-hero{max-height:88px;margin:4px 0 8px;}
+}
+@media (prefers-reduced-motion: reduce){.dlg-head::after,.dlg-foot::before{transition:none;}}
 /* folder browser modal (native-dialog fallback). Must come AFTER the
    .viewer-modal rules: `.folder-modal .card` ties with `.viewer-modal .card`
    on specificity, so source order is what lets these declarations win. */
@@ -2811,7 +2878,7 @@ button.pd-ov-card:hover{border-color:var(--ink-3);}
 .pl-manifest-delta{margin:8px 0;}
 .pl-delta{font-size:12px;}
 .pl-delta-secret{font-size:12px;font-weight:700;color:var(--red-ink);background:var(--red-bg);border-radius:var(--r-sm);padding:3px 8px;margin:2px 0;display:inline-block;}
-#plugin-modal .card{max-width:640px;width:min(92vw,640px);max-height:80vh;overflow:auto;}
+#plugin-modal .card{max-width:640px;width:min(92vw,640px);max-height:80vh;}
 
 /* ---- Pluggable source pane (New Pipeline) ---- */
 .sp-pane{margin-top:11px;}
@@ -3668,7 +3735,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 
 /* Model editor dialog (app.js openModelEditorDialog; configurable-models-design.md §4.10). The
    editor renders its own .card, so the host only sizes and scrolls it. */
-.mv-editor-host{width:min(880px,100%);max-height:86vh;overflow:auto;}
+.mv-editor-host{width:min(880px,100%);}
 .mv-editor-host .mv-editor{margin:0;}
 
 /* Catalog toolbar and folding groups (models-view.mjs renderModelsList). */
@@ -4451,7 +4518,7 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 
 /* Workspace Ship-it: one row per affected member repo (tick box, branch → base,
    its own remotes, its own status line). Every node the JS hides has a [hidden] twin. */
-.shipit-repos{display:grid;gap:10px;margin-top:14px;max-height:50vh;overflow:auto;text-align:left;}
+.shipit-repos{display:grid;gap:10px;margin-top:14px;text-align:left;}
 .shipit-repos[hidden]{display:none;}
 .shipit-repo{display:grid;gap:6px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-sm);}
 .shipit-repo-head{display:flex;align-items:center;gap:8px;cursor:pointer;}
@@ -4471,7 +4538,7 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 #publish-modal .card{width:min(520px,100%);padding:24px;}
 .publish-card h2{margin:0;font:700 18px/1.25 var(--sans);letter-spacing:-.015em;}
 .publish-sub{margin:8px 0 0;font:400 13px/1.6 var(--sans);color:var(--ink-2);}
-.publish-repos{display:grid;gap:10px;margin-top:16px;max-height:50vh;overflow:auto;text-align:left;}
+.publish-repos{display:grid;gap:10px;margin-top:16px;text-align:left;}
 .publish-repo{display:grid;gap:12px;padding:14px;background:var(--field);border-radius:var(--r-ctrl);}
 .publish-repo-head{display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--ink);word-break:break-all;}
 .publish-pick[hidden],.publish-remote-wrap[hidden],.publish-status[hidden]{display:none;}
@@ -6666,7 +6733,8 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .ob-door-icon svg{width:19px;height:19px;}
 .ob-door-arrow{margin-left:auto;color:var(--ink-2);font-size:18px;line-height:1;}
 @media (max-width:760px){
-  .ob-welcome{max-height:calc(100dvh - 24px);overflow:auto;}
+  .viewer-modal .card.dlg.ob-welcome{max-height:calc(100dvh - 24px);}
+  .dlg .ob-hero{max-height:30vh;}
   .ob-door{min-height:44px;}
   .ob-headline{font-size:18px;}
 }
@@ -7556,24 +7624,9 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 /* ---- Report this run modal ---- */
 /* Wider than a confirm (it carries a JSON preview), narrower than the viewer. */
 .report-modal .card{width:min(680px,100%);}
-/* Every action lives in a sticky header instead of at the foot of a scrolling card.
-   The card is the scroll container (.viewer-modal .card{overflow:auto}), so `top:0`
-   sticks to its padding edge; the negative margins pull the block out over the card's
-   24px padding so its opaque background covers the full width AND the strip above it,
-   which the JSON preview would otherwise scroll through. The radius keeps it from
-   painting square corners over the card's rounded ones. */
-/* top:-24px, not 0. A sticky element clamps at the SCROLLPORT's top inset, which for
-   this card is its padding edge — 24px below the border. At top:0 the block pins there
-   and the 24px strip above it stays transparent, so the form scrolls through it in
-   plain sight (measured over CDP: the opt-in labels showed above the title). Pulling
-   the inset up by exactly the card's padding pins the block flush to the border edge
-   instead, where its own background covers the strip. */
-.report-modal .report-top{position:sticky;top:-24px;z-index:2;background:var(--panel);
-  margin:-24px -24px 16px;padding:24px 24px 14px;border-bottom:1px solid var(--line);
-  border-radius:var(--r-card) var(--r-card) 0 0;}
-/* The error/filed slots carry their own top margin, and the header's padding closes
-   the block — a margin here would only add a gap when both are hidden, which is most
-   of the time. */
+/* The error/filed slots carry their own top margin, and the body's seam padding
+   (--dlg-gap-head) closes the head — a margin here would only add a gap when both are
+   hidden, which is most of the time. */
 .report-modal .report-top .card-head{margin-bottom:0;}
 .report-head-actions{display:flex;align-items:center;gap:9px;}
 /* Wrap rather than overflow the 680px card on a narrow window. */
