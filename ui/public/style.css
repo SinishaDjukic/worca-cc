@@ -4962,7 +4962,7 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .rd-track-dot.is-pulse{animation:wr-pulse 1.6s ease-in-out infinite;}
 .rd-track-label{font-size:var(--fs-meta);color:var(--ink);white-space:nowrap;}
 .rd-track-step.is-current .rd-track-label{font-weight:600;}
-.rd-track-step.is-future .rd-track-label{color:var(--ink-3);}
+.rd-track-step.is-future .rd-track-label{color:var(--ink-2);}   /* --ink-3 is 2.8:1 on the panel in light */
 .rd-track-step.is-closed .rd-track-label{text-decoration:line-through;color:var(--ink-2);}
 .rd-track-line{flex:1;min-width:12px;height:1px;margin-right:8px;background:var(--line-2);}
 .rd-track-line.is-done{background:var(--green);}
