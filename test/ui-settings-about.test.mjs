@@ -61,14 +61,29 @@ const vOutdated = () => ({ current: PAINTED_VERSION, latest: '10.0.0', status: '
 const vLatest = () => ({ ...vOutdated(), latest: PAINTED_VERSION, status: 'up-to-date', links: { releaseNotes: 'https://docs.worca.dev/changelog/', whatsNew: '', compare: '' } });
 const vSource = () => ({ ...vLatest(), latest: null, status: 'source', checkedAt: null });
 
-async function boot({ settings = okSettings, version = () => null } = {}) {
+// GET /api/app/update fixtures (issue #841: manual update).
+const uEligible = { canUpdate: true, reason: null, message: '', distTags: { latest: '10.0.0', rc: null }, autoRestartMin: '1.14.0', startCommand: 'worca ui', lastResult: null };
+const uShared = { ...uEligible, canUpdate: false, reason: 'shared', message: 'Updates are turned off on a shared install. Whoever runs this Worca updates it.' };
+const uNotSupervised = { ...uEligible, canUpdate: false, reason: 'not-supervised', message: 'This Worca was not started with worca ui, so it cannot restart itself. Update from a terminal:' };
+const uFailed = { ...uEligible, lastResult: { state: 'failed', from: PAINTED_VERSION, to: '10.0.0', reason: 'npm could not write to /usr/local/lib/node_modules (EACCES)', output: 'npm error code EACCES', resumed: 2 } };
+const uSource = { ...uEligible, canUpdate: false, reason: 'source', message: 'Run from a git checkout: update with git pull, then worca ui restart.' };
+
+async function boot({ settings = okSettings, version = () => null, update, versions } = {}) {
   const calls = [];
+  const json = (b, status = 200) => Promise.resolve({ ok: status < 300, status, json: async () => b });
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
   window.fetch = (url, init = {}) => {
     const u = String(url);
+    if (u.includes('/api/app/update') || u.includes('/api/health')) calls.push({ url: u, method: init.method || 'GET', body: init.body });
+    if (u.includes('/api/health')) return json({ name: '@worca/app', startedAt: 'boot-a' });
+    if (u.includes('/api/app/update/versions')) return json(versions ?? { current: PAINTED_VERSION, distTags: { latest: '10.0.0', rc: null }, versions: [] });
+    if (u.includes('/api/app/update/preview')) return json({ target: '10.0.0', autoRestart: true, autoResume: true, startCommand: 'worca ui', runs: [], scheduled: [] });
+    if (u.includes('/api/app/update/dismiss')) return json({ ok: true });
+    if (u.includes('/api/app/update') && init.method === 'POST') return json({ ok: true, target: '10.0.0', autoRestart: true, startCommand: 'worca ui' }, 202);
+    if (u.includes('/api/app/update')) return update === null ? json({ error: 'off' }, 503) : json(update ?? uEligible);
     if (u.includes('/api/app/version')) {
       calls.push({ url: u, method: init.method || 'GET', body: init.body });
       const v = version(u);
@@ -216,14 +231,15 @@ test('About shows Latest, Update available + links, or nothing, from GET /api/ap
   ]);
 });
 
-test('the About card: anchors carry target/rel, and the only controls are the update switch and Check now', () => {
+test('the About card: anchors carry target/rel, and the controls are the update switch, Check now and the update row', () => {
   const card = settingsView().querySelector('#about-card');
   for (const a of card.querySelectorAll('a')) {
     assert.equal(a.getAttribute('target'), '_blank', a.id);
     assert.equal(a.getAttribute('rel'), 'noopener noreferrer', a.id);
   }
   const controls = [...card.querySelectorAll('button, input, select, textarea')].map((n) => n.id).sort();
-  assert.deepEqual(controls, ['aboutCheckNow', 'aboutUpdateCheck']);
+  assert.deepEqual(controls, ['aboutCheckNow', 'aboutUpdateCheck', 'aboutUpdateChoose', 'aboutUpdateCopy',
+    'aboutUpdateDismiss', 'aboutUpdateFailedCopy', 'aboutUpdateGo'].sort());
   assert.equal(card.querySelector('.hint, .info-tip'), null, 'still no hint and no info-tip');
   assert.equal(card.querySelector('#aboutUpdateCheck').checked, true, 'the markup default matches the server default (on)');
 });
@@ -369,4 +385,76 @@ test('paintVersionStatusInto / paintUpdateMarkerInto: malformed payloads read as
       },
     })),
   ]);
+});
+
+// Manual update (issue #841): the Update row per eligibility, the failed callout, and the confirm → POST flow.
+test('outdated + eligible → "Update to 10.0.0" enabled, Choose version shown, no command', async () => {
+  const { $, openSettings, tick } = await boot({ version: vOutdated, update: uEligible });
+  await openSettings(); await tick(); await tick();
+  assert.equal($('#aboutUpdateRow').hidden, false);
+  assert.equal($('#aboutUpdateGo').hidden, false);
+  assert.equal($('#aboutUpdateGo').textContent, 'Update to 10.0.0');
+  assert.equal($('#aboutUpdateGo').disabled, false);
+  assert.equal($('#aboutUpdateChoose').hidden, false);
+  assert.equal($('#aboutUpdateCmdRow').hidden, true);
+});
+
+test('shared → button visible but disabled, shared hint, no command', async () => {
+  const { $, openSettings, tick } = await boot({ version: vOutdated, update: uShared });
+  await openSettings(); await tick(); await tick();
+  assert.equal($('#aboutUpdateGo').hidden, false);
+  assert.equal($('#aboutUpdateGo').disabled, true);
+  assert.match($('#aboutUpdateNote').textContent, /shared install/);
+  assert.equal($('#aboutUpdateCmdRow').hidden, true);
+});
+
+test('not started by worca ui → no primary, reason + copy-able npm command', async () => {
+  const { $, openSettings, tick } = await boot({ version: vOutdated, update: uNotSupervised });
+  await openSettings(); await tick(); await tick();
+  assert.equal($('#aboutUpdateGo').hidden, true);
+  assert.match($('#aboutUpdateNote').textContent, /not started with worca ui/);
+  assert.equal($('#aboutUpdateCmdRow').hidden, false);
+  assert.equal($('#aboutUpdateCmd').textContent, 'npm install -g @worca/app@10.0.0 && worca ui restart');
+});
+
+test('failed result → red callout with reason, command and folded npm output', async () => {
+  const { $, openSettings, tick } = await boot({ version: vOutdated, update: uFailed });
+  await openSettings(); await tick(); await tick();
+  assert.equal($('#aboutUpdateFailed').hidden, false);
+  assert.equal($('#aboutUpdateFailedTitle').textContent, `The update to 10.0.0 failed. Still on ${PAINTED_VERSION}.`);
+  assert.match($('#aboutUpdateFailedReason').textContent, /EACCES\)\. Worca started again on 9\.9\.9-test and resumed 2 runs\./);
+  assert.equal($('#aboutUpdateFailedCmd').textContent, 'npm install -g @worca/app@10.0.0 && worca ui restart');
+  assert.equal($('#aboutUpdateOutputWrap').hidden, false);
+  assert.equal($('#aboutUpdateOutput').textContent, 'npm error code EACCES');
+  assert.equal($('#aboutUpdateBack').hidden, true);
+});
+
+test('source build → git pull hint, no Choose version', async () => {
+  const { $, openSettings, tick } = await boot({ version: vSource, update: uSource });
+  await openSettings(); await tick(); await tick();
+  assert.equal($('#aboutUpdateRow').hidden, false);
+  assert.match($('#aboutUpdateNote').textContent, /git pull/);
+  assert.equal($('#aboutUpdateChoose').hidden, true);
+  assert.equal($('#aboutUpdateGo').hidden, true);
+  assert.equal($('#aboutUpdateCmdRow').hidden, true);
+});
+
+test('Update to → confirm pane with "No runs are active."; Update & restart POSTs {version} once', async () => {
+  const { $, openSettings, tick, calls } = await boot({ version: vOutdated, update: uEligible });
+  await openSettings(); await tick(); await tick();
+  $('#aboutUpdateGo').click();
+  await tick(); await tick();
+  assert.equal($('#update-modal').classList.contains('hidden'), false);
+  assert.equal($('#update-modal [data-pane="confirm"]').hidden, false);
+  assert.equal($('#update-modal [data-pane="pick"]').hidden, true);
+  assert.equal($('#updateConfirmRuns').textContent, 'No runs are active.');
+  assert.equal($('#updateConfirmGo').disabled, false);
+  $('#updateConfirmGo').click();
+  await tick(); await tick(); await tick();
+  const posts = calls.filter((c) => c.method === 'POST' && /\/api\/app\/update$/.test(c.url));
+  assert.equal(posts.length, 1);
+  assert.deepEqual(JSON.parse(posts[0].body), { version: '10.0.0' });
+  assert.equal($('#update-modal').classList.contains('hidden'), true);
+  assert.equal($('#update-overlay').classList.contains('hidden'), false);
+  assert.equal($('#updateOverlayTitle').textContent, 'Updating Worca to 10.0.0');
 });

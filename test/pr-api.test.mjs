@@ -23,6 +23,8 @@ import * as azurePr from '../src/core/pr/azure.mjs';
 import { setPrRemotePrefs, readPrRemotePrefs } from '../src/core/config.mjs';
 import { createTicket, markTicketFired } from '../src/core/scheduler.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
+import { createRunGroup, addToGroup } from '../src/core/run-groups.mjs';
+import { writeFileSync } from 'node:fs';
 import { getWatch } from '../src/core/pr-watch.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { withEnv } from './helpers/with-env.mjs';
@@ -85,7 +87,10 @@ const REMOTES_V = [
 ].join('\n') + '\n';
 
 // gh present; git remotes = origin (the fork) + upstream; every argv lands in `seen`.
-function stubForkRepo(seen, { create = 'https://github.com/up/repo/pull/7\n', view = 'MERGEABLE\n', remotesOk = true, refs = REFS } = {}) {
+// `create` may be a function of the 1-based create count (its stdout, or an Error to fail that create); `delayMs` waits
+// that long before answering gh pr create.
+function stubForkRepo(seen, { create = 'https://github.com/up/repo/pull/7\n', view = 'MERGEABLE\n', remotesOk = true, refs = REFS, delayMs = 0 } = {}) {
+  let n = 0;
   gitInfo.setRunner((cmd, args) => {
     seen.push([cmd, ...args]);
     if (cmd === 'gh' && args[0] === '--version') return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
@@ -96,7 +101,11 @@ function stubForkRepo(seen, { create = 'https://github.com/up/repo/pull/7\n', vi
     }
     if (cmd === 'git' && args[0] === 'for-each-ref') return Promise.resolve({ ok: true, stdout: refs, stderr: '', code: 0 });
     if (cmd === 'git' && args[0] === 'push') return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
-    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'create') return Promise.resolve({ ok: true, stdout: create, stderr: '', code: 0 });
+    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'create') {
+      const out = typeof create === 'function' ? create(++n) : create;
+      const answer = out instanceof Error ? { ok: false, stdout: '', stderr: out.message, code: 1 } : { ok: true, stdout: out, stderr: '', code: 0 };
+      return delayMs ? new Promise((r) => setTimeout(() => r(answer), delayMs)) : Promise.resolve(answer);
+    }
     if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view') return Promise.resolve({ ok: true, stdout: view, stderr: '', code: 0 });
     return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
   });
@@ -487,6 +496,286 @@ test('a chained run: GET stacks the default on the previous run\'s branch until 
     const k = await (await getRemotes({ projectKey: betaKey, id: nb3 })).json();
     assert.equal(k.defaultBase, want, state);
   }
+});
+
+// ── One ship flow (slice 2): POST /api/chains/:id/ship — a Run-after chain ships stacked or as one PR ──────────
+const nth = (k) => `https://github.com/up/repo/pull/${40 + k}\n`;   // a distinct url per create
+const argOf = (c, k) => c[c.indexOf(k) + 1];
+const prCreates = (seen) => seen.filter((c) => c[0] === 'gh' && c[1] === 'pr' && c[2] === 'create');
+const shipChain = (id, body) => fetch(`${base}/api/chains/${encodeURIComponent(id)}/ship`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+const chain2 = async (tag) => {
+  const run = async (title, source, feature) => (await seedPipeline(betaRepo, { title, status: 'done',
+    startedAt: '2026-06-02T00:00:00Z', branch: { source, feature, branchKept: true } })).id;
+  const r1 = await run(`${tag}1`, 'dev', `worca-cc/${tag}1`);
+  const r2 = await run(`${tag}2`, `worca-cc/${tag}1`, `worca-cc/${tag}2`);
+  const t = createTicket({ projectDir: betaRepo, title: 'next', request: { projectDir: betaRepo, prompt: 'next' },
+    after: { kind: 'pipeline', id: r1 }, sourceFromPrevious: true });
+  markTicketFired(t.id, { pipelineId: r2 });
+  return { r1, r2, id: `p:${r1}` };
+};
+
+test('chain ship, stacked: 2 createRunPr calls, run 1 into the root, run 2 onto run 1\'s branch; each run records its PR', async () => {
+  const { r1, r2, id } = await chain2('cs');
+  const seen = [];
+  stubForkRepo(seen, { refs: `${REFS}refs/remotes/origin/worca-cc/cs1\n`, create: nth });
+  const r = await shipChain(id, { mode: 'stacked' });
+  assert.equal(r.status, 200, await r.clone().text());
+  const creates = prCreates(seen);
+  assert.equal(creates.length, 2);
+  assert.deepEqual(creates.map((c) => argOf(c, '--base')), ['dev', 'worca-cc/cs1']);
+  assert.deepEqual([readPrState(r1).url, readPrState(r2).url], [nth(1).trim(), nth(2).trim()]);
+  assert.equal((await shipChain(id, { mode: 'stacked' })).status, 409, 'every run has a PR: nothing left to create');
+});
+
+test('chain ship, stacked: a failure on run 2 keeps run 1\'s PR, lists it, and a retry creates only run 2\'s', async () => {
+  const { r1, r2, id } = await chain2('cf');
+  const seen = [];
+  stubForkRepo(seen, { refs: `${REFS}refs/remotes/origin/worca-cc/cf1\n`, create: (k) => (k === 2 ? new Error('boom') : nth(k)) });
+  const r = await shipChain(id, { mode: 'stacked' });
+  assert.notEqual(r.status, 200);
+  const j = await r.json();
+  assert.match(j.error, /run 2's PR.*Create PR again to continue/);
+  assert.deepEqual(j.prs, [nth(1).trim()]);
+  assert.equal(readPrState(r1).url, nth(1).trim());
+  assert.equal(readPrState(r2), null);
+  stubForkRepo(seen, { refs: `${REFS}refs/remotes/origin/worca-cc/cf1\n`, create: () => nth(3) });
+  assert.equal((await shipChain(id, { mode: 'stacked' })).status, 200);
+  assert.equal(prCreates(seen).length, 3, '2 tries, then 1 retry');
+});
+
+test('chain ship: One on a forked chain answers 409 before the PR host is asked', async () => {
+  const { r1, id } = await chain2('ck');
+  const r3 = (await seedPipeline(betaRepo, { title: 'ck3', status: 'done', startedAt: '2026-06-02T00:00:00Z',
+    branch: { source: 'worca-cc/ck1', feature: 'worca-cc/ck3', branchKept: true } })).id;
+  const t = createTicket({ projectDir: betaRepo, title: 'fork', request: { projectDir: betaRepo, prompt: 'fork' },
+    after: { kind: 'pipeline', id: r1 }, sourceFromPrevious: true });
+  markTicketFired(t.id, { pipelineId: r3 });               // run 3 also follows run 1: the chain forks
+  const seen = [];
+  stubForkRepo(seen);
+  const r = await shipChain(id, { mode: 'one' });
+  assert.equal(r.status, 409);
+  assert.match((await r.json()).error, /forks/);
+  assert.equal(seen.filter((c) => c[0] === 'gh' && c[1] === 'pr').length, 0);
+});
+
+test('chain ship: One on a chain whose run started from its own branch answers 409 before the PR host is asked', async () => {
+  const r1 = (await seedPipeline(betaRepo, { title: 'cl1', status: 'done', startedAt: '2026-06-02T00:00:00Z',
+    branch: { source: 'dev', feature: 'worca-cc/cl1', branchKept: true } })).id;
+  const r2 = (await seedPipeline(betaRepo, { title: 'cl2', status: 'done', startedAt: '2026-06-02T00:00:00Z',
+    branch: { source: 'dev', feature: 'worca-cc/cl2', branchKept: true } })).id;
+  const t = createTicket({ projectDir: betaRepo, title: 'next', request: { projectDir: betaRepo, prompt: 'next' },
+    after: { kind: 'pipeline', id: r1 } });               // Run after, but from its own branch: One would hold only run 2
+  markTicketFired(t.id, { pipelineId: r2 });
+  const seen = [];
+  stubForkRepo(seen);
+  const r = await shipChain(`p:${r1}`, { mode: 'one' });
+  assert.equal(r.status, 409);
+  assert.match((await r.json()).error, /does not start from the previous run's branch/);
+  assert.equal(seen.filter((c) => c[0] === 'gh' && c[1] === 'pr').length, 0);
+  assert.equal(readPrState(r1), null);
+});
+
+test('chain ship: a run with no branch of its own answers 409 before any PR is created', async () => {
+  const { r1, r2 } = await chain2('cn');
+  const r3 = (await seedPipeline(betaRepo, { title: 'cn3', status: 'done', startedAt: '2026-06-02T00:00:00Z',
+    branch: { source: 'worca-cc/cn2' } })).id;           // a Folder-mode run: no feature branch
+  const t = createTicket({ projectDir: betaRepo, title: 'last', request: { projectDir: betaRepo, prompt: 'last' },
+    after: { kind: 'pipeline', id: r2 }, sourceFromPrevious: true });
+  markTicketFired(t.id, { pipelineId: r3 });
+  const seen = [];
+  stubForkRepo(seen);
+  const r = await shipChain(`p:${r1}`, { mode: 'stacked' });
+  assert.equal(r.status, 409);
+  assert.match((await r.json()).error, /run 3 has no branch to ship/);
+  assert.equal(prCreates(seen).length, 0, 'no PR is created part-way');
+});
+
+test('chain ship: two ships at once — one runs, the other answers 409 "already shipping"', async () => {
+  const { id } = await chain2('cc');
+  const seen = [];
+  stubForkRepo(seen, { refs: `${REFS}refs/remotes/origin/worca-cc/cc1\n`, create: nth, delayMs: 80 });
+  const rs = await Promise.all([shipChain(id, { mode: 'stacked' }), shipChain(id, { mode: 'stacked' })]);
+  assert.deepEqual(rs.map((r) => r.status).sort(), [200, 409]);
+  assert.match((await rs.find((r) => r.status === 409).json()).error, /already shipping/);
+  assert.equal(prCreates(seen).length, 2);
+});
+
+test('chain ship, stacked with watch: true turns Watch on for each new PR', async () => {
+  const { r1, r2, id } = await chain2('cw');
+  const seen = [];
+  stubForkRepo(seen, { refs: `${REFS}refs/remotes/origin/worca-cc/cw1\n`, create: nth });
+  assert.equal((await shipChain(id, { mode: 'stacked', watch: true })).status, 200);
+  assert.deepEqual([getWatch(nth(1).trim()).pipelineId, getWatch(nth(2).trim()).pipelineId], [r1, r2]);
+});
+
+test('chain ship, one: a single PR from the last run\'s branch into the chain root, recorded on every run; refused once a run has a PR', async () => {
+  const { r1, r2, id } = await chain2('co');
+  const seen = [];
+  stubForkRepo(seen);
+  const r = await shipChain(id, { mode: 'one', title: 'Both runs' });
+  assert.equal(r.status, 200, await r.clone().text());
+  const creates = prCreates(seen);
+  assert.equal(creates.length, 1);
+  assert.equal(argOf(creates[0], '--base'), 'dev');
+  assert.match(argOf(creates[0], '--head'), /worca-cc\/co2$/);
+  assert.equal(argOf(creates[0], '--title'), 'Both runs');
+  assert.equal(readPrState(r1).url, readPrState(r2).url);
+  const other = await chain2('cx');
+  persistPrState(other.r1, { url: 'https://github.com/up/repo/pull/40', number: 40, state: 'OPEN' });
+  const refused = await shipChain(other.id, { mode: 'one' });
+  assert.equal(refused.status, 409);
+  assert.match((await refused.json()).error, /already has a PR/);
+});
+
+test('chain ship: 400 bad mode or watch, 404 unknown, 409 a run not done — answered before the PR host is asked', async () => {
+  const seen = [];
+  stubForkRepo(seen);
+  assert.equal((await shipChain('p:nope', { mode: 'one' })).status, 404);
+  const { r2, id } = await chain2('cb');
+  assert.equal((await shipChain(id, { mode: 'all' })).status, 400);
+  assert.equal((await shipChain(id, { mode: 'one', watch: 'yes' })).status, 400);
+  getDb().prepare("UPDATE pipelines SET status = 'running' WHERE id = ?").run(r2);
+  assert.equal((await shipChain(id, { mode: 'stacked' })).status, 409);
+  getDb().prepare("UPDATE pipelines SET status = 'done' WHERE id = ?").run(r2);
+  assert.equal(seen.filter((c) => c[0] === 'gh').length, 0, 'no gh call for a refused request');
+});
+
+test('chain ship: 409 with the POST /api/pr message when no PR host is available', () => withEnv(NO_ADO, async () => {
+  const { id } = await chain2('ch');
+  gitInfo.setRunner((cmd) => Promise.resolve(cmd === 'gh' ? { ok: false, stdout: '', stderr: 'not found', code: 127 }
+    : { ok: true, stdout: '', stderr: '', code: 0 }));
+  const r = await shipChain(id, { mode: 'stacked' });
+  assert.equal(r.status, 409);
+  assert.match((await r.json()).error, /No pull request host is available/);
+}));
+
+// ── One ship flow (slice 3): user groups ──
+const sh = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim();
+const shipGroup = (id, body) => fetch(`${base}/api/run-groups/${encodeURIComponent(id)}/ship`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+const combineOf = async (id) => (await fetch(`${base}/api/run-groups/${encodeURIComponent(id)}/combine`)).json();
+/** A real repo with dev and 3 done runs on their own branches off dev; `files[i]` is what run i edits. → { dir, pids, gid } */
+async function userGroup3(tag, files = ['a.txt', 'b.txt', 'c.txt']) {
+  const dir = await mkdtemp(join(tmpdir(), `worca-ug-${tag}-`));
+  for (const a of [['init', '-q', '-b', 'dev'], ['config', 'user.email', 't@t'], ['config', 'user.name', 't'], ['config', 'commit.gpgsign', 'false']]) sh(dir, ...a);
+  for (const f of new Set(files)) writeFileSync(join(dir, f), 'base\n');
+  sh(dir, 'add', '-A'); sh(dir, 'commit', '-qm', 'init');
+  const pids = [];
+  for (const [i, f] of files.entries()) {
+    const feature = `worca-cc/${tag}${i + 1}`;
+    sh(dir, 'checkout', '-q', '-b', feature, 'dev');
+    writeFileSync(join(dir, f), `run ${i + 1}\n`); sh(dir, 'commit', '-qam', `run ${i + 1}`);
+    sh(dir, 'checkout', '-q', 'dev');
+    pids.push((await seedPipeline(dir, { title: `${tag} ${i + 1}`, status: 'done', startedAt: '2026-10-01T00:00:00Z',
+      branch: { source: 'dev', feature, branchKept: true } })).id);
+  }
+  // As the "Runs feat" test does: the project row with the repo as its path, so prTargetFor finds repoDir.
+  const key = projectKey(dir);
+  writeStoreMeta(key, 'project', { key, name: `G ${tag}`, path: dir });
+  const g = createRunGroup({ title: 'Login polish', pipelineId: pids[0], by: 't' });
+  for (const p of pids.slice(1)) addToGroup({ groupId: g.id, pipelineId: p, by: 't' });
+  return { dir, pids, gid: g.id };
+}
+/** HEAD, the member branches and the checkout's status of a userGroup3 repo. */
+const repoSnap = (dir, tag) => [sh(dir, 'rev-parse', 'HEAD'), ...[1, 2, 3].map((k) => sh(dir, 'rev-parse', `worca-cc/${tag}${k}`)),
+  sh(dir, 'status', '--porcelain')];
+
+test('user group ship, separate: 3 PRs, each from its own branch into dev; one member with a PR → 2', async () => {
+  const { pids, gid } = await userGroup3('us');
+  const seen = [];
+  stubForkRepo(seen, { create: nth });
+  const r = await shipGroup(gid, { mode: 'separate' });
+  assert.equal(r.status, 200, await r.clone().text());
+  const creates = prCreates(seen);
+  assert.equal(creates.length, 3);
+  assert.deepEqual(creates.map((c) => argOf(c, '--head').replace(/^[^:]+:/, '')), ['worca-cc/us1', 'worca-cc/us2', 'worca-cc/us3']);
+  assert.deepEqual(creates.map((c) => argOf(c, '--base')), ['dev', 'dev', 'dev']);
+  assert.equal((await r.json()).prs.length, 3);
+  assert.deepEqual(pids.map((p) => readPrState(p).url), [nth(1), nth(2), nth(3)].map((u) => u.trim()));
+
+  const two = await userGroup3('ut');
+  persistPrState(two.pids[1], { url: 'https://github.com/up/repo/pull/99', number: 99, state: 'OPEN' });
+  const seen2 = [];
+  stubForkRepo(seen2, { create: nth });
+  const r2 = await shipGroup(two.gid, { mode: 'separate' });
+  assert.equal(r2.status, 200);
+  assert.equal(prCreates(seen2).length, 2, 'only the members without a PR');
+  assert.equal((await r2.json()).prs.length, 2);
+  // One is refused once a member has a PR (clarify 2).
+  const one = await shipGroup(two.gid, { mode: 'one' });
+  assert.equal(one.status, 409);
+  assert.match((await one.json()).error, /already has a PR/);
+});
+
+test('user group ship, separate: a run with no branch of its own answers 409 before any PR is created', async () => {
+  const { pids, gid } = await userGroup3('un');
+  getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?').run(JSON.stringify({ source: 'dev' }), pids[1]);
+  const seen = [];
+  stubForkRepo(seen, { create: nth });
+  const r = await shipGroup(gid, { mode: 'separate' });
+  assert.equal(r.status, 409);
+  assert.match((await r.json()).error, /un 2 has no branch to ship here/);
+  assert.equal(prCreates(seen).length, 0, 'no PR is created part-way');
+  assert.equal(readPrState(pids[0]), null);
+});
+
+test('chain ship, stacked: a failure part-way still watches the PRs made before it', async () => {
+  const { r1, id } = await chain2('cw');
+  const seen = [];
+  stubForkRepo(seen, { refs: `${REFS}refs/remotes/origin/worca-cc/cw1\n`, create: (k) => (k === 2 ? new Error('boom') : nth(k)) });
+  const r = await shipChain(id, { mode: 'stacked', watch: true });
+  assert.notEqual(r.status, 200);
+  assert.equal(getWatch(nth(1).trim()).pipelineId, r1);
+});
+
+test('user group ship, one: a combined branch named after the group is pushed and one PR is recorded on all members', async () => {
+  const { dir, pids, gid } = await userGroup3('uo');
+  const seen = [];
+  stubForkRepo(seen, { create: nth });
+  assert.deepEqual(await combineOf(gid), { n: 3, oneOff: '', line: 'The 3 runs combine without conflicts', base: 'dev', files: [] });
+  const snap0 = repoSnap(dir, 'uo');
+  const r = await shipGroup(gid, { mode: 'one', title: 'Login polish' });
+  assert.equal(r.status, 200, await r.clone().text());
+  const j = await r.json();
+  assert.equal(j.branch, `worca-cc/login-polish-${gid.slice(4, 12)}`);
+  assert.ok(seen.some((c) => c[0] === 'git' && c[1] === 'push' && c.at(-1) === j.branch), 'the combined branch is pushed');
+  const creates = prCreates(seen);
+  assert.equal(creates.length, 1);
+  assert.equal(argOf(creates[0], '--head').replace(/^[^:]+:/, ''), j.branch);
+  assert.equal(argOf(creates[0], '--base'), 'dev');
+  assert.deepEqual(pids.map((p) => readPrState(p).url), Array(3).fill(nth(1).trim()));
+  // The members other than the last get the group audit line (prAudit reads only 'PR %' lines, so query directly).
+  const events = (id) => getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ? ORDER BY id').all(id).map((x) => x.text);
+  assert.ok(events(pids[0]).some((t) => t.startsWith('Shipped with its group as one PR') && t.endsWith(nth(1).trim())));
+  const parents = sh(dir, 'rev-list', '--parents', '-n', '1', j.branch).split(' ').slice(1);
+  assert.deepEqual(parents, snap0.slice(1, 4), 'the member heads, in position order');
+  assert.deepEqual(repoSnap(dir, 'uo'), snap0, 'no checkout, member branch or HEAD moved');
+});
+
+test('user group: a conflicting group reports the file, refuses One with 409 and pushes nothing; separate still works', async () => {
+  const { gid } = await userGroup3('uc', ['a.txt', 'a.txt', 'c.txt']);
+  const seen = [];
+  stubForkRepo(seen, { create: nth });
+  const c = await combineOf(gid);
+  assert.equal(c.oneOff, 'The runs conflict in a.txt');
+  assert.deepEqual(c.files, ['a.txt']);
+  const r = await shipGroup(gid, { mode: 'one' });
+  assert.equal(r.status, 409);
+  assert.equal((await r.json()).error, 'The runs conflict in a.txt');
+  assert.ok(!seen.some((x) => x[1] === 'push' || x[2] === 'create'), 'nothing pushed or created');
+  assert.equal((await shipGroup(gid, { mode: 'separate' })).status, 200);
+});
+
+test('user group ship: 400 on a bad mode, 404 on an unknown group, 409 while a run is not done', async () => {
+  const { pids, gid } = await userGroup3('ux');
+  stubForkRepo([]);
+  assert.equal((await shipGroup(gid, { mode: 'stacked' })).status, 400);
+  assert.equal((await shipGroup('grp_000000000000', { mode: 'separate' })).status, 404);
+  getDb().prepare("UPDATE pipelines SET status = 'running' WHERE id = ?").run(pids[2]);
+  const r = await shipGroup(gid, { mode: 'separate' });
+  assert.equal(r.status, 409);
+  assert.match((await r.json()).error, /every run in the group must be done/);
 });
 
 // A run started from a remote-tracking ref (the Ask agent's start_run with sourceBranch "origin/dev") records it

@@ -121,7 +121,7 @@
             </div>
           </div>
           <!-- Update available (issue #841): shown only while GET /api/app/version says outdated.
-               Opens Settings › General › About; no toast, no modal, nothing installs from here. -->
+               Opens Settings › General › About; no toast, no modal. Updating is a click on that card, never from here. -->
           <a class="side-update" id="side-update" href="#settings" hidden
              aria-label="Update available" title="Update available"><span class="side-update-dot" aria-hidden="true"></span><span class="side-update-label">Update available</span></a>
           <!-- The account corner (account-menu.mjs): who is looking (GET /api/whoami), the spend ring
@@ -1839,7 +1839,9 @@
               <small class="hint" id="gsSettingsMsg"></small>
             </section>
 
-            <!-- About: no info-tip and no .hint. Links are anchors (target=_blank rel=noopener noreferrer); the only controls are the update-check switch and Check now (ui-settings-about.test.mjs pins this). -->
+            <!-- About: no info-tip and no .hint. Links are anchors (target=_blank rel=noopener noreferrer). Controls: the update-check
+                 switch and Check now, plus the manual update row (Update to / Choose version… / Copy / Dismiss, issue #841).
+                 ui-settings-about.test.mjs pins this list. -->
             <section class="card settings-card" id="about-card" data-min-level="simple">
               <div class="label-row">
                 <h2>About</h2>
@@ -1853,6 +1855,33 @@
                 <!-- GET /api/app/version (#841): "Latest" | "Update available: X.Y.Z" | "Source build" (a git checkout);
                      hidden when unknown or ahead. -->
                 <span class="about-update" id="aboutUpdateState" hidden></span>
+              </div>
+              <!-- Manual update (#841): painted by update-view.mjs from GET /api/app/update. -->
+              <div class="about-row" id="aboutUpdateRow" hidden>
+                <span class="about-key">Update</span>
+                <div class="about-val about-update-body">
+                  <div class="about-update-actions">
+                    <button type="button" class="btn btn-sm btn-primary" id="aboutUpdateGo" hidden>Update</button>
+                    <button type="button" class="btn btn-sm btn-quiet" id="aboutUpdateChoose">Choose version…</button>
+                  </div>
+                  <p class="about-note" id="aboutUpdateNote" hidden></p>
+                  <div class="about-cmd" id="aboutUpdateCmdRow" hidden>
+                    <code class="about-cmd-text" id="aboutUpdateCmd"></code>
+                    <button type="button" class="btn btn-sm" id="aboutUpdateCopy">Copy</button>
+                  </div>
+                  <div class="about-result about-result-failed" id="aboutUpdateFailed" role="status" hidden>
+                    <strong id="aboutUpdateFailedTitle"></strong>
+                    <span id="aboutUpdateFailedReason"></span>
+                    <p class="about-note">Update from a terminal instead:</p>
+                    <div class="about-cmd"><code class="about-cmd-text" id="aboutUpdateFailedCmd"></code>
+                      <button type="button" class="btn btn-sm" id="aboutUpdateFailedCopy">Copy</button></div>
+                    <details id="aboutUpdateOutputWrap"><summary>npm output</summary><pre class="about-output" id="aboutUpdateOutput"></pre></details>
+                    <button type="button" class="btn btn-sm btn-quiet" id="aboutUpdateDismiss">Dismiss</button>
+                  </div>
+                  <div class="about-result about-result-back" id="aboutUpdateBack" role="status" hidden>
+                    <span id="aboutUpdateBackText"></span>
+                  </div>
+                </div>
               </div>
               <!-- Only while outdated: the new release's changelog page and the GitHub compare view. -->
               <div class="about-row" id="aboutUpdateLinks" hidden>
@@ -2662,6 +2691,56 @@
       </div>
     </div>
 
+    <!-- ===== Update Worca (issue #841): version picker + confirm, then the updating overlay ===== -->
+    <div id="update-modal" class="viewer-modal confirm-modal update-modal hidden" role="dialog" aria-modal="true" aria-labelledby="updatePickTitle">
+      <div class="card">
+        <div data-pane="pick">
+          <div class="card-head"><h2 id="updatePickTitle">Choose a Worca version</h2></div>
+          <p class="confirm-message" id="updatePickSub">Versions come from the npm registry.</p>
+          <div class="seg" aria-label="Channel">
+            <button type="button" data-channel="stable" aria-pressed="true">Stable</button>
+            <button type="button" data-channel="rc" aria-pressed="false">Release candidates</button>
+          </div>
+          <div class="update-versions" id="updateVersionList" role="radiogroup" aria-label="Versions"></div>
+          <label class="switch-row update-older"><input type="checkbox" id="updateShowOlder" class="sw-input" role="switch" /><span class="switch" aria-hidden="true"></span><span class="switch-label">Show older versions (roll back)</span></label>
+          <p class="update-callout" id="updatePickNote" hidden></p>
+          <div class="confirm-actions update-actions">
+            <a class="update-notes-link" href="https://docs.worca.dev/changelog/" target="_blank" rel="noopener noreferrer">Release notes</a>
+            <button type="button" class="btn" id="updatePickCancel">Cancel</button>
+            <button type="button" class="btn btn-primary" id="updatePickGo" disabled>Pick a version</button>
+          </div>
+        </div>
+        <div data-pane="confirm" hidden>
+          <div class="card-head"><h2 id="updateConfirmTitle">Update Worca?</h2></div>
+          <p class="confirm-message" id="updateConfirmMsg"></p>
+          <p class="update-callout" id="updateConfirmRuns"></p>
+          <p class="update-callout" id="updateConfirmSched" hidden></p>
+          <div class="update-callout" id="updateConfirmManual" data-tone="warn" hidden>
+            Start it by hand once it is installed:
+            <div class="about-cmd"><code class="about-cmd-text" id="updateConfirmStartCmd">worca ui</code>
+              <button type="button" class="btn" id="updateConfirmCopy">Copy</button></div>
+          </div>
+          <div class="confirm-actions update-actions">
+            <a class="update-notes-link" href="https://docs.worca.dev/changelog/" target="_blank" rel="noopener noreferrer">Release notes</a>
+            <button type="button" class="btn" id="updateConfirmBack">Cancel</button>
+            <button type="button" class="btn btn-primary" id="updateConfirmGo" disabled>Update &amp; restart</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="update-overlay" class="viewer-modal confirm-modal update-overlay hidden" role="alertdialog" aria-modal="true" aria-labelledby="updateOverlayTitle">
+      <div class="card">
+        <div class="card-head"><h2 id="updateOverlayTitle">Updating Worca</h2></div>
+        <p class="confirm-message"><span class="spinner" aria-hidden="true"></span> <span id="updateOverlayStep"></span></p>
+        <p class="about-note">Keep the terminal running <code>worca ui</code> open: it does the install while the server is down. This page reloads when Worca is back.</p>
+        <div class="update-callout" id="updateOverlayManual" data-tone="warn" hidden>
+          This version cannot start itself. Start it with:
+          <div class="about-cmd"><code class="about-cmd-text" id="updateOverlayStartCmd">worca ui</code>
+            <button type="button" class="btn" id="updateOverlayCopy">Copy</button></div>
+        </div>
+      </div>
+    </div>
+
     <!-- ===== Choose a scan model ===== -->
     <!-- Opens when a re-scan (the header's Re-scan, or the auto re-scan after a member change)
          targets a workspace whose saved scan model is missing or no longer usable (the server
@@ -2911,6 +2990,17 @@
             <!-- Base conflicts (#620): the stored local check while no PR exists. Painted by paintShipItBaseCheck. -->
             <small class="hint shipit-basecheck" hidden></small>
           </section>
+          <!-- One ship flow (slice 2): a feature's or a chain's PRs, One or N stacked, with the suggestion under it.
+               Painted by ship-group-dialog.mjs; hidden for a single run and a workspace run. -->
+          <section class="shipit-zone shipit-prs" aria-labelledby="shipit-prs-label" hidden>
+            <span class="shipit-zone-label" id="shipit-prs-label">Pull requests</span>
+            <div class="shipit-prs-opts" role="radiogroup" aria-labelledby="shipit-prs-label" aria-describedby="shipit-prs-hint">
+              <label class="opt-row"><input type="radio" name="shipit-prs" value="one" aria-describedby="shipit-prs-one-why" /><span>One</span></label>
+              <label class="opt-row"><input type="radio" name="shipit-prs" value="stacked" /><span class="shipit-prs-stacked-label">2 stacked</span></label>
+            </div>
+            <small class="hint shipit-prs-one-why" id="shipit-prs-one-why" hidden></small>
+            <small class="hint shipit-prs-hint" id="shipit-prs-hint" hidden></small>
+          </section>
           <!-- Workspace runs: one row per affected member repo (tick box, branch → base,
                push/base remotes, per-repo status). Built by openShipItWsModal. -->
           <div id="shipit-repos" class="shipit-repos" hidden></div>
@@ -2943,6 +3033,8 @@
               <small class="shipit-closes hint" hidden></small>
             </div>
           </section>
+          <!-- The per-run note stands in for the hidden Title and description zone (ship-group-dialog.mjs). -->
+          <p class="shipit-slice-note" hidden></p>
           <!-- Zone 4, After it opens: Watch PR (starts from the project's Watch new pull requests setting, s4), and
                the Shaper s4 release row (shape/release-row.mjs), collapsed on every open; the workspace dialog hides
                it. No data-min-level: the controls show wherever the modal does (docs/ui-levels.md, History). -->
@@ -2953,7 +3045,6 @@
             <div class="shipit-release" aria-label="Release"></div>
           </section>
           <div class="shipit-try" hidden data-min-level="advanced" aria-label="Try it first"></div>
-          <p class="shipit-slice-note" hidden></p>
         </div>
         <div class="dlg-foot">
           <div class="shipit-actions" data-card-actions>

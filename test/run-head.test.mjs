@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
-import { headModel, trackerModel, renderTracker, renderHeadButtons, prMenuItems, trackerWatchWords, canResolvePr,
+import { headModel, groupHead, trackerModel, renderTracker, renderHeadButtons, prMenuItems, trackerWatchWords, canResolvePr,
   showsFixConflicts, hdPrWatchLabel } from '../ui/public/run-head.mjs';
 
 const M = (state, extra = {}) => ({ state, word: state, dot: 'green', line: '', actions: [], pr: null, prNeeds: false, ...extra });
@@ -328,6 +328,31 @@ test('renderHeadButtons: before, the slot, after; rebuilt only on change, and a 
   assert.equal(d.activeElement, host.querySelector('[data-head="discard-kept"]'));
   renderHeadButtons(host, headModel(F({ m: M('working') })), slot, {});
   assert.equal(host.hidden, true);
+});
+
+test('groupHead (one ship flow): Create PR, View PR ▾, View PRs ▾; a partly shipped group keeps Create PR as a head button', () => {
+  const pr = (n, o = {}) => ({ key: `p${n}`, name: `Run ${n}`, number: n, url: `u${n}`, open: true, merged: false, ...o });
+  assert.deepEqual(groupHead({ state: 'ready', prs: [] }).cta, { state: 'create' });
+  assert.deepEqual(groupHead({ state: 'ready', prs: [] }).after, []);
+  const partly = groupHead({ state: 'ready', prs: [pr(1)] });
+  assert.deepEqual(partly.cta, { state: 'view', href: 'u1', menu: true });
+  assert.deepEqual(partly.after.map((b) => [b.id, b.label, !!b.primary]), [['ship', 'Create PR', true]]);
+  assert.deepEqual(groupHead({ state: 'in-review', prs: [pr(1), pr(2)] }).cta, { state: 'view', label: 'View PRs', menu: true, ws: true });
+  assert.deepEqual(groupHead({ state: 'in-review', prs: [pr(1), pr(2)] }).after, []);
+  assert.deepEqual(groupHead({ state: 'merged', prs: [pr(1, { open: false, merged: true })] }).cta, { state: 'merged', href: 'u1', menu: true });
+  assert.equal(groupHead({ state: 'working', prs: [] }).cta, null);
+});
+
+test('prMenuItems with onWatchAll / onCopyAll: each PR as today, then Watch PRs (Advanced) and Copy PR links', () => {
+  const prs = [{ key: 'a', name: 'Run 1', number: 12, url: 'u1', open: true, watch: null },
+    { key: 'b', name: 'Run 2', number: 13, url: 'u2', open: true, watch: null, conflicts: true }];
+  const noop = () => {};
+  const labels = (level, extra = { onWatchAll: noop, onCopyAll: noop }) => prMenuItems(prs, { level, onWatch: noop, onCopy: noop, onOpen: noop, onResolve: noop, ...extra })
+    .map((i) => (i.sep ? '—' : i.header || i.label));
+  assert.deepEqual(labels('advanced'), ['Run 1 · Pull request #12', 'View PR #12', 'Copy PR link', '—',
+    'Run 2 · Pull request #13', 'View PR #13', 'Copy PR link', 'Fix conflicts', '—', 'Watch PRs', 'Copy PR links']);
+  assert.deepEqual(labels('basic').slice(-2), ['—', 'Copy PR links']);
+  assert.equal(labels('advanced', {}).includes('Copy PR links'), false, 'the workspace menu is unchanged');
 });
 
 test('tracker: the last PR step names the base; "Merged into base" when none is known', () => {

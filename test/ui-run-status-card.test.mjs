@@ -199,7 +199,32 @@ test('kindLabel, member rows and ship lines for a feature group', () => {
   const ready = groupModel({ kind: 'feature', members: [done, done, done] }, { now: NOW });
   assert.equal(groupShipLine({ ...row, model: ready, members: ready.members.map((m, i) => ({ position: i + 1, model: m })) }),
     'Merge in order 1 → 2 → 3, or ship as one PR');
-  assert.equal(groupShipLine({ ...row, groupKind: 'user' }), '');
+  assert.equal(groupShipLine({ ...row, groupKind: 'user' }), 'Create PR comes when all 3 runs are done.');
+});
+
+test('groupShipLine (one ship flow): a chain waits, then reads the merge order; stacked In review keeps it, One drops it', () => {
+  const done = { status: 'done', endReached: true };
+  const gh = (n) => ({ url: `https://github.com/o/r/pull/${n}`, number: n, state: 'OPEN' });
+  const mk = (members) => { const model = groupModel({ kind: 'chain', members });
+    return { groupKind: 'chain', model, members: model.members.map((m, i) => ({ position: i + 1, model: m })) }; };
+  assert.equal(groupShipLine(mk([done, { status: 'running' }])), 'Create PR comes when all 2 runs are done.');
+  assert.equal(groupShipLine(mk([done, done])), 'Merge in order 1 → 2, or ship as one PR');
+  assert.equal(groupShipLine(mk([{ ...done, pr: gh(1) }, done, done])), 'Merge in order 1 → 2 → 3', 'partly shipped: One is disabled, so not offered');
+  assert.equal(groupShipLine(mk([{ ...done, pr: gh(1) }, { ...done, pr: gh(2) }])), 'Merge in order 1 → 2');
+  assert.equal(groupShipLine(mk([{ ...done, pr: gh(3) }, { ...done, pr: gh(3) }])), '', 'shipped as One');
+});
+
+test('groupShipLine (slice 3): a user group reads Any order, or as one PR when the runs combine; Any order in review', () => {
+  const done = { status: 'done', endReached: true };
+  const gh = (n) => ({ url: `https://github.com/o/r/pull/${n}`, number: n, state: 'OPEN' });
+  const mk = (members) => { const model = groupModel({ kind: 'user', members });
+    return { groupKind: 'user', model, members: model.members.map((m, i) => ({ position: i + 1, adhoc: true, model: m })) }; };
+  assert.equal(groupShipLine(mk([done, { status: 'running' }])), 'Create PR comes when all 2 runs are done.');
+  assert.equal(groupShipLine(mk([done, done, done])), 'Any order, or as one PR when the runs combine');
+  assert.equal(groupShipLine(mk([{ ...done, pr: gh(1) }, done, done])), 'Any order', 'a member PR turns One off');
+  assert.equal(groupShipLine(mk([{ ...done, pr: gh(1) }, { ...done, pr: gh(2) }, { ...done, pr: gh(3) }])), 'Any order');
+  assert.equal(groupShipLine(mk([{ ...done, pr: gh(4) }, { ...done, pr: gh(4) }, { ...done, pr: gh(4) }])), '', 'one PR on every run has no order');
+  assert.equal(groupShipLine(mk([done])), '', 'a group of one run');
 });
 
 test('QA 3: the run page status text names the reason the chip gives', () => {

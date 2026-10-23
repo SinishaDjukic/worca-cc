@@ -1,7 +1,7 @@
 // ui/public/shape/ship-card.mjs — Shaper s4: the Ship card. One renderer for the chat card (type 'ship') and the
 // group page / Plans tab (feature-view.mjs shipBlock). Chrome: .ask-card .ask-mcard (style.css "Chat P2: Action cards").
-import { renderReleaseRow } from './release-row.mjs';
-import { VIEW_PR_LABEL } from '../ship-words.mjs';
+import { CREATE_PR_LABEL, VIEW_PR_LABEL } from '../ship-words.mjs';
+import { icon } from '../icons.mjs';
 import { renderAskChanges } from '../chat/ask-changes.mjs';
 import { shapeFirstOn } from '../chat/shape-gate.mjs';
 
@@ -22,9 +22,15 @@ export function shipReason(suggested, added) {
   return '';
 }
 
+// One ship flow: app.js registers the shared Create PR dialog on every boot (the last boot wins); every Ship card's
+// Create PR opens it.
+let openShipDialog = null;
+export function setShipDialogOpener(fn) { openShipDialog = typeof fn === 'function' ? fn : null; }
+
 /**
- * model: { phase:'waiting'|'ready'|'applied'|'declined', title, runs, files, added, deleted, suggested, hint, result }
- * handlers: { onShip(mode, release) → Promise, onNotNow?() → Promise }  (no onNotNow → no Not now button)
+ * model: { phase:'waiting'|'ready'|'applied'|'declined', featureId, title, runs, files, added, deleted, suggested, result }
+ * handlers: { onNotNow?() → Promise, onAskChanges?(text) }  (no onNotNow → no Not now button). The ready card's Create PR
+ * opens the dialog setShipDialogOpener registered, with the button and the card (D20: focus after it closes).
  */
 export function renderShipCard(doc, m, handlers = {}) {
   const h = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -42,6 +48,7 @@ export function renderShipCard(doc, m, handlers = {}) {
   root.setAttribute('data-ship-card', m.phase);
   root.setAttribute('role', 'group');
   root.setAttribute('aria-label', `Ship: ${m.title || ''}`);
+  if (m.featureId) root.dataset.shipFeature = m.featureId;   // D20: the dialog finds the card again after it re-renders
   const head = h('div', 'ask-mcard-head');
   const title = h('span', 'ask-mcard-title', m.title || ''); title.title = m.title || '';
   head.append(h('span', 'ask-mcard-kind', m.phase === 'applied' ? 'Shipped' : 'Ship'), title);
@@ -62,12 +69,9 @@ export function renderShipCard(doc, m, handlers = {}) {
     return root;
   }
   // ready
-  body.appendChild(h('div', 'ask-shipcard-stats', shipSummaryLine(m)));
+  body.appendChild(h('div', 'ask-shipcard-stats', `Ready to ship · ${shipSummaryLine(m)}`));
   const why = shipReason(m.suggested, m.added);
   if (why) body.appendChild(h('div', 'ask-shipcard-why', why));
-  const row = renderReleaseRow(doc, m.hint || null);
-  const relSlot = h('div', 'ask-shipcard-release'); relSlot.appendChild(row.el);
-  body.appendChild(relSlot);
   if (handlers.onAskChanges) body.appendChild(renderAskChanges(doc, { onSend: handlers.onAskChanges }).el);     // Shaper s5
   const err = h('div', 'ask-card-err'); err.setAttribute('aria-live', 'polite');
   root.appendChild(err);
@@ -83,18 +87,19 @@ export function renderShipCard(doc, m, handlers = {}) {
       try { await handlers.onNotNow(); } catch (e) { err.textContent = errorOf(e); lock(false); }
     });
   }
-  for (const [mode, label] of [['stacked', 'Stacked PRs'], ['one', 'One PR']]) {
-    const b = button(m.suggested === mode ? 'btn btn-sm btn-primary' : 'btn btn-sm', label, `ship-${mode}`);
-    b.addEventListener('click', async () => {
-      const rel = row.check();
-      if (!rel.ok) return;                                   // the row shows why; nothing is posted
-      lock(true); err.textContent = ''; b.textContent = 'Shipping…';
-      // Success keeps the buttons locked (as the pull-request card's Create does): the server's flip frame, or the
-      // group page host's repaint, rebuilds the card. Unlocking here would allow a second click before that frame.
-      try { await handlers.onShip(mode, rel.value); }
-      catch (e) { err.textContent = errorOf(e); b.textContent = label; lock(false); }
-    });
-  }
+  const create = button('btn btn-sm btn-primary', null, 'ship-create');
+  create.append(icon(doc, 'pr-create', 14), h('span', null, CREATE_PR_LABEL));
+  create.addEventListener('click', () => {
+    if (create.disabled) return;
+    err.textContent = '';
+    if (!openShipDialog) { err.textContent = 'Open the feature page to create its PR'; return; }
+    // D20: busy until the dialog is open (or the load failed), so a double click opens one dialog.
+    create.disabled = true;
+    create.setAttribute('aria-busy', 'true');
+    Promise.resolve().then(() => openShipDialog(m.featureId, { opener: create, card: root }))
+      .catch((e) => { err.textContent = errorOf(e); })
+      .finally(() => { create.disabled = false; create.removeAttribute('aria-busy'); });
+  });
   root.appendChild(actions);
   return root;
 }
@@ -115,12 +120,8 @@ export function buildShipChatCard(block, ctx) {
   const c = block.card || {};
   const phase = block.state === 'applied' ? 'applied' : block.state === 'declined' ? 'declined' : 'ready';
   const say = (t) => { if (ctx && typeof ctx.announce === 'function') ctx.announce(t); };
-  const el = renderShipCard(ctx.doc, { phase, title: c.title, runs: c.runs, files: c.files, added: c.added, deleted: c.deleted,
-    suggested: c.suggested, hint: c.release || null, result: c.result || null }, {
-    onShip: async (mode, release) => {
-      await ctx.postCard(block, { verb: mode === 'one' ? 'ship-one' : 'ship-stacked', ...(release ? { release } : {}) });
-      say(mode === 'one' ? `Shipped ${c.title} as one PR` : `Shipped ${c.title} as stacked PRs`);
-    },
+  const el = renderShipCard(ctx.doc, { phase, featureId: c.featureId, title: c.title, runs: c.runs, files: c.files, added: c.added,
+    deleted: c.deleted, suggested: c.suggested, result: c.result || null }, {
     onNotNow: async () => { await ctx.postCard(block, { verb: 'not-now' }); say('Ship card dismissed'); },
     ...(shapeFirstOn(ctx.doc) && typeof ctx.postChanges === 'function' ? { onAskChanges: (t) => ctx.postChanges({ featureId: c.featureId }, t) } : {}),
   });

@@ -163,7 +163,7 @@ test('every migrated index.html dialog is .card.dlg > .dlg-head, .dlg-body[, .dl
   }
   // The reported case: the title is head content, the zones are body content.
   assert.ok(page.querySelector('#shipit-modal .dlg-head > h2.shipit-title:only-child'));
-  assert.ok(page.querySelector('#shipit-modal .dlg-body > .shipit-into + #shipit-repos + .shipit-desc + .shipit-after'));
+  assert.ok(page.querySelector('#shipit-modal .dlg-body > .shipit-into + .shipit-prs + #shipit-repos + .shipit-desc + .shipit-slice-note + .shipit-after'));
   // Status lines sit in the foot, above the actions, so a save error stays in view.
   for (const sel of ['#mode-msg', '#proj-add-msg', '#proj-git-msg', '#proj-bulk-msg']) {
     const s = page.querySelector(sel);
