@@ -4518,6 +4518,7 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .shipit-desc-err{margin-top:8px;}
 .shipit-desc-err[hidden]{display:none;}
 .shipit-draft{margin-top:10px;}
+.shipit-watch-help{display:block;margin-top:4px;}
 .shipit-closes{margin-top:4px;}
 .shipit-closes[hidden]{display:none;}
 /* The Generate-with-AI veil over the editor (or its preview) while a draft is in

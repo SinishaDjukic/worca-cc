@@ -366,6 +366,22 @@ test('workspace Ship it: Watch PR resets on open and one snapshot applies to eve
   assert.deepEqual(prPosts(ctx).map((c) => [JSON.parse(c.opts.body).memberKey, JSON.parse(c.opts.body).watch]), [[API, true], [WEB, true]]);
 });
 
+test('s4: workspace Ship it starts Watch PR on only when every listed repository has the project setting on', async () => {
+  for (const [api, web, want] of [[true, true, true], [true, false, false], [true, undefined, false]]) {
+    const value = { [API]: api, [WEB]: web };
+    const arms = (url) => {
+      const m = /\/api\/projects\/([^/]+)\/settings$/.exec(url);
+      if (!m || !(m[1] in value)) return null;
+      const v = value[m[1]];
+      return ok({ own: {}, effective: v === undefined ? {} : { watchNewPrs: { value: v, source: 'project' } }, layers: {}, roles: [] });
+    };
+    const ctx = await bootShip({ detail: WS_DETAIL, arms, rows: [wsRow([member(API, 'api'), member(WEB, 'web')])] });
+    await openDetail(ctx, wksDetailHash);
+    click(ctx.window, hdPr(ctx.window)); await settle(ctx.window, 6);
+    assert.equal(modalOf(ctx.window).querySelector('.shipit-watch-input').checked, want, `api ${api}, web ${web}`);
+  }
+});
+
 test('workspace Ship it is a form: a backdrop click keeps it and its picks; Escape asks once a pick changed; Cancel closes at once', async () => {
   const ctx = await bootShip({ detail: WS_DETAIL, rows: [wsRow([member(API, 'api'), member(WEB, 'web')])] });
   await openDetail(ctx, wksDetailHash);

@@ -240,7 +240,9 @@ on the Overview tab (one row per repository for a workspace run). Both show at
 every level. Watch is changed from the View PR ▾ menu (Advanced) and from the
 Overview row's switch (Advanced).
 
-Watch PR is opt-in, also in Ship It. It supports github.com and Azure DevOps
+Watch PR is opt-in. In Ship It its switch starts from the project's **Watch new pull requests** setting (Project
+page › Settings › Pull requests; off by default), and a workspace's Ship It starts it on only when every repository
+it lists has that setting on. Watch PR supports github.com and Azure DevOps
 ([how Azure maps](azure-devops.md#watch-pr)) and batches
 failed checks, merge conflicts and trusted author, owner, member or collaborator
 feedback into at most three automatic fix runs. Checks that also fail on the base
