@@ -21,6 +21,7 @@ test('running: a not-started stage spawns on its new selection; the running stag
     await run.held;
     id = run.orch.getState().id;
     assert.deepEqual(run.orch.modelSwitchSnapshot().active, ['n_plan'], 'the scheduler view reaches the stage rule');
+    assert.deepEqual(run.orch.modelSwitchSnapshot().ready, [], 'and so do the nodes it holds ready (none while Plan runs alone)');
     const out = await run.orch.switchModels({
       n_impl: { model: OPUS, effort: 'high', subagentModel: 'opus' },
       n_plan: { model: 'claude-sonnet-5-5' },
@@ -259,5 +260,20 @@ test('a live Claude run refuses a Codex model (the harness would drop it at spaw
   await assert.rejects(run.orch.switchModels({ n_impl: { model: CODEX_BUILTIN_MODELS[0].id } }),
     (e) => e.code === 'INVALID_SELECTION' && /not on Claude/.test(e.message));
   run.release();
+  assert.equal((await run.done).status, 'done');
+});
+
+test('one model for all: a step row records the model the stage actually spawned on, not its manifest cell', { timeout: 120000 }, async () => {
+  const HAIKU = 'claude-haiku-4-5';
+  const run = heldRun('msw-live-forall', { holdAt: (ctx) => ctx.executionId === 'x:n_plan:1',
+    opts: { claude: { mock: true, model: HAIKU, effort: 'high', modelForAll: true } } });
+  try {
+    await run.held;
+    const plan = run.orch.getState().steps.find((s) => s.executionId === 'x:n_plan:1');
+    assert.equal(cellOf(run.orch.state.stepper, 'n_plan').model, '', 'precondition: the cell inherits the default');
+    const spawn = run.spawns.find((s) => s.executionId === 'x:n_plan:1');
+    assert.equal(spawn.model, HAIKU, 'precondition: the harness ran the one model for all');
+    assert.deepEqual([plan.model, plan.effort], [HAIKU, 'high'], 'the Agents tab labels the cycle with what ran');
+  } finally { run.release(); }
   assert.equal((await run.done).status, 'done');
 });

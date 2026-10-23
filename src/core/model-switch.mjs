@@ -127,7 +127,7 @@ export function completedNodeIds(steps) {
  *   `held`: wire ids held at their cycle-cap gate (the scheduler snapshot's `gates[].wireId`). While
  *   the user decides, every loop row is 'done' and nothing is active, yet "another cycle" re-runs it.
  */
-export function switchableStages({ manifest, steps, active, held } = {}) {
+export function switchableStages({ manifest, steps, active, held, ready } = {}) {
   const running = new Set(active || []);
   const paused = new Set();
   const done = new Set();
@@ -139,8 +139,10 @@ export function switchableStages({ manifest, steps, active, held } = {}) {
     else if (s.status === 'done') done.add(s.nodeId);
     else unfinished.add(s.nodeId);                     // error / stopped: not completed (today's rule)
   }
+  // `ready`: inputs in, waiting for an agent slot (no row yet) — it WILL fire, so its loop is still going.
+  const armed = new Set((ready || []).filter((id) => !running.has(id) && !paused.has(id)));
   const groups = cycleGroups(manifest?.graph);
-  const openGroups = new Set([...running, ...paused].filter((id) => groups.has(id)).map((id) => groups.get(id)));
+  const openGroups = new Set([...running, ...paused, ...armed].filter((id) => groups.has(id)).map((id) => groups.get(id)));
   const wires = new Map((manifest?.graph?.wires || []).map((w) => [w?.id, w]));
   for (const wireId of held || []) {
     const w = wires.get(wireId);
@@ -151,6 +153,7 @@ export function switchableStages({ manifest, steps, active, held } = {}) {
     if (running.has(id)) return 'running';
     if (paused.has(id)) return 'paused';
     if (!done.has(id) || unfinished.has(id)) return 'pending';
+    if (armed.has(id)) return 'may-rerun';             // ran before, about to run again
     return groups.has(id) && openGroups.has(groups.get(id)) ? 'may-rerun' : 'completed';
   };
   return (manifest?.graph?.nodes || [])

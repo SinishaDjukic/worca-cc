@@ -65,7 +65,7 @@ test('applyModelSwitch rewrites graph cells AND the derived steps cells; no-op c
 
 // wf_default: n_impl <-> n_review is a cycle (w8/w9); n_refine is self-wired (w5).
 const row = (nodeId, status, n = 1) => ({ key: `x:${nodeId}:${n}`, executionId: `x:${nodeId}:${n}`, nodeId, status });
-const st = (steps, active, held) => Object.fromEntries(switchableStages({ manifest, steps, active, held }).map((s) => [s.nodeId, s]));
+const st = (steps, active, held, ready) => Object.fromEntries(switchableStages({ manifest, steps, active, held, ready }).map((s) => [s.nodeId, s]));
 const UP = [row('n_clarify', 'done'), row('n_plan', 'done'), row('n_refine', 'done')];
 const wire = (a, b) => ({ id: `w_${a}_${b}`, from: { node: a, port: 'o' }, to: { node: b, port: 'i' } });
 
@@ -128,6 +128,17 @@ test('switchableStages: the state table', async () => {
     } },
     { name: 'done plus an error row reads pending, as before', run: () => {
       assert.equal(st([row('n_plan', 'done'), row('n_plan', 'error', 2)]).n_plan.state, 'pending');
+    } },
+    { name: 'a loop partner the scheduler holds READY (no row yet: waiting for an agent slot) keeps the loop open', run: () => {
+      const implDone = [...UP, row('n_impl', 'done')];
+      assert.equal(st(implDone).n_impl.state, 'completed', 'without the scheduler view the loop reads closed');
+      const s = st(implDone, [], [], ['n_review']);
+      assert.deepEqual([s.n_impl.state, s.n_impl.switchable], ['may-rerun', true], 'Review will fire and may send Implement round again');
+      assert.deepEqual([s.n_review.state, s.n_review.switchable], ['pending', true], 'a ready node has not started: still switchable');
+    } },
+    { name: 'a ready node off any cycle opens nothing', run: () => {
+      const s = st([row('n_clarify', 'done')], [], [], ['n_plan']);
+      assert.deepEqual([s.n_plan.state, s.n_clarify.state], ['pending', 'completed']);
     } },
   ]);
 });

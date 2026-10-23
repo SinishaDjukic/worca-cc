@@ -1082,11 +1082,23 @@ export class GraphOrchestrator extends RunHarness {
    * answer is followed by a snapshot (scheduler publish/resolveGate), so the last clean one is current
    * while the run is not pausing — and a switch is refused once it is.
    */
+  /** The model/effort pair a spawn of `nc` runs on, for its ledger row (the Agents tab's pill): a run resumed
+   *  with one model for every stage runs that pair whatever the cell says (run-harness _nodeModelPair), else
+   *  the node's own cell. */
+  _spawnSelection(nc) {
+    if (this._modelForAll && this.claude?.model && this._engineModel(this.claude.model)) {
+      return { model: this.claude.model, effort: this.claude.effort || '' };
+    }
+    return { model: nc.model || '', effort: nc.effort || '' };
+  }
+
   modelSwitchSnapshot() {
+    const sched = this._scheduler?.getState();
     return {
       manifest: this.state.stepper,
       steps: this.state.steps,
-      active: (this._scheduler?.getState().active || []).map((a) => a.nodeId),
+      active: (sched?.active || []).map((a) => a.nodeId),
+      ready: [...(sched?.ready || [])],   // inputs in, no slot yet: it WILL fire (model-switch.mjs opens its loop)
       held: heldWireIds(this._graphSnapshot),
       runDefault: this.claude?.model || '',
       engine: this.claude?.engine || 'claude',
@@ -2098,9 +2110,9 @@ export class GraphOrchestrator extends RunHarness {
         ? { meta: nc.meta, runtime: nc.runtime, file: nc.file, command: nc.command, params: nc.params, paramsPort: nc.paramsPort === true, timeoutMs: nc.timeoutMs, mock: nc.mock }
         : undefined,
       runners: this._runners,             // P3's injection seam (runExecution reads ctx.runners)
-      // The node's own selection as this execution starts ('' = inherit the default), recorded on its
-      // ledger row by _execStep: a later model switch rewrites nodeCtx, never what a past cycle ran on.
-      selection: nc.kind === 'agent' ? { model: nc.model || '', effort: nc.effort || '' } : null,
+      // The selection this execution starts on ('' = inherit the default), recorded on its ledger row by
+      // _execStep: a later model switch rewrites nodeCtx, never what a past cycle ran on.
+      selection: nc.kind === 'agent' ? this._spawnSelection(nc) : null,
       resumeSessionId: this._takeResumeSession(executionId),
       ask: (q) => this._enqueueAsk(() => this._ask(q)).then((payload) => {
         // D28: the legacy Clarify questions ask (the one maxQuestions caps); a form ask has no question list

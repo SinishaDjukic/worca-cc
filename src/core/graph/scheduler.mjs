@@ -1262,6 +1262,9 @@ export function createScheduler(opts) {
     getState() {
       return {
         active: [...running].map(([nodeId, executionId]) => ({ nodeId, executionId })),
+        // Agent/script nodes whose inputs are in but that wait for a pool slot (drainPasses skipped them
+        // capped): no row yet, not running, yet they WILL fire. A model switch reads it (model-switch.mjs).
+        ready: order.filter((id) => { const n = nodeById.get(id); return !!n && !isFlow(n) && !running.has(id) && isReady(n); }),
         executions: [...execs.values()].map((e) => ({ ...e })),
         // Latched OUTPUT tokens (what a wire carries), keyed '<node>.<outputPort>'.
         tokens: Object.fromEntries([...outputs].map(([k, t]) => [
