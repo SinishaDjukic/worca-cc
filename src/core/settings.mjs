@@ -19,6 +19,7 @@
 //                            override); this module never writes process.env.
 //   resumeAfterUsageLimit  — opt-in boolean (default false): schedule a usage-limit pause's
 //                            resume for just after the limit resets, unattended.
+//   updateCheck            — boolean (default true): check npm for a newer stable Worca (Settings › About).
 //   pipelineCostLimitUsd   — per-pipeline lifetime USD spend cap; unset = no limit.
 //   totalCostLimitUsd      — windowed all-pipelines USD spend cap; unset = no limit.
 //   costLimitResetPeriod   — total-budget window, 'weekly' | 'monthly' (default).
@@ -68,6 +69,7 @@ import { validateNightPatch, NIGHT_TOGGLES } from './night/config.mjs';
 import { normalizeDomainList, normalizeDomainPattern, domainError, DOMAIN_LIST_MAX, RESERVED_KEY_VAR } from './web-allowlist.mjs';
 import { normaliseDimensions } from '../shared/tag-dimensions.mjs';
 import { normalizePins, storedPins } from '../shared/home-pins.mjs';
+import { DEFAULT_PATTERN, DEFAULT_TYPES, TYPE_RE, patternProblem } from '../shared/naming/pattern.mjs';
 
 /**
  * The real OS home base, honoring HOME/USERPROFILE so tests can sandbox it.
@@ -434,7 +436,7 @@ export function assertMemoryDefragModelInput(input, models = null) {
   return assertModelPairInput('memoryDefrag', input, models);
 }
 
-/** The `{ model, effort }` pair check shared by memoryDefrag and agentGenModel; `key` names the setting in
+/** The `{ model, effort }` pair check shared by memoryDefrag, agentGenModel and namingModel; `key` names the setting in
  *  every message. */
 function assertModelPairInput(key, input, models) {
   if (input === '' || input === null || input === undefined) return null;
@@ -821,6 +823,58 @@ export async function setAskWeb(input) {
   return { askWeb: askWeb() };
 }
 
+// ── Smart run naming (src/core/naming.mjs, flag smartRunNaming) ───────────────
+// `smartNaming` = { suggestTitle, suggestBranch, pattern, types, trigger, addRunId }. The stored
+// block holds only what differs from the defaults. The project layer may hold `pattern` and `types` only.
+// The model is a helper job of its own (`namingModel`); a leftover `model` key from before is ignored.
+export const SMART_NAMING_DEFAULTS = Object.freeze({
+  suggestTitle: true, suggestBranch: true,
+  pattern: DEFAULT_PATTERN, types: Object.freeze([...DEFAULT_TYPES]), trigger: 'debounce', addRunId: false,
+});
+
+/** Validate + normalise a user-layer block (partial allowed). Throws Error with a field-ready message. */
+export function assertSmartNamingInput(input) {
+  if (!isObj(input)) throw new Error('smart run naming must be an object');
+  const out = {};
+  for (const k of ['suggestTitle', 'suggestBranch', 'addRunId']) {
+    if (k in input) { if (typeof input[k] !== 'boolean') throw new Error(`${k} must be true or false`); out[k] = input[k]; }
+  }
+  if ('pattern' in input) { const p = patternProblem(input.pattern); if (p) throw new Error(p); out.pattern = input.pattern.trim(); }
+  if ('types' in input) {
+    const t = input.types;
+    if (!Array.isArray(t) || !t.length || t.length > 20 || t.some((x) => typeof x !== 'string' || !TYPE_RE.test(x))) {
+      throw new Error('types must be 1 to 20 short lowercase words');
+    }
+    out.types = [...new Set(t)];
+  }
+  if ('trigger' in input) { if (!['debounce', 'manual'].includes(input.trigger)) throw new Error('trigger must be debounce or manual'); out.trigger = input.trigger; }
+  return out;
+}
+
+/** Effective config: defaults, then the user block, then the project layer (pattern and types only). */
+export function smartNaming(scope) {
+  const user = readSettings().smartNaming;
+  const proj = projectOverride('smartNaming', scope);
+  const pick = (o) => (isObj(o) ? o : {});
+  const { model: _legacyModel, ...stored } = pick(user);   // the model moved to namingModel: ignore a leftover
+  const merged = { ...SMART_NAMING_DEFAULTS, ...stored };
+  merged.types = [...merged.types];
+  for (const k of ['pattern', 'types']) if (pick(proj)[k] !== undefined) merged[k] = k === 'types' ? [...proj[k]] : proj[k];
+  return merged;
+}
+
+/** `null` deletes the block; otherwise the validated keys merge over the stored block and keys equal to the default are dropped. */
+export async function setSmartNaming(input) {
+  const settings = readSettings();
+  if (input === null) { delete settings.smartNaming; await persistSettings(settings); return { smartNaming: smartNaming() }; }
+  const { model: _legacyModel, ...prev } = isObj(settings.smartNaming) ? settings.smartNaming : {};   // dropped on save
+  const next = { ...prev, ...assertSmartNamingInput(input) };
+  for (const [k, def] of Object.entries(SMART_NAMING_DEFAULTS)) if (JSON.stringify(next[k]) === JSON.stringify(def)) delete next[k];
+  if (Object.keys(next).length) settings.smartNaming = next; else delete settings.smartNaming;
+  await persistSettings(settings);
+  return { smartNaming: smartNaming() };
+}
+
 // ── Night mode (src/core/night/*) ─────────────────────────────────────────────
 // `nightMode` is the user layer of the night config (only the fields the user set);
 // `nightModeToggle` is the live global switch and is NOT part of the field precedence.
@@ -1159,8 +1213,10 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'pipelineCostLimitUsd', 'totalCostLimitUsd', 'costLimitResetPeriod', 'humanRateUsdPerHour',
   'askMaxTurns', 'askMaxBudgetUsd',
   'askWeb',                                  // Chat web access { enabled, allowedDomains, search }
+  'smartNaming',                             // Smart run naming { suggestTitle, suggestBranch, pattern, types, trigger, addRunId }
   'debugSpawnEnabled',
   'resumeAfterUsageLimit',
+  'updateCheck',                             // Settings › About: check npm for a newer stable Worca (#841)
   'titleModel', 'hideBuiltinModels',
   'theme',
   'uiLevel',                                 // interface mode (docs/ui-levels.md)
@@ -1169,6 +1225,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'prDescriptionModel',                      // the "Ship it?" modal's Generate with AI
   'memoryDefrag',                            // Settings › Memory: the defragment model + effort
   'agentGenModel',                           // the agent wizard's Generate: model + effort (Claude, user-level)
+  'namingModel',                             // Smart run naming's model + effort (Models › Helper jobs, Claude, user-level)
   'workspaceScan',                           // Settings › Runs › Workspaces: the scan's models
   'schedule',                                // scheduled-run defaults { graceMin, ifMissed, maxFailures }
   'nightMode',                               // night mode user layer (night/config.mjs fields)
@@ -1552,6 +1609,48 @@ export async function setAgentGenModel(input, { models = null } = {}) {
   return { agentGenModel: agentGenModel() };
 }
 
+// ── Run naming model (Models › Engines › Claude › Helper jobs › Run naming) ───
+// `namingModel`: the { model, effort } pair of Smart run naming's one cheap call (naming.mjs suggestNames).
+// User-level and Claude-only like agentGenModel: naming always runs on Claude (auxTextCall) and the New run
+// form's suggestion is not a run, so there is no project override and no other engine's slot. Unset = the
+// cheapest ready Claude model at its lowest effort (naming.mjs#resolveNamingModel).
+const warnedNamingModel = new Set();
+
+/** The STORED pair: `{ model, effort }`, both null when unset. Sync and never throws (agentGenModel's rules). */
+export function namingModel() {
+  if (homeGuarded()) return { model: null, effort: null };
+  const v = readSettings().namingModel;
+  if (v === undefined || v === null) return { model: null, effort: null };
+  const warnOnce = (what, tail) => {
+    const id = JSON.stringify(what);
+    if (warnedNamingModel.has(id)) return;
+    warnedNamingModel.add(id);
+    console.warn(`[worca] invalid namingModel ${id} — ${tail}`);
+  };
+  const m = isObj(v) ? v.model : undefined;
+  if (typeof m !== 'string' || !m.trim() || m.length > DEFRAG_MODEL_MAX_LEN) {
+    warnOnce(v, 'run naming uses the cheapest ready Claude model');
+    return { model: null, effort: null };
+  }
+  const effort = typeof v.effort === 'string' && EFFORTS.includes(v.effort) ? v.effort : null;
+  if (v.effort !== undefined && v.effort !== null && effort === null) warnOnce(v, 'run naming uses the model\'s default effort');
+  return { model: m.trim(), effort };
+}
+
+/** Validate a POST value exactly like assertAgentGenModelInput. */
+export function assertNamingModelInput(input, models = null) {
+  return assertModelPairInput('namingModel', input, models);
+}
+
+export async function setNamingModel(input, { models = null } = {}) {
+  const pair = assertNamingModelInput(input, models);
+  const settings = readSettings();
+  if (pair === null) delete settings.namingModel;
+  else settings.namingModel = pair.effort ? pair : { model: pair.model };
+  await persistSettings(settings);
+  return { namingModel: namingModel() };
+}
+
 // ── Spawn-debug diagnostics toggle (the stored side of WORCA_DEBUG_SPAWN) ────
 // Like every other stored setting (skillMount, the cost caps, the ask caps) this
 // is READ AT USE TIME: claude-runner.mjs#debugSpawnEnabled calls
@@ -1633,6 +1732,33 @@ export async function setResumeAfterUsageLimit(input) {
   else settings.resumeAfterUsageLimit = input;
   await persistSettings(settings);
   return { resumeAfterUsageLimit: resumeAfterUsageLimit() };
+}
+
+// ── Check for new Worca versions (issue #841) ────────────────────────────────
+export const DEFAULT_UPDATE_CHECK = true;
+
+/** @throws {Error} unless `input` is a boolean (the route and the setter share this). */
+export function assertUpdateCheckInput(input) {
+  if (!isBool(input)) throw new Error('updateCheck must be true or false');
+}
+
+/** Whether the About card may ask npm for the latest version. Read at use time. */
+export function updateCheckEnabled() {
+  const v = readSettings().updateCheck;
+  if (v === undefined) return DEFAULT_UPDATE_CHECK;
+  if (isBool(v)) return v;
+  console.warn(`[worca] invalid updateCheck ${JSON.stringify(v)} — using the default (${DEFAULT_UPDATE_CHECK})`);
+  return DEFAULT_UPDATE_CHECK;
+}
+
+/** @throws {Error} unless `input` is a boolean. */
+export async function setUpdateCheck(input) {
+  assertUpdateCheckInput(input);
+  const settings = readSettings();
+  if (input === DEFAULT_UPDATE_CHECK) delete settings.updateCheck;
+  else settings.updateCheck = input;
+  await persistSettings(settings);
+  return { updateCheck: updateCheckEnabled() };
 }
 
 // ---------------------------------------------------------------------------

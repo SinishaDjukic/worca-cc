@@ -58,7 +58,7 @@ test('list_settings rows: user scope lists the Settings page, never a secret, a 
   const { reg } = setup();
   const out = await reg.list({ scope: 'user' });
   const ids = out.settings.map((r) => r.id);
-  for (const id of ['theme', 'uiLevel', 'pipelineCostLimitUsd', 'sync.beforeRun', 'schedule.graceMin', 'chat.notify.done', 'askMaxTurns', 'models.claude.ask', 'models.claude.memoryDefrag', 'run.engine', 'models.claude.steps.planner', 'workspaceScan.scanEffort']) assert.ok(ids.includes(id), id);
+  for (const id of ['theme', 'uiLevel', 'pipelineCostLimitUsd', 'sync.beforeRun', 'schedule.graceMin', 'chat.notify.done', 'askMaxTurns', 'models.claude.ask', 'models.claude.memoryDefrag', 'run.engine', 'models.claude.steps.planner', 'workspaceScan.scanEffort', 'updateCheck']) assert.ok(ids.includes(id), id);
   for (const id of ids) assert.ok(!/^(root|projectsRoot|actions|askWeb|chat\.scriptTools|chat\.channels|nightMode|providers|speech)(\.|$)/.test(id), `never listed: ${id}`);
   const theme = out.settings.find((r) => r.id === 'theme');
   assert.deepEqual(theme, { id: 'theme', label: 'Theme', group: 'General', value: 'System (default)', stored: null, allowed: '"system" | "light" | "dark" | null (default)' });
@@ -182,6 +182,17 @@ test('every user setting writes exactly one known POST key — never an empty bo
       assert.ok(SETTINGS_POST_KEYS.includes(keys[0]) && !['root', 'projectsRoot', 'actions'].includes(keys[0]), `${def.id} → ${keys[0]}`);
     }
   }
+});
+
+test('updateCheck is a default-on General boolean that writes exactly { updateCheck }', () => {
+  const { reg } = setup();
+  const def = reg.defsFor('user').find((d) => d.id === 'updateCheck');
+  assert.equal(def.group, 'General');
+  assert.equal(def.dflt, true);
+  assert.deepEqual(def.body(false), { updateCheck: false });
+  assert.deepEqual(def.body(null), { updateCheck: true }, 'unset writes the default back');
+  assert.equal(def.read({}), null);
+  assert.equal(def.read({ updateCheck: false }), false);
 });
 
 test('assertScheduleDefaultsInput is the setter\'s own check (setScheduleDefaults still refuses before any write)', async () => {
@@ -401,4 +412,30 @@ test('models.claude.utility.agentGen: a user-scope Claude pair on agentGenModel,
   const p = await reg.check({ id: 'models.claude.utility.agentGen', scope: 'project', projectKey: PROJECT.key, value: { model: 'claude-sonnet-5' } });
   assert.equal(p.ok, false);
   assert.match(p.error, /^unknown setting "models\.claude\.utility\.agentGen"/, 'user-only: unknown per project, not "keys and tokens"');
+});
+
+test('models.claude.utility.naming: a user-scope Claude pair on namingModel, never a project setting', async () => {
+  const { reg, s, bodies, slots } = setup();
+  const row = (await reg.list({ scope: 'user', query: 'naming' })).settings;
+  assert.deepEqual(row.map((r) => [r.id, r.label, r.group, r.value, r.stored]),
+    [['models.claude.utility.naming', 'Run naming model', 'Models', 'Default', null]]);
+  assert.match(row[0].allowed, /a model from list_models that runs on Claude, "effort": "medium" \| "high" \| "xhigh" \| "max"/);
+  let r = await reg.apply({ id: 'models.claude.utility.naming', scope: 'user', value: { model: 'CLAUDE-OPUS-5-5', effort: 'high' } });
+  assert.equal(r.ok, true, r.error);
+  assert.deepEqual(bodies.at(-1), { namingModel: { model: 'claude-opus-5-5', effort: 'high' } }, 'the catalog casing, on the Settings page\'s own key');
+  assert.equal(r.card.after, 'claude-opus-5-5 · high');
+  assert.deepEqual(slots.at(-1), { id: 'models.claude.utility.naming', engine: 'claude', value: { model: 'claude-opus-5-5', effort: 'high' } },
+    'the catalog check runs on Claude: a Codex id is refused here, not "applied" and then refused by the server');
+  r = await reg.check({ id: 'models.claude.utility.naming', value: { model: 'claude-sonnet-5', effort: 'max' } });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /claude-sonnet-5 does not offer effort "max"/);
+  r = await reg.check({ id: 'models.claude.utility.naming', value: { model: 'gpt-x' } });
+  assert.match(r.error, /unknown model "gpt-x"/);
+  r = await reg.apply({ id: 'models.claude.utility.naming', scope: 'user', value: null });
+  assert.equal(r.ok, true, r.error);
+  assert.deepEqual(bodies.at(-1), { namingModel: null });
+  assert.equal('namingModel' in s, false);
+  const p = await reg.check({ id: 'models.claude.utility.naming', scope: 'project', projectKey: PROJECT.key, value: { model: 'claude-sonnet-5' } });
+  assert.equal(p.ok, false);
+  assert.match(p.error, /^unknown setting "models\.claude\.utility\.naming"/, 'user-only: unknown per project, not "keys and tokens"');
 });

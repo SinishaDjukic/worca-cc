@@ -93,6 +93,18 @@ export const FLAGS = Object.freeze([
     reviewBy: '2027-01-18',
     docs: 'docs/feature-flags.md',
   }),
+  entry({
+    key: 'smartRunNaming',
+    title: 'Smart run naming',
+    description: 'A very low effort model reads the task and suggests the run title and a branch name in your convention (feat/…, fix/…). You can edit both before Start. Off: today\'s naming.',
+    stage: 'experimental',
+    default: false,
+    owner: 'e-angelov',
+    since: '1.13.0',
+    added: '2026-10-22',
+    reviewBy: '2027-01-20',
+    docs: 'docs/feature-flags.md',
+  }),
 ]);
 
 const BY_KEY = new Map(FLAGS.map((f) => [f.key, f]));
