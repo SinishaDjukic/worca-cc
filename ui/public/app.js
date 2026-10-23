@@ -254,7 +254,7 @@ import { paintAboutInto, paintVersionStatusInto, paintUpdateMarkerInto } from '.
 import { renderReasonOptions, renderOptIns, previewText, reportBlobParts, REPORT_PREVIEW_DEBOUNCE_MS } from './report-run.mjs';
 import { openScheduleSheet, closeScheduleSheet, browserTimeZone } from './schedule-sheet.mjs';
 import {
-  freshSyncState, ago, listRowModel, projectBarModel, wsRollupModel, ffRefusalCopy, syncStageLabel, fetchedAgo, isSyncableBranchName,
+  freshSyncState, ago, listRowModel, projectBarModel, wsRollupModel, ffRefusalCopy, syncStageLabel, syncStageTitle, fetchedAgo, isSyncableBranchName,
   runOutcomeModel, openSyncDialog, chooseSyncRefusal, NO_COMMITS_HINT,
 } from './branch-sync.mjs';
 import { gitActionFor, GIT_DIALOG, gitDoneMessage } from './project-git.mjs';
@@ -36427,7 +36427,9 @@ function paintRdHeader(screen, r) {
   if (syncBtn) {
     const hasStage = Array.isArray(r.steps) && r.steps.some((s) => s && s.executionId === SYNC_EXECUTION_ID);
     syncBtn.hidden = !hasStage;
-    syncBtn.textContent = hasStage ? syncStageLabel(br.sync, source) : '';
+    syncBtn.textContent = hasStage ? syncStageLabel(br.sync) : '';
+    syncBtn.title = syncStageTitle(hasStage ? br.sync : null, source);
+    syncBtn.setAttribute('aria-label', syncBtn.title);
     syncBtn.onclick = hasStage ? () => focusLogExecution({ run: r }, SYNC_EXECUTION_ID, 'sync') : null;
   }
   const copyBtn = screen.querySelector('.rd-branch-copy');
