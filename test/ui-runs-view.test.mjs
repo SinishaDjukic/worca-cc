@@ -1330,3 +1330,17 @@ test('run 3: on a phone (slide layout) the group pane is full screen with Back, 
     window.close();
   }
 });
+test('slice 2: side by side (split) the group Back shows the list, with the group pane closed', async () => {
+  const { window, doc } = await boot({ runGroups: [FEATURE_GROUP], history: [] });
+  go(window, 'runs'); await settle(window);
+  doc.getElementById('runs-shell').dataset.layout = 'split';
+  go(window, `feature/${FEATURE_GROUP.id}`); await settle(window, 6);
+  const shell = doc.getElementById('group-shell');
+  assert.ok(shell.classList.contains('detail-open'));
+  doc.querySelector('#group-detail .gpage-back').click(); await settle(window, 6);
+  assert.equal(window.location.hash, '#runs');
+  assert.equal(shell.classList.contains('detail-open'), false, 'the group page closed');
+  window.dispatchEvent(new window.Event('hashchange')); await settle(window, 6);
+  assert.equal(shell.classList.contains('detail-open'), false, 'and is not reopened by the D6 restore');
+  window.close();
+});

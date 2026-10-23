@@ -11,9 +11,10 @@ import { currentBranch, unbornBranch, resolveDefaultBranch } from './worktree.mj
 import { mapWithCap, fanoutCap } from './fanout.mjs';
 import { gitAvailable, onGitChange } from './git-available.mjs';
 import {
-  syncRepo, remoteInfo, incomingCommits, commitInfo, isSafeBranchName, lastFetchedAt,
+  syncRepo, remoteInfo, incomingCommits, commitInfo, isSafeBranchName, isSafeRemoteName, lastFetchedAt,
   INTERACTIVE_TTL_MS, INTERACTIVE_TIMEOUT_MS, RUN_TIMEOUT_MS,
 } from './git-sync.mjs';
+import { branchTips, tipsRelation } from './git-info.mjs';
 
 export const projectSyncEvents = new EventEmitter();
 
@@ -22,6 +23,29 @@ export function effectiveSyncSettings(projectKey) {
   let own = null;
   try { own = projectKey ? readSyncPrefs(projectKey) : null; } catch { own = null; }
   return normalizeSyncSettings(own || {}, syncDefaults());
+}
+
+/** The remote a run on its source branch (branch.sameAsSource) pushes its source to (POST /api/push): the
+ *  run's recorded sync remote, else the project's sync setting. Validated: the value ends up in git's argv. */
+export function sourcePushRemote(br, projectKey) {
+  return isSafeRemoteName(br?.sync?.remote) ? br.sync.remote : (effectiveSyncSettings(projectKey).remote || 'origin');
+}
+
+/** A run's source branch (br.source) push state from refs only (no network), as publishStatus reads a published
+ *  branch. The remote is the recorded push's (br.pushed), else sourcePushRemote's.
+ *  'pushed' = the remote has every local commit (equal, or only the remote is ahead), 'ahead' = local commits
+ *  not on the remote, 'diverged' = both sides have commits (a plain push is refused), 'unpushed' = no remote
+ *  branch. -> { remote, state } | null (no source, no local branch, or git failed). */
+export async function sourcePushStatus(repoDir, br, projectKey) {
+  if (!repoDir || !isSafeBranchName(br?.source)) return null;
+  const remote = isSafeRemoteName(br.pushed?.remote) ? br.pushed.remote : sourcePushRemote(br, projectKey);
+  const tips = await branchTips(repoDir, br.source, remote);
+  if (!tips?.local) return null;
+  if (!tips.remote) return { remote, state: 'unpushed' };
+  const rel = await tipsRelation(repoDir, tips.local, tips.remote);
+  // null with two different tips: git could not tell, so keep reading it as local commits.
+  const ahead = rel === 'ahead' || (rel === null && tips.local !== tips.remote);
+  return { remote, state: ahead ? 'ahead' : rel === 'diverged' ? 'diverged' : 'pushed' };
 }
 
 async function chipHead(dir) {

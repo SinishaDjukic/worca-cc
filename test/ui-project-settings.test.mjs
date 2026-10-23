@@ -43,7 +43,7 @@ const field = (host, id) => host.querySelector(`[data-setting="${id}"]`);
 test('every field says what it inherits and from where; an override shows Project', async () => {
   const { host } = harness();
   for (let i = 0; i < 4; i++) await tick();
-  assert.deepEqual([...host.querySelectorAll('.pd-settings-card')].map((c) => c.dataset.card), ['models', 'cost', 'ask', 'context', 'smartNaming']);
+  assert.deepEqual([...host.querySelectorAll('.pd-settings-card')].map((c) => c.dataset.card), ['models', 'cost', 'ask', 'context', 'pr', 'smartNaming']);
   const turns = field(host, 'askMaxTurns');
   assert.equal(turns.querySelector('.inherit-input').value, '9');
   assert.equal(turns.querySelector('.inherit-input').placeholder, '30 (your setting)');
@@ -123,4 +123,28 @@ test('Smart run naming: pattern and types show what they inherit; Save sends one
   host.querySelector('[data-card="smartNaming"] .pd-settings-save').click();
   await tick(); await tick();
   assert.deepEqual(calls.filter((c) => c.method === 'PATCH').pop().body, { smartNaming: null });
+});
+
+test('s4: Pull requests › Watch new pull requests reads Off (default) and saves true, then null on Clear', async () => {
+  const view = { ...VIEW, own: {}, layers: { ...VIEW.layers, watchNewPrs: { default: false } } };
+  const saved = { ...view, own: { watchNewPrs: true }, layers: { ...view.layers, watchNewPrs: { project: true, default: false } } };
+  const { window, host, calls } = harness({ settings: () => ({ status: 200, body: view }), patch: (body) => ({ status: 200, body: body.watchNewPrs === true ? saved : view }) });
+  for (let i = 0; i < 4; i++) await tick();
+  const row = field(host, 'watchNewPrs');
+  const select = row.querySelector('.inherit-input');
+  assert.deepEqual([...select.options].map((o) => [o.value, o.textContent]), [['', 'Off (default)'], ['on', 'On']]);
+  assert.equal(row.querySelector('label').textContent, 'Watch new pull requests');
+  select.value = 'on';
+  select.dispatchEvent(new window.Event('change', { bubbles: true }));
+  const card = host.querySelector('.pd-settings-card[data-card="pr"]');
+  card.querySelector('.pd-settings-save').click();
+  for (let i = 0; i < 4; i++) await tick();
+  assert.deepEqual(calls.filter((c) => c.method === 'PATCH').at(-1).body, { watchNewPrs: true });
+  const again = field(host, 'watchNewPrs');
+  assert.equal(again.querySelector('.inherit-input').value, 'on', 'repainted from the answer');
+  assert.equal(again.querySelector('.inherit-badge').hidden, false, 'set here: the Project badge shows');
+  again.querySelector('.inherit-clear').click();
+  host.querySelector('.pd-settings-card[data-card="pr"] .pd-settings-save').click();
+  for (let i = 0; i < 4; i++) await tick();
+  assert.deepEqual(calls.filter((c) => c.method === 'PATCH').at(-1).body, { watchNewPrs: null });
 });

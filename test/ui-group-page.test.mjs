@@ -149,6 +149,9 @@ test('run 4 D13: the Back link carries the run page\'s chevron; D2: the made ans
     ...NOOP, mountQuestion, answerLabel: () => root.querySelector('.gpage-question .btn-primary').textContent });
   const back = root.querySelector('.gpage-back');
   assert.ok(back.querySelector('.ic svg'), 'the chevron');
-  assert.equal(back.textContent, 'Runs');
+  // Slice 2: the run page's 28px quiet icon Back, named for the list.
+  assert.equal(back.textContent.trim(), '');
+  assert.equal(back.getAttribute('aria-label'), 'Back to Runs');
+  for (const c of ['btn-sm', 'btn-quiet', 'btn-icon']) assert.ok(back.classList.contains(c), c);
   assert.equal(root.querySelector('.gpage-actions [data-model-action="answer"]').textContent, 'Approve 2 runs');
 });

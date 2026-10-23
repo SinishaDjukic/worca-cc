@@ -217,27 +217,108 @@ test('same-branch, merged back: Push replaces Create PR and posts /api/push; the
   assert.equal(doc.querySelector('#hist-detail .hd-pr').hidden, true);
   const push = doc.querySelector('#hist-detail .hd-push');
   assert.equal(push.hidden, false);
-  assert.equal(push.textContent, 'Push main');
+  // A short label (a long branch must not widen the button); the branch is in the tooltip.
+  assert.equal(push.textContent, 'Push');
+  assert.equal(push.title, 'Push to main');
   // The hidden branch was fast-forwarded into main and deleted: never offer its name, Publish or a copy.
   assert.equal(doc.querySelector('#hist-detail .hd-base').textContent, 'Merged into main');
   assert.equal(doc.querySelector('#hist-detail .hd-branch-copy').hidden, true);
   assert.equal(doc.querySelector('#hist-detail .hd-publish').hidden, true);
   assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-page-branch-name').textContent, 'main');
-  const cta = doc.querySelector('#hist-detail .hd-g-push');
-  assert.ok(cta, 'the run summary offers Push');
-  // PR controls (design system): Push is a primary .btn led by arrow-up, and the summary says the header's words.
-  assert.equal(cta.textContent, 'Push main');
+  const cta = doc.querySelector('#hist-detail .hd-glance .rd-head-acts .rd-pr-slot [data-rd-cta]');
+  assert.ok(cta, 'the card head offers Push');
+  // PR controls (design system): Push is a primary .btn led by arrow-up, and the head says the header's words.
+  assert.equal(cta.textContent, 'Push');
+  assert.equal(cta.title, 'Push to main');
   assert.ok(cta.classList.contains('btn-primary'), cta.className);
   for (const b of [push, cta]) assert.equal(b.querySelector(':scope > .ic svg').innerHTML, ICONS['arrow-up'], b.className);
-  cta.click();   // the summary's button drives the header's (one wiring) and must show the outcome too
+  // Slice 3: the head's Push shares the header's flow (pushSourceFlow) and shows its outcome.
+  assert.equal(doc.querySelector('#hist-detail .hd-glance .run-status').dataset.line, 'Ready to ship · in main here, not on the remote');
+  cta.click();
   await ctx.settle();
   assert.deepEqual(pushes[0], { projectKey: DONE.projectKey, projectDir: DONE.projectDir, id: 'ps' });
-  assert.equal(push.textContent, 'Pushed to origin');
-  assert.equal(doc.querySelector('#hist-detail .hd-g-push').textContent.trim(), 'Pushed to origin');
-  assert.equal(doc.querySelector('#hist-detail .hd-g-push').disabled, true);
+  for (const b of [push, cta]) {   // the header's button shows the same outcome
+    assert.equal(b.textContent.trim(), 'Pushed to origin', b.className);
+    assert.equal(b.disabled, true, b.className);
+  }
 });
 
-test('same-branch, not merged back: no Push; Create PR lands the work from its own branch; a banner with the reason and the manual commands', async () => {
+test('same-branch, merged back: a failed push keeps the label short, the error in the tooltip and a visible toast; a retry restores the branch', async () => {
+  const LONG = 'worca-cc/version-visibility-update-available-check-841-b03553cf';
+  const row = { ...SAME_MERGED, id: 'pf', sourceBranch: LONG,
+    mergeBack: { merged: true, members: [{ ...SAME_MEMBER, source: LONG, merged: true, kind: null, reason: null, sha: 'b'.repeat(40) }] } };
+  let fail = true;
+  const handler = (url, opts) => {
+    if (url.endsWith('/api/push')) {
+      return fail ? Promise.resolve({ ok: false, status: 409, json: async () => ({ error: 'the remote rejected the push (non-fast-forward)' }) })
+        : ok({ ok: true, remote: 'origin', branch: LONG });
+    }
+    return sameArms([row], [])(url, opts);
+  };
+  const ctx = await boot({ fetchHandler: handler });
+  ctx.showDetails(row);
+  await ctx.settle();
+  const doc = ctx.window.document;
+  const push = doc.querySelector('#hist-detail .hd-push');
+  const cta = () => doc.querySelector('#hist-detail .hd-glance .rd-head-acts .rd-pr-slot [data-rd-cta]');
+  assert.equal(push.textContent, 'Push');
+  assert.equal(push.title, `Push to ${LONG}`);
+  assert.equal(cta().textContent, 'Push');
+  assert.equal(cta().title, `Push to ${LONG}`);
+  cta().click();
+  await ctx.settle();
+  for (const b of [push, cta()]) {
+    assert.equal(b.textContent.trim(), 'Push failed', b.className);
+    assert.match(b.title, /non-fast-forward/, b.className);
+    assert.equal(b.disabled, false, b.className);
+  }
+  // Visible text too (touch has no tooltip): a Push failed toast with the error.
+  const toast = [...doc.querySelectorAll('.toast.err')].find((t) => /Push failed/.test(t.textContent));
+  assert.ok(toast, 'a visible Push failed toast');
+  assert.match(toast.textContent, /non-fast-forward/);
+  fail = false;
+  push.click();
+  await ctx.settle();
+  assert.equal(push.textContent, 'Pushed to origin');
+  assert.equal(push.title, `${LONG} is on origin`, 'a successful retry puts the branch back in the tooltip');
+  assert.equal(cta().textContent.trim(), 'Pushed to origin');
+  assert.equal(cta().title, `${LONG} is on origin`);
+});
+
+// The push state comes from the server (record.push, refs only), so a reload keeps what a click showed.
+test('same-branch, merged back: the record\'s push state paints both buttons (pushed, ahead, unpushed, diverged)', async () => {
+  const paint = async (push) => {
+    const row = { ...SAME_MERGED, id: `pp-${push ? push.state : 'none'}`, ...(push ? { push } : {}) };
+    const ctx = await boot({ fetchHandler: sameArms([row], []) });
+    ctx.showDetails(row);
+    await ctx.settle();
+    const doc = ctx.window.document;
+    return [doc.querySelector('#hist-detail .hd-push'), doc.querySelector('#hist-detail .hd-glance .rd-head-acts .rd-pr-slot [data-rd-cta]')];
+  };
+  const same = (btns, { label, title, disabled }) => {
+    for (const b of btns) {
+      assert.ok(b, 'both Push buttons are painted');
+      assert.equal(b.textContent.trim(), label, b.className);
+      assert.equal(b.title, title, b.className);
+      assert.equal(b.disabled, disabled, b.className);
+    }
+  };
+  await checkRows([
+    { name: 'a reload after a push: disabled "Pushed to origin", the branch in the tooltip', run: async () =>
+      same(await paint({ remote: 'origin', state: 'pushed' }), { label: 'Pushed to origin', title: 'main is on origin', disabled: true }) },
+    { name: 'a new local commit since: Push again', run: async () =>
+      same(await paint({ remote: 'origin', state: 'ahead' }), { label: 'Push', title: 'Push to main', disabled: false }) },
+    { name: 'no remote branch yet: Push', run: async () =>
+      same(await paint({ remote: 'origin', state: 'unpushed' }), { label: 'Push', title: 'Push to main', disabled: false }) },
+    { name: 'diverged: disabled, the reason in the tooltip', run: async () => {
+      const btns = await paint({ remote: 'origin', state: 'diverged' });
+      same(btns, { label: 'Push', title: btns[0].title, disabled: true });
+      assert.match(btns[0].title, /main and origin\/main have diverged/);
+    } },
+  ]);
+});
+
+test('same-branch, not merged back: no Push; Create PR lands the work from its own branch; How to merge shows the reason and the manual commands', async () => {
   const ctx = await boot({ fetchHandler: sameArms([SAME_NOT], []) });
   ctx.showDetails(SAME_NOT);
   await ctx.settle();
@@ -246,24 +327,33 @@ test('same-branch, not merged back: no Push; Create PR lands the work from its o
   // The merge back was refused, so the work is on its own branch: a PR is how it lands (M6).
   assert.equal(doc.querySelector('#hist-detail .hd-pr').hidden, false, 'Create PR for a run that did not merge back');
   assert.equal(doc.querySelector('#hist-detail .hd-base').textContent, 'main →', 'the work did not flow into main');
-  const banner = doc.querySelector('#hist-detail .merge-back-banner');
-  assert.equal(banner.hidden, false);
-  assert.match(banner.textContent, /uncommitted change/);
-  assert.equal(banner.querySelector('strong').textContent, DONE.projectName, 'the project by its name, not its store key');
+  // Slice 3 (D12): no merge-back banner; the head's How to merge opens the commands in the viewer.
+  assert.equal(doc.querySelector('#hist-detail .merge-back-banner'), null);
+  const glance = doc.querySelector('#hist-detail .hd-glance');
+  assert.equal(glance.querySelector('.run-status').dataset.line, 'Needs you · not merged back into main');
+  assert.doesNotMatch(glance.querySelector('.rd-sheet').textContent, /worktree/i);
+  glance.querySelector('.rd-head-acts [data-head="how-to-merge"]').click();
+  assert.equal(doc.getElementById('viewer-title').textContent, 'How to merge');
+  const text = doc.getElementById('viewer').textContent;
+  assert.match(text, /uncommitted change/);
+  assert.match(text, new RegExp(`^${DONE.projectName}: `, 'm'), 'the project by its name, not its store key');
   // Chained (a failed switch stops the rest), in the project dir, fast-forward only.
-  assert.equal(banner.querySelector('code').textContent,
-    "cd '/x/proj' && git switch 'main' && git merge --ff-only --no-overwrite-ignore 'worca-cc/feat-ps' && git branch -d 'worca-cc/feat-ps'");
-  assert.match(banner.textContent, /Commit or stash your changes/);
+  assert.ok(text.split('\n').includes(
+    "cd '/x/proj' && git switch 'main' && git merge --ff-only --no-overwrite-ignore 'worca-cc/feat-ps' && git branch -d 'worca-cc/feat-ps'"), text);
+  assert.match(text, /Commit or stash your changes/);
 });
 
-test('merge-back banner: each refusal gets its own recipe (in-use runs in that worktree, diverged needs a real merge, missing re-creates the source, commit-failed has none)', async () => {
+test('How to merge: each refusal gets its own recipe (in-use runs in that worktree, diverged needs a real merge, missing re-creates the source, commit-failed has none)', async () => {
   const recipe = async (mb) => {
     const row = { ...SAME_NOT, id: `pk${mb.kind}`, mergeBack: { merged: false, members: [{ ...SAME_MEMBER, merged: false, sha: null, reason: 'r', paths: [], ...mb }] } };
     const ctx = await boot({ fetchHandler: sameArms([row], []) });
     ctx.showDetails(row);
     await ctx.settle();
-    const banner = ctx.window.document.querySelector('#hist-detail .merge-back-banner');
-    return { code: banner.querySelector('code')?.textContent ?? null, text: banner.textContent };
+    const doc = ctx.window.document;
+    doc.querySelector('#hist-detail .hd-glance .rd-head-acts [data-head="how-to-merge"]').click();
+    const text = doc.getElementById('viewer').textContent;
+    const lines = text.split('\n');
+    return { code: lines.find((l) => /^cd |^git /.test(l)) ?? null, text };
   };
   await checkRows([
     { name: 'in-use with the worktree', run: async () => assert.equal((await recipe({ kind: 'in-use', paths: ['/x/other wt'] })).code,
@@ -273,6 +363,10 @@ test('merge-back banner: each refusal gets its own recipe (in-use runs in that w
       "cd '/x/proj' && git switch 'main' && git merge 'worca-cc/feat-ps' && git branch -d 'worca-cc/feat-ps'") },
     { name: 'missing', run: async () => assert.equal((await recipe({ kind: 'missing' })).code,
       "cd '/x/proj' && git branch 'main' 'worca-cc/feat-ps' && git branch -d 'worca-cc/feat-ps'") },
-    { name: 'commit-failed', run: async () => assert.equal((await recipe({ kind: 'commit-failed' })).code, null) },
+    { name: 'commit-failed', run: async () => {
+      const r = await recipe({ kind: 'commit-failed' });
+      assert.equal(r.code, null);
+      assert.match(r.text, /Recover them first with Apply to branch\./);
+    } },
   ]);
 });

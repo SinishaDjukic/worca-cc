@@ -430,5 +430,13 @@ test('an INTERRUPTED run offers no working Stop on its page (it stays resumable)
   // The one run model never lists Stop for an interrupted run: it offers Resume and Archive.
   const stop = ctx.window.document.querySelector('#run-detail .rd-stop');
   assert.equal(stop.hidden, true);
-  assert.ok(ctx.window.document.querySelector('#run-detail [data-model-action="archive"]:not([hidden])'));
+  // Slice 2: Archive lives in the run page's ⋯, never in its bar.
+  const doc = ctx.window.document;
+  doc.querySelector('#run-detail .rd-bar-more').dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
+  const archive = [...doc.querySelectorAll('body > .wfv-menu .menu-item')].find((b) => b.querySelector('.wfv-menu-l').textContent === 'Archive');
+  assert.ok(archive, 'Archive is reachable from the ⋯');
+  archive.click();
+  for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0));
+  assert.match(doc.getElementById('confirm-modal').textContent, /It is interrupted and can't be resumed afterwards\./);
+  doc.getElementById('confirm-cancel').click();
 });

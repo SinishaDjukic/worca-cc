@@ -893,3 +893,15 @@ test('the search field\'s placeholder uses the Workflows Library\'s rendered col
   assert.ok(rule, 'the placeholder rule');
   assert.equal(rule[1], 'color:var(--ink-2);');
 });
+
+test('Today / Yesterday / Earlier read as sections: a divider and space before each following group, theme tokens only', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const sep = css.match(/\.chat-history-group \+ \.chat-history-group\{([^}]*)\}/);
+  assert.ok(sep, 'the between-groups rule');
+  assert.match(sep[1], /border-top:1px solid var\(--line-2\)/);
+  assert.match(sep[1], /margin-top:(\d+)px/);
+  assert.ok(Number(sep[1].match(/margin-top:(\d+)px/)[1]) > 6, 'more room than the old 6px');
+  const label = css.match(/\.chat-history-group-label\{([^}]*)\}/);
+  assert.ok(label, 'the label rule');
+  assert.doesNotMatch(label[1], /#[0-9a-f]{3,8}\b|rgb/i, 'theme tokens, no colour literals');
+});

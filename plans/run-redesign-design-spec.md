@@ -104,7 +104,7 @@ A **run** is either a **single run** or a **group** (members are runs). Every su
 | Paused | grey | no | Build · paused: usage limit | Run 2 of 3 · paused | Resume, Stop |
 | Waiting (scheduled / after another run) | grey ring | no | Waiting · starts 21:00 | Run 2 of 3 · waiting for run 1 | Start now, Cancel |
 | Failed | red **!** icon | no | Review · failed: Review Implementation | Run 2 of 3 · failed | Retry, Report |
-| Stopped | dark grey | no | Stopped at Build | Stopped at run 2 of 3 | Resume (if resumable), Archive |
+| Stopped | dark grey | no | Stopped at Build | Stopped at run 2 of 3 | Archive (the server refuses Resume on a stopped run; slice 2 D11) |
 | Ready (done, no PR yet) | green | no | Ready to ship | 3 of 3 done · ready to ship | Ship it |
 | In review (PR open) | green | no | In review · PR #759 | In review · 3 PRs / 1 PR | Open PR |
 | Merged | violet | no | Merged | Merged | Archive |

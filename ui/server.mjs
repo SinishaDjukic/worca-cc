@@ -24,6 +24,7 @@ import { preflightDeps } from '../src/core/preflight-deps.mjs';
 import { committedMcpStatus, approveCommittedMcp } from '../src/core/mcpjson-approval.mjs';
 import { runFolderHosting } from '../src/core/preflight-host.mjs';
 import { createOrchestratorFor } from '../src/core/engine-select.mjs';
+import { createUpdateChecker, fetchNpmLatest, isSourceBuild, parseVersion, releaseLinks } from '../src/core/update-check.mjs';
 import { limitResumeDecision } from '../src/core/limit-resume.mjs';
 import { selectRunEngine } from '../src/core/engines/index.mjs';
 import { mockSlowMs } from '../src/core/engines/mock.mjs';
@@ -74,6 +75,8 @@ import {
   chatPrefs, setChatPrefs,
   debugSpawnEnabled as storedDebugSpawnEnabled, effectiveDebugSpawn, setDebugSpawnEnabled, assertDebugSpawnInput, SETTINGS_POST_KEYS,
   resumeAfterUsageLimit, assertResumeAfterUsageLimitInput, setResumeAfterUsageLimit,
+  autoGeneratePrDescription, assertAutoGeneratePrDescriptionInput, setAutoGeneratePrDescription,
+  updateCheckEnabled, assertUpdateCheckInput, setUpdateCheck,
   titleModel as storedTitleModel, setTitleModel, assertTitleModelInput,
   hideBuiltinModels, setHideBuiltinModels, assertHideBuiltinModelsInput,
   theme as storedTheme, setTheme, assertThemeInput,
@@ -326,7 +329,7 @@ import { shipFeature, SHIP_MODES, shipCardVerb } from '../src/core/shape/ship.mj
 import { releaseVersionHint, recordRunRelease, draftReleasesOnMerge } from '../src/core/draft-release.mjs';
 import { parseReleaseChoice } from '../src/shared/release-version.mjs';
 import {
-  projectSyncBlock, workspaceSyncBlocks, effectiveSyncSettings, projectSyncEvents, startProjectSyncBackground,
+  projectSyncBlock, workspaceSyncBlocks, effectiveSyncSettings, sourcePushRemote, projectSyncEvents, startProjectSyncBackground,
 } from '../src/core/project-sync.mjs';
 import { mapWithCap, fanoutCap } from '../src/core/fanout.mjs';
 import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, prBaseBranch, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips, tipsRelation,
@@ -543,6 +546,27 @@ const APP_INFO = Object.freeze({
   // prefilled issue URL can never disagree. Falls back to <repo>/issues.
   bugsUrl: BUGS_URL || (APP_REPO_URL ? `${APP_REPO_URL}/issues` : ''),
 });
+// Settings ▸ About "is this the latest Worca?" (issue #841). Read-only: an npm dist-tags read,
+// cached in memory (src/core/update-check.mjs). Never at boot, never under mock or node:test:
+// the default fetcher refuses without any I/O there. WORCA_UPDATE_CHECK_LATEST=<version> stands
+// in for npm (a demo / manual-review aid; never the network). Tests swap the fetcher via _testing.
+// A source checkout (`.git` in PROJECT_ROOT) asks nothing and reports status 'source', unless that
+// override is set (demos run from source).
+let updateFetcherOverride = null;
+let sourceBuildOverride = null;
+function defaultUpdateFetcher() {
+  const fake = process.env.WORCA_UPDATE_CHECK_LATEST;
+  if (fake && parseVersion(fake)) return Promise.resolve(fake);
+  if (serverMockMode() || process.env.NODE_TEST_CONTEXT) return Promise.reject(new Error('update check is off under mock / tests'));
+  return fetchNpmLatest();
+}
+const updateChecker = createUpdateChecker({
+  currentVersion: PKG_VERSION || '',
+  enabled: () => updateCheckEnabled(),
+  sourceBuild: () => sourceBuildOverride ?? isSourceBuild(PROJECT_ROOT),
+  fetchLatest: () => (updateFetcherOverride || defaultUpdateFetcher)(),
+});
+const versionPayload = (s) => ({ ...s, links: releaseLinks(s, APP_INFO.repoUrl) });
 const HLJS_LANGUAGE_FILE_RE = /^[a-z0-9][a-z0-9-]{0,63}\.min\.js$/;
 // Primaries plus the sub-language grammars their instances register
 // (hljs-loader.mjs); a shipped but unmapped grammar stays a plain 404.
@@ -9080,12 +9104,20 @@ app.post('/api/push', async (req, res) => {
     return res.status(409).json({ error: `the run's work is not on ${b.source} (not merged back). Merge it by hand first` });
   }
   // The run's sync remote — validated like the branch (the record's value ends up in git's argv).
-  const remote = isSafeRemoteName(b.sync?.remote) ? b.sync.remote
-    : (effectiveSyncSettings(projectKey(state.projectDir)).remote || 'origin');
+  const remote = sourcePushRemote(b, projectKey(state.projectDir));
   const pushed = await pushBranch(state.projectDir, b.source, remote);
   if (!pushed.ok) return res.status(500).json({ error: `git push failed: ${pushed.stderr}` });
   const by = actorOf(req);
-  appendAuditById(state.id || id, `Pushed \`${b.source}\` to \`${remote}\`${byActor(by)}.`, { actor: by });
+  const runId = state.id || id;
+  // Recorded beside the run's branch (as Publish records br.published), so a reload reads "Pushed to <remote>".
+  const tips = await branchTips(state.projectDir, b.source, null);
+  try {
+    updateBranchRecords(runId, ['project'], (br) => {
+      br.pushed = { remote, sha: tips?.local || null, at: new Date().toISOString(), by };
+    });
+  } catch { /* best-effort: the remote-tracking ref still shows the source as pushed */ }
+  appendAuditById(runId, `Pushed \`${b.source}\` to \`${remote}\`${byActor(by)}.`, { actor: by });
+  emitChanged('pipelines-changed', 'updated');
   res.json({ ok: true, remote, branch: b.source });
 });
 
@@ -10741,6 +10773,8 @@ const settingsState = () => ({
   debugSpawnEnabled: storedDebugSpawnEnabled(),          // what is STORED (the checkbox)
   debugSpawnEffective: effectiveDebugSpawn(),             // what the next spawn will DO, and why
   resumeAfterUsageLimit: resumeAfterUsageLimit(),
+  autoGeneratePrDescription: autoGeneratePrDescription(), // Create PR: Generate with AI on open
+  updateCheck: updateCheckEnabled(),                    // Settings › About: npm latest check (#841)
   titleModel: storedTitleModel(),                         // the STORED id (the select), null = run's model
   titleModelEffective: describeTitleModel(),              // env override / stale id, for the hint line (#422)
   hideBuiltinModels: hideBuiltinModels(),
@@ -11214,6 +11248,17 @@ app.get('/api/settings', async (req, res) => {
   res.json({ ...settingsState(), ...(person ? { nightModeToggle: nightModeToggleFor(person), nightModePerPerson: person } : {}), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), ...(await namingModelState()), chat: chatPrefs(), app: APP_INFO });
 });
 
+// GET  /api/app/version       → { current, latest, status, checkedAt, enabled, links } (issue #841);
+//                                status 'source' on a git checkout (no npm request, no update links).
+// POST /api/app/version/check → the same, re-checking npm unless the last try is under a minute old.
+// Read-only: nothing here installs or restarts anything. Failures read as status 'unknown'.
+app.get('/api/app/version', async (req, res) => {
+  res.set('Cache-Control', 'no-store').json(versionPayload(await updateChecker.status()));
+});
+app.post('/api/app/version/check', async (req, res) => {
+  res.set('Cache-Control', 'no-store').json(versionPayload(await updateChecker.status({ force: true })));
+});
+
 app.get('/api/budget', (_req, res) => {
   const budget = budgetStatus();
   // The account menu's spend card ("Saved") rides on this snapshot (money-saved design §10).
@@ -11275,6 +11320,8 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const hasSmartNaming = has('smartNaming');      // null clears the stored block
   const hasDebugSpawnKey = has('debugSpawnEnabled');
   const hasLimitResumeKey = has('resumeAfterUsageLimit');
+  const hasAutoPrDescKey = has('autoGeneratePrDescription');
+  const hasUpdateCheckKey = has('updateCheck');
   const hasTitleModelKey = has('titleModel');
   const hasHideBuiltinKey = has('hideBuiltinModels');
   const hasThemeKey = has('theme');
@@ -11349,6 +11396,8 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasSmartNaming && body.smartNaming !== null) asSettingsField('smartNaming', () => assertSmartNamingInput(body.smartNaming));
     if (hasDebugSpawnKey) asSettingsField('debugSpawnEnabled', () => assertDebugSpawnInput(body.debugSpawnEnabled));
     if (hasLimitResumeKey) asSettingsField('resumeAfterUsageLimit', () => assertResumeAfterUsageLimitInput(body.resumeAfterUsageLimit));
+    if (hasAutoPrDescKey) asSettingsField('autoGeneratePrDescription', () => assertAutoGeneratePrDescriptionInput(body.autoGeneratePrDescription));
+    if (hasUpdateCheckKey) asSettingsField('updateCheck', () => assertUpdateCheckInput(body.updateCheck));
     if (hasTitleModelKey) asSettingsField('titleModel', () => {
       assertTitleModelInput(titleModelInput);
       if (titleModelInput !== '' && titleModelInput !== null && !catalogHasModel(titleModelInput)) {
@@ -11421,6 +11470,11 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasSmartNaming) await setSmartNaming(body.smartNaming);
     if (hasDebugSpawnKey) await setDebugSpawnEnabled(body.debugSpawnEnabled);
     if (hasLimitResumeKey) await setResumeAfterUsageLimit(body.resumeAfterUsageLimit);
+    if (hasAutoPrDescKey) await setAutoGeneratePrDescription(body.autoGeneratePrDescription);
+    if (hasUpdateCheckKey) {
+      await setUpdateCheck(body.updateCheck);
+      if (body.updateCheck === false) updateChecker.clear();   // back on = a fresh check, never the old answer
+    }
     if (hasTitleModelKey) await setTitleModel(titleModelInput);
     if (hasHideBuiltinKey) await setHideBuiltinModels(body.hideBuiltinModels);
     if (hasThemeKey) await setTheme(body.theme);
@@ -11451,7 +11505,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
     if (hasSmartNaming || hasNamingModelKey) cachedPick = undefined;
-    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasNetworkWaitKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasNetworkWaitKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey || hasUpdateCheckKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;
@@ -17734,6 +17788,9 @@ if (isMain) {
 
 export { app, server, runs };
 export const _testing = {
+  updateChecker,
+  setUpdateFetcher: (fn) => { updateFetcherOverride = typeof fn === 'function' ? fn : null; updateChecker.clear(); },
+  setSourceBuild: (v) => { sourceBuildOverride = typeof v === 'boolean' ? v : null; updateChecker.clear(); },
   wireRun, summarizeRuns, scanRequest, fireTicket, afterMembersChanged, markResumedRescan, wireAgentGen, startAgentGen, wireScriptBench, startScriptBench,
   chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork, answerRun,
   chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor, switchThreadScope,

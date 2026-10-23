@@ -248,7 +248,8 @@ test('blocking prompts are never under a gated ancestor in the shell', () => {
   const doc = shell();
   for (const sel of ['#run-detail-tpl', '#hist-detail-tpl']) {
     const tpl = doc.querySelector(sel).content;
-    for (const q of tpl.querySelectorAll('.qpanel, .cost-banner, .retained-banner, .rd-questions')) {
+    assert.ok(tpl.querySelector('.rd-head-acts') && tpl.querySelector('.rd-track'), `${sel}: the card head and tracker`);   // slice 3
+    for (const q of tpl.querySelectorAll('.qpanel, .cost-banner, .rd-head-acts, .rd-track, .rd-questions')) {
       assert.equal(minLevelFor(q), 'simple', `${sel} ${q.className} must show at every level`);
     }
   }

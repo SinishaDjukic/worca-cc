@@ -562,6 +562,10 @@ test('a failed log fetch re-arms the Logs tab for a retry', async () => {
 // from the card accordion onto this screen).
 // ---------------------------------------------------------------------------
 
+// Slice 3 (D13): kept work's Discard is a card head button; the recovery patch is the tracker's Download patch.
+const DISCARD_KEPT = '#hist-detail .hd-glance .rd-head-acts [data-head="discard-kept"]';
+const keptLine = (doc) => doc.querySelector('#hist-detail .hd-glance .rd-sheet .run-status').dataset.line;
+
 test('discard confirms honestly, POSTs the keyed route and shows/links the saved recovery patch', async () => {
   await checkRows([
     { name: 'discard confirms honestly, POSTs the keyed route, and shows the saved recovery patch', run: async () => {
@@ -578,7 +582,7 @@ test('discard confirms honestly, POSTs the keyed route and shows/links the saved
       });
       await openDetail(ctx);
       const doc = ctx.window.document;
-      click(ctx.window, doc.querySelector('#hist-detail .hist-discard'));
+      click(ctx.window, doc.querySelector(DISCARD_KEPT));
       const confirmText = await confirmDialog(ctx.window);
       await settle(ctx.window, 5);
 
@@ -593,24 +597,24 @@ test('discard confirms honestly, POSTs the keyed route and shows/links the saved
       assert.match(doc.querySelector('#viewer').textContent, /retained-work\.patch/,
         'the saved patch path is surfaced, not swallowed');
     } },
-    { name: 'the retained banner links the recovery patch honestly (retained-work name + label)', run: async () => {
+    { name: 'the tracker links the recovery patch honestly (retained-work name)', run: async () => {
       const ctx = await bootDetail({
         rows: [retainedRow()],
         detail: { ...DETAIL, artifacts: [{ kind: 'retained-work-patch', relPath: 'retained-work.patch' }] },
       });
       await openDetail(ctx);
-      const link = ctx.window.document.querySelector('#hist-detail .retained-patch-link a');
+      const link = [...ctx.window.document.querySelectorAll('#hist-detail .hd-glance .rd-track a.rd-track-link')]
+        .find((a) => a.textContent === 'Download patch');
       assert.ok(link, 'the alternate-recovery link renders for a retained-work-patch artifact');
       assert.equal(link.download, `retained-work-${ROW.id}.patch`, 'download name matches what the route prefers');
-      assert.equal(link.textContent, 'Download the recovery patch');
-      assert.equal(link.title, 'The snapshot taken when the work was retained');
+      assert.match(link.getAttribute('href'), /\/recovery-patch\?/);
     } },
   ]);
 });
 
-test('a failed or refused discard keeps the banner, badge and Archive block and offers a Retry that asks again', async () => {
+test('a failed or refused discard keeps the kept head and Archive block and offers a Retry that asks again', async () => {
   await checkRows([
-    { name: 'a failed discard keeps the banner, the badge and the Archive block — and lets the user retry', run: async () => {
+    { name: 'a failed discard keeps the kept head and the Archive block — and lets the user retry', run: async () => {
       const ctx = await bootDetail({
         rows: [retainedRow()],
         arms: (url) => (url.includes('/discard-worktree')
@@ -623,14 +627,14 @@ test('a failed or refused discard keeps the banner, badge and Archive block and 
       });
       await openDetail(ctx);
       const doc = ctx.window.document;
-      click(ctx.window, doc.querySelector('#hist-detail .hist-discard'));
+      click(ctx.window, doc.querySelector(DISCARD_KEPT));
       await confirmDialog(ctx.window);
       await settle(ctx.window, 5);
 
-      assert.equal(doc.querySelector('#hist-detail .hist-retained-badge').hidden, false, 'badge stays');
-      assert.equal(doc.querySelector('#hist-detail .retained-banner').hidden, false, 'banner stays');
+      assert.equal(keptLine(doc), 'Needs you · the changes could not be committed', 'the kept status stays');
+      assert.ok(doc.querySelector(DISCARD_KEPT), 'the head keeps Discard');
       assert.equal(doc.querySelector('#hist-detail .hd-archive').disabled, true, 'Archive stays blocked');
-      const discardBtn = doc.querySelector('#hist-detail .hist-discard');
+      const discardBtn = doc.querySelector(DISCARD_KEPT);
       assert.equal(discardBtn.disabled, false, 'the user can retry');
       assert.match(discardBtn.textContent, /Discard/);
       assert.deepEqual(lastToast(doc), { tone: 'warn', title: 'Discard incomplete',
@@ -653,14 +657,14 @@ test('a failed or refused discard keeps the banner, badge and Archive block and 
       });
       await openDetail(ctx);
       const doc = ctx.window.document;
-      click(ctx.window, doc.querySelector('#hist-detail .hist-discard'));
+      click(ctx.window, doc.querySelector(DISCARD_KEPT));
       await confirmDialog(ctx.window);
       await settle(ctx.window, 5);
 
       assert.equal(posts, 1);
       assert.deepEqual(lastToast(doc), { tone: 'err', title: 'Could not discard the retained worktree',
         detail: 'disk on fire', action: 'Retry' });
-      const discardBtn = doc.querySelector('#hist-detail .hist-discard');
+      const discardBtn = doc.querySelector(DISCARD_KEPT);
       assert.equal(discardBtn.disabled, false, 'the user can retry');
       assert.match(discardBtn.title, /disk on fire/, 'the button keeps its title');
       clickToastAction(ctx.window);
@@ -786,46 +790,43 @@ test('Auto badge: an Auto run is badged with classifier rows under Preflight, a 
 const DECIDING_BOOTSTRAP = { version: 2, template: { id: 'wf_auto', name: 'Auto' }, auto: { status: 'deciding', humanInLoop: true }, graph: { nodes: [], wires: [] }, bookends: { preflight: true, done: true }, steps: [{ kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight', sub: 'checks' }] }, { kind: 'done', nodes: [{ id: 'done', label: 'Done', sub: 'complete' }] }], feedbacks: [] };
 
 // ---------------------------------------------------------------------------
-// The overflow menu — Archive + Report this run live behind one ⋯ trigger
+// The overflow menu — slice 2: Archive + Report this run live in the bar's one ⋯ (runMoreItems)
 // ---------------------------------------------------------------------------
-// The two buttons keep their own classes inside it, so every gate, busy-label swap
-// and assertion above still addresses them directly; only their PLACEMENT moved.
+// The buttons stay as hidden carriers with their own classes, so every gate, busy-label swap
+// and assertion above still addresses them directly; the ⋯ item clicks them.
 
-const hdMore = (doc) => doc.querySelector('#hist-detail .hd-more');
-const hdMenu = (doc) => doc.querySelector('#hist-detail .hd-menu');
+const hdMore = (doc) => doc.querySelector('#hist-detail .hd-bar-more');
+const hdMenu = (doc) => doc.querySelector('body > .wfv-menu');
+const hdItems = (doc) => [...(hdMenu(doc)?.querySelectorAll('.menu-item') || [])];
+const hdItem = (doc, label) => hdItems(doc).find((b) => b.querySelector('.wfv-menu-l').textContent === label);
 
-test('the ⋯ header menu opens/closes (outside click, Escape, choosing) and its trigger hides when the menu would be empty', async () => {
+test('the ⋯ bar menu opens/closes (outside press, Escape, choosing) and lists Archive and Report only for a finished run', async () => {
   await checkRows([
-    { name: 'the ⋯ trigger opens and closes the header menu', run: async () => {
+    { name: 'the ⋯ trigger opens and closes the bar menu', run: async () => {
       const ctx = await bootDetail();
       await openDetail(ctx);
       const doc = ctx.window.document;
 
       const more = hdMore(doc);
-      const menu = hdMenu(doc);
-      assert.ok(more && menu, 'the trigger and its menu are in the detail template');
-      assert.equal(menu.hidden, true, 'the menu starts closed');
+      assert.ok(more, 'the trigger is in the bar');
+      assert.equal(hdMenu(doc), null, 'the menu starts closed');
       assert.equal(more.getAttribute('aria-expanded'), 'false');
       assert.equal(more.getAttribute('aria-haspopup'), 'menu');
 
       click(ctx.window, more);
       await settle(ctx.window);
-      assert.equal(menu.hidden, false, 'clicking opens it');
+      assert.ok(hdMenu(doc), 'clicking opens it');
       assert.equal(more.getAttribute('aria-expanded'), 'true');
-      assert.ok(menu.contains(doc.querySelector('#hist-detail .hd-archive')), 'Archive lives inside');
-      const report = doc.querySelector('#hist-detail .hd-report');
-      assert.ok(menu.contains(report), 'so does Report this run');
-      assert.ok(report.querySelector('svg'), 'Report carries a warning-triangle icon, like Archive carries a bin');
-      assert.equal(report.querySelector('.hd-btn-label').textContent, 'Report this run',
-        'and its label lives in the same span Archive uses, so the two rows line up');
-      assert.equal(menu.contains(doc.querySelector('#hist-detail .hd-resume')), false,
-        'Resume is the primary action and sits in the bar');
+      assert.ok(hdItem(doc, 'Archive'), 'Archive lives inside');
+      assert.ok(hdItem(doc, 'Report this run'), 'so does Report this run');
+      assert.equal(hdItem(doc, 'Resume'), undefined, 'Resume is the primary action and sits in the bar');
+      assert.ok(doc.querySelector('#hist-detail .hd-archive').closest('.run-menu-carriers[hidden]'), 'the carrier stays out of view');
 
       click(ctx.window, more);
       await settle(ctx.window);
-      assert.equal(menu.hidden, true, 'clicking again closes it');
+      assert.equal(hdMenu(doc), null, 'clicking again closes it');
     } },
-    { name: 'the menu closes on an outside click, on Escape, and on choosing an item', run: async () => {
+    { name: 'the menu closes on an outside press, on Escape, and on choosing an item', run: async () => {
       const ctx = await bootDetail();
       await openDetail(ctx);
       const { window: w } = ctx;
@@ -833,26 +834,25 @@ test('the ⋯ header menu opens/closes (outside click, Escape, choosing) and its
       const open = async () => { click(w, hdMore(doc)); await settle(w); };
 
       await open();
-      click(w, doc.querySelector('#hist-detail .hd-meta'));
+      doc.querySelector('#hist-detail .hd-meta').dispatchEvent(new w.Event('pointerdown', { bubbles: true }));
       await settle(w);
-      assert.equal(hdMenu(doc).hidden, true, 'a click anywhere else dismisses it');
+      assert.equal(hdMenu(doc), null, 'a press anywhere else dismisses it');
 
       await open();
-      doc.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      doc.activeElement.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       await settle(w);
-      assert.equal(hdMenu(doc).hidden, true, 'Escape dismisses it');
+      assert.equal(hdMenu(doc), null, 'Escape dismisses it');
       assert.equal(doc.activeElement, hdMore(doc), 'and hands focus back to the trigger');
 
       await open();
-      click(w, doc.querySelector('#hist-detail .hd-report'));
+      hdItem(doc, 'Report this run').click();
       await settle(w);
-      assert.equal(hdMenu(doc).hidden, true, 'choosing an item dismisses it');
+      assert.equal(hdMenu(doc), null, 'choosing an item dismisses it');
       assert.equal(doc.getElementById('report-modal').classList.contains('hidden'), false,
         'and the item still does its job');
     } },
-    { name: 'the ⋯ trigger hides when it would open an empty menu', run: async () => {
-      // A live run can be neither archived nor reported. An always-present trigger that
-      // opens onto nothing is worse than no trigger.
+    { name: 'a live run\'s ⋯ lists neither Archive nor Report', run: async () => {
+      // A live run can be neither archived nor reported.
       const live = { ...ROW, status: 'running', survived: false };
       const ctx = await bootDetail({ rows: [live],
         detail: { ...DETAIL, state: { ...DETAIL.state, status: 'running' } } });
@@ -861,15 +861,18 @@ test('the ⋯ header menu opens/closes (outside click, Escape, choosing) and its
 
       assert.equal(doc.querySelector('#hist-detail .hd-archive').hidden, true);
       assert.equal(doc.querySelector('#hist-detail .hd-report').hidden, true);
-      assert.equal(hdMore(doc).hidden, true, 'so the trigger goes too');
+      click(ctx.window, hdMore(doc));
+      await settle(ctx.window);
+      assert.equal(hdItem(doc, 'Archive'), undefined);
+      assert.equal(hdItem(doc, 'Report this run'), undefined);
 
-      // The gate is set once per visit (setupHdActions) — refreshHdFromRow re-runs only
-      // the DISABLED gate, so a run going terminal under an open screen offers the
-      // trigger on the next visit, exactly as Archive and Report already do.
+      // The offer is set once per visit (setupHdActions) — refreshHdFromRow re-runs only
+      // the DISABLED gate, so a run going terminal under an open screen offers them on the next visit.
       const done = await bootDetail();
       await openDetail(done);
-      assert.equal(hdMore(done.window.document).hidden, false,
-        'a finished run opens the screen with the trigger in place');
+      click(done.window, hdMore(done.window.document));
+      await settle(done.window);
+      assert.ok(hdItem(done.window.document, 'Archive'), 'a finished run opens the screen with Archive in ⋯');
     } },
   ]);
 });
@@ -1058,10 +1061,10 @@ test('History opens on the glance: page title, status line, facts, the tab rows;
 // The saved run's bar carries the Running bar's controls in its order (Run after, the
 // Resume split, Pause, Stop, then the terminal button), in both modes. "Resume on <other engine>" lives in the
 // split's menu, never as a button of its own. The Details header
-// keeps only the PR controls and the ⋯ menu, and the glance card carries no run control. Run 3 (D13): the bar ends
+// keeps only the PR controls (slice 2: its ⋯ joined the bar's), and the glance card carries no run control. Run 3 (D13): the bar ends
 // with its own ⋯ (Save as preset and Terminal fold into it; CSS hides the two). Run after stays a quick button beside
 // Resume and Stop, so ⋯ does not repeat it.
-const HD_BAR_ORDER = ['hd-save-preset', 'hd-after', 'rd-actions', 'hd-resume-split', 'hd-pause', 'hd-stop', 'term-opener', 'hd-bar-more'];
+const HD_BAR_ORDER = ['hd-save-preset', 'hd-after', 'rd-actions', 'hd-resume-split', 'hd-pause', 'hd-stop', 'term-opener', 'hd-bar-more', 'run-menu-carriers'];
 // A step in flight: the one run model reads a running run with no step as Starting, which offers no Pause (slice 4).
 const STEPPING = { steps: [{ executionId: 'x:n_impl:1', nodeId: 'n_impl', ordinal: 1, cycle: 1, kind: 'cycle', status: 'start',
   startedAt: '2026-01-01T00:00:00Z' }], active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:1' }] };
@@ -1105,8 +1108,8 @@ test('History bar per finished/paused status: Run after, Resume split only when 
       for (const sel of ['.hd-after', '.hd-resume-split', '.hd-resume', '.hd-resume-switch', '.hd-pause', '.hd-stop']) {
         assert.equal(header.querySelector(sel), null, `${sel} is not in the Details header`);
       }
-      assert.ok(header.querySelector('.hd-pr') && header.querySelector('.hd-pr-link') && header.querySelector('.hd-more'),
-        'the Details header keeps the PR controls and the ⋯ menu');
+      assert.ok(header.querySelector('.hd-pr') && header.querySelector('.hd-pr-link'), 'the Details header keeps the PR controls');
+      assert.equal(header.querySelector('.hd-more, .hd-menu'), null, 'slice 2: its ⋯ moved into the bar\'s one menu');
       assert.equal(hd.querySelector('.hd-result [class*="hd-g-resume"], .hd-result .hd-g-after'), null, 'the card carries no run control');
       click(ctx.window, after);
       assert.equal(ctx.window.location.hash, `#new/after/${ROW.id}`);
@@ -1621,46 +1624,58 @@ test('History bar: a live pause after load (error cause named / total-budget pau
   await checkRows(rows);
 });
 
-// The card's PR place (run 3, D11): an eligible run's one Create pull request button in the slot; a run with its own PR
-// shows the PR bar instead (the chip with "PR #7", right under the facts block) and the slot holds no button.
-test('History glance: one Create pull request when eligible; the PR bar for an open or merged PR', async () => {
+// Slice 3: the card head holds the PR control at every level: Create PR beside Try it when eligible, View PR │ ▾ for an
+// open or merged PR (its words on the tracker), and a closed PR is a struck tracker step with Create PR again.
+test('History glance: the card head\'s Create PR (every level), View PR │ ▾, and a closed PR on the tracker', async () => {
   const rows = [];
-  for (const [label, pr, word] of [
-    ['eligible', null, ''],
-    ['open', { state: 'OPEN', number: 7, url: 'https://github.com/o/r/pull/7' }, 'Ready'],
-    ['merged', { state: 'MERGED', number: 7, url: 'https://github.com/o/r/pull/7' }, 'Merged'],
+  const url = 'https://github.com/o/r/pull/7';
+  for (const [label, pr, level] of [
+    ['eligible', null, ''], ['eligible at Simple', null, 'simple'],
+    ['open', { state: 'OPEN', number: 7, url }, ''], ['merged', { state: 'MERGED', number: 7, url }, ''],
+    ['closed', { state: 'CLOSED', number: 7, url }, ''],
   ]) {
     rows.push({ name: `History glance, ${label} PR`, run: async () => {
       const row = { ...ROW, pr };
       const ctx = await bootDetail({
         rows: [row],
-        arms: (url) => (url.endsWith('/api/history') ? ok({ pipelines: [row], ghAvailable: true }) : null),
+        arms: (u) => (u.endsWith('/api/history') ? ok({ pipelines: [row], ghAvailable: true }) : null),
       });
+      if (level) ctx.window.document.documentElement.dataset.level = level;
       await openDetail(ctx, '');
       await settle(ctx.window, 6);
       const glance = ctx.window.document.querySelector('#hist-detail .hd-glance');
       const slot = glance.querySelector('.rd-pr-slot');
-      const box = glance.querySelector('.rd-pr-box');
       assert.equal(slot.closest('.hd-result'), null, 'outside the result host paintHdGlance rebuilds');
-      assert.equal(slot.parentElement, glance.querySelector('.rd-sheet > .rd-sheet-head'), 'the button sits beside the status');
-      assert.equal(box.previousElementSibling, glance.querySelector('.rd-sheet > .rd-kv'), 'the PR bar sits right under the facts');
-      if (!pr) {
+      assert.equal(slot.parentElement, glance.querySelector('.rd-sheet > .rd-sheet-head > .rd-head-acts'), 'the control sits in the head');
+      assert.equal(glance.querySelector('.rd-pr-box'), null, 'no PR bar');
+      assert.equal(glance.querySelector('.rd-result [data-rd-cta]'), null, 'nothing PR-shaped under Results');
+      const steps = [...glance.querySelectorAll('.rd-track .rd-track-step')];
+      assert.equal(steps.length, 3);
+      if (!pr || pr.state === 'CLOSED') {
         assert.equal(slot.hidden, false);
         const ctas = [...slot.children];
         assert.equal(ctas.length, 1, 'one button, the pull request');
         assert.ok(ctas[0].hasAttribute('data-rd-cta') && ctas[0].classList.contains('hd-g-pr'), ctas[0].className);
+        assert.ok(ctas[0].classList.contains('btn-primary'));
         assert.equal(ctas[0].querySelector(':scope > .ic svg').innerHTML, ICONS['pr-create']);
         assert.equal(ctas[0].classList.contains('btn-block'), false, 'at its natural width');
         assert.equal(ctas[0].textContent, 'Create PR');
+        if (pr) {
+          assert.equal(glance.querySelector('.run-status').dataset.line, 'Ready to ship · the PR was closed');
+          assert.ok(steps[1].classList.contains('is-closed'));
+          assert.equal(glance.querySelector('.runs-pr'), null, 'a closed PR is no chip');
+        }
         return;
       }
-      assert.equal(slot.hidden, true, 'no View pull request button');
-      const chip = glance.querySelector('.rd-pr-status .rd-prs-sum a.runs-pr');
-      assert.ok(chip, 'the PR bar leads with the linked chip');
-      assert.equal(chip.getAttribute('href'), pr.url);
-      assert.equal(chip.querySelector('.runs-pr-num').textContent, 'PR #7');
-      assert.equal(chip.querySelector('.runs-pr-word').textContent, word);
-      assert.equal(glance.querySelector('.rd-result [data-rd-cta]'), null, 'nothing PR-shaped under Results');
+      const main = slot.querySelector('.btn-split.rd-pr-split > a[data-rd-cta]');
+      assert.ok(main, 'View PR │ ▾');
+      assert.equal(main.getAttribute('href'), url);
+      assert.equal(main.textContent, 'View PR');
+      assert.equal(main.classList.contains('btn-primary'), false);
+      assert.equal(main.querySelector(':scope > .ic svg').innerHTML, ICONS[pr.state === 'MERGED' ? 'merge' : 'pull-request']);
+      assert.ok(slot.querySelector('.rd-pr-split > button.rd-pr-more[aria-haspopup="menu"]'));
+      assert.equal(steps[1].querySelector('a.rd-track-pr').textContent, '#7');
+      assert.ok(steps[pr.state === 'MERGED' ? 2 : 1].classList.contains(pr.state === 'MERGED' ? 'is-merged' : 'is-ready'));
     } });
   }
   await checkRows(rows);
@@ -1692,7 +1707,7 @@ async function pendingGlance(shared = ROW, { ghAvailable = true, level = '' } = 
 
 test('History glance PR lookup pending: a busy placeholder morphs in place into the link, or into Create forwarding to the header button', async (t) => {
   await checkRows([
-    { name: 'History glance, PR lookup pending: a busy placeholder, then the PR bar takes over (run 3, D11)', run: async () => {
+    { name: 'History glance, PR lookup pending: a busy placeholder, then it morphs into View PR │ ▾ (slice 3)', run: async () => {
       const { ctx, slot } = await pendingGlance();
       assert.equal(slot.hidden, false);
       assert.ok(slot.classList.contains('is-pending'), slot.className);
@@ -1712,11 +1727,11 @@ test('History glance PR lookup pending: a busy placeholder morphs in place into 
         assert.equal(ctx.window.document.querySelector('#hist-detail .hd-glance .rd-pr-slot'), slot, 'the slot is never replaced');
         assert.equal(slot.getAttribute('aria-busy'), null);
         assert.equal(slot.getAttribute('aria-label'), null);
-        assert.equal(slot.querySelector('[data-rd-cta]'), null, 'the run\'s own PR is no slot button');
-        const chip = ctx.window.document.querySelector('#hist-detail .hd-glance .rd-pr-status .rd-prs-sum a.runs-pr.is-merged');
-        assert.ok(chip, 'the PR bar shows the merged chip');
-        assert.equal(chip.getAttribute('href'), url);
-        assert.equal(chip.target, '_blank');
+        const main = slot.querySelector('.rd-pr-split > a[data-rd-cta]');
+        assert.ok(main, 'the placeholder became the split');
+        assert.equal(main.getAttribute('href'), url);
+        assert.equal(main.target, '_blank');
+        assert.equal(main.querySelector(':scope > .ic svg').innerHTML, ICONS.merge);
       } finally {
         t.mock.timers.reset();
       }

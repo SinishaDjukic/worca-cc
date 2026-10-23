@@ -34,6 +34,14 @@ export const ACTION_LABEL = Object.freeze({
   retry: 'Retry', report: 'Report', archive: 'Archive', ship: 'Create PR', 'open-pr': 'View PR', 'ask-changes': 'Ask for changes',
 });
 
+/** Run-scope actions that live in the run page's ⋯ menu, never in its bar (slice 2). The group header and the Chat
+ *  card still make them from the model. */
+export const MENU_ACTIONS = Object.freeze(['archive', 'report']);
+
+/** Finished-run actions the run page draws in its card head (slice 3), never in its bar. The group header and the Chat
+ *  card still make them from the model. */
+export const HEAD_ACTIONS = Object.freeze(['ship', 'open-pr', 'retry', 'ask-changes']);
+
 const ACTIONS = Object.freeze({
   starting: ['stop'], working: ['pause', 'stop'], 'needs-you': ['answer', 'stop'], paused: ['resume', 'stop'],
   waiting: ['start-now', 'cancel'], failed: ['retry', 'report'], stopped: ['archive'], ready: ['ship'],
@@ -291,7 +299,6 @@ export function runModel(run, opts = {}) {
   // A PR-driven Needs you has no question to answer; its line is the chip's reason (QA 3) and its action View PR (D31).
   const prNeeds = state === 'needs-you' && r.pendingQuestion == null && (watchNeeds || !!(pr && pr.needsYou));
   const actions = fin ? [] : watchNeeds ? ['open-pr', 'ask-changes'] : prNeeds ? ['open-pr']
-    : state === 'stopped' && r.resumable === true ? ['resume', 'archive']
     // An interrupted run is never stopped: it archives, and resumes too unless it never can (no resume point, its project gone).
     : r.status === 'interrupted' ? (r.resumable === false ? ['archive'] : ['resume', 'archive']) : ACTIONS[state];
   const base = fin ? fin.line : state === 'starting' && mode === 'folder' ? 'Copying the folder'

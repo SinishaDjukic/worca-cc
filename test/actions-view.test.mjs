@@ -444,3 +444,55 @@ test('releaseCheckout: the Actions tab\'s Discard / Unlink copy and DELETE, shar
   assert.equal(await releaseCheckout({ api, url: '/x', members: ['m'], confirm: async () => false }), null);
   assert.equal(calls.length, 0);
 });
+
+test('checked out: Download patch sits before Discard; a linked folder before Unlink; the folder path has a copy button', () => {
+  const calls = [];
+  const handlers = { onDiff: (k, b) => calls.push(['diff', k, b.tagName]), onDiscard: () => {}, onUnlink: () => {}, onCopy: (t) => calls.push(['copy', t]) };
+  const own = renderActionsCard(model(member({ checkout: { setup: { status: 'ok' } } })), { doc, handlers });
+  const ownLabels = labelsOf(own);
+  assert.equal(ownLabels.at(-1), 'Discard');
+  assert.equal(ownLabels.at(-2), 'Download patch');
+  own.querySelector('.act-diff').click();
+  own.querySelector('.act-copy[aria-label="Copy folder path"]').click();
+  assert.deepEqual(calls, [['diff', 'app-0cea65fb', 'BUTTON'], ['copy', '/h/runs/ab/repos/app-0cea65fb']]);
+  const linked = renderActionsCard(model(member({ checkout: { external: true, worktreeDir: '/Users/ada/dev/app', setup: { status: 'skipped' } } })), { doc, handlers });
+  assert.deepEqual(labelsOf(linked).slice(-2), ['Download patch', 'Unlink']);
+  assert.ok(!labelsOf(linked).includes('Discard'), 'a linked folder is never discarded');
+  assert.ok(linked.querySelector('.act-copy[aria-label="Copy folder path"]'));
+  for (const s of [{ status: 'running' }, { status: 'failed', exitCode: 1 }]) {   // setting up / setup failed keep the patch too
+    assert.ok(renderActionsCard(model(member({ checkout: { setup: s } })), { doc, handlers }).querySelector('.act-diff'));
+  }
+  assert.equal(renderActionsCard(model(member()), { doc, handlers }).querySelector('.act-diff'), null, 'not before Check out');
+});
+
+test('controller: Download patch hands the scoped diff URL and branch to downloadPatch', async () => {
+  const got = [];
+  const host = doc.createElement('div');
+  const m = member({ checkout: { setup: { status: 'ok' } } });
+  const ctl = createActionsController({ runId: 'ab', scopeQuery: 'projectKey=app', host, doc, ws: { send() {} },
+    api: async () => ({ ok: true, status: 200, data: model(m) }), confirm: async () => true,
+    downloadPatch: (o) => got.push(o) });
+  await ctl.refresh();
+  host.querySelector('.act-diff').click();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(got.length, 1);
+  assert.equal(got[0].url, '/api/runs/ab/checkout/diff?projectKey=app&member=app-0cea65fb');
+  assert.equal(got[0].branch, 'worca-cc/x');
+  assert.equal(got[0].btn.tagName, 'BUTTON');
+  ctl.destroy();
+});
+
+test('controller: a Discard that succeeds says so in the card', async () => {
+  const host = doc.createElement('div');
+  let co = { setup: { status: 'ok' } };
+  const api = async (method) => (method === 'DELETE'
+    ? (co = null, { ok: true, status: 200, data: { patches: ['checkout-discard-app.patch'] } })
+    : { ok: true, status: 200, data: model(member({ checkout: co })) });
+  const ctl = createActionsController({ runId: 'ab', scopeQuery: 'projectKey=app', host, doc, ws: { send() {} }, api, confirm: async () => true });
+  await ctl.refresh();
+  [...host.querySelectorAll('button')].find((b) => b.textContent === 'Discard').click();
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.match(host.textContent, /Checkout discarded\. Uncommitted changes were saved as a patch in the run's files\./);
+  ctl.destroy();
+});

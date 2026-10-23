@@ -205,20 +205,20 @@ test('back/Back button/Escape: side by side keeps the saved run, the slide layou
       // jsdom never fires `transitionend`, so the screen is emptied only by the 600ms
       // fallback timer.
     } },
-    { name: 'the Back button: slide returns to the list; side by side it keeps the saved run', run: async () => {
+    { name: 'the Back button returns to the list in both layouts', run: async () => {
       split(ctx.window);
-      const shell = await openDetail(ctx);
+      let shell = await openDetail(ctx);
       const back = ctx.window.document.querySelector('#hist-detail .hd-back');
       assert.ok(back, 'the detail header carries a Back button');
 
-      // Split: CSS hides the button (the list is in view); a stray click lands on #runs, which
-      // restores this very run, so the glance stays.
+      // Slice 2: split shows Back too; it asks for the list itself (goRunsList), never the remembered run.
       back.dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
       await settle(ctx.window);
-      assert.equal(ctx.window.location.hash.replace(/^#/, ''), detailHash);
-      assert.ok(shell.classList.contains('detail-open'));
+      assert.equal(ctx.window.location.hash.replace(/^#/, ''), 'runs');
+      assert.equal(shell.classList.contains('detail-open'), false);
 
       slide(ctx.window);
+      shell = await openDetail(ctx);
       ctx.window.document.querySelector('#hist-detail .hd-back')
         .dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
       await settle(ctx.window);
