@@ -11,9 +11,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
-import { seedPipelineRow } from './helpers/db-seed.mjs';
+import { seedPipelineRow, seedPipeline } from './helpers/db-seed.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { predecessorState, recordOutcome, createSchedule, createTicket, getSchedule, getTicket } from '../src/core/scheduler.mjs';
 
 useTempHome(after); // outer isolation: /api/run finishes ASYNC in-process
 
@@ -577,4 +578,42 @@ test('GET /api/schedules carries the open "Run after" chains, and drops a chain 
   getDb().prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE id = ?").run(b.runId);
   const settledChains = await get('/api/schedules');
   assert.equal(settledChains.chains.some((c) => c.id === 'p:ch000001'), false);
+});
+
+// ── S1 — an unsuccessful done run gates like a failure and feeds the streak ──────
+
+test('pipelineGate (via predecessorState): an unsuccessful done gates bad unless policy=any', async () => {
+  const bad = await seedPipeline(dir, {
+    engine: 2, endReached: false, status: 'done',
+    successful: false, outcomeReason: 'Implementation produced no changes to the worktree.',
+  });
+  const good = await seedPipeline(dir, { engine: 2, endReached: true, status: 'done' });  // successful (default)
+
+  const badDefault = predecessorState({ kind: 'pipeline', id: bad.id }, { policy: 'done' });
+  assert.equal(badDefault.state, 'bad');
+  assert.match(badDefault.reason, /unsuccessful/);
+
+  const badAny = predecessorState({ kind: 'pipeline', id: bad.id }, { policy: 'any' });
+  assert.equal(badAny.state, 'ok');
+
+  assert.equal(predecessorState({ kind: 'pipeline', id: good.id }, { policy: 'done' }).state, 'ok');
+  assert.equal(predecessorState({ kind: 'pipeline', id: good.id }, { policy: 'any' }).state, 'ok');
+});
+
+test('recordOutcome: an unsuccessful done bumps failure_streak; a successful one resets it', async () => {
+  const rule = { freq: 'daily', time: '02:00', tz: 'Europe/Berlin', anchor: '2026-09-18' };
+  const { schedule } = createSchedule({ title: 'Nightly S1', projectDir: dir, request: { projectDir: dir, prompt: 'x' }, rule });
+  const fire = (t) => getDb().prepare("UPDATE scheduled_runs SET status = 'fired' WHERE id = ?").run(t.id);
+
+  // first occurrence finished unsuccessfully → streak 1
+  const t1 = createTicket({ scheduleId: schedule.id, title: 'A', projectDir: dir, runAtMs: Date.now(), request: {} });
+  fire(t1);
+  recordOutcome(t1.id, { status: 'done', successful: false, detail: 'no changes' });
+  assert.equal(getSchedule(schedule.id).failureStreak, 1);
+
+  // a later successful occurrence resets the streak
+  const t2 = createTicket({ scheduleId: schedule.id, title: 'B', projectDir: dir, runAtMs: Date.now() + 1000, request: {} });
+  fire(t2);
+  recordOutcome(t2.id, { status: 'done', successful: true });
+  assert.equal(getSchedule(schedule.id).failureStreak, 0);
 });

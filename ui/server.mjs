@@ -1332,6 +1332,7 @@ function wireRun(entry) {
         try {
           recordOutcome(entry.ticketId, {
             status: name === 'error' ? 'error' : ((payload && payload.status) || 'done'),
+            successful: payload ? payload.successful : undefined,          // S1: the done emit carries it
             pipelineId: entry.pipelineId || null,
             reason: (payload && payload.reason) || null,
             detail: (payload && (payload.detail || payload.message)) || null,

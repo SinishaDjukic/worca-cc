@@ -488,7 +488,7 @@ export function createAskTools(deps) {
       description: 'List the saved workflows with their ordered step groups (parallel agent nodes share a group) and feedback loops. Pick one by name, domain and steps.',
       inputSchema: SCHEMA.obj({}) },
     { name: 'list_runs',
-      description: 'Find past runs, newest first. Optional filters: projectKey OR workspaceId, status (e.g. done, running, error, stopped), query (title substring), startedBy (the person who started the run, exactly as list_people names them, case-insensitive; "me" = the person signed in to this chat, only on a shared sign-in). Each row carries startedBy (a person, "local" for this machine, null before attribution). limit defaults to 20, max 100.',
+      description: 'Find past runs, newest first. Optional filters: projectKey OR workspaceId, status (e.g. done, running, error, stopped), query (title substring), startedBy (the person who started the run, exactly as list_people names them, case-insensitive; "me" = the person signed in to this chat, only on a shared sign-in). Each row carries startedBy (a person, "local" for this machine, null before attribution). A row that finished but did not do the work it was asked to do also carries successful:false and a short outcomeReason (both absent on a run that succeeded). limit defaults to 20, max 100.',
       inputSchema: SCHEMA.obj({ projectKey: SCHEMA.s('project key from list_projects'), workspaceId: SCHEMA.s('workspace id from list_projects'),
         status: SCHEMA.s('run status to match'), limit: SCHEMA.i('max results (1-100)', 1, L.listRunsMaxLimit), query: SCHEMA.s('case-insensitive title substring'),
         startedBy: SCHEMA.s('who started the run (a name from list_people, or "me")') }) },
@@ -496,7 +496,7 @@ export function createAskTools(deps) {
       description: 'Who has started runs on this worca: one row per person (the name recorded when they started a run — a verified sign-in email, a trusted-header name, or the operator\'s declared name; "local" = runs started on this machine with no identity) with runs, lastRunAt and totalCostUsd, most active first. Optional scope: projectKey OR workspaceId. Runs from before attribution existed have no person and are not counted. Read-only; this machine\'s runs only (team-wide people are in get_team_metrics actor breakdowns).',
       inputSchema: SCHEMA.obj({ projectKey: SCHEMA.s('project key from list_projects'), workspaceId: SCHEMA.s('workspace id from list_projects') }) },
     { name: 'get_run',
-      description: 'Read one run: its metadata, the user\'s original prompt, startedBy (the person who started it), `scheduled` when a schedule started it, and `actedBy` — the people who acted on it (paused, resumed, stopped, answered its questions, continued past a cost cap, opened its PR, archived it) with when (not the run\'s Actions: those are get_run_checkout). Give projectKey or workspaceId when known; without them the user-pinned scope (when the chat has one) is tried first, then the id is searched everywhere.',
+      description: 'Read one run: its metadata, the user\'s original prompt, startedBy (the person who started it), `scheduled` when a schedule started it, and `actedBy` — the people who acted on it (paused, resumed, stopped, answered its questions, continued past a cost cap, opened its PR, archived it) with when (not the run\'s Actions: those are get_run_checkout). A run that finished but did not do the work it was asked to do carries successful:false and a short outcomeReason (both absent on a run that succeeded). Give projectKey or workspaceId when known; without them the user-pinned scope (when the chat has one) is tried first, then the id is searched everywhere.',
       inputSchema: SCHEMA.obj({ id: SCHEMA.s('run id (8 hex)'), projectKey: SCHEMA.s('scope to a project'), workspaceId: SCHEMA.s('scope to a workspace') }, ['id']) },
     { name: 'get_run_diff',
       description: 'Read the unified diff of a run, paged by byte offset (use nextOffset until truncated is false). Optional path = one file only. files[] lists every file with added/removed counts; credential files are omitted. For a run still in progress it returns the changes so far in its worktree, with live: true — they will keep moving until the run ends.',
@@ -1050,6 +1050,7 @@ export function createAskTools(deps) {
     const wsMeta = isWs ? (parseJson(row.workspace_meta, null) || {}) : null;
     const none = !isWs && row.project_key === NO_PROJECT_KEY;   // P3: propose_run names it noProject: true, never this key
     const meta = isWs || none ? null : deps.readStoreMeta(row.project_key);
+    const oc = parseJson(row.outcome, null);   // S1: the run-outcome facts (successful/reason)
     return {
       id: row.id,
       title: deps.redact(row.title ?? row.id),
@@ -1078,6 +1079,10 @@ export function createAskTools(deps) {
       startedBy: row.started_by ?? null,
       // Started by a schedule (docs/scheduled-runs.md): only then, so every other run keeps its shape.
       ...(row.scheduled_for || row.schedule_id ? { scheduled: { scheduledFor: row.scheduled_for ?? null, scheduleId: row.schedule_id ?? null } } : {}),
+      // S1: present ONLY when the run finished unsuccessfully, so a successful run's body is byte-identical to today.
+      ...(oc?.successful === false
+        ? { successful: false, ...(oc.reason ? { outcomeReason: deps.redact(oc.reason) } : {}) }
+        : {}),
     };
   }
 
@@ -1894,6 +1899,10 @@ export function createAskTools(deps) {
           sourceBranch: e.sourceBranch ?? null, guardrailsId: e.guardrailsId ?? null,
           totalCostUsd: e.totalCostUsd ?? null,
           startedBy: e.startedBy ?? null,
+          // S1: present ONLY when the run finished unsuccessfully, so a successful row keeps today's shape.
+          ...(e.successful === false
+            ? { successful: false, ...(e.outcomeReason ? { outcomeReason: deps.redact(e.outcomeReason) } : {}) }
+            : {}),
         });
         if (out.length >= limit) break;
       }

@@ -16,6 +16,10 @@ import { getDb } from './db.mjs';
 import { runDirForRow, readStoreMeta, readPromptFile } from './artifacts.mjs';
 import { RESULTS_FILE } from './results.mjs';
 import { anyPrHost, findPrForBranch } from './git-info.mjs';
+import { outcomeSuccessful } from './outcome.mjs';
+
+/** Parse the `outcome` JSON column to an object, or null. */
+const parseOutcome = (v) => { try { return v == null ? null : JSON.parse(v); } catch { return null; } };
 
 /** Profile roster for a plugin; never throws — the pane must render even when a
  *  plugin's data dir is unreadable (it degrades to "no profiles yet"). */
@@ -148,9 +152,10 @@ export async function resolveTaskInput(source, { projectDir } = {}) {
 
 // ── result write-back (spec §7.5) ──────────────────────────────────────────────
 
-/** Map a pipeline row status onto the connector reportResult vocabulary (§7.1). */
-function statusToResult(status) {
-  if (status === 'done') return 'completed';
+/** Map a pipeline row status onto the connector reportResult vocabulary (§7.1).
+ *  S1: a `done` run that finished unsuccessfully maps to 'failed', not 'completed'. */
+export function statusToResult(status, { successful = true } = {}) {
+  if (status === 'done') return successful ? 'completed' : 'failed';
   if (status === 'error' || status === 'stopped') return 'failed';
   return 'needs-human'; // paused | interrupted | anything non-terminal (manual retry path)
 }
@@ -247,7 +252,7 @@ export async function reportResultForPipeline(pipelineRow, resultsBundle) {
       op: 'reportResult',
       args: {
         id: ref.taskId,
-        status: statusToResult(pipelineRow.status),
+        status: statusToResult(pipelineRow.status, { successful: outcomeSuccessful(parseOutcome(pipelineRow.outcome)) }),
         summary: buildResultSummary(pipelineRow, resultsBundle),
         links: buildResultLinks(resultsBundle),
         inputs,
