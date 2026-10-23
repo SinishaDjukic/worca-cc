@@ -96,7 +96,8 @@ level and has no **Diff**, **Changes** or **Actions**.
 - **Pause & resume, even across restarts** — **Pause** parks a run, and so does
   a cost cap or a failing step; only **Stop** ends one. **Resume** re-attaches
   the paused Claude sessions (`claude --resume`) in the same worktree,
-  uncommitted agent work included, or **Resume at…** schedules it. Paused runs
+  uncommitted agent work included, or **Resume at…** schedules it — at a time,
+  or after another run ends, so paused runs can resume one after another. Paused runs
   survive a server restart, and a run cut off mid-step comes back as
   *Interrupted*, resumable from its last clean point. A step that loses the
   network waits for it and retries by itself; a run parked by an outage resumes

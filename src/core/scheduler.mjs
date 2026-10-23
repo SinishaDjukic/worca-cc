@@ -236,7 +236,10 @@ export function createTicket({
   const chained = normAfter(after);
   if (after && !chained) throw new Error('createTicket: after.kind must be ticket | pipeline and after.id a string');
   if (resumePipelineId != null && (typeof resumePipelineId !== 'string' || !resumePipelineId.trim())) throw new Error('createTicket: resumePipelineId must be a non-empty string');
-  if (resumePipelineId && chained) throw new Error('createTicket: a resume ticket cannot wait on another run');
+  if (resumePipelineId && chained) {
+    const why = resumeWaitError(chained, resumePipelineId.trim());
+    if (why) throw new Error(`createTicket: ${why}`);
+  }
   if (!chained && !Number.isFinite(runAtMs)) throw new Error('createTicket: runAtMs is required');
   const tc = targetCols({ projectDir, workspaceId }, { allowNoProject: !!resumePipelineId });
   const ts = iso(now);
@@ -248,7 +251,8 @@ export function createTicket({
   `).run(id, scheduleId, title, tc.project_key, tc.project_dir, tc.workspace_id, chained ? AFTER_RUN_AT : iso(runAtMs), JSON.stringify(request || {}),
     normPolicy(ifMissed, MISSED_POLICIES, 'run'), normGrace(graceMin), ownerPid, ownerPid != null ? (ownerHost || hostname()) : null,
     askThreadId, askCardId, forced ? 1 : 0,
-    chained ? chained.kind : null, chained ? chained.id : null, normPolicy(afterPolicy, AFTER_POLICIES, 'done'), chained && sourceFromPrevious ? 1 : 0,
+    // A resume continues on its own branch: never "from the previous run's branch".
+    chained ? chained.kind : null, chained ? chained.id : null, normPolicy(afterPolicy, AFTER_POLICIES, 'done'), chained && sourceFromPrevious && !resumePipelineId ? 1 : 0,
     resumePipelineId ? resumePipelineId.trim() : null, presetId || null, ts, ts, byOf(createdBy), byOf(createdBy));
   return getTicket(id);
 }
@@ -307,6 +311,16 @@ export function updateTicket(id, { runAtMs, ifMissed, graceMin, after, afterPoli
   // `after: null` is "not given"; anything else that does not normalise is a caller bug — refuse it
   // like createTicket does, never answer "no change".
   if (after !== undefined && after !== null && !chained) throw new Error('updateTicket: after.kind must be ticket | pipeline and after.id a string');
+  if (chained && t.resumePipelineId) {
+    const why = resumeWaitError(chained, t.resumePipelineId);
+    if (why) throw new Error(`updateTicket: ${why}`);
+  }
+  if (chained && chained.kind === 'ticket' && chained.id === t.id) throw new Error('updateTicket: a ticket cannot wait on itself — it is this run');
+  // A cycle through a paused run's resume (T waits on A while A's resume waits on T) never fires either side.
+  if (chained && waitReaches(chained, { ticketId: t.id })) {
+    const ref = afterRefOf(chained.id);
+    throw new Error(`updateTicket: ‘${(ref && ref.title) || chained.id.slice(0, 8)}’ already waits for this run`);
+  }
   if (chained) {
     sets.push('run_at = ?', 'after_kind = ?', 'after_id = ?', "status = 'scheduled'", 'attempts = 0', 'retry_at = NULL', 'queued = 0', 'forced = 0', 'fail_reason = NULL');
     args.push(AFTER_RUN_AT, chained.kind, chained.id);
@@ -315,7 +329,7 @@ export function updateTicket(id, { runAtMs, ifMissed, graceMin, after, afterPoli
   // a second `after_policy = ?` in the same SET would win over the reset above (SQLite keeps the LAST
   // assignment of a repeated column), and the stale `any` the reset exists to clear would survive.
   if (afterPolicy !== undefined && !Number.isFinite(runAtMs) && AFTER_POLICIES.includes(afterPolicy)) { sets.push('after_policy = ?'); args.push(afterPolicy); }
-  if (sourceFromPrevious !== undefined && (chained || (t.after && !Number.isFinite(runAtMs)))) { sets.push('source_from_previous = ?'); args.push(sourceFromPrevious ? 1 : 0); }
+  if (sourceFromPrevious !== undefined && !t.resumePipelineId && (chained || (t.after && !Number.isFinite(runAtMs)))) { sets.push('source_from_previous = ?'); args.push(sourceFromPrevious ? 1 : 0); }
   if (ifMissed !== undefined) { sets.push('if_missed = ?'); args.push(normPolicy(ifMissed, MISSED_POLICIES, t.ifMissed)); }
   if (graceMin !== undefined) { sets.push('grace_min = ?'); args.push(normGrace(graceMin, t.graceMin)); }
   if (!sets.length) return t;
@@ -565,15 +579,47 @@ export function dependentsOfRun({ ticketId = null, pipelineId = null } = {}) {
 
 const CHAIN_DEPTH_CAP = 100;
 
-/** True when following `after` upward reaches `selfId` (spec D8). */
-function chainReaches(after, selfId) {
-  let cur = after;
-  for (let depth = 0; cur && cur.kind === 'ticket' && depth < CHAIN_DEPTH_CAP; depth++) {
-    if (cur.id === selfId) return true;
+/**
+ * True when waiting on `after` would wait on the ticket `ticketId` or the run `pipelineId` itself (spec D8):
+ * the predecessor is (or becomes, or resumes) it, or something it still waits on is. A ticket waits on its
+ * `after` until it fires; a ticket that resumes or became a run ends with that run; a paused run waits on
+ * its own resume's `after`.
+ */
+function waitReaches(after, { ticketId = null, pipelineId = null } = {}) {
+  const queue = [after];
+  const seen = new Set();
+  while (queue.length && seen.size < CHAIN_DEPTH_CAP) {
+    const cur = queue.shift();
+    const key = cur && `${cur.kind}:${cur.id}`;
+    if (!cur || !cur.id || seen.has(key)) continue;
+    seen.add(key);
+    if (cur.kind === 'pipeline') {
+      if (pipelineId && cur.id === pipelineId) return true;
+      for (const r of resumeTicketsFor(cur.id)) if (r.after) queue.push(r.after);
+      continue;
+    }
+    if (ticketId && cur.id === ticketId) return true;
     const t = getTicket(cur.id);
-    cur = t ? t.after : null;
+    if (!t) continue;
+    if (t.pipelineId) queue.push({ kind: 'pipeline', id: t.pipelineId });
+    if (t.resumePipelineId) queue.push({ kind: 'pipeline', id: t.resumePipelineId });
+    if (t.after && !t.pipelineId) queue.push(t.after);
   }
   return false;
+}
+
+/** Why a resume of `pipelineId` may not wait on `after` (its own run, or a cycle), else null. */
+export function resumeWaitError(after, pipelineId) {
+  const a = normAfter(after);
+  if (!a || typeof pipelineId !== 'string' || !pipelineId) return null;
+  const self = a.kind === 'pipeline' ? a.id === pipelineId : (() => {
+    const t = getTicket(a.id);
+    return !!t && (t.pipelineId === pipelineId || t.resumePipelineId === pipelineId);
+  })();
+  if (self) return 'a run cannot resume after itself';
+  if (!waitReaches(a, { pipelineId })) return null;
+  const ref = afterRefOf(a.id);
+  return `‘${(ref && ref.title) || a.id.slice(0, 8)}’ already waits for this run`;
 }
 
 /** The run whose feature branch `pipelineId` started from: its latest ticket's predecessor when that ticket
@@ -633,7 +679,7 @@ export function stackedPrBaseOf(pipelineId, chain) {
 
 // ── run progress: chains (spec 2026-10-14 run-progress P8) ───────────────────
 
-const CHAIN_TICKET_SQL = 'SELECT id, title, status, after_kind, after_id, pipeline_id, project_key, project_dir, workspace_id, created_at FROM scheduled_runs';
+const CHAIN_TICKET_SQL = 'SELECT id, title, status, after_kind, after_id, pipeline_id, resume_pipeline_id, project_key, project_dir, workspace_id, created_at FROM scheduled_runs';
 const CHAIN_PIPELINE_SQL = 'SELECT id, title, status, target, project_key, workspace_key, pr_url FROM pipelines WHERE id = ?';
 const WAITING_TICKET = new Set(['scheduled', 'firing']);
 const PR_URL_RE = /^https:\/\/\S+$/i;   // the expander makes it a link: never a javascript:/data: href
@@ -657,7 +703,8 @@ export function runChains({ isLive = null } = {}) {
     if (!tickets.has(id)) tickets.set(id, db.prepare(`${CHAIN_TICKET_SQL} WHERE id = ?`).get(String(id)) || null);
     return tickets.get(id);
   };
-  const keyOf = (t) => (t.pipeline_id ? `p:${t.pipeline_id}` : `t:${t.id}`);
+  // A resume ticket IS the paused run it resumes, before it fires as well as after.
+  const keyOf = (t) => (t.pipeline_id || t.resume_pipeline_id ? `p:${t.pipeline_id || t.resume_pipeline_id}` : `t:${t.id}`);
   const nodes = new Map();
   const node = (key) => {
     if (!nodes.has(key)) nodes.set(key, { key, ticket: null, pipelineId: key.startsWith('p:') ? key.slice(2) : null, parent: null, children: [] });
@@ -683,7 +730,10 @@ export function runChains({ isLive = null } = {}) {
     const t = n.ticket;
     const row = n.pipelineId ? db.prepare(CHAIN_PIPELINE_SQL).get(n.pipelineId) || null : null;
     let state;
-    if (n.pipelineId) {
+    // A resume not fired yet: the paused row reads `paused` (open), but the member still waits — or its link
+    // failed. A skipped one was resumed (or stopped) by hand: the run's own row tells its state.
+    if (t && t.resume_pipeline_id && t.status !== 'fired' && t.status !== 'skipped') state = WAITING_TICKET.has(t.status) ? 'waiting' : 'failed';
+    else if (n.pipelineId) {
       if (!row) state = 'failed';
       else if ((isLive && isLive({ id: t ? t.id : row.id, pipelineId: row.id })) || OPEN_PIPELINE.includes(row.status)) state = 'current';
       else if (row.status === 'done') state = 'done';
@@ -746,9 +796,9 @@ export function resolveAfterRef(after, { projectDir = null, workspaceId = null, 
     if (ref.workspaceId) return { ok: false, error: `${name} targets a workspace; this run targets a project` };
     if (wantKey && ref.projectKey !== wantKey) return { ok: false, error: `${name} targets another project; this run targets ${projectDir}` };
   }
-  if (selfId && ref.kind === 'ticket') {
-    if (ref.id === selfId) return { ok: false, error: `${name} is this run` };
-    if (chainReaches({ kind: 'ticket', id: ref.id }, selfId)) return { ok: false, error: `${name} already waits for this run` };
+  if (selfId) {
+    if (ref.kind === 'ticket' && ref.id === selfId) return { ok: false, error: `${name} is this run` };
+    if (waitReaches({ kind: ref.kind, id: ref.id }, { ticketId: selfId })) return { ok: false, error: `${name} already waits for this run` };
   }
   const p = predecessorState({ kind: ref.kind, id: ref.id }, { policy, isLive });
   if (p.state === 'bad' || p.state === 'gone') return { ok: false, error: `${name} ${p.reason} — nothing to wait for` };

@@ -337,6 +337,15 @@ test('one wording per state: no status line has a colon form; a paused-after-res
   assert.equal(runModel(R({ stepper: noStage, status: 'interrupted', steps: [row('n_x', 'start')] }), OPTS).line, 'Paused · interrupted');
 });
 
+test('an interrupted run offers Archive, never Stop: with Resume while it can resume, alone once it never can', () => {
+  const run = (o) => R({ status: 'interrupted', steps: [row('n_impl', 'start')], ...o });
+  assert.deepEqual(runModel(run({ resumable: false }), OPTS).actions, ['archive']);
+  assert.deepEqual(runModel(run({ resumable: true }), OPTS).actions, ['resume', 'archive']);
+  assert.deepEqual(runModel(run({}), OPTS).actions, ['resume', 'archive'], 'no flag (a live run) stays resumable');
+  assert.deepEqual(runModel(R({ status: 'paused', steps: [row('n_impl', 'paused')], resumable: false }), OPTS).actions, ['resume', 'stop'],
+    'a paused run is stoppable: only an interrupted one turns into Archive');
+});
+
 test('prState: dev’s isDraft reads Draft; a draft that conflicts or fails checks shows that instead (#784)', () => {
   assert.equal(prState(ghPr({ isDraft: true, mergeable: 'UNKNOWN' })).word, 'Draft');
   assert.equal(prState(ghPr({ isDraft: false, mergeable: 'MERGEABLE' })).word, 'Ready');
