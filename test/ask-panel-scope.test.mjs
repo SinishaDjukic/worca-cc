@@ -205,7 +205,12 @@ test('P4 scope pill and menu (canvas ScopeMenu): every level, the dashed circle,
   assert.deepEqual(rows.map((r) => r.querySelector('.ask-model-name').textContent), ['No project', 'Demo', 'Notes', 'Gone (missing)', 'Team', 'Add project…']);
   assert.deepEqual(rows.map((r) => r.getAttribute('role')), ['menuitemradio', 'menuitemradio', 'menuitemradio', 'menuitemradio', 'menuitemradio', 'menuitem']);
   assert.deepEqual(rows.map((r) => r.getAttribute('aria-checked')), ['true', 'false', 'false', 'false', 'false', null]);
-  assert.deepEqual(rows.map((r) => r.querySelector('.kind-chip')?.textContent ?? null), [null, 'Git', 'Folder', null, 'Workspace', null], 'no vcs on the row: no chip (P1b projectKind)');
+  assert.deepEqual(rows.map((r) => r.querySelector('.kind-chip')?.textContent ?? null), [null, 'Git', 'Folder', null, null, null], 'no vcs on the row: no chip (P1b projectKind); a workspace row: no constant Workspace chip');
+  const shape = (r) => [...r.children].map((c) => c.tagName.toLowerCase() + (c.className ? `.${c.className}` : ''));
+  assert.deepEqual(rows.slice(0, 5).map((r) => shape(r).at(-1)), Array(5).fill('span.ask-scope-check'), 'every radio row ends in the same check slot, picked or not');
+  assert.deepEqual(rows.slice(0, 5).map((r) => r.querySelector(':scope > .ask-scope-check').getAttribute('aria-hidden')), Array(5).fill('true'));
+  assert.deepEqual(rows.slice(0, 5).map((r) => r.querySelectorAll('.ask-model-check').length), [1, 0, 0, 0, 0], 'the ✓ only in the picked row\'s slot');
+  assert.equal(rows[5].querySelector('.ask-scope-check'), null, 'Add project… is no radio: no slot');
   assert.deepEqual(rows.map((r) => r.querySelector('.ask-scope-sub')?.textContent ?? null), [null, '~/demo', 'C:\\Users\\me\\Notes', '/p/gone', null, null], 'displayPath (S22), else path');
   assert.equal(rows[1].title, '/Users/me/demo', 'the title holds the absolute path');
   assert.equal(rows[0].querySelector('.ask-model-check').getAttribute('aria-hidden'), 'true', 'aria-checked carries the pick');

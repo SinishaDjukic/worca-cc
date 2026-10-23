@@ -4759,9 +4759,11 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .runs-item:has(> a.runs-row.selected) .runs-pr.is-closed,.runs-item:has(> a.runs-row.selected) .runs-pr.is-conflicts,.runs-item:has(> a.runs-row.selected) .runs-pr.is-failing{color:var(--red-ink-strong);}
 .runs-indep{font-size:11px;font-weight:500;padding:0 4px;border-radius:var(--r-xs);background:var(--canvas-2);color:var(--ink-2);}
 /* openMenu marks the chosen Show / Group by item only with aria-checked; the check mark moves here from the removed
-   .runs-group-menu rule (same 12px mask), so every openMenu radio item shows it. */
-.wfv-menu [role="menuitemradio"][aria-checked="true"]::after{content:"";width:12px;height:12px;margin-left:auto;background:currentColor;
+   .runs-group-menu rule (same 12px mask), so every openMenu radio item shows it. Every radio item reserves the slot
+   (painted only when checked), so whatever sits before it lines up on every row. */
+.wfv-menu [role="menuitemradio"]::after{content:"";flex:none;width:12px;height:12px;margin-left:auto;background:transparent;
   mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E") center/12px no-repeat;}
+.wfv-menu [role="menuitemradio"][aria-checked="true"]::after{background:currentColor;}
 .runs-sec-head{display:flex;gap:8px;align-items:center;width:100%;padding:12px 0 6px;font-size:12px;font-weight:600;color:var(--ink-2);border:0;border-bottom:1px solid var(--line);background:none;text-align:left;}
 button.runs-sec-head{cursor:pointer;}
 button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
@@ -9033,9 +9035,14 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .ask-scope-line{display:flex;align-items:center;gap:8px;min-width:0;}
 .ask-scope-line > .ask-model-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .ask-scope-line > .kind-chip{margin-left:auto;}
+/* The trailing check slot on every scope radio row (empty unless picked), so the chip column is the same on each row. */
+.ask-scope-check{flex:none;display:inline-flex;justify-content:flex-end;width:16px;margin-left:auto;}
+.ask-scope-check > .ask-model-check{margin-left:0;}
 .ask-scope-sub{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:11px;color:var(--ink-2);}
 /* The Workflows composer's scope menu (workflows/menu.mjs) keeps the one kind chip on the right, as the Ask menu does (B8). */
 .wfv-menu-item > .kind-chip{margin-left:auto;}
+/* One auto margin per row: the ✓ slot follows the chip at the item's gap, so the chips line up picked or not. */
+.wfv-menu-item:has(> .kind-chip)::after{margin-left:0;}
 /* The run card's `Where it runs` sub-line (ask-panel.mjs updateTargetSub): the kind chip between the name and the branch words (B10). */
 .ask-rp-sec-sub > .kind-chip{margin:0 6px;}
 /* The `Switched to <name>` divider row (canvas Switched): a centered label between two hairlines, no accent. */
