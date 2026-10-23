@@ -9606,6 +9606,16 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .rd-bar-end,.gpage-actions{min-width:0;flex:0 1 auto;}
 :is(.rd-actions,.gpage-actions) .btn-primary{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .rd-bar :is(.btn-danger,.btn-icon){flex:none;}
+/* One control size on both bars: the model's made .btn-sm actions (syncActions; the chat run card keeps them small)
+   and the Resume split come up to .btn's 32px and body size; the primary keeps its 600 weight, as everywhere (the
+   button audit's rule). Child selectors only: the chat panel's Open full page / Close (.crp-bar-btns) keep their square. */
+:is(.rd-bar,.hd-bar) .rd-bar-end > .btn,
+:is(.rd-bar,.hd-bar) .rd-bar-end > :is(.rd-actions,.btn-split) > .btn{height:32px;padding:0 12px;gap:6px;font-size:var(--fs-body);}
+:is(.rd-bar,.hd-bar) .rd-bar-end > .btn.btn-icon,
+:is(.rd-bar,.hd-bar) .rd-bar-end > :is(.rd-actions,.btn-split) > .btn.btn-icon{width:32px;padding:0;}
+/* ⋯ is .btn-quiet in markup; on the bar it wears its neighbours' border and fill. */
+:is(.rd-bar,.hd-bar) .rd-bar-end > :is(.rd-bar-more,.hd-bar-more){background:var(--panel);border-color:var(--line-2);color:var(--ink);}
+:is(.rd-bar,.hd-bar) .rd-bar-end > :is(.rd-bar-more,.hd-bar-more):hover:not(:disabled){background-color:var(--btn-hover);}
 /* Run 3 (D6): the breadcrumb at the bar's left (split layout only). */
 .rd-crumbs{display:flex;align-items:center;gap:4px;min-width:0;font-size:var(--fs-meta);color:var(--ink-2);}
 .rd-crumbs[hidden]{display:none;}
