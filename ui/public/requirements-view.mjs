@@ -11,6 +11,7 @@
 //   view.destroy()
 
 import { gitOn, onGitChange, GIT_MISSING_TEXT } from './git-gate.mjs';
+import { makeSwitch } from './switch.mjs';
 
 // The displayed state (A2 §4), always the server's `f.state`: the page never derives it. `started` is
 // drawn as the latest run's pill (runPill), not as a badge.
@@ -665,8 +666,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const area = h('textarea', { rows: '4', 'aria-label': 'Your notes for Worca', 'data-ui': 'notes-body', maxlength: String(NOTES_MAX),
       placeholder: 'Actors, terms and standing rules every feature here should know' });
     area.value = v.body;
-    const look = h('input', { type: 'checkbox', id: 'req-notes-look', 'data-ui': 'notes-look' });
-    look.checked = v.look;
+    // the shared switch (switch.mjs): an on/off setting is a switch, not a checkbox (docs/design-system.md › Switch)
+    const { row: lookRow, input: look } = makeSwitch(document, { checked: v.look, rowClass: 'req-brief-notes-look', data: { ui: 'notes-look' },
+      label: 'Let Worca look at the code (for the brief, and when you ask it to look closer at a feature)' });
     const save = () => act(async () => {
       await api('PUT', `/api/requirements/context/${s.scopeType}/${encodeURIComponent(s.scopeKey)}`, { body: area.value, lookAtCode: look.checked });
       notesDraft = null; notesBase = null;
@@ -677,8 +679,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     return h('section', { class: 'card req-brief-notes', 'aria-label': 'Your notes for Worca' },
       h('div', { class: 'req-card-head' }, h('h3', { text: 'Your notes for Worca' })),
       area,
-      h('label', { for: 'req-notes-look', class: 'req-brief-notes-look' }, look,
-        ' Let Worca look at the code (for the brief, and when you ask it to look closer at a feature)'),
+      lookRow,
       h('div', { class: 'req-brief-notes-foot' },
         onCancel ? h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'notes-cancel', onclick: onCancel }, 'Cancel') : null,
         h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'notes-save', onclick: save }, 'Save notes')));
@@ -746,7 +747,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     });
     return menu('brief-export', h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'brief-export' }, 'Export ▾'), [
       menuItem('Copy Markdown', copy, { ui: 'mi-brief-copy' }),
-      h('a', { role: 'menuitem', class: 'req-menu-item', 'data-ui': 'mi-brief-download', href: `${briefApi(s)}/markdown?download=1`, download: '' }, 'Download .md'),
+      h('a', { role: 'menuitem', class: 'menu-item req-menu-item', 'data-ui': 'mi-brief-download', href: `${briefApi(s)}/markdown?download=1`, download: '' }, 'Download .md'),
     ]);
   }
 
@@ -1620,12 +1621,12 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       foot ? h('div', { class: 'req-knows-foot' }, ...foot) : null);
   }
 
-  // A menu button (the ⋯ header menu's pattern, .hd-more-wrap / .hd-menu): the trigger toggles a role=menu
+  // A menu button (the ⋯ header menu's pattern, .hd-more-wrap / .hd-menu, in upstream's one .menu box): the trigger toggles a role=menu
   // list; a choice, Escape (focus back on the trigger) or a press outside closes it. The open one is kept
   // in `ui.menu`, so a live repaint does not shut it.
   function menu(key, trigger, items) {
     const on = ui.menu === key;
-    const list = h('div', { class: 'hd-menu req-menu-list', role: 'menu', hidden: !on }, ...items);
+    const list = h('div', { class: 'menu hd-menu req-menu-list', role: 'menu', hidden: !on }, ...items);
     trigger.setAttribute('aria-haspopup', 'menu');
     trigger.setAttribute('aria-expanded', on ? 'true' : 'false');
     trigger.addEventListener('click', () => setMenu(ui.menu === key ? null : key));
@@ -1648,7 +1649,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     }
   }
   // Each item has a data-ui, so a live repaint keeps the focus on it inside the open menu.
-  const menuItem = (label, onclick, { disabled = false, ui: key = null, needsGit = false } = {}) => h('button', { type: 'button', role: 'menuitem', class: 'req-menu-item', 'data-ui': key, 'data-needs-git': needsGit, disabled, onclick }, label);
+  const menuItem = (label, onclick, { disabled = false, ui: key = null, needsGit = false } = {}) => h('button', { type: 'button', role: 'menuitem', class: 'menu-item req-menu-item', 'data-ui': key, 'data-needs-git': needsGit, disabled, onclick }, label);
 
   function header(f) {
     const save = () => act(async () => {
@@ -1683,7 +1684,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         menu('export', h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'menu-export' }, 'Export ▾'), [
           f.scopeType === 'project' ? menuItem('Save to specs/', save, { ui: 'mi-save' }) : null,
           menuItem('Copy Markdown', copy, { ui: 'mi-copy' }),
-          h('a', { role: 'menuitem', class: 'req-menu-item', 'data-ui': 'mi-download', href: `/api/requirements/${f.seq}/markdown?download=1`, download: '' }, 'Download .md'),
+          h('a', { role: 'menuitem', class: 'menu-item req-menu-item', 'data-ui': 'mi-download', href: `/api/requirements/${f.seq}/markdown?download=1`, download: '' }, 'Download .md'),
         ]),
         menu('more', h('button', { type: 'button', class: 'req-ico', 'aria-label': 'More actions', title: 'More actions', 'data-ui': 'menu-more' },
           icon(ICONS.dots, { size: 18, fill: 'currentColor', stroke: 'none' })), [

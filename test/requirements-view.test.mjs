@@ -2719,3 +2719,25 @@ test('git appears or goes missing: New feature says its look line again and keep
     assert.equal(gets(), 2, 'destroy unsubscribes');
   });
 });
+
+// Upstream's one menu (style.css .menu / .menu-item, test/ui-shared-controls.test.mjs): every Export ▾ and ⋯ list is a
+// .menu box and every row a .menu-item, on the feature page and on the brief page.
+test('one menu: the Export and ⋯ lists are .menu boxes with .menu-item rows', async () => {
+  const f = await openKnows(knowsFeature());
+  const b = await openBrief(madeBody());
+  const lists = [...f.host.querySelectorAll('[role="menu"]'), ...b.host.querySelectorAll('[role="menu"]')];
+  assert.equal(lists.length, 4);
+  for (const m of lists) {
+    assert.ok(m.classList.contains('menu') && m.classList.contains('hd-menu'), m.parentElement.getAttribute('data-menu'));
+    for (const it of m.querySelectorAll('[role="menuitem"]')) assert.ok(it.classList.contains('menu-item'), it.textContent);
+  }
+});
+
+test('the notes switch is the shared switch (role=switch), with its label', async () => {
+  const { host } = await openBrief(briefBody());
+  const sw = host.querySelector('[data-ui="notes-look"]');
+  assert.equal(sw.getAttribute('role'), 'switch');
+  assert.ok(sw.classList.contains('sw-input'));
+  assert.ok(sw.closest('label').classList.contains('switch-row'));
+  assert.equal(text(sw.closest('label')), 'Let Worca look at the code (for the brief, and when you ask it to look closer at a feature)');
+});

@@ -9927,11 +9927,9 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .req-ico:hover:not(:disabled),.req-ico[aria-expanded="true"]{background:var(--hover);color:var(--ink)}
 .req-ico:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-ico:disabled{opacity:.45;cursor:not-allowed}
-/* The menus wear the header ⋯ menu's chrome (.hd-more-wrap, .hd-menu); their rows are the Runs group menu's. */
+/* The menus are upstream's one menu (.menu box, .menu-item rows) placed like the header ⋯ (.hd-more-wrap, .hd-menu). */
 .req-menu .hd-menu{min-width:200px}
-.req-menu-item{display:flex;align-items:center;gap:8px;width:100%;box-sizing:border-box;padding:8px 10px;border:0;border-radius:9px;background:transparent;color:var(--ink);font:600 13px var(--sans);text-align:left;text-decoration:none;cursor:pointer}
-.req-menu-item:hover:not(:disabled),.req-menu-item:focus-visible{background:var(--hover);outline:none}
-.req-menu-item:disabled{opacity:.45;cursor:not-allowed}
+.req-menu-item{box-sizing:border-box;text-decoration:none}   /* Download .md is a link row */
 .req-actions{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 0}
 .req-cols{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:22px;align-items:start}
 @media (max-width:900px){.req-cols{grid-template-columns:1fr}}
@@ -10127,7 +10125,7 @@ a.req-run-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-brief-notes{padding:18px 22px;display:flex;flex-direction:column;gap:10px}
 .req-brief-notes .req-card-head{margin:0}
 .req-brief-notes textarea{width:100%;box-sizing:border-box;min-height:84px}
-.req-brief-notes-look{display:flex;align-items:flex-start;gap:8px;font-size:13px}
+.req-brief-notes-look{align-items:flex-start}   /* the shared .switch-row, its long label wrapping */
 /* Without git there is no Create on the empty brief page: this line says why (git-gate.mjs). */
 .req-brief-nogit-create{margin:0;max-width:300px}
 :root:not([data-git="off"]) .req-brief-nogit-create{display:none}
