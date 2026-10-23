@@ -254,7 +254,7 @@ import { paintAboutInto, paintVersionStatusInto, paintUpdateMarkerInto } from '.
 import { renderReasonOptions, renderOptIns, previewText, reportBlobParts, REPORT_PREVIEW_DEBOUNCE_MS } from './report-run.mjs';
 import { openScheduleSheet, closeScheduleSheet, browserTimeZone } from './schedule-sheet.mjs';
 import {
-  freshSyncState, ago, listRowModel, projectBarModel, wsRollupModel, ffRefusalCopy, syncStageLabel, fetchedAgo, isSyncableBranchName,
+  freshSyncState, ago, listRowModel, projectBarModel, wsRollupModel, ffRefusalCopy, syncStageLabel, syncStageTitle, fetchedAgo, isSyncableBranchName,
   runOutcomeModel, openSyncDialog, chooseSyncRefusal, NO_COMMITS_HINT,
 } from './branch-sync.mjs';
 import { gitActionFor, GIT_DIALOG, gitDoneMessage } from './project-git.mjs';
@@ -1710,6 +1710,11 @@ function handleServerMessage(msg) {
     scheduleOnboardingRefresh();
     refreshAllCounts();
     refreshBudget();
+    // An archive / delete names the parked live runs the server evicted; every tab drops its copies of them.
+    if (Array.isArray(msg.removedRunIds) && msg.removedRunIds.length) {
+      const gone = new Set(msg.removedRunIds);
+      dropParkedRuns((e) => gone.has(e.runId));
+    }
     // Chat P4: the run panel reads these rows too. The Archived feed, once loaded, goes stale on the same change:
     // reloadRunsHistory refetches it while the Runs page is open; elsewhere it is dropped so the next Archived paint
     // fetches afresh.
@@ -2363,6 +2368,22 @@ function dropSupersededPaused(r) {
 // keeps its glance/Details mode and tab and REPLACES the dead address, so Back never lands on it (replaceRoute
 // rewrites the hash at once, so the bounce check in renderRunningView already sees the new id). The Chat run
 // panel follows in place, on a microtask: never remount it in the middle of upsertRun / onHello.
+// An archived or deleted run's parked (paused / interrupted) live copies leave this tab's runs Map, as the server's
+// leave its (dropParkedEntries, ui/server.mjs): buildRunsModel lists every live row, so one left behind stays in
+// Running as a ghost card. `drop(e)` picks the entries; the caller repaints.
+function dropParkedRuns(drop) {
+  let n = 0;
+  for (const [id, e] of runs) {
+    if ((e.status !== 'paused' && e.status !== 'interrupted') || !drop(e)) continue;
+    alerts.onResolved(alertRun(e));
+    runs.delete(id);
+    if (state.selectedRunId === id) state.selectedRunId = '';
+    n++;
+  }
+  if (n) { renderPipelineTabs(); updateNavCounts(); }
+  return n;
+}
+
 function followSupersedingRun(fromId, r) {
   if (!runDetailState.screen || runDetailState.runId !== fromId) return;
   if (runDetailState.host === 'panel') {
@@ -24614,7 +24635,8 @@ function paintHdActions(screen, record, data) {
   const bar = screen.querySelector('.rd-bar-end');
   const slot = bar && bar.querySelector('.rd-actions');
   if (!slot) return;
-  const m = runModel(hdModelRun(record, data), { memo: memoFor(record.id) });
+  const mr = hdModelRun(record, data);
+  const m = runModel(mr, { memo: memoFor(record.id) });
   const resumeBtn = bar.querySelector('.hd-resume');
   const split = bar.querySelector('.hd-resume-split');
   const pause = bar.querySelector('.hd-pause');
@@ -24637,8 +24659,8 @@ function paintHdActions(screen, record, data) {
     // run is still pausing; never as a button that cannot work.
     skip: [...MENU_ACTIONS, ...HEAD_ACTIONS, ...(resumable || pausing ? [] : ['resume'])],
     disable: { 'ask-changes': "Ask for changes from the run's chat", ...(pausing && !resumable ? { resume: 'Pausing…' } : {}) },
-    onAction: (id, b) => runAction({ runId: live ? live.runId : null, pipelineId: record.id, title: record.title,
-      projectKey: record.projectKey || '', workspaceId: record.workspaceId || null }, id, b, m),
+    onAction: (id, b) => runAction({ runId: live ? live.runId : null, pipelineId: record.id, title: record.title, status: mr.status,
+      ...(mr.resumable === false ? { resumable: false } : {}), projectKey: record.projectKey || '', workspaceId: record.workspaceId || null }, id, b, m),
   });
   // .hd-resume starts hidden in the template; the split follows it (as .rd-resume-split follows .rd-pause).
   if (split && resumeBtn) split.hidden = resumeBtn.hidden;
@@ -25408,30 +25430,42 @@ const SCHEDULE_REFUSED_PAUSE = new Set(['cost_pipeline', 'cost_total', 'cost_pip
 /**
  * "Resume at…" — schedule a one-off resume of a paused run. Uses the schedule sheet
  * (one-off time; missed-slot policy pre-selected to Skip per the clarify answer — the
- * user may still pick "Start it late"), then POSTs the ticket.
+ * user may still pick "Start it late" — or "After a run": when another run of the same
+ * target ends), then POSTs the ticket. A resume continues on its own branch, so it never
+ * sends sourceFromPrevious (the sheet has no such control; the server refuses it).
  */
 async function scheduleResumeAt({ pipelineId, title, projectDir = null, workspaceId = null, runEngine = null, pause = null }, btn) {
   // After a usage limit the run's engine hit, the resume may go to another engine (each has its own allowance).
   const saved = runEngine || 'claude';
   const others = usageLimitSwitches(pause || {});
+  const q = workspaceId ? `workspaceId=${encodeURIComponent(workspaceId)}` : (projectDir ? `projectDir=${encodeURIComponent(projectDir)}` : '');
+  // The run being resumed is paused, so after-candidates lists it: it can never wait on itself.
+  const candidates = q ? async () => {
+    const r = await fetch(`/api/schedules/after-candidates?${q}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const c = await r.json();
+    return { runs: (c.runs || []).filter((x) => x.pipelineId !== pipelineId), tickets: c.tickets || [] };
+  } : null;
   const res = await openScheduleSheet({
     engine: others.length ? { choices: [saved, ...others].map((e) => [e, engineLabel(e)]), value: saved } : null,
     mode: 'ticket',
-    allowAfter: false,                    // a resume ticket can never chain (createTicket throws)
+    candidates,
     initial: { ifMissed: 'skip' },        // pre-selected, not locked — "Start it late" stays available
     runTitle: `Resume ‘${title || pipelineId}’`,
     heading: 'Schedule the resume',
     confirmLabel: 'Schedule resume',
   });
-  if (!res || !res.scheduledFor) return;
+  if (!res || !(res.scheduledFor || res.after)) return;
   if (btn) btn.disabled = true;
   try {
+    const when = res.after
+      ? { after: { kind: res.after.kind, id: res.after.id }, afterPolicy: res.afterPolicy || 'done' }
+      : { scheduledFor: res.scheduledFor, ifMissed: res.ifMissed, ...(res.ifMissed === 'run' && res.graceMin != null ? { graceMin: res.graceMin } : {}) };
     const r = await fetch('/api/schedules/resume', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        pipelineId, scheduledFor: res.scheduledFor, ifMissed: res.ifMissed,
-        ...(res.ifMissed === 'run' && res.graceMin != null ? { graceMin: res.graceMin } : {}),
+        pipelineId, ...when,
         ...(res.engine ? { engine: res.engine } : {}),
       }),
     });
@@ -25655,14 +25689,18 @@ function runMoreItems(screen, { away = [], extra = [] } = {}) {
   return items.concat(run);
 }
 /** The run page's one Archive (slice 2): confirm, DELETE, toast. `btn` is the hidden carrier the ⋯ item clicks; it
- *  holds the gate and the busy label. `rec` is the History row (id, projectKey, projectDir, title). */
-async function archiveRunFlow({ btn, rec: r, screen, onGone }) {
+ *  holds the gate and the busy label. `rec` is the History row (id, projectKey, projectDir, title); `run` is the
+ *  authoritative status/resumable carrier (the detail state, or the live run), the row when absent. */
+async function archiveRunFlow({ btn, rec: r, run, screen, onGone }) {
   if (!btn || btn.disabled || !r) return;
   // The dependents read is async and no modal is up yet: hold the button under the house 'busy' flag
   // (hdSetArchiveGate leaves a busy button alone) so a second click cannot run this flow — and its
   // DELETE — twice. Released before the modal opens; the scrim covers the button from there on.
   btn.dataset.archiveState = 'busy'; btn.disabled = true;
-  const chainNote = await afterDependentsNote(`pipelineId=${encodeURIComponent(r.id)}`);
+  const st = run || r;
+  const chainNote = await afterDependentsNote(`pipelineId=${encodeURIComponent(r.id)}`)
+    // An interrupted run that could still resume loses its resume point (Restore never brings it back).
+    + (String(st.status || '').toLowerCase() === 'interrupted' && st.resumable !== false ? "\n\nIt is interrupted and can't be resumed afterwards." : '');
   delete btn.dataset.archiveState; btn.disabled = false;
   // Spec §5.2/D2 fixes this copy VERBATIM — do not paraphrase (only the
   // run-title context line above it is ours; only the page name changed when
@@ -26013,7 +26051,7 @@ function setupHdActions(screen, record, data) {
     archiveBtn.hidden = false;
     hdSetArchiveGate(archiveBtn, held.retained, held.checkout);
     archiveBtn.addEventListener('click', () => {
-      void archiveRunFlow({ btn: archiveBtn, rec: hdCurrentRecord(record), screen, onGone: () => leaveSavedRun(screen) });
+      void archiveRunFlow({ btn: archiveBtn, rec: hdCurrentRecord(record), run: st, screen, onGone: () => leaveSavedRun(screen) });
     });
   }
 
@@ -30689,7 +30727,9 @@ function runAction(ref0, id, btn = null, m = null) {
     case 'stop': return chatRunControls.stop(ref);
     case 'answer': return answerOrApprove(btn, ref);
     case 'report': return pid ? openReportModal(pid) : undefined;
-    case 'archive': return runBulkAction('archive', [rowTarget({ key: pid, title: ref.title || pid, model: m || { state: 'stopped' }, run: r, pipelineId: pid, runId: r ? r.runId : null })]);
+    // status / resumable: an interrupted run that could still resume asks before it archives (src/shared/run-bulk.mjs).
+    case 'archive': return runBulkAction('archive', [rowTarget({ key: pid, title: ref.title || pid, model: m || { state: 'stopped' }, run: r,
+      status: ref.status, resumable: ref.resumable, pipelineId: pid, runId: r ? r.runId : null })]);
     case 'start-now': return ref.ticketId ? scheduleCall('POST', `/api/schedules/${encodeURIComponent(ref.ticketId)}/run-now`, 'Run started', 'start the run now') : undefined;
     case 'cancel': return ref.ticketId ? scheduleCall('DELETE', `/api/schedules/${encodeURIComponent(ref.ticketId)}`, 'Run cancelled', 'cancel the waiting run') : undefined;
     case 'ship': {
@@ -32725,6 +32765,8 @@ const histRun = (p, st = null) => ({ status: String((p && p.status) || (st && st
   ...(memberPrsOf(p).length ? { memberPrs: memberPrsOf(p) } : {}),
   // D24: passed through for the model; the saved state's branch carries a round marker on a frozen row.
   round: (p && p.round) || null, branch: (st && st.branch) || null, watch: (p && p.watch) || null,
+  // An interrupted run that can never resume (no resume point, its project gone): the model offers Archive instead.
+  ...((p && p.resumable === false) || (st && st.resumable === false) ? { resumable: false } : {}),
   // Projects, any way: a Folder run's changes and a run without a project word the finished line; no git here, no git chrome.
   ...(modelWorkMode(p, st) !== 'git' ? { workMode: modelWorkMode(p, st) } : {}),
   ...((p && p.changes) || (st && st.changes) ? { changes: (p && p.changes) || st.changes } : {}),
@@ -32741,6 +32783,7 @@ function runsHistItem(p) {
     startedAt: p.startedAt, mtime: p.mtime, groupName: histGroupName(p), groupKind: isNoProjectRun(p) ? 'none' : projectKindForKey(p.projectKey), by: runsPersonKey(p.startedBy),
     pr: glancePrInput(p),
     archived: !!p.archived,
+    ...(p.resumable === false ? { resumable: false } : {}),   // histRow / rowTarget: the bar's Archive / Delete take it
     checks: typeof p.checks === 'number' ? p.checks : null,
     changes: folder ? { state: (p.changes && p.changes.state) || 'pending' } : null,
     files: folder ? (fc ? fc.total : null) : (typeof p.files === 'number' ? p.files : null),
@@ -33152,10 +33195,9 @@ function reloadRunsHistory() {
 }
 const runsWord = (n) => `${n} run${n === 1 ? '' : 's'}`;
 async function runBulkAction(action, targets = selectedTargets()) {
-  if (action !== 'archive') {
-    const ok = await confirmModal(bulkConfirm(action, barModel(targets)[action].plan));
-    if (!ok) return;
-  }
+  // Archive asks only when it takes an interrupted run that could still resume (bulkConfirm answers null otherwise).
+  const ask = bulkConfirm(action, barModel(targets)[action].plan);
+  if (ask && !(await confirmModal(ask))) return;
   try {
     const out = await postBulk(bulkBody(action, targets));
     runsUi.sel.clear();
@@ -33163,12 +33205,17 @@ async function runBulkAction(action, targets = selectedTargets()) {
     const n = out.done.length + out.cancelled.length;
     const skipped = out.skipped.length ? `Skipped ${out.skipped.length}: ${out.skipped.map((s) => `${s.title} (${s.reason})`).join(', ')}.` : '';
     const verb = { stop: 'Stopped', archive: 'Archived', delete: 'Deleted' }[action];
-    // D19: Archive has no confirm; its toast offers Undo (restore), for TOAST_AUTO_MS.
+    // D19: its toast offers Undo (restore), for TOAST_AUTO_MS.
     const undo = action === 'archive' && out.done.length ? { label: 'Undo', run: () => postBulk({ action: 'restore', targets: out.done.map((d) => ({ pipelineId: d.id })), groups: [] })
       .then(() => reloadRunsHistory())
       // The archive did happen, so "Nothing was changed" would be false: the Undo names its own next step.
       .catch((e) => notify(actionError('undo the archive', e, { next: 'The runs stay archived; restore them from Show = Archived.' }))) } : null;
     notify({ tone: n ? 'ok' : 'warn', title: `${verb} ${runsWord(n)}`, detail: skipped, action: undo });
+    // The archived / deleted runs' parked live cards leave at once, ahead of the server's pipelines-changed frame.
+    if (action !== 'stop' && out.done.length) {
+      const gone = new Set(out.done.map((d) => d.id));
+      dropParkedRuns((e) => gone.has(e.pipelineId));
+    }
     reloadRunsHistory();
   } catch (e) {
     notify(actionError(`${action} the selected runs`, e));
@@ -33878,7 +33925,7 @@ function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
   const rdArchive = screen.querySelector('.rd-archive');
   rdArchive.addEventListener('click', () => {
     const cur = runs.get(runId);
-    void archiveRunFlow({ btn: rdArchive, rec: cur && rdArchiveRecord(cur), screen, onGone: () => leaveLiveRun(screen) });
+    void archiveRunFlow({ btn: rdArchive, rec: cur && rdArchiveRecord(cur), run: cur, screen, onGone: () => leaveLiveRun(screen) });
   });
 
   const r = runs.get(runId);
@@ -34753,7 +34800,7 @@ function answerLabelOf(root) {
   return own ? own.textContent : '';
 }
 /** Slice 2: offer and gate the live ⋯'s Report this run, Archive and Save as preset. A finished run only (a live one
- *  can be neither archived nor reported). Archive does not wait for the History row (rdArchiveRecord); the gate reads
+ *  can be neither archived nor reported), and Archive for an interrupted run. Archive does not wait for the History row (rdArchiveRecord); the gate reads
  *  what the Actions row reads (paintRdResult): a local copy, or kept work. */
 function paintRdMenuCarriers(screen, r) {
   const finished = BASE_FINISHED.has(String(r.status || ''));
@@ -34762,7 +34809,8 @@ function paintRdMenuCarriers(screen, r) {
   if (report) report.hidden = !(finished && r.pipelineId);
   const archive = screen.querySelector('.rd-archive');
   if (archive) {
-    archive.hidden = !(finished && r.pipelineId && !(rec && rec.archivedAt));
+    // An interrupted run always archives too (the run model's ['resume', 'archive'] / ['archive']).
+    archive.hidden = !((finished || String(r.status || '') === 'interrupted') && r.pipelineId && !(rec && rec.archivedAt));
     const kept = !(r._retainedDiscarded || r._retainedApplied) && !!((rec && rec.retainedWork) || rdRetainedFor(r));
     hdSetArchiveGate(archive, kept, hdCheckoutFor(rec));
   }
@@ -34808,26 +34856,15 @@ function paintRdActions(screen, r, m = rdModel(r)) {
   });
   if (split) split.hidden = !!pause && pause.hidden;      // the split wrapper follows its button
 }
-/** D18, run 3 D8: the facts block's group row. `el` is its dd, repainted through a signature; the dt names the kind
- *  (Feature / Chain / Group), and the row hides with no group below Advanced. */
+/** D18, run 3 D8: the facts block's group row. A run in a group has none: its kind chip names its place and links the
+ *  group page (paintRunPlace). A run in no group offers "Add to group…" at Advanced; the row hides below it. */
 function paintGroupLine(el, pipelineId, title, home) {
   if (!el) return;
   const row = el.closest('.rd-kv-row') || el;
   const dt = row.querySelector('.rd-kv-k');
-  if (home) {
-    const sig = `in|${groupHref(home.row)}|${home.row.title}|${home.planning ? 'p' : home.position}|${home.total}|${home.row.groupKind}`;
-    row.hidden = false;
-    if (el.dataset.sig === sig) return;
-    el.dataset.sig = sig;
-    if (dt) dt.textContent = groupKindWord(home.row);
-    const a = Object.assign(document.createElement('a'), { className: 'rd-group-link', href: groupHref(home.row), textContent: home.row.title });
-    const pos = Object.assign(document.createElement('span'), { className: 'rd-group-pos',
-      textContent: ` · ${home.planning ? 'planning' : `run ${home.position} of ${home.total}`}` });
-    el.replaceChildren(a, pos);
-    return;
-  }
   if (dt) dt.textContent = 'Group';
-  if (!pipelineId || !levelAtLeast('advanced')) { row.hidden = true; el.dataset.sig = ''; el.replaceChildren(); return; }
+  // Empty, not only hidden: syncFacts re-derives each row's hidden from its dd's content.
+  if (home || !pipelineId || !levelAtLeast('advanced')) { row.hidden = true; el.dataset.sig = ''; el.replaceChildren(); return; }
   row.hidden = false;
   if (el.dataset.sig === 'add') return;
   el.dataset.sig = 'add';
@@ -34836,12 +34873,26 @@ function paintGroupLine(el, pipelineId, title, home) {
   b.addEventListener('click', () => openAddToGroup(b, { pipelineId, title }));
   el.replaceChildren(b);
 }
-/** Run 3 (D6, D7): the kind chip ("Run 2 of 3") and the breadcrumb, from the run's group. The breadcrumb is the
- *  split layout's alone: the Chat run panel keeps none (its "Runs" crumb would leave Chat). */
+/** Run 3 (D6, D7): the kind chip ("Run 2 of 3") and the breadcrumb, from the run's group. In a group the chip links
+ *  the group page ("›" is CSS). The breadcrumb is the split layout's alone: the Chat run panel keeps none (its "Runs"
+ *  crumb would leave Chat). */
 function paintRunPlace(screen, home) {
-  const chip = screen.querySelector('.rd-glance .rd-title-row .kind-chip');
+  const old = screen.querySelector('.rd-glance .rd-title-row .kind-chip');
   const word = runPositionLabel(home);
-  if (chip && chip.textContent !== word) chip.textContent = word;
+  const href = home ? groupHref(home.row) : '';
+  let chip = old;
+  if (chip && (chip.tagName === 'A') !== !!href) {
+    chip = document.createElement(href ? 'a' : 'span');
+    chip.className = 'kind-chip';
+    old.replaceWith(chip);
+  }
+  if (chip) {
+    if (chip.textContent !== word) chip.textContent = word;
+    if (href) {
+      if (chip.getAttribute('href') !== href) chip.setAttribute('href', href);
+      chip.setAttribute('aria-label', `${word}, open ${groupKindWord(home.row).toLowerCase()} ${home.row.title}`);
+    }
+  }
   paintCrumbs(screen.querySelector(':is(.rd-bar,.hd-bar) .rd-crumbs'), screen.dataset.presentation === 'panel' ? [] : runCrumbs(home));
   syncFacts(screen.querySelector('.rd-glance .rd-kv'));
 }
@@ -35382,7 +35433,7 @@ function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '',
  *  a live run has none), `m` the page model, `kept` screen._headKept, `repaint` the page's head painter.
  *  Side effect: it starts the PR status reads it needs (the feed's, and each open workspace member's through
  *  ensurePrStatus); a landed member read calls `repaint`, which then finds it cached, so it cannot loop. */
-function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, kept, repaint }) {
+function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, kept, repaint, liveSource = '' }) {
   const ws = !!rec && rec.target === 'workspace' && hasWsMembers(rec);
   const own = !ws && rec && rec.pr && typeof rec.pr === 'object' && rec.pr.url ? rec.pr : null;
   const open = !!own && String(own.state || '').toUpperCase() === 'OPEN';
@@ -35404,8 +35455,8 @@ function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, kept, re
       key: x.memberKey, name: (names && names[x.memberKey]) || String(x.projectKey || x.memberKey).replace(/-[0-9a-f]{8}$/, ''),
       pr: x.pr && typeof x.pr === 'object' ? x.pr : null,
       prStatus: prStatusCache.get(prStatusKey(memberScope(x))) || null })) } : null,
-    base: (prStatus && prStatus.base) || (rec && rec.sourceBranch) || '',
-    source: (rec && rec.sourceBranch) || '',
+    base: (prStatus && prStatus.base) || (rec && rec.sourceBranch) || liveSource || '',
+    source: (rec && rec.sourceBranch) || liveSource || '',
     pr: own, prInput: glancePrInput(rec), prStatus, watch: (rec && rec.watch) || null,
     canCreatePr: !!rec && histPrEligible(rec) && !(own && open),
     push: !!rec && !!rec.sameAsSource && rec.target !== 'workspace' && rec.mergeBack?.merged === true && !!rec.sourceBranch,
@@ -35957,6 +36008,8 @@ function paintRdHead(screen, r, m = rdModel(r)) {
   const repaint = () => { if (screen.isConnected) paintRdHead(screen, r); };
   const f = headFactsOf(screen, rec, {
     m: pageModel(m), mode, gitChrome: gitOn() && isGitRun(r), kept, repaint,
+    // A live run has no History row yet: the state frame keeps its branch record and the sticky source (onState).
+    liveSource: r.branchSource || (r.branch && typeof r.branch === 'object' && r.branch.source) || '',
     folder: bar ? { state: bar.state, total: changesCounts(changes).total } : null,
     canTry: !!(rec && rec.branch) && terminal && !kept && !!r.pipelineId && !hdCheckoutFor(rec),
   });
@@ -36513,7 +36566,9 @@ function paintRdHeader(screen, r) {
   if (syncBtn) {
     const hasStage = Array.isArray(r.steps) && r.steps.some((s) => s && s.executionId === SYNC_EXECUTION_ID);
     syncBtn.hidden = !hasStage;
-    syncBtn.textContent = hasStage ? syncStageLabel(br.sync, source) : '';
+    syncBtn.textContent = hasStage ? syncStageLabel(br.sync) : '';
+    syncBtn.title = syncStageTitle(hasStage ? br.sync : null, source);
+    syncBtn.setAttribute('aria-label', syncBtn.title);
     syncBtn.onclick = hasStage ? () => focusLogExecution({ run: r }, SYNC_EXECUTION_ID, 'sync') : null;
   }
   const copyBtn = screen.querySelector('.rd-branch-copy');

@@ -33,7 +33,9 @@ test('the scope menu: two-line project rows, the chip on the right, the path in 
   assert.equal(ruleBody('.ask-scope-line'), 'display:flex;align-items:center;gap:8px;min-width:0;');
   assert.equal(ruleBody('.ask-scope-line > .ask-model-name'), 'min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;');
   assert.equal(ruleBody('.ask-scope-line > .kind-chip'), 'margin-left:auto;');
-  assert.equal(ruleBody('.ask-scope-sub'), 'min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:11px;color:var(--ink-2);');
+  assert.equal(ruleBody('.ask-scope-check'), 'flex:none;display:inline-flex;justify-content:flex-end;width:16px;margin-left:auto;', 'one fixed check slot on every radio row, so the chips line up picked or not');
+  assert.equal(ruleBody('.ask-scope-check > .ask-model-check'), 'margin-left:0;');
+  assert.equal(ruleBody('.ask-scope-sub'),'min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:11px;color:var(--ink-2);');
 });
 
 test('the divider: a centered label between two hairlines, no accent', () => {
@@ -64,6 +66,13 @@ test('the amber scope warning is gone with scopeMismatch (U16)', () => {
 
 test('the Workflows menu keeps the kind chip on the right (B8)', () => {
   assert.equal(ruleBody('.wfv-menu-item > .kind-chip'), 'margin-left:auto;');
+  assert.equal(ruleBody('.wfv-menu-item:has(> .kind-chip)::after'), 'margin-left:0;', 'one auto margin (the chip\'s): the ✓ slot sits a fixed gap after it');
+});
+
+test('every openMenu radio item reserves the 12px ✓ slot; only the picked one paints it', () => {
+  const slot = ruleBody('.wfv-menu [role="menuitemradio"]::after');
+  assert.match(slot, /^content:"";flex:none;width:12px;height:12px;margin-left:auto;background:transparent; ?mask:url\(/);
+  assert.equal(ruleBody('.wfv-menu [role="menuitemradio"][aria-checked="true"]::after'), 'background:currentColor;');
 });
 
 test('B10: the chip sits between the name and the branch words', () => {

@@ -1271,6 +1271,17 @@ test('slice 3: an open PR is View PR │ ▾ in the card head and the tracker\'s
   assert.equal(scr.querySelector('.rd-result [data-rd-cta]'), null, 'nothing PR-shaped under Results');
 });
 
+test('a live run\'s tracker names its source branch as the base; without one it reads "Merged into base"', async () => {
+  const ctx = await bootRunning();
+  const rd = await openGlance(ctx, 'running/r1', { branch: { source: 'main', feature: 'worca-cc/rate-p1', worktreeDir: '/tmp/wt' } });
+  assert.equal(rd.querySelectorAll('.rd-track .rd-track-step').length, 3, 'a live git run paints the tracker');
+  const lastLabel = () => [...rd.querySelectorAll('.rd-track .rd-track-step')].at(-1).querySelector('.rd-track-label').textContent;
+  assert.equal(lastLabel(), 'Merged into main');
+  const ctx2 = await bootRunning();
+  const rd2 = await openGlance(ctx2);
+  assert.equal([...rd2.querySelectorAll('.rd-track .rd-track-step')].at(-1).querySelector('.rd-track-label').textContent, 'Merged into base');
+});
+
 test('needle (c): at Advanced and Expert the ▾ lists one Watch switch, whose click POSTs /api/pr/watch', async () => {
   await checkRows(['advanced', 'expert'].map((level) => ({ name: level, run: async () => {
     const { ctx, calls, menu, openMenu } = await prGlance({ level });
@@ -1744,6 +1755,9 @@ test('the run page carries the progress bar in its status block, and no chain ba
   assert.equal(screen.querySelector('.rd-slice-line'), null);
   assert.equal(statusOf(screen).dataset.state, 'working');
   assert.match(statusOf(screen).querySelector('.run-status-text').textContent, /^Working · .*Implementer/, 'the model line, word first');
+  assert.doesNotMatch(statusOf(screen).querySelector('.run-status-text').textContent, /· step ·|(^|· )(Plan|Build|Review|Ready) ·/,
+    'beside the stage bar the live page names only the step');
+  assert.equal(statusOf(screen).dataset.line, 'Implementer', 'a nodes-mode run (V2_MANIFEST has no stages): no "Step ·" either');
   assert.equal(screen.querySelector('.rd-meta .rd-step').textContent, 'Implementer', 'the header step segment keeps the P5 text');
 });
 
@@ -1815,7 +1829,7 @@ test('a staged manifest reads "<Stage> · …" on the status line and the header
   assert.equal(runBarOf(screen).dataset.tone, 'blue');
 });
 
-// --- the Group row (runs redesign slice 4, D18): where the run sits, instead of the chain bar and the slice line ----
+// --- where the run sits (runs redesign slice 4, D18): the kind chip links the group, instead of the chain bar and the slice line ----
 const STAGED_V2 = () => {
   const m = JSON.parse(JSON.stringify(V2_MANIFEST));
   m.graph.nodes[0].progressStage = 'build';
@@ -1828,10 +1842,9 @@ const CHAIN_OF_THREE = () => [{ id: 'p:p0', title: 'Chain', members: [
 ] }];
 const FEATURE_OF_THREE = () => [{ id: 'feat_1', kind: 'feature', title: 'Charts', projectKey: null, planning: null, cost: { usd: 0, byPipeline: {} },
   members: [1, 2, 3].map((i) => ({ position: i, title: `Slice ${i}`, pipelineId: `p${i - 1}`, ticketId: null, status: i === 1 ? 'done' : 'running', pr: null, ticket: null, adhoc: false, after: null })) }];
-// Run 3 (D8): the group is the facts block's first row; its dt names the kind, its dd links the group page.
+// A run in a group has no group row in its facts block: its kind chip ("Run 2 of 3") links the group page.
 const groupLineOf = (screen) => screen.querySelector('.rd-glance .rd-sheet .rd-kv [data-fact="group"]');
-const groupValueOf = (screen) => groupLineOf(screen).querySelector('.rd-kv-v');
-const lineText = (el) => el.textContent.replace(/\s+/g, ' ').trim();
+const chipOf = (screen) => screen.querySelector('.rd-glance .rd-title-row .kind-chip');
 
 async function openChainRun(ctx) {
   frame(ctx, { type: 'run-created', runId: 'r1', title: 'Add dark mode', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
@@ -1841,44 +1854,46 @@ async function openChainRun(ctx) {
   return ctx.window.document.querySelector('#run-detail');
 }
 
-test('a run in a chain of three says "Part of Chain · run 2 of 3", linking the chain\'s group page; no chain bar', async () => {
+test('a run in a chain of three: its chip "Run 2 of 3" links the chain\'s group page; no group row, no chain bar', async () => {
   const ctx = await bootRunning();
   ctx.box.chains = CHAIN_OF_THREE();
   const screen = await openChainRun(ctx);
-  const line = groupLineOf(screen);
-  assert.equal(line.hidden, false);
-  assert.equal(line.querySelector('.rd-kv-k').textContent, 'Chain');
-  assert.equal(lineText(groupValueOf(screen)), 'Chain · run 2 of 3');
-  assert.equal(line.querySelector('a.rd-group-link').getAttribute('href'), '#group/p%3Ap0');
+  assert.equal(groupLineOf(screen).hidden, true);
+  assert.equal(chipOf(screen).tagName, 'A');
+  assert.equal(chipOf(screen).textContent, 'Run 2 of 3');
+  assert.equal(chipOf(screen).getAttribute('href'), '#group/p%3Ap0');
   assert.equal(screen.querySelector('.rd-prog-chain'), null);
   assert.equal(runBarOf(screen).querySelectorAll('.run-prog-sec').length, 4, 'only the run\'s own four sections');
 });
 
-test('a live slice says "Part of Charts · run 2 of 3" linking the feature page; a repaint keeps one link', async () => {
+test('a live slice\'s chip "Run 2 of 3" links the feature page; a repaint keeps one chip', async () => {
   const ctx = await bootRunning();
   frame(ctx, { type: 'hello', flags: { shapeFirst: true }, runs: [] });
   ctx.box.groups = FEATURE_OF_THREE();
   frame(ctx, { type: 'run-groups-changed' });
   await settle(ctx.window, 4);
   const screen = await openChainRun(ctx);
-  const line = groupLineOf(screen);
-  assert.equal(line.querySelector('.rd-kv-k').textContent, 'Feature');
-  assert.equal(lineText(groupValueOf(screen)), 'Charts · run 2 of 3');
-  assert.equal(line.querySelector('a.rd-group-link').getAttribute('href'), '#feature/feat_1');
-  assert.equal(screen.querySelector('.rd-slice-line'), null, 'the Group row replaces the slice line');
+  assert.equal(groupLineOf(screen).hidden, true);
+  assert.equal(chipOf(screen).textContent, 'Run 2 of 3');
+  assert.equal(chipOf(screen).getAttribute('href'), '#feature/feat_1');
+  assert.equal(screen.querySelector('.rd-slice-line'), null, 'the chip replaces the slice line');
   frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: STAGED_V2(), steps: V2_STEPS(), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }], subAgents: [], totalCostUsd: 2 });
   await settle(ctx.window, 4);
-  assert.equal(screen.querySelectorAll('.rd-group-link').length, 1, 'painting twice leaves one link');
+  assert.equal(screen.querySelectorAll('.rd-glance .rd-title-row .kind-chip').length, 1, 'painting twice leaves one chip');
+  assert.equal(chipOf(screen).tagName, 'A');
 });
 
-test('chain freshness: no group at first, a schedules-changed frame then shows the Group row', async () => {
+test('chain freshness: no group at first, a schedules-changed frame then links the chip', async () => {
   const ctx = await bootRunning();
   const screen = await openChainRun(ctx);
-  assert.equal(groupLineOf(screen).querySelector('.rd-group-link'), null);
+  assert.equal(chipOf(screen).tagName, 'SPAN');
+  assert.equal(chipOf(screen).textContent, 'Run');
   ctx.box.chains = CHAIN_OF_THREE();
   frame(ctx, { type: 'schedules-changed' });
   await settle(ctx.window, 8);
-  assert.equal(lineText(groupValueOf(screen)), 'Chain · run 2 of 3');
+  assert.equal(chipOf(screen).tagName, 'A');
+  assert.equal(chipOf(screen).getAttribute('href'), '#group/p%3Ap0');
+  assert.equal(chipOf(screen).textContent, 'Run 2 of 3');
 });
 
 test('a failing /api/schedules is not refetched by repaints; the run reads as in no group', async () => {
@@ -1892,7 +1907,8 @@ test('a failing /api/schedules is not refetched by repaints; the run reads as in
     await settle(ctx.window, 4);
   }
   assert.equal(ctx.calls.filter((c) => c.url.endsWith('/api/schedules')).length, asked, 'repaints do not refetch a failing lookup');
-  assert.equal(groupLineOf(screen).querySelector('.rd-group-link'), null);
+  assert.equal(chipOf(screen).tagName, 'SPAN');
+  assert.equal(chipOf(screen).textContent, 'Run');
 });
 
 test('run page: Apply to branch clears the kept head, and a later state frame does not bring it back', async () => {

@@ -226,16 +226,32 @@ export function ffRefusalCopy(ff, base, remote = 'origin') {
   }[ff.kind] || `Could not update ${base}.`;
 }
 
-/** The run header's Sync button label from a member's sync record (plan D6, §6.5). */
-export function syncStageLabel(record, base = '') {
+/** The run header's Sync button label from a member's sync record (plan D6, §6.5). Short and
+ *  branch-free: the source branch already sits on the left of the same row (.rd-base). */
+export function syncStageLabel(record) {
   if (!record) return 'Sync';
   const n = record.commits || 0;
   switch (record.result) {
     case 'fast-forwarded': return `Synced ${n} commit${n === 1 ? '' : 's'}`;
-    case 'remote-start': return `Started from ${record.remote || 'origin'}/${base}`;
-    case 'fetch-failed': return 'Sync: used the last fetch';
-    case 'diverged': return 'Sync: diverged';
+    case 'remote-start': return `From ${record.remote || 'origin'}`;
+    case 'fetch-failed': return 'Used last fetch';
+    case 'diverged': return 'Diverged';
     default: return 'Sync';
+  }
+}
+
+/** The Sync button's tooltip: the long form of syncStageLabel plus what a click does. */
+export function syncStageTitle(record, base = '') {
+  const action = 'Show the Sync log';
+  if (!record) return action;
+  const remote = record.remote || 'origin';
+  const n = record.commits || 0;
+  switch (record.result) {
+    case 'fast-forwarded': return `Synced ${n} commit${n === 1 ? '' : 's'} from ${remote}/${base}. ${action}`;
+    case 'remote-start': return `Started from ${remote}/${base}: the local branch was left untouched. ${action}`;
+    case 'fetch-failed': return `Could not fetch ${remote}: started from the last fetch. ${action}`;
+    case 'diverged': return `${base} has diverged from ${remote}/${base}. ${action}`;
+    default: return action;
   }
 }
 
