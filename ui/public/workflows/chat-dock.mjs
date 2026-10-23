@@ -315,7 +315,7 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
       ...projs.map((p) => ({ label: p.name || p.key, chip: kindChip(doc, projectKind(p)), checked: Boolean(scope.pinned && scope.projectKey === p.key),
         onSelect: () => set({ pinned: true, projectKey: p.key, label: p.name || p.key }) })),
       ...(spaces.length ? [{ sep: true }, { header: 'Workspaces' }] : []),
-      ...spaces.map((w) => ({ label: w.name || w.id, chip: kindChip(doc, 'ws'), checked: Boolean(scope.pinned && scope.workspaceId === w.id),
+      ...spaces.map((w) => ({ label: w.name || w.id, checked: Boolean(scope.pinned && scope.workspaceId === w.id),
         onSelect: () => set({ pinned: true, workspaceId: w.id, label: w.name || w.id }) })),
     ] });
   });
