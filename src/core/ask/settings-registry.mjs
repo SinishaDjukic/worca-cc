@@ -6,7 +6,7 @@
 // (deps.applyUser / deps.applyProject, ui/server.mjs). The MCP child's copy has no writers: it lists and checks.
 // No I/O here — every reader and writer comes in through deps.
 import {
-  assertThemeInput, assertUiLevelInput, assertDebugSpawnInput, assertUpdateCheckInput, assertCostLimitInputs,
+  assertThemeInput, assertUiLevelInput, assertDebugSpawnInput, assertUpdateCheckInput, assertAutoGeneratePrDescriptionInput, assertCostLimitInputs,
   assertHumanRateInput, assertAskLimitInputs, assertAskEngineInput, assertRunEngineInput, assertSyncSettingsInput,
   assertScheduleDefaultsInput, assertWorkspaceScanInput, assertMemoryDefragModelInput, assertAgentGenModelInput, assertNamingModelInput, normalizeModelPair,
   SETTINGS_POST_KEYS, DEFAULT_SYNC_SETTINGS, DEFAULT_SCHEDULE_GRACE_MIN, DEFAULT_SCHEDULE_IF_MISSED,
@@ -112,6 +112,9 @@ function buildUserDefs(roles, scanDefaults) {
     userDef({ id: 'updateCheck', label: 'Check for new Worca versions', group: 'General', read: (s) => ownKey(s, 'updateCheck'),
       body: (unit) => ({ updateCheck: unit !== false }), dflt: true, fmt: onOff, allowed: 'true | false',
       check: (v) => { if (v == null) return null; assertUpdateCheckInput(v); return v === true ? null : v; } }),
+    userDef({ id: 'autoGeneratePrDescription', label: 'Draft the PR description with AI automatically', group: 'General', read: (s) => ownKey(s, 'autoGeneratePrDescription'),
+      body: (unit) => ({ autoGeneratePrDescription: unit === true }), dflt: false, fmt: onOff, allowed: 'true | false',
+      check: (v) => { if (v == null) return null; assertAutoGeneratePrDescriptionInput(v); return v === false ? null : v; } }),
     userDef({ id: 'pipelineCostLimitUsd', label: 'Per-pipeline cost limit', group: 'Runs', ...topKey('pipelineCostLimitUsd'), fmt: usd('No limit'), allowed: 'a positive amount in USD',
       check: (v) => { assertCostLimitInputs({ pipelineCostLimitUsd: v ?? '' }); return v ?? null; } }),
     userDef({ id: 'totalCostLimitUsd', label: 'Total cost limit', group: 'Runs', ...topKey('totalCostLimitUsd'), fmt: usd('No limit'), allowed: 'a positive amount in USD',

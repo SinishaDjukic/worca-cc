@@ -124,7 +124,8 @@ level and has no **Diff**, **Changes** or **Actions**.
   (Advanced) lists deleted runs and restores them.
 - **One-click PRs** — a finished run's page offers **Create PR**:
   *Create pull request* shows the files and +/− lines, lets you write the description or
-  **Generate with AI**, open it as a draft and watch it, then pushes the branch
+  **Generate with AI** (Settings › Runs › **Pull requests** can draft it as soon as the
+  dialog opens), open it as a draft and watch it, then pushes the branch
   and opens the PR with the GitHub CLI (`gh`), or on
   [Azure DevOps](docs/azure-devops.md) with a personal access token. A run
   started from a GitHub issue closes it on merge, and a workspace run opens one

@@ -12,7 +12,7 @@ import { renderIndexHtml } from '../src/core/index-html.mjs';
 const trackDom = useDomRelease(afterEach);
 const html = readFileSync(fileURLToPath(new URL('../ui/public/index.html', import.meta.url)), 'utf8');
 const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
-const MARKUP = ['#branch-fields', '#proj-add-tab-clone', '#sync-settings-card', '#actions-settings-card', '.rd-page-branch',
+const MARKUP = ['#branch-fields', '#proj-add-tab-clone', '#sync-settings-card', '#actions-settings-card', '#pr-settings-card', '.rd-page-branch',
   '.retained-banner', '.rd-pr-box', '.rd-base', '.rd-branch-copy', '.rd-sync', '.merge-back-banner', '.hist-merge', '.hd-pr',
   '.hd-publish', '.hd-pr-link', '.hd-push', '.hd-published', '.hd-base-check', '.hd-pr-repos', '.hd-base', '.hd-branch-copy',
   '.wiz-import', '[data-pdest="marketplace"]', '#export-marketplace-field'];   // dev's git-spawning workspace import and #717 export
