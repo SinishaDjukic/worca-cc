@@ -1,14 +1,16 @@
 // test/ui-settings-about.test.mjs
 // Settings ▸ About card: version (linked to its release tag) + repo link, painted
 // from the `app` block of GET /api/settings, and the two feedback links ("Report a bug" /
-// "Suggest an improvement") that about-links.mjs repaints from `app.bugsUrl`.
+// "Suggest an improvement") that about-links.mjs repaints from `app.bugsUrl`. Plus the
+// update state from GET /api/app/version (issue #841): the Latest / Update available badge,
+// the What's new / Changes since links, the update-check switch, Check now and the sidebar marker.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
-import { paintAboutInto } from '../ui/public/about-links.mjs';
+import { paintAboutInto, paintVersionStatusInto, paintUpdateMarkerInto } from '../ui/public/about-links.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
@@ -51,15 +53,29 @@ const settingsView = () => {
   return dom.window.document.querySelector('.view[data-view="settings"]');
 };
 
-async function boot({ settings = okSettings } = {}) {
+// GET /api/app/version fixtures (issue #841).
+const vOutdated = () => ({ current: PAINTED_VERSION, latest: '10.0.0', status: 'outdated', enabled: true, checkedAt: '2026-10-23T00:00:00.000Z',
+  links: { releaseNotes: 'https://docs.worca.dev/changelog/', whatsNew: 'https://docs.worca.dev/changelog/10.0.0/',
+           compare: 'https://example.com/acme/widget/compare/worca-app-v9.9.9-test...worca-app-v10.0.0' } });
+const vLatest = () => ({ ...vOutdated(), latest: PAINTED_VERSION, status: 'up-to-date', links: { releaseNotes: 'https://docs.worca.dev/changelog/', whatsNew: '', compare: '' } });
+
+async function boot({ settings = okSettings, version = () => null } = {}) {
+  const calls = [];
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
-  window.fetch = (url) => {
+  window.fetch = (url, init = {}) => {
     const u = String(url);
-    if (u.includes('/api/settings'))
-      return Promise.resolve({ ok: true, status: 200, json: async () => settings() });
+    if (u.includes('/api/app/version')) {
+      calls.push({ url: u, method: init.method || 'GET', body: init.body });
+      const v = version(u);
+      return Promise.resolve(v ? { ok: true, status: 200, json: async () => v } : { ok: false, status: 503, json: async () => ({ error: 'off' }) });
+    }
+    if (u.includes('/api/settings')) {
+      calls.push({ url: u, method: init.method || 'GET', body: init.body });
+      return Promise.resolve({ ok: true, status: 200, json: async () => (init.method === 'POST' ? { ...settings(), ...JSON.parse(init.body) } : settings()) });
+    }
     if (u.includes('/api/budget'))
       return Promise.resolve({ ok: true, status: 200, json: async () => okBudget() });
     if (u.includes('/api/projects'))
@@ -79,7 +95,7 @@ async function boot({ settings = okSettings } = {}) {
     window.dispatchEvent(new window.Event('hashchange'));
     await tick();
   };
-  return { window, tick, $, openSettings };
+  return { window, tick, $, openSettings, calls };
 }
 
 test('opening Settings paints the version and repo link from the server payload', async () => {
@@ -154,5 +170,147 @@ test('paintAboutInto points both feedback links at bugs.url (no doubled slash) a
           `${JSON.stringify(info)} must not blank the link`);
       }
     } },
+  ]);
+});
+
+test('About shows Latest, Update available + links, or nothing, from GET /api/app/version', async () => {
+  await checkRows([
+    { name: 'up-to-date → "Latest", no update links, Release notes always', run: async () => {
+      const { $, openSettings, tick } = await boot({ version: vLatest });
+      await openSettings(); await tick();
+      assert.equal($('#aboutUpdateState').hidden, false);
+      assert.equal($('#aboutUpdateState').textContent, 'Latest');
+      assert.equal($('#aboutUpdateLinks').hidden, true);
+      assert.equal($('#aboutReleaseNotes').getAttribute('href'), 'https://docs.worca.dev/changelog/');
+    } },
+    { name: 'outdated → "Update available: 10.0.0", What\'s new + Changes since <current>', run: async () => {
+      const { $, openSettings, tick } = await boot({ version: vOutdated });
+      await openSettings(); await tick();
+      assert.equal($('#aboutUpdateState').textContent, 'Update available: 10.0.0');
+      assert.equal($('#aboutUpdateState').dataset.state, 'outdated');
+      assert.equal($('#aboutUpdateLinks').hidden, false);
+      assert.equal($('#aboutWhatsNew').getAttribute('href'), 'https://docs.worca.dev/changelog/10.0.0/');
+      assert.equal($('#aboutCompare').textContent, `Changes since ${PAINTED_VERSION}`);
+      assert.match($('#aboutCompare').getAttribute('href'), /\/compare\/worca-app-v9\.9\.9-test\.\.\.worca-app-v10\.0\.0$/);
+    } },
+    { name: 'unknown / ahead / failed read → nothing, static Release notes href kept', run: async () => {
+      for (const version of [() => null, () => ({ ...vLatest(), status: 'ahead' }), () => ({ ...vLatest(), status: 'unknown', latest: null })]) {
+        const { $, openSettings, tick } = await boot({ version });
+        await openSettings(); await tick();
+        assert.equal($('#aboutUpdateState').hidden, true);
+        assert.equal($('#aboutUpdateState').textContent, '');
+        assert.equal($('#aboutUpdateLinks').hidden, true);
+        assert.equal($('#aboutReleaseNotes').getAttribute('href'), 'https://docs.worca.dev/changelog/');
+      }
+    } },
+    { name: 'a non-https link from the payload is never assigned', run: async () => {
+      const evil = () => ({ ...vOutdated(), links: { releaseNotes: 'javascript:alert(1)', whatsNew: 'javascript:alert(1)', compare: '' } });
+      const { $, openSettings, tick } = await boot({ version: evil });
+      await openSettings(); await tick();
+      assert.equal($('#aboutReleaseNotes').getAttribute('href'), 'https://docs.worca.dev/changelog/');
+      assert.equal($('#aboutWhatsNew').hasAttribute('href'), false);
+      assert.equal($('#aboutUpdateLinks').hidden, true);
+    } },
+  ]);
+});
+
+test('the About card: anchors carry target/rel, and the only controls are the update switch and Check now', () => {
+  const card = settingsView().querySelector('#about-card');
+  for (const a of card.querySelectorAll('a')) {
+    assert.equal(a.getAttribute('target'), '_blank', a.id);
+    assert.equal(a.getAttribute('rel'), 'noopener noreferrer', a.id);
+  }
+  const controls = [...card.querySelectorAll('button, input, select, textarea')].map((n) => n.id).sort();
+  assert.deepEqual(controls, ['aboutCheckNow', 'aboutUpdateCheck']);
+  assert.equal(card.querySelector('.hint, .info-tip'), null, 'still no hint and no info-tip');
+  assert.equal(card.querySelector('#aboutUpdateCheck').checked, true, 'the markup default matches the server default (on)');
+});
+
+test('the switch posts { updateCheck } on change, and off hides Check now and the badge', async () => {
+  let enabled = true;
+  const version = () => (enabled ? vOutdated() : { ...vOutdated(), enabled: false, status: 'unknown', latest: null, links: { releaseNotes: 'https://docs.worca.dev/changelog/', whatsNew: '', compare: '' } });
+  const { window, $, openSettings, tick, calls } = await boot({ version });
+  await openSettings(); await tick();
+  assert.equal($('#aboutUpdateState').hidden, false);
+  enabled = false;
+  $('#aboutUpdateCheck').checked = false;
+  $('#aboutUpdateCheck').dispatchEvent(new window.Event('change', { bubbles: true }));
+  await tick(); await tick();
+  const post = calls.find((c) => c.method === 'POST' && c.url.includes('/api/settings'));
+  assert.deepEqual(JSON.parse(post.body), { updateCheck: false });
+  assert.equal($('#aboutCheckNow').hidden, true);
+  assert.equal($('#aboutUpdateState').hidden, true);
+  assert.equal($('#side-update').hidden, true);
+});
+
+test('Check now POSTs /api/app/version/check', async () => {
+  const { $, openSettings, tick, calls } = await boot({ version: vLatest });
+  await openSettings(); await tick();
+  $('#aboutCheckNow').click();
+  await tick(); await tick();
+  assert.ok(calls.some((c) => c.method === 'POST' && c.url.includes('/api/app/version/check')));
+});
+
+test('the sidebar marker shows only while outdated and opens Settings › General', async () => {
+  await checkRows([
+    { name: 'outdated at boot → visible with the version in its label; click routes to #settings', run: async () => {
+      const { window, $, tick } = await boot({ version: vOutdated });
+      await tick();
+      const m = $('#side-update');
+      assert.equal(m.hidden, false);
+      assert.equal(m.getAttribute('aria-label'), 'Update available: Worca 10.0.0');
+      window.location.hash = 'chat';
+      m.click();
+      assert.equal(window.location.hash, '#settings');
+    } },
+    { name: 'up-to-date / unknown / failed read → hidden', run: async () => {
+      for (const version of [vLatest, () => null, () => ({ ...vLatest(), status: 'unknown', latest: null })]) {
+        const { $, tick } = await boot({ version });
+        await tick();
+        assert.equal($('#side-update').hidden, true);
+      }
+    } },
+  ]);
+});
+
+// The pure painters (no app.js): malformed payloads never throw and always read as unknown.
+test('paintVersionStatusInto / paintUpdateMarkerInto: malformed payloads read as unknown, never throw', async () => {
+  const sideFoot = () => {
+    const dom = trackDom(new JSDOM('<div id="side-foot"><a class="side-update" id="side-update" href="#settings" hidden aria-label="Update available" title="Update available"></a></div>'));
+    return dom.window.document;
+  };
+  await checkRows([
+    { name: 'outdated paints the badge, both links and the marker label', run: async () => {
+      const view = settingsView(); const foot = sideFoot();
+      paintVersionStatusInto(view, vOutdated());
+      paintUpdateMarkerInto(foot, vOutdated());
+      assert.equal(view.querySelector('#aboutUpdateState').textContent, 'Update available: 10.0.0');
+      assert.equal(view.querySelector('#aboutUpdateLinks').hidden, false);
+      assert.equal(view.querySelector('#aboutCompare').textContent, `Changes since ${PAINTED_VERSION}`);
+      assert.equal(foot.querySelector('#side-update').hidden, false);
+      assert.equal(foot.querySelector('#side-update').title, 'Update available: Worca 10.0.0');
+    } },
+    { name: 'outdated with no links object: badge and marker, but no update links', run: () => {
+      const view = settingsView(); const foot = sideFoot();
+      const vs = { status: 'outdated', latest: '10.0.0', current: PAINTED_VERSION };
+      paintVersionStatusInto(view, vs);
+      paintUpdateMarkerInto(foot, vs);
+      assert.equal(view.querySelector('#aboutUpdateState').textContent, 'Update available: 10.0.0');
+      assert.equal(view.querySelector('#aboutUpdateLinks').hidden, true);
+      assert.equal(view.querySelector('#aboutReleaseNotes').getAttribute('href'), 'https://docs.worca.dev/changelog/');
+      assert.equal(foot.querySelector('#side-update').hidden, false);
+    } },
+    ...[undefined, null, {}, { status: 42 }, { status: 'outdated', latest: null, links: vOutdated().links }].map((vs) => ({
+      name: `${JSON.stringify(vs)} → unknown`,
+      run: () => {
+        const view = settingsView(); const foot = sideFoot();
+        paintVersionStatusInto(view, vs);
+        paintUpdateMarkerInto(foot, vs);
+        assert.equal(view.querySelector('#aboutUpdateState').hidden, true);
+        assert.equal(view.querySelector('#aboutUpdateLinks').hidden, true);
+        assert.equal(view.querySelector('#aboutReleaseNotes').getAttribute('href'), 'https://docs.worca.dev/changelog/');
+        assert.equal(foot.querySelector('#side-update').hidden, true);
+      },
+    })),
   ]);
 });

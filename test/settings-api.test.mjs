@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { _resetForTests } from '../src/core/db.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
-let home, srv, base, prev;
+let home, srv, base, prev, testing;
 
 before(async () => {
   home = await mkdtemp(join(tmpdir(), 'worca-cc-setapi-'));
@@ -27,7 +27,8 @@ before(async () => {
   delete process.env.WORCA_PROJECTS_ROOT;
   process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
   _resetForTests();
-  const { app } = await import('../ui/server.mjs');
+  const { app, _testing: t } = await import('../ui/server.mjs');
+  testing = t;
   srv = http.createServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
@@ -126,6 +127,67 @@ test('resumeAfterUsageLimit: GET defaults to false, POST true round-trips, a non
   ]);
 });
 
+test('updateCheck: GET defaults to true, POST false round-trips, a non-boolean answers 400 naming the field', async () => {
+  await checkRows([
+    { name: 'GET /api/settings: updateCheck defaults to true', run: async () => {
+      assert.equal((await (await fetch(`${base}/api/settings`)).json()).updateCheck, true);
+    } },
+    { name: 'POST updateCheck false round-trips through GET and back to true', run: async () => {
+      try {
+        assert.equal((await (await postJson({ updateCheck: false })).json()).updateCheck, false);
+        assert.equal((await (await fetch(`${base}/api/settings`)).json()).updateCheck, false);
+      } finally {
+        assert.equal((await (await postJson({ updateCheck: true })).json()).updateCheck, true);
+      }
+    } },
+    { name: 'POST updateCheck "yes" answers 400 naming the field', run: async () => {
+      const r = await postJson({ updateCheck: 'yes' });
+      assert.equal(r.status, 400);
+      assert.equal((await r.json()).field, 'updateCheck');
+    } },
+  ]);
+});
+
+test('GET /api/app/version: unknown with no fetch under tests; a fake fetcher drives outdated + links; setting off = no fetch', async () => {
+  const get = async () => (await fetch(`${base}/api/app/version`)).json();
+  const pkgVersion = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')).version;
+  await checkRows([
+    { name: 'default fetcher under NODE_TEST_CONTEXT: unknown, no network', run: async () => {
+      testing.setUpdateFetcher(null);
+      const j = await get();
+      assert.equal(j.status, 'unknown');
+      assert.equal(j.current, pkgVersion);
+      assert.equal(j.links.releaseNotes, 'https://docs.worca.dev/changelog/');
+      assert.equal(j.links.whatsNew, '');
+    } },
+    { name: 'a newer latest reads outdated with What\'s new and compare links', run: async () => {
+      let calls = 0;
+      testing.setUpdateFetcher(async () => { calls++; return '99.0.0'; });
+      const j = await get();
+      assert.equal(j.status, 'outdated');
+      assert.equal(j.latest, '99.0.0');
+      assert.equal(j.links.whatsNew, 'https://docs.worca.dev/changelog/99.0.0/');
+      assert.match(j.links.compare, new RegExp(`/compare/worca-app-v${pkgVersion.replace(/\./g, '\\.')}\\.\\.\\.worca-app-v99\\.0\\.0$`));
+      await get();
+      assert.equal(calls, 1, 'cached');
+      const forced = await (await fetch(`${base}/api/app/version/check`, { method: 'POST' })).json();
+      assert.equal(forced.status, 'outdated');
+      assert.equal(calls, 1, 'Check now inside the minimum interval does not refetch');
+    } },
+    { name: 'updateCheck false: unknown, enabled false, fetcher never called', run: async () => {
+      let calls = 0;
+      testing.setUpdateFetcher(async () => { calls++; return '99.0.0'; });
+      try {
+        await postJson({ updateCheck: false });
+        const j = await get();
+        assert.equal(j.status, 'unknown');
+        assert.equal(j.enabled, false);
+        assert.equal(calls, 0);
+      } finally { await postJson({ updateCheck: true }); testing.setUpdateFetcher(null); }
+    } },
+  ]);
+});
+
 test('a mixed POST whose root is unusable answers 400 with neither the debug toggle nor the theme applied', async () => {
   const filePath = fileURLToPath(import.meta.url); // a file, not a dir → setWorcaRoot throws
   const r = await postJson({ debugSpawnEnabled: true, theme: 'dark', root: filePath });
@@ -152,7 +214,7 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
     // key, each with a value its setter accepts as "no change / default".
     const probes = {
       projectsRoot: '', chat: {}, pipelineCostLimitUsd: '', totalCostLimitUsd: '', costLimitResetPeriod: '', humanRateUsdPerHour: '',
-      askMaxTurns: '', askMaxBudgetUsd: '', askWeb: null, smartNaming: null, debugSpawnEnabled: false, resumeAfterUsageLimit: false,
+      askMaxTurns: '', askMaxBudgetUsd: '', askWeb: null, smartNaming: null, debugSpawnEnabled: false, resumeAfterUsageLimit: false, updateCheck: true,
       titleModel: '', hideBuiltinModels: false, theme: '', uiLevel: '',
       autoWorkflowModel: '',
       prDescriptionModel: '',
