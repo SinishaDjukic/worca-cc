@@ -677,6 +677,25 @@ test('Runs list: selected and Needs-you rows take the sidebar nav item\'s corner
   }
 });
 
+test('Runs list: the selected row takes --row-selected, a translucent ink step that shows on the panel and on the Needs-you tint', () => {
+  const root = ALL.find((r) => r.sel === ':root').body;
+  assert.match(root, /--row-selected:color-mix\(in srgb,var\(--ink\) \d+%,transparent\);/, 'no new hue: a translucent --ink mix');
+  assert.match(root, /--row-open:color-mix\(in srgb,var\(--row-selected\) 50%,transparent\);/, 'the open-group fill stays a step lighter');
+  const selected = ALL.filter((r) => splitTop(r.sel).includes('.runs-item:has(> a.runs-row.selected)')).map((r) => r.body).join(';');
+  assert.match(selected, /background:var\(--row-selected\)/);
+  assert.doesNotMatch(selected, /var\(--field\)/);
+});
+
+test('Runs list: PR chips on the selected row take the -ink-strong shades, so they stay at 4.5:1 on --row-selected', () => {
+  const bodyOf = (sel) => ALL.filter((r) => splitTop(r.sel).includes(sel)).map((r) => r.body).join(';');
+  const on = '.runs-item:has(> a.runs-row.selected) ';
+  assert.match(bodyOf(`${on}.runs-pr.is-ready`), /color:var\(--green-ink-strong\)/);
+  assert.match(bodyOf(`${on}.runs-pr.is-changes`), /color:var\(--amber-ink-strong\)/);
+  for (const tone of ['is-closed', 'is-conflicts', 'is-failing']) {
+    assert.match(bodyOf(`${on}.runs-pr.${tone}`), /color:var\(--red-ink-strong\)/, tone);
+  }
+});
+
 test('Runs list: one highlight at a time — a group whose run is open is filled only while collapsed; members have no dividers', () => {
   const bodyOf = (sel) => ALL.filter((r) => splitTop(r.sel).includes(sel)).map((r) => r.body).join(';');
   const collapsed = bodyOf('.runs-item:has(> a.runs-row.member-open):not(:has(> .runs-members))');

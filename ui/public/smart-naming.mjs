@@ -10,6 +10,9 @@ const TITLE_SUGGESTED_HINT = 'Suggested from the task. Type over it to keep your
 const EDITED_HINT = 'Your name is kept. Press Suggest again to replace it.';
 const LOADING_HINT = 'Suggesting with a small model. Start is never blocked by it.';
 const FALLBACK_HINT = 'Could not suggest; using today\'s name. Worca adds the run id.';
+// Called bare, never as methods of the defaults object: a browser throws "Illegal invocation" on a timer whose `this`
+// is not the window, and reset() runs after every Start even with the flag off.
+const BARE_TIMERS = { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (id) => clearTimeout(id) };
 
 /**
  * @param {object} deps
@@ -20,7 +23,7 @@ const FALLBACK_HINT = 'Could not suggest; using today\'s name. Worca adds the ru
  * @param {() => (string|undefined)} deps.getProjectDir
  * @param {(doc: Document, name: string, size?: number) => HTMLElement} deps.icon
  */
-export function createSmartNaming({ doc, el, flagOn, api, getProjectDir, icon, timers = { setTimeout, clearTimeout } }) {
+export function createSmartNaming({ doc, el, flagOn, api, getProjectDir, icon, timers = BARE_TIMERS }) {
   const st = { title: 'idle', branch: 'idle' };   // idle | loading | suggested | edited | failed
   let last = null, lastPrompt = '', timer = null, ctl = null, cfg = null, cfgLoad = null, fallbackValue = null;
   const hintEl = (which) => doc.getElementById(which === 'title' ? 'titleHint' : 'featureBranchHint');
