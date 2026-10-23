@@ -15,7 +15,8 @@ import { checkRows } from './helpers/rows.mjs';
 const JIRA = {
   type: 'plugin', plugin: 'jira-source', sourceId: 'jira', displayName: 'Jira',
   inputs: [
-    { key: 'writeBack', type: 'select', label: 'Write result back', default: 'yes', options: ['yes', 'no'] },
+    // Options as listTaskSources serves them: normalizeManifest turns every option into {value, label}.
+    { key: 'writeBack', type: 'select', label: 'Write result back', default: 'yes', options: [{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }] },
     { key: 'task', type: 'task-browser', label: 'Issue' },
   ],
   multiProfile: true, profiles: ['acme', 'globex'],
