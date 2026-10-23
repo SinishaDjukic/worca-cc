@@ -786,46 +786,43 @@ test('Auto badge: an Auto run is badged with classifier rows under Preflight, a 
 const DECIDING_BOOTSTRAP = { version: 2, template: { id: 'wf_auto', name: 'Auto' }, auto: { status: 'deciding', humanInLoop: true }, graph: { nodes: [], wires: [] }, bookends: { preflight: true, done: true }, steps: [{ kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight', sub: 'checks' }] }, { kind: 'done', nodes: [{ id: 'done', label: 'Done', sub: 'complete' }] }], feedbacks: [] };
 
 // ---------------------------------------------------------------------------
-// The overflow menu — Archive + Report this run live behind one ⋯ trigger
+// The overflow menu — slice 2: Archive + Report this run live in the bar's one ⋯ (runMoreItems)
 // ---------------------------------------------------------------------------
-// The two buttons keep their own classes inside it, so every gate, busy-label swap
-// and assertion above still addresses them directly; only their PLACEMENT moved.
+// The buttons stay as hidden carriers with their own classes, so every gate, busy-label swap
+// and assertion above still addresses them directly; the ⋯ item clicks them.
 
-const hdMore = (doc) => doc.querySelector('#hist-detail .hd-more');
-const hdMenu = (doc) => doc.querySelector('#hist-detail .hd-menu');
+const hdMore = (doc) => doc.querySelector('#hist-detail .hd-bar-more');
+const hdMenu = (doc) => doc.querySelector('body > .wfv-menu');
+const hdItems = (doc) => [...(hdMenu(doc)?.querySelectorAll('.menu-item') || [])];
+const hdItem = (doc, label) => hdItems(doc).find((b) => b.querySelector('.wfv-menu-l').textContent === label);
 
-test('the ⋯ header menu opens/closes (outside click, Escape, choosing) and its trigger hides when the menu would be empty', async () => {
+test('the ⋯ bar menu opens/closes (outside press, Escape, choosing) and lists Archive and Report only for a finished run', async () => {
   await checkRows([
-    { name: 'the ⋯ trigger opens and closes the header menu', run: async () => {
+    { name: 'the ⋯ trigger opens and closes the bar menu', run: async () => {
       const ctx = await bootDetail();
       await openDetail(ctx);
       const doc = ctx.window.document;
 
       const more = hdMore(doc);
-      const menu = hdMenu(doc);
-      assert.ok(more && menu, 'the trigger and its menu are in the detail template');
-      assert.equal(menu.hidden, true, 'the menu starts closed');
+      assert.ok(more, 'the trigger is in the bar');
+      assert.equal(hdMenu(doc), null, 'the menu starts closed');
       assert.equal(more.getAttribute('aria-expanded'), 'false');
       assert.equal(more.getAttribute('aria-haspopup'), 'menu');
 
       click(ctx.window, more);
       await settle(ctx.window);
-      assert.equal(menu.hidden, false, 'clicking opens it');
+      assert.ok(hdMenu(doc), 'clicking opens it');
       assert.equal(more.getAttribute('aria-expanded'), 'true');
-      assert.ok(menu.contains(doc.querySelector('#hist-detail .hd-archive')), 'Archive lives inside');
-      const report = doc.querySelector('#hist-detail .hd-report');
-      assert.ok(menu.contains(report), 'so does Report this run');
-      assert.ok(report.querySelector('svg'), 'Report carries a warning-triangle icon, like Archive carries a bin');
-      assert.equal(report.querySelector('.hd-btn-label').textContent, 'Report this run',
-        'and its label lives in the same span Archive uses, so the two rows line up');
-      assert.equal(menu.contains(doc.querySelector('#hist-detail .hd-resume')), false,
-        'Resume is the primary action and sits in the bar');
+      assert.ok(hdItem(doc, 'Archive'), 'Archive lives inside');
+      assert.ok(hdItem(doc, 'Report this run'), 'so does Report this run');
+      assert.equal(hdItem(doc, 'Resume'), undefined, 'Resume is the primary action and sits in the bar');
+      assert.ok(doc.querySelector('#hist-detail .hd-archive').closest('.run-menu-carriers[hidden]'), 'the carrier stays out of view');
 
       click(ctx.window, more);
       await settle(ctx.window);
-      assert.equal(menu.hidden, true, 'clicking again closes it');
+      assert.equal(hdMenu(doc), null, 'clicking again closes it');
     } },
-    { name: 'the menu closes on an outside click, on Escape, and on choosing an item', run: async () => {
+    { name: 'the menu closes on an outside press, on Escape, and on choosing an item', run: async () => {
       const ctx = await bootDetail();
       await openDetail(ctx);
       const { window: w } = ctx;
@@ -833,26 +830,25 @@ test('the ⋯ header menu opens/closes (outside click, Escape, choosing) and its
       const open = async () => { click(w, hdMore(doc)); await settle(w); };
 
       await open();
-      click(w, doc.querySelector('#hist-detail .hd-meta'));
+      doc.querySelector('#hist-detail .hd-meta').dispatchEvent(new w.Event('pointerdown', { bubbles: true }));
       await settle(w);
-      assert.equal(hdMenu(doc).hidden, true, 'a click anywhere else dismisses it');
+      assert.equal(hdMenu(doc), null, 'a press anywhere else dismisses it');
 
       await open();
-      doc.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      doc.activeElement.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       await settle(w);
-      assert.equal(hdMenu(doc).hidden, true, 'Escape dismisses it');
+      assert.equal(hdMenu(doc), null, 'Escape dismisses it');
       assert.equal(doc.activeElement, hdMore(doc), 'and hands focus back to the trigger');
 
       await open();
-      click(w, doc.querySelector('#hist-detail .hd-report'));
+      hdItem(doc, 'Report this run').click();
       await settle(w);
-      assert.equal(hdMenu(doc).hidden, true, 'choosing an item dismisses it');
+      assert.equal(hdMenu(doc), null, 'choosing an item dismisses it');
       assert.equal(doc.getElementById('report-modal').classList.contains('hidden'), false,
         'and the item still does its job');
     } },
-    { name: 'the ⋯ trigger hides when it would open an empty menu', run: async () => {
-      // A live run can be neither archived nor reported. An always-present trigger that
-      // opens onto nothing is worse than no trigger.
+    { name: 'a live run\'s ⋯ lists neither Archive nor Report', run: async () => {
+      // A live run can be neither archived nor reported.
       const live = { ...ROW, status: 'running', survived: false };
       const ctx = await bootDetail({ rows: [live],
         detail: { ...DETAIL, state: { ...DETAIL.state, status: 'running' } } });
@@ -861,15 +857,18 @@ test('the ⋯ header menu opens/closes (outside click, Escape, choosing) and its
 
       assert.equal(doc.querySelector('#hist-detail .hd-archive').hidden, true);
       assert.equal(doc.querySelector('#hist-detail .hd-report').hidden, true);
-      assert.equal(hdMore(doc).hidden, true, 'so the trigger goes too');
+      click(ctx.window, hdMore(doc));
+      await settle(ctx.window);
+      assert.equal(hdItem(doc, 'Archive'), undefined);
+      assert.equal(hdItem(doc, 'Report this run'), undefined);
 
-      // The gate is set once per visit (setupHdActions) — refreshHdFromRow re-runs only
-      // the DISABLED gate, so a run going terminal under an open screen offers the
-      // trigger on the next visit, exactly as Archive and Report already do.
+      // The offer is set once per visit (setupHdActions) — refreshHdFromRow re-runs only
+      // the DISABLED gate, so a run going terminal under an open screen offers them on the next visit.
       const done = await bootDetail();
       await openDetail(done);
-      assert.equal(hdMore(done.window.document).hidden, false,
-        'a finished run opens the screen with the trigger in place');
+      click(done.window, hdMore(done.window.document));
+      await settle(done.window);
+      assert.ok(hdItem(done.window.document, 'Archive'), 'a finished run opens the screen with Archive in ⋯');
     } },
   ]);
 });
@@ -1058,10 +1057,10 @@ test('History opens on the glance: page title, status line, facts, the tab rows;
 // The saved run's bar carries the Running bar's controls in its order (Run after, the
 // Resume split, Pause, Stop, then the terminal button), in both modes. "Resume on <other engine>" lives in the
 // split's menu, never as a button of its own. The Details header
-// keeps only the PR controls and the ⋯ menu, and the glance card carries no run control. Run 3 (D13): the bar ends
+// keeps only the PR controls (slice 2: its ⋯ joined the bar's), and the glance card carries no run control. Run 3 (D13): the bar ends
 // with its own ⋯ (Save as preset and Terminal fold into it; CSS hides the two). Run after stays a quick button beside
 // Resume and Stop, so ⋯ does not repeat it.
-const HD_BAR_ORDER = ['hd-save-preset', 'hd-after', 'rd-actions', 'hd-resume-split', 'hd-pause', 'hd-stop', 'term-opener', 'hd-bar-more'];
+const HD_BAR_ORDER = ['hd-save-preset', 'hd-after', 'rd-actions', 'hd-resume-split', 'hd-pause', 'hd-stop', 'term-opener', 'hd-bar-more', 'run-menu-carriers'];
 // A step in flight: the one run model reads a running run with no step as Starting, which offers no Pause (slice 4).
 const STEPPING = { steps: [{ executionId: 'x:n_impl:1', nodeId: 'n_impl', ordinal: 1, cycle: 1, kind: 'cycle', status: 'start',
   startedAt: '2026-01-01T00:00:00Z' }], active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:1' }] };
@@ -1106,8 +1105,8 @@ test('History bar per finished/paused status: Run after, Resume split only when 
       for (const sel of ['.hd-after', '.hd-resume-split', '.hd-resume', '.hd-resume-switch', '.hd-pause', '.hd-stop']) {
         assert.equal(header.querySelector(sel), null, `${sel} is not in the Details header`);
       }
-      assert.ok(header.querySelector('.hd-pr') && header.querySelector('.hd-pr-link') && header.querySelector('.hd-more'),
-        'the Details header keeps the PR controls and the ⋯ menu');
+      assert.ok(header.querySelector('.hd-pr') && header.querySelector('.hd-pr-link'), 'the Details header keeps the PR controls');
+      assert.equal(header.querySelector('.hd-more, .hd-menu'), null, 'slice 2: its ⋯ moved into the bar\'s one menu');
       assert.equal(hd.querySelector('.hd-result [class*="hd-g-resume"], .hd-result .hd-g-after'), null, 'the card carries no run control');
       click(ctx.window, after);
       assert.equal(ctx.window.location.hash, `#new/after/${ROW.id}`);

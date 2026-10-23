@@ -815,7 +815,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .settings-load-msg{margin:0 0 14px;max-width:760px;}
 
 /* One menu (docs/design-system.md › Menu): openMenu's .wfv-menu, the sidebar flyouts (.nav-fly), the composer pickers
-   (.ask-pop), the split-button menus (.btn-split-menu) and the run header ⋯ (.hd-menu) all wear .menu for the box and
+   (.ask-pop) and the split-button menus (.btn-split-menu) all wear .menu for the box and
    .menu-item for a row. Each family keeps its own position, width and z-index only. */
 .menu{padding:4px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);box-shadow:var(--shadow-menu);font-size:var(--fs-body);}
 .menu-item{display:flex;align-items:center;gap:10px;width:100%;min-height:30px;padding:4px 9px;border:0;border-radius:var(--r-sm);
@@ -3911,27 +3911,14 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
    above beats the UA's `[hidden]{display:none}`, and this button ships hidden. */
 .hd-report[hidden]{display:none;}
 
-/* ---- the header's ⋯ overflow menu (Archive + Report this run) ---- */
-/* The wrapper is the positioning context; the menu hangs off its right edge so it
-   cannot push the row wider or escape the card on a narrow window. */
-.hd-more-wrap{position:relative;display:inline-flex;}
-.hd-more[hidden]{display:none;}
-/* open, not hover */
-.hd-menu{position:absolute;top:calc(100% + 6px);right:0;z-index:5;min-width:214px;display:flex;flex-direction:column;gap:2px;}
-.hd-menu[hidden]{display:none;}
-/* The menu drops over the sticky .hd-tabs (same z-index, later in the DOM): lift the
-   header above them only while it is open, so scrolled tabs still cover the header. */
-.hd-header:has(.hd-menu:not([hidden])){position:relative;z-index:6;}
-/* Likewise the bar (sticky, z-index 5, BEFORE the tabs in the DOM) while its Resume split menu is open. */
+/* The bar (sticky, z-index 5, BEFORE the tabs in the DOM) while its Resume split menu is open. */
 .rd-bar:has(.btn-split-menu:not([hidden])),.hd-bar:has(.btn-split-menu:not([hidden])){z-index:7;}
-/* The rows are the shared .menu-item (Archive adds .is-danger); a hidden row stays hidden. */
-/* Same guard as its siblings (.hd-archive[hidden], .hd-report[hidden]): the flex
-   display above beats the UA [hidden] rule, so a non-archived run's Restore
-   would otherwise stay visible inside the flex .hd-menu. */
+/* Slice 2: the ⋯'s hidden carriers (index.html .run-menu-carriers); same guard as its siblings
+   (.hd-archive[hidden], .hd-report[hidden]). */
 .hd-restore[hidden]{display:none;}
 /* The header cost's breakdown (app.js paintCostBreakdown): the meta line's cost becomes a
    trigger, its panel hangs off the header card. While it is open the card lifts above the
-   sticky tabs, exactly like the ⋯ menu above. Tokens only; the Away mode row is marked by a
+   sticky tabs. Tokens only; the Away mode row is marked by a
    small amber swatch, never by an accent edge. */
 .cost-bd-btn{all:unset;cursor:pointer;font:inherit;border-bottom:1px dotted var(--ink-3);}
 .cost-bd-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-sm);}
@@ -3957,7 +3944,6 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
    (measured in headless Chrome). The extra pixel per side matches .hd-pr, which
    is the same type size and already pays it. */
 .hd-archive[hidden]{display:none;}
-.hd-archive[disabled]{opacity:.55;cursor:not-allowed;}
 /* align-items:flex-start, NOT the default stretch: `.badge.hist-retained-badge`
    (696) is inline-flex with no width, so a stretching column blows it up to the
    full body width. Only the BANNERS want the full row (the Discard worktree button
@@ -4771,9 +4757,8 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .runs-empty-sub{margin:0;font-size:13px;color:var(--ink-2);}
 /* The glance title is a programmatic focus landing (tabindex=-1), not a control. */
 .rd-page-title:focus{outline:none;}
-/* Side by side: only the open detail shows, and the glance's back-to-list button has nowhere to go. */
+/* Side by side: only the open detail shows. */
 .runs-shell[data-layout="split"] .runs-pane > :is(.run-shell,.hist-shell,.group-shell):not(.detail-open){display:none;}
-.runs-shell[data-layout="split"] :is(.rd-back,.hd-back,.gpage-back){display:none;}
 /* Run 3 (D6): the slide layout keeps the one Back button; the breadcrumb is for the split layout. */
 .runs-shell[data-layout="slide"] .rd-crumbs{display:none;}
 /* Narrow: the slide the two old screens used (D7). */
@@ -4843,8 +4828,7 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .rd-error{margin-top:24px;color:var(--red-ink);font-size:var(--fs-body);}
 .rd-error[hidden]{display:none;}
 /* .rd-back is focused programmatically by openRunDetail — same reasoning as the .hd-back arm. */
-.rd-back{display:inline-flex;align-items:center;gap:8px;}
-.gpage-back{display:inline-flex;align-items:center;gap:8px;}   /* run 4 (D13): the run page's Back, chevron included */
+.rd-back,.hd-back,.gpage-back{display:inline-flex;align-items:center;justify-content:center;}   /* slice 2: a 28px icon button (btn-sm btn-icon) */
 .rd-back:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 
 /* MUST sit after the rules above: @media contributes no specificity, so an
@@ -9927,6 +9911,8 @@ body:has(> .mk-layer:not(.hidden)) > .wfv-menu{z-index:58;}
 .wfv-menu-ic{color:var(--ink-2);}
 .wfv-menu-item.is-danger{color:var(--red-ink-strong);}
 .wfv-menu-item.is-danger .wfv-menu-ic{color:inherit;}
+/* A gated danger item (Archive behind a local copy or kept work) reads disabled, as any other disabled item. */
+.menu-item.is-danger:is(:disabled,[aria-disabled="true"]){color:var(--ink-3);}
 @media (max-width:600px){.mk-sheet-head,.mk-sheet-body,.mk-sheet-foot{padding-left:16px;padding-right:16px;}}
 
 /* Page shell (CONTRACT §5): the tabs are the header (no page intro, L18); counts in tabs and section heads. */

@@ -110,7 +110,7 @@ import { loadRunsView, saveRunsView, viewChip, viewMenuItems } from './runs-view
 import { createRunsSelection, runsKeyAction, rowTarget, barModel, bulkBody, rangeKeys, labelTargets } from './runs-selection.mjs';
 import { bulkConfirm } from '../../src/shared/run-bulk.mjs';
 import { openGroupPicker } from './group-picker.mjs';
-import { ACTION_LABEL, groupModel, runModel } from '../../src/shared/run-model.mjs';
+import { ACTION_LABEL, MENU_ACTIONS, groupModel, runModel } from '../../src/shared/run-model.mjs';
 // Import list only — `statusChip`/`diffBadges`/`mergeFindings`/`reportResultControl`
 // lost their last app.js caller with the retired card accordion, and `sourceBadge` with the
 // History list card. They stay EXPORTED
@@ -304,7 +304,7 @@ import { stepChip, stepTitle, isStepCard, renderGateCard, renderRecoveryCard, qu
 import { installInputMode } from './input-mode.mjs';
 import { noteAnswer, forgetAnswer } from './shape/step-receipt.mjs';
 import { renderChecklistGroups } from './shape/checklist-view.mjs';
-import { toggleMenu, openMenu } from './workflows/menu.mjs';
+import { toggleMenu, openMenu, closeMenus } from './workflows/menu.mjs';
 import { renderAskForm } from './ask/form-renderer.mjs';
 import { renderNightForm, readNightForm, updateAwaySummary } from './night-mode-form.mjs';
 import { visibleFields as visibleAnswerFields } from '../../src/shared/forms/layout.mjs';
@@ -22967,19 +22967,14 @@ function openHistDetail(parsed, { instant = false, host: where = 'page' } = {}) 
   // The panel has no glance, so there is no page title to watch.
   if (panel) presentRunScreenInPanel(screen); else watchPageTitle(screen, 'hd');
 
-  screen.querySelector('.hd-back').addEventListener('click', () => { location.hash = 'runs'; });
+  screen.querySelector('.hd-back').addEventListener('click', () => backToRunsList());   // slice 2: the list itself, never the D6 restore
   // Glance <-> Details are routes, so the browser's back and forward walk them.
   const toDetails = (tab = '') => { hdGoDetails(tab); };
   const toRun = () => { if (histDetailState && histDetailState.host !== 'panel') location.hash = hdHash(histDetailState); };
   screen.querySelector('.hd-to-run').addEventListener('click', toRun);
   // Run 3 (D13): the saved bar is the primary action, Run after, Stop and ⋯; ⋯ drives the controls CSS hides there.
   screen.querySelector('.hd-bar-more')?.addEventListener('click', (e) => {
-    const anchor = e.currentTarget;
-    const items = [];
-    const preset = screen.querySelector('.hd-save-preset');
-    if (preset && !preset.hidden && flagOn('runPresets')) items.push({ label: 'Save as preset', title: preset.title, onSelect: () => preset.click() });
-    if (screen.dataset.presentation !== 'panel') items.push({ label: 'Terminal', onSelect: () => terminalPane?.toggle() });
-    toggleMenu({ doc: document, anchor, items, align: 'end', label: 'More for this run' });
+    toggleMenu({ doc: document, anchor: e.currentTarget, items: runMoreItems(screen), align: 'end', label: 'More for this run' });
   });
   screen.querySelector('.hd-glance .rd-sheet').addEventListener('click', (e) => {
     const row = e.target.closest && e.target.closest('[data-rd-tab]');
@@ -24380,10 +24375,8 @@ function paintHdGlance(screen, record, data) {
 // Run presets slice 2 (#712): Save setup as preset on a run's page. Shown only with the flag on and a stored setup
 // (pipelines.run_setup, v62); a run from before v62, the CLI or a scan has none. One GET per run id per page load.
 const runSetupKnown = new Map();   // pipeline id -> setup object | null
-async function paintHdSavePreset(screen, data) {
-  const btn = screen && screen.querySelector('.hd-save-preset');
+async function paintRunSavePreset(btn, run, isCurrent) {
   if (!btn) return;
-  const run = data && data.state;
   const id = run && run.id;
   if (!id || !flagOn('runPresets')) { btn.hidden = true; btn.onclick = null; return; }
   if (!runSetupKnown.has(id)) {
@@ -24392,10 +24385,15 @@ async function paintHdSavePreset(screen, data) {
     if (!r.ok) return;                                  // 404 / offline: stay hidden, ask again on the next paint
     runSetupKnown.set(id, (r.data && r.data.setup) || null);
   }
-  if (!histDetailState || histDetailState.data !== data) return;   // closed, or another run opened while this one was asked about
+  if (!isCurrent()) return;                             // closed, or another run opened while this one was asked about
   const setup = runSetupKnown.get(id);
   btn.hidden = !setup;
   btn.onclick = setup ? () => void saveRunPresetDialog(run, btn) : null;
+}
+async function paintHdSavePreset(screen, data) {
+  const run = data && data.state;
+  return paintRunSavePreset(screen && screen.querySelector('.hd-save-preset'), run,
+    () => !!histDetailState && histDetailState.data === data);
 }
 
 async function saveRunPresetDialog(run, btn) {
@@ -24542,6 +24540,7 @@ function paintHdActions(screen, record, data) {
   const stop = bar.querySelector('.hd-stop');
   const live = hdLiveRun(record);
   const resumable = !!resumeBtn && resumeBtn.dataset.resumable === '1';
+  const pausing = !!live && String(live.status || '') === 'pausing';
   syncActions(slot, m, {
     own: {
       // paintHdLive keeps its resumable rule (archived, over, st.resumable) and records it here.
@@ -24553,9 +24552,10 @@ function paintHdActions(screen, record, data) {
     },
     pool: [resumeBtn, pause, stop],                       // the template's hidden states never linger
     covered: prCovered(screen),
-    // The model offers Resume for any paused or interrupted row; the server refuses an archived or over one, and a
-    // live run still pausing cannot be resumed yet. Shown (one model), but disabled with the reason.
-    disable: { 'ask-changes': "Ask for changes from the run's chat", ...(resumable ? {} : { resume: live && String(live.status || '') === 'pausing' ? 'Pausing…' : 'This run cannot be resumed' }) },
+    // Slice 2: Archive and Report live in the ⋯. Resume shows only when paintHdLive's rule (HD_RESUMABLE, not
+    // archived or over) holds, or disabled while a live run is still pausing; never as a button that cannot work.
+    skip: [...MENU_ACTIONS, ...(resumable || pausing ? [] : ['resume'])],
+    disable: { 'ask-changes': "Ask for changes from the run's chat", ...(pausing && !resumable ? { resume: 'Pausing…' } : {}) },
     onAction: (id, b) => runAction({ runId: live ? live.runId : null, pipelineId: record.id, title: record.title,
       projectKey: record.projectKey || '', workspaceId: record.workspaceId || null }, id, b, m),
   });
@@ -25532,6 +25532,8 @@ function hdChangesOf(record, data) {
   return (record && record.changes) || (data && data.state && data.state.changes) || null;
 }
 
+const ARCHIVE_GATE_KEPT = 'Recover or discard the kept work first';
+const ARCHIVE_GATE_CHECKOUT = 'Close the local copy in Actions first';
 function hdSetArchiveGate(btn, retained, checkout = null) {
   if (!btn) return;
   // An IN-FLIGHT archive owns its button outright — the mirror of
@@ -25543,8 +25545,89 @@ function hdSetArchiveGate(btn, retained, checkout = null) {
   // archive that in fact succeeded).
   if (btn.dataset.archiveState === 'busy') return;
   btn.disabled = !!(retained || checkout);
-  btn.title = retained ? 'Recover or discard the retained uncommitted work before archiving.'
-    : checkout ? 'Discard the checkout (or unlink your folder) before archiving.' : '';
+  btn.title = retained ? ARCHIVE_GATE_KEPT : checkout ? ARCHIVE_GATE_CHECKOUT : '';
+}
+/** Slice 2: the run page's one ⋯, live and saved, every level. `away`: the live page's Away mode items (with their
+ *  trailing separator); `extra`: items between Save as preset and Terminal (a shaped run's Run after). Run-scope
+ *  actions come last, after a separator: Report this run, then Archive (danger) or Restore. */
+function runMoreItems(screen, { away = [], extra = [] } = {}) {
+  const offered = (sel) => { const b = screen.querySelector(sel); return b && !b.hidden ? b : null; };
+  const items = [...away];
+  const preset = offered('.hd-save-preset, .rd-save-preset');
+  if (preset && flagOn('runPresets')) items.push({ label: 'Save as preset', title: preset.title, onSelect: () => preset.click() });
+  items.push(...extra);
+  // The Chat panel hides the terminal opener on purpose (.crp .term-opener): no Terminal item there either.
+  if (screen.dataset.presentation !== 'panel') items.push({ label: 'Terminal', hint: 'Ctrl+`', onSelect: () => terminalPane?.toggle() });
+  const report = offered('.hd-report, .rd-report');
+  const archive = offered('.hd-archive, .rd-archive');
+  const restore = offered('.hd-restore');
+  const run = [];
+  if (report) run.push({ label: 'Report this run', onSelect: () => report.click() });
+  if (archive) run.push({ label: 'Archive', danger: true, disabled: archive.disabled, title: archive.title, onSelect: () => archive.click() });
+  else if (restore) run.push({ label: 'Restore', onSelect: () => restore.click() });
+  if (run.length && items.length && !items.at(-1).sep) items.push({ sep: true });
+  return items.concat(run);
+}
+/** The run page's one Archive (slice 2): confirm, DELETE, toast. `btn` is the hidden carrier the ⋯ item clicks; it
+ *  holds the gate and the busy label. `rec` is the History row (id, projectKey, projectDir, title). */
+async function archiveRunFlow({ btn, rec: r, screen, onGone }) {
+  if (!btn || btn.disabled || !r) return;
+  // The dependents read is async and no modal is up yet: hold the button under the house 'busy' flag
+  // (hdSetArchiveGate leaves a busy button alone) so a second click cannot run this flow — and its
+  // DELETE — twice. Released before the modal opens; the scrim covers the button from there on.
+  btn.dataset.archiveState = 'busy'; btn.disabled = true;
+  const chainNote = await afterDependentsNote(`pipelineId=${encodeURIComponent(r.id)}`);
+  delete btn.dataset.archiveState; btn.disabled = false;
+  // Spec §5.2/D2 fixes this copy VERBATIM — do not paraphrase (only the
+  // run-title context line above it is ours; only the page name changed when
+  // History merged into Runs). The title says "run", matching the Runs page's
+  // own naming; the message body below is the spec's, untouched.
+  // `.confirm-message` already
+  // declares white-space:pre-line, so the blank line renders as a paragraph.
+  const ok = await confirmModal({
+    title: 'Archive this run?',
+    message: isNoProjectRun(r)   // P3: no branch, worktree or PR; its files live only in the run folder Archive removes
+      ? `${r.title || r.id}\n\nIt moves out of Runs. The files it made and its run artifacts (logs, results) are removed.${chainNote}`
+      : `${r.title || r.id}\n\nIt moves out of Runs. The local branch, worktree, and run artifacts (logs, results, diff) are removed. The remote branch and any open PR stay untouched.${chainNote}`,
+    confirmLabel: 'Archive',
+    danger: true,
+  });
+  if (!ok) return;
+  const label = btnLabelEl(btn);
+  btn.dataset.archiveState = 'busy';   // read by hdSetArchiveGate
+  btn.disabled = true;
+  label.textContent = 'Archiving…';
+  try {
+    const qs = runActionQuery(r.projectDir || null, r);
+    const res = await fetch(`/api/runs/${encodeURIComponent(r.id)}?${qs.toString()}`, { method: 'DELETE' });
+    const dd = await safeJson(res);
+    if (!res.ok) throw new Error((dd && dd.error) || `HTTP ${res.status}`);
+    state.historyAll = state.historyAll.filter((x) => !(x && x.id === r.id && x.projectKey === r.projectKey));
+    // The archived feed too, so a revisit of the Archived toggle does not show the
+    // just-archived run as still archived.
+    if (state.historyArchived) {
+      state.historyArchived = state.historyArchived.filter((x) => !(x && x.id === r.id && x.projectKey === r.projectKey));
+      paintRunsList();
+    }
+    // The same guard loadHistoryView uses ("never cache empty/error"):
+    // archiving the LAST pipeline would otherwise persist `{pipelines: []}`
+    // and the next boot would paint an empty History from cache before the
+    // network answers.
+    if (state.historyAll.length) writeHistoryCache(state.historyAll, state.ghAvailable, state.adoAvailable);
+    const m = readLastRun();
+    if (m && m.pipelineId === r.id && (!m.projectKey || m.projectKey === r.projectKey)) forgetLastRun();
+    paintHistory();
+    onGone();                                     // the archived run is gone: the list, or the Chat panel closes
+    notify({ tone: 'ok', title: 'Run archived' });
+  } catch (err) {
+    // Cleared only on failure: the success path leaves the page and the screen
+    // (button included) is discarded.
+    delete btn.dataset.archiveState;
+    btn.disabled = false;
+    label.textContent = 'Archive';
+    notify({ tone: 'err', title: 'Could not archive the run', detail: err.message, key: `archive-${r.id}`,
+      action: { label: 'Retry', run: () => btn.isConnected && btn.click() } });
+  }
 }
 
 // Base conflicts (#620): one line per branch from the loaded detail (data.state), Re-check / Update branch /
@@ -25836,65 +25919,8 @@ function setupHdActions(screen, record, data) {
   if (!archived && isDeletableEntry({ ...record, status: st.status })) {
     archiveBtn.hidden = false;
     hdSetArchiveGate(archiveBtn, held.retained, held.checkout);
-    archiveBtn.addEventListener('click', async () => {
-      if (archiveBtn.disabled) return;
-      const r = hdCurrentRecord(record);              // never the load-time object
-      // The dependents read is async and no modal is up yet: hold the button under the house 'busy' flag
-      // (hdSetArchiveGate leaves a busy button alone) so a second click cannot run this handler — and its
-      // DELETE — twice. Released before the modal opens; the scrim covers the button from there on.
-      archiveBtn.dataset.archiveState = 'busy'; archiveBtn.disabled = true;
-      const chainNote = await afterDependentsNote(`pipelineId=${encodeURIComponent(r.id)}`);
-      delete archiveBtn.dataset.archiveState; archiveBtn.disabled = false;
-      // Spec §5.2/D2 fixes this copy VERBATIM — do not paraphrase (only the
-      // run-title context line above it is ours; only the page name changed when
-      // History merged into Runs). The title says "run", matching the Runs page's
-      // own naming; the message body below is the spec's, untouched.
-      // `.confirm-message` already
-      // declares white-space:pre-line, so the blank line renders as a paragraph.
-      const ok = await confirmModal({
-        title: 'Archive this run?',
-        message: isNoProjectRun(r)   // P3: no branch, worktree or PR; its files live only in the run folder Archive removes
-          ? `${r.title || r.id}\n\nIt moves out of Runs. The files it made and its run artifacts (logs, results) are removed.${chainNote}`
-          : `${r.title || r.id}\n\nIt moves out of Runs. The local branch, worktree, and run artifacts (logs, results, diff) are removed. The remote branch and any open PR stay untouched.${chainNote}`,
-        confirmLabel: 'Archive',
-        danger: true,
-      });
-      if (!ok) return;
-      const label = btnLabelEl(archiveBtn);
-      archiveBtn.dataset.archiveState = 'busy';   // read by hdSetArchiveGate
-      archiveBtn.disabled = true;
-      label.textContent = 'Archiving…';
-      try {
-        const qs = runActionQuery(r.projectDir || null, r);
-        const res = await fetch(`/api/runs/${encodeURIComponent(r.id)}?${qs.toString()}`, { method: 'DELETE' });
-        const dd = await safeJson(res);
-        if (!res.ok) throw new Error((dd && dd.error) || `HTTP ${res.status}`);
-        state.historyAll = state.historyAll.filter((x) => !(x && x.id === r.id && x.projectKey === r.projectKey));
-        // The archived feed too, so a revisit of the Archived toggle does not show the
-        // just-archived run as still archived.
-        if (state.historyArchived) {
-          state.historyArchived = state.historyArchived.filter((x) => !(x && x.id === r.id && x.projectKey === r.projectKey));
-          paintRunsList();
-        }
-        // The same guard loadHistoryView uses ("never cache empty/error"):
-        // archiving the LAST pipeline would otherwise persist `{pipelines: []}`
-        // and the next boot would paint an empty History from cache before the
-        // network answers.
-        if (state.historyAll.length) writeHistoryCache(state.historyAll, state.ghAvailable, state.adoAvailable);
-        const m = readLastRun();
-        if (m && m.pipelineId === r.id && (!m.projectKey || m.projectKey === r.projectKey)) forgetLastRun();
-        paintHistory();
-        leaveSavedRun(screen);                      // the list itself (in Chat the run panel closes): the archived run is gone
-        notify({ tone: 'ok', title: 'Run archived' });
-      } catch (err) {
-        // Cleared only on failure: the success path navigates back to the list and
-        // the screen (button included) is discarded.
-        delete archiveBtn.dataset.archiveState;
-        archiveBtn.disabled = false;
-        label.textContent = 'Archive';
-        notify({ tone: 'err', title: 'Could not archive the run', detail: err.message, key: `archive-${r.id}`,
-          action: { label: 'Retry', run: () => archiveBtn.isConnected && archiveBtn.click() } });
-      }
+    archiveBtn.addEventListener('click', () => {
+      void archiveRunFlow({ btn: archiveBtn, rec: hdCurrentRecord(record), screen, onGone: () => leaveSavedRun(screen) });
     });
   }
 
@@ -25965,18 +25991,6 @@ function setupHdActions(screen, record, data) {
   // that goes terminal while the screen is open offers the button on the next visit,
   // exactly like Archive.
 
-  // The ⋯ trigger, gated on its own contents: a live run can be neither archived,
-  // restored nor reported, and a trigger that opens onto an empty menu is worse than
-  // no trigger.
-  const moreBtn = screen.querySelector('.hd-more');
-  const moreMenu = screen.querySelector('.hd-menu');
-  moreBtn.hidden = archiveBtn.hidden && reportBtn.hidden && (!restoreBtn || restoreBtn.hidden);
-  moreBtn.addEventListener('click', () => {
-    const opening = moreMenu.hidden;
-    moreMenu.hidden = !opening;
-    moreBtn.setAttribute('aria-expanded', opening ? 'true' : 'false');
-  });
-
   paintHdPr(screen, record, data);
   paintHdAfter(screen, record, data);
   void paintHdSavePreset(screen, data);
@@ -26001,42 +26015,13 @@ function setupHdActions(screen, record, data) {
 // setupHdActions installed must resolve the record through hdCurrentRecord() at
 // click time — do NOT "fix" a stale-record symptom by calling setupHdActions from
 // here; that double-binds both buttons.
-// ---- the History detail header's ⋯ menu -------------------------------------
-// One module-level pair of listeners, not per-screen ones: the detail screen is
-// rebuilt on every visit, so per-screen document listeners would accumulate. These
-// read whatever .hd-menu is in the DOM right now, and no-op when there is none.
-
-/** Close the header menu if it is open. @returns whether it actually closed one. */
-function closeHdMenu({ focusTrigger = false } = {}) {
-  // The saved screen lives on the Runs page or in the Chat run panel (Chat P4); one at a time.
-  const menu = document.querySelector('#hist-detail .hd-menu, [data-chat-panel] .hd-menu');
-  if (!menu || menu.hidden) return false;
-  menu.hidden = true;
-  const trigger = document.querySelector('#hist-detail .hd-more, [data-chat-panel] .hd-more');
-  if (trigger) {
-    trigger.setAttribute('aria-expanded', 'false');
-    if (focusTrigger) trigger.focus();
-  }
-  return true;
-}
-
-// CAPTURE phase, deliberately. .hd-report's own handler calls stopPropagation(), so a
-// bubble-phase closer would never see a click on it and the menu would stay open
-// behind the report modal. Capture runs BEFORE the target's handler, so the menu is
-// closed first and the item still does its job. The trigger is excluded: its own
-// listener toggles, and closing here would make every second click a no-op.
-document.addEventListener('click', (e) => {
-  const t = e.target;
-  if (t && typeof t.closest === 'function' && t.closest('#hist-detail .hd-more, [data-chat-panel] .hd-more')) return;
-  closeHdMenu();
-}, true);
 
 // ---- the header cost's breakdown (run page and History run page) -------------
 // The run page's meta line is rebuilt whenever what it says changes, and History's on every
 // paint, so a cost trigger can be replaced; the panel hangs off the header card (outside the
 // meta line), so an open panel survives the repaint. Old runs (no
 // Away mode, Auto workflow or run title share, no cut agent turns) keep the plain cost text and
-// get no panel. Bound once, module-level, like the ⋯ menu above. Escape is handled by the two
+// get no panel. Bound once, module-level. Escape is handled by the two
 // capture-phase detail-screen arms (closeCostPop), which would otherwise navigate before a local
 // listener ran.
 function costTriggerFocused(meta) {
@@ -29905,10 +29890,6 @@ document.addEventListener('keydown', (e) => {
   // list. Same shape as the modal guards above — this listener is CAPTURE phase, so
   // a guard here is the only way to opt a subtree out.
   if (e.target && typeof e.target.closest === 'function' && e.target.closest('.hd-cmt-composer')) return;
-  // The header's ⋯ menu owns Escape while it is open: dismiss it and stay on the
-  // screen. Handled HERE rather than in its own listener because this one is capture
-  // phase — a separate listener would fire after the navigation had already run.
-  if (closeHdMenu({ focusTrigger: true })) return;
   if (closeCostPop({ focusTrigger: true })) return;
   // Details steps back to the run's glance; the glance steps back to the list, in the
   // slide only: side by side the list is already there.
@@ -32425,9 +32406,10 @@ async function loadRunGroups() {
 // ── The group page (runs redesign slice 4, D13 to D17): #feature/ID[/tab] and #group/ID[/tab] ──
 // Run 3 (D2): loading / gone / error keep the bar's Back, so a phone is never stranded. Returns the message line.
 function groupMessage(host, cls, text) {
-  const back = Object.assign(document.createElement('a'), { className: 'btn gpage-back', href: '#runs' });
-  back.append(icon(document, 'chevron-left', 15), 'Runs');
-  back.setAttribute('aria-label', 'Back to the runs list');
+  const back = Object.assign(document.createElement('a'), { className: 'btn btn-sm btn-quiet btn-icon gpage-back', href: '#runs' });
+  back.append(icon(document, 'chevron-left', 16));       // slice 2: the run page's 28px Back
+  back.setAttribute('aria-label', 'Back to Runs');
+  back.title = 'Back to Runs';
   const bar = Object.assign(document.createElement('div'), { className: 'gpage-bar rd-bar' });
   bar.append(back);
   const p = Object.assign(document.createElement('p'), { className: cls, textContent: text });
@@ -32441,6 +32423,14 @@ function keepGroupBack(host, rebuild) {
   rebuild();
   if (had) host.querySelector('.gpage-back')?.focus({ preventScroll: true });
 }
+// Slice 2: the group Back is a link (#runs) for a middle-click, but a plain click asks for the list itself; at split a
+// bare #runs would reopen this very group (D6).
+el.groupDetail?.addEventListener('click', (e) => {
+  const back = e.target.closest && e.target.closest('.gpage-back');
+  if (!back || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  e.preventDefault();
+  backToRunsList();
+});
 async function mountGroupPage(host, { route, id, tab, reentered = false }) {
   const fresh = GROUP_PAGE.host !== host || GROUP_PAGE.route !== route || GROUP_PAGE.id !== id;
   Object.assign(GROUP_PAGE, { host, route, id, tab, reentered, ...(fresh ? { featureId: '', gone: false, failed: false, resolving: false } : {}) });
@@ -33447,6 +33437,12 @@ function goRunsList() {
   if (location.hash.slice(1) === 'runs') showView('runs');   // no hashchange would fire
   else location.hash = 'runs';
 }
+// A run page's Back: the list itself, and the run is forgotten, so a later bare #runs (a reload, a return from Chat)
+// shows the list too instead of reopening the run the person just closed.
+function backToRunsList() {
+  forgetLastRun();
+  goRunsList();
+}
 // After Archive (and a Restore on the Runs page) the saved screen is gone: the Runs list on the page; in Chat the
 // run panel closes instead (Chat P4). `screen` is the screen the action was pressed on: a panel screen the user
 // closed or swapped while the request was in flight leaves Chat where it is — never the Runs list, never another
@@ -33596,7 +33592,7 @@ function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
   // The panel has no glance, so there is no page title to watch (the bar never repeats the name there).
   if (panel) presentRunScreenInPanel(screen); else watchPageTitle(screen, 'rd');
 
-  screen.querySelector('.rd-back').addEventListener('click', () => { location.hash = 'runs'; });
+  screen.querySelector('.rd-back').addEventListener('click', () => backToRunsList());
   // Glance <-> Details are routes, so the browser's own back and forward walk them.
   const toDetails = (tab = '') => { rdGoDetails(tab); };
   const toRun = () => { if (runDetailState.host !== 'panel') location.hash = rdHash(runDetailState.runId); };
@@ -33750,27 +33746,31 @@ function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
 
   // D31: a shaped run's ⋯ drives the bar controls CSS hides — the same select, button and pane.
   screen.querySelector('.rd-bar-more').addEventListener('click', (e) => {
-    const anchor = e.currentTarget;
     const ns = screen.querySelector('.rd-night');
     const after = screen.querySelector('.rd-after');
-    const items = [];
+    const away = [];
     if (ns && !ns.closest('.rd-night-wrap').hidden) {
       const pill = screen.querySelector('.rd-night-pill');
-      items.push({ header: 'Away mode on this run' });
+      away.push({ header: 'Away mode on this run' });
       for (const o of RUN_SWITCH_OPTIONS) {
         const on = ns.value === o.value;
-        items.push({ label: o.label, title: o.tip, checked: on, hint: on && pill ? pill.textContent : '',
+        away.push({ label: o.label, title: o.tip, checked: on, hint: on && pill ? pill.textContent : '',
           onSelect: () => { if (on) return; ns.value = o.value; ns.dispatchEvent(new Event('change')); } });
       }
-      items.push({ sep: true });
+      away.push({ sep: true });
     }
     // Run after is the bar's own quick button; only a shaped run's bar folds it (D31), so only there does ⋯ carry it.
-    if (after && !after.hidden && levelAtLeast('advanced') && screen.querySelector('.rd-bar')?.hasAttribute('data-shaped')) {
-      items.push({ label: after.querySelector('.rd-btn-label').textContent, title: after.title, onSelect: () => after.click() });
-    }
-    // The Chat panel hides the terminal opener on purpose (.crp .term-opener): no Terminal item there either.
-    if (screen.dataset.presentation !== 'panel') items.push({ label: 'Terminal', onSelect: () => terminalPane?.toggle() });
-    toggleMenu({ doc: document, anchor, items, align: 'end', label: 'More for this run' });
+    const extra = after && !after.hidden && levelAtLeast('advanced') && screen.querySelector('.rd-bar')?.hasAttribute('data-shaped')
+      ? [{ label: after.querySelector('.rd-btn-label').textContent, title: after.title, onSelect: () => after.click() }] : [];
+    toggleMenu({ doc: document, anchor: e.currentTarget, items: runMoreItems(screen, { away, extra }), align: 'end', label: 'More for this run' });
+  });
+  // Slice 2: the live ⋯'s run-scope carriers (offered and gated by paintRdMenuCarriers on every repaint).
+  const rdReport = screen.querySelector('.rd-report');
+  rdReport.addEventListener('click', () => { const cur = runs.get(runId); if (cur && cur.pipelineId) openReportModal(cur.pipelineId); });
+  const rdArchive = screen.querySelector('.rd-archive');
+  rdArchive.addEventListener('click', () => {
+    const cur = runs.get(runId);
+    void archiveRunFlow({ btn: rdArchive, rec: cur && rdArchiveRecord(cur), screen, onGone: () => leaveLiveRun(screen) });
   });
 
   const r = runs.get(runId);
@@ -34190,7 +34190,7 @@ function crpUnmount(els = crpEls()) {
     histDetailState = null;
     hdCommentState = null;
   }
-  closeHdMenu();
+  closeMenus();                                    // a ⋯ menu left open does not outlive the Chat panel
   closeCostPop();
   const host = els && els.host;
   if (host && host.firstChild) {
@@ -34440,7 +34440,6 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     return;
   }
-  if (closeHdMenu({ focusTrigger: true })) return;
   if (closeCostPop({ focusTrigger: true })) return;
   e.preventDefault();
   closeChatRunPanelRoute({ restoreFocus: true });
@@ -34653,6 +34652,40 @@ function answerLabelOf(root) {
   const own = root && root.querySelector('.qpanel:not(.hidden) .plan-actions .btn-primary');
   return own ? own.textContent : '';
 }
+/** Slice 2: offer and gate the live ⋯'s Report this run, Archive and Save as preset. A finished run only (a live one
+ *  can be neither archived nor reported). Archive does not wait for the History row (rdArchiveRecord); the gate reads
+ *  what the Actions row reads (paintRdResult): a local copy, or kept work. */
+function paintRdMenuCarriers(screen, r) {
+  const finished = BASE_FINISHED.has(String(r.status || ''));
+  const rec = r.pipelineId ? rdHistoryRecord(r) : null;
+  const report = screen.querySelector('.rd-report');
+  if (report) report.hidden = !(finished && r.pipelineId);
+  const archive = screen.querySelector('.rd-archive');
+  if (archive) {
+    archive.hidden = !(finished && r.pipelineId && !(rec && rec.archivedAt));
+    const kept = !(r._retainedDiscarded || r._retainedApplied) && !!((rec && rec.retainedWork) || rdRetainedFor(r));
+    hdSetArchiveGate(archive, kept, hdCheckoutFor(rec));
+  }
+  const preset = screen.querySelector('.rd-save-preset');
+  if (preset) void paintRunSavePreset(preset, r.pipelineId ? { ...(rec || {}), id: r.pipelineId } : null,
+    () => screen.isConnected && runs.get(r.runId) === r);
+}
+// What the live Archive's DELETE is addressed by: the History row, else the run itself. A finished run's row turns
+// terminal and the page hands off to the saved run (rdSavedRow) about as soon as History lists it, so waiting for the
+// row would leave the live Archive all but unreachable.
+function rdArchiveRecord(r) {
+  if (!r || !r.pipelineId) return null;
+  const rec = rdHistoryRecord(r);
+  if (rec) return rec;
+  return r.workspaceId
+    ? { id: r.pipelineId, title: r.title, projectKey: `workspaces/${r.workspaceId}`, target: 'workspace' }
+    : { id: r.pipelineId, title: r.title, projectKey: historyKeyForRun(r), projectDir: r.projectDir };
+}
+// After Archive on the live page: the Chat panel closes (as Close does); the Runs page shows the list itself.
+function leaveLiveRun(screen) {
+  if (screen.dataset.presentation === 'panel') closeChatRunPanelRoute({ restoreFocus: true });
+  else goRunsList();
+}
 function paintRdActions(screen, r, m = rdModel(r)) {
   const bar = screen.querySelector('.rd-bar-end');
   const slot = bar && bar.querySelector('.rd-actions');
@@ -34667,6 +34700,7 @@ function paintRdActions(screen, r, m = rdModel(r)) {
     own: { ...pauseResumeOwn(pause, st), stop },
     pool: [pause, stop],                                  // a "Pause" left from a run that has ended is hidden
     covered: prCovered(screen),
+    skip: MENU_ACTIONS,                                   // slice 2: Archive and Report live in the ⋯ (runMoreItems)
     // The model reads pausing as paused, but chatRunControls.resume does nothing while the run is still live.
     disable: { 'ask-changes': "Ask for changes from the run's chat", ...(st === 'pausing' ? { resume: 'Pausing…' } : {}) },
     labels: { answer: answerLabelOf(screen.querySelector('.rd-questions')) },
@@ -35575,6 +35609,7 @@ function paintRdResult(screen, r, { glance = 'run', trailCount = 0 } = {}) {
   const host = screen.querySelector('.rd-result');
   if (!host) return;
   paintRdPrCta(screen, r);
+  paintRdMenuCarriers(screen, r);                        // slice 2: the ⋯ Archive's gate reads this row's checkout facts
   const terminal = RD_TERMINAL.includes(r.status);
   const steps = trailCount ? `${trailCount} step${trailCount === 1 ? '' : 's'}` : '';
   if (!terminal) {
@@ -36141,6 +36176,7 @@ function paintRdHeader(screen, r) {
   screen.querySelector('.rd-bar')?.toggleAttribute('data-shaped', shapedBar);
   const barMore = screen.querySelector('.rd-bar-more');
   if (barMore) barMore.hidden = false;
+  paintRdMenuCarriers(screen, r);
   // Run after this one (the list card's old schedule-after button): a pipeline run with a pipeline
   // id, in every state. A finished run is followed up, as on the saved run's bar (paintHdAfter).
   const afterBtn = screen.querySelector('.rd-after');

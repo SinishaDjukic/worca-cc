@@ -91,7 +91,7 @@ const ROWS = [
   ...['.sync-row', '.sync-pill', '.sync-note', '.sync-commits', '.sync-go', '.rd-sync', '#shipit-base-warn', '.proj-sync', '.sync-checked']
     .map((sel) => [sel, 'ui-branch-sync-model: §6.3 explicit [hidden]']),
   ['.rd-glance', 'ui-running-detail: Details must replace the glance'],
-  ['.hd-report', 'latent: .hd-menu .hd-report outranks .hd-report[hidden] (fixed by the global rule)'],
+  ['.hd-report', 'the ⋯ carrier keeps its [hidden] rule'],
   // More dropped tests that asserted a [hidden] rule:
   ['.rd-night-sec', 'ui-night-mode: the answers sit under the run card'],
   ['.chat-panel', 'worca Chat: the run panel slot keeps its hidden twin'],
@@ -183,4 +183,35 @@ test('run 4 D21, D14: the Chat run card is divided sections, the group page Ship
   assert.equal(ship.getPropertyValue('border-top'), '1px solid var(--line)');
   assert.equal(ship.getPropertyValue('border-radius'), '0px');
   assert.match(flat.at(-1).selectorText, /^:is\(\.ask-card,\.chat-rc,\.shape-feature\) :is\(\.qpanel,/, 'the in-card override is the last rule');
+});
+
+test('slice 2: at split layout every Back keeps a display (no rule hides .rd-back, .hd-back or .gpage-back)', () => {
+  document.body.innerHTML = `<div class="runs-shell" data-layout="split"><div class="runs-pane">
+    <div class="run-shell detail-open"><div class="rd"><div class="rd-bar"><button class="btn btn-sm btn-quiet btn-icon rd-back"></button></div></div></div>
+    <div class="hist-shell detail-open"><div class="hd"><div class="hd-bar"><button class="btn btn-sm btn-quiet btn-icon hd-back"></button></div></div></div>
+    <div class="group-shell detail-open"><div class="gpage"><div class="gpage-bar rd-bar"><a class="btn btn-sm btn-quiet btn-icon gpage-back"></a></div></div></div>
+  </div></div>`;
+  for (const cls of ['rd-back', 'hd-back', 'gpage-back']) {
+    const el = document.querySelector(`.${cls}`);
+    // Every top-level rule (no @media / @container arm) that sets display on this element; the cascade's winner.
+    const hits = flat.map((r, i) => ({ r, i })).filter(({ r }) => topLevel(r) && r.style.getPropertyValue('display'))
+      .flatMap(({ r, i }) => sels(r).filter((s) => { try { return el.matches(s); } catch { return false; } })
+        .map((s) => ({ r, i, imp: important(r), spec: specificity(s) })));
+    hits.sort((x, y) => (x.imp - y.imp) || cmp(x.spec, y.spec) || (x.i - y.i));
+    const win = hits.at(-1);
+    assert.ok(win, `${cls}: some rule gives it a display`);
+    assert.notEqual(win.r.style.getPropertyValue('display'), 'none', `${cls} is hidden at split by "${win.r.selectorText}"`);
+  }
+  document.body.innerHTML = '';
+});
+
+test('slice 2: a disabled danger ⋯ item (the gated Archive) reads disabled, not red', () => {
+  document.body.innerHTML = '<div class="menu wfv-menu"><button class="menu-item wfv-menu-item is-danger" disabled></button></div>';
+  const el = document.querySelector('.is-danger');
+  const hits = flat.map((r, i) => ({ r, i })).filter(({ r }) => topLevel(r) && r.style.getPropertyValue('color'))
+    .flatMap(({ r, i }) => sels(r).filter((s) => { try { return el.matches(s); } catch { return false; } })
+      .map((s) => ({ r, i, imp: important(r), spec: specificity(s) })));
+  hits.sort((x, y) => (x.imp - y.imp) || cmp(x.spec, y.spec) || (x.i - y.i));
+  assert.equal(hits.at(-1)?.r.style.getPropertyValue('color'), 'var(--ink-3)', `won by "${hits.at(-1)?.r.selectorText}"`);
+  document.body.innerHTML = '';
 });

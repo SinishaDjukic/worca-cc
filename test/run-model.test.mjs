@@ -1,7 +1,7 @@
 // test/run-model.test.mjs — the one run model over every row of spec §2.1 (single and group), PR state and count.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { runModel, groupModel, prState, RUN_STATES, ACTION_LABEL, finishedNeedsYou, memberPrState } from '../src/shared/run-model.mjs';
+import { runModel, groupModel, prState, RUN_STATES, ACTION_LABEL, MENU_ACTIONS, finishedNeedsYou, memberPrState } from '../src/shared/run-model.mjs';
 import { ICONS } from '../ui/public/icons.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -404,4 +404,11 @@ test('D11: waiting wording names what the run waits for', () => {
   assert.equal(line({ index: 2 }), 'Waiting · starts after run 2');
   assert.equal(line({ title: 'Nightly docs refresh' }), 'Waiting · starts after Nightly docs refresh');
   assert.equal(line({}), 'Waiting');
+});
+
+test('slice 2: a stopped run offers Archive only, whatever resumable says', () => {
+  for (const resumable of [true, false, undefined]) {
+    assert.deepEqual(runModel({ status: 'stopped', resumable }).actions, ['archive']);
+  }
+  assert.deepEqual([...MENU_ACTIONS], ['archive', 'report']);
 });

@@ -215,8 +215,8 @@ test('one menu: the .menu box and .menu-item rows', () => {
 });
 
 // The containers only: .ask-pop-divider, -caption and the other inner parts are not boxes.
-const MENU_BOX = /^(?:\.nav-fly(?:\.acct-menu|\.lvl-menu|\.act-fly)?|\.ask-pop(?:-(?:scope|model|mcp|ctx|chip|at|voice))?|\.btn-split-menu|\.hd-menu|\.wfv-menu)$/;
-const MENU_ROW = /^(?:\.wfv-menu-item|\.ask-pop-item|\.btn-split-menu button|\.hd-menu \.hd-(?:archive|report|restore)|\.nav \.nav-fly button)$/;
+const MENU_BOX = /^(?:\.nav-fly(?:\.acct-menu|\.lvl-menu|\.act-fly)?|\.ask-pop(?:-(?:scope|model|mcp|ctx|chip|at|voice))?|\.btn-split-menu|\.wfv-menu)$/;
+const MENU_ROW = /^(?:\.wfv-menu-item|\.ask-pop-item|\.btn-split-menu button|\.nav \.nav-fly button)$/;
 test('one menu: the five families keep position and size only, no skin of their own', () => {
   const bad = [];
   for (const r of ALL) for (const s of splitTop(r.sel)) {
@@ -227,11 +227,11 @@ test('one menu: the five families keep position and size only, no skin of their 
   assert.deepEqual(bad, []);
 });
 
-test('one menu: the 7 role="menu" boxes in index.html are .menu and their menu items are .menu-item', () => {
+test('one menu: the 6 role="menu" boxes in index.html are .menu and their menu items are .menu-item', () => {
   // The run, history and project pages live in <template>s, whose content querySelectorAll does not enter.
   const inTemplates = (root) => [root, ...[...root.querySelectorAll('template')].flatMap((t) => inTemplates(t.content))];
   const menus = inTemplates(index).flatMap((r) => [...r.querySelectorAll('[role="menu"]')]);
-  assert.equal(menus.length, 7);   // 3 .nav-fly, 3 .btn-split-menu, 1 .hd-menu
+  assert.equal(menus.length, 6);   // 3 .nav-fly, 3 .btn-split-menu
   assert.deepEqual(menus.filter((m) => !m.classList.contains('menu')).map((m) => m.id || m.className), []);
   // Segmented rows inside the account menu (the theme icons) are not menu rows.
   assert.deepEqual(menus.flatMap((m) => [...m.querySelectorAll('button[role^="menuitem"], [role="menu"] > button')])
@@ -241,7 +241,7 @@ test('one menu: the 7 role="menu" boxes in index.html are .menu and their menu i
 // An emitter is a class assignment (className =, classList.add, make(…), h(…)); the class string that names a menu
 // family names .menu (a box) or .menu-item (a row) too. Selector strings start with "." and never count.
 const EMIT = /className\s*=|classList\.add\(|\bmake\(|\bh\(|createElement\(/;
-const FAMILY = /['"`]([^'"`\n.]*(?<![\w-])(nav-fly|ask-pop|btn-split-menu|hd-menu|wfv-menu|wfv-menu-item|ask-pop-item)(?![\w-])[^'"`\n]*)['"`]/;
+const FAMILY = /['"`]([^'"`\n.]*(?<![\w-])(nav-fly|ask-pop|btn-split-menu|wfv-menu|wfv-menu-item|ask-pop-item)(?![\w-])[^'"`\n]*)['"`]/;
 test('one menu: every JS emitter of a menu family adds .menu / .menu-item', () => {
   const bad = [];
   for (const f of JS) code(readFileSync(f, 'utf8')).split('\n').forEach((l, i) => {
@@ -348,7 +348,7 @@ test('design debt: no shared-control entry is left in test/fixtures/design-debt.
   const debt = JSON.parse(read('test/fixtures/design-debt.json'));
   const all = Object.values(debt).filter(Array.isArray).flat();
   assert.deepEqual(SHARED_DEBT.filter((e) => all.includes(e)), []);
-  const CONTROL = /switch|\.tog\b|ask-rp-(?:sw|knob|ctl)|fanout-toggle|nav-fly|ask-pop|btn-split-menu|hd-menu|wfv-menu|tag-chip|ps-pill|ask-cmd-pill|tp-tab-badge|check-row|info-tip|row-btn/;
+  const CONTROL = /switch|\.tog\b|ask-rp-(?:sw|knob|ctl)|fanout-toggle|nav-fly|ask-pop|btn-split-menu|wfv-menu|tag-chip|ps-pill|ask-cmd-pill|tp-tab-badge|check-row|info-tip|row-btn/;
   assert.deepEqual(all.filter((e) => CONTROL.test(e)), []);
 });
 

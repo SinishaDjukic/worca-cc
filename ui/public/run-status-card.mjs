@@ -95,10 +95,11 @@ export function paintRunStatus(host, m) {
  * data-model-action. Own elements that live inside `host` (the chat card's Pause / Stop) are ordered with the made
  * ones; own elements elsewhere (the run page's bar) are only shown or hidden.
  */
-export function syncActions(host, m, { own = {}, pool = [], covered = {}, disable = {}, labels = {}, onAction = () => {} } = {}) {
+export function syncActions(host, m, { own = {}, pool = [], covered = {}, disable = {}, labels = {}, skip = [], onAction = () => {} } = {}) {
   if (!host) return;
   const doc = host.ownerDocument;
-  const want = (m && m.actions) || [];
+  // `skip`: actions this host leaves to another control (the run page's ⋯ owns Archive and Report, slice 2).
+  const want = ((m && m.actions) || []).filter((id) => !skip.includes(id));
   host.__onAction = onAction;
   const made = host.__made || (host.__made = new Map());
   // `pool`: every existing button this host manages. One the model does not own is hidden here, so no painter's

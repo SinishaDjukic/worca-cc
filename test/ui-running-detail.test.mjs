@@ -1839,3 +1839,89 @@ test('run page, Simple: a checkout gets a plain row with Discard, gone once the 
   await discard();
   assert.equal(row(), null);
 });
+
+// ---------------------------------------------------------------------------
+// Slice 2: the run page's one ⋯ (needle test e, live page). openGlance's run is r1 / pipeline p1.
+// ---------------------------------------------------------------------------
+// `live: true`: History has not caught up with the stop yet. A terminal row hands the page off to the saved run
+// (rdSavedRow), so the live page shows a finished run only in that window.
+const liveRow = (over = {}) => ({ ...HISTORY_ROW, id: 'p1', title: 'Rate limit uploads', status: 'stopped', live: true, ...over });
+const liveCheckout = { members: [{ projectKey: KEY, worktreeDir: '/tmp/co', branch: 'worca/p1',
+  at: new Date().toISOString(), policy: 'on-demand', setup: { status: 'ok' } }] };
+const openRdMore = (ctx) => {
+  const doc = ctx.window.document;
+  doc.querySelector('#run-detail .rd-bar-more').dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
+  return [...doc.querySelectorAll('body > .wfv-menu .menu-item')];
+};
+const rdLabel = (b) => b.querySelector('.wfv-menu-l').textContent;
+
+test('needle (e), live: a stopped run has one Archive, in ⋯; confirming archives it and shows the list', async () => {
+  const ctx = await bootRunning({ rows: [liveRow()] });
+  const rd = await openGlance(ctx, 'running/r1', { status: 'stopped', active: [] });
+  const doc = ctx.window.document;
+  assert.equal([...rd.querySelectorAll('button')].filter((b) => b.textContent.trim() === 'Archive' && !b.closest('[hidden]')).length, 0);
+  assert.equal(rd.querySelectorAll('.rd-actions [data-model-action="archive"], .rd-actions [data-model-action="report"], .rd-actions [data-model-action="resume"]').length, 0);
+  const items = openRdMore(ctx);
+  assert.equal(items.filter((b) => rdLabel(b) === 'Archive').length, 1);
+  assert.equal(items.filter((b) => rdLabel(b) === 'Report this run').length, 1);
+  assert.deepEqual(items.map(rdLabel).slice(-2), ['Report this run', 'Archive']);
+  assert.ok(doc.querySelector('body > .wfv-menu .menu-sep'), 'after a separator');
+  items.find((b) => rdLabel(b) === 'Archive').click();
+  await settle(ctx.window, 4);
+  assert.equal(doc.getElementById('confirm-title').textContent, 'Archive this run?');
+  doc.querySelector('#confirm-ok').click();
+  await settle(ctx.window, 6);
+  assert.equal(ctx.calls.filter((c) => c.opts.method === 'DELETE' && /\/api\/runs\/p1\?/.test(c.url)).length, 1);
+  assert.equal(lastToast(doc).title, 'Run archived');
+  assert.equal(ctx.window.location.hash, '#runs');
+  assert.equal(doc.querySelector('#run-shell').classList.contains('detail-open'), false);
+});
+
+test('needle (e), live: checked out, the ⋯ Archive is disabled with "Close the local copy in Actions first"', async () => {
+  const ctx = await bootRunning({ rows: [liveRow({ checkout: liveCheckout })] });
+  await openGlance(ctx, 'running/r1', { status: 'stopped', active: [] });
+  const archive = openRdMore(ctx).find((b) => rdLabel(b) === 'Archive');
+  assert.equal(archive.disabled, true);
+  assert.equal(archive.title, 'Close the local copy in Actions first');
+});
+
+test('slice 2, live: a finished run History has not listed yet still offers Archive, addressed by the run itself', async () => {
+  const ctx = await bootRunning({ rows: [] });
+  await openGlance(ctx, 'running/r1', { status: 'stopped', active: [] });
+  const doc = ctx.window.document;
+  const archive = openRdMore(ctx).find((b) => rdLabel(b) === 'Archive');
+  assert.ok(archive, 'no History row is needed to offer Archive');
+  assert.equal(archive.disabled, false);
+  archive.click();
+  await settle(ctx.window, 4);
+  assert.equal(doc.getElementById('confirm-title').textContent, 'Archive this run?');
+  doc.querySelector('#confirm-ok').click();
+  await settle(ctx.window, 6);
+  const del = ctx.calls.filter((c) => c.opts.method === 'DELETE' && /\/api\/runs\/p1\?/.test(c.url));
+  assert.equal(del.length, 1);
+  assert.equal(new URL(del[0].url, 'http://x').searchParams.get('projectDir'), PROJECT);
+  assert.equal(lastToast(doc).title, 'Run archived');
+});
+
+test('slice 2, live: a checkout that arrives through a History refresh (no new frame) gates the next ⋯ open', async () => {
+  const ctx = await bootRunning({ rows: [liveRow()] });
+  await openGlance(ctx, 'running/r1', { status: 'stopped', active: [] });
+  assert.equal(openRdMore(ctx).find((b) => rdLabel(b) === 'Archive').disabled, false);
+  openRdMore(ctx);                                         // the toggle closes it
+  ctx.box.rows = [liveRow({ checkout: liveCheckout })];
+  frame(ctx, { type: 'pipelines-changed' });
+  await settle(ctx.window, 8);
+  const archive = openRdMore(ctx).find((b) => rdLabel(b) === 'Archive');
+  assert.equal(archive.disabled, true);
+  assert.equal(archive.title, 'Close the local copy in Actions first');
+});
+
+test('slice 2, live: a running run lists Away mode in ⋯, and no Archive or Report', async () => {
+  const ctx = await bootRunning({ rows: [liveRow({ status: 'running' })] });
+  await openGlance(ctx);
+  const doc = ctx.window.document;
+  doc.querySelector('#run-detail .rd-bar-more').dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
+  const menu = doc.querySelector('body > .wfv-menu');
+  assert.match(menu.textContent, /Away mode on this run/);
+  assert.deepEqual([...menu.querySelectorAll('.menu-item')].map(rdLabel).filter((l) => l === 'Archive' || l === 'Report this run'), []);
+});
