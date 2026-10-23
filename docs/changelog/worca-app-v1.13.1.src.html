@@ -1,0 +1,527 @@
+<title>Worca — What's new in 1.13.1</title>
+<style>
+  :root{
+    --bg:#ECEAE4; --card:#FFFFFF; --card-2:#F6F4EF;
+    --ink:#14151A; --ink-2:#56534C; --ink-3:#8B8780; --line:#E2DFD7;
+    --ocean:#4B5ED2; --ocean-deep:#3A49AC; --wash:#DDE3F7; --wash-2:#EBEEFA;
+    --coral:#EEA47D; --coral-soft:#F8E3D5; --lime:#DEEFC4; --lime-2:#EDF6DC;
+    --dark:#131419; --dark-2:#1C1D25; --on-dark:#F4F3EE; --on-dark-2:#9EA0AC;
+    --ok:#38854F; --warn:#DFA23F; --bad:#C9524A; --info:#5B94C8;
+    --r-lg:28px; --r-md:18px; --r-sm:12px;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+    --shadow:0 18px 50px -22px rgba(20,21,26,.28);
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased}
+  img{max-width:100%;display:block}
+  .wrap{max-width:1280px;margin:0 auto;padding:18px 22px 90px}
+
+  /* ---------- shared bits ---------- */
+  .kicker{display:inline-flex;align-items:center;gap:8px;background:var(--card);
+    border:1px solid var(--line);border-radius:999px;padding:7px 15px;
+    font-size:11.5px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-2)}
+  .kicker .dot{width:8px;height:8px;border-radius:50%;background:var(--ocean)}
+  h1,h2{margin:0;letter-spacing:-.035em;line-height:1.02;text-wrap:balance;font-weight:800}
+  h1{font-size:clamp(44px,7vw,92px)}
+  h2{font-size:clamp(34px,4.6vw,58px)}
+  .sub b{color:var(--ink);font-weight:700}
+  .sub{color:var(--ink-2);font-size:clamp(16px,1.6vw,19px);max-width:52ch;margin:0}
+  .chips{display:flex;flex-wrap:wrap;gap:10px}
+  .chip{background:var(--card);border:1px solid var(--line);border-radius:999px;
+    padding:8px 16px;font-size:13.5px;font-weight:600;color:var(--ink-2);white-space:nowrap}
+  .chip b{color:var(--ink);font-family:var(--mono);font-weight:700}
+  .chip.acc{background:var(--ink);border-color:var(--ink);color:#fff}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+  .sec{border-radius:var(--r-lg);background:var(--card);margin-top:26px;
+    padding:clamp(28px,4.4vw,64px);position:relative;overflow:hidden}
+  .sec-head{display:flex;flex-direction:column;align-items:flex-start;gap:18px;max-width:900px;position:relative;z-index:2}
+  .grid2{display:grid;grid-template-columns:5fr 6fr;gap:clamp(22px,3vw,44px);align-items:center;margin-top:38px}
+  .grid2.flip{grid-template-columns:6fr 5fr}
+  @media (max-width:920px){.grid2,.grid2.flip{grid-template-columns:1fr}}
+
+  /* screenshot frame */
+  .shot{border-radius:var(--r-md);overflow:hidden;background:var(--card);
+    border:1px solid var(--line);box-shadow:var(--shadow)}
+  .shot .bar{height:32px;background:var(--card-2);border-bottom:1px solid var(--line);
+    display:flex;align-items:center;gap:6px;padding:0 14px}
+  .shot .bar i{width:10px;height:10px;border-radius:50%;background:#DDD9CF;display:block}
+  .shot .bar i:first-child{background:#E8B4AC}.shot .bar i:nth-child(2){background:#EAD3A2}.shot .bar i:nth-child(3){background:#BCD8B4}
+  .shot .crop{overflow:hidden;position:relative}
+  .shot img{height:auto}
+  .shot-cap{margin:12px 4px 0;font-size:13px;color:var(--ink-3);font-weight:600}
+
+  /* reveals */
+  .rv{opacity:0;transform:translateY(26px);transition:opacity .7s ease,transform .7s cubic-bezier(.2,.7,.2,1)}
+  .rv.in{opacity:1;transform:none}
+  .rv.d1{transition-delay:.08s}.rv.d2{transition-delay:.16s}.rv.d3{transition-delay:.24s}
+
+  /* ---------- topbar ---------- */
+  .top{display:flex;justify-content:space-between;align-items:center;padding:10px 6px 4px}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:800;letter-spacing:.02em;font-size:18px}
+  .top .chip{background:transparent}
+
+  /* ---------- hero ---------- */
+  .hero{background:linear-gradient(135deg,var(--wash) 0%,var(--wash-2) 60%,#F2EFFA 100%)}
+  .hero-grid{display:grid;grid-template-columns:6fr 5fr;gap:clamp(24px,3vw,48px);align-items:center;position:relative}  /* no z-index: a stacking context here would put the ribbon over the text */
+  @media (max-width:920px){.hero-grid{grid-template-columns:1fr}}
+  .hero .shot{transform:rotate(1.6deg)}
+  .hero .sec-head{position:relative;z-index:4}
+  .ribbon{position:absolute;inset:0;z-index:1;pointer-events:none}   /* behind the text (4) and the shot (2) */
+  @media (max-width:920px){.ribbon{display:none}}
+  .ribbon text{font-family:var(--mono);font-size:15px;font-weight:700;letter-spacing:.30em;fill:#fff}
+  .float-chip{position:absolute;z-index:3;background:var(--card);border-radius:14px;box-shadow:var(--shadow);
+    border:1px solid var(--line);padding:10px 16px;font-size:13px;font-weight:700}
+  .float-chip small{display:block;font-weight:600;color:var(--ink-3);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase}
+
+  /* ---------- demo cards ---------- */
+  .demo{border-radius:var(--r-md);background:var(--card-2);border:1px solid var(--line);padding:26px;position:relative}
+  .demo .dlabel{font-size:10.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3);margin-bottom:18px}
+  .env-note{margin:14px 2px 0;font-size:12.5px;color:var(--ink-3);font-weight:600}
+  .badge{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;border-radius:6px;padding:3px 7px;white-space:nowrap}
+  .badge.violet{background:#E7E4F8;color:#4A3E9E}
+  .badge.grey{background:var(--card-2);color:var(--ink-3);border:1px solid var(--line)}
+  .pill{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;border-radius:999px;padding:4px 10px}
+  .pill.run{background:#E4F0E7;color:var(--ok)}
+  .pill.flag{background:#FBEEDC;color:#9A6A17}
+  .ghost-btn{border:1.5px solid var(--ink);border-radius:999px;background:var(--card);
+    padding:7px 14px;font-size:12px;font-weight:700;white-space:nowrap;transition:.3s;display:inline-block}
+  .ghost-btn.pulse{transform:scale(1.06);box-shadow:0 0 0 6px rgba(75,94,210,.18)}
+
+  /* recipe: precedence — layers resolve into one winner */
+  .cat-demo{display:flex;flex-direction:column;gap:10px}
+  .cat-row{border-radius:var(--r-sm);border:1px solid var(--line);background:var(--card);padding:13px 16px;
+    display:flex;align-items:center;gap:12px;transition:.35s ease}
+  .cat-row .t{font-weight:700;font-size:13.5px;flex:1}
+  .cat-row .src{font-family:var(--mono);font-size:11.5px;color:var(--ink-2)}
+  .cat-row.dim{opacity:.45}
+  .cat-row.win{border-color:var(--ink);box-shadow:var(--shadow)}
+
+  /* recipe: mask / reveal — a secret shown only on demand */
+  .env-demo .erow{background:var(--card);border:1px solid var(--line);border-radius:var(--r-sm);padding:14px 16px;
+    display:flex;align-items:center;gap:14px}
+  .env-demo .ekey{font-family:var(--mono);font-size:12.5px;color:var(--ink-2);flex:0 0 auto}
+  .env-demo .eval{font-family:var(--mono);font-size:13px;font-weight:700;position:relative;flex:1;height:20px;overflow:hidden}
+  .env-demo .eval span{position:absolute;inset:0;transition:opacity .4s}
+  .env-demo .eval .raw{opacity:0}
+  .env-demo.reveal .eval .raw{opacity:1}
+  .env-demo.reveal .eval .msk{opacity:0}
+
+  /* recipe: meter + flag — a run crossing a threshold */
+  .meter-run{background:var(--card);border:1px solid var(--line);border-radius:var(--r-sm);padding:16px 18px}
+  .meter-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+  .meter-top .t{font-weight:700;font-size:14px}
+  .meter{height:12px;border-radius:999px;background:var(--line);position:relative}
+  .meter .fill{height:100%;border-radius:999px;width:0%;background:var(--info);transition:width 1.4s ease}
+  .meter-amt{display:flex;justify-content:space-between;margin-top:10px;font-family:var(--mono);font-size:12.5px;color:var(--ink-2)}
+  .cost-banner{margin-top:14px;border-radius:var(--r-sm);background:#FBF3E4;border:1px solid #EDD9AE;
+    padding:13px 16px;display:flex;justify-content:space-between;align-items:center;gap:10px;
+    opacity:.22;transform:translateY(-4px);transition:.45s ease}
+  .cost-banner.show{opacity:1;transform:none}
+  .cost-banner .msg{font-size:13px;font-weight:600;color:#7A5A1A}
+  .cap-steps{list-style:none;margin:22px 0 0;padding:0;display:flex;flex-direction:column;gap:9px}
+  .cap-steps li{display:flex;gap:11px;align-items:center;font-size:13.5px;font-weight:600;color:var(--ink-3);transition:.35s}
+  .cap-steps .n{width:23px;height:23px;border-radius:50%;background:var(--card);border:1px solid var(--line);flex:none;
+    display:grid;place-items:center;font-family:var(--mono);font-size:11px;font-weight:700;transition:.35s}
+  .cap-steps li.on{color:var(--ink)}
+  .cap-steps li.on .n{background:var(--ink);color:#fff;border-color:var(--ink)}
+
+  /* recipe: grouped picker — grouping + a collision suffix */
+  .dd-demo .grp{margin-bottom:12px}
+  .dd-demo .glabel{font-size:10.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);margin:0 0 7px 4px}
+  .dd-opt{border:1px solid var(--line);border-radius:10px;background:var(--card);padding:10px 14px;
+    font-size:13.5px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:8px}
+  .dd-opt .sfx{font-family:var(--mono);font-size:11.5px;color:var(--ink-3);opacity:0;transition:opacity .5s}
+  .dd-demo.collide .dd-opt .sfx{opacity:1}
+  .dd-opt.sel{border-color:var(--ink);box-shadow:var(--shadow)}
+
+  /* recipe: review rows — red-flagged changes + a green guarantee */
+  .con-demo .crow{background:var(--card);border:1px solid var(--line);border-radius:var(--r-sm);padding:13px 16px;margin-bottom:10px;
+    font-size:13px;font-weight:600;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+  .red-chip{background:#FCE9E4;color:#A03A31;border-radius:6px;padding:3px 8px;font-size:11px;font-weight:700;font-family:var(--mono)}
+  .con-note{border-radius:var(--r-sm);background:var(--lime-2);border:1px solid #CFE3A8;padding:12px 16px;
+    display:flex;align-items:center;justify-content:space-between;font-size:12.5px;font-weight:600;color:#41611F}
+
+  /* recipe: policy flip — a heuristic changing a default */
+  .pol-demo .prow{background:var(--card);border:1px solid var(--line);border-radius:var(--r-sm);padding:13px 16px;margin-bottom:10px;
+    display:flex;align-items:center;gap:12px}
+  .pol-demo .pkey{font-family:var(--mono);font-size:12px;color:var(--ink-2);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+  .pol-demo .pmode{font-size:12px;font-weight:700;border:1px solid var(--line);border-radius:8px;padding:6px 12px;background:var(--card-2);
+    position:relative;min-width:150px;text-align:center;height:31px;overflow:hidden}
+  .pol-demo .pmode span{position:absolute;inset:0;display:grid;place-items:center;transition:opacity .4s}
+  .pol-demo .pmode .b{opacity:0;color:#A03A31}
+  .pol-demo .prow.flip .pmode .a{opacity:0}
+  .pol-demo .prow.flip .pmode .b{opacity:1}
+  .pol-demo .warn-note{font-size:11.5px;color:var(--bad);font-weight:700;opacity:0;transition:opacity .4s}
+  .pol-demo .prow.flip ~ .warn-note{opacity:1}
+
+  /* ---------- receipts section ---------- */
+  .polish{background:linear-gradient(160deg,#F7EFE7,#FBF6EF)}
+  .p-ribbon{position:absolute;inset:0;pointer-events:none;z-index:1}
+  .p-ribbon text{font-family:var(--mono);font-size:14px;font-weight:700;letter-spacing:.28em;fill:#fff}
+  .bubs{position:relative;z-index:2;display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:40px}
+  @media (max-width:920px){.bubs{grid-template-columns:1fr 1fr}}
+  @media (max-width:560px){.bubs{grid-template-columns:1fr}}
+  .bub{background:var(--card);border-radius:20px;border:1px solid var(--line);padding:18px;display:flex;gap:16px;align-items:center}
+  .bub .im{width:86px;height:86px;border-radius:50%;overflow:hidden;flex:none;border:1px solid var(--line);position:relative;
+    display:grid;place-items:center;background:var(--card-2)}
+  .bub .im img{width:300%;max-width:none;position:absolute}
+  .bub .im .big{font-family:var(--mono);font-weight:800;font-size:19px;letter-spacing:-.02em}
+  .bub .tx b{display:block;font-size:14.5px;letter-spacing:-.01em}
+  .bub .tx span{font-size:12.5px;color:var(--ink-2)}
+
+  .foot{display:flex;justify-content:space-between;align-items:center;padding:34px 8px 0;color:var(--ink-3);font-size:13px}
+
+  /* dot rail */
+  .rail{position:fixed;right:16px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:9px;z-index:50}
+  .rail a{width:8px;height:8px;border-radius:50%;background:var(--ink-3);opacity:.35;transition:.25s}
+  .rail a.on{opacity:1;background:var(--ocean);transform:scale(1.35)}
+  @media (max-width:1360px){.rail{display:none}}
+
+  a{color:inherit}
+  :focus-visible{outline:2.5px solid var(--ocean);outline-offset:2px;border-radius:4px}
+
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{animation:none!important;transition:none!important}
+    html{scroll-behavior:auto}
+    .rv{opacity:1;transform:none}
+    .cost-banner{opacity:1;transform:none}
+    .env-demo .eval .raw{position:static}
+  }
+</style>
+
+<div class="wrap">
+
+  <!-- top -->
+  <div class="top">
+    <div class="brand">
+      <img src="ui/public/assets/worca-logo.png" alt="Worca" style="height:34px;width:auto;mix-blend-mode:multiply">
+    </div>
+    <span class="chip mono">changelog · v1.12.0 → v1.13.1</span>
+  </div>
+
+  <!-- ================= HERO ================= -->
+  <section class="sec hero" id="s0">
+    <svg class="ribbon" viewBox="0 0 1280 640" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      <path id="rb" d="M -120 652 C 260 650, 560 640, 740 560 S 1060 170, 1400 120" fill="none" stroke="#4B5ED2" stroke-width="42" stroke-linecap="round" opacity=".92"></path>
+      <text><textPath id="rbt" href="#rb" startOffset="-12%">MARKETPLACE · SMART NAMING · SHAPER · FOLDER → GIT · CREATE PR · PROFILE MENU · FIXES · MARKETPLACE · SMART NAMING · SHAPER · FOLDER → GIT · CREATE PR · PROFILE MENU · FIXES · </textPath></text>
+    </svg>
+    <div class="hero-grid">
+      <div class="sec-head rv in">
+        <span class="kicker"><span class="dot"></span>What's new · v1.13.1</span>
+        <h1>A new Marketplace.<br>Smarter runs.</h1>
+        <p class="sub">Find, install and set up plugins on one Marketplace page, let a small model suggest each run's title and branch, plan with Shaper by default, turn a plain folder into a git project, and create pull requests from the same button everywhere.</p>
+        <div class="chips">
+          <span class="chip acc">Marketplace</span><span class="chip">Smart naming</span><span class="chip">Shaper on</span><span class="chip">Folder → git</span><span class="chip">Create PR</span><span class="chip">Profile menu</span><span class="chip">Fixes</span>
+        </div>
+      </div>
+      <div class="rv d1 in" style="position:relative;z-index:2">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:560px"><img src="docs/changelog/shots/1.13.1/s0.jpg" alt="Marketplace, Browse tab, with the telegram-chat install sheet open on its Review step: what it adds, the bot token it asks for, a warning about who can control runs, and its source commit"></div></div>
+        <div class="float-chip" style="right:-8px;top:-16px"><small>New</small><span>Review before install</span></div>
+        <div class="float-chip" style="right:24px;bottom:-18px"><small>New</small><span>Set up right after</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S1 · Marketplace ================= -->
+  <section class="sec" id="s1">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot" style="background:var(--bad)"></span>Marketplace</span>
+      <h2>Find, install and set up plugins.</h2>
+      <p class="sub"><b>Not sure what a plugin adds, or what it needs before it works?</b><br>Now the Marketplace page shows every plugin grouped by what it adds. Installing one opens a sheet: review what it adds and the secrets it asks for, install, then fill in its settings straight away. The Installed tab puts plugins that still need setup first, and updates are reviewed one at a time.</p>
+      <div class="chips">
+        <span class="chip"><b>4</b> steps: review, install, set up, done</span><span class="chip">plugins that need setup listed first</span><span class="chip">switch a plugin off without removing it</span><span class="chip">add a marketplace and watch it load</span>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="demo rv">
+        <div class="dlabel">Installing a plugin</div>
+        <div class="meter-run">
+          <div class="meter-top"><span class="t">telegram-chat · 0.1.0</span><span class="pill run" id="mkPill">Review</span></div>
+          <div class="meter-amt"><span>asks for: bot token · secret</span><span>adds: 1 chat channel</span></div>
+        </div>
+        <ol class="cap-steps" id="mkSteps">
+          <li><span class="n">1</span>Review what it adds and asks for</li>
+          <li><span class="n">2</span>Install the version you reviewed</li>
+          <li><span class="n">3</span>Set up its settings, or skip for now</li>
+          <li><span class="n">4</span>Done: it shows in Installed</li>
+        </ol>
+        <p class="env-note">Errors stay inside the sheet, next to the step that failed.</p>
+      </div>
+      <div class="rv d1">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:330px"><img src="docs/changelog/shots/1.13.1/s1.jpg" alt="Marketplace, Installed tab: telegram-chat under Needs attention with a Needs setup badge and a Set up button, then four installed plugins, each with an on/off switch" style="width:170%;max-width:none;margin:-9% 0 0 -29%"></div></div>
+        <p class="shot-cap">The Installed tab: what needs setup first, then every plugin with its switch.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S2 · Smart naming ================= -->
+  <section class="sec" id="s2">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot"></span>Runs</span>
+      <h2>Runs that name themselves.</h2>
+      <p class="sub"><b>Tired of runs called after the first words of a long task?</b><br>Now, with Smart run naming on, a small model reads the task as you type and suggests a short title and a branch name in your team's style, like <span class="mono">feat/rate-limit-contacts-search</span>. Change the type and the branch follows. Type over either field and Worca keeps your words.</p>
+      <div class="chips">
+        <span class="chip">your own text is never replaced</span><span class="chip">never holds up Start</span><span class="chip">about <b>$0.00005</b> a suggestion</span><span class="chip">turn it on in Settings › Labs</span>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="demo rv env-demo" id="envDemo">
+        <div class="dlabel">Suggested from the task</div>
+        <div class="erow">
+          <span class="ekey">Title</span>
+          <span class="eval"><span class="msk">Suggesting…</span><span class="raw">Rate-limit the contacts search endpoint</span></span>
+        </div>
+        <div class="erow" style="margin-top:10px">
+          <span class="ekey">Branch</span>
+          <span class="eval"><span class="msk">Suggesting…</span><span class="raw">feat/rate-limit-contacts-search</span></span>
+        </div>
+        <div style="margin-top:14px"><span class="ghost-btn" id="revealBtn">Suggesting…</span></div>
+        <p class="env-note">The branch follows your pattern, set per project in Settings › Runs.</p>
+      </div>
+      <div class="rv d1">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:500px"><img src="docs/changelog/shots/1.13.1/s2.jpg" alt="New run form: the title Rate-limit the contacts search endpoint and the branch feat/rate-limit-contacts-search, both marked Suggested, with the type picker set to feat" style="width:171%;max-width:none;margin:-9% 0 0 -48%"></div></div>
+        <p class="shot-cap">New run: a suggested title and branch, each marked Suggested until you change it.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S3 · Shaper ================= -->
+  <section class="sec" id="s3">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot"></span>Shaper</span>
+      <h2>Shaper is on for everyone.</h2>
+      <p class="sub"><b>Missed Shaper because it was hidden in Labs?</b><br>Now Shaper, which plans a task with you before anything is built, is in Beta and switched on. Pick it on the Chat home, describe the problem, and approve the plan before a run starts. If you had turned it off, it stays off.</p>
+      <div class="chips">
+        <span class="chip">on unless you turned it off</span><span class="chip">plans before it builds</span><span class="chip">switch it off in Settings › Labs</span>
+      </div>
+    </div>
+    <div class="grid2 flip">
+      <div class="rv">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:345px"><img src="docs/changelog/shots/1.13.1/s3.jpg" alt="Chat home: the composer with a Shaper chip and the prompt Describe the problem, above the action row where Shaper shows a Beta badge" style="width:187%;max-width:none;margin:-23% 0 0 -57%"></div></div>
+        <p class="shot-cap">The Chat home: Shaper picked, waiting for the problem.</p>
+      </div>
+      <div class="demo rv d1 pol-demo" id="polDemo">
+        <div class="dlabel">What changes for you</div>
+        <div class="prow" id="polFlip"><span class="pkey">never touched the switch</span><span class="pmode"><span class="a">Off</span><span class="b" style="color:var(--ok)">On</span></span></div>
+        <div class="prow"><span class="pkey">turned it off yourself</span><span class="pmode"><span class="a">Off</span></span></div>
+        <p class="warn-note" style="color:var(--ok)">only the default changed</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S4 · Folder → git ================= -->
+  <section class="sec" id="s4">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot" style="background:var(--info)"></span>Projects</span>
+      <h2>Turn a folder into a git project.</h2>
+      <p class="sub"><b>Want branches and pull requests for a plain folder?</b><br>Now press Use git on a Folder project. Worca sets up git in place, links a remote if you give one, and the project gets its sync bar and Branch card without a reload. A git project with no remote gets Link remote instead.</p>
+      <div class="chips">
+        <span class="chip">your files stay as they are</span><span class="chip">remote now or later</span><span class="chip">undone if it fails</span>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="demo rv">
+        <div class="dlabel">One project, before and after</div>
+        <div class="cat-demo">
+          <div class="cat-row dim"><span class="t">acme-reports</span><span class="badge grey">folder</span><span class="src">runs work on a copy</span></div>
+          <div class="cat-row win"><span class="t">acme-reports</span><span class="badge violet">git</span><span class="src">branches · pull requests</span></div>
+        </div>
+        <p class="env-note">The first run commits the files that were already there.</p>
+      </div>
+      <div class="rv d1">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:360px"><img src="docs/changelog/shots/1.13.1/s4.jpg" alt="Projects page with the Use git for this project dialog over it: it runs git init in the folder, with an optional remote URL filled in" style="width:241%;max-width:none;margin:-48% 0 0 -70%"></div></div>
+        <p class="shot-cap">Projects: Use git on acme-reports, with a remote to link.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S5 · Run page ================= -->
+  <section class="sec" id="s5">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot"></span>Run page</span>
+      <h2>Create PR, the same button everywhere.</h2>
+      <p class="sub"><b>Ship it, open a pull request, push: which button does what?</b><br>Now a finished run offers one Create PR button, styled the same on its page, in the Runs list and in Chat. Run after is back as its own button on the run bar, and on a wide screen the live view sits beside the run card.</p>
+      <div class="chips">
+        <span class="chip">Ship it is now Create PR</span><span class="chip">Run after one click away</span><span class="chip">live view beside the run</span><span class="chip">full-screen Workflows again</span>
+      </div>
+    </div>
+    <div class="grid2 flip">
+      <div class="rv">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:500px"><img src="docs/changelog/shots/1.13.1/s5.jpg" alt="A finished run, Paginate the search endpoint: Ready to ship with a Create PR button, and Run after on the run bar above" style="width:210%;max-width:none;margin:-6% 0 0 -98%"></div></div>
+        <p class="shot-cap">A finished run: Create PR on the card, Run after on the bar.</p>
+      </div>
+      <div class="demo rv d1 dd-demo" id="ddDemo">
+        <div class="dlabel">The buttons on a finished run</div>
+        <div class="grp">
+          <p class="glabel">Pull request</p>
+          <div class="dd-opt sel">Create PR <span class="sfx">(was Ship it)</span></div>
+        </div>
+        <div class="grp">
+          <p class="glabel">Run bar</p>
+          <div class="dd-opt">Run after <span class="sfx">(was in the ⋯ menu)</span></div>
+          <div class="dd-opt">⋯ More</div>
+        </div>
+        <p class="env-note">Keyboard focus, save messages and page addresses were made consistent across the app too.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S6 · Profile menu ================= -->
+  <section class="sec" id="s6">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot"></span>Everyday</span>
+      <h2>Away and Keep awake, one click.</h2>
+      <p class="sub"><b>Keeping the computer awake meant a trip to Settings?</b><br>Now both are switches in the profile menu, side by side. While you are away, your avatar shows a walking figure. Settings sections sit on white cards, the sidebar is narrower, and the model that writes new agents is your choice in Settings.</p>
+      <div class="chips">
+        <span class="chip">two switches, one menu</span><span class="chip">a walking figure while away</span><span class="chip">pick the agent-writing model</span>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="demo rv pol-demo">
+        <div class="dlabel">The profile menu</div>
+        <div class="prow" id="awayFlip"><span class="pkey">Away</span><span class="pmode"><span class="a">Off</span><span class="b" style="color:var(--ok)">On</span></span></div>
+        <div class="prow"><span class="pkey">Keep awake</span><span class="pmode"><span class="a">On</span></span></div>
+        <p class="warn-note" style="color:var(--ink-2)">the avatar shows a walking figure</p>
+      </div>
+      <div class="rv d1">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:385px"><img src="docs/changelog/shots/1.13.1/s6.jpg" alt="The profile menu open from the sidebar: spend this month, Interface mode, Settings, then Away and Keep awake as switches, and Appearance" style="width:250%;max-width:none;margin:-93% 0 0 0"></div></div>
+        <p class="shot-cap">The profile menu: Away and Keep awake together.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S7 · Fixes ================= -->
+  <section class="sec" id="s7">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot" style="background:var(--info)"></span>Reliability</span>
+      <h2>Bug fixes and security updates.</h2>
+      <p class="sub"><b>Lost a run’s work to an interrupted git command?</b><br>Now Worca clears the lock files a killed git command leaves behind, so a run still saves its work. Show in folder opens the project's copy when a run's own folder is cleaned up. Three libraries got security updates, and 1.13.1 fixes the New run form saying "Run not started" for a run that had started.</p>
+      <div class="chips">
+        <span class="chip">stuck git locks cleared</span><span class="chip">Show in folder after cleanup</span><span class="chip"><b>5</b> security advisories closed</span>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="demo rv con-demo">
+        <div class="dlabel">What was going wrong</div>
+        <div class="crow"><span>A killed git commit left a lock</span><span class="red-chip">FIXED — run saves its work</span></div>
+        <div class="crow"><span>An MCP server redirected elsewhere</span><span class="red-chip">FIXED — tokens not resent</span></div>
+        <div class="crow"><span>Start said "Run not started"</span><span class="red-chip">FIXED in 1.13.1</span></div>
+        <div class="con-note"><span>Every fix has a test</span><span class="mono">fails before · passes after ✓</span></div>
+      </div>
+      <div class="demo rv d1">
+        <div class="dlabel">Show in folder, after a run is cleaned up</div>
+        <div class="cat-demo">
+          <div class="cat-row dim"><span class="t">The run's own copy</span><span class="badge grey">gone</span><span class="src">cleaned up</span></div>
+          <div class="cat-row win"><span class="t">The project's copy</span><span class="badge violet">opens</span><span class="src">same file</span></div>
+        </div>
+        <p class="env-note">If both are gone, the message says why.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= RECEIPTS (always last) ================= -->
+  <section class="sec polish" id="s8">
+    <svg class="p-ribbon" viewBox="0 0 1280 760" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      <path id="pb" d="M -60 78 C 260 8, 520 140, 760 92 S 1160 6, 1360 96" fill="none" stroke="#EEA47D" stroke-width="34" stroke-linecap="round" opacity=".9"></path>
+      <text><textPath id="pbt" href="#pb" startOffset="-10%">TESTS · NUMBERS · PROOF · TESTS · NUMBERS · PROOF · TESTS · NUMBERS · PROOF · TESTS · NUMBERS · PROOF · </textPath></text>
+    </svg>
+    <div class="sec-head rv" style="margin-top:110px">
+      <span class="kicker"><span class="dot" style="background:var(--coral)"></span>And the receipts</span>
+      <h2>Shipped, tested, verified live.</h2>
+    </div>
+    <div class="bubs">
+      <div class="bub rv"><span class="im"><span class="big">14,930</span></span><div class="tx"><b>Tests green</b><span>46 new test files · +12,912 test lines</span></div></div>
+      <div class="bub rv d1"><span class="im"><span class="big">+22.6k</span></span><div class="tx"><b>Lines landed</b><span>357 files · 32 commits on dev</span></div></div>
+      <div class="bub rv d2"><span class="im"><span class="big">23</span></span><div class="tx"><b>PRs merged</b><span>since v1.12.0 · in under a day</span></div></div>
+      <div class="bub rv"><span class="im"><img src="docs/changelog/shots/1.13.1/r1.jpg" style="width:552%;left:-143%;top:-34%" alt="The Add marketplace dialog after adding: Added Worca CC Official, with its plugins and Install buttons"></span><div class="tx"><b>Add a marketplace, live</b><span>progress from the server · its plugins listed when done</span></div></div>
+      <div class="bub rv d1"><span class="im"><span class="big">11</span></span><div class="tx"><b>Plugins from Worca</b><span>task sources · chat channels · MCP servers</span></div></div>
+      <div class="bub rv d2"><span class="im"><span class="big">2</span></span><div class="tx"><b>Release candidates</b><span>1.13.0 rehearsed twice · 1.13.1 fixed in a day</span></div></div>
+    </div>
+  </section>
+
+  <div class="foot">
+    <span>WORCA · changelog · <span class="mono">v1.12.0 → v1.13.1</span></span>
+    <span class="mono">Oct 22 – Oct 23, 2026</span>
+  </div>
+</div>
+
+<nav class="rail" id="rail" aria-label="Sections">
+  <a href="#s0" aria-label="What's new" class="on"></a><a href="#s1" aria-label="Marketplace"></a><a href="#s2" aria-label="Smart naming"></a><a href="#s3" aria-label="Shaper"></a><a href="#s4" aria-label="Folder to git"></a><a href="#s5" aria-label="Create PR"></a><a href="#s6" aria-label="Profile menu"></a><a href="#s7" aria-label="Fixes"></a><a href="#s8" aria-label="Receipts"></a>
+</nav>
+
+<script>
+(function () {
+  var reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var $ = function (id) { return document.getElementById(id); };
+
+  // scroll reveals
+  var io = new IntersectionObserver(function (es) {
+    es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+  }, { threshold: 0.18 });
+  document.querySelectorAll('.rv').forEach(function (el) { io.observe(el); });
+
+  // dot rail follows the section in the middle of the viewport
+  var secs = [].slice.call(document.querySelectorAll('.sec'));
+  var dots = [].slice.call(document.querySelectorAll('.rail a'));
+  var so = new IntersectionObserver(function (es) {
+    es.forEach(function (e) {
+      if (e.isIntersecting) {
+        var i = secs.indexOf(e.target);
+        dots.forEach(function (d, j) { d.classList.toggle('on', j === i); });
+      }
+    });
+  }, { rootMargin: '-45% 0px -45% 0px' });
+  secs.forEach(function (s) { so.observe(s); });
+
+  // ribbons drift with scroll position
+  var rbt = $('rbt'), pbt = $('pbt');
+  if (!reduced) addEventListener('scroll', function () {
+    var p = scrollY / Math.max(1, document.body.scrollHeight - innerHeight);
+    if (rbt) rbt.setAttribute('startOffset', (-12 + p * 30) + '%');
+    if (pbt) pbt.setAttribute('startOffset', (-10 + p * 26) + '%');
+  }, { passive: true });
+
+  var mkSteps = [].slice.call(document.querySelectorAll('#mkSteps li'));
+  var mkPill = $('mkPill'), mkWords = ['Review', 'Installing', 'Set up', 'Installed'];
+
+  // Reduced motion: every demo in its final state, no timers.
+  if (reduced) {
+    if ($('envDemo')) { $('envDemo').classList.add('reveal'); $('revealBtn').textContent = 'Suggested'; }
+    if ($('ddDemo')) $('ddDemo').classList.add('collide');
+    if ($('polFlip')) $('polFlip').classList.add('flip');
+    if ($('awayFlip')) $('awayFlip').classList.add('flip');
+    mkSteps.forEach(function (li) { li.classList.add('on'); });
+    if (mkPill) mkPill.textContent = 'Installed';
+    return;
+  }
+
+  // recipe: mask / reveal: a suggestion arriving
+  var env = $('envDemo'), btn = $('revealBtn');
+  if (env && btn) setInterval(function () {
+    var on = env.classList.toggle('reveal');
+    btn.textContent = on ? 'Suggested' : 'Suggesting…';
+    btn.classList.toggle('pulse', on);
+  }, 2600);
+
+  // install steps: review → install → set up → done
+  if (mkSteps.length) { var step = 0; setInterval(function () {
+    step = (step + 1) % mkSteps.length;
+    mkSteps.forEach(function (li, i) { li.classList.toggle('on', i === step); });
+    if (mkPill) mkPill.textContent = mkWords[step];
+  }, 2100); mkSteps[0].classList.add('on'); }
+
+  // recipe: grouped picker: what each button used to be
+  var dd = $('ddDemo');
+  if (dd) setInterval(function () { dd.classList.toggle('collide'); }, 2800);
+
+  // recipe: policy flip (Shaper default, Away switch)
+  var pf = $('polFlip');
+  if (pf) setInterval(function () { pf.classList.toggle('flip'); }, 2400);
+  var af = $('awayFlip');
+  if (af) setInterval(function () { af.classList.toggle('flip'); }, 2700);
+})();
+</script>

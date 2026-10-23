@@ -29,7 +29,12 @@
   --side-sel-bg:light-dark(#EFEFEF,#353531);
   --surface:light-dark(#FFFFFF,#34342F);
   --field:light-dark(#F6F6F4,#2C2C29);
-  --row-open:color-mix(in srgb,var(--field) 50%,transparent);
+  /* The selected Runs row: a translucent ink step, so it darkens (light) or lightens (dark) whatever it sits on and still
+     shows over the Needs-you amber tint (--field there was 1.01:1). 1.17:1 on the panel light, 1.24:1 dark; --ink-2 on it
+     stays at 5.2:1 or more, the tint included; its PR chips take the -ink-strong shades (4.5:1 or more, .runs-pr).
+     --row-open is half of it, so the two keep their step. */
+  --row-selected:color-mix(in srgb,var(--ink) 8%,transparent);
+  --row-open:color-mix(in srgb,var(--row-selected) 50%,transparent);
   --field-focus:light-dark(#FFFFFF,#2E2E2B);
   --ink:light-dark(#19191B,#ECECE8);
   --ink-2:light-dark(#5C5C63,#B4B4AE);
@@ -4633,7 +4638,7 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .runs-item{display:grid;grid-template-columns:28px minmax(0,1fr) 56px;align-items:start;border-bottom:1px solid var(--line);}
 /* The sidebar nav item's corner (decided); the row's own divider would bend at it, so it turns transparent. */
 .runs-item.is-needs{background:color-mix(in srgb,var(--amber) 8%,transparent);border-radius:var(--r-sm);border-bottom-color:transparent;}
-.runs-item:has(> a.runs-row.selected){background:var(--field);border-radius:var(--r-sm);border-bottom-color:transparent;}
+.runs-item:has(> a.runs-row.selected){background:var(--row-selected);border-radius:var(--r-sm);border-bottom-color:transparent;}
 /* One highlight at a time: a group whose run is open takes the lighter fill as one block over its whole row only while
    collapsed (no .runs-members); expanded, the open member row is the highlight (it is .selected) and the group keeps
    its divider. The item is painted, not its cells: .runs-pick/.runs-row-tail have fixed heights and would notch it. */
@@ -4664,6 +4669,11 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .runs-pr.is-closed{color:var(--red-ink);}
 .runs-pr.is-conflicts,.runs-pr.is-failing{color:var(--red-ink);}
 .runs-pr.is-running,.runs-pr.is-fixing{color:var(--ink-2);}
+/* On the selected row's --row-selected fill the plain inks drop under 4.5:1 (light --red-ink 4.1, --amber-ink 4.0, and
+   lower on the Needs-you tint); the strong shades stay at 4.5:1 or more on both. */
+.runs-item:has(> a.runs-row.selected) .runs-pr.is-ready{color:var(--green-ink-strong);}
+.runs-item:has(> a.runs-row.selected) .runs-pr.is-changes{color:var(--amber-ink-strong);}
+.runs-item:has(> a.runs-row.selected) .runs-pr.is-closed,.runs-item:has(> a.runs-row.selected) .runs-pr.is-conflicts,.runs-item:has(> a.runs-row.selected) .runs-pr.is-failing{color:var(--red-ink-strong);}
 .runs-indep{font-size:11px;font-weight:500;padding:0 4px;border-radius:var(--r-xs);background:var(--canvas-2);color:var(--ink-2);}
 /* openMenu marks the chosen Show / Group by item only with aria-checked; the check mark moves here from the removed
    .runs-group-menu rule (same 12px mask), so every openMenu radio item shows it. */
