@@ -9871,6 +9871,331 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .ask-ref-pill.tone-blue{color:var(--h-blue-ink);}
 .ask-ref-pill.tone-slate{color:var(--slate-ink);}
 
+/* Requirements page (plans/requirements-design.md section 6). Tokens only. */
+/* The list: the filter tabs and New feature, then one card of rows per project / workspace. A row is
+   id · title over its meta line · the state badge or run pill · the cost; on a phone the meta line
+   takes the second row. */
+.req-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin:0 0 20px}
+.req-filter{flex-wrap:wrap;max-width:100%}
+.req-group{display:flex;flex-direction:column;gap:8px;margin:0 0 20px}
+.req-group h2{font-size:12px;font-weight:600;color:var(--ink-2);margin:0}
+.req-rows{padding:0;overflow:hidden}
+.req-row{display:grid;grid-template-columns:72px minmax(0,1fr) auto auto;grid-template-areas:"id main mark cost";align-items:center;gap:16px;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--line);border-radius:0;padding:14px 18px;margin:0;color:var(--ink);cursor:pointer;font:inherit}
+.req-row:last-child{border-bottom:0}
+.req-row:hover{background:var(--field)}
+.req-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px}
+.req-row > .req-id{grid-area:id}
+.req-row > .req-row-main{grid-area:main}
+.req-row > .badge,.req-row > .pill-run{grid-area:mark;justify-self:end}
+.req-row > .req-cost{grid-area:cost}
+.req-id,.req-item code{font-family:var(--mono);font-size:12px;color:var(--ink-2)}
+.req-row-main{display:flex;flex-direction:column;gap:2px;min-width:0}
+.req-title{font-weight:500;overflow-wrap:anywhere}
+.req-row .req-row-meta{margin:0}
+.req-row .req-row-meta.need{color:var(--amber-ink-strong)}
+.req-row .pill-run{padding:5px 10px;font-size:12px}
+/* A run that is not running, done or failed (paused, unknown): a quiet pill; only a live run's dot pulses. */
+.req-run:not(.peach):not(.green):not(.red){background:var(--field);color:var(--ink-2)}
+.req-run:not(.peach):not(.green):not(.red) .pdot{background:var(--ink-3)}
+.req-run:not(.peach) .pdot{animation:none}
+.req-cost{font-family:var(--mono);font-size:12px;color:var(--ink-2);min-width:48px;text-align:right}
+.req-empty,.req-spend{margin:0 0 12px}
+@media (max-width:600px){
+  .req-row{grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"id mark mark" "main main cost";gap:6px 12px;padding:12px 14px}
+  .req-row > .req-id{justify-self:start}
+}
+/* New feature: a narrow column with a back link, the heading, and the form card. */
+.req-new-page{display:flex;flex-direction:column;gap:20px;max-width:720px;margin:0 auto}
+.req-back{align-self:flex-start;margin:0;text-decoration:none}
+.req-back:hover{color:var(--ink)}
+.req-new-head h2{margin:0 0 6px;font-size:22px}
+.req-sub{margin:0;color:var(--ink-2)}
+.req-new .actions{flex-wrap:wrap;margin-top:6px}
+.req-new .req-new-cost{margin:0}
+.req-new .req-new-cost[hidden]{display:none}
+.req-new-btns{display:flex;gap:10px;margin-left:auto}
+/* The feature page (board Interview.dc.html): the back link, the header with its two menus, then the
+   conversation left and Ready + the spec right. */
+.req-page{display:flex;flex-direction:column;gap:18px;max-width:1180px}
+.req-page > .req-back{margin:0}
+.req-head{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:16px}
+.req-head-main{display:flex;flex-direction:column;gap:8px;min-width:0}
+.req-head-title{display:flex;flex-wrap:wrap;align-items:center;gap:10px;min-width:0}
+.req-head-title .req-id{font-size:15px}
+.req-head h2{margin:0;font-size:22px;font-weight:700;letter-spacing:-.015em;overflow-wrap:anywhere}
+.req-chips{display:flex;flex-wrap:wrap;gap:8px}
+.req-head-tools{display:flex;align-items:center;gap:8px;margin-left:auto}
+/* A small borderless icon button: the pencils, add / remove, the header's ⋯. */
+.req-ico{display:inline-grid;place-items:center;flex:none;width:28px;height:28px;padding:0;border:0;border-radius:var(--r-md);background:transparent;color:var(--ink-3);cursor:pointer}
+.req-ico:hover:not(:disabled),.req-ico[aria-expanded="true"]{background:var(--hover);color:var(--ink)}
+.req-ico:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.req-ico:disabled{opacity:.45;cursor:not-allowed}
+/* The menus are upstream's one menu (.menu box, .menu-item rows) placed like the header ⋯ (.hd-more-wrap, .hd-menu). */
+.req-menu .hd-menu{min-width:200px}
+.req-menu-item{box-sizing:border-box;text-decoration:none}   /* Download .md is a link row */
+.req-actions{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 0}
+.req-cols{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:22px;align-items:start}
+@media (max-width:900px){.req-cols{grid-template-columns:1fr}}
+.req-left,.req-right{display:flex;flex-direction:column;gap:14px;min-width:0}
+.req-left > .qpanel,.req-left > .hint,.req-left > .req-error{margin:0}
+.req-rounds,.req-ready,.req-spec{padding:16px 18px}
+.req-card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 10px}
+.req-card-head h3,.req-rounds h3{margin:0;font-size:13px;font-weight:600}
+.req-card-head .hint{margin:0}
+.req-card-head code{font-family:var(--mono);font-size:12px;color:var(--ink-2)}
+/* Earlier rounds: one card, a hairline between rounds. */
+.req-rounds h3{margin:0 0 10px}
+.req-round{display:flex;flex-direction:column;gap:6px}
+.req-round + .req-round{margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
+.req-round-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.req-round-n{font-size:12px;font-weight:600;color:var(--ink-2)}
+.req-round .req-round-note{margin:0}
+.req-round-qt{font-size:13px}
+.req-round-answer{margin:2px 0 0;font-size:13px;color:var(--ink-2)}
+.req-round-answer code{font-family:var(--mono);font-size:12px;color:var(--ink-3)}
+.req-change{font-size:12px}
+.req-orient{padding:14px 18px}
+.req-orient summary{cursor:pointer;font-size:13px;font-weight:600}
+.req-orient .req-orient-meta{display:inline;margin:0 0 0 6px;font-weight:400}
+.req-orient p{margin:10px 0 0;font-size:13px;color:var(--ink-2)}
+/* Ready to start?: the six checks, a hairline, then the start buttons. */
+.req-checks{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;font-size:13px}
+.req-check{display:flex;align-items:flex-start;gap:10px}
+.req-check > svg{flex:none;margin-top:1px;color:var(--ink-3)}
+.req-check.ok > svg{color:var(--green-ink)}
+.req-check-label{flex:1;min-width:0}
+.req-check .req-check-hint{margin:0;text-align:right}
+@media (max-width:600px){.req-check{flex-wrap:wrap}.req-check .req-check-hint{flex-basis:100%;text-align:left;padding-left:26px}}
+.req-ready-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+.req-ready-foot > .hint{margin:0}
+.req-ready-btns{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-left:auto}
+.req-start-anyway{font-size:13px}
+.req-start:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
+/* The spec card. */
+.req-spec{display:flex;flex-direction:column;gap:14px}
+.req-spec > .req-card-head{margin:0}
+.req-sect{margin:0}
+.req-sect-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 2px}
+.req-sect-head h4{flex:1;min-width:0;margin:0;font-size:12px;font-weight:600;color:var(--ink-2)}
+.req-edited{font-weight:500;color:var(--amber-ink)}
+.req-sect p{margin:2px 0 0;font-size:13px}
+.req-sect ul,.req-sect ol{margin:2px 0 0;padding-left:20px;font-size:13px}
+.req-sect .req-items{list-style:none;padding:0;display:flex;flex-direction:column;gap:6px;margin-top:6px}
+.req-item{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 10px;margin:0;font-size:13px}
+.req-items .req-item > code{flex:0 0 52px}
+.req-item-text{flex:1;min-width:0}
+.req-add{flex-wrap:nowrap;align-items:center;margin-top:8px}
+.req-add input{flex:1 1 auto;width:auto;min-width:0}
+.req-assume{margin:6px 0 0;padding:10px 12px;border-radius:var(--r-md)}
+.req-assume.open{background:var(--amber-wash)}
+/* One row above 600px: id · text · the Confirm / Reject toggle (or the frozen version's badge). */
+.req-assume{flex-wrap:nowrap;align-items:center}
+.req-assume .req-item-text{flex:1 1 0}
+.req-assume > .req-toggle,.req-assume > .badge{flex:none}
+@media (max-width:600px){.req-assume{flex-wrap:wrap}.req-assume .req-item-text{flex:1 1 calc(100% - 64px)}.req-assume > .req-toggle{margin-left:auto}}
+.req-more{align-self:flex-start;font-size:13px}
+.req-new select,.req-new input,.req-new textarea,.req-edit input,.req-edit textarea{width:100%;box-sizing:border-box}
+.req-edit{display:flex;flex-direction:column;gap:8px;margin-top:6px}
+.req-edit .req-actions{margin:0}
+.req-why{margin:2px 0 6px 28px}
+.req-q .req-q-note{margin:8px 0 0}
+/* Narrow screens: the footer (count + Finish now / Skip / Submit) wraps instead of pushing the count off the card (as .chat-rc-q). */
+.req-q .qpanel-foot{flex-wrap:wrap;row-gap:8px}
+.req-q .qpanel-foot > button{max-width:100%;white-space:normal;text-wrap:balance}
+.req-error{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.req-retry{margin-left:8px}
+.req-confirm[aria-pressed="true"]{border-color:var(--green-ink);color:var(--green-ink)}
+.req-reject[aria-pressed="true"]{border-color:var(--red-ink);color:var(--red-ink)}
+/* Task 8: a muted text link (the mock's `hint` links: an earlier round's Change, Ready to build's Change,
+   Decide's "Show the other N"), and the start-anyway link's disabled look. */
+.req-link{appearance:none;-webkit-appearance:none;display:inline;background:none;border:0;padding:0;margin:0;font:inherit;font-size:12px;color:var(--ink-2);cursor:pointer;text-align:left;text-decoration:underline;text-underline-offset:2px}
+.req-link:hover{color:var(--ink)}
+.req-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs)}
+.req-start-anyway:disabled{opacity:.45;cursor:not-allowed}
+/* Decide (board Decisions.dc.html): one row per assumption, id · text · a Confirm / Reject toggle. */
+.req-left > .req-decide{margin:0;padding:16px 18px 10px}
+.req-decide .req-decide-note{margin:8px 0 4px 28px;color:var(--ink-2)}
+.req-arows{padding-left:28px}
+.req-arow{display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:12px;align-items:start;padding:11px 0;border-top:1px solid var(--line);font-size:13px}
+.req-arow:last-child{border-bottom:1px solid var(--line)}
+.req-arow > .req-id{padding-top:1px}
+.req-arow-text{min-width:0;overflow-wrap:anywhere}
+.req-toggle button{padding:5px 12px;font-size:12px}
+.req-toggle button.req-no.on{background:var(--red-bg);color:var(--red-ink-strong);box-shadow:none}
+.req-decide-more{display:block;margin:10px 0 0 28px}
+.req-decide .qpanel-foot{flex-wrap:wrap}
+@media (max-width:600px){
+  .req-arows,.req-decide-more{padding-left:0;margin-left:0}
+  .req-decide .req-decide-note{margin-left:0}
+  .req-arow{grid-template-columns:44px minmax(0,1fr)}
+  .req-arow > .req-toggle{grid-column:2;justify-self:start}
+}
+/* Ready to build (board Ready.dc.html): what Start does, the workflow and branch chips with Change, Start. */
+.req-build{padding:20px 22px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px 24px;align-items:center}
+.req-build-main{display:flex;flex-direction:column;gap:6px;min-width:0}
+.req-build h3{margin:0;font-size:15px;font-weight:700}
+.req-build p{margin:0;font-size:13px;color:var(--ink-2)}
+.req-build p b{color:var(--ink);font-weight:600}
+.req-build-chips{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:4px}
+.req-build-choices{display:flex;flex-wrap:wrap;gap:12px;margin-top:8px}
+.req-build-field{display:flex;flex-direction:column;gap:6px;flex:1 1 200px;min-width:0}
+.req-build-field label{font-size:12px;font-weight:600;color:var(--ink-2)}
+.req-build-field .req-build-warn{margin:0}
+.req-build-field select,.req-build-field input{box-sizing:border-box;font-size:13px}   /* the shared 32px field */
+.req-build-go:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
+@media (max-width:600px){.req-build{grid-template-columns:1fr;padding:16px 18px}.req-build-go{justify-self:start}}
+/* Started (board Started.dc.html): the runs card, the changed-since notice, the spec version switch. */
+.req-runs{padding:16px 18px;display:flex;flex-direction:column;gap:12px}
+.req-runs .req-card-head{margin:0}
+.req-run-rows{display:flex;flex-direction:column;gap:8px}
+.req-run-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:14px;align-items:center;padding:12px 14px;border-radius:var(--r-md);background:var(--field);color:var(--ink);text-decoration:none}
+a.req-run-row:hover{background:var(--hover)}
+a.req-run-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.req-run-row.gone{grid-template-columns:minmax(0,1fr)}
+.req-run-row .pill-run{padding:5px 10px;font-size:12px}
+.req-run-main{display:flex;flex-direction:column;gap:2px;min-width:0}
+.req-run-main .hint{margin:0}
+.req-run-label{font-weight:500;font-size:13px;overflow-wrap:anywhere}
+.req-run-cost{font-family:var(--mono);font-size:12px;color:var(--ink-2)}
+.req-run-go{color:var(--ink-3)}
+.req-runs .req-run-total{margin:0}
+.req-run-total code{font-family:var(--mono)}
+.req-changed{display:flex;gap:12px;align-items:flex-start;padding:14px 16px;border-radius:var(--r-md);background:var(--amber-wash);border:1px solid var(--amber-bg)}
+.req-changed > svg{flex:none;margin-top:1px;color:var(--amber-ink-strong)}
+.req-changed-body{display:flex;flex-direction:column;gap:6px;flex:1;min-width:0}
+.req-changed-body b{font-size:13px}
+.req-changed-body p{margin:0;font-size:13px;color:var(--ink-2)}
+.req-change-line{font-size:13px;padding:8px 10px;background:var(--surface);border-radius:var(--r-md);overflow-wrap:anywhere}
+.req-change-line .req-id{margin-right:4px}
+.req-del{color:var(--ink-2);text-decoration:line-through}
+.req-ins{background:var(--green-bg);border-radius:var(--r-xs);padding:0 3px;text-decoration:none;-webkit-box-decoration-break:clone;box-decoration-break:clone}
+.req-changed .req-actions{margin:2px 0 0}
+.req-spec > .req-card-head{flex-wrap:wrap}
+.req-spec .req-spec-ver{flex:1;min-width:0}
+.req-item .req-changed-mark{display:inline;margin:0;color:var(--amber-ink-strong)}
+.req-runs .req-card-head{flex-wrap:wrap}
+.req-msg-link{color:var(--blue-ink-strong);font-weight:600}
+.req-msg-link:hover{color:var(--ink)}
+@media (max-width:600px){
+  .req-run-row{grid-template-columns:auto minmax(0,1fr) auto;gap:8px 12px}
+  .req-run-go{display:none}
+  .req-spec .req-spec-ver{order:3;flex-basis:100%}
+}
+/* The start-before-Ready dialog (board StartAnyway.dc.html) on the upstream .viewer-modal overlay. */
+.viewer-modal.req-dlg-wrap{place-items:start center;padding-top:min(18vh,180px)}
+.req-dlg-wrap .card.req-dialog{width:min(560px,100%);box-sizing:border-box;box-shadow:var(--shadow-sheet);padding:24px 26px;display:flex;flex-direction:column;gap:14px}
+.req-dialog h2{margin:0;font-size:18px;font-weight:700;letter-spacing:-.01em}
+.req-dlg-lead{margin:0;font-size:13px;color:var(--ink-2)}
+.req-dlg-fail{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:var(--r-md);background:var(--amber-wash);border:1px solid var(--amber-bg);font-size:13px}
+.req-dlg-fail ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.req-dlg-fail li{display:flex;gap:10px;align-items:flex-start}
+.req-dlg-fail li > svg{flex:none;margin-top:1px;color:var(--amber-ink-strong)}
+.req-dlg-fail b{font-weight:600}
+.req-dlg-fail p{margin:0;color:var(--ink-2)}
+.req-dlg-field{margin:0}
+.req-dlg-field textarea{box-sizing:border-box;min-height:84px}
+.req-dlg-field .req-dlg-count{margin:4px 0 0;text-align:right}
+.req-dialog .req-dlg-who,.req-dialog .req-dlg-msg{margin:0}
+.req-dlg-msg:empty{display:none}
+.req-dlg-btns{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:10px;margin-top:4px}
+@media (max-width:600px){.viewer-modal.req-dlg-wrap{padding:16px}.req-dlg-wrap .card.req-dialog{padding:18px 16px}}
+/* A7: the list's group header names the scope's Product brief; the brief page (board BriefEmpty.dc.html): the
+   header, Give Worca a head start (the four parts left, the cost box with Create right), Your notes for Worca. */
+.req-group-head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 12px}
+.req-group-head .req-group-brief{margin:0;color:var(--ink-2)}
+.req-brief-link{color:var(--blue-ink-strong);font-weight:600;text-decoration:underline;text-underline-offset:2px}
+.req-brief-link:hover{color:var(--ink)}
+.req-brief-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs)}
+.req-brief-page{max-width:980px}
+.req-brief-head{display:flex;flex-direction:column;gap:6px}
+.req-brief-head h2{margin:0;font-size:22px;font-weight:700;letter-spacing:-.015em}
+.req-brief-start{padding:22px 24px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px 28px;align-items:start}
+.req-brief-main{display:flex;flex-direction:column;gap:10px;min-width:0}
+.req-brief-main h3{margin:0;font-size:15px;font-weight:700}
+.req-brief-main .req-brief-why{margin:0;font-size:13px;color:var(--ink-2)}
+.req-brief-parts{list-style:none;margin:2px 0 0;padding:0;display:flex;flex-direction:column;gap:7px;font-size:13px}
+.req-brief-parts li{display:flex;gap:10px}
+.req-brief-parts li > svg{flex:none;margin-top:2px;color:var(--green-ink)}
+.req-brief-parts b{font-weight:600}
+.req-brief-main .req-brief-plain{margin:4px 0 0}
+.req-brief-cost{display:flex;flex-direction:column;gap:10px;align-items:stretch;min-width:240px;max-width:300px;box-sizing:border-box;padding:16px;border-radius:var(--r-md);background:var(--field)}
+.req-brief-look{font-size:12px;font-weight:600;color:var(--ink-2)}
+.req-brief-facts{font-size:13px;overflow-wrap:anywhere}
+.req-brief-facts code{font-family:var(--mono);font-size:12px;padding:1px 6px;border-radius:var(--r-sm);background:var(--surface)}
+.req-brief-cost .hint,.req-brief-cost .form-msg{margin:0}
+.req-brief-create{justify-content:center}
+.req-brief-create:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
+.req-brief-notes{padding:18px 22px;display:flex;flex-direction:column;gap:10px}
+.req-brief-notes .req-card-head{margin:0}
+.req-brief-notes textarea{width:100%;box-sizing:border-box;min-height:84px}
+.req-brief-notes-look{align-items:flex-start}   /* the shared .switch-row, its long label wrapping */
+/* Without git there is no Create on the empty brief page: this line says why (git-gate.mjs). */
+.req-brief-nogit-create{margin:0;max-width:300px}
+:root:not([data-git="off"]) .req-brief-nogit-create{display:none}
+.req-brief-notes-foot{display:flex;justify-content:flex-end;gap:8px}
+/* A7: the brief page once made (board Brief.dc.html): the chips and the two menus, the code-moved-on notice (the
+   amber .req-changed box), the brief card left, How Worca uses it / Your notes / What Worca read right. */
+.req-brief-page.req-brief-made{max-width:1180px}
+.req-brief-head-row{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px 16px}
+.req-brief-head-main{display:flex;flex-direction:column;gap:8px;min-width:0}
+.req-brief-chips{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.req-brief-chips code{font-family:var(--mono);font-size:12px}
+.req-brief-head .req-brief-refresh-failed{margin:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.req-brief-stale-text b{font-size:inherit;font-weight:600;color:var(--ink)}
+.req-brief-stale-text code{font-family:var(--mono);font-size:12px;padding:0;background:none;color:var(--ink)}
+.req-brief-cols{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:22px;align-items:start}
+.req-brief-card{padding:18px 22px;display:flex;flex-direction:column;gap:18px;min-width:0}
+.req-brief-card .req-rewrite{font-size:12px}
+.req-brief-card .req-brief-product{margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
+.req-brief-card .req-brief-users{display:flex;flex-direction:column;gap:4px;margin:6px 0 0}
+.req-brief-users b,.req-brief-terms b,.req-brief-area b{font-weight:600}
+.req-brief-terms{display:grid;grid-template-columns:minmax(90px,150px) minmax(0,1fr);gap:4px 14px;margin:6px 0 0;font-size:13px;overflow-wrap:anywhere}
+.req-brief-areas{margin:4px 0 0}
+.req-brief-area{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:baseline;padding:8px 0;border-top:1px solid var(--line);font-size:13px;overflow-wrap:anywhere}
+.req-brief-area:first-child{border-top:0}
+.req-brief-card .req-edit .hint{margin:0}
+.req-brief-card .req-edit textarea{min-height:96px}
+.req-brief-side{display:flex;flex-direction:column;gap:14px;min-width:0}
+.req-brief-how{padding:16px 18px;display:flex;flex-direction:column;gap:8px}
+.req-brief-how h3{margin:0;font-size:13px;font-weight:600}
+.req-brief-how p{margin:0;font-size:13px;color:var(--ink-2)}
+.req-brief-how p b{font-weight:600;color:var(--ink)}
+.req-brief-how .req-brief-used{margin:0;font-size:13px}
+.req-brief-notes-read,.req-brief-read{padding:14px 18px}
+.req-brief-notes-read summary,.req-brief-read summary{cursor:pointer;font-size:13px;font-weight:600}
+.req-brief-read .req-brief-read-n{display:inline;margin:0;font-weight:400}
+.req-brief-notes-read p{margin:8px 0 0;font-size:13px;color:var(--ink-2);white-space:pre-wrap;overflow-wrap:anywhere}
+.req-brief-notes-read .btn{margin-top:10px}
+.req-brief-files{margin:10px 0 0;padding-left:18px;max-height:320px;overflow:auto;font-family:var(--mono);font-size:12px;color:var(--ink-2);overflow-wrap:anywhere}
+/* A7 Task 9: the green line under New feature's For (board 13); What Worca knows, the card that replaces A2's
+   folded box on a feature page when the scope has a brief (board 14); the brief page's small note on the members
+   of a workspace the brief does not cover. */
+.req-brief-line{display:flex;gap:10px;align-items:flex-start;margin:8px 0 0;padding:10px 12px;border-radius:var(--r-md);background:var(--green-bg);color:var(--ink);font-size:13px;line-height:1.45}
+.req-brief-line > svg{flex:none;margin-top:1px;color:var(--green-ink)}
+.req-knows{padding:16px 18px;display:flex;flex-direction:column;gap:10px}
+.req-knows .req-card-head{flex-wrap:wrap;gap:4px 10px;margin:0}
+.req-knows .hint{margin:0}
+.req-knows .req-knows-text{margin:0;font-size:13px;overflow-wrap:anywhere;white-space:pre-wrap}
+.req-knows:not(.req-knows-looked) .req-knows-text{color:var(--ink-2)}
+.req-knows .link-btn{font-size:inherit}
+.req-knows .link-btn:disabled{opacity:.45;cursor:not-allowed}
+.req-knows-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 12px;padding-top:10px;border-top:1px solid var(--line)}
+.req-knows-looked .req-knows-foot{justify-content:flex-end}
+.req-knows-foot .hint{flex:1 1 200px;min-width:0}
+.req-knows-foot .btn{flex:none}
+.req-knows-foot .btn:disabled{opacity:.45;cursor:not-allowed}
+.req-brief-members{margin:0;padding:10px 14px;border-radius:var(--r-md);background:var(--field)}
+.req-brief-members p{margin:0}
+.req-brief-members .req-actions{margin:8px 0 0}
+@media (max-width:900px){.req-brief-cols{grid-template-columns:1fr}}
+@media (max-width:600px){
+  .req-brief-start{grid-template-columns:1fr;padding:18px 16px}
+  .req-brief-cost{min-width:0;max-width:none}
+  .req-brief-notes{padding:16px}
+  .req-brief-card{padding:16px}
+  .req-brief-terms{grid-template-columns:minmax(0,38%) minmax(0,1fr)}
+}
+
 /* ── marketplace P3 ── */
 /* Plugin icons (U7, board 0.1): the kind colour lives only in this tile; hue families carry the dark arms. */
 .mk-mt{display:inline-flex;align-items:center;justify-content:center;flex:none;width:40px;height:40px;border-radius:var(--r-md);}
@@ -10266,331 +10591,6 @@ button.mk-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;bor
 .sn-types{display:flex;flex-wrap:wrap;gap:6px}
 @media (max-width:480px){.sn-branch-row{grid-template-columns:1fr}}
 @media (prefers-reduced-motion:reduce){.sn-adorn.sn-loading .input{animation:none}}
-
-/* Requirements page (plans/requirements-design.md section 6). Tokens only. */
-/* The list: the filter tabs and New feature, then one card of rows per project / workspace. A row is
-   id · title over its meta line · the state badge or run pill · the cost; on a phone the meta line
-   takes the second row. */
-.req-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin:0 0 20px}
-.req-filter{flex-wrap:wrap;max-width:100%}
-.req-group{display:flex;flex-direction:column;gap:8px;margin:0 0 20px}
-.req-group h2{font-size:12px;font-weight:600;color:var(--ink-2);margin:0}
-.req-rows{padding:0;overflow:hidden}
-.req-row{display:grid;grid-template-columns:72px minmax(0,1fr) auto auto;grid-template-areas:"id main mark cost";align-items:center;gap:16px;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--line);border-radius:0;padding:14px 18px;margin:0;color:var(--ink);cursor:pointer;font:inherit}
-.req-row:last-child{border-bottom:0}
-.req-row:hover{background:var(--field)}
-.req-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px}
-.req-row > .req-id{grid-area:id}
-.req-row > .req-row-main{grid-area:main}
-.req-row > .badge,.req-row > .pill-run{grid-area:mark;justify-self:end}
-.req-row > .req-cost{grid-area:cost}
-.req-id,.req-item code{font-family:var(--mono);font-size:12px;color:var(--ink-2)}
-.req-row-main{display:flex;flex-direction:column;gap:2px;min-width:0}
-.req-title{font-weight:500;overflow-wrap:anywhere}
-.req-row .req-row-meta{margin:0}
-.req-row .req-row-meta.need{color:var(--amber-ink-strong)}
-.req-row .pill-run{padding:5px 10px;font-size:12px}
-/* A run that is not running, done or failed (paused, unknown): a quiet pill; only a live run's dot pulses. */
-.req-run:not(.peach):not(.green):not(.red){background:var(--field);color:var(--ink-2)}
-.req-run:not(.peach):not(.green):not(.red) .pdot{background:var(--ink-3)}
-.req-run:not(.peach) .pdot{animation:none}
-.req-cost{font-family:var(--mono);font-size:12px;color:var(--ink-2);min-width:48px;text-align:right}
-.req-empty,.req-spend{margin:0 0 12px}
-@media (max-width:600px){
-  .req-row{grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"id mark mark" "main main cost";gap:6px 12px;padding:12px 14px}
-  .req-row > .req-id{justify-self:start}
-}
-/* New feature: a narrow column with a back link, the heading, and the form card. */
-.req-new-page{display:flex;flex-direction:column;gap:20px;max-width:720px;margin:0 auto}
-.req-back{align-self:flex-start;margin:0;text-decoration:none}
-.req-back:hover{color:var(--ink)}
-.req-new-head h2{margin:0 0 6px;font-size:22px}
-.req-sub{margin:0;color:var(--ink-2)}
-.req-new .actions{flex-wrap:wrap;margin-top:6px}
-.req-new .req-new-cost{margin:0}
-.req-new .req-new-cost[hidden]{display:none}
-.req-new-btns{display:flex;gap:10px;margin-left:auto}
-/* The feature page (board Interview.dc.html): the back link, the header with its two menus, then the
-   conversation left and Ready + the spec right. */
-.req-page{display:flex;flex-direction:column;gap:18px;max-width:1180px}
-.req-page > .req-back{margin:0}
-.req-head{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:16px}
-.req-head-main{display:flex;flex-direction:column;gap:8px;min-width:0}
-.req-head-title{display:flex;flex-wrap:wrap;align-items:center;gap:10px;min-width:0}
-.req-head-title .req-id{font-size:15px}
-.req-head h2{margin:0;font-size:22px;font-weight:700;letter-spacing:-.015em;overflow-wrap:anywhere}
-.req-chips{display:flex;flex-wrap:wrap;gap:8px}
-.req-head-tools{display:flex;align-items:center;gap:8px;margin-left:auto}
-/* A small borderless icon button: the pencils, add / remove, the header's ⋯. */
-.req-ico{display:inline-grid;place-items:center;flex:none;width:28px;height:28px;padding:0;border:0;border-radius:var(--r-md);background:transparent;color:var(--ink-3);cursor:pointer}
-.req-ico:hover:not(:disabled),.req-ico[aria-expanded="true"]{background:var(--hover);color:var(--ink)}
-.req-ico:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
-.req-ico:disabled{opacity:.45;cursor:not-allowed}
-/* The menus are upstream's one menu (.menu box, .menu-item rows) placed like the header ⋯ (.hd-more-wrap, .hd-menu). */
-.req-menu .hd-menu{min-width:200px}
-.req-menu-item{box-sizing:border-box;text-decoration:none}   /* Download .md is a link row */
-.req-actions{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 0}
-.req-cols{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:22px;align-items:start}
-@media (max-width:900px){.req-cols{grid-template-columns:1fr}}
-.req-left,.req-right{display:flex;flex-direction:column;gap:14px;min-width:0}
-.req-left > .qpanel,.req-left > .hint,.req-left > .req-error{margin:0}
-.req-rounds,.req-ready,.req-spec{padding:16px 18px}
-.req-card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 10px}
-.req-card-head h3,.req-rounds h3{margin:0;font-size:13px;font-weight:600}
-.req-card-head .hint{margin:0}
-.req-card-head code{font-family:var(--mono);font-size:12px;color:var(--ink-2)}
-/* Earlier rounds: one card, a hairline between rounds. */
-.req-rounds h3{margin:0 0 10px}
-.req-round{display:flex;flex-direction:column;gap:6px}
-.req-round + .req-round{margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
-.req-round-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
-.req-round-n{font-size:12px;font-weight:600;color:var(--ink-2)}
-.req-round .req-round-note{margin:0}
-.req-round-qt{font-size:13px}
-.req-round-answer{margin:2px 0 0;font-size:13px;color:var(--ink-2)}
-.req-round-answer code{font-family:var(--mono);font-size:12px;color:var(--ink-3)}
-.req-change{font-size:12px}
-.req-orient{padding:14px 18px}
-.req-orient summary{cursor:pointer;font-size:13px;font-weight:600}
-.req-orient .req-orient-meta{display:inline;margin:0 0 0 6px;font-weight:400}
-.req-orient p{margin:10px 0 0;font-size:13px;color:var(--ink-2)}
-/* Ready to start?: the six checks, a hairline, then the start buttons. */
-.req-checks{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;font-size:13px}
-.req-check{display:flex;align-items:flex-start;gap:10px}
-.req-check > svg{flex:none;margin-top:1px;color:var(--ink-3)}
-.req-check.ok > svg{color:var(--green-ink)}
-.req-check-label{flex:1;min-width:0}
-.req-check .req-check-hint{margin:0;text-align:right}
-@media (max-width:600px){.req-check{flex-wrap:wrap}.req-check .req-check-hint{flex-basis:100%;text-align:left;padding-left:26px}}
-.req-ready-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
-.req-ready-foot > .hint{margin:0}
-.req-ready-btns{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-left:auto}
-.req-start-anyway{font-size:13px}
-.req-start:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
-/* The spec card. */
-.req-spec{display:flex;flex-direction:column;gap:14px}
-.req-spec > .req-card-head{margin:0}
-.req-sect{margin:0}
-.req-sect-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 2px}
-.req-sect-head h4{flex:1;min-width:0;margin:0;font-size:12px;font-weight:600;color:var(--ink-2)}
-.req-edited{font-weight:500;color:var(--amber-ink)}
-.req-sect p{margin:2px 0 0;font-size:13px}
-.req-sect ul,.req-sect ol{margin:2px 0 0;padding-left:20px;font-size:13px}
-.req-sect .req-items{list-style:none;padding:0;display:flex;flex-direction:column;gap:6px;margin-top:6px}
-.req-item{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 10px;margin:0;font-size:13px}
-.req-items .req-item > code{flex:0 0 52px}
-.req-item-text{flex:1;min-width:0}
-.req-add{flex-wrap:nowrap;align-items:center;margin-top:8px}
-.req-add input{flex:1 1 auto;width:auto;min-width:0}
-.req-assume{margin:6px 0 0;padding:10px 12px;border-radius:var(--r-md)}
-.req-assume.open{background:var(--amber-wash)}
-/* One row above 600px: id · text · the Confirm / Reject toggle (or the frozen version's badge). */
-.req-assume{flex-wrap:nowrap;align-items:center}
-.req-assume .req-item-text{flex:1 1 0}
-.req-assume > .req-toggle,.req-assume > .badge{flex:none}
-@media (max-width:600px){.req-assume{flex-wrap:wrap}.req-assume .req-item-text{flex:1 1 calc(100% - 64px)}.req-assume > .req-toggle{margin-left:auto}}
-.req-more{align-self:flex-start;font-size:13px}
-.req-new select,.req-new input,.req-new textarea,.req-edit input,.req-edit textarea{width:100%;box-sizing:border-box}
-.req-edit{display:flex;flex-direction:column;gap:8px;margin-top:6px}
-.req-edit .req-actions{margin:0}
-.req-why{margin:2px 0 6px 28px}
-.req-q .req-q-note{margin:8px 0 0}
-/* Narrow screens: the footer (count + Finish now / Skip / Submit) wraps instead of pushing the count off the card (as .chat-rc-q). */
-.req-q .qpanel-foot{flex-wrap:wrap;row-gap:8px}
-.req-q .qpanel-foot > button{max-width:100%;white-space:normal;text-wrap:balance}
-.req-error{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-.req-retry{margin-left:8px}
-.req-confirm[aria-pressed="true"]{border-color:var(--green-ink);color:var(--green-ink)}
-.req-reject[aria-pressed="true"]{border-color:var(--red-ink);color:var(--red-ink)}
-/* Task 8: a muted text link (the mock's `hint` links: an earlier round's Change, Ready to build's Change,
-   Decide's "Show the other N"), and the start-anyway link's disabled look. */
-.req-link{appearance:none;-webkit-appearance:none;display:inline;background:none;border:0;padding:0;margin:0;font:inherit;font-size:12px;color:var(--ink-2);cursor:pointer;text-align:left;text-decoration:underline;text-underline-offset:2px}
-.req-link:hover{color:var(--ink)}
-.req-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs)}
-.req-start-anyway:disabled{opacity:.45;cursor:not-allowed}
-/* Decide (board Decisions.dc.html): one row per assumption, id · text · a Confirm / Reject toggle. */
-.req-left > .req-decide{margin:0;padding:16px 18px 10px}
-.req-decide .req-decide-note{margin:8px 0 4px 28px;color:var(--ink-2)}
-.req-arows{padding-left:28px}
-.req-arow{display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:12px;align-items:start;padding:11px 0;border-top:1px solid var(--line);font-size:13px}
-.req-arow:last-child{border-bottom:1px solid var(--line)}
-.req-arow > .req-id{padding-top:1px}
-.req-arow-text{min-width:0;overflow-wrap:anywhere}
-.req-toggle button{padding:5px 12px;font-size:12px}
-.req-toggle button.req-no.on{background:var(--red-bg);color:var(--red-ink-strong);box-shadow:none}
-.req-decide-more{display:block;margin:10px 0 0 28px}
-.req-decide .qpanel-foot{flex-wrap:wrap}
-@media (max-width:600px){
-  .req-arows,.req-decide-more{padding-left:0;margin-left:0}
-  .req-decide .req-decide-note{margin-left:0}
-  .req-arow{grid-template-columns:44px minmax(0,1fr)}
-  .req-arow > .req-toggle{grid-column:2;justify-self:start}
-}
-/* Ready to build (board Ready.dc.html): what Start does, the workflow and branch chips with Change, Start. */
-.req-build{padding:20px 22px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px 24px;align-items:center}
-.req-build-main{display:flex;flex-direction:column;gap:6px;min-width:0}
-.req-build h3{margin:0;font-size:15px;font-weight:700}
-.req-build p{margin:0;font-size:13px;color:var(--ink-2)}
-.req-build p b{color:var(--ink);font-weight:600}
-.req-build-chips{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:4px}
-.req-build-choices{display:flex;flex-wrap:wrap;gap:12px;margin-top:8px}
-.req-build-field{display:flex;flex-direction:column;gap:6px;flex:1 1 200px;min-width:0}
-.req-build-field label{font-size:12px;font-weight:600;color:var(--ink-2)}
-.req-build-field .req-build-warn{margin:0}
-.req-build-field select,.req-build-field input{box-sizing:border-box;font-size:13px}   /* the shared 32px field */
-.req-build-go:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
-@media (max-width:600px){.req-build{grid-template-columns:1fr;padding:16px 18px}.req-build-go{justify-self:start}}
-/* Started (board Started.dc.html): the runs card, the changed-since notice, the spec version switch. */
-.req-runs{padding:16px 18px;display:flex;flex-direction:column;gap:12px}
-.req-runs .req-card-head{margin:0}
-.req-run-rows{display:flex;flex-direction:column;gap:8px}
-.req-run-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:14px;align-items:center;padding:12px 14px;border-radius:var(--r-md);background:var(--field);color:var(--ink);text-decoration:none}
-a.req-run-row:hover{background:var(--hover)}
-a.req-run-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
-.req-run-row.gone{grid-template-columns:minmax(0,1fr)}
-.req-run-row .pill-run{padding:5px 10px;font-size:12px}
-.req-run-main{display:flex;flex-direction:column;gap:2px;min-width:0}
-.req-run-main .hint{margin:0}
-.req-run-label{font-weight:500;font-size:13px;overflow-wrap:anywhere}
-.req-run-cost{font-family:var(--mono);font-size:12px;color:var(--ink-2)}
-.req-run-go{color:var(--ink-3)}
-.req-runs .req-run-total{margin:0}
-.req-run-total code{font-family:var(--mono)}
-.req-changed{display:flex;gap:12px;align-items:flex-start;padding:14px 16px;border-radius:var(--r-md);background:var(--amber-wash);border:1px solid var(--amber-bg)}
-.req-changed > svg{flex:none;margin-top:1px;color:var(--amber-ink-strong)}
-.req-changed-body{display:flex;flex-direction:column;gap:6px;flex:1;min-width:0}
-.req-changed-body b{font-size:13px}
-.req-changed-body p{margin:0;font-size:13px;color:var(--ink-2)}
-.req-change-line{font-size:13px;padding:8px 10px;background:var(--surface);border-radius:var(--r-md);overflow-wrap:anywhere}
-.req-change-line .req-id{margin-right:4px}
-.req-del{color:var(--ink-2);text-decoration:line-through}
-.req-ins{background:var(--green-bg);border-radius:var(--r-xs);padding:0 3px;text-decoration:none;-webkit-box-decoration-break:clone;box-decoration-break:clone}
-.req-changed .req-actions{margin:2px 0 0}
-.req-spec > .req-card-head{flex-wrap:wrap}
-.req-spec .req-spec-ver{flex:1;min-width:0}
-.req-item .req-changed-mark{display:inline;margin:0;color:var(--amber-ink-strong)}
-.req-runs .req-card-head{flex-wrap:wrap}
-.req-msg-link{color:var(--blue-ink-strong);font-weight:600}
-.req-msg-link:hover{color:var(--ink)}
-@media (max-width:600px){
-  .req-run-row{grid-template-columns:auto minmax(0,1fr) auto;gap:8px 12px}
-  .req-run-go{display:none}
-  .req-spec .req-spec-ver{order:3;flex-basis:100%}
-}
-/* The start-before-Ready dialog (board StartAnyway.dc.html) on the upstream .viewer-modal overlay. */
-.viewer-modal.req-dlg-wrap{place-items:start center;padding-top:min(18vh,180px)}
-.req-dlg-wrap .card.req-dialog{width:min(560px,100%);box-sizing:border-box;box-shadow:var(--shadow-sheet);padding:24px 26px;display:flex;flex-direction:column;gap:14px}
-.req-dialog h2{margin:0;font-size:18px;font-weight:700;letter-spacing:-.01em}
-.req-dlg-lead{margin:0;font-size:13px;color:var(--ink-2)}
-.req-dlg-fail{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:var(--r-md);background:var(--amber-wash);border:1px solid var(--amber-bg);font-size:13px}
-.req-dlg-fail ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
-.req-dlg-fail li{display:flex;gap:10px;align-items:flex-start}
-.req-dlg-fail li > svg{flex:none;margin-top:1px;color:var(--amber-ink-strong)}
-.req-dlg-fail b{font-weight:600}
-.req-dlg-fail p{margin:0;color:var(--ink-2)}
-.req-dlg-field{margin:0}
-.req-dlg-field textarea{box-sizing:border-box;min-height:84px}
-.req-dlg-field .req-dlg-count{margin:4px 0 0;text-align:right}
-.req-dialog .req-dlg-who,.req-dialog .req-dlg-msg{margin:0}
-.req-dlg-msg:empty{display:none}
-.req-dlg-btns{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:10px;margin-top:4px}
-@media (max-width:600px){.viewer-modal.req-dlg-wrap{padding:16px}.req-dlg-wrap .card.req-dialog{padding:18px 16px}}
-/* A7: the list's group header names the scope's Product brief; the brief page (board BriefEmpty.dc.html): the
-   header, Give Worca a head start (the four parts left, the cost box with Create right), Your notes for Worca. */
-.req-group-head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 12px}
-.req-group-head .req-group-brief{margin:0;color:var(--ink-2)}
-.req-brief-link{color:var(--blue-ink-strong);font-weight:600;text-decoration:underline;text-underline-offset:2px}
-.req-brief-link:hover{color:var(--ink)}
-.req-brief-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs)}
-.req-brief-page{max-width:980px}
-.req-brief-head{display:flex;flex-direction:column;gap:6px}
-.req-brief-head h2{margin:0;font-size:22px;font-weight:700;letter-spacing:-.015em}
-.req-brief-start{padding:22px 24px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px 28px;align-items:start}
-.req-brief-main{display:flex;flex-direction:column;gap:10px;min-width:0}
-.req-brief-main h3{margin:0;font-size:15px;font-weight:700}
-.req-brief-main .req-brief-why{margin:0;font-size:13px;color:var(--ink-2)}
-.req-brief-parts{list-style:none;margin:2px 0 0;padding:0;display:flex;flex-direction:column;gap:7px;font-size:13px}
-.req-brief-parts li{display:flex;gap:10px}
-.req-brief-parts li > svg{flex:none;margin-top:2px;color:var(--green-ink)}
-.req-brief-parts b{font-weight:600}
-.req-brief-main .req-brief-plain{margin:4px 0 0}
-.req-brief-cost{display:flex;flex-direction:column;gap:10px;align-items:stretch;min-width:240px;max-width:300px;box-sizing:border-box;padding:16px;border-radius:var(--r-md);background:var(--field)}
-.req-brief-look{font-size:12px;font-weight:600;color:var(--ink-2)}
-.req-brief-facts{font-size:13px;overflow-wrap:anywhere}
-.req-brief-facts code{font-family:var(--mono);font-size:12px;padding:1px 6px;border-radius:var(--r-sm);background:var(--surface)}
-.req-brief-cost .hint,.req-brief-cost .form-msg{margin:0}
-.req-brief-create{justify-content:center}
-.req-brief-create:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
-.req-brief-notes{padding:18px 22px;display:flex;flex-direction:column;gap:10px}
-.req-brief-notes .req-card-head{margin:0}
-.req-brief-notes textarea{width:100%;box-sizing:border-box;min-height:84px}
-.req-brief-notes-look{align-items:flex-start}   /* the shared .switch-row, its long label wrapping */
-/* Without git there is no Create on the empty brief page: this line says why (git-gate.mjs). */
-.req-brief-nogit-create{margin:0;max-width:300px}
-:root:not([data-git="off"]) .req-brief-nogit-create{display:none}
-.req-brief-notes-foot{display:flex;justify-content:flex-end;gap:8px}
-/* A7: the brief page once made (board Brief.dc.html): the chips and the two menus, the code-moved-on notice (the
-   amber .req-changed box), the brief card left, How Worca uses it / Your notes / What Worca read right. */
-.req-brief-page.req-brief-made{max-width:1180px}
-.req-brief-head-row{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px 16px}
-.req-brief-head-main{display:flex;flex-direction:column;gap:8px;min-width:0}
-.req-brief-chips{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
-.req-brief-chips code{font-family:var(--mono);font-size:12px}
-.req-brief-head .req-brief-refresh-failed{margin:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
-.req-brief-stale-text b{font-size:inherit;font-weight:600;color:var(--ink)}
-.req-brief-stale-text code{font-family:var(--mono);font-size:12px;padding:0;background:none;color:var(--ink)}
-.req-brief-cols{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:22px;align-items:start}
-.req-brief-card{padding:18px 22px;display:flex;flex-direction:column;gap:18px;min-width:0}
-.req-brief-card .req-rewrite{font-size:12px}
-.req-brief-card .req-brief-product{margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
-.req-brief-card .req-brief-users{display:flex;flex-direction:column;gap:4px;margin:6px 0 0}
-.req-brief-users b,.req-brief-terms b,.req-brief-area b{font-weight:600}
-.req-brief-terms{display:grid;grid-template-columns:minmax(90px,150px) minmax(0,1fr);gap:4px 14px;margin:6px 0 0;font-size:13px;overflow-wrap:anywhere}
-.req-brief-areas{margin:4px 0 0}
-.req-brief-area{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:baseline;padding:8px 0;border-top:1px solid var(--line);font-size:13px;overflow-wrap:anywhere}
-.req-brief-area:first-child{border-top:0}
-.req-brief-card .req-edit .hint{margin:0}
-.req-brief-card .req-edit textarea{min-height:96px}
-.req-brief-side{display:flex;flex-direction:column;gap:14px;min-width:0}
-.req-brief-how{padding:16px 18px;display:flex;flex-direction:column;gap:8px}
-.req-brief-how h3{margin:0;font-size:13px;font-weight:600}
-.req-brief-how p{margin:0;font-size:13px;color:var(--ink-2)}
-.req-brief-how p b{font-weight:600;color:var(--ink)}
-.req-brief-how .req-brief-used{margin:0;font-size:13px}
-.req-brief-notes-read,.req-brief-read{padding:14px 18px}
-.req-brief-notes-read summary,.req-brief-read summary{cursor:pointer;font-size:13px;font-weight:600}
-.req-brief-read .req-brief-read-n{display:inline;margin:0;font-weight:400}
-.req-brief-notes-read p{margin:8px 0 0;font-size:13px;color:var(--ink-2);white-space:pre-wrap;overflow-wrap:anywhere}
-.req-brief-notes-read .btn{margin-top:10px}
-.req-brief-files{margin:10px 0 0;padding-left:18px;max-height:320px;overflow:auto;font-family:var(--mono);font-size:12px;color:var(--ink-2);overflow-wrap:anywhere}
-/* A7 Task 9: the green line under New feature's For (board 13); What Worca knows, the card that replaces A2's
-   folded box on a feature page when the scope has a brief (board 14); the brief page's small note on the members
-   of a workspace the brief does not cover. */
-.req-brief-line{display:flex;gap:10px;align-items:flex-start;margin:8px 0 0;padding:10px 12px;border-radius:var(--r-md);background:var(--green-bg);color:var(--ink);font-size:13px;line-height:1.45}
-.req-brief-line > svg{flex:none;margin-top:1px;color:var(--green-ink)}
-.req-knows{padding:16px 18px;display:flex;flex-direction:column;gap:10px}
-.req-knows .req-card-head{flex-wrap:wrap;gap:4px 10px;margin:0}
-.req-knows .hint{margin:0}
-.req-knows .req-knows-text{margin:0;font-size:13px;overflow-wrap:anywhere;white-space:pre-wrap}
-.req-knows:not(.req-knows-looked) .req-knows-text{color:var(--ink-2)}
-.req-knows .link-btn{font-size:inherit}
-.req-knows .link-btn:disabled{opacity:.45;cursor:not-allowed}
-.req-knows-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 12px;padding-top:10px;border-top:1px solid var(--line)}
-.req-knows-looked .req-knows-foot{justify-content:flex-end}
-.req-knows-foot .hint{flex:1 1 200px;min-width:0}
-.req-knows-foot .btn{flex:none}
-.req-knows-foot .btn:disabled{opacity:.45;cursor:not-allowed}
-.req-brief-members{margin:0;padding:10px 14px;border-radius:var(--r-md);background:var(--field)}
-.req-brief-members p{margin:0}
-.req-brief-members .req-actions{margin:8px 0 0}
-@media (max-width:900px){.req-brief-cols{grid-template-columns:1fr}}
-@media (max-width:600px){
-  .req-brief-start{grid-template-columns:1fr;padding:18px 16px}
-  .req-brief-cost{min-width:0;max-width:none}
-  .req-brief-notes{padding:16px}
-  .req-brief-card{padding:16px}
-  .req-brief-terms{grid-template-columns:minmax(0,38%) minmax(0,1fr)}
-}
 
 /* One border level per card (review B2): inside a chat card the nested boxes drop their border and take a tint. It stays LAST in the file: at (0,2,0) it only beats earlier rules of the same weight, and a
    later state rule resetting the border shorthand would draw the box again. Outside cards the base rules keep theirs. */
