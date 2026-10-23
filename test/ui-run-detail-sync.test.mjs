@@ -76,6 +76,9 @@ test('the run page header reflects the sync record: .rd-sync summarises branch.s
       assert.ok(btn, 'the header carries the Sync button');
       assert.equal(btn.hidden, false);
       assert.equal(btn.textContent, 'Synced 3 commits');
+      assert.equal(btn.title, 'Synced 3 commits from origin/dev. Show the Sync log');
+      assert.equal(btn.getAttribute('aria-label'), btn.title);
+      assert.ok(btn.classList.contains('btn-sm'), 'compact like the copy chip beside it');
     } },
     { name: 'a run without the Sync row keeps .rd-sync hidden', run: async () => {
       const { window } = await openRun({ steps: [], branch: { source: 'main', feature: 'worca-cc/auth-fix' } });
@@ -92,7 +95,9 @@ test('the run page header reflects the sync record: .rd-sync summarises branch.s
       assert.equal(base.textContent, 'dev @ abc1234 →');
       assert.match(base.title, /Started from abc1234def5678/);
       assert.match(base.title, /remote tip/);
-      assert.equal(window.document.querySelector('#run-detail .rd-sync').textContent, 'Started from origin/dev');
+      const btn = window.document.querySelector('#run-detail .rd-sync');
+      assert.equal(btn.textContent, 'From origin', 'the source branch already sits on the left of the row');
+      assert.equal(btn.title, 'Started from origin/dev: the local branch was left untouched. Show the Sync log');
     } },
   ]);
 });

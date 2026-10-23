@@ -55,7 +55,7 @@ import {
   deleteDiffComment, unresolvedCounts, onDiffCommentsChanged, stampSentRunId,
   peekPendingCardComments, clearPendingCardComments, DiffCommentError, DC_ID_RE,
 } from '../src/core/diff-comments.mjs';
-import { listProjects, addProject, addProjects, removeProject, normalizeProjectPath, countProjects, worcaHome, getProjectByPath, displayPath,
+import { listProjects, runOnboarded, addProject, addProjects, removeProject, normalizeProjectPath, countProjects, worcaHome, getProjectByPath, displayPath,
   getProjectByName, ownsProjectFolder, removeProjectAndFolder, enclosingRepoOf, nestedInRepoMessage, worcaNestedRepoOf, worcaNestedRepoHint } from '../src/core/projects.mjs';
 import { effectiveWorkMode, workModeOfRow, workModeForStart, samePath } from '../src/core/project-kind.mjs';
 import { renderIndexHtml, INDEX_THEME_ANCHOR, FLAG_GATES_ANCHOR } from '../src/core/index-html.mjs';
@@ -75,6 +75,7 @@ import {
   chatPrefs, setChatPrefs,
   debugSpawnEnabled as storedDebugSpawnEnabled, effectiveDebugSpawn, setDebugSpawnEnabled, assertDebugSpawnInput, SETTINGS_POST_KEYS,
   resumeAfterUsageLimit, assertResumeAfterUsageLimitInput, setResumeAfterUsageLimit,
+  autoGeneratePrDescription, assertAutoGeneratePrDescriptionInput, setAutoGeneratePrDescription,
   updateCheckEnabled, assertUpdateCheckInput, setUpdateCheck,
   titleModel as storedTitleModel, setTitleModel, assertTitleModelInput,
   hideBuiltinModels, setHideBuiltinModels, assertHideBuiltinModelsInput,
@@ -446,7 +447,7 @@ import {
   createSchedule, getSchedule, listSchedules, updateSchedule, pauseSchedule, resumeSchedule, skipNext,
   runScheduleNow, deleteSchedule, cancelForTarget, dependentsOfWorkflow, runDueTickets, recordOutcome,
   recoverScheduler, purgeScheduler, scheduleCounts, scheduleStageDir, scheduleSignature,
-  resolveAfterRef, predecessorState, previousBranchesOf, dependentsOfRun, AFTER_POLICIES, afterRefOf,
+  resolveAfterRef, resumeWaitError, predecessorState, previousBranchesOf, dependentsOfRun, AFTER_POLICIES, afterRefOf,
   chainBaseBranchesOf, stackedPrBaseOf, resumeTicketsFor, cancelResumeTicketsFor, inheritedTagsAtCreation, runChains,
 } from '../src/core/scheduler.mjs';
 import {
@@ -3972,8 +3973,9 @@ app.post('/api/schedules/preview', (req, res) => {
   res.json({ rule: norm.rule, sentence: describeRule(norm.rule), next: previewOccurrences(norm.rule, Date.now(), n).map((t) => new Date(t).toISOString()) });
 });
 
-// POST /api/schedules/resume { pipelineId, scheduledFor, ifMissed?, graceMin?, engine?, afterUsageLimit? } — a one-off
-// "resume this paused run at <time>" ticket. ifMissed defaults to 'skip' (clarify default);
+// POST /api/schedules/resume { pipelineId, scheduledFor | after, afterPolicy?, ifMissed?, graceMin?, engine?, afterUsageLimit? } — a one-off
+// "resume this paused run at <time>" ticket, or "… when <another run> ends" with `after` ({ kind, id }, the
+// resolveAfterRef validator; afterPolicy 'done' | 'any'). Never both. ifMissed defaults to 'skip' (clarify default);
 // the sheet pre-selects 'skip' but lets the user pick 'run', so an HTTP caller may pass either.
 // `engine` resumes it on another engine; the engine gate is checked now and again when it fires.
 // `afterUsageLimit` (the notice's "Resume at") only adds the "(after usage limit)" title suffix.
@@ -3983,9 +3985,24 @@ app.post('/api/schedules/resume', async (req, res) => {
     const by = actorOf(req);
     const v = await validateResumeTarget(body.pipelineId);
     if (!v.ok) return res.status(v.status).json(v.body);
-    const at = parseScheduledFor(body.scheduledFor);
-    if (!at.ok) return badRequest(res, at.error);
-    if (at.ms < Date.now() - 5_000) return badRequest(res, 'scheduledFor is in the past');
+    let at = null, afterRef = null, afterPolicy = 'done';
+    if (body.after != null) {
+      if (body.scheduledFor != null) return badRequest(res, 'provide scheduledFor OR after, not both');
+      if (body.afterPolicy != null) {
+        if (!AFTER_POLICIES.includes(body.afterPolicy)) return badRequest(res, `afterPolicy must be one of ${AFTER_POLICIES.join(' | ')}`);
+        afterPolicy = body.afterPolicy;
+      }
+      const r = resolveAfterRef(body.after, { projectDir: v.projectDir, workspaceId: v.workspaceId, policy: afterPolicy, isLive: liveProbe });
+      if (!r.ok) return badRequest(res, r.error);
+      const why = resumeWaitError(r.after, v.row.id);
+      if (why) return badRequest(res, why);
+      afterRef = r.after;
+    } else {
+      if (body.afterPolicy != null) return badRequest(res, 'afterPolicy does not apply to a resume at a time');
+      at = parseScheduledFor(body.scheduledFor);
+      if (!at.ok) return badRequest(res, at.error);
+      if (at.ms < Date.now() - 5_000) return badRequest(res, 'scheduledFor is in the past');
+    }
     let ifMissed = 'skip';
     if (body.ifMissed != null) {
       if (!MISSED_POLICIES.includes(body.ifMissed)) return badRequest(res, `ifMissed must be one of ${MISSED_POLICIES.join(' | ')}`);
@@ -4011,16 +4028,23 @@ app.post('/api/schedules/resume', async (req, res) => {
       const refusal = (probe.claude?.engine || 'claude') !== 'claude' ? await probe.engineResumeRefusal() : null;
       if (refusal) return res.status(409).json({ error: engineRefusalFor(refusal.error, 'ui'), code: 'engine-refused', overridable: refusal.overridable, engine });
     }
-    const title = `Resume ‘${v.row.title || v.row.id}’${engine ? ` on ${engineLabel(engine)}` : ''}${body.afterUsageLimit === true ? ' (after usage limit)' : ''}`;
+    const afterName = afterRef ? `‘${afterRef.title || afterRef.id.slice(0, 8)}’` : '';
+    const title = `Resume ‘${v.row.title || v.row.id}’${engine ? ` on ${engineLabel(engine)}` : ''}${afterRef ? ` after ${afterName}` : ''}${body.afterUsageLimit === true ? ' (after usage limit)' : ''}`;
     const request = { prompt: '', title: v.row.title || null, internal: { resumePipelineId: v.row.id, startedBy: by, ...(engine ? { resumeEngine: engine } : {}) } };
     const ticket = createTicket({
       title, projectDir: v.projectDir, workspaceId: v.workspaceId,
-      runAtMs: at.ms, request, ifMissed, graceMin,
+      ...(afterRef ? { after: { kind: afterRef.kind, id: afterRef.id }, afterPolicy } : { runAtMs: at.ms }),
+      request, ifMissed, graceMin,
       resumePipelineId: v.row.id, createdBy: by,
     });
-    appendAuditById(v.row.id, `Resume scheduled for ${new Date(at.ms).toISOString().slice(0, 16).replace('T', ' ')} UTC${byActor(by)}.`, { actor: by });
+    appendAuditById(v.row.id, afterRef
+      ? `Resume scheduled after ${afterName}${byActor(by)}.`
+      : `Resume scheduled for ${new Date(at.ms).toISOString().slice(0, 16).replace('T', ' ')} UTC${byActor(by)}.`, { actor: by });
     emitChanged('schedules-changed', 'created');
-    res.status(202).json({ runId: ticket.id, status: 'scheduled', scheduledFor: ticket.runAt, resumePipelineId: v.row.id });
+    res.status(202).json({
+      runId: ticket.id, status: 'scheduled', scheduledFor: afterRef ? null : ticket.runAt, resumePipelineId: v.row.id,
+      ...(afterRef ? { after: { kind: afterRef.kind, id: afterRef.id, title: afterRef.title } } : {}),
+    });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -4162,6 +4186,8 @@ async function scheduleVerb(verb, id, body = {}, { by = null } = {}) {
           if (!AFTER_POLICIES.includes(policy)) return out(400, { error: `afterPolicy must be one of ${AFTER_POLICIES.join(' | ')}` });
           const r = resolveAfterRef(body.after, { projectDir: found.item.projectDir, workspaceId: found.item.workspaceId, policy, selfId: found.item.id, isLive: liveProbe });
           if (!r.ok) return out(400, { error: r.error });
+          const why = found.item.resumePipelineId ? resumeWaitError(r.after, found.item.resumePipelineId) : null;
+          if (why) return out(400, { error: why });
           patch.after = { kind: r.after.kind, id: r.after.id };
           patch.afterPolicy = policy;
         } else if (body.afterPolicy != null) {
@@ -4174,6 +4200,7 @@ async function scheduleVerb(verb, id, body = {}, { by = null } = {}) {
         }
         if (body.sourceFromPrevious != null) {
           if (typeof body.sourceFromPrevious !== 'boolean') return out(400, { error: 'sourceFromPrevious must be true or false' });
+          if (body.sourceFromPrevious && found.item.resumePipelineId) return out(400, { error: 'a resume continues on its own branch, never on the previous run’s' });
           // Needs a predecessor AFTER this patch: none on the row and none coming, or a move back to a time
           // (which clears after_* — `source_from_previous = 1` with `after_id = NULL` must never be written).
           if (body.sourceFromPrevious && (patch.runAtMs != null || (!patch.after && !found.item.after))) return out(400, { error: 'sourceFromPrevious needs after' });
@@ -5518,6 +5545,7 @@ async function resumeTargetDirs(saved) {
     const meta = JSON.parse(saved.row.workspace_meta);
     const projects = (meta.projects || []).map((p) => ({ ...p }));
     if (!projects.length) throw new ResumeError(400, { error: 'workspace metadata incomplete' });
+    if (!runOnboarded(saved.row)) throw new ResumeError(400, { error: 'workspace for this pipeline (or one of its members) is not onboarded on this machine' });
     return {
       projectDir: projects[0].projectDir,
       workspace: { id: meta.workspaceId, key: saved.row.workspace_key, name: meta.workspaceName, description: meta.workspaceDescription || '', projects },
@@ -7322,14 +7350,15 @@ function bulkResolve(t) {
     return { id: pid || entry.id, runId: entry.id, pipelineId: pid, title: entry.title || pid || entry.id, state: m.state, status: entry.status };
   }
   if (pid) {
-    const row = getDb().prepare(`SELECT title, status, project_key, workspace_key, resume_point IS NOT NULL AS resumable
-      FROM pipelines WHERE id = ? AND deleted_at IS NULL`).get(pid);
+    const row = getDb().prepare(`SELECT id, title, status, project_key, workspace_key, target, workspace_meta,
+      resume_point IS NOT NULL AS resumable FROM pipelines WHERE id = ? AND deleted_at IS NULL`).get(pid);
     if (!row) return null;
     const m = runModelFor(pid);
     // runModelFor reads readPrState, so a done run whose PR needs you arrives with prNeeds (D31) and the table treats it as finished.
-    // `resumable`: an interrupted row without a resume point can never resume, so the table lets Archive / Delete take it.
+    // `resumable`: an interrupted row without a resume point, or whose project (workspace, member) is no longer onboarded,
+    // can never resume, so the table lets Archive / Delete take it.
     return { id: pid, pipelineId: pid, runId: entry?.id || null, title: row.title || pid, state: m ? m.state : 'stopped', status: row.status,
-      prNeeds: !!(m && m.prNeeds), resumable: !!row.resumable, key: row.project_key, workspaceKey: row.workspace_key };
+      prNeeds: !!(m && m.prNeeds), resumable: !!row.resumable && runOnboarded(row), key: row.project_key, workspaceKey: row.workspace_key };
   }
   const tk = t.ticketId ? getTicket(t.ticketId) : null;
   if (!tk) return null;
@@ -7339,6 +7368,14 @@ function bulkResolve(t) {
   return { id: tk.id, ticketId: tk.id, title: tk.title || 'Scheduled run', state: runModel({ ticket: { status: tk.status, runAt: null } }).state, status: tk.status };
 }
 const rowScope = (t) => ({ key: t.workspaceKey ? null : t.key, workspaceKey: t.workspaceKey || null, id: t.pipelineId });
+// An archived or deleted run's parked (paused / interrupted) entries leave the runs Map: summarizeRuns replays every
+// entry in each hello, so one left behind comes back as a ghost Paused card in Running. Returns the evicted runIds:
+// the pipelines-changed frame names them (removedRunIds), so the tabs already open drop their copies too.
+function dropParkedEntries(pipelineId) {
+  const gone = [];
+  for (const [id, e] of runs) if (e.pipelineId === pipelineId && (e.status === 'paused' || e.status === 'interrupted')) { runs.delete(id); gone.push(id); }
+  return gone;
+}
 
 app.post('/api/runs/bulk', async (req, res) => {
   try {
@@ -7352,9 +7389,11 @@ app.post('/api/runs/bulk', async (req, res) => {
     const AUDIT = { archive: 'Run archived', restore: 'Run restored', delete: 'Run deleted' };
     // archive / restore / purge return null for an unknown run (→ skipped) and a flag for a no-op
     // ({alreadyArchived}, {alreadyActive}, {alreadyDeleted}), which writes no audit line.
+    const removedRunIds = [];
     const audited = (fn) => async (t) => {
       const r = await fn(rowScope(t));
       if (!r) throw new Error('run not found');
+      if (action !== 'restore') removedRunIds.push(...dropParkedEntries(t.pipelineId));
       if (!r.alreadyArchived && !r.alreadyActive && !r.alreadyDeleted) appendAuditById(t.pipelineId, `${AUDIT[action]}${byActor(by)}.`, { actor: by });
       return r;
     };
@@ -7373,7 +7412,7 @@ app.post('/api/runs/bulk', async (req, res) => {
       cancel: (t) => !!cancelTicket(t.ticketId, { by }),
       afterGroupStop: (g) => { cancelRest(g.id, { by }); broadcastFeature(g.id); },   // a non-active feature returns {status:409}: nothing to do
     });
-    emitChanged('pipelines-changed', `bulk-${action}`);
+    broadcast({ type: 'pipelines-changed', action: `bulk-${action}`, removedRunIds });
     if (out.cancelled.length || action === 'stop') emitChanged('schedules-changed', 'bulk');
     emitChanged('run-groups-changed', 'bulk');
     res.json(out);
@@ -7456,10 +7495,11 @@ app.delete('/api/runs/:id', async (req, res) => {
       });
     });
     if (!report) return res.status(404).json({ error: 'pipeline not found' });
+    const removedRunIds = dropParkedEntries(id);
     if (report.archived) {
       appendAuditById(report.id, `Run archived${byActor(archBy)}.`, { actor: archBy });
     }
-    emitChanged('pipelines-changed', 'deleted');
+    broadcast({ type: 'pipelines-changed', action: 'deleted', removedRunIds });
     res.json({ ok: true, ...report });
   } catch (e) {
     if (e && e.code === 'RUNNING') return res.status(409).json({ error: e.message });
@@ -10999,6 +11039,7 @@ const settingsState = () => ({
   debugSpawnEnabled: storedDebugSpawnEnabled(),          // what is STORED (the checkbox)
   debugSpawnEffective: effectiveDebugSpawn(),             // what the next spawn will DO, and why
   resumeAfterUsageLimit: resumeAfterUsageLimit(),
+  autoGeneratePrDescription: autoGeneratePrDescription(), // Create PR: Generate with AI on open
   updateCheck: updateCheckEnabled(),                    // Settings › About: npm latest check (#841)
   titleModel: storedTitleModel(),                         // the STORED id (the select), null = run's model
   titleModelEffective: describeTitleModel(),              // env override / stale id, for the hint line (#422)
@@ -11545,6 +11586,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const hasSmartNaming = has('smartNaming');      // null clears the stored block
   const hasDebugSpawnKey = has('debugSpawnEnabled');
   const hasLimitResumeKey = has('resumeAfterUsageLimit');
+  const hasAutoPrDescKey = has('autoGeneratePrDescription');
   const hasUpdateCheckKey = has('updateCheck');
   const hasTitleModelKey = has('titleModel');
   const hasHideBuiltinKey = has('hideBuiltinModels');
@@ -11620,6 +11662,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasSmartNaming && body.smartNaming !== null) asSettingsField('smartNaming', () => assertSmartNamingInput(body.smartNaming));
     if (hasDebugSpawnKey) asSettingsField('debugSpawnEnabled', () => assertDebugSpawnInput(body.debugSpawnEnabled));
     if (hasLimitResumeKey) asSettingsField('resumeAfterUsageLimit', () => assertResumeAfterUsageLimitInput(body.resumeAfterUsageLimit));
+    if (hasAutoPrDescKey) asSettingsField('autoGeneratePrDescription', () => assertAutoGeneratePrDescriptionInput(body.autoGeneratePrDescription));
     if (hasUpdateCheckKey) asSettingsField('updateCheck', () => assertUpdateCheckInput(body.updateCheck));
     if (hasTitleModelKey) asSettingsField('titleModel', () => {
       assertTitleModelInput(titleModelInput);
@@ -11693,6 +11736,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasSmartNaming) await setSmartNaming(body.smartNaming);
     if (hasDebugSpawnKey) await setDebugSpawnEnabled(body.debugSpawnEnabled);
     if (hasLimitResumeKey) await setResumeAfterUsageLimit(body.resumeAfterUsageLimit);
+    if (hasAutoPrDescKey) await setAutoGeneratePrDescription(body.autoGeneratePrDescription);
     if (hasUpdateCheckKey) {
       await setUpdateCheck(body.updateCheck);
       if (body.updateCheck === false) updateChecker.clear();   // back on = a fresh check, never the old answer
@@ -11727,7 +11771,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
     if (hasSmartNaming || hasNamingModelKey) cachedPick = undefined;
-    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasNetworkWaitKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey || hasUpdateCheckKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasNetworkWaitKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey || hasUpdateCheckKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;
@@ -18020,7 +18064,7 @@ export const _testing = {
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
   askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor,
   uiControl, bearerMatches,
-  broadcast, askFilesRunDir,
+  broadcast, sockets, askFilesRunDir,
   validateResumeTarget, resumeTargetDirs, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
   trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
   askCommandBridge, askCommands, askCommandsEnabled, askCommandTarget, drainAskDeferred, startScopeEventTurn, startTerminalEventTurn, terminals, prWatcher, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,

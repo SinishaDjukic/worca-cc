@@ -500,6 +500,9 @@ test('rowToState reports `resumable` from the row\'s resume_point, not its statu
 
   getDb().prepare('UPDATE pipelines SET resume_point = ? WHERE id = ?')
     .run(JSON.stringify({ version: 2, snapshot: null }), 'rsm00001');
+  assert.equal((await readPipelineByKey(key, 'rsm00001')).state.resumable, false, 'a live point, but its project is not onboarded');
+  getDb().prepare('INSERT OR IGNORE INTO projects (key, name, path, created_at) VALUES (?, ?, ?, ?)')
+    .run(key, 'rsm project', join(tmpdir(), 'rsm-project'), new Date().toISOString());
   const withPoint = await readPipelineByKey(key, 'rsm00001');
   assert.equal(withPoint.state.resumable, true, 'a live point is resumable');
 });

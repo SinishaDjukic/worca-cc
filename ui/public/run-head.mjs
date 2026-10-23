@@ -186,7 +186,7 @@ function prSecond(f, pr) {
   return out;
 }
 function prPath(f, pr = f.pr && f.pr.url ? f.pr : null) {
-  const merged = `Merged into ${f.base || 'the base branch'}`;
+  const merged = `Merged into ${f.base || 'base'}`;
   const first = changesStep(f);
   if (first) return [first, N('future', 'Pull request'), N('future', merged)];
   const s = upper(pr);

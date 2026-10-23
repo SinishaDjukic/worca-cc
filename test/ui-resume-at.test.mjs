@@ -308,3 +308,37 @@ test('at data-level="simple" the resume carets carry data-min-level="advanced" (
   await ctx2.settle(8);
   assert.equal(ctx2.doc.querySelector('.hd-resume-more').getAttribute('data-min-level'), 'advanced');
 });
+
+test('"Resume at…" can wait for another run: the sheet offers After a run without the paused run itself, and posts {after, afterPolicy}', async () => {
+  const ctx = await boot({
+    level: 'advanced',
+    fetchHandler: (url) => (url.includes('/api/schedules/after-candidates')
+      ? ok({ runs: [{ pipelineId: 'pl_1', title: 'Feat', status: 'paused' }, { pipelineId: 'pl_2', title: 'Build', status: 'running' }], tickets: [] })
+      : null),
+  });
+  const card = await pausedCard(ctx);
+  card.querySelector('.rd-resume-more').click();
+  await ctx.settle();
+  card.querySelector('.rd-resume-at').click();
+  await ctx.settle();
+  const modal = ctx.doc.getElementById('schedule-modal');
+  const kindBtn = modal.querySelector('button[data-kind="after"]');
+  assert.ok(kindBtn, 'the At a time · After a run switch shows for a resume');
+  kindBtn.click();
+  await ctx.settle(6);
+  const cands = ctx.fetchCalls.find((c) => c.url.includes('/api/schedules/after-candidates'));
+  assert.match(cands.url, /projectDir=%2Ftmp%2Fproj-resume-at/);
+  const options = [...modal.querySelectorAll('#sched-after option')].map((o) => o.value);
+  assert.deepEqual(options, ['pipeline:pl_2'], 'the run being resumed is never offered');
+  modal.querySelector('.sched-ok').click();
+  await ctx.settle(6);
+  const posts = ctx.fetchCalls.filter((c) => c.url.includes('/api/schedules/resume'));
+  assert.equal(posts.length, 1);
+  const body = JSON.parse(posts[0].opts.body);
+  assert.deepEqual(body.after, { kind: 'pipeline', id: 'pl_2' });
+  assert.equal(body.afterPolicy, 'done');
+  assert.equal(body.pipelineId, 'pl_1');
+  assert.equal('scheduledFor' in body, false);
+  assert.equal('sourceFromPrevious' in body, false);
+  assert.equal(ctx.window.location.hash, '#schedules/once');
+});

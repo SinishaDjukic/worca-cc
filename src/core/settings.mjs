@@ -19,6 +19,8 @@
 //                            override); this module never writes process.env.
 //   resumeAfterUsageLimit  — opt-in boolean (default false): schedule a usage-limit pause's
 //                            resume for just after the limit resets, unattended.
+//   autoGeneratePrDescription — opt-in boolean (default false): the Create PR dialog
+//                            drafts its description with AI as soon as it opens.
 //   updateCheck            — boolean (default true): check npm for a newer stable Worca (Settings › About).
 //   pipelineCostLimitUsd   — per-pipeline lifetime USD spend cap; unset = no limit.
 //   totalCostLimitUsd      — windowed all-pipelines USD spend cap; unset = no limit.
@@ -1223,6 +1225,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'flags',                                   // feature flags { key: bool } (docs/feature-flags.md)
   'autoWorkflowModel',                       // auto-workflow spec D14
   'prDescriptionModel',                      // the "Ship it?" modal's Generate with AI
+  'autoGeneratePrDescription',               // run that Generate with AI when the modal opens
   'memoryDefrag',                            // Settings › Memory: the defragment model + effort
   'agentGenModel',                           // the agent wizard's Generate: model + effort (Claude, user-level)
   'namingModel',                             // Smart run naming's model + effort (Models › Helper jobs, Claude, user-level)
@@ -1732,6 +1735,33 @@ export async function setResumeAfterUsageLimit(input) {
   else settings.resumeAfterUsageLimit = input;
   await persistSettings(settings);
   return { resumeAfterUsageLimit: resumeAfterUsageLimit() };
+}
+
+// ── Draft the PR description automatically (opt-in) ──────────────────────────
+export const DEFAULT_AUTO_GENERATE_PR_DESCRIPTION = false;
+
+/** @throws {Error} unless `input` is a boolean (the route and the setter share this). */
+export function assertAutoGeneratePrDescriptionInput(input) {
+  if (!isBool(input)) throw new Error('autoGeneratePrDescription must be true or false');
+}
+
+/** The Create PR dialog runs its Generate with AI on open when this is on. */
+export function autoGeneratePrDescription() {
+  const v = readSettings().autoGeneratePrDescription;
+  if (v === undefined) return DEFAULT_AUTO_GENERATE_PR_DESCRIPTION;
+  if (isBool(v)) return v;
+  console.warn(`[worca] invalid autoGeneratePrDescription ${JSON.stringify(v)} — using the default (${DEFAULT_AUTO_GENERATE_PR_DESCRIPTION})`);
+  return DEFAULT_AUTO_GENERATE_PR_DESCRIPTION;
+}
+
+/** @throws {Error} unless `input` is a boolean. */
+export async function setAutoGeneratePrDescription(input) {
+  assertAutoGeneratePrDescriptionInput(input);
+  const settings = readSettings();
+  if (input === DEFAULT_AUTO_GENERATE_PR_DESCRIPTION) delete settings.autoGeneratePrDescription;
+  else settings.autoGeneratePrDescription = input;
+  await persistSettings(settings);
+  return { autoGeneratePrDescription: autoGeneratePrDescription() };
 }
 
 // ── Check for new Worca versions (issue #841) ────────────────────────────────

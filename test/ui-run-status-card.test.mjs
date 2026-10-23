@@ -75,9 +75,9 @@ test('paintRunStatus: live role rows under the status line, the Refine line, hid
     [['product', 'Product', 'reviewing'], ['ux', 'UX', '1 major']]);
   assert.ok(rows[0].querySelector('.run-role-dot').classList.contains('is-live'));
   assert.equal(rows[1].querySelector('.run-role-dot').classList.contains('is-live'), false);
-  paintRunStatus(host, { ...base, roles: { rows: [], refine: 'Refine · fixing 3 findings from UX and Architect' } });
+  paintRunStatus(host, { ...base, roles: { rows: [], refine: 'Fixing 3 findings from UX and Architect' } });
   assert.equal(host.querySelectorAll('.run-role-row').length, 0);
-  assert.equal(host.querySelector('.run-role-refine').textContent, 'Refine · fixing 3 findings from UX and Architect');
+  assert.equal(host.querySelector('.run-role-refine').textContent, 'Fixing 3 findings from UX and Architect');
   paintRunStatus(host, { ...base, roles: null });
   assert.equal(host.querySelector('.run-status-roles').hidden, true, 'roles:null hides the block');
   assert.equal(host.querySelectorAll('.run-status-roles').length, 1, 'made once');
@@ -282,4 +282,21 @@ test('slice 2: syncActions skip never makes or shows a skipped action', () => {
   assert.deepEqual([...slot.querySelectorAll('[data-model-action]')].map((b) => b.dataset.modelAction), ['retry']);
   syncActions(slot, { actions: ['archive'] }, { skip: ['archive', 'report'] });
   assert.equal(slot.querySelectorAll('[data-model-action]').length, 0, 'a button made earlier is removed too');
+});
+
+test('paintRunStatus: beside the stage bar a working run reads "Working · STEP"; data-line keeps the stage', () => {
+  const working = RUN_STATE_ROWS.find((r) => r.state === 'working').run;
+  const m = runModel(working, { now: NOW, timeZone: 'UTC' });
+  assert.equal(m.progress.mode, 'stages', 'the fixture run is a staged run');
+  const host = dom().createElement('div');
+  paintRunStatus(host, m);
+  assert.equal(host.querySelector('.run-status-bar').hidden, false);
+  assert.equal(host.querySelector('.run-status-text').textContent, m.barLine ? `Working · ${m.barLine}` : 'Working');
+  assert.equal(host.dataset.line, m.line, 'the canonical line is unchanged');
+  assert.ok(!host.querySelector('.run-status-text').textContent.includes(`${m.progress.label} ·`), 'the stage is said once, on the bar');
+  // statusText without a bar keeps the stage.
+  assert.equal(statusText(m).line, m.line);
+  assert.equal(statusText(m, { stageBar: true }).line, m.barLine);
+  // A model whose bar is hidden (prNeeds) or a non-working state never reads barLine.
+  assert.equal(statusText({ ...m, barLine: null }, { stageBar: true }).line, m.line);
 });

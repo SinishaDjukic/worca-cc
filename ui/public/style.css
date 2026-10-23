@@ -4680,9 +4680,11 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .runs-item:has(> a.runs-row.selected) .runs-pr.is-closed,.runs-item:has(> a.runs-row.selected) .runs-pr.is-conflicts,.runs-item:has(> a.runs-row.selected) .runs-pr.is-failing{color:var(--red-ink-strong);}
 .runs-indep{font-size:11px;font-weight:500;padding:0 4px;border-radius:var(--r-xs);background:var(--canvas-2);color:var(--ink-2);}
 /* openMenu marks the chosen Show / Group by item only with aria-checked; the check mark moves here from the removed
-   .runs-group-menu rule (same 12px mask), so every openMenu radio item shows it. */
-.wfv-menu [role="menuitemradio"][aria-checked="true"]::after{content:"";width:12px;height:12px;margin-left:auto;background:currentColor;
+   .runs-group-menu rule (same 12px mask), so every openMenu radio item shows it. Every radio item reserves the slot
+   (painted only when checked), so whatever sits before it lines up on every row. */
+.wfv-menu [role="menuitemradio"]::after{content:"";flex:none;width:12px;height:12px;margin-left:auto;background:transparent;
   mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E") center/12px no-repeat;}
+.wfv-menu [role="menuitemradio"][aria-checked="true"]::after{background:currentColor;}
 .runs-sec-head{display:flex;gap:8px;align-items:center;width:100%;padding:12px 0 6px;font-size:12px;font-weight:600;color:var(--ink-2);border:0;border-bottom:1px solid var(--line);background:none;text-align:left;}
 button.runs-sec-head{cursor:pointer;}
 button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
@@ -4953,7 +4955,7 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .rd-track-dot.is-closed{border:1.5px solid var(--ink-3);color:var(--ink-3);}
 .rd-track-dot.is-future{border:1.5px solid var(--line-2);}
 .rd-track-dot.is-pulse{animation:wr-pulse 1.6s ease-in-out infinite;}
-.rd-track-label{font-size:var(--fs-meta);color:var(--ink);white-space:nowrap;}
+.rd-track-label{font-size:var(--fs-meta);color:var(--ink);min-width:0;overflow-wrap:anywhere;}
 .rd-track-step.is-current .rd-track-label{font-weight:600;}
 .rd-track-step.is-future .rd-track-label{color:var(--ink-2);}   /* --ink-3 is 2.8:1 on the panel in light */
 .rd-track-step.is-closed .rd-track-label{text-decoration:line-through;color:var(--ink-2);}
@@ -4968,7 +4970,6 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 :is(.rd-track-tx,.rd-track-act).is-bad{color:var(--amber-ink);}
 @media (prefers-reduced-motion: reduce){.rd-track-dot.is-pulse{animation:none;}.rd-track-dot.is-current::after{transition:none;}}
 @media (max-width:480px){
-  .rd-track-label{white-space:normal;}
   .rd-track-line{min-width:8px;margin-right:4px;}
   .rd-track-row.has-name{grid-template-columns:minmax(0,1fr);row-gap:4px;}
 }
@@ -5079,7 +5080,9 @@ button.rd-srow:hover{background:var(--hover-on-field);}
 .rd-pr-status[hidden]{display:none;}
 .rd-pr-status{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px;
   border-top:1px solid var(--blue-line);font-size:13px;color:var(--ink-2);}
-.rd-prs-sum{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-width:0;}
+.rd-prs-sum{display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:0;}
+.rd-prs-lead,.rd-prs-notes{display:flex;align-items:center;gap:6px;min-width:0;}
+.rd-prs-notes{flex-wrap:wrap;}
 .rd-prs-ico{flex:0 0 auto;}
 .rd-prs-sum .is-ok,.rd-prs-ico.is-ok{color:var(--green-ink);}
 .rd-prs-sum .is-run,.rd-prs-ico.is-run,.rd-prs-ico.is-wait{color:var(--amber-ink);}
@@ -7018,7 +7021,7 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .sync-checked[hidden]{display:none;}
 .sync-check-now.busy svg{animation:ws-spin .9s linear infinite;}
 #projects-sync-all[hidden]{display:none;}
-.rd-sync{align-self:stretch;margin-left:8px;white-space:nowrap;}   /* stretch: the same height as .rd-branch-copy in .rd-row3 */
+.rd-sync{align-self:stretch;margin-left:8px;white-space:nowrap;min-width:0;max-width:24ch;overflow:hidden;text-overflow:ellipsis;}   /* stretch: the same height as .rd-branch-copy in .rd-row3; ellipsis: no label pushes past the card */
 .topbar-actions{display:flex;align-items:center;gap:8px;flex:none;}   /* never squeezed by the .sub text: labels stay on one line */
 .topbar-actions .btn{white-space:nowrap;}
 /* No global [hidden] rule in this sheet — each display-setting element opts in. */
@@ -8967,9 +8970,14 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .ask-scope-line{display:flex;align-items:center;gap:8px;min-width:0;}
 .ask-scope-line > .ask-model-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .ask-scope-line > .kind-chip{margin-left:auto;}
+/* The trailing check slot on every scope radio row (empty unless picked), so the chip column is the same on each row. */
+.ask-scope-check{flex:none;display:inline-flex;justify-content:flex-end;width:16px;margin-left:auto;}
+.ask-scope-check > .ask-model-check{margin-left:0;}
 .ask-scope-sub{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:11px;color:var(--ink-2);}
 /* The Workflows composer's scope menu (workflows/menu.mjs) keeps the one kind chip on the right, as the Ask menu does (B8). */
 .wfv-menu-item > .kind-chip{margin-left:auto;}
+/* One auto margin per row: the ✓ slot follows the chip at the item's gap, so the chips line up picked or not. */
+.wfv-menu-item:has(> .kind-chip)::after{margin-left:0;}
 /* The run card's `Where it runs` sub-line (ask-panel.mjs updateTargetSub): the kind chip between the name and the branch words (B10). */
 .ask-rp-sec-sub > .kind-chip{margin:0 6px;}
 /* The `Switched to <name>` divider row (canvas Switched): a centered label between two hairlines, no accent. */
@@ -9592,6 +9600,16 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .rd-bar-end,.gpage-actions{min-width:0;flex:0 1 auto;}
 :is(.rd-actions,.gpage-actions) .btn-primary{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .rd-bar :is(.btn-danger,.btn-icon){flex:none;}
+/* One control size on both bars: the model's made .btn-sm actions (syncActions; the chat run card keeps them small)
+   and the Resume split come up to .btn's 32px and body size; the primary keeps its 600 weight, as everywhere (the
+   button audit's rule). Child selectors only: the chat panel's Open full page / Close (.crp-bar-btns) keep their square. */
+:is(.rd-bar,.hd-bar) .rd-bar-end > .btn,
+:is(.rd-bar,.hd-bar) .rd-bar-end > :is(.rd-actions,.btn-split) > .btn{height:32px;padding:0 12px;gap:6px;font-size:var(--fs-body);}
+:is(.rd-bar,.hd-bar) .rd-bar-end > .btn.btn-icon,
+:is(.rd-bar,.hd-bar) .rd-bar-end > :is(.rd-actions,.btn-split) > .btn.btn-icon{width:32px;padding:0;}
+/* ⋯ is .btn-quiet in markup; on the bar it wears its neighbours' border and fill. */
+:is(.rd-bar,.hd-bar) .rd-bar-end > :is(.rd-bar-more,.hd-bar-more){background:var(--panel);border-color:var(--line-2);color:var(--ink);}
+:is(.rd-bar,.hd-bar) .rd-bar-end > :is(.rd-bar-more,.hd-bar-more):hover:not(:disabled){background-color:var(--btn-hover);}
 /* Run 3 (D6): the breadcrumb at the bar's left (split layout only). */
 .rd-crumbs{display:flex;align-items:center;gap:4px;min-width:0;font-size:var(--fs-meta);color:var(--ink-2);}
 .rd-crumbs[hidden]{display:none;}
@@ -9735,6 +9753,11 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
    corner come from the grouped chip rule above), the shared status block, member rows and the group page. */
 .kind-chip{display:inline-flex;align-items:center;height:18px;padding:0 6px;border:0;background:var(--field);color:var(--ink-2);white-space:nowrap;}
 .rd-title-row{display:flex;align-items:center;gap:8px;min-width:0;}
+/* A grouped run's kind chip links its group page ("Run 1 of 3 ›"); the chevron is not part of its name. */
+.rd-title-row a.kind-chip{text-decoration:none;cursor:pointer;}
+.rd-title-row a.kind-chip::after{content:"›"/"";margin-left:4px;}
+.rd-title-row a.kind-chip:hover{background:var(--hover);color:var(--ink);}
+.rd-title-row a.kind-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 /* the shared status block */
 .run-status{display:grid;gap:8px;min-width:0;}
 .run-status-head{display:flex;align-items:center;gap:8px;min-width:0;}

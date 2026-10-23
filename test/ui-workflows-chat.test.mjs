@@ -700,7 +700,7 @@ test('Enter sends the text with the canvas; the scope menu is the chat\'s (No pr
   assert.deepEqual([...menu.querySelectorAll('.wfv-menu-h')].map((x) => x.textContent), ['Projects', 'Workspaces']);
   assert.equal(menu.querySelector('.wfv-menu-hint'), null, 'B8: the kind is the one chip, never a text hint');
   assert.deepEqual([...menu.querySelectorAll('.wfv-menu-item')].map((b) => [b.querySelector('.wfv-menu-l').textContent, b.querySelector('.kind-chip')?.className ?? null, b.getAttribute('role'), b.getAttribute('aria-checked')]),
-    [['No project', null, 'menuitemradio', 'true'], ['worca', 'kind-chip kind-git', 'menuitemradio', 'false'], ['Team', 'kind-chip kind-ws', 'menuitemradio', 'false']]);
+    [['No project', null, 'menuitemradio', 'true'], ['worca', 'kind-chip kind-git', 'menuitemradio', 'false'], ['Team', null, 'menuitemradio', 'false']]);
   [...s.doc.querySelectorAll('.wfv-menu-item')].find((b) => b.textContent.startsWith('worca')).click();
   const input = root.querySelector('#wfc-input');
   input.value = 'Add Plan after Task';

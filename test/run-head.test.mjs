@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
+import { readFileSync } from 'node:fs';
 import { headModel, groupHead, trackerModel, renderTracker, renderHeadButtons, prMenuItems, trackerWatchWords, canResolvePr,
   showsFixConflicts, hdPrWatchLabel } from '../ui/public/run-head.mjs';
 
@@ -352,4 +353,22 @@ test('prMenuItems with onWatchAll / onCopyAll: each PR as today, then Watch PRs 
     'Run 2 · Pull request #13', 'View PR #13', 'Copy PR link', 'Fix conflicts', '—', 'Watch PRs', 'Copy PR links']);
   assert.deepEqual(labels('basic').slice(-2), ['—', 'Copy PR links']);
   assert.equal(labels('advanced', {}).includes('Copy PR links'), false, 'the workspace menu is unchanged');
+});
+
+test('tracker: the last PR step names the base; "Merged into base" when none is known', () => {
+  const last = (f) => steps(f).at(-1).querySelector('.rd-track-label').textContent;
+  assert.equal(last(F({ m: M('working', { pulse: true }), base: 'main' })), 'Merged into main');
+  assert.equal(last(F({ m: M('working', { pulse: true }), base: '' })), 'Merged into base');
+  const long = 'feature/very-long-integration-branch-name-for-the-billing-team';
+  assert.equal(last(F({ base: long })), `Merged into ${long}`, 'the whole name, wrapped by CSS, never cut');
+});
+
+test('tracker CSS: labels wrap inside their column at every width', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const rule = css.match(/^\.rd-track-label\{([^}]*)\}/m);
+  assert.ok(rule, 'the base label rule');
+  assert.doesNotMatch(rule[1], /white-space:nowrap/, 'a nowrap label spills past the card');
+  assert.match(rule[1], /min-width:0;/);
+  assert.match(rule[1], /overflow-wrap:anywhere;/);
+  assert.match(css, /^\.rd-track-steps\{display:grid;grid-template-columns:repeat\(3,minmax\(0,1fr\)\);/m, 'columns may shrink');
 });
