@@ -2489,3 +2489,24 @@ test('s2: a workspace answer (no autofill) paints no missing slot', async () => 
   await ctx.tick();
   assert.equal(card.querySelectorAll('.ask-rp-tags .tag-missing').length, 0);
 });
+
+test('ask-panel-card: a derived branch is marked suggested on Start only while the person has not edited it', async () => {
+  const derived = { ...PROJECT_CARD, featureBranchDerived: true };
+  const rec = {};
+  const ctx = await openWithCard(derived, rec);
+  const cardEl = ctx.doc.querySelector('.ask-card');
+  cardEl.querySelector('[data-ask-card-start]').click();
+  await ctx.tick(); await ctx.tick();
+  assert.equal(rec.runBodies[0].featureBranch, 'worca/fix-login');
+  assert.equal(rec.runBodies[0].featureBranchSuggested, true);
+  cardEl.querySelector('.ask-card-feature').value = 'fix/my-own';
+  cardEl.querySelector('[data-ask-card-start]').click();
+  await ctx.tick(); await ctx.tick();
+  assert.equal(rec.runBodies[1].featureBranch, 'fix/my-own');
+  assert.equal('featureBranchSuggested' in rec.runBodies[1], false);
+  const plain = {};
+  const ctx2 = await openWithCard(PROJECT_CARD, plain);
+  ctx2.doc.querySelector('[data-ask-card-start]').click();
+  await ctx2.tick(); await ctx2.tick();
+  assert.equal('featureBranchSuggested' in plain.runBodies[0], false, 'a flag-off card (no marker) keeps its body');
+});

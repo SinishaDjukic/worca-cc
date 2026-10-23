@@ -34,6 +34,7 @@ test('a Codex id in a Claude utility setting is a 400 naming it; nothing is writ
     ['prDescriptionModel', 'gpt-5.6-sol', 'gpt-5.6-sol'],
     ['memoryDefrag', { model: 'gpt-5.5', effort: 'low' }, 'gpt-5.5'],
     ['agentGenModel', { model: 'gpt-5.5', effort: 'high' }, 'gpt-5.5'],
+    ['namingModel', { model: 'gpt-5.5', effort: 'high' }, 'gpt-5.5'],
     ['workspaceScan', { scanModel: 'gpt-5.5', scanEffort: 'low', agentModel: 'sonnet', agentEffort: 'medium' }, 'gpt-5.5'],
   ];
   for (const [key, value, id] of cases) {
@@ -48,6 +49,7 @@ test('a Codex id in a Claude utility setting is a 400 naming it; nothing is writ
   assert.equal(s.prDescriptionModel, '');
   assert.equal(s.autoWorkflowModel, '');
   assert.deepEqual(s.agentGenModel, { model: null, effort: null });
+  assert.deepEqual(s.namingModel, { model: null, effort: null });
   assert.notEqual(s.theme, 'dark', 'a refused POST writes no key');
   const ok = await post({ titleModel: 'claude-haiku-4-5' });
   assert.equal(ok.status, 200, 'a Claude id is still accepted');

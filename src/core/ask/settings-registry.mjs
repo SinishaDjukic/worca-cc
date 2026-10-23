@@ -6,9 +6,9 @@
 // (deps.applyUser / deps.applyProject, ui/server.mjs). The MCP child's copy has no writers: it lists and checks.
 // No I/O here — every reader and writer comes in through deps.
 import {
-  assertThemeInput, assertUiLevelInput, assertDebugSpawnInput, assertCostLimitInputs,
+  assertThemeInput, assertUiLevelInput, assertDebugSpawnInput, assertUpdateCheckInput, assertCostLimitInputs,
   assertHumanRateInput, assertAskLimitInputs, assertAskEngineInput, assertRunEngineInput, assertSyncSettingsInput,
-  assertScheduleDefaultsInput, assertWorkspaceScanInput, assertMemoryDefragModelInput, assertAgentGenModelInput, normalizeModelPair,
+  assertScheduleDefaultsInput, assertWorkspaceScanInput, assertMemoryDefragModelInput, assertAgentGenModelInput, assertNamingModelInput, normalizeModelPair,
   SETTINGS_POST_KEYS, DEFAULT_SYNC_SETTINGS, DEFAULT_SCHEDULE_GRACE_MIN, DEFAULT_SCHEDULE_IF_MISSED,
   DEFAULT_SCHEDULE_MAX_FAILURES, DEFAULT_COST_RESET_PERIOD, DEFAULT_HUMAN_RATE_USD, DEFAULT_ASK_MAX_TURNS,
 } from '../settings.mjs';
@@ -61,6 +61,7 @@ const CLAUDE_HELPER_KEYS = Object.freeze({ title: 'titleModel', classifier: 'aut
 const CODEX_JOBS = Object.freeze(['title', 'classifier', 'overview', 'prDescription', 'memoryDefrag', 'workspaceScan']);
 const RUN_JOBS = new Set(['title', 'classifier', 'overview', 'prDescription']);
 const AGENT_GEN_ID = 'models.claude.utility.agentGen';
+const NAMING_ID = 'models.claude.utility.naming';
 const SCAN_FIELDS = Object.freeze({
   scanModel: { label: 'Workspace scan: scan agent model', allowed: 'a model id from list_models' },
   scanEffort: { label: 'Workspace scan: scan agent effort', allowed: EFFORTS.map((e) => JSON.stringify(e)).join(' | ') },
@@ -108,6 +109,9 @@ function buildUserDefs(roles, scanDefaults) {
     userDef({ id: 'debugSpawnEnabled', label: 'Spawn diagnostics', group: 'General', read: (s) => ownKey(s, 'debugSpawnEnabled'),
       body: (unit) => ({ debugSpawnEnabled: unit === true }), dflt: false, fmt: onOff, allowed: 'true | false',
       check: (v) => { if (v == null) return null; assertDebugSpawnInput(v); return v === false ? null : v; } }),
+    userDef({ id: 'updateCheck', label: 'Check for new Worca versions', group: 'General', read: (s) => ownKey(s, 'updateCheck'),
+      body: (unit) => ({ updateCheck: unit !== false }), dflt: true, fmt: onOff, allowed: 'true | false',
+      check: (v) => { if (v == null) return null; assertUpdateCheckInput(v); return v === true ? null : v; } }),
     userDef({ id: 'pipelineCostLimitUsd', label: 'Per-pipeline cost limit', group: 'Runs', ...topKey('pipelineCostLimitUsd'), fmt: usd('No limit'), allowed: 'a positive amount in USD',
       check: (v) => { assertCostLimitInputs({ pipelineCostLimitUsd: v ?? '' }); return v ?? null; } }),
     userDef({ id: 'totalCostLimitUsd', label: 'Total cost limit', group: 'Runs', ...topKey('totalCostLimitUsd'), fmt: usd('No limit'), allowed: 'a positive amount in USD',
@@ -189,6 +193,18 @@ function buildUserDefs(roles, scanDefaults) {
         if (!pair) return null;
         const value = { model: pair.model, ...(pair.effort ? { effort: pair.effort } : {}) };
         await ctx.slot([{ id: ctx.def.id, engine: 'claude', value }]);   // in the catalog is not enough: it must run on Claude
+        return value;
+      } }),
+    // Smart run naming's one call: always Claude and project-less, so user scope only (not a cascade id).
+    userDef({ id: NAMING_ID, label: 'Run naming model', group: 'Models', fmt: pairText, allowed: pairAllowed('claude'),
+      read: (s) => (isObj(s.namingModel) && typeof s.namingModel.model === 'string' && s.namingModel.model.trim()
+        ? { model: s.namingModel.model.trim(), ...(typeof s.namingModel.effort === 'string' && s.namingModel.effort ? { effort: s.namingModel.effort } : {}) } : null),
+      body: (unit) => ({ namingModel: unit && unit.model ? { model: unit.model, effort: unit.effort || '' } : null }),
+      check: async (v, ctx) => {
+        const pair = assertNamingModelInput(v, await ctx.models());
+        if (!pair) return null;
+        const value = { model: pair.model, ...(pair.effort ? { effort: pair.effort } : {}) };
+        await ctx.slot([{ id: ctx.def.id, engine: 'claude', value }]);
         return value;
       } }),
     ...CODEX_JOBS.map((job) => pairDef(RUN_JOBS.has(job) ? `models.codex.utility.${job}` : `models.codex.${job}`, `${JOBS[job]} (${engineLabel('codex')})`, 'Models', 'codex',
@@ -311,7 +327,7 @@ export function createSettingsRegistry(deps = {}) {
     const def = findDef(sid, scope);
     if (!def) {
       // A model slot id is never an exclusion (the 'models' entry is the catalog): a project-only slot or a typo.
-      const slot = MODEL_ID_RE.test(sid) || ASK_ENGINES.some((e) => sid === `models.${e}.ask`) || sid === AGENT_GEN_ID;
+      const slot = MODEL_ID_RE.test(sid) || ASK_ENGINES.some((e) => sid === `models.${e}.ask`) || sid === AGENT_GEN_ID || sid === NAMING_ID;
       const ex = slot ? null : exclusionOf(sid);
       if (ex) return { ok: false, error: `${sid} is not changed from the chat: ${ex.why}` };
       const projectOnly = scope === 'user' && findDef(sid, 'project') ? ' (it is set per project: scope "project")' : '';

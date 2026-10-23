@@ -63,7 +63,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 70;
+export const SCHEMA_VERSION = 71;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -1079,6 +1079,21 @@ CREATE TABLE IF NOT EXISTS run_labels (
 CREATE INDEX IF NOT EXISTS idx_run_labels_label ON run_labels (label);
 `;
 
+// v71 (Smart run naming): spend that happens before a run exists (the New run form's name suggestion). Never joins
+// cost_ledger, so it is never billed to a run or counted toward a budget. NO foreign key: it is a permanent fact.
+const UTILITY_COST_LEDGER_DDL = `
+CREATE TABLE IF NOT EXISTS utility_cost_ledger (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind       TEXT NOT NULL,
+  amount_usd REAL NOT NULL,
+  tokens_in  INTEGER,
+  tokens_out INTEGER,
+  model      TEXT,
+  ts         INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_utility_cost_ledger_ts ON utility_cost_ledger (ts);
+`;
+
 // v59 (#718; 57-58 are Shaper's): run tags. One row per (run, key); the plain tag `spike` is value ''. Written at run
 // creation and by the tag-edit route only — writeState never touches them. pipelines rows are never
 // DELETEd (pipeline-delete.mjs), so the CASCADE is convention, and tags survive archive/restore.
@@ -1237,6 +1252,7 @@ const INCREMENTAL_TABLES = {
   run_tags:       RUN_TAGS_DDL,
   run_tag_events: RUN_TAGS_DDL,
   run_labels:     RUN_LABELS_DDL,
+  utility_cost_ledger: UTILITY_COST_LEDGER_DDL,
   run_presets:    RUN_PRESETS_DDL,
   run_groups:        RUN_GROUPS_DDL,
   run_group_members: RUN_GROUPS_DDL,
@@ -2371,6 +2387,7 @@ export function migrate(db) {
     if (current < 68) db.exec(RUN_LABELS_DDL);   // v68 run labels
     if (current < 69) applySchemaV69(db);
     // v70: ask_attachments.source_run_id / source_project_key / source_rel (Show in folder's fallback) — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    if (current < 71) db.exec(UTILITY_COST_LEDGER_DDL);   // v71 utility spend (Smart run naming)
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {
