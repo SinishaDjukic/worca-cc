@@ -58,7 +58,7 @@ test('list_settings rows: user scope lists the Settings page, never a secret, a 
   const { reg } = setup();
   const out = await reg.list({ scope: 'user' });
   const ids = out.settings.map((r) => r.id);
-  for (const id of ['theme', 'uiLevel', 'pipelineCostLimitUsd', 'sync.beforeRun', 'schedule.graceMin', 'chat.notify.done', 'askMaxTurns', 'models.claude.ask', 'models.claude.memoryDefrag', 'run.engine', 'models.claude.steps.planner', 'workspaceScan.scanEffort']) assert.ok(ids.includes(id), id);
+  for (const id of ['theme', 'uiLevel', 'pipelineCostLimitUsd', 'sync.beforeRun', 'schedule.graceMin', 'chat.notify.done', 'askMaxTurns', 'models.claude.ask', 'models.claude.memoryDefrag', 'run.engine', 'models.claude.steps.planner', 'workspaceScan.scanEffort', 'updateCheck']) assert.ok(ids.includes(id), id);
   for (const id of ids) assert.ok(!/^(root|projectsRoot|actions|askWeb|chat\.scriptTools|chat\.channels|nightMode|providers|speech)(\.|$)/.test(id), `never listed: ${id}`);
   const theme = out.settings.find((r) => r.id === 'theme');
   assert.deepEqual(theme, { id: 'theme', label: 'Theme', group: 'General', value: 'System (default)', stored: null, allowed: '"system" | "light" | "dark" | null (default)' });
@@ -182,6 +182,17 @@ test('every user setting writes exactly one known POST key — never an empty bo
       assert.ok(SETTINGS_POST_KEYS.includes(keys[0]) && !['root', 'projectsRoot', 'actions'].includes(keys[0]), `${def.id} → ${keys[0]}`);
     }
   }
+});
+
+test('updateCheck is a default-on General boolean that writes exactly { updateCheck }', () => {
+  const { reg } = setup();
+  const def = reg.defsFor('user').find((d) => d.id === 'updateCheck');
+  assert.equal(def.group, 'General');
+  assert.equal(def.dflt, true);
+  assert.deepEqual(def.body(false), { updateCheck: false });
+  assert.deepEqual(def.body(null), { updateCheck: true }, 'unset writes the default back');
+  assert.equal(def.read({}), null);
+  assert.equal(def.read({ updateCheck: false }), false);
 });
 
 test('assertScheduleDefaultsInput is the setter\'s own check (setScheduleDefaults still refuses before any write)', async () => {
