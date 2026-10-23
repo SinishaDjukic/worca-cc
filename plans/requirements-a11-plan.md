@@ -19,7 +19,7 @@
 - `systemPromptMode` is default-off: absent, `'append'` or any other value ⇒ every argv byte-identical to today (`test/claude-argv-snapshot.test.mjs` stays green unchanged).
 - The host-guard preamble stays at the head of every real spawn's system prompt, replaced or appended.
 - **The A1.1/A7 contract (design §9), binding:** `callModel(d, { kind, cwd, prompt, model, timeoutMs, ...overrides })` exported, `interviewCallOptions(kind, { cwd, prompt, model, ...overrides })`; kinds `'look'` | `'round'` only; overrides `systemPrompt`, `tools`, `maxTurns`, `effort` and nothing else (anything else throws `TypeError`). In `round.mjs` A1.1 edits only: the new header lines of both system prompts, `roundPromptParts` / `buildRoundPrompt`, and the existing working-directory ternary of `buildOrientationPrompt`. Never edit: the data-rule lines and the "Do not ask what …" line of `ROUND_SYSTEM_PROMPT`, the data line and the JSON line of `ORIENTATION_SYSTEM_PROMPT`, anything before `buildOrientationPrompt`'s reply line other than the ternary, `startOrientation`, `runOrientation`. No import from Shaper code.
-- Tests never spawn a real claude (`node tools/test.mjs` sets the guard). The measurement tool spends money only with `--yes`, and only Task 8 runs it, after an explicit go-ahead.
+- Tests never spawn a real claude (`node tools/test.mjs` sets the guard). The measurement tool spends money only with `--yes`, and only Task 8 runs it: the real runs spend money, so they are a separate, final task run by hand.
 - No local machine paths in committed files (fixture included). Every file written is valid UTF-8 (`iconv -f utf-8 -t utf-8 <file> >/dev/null`).
 - `style.css`: tokens only, never a hex colour.
 - One test file: `node tools/test.mjs test/<file>.test.mjs`. Tests marked POSIX-only (`POSIX_SHIM`) skip on Windows; say so in the report rather than claiming them.
@@ -46,7 +46,7 @@ Each task has one implementer, then one review (spec compliance and code quality
 | 5 Resolution, list, tool defaults | Sonnet 5.5 | |
 | 6 UI (boards 10, 13) | Sonnet 5.5 | small DOM changes, jsdom tests |
 | 7 Proof, docs, whole-branch check | Sonnet 5.5 | |
-| 8 Real measurement | by hand | spends money; only after an explicit go-ahead |
+| 8 Real measurement | by hand | the real runs spend money, so they are a separate, final task run by hand |
 
 ---
 
@@ -229,9 +229,9 @@ Each task has one implementer, then one review (spec compliance and code quality
 
 ---
 
-### Task 8: Measure with the real model (only after an explicit go-ahead)
+### Task 8: Measure with the real model (a separate, final task run by hand)
 
-Spends money: about $2–3 in all (estimate). **Do not start without an explicit yes**, given with the estimate and the runs below. Every run is capped with `--max-usd` (default 1.50). Run with the real `HOME` (a sandboxed home is not signed in to Claude Code), Worca's server untouched; the tool writes nothing into Worca's data. Reports go to the scratchpad, not the repository. The look reads a read-only checkout of a registered project the user names (`<dir>` below; for a fair pair, the same commit before and after).
+Spends money: about $2–3 in all (estimate). **It spends money, so it is run by hand**, with the estimate and the runs below. Every run is capped with `--max-usd` (default 1.50). Run with the real `HOME` (a sandboxed home is not signed in to Claude Code), Worca's server untouched; the tool writes nothing into Worca's data. Reports go to the scratchpad, not the repository. The look reads a read-only checkout of a registered project the user names (`<dir>` below; for a fair pair, the same commit before and after).
 
 - [ ] **Step 1:** `claude --version` into the report; Task 2's offline flag probe again.
 - [ ] **Step 2: Before** (A2's behaviour): `git switch --detach <Task 1 commit>`; `node tools/requirements-replay.mjs --rounds 4 --look <dir> --model claude-opus-5-5 --effort medium --label before --out <scratch>/before.json --yes`; `git switch -`.

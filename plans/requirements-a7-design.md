@@ -243,7 +243,7 @@ and the feature page of a feature in that scope repaint; the New feature form do
   failed: <message>" with **Refresh**; a staleness that cannot be told heads the notice "Worca cannot check
   this brief against the code" and replaces its sentence with "Worca cannot tell how far the code moved on: " + `missing` "the project's folder is missing." /
   `branch-gone` "the branch `<branch>` no longer exists." / `rewritten` "the commit this brief was made
-  from is no longer on `<branch>`." / `slow` "checking took too long; reload to try again."; without git on this machine there is no notice, only a
+  from is no longer on `<branch>`." / `slow` "checking took too long; reload to try again."; without git there is no notice, only a
   quiet note: "Worca cannot check this brief against the code: git is not installed on this machine."; a workspace
   adds "Not checked: <names>." for unknown members and "<names> joined after this brief; refresh to include
   them."
