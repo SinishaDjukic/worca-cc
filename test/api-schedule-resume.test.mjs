@@ -277,3 +277,111 @@ test('fire fails (not skips) when the run became cap-paused meanwhile', async ()
   assert.equal(t.status, 'failed');
   assert.match(t.fail_reason, /cost cap/);
 });
+
+// ── a resume after another run ──────────────────────────────────────────────
+
+test('create after another run: 202, waits on it, titled and audited after it', async () => {
+  const { id } = await pausedFixture({ title: 'Docs' });
+  const pred = await seedPipeline(dir, { title: 'Build', status: 'running' });
+  const r = await post('/api/schedules/resume', { pipelineId: id, after: { kind: 'pipeline', id: pred.id }, afterPolicy: 'any' });
+  assert.equal(r.status, 202);
+  const made = await r.json();
+  assert.equal(made.scheduledFor, null);
+  assert.deepEqual(made.after, { kind: 'pipeline', id: pred.id, title: 'Build' });
+  assert.equal(made.resumePipelineId, id);
+  const list = await (await fetch(`${base}/api/schedules?projectDir=${encodeURIComponent(dir)}`)).json();
+  const t = list.tickets.find((x) => x.id === made.runId);
+  assert.equal(t.title, 'Resume ‘Docs’ after ‘Build’');
+  assert.equal(t.after.id, pred.id);
+  assert.equal(t.after.policy, 'any');
+  assert.equal(t.sourceFromPrevious, false);
+  const ev = getDb().prepare("SELECT text FROM pipeline_events WHERE pipeline_id = ? AND text LIKE 'Resume scheduled after%'").get(id);
+  assert.match(ev.text, /^Resume scheduled after ‘Build’/);
+});
+
+test('create after another run refuses: both or neither of scheduledFor/after, a bad policy, an unknown run, itself, a cycle, a cap pause', async () => {
+  const pred = await seedPipeline(dir, { title: 'Build', status: 'running' });
+  const after = { kind: 'pipeline', id: pred.id };
+  await checkRows([
+    { name: 'scheduledFor and after together', run: async () => {
+      const { id } = await pausedFixture();
+      const r = await post('/api/schedules/resume', { pipelineId: id, scheduledFor: inFuture(3600_000), after });
+      assert.equal(r.status, 400);
+      assert.match((await r.json()).error, /scheduledFor OR after/);
+    } },
+    { name: 'neither', run: async () => {
+      const { id } = await pausedFixture();
+      assert.equal((await post('/api/schedules/resume', { pipelineId: id })).status, 400);
+    } },
+    { name: 'a bad policy', run: async () => {
+      const { id } = await pausedFixture();
+      assert.equal((await post('/api/schedules/resume', { pipelineId: id, after, afterPolicy: 'sometimes' })).status, 400);
+    } },
+    { name: 'an unknown predecessor', run: async () => {
+      const { id } = await pausedFixture();
+      const r = await post('/api/schedules/resume', { pipelineId: id, after: { kind: 'pipeline', id: 'pl_nope' } });
+      assert.equal(r.status, 400);
+      assert.match((await r.json()).error, /no run or scheduled run/);
+    } },
+    { name: 'itself', run: async () => {
+      const { id } = await pausedFixture();
+      const r = await post('/api/schedules/resume', { pipelineId: id, after: { kind: 'pipeline', id } });
+      assert.equal(r.status, 400);
+      assert.match((await r.json()).error, /cannot resume after itself/);
+    } },
+    { name: 'a cycle', run: async () => {
+      const a = await pausedFixture({ title: 'A' });
+      const b = await pausedFixture({ title: 'B' });
+      assert.equal((await post('/api/schedules/resume', { pipelineId: b.id, after: { kind: 'pipeline', id: a.id } })).status, 202);
+      const r = await post('/api/schedules/resume', { pipelineId: a.id, after: { kind: 'pipeline', id: b.id } });
+      assert.equal(r.status, 400);
+      assert.match((await r.json()).error, /‘B’ already waits for this run/);
+    } },
+    { name: 'a cap pause is still refused', run: async () => {
+      const { id } = await pausedFixture({ pauseReason: 'cost_pipeline', pauseDetail: 'cap hit' });
+      const r = await post('/api/schedules/resume', { pipelineId: id, after });
+      assert.equal(r.status, 409);
+      assert.equal((await r.json()).code, 'CAP_PAUSE');
+    } },
+  ]);
+});
+
+test('fire after another run: waits while it runs, resumes once it is done; a run resumed meanwhile skips', async () => {
+  const { id } = await pausedFixture();
+  const pred = await seedPipeline(dir, { title: 'Build', status: 'running' });
+  const r = await post('/api/schedules/resume', { pipelineId: id, after: { kind: 'pipeline', id: pred.id } });
+  const { runId: ticketId } = await r.json();
+  let out = await schedulerTick();
+  assert.ok(out.waiting.includes(ticketId));
+  assert.equal(getDb().prepare('SELECT status FROM scheduled_runs WHERE id = ?').get(ticketId).status, 'scheduled');
+  getDb().prepare("UPDATE pipelines SET status = 'done' WHERE id = ?").run(pred.id);
+  out = await schedulerTick();
+  assert.ok(out.fired.includes(ticketId));
+  const entry = [...runs.values()].find((e) => e.pipelineId === id);
+  assert.equal(entry.ticketId, ticketId);
+  assert.equal(entry.lastAction.kind, 'resume');
+  await cleanupRun(id);
+
+  // The fire-time re-check of the paused target holds for a resume after another run too.
+  const other = await pausedFixture();
+  const r2 = await post('/api/schedules/resume', { pipelineId: other.id, after: { kind: 'pipeline', id: pred.id } });
+  const { runId: t2 } = await r2.json();
+  getDb().prepare("UPDATE pipelines SET status = 'stopped' WHERE id = ?").run(other.id);
+  out = await schedulerTick();
+  assert.ok(out.skipped.includes(t2));
+});
+
+test('PATCH a resume ticket: it may move to after another run, never after itself, never from the previous run’s branch', async () => {
+  const { id } = await pausedFixture();
+  const pred = await seedPipeline(dir, { title: 'Build', status: 'running' });
+  const { runId: ticketId } = await (await post('/api/schedules/resume', { pipelineId: id, scheduledFor: inFuture(3600_000) })).json();
+  const self = await call('PATCH', `/api/schedules/${ticketId}`, { after: { kind: 'pipeline', id } });
+  assert.equal(self.status, 400);
+  assert.match((await self.json()).error, /cannot resume after itself/);
+  const branch = await call('PATCH', `/api/schedules/${ticketId}`, { after: { kind: 'pipeline', id: pred.id }, sourceFromPrevious: true });
+  assert.equal(branch.status, 400);
+  assert.match((await branch.json()).error, /own branch/);
+  const moved = await call('PATCH', `/api/schedules/${ticketId}`, { after: { kind: 'pipeline', id: pred.id } });
+  assert.equal(moved.status, 200);
+  assert.equal((await moved.json()).item.after.id, pred.id);
+});
