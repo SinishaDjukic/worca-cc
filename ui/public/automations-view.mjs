@@ -3,7 +3,7 @@
 // this module only renders and calls back. Every GitHub-sourced string (titles, logins) goes through textContent.
 import { makeSwitch } from './switch.mjs';
 
-export const AUTOMATIONS_EMPTY_RULES = 'No rules yet. Turn on an Auto-handle switch above, or add a rule.';
+export const AUTOMATIONS_EMPTY_RULES = 'No rules of your own yet. The Auto-handle switches above need none; add a rule for anything else.';
 export const AUTOMATIONS_EMPTY_EVENTS = 'Nothing happened yet. New issues and pull requests show here with what Worca did.';
 
 const EVENT_WORDS = Object.freeze({ 'issue.opened': 'Issue opened', 'pr.opened': 'PR opened or ready' });
@@ -93,7 +93,8 @@ export function renderAutomations(doc, data, { workflowNames = {}, ...cb } = {})
   const rh = h(doc, 'div', 'pl-head');
   rh.append(h(doc, 'h3', '', 'Rules'), btn(doc, 'Add rule', 'btn btn-sm', () => cb.onAddRule?.()));
   rules.append(rh);
-  const own = (data.rules || []);
+  // An Auto-handle switch IS its rule: the switch above is its only control, so the list holds the rules added here.
+  const own = (data.rules || []).filter((r) => r.origin !== 'auto-handle');
   if (!own.length) rules.append(h(doc, 'div', 'hist-empty', AUTOMATIONS_EMPTY_RULES));
   for (const r of own) {
     const s = ruleSummary(r, workflowNames);
@@ -101,12 +102,11 @@ export function renderAutomations(doc, data, { workflowNames = {}, ...cb } = {})
     row.dataset.rule = r.id;
     const top = h(doc, 'div', 'pl-head');
     top.append(h(doc, 'b', '', s.title));
-    if (r.origin === 'auto-handle') top.append(h(doc, 'span', 'badge', 'Auto-handle'));
     if (!r.enabled) top.append(h(doc, 'span', 'badge grey', 'Off'));
     row.append(top, h(doc, 'small', 'hint', s.detail));
     const acts = h(doc, 'div', 'pl-actions');
     acts.append(btn(doc, r.enabled ? 'Turn off' : 'Turn on', 'btn btn-sm', () => cb.onToggleRule?.(r, !r.enabled)));
-    if (r.origin !== 'auto-handle') acts.append(btn(doc, 'Delete', 'btn btn-sm', () => cb.onDeleteRule?.(r)));
+    acts.append(btn(doc, 'Delete', 'btn btn-sm', () => cb.onDeleteRule?.(r)));
     row.append(acts);
     rules.append(row);
   }

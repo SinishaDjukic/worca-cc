@@ -315,7 +315,7 @@ inside the view.
 | Runs tab: Wait for the network | A |
 | Guardrails tab (list, details); Memory tab (files) | A |
 | Presets tab (every preset: Use, Rename, Duplicate, Edit scope, Delete) | A |
-| Automations tab (flag gitAutomations: project picker, Auto-handle switches, rules with Add / Turn off / Delete, Recent with Approve the fix and Open run, Check now) | A — "Approve the fix" waits on a person, but it is also answered by a `/worca approve` comment on GitHub |
+| Automations tab (flag gitAutomations: project picker, Auto-handle switches, your own rules with Add / Turn off / Delete (a switch's rule is not listed: the switch is its control), Recent with Approve the fix and Open run, Check now) | A — "Approve the fix" waits on a person, but it is also answered by a `/worca approve` comment on GitHub |
 | General: spawn diagnostics; Memory tab: the line linking to Helper jobs | E |
 | Guardrails create / delete | E |
 
