@@ -707,7 +707,7 @@ const states = [
       designChecks.push({ what: `dialog: #${id} pads its card 24px and its actions are 32px`,
         ok: !!d.pad && d.pad.every((p) => p === '24px') && d.hs.every(([, h]) => h === 32), got: d });
       if (id === 'shipit-modal') {
-        // The shared dialog anatomy (dialog-layout.mjs): on a short window the hero compacts and stays pinned.
+        // The shared dialog anatomy (dialog-layout.mjs): on a short window the title stays pinned.
         await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 600, deviceScaleFactor: 1, mobile: false });
         await settle('dialog-pin resize');
         const pin = await ev(`(async () => { const m = document.getElementById('shipit-modal');
@@ -717,13 +717,12 @@ const states = [
           const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
           await frame();
           const top = () => m.querySelector('.dlg-head h2').getBoundingClientRect().top;
-          const hero = Math.round(m.querySelector('.shipit-ico-wrap').getBoundingClientRect().height);
           const t0 = top(); body.scrollTop = 400; body.dispatchEvent(new Event('scroll')); await frame();
-          const r = { hero, dy: Math.round(top() - t0), scrolled: body.scrollTop, under: card.hasAttribute('data-under-head'),
+          const r = { dy: Math.round(top() - t0), scrolled: body.scrollTop, under: card.hasAttribute('data-under-head'),
             bodyH: Math.round(body.clientHeight) };
           probe.remove(); body.scrollTop = 0; return r; })()`);
-        designChecks.push({ what: 'dialog: #shipit-modal at 1280x600 keeps its 48px hero and title pinned while the body scrolls',
-          ok: !pin.missing && pin.hero === 48 && pin.dy === 0 && pin.scrolled >= 400 && pin.under && pin.bodyH >= 120, got: pin });
+        designChecks.push({ what: 'dialog: #shipit-modal at 1280x600 keeps its title pinned while the body scrolls',
+          ok: !pin.missing && pin.dy === 0 && pin.scrolled >= 400 && pin.under && pin.bodyH >= 120, got: pin });
         await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
         await settle('dialog-pin restore');
       }

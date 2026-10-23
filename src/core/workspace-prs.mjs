@@ -37,7 +37,7 @@ export function memberPrTarget(state, memberKey) {
   if (!key) return { ok: false, error: 'memberKey is required for a workspace run' };
   const m = workspaceMembers(state).find((x) => x.memberKey === key);
   if (!m) return { ok: false, error: `unknown workspace member: ${key.slice(0, 80)}` };
-  if (m.workMode === 'folder') return { ok: false, error: `a Folder member has no branch to open a pull request from: ${m.memberKey}` };
+  if (m.workMode === 'folder') return { ok: false, error: `a Folder member has no branch to create a PR from: ${m.memberKey}` };
   return { ok: true, target: { repoDir: m.projectDir, feature: m.feature, source: m.source, memberKey: m.memberKey, memberName: m.name } };
 }
 

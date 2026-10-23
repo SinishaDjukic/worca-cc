@@ -1716,7 +1716,7 @@ test('History glance PR lookup pending: a busy placeholder morphs in place into 
       const wait = slot.querySelector('.rd-pr-wait');
       assert.equal(wait.textContent, 'Create PR', 'the placeholder holds the button\'s own words, so it is the button\'s width');
       assert.equal(wait.getAttribute('aria-hidden'), 'true');
-      assert.equal(slot.getAttribute('aria-label'), 'Checking the pull request…');
+      assert.equal(slot.getAttribute('aria-label'), 'Checking the PR…');
       assert.equal(slot.querySelector('button, a, [data-rd-cta]'), null, 'not clickable');
       const url = 'https://github.com/o/r/pull/7';
       const timers = useAppTimers(t);

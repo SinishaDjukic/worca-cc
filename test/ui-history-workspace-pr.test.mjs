@@ -278,7 +278,9 @@ test('dialog lists affected repos (ticked), says which were skipped, loads remot
   click(ctx.window, hdPr(ctx.window)); await settle(ctx.window, 6);
   const modal = modalOf(ctx.window);
   assert.equal(isOpen(ctx.window), true);
-  assert.equal(modal.querySelector('.shipit-summary').hidden, true);
+  assert.equal(modal.querySelector('.shipit-into').hidden, true, 'each repo row carries its own remotes and base');
+  assert.equal(modal.querySelector('#shipit-title-input').hidden, true, 'each repo\'s PR keeps the run title');
+  assert.equal(modal.querySelector('#shipit-pr-label').textContent, 'Description');
   const rows = [...modal.querySelectorAll('#shipit-repos .shipit-repo')];
   assert.deepEqual(rows.map((r) => r.dataset.memberKey), [API, WEB]);
   assert.ok(rows.every((r) => r.querySelector('.shipit-repo-pick').checked), 'default: all affected');
@@ -286,10 +288,12 @@ test('dialog lists affected repos (ticked), says which were skipped, loads remot
   assert.equal(rows[0].querySelector('.shipit-repo-stat').textContent, '2 files · +7 −1');
   const keys = remotesCalls(ctx).map((c) => new URL(c.url, 'http://x').searchParams.get('memberKey')).sort();
   assert.deepEqual(keys, [API, WEB]);
-  assert.equal(modal.querySelector('.shipit-ok').textContent, 'Open 2 pull requests');
+  assert.equal(modal.querySelector('.shipit-ok').textContent, 'Create 2 PRs');
+  assert.equal(modal.querySelector('.shipit-title').textContent, 'Create 2 PRs', 'the title equals the confirm');
   rows[1].querySelector('.shipit-repo-pick').checked = false;
   rows[1].querySelector('.shipit-repo-pick').dispatchEvent(new ctx.window.Event('change'));
-  assert.equal(modal.querySelector('.shipit-ok').textContent, 'Open 1 pull request');
+  assert.equal(modal.querySelector('.shipit-ok').textContent, 'Create PR');
+  assert.equal(modal.querySelector('.shipit-title').textContent, 'Create PR');
 });
 
 test('partial failure: per-repo error, success kept, retry re-POSTs ONLY the failed repo, cross-links', async () => {
@@ -314,9 +318,9 @@ test('partial failure: per-repo error, success kept, retry re-POSTs ONLY the fai
   const [apiRow, webRow] = modal.querySelectorAll('#shipit-repos .shipit-repo');
   assert.match(apiRow.querySelector('.shipit-repo-status').textContent, /View PR/);
   assert.equal(apiRow.querySelector('.shipit-repo-pick').disabled, true, 'an opened repo is done');
-  assert.match(webRow.querySelector('.shipit-repo-status').textContent, /Could not open PR: git push failed: denied/);
+  assert.match(webRow.querySelector('.shipit-repo-status').textContent, /Could not create PR: git push failed: denied/);
   assert.equal(modal.querySelector('.shipit-ok').textContent, 'Retry 1 failed');
-  assert.match(cardAlertOf(modal.querySelector('.shipit-card')).detail, /1 of 2 pull requests could not be opened/);
+  assert.match(cardAlertOf(modal.querySelector('.shipit-card')).detail, /1 of 2 PRs could not be created/);
   assert.equal(crossPosts(ctx).length, 1, 'cross-linked after the round that opened api');
   assert.equal(hdRepos(ctx.window).querySelector('.hd-pr-repo-link').href, 'https://x/api-00000001/pull/1', 'header in step');
 
@@ -653,4 +657,31 @@ test('#620: each repo line reads the newer check and a stale one is redone quiet
   const lines = [...modalOf(ctx.window).querySelectorAll('#shipit-repos .shipit-repo')]
     .map((r) => [r.dataset.memberKey, r.querySelector('.shipit-basecheck').hidden]);
   assert.deepEqual(lines, [[API, true], [WEB, true]], 'no conflict line: both repos are up to date now');
+});
+
+// A single-run open shows Try it first and binds it to that run's checkout. The workspace dialog
+// shows no Try it first, so its open must not inherit the earlier run's button or strip.
+test('workspace Create PR after a single-run open: no Try it first button or strip is left over', async () => {
+  const tryModel = { enabled: true, finished: true, workspace: false, estimate: null, stacks: [], stackStates: [], instances: [],
+    members: [{ projectKey: KEY, projectName: 'Alpha', branch: 'feat/log-ux', checkout: null, actions: [], builtins: [] }] };
+  const ctx = await bootShip({
+    rows: [row(), wsRow([member(API, 'api'), member(WEB, 'web')])],
+    arms: (url, opts) => (/\/api\/runs\/[^/]+\/actions\?/.test(url) && (opts.method || 'GET') === 'GET' ? ok(tryModel) : null),
+  });
+  await openDetail(ctx, detailHash);
+  click(ctx.window, hdPr(ctx.window)); await settle(ctx.window, 6);
+  const modal = modalOf(ctx.window);
+  assert.equal(modal.querySelector('.shipit-try-btn').hidden, false, 'the single run is not checked out: Try it first shows');
+  click(ctx.window, modal.querySelector('.shipit-cancel'));
+  assert.equal(isOpen(ctx.window), false);
+
+  ctx.box.detail = WS_DETAIL;
+  await openDetail(ctx, wksDetailHash);
+  click(ctx.window, hdPr(ctx.window)); await settle(ctx.window, 6);
+  assert.equal(isOpen(ctx.window), true);
+  const tryBtn = modal.querySelector('.shipit-try-btn');
+  assert.equal(tryBtn.hidden, true, 'the workspace footer has no Try it first');
+  assert.equal(tryBtn.onclick, null, 'and it no longer checks out the earlier run');
+  assert.equal(modal.querySelector('.shipit-try').hidden, true);
+  assert.equal(modal.querySelector('.shipit-try').children.length, 0);
 });

@@ -810,7 +810,7 @@ async function seedIssueRun({ url = ISSUE_URL, feature = 'worca-cc/issue-run' } 
     branch: { source: 'main', feature, branchKept: true } });
   return id;
 }
-const prAudit = (id) => getDb().prepare("SELECT text FROM pipeline_events WHERE pipeline_id = ? AND text LIKE 'Pull request %' ORDER BY id").all(id).map((r) => r.text);
+const prAudit = (id) => getDb().prepare("SELECT text FROM pipeline_events WHERE pipeline_id = ? AND text LIKE 'PR %' ORDER BY id").all(id).map((r) => r.text);
 const FORK = { pushRemote: 'origin', baseRemote: 'upstream' };   // base repo = up/repo
 
 test('POST /api/pr refuses a non-boolean draft with 400 before anything is pushed', async () => {
@@ -824,6 +824,39 @@ test('POST /api/pr refuses a non-boolean draft with 400 before anything is pushe
   }
 });
 
+test('POST /api/pr title: a custom title reaches gh pr create --title and leads an empty body', async () => {
+  const id = await seedIssueRun({ feature: 'worca-cc/titled-run' });
+  const seen = [];
+  stubForkRepo(seen);
+  const r = await post({ projectKey: betaKey, id, title: '  Fix booking timezone ', ...FORK });
+  assert.equal(r.status, 200, await r.clone().text());
+  const create = seen.find((c) => c[2] === 'create');
+  assert.equal(create[create.indexOf('--title') + 1], 'Fix booking timezone');
+  assert.match(create[create.indexOf('--body') + 1], /^Fix booking timezone/, 'no description: the custom title leads the body');
+});
+
+test('POST /api/pr refuses a non-string or over-long title with 400 before anything is pushed', async () => {
+  for (const [bad, error] of [[7, 'title must be a string'], [{}, 'title must be a string'], ['x'.repeat(257), 'title must be at most 256 characters']]) {
+    const seen = [];
+    stubForkRepo(seen);
+    const r = await post({ projectKey: betaKey, id: betaId, title: bad });
+    assert.equal(r.status, 400);
+    assert.deepEqual(await r.json(), { error });
+    assert.ok(!seen.some((c) => c[1] === 'push'), 'nothing was pushed');
+  }
+});
+
+test('POST /api/pr title: blank or null keeps the run title', async () => {
+  for (const title of ['   ', null]) {
+    const id = await seedIssueRun({ feature: `worca-cc/blank-title-${title === null ? 'n' : 's'}` });
+    const seen = [];
+    stubForkRepo(seen);
+    await post({ projectKey: betaKey, id, title, ...FORK });
+    const create = seen.find((c) => c[2] === 'create');
+    assert.equal(create[create.indexOf('--title') + 1], 'Issue feature');
+  }
+});
+
 test('POST /api/pr draft: true reaches gh pr create --draft, says (draft) in the audit and the response', async () => {
   const id = await seedIssueRun({ feature: 'worca-cc/draft-run' });
   const seen = [];
@@ -833,7 +866,7 @@ test('POST /api/pr draft: true reaches gh pr create --draft, says (draft) in the
   const j = await r.json();
   assert.equal(j.draft, true);
   assert.equal(seen.find((c) => c[2] === 'create').at(-1), '--draft');
-  assert.deepEqual(prAudit(id), ['Pull request opened (draft): https://github.com/up/repo/pull/7']);
+  assert.deepEqual(prAudit(id), ['PR created (draft): https://github.com/up/repo/pull/7']);
 });
 
 test('POST /api/pr draft: false or absent -> no --draft, draft:false, the audit line unchanged', async () => {
@@ -844,7 +877,7 @@ test('POST /api/pr draft: false or absent -> no --draft, draft:false, the audit 
     const j = await (await post({ projectKey: betaKey, id, ...FORK, ...extra })).json();
     assert.equal(j.draft, false);
     assert.ok(!seen.find((c) => c[2] === 'create').includes('--draft'));
-    assert.deepEqual(prAudit(id), ['Pull request opened: https://github.com/up/repo/pull/7']);
+    assert.deepEqual(prAudit(id), ['PR created: https://github.com/up/repo/pull/7']);
   }
 });
 
@@ -862,7 +895,7 @@ test('POST /api/pr draft: true on an existing PR changes nothing: draft:false, "
   const j = await (await post({ projectKey: betaKey, id, draft: true, ...FORK })).json();
   assert.equal(j.existed, true);
   assert.equal(j.draft, false);
-  assert.deepEqual(prAudit(id), ['Pull request linked: https://github.com/up/repo/pull/3']);
+  assert.deepEqual(prAudit(id), ['PR linked: https://github.com/up/repo/pull/3']);
 });
 
 test('POST /api/pr body order: description -> Closes line -> attribution footer', async () => {

@@ -287,7 +287,7 @@ Worca's small helper calls — the title and the Auto workflow classifier — re
 too; a classifier that still fails falls back to the default workflow instead of
 failing the run. The Models page picks the model for each helper call — *Title model*,
 *Auto workflow model* (`WORCA_AUTO_MODEL` overrides it), *PR description model*
-(the Create PR dialog's Generate with AI, which Settings › Runs › Pull requests can run each
+(the Create PR dialog's Generate, which Settings › Runs › Pull requests can run each
 time the dialog opens; Sonnet-class by default), *Agent generation*
 (Workflows › Agents › + › Generate; a model and an effort, the Claude tab only, since agent
 generation always runs on Claude; unset, or a model since removed from the catalog, uses

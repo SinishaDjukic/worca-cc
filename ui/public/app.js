@@ -98,7 +98,7 @@ import { workModeOf, isGitRun, isFolderRun, isNoProjectRun, NO_PROJECT_KEY, proj
 import { changesCounts, filesWord, renderCountsNode, applyBarModel, paintApplyBar, runChangesUrl, openApplyDialog, discardChanges, CHANGE_SIGN, CHANGE_WORD } from './folder-changes.mjs';
 import { runProgress, progressWidth } from '../../src/shared/run-progress.mjs';
 import { DEFAULT_HOME_PINS, isPinned, pinWorkflow, unpinWorkflow } from '../../src/shared/home-pins.mjs';
-import { CREATE_PR_LABEL, doneStatusWord } from './ship-words.mjs';
+import { CREATE_PR_LABEL, CREATE_PR_FAILED, CREATING_PR, VIEW_PR_LABEL, VIEW_PRS_LABEL, createPrLabel, doneStatusWord } from './ship-words.mjs';
 import { worktreeNoticeModel, worktreeRowState, retainedCommands, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome, checkoutRowValue, memberLabel } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
 import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, RECENT_PAGE, groupRow, memberPrsOf, prChip, memberCostUsd, whenLabel } from './runs-list.mjs';
@@ -124,7 +124,7 @@ import {
   renderMemoryHistory, MEMORY_NAME_HELP, formatWhen, parseSnapshotId, patchRunRefs,
 } from './memory-view.mjs';
 import { createScriptsController, nextCopyKey } from './scripts-view.mjs';
-import { renderRunPill, renderOverviewStrip, renderShipItStrip, renderRunningActionRows, historyActionBadges, createActionsController, releaseCheckout } from './actions-view.mjs';
+import { renderRunPill, renderOverviewStrip, renderShipItStrip, shipItTryState, renderRunningActionRows, historyActionBadges, createActionsController, releaseCheckout } from './actions-view.mjs';
 import { editorFieldEl, renderProjectActionsEditor, renderStackEditor } from './actions-config-view.mjs';
 import { createMcpView, mountProjectMcp, paintMcpResolution, paintAskMcpBlock, setMcpStripRenderer } from './mcp-view.mjs';
 import { createAskPanel } from './ask-panel.mjs';
@@ -17941,29 +17941,56 @@ function paintHistActionBadges() {
   }
 }
 
-// ---- Ship It "Try it first" ----
+// ---- Create PR "Try it first": the footer button, then the strip once checked out ----
 // Follows loadShipItRemotes: every await re-checks the generation, and nothing here ever
 // blocks .shipit-ok.
 async function paintShipItTry(modal, record, gen, isClosed) {
   const box = modal.querySelector('.shipit-try');
-  if (!box) return;
-  box.hidden = true;
-  box.replaceChildren();
+  const tryBtn = modal.querySelector('.shipit-try-btn');
+  if (!box || !tryBtn) return;
+  box.hidden = true; box.replaceChildren();
+  tryBtn.hidden = true; tryBtn.onclick = null;
+  let tryFocused = false;   // set on click: a disabled button can drop focus, so read it before disabling
+  let checkingOut = false;  // an actions-changed repaint while the POST is out must not re-enable the button
+  // Focus never falls to <body>: back on Try it first when it is still shown, else on Create PR.
+  const settleTryFocus = () => {
+    if (!tryFocused) return;
+    tryFocused = false;
+    (tryBtn.hidden ? modal.querySelector('.shipit-ok') : tryBtn).focus();
+  };
   const scope = runActionQuery(record.projectDir, record).toString();
   const call = (method, tail, body) => actionsCall(method, actionsRunUrl(record.id, tail, scope), body);
   const repaint = async () => {
     if (gen !== shipItRemotesGen || isClosed()) return;   // a closed dialog stops following actions-changed
     const r = await call('GET', '/actions');
     if (gen !== shipItRemotesGen || isClosed()) return;
-    if (!r.ok) { box.hidden = true; box.replaceChildren(); return; }
+    if (!r.ok) { box.hidden = true; box.replaceChildren(); tryBtn.hidden = true; settleTryFocus(); return; }
     actionsModelCache.set(record.id, r.data);
     paintActionsStrips(record.id);
-    const node = renderShipItStrip(r.data, { doc: document, handlers });
+    const state = shipItTryState(r.data);
+    tryBtn.hidden = state !== 'checkout';
+    tryBtn.disabled = checkingOut;
+    tryBtn.onclick = state === 'checkout'
+      ? () => {
+        tryFocused = document.activeElement === tryBtn;
+        tryBtn.disabled = true;
+        handlers.onCheckout(r.data.workspace ? undefined : [r.data.members.find((m) => m.branch).projectKey]);
+      }
+      : null;
+    const node = state === 'strip' ? renderShipItStrip(r.data, { doc: document, handlers }) : null;
     box.replaceChildren(...(node ? [node] : []));
     box.hidden = !node;
+    settleTryFocus();
   };
   const handlers = {
-    onCheckout: async (members) => { await call('POST', '/checkout', members ? { members } : {}); await repaint(); },
+    // A failed checkout says so on the card; repaint() re-enables (or hides) the button either way.
+    onCheckout: async (members) => {
+      checkingOut = true;
+      const r = await call('POST', '/checkout', members ? { members } : {});
+      checkingOut = false;
+      cardAlert(modal.querySelector('.shipit-card'), r.ok ? null : { title: 'Not checked out', detail: r.data?.error || 'The checkout failed.' });
+      await repaint();
+    },
     onStart: async (member, actionId) => { await call('POST', `/actions/${encodeURIComponent(actionId)}/start`, { member }); await repaint(); },
     onBuiltin: async (member, key) => { await call('POST', `/builtins/${encodeURIComponent(key)}`, { member }); },
     onStop: async (member, actionId) => { await call('POST', `/actions/${encodeURIComponent(actionId)}/stop`, { member }); await repaint(); },
@@ -22075,7 +22102,7 @@ function shellSingleQuote(value) {
 // text (git stderr and branch names are data).
 function mergeBackText(p) {
   const failed = (Array.isArray(p?.mergeBack?.members) ? p.mergeBack.members : []).filter((m) => m && m.merged === false);
-  const out = ['Not merged back into the source branch', 'The run’s work stayed on its own branch. To land it, open a pull request or merge it by hand:'];
+  const out = ['Not merged back into the source branch', 'The run’s work stayed on its own branch. To land it, create a PR or merge it by hand:'];
   for (const m of failed) {
     // A person reads the project's name, not its store key (<name>-<8 hex>).
     const name = m.name || (p.target !== 'workspace' && p.projectName)
@@ -22112,7 +22139,7 @@ function mergeBackRecipe(m, p) {
     case 'dirty':
       return { lead: `Commit or stash your changes in ${m.source} first (or move the file in the way), then:`, cmd: inSource };
     case 'diverged':
-      return { lead: `${m.source} has new commits, so it needs a real merge (or open a pull request instead):`, cmd: `${cd}git switch ${src} && git merge ${br} && ${del}` };
+      return { lead: `${m.source} has new commits, so it needs a real merge (or create a PR instead):`, cmd: `${cd}git switch ${src} && git merge ${br} && ${del}` };
     case 'not-done':
       return { lead: 'The run did not finish. Check its work in Diff before you merge it:', cmd: inSource };
     default:
@@ -23226,6 +23253,19 @@ function paintHistStatusIcon(host, p) {
 let shipItClose = null;
 function closeShipItModal() { if (shipItClose) shipItClose(); }
 
+/** The Create PR dialog's title, its aria-label and its confirm say the same words (docs/design-system.md, PR controls). */
+function setShipItLabel(modal, label) {
+  modal.setAttribute('aria-label', label);
+  modal.querySelector('.shipit-title').textContent = label;
+  setCtaContent(modal.querySelector('.shipit-ok'), 'pr-create', label);
+}
+
+/** Single run: Into hides when it holds nothing (no base name, no branch pick, no remotes). */
+function paintShipItInto(modal) {
+  const q = (s) => modal.querySelector(s);
+  q('.shipit-into').hidden = !q('.shipit-base').textContent && q('.shipit-base-wrap').hidden && q('.shipit-remotes').hidden;
+}
+
 // Per-open generation for the remotes fetch. Cancel stays live while the remotes
 // load, so a response can land after the modal was closed and re-opened for a NEWER
 // generation; it must not repopulate selects it does not own. Same guard as
@@ -23268,7 +23308,7 @@ function fillShipItBaseSelect(select, chain, remoteName, remoteBranches, fallbac
   select.value = offered(keep) ? keep : (offered(fallback) ? fallback : (select.options[0]?.value || ''));
 }
 
-// The base label names the base remote's PR host ("Open PR in (Azure DevOps)"). The hint
+// The Into label names the base remote's PR host ("Into (Azure DevOps)"). The hint
 // under the selects says why that host cannot open the PR (no credential, or an Azure
 // cross-repo PR), else names the cross-repo head when the two remotes point at different
 // repositories ("me:branch → up/repo main"); empty otherwise. Pure, so the single modal
@@ -23284,15 +23324,15 @@ function crossRepoHint(remotes, pushName, baseName, branch, baseBranch) {
 
 function paintShipItRemotesHint(modal, remotes, record) {
   const base = remotes.find((r) => r.name === modal.querySelector('.shipit-base-remote').value);
-  const label = modal.querySelector('label[for="shipit-base-remote"]');
-  if (label) label.textContent = base && base.prHost ? `Open PR in (${base.prHost})` : 'Open PR in';
+  const label = modal.querySelector('#shipit-into-label');
+  if (label) label.textContent = base && base.prHost ? `Into (${base.prHost})` : 'Into';
   modal.querySelector('.shipit-remotes-hint').textContent = crossRepoHint(remotes,
     modal.querySelector('.shipit-push-remote').value, modal.querySelector('.shipit-base-remote').value,
     record.branch, shipItChosenBase(modal, record));
 }
 
 function setShipItRemotesDisabled(modal, on) {
-  for (const s of modal.querySelectorAll('.shipit-remotes select, .shipit-base-branch')) s.disabled = on;
+  for (const s of modal.querySelectorAll('.shipit-into select')) s.disabled = on;
 }
 
 // s4: Ship it's Watch PR starts from the project's 'Watch new pull requests' (cascade id watchNewPrs, default off).
@@ -23308,7 +23348,7 @@ async function shipItWatchDefault(projectKey) {
 }
 
 // Load the project's remotes into the two selects, and the base-branch choices into
-// the summary's pick. `isClosed` reports whether this generation's modal was already
+// the Into zone's pick. `isClosed` reports whether this generation's modal was already
 // torn down. On any failure (network, non-2xx, or a body without a `remotes` array —
 // safeJson answers `{}` for an unparseable body and the UI test harness answers
 // un-armed URLs with a generic config payload) the block stays hidden and the POST
@@ -23327,6 +23367,8 @@ async function loadShipItRemotes(modal, record, gen, isClosed) {
   branchWrap.hidden = true;
   branchSel.innerHTML = '';
   setShipItRemotesDisabled(modal, true);
+  modal.querySelector('#shipit-into-label').textContent = 'Into';   // a previous run's host suffix never carries over
+  paintShipItInto(modal);                                            // nothing loaded yet: an empty Into hides
   modal.querySelector('.shipit-remotes-hint').textContent = '';
   const closes = modal.querySelector('.shipit-closes');
   closes.hidden = true; closes.textContent = '';
@@ -23356,8 +23398,14 @@ async function loadShipItRemotes(modal, record, gen, isClosed) {
       const d = data.defaults || {};
       fillRemoteSelect(pushSel, remotes, d.pushRemote);
       fillRemoteSelect(baseSel, remotes, d.baseRemote);
-      box.hidden = false;
     }
+    // Hidden still means "no remotes loaded" (the POST sends the remotes whenever it shows); one remote shows only
+    // the branch, so the remote fields inside it show from two up.
+    box.hidden = !remotes.length;
+    const many = remotes.length > 1;
+    modal.querySelector('.shipit-base-remote-field').hidden = !many;
+    modal.querySelector('.shipit-push-field').hidden = !many;
+    modal.querySelector('.shipit-into-row').dataset.cols = many ? '2' : '1';
     // The base remote's branches come with the list (one per remote), so a switch
     // of the base remote re-lists them without a fetch of its own.
     const byRemote = data.branches && typeof data.branches === 'object' ? data.branches : {};
@@ -23367,8 +23415,8 @@ async function loadShipItRemotes(modal, record, gen, isClosed) {
       paintBranches();
       branchWrap.hidden = false;
       modal.querySelector('.shipit-base').textContent = '';
-      modal.querySelector('.shipit-summary').hidden = false;
     }
+    paintShipItInto(modal);
     const paintBaseCheck = () => modal._paintShipBase?.();   // #620: the pick may name another base now
     paintBaseCheck();
     // Confirm may already have been pressed (okBtn disabled = POST in flight, sent
@@ -23419,13 +23467,13 @@ function resetShipItDesc(modal) {
   err.hidden = true; err.textContent = '';
 }
 
-// Generate with AI in flight: the button is disabled and says so, Stop shows, the
+// Generate in flight: the button is disabled and says so, Stop shows, the
 // textarea is read-only so nothing typed meanwhile is overwritten by the draft, and
 // the field wears the shimmer veil (.is-generating) that also swallows clicks.
 function setShipItGenerating(modal, on) {
   const btn = modal.querySelector('.shipit-generate');
   btn.disabled = on;
-  btn.textContent = on ? 'Generating…' : 'Generate with AI';
+  btn.textContent = on ? 'Generating…' : 'Generate';
   modal.querySelector('.shipit-generate-stop').hidden = !on;
   modal.querySelector('.shipit-desc-input').readOnly = on;
   const field = modal.querySelector('.shipit-desc-field');
@@ -23447,7 +23495,7 @@ function setShipItGenerating(modal, on) {
 async function openShipItFor(ref = {}, link = null) {
   const id = ref && (ref.pipelineId || ref.id);
   const projectKey = ref && ref.workspaceId ? `workspaces/${ref.workspaceId}` : ref && ref.projectKey;
-  if (!id || !projectKey) return { opened: false, error: 'This run has no project to open a pull request in.' };
+  if (!id || !projectKey) return { opened: false, error: 'This run has no project to create a PR in.' };
   const rowOf = () => (state.historyAll || []).find((r) => r && r.id === id && r.projectKey === projectKey) || null;
   // Off the Runs views no History refresh runs (pipelines-changed and finishRun reload only there), so a row loaded while
   // the run ran stays stale on the Chat page — a workspace row's members read affected:false until the run ends. Reload
@@ -23474,7 +23522,7 @@ async function openShipItFor(ref = {}, link = null) {
     data = await safeJson(res);
     if (!res.ok || !data || !data.state) throw new Error((data && data.error) || `HTTP ${res.status}`);
   } catch (e) { return { opened: false, error: `Could not load this run: ${e.message}` }; }
-  if (!histCanShip(record)) return { opened: false, error: prLive(record.pr) ? 'This run already has a pull request.' : 'No pull request can be opened for this run.' };
+  if (!histCanShip(record)) return { opened: false, error: prLive(record.pr) ? 'This run already has a pull request.' : 'No PR can be created for this run.' };
   const askLink = link && link.askThreadId && link.askCardId ? { askThreadId: link.askThreadId, askCardId: link.askCardId } : null;
   return new Promise((resolve) => {
     const shown = openShipItModal(record, data, { link: askLink, onClose: (out) => resolve(out) });
@@ -23509,18 +23557,12 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
   if (record.target === 'workspace') return openShipItWsModal(record, data, { link, onClose });
   modal.querySelector('#shipit-repos').hidden = true;   // a previous workspace open may have shown it
   const q = (sel) => modal.querySelector(sel);
-  q('.shipit-sub').textContent =
-    `This opens a pull request for ${record.title || record.id} and puts it up for review.`;
-  const sums = data && data.results && data.results.summary;
-  // 'D' rows already count inside filesChanged — do not add filesDeleted.
-  const nFiles = sums ? (sums.filesNew || 0) + (sums.filesChanged || 0) : null;
-  const added = sums ? sums.linesAdded : (record.survived ? record.added : null);
-  const removed = sums ? sums.linesRemoved : (record.survived ? record.removed : null);
-  q('.shipit-files').textContent = nFiles != null ? `${nFiles} file${nFiles === 1 ? '' : 's'}` : '';
-  q('.shipit-add').textContent = added != null ? `+${added}` : '';
-  q('.shipit-del').textContent = removed != null ? `−${removed}` : '';   // U+2212 — a COUNT
-  q('.shipit-branch').textContent = record.branch || '';
+  // A previous workspace open hid Into and the title field and relabelled the PR zone.
+  q('.shipit-into').hidden = false;
+  q('.shipit-title-input').hidden = false;
+  q('#shipit-pr-label').textContent = 'Title and description';
   q('.shipit-base').textContent = record.sourceBranch || '';
+  paintShipItInto(modal);
   // #620: the local conflict check before a PR exists (the forge pill takes over once one does). Re-run by
   // loadShipItRemotes when the base pick appears or changes. The newer of the detail's and the row's check, as the
   // History detail reads it; one that may be out of date is redone quietly (shipItBaseRecheck).
@@ -23535,19 +23577,17 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
     const md = baseCheckModel(rec);
     el.className = `hint shipit-basecheck tone-${md.tone}`;
     el.textContent = rec.status === 'conflicts'
-      ? `${md.label} with ${rec.base} (${md.when}). Resolve them first, or open the PR anyway.`
+      ? `${md.label} with ${rec.base} (${md.when}). Resolve them first, or create the PR anyway.`
       : `${md.label} (${md.when}). Update branch first to test against it.`;
   };
   modal._paintShipBase = paintShipBase;
   paintShipBase();
   shipItBaseRecheck(modal, record, data, [{ rec: shipBaseRec(), published: shipBranch().published }], paintShipBase);
-  // Spec §5.10: omit the whole summary line when there is nothing to summarize.
-  // (No `&& !record.branch` term: histPrEligible gates BOTH doors into this modal
-  // and requires `branch`, so that clause could never be false.)
-  q('.shipit-summary').hidden = nFiles == null && added == null;
   const card = q('.shipit-actions').parentElement;
   cardAlert(card, null);
   resetShipItDesc(modal);
+  const titleIn = q('.shipit-title-input');
+  titleIn.value = record.title || '';
   q('.shipit-draft-input').checked = false;          // D1: draft is opt-in per ship, never remembered
   // s4: Watch PR starts unchecked and turns on when the project's setting answers true (below, after the guard).
   // A pick the user makes first wins.
@@ -23562,7 +23602,7 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
   modal._releaseRow = relRow;
   const okBtn = q('.shipit-ok');
   const cancelBtn = q('.shipit-cancel');
-  okBtn.disabled = false; okBtn.textContent = 'Create pull request';
+  okBtn.disabled = false; setShipItLabel(modal, CREATE_PR_LABEL);
   cancelBtn.disabled = false;                       // a previous open may have parked it mid-POST
   modal.classList.remove('hidden');
   okBtn.focus();
@@ -23578,7 +23618,7 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
   // open stacks another `onOk`, i.e. one click = N POSTs.
   let closed = false;
   let posting = false;                              // the PR POST is out
-  // The in-flight Generate with AI request (null when idle). Stop and done() abort
+  // The in-flight Generate request (null when idle). Stop and done() abort
   // it; its handler acts only while it is still THIS open's current request.
   let genCtl = null;
   let shipped = null;                                // worca Chat P2: {opened:true, url?} once a PR opened
@@ -23618,7 +23658,7 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
     if (!auto && descInput.value.trim()) {
       const replace = await confirmModal({
         title: 'Replace the description?',
-        message: 'Generate with AI replaces what you have written in the PR description.',
+        message: 'Generate replaces what you have written in the description.',
         confirmLabel: 'Replace',
       });
       if (!replace || closed || genCtl) return;
@@ -23666,7 +23706,7 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
     okBtn.disabled = true;
     posting = true;
     cancelBtn.disabled = true;
-    okBtn.textContent = 'Opening…';
+    setCtaContent(okBtn, 'pr-create', CREATING_PR);
     setShipItRemotesDisabled(modal, true);
     cardAlert(card, null);
     const payload = { projectDir: record.projectDir || null, projectKey: record.projectKey, id: record.id };
@@ -23684,6 +23724,9 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
     if (q('.shipit-draft-input').checked) payload.draft = true;
     if (q('.shipit-watch-input').checked) payload.watch = true;
     if (rel.value) payload.release = rel.value;      // a collapsed row sends nothing
+    // The title only when it was edited: an untouched field keeps the payload (and the PR) as before.
+    const title = q('.shipit-title-input').value.trim();
+    if (title && title !== String(record.title || '').trim()) payload.title = title;
     try {
       const res = await fetch('/api/pr', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -23727,7 +23770,7 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
       if (closed) return;
       okBtn.disabled = false;
       cancelBtn.disabled = false;
-      okBtn.textContent = 'Create pull request';
+      setShipItLabel(modal, CREATE_PR_LABEL);
       if (!q('.shipit-remotes').hidden || !q('.shipit-base-wrap').hidden) setShipItRemotesDisabled(modal, false);
       cardAlert(card, { title: 'Not shipped', detail: e2.message });
     }
@@ -23788,7 +23831,7 @@ function paintShipItRepoBase(row, rec) {
   if (row.baseNote.hidden) return;
   const md = baseCheckModel(rec);
   row.baseNote.className = `hint shipit-basecheck tone-${md.tone}`;
-  row.baseNote.textContent = `${md.label} with ${rec.base}${md.when ? ` (${md.when})` : ''}. Resolve them first, or open the PR anyway.`;
+  row.baseNote.textContent = `${md.label} with ${rec.base}${md.when ? ` (${md.when})` : ''}. Resolve them first, or create the PR anyway.`;
 }
 
 // --- Ship-it, workspace mode: one row per affected member repo --------------
@@ -23810,7 +23853,7 @@ function buildShipItRepoRow(member, summary, canShip) {
     row.pick.type = 'checkbox';
     row.pick.className = 'shipit-repo-pick';
     row.pick.checked = true;                                   // default: every affected repo
-    row.pick.setAttribute('aria-label', `Open a pull request in ${member.name || member.memberKey}`);
+    row.pick.setAttribute('aria-label', `Create a PR in ${member.name || member.memberKey}`);
     head.appendChild(row.pick);
   }
   const name = document.createElement('b');
@@ -23831,7 +23874,7 @@ function buildShipItRepoRow(member, summary, canShip) {
   if (!canShip) {                                               // shown for context, never offered
     row.done = true;
     if (prLive(member.pr)) setShipItRowOpened(row, member.pr);
-    else setShipItRowStatus(row, `${wsMemberNote(member)}. No PR can be opened.`, '');   // the exact cause
+    else setShipItRowStatus(row, `${wsMemberNote(member)}. No PR can be created.`, '');   // the exact cause
     el.appendChild(row.statusEl);
     return row;
   }
@@ -23875,8 +23918,8 @@ function buildShipItRepoRow(member, summary, canShip) {
     row.remotesBox.appendChild(f);
     return sel;
   };
-  row.pushSel = field('Push branch to', 'shipit-repo-push-remote');
-  row.baseSel = field('Open PR in', 'shipit-repo-base-remote');
+  row.pushSel = field('Push remote', 'shipit-repo-push-remote');
+  row.baseSel = field('Into', 'shipit-repo-base-remote');
   row.hint = document.createElement('small');
   row.hint.className = 'shipit-remotes-hint hint';               // :empty hides it (style.css)
   row.remotesBox.appendChild(row.hint);
@@ -23905,7 +23948,7 @@ function prRepoLink(pr) {
   const a = document.createElement('a');
   a.className = merged ? 'hd-pr-repo-link merged' : 'hd-pr-repo-link';
   a.href = pr.url; a.target = '_blank'; a.rel = 'noopener';
-  a.append(icon(document, merged ? 'merge' : 'pull-request', 14), 'View PR');
+  a.append(icon(document, merged ? 'merge' : 'pull-request', 14), VIEW_PR_LABEL);
   return a;
 }
 
@@ -23962,11 +24005,11 @@ async function crossLinkWsPrs(record) {
       body: JSON.stringify({ projectKey: record.projectKey, id: record.id }),
     });
     const dd = await safeJson(res);
-    if (!res.ok) return `The pull requests were opened but could not be cross-linked: ${(dd && dd.error) || `HTTP ${res.status}`}`;
+    if (!res.ok) return `The pull requests were created but could not be cross-linked: ${(dd && dd.error) || `HTTP ${res.status}`}`;
     const failed = Array.isArray(dd.failed) ? dd.failed : [];
     return failed.length ? `Could not cross-link ${failed.length} pull request${failed.length === 1 ? '' : 's'} (${failed.map((f) => f.memberKey).join(', ')}).` : '';
   } catch (e) {
-    return `The pull requests were opened but could not be cross-linked: ${e.message}`;
+    return `The pull requests were created but could not be cross-linked: ${e.message}`;
   }
 }
 
@@ -24020,6 +24063,11 @@ function openShipItWsModal(record, data, { link = null, onClose = null } = {}) {
   const ws = q('.shipit-release');
   if (ws) { ws.replaceChildren(); ws.hidden = true; }
   modal._releaseRow = null;
+  // Try it first is single-run only: drop the button and strip an earlier single-run open painted.
+  const tryBox = q('.shipit-try');
+  if (tryBox) { tryBox.hidden = true; tryBox.replaceChildren(); }
+  const tryBtn = q('.shipit-try-btn');
+  if (tryBtn) { tryBtn.hidden = true; tryBtn.onclick = null; }
   const list = q('#shipit-repos');
   const members = histWsMembers(record);
   const shippable = new Set(histWsShippable(record).map((m) => m.memberKey));
@@ -24027,10 +24075,10 @@ function openShipItWsModal(record, data, { link = null, onClose = null } = {}) {
   // A changed Folder member (P5) has no branch to ship: named on its own line, never a repo row (no remotes read).
   const folderSkipped = members.filter((m) => m.workMode === 'folder' && m.affected);
   const perProject = (data && data.results && data.results.perProject) || {};
-  q('.shipit-sub').textContent =
-    `This opens a pull request in each repository ${record.title || record.id} changed and puts them up for review.`;
-  q('.shipit-summary').hidden = true;                 // the single-repo summary/remotes stay out of the way
-  q('.shipit-remotes').hidden = true;
+  // Each repo row carries its own remotes and base, and each repo's PR keeps the run title: no Into, no title field.
+  q('.shipit-into').hidden = true;
+  q('.shipit-title-input').hidden = true;
+  q('#shipit-pr-label').textContent = 'Description';
   q('.shipit-basecheck').hidden = true;               // #620: each repo row carries its own line instead
   modal._paintShipBase = null;
   list.replaceChildren();
@@ -24074,9 +24122,9 @@ function openShipItWsModal(record, data, { link = null, onClose = null } = {}) {
     if (n === 0 && openedHere) { okBtn.disabled = false; okBtn.textContent = 'Close'; return; }
     okBtn.disabled = n === 0;
     // "Retry" only when the pick is exactly failed rows: re-ticking a repo that was never
-    // tried (the user unticked it before the first round) makes it a plain "Open".
-    okBtn.textContent = n > 0 && sel.every((r) => r.failed)
-      ? `Retry ${n} failed` : `Open ${n} pull request${n === 1 ? '' : 's'}`;
+    // tried (the user unticked it before the first round) makes it a plain Create. The title keeps the last Create label.
+    if (n > 0 && sel.every((r) => r.failed)) { setCtaContent(okBtn, 'pr-create', `Retry ${n} failed`); return; }
+    setShipItLabel(modal, createPrLabel(Math.max(n, 1)));
   };
   for (const r of rows) if (r.pick) r.pick.onchange = paintOk;
   paintOk();
@@ -24116,14 +24164,14 @@ function openShipItWsModal(record, data, { link = null, onClose = null } = {}) {
     const watch = q('.shipit-watch-input').checked;
     if (!batch.length) { done(); return; }             // the "Close" state after a finished batch
     okBtn.disabled = true;
-    okBtn.textContent = 'Opening…';
+    setCtaContent(okBtn, 'pr-create', CREATING_PR);
     cardAlert(card, null);
     for (const r of rows) { r.busy = true; setShipItRowDisabled(r, true); }
     const opened = [];
     const failedRows = [];
     for (const r of batch) {
       if (closed) break;
-      setShipItRowStatus(r, 'Opening…', '');
+      setShipItRowStatus(r, 'Creating…', '');
       try {
         const res = await fetch('/api/pr', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -24143,7 +24191,7 @@ function openShipItWsModal(record, data, { link = null, onClose = null } = {}) {
       } catch (e2) {
         r.failed = true;
         failedRows.push(r);
-        if (!closed) setShipItRowStatus(r, `Could not open PR: ${e2.message}`, 'err');
+        if (!closed) setShipItRowStatus(r, `${CREATE_PR_FAILED}: ${e2.message}`, 'err');
       }
     }
     // Deliberately NOT guarded on `closed`: a cancel mid-batch stops further POSTs, but
@@ -24157,7 +24205,7 @@ function openShipItWsModal(record, data, { link = null, onClose = null } = {}) {
     if (!failedRows.length && !note) { done(); return; }
     const msgs = [];
     if (failedRows.length) {
-      msgs.push(`${failedRows.length} of ${batch.length} pull request${batch.length === 1 ? '' : 's'} could not be opened. ` +
+      msgs.push(`${failedRows.length} of ${batch.length} PR${batch.length === 1 ? '' : 's'} could not be created. ` +
         'Opened ones stay open. Fix the cause and retry the rest.');
     }
     if (note) msgs.push(note);
@@ -24703,7 +24751,7 @@ function paintHdPr(screen, record, data) {
   if (pr && (prState === 'OPEN' || prState === 'MERGED') && pr.url) {
     link.hidden = false;
     link.href = pr.url;
-    setCtaContent(link, prState === 'MERGED' ? 'merge' : 'pull-request', 'View PR');
+    setCtaContent(link, prState === 'MERGED' ? 'merge' : 'pull-request', VIEW_PR_LABEL);
     link.classList.toggle('merged', prState === 'MERGED');
     return;
   }
@@ -30635,7 +30683,7 @@ function runAction(ref0, id, btn = null, m = null) {
       const shipRef = { ...ref, pipelineId: pid, projectKey: ref.projectKey || (hist && hist.projectKey) || '',
         workspaceId: ref.workspaceId || (r && r.workspaceId) || null };
       return Promise.resolve(chatRunControls.openShipIt(shipRef)).then((res) => {
-        if (res && res.error) notify({ tone: 'err', title: 'Could not open Create PR', detail: res.error });
+        if (res && res.error) notify({ tone: 'err', title: CREATE_PR_FAILED, detail: res.error });
       });
     }
     case 'open-pr': { const url = m && m.pr && m.pr.url; if (url) window.open(url, '_blank', 'noopener'); return undefined; }
@@ -33159,7 +33207,7 @@ function runsRowMenuItems(r, more) {
     ...(adv ? [{ label: 'Delete', disabled: !m.delete.count, title: m.delete.title, onSelect: () => runBulkAction('delete', [t]) }] : []),
     ...(adv && r.kind !== 'chain' && r.pipelineId && !g ? [{ sep: true }, { label: 'Add to group…', onSelect: () => openAddToGroup(more, r) }] : []),
     ...(adv && adhoc ? [{ sep: true }, { label: 'Remove from group', onSelect: () => removeRunFromGroup(r) }] : []),
-    ...(prUrl ? [{ label: 'View PR', onSelect: () => window.open(prUrl, '_blank', 'noopener') }] : []),
+    ...(prUrl ? [{ label: VIEW_PR_LABEL, onSelect: () => window.open(prUrl, '_blank', 'noopener') }] : []),
     ...(r.groupKind === 'feature' ? [{ label: 'Open feature', onSelect: () => { location.hash = r.href; } }] : []),
   ];
 }
@@ -35207,8 +35255,8 @@ const PR_CTA_OUT_MS = 380;
 const PR_CTA_LOOK = {
   create: { look: '', icon: 'pr-create', label: CREATE_PR_LABEL },
   push: { look: '', icon: 'arrow-up', label: '' },   // a run on its source branch: the caller's label and title (paintHdPush)
-  view: { look: 'pr-view', icon: 'pull-request', label: 'View PR' },
-  merged: { look: 'pr-merged', icon: 'merge', label: 'View PR' },
+  view: { look: 'pr-view', icon: 'pull-request', label: VIEW_PR_LABEL },
+  merged: { look: 'pr-merged', icon: 'merge', label: VIEW_PR_LABEL },
 };
 function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '', label: own = '', title = '', disabled = false, menu = false, ws = false } = {}) {
   if (!slot) return;
@@ -35235,7 +35283,7 @@ function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '',
     slot.replaceChildren(spin, wait);
     slot.classList.add('is-pending');
     slot.setAttribute('aria-busy', 'true');
-    slot.setAttribute('aria-label', 'Checking the pull request…');
+    slot.setAttribute('aria-label', 'Checking the PR…');
     slot.hidden = false;
     return;
   }
@@ -35266,13 +35314,13 @@ function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '',
     caret.className = 'btn btn-icon rd-pr-more';     // joined by .btn-split > .btn + .btn (style.css)
     caret.setAttribute('aria-haspopup', 'menu');
     caret.setAttribute('aria-expanded', 'false');
-    caret.setAttribute('aria-label', ws ? 'Pull requests' : 'Pull request menu');
+    caret.setAttribute('aria-label', ws ? 'PRs' : 'PR menu');
     caret.append(icon(document, 'chevron-down', 16));
     caret.addEventListener('click', () => { if (slot._prMenu) slot._prMenu(caret); });
     if (ws) {                                       // a workspace: one button that opens the member list
       caret.className = 'btn rd-pr-more rd-pr-wsbtn';
       caret.setAttribute('data-rd-cta', '');
-      setCtaContent(caret, 'pull-request', own || 'View PRs');
+      setCtaContent(caret, 'pull-request', own || VIEW_PRS_LABEL);
       caret.append(icon(document, 'chevron-down', 16));
       ctl.append(caret);
     } else {
@@ -35807,7 +35855,7 @@ function renderRdPrStatus(host, scope, s) {
     sw.removeAttribute('aria-hidden');
     sw.setAttribute('role', 'switch');
     sw.setAttribute('aria-checked', String(!!wst.watching));
-    sw.setAttribute('aria-label', 'Watch this pull request');
+    sw.setAttribute('aria-label', 'Watch this PR');
     sw.tabIndex = 0;
     row.append(word, sw);
     const toggle = async () => {
@@ -39551,20 +39599,20 @@ function exportSyncFormat() {
   document.getElementById('export-plan-btn').classList.toggle('hidden', json);
   document.getElementById('export-plan-btn').disabled = false;
   const apply = document.getElementById('export-apply-btn');
-  apply.textContent = json ? 'Download' : market ? 'Open pull request' : 'Export';
+  apply.textContent = json ? 'Download' : market ? CREATE_PR_LABEL : 'Export';
   apply.disabled = false;
   const name = exportModalState.item ? exportModalState.item.name : '';
   document.getElementById('export-subtitle').textContent = json
     ? `Download "${name}" as a JSON file another Worca user can import.`
     : market
-      ? `Open a pull request that adds "${name}" to a team marketplace as a Worca plugin.`
+      ? `Create a PR that adds "${name}" to a team marketplace as a Worca plugin.`
       : plugin
         ? `Export "${name}" as a Worca plugin folder to share with other Worca users.`
         : `Export "${name}" as a runnable /command skill.`;
   document.getElementById('export-format-hint').textContent = json
     ? 'The saved graph only. No agents or skills travel with it. The recipient uses Import… in their saved list.'
     : market
-      ? 'Builds the plugin in a fresh copy of the marketplace, lists it in worca-cc-marketplace.json, validates it (lint, script cases, the marketplace\'s own discovery) and opens one pull request on worca/plugin/<name>.'
+      ? 'Builds the plugin in a fresh copy of the marketplace, lists it in worca-cc-marketplace.json, validates it (lint, script cases, the marketplace\'s own discovery) and creates one PR on worca/plugin/<name>.'
       : plugin
         ? 'Bundles the pipeline, your own agents it uses and the skills they need. Built-in agents are not copied. The recipient runs: worca plugin link <folder>'
         : 'Writes a SKILL.md plus the agents it dispatches under .claude/, so the pipeline runs inside Claude Code without Worca.';
@@ -39820,7 +39868,7 @@ function bindExportModal() {
         exportRenderPlan({ ...plan.files, warnings: plan.warnings, conflicts: [] });
         document.getElementById('export-plan').appendChild(marketplacePlanExtras(plan, { doc: document }));
         exportSay(plan.status === 'unchanged' ? 'No changes. The marketplace already has this export.'
-          : 'Preview only. Nothing is pushed until you click Open pull request.');
+          : `Preview only. Nothing is pushed until you click ${CREATE_PR_LABEL}.`);
         return;
       }
       exportRenderPlan(plan);
@@ -39853,7 +39901,7 @@ function bindExportModal() {
     if (exportIsMarketplace()) {
       const nameProblem = marketplaceNameProblem(exportPluginName());
       if (nameProblem) { exportSay(nameProblem, true); return; }
-      exportSay('Building the plugin in a copy of the marketplace, validating, then opening the pull request…');
+      exportSay('Building the plugin in a copy of the marketplace, validating, then creating the PR…');
       exportSetBusy(true);                                 // about a minute: a second click must not start a second export
       // The inputs are locked while it runs, so the result is for what the dialog shows — it reports what
       // happened, not what would happen, so it is never stale. Only a dialog closed meanwhile is not painted:

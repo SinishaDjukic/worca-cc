@@ -8,7 +8,6 @@ import { JSDOM } from 'jsdom';
 import { ICONS } from '../ui/public/icons.mjs';
 import { syncActions } from '../ui/public/run-status-card.mjs';
 import { HEAD_ACTIONS, MENU_ACTIONS } from '../src/shared/run-model.mjs';
-import { renderShipItStrip } from '../ui/public/actions-view.mjs';
 
 const read = (p) => readFileSync(new URL(`../ui/public/${p}`, import.meta.url), 'utf8');
 const html = read('index.html');
@@ -121,8 +120,15 @@ test('PR text links are --blue-ink-strong at weight 600', () => {
   assert.equal(decls('.hd-pr-repo-link.merged'), '', 'a merged repo link is not greyed');
 });
 
-test('Ship it dialog, Try it first: Check out is a secondary small button', () => {
-  const row = renderShipItStrip({ finished: true, members: [{ projectKey: 'p', branch: 'b' }] }, { doc: doc() });
-  const b = [...row.querySelectorAll('button')].find((x) => x.textContent === 'Check out');
-  assert.equal(b.className, 'btn btn-sm');
+test('Create PR dialog, Try it first: a secondary 32px .btn on the footer left', () => {
+  const page = new JSDOM(html).window.document;
+  const b = page.querySelector('#shipit-modal .shipit-actions > .shipit-try-btn');
+  assert.equal(b.className, 'btn shipit-try-btn');
+  assert.equal(b.textContent, 'Try it first');
+  assert.equal(b.getAttribute('data-min-level'), 'advanced');
+  assert.equal(b.parentElement.firstElementChild, b, 'it leads the footer');
+  assert.match(decls('.shipit-try-btn'), /margin-right:auto/);
+  assert.match(decls('.shipit-actions'), /justify-content:flex-end/);
+  assert.match(decls('.shipit-actions'), /border-top:1px solid var\(--line\)/);
+  assert.match(decls('.shipit-ok'), /flex:none/);
 });

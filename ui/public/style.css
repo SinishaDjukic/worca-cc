@@ -1766,7 +1766,11 @@ dialog.discard-modal::backdrop{background:transparent;}
 #export-modal .card.dlg{--dlg-gap-head:6px;--dlg-gap-foot:0px;}   /* .export-field 12px and #export-msg 18px sit inside #export-form */
 .report-modal .card.dlg{--dlg-gap-head:31px;}   /* the old sticky head's 14px padding + 1px rule + 16px margin */
 .ob-claude.dlg{--dlg-gap-foot:22px;}
-.shipit-card.dlg{--dlg-gap-foot:22px;}
+/* Create PR: the title's --line rule and the footer's top rule are its fixed dividers, so the scroll dividers stay
+   off and the body adds no gap of its own: the zones' 14px padding is the spacing. (0,3,0) so the short-window
+   10px head gap does not reach it. */
+.viewer-modal .shipit-card.dlg{--dlg-gap-head:0px;--dlg-gap-foot:14px;}
+.shipit-card.dlg > .dlg-head::after,.shipit-card.dlg > .dlg-foot::before{display:none;}
 .publish-card.dlg{--dlg-gap-head:16px;--dlg-gap-foot:22px;}
 .stop-card.dlg{--dlg-gap-head:12px;--dlg-gap-foot:22px;}
 #mode-modal .card.dlg{--dlg-gap-head:16px;--dlg-gap-foot:16px;}
@@ -1792,11 +1796,6 @@ dialog.discard-modal::backdrop{background:transparent;}
   .viewer-modal{padding:12px 24px;}
   .viewer-modal .card.dlg{max-height:calc(100dvh - 24px);}
   .viewer-modal .dlg{--dlg-gap-head:10px;}
-  .dlg .shipit-ico-wrap{width:48px;height:48px;}
-  .dlg .shipit-ico{width:40px;height:40px;}
-  .dlg .shipit-ico svg{width:20px;height:20px;}
-  .shipit-card.dlg h2{margin-top:10px;}
-  .dlg .shipit-sub{margin-top:4px;}
   .dlg .ob-hero{max-height:88px;margin:4px 0 8px;}
 }
 @media (prefers-reduced-motion: reduce){.dlg-head::after,.dlg-foot::before{transition:none;}}
@@ -4471,45 +4470,37 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
    (:786) and `.confirm-modal .card` (:1306). Everything else below only ties with
    `.card` (:263) and wins on source order, so it stays bare. */
 #shipit-modal .card{width:min(560px,100%);}
-.shipit-card{text-align:center;
-  animation:shipit-rise .34s cubic-bezier(.2,.7,.3,1) both;}
+.shipit-card{text-align:left;animation:shipit-rise .34s cubic-bezier(.2,.7,.3,1) both;}
 @keyframes shipit-rise{0%{transform:translateY(10px);opacity:0}100%{transform:translateY(0);opacity:1}}
-.shipit-ico-wrap{position:relative;display:grid;place-items:center;width:74px;height:74px;margin:0 auto;}
-.shipit-spark{position:absolute;inset:0;border-radius:var(--r-sm);background:var(--green-bg);
-  animation:shipit-spark .9s ease-out .12s both;}
-.shipit-ico{position:relative;display:grid;place-items:center;width:60px;height:60px;border-radius:var(--r-sm);
-  background:var(--green-bg);color:var(--green-ink);animation:shipit-pop .42s cubic-bezier(.2,.8,.25,1) both;}
-@keyframes shipit-pop{0%{transform:scale(.72);opacity:0}60%{transform:scale(1.06)}100%{transform:scale(1);opacity:1}}
-@keyframes shipit-spark{0%{transform:scale(.4);opacity:0}45%{opacity:1}100%{transform:scale(1.9);opacity:0}}
-.shipit-card h2{margin:18px 0 0;font:700 18px/1.25 var(--sans);letter-spacing:-.02em;}
-.shipit-sub{margin:8px 0 0;font:400 13px/1.6 var(--sans);color:var(--ink-2);}
-.shipit-summary{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:8px;
-  margin-top:18px;padding:14px;background:var(--field);border-radius:var(--r-ctrl);font-size:12px;color:var(--ink-2);}
-.shipit-summary[hidden]{display:none;}
-/* An empty flex child still eats a `gap`, so a results-less run ("+12 −3", no file
-   count) would render a stray 8px hole. Hide the value spans by NAME — a blanket
-   `> span:empty` would also hide `.shipit-break`, whose whole job is to be an empty
-   full-width line break. Precedent: `.h-meta .hist-total:empty` (:807). */
-.shipit-files:empty,.shipit-add:empty,.shipit-del:empty,.shipit-base:empty{display:none;}
-.shipit-files:empty + .shipit-dot{display:none;}
-.shipit-break{flex-basis:100%;height:0;}
-.shipit-branch{color:var(--ink);word-break:break-all;}
-/* The base-branch pick stands where the plain base name was, inline in the
-   summary line: a compact house select (cf. `.step-config select`) on the
-   --field pill, not the full-width form field. */
-.shipit-summary .select-wrap,.shipit-repo-branch .select-wrap{max-width:100%;}
-.shipit-summary .select,.shipit-repo-branch .select{width:auto;max-width:100%;padding:6px 30px 6px 10px;font:inherit;color:var(--ink);
-  background:var(--surface);border-color:var(--line-2);border-radius:var(--r-sm);}
-.shipit-summary .select:focus,.shipit-repo-branch .select:focus{border-color:var(--ink);}
-.shipit-summary .select-wrap::after,.shipit-repo-branch .select-wrap::after{right:11px;}
-.shipit-summary select:disabled,.shipit-repo-branch select:disabled{opacity:.55;cursor:not-allowed;}
-.shipit-actions{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:22px;}
-
-/* Fork support: push-remote + base-repo selects. Left-aligned inside the centered
-   card; the global select{width:100%} fills each grid cell. */
-.shipit-remotes{display:grid;grid-template-columns:1fr 1fr;gap:10px 12px;margin-top:14px;text-align:left;}
+/* The Create PR dialog: a centred title over a --line rule, then the zones (Into, Title and description, After it
+   opens), each a labelled grid closed by its own --line rule, then the footer behind a divider. */
+.shipit-card h2.shipit-title{margin:0;padding-bottom:12px;border-bottom:1px solid var(--line);text-align:center;font:700 18px/1.25 var(--sans);}
+.shipit-zone{display:grid;gap:8px;padding:14px 0;border-bottom:1px solid var(--line);}
+.shipit-zone[hidden]{display:none;}
+.shipit-after{border-bottom:0;}   /* the footer's own top rule is the one divider */
+.shipit-zone-label{font:500 12px/1.2 var(--sans);color:var(--ink-2);}
+.shipit-into-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.shipit-into-row[data-cols="1"]{grid-template-columns:1fr;}
+.shipit-remotes{display:contents;}
 .shipit-remotes[hidden]{display:none;}
-.shipit-remote-field label{display:block;margin:0 0 6px 2px;font:600 12px/1.2 var(--sans);color:var(--ink-2);}
+.shipit-base-remote-field[hidden],.shipit-push-field[hidden]{display:none;}
+.shipit-push-field{grid-column:1 / -1;order:2;}
+.shipit-push-field label,.shipit-remote-field label{display:block;margin:0 0 6px;font:500 12px/1.2 var(--sans);color:var(--ink-2);}
+.shipit-base:empty{display:none;}
+.shipit-base:not(:empty){display:flex;align-items:center;min-height:32px;padding:0 10px;border-radius:var(--r-ctrl);background:var(--field);}
+.shipit-repo-branch .select-wrap{max-width:100%;}
+.shipit-repo-branch .select{width:auto;max-width:100%;padding:6px 30px 6px 10px;font:inherit;color:var(--ink);
+  background:var(--surface);border-color:var(--line-2);border-radius:var(--r-sm);}
+.shipit-repo-branch .select:focus{border-color:var(--ink);}
+.shipit-repo-branch .select-wrap::after{right:11px;}
+.shipit-repo-branch select:disabled,.shipit-into select:disabled{opacity:.55;cursor:not-allowed;}
+.shipit-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:10px;margin-top:14px;padding-top:14px;border-top:1px solid var(--line);}
+.shipit-try-btn{margin-right:auto;}
+.shipit-try-btn[hidden]{display:none;}
+.shipit-ok{flex:none;}
+@media (max-width:520px){.shipit-into-row{grid-template-columns:1fr;}}
+
+/* Fork support: the push-remote + base-repo selects (and each workspace row's twins). */
 .shipit-remotes .select,.shipit-repo-remotes .select{padding:0 36px 0 12px;font-size:13px;}
 .shipit-remotes .select-wrap::after,.shipit-repo-remotes .select-wrap::after{right:13px;}
 .shipit-remotes select:disabled,.shipit-repo-remotes select:disabled{opacity:.55;cursor:not-allowed;}
@@ -4528,7 +4519,7 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .shipit-repo-remotes[hidden]{display:none;}
 .shipit-repo-status[hidden]{display:none;}   /* .hint sets display:block */
 .shipit-skipped{margin:0;}
-@media (max-width:520px){.shipit-remotes,.shipit-repo-remotes{grid-template-columns:1fr;}}
+@media (max-width:520px){.shipit-repo-remotes{grid-template-columns:1fr;}}
 
 /* Publish branch (#618): the header's outline pill + "Published to …" note, and its dialog
    (one row per repo: tick for a workspace member, name, branch, push remote, status). */
@@ -4570,9 +4561,7 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
    the textarea (or its rendered preview) under it. Left-aligned inside the centered
    card like the remotes. `.btn` sets display:inline-flex and `.hint` display:block,
    so the Stop button, the preview and the error line each ship a [hidden] twin. */
-.shipit-desc{margin-top:14px;text-align:left;}
 .shipit-desc-head{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;}
-.shipit-desc-head label{margin:0 4px 0 2px;font:600 12px/1.2 var(--sans);color:var(--ink-2);}
 .shipit-desc-head .shipit-generate-stop{margin-left:auto;}
 .shipit-desc-head .shipit-generate-stop[hidden]{display:none;}
 .shipit-desc-head .shipit-generate-stop[hidden] + .shipit-generate{margin-left:auto;}
@@ -4621,20 +4610,15 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
   0%,100%{box-shadow:inset 0 0 0 1.5px var(--blue-glow);}
   50%{box-shadow:inset 0 0 0 1.5px var(--blue-glow-strong),inset 0 0 24px color-mix(in srgb,var(--blue) 16%,transparent);}}
 
-/* Reduced motion for the three ship-it animations. This block MUST sit AFTER the
+/* Reduced motion for the Create PR dialog's animations. This block MUST sit AFTER the
    rules that declare them: `@media` contributes no specificity, so naming
    `.shipit-card` in the kill list at :763 would tie at (0,1,0) and LOSE on source
    order — the animation would still play. (The four names already at :763 work
    only because each is declared before it, and the run-graph block at :1246
    likewise follows its animations.) */
 @media (prefers-reduced-motion: reduce){
-  .shipit-card,.shipit-ico{animation:none;}
-  /* `.shipit-spark` needs its END STATE too, not just `animation:none`. Its
-     keyframes are `both`-filled and finish at opacity:0; kill the animation alone
-     and it computes `opacity:1; transform:none` — a permanent 74px --green-bg disc
-     ringing the 60px icon. */
-  .shipit-spark{animation:none;opacity:0;}
-  /* The Generate-with-AI veil holds still: a steady violet edge, no sweep, and the
+  .shipit-card{animation:none;}
+  /* The Generate veil holds still: a steady violet edge, no sweep, and the
      label gets a real colour back (its fill is a clipped, now-frozen gradient). */
   .shipit-desc-field.is-generating .shipit-desc-busy{animation:none;
     box-shadow:inset 0 0 0 1.5px var(--blue-ring);}

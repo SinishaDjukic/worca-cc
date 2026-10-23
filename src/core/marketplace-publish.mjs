@@ -446,7 +446,7 @@ export async function exportWorkflowToMarketplace({ workflowId, marketplaceId, p
   if (target.ref && !isSafeBranchName(target.ref)) throw err(`the marketplace tracks an unusable branch name "${target.ref}"`, 'BAD_REQUEST');
   if (!dryRun) {
     const avail = await d.providerAvailable(target);
-    if (!avail.ok) throw err(`cannot open a ${target.label} pull request here: ${avail.reason}`, 'UNSUPPORTED');
+    if (!avail.ok) throw err(`cannot create a ${target.label} PR here: ${avail.reason}`, 'UNSUPPORTED');
   }
 
   const work = await mkdtemp(join(tmpdir(), 'worca-mkt-publish-'));

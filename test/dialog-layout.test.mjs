@@ -135,13 +135,13 @@ test('CSS: the .dlg card is a clipping column, the body is the one scroller, sea
   assert.ok(has('.dlg-head::after,.dlg-foot::before', /background:var\(--line\);opacity:0;/));
   assert.ok(has('.dlg[data-under-head] > .dlg-head::after,.dlg[data-under-foot] > .dlg-foot::before', /opacity:1;/));
   assert.ok(!ALL.some((r) => /\.dlg/.test(r.sel) && /box-shadow/.test(r.body)), 'the divider is not a resting shadow');
-  assert.ok(has('.shipit-card.dlg', /--dlg-gap-foot:22px;/));
+  assert.ok(has('.viewer-modal .shipit-card.dlg', /--dlg-gap-head:0px;--dlg-gap-foot:14px;/), 'Create PR: the zones carry the spacing');
+  assert.ok(has('.shipit-card.dlg > .dlg-head::after,.shipit-card.dlg > .dlg-foot::before', /display:none;/), 'its title and footer rules are the dividers');
   // Add project's foot gap is 0 (the last .field brings 18px), so a trailing switch row needs its own 14px.
   assert.ok(has('#scan-model-modal .card.dlg,#project-add-modal .card.dlg', /--dlg-gap-foot:0px;/));
   assert.ok(has('#project-add-modal .dlg-body > .proj-add-git', /margin-bottom:14px;/), 'the Use git row keeps the 14px above the foot');
   assert.ok(has('.viewer-modal .dlg-body .card', /max-height:none;overflow:visible;/), 'a nested card never scrolls');
   const short = ALL.filter((r) => /max-height:\s*640px/.test(r.media));
-  assert.ok(short.some((r) => r.sel === '.dlg .shipit-ico-wrap' && /width:48px;height:48px;/.test(r.body)));
   assert.ok(short.some((r) => r.sel === '.viewer-modal .card.dlg' && /max-height:calc\(100dvh - 24px\)/.test(r.body)));
   assert.ok(short.some((r) => r.sel === '.viewer-modal .dlg' && /--dlg-gap-head:10px;/.test(r.body)));
   assert.ok(short.some((r) => r.sel === '.dlg .ob-hero' && /max-height:88px;/.test(r.body)));
@@ -161,8 +161,9 @@ test('every migrated index.html dialog is .card.dlg > .dlg-head, .dlg-body[, .dl
     assert.deepEqual([...card.children].map((c) => [...c.classList].find((k) => k.startsWith('dlg-'))), want, id);
     if (!NO_FOOT.has(id)) assert.ok(card.querySelector(':scope > .dlg-foot .btn, :scope > .dlg-foot .confirm-actions'), `${id}: the actions live in the foot`);
   }
-  // The reported case: hero, title and subtitle are head content.
-  assert.ok(page.querySelector('#shipit-modal .dlg-head > .shipit-ico-wrap + h2 + .shipit-sub'));
+  // The reported case: the title is head content, the zones are body content.
+  assert.ok(page.querySelector('#shipit-modal .dlg-head > h2.shipit-title:only-child'));
+  assert.ok(page.querySelector('#shipit-modal .dlg-body > .shipit-into + #shipit-repos + .shipit-desc + .shipit-after'));
   // Status lines sit in the foot, above the actions, so a save error stays in view.
   for (const sel of ['#mode-msg', '#proj-add-msg', '#proj-git-msg', '#proj-bulk-msg']) {
     const s = page.querySelector(sel);
