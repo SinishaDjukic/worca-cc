@@ -330,28 +330,53 @@ test('an in-flight Archive survives a concurrent repaint (never a second DELETE)
 // Retained work
 // ---------------------------------------------------------------------------
 
+// Slice 3 (D13): kept work has no banner; the card head carries Discard · Apply to branch, the tracker its patch and
+// commands.
+const KEPT_LINE = 'Needs you · the changes could not be committed';
+const keptBtn = (doc, id) => doc.querySelector(`#hist-detail .hd-glance .rd-head-acts [data-head="${id}"]`);
+const statusLine = (doc) => doc.querySelector('#hist-detail .hd-glance .rd-sheet .run-status').dataset.line;
+const keptShown = (doc) => statusLine(doc) === KEPT_LINE;
+const PATCH_DETAIL = { ...DETAIL, artifacts: [{ kind: 'retained-work-patch', relPath: 'retained-work.patch' }] };
+
 test('Archive is disabled with a tooltip when the list row reports retained work', async () => {
-  const ctx = await bootDetail({ rows: [retainedRow()] });
+  const ctx = await bootDetail({ rows: [retainedRow()], detail: PATCH_DETAIL });
   await openDetail(ctx);
   const doc = ctx.window.document;
   const archive = doc.querySelector('#hist-detail .hd-archive');
   assert.equal(archive.disabled, true);
-  assert.match(archive.title, /Recover or discard/);
-  const banner = doc.querySelector('#hist-detail .retained-banner');
-  assert.equal(banner.hidden, false);
-  // The banner's CONTENT, not just its visibility: this block is the only
-  // recovery instruction the user ever gets for work that never reached the
-  // branch, so a painter that renders an empty banner must fail here.
-  assert.match(banner.textContent, /uncommitted work retained/i);
-  assert.match(banner.textContent, /pre-commit hook failed/, "git's own stderr, verbatim");
-  assert.match(banner.textContent, /Worktree: \/tmp\/wt/);
-  assert.match(banner.textContent, /git -C '\/tmp\/wt' add -A/, 'the copy-paste recovery block');
-  assert.equal(doc.querySelector('#hist-detail .hist-retained-badge').hidden, false);
-  assert.equal(doc.querySelector('#hist-detail .hist-discard').hidden, false,
-    'an AUTHORITATIVE retention also offers the action');
+  assert.equal(archive.title, 'Recover or discard the kept work first');
+  assert.equal(doc.querySelector('#hist-detail .retained-banner'), null);
+  assert.equal(doc.querySelector('#hist-detail .hist-retained-badge'), null);
+  assert.equal(statusLine(doc), KEPT_LINE);
+  // An AUTHORITATIVE retention offers the actions in the head, Apply as the one primary.
+  assert.ok(keptBtn(doc, 'discard-kept'));
+  assert.ok(keptBtn(doc, 'apply-kept').classList.contains('btn-primary'));
+  // The tracker's Changes step is the only recovery instruction: the patch and the copy-paste commands.
+  const step = doc.querySelector('#hist-detail .hd-glance .rd-track .rd-track-step');
+  assert.ok(step.classList.contains('is-problem'));
+  const patch = [...step.querySelectorAll('a.rd-track-link')].find((a) => a.textContent === 'Download patch');
+  assert.match(patch.getAttribute('href'), /\/recovery-patch\?/);
+  click(ctx.window, [...step.querySelectorAll('button.rd-track-act')].find((b) => b.textContent === 'Commit it yourself'));
+  assert.equal(doc.getElementById('viewer-title').textContent, 'Commit it yourself');
+  const text = doc.getElementById('viewer').textContent;
+  assert.match(text, /pre-commit hook failed/, "git's own stderr, verbatim");
+  assert.match(text, /git -C '\/tmp\/wt' add -A/, 'the copy-paste recovery block');
+  assert.doesNotMatch(doc.querySelector('#hist-detail .hd-glance .rd-sheet').textContent, /worktree/i);
 });
 
-test('discarding the retained worktree clears the banner and re-enables Archive, also on a deep link once the real row lands', async () => {
+test('kept work on a stopped or a failed saved run: the head offers Discard and Apply to branch, the tracker its patch', async () => {
+  await checkRows(['stopped', 'error'].map((status) => ({ name: status, run: async () => {
+    const ctx = await bootDetail({ rows: [retainedRow({ status })], detail: { ...PATCH_DETAIL, state: { ...DETAIL.state, status } } });
+    await openDetail(ctx);
+    const doc = ctx.window.document;
+    assert.ok(keptBtn(doc, 'apply-kept'), `${status}: Apply to branch`);
+    assert.ok(keptBtn(doc, 'discard-kept'), `${status}: Discard`);
+    const patch = [...doc.querySelectorAll('#hist-detail .hd-glance .rd-track a.rd-track-link')].find((a) => a.textContent === 'Download patch');
+    assert.ok(patch, `${status}: the tracker's Download patch`);
+  } })));
+});
+
+test('discarding the kept work clears the head and re-enables Archive, also on a deep link once the real row lands', async () => {
   await checkRows([
     { name: 'discarding the retained worktree clears the banner and re-enables Archive', run: async () => {
       const ctx = await bootDetail({
@@ -362,12 +387,12 @@ test('discarding the retained worktree clears the banner and re-enables Archive,
       });
       await openDetail(ctx);
       const doc = ctx.window.document;
-      click(ctx.window, doc.querySelector('#hist-detail .hist-discard'));
+      click(ctx.window, keptBtn(doc, 'discard-kept'));
       await confirmDialog(ctx.window);
       await settle(ctx.window, 5);
 
-      assert.equal(doc.querySelector('#hist-detail .retained-banner').hidden, true);
-      assert.equal(doc.querySelector('#hist-detail .hist-discard'), null);
+      assert.equal(keptShown(doc), false);
+      assert.equal(keptBtn(doc, 'discard-kept'), null);
       assert.equal(doc.querySelector('#hist-detail .hd-archive').disabled, false);
       // A discard is not an archive: the run stays listed.
       assert.ok(doc.querySelector(`#runs-list .runs-row[data-kind="hist"][data-pipeline-id="${ROW.id}"]`),
@@ -385,22 +410,20 @@ test('discarding the retained worktree clears the banner and re-enables Archive,
 
       // (1) PROVISIONAL retention: banner up and Archive blocked, but NO action —
       // discarding must act on the authoritative row, not on an inferred retention.
-      assert.equal(doc.querySelector('#hist-detail .retained-banner').hidden, false);
+      assert.equal(keptShown(doc), true);
       assert.equal(doc.querySelector('#hist-detail .hd-archive').disabled, true);
-      assert.equal(doc.querySelector('#hist-detail .hist-discard'), null,
-        'a provisional retention binds no Discard');
+      assert.equal(keptBtn(doc, 'discard-kept'), null, 'a provisional retention binds no Discard');
 
       // (2) the row agrees: the worktree really is still there
       await deliverRows(ctx, [retainedRow()]);
-      assert.equal(doc.querySelector('#hist-detail .retained-banner').hidden, false);
-      assert.equal(doc.querySelector('#hist-detail .hist-discard').hidden, false,
-        'the action arrives with the authoritative row');
+      assert.equal(keptShown(doc), true);
+      assert.ok(keptBtn(doc, 'discard-kept'), 'the action arrives with the authoritative row');
 
       // (3) discard acts on THAT row, so the repaint really clears
-      click(ctx.window, doc.querySelector('#hist-detail .hist-discard'));
+      click(ctx.window, keptBtn(doc, 'discard-kept'));
       await confirmDialog(ctx.window);
       await settle(ctx.window, 6);
-      assert.equal(doc.querySelector('#hist-detail .retained-banner').hidden, true);
+      assert.equal(keptShown(doc), false);
       assert.equal(doc.querySelector('#hist-detail .hd-archive').disabled, false);
       // A discard is not an archive: the run stays listed.
       assert.ok(doc.querySelector(`#runs-list .runs-row[data-kind="hist"][data-pipeline-id="${ROW.id}"]`),
@@ -413,13 +436,13 @@ test('deep link derives retained work from state.branch.commitFailed, then DEFER
   const ctx = await bootDetail({ rows: [], detail: COMMIT_FAILED_DETAIL, deepLink: true });
   await settle(ctx.window, 5);
   const doc = ctx.window.document;
-  assert.equal(doc.querySelector('#hist-detail .retained-banner').hidden, false);
+  assert.equal(keptShown(doc), true);
   assert.equal(doc.querySelector('#hist-detail .hd-archive').disabled, true);
 
   // The server gates retainedWork on existsSync(worktreeDir), so a stale
   // commitFailed stamp must not outlive the row. Authoritative in BOTH directions.
   await deliverRows(ctx, [{ ...ROW, retainedWork: null }]);
-  assert.equal(doc.querySelector('#hist-detail .retained-banner').hidden, true);
+  assert.equal(keptShown(doc), false);
   assert.equal(doc.querySelector('#hist-detail .hd-archive').disabled, false);
 });
 
@@ -610,34 +633,101 @@ test('with a saved run open, the popup for that run names the step from its save
 });
 
 // ---------------------------------------------------------------------------
-// The worktree notice (summary card): a checkout, a linked folder, Apply to branch
+// The summary card: the checkout's Actions row (Simple: a plain row with Discard / Unlink), the retained notice
 // ---------------------------------------------------------------------------
 
+// Seeded "now": whenLabel then reads HH:MM (today), even near midnight.
 const checkoutRow = (member = {}) => ({ ...ROW, checkout: { members: [{ projectKey: KEY, worktreeDir: '/tmp/co', branch: ROW.branch,
-  at: '2026-10-14T09:00:00Z', policy: 'on-demand', setup: { status: 'ok' }, ...member }] } });
-const noticeOf = (doc) => doc.querySelector('#hist-detail .hd-glance .retained-banner');
+  at: new Date().toISOString(), policy: 'on-demand', setup: { status: 'ok' }, ...member }] } });
+const glanceOf = (doc) => doc.querySelector('#hist-detail .hd-glance');
+const actionsRowOf = (doc) => doc.querySelector('#hist-detail .hd-glance .rd-result .rd-srow[data-rd-tab="actions"]');
+const actionsValueOf = (doc) => { const v = actionsRowOf(doc)?.querySelector('.rd-srow-v'); return v ? v.textContent : ''; };
+const simpleRowOf = (doc) => doc.querySelector('#hist-detail .hd-glance .rd-result .rd-srow-checkout');
 const buttonsOf = (el) => [...el.querySelectorAll('button')].map((b) => b.textContent);
+const atSimple = (ctx) => { ctx.window.document.documentElement.dataset.level = 'simple'; };
+const atAdvanced = (ctx) => { ctx.window.document.documentElement.dataset.level = 'advanced'; };
+/** Browsers blur a focused button the moment it becomes disabled; jsdom does not. Blur first: jsdom's blur() does
+ *  nothing on a button that is already disabled. */
+function blurOnDisable(btn) {
+  const proto = Object.getPrototypeOf(btn);
+  const desc = Object.getOwnPropertyDescriptor(proto, 'disabled') || Object.getOwnPropertyDescriptor(Object.getPrototypeOf(proto), 'disabled');
+  Object.defineProperty(btn, 'disabled', {
+    configurable: true,
+    get() { return desc.get.call(this); },
+    set(v) { if (v) this.blur(); desc.set.call(this, v); },
+  });
+}
 
-test('worktree notice: a checked-out run says where and why, at every level, and blocks Archive', async () => {
+test('checkout: no box on the glance; the Actions row says where the local copy stands; Archive stays blocked', async () => {
   const ctx = await bootDetail({ rows: [checkoutRow()] });
+  atAdvanced(ctx);
   await openDetail(ctx, '');
   await settle(ctx.window, 6);
   const doc = ctx.window.document;
-  const n = noticeOf(doc);
-  assert.equal(n.hidden, false);
-  assert.equal(n.dataset.kind, 'checkout');
-  assert.equal(n.getAttribute('role'), 'status');
-  assert.equal(n.closest('[data-min-level]'), null, 'never level-gated');
-  assert.match(n.textContent, /Checked out in a worktree/);
-  assert.match(n.textContent, /Worktree: \/tmp\/co/);
-  assert.match(n.textContent, /Check out, Archive and a new run on this branch are refused/);
-  assert.deepEqual(buttonsOf(n), ['Discard', 'Get the diff', 'Actions tab ›']);
+  assert.equal(keptShown(doc), false);
+  assert.equal(keptBtn(doc, 'apply-kept'), null);
+  assert.match(actionsValueOf(doc), /^Local copy open · since \d{1,2}:\d{2}$/);
+  const v = actionsRowOf(doc).querySelector('.rd-srow-v');
+  assert.equal(actionsRowOf(doc).lastElementChild, v, 'the value is the row\'s last child, before the CSS chevron');
+  assert.equal(simpleRowOf(doc), null, 'the tab row owns it at Advanced');
+  assert.doesNotMatch(glanceOf(doc).textContent, /worktree/i);
   const archive = doc.querySelector('#hist-detail .hd-archive');
   assert.equal(archive.disabled, true);
-  assert.match(archive.title, /Discard the checkout/);
+  assert.equal(archive.title, 'Close the local copy in Actions first');
 });
 
-test('worktree notice: Discard uses the Actions tab\'s confirm and DELETE, then the notice goes', async () => {
+test('checkout row: before Check out it offers the try; a linked folder reads as yours', async () => {
+  const ctx = await bootDetail({ rows: [ROW] });
+  atAdvanced(ctx);
+  await openDetail(ctx, '');
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  assert.equal(actionsValueOf(doc), 'Try it on this machine');
+  await deliverRows(ctx, [checkoutRow({ worktreeDir: '/Users/ada/app', external: true, policy: 'external' })]);
+  assert.match(actionsValueOf(doc), /^Linked to your folder · since \d{1,2}:\d{2}$/);
+  assert.equal(actionsRowOf(doc).querySelectorAll('.rd-srow-v').length, 1, 'patched in place, never stacked');
+});
+
+test('checkout row: a workspace with two local copies; at Simple one Discard per member', async () => {
+  const ws = { ...ROW, target: 'workspace', projectKey: 'workspaces/ws1', projectDir: null,
+    members: [{ memberKey: 'app-11111111', name: 'App' }, { memberKey: 'api-22222222', name: 'API' }],
+    checkout: { members: [
+      { projectKey: 'app-11111111', worktreeDir: '/tmp/a', branch: ROW.branch, at: new Date().toISOString() },
+      { projectKey: 'api-22222222', worktreeDir: '/tmp/b', branch: ROW.branch, at: new Date().toISOString() }] } };
+  const ctx = await bootDetail({
+    rows: [ws],
+    arms: (url) => (new URL(url, 'http://localhost:4317').pathname === `/api/workspaces/ws1/runs/${ROW.id}` ? ok(DETAIL) : null),
+  });
+  atAdvanced(ctx);
+  go(ctx.window, `history/workspaces/ws1/${ROW.id}`);
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  assert.match(actionsValueOf(doc), /^2 local copies open · since /);
+  atSimple(ctx);
+  await deliverRows(ctx, [structuredClone(ws)]);
+  const row = simpleRowOf(doc);
+  assert.ok(row, 'at Simple a plain row carries the way out');
+  assert.match(row.textContent, /^2 local copies open · since /);
+  assert.deepEqual([...row.querySelectorAll('.rd-srow-acts button')].map((b) => b.textContent), ['Discard app', 'Discard api']);
+  // At 375px the buttons wrap under the text: the text keeps a basis instead of shrinking into a narrow column.
+  const { readFileSync } = await import('node:fs');
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  assert.match(css, /\.rd-srow-checkout \.rd-srow-tx\{flex:1 1 \d+em;\}/);
+});
+
+test('checkout row: retained work shows the kept head and no Actions row value', async () => {
+  const ctx = await bootDetail({ rows: [retainedRow()] });
+  atAdvanced(ctx);
+  await openDetail(ctx, '');
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  assert.equal(keptShown(doc), true);
+  assert.ok(keptBtn(doc, 'apply-kept'));
+  assert.ok(actionsRowOf(doc), 'the Actions tab row is there');
+  assert.equal(actionsRowOf(doc).querySelector('.rd-srow-v'), null);
+});
+
+test('Simple: Discard on the checkout row uses the Actions tab\'s confirm and DELETE, then the row goes', async () => {
   const calls = [];
   const ctx = await bootDetail({
     rows: [checkoutRow()],
@@ -647,38 +737,103 @@ test('worktree notice: Discard uses the Actions tab\'s confirm and DELETE, then 
       return ok({ removed: [KEY], patches: [], unlinked: [] });
     },
   });
+  atSimple(ctx);
   await openDetail(ctx, '');
   await settle(ctx.window, 6);
   const doc = ctx.window.document;
-  click(ctx.window, [...noticeOf(doc).querySelectorAll('button')].find((b) => b.textContent === 'Discard'));
+  assert.equal(actionsRowOf(doc), null, 'no Actions tab at Simple');
+  const row = simpleRowOf(doc);
+  assert.match(row.textContent, /^Local copy open · since /);
+  assert.deepEqual(buttonsOf(row), ['Discard']);
+  assert.doesNotMatch(glanceOf(doc).textContent, /worktree/i);
+  click(ctx.window, row.querySelector('button'));
   await settle(ctx.window, 2);
   assert.equal(doc.getElementById('confirm-title').textContent, 'Discard the checkout?');
   await confirmDialog(ctx.window);
   await settle(ctx.window, 6);
   assert.deepEqual(calls.filter((c) => c[0] === 'DELETE'), [['DELETE', `/api/runs/${ROW.id}/checkout?projectKey=${KEY}`, { members: [KEY] }]]);
-  assert.equal(noticeOf(doc).hidden, true);
+  await deliverRows(ctx, [ROW]);
+  assert.equal(simpleRowOf(doc), null);
   assert.equal(doc.querySelector('#hist-detail .hd-archive').disabled, false);
 });
 
-test('worktree notice: a linked folder offers Unlink; Get the diff on a clean folder says so', async () => {
+test('Simple: a linked folder\'s row offers Unlink with its own confirm, and only unlinks', async () => {
+  const calls = [];
   const ctx = await bootDetail({
     rows: [checkoutRow({ worktreeDir: '/Users/ada/app', external: true, policy: 'external' })],
-    arms: (url) => (url.includes(`/api/runs/${ROW.id}/checkout/diff?`) ? Promise.resolve({ ok: true, status: 204, json: async () => ({}) }) : null),
+    arms: (url, opts = {}) => {
+      if (!url.includes(`/api/runs/${ROW.id}/checkout?`)) return null;
+      calls.push([opts.method, url, opts.body ? JSON.parse(opts.body) : null]);
+      return ok({ removed: [], patches: [], unlinked: [KEY] });
+    },
   });
+  atSimple(ctx);
   await openDetail(ctx, '');
   await settle(ctx.window, 6);
   const doc = ctx.window.document;
-  const n = noticeOf(doc);
-  assert.match(n.textContent, /Linked to your folder/);
-  assert.deepEqual(buttonsOf(n), ['Unlink', 'Get the diff', 'Actions tab ›']);
-  click(ctx.window, [...n.querySelectorAll('button')].find((b) => b.textContent === 'Get the diff'));
-  await settle(ctx.window, 4);
-  const req = ctx.calls.find((c) => c.url.includes('/checkout/diff'));
-  assert.match(req.url, new RegExp(`projectKey=${KEY}&member=${KEY}`));
-  assert.equal(lastToast(doc).title, 'Nothing uncommitted');
+  const row = simpleRowOf(doc);
+  assert.match(row.textContent, /^Linked to your folder · since /);
+  assert.deepEqual(buttonsOf(row), ['Unlink']);
+  assert.doesNotMatch(glanceOf(doc).textContent, /worktree/i);
+  click(ctx.window, row.querySelector('button'));
+  await settle(ctx.window, 2);
+  assert.equal(doc.getElementById('confirm-title').textContent, 'Stop using this folder?');
+  await confirmDialog(ctx.window);
+  await settle(ctx.window, 6);
+  assert.deepEqual(calls, [['DELETE', `/api/runs/${ROW.id}/checkout?projectKey=${KEY}`, { members: [KEY] }]]);
+  assert.deepEqual(lastToast(doc), { tone: 'ok', title: 'Folder unlinked', detail: 'The folder stays as it was.', action: '' });
+  await deliverRows(ctx, [ROW]);
+  assert.equal(simpleRowOf(doc), null);
 });
 
-test('worktree notice: Apply to branch commits the retained work and clears the notice', async () => {
+test('Simple: an unchanged row repainted keeps the same checkout button node (D14)', async () => {
+  const row = checkoutRow();
+  const ctx = await bootDetail({ rows: [row] });
+  atSimple(ctx);
+  await openDetail(ctx, '');
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  const before = simpleRowOf(doc).querySelector('button');
+  before.focus();
+  await deliverRows(ctx, [structuredClone(row)]);
+  assert.equal(simpleRowOf(doc).querySelector('button'), before, 'a button replaced between press and release drops its click');
+  assert.equal(before.isConnected, true);
+  assert.equal(doc.activeElement, before, 'the Results rebuild detaches the row for a moment; focus comes back');
+});
+
+test('Actions tab: Download patch asks for the member\'s diff; a clean folder says so and keeps focus', async () => {
+  const actModel = {
+    runId: ROW.id, workspace: false, finished: true, enabled: true,
+    members: [{ projectKey: KEY, projectName: 'Alpha', branch: ROW.branch, state: 'checked-out',
+      checkout: { setup: { status: 'ok' }, worktreeDir: '/tmp/co' }, actions: [], builtins: [] }],
+    instances: [], stacks: [], stackStates: [],
+  };
+  const ctx = await bootDetail({
+    rows: [checkoutRow()],
+    arms: (url) => {
+      if (url.endsWith('/api/actions/running')) return ok([]);
+      if (url.includes(`/api/runs/${ROW.id}/actions?`)) return ok(actModel);
+      if (url.includes(`/api/runs/${ROW.id}/checkout/diff?`)) return Promise.resolve({ ok: true, status: 204, json: async () => ({}) });
+      return null;
+    },
+  });
+  atAdvanced(ctx);
+  await openDetail(ctx, 'details/actions');
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  const btn = secOf(doc, 'actions').querySelector('.act-diff');
+  assert.equal(btn.textContent, 'Download patch');
+  blurOnDisable(btn);
+  btn.focus();
+  click(ctx.window, btn);
+  await settle(ctx.window, 4);
+  const req = ctx.calls.find((c) => c.url.includes('/checkout/diff'));
+  assert.match(req.url, new RegExp(`^/api/runs/${ROW.id}/checkout/diff\\?projectKey=${KEY}&member=${KEY}$`));
+  assert.equal(lastToast(doc).title, 'Nothing uncommitted');
+  assert.equal(doc.activeElement, btn, 'focus is back on the button');
+});
+
+test('kept work: Apply to branch commits the retained work and clears the head', async () => {
   let posted = null;
   const ctx = await bootDetail({
     rows: [retainedRow()],
@@ -692,25 +847,25 @@ test('worktree notice: Apply to branch commits the retained work and clears the 
   await openDetail(ctx, '');
   await settle(ctx.window, 6);
   const doc = ctx.window.document;
-  const n = noticeOf(doc);
-  assert.equal(n.dataset.kind, 'retained');
-  assert.match(n.textContent, /A pull request opened now would not include them/);
+  assert.equal(keptShown(doc), true);
   const actionsGets = () => ctx.calls.filter((c) => c.url.includes(`/api/runs/${ROW.id}/actions`)).length;
   const getsBefore = actionsGets();
-  click(ctx.window, n.querySelector('.wt-apply'));
+  click(ctx.window, keptBtn(doc, 'apply-kept'));
   await settle(ctx.window, 2);
   assert.equal(doc.getElementById('confirm-title').textContent, 'Apply the work to the branch?');
   await confirmDialog(ctx.window);
   await settle(ctx.window, 6);
   assert.deepEqual(posted, ['POST', `/api/runs/${ROW.id}/apply-retained?projectKey=${KEY}`]);
-  assert.equal(noticeOf(doc).hidden, true);
+  assert.equal(keptShown(doc), false);
+  assert.equal(keptBtn(doc, 'apply-kept'), null);
   assert.equal(doc.querySelector('#hist-detail .hd-archive').disabled, false);
   assert.deepEqual(lastToast(doc), { tone: 'ok', title: 'Work applied to the branch',
     detail: `Committed abcdef0123 on ${ROW.branch}.`, action: '' });
   assert.ok(actionsGets() > getsBefore, 'the Actions model is refetched: it no longer offers the released worktree');
 });
 
-test('worktree notice: a commit that fails again keeps the notice and shows git\'s message', async () => {
+
+test('kept work: a commit that fails again keeps the head and shows git\'s message', async () => {
   const ctx = await bootDetail({
     rows: [retainedRow()],
     arms: (url) => (url.includes('/apply-retained')
@@ -721,17 +876,19 @@ test('worktree notice: a commit that fails again keeps the notice and shows git\
   await openDetail(ctx, '');
   await settle(ctx.window, 6);
   const doc = ctx.window.document;
-  click(ctx.window, noticeOf(doc).querySelector('.wt-apply'));
+  click(ctx.window, keptBtn(doc, 'apply-kept'));
   await confirmDialog(ctx.window);
   await settle(ctx.window, 6);
-  assert.equal(noticeOf(doc).hidden, false, 'the retained state stays');
+  assert.equal(keptShown(doc), true, 'the retained state stays');
+  assert.ok(keptBtn(doc, 'apply-kept'));
   const t = lastToast(doc);
   assert.equal(t.tone, 'err');
   assert.equal(t.title, 'The commit failed again');
   assert.equal(t.detail, 'lint failed: 3 errors');
 });
 
-test('worktree notice: after a discard, a cache-warm row (no retainedWork key) does not bring back a provisional notice', async () => {
+
+test('kept work: after a discard, a cache-warm row (no retainedWork key) does not bring back a provisional head', async () => {
   const ctx = await bootDetail({
     rows: [], detail: structuredClone(COMMIT_FAILED_DETAIL), deepLink: true,
     arms: (url) => (url.includes('/discard-worktree') ? ok({ ok: true, remaining: 0, patches: [] }) : null),
@@ -739,76 +896,18 @@ test('worktree notice: after a discard, a cache-warm row (no retainedWork key) d
   await settle(ctx.window, 5);
   const doc = ctx.window.document;
   await deliverRows(ctx, [retainedRow()]);
-  click(ctx.window, doc.querySelector('#hist-detail .hist-discard'));
+  click(ctx.window, keptBtn(doc, 'discard-kept'));
   await confirmDialog(ctx.window);
   await settle(ctx.window, 6);
-  assert.equal(doc.querySelector('#hist-detail .retained-banner').hidden, true);
+  assert.equal(keptShown(doc), false);
   const { retainedWork: _gone, ...cacheWarm } = ROW;
   await deliverRows(ctx, [cacheWarm]);
-  assert.equal(doc.querySelector('#hist-detail .retained-banner').hidden, true, 'hdForgetRetained: the stale commitFailed stamp is released');
+  assert.equal(keptShown(doc), false, 'hdForgetRetained: the stale commitFailed stamp is released');
   assert.equal(doc.querySelector('#hist-detail .hd-archive').disabled, false);
 });
 
-test('worktree notice: Unlink uses the linked folder\'s own confirm and only unlinks', async () => {
-  const calls = [];
-  const ctx = await bootDetail({
-    rows: [checkoutRow({ worktreeDir: '/Users/ada/app', external: true, policy: 'external' })],
-    arms: (url, opts = {}) => {
-      if (!url.includes(`/api/runs/${ROW.id}/checkout?`)) return null;
-      calls.push([opts.method, url, opts.body ? JSON.parse(opts.body) : null]);
-      return ok({ removed: [], patches: [], unlinked: [KEY] });
-    },
-  });
-  await openDetail(ctx, '');
-  await settle(ctx.window, 6);
-  const doc = ctx.window.document;
-  click(ctx.window, [...noticeOf(doc).querySelectorAll('button')].find((b) => b.textContent === 'Unlink'));
-  await settle(ctx.window, 2);
-  assert.equal(doc.getElementById('confirm-title').textContent, 'Stop using this folder?');
-  await confirmDialog(ctx.window);
-  await settle(ctx.window, 6);
-  assert.deepEqual(calls, [['DELETE', `/api/runs/${ROW.id}/checkout?projectKey=${KEY}`, { members: [KEY] }]]);
-  assert.equal(noticeOf(doc).hidden, true);
-  assert.deepEqual(lastToast(doc), { tone: 'ok', title: 'Folder unlinked', detail: 'The folder stays as it was.', action: '' });
-});
 
-test('worktree notice: an unchanged row repainted keeps the same button nodes (D14)', async () => {
-  const ctx = await bootDetail({ rows: [checkoutRow()] });
-  await openDetail(ctx, '');
-  await settle(ctx.window, 6);
-  const doc = ctx.window.document;
-  const before = noticeOf(doc).querySelector('button');
-  await deliverRows(ctx, [checkoutRow()]);
-  assert.equal(noticeOf(doc).querySelector('button'), before, 'a button replaced between press and release drops its click');
-  assert.equal(before.isConnected, true);
-});
-
-test('worktree notice: a workspace run names each member, and Get the diff asks for that member', async () => {
-  const ws = { ...ROW, target: 'workspace', projectKey: 'workspaces/ws1', projectDir: null,
-    members: [{ memberKey: 'app-11111111', name: 'App' }, { memberKey: 'api-22222222', name: 'API' }],
-    checkout: { members: [
-      { projectKey: 'app-11111111', worktreeDir: '/tmp/a', branch: ROW.branch, at: '2026-10-14T09:00:00Z' },
-      { projectKey: 'api-22222222', worktreeDir: '/tmp/b', branch: ROW.branch, at: '2026-10-14T09:00:00Z', external: true }] } };
-  const ctx = await bootDetail({
-    rows: [ws],
-    arms: (url) => {
-      if (new URL(url, 'http://localhost:4317').pathname === `/api/workspaces/ws1/runs/${ROW.id}`) return ok(DETAIL);
-      return url.includes('/checkout/diff') ? Promise.resolve({ ok: true, status: 204, json: async () => ({}) }) : null;
-    },
-  });
-  go(ctx.window, `history/workspaces/ws1/${ROW.id}`);
-  await settle(ctx.window, 6);
-  const doc = ctx.window.document;
-  const n = noticeOf(doc);
-  assert.equal(n.hidden, false);
-  assert.deepEqual([...n.querySelectorAll('.wt-members strong')].map((s) => s.textContent), ['App', 'API']);
-  assert.deepEqual(buttonsOf(n), ['Discard', 'Get the diff', 'Unlink', 'Get the diff', 'Actions tab ›']);
-  click(ctx.window, n.querySelectorAll('button')[1]);
-  await settle(ctx.window, 4);
-  assert.match(ctx.calls.find((c) => c.url.includes('/checkout/diff')).url, /\?workspaceId=ws1&member=app-11111111$/);
-});
-
-test('F-2: the notice card, the Overview WORKTREE row and the Actions strip read one checkout', async () => {
+test('F-2: the Actions row, the Overview WORKTREE row and the Actions strip read one checkout', async () => {
   const actModel = (checkedOut) => ({
     runId: ROW.id, workspace: false, finished: true, enabled: true,
     members: [{ projectKey: KEY, projectName: 'Alpha', branch: ROW.branch, state: checkedOut ? 'checked-out' : 'not-checked-out',
@@ -824,6 +923,7 @@ test('F-2: the notice card, the Overview WORKTREE row and the Actions strip read
       return null;
     },
   });
+  atAdvanced(ctx);
   await openDetail(ctx, 'details/overview');
   await settle(ctx.window, 6);
   const doc = ctx.window.document;
@@ -831,7 +931,7 @@ test('F-2: the notice card, the Overview WORKTREE row and the Actions strip read
   assert.match(wt().textContent, /checked out/);
   assert.doesNotMatch(wt().textContent, /released/);
   assert.match(wt().querySelector('.hd-ov-wt-path').title, /\/tmp\/co/);
-  assert.match(noticeOf(doc).textContent, /Worktree: \/tmp\/co/);
+  assert.match(actionsValueOf(doc), /^Local copy open · since /);
   const strip = () => secOf(doc, 'overview').querySelector('.act-strip');
   assert.ok(![...strip().querySelectorAll('button')].some((b) => b.textContent === 'Check out'), 'no Check out while checked out');
   // Discarded: the row, then both change events
@@ -840,6 +940,7 @@ test('F-2: the notice card, the Overview WORKTREE row and the Actions strip read
   ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'actions-changed', action: 'checkout' }) });
   await settle(ctx.window, 6);
   assert.match(wt().textContent, /released/);
+  assert.equal(actionsValueOf(doc), 'Try it on this machine');
   assert.ok([...strip().querySelectorAll('button')].some((b) => b.textContent === 'Check out'));
 });
 
@@ -859,4 +960,66 @@ test('F-1 / F-10 style rules: the header row wraps, the meta line is sans', asyn
   assert.match(css, /\.hd-row1,\.pd-row1\{[^}]*flex-wrap:wrap/);
   assert.match(css, /@media \(max-width:640px\)\{\.hd-row1 > \.hd-title,\.pd-row1 > \.pd-title\{flex:1 1 100%;\}\}/);
   assert.match(css, /\.hd-meta\{[^}]*var\(--sans\)/);
+});
+
+// ---------------------------------------------------------------------------
+// Slice 2: the run page's one ⋯ (needle test e, saved page)
+// ---------------------------------------------------------------------------
+
+const openMore = (ctx, sel = '#hist-detail .hd-bar-more') => {
+  const doc = ctx.window.document;
+  doc.querySelector(sel).dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
+  return doc.querySelector('body > .wfv-menu');
+};
+const itemsOf = (menu) => [...menu.querySelectorAll('.menu-item')];
+const labelOf = (b) => b.querySelector('.wfv-menu-l').textContent;
+// A control a person can reach: not inside (or itself) [hidden].
+const reachableArchive = (root) => [...root.querySelectorAll('button')]
+  .filter((b) => b.textContent.trim() === 'Archive' && !b.closest('[hidden]'));
+
+for (const level of ['simple', 'advanced', 'expert']) {
+  test(`needle (e) at ${level}: one Archive, in ⋯, confirmed; none in .rd-actions`, async () => {
+    const ctx = await bootDetail({ rows: [{ ...ROW, status: 'stopped' }] });
+    ctx.window.document.documentElement.dataset.level = level;
+    await openDetail(ctx, '');
+    await settle(ctx.window, 6);
+    const doc = ctx.window.document;
+    const screen = doc.querySelector('#hist-detail');
+    assert.equal(reachableArchive(screen).length, 0, 'no Archive on the page outside the ⋯');
+    assert.equal(screen.querySelectorAll('.rd-actions [data-model-action="archive"], .rd-actions [data-model-action="report"]').length, 0);
+    assert.equal(screen.querySelector('.hd-more, .hd-menu'), null, 'the Details ⋯ is gone');
+    const menu = openMore(ctx);
+    const items = itemsOf(menu);
+    assert.equal(items.filter((b) => labelOf(b) === 'Archive').length, 1);
+    assert.deepEqual(items.map(labelOf).slice(-2), ['Report this run', 'Archive']);
+    assert.equal(items.find((b) => labelOf(b) === 'Terminal').querySelector('.wfv-menu-hint').textContent, 'Ctrl+`');
+    const archive = items.find((b) => labelOf(b) === 'Archive');
+    assert.ok(archive.classList.contains('is-danger'));
+    archive.click();
+    await settle(ctx.window, 4);
+    assert.equal(doc.getElementById('confirm-title').textContent, 'Archive this run?');
+  });
+}
+
+test('needle (e): checked out, the ⋯ Archive is disabled with "Close the local copy in Actions first"', async () => {
+  const ctx = await bootDetail({ rows: [checkoutRow()] });
+  atSimple(ctx);
+  await openDetail(ctx, '');
+  await settle(ctx.window, 6);
+  const archive = itemsOf(openMore(ctx)).find((b) => labelOf(b) === 'Archive');
+  assert.equal(archive.disabled, true);
+  assert.equal(archive.title, 'Close the local copy in Actions first');
+  archive.click();
+  await settle(ctx.window, 2);
+  assert.equal(ctx.window.document.querySelector('#confirm-modal').classList.contains('hidden'), true, 'no confirm opens');
+});
+
+test('slice 2: an archived saved run\'s ⋯ ends with Restore and has no Archive', async () => {
+  const ctx = await bootDetail({ detail: { ...DETAIL, state: { ...DETAIL.state, archivedAt: '2026-10-18T10:00:00Z' } } });
+  atSimple(ctx);
+  await openDetail(ctx, '');
+  await settle(ctx.window, 6);
+  const labels = itemsOf(openMore(ctx)).map(labelOf);
+  assert.equal(labels.at(-1), 'Restore');
+  assert.equal(labels.includes('Archive'), false);
 });

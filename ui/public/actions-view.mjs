@@ -182,6 +182,8 @@ function memberCard(model, m, { doc, handlers, logs, queued }) {
       'Stop using your folder for this run. Running services stop; the folder and its changes stay as they are.')
     : btn(doc, 'Discard', 'btn act-discard', () => handlers.onDiscard?.([m.projectKey]),
       'Delete the checkout folder. Running services stop, and uncommitted changes are saved as a patch first.'));
+  const diffBtn = () => btn(doc, 'Download patch', 'btn act-diff', (e) => handlers.onDiff?.(m.projectKey, e.currentTarget),
+    'Download a patch of the folder\'s uncommitted changes. Read-only: nothing in the folder is staged or changed.');
   // The note under the row names the apps a click opens and where they are changed (Settings › Runs › Actions).
   // An app that is not there is simply not mentioned: no nagging on every run (the Settings card says it).
   // `lead` comes first in the same note (before Check out: what waits for it, which already names the buttons).
@@ -256,6 +258,7 @@ function memberCard(model, m, { doc, handlers, logs, queued }) {
       row.append(btn(doc, b.label, null, () => handlers.onBuiltin?.(m.projectKey, b.key), builtinTip(b.key, b.label, m.checkout?.external ? 'your folder' : 'the checkout')));
     }
   } else { const c = copyBtn(); if (c) row.append(c); }
+  if (handlers.onDiff) row.append(diffBtn());
   row.append(discardBtn());
   sec.append(row);
   // The notes under the row sit together as one block (not paragraphs with their own margins).
@@ -435,7 +438,7 @@ export function historyActionBadges(p, running) {
 
 /**
  * Discard (Worca's own checkout) or Unlink (a linked folder): the Actions tab's confirm copy and DELETE,
- * shared with the summary card's worktree notice (app.js) so both say and do exactly the same. A Discard whose
+ * shared with the summary card's Simple checkout row (app.js) so both say and do exactly the same. A Discard whose
  * snapshot fails asks again before forcing. Resolves the last `api` answer, or null when the person cancelled.
  */
 export async function releaseCheckout({ api, url, members, external = false, dir = '', confirm }) {
@@ -453,7 +456,7 @@ export async function releaseCheckout({ api, url, members, external = false, dir
 }
 
 /** The live Actions tab: fetches the run model, renders the card, follows action-* frames. */
-export function createActionsController({ runId, scopeQuery, api, ws, host, doc, confirm, navigate, onModel }) {
+export function createActionsController({ runId, scopeQuery, api, ws, host, doc, confirm, navigate, onModel, downloadPatch }) {
   const st = { model: null, dead: false, lastSeq: new Map(), logs: new Map(), queued: new Set(), subscribed: new Set(), notice: null };
   const base = `/api/runs/${encodeURIComponent(runId)}`;
   const q = scopeQuery ? `?${scopeQuery}` : '';
@@ -499,6 +502,9 @@ export function createActionsController({ runId, scopeQuery, api, ws, host, doc,
     if (!r.ok) return fail(r);
     st.notice = null; await refresh(); return r;
   };
+  // What a Discard / Unlink did, said in the card (the words the summary card's toast used).
+  const released = (external, r) => ({ kind: 'ok', text: external ? 'Folder unlinked. The folder stays as it was.'
+    : `Checkout discarded. ${(r.data?.patches || []).length ? 'Uncommitted changes were saved as a patch in the run\'s files.' : 'Nothing uncommitted needed saving.'}` });
 
   const handlers = {
     onCheckout: async (members) => after(await api('POST', `${base}/checkout${q}`, members ? { members } : {})),
@@ -517,12 +523,19 @@ export function createActionsController({ runId, scopeQuery, api, ws, host, doc,
       const m = (st.model?.members || []).find((x) => x.projectKey === member);
       const r = await releaseCheckout({ api, url: `${base}/checkout${q}`, members: [member], external: true,
         dir: m?.checkout?.worktreeDir || 'the folder', confirm });
-      if (r) await after(r);
+      if (r && (await after(r))?.ok) { st.notice = released(true, r); render(); }
     },
     onDiscard: async (members) => {
       const r = await releaseCheckout({ api, url: `${base}/checkout${q}`, members, confirm });
-      if (r) await after(r);
+      if (r && (await after(r))?.ok) { st.notice = released(false, r); render(); }
     },
+    // Download patch: a read-only patch of the checkout's uncommitted changes. The page fetches and saves it.
+    ...(downloadPatch ? { onDiff: async (member, btnEl) => {
+      const m = (st.model?.members || []).find((x) => x.projectKey === member);
+      const qs = new URLSearchParams(scopeQuery || '');
+      if (member) qs.set('member', member);
+      await downloadPatch({ url: `${base}/checkout/diff?${qs}`, branch: m?.branch || runId, btn: btnEl });
+    } } : {}),
     onStart: async (member, actionId) => {
       const r = await api('POST', `${base}/actions/${encodeURIComponent(actionId)}/start${q}`, { member });
       if (!r.ok) return fail(r);

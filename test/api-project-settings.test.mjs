@@ -109,3 +109,22 @@ test('smartNaming: a project overrides pattern and types only; null restores the
   assert.equal((await call('PATCH', url, { smartNaming: null })).status, 200);
   assert.deepEqual(smartNaming({ projectDir }).types, ['feat', 'fix', 'chore', 'docs', 'refactor', 'test']);
 });
+
+test('watchNewPrs (s4): off by default, a PATCH round-trips on GET, null clears it, a non-boolean writes nothing', async () => {
+  const url = `/api/projects/${key}/settings`;
+  assert.deepEqual((await call('GET', url)).body.effective.watchNewPrs, { value: false, source: 'default' });
+  const set = await call('PATCH', url, { watchNewPrs: true });
+  assert.equal(set.status, 200, JSON.stringify(set.body));
+  const got = await call('GET', url);
+  assert.equal(got.body.own.watchNewPrs, true);
+  assert.deepEqual(got.body.effective.watchNewPrs, { value: true, source: 'project' });
+  const bad = await call('PATCH', url, { watchNewPrs: 'yes' });
+  assert.equal(bad.status, 400);
+  assert.match(bad.body.error, /^watchNewPrs must be true or false$/);
+  assert.equal((await call('GET', url)).body.own.watchNewPrs, true, 'a refused patch writes nothing');
+  const off = await call('PATCH', url, { watchNewPrs: false });
+  assert.deepEqual(off.body.effective.watchNewPrs, { value: false, source: 'project' }, 'false is a stored value, not a clear');
+  const clear = await call('PATCH', url, { watchNewPrs: null });
+  assert.equal('watchNewPrs' in clear.body.own, false);
+  assert.deepEqual(clear.body.effective.watchNewPrs, { value: false, source: 'default' });
+});

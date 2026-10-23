@@ -249,3 +249,12 @@ test('D4: a member row draws no chip for a pending PR (open, no verdict yet), an
   assert.equal(pending.dataset.state, 'in-review');
   assert.equal(rowOf({ ...pr, checks: { state: 'passing', total: 12, failed: 0, pending: 0 } }).querySelectorAll('.runs-pr').length, 1);
 });
+
+test('slice 2: syncActions skip never makes or shows a skipped action', () => {
+  const doc = trackDom(new JSDOM('<!doctype html><body><span class="slot"></span></body>')).window.document;
+  const slot = doc.querySelector('.slot');
+  syncActions(slot, { actions: ['retry', 'report'] }, { skip: ['archive', 'report'] });
+  assert.deepEqual([...slot.querySelectorAll('[data-model-action]')].map((b) => b.dataset.modelAction), ['retry']);
+  syncActions(slot, { actions: ['archive'] }, { skip: ['archive', 'report'] });
+  assert.equal(slot.querySelectorAll('[data-model-action]').length, 0, 'a button made earlier is removed too');
+});
