@@ -53,6 +53,13 @@ test('controls (tabs, nav rows, chips, role=button rows) and hidden buttons are 
     <button class="filter-chip">All</button><div role="button" class="run-row">Row</div><button class="btn-go" data-hidden>x</button>`), []);
 });
 
+test('a made .btn-sm action on the run page bar (.rd-bar-end) is the bar\'s medium size; elsewhere .btn-sm stays 28px/12px', () => {
+  const sm13 = { m: { fontSize: '13px' }, p: { fontSize: '13px' } };
+  assert.deepEqual(run(`<span class="rd-bar-end"><button class="btn rd-after">Run after</button><span class="rd-actions">
+    <button id="p" class="btn btn-sm btn-primary">Answer</button><button id="m" class="btn btn-sm">Archive</button></span></span>`, sm13), []);
+  assert.deepEqual(run('<div class="chat-rc-factions"><button id="m" class="btn btn-sm">Archive</button></div>', sm13).map((v) => v.rule), ['height', 'font-size']);
+});
+
 test('under a coarse pointer every button must be at least 40px', () => {
   assert.deepEqual(run('<button class="btn">a</button>', {}, { coarse: true }).map((v) => v.rule), ['height']);
   assert.deepEqual(run('<button class="btn">a</button>', {}, { coarse: true, height: 40 }), []);

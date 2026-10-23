@@ -161,7 +161,8 @@ A dot is the state: peach working (pulses), grey paused or waiting, green ready,
 ### Tracker
 The run page card's read-only "where is the work" line (`.rd-track`, `ui/public/run-head.mjs` `renderTracker`), under
 the status line after a `--line` divider, at every level. Three steps on one 3-column grid: the PR path (Changes ·
-Pull request · Merged into the base), the Push path (Changes · In the source here · On the remote), a Folder run's two
+Pull request · Merged into main: the real base, also while the run is live, or `Merged into base` when none is known),
+the Push path (Changes · In the source here · On the remote), a Folder run's two
 steps (Changes · Applied to your folder), and one row per workspace member with its name in a 44px column. Each step is
 a 16px node, a 12px label (600 when current, `--ink-3` when future) and a 1px connector, `--green` after a done node and
 `--line-2` otherwise. Nodes reuse the status-dot colours: done is a green fill with ✓, current is a ring with a dot
@@ -170,7 +171,7 @@ red `!`, closed an `--ink-3` × with a struck label, future a hollow `--line-2` 
 (`check`, `alert`, `x`). An optional 12px `--ink-2` second line holds the PR link (`#866`), GitHub's verdict, blue
 (`--blue-ink`) in-progress words and amber (`--amber-ink`) problems. Its links and its two quiet buttons (`Watching`,
 which opens the ▾ menu at Advanced, and kept work's `Commit it yourself`, `button.rd-track-act`) are its only controls.
-Under 480px the labels wrap and the connectors shrink to 8px.
+Labels wrap inside their column at every width and never run past the card; under 480px the connectors shrink to 8px.
 ### Menu (checked)
 One menu skin. The box is `.menu`: 4px padding, `--panel`, 1px `--line`, `--r-md` (8px), `--shadow-menu`, 13px. A row is
 `.menu-item`: at least 30px, `--r-sm` (6px), `--hover` on hover and keyboard focus; `.menu-sep` and `.menu-h` (12px /
@@ -227,8 +228,10 @@ buttons stay 28px; the card keeps the shared 24px padding (checked by the theme 
 - Run and group pages share one head: the bar (Back, a 28px chevron `Back to Runs`, in every layout; the breadcrumb
   `Runs › Run tags › Run 2` beside it when the list stands beside the page; Run after; on the right the one primary
   action, Stop, ⋯), the title with its kind chip (`Run 2 of 3`, `Run`, or
-  `Feature` / `Chain` / `Group`), then the card: the status block (the status line, the head buttons at its right, with
-  the PR control among them; see PR controls), the tracker under a `--line` divider, the facts block (`.rd-kv`: 12px
+  `Feature` / `Chain` / `Group`; a run in a group's chip links its group page and ends in a CSS `›` (`Run 2 of 3 ›`), so
+  its facts block has no group row), then the card: the status block (the status line, the head buttons at its right,
+  with the PR control among them; see PR controls. Beside the stage bar the status line names only the step
+  (`Working · Refine Plan`); the stage is on the bar), the tracker under a `--line` divider, the facts block (`.rd-kv`: 12px
   `--ink-2` labels, 13px values, one row per fact and one place to edit it; a quiet button that leads a value pulls back
   by its padding so its text sits on the value column), then the tiles (`--fs-stat` sans values with tabular figures,
   `--pad-tile` padding). No PR bar, no kept-work, merge-back or Apply box: their actions are head buttons.

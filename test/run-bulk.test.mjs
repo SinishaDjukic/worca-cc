@@ -44,19 +44,34 @@ test('a finished run raised to Needs you by its PR (D31) archives and deletes; S
   assert.equal(planBulk('stop', [pr]).skip[0].reason, 'already finished');
 });
 
-test('an interrupted run with no resume point archives and deletes; one that can resume is skipped as interrupted', () => {
+test('Archive and Delete take any interrupted run; Stop never does; a paused run stays unarchivable', () => {
   const dead = T('d', 'paused', { status: 'interrupted', resumable: false, pipelineId: 'd' });
   const parked = T('r', 'paused', { status: 'interrupted', resumable: true, pipelineId: 'r' });
   const unknown = T('u', 'paused', { status: 'interrupted', pipelineId: 'u' });
-  assert.equal(bulkVerdict('archive', dead), 'apply');
-  assert.equal(bulkVerdict('delete', dead), 'apply');
-  assert.equal(bulkVerdict('stop', dead), 'skip', 'an interrupted run is never stopped');
-  for (const t of [parked, unknown]) {
-    assert.equal(bulkVerdict('archive', t), 'skip', `${t.id}: only Resume moves it on`);
-    assert.equal(bulkVerdict('delete', t), 'skip');
+  for (const t of [dead, parked, unknown]) {
+    assert.equal(bulkVerdict('archive', t), 'apply', t.id);
+    assert.equal(bulkVerdict('delete', t), 'apply', t.id);
+    assert.equal(bulkVerdict('stop', t), 'skip', `${t.id}: an interrupted run is never stopped`);
   }
-  assert.deepEqual(planBulk('archive', [parked]).skip.map((t) => t.reason), ['interrupted — resume it first']);
-  assert.deepEqual(planBulk('delete', [parked]).skip.map((t) => t.reason), ['interrupted — resume it first']);
+  assert.deepEqual(planBulk('stop', [parked]).skip.map((t) => t.reason), ['interrupted — resume it first']);
+  const paused = T('p', 'paused', { status: 'paused', pipelineId: 'p' });
+  assert.equal(bulkVerdict('archive', paused), 'skip');
+  assert.equal(bulkVerdict('delete', paused), 'skip');
+  for (const s of ['working', 'starting']) assert.equal(bulkVerdict('archive', T('w', s, { status: 'running' })), 'skip');
+});
+
+test('Archive asks first only when it takes a run that could still resume; Delete says so too', () => {
+  const dead = T('d', 'paused', { status: 'interrupted', resumable: false, pipelineId: 'd' });
+  const parked = T('r', 'paused', { status: 'interrupted', resumable: true, pipelineId: 'Parked run' });
+  assert.equal(bulkConfirm('archive', planBulk('archive', [T('a', 'merged'), dead])), null, 'nothing resumable: Undo, no confirm');
+  const a = bulkConfirm('archive', planBulk('archive', [T('a', 'merged'), parked]));
+  assert.equal(a.title, 'Archive 2 runs?');
+  assert.equal(a.confirmLabel, 'Archive');
+  assert.equal(a.danger, true);
+  assert.match(a.message, /1 interrupted run can't be resumed afterwards: r\./);
+  const d = bulkConfirm('delete', planBulk('delete', [parked]));
+  assert.match(d.message, /1 interrupted run can't be resumed afterwards: r\./);
+  assert.doesNotMatch(bulkConfirm('delete', planBulk('delete', [dead])).message, /resumed/);
 });
 
 test('a waiting group member that Archive skips reads "not started yet", not "never started"', () => {

@@ -448,7 +448,7 @@ run states), not only on hand-made objects. The UX perspective's manual web chec
 
 In the bundle:
 - Chat card member rows use the group page's table row (one renderer): title in ink over the status line, PR chip, cost, › on hover; cost drops under 480px card width.
-- One wording per state, always "State · detail" ("Paused · interrupted", "Plan · needs you · approve the plan", "Build · step · Implementation"). No colon forms. The group page head keeps "Run 5 of 5 · paused".
+- One wording per state, always "State · detail" ("Paused · interrupted", "Plan · needs you · approve the plan", "Build · Implementation" (beside the stage bar: Implementation)). No colon forms. The group page head keeps "Run 5 of 5 · paused".
 - Run page head: "Save as preset" (was "Save setup as preset"); "Add tags" is a quiet button like "Add to group…".
 - Keep awake: beta flag, on by default locally, its own section in Settings › Runs right after Away mode, Beta chip in the label.
 

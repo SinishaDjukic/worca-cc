@@ -203,10 +203,14 @@ export function createScheduleChangeValidator({ getItem, afterRef = null, now = 
         if (!['scheduled', 'missed'].includes(item.status)) return { ok: false, errors: [`this run is ${item.status} and can no longer be moved`] };
         if (str(raw.after)) {
           if (str(raw.when)) return { ok: false, errors: ['move: give when OR after, not both'] };
+          // A resume ticket continues the paused run on its own branch (the server refuses the flag too).
+          if (item.resumePipelineId && raw.sourceFromPrevious === true) return { ok: false, errors: ['move: a resume continues on its own branch — sourceFromPrevious does not apply'] };
           const aspec = resolveScheduleSpec({ after: raw.after, afterPolicy: raw.afterPolicy ?? (item.after ? item.after.policy : undefined), sourceFromPrevious: raw.sourceFromPrevious ?? item.sourceFromPrevious,   // a re-chaining keeps the ticket's branch choice, like afterPolicy
             projectKey: item.projectKey, workspaceId: item.workspaceId }, { nowMs, timeZone: tzOf(), afterRef });
           if (!aspec.ok) return { ok: false, errors: aspec.errors.map((e) => `move: ${e.replace(/^after: /, '')}`) };   // no `move: after: …` double prefix
           if (aspec.schedule.after.kind === 'ticket' && aspec.schedule.after.id === item.id) return { ok: false, errors: ['move: a run cannot wait for itself'] };
+          // The server's resumeWaitError also refuses a cycle when the card is applied.
+          if (item.resumePipelineId && aspec.schedule.after.kind === 'pipeline' && aspec.schedule.after.id === item.resumePipelineId) return { ok: false, errors: ['move: a run cannot resume after itself'] };
           card.before = beforeCurrent();   // an after-ticket's "before" is its predecessor, never the 9999 sentinel
           // `card.after` means "the state AFTER the change" in this validator — the predecessor
           // itself rides under `afterRun` so the two senses never collide.

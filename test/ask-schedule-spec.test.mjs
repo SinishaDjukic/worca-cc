@@ -253,6 +253,13 @@ test('run chains: after a run id (refusals), sourceFromPrevious vs a branch, a m
       // The after-branch sits BELOW the kind / occurrence / status guards.
       assert.deepEqual((await validate({ action: 'move', id: 'ffff', after: 'p1' }, { timeZone: 'UTC' })).errors, ['this run is fired and can no longer be moved']);
       assert.deepEqual((await validate({ action: 'move', id: 'aaaa', after: 'e1' }, { timeZone: 'UTC' })).errors, ['move: ‘Broken’ ended with an error — nothing to wait for']);
+      // A resume ticket may wait on another run, never on the run it resumes, never "from its branch".
+      rows.rrrr = { kind: 'once', item: { id: 'rrrr', title: 'Resume ‘Docs’', status: 'scheduled', runAt: '2026-09-19T00:00:00.000Z', scheduleId: null, projectDir: '/p/shop', projectKey: 'proj-1', workspaceId: null, after: null, resumePipelineId: 'p9' } };
+      const resume = await validate({ action: 'move', id: 'rrrr', after: 'p1' }, { timeZone: 'UTC' });
+      assert.equal(resume.ok, true, JSON.stringify(resume));
+      assert.deepEqual(resume.card.patch, { after: { kind: 'pipeline', id: 'p1' }, afterPolicy: 'done' });
+      assert.deepEqual((await validate({ action: 'move', id: 'rrrr', after: 'p9' }, { timeZone: 'UTC' })).errors, ['move: a run cannot resume after itself']);
+      assert.deepEqual((await validate({ action: 'move', id: 'rrrr', after: 'p1', sourceFromPrevious: true }, { timeZone: 'UTC' })).errors, ['move: a resume continues on its own branch — sourceFromPrevious does not apply']);
       // Re-chaining an after-ticket: `before` names the current predecessor by TITLE (looked up through
       // afterRef — the row carries only its id), the branch choice is inherited when unsaid, and turning
       // it OFF must reach the PATCH explicitly (an omitted key means "keep" there).

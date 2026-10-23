@@ -28,6 +28,7 @@ const cases = [
   ['theme must be system, light or dark', 'theme', 'theme', '“Theme” must be system, light or dark.'],
   ['uiLevel must be simple, advanced or expert', 'uiLevel', 'uiLevel', '“Interface mode” must be simple, advanced or expert.'],
   ['resumeAfterUsageLimit must be true or false', 'resumeAfterUsageLimit', 'resumeAfterUsageLimit', '“Resume after a usage limit” must be true or false.'],
+  ['autoGeneratePrDescription must be true or false', 'autoGeneratePrDescription', 'autoGeneratePrDescription', '“Draft the PR description automatically” must be true or false.'],
 ];
 test('settingsErrorReply: table of validator messages → {error, field}; no-ctx raw text; never leaks a key; e.g. text is not a key', async () => {
   await checkRows([
