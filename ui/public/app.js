@@ -17948,6 +17948,7 @@ async function paintShipItTry(modal, record, gen, isClosed) {
   box.hidden = true; box.replaceChildren();
   tryBtn.hidden = true; tryBtn.onclick = null;
   let tryFocused = false;   // set on click: a disabled button can drop focus, so read it before disabling
+  let checkingOut = false;  // an actions-changed repaint while the POST is out must not re-enable the button
   // Focus never falls to <body>: back on Try it first when it is still shown, else on Create PR.
   const settleTryFocus = () => {
     if (!tryFocused) return;
@@ -17965,7 +17966,7 @@ async function paintShipItTry(modal, record, gen, isClosed) {
     paintActionsStrips(record.id);
     const state = shipItTryState(r.data);
     tryBtn.hidden = state !== 'checkout';
-    tryBtn.disabled = false;
+    tryBtn.disabled = checkingOut;
     tryBtn.onclick = state === 'checkout'
       ? () => {
         tryFocused = document.activeElement === tryBtn;
@@ -17981,7 +17982,9 @@ async function paintShipItTry(modal, record, gen, isClosed) {
   const handlers = {
     // A failed checkout says so on the card; repaint() re-enables (or hides) the button either way.
     onCheckout: async (members) => {
+      checkingOut = true;
       const r = await call('POST', '/checkout', members ? { members } : {});
+      checkingOut = false;
       cardAlert(modal.querySelector('.shipit-card'), r.ok ? null : { title: 'Not checked out', detail: r.data?.error || 'The checkout failed.' });
       await repaint();
     },
@@ -23359,6 +23362,7 @@ async function loadShipItRemotes(modal, record, gen, isClosed) {
   branchWrap.hidden = true;
   branchSel.innerHTML = '';
   setShipItRemotesDisabled(modal, true);
+  modal.querySelector('#shipit-into-label').textContent = 'Into';   // a previous run's host suffix never carries over
   paintShipItInto(modal);                                            // nothing loaded yet: an empty Into hides
   modal.querySelector('.shipit-remotes-hint').textContent = '';
   const closes = modal.querySelector('.shipit-closes');

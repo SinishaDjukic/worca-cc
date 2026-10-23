@@ -353,6 +353,8 @@ test('Try it first: disabled while the checkout is out, "Not checked out" on fai
   tryBtn.focus();
   click(ctx.window, tryBtn); await settle(ctx.window, 2);
   assert.equal(tryBtn.disabled, true, 'disabled while the checkout POST is out');
+  modal.querySelector('.shipit-try').__repaint(); await settle(ctx.window, 4);
+  assert.equal(tryBtn.disabled, true, 'an actions-changed repaint keeps it disabled while the POST is out');
   assert.deepEqual(checkouts, [{ members: ['p-1'] }]);
   release(fail(500, { error: 'disk full' })); await settle(ctx.window, 4);
   assert.deepEqual(cardAlertOf(card), { title: 'Not checked out', detail: 'disk full' });
