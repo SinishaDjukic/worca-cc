@@ -24162,19 +24162,27 @@ function paintHdPush(screen, record) {
   if (record.mergeBack?.merged === false) return false;   // not merged back: the work is on its own branch, a PR lands it
   if (!btn || record.target === 'workspace' || !record.sourceBranch || !record.mergeBack || record.mergeBack.merged !== true) return true;
   btn.hidden = false;
-  btn.disabled = false;
-  setCtaContent(btn, 'arrow-up', `Push ${record.sourceBranch}`);
-  // The run summary's CTA (.hd-g-push) clicks this button: keep its label and state in step with it.
-  const mirror = (label, disabled) => {
+  // The label stays short (a long branch would widen the button past the card); the tooltip names the branch.
+  // record.push (refs only, rowToHistoryEntry): a source already on its remote reads "Pushed to <remote>" after a
+  // reload too; a diverged one cannot be pushed (never forced); a new local commit offers Push again.
+  const push = record.push || null;
+  const tip = hdPushTip(record);
+  btn.disabled = push?.state === 'pushed' || push?.state === 'diverged';
+  setCtaContent(btn, 'arrow-up', push?.state === 'pushed' ? `Pushed to ${push.remote}` : 'Push');
+  btn.title = hdPushTip(record, push);
+  // The run summary's CTA (.hd-g-push) clicks this button: keep its label, tooltip and state in step with it.
+  const mirror = (label, disabled, title) => {
     const g = screen.querySelector('.hd-g-push');
     if (!g) return;
     g.disabled = disabled;
+    g.title = title;
     setCtaContent(g, PR_CTA_LOOK.push.icon, label);
   };
   btn.onclick = async () => {               // property, not addEventListener: paintHdPr re-runs (as its own btn.onclick, :18315)
     btn.disabled = true;
     setCtaContent(btn, 'arrow-up', 'Pushing…');
-    mirror('Pushing…', true);
+    btn.title = tip;
+    mirror('Pushing…', true, tip);
     try {
       const res = await fetch('/api/push', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -24185,15 +24193,26 @@ function paintHdPush(screen, record) {
       const dd = await safeJson(res);
       if (!res.ok) throw new Error((dd && dd.error) || `HTTP ${res.status}`);
       setCtaContent(btn, 'arrow-up', `Pushed to ${dd.remote || 'the remote'}`);
-      mirror(btn.textContent, true);
+      btn.title = hdPushTip(record, { state: 'pushed', remote: dd.remote || 'the remote' });
+      mirror(btn.textContent, true, btn.title);
     } catch (err) {
+      // A short label; the error (often long) is in the tooltip, and a click retries.
       btn.disabled = false;
-      setCtaContent(btn, 'arrow-up', `Push ${record.sourceBranch}`);
-      btn.title = err && err.message ? err.message : String(err);
-      mirror(`Push failed: ${btn.title}`, false);
+      setCtaContent(btn, 'arrow-up', 'Push failed');
+      btn.title = `Push failed: ${err && err.message ? err.message : String(err)}`;
+      mirror('Push failed', false, btn.title);
     }
   };
   return true;
+}
+
+// The Push buttons' tooltip: the source branch they push (their label is just "Push"), or, from the push
+// state ({ state, remote }), where it already is / why it cannot be pushed.
+function hdPushTip(record, push = null) {
+  const b = record.sourceBranch;
+  if (push?.state === 'pushed') return `${b} is on ${push.remote}`;
+  if (push?.state === 'diverged') return `${b} and ${push.remote}/${b} have diverged: pull or rebase ${b}, then push`;
+  return `Push to ${b}`;
 }
 
 // Keep the OPEN detail's PR control in step with the two PR-resolution paths
@@ -24302,8 +24321,9 @@ function paintHdGlance(screen, record, data) {
     // The one wiring: the header's button opens the ship-it modal (re-read at click time).
     paintPrCta(slot, { state: 'create', cls: 'hd-g-pr', onClick: () => { const b = screen.querySelector('.hd-pr'); if (b) b.click(); } });
   } else if (shown(pushBtn) && !pushBtn.hidden) {
-    paintPrCta(slot, { state: 'push', cls: 'hd-g-push', label: `Push ${record.sourceBranch}`,
-      onClick: () => { const b = screen.querySelector('.hd-push'); if (b) b.click(); } });
+    // The header's button's own label, tooltip and disabled state (paintHdPush, its click's outcome): one source.
+    paintPrCta(slot, { state: 'push', cls: 'hd-g-push', label: pushBtn.textContent || 'Push', title: pushBtn.title || hdPushTip(record),
+      disabled: pushBtn.disabled, onClick: () => { const b = screen.querySelector('.hd-push'); if (b) b.click(); } });
   } else if (pr === 'PENDING' && shown(createBtn)) {
     paintPrCta(slot, { state: 'pending' });
   } else {
@@ -35014,7 +35034,7 @@ function setCtaContent(node, name, label) {
 // cannot morph. `state`: 'pending' (the lookup runs: a white placeholder with a spinner at
 // the button's height, nothing to click), 'create' | 'view' | 'merged' (the button in its
 // colour; View and Merged link to `href`, Create calls `onClick`), 'push' (Create's look, its
-// `label` the header's "Push <branch>"), 'none' (no slot).
+// `label` the header's "Push", its `title` the branch), 'none' (no slot).
 // Pending -> a button morphs: the colour grows as a circle from the spinner (.rd-pr-fill),
 // the spinner fades, the icon and label come in. Pending -> none fades out in place.
 // Any other change paints the end state at once, so a known state (a cached row) never
@@ -35024,14 +35044,14 @@ const PR_CTA_MORPH_MS = 420;
 const PR_CTA_OUT_MS = 380;
 const PR_CTA_LOOK = {
   create: { look: '', icon: 'pr-create', label: CREATE_PR_LABEL },
-  push: { look: '', icon: 'arrow-up', label: '' },   // a run on its source branch: the caller's label (paintHdPush)
+  push: { look: '', icon: 'arrow-up', label: '' },   // a run on its source branch: the caller's label and title (paintHdPush)
   view: { look: 'pr-view', icon: 'pull-request', label: 'View PR' },
   merged: { look: 'pr-merged', icon: 'merge', label: 'View PR' },
 };
-function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '', label: own = '' } = {}) {
+function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '', label: own = '', title = '', disabled = false } = {}) {
   if (!slot) return;
   slot._prClick = onClick;                         // read at click time: a repaint re-binds it
-  const sig = `${state}|${href}|${cls}|${own}`;
+  const sig = `${state}|${href}|${cls}|${own}|${title}|${disabled}`;
   if (slot.dataset.sig === sig) return;
   const from = slot.dataset.state || 'none';
   slot.dataset.sig = sig;
@@ -35083,6 +35103,8 @@ function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '',
   }
   ctl.className = ['btn', look ? '' : 'btn-primary', look, cls].filter(Boolean).join(' ');
   ctl.setAttribute('data-rd-cta', '');
+  if (title) ctl.title = title;
+  if (disabled && ctl.tagName === 'BUTTON') ctl.disabled = true;
   setCtaContent(ctl, glyph, own || label);
   slot.hidden = false;
   const wait = from === 'pending' && slot.querySelector('.rd-pr-wait');

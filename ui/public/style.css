@@ -4956,7 +4956,7 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
    line's height with or without the button, and its fade-out moves nothing. */
 .rd-sheet-head > .rd-pr-slot{grid-area:1 / 3;margin:-6.25px 0 -6.25px 16px;}
 /* A narrow card: the button wraps onto its own row under the status, on the left edge. */
-@container rd-head (max-width:420px){.rd-sheet-head > .rd-pr-slot{grid-area:2 / 1 / 3 / -1;justify-self:start;margin:12px 0 0;}}
+@container rd-head (max-width:420px){.rd-sheet-head > .rd-pr-slot{grid-area:2 / 1 / 3 / -1;justify-self:start;margin:12px 0 0;max-width:100%;}}
 /* The status line (.rd-now-top) is the shared status block (run-status-card.mjs, .run-status below). */
 
 /* The status glyph (run-glance.mjs renderOrb): colour is the state. */
@@ -5052,7 +5052,9 @@ button.rd-srow:hover{background:var(--hover-on-field);}
    opacity, will-change only on the nodes that animate; the slot's height never changes during
    the morph. With no button after all, the placeholder fades out in place (in a narrow head, where
    the slot is a row of its own, that row then closes at once: accepted, it is a rare case). */
-.rd-pr-slot{position:relative;width:fit-content;border-radius:var(--r-ctrl);}
+/* Capped at half the head (cqi: .rd-sheet-head is the container), so no label ("Pushed to <remote>", a long error)
+   can push the button past the card or squeeze the status column; the label ellipsizes, the icon stays. */
+.rd-pr-slot{position:relative;width:fit-content;max-width:min(260px,50cqi);border-radius:var(--r-ctrl);}
 .rd-pr-slot[hidden]{display:none;}
 .rd-pr-status[hidden]{display:none;}
 /* The PR bar: the run's own PR, its checks and Watch, as one card; nothing (no gap) without them. */
@@ -5084,7 +5086,8 @@ button.rd-prs-link{background:none;border:0;padding:0;font:inherit;cursor:pointe
 button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
 .rd-prs-watch{display:flex;align-items:center;gap:8px;flex:0 0 auto;margin-left:auto;cursor:pointer;font-weight:500;}
 .rd-pr-slot:is(.is-pending,.is-morph,.is-out){overflow:hidden;background:var(--panel);box-shadow:inset 0 0 0 1px var(--line);}
-.rd-pr-slot > [data-rd-cta]{position:relative;}   /* above the colour layer */
+.rd-pr-slot > [data-rd-cta]{position:relative;max-width:100%;}   /* above the colour layer */
+.rd-pr-slot > [data-rd-cta] > span:not(.ic){min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .rd-pr-wait{display:flex;align-items:center;justify-content:center;gap:6px;box-sizing:border-box;height:32px;padding:0 12px;
   font:500 13px var(--sans);color:var(--ink-2);cursor:default;}
 .rd-pr-wait > *{opacity:0;}

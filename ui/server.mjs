@@ -326,7 +326,7 @@ import { shipFeature, SHIP_MODES, shipCardVerb } from '../src/core/shape/ship.mj
 import { releaseVersionHint, recordRunRelease, draftReleasesOnMerge } from '../src/core/draft-release.mjs';
 import { parseReleaseChoice } from '../src/shared/release-version.mjs';
 import {
-  projectSyncBlock, workspaceSyncBlocks, effectiveSyncSettings, projectSyncEvents, startProjectSyncBackground,
+  projectSyncBlock, workspaceSyncBlocks, effectiveSyncSettings, sourcePushRemote, projectSyncEvents, startProjectSyncBackground,
 } from '../src/core/project-sync.mjs';
 import { mapWithCap, fanoutCap } from '../src/core/fanout.mjs';
 import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, prBaseBranch, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips, tipsRelation,
@@ -9067,12 +9067,20 @@ app.post('/api/push', async (req, res) => {
     return res.status(409).json({ error: `the run's work is not on ${b.source} (not merged back). Merge it by hand first` });
   }
   // The run's sync remote — validated like the branch (the record's value ends up in git's argv).
-  const remote = isSafeRemoteName(b.sync?.remote) ? b.sync.remote
-    : (effectiveSyncSettings(projectKey(state.projectDir)).remote || 'origin');
+  const remote = sourcePushRemote(b, projectKey(state.projectDir));
   const pushed = await pushBranch(state.projectDir, b.source, remote);
   if (!pushed.ok) return res.status(500).json({ error: `git push failed: ${pushed.stderr}` });
   const by = actorOf(req);
-  appendAuditById(state.id || id, `Pushed \`${b.source}\` to \`${remote}\`${byActor(by)}.`, { actor: by });
+  const runId = state.id || id;
+  // Recorded beside the run's branch (as Publish records br.published), so a reload reads "Pushed to <remote>".
+  const tips = await branchTips(state.projectDir, b.source, null);
+  try {
+    updateBranchRecords(runId, ['project'], (br) => {
+      br.pushed = { remote, sha: tips?.local || null, at: new Date().toISOString(), by };
+    });
+  } catch { /* best-effort: the remote-tracking ref still shows the source as pushed */ }
+  appendAuditById(runId, `Pushed \`${b.source}\` to \`${remote}\`${byActor(by)}.`, { actor: by });
+  emitChanged('pipelines-changed', 'updated');
   res.json({ ok: true, remote, branch: b.source });
 });
 
