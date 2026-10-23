@@ -53,3 +53,10 @@ test('kind chip CSS: modifiers scoped to .kind-chip, readable tokens in both the
   assert.match(css, /\.kind-chip\.kind-ws\{background:var\(--slate-bg\);color:var\(--slate-ink\);\}/);
   assert.doesNotMatch(css, /(^|[^.\w-])\.kind-(git|folder|none|ws)\{/m, 'no bare modifier rule');
 });
+
+test('the run page kind chip as a link: no underline, a CSS chevron, a focus ring; the chip rule itself unchanged', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  assert.match(css, /^\.rd-title-row a\.kind-chip\{text-decoration:none;/m);
+  assert.match(css, /^\.rd-title-row a\.kind-chip::after\{content:"›"\/"";/m);
+  assert.match(css, /^\.rd-title-row a\.kind-chip:focus-visible\{outline:2px solid var\(--ink\);/m);
+});

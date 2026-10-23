@@ -8,6 +8,9 @@ export const BUTTON_SPEC = Object.freeze({
   heights: { 'btn-sm': 28, '': 32, 'btn-lg': 40 },
   fontSizes: { 'btn-sm': '12px', '': '13px', 'btn-lg': '13px' },
   corners: ['6px', '0px'],                              // 0 for the joined halves of a split button
+  // One control size on the run page bar: its made .btn-sm actions (syncActions, shared with the chat run card) are
+  // medium there (style.css `:is(.rd-bar,.hd-bar) .rd-bar-end > …`).
+  mediumIn: ['.rd-bar-end'],
   // D10: controls, not §1.2 buttons. They still obey the radius tokens (test/ui-design-language.test.mjs).
   controls: ['.nav button', '.seg button', '.tab', '[role="tab"]', '[role="menuitem"]', '[role="menuitemradio"]',
     '[role="menuitemcheckbox"]', '[role="option"]', '[role="radio"]', '[role="switch"]', '.switch', '.link-btn',
@@ -49,7 +52,7 @@ export function auditButtons(root, spec, env) {
     const variants = spec.variants.filter((c) => cl.contains(c));
     if (sizes.length > 1) bad('two-sizes', sizes.join(' '));
     if (variants.length > 1) bad('two-variants', variants.join(' '));
-    const size = sizes[0] || '';
+    const size = el.closest(spec.mediumIn.join(',')) ? '' : (sizes[0] || '');
     const cs = style(el);
     const h = Math.round(rect(el).height);
     if (coarse ? h < 40 : h !== spec.heights[size]) bad('height', `${h}px`);

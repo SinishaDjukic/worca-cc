@@ -106,8 +106,24 @@ test('POST sets debugSpawnEnabled; GET reflects it; does not touch root', async 
   }
 });
 
-test('resumeAfterUsageLimit: GET defaults to false, POST true round-trips, a non-boolean answers 400 naming the field', async () => {
+test('resumeAfterUsageLimit / autoGeneratePrDescription: GET defaults to false, POST true round-trips, a non-boolean answers 400 naming the field', async () => {
   await checkRows([
+    { name: 'GET /api/settings: autoGeneratePrDescription defaults to false', run: async () => {
+      assert.equal((await (await fetch(`${base}/api/settings`)).json()).autoGeneratePrDescription, false);
+    } },
+    { name: 'POST autoGeneratePrDescription true round-trips through GET and back to false', run: async () => {
+      try {
+        assert.equal((await (await postJson({ autoGeneratePrDescription: true })).json()).autoGeneratePrDescription, true);
+        assert.equal((await (await fetch(`${base}/api/settings`)).json()).autoGeneratePrDescription, true);
+      } finally {
+        assert.equal((await (await postJson({ autoGeneratePrDescription: false })).json()).autoGeneratePrDescription, false);
+      }
+    } },
+    { name: 'POST autoGeneratePrDescription "yes" answers 400 naming the field', run: async () => {
+      const r = await postJson({ autoGeneratePrDescription: 'yes' });
+      assert.equal(r.status, 400);
+      assert.equal((await r.json()).field, 'autoGeneratePrDescription');
+    } },
     { name: 'GET /api/settings: resumeAfterUsageLimit defaults to false', run: async () => {
       assert.equal((await (await fetch(`${base}/api/settings`)).json()).resumeAfterUsageLimit, false);
     } },
@@ -256,7 +272,7 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
     // key, each with a value its setter accepts as "no change / default".
     const probes = {
       projectsRoot: '', chat: {}, pipelineCostLimitUsd: '', totalCostLimitUsd: '', costLimitResetPeriod: '', humanRateUsdPerHour: '',
-      askMaxTurns: '', askMaxBudgetUsd: '', askWeb: null, smartNaming: null, debugSpawnEnabled: false, resumeAfterUsageLimit: false, updateCheck: true,
+      askMaxTurns: '', askMaxBudgetUsd: '', askWeb: null, smartNaming: null, debugSpawnEnabled: false, resumeAfterUsageLimit: false, autoGeneratePrDescription: false, updateCheck: true,
       titleModel: '', hideBuiltinModels: false, theme: '', uiLevel: '',
       autoWorkflowModel: '',
       prDescriptionModel: '',

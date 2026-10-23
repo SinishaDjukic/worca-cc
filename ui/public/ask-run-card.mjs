@@ -89,7 +89,9 @@ export function snapshotFromState(state, { now = Date.now(), extras = null } = {
     // Runs redesign slice 4 (D9): the raw state runModel reads, so the card draws the same model as the list and the page.
     run: { stepper: state.stepper || null, status, steps: state.steps || [], active: state.active || [],
       endReached: !!state.endReached, tokens: state.tokens || {}, progressFacts: state.progressFacts || null,
-      pendingQuestion: null, pauseReason: state.pauseReason || '', pr, resumable: state.resumable === true,
+      pendingQuestion: null, pauseReason: state.pauseReason || '', pr,
+      // Tri-state: a live state carries no flag (it stays resumable); only the saved detail's `false` means never.
+      ...(typeof state.resumable === 'boolean' ? { resumable: state.resumable } : {}),
       // D24: the round marker (branch.roundOf) and the Watch PR fact (extras.watch) pass through; the model words them.
       branch: state.branch && typeof state.branch === 'object' ? state.branch : null, round: state.round || null,
       watch: (x && x.watch) || null,
