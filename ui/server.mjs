@@ -5037,14 +5037,21 @@ const livePr = (pid) => { const pr = readPrState(pid); return !!(pr && pr.url &&
 /** One ship flow (D6, D7): a Run-after chain ships as one PR per run (stacked) or one PR from its last run. → { status, body } */
 async function shipChainNow(chainId, mode, { actor = null, title = null, body = '', draft = false, watch = false } = {}) {
   if (!SHIP_MODES.includes(mode)) return { status: 400, body: { error: 'mode must be stacked or one' } };
-  const chain = runChains({ keepDone: true }).find((c) => c.id === chainId);
+  const chain = runChains({ keepDone: 'all' }).find((c) => c.id === chainId);
   if (!chain) return { status: 404, body: { error: 'unknown chain' } };
   if (!chain.members.every((m) => m.state === 'done' && m.pipelineId)) return { status: 409, body: { error: 'every run in the chain must be done before it ships' } };
   const todo = chain.members.filter((m) => !livePr(m.pipelineId));
   if (!todo.length) return { status: 409, body: { error: 'every run in the chain already has a PR' } };
+  // Before any PR: a run with no branch of its own (a workspace or Folder run) would stop the ship part-way.
+  const lost = todo.findIndex((m) => !m.canPr);
+  if (lost >= 0) return { status: 409, body: { error: `run ${chain.members.indexOf(todo[lost]) + 1} has no branch to ship: create its PR from its own page` } };
   if (mode === 'one') {
     if (todo.length !== chain.members.length) return { status: 409, body: { error: 'a run in this chain already has a PR: create one PR per run' } };
     if (chain.members.some((m, i) => i > 0 && m.after !== i)) return { status: 409, body: { error: 'a chain that forks ships as one PR per run' } };
+    // One is the last run's branch: it holds every run's work only when each run started from the one before it.
+    if (chain.members.some((m, i) => i > 0 && (!m.stacks || m.projectKey !== chain.members[0].projectKey))) {
+      return { status: 409, body: { error: "a run in this chain does not start from the previous run's branch: create one PR per run" } };
+    }
   }
   if (!(await anyPrHost())) return { status: 409, body: { error: NO_PR_HOST } };
   if (CHAIN_SHIPPING.has(chainId)) return { status: 409, body: { error: 'this chain is already shipping' } };

@@ -6,17 +6,21 @@ import { createPrLabel } from './ship-words.mjs';
 export const PER_RUN_NOTE = 'Each PR takes its own run summary';
 export const ONE_FEATURE_NOTE = 'The PR takes every run\'s summary';
 export const ONE_OFF_REASON = 'A run already has a PR';
+export const ONE_LOOSE_REASON = 'A run does not start from the previous run\'s branch';
 
 /** A member's own PR: open, and not an in-flight feature's slice draft (stacked marks those ready, One closes them). */
 const ownsPr = (kind, pr) => !!(pr && pr.url && pr.state !== 'CLOSED' && !(kind === 'feature' && pr.draft));
 
 /**
- * view: { kind: 'feature'|'chain', suggested?: 'one'|'stacked'|null, members: [{ position, pr: { url, state?, draft? } | null }] }
+ * view: { kind: 'feature'|'chain', suggested?: 'one'|'stacked'|null, members: [{ position, pr: { url, state?, draft? } | null,
+ *   stacks? }] }: a chain member with `stacks: false` did not start from the previous run's branch, so One would ship
+ *   only the last run's work.
  * → { n: members that still need a PR, oneOff: '' or why One is disabled, mode: the default pick }
  */
 export function groupShipChoice({ kind, members, suggested = null }) {
   const owned = members.filter((m) => ownsPr(kind, m.pr));
-  const oneOff = owned.length ? ONE_OFF_REASON : '';
+  const loose = kind === 'chain' && members.some((m, i) => i > 0 && m.stacks === false);
+  const oneOff = owned.length ? ONE_OFF_REASON : loose ? ONE_LOOSE_REASON : '';
   const mode = oneOff || kind !== 'feature' || suggested === 'stacked' ? 'stacked' : 'one';
   return { n: members.length - owned.length, oneOff, mode };
 }

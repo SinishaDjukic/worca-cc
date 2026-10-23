@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
-import { paintGroupShip, groupShipChoice, resetGroupShip, PER_RUN_NOTE } from '../ui/public/ship-group-dialog.mjs';
+import { paintGroupShip, groupShipChoice, resetGroupShip, PER_RUN_NOTE, ONE_LOOSE_REASON } from '../ui/public/ship-group-dialog.mjs';
 
 const trackDom = useDomRelease(afterEach);
 const html = readFileSync(new URL('../ui/public/index.html', import.meta.url), 'utf8');
@@ -44,6 +44,12 @@ test('a member with a PR: One disabled with its reason, N counts the rest; a fea
   assert.equal(modal.querySelector('.shipit-ok').textContent, 'Create 2 PRs');
   const drafts = { ...FEATURE, members: FEATURE.members.map((m) => ({ ...m, pr: { url: `d${m.position}`, state: 'OPEN', draft: true } })) };
   assert.deepEqual(groupShipChoice(drafts), { n: 3, oneOff: '', mode: 'one' });
+});
+
+test('a chain run that did not start from the previous run\'s branch disables One with its reason', () => {
+  const loose = { kind: 'chain', members: [{ position: 1, pr: null }, { position: 2, pr: null, stacks: false }] };
+  assert.deepEqual(groupShipChoice(loose), { n: 2, oneOff: ONE_LOOSE_REASON, mode: 'stacked' });
+  assert.equal(groupShipChoice({ kind: 'chain', members: [{ position: 1, pr: null }, { position: 2, pr: null, stacks: true }] }).oneOff, '');
 });
 
 test('a chain\'s One shows Title and description with Draft and without Generate; a closed PR does not count', () => {

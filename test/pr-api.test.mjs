@@ -557,6 +557,38 @@ test('chain ship: One on a forked chain answers 409 before the PR host is asked'
   assert.equal(seen.filter((c) => c[0] === 'gh' && c[1] === 'pr').length, 0);
 });
 
+test('chain ship: One on a chain whose run started from its own branch answers 409 before the PR host is asked', async () => {
+  const r1 = (await seedPipeline(betaRepo, { title: 'cl1', status: 'done', startedAt: '2026-06-02T00:00:00Z',
+    branch: { source: 'dev', feature: 'worca-cc/cl1', branchKept: true } })).id;
+  const r2 = (await seedPipeline(betaRepo, { title: 'cl2', status: 'done', startedAt: '2026-06-02T00:00:00Z',
+    branch: { source: 'dev', feature: 'worca-cc/cl2', branchKept: true } })).id;
+  const t = createTicket({ projectDir: betaRepo, title: 'next', request: { projectDir: betaRepo, prompt: 'next' },
+    after: { kind: 'pipeline', id: r1 } });               // Run after, but from its own branch: One would hold only run 2
+  markTicketFired(t.id, { pipelineId: r2 });
+  const seen = [];
+  stubForkRepo(seen);
+  const r = await shipChain(`p:${r1}`, { mode: 'one' });
+  assert.equal(r.status, 409);
+  assert.match((await r.json()).error, /does not start from the previous run's branch/);
+  assert.equal(seen.filter((c) => c[0] === 'gh' && c[1] === 'pr').length, 0);
+  assert.equal(readPrState(r1), null);
+});
+
+test('chain ship: a run with no branch of its own answers 409 before any PR is created', async () => {
+  const { r1, r2 } = await chain2('cn');
+  const r3 = (await seedPipeline(betaRepo, { title: 'cn3', status: 'done', startedAt: '2026-06-02T00:00:00Z',
+    branch: { source: 'worca-cc/cn2' } })).id;           // a Folder-mode run: no feature branch
+  const t = createTicket({ projectDir: betaRepo, title: 'last', request: { projectDir: betaRepo, prompt: 'last' },
+    after: { kind: 'pipeline', id: r2 }, sourceFromPrevious: true });
+  markTicketFired(t.id, { pipelineId: r3 });
+  const seen = [];
+  stubForkRepo(seen);
+  const r = await shipChain(`p:${r1}`, { mode: 'stacked' });
+  assert.equal(r.status, 409);
+  assert.match((await r.json()).error, /run 3 has no branch to ship/);
+  assert.equal(prCreates(seen).length, 0, 'no PR is created part-way');
+});
+
 test('chain ship: two ships at once — one runs, the other answers 409 "already shipping"', async () => {
   const { id } = await chain2('cc');
   const seen = [];

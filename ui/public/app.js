@@ -24199,7 +24199,7 @@ async function openChainShip(row, { opener = null } = {}) {
   const base = await groupShipBase(last.pipelineId, projectKey);
   openShipItGroupModal({ kind: 'chain', id: row.groupId, title: row.title, projectKey, base,
     members: row.members.map((mb) => { const pr = mb.model && mb.model.pr;
-      return { position: mb.position, pr: pr && pr.url ? { url: pr.url, state: pr.id === 'closed' ? 'CLOSED' : 'OPEN' } : null }; }) },
+      return { position: mb.position, stacks: mb.stacks, pr: pr && pr.url ? { url: pr.url, state: pr.id === 'closed' ? 'CLOSED' : 'OPEN' } : null }; }) },
     { opener, refocus: focusGroupHead });
 }
 /** Create PR on a feature's or a chain's status line (D19, D20): the slot's Create PR shows `pending`, a head button
@@ -32608,6 +32608,7 @@ function runsGroupItem({ id, groupKind, title, members, cost = null, planning = 
       : groupKind === 'feature' ? `#feature/${encodeURIComponent(id)}` : m.ticketId ? '#schedules/once' : '#runs';
     return { position: m.position || i + 1, title: m.title, adhoc: !!m.adhoc, href, pipelineId: m.pipelineId || (r && r.pipelineId) || null,
       projectKey: m.projectKey || pk || null,   // one ship flow: the chain dialog's GET /api/pr/remotes
+      stacks: m.stacks,                         // one ship flow: a chain run started from the previous run's branch
       ticketId: m.ticketId || null, runId: r ? r.runId : '', kind: r ? 'live' : m.pipelineId ? 'hist' : 'sched', run,
       memo: memoFor(m.pipelineId || m.ticketId || `${id}:${i}`),
       startedAt: (r && r.startedAt) || (h && h.startedAt) || null,       // D12: the group's dispatch time
