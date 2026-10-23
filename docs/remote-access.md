@@ -74,7 +74,8 @@ once per organization, steps 3–7 once per worca deployment.
    that's `WORCA_CF_ACCESS_AUD`.
 7. **Only if you use the Teams chat channel or GitHub webhooks for automations:** add a second policy with
    action **Bypass** for the path `/api/ingress/*`. Those routes check their own token or signature
-   (Teams: a per-channel token; GitHub: the `X-Hub-Signature-256` HMAC, docs/git-automations.md) and
+   (Teams: a per-channel token; GitHub: the `X-Hub-Signature-256` HMAC; Azure DevOps service hooks: a Basic
+   authentication password; docs/git-automations.md) and
    never reach the rest of the API.
 
 Use one Access application, with its own AUD tag, per worca deployment: a token issued for one

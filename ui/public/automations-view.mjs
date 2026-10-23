@@ -62,13 +62,16 @@ export function eventStatus(e) {
 export function renderAutomations(doc, data, { workflowNames = {}, ...cb } = {}) {
   const root = h(doc, 'div', 'automations');
   if (!data.repo) {
-    root.append(h(doc, 'p', 'hint', 'This project has no GitHub remote. Automations watch a GitHub repository.'));
+    root.append(h(doc, 'p', 'hint', 'This project has no GitHub or Azure DevOps remote. Automations watch a repository on one of them.'));
     return root;
   }
-  const delivery = data.webhook?.configured
-    ? 'Delivery: GitHub webhooks, with a poll every 5 minutes as a catch-up.'
+  const azure = data.forge === 'azure';
+  const hostName = azure ? 'Azure DevOps' : 'GitHub';
+  const hooked = azure ? data.azureWebhook?.configured : data.webhook?.configured;
+  const delivery = hooked
+    ? `Delivery: ${azure ? 'Azure DevOps service hooks' : 'GitHub webhooks'}, with a poll every 5 minutes as a catch-up.`
     : data.polling === false ? 'Polling is off (WORCA_AUTOMATIONS_POLL=0) and no webhook secret is set: nothing is delivered.'
-      : 'Delivery: Worca checks GitHub every minute.';
+      : `Delivery: Worca checks ${hostName} every minute.`;
   const head = h(doc, 'p', 'hint automations-repo');
   head.append(`Watching ${data.repo}. ${delivery} `);
   head.append(btn(doc, 'Check now', 'btn btn-sm btn-quiet', () => cb.onCheckNow?.()));
@@ -81,7 +84,9 @@ export function renderAutomations(doc, data, { workflowNames = {}, ...cb } = {})
     sw.input.addEventListener('change', () => cb.onSwitch?.(s.key, sw.input.checked));
     ah.append(sw.row);
   }
-  ah.append(h(doc, 'p', 'hint', 'Only collaborators\' issues and PRs start a run. Runs use the Strict guardrails, and Worca never approves or merges.'));
+  ah.append(h(doc, 'p', 'hint', azure
+    ? 'On Azure DevOps a new issue is a new work item in the project, and its tags are labels. Runs use the Strict guardrails, and Worca never votes on or completes a pull request.'
+    : 'Only collaborators\' issues and PRs start a run. Runs use the Strict guardrails, and Worca never approves or merges.'));
   root.append(ah);
 
   const rules = h(doc, 'div', 'automations-rules drows');
@@ -115,8 +120,8 @@ export function renderAutomations(doc, data, { workflowNames = {}, ...cb } = {})
     const row = h(doc, 'div', 'drow drow-stack automations-event');
     row.dataset.event = e.id;
     const top = h(doc, 'div', 'pl-head');
-    const link = h(doc, 'a', '', `${e.kind === 'pr' ? 'PR' : 'Issue'} #${e.number}`);
-    if (/^https:\/\/github\.com\//.test(String(e.url || ''))) { link.href = e.url; link.target = '_blank'; link.rel = 'noopener noreferrer'; }
+    const link = h(doc, 'a', '', `${e.kind === 'pr' ? 'PR' : /^dev\.azure\.com\//i.test(String(e.repo || '')) ? 'Work item' : 'Issue'} #${e.number}`);
+    if (/^https:\/\/(github\.com|dev\.azure\.com)\//.test(String(e.url || ''))) { link.href = e.url; link.target = '_blank'; link.rel = 'noopener noreferrer'; }
     top.append(link, ' ', h(doc, 'span', '', e.title || ''), h(doc, 'span', `badge ${st.family}`, st.word));
     row.append(top);
     const meta = [e.author ? `by @${e.author}` : '', ACTION_WORDS[e.phase === 'fix' ? 'fix' : e.action] || '', st.reason,

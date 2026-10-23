@@ -339,9 +339,10 @@ import {
   createAutomationEngine, listRules as listAutomationRules, getRule as getAutomationRule, createRule as createAutomationRule,
   updateRule as updateAutomationRule, deleteRule as deleteAutomationRule, validateRule as validateAutomationRule, listEvents as listAutomationEvents,
   autoHandleState, setAutoHandle, AUTO_HANDLE, verifyGithubSignature, recordDelivery, normalizeFilter as normalizeAutomationFilter,
-  normalizeLimits as normalizeAutomationLimits,
+  normalizeLimits as normalizeAutomationLimits, forgeOfRepo,
 } from '../src/core/automations.mjs';
 import { ensureAutomationTemplate, listAutomationTemplates, TEMPLATE_FOR_ACTION } from '../src/core/automation-templates.mjs';
+import { createAzureAutomationHost, azureWebhookItems } from '../src/core/automation-azure.mjs';
 import { forkRefusal, workItemIdFromSourceRef, prSummary, workItemSummaries } from '../src/core/pr/azure.mjs';
 import { workspaceMembers as prStateMembers, memberPrTarget, relatedPrsBlock, withRelatedPrsBlock } from '../src/core/workspace-prs.mjs';
 import { isSyntacticRef } from '../src/core/ask/proposal.mjs';
@@ -1566,6 +1567,34 @@ app.post('/api/ingress/github', express.raw({ type: '*/*', limit: '1mb' }), (req
     .catch((err) => console.warn(`[worca-ui] GitHub webhook ${name} (${delivery}): ${err?.message || err}`));
 });
 
+// Azure DevOps service hooks (#711): the same posture as the GitHub route above. Service hooks cannot sign a body, so
+// the hook sends Basic authentication whose password is WORCA_ADO_WEBHOOK_SECRET (any user name), compared in
+// constant time; anything else is 404. A repeated notification (its `id`) is acknowledged and dropped.
+app.post('/api/ingress/azure', express.raw({ type: '*/*', limit: '1mb' }), (req, res) => {
+  const notFound = () => res.status(404).json({ error: 'not found' });
+  if (!flagEnabled('gitAutomations')) return notFound();
+  const secret = String(process.env.WORCA_ADO_WEBHOOK_SECRET || '').trim();
+  if (!secret) return notFound();
+  if (!githubIngressBucket.tryConsume()) return res.status(429).json({ error: 'rate limited' });
+  const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+  const m = /^Basic\s+(\S+)$/i.exec(String(req.get('authorization') || ''));
+  let password = '';
+  try { const decoded = m ? Buffer.from(m[1], 'base64').toString('utf8') : ''; password = decoded.slice(decoded.indexOf(':') + 1); } catch { password = ''; }
+  const got = Buffer.from(password); const want = Buffer.from(secret);
+  if (!m || got.length !== want.length || !timingSafeEqual(got, want)) {
+    console.warn(`[worca-ui] Azure DevOps service hook refused: bad or missing credential (${raw.length} bytes)`);
+    return notFound();
+  }
+  let payload;
+  try { payload = JSON.parse(raw.toString('utf8')); } catch { return res.status(400).json({ error: 'not JSON' }); }
+  const delivery = typeof payload?.id === 'string' ? `ado:${payload.id.slice(0, 90)}` : '';
+  if (delivery && !recordDelivery(delivery)) return res.status(200).json({ ok: true, duplicate: true });
+  res.status(202).json({ ok: true });
+  const repos = [...new Set(listAutomationRules({ enabledOnly: true }).map((r) => r.repo).filter((r) => forgeOfRepo(r) === 'azure'))];
+  Promise.resolve().then(() => automations.handleItems(azureWebhookItems(payload, repos)))
+    .catch((err) => console.warn(`[worca-ui] Azure DevOps service hook ${payload?.eventType || '?'}: ${err?.message || err}`));
+});
+
 // ---------------------------------------------------------------------------
 // Express middleware + static
 // ---------------------------------------------------------------------------
@@ -2072,11 +2101,12 @@ function normalizeRunSource(raw, { automation = false } = {}) {
   const type = raw.type;
   // A Git event automation's issue or PR (#711). In-process only (invokeStartRun's `automation`), never from HTTP:
   // a hand-built body must not claim an issue it was not started from.
-  if (type === 'github' && automation) {
-    if (!(typeof raw.prompt === 'string' && raw.prompt.trim()) || !(typeof raw.url === 'string' && /^https:\/\/github\.com\//.test(raw.url))) {
-      return { ok: false, error: 'source.prompt and a github.com source.url are required for type "github"' };
+  if ((type === 'github' || type === 'azure') && automation) {
+    const host = type === 'azure' ? /^https:\/\/dev\.azure\.com\// : /^https:\/\/github\.com\//;
+    if (!(typeof raw.prompt === 'string' && raw.prompt.trim()) || !(typeof raw.url === 'string' && host.test(raw.url))) {
+      return { ok: false, error: `source.prompt and a ${type === 'azure' ? 'dev.azure.com' : 'github.com'} source.url are required for type "${type}"` };
     }
-    return { ok: true, source: { type: 'github', kind: raw.kind === 'pr' ? 'pr' : 'issue', repo: String(raw.repo || ''),
+    return { ok: true, source: { type, kind: raw.kind === 'pr' ? 'pr' : 'issue', repo: String(raw.repo || ''),
       number: Number.isSafeInteger(raw.number) ? raw.number : null, url: raw.url, title: String(raw.title || '').slice(0, 300), prompt: raw.prompt } };
   }
   if (type === 'prompt') {
@@ -7705,6 +7735,7 @@ const kickPrWatch = () => { void prWatcher.runner.kick(); };
 // ---------------------------------------------------------------------------
 const automationsOn = () => flagEnabled('gitAutomations');
 const webhookSecret = () => String(process.env.WORCA_GH_WEBHOOK_SECRET || '').trim();
+const adoWebhookSecret = () => String(process.env.WORCA_ADO_WEBHOOK_SECRET || '').trim();
 let ownLoginsCache = { at: 0, logins: [] };
 /** The account behind worca's GitHub credential, cached for an hour (an App token has no /user: none). */
 async function automationOwnLogins() {
@@ -7713,19 +7744,21 @@ async function automationOwnLogins() {
   ownLoginsCache = { at: Date.now(), logins: r.ok && r.json?.login ? [r.json.login] : [] };
   return ownLoginsCache.logins;
 }
-/** The project's remote whose GitHub repository is `repo` (the remote a PR head is fetched from), else origin. */
+/** The project's remote whose repository is `repo` (the remote a PR head is fetched from), else origin. */
 async function automationRemote(projectDir, repo) {
   const rl = await listRemotes(projectDir);
-  const hit = rl.ok ? rl.remotes.find((r) => r.forge === 'github' && String(r.slug || '').toLowerCase() === String(repo).toLowerCase()) : null;
+  const hit = rl.ok ? rl.remotes.find((r) => r.forge && String(r.slug || '').toLowerCase() === String(repo).toLowerCase()) : null;
   return hit?.name || 'origin';
 }
-/** A project's GitHub repository: its origin remote's when that is on GitHub, else the first GitHub remote. */
-async function projectGithubRepo(projectDir) {
+/** A project's repository on GitHub (`owner/name`) or Azure DevOps (`dev.azure.com/org/project/repo`, its remote slug):
+ *  origin's when it is on either, else the first such remote. */
+async function projectAutomationRepo(projectDir) {
   const rl = await listRemotes(projectDir);
   if (!rl.ok) return null;
-  const gh = rl.remotes.filter((r) => r.forge === 'github' && r.slug);
-  return (gh.find((r) => r.name === 'origin') || gh[0])?.slug || null;
+  const hosted = rl.remotes.filter((r) => (r.forge === 'github' || r.forge === 'azure') && r.slug);
+  return (hosted.find((r) => r.name === 'origin') || hosted[0])?.slug || null;
 }
+const NO_FORGE_REMOTE = 'this project has no GitHub or Azure DevOps remote: automations watch a repository on one of them';
 async function automationPlanText(pipelineId) {
   const row = findPipelineRowById(pipelineId);
   if (!row) return null;
@@ -7786,7 +7819,17 @@ const automationHost = {
     if (headSha && r.sha && r.sha !== headSha) return { ok: false, error: 'the pull request moved while Worca fetched it' };
     return { ok: true, ref: r.ref, remote };
   },
+  ownLogins: () => automationOwnLogins(),
 };
+// Azure DevOps (automation-azure.mjs): the same contract in GitHub's shapes; a PR head is its source branch.
+const automationAzureHost = createAzureAutomationHost({
+  fetchHead: async ({ projectDir, repo, number, branch }) => {
+    const remote = await automationRemote(projectDir, repo);
+    const r = await fetchPullHead(projectDir, { remote, number, branch });
+    return r.ok ? { ok: true, ref: r.ref, sha: r.sha, remote } : r;
+  },
+});
+const automationHostFor = (repo) => (forgeOfRepo(repo) === 'azure' ? automationAzureHost : automationHost);
 function automationNotify({ kind, event, rule, message }) {
   const quiet = kind === 'started' || kind === 'done' || kind === 'queued' || (kind === 'skipped' && event?.reason !== 'daily-cap');
   addNotification({ kind: `automation_${kind}`, severity: quiet ? 'info' : 'problem', pipelineId: event?.pipelineId || null,
@@ -7794,8 +7837,8 @@ function automationNotify({ kind, event, rule, message }) {
   emitChanged('notifications-changed');
 }
 const automations = createAutomationEngine({
-  host: automationHost,
-  ownLogins: automationOwnLogins,
+  hostFor: automationHostFor,
+  ownLogins: (repo) => automationHostFor(repo).ownLogins(repo),
   isOwnPr: (url) => !!getDb().prepare('SELECT 1 FROM pipelines WHERE pr_url = ? UNION SELECT 1 FROM pipeline_member_prs WHERE pr_url = ? LIMIT 1').get(url, url),
   ensureTemplate: (action) => ensureAutomationTemplate(TEMPLATE_FOR_ACTION[action] || 'fix'),
   startRun: async (body, { startedBy, trigger }) => {
@@ -7835,9 +7878,9 @@ const automations = createAutomationEngine({
   notify: automationNotify,
   onChange: () => broadcast({ type: 'automations-changed' }),
   enabled: automationsOn,
-  // Runs are followed every minute (the cost cap); with webhooks GitHub itself is polled only as a 5-minute catch-up.
+  // Runs are followed every minute (the cost cap); with webhooks the hosts are polled only as a 5-minute catch-up.
   intervalMs: 60_000,
-  pollEveryMs: () => (webhookSecret() ? 300_000 : 60_000),
+  pollEveryMs: () => (webhookSecret() || adoWebhookSecret() ? 300_000 : 60_000),
   log: (m) => console.warn(`[worca-ui] ${m}`),
 });
 const kickAutomations = () => { void automations.runner.kick(); };
@@ -7847,7 +7890,7 @@ async function automationProject(req, res, dirIn) {
   const dir = resolveProjectDir(dirIn);
   const project = dir ? await registeredProjectForDir(dir) : null;
   if (!project) { badRequest(res, 'projectDir must be a registered project'); return null; }
-  const repo = await projectGithubRepo(project.path);
+  const repo = await projectAutomationRepo(project.path);
   return { project, projectDir: project.path, projectKey: projectKey(project.path), repo };
 }
 
@@ -7860,10 +7903,11 @@ app.get('/api/automations', syncRoute(async (req, res) => {
   res.json({
     rules: listAutomationRules({ projectKey: key }),
     events: listAutomationEvents({ projectKey: key, limit: Number(req.query.limit) || 50 }),
-    ...(scope ? { autoHandle: autoHandleState(key), repo: scope.repo } : {}),
+    ...(scope ? { autoHandle: autoHandleState(key), repo: scope.repo, forge: scope.repo ? forgeOfRepo(scope.repo) : null } : {}),
     switches: Object.entries(AUTO_HANDLE).map(([k, v]) => ({ key: k, label: v.label })),
     templates: listAutomationTemplates(),
     webhook: { configured: !!webhookSecret(), path: '/api/ingress/github' },
+    azureWebhook: { configured: !!adoWebhookSecret(), path: '/api/ingress/azure' },
     polling: String(process.env.WORCA_AUTOMATIONS_POLL ?? '1') !== '0',
   });
 }));
@@ -7872,7 +7916,7 @@ app.post('/api/automations/rules', syncRoute(async (req, res) => {
   const body = req.body || {};
   const scope = await automationProject(req, res, body.projectDir);
   if (!scope) return;
-  if (!scope.repo) return res.status(409).json({ error: 'this project has no GitHub remote: automations watch a GitHub repository' });
+  if (!scope.repo) return res.status(409).json({ error: NO_FORGE_REMOTE });
   const v = validateAutomationRule(body);
   if (!v.ok) return badRequest(res, v.error);
   if (v.rule.workflowId) { try { await assertRunnableWorkflow(v.rule.workflowId); } catch (err) { return badRequest(res, err.message); } }
@@ -7915,7 +7959,7 @@ app.put('/api/automations/auto-handle', syncRoute(async (req, res) => {
   if (typeof body.on !== 'boolean') return badRequest(res, 'on must be true or false');
   const scope = await automationProject(req, res, body.projectDir);
   if (!scope) return;
-  if (body.on && !scope.repo) return res.status(409).json({ error: 'this project has no GitHub remote: automations watch a GitHub repository' });
+  if (body.on && !scope.repo) return res.status(409).json({ error: NO_FORGE_REMOTE });
   const autoHandle = setAutoHandle({ projectKey: scope.projectKey, projectDir: scope.projectDir, repo: scope.repo, key: body.key, on: body.on, by: actorOf(req) });
   broadcast({ type: 'automations-changed' }); kickAutomations();
   res.json({ autoHandle });

@@ -1,10 +1,10 @@
 # Git event automations and Auto-handle
 
 > Experimental: turn on **Git event automations** in Settings › Labs (flag `gitAutomations`), or run
-> `worca flags on gitAutomations`. While it is off nothing polls GitHub, every `/api/automations` route
-> and the webhook answer 404, and rules you already made stay stored but do nothing.
+> `worca flags on gitAutomations`. While it is off nothing polls GitHub or Azure DevOps, every
+> `/api/automations` route and both webhooks answer 404, and rules you already made stay stored but do nothing.
 
-Worca can start a run when something happens on GitHub, without anyone opening New run. An automation
+Worca can start a run when something happens on GitHub or Azure DevOps, without anyone opening New run. An automation
 works like a hook: **when an event happens in a project and matches a filter, Worca runs a workflow.**
 
 Two events are supported today:
@@ -15,6 +15,9 @@ Two events are supported today:
 | PR opened or ready | A pull request is opened, or a draft is marked ready for review. A review rule also looks at every new head commit pushed to the PR. |
 
 Editing an issue or a PR never starts a run. Neither do Worca's own comments or Worca's own PRs.
+
+A project's repository is its `origin` remote when that is on github.com or dev.azure.com, else the first remote
+that is. On Azure DevOps see [Azure DevOps](#azure-devops) for what each event means there.
 
 ## Auto-handle
 
@@ -78,6 +81,12 @@ and to everything while the flag is off or no secret is set. A delivery GitHub s
 
 **Check now** in Settings › Automations polls at once.
 
+On Azure DevOps, set `WORCA_ADO_WEBHOOK_SECRET` and add service hooks (Project settings › Service hooks ›
+Web Hooks) to `https://<your worca>/api/ingress/azure` for **Work item created**, **Work item updated**,
+**Work item commented on**, **Pull request created** and **Pull request updated**, with **Basic authentication**:
+any user name, the secret as the password (service hooks cannot sign a body). Anything without that password
+gets 404, and a notification sent again (same `id`) is dropped.
+
 ### Nothing twice, no backlog
 
 Each rule records one decision per issue or PR (per head commit for a review). A restart, a missed poll,
@@ -97,6 +106,24 @@ problem, never as instructions. Event runs use the **Strict** guardrail set by d
 never get a GitHub credential. Worca's own comments, reviews and PRs carry a marker and are never treated
 as events.
 
+## Azure DevOps
+
+The same rules, switches and templates work on a repository on dev.azure.com (`dev.azure.com/<org>/<project>/<repo>`
+in the rule list). What changes:
+
+- **Issue opened is a work item created** in the repository's Azure DevOps project (any type), and a work item
+  whose tags change is looked at again. Tags are the labels of a rule's filters. A work item belongs to the
+  project, not a repository: when several Worca projects use repositories of the same Azure DevOps project, each
+  one's rules see it, so narrow them with a tag filter.
+- **Who can start a run:** every author counts as a member. Azure DevOps has no outside contributors: only
+  people in your organization can open a work item or a PR, or comment.
+- **Propose a fix** posts the plan as a work item comment; `/worca approve` in a comment starts the fix.
+- **Full fix** opens a draft PR that **links the work item** (Azure's form of `Closes #N`), and Watch PR follows it.
+- **Automatic review** posts one summary thread (closed, for information) and one active thread per finding on its
+  line. It never votes and never completes a PR. PRs from a fork are not reviewed yet.
+- **Credentials:** `WORCA_ADO_TOKEN` (Code: Read & Write) for repositories and PRs; for work items
+  `WORCA_ADO_BOARDS_TOKEN` (Work Items: Read & Write), else the Code token, which then needs that scope too.
+
 ## Activity and chat
 
 Every start, skip, queue, approval request, finish and failure goes to the Activity feed (Schedules ›
@@ -110,7 +137,7 @@ GitHub App). Per-project GitHub identities (#705) will be used once they exist.
 
 ## Not covered yet
 
-- Azure DevOps repositories, and workspace (multi-project) runs.
+- GitHub Enterprise Server and Azure DevOps Server (on-premises), and workspace (multi-project) runs.
 - More events: label added as its own event, `/worca` comment commands besides `approve`, PR review
   comments, pushes to a branch, and CI failing on the default branch.
 - An Automations step in Add project (use the project page's **Automations** button).
@@ -122,11 +149,12 @@ All routes need the flag; they answer 404 while it is off.
 
 | Route | |
 |---|---|
-| `GET /api/automations?projectDir=` | `{ rules, events, autoHandle, repo, switches, templates, webhook, polling }` |
+| `GET /api/automations?projectDir=` | `{ rules, events, autoHandle, repo, forge, switches, templates, webhook, azureWebhook, polling }` |
 | `POST /api/automations/rules` | `{ projectDir, event, action, workflowId?, filter?, limits?, guardrailsId?, enabled? }` → 201 `{ rule }` |
 | `PATCH /api/automations/rules/:id` | `{ enabled?, filter?, limits?, workflowId?, guardrailsId? }` |
 | `DELETE /api/automations/rules/:id` | |
 | `PUT /api/automations/auto-handle` | `{ projectDir, key: propose \| fix \| review, on }` → `{ autoHandle }` |
 | `POST /api/automations/events/:id/approve` | Start the fix of a proposed plan |
 | `POST /api/automations/poll` | Poll now |
-| `POST /api/ingress/github` | The signed webhook |
+| `POST /api/ingress/github` | The signed GitHub webhook |
+| `POST /api/ingress/azure` | The Azure DevOps service hook (Basic authentication) |

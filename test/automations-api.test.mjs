@@ -18,7 +18,7 @@ process.env.WORCA_AUTOMATIONS_POLL = '0';
 
 const SECRET = 'hook-secret-1';
 const JSONH = { 'Content-Type': 'application/json' };
-let srv, base, repo, server, gitInfo, db, addProject;
+let srv, base, repo, adoRepo, server, gitInfo, db, addProject;
 const prevFlags = process.env.WORCA_FLAGS;
 
 const call = (method, p, body) => fetch(`${base}${p}`, { method, headers: JSONH, ...(body ? { body: JSON.stringify(body) } : {}) });
@@ -37,6 +37,10 @@ before(async () => {
   git('remote', 'add', 'origin', 'https://github.com/o/r.git');
   ({ addProject } = await import('../src/core/projects.mjs'));
   await addProject({ name: 'aut-repo', path: repo });
+  adoRepo = await mkdtemp(join(tmpdir(), 'worca-cc-aut-ado-'));
+  execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: adoRepo, stdio: 'ignore' });
+  execFileSync('git', ['remote', 'add', 'origin', 'https://acme@dev.azure.com/acme/Shop/_git/web'], { cwd: adoRepo, stdio: 'ignore' });
+  await addProject({ name: 'aut-ado', path: adoRepo });
   // The remote is not reachable here: the run starts without its sync-before-run fetch (the project's own setting).
   const { writeSyncPrefs } = await import('../src/core/config.mjs');
   const { projectKey } = await import('../src/core/store.mjs');
@@ -55,12 +59,15 @@ after(async () => {
   gitInfo.reset();
   if (prevFlags === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = prevFlags;
   delete process.env.WORCA_GH_WEBHOOK_SECRET;
+  delete process.env.WORCA_ADO_WEBHOOK_SECRET;
   await rm(repo, { recursive: true, force: true });
+  await rm(adoRepo, { recursive: true, force: true });
 });
 
 beforeEach(() => {
   process.env.WORCA_FLAGS = 'gitAutomations';
   process.env.WORCA_GH_WEBHOOK_SECRET = SECRET;
+  process.env.WORCA_ADO_WEBHOOK_SECRET = 'ado-secret';
   db.getDb().exec('DELETE FROM automation_rules; DELETE FROM automation_events; DELETE FROM automation_cursors; DELETE FROM automation_deliveries');
   // No real GitHub: every gh call fails (the /user lookup included), every git call runs for real.
   gitInfo.setRunner((cmd, args, o) => (cmd === 'gh' ? Promise.resolve({ ok: false, stdout: '', stderr: 'offline', code: 1 }) : gitInfo.defaultRun(cmd, args, o)));
@@ -153,4 +160,23 @@ test('an opened issue from a collaborator starts one run whose source is the iss
   assert.equal(JSON.parse(row.source_ref).url, 'https://github.com/o/r/issues/7');
   assert.equal(row.guardrails_id, 'secure');
   await stopAndSettle(runs, (e) => e === entry);
+});
+
+test('Azure DevOps: a rule on an Azure remote keys on dev.azure.com/org/project/repo; the service hook needs its Basic password', async () => {
+  const c = await call('POST', '/api/automations/rules', { projectDir: adoRepo, event: 'issue.opened', action: 'fix' });
+  assert.equal(c.status, 201);
+  assert.equal((await c.json()).rule.repo, 'dev.azure.com/acme/Shop/web');
+  const list = await (await call('GET', `/api/automations?projectDir=${encodeURIComponent(adoRepo)}`)).json();
+  assert.deepEqual([list.repo, list.forge, list.azureWebhook.configured], ['dev.azure.com/acme/Shop/web', 'azure', true]);
+  const ado = (payload, password) => fetch(`${base}/api/ingress/azure`, { method: 'POST', body: JSON.stringify(payload),
+    headers: { 'Content-Type': 'application/json', ...(password ? { Authorization: `Basic ${Buffer.from(`hook:${password}`).toString('base64')}` } : {}) } });
+  const payload = { id: 'n-1', eventType: 'build.complete', resource: {} };
+  assert.equal((await ado(payload)).status, 404);
+  assert.equal((await ado(payload, 'wrong')).status, 404);
+  assert.equal((await ado(payload, 'ado-secret')).status, 202);
+  const again = await ado(payload, 'ado-secret');
+  assert.equal(again.status, 200);
+  assert.equal((await again.json()).duplicate, true);
+  delete process.env.WORCA_ADO_WEBHOOK_SECRET;
+  assert.equal((await ado({ id: 'n-2' }, 'ado-secret')).status, 404);
 });

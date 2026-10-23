@@ -354,19 +354,21 @@ export async function fetchRemote(dir, { remote = 'origin', timeoutMs = INTERACT
 }
 
 /**
- * Fetch a GitHub pull request's head (`refs/pull/<n>/head`, which also serves a fork's PR) into the
- * remote-tracking ref `refs/remotes/<remote>/worca-pr-<n>`, so a run can start from `<remote>/worca-pr-<n>` (#711's
- * PR review). → { ok:true, ref, sha } | { ok:false, kind, error }
+ * Fetch a pull request's head into the remote-tracking ref `refs/remotes/<remote>/worca-pr-<n>`, so a run can start
+ * from `<remote>/worca-pr-<n>` (#711's PR review). GitHub serves every PR (a fork's too) at `refs/pull/<n>/head`;
+ * Azure DevOps has no such ref, so its caller names the PR's source `branch` instead.
+ * → { ok:true, ref, sha } | { ok:false, kind, error }
  */
-export async function fetchPullHead(dir, { remote = 'origin', number, timeoutMs = RUN_TIMEOUT_MS } = {}) {
+export async function fetchPullHead(dir, { remote = 'origin', number, branch = null, timeoutMs = RUN_TIMEOUT_MS } = {}) {
   const n = Number(number);
   if (!dir || !Number.isSafeInteger(n) || n <= 0) return { ok: false, kind: 'failed', error: 'a project and a pull request number are required' };
   if (!isSafeRemoteName(remote)) return { ok: false, kind: 'failed', error: `invalid remote ${remote}` };
+  if (branch !== null && !isSafeBranchName(branch)) return { ok: false, kind: 'failed', error: `invalid branch ${branch}` };
   const info = await remoteInfo(dir, remote);
   if (!info.ok) return info;
   const cred = await readCred(info);
   const local = `refs/remotes/${remote}/worca-pr-${n}`;
-  const r = await _run(['fetch', '--no-tags', info.name, `+refs/pull/${n}/head:${local}`], { cwd: dir, env: cred.env, timeoutMs });
+  const r = await _run(['fetch', '--no-tags', info.name, `+${branch ? `refs/heads/${branch}` : `refs/pull/${n}/head`}:${local}`], { cwd: dir, env: cred.env, timeoutMs });
   if (!r.ok) {
     return { ok: false, kind: r.timedOut ? 'timeout' : classifyFetchError(r.stderr),
       error: scrubGitText(r.stderr) || (r.timedOut ? `git fetch timed out after ${timeoutMs} ms` : `git fetch exited ${r.code}`) };
