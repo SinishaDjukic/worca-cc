@@ -299,7 +299,7 @@ inside the view.
 | Workspace header "Scan model" control (view / change / clear the saved re-scan model); the choose-a-model window a re-scan opens when the workspace has no usable pick — it unblocks the re-scan, so it shows at any level | A |
 | Workspace page Map tab (coverage, graph, edges, confirm / reject / clear, add / delete manual edges, Regenerate description) | A |
 | Workspace page Actions tab | A |
-| Workspace page Automations tab (flag gitAutomations: the project tab's switches, rules and Recent over every member's repository, the repositories watched, one Open PR per changed repository) | A — as the project page's |
+| Workspace page Automations tab (flag gitAutomations: the project tab's switches, rules and Recent over every member's repository, the repositories watched, View PR, or View PRs ▾ listing each changed repository's PR) | A — as the project page's |
 | Memory health, Defragment, snapshot restore | E — the health card stays visible when overdue or failing |
 | Projects-row team chips; project page Team tab and its TEAM METRICS / TEAM POLICY cards; KEY card | E |
 | Workspace page Team tab (members table, metrics home, policy home) and its METRICS HOME / POLICY HOME cards | E |

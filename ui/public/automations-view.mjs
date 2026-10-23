@@ -5,6 +5,8 @@
 // app.js owns the fetches and the dialogs; this module only renders and calls back. Every string from GitHub or Azure
 // DevOps (titles, logins) goes through textContent.
 import { makeSwitch } from './switch.mjs';
+import { icon } from './icons.mjs';
+import { toggleMenu } from './workflows/menu.mjs';
 
 export const AUTOMATIONS_EMPTY_RULES = 'No rules of your own yet. The switches above need none; add a rule for anything else.';
 export const AUTOMATIONS_EMPTY_EVENTS = 'Nothing yet. New issues and pull requests show here with what Worca did.';
@@ -28,7 +30,7 @@ const STATUS = Object.freeze({
 });
 const REASONS = Object.freeze({
   'untrusted-author': 'author is not a collaborator (add the trigger label to start it)', draft: 'a draft',
-  filtered: 'labels do not match', missed: 'opened while Worca was off', closed: 'closed', 'daily-cap': 'daily limit reached: starts the next day',
+  filtered: 'labels do not match', missed: 'opened while Worca was off', closed: 'closed', 'daily-cap': 'daily limit reached · starts the next day',
   concurrency: 'waiting for a free slot', 'rule-off': 'rule turned off', 'queue-full': 'too many waiting (100)', removed: 'removed from the queue',
   superseded: 'a newer push replaced it',
   question: 'a question: commented, no run', 'needs-info': 'unclear: asked for details, no run',
@@ -101,28 +103,48 @@ function eventRow(doc, e, cb, { projectName = null } = {}) {
   const acts = h(doc, 'div', 'pl-actions');
   if (e.status === 'awaiting-approval' && cb.onApprove) acts.append(btn(doc, 'Approve', 'btn btn-primary btn-sm', () => cb.onApprove(e)));
   if (e.pipelineId && cb.onOpenRun) acts.append(btn(doc, 'Open run', 'btn btn-sm', () => cb.onOpenRun(e)));
-  // A workspace fix opened one PR per changed repository: a link each, named by its repository.
-  const prs = Array.isArray(e.prs) && e.prs.some((p) => p && p.url) ? e.prs.filter((p) => p && p.url) : (e.prUrl ? [{ url: e.prUrl }] : []);
-  for (const p of prs) {
-    if (!/^https:\/\//.test(p.url)) continue;
-    const pr = h(doc, 'a', 'btn btn-sm', prs.length > 1 ? `Open PR (${p.name || p.repo || 'repository'})` : 'Open PR');
-    pr.href = p.url; pr.target = '_blank'; pr.rel = 'noopener noreferrer';
-    acts.append(pr);
-  }
+  const pr = prControl(doc, e);
+  if (pr) acts.append(pr);
   if (acts.childNodes.length) row.append(acts);
   return row;
 }
 
-/** Why a waiting event waits, and when it starts: the daily limit until 00:00 UTC (in about N hours), the
+/** View PR for one PR; for a workspace fix's several (one per changed repository) one View PRs ▾ that lists each by
+ *  its repository (design system, PR controls). null without an https PR. */
+export function prControl(doc, e) {
+  const all = Array.isArray(e.prs) && e.prs.some((p) => p && p.url) ? e.prs : (e.prUrl ? [{ url: e.prUrl }] : []);
+  const prs = all.filter((p) => p && /^https:\/\//.test(String(p.url || '')));
+  if (!prs.length) return null;
+  if (prs.length === 1) {
+    const a = h(doc, 'a', 'btn btn-sm');
+    a.href = prs[0].url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    a.append(icon(doc, 'pull-request', 14), 'View PR');
+    return a;
+  }
+  const b = h(doc, 'button', 'btn btn-sm automations-prs');
+  b.type = 'button';
+  b.setAttribute('aria-haspopup', 'menu');
+  b.append(icon(doc, 'pull-request', 14), 'View PRs', icon(doc, 'chevron-down', 14));
+  const win = doc.defaultView || globalThis;
+  b.addEventListener('click', () => toggleMenu({ doc, anchor: b, label: 'Pull requests', items: prs.map((p) => ({
+    label: `View PR · ${p.name || p.repo || 'repository'}`, icon: 'pull-request',
+    onSelect: () => win.open(p.url, '_blank', 'noopener,noreferrer'),
+  })) }));
+  return b;
+}
+
+/** What a waiting event waits for, as a status line: the daily limit until 00:00 UTC (in about N hours), the
  *  concurrency limit until a run ends. `now` for tests. */
 export function waitLine(e, now = Date.now()) {
   if (e.reason === 'daily-cap') {
     const next = new Date(now); next.setUTCHours(24, 0, 0, 0);
     const h = Math.max(1, Math.round((next.getTime() - now) / 3_600_000));
-    return `Daily limit reached: starts after 00:00 UTC (in about ${h} hour${h === 1 ? '' : 's'}), if the next day's limit allows`;
+    return `Waiting · daily limit · starts 00:00 UTC (in about ${h} hour${h === 1 ? '' : 's'})`;
   }
-  return 'Starts when a running event run ends';
+  return 'Waiting · starts when a run ends';
 }
+// The daily-limit line's caveat, in its tooltip: a day whose limit fills again keeps it waiting.
+const DAILY_WAIT_TIP = 'It starts if the next day\'s limit allows; otherwise it waits another day.';
 
 /** "Waiting": the queue, in the order it starts, with Start now (past the limits) and Remove. */
 function waitingSection(doc, queue = [], cb = {}, { names = null } = {}) {
@@ -138,7 +160,9 @@ function waitingSection(doc, queue = [], cb = {}, { names = null } = {}) {
     const link = h(doc, 'a', '', `${e.kind === 'pr' ? 'PR' : isAzure(e.repo) ? 'Work item' : 'Issue'} #${e.number}`);
     if (/^https:\/\/(github\.com|dev\.azure\.com)\//.test(String(e.url || ''))) { link.href = e.url; link.target = '_blank'; link.rel = 'noopener noreferrer'; }
     top.append(link, ' ', h(doc, 'span', '', e.title || ''));
-    row.append(top, h(doc, 'small', 'hint', [ACTION_WORDS[e.phase === 'fix' ? 'fix' : e.action] || '', waitLine(e)].filter(Boolean).join(' · ')));
+    const line = h(doc, 'small', 'hint', [waitLine(e), ACTION_WORDS[e.phase === 'fix' ? 'fix' : e.action] || ''].filter(Boolean).join(' · '));
+    if (e.reason === 'daily-cap') line.title = DAILY_WAIT_TIP;
+    row.append(top, line);
     const acts = h(doc, 'div', 'pl-actions');
     if (cb.onStartNow) acts.append(btn(doc, 'Start now', 'btn btn-sm', () => cb.onStartNow(e)));
     if (cb.onRemoveQueued) acts.append(btn(doc, 'Remove', 'btn btn-sm', () => cb.onRemoveQueued(e)));
