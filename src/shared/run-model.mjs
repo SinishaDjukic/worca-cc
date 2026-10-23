@@ -292,8 +292,8 @@ export function runModel(run, opts = {}) {
   const prNeeds = state === 'needs-you' && r.pendingQuestion == null && (watchNeeds || !!(pr && pr.needsYou));
   const actions = fin ? [] : watchNeeds ? ['open-pr', 'ask-changes'] : prNeeds ? ['open-pr']
     : state === 'stopped' && r.resumable === true ? ['resume', 'archive']
-    // An interrupted run that can never resume (no resume point, or its project is gone) is never stopped either.
-    : r.status === 'interrupted' && r.resumable === false ? ['archive'] : ACTIONS[state];
+    // An interrupted run is never stopped: it archives, and resumes too unless it never can (no resume point, its project gone).
+    : r.status === 'interrupted' ? (r.resumable === false ? ['archive'] : ['resume', 'archive']) : ACTIONS[state];
   const base = fin ? fin.line : state === 'starting' && mode === 'folder' ? 'Copying the folder'
     : watchNeeds ? watch.line : prNeeds ? prReasonLine(pr) : singleLine(state, r, prog, pr, opts);
   const round = roundOf(r);

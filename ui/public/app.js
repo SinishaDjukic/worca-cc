@@ -1706,6 +1706,11 @@ function handleServerMessage(msg) {
     scheduleOnboardingRefresh();
     refreshAllCounts();
     refreshBudget();
+    // An archive / delete names the parked live runs the server evicted; every tab drops its copies of them.
+    if (Array.isArray(msg.removedRunIds) && msg.removedRunIds.length) {
+      const gone = new Set(msg.removedRunIds);
+      dropParkedRuns((e) => gone.has(e.runId));
+    }
     // Chat P4: the run panel reads these rows too. The Archived feed, once loaded, goes stale on the same change:
     // reloadRunsHistory refetches it while the Runs page is open; elsewhere it is dropped so the next Archived paint
     // fetches afresh.
@@ -2345,6 +2350,22 @@ function dropSupersededPaused(r) {
 // keeps its glance/Details mode and tab and REPLACES the dead address, so Back never lands on it (replaceRoute
 // rewrites the hash at once, so the bounce check in renderRunningView already sees the new id). The Chat run
 // panel follows in place, on a microtask: never remount it in the middle of upsertRun / onHello.
+// An archived or deleted run's parked (paused / interrupted) live copies leave this tab's runs Map, as the server's
+// leave its (dropParkedEntries, ui/server.mjs): buildRunsModel lists every live row, so one left behind stays in
+// Running as a ghost card. `drop(e)` picks the entries; the caller repaints.
+function dropParkedRuns(drop) {
+  let n = 0;
+  for (const [id, e] of runs) {
+    if ((e.status !== 'paused' && e.status !== 'interrupted') || !drop(e)) continue;
+    alerts.onResolved(alertRun(e));
+    runs.delete(id);
+    if (state.selectedRunId === id) state.selectedRunId = '';
+    n++;
+  }
+  if (n) { renderPipelineTabs(); updateNavCounts(); }
+  return n;
+}
+
 function followSupersedingRun(fromId, r) {
   if (!runDetailState.screen || runDetailState.runId !== fromId) return;
   if (runDetailState.host === 'panel') {
@@ -24476,7 +24497,8 @@ function paintHdActions(screen, record, data) {
   const bar = screen.querySelector('.rd-bar-end');
   const slot = bar && bar.querySelector('.rd-actions');
   if (!slot) return;
-  const m = runModel(hdModelRun(record, data), { memo: memoFor(record.id) });
+  const mr = hdModelRun(record, data);
+  const m = runModel(mr, { memo: memoFor(record.id) });
   const resumeBtn = bar.querySelector('.hd-resume');
   const split = bar.querySelector('.hd-resume-split');
   const pause = bar.querySelector('.hd-pause');
@@ -24497,8 +24519,8 @@ function paintHdActions(screen, record, data) {
     // The model offers Resume for any paused or interrupted row; the server refuses an archived or over one, and a
     // live run still pausing cannot be resumed yet. Shown (one model), but disabled with the reason.
     disable: { 'ask-changes': "Ask for changes from the run's chat", ...(resumable ? {} : { resume: live && String(live.status || '') === 'pausing' ? 'Pausing…' : 'This run cannot be resumed' }) },
-    onAction: (id, b) => runAction({ runId: live ? live.runId : null, pipelineId: record.id, title: record.title,
-      projectKey: record.projectKey || '', workspaceId: record.workspaceId || null }, id, b, m),
+    onAction: (id, b) => runAction({ runId: live ? live.runId : null, pipelineId: record.id, title: record.title, status: mr.status,
+      ...(mr.resumable === false ? { resumable: false } : {}), projectKey: record.projectKey || '', workspaceId: record.workspaceId || null }, id, b, m),
   });
   // .hd-resume starts hidden in the template; the split follows it (as .rd-resume-split follows .rd-pause).
   if (split && resumeBtn) split.hidden = resumeBtn.hidden;
@@ -25782,7 +25804,9 @@ function setupHdActions(screen, record, data) {
       // (hdSetArchiveGate leaves a busy button alone) so a second click cannot run this handler — and its
       // DELETE — twice. Released before the modal opens; the scrim covers the button from there on.
       archiveBtn.dataset.archiveState = 'busy'; archiveBtn.disabled = true;
-      const chainNote = await afterDependentsNote(`pipelineId=${encodeURIComponent(r.id)}`);
+      const chainNote = await afterDependentsNote(`pipelineId=${encodeURIComponent(r.id)}`)
+        // An interrupted run that could still resume loses its resume point (Restore never brings it back).
+        + (String(st.status || '').toLowerCase() === 'interrupted' && st.resumable !== false ? "\n\nIt is interrupted and can't be resumed afterwards." : '');
       delete archiveBtn.dataset.archiveState; archiveBtn.disabled = false;
       // Spec §5.2/D2 fixes this copy VERBATIM — do not paraphrase (only the
       // run-title context line above it is ours; only the page name changed when
@@ -30552,7 +30576,9 @@ function runAction(ref0, id, btn = null, m = null) {
     case 'stop': return chatRunControls.stop(ref);
     case 'answer': return answerOrApprove(btn, ref);
     case 'report': return pid ? openReportModal(pid) : undefined;
-    case 'archive': return runBulkAction('archive', [rowTarget({ key: pid, title: ref.title || pid, model: m || { state: 'stopped' }, run: r, pipelineId: pid, runId: r ? r.runId : null })]);
+    // status / resumable: an interrupted run that could still resume asks before it archives (src/shared/run-bulk.mjs).
+    case 'archive': return runBulkAction('archive', [rowTarget({ key: pid, title: ref.title || pid, model: m || { state: 'stopped' }, run: r,
+      status: ref.status, resumable: ref.resumable, pipelineId: pid, runId: r ? r.runId : null })]);
     case 'start-now': return ref.ticketId ? scheduleCall('POST', `/api/schedules/${encodeURIComponent(ref.ticketId)}/run-now`, 'Run started', 'start the run now') : undefined;
     case 'cancel': return ref.ticketId ? scheduleCall('DELETE', `/api/schedules/${encodeURIComponent(ref.ticketId)}`, 'Run cancelled', 'cancel the waiting run') : undefined;
     case 'ship': {
@@ -33008,10 +33034,9 @@ function reloadRunsHistory() {
 }
 const runsWord = (n) => `${n} run${n === 1 ? '' : 's'}`;
 async function runBulkAction(action, targets = selectedTargets()) {
-  if (action !== 'archive') {
-    const ok = await confirmModal(bulkConfirm(action, barModel(targets)[action].plan));
-    if (!ok) return;
-  }
+  // Archive asks only when it takes an interrupted run that could still resume (bulkConfirm answers null otherwise).
+  const ask = bulkConfirm(action, barModel(targets)[action].plan);
+  if (ask && !(await confirmModal(ask))) return;
   try {
     const out = await postBulk(bulkBody(action, targets));
     runsUi.sel.clear();
@@ -33019,12 +33044,17 @@ async function runBulkAction(action, targets = selectedTargets()) {
     const n = out.done.length + out.cancelled.length;
     const skipped = out.skipped.length ? `Skipped ${out.skipped.length}: ${out.skipped.map((s) => `${s.title} (${s.reason})`).join(', ')}.` : '';
     const verb = { stop: 'Stopped', archive: 'Archived', delete: 'Deleted' }[action];
-    // D19: Archive has no confirm; its toast offers Undo (restore), for TOAST_AUTO_MS.
+    // D19: its toast offers Undo (restore), for TOAST_AUTO_MS.
     const undo = action === 'archive' && out.done.length ? { label: 'Undo', run: () => postBulk({ action: 'restore', targets: out.done.map((d) => ({ pipelineId: d.id })), groups: [] })
       .then(() => reloadRunsHistory())
       // The archive did happen, so "Nothing was changed" would be false: the Undo names its own next step.
       .catch((e) => notify(actionError('undo the archive', e, { next: 'The runs stay archived; restore them from Show = Archived.' }))) } : null;
     notify({ tone: n ? 'ok' : 'warn', title: `${verb} ${runsWord(n)}`, detail: skipped, action: undo });
+    // The archived / deleted runs' parked live cards leave at once, ahead of the server's pipelines-changed frame.
+    if (action !== 'stop' && out.done.length) {
+      const gone = new Set(out.done.map((d) => d.id));
+      dropParkedRuns((e) => gone.has(e.pipelineId));
+    }
     reloadRunsHistory();
   } catch (e) {
     notify(actionError(`${action} the selected runs`, e));

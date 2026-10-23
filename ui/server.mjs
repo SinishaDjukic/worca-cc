@@ -7090,6 +7090,14 @@ function bulkResolve(t) {
   return { id: tk.id, ticketId: tk.id, title: tk.title || 'Scheduled run', state: runModel({ ticket: { status: tk.status, runAt: null } }).state, status: tk.status };
 }
 const rowScope = (t) => ({ key: t.workspaceKey ? null : t.key, workspaceKey: t.workspaceKey || null, id: t.pipelineId });
+// An archived or deleted run's parked (paused / interrupted) entries leave the runs Map: summarizeRuns replays every
+// entry in each hello, so one left behind comes back as a ghost Paused card in Running. Returns the evicted runIds:
+// the pipelines-changed frame names them (removedRunIds), so the tabs already open drop their copies too.
+function dropParkedEntries(pipelineId) {
+  const gone = [];
+  for (const [id, e] of runs) if (e.pipelineId === pipelineId && (e.status === 'paused' || e.status === 'interrupted')) { runs.delete(id); gone.push(id); }
+  return gone;
+}
 
 app.post('/api/runs/bulk', async (req, res) => {
   try {
@@ -7103,9 +7111,11 @@ app.post('/api/runs/bulk', async (req, res) => {
     const AUDIT = { archive: 'Run archived', restore: 'Run restored', delete: 'Run deleted' };
     // archive / restore / purge return null for an unknown run (→ skipped) and a flag for a no-op
     // ({alreadyArchived}, {alreadyActive}, {alreadyDeleted}), which writes no audit line.
+    const removedRunIds = [];
     const audited = (fn) => async (t) => {
       const r = await fn(rowScope(t));
       if (!r) throw new Error('run not found');
+      if (action !== 'restore') removedRunIds.push(...dropParkedEntries(t.pipelineId));
       if (!r.alreadyArchived && !r.alreadyActive && !r.alreadyDeleted) appendAuditById(t.pipelineId, `${AUDIT[action]}${byActor(by)}.`, { actor: by });
       return r;
     };
@@ -7124,7 +7134,7 @@ app.post('/api/runs/bulk', async (req, res) => {
       cancel: (t) => !!cancelTicket(t.ticketId, { by }),
       afterGroupStop: (g) => { cancelRest(g.id, { by }); broadcastFeature(g.id); },   // a non-active feature returns {status:409}: nothing to do
     });
-    emitChanged('pipelines-changed', `bulk-${action}`);
+    broadcast({ type: 'pipelines-changed', action: `bulk-${action}`, removedRunIds });
     if (out.cancelled.length || action === 'stop') emitChanged('schedules-changed', 'bulk');
     emitChanged('run-groups-changed', 'bulk');
     res.json(out);
@@ -7207,10 +7217,11 @@ app.delete('/api/runs/:id', async (req, res) => {
       });
     });
     if (!report) return res.status(404).json({ error: 'pipeline not found' });
+    const removedRunIds = dropParkedEntries(id);
     if (report.archived) {
       appendAuditById(report.id, `Run archived${byActor(archBy)}.`, { actor: archBy });
     }
-    emitChanged('pipelines-changed', 'deleted');
+    broadcast({ type: 'pipelines-changed', action: 'deleted', removedRunIds });
     res.json({ ok: true, ...report });
   } catch (e) {
     if (e && e.code === 'RUNNING') return res.status(409).json({ error: e.message });
@@ -17730,7 +17741,7 @@ export const _testing = {
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
   askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor,
   uiControl, bearerMatches,
-  broadcast, askFilesRunDir,
+  broadcast, sockets, askFilesRunDir,
   validateResumeTarget, resumeTargetDirs, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
   trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
   askCommandBridge, askCommands, askCommandsEnabled, askCommandTarget, drainAskDeferred, startScopeEventTurn, startTerminalEventTurn, terminals, prWatcher, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
