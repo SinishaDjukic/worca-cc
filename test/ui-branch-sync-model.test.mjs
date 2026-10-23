@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ago, syncPillModel, chipState, projectChipModel, worstChip, sourceRefNote,
-  fetchFailureCopy, ffRefusalCopy, syncStageLabel, cssEscape,
+  fetchFailureCopy, ffRefusalCopy, syncStageLabel, syncStageTitle, cssEscape,
   mountSyncRow, paintSyncRow, isSyncableBranchName, fetchedAgo, syncPrefsModel, syncPrefsPatch,
   runOutcomeModel, listRowModel, projectBarModel, wsRollupModel, NO_COMMITS_HINT,
 } from '../ui/public/branch-sync.mjs';
@@ -181,11 +181,22 @@ test('sync copy helpers: sourceRefNote, syncStageLabel, ffRefusalCopy and fetchF
       assert.equal(syncStageLabel(null), 'Sync');
       assert.equal(syncStageLabel({ result: 'fast-forwarded', commits: 3 }), 'Synced 3 commits');
       assert.equal(syncStageLabel({ result: 'fast-forwarded', commits: 1 }), 'Synced 1 commit');
-      assert.equal(syncStageLabel({ result: 'remote-start', remote: 'origin' }, 'dev'), 'Started from origin/dev');
-      assert.equal(syncStageLabel({ result: 'remote-start' }, 'main'), 'Started from origin/main');
-      assert.equal(syncStageLabel({ result: 'fetch-failed' }), 'Sync: used the last fetch');
-      assert.equal(syncStageLabel({ result: 'diverged' }), 'Sync: diverged');
+      assert.equal(syncStageLabel({ result: 'remote-start', remote: 'origin' }), 'From origin');
+      assert.equal(syncStageLabel({ result: 'remote-start', remote: 'upstream' }), 'From upstream');
+      assert.equal(syncStageLabel({ result: 'remote-start' }), 'From origin');
+      assert.equal(syncStageLabel({ result: 'fetch-failed' }), 'Used last fetch');
+      assert.equal(syncStageLabel({ result: 'diverged' }), 'Diverged');
       assert.equal(syncStageLabel({ result: 'up-to-date' }), 'Sync');
+    } },
+    { name: 'syncStageTitle carries the long form plus the action, naming the remote and base', run: () => {
+      assert.equal(syncStageTitle(null, 'dev'), 'Show the Sync log');
+      assert.equal(syncStageTitle({ result: 'up-to-date' }, 'dev'), 'Show the Sync log');
+      assert.equal(syncStageTitle({ result: 'remote-start', remote: 'origin' }, 'dev'), 'Started from origin/dev: the local branch was left untouched. Show the Sync log');
+      assert.equal(syncStageTitle({ result: 'remote-start', remote: 'upstream' }, 'main'), 'Started from upstream/main: the local branch was left untouched. Show the Sync log');
+      assert.equal(syncStageTitle({ result: 'fast-forwarded', commits: 3 }, 'dev'), 'Synced 3 commits from origin/dev. Show the Sync log');
+      assert.equal(syncStageTitle({ result: 'fast-forwarded', commits: 1, remote: 'upstream' }, 'dev'), 'Synced 1 commit from upstream/dev. Show the Sync log');
+      assert.equal(syncStageTitle({ result: 'fetch-failed' }, 'dev'), 'Could not fetch origin: started from the last fetch. Show the Sync log');
+      assert.equal(syncStageTitle({ result: 'diverged', remote: 'origin' }, 'dev'), 'dev has diverged from origin/dev. Show the Sync log');
     } },
     { name: 'ffRefusalCopy: dirty, in-use, diverged, unknown kind, ok', run: () => {
       assert.match(ffRefusalCopy({ ok: false, kind: 'dirty' }, 'dev'), /^dev has uncommitted changes, so it was not moved\. Runs start from origin\/dev/);

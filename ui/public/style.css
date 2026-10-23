@@ -7032,7 +7032,7 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .sync-checked[hidden]{display:none;}
 .sync-check-now.busy svg{animation:ws-spin .9s linear infinite;}
 #projects-sync-all[hidden]{display:none;}
-.rd-sync{align-self:stretch;margin-left:8px;white-space:nowrap;}   /* stretch: the same height as .rd-branch-copy in .rd-row3 */
+.rd-sync{align-self:stretch;margin-left:8px;white-space:nowrap;min-width:0;max-width:24ch;overflow:hidden;text-overflow:ellipsis;}   /* stretch: the same height as .rd-branch-copy in .rd-row3; ellipsis: no label pushes past the card */
 .topbar-actions{display:flex;align-items:center;gap:8px;flex:none;}   /* never squeezed by the .sub text: labels stay on one line */
 .topbar-actions .btn{white-space:nowrap;}
 /* No global [hidden] rule in this sheet — each display-setting element opts in. */
