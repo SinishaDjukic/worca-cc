@@ -18476,8 +18476,9 @@ async function paintEngineCardStatus(root) {
       : `${e.label} can start runs: its CLI is installed and signed in.${e.reason ? ` Note: ${String(e.reason).replace(/\.$/, '')}.` : ''}`;
   }
 }
-// The flag flips while the Models page is open: the Engines card gains / loses the interview row.
-onFlagChange('requirements', () => { if (currentView() === 'models' && lastEngineSettingsData) void paintEngineSettings(lastEngineSettingsData); });
+// The flag flips while the Models page is open: the Engines card gains / loses the interview row. Refetched, since
+// GET /api/settings carries the row's stored pair and its default only while the flag is on.
+onFlagChange('requirements', () => { if (currentView() === 'models' && lastEngineSettingsData) void paintHelperModelCards(); });
 document.getElementById('engineSettingsSave')?.addEventListener('click', async () => {
   const root = document.getElementById('engine-settings-root');
   const body = enginePatchToSettingsBody(readEngineSection(root));

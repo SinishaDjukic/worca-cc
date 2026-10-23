@@ -95,7 +95,7 @@ async function boot(settings = {}, { hash = 'settings', engines = null, flags = 
   window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
   const posts = [];
   const body = () => ({ root: '/w', projectsRoot: '/p', projectsRootDefault: '/p', default: {}, chat: {}, titleModel: null,
-    titleModelEffective: { model: null, source: 'run', stale: null }, hideBuiltinModels: false, ...settings });
+    titleModelEffective: { model: null, source: 'run', stale: null }, hideBuiltinModels: false, ...(typeof settings === 'function' ? settings(window) : settings) });
   window.fetch = (url, opts = {}) => {
     const u = String(url);
     const method = (opts.method || 'GET').toUpperCase();
@@ -173,8 +173,23 @@ test('requirementsInterview is a bare-id helper job and maps onto its own settin
 
 const INTERVIEW_DEFAULT = { requirementsInterviewDefault: { model: 'claude-opus-5-5', effort: 'medium' } };
 
+// As the server answers: the interview keys only while the requirements flag is on (ui/server.mjs settingsState).
+const flagAware = (w) => (/(?:^|\s)requirements(?:\s|$)/.test(w.document.documentElement.dataset.flags || '') ? { ...INTERVIEW_DEFAULT } : {});
+
+test('the Models page: the flag turning on while it is open refetches the settings, so the row shows its default', async () => {
+  const off = await boot(flagAware, { hash: 'models' });
+  assert.equal(off.doc.querySelector('[data-setting="models.claude.requirementsInterview"]'), null);
+  const { applyFlags } = await import(pathToFileURL(fileURLToPath(new URL('../ui/public/flags.mjs', import.meta.url))).href);
+  applyFlags({ requirements: true }, off.doc);
+  for (let i = 0; i < 8; i++) await off.tick();
+  const row = off.doc.querySelector('[data-setting="models.claude.requirementsInterview"]');
+  assert.ok(row, 'the row appears');
+  assert.equal(row.querySelector('.inherit-model').options[0].textContent, 'Opus 5.5 (default)');
+  assert.match(row.querySelector('.inherit-effort').options[0].textContent, /medium \(default\)/);
+});
+
 test('the Models page: the Requirements interview row shows only while the requirements flag is on', async () => {
-  const off = await boot({ ...INTERVIEW_DEFAULT }, { hash: 'models' });
+  const off = await boot(flagAware, { hash: 'models' });
   assert.equal(off.doc.querySelector('[data-setting="models.claude.requirementsInterview"]'), null);
   const { doc, tick } = await boot({ ...INTERVIEW_DEFAULT }, { hash: 'models', flags: 'requirements' });
   const row = doc.querySelector('.engine-card[data-engine="claude"] .engine-helpers [data-setting="models.claude.requirementsInterview"]');
