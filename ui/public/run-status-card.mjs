@@ -22,9 +22,11 @@ const isGroup = (m) => !!(m && m.count && Array.isArray(m.members));
 const textEl = (doc, tag, cls, text) => { const e = doc.createElement(tag); e.className = cls; e.textContent = text; return e; };
 
 /** D2: the visible status text. The word leads only when the line does not already state it (the model marks a
- *  round line, whose "Running" stands for Working, with lineSaysState). */
-export function statusText(m) {
-  const line = String((m && m.line) || '');
+ *  round line, whose "Running" stands for Working, with lineSaysState). Beside a bar that names the stages
+ *  (`stageBar`), a working run's line is `barLine`: the step alone, the stage being on the bar. */
+export function statusText(m, { stageBar = false } = {}) {
+  const own = m && (stageBar && m.barLine != null ? m.barLine : m.line);
+  const line = String(own || '');
   const word = String((m && m.word) || '');
   const said = !word || !!(m && m.lineSaysState) || line.toLowerCase().includes(word.toLowerCase());
   return { word, line, text: said ? line || word : line ? `${word} · ${line}` : word };
@@ -61,13 +63,15 @@ export function paintRunStatus(host, m) {
   host.dataset.state = m.state;
   host.dataset.word = m.word;
   host.dataset.line = m.line;
-  paintStatusDot(dot, m);
-  text.textContent = statusText(m).text;
   const g = isGroup(m);
+  const cur = g ? m.current : m;
+  // A run in Needs you only through its PR has finished its pipeline, so it has no bar (an empty one read as 0%).
+  const show = !!(cur && cur.progress && BAR_STATES.has(cur.state) && !cur.prNeeds);
+  paintStatusDot(dot, m);
+  text.textContent = statusText(m, { stageBar: !g && show }).text;
   if (g && !GROUP_ENDED.has(m.state) && m.progress) {
     paintChainBar(group, { total: m.progress.total, fraction: m.progress.fraction, text: `${m.count.done} done` });
   } else group.hidden = true;
-  const cur = g ? m.current : m;
   // A12: one row per role while role reviews run, or the one Refine line (role-review.mjs liveRoleRows).
   const roles = cur ? cur.roles : null;
   host.__rs.roles.hidden = !roles;
@@ -82,8 +86,6 @@ export function paintRunStatus(host, m) {
         return row;
       })));
   }
-  // A run in Needs you only through its PR has finished its pipeline, so it has no bar (an empty one read as 0%).
-  const show = !!(cur && cur.progress && BAR_STATES.has(cur.state) && !cur.prNeeds);
   bar.hidden = !show;
   if (show) paintProgressBar(bar, cur.progress, { pulse: !!cur.pulse });
 }
