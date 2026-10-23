@@ -60,6 +60,9 @@ import { useEnvProxy, proxyNotice } from '../core/env-proxy.mjs';
 import { startEgressPolicy, egressNotice } from '../core/egress-policy.mjs';
 import { gitState, GIT_MISSING } from '../core/git-available.mjs';
 import { workModeOfRow, workModeForStart, effectiveWorkMode } from '../core/project-kind.mjs';
+// Static on purpose (issue #841): after `npm i -g` the files on disk are the new version's.
+import { superviseUi } from '../core/ui-supervisor.mjs';
+import { SUPERVISOR_ENV, DRY_RUN_ENV, runNpmInstall, readUpdateRecord, writeUpdateRecord } from '../core/ui-update.mjs';
 
 // ── node:sqlite runtime guard + warning filter ──────────────────────────────────
 // Drop ONLY the one-time ExperimentalWarning emitted by node:sqlite (the module is
@@ -964,7 +967,7 @@ function openBrowser(url) {
   } catch { /* no browser opener on this box — the URL is printed anyway */ }
 }
 
-/** Spawn ui/server.mjs on `port` and inherit its stdio. Resolves with its exit code. */
+/** Spawn ui/server.mjs on `port` and inherit its stdio; on an update exit, install and start it again (superviseUi). Resolves with its exit code. */
 async function uiStart(a) {
   const { port, host } = resolveUiPort(a);
   const url = uiUrl({ host, port });
@@ -993,34 +996,45 @@ async function uiStart(a) {
   const server = join(REPO_ROOT, 'ui', 'server.mjs');
   out(c('cyan', `Starting Worca UI on ${url}`));
   if (effectiveDebugSpawn().enabled) out(c('gray', `  node ${server}`));
-  const env = { ...process.env, PORT: String(port) };
+  const env = { ...process.env, PORT: String(port), [SUPERVISOR_ENV]: String(process.pid) };   // the server checks it against its ppid
   if (a.mock) env.WORCA_MOCK = '1';
-  const child = spawn(process.execPath, [server], { stdio: 'inherit', env });
-  if (a.open) {
-    waitForUiState({ host, port, states: ['worca'], timeoutMs: 20000 })
-      .then((r) => { if (r) openBrowser(url); })
-      .catch(() => {});
-  }
+  let child = null;
+  const ac = new AbortController();
   // Hand a stop to the server and wait for it (B2). In a container this process is what tini
   // signals (tini -> entrypoint -> `worca ui`), and without a handler Node exited at once on
   // SIGTERM: the server never saw the stop, so it neither paused its runs nor shut down cleanly.
   // Forwarding is safe twice over: a terminal's Ctrl+C already reaches the server too, and the
-  // server's shutdown runs once.
-  const forward = (sig) => () => { try { child.kill(sig); } catch { /* already gone */ } };
+  // server's shutdown runs once. During an install there is no child: the signal aborts npm
+  // instead, and the loop ends.
+  const forward = (sig) => () => { ac.abort(); if (child) { try { child.kill(sig); } catch { /* already gone */ } } };
   const handlers = { SIGTERM: forward('SIGTERM'), SIGINT: forward('SIGINT'), SIGHUP: forward('SIGHUP') };
   for (const [sig, fn] of Object.entries(handlers)) process.on(sig, fn);
   const unhook = () => { for (const [sig, fn] of Object.entries(handlers)) process.off(sig, fn); };
-  return new Promise((res) => {
-    child.on('exit', (code, signal) => {
-      unhook();
-      res(code ?? (signal === 'SIGTERM' ? 143 : signal === 'SIGINT' ? 130 : 0));
-    });
-    child.on('error', (err) => {
-      unhook();
-      process.stderr.write(`Failed to launch UI: ${err.message}\n`);
-      res(1);
-    });
+  let opened = false;
+  const startServer = () => new Promise((res) => {
+    let settled = false;
+    const done = (code) => { if (!settled) { settled = true; child = null; res(code); } };
+    child = spawn(process.execPath, [server], { stdio: 'inherit', env });
+    if (a.open && !opened) {
+      opened = true;
+      waitForUiState({ host, port, states: ['worca'], timeoutMs: 20000 })
+        .then((r) => { if (r) openBrowser(url); })
+        .catch(() => {});
+    }
+    child.on('exit', (code, signal) => done(code ?? (signal === 'SIGTERM' ? 143 : signal === 'SIGINT' ? 130 : 0)));
+    child.on('error', (err) => { process.stderr.write(`Failed to launch UI: ${err.message}\n`); done(1); });
   });
+  try {
+    return await superviseUi({
+      startServer,
+      install: (v, o) => runNpmInstall(v, o),
+      readRecord: () => readUpdateRecord(),
+      writeRecord: (r) => writeUpdateRecord(r),
+      log: (s) => out(s),
+      signal: ac.signal,
+      dryRun: /^(1|true|yes|on)$/i.test(String(process.env[DRY_RUN_ENV] || '')),
+    });
+  } finally { unhook(); }
 }
 
 /** Stop the UI on the resolved port. Idempotent: "not running" exits 0. */

@@ -251,6 +251,7 @@ import {
   renderProjectTmCell, renderProjectTmChip, projectTmSummary, renderEnableDialogBody, renderMetricsHomePicker, renderWsMetricsRow, renderWsSummary, renderRouteResults, renderWsMetricsPending } from './team-metrics-surfaces.mjs';
 import { renderMapTab, emptyMapFilters } from './workspace-map-view.mjs';
 import { paintAboutInto, paintVersionStatusInto, paintUpdateMarkerInto } from './about-links.mjs';
+import { createUpdateUi } from './update-view.mjs';
 import { renderReasonOptions, renderOptIns, previewText, reportBlobParts, REPORT_PREVIEW_DEBOUNCE_MS } from './report-run.mjs';
 import { openScheduleSheet, closeScheduleSheet, browserTimeZone } from './schedule-sheet.mjs';
 import {
@@ -15440,9 +15441,23 @@ function paintAbout(info) {
 // and the sidebar marker. The server owns the cache and the 24 h interval; a failed read paints
 // unknown (nothing), never an error — the check is a nicety, not a status anyone must act on.
 let versionStatusSeq = 0;
+// Manual update (#841): the About card's Update row, the version picker / confirm modal and the
+// updating overlay (update-view.mjs). GET /api/app/update says who may update and to what.
+async function copyText(text) {
+  try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return true; } return legacyCopy(text); }
+  catch { return legacyCopy(text); }
+}
+const updateGuards = new Map();
+const updateUi = createUpdateUi({
+  doc: document, fetchImpl: (...a) => fetch(...a), copyText,
+  report: (msg, kind) => reportStatus(null, '', msg, kind),
+  guardModal: (modal, opts) => { if (!updateGuards.has(modal)) updateGuards.set(modal, guardModal(modal)); updateGuards.get(modal).opened(opts); },
+});
+updateUi.wire();
 function paintVersionStatus(vs) {
   paintVersionStatusInto(document, vs);
   paintUpdateMarkerInto(document, vs);
+  updateUi.setVersionStatus(vs);
 }
 async function refreshVersionStatus({ force = false } = {}) {
   const mine = ++versionStatusSeq;
@@ -15452,6 +15467,7 @@ async function refreshVersionStatus({ force = false } = {}) {
     if (res.ok) vs = await safeJson(res);
   } catch { /* offline: unknown */ }
   if (mine === versionStatusSeq) paintVersionStatus(vs);
+  updateUi.refresh();
   return vs;
 }
 

@@ -24,7 +24,11 @@ import { preflightDeps } from '../src/core/preflight-deps.mjs';
 import { committedMcpStatus, approveCommittedMcp } from '../src/core/mcpjson-approval.mjs';
 import { runFolderHosting } from '../src/core/preflight-host.mjs';
 import { createOrchestratorFor } from '../src/core/engine-select.mjs';
-import { createUpdateChecker, fetchNpmLatest, isSourceBuild, parseVersion, releaseLinks } from '../src/core/update-check.mjs';
+import { createUpdateChecker, fetchNpmLatest, isSourceBuild, parseVersion, releaseLinks,
+  createVersionLister, fetchNpmVersions, fakeVersionList, annotateVersions, findListedVersion, canonicalVersion,
+  canAutoRestart, compareVersions, AUTO_RESTART_MIN } from '../src/core/update-check.mjs';
+import { UPDATE_EXIT_CODE, supervisorMatches, readUpdateRecord, writeUpdateRecord, startCommand } from '../src/core/ui-update.mjs';
+import { isSharedInstall, updateEligibility, probeNpmGlobal, UPDATE_MESSAGES } from '../src/core/update-eligibility.mjs';
 import { limitResumeDecision } from '../src/core/limit-resume.mjs';
 import { selectRunEngine } from '../src/core/engines/index.mjs';
 import { mockSlowMs } from '../src/core/engines/mock.mjs';
@@ -742,6 +746,79 @@ const MAX_BUFFER = 5000;
 // ---------------------------------------------------------------------------
 const app = express();
 const server = http.createServer(app);
+
+// Settings › About manual update (issue #841). The version list (npm packument, cached 12 h like the
+// check above), who may update, and the handoff record's last result. Never at boot, never under mock
+// or node:test (the default fetcher and probe refuse without I/O). Tests swap them via _testing.
+let versionsFetcherOverride = null;
+function defaultVersionsFetcher() {
+  const fake = process.env.WORCA_UPDATE_CHECK_LATEST;
+  if (fake && parseVersion(fake)) return Promise.resolve(fakeVersionList(PKG_VERSION, fake));
+  if (serverMockMode() || process.env.NODE_TEST_CONTEXT) return Promise.reject(new Error('version list is off under mock / tests'));
+  return fetchNpmVersions();
+}
+const versionLister = createVersionLister({ fetchList: () => (versionsFetcherOverride || defaultVersionsFetcher)() });
+
+let npmProbeOverride = null; let npmProbePromise = null; let updateDeploymentOverride = null; let updateMockOverride = null;
+function npmProbe() {
+  if (npmProbeOverride) return Promise.resolve(npmProbeOverride());
+  if (serverMockMode() || process.env.NODE_TEST_CONTEXT) return Promise.resolve(null);
+  return (npmProbePromise ||= probeNpmGlobal({ packageRoot: PROJECT_ROOT }));   // once per process: the install cannot move under us
+}
+const updateDeployment = () => updateDeploymentOverride ?? DEPLOYMENT;
+// Read per call (tests flip it); the value must be our direct parent's pid, never an inherited copy.
+const updateSupervised = () => !!uiControl.token && typeof uiControl.onShutdown === 'function' && supervisorMatches(process.env);
+const RUNNING_VERSION = canonicalVersion(PKG_VERSION);
+const UPDATE_SCHEDULE_WINDOW_MS = 30 * 60_000;
+const UPDATE_RESULT_TTL_MS = { failed: 24 * 3600_000, installed: 30 * 60_000 };
+let updateRequested = false;
+
+async function currentUpdateEligibility(req = null) {
+  if (req && agentMayBeCaller(req)) return { canUpdate: false, reason: 'agent', message: UPDATE_MESSAGES.agent, dryRun: false };
+  const deployment = updateDeployment();
+  const sourceBuild = sourceBuildOverride ?? isSourceBuild(PROJECT_ROOT);
+  const supervised = updateSupervised();
+  // Spawn `npm root -g` only when its answer can change the verdict (never on a shared install).
+  const needNpm = !isSharedInstall({ deployment, env: process.env }) && !sourceBuild && supervised;
+  return updateEligibility({
+    deployment, env: process.env, sourceBuild, supervised,
+    npm: needNpm ? await npmProbe() : null,
+    mock: updateMockOverride ?? serverMockMode(),
+  });
+}
+const updatePort = () => Number(server.address?.()?.port) || PORT;
+
+function lastUpdateResult() {
+  let rec; try { rec = readUpdateRecord(); } catch { return null; }
+  if (!rec || !(rec.state in UPDATE_RESULT_TTL_MS)) return null;
+  const at = Date.parse(rec.finishedAt || '');
+  if (!Number.isFinite(at) || Date.now() - at > UPDATE_RESULT_TTL_MS[rec.state]) return null;
+  if (rec.state === 'installed' && rec.to !== RUNNING_VERSION) return null;
+  // "Still on <from>" is only true while <from> runs: a failure followed by a by-hand update is stale.
+  if (rec.state === 'failed' && rec.from && rec.from !== RUNNING_VERSION) return null;
+  return { state: rec.state, from: rec.from || null, to: rec.to || null, reason: rec.reason || '', output: rec.output || '',
+    finishedAt: rec.finishedAt, resumed: Number.isInteger(rec.resumed) ? rec.resumed : null };
+}
+
+function updateCallerOk(req, res) {
+  if (!terminalSameOrigin(req)) { res.status(403).json({ error: 'Updates only answer pages served by this Worca.', code: 'UPDATE_CROSS_ORIGIN' }); return false; }
+  if (agentMayBeCaller(req)) { res.status(403).json({ error: UPDATE_MESSAGES.agent, code: 'UPDATE_AGENT_BLOCKED' }); return false; }
+  if (isSharedInstall({ deployment: updateDeployment(), env: process.env })) { res.status(403).json({ error: UPDATE_MESSAGES.shared, code: 'UPDATE_DISABLED' }); return false; }
+  return true;
+}
+
+function updatePreview() {
+  // drainActiveEntries() returns the raw `runs` Map entries (id = runId, pipelineId, title, status, …).
+  const runsNow = drainActiveEntries().map((e) => ({ id: e.pipelineId || e.id, title: e.title || e.pipelineId || e.id }));
+  const soon = Date.now() + UPDATE_SCHEDULE_WINDOW_MS;
+  let scheduled = [];
+  try {
+    scheduled = listTickets().filter((t) => t.status === 'scheduled' && !t.after && Date.parse(t.runAt) <= soon)
+      .map((t) => ({ id: t.id, title: t.title || '', runAt: t.runAt }));
+  } catch { /* the note is optional */ }
+  // Paused runs continue on the next boot only when auto-resume is on (autoResumeOnBoot, drain.mjs).
+  return { runs: runsNow, scheduled, autoResume: autoResumeMode(process.env) !== 'off' };
+}
 // Refuse during the upgrade (before any replay is sent): the Host/Origin guard
 // first, then the identity check when remote access is on. The 'connection'
 // handler below re-checks the host guard as a second line.
@@ -11285,6 +11362,61 @@ app.post('/api/app/version/check', async (req, res) => {
   res.set('Cache-Control', 'no-store').json(versionPayload(await updateChecker.status({ force: true })));
 });
 
+// Manual update (issue #841). GET reads only; POST asks the `worca ui` supervisor to install: it
+// writes <worcaHome>/update.json, drains like a stop, and exits UPDATE_EXIT_CODE. Nothing installs here.
+app.get('/api/app/update', async (req, res) => {
+  const elig = await currentUpdateEligibility(req);
+  const list = updateCheckEnabled() ? await versionLister.get() : versionLister.peek();
+  const rc = list?.distTags?.rc || null;
+  res.set('Cache-Control', 'no-store').json({
+    ...elig, current: RUNNING_VERSION, distTags: list?.distTags || null,
+    rcNewer: !!(rc && parseVersion(PKG_VERSION) && compareVersions(parseVersion(rc), parseVersion(PKG_VERSION)) > 0),
+    autoRestartMin: AUTO_RESTART_MIN, startCommand: startCommand(updatePort()), lastResult: lastUpdateResult(),
+  });
+});
+app.get('/api/app/update/versions', async (req, res) => {
+  const list = await versionLister.get({ force: req.query.refresh === '1' });
+  if (!list) return res.status(502).json({ error: 'Could not load the version list from npm. Try again in a moment.', code: 'VERSIONS_UNAVAILABLE' });
+  res.set('Cache-Control', 'no-store').json({ current: RUNNING_VERSION, distTags: list.distTags, versions: annotateVersions(list, PKG_VERSION) });
+});
+app.get('/api/app/update/preview', async (req, res) => {
+  // Lists run titles: answer only this Worca's own pages, never an agent.
+  if (!terminalSameOrigin(req) || agentMayBeCaller(req)) return res.status(403).json({ error: 'Updates only answer pages served by this Worca.', code: 'UPDATE_CROSS_ORIGIN' });
+  const target = canonicalVersion(req.query.version);
+  if (!target) return res.status(400).json({ error: 'Pick a version from the list.', code: 'UPDATE_BAD_VERSION' });
+  res.set('Cache-Control', 'no-store').json({ target, autoRestart: canAutoRestart(target), startCommand: startCommand(updatePort()), ...updatePreview() });
+});
+app.post('/api/app/update', async (req, res) => {
+  if (!updateCallerOk(req, res)) return;
+  if (updateRequested || DRAIN.on) return res.status(503).json({ error: 'Worca is already stopping.', code: 'UPDATE_IN_PROGRESS' });
+  const target = canonicalVersion(req.body?.version);
+  if (!target) return res.status(400).json({ error: 'Pick a version from the list.', code: 'UPDATE_BAD_VERSION' });
+  if (target === RUNNING_VERSION) return res.status(400).json({ error: `Worca ${target} is already running.`, code: 'UPDATE_SAME_VERSION' });
+  const elig = await currentUpdateEligibility(req);
+  if (!elig.canUpdate) return res.status(409).json({ error: elig.message, code: 'UPDATE_UNAVAILABLE', reason: elig.reason });
+  const list = await versionLister.get();
+  if (!list) return res.status(502).json({ error: 'Could not reach the npm registry. Try again in a moment.', code: 'VERSIONS_UNAVAILABLE' });
+  if (!findListedVersion(list, target)) return res.status(400).json({ error: `@worca/app@${target} is not on npm.`, code: 'UPDATE_BAD_VERSION' });
+  if (updateRequested || DRAIN.on) return res.status(503).json({ error: 'Worca is already stopping.', code: 'UPDATE_IN_PROGRESS' });
+  const autoRestart = canAutoRestart(target); const port = updatePort();
+  updateRequested = true;
+  try {
+    writeUpdateRecord({ state: 'requested', from: RUNNING_VERSION, to: target, autoRestart, port, requestedAt: new Date().toISOString(), pid: process.pid });
+  } catch (err) {
+    updateRequested = false;
+    return res.status(500).json({ error: `Could not record the update request: ${err.message}`, code: 'UPDATE_RECORD_FAILED' });
+  }
+  console.log(`[worca] update to ${target} requested; draining and handing over to worca ui`);
+  res.status(202).json({ ok: true, target, autoRestart, startCommand: startCommand(port) });
+  setImmediate(() => uiControl.onShutdown('update'));
+});
+app.post('/api/app/update/dismiss', (req, res) => {
+  if (!terminalSameOrigin(req) || agentMayBeCaller(req)) return res.status(403).json({ error: 'Not from here.', code: 'UPDATE_CROSS_ORIGIN' });
+  const rec = readUpdateRecord();
+  if (rec && (rec.state === 'failed' || rec.state === 'installed')) writeUpdateRecord({ ...rec, state: 'dismissed' });
+  res.json({ ok: true });
+});
+
 app.get('/api/budget', (_req, res) => {
   const budget = budgetStatus();
   // The account menu's spend card ("Saved") rides on this snapshot (money-saved design §10).
@@ -17700,6 +17832,19 @@ if (isMain) {
   bootMaintenance().then((summary) => {
     // B3: continue what the last stop paused (and, with WORCA_AUTO_RESUME=1, what a crash interrupted).
     autoResumeOnBoot({ interruptedIds: summary?.reconciledIds || [] })
+      .then((boot) => {
+        // #841: tell the About card how the update went ("N runs resumed"), and close a request
+        // that a different process left behind (its parent died, or never handled the exit).
+        try {
+          const rec = readUpdateRecord();
+          if (rec && rec.resumed == null && ((rec.state === 'installed' && rec.to === RUNNING_VERSION) || (rec.state === 'failed' && rec.from === RUNNING_VERSION))) {
+            writeUpdateRecord({ ...rec, resumed: boot?.resumed?.length ?? 0 });
+          } else if (rec && (rec.state === 'requested' || rec.state === 'installing') && rec.pid !== process.pid) {
+            writeUpdateRecord({ ...rec, state: 'failed', reason: 'Worca restarted before the update ran. Update from a terminal instead.', output: '', finishedAt: new Date().toISOString() });
+          }
+        } catch { /* the record is advisory */ }
+        return boot;
+      })
       .catch((err) => console.error(`[worca-ui] auto-resume failed: ${err && err.message ? err.message : err}`));
   }, (err) => {
     bootMaintenanceFailed = true;
@@ -17724,7 +17869,7 @@ if (isMain) {
   // same path serves POST /api/shutdown (`worca ui stop`), which exits 0.
   let shuttingDown = false;
   let wroteInstanceFile = false;
-  const exitCodeFor = (signal) => (signal === 'SIGINT' ? 130 : signal === 'SIGTERM' ? 143 : 0);
+  const exitCodeFor = (signal) => (signal === 'SIGINT' ? 130 : signal === 'SIGTERM' ? 143 : signal === 'update' ? UPDATE_EXIT_CODE : 0);
   const shutdown = (signal) => {
     if (shuttingDown) return;
     shuttingDown = true;
@@ -17817,6 +17962,12 @@ export const _testing = {
   updateChecker,
   setUpdateFetcher: (fn) => { updateFetcherOverride = typeof fn === 'function' ? fn : null; updateChecker.clear(); },
   setSourceBuild: (v) => { sourceBuildOverride = typeof v === 'boolean' ? v : null; updateChecker.clear(); },
+  setVersionsFetcher: (fn) => { versionsFetcherOverride = typeof fn === 'function' ? fn : null; versionLister.clear(); },
+  setNpmProbe: (fn) => { npmProbeOverride = typeof fn === 'function' ? fn : null; },
+  setUpdateDeployment: (d) => { updateDeploymentOverride = d || null; },
+  setUpdateMockOverride: (v) => { updateMockOverride = typeof v === 'boolean' ? v : null; },
+  resetUpdateRequest: () => { updateRequested = false; },
+  pkgVersion: RUNNING_VERSION,
   wireRun, summarizeRuns, scanRequest, fireTicket, afterMembersChanged, markResumedRescan, wireAgentGen, startAgentGen, wireScriptBench, startScriptBench,
   chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork, answerRun,
   chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor, switchThreadScope,

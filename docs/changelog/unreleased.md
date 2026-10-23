@@ -14,15 +14,23 @@ opens the card. Worca checks the npm registry's `latest` tag at most every 12 ho
 tab asks again when it regains focus (a release candidate never counts as newer). Run from a git
 checkout, the card says **Source build** and npm is never asked. Offline, nothing shows. Turn it
 off with **Check for new Worca versions** in the same card; turning it back on checks afresh.
-Nothing is installed or restarted from the app.
+**Update to X.Y.Z** on the same card installs the latest stable and restarts Worca: running runs
+pause and continue after the restart (when auto-resume is on), and the page reconnects by itself.
+**Choose version…** picks a release candidate or rolls back; a version older than 1.14.0 installs
+and then has to be started by hand with `worca ui`. This works when Worca was started with
+`worca ui` from an `npm install -g` install whose global folder you can write to; otherwise the card
+says why and shows the command to run. Shared and hosted installs keep the buttons off. A failed
+install starts the previous version again and shows npm's reason on the card. Nothing updates
+automatically.
 
-Chips: About · version · release notes
+Chips: About · version · release notes · update
 
 Read it: [Getting started](../getting-started.md)
 
 Pull requests (add each number when it opens):
 
 - See when a newer Worca is out (#841)
+- Update Worca from the About card (#841)
 
 ## Plugins work behind a proxy
 
