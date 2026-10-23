@@ -25,7 +25,7 @@ anything.
 ## Rules
 
 1. **A blocking prompt is never hidden.** The cycle gate, the recovery prompt,
-   the cost-pause banner, the worktree notice and any clarifying question
+   the cost-pause banner, the worktree notice (work retained after a failed commit) and any clarifying question
    show at every level. A run that waits on a hidden control is a dead run. A
    blocking prompt may be *reworded* for Simple (the cycle gate is), never
    removed. Recovery instructions (the retained-work git commands) count as part
@@ -174,7 +174,9 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Card (History-level): status, title, elapsed, cost, Stop, Pause/Resume, open; a strip on a waiting or parked run that opens the run page at its question | S |
 | "Scheduled" group (runs due within 24 h) | S — it only exists when something is scheduled |
 | Needs-input pill and banner; clarify questions; Auto proposal ("Review the workflow": preview that opens a pan/zoom popup, Accept) — all answered on the run page | S |
-| Recovery prompt, cycle gate, cost-pause banner, worktree notice (retained work or a live checkout; only its Actions tab › link is Advanced), merge-back banner (a run on its source branch that could not be fast-forwarded) | all |
+| Recovery prompt, cycle gate, cost-pause banner, worktree notice (work retained after a failed commit), merge-back banner (a run on its source branch that could not be fast-forwarded) | all |
+| Summary card › a live checkout: the Results row with Discard / Unlink | S |
+| Summary card › the Actions row value (`Local copy open · since 18:12`, `Try it on this machine`) and the Actions tab's Download patch | A |
 | Plan approval (Shaper): one step card — head (title + Plan chip), summary, folded shape check, Ask for changes / Full plan / Approve and build / ⋯ (Fix all, Save to plans/, Stop); the same card with the gate off (Full plan opens the artifact viewer) | all (rule 1) |
 | Plan approval extras: perspectives "edit" (chips + Update plan), Fix all, Save to plans/ | S |
 | Plan approval: Open in New run | A |

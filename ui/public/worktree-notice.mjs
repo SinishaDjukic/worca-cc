@@ -1,8 +1,9 @@
 // ui/public/worktree-notice.mjs — the summary card's live-worktree notice, on the run page's `.rd-glance` and
 // History's `.hd-glance`, at every interface level. A finished run's branch is held by a live worktree in
 // two cases:
-//   - retained work: the end-of-run commit failed, so the work exists only in the worktree;
-//   - a checkout: Actions › Check out, or a linked folder of the person's own.
+//   - retained work: the end-of-run commit failed, so the work exists only in the worktree. This is the notice;
+//   - a checkout: Actions › Check out, or a linked folder of the person's own. No notice: the Results › Actions
+//     row says where the local copy stands (checkoutRowValue) and the Actions tab owns its controls.
 // Pure: a model from the run's facts, and a renderer that takes `doc` and returns detached DOM. Git stderr
 // and paths are data: textContent only, never innerHTML. app.js owns the calls and the host
 // (paintWorktreeNotice).
@@ -26,7 +27,6 @@ const sq = (v) => `'${String(v == null ? '' : v).replaceAll("'", "'\"'\"'")}'`;
 
 export const NOTICE_TITLES = Object.freeze({
   retained: 'Commit failed: uncommitted work retained',
-  checkout: 'Checked out in a worktree',
   linked: 'Linked to your folder',
 });
 const WHY = 'git keeps a branch in one folder at a time.';
@@ -118,18 +118,33 @@ export function applyOutcome(report = {}) {
 }
 
 /**
- * The notice's content (the host element, its role and its look belong to the caller).
+ * The notice's content (the host element, its role and its look belong to the caller). Retained work only: a
+ * checkout has no glance notice (the Results › Actions row says it and the Actions tab owns its controls).
  * @param {object|null} model worktreeNoticeModel(…)
- * @param {{ doc: Document, handlers?: { onApply?, onDiscardRetained?, onReleaseCheckout?, onDiff?, onOpenActions? },
+ * @param {{ doc: Document, handlers?: { onApply?, onDiscardRetained? },
  *   recovery?: { kind:'retained'|'diff', href:string, download?:string }|null, when?: (iso:string)=>string }} opts
  * @returns {DocumentFragment}
  */
 export function renderWorktreeNotice(model, { doc, handlers = {}, recovery = null, when = (iso) => String(iso || '') } = {}) {
   const frag = doc.createDocumentFragment();
-  if (!model) return frag;
-  if (model.kind === 'retained') renderRetained(doc, frag, model, { handlers, recovery, when });
-  else renderCheckout(doc, frag, model, { handlers, when });
+  // A checkout has no glance notice: the Results › Actions row says it and the Actions tab owns its controls.
+  if (!model || model.kind !== 'retained') return frag;
+  renderRetained(doc, frag, model, { handlers, recovery, when });
   return frag;
+}
+
+/** The glance's Results › Actions row value before a checkout. */
+export const TRY_IT_ROW = 'Try it on this machine';
+
+/** "Local copy open · since 18:12", "Linked to your folder · since 18:12", "2 local copies open · since 18:12";
+ *  no checkout: TRY_IT_ROW when the run can be tried, else ''. `checkout` is History's `{ members: [{ at, external }] }`. */
+export function checkoutRowValue(checkout, { when = (iso) => String(iso || ''), canTry = true } = {}) {
+  const ms = Array.isArray(checkout?.members) ? checkout.members : [];
+  if (!ms.length) return canTry ? TRY_IT_ROW : '';
+  const first = ms.map((m) => m.at).filter(Boolean).sort()[0] || null;
+  const since = first ? ` · since ${when(first)}` : '';
+  if (ms.every((m) => m.external === true)) return `${NOTICE_TITLES.linked}${since}`;
+  return `${ms.length > 1 ? `${ms.length} local copies` : 'Local copy'} open${since}`;
 }
 
 function renderRetained(doc, frag, model, { handlers, recovery, when }) {
@@ -174,44 +189,4 @@ function renderRetained(doc, frag, model, { handlers, recovery, when }) {
     .map((m) => `git -C ${sq(m.dir)} status\ngit -C ${sq(m.dir)} add -A\ngit -C ${sq(m.dir)} commit`).join('\n\n')));
   manual.append(h(doc, 'p', null, 'The changes are already staged in the worktree, so git status lists them under "Changes to be committed". After committing, Discard worktree removes the redundant worktree and clears this notice. A patch of anything still uncommitted is saved first.'));
   frag.append(manual);
-}
-
-function renderCheckout(doc, frag, model, { handlers, when }) {
-  const linked = model.members.every((m) => m.external);
-  const one = model.members.length === 1 ? model.members[0] : null;
-  frag.append(h(doc, 'h4', null, linked ? NOTICE_TITLES.linked : NOTICE_TITLES.checkout));
-  frag.append(h(doc, 'p', 'wt-lead', one
-    ? `${one.branch || 'The run\'s branch'} is checked out in ${one.external ? 'your folder' : 'a worktree'}${one.at ? ` since ${when(one.at)}` : ''}.`
-    : 'The run\'s branches are checked out:'));
-  frag.append(h(doc, 'p', 'wt-refused', `While it is, Check out, Archive and a new run on this branch are refused: ${WHY}`));
-  const list = h(doc, 'ul', 'wt-members');
-  for (const m of model.members) {
-    const li = h(doc, 'li');
-    if (m.label) li.append(h(doc, 'strong', null, m.label));
-    if (!one) li.append(doc.createTextNode(`${m.label ? ' · ' : ''}${m.branch || ''}${m.at ? ` since ${when(m.at)}` : ''}`));
-    li.append(h(doc, 'div', 'wt-path', `${m.external ? 'Your folder' : 'Worktree'}: ${m.dir || '(unknown)'}`));
-    const acts = h(doc, 'div', 'wt-member-actions');
-    if (!model.provisional && handlers.onReleaseCheckout) {
-      acts.append(m.external
-        ? button(doc, 'Unlink', 'btn wt-release', (b) => handlers.onReleaseCheckout(m, b),
-          'Stop using your folder for this run. Running services stop; the folder and its changes stay as they are.')
-        : button(doc, 'Discard', 'btn wt-release', (b) => handlers.onReleaseCheckout(m, b),
-          'Delete the checkout folder. Running services stop, and uncommitted changes are saved as a patch first.'));
-    }
-    if (!model.provisional && handlers.onDiff) {
-      acts.append(button(doc, 'Get the diff', 'btn wt-diff', (b) => handlers.onDiff(m, b),
-        'Download a patch of the folder\'s uncommitted changes. Read-only: nothing in the folder is staged or changed.'));
-    }
-    if (acts.childNodes.length) li.append(acts);
-    list.append(li);
-  }
-  frag.append(list);
-  if (handlers.onOpenActions) {
-    // The Actions tab itself is Advanced (docs/ui-levels.md): only this link is gated, never the notice.
-    const row = h(doc, 'div', 'wt-actions wt-actions-row');
-    row.dataset.minLevel = 'advanced';
-    row.append(button(doc, 'Actions tab ›', 'btn wt-actions-tab', () => handlers.onOpenActions(),
-      'Open the run\'s Actions tab: services, setup, editor and terminal'));
-    frag.append(row);
-  }
 }

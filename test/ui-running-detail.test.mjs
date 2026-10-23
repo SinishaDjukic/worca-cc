@@ -1790,8 +1790,9 @@ test('run page: Apply to branch clears the notice, and a later state frame does 
   assert.equal(notice.hidden, true, 'the finished orchestrator\'s stale commitFailed stamp does not resurrect it');
 });
 
-test('run page: a checkout on History\'s row shows the notice, and a row without it clears it', async () => {
-  const CO = { members: [{ projectKey: KEY, worktreeDir: '/tmp/co', branch: 'worca-cc/dark-p1', at: '2026-10-14T09:00:00Z', policy: 'on-demand' }] };
+// A checkout made "now": whenLabel then reads HH:MM. `level` is set before the glance opens (the activity rows read it).
+async function checkoutGlance(level) {
+  const CO = { members: [{ projectKey: KEY, worktreeDir: '/tmp/co', branch: 'worca-cc/dark-p1', at: new Date().toISOString(), policy: 'on-demand' }] };
   const box = { rows: [{ ...HISTORY_ROW, id: 'p1', live: true, survived: true, branch: 'worca-cc/dark-p1', sourceBranch: 'main', pr: null, checkout: CO }] };
   const ctx = await boot({
     fetchHandler: (url) => {
@@ -1802,17 +1803,39 @@ test('run page: a checkout on History\'s row shows the notice, and a row without
       return null;
     },
   });
+  ctx.window.document.documentElement.dataset.level = level;
   frame(ctx, { type: 'hello', runs: [] });
   await settle(ctx.window, 6);
   await openGlance(ctx);
   frame(ctx, { type: 'done', runId: 'r1', status: 'done' });
   await settle(ctx.window, 10);
-  const n = ctx.window.document.querySelector('#run-detail .retained-banner');
-  assert.equal(n.hidden, false);
-  assert.equal(n.dataset.kind, 'checkout');
-  assert.deepEqual([...n.querySelectorAll('button')].map((b) => b.textContent), ['Discard', 'Get the diff', 'Actions tab ›']);
-  box.rows = [{ ...box.rows[0], checkout: null }];
-  frame(ctx, { type: 'pipelines-changed' });
-  await settle(ctx.window, 12);
-  assert.equal(n.hidden, true, 'a checkout discarded elsewhere clears the notice here (rdRepaintOpenGlance repaints the banners)');
+  const discard = async () => {
+    box.rows = [{ ...box.rows[0], checkout: null }];
+    frame(ctx, { type: 'pipelines-changed' });
+    await settle(ctx.window, 12);
+  };
+  return { ctx, doc: ctx.window.document, discard };
+}
+
+test('run page: a checkout on History\'s row is the Actions row, never a box; a row without it offers the try', async () => {
+  const { doc, discard } = await checkoutGlance('advanced');
+  const n = doc.querySelector('#run-detail .retained-banner');
+  const value = () => doc.querySelector('#run-detail .rd-result .rd-srow[data-rd-tab="actions"] .rd-srow-v')?.textContent || '';
+  assert.equal(n.hidden, true);
+  assert.notEqual(n.dataset.kind, 'checkout');
+  assert.match(value(), /^Local copy open · since \d{1,2}:\d{2}$/);
+  assert.doesNotMatch(doc.querySelector('#run-detail .rd-glance').textContent, /worktree/i);
+  await discard();
+  assert.equal(value(), 'Try it on this machine', 'a checkout discarded elsewhere updates the row here (rdRepaintOpenGlance repaints the banners)');
+});
+
+test('run page, Simple: a checkout gets a plain row with Discard, gone once the checkout clears', async () => {
+  const { doc, discard } = await checkoutGlance('simple');
+  const row = () => doc.querySelector('#run-detail .rd-result .rd-srow-checkout');
+  assert.equal(doc.querySelector('#run-detail .rd-result .rd-srow[data-rd-tab="actions"]'), null);
+  assert.match(row().textContent, /^Local copy open · since /);
+  assert.deepEqual([...row().querySelectorAll('button')].map((b) => b.textContent), ['Discard']);
+  assert.doesNotMatch(doc.querySelector('#run-detail .rd-glance').textContent, /worktree/i);
+  await discard();
+  assert.equal(row(), null);
 });

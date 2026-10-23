@@ -5036,6 +5036,10 @@ button.rd-srow:hover{background:var(--hover-on-field);}
 .rd-srow-ico{flex:none;color:var(--ink-2);}   /* the tab icon the row leads to */
 .rd-srow-tx small{display:block;color:var(--ink-2);font-size:var(--fs-meta);}
 .rd-srow-v{color:var(--ink-2);font:400 var(--fs-body)/var(--lh-body) var(--sans);font-variant-numeric:tabular-nums;white-space:nowrap;}
+/* the Simple checkout row: text, then its Discard / Unlink buttons, wrapping on a narrow card */
+.rd-srow-checkout{flex-wrap:wrap;}
+.rd-srow-checkout .rd-srow-tx{flex:1 1 14em;}   /* a basis, so the buttons wrap under the text instead of squeezing it */
+.rd-srow-acts{display:flex;flex-wrap:wrap;gap:8px;}
 .rd-srow.chv::after{content:"›";color:var(--ink-2);font-size:var(--fs-subpage);line-height:1;}
 .rd-slist .issues{margin:0;padding:10px 14px;}
 
