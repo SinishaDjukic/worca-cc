@@ -48,6 +48,14 @@ test('the head lays the buttons out after the live row, and under the status in 
   assert.match(decls('.rd-sheet-head > .rd-head-acts'), /grid-area:1 \/ 3/);
   assert.match(css, /@container rd-head \(max-width:420px\)\{[^@]*\.rd-sheet-head > \.rd-head-acts\{grid-area:2 \/ 1 \/ 3 \/ -1;justify-self:start;/);
   assert.match(decls('.rd-pr-slot'), /width:fit-content/);
+  // Safety net: no label (a long branch, "Push failed: …") can grow the button past the card and squeeze the status.
+  assert.match(decls('.rd-pr-slot'), /max-width:/);
+  assert.match(decls('.rd-pr-slot > [data-rd-cta]'), /max-width:100%/);
+  const label = decls('.rd-pr-slot > [data-rd-cta] > span:not(.ic)');
+  for (const d of [/overflow:hidden/, /text-overflow:ellipsis/, /white-space:nowrap/, /min-width:0/]) assert.match(label, d);
+  assert.match(decls('.ic'), /flex:none/, 'the icon stays visible while the label truncates');
+  assert.match(css, /@container rd-head \(max-width:420px\)\{[^@]*\.rd-sheet-head > \.rd-head-acts\{[^}]*max-width:100%;\}\s*\.rd-head-acts > \.rd-pr-slot\{max-width:100%/,
+    'a narrow card lets the wrapped button take the full row');
   assert.doesNotMatch(decls('.rd-pr-wait'), /width:100%/, 'the placeholder takes the button\'s natural size');
   assert.doesNotMatch(css, /rd-pr-fold/, 'the no-button exit fades in place');
   assert.doesNotMatch(css, /\[data-rd-cta\]\{border-radius/, 'the dead PR-box corner rule is gone');
@@ -58,7 +66,7 @@ test('no PR control is full width, and the CTA glyphs come from icons.mjs', () =
   for (const f of ['app.js', 'chat/run-card.mjs', 'run-status-card.mjs']) assert.doesNotMatch(read(f), /btn-block/, f);
   assert.doesNotMatch(read('app.js'), /CTA_ICONS|rd-cta-ico/);
   assert.ok(Object.hasOwn(ICONS, 'pr-create'));
-  assert.doesNotMatch(read('app.js'), /Push the source branch/, 'Push says the header\'s "Push <branch>"');
+  assert.doesNotMatch(read('app.js'), /Push the source branch/, 'Push says the header\'s "Push" (its tooltip names the branch)');
 });
 
 test('facts: a quiet button that opens a value sits on the value column (.btn-sm padding + border)', () => {

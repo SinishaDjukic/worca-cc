@@ -15,6 +15,15 @@ export function hdPrWatchLabel(state) {
   return state.status === 'needs-person' ? 'Needs a person' : '';
 }
 
+// Push (a run on its source branch): the label stays short (a long branch would widen the button past the card), the
+// tooltip names the branch. `push` is the record's push state ({ state, remote }, refs only) or null.
+export function pushLabel(push) { return push?.state === 'pushed' ? `Pushed to ${push.remote}` : 'Push'; }
+export function pushTip(branch, push = null) {
+  if (push?.state === 'pushed') return `${branch} is on ${push.remote}`;
+  if (push?.state === 'diverged') return `${branch} and ${push.remote}/${branch} have diverged: pull or rebase ${branch}, then push`;
+  return `Push to ${branch}`;
+}
+
 export const WATCH_HELP = 'Start a fix run when checks fail or a reviewer asks for changes';
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const AMBER = Object.freeze({ state: 'needs-you', word: 'Needs you', dot: 'amber', symbol: null, pulse: false });
@@ -108,7 +117,8 @@ export function headModel(f) {
     return { ...NONE, key: 'not-merged-back', status: { ...AMBER, line: `Needs you · not merged back into ${f.source}` },
       before: [btn('how-to-merge', 'How to merge')], cta: f.canCreatePr ? { state: 'create' } : null };
   }
-  if (f.push) return { ...NONE, key: 'push', status: { line: `Ready to ship · in ${f.source} here, not on the remote` }, before: tryIt, cta: { state: 'push', label: `Push ${f.source}` } };
+  if (f.push) return { ...NONE, key: 'push', status: { line: `Ready to ship · in ${f.source} here, not on the remote` }, before: tryIt, cta: { state: 'push', label: pushLabel(f.pushState), title: pushTip(f.source, f.pushState),
+    disabled: f.pushState?.state === 'pushed' || f.pushState?.state === 'diverged' } };
   if (m.state !== 'ready') return { ...NONE, key: m.state };             // merged into its base without a PR (inBase)
   const cta = f.prInput === 'PENDING' ? { state: 'pending' } : f.canCreatePr ? { state: 'create' } : null;
   if (s === 'CLOSED') return { ...NONE, key: 'pr-closed', status: { line: 'Ready to ship · the PR was closed' }, before: tryIt, cta };
