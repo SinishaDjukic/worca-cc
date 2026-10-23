@@ -209,7 +209,7 @@ export function liveRoleRows(run, { stage = null } = {}) {
       .filter((f) => f.status === 'open' && BLOCKING.has(f.severity)).map(() => x.label || label(x.key)));
     if (openBy.length && active.length > 0) {
       const n = openBy.length;
-      return { rows: [], refine: `Refine · fixing ${n} finding${n === 1 ? '' : 's'} from ${joinLabels([...new Set(openBy)])}` };
+      return { rows: [], refine: `Fixing ${n} finding${n === 1 ? '' : 's'} from ${joinLabels([...new Set(openBy)])}` };
     }
     return { rows: record.roles.map((x) => ({ key: x.key, label: x.label || label(x.key),
       state: x.skipped ? 'skipped: nothing open' : worstText(x.findings), live: false })), refine: '' };
