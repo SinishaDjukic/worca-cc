@@ -1307,6 +1307,48 @@ test('run 3: a PR that merges while its page is open never gets its checks line 
   assert.doesNotMatch(box.textContent, /checks running/, 'a refresh paints no checks line');
 });
 
+// The PR bar is always two lines: the chip on its own line, the notes on a second one, with separators only between notes.
+test('the PR bar puts the chip and its notes on separate lines, no separator before the first note', async () => {
+  const url = 'https://github.com/o/r/pull/879';
+  const row = { ...HISTORY_ROW, id: 'p1', live: true, survived: true, branch: 'worca-cc/dark-p1', sourceBranch: 'main',
+    pr: { state: 'OPEN', url, number: 879, checks: { state: 'pending', total: 15, failed: 0, pending: 11 } } };
+  let answer = { checks: { state: 'pending', total: 15, failed: 0, pending: 11 }, mergeable: 'MERGEABLE',
+    status: { tone: 'wait', label: 'Review required', detail: '4 of 15 done' }, watch: { watching: true } };
+  const ctx = await boot({
+    fetchHandler: (u) => {
+      if (u.includes('/api/pr/checks')) return ok(answer);
+      if (u.endsWith('/api/history/pr')) return ok({ ok: true });
+      if (u.endsWith('/api/history')) return ok({ pipelines: [structuredClone(row)], ghAvailable: true });
+      if (u.endsWith('/api/budget')) return ok(okBudget());
+      if (u.includes('/api/runs/p1?projectDir=')) return ok({ state: { status: 'done' }, results: null, clarify: { questions: [], answers: [] } });
+      return null;
+    },
+  });
+  frame(ctx, { type: 'hello', runs: [] });
+  await settle(ctx.window, 6);
+  const rd = await openGlance(ctx);
+  frame(ctx, { type: 'done', runId: 'r1', status: 'done' });
+  await settle(ctx.window, 10);
+  const sum = rd.querySelector('.rd-pr-status .rd-prs-sum');
+  const lines = [...sum.children];
+  assert.deepEqual(lines.map((l) => l.className), ['rd-prs-lead', 'rd-prs-notes'], 'two line elements');
+  assert.ok(lines[0].querySelector('a.runs-pr'), 'the chip leads line 1');
+  assert.equal(lines[0].querySelector('.rd-prs-sep'), null, 'no separator on the chip line');
+  assert.equal(lines[0].querySelector('.rd-prs-detail'), null, 'no note on the chip line');
+  const notes = lines[1];
+  assert.notEqual(notes.firstElementChild.className, 'rd-prs-sep', 'no separator before the first note');
+  assert.notEqual(notes.lastElementChild.className, 'rd-prs-sep', 'no separator after the last note');
+  assert.deepEqual([...notes.children].map((n) => n.textContent), ['Review required', '·', '4 of 15 done']);
+  assert.ok(rd.querySelector('.rd-pr-status > .rd-prs-watch'), 'Watch stays beside the two-line block');
+  // No notes: the chip line alone, no empty second line.
+  answer = { ...answer, status: { tone: 'run', label: 'Checks running' }, watch: null };
+  frame(ctx, { type: 'pr-watch-changed', projectKey: row.projectKey, pipelineId: 'p1' });
+  await settle(ctx.window, 10);
+  const alone = rd.querySelector('.rd-pr-status .rd-prs-sum');
+  assert.deepEqual([...alone.children].map((l) => l.className), ['rd-prs-lead']);
+  assert.equal(alone.querySelector('.rd-prs-notes, .rd-prs-sep'), null);
+});
+
 // QA 3: the run page PR box leads with the Runs list's own chip (prChip over the run model's prState), the same word and
 // icon as the list; GitHub's verdict stays a note only when it adds something the chip does not say.
 test('QA 3: the run page PR box leads with the list\'s chip, also after a pr-watch-changed refresh', async () => {

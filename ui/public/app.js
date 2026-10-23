@@ -35310,18 +35310,25 @@ function renderRdPrStatus(host, scope, s) {
     }
   }
   const parts = [];
-  if (chip) {
+  if (chip || tone) {
+    // Always two lines: the lead (the chip, or icon + headline), then the notes, separated only between each other.
+    const lead = document.createElement('span');
+    lead.className = 'rd-prs-lead';
+    if (chip) {
+      lead.append(prChip(document, chip, { link: true, number: true }));   // run 3 (D11): icon, "PR #821", word
+    } else {
+      lead.innerHTML = `<svg class="rd-prs-ico ${tone}" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${PR_STATUS_ICONS[tone]}</svg>`;
+      lead.appendChild(span('rd-prs-text', text));
+    }
     const sum = document.createElement('span');
     sum.className = 'rd-prs-sum';
-    sum.append(prChip(document, chip, { link: true, number: true }));   // run 3 (D11): icon, "PR #821", word
-    for (const n of notes) sum.append(span('rd-prs-sep', '·'), n);
-    parts.push(sum);
-  } else if (tone) {
-    const sum = document.createElement('span');
-    sum.className = 'rd-prs-sum';
-    sum.innerHTML = `<svg class="rd-prs-ico ${tone}" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${PR_STATUS_ICONS[tone]}</svg>`;
-    sum.appendChild(span('rd-prs-text', text));
-    for (const n of notes) sum.append(span('rd-prs-sep', '·'), n);
+    sum.append(lead);
+    if (notes.length) {
+      const line = document.createElement('span');
+      line.className = 'rd-prs-notes';
+      notes.forEach((n, i) => { if (i) line.append(span('rd-prs-sep', '·')); line.append(n); });
+      sum.append(line);
+    }
     parts.push(sum);
   }
   if (wst) {
