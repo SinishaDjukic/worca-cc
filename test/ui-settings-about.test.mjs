@@ -18,6 +18,7 @@ const trackDom = useDomRelease(afterEach);
 
 const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
+const cssPath = fileURLToPath(new URL('../ui/public/style.css', import.meta.url));
 const pkg = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'));
 
 // package.json repository.url in browsable form (same normalisation as ui/server.mjs).
@@ -58,6 +59,7 @@ const vOutdated = () => ({ current: PAINTED_VERSION, latest: '10.0.0', status: '
   links: { releaseNotes: 'https://docs.worca.dev/changelog/', whatsNew: 'https://docs.worca.dev/changelog/10.0.0/',
            compare: 'https://example.com/acme/widget/compare/worca-app-v9.9.9-test...worca-app-v10.0.0' } });
 const vLatest = () => ({ ...vOutdated(), latest: PAINTED_VERSION, status: 'up-to-date', links: { releaseNotes: 'https://docs.worca.dev/changelog/', whatsNew: '', compare: '' } });
+const vSource = () => ({ ...vLatest(), latest: null, status: 'source', checkedAt: null });
 
 async function boot({ settings = okSettings, version = () => null } = {}) {
   const calls = [];
@@ -226,6 +228,50 @@ test('the About card: anchors carry target/rel, and the only controls are the up
   assert.equal(card.querySelector('#aboutUpdateCheck').checked, true, 'the markup default matches the server default (on)');
 });
 
+test('Check now is a plain small button, and only the Updates row centres its items', () => {
+  const card = settingsView().querySelector('#about-card');
+  const btn = card.querySelector('#aboutCheckNow');
+  assert.ok(btn.classList.contains('btn') && btn.classList.contains('btn-sm'), 'btn btn-sm like the other small Settings buttons');
+  assert.equal(btn.classList.contains('btn-quiet'), false, 'btn-quiet is borderless and reads as grey text');
+  const rows = [...card.querySelectorAll('.about-row')];
+  const centred = rows.filter((r) => r.classList.contains('about-row-center'));
+  assert.deepEqual(centred, [btn.closest('.about-row')], 'the switch row alone (its label takes its baseline from the text-less pill)');
+  const css = readFileSync(cssPath, 'utf8');
+  assert.match(css, /\.about-row\{display:flex;align-items:baseline;/, 'the other rows stay on baseline');
+  assert.match(css, /\.about-row\.about-row-center\{align-items:center;\}/);
+  assert.match(css, /\.about-update\[data-state="source"\]\{background:var\(--field\);color:var\(--ink-2\);\}/, 'Source build is neutral');
+});
+
+test('a source build: neutral "Source build" badge, no update links, no Check now, no sidebar marker; switch and Release notes stay', async () => {
+  const { $, openSettings, tick } = await boot({ version: vSource });
+  await openSettings(); await tick();
+  assert.equal($('#aboutUpdateState').hidden, false);
+  assert.equal($('#aboutUpdateState').textContent, 'Source build');
+  assert.equal($('#aboutUpdateState').dataset.state, 'source');
+  assert.equal($('#aboutUpdateLinks').hidden, true);
+  assert.equal($('#aboutWhatsNew').hidden, true);
+  assert.equal($('#aboutCompare').hidden, true);
+  assert.equal($('#aboutReleaseNotes').getAttribute('href'), 'https://docs.worca.dev/changelog/');
+  assert.equal($('#aboutCheckNow').hidden, true, 'nothing to check');
+  assert.equal($('#aboutUpdateCheck').closest('.about-row').hidden, false, 'the switch stays');
+  assert.equal($('#side-update').hidden, true);
+});
+
+test('focus re-reads GET /api/app/version (never the forced check): the marker appears once the server answers outdated', async () => {
+  let answer = vLatest;
+  const { window, $, tick, calls } = await boot({ version: () => answer() });
+  await tick();
+  assert.equal($('#side-update').hidden, true);
+  answer = vOutdated;
+  const before = calls.length;
+  window.dispatchEvent(new window.Event('focus'));
+  await tick(); await tick();
+  assert.equal($('#side-update').hidden, false);
+  const after = calls.slice(before).filter((c) => c.url.includes('/api/app/version'));
+  assert.ok(after.length >= 1, 'focus asked again');
+  assert.ok(after.every((c) => c.method === 'GET' && !c.url.includes('/check')), 'GET only, never force');
+});
+
 test('the switch posts { updateCheck } on change, and off hides Check now and the badge', async () => {
   let enabled = true;
   const version = () => (enabled ? vOutdated() : { ...vOutdated(), enabled: false, status: 'unknown', latest: null, links: { releaseNotes: 'https://docs.worca.dev/changelog/', whatsNew: '', compare: '' } });
@@ -299,6 +345,16 @@ test('paintVersionStatusInto / paintUpdateMarkerInto: malformed payloads read as
       assert.equal(view.querySelector('#aboutUpdateLinks').hidden, true);
       assert.equal(view.querySelector('#aboutReleaseNotes').getAttribute('href'), 'https://docs.worca.dev/changelog/');
       assert.equal(foot.querySelector('#side-update').hidden, false);
+    } },
+    { name: 'source paints the neutral badge, hides Check now and never the marker', run: () => {
+      const view = settingsView(); const foot = sideFoot();
+      paintVersionStatusInto(view, vSource());
+      paintUpdateMarkerInto(foot, vSource());
+      assert.equal(view.querySelector('#aboutUpdateState').textContent, 'Source build');
+      assert.equal(view.querySelector('#aboutUpdateState').dataset.state, 'source');
+      assert.equal(view.querySelector('#aboutCheckNow').hidden, true);
+      assert.equal(view.querySelector('#aboutUpdateLinks').hidden, true);
+      assert.equal(foot.querySelector('#side-update').hidden, true);
     } },
     ...[undefined, null, {}, { status: 42 }, { status: 'outdated', latest: null, links: vOutdated().links }].map((vs) => ({
       name: `${JSON.stringify(vs)} → unknown`,

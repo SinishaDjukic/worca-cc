@@ -15435,7 +15435,7 @@ async function refreshVersionStatus({ force = false } = {}) {
 // The switch saves on change, like the Theme segment: one boolean, no Save button.
 el.aboutUpdateCheck?.addEventListener('change', async () => {
   const on = el.aboutUpdateCheck.checked;
-  if (el.aboutCheckNow) el.aboutCheckNow.hidden = !on;
+  if (el.aboutCheckNow) el.aboutCheckNow.hidden = !on || document.getElementById('aboutUpdateState')?.dataset.state === 'source';
   try {
     const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ updateCheck: on }) });
     const data = await safeJson(res);
@@ -38958,6 +38958,9 @@ refreshBudget();
 startBudgetTick();
 loadWhoami();
 void refreshVersionStatus();   // sidebar "Update available" marker (#841)
+// ...and again when the tab regains focus, so a tab left open for days still sees a new release. A GET
+// only: the server's cache decides whether npm is asked.
+window.addEventListener('focus', () => { void refreshVersionStatus(); });
 // Credential broker badges ("your key / no key" on model pickers): fetched at boot and
 // again when the tab regains focus — people add keys on the key page in another tab.
 // Pickers already on screen repaint once the answer changes what they show.

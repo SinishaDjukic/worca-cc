@@ -151,6 +151,8 @@ test('updateCheck: GET defaults to true, POST false round-trips, a non-boolean a
 test('GET /api/app/version: unknown with no fetch under tests; a fake fetcher drives outdated + links; setting off = no fetch', async () => {
   const get = async () => (await fetch(`${base}/api/app/version`)).json();
   const pkgVersion = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')).version;
+  // The test tree is itself a git checkout: pin "installed from npm" unless a row says otherwise.
+  testing.setSourceBuild(false);
   await checkRows([
     { name: 'default fetcher under NODE_TEST_CONTEXT: unknown, no network', run: async () => {
       testing.setUpdateFetcher(null);
@@ -184,6 +186,46 @@ test('GET /api/app/version: unknown with no fetch under tests; a fake fetcher dr
         assert.equal(j.enabled, false);
         assert.equal(calls, 0);
       } finally { await postJson({ updateCheck: true }); testing.setUpdateFetcher(null); }
+    } },
+    { name: 'POST updateCheck false clears the cached answer: back on = a fresh fetch', run: async () => {
+      let calls = 0;
+      testing.setUpdateFetcher(async () => { calls++; return calls === 1 ? '99.0.0' : pkgVersion; });
+      try {
+        assert.equal((await get()).status, 'outdated');
+        await postJson({ updateCheck: false });
+        await postJson({ updateCheck: true });
+        assert.equal((await get()).status, 'up-to-date');
+        assert.equal(calls, 2);
+      } finally { await postJson({ updateCheck: true }); testing.setUpdateFetcher(null); }
+    } },
+    { name: 'a source build: status source, no links, no fetch, Check now included', run: async () => {
+      let calls = 0;
+      testing.setUpdateFetcher(async () => { calls++; return '99.0.0'; });
+      testing.setSourceBuild(true);
+      try {
+        for (const j of [await get(), await (await fetch(`${base}/api/app/version/check`, { method: 'POST' })).json()]) {
+          assert.equal(j.status, 'source');
+          assert.equal(j.latest, null);
+          assert.equal(j.current, pkgVersion);
+          assert.deepEqual(j.links, { releaseNotes: 'https://docs.worca.dev/changelog/', whatsNew: '', compare: '' });
+        }
+        assert.equal(calls, 0);
+      } finally { testing.setSourceBuild(false); testing.setUpdateFetcher(null); }
+    } },
+    { name: 'the real detection on this checkout: source build, unless WORCA_UPDATE_CHECK_LATEST is set', run: async () => {
+      const prevLatest = process.env.WORCA_UPDATE_CHECK_LATEST;
+      testing.setSourceBuild(null);
+      try {
+        delete process.env.WORCA_UPDATE_CHECK_LATEST;
+        assert.equal((await get()).status, 'source');
+        process.env.WORCA_UPDATE_CHECK_LATEST = '99.1.0';
+        const j = await get();
+        assert.equal(j.status, 'outdated');
+        assert.equal(j.latest, '99.1.0');
+      } finally {
+        if (prevLatest === undefined) delete process.env.WORCA_UPDATE_CHECK_LATEST; else process.env.WORCA_UPDATE_CHECK_LATEST = prevLatest;
+        testing.setSourceBuild(false); testing.setUpdateFetcher(null);
+      }
     } },
   ]);
 });

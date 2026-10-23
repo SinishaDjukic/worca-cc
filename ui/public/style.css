@@ -3512,8 +3512,12 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 /* #841: the version's update state, the Updates switch row and Check now. */
 .about-update{font-size:11px;font-weight:600;padding:1px 7px;border-radius:var(--r-xs);background:var(--green-bg);color:var(--green-ink-strong);}
 .about-update[data-state="outdated"]{background:var(--amber-bg);color:var(--amber-ink-strong);}
+.about-update[data-state="source"]{background:var(--field);color:var(--ink-2);}
 .about-row > .about-link + .about-link{margin-left:12px;}
 .about-switch{position:relative;}
+/* The Updates row: a baseline row would take label.switch-row's baseline from its text-less .switch pill
+   and lift the label above the key and Check now. Centre this row only. */
+.about-row.about-row-center{align-items:center;}
 
 /* ---------- Budget readout (Settings) ---------- */
 /* Section gap before the limit fields (the disclaimer hint that used to sit

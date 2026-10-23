@@ -2,11 +2,15 @@
 // "Is this the latest Worca?" (issue #841). Reads the npm `latest` dist-tag of @worca/app and
 // compares it with the running version by SemVer precedence. Read-only: nothing here installs,
 // updates or restarts anything. The fetcher is injected (createUpdateChecker), so tests and
-// mock servers never reach the network; failures are silent and read as 'unknown'.
+// mock servers never reach the network; failures are silent and read as 'unknown'. A source
+// checkout (isSourceBuild) never asks npm: its package.json version says nothing about the code.
+
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 
 export const NPM_DIST_TAGS_URL = 'https://registry.npmjs.org/-/package/@worca%2Fapp/dist-tags';
 export const CHANGELOG_URL = 'https://docs.worca.dev/changelog/';
-export const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;   // a good answer is reused for a day
+export const CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;   // a good answer is reused for 12 hours
 export const FAILED_RETRY_MS = 60 * 60 * 1000;          // offline: try again in an hour, not per request
 export const MIN_RECHECK_MS = 60 * 1000;                // "Check now" at most once a minute
 export const FETCH_TIMEOUT_MS = 5000;
@@ -75,16 +79,29 @@ export async function fetchNpmLatest({ fetchImpl = globalThis.fetch, timeoutMs =
 }
 
 /**
+ * Worca runs from a git checkout, not an npm install: `.git` sits in the package root (a directory in
+ * a clone, a file in a worktree). The published package never has one ("files" is an allowlist).
+ * WORCA_UPDATE_CHECK_LATEST (the demo / manual-review aid; demos run from source) wins: compare as
+ * an install.
+ */
+export function isSourceBuild(root, env = process.env) {
+  if (parseVersion(env.WORCA_UPDATE_CHECK_LATEST)) return false;
+  return existsSync(join(root, '.git'));
+}
+
+/**
  * One cached check per process.
- * @param {{currentVersion:string, fetchLatest:() => Promise<string>, enabled?:() => boolean, now?:() => number,
+ * @param {{currentVersion:string, fetchLatest:() => Promise<string>, enabled?:() => boolean,
+ *          sourceBuild?:() => boolean, now?:() => number,
  *          intervalMs?:number, failedRetryMs?:number, minRecheckMs?:number}} opts
  */
 export function createUpdateChecker({
-  currentVersion, fetchLatest, enabled = () => true, now = Date.now,
+  currentVersion, fetchLatest, enabled = () => true, sourceBuild = () => false, now = Date.now,
   intervalMs = CHECK_INTERVAL_MS, failedRetryMs = FAILED_RETRY_MS, minRecheckMs = MIN_RECHECK_MS,
 }) {
   let cache = null;          // { latest: string|null, checkedAt: ms }; latest null = the last attempt failed
   let inflight = null;
+  let generation = 0;        // bumped by clear(): a request started before it never writes the cache
 
   const snapshot = (on) => {
     const latest = on && cache ? cache.latest : null;
@@ -99,28 +116,32 @@ export function createUpdateChecker({
   const stale = () => !cache || now() - cache.checkedAt >= (cache.latest ? intervalMs : failedRetryMs);
   const attempt = () => {
     if (!inflight) {
-      inflight = (async () => {
+      const mine = generation;
+      const p = (async () => {
         let latest = null;
         try {
           const v = await fetchLatest();
-          const p = parseVersion(v);
-          latest = p ? formatVersion(p) : null;
+          const parsed = parseVersion(v);
+          latest = parsed ? formatVersion(parsed) : null;
         } catch { /* offline, timeout, refused: silent, reads as unknown */ }
-        cache = { latest, checkedAt: now() };
-      })().finally(() => { inflight = null; });
+        if (mine === generation) cache = { latest, checkedAt: now() };
+      })().finally(() => { if (inflight === p) inflight = null; });
+      inflight = p;
     }
     return inflight;
   };
+  const clear = () => { generation++; cache = null; inflight = null; };
 
   return {
     /** @param {{force?: boolean}} [opts] force = "Check now": refetch unless the last attempt is under minRecheckMs old. */
     async status({ force = false } = {}) {
-      if (!enabled()) return snapshot(false);
+      if (sourceBuild()) return { current: currentVersion || '', latest: null, status: 'source', checkedAt: null, enabled: !!enabled() };
+      if (!enabled()) { clear(); return snapshot(false); }
       if (inflight) await inflight;
       else if (stale() || (force && now() - cache.checkedAt >= minRecheckMs)) await attempt();
       return snapshot(true);
     },
-    /** Tests only: forget the cached answer. */
-    reset() { cache = null; },
+    /** Forget the cached answer and drop any request in flight (the check was switched off). */
+    clear,
   };
 }

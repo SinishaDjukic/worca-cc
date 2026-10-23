@@ -24,7 +24,7 @@ import { preflightDeps } from '../src/core/preflight-deps.mjs';
 import { committedMcpStatus, approveCommittedMcp } from '../src/core/mcpjson-approval.mjs';
 import { runFolderHosting } from '../src/core/preflight-host.mjs';
 import { createOrchestratorFor } from '../src/core/engine-select.mjs';
-import { createUpdateChecker, fetchNpmLatest, parseVersion, releaseLinks } from '../src/core/update-check.mjs';
+import { createUpdateChecker, fetchNpmLatest, isSourceBuild, parseVersion, releaseLinks } from '../src/core/update-check.mjs';
 import { limitResumeDecision } from '../src/core/limit-resume.mjs';
 import { selectRunEngine } from '../src/core/engines/index.mjs';
 import { mockSlowMs } from '../src/core/engines/mock.mjs';
@@ -549,7 +549,10 @@ const APP_INFO = Object.freeze({
 // cached in memory (src/core/update-check.mjs). Never at boot, never under mock or node:test:
 // the default fetcher refuses without any I/O there. WORCA_UPDATE_CHECK_LATEST=<version> stands
 // in for npm (a demo / manual-review aid; never the network). Tests swap the fetcher via _testing.
+// A source checkout (`.git` in PROJECT_ROOT) asks nothing and reports status 'source', unless that
+// override is set (demos run from source).
 let updateFetcherOverride = null;
+let sourceBuildOverride = null;
 function defaultUpdateFetcher() {
   const fake = process.env.WORCA_UPDATE_CHECK_LATEST;
   if (fake && parseVersion(fake)) return Promise.resolve(fake);
@@ -559,6 +562,7 @@ function defaultUpdateFetcher() {
 const updateChecker = createUpdateChecker({
   currentVersion: PKG_VERSION || '',
   enabled: () => updateCheckEnabled(),
+  sourceBuild: () => sourceBuildOverride ?? isSourceBuild(PROJECT_ROOT),
   fetchLatest: () => (updateFetcherOverride || defaultUpdateFetcher)(),
 });
 const versionPayload = (s) => ({ ...s, links: releaseLinks(s, APP_INFO.repoUrl) });
@@ -11221,7 +11225,8 @@ app.get('/api/settings', async (req, res) => {
   res.json({ ...settingsState(), ...(person ? { nightModeToggle: nightModeToggleFor(person), nightModePerPerson: person } : {}), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), ...(await namingModelState()), chat: chatPrefs(), app: APP_INFO });
 });
 
-// GET  /api/app/version       → { current, latest, status, checkedAt, enabled, links } (issue #841)
+// GET  /api/app/version       → { current, latest, status, checkedAt, enabled, links } (issue #841);
+//                                status 'source' on a git checkout (no npm request, no update links).
 // POST /api/app/version/check → the same, re-checking npm unless the last try is under a minute old.
 // Read-only: nothing here installs or restarts anything. Failures read as status 'unknown'.
 app.get('/api/app/version', async (req, res) => {
@@ -11440,7 +11445,10 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasSmartNaming) await setSmartNaming(body.smartNaming);
     if (hasDebugSpawnKey) await setDebugSpawnEnabled(body.debugSpawnEnabled);
     if (hasLimitResumeKey) await setResumeAfterUsageLimit(body.resumeAfterUsageLimit);
-    if (hasUpdateCheckKey) await setUpdateCheck(body.updateCheck);
+    if (hasUpdateCheckKey) {
+      await setUpdateCheck(body.updateCheck);
+      if (body.updateCheck === false) updateChecker.clear();   // back on = a fresh check, never the old answer
+    }
     if (hasTitleModelKey) await setTitleModel(titleModelInput);
     if (hasHideBuiltinKey) await setHideBuiltinModels(body.hideBuiltinModels);
     if (hasThemeKey) await setTheme(body.theme);
@@ -17755,7 +17763,8 @@ if (isMain) {
 export { app, server, runs };
 export const _testing = {
   updateChecker,
-  setUpdateFetcher: (fn) => { updateFetcherOverride = typeof fn === 'function' ? fn : null; updateChecker.reset(); },
+  setUpdateFetcher: (fn) => { updateFetcherOverride = typeof fn === 'function' ? fn : null; updateChecker.clear(); },
+  setSourceBuild: (v) => { sourceBuildOverride = typeof v === 'boolean' ? v : null; updateChecker.clear(); },
   wireRun, summarizeRuns, scanRequest, fireTicket, afterMembersChanged, markResumedRescan, wireAgentGen, startAgentGen, wireScriptBench, startScriptBench,
   chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork, answerRun,
   chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor, switchThreadScope,

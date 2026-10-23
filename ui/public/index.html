@@ -1882,7 +1882,8 @@
                      without one the anchor is plain text, so the placeholder never links. -->
                 <a class="about-val about-version" id="aboutVersion"
                    target="_blank" rel="noopener noreferrer">&mdash;</a>
-                <!-- GET /api/app/version (#841): "Latest" | "Update available: X.Y.Z"; hidden when unknown or ahead. -->
+                <!-- GET /api/app/version (#841): "Latest" | "Update available: X.Y.Z" | "Source build" (a git checkout);
+                     hidden when unknown or ahead. -->
                 <span class="about-update" id="aboutUpdateState" hidden></span>
               </div>
               <!-- Only while outdated: the new release's changelog page and the GitHub compare view. -->
@@ -1899,10 +1900,10 @@
                    href="https://docs.worca.dev/changelog/"
                    target="_blank" rel="noopener noreferrer">docs.worca.dev/changelog</a>
               </div>
-              <div class="about-row">
+              <div class="about-row about-row-center">
                 <span class="about-key">Updates</span>
                 <label class="about-val switch-row about-switch" for="aboutUpdateCheck"><input id="aboutUpdateCheck" data-setting="updateCheck" class="sw-input" type="checkbox" role="switch" checked><span class="switch" aria-hidden="true"></span><span class="switch-label">Check for new Worca versions</span></label>
-                <button type="button" class="btn btn-sm btn-quiet about-check" id="aboutCheckNow">Check now</button>
+                <button type="button" class="btn btn-sm about-check" id="aboutCheckNow">Check now</button>
               </div>
               <div class="about-row">
                 <span class="about-key">Repository</span>

@@ -10,10 +10,11 @@ them into the next page and empties this file.
 The About card now marks the version **Latest** or **Update available: X.Y.Z**, and while an update
 is out it links to that release's **What's new** page and to the GitHub **Changes since** view; a
 **Release notes** link is always there. A small **Update available** marker in the sidebar foot
-opens the card. Worca checks the npm registry's `latest` tag at most once a day (a release
-candidate never counts as newer, and a source checkout ahead of npm is never "outdated"). Offline,
-nothing shows. Turn it off with **Check for new Worca versions** in the same card. Nothing is
-installed or restarted from the app.
+opens the card. Worca checks the npm registry's `latest` tag at most every 12 hours, and an open
+tab asks again when it regains focus (a release candidate never counts as newer). Run from a git
+checkout, the card says **Source build** and npm is never asked. Offline, nothing shows. Turn it
+off with **Check for new Worca versions** in the same card; turning it back on checks afresh.
+Nothing is installed or restarted from the app.
 
 Chips: About · version · release notes
 

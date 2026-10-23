@@ -24,7 +24,8 @@ const httpsUrl = (u) => (typeof u === 'string' && /^https:\/\/\S+$/.test(u) ? u 
 const isStatus = (vs) => !!vs && typeof vs === 'object' && typeof vs.status === 'string';
 
 /**
- * The About card's update state (GET /api/app/version, issue #841): the badge next to the version,
+ * The About card's update state (GET /api/app/version, issue #841): the badge next to the version
+ * (Latest / Update available / Source build),
  * the What's new / Changes since links while outdated, the Release notes href and the switch.
  * A missing or malformed payload reads as unknown: no badge, no update links, static hrefs kept.
  *
@@ -37,10 +38,12 @@ export function paintVersionStatusInto(root, vs) {
   const ok = isStatus(vs);
   const links = ok && vs.links && typeof vs.links === 'object' ? vs.links : {};
   const outdated = ok && vs.status === 'outdated' && typeof vs.latest === 'string' && !!vs.latest;
+  const source = ok && vs.status === 'source';   // a git checkout: no npm answer to show, nothing to check
 
   const badge = root.querySelector('#aboutUpdateState');
   if (badge) {
-    const text = !ok ? '' : vs.status === 'up-to-date' ? 'Latest' : outdated ? `Update available: ${vs.latest}` : '';
+    const text = !ok ? '' : vs.status === 'up-to-date' ? 'Latest' : outdated ? `Update available: ${vs.latest}`
+      : source ? 'Source build' : '';
     badge.textContent = text;
     badge.hidden = !text;
     if (text) badge.dataset.state = vs.status; else delete badge.dataset.state;
@@ -66,7 +69,7 @@ export function paintVersionStatusInto(root, vs) {
   const sw = root.querySelector('#aboutUpdateCheck');
   if (sw && ok && typeof vs.enabled === 'boolean') sw.checked = vs.enabled;
   const btn = root.querySelector('#aboutCheckNow');
-  if (btn && sw) btn.hidden = !sw.checked;
+  if (btn && sw) btn.hidden = !sw.checked || source;
 }
 
 /** The sidebar-footer marker: visible only while outdated. Never shows for unknown / ahead / up-to-date. */
