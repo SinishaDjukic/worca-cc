@@ -17,13 +17,18 @@ let current = null;
  * @param {'start'|'end'} [o.align]  the edge shared with the anchor
  * @param {'bottom'|'top'} [o.side]   open below (default) or above the anchor
  * @param {string} [o.label]  aria-label of the menu
+ * @param {HTMLElement} [o.host]  append the menu inside it (a split button's .btn-split.mini) and let its CSS place it;
+ *   else <body>, fixed
+ * @param {string} [o.className]  extra classes on the menu
+ * An item `{ switch: true, label, help, checked, onToggle(button) }` is a menuitemcheckbox switch row whose toggle keeps
+ * the menu open (the account menu's rule); onToggle owns aria-checked.
  * @returns {{el:HTMLElement, close:() => void}}
  */
-export function openMenu({ doc, anchor, items, align = 'start', side = 'bottom', label = '' }) {
+export function openMenu({ doc, anchor, items, align = 'start', side = 'bottom', label = '', host = null, className = '' }) {
   closeMenus();
   const win = doc.defaultView || globalThis;
   const el = doc.createElement('div');
-  el.className = 'menu wfv-menu';
+  el.className = ['menu wfv-menu', className].filter(Boolean).join(' ');
   el.setAttribute('role', 'menu');
   if (label) el.setAttribute('aria-label', label);
   el.dataset.canvasKeys = 'off';
@@ -33,6 +38,27 @@ export function openMenu({ doc, anchor, items, align = 'start', side = 'bottom',
     if (it.header) { const h = doc.createElement('div'); h.className = 'menu-h wfv-menu-h'; h.textContent = it.header; el.appendChild(h); continue; }
     const b = doc.createElement('button');
     b.type = 'button';
+    if (it.switch) {
+      b.tabIndex = -1;
+      b.className = 'menu-item wfv-menu-item sw-item';
+      b.setAttribute('role', 'menuitemcheckbox');
+      b.setAttribute('aria-checked', it.checked ? 'true' : 'false');
+      if (it.icon) b.appendChild(icon(doc, it.icon, 16, 'ic wfv-menu-ic'));
+      const tx = doc.createElement('span');
+      tx.className = 'wfv-menu-l';
+      const name = doc.createElement('b');
+      name.textContent = it.label;
+      tx.appendChild(name);
+      if (it.help) { const s = doc.createElement('small'); s.setAttribute('aria-live', 'polite'); s.textContent = it.help; tx.appendChild(s); }
+      const sw = doc.createElement('span');
+      sw.className = 'switch';
+      sw.setAttribute('aria-hidden', 'true');
+      b.append(tx, sw);
+      b.addEventListener('click', () => { if (b.getAttribute('aria-disabled') !== 'true' && typeof it.onToggle === 'function') it.onToggle(b); });
+      el.appendChild(b);
+      buttons.push(b);
+      continue;
+    }
     b.className = it.danger ? 'menu-item wfv-menu-item is-danger' : 'menu-item wfv-menu-item';
     b.setAttribute('role', it.checked == null ? 'menuitem' : 'menuitemradio');
     if (it.checked != null) b.setAttribute('aria-checked', it.checked ? 'true' : 'false');
@@ -57,21 +83,27 @@ export function openMenu({ doc, anchor, items, align = 'start', side = 'bottom',
     el.appendChild(b);
     buttons.push(b);
   }
-  // Fixed BEFORE it is measured: a block menu in <body> is as wide as the viewport, which clamped every menu to left:8.
-  el.style.position = 'fixed';
-  el.style.left = '0px';
-  el.style.top = '0px';
-  doc.body.appendChild(el);
-  const r = anchor.getBoundingClientRect();
-  const w = el.offsetWidth || 0;
-  const h = el.offsetHeight || 0;
-  const vw = win.innerWidth || 0;
-  const vh = win.innerHeight || 0;
-  el.style.left = `${Math.max(8, Math.min(align === 'end' ? r.right - w : r.left, vw - w - 8))}px`;
-  let top = side === 'top' ? r.top - h - 6 : r.bottom + 6;
-  if (top < 8) top = r.bottom + 6;
-  else if (top + h > vh - 8 && side !== 'top') top = Math.max(8, r.top - h - 6);
-  el.style.top = `${top}px`;
+  if (host) {
+    // No fixed placement and no measuring: `.btn-split` is position:relative and `.btn-split.mini .btn-split-menu`
+    // drops the absolute menu below the split (style.css).
+    host.appendChild(el);
+  } else {
+    // Fixed BEFORE it is measured: a block menu in <body> is as wide as the viewport, which clamped every menu to left:8.
+    el.style.position = 'fixed';
+    el.style.left = '0px';
+    el.style.top = '0px';
+    doc.body.appendChild(el);
+    const r = anchor.getBoundingClientRect();
+    const w = el.offsetWidth || 0;
+    const h = el.offsetHeight || 0;
+    const vw = win.innerWidth || 0;
+    const vh = win.innerHeight || 0;
+    el.style.left = `${Math.max(8, Math.min(align === 'end' ? r.right - w : r.left, vw - w - 8))}px`;
+    let top = side === 'top' ? r.top - h - 6 : r.bottom + 6;
+    if (top < 8) top = r.bottom + 6;
+    else if (top + h > vh - 8 && side !== 'top') top = Math.max(8, r.top - h - 6);
+    el.style.top = `${top}px`;
+  }
   anchor.setAttribute('aria-expanded', 'true');
 
   const enabled = () => buttons.filter((b) => !b.disabled);

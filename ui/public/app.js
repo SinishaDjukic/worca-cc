@@ -99,18 +99,20 @@ import { changesCounts, filesWord, renderCountsNode, applyBarModel, paintApplyBa
 import { runProgress, progressWidth } from '../../src/shared/run-progress.mjs';
 import { DEFAULT_HOME_PINS, isPinned, pinWorkflow, unpinWorkflow } from '../../src/shared/home-pins.mjs';
 import { CREATE_PR_LABEL, doneStatusWord } from './ship-words.mjs';
-import { worktreeNoticeModel, worktreeRowState, renderWorktreeNotice, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome, checkoutRowValue, memberLabel } from './worktree-notice.mjs';
+import { worktreeNoticeModel, worktreeRowState, retainedCommands, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome, checkoutRowValue, memberLabel } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
 import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, RECENT_PAGE, groupRow, memberPrsOf, prChip, memberCostUsd, whenLabel } from './runs-list.mjs';
 import { paintRunStatus, syncActions, pauseResumeOwn } from './run-status-card.mjs';
 import { buildGroupPage, paintGroupPage, runReceipts } from './group-page.mjs';
 import { runPositionLabel, groupKindWord, pageModel, runCrumbs, paintCrumbs, syncFacts } from './run-page-head.mjs';
+import { headModel, trackerModel, renderHeadButtons, renderTracker, prMenuItems, canResolvePr, showsFixConflicts, HD_PR_WATCH_ACTIVE,
+  hdPrWatchLabel, WATCH_HELP } from './run-head.mjs';
 import { delegateQuestion } from './question-delegate.mjs';
 import { loadRunsView, saveRunsView, viewChip, viewMenuItems } from './runs-view-menu.mjs';
 import { createRunsSelection, runsKeyAction, rowTarget, barModel, bulkBody, rangeKeys, labelTargets } from './runs-selection.mjs';
 import { bulkConfirm } from '../../src/shared/run-bulk.mjs';
 import { openGroupPicker } from './group-picker.mjs';
-import { ACTION_LABEL, MENU_ACTIONS, groupModel, runModel } from '../../src/shared/run-model.mjs';
+import { ACTION_LABEL, HEAD_ACTIONS, MENU_ACTIONS, groupModel, runModel } from '../../src/shared/run-model.mjs';
 // Import list only — `statusChip`/`diffBadges`/`mergeFindings`/`reportResultControl`
 // lost their last app.js caller with the retired card accordion, and `sourceBadge` with the
 // History list card. They stay EXPORTED
@@ -22029,37 +22031,20 @@ function shellSingleQuote(value) {
   return `'${String(value == null ? '' : value).replaceAll("'", "'\"'\"'")}'`;
 }
 
-// Run on the source branch (branch.sameAsSource): which members' hidden branch could NOT be fast-forwarded
-// into their source, why, and the commands to merge by hand. textContent only: git stderr and branch
-// names are data, never markup.
-function renderMergeBack(node, p) {
-  const banner = node.querySelector('.merge-back-banner');
-  if (!banner) return;
+// Run on the source branch (branch.sameAsSource): which members' hidden branch could NOT be fast-forwarded into their
+// source, why, and the commands to merge by hand. Slice 3 (D12): the head's How to merge shows it in the viewer as plain
+// text (git stderr and branch names are data).
+function mergeBackText(p) {
   const failed = (Array.isArray(p?.mergeBack?.members) ? p.mergeBack.members : []).filter((m) => m && m.merged === false);
-  banner.hidden = !failed.length;
-  banner.innerHTML = '';
-  if (!failed.length) return;
-  const title = document.createElement('h4');
-  title.textContent = 'Not merged back into the source branch';
-  const intro = document.createElement('p');
-  intro.textContent = 'The run’s work stayed on its own branch. To land it, open a pull request or merge it by hand:';
-  const list = document.createElement('ul');
+  const out = ['Not merged back into the source branch', 'The run’s work stayed on its own branch. To land it, open a pull request or merge it by hand:'];
   for (const m of failed) {
-    const li = document.createElement('li');
-    const label = document.createElement('strong');
     // A person reads the project's name, not its store key (<name>-<8 hex>).
-    label.textContent = m.name || (p.target !== 'workspace' && p.projectName)
+    const name = m.name || (p.target !== 'workspace' && p.projectName)
       || String(m.projectKey || '').replace(/-[0-9a-f]{8}$/, '') || m.source || 'Project';
-    const detail = document.createElement('span');
-    detail.textContent = `: ${m.reason || 'the fast-forward was not possible'}. The work is on ${m.branch}.`;
     const { lead, cmd } = mergeBackRecipe(m, p);
-    const how = document.createElement('p');
-    how.textContent = lead;
-    li.append(label, detail, how);
-    if (cmd) { const command = document.createElement('code'); command.textContent = cmd; li.append(command); }
-    list.appendChild(li);
+    out.push('', `${name}: ${m.reason || 'the fast-forward was not possible'}. The work is on ${m.branch}.`, lead, ...(cmd ? [cmd] : []));
   }
-  banner.append(title, intro, list);
+  return out.join('\n');
 }
 
 // What to run by hand for one member that was not merged back, by why it was refused. Every line is
@@ -22076,7 +22061,7 @@ function mergeBackRecipe(m, p) {
   const inSource = `${cd}git switch ${src} && ${ff} && ${del}`;
   switch (m.kind) {
     case 'commit-failed':
-      return { lead: 'The run’s last changes were never committed, so nothing could be merged. Recover them first (see the saved-work notice).', cmd: '' };
+      return { lead: 'The run’s last changes were never committed, so nothing could be merged. Recover them first with Apply to branch.', cmd: '' };
     case 'in-use': {
       const wt = Array.isArray(m.paths) && m.paths[0];
       return wt
@@ -22094,30 +22079,6 @@ function mergeBackRecipe(m, p) {
     default:
       return { lead: 'Merge it by hand:', cmd: inSource };
   }
-}
-
-// The summary card's worktree notice (worktree-notice.mjs) in its host, `.retained-banner` inside
-// `.rd-banners` / `.hd-banners`, so the Chat run panel carries it too. It shows at every level. It is
-// rebuilt ONLY when what it shows changes: the run page repaints on every frame of any run, and in Chrome
-// a button replaced between press and release loses its click. The handlers therefore read the run or
-// the record at click time.
-function paintWorktreeNotice(screen, model, { sig = '', recovery = null, handlers = {} } = {}) {
-  const badge = screen.querySelector('.hist-retained-badge');
-  if (badge) badge.hidden = !(model && model.kind === 'retained');
-  const host = screen.querySelector('.retained-banner');
-  if (!host) return;
-  if (!model) {
-    host.hidden = true;
-    if (host.dataset.key) { host.replaceChildren(); delete host.dataset.key; delete host.dataset.kind; }
-    return;
-  }
-  host.hidden = false;
-  host.dataset.kind = model.kind;
-  host.setAttribute('role', model.kind === 'retained' ? 'alert' : 'status');
-  const key = JSON.stringify([sig, model, recovery]);
-  if (host.dataset.key === key) return;
-  host.dataset.key = key;
-  host.replaceChildren(renderWorktreeNotice(model, { doc: document, handlers, recovery, when: fmtDate }));
 }
 
 /** Workspace member names from History's row (`members[].memberKey/name`), for the notice's member lines. */
@@ -24210,36 +24171,30 @@ function paintHdPush(screen, record) {
   btn.hidden = false;
   btn.disabled = false;
   setCtaContent(btn, 'arrow-up', `Push ${record.sourceBranch}`);
-  // The run summary's CTA (.hd-g-push) clicks this button: keep its label and state in step with it.
-  const mirror = (label, disabled) => {
-    const g = screen.querySelector('.hd-g-push');
-    if (!g) return;
-    g.disabled = disabled;
-    setCtaContent(g, PR_CTA_LOOK.push.icon, label);
-  };
-  btn.onclick = async () => {               // property, not addEventListener: paintHdPr re-runs (as its own btn.onclick, :18315)
-    btn.disabled = true;
-    setCtaContent(btn, 'arrow-up', 'Pushing…');
-    mirror('Pushing…', true);
-    try {
-      const res = await fetch('/api/push', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        // The ship-it modal's own payload shape (:18052). projectKey/projectDir come from listAllPipelines'
-        // project tag (artifacts.mjs:2108), not rowToHistoryEntry.
-        body: JSON.stringify({ projectKey: record.projectKey, projectDir: record.projectDir || null, id: record.id }),
-      });
-      const dd = await safeJson(res);
-      if (!res.ok) throw new Error((dd && dd.error) || `HTTP ${res.status}`);
-      setCtaContent(btn, 'arrow-up', `Pushed to ${dd.remote || 'the remote'}`);
-      mirror(btn.textContent, true);
-    } catch (err) {
-      btn.disabled = false;
-      setCtaContent(btn, 'arrow-up', `Push ${record.sourceBranch}`);
-      btn.title = err && err.message ? err.message : String(err);
-      mirror(`Push failed: ${btn.title}`, false);
-    }
-  };
+  btn.onclick = () => pushSourceFlow(btn, record);   // property, not addEventListener: paintHdPr re-runs
   return true;
+}
+/** Push (POST /api/push) the run's source branch to its remote; `btn` shows the busy state and the outcome. The Details
+ *  header's .hd-push and the card head's Push (slice 3) share it. */
+async function pushSourceFlow(btn, record) {
+  btn.disabled = true;
+  setCtaContent(btn, 'arrow-up', 'Pushing…');
+  try {
+    const res = await fetch('/api/push', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      // The ship-it modal's own payload shape (:18052). projectKey/projectDir come from listAllPipelines'
+      // project tag (artifacts.mjs:2108), not rowToHistoryEntry.
+      body: JSON.stringify({ projectKey: record.projectKey, projectDir: record.projectDir || null, id: record.id }),
+    });
+    const dd = await safeJson(res);
+    if (!res.ok) throw new Error((dd && dd.error) || `HTTP ${res.status}`);
+    setCtaContent(btn, 'arrow-up', `Pushed to ${dd.remote || 'the remote'}`);
+  } catch (err) {
+    btn.disabled = false;
+    setCtaContent(btn, 'arrow-up', `Push ${record.sourceBranch}`);
+    btn.title = err && err.message ? err.message : String(err);
+    notify({ tone: 'err', title: 'Push failed', detail: btn.title });   // visible on touch too, not only in the title
+  }
 }
 
 // Keep the OPEN detail's PR control in step with the two PR-resolution paths
@@ -24294,7 +24249,8 @@ function paintHdGlance(screen, record, data) {
   paintRunKindChip(glance.querySelector('.rd-page-meta'), mode);
 
   // Runs redesign slice 4: the one status block and the Group row, as on the live page (no bar: the run is finished).
-  paintRunStatus(glance.querySelector('.rd-sheet .run-status'), pageModel(runModel(hdModelRun(record, data), { memo: memoFor(record.id) })));
+  // Slice 3: the status block is the card head's (paintHdHead: status line, head buttons, tracker).
+  paintHdHead(screen, record, data);
   const home = groupHomeOf(record.id || '');
   paintGroupLine(glance.querySelector('.rd-kv .rd-group-line'), record.id || '', record.title || '', home);
   paintRunPlace(screen, home);
@@ -24325,45 +24281,7 @@ function paintHdGlance(screen, record, data) {
   const hdFm = hdFolderMembers(record, data);
   paintFolderBars(screen, { pipelineId: record.id, status: st.status, changes: record.target === 'workspace' || st.target === 'workspace' ? null : changes });
   paintMemberBars(screen, { pipelineId: record.id, status: st.status, members: hdFm });
-  if (!gitChrome) { paintRdPrStatus(glance.querySelector('.rd-pr-status'), null); paintPrCta(glance.querySelector('.rd-pr-slot'), { state: 'none' }); return; }
-  // The pull request, mirrored from the Details header's control into the card's slot
-  // (paintPrCta, outside the host rebuilt above): visible exactly when it is, so at most one
-  // button, coloured by the PR's state. While the lookup runs (and the control's level shows
-  // it), the slot holds the placeholder that morphs into whichever button the answer brings.
-  // A run on its source branch ships by Push (paintHdPush): the slot mirrors that button instead.
-  const shown = (src) => !!src && levelAtLeast(src.dataset.minLevel || 'simple');
-  const createBtn = screen.querySelector('.hd-pr');
-  const pushBtn = screen.querySelector('.hd-push');
-  const link = screen.querySelector('.hd-pr-link');
-  const slot = glance.querySelector('.rd-pr-slot');
-  const linked = shown(link) && !link.hidden;
-  // QA 3: the PR box leads with the run model's chip, read by id: hdModelRun falls back to histRun(record), and `record`
-  // can be a replaced object after a History reload, so the lookup is unconditional.
-  const hdChip = () => {
-    const rec = (state.historyAll || []).find((p) => p && p.id === record.id) || record;
-    return runModel(hdModelRun(rec, data), { memo: memoFor(record.id) }).pr;
-  };
-  // Run 3 (D11): the run's own PR is the PR bar (chip, checks, Watch); the header's View PR is its action. A workspace
-  // run keeps today's slot.
-  const ownPr = linked && record.target !== 'workspace';
-  paintRdPrStatus(glance.querySelector('.rd-pr-status'),
-    ownPr ? { id: record.id, projectKey: record.projectKey, chipOf: hdChip, checks: pr === 'OPEN' } : null);
-  if (ownPr) {
-    paintPrCta(slot, { state: 'none' });
-  } else if (linked) {
-    paintPrCta(slot, { state: pr === 'MERGED' ? 'merged' : 'view', href: link.href, cls: 'hd-g-pr-link' });
-  } else if (shown(createBtn) && !createBtn.hidden) {
-    // The one wiring: the header's button opens the ship-it modal (re-read at click time).
-    paintPrCta(slot, { state: 'create', cls: 'hd-g-pr', onClick: () => { const b = screen.querySelector('.hd-pr'); if (b) b.click(); } });
-  } else if (shown(pushBtn) && !pushBtn.hidden) {
-    paintPrCta(slot, { state: 'push', cls: 'hd-g-push', label: `Push ${record.sourceBranch}`,
-      onClick: () => { const b = screen.querySelector('.hd-push'); if (b) b.click(); } });
-  } else if (pr === 'PENDING' && shown(createBtn)) {
-    paintPrCta(slot, { state: 'pending' });
-  } else {
-    paintPrCta(slot, { state: 'none' });
-  }
-  paintHdActions(screen, record, data);            // last: `covered` reads the call-to-action just painted (D4)
+  paintHdActions(screen, record, data);
 }
 
 // Detail-header PR control from the record's tri-state (undefined = enrichment
@@ -24551,10 +24469,10 @@ function paintHdActions(screen, record, data) {
       stop,
     },
     pool: [resumeBtn, pause, stop],                       // the template's hidden states never linger
-    covered: prCovered(screen),
-    // Slice 2: Archive and Report live in the ⋯. Resume shows only when paintHdLive's rule (HD_RESUMABLE, not
-    // archived or over) holds, or disabled while a live run is still pausing; never as a button that cannot work.
-    skip: [...MENU_ACTIONS, ...(resumable || pausing ? [] : ['resume'])],
+    // Slice 2: Archive and Report live in the ⋯; slice 3: ship, View PR, Retry and Ask for changes in the card head.
+    // Resume shows only when paintHdLive's rule (HD_RESUMABLE, not archived or over) holds, or disabled while a live
+    // run is still pausing; never as a button that cannot work.
+    skip: [...MENU_ACTIONS, ...HEAD_ACTIONS, ...(resumable || pausing ? [] : ['resume'])],
     disable: { 'ask-changes': "Ask for changes from the run's chat", ...(pausing && !resumable ? { resume: 'Pausing…' } : {}) },
     onAction: (id, b) => runAction({ runId: live ? live.runId : null, pipelineId: record.id, title: record.title,
       projectKey: record.projectKey || '', workspaceId: record.workspaceId || null }, id, b, m),
@@ -24695,17 +24613,9 @@ function paintHdPr(screen, record, data) {
   btn.onclick = () => openShipItModal(record, data);
 }
 
-// Watch PR (#619): the PR's status and Watch switch live on the Overview tab (paintHdOvPrs) and the run
-// page card (paintRdPrCta), both drawn by paintRdPrStatus.
-const HD_PR_WATCH_ACTIVE = new Set(['starting', 'fixing', 'publishing']);
-// Words only while the watch is doing something: the switch already says on or off.
-function hdPrWatchLabel(state) {
-  if (HD_PR_WATCH_ACTIVE.has(state.status) && state.resolving) return 'Resolving conflicts';
-  if (HD_PR_WATCH_ACTIVE.has(state.status) && state.mergingBase) return `Merging ${state.mergingBase} in`;
-  if (!state.watching) return HD_PR_WATCH_ACTIVE.has(state.status) ? 'Disabled (finishing)' : '';
-  if (HD_PR_WATCH_ACTIVE.has(state.status)) return 'Fixing';
-  return state.status === 'needs-person' ? 'Needs a person' : '';
-}
+// Watch PR (#619): the PR's status and Watch switch live on the Overview tab (paintHdOvPrs), drawn by paintRdPrStatus;
+// the run page card reads the same answer through its .rd-pr-feed (slice 3). The words are run-head.mjs's
+// (HD_PR_WATCH_ACTIVE, hdPrWatchLabel).
 const hdPrWatchTone = (state) => (state.status === 'needs-person' ? 'bad' : HD_PR_WATCH_ACTIVE.has(state.status) ? 'run' : '');
 const HD_PR_WATCH_TIP = 'Watch: start a fix run when checks fail or reviewers ask for changes';
 /** The Watch switch's face: the word and the track, on or off. */
@@ -24998,7 +24908,11 @@ function paintHdTags(screen, record, data) {
     edit.className = 'btn btn-sm btn-quiet hd-tags-edit';
     // Run 3 (D8): the facts row's dt says "Cost tags", so its control is one word; Details keeps the long one.
     const words = tags.length ? 'Edit cost tags' : 'Add cost tags';
-    edit.textContent = where === 'glance' ? (tags.length ? 'Edit' : 'Add') : words;
+    if (where === 'glance' && !tags.length) {
+      // Slice 3 (D18): as the Labels row, the empty row says None and its Add leads with the plus.
+      box.append(Object.assign(document.createElement('span'), { className: 'rd-kv-none', textContent: 'None' }));
+      edit.append(icon(document, 'plus', 12), 'Add');
+    } else edit.textContent = where === 'glance' ? 'Edit' : words;
     if (where === 'glance') edit.setAttribute('aria-label', words);
     edit.addEventListener('click', () => { hdTagEditor = { ...hdTagEditorFor(st, repaint, record), host: where }; repaint(); });
     box.appendChild(edit);
@@ -25479,27 +25393,23 @@ function paintHdBanners(screen, record, data) {
     banners.prepend(banner);
   }
 
-  // The worktree notice: retained work (the end-of-run commit failed); a live checkout is the Actions row. A PROVISIONAL
-  // retention (deep link, cache-warm row) shows the facts but offers no action: Apply and Discard must act
-  // on the authoritative row, which arrives one fetch later and re-runs this painter. Handlers read the
-  // record at click time (hdCurrentRecord): refreshHdFromRow REPLACES histDetailState.record.
+  // Kept work (the end-of-run commit failed); a live checkout is the Actions row. Slice 3 (D13): the card head carries
+  // Discard · Apply to branch and the tracker its patch and commands (screen._headKept). A PROVISIONAL retention (deep
+  // link, cache-warm row) offers no action: Apply and Discard must act on the authoritative row, which arrives one
+  // fetch later and re-runs this painter. Handlers read the record at click time (hdCurrentRecord): refreshHdFromRow
+  // REPLACES histDetailState.record.
   const { retained, provisional } = hdRetainedFor(record, st);
   const checkout = hdCheckoutFor(record);
-  renderMergeBack(screen, record);
   const model = worktreeNoticeModel({
-    retained, checkout: null, provisional,   // a checkout lives in the Actions row and tab, never in this notice
+    retained, checkout: null, provisional,   // a checkout lives in the Actions row and tab, never in the head
     workspace: record.target === 'workspace', names: memberNamesOf(record),
     recoveryPatch: recoveryPatchKind(data.artifacts),
   });
   const cur = () => hdCurrentRecord(record);
-  paintWorktreeNotice(screen, model, {
-    sig: `hd|${record.id}`,
-    recovery: recoveryLinkOf(record.projectDir || null, record, model),
-    handlers: {
-      onApply: (btn) => applyRetainedFlow(btn, cur(), model),
-      onDiscardRetained: (btn) => discardRetainedWorktree(btn, cur().projectDir || null, cur()),
-    },
-  });
+  screen._headKept = model && model.kind === 'retained' ? { provisional: !!provisional, recovery: recoveryLinkOf(record.projectDir || null, record, model),
+    commands: retainedCommands(model), onApply: (btn) => applyRetainedFlow(btn, cur(), model),
+    onDiscard: (btn) => discardRetainedWorktree(btn, cur().projectDir || null, cur()) } : null;
+  paintHdHead(screen, cur(), data);
   paintActionsRowValue(screen, checkout, hdCanTry(record, st, retained, provisional), cur);
   return { retained, checkout };
 }
@@ -34625,7 +34535,7 @@ const rdModel = (r) => runModel(rdModelRun(r), { memo: memoFor(r.pipelineId || r
 function paintRdStatus(screen, r) {
   const m = rdModel(r);
   const block = screen.querySelector('.rd-sheet .run-status');
-  paintRunStatus(block, pageModel(m));                       // run 3 D10: the PR bar carries "PR #N"
+  paintRdHead(screen, r, m);                                 // slice 3: the card head (status line, head buttons, tracker)
   // The run page's bar takes over the removed .rd-prog's focus stop ("Run progress"): the D30 one-line wait state
   // shows only its stage words and gives it the focus ring.
   const bar = block && block.querySelector('.run-status-bar');
@@ -34635,14 +34545,6 @@ function paintRdStatus(screen, r) {
   paintRunPlace(screen, home);
   paintRdActions(screen, r, m);
   return m;
-}
-/** The glance's PR call-to-action (paintPrCta into .rd-pr-slot) already offers the PR action when it shows Create pull
- *  request / Push (ship) or View PR (open-pr): the bar makes no second button for it (Known bug 9). Run 3 (D11): a run
- *  with its own PR paints the slot `none` (the PR bar names it), so the `view` / `merged` branch is a workspace run's. */
-function prCovered(screen) {
-  const slot = screen.querySelector('.rd-glance .rd-pr-slot');
-  const st = slot && !slot.hidden ? slot.dataset.state || 'none' : 'none';
-  return st === 'create' || st === 'push' ? { ship: slot } : st === 'view' || st === 'merged' ? { 'open-pr': slot } : {};
 }
 /** D4 on the run page: the model decides which bar buttons show. Called last by every painter that used to write
  *  their `hidden` (paintRdStatus, and the ends of paintRdHeader, paintRdTerminal and paintRdPrCta). */
@@ -34699,8 +34601,8 @@ function paintRdActions(screen, r, m = rdModel(r)) {
     // pausing or stopped-resumable run, whose button still reads "Pause", gets a made "Resume" instead.
     own: { ...pauseResumeOwn(pause, st), stop },
     pool: [pause, stop],                                  // a "Pause" left from a run that has ended is hidden
-    covered: prCovered(screen),
-    skip: MENU_ACTIONS,                                   // slice 2: Archive and Report live in the ⋯ (runMoreItems)
+    // Slice 2: Archive and Report live in the ⋯ (runMoreItems); slice 3: the head actions in the card head (run-head.mjs).
+    skip: [...MENU_ACTIONS, ...HEAD_ACTIONS],
     // The model reads pausing as paused, but chatRunControls.resume does nothing while the run is still live.
     disable: { 'ask-changes': "Ask for changes from the run's chat", ...(st === 'pausing' ? { resume: 'Pausing…' } : {}) },
     labels: { answer: answerLabelOf(screen.querySelector('.rd-questions')) },
@@ -34732,6 +34634,7 @@ function paintGroupLine(el, pipelineId, title, home) {
   if (el.dataset.sig === 'add') return;
   el.dataset.sig = 'add';
   const b = Object.assign(document.createElement('button'), { type: 'button', className: 'btn btn-sm btn-quiet rd-group-add', textContent: 'Add to group…' });
+  b.prepend(icon(document, 'plus', 12));
   b.addEventListener('click', () => openAddToGroup(b, { pipelineId, title }));
   el.replaceChildren(b);
 }
@@ -35159,7 +35062,8 @@ function setCtaContent(node, name, label) {
 // cannot morph. `state`: 'pending' (the lookup runs: a white placeholder with a spinner at
 // the button's height, nothing to click), 'create' | 'view' | 'merged' (the button in its
 // colour; View and Merged link to `href`, Create calls `onClick`), 'push' (Create's look, its
-// `label` the header's "Push <branch>"), 'none' (no slot).
+// `label` the header's "Push <branch>"), 'none' (no slot). Slice 3 (D7): with `menu`, View and Merged are a split
+// button whose ▾ calls slot._prMenu(caret); `ws` (a workspace) makes it one "View PRs ▾" button instead.
 // Pending -> a button morphs: the colour grows as a circle from the spinner (.rd-pr-fill),
 // the spinner fades, the icon and label come in. Pending -> none fades out in place.
 // Any other change paints the end state at once, so a known state (a cached row) never
@@ -35173,10 +35077,10 @@ const PR_CTA_LOOK = {
   view: { look: 'pr-view', icon: 'pull-request', label: 'View PR' },
   merged: { look: 'pr-merged', icon: 'merge', label: 'View PR' },
 };
-function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '', label: own = '' } = {}) {
+function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '', label: own = '', menu = false, ws = false } = {}) {
   if (!slot) return;
   slot._prClick = onClick;                         // read at click time: a repaint re-binds it
-  const sig = `${state}|${href}|${cls}|${own}`;
+  const sig = `${state}|${href}|${cls}|${own}|${menu}|${ws}`;
   if (slot.dataset.sig === sig) return;
   const from = slot.dataset.state || 'none';
   slot.dataset.sig = sig;
@@ -35220,15 +35124,43 @@ function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '',
     ctl = document.createElement('button');
     ctl.type = 'button';
     ctl.addEventListener('click', () => { if (slot._prClick) slot._prClick(); });
+  } else if (menu) {
+    // Slice 3 (D7): View PR │ ▾. The main half opens the PR; ▾ opens its menu (slot._prMenu, set per paint).
+    ctl = document.createElement('span');
+    ctl.className = 'btn-split mini rd-pr-split';
+    const caret = document.createElement('button');
+    caret.type = 'button';
+    caret.className = 'btn btn-icon rd-pr-more';     // joined by .btn-split > .btn + .btn (style.css)
+    caret.setAttribute('aria-haspopup', 'menu');
+    caret.setAttribute('aria-expanded', 'false');
+    caret.setAttribute('aria-label', ws ? 'Pull requests' : 'Pull request menu');
+    caret.append(icon(document, 'chevron-down', 16));
+    caret.addEventListener('click', () => { if (slot._prMenu) slot._prMenu(caret); });
+    if (ws) {                                       // a workspace: one button that opens the member list
+      caret.className = 'btn rd-pr-more rd-pr-wsbtn';
+      caret.setAttribute('data-rd-cta', '');
+      setCtaContent(caret, 'pull-request', own || 'View PRs');
+      caret.append(icon(document, 'chevron-down', 16));
+      ctl.append(caret);
+    } else {
+      const main = document.createElement('a');
+      main.href = href; main.target = '_blank'; main.rel = 'noopener';
+      main.className = ['btn', look, cls].filter(Boolean).join(' ');
+      main.setAttribute('data-rd-cta', '');
+      setCtaContent(main, glyph, own || label);
+      ctl.append(main, caret);
+    }
   } else {
     ctl = document.createElement('a');
     ctl.href = href;
     ctl.target = '_blank';
     ctl.rel = 'noopener';
   }
-  ctl.className = ['btn', look ? '' : 'btn-primary', look, cls].filter(Boolean).join(' ');
-  ctl.setAttribute('data-rd-cta', '');
-  setCtaContent(ctl, glyph, own || label);
+  if (!menu || state === 'create' || state === 'push') {
+    ctl.className = ['btn', look ? '' : 'btn-primary', look, cls].filter(Boolean).join(' ');
+    ctl.setAttribute('data-rd-cta', '');
+    setCtaContent(ctl, glyph, own || label);
+  }
   slot.hidden = false;
   const wait = from === 'pending' && slot.querySelector('.rd-pr-wait');
   if (!wait) { slot.replaceChildren(ctl); return; }
@@ -35243,6 +35175,219 @@ function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '',
     fill.remove();
     slot.querySelector('.rd-pr-spin')?.remove();
   });
+}
+
+/** Slice 3 (D4): what the card head and tracker read, the same on both run pages. `rec` is the History row (null while
+ *  a live run has none), `m` the page model, `kept` screen._headKept, `repaint` the page's head painter.
+ *  Side effect: it starts the PR status reads it needs (the feed's, and each open workspace member's through
+ *  ensurePrStatus); a landed member read calls `repaint`, which then finds it cached, so it cannot loop. */
+function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, kept, repaint }) {
+  const ws = !!rec && rec.target === 'workspace' && hasWsMembers(rec);
+  const own = !ws && rec && rec.pr && typeof rec.pr === 'object' && rec.pr.url ? rec.pr : null;
+  const open = !!own && String(own.state || '').toUpperCase() === 'OPEN';
+  const scope = own && String(own.state || '').toUpperCase() !== 'CLOSED'
+    ? { id: rec.id, projectKey: rec.projectKey, checks: open } : null;
+  const prStatus = headPrStatus(screen, scope, repaint);
+  const names = memberNamesOf(rec);
+  const memberScope = (x) => ({ id: rec.id, projectKey: rec.projectKey, memberKey: x.memberKey });
+  if (ws) {
+    for (const x of histWsMembers(rec)) {
+      if (!x.pr || String(x.pr.state || '').toUpperCase() !== 'OPEN') continue;
+      const hit = prStatusCache.get(prStatusKey(memberScope(x)));
+      if (!hit || Date.now() - hit.at > PR_STATUS_STALE_MS) void ensurePrStatus(memberScope(x)).then((st) => { if (st && st !== hit && screen.isConnected) repaint(); });
+    }
+  }
+  return {
+    m, mode, gitChrome, folder, canTry, kept, level: currentLevel(),
+    workspace: ws ? { members: histWsMembers(rec).map((x) => ({
+      key: x.memberKey, name: (names && names[x.memberKey]) || String(x.projectKey || x.memberKey).replace(/-[0-9a-f]{8}$/, ''),
+      pr: x.pr && typeof x.pr === 'object' ? x.pr : null,
+      prStatus: prStatusCache.get(prStatusKey(memberScope(x))) || null })) } : null,
+    base: (prStatus && prStatus.base) || (rec && rec.sourceBranch) || '',
+    source: (rec && rec.sourceBranch) || '',
+    pr: own, prInput: glancePrInput(rec), prStatus, watch: (rec && rec.watch) || null,
+    canCreatePr: !!rec && histPrEligible(rec) && !(own && open),
+    push: !!rec && !!rec.sameAsSource && rec.target !== 'workspace' && rec.mergeBack?.merged === true && !!rec.sourceBranch,
+    notMergedBack: !!rec && !!rec.sameAsSource && rec.mergeBack?.merged === false,
+  };
+}
+
+/** Slice 3: the card's status line, head buttons and tracker. `h`: the page's calls (headHandlers). */
+function paintRunHead(screen, f, h) {
+  const head = headModel(f);
+  const block = screen.querySelector('.rd-sheet .run-status');
+  paintRunStatus(block, head.status ? { ...f.m, ...head.status, lineSaysState: false } : f.m);
+  const slot = screen.querySelector('.rd-head-acts .rd-pr-slot');
+  const c = head.cta;
+  if (!c) paintPrCta(slot, { state: 'none' });
+  else if (c.state === 'create') paintPrCta(slot, { state: 'create', cls: h.ctaCls || '', onClick: h.onCreate });
+  else if (c.state === 'push') paintPrCta(slot, { state: 'push', label: c.label, onClick: () => h.onHead('push', slot.querySelector('[data-rd-cta]')) });
+  else paintPrCta(slot, { state: c.state, href: c.href || '', menu: !!c.menu, ws: !!c.ws, label: c.label || '' });
+  if (slot) slot._prMenu = (anchor) => h.onMenu(anchor, f);
+  renderHeadButtons(screen.querySelector('.rd-head-acts'), head, slot, h);
+  if (slot && slot._prMenuOpen) slot._prMenuOpen(f);
+  renderTracker(screen.querySelector('.rd-track'), trackerModel(f), h);
+  return head;
+}
+
+/** Slice 3: the saved page's card head (paintRunHead) from the record and the loaded detail. Create PR is the Details
+ *  header's .hd-pr click (re-read at click time; paintHdPr keeps that button's wiring), at every level. */
+function paintHdHead(screen, record, data) {
+  const glance = screen && screen.querySelector('.hd-glance');
+  if (!glance || !record || !data || !data.state) return;
+  const st = data.state;
+  const mode = hdWorkMode(record, data);
+  const workspace = record.target === 'workspace' || st.target === 'workspace';
+  const changes = mode === 'folder' && !workspace ? (hdChangesOf(record, data) || { state: 'pending' }) : null;
+  const bar = changes ? applyBarModel({ status: st.status, changes }) : null;   // P5: a workspace applies per member
+  const held = hdRetainedFor(record, st);
+  const kept = screen._headKept || null;
+  const rec = (state.historyAll || []).find((x) => x && x.id === record.id) || record;
+  const m = pageModel(runModel(hdModelRun(rec, data), { memo: memoFor(record.id) }));
+  const repaint = () => { if (glance.isConnected && histDetailState && histDetailState.screen === screen) paintHdHead(screen, hdCurrentRecord(record), histDetailState.data || data); };
+  const f = headFactsOf(glance, record, {
+    m, mode, gitChrome: gitOn() && isGitRun(hdRunOf(record, data)), kept, repaint,
+    folder: bar ? { state: bar.state, total: changesCounts(changes).total } : null,
+    canTry: hdCanTry(record, st, held.retained, held.provisional) && !hdCheckoutFor(record),
+  });
+  paintRunHead(glance, f, headHandlers(glance, () => hdCurrentRecord(record), { kept, ctaCls: 'hd-g-pr', folderTotal: f.folder ? f.folder.total : 0,
+    onCreate: () => { const b = screen.querySelector('.hd-pr'); if (b) b.click(); } }));
+}
+
+/** Slice 3 (D11): the head buttons' and the tracker's calls. `cur()` re-reads the record at click time. */
+function headHandlers(screen, cur, { onCreate, kept, ctaCls = '', folderTotal = 0 }) {
+  const scopeOf = (memberKey) => { const rec = cur(); return { id: rec.id, projectKey: rec.projectKey, ...(memberKey ? { memberKey } : {}) }; };
+  const feed = () => screen.querySelector('.rd-pr-feed');
+  return {
+    onCreate, ctaCls,
+    onHead: (id, b) => {
+      const rec = cur();
+      if (id === 'ship') return onCreate();
+      if (id === 'try') return tryItFlow(b, rec);
+      if (id === 'push') return pushSourceFlow(b, rec);
+      if (id === 'report') return openReportModal(rec.id);
+      if (id === 'how-to-merge') return showViewer('How to merge', mergeBackText(rec));
+      if (id === 'fix-conflicts') return resolvePrFlow(b, scopeOf(''), feed());
+      if (id === 'discard-kept') return kept && kept.onDiscard(b);
+      if (id === 'apply-kept') return kept && kept.onApply(b);
+      if (id === 'discard-folder') return folderDiscardFlow({ pipelineId: rec.id, total: folderTotal });
+      if (id === 'apply-folder') return folderApplyFlow({ pipelineId: rec.id, opener: b });
+      return undefined;
+    },
+    onMenu: (anchor, f) => {
+      // Opens at once from the cache (Copy PR link needs no status); a cold or failed read only lacks the Watch item.
+      const base = f.workspace
+        ? f.workspace.members.filter((x) => x.pr && x.pr.url).map((x) => ({ key: x.key, name: x.name, number: x.pr.number, url: x.pr.url,
+          open: String(x.pr.state).toUpperCase() === 'OPEN' }))
+        : [{ key: '', name: '', number: f.pr.number, url: f.pr.url, open: String(f.pr.state).toUpperCase() === 'OPEN', single: true }];
+      const failed = new Set();                          // keys whose read gave no answer at all (D9: Watch unavailable)
+      let facts = f;                                     // a head repaint while the menu is open brings new facts
+      const build = () => base.map((p) => {
+        const s = p.open ? prStatusCache.get(prStatusKey(scopeOf(p.key))) || null : null;
+        const watch = s && s.watch ? s.watch : null;
+        // Single PR: exactly the head's rule (showsFixConflicts, R-ux-4). A workspace head has no per-member Fix
+        // conflicts, so a member offers it when its own PR conflicts and no watch is fixing it.
+        const conflicts = p.single ? showsFixConflicts(facts.m, watch) : !!s && s.mergeable === 'CONFLICTING' && canResolvePr(watch);
+        return { ...p, watch, conflicts, watchFailed: failed.has(p.key) || !!(s && s.failed) };
+      });
+      const shape = (prs) => JSON.stringify(prs.map((p) => [!!p.watch, p.conflicts, p.watchFailed]));
+      const opts = (prs) => ({ doc: document, anchor, host: anchor.closest('.btn-split'), className: 'btn-split-menu rd-pr-menu',
+        label: 'Pull request', items: prMenuItems(prs, { level: currentLevel(),
+          onWatch: (p, b) => togglePrWatch(b, scopeOf(p.key), feed()),
+          onCopy: (p) => copyPrLink(p.url),
+          onOpen: (p) => window.open(p.url, '_blank', 'noopener'),
+          onResolve: (p) => resolvePrFlow(anchor, scopeOf(p.key), feed()) }) });
+      let shown = build();
+      let menu = toggleMenu(opts(shown));               // a second ▾ click closes it
+      if (!menu) return;
+      // Rebuild when the items changed, unless `keep` matches (a switch row whose state must not be wiped).
+      const rebuild = (keep) => {
+        const next = build();
+        if (!menu.el.isConnected || shape(next) === shape(shown)) return;
+        if (menu.el.querySelector(keep)) return;
+        // A keyboard user keeps the item they were on (openMenu focuses the first one).
+        const had = menu.el.contains(document.activeElement) ? document.activeElement.textContent : null;
+        menu = openMenu(opts(next));
+        shown = next;
+        if (had != null) {
+          const back = [...menu.el.querySelectorAll('[role^="menuitem"]')].find((b) => b.textContent === had);
+          if (back) back.focus();
+        }
+      };
+      // paintRunHead calls this on every head paint: Fix conflicts in the menu follows the head's (R-ux-4), e.g. after
+      // the Watch switch turns a watch on. A Watch error the switch shows is never wiped.
+      const slot = anchor.closest('.rd-pr-slot');
+      if (slot) slot._prMenuOpen = (nf) => { facts = nf; rebuild('.sw-item[title]'); };
+      const cold = shown.filter((p) => p.open && !p.watch);
+      if (!cold.length) return;
+      // Never wipe a Watch toggle in flight or an error it shows (a workspace's warm member may have one).
+      void Promise.all(cold.map((p) => ensurePrStatus(scopeOf(p.key)).then((s) => { if (!s) failed.add(p.key); })))
+        .then(() => rebuild('.sw-item[aria-disabled="true"], .sw-item[title]'));
+    },
+    onWatch: (el) => { const caret = screen.querySelector('.rd-head-acts .rd-pr-more'); if (caret) caret.click(); else el.blur(); },
+    onCommit: () => showViewer('Commit it yourself', kept ? kept.commands : ''),
+    fixRunHref: (pid) => `#history/${cur().projectKey}/${pid}`,
+    onFixRun: (e, pid) => {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+      const live = [...runs.values()].find((x) => x.pipelineId === pid && !RD_TERMINAL.includes(x.status));
+      if (live) { e.preventDefault(); location.hash = `running/${live.runId}`; }
+    },
+  };
+}
+/** The Watch item (D9): today's .rd-prs-watch POST and failure text; the menu stays open. */
+async function togglePrWatch(btn, scope, feed) {
+  const k = prStatusKey(scope);
+  const was = btn.getAttribute('aria-checked') === 'true';
+  const help = btn.querySelector('small');
+  btn.setAttribute('aria-disabled', 'true');
+  try {
+    const r = await fetch('/api/pr/watch', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...prScopeBody(scope), watch: !was }) });
+    const nextWatch = await safeJson(r);
+    if (!r.ok || !nextWatch) throw new Error(nextWatch?.error || `HTTP ${r.status}`);
+    btn.setAttribute('aria-checked', String(!!nextWatch.watching));
+    btn.removeAttribute('title');
+    if (help) help.textContent = WATCH_HELP;
+    const next = { ...(prStatusCache.get(k) || { at: Date.now() }), watch: nextWatch };
+    prStatusCache.set(k, next);
+    if (feed && feed.dataset.key === k) renderPrHost(feed, scope, next);
+  } catch (err) {
+    btn.title = `Could not change Watch: ${err.message}`;
+    if (help) help.textContent = btn.title;
+  } finally {
+    btn.removeAttribute('aria-disabled');
+  }
+}
+/** Fix conflicts (D11): today's Resolve call, POST /api/pr/resolve, its answer or error into the PR status cache. */
+async function resolvePrFlow(btn, scope, feed) {
+  if (btn) btn.disabled = true;
+  const k = prStatusKey(scope);
+  let patch;
+  try {
+    const r = await fetch('/api/pr/resolve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(prScopeBody(scope)) });
+    const out = await safeJson(r);
+    if (!r.ok || !out) throw Object.assign(new Error(out?.error || `HTTP ${r.status}`), { watch: out?.watch });
+    patch = { watch: out, resolveError: null };
+  } catch (err) {
+    patch = { resolveError: err.message, ...(err.watch && typeof err.watch.watching === 'boolean' ? { watch: err.watch } : {}) };
+  }
+  const next = { ...(prStatusCache.get(k) || { at: Date.now() }), ...patch };
+  prStatusCache.set(k, next);
+  if (btn && btn.isConnected) btn.disabled = false;
+  if (feed && feed.dataset.key === k) renderPrHost(feed, scope, next);
+}
+async function copyPrLink(url) {
+  try { await navigator.clipboard.writeText(url); notify({ tone: 'ok', title: 'PR link copied' }); }
+  catch { notify({ tone: 'err', title: 'Could not copy the link' }); }
+}
+/** Try it (D11): today's Check out (stripHandlers().onCheckout); the History broadcast then repaints the head. */
+async function tryItFlow(btn, rec) {
+  const scope = runActionQuery(rec.projectDir || null, rec).toString();
+  btn.disabled = true;
+  const r = await actionsCall('POST', actionsRunUrl(rec.id, '/checkout', scope), {});
+  if (btn.isConnected) btn.disabled = false;
+  if (!r.ok) notify({ tone: 'err', title: 'Could not check out', detail: (r.data && r.data.error) || `HTTP ${r.status}` });
+  await refreshActionsModel(rec.id, scope);
 }
 
 function rdSheetGroup(title, rows) {
@@ -35336,12 +35481,12 @@ function paintRdPrStatus(host, scope) {
   if (scope.checks === false) {
     clearTimeout(host._prTimer);
     if (host.dataset.key !== key) { host.dataset.key = key; host.dataset.sig = ''; }
-    renderRdPrStatus(host, scope, {});
+    renderPrHost(host, scope, {});
     return;
   }
   const cached = prStatusCache.get(key);
   if (host.dataset.key !== key) { host.dataset.key = key; host.dataset.sig = ''; host.hidden = true; clearTimeout(host._prTimer); }
-  if (cached) renderRdPrStatus(host, scope, cached);
+  if (cached) renderPrHost(host, scope, cached);
   if (!host._prLoading && (!cached || Date.now() - cached.at > PR_STATUS_STALE_MS)) void loadRdPrStatus(host, scope);
 }
 // One GET per PR in flight: the run page card and the Overview row can show the same PR at once.
@@ -35366,18 +35511,59 @@ async function loadRdPrStatus(host, scope) {
   if (host._prScope?.checks === false) return;     // the PR merged or closed meanwhile: its chip alone (D11)
   // A change announced while this read was in flight: read once more, the answer may predate it.
   if (host._prAgain && host.dataset.key === key) { void loadRdPrStatus(host, host._prScope || scope); return; }
-  const w = c?.watch;
-  const next = { at: Date.now(), checks: c?.checks || null, mergeable: c?.mergeable || 'UNKNOWN',
-    status: c?.status && typeof c.status.label === 'string' ? c.status : null,
-    watch: w && typeof w.watching === 'boolean' ? w : null };
+  const next = prStatusFrom(c);
   prStatusCache.set(key, next);
   if (host.dataset.key !== key) return;            // the slot moved to another run meanwhile
-  renderRdPrStatus(host, scope, next);
+  renderPrHost(host, scope, next);
   if (next.checks?.state === 'pending') {
     host._prTimer = setTimeout(() => {
-      if (host.dataset.key === key && host.isConnected && host.offsetParent) void loadRdPrStatus(host, scope);
+      // The card's .rd-pr-feed is hidden (no offsetParent of its own): it polls while its card head shows.
+      if (host.dataset.key === key && host.isConnected && (host._prRender ? host.parentElement && host.parentElement.offsetParent : host.offsetParent)) void loadRdPrStatus(host, scope);
     }, PR_STATUS_POLL_MS);
   }
+}
+/** Slice 3 (D10): the glance's hidden .rd-pr-feed is a paintRdPrStatus host whose answers repaint the card head and
+ *  tracker (feed._prRender) instead of drawing a PR bar. Every other host draws its status line as before. */
+function renderPrHost(host, scope, s) {
+  if (!host._prRender) { renderRdPrStatus(host, scope, s); return; }
+  const sig = JSON.stringify([s.checks, s.status, s.watch, s.resolveError]);
+  if (host.dataset.sig === sig) return;
+  host.dataset.sig = sig;
+  if (!host._prPainting) host._prRender();
+}
+/** The card's PR read: the cached GET /api/pr/checks answer for `scope` (loading it when missing or stale), or null. */
+function headPrStatus(screen, scope, repaint) {
+  const feed = screen.querySelector('.rd-pr-feed');
+  if (!feed) return null;
+  feed._prRender = repaint;
+  feed._prPainting = true;                          // a cached answer paints with this call, not through a second repaint
+  try { paintRdPrStatus(feed, scope); } finally { feed._prPainting = false; }
+  return scope ? prStatusCache.get(prStatusKey(scope)) || null : null;
+}
+/** loadRdPrStatus's answer → the cached shape (plus the PR's base branch, and `failed` when the read gave no answer at
+ *  all, which the ▾ menu words as Watch unavailable). */
+function prStatusFrom(c) {
+  const w = c?.watch;
+  return { at: Date.now(), failed: !c, checks: c?.checks || null, mergeable: c?.mergeable || 'UNKNOWN', base: c?.base || null,
+    status: c?.status && typeof c.status.label === 'string' ? c.status : null,
+    watch: w && typeof w.watching === 'boolean' ? w : null };
+}
+/** A PR status with no host (the ▾ menu, workspace members): the fresh cached answer, else one shared GET. Never
+ *  throws: a failed read resolves to the stale answer or null. */
+async function ensurePrStatus(scope) {
+  const k = prStatusKey(scope);
+  const hit = prStatusCache.get(k);
+  if (hit && Date.now() - hit.at <= PR_STATUS_STALE_MS) return hit;
+  const c = await readPrStatus(k, new URLSearchParams({ projectKey: '', ...prScopeBody(scope) }));
+  if (!c) {
+    // A failed read is cached too (as loadRdPrStatus does), so the next paint does not ask again at once: a stale
+    // answer keeps its facts with a fresh time, none becomes the `failed` mark.
+    prStatusCache.set(k, hit ? { ...hit, at: Date.now() } : prStatusFrom(null));
+    return hit || null;
+  }
+  const next = prStatusFrom(c);
+  prStatusCache.set(k, next);
+  return next;
 }
 const PR_STATUS_ICONS = {
   'is-ok': '<circle cx="12" cy="12" r="9"/><path d="m8 12.5 2.8 2.8L16 10"/>',
@@ -35448,7 +35634,7 @@ function renderRdPrStatus(host, scope, s) {
         }
         const next = { ...(prStatusCache.get(k) || s), ...patch };
         prStatusCache.set(k, next);
-        if (host.dataset.key === k) renderRdPrStatus(host, scope, next);
+        if (host.dataset.key === k) renderPrHost(host, scope, next);
       });
       notes.push(b);
       if (s.resolveError) notes.push(span('is-bad', s.resolveError));
@@ -35491,7 +35677,7 @@ function renderRdPrStatus(host, scope, s) {
         if (!r.ok || !nextWatch) throw new Error(nextWatch?.error || `HTTP ${r.status}`);
         const next = { ...(prStatusCache.get(prStatusKey(scope)) || s), watch: nextWatch };
         prStatusCache.set(prStatusKey(scope), next);
-        if (host.dataset.key === prStatusKey(scope)) renderRdPrStatus(host, scope, next);
+        if (host.dataset.key === prStatusKey(scope)) renderPrHost(host, scope, next);
       } catch (err) {
         sw.classList.remove('disabled');
         row.title = `Could not change Watch: ${err.message}`;
@@ -35509,7 +35695,7 @@ function refreshRdPrStatus(projectKey, id, memberKey = '') {
   const scope = { projectKey, id, ...(memberKey ? { memberKey } : {}) };
   const key = prStatusKey(scope);
   prStatusCache.delete(key);
-  for (const host of document.querySelectorAll('.rd-pr-status')) {
+  for (const host of document.querySelectorAll('.rd-pr-status, .rd-pr-feed')) {
     if (host.dataset.key !== key || host._prScope?.checks === false) continue;   // a merged or closed PR reads nothing (D11)
     // QA 3: the painted scope (its chipOf re-reads the model at paint time).
     const sc = host._prScope && prStatusKey(host._prScope) === key ? host._prScope : scope;
@@ -35550,65 +35736,35 @@ function paintHdOvPrs(box, record) {
   scopes.forEach(({ name, ...scope }, i) => paintRdPrStatus(hosts[i], scope));
 }
 
-// The pull request button under the result, in its slot (paintPrCta). Same tri-state as
-// paintHdPr: an open or merged PR links, `null` (resolved, none) offers Create when
-// eligible, `undefined` (the lookup runs) and a History row not loaded yet hold the
-// placeholder. One button at most, in the state's colour: ink to create, blue while open,
-// violet once merged (the orb's). Only a finished run whose History key resolves.
-// "Create pull request" hands over to History's ship-it modal (pendingShipIt), which owns
-// the remotes picker and the push.
-function paintRdPrCta(screen, r) {
-  try {
-    const slot = screen.querySelector('.rd-pr-slot');
-    if (!slot) return;
-    if (!(gitOn() && isGitRun(r))) { paintPrCta(slot, { state: 'none' }); paintRdPrStatus(screen.querySelector('.rd-pr-status'), null); return; }
-    const status = screen.querySelector('.rd-pr-status');
-    const key = r.status === 'done' ? historyKeyForRun(r) : '';
-    if (!key) { paintPrCta(slot, { state: 'none' }); paintRdPrStatus(status, null); return; }
-    const record = rdHistoryRecord(r);
-    if (glancePrInput(record) === 'PENDING') { paintPrCta(slot, { state: 'pending' }); paintRdPrStatus(status, null); return; }
-    const pr = record.pr && typeof record.pr === 'object' ? record.pr : null;
-    const prState = pr ? String(pr.state || '').toUpperCase() : '';
-    // Run 3 (D11): the PR bar (.rd-pr-status) is the run's one PR mention; the header's View PR is the action.
-    // QA 3: the scope says how to read the run model's chip. rdModel → rdModelRun → rdHistoryRecord looks the row up in
-    // state.historyAll on every call, so it sees a pr-watch-changed frame's in-place `row.pr.fixing`.
-    const ownPr = pr && (prState === 'OPEN' || prState === 'MERGED' || prState === 'CLOSED') && pr.url && record.target !== 'workspace';
-    const prScope = ownPr ? { id: r.pipelineId, projectKey: key, chipOf: () => rdModel(r).pr, checks: prState === 'OPEN' } : null;
-    if (ownPr && prState !== 'CLOSED') {
-      paintPrCta(slot, { state: 'none' });
-      paintRdPrStatus(status, prScope);
-      return;
-    }
-    if (pr && (prState === 'OPEN' || prState === 'MERGED') && pr.url) {   // a workspace run: today's slot, unchanged
-      paintPrCta(slot, { state: prState === 'MERGED' ? 'merged' : 'view', href: pr.url });
-      paintRdPrStatus(status, null);
-      return;
-    }
-    paintRdPrStatus(status, prScope);              // a closed PR: its chip, while the slot can still create a new one
-    if (histPrEligible(record) && record.pr !== undefined) {
-      paintPrCta(slot, {
-        state: 'create', cls: 'rd-create-pr',
-        onClick: () => {
-          pendingShipIt = { id: r.pipelineId, projectKey: key };
-          location.hash = `history/${key}/${r.pipelineId}`;
-        },
-      });
-    } else {
-      paintPrCta(slot, { state: 'none' });
-    }
-  } finally {
-    paintRdActions(screen, r);                     // covered (prCovered) reads the call-to-action just painted
-  }
+/** Slice 3: the live page's card head (paintRunHead), from History's row once a finished run has one. Create PR hands
+ *  over to History's ship-it modal (pendingShipIt), which owns the remotes picker and the push. */
+function paintRdHead(screen, r, m = rdModel(r)) {
+  const terminal = RD_TERMINAL.includes(r.status);
+  const rec = terminal && r.pipelineId ? rdHistoryRecord(r) : null;
+  const kept = screen._headKept || null;
+  const mode = workModeOf(r);
+  const changes = terminal && mode === 'folder' && r.kind !== 'workspace-run' ? (rdFolderChanges(r) || { state: 'pending' }) : null;
+  const bar = changes ? applyBarModel({ status: r.status, changes }) : null;   // P5: a workspace applies per member
+  const repaint = () => { if (screen.isConnected) paintRdHead(screen, r); };
+  const f = headFactsOf(screen, rec, {
+    m: pageModel(m), mode, gitChrome: gitOn() && isGitRun(r), kept, repaint,
+    folder: bar ? { state: bar.state, total: changesCounts(changes).total } : null,
+    canTry: !!(rec && rec.branch) && terminal && !kept && !!r.pipelineId && !hdCheckoutFor(rec),
+  });
+  paintRunHead(screen, f, headHandlers(screen, () => rdNoticeCarrier(r), { kept, ctaCls: 'rd-create-pr', folderTotal: f.folder ? f.folder.total : 0, onCreate: () => {
+    const key = historyKeyForRun(r);
+    pendingShipIt = { id: r.pipelineId, projectKey: key };
+    location.hash = `history/${key}/${r.pipelineId}`;
+  } }));
 }
 
-// Every tab (Activity) always; once the run is over, the pull request under it (its own
-// slot, paintRdPrCta; the facts row above carries Time · Cost · Changes in every state).
+// Every tab (Activity) always (the card head carries the pull request, paintRdHead; the facts row above carries
+// Time · Cost · Changes in every state).
 // Numbers come from results.json. Rebuilt only when its content changes (a replaced row
 // loses :hover).
 function paintRdResult(screen, r, { glance = 'run', trailCount = 0 } = {}) {
   const host = screen.querySelector('.rd-result');
   if (!host) return;
-  paintRdPrCta(screen, r);
   paintRdMenuCarriers(screen, r);                        // slice 2: the ⋯ Archive's gate reads this row's checkout facts
   const terminal = RD_TERMINAL.includes(r.status);
   const steps = trailCount ? `${trailCount} step${trailCount === 1 ? '' : 's'}` : '';
@@ -35835,7 +35991,7 @@ function rdNoticeCarrier(r) {
     ...(ws ? { target: 'workspace' } : {}), retainedWork: rdRetainedFor(r) };
 }
 
-// The run page's worktree notice (retained work) and the Actions row. Retained work comes from History's row when it
+// The run page's kept work (retained work, the card head's since slice 3) and the Actions row. Retained work comes from History's row when it
 // lists some (every member, existsSync-gated), else from the live run's branch.commitFailed (a run whose row has not
 // landed yet). A checkout comes from History's row only: a Check out is a DB write the run's own frames never carry, and
 // `pipelines-changed` reloads the rows on this view (rdRepaintOpenGlance then repaints here). The clears
@@ -35854,14 +36010,12 @@ function paintRdWorktreeNotice(screen, r) {
     const open = runDetailState.screen;
     if (open && runDetailState.runId === r.runId) paintRdBanners(open, r);
   };
-  paintWorktreeNotice(screen, model, {
-    sig: `rd|${r.runId}|${r.pipelineId || ''}`,
-    recovery: r.pipelineId ? recoveryLinkOf(r.projectDir || null, rdNoticeCarrier(r), model) : null,
-    handlers: {
-      onApply: (btn) => applyRetainedFlow(btn, rdNoticeCarrier(r), model, () => { r._retainedApplied = true; repaint(); }),
-      onDiscardRetained: (btn) => discardRetainedWorktree(btn, r.projectDir || null, rdNoticeCarrier(r), () => { r._retainedDiscarded = true; repaint(); }),
-    },
-  });
+  // Slice 3 (D13): the card head carries Discard · Apply to branch, the tracker the patch and the commands.
+  screen._headKept = model && model.kind === 'retained' ? { provisional: !!model.provisional,
+    recovery: r.pipelineId ? recoveryLinkOf(r.projectDir || null, rdNoticeCarrier(r), model) : null, commands: retainedCommands(model),
+    onApply: (btn) => applyRetainedFlow(btn, rdNoticeCarrier(r), model, () => { r._retainedApplied = true; repaint(); }),
+    onDiscard: (btn) => discardRetainedWorktree(btn, r.projectDir || null, rdNoticeCarrier(r), () => { r._retainedDiscarded = true; repaint(); }) } : null;
+  paintRdHead(screen, r);
   const canTry = !!(rec && rec.branch) && RD_TERMINAL.includes(r.status) && !retained && !!r.pipelineId;
   paintActionsRowValue(screen, checkout, canTry, () => rdNoticeCarrier(r));
 }

@@ -1,7 +1,7 @@
 // test/run-model.test.mjs — the one run model over every row of spec §2.1 (single and group), PR state and count.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { runModel, groupModel, prState, RUN_STATES, ACTION_LABEL, MENU_ACTIONS, finishedNeedsYou, memberPrState } from '../src/shared/run-model.mjs';
+import { runModel, groupModel, prState, RUN_STATES, ACTION_LABEL, MENU_ACTIONS, HEAD_ACTIONS, finishedNeedsYou, memberPrState } from '../src/shared/run-model.mjs';
 import { ICONS } from '../ui/public/icons.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -411,4 +411,10 @@ test('slice 2: a stopped run offers Archive only, whatever resumable says', () =
     assert.deepEqual(runModel({ status: 'stopped', resumable }).actions, ['archive']);
   }
   assert.deepEqual([...MENU_ACTIONS], ['archive', 'report']);
+});
+
+test('slice 3: ship, View PR, Retry and Ask for changes are head actions, disjoint from the ⋯ ones', () => {
+  assert.deepEqual([...HEAD_ACTIONS], ['ship', 'open-pr', 'retry', 'ask-changes']);
+  assert.equal(HEAD_ACTIONS.some((a) => MENU_ACTIONS.includes(a)), false);
+  assert.ok(Object.isFrozen(HEAD_ACTIONS));
 });

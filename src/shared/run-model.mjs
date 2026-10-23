@@ -38,6 +38,10 @@ export const ACTION_LABEL = Object.freeze({
  *  card still make them from the model. */
 export const MENU_ACTIONS = Object.freeze(['archive', 'report']);
 
+/** Finished-run actions the run page draws in its card head (slice 3), never in its bar. The group header and the Chat
+ *  card still make them from the model. */
+export const HEAD_ACTIONS = Object.freeze(['ship', 'open-pr', 'retry', 'ask-changes']);
+
 const ACTIONS = Object.freeze({
   starting: ['stop'], working: ['pause', 'stop'], 'needs-you': ['answer', 'stop'], paused: ['resume', 'stop'],
   waiting: ['start-now', 'cancel'], failed: ['retry', 'report'], stopped: ['archive'], ready: ['ship'],

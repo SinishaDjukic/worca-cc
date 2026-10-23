@@ -442,6 +442,37 @@ test('workspace detail: pr-watch-changed for the run\'s store key rereads only t
   assert.deepEqual([gets(API), gets(WEB)], [before[0] + 1, before[1]]);
 });
 
+test('workspace card head: a member PR read that fails after going stale is not retried back to back', async () => {
+  // api answers at once; web's first read is held. Once api's answer is stale and its endpoint fails, web's late
+  // answer repaints the head, which asks api again: that failed read must not repaint (and ask) again in a loop.
+  let down = false;
+  const held = [];
+  const answer = () => ok(memberChecks({ watching: false, status: 'idle', reason: null, activePipelineId: null }));
+  const arms = (url) => {
+    if (!/\/api\/pr\/checks\?/.test(url)) return null;
+    const mk = new URL(url, 'http://x').searchParams.get('memberKey');
+    if (mk === WEB && !held.done) return new Promise((r) => held.push(r));
+    return down ? fail(500, { error: 'rate limited' }) : answer();
+  };
+  const ctx = await bootShip({ detail: WS_DETAIL, arms, rows: [wsRow([
+    member(API, 'api', { pr: { state: 'OPEN', url: 'https://github.com/o/api/pull/1', number: 1 } }),
+    member(WEB, 'web', { pr: { state: 'OPEN', url: 'https://github.com/o/web/pull/2', number: 2 } })])] });
+  await openDetail(ctx, wksDetailHash); await settle(ctx.window, 6);
+  const gets = () => ctx.calls.filter((c) => /\/api\/pr\/checks\?/.test(c.url) && new URL(c.url, 'http://x').searchParams.get('memberKey') === API).length;
+  assert.ok(gets() > 0, 'the api member PR was read');
+  assert.ok(held.length > 0, 'the web member read is in flight');
+  const realNow = Date.now;
+  Date.now = () => realNow() + 60000;                  // api's cached answer is stale now
+  try {
+    down = true;
+    held.done = true;
+    const before = gets();
+    while (held.length) held.shift()(answer());
+    await settle(ctx.window, 30);
+    assert.ok(gets() - before <= 1, `no read loop: ${gets() - before} api reads after one repaint`);
+  } finally { Date.now = realNow; }
+});
+
 const NOTES = 'notes-00000004';
 const folderMember = (state) => member(NOTES, 'notes', { workMode: 'folder', branch: null, sourceBranch: null, survived: false,
   affected: true, added: 0, removed: 0, diffFrozen: false, changes: { state, counts: { added: 2, modified: 0, deleted: 0 } } });
@@ -532,8 +563,9 @@ test('an all-Folder workspace run: no Diff, Changes per member with the summed b
   assert.equal(d.querySelector('#hist-detail button[role="tab"][data-sec="diff"]'), null, 'no Diff');
   const tab = d.querySelector('#hist-detail button[role="tab"][data-sec="changes"]');
   assert.equal(tab.querySelector('.hd-tab-badge').textContent, '5', '2 + 3 files');
-  const slot = d.querySelector('#hist-detail .hd-glance .rd-apply-slot');
-  assert.ok(!slot || slot.hidden, 'no run-level Apply bar on a workspace run (it would POST without a memberKey)');
+  // Slice 3 (D14): the head offers no run-level Apply or Discard on a workspace run (it would POST without a memberKey).
+  assert.equal(d.querySelector('#hist-detail .hd-glance .rd-head-acts [data-head="apply-folder"]'), null);
+  assert.equal(d.querySelector('#hist-detail .hd-glance .rd-head-acts [data-head="discard-folder"]'), null);
   click(ctx.window, tab); await settle(ctx.window, 6);
   const secs = [...d.querySelectorAll('#hist-detail .hd-sec[data-sec="changes"] section[data-member-key]')];
   assert.deepEqual(secs.map((n) => [n.dataset.memberKey, n.querySelector('.fc-member-name').textContent, n.querySelector('.fc-bar-l').textContent]),

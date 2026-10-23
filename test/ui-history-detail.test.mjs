@@ -330,28 +330,53 @@ test('an in-flight Archive survives a concurrent repaint (never a second DELETE)
 // Retained work
 // ---------------------------------------------------------------------------
 
+// Slice 3 (D13): kept work has no banner; the card head carries Discard · Apply to branch, the tracker its patch and
+// commands.
+const KEPT_LINE = 'Needs you · the changes could not be committed';
+const keptBtn = (doc, id) => doc.querySelector(`#hist-detail .hd-glance .rd-head-acts [data-head="${id}"]`);
+const statusLine = (doc) => doc.querySelector('#hist-detail .hd-glance .rd-sheet .run-status').dataset.line;
+const keptShown = (doc) => statusLine(doc) === KEPT_LINE;
+const PATCH_DETAIL = { ...DETAIL, artifacts: [{ kind: 'retained-work-patch', relPath: 'retained-work.patch' }] };
+
 test('Archive is disabled with a tooltip when the list row reports retained work', async () => {
-  const ctx = await bootDetail({ rows: [retainedRow()] });
+  const ctx = await bootDetail({ rows: [retainedRow()], detail: PATCH_DETAIL });
   await openDetail(ctx);
   const doc = ctx.window.document;
   const archive = doc.querySelector('#hist-detail .hd-archive');
   assert.equal(archive.disabled, true);
   assert.equal(archive.title, 'Recover or discard the kept work first');
-  const banner = doc.querySelector('#hist-detail .retained-banner');
-  assert.equal(banner.hidden, false);
-  // The banner's CONTENT, not just its visibility: this block is the only
-  // recovery instruction the user ever gets for work that never reached the
-  // branch, so a painter that renders an empty banner must fail here.
-  assert.match(banner.textContent, /uncommitted work retained/i);
-  assert.match(banner.textContent, /pre-commit hook failed/, "git's own stderr, verbatim");
-  assert.match(banner.textContent, /Worktree: \/tmp\/wt/);
-  assert.match(banner.textContent, /git -C '\/tmp\/wt' add -A/, 'the copy-paste recovery block');
-  assert.equal(doc.querySelector('#hist-detail .hist-retained-badge').hidden, false);
-  assert.equal(doc.querySelector('#hist-detail .hist-discard').hidden, false,
-    'an AUTHORITATIVE retention also offers the action');
+  assert.equal(doc.querySelector('#hist-detail .retained-banner'), null);
+  assert.equal(doc.querySelector('#hist-detail .hist-retained-badge'), null);
+  assert.equal(statusLine(doc), KEPT_LINE);
+  // An AUTHORITATIVE retention offers the actions in the head, Apply as the one primary.
+  assert.ok(keptBtn(doc, 'discard-kept'));
+  assert.ok(keptBtn(doc, 'apply-kept').classList.contains('btn-primary'));
+  // The tracker's Changes step is the only recovery instruction: the patch and the copy-paste commands.
+  const step = doc.querySelector('#hist-detail .hd-glance .rd-track .rd-track-step');
+  assert.ok(step.classList.contains('is-problem'));
+  const patch = [...step.querySelectorAll('a.rd-track-link')].find((a) => a.textContent === 'Download patch');
+  assert.match(patch.getAttribute('href'), /\/recovery-patch\?/);
+  click(ctx.window, [...step.querySelectorAll('button.rd-track-act')].find((b) => b.textContent === 'Commit it yourself'));
+  assert.equal(doc.getElementById('viewer-title').textContent, 'Commit it yourself');
+  const text = doc.getElementById('viewer').textContent;
+  assert.match(text, /pre-commit hook failed/, "git's own stderr, verbatim");
+  assert.match(text, /git -C '\/tmp\/wt' add -A/, 'the copy-paste recovery block');
+  assert.doesNotMatch(doc.querySelector('#hist-detail .hd-glance .rd-sheet').textContent, /worktree/i);
 });
 
-test('discarding the retained worktree clears the banner and re-enables Archive, also on a deep link once the real row lands', async () => {
+test('kept work on a stopped or a failed saved run: the head offers Discard and Apply to branch, the tracker its patch', async () => {
+  await checkRows(['stopped', 'error'].map((status) => ({ name: status, run: async () => {
+    const ctx = await bootDetail({ rows: [retainedRow({ status })], detail: { ...PATCH_DETAIL, state: { ...DETAIL.state, status } } });
+    await openDetail(ctx);
+    const doc = ctx.window.document;
+    assert.ok(keptBtn(doc, 'apply-kept'), `${status}: Apply to branch`);
+    assert.ok(keptBtn(doc, 'discard-kept'), `${status}: Discard`);
+    const patch = [...doc.querySelectorAll('#hist-detail .hd-glance .rd-track a.rd-track-link')].find((a) => a.textContent === 'Download patch');
+    assert.ok(patch, `${status}: the tracker's Download patch`);
+  } })));
+});
+
+test('discarding the kept work clears the head and re-enables Archive, also on a deep link once the real row lands', async () => {
   await checkRows([
     { name: 'discarding the retained worktree clears the banner and re-enables Archive', run: async () => {
       const ctx = await bootDetail({
@@ -362,12 +387,12 @@ test('discarding the retained worktree clears the banner and re-enables Archive,
       });
       await openDetail(ctx);
       const doc = ctx.window.document;
-      click(ctx.window, doc.querySelector('#hist-detail .hist-discard'));
+      click(ctx.window, keptBtn(doc, 'discard-kept'));
       await confirmDialog(ctx.window);
       await settle(ctx.window, 5);
 
-      assert.equal(doc.querySelector('#hist-detail .retained-banner').hidden, true);
-      assert.equal(doc.querySelector('#hist-detail .hist-discard'), null);
+      assert.equal(keptShown(doc), false);
+      assert.equal(keptBtn(doc, 'discard-kept'), null);
       assert.equal(doc.querySelector('#hist-detail .hd-archive').disabled, false);
       // A discard is not an archive: the run stays listed.
       assert.ok(doc.querySelector(`#runs-list .runs-row[data-kind="hist"][data-pipeline-id="${ROW.id}"]`),
@@ -385,22 +410,20 @@ test('discarding the retained worktree clears the banner and re-enables Archive,
 
       // (1) PROVISIONAL retention: banner up and Archive blocked, but NO action —
       // discarding must act on the authoritative row, not on an inferred retention.
-      assert.equal(doc.querySelector('#hist-detail .retained-banner').hidden, false);
+      assert.equal(keptShown(doc), true);
       assert.equal(doc.querySelector('#hist-detail .hd-archive').disabled, true);
-      assert.equal(doc.querySelector('#hist-detail .hist-discard'), null,
-        'a provisional retention binds no Discard');
+      assert.equal(keptBtn(doc, 'discard-kept'), null, 'a provisional retention binds no Discard');
 
       // (2) the row agrees: the worktree really is still there
       await deliverRows(ctx, [retainedRow()]);
-      assert.equal(doc.querySelector('#hist-detail .retained-banner').hidden, false);
-      assert.equal(doc.querySelector('#hist-detail .hist-discard').hidden, false,
-        'the action arrives with the authoritative row');
+      assert.equal(keptShown(doc), true);
+      assert.ok(keptBtn(doc, 'discard-kept'), 'the action arrives with the authoritative row');
 
       // (3) discard acts on THAT row, so the repaint really clears
-      click(ctx.window, doc.querySelector('#hist-detail .hist-discard'));
+      click(ctx.window, keptBtn(doc, 'discard-kept'));
       await confirmDialog(ctx.window);
       await settle(ctx.window, 6);
-      assert.equal(doc.querySelector('#hist-detail .retained-banner').hidden, true);
+      assert.equal(keptShown(doc), false);
       assert.equal(doc.querySelector('#hist-detail .hd-archive').disabled, false);
       // A discard is not an archive: the run stays listed.
       assert.ok(doc.querySelector(`#runs-list .runs-row[data-kind="hist"][data-pipeline-id="${ROW.id}"]`),
@@ -413,13 +436,13 @@ test('deep link derives retained work from state.branch.commitFailed, then DEFER
   const ctx = await bootDetail({ rows: [], detail: COMMIT_FAILED_DETAIL, deepLink: true });
   await settle(ctx.window, 5);
   const doc = ctx.window.document;
-  assert.equal(doc.querySelector('#hist-detail .retained-banner').hidden, false);
+  assert.equal(keptShown(doc), true);
   assert.equal(doc.querySelector('#hist-detail .hd-archive').disabled, true);
 
   // The server gates retainedWork on existsSync(worktreeDir), so a stale
   // commitFailed stamp must not outlive the row. Authoritative in BOTH directions.
   await deliverRows(ctx, [{ ...ROW, retainedWork: null }]);
-  assert.equal(doc.querySelector('#hist-detail .retained-banner').hidden, true);
+  assert.equal(keptShown(doc), false);
   assert.equal(doc.querySelector('#hist-detail .hd-archive').disabled, false);
 });
 
@@ -616,7 +639,6 @@ test('with a saved run open, the popup for that run names the step from its save
 // Seeded "now": whenLabel then reads HH:MM (today), even near midnight.
 const checkoutRow = (member = {}) => ({ ...ROW, checkout: { members: [{ projectKey: KEY, worktreeDir: '/tmp/co', branch: ROW.branch,
   at: new Date().toISOString(), policy: 'on-demand', setup: { status: 'ok' }, ...member }] } });
-const noticeOf = (doc) => doc.querySelector('#hist-detail .hd-glance .retained-banner');
 const glanceOf = (doc) => doc.querySelector('#hist-detail .hd-glance');
 const actionsRowOf = (doc) => doc.querySelector('#hist-detail .hd-glance .rd-result .rd-srow[data-rd-tab="actions"]');
 const actionsValueOf = (doc) => { const v = actionsRowOf(doc)?.querySelector('.rd-srow-v'); return v ? v.textContent : ''; };
@@ -642,9 +664,8 @@ test('checkout: no box on the glance; the Actions row says where the local copy 
   await openDetail(ctx, '');
   await settle(ctx.window, 6);
   const doc = ctx.window.document;
-  const n = noticeOf(doc);
-  assert.equal(n.hidden, true);
-  assert.notEqual(n.dataset.kind, 'checkout');
+  assert.equal(keptShown(doc), false);
+  assert.equal(keptBtn(doc, 'apply-kept'), null);
   assert.match(actionsValueOf(doc), /^Local copy open · since \d{1,2}:\d{2}$/);
   const v = actionsRowOf(doc).querySelector('.rd-srow-v');
   assert.equal(actionsRowOf(doc).lastElementChild, v, 'the value is the row\'s last child, before the CSS chevron');
@@ -694,13 +715,14 @@ test('checkout row: a workspace with two local copies; at Simple one Discard per
   assert.match(css, /\.rd-srow-checkout \.rd-srow-tx\{flex:1 1 \d+em;\}/);
 });
 
-test('checkout row: retained work shows the retained notice and no Actions row value', async () => {
+test('checkout row: retained work shows the kept head and no Actions row value', async () => {
   const ctx = await bootDetail({ rows: [retainedRow()] });
   atAdvanced(ctx);
   await openDetail(ctx, '');
   await settle(ctx.window, 6);
   const doc = ctx.window.document;
-  assert.equal(noticeOf(doc).dataset.kind, 'retained');
+  assert.equal(keptShown(doc), true);
+  assert.ok(keptBtn(doc, 'apply-kept'));
   assert.ok(actionsRowOf(doc), 'the Actions tab row is there');
   assert.equal(actionsRowOf(doc).querySelector('.rd-srow-v'), null);
 });
@@ -811,7 +833,7 @@ test('Actions tab: Download patch asks for the member\'s diff; a clean folder sa
   assert.equal(doc.activeElement, btn, 'focus is back on the button');
 });
 
-test('worktree notice: Apply to branch commits the retained work and clears the notice', async () => {
+test('kept work: Apply to branch commits the retained work and clears the head', async () => {
   let posted = null;
   const ctx = await bootDetail({
     rows: [retainedRow()],
@@ -825,18 +847,17 @@ test('worktree notice: Apply to branch commits the retained work and clears the 
   await openDetail(ctx, '');
   await settle(ctx.window, 6);
   const doc = ctx.window.document;
-  const n = noticeOf(doc);
-  assert.equal(n.dataset.kind, 'retained');
-  assert.match(n.textContent, /A pull request opened now would not include them/);
+  assert.equal(keptShown(doc), true);
   const actionsGets = () => ctx.calls.filter((c) => c.url.includes(`/api/runs/${ROW.id}/actions`)).length;
   const getsBefore = actionsGets();
-  click(ctx.window, n.querySelector('.wt-apply'));
+  click(ctx.window, keptBtn(doc, 'apply-kept'));
   await settle(ctx.window, 2);
   assert.equal(doc.getElementById('confirm-title').textContent, 'Apply the work to the branch?');
   await confirmDialog(ctx.window);
   await settle(ctx.window, 6);
   assert.deepEqual(posted, ['POST', `/api/runs/${ROW.id}/apply-retained?projectKey=${KEY}`]);
-  assert.equal(noticeOf(doc).hidden, true);
+  assert.equal(keptShown(doc), false);
+  assert.equal(keptBtn(doc, 'apply-kept'), null);
   assert.equal(doc.querySelector('#hist-detail .hd-archive').disabled, false);
   assert.deepEqual(lastToast(doc), { tone: 'ok', title: 'Work applied to the branch',
     detail: `Committed abcdef0123 on ${ROW.branch}.`, action: '' });
@@ -844,7 +865,7 @@ test('worktree notice: Apply to branch commits the retained work and clears the 
 });
 
 
-test('worktree notice: a commit that fails again keeps the notice and shows git\'s message', async () => {
+test('kept work: a commit that fails again keeps the head and shows git\'s message', async () => {
   const ctx = await bootDetail({
     rows: [retainedRow()],
     arms: (url) => (url.includes('/apply-retained')
@@ -855,10 +876,11 @@ test('worktree notice: a commit that fails again keeps the notice and shows git\
   await openDetail(ctx, '');
   await settle(ctx.window, 6);
   const doc = ctx.window.document;
-  click(ctx.window, noticeOf(doc).querySelector('.wt-apply'));
+  click(ctx.window, keptBtn(doc, 'apply-kept'));
   await confirmDialog(ctx.window);
   await settle(ctx.window, 6);
-  assert.equal(noticeOf(doc).hidden, false, 'the retained state stays');
+  assert.equal(keptShown(doc), true, 'the retained state stays');
+  assert.ok(keptBtn(doc, 'apply-kept'));
   const t = lastToast(doc);
   assert.equal(t.tone, 'err');
   assert.equal(t.title, 'The commit failed again');
@@ -866,7 +888,7 @@ test('worktree notice: a commit that fails again keeps the notice and shows git\
 });
 
 
-test('worktree notice: after a discard, a cache-warm row (no retainedWork key) does not bring back a provisional notice', async () => {
+test('kept work: after a discard, a cache-warm row (no retainedWork key) does not bring back a provisional head', async () => {
   const ctx = await bootDetail({
     rows: [], detail: structuredClone(COMMIT_FAILED_DETAIL), deepLink: true,
     arms: (url) => (url.includes('/discard-worktree') ? ok({ ok: true, remaining: 0, patches: [] }) : null),
@@ -874,13 +896,13 @@ test('worktree notice: after a discard, a cache-warm row (no retainedWork key) d
   await settle(ctx.window, 5);
   const doc = ctx.window.document;
   await deliverRows(ctx, [retainedRow()]);
-  click(ctx.window, doc.querySelector('#hist-detail .hist-discard'));
+  click(ctx.window, keptBtn(doc, 'discard-kept'));
   await confirmDialog(ctx.window);
   await settle(ctx.window, 6);
-  assert.equal(doc.querySelector('#hist-detail .retained-banner').hidden, true);
+  assert.equal(keptShown(doc), false);
   const { retainedWork: _gone, ...cacheWarm } = ROW;
   await deliverRows(ctx, [cacheWarm]);
-  assert.equal(doc.querySelector('#hist-detail .retained-banner').hidden, true, 'hdForgetRetained: the stale commitFailed stamp is released');
+  assert.equal(keptShown(doc), false, 'hdForgetRetained: the stale commitFailed stamp is released');
   assert.equal(doc.querySelector('#hist-detail .hd-archive').disabled, false);
 });
 

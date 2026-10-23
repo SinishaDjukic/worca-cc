@@ -223,21 +223,40 @@ test('same-branch, merged back: Push replaces Create PR and posts /api/push; the
   assert.equal(doc.querySelector('#hist-detail .hd-branch-copy').hidden, true);
   assert.equal(doc.querySelector('#hist-detail .hd-publish').hidden, true);
   assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-page-branch-name').textContent, 'main');
-  const cta = doc.querySelector('#hist-detail .hd-g-push');
-  assert.ok(cta, 'the run summary offers Push');
-  // PR controls (design system): Push is a primary .btn led by arrow-up, and the summary says the header's words.
+  const cta = doc.querySelector('#hist-detail .hd-glance .rd-head-acts .rd-pr-slot [data-rd-cta]');
+  assert.ok(cta, 'the card head offers Push');
+  // PR controls (design system): Push is a primary .btn led by arrow-up, and the head says the header's words.
   assert.equal(cta.textContent, 'Push main');
   assert.ok(cta.classList.contains('btn-primary'), cta.className);
   for (const b of [push, cta]) assert.equal(b.querySelector(':scope > .ic svg').innerHTML, ICONS['arrow-up'], b.className);
-  cta.click();   // the summary's button drives the header's (one wiring) and must show the outcome too
+  // Slice 3: the head's Push shares the header's flow (pushSourceFlow) and shows its outcome.
+  assert.equal(doc.querySelector('#hist-detail .hd-glance .run-status').dataset.line, 'Ready to ship · in main here, not on the remote');
+  cta.click();
   await ctx.settle();
   assert.deepEqual(pushes[0], { projectKey: DONE.projectKey, projectDir: DONE.projectDir, id: 'ps' });
-  assert.equal(push.textContent, 'Pushed to origin');
-  assert.equal(doc.querySelector('#hist-detail .hd-g-push').textContent.trim(), 'Pushed to origin');
-  assert.equal(doc.querySelector('#hist-detail .hd-g-push').disabled, true);
+  assert.equal(cta.textContent.trim(), 'Pushed to origin');
+  assert.equal(cta.disabled, true);
 });
 
-test('same-branch, not merged back: no Push; Create PR lands the work from its own branch; a banner with the reason and the manual commands', async () => {
+test('same-branch, merged back: a failed Push says so in visible text (a toast), not only in the button title', async () => {
+  const fail = (url, opts) => (url.endsWith('/api/push')
+    ? Promise.resolve({ ok: false, status: 409, json: async () => ({ error: 'the remote rejected the push' }) })
+    : sameArms([SAME_MERGED], [])(url, opts));
+  const ctx = await boot({ fetchHandler: fail });
+  ctx.showDetails(SAME_MERGED);
+  await ctx.settle();
+  const doc = ctx.window.document;
+  const cta = doc.querySelector('#hist-detail .hd-glance .rd-head-acts .rd-pr-slot [data-rd-cta]');
+  cta.click();
+  await ctx.settle();
+  assert.equal(cta.textContent.trim(), 'Push main');
+  assert.equal(cta.disabled, false);
+  const toast = [...doc.querySelectorAll('.toast.err')].find((t) => /Push failed/.test(t.textContent));
+  assert.ok(toast, 'a visible Push failed toast');
+  assert.match(toast.textContent, /the remote rejected the push/);
+});
+
+test('same-branch, not merged back: no Push; Create PR lands the work from its own branch; How to merge shows the reason and the manual commands', async () => {
   const ctx = await boot({ fetchHandler: sameArms([SAME_NOT], []) });
   ctx.showDetails(SAME_NOT);
   await ctx.settle();
@@ -246,24 +265,33 @@ test('same-branch, not merged back: no Push; Create PR lands the work from its o
   // The merge back was refused, so the work is on its own branch: a PR is how it lands (M6).
   assert.equal(doc.querySelector('#hist-detail .hd-pr').hidden, false, 'Create PR for a run that did not merge back');
   assert.equal(doc.querySelector('#hist-detail .hd-base').textContent, 'main →', 'the work did not flow into main');
-  const banner = doc.querySelector('#hist-detail .merge-back-banner');
-  assert.equal(banner.hidden, false);
-  assert.match(banner.textContent, /uncommitted change/);
-  assert.equal(banner.querySelector('strong').textContent, DONE.projectName, 'the project by its name, not its store key');
+  // Slice 3 (D12): no merge-back banner; the head's How to merge opens the commands in the viewer.
+  assert.equal(doc.querySelector('#hist-detail .merge-back-banner'), null);
+  const glance = doc.querySelector('#hist-detail .hd-glance');
+  assert.equal(glance.querySelector('.run-status').dataset.line, 'Needs you · not merged back into main');
+  assert.doesNotMatch(glance.querySelector('.rd-sheet').textContent, /worktree/i);
+  glance.querySelector('.rd-head-acts [data-head="how-to-merge"]').click();
+  assert.equal(doc.getElementById('viewer-title').textContent, 'How to merge');
+  const text = doc.getElementById('viewer').textContent;
+  assert.match(text, /uncommitted change/);
+  assert.match(text, new RegExp(`^${DONE.projectName}: `, 'm'), 'the project by its name, not its store key');
   // Chained (a failed switch stops the rest), in the project dir, fast-forward only.
-  assert.equal(banner.querySelector('code').textContent,
-    "cd '/x/proj' && git switch 'main' && git merge --ff-only --no-overwrite-ignore 'worca-cc/feat-ps' && git branch -d 'worca-cc/feat-ps'");
-  assert.match(banner.textContent, /Commit or stash your changes/);
+  assert.ok(text.split('\n').includes(
+    "cd '/x/proj' && git switch 'main' && git merge --ff-only --no-overwrite-ignore 'worca-cc/feat-ps' && git branch -d 'worca-cc/feat-ps'"), text);
+  assert.match(text, /Commit or stash your changes/);
 });
 
-test('merge-back banner: each refusal gets its own recipe (in-use runs in that worktree, diverged needs a real merge, missing re-creates the source, commit-failed has none)', async () => {
+test('How to merge: each refusal gets its own recipe (in-use runs in that worktree, diverged needs a real merge, missing re-creates the source, commit-failed has none)', async () => {
   const recipe = async (mb) => {
     const row = { ...SAME_NOT, id: `pk${mb.kind}`, mergeBack: { merged: false, members: [{ ...SAME_MEMBER, merged: false, sha: null, reason: 'r', paths: [], ...mb }] } };
     const ctx = await boot({ fetchHandler: sameArms([row], []) });
     ctx.showDetails(row);
     await ctx.settle();
-    const banner = ctx.window.document.querySelector('#hist-detail .merge-back-banner');
-    return { code: banner.querySelector('code')?.textContent ?? null, text: banner.textContent };
+    const doc = ctx.window.document;
+    doc.querySelector('#hist-detail .hd-glance .rd-head-acts [data-head="how-to-merge"]').click();
+    const text = doc.getElementById('viewer').textContent;
+    const lines = text.split('\n');
+    return { code: lines.find((l) => /^cd |^git /.test(l)) ?? null, text };
   };
   await checkRows([
     { name: 'in-use with the worktree', run: async () => assert.equal((await recipe({ kind: 'in-use', paths: ['/x/other wt'] })).code,
@@ -273,6 +301,10 @@ test('merge-back banner: each refusal gets its own recipe (in-use runs in that w
       "cd '/x/proj' && git switch 'main' && git merge 'worca-cc/feat-ps' && git branch -d 'worca-cc/feat-ps'") },
     { name: 'missing', run: async () => assert.equal((await recipe({ kind: 'missing' })).code,
       "cd '/x/proj' && git branch 'main' 'worca-cc/feat-ps' && git branch -d 'worca-cc/feat-ps'") },
-    { name: 'commit-failed', run: async () => assert.equal((await recipe({ kind: 'commit-failed' })).code, null) },
+    { name: 'commit-failed', run: async () => {
+      const r = await recipe({ kind: 'commit-failed' });
+      assert.equal(r.code, null);
+      assert.match(r.text, /Recover them first with Apply to branch\./);
+    } },
   ]);
 });

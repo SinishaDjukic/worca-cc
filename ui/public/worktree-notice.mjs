@@ -4,24 +4,9 @@
 //   - retained work: the end-of-run commit failed, so the work exists only in the worktree. This is the notice;
 //   - a checkout: Actions › Check out, or a linked folder of the person's own. No notice: the Results › Actions
 //     row says where the local copy stands (checkoutRowValue) and the Actions tab owns its controls.
-// Pure: a model from the run's facts, and a renderer that takes `doc` and returns detached DOM. Git stderr
-// and paths are data: textContent only, never innerHTML. app.js owns the calls and the host
-// (paintWorktreeNotice).
+// Pure: a model from the run's facts and the kept work's commands (slice 3: the run page's card head and tracker
+// carry the actions; app.js owns the calls). Git stderr and paths are data, never markup.
 
-const h = (doc, tag, cls, text) => {
-  const el = doc.createElement(tag);
-  if (cls) el.className = cls;
-  if (text != null) el.textContent = text;
-  return el;
-};
-/** A notice button. `onClick(button)` receives the node, so a flow can show its busy state on it. */
-const button = (doc, label, cls, onClick, tip) => {
-  const b = h(doc, 'button', `btn btn-sm ${cls}`, label);
-  b.type = 'button';
-  if (tip) b.title = tip;
-  b.addEventListener('click', (e) => { e.stopPropagation(); onClick(b); });
-  return b;
-};
 /** app.js shellSingleQuote: a path pasted into a POSIX shell. */
 const sq = (v) => `'${String(v == null ? '' : v).replaceAll("'", "'\"'\"'")}'`;
 
@@ -29,7 +14,6 @@ export const NOTICE_TITLES = Object.freeze({
   retained: 'Commit failed: uncommitted work retained',
   linked: 'Linked to your folder',
 });
-const WHY = 'git keeps a branch in one folder at a time.';
 
 /** A workspace member's display name: History's member name, else its key without the `-<8 hex>` suffix. */
 export function memberLabel(projectKey, names = {}) {
@@ -117,20 +101,13 @@ export function applyOutcome(report = {}) {
   return { tone: warn ? 'warn' : 'ok', title: failed.length ? 'Some of the work was applied' : 'Work applied to the branch', detail: lines.join(' ') };
 }
 
-/**
- * The notice's content (the host element, its role and its look belong to the caller). Retained work only: a
- * checkout has no glance notice (the Results › Actions row says it and the Actions tab owns its controls).
- * @param {object|null} model worktreeNoticeModel(…)
- * @param {{ doc: Document, handlers?: { onApply?, onDiscardRetained? },
- *   recovery?: { kind:'retained'|'diff', href:string, download?:string }|null, when?: (iso:string)=>string }} opts
- * @returns {DocumentFragment}
- */
-export function renderWorktreeNotice(model, { doc, handlers = {}, recovery = null, when = (iso) => String(iso || '') } = {}) {
-  const frag = doc.createDocumentFragment();
-  // A checkout has no glance notice: the Results › Actions row says it and the Actions tab owns its controls.
-  if (!model || model.kind !== 'retained') return frag;
-  renderRetained(doc, frag, model, { handlers, recovery, when });
-  return frag;
+/** Slice 3: the kept work's "Commit it yourself" text (the tracker's Changes step opens it in the viewer): each member's
+ *  git failure, then the commands the notice's <details> showed. Paths are data, quoted for a POSIX shell. */
+export function retainedCommands(model) {
+  if (!model || model.kind !== 'retained') return '';
+  const why = model.members.map((m) => `${m.label ? `${m.label} · ` : ''}git ${m.step}: ${m.message || 'failed'}`).join('\n');
+  const cmds = model.members.map((m) => `git -C ${sq(m.dir)} status\ngit -C ${sq(m.dir)} add -A\ngit -C ${sq(m.dir)} commit`).join('\n\n');
+  return `${why}\n\n${cmds}\n\nThe changes are already staged, so git status lists them under "Changes to be committed". After committing, Discard removes the leftover copy. A patch of anything still uncommitted is saved first.`;
 }
 
 /** The glance's Results › Actions row value before a checkout. */
@@ -145,48 +122,4 @@ export function checkoutRowValue(checkout, { when = (iso) => String(iso || ''), 
   const since = first ? ` · since ${when(first)}` : '';
   if (ms.every((m) => m.external === true)) return `${NOTICE_TITLES.linked}${since}`;
   return `${ms.length > 1 ? `${ms.length} local copies` : 'Local copy'} open${since}`;
-}
-
-function renderRetained(doc, frag, model, { handlers, recovery, when }) {
-  const one = model.members.length === 1 ? model.members[0] : null;
-  frag.append(h(doc, 'h4', null, NOTICE_TITLES.retained));
-  frag.append(h(doc, 'p', 'wt-lead', `The run's last changes could not be committed, so they exist only in ${one ? 'its worktree' : 'the worktrees below'}, not on ${one && one.branch ? one.branch : 'the run\'s branches'}. A pull request opened now would not include them.`));
-  frag.append(h(doc, 'p', 'wt-refused', `Until you apply or discard the work, Check out, Archive and a new run on this branch are refused: ${WHY}`));
-  const list = h(doc, 'ul', 'wt-members');
-  for (const m of model.members) {
-    const li = h(doc, 'li');
-    if (m.label) li.append(h(doc, 'strong', null, m.label), doc.createTextNode(' · '));
-    li.append(h(doc, 'span', 'wt-git', `git ${m.step}: ${m.message || 'failed'}`));
-    li.append(h(doc, 'div', 'wt-path', `Worktree: ${m.dir || '(unknown)'}`));
-    if (m.branch) li.append(h(doc, 'div', null, `Branch: ${m.branch} (the uncommitted work is not on it yet)`));
-    if (m.at) li.append(h(doc, 'div', 'wt-since', `Since ${when(m.at)}`));
-    list.append(li);
-  }
-  frag.append(list);
-  const row = h(doc, 'div', 'wt-actions');
-  if (!model.provisional && handlers.onApply) {
-    row.append(button(doc, 'Apply to branch', 'btn-primary wt-apply', handlers.onApply,
-      'Commit the retained work onto the branch in its worktree, where it is staged, then remove the worktree'));
-  }
-  if (recovery && recovery.href) {
-    const span = h(doc, 'span', 'retained-patch-link');
-    const a = h(doc, 'a', null, recovery.kind === 'diff' ? 'Download the run\'s diff patch' : 'Download the recovery patch');
-    a.href = recovery.href;
-    if (recovery.download) a.setAttribute('download', recovery.download);
-    a.title = recovery.kind === 'diff' ? 'The diff the run recorded when it ended' : 'The snapshot taken when the work was retained';
-    a.addEventListener('click', (e) => e.stopPropagation());
-    span.append(a);
-    row.append(span);
-  }
-  if (!model.provisional && handlers.onDiscardRetained) {
-    row.append(button(doc, 'Discard worktree', 'btn hist-discard', handlers.onDiscardRetained,
-      'Save a patch of anything uncommitted, then remove the worktree. The branch is kept.'));
-  }
-  if (row.childNodes.length) frag.append(row);
-  const manual = h(doc, 'details', 'wt-manual');
-  manual.append(h(doc, 'summary', null, 'Commit it yourself'));
-  manual.append(h(doc, 'code', null, model.members
-    .map((m) => `git -C ${sq(m.dir)} status\ngit -C ${sq(m.dir)} add -A\ngit -C ${sq(m.dir)} commit`).join('\n\n')));
-  manual.append(h(doc, 'p', null, 'The changes are already staged in the worktree, so git status lists them under "Changes to be committed". After committing, Discard worktree removes the redundant worktree and clears this notice. A patch of anything still uncommitted is saved first.'));
-  frag.append(manual);
 }
