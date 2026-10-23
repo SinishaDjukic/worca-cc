@@ -72,6 +72,16 @@ workflow), and optionally:
 - **Limits** — runs per day (default 10), a cost cap per run (default $5) and how many event runs may
   run at once in the project (default 1).
 
+Each switch and each rule shows its limits on a line of their own. **Edit limits** changes them: on every rule, and
+on a switch once it has been turned on (before that it shows the defaults it starts with). Runs per day accepts 1 to
+200, the cost cap $0.10 to $1000, runs at a time 1 to 10; anything else is refused. When a limit is reached:
+
+- **Runs at a time:** the event waits in a queue and starts when a run ends (Worca reads it again first, in case it
+  was closed meanwhile).
+- **Runs per day:** the event is skipped, not held for the next day; Recent shows it as "daily cap reached". The
+  count resets at midnight UTC.
+- **Cost cap:** a run that passes it is stopped and its event fails.
+
 A rule that is turned off and on again does not pick up what was opened while it was off.
 
 ## Workspaces
@@ -214,7 +224,7 @@ All routes need the flag; they answer 404 while it is off.
 | `GET /api/automations?workspaceId=` | `{ scope: 'workspace', workspaceId, name, repos: [{ name, projectKey, repo, forge }], rules, events, autoHandle, … }` |
 | `GET /api/automations` | Every rule and the latest events (the overview); a workspace's are keyed `workspaces/<id>` |
 | `POST /api/automations/rules` | `{ projectDir \| workspaceId, event, action, workflowId?, filter?, limits?, guardrailsId?, enabled? }` → 201 `{ rule }` (`rule.scope` is `project` or `workspace`) |
-| `PATCH /api/automations/rules/:id` | `{ enabled?, filter?, limits?, workflowId?, guardrailsId? }` |
+| `PATCH /api/automations/rules/:id` | `{ enabled?, filter?, limits?, workflowId?, guardrailsId? }` (an Auto-handle switch's rule too); a limit outside its range → 400 |
 | `DELETE /api/automations/rules/:id` | |
 | `PUT /api/automations/auto-handle` | `{ projectDir \| workspaceId, key: propose \| fix \| review, on }` → `{ autoHandle }` |
 | `POST /api/automations/events/:id/approve` | Start the fix of a proposed plan |

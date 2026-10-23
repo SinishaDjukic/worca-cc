@@ -9,7 +9,7 @@ import { getDb } from '../src/core/db.mjs';
 import {
   validateRule, normalizeLimits, createRule, listRules, getRule, setAutoHandle, autoHandleState, pollTargets, listEvents, getEvent,
   issueEvent, prEvent, subjectFor, memberForEvent, fixComment, buildTask, createAutomationEngine,
-  DEFAULT_WORKSPACE_LIMITS, workspaceOwnerKey,
+  DEFAULT_WORKSPACE_LIMITS, workspaceOwnerKey, limitsError,
 } from '../src/core/automations.mjs';
 import { azureWebhookItems } from '../src/core/automation-azure.mjs';
 
@@ -280,4 +280,15 @@ test('a deleted workspace\'s rules match nothing; buildTask without a workspace 
   const ev = issueEvent('o/api', issue('o/api', 1));
   assert.doesNotMatch(buildTask(ev, { action: 'fix' }), /workspace/);
   assert.ok(getRule(listRules()[0].id));
+});
+
+test('limitsError: a value outside its range is named; empty or absent values keep the defaults', () => {
+  assert.equal(limitsError(undefined), null);
+  assert.equal(limitsError({ dailyRuns: '', maxCostUsd: null }), null);
+  assert.equal(limitsError({ dailyRuns: 200, maxCostUsd: 0.1, maxConcurrent: 10 }), null);
+  assert.match(limitsError({ dailyRuns: 0 }), /Runs per day must be between 1 and 200/);
+  assert.match(limitsError({ maxCostUsd: 'lots' }), /Cost cap per run must be between 0.1 and 1000/);
+  assert.match(limitsError({ maxConcurrent: 11 }), /Runs at a time must be between 1 and 10/);
+  assert.equal(limitsError([]), 'limits must be an object');
+  assert.match(validateRule({ event: 'issue.opened', action: 'fix', limits: { dailyRuns: 999 } }).error, /Runs per day/);
 });

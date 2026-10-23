@@ -340,7 +340,7 @@ import {
   updateRule as updateAutomationRule, deleteRule as deleteAutomationRule, validateRule as validateAutomationRule, listEvents as listAutomationEvents,
   autoHandleState, setAutoHandle, AUTO_HANDLE, verifyGithubSignature, recordDelivery, normalizeFilter as normalizeAutomationFilter,
   normalizeLimits as normalizeAutomationLimits, forgeOfRepo, DEFAULT_LIMITS as AUTOMATION_DEFAULT_LIMITS, TRIAGE_SYSTEM, triagePrompt, parseTriage, mockTriage,
-  DEFAULT_WORKSPACE_LIMITS as AUTOMATION_WORKSPACE_LIMITS, workspaceOwnerKey, memberForEvent,
+  DEFAULT_WORKSPACE_LIMITS as AUTOMATION_WORKSPACE_LIMITS, workspaceOwnerKey, memberForEvent, limitsError as automationLimitsError,
 } from '../src/core/automations.mjs';
 import { ensureAutomationTemplate, listAutomationTemplates, TEMPLATE_FOR_ACTION } from '../src/core/automation-templates.mjs';
 import { createAzureAutomationHost, azureWebhookItems } from '../src/core/automation-azure.mjs';
@@ -8049,6 +8049,7 @@ app.patch('/api/automations/rules/:id', syncRoute(async (req, res) => {
   const patch = {};
   if (b.enabled !== undefined) { if (typeof b.enabled !== 'boolean') return badRequest(res, 'enabled must be true or false'); patch.enabled = b.enabled; }
   if (b.filter !== undefined) patch.filter = normalizeAutomationFilter(b.filter);
+  if (b.limits !== undefined && automationLimitsError(b.limits)) return badRequest(res, automationLimitsError(b.limits));
   if (b.limits !== undefined) patch.limits = normalizeAutomationLimits(b.limits, cur.scope === 'workspace' ? AUTOMATION_WORKSPACE_LIMITS : AUTOMATION_DEFAULT_LIMITS);
   if (b.workflowId !== undefined) {
     if (cur.action !== 'run') return badRequest(res, 'only a "run" rule names its workflow');

@@ -106,10 +106,29 @@ export function normalizeLimits(raw = {}, defaults = DEFAULT_LIMITS) {
     return int ? Math.floor(n) : Math.round(n * 100) / 100;
   };
   return {
-    dailyRuns: num(l.dailyRuns, defaults.dailyRuns, { min: 1, max: 200, int: true }),
-    maxCostUsd: num(l.maxCostUsd, defaults.maxCostUsd, { min: 0.1, max: 1000 }),
-    maxConcurrent: num(l.maxConcurrent, defaults.maxConcurrent, { min: 1, max: 10, int: true }),
+    dailyRuns: num(l.dailyRuns, defaults.dailyRuns, { ...LIMIT_RANGES.dailyRuns, int: true }),
+    maxCostUsd: num(l.maxCostUsd, defaults.maxCostUsd, LIMIT_RANGES.maxCostUsd),
+    maxConcurrent: num(l.maxConcurrent, defaults.maxConcurrent, { ...LIMIT_RANGES.maxConcurrent, int: true }),
   };
+}
+
+/** The range each limit accepts (normalizeLimits keeps the default outside it). */
+export const LIMIT_RANGES = Object.freeze({
+  dailyRuns: Object.freeze({ min: 1, max: 200, word: 'Runs per day' }),
+  maxCostUsd: Object.freeze({ min: 0.1, max: 1000, word: 'Cost cap per run' }),
+  maxConcurrent: Object.freeze({ min: 1, max: 10, word: 'Runs at a time' }),
+});
+/** Why a limits body is refused (a value given but outside its range), or null. Empty and absent values are fine. */
+export function limitsError(raw) {
+  if (raw == null) return null;
+  if (typeof raw !== 'object' || Array.isArray(raw)) return 'limits must be an object';
+  for (const [k, r] of Object.entries(LIMIT_RANGES)) {
+    const v = raw[k];
+    if (v === undefined || v === null || v === '') continue;
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < r.min || n > r.max) return `${r.word} must be between ${r.min} and ${r.max}`;
+  }
+  return null;
 }
 
 /** Check a rule body. → { ok, rule } | { ok:false, error } (the stored fields, without ids or times). `scope` picks
@@ -117,6 +136,8 @@ export function normalizeLimits(raw = {}, defaults = DEFAULT_LIMITS) {
 export function validateRule(body = {}, { scope = 'project' } = {}) {
   const b = body && typeof body === 'object' ? body : {};
   if (!AUTOMATION_EVENTS.includes(b.event)) return { ok: false, error: `event must be one of ${AUTOMATION_EVENTS.join(', ')}` };
+  const le = limitsError(b.limits);
+  if (le) return { ok: false, error: le };
   if (!ACTIONS_FOR_EVENT[b.event].includes(b.action)) {
     return { ok: false, error: `action for ${b.event} must be one of ${ACTIONS_FOR_EVENT[b.event].join(', ')}` };
   }

@@ -81,6 +81,13 @@ test('a workspace\'s rules: its members\' repositories, the workspace limits, it
   // A partial change keeps the workspace defaults for the rest.
   const p = await call('PATCH', `/api/automations/rules/${rule.id}`, { limits: { dailyRuns: 3 } });
   assert.deepEqual((await p.json()).rule.limits, { dailyRuns: 3, maxCostUsd: 15, maxConcurrent: 1 });
+  // A value outside its range is refused, never silently replaced by the default; the auto-handle rule is editable too.
+  const bad = await call('PATCH', `/api/automations/rules/${rule.id}`, { limits: { dailyRuns: 500 } });
+  assert.equal(bad.status, 400);
+  assert.match((await bad.json()).error, /Runs per day must be between 1 and 200/);
+  const badNew = await call('POST', '/api/automations/rules', { workspaceId: ws.id, event: 'pr.opened', action: 'review', limits: { maxConcurrent: 0 } });
+  assert.equal(badNew.status, 400);
+  assert.match((await badNew.json()).error, /Runs at a time must be between 1 and 10/);
   const g = await (await call('GET', `/api/automations?workspaceId=${ws.id}`)).json();
   assert.equal(g.scope, 'workspace');
   assert.deepEqual(g.repos.map((r) => r.repo).sort(), ['o/a', 'o/b']);
@@ -88,6 +95,9 @@ test('a workspace\'s rules: its members\' repositories, the workspace limits, it
   assert.deepEqual(g.rules.map((r) => r.id), [rule.id]);
   const put = await call('PUT', '/api/automations/auto-handle', { workspaceId: ws.id, key: 'review', on: true });
   assert.deepEqual((await put.json()).autoHandle, { propose: false, fix: false, review: true });
+  const sw = (await (await call('GET', `/api/automations?workspaceId=${ws.id}`)).json()).rules.find((r) => r.origin === 'auto-handle');
+  const edited = await call('PATCH', `/api/automations/rules/${sw.id}`, { limits: { dailyRuns: '2', maxCostUsd: '7.5', maxConcurrent: '2' } });
+  assert.deepEqual((await edited.json()).rule.limits, { dailyRuns: 2, maxCostUsd: 7.5, maxConcurrent: 2 });
   // The overview lists the workspace's rules under its key.
   const all = await (await call('GET', '/api/automations')).json();
   assert.ok(all.rules.every((r) => r.projectKey === `workspaces/${ws.id}`));

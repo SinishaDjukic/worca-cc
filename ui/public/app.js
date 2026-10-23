@@ -38458,6 +38458,17 @@ async function buildAutomationsTab(sec, { target, where, stale, reload, openRun 
       fail(await mcpApi('DELETE', `/api/automations/rules/${encodeURIComponent(rule.id)}`), 'Could not delete the rule');
       await reload();
     },
+    onEditLimits: async (rule) => {
+      const l = rule.limits || lim;
+      const v = await promptModal({ title: 'Edit limits', confirmLabel: 'Save limits', fields: [
+        { id: 'dailyRuns', label: 'Runs per day', value: String(l.dailyRuns), hint: '1 to 200. Past it, new events are skipped (not held for the next day; the count resets at midnight UTC).' },
+        { id: 'maxCostUsd', label: 'Cost cap per run (USD)', value: String(l.maxCostUsd), hint: '0.1 to 1000. A run that passes it is stopped.' },
+        { id: 'maxConcurrent', label: `Runs at a time in ${where}`, value: String(l.maxConcurrent), hint: '1 to 10. Past it, new events wait and start when a run ends.' }] });
+      if (!v) return;
+      fail(await mcpApi('PATCH', `/api/automations/rules/${encodeURIComponent(rule.id)}`,
+        { limits: { dailyRuns: v.dailyRuns, maxCostUsd: v.maxCostUsd, maxConcurrent: v.maxConcurrent } }), 'Could not change the limits');
+      await reload();
+    },
     onApprove: async (ev) => { await approveAutomation(ev); await reload(); },
     onOpenRun: (ev) => openRun(ev, r.data),
     onAddRule: async () => {

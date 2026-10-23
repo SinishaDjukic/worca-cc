@@ -46,7 +46,7 @@ function btn(doc, label, cls, onClick) {
 }
 const isAzure = (repo) => /^dev\.azure\.com\//i.test(String(repo || ''));
 
-/** "Issue opened → Triage and propose" plus its filter and limits, one line each. */
+/** "Issue opened → Triage and propose", its filter in one line (`detail`) and its limits in another (`limits`). */
 export function ruleSummary(rule, workflowNames = {}) {
   const what = rule.action === 'run' ? `Run ${workflowNames[rule.workflowId] || rule.workflowId}` : ACTION_WORDS[rule.action] || rule.action;
   const f = rule.filter || {};
@@ -55,7 +55,15 @@ export function ruleSummary(rule, workflowNames = {}) {
   if (f.excludeLabels?.length) bits.push(`not ${f.excludeLabels.join(', ')}`);
   if (f.triggerLabel) bits.push(`trigger label “${f.triggerLabel}”`);
   if (f.allowLogins?.length) bits.push(`also @${f.allowLogins.join(', @')}`);
-  return { title: `${EVENT_WORDS[rule.event] || rule.event} → ${what}`, detail: [...bits, limitsLine(rule.limits)].filter(Boolean).join(' · ') };
+  return { title: `${EVENT_WORDS[rule.event] || rule.event} → ${what}`, detail: bits.join(' · '), limits: limitsLine(rule.limits) };
+}
+
+/** "Limits: Max 5 runs/day · $15 per run · 1 at a time" and, when the rule exists, its Edit limits button. */
+function limitsRow(doc, limits, onEdit) {
+  const row = h(doc, 'div', 'automations-limits');
+  row.append(h(doc, 'span', 'hint', `Limits: ${limitsLine(limits)}`));
+  if (onEdit) row.append(btn(doc, 'Edit limits', 'btn btn-sm btn-quiet', onEdit));
+  return row;
 }
 
 const AUTO_HANDLE_KEY = Object.freeze({ 'issue.opened:propose': 'propose', 'issue.opened:fix': 'fix', 'pr.opened:review': 'review' });
@@ -122,7 +130,8 @@ export function overrideLine(o) {
  * A project's or a workspace's Automations tab.
  * data: GET /api/automations?projectDir= ({ scope: 'project', rules, events, autoHandle, switches, repo, forge, overriddenBy,
  *   defaultLimits, webhook, azureWebhook, polling }) or ?workspaceId= ({ scope: 'workspace', repos: [{ name, repo, forge }], … })
- * cb: { onSwitch(key, on), onAddRule(), onToggleRule(rule, on), onDeleteRule(rule), onApprove(event), onOpenRun(event), onCheckNow() }
+ * cb: { onSwitch(key, on), onAddRule(), onToggleRule(rule, on), onDeleteRule(rule), onEditLimits(rule), onApprove(event),
+ *   onOpenRun(event), onCheckNow() }
  */
 export function renderAutomations(doc, data, { workflowNames = {}, ...cb } = {}) {
   const root = h(doc, 'div', 'automations');
@@ -154,10 +163,12 @@ export function renderAutomations(doc, data, { workflowNames = {}, ...cb } = {})
     const sw = makeSwitch(doc, { label: s.label, checked: !!data.autoHandle?.[s.key], rowClass: 'automations-switch', data: { switch: s.key } });
     sw.input.addEventListener('change', () => cb.onSwitch?.(s.key, sw.input.checked));
     ah.append(sw.row);
-    // What the switch does, and the limits its rule runs under (the stored rule's once it exists, else the defaults).
+    // What the switch does, and the limits its rule runs under: the stored rule's (editable) once the switch was
+    // turned on, else the defaults it will start with.
     const own = (data.rules || []).find((r) => r.origin === 'auto-handle' && autoHandleKey(r) === s.key);
-    const help = h(doc, 'p', 'hint automations-switch-help', (ws && WORKSPACE_HELP[s.key]) || s.help || '');
-    help.append(h(doc, 'span', 'automations-switch-limits', limitsLine(own?.limits || data.defaultLimits)));
+    const help = h(doc, 'div', 'automations-switch-help');
+    help.append(h(doc, 'p', 'hint', (ws && WORKSPACE_HELP[s.key]) || s.help || ''),
+      limitsRow(doc, own?.limits || data.defaultLimits, own && cb.onEditLimits ? () => cb.onEditLimits(own) : null));
     ah.append(help);
   }
   ah.append(h(doc, 'p', 'hint', azure
@@ -179,7 +190,9 @@ export function renderAutomations(doc, data, { workflowNames = {}, ...cb } = {})
     const top = h(doc, 'div', 'pl-head');
     top.append(h(doc, 'b', '', s.title));
     if (!r.enabled) top.append(h(doc, 'span', 'badge grey', 'Off'));
-    row.append(top, h(doc, 'small', 'hint', s.detail));
+    row.append(top);
+    if (s.detail) row.append(h(doc, 'small', 'hint', s.detail));
+    row.append(limitsRow(doc, r.limits, cb.onEditLimits ? () => cb.onEditLimits(r) : null));
     const acts = h(doc, 'div', 'pl-actions');
     acts.append(btn(doc, r.enabled ? 'Turn off' : 'Turn on', 'btn btn-sm', () => cb.onToggleRule?.(r, !r.enabled)));
     acts.append(btn(doc, 'Delete', 'btn btn-sm', () => cb.onDeleteRule?.(r)));
