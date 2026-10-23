@@ -1458,11 +1458,6 @@
                   </button>
                   <!-- Use git (a Folder project) / Link remote (a Git project without origin): paintProjGitButton
                        shows it and sets the word; POST /api/projects/:key/git-init. -->
-                  <!-- Git event automations (#711): this project's rules and Auto-handle, in Settings › Automations. -->
-                  <button type="button" class="pd-automations btn" data-flag="gitAutomations" data-min-level="advanced">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 3 5 14h6l-1 7 8-11h-6l1-7z"></path></svg>
-                    Automations
-                  </button>
                   <button type="button" class="pd-git btn" data-needs-git hidden>
                     <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.2"></circle><circle cx="6" cy="18" r="2.2"></circle><circle cx="18" cy="9" r="2.2"></circle><path d="M6 8.2v7.6M18 11.2c0 3-3 3.8-9.8 5.6"></path></svg>
                     <span class="pd-git-label">Use git</span>
@@ -1953,10 +1948,7 @@
           <section class="settings-pane hidden" data-tab="automations">
             <section class="card settings-card" id="automations-settings-card" data-min-level="advanced" data-flag="gitAutomations">
               <div class="card-head"><div class="label-row"><h2>Automations</h2></div></div>
-              <p class="hint">Start a workflow when an issue or pull request is opened on GitHub. Pick a project.</p>
-              <label class="automations-project-label">Project
-                <select id="automations-project"></select>
-              </label>
+              <p class="hint">Start a workflow when an issue or pull request is opened. Each project sets its own in its Automations tab.</p>
               <div id="automations-body"></div>
             </section>
           </section><!-- /pane automations -->

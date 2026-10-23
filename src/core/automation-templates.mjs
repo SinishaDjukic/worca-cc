@@ -44,6 +44,17 @@ export const AUTOMATION_TEMPLATES = Object.freeze({
       w('w5', 'n_refine', 'plan', 'n_review', 'plan'), w('w6', 'n_impl', 'done', 'n_review', 'done'),
       w('w7', 'n_review', 'review', 'n_impl', 'fix', { maxCycles: 3 }), w('w8', 'n_review', 'pass', 'n_end', 'result')],
   },
+  // The fix after a person approved a proposed plan: no planner, the task (which quotes the approved plan) feeds both
+  // plan ports, as in Watch PR's wf_pr_fix. Re-planning would only re-confirm what was approved.
+  approvedFix: {
+    id: 'wf_auto_approved_fix', name: 'Approved plan → implement and open a draft PR', domain: 'coding',
+    nodes: [task,
+      { id: 'n_impl', kind: 'agent', key: 'implementer', x: 320, y: 200, config: {} },
+      { id: 'n_review', kind: 'agent', key: 'reviewer', x: 600, y: 200, config: {} }, end(880)],
+    wires: [w('w1', 'n_task', 'task', 'n_impl', 'plan'), w('w2', 'n_task', 'task', 'n_review', 'plan'),
+      w('w3', 'n_impl', 'done', 'n_review', 'done'), w('w4', 'n_review', 'review', 'n_impl', 'fix', { maxCycles: 3 }),
+      w('w5', 'n_review', 'pass', 'n_end', 'result')],
+  },
   // The reviewer's blocking `review` output is deliberately unwired: there is no implementer to loop back to, so a
   // review with findings ends the run (done) and its verdict is what Worca posts.
   review: {

@@ -21,7 +21,9 @@ that is. On Azure DevOps see [Azure DevOps](#azure-devops) for what each event m
 
 ## Auto-handle
 
-**Settings › Automations** (or **Automations** on a project page) has three switches per project:
+Each project's **Automations** tab (on its project page) has three switches, each with a line on what it does and
+the limits it runs under. **Settings › Automations** is the overview: which projects automate what, how events
+arrive, and the latest activity across projects.
 
 - **New issue → triage and propose.** Worca first decides what kind of issue it is (see [Triage](#triage)):
   - a **bug**: it reproduces the issue where it can, finds the root cause and writes a fix plan;
@@ -29,8 +31,9 @@ that is. On Azure DevOps see [Azure DevOps](#azure-devops) for what each event m
   - a **question**, or **unclear**: no run. One comment says so, or asks for the details that are missing.
 
   It posts the plan as an issue comment and stops. No code is changed until a person approves:
-  **Approve the fix** in Worca, or a `/worca approve` comment on the issue from a collaborator
-  (OWNER, MEMBER or COLLABORATOR). The fix then runs with the approved plan, as below.
+  **Approve** in Worca, or a `/worca approve` comment on the issue from a collaborator
+  (OWNER, MEMBER or COLLABORATOR). The fix then implements the approved plan (no new planning), reviews it,
+  and opens a draft PR as below.
 - **New issue → full fix.** Worca fixes the issue, opens a **draft** pull request whose description says
   `Closes #N`, turns on Watch PR for it, and links the PR in an issue comment.
 - **New PR → automatic review.** Worca reviews the PR's head and posts **one** review with inline comments
@@ -79,7 +82,8 @@ needs it; open it in the Workflows view and edit it like any other. Worca never 
 |---|---|
 | Bug → reproduce and root-cause | Triage and propose, for a bug |
 | Issue → plan only | Triage and propose, for a feature request; or pick it in a "run a workflow" rule |
-| Issue → fix and open a draft PR | Full fix, and the fix after an approval |
+| Issue → fix and open a draft PR | Full fix |
+| Approved plan → implement and open a draft PR | The fix after an approval: Implement ⇄ Review on the approved plan, no planner |
 | PR → review | Automatic review |
 
 None of them has a Clarify step: nobody is watching an event run.
@@ -101,7 +105,7 @@ and to everything while the flag is off or no secret is set. A delivery GitHub s
 
 `WORCA_AUTOMATIONS_POLL=0` turns polling off.
 
-**Check now** in Settings › Automations polls at once.
+**Check now** in a project's Automations tab polls at once.
 
 On Azure DevOps, set `WORCA_ADO_WEBHOOK_SECRET` and add service hooks (Project settings › Service hooks ›
 Web Hooks) to `https://<your worca>/api/ingress/azure` for **Work item created**, **Work item updated**,
@@ -162,7 +166,9 @@ GitHub App). Per-project GitHub identities (#705) will be used once they exist.
 - GitHub Enterprise Server and Azure DevOps Server (on-premises), and workspace (multi-project) runs.
 - More events: label added as its own event, `/worca` comment commands besides `approve`, PR review
   comments, pushes to a branch, and CI failing on the default branch.
-- An Automations step in Add project (use the project page's **Automations** button).
+- An Automations step in Add project (use the project page's **Automations** tab).
+- Workspace automations: rules on a workspace that start workspace runs for issues needing changes in several
+  repositories, and own an Azure DevOps project's work items.
 - Waking a suspended hosted instance on a webhook.
 
 ## API

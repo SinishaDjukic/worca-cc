@@ -30,15 +30,12 @@ export const ACTIONS_FOR_EVENT = Object.freeze({
 /** Each switch's `help` says what it does, in the words Settings › Automations shows under it. */
 export const AUTO_HANDLE = Object.freeze({
   propose: Object.freeze({ event: 'issue.opened', action: 'propose', label: 'New issue → triage and propose',
-    help: 'Works out whether the issue is a bug or a feature request, from its type or labels, else with one cheap model call. '
-      + 'A bug gets a reproduction, its root cause and a fix plan; a feature request gets a plan. The plan is posted as a comment, '
-      + 'and nothing changes until a person approves it here or replies /worca approve. A question or an unclear issue gets one comment and no run.' }),
+    help: 'Bug: finds the root cause and posts a fix plan. Feature request: posts a plan. Nothing changes until someone '
+      + 'approves (here, or /worca approve). Questions and unclear issues get a comment, no run.' }),
   fix: Object.freeze({ event: 'issue.opened', action: 'fix', label: 'New issue → full fix',
-    help: 'Fixes the issue straight away, with no approval step: plan, implement and review, then a draft pull request '
-      + 'that closes the issue, with Watch PR turned on. Nothing is merged.' }),
+    help: 'Fixes it without asking, then opens a draft PR that closes the issue and watches it. Never merges.' }),
   review: Object.freeze({ event: 'pr.opened', action: 'review', label: 'New PR → automatic review',
-    help: 'Reviews each new or ready pull request, and each new push to it, and posts one comment-only review with inline '
-      + 'comments. Never approves, requests changes or merges; skips drafts and Worca\'s own pull requests.' }),
+    help: 'Posts one comment-only review per new PR or push, with inline comments. Never approves or merges; skips drafts and Worca\'s own PRs.' }),
 });
 export const TRUSTED_ASSOCIATIONS = Object.freeze(['OWNER', 'MEMBER', 'COLLABORATOR']);
 export const DEFAULT_TRIGGER_LABEL = 'worca';
@@ -509,7 +506,8 @@ export function buildTask(ev, rule, { plan = null, triage = null } = {}) {
   }
   if (rule.action === 'fix') {
     const approved = plan ? `\n\nA person approved this plan for the fix:\n\n${quote(plan)}` : '';
-    return `${head}${body}${approved}\n\nFix this ${issueWord(ev.repo)}. Keep the change focused on it, add or update tests, and leave the repository passing them.`;
+    if (plan) return `${head}${body}${approved}\n\nImplement the approved plan. Keep the change focused on it, add or update tests, and leave the repository passing them.`;
+    return `${head}${body}\n\nFix this ${issueWord(ev.repo)}. Keep the change focused on it, add or update tests, and leave the repository passing them.`;
   }
   if (rule.action === 'review') {
     const base = ev.baseRef ? `\`${ev.baseRemote || 'origin'}/${ev.baseRef}\`` : 'its base branch';
@@ -627,7 +625,8 @@ export function createAutomationRunner({ tick, intervalMs = 60_000, env = proces
  *   ownLogins(repo)        → logins that are Worca itself on that host (best effort)
  *   isOwnPr(url)           → true for a PR a Worca run opened
  *   startRun(body, { startedBy, event, rule }) → { status, body }   (POST /api/run's handler)
- *   ensureTemplate(action, { triage }) → the workflow id an action runs (a propose run: by its triage)
+ *   ensureTemplate(action, { triage, approved }) → the workflow id an action runs (a propose run: by its triage; a fix
+ *                          with an approved plan: implement and review only)
  *   classify(ev)           → { kind: bug|feature|question|unclear, reason } (one cheap model call) | null
  *   host.addLabels({ projectDir, repo, number, labels }) → { ok }  (optional: the label after an AI triage)
  *   pipelineOfRun(runId)   → pipeline id | null;  pipelineStatus(id) → status | null;  pipelineCost(id) → USD
@@ -669,7 +668,7 @@ export function createAutomationEngine(deps = {}) {
       await labelAfterAi(rule, ev, triage);
     }
     let workflowId = action === 'run' ? rule.workflowId : null;
-    try { if (!workflowId) workflowId = await deps.ensureTemplate(action, { triage: triage?.kind || null }); }
+    try { if (!workflowId) workflowId = await deps.ensureTemplate(action, { triage: triage?.kind || null, approved: !!plan }); }
     catch (err) { return fail(event, rule, 'start-refused', err?.message); }
     let sourceBranch = null;
     if (action === 'review') {

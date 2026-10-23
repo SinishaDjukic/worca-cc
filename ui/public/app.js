@@ -271,7 +271,7 @@ import { PROBE_DEBOUNCE_MS, defaultAddMode, detectModel } from './project-add.mj
 import { presetMenuGroups, presetHiddenItems, presetNodePick, renderBrokenCard, resetItem, saveDialogError, configWithPreset } from './run-presets-picker.mjs';
 import { runPresetScopeOptions, runPresetRequest, runPresetErrorText, RUN_PRESET_SAVED_NOTE } from './run-presets-save.mjs';
 import { renderPresetsList } from './run-presets-view.mjs';
-import { renderAutomations } from './automations-view.mjs';
+import { renderAutomations, renderAutomationsOverview } from './automations-view.mjs';
 import { presetSetupSummary, presetSavedNote, workflowNamesFrom } from './run-presets-names.mjs';
 import { setupFromBody } from '../../src/shared/run-presets.mjs';
 import { createTagInput, tagChip, fetchTagVocabulary, createDimensionSlots, createDimensionEditor, flashFilled, missingSlot } from './tag-input.mjs';
@@ -1681,7 +1681,10 @@ function handleServerMessage(msg) {
   }
 
   if (msg.type === 'automations-changed') {
-    if (currentView() === 'settings' && currentSettingsTab === 'automations' && flagOn('gitAutomations')) void loadAutomationsView(automationsProjectKey);
+    if (!flagOn('gitAutomations')) return;
+    if (currentView() === 'settings' && currentSettingsTab === 'automations') void loadAutomationsView();
+    const sec = projDetail && projDetail.screen.querySelector('.pd-sec-automations');
+    if (sec && sec.isConnected) void buildPdAutomations(sec, projDetail.key);
     return;
   }
 
@@ -12937,7 +12940,7 @@ const capFirst = (t) => (t ? t[0].toUpperCase() + t.slice(1) : t);
 // (Memory tab), "<key>/memory/<enc name>" (that file open) or "<key>/away" (Away mode tab). Keys are `<slug>-<8hex>`
 // (store.mjs#projectKey) and never contain "/", so the first slash splits key from tab. An
 // unknown tab word reads as Overview (the hash is left alone, as History leaves an odd param alone).
-const PROJ_TABS = ['overview', 'team', 'memory', 'settings', 'away', 'mcp', 'actions'];
+const PROJ_TABS = ['overview', 'team', 'memory', 'settings', 'away', 'mcp', 'actions', 'automations'];
 function parseProjParam(param = '') {
   const s = String(param || '');
   if (!s) return null;
@@ -12952,7 +12955,7 @@ function parseProjParam(param = '') {
 }
 // The canonical param for a tab: Overview is plain '<key>', never '<key>/overview'.
 function projParamFor(key, tab = 'overview', sub = '') {
-  if (tab === 'team' || tab === 'settings' || tab === 'mcp' || tab === 'actions') return `${key}/${tab}`;
+  if (tab === 'team' || tab === 'settings' || tab === 'mcp' || tab === 'actions' || tab === 'automations') return `${key}/${tab}`;
   if (tab !== 'memory') return key;
   return sub ? `${key}/memory/${encodeURIComponent(sub)}` : `${key}/memory`;
 }
@@ -12995,7 +12998,6 @@ function openProjDetail(p, parsed, { instant = false } = {}) {
   screen.querySelector('.pd-new').addEventListener('click', () => { newPipelineForProject(p.key); });
   screen.querySelector('.pd-history').addEventListener('click', () => { openRunsForProject(p.key); });
   screen.querySelector('.pd-remove').addEventListener('click', () => { void removeProjectFromPage(p.key); });
-  screen.querySelector('.pd-automations')?.addEventListener('click', () => { location.hash = `settings/automations/${encodeURIComponent(p.key)}`; });
   screen.querySelector('.pd-git').addEventListener('click', (e) => {
     const action = e.currentTarget.dataset.action;
     if (action) openProjectGitModal(p.key, action, () => projDetail && projDetail.screen.querySelector('.pd-git'));
@@ -13192,6 +13194,7 @@ const PD_TAB_ICONS = {
   team: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"></circle><path d="M3.5 19c.6-3 2.8-4.6 5.5-4.6S13.9 16 14.5 19"></path><circle cx="17.5" cy="9.5" r="2.4"></circle><path d="M15.5 14.6c2.7 0 4.4 1.4 5 4.4"></path></svg>',
   mcp: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v5M15 3v5"></path><path d="M6 8h12v3a6 6 0 0 1-12 0z"></path><path d="M12 17v4"></path></svg>',
   actions: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5l11 7-11 7z"></path></svg>',
+  automations: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3 5 14h6l-1 7 8-11h-6l1-7z"></path></svg>',
 };
 // Table-driven, like HD_TABS. `build(sec, key)` takes the KEY (buildArgs), never the project object.
 const PD_TABS = [
@@ -13201,6 +13204,8 @@ const PD_TABS = [
   { key: 'settings', label: 'Settings', level: 'advanced', badge: () => null, visible: () => true, build: (sec, key) => buildPdSettings(sec, key) },
   { key: 'mcp', label: 'Sets', level: 'advanced', badge: () => null, visible: () => true, build: (sec, key) => buildPdMcp(sec, key) },
   { key: 'actions', needsGit: true, label: 'Actions', level: 'advanced', badge: () => null, visible: () => true, build: (sec, key) => buildPdActions(sec, key) },
+  // Git event automations (#711): shown while the gitAutomations flag is on (read when the page opens).
+  { key: 'automations', needsGit: true, label: 'Automations', level: 'advanced', badge: () => null, visible: () => flagOn('gitAutomations'), build: (sec, key) => buildPdAutomations(sec, key) },
 ];
 function initPdTabs(screen, p) {
   initDetailTabs(screen, PD_TABS.map((t) => ({ ...t, icon: PD_TAB_ICONS[t.key] })), p, {
@@ -37425,7 +37430,7 @@ function showSettingsTab(param = '') {
   }
   if (tab === 'tags') { void loadTagsTeam(); void loadLabelsSection(); }
   if (tab === 'presets') void loadPresetsView();
-  if (tab === 'automations') void loadAutomationsView(sub);
+  if (tab === 'automations') void loadAutomationsView();
   if (tab === 'ask') void paintAskMcpBlock(document.getElementById('ask-mcp-host'), { api: mcpApi });
   if (tab === 'guardrails') loadGuardrailsView(sub);
   if (tab === 'memory') loadMemoryTab(sub);
@@ -38393,31 +38398,35 @@ async function deletePreset(p) {
 }
 const presetChangeError = (r) => notify({ tone: 'err', title: 'Could not change the preset', detail: (r.data && r.data.error) || `HTTP ${r.status}` });
 
-// Settings › Automations (automations-view.mjs, docs/git-automations.md): one project at a time — the param after the
-// tab names it (#settings/automations/<projectKey>), else the first project with a rule, else the first project.
-let automationsProjectKey = '';
-let automationsSeq = 0;
-async function loadAutomationsView(sub = '') {
-  const host = document.getElementById('automations-body');
-  const pick = document.getElementById('automations-project');
-  if (!host || !pick || !flagOn('gitAutomations')) return;
-  const seq = ++automationsSeq;
-  if (!(state.projects || []).length) await loadProjects();
-  const projects = (state.projects || []).filter((p) => p && p.key && p.path);
-  if (!projects.length) { host.replaceChildren(Object.assign(document.createElement('div'), { className: 'hist-empty', textContent: 'Add a project first.' })); return; }
-  const wanted = decodeURIComponent(String(sub || '')) || automationsProjectKey;
-  const proj = projects.find((p) => p.key === wanted) || projects[0];
-  automationsProjectKey = proj.key;
-  pick.replaceChildren(...projects.map((p) => Object.assign(document.createElement('option'), { value: p.key, textContent: p.name, selected: p.key === proj.key })));
-  pick.onchange = () => { location.hash = `settings/automations/${encodeURIComponent(pick.value)}`; };
+// Git event automations (automations-view.mjs, docs/git-automations.md). A project page's Automations tab holds the
+// project's switches and rules; Settings › Automations is the overview across projects.
+const automationsFail = (res, title) => { if (!res.ok) notify({ tone: 'err', title, detail: (res.data && res.data.error) || `HTTP ${res.status}` }); };
+const automationsErr = (r) => Object.assign(document.createElement('p'), { className: 'hint err', textContent: (r.data && r.data.error) || `HTTP ${r.status}` });
+/** Approve a waiting plan: the confirm, then the fix run. */
+async function approveAutomation(ev) {
+  if (!(await confirmModal({ title: 'Approve', message: `Start the fix for #${ev.number} with the proposed plan? Worca opens a draft pull request when it is done.`, confirmLabel: 'Start the fix' }))) return;
+  automationsFail(await mcpApi('POST', `/api/automations/events/${encodeURIComponent(ev.id)}/approve`, {}), 'The fix did not start');
+}
+function openAutomationRun(ev, projectKey) {
+  if (ev.runId && runs.has(ev.runId)) { location.hash = `running/${ev.runId}`; return; }
+  location.hash = `history/${histDetailParam({ id: ev.pipelineId, projectKey })}`;
+}
+
+// Project page › Automations. `sec` is the tab's section; a reload repaints it in place.
+let pdAutomationsSeq = 0;
+async function buildPdAutomations(sec, key) {
+  sec.classList.add('pd-sec-automations');
+  const proj = projectByKey(key);
+  if (!proj || !flagOn('gitAutomations')) return;
+  const seq = ++pdAutomationsSeq;
   const [r, wf] = await Promise.all([mcpApi('GET', `/api/automations?projectDir=${encodeURIComponent(proj.path)}`), mcpApi('GET', '/api/workflows')]);
-  if (seq !== automationsSeq) return;
-  if (!r.ok) { host.replaceChildren(Object.assign(document.createElement('p'), { className: 'hint err', textContent: (r.data && r.data.error) || `HTTP ${r.status}` })); return; }
+  if (seq !== pdAutomationsSeq || !sec.isConnected) return;
+  if (!r.ok) { sec.replaceChildren(automationsErr(r)); return; }
   const workflows = (wf.ok && Array.isArray(wf.data?.workflows) ? wf.data.workflows : []).map((w) => ({ id: w.id, name: w.name || w.id }));
   const workflowNames = Object.fromEntries([['wf_default', 'Default'], ...workflows.map((w) => [w.id, w.name])]);
-  const fail = (res, title) => { if (!res.ok) notify({ tone: 'err', title, detail: (res.data && res.data.error) || `HTTP ${res.status}` }); };
-  const reload = () => loadAutomationsView(proj.key);
-  host.replaceChildren(renderAutomations(document, r.data, {
+  const fail = automationsFail;
+  const reload = () => buildPdAutomations(sec, key);
+  sec.replaceChildren(renderAutomations(document, r.data, {
     workflowNames,
     onSwitch: async (key, on) => { const res = await mcpApi('PUT', '/api/automations/auto-handle', { projectDir: proj.path, key, on }); fail(res, 'Could not change Auto-handle'); await reload(); },
     onCheckNow: async () => { fail(await mcpApi('POST', '/api/automations/poll', {}), 'Could not check GitHub'); await reload(); },
@@ -38427,15 +38436,8 @@ async function loadAutomationsView(sub = '') {
       fail(await mcpApi('DELETE', `/api/automations/rules/${encodeURIComponent(rule.id)}`), 'Could not delete the rule');
       await reload();
     },
-    onApprove: async (ev) => {
-      if (!(await confirmModal({ title: 'Approve the fix', message: `Start the fix for #${ev.number} with the proposed plan? Worca opens a draft pull request when it is done.`, confirmLabel: 'Start the fix' }))) return;
-      fail(await mcpApi('POST', `/api/automations/events/${encodeURIComponent(ev.id)}/approve`, {}), 'The fix did not start');
-      await reload();
-    },
-    onOpenRun: (ev) => {
-      if (ev.runId && runs.has(ev.runId)) { location.hash = `running/${ev.runId}`; return; }
-      location.hash = `history/${histDetailParam({ id: ev.pipelineId, projectKey: proj.key })}`;
-    },
+    onApprove: async (ev) => { await approveAutomation(ev); await reload(); },
+    onOpenRun: (ev) => openAutomationRun(ev, key),
     onAddRule: async () => {
       const v = await promptModal({ title: 'Add rule', confirmLabel: 'Add rule', fields: [
         { id: 'when', label: 'When', value: 'issue.opened:propose', options: [
@@ -38461,6 +38463,23 @@ async function loadAutomationsView(sub = '') {
       fail(res, 'Could not add the rule');
       await reload();
     },
+  }));
+}
+
+// Settings › Automations: the overview. Each project row opens that project's Automations tab.
+let automationsOverviewSeq = 0;
+async function loadAutomationsView() {
+  const host = document.getElementById('automations-body');
+  if (!host || !flagOn('gitAutomations')) return;
+  const seq = ++automationsOverviewSeq;
+  if (!(state.projects || []).length) await loadProjects();
+  const r = await mcpApi('GET', '/api/automations');
+  if (seq !== automationsOverviewSeq) return;
+  if (!r.ok) { host.replaceChildren(automationsErr(r)); return; }
+  host.replaceChildren(renderAutomationsOverview(document, r.data, (state.projects || []).filter((p) => p && p.key), {
+    onOpenProject: (key) => { location.hash = `projects/${projParamFor(key, 'automations')}`; },
+    onApprove: async (ev) => { await approveAutomation(ev); await loadAutomationsView(); },
+    onOpenRun: (ev) => openAutomationRun(ev, ev.projectKey),
   }));
 }
 

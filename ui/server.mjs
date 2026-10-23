@@ -7853,7 +7853,9 @@ const automations = createAutomationEngine({
   ownLogins: (repo) => automationHostFor(repo).ownLogins(repo),
   isOwnPr: (url) => !!getDb().prepare('SELECT 1 FROM pipelines WHERE pr_url = ? UNION SELECT 1 FROM pipeline_member_prs WHERE pr_url = ? LIMIT 1').get(url, url),
   // A feature request's proposal is a plan for the change, a bug's a reproduction and root cause.
-  ensureTemplate: (action, { triage = null } = {}) => ensureAutomationTemplate(action === 'propose' && triage === 'feature' ? 'planOnly' : TEMPLATE_FOR_ACTION[action] || 'fix'),
+  // A fix after an approved plan goes straight to Implement ⇄ Review.
+  ensureTemplate: (action, { triage = null, approved = false } = {}) => ensureAutomationTemplate(
+    action === 'propose' && triage === 'feature' ? 'planOnly' : action === 'fix' && approved ? 'approvedFix' : TEMPLATE_FOR_ACTION[action] || 'fix'),
   classify: automationClassify,
   startRun: async (body, { startedBy, trigger }) => {
     const out = await invokeStartRun(body, null, { startedBy, automation: true });

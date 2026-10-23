@@ -981,7 +981,6 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .automations-switches .switch-row{margin:10px 0 2px;}
 .automations-switch-help{margin:0 0 6px 46px;}
 .automations-switch-limits{display:block;color:var(--ink-3);}
-.automations-project-label{display:flex;flex-direction:column;gap:4px;margin-bottom:8px;}
 /* Workflow (60%) and the engine that runs it (40%) share a row; the engine hints span it below. */
 .wf-engine-row{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);column-gap:18px;align-items:start;}
 .wf-engine-row > *{min-width:0;}

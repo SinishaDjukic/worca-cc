@@ -227,7 +227,7 @@ function harness({ clock = { t: T0 + 120_000 } } = {}) {
     },
     ownLogins: async () => ['worca-bot'],
     isOwnPr: async (url) => url.endsWith('/pull/99'),
-    ensureTemplate: async (action) => `wf_tpl_${action}`,
+    ensureTemplate: async (action, o = {}) => `wf_tpl_${action}${o.approved ? '_approved' : ''}`,
     startRun: async (body, opts) => {
       const runId = `run-${++seq}`;
       calls.start.push({ body, opts });
@@ -351,8 +351,8 @@ test('engine: propose a fix posts the plan, waits, and a collaborator\'s /worca 
     created_at: iso(h.clock.t), updated_at: iso(h.clock.t) });
   await h.engine.tick();
   assert.equal(h.calls.start.length, 2);
-  assert.equal(h.calls.start[1].body.workflowId, 'wf_tpl_fix');
-  assert.match(h.calls.start[1].body.source.prompt, /A person approved this plan/);
+  assert.equal(h.calls.start[1].body.workflowId, 'wf_tpl_fix_approved', 'an approved plan goes straight to implement and review');
+  assert.match(h.calls.start[1].body.source.prompt, /A person approved this plan[\s\S]*Implement the approved plan/);
   assert.equal(getEvent(ev.id).approvedBy, 'github:carol');
   h.finish(2);
   await h.engine.tick();
