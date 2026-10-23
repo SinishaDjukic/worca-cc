@@ -137,6 +137,7 @@ import { registerScopeSwitchCard } from './chat/scope-switch-card.mjs';
 import { registerFilesCard, filesForViewer, fileViewerUrls } from './chat/files-card.mjs';
 import { createTerminalPane } from './terminal-pane.mjs';
 import { notify, announce, withButton, fieldError, clearFieldErrors, cardAlert, trackDirty, splitMessage, BUTTON_DONE_MS } from './feedback.mjs';
+import { layoutDialog, watchDialogEdges } from './dialog-layout.mjs';
 import { setEngineLocks, engineLock, applyEngineLocks } from './engine-locks.mjs';
 import { guardModal, dialogOpen } from './modal-guard.mjs';
 import { createVoiceController } from './ask-voice.mjs';
@@ -980,6 +981,8 @@ const el = {
   reportCreate: $('#report-create-issue'),
   reportFiled: $('#report-filed'),
 };
+// The shared dialog anatomy (dialog-layout.mjs): keep the head/foot edge dividers of every static .dlg current.
+watchDialogEdges(document);
 
 // #555: one dirty tracker per Settings card, keyed by card id (settingsCardDirty). Declared up here,
 // not beside postSettingsCard: the Chat and Root cards create theirs at top level further up the file.
@@ -18445,6 +18448,8 @@ function openModelEditorDialog() {
   if (!mvState.editing && mvState.prefill) prefillModelEditor(editor, mvState.prefill);
   const title = editor.querySelector('.mv-editor-title');
   if (title) title.id = 'mv-editor-heading';
+  // The shared dialog anatomy: the title stays pinned, the Save/Cancel row too (dialog-layout.mjs).
+  layoutDialog(editor, { head: [title], foot: [editor.querySelector(':scope > .mv-editor-msg'), editor.querySelector(':scope > .mv-editor-btns')] });
   el.modelEditorHost.replaceChildren(editor);
   mvEditor.lastFocus = document.activeElement;
   el.modelEditorModal.classList.remove('hidden');
