@@ -2964,7 +2964,7 @@ button.pd-ov-card:hover{border-color:var(--ink-3);}
 .stat-label{display:flex;align-items:center;gap:8px;color:var(--ink-2);font-size:var(--fs-meta);font-weight:500;}
 .stat-link{color:inherit;text-decoration:none;}
 .stat-link:hover{color:var(--ink);text-decoration:underline;}
-.stat-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:3px;}
+.stat-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
 .stat-ico{width:16px;height:16px;color:var(--ink-3);flex:0 0 auto;}
 .stat-delta,.stat-mult{margin-left:auto;background:var(--field);color:var(--ink-2);font-size:11px;font-weight:600;
   padding:2px 8px;border-radius:var(--r-xs);white-space:nowrap;}
@@ -9864,10 +9864,6 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .ask-card.chat-rc > .chat-rc-q :is(.qpanel,.qblock){padding-left:0;padding-right:0;border-radius:0;background:none;}
 .ask-card.chat-rc .chat-rc-art-rows{border:0;border-radius:0;}
 
-/* One border level per card (review B2): inside a chat card the nested boxes drop their border and take a tint. It stays LAST in the file: at (0,2,0) it only beats earlier rules of the same weight, and a
-   later state rule resetting the border shorthand would draw the box again. Outside cards the base rules keep theirs. */
-:is(.ask-card,.chat-rc,.shape-feature) :is(.qpanel,.qblock,.af-choice,.af-form,.issue-detail,.opt-row,.shape-plan-notes,
-  .outline-slice,.shape-plan-outline-change,.chat-rc-result,.shape-card){border:0;background:var(--field);}
 /* Requirements page (plans/requirements-design.md section 6). Tokens only. */
 /* The list: the filter tabs and New feature, then one card of rows per project / workspace. A row is
    id · title over its meta line · the state badge or run pill · the cost; on a phone the meta line
@@ -9890,7 +9886,7 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .req-title{font-weight:500;overflow-wrap:anywhere}
 .req-row .req-row-meta{margin:0}
 .req-row .req-row-meta.need{color:var(--amber-ink-strong)}
-.req-row .pill-run{padding:5px 10px;font-size:11.5px}
+.req-row .pill-run{padding:5px 10px;font-size:12px}
 /* A run that is not running, done or failed (paused, unknown): a quiet pill; only a live run's dot pulses. */
 .req-run:not(.peach):not(.green):not(.red){background:var(--field);color:var(--ink-2)}
 .req-run:not(.peach):not(.green):not(.red) .pdot{background:var(--ink-3)}
@@ -9918,12 +9914,12 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .req-head{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:16px}
 .req-head-main{display:flex;flex-direction:column;gap:8px;min-width:0}
 .req-head-title{display:flex;flex-wrap:wrap;align-items:center;gap:10px;min-width:0}
-.req-head-title .req-id{font-size:14px}
+.req-head-title .req-id{font-size:15px}
 .req-head h2{margin:0;font-size:22px;font-weight:700;letter-spacing:-.015em;overflow-wrap:anywhere}
 .req-chips{display:flex;flex-wrap:wrap;gap:8px}
 .req-head-tools{display:flex;align-items:center;gap:8px;margin-left:auto}
 /* A small borderless icon button: the pencils, add / remove, the header's ⋯. */
-.req-ico{display:inline-grid;place-items:center;flex:none;width:28px;height:28px;padding:0;border:0;border-radius:8px;background:transparent;color:var(--ink-3);cursor:pointer}
+.req-ico{display:inline-grid;place-items:center;flex:none;width:28px;height:28px;padding:0;border:0;border-radius:var(--r-md);background:transparent;color:var(--ink-3);cursor:pointer}
 .req-ico:hover:not(:disabled),.req-ico[aria-expanded="true"]{background:var(--hover);color:var(--ink)}
 .req-ico:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-ico:disabled{opacity:.45;cursor:not-allowed}
@@ -9948,8 +9944,8 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .req-round-n{font-size:12px;font-weight:600;color:var(--ink-2)}
 .req-round .req-round-note{margin:0}
 .req-round-qt{font-size:13px}
-.req-round-answer{margin:2px 0 0;font-size:12.5px;color:var(--ink-2)}
-.req-round-answer code{font-family:var(--mono);font-size:11.5px;color:var(--ink-3)}
+.req-round-answer{margin:2px 0 0;font-size:13px;color:var(--ink-2)}
+.req-round-answer code{font-family:var(--mono);font-size:12px;color:var(--ink-3)}
 .req-change{font-size:12px}
 .req-orient{padding:14px 18px}
 .req-orient summary{cursor:pointer;font-size:13px;font-weight:600}
@@ -9966,7 +9962,7 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .req-ready-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
 .req-ready-foot > .hint{margin:0}
 .req-ready-btns{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-left:auto}
-.req-start-anyway{font-size:12.5px}
+.req-start-anyway{font-size:13px}
 .req-start:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
 /* The spec card. */
 .req-spec{display:flex;flex-direction:column;gap:14px}
@@ -9983,14 +9979,14 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .req-item-text{flex:1;min-width:0}
 .req-add{flex-wrap:nowrap;align-items:center;margin-top:8px}
 .req-add input{flex:1 1 auto;width:auto;min-width:0}
-.req-assume{margin:6px 0 0;padding:10px 12px;border-radius:10px}
+.req-assume{margin:6px 0 0;padding:10px 12px;border-radius:var(--r-md)}
 .req-assume.open{background:var(--amber-wash)}
 /* One row above 600px: id · text · the Confirm / Reject toggle (or the frozen version's badge). */
 .req-assume{flex-wrap:nowrap;align-items:center}
 .req-assume .req-item-text{flex:1 1 0}
 .req-assume > .req-toggle,.req-assume > .badge{flex:none}
 @media (max-width:600px){.req-assume{flex-wrap:wrap}.req-assume .req-item-text{flex:1 1 calc(100% - 64px)}.req-assume > .req-toggle{margin-left:auto}}
-.req-more{align-self:flex-start;font-size:12.5px}
+.req-more{align-self:flex-start;font-size:13px}
 .req-new select,.req-new input,.req-new textarea,.req-edit input,.req-edit textarea{width:100%;box-sizing:border-box}
 .req-edit{display:flex;flex-direction:column;gap:8px;margin-top:6px}
 .req-edit .req-actions{margin:0}
@@ -10007,7 +10003,7 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
    Decide's "Show the other N"), and the start-anyway link's disabled look. */
 .req-link{appearance:none;-webkit-appearance:none;display:inline;background:none;border:0;padding:0;margin:0;font:inherit;font-size:12px;color:var(--ink-2);cursor:pointer;text-align:left;text-decoration:underline;text-underline-offset:2px}
 .req-link:hover{color:var(--ink)}
-.req-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:4px}
+.req-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs)}
 .req-start-anyway:disabled{opacity:.45;cursor:not-allowed}
 /* Decide (board Decisions.dc.html): one row per assumption, id · text · a Confirm / Reject toggle. */
 .req-left > .req-decide{margin:0;padding:16px 18px 10px}
@@ -10038,18 +10034,18 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .req-build-field{display:flex;flex-direction:column;gap:6px;flex:1 1 200px;min-width:0}
 .req-build-field label{font-size:12px;font-weight:600;color:var(--ink-2)}
 .req-build-field .req-build-warn{margin:0}
-.req-build-field select,.req-build-field input{box-sizing:border-box;padding-top:9px;padding-bottom:9px;font-size:13px}
+.req-build-field select,.req-build-field input{box-sizing:border-box;font-size:13px}   /* the shared 32px field */
 .req-build-go:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
 @media (max-width:600px){.req-build{grid-template-columns:1fr;padding:16px 18px}.req-build-go{justify-self:start}}
 /* Started (board Started.dc.html): the runs card, the changed-since notice, the spec version switch. */
 .req-runs{padding:16px 18px;display:flex;flex-direction:column;gap:12px}
 .req-runs .req-card-head{margin:0}
 .req-run-rows{display:flex;flex-direction:column;gap:8px}
-.req-run-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:14px;align-items:center;padding:12px 14px;border-radius:12px;background:var(--field);color:var(--ink);text-decoration:none}
+.req-run-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:14px;align-items:center;padding:12px 14px;border-radius:var(--r-md);background:var(--field);color:var(--ink);text-decoration:none}
 a.req-run-row:hover{background:var(--hover)}
 a.req-run-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-run-row.gone{grid-template-columns:minmax(0,1fr)}
-.req-run-row .pill-run{padding:5px 10px;font-size:11.5px}
+.req-run-row .pill-run{padding:5px 10px;font-size:12px}
 .req-run-main{display:flex;flex-direction:column;gap:2px;min-width:0}
 .req-run-main .hint{margin:0}
 .req-run-label{font-weight:500;font-size:13px;overflow-wrap:anywhere}
@@ -10057,15 +10053,15 @@ a.req-run-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-run-go{color:var(--ink-3)}
 .req-runs .req-run-total{margin:0}
 .req-run-total code{font-family:var(--mono)}
-.req-changed{display:flex;gap:12px;align-items:flex-start;padding:14px 16px;border-radius:14px;background:var(--amber-wash);border:1px solid var(--amber-bg)}
+.req-changed{display:flex;gap:12px;align-items:flex-start;padding:14px 16px;border-radius:var(--r-md);background:var(--amber-wash);border:1px solid var(--amber-bg)}
 .req-changed > svg{flex:none;margin-top:1px;color:var(--amber-ink-strong)}
 .req-changed-body{display:flex;flex-direction:column;gap:6px;flex:1;min-width:0}
-.req-changed-body b{font-size:13.5px}
+.req-changed-body b{font-size:13px}
 .req-changed-body p{margin:0;font-size:13px;color:var(--ink-2)}
-.req-change-line{font-size:13px;padding:8px 10px;background:var(--surface);border-radius:10px;overflow-wrap:anywhere}
+.req-change-line{font-size:13px;padding:8px 10px;background:var(--surface);border-radius:var(--r-md);overflow-wrap:anywhere}
 .req-change-line .req-id{margin-right:4px}
 .req-del{color:var(--ink-2);text-decoration:line-through}
-.req-ins{background:var(--green-bg);border-radius:4px;padding:0 3px;text-decoration:none;-webkit-box-decoration-break:clone;box-decoration-break:clone}
+.req-ins{background:var(--green-bg);border-radius:var(--r-xs);padding:0 3px;text-decoration:none;-webkit-box-decoration-break:clone;box-decoration-break:clone}
 .req-changed .req-actions{margin:2px 0 0}
 .req-spec > .req-card-head{flex-wrap:wrap}
 .req-spec .req-spec-ver{flex:1;min-width:0}
@@ -10082,8 +10078,8 @@ a.req-run-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .viewer-modal.req-dlg-wrap{place-items:start center;padding-top:min(18vh,180px)}
 .req-dlg-wrap .card.req-dialog{width:min(560px,100%);box-sizing:border-box;box-shadow:var(--shadow-sheet);padding:24px 26px;display:flex;flex-direction:column;gap:14px}
 .req-dialog h2{margin:0;font-size:18px;font-weight:700;letter-spacing:-.01em}
-.req-dlg-lead{margin:0;font-size:13.5px;color:var(--ink-2)}
-.req-dlg-fail{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:10px;background:var(--amber-wash);border:1px solid var(--amber-bg);font-size:13px}
+.req-dlg-lead{margin:0;font-size:13px;color:var(--ink-2)}
+.req-dlg-fail{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:var(--r-md);background:var(--amber-wash);border:1px solid var(--amber-bg);font-size:13px}
 .req-dlg-fail ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
 .req-dlg-fail li{display:flex;gap:10px;align-items:flex-start}
 .req-dlg-fail li > svg{flex:none;margin-top:1px;color:var(--amber-ink-strong)}
@@ -10102,7 +10098,7 @@ a.req-run-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-group-head .req-group-brief{margin:0;color:var(--ink-2)}
 .req-brief-link{color:var(--blue-ink-strong);font-weight:600;text-decoration:underline;text-underline-offset:2px}
 .req-brief-link:hover{color:var(--ink)}
-.req-brief-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:4px}
+.req-brief-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs)}
 .req-brief-page{max-width:980px}
 .req-brief-head{display:flex;flex-direction:column;gap:6px}
 .req-brief-head h2{margin:0;font-size:22px;font-weight:700;letter-spacing:-.015em}
@@ -10115,10 +10111,10 @@ a.req-run-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-brief-parts li > svg{flex:none;margin-top:2px;color:var(--green-ink)}
 .req-brief-parts b{font-weight:600}
 .req-brief-main .req-brief-plain{margin:4px 0 0}
-.req-brief-cost{display:flex;flex-direction:column;gap:10px;align-items:stretch;min-width:240px;max-width:300px;box-sizing:border-box;padding:16px;border-radius:14px;background:var(--field)}
+.req-brief-cost{display:flex;flex-direction:column;gap:10px;align-items:stretch;min-width:240px;max-width:300px;box-sizing:border-box;padding:16px;border-radius:var(--r-md);background:var(--field)}
 .req-brief-look{font-size:12px;font-weight:600;color:var(--ink-2)}
 .req-brief-facts{font-size:13px;overflow-wrap:anywhere}
-.req-brief-facts code{font-family:var(--mono);font-size:12px;padding:1px 6px;border-radius:6px;background:var(--surface)}
+.req-brief-facts code{font-family:var(--mono);font-size:12px;padding:1px 6px;border-radius:var(--r-sm);background:var(--surface)}
 .req-brief-cost .hint,.req-brief-cost .form-msg{margin:0}
 .req-brief-create{justify-content:center}
 .req-brief-create:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
@@ -10136,7 +10132,7 @@ a.req-run-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-brief-head-row{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px 16px}
 .req-brief-head-main{display:flex;flex-direction:column;gap:8px;min-width:0}
 .req-brief-chips{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
-.req-brief-chips code{font-family:var(--mono);font-size:11.5px}
+.req-brief-chips code{font-family:var(--mono);font-size:12px}
 .req-brief-head .req-brief-refresh-failed{margin:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
 .req-brief-stale-text b{font-size:inherit;font-weight:600;color:var(--ink)}
 .req-brief-stale-text code{font-family:var(--mono);font-size:12px;padding:0;background:none;color:var(--ink)}
@@ -10157,7 +10153,7 @@ a.req-run-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-brief-how h3{margin:0;font-size:13px;font-weight:600}
 .req-brief-how p{margin:0;font-size:13px;color:var(--ink-2)}
 .req-brief-how p b{font-weight:600;color:var(--ink)}
-.req-brief-how .req-brief-used{margin:0;font-size:12.5px}
+.req-brief-how .req-brief-used{margin:0;font-size:13px}
 .req-brief-notes-read,.req-brief-read{padding:14px 18px}
 .req-brief-notes-read summary,.req-brief-read summary{cursor:pointer;font-size:13px;font-weight:600}
 .req-brief-read .req-brief-read-n{display:inline;margin:0;font-weight:400}
@@ -10167,7 +10163,7 @@ a.req-run-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 /* A7 Task 9: the green line under New feature's For (board 13); What Worca knows, the card that replaces A2's
    folded box on a feature page when the scope has a brief (board 14); the brief page's small note on the members
    of a workspace the brief does not cover. */
-.req-brief-line{display:flex;gap:10px;align-items:flex-start;margin:8px 0 0;padding:10px 12px;border-radius:10px;background:var(--green-bg);color:var(--ink);font-size:12.5px;line-height:1.45}
+.req-brief-line{display:flex;gap:10px;align-items:flex-start;margin:8px 0 0;padding:10px 12px;border-radius:var(--r-md);background:var(--green-bg);color:var(--ink);font-size:13px;line-height:1.45}
 .req-brief-line > svg{flex:none;margin-top:1px;color:var(--green-ink)}
 .req-knows{padding:16px 18px;display:flex;flex-direction:column;gap:10px}
 .req-knows .req-card-head{flex-wrap:wrap;gap:4px 10px;margin:0}
@@ -10181,7 +10177,7 @@ a.req-run-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-knows-foot .hint{flex:1 1 200px;min-width:0}
 .req-knows-foot .btn{flex:none}
 .req-knows-foot .btn:disabled{opacity:.45;cursor:not-allowed}
-.req-brief-members{margin:0;padding:10px 14px;border-radius:10px;background:var(--field)}
+.req-brief-members{margin:0;padding:10px 14px;border-radius:var(--r-md);background:var(--field)}
 .req-brief-members p{margin:0}
 .req-brief-members .req-actions{margin:8px 0 0}
 @media (max-width:900px){.req-brief-cols{grid-template-columns:1fr}}
@@ -10192,3 +10188,8 @@ a.req-run-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
   .req-brief-card{padding:16px}
   .req-brief-terms{grid-template-columns:minmax(0,38%) minmax(0,1fr)}
 }
+
+/* One border level per card (review B2): inside a chat card the nested boxes drop their border and take a tint. It stays LAST in the file: at (0,2,0) it only beats earlier rules of the same weight, and a
+   later state rule resetting the border shorthand would draw the box again. Outside cards the base rules keep theirs. */
+:is(.ask-card,.chat-rc,.shape-feature) :is(.qpanel,.qblock,.af-choice,.af-form,.issue-detail,.opt-row,.shape-plan-notes,
+  .outline-slice,.shape-plan-outline-change,.chat-rc-result,.shape-card){border:0;background:var(--field);}

@@ -12,6 +12,7 @@
 
 import { gitOn, onGitChange, GIT_MISSING_TEXT } from './git-gate.mjs';
 import { makeSwitch } from './switch.mjs';
+import { icon as sharedIcon } from './icons.mjs';
 
 // The displayed state (A2 §4), always the server's `f.state`: the page never derives it. `started` is
 // drawn as the latest run's pill (runPill), not as a badge.
@@ -416,7 +417,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     paintHost(
       h('div', { class: 'req-bar' },
         filterTabs(all),
-        h('button', { type: 'button', class: 'btn-go', onclick: () => route('new') }, 'New feature')),
+        h('button', { type: 'button', class: 'btn btn-primary', onclick: () => route('new') }, 'New feature')),
       shown.length ? null : h('p', { class: 'hint req-empty', text: all.length === 0 && filter !== 'archived'
         ? 'No features yet. Describe one in a few sentences and Worca interviews you about it.'
         : 'Nothing here.' }),
@@ -506,7 +507,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           cost.el,
           h('div', { class: 'req-new-btns' },
             h('button', { type: 'button', class: 'btn', onclick: () => route('') }, 'Cancel'),
-            h('button', { type: 'button', class: 'btn-go', onclick: create }, 'Start the interview'))))));
+            h('button', { type: 'button', class: 'btn btn-primary', onclick: create }, 'Start the interview'))))));
   }
 
   // ---- the Product brief page (A7 §6; board BriefEmpty.dc.html): the header, Give Worca a head start while
@@ -649,7 +650,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         leftOut ? h('span', { class: 'hint req-brief-left-out',
           text: `Worca reads at most 8 projects of a workspace: ${joinAnd(leftOut)} ${leftOut.length === 1 ? 'is' : 'are'} left out.` }) : null,
         failed ? h('p', { class: 'form-msg err req-brief-failed', role: 'status', text: failed }) : null,
-        h('button', { type: 'button', class: 'btn-go req-brief-create', 'data-ui': 'brief-create', 'data-brief-go': true, disabled: creating || !!whyNot, onclick: createBrief },
+        h('button', { type: 'button', class: 'btn btn-primary req-brief-create', 'data-ui': 'brief-create', 'data-brief-go': true, disabled: creating || !!whyNot, onclick: createBrief },
           making || creating ? 'Creating…' : failed ? 'Try again' : 'Create the brief'),
         whyNot ? h('span', { class: 'hint req-brief-why-not', text: whyNot }) : null),
       // shown only while git is missing (style.css), in place of the box above
@@ -681,8 +682,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       area,
       lookRow,
       h('div', { class: 'req-brief-notes-foot' },
-        onCancel ? h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'notes-cancel', onclick: onCancel }, 'Cancel') : null,
-        h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'notes-save', onclick: save }, 'Save notes')));
+        onCancel ? h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'notes-cancel', onclick: onCancel }, 'Cancel') : null,
+        h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'notes-save', onclick: save }, 'Save notes')));
   }
 
   // ---- the brief page once made (board Brief.dc.html; A7 §6 "Board 12 states" and "Elsewhere") ----
@@ -734,7 +735,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   function refreshButton(data, label, key) {
     const making = !!(data.brief && data.brief.status === 'making');
     // a refresh checks out the code again: hidden while git is missing (git-gate.mjs)
-    return h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': key, 'data-brief-go': true, 'data-needs-git': true, disabled: creating || making, onclick: createBrief }, label);
+    return h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': key, 'data-brief-go': true, 'data-needs-git': true, disabled: creating || making, onclick: createBrief }, label);
   }
 
   function exportMenu() {
@@ -745,7 +746,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       await navigator.clipboard.writeText(await res.text());
       say('Copied as Markdown.', 'ok');
     });
-    return menu('brief-export', h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'brief-export' }, 'Export ▾'), [
+    return menu('brief-export', h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'brief-export' }, 'Export', sharedIcon(document, 'chevron-down', 14)), [
       menuItem('Copy Markdown', copy, { ui: 'mi-brief-copy' }),
       h('a', { role: 'menuitem', class: 'menu-item req-menu-item', 'data-ui': 'mi-brief-download', href: `${briefApi(s)}/markdown?download=1`, download: '' }, 'Download .md'),
     ]);
@@ -886,8 +887,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       body = h('div', { class: 'req-edit' }, ta,
         BRIEF_FORMAT[key] ? h('p', { class: 'hint', text: BRIEF_FORMAT[key] }) : null,
         h('div', { class: 'req-actions' },
-          h('button', { type: 'button', class: 'btn btn-mini', onclick: () => { briefEditing = null; briefEditVal = null; briefFocusNext = `brief-edit-${key}`; redrawBrief(); } }, 'Cancel'),
-          h('button', { type: 'button', class: 'btn-go', onclick: save }, 'Save')));
+          h('button', { type: 'button', class: 'btn btn-sm', onclick: () => { briefEditing = null; briefEditVal = null; briefFocusNext = `brief-edit-${key}`; redrawBrief(); } }, 'Cancel'),
+          h('button', { type: 'button', class: 'btn btn-primary', onclick: save }, 'Save')));
     } else body = briefSectionBody(key, value);
     const rewrite = () => act(async () => { briefFocusNext = `brief-edit-${key}`; paintAnswer(s, await api('DELETE', `${url}/edited`)); });
     return h('section', { class: 'req-sect', 'data-section': key },
@@ -913,7 +914,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       : h('details', { class: 'card req-brief-notes-read', open: briefFolds.notes },
         h('summary', {}, 'Your notes for Worca'),
         notesBody.trim() ? h('p', { text: notesBody }) : h('p', { class: 'hint', text: 'No notes yet.' }),
-        h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'notes-edit',
+        h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'notes-edit',
           onclick: () => { notesEditing = true; notesDraft = null; briefFocusNext = 'notes-body'; redrawBrief(); } }, 'Edit notes'));
     const files = Array.isArray(b.files) ? b.files.filter((p) => typeof p === 'string') : [];
     return h('aside', { class: 'req-brief-side' },
@@ -968,12 +969,12 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       await paint();
     });
     const foot = revise
-      ? [h('button', { type: 'button', class: 'btn btn-mini req-revise-cancel',
+      ? [h('button', { type: 'button', class: 'btn btn-sm req-revise-cancel',
         onclick: () => { revising = null; revDraft = null; focusNext = `change-${round.turnId}`; redraw(); } }, 'Cancel'),
-        h('button', { type: 'button', class: 'btn-go', onclick: () => post({}) }, 'Submit changes')]
-      : [h('button', { type: 'button', class: 'btn btn-mini req-finish', onclick: () => act(async () => { await api('POST', `/api/requirements/${f.seq}/finish`, {}); await paint(); }) }, 'Finish now'),
-        h('button', { type: 'button', class: 'btn btn-mini req-skip', onclick: () => post({ useRecommended: true }) }, 'Skip, use recommended'),
-        h('button', { type: 'button', class: 'btn-go', onclick: () => post({}) }, 'Submit')];
+        h('button', { type: 'button', class: 'btn btn-primary', onclick: () => post({}) }, 'Submit changes')]
+      : [h('button', { type: 'button', class: 'btn btn-sm req-finish', onclick: () => act(async () => { await api('POST', `/api/requirements/${f.seq}/finish`, {}); await paint(); }) }, 'Finish now'),
+        h('button', { type: 'button', class: 'btn btn-sm req-skip', onclick: () => post({ useRecommended: true }) }, 'Skip, use recommended'),
+        h('button', { type: 'button', class: 'btn btn-primary', onclick: () => post({}) }, 'Submit')];
     const panel = h('div', { class: `qpanel req-q${revise ? ' req-revise' : ''}` },
       h('div', { class: 'qpanel-head' }, h('b', { text: revise ? `Change round ${round.n}` : 'Your turn' }),
         h('span', { class: 'qcount', text: plural(round.questions.length, 'question') })),
@@ -1046,7 +1047,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       f.status === 'archived' ? h('p', { class: 'hint req-note', text: 'This feature is archived. Restore it to continue.' }) : null,
       working ? h('p', { class: 'hint req-working', text: f.status === 'looking' ? 'Worca is looking at the code…' : 'Worca is thinking…' }) : null,
       open && f.lastError ? h('div', { class: 'req-error form-msg err' }, f.lastError, ' ',
-        h('button', { type: 'button', class: 'btn btn-mini req-retry', onclick: () => act(async () => { await api('POST', `/api/requirements/${f.seq}/retry`, {}); await paint(); }) }, 'Try again')) : null,
+        h('button', { type: 'button', class: 'btn btn-sm req-retry', onclick: () => act(async () => { await api('POST', `/api/requirements/${f.seq}/retry`, {}); await paint(); }) }, 'Try again')) : null,
       card,
       earlierRounds(f, rounds),
       f.brief ? knowsCard(f, turns) : orientationBox(f, turns));
@@ -1100,9 +1101,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         onclick: () => { ui.decideMore = !ui.decideMore; focusNext = 'decide-more'; redraw(); } }, ui.decideMore ? 'Show fewer' : `Show the other ${rest.length}`) : null,
       h('div', { class: 'qpanel-foot' },
         h('span', { class: 'qanswered', text: `${all.length - open.length} decided · ${rejected} rejected` }),
-        open.length ? h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'confirm-all', onclick: () => post('assumptions', { confirmOpen: true }) },
+        open.length ? h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'confirm-all', onclick: () => post('assumptions', { confirmOpen: true }) },
           `Confirm the ${open.length} left`) : null,
-        waitingIds.length ? h('button', { type: 'button', class: 'btn-go', 'data-ui': 'follow-up', onclick: () => post('follow-up', {}) },
+        waitingIds.length ? h('button', { type: 'button', class: 'btn btn-primary', 'data-ui': 'follow-up', onclick: () => post('follow-up', {}) },
           `Done, ask about ${waitingIds[0]}${waitingIds.length > 1 ? ` and ${waitingIds.length - 1} more` : ''}`) : null));
   }
 
@@ -1189,7 +1190,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
             'aria-label': 'Change the workflow and branch', 'data-min-level': 'advanced',   // docs/ui-levels.md: the chips show the values at every level
             onclick: () => { c.open = !c.open; focusNext = c.open ? 'build-workflow' : 'build-change'; redraw(); } }, 'Change')),
         c.open ? buildChoices(f, c, chipBranch) : null),
-      h('button', { type: 'button', class: 'btn-go req-build-go', 'data-ui': 'start-go', 'data-start': '', disabled: starting,
+      h('button', { type: 'button', class: 'btn btn-primary req-build-go', 'data-ui': 'start-go', 'data-start': '', disabled: starting,
         onclick: (e) => startFlow(f, { trigger: e.currentTarget }) }, icon(ICONS.play, { size: 14, fill: 'currentColor', stroke: 'none' }), 'Start in Worca'));
   }
 
@@ -1213,7 +1214,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     };
     return h('section', { class: 'card req-runs', 'aria-label': 'Runs from this feature' },
       h('div', { class: 'req-card-head' }, h('h3', { text: 'Runs from this feature' }),
-        h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'start-again', 'data-start': '',
+        h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'start-again', 'data-start': '',
           disabled: !changed || isLocked(f) || starting || !(r.ok || r.overridable),
           title: changed ? null : 'Nothing changed since the last start',
           onclick: (e) => startFlow(f, { trigger: e.currentTarget }) }, `Start again with v${nextVersion(f)}`)),
@@ -1255,7 +1256,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         ...f.changedSinceStart.map(changeLine),
         h('p', { text: `The running build still works from v${v}; it does not see this change.` }),
         h('div', { class: 'req-actions' },
-          h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'revert', disabled: isLocked(f), onclick: undo }, 'Undo my changes'))));
+          h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'revert', disabled: isLocked(f), onclick: undo }, 'Undo my changes'))));
   }
 
   // A small icon button (`req-ico`); `req-sect-edit` marks it as one of the edits the lock disables.
@@ -1275,8 +1276,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       if (ui.editVals && ui.editVals.key === key) { a.value = ui.editVals.a; if (b) b.value = ui.editVals.b; }
       body = h('div', { class: 'req-edit' }, a, b,
         h('div', { class: 'req-actions' },
-          h('button', { type: 'button', class: 'btn btn-mini', onclick: () => { editing = null; ui.editVals = null; redraw(); } }, 'Cancel'),
-          h('button', { type: 'button', class: 'btn-go', onclick: () => act(async () => {
+          h('button', { type: 'button', class: 'btn btn-sm', onclick: () => { editing = null; ui.editVals = null; redraw(); } }, 'Cancel'),
+          h('button', { type: 'button', class: 'btn btn-primary', onclick: () => act(async () => {
             await api('PUT', `/api/requirements/${f.seq}/spec/${key}`, { value: isGoal ? { text: a.value, measure: b.value } : a.value });
             editing = null; ui.editVals = null; await paint();
           }) }, 'Save')));
@@ -1289,7 +1290,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     return h('section', { class: 'req-sect', 'data-section': key },
       h('div', { class: 'req-sect-head' },
         h('h4', {}, title, edited ? h('span', { class: 'req-edited', text: ' · edited by you' }) : null),
-        edited ? h('button', { type: 'button', class: 'btn-ghost btn-mini req-sect-edit req-rewrite', disabled: working, 'aria-label': `Let Worca rewrite ${title}`,
+        edited ? h('button', { type: 'button', class: 'btn btn-quiet btn-sm req-sect-edit req-rewrite', disabled: working, 'aria-label': `Let Worca rewrite ${title}`,
           onclick: () => act(async () => { await api('DELETE', `/api/requirements/${f.seq}/spec/${key}/edited`); await paint(); }) }, 'Let Worca rewrite this') : null,
         ro ? null : icoBtn('pencil', `Edit ${title}`, () => { editing = key; focusNext = 'edit-a'; redraw(); }, { disabled: working, 'data-ui': `edit-${key}` })),
       body);
@@ -1309,7 +1310,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         if (e.key === 'Enter') { e.preventDefault(); addBtn.click(); }
         else if (e.key === 'Escape') { e.preventDefault(); ui.critOpen = false; ui.crit = ''; input.value = ''; focusNext = 'add-criterion'; redraw(); }
       });
-      addBtn = h('button', { type: 'button', class: 'btn btn-mini req-sect-edit', disabled: working,
+      addBtn = h('button', { type: 'button', class: 'btn btn-sm req-sect-edit', disabled: working,
         onclick: () => act(async () => {
           await api('POST', `/api/requirements/${f.seq}/criteria`, { text: input.value });
           input.value = ''; ui.crit = ''; ui.critOpen = false;
@@ -1536,7 +1537,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('div', { class: 'req-ready-btns' },
           r.overridable ? h('button', { type: 'button', class: 'link-btn req-start-anyway', 'data-ui': 'start-anyway', 'data-start': '', disabled: locked,
             onclick: (e) => startFlow(f, { override: true, trigger: e.currentTarget }) }, "Start before it's Ready…") : null,
-          cardStarts ? null : h('button', { type: 'button', class: r.ok ? 'btn-go btn-mini req-start' : 'btn btn-mini req-start', 'data-ui': 'start', 'data-start': '', disabled: !r.ok || locked,
+          cardStarts ? null : h('button', { type: 'button', class: r.ok ? 'btn btn-primary btn-sm req-start' : 'btn btn-sm req-start', 'data-ui': 'start', 'data-start': '', disabled: !r.ok || locked,
             onclick: (e) => startFlow(f, { override: false, trigger: e.currentTarget }) }, 'Start in Worca'))));
   }
 
@@ -1566,7 +1567,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       h('summary', {}, 'What Worca found in the code', meta ? h('span', { class: 'hint req-orient-meta', text: meta }) : null),
       h('p', { text }),
       o && o.skipped === 'brief' ? h('div', { class: 'req-actions' },
-        h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'orient-look-again', 'data-needs-git': true, disabled: isLocked(f), onclick: () => postLook(f) }, 'Look again')) : null,
+        h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'orient-look-again', 'data-needs-git': true, disabled: isLocked(f), onclick: () => postLook(f) }, 'Look again')) : null,
       o && o.files && o.files.length ? h('ul', { class: 'hint', 'data-min-level': 'advanced' }, ...o.files.map((p) => h('li', { text: p }))) : null);
   }
 
@@ -1594,7 +1595,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       if (lookOn) {
         // a look checks out the code: the hint and Look closer hide while git is missing (git-gate.mjs)
         foot = [h('span', { class: 'hint', 'data-needs-git': true, text: 'Worth it when the feature touches something the brief only skims.' }),
-          h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'look-closer', 'data-needs-git': true, disabled: locked, onclick: () => postLook(f) },
+          h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'look-closer', 'data-needs-git': true, disabled: locked, onclick: () => postLook(f) },
             `Look closer${typeof f.lookCostUsd === 'number' ? ` · about ${usd(f.lookCostUsd)}` : ''}`)];
       }
     } else {
@@ -1613,7 +1614,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       body = [h('p', { class: 'req-knows-text', text: o.summary || 'Nothing relevant found.' }),
         o.summary && !o.addedToBrief && ofThisBrief ? h('p', { class: 'hint req-knows-add' }, 'Not in the brief yet. ',
           h('button', { type: 'button', class: 'link-btn', 'data-ui': 'brief-add', disabled: locked, onclick: add }, 'Add this to the brief')) : null];
-      if (lookOn) foot = [h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'look-again', 'data-needs-git': true, disabled: locked, onclick: () => postLook(f) }, 'Look again')];
+      if (lookOn) foot = [h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'look-again', 'data-needs-git': true, disabled: locked, onclick: () => postLook(f) }, 'Look again')];
     }
     return h('section', { class: `card req-knows${looked ? ' req-knows-looked' : ''}`, 'aria-label': 'What Worca knows', 'data-ui': 'knows', tabindex: '-1' },
       h('div', { class: 'req-card-head' }, h('h3', { text: 'What Worca knows' }), h('span', { class: 'hint req-knows-meta' }, ...meta)),
@@ -1681,7 +1682,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           h('span', { class: 'chip', text: `${usd(f.costUsd)} so far` }),
           f.savedPath ? h('span', { class: 'chip', text: `Saved as ${f.savedPath}` }) : null)),
       h('div', { class: 'req-head-tools' },
-        menu('export', h('button', { type: 'button', class: 'btn btn-mini', 'data-ui': 'menu-export' }, 'Export ▾'), [
+        menu('export', h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'menu-export' }, 'Export', sharedIcon(document, 'chevron-down', 14)), [
           f.scopeType === 'project' ? menuItem('Save to specs/', save, { ui: 'mi-save' }) : null,
           menuItem('Copy Markdown', copy, { ui: 'mi-copy' }),
           h('a', { role: 'menuitem', class: 'menu-item req-menu-item', 'data-ui': 'mi-download', href: `/api/requirements/${f.seq}/markdown?download=1`, download: '' }, 'Download .md'),

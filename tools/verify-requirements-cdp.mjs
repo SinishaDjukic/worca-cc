@@ -165,7 +165,7 @@ const filled = await A.evalJs(`(() => { const sel = document.getElementById('req
   const opt = [...sel.options].find((o) => o.text === 'shop'); if (!opt) return false; sel.value = opt.value;
   document.getElementById('req-new-title').value = 'Cancel an order';
   document.getElementById('req-new-desc').value = 'Customers cancel before it ships';
-  [...document.querySelectorAll('.req-new .btn-go')].at(-1).click(); return true; })()`);
+  [...document.querySelectorAll('.req-new .btn-primary')].at(-1).click(); return true; })()`);
 check("the target select offers the 'shop' project", filled);
 if (!filled) await shutdown(1);
 check('round 1 asks (mock): the question card shows', await until(() => A.evalJs(`!!document.querySelector('#requirements-host .qpanel .qopt')`)));
@@ -190,7 +190,7 @@ check("the Ready panel shows the server's six checks; Start is enabled exactly w
         : p.querySelector('[data-ui="start"]').disabled === !f.readiness.ok)
       && p.querySelector('code').textContent === f.readiness.passed + ' of 6'; })()`));
 check('the Export menu opens on its button and Escape closes it',
-  await A.evalJs(`(() => { const t = [...document.querySelectorAll('#requirements-host .req-head button')].find((b) => b.textContent === 'Export ▾');
+  await A.evalJs(`(() => { const t = [...document.querySelectorAll('#requirements-host .req-head button')].find((b) => b.textContent === 'Export');
     const m = t.parentElement.querySelector('[role="menu"]');
     t.click(); const opened = !m.hidden && getComputedStyle(m).display !== 'none';
     m.querySelector('[role="menuitem"]').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
@@ -278,7 +278,7 @@ check('New feature for that project shows "Worca knows shop from its product bri
       && /cents per round/.test(document.querySelector('.req-new .req-new-cost')?.textContent || ''); })()`)));
 await A.evalJs(`(() => { document.getElementById('req-new-title').value = 'Orders report';
   document.getElementById('req-new-desc').value = 'A report of orders per day';
-  [...document.querySelectorAll('.req-new .btn-go')].at(-1).click(); })()`);
+  [...document.querySelectorAll('.req-new .btn-primary')].at(-1).click(); })()`);
 check('a feature created there shows "What Worca knows" with Look closer',
   await until(() => A.evalJs(`(() => { const c = document.querySelector('#requirements-host .req-knows');
     return !!c && c.querySelector('h3')?.textContent === 'What Worca knows' && !!c.querySelector('[data-ui="look-closer"]'); })()`), 15000));

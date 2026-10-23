@@ -95,7 +95,7 @@ test('list: subtitle and New feature; the filter tabs with their counts; the fil
   const view = createRequirementsView({ host, subEl, msgEl: document.createElement('p'), deps: { route: (p) => routed.push(p) } });
   await view.show('');
   assert.equal(subEl.textContent, 'Define a feature with Worca before anything is built. Nothing runs until you start it.');
-  const go = host.querySelector('.btn-go');
+  const go = host.querySelector('.btn-primary');
   assert.equal(go.textContent, 'New feature');
   go.click();
   assert.deepEqual(routed, ['new']);
@@ -238,7 +238,7 @@ test('detail: question card with recommended preselected; submit posts the picks
   opts[1].click();
   assert.equal(opts[1].getAttribute('aria-pressed'), 'true');
   assert.equal(opts[0].getAttribute('aria-pressed'), 'false');
-  card.querySelector('.btn-go').click();
+  card.querySelector('.btn-primary').click();
   await new Promise((r) => setTimeout(r, 0));
   const post = calls.find((c) => c.method === 'POST');
   assert.deepEqual(post.body, { roundTurnId: 9, answers: [{ id: 'who', option: 'Support' }] });
@@ -326,7 +326,7 @@ test('new form: a live update neither repaints nor fetches; create posts and rou
   assert.equal(host.querySelector('#req-new-title').value, 'My title');
   assert.equal(host.querySelector('#req-new-desc').value, 'My text');
   assert.equal(calls.length, n, 'no fetch');
-  host.querySelector('.btn-go').click();
+  host.querySelector('.btn-primary').click();
   await tick();
   assert.deepEqual(calls.find((c) => c.method === 'POST').body, { scopeType: 'project', scopeKey: 'shop-1', title: 'My title', description: 'My text' });
   assert.deepEqual(routed, ['feature/7']);
@@ -416,8 +416,8 @@ test('new feature: back link, heading, field blocks, the For select with its gro
   select.dispatchEvent(new window.Event('change'));
   assert.equal(fields[2].querySelector('.hint').textContent, "Worca looks at the code of this workspace's projects once, read-only, to learn what already exists. Change that in Your notes for Worca.");
   assert.equal(fields[2].querySelector('.req-brief-line'), null, 'no brief, no green line');
-  assert.deepEqual([...form.querySelectorAll('.btn, .btn-go')].map((b) => b.textContent), ['Cancel', 'Start the interview']);
-  assert.ok([...form.querySelectorAll('.btn-go')].at(-1).textContent === 'Start the interview', 'the CDP proof clicks the last .req-new .btn-go');
+  assert.deepEqual([...form.querySelectorAll('.btn, .btn-primary')].map((b) => b.textContent), ['Cancel', 'Start the interview']);
+  assert.ok([...form.querySelectorAll('.btn-primary')].at(-1).textContent === 'Start the interview', 'the CDP proof clicks the last .req-new .btn-primary');
   assert.doesNotMatch(host.textContent, /null|false|undefined/);
 });
 
@@ -722,7 +722,7 @@ test('Export menu: its entries, Save only for a project feature; a choice, Escap
   const { host, view } = make();
   document.body.append(host);
   await view.show('feature/4');
-  const trigger = () => btn(host, 'Export ▾');
+  const trigger = () => btn(host, 'Export');
   const list = () => trigger().parentElement.querySelector('[role="menu"]');
   assert.equal(trigger().getAttribute('aria-haspopup'), 'menu');
   assert.equal(trigger().getAttribute('aria-expanded'), 'false');
@@ -940,7 +940,7 @@ test('Decide card: Confirm the N left and Done, ask about A-n post their routes;
   const follow = () => host.querySelector('[data-ui="follow-up"]');
   assert.equal(all().textContent, 'Confirm the 2 left');
   assert.equal(follow().textContent, 'Done, ask about A-3');
-  assert.ok(follow().classList.contains('btn-go'));
+  assert.ok(follow().classList.contains('btn-primary'));
   all().click();
   await tick(); await tick();
   assert.deepEqual(calls.filter((c) => c.method === 'POST').at(-1), { method: 'POST', url: '/api/requirements/4/assumptions', body: { confirmOpen: true } });
@@ -982,7 +982,7 @@ test('Ready to build: the sentence, the chips, Change reveals the workflow and b
   assert.equal(card().querySelector('p b').textContent, 'shop');
   assert.deepEqual(chipsOf(card()), ['Workflow · Auto', 'Branch from · default']);
   const go = card().querySelector('[data-ui="start-go"]');
-  assert.ok(go.classList.contains('btn-go'));
+  assert.ok(go.classList.contains('btn-primary'));
   assert.equal(go.textContent, 'Start in Worca');
   assert.equal(card().querySelector('select'), null, 'the selects open from Change');
   const change = card().querySelector('[data-ui="build-change"]');
@@ -1337,14 +1337,14 @@ test('focus: a live update keeps the focus on an open menu\'s item; Escape still
   const { host, view } = make();
   document.body.append(host);
   await view.show('feature/4');
-  btn(host, 'Export ▾').click();
+  btn(host, 'Export').click();
   btn(host, 'Copy Markdown').focus();
   await view.changed(4);
   assert.equal(document.activeElement && document.activeElement.textContent, 'Copy Markdown');
   assert.ok(host.contains(document.activeElement));
   document.activeElement.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-  assert.equal(btn(host, 'Export ▾').getAttribute('aria-expanded'), 'false');
-  assert.equal(document.activeElement, btn(host, 'Export ▾'));
+  assert.equal(btn(host, 'Export').getAttribute('aria-expanded'), 'false');
+  assert.equal(document.activeElement, btn(host, 'Export'));
   host.remove();
 });
 
@@ -1576,7 +1576,7 @@ test('brief page, none yet: the head-start card, the four parts, the cost box wi
   assert.equal(text(box.querySelector('.req-brief-model')), 'Opus 5.5 · counts toward your limit');
   const go = createBtn(host);
   assert.equal(go.textContent, 'Create the brief');
-  assert.ok(go.classList.contains('btn-go'));
+  assert.ok(go.classList.contains('btn-primary'));
   assert.equal(go.disabled, false);
   assert.ok(!/null|undefined/.test(host.textContent), 'no "null" or "undefined" on the page');
 });
@@ -1688,7 +1688,7 @@ test('brief page: Your notes for Worca: the card, Save notes puts the body and t
   area.value = 'New notes';
   sw.checked = false;
   const save = btn(host, 'Save notes');
-  assert.ok(save.classList.contains('btn') && save.classList.contains('btn-mini'));
+  assert.ok(save.classList.contains('btn') && save.classList.contains('btn-sm'));
   save.click();
   await tick(); await tick(); await tick();
   assert.deepEqual(calls.find((c) => c.method === 'PUT').body, { body: 'New notes', lookAtCode: false });
@@ -1857,7 +1857,7 @@ test('brief page, made: the chips (branch @ sha · age, cost, used by), no head-
   assert.deepEqual(chips(host), ['Made from main @ 3f9c2a1 · 2 days ago', '$1.42', 'Used by 2 features']);
   assert.equal(host.querySelector('.req-brief-chips code').textContent, 'main @ 3f9c2a1');
   assert.equal(host.querySelector('.req-brief-chips .badge'), null, 'no Refreshing badge');
-  assert.ok(btn(host, 'Export ▾'), 'Export ▾');
+  assert.ok(btn(host, 'Export'), 'Export');
   assert.ok(host.querySelector('[data-ui="brief-more"][aria-label="More actions"]'), '⋯');
   assert.ok(!/null|undefined/.test(host.textContent), 'no "null" or "undefined" on the page');
   // made today, one user
@@ -1895,7 +1895,7 @@ test('brief page, made: a failed refresh is said under the chips with Refresh', 
   const kids = [...host.querySelector('.req-brief-head').children];
   assert.ok(kids.indexOf(line) > kids.indexOf(host.querySelector('.req-brief-head-row')), 'under the chips');
   const go = line.querySelector('button');
-  assert.ok(go.classList.contains('btn') && go.classList.contains('btn-mini'));
+  assert.ok(go.classList.contains('btn') && go.classList.contains('btn-sm'));
   go.click();
   assert.equal(go.disabled, true, 'disabled at once');
   go.click();
@@ -1912,7 +1912,7 @@ test('brief page, made: Export (Copy Markdown, Download .md) and ⋯ (Refresh wi
   const { host, msgEl, calls } = await openBrief(madeBody(), {
     [`POST ${BRIEF_URL}`]: { __status: 202, body: madeBody({ brief: madeRow({ status: 'making' }) }) },
     [`DELETE ${BRIEF_URL}`]: briefBody(), [`GET ${BRIEF_URL}/markdown`]: {} });
-  btn(host, 'Export ▾').click();
+  btn(host, 'Export').click();
   const exp = host.querySelector('[data-menu="brief-export"] [role="menu"]');
   assert.equal(exp.hidden, false);
   assert.deepEqual([...exp.querySelectorAll('[role="menuitem"]')].map((x) => x.textContent), ['Copy Markdown', 'Download .md']);
@@ -1964,7 +1964,7 @@ test('brief page, made: the code-moved-on notice, with the changed areas or none
   assert.deepEqual([...p.querySelectorAll('b')].map((c) => c.textContent), ['Orders', 'Payments']);
   const go = n.querySelector('[data-ui="brief-refresh"]');
   assert.equal(go.textContent, 'Refresh · about $1.50');
-  assert.ok(go.classList.contains('btn') && go.classList.contains('btn-mini'));
+  assert.ok(go.classList.contains('btn') && go.classList.contains('btn-sm'));
   assert.equal(n.querySelectorAll('button').length, 1, 'one Refresh (Q2)');
   go.click();
   await tick(); await tick();
@@ -2285,7 +2285,7 @@ test('brief page, made: an open notes editor and the folds survive a live repain
 test('brief page, made: Copy Markdown that fails says so and copies nothing', async () => {
   const { host, msgEl } = await openBrief(madeBody(), { [`GET ${BRIEF_URL}/markdown`]: { __status: 500, body: { error: 'down' } } });
   clip.length = 0;
-  btn(host, 'Export ▾').click();
+  btn(host, 'Export').click();
   btn(host, 'Copy Markdown').click();
   await tick(); await tick();
   assert.deepEqual(clip, []);
@@ -2395,7 +2395,7 @@ test('What Worca knows, before a closer look: from the brief, the matches, the h
   assert.equal(text(card.querySelector('.req-knows-foot .hint')), 'Worth it when the feature touches something the brief only skims.');
   const go = card.querySelector('[data-ui="look-closer"]');
   assert.equal(go.textContent, 'Look closer · about $0.25');
-  assert.ok(go.classList.contains('btn') && go.classList.contains('btn-mini'));
+  assert.ok(go.classList.contains('btn') && go.classList.contains('btn-sm'));
   assert.equal(go.disabled, false);
   assert.equal(card.querySelector('.req-knows-failed'), null);
   go.click();
