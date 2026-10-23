@@ -2741,3 +2741,18 @@ test('the notes switch is the shared switch (role=switch), with its label', asyn
   assert.ok(sw.closest('label').classList.contains('switch-row'));
   assert.equal(text(sw.closest('label')), 'Let Worca look at the code (for the brief, and when you ask it to look closer at a feature)');
 });
+
+test('Add this to the brief without git: Look again is hidden, so the focus goes to the card', async () => {
+  const LOOKED = { summary: 'The slip.', files: ['src/slip.mjs'], skipped: null, area: 'Orders', scopeType: 'project', scopeKey: 'shop-1', briefId: 3 };
+  const turns = [{ id: 7, kind: 'orientation', costUsd: 0.22, payload: { ...LOOKED } }];
+  await withGit(false, async () => {
+    const a = await openKnows(knowsFeature({ orientation: LOOKED }), turns, {
+      'POST /api/requirements/4/brief-addition': () => { a.set(knowsFeature({ orientation: { ...LOOKED, addedToBrief: 'x' } })); return {}; } });
+    document.body.append(a.host);
+    try {
+      a.host.querySelector('[data-ui="brief-add"]').click();
+      await tick(); await tick(); await tick();
+      assert.equal(document.activeElement.getAttribute('data-ui'), 'knows');
+    } finally { a.host.remove(); a.view.destroy(); }
+  });
+});

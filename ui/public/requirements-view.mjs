@@ -1604,7 +1604,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       // The link goes once added: the focus moves to Look again (else to this card) and the message line names the area.
       const add = () => act(async () => {
         await api('POST', `/api/requirements/${f.seq}/brief-addition`, {});
-        focusNext = lookOn ? 'look-again' : 'knows';
+        focusNext = lookOn && gitOn() ? 'look-again' : 'knows';   // Look again hides while git is missing
         await paint();
         say(`Added to the product brief as “${areaLabel({ belongsTo: o.area || null, name: f.title })}”.`, 'ok');
       });

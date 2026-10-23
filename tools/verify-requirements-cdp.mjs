@@ -257,9 +257,9 @@ check('Create in mock mode: the made brief page shows its four sections and "Mad
     const keys = [...h.querySelectorAll('.req-brief-card [data-section]')].map((x) => x.getAttribute('data-section'));
     return keys.length === 4 && /Made from/.test(h.textContent); })()`), 15000));
 // A commit to the test repo: the brief page then says the code moved on. The server remembers a repository
-// check for MEMO_MS (brief-job.mjs, 30 s), so wait that out, then reopen the page so it is read again.
-// test/requirements-brief-job.test.mjs keeps this sleep at MEMO_MS + 1000.
-await sleep(31000);
+// check for MEMO_MS (brief-job.mjs), so wait that out, then reopen the page so it is read again.
+const { MEMO_MS } = await import(new URL('../src/core/requirements/brief-job.mjs', import.meta.url).href);
+await sleep(MEMO_MS + 1000);
 writeFileSync(path.join(projDir, 'README.md'), 'orders\n');
 git('add', 'README.md'); git('commit', '-m', 'moved on');
 await A.evalJs(`location.hash = '#requirements'`);
@@ -291,6 +291,35 @@ await A.evalJs(`location.hash = ${JSON.stringify(briefHash)}`);
 check('Add this to the brief: the brief page lists the added area and "Used by 1 feature"',
   await until(() => A.evalJs(`(() => { const t = document.querySelector('#requirements-host').textContent;
     return /Orders: Orders report/.test(t) && /Orders · checkout and order history/.test(t) && /Used by 1 feature/.test(t); })()`), 15000));
+// ---- The header menus have their panel (upstream's .menu box), and at phone width (390 px) every page fits and
+// every menu opens inside the screen.
+const featureHash = `#requirements/feature/${seqNo}`;
+const MENUS = { [featureHash]: ['menu-export', 'menu-more'], [briefHash]: ['brief-export', 'brief-more'] };
+/** Open one header menu, measure its list (inside [0, clientWidth], a background that is not transparent), close it. */
+const menuBox = (ui) => A.evalJs(`(() => { const t = document.querySelector('#requirements-host [data-ui="${ui}"]'); if (!t) return null;
+  t.click(); const m = t.parentElement.querySelector('[role="menu"]'); if (!m || m.hidden) return null;
+  const r = m.getBoundingClientRect(); const bg = getComputedStyle(m).backgroundColor; const w = document.documentElement.clientWidth;
+  t.click(); return { left: Math.round(r.left), right: Math.round(r.right), w, bg }; })()`);
+const menuOk = (b) => !!b && b.left >= 0 && b.right <= b.w && b.bg !== 'rgba(0, 0, 0, 0)' && b.bg !== 'transparent';
+const goTo = async (hash, ready) => { await A.evalJs(`location.hash = ${JSON.stringify(hash)}`); return until(() => A.evalJs(ready)); };
+const READY = { [featureHash]: `!!document.querySelector('#requirements-host [data-ui="menu-more"]')`,
+  [briefHash]: `!!document.querySelector('#requirements-host [data-ui="brief-more"]')`,
+  '#requirements': `!!document.querySelector('#requirements-host .req-row')`, '#requirements/new': `!!document.getElementById('req-new-title')` };
+await goTo(featureHash, READY[featureHash]);
+const wide = await menuBox('menu-export');
+check('desktop: the Export menu has its panel (a background, not transparent)', menuOk(wide), JSON.stringify(wide));
+await A.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+for (const hash of ['#requirements', '#requirements/new', featureHash, briefHash]) {
+  const shown = await goTo(hash, READY[hash]);
+  await sleep(200);
+  const fit = await A.evalJs(`document.documentElement.scrollWidth === document.documentElement.clientWidth`);
+  check(`390 px: ${hash.replace(/\/\d+$/, '/<n>').replace(/brief\/.*/, 'brief/<project>')} fits the screen (no sideways scroll)`, shown && fit);
+  for (const ui of MENUS[hash] || []) {
+    const b = await menuBox(ui);
+    check(`390 px: ${ui} opens inside the screen with its panel`, menuOk(b), JSON.stringify(b));
+  }
+}
+await A.send('Emulation.clearDeviceMetricsOverride');
 // The mock Auto run parks on its workflow question: stop it so the server closes and the temp dir can go.
 for (const r of runs.values()) { try { r.orch?.stop?.(); } catch {} }
 const settled = new Set(['done', 'stopped', 'error', 'paused', 'interrupted']);
