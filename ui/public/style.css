@@ -4965,7 +4965,7 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .rd-track-dot.is-closed{border:1.5px solid var(--ink-3);color:var(--ink-3);}
 .rd-track-dot.is-future{border:1.5px solid var(--line-2);}
 .rd-track-dot.is-pulse{animation:wr-pulse 1.6s ease-in-out infinite;}
-.rd-track-label{font-size:var(--fs-meta);color:var(--ink);white-space:nowrap;}
+.rd-track-label{font-size:var(--fs-meta);color:var(--ink);min-width:0;overflow-wrap:anywhere;}
 .rd-track-step.is-current .rd-track-label{font-weight:600;}
 .rd-track-step.is-future .rd-track-label{color:var(--ink-2);}   /* --ink-3 is 2.8:1 on the panel in light */
 .rd-track-step.is-closed .rd-track-label{text-decoration:line-through;color:var(--ink-2);}
@@ -4980,7 +4980,6 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 :is(.rd-track-tx,.rd-track-act).is-bad{color:var(--amber-ink);}
 @media (prefers-reduced-motion: reduce){.rd-track-dot.is-pulse{animation:none;}.rd-track-dot.is-current::after{transition:none;}}
 @media (max-width:480px){
-  .rd-track-label{white-space:normal;}
   .rd-track-line{min-width:8px;margin-right:4px;}
   .rd-track-row.has-name{grid-template-columns:minmax(0,1fr);row-gap:4px;}
 }
@@ -9759,6 +9758,11 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
    corner come from the grouped chip rule above), the shared status block, member rows and the group page. */
 .kind-chip{display:inline-flex;align-items:center;height:18px;padding:0 6px;border:0;background:var(--field);color:var(--ink-2);white-space:nowrap;}
 .rd-title-row{display:flex;align-items:center;gap:8px;min-width:0;}
+/* A grouped run's kind chip links its group page ("Run 1 of 3 ›"); the chevron is not part of its name. */
+.rd-title-row a.kind-chip{text-decoration:none;cursor:pointer;}
+.rd-title-row a.kind-chip::after{content:"›"/"";margin-left:4px;}
+.rd-title-row a.kind-chip:hover{background:var(--hover);color:var(--ink);}
+.rd-title-row a.kind-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 /* the shared status block */
 .run-status{display:grid;gap:8px;min-width:0;}
 .run-status-head{display:flex;align-items:center;gap:8px;min-width:0;}
