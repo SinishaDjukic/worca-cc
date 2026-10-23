@@ -141,14 +141,16 @@ const FRESULTS = { summary: { filesNew: 1, filesChanged: 2, filesDeleted: 1, lin
   changedFiles: [{ path: 'index.csv', status: 'M', added: 1, removed: 1 }, { path: 'old/notes.txt', status: 'D', added: 0, removed: 1 }],
   keyThingsToCheck: [], nitpicks: [] };
 
-test('the folder run glance (board 10): Finished · 14 files changed, time · cost · +9 ~4 −1 files changed, the Folder chip', async () => {
+test('the folder run glance (board 10): Ready · 14 files changed in a copy, time · cost · +9 ~4 −1 files changed, the Folder chip', async () => {
   const ctx = await boot();
   await openDetail(ctx, '');
   const doc = ctx.window.document;
   const g = doc.querySelector('#hist-detail .hd-glance');
   // Runs redesign: the one status block (run-model.mjs) words the run.
-  assert.equal(g.querySelector('.rd-now-top').dataset.word, 'Finished');
-  assert.equal(g.querySelector('.rd-now-top .run-status-text').textContent, 'Finished · 14 files changed');
+  // Slice 3: the card head words a pending copy, and the tracker has the folder path's 2 steps.
+  assert.equal(g.querySelector('.rd-now-top').dataset.word, 'Ready');
+  assert.equal(g.querySelector('.rd-now-top .run-status-text').textContent, 'Ready · 14 files changed in a copy');
+  assert.equal(g.querySelectorAll('.rd-track .rd-track-step').length, 2);
   const tile = [...doc.querySelectorAll('#hist-detail .rd-facts .rd-stats > div')].at(-1);
   assert.equal(tile.lastElementChild.textContent, 'files changed');
   assert.equal(tile.querySelector('b').className, 'fc-tile');
@@ -223,7 +225,7 @@ test('a folder run shows no git chrome and asks git or a forge nothing', async (
       const g = doc.querySelector('#hist-detail .hd-glance');
       assert.equal(doc.querySelector('#hist-detail .hd-base').hidden, false);
       assert.equal(g.querySelector('.rd-page-branch').hidden, false);
-      assert.equal(g.querySelector('.rd-now-top .run-status-text').textContent, 'Ready to ship');
+      assert.equal(g.querySelector('.rd-now-top .run-status-text').textContent, 'Ready to ship · not in feat/log-ux yet');
     } },
     { name: 'git missing hides a git run\'s pull request link and slot (paintHdPr / the !gitChrome return)', run: async () => {
       const ctx = await bootDetail({ rows: [{ ...ROW, pr: { state: 'OPEN', url: 'https://github.com/a/b/pull/1' } }] });
@@ -273,17 +275,22 @@ test('a folder row that carries git-looking fields still shows no branch row and
   assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-page-branch').hidden, true);
 });
 
-const slotOf = (doc) => doc.querySelector('#hist-detail .hd-glance .rd-apply-slot');
+// Slice 3 (D14): the glance's Apply bar is the card head's Discard · Apply to folder; the Changes tab keeps its bar.
+const headOf = (doc) => doc.querySelector('#hist-detail .hd-glance .rd-head-acts');
+const headBtn = (doc, id) => headOf(doc).querySelector(`[data-head="${id}"]`);
+const headLabels = (doc) => [...headOf(doc).querySelectorAll('[data-head]')].map((b) => b.textContent);
+const lineOf = (doc) => doc.querySelector('#hist-detail .hd-glance .rd-now-top .run-status-text').textContent;
 
-test('the Apply bar on the glance and on Changes; Apply to folder applies 13 files, toasts, and the bar settles to Applied', async () => {
+test('the head\'s Apply on the glance and the bar on Changes; Apply to folder applies 13 files, toasts, and settles to Applied', async () => {
   const ctx = await boot();
   await openDetail(ctx, '');
   const doc = ctx.window.document;
-  const slot = slotOf(doc);
-  assert.equal(slot.hidden, false);
-  assert.equal(slot.querySelector('.fc-bar-l').textContent, '14 files · on a copy');
-  assert.deepEqual([...slot.querySelectorAll('button')].map((b) => b.textContent), ['Discard', 'Apply to folder']);
-  click(ctx.window, slot.querySelector('.fc-apply'));
+  assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-apply-slot'), null, 'no Apply bar on the glance');
+  assert.equal(lineOf(doc), 'Ready · 14 files changed in a copy');
+  assert.deepEqual(headLabels(doc), ['Discard', 'Apply to folder']);
+  assert.ok(headBtn(doc, 'apply-folder').classList.contains('btn-primary'));
+  assert.doesNotMatch(doc.querySelector('#hist-detail .hd-glance .rd-sheet').textContent, /worktree/i);
+  click(ctx.window, headBtn(doc, 'apply-folder'));
   await settle(ctx.window, 4);
   const modal = doc.querySelector('.fc-modal');
   assert.equal(modal.querySelector('.fc-go').textContent, 'Apply 13 files');
@@ -291,9 +298,9 @@ test('the Apply bar on the glance and on Changes; Apply to folder applies 13 fil
   await settle(ctx.window, 6);
   assert.equal(doc.querySelector('.fc-modal'), null);
   assert.deepEqual(lastToast(doc), { tone: 'ok', title: 'Applied to folder', detail: '13 files · 1 skipped', action: '' });
-  assert.equal(slotOf(doc).querySelector('.fc-bar-l').textContent, '14 files · Applied');
-  assert.equal(slotOf(doc).querySelector('button'), null, 'nothing left to apply or discard');
+  assert.deepEqual(headLabels(doc), [], 'nothing left to apply or discard');
   assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-now-top').dataset.word, 'Applied');
+  assert.deepEqual([...doc.querySelectorAll('#hist-detail .hd-glance .rd-track .rd-track-step')].map((x) => x.className), ['rd-track-step is-done', 'rd-track-step is-done']);
   assert.deepEqual(ctx.calls.filter((c) => c.opts.method === 'POST' && c.url.includes(`/api/runs/${ID}/`)).map((c) => c.url), [`/api/runs/${ID}/apply`]);
   await openDetail(ctx, 'details/changes');
   await settle(ctx.window, 4);
@@ -306,7 +313,7 @@ test('Discard asks once (destructive, no prose), discards and toasts; a refusal 
       const ctx = await boot();
       await openDetail(ctx, '');
       const doc = ctx.window.document;
-      click(ctx.window, slotOf(doc).querySelector('.fc-discard'));
+      click(ctx.window, headBtn(doc, 'discard-folder'));
       await settle(ctx.window, 2);
       assert.equal(doc.querySelector('#confirm-title').textContent, 'Discard 14 files?');
       assert.ok(doc.querySelector('#confirm-title').classList.contains('danger'));
@@ -315,25 +322,25 @@ test('Discard asks once (destructive, no prose), discards and toasts; a refusal 
       doc.querySelector('#confirm-ok').click();
       await settle(ctx.window, 6);
       assert.deepEqual(lastToast(doc), { tone: 'ok', title: 'Changes discarded', detail: '', action: '' });
-      assert.equal(slotOf(doc).querySelector('.fc-bar-l').textContent, '14 files · Discarded');
+      assert.deepEqual(headLabels(doc), []);
       assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-now-top').dataset.word, 'Discarded');
     } },
     { name: 'refused', run: async () => {
       const ctx = await boot({ arms: folderArms({ discard: () => fail(409, { error: 'The run has not finished.', code: 'RUN_NOT_FINISHED' }) }) });
       await openDetail(ctx, '');
       const doc = ctx.window.document;
-      click(ctx.window, slotOf(doc).querySelector('.fc-discard'));
+      click(ctx.window, headBtn(doc, 'discard-folder'));
       await settle(ctx.window, 2);
       doc.querySelector('#confirm-ok').click();
       await settle(ctx.window, 6);
       assert.deepEqual(lastToast(doc), { tone: 'err', title: 'Could not discard the changes', detail: 'The run has not finished.', action: 'Retry' });
-      assert.deepEqual([...slotOf(doc).querySelectorAll('button')].map((b) => b.textContent), ['Discard', 'Apply to folder']);
+      assert.deepEqual(headLabels(doc), ['Discard', 'Apply to folder']);
     } },
     { name: 'Cancel posts nothing', run: async () => {
       const ctx = await boot();
       await openDetail(ctx, '');
       const doc = ctx.window.document;
-      click(ctx.window, slotOf(doc).querySelector('.fc-discard'));
+      click(ctx.window, headBtn(doc, 'discard-folder'));
       await settle(ctx.window, 2);
       doc.querySelector('#confirm-cancel').click();
       await settle(ctx.window, 2);
@@ -342,25 +349,24 @@ test('Discard asks once (destructive, no prose), discards and toasts; a refusal 
   ]);
 });
 
-test('the bar follows the server: another tab applied it; none while not finished; none for a git run', async () => {
+test('the head follows the server: another tab applied it; none while not finished; none for a git run', async () => {
   await checkRows([
     { name: 'pipelines-changed brings the settled row', run: async () => {
       const ctx = await boot();
       await openDetail(ctx, '');
       await deliverRows(ctx, [FROW({ changes: { state: 'applied', counts: COUNTS } })]);
-      const slot = slotOf(ctx.window.document);
-      assert.equal(slot.querySelector('.fc-bar-l').textContent, '14 files · Applied');
-      assert.equal(slot.querySelector('button'), null);
+      assert.equal(ctx.window.document.querySelector('#hist-detail .hd-glance .rd-now-top').dataset.word, 'Applied');
+      assert.deepEqual(headLabels(ctx.window.document), []);
     } },
     { name: 'paused', run: async () => {
       const ctx = await boot({ rows: [FROW({ status: 'paused' })], detail: FDETAIL({}, { status: 'paused' }) });
       await openDetail(ctx, '');
-      assert.equal(slotOf(ctx.window.document).hidden, true);
+      assert.equal(headBtn(ctx.window.document, 'apply-folder'), null);
     } },
     { name: 'git', run: async () => {
       const ctx = await bootDetail();
       await openDetail(ctx, '');
-      assert.equal(slotOf(ctx.window.document).hidden, true);
+      assert.equal(headBtn(ctx.window.document, 'apply-folder'), null);
     } },
     { name: 'Escape in the Apply dialog closes it; the page stays on Changes', run: async () => {
       const ctx = await boot();
@@ -381,11 +387,11 @@ test('a deep link with no saved row yet: Apply settles the bar from the detail p
   const ctx = await boot({ rows: [] });
   await openDetail(ctx, '');
   const doc = ctx.window.document;
-  click(ctx.window, slotOf(doc).querySelector('.fc-apply'));
+  click(ctx.window, headBtn(doc, 'apply-folder'));
   await settle(ctx.window, 4);
   click(ctx.window, doc.querySelector('.fc-modal .fc-go'));
   await settle(ctx.window, 6);
-  assert.equal(slotOf(doc).querySelector('.fc-bar-l').textContent, '14 files · Applied');
+  assert.deepEqual(headLabels(doc), []);
   assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-now-top').dataset.word, 'Applied');
 });
 
@@ -395,21 +401,21 @@ test('files the OS refused: Close on the result toasts warn with the counts', as
   const ctx = await boot({ arms: folderArms({ apply: () => ok(result) }) });
   await openDetail(ctx, '');
   const doc = ctx.window.document;
-  click(ctx.window, slotOf(doc).querySelector('.fc-apply'));
+  click(ctx.window, headBtn(doc, 'apply-folder'));
   await settle(ctx.window, 4);
   click(ctx.window, doc.querySelector('.fc-modal .fc-go'));
   await settle(ctx.window, 6);
   click(ctx.window, doc.querySelector('.fc-modal .fc-cancel'));
   await settle(ctx.window, 4);
   assert.deepEqual(lastToast(doc), { tone: 'warn', title: 'Applied to folder', detail: '11 files · 1 skipped · 2 failed', action: '' });
-  assert.equal(slotOf(doc).querySelector('.fc-bar-l').textContent, '14 files · Applied');
+  assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-now-top').dataset.word, 'Applied');
 });
 
 test('Retry on a refused discard asks again and posts again', async () => {
   const ctx = await boot({ arms: folderArms({ discard: () => fail(409, { error: 'The run has not finished.', code: 'RUN_NOT_FINISHED' }) }) });
   await openDetail(ctx, '');
   const doc = ctx.window.document;
-  click(ctx.window, slotOf(doc).querySelector('.fc-discard'));
+  click(ctx.window, headBtn(doc, 'discard-folder'));
   await settle(ctx.window, 2);
   doc.querySelector('#confirm-ok').click();
   await settle(ctx.window, 6);

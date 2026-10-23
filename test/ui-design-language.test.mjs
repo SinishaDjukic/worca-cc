@@ -114,7 +114,7 @@ const REMOVED = ['btn-go', 'btn-ghost', 'btn-mini', 'btn-clear', 'btn-expand', '
   'wfv-btn', 'wfv-btn-primary', 'wfv-icon-btn', 'apv-btn', 'apv-btn-primary', 'pp-btn', 'chat-rc-btn', 'ask-icon-btn'];
 // D5: single-element hooks that stay for JS and tests, with layout only.
 const HOOKS = ['stop-confirm', 'stop-cancel', 'shipit-ok', 'guide-next', 'mc-btn', 'pp-send', 'gv-nav-btn', 'ask-cmd-stop',
-  'sync-check-now', 'hd-stop', 'rd-stop', 'rd-pause', 'topnav-new', 'hd-more', 'ask-card-not-now', 'btn-split-more',
+  'sync-check-now', 'hd-stop', 'rd-stop', 'rd-pause', 'topnav-new', 'ask-card-not-now', 'btn-split-more',
   'chat-home-act', 'chat-run-tile-open'];
 // A whole class token: not part of a longer class or of a data- attribute (data-ask-card-start stays).
 const classRe = (c) => new RegExp(`(?<![\\w-])${c}(?![\\w-])`);
@@ -677,6 +677,25 @@ test('Runs list: selected and Needs-you rows take the sidebar nav item\'s corner
   }
 });
 
+test('Runs list: the selected row takes --row-selected, a translucent ink step that shows on the panel and on the Needs-you tint', () => {
+  const root = ALL.find((r) => r.sel === ':root').body;
+  assert.match(root, /--row-selected:color-mix\(in srgb,var\(--ink\) \d+%,transparent\);/, 'no new hue: a translucent --ink mix');
+  assert.match(root, /--row-open:color-mix\(in srgb,var\(--row-selected\) 50%,transparent\);/, 'the open-group fill stays a step lighter');
+  const selected = ALL.filter((r) => splitTop(r.sel).includes('.runs-item:has(> a.runs-row.selected)')).map((r) => r.body).join(';');
+  assert.match(selected, /background:var\(--row-selected\)/);
+  assert.doesNotMatch(selected, /var\(--field\)/);
+});
+
+test('Runs list: PR chips on the selected row take the -ink-strong shades, so they stay at 4.5:1 on --row-selected', () => {
+  const bodyOf = (sel) => ALL.filter((r) => splitTop(r.sel).includes(sel)).map((r) => r.body).join(';');
+  const on = '.runs-item:has(> a.runs-row.selected) ';
+  assert.match(bodyOf(`${on}.runs-pr.is-ready`), /color:var\(--green-ink-strong\)/);
+  assert.match(bodyOf(`${on}.runs-pr.is-changes`), /color:var\(--amber-ink-strong\)/);
+  for (const tone of ['is-closed', 'is-conflicts', 'is-failing']) {
+    assert.match(bodyOf(`${on}.runs-pr.${tone}`), /color:var\(--red-ink-strong\)/, tone);
+  }
+});
+
 test('Runs list: one highlight at a time — a group whose run is open is filled only while collapsed; members have no dividers', () => {
   const bodyOf = (sel) => ALL.filter((r) => splitTop(r.sel).includes(sel)).map((r) => r.body).join(';');
   const collapsed = bodyOf('.runs-item:has(> a.runs-row.member-open):not(:has(> .runs-members))');
@@ -743,7 +762,7 @@ const SLICE1_TYPE = new RegExp('(?:^|[\\s(,>+~])(?:' + [
   '\\.topnav', '\\.tsearch', '\\.activity-', '\\.nav(?![\\w-])', '\\.nav-', '\\.sidebar', '\\.side-', '\\.user ', '\\.acct',   // shell
   '\\.runs-', '\\.rd-', '\\.hd-', '\\.rg-', '\\.cost-pop', '\\.cost-bd-', '\\.artifact-', '\\.log(?![\\w-])',                  // Runs list, run page
   '\\.run-log-head', '\\.run-warn', '\\.label-(?:chip|more)',
-  '\\.q(?:panel|text|opt|free|block|answered|tune)', '\\.af-', '\\.issue-', '\\.retained-banner', '\\.merge-back-banner',
+  '\\.q(?:panel|text|opt|free|block|answered|tune)', '\\.af-', '\\.issue-',
   '\\.wf-pop-', '\\.wf-preview-hint', '\\.agent-type-pill', '\\.sub-model-pill', '\\.skill-pill', '\\.graphify-pill',
   '\\.gpage', '\\.feature-page', '\\.shape-', '\\.run-member', '\\.run-status', '\\.chat-rc-shaped', '\\.ask-mcard-',          // group, feature
   '\\.ask-shipcard-', '\\.plan-(?:body|meta|check-ok|tag|ground)', '\\.outline-est', '\\.ask-rp-shape-what', '\\.ask-md a\\.ask-ref-chip',
@@ -850,7 +869,7 @@ test('no glyph at the edge of a visible string; use icon(doc, …) (F-12)', () =
 // two named exceptions (slice 1 shipped them as the shipped-state colour), plus the Smart run naming Labs chip and shimmer, and the
 // Marketplace kind colours give the chat kind its violet tile and facet dot (docs/design-system.md › Marketplace exceptions). Exact selectors, no substring match.
 const VIOLET_OK = new Set(['.badge.flag-stage-experimental', '.status-dot.is-violet', '.rg-orb-merged .rg-orb-bg', '.rg-orb-merged .rg-orb-line',
-  '.sn-chip', '.sn-adorn.sn-loading .input', '.mk-t-chat', '.mk-dot-chat']);
+  '.sn-chip', '.sn-adorn.sn-loading .input', '.mk-t-chat', '.mk-dot-chat', '.rd-track-dot.is-merged']);
 test('violet only inside Labs selectors and the merged dot and orb (F-13)', () => {
   const bad = ALL.filter((r) => r.sel !== ':root' && /var\(--violet/.test(r.body) && !splitTop(r.sel).every((s) => VIOLET_OK.has(s.trim())))
     .map((r) => where(r, 'violet'));
@@ -871,4 +890,15 @@ test('a project card sync bar is not a bordered block (F-16)', () => {
   const r = ALL.filter((x) => splitTop(x.sel).includes('.proj-sync'));
   assert.ok(r.length);
   for (const x of r) assert.deepEqual(decls(x.body, 'border|border-radius|border-style|background'), [], where(x, 'box'));
+});
+
+test('slice 3 (D18): the run page tiles read in the stat face, 22px sans with tabular figures', () => {
+  const r = ALL.filter((x) => splitTop(x.sel).map((t) => t.trim()).includes('.rd-stats b'));
+  assert.ok(r.length);
+  const body = r.map((x) => x.body).join(';');
+  assert.match(body, /var\(--fs-stat\)/);
+  assert.match(body, /var\(--sans\)/);
+  assert.match(body, /tabular-nums/);
+  const tile = ALL.filter((x) => splitTop(x.sel).map((t) => t.trim()).includes('.rd-stats > div')).map((x) => x.body).join(';');
+  assert.match(tile, /padding:var\(--pad-tile\) 8px/);
 });

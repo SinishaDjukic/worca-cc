@@ -16,11 +16,14 @@ a `color-mix()` recipe used twice is a named token (`--btn-hover`, `--red-tint`,
 | amber | `--amber*` | needs you, attention, waiting; a PR problem | a brand mark, "not installed", "built-in" |
 | red | `--red*` | failed, destructive | a warning that needs no action |
 | blue | `--blue*` | information (the Beta chip), in-progress text, links | a status dot, a bar, team policy |
-| violet | `--violet*` | Labs only (the merged status dot and merged run orb are the two named exceptions; the Marketplace chat kind tile and dot follow its kind colours, › Marketplace exceptions) | sources, "Official", policy, a badge, a chart series |
+| violet | `--violet*` | Labs only (the merged status dot, the merged run orb and the run page tracker's merged node `.rd-track-dot.is-merged` are the named exceptions; the Marketplace chat kind tile and dot follow its kind colours, › Marketplace exceptions) | sources, "Official", policy, a badge, a chart series |
 | slate | `--slate*` | neutral metadata: a source, "Official", policy (`.badge.slate`) | a state |
 Status-dot exceptions: peach = working (it pulses), violet = merged. They are the dots only, never a badge.
 Surfaces: `--panel` page, `--surface` raised, `--field` field and tint fill; `--line` dividers, `--line-2` control borders.
-`--row-open` is 50% of `--field` (no new hue): the lighter row highlight of a collapsed Runs group whose run is open.
+`--row-selected` is `--ink` at 8% over transparent (no new hue): the selected Runs row, one ink step over whatever it
+sits on, so it reads on the panel and on the Needs-you amber tint alike. Its PR chips take the `-ink-strong` shades to
+stay at 4.5:1. `--row-open` is 50% of `--row-selected`: the
+lighter row highlight of a collapsed Runs group whose run is open.
 
 Known drift (left for a later run): amber `badge waiting` on Guardrails' "built-in"
 and Models' "endpoint-routed", "project (legacy)" and "plugin:" labels; blue engine and credential badges. The interface
@@ -83,7 +86,8 @@ on focus. Rings sit on `:focus-visible`, never on `:focus`.
 ### Button (checked)
 `.btn` + one size (`.btn-sm`, `.btn-lg`) + one variant (`.btn-primary`, `.btn-quiet`, `.btn-danger`); `.btn-icon` is
 square. One primary per group. Labels of 1–3 words, verb first. Icons come from `icon(doc, 'plus')`
-(`ui/public/icons.mjs`), never a typed "+", "×" or "▾" (checked). `.info-tip` is a 28px square like `.btn-sm.btn-icon`; a
+(`ui/public/icons.mjs`), never a typed "+", "×" or "▾" (checked). The `eye` glyph is used only by the View PR ▾ menu's
+Watch item and the tracker's idle `Watching` button. `.info-tip` is a 28px square like `.btn-sm.btn-icon`; a
 button outside `.btn` must be a shared control or a row a person opens (checked by the stray audit). The composer's
 disabled Save keeps its ink fill at 70% opacity, not the 45% grey of other disabled buttons, so it still reads as the
 primary.
@@ -100,12 +104,16 @@ Every pull request button and link looks the same everywhere (`test/ui-pr-contro
 4. Labels. "Create PR" (`CREATE_PR_LABEL`, `ui/public/ship-words.mjs`); "View PR" for an open and a merged PR; Push says
    the header's `Push main` (the source branch). The Ship it dialog keeps its title "Create pull request", and its "Try
    it first" Check out is a secondary `.btn-sm`, so the dialog has one primary.
-5. Links. A PR text link (`.rd-prs-link`, `.chat-rc-watch-pr`, `.ask-prcard-link`, `.ask-shipcard-pr`,
+5. Links. A PR text link (`.rd-prs-link`, `.rd-track-pr`, `.chat-rc-watch-pr`, `.ask-prcard-link`, `.ask-shipcard-pr`,
    `.hd-pr-repo-link`) is `--blue-ink-strong`, weight 600.
-Placement: on the run page the button sits at the right of the status block in the card's head (`.rd-sheet-head >
-.rd-pr-slot`), centred on the status line; under 420px of head width it wraps onto its own row below the status, on the
-left edge. The PR bar (the run's own PR, its checks and Watch) sits under the facts. Runs list PR chips (`.runs-pr`) are
-chips, not PR controls.
+Placement: on the run page the PR control sits in the card's head at every level (`.rd-sheet-head > .rd-head-acts`, the
+`.rd-pr-slot` among the head buttons: Try it, Create PR, Push, Fix conflicts, Ask for changes, Discard / Apply, How to
+merge, Report), centred on the status line, with at most one primary; under 420px of head width the buttons wrap onto
+their own row below the status, on the left edge. View PR is a split button `View PR │ ▾`
+(`.btn-split.mini.rd-pr-split`): the main half opens the PR, the ▾ (PR scope) holds Watch (Advanced and above), Copy PR
+link and Fix conflicts (while the PR conflicts). A workspace run has one `View PRs ▾` button that lists each member's PR.
+Nothing PR-related sits in the bar or in a PR bar; the PR's checks and Watch words are the tracker's PR step. Runs list PR
+chips (`.runs-pr`) are chips, not PR controls.
 ### Field
 `.input` / `.select` / text, number and select elements: 32px, 13px, `--field` fill, 6px corner, ink border on focus.
 `.input-sm` / `.select-sm`: 28px, 12px. A textarea grows; it keeps the same fill, corner and padding sides. Search, url, email,
@@ -142,13 +150,28 @@ or a policy origin is `.badge.slate`; "not installed" and "built-in" are grey.
 ### Status dot and symbols
 A dot is the state: peach working (pulses), grey paused or waiting, green ready, violet merged. Needs you is an amber
 "?" only when Worca asks; a PR problem is a plain amber dot with the reason in the PR chip; failed is a red "!".
+### Tracker
+The run page card's read-only "where is the work" line (`.rd-track`, `ui/public/run-head.mjs` `renderTracker`), under
+the status line after a `--line` divider, at every level. Three steps on one 3-column grid: the PR path (Changes ·
+Pull request · Merged into the base), the Push path (Changes · In the source here · On the remote), a Folder run's two
+steps (Changes · Applied to your folder), and one row per workspace member with its name in a 44px column. Each step is
+a 16px node, a 12px label (600 when current, `--ink-3` when future) and a 1px connector, `--green` after a done node and
+`--line-2` otherwise. Nodes reuse the status-dot colours: done is a green fill with ✓, current is a ring with a dot
+(peach pulsing while working, green when ready, violet filled with ✓ once merged), a problem is an amber `!`, failed a
+red `!`, closed an `--ink-3` × with a struck label, future a hollow `--line-2` ring. Glyphs come from `icons.mjs`
+(`check`, `alert`, `x`). An optional 12px `--ink-2` second line holds the PR link (`#866`), GitHub's verdict, blue
+(`--blue-ink`) in-progress words and amber (`--amber-ink`) problems. Its links and its two quiet buttons (`Watching`,
+which opens the ▾ menu at Advanced, and kept work's `Commit it yourself`, `button.rd-track-act`) are its only controls.
+Under 480px the labels wrap and the connectors shrink to 8px.
 ### Menu (checked)
 One menu skin. The box is `.menu`: 4px padding, `--panel`, 1px `--line`, `--r-md` (8px), `--shadow-menu`, 13px. A row is
 `.menu-item`: at least 30px, `--r-sm` (6px), `--hover` on hover and keyboard focus; `.menu-sep` and `.menu-h` (12px /
 600 `--ink-2`) divide and head. A disabled row is `--ink-3` with no hover; a destructive row is `.menu-item.is-danger`
 (red ink, `--red-bg` on hover) and nothing else in a menu is red or amber. `openMenu({ doc, anchor, items, align, side,
-label })` (`ui/public/workflows/menu.mjs`) emits it, and its items take `danger`. The sidebar flyouts (`.nav-fly`), the
-composer pickers (`.ask-pop`), the split-button menus (`.btn-split-menu`) and the run header ⋯ (`.hd-menu`) keep their
+label, host, className })` (`ui/public/workflows/menu.mjs`) emits it, and its items take `danger`. With `host` the menu
+is appended inside it (a `.btn-split.mini`) and placed by its CSS; a `{ switch: true }` item is a `menuitemcheckbox`
+switch row (help line, `.switch`) whose toggle keeps the menu open. The run page's View PR ▾ is built with it. The sidebar flyouts (`.nav-fly`), the
+composer pickers (`.ask-pop`) and the split-button menus (`.btn-split-menu`) keep their
 own builders and positions and add `.menu` / `.menu-item`; they carry no box or row skin of their own. No hand-built
 dropdowns.
 ### Row button
@@ -193,12 +216,19 @@ buttons stay 28px; the card keeps the shared 24px padding (checked by the theme 
   no page header; the Marketplace's tabs are its header (Marketplace exceptions).
 - Stat tiles hold numbers only (time, cost, files changed). A list of chips goes in its own labelled row, for example
   the Cost tags row in the run page's facts block, never stacked inside a tile. The value is sans with tabular figures.
-- Run and group pages share one head: the bar (the breadcrumb `Runs › Run tags › Run 2` beside the list, Back on
-  phones; on the right the one primary action, Stop, ⋯), the title with its kind chip (`Run 2 of 3`, `Run`, or
-  `Feature` / `Chain` / `Group`), then the card: the status block with the PR button at its right (Create PR, View PR or
-  Push; see PR controls), the facts block (`.rd-kv`: 12px `--ink-2` labels, 13px values, one row per fact and one place
-  to edit it; a quiet button that leads a value pulls back by its padding so its text sits on the value column), the PR
-  bar under the facts (only for the run's own PR), the tiles.
+- Run and group pages share one head: the bar (Back, a 28px chevron `Back to Runs`, in every layout; the breadcrumb
+  `Runs › Run tags › Run 2` beside it when the list stands beside the page; Run after; on the right the one primary
+  action, Stop, ⋯), the title with its kind chip (`Run 2 of 3`, `Run`, or
+  `Feature` / `Chain` / `Group`), then the card: the status block (the status line, the head buttons at its right, with
+  the PR control among them; see PR controls), the tracker under a `--line` divider, the facts block (`.rd-kv`: 12px
+  `--ink-2` labels, 13px values, one row per fact and one place to edit it; a quiet button that leads a value pulls back
+  by its padding so its text sits on the value column), then the tiles (`--fs-stat` sans values with tabular figures,
+  `--pad-tile` padding). No PR bar, no kept-work, merge-back or Apply box: their actions are head buttons.
+- The run page's ⋯ holds run-scope actions, the same on the live and saved pages at every level: Away mode (while
+  live), Save as preset, Terminal (Ctrl+`), then Report this run and Archive (Restore once archived). Archive asks
+  "Archive this run?" and is disabled, with the reason as its tooltip, while a local copy is open or kept work waits.
+  The bar never makes an Archive or Report button: a failed run's Report this run is in ⋯ and in the card head.
+  ⋯ = this run; ▾ = this pull request.
 - Runs navigation: every row opens its own page in the right pane and the list stays. A group row opens the group
   page; the ⌄ only expands. One row is highlighted at a time, the one whose page is open: a collapsed group whose run
   is open shows the lighter `--row-open` fill over its whole row; expanded, only the open run's row is highlighted.

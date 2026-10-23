@@ -24,6 +24,7 @@ import { preflightDeps } from '../src/core/preflight-deps.mjs';
 import { committedMcpStatus, approveCommittedMcp } from '../src/core/mcpjson-approval.mjs';
 import { runFolderHosting } from '../src/core/preflight-host.mjs';
 import { createOrchestratorFor } from '../src/core/engine-select.mjs';
+import { createUpdateChecker, fetchNpmLatest, isSourceBuild, parseVersion, releaseLinks } from '../src/core/update-check.mjs';
 import { limitResumeDecision } from '../src/core/limit-resume.mjs';
 import { selectRunEngine } from '../src/core/engines/index.mjs';
 import { mockSlowMs } from '../src/core/engines/mock.mjs';
@@ -74,6 +75,7 @@ import {
   chatPrefs, setChatPrefs,
   debugSpawnEnabled as storedDebugSpawnEnabled, effectiveDebugSpawn, setDebugSpawnEnabled, assertDebugSpawnInput, SETTINGS_POST_KEYS,
   resumeAfterUsageLimit, assertResumeAfterUsageLimitInput, setResumeAfterUsageLimit,
+  updateCheckEnabled, assertUpdateCheckInput, setUpdateCheck,
   titleModel as storedTitleModel, setTitleModel, assertTitleModelInput,
   hideBuiltinModels, setHideBuiltinModels, assertHideBuiltinModelsInput,
   theme as storedTheme, setTheme, assertThemeInput,
@@ -548,6 +550,27 @@ const APP_INFO = Object.freeze({
   // prefilled issue URL can never disagree. Falls back to <repo>/issues.
   bugsUrl: BUGS_URL || (APP_REPO_URL ? `${APP_REPO_URL}/issues` : ''),
 });
+// Settings ▸ About "is this the latest Worca?" (issue #841). Read-only: an npm dist-tags read,
+// cached in memory (src/core/update-check.mjs). Never at boot, never under mock or node:test:
+// the default fetcher refuses without any I/O there. WORCA_UPDATE_CHECK_LATEST=<version> stands
+// in for npm (a demo / manual-review aid; never the network). Tests swap the fetcher via _testing.
+// A source checkout (`.git` in PROJECT_ROOT) asks nothing and reports status 'source', unless that
+// override is set (demos run from source).
+let updateFetcherOverride = null;
+let sourceBuildOverride = null;
+function defaultUpdateFetcher() {
+  const fake = process.env.WORCA_UPDATE_CHECK_LATEST;
+  if (fake && parseVersion(fake)) return Promise.resolve(fake);
+  if (serverMockMode() || process.env.NODE_TEST_CONTEXT) return Promise.reject(new Error('update check is off under mock / tests'));
+  return fetchNpmLatest();
+}
+const updateChecker = createUpdateChecker({
+  currentVersion: PKG_VERSION || '',
+  enabled: () => updateCheckEnabled(),
+  sourceBuild: () => sourceBuildOverride ?? isSourceBuild(PROJECT_ROOT),
+  fetchLatest: () => (updateFetcherOverride || defaultUpdateFetcher)(),
+});
+const versionPayload = (s) => ({ ...s, links: releaseLinks(s, APP_INFO.repoUrl) });
 const HLJS_LANGUAGE_FILE_RE = /^[a-z0-9][a-z0-9-]{0,63}\.min\.js$/;
 // Primaries plus the sub-language grammars their instances register
 // (hljs-loader.mjs); a shipped but unmapped grammar stays a plain 404.
@@ -10768,6 +10791,7 @@ const settingsState = () => ({
   debugSpawnEnabled: storedDebugSpawnEnabled(),          // what is STORED (the checkbox)
   debugSpawnEffective: effectiveDebugSpawn(),             // what the next spawn will DO, and why
   resumeAfterUsageLimit: resumeAfterUsageLimit(),
+  updateCheck: updateCheckEnabled(),                    // Settings › About: npm latest check (#841)
   titleModel: storedTitleModel(),                         // the STORED id (the select), null = run's model
   titleModelEffective: describeTitleModel(),              // env override / stale id, for the hint line (#422)
   hideBuiltinModels: hideBuiltinModels(),
@@ -11249,6 +11273,17 @@ app.get('/api/settings', async (req, res) => {
   res.json({ ...settingsState(), ...(person ? { nightModeToggle: nightModeToggleFor(person), nightModePerPerson: person } : {}), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), ...(await namingModelState()), ...(await requirementsInterviewState()), chat: chatPrefs(), app: APP_INFO });
 });
 
+// GET  /api/app/version       → { current, latest, status, checkedAt, enabled, links } (issue #841);
+//                                status 'source' on a git checkout (no npm request, no update links).
+// POST /api/app/version/check → the same, re-checking npm unless the last try is under a minute old.
+// Read-only: nothing here installs or restarts anything. Failures read as status 'unknown'.
+app.get('/api/app/version', async (req, res) => {
+  res.set('Cache-Control', 'no-store').json(versionPayload(await updateChecker.status()));
+});
+app.post('/api/app/version/check', async (req, res) => {
+  res.set('Cache-Control', 'no-store').json(versionPayload(await updateChecker.status({ force: true })));
+});
+
 app.get('/api/budget', (_req, res) => {
   const budget = budgetStatus();
   // The account menu's spend card ("Saved") rides on this snapshot (money-saved design §10).
@@ -11310,6 +11345,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const hasSmartNaming = has('smartNaming');      // null clears the stored block
   const hasDebugSpawnKey = has('debugSpawnEnabled');
   const hasLimitResumeKey = has('resumeAfterUsageLimit');
+  const hasUpdateCheckKey = has('updateCheck');
   const hasTitleModelKey = has('titleModel');
   const hasHideBuiltinKey = has('hideBuiltinModels');
   const hasThemeKey = has('theme');
@@ -11385,6 +11421,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasSmartNaming && body.smartNaming !== null) asSettingsField('smartNaming', () => assertSmartNamingInput(body.smartNaming));
     if (hasDebugSpawnKey) asSettingsField('debugSpawnEnabled', () => assertDebugSpawnInput(body.debugSpawnEnabled));
     if (hasLimitResumeKey) asSettingsField('resumeAfterUsageLimit', () => assertResumeAfterUsageLimitInput(body.resumeAfterUsageLimit));
+    if (hasUpdateCheckKey) asSettingsField('updateCheck', () => assertUpdateCheckInput(body.updateCheck));
     if (hasTitleModelKey) asSettingsField('titleModel', () => {
       assertTitleModelInput(titleModelInput);
       if (titleModelInput !== '' && titleModelInput !== null && !catalogHasModel(titleModelInput)) {
@@ -11461,6 +11498,10 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasSmartNaming) await setSmartNaming(body.smartNaming);
     if (hasDebugSpawnKey) await setDebugSpawnEnabled(body.debugSpawnEnabled);
     if (hasLimitResumeKey) await setResumeAfterUsageLimit(body.resumeAfterUsageLimit);
+    if (hasUpdateCheckKey) {
+      await setUpdateCheck(body.updateCheck);
+      if (body.updateCheck === false) updateChecker.clear();   // back on = a fresh check, never the old answer
+    }
     if (hasTitleModelKey) await setTitleModel(titleModelInput);
     if (hasHideBuiltinKey) await setHideBuiltinModels(body.hideBuiltinModels);
     if (hasThemeKey) await setTheme(body.theme);
@@ -11492,7 +11533,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
     if (hasSmartNaming || hasNamingModelKey) cachedPick = undefined;
-    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey || hasUpdateCheckKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;
@@ -17801,6 +17842,9 @@ if (isMain) {
 
 export { app, server, runs };
 export const _testing = {
+  updateChecker,
+  setUpdateFetcher: (fn) => { updateFetcherOverride = typeof fn === 'function' ? fn : null; updateChecker.clear(); },
+  setSourceBuild: (v) => { sourceBuildOverride = typeof v === 'boolean' ? v : null; updateChecker.clear(); },
   wireRun, summarizeRuns, scanRequest, fireTicket, afterMembersChanged, markResumedRescan, wireAgentGen, startAgentGen, wireScriptBench, startScriptBench,
   chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork, answerRun,
   chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor, switchThreadScope,

@@ -19,6 +19,7 @@
 //                            override); this module never writes process.env.
 //   resumeAfterUsageLimit  — opt-in boolean (default false): schedule a usage-limit pause's
 //                            resume for just after the limit resets, unattended.
+//   updateCheck            — boolean (default true): check npm for a newer stable Worca (Settings › About).
 //   pipelineCostLimitUsd   — per-pipeline lifetime USD spend cap; unset = no limit.
 //   totalCostLimitUsd      — windowed all-pipelines USD spend cap; unset = no limit.
 //   costLimitResetPeriod   — total-budget window, 'weekly' | 'monthly' (default).
@@ -1215,6 +1216,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'smartNaming',                             // Smart run naming { suggestTitle, suggestBranch, pattern, types, trigger, addRunId }
   'debugSpawnEnabled',
   'resumeAfterUsageLimit',
+  'updateCheck',                             // Settings › About: check npm for a newer stable Worca (#841)
   'titleModel', 'hideBuiltinModels',
   'theme',
   'uiLevel',                                 // interface mode (docs/ui-levels.md)
@@ -1748,6 +1750,33 @@ export async function setResumeAfterUsageLimit(input) {
   else settings.resumeAfterUsageLimit = input;
   await persistSettings(settings);
   return { resumeAfterUsageLimit: resumeAfterUsageLimit() };
+}
+
+// ── Check for new Worca versions (issue #841) ────────────────────────────────
+export const DEFAULT_UPDATE_CHECK = true;
+
+/** @throws {Error} unless `input` is a boolean (the route and the setter share this). */
+export function assertUpdateCheckInput(input) {
+  if (!isBool(input)) throw new Error('updateCheck must be true or false');
+}
+
+/** Whether the About card may ask npm for the latest version. Read at use time. */
+export function updateCheckEnabled() {
+  const v = readSettings().updateCheck;
+  if (v === undefined) return DEFAULT_UPDATE_CHECK;
+  if (isBool(v)) return v;
+  console.warn(`[worca] invalid updateCheck ${JSON.stringify(v)} — using the default (${DEFAULT_UPDATE_CHECK})`);
+  return DEFAULT_UPDATE_CHECK;
+}
+
+/** @throws {Error} unless `input` is a boolean. */
+export async function setUpdateCheck(input) {
+  assertUpdateCheckInput(input);
+  const settings = readSettings();
+  if (input === DEFAULT_UPDATE_CHECK) delete settings.updateCheck;
+  else settings.updateCheck = input;
+  await persistSettings(settings);
+  return { updateCheck: updateCheckEnabled() };
 }
 
 // ---------------------------------------------------------------------------

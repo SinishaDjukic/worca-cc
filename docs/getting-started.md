@@ -76,6 +76,17 @@ it → know the workflows → real work → scale.
 - **Settings › General › Getting started**: **Show again** undoes Hide and
   opens the page (**Open checklist** when nothing is hidden). Only the
   checklist returns; the welcome stays seen.
+- **Settings › General › About** shows the Worca version you are running and whether it is the
+  latest stable release: **Latest**, or **Update available: X.Y.Z** with links to that release's
+  **What's new** page and the GitHub **Changes since** comparison. **Release notes** always links to
+  [docs.worca.dev/changelog](https://docs.worca.dev/changelog/). When an update is available, a small
+  **Update available** marker also appears at the bottom of the sidebar; it opens the About card.
+  Worca only looks (at most every 12 hours, at the npm registry's `latest` tag for `@worca/app`, and
+  again when an open tab regains focus); it never installs or restarts anything. Run from a git
+  checkout instead of an npm install, the card says **Source build** and npm is never asked. Turn
+  **Check for new Worca versions** off in the same card to stop the check (turning it back on checks
+  afresh); offline, the card simply shows no status. Behind the Docker egress overlay the check
+  needs `registry.npmjs.org`, which the default allowlist already includes.
 - **Spotlight** (`ui/public/guide-spot.mjs`): scrim over the page, the one real
   control elevated above it and ringed (violet, pulsing halo, the control's own
   corner radius), one balloon of *why* plus **Skip** — and **Next** (or **Done**
