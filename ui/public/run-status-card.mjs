@@ -212,7 +212,7 @@ export function renderMemberRows(doc, row) {
 
 /** D17: the group page's one ship line (a feature, or a chain in the one ship flow). */
 export function groupShipLine(row) {
-  if (!row || !['feature', 'chain'].includes(row.groupKind) || !row.model) return '';
+  if (!row || !['feature', 'chain', 'user'].includes(row.groupKind) || !row.model) return '';
   const { done, total } = row.model.count;
   const native = (row.members || []).filter((mb) => !mb.adhoc);
   const order = native.map((mb) => mb.position).join(' → ');
@@ -225,6 +225,11 @@ export function groupShipLine(row) {
   // A feature's legacy slice draft is not such a PR.
   const owned = (row.members || []).some((mb) => { const pr = mb.model && mb.model.pr;
     return !!(pr && pr.url && pr.id !== 'closed' && !(row.groupKind === 'feature' && pr.id === 'draft')); });
+  // Slice 3: a user group's runs are independent (every member is ad hoc): any merge order; One only when they combine.
+  if (row.groupKind === 'user') {
+    if (row.model.state === 'ready' && total >= 2) return owned ? 'Any order' : 'Any order, or as one PR when the runs combine';
+    return row.model.state === 'in-review' && row.model.prCount >= 2 ? 'Any order' : '';
+  }
   const tail = `${owned ? '' : ', or ship as one PR'}${indep.length ? ` · ${indep.join(', ')} independent` : ''}`;
   if (row.model.state === 'ready' && native.length >= 2) return `Merge in order ${order}${tail}`;
   // Stacked PRs (2 or more) merge in order; one PR (a feature's, or a chain's recorded on every run) has no order.

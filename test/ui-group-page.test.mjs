@@ -52,7 +52,7 @@ test('Overview is offered only when the host says so; Logs links each member', (
   assert.equal(root.querySelector('.rd-tab[aria-selected="true"]').dataset.tab, 'logs');
   assert.deepEqual([...root.querySelectorAll('.gpage-panel[data-tab="logs"] a')].map((a) => a.getAttribute('href')),
     ['#running/r0/details/logs', '#running/r1/details/logs', '#running/r2/details/logs', '#running/r3/details/logs']);
-  assert.equal(root.querySelector('.gpage-ship').hidden, true, 'no ship line for a user group');
+  assert.equal(root.querySelector('.gpage-ship').textContent, 'Create PR comes when all 3 runs are done.');
 });
 
 test('Logs is offered only when the host says so (the run page\'s Logs tab is Expert): /logs falls back to Runs', () => {
@@ -185,4 +185,31 @@ test('run 4 D13: the Back link carries the run page\'s chevron; D2: the made ans
   assert.equal(back.getAttribute('aria-label'), 'Back to Runs');
   for (const c of ['btn-sm', 'btn-quiet', 'btn-icon']) assert.ok(back.classList.contains(c), c);
   assert.equal(root.querySelector('.gpage-actions [data-model-action="answer"]').textContent, 'Approve 2 runs');
+});
+
+test('slice 3: a user group\'s PR controls sit on the status line; separate reads In review · 3 PRs and Any order, One reads In review · 1 PR', () => {
+  const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+  const gh = (n) => ({ url: `https://github.com/o/r/pull/${n}`, number: n, state: 'OPEN' });
+  const mk = (members) => { const model = groupModel({ kind: 'user', title: 'Login polish', members }, { now: NOW });
+    return { kind: 'chain', groupKind: 'user', groupId: 'grp_a1b2c3d4e5f6', title: 'Login polish', model, costUsd: 0,
+      members: model.members.map((m, i) => ({ position: i + 1, title: `R${i + 1}`, pipelineId: `p${i + 1}`, href: `#running/r${i}`, adhoc: true, model: m })) }; };
+  const paint = (row) => { const heads = []; const root = buildGroupPage(doc);
+    paintGroupPage(root, { row, project: 'p', tab: 'runs' }, { ...NOOP, paintHead: (acts, slot, head) => heads.push({ acts, slot, head }) });
+    const bar = [...root.querySelectorAll('.gpage-bar [data-model-action]')].filter((b) => !b.hidden).map((b) => b.dataset.modelAction);
+    return { root, bar, ...heads.at(-1) }; };
+  const ready = paint(mk([done, done, done]));
+  assert.deepEqual(ready.bar, []);
+  assert.deepEqual(ready.head.cta, { state: 'create' });
+  assert.equal(ready.root.querySelector('.gpage-ship').textContent, 'Any order, or as one PR when the runs combine');
+  const sep = paint(mk([1, 2, 3].map((k) => ({ ...done, pr: gh(k) }))));
+  assert.deepEqual(sep.bar, [], 'no Open PR in the bar (D10)');
+  assert.deepEqual(sep.head.cta, { state: 'view', label: 'View PRs', menu: true, ws: true });
+  assert.ok(sep.root.querySelector('.gpage-card .run-status').textContent.includes('In review · 3 PRs'));
+  assert.equal(sep.root.querySelector('.gpage-ship').textContent, 'Any order');
+  assert.equal(sep.root.querySelectorAll('.gpage-runs .run-member-pr .runs-pr').length, 3);
+  const one = paint(mk([1, 2, 3].map(() => ({ ...done, pr: gh(9) }))));
+  assert.deepEqual(one.bar, [], 'QA 7\'s Open PR moved to the head');
+  assert.deepEqual(one.head.cta, { state: 'view', href: gh(9).url, menu: true });
+  assert.ok(one.root.querySelector('.gpage-card .run-status').textContent.includes('In review · 1 PR'));
+  assert.equal(one.root.querySelector('.gpage-ship').hidden, true, 'no ship line after One');
 });

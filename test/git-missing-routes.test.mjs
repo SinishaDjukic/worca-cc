@@ -147,13 +147,14 @@ test('routes while git is missing', async (t) => {
 // plan removes (P5 drops the two scan entries, P6 the nine team and two plugin entries — this row survives both).
 test('the git-only table keeps every route whose whole purpose is git', async () => {
   await checkRows([
-    { name: 'GIT_ONLY_ROUTES holds the 24 non-U2a, non-scan entries', run: () => {
+    { name: 'GIT_ONLY_ROUTES holds the 26 non-U2a, non-scan entries', run: () => {
       const have = new Set(T.GIT_ONLY_ROUTES.map(([m, p]) => `${m} ${p}`));
       for (const r of ['post /api/projects/clone', 'post /api/projects/:key/git-init', 'delete /api/projects/:key/terminal/worktrees',
         'post /api/runs/:id/checkout', 'delete /api/runs/:id/checkout', 'get /api/runs/:id/checkout/diff',
         'post /api/projects/:key/actions/:actionId/try',
         'get /api/pr/remotes', 'post /api/pr', 'post /api/pr/resolve', 'post /api/runs/:id/publish',
         'post /api/push', 'post /api/shape/features/:id/ship',
+        'get /api/run-groups/:id/combine', 'post /api/run-groups/:id/ship',
         'post /api/sync', 'post /api/projects/:key/sync', 'post /api/sync/all', 'post /api/workspaces/:id/sync',
         'post /api/runs/:id/base-check', 'post /api/runs/:id/update-branch',
         'post /api/runs/:id/resolve-pipeline', 'post /api/runs/:id/resolve-terminal',

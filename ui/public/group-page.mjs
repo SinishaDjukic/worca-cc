@@ -77,10 +77,9 @@ export function buildGroupPage(doc) {
   return root;
 }
 
-/** One ship flow (D11): a feature's or a chain's Create PR and View PR(s) live on the status line (docs/design-system.md
- *  "Placement"), never in the bar. A user group (slice 3) keeps QA 7's bar: Open PR only with exactly one PR. */
-export function headerActions(m, groupKind = 'chain') {
-  if (groupKind === 'user') return m.prCount === 1 ? m : { ...m, actions: m.actions.filter((a) => a !== 'open-pr') };
+/** One ship flow (D11): a group's Create PR and View PR(s) live on the status line (docs/design-system.md
+ *  "Placement"), never in the bar, for features, chains and user groups alike. */
+export function headerActions(m) {
   return { ...m, actions: m.actions.filter((a) => a !== 'open-pr' && a !== 'ship') };
 }
 
@@ -146,7 +145,7 @@ export function paintGroupPage(root, view, deps) {
   stop.title = current ? `Stop ${current.isPlanning ? 'Planning' : `Run ${current.position}`}` : 'Stop';
   // Run 4 (D2): the question is mounted first, so the bar's Answer can name the card's own primary.
   deps.mountQuestion(root.querySelector('.gpage-question'), current);
-  syncActions(root.querySelector('.gpage-actions'), headerActions(m, row.groupKind), { own: { stop }, pool: [stop], onAction: deps.onAction,
+  syncActions(root.querySelector('.gpage-actions'), headerActions(m), { own: { stop }, pool: [stop], onAction: deps.onAction,
     disable: { 'ask-changes': "Ask for changes from the run's chat" }, labels: { answer: deps.answerLabel ? deps.answerLabel() : '' } });
   if (deps.paintHead) {
     deps.paintHead(root.querySelector('.gpage-card .rd-head-acts'), root.querySelector('.gpage-card .rd-pr-slot'),

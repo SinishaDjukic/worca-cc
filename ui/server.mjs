@@ -317,12 +317,12 @@ import { loadScriptRegistry } from '../src/core/script-registry.mjs';
 import { probePython, pythonRuntimeState } from '../src/core/graph/python-probe.mjs';
 import {
   listLocalBranches, currentBranch, isValidSourceRef, sweepRunRoots, sweepLegacyWorktreesAll, resolveDefaultBranch, worktreePathForBranch,
-  sanitizeBranchName,
+  sanitizeBranchName, suggestBranchName,
 } from '../src/core/worktree.mjs';
 import {
   fetchRemote, remoteInfo, syncStatus, fastForward, resolveSourceRef, commitsBetween, isSafeBranchName, isSafeRemoteName, scrubGitText,
   INTERACTIVE_TTL_MS, INTERACTIVE_TIMEOUT_MS, RUN_TIMEOUT_MS, checkBaseMerge, mergeBaseInto, startConflictMerge, branchCheckouts,
-  commitFileOnBranch,
+  commitFileOnBranch, checkCombine, writeCombinedBranch,
 } from '../src/core/git-sync.mjs';
 import { shipFeature, SHIP_MODES, shipCardVerb } from '../src/core/shape/ship.mjs';
 import { releaseVersionHint, recordRunRelease, draftReleasesOnMerge } from '../src/core/draft-release.mjs';
@@ -1696,6 +1696,7 @@ const GIT_ONLY_ROUTES = Object.freeze([
   ['post', '/api/projects/:key/actions/:actionId/try'],
   ['get', '/api/pr/remotes'], ['post', '/api/pr'], ['post', '/api/pr/resolve'], ['post', '/api/runs/:id/publish'],
   ['post', '/api/push'], ['post', '/api/shape/features/:id/ship'], ['post', '/api/chains/:id/ship'],
+  ['get', '/api/run-groups/:id/combine'], ['post', '/api/run-groups/:id/ship'],
   ['post', '/api/sync'], ['post', '/api/projects/:key/sync'], ['post', '/api/sync/all'], ['post', '/api/workspaces/:id/sync'],
   ['post', '/api/runs/:id/base-check'], ['post', '/api/runs/:id/update-branch'],
   ['post', '/api/runs/:id/resolve-pipeline'], ['post', '/api/runs/:id/resolve-terminal'],
@@ -5064,6 +5065,123 @@ app.post('/api/chains/:id/ship', async (req, res) => {
     if (b.title != null && (typeof b.title !== 'string' || b.title.length > PR_TITLE_MAX)) return badRequest(res, `title must be a string of at most ${PR_TITLE_MAX} characters`);
     if (b.body != null && (typeof b.body !== 'string' || b.body.length > PR_BODY_MAX)) return badRequest(res, `body must be a string of at most ${PR_BODY_MAX} characters`);
     const r = await shipChainNow(String(req.params.id), b.mode, { actor: actorOf(req), title: (b.title || '').trim() || null,
+      body: (b.body || '').trimEnd(), draft: b.draft === true, watch: b.watch === true });
+    res.status(r.status).json(r.body);
+  } catch (err) { if (!res.headersSent) res.status(500).json({ error: err?.message || String(err) }); }
+});
+
+// ── One ship flow (slice 3): a user group ships as one PR per run (separate) or one PR from a combined branch ──────
+const GROUP_SHIP_MODES = Object.freeze(['separate', 'one']);
+const GROUP_SHIPPING = new Set();   // user group ids with a ship in flight
+const COMBINE_FILES_SHOWN = 3;
+/** A user group's members in position order, each with its state and PR target; null for an unknown group. */
+function userGroupMembers(groupId) {
+  const group = listRunGroups().find((g) => g.id === groupId && g.kind === 'user') || null;
+  if (!group) return null;
+  const members = group.members.filter((m) => m.pipelineId).map((m) => {
+    const state = readPipelineStateById(m.pipelineId);
+    return { m, state, target: state ? prTargetFor(state) : { error: 'the run has no state' } };
+  });
+  return { group, members };
+}
+const conflictReason = (c) => {
+  const shown = c.files.slice(0, COMBINE_FILES_SHOWN);
+  const more = c.fileCount - shown.length;
+  return `The runs conflict in ${shown.join(', ')}${more > 0 ? ` and ${more} more` : ''}`;
+};
+/** D5/D6: may this group ship as One? → { oneOff: '' | why not, line?, base?, repoDir?, combine? } */
+async function combineFor(members) {
+  if (members.some((x) => livePr(x.m.pipelineId))) return { oneOff: 'A run already has a PR' };
+  if (members.length < 2) return { oneOff: 'A group of one run ships as its own PR' };
+  if (members.some((x) => x.state && x.state.target === 'workspace')) return { oneOff: 'A workspace run ships as its own PR' };
+  const lost = members.find((x) => x.target.error || !x.target.repoDir || !x.target.feature || !x.target.source);
+  if (lost) return { oneOff: `${lost.m.title || 'A run'} has no branch to combine` };
+  if (new Set(members.map((x) => x.target.repoDir)).size > 1) return { oneOff: 'The runs are in different projects' };
+  const repoDir = members[0].target.repoDir;
+  const names = ((await listRemotes(repoDir)).remotes || []).map((r) => r.name);
+  const bases = [...new Set(await Promise.all(members.map((x) => prBaseBranch(repoDir, x.target.source, names))))];
+  if (bases.length > 1) return { oneOff: `The runs start from different branches: ${bases.join(', ')}` };
+  const combine = await checkCombine(repoDir, { branches: members.map((x) => x.target.feature) });
+  if (combine.status === 'conflicts') return { oneOff: conflictReason(combine), combine };
+  if (combine.status === 'no-branch') return { oneOff: `${combine.branch} is not in the repository`, combine };
+  if (combine.status !== 'clean') return { oneOff: `Could not check whether the runs combine: ${combine.error}`, combine };
+  return { oneOff: '', line: `The ${members.length} runs combine without conflicts`, base: bases[0], repoDir, combine };
+}
+/** D3: the combined branch is named after the group, and fixed per group (its id), so nothing new is stored. */
+const groupBranchName = (group) => suggestBranchName({ title: group.title, pipelineId: String(group.id).replace(/^grp_/, '') });
+/** D8: the one PR's default body, when the dialog's description is blank. */
+const combinedGroupBody = (members) => ['Combines these runs, each from its own branch:', '',
+  ...members.map((x) => `- ${x.m.title || x.target.feature} (\`${x.target.feature}\`)`)].join('\n');
+
+/** → { status, body } */
+async function shipUserGroupNow(groupId, mode, { actor = null, title = null, body = '', draft = false, watch = false } = {}) {
+  if (!GROUP_SHIP_MODES.includes(mode)) return { status: 400, body: { error: 'mode must be one or separate' } };
+  const found = userGroupMembers(groupId);
+  if (!found) return { status: 404, body: { error: 'unknown group' } };
+  const { group, members } = found;
+  if (!members.length || !members.every((x) => x.m.status === 'done')) {
+    return { status: 409, body: { error: 'every run in the group must be done before it ships' } };
+  }
+  const todo = members.filter((x) => !livePr(x.m.pipelineId));
+  if (!todo.length) return { status: 409, body: { error: 'every run in the group already has a PR' } };
+  if (!(await anyPrHost())) return { status: 409, body: { error: NO_PR_HOST } };
+  if (GROUP_SHIPPING.has(groupId)) return { status: 409, body: { error: 'this group is already shipping' } };
+  GROUP_SHIPPING.add(groupId);
+  try {
+    const opened = [];
+    let branch = null;
+    if (mode === 'separate') {
+      for (const x of todo) {                           // D7: each into its own base, in position order
+        const r = await openMemberPr(x.m.pipelineId, { actor });
+        if (!r.ok) return { status: r.status || 500, body: { error: `could not create the PR for ${x.m.title || 'a run'}: ${r.error}. Create PR again to continue.`, prs: opened.map((p) => p.url) } };
+        opened.push({ url: r.pr.url, pipelineId: x.m.pipelineId, pushRemote: r.pushRemote || 'origin' });
+      }
+    } else {
+      const c = await combineFor(members);              // again: a branch may have moved since the dialog's check
+      if (c.oneOff) return { status: 409, body: { error: c.oneOff } };
+      const last = members[members.length - 1];
+      branch = groupBranchName(group);
+      const w = await writeCombinedBranch(c.repoDir, { branch, combine: c.combine, message: `Combine ${members.length} runs: ${group.title}` });
+      if (!w.ok) return { status: w.kind === 'exists' || w.kind === 'identity' ? 409 : 500, body: { error: w.error } };
+      const target = { ...last.target, feature: branch, source: c.base };
+      const r = await createRunPr({ id: last.m.pipelineId, state: last.state, target, base: c.base, title: title || group.title,
+        description: body || combinedGroupBody(members), draft, actor, preamble: false });
+      // The branch stays: Create PR again reuses it (writeCombinedBranch 'reused') while the member heads are the same.
+      if (!r.ok) return { status: r.status || 500, body: { error: r.error } };
+      // The one PR is every run's PR: each row shows its chip, prCount reads 1, and One stays disabled afterwards.
+      for (const x of members) {
+        if (x === last) continue;
+        persistPrState(x.m.pipelineId, { url: r.pr.url, number: r.pr.number ?? null, state: r.pr.state || 'OPEN' });
+        appendAuditById(x.m.pipelineId, `Shipped with its group as one PR${byActor(actor)}: ${r.pr.url}`, { actor });
+      }
+      opened.push({ url: r.pr.url, pipelineId: last.m.pipelineId, pushRemote: r.pushRemote || 'origin' });
+    }
+    if (watch) {
+      for (const p of opened) {
+        try { setWatch({ prUrl: p.url, pipelineId: p.pipelineId, memberKey: '', pushRemote: p.pushRemote, enabled: true, enabledBy: actor }); }
+        catch (err) { console.error(`[worca-ui] watch after group ship failed: ${err?.message || err}`); }
+      }
+    }
+    emitChanged('pipelines-changed', 'updated');
+    return { status: 200, body: { ok: true, mode, prs: opened.map((p) => p.url), ...(branch ? { branch } : {}) } };
+  } finally { GROUP_SHIPPING.delete(groupId); }
+}
+app.get('/api/run-groups/:id/combine', async (req, res) => {
+  try {
+    const found = userGroupMembers(String(req.params.id));
+    if (!found) return res.status(404).json({ error: 'unknown group' });
+    const c = await combineFor(found.members);
+    res.json({ n: found.members.length, oneOff: c.oneOff, line: c.line || '', base: c.base || null,
+      files: (c.combine && c.combine.files) || [] });
+  } catch (err) { if (!res.headersSent) res.status(500).json({ error: err?.message || String(err) }); }
+});
+app.post('/api/run-groups/:id/ship', async (req, res) => {
+  try {
+    const b = req.body || {};
+    for (const k of ['watch', 'draft']) if (!(b[k] === undefined || typeof b[k] === 'boolean')) return badRequest(res, `${k} must be a boolean`);
+    if (b.title != null && (typeof b.title !== 'string' || b.title.length > PR_TITLE_MAX)) return badRequest(res, `title must be a string of at most ${PR_TITLE_MAX} characters`);
+    if (b.body != null && (typeof b.body !== 'string' || b.body.length > PR_BODY_MAX)) return badRequest(res, `body must be a string of at most ${PR_BODY_MAX} characters`);
+    const r = await shipUserGroupNow(String(req.params.id), b.mode, { actor: actorOf(req), title: (b.title || '').trim() || null,
       body: (b.body || '').trimEnd(), draft: b.draft === true, watch: b.watch === true });
     res.status(r.status).json(r.body);
   } catch (err) { if (!res.headersSent) res.status(500).json({ error: err?.message || String(err) }); }

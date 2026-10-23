@@ -134,7 +134,8 @@ PR's **state as an icon + word**, not its number; the number is in the tooltip a
 Rows show nothing else about the PR (decided 2026-10-18): no merge order and no merge button in a row — the run
 number ("1 ·") already gives the order. Clicking a row opens the run (its card in Chat, the run or group page), where
 Merge, Ship it and Open PR live; the row's ⋯ offers Open PR, never Merge. The merge order appears once, on the group
-page's ship line: "Merge in order 1 → 2 → 3, or ship as one PR".
+page's ship line: "Merge in order 1 → 2 → 3, or ship as one PR". A user group's runs are independent, so its ship
+line reads "Any order, or as one PR when the runs combine" when ready, and "Any order" in review.
 
 | PR state | Icon | Colour |
 |---|---|---|
