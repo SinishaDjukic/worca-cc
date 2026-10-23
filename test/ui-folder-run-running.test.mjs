@@ -61,7 +61,7 @@ test('a git run while git is missing: the composed predicate (gitOn() && isGitRu
   assert.equal($(ctx, '.rd-page-meta .kind-chip'), null, 'still a git run');
 });
 
-test('a finished folder run before its saved row lands: Finished · 14 files changed, the Apply bar, no pull request, no Actions strip', async () => {
+test('a finished folder run before its saved row lands: Ready · 14 files changed in a copy, Discard · Apply to folder, no pull request, no Actions strip', async () => {
   const DETAIL = { state: { id: 'p1', title: 'Rename receipts', status: 'done', workMode: 'folder', branch: { workMode: 'folder' }, steps: [], subAgents: [],
     changes: { state: 'pending', counts: COUNTS } }, results: null, clarify: { questions: [], answers: [] }, stepQuestions: [], artifacts: [] };
   const ctx = await bootApp({ fetchHandler: (url) => {
@@ -74,10 +74,13 @@ test('a finished folder run before its saved row lands: Finished · 14 files cha
   await ctx.settle(8);
   assert.equal(ctx.window.location.hash, '#running/r1', 'no saved row yet: it stays here');
   // Runs redesign: the one status block (run-model.mjs) words the run.
-  assert.equal($(ctx, '.rd-now-top').dataset.word, 'Finished');
-  assert.equal($(ctx, '.rd-now-top .run-status-text').textContent, 'Finished · 14 files changed');
-  assert.equal($(ctx, '.rd-apply-slot .fc-bar-l').textContent, '14 files · on a copy');
-  assert.deepEqual([...ctx.window.document.querySelectorAll('#run-detail .rd-apply-slot button')].map((b) => b.textContent), ['Discard', 'Apply to folder']);
+  // Slice 3 (D14): the card head words the pending copy and carries its actions; the tracker has 2 steps.
+  assert.equal($(ctx, '.rd-now-top').dataset.word, 'Ready');
+  assert.equal($(ctx, '.rd-now-top .run-status-text').textContent, 'Ready · 14 files changed in a copy');
+  assert.equal($(ctx, '.rd-apply-slot'), null);
+  assert.deepEqual([...ctx.window.document.querySelectorAll('#run-detail .rd-head-acts [data-head]')].map((b) => b.textContent), ['Discard', 'Apply to folder']);
+  assert.equal(ctx.window.document.querySelectorAll('#run-detail .rd-track .rd-track-step').length, 2);
+  assert.doesNotMatch($(ctx, '.rd-sheet').textContent, /worktree/i);
   assert.equal($(ctx, '.rd-pr-slot').hidden, true);
   const tile = [...ctx.window.document.querySelectorAll('#run-detail .rd-facts .rd-stats > div')].find((t) => t.lastElementChild.textContent === 'files changed');
   assert.equal(tile.querySelector('b').textContent, '+9 ~4 −1');
@@ -127,7 +130,7 @@ const FPLAN = { target: '/x', add: ['a'], update: [], delete: [], skipped: [] };
 const FDONE = { state: { id: 'p1', title: 'Rename receipts', status: 'done', workMode: 'folder', branch: { workMode: 'folder' }, steps: [], subAgents: [],
   changes: { state: 'pending', counts: COUNTS } }, results: null, clarify: { questions: [], answers: [] }, stepQuestions: [], artifacts: [] };
 
-test('Apply from the Running page settles its bar and headline (the run models + rdRepaintOpenGlance)', async () => {
+test('Apply from the Running page settles its head and headline (the run models + rdRepaintOpenGlance)', async () => {
   const ctx = await bootApp({ fetchHandler: (url, opts) => {
     if (url.startsWith('/api/runs/p1?')) return ok(FDONE);
     if (url.endsWith('/api/history')) return ok({ pipelines: [], ghAvailable: false });
@@ -138,11 +141,11 @@ test('Apply from the Running page settles its bar and headline (the run models +
   helloRun(ctx, { runId: 'r1', pipelineId: 'p1', status: 'done', workMode: 'folder', projectDir: '/tmp/tax' });
   ctx.go('running/r1');
   await ctx.settle(8);
-  $(ctx, '.rd-apply-slot .fc-apply').click();
+  $(ctx, '.rd-head-acts [data-head="apply-folder"]').click();
   await ctx.settle(4);
   ctx.window.document.querySelector('.fc-modal .fc-go').click();
   await ctx.settle(8);
-  assert.equal($(ctx, '.rd-apply-slot .fc-bar-l').textContent, '14 files · Applied');
+  assert.equal($(ctx, '.rd-head-acts [data-head="apply-folder"]'), null);
   assert.equal($(ctx, '.rd-now-top').dataset.word, 'Applied');
 });
 
@@ -276,8 +279,8 @@ test('P5: a finished all-Folder workspace run before its saved row lands: no run
   assert.ok(!ctx.calls.some((c) => /\/api\/runs\/pw\/(changes|apply-plan|apply|discard)/.test(c.url) && !c.url.includes('memberKey=')), 'never a memberless Changes call');
   ctx.go('running/w2');
   await ctx.settle(8);
-  const slot = $(ctx, '.rd-apply-slot');
-  assert.ok(slot && slot.hidden, 'no run-level Apply bar on the glance (it would POST without a memberKey)');
+  assert.equal($(ctx, '.rd-head-acts [data-head="apply-folder"]'), null, 'no run-level Apply on the glance (it would POST without a memberKey)');
+  assert.equal($(ctx, '.rd-head-acts [data-head="discard-folder"]'), null);
   assert.equal($(ctx, '.rd-now-top').dataset.word, 'Finished', 'notes is still pending');
   // Applying the last pending member settles the saved state's rollup too: with no History row the headline reads it.
   ctx.go('running/w2/details/changes');

@@ -562,6 +562,10 @@ test('a failed log fetch re-arms the Logs tab for a retry', async () => {
 // from the card accordion onto this screen).
 // ---------------------------------------------------------------------------
 
+// Slice 3 (D13): kept work's Discard is a card head button; the recovery patch is the tracker's Download patch.
+const DISCARD_KEPT = '#hist-detail .hd-glance .rd-head-acts [data-head="discard-kept"]';
+const keptLine = (doc) => doc.querySelector('#hist-detail .hd-glance .rd-sheet .run-status').dataset.line;
+
 test('discard confirms honestly, POSTs the keyed route and shows/links the saved recovery patch', async () => {
   await checkRows([
     { name: 'discard confirms honestly, POSTs the keyed route, and shows the saved recovery patch', run: async () => {
@@ -578,7 +582,7 @@ test('discard confirms honestly, POSTs the keyed route and shows/links the saved
       });
       await openDetail(ctx);
       const doc = ctx.window.document;
-      click(ctx.window, doc.querySelector('#hist-detail .hist-discard'));
+      click(ctx.window, doc.querySelector(DISCARD_KEPT));
       const confirmText = await confirmDialog(ctx.window);
       await settle(ctx.window, 5);
 
@@ -593,24 +597,24 @@ test('discard confirms honestly, POSTs the keyed route and shows/links the saved
       assert.match(doc.querySelector('#viewer').textContent, /retained-work\.patch/,
         'the saved patch path is surfaced, not swallowed');
     } },
-    { name: 'the retained banner links the recovery patch honestly (retained-work name + label)', run: async () => {
+    { name: 'the tracker links the recovery patch honestly (retained-work name)', run: async () => {
       const ctx = await bootDetail({
         rows: [retainedRow()],
         detail: { ...DETAIL, artifacts: [{ kind: 'retained-work-patch', relPath: 'retained-work.patch' }] },
       });
       await openDetail(ctx);
-      const link = ctx.window.document.querySelector('#hist-detail .retained-patch-link a');
+      const link = [...ctx.window.document.querySelectorAll('#hist-detail .hd-glance .rd-track a.rd-track-link')]
+        .find((a) => a.textContent === 'Download patch');
       assert.ok(link, 'the alternate-recovery link renders for a retained-work-patch artifact');
       assert.equal(link.download, `retained-work-${ROW.id}.patch`, 'download name matches what the route prefers');
-      assert.equal(link.textContent, 'Download the recovery patch');
-      assert.equal(link.title, 'The snapshot taken when the work was retained');
+      assert.match(link.getAttribute('href'), /\/recovery-patch\?/);
     } },
   ]);
 });
 
-test('a failed or refused discard keeps the banner, badge and Archive block and offers a Retry that asks again', async () => {
+test('a failed or refused discard keeps the kept head and Archive block and offers a Retry that asks again', async () => {
   await checkRows([
-    { name: 'a failed discard keeps the banner, the badge and the Archive block — and lets the user retry', run: async () => {
+    { name: 'a failed discard keeps the kept head and the Archive block — and lets the user retry', run: async () => {
       const ctx = await bootDetail({
         rows: [retainedRow()],
         arms: (url) => (url.includes('/discard-worktree')
@@ -623,14 +627,14 @@ test('a failed or refused discard keeps the banner, badge and Archive block and 
       });
       await openDetail(ctx);
       const doc = ctx.window.document;
-      click(ctx.window, doc.querySelector('#hist-detail .hist-discard'));
+      click(ctx.window, doc.querySelector(DISCARD_KEPT));
       await confirmDialog(ctx.window);
       await settle(ctx.window, 5);
 
-      assert.equal(doc.querySelector('#hist-detail .hist-retained-badge').hidden, false, 'badge stays');
-      assert.equal(doc.querySelector('#hist-detail .retained-banner').hidden, false, 'banner stays');
+      assert.equal(keptLine(doc), 'Needs you · the changes could not be committed', 'the kept status stays');
+      assert.ok(doc.querySelector(DISCARD_KEPT), 'the head keeps Discard');
       assert.equal(doc.querySelector('#hist-detail .hd-archive').disabled, true, 'Archive stays blocked');
-      const discardBtn = doc.querySelector('#hist-detail .hist-discard');
+      const discardBtn = doc.querySelector(DISCARD_KEPT);
       assert.equal(discardBtn.disabled, false, 'the user can retry');
       assert.match(discardBtn.textContent, /Discard/);
       assert.deepEqual(lastToast(doc), { tone: 'warn', title: 'Discard incomplete',
@@ -653,14 +657,14 @@ test('a failed or refused discard keeps the banner, badge and Archive block and 
       });
       await openDetail(ctx);
       const doc = ctx.window.document;
-      click(ctx.window, doc.querySelector('#hist-detail .hist-discard'));
+      click(ctx.window, doc.querySelector(DISCARD_KEPT));
       await confirmDialog(ctx.window);
       await settle(ctx.window, 5);
 
       assert.equal(posts, 1);
       assert.deepEqual(lastToast(doc), { tone: 'err', title: 'Could not discard the retained worktree',
         detail: 'disk on fire', action: 'Retry' });
-      const discardBtn = doc.querySelector('#hist-detail .hist-discard');
+      const discardBtn = doc.querySelector(DISCARD_KEPT);
       assert.equal(discardBtn.disabled, false, 'the user can retry');
       assert.match(discardBtn.title, /disk on fire/, 'the button keeps its title');
       clickToastAction(ctx.window);
@@ -1621,46 +1625,58 @@ test('History bar: a live pause after load (error cause named / total-budget pau
   await checkRows(rows);
 });
 
-// The card's PR place (run 3, D11): an eligible run's one Create pull request button in the slot; a run with its own PR
-// shows the PR bar instead (the chip with "PR #7", right under the facts block) and the slot holds no button.
-test('History glance: one Create pull request when eligible; the PR bar for an open or merged PR', async () => {
+// Slice 3: the card head holds the PR control at every level: Create PR beside Try it when eligible, View PR │ ▾ for an
+// open or merged PR (its words on the tracker), and a closed PR is a struck tracker step with Create PR again.
+test('History glance: the card head\'s Create PR (every level), View PR │ ▾, and a closed PR on the tracker', async () => {
   const rows = [];
-  for (const [label, pr, word] of [
-    ['eligible', null, ''],
-    ['open', { state: 'OPEN', number: 7, url: 'https://github.com/o/r/pull/7' }, 'Ready'],
-    ['merged', { state: 'MERGED', number: 7, url: 'https://github.com/o/r/pull/7' }, 'Merged'],
+  const url = 'https://github.com/o/r/pull/7';
+  for (const [label, pr, level] of [
+    ['eligible', null, ''], ['eligible at Simple', null, 'simple'],
+    ['open', { state: 'OPEN', number: 7, url }, ''], ['merged', { state: 'MERGED', number: 7, url }, ''],
+    ['closed', { state: 'CLOSED', number: 7, url }, ''],
   ]) {
     rows.push({ name: `History glance, ${label} PR`, run: async () => {
       const row = { ...ROW, pr };
       const ctx = await bootDetail({
         rows: [row],
-        arms: (url) => (url.endsWith('/api/history') ? ok({ pipelines: [row], ghAvailable: true }) : null),
+        arms: (u) => (u.endsWith('/api/history') ? ok({ pipelines: [row], ghAvailable: true }) : null),
       });
+      if (level) ctx.window.document.documentElement.dataset.level = level;
       await openDetail(ctx, '');
       await settle(ctx.window, 6);
       const glance = ctx.window.document.querySelector('#hist-detail .hd-glance');
       const slot = glance.querySelector('.rd-pr-slot');
-      const box = glance.querySelector('.rd-pr-box');
       assert.equal(slot.closest('.hd-result'), null, 'outside the result host paintHdGlance rebuilds');
-      assert.equal(slot.parentElement, glance.querySelector('.rd-sheet > .rd-sheet-head'), 'the button sits beside the status');
-      assert.equal(box.previousElementSibling, glance.querySelector('.rd-sheet > .rd-kv'), 'the PR bar sits right under the facts');
-      if (!pr) {
+      assert.equal(slot.parentElement, glance.querySelector('.rd-sheet > .rd-sheet-head > .rd-head-acts'), 'the control sits in the head');
+      assert.equal(glance.querySelector('.rd-pr-box'), null, 'no PR bar');
+      assert.equal(glance.querySelector('.rd-result [data-rd-cta]'), null, 'nothing PR-shaped under Results');
+      const steps = [...glance.querySelectorAll('.rd-track .rd-track-step')];
+      assert.equal(steps.length, 3);
+      if (!pr || pr.state === 'CLOSED') {
         assert.equal(slot.hidden, false);
         const ctas = [...slot.children];
         assert.equal(ctas.length, 1, 'one button, the pull request');
         assert.ok(ctas[0].hasAttribute('data-rd-cta') && ctas[0].classList.contains('hd-g-pr'), ctas[0].className);
+        assert.ok(ctas[0].classList.contains('btn-primary'));
         assert.equal(ctas[0].querySelector(':scope > .ic svg').innerHTML, ICONS['pr-create']);
         assert.equal(ctas[0].classList.contains('btn-block'), false, 'at its natural width');
         assert.equal(ctas[0].textContent, 'Create PR');
+        if (pr) {
+          assert.equal(glance.querySelector('.run-status').dataset.line, 'Ready to ship · the PR was closed');
+          assert.ok(steps[1].classList.contains('is-closed'));
+          assert.equal(glance.querySelector('.runs-pr'), null, 'a closed PR is no chip');
+        }
         return;
       }
-      assert.equal(slot.hidden, true, 'no View pull request button');
-      const chip = glance.querySelector('.rd-pr-status .rd-prs-sum a.runs-pr');
-      assert.ok(chip, 'the PR bar leads with the linked chip');
-      assert.equal(chip.getAttribute('href'), pr.url);
-      assert.equal(chip.querySelector('.runs-pr-num').textContent, 'PR #7');
-      assert.equal(chip.querySelector('.runs-pr-word').textContent, word);
-      assert.equal(glance.querySelector('.rd-result [data-rd-cta]'), null, 'nothing PR-shaped under Results');
+      const main = slot.querySelector('.btn-split.rd-pr-split > a[data-rd-cta]');
+      assert.ok(main, 'View PR │ ▾');
+      assert.equal(main.getAttribute('href'), url);
+      assert.equal(main.textContent, 'View PR');
+      assert.equal(main.classList.contains('btn-primary'), false);
+      assert.equal(main.querySelector(':scope > .ic svg').innerHTML, ICONS[pr.state === 'MERGED' ? 'merge' : 'pull-request']);
+      assert.ok(slot.querySelector('.rd-pr-split > button.rd-pr-more[aria-haspopup="menu"]'));
+      assert.equal(steps[1].querySelector('a.rd-track-pr').textContent, '#7');
+      assert.ok(steps[pr.state === 'MERGED' ? 2 : 1].classList.contains(pr.state === 'MERGED' ? 'is-merged' : 'is-ready'));
     } });
   }
   await checkRows(rows);
@@ -1692,7 +1708,7 @@ async function pendingGlance(shared = ROW, { ghAvailable = true, level = '' } = 
 
 test('History glance PR lookup pending: a busy placeholder morphs in place into the link, or into Create forwarding to the header button', async (t) => {
   await checkRows([
-    { name: 'History glance, PR lookup pending: a busy placeholder, then the PR bar takes over (run 3, D11)', run: async () => {
+    { name: 'History glance, PR lookup pending: a busy placeholder, then it morphs into View PR │ ▾ (slice 3)', run: async () => {
       const { ctx, slot } = await pendingGlance();
       assert.equal(slot.hidden, false);
       assert.ok(slot.classList.contains('is-pending'), slot.className);
@@ -1712,11 +1728,11 @@ test('History glance PR lookup pending: a busy placeholder morphs in place into 
         assert.equal(ctx.window.document.querySelector('#hist-detail .hd-glance .rd-pr-slot'), slot, 'the slot is never replaced');
         assert.equal(slot.getAttribute('aria-busy'), null);
         assert.equal(slot.getAttribute('aria-label'), null);
-        assert.equal(slot.querySelector('[data-rd-cta]'), null, 'the run\'s own PR is no slot button');
-        const chip = ctx.window.document.querySelector('#hist-detail .hd-glance .rd-pr-status .rd-prs-sum a.runs-pr.is-merged');
-        assert.ok(chip, 'the PR bar shows the merged chip');
-        assert.equal(chip.getAttribute('href'), url);
-        assert.equal(chip.target, '_blank');
+        const main = slot.querySelector('.rd-pr-split > a[data-rd-cta]');
+        assert.ok(main, 'the placeholder became the split');
+        assert.equal(main.getAttribute('href'), url);
+        assert.equal(main.target, '_blank');
+        assert.equal(main.querySelector(':scope > .ic svg').innerHTML, ICONS.merge);
       } finally {
         t.mock.timers.reset();
       }

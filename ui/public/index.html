@@ -861,10 +861,13 @@
                       <span class="txt">Live view</span>
                       <div class="switch rd-live-switch" role="switch" tabindex="0" aria-checked="false" aria-label="Live view"></div>
                     </div>
-                    <!-- The pull request button beside the status (Create PR, View PR, Push): one node for the screen's
-                         life, outside the result (rebuilt), so its loading placeholder can morph (paintPrCta). -->
-                    <div class="rd-pr-slot" data-needs-git hidden></div>
+                    <!-- Slice 3: the head buttons (run-head.mjs renderHeadButtons) around the PR control (paintPrCta keeps its one
+                         node), at every level; the hidden feed is the PR status read (paintRdPrStatus) that repaints them. -->
+                    <div class="rd-head-acts" hidden><div class="rd-pr-slot" data-needs-git hidden></div></div>
+                    <span class="rd-pr-feed" hidden></span>
                   </div>
+                  <!-- Slice 3: the read-only tracker (run-head.mjs renderTracker), under the status line at every level. -->
+                  <div class="rd-track" role="group" aria-label="Where the work is" hidden></div>
                   <!-- Run 3 (D8): the facts block, one row per fact and one place to edit it. The Project row's value is the
                        old meta line (paintPageHead owns its first text node); the branch chip copies the name (paintPageBranch). -->
                   <dl class="rd-kv" aria-label="Run facts">
@@ -874,19 +877,9 @@
                     <div class="rd-kv-row" data-fact="labels" hidden><dt class="rd-kv-k">Labels</dt><dd class="rd-kv-v"></dd></div>
                     <div class="rd-kv-row" data-fact="tags" hidden><dt class="rd-kv-k">Cost tags</dt><dd class="rd-kv-v"></dd></div>
                   </dl>
-                  <!-- The PR bar (run 3 D11): the run's own PR, its checks and Watch. Its button is in the head (.rd-pr-slot). -->
-                  <div class="rd-pr-box" data-needs-git>
-                    <!-- The open PR's chip, checks, conflicts and Watch PR (paintRdPrStatus). -->
-                    <div class="rd-pr-status" hidden></div>
-                  </div>
-                  <div class="rd-banners">
-                    <!-- The worktree notice (worktree-notice.mjs): retained work, or a live checkout. -->
-                    <div class="retained-banner" data-needs-git role="alert" hidden></div>
-                  </div>
+                  <div class="rd-banners"></div>
                   <!-- Time · Cost · Changes, in every state (the time ticks while live). -->
                   <div class="rd-facts"></div>
-                  <!-- A Folder run's changes on its copy: Discard · Apply to folder (paintFolderBars). -->
-                  <div class="rd-apply-slot" hidden></div>
                   <!-- Away mode's answers on this run, at the top where they are seen: how many, how many to
                        check, and a jump to the first one to check (paintAwayAnswers). -->
                   <div class="rd-away-note" hidden><span class="rd-away-note-text"></span><button type="button" class="btn btn-sm rd-away-jump">See the answers</button></div>
@@ -1032,9 +1025,13 @@
                 <div class="rd-sheet">
                   <div class="rd-sheet-head">
                     <div class="rd-now-top run-status"></div>
-                    <!-- The pull request button beside the status: one node for the screen's life (paintPrCta). -->
-                    <div class="rd-pr-slot" data-needs-git hidden></div>
+                    <!-- Slice 3: the head buttons (run-head.mjs renderHeadButtons) around the PR control (paintPrCta keeps its one
+                         node), at every level; the hidden feed is the PR status read (paintRdPrStatus) that repaints them. -->
+                    <div class="rd-head-acts" hidden><div class="rd-pr-slot" data-needs-git hidden></div></div>
+                    <span class="rd-pr-feed" hidden></span>
                   </div>
+                  <!-- Slice 3: the read-only tracker (run-head.mjs renderTracker), under the status line at every level. -->
+                  <div class="rd-track" role="group" aria-label="Where the work is" hidden></div>
                   <!-- Run 3 (D8): the facts block, one row per fact and one place to edit it. The Project row's value is the
                        old meta line (paintPageHead owns its first text node); the branch chip copies the name (paintPageBranch). -->
                   <dl class="rd-kv" aria-label="Run facts">
@@ -1044,20 +1041,9 @@
                     <div class="rd-kv-row" data-fact="labels" hidden><dt class="rd-kv-k">Labels</dt><dd class="rd-kv-v"></dd></div>
                     <div class="rd-kv-row" data-fact="tags" hidden><dt class="rd-kv-k">Cost tags</dt><dd class="rd-kv-v"></dd></div>
                   </dl>
-                  <!-- The PR bar (run 3 D11): the run's own PR, its checks and Watch. Its button is in the head (.rd-pr-slot). -->
-                  <div class="rd-pr-box" data-needs-git>
-                    <!-- The open PR's chip, checks, conflicts and Watch PR (paintRdPrStatus). -->
-                    <div class="rd-pr-status" hidden></div>
-                  </div>
                   <div class="hd-limit-notice rd-ov-state" hidden><span class="rd-ov-copy"></span></div>
-                  <div class="hd-banners">
-                    <span class="badge hist-retained-badge" hidden>Work retained</span>
-                    <div class="retained-banner" data-needs-git role="alert" hidden></div>
-                    <div class="merge-back-banner" data-needs-git role="status" hidden></div>
-                  </div>
+                  <div class="hd-banners"></div>
                   <div class="rd-facts"></div>
-                  <!-- A Folder run's changes on its copy: Discard · Apply to folder (paintFolderBars). -->
-                  <div class="rd-apply-slot" hidden></div>
                   <!-- Away mode's answers on this run, at the top where they are seen: how many, how many to
                        check, and a jump to the first one to check (paintAwayAnswers). -->
                   <div class="rd-away-note" hidden><span class="rd-away-note-text"></span><button type="button" class="btn btn-sm rd-away-jump">See the answers</button></div>
