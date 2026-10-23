@@ -43,11 +43,13 @@ export class ProxyError extends Error {
  *  construction. Never printable. */
 export class ProxyCredentials {
   #ntHash; #basic;
-  constructor({ domain = '', user, password, raw }, auth) {
+  /** `ntHash` (a 16-byte Buffer) is a saved login (src/core/proxy-credentials.mjs): NTLMv2 only. */
+  constructor({ domain = '', user, password, raw, ntHash: hash = null }, auth) {
     this.domain = String(domain);
     this.user = String(user);
-    this.#ntHash = auth === 'basic' ? null : ntHash(password);
-    this.#basic = auth === 'basic' ? Buffer.from(`${raw ?? user}:${password}`, 'utf8').toString('base64') : null;
+    this.saved = hash !== null;
+    this.#ntHash = auth === 'basic' ? null : (hash ? Buffer.from(hash) : ntHash(password));
+    this.#basic = auth === 'basic' && !hash ? Buffer.from(`${raw ?? user}:${password}`, 'utf8').toString('base64') : null;
   }
   get ntHash() { return this.#ntHash; }
   get basicToken() { return this.#basic; }
@@ -57,7 +59,9 @@ export class ProxyCredentials {
   [inspect.custom]() { return this.toString(); }
 }
 
-const hostPort = (h, p) => `${h.includes(':') ? `[${h}]` : h}:${p}`;
+/** "host:port", bracketing an IPv6 host. */
+export const upstreamLabel = (h, p) => `${h.includes(':') ? `[${h}]` : h}:${p}`;
+const hostPort = upstreamLabel;
 
 /** "http://DOMAIN%5Cuser:pass@host:port" -> { host, port, credentials } or { error } (never quoting the value). */
 export function parseUpstreamUrl(raw) {
@@ -100,8 +104,11 @@ const clampMs = (v, d) => (Number.isFinite(v) ? Math.min(Math.max(Math.round(v),
  * @returns {null | {error: string, source: string} | {source: 'settings'|'env', host: string, port: number,
  *   auth: string, credentials: ProxyCredentials|null, noProxy: {all: boolean, list: string[]},
  *   timeouts: {connectMs: number, authMs: number, idleMs: number}, warnings: string[]}}
+ *   `login` is a readProxyLogin() record (or null): a saved login wins over the URL's user name
+ *   (D6), and `urlCredentials` keeps the URL login as the fallback a logout returns to.
+ *   `requestedAuth` is the auth mode the user set, or null (D23).
  */
-export function resolveUpstream({ env = process.env, settings } = {}) {
+export function resolveUpstream({ env = process.env, settings, login = null } = {}) {
   const s = settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {};
   const configured = typeof s.upstream === 'string' ? s.upstream.trim() : '';
   const raw = configured || env.https_proxy || env.HTTPS_PROXY || env.http_proxy || env.HTTP_PROXY || '';
@@ -115,15 +122,33 @@ export function resolveUpstream({ env = process.env, settings } = {}) {
     creds = null;
     warnings.push('settings.json networkProxy.upstream carries a user name or password, which Worca ignores (a password never goes into settings.json)');
   }
-  let auth = AUTH_MODES.includes(s.auth) ? s.auth : (creds ? 'auto' : 'none');
+  const saved = login && !login.error && login.ntHash ? login : null;
+  let usedLogin = null;
+  // D23: what the user chose, or null. An explicit 'none' turns the saved login off.
+  const requestedAuth = AUTH_MODES.includes(s.auth) ? s.auth : null;
+  if (saved && requestedAuth === 'none') {
+    warnings.push('networkProxy.auth is none, so the saved login (worca proxy login) is not used');
+  } else if (saved && s.auth !== 'basic') {
+    if (creds) warnings.push('a login is saved (worca proxy login), so the user name and password in the proxy URL are not used');
+    creds = { domain: saved.domain, user: saved.user, ntHash: saved.ntHash };
+    usedLogin = { id: saved.id, label: saved.domain ? `${saved.domain}\\${saved.user}` : saved.user, savedAt: saved.savedAt, rejected: saved.rejected || null };
+  } else if (saved && !creds) {
+    warnings.push('networkProxy.auth is basic, but the saved login keeps only an NT hash, which Basic cannot use; put the login in the HTTP(S)_PROXY URL or set auth to auto');
+  }
+  if (login && login.error) warnings.push(`the saved login cannot be used (${login.error})`);
+  // The URL login stays the fallback a logout returns to (D6); Basic never swaps logins.
+  const urlCreds = !configured && p.credentials ? p.credentials : null;
+  let auth = requestedAuth || (creds ? 'auto' : 'none');
   if (auth !== 'none' && !creds) {
-    warnings.push(`networkProxy.auth is ${auth}, but the upstream URL has no credentials, so no login is sent`);
+    warnings.push(`networkProxy.auth is ${auth}, but no login is saved and the upstream URL has no credentials, so no login is sent`);
     auth = 'none';
   }
   const t = s.timeouts && typeof s.timeouts === 'object' ? s.timeouts : {};
   const timeouts = Object.fromEntries(Object.entries(UPSTREAM_TIMEOUTS).map(([k, d]) => [k, clampMs(t[k], d)]));
   const noProxy = parseNoProxy(s.noProxy !== undefined ? s.noProxy : (env.no_proxy || env.NO_PROXY || ''));
-  return { source, host: p.host, port: p.port, auth, credentials: creds ? new ProxyCredentials(creds, auth) : null, noProxy, timeouts, warnings };
+  return { source, host: p.host, port: p.port, auth, requestedAuth, credentials: creds ? new ProxyCredentials(creds, auth) : null,
+    urlCredentials: urlCreds && auth !== 'basic' ? new ProxyCredentials(urlCreds, 'auto') : null,
+    login: usedLogin, noProxy, timeouts, warnings };
 }
 
 /**
@@ -133,9 +158,10 @@ export function resolveUpstream({ env = process.env, settings } = {}) {
  * an ambiguous outcome (weight 2 for close/reset/timeout/malformed, 1 for a 5xx that carries a
  * Proxy-Authenticate challenge; a plain 5xx is accepted() by the caller).
  */
-export function createAuthGate({ maxParallel = MAX_PARALLEL_HANDSHAKES } = {}) {
-  let state = 'unverified';
-  let reason = '';
+export function createAuthGate({ maxParallel = MAX_PARALLEL_HANDSHAKES, tripped = '' } = {}) {
+  // `tripped`: start shut, with this reason (a login the corporate proxy already rejected).
+  let state = tripped ? 'tripped' : 'unverified';
+  let reason = tripped || '';
   let active = 0;
   let strikes = 0;
   const waiting = [];
@@ -314,39 +340,49 @@ function connectTcp(host, port, timeoutMs) {
 
 /**
  * @param {ReturnType<typeof resolveUpstream>} upstream  a resolved upstream without `error`
- * @param {{log?: (line: string) => void, now?: () => number}} [opts]
+ * @param {{log?: (line: string) => void, now?: () => number, startTripped?: boolean,
+ *   onTrip?: (t: {upstream: string, loginId: string|null}) => void, loginId?: string|null}} [opts]
+ *   startTripped: the saved login is already marked rejected, so the gate starts shut. onTrip: called
+ *   once when a handshake of the CURRENT login trips the gate, with that login's id (D7).
  */
-export function createUpstreamConnector(upstream, { log = () => {}, now = Date.now } = {}) {
-  const gate = createAuthGate();
+export function createUpstreamConnector(upstream, { log = () => {}, now = Date.now, startTripped = false, onTrip = () => {},
+  loginId = upstream.login ? upstream.login.id : null } = {}) {
   const T = upstream.timeouts;
-  const creds = upstream.credentials;
+  const urlCreds = upstream.urlCredentials || null;
+  /** The login in use. A new object per swap; `gen` grows by one each time (D7). */
+  let cur = { gen: 0, creds: upstream.credentials, auth: upstream.auth, loginId };
   const label = hostPort(upstream.host, upstream.port);
   const directAgent = new http.Agent({ keepAlive: false });
   const say = (l) => { try { log(l); } catch { /* a logger must not take the proxy down */ } };
-  const needsLogin = `proxy needs login: the corporate proxy ${label} did not accept the credentials, so Worca stopped sending them to keep the account from being locked. Correct the credentials and restart Worca.`;
+  const needsLogin = `proxy needs login: the corporate proxy ${label} did not accept the credentials, so Worca stopped sending them to keep the account from being locked. Run \`worca proxy login\` (or Log in under Settings › Network proxy) with the right password; a login in HTTPS_PROXY needs a corrected URL, then restart Worca.`;
+  const gate = createAuthGate({ tripped: startTripped ? needsLogin : '' });
+  /** A handshake's outcome counts only for the login it started with. */
+  const live = (ctx) => ctx.gen === cur.gen;
   const asProxyError = (err) => (err instanceof ProxyError ? err
     : new ProxyError(502, `the corporate proxy ${label} failed (${err && err.code ? err.code : 'error'})`));
   const loginError = () => new ProxyError(407, needsLogin, { needsLogin: true });
 
   /** The one log line that names the user, written once, when this call tripped the gate. */
-  function tripped(scheme) {
-    say(`${label} did not accept the ${scheme} login for ${creds.label}; no credentials are sent until Worca restarts (proxy needs login). Correct the credentials and restart Worca.`);
+  function tripped(ctx, scheme) {
+    say(`${label} did not accept the ${scheme} login for ${ctx.creds.label}; no credentials are sent until a new login is saved (proxy needs login).`);
+    try { onTrip({ upstream: label, loginId: ctx.loginId }); } catch { /* marking the file must not take the proxy down */ }
     return loginError();
   }
+  // A stale ctx (an older login) never touches the gate: its outcome says nothing about the new login.
   /** A 407 to credentials: trip at once (D11). */
-  const trip = (scheme) => (gate.rejected(needsLogin) ? tripped(scheme) : loginError());
+  const trip = (ctx, scheme) => (live(ctx) && gate.rejected(needsLogin) ? tripped(ctx, scheme) : loginError());
   /** A close, reset, timeout or malformed answer after credentials went out (D11, weight 2). */
-  const strike = (scheme, err) => (gate.unconfirmed(needsLogin, 2) ? tripped(scheme) : asProxyError(err));
+  const strike = (ctx, scheme, err) => (live(ctx) && gate.unconfirmed(needsLogin, 2) ? tripped(ctx, scheme) : asProxyError(err));
   /**
    * Judge the status that answered credentials; returns the refusal to send, or null to go on
    * (the caller relays the answer, a 5xx included). A 5xx proves the login: the proxy went on to
    * the origin, so dead hosts never trip the breaker. Only a 5xx that ALSO carries a
    * Proxy-Authenticate challenge is ambiguous, a weight-1 strike (D11).
    */
-  function judge(status, scheme, challenged) {
-    if (status === 407) return trip(scheme);
-    if (status >= 500 && challenged) return gate.unconfirmed(needsLogin, 1) ? tripped(scheme) : null;
-    gate.accepted();
+  function judge(ctx, status, scheme, challenged) {
+    if (status === 407) return trip(ctx, scheme);
+    if (status >= 500 && challenged) return live(ctx) && gate.unconfirmed(needsLogin, 1) ? tripped(ctx, scheme) : null;
+    if (live(ctx)) gate.accepted();
     return null;
   }
 
@@ -356,18 +392,18 @@ export function createUpstreamConnector(upstream, { log = () => {}, now = Date.n
   }
 
   /** The round trip that carries credentials: every outcome is judged before the gate is released. */
-  async function sendCredentials(socket, lines, deadline, scheme) {
+  async function sendCredentials(ctx, socket, lines, deadline, scheme) {
     let h;
-    try { h = await roundTrip(socket, lines, deadline); } catch (err) { throw strike(scheme, err); }
-    const refusal = judge(h.status, scheme, h.headers.has('proxy-authenticate'));
+    try { h = await roundTrip(socket, lines, deadline); } catch (err) { throw strike(ctx, scheme, err); }
+    const refusal = judge(ctx, h.status, scheme, h.headers.has('proxy-authenticate'));
     if (refusal) throw refusal;
     return h;
   }
 
-  async function basicStep(socket, buildHead, deadline, finalByCaller) {
-    const authz = `Basic ${creds.basicToken}`;
+  async function basicStep(ctx, socket, buildHead, deadline, finalByCaller) {
+    const authz = `Basic ${ctx.creds.basicToken}`;
     if (finalByCaller) return { socket, proxyAuthorization: authz, scheme: 'Basic' };
-    return { socket, head: await sendCredentials(socket, buildHead(authz), deadline, 'Basic') };
+    return { socket, head: await sendCredentials(ctx, socket, buildHead(authz), deadline, 'Basic') };
   }
 
   /**
@@ -376,9 +412,9 @@ export function createUpstreamConnector(upstream, { log = () => {}, now = Date.n
    * the Proxy-Authorization the caller sends with the real request; otherwise it returns the
    * final response head. auto and ntlm both mean NTLMv2 only: never a Basic fallback (D8).
    */
-  async function authenticate(socket, buildHead, deadline, { finalByCaller }) {
-    if (upstream.auth === 'none') return { socket, head: await roundTrip(socket, buildHead(null), deadline) };
-    if (upstream.auth === 'basic') return basicStep(socket, buildHead, deadline, finalByCaller);
+  async function authenticate(ctx, socket, buildHead, deadline, { finalByCaller }) {
+    if (ctx.auth === 'none') return { socket, head: await roundTrip(socket, buildHead(null), deadline) };
+    if (ctx.auth === 'basic') return basicStep(ctx, socket, buildHead, deadline, finalByCaller);
     const h1 = await roundTrip(socket, buildHead(`NTLM ${type1Message().toString('base64')}`), deadline);
     if (h1.status !== 407) return { socket, head: h1, unchallenged: true };
     const offered = authChallenges(h1);
@@ -394,28 +430,33 @@ export function createUpstreamConnector(upstream, { log = () => {}, now = Date.n
     if (left.length) socket.unshift(left);
     let t3;
     try {
-      t3 = type3Message({ ntHash: creds.ntHash, user: creds.user, domain: creds.domain, type2: parseType2(ntlm.token), now: now() });
+      t3 = type3Message({ ntHash: ctx.creds.ntHash, user: ctx.creds.user, domain: ctx.creds.domain, type2: parseType2(ntlm.token), now: now() });
     } catch (err) {
       if (err instanceof NtlmError) throw new ProxyError(502, `the corporate proxy ${label} sent a malformed NTLM challenge`);
       throw err;
     }
     const authz = `NTLM ${t3.toString('base64')}`;
     if (finalByCaller) return { socket, proxyAuthorization: authz, scheme: 'NTLM' };
-    return { socket, head: await sendCredentials(socket, buildHead(authz), deadline, 'NTLM') };
+    return { socket, head: await sendCredentials(ctx, socket, buildHead(authz), deadline, 'NTLM') };
   }
 
-  const acquire = () => (upstream.auth === 'none' ? Promise.resolve(() => {}) : gate.acquire());
+  /** Capture the login for one request (D7); the gate is skipped for auth none. */
+  async function acquire() {
+    const ctx = cur;
+    const release = ctx.auth === 'none' ? () => {} : await gate.acquire();
+    return { ctx, release };
+  }
 
   /** CONNECT host:port through the upstream; resolves { socket, rest } once the upstream said 2xx. */
   async function tunnel({ host, port }) {
-    const release = await acquire();
+    const { ctx, release } = await acquire();
     let socket = null;
     try {
       socket = await connectTcp(upstream.host, upstream.port, T.connectMs);
       const target = hostPort(host, port);
       const buildHead = (authz) => [`CONNECT ${target} HTTP/1.1`, `Host: ${target}`, 'Proxy-Connection: Keep-Alive',
         ...(authz ? [`Proxy-Authorization: ${authz}`] : [])];
-      const r = await authenticate(socket, buildHead, now() + T.authMs, { finalByCaller: false });
+      const r = await authenticate(ctx, socket, buildHead, now() + T.authMs, { finalByCaller: false });
       socket = r.socket;
       const { status } = r.head;
       if (status === 407) throw new ProxyError(407, `proxy needs login: the corporate proxy ${label} asks for a login and none is configured.`, { needsLogin: true });
@@ -443,7 +484,7 @@ export function createUpstreamConnector(upstream, { log = () => {}, now = Date.n
    * leaves: a 407 nobody waits for still trips the gate, or the next waiter would send the same
    * credentials again (D11). Every way `up` can end (response, upgrade, error, close) settles.
    */
-  function relay(req, res, up, { scheme, release }) {
+  function relay(req, res, up, { ctx, scheme, release }) {
     let settled = false;
     let clientGone = false;
     let credentialsOut = false;   // the head carrying `scheme` was written before the client left
@@ -453,12 +494,12 @@ export function createUpstreamConnector(upstream, { log = () => {}, now = Date.n
     up.on('timeout', () => up.destroy(new ProxyError(504, `the corporate proxy ${label} did not answer in time`)));
     up.on('error', (err) => {
       let e = err;
-      settle(() => { if (scheme && (!clientGone || credentialsOut)) e = strike(scheme, err); });
+      settle(() => { if (scheme && (!clientGone || credentialsOut)) e = strike(ctx, scheme, err); });
       reply(e);
     });
     up.on('response', (ur) => {
       let refusal = null;
-      settle(() => { if (scheme) refusal = judge(ur.statusCode, scheme, ur.headers['proxy-authenticate'] !== undefined); });
+      settle(() => { if (scheme) refusal = judge(ctx, ur.statusCode, scheme, ur.headers['proxy-authenticate'] !== undefined); });
       if (clientGone) { ur.resume(); up.destroy(); return; }
       if (refusal) { ur.resume(); replyError(res, refusal); return; }
       up.setTimeout(T.idleMs);
@@ -470,13 +511,13 @@ export function createUpstreamConnector(upstream, { log = () => {}, now = Date.n
     // credentials with something other than a 407, which proves them.
     up.on('upgrade', (ur, socket) => {
       socket.destroy();
-      settle(() => { if (scheme) judge(ur.statusCode, scheme, false); });
+      settle(() => { if (scheme) judge(ctx, ur.statusCode, scheme, false); });
       reply(new ProxyError(502, `the corporate proxy ${label} answered ${ur.statusCode} Switching Protocols, which Worca does not relay`));
     });
     up.on('close', () => {
       if (settled) return;
       let e = new ProxyError(502, `the corporate proxy ${label} closed the connection without an answer`);
-      settle(() => { if (scheme && (!clientGone || credentialsOut)) e = strike(scheme, e); });
+      settle(() => { if (scheme && (!clientGone || credentialsOut)) e = strike(ctx, scheme, e); });
       reply(e);
     });
     res.on('close', () => {
@@ -510,21 +551,23 @@ export function createUpstreamConnector(upstream, { log = () => {}, now = Date.n
       let release = () => {};
       let socket = null;
       try {
-        release = await acquire();
-        if (upstream.auth === 'none') {
-          relay(req, res, http.request({ ...base, agent: directAgent, headers }), { scheme: null, release });
+        const got = await acquire();
+        const { ctx } = got;
+        release = got.release;
+        if (ctx.auth === 'none') {
+          relay(req, res, http.request({ ...base, agent: directAgent, headers }), { ctx, scheme: null, release });
           return;
         }
         // Connect before any credentials exist on the wire: an unreachable proxy is a 502/504,
         // never a strike against the login.
         socket = await connectTcp(upstream.host, upstream.port, T.connectMs);
         let r;
-        if (upstream.auth === 'basic') {
-          r = await basicStep(socket, null, 0, true);
+        if (ctx.auth === 'basic') {
+          r = await basicStep(ctx, socket, null, 0, true);
         } else {
           const buildHead = (authz) => [`HEAD ${path} HTTP/1.1`, `Host: ${url.host}`, 'Proxy-Connection: Keep-Alive', 'Content-Length: 0',
             ...(authz ? [`Proxy-Authorization: ${authz}`] : [])];
-          r = await authenticate(socket, buildHead, now() + T.authMs, { finalByCaller: true });
+          r = await authenticate(ctx, socket, buildHead, now() + T.authMs, { finalByCaller: true });
           socket = r.socket;
           if (r.unchallenged) { socket.destroy(); socket = null; }
         }
@@ -539,7 +582,7 @@ export function createUpstreamConnector(upstream, { log = () => {}, now = Date.n
         // readResponseHead/drainBody left `own` paused; a paused socket handed to http.request
         // never delivers the response. 'socket' fires after Node's parser is attached.
         if (own) up.once('socket', (s) => s.resume());
-        relay(req, res, up, { scheme: r.scheme || null, release });
+        relay(req, res, up, { ctx, scheme: r.scheme || null, release });
       } catch (err) {
         socket?.destroy();
         release();
@@ -553,9 +596,61 @@ export function createUpstreamConnector(upstream, { log = () => {}, now = Date.n
     route: (host) => (goesDirect(host, upstream.noProxy) ? 'direct' : 'upstream'),
     tunnel,
     forward,
-    status: () => ({ upstream: label, auth: upstream.auth, source: upstream.source,
-      state: upstream.auth === 'none' ? 'none' : gate.state() }),
+    status: () => ({ upstream: label, auth: cur.auth, source: upstream.source, login: cur.creds ? cur.creds.label : null,
+      loginId: cur.loginId, state: cur.auth === 'none' ? 'none' : gate.state() }),
     reset: () => gate.reset(),
+    /**
+     * Swap in a saved login (D8). `next` null = logged out: fall back to the URL login, else send
+     * nothing. `rejected`: that login is already marked rejected, so the gate stays shut. Basic
+     * keeps the URL's password and never swaps. @returns {boolean} true when the login changed
+     */
+    useLogin(next, { id = null, rejected = false } = {}) {
+      // Basic keeps the URL's password; an explicit `auth: none` sends nothing, ever (D23).
+      if (upstream.auth === 'basic' || upstream.requestedAuth === 'basic' || upstream.requestedAuth === 'none') return false;
+      const creds = next || urlCreds;
+      // The mode to restore: what the user set (ntlm stays ntlm), else auto. Never the boot's
+      // derived 'none' (that only meant "no login yet").
+      const auth = creds ? (upstream.requestedAuth || 'auto') : 'none';
+      cur = { gen: cur.gen + 1, creds, auth, loginId: next ? id : null };
+      gate.reset();
+      if (creds && rejected) gate.rejected(needsLogin);
+      return true;
+    },
     close: () => directAgent.destroy(),
   };
+}
+
+/** The hosts the Test button and `worca proxy test` CONNECT to. */
+export const TEST_HOSTS = Object.freeze(['github.com', 'api.anthropic.com']);
+
+/**
+ * CONNECT host:443 through the upstream for each host, one after another on ONE connector, so a
+ * wrong login costs one Type 3 (the next host gets the local 407). A noProxy host is reported
+ * as direct and not contacted.
+ * @returns {Promise<{ok: boolean, upstream: object, results: Array<{host: string, ok: boolean, via: 'upstream'|'direct', ms: number, status?: number, needsLogin?: boolean, error?: string}>}>}
+ */
+export async function checkUpstream(upstream, { hosts = TEST_HOSTS, port = 443, log = () => {}, now = Date.now,
+  startTripped = false, onTrip = () => {} } = {}) {
+  const connector = createUpstreamConnector(upstream, { log, now, startTripped, onTrip });
+  const results = [];
+  try {
+    for (const host of hosts) {
+      const t0 = Date.now();
+      if (connector.route(host) === 'direct') {
+        results.push({ host, ok: true, via: 'direct', ms: 0, error: 'goes direct (NO_PROXY), not tested' });
+        continue;
+      }
+      try {
+        const { socket } = await connector.tunnel({ host, port });
+        socket.destroy();
+        results.push({ host, ok: true, via: 'upstream', ms: Date.now() - t0 });
+      } catch (err) {
+        results.push({ host, ok: false, via: 'upstream', ms: Date.now() - t0, status: err.status || 502,
+          needsLogin: !!err.needsLogin, error: err.message });
+      }
+    }
+    return { ok: results.every((r) => r.ok), upstream: connector.status(), results };
+  } finally {
+    connector.close();
+  }
 }

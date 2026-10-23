@@ -522,7 +522,7 @@ test('corporate proxy, flag on: HTTP(S)_PROXY becomes the upstream and children 
     assert.equal(env.PATH, '/bin');
     assert.equal(env.NO_PROXY, '127.0.0.1,localhost,::1,intranet.example');
     assert.equal(r.replacedProxy, false);
-    assert.match(egressNotice(r).text, /^corporate proxy: outbound connections go through 127\.0\.0\.1:\d+ \(NTLMv2\) via http:\/\/127\.0\.0\.1:\d+/);
+    assert.match(egressNotice(r).text, /^Corporate proxy: via 127\.0\.0\.1:\d+ \(NTLMv2\), logged in as Domain\\User, local proxy http:\/\/127\.0\.0\.1:\d+/);
     assertNoCorpSecrets(egressNotice(r).text);
     assertNoCorpSecrets(JSON.stringify(r.upstream));
     const tunnel = await rawRequest(Number(new URL(r.url).port), 'CONNECT github.com:443 HTTP/1.1\r\nHost: github.com:443\r\n\r\nGET /t HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n');
@@ -589,6 +589,162 @@ test('corporate proxy, flag on: no upstream anywhere is off; a bad one is a warn
   assert.equal(bad.status, 'off');
   const n = egressNotice(bad);
   assert.equal(n.level, 'warn');
-  assert.match(n.text, /^corporate proxy: the upstream proxy must be an http:\/\/ URL/);
+  assert.match(n.text, /^Corporate proxy: the upstream proxy must be an http:\/\/ URL/);
   assert.doesNotMatch(n.text, /s3cret|corp\.example:8443/);
+});
+
+// --- the saved login (worca proxy login, src/core/proxy-credentials.mjs) ------------------------
+
+import { mkdtempSync, rmSync, chmodSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { saveProxyLogin, readProxyLogin, markLoginRejected, PROXY_LOGIN_FILE } from '../src/core/proxy-credentials.mjs';
+import { ntHash } from '../src/core/ntlm.mjs';
+
+const ACME = { domain: 'ACME', user: 'jdoe', password: 'S3cret!' };
+const CONNECT_GH = 'CONNECT github.com:443 HTTP/1.1\r\nHost: github.com:443\r\n\r\nGET /t HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n';
+
+async function untilTrue(cond, ms = 3000, step = 10) {
+  const t0 = Date.now();
+  while (!cond()) {
+    if (Date.now() - t0 > ms) throw new Error('timed out');
+    await new Promise((r) => setTimeout(r, step));
+  }
+}
+
+/** A fake NTLM upstream for ACME\jdoe / S3cret!, a temp home, and a policy started on it. */
+async function savedLoginRig(t, { fakeOpts = {}, networkProxy = {}, password = 'S3cret!', marked = false, policyOpts = {} } = {}) {
+  const home = mkdtempSync(join(tmpdir(), 'worca-egress-login-'));
+  const o = await origin();
+  const fake = await startFakeUpstream({ scheme: 'ntlm', domain: 'ACME', user: 'jdoe', password: 'S3cret!', originPort: o.port, ...fakeOpts });
+  const saved = password ? saveProxyLogin({ ...ACME, password }, { home }) : null;
+  if (saved && marked) markLoginRejected(saved.id, { home, upstream: `127.0.0.1:${fake.port}` });
+  const logs = [];
+  const env = {};
+  const r = await startEgressPolicy({
+    env, corporateProxy: FLAG_ON, log: (l) => logs.push(l),
+    settings: () => ({ networkProxy: { upstream: fake.url(), ...networkProxy } }),
+    login: () => readProxyLogin({ home }),
+    watchLogin: () => () => {},
+    markRejected: (id, opts) => markLoginRejected(id, { ...opts, home }),
+    ...policyOpts,
+  });
+  t.after(async () => { await r.close(); await fake.close(); o.server.close(); rmSync(home, { recursive: true, force: true }); });
+  return { home, fake, r, logs, env, saved, port: r.url ? Number(new URL(r.url).port) : 0 };
+}
+
+test('saved login: one marked rejected boots tripped and the upstream sees no credentials', async (t) => {
+  const { r, fake, port } = await savedLoginRig(t, { marked: true });
+  assert.equal(r.connector.status().state, 'tripped');
+  const n = egressNotice(r);
+  assert.equal(n.level, 'warn');
+  assert.match(n.text, /^Corporate proxy: via 127\.0\.0\.1:\d+ \(NTLMv2\): proxy needs login/);
+  const out = await rawRequest(port, CONNECT_GH);
+  assert.match(out, /^HTTP\/1\.1 407/);
+  assert.equal(fake.stats.authHeaders.length, 0);
+});
+
+test('saved login: the boot line names it, and reloadLogin picks up a new save', async (t) => {
+  const { r, home, port } = await savedLoginRig(t, { marked: true });
+  const fresh = await savedLoginRig(t);
+  const n = egressNotice(fresh.r);
+  assert.equal(n.level, 'info');
+  assert.match(n.text, /^Corporate proxy: via 127\.0\.0\.1:\d+ \(NTLMv2\), logged in as ACME\\jdoe, local proxy/);
+  saveProxyLogin(ACME, { home });
+  assert.equal(r.reloadLogin(), true);
+  assert.equal(r.connector.status().state, 'unverified');
+  assert.equal(r.reloadLogin(), false, 'nothing changed since');
+  assert.match(await rawRequest(port, CONNECT_GH), /origin saw \/t/);
+});
+
+test('saved login: a marker written by a second process trips the running connector', async (t) => {
+  const { r, home, fake, port, saved } = await savedLoginRig(t);
+  assert.equal(markLoginRejected(saved.id, { home, upstream: 'x' }), true);   // e.g. worca proxy test
+  assert.equal(r.reloadLogin(), true);
+  assert.equal(r.connector.status().state, 'tripped');
+  const before = fake.stats.authHeaders.length;
+  assert.match(await rawRequest(port, CONNECT_GH), /^HTTP\/1\.1 407/);
+  assert.equal(fake.stats.authHeaders.length, before);
+});
+
+test('saved login: a 407 to a handshake begun before a new login leaves the new login unmarked', async (t) => {
+  const { r, home, fake, port } = await savedLoginRig(t, { password: 'wrong', fakeOpts: { holdType3: true } });
+  const pending = rawRequest(port, CONNECT_GH);
+  await untilTrue(() => fake.stats.type3 === 1);
+  saveProxyLogin(ACME, { home });
+  assert.equal(r.reloadLogin(), true);
+  fake.release();
+  assert.match(await pending, /^HTTP\/1\.1 407/);
+  assert.equal(readProxyLogin({ home }).rejected, null);
+  assert.equal(r.connector.status().state, 'unverified');
+});
+
+test('saved login: the default watcher swaps a new login in without a restart', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'worca-egress-watch-'));
+  const prev = process.env.WORCA_HOME;
+  process.env.WORCA_HOME = home;
+  const o = await origin();
+  const fake = await startFakeUpstream({ scheme: 'ntlm', domain: 'ACME', user: 'jdoe', password: 'S3cret!', originPort: o.port });
+  const r = await startEgressPolicy({ env: {}, corporateProxy: FLAG_ON, loginPollMs: 50, settings: () => ({ networkProxy: { upstream: fake.url() } }) });
+  t.after(async () => {
+    await r.close(); await fake.close(); o.server.close();
+    if (prev === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prev;
+    rmSync(home, { recursive: true, force: true });
+  });
+  assert.equal(r.connector.status().state, 'none', 'no login at boot');
+  saveProxyLogin(ACME);   // the default home: WORCA_HOME/.worca-cc
+  await untilTrue(() => r.connector.status().state === 'unverified', 3000, 25);
+  assert.equal(r.connector.status().auth, 'auto');
+});
+
+test('saved login: a file that turns unreadable keeps a tripped connector tripped, logged once', { skip: process.platform === 'win32' }, async (t) => {
+  const { r, home, logs, saved } = await savedLoginRig(t, { marked: true });
+  chmodSync(join(home, PROXY_LOGIN_FILE), 0o644);
+  assert.equal(r.reloadLogin(), false);
+  assert.equal(r.connector.status().state, 'tripped');
+  assert.equal(r.connector.status().loginId, saved.id);
+  assert.equal(logs.filter((l) => /cannot be used/.test(l)).length, 1);
+  assert.match(logs.find((l) => /cannot be used/.test(l)), /^Corporate proxy:/);
+  const n = logs.length;
+  assert.equal(r.reloadLogin(), false);
+  assert.equal(logs.length, n, 'the same error is not logged again');
+});
+
+test('saved login: an explicit auth none never sends it, and no watcher starts', async (t) => {
+  let watched = 0;
+  const { r, home, fake, port } = await savedLoginRig(t, { networkProxy: { auth: 'none' }, policyOpts: { watchLogin: () => { watched += 1; return () => {}; } } });
+  assert.equal(r.connector.status().auth, 'none');
+  assert.equal(watched, 0);
+  await rawRequest(port, CONNECT_GH);
+  saveProxyLogin(ACME, { home });
+  r.reloadLogin();
+  assert.equal(r.connector.status().auth, 'none');
+  await rawRequest(port, CONNECT_GH);
+  assert.equal(fake.stats.authHeaders.length, 0);
+});
+
+test('saved login: a tripped handshake logs neither the password nor the hash', async (t) => {
+  const { logs, port, r } = await savedLoginRig(t, { password: 'wrong' });
+  assert.match(await rawRequest(port, CONNECT_GH), /^HTTP\/1\.1 407/);
+  assert.equal(r.connector.status().state, 'tripped');
+  assert.ok(logs.some((l) => /^Corporate proxy: .*did not accept/.test(l)), logs.join('\n'));
+  const joined = logs.join('\n');
+  for (const s of ['wrong', 'S3cret!', ntHash('wrong').toString('hex')]) assert.ok(!joined.includes(s), joined);
+});
+
+test('sourceEnv: the proxy variables before the swap, and never a parent\'s local proxy', async (t) => {
+  const o = await origin();
+  const fake = await startFakeUpstream({ scheme: 'none', originPort: o.port });
+  const env = { HTTPS_PROXY: fake.url(), PATH: '/bin' };
+  const r = await startEgressPolicy({ env, corporateProxy: FLAG_ON, settings: () => ({}), login: () => null });
+  t.after(async () => { await r.close(); await fake.close(); o.server.close(); });
+  assert.equal(r.sourceEnv.HTTPS_PROXY, fake.url());
+  assert.equal(env.HTTPS_PROXY, r.url);
+  const local = 'http://127.0.0.1:9';
+  const child = { [EGRESS_PROXY_VAR]: local, HTTPS_PROXY: local, HTTP_PROXY: local, https_proxy: local, http_proxy: local, PATH: '/bin' };
+  const inh = await startEgressPolicy({ env: child, corporateProxy: FLAG_ON, settings: () => ({}) });
+  assert.equal(inh.status, 'inherited');
+  for (const k of [EGRESS_PROXY_VAR, 'HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy']) assert.equal(k in inh.sourceEnv, false, k);
+  const off = await startEgressPolicy({ env: { PATH: '/bin' }, corporateProxy: FLAG_OFF });
+  assert.deepEqual(off.sourceEnv, { PATH: '/bin' });
 });
