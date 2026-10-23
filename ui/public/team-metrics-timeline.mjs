@@ -138,7 +138,7 @@ function tiles(doc, sum, { filter }) {
     ? [failing && `${failing} failing`, waiting && `${waiting} waiting for review`].filter(Boolean).join(' · ')
     : 'Nothing is blocked';
   row.append(tile({ f: 'attention', tone: 'red', label: 'Needs attention', value: String(sum.attention.length), sub: attSub }));
-  if (sum.prKnown) row.append(tile({ label: 'Median lead time', value: fmtSpan(sum.medianLeadMs), sub: 'First run (or PR opened) to merge' }));
+  if (sum.prKnown) row.append(tile({ label: 'Median lead time', value: fmtSpan(sum.medianLeadMs), sub: 'First run (or PR created) to merge' }));
   row.append(tile({ label: 'Agent spend', value: TM_FMT.usd(sum.spendUsd), sub: 'Runs started in this period' }));
   return row;
 }

@@ -103,7 +103,7 @@ test('marketplaceNameProblem: a typed name with no letter or digit stops the exp
 test('marketplaceDoneView: PR link, version, fork; "No changes" without a PR', () => {
   const d = doc();
   const v = marketplaceDoneView({ ...RES, status: 'opened', prUrl: 'https://github.com/acme/market/pull/9', pushTo: 'fork', fork: { repo: 'me/market' }, draft: true }, { doc: d });
-  assert.equal(v.title, 'Pull request opened for plugin "shared-flow" v0.1.1');
+  assert.equal(v.title, 'PR created for plugin "shared-flow" v0.1.1');
   const pr = v.lines.find(([k]) => k === 'Pull request')[1];
   assert.equal(pr.tagName, 'A');
   assert.equal(pr.getAttribute('href'), 'https://github.com/acme/market/pull/9');
@@ -122,7 +122,7 @@ test('marketplaceDoneView: PR link, version, fork; "No changes" without a PR', (
   assert.equal(same.lines.some(([k]) => k === 'Branch'), true);
   // a hand-authored plugin without a version (D18): never "vnull" / "null (new)"
   const unv = marketplaceDoneView({ ...RES, status: 'opened', prUrl: 'https://github.com/acme/market/pull/9', oldVersion: null, newVersion: null, versionText: 'unversioned (unchanged)' }, { doc: d });
-  assert.equal(unv.title, 'Pull request opened for plugin "shared-flow"');
+  assert.equal(unv.title, 'PR created for plugin "shared-flow"');
   assert.deepEqual(unv.lines.find(([k]) => k === 'Version'), ['Version', 'unversioned (unchanged)']);
   assert.doesNotMatch(JSON.stringify(unv.lines.filter(([, v]) => typeof v === 'string')), /null/);
 });

@@ -12,7 +12,7 @@ import { planApprovedLine } from '../log-line.mjs';
 import { mountRunGraph } from '../graph/run-hosts.mjs';
 import { fmtDur, fmtUsd, isGraphManifest, manifestNodes } from '../graph/run-decor.mjs';
 import { askKindOf } from '../ask/registry.mjs';
-import { CREATE_PR_LABEL } from '../ship-words.mjs';
+import { CREATE_PR_LABEL, VIEW_PR_LABEL } from '../ship-words.mjs';
 import { icon as uiIcon } from '../icons.mjs';
 import { shapeFirstOn } from './shape-gate.mjs';
 import { checklistScore } from '../../../src/shared/shape/review-checklist.mjs';
@@ -718,7 +718,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       if (prUrl) {
         // PR controls (design system): View PR is a secondary small button, led by the PR's state glyph.
         const a = h('a', 'btn btn-sm chat-rc-view-pr');
-        a.append(uiIcon(doc, word.key === 'merged' ? 'merge' : 'pull-request', 14), 'View PR');
+        a.append(uiIcon(doc, word.key === 'merged' ? 'merge' : 'pull-request', 14), VIEW_PR_LABEL);
         viewPrLink = a;
         a.setAttribute('href', prUrl);
         a.target = '_blank';
@@ -788,7 +788,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     if (watchEl.dataset.sig === sig) return;                 // the 1 s tick must not steal a link's focus
     watchEl.dataset.sig = sig;
     const extras = [];
-    if (withPr) extras.push(link('chat-rc-watch-pr', w.prUrl, 'View PR'));
+    if (withPr) extras.push(link('chat-rc-watch-pr', w.prUrl, VIEW_PR_LABEL));
     if (withAsk) {
       const ask = button('btn btn-sm btn-quiet chat-rc-watch-ask', 'Ask for changes');
       ask.addEventListener('click', askForChanges);

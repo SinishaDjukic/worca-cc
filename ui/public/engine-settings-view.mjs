@@ -20,7 +20,7 @@ export const JOB_HINTS = Object.freeze({
   title: 'Writes the short title every run and chat gets.',
   classifier: 'Reads an Auto run\'s task and picks the workflow it runs.',
   overview: 'Writes the overview a finished run opens on.',
-  prDescription: 'Drafts the pull request description ("Generate with AI").',
+  prDescription: 'Drafts the pull request description ("Generate").',
   memoryDefrag: 'Runs Memory defragment, which restructures saved memory.',
   agentGen: 'Drafts a new agent\'s prompt and metadata in Workflows › Agents (Generate).',
   naming: 'Suggests the title and branch name on the New run form (Smart run naming). Unset: the cheapest ready Claude model.',

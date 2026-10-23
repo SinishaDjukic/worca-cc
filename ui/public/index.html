@@ -2274,7 +2274,7 @@
               <div class="drows">
               <label class="field drow switch-drow" for="prAutoDescribe">
                 <span class="drow-label">Draft the PR description with AI automatically
-                  <button type="button" class="info-tip" aria-label="About drafting the PR description automatically">i<span class="tip-content hidden">Each time the Create PR dialog opens, Worca runs the PR description model to draft the description, as if you had pressed Generate with AI. You can stop it, edit the draft or generate again.</span></button>
+                  <button type="button" class="info-tip" aria-label="About drafting the PR description automatically">i<span class="tip-content hidden">Each time the Create PR dialog opens, Worca runs the PR description model to draft the description, as if you had pressed Generate. You can stop it, edit the draft or generate again.</span></button>
                 </span>
                 <span class="drow-control"><input id="prAutoDescribe" data-setting="autoGeneratePrDescription" class="sw-input" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></span>
               </label>
@@ -2838,109 +2838,91 @@
       </div>
     </div>
 
-    <!-- ===== "Create pull request" confirm modal (History detail) ===== -->
+    <!-- ===== "Create PR" confirm modal (History detail) ===== -->
     <!-- No z-index of its own: #confirm-modal.viewer-modal{z-index:60} (style.css:781)
          exists because #confirm-modal precedes #plugin-modal in the DOM, and this
          dialog never coexists with another overlay — the Escape guard and the
          double-open guard keep them mutually exclusive. -->
-    <div id="shipit-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-label="Create pull request">
+    <div id="shipit-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-label="Create PR">
       <div class="card shipit-card">
-        <div class="shipit-ico-wrap">
-          <div class="shipit-spark"></div>
-          <div class="shipit-ico">
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6.5" cy="6" r="2.4"></circle><circle cx="6.5" cy="18" r="2.4"></circle><circle cx="17.5" cy="12" r="2.4"></circle><path d="M6.5 8.4v7.2M8.9 17c4.1 0 6-1.8 6.2-3.6M8.9 7c4.1 0 6 1.8 6.2 3.6"></path></svg>
-          </div>
-        </div>
-        <h2>Create pull request</h2>
-        <p class="shipit-sub"></p>
-        <div class="shipit-summary mono">
-          <span class="shipit-files"></span>
-          <!-- spec §5.10 writes the summary as "N files · +A −R"; the middot is markup
-               so the CSS can drop it when the file count is absent. -->
-          <span class="shipit-dot">·</span>
-          <span class="diff-add shipit-add"></span>
-          <span class="diff-del shipit-del"></span>
-          <span class="shipit-break"></span>
-          <b class="shipit-branch"></b>
-          <span class="shipit-arrow">→</span>
-          <span class="shipit-base"></span>
-          <!-- The base-branch pick, in place of the plain base name once GET
-               /api/pr/remotes names the choices: the run chain (root first, the
-               default) and the base remote's branches. While it is hidden the
-               plain `.shipit-base` text stands and the POST omits baseBranch. -->
-          <span class="select-wrap shipit-base-wrap" hidden>
-            <select id="shipit-base-branch" class="select shipit-base-branch" aria-label="Base branch"></select>
-          </span>
-        </div>
-        <!-- Sync before run (#527): the base moved on the remote since this run started. -->
-        <small class="hint warn" id="shipit-base-warn" hidden></small>
-        <!-- Base conflicts (#620): the stored local check while no PR exists. Painted by paintShipItBaseCheck. -->
-        <small class="hint shipit-basecheck" hidden></small>
-        <!-- Fork support: where the branch is pushed and which repo the PR opens in
-             (GitHub's "compare across forks"; Azure DevOps opens PRs within one repository). Filled from GET /api/pr/remotes on
-             open; hidden until the list arrives and stays hidden when it cannot be
-             loaded (the server then applies its own defaults). -->
-        <div class="shipit-remotes" hidden>
-          <div class="shipit-remote-field">
-            <label for="shipit-push-remote">Push branch to</label>
-            <div class="select-wrap">
-              <select id="shipit-push-remote" class="select shipit-push-remote" aria-label="Push remote"></select>
+        <h2 class="shipit-title">Create PR</h2>
+        <!-- Zone 2, Into: base remote and base branch on one row; with one remote only the branch (D5).
+             `.shipit-remotes` is filled from GET /api/pr/remotes on open; hidden until the list arrives and stays
+             hidden when it cannot be loaded (the server then applies its own defaults). The base-branch pick
+             replaces the plain `.shipit-base` name once the choices are known; while it is hidden the POST omits
+             baseBranch. -->
+        <section class="shipit-zone shipit-into" aria-labelledby="shipit-into-label">
+          <span class="shipit-zone-label" id="shipit-into-label">Into</span>
+          <div class="shipit-into-row" data-cols="1">
+            <div class="shipit-remotes" hidden>
+              <div class="select-wrap shipit-base-remote-field" hidden>
+                <select id="shipit-base-remote" class="select shipit-base-remote" aria-label="Base repository"></select>
+              </div>
+              <div class="shipit-push-field" hidden>
+                <label for="shipit-push-remote">Push remote</label>
+                <div class="select-wrap">
+                  <select id="shipit-push-remote" class="select shipit-push-remote" aria-label="Push remote"></select>
+                </div>
+              </div>
             </div>
-          </div>
-          <div class="shipit-remote-field">
-            <label for="shipit-base-remote">Open PR in</label>
-            <div class="select-wrap">
-              <select id="shipit-base-remote" class="select shipit-base-remote" aria-label="Base repository"></select>
-            </div>
+            <span class="shipit-base mono"></span>
+            <span class="select-wrap shipit-base-wrap" hidden>
+              <select id="shipit-base-branch" class="select shipit-base-branch" aria-label="Base branch"></select>
+            </span>
           </div>
           <small class="shipit-remotes-hint hint"></small>
-        </div>
+          <!-- Sync before run (#527): the base moved on the remote since this run started. -->
+          <small class="hint warn" id="shipit-base-warn" hidden></small>
+          <!-- Base conflicts (#620): the stored local check while no PR exists. Painted by paintShipItBaseCheck. -->
+          <small class="hint shipit-basecheck" hidden></small>
+        </section>
         <!-- Workspace runs: one row per affected member repo (tick box, branch → base,
              push/base remotes, per-repo status). Built by openShipItWsModal. -->
         <div id="shipit-repos" class="shipit-repos" hidden></div>
-        <!-- The PR description (optional): free-form markdown with Write / Preview tabs,
-             or drafted by Generate with AI (POST /api/pr/describe) for the user to edit.
-             Reset to empty on every open; empty = the PR body is the title, as before.
-             Its own error line keeps a failed draft off "Could not open PR". -->
-        <div class="shipit-desc">
+        <!-- Zone 3, the PR itself: title, description (Write / Preview / Generate), Draft. The description is
+             optional and reset to empty on every open; empty = the PR body is the title, as before. Its own error
+             line keeps a failed draft off "Not shipped". Draft is opt-in per PR (off on every open); the
+             "Will close" line names the run's GitHub issue source (GET /api/pr/remotes `issue`). -->
+        <section class="shipit-zone shipit-desc" aria-labelledby="shipit-pr-label">
+          <span class="shipit-zone-label" id="shipit-pr-label">Title and description</span>
+          <input id="shipit-title-input" class="input shipit-title-input" type="text" maxlength="256" aria-label="PR title" />
           <div class="shipit-desc-head">
-            <label for="shipit-desc-input">PR description</label>
-            <div class="md-tabs tabs" role="tablist" aria-label="PR description editor">
+            <div class="md-tabs tabs" role="tablist" aria-label="Description editor">
               <button type="button" class="md-tab tab shipit-desc-tab" role="tab" data-mode="text" aria-selected="true">Write</button>
               <button type="button" class="md-tab tab shipit-desc-tab" role="tab" data-mode="preview" aria-selected="false">Preview</button>
             </div>
             <button type="button" class="shipit-generate-stop btn btn-sm" hidden>Stop</button>
-            <button type="button" class="shipit-generate btn btn-sm">Generate with AI</button>
+            <button type="button" class="shipit-generate btn btn-sm btn-quiet">Generate</button>
           </div>
-          <!-- The editor and its preview share one box so the Generate-with-AI veil can
-               lie over whichever is showing: a shimmer sweep that also swallows clicks
-               while the textarea is read-only. `.is-generating` + aria-busy toggle it
-               (setShipItGenerating); the veil itself is decoration. -->
+          <!-- The editor and its preview share one box so the Generate veil can lie over whichever is showing: a
+               shimmer sweep that also swallows clicks while the textarea is read-only. `.is-generating` +
+               aria-busy toggle it (setShipItGenerating); the veil itself is decoration. -->
           <div class="shipit-desc-field" aria-busy="false">
-            <textarea id="shipit-desc-input" class="shipit-desc-input textarea" rows="7" placeholder="Describe this change, or use Generate with AI"></textarea>
+            <textarea id="shipit-desc-input" class="shipit-desc-input textarea" rows="5" aria-label="Description" placeholder="Describe this change, or use Generate"></textarea>
             <div class="shipit-desc-preview md-preview viewer" hidden></div>
             <div class="shipit-desc-busy" aria-hidden="true"><span class="shipit-desc-busy-label">Drafting with AI…</span></div>
           </div>
           <div class="shipit-desc-err hint err" hidden></div>
-        </div>
-        <!-- Draft is opt-in per ship (unchecked on every open); Watch PR starts from the project's Watch new
-             pull requests setting (s4). No data-min-level: the
-             controls show wherever the modal does (docs/ui-levels.md, History). The
-             "Will close" line names the run's GitHub issue source (GET /api/pr/remotes `issue`). -->
-        <div class="shipit-draft">
-          <label class="switch-row" for="shipit-draft-input"><input id="shipit-draft-input" class="sw-input shipit-draft-input" type="checkbox" role="switch" /><span class="switch" aria-hidden="true"></span><span class="switch-label">Open as draft</span></label>
+          <div class="shipit-draft">
+            <label class="switch-row" for="shipit-draft-input"><input id="shipit-draft-input" class="sw-input shipit-draft-input" type="checkbox" role="switch" /><span class="switch" aria-hidden="true"></span><span class="switch-label">Draft</span></label>
+            <small class="shipit-closes hint" hidden></small>
+          </div>
+        </section>
+        <!-- Zone 4, After it opens: Watch PR (starts from the project's Watch new pull requests setting, s4), and
+             the Shaper s4 release row (shape/release-row.mjs), collapsed on every open; the workspace dialog hides
+             it. No data-min-level: the controls show wherever the modal does (docs/ui-levels.md, History). -->
+        <section class="shipit-zone shipit-after" aria-labelledby="shipit-after-label">
+          <span class="shipit-zone-label" id="shipit-after-label">After it opens</span>
           <label class="switch-row" for="shipit-watch-input"><input id="shipit-watch-input" class="sw-input shipit-watch-input" type="checkbox" role="switch" aria-describedby="shipit-watch-help" /><span class="switch" aria-hidden="true"></span><span class="switch-label">Watch PR</span></label>
-          <small id="shipit-watch-help" class="hint shipit-watch-help">Start a fix run when checks fail or a reviewer asks for changes</small>
-          <small class="shipit-closes hint" hidden></small>
-        </div>
-        <!-- Shaper s4: the release row (shape/release-row.mjs), collapsed on every open like the draft box; the
-             workspace dialog hides it. -->
-        <div class="shipit-release" aria-label="Release"></div>
+          <small id="shipit-watch-help" class="hint shipit-watch-help">Follows checks and reviews</small>
+          <div class="shipit-release" aria-label="Release"></div>
+        </section>
         <div class="shipit-try" hidden data-min-level="advanced" aria-label="Try it first"></div>
         <p class="shipit-slice-note" hidden></p>
         <div class="shipit-actions" data-card-actions>
+          <button type="button" class="btn shipit-try-btn" hidden data-min-level="advanced">Try it first</button>
           <button type="button" class="shipit-cancel btn">Cancel</button>
-          <button type="button" class="btn btn-primary shipit-ok">Create pull request</button>
+          <button type="button" class="btn btn-primary shipit-ok">Create PR</button>
         </div>
       </div>
     </div>
@@ -2951,7 +2933,7 @@
     <div id="publish-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-label="Publish branch">
       <div class="card publish-card">
         <h2>Publish branch</h2>
-        <p class="publish-sub hint">Pushes the branch so it can be pulled and tested.<br>No pull request is opened.</p>
+        <p class="publish-sub hint">Pushes the branch so it can be pulled and tested.<br>No PR is created.</p>
         <div class="publish-repos"></div>
         <div class="publish-actions" data-card-actions>
           <button type="button" class="publish-cancel btn">Cancel</button>

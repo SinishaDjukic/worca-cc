@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { memberViewState, renderActionsCard, renderOverviewStrip, renderRunPill,
+import { memberViewState, renderActionsCard, renderOverviewStrip, renderRunPill, renderShipItStrip, shipItTryState,
   renderRunningActionRows, historyActionBadges, formatUptime, isSafeHref, createActionsController, releaseCheckout } from '../ui/public/actions-view.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
@@ -129,6 +129,17 @@ test('workspace: member checkboxes, "Check out selected", stack rows', () => {
   assert.deepEqual(got, [['api-1a2b3c4d'], ['dev', 'stop']]);
   assert.equal(el.querySelectorAll('section.act-card').length, 2);
   assert.equal(labelsOf(el).filter((t) => t === 'Check out').length, 0);
+});
+
+test('shipItTryState: checkout before the branch is checked out, strip after, null when unfinished or branchless', () => {
+  assert.equal(shipItTryState(model(member())), 'checkout');
+  assert.equal(renderShipItStrip(model(member()), { doc }), null, 'no Check out button in the strip any more');
+  const inn = model(member({ checkout: { dir: '/x' } }));
+  assert.equal(shipItTryState(inn), 'strip');
+  assert.equal(renderShipItStrip(inn, { doc }).querySelector('.act-label').textContent, 'Try it first');
+  assert.equal(shipItTryState({ ...model(member()), finished: false }), null);
+  assert.equal(shipItTryState(model(member({ branch: null }))), null);
+  assert.equal(shipItTryState(null), null);
 });
 
 test('overview strip: Check out, then open link + Stop while a service runs; null without a branch', () => {

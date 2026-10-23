@@ -5,7 +5,6 @@
     ".ins-port-editor .ins-prow input[type=\"text\"]",
     ".qtune .select-wrap select",
     ".shipit-repo-branch .select",
-    ".shipit-summary .select",
     ".tp-onbreach .select"
   ],
   "solidPressed": [

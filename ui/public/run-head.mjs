@@ -2,7 +2,7 @@
 // View PR ▾ items) and its read-only three-step tracker, for both run pages. Pure: headModel / trackerModel read the
 // facts app.js builds (headFactsOf); renderHeadButtons / renderTracker draw over the host's ownerDocument, never fetch.
 import { icon } from './icons.mjs';
-import { CREATE_PR_LABEL } from './ship-words.mjs';
+import { CREATE_PR_LABEL, VIEW_PRS_LABEL, viewPrLabel } from './ship-words.mjs';
 
 // Watch PR (#619), moved from app.js: the tracker and the Overview's PR rows read one wording.
 export const HD_PR_WATCH_ACTIVE = new Set(['starting', 'fixing', 'publishing']);
@@ -132,7 +132,7 @@ function workspaceHead(f) {
   const merged = prs.filter((x) => upper(x.pr) === 'MERGED').length;
   const open = prs.some((x) => upper(x.pr) === 'OPEN');
   return { ...NONE, key: 'workspace', status: open && f.m.state === 'in-review' ? { line: `In review · ${merged} of ${prs.length} merged` } : null,
-    cta: { state: 'view', label: 'View PRs', menu: true, ws: true },
+    cta: { state: 'view', label: VIEW_PRS_LABEL, menu: true, ws: true },
     after: f.canCreatePr ? [btn('ship', CREATE_PR_LABEL, { primary: true, icon: 'pr-create' })] : [] };
 }
 
@@ -343,7 +343,7 @@ export function prMenuItems(prs, { level, onWatch, onCopy, onOpen, onResolve }) 
   for (const p of prs) {
     if (items.length) items.push({ sep: true });
     items.push({ header: many ? `${p.name} · Pull request #${p.number}` : `Pull request #${p.number}` });
-    if (many) items.push({ label: `Open PR #${p.number}`, icon: 'external', onSelect: () => onOpen(p) });
+    if (many) items.push({ label: viewPrLabel(p.number), icon: 'external', onSelect: () => onOpen(p) });
     if (adv && p.open && p.watch) items.push({ switch: true, label: 'Watch', icon: 'eye', help: WATCH_HELP, checked: !!p.watch.watching, key: p.key, onToggle: (b) => onWatch(p, b) });
     // A read that failed outright (D9): say so instead of leaving Watch silently absent. Disabled items are skipped by
     // openMenu's arrow keys (its `enabled()` filter).

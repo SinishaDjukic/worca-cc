@@ -49,7 +49,7 @@ export async function shipFeature({ feature, mode, maxBody = Infinity }, deps) {
     return { ok: true, mode, prUrl: null, warnings };
   }
   const one = await deps.openOnePr({ pipelineId: last.pipelineId, title: feature.title, body: onePrBody(slices, null, { maxChars: maxBody }) });
-  if (!one.ok) return { ok: false, status: 500, error: `could not open the pull request: ${one.error}` };
+  if (!one.ok) return { ok: false, status: 500, error: `could not create the PR: ${one.error}` };
   // P16: the forge answered with an open PR from the same head into the same base (the last slice's draft already
   // targets the root): that PR is the one PR. Make it ready and give it the combined body; never close it.
   let kept = null;

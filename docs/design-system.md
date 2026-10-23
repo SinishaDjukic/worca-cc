@@ -95,15 +95,20 @@ primary.
 Every pull request button and link looks the same everywhere (`test/ui-pr-controls.test.mjs`).
 1. Variant. Create PR and Push are the ship actions: `.btn.btn-primary`. View PR is navigation: a plain secondary
    `.btn`, for an open PR and a merged one alike. Nothing is a custom pill.
-2. Size by context. On a page (the run page's card head, the History Details header, the Ship it dialog) `.btn`, 32px.
+2. Size by context. On a page (the run page's card head, the History Details header, the Create PR dialog) `.btn`, 32px.
    Inside a card or bar (the Chat run card, the Chat pull request card, the run and group page bar buttons that
    `syncActions` makes) `.btn.btn-sm`, 28px. Never full width (`.btn-block`).
 3. Icon. Every PR button leads with one glyph from `icon(doc, name, size)` (`ui/public/icons.mjs`): 16px on `.btn`,
    14px on `.btn-sm`. Create PR `pr-create`; View PR `pull-request` while the PR is open, `merge` once merged; Push
    `arrow-up`.
-4. Labels. "Create PR" (`CREATE_PR_LABEL`, `ui/public/ship-words.mjs`); "View PR" for an open and a merged PR; Push says
-   the header's `Push main` (the source branch). The Ship it dialog keeps its title "Create pull request", and its "Try
-   it first" Check out is a secondary `.btn-sm`, so the dialog has one primary.
+4. Labels. The words come from `ui/public/ship-words.mjs`. "Create PR" makes PRs everywhere; "View PR" goes to one PR
+   (a menu item names it: "View PR #812"); "View PRs ▾" lists several; "Ship" is a status word ("Ready to ship"), never
+   a button. Push says the header's `Push main` (the source branch). Buttons, menu items, aria-labels and dialog titles
+   say "PR"; "pull request" only in headings and sentences; "open" is not a PR verb. The Create PR dialog's title equals
+   its confirm ("Create PR", "Create 2 PRs"). Its zones, in order: Into (remote and branch on one row, the branch alone
+   with one remote), Title and description (with Draft), After it opens (Watch PR, Release). Its footer: a divider,
+   then Cancel and the primary on the right; "Try it first" is a secondary `.btn` on the left; one primary. Field
+   labels in it are nouns ("Into", "Push remote", "Draft").
 5. Links. A PR text link (`.rd-prs-link`, `.rd-track-pr`, `.chat-rc-watch-pr`, `.ask-prcard-link`, `.ask-shipcard-pr`,
    `.hd-pr-repo-link`) is `--blue-ink-strong`, weight 600.
 Placement: on the run page the PR control sits in the card's head at every level (`.rd-sheet-head > .rd-head-acts`, the
